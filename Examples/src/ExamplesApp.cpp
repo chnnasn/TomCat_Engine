@@ -6,11 +6,7 @@ public:
 	Examples(){}
 	~Examples() {}
 };
-void main() {
+TomCat::Application* TomCat::CreateApplication() {
 
-	Examples* examples = new Examples();
-
-	examples->Run();
-
-	delete examples;
+	return new Examples();
 }

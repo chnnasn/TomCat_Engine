@@ -14,5 +14,10 @@ namespace TomCat {
 
 		void Run();
 	};
+
+
+	//客户端定义
+	Application* CreateApplication();
+
 }
 
