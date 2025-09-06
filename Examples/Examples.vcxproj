@@ -24,6 +24,7 @@
     <ProjectGuid>{1cacb1dd-3119-4232-91fb-59bdd0e036c8}</ProjectGuid>
     <RootNamespace>Examples</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>Z_Examples</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -113,7 +114,8 @@
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;TC_PLAYTFORM_WINDOWSTC_PLAYTFORM_WINDOWS_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)TomCat\src;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)TomCat\src;$(SolutionDir)TomCat\vendor\spdlog\include;</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -129,7 +131,8 @@
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;TC_PLAYTFORM_WINDOWSTC_PLAYTFORM_WINDOWSNDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)TomCat\src;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)TomCat\src;$(SolutionDir)TomCat\vendor\spdlog\include;</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
