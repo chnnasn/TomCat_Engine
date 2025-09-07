@@ -1,3 +1,6 @@
 [submodule "TomCat/vendor/spdlog"]
 	path = TomCat/vendor/spdlog
 	url = https://github.com/gabime/spdlog
+[submodule "TomCat/vendor/GLFW"]
+	path = TomCat/vendor/GLFW
+	url = https://github.com/TheCherno/glfw

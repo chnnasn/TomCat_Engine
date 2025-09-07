@@ -10,6 +10,13 @@ workspace "TomCat"
 
 
 outputdir = "%{cfg.buildcfd}-%{cfg.system}-%{cfg.architecture}"
+
+-- Include directories relative to root folder (solution directory)
+IncludeDir = {}
+IncludeDir["GLFW"] = "TomCat/vendor/GLFW/include"
+
+include "TomCat/vendor/GLFW"
+
 project "TomCat"
 	location "TomCat"
 	kind"sharedLib"
@@ -30,8 +37,17 @@ project "TomCat"
 	includedirs
 	{
 		"%{prj.name}/src",
-		"%{prj.name}/vendor/spdlog/include"
+		"%{prj.name}/vendor/spdlog/include",
+		"%{IncludeDir.GLFW}"
 	}
+
+	
+	links 
+	{ 
+		"GLFW",
+		"opengl32.lib"
+	}
+
 
 	filter "system:windows"
 		cppdialect"C++20"

@@ -1,26 +1,17 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Events">
-      <UniqueIdentifier>{3A8963B1-262B-8E87-0FE6-A1DBFB2615D8}</UniqueIdentifier>
-    </Filter>
     <Filter Include="TomCat">
       <UniqueIdentifier>{CDE8E5D3-B98A-10AA-A245-24FE8E8697FA}</UniqueIdentifier>
     </Filter>
+    <Filter Include="TomCat\Events">
+      <UniqueIdentifier>{110C5E85-7DCC-D9BB-4607-2339B2861E98}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="platform">
+      <UniqueIdentifier>{4A63C33C-3630-1E48-5F49-0CF04B7553D6}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\Events\ApplicationEvent.h">
-      <Filter>Events</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Events\Event.h">
-      <Filter>Events</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Events\KeyEvent.h">
-      <Filter>Events</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Events\MouseEvent.h">
-      <Filter>Events</Filter>
-    </ClInclude>
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Application.h">
       <Filter>TomCat</Filter>
@@ -31,8 +22,26 @@
     <ClInclude Include="src\TomCat\EntryPoint.h">
       <Filter>TomCat</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Events\ApplicationEvent.h">
+      <Filter>TomCat\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Events\Event.h">
+      <Filter>TomCat\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Events\KeyEvent.h">
+      <Filter>TomCat\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Events\MouseEvent.h">
+      <Filter>TomCat\Events</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Log.h">
       <Filter>TomCat</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Window.h">
+      <Filter>TomCat</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\WindowsWindow.h">
+      <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="src\tcpch.h" />
   </ItemGroup>
@@ -42,6 +51,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Log.cpp">
       <Filter>TomCat</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\WindowsWindow.cpp">
+      <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="src\tcpch.cpp" />
   </ItemGroup>
