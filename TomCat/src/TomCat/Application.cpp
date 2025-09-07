@@ -20,13 +20,31 @@ namespace TomCat {
 
 	}
 
+	void Application::PushLayer(Layer* Layer)
+	{
+		m_LayerStack.PushLayer(Layer);
+	}
+	void Application::PushOverLayer(Layer* Layer)
+	{
+		m_LayerStack.PushOverLayer(Layer);
+	}
+
+
 
 	void Application::OnEvent(Event& e) 
 	{
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(Bind_Event_Fn(OnWindowClose));
 
-		TC_Core_Trace("{0}",e.ToString());
+		//TC_Core_Trace("{0}",e.ToString());
+
+		for (auto it = m_LayerStack.end(); it != m_LayerStack.begin(); )
+		{
+			(*--it)->OnEvent(e);
+			if (e.m_Handled)
+				break;
+		}
+
 	}
 
 
@@ -36,6 +54,10 @@ namespace TomCat {
 		{
 			glClearColor(1,0,1,1);
 			glClear(GL_COLOR_BUFFER_BIT);
+
+			for (Layer* layer : m_LayerStack)
+				layer->OnUpdate();
+
 			m_Window->OnUpdate();
 		}
 	}

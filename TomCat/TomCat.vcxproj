@@ -84,9 +84,9 @@
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 /MDd %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -111,9 +111,9 @@
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 /MD %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -139,9 +139,9 @@
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalOptions>/utf-8 /MD %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -163,6 +163,8 @@
     <ClInclude Include="src\TomCat\Events\Event.h" />
     <ClInclude Include="src\TomCat\Events\KeyEvent.h" />
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
+    <ClInclude Include="src\TomCat\Layer.h" />
+    <ClInclude Include="src\TomCat\LayerStack.h" />
     <ClInclude Include="src\TomCat\Log.h" />
     <ClInclude Include="src\TomCat\Window.h" />
     <ClInclude Include="src\platform\WindowsWindow.h" />
@@ -170,6 +172,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp" />
+    <ClCompile Include="src\TomCat\Layer.cpp" />
+    <ClCompile Include="src\TomCat\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Log.cpp" />
     <ClCompile Include="src\platform\WindowsWindow.cpp" />
     <ClCompile Include="src\tcpch.cpp">
