@@ -3,11 +3,11 @@
 
 #include <stdio.h>
 
+
+//ä¾›ç¨‹åºä½¿ç”¨
+#include "TomCat/Application.h"
 #include "TomCat/Log.h"
 
 
-//¹©³ÌĞòÊ¹ÓÃ
-#include "TomCat/Application.h"
-
-//Èë¿Ú
+//å…¥å£
 #include "TomCat/EntryPoint.h"
