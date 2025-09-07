@@ -1,9 +1,10 @@
 #pragma once
-
 #include "Core.h"
-#include "Events/Event.h"
+
 #include "Window.h"
-#include "Events/ApplicationEvent.h"
+#include "TomCat/LayerStack.h"
+#include "TomCat/Events/Event.h"
+#include "TomCat/Events/ApplicationEvent.h"
 
 namespace TomCat {
 	class TomCat_API Application
@@ -17,11 +18,15 @@ namespace TomCat {
 
 		void OnEvent(Event& e);
 
+		void PushLayer(Layer* Layer);
+		void PushOverLayer(Layer* Layer);
+
 	private:
 		bool OnWindowClose(WindowCloseEvent& e);
 
 		std::unique_ptr<Window>m_Window;
 		bool m_Running = true;
+		LayerStack m_LayerStack;
 	};
 
 

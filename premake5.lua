@@ -47,6 +47,8 @@ project "TomCat"
 		"GLFW",
 		"opengl32.lib"
 	}
+	buildoptions "/utf-8"
+
 
 
 	filter "system:windows"
@@ -67,14 +69,17 @@ project "TomCat"
 
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
+		buildoptions "/MDd"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"
+		buildoptions "/MD"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
+		buildoptions "/MD"
 		optimize "On"
 
 project "Z_Examples"
@@ -106,6 +111,8 @@ project "Z_Examples"
 
 	}
 
+	buildoptions "/utf-8"
+
 
 	filter "system:windows"
 		cppdialect"C++20"
@@ -119,12 +126,15 @@ project "Z_Examples"
 
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
+		buildoptions "/MDd"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"
+		buildoptions "/MD"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
+		buildoptions "/MD"
 		optimize "On"
