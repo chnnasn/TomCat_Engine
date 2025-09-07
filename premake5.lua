@@ -14,8 +14,10 @@ outputdir = "%{cfg.buildcfd}-%{cfg.system}-%{cfg.architecture}"
 -- Include directories relative to root folder (solution directory)
 IncludeDir = {}
 IncludeDir["GLFW"] = "TomCat/vendor/GLFW/include"
+IncludeDir["Glad"] = "TomCat/vendor/Glad/include"
 
 include "TomCat/vendor/GLFW"
+include "TomCat/vendor/Glad"
 
 project "TomCat"
 	location "TomCat"
@@ -38,13 +40,15 @@ project "TomCat"
 	{
 		"%{prj.name}/src",
 		"%{prj.name}/vendor/spdlog/include",
-		"%{IncludeDir.GLFW}"
+		"%{IncludeDir.GLFW}",
+		"%{IncludeDir.Glad}"
 	}
 
 	
 	links 
 	{ 
 		"GLFW",
+		"Glad",
 		"opengl32.lib"
 	}
 	buildoptions "/utf-8"
@@ -60,6 +64,7 @@ project "TomCat"
 	{
 		"TC_PLAYTFORM_WINDOWS",
 		"TC_BUILD_DLL",
+		"GLFW_INCLUDE_NONE"
 	}
 
 	postbuildcommands
