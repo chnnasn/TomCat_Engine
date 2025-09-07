@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core.h"
+#include "Events/Event.h"
 
 namespace TomCat {
 	class TomCat_API Application
@@ -16,7 +17,7 @@ namespace TomCat {
 	};
 
 
-	//¿Í»§¶Ë¶¨Òå
+	//å®¢æˆ·ç«¯å®šä¹‰
 	Application* CreateApplication();
 
 }
