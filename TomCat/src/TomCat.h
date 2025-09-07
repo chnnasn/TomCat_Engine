@@ -6,6 +6,7 @@
 
 //供程序使用
 #include "TomCat/Application.h"
+#include "TomCat/Layer.h"
 #include "TomCat/Log.h"
 
 

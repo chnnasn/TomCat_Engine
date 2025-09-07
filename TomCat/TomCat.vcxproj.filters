@@ -34,6 +34,12 @@
     <ClInclude Include="src\TomCat\Events\MouseEvent.h">
       <Filter>TomCat\Events</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Layer.h">
+      <Filter>TomCat</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\LayerStack.h">
+      <Filter>TomCat</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Log.h">
       <Filter>TomCat</Filter>
     </ClInclude>
@@ -47,6 +53,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
+      <Filter>TomCat</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Layer.cpp">
+      <Filter>TomCat</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\LayerStack.cpp">
       <Filter>TomCat</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Log.cpp">

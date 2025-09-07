@@ -53,8 +53,10 @@ namespace TomCat {
 			return GetCategoryFlogs() & category;
 		}
 
-	protected:
 		bool m_Handled = false;
+
+	protected:
+
 
 	};
 
