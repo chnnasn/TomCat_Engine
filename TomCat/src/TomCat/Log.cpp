@@ -1,3 +1,4 @@
+#include "tcpch.h"
 #include "Log.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 
@@ -7,7 +8,7 @@ namespace TomCat {
 	std::shared_ptr<spdlog::logger> Log::s_ClinetLogger;
 	void Log::Init() {
 
-		spdlog::set_pattern("%^[%T] %n: %v%$");//ÑÕÉ« Ê±¼ä´Á ÈÕÖ¾Ãû ÎÊÌâ
+		spdlog::set_pattern("%^[%T] %n: %v%$");//é¢œè‰² æ—¶é—´æˆ³ æ—¥å¿—å é—®é¢˜
 
 		s_CoreLogger = spdlog::stdout_color_mt("TOMCAT");
 		s_CoreLogger->set_level(spdlog::level::trace);

@@ -34,6 +34,7 @@
     <ClInclude Include="src\TomCat\Log.h">
       <Filter>TomCat</Filter>
     </ClInclude>
+    <ClInclude Include="src\tcpch.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
@@ -42,5 +43,6 @@
     <ClCompile Include="src\TomCat\Log.cpp">
       <Filter>TomCat</Filter>
     </ClCompile>
+    <ClCompile Include="src\tcpch.cpp" />
   </ItemGroup>
 </Project>

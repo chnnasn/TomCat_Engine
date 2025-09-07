@@ -2,8 +2,6 @@
 
 #include "TomCat/Core.h"
 
-#include <string>
-#include <functional>
 
 namespace TomCat {
 

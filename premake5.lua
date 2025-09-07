@@ -18,6 +18,9 @@ project "TomCat"
 	targetdir ("bin/" .. outputdir .."/%{prj.name}")
 	objdir ("bin - int/" .. outputdir .."/%{prj.name}")
 
+	pchheader "tcpch.h"
+	pchsource "TomCat/src/tcpch.cpp"
+
 	files
 	{
 		"%{prj.name}/src/**.h",
