@@ -4,26 +4,29 @@
 #include "Events/ApplicationEvent.h"
 #include "Log.h"
 
+#include <GLFW/glfw3.h>
+
 namespace TomCat {
 
-	Application::Application(){
-	
+	Application::Application()
+	{
+		m_Window = std::unique_ptr<Window>(Window::Create());
 	}
 
-	Application :: ~Application() {
-	
+	Application :: ~Application() 
+	{
+
 	}
 
 
 
 	void Application::Run() {
 
-		WindowResizeEvent e(1280,720);
-		if(e.IsIncategory(EventCategoryApplication))
+		while (m_Running) 
 		{
-			TC_Trace(e.ToString());
+			glClearColor(1,0,1,1);
+			glClear(GL_COLOR_BUFFER_BIT);
+			m_Window->OnUpdate();
 		}
-
-		while (true);
 	}
 }
