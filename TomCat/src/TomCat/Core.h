@@ -9,5 +9,14 @@
 	#error TomCat only support windows!
 #endif
 
+#ifdef TC_Core_Assert
+		#define TC_Assert(x, ...) { if(!(x)) { TC_Error("Assertion Failed: {0}", __VA_ARGS__); __debugbreak(); } }
+		#define TC_Core_Assert(x, ...) { if(!(x)) { TC_Core_Error("Assertion Failed: {0}", __VA_ARGS__); __debugbreak(); } }
+#else
+		#define TC_Assert(x, ...)
+		#define TC_Core_Assert(x, ...)
+#endif
+
+
 #define BIT(x) (1<<x)
 

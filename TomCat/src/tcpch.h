@@ -12,6 +12,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "TomCat/Log.h"
+
 
 #ifdef TC_PLAYTFORM_WINDOWS
 	#include <Windows.h>
