@@ -2,7 +2,6 @@
 
 #include "Event.h"
 
-#include <sstream>
 
 namespace TomCat {
 	class  TomCat_API WindowResizeEvent : public Event

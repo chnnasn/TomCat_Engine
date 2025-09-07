@@ -2,8 +2,6 @@
 
 #include "Event.h"
 
-#include <sstream>
-
 namespace TomCat{
 
 	class TomCat_API MouseMovedEvent : public Event
