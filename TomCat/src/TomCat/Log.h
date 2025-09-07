@@ -5,6 +5,7 @@
 #include "Core.h"
 
 #include "spdlog/spdlog.h"
+#include "spdlog/fmt/ostr.h"
 
 namespace TomCat {
 	class TomCat_API Log
