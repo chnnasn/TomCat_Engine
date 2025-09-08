@@ -43,7 +43,7 @@ namespace TomCat {
 
 		if (!s_GLFWInitialized)
 		{
-			//TODO:glfwTerminate on system shutdown
+			//系统关闭时调用glfwTerminate 
 			int success = glfwInit();
 			TC_Core_Assert(success, "不能初始化GLFW");
 			glfwSetErrorCallback(GLFWErrorCallback);
@@ -124,7 +124,7 @@ namespace TomCat {
 				}
 				case GLFW_RELEASE:
 				{
-					MouseButtonPressedEvent event(button);
+					MouseButtonReleasedEvent event(button);
 					Data.EventCallback(event);
 					break;
 				}
@@ -147,6 +147,16 @@ namespace TomCat {
 			MouseMovedEvent event((float)xpos,(float)ypos);
 
 			Data.EventCallback(event);
+		});
+
+
+		glfwSetCharCallback(m_Window, [](GLFWwindow* Window, unsigned int KeyCode)
+		{
+				WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+
+				KeyTypedEvent event(KeyCode);
+
+				Data.EventCallback(event);
 		});
 
 	}

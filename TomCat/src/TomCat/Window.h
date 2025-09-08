@@ -22,7 +22,7 @@ namespace TomCat {
 		}
 	};
 
-	//Interface representing a desktop system based Window
+	//基于窗口的桌面系统的接口
 	class TomCat_API Window 
 	{
 	public:
@@ -35,7 +35,7 @@ namespace TomCat {
 		virtual unsigned int GetWidth() const = 0;
 		virtual unsigned int GetHeight() const = 0;
 
-		//window attributes
+		//窗口属性
 		virtual void SetEventCallback(const EventCallbackFn& callback) = 0;
 		virtual void SetVSync(bool enabled) = 0;
 		virtual bool IsVSync() const = 0;
