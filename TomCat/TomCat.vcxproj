@@ -80,7 +80,7 @@
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\Glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -95,7 +95,8 @@
       <ImportLibrary>..\bin\-windows-x86_64\TomCat\TomCat.lib</ImportLibrary>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll ..\bin\-windows-x86_64\Z_Examples</Command>
+      <Command>IF NOT EXIST ..\bin\-windows-x86_64\Z_Examples (mkdir ..\bin\-windows-x86_64\Z_Examples)
+copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Examples\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -104,7 +105,7 @@
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\Glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -123,7 +124,8 @@
       <ImportLibrary>..\bin\-windows-x86_64\TomCat\TomCat.lib</ImportLibrary>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll ..\bin\-windows-x86_64\Z_Examples</Command>
+      <Command>IF NOT EXIST ..\bin\-windows-x86_64\Z_Examples (mkdir ..\bin\-windows-x86_64\Z_Examples)
+copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Examples\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
@@ -132,7 +134,7 @@
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\Glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -151,10 +153,12 @@
       <ImportLibrary>..\bin\-windows-x86_64\TomCat\TomCat.lib</ImportLibrary>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll ..\bin\-windows-x86_64\Z_Examples</Command>
+      <Command>IF NOT EXIST ..\bin\-windows-x86_64\Z_Examples (mkdir ..\bin\-windows-x86_64\Z_Examples)
+copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Examples\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\platform\OpenGL\ImGuiOpenGLRenderer.h" />
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Application.h" />
     <ClInclude Include="src\TomCat\Core.h" />
@@ -163,6 +167,7 @@
     <ClInclude Include="src\TomCat\Events\Event.h" />
     <ClInclude Include="src\TomCat\Events\KeyEvent.h" />
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
+    <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Layer.h" />
     <ClInclude Include="src\TomCat\LayerStack.h" />
     <ClInclude Include="src\TomCat\Log.h" />
@@ -171,7 +176,9 @@
     <ClInclude Include="src\tcpch.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\platform\OpenGL\ImGuiOpenGLRenderer.cpp" />
     <ClCompile Include="src\TomCat\Application.cpp" />
+    <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Layer.cpp" />
     <ClCompile Include="src\TomCat\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Log.cpp" />
@@ -186,6 +193,9 @@
     </ProjectReference>
     <ProjectReference Include="vendor\Glad\Glad.vcxproj">
       <Project>{BDD6857C-A90D-870D-52FA-6C103E10030F}</Project>
+    </ProjectReference>
+    <ProjectReference Include="vendor\ImGui\ImGui.vcxproj">
+      <Project>{C0FF640D-2C14-8DBE-F595-301E616989EF}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
