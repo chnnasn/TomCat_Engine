@@ -10,6 +10,9 @@
     <Filter Include="platform">
       <UniqueIdentifier>{4A63C33C-3630-1E48-5F49-0CF04B7553D6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="platform\OpenGL">
+      <UniqueIdentifier>{13a0a1c4-e488-48fd-8627-c352469e491f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\TomCat.h" />
@@ -46,10 +49,14 @@
     <ClInclude Include="src\TomCat\Window.h">
       <Filter>TomCat</Filter>
     </ClInclude>
-    <ClInclude Include="src\platform\WindowsWindow.h">
+    <ClInclude Include="src\platform\WindowsWindow\WindowsWindow.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="src\tcpch.h" />
+    <ClInclude Include="src\platform\OpenGL\ImGuiOpenGLRenderer.h">
+      <Filter>platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
@@ -64,9 +71,13 @@
     <ClCompile Include="src\TomCat\Log.cpp">
       <Filter>TomCat</Filter>
     </ClCompile>
-    <ClCompile Include="src\platform\WindowsWindow.cpp">
+    <ClCompile Include="src\platform\WindowsWindow\WindowsWindow.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="src\tcpch.cpp" />
+    <ClCompile Include="src\platform\OpenGL\ImGuiOpenGLRenderer.cpp">
+      <Filter>platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
   </ItemGroup>
 </Project>

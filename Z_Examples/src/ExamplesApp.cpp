@@ -10,7 +10,7 @@ public:
 
 	void OnUpdate() override
 	{
-		TC_Info("ExampleLayer : UpDate");
+		//TC_Info("ExampleLayer : UpDate");
 	}
 
 	void OnEvent(TomCat::Event& event) override
@@ -29,6 +29,7 @@ public:
 	Examples()
 	{
 		PushLayer(new ExampleLayer());
+		PushOverLayer(new TomCat::ImGuiLayer());
 	}
 	~Examples() {}
 };

@@ -15,9 +15,11 @@ outputdir = "%{cfg.buildcfd}-%{cfg.system}-%{cfg.architecture}"
 IncludeDir = {}
 IncludeDir["GLFW"] = "TomCat/vendor/GLFW/include"
 IncludeDir["Glad"] = "TomCat/vendor/Glad/include"
+IncludeDir["ImGui"] = "TomCat/vendor/ImGui"
 
 include "TomCat/vendor/GLFW"
 include "TomCat/vendor/Glad"
+include "TomCat/vendor/ImGui"
 
 project "TomCat"
 	location "TomCat"
@@ -41,6 +43,7 @@ project "TomCat"
 		"%{prj.name}/src",
 		"%{prj.name}/vendor/spdlog/include",
 		"%{IncludeDir.GLFW}",
+		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.Glad}"
 	}
 
@@ -49,6 +52,7 @@ project "TomCat"
 	{ 
 		"GLFW",
 		"Glad",
+		"ImGui",
 		"opengl32.lib"
 	}
 	buildoptions "/utf-8"
@@ -68,8 +72,8 @@ project "TomCat"
 	}
 
 	postbuildcommands
-	{
-		("{COPYFILE} %{cfg.buildtarget.relpath} ../bin/" .. outputdir .."/Z_Examples")
+	{	("{MKDIR} ../bin/" .. outputdir .. "/Z_Examples"),
+		("{COPYFILE} %{cfg.buildtarget.relpath} \"../bin/".. outputdir .."/Z_Examples/\"")
 	}
 
 	filter "configurations:Debug"

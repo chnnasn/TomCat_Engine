@@ -8,9 +8,13 @@
 namespace TomCat {
 
 #define Bind_Event_Fn(x) std::bind(&Application::x,this,std::placeholders::_1)
+	Application* Application::s_Instance = nullptr;
 
 	Application::Application()
 	{
+
+		TC_Core_Assert(!s_Instance, "应用程序已经存在！");
+		s_Instance = this;
 		m_Window = std::unique_ptr<Window>(Window::Create());
 		m_Window->SetEventCallback(Bind_Event_Fn(OnEvent));
 
@@ -28,6 +32,7 @@ namespace TomCat {
 	void Application::PushOverLayer(Layer* Layer)
 	{
 		m_LayerStack.PushOverLayer(Layer);
+		Layer->OnAttach();
 	}
 
 

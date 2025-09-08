@@ -20,3 +20,5 @@
 
 #define BIT(x) (1<<x)
 
+#define TC_Bind_Event_Fn(x) std::bind(&x,this,std::placeholders::_1)
+
