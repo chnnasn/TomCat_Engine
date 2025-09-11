@@ -172,7 +172,7 @@ copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Ex
     <ClInclude Include="src\TomCat\LayerStack.h" />
     <ClInclude Include="src\TomCat\Log.h" />
     <ClInclude Include="src\TomCat\Window.h" />
-    <ClInclude Include="src\platform\WindowsWindow.h" />
+    <ClInclude Include="src\platform\WindowsWindow\WindowsWindow.h" />
     <ClInclude Include="src\tcpch.h" />
   </ItemGroup>
   <ItemGroup>
@@ -182,7 +182,7 @@ copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Ex
     <ClCompile Include="src\TomCat\Layer.cpp" />
     <ClCompile Include="src\TomCat\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Log.cpp" />
-    <ClCompile Include="src\platform\WindowsWindow.cpp" />
+    <ClCompile Include="src\platform\WindowsWindow\WindowsWindow.cpp" />
     <ClCompile Include="src\tcpch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>

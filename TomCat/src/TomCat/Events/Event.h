@@ -5,7 +5,7 @@
 
 namespace TomCat {
 
-	// TomCat 中的事件目前是阻塞式的，意味着当事件发生时，
+	// 的事件目前是阻塞式的，意味着当事件发生时，
 	// 它会立即被分发并且必须当场处理。
 	// 对于未来，更好的策略可能是在事件总线中缓冲事件，
 	// 并在更新阶段的"事件"部分处理它们。
@@ -16,7 +16,7 @@ namespace TomCat {
 		None = 0,
 		WindowClose, WindowResize, WindowFocus, WindowLostFocus,
 		AppTick,AppUpdate,AppRender,
-		KeyPressed,KeyReleased,
+		KeyPressed,KeyReleased,KeyTyped,
 		MouseButtonPressed, MouseButtonReleased,MouseMoved, MouseScrolled
 
 	};

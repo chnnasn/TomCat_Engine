@@ -13,7 +13,7 @@ namespace TomCat {
 	Application::Application()
 	{
 
-		TC_Core_Assert(!s_Instance, "Application already exists!");
+		TC_Core_Assert(!s_Instance, "应用程序已经存在！");
 		s_Instance = this;
 		m_Window = std::unique_ptr<Window>(Window::Create());
 		m_Window->SetEventCallback(Bind_Event_Fn(OnEvent));

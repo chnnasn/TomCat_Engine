@@ -49,7 +49,7 @@
     <ClInclude Include="src\TomCat\Window.h">
       <Filter>TomCat</Filter>
     </ClInclude>
-    <ClInclude Include="src\platform\WindowsWindow.h">
+    <ClInclude Include="src\platform\WindowsWindow\WindowsWindow.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="src\tcpch.h" />
@@ -71,7 +71,7 @@
     <ClCompile Include="src\TomCat\Log.cpp">
       <Filter>TomCat</Filter>
     </ClCompile>
-    <ClCompile Include="src\platform\WindowsWindow.cpp">
+    <ClCompile Include="src\platform\WindowsWindow\WindowsWindow.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="src\tcpch.cpp" />
