@@ -5,6 +5,8 @@
 
 #include <Glad/glad.h>
 
+#include "Input.h"
+
 namespace TomCat {
 
 #define Bind_Event_Fn(x) std::bind(&Application::x,this,std::placeholders::_1)
@@ -63,6 +65,10 @@ namespace TomCat {
 
 			for (Layer* layer : m_LayerStack)
 				layer->OnUpdate();
+
+			auto [x, y] = Input::GetMousePositon();
+			TC_Core_Trace("{0}.{1}" ,x,y);
+
 
 			m_Window->OnUpdate();
 		}
