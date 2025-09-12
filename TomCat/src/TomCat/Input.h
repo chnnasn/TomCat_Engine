@@ -1,0 +1,29 @@
+#pragma once
+
+#include "TomCat//Core.h"
+
+namespace TomCat {
+
+	class  TomCat_API Input
+	{
+	public:
+		inline static bool IsKeyPressed(int KeyCode) { return s_Instance->IsKeyPressedImpl(KeyCode);}
+		inline static bool IsMouseButtonPressed(int Button) { return s_Instance->IsKeyPressedImpl(Button);}
+		inline static std::pair<float,float> GetMousePositon() { return s_Instance->GetMousePositonImpl();}
+		inline static float GetMouseX() { return s_Instance->GetMouseXImpl();}
+		inline static float GetMouseY() { return s_Instance->GetMouseYImpl();}
+
+	protected:
+		virtual bool IsKeyPressedImpl(int KeyCode) = 0;
+		virtual bool IsMouseButtonPressedImpl(int Button) = 0;
+		virtual std::pair<float, float> GetMousePositonImpl() = 0;
+		virtual float GetMouseXImpl() = 0;
+		virtual float GetMouseYImpl() = 0;
+
+	private:
+		static Input* s_Instance;
+
+	};
+
+
+}

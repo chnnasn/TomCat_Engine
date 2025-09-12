@@ -159,6 +159,7 @@ copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Ex
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\platform\OpenGL\ImGuiOpenGLRenderer.h" />
+    <ClInclude Include="src\platform\Window\WindowsInput.h" />
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Application.h" />
     <ClInclude Include="src\TomCat\Core.h" />
@@ -168,21 +169,23 @@ copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Ex
     <ClInclude Include="src\TomCat\Events\KeyEvent.h" />
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
+    <ClInclude Include="src\TomCat\Input.h" />
     <ClInclude Include="src\TomCat\Layer.h" />
     <ClInclude Include="src\TomCat\LayerStack.h" />
     <ClInclude Include="src\TomCat\Log.h" />
     <ClInclude Include="src\TomCat\Window.h" />
-    <ClInclude Include="src\platform\WindowsWindow\WindowsWindow.h" />
+    <ClInclude Include="src\platform\Window\WindowsWindow.h" />
     <ClInclude Include="src\tcpch.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\platform\OpenGL\ImGuiOpenGLRenderer.cpp" />
+    <ClCompile Include="src\platform\Window\WindowsInput.cpp" />
     <ClCompile Include="src\TomCat\Application.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Layer.cpp" />
     <ClCompile Include="src\TomCat\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Log.cpp" />
-    <ClCompile Include="src\platform\WindowsWindow\WindowsWindow.cpp" />
+    <ClCompile Include="src\platform\Window\WindowsWindow.cpp" />
     <ClCompile Include="src\tcpch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>

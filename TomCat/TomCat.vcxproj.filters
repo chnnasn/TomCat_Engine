@@ -49,7 +49,7 @@
     <ClInclude Include="src\TomCat\Window.h">
       <Filter>TomCat</Filter>
     </ClInclude>
-    <ClInclude Include="src\platform\WindowsWindow\WindowsWindow.h">
+    <ClInclude Include="src\platform\Window\WindowsWindow.h">
       <Filter>platform</Filter>
     </ClInclude>
     <ClInclude Include="src\tcpch.h" />
@@ -57,6 +57,8 @@
       <Filter>platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
+    <ClInclude Include="src\TomCat\Input.h" />
+    <ClInclude Include="src\platform\Window\WindowsInput.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
@@ -71,7 +73,7 @@
     <ClCompile Include="src\TomCat\Log.cpp">
       <Filter>TomCat</Filter>
     </ClCompile>
-    <ClCompile Include="src\platform\WindowsWindow\WindowsWindow.cpp">
+    <ClCompile Include="src\platform\Window\WindowsWindow.cpp">
       <Filter>platform</Filter>
     </ClCompile>
     <ClCompile Include="src\tcpch.cpp" />
@@ -79,5 +81,6 @@
       <Filter>platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
+    <ClCompile Include="src\platform\Window\WindowsInput.cpp" />
   </ItemGroup>
 </Project>
