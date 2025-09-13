@@ -1,14 +1,14 @@
 #pragma once
 
-#include "TomCat//Core.h"
+#include "TomCat/Core.h"
 
 namespace TomCat {
 
 	class  TomCat_API Input
 	{
 	public:
-		inline static bool IsKeyPressed(int KeyCode) { return s_Instance->IsKeyPressedImpl(KeyCode);}
-		inline static bool IsMouseButtonPressed(int Button) { return s_Instance->IsKeyPressedImpl(Button);}
+		inline static bool IsKeyPressed(KeyCode KeyCode) { return s_Instance->IsKeyPressedImpl(static_cast<int>(KeyCode));}
+		inline static bool IsMouseButtonPressed(MouseButtonCode Button) { return s_Instance->IsKeyPressedImpl(static_cast<int>(Button));}
 		inline static std::pair<float,float> GetMousePositon() { return s_Instance->GetMousePositonImpl();}
 		inline static float GetMouseX() { return s_Instance->GetMouseXImpl();}
 		inline static float GetMouseY() { return s_Instance->GetMouseYImpl();}

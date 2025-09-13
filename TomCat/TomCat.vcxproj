@@ -170,9 +170,11 @@ copy /B /Y ..\bin\-windows-x86_64\TomCat\TomCat.dll "..\bin\-windows-x86_64\Z_Ex
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Input.h" />
+    <ClInclude Include="src\TomCat\KeyCodes.h" />
     <ClInclude Include="src\TomCat\Layer.h" />
     <ClInclude Include="src\TomCat\LayerStack.h" />
     <ClInclude Include="src\TomCat\Log.h" />
+    <ClInclude Include="src\TomCat\MouseButtonCodes.h" />
     <ClInclude Include="src\TomCat\Window.h" />
     <ClInclude Include="src\platform\Window\WindowsWindow.h" />
     <ClInclude Include="src\tcpch.h" />

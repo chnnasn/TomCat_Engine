@@ -1,4 +1,8 @@
 #pragma once
+
+#include "TomCat/KeyCodes.h"
+#include "TomCat/MouseButtonCodes.h"
+
 #ifdef TC_PLAYTFORM_WINDOWS
 	#ifdef TC_BUILD_DLL
 		#define TomCat_API _declspec(dllexport)

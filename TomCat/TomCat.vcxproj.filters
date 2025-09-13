@@ -59,6 +59,8 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Input.h" />
     <ClInclude Include="src\platform\Window\WindowsInput.h" />
+    <ClInclude Include="src\TomCat\KeyCodes.h" />
+    <ClInclude Include="src\TomCat\MouseButtonCodes.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
