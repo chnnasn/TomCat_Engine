@@ -1,5 +1,7 @@
 #include <TomCat.h>
 
+#include "ImGui/imgui.h"
+
 class ExampleLayer : public TomCat::Layer
 {
 public:
@@ -18,6 +20,16 @@ public:
 		
 		}
 	}
+
+	virtual void OnImGuiRender()override
+	{
+	
+		ImGui::Begin("Test");
+		ImGui::Text("Hello World");
+		ImGui::End();
+
+	}
+
 
 	void OnEvent(TomCat::Event& event) override
 	{
