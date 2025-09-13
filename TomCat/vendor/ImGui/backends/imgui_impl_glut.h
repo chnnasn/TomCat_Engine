@@ -20,6 +20,7 @@
 // Read online: https://github.com/ocornut/imgui/tree/master/docs
 
 #pragma once
+
 #include "imgui.h"      // IMGUI_IMPL_API
 
 IMGUI_IMPL_API bool     ImGui_ImplGLUT_Init();

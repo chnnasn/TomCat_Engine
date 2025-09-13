@@ -6,6 +6,9 @@
 #include "TomCat/Events/Event.h"
 #include "TomCat/Events/ApplicationEvent.h"
 
+
+#include "TomCat/ImGui/ImGuiLayer.h"
+
 namespace TomCat {
 	class TomCat_API Application
 	{ 
@@ -30,6 +33,7 @@ namespace TomCat {
 		bool OnWindowClose(WindowCloseEvent& e);
 
 		std::unique_ptr<Window>m_Window;
+		ImGuiLayer* m_ImGuiLayer;
 		bool m_Running = true;
 		LayerStack m_LayerStack;
 	private:
