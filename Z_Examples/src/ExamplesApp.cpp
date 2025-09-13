@@ -43,7 +43,6 @@ public:
 	Examples()
 	{
 		PushLayer(new ExampleLayer());
-		PushOverLayer(new TomCat::ImGuiLayer());
 	}
 	~Examples() {}
 };
