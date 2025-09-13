@@ -1,4 +1,4 @@
-	#include "tcpch.h"
+#include "tcpch.h"
 
 #include "WindowsWindow.h"
 
@@ -7,6 +7,7 @@
 #include "TomCat/Events/ApplicationEvent.h"
 
 #include <Glad/glad.h>
+
 namespace TomCat {
 
 	static bool	s_GLFWInitialized = false;
