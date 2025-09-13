@@ -16,6 +16,7 @@ IncludeDir = {}
 IncludeDir["GLFW"] = "TomCat/vendor/GLFW/include"
 IncludeDir["Glad"] = "TomCat/vendor/Glad/include"
 IncludeDir["ImGui"] = "TomCat/vendor/ImGui"
+IncludeDir["glm"] = "TomCat/vendor/glm"
 
 include "TomCat/vendor/GLFW"
 include "TomCat/vendor/Glad"
@@ -35,7 +36,9 @@ project "TomCat"
 	files
 	{
 		"%{prj.name}/src/**.h",
-		"%{prj.name}/src/**.cpp"
+		"%{prj.name}/src/**.cpp",
+		"%{prj.name}/vendor/glm/glm/**.hpp",
+		"%{prj.name}/vendor/glm/glm/**.inl"
 	}
 
 	includedirs
@@ -44,7 +47,8 @@ project "TomCat"
 		"%{prj.name}/vendor/spdlog/include",
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.ImGui}",
-		"%{IncludeDir.Glad}"
+		"%{IncludeDir.Glad}",
+		"%{IncludeDir.glm}"
 	}
 
 	
@@ -111,7 +115,8 @@ project "Z_Examples"
 	{
 	
 		"TomCat/vendor/spdlog/include",
-		"TomCat/src"
+		"TomCat/src",
+		"%{IncludeDir.glm}"
 	}
 
 	links

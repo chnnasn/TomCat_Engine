@@ -5,7 +5,7 @@ class ExampleLayer : public TomCat::Layer
 public:
 	ExampleLayer() : Layer("Example")
 	{
-		
+
 	}
 
 	void OnUpdate() override
