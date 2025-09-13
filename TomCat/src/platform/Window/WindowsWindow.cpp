@@ -10,6 +10,7 @@
 namespace TomCat {
 
 	static bool	s_GLFWInitialized = false;
+
 	static void GLFWErrorCallback(int error, const char* description)
 	{
 		TC_Core_Error("GLFW ERROE({0}) :{1}",error,description);
