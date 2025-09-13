@@ -4,11 +4,17 @@
 #include "TomCat/MouseButtonCodes.h"
 
 #ifdef TC_PLAYTFORM_WINDOWS
+
+#if TC_DYNAMIC_LINK
 	#ifdef TC_BUILD_DLL
 		#define TomCat_API _declspec(dllexport)
 	#else
 		#define TomCat_API _declspec(dllimport)	
 	#endif
+#else
+	#define TomCat_API
+#endif
+
 #else
 	#error TomCat only support windows!
 #endif
