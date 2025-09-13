@@ -56,7 +56,10 @@ public:
 	{
 		PushLayer(new ExampleLayer());
 	}
-	~Examples() {}
+	~Examples()
+	{
+	
+	}
 };
 TomCat::Application* TomCat::CreateApplication() {
 
