@@ -24,11 +24,13 @@ include "TomCat/vendor/ImGui"
 
 project "TomCat"
 	location "TomCat"
-	kind"sharedLib"
+	kind"StaticLib"
 	language "C++"
+	cppdialect"C++20"
+	staticruntime "on"
 
 	targetdir ("bin/" .. outputdir .."/%{prj.name}")
-	objdir ("bin - int/" .. outputdir .."/%{prj.name}")
+	objdir ("bin-int/" .. outputdir .."/%{prj.name}")
 
 	pchheader "tcpch.h"
 	pchsource "TomCat/src/tcpch.cpp"
@@ -39,6 +41,12 @@ project "TomCat"
 		"%{prj.name}/src/**.cpp",
 		"%{prj.name}/vendor/glm/glm/**.hpp",
 		"%{prj.name}/vendor/glm/glm/**.inl"
+	}
+
+
+	defines
+	{
+		"_CRT_SECURE_NO_WARNINGS"
 	}
 
 	includedirs
@@ -64,46 +72,42 @@ project "TomCat"
 
 
 	filter "system:windows"
-		cppdialect"C++20"
-		staticruntime "On"
 		systemversion "latest"
 
 	defines
 	{
 		"TC_PLAYTFORM_WINDOWS",
 		"TC_BUILD_DLL",
-		"GLFW_INCLUDE_NONE"
-	}
-
-	postbuildcommands
-	{	("{MKDIR} ../bin/" .. outputdir .. "/Z_Examples"),
-		("{COPYFILE} %{cfg.buildtarget.relpath} \"../bin/".. outputdir .."/Z_Examples/\"")
+		"GLFW_INCLUDE_NONE",
+		"IMGUI_API=_declspec(dllexport);"
 	}
 
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
-		buildoptions "/MDd"
-		symbols "On"
+		runtime "Debug"
+		symbols "on"
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"
-		buildoptions "/MD"
-		optimize "On"
+		runtime "Release"
+		optimize "on"
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
-		buildoptions "/MD"
-		optimize "On"
+		runtime "Release"
+		optimize "on"
+
 
 project "Z_Examples"
+
 	location "Z_Examples"
-
 	kind "ConsoleAPP"
-
 	language "C++"
+	cppdialect"C++20"
+	staticruntime "on"
 
 	targetdir ("bin/" .. outputdir .."/%{prj.name}")
-	objdir ("bin - int/" .. outputdir .."/%{prj.name}")
+	objdir ("bin-int/" .. outputdir .."/%{prj.name}")
 
 	files
 	{
@@ -116,6 +120,7 @@ project "Z_Examples"
 	
 		"TomCat/vendor/spdlog/include",
 		"TomCat/src",
+		"TomCat/vendor",
 		"%{IncludeDir.glm}"
 	}
 
@@ -129,26 +134,25 @@ project "Z_Examples"
 
 
 	filter "system:windows"
-		cppdialect"C++20"
-		staticruntime "On"
 		systemversion "latest"
 
 	defines
 	{
-		"TC_PLAYTFORM_WINDOWS"
+		"TC_PLAYTFORM_WINDOWS",
+		"IMGUI_API=_declspec(dllimport);"
 	}
 
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
-		buildoptions "/MDd"
-		symbols "On"
+		runtime "Debug"
+		symbols "on"
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"
-		buildoptions "/MD"
-		optimize "On"
+		runtime "Release"
+		optimize "on"
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
-		buildoptions "/MD"
-		optimize "On"  
+		runtime "Release"
+		optimize "on"  
