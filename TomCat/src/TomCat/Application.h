@@ -6,8 +6,8 @@
 #include "TomCat/Events/Event.h"
 #include "TomCat/Events/ApplicationEvent.h"
 
-
 #include "TomCat/ImGui/ImGuiLayer.h"
+#include"TomCat/Renderer/Shader.h"
 
 namespace TomCat {
 	class TomCat_API Application
@@ -36,6 +36,11 @@ namespace TomCat {
 		ImGuiLayer* m_ImGuiLayer;
 		bool m_Running = true;
 		LayerStack m_LayerStack;
+
+		unsigned int m_VertexArray, m_VertexBuffer, m_IndexBuffer;
+		std::unique_ptr<Shader> m_Shader;
+
+
 	private:
 		static Application* s_Instance;
 	};
