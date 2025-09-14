@@ -21,6 +21,11 @@ namespace TomCat {
 		int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 		TC_Core_Assert(status, "初始化Glad失败");
 
+		TC_Core_Info("OpenGL Info");
+		TC_Core_Info("Vendor: {0}", reinterpret_cast<const char*>(glGetString(GL_VENDOR)));
+		TC_Core_Info("Renderer: {0}", reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
+		TC_Core_Info("Version: {0}", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+
 	}
 
 	void OpenGLContext::SwapBuffers()

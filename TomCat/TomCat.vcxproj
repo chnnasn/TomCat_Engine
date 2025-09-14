@@ -162,6 +162,7 @@
     <ClInclude Include="src\TomCat\Log.h" />
     <ClInclude Include="src\TomCat\MouseButtonCodes.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
+    <ClInclude Include="src\TomCat\Renderer\Shader.h" />
     <ClInclude Include="src\TomCat\Window.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h" />
     <ClInclude Include="src\platform\Window\WindowsInput.h" />
@@ -599,6 +600,7 @@
     <ClCompile Include="src\tcpch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Shader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="vendor\GLFW\GLFW.vcxproj">
