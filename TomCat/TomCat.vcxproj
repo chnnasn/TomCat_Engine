@@ -146,6 +146,7 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Application.h" />
     <ClInclude Include="src\TomCat\Core.h" />
@@ -161,7 +162,9 @@
     <ClInclude Include="src\TomCat\LayerStack.h" />
     <ClInclude Include="src\TomCat\Log.h" />
     <ClInclude Include="src\TomCat\MouseButtonCodes.h" />
+    <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
+    <ClInclude Include="src\TomCat\Renderer\Renderer.h" />
     <ClInclude Include="src\TomCat\Renderer\Shader.h" />
     <ClInclude Include="src\TomCat\Window.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h" />
@@ -588,6 +591,7 @@
     <ClInclude Include="vendor\glm\glm\vector_relational.hpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="src\TomCat\Application.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
@@ -600,6 +604,8 @@
     <ClCompile Include="src\tcpch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\Renderer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Shader.cpp" />
   </ItemGroup>
   <ItemGroup>
