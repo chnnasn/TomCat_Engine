@@ -1366,6 +1366,9 @@
       <Filter>vendor\glm\glm</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Shader.h" />
+    <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
+    <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
+    <ClInclude Include="src\TomCat\Renderer\Renderer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
@@ -1399,5 +1402,8 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Shader.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
+    <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\Renderer.cpp" />
   </ItemGroup>
 </Project>
