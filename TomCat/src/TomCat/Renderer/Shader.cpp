@@ -4,6 +4,7 @@
 
 
 #include <glad/glad.h>
+#include "platform/OpenGL/OpenGLBuffer.h"
 
 
 
@@ -120,6 +121,7 @@ namespace TomCat {
 	{
 		glDeleteProgram(m_RendererID);
 	}
+
 
 	void Shader::Bind() const
 	{
