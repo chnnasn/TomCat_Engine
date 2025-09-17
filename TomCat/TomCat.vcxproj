@@ -147,6 +147,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
+    <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h" />
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Application.h" />
     <ClInclude Include="src\TomCat\Core.h" />
@@ -166,6 +167,7 @@
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
     <ClInclude Include="src\TomCat\Renderer\Renderer.h" />
     <ClInclude Include="src\TomCat\Renderer\Shader.h" />
+    <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
     <ClInclude Include="src\TomCat\Window.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h" />
     <ClInclude Include="src\platform\Window\WindowsInput.h" />
@@ -592,6 +594,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
+    <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp" />
     <ClCompile Include="src\TomCat\Application.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
@@ -607,6 +610,7 @@
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Renderer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Shader.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="vendor\GLFW\GLFW.vcxproj">

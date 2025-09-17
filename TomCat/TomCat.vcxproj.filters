@@ -1369,6 +1369,8 @@
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\Renderer.h" />
+    <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
+    <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
@@ -1405,5 +1407,7 @@
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Renderer.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
+    <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp" />
   </ItemGroup>
 </Project>

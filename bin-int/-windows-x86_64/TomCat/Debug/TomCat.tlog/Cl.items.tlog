@@ -1,4 +1,5 @@
 D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLBuffer.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\OpenGLBuffer.obj
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\OpenGLVertexArray.obj
 D:\github\TomCat_Engine\TomCat\src\TomCat\Application.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\Application.obj
 D:\github\TomCat_Engine\TomCat\src\TomCat\ImGui\ImGuiBuild.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\ImGuiBuild.obj
 D:\github\TomCat_Engine\TomCat\src\TomCat\ImGui\ImGuiLayer.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\ImGuiLayer.obj
@@ -12,3 +13,4 @@ D:\github\TomCat_Engine\TomCat\src\tcpch.cpp;D:\github\TomCat_Engine\bin-int\-wi
 D:\github\TomCat_Engine\TomCat\src\TomCat\Renderer\Buffer.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\Buffer.obj
 D:\github\TomCat_Engine\TomCat\src\TomCat\Renderer\Renderer.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\Renderer.obj
 D:\github\TomCat_Engine\TomCat\src\TomCat\Renderer\Shader.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\Shader.obj
+D:\github\TomCat_Engine\TomCat\src\TomCat\Renderer\VertexArray.cpp;D:\github\TomCat_Engine\bin-int\-windows-x86_64\TomCat\Debug\VertexArray.obj
