@@ -10,9 +10,9 @@ namespace TomCat {
 	{
 		switch (Renderer::GetAPI())
 		{
-		case RendererAPI::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
+			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
 
-		case RendererAPI::OpenGL: return new OpenGLVertexArray();
+			case RendererAPI::API::OpenGL: return new OpenGLVertexArray();
 		}
 		TC_Core_Assert(false, "unknown rendererapi")
 			return nullptr;
