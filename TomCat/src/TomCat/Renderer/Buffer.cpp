@@ -9,9 +9,9 @@ namespace TomCat {
 	{
 		switch (Renderer::GetAPI()) 
 		{
-			case RendererAPI::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
+			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
 
-			case RendererAPI::OpenGL: return new OpenGLVertexBuffer(vertices,size);
+			case RendererAPI::API::OpenGL: return new OpenGLVertexBuffer(vertices,size);
 		}
 		TC_Core_Assert(false,"unknown rendererapi")
 		return nullptr;
@@ -22,9 +22,9 @@ namespace TomCat {
 	{
 		switch (Renderer::GetAPI())
 		{
-			case RendererAPI::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
+			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
 
-			case RendererAPI::OpenGL: return new OpenGLIndexBuffer(indices, size);
+			case RendererAPI::API::OpenGL: return new OpenGLIndexBuffer(indices, size);
 		}
 		TC_Core_Assert(false, "unknown rendererapi")
 		return nullptr;
