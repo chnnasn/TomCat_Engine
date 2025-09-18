@@ -8,11 +8,7 @@
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 
-#include"TomCat/Renderer/Shader.h"
-#include"TomCat/Renderer/Buffer.h"
-#include"TomCat/Renderer/VertexArray.h"
-
-#include "TomCat/Renderer/OrthographicCamera.h"
+#include "TomCat/Core/TimeStep.h"
 
 namespace TomCat {
 	class TomCat_API Application
@@ -37,10 +33,12 @@ namespace TomCat {
 	private:
 		bool OnWindowClose(WindowCloseEvent& e);
 
+	private:
 		std::unique_ptr<Window>m_Window;
 		ImGuiLayer* m_ImGuiLayer;
 		bool m_Running = true;
 		LayerStack m_LayerStack;
+		float m_LastFrameTime = 0.0f;
 
 	private:
 		static Application* s_Instance;
