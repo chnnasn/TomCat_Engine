@@ -1376,6 +1376,7 @@
     <ClInclude Include="src\platform\OpenGL\OpenGLRendererAPI.h" />
     <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
     <ClInclude Include="src\TomCat\Core\TimeStep.h" />
+    <ClInclude Include="src\platform\OpenGL\OpenGLShader.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
@@ -1418,5 +1419,6 @@
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLRendererAPI.cpp" />
     <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp" />
+    <ClCompile Include="src\platform\OpenGL\OpenGLShader.cpp" />
   </ItemGroup>
 </Project>
