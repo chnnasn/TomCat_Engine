@@ -7,7 +7,8 @@ namespace TomCat {
 	class  OrthographicCamera
 	{
 	public:
-		 OrthographicCamera(float left,float right,float bottom ,float top);
+
+		OrthographicCamera(float left, float right, float bottom, float top);
 		
 
 		 const glm::vec3& GetPositon() const { return m_Positon; };
