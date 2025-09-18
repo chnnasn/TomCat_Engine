@@ -12,6 +12,16 @@
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 
+//渲染器
+#include "TomCat/Renderer/Renderer.h"
+#include "TomCat/Renderer/RenderCommand.h"
+
+#include "TomCat/Renderer/Shader.h"
+#include "TomCat/Renderer/Buffer.h"
+#include "TomCat/Renderer/VertexArray.h"
+
+#include "TomCat/Renderer/OrthographicCamera.h"
+
 
 //入口
 #include "TomCat/EntryPoint.h"
