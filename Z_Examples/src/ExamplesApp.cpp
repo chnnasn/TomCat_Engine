@@ -128,26 +128,26 @@ public:
 		m_BlueShader.reset(new TomCat::Shader(BlueShaderVertexSrc, BlueShaderFragmentSrc));
 	}
 
-	void OnUpdate() override
+	void OnUpdate(TomCat::Timestep ts) override
 	{
 
 		if (TomCat::Input::IsKeyPressed(KeyCode::Left) || TomCat::Input::IsKeyPressed(KeyCode::A))
-			m_CameraPosition.x += m_CameraMoveSpeed;
+			m_CameraPosition.x += m_CameraMoveSpeed * ts;
 
 		if (TomCat::Input::IsKeyPressed(KeyCode::Right) || TomCat::Input::IsKeyPressed(KeyCode::D))
-			m_CameraPosition.x -= m_CameraMoveSpeed;
+			m_CameraPosition.x -= m_CameraMoveSpeed * ts;
 
 		if (TomCat::Input::IsKeyPressed(KeyCode::Down) || TomCat::Input::IsKeyPressed(KeyCode::S))
-			m_CameraPosition.y += m_CameraMoveSpeed;
+			m_CameraPosition.y += m_CameraMoveSpeed * ts;
 
 		if (TomCat::Input::IsKeyPressed(KeyCode::Up) || TomCat::Input::IsKeyPressed(KeyCode::W))
-			m_CameraPosition.y -= m_CameraMoveSpeed;
+			m_CameraPosition.y -= m_CameraMoveSpeed * ts;
 
 		if (TomCat::Input::IsKeyPressed(KeyCode::Q))
-			m_CameraRotation -= m_CameraRotationSpeed;
+			m_CameraRotation -= m_CameraRotationSpeed * ts;
 
 		if (TomCat::Input::IsKeyPressed(KeyCode::E))
-			m_CameraRotation += m_CameraRotationSpeed;
+			m_CameraRotation += m_CameraRotationSpeed * ts;
 
 
 		TomCat::RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
@@ -187,10 +187,10 @@ private:
 
 	TomCat::OrthographicCamera m_Camera;
 	glm::vec3 m_CameraPosition;
-	float m_CameraMoveSpeed = 0.1f;
+	float m_CameraMoveSpeed = 1.0f;
 
 	float m_CameraRotation = 0.0f;
-	float m_CameraRotationSpeed = 2.0f;
+	float m_CameraRotationSpeed = 10.0f;
 };
 
 

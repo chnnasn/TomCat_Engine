@@ -7,6 +7,8 @@
 
 #include "Input.h"
 
+#include <glfw/glfw3.h>
+
 namespace TomCat {
 
 #define Bind_Event_Fn(x) std::bind(&Application::x,this,std::placeholders::_1)
@@ -66,9 +68,12 @@ namespace TomCat {
 
 		while (m_Running) 
 		{
+			float time = (float)glfwGetTime();
+			Timestep timestep = time - m_LastFrameTime;
+			m_LastFrameTime = time;
 
 			for (Layer* layer : m_LayerStack)
-				layer->OnUpdate();
+				layer->OnUpdate(timestep);
 
 			m_ImGuiLayer->Begin();
 			for (Layer* layer : m_LayerStack)

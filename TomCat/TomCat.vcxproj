@@ -152,6 +152,7 @@
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Application.h" />
     <ClInclude Include="src\TomCat\Core.h" />
+    <ClInclude Include="src\TomCat\Core\TimeStep.h" />
     <ClInclude Include="src\TomCat\EntryPoint.h" />
     <ClInclude Include="src\TomCat\Events\ApplicationEvent.h" />
     <ClInclude Include="src\TomCat\Events\Event.h" />
