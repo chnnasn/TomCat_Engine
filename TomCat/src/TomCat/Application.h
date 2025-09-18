@@ -12,6 +12,8 @@
 #include"TomCat/Renderer/Buffer.h"
 #include"TomCat/Renderer/VertexArray.h"
 
+#include "TomCat/Renderer/OrthographicCamera.h"
+
 namespace TomCat {
 	class TomCat_API Application
 	{ 
@@ -45,6 +47,8 @@ namespace TomCat {
 
 		std::shared_ptr<Shader> m_BlueShader;
 		std::shared_ptr<VertexArray> m_SquareVA;
+
+		OrthographicCamera m_Camera;
 
 	private:
 		static Application* s_Instance;

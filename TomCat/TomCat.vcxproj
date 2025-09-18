@@ -166,6 +166,7 @@
     <ClInclude Include="src\TomCat\MouseButtonCodes.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
+    <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
     <ClInclude Include="src\TomCat\Renderer\RenderCommand.h" />
     <ClInclude Include="src\TomCat\Renderer\Renderer.h" />
     <ClInclude Include="src\TomCat\Renderer\RendererAPI.h" />
@@ -612,6 +613,7 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp" />
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Renderer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\RendererAPI.cpp" />
