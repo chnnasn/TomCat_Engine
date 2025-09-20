@@ -174,6 +174,8 @@ public:
 		m_TextureShader.reset(TomCat::Shader::Create(textureShaderVertexSrc, texturerShaderFragmentSrc));
 
 		m_Texture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
+		m_LogoTexture = TomCat::Texture2D::Create("assets/textures/ChernoLogo.png");
+		 
 
 
 		std::dynamic_pointer_cast<TomCat::OpenGLShader>(m_TextureShader)->Bind();
@@ -235,6 +237,11 @@ public:
 
 		TomCat::Renderer::Submit(m_TextureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
+
+		m_LogoTexture->Bind();
+
+		TomCat::Renderer::Submit(m_TextureShader, m_SquareVA,glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+
 		//TomCat::Renderer::Submit(m_Shader, m_VertexArray);
 
 		TomCat::Renderer::EndScene();
@@ -263,7 +270,7 @@ private:
 	TomCat::Ref<TomCat::Shader> m_FlatColorShader,m_TextureShader;
 	TomCat::Ref<TomCat::VertexArray> m_SquareVA;
 
-	TomCat::Ref<TomCat::Texture2D> m_Texture;
+	TomCat::Ref<TomCat::Texture2D> m_Texture, m_LogoTexture;
 
 	TomCat::OrthographicCamera m_Camera;
 	glm::vec3 m_CameraPosition;
