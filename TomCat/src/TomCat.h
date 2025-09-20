@@ -18,6 +18,7 @@
 #include "TomCat/Renderer/RenderCommand.h"
 
 #include "TomCat/Renderer/Shader.h"
+#include "TomCat/Renderer/Texture.h"
 #include "TomCat/Renderer/Buffer.h"
 #include "TomCat/Renderer/VertexArray.h"
 

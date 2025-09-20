@@ -17,6 +17,7 @@ IncludeDir["GLFW"] = "TomCat/vendor/GLFW/include"
 IncludeDir["Glad"] = "TomCat/vendor/Glad/include"
 IncludeDir["ImGui"] = "TomCat/vendor/ImGui"
 IncludeDir["glm"] = "TomCat/vendor/glm"
+IncludeDir["stb_image"] = "TomCat/vendor/stb_image"
 
 include "TomCat/vendor/GLFW"
 include "TomCat/vendor/Glad"
@@ -40,7 +41,9 @@ project "TomCat"
 		"%{prj.name}/src/**.h",
 		"%{prj.name}/src/**.cpp",
 		"%{prj.name}/vendor/glm/glm/**.hpp",
-		"%{prj.name}/vendor/glm/glm/**.inl"
+		"%{prj.name}/vendor/glm/glm/**.inl",
+		"%{prj.name}/vendor/stb_image/**.h",
+		"%{prj.name}/vendor/stb_image/**.cpp"
 	}
 
 
@@ -56,7 +59,8 @@ project "TomCat"
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.Glad}",
-		"%{IncludeDir.glm}"
+		"%{IncludeDir.glm}",
+		"%{IncludeDir.stb_image}"
 	}
 
 	
