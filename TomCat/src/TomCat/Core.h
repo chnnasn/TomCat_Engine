@@ -3,6 +3,8 @@
 #include "TomCat/KeyCodes.h"
 #include "TomCat/MouseButtonCodes.h"
 
+#include <memory>
+
 #ifdef TC_PLAYTFORM_WINDOWS
 
 #if TC_DYNAMIC_LINK
@@ -31,4 +33,16 @@
 #define BIT(x) (1<<x)
 
 #define TC_Bind_Event_Fn(x) std::bind(&x,this,std::placeholders::_1)
+
+
+namespace TomCat {
+
+	template<typename T>
+	using Scope = std::unique_ptr<T>;
+
+	template<typename T>
+	using Ref = std::shared_ptr<T>;
+
+
+}
 
