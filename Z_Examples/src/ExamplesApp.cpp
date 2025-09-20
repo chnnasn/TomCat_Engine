@@ -23,7 +23,7 @@ public:
 			0.0f,0.5f,0.0f,1.0f,1.0f,0.0f,1.0f,
 		};
 
-		std::shared_ptr<TomCat::VertexBuffer> vertexBuffer;
+		TomCat::Ref<TomCat::VertexBuffer> vertexBuffer;
 		vertexBuffer.reset(TomCat::VertexBuffer::Create(vertices, sizeof(vertices)));
 
 		TomCat::BufferLayout layout = {
@@ -34,7 +34,7 @@ public:
 		m_VertexArray->AddVertexBuffer(vertexBuffer);
 
 		uint32_t indices[3] = { 0,1,2 };
-		std::shared_ptr<TomCat::IndexBuffer> indexBuffer;
+		TomCat::Ref<TomCat::IndexBuffer> indexBuffer;
 		indexBuffer.reset(TomCat::IndexBuffer::Create(indices, sizeof(indices) / sizeof(uint32_t)));
 		m_VertexArray->SetIndexBuffer(indexBuffer);
 
@@ -49,7 +49,7 @@ public:
 		};
 
 
-		std::shared_ptr<TomCat::VertexBuffer> squareVB;
+		TomCat::Ref<TomCat::VertexBuffer> squareVB;
 		squareVB.reset(TomCat::VertexBuffer::Create(squareVertices, sizeof(squareVertices)));
 
 		TomCat::BufferLayout squareVBLayout = {
@@ -59,7 +59,7 @@ public:
 		m_SquareVA->AddVertexBuffer(squareVB);
 
 		uint32_t squareIndices[6] = { 0,1,2,2,3,0 };
-		std::shared_ptr<TomCat::IndexBuffer> squareIB;
+		TomCat::Ref<TomCat::IndexBuffer> squareIB;
 		squareIB.reset(TomCat::IndexBuffer::Create(squareIndices, sizeof(squareIndices) / sizeof(uint32_t)));
 		m_SquareVA->SetIndexBuffer(squareIB);
 
@@ -172,7 +172,6 @@ public:
 
 		 glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f));
 
-		 TC_Trace("Setting color: {}, {}, {}", m_SquareColor.r, m_SquareColor.g, m_SquareColor.b);
 		 std::dynamic_pointer_cast<TomCat::OpenGLShader>(m_FlatColorShader)->Bind();
 		 std::dynamic_pointer_cast<TomCat::OpenGLShader>(m_FlatColorShader)->UploadUniformFloat3("u_Color", m_SquareColor);
 
@@ -210,11 +209,11 @@ public:
 	}
 
 private:
-	std::shared_ptr<TomCat::Shader> m_Shader;
-	std::shared_ptr<TomCat::VertexArray> m_VertexArray;
+	TomCat::Ref<TomCat::Shader> m_Shader;
+	TomCat::Ref<TomCat::VertexArray> m_VertexArray;
 
-	std::shared_ptr<TomCat::Shader> m_FlatColorShader;
-	std::shared_ptr<TomCat::VertexArray> m_SquareVA;
+	TomCat::Ref<TomCat::Shader> m_FlatColorShader;
+	TomCat::Ref<TomCat::VertexArray> m_SquareVA;
 
 	TomCat::OrthographicCamera m_Camera;
 	glm::vec3 m_CameraPosition;
