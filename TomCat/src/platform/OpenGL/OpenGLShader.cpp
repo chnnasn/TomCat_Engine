@@ -30,9 +30,17 @@ namespace TomCat {
 		std::string source = ReadFile(filepath);
 		auto shaderSources = PreProcess(source);
 		Compile(shaderSources);
+
+		auto lastSlash = filepath.find_last_of("/\\");
+		lastSlash = lastSlash == std::string::npos ? 0 : lastSlash + 1;
+		auto lastDot = filepath.rfind('.');
+		auto count = lastDot == std::string::npos ? filepath.size() - lastSlash : lastDot - lastSlash;
+		m_Name=filepath.substr(lastSlash,count);
+
 	}
 
-	OpenGLShader::OpenGLShader(const std::string& vertexSrc, const std::string& fragmentSrc)
+	OpenGLShader::OpenGLShader(const std::string& name,const std::string& vertexSrc, const std::string& fragmentSrc)
+		:m_Name(name)
 	{
 		std::unordered_map<GLenum, std::string> sources;
 		sources[GL_VERTEX_SHADER] = vertexSrc;
@@ -48,7 +56,7 @@ namespace TomCat {
 	std::string OpenGLShader::ReadFile(const std::string& filepath)
 	{
 		std::string result;
-		std::ifstream in(filepath, std::ios::in, std::ios::binary);
+		std::ifstream in(filepath, std::ios::in | std::ios::binary);
 
 		if (in)
 		{
@@ -91,8 +99,8 @@ namespace TomCat {
 	void OpenGLShader::Compile(const std::unordered_map<GLenum, std::string>& shaderSouces)
 	{
 		GLuint program = glCreateProgram();
-		std::vector<GLenum> glShaderIDs(shaderSouces.size());
-
+		std::array<GLenum,2> glShaderIDs;
+		int glShaderIDIndex = 0;
 		for (auto& kv : shaderSouces) 
 		{
 			GLenum type = kv.first;
@@ -124,7 +132,7 @@ namespace TomCat {
 				break;
 			}
 			glAttachShader(program, Shader);
-			glShaderIDs.push_back(Shader);
+			glShaderIDs[glShaderIDIndex++] = Shader;
 		}
 		// Link our program
 		glLinkProgram(program);

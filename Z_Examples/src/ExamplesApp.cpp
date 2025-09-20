@@ -102,7 +102,7 @@ public:
 			}
 		)";
 
-		m_Shader.reset(TomCat::Shader::Create(vertexSrc, fragmentSrc));
+		m_Shader = TomCat::Shader::Create("VertexPosColor",vertexSrc, fragmentSrc);
 
 		std::string flatColorShaderVertexSrc = R"(
 			#version 330 core
@@ -136,17 +136,17 @@ public:
 			}
 		)";
 
-		m_FlatColorShader.reset(TomCat::Shader::Create(flatColorShaderVertexSrc, flatColorShaderFragmentSrc));
+		m_FlatColorShader = TomCat::Shader::Create("FlatColor",flatColorShaderVertexSrc, flatColorShaderFragmentSrc);
 
-		m_TextureShader.reset(TomCat::Shader::Create("assets/shaders/Texture.glsl"));
+		auto textureShader = m_ShaderLibrary.Load("assets/shaders/Texture.glsl");
 
 		m_Texture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
 		m_LogoTexture = TomCat::Texture2D::Create("assets/textures/ChernoLogo.png");
 		 
 
 
-		std::dynamic_pointer_cast<TomCat::OpenGLShader>(m_TextureShader)->Bind();
-		std::dynamic_pointer_cast<TomCat::OpenGLShader>(m_TextureShader)->UploadUniformInt("u_Texture", 0);
+		std::dynamic_pointer_cast<TomCat::OpenGLShader>(textureShader)->Bind();
+		std::dynamic_pointer_cast<TomCat::OpenGLShader>(textureShader)->UploadUniformInt("u_Texture", 0);
 
 	}
 
@@ -200,14 +200,16 @@ public:
 			}
 		}
 
+		auto textureShader = m_ShaderLibrary.Get("Texture");
+
 		m_Texture->Bind();
 
-		TomCat::Renderer::Submit(m_TextureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+		TomCat::Renderer::Submit(textureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
 
 		m_LogoTexture->Bind();
 
-		TomCat::Renderer::Submit(m_TextureShader, m_SquareVA,glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+		TomCat::Renderer::Submit(textureShader, m_SquareVA,glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
 		//TomCat::Renderer::Submit(m_Shader, m_VertexArray);
 
@@ -231,10 +233,12 @@ public:
 	}
 
 private:
+	TomCat::ShaderLibrary m_ShaderLibrary;
+
 	TomCat::Ref<TomCat::Shader> m_Shader;
 	TomCat::Ref<TomCat::VertexArray> m_VertexArray;
 
-	TomCat::Ref<TomCat::Shader> m_FlatColorShader,m_TextureShader;
+	TomCat::Ref<TomCat::Shader> m_FlatColorShader;
 	TomCat::Ref<TomCat::VertexArray> m_SquareVA;
 
 	TomCat::Ref<TomCat::Texture2D> m_Texture, m_LogoTexture;
