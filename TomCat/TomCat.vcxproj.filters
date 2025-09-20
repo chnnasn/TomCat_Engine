@@ -7,6 +7,9 @@
     <Filter Include="src\TomCat">
       <UniqueIdentifier>{04C24431-F079-867E-5981-5FDA4558216F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Core">
+      <UniqueIdentifier>{DCC85B31-4854-C9F5-5165-4CEABD6F25F6}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Events">
       <UniqueIdentifier>{688193FC-D497-9192-1D0F-1DB48964621A}</UniqueIdentifier>
     </Filter>
@@ -46,6 +49,9 @@
     <Filter Include="vendor\glm\glm\gtx">
       <UniqueIdentifier>{B3A6A76B-9F8A-68C1-08EB-6214F4ED5243}</UniqueIdentifier>
     </Filter>
+    <Filter Include="vendor\stb_image">
+      <UniqueIdentifier>{0DA0BA59-F998-D9AB-22CB-BE300E23B9B7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\TomCat.h">
@@ -56,6 +62,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Core.h">
       <Filter>src\TomCat</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Core\TimeStep.h">
+      <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\EntryPoint.h">
       <Filter>src\TomCat</Filter>
@@ -93,13 +102,52 @@
     <ClInclude Include="src\TomCat\MouseButtonCodes.h">
       <Filter>src\TomCat</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Buffer.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\RenderCommand.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Renderer.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\RendererAPI.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Shader.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Texture.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\VertexArray.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Window.h">
       <Filter>src\TomCat</Filter>
     </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLRendererAPI.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLShader.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLTexture.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h">
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\Window\WindowsInput.h">
@@ -1365,18 +1413,9 @@
     <ClInclude Include="vendor\glm\glm\vector_relational.hpp">
       <Filter>vendor\glm\glm</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Renderer\Shader.h" />
-    <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
-    <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
-    <ClInclude Include="src\TomCat\Renderer\Renderer.h" />
-    <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
-    <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h" />
-    <ClInclude Include="src\TomCat\Renderer\RendererAPI.h" />
-    <ClInclude Include="src\TomCat\Renderer\RenderCommand.h" />
-    <ClInclude Include="src\platform\OpenGL\OpenGLRendererAPI.h" />
-    <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
-    <ClInclude Include="src\TomCat\Core\TimeStep.h" />
-    <ClInclude Include="src\platform\OpenGL\OpenGLShader.h" />
+    <ClInclude Include="vendor\stb_image\stb_image.h">
+      <Filter>vendor\stb_image</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Application.cpp">
@@ -1397,7 +1436,46 @@
     <ClCompile Include="src\TomCat\Log.cpp">
       <Filter>src\TomCat</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Buffer.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Renderer.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\RendererAPI.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Shader.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Texture.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLContext.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLRendererAPI.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLShader.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLTexture.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp">
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Window\WindowsInput.cpp">
@@ -1409,16 +1487,8 @@
     <ClCompile Include="src\tcpch.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\Renderer\Shader.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
-    <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\Renderer.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
-    <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\RendererAPI.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp" />
-    <ClCompile Include="src\platform\OpenGL\OpenGLRendererAPI.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp" />
-    <ClCompile Include="src\platform\OpenGL\OpenGLShader.cpp" />
+    <ClCompile Include="vendor\stb_image\stb_image.cpp">
+      <Filter>vendor\stb_image</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
