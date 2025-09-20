@@ -41,11 +41,11 @@ public:
 
 		m_SquareVA.reset(TomCat::VertexArray::Create());
 
-		float squareVertices[3 * 4] = {
-			-0.5f, -0.5f, 0.0f,
-			 0.5f, -0.5f, 0.0f,
-			 0.5f,  0.5f, 0.0f,
-			-0.5f,  0.5f, 0.0f
+		float squareVertices[5 * 4] = {
+			-0.5f, -0.5f, 0.0f,0.0f,0.0f,
+			 0.5f, -0.5f, 0.0f,1.0f,0.0f,
+			 0.5f,  0.5f, 0.0f,1.0f,1.0f,
+			-0.5f,  0.5f, 0.0f,0.0f,1.0f
 		};
 
 
@@ -53,7 +53,8 @@ public:
 		squareVB.reset(TomCat::VertexBuffer::Create(squareVertices, sizeof(squareVertices)));
 
 		TomCat::BufferLayout squareVBLayout = {
-			{TomCat::ShaderDataType::Float3,"a_Posioton"}
+			{TomCat::ShaderDataType::Float3,"a_Posioton"},
+			{TomCat::ShaderDataType::Float2,"a_TexCoord"}
 		};
 		squareVB->SetLayout(squareVBLayout);
 		m_SquareVA->AddVertexBuffer(squareVB);
@@ -101,7 +102,7 @@ public:
 			}
 		)";
 
-		m_Shader.reset(TomCat::Shader::Create(vertexSrc, fragmentSrc));
+		m_Shader = TomCat::Shader::Create("VertexPosColor",vertexSrc, fragmentSrc);
 
 		std::string flatColorShaderVertexSrc = R"(
 			#version 330 core
@@ -135,7 +136,18 @@ public:
 			}
 		)";
 
-		m_FlatColorShader.reset(TomCat::Shader::Create(flatColorShaderVertexSrc, flatColorShaderFragmentSrc));
+		m_FlatColorShader = TomCat::Shader::Create("FlatColor",flatColorShaderVertexSrc, flatColorShaderFragmentSrc);
+
+		auto textureShader = m_ShaderLibrary.Load("assets/shaders/Texture.glsl");
+
+		m_Texture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
+		m_LogoTexture = TomCat::Texture2D::Create("assets/textures/ChernoLogo.png");
+		 
+
+
+		std::dynamic_pointer_cast<TomCat::OpenGLShader>(textureShader)->Bind();
+		std::dynamic_pointer_cast<TomCat::OpenGLShader>(textureShader)->UploadUniformInt("u_Texture", 0);
+
 	}
 
 	void OnUpdate(TomCat::Timestep ts) override
@@ -187,7 +199,19 @@ public:
 
 			}
 		}
-		TomCat::Renderer::Submit(m_Shader, m_VertexArray);
+
+		auto textureShader = m_ShaderLibrary.Get("Texture");
+
+		m_Texture->Bind();
+
+		TomCat::Renderer::Submit(textureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+
+
+		m_LogoTexture->Bind();
+
+		TomCat::Renderer::Submit(textureShader, m_SquareVA,glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+
+		//TomCat::Renderer::Submit(m_Shader, m_VertexArray);
 
 		TomCat::Renderer::EndScene();
 
@@ -209,11 +233,15 @@ public:
 	}
 
 private:
+	TomCat::ShaderLibrary m_ShaderLibrary;
+
 	TomCat::Ref<TomCat::Shader> m_Shader;
 	TomCat::Ref<TomCat::VertexArray> m_VertexArray;
 
 	TomCat::Ref<TomCat::Shader> m_FlatColorShader;
 	TomCat::Ref<TomCat::VertexArray> m_SquareVA;
+
+	TomCat::Ref<TomCat::Texture2D> m_Texture, m_LogoTexture;
 
 	TomCat::OrthographicCamera m_Camera;
 	glm::vec3 m_CameraPosition;
