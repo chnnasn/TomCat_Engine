@@ -12,7 +12,7 @@ class ExampleLayer : public TomCat::Layer
 {
 public:
 	ExampleLayer() 
-		: Layer("Example"),m_Camera(-1.6f, 1.6f, -0.9f, 0.9f),m_CameraPosition(0.0f)
+		: Layer("Example"), m_CameraController(1280.0f/720.0f)
 	{
 		m_VertexArray.reset(TomCat::VertexArray::Create());
 
@@ -152,35 +152,14 @@ public:
 
 	void OnUpdate(TomCat::Timestep ts) override
 	{
+		//调用摄像机
+		m_CameraController.OnUpdate(ts);
 
-		if (TomCat::Input::IsKeyPressed(KeyCode::Left))
-			m_CameraPosition.x += m_CameraMoveSpeed * ts;
-
-		if (TomCat::Input::IsKeyPressed(KeyCode::Right))
-			m_CameraPosition.x -= m_CameraMoveSpeed * ts;
-
-		if (TomCat::Input::IsKeyPressed(KeyCode::Down))
-			m_CameraPosition.y += m_CameraMoveSpeed * ts;
-
-		if (TomCat::Input::IsKeyPressed(KeyCode::Up))
-			m_CameraPosition.y -= m_CameraMoveSpeed * ts;
-
-		if (TomCat::Input::IsKeyPressed(KeyCode::Q))
-			m_CameraRotation -= m_CameraRotationSpeed * ts;
-
-		if (TomCat::Input::IsKeyPressed(KeyCode::E))
-			m_CameraRotation += m_CameraRotationSpeed * ts;
-
-
-
+		//渲染
 		TomCat::RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
 		TomCat::RenderCommand::Clear();
 
-		m_Camera.SetPosition(m_CameraPosition);
-		m_Camera.SetRotation(m_CameraRotation);
-
-
-		TomCat::Renderer::BeginScene(m_Camera);
+		TomCat::Renderer::BeginScene(m_CameraController.GetCamera());
 
 		 glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f));
 
@@ -227,9 +206,9 @@ public:
 	}
 
 
-	void OnEvent(TomCat::Event& event) override
+	void OnEvent(TomCat::Event& e) override
 	{
-
+		m_CameraController.OnEvent(e);
 	}
 
 private:
@@ -243,12 +222,7 @@ private:
 
 	TomCat::Ref<TomCat::Texture2D> m_Texture, m_LogoTexture;
 
-	TomCat::OrthographicCamera m_Camera;
-	glm::vec3 m_CameraPosition;
-	float m_CameraMoveSpeed = 5.0f;
-
-	float m_CameraRotation = 0.0f;
-	float m_CameraRotationSpeed = 10.0f;
+	TomCat::OrthographicCameraController m_CameraController;
 
 	glm::vec3 m_SquareColor = { 0.2f, 0.3f, 0.8f };
 

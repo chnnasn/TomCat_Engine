@@ -162,6 +162,7 @@
     <ClInclude Include="src\TomCat\LayerStack.h" />
     <ClInclude Include="src\TomCat\Log.h" />
     <ClInclude Include="src\TomCat\MouseButtonCodes.h" />
+    <ClInclude Include="src\TomCat\OrthographicCameraController.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
     <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
@@ -608,6 +609,7 @@
     <ClCompile Include="src\TomCat\Layer.cpp" />
     <ClCompile Include="src\TomCat\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Log.cpp" />
+    <ClCompile Include="src\TomCat\OrthographicCameraController.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp" />
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp" />
