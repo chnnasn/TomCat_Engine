@@ -53,6 +53,7 @@ namespace TomCat {
 	{
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(Bind_Event_Fn(OnWindowClose));
+		dispatcher.Dispatch<WindowResizeEvent>(Bind_Event_Fn(OnWindowResize));
 
 		//TC_Core_Trace("{0}",e.ToString());
 
@@ -74,8 +75,11 @@ namespace TomCat {
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
-			for (Layer* layer : m_LayerStack)
-				layer->OnUpdate(timestep);
+			if (!m_Minized) 
+			{
+				for (Layer* layer : m_LayerStack)
+					layer->OnUpdate(timestep);
+			}
 
 			m_ImGuiLayer->Begin();
 			for (Layer* layer : m_LayerStack)
@@ -91,5 +95,20 @@ namespace TomCat {
 	{
 		m_Running = false;
 		return true;
+	}
+
+
+	bool Application::OnWindowResize(WindowResizeEvent& e)
+	{
+		if (e.GetWidth() == 0 || e.GetHeight() == 0)
+		{
+			m_Minized = true;
+			return false;
+		}
+
+		m_Minized = false;
+		Renderer::OnWindowResize(e.GetWidth(), e.GetHeight());
+
+		return false;
 	}
 }
