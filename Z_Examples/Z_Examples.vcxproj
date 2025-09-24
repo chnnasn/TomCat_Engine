@@ -137,7 +137,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\ExamplesApp.cpp" />
+    <ClInclude Include="src\Z_Examples2D.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Z_Examples2D.cpp" />
+    <ClCompile Include="src\Z_ExamplesApp.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\TomCat\TomCat.vcxproj">

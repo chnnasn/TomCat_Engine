@@ -36,7 +36,7 @@
  * since android is based on the linux kernel
  * it has __linux__ defined */
 #elif defined(__ANDROID__)
-	#define HZ_PLATFORM_ANDROID
+	#define TC_PLATFORM_ANDROID
 	#error "Android is not supported!"
 #elif defined(__linux__)
 	#define TC_PLATFORM_LINUX

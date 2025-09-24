@@ -1,5 +1,7 @@
 #include <TomCat.h>
 
+#include <TomCat/Core/EntryPoint.h>
+
 #include "platform/OpenGL/OpenGLShader.h"
 
 #include "ImGui/imgui.h"
@@ -8,13 +10,15 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include "Z_Examples2D.h"
+
 class ExampleLayer : public TomCat::Layer
 {
 public:
 	ExampleLayer() 
 		: Layer("Example"), m_CameraController(1280.0f/720.0f)
 	{
-		m_VertexArray.reset(TomCat::VertexArray::Create());
+		m_VertexArray = TomCat::VertexArray::Create();
 
 
 		float vertices[3 * 7] = {
@@ -39,7 +43,7 @@ public:
 		m_VertexArray->SetIndexBuffer(indexBuffer);
 
 
-		m_SquareVA.reset(TomCat::VertexArray::Create());
+		m_SquareVA = TomCat::VertexArray::Create();
 
 		float squareVertices[5 * 4] = {
 			-0.5f, -0.5f, 0.0f,0.0f,0.0f,
@@ -235,7 +239,8 @@ class Examples :public TomCat::Application
 public:
 	Examples()
 	{
-		PushLayer(new ExampleLayer());
+		//PushLayer(new ExampleLayer());
+		PushLayer(new Z_Examples2D());
 	}
 	~Examples()
 	{

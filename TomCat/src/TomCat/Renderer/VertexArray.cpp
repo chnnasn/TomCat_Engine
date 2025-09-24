@@ -6,13 +6,13 @@
 
 namespace TomCat {
 
-	VertexArray* VertexArray::Create()
+	Ref<VertexArray> VertexArray::Create()
 	{
 		switch (Renderer::GetAPI())
 		{
 			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
 
-			case RendererAPI::API::OpenGL: return new OpenGLVertexArray();
+			case RendererAPI::API::OpenGL: return std::make_shared<OpenGLVertexArray>();
 		}
 		TC_Core_Assert(false, "unknown rendererapi")
 			return nullptr;
