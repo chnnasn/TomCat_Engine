@@ -2,7 +2,7 @@
 #include "Core.h"
 
 #include "Window.h"
-#include "TomCat/LayerStack.h"
+#include "TomCat/Core/LayerStack.h"
 #include "TomCat/Events/Event.h"
 #include "TomCat/Events/ApplicationEvent.h"
 
@@ -32,11 +32,13 @@ namespace TomCat {
 
 	private:
 		bool OnWindowClose(WindowCloseEvent& e);
+		bool OnWindowResize(WindowResizeEvent& e);
 
 	private:
 		std::unique_ptr<Window>m_Window;
 		ImGuiLayer* m_ImGuiLayer;
 		bool m_Running = true;
+		bool m_Minized = false;
 		LayerStack m_LayerStack;
 		float m_LastFrameTime = 0.0f;
 

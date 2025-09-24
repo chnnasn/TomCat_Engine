@@ -1,15 +1,16 @@
 #pragma once
 
 //供程序使用
-#include "TomCat/Application.h"
-#include "TomCat/Layer.h"
-#include "TomCat/Log.h"
+#include "TomCat/Core/Application.h"
+#include "TomCat/Core/Layer.h"
+#include "TomCat/Core/Log.h"
 
 #include "TomCat/Core/TimeStep.h"
 
-#include "TomCat/Input.h"
-#include "TomCat/KeyCodes.h"
-#include "TomCat/MouseButtonCodes.h"
+#include "TomCat/Core/Input.h"
+#include "TomCat/Core/KeyCodes.h"
+#include "TomCat/Core/MouseButtonCodes.h"
+#include "TomCat/Renderer/OrthographicCameraController.h"
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 
@@ -26,4 +27,4 @@
 
 
 //入口
-#include "TomCat/EntryPoint.h"
+#include "TomCat/Core/EntryPoint.h"
