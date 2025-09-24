@@ -28,7 +28,7 @@ namespace TomCat {
 			glm::mat4 VertexProjectinMatrix;
 		};
 
-		static SceneData* m_SceneData;
+		static Scope<SceneData> m_SceneData;
 	};
 
 }
