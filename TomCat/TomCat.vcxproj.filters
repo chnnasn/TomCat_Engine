@@ -102,6 +102,9 @@
     <ClInclude Include="src\TomCat\MouseButtonCodes.h">
       <Filter>src\TomCat</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\OrthographicCameraController.h">
+      <Filter>src\TomCat</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Buffer.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
@@ -1434,6 +1437,9 @@
       <Filter>src\TomCat</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Log.cpp">
+      <Filter>src\TomCat</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\OrthographicCameraController.cpp">
       <Filter>src\TomCat</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp">
