@@ -16,24 +16,38 @@ namespace TomCat {
 	{
 
 		if (Input::IsKeyPressed(KeyCode::A))
-			m_CameraPosition.x += m_CameraTranslationSpeed * ts;
+		{
+			m_CameraPosition.x -= cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+			m_CameraPosition.y -= sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+		}
 
 		if (Input::IsKeyPressed(KeyCode::D))
-			m_CameraPosition.x -= m_CameraTranslationSpeed * ts;
+		{
+			m_CameraPosition.x += cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+			m_CameraPosition.y += sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+		}
 
 		if (Input::IsKeyPressed(KeyCode::S))
-			m_CameraPosition.y += m_CameraTranslationSpeed * ts;
+		{
+			m_CameraPosition.x += -sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+			m_CameraPosition.y += cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+		}
 
 		if (Input::IsKeyPressed(KeyCode::W))
-			m_CameraPosition.y -= m_CameraTranslationSpeed * ts;
+		{
+			m_CameraPosition.x -= -sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+			m_CameraPosition.y -= cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+		}
 
 		if (m_Rotation) 
 		{
-			if (Input::IsKeyPressed(KeyCode::Q))
+			if (Input::IsKeyPressed(KeyCode::E))
 				m_CameraRotation -= m_CameraRotationSpeed * ts;
 
-			if (Input::IsKeyPressed(KeyCode::E))
-				m_CameraRotation += m_CameraRotationSpeed * ts;
+			if (m_CameraRotation > 180.0f)
+				m_CameraRotation -= 360.0f;
+			else if (m_CameraRotation <= -180.0f)
+				m_CameraRotation += 360.0f;
 
 			m_Camera.SetRotation(m_CameraRotation);
 		}
