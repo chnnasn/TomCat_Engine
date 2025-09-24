@@ -1,3 +1,5 @@
+//Baisci Texture shader
+
 #type vertex
 #version 330 core
 			
