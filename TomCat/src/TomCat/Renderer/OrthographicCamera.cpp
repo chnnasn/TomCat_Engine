@@ -19,7 +19,6 @@ namespace TomCat {
 		m_ViewProjectionMatrix = m_ProjectionMatrix * m_ViewMatrix;
 	}
 
-
 	void OrthographicCamera::RecalculateViewMatrix()
 	{
 
