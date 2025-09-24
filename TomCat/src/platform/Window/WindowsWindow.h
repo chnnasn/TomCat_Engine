@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TomCat/Window.h"
+#include "TomCat/Core/Window.h"
 #include "TomCat/Renderer/GraphicsContext.h"
 
 #include <GLFW/glfw3.h>

@@ -2,8 +2,8 @@
 
 #include "tcpch.h"
 
-#include"TomCat/Core.h"
-#include "Events/Event.h"
+#include"TomCat/Core/Core.h"
+#include "TomCat/Events/Event.h"
 
 namespace TomCat {
 

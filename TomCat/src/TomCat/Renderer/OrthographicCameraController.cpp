@@ -1,7 +1,7 @@
 	#include "tcpch.h"
 
 #include "OrthographicCameraController.h"
-#include "TomCat/Input.h"
+#include "TomCat/Core/Input.h"
 
 namespace TomCat {
 

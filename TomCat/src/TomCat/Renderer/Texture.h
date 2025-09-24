@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "TomCat/Core.h"
+#include "TomCat/Core/Core.h"
 
 namespace TomCat {
 

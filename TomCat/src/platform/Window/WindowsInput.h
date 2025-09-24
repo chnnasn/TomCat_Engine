@@ -1,5 +1,5 @@
 #pragma once
-#include "TomCat/Input.h"
+#include "TomCat/Core/Input.h"
 
 namespace TomCat {
 

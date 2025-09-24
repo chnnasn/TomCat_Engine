@@ -5,7 +5,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 
-#include "TomCat/Application.h"
+#include "TomCat/Core/Application.h"
 
 #include <Glad/glad.h>
 #include <GLFW/glfw3.h>

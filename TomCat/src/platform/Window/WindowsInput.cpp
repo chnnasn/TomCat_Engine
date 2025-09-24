@@ -1,7 +1,7 @@
 #include "tcpch.h"
 #include "WindowsInput.h"
 #include <glfw/glfw3.h>
-#include "TomCat/Application.h"
+#include "TomCat/Core/Application.h"
 
 namespace TomCat {
 

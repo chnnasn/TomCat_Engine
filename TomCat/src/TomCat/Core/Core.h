@@ -1,7 +1,7 @@
 #pragma once
 
-#include "TomCat/KeyCodes.h"
-#include "TomCat/MouseButtonCodes.h"
+#include "TomCat/Core/KeyCodes.h"
+#include "TomCat/Core/MouseButtonCodes.h"
 
 #include <memory>
 
