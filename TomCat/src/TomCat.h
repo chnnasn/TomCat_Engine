@@ -25,6 +25,3 @@
 
 #include "TomCat/Renderer/OrthographicCamera.h"
 
-
-//入口
-#include "TomCat/Core/EntryPoint.h"

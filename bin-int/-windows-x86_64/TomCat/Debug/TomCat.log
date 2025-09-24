@@ -1,5 +1,15 @@
-﻿  WindowsInput.cpp
-  WindowsWindow.cpp
-  stb_image.cpp
+﻿  Application.cpp
+  Buffer.cpp
+  RenderCommand.cpp
+  Renderer.cpp
+  RendererAPI.cpp
+  Shader.cpp
+  Texture.cpp
+  VertexArray.cpp
+  OpenGLRendererAPI.cpp
+  OpenGLVertexArray.cpp
   正在生成代码...
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp(72,5): warning C4312: “类型强制转换”: 从“const uint32_t”转换到更大的“const void *”
+  (编译源文件“/src/platform/OpenGL/OpenGLVertexArray.cpp”)
+  
   TomCat.vcxproj -> D:\github\TomCat_Engine\bin\-windows-x86_64\TomCat\TomCat.lib

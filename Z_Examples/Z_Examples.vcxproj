@@ -137,12 +137,16 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\ExamplesApp.cpp" />
+    <ClCompile Include="src\Z_ExamplesApp.cpp" />
+    <ClCompile Include="src\Z_Examples2D.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\TomCat\TomCat.vcxproj">
       <Project>{CDE8E5D3-B98A-10AA-A245-24FE8E8697FA}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Z_Examples2D.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
