@@ -12,6 +12,7 @@ int main(int argc,char** argv) {
 
 	TC_Info("Hello");
 
+
 	auto app = TomCat::CreateApplication();
 
 	app->Run();
