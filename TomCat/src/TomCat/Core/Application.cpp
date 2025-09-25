@@ -11,16 +11,16 @@
 
 namespace TomCat {
 
-#define Bind_Event_Fn(x) std::bind(&Application::x,this,std::placeholders::_1)
 	Application* Application::s_Instance = nullptr;
 
 	Application::Application()
 	{
+		TC_PROFILE_FUNCTION();
 
 		TC_Core_Assert(!s_Instance, "应用程序已经存在！");
 		s_Instance = this;
 		m_Window = std::unique_ptr<Window>(Window::Create());
-		m_Window->SetEventCallback(Bind_Event_Fn(OnEvent));
+		m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
 
 		Renderer::Init();
 
@@ -33,16 +33,20 @@ namespace TomCat {
 
 	Application :: ~Application() 
 	{
+		TC_PROFILE_FUNCTION();
 
+		Renderer::Shutdown();
 	}
 
 	void Application::PushLayer(Layer* Layer)
 	{
+		TC_PROFILE_FUNCTION();
 		m_LayerStack.PushLayer(Layer);
 		Layer->OnAttach();
 	}
 	void Application::PushOverLayer(Layer* Layer)
 	{
+		TC_PROFILE_FUNCTION();
 		m_LayerStack.PushOverLayer(Layer);
 		Layer->OnAttach();
 	}
@@ -53,13 +57,13 @@ namespace TomCat {
 
 	}
 
-
-
 	void Application::OnEvent(Event& e) 
 	{
+		TC_PROFILE_FUNCTION();
+
 		EventDispatcher dispatcher(e);
-		dispatcher.Dispatch<WindowCloseEvent>(Bind_Event_Fn(OnWindowClose));
-		dispatcher.Dispatch<WindowResizeEvent>(Bind_Event_Fn(OnWindowResize));
+		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(Application::OnWindowClose));
+		dispatcher.Dispatch<WindowResizeEvent>(TC_Bind_Event_Fn(Application::OnWindowResize));
 
 		//TC_Core_Trace("{0}",e.ToString());
 
@@ -73,24 +77,36 @@ namespace TomCat {
 	}
 
 
-	void Application::Run() {
+	void Application::Run()
+	{
+		TC_PROFILE_FUNCTION();
 
 		while (m_Running) 
 		{
+			TC_PROFILE_SCOPE("RunLoop");
+
 			float time = (float)glfwGetTime();
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
 			if (!m_Minized) 
 			{
-				for (Layer* layer : m_LayerStack)
-					layer->OnUpdate(timestep);
-			}
+				{
+					TC_PROFILE_SCOPE("LayerStack Onupdates");
 
-			m_ImGuiLayer->Begin();
-			for (Layer* layer : m_LayerStack)
-				layer->OnImGuiRender();
-			m_ImGuiLayer->End();
+					for (Layer* layer : m_LayerStack)
+						layer->OnUpdate(timestep);
+				}
+
+				m_ImGuiLayer->Begin();
+				{
+					TC_PROFILE_SCOPE("LayerStack OnImGuiRender");
+					for (Layer* layer : m_LayerStack)
+						layer->OnImGuiRender();
+				}
+				m_ImGuiLayer->End();
+
+			}
 
 			m_Window->OnUpdate();
 		}
@@ -106,6 +122,8 @@ namespace TomCat {
 
 	bool Application::OnWindowResize(WindowResizeEvent& e)
 	{
+		TC_PROFILE_FUNCTION();
+
 		if (e.GetWidth() == 0 || e.GetHeight() == 0)
 		{
 			m_Minized = true;

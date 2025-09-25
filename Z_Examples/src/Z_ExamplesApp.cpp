@@ -28,7 +28,7 @@ public:
 		};
 
 		TomCat::Ref<TomCat::VertexBuffer> vertexBuffer;
-		vertexBuffer.reset(TomCat::VertexBuffer::Create(vertices, sizeof(vertices)));
+		vertexBuffer = TomCat::VertexBuffer::Create(vertices, sizeof(vertices));
 
 		TomCat::BufferLayout layout = {
 				{TomCat::ShaderDataType::Float3,"a_Posioton"},
@@ -39,7 +39,7 @@ public:
 
 		uint32_t indices[3] = { 0,1,2 };
 		TomCat::Ref<TomCat::IndexBuffer> indexBuffer;
-		indexBuffer.reset(TomCat::IndexBuffer::Create(indices, sizeof(indices) / sizeof(uint32_t)));
+		indexBuffer = TomCat::IndexBuffer::Create(indices, sizeof(indices) / sizeof(uint32_t));
 		m_VertexArray->SetIndexBuffer(indexBuffer);
 
 
@@ -54,7 +54,7 @@ public:
 
 
 		TomCat::Ref<TomCat::VertexBuffer> squareVB;
-		squareVB.reset(TomCat::VertexBuffer::Create(squareVertices, sizeof(squareVertices)));
+		squareVB = TomCat::VertexBuffer::Create(squareVertices, sizeof(squareVertices));
 
 		TomCat::BufferLayout squareVBLayout = {
 			{TomCat::ShaderDataType::Float3,"a_Posioton"},
@@ -65,7 +65,7 @@ public:
 
 		uint32_t squareIndices[6] = { 0,1,2,2,3,0 };
 		TomCat::Ref<TomCat::IndexBuffer> squareIB;
-		squareIB.reset(TomCat::IndexBuffer::Create(squareIndices, sizeof(squareIndices) / sizeof(uint32_t)));
+		squareIB = TomCat::IndexBuffer::Create(squareIndices, sizeof(squareIndices) / sizeof(uint32_t));
 		m_SquareVA->SetIndexBuffer(squareIB);
 
 		///<summary>

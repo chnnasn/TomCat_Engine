@@ -4,7 +4,7 @@
 
 namespace TomCat{
 
-	class TomCat_API MouseMovedEvent : public Event
+	class MouseMovedEvent : public Event
 	{
 	public:
 		MouseMovedEvent(float x, float y)
@@ -27,7 +27,7 @@ namespace TomCat{
 		float m_MouseX, m_MouseY;
 	};
 
-	class TomCat_API MouseScrolledEvent : public Event
+	class MouseScrolledEvent : public Event
 	{
 	public:
 		MouseScrolledEvent(float xOffset, float yOffset)
@@ -50,7 +50,7 @@ namespace TomCat{
 		float m_XOffset, m_YOffset;
 	};
 
-	class TomCat_API MouseButtonEvent : public Event
+	class MouseButtonEvent : public Event
 	{
 	public:
 		inline int GetMouseButton() const { return m_Button; }
@@ -64,7 +64,7 @@ namespace TomCat{
 		int m_Button;
 	};
 
-	class TomCat_API MouseButtonPressedEvent : public MouseButtonEvent
+	class MouseButtonPressedEvent : public MouseButtonEvent
 	{
 	public:
 		MouseButtonPressedEvent(int button)
@@ -81,7 +81,7 @@ namespace TomCat{
 		Event_Class_Type(MouseButtonPressed)
 	};
 
-	class TomCat_API MouseButtonReleasedEvent : public MouseButtonEvent
+	class MouseButtonReleasedEvent : public MouseButtonEvent
 	{
 	public:
 		MouseButtonReleasedEvent(int button)

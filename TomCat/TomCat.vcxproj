@@ -605,6 +605,7 @@
     <ClInclude Include="vendor\stb_image\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp" />
     <ClCompile Include="src\TomCat\Core\Application.cpp" />
     <ClCompile Include="src\TomCat\Core\Layer.cpp" />

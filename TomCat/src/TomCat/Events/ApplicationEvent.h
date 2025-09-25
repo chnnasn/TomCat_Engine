@@ -4,7 +4,7 @@
 
 
 namespace TomCat {
-	class  TomCat_API WindowResizeEvent : public Event
+	class WindowResizeEvent : public Event
 	{
 	public:
 		WindowResizeEvent(unsigned int width,unsigned int height)

@@ -16,6 +16,7 @@ namespace TomCat {
 
 	void OpenGLContext::Init()
 	{
+		TC_PROFILE_FUNCTION();
 
 		glfwMakeContextCurrent(m_WindowHandle);
 		int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
@@ -39,6 +40,7 @@ namespace TomCat {
 
 	void OpenGLContext::SwapBuffers()
 	{
+		TC_PROFILE_FUNCTION();
 
 		glfwSwapBuffers(m_WindowHandle);
 

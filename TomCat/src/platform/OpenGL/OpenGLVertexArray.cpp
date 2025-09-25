@@ -31,6 +31,7 @@ namespace TomCat {
 
 	OpenGLVertexArray::OpenGLVertexArray()
 	{
+		TC_PROFILE_FUNCTION();
 
 		glCreateVertexArrays(1, &m_RendererID);
 	
@@ -38,39 +39,45 @@ namespace TomCat {
 
 	OpenGLVertexArray::~OpenGLVertexArray()
 	{
+		TC_PROFILE_FUNCTION();
 
 		glDeleteVertexArrays(1,&m_RendererID);
 	}
 
 	void OpenGLVertexArray::Bind() const
 	{
+		TC_PROFILE_FUNCTION();
+
 		glBindVertexArray(m_RendererID);
 	}
 
 	void OpenGLVertexArray::Unbind() const
 	{
+		TC_PROFILE_FUNCTION();
+
 		glBindVertexArray(0);
 	}
 
 	void OpenGLVertexArray::AddVertexBuffer(const Ref<VertexBuffer>& vertexBuffer)
 	{
-		TC_Core_Assert("Vertex Buffer has no layout");
+		TC_PROFILE_FUNCTION();
+
+        TC_Core_Assert(vertexBuffer->GetLayout().GetElements().size(), "Vertex Buffer has no layout");
 
 		glBindVertexArray(m_RendererID);
 		vertexBuffer->Bind();
 
-		uint32_t index = 0;
 		const auto& layout = vertexBuffer->GetLayout();
 		for (const auto& element : layout)
 		{
-			glEnableVertexAttribArray(index);
-			glVertexAttribPointer(index,
+			glEnableVertexAttribArray(m_VertexBufferIndex);
+			glVertexAttribPointer(m_VertexBufferIndex,
 				element.GetComponentCount(),
 				ShaderDataTypeToOpenGLBaseType(element.Type),
 				element.Normalized ? GL_TRUE : GL_FALSE,
 				layout.GetStride(),
 				(const void*)element.Offset);
-			index++;
+			m_VertexBufferIndex++;
 		}
 		m_VertexBuffers.push_back(vertexBuffer);
 
@@ -78,6 +85,8 @@ namespace TomCat {
 
 	void OpenGLVertexArray::SetIndexBuffer(const Ref<IndexBuffer>& indexBuffer)
 	{
+		TC_PROFILE_FUNCTION();
+
 		glBindVertexArray(m_RendererID);
 		indexBuffer->Bind();
 

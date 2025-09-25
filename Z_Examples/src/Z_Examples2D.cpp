@@ -14,11 +14,15 @@ Z_Examples2D::Z_Examples2D():Layer("Z_Examples2D"),m_CameraController(1280.0f / 
 
 void Z_Examples2D::OnAttach()
 {
+    TC_PROFILE_FUNCTION();
+
     m_CheckerboardTexture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
 }
 
 void Z_Examples2D::OnDetach()
 {
+   
+    TC_PROFILE_FUNCTION();
 }
 
 void Z_Examples2D::OnUpdate(TomCat::Timestep ts)
@@ -26,10 +30,7 @@ void Z_Examples2D::OnUpdate(TomCat::Timestep ts)
     TC_PROFILE_FUNCTION();
 
     // Update
-    {
-        TC_PROFILE_SCOPE("CameraController::OnUpdate");
-        m_CameraController.OnUpdate(ts);
-    }
+    m_CameraController.OnUpdate(ts);
 
     // Render
     {
@@ -50,6 +51,8 @@ void Z_Examples2D::OnUpdate(TomCat::Timestep ts)
 
 void Z_Examples2D::OnImGuiRender()
 {
+    TC_PROFILE_FUNCTION();
+
 
     //static bool DockSpace = true;
     //static bool opt_fullscreen = true;

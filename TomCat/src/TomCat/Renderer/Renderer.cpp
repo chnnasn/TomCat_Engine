@@ -9,9 +9,17 @@ Scope<Renderer::SceneData> Renderer::m_SceneData = CreateScope<Renderer::SceneDa
 
 	void Renderer::Init()
 	{
+		TC_PROFILE_FUNCTION();
+
 		RenderCommand::Init();
 		Renderer2D::Init();
 	}
+
+	void Renderer::Shutdown()
+	{
+		Renderer2D::Shutdown();
+	}
+
 
 	void Renderer::OnWindowResize(uint32_t width, uint32_t height)
 	{
@@ -20,7 +28,7 @@ Scope<Renderer::SceneData> Renderer::m_SceneData = CreateScope<Renderer::SceneDa
 
 	void Renderer::BeginScene(OrthographicCamera& Camera)
 	{
-		m_SceneData->VertexProjectinMatrix = Camera.GetViewProjectionMatrix();
+		m_SceneData->ViewProjectionMatrix = Camera.GetViewProjectionMatrix();
 	}
 	void Renderer::EndScene()
 	{
@@ -28,8 +36,8 @@ Scope<Renderer::SceneData> Renderer::m_SceneData = CreateScope<Renderer::SceneDa
 	void Renderer::Submit(const Ref<Shader>& shader , const Ref<VertexArray>& vertexArray, const glm::mat4& transform)
 	{
 		shader->Bind();
-		std::dynamic_pointer_cast<OpenGLShader>(shader)->UploadUniformMat4("u_ViewProjection", m_SceneData->VertexProjectinMatrix);
-		std::dynamic_pointer_cast<OpenGLShader>(shader)->UploadUniformMat4("u_Transform",transform);
+		shader->SetMat4("u_ViewProjection", m_SceneData->ViewProjectionMatrix);
+		shader->SetMat4("u_Transform", transform);
 
 		vertexArray->Bind();
 		RenderCommand::DrawIndexed(vertexArray);
