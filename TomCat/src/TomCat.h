@@ -16,6 +16,7 @@
 
 //渲染器
 #include "TomCat/Renderer/Renderer.h"
+#include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/RenderCommand.h"
 
 #include "TomCat/Renderer/Shader.h"
