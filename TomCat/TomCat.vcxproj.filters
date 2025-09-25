@@ -60,7 +60,7 @@
     <ClInclude Include="src\TomCat\Core\Application.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Core\Core.h">
+    <ClInclude Include="src\TomCat\Core\Base.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\EntryPoint.h">
@@ -1421,6 +1421,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Renderer2D.h" />
     <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
+    <ClInclude Include="src\TomCat\Core\Random.h" />
+    <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
+    <ClInclude Include="src\platform\OpenGL\OpenGLFramebuffer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
@@ -1500,5 +1503,7 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp" />
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
+    <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp" />
   </ItemGroup>
 </Project>

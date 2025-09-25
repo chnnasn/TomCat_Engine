@@ -146,11 +146,14 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\platform\OpenGL\OpenGLFramebuffer.h" />
+    <ClInclude Include="src\TomCat\Core\Random.h" />
     <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
+    <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\Renderer2D.h" />
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Core\Application.h" />
-    <ClInclude Include="src\TomCat\Core\Core.h" />
+    <ClInclude Include="src\TomCat\Core\Base.h" />
     <ClInclude Include="src\TomCat\Core\EntryPoint.h" />
     <ClInclude Include="src\TomCat\Core\Input.h" />
     <ClInclude Include="src\TomCat\Core\KeyCodes.h" />
@@ -605,6 +608,8 @@
     <ClInclude Include="vendor\stb_image\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp" />
     <ClCompile Include="src\TomCat\Core\Application.cpp" />

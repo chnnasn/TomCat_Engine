@@ -122,7 +122,7 @@ namespace TomCat {
 	};
 }
 
-#define TC_PROFILE 1
+#define TC_PROFILE 0
 #if TC_PROFILE
 #define TC_PROFILE_BEGIN_SESSION(name, filepath) ::TomCat::Instrumentor::Get().BeginSession(name, filepath)
 #define TC_PROFILE_END_SESSION() ::TomCat::Instrumentor::Get().EndSession()
