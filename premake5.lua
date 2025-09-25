@@ -18,11 +18,11 @@ IncludeDir["Glad"] = "TomCat/vendor/Glad/include"
 IncludeDir["ImGui"] = "TomCat/vendor/ImGui"
 IncludeDir["glm"] = "TomCat/vendor/glm"
 IncludeDir["stb_image"] = "TomCat/vendor/stb_image"
-
-include "TomCat/vendor/GLFW"
-include "TomCat/vendor/Glad"
-include "TomCat/vendor/ImGui"
-
+group "Dependencies"
+	include "TomCat/vendor/GLFW"
+	include "TomCat/vendor/Glad"
+	include "TomCat/vendor/ImGui"
+group ""
 project "TomCat"
 	location "TomCat"
 	kind"StaticLib"
@@ -49,7 +49,8 @@ project "TomCat"
 
 	defines
 	{
-		"_CRT_SECURE_NO_WARNINGS"
+		"_CRT_SECURE_NO_WARNINGS",
+		"GLFW_INCLUDE_NONE"
 	}
 
 	includedirs
@@ -159,4 +160,51 @@ project "Z_Examples"
 	filter "configurations:Dist"
 		defines "TC_DIST"
 		runtime "Release"
-		optimize "on"  
+		optimize "on" 
+
+project "TomCat-Editor"
+	location "TomCat-Editor"
+	kind "ConsoleApp"
+	language "C++"
+	cppdialect "C++20"
+	staticruntime "on"
+
+	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
+	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
+
+	files
+	{
+		"%{prj.name}/src/**.h",
+		"%{prj.name}/src/**.cpp"
+	}
+
+	includedirs
+	{
+		"TomCat/vendor/spdlog/include",
+		"TomCat/src",
+		"TomCat/vendor",
+		"%{IncludeDir.glm}"
+	}
+
+	links
+	{
+		"TomCat"
+	}
+
+	filter "system:windows"
+		systemversion "latest"
+		
+	filter "configurations:Debug"
+		defines "TC_DEBUG"
+		runtime "Debug"
+		symbols "on"
+
+	filter "configurations:Release"
+		defines "TC_RELEASE"
+		runtime "Release"
+		optimize "on"
+
+	filter "configurations:Dist"
+		defines "TC_DIST"
+		runtime "Release"
+		optimize "on"
