@@ -1,7 +1,4 @@
-﻿  Renderer2D.cpp
-  OpenGLVertexArray.cpp
-D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp(79,5): warning C4312: “类型强制转换”: 从“const uint32_t”转换到更大的“const void *”
-  (编译源文件“/src/platform/OpenGL/OpenGLVertexArray.cpp”)
-  
+﻿  Renderer.cpp
+  Renderer2D.cpp
   正在生成代码...
   TomCat.vcxproj -> D:\github\TomCat_Engine\bin\-windows-x86_64\TomCat\TomCat.lib
