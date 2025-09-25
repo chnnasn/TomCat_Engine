@@ -5,10 +5,10 @@
 
 namespace TomCat {
 
-	OpenGLFramebuffer::OpenGLFramebuffer(const FramebufferSpecification& spec)
-		:m_Specification(spec)
-	{
 
+	OpenGLFramebuffer::OpenGLFramebuffer(const FramebufferSpecification& spec)
+		: m_Specification(spec)
+	{
 		Invalidate();
 	}
 
@@ -19,16 +19,16 @@ namespace TomCat {
 
 	void OpenGLFramebuffer::Invalidate()
 	{
-		glCreateFramebuffers(1,&m_RendererID);
+		glCreateFramebuffers(1, &m_RendererID);
 		glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 
-		glCreateTextures(GL_TEXTURE_2D,1,&m_ColorAttachment);
+		glCreateTextures(GL_TEXTURE_2D, 1, &m_ColorAttachment);
+		glBindTexture(GL_TEXTURE_2D, m_ColorAttachment);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, m_Specification.Width, m_Specification.Height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_ColorAttachment, 0);
-
 
 		glCreateTextures(GL_TEXTURE_2D, 1, &m_DepthAttachment);
 		glBindTexture(GL_TEXTURE_2D, m_DepthAttachment);
@@ -41,7 +41,6 @@ namespace TomCat {
 
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}
-
 
 	void OpenGLFramebuffer::Bind()
 	{
