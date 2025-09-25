@@ -19,6 +19,8 @@ namespace TomCat {
 
 		virtual void Bind(uint32_t slot = 0) const = 0;
 
+		virtual bool operator==(const Texture& other) const = 0;
+
 	private:
 
 	};
