@@ -13,13 +13,13 @@ namespace TomCat {
 
 	Application* Application::s_Instance = nullptr;
 
-	Application::Application()
+	Application::Application(const std::string& name)
 	{
 		TC_PROFILE_FUNCTION();
 
 		TC_Core_Assert(!s_Instance, "应用程序已经存在！");
 		s_Instance = this;
-		m_Window = std::unique_ptr<Window>(Window::Create());
+		m_Window = Window::Create(WindowProps(name));
 		m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
 
 		Renderer::Init();

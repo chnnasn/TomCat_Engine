@@ -10,6 +10,9 @@
     <Filter Include="src\TomCat\Core">
       <UniqueIdentifier>{DCC85B31-4854-C9F5-5165-4CEABD6F25F6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Debug">
+      <UniqueIdentifier>{7A3FE15C-6638-00AF-8F6A-E5337BC2DFBA}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Events">
       <UniqueIdentifier>{688193FC-D497-9192-1D0F-1DB48964621A}</UniqueIdentifier>
     </Filter>
@@ -84,11 +87,17 @@
     <ClInclude Include="src\TomCat\Core\MouseButtonCodes.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\Random.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\TimeStep.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\Window.h">
       <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Debug\Instrumentor.h">
+      <Filter>src\TomCat\Debug</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Events\ApplicationEvent.h">
       <Filter>src\TomCat\Events</Filter>
@@ -108,6 +117,9 @@
     <ClInclude Include="src\TomCat\Renderer\Buffer.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Framebuffer.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
@@ -121,6 +133,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Renderer.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Renderer2D.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\RendererAPI.h">
@@ -139,6 +154,9 @@
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLFramebuffer.h">
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLRendererAPI.h">
@@ -1419,11 +1437,6 @@
     <ClInclude Include="vendor\stb_image\stb_image.h">
       <Filter>vendor\stb_image</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Renderer\Renderer2D.h" />
-    <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
-    <ClInclude Include="src\TomCat\Core\Random.h" />
-    <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
-    <ClInclude Include="src\platform\OpenGL\OpenGLFramebuffer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
@@ -1438,6 +1451,9 @@
     <ClCompile Include="src\TomCat\Core\Log.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Core\Window.cpp">
+      <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
@@ -1445,6 +1461,12 @@
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp">
@@ -1457,6 +1479,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Renderer.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\RendererAPI.cpp">
@@ -1475,6 +1500,9 @@
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLContext.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp">
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLRendererAPI.cpp">
@@ -1501,9 +1529,5 @@
     <ClCompile Include="vendor\stb_image\stb_image.cpp">
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
-    <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp" />
   </ItemGroup>
 </Project>

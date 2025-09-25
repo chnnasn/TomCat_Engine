@@ -3,6 +3,7 @@
 #include <TomCat/Core/EntryPoint.h>
 
 #include "Z_Examples2D.h"
+#include "ExampleLayer.h"
 
 class Examples :public TomCat::Application
 {
@@ -12,6 +13,7 @@ public:
 		//PushLayer(new ExampleLayer());
 		PushLayer(new Z_Examples2D());
 	}
+
 	~Examples()
 	{
 	
