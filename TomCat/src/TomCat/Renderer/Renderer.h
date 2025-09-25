@@ -11,6 +11,8 @@ namespace TomCat {
 	{
 	public:
 		static void Init();
+		static void Shutdown();
+
 		static void OnWindowResize(uint32_t width, uint32_t height);
 
 		static void BeginScene(OrthographicCamera& Camera);
@@ -25,7 +27,7 @@ namespace TomCat {
 	private:
 		struct  SceneData
 		{
-			glm::mat4 VertexProjectinMatrix;
+			glm::mat4 ViewProjectionMatrix;
 		};
 
 		static Scope<SceneData> m_SceneData;

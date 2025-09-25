@@ -7,8 +7,8 @@
 
 #include "TomCat/Core/Application.h"
 
-#include <Glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <Glad/glad.h>
 
 namespace TomCat {
 
@@ -56,6 +56,7 @@ namespace TomCat {
 
 	void ImGuiLayer::OnDetach()
 	{
+		TC_PROFILE_FUNCTION();
 
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
@@ -65,6 +66,8 @@ namespace TomCat {
 
 	void ImGuiLayer::Begin()
 	{
+		TC_PROFILE_FUNCTION();
+
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
@@ -73,6 +76,8 @@ namespace TomCat {
 
 	void ImGuiLayer::End()
 	{
+		TC_PROFILE_FUNCTION();
+
 		ImGuiIO& io = ImGui::GetIO();
 		Application& app = Application::Get();
 		io.DisplaySize = ImVec2((float)app.GetWindow().GetWidth(), (float)app.GetWindow().GetHeight());

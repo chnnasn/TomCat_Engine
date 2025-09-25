@@ -38,7 +38,7 @@ namespace TomCat {
 
 #define Event_Class_Category(category) virtual int GetCategoryFlogs() const override {return category;}
 
-	class TomCat_API Event
+	class Event
 	{
 		friend class EventDispatcher;
 

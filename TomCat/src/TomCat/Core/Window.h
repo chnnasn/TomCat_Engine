@@ -23,7 +23,7 @@ namespace TomCat {
 	};
 
 	//基于窗口的桌面系统的接口
-	class TomCat_API Window 
+	class Window 
 	{
 	public:
 		using EventCallbackFn = std::function<void(Event&)>;
@@ -42,7 +42,7 @@ namespace TomCat {
 
 		virtual void* GetNativeWindow() const = 0;
 
-		static Window* Create(const WindowProps& props = WindowProps());
+		static Scope<Window> Create(const WindowProps& props = WindowProps());
 	};
 
 }

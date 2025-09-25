@@ -27,6 +27,8 @@ namespace TomCat {
 
 	OpenGLShader::OpenGLShader(const std::string& filepath)
 	{
+		TC_PROFILE_FUNCTION();
+
 		std::string source = ReadFile(filepath);
 		auto shaderSources = PreProcess(source);
 		Compile(shaderSources);
@@ -42,6 +44,8 @@ namespace TomCat {
 	OpenGLShader::OpenGLShader(const std::string& name,const std::string& vertexSrc, const std::string& fragmentSrc)
 		:m_Name(name)
 	{
+		TC_PROFILE_FUNCTION();
+
 		std::unordered_map<GLenum, std::string> sources;
 		sources[GL_VERTEX_SHADER] = vertexSrc;
 		sources[GL_FRAGMENT_SHADER] = fragmentSrc;
@@ -50,21 +54,34 @@ namespace TomCat {
 
 	OpenGLShader::~OpenGLShader()
 	{
+		TC_PROFILE_FUNCTION();
+
 		glDeleteProgram(m_RendererID);
 	}
 
 	std::string OpenGLShader::ReadFile(const std::string& filepath)
 	{
+		TC_PROFILE_FUNCTION();
+
 		std::string result;
 		std::ifstream in(filepath, std::ios::in | std::ios::binary);
 
 		if (in)
 		{
 			in.seekg(0, std::ios::end);
-			result.resize(in.tellg());
-			in.seekg(0, std::ios::beg);
-			in.read(&result[0], result.size());
-			in.close();
+			size_t size = in.tellg();
+			if (size != -1)
+			{
+				result.resize(size);
+				in.seekg(0, std::ios::beg);
+				in.read(&result[0], result.size());
+				in.close();
+			}
+			else
+			{
+				TC_Core_Error("Could not read from file '{0}'", filepath);
+			}
+
 		}
 		else
 		{
@@ -76,6 +93,8 @@ namespace TomCat {
 
 	std::unordered_map<GLenum, std::string> OpenGLShader::PreProcess(const std::string& source)
 	{
+		TC_PROFILE_FUNCTION();
+
 		std::unordered_map<GLenum, std::string> shaderSources;
 
 		const char* typeToken = "#type";
@@ -99,6 +118,8 @@ namespace TomCat {
 
 	void OpenGLShader::Compile(const std::unordered_map<GLenum, std::string>& shaderSouces)
 	{
+		TC_PROFILE_FUNCTION();
+
 		GLuint program = glCreateProgram();
 		std::array<GLenum,2> glShaderIDs;
 		int glShaderIDIndex = 0;
@@ -174,29 +195,41 @@ namespace TomCat {
 
 	void OpenGLShader::Bind() const
 	{
+		TC_PROFILE_FUNCTION();
+
 		glUseProgram(m_RendererID);
 	}
 
 	void OpenGLShader::Unbind() const
 	{
+		TC_PROFILE_FUNCTION();
+
 		glUseProgram(0);
 	}
 
 	void OpenGLShader:: SetInt(const std::string& name, int value)
 	{
+		TC_PROFILE_FUNCTION();
+
 		UploadUniformInt(name, value);
 	}
 
 	 void OpenGLShader::SetFloat3(const std::string& name, const glm::vec3& value)
 	 {
+		 TC_PROFILE_FUNCTION();
+
 		 UploadUniformFloat3(name,value);
 	 }
 	 void OpenGLShader::SetFloat4(const std::string& name, const glm::vec4& value)
 	 {
+		 TC_PROFILE_FUNCTION();
+
 		 UploadUniformFloat4(name, value);
 	 }
 	 void OpenGLShader::SetMat4(const std::string& name, const glm::mat4& value)
 	 {
+		 TC_PROFILE_FUNCTION();
+
 		 UploadUniformMat4(name, value);
 	 }
 
