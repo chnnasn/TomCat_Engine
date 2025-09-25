@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "TomCat/Core/Core.h"
+#include "TomCat/Core/Base.h"
 
 namespace TomCat {
 
@@ -13,6 +13,7 @@ namespace TomCat {
 
 		virtual uint32_t GetWidth() const = 0;
 		virtual uint32_t GetHeight() const = 0;
+		virtual uint32_t GetRendererID() const = 0;
 
 		virtual void SetData(void* data, uint32_t size) = 0;
 

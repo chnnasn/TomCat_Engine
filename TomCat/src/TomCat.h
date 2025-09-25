@@ -21,6 +21,7 @@
 
 #include "TomCat/Renderer/Shader.h"
 #include "TomCat/Renderer/Texture.h"
+#include "TomCat/Renderer/Framebuffer.h"
 #include "TomCat/Renderer/Buffer.h"
 #include "TomCat/Renderer/VertexArray.h"
 

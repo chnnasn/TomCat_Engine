@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TomCat/Core/Core.h"
+#include "TomCat/Core/Base.h"
 
 namespace TomCat {
 
