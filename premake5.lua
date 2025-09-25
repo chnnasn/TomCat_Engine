@@ -18,6 +18,7 @@ IncludeDir["Glad"] = "TomCat/vendor/Glad/include"
 IncludeDir["ImGui"] = "TomCat/vendor/ImGui"
 IncludeDir["glm"] = "TomCat/vendor/glm"
 IncludeDir["stb_image"] = "TomCat/vendor/stb_image"
+
 group "Dependencies"
 	include "TomCat/vendor/GLFW"
 	include "TomCat/vendor/Glad"
@@ -162,8 +163,8 @@ project "Z_Examples"
 		runtime "Release"
 		optimize "on" 
 
-project "TomCat-Editor"
-	location "TomCat-Editor"
+project "TomCatInput"
+	location "TomCatInput"
 	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++20"
@@ -191,9 +192,17 @@ project "TomCat-Editor"
 		"TomCat"
 	}
 
+	buildoptions "/utf-8"
+
 	filter "system:windows"
 		systemversion "latest"
 		
+	defines
+	{
+		"TC_PLAYTFORM_WINDOWS",
+		"IMGUI_API=_declspec(dllimport);"
+	}
+
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
 		runtime "Debug"

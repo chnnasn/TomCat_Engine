@@ -8,7 +8,7 @@
 ExampleLayer::ExampleLayer() 
 	: Layer("ExampleLayer"), m_CameraController(1280.0f / 720.0f)
 {
-	m_VertexArray = Hazel::VertexArray::Create();
+	m_VertexArray = TomCat::VertexArray::Create();
 
 	float vertices[3 * 7] = {
 		-0.5f, -0.5f, 0.0f, 0.8f, 0.2f, 0.8f, 1.0f,
@@ -16,19 +16,19 @@ ExampleLayer::ExampleLayer()
 		 0.0f,  0.5f, 0.0f, 0.8f, 0.8f, 0.2f, 1.0f
 	};
 
-	Hazel::Ref<Hazel::VertexBuffer> vertexBuffer = Hazel::VertexBuffer::Create(vertices, sizeof(vertices));
-	Hazel::BufferLayout layout = {
-		{ Hazel::ShaderDataType::Float3, "a_Position" },
-		{ Hazel::ShaderDataType::Float4, "a_Color" }
+	TomCat::Ref<TomCat::VertexBuffer> vertexBuffer = TomCat::VertexBuffer::Create(vertices, sizeof(vertices));
+	TomCat::BufferLayout layout = {
+		{ TomCat::ShaderDataType::Float3, "a_Position" },
+		{ TomCat::ShaderDataType::Float4, "a_Color" }
 	};
 	vertexBuffer->SetLayout(layout);
 	m_VertexArray->AddVertexBuffer(vertexBuffer);
 
 	uint32_t indices[3] = { 0, 1, 2 };
-	Hazel::Ref<Hazel::IndexBuffer> indexBuffer = Hazel::IndexBuffer::Create(indices, sizeof(indices) / sizeof(uint32_t));
+	TomCat::Ref<TomCat::IndexBuffer> indexBuffer = TomCat::IndexBuffer::Create(indices, sizeof(indices) / sizeof(uint32_t));
 	m_VertexArray->SetIndexBuffer(indexBuffer);
 
-	m_SquareVA = Hazel::VertexArray::Create();
+	m_SquareVA = TomCat::VertexArray::Create();
 
 	float squareVertices[5 * 4] = {
 		-0.5f, -0.5f, 0.0f, 0.0f, 0.0f,
@@ -37,15 +37,15 @@ ExampleLayer::ExampleLayer()
 		-0.5f,  0.5f, 0.0f, 0.0f, 1.0f
 	};
 
-	Hazel::Ref<Hazel::VertexBuffer> squareVB = Hazel::VertexBuffer::Create(squareVertices, sizeof(squareVertices));
+	TomCat::Ref<TomCat::VertexBuffer> squareVB = TomCat::VertexBuffer::Create(squareVertices, sizeof(squareVertices));
 	squareVB->SetLayout({
-		{ Hazel::ShaderDataType::Float3, "a_Position" },
-		{ Hazel::ShaderDataType::Float2, "a_TexCoord" }
+		{ TomCat::ShaderDataType::Float3, "a_Position" },
+		{ TomCat::ShaderDataType::Float2, "a_TexCoord" }
 		});
 	m_SquareVA->AddVertexBuffer(squareVB);
 
 	uint32_t squareIndices[6] = { 0, 1, 2, 2, 3, 0 };
-	Hazel::Ref<Hazel::IndexBuffer> squareIB = Hazel::IndexBuffer::Create(squareIndices, sizeof(squareIndices) / sizeof(uint32_t));
+	TomCat::Ref<TomCat::IndexBuffer> squareIB = TomCat::IndexBuffer::Create(squareIndices, sizeof(squareIndices) / sizeof(uint32_t));
 	m_SquareVA->SetIndexBuffer(squareIB);
 
 	std::string vertexSrc = R"(
@@ -83,7 +83,7 @@ ExampleLayer::ExampleLayer()
 			}
 		)";
 
-	m_Shader = Hazel::Shader::Create("VertexPosColor", vertexSrc, fragmentSrc);
+	m_Shader = TomCat::Shader::Create("VertexPosColor", vertexSrc, fragmentSrc);
 
 	std::string flatColorShaderVertexSrc = R"(
 			#version 330 core
@@ -117,12 +117,12 @@ ExampleLayer::ExampleLayer()
 			}
 		)";
 
-	m_FlatColorShader = Hazel::Shader::Create("FlatColor", flatColorShaderVertexSrc, flatColorShaderFragmentSrc);
+	m_FlatColorShader = TomCat::Shader::Create("FlatColor", flatColorShaderVertexSrc, flatColorShaderFragmentSrc);
 
 	auto textureShader = m_ShaderLibrary.Load("assets/shaders/Texture.glsl");
 
-	m_Texture = Hazel::Texture2D::Create("assets/textures/Checkerboard.png");
-	m_ChernoLogoTexture = Hazel::Texture2D::Create("assets/textures/ChernoLogo.png");
+	m_Texture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
+	m_ChernoLogoTexture = TomCat::Texture2D::Create("assets/textures/ChernoLogo.png");
 
 	textureShader->Bind();
 	textureShader->SetInt("u_Texture", 0);
@@ -136,16 +136,16 @@ void ExampleLayer::OnDetach()
 {
 }
 
-void ExampleLayer::OnUpdate(Hazel::Timestep ts) 
+void ExampleLayer::OnUpdate(TomCat::Timestep ts) 
 {
 	// Update
 	m_CameraController.OnUpdate(ts);
 
 	// Render
-	Hazel::RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
-	Hazel::RenderCommand::Clear();
+	TomCat::RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+	TomCat::RenderCommand::Clear();
 
-	Hazel::Renderer::BeginScene(m_CameraController.GetCamera());
+	TomCat::Renderer::BeginScene(m_CameraController.GetCamera());
 
 	glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f));
 
@@ -158,21 +158,21 @@ void ExampleLayer::OnUpdate(Hazel::Timestep ts)
 		{
 			glm::vec3 pos(x * 0.11f, y * 0.11f, 0.0f);
 			glm::mat4 transform = glm::translate(glm::mat4(1.0f), pos) * scale;
-			Hazel::Renderer::Submit(m_FlatColorShader, m_SquareVA, transform);
+			TomCat::Renderer::Submit(m_FlatColorShader, m_SquareVA, transform);
 		}
 	}
 
 	auto textureShader = m_ShaderLibrary.Get("Texture");
 
 	m_Texture->Bind();
-	Hazel::Renderer::Submit(textureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+	TomCat::Renderer::Submit(textureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 	m_ChernoLogoTexture->Bind();
-	Hazel::Renderer::Submit(textureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+	TomCat::Renderer::Submit(textureShader, m_SquareVA, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
 	// Triangle
-	// Hazel::Renderer::Submit(m_Shader, m_VertexArray);
+	// TomCat::Renderer::Submit(m_Shader, m_VertexArray);
 
-	Hazel::Renderer::EndScene();
+	TomCat::Renderer::EndScene();
 }
 
 void ExampleLayer::OnImGuiRender() 
@@ -182,7 +182,7 @@ void ExampleLayer::OnImGuiRender()
 	ImGui::End();
 }
 
-void ExampleLayer::OnEvent(Hazel::Event& e) 
+void ExampleLayer::OnEvent(TomCat::Event& e) 
 {
 	m_CameraController.OnEvent(e);
 }

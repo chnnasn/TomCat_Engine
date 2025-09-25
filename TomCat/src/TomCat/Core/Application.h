@@ -14,7 +14,7 @@ namespace TomCat {
 	class Application
 	{ 
 	public :
-		Application(const std::string& name = "Hazel App");
+		Application(const std::string& name = "TomCat App");
 
 		virtual ~Application();
 
