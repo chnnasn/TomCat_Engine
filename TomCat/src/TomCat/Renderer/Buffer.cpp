@@ -4,6 +4,17 @@
 #include "platform/OpenGL/OpenGLBuffer.h"
 
 namespace TomCat {
+	Ref<VertexBuffer> VertexBuffer::Create(uint32_t size)
+	{
+		switch (Renderer::GetAPI())
+		{
+			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
+
+			case RendererAPI::API::OpenGL: return  CreateRef< OpenGLVertexBuffer>(size);
+		}
+		TC_Core_Assert(false, "unknown rendererapi")
+			return nullptr;
+	}
 
 	Ref<VertexBuffer> VertexBuffer::Create(float* vertices, uint32_t  size)
 	{
