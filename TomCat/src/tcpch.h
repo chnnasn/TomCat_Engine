@@ -14,6 +14,7 @@
 #include <unordered_set>
 
 #include "TomCat/Core/Log.h"
+#include "TomCat/Debug/Instrumentor.h"
 
 
 #ifdef TC_PLAYTFORM_WINDOWS
