@@ -146,6 +146,7 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\TomCat\Renderer\Renderer2D.h" />
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Core\Application.h" />
     <ClInclude Include="src\TomCat\Core\Core.h" />
@@ -603,6 +604,7 @@
     <ClInclude Include="vendor\stb_image\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp" />
     <ClCompile Include="src\TomCat\Core\Application.cpp" />
     <ClCompile Include="src\TomCat\Core\Layer.cpp" />
     <ClCompile Include="src\TomCat\Core\LayerStack.cpp" />
