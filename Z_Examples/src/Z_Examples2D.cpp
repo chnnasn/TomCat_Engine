@@ -1,10 +1,9 @@
 #include "Z_Examples2D.h"
-
-#include "platform/OpenGL/OpenGLShader.h"
-#include "ImGui/imgui.h"
+#include "imgui/imgui.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+
 
 Z_Examples2D::Z_Examples2D():Layer("Z_Examples2D"),m_CameraController(1280.0f / 720.0f)
 {
@@ -14,7 +13,7 @@ Z_Examples2D::Z_Examples2D():Layer("Z_Examples2D"),m_CameraController(1280.0f / 
 
 void Z_Examples2D::OnAttach()
 {
-
+    m_CheckerboardTexture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
 }
 
 void Z_Examples2D::OnDetach()
@@ -31,12 +30,10 @@ void Z_Examples2D::OnUpdate(TomCat::Timestep ts)
 	TomCat::RenderCommand::Clear();
 
 	TomCat::Renderer2D::BeginScene(m_CameraController.GetCamera());
-    TomCat::Renderer2D::DrawQuad({0.0f,0.0f}, {1.0f,1.0f}, {0.8f,0.2f,0.3f,1.0f});
+    TomCat::Renderer2D::DrawQuad({-1.0f,0.0f}, {0.8f,0.8f}, {0.8f,0.2f,0.3f,1.0f});
+    TomCat::Renderer2D::DrawQuad({0.5f,-0.5f}, {0.5f,0.75f},{0.2f,0.3f,0.8f,1.0f});
+    TomCat::Renderer2D::DrawQuad({ 0.0f, 0.0f, -0.1f }, { 10.0f, 10.0f }, m_CheckerboardTexture);
     TomCat::Renderer2D::EndScene();
-
-	//std::dynamic_pointer_cast<TomCat::OpenGLShader>(m_FlatColorShader)->Bind();
-	//std::dynamic_pointer_cast<TomCat::OpenGLShader>(m_FlatColorShader)->UploadUniformFloat4("u_Color", m_SquareColor);
-
 
 
 }
