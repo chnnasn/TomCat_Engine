@@ -4,8 +4,8 @@
 
 namespace TomCat {
 
-	std::shared_ptr<spdlog::logger> Log::s_CoreLogger;
-	std::shared_ptr<spdlog::logger> Log::s_ClinetLogger;
+	Ref<spdlog::logger> Log::s_CoreLogger;
+	Ref<spdlog::logger> Log::s_ClinetLogger;
 	void Log::Init() {
 
 		spdlog::set_pattern("%^[%T] %n: %v%$");//颜色 时间戳 日志名 问题

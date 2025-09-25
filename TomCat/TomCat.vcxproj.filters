@@ -1499,5 +1499,6 @@
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
   </ItemGroup>
 </Project>

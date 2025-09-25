@@ -3,11 +3,6 @@
 
 namespace TomCat {
 
-	LayerStack::LayerStack()
-	{
-
-	}
-
 	LayerStack ::~LayerStack()
 	{
 		for (Layer* Layer : m_Layers)
@@ -32,6 +27,7 @@ namespace TomCat {
 
 		if (it != m_Layers.end())
 		{
+			Layer->OnDetach();
 			m_Layers.erase(it);
 			m_LayerInsertIndex--;
 		}
@@ -41,6 +37,7 @@ namespace TomCat {
 
 		if (it != m_Layers.end())
 		{
+			OverLay->OnDetach();
 			m_Layers.erase(it);
 		}
 	}

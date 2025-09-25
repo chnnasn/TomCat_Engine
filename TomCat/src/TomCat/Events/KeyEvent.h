@@ -4,7 +4,7 @@
 
 
 namespace TomCat {
-	class  TomCat_API KeyEvent : public Event
+	class  KeyEvent : public Event
 	{
 	public:
 
@@ -20,7 +20,7 @@ namespace TomCat {
 
 	};
 
-	class TomCat_API KeyPressedEvent : public KeyEvent
+	class KeyPressedEvent : public KeyEvent
 	{
 	public:
 		KeyPressedEvent(int keycode,int repeatCount)
@@ -41,7 +41,7 @@ namespace TomCat {
 
 	};
 
-	class TomCat_API KeyReleasedEvent : public KeyEvent
+	class KeyReleasedEvent : public KeyEvent
 	{
 	public:
 		KeyReleasedEvent(int keycode)
@@ -58,7 +58,7 @@ namespace TomCat {
 		Event_Class_Type(KeyReleased)
 	};
 
-	class TomCat_API KeyTypedEvent : public KeyEvent
+	class KeyTypedEvent : public KeyEvent
 	{
 	public:
 		KeyTypedEvent(int keycode)

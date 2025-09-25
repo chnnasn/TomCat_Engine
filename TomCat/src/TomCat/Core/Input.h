@@ -4,9 +4,15 @@
 
 namespace TomCat {
 
-	class  TomCat_API Input
+	class Input
 	{
+	protected:
+		Input() = default;
+
 	public:
+		Input(const Input&) = delete;
+		Input& operator=(const Input&) = delete;
+
 		inline static bool IsKeyPressed(KeyCode KeyCode) { return s_Instance->IsKeyPressedImpl(static_cast<int>(KeyCode));}
 		inline static bool IsMouseButtonPressed(MouseButtonCode Button) { return s_Instance->IsKeyPressedImpl(static_cast<int>(Button));}
 		inline static std::pair<float,float> GetMousePositon() { return s_Instance->GetMousePositonImpl();}
