@@ -11,10 +11,10 @@
 #include "TomCat/Core/TimeStep.h"
 
 namespace TomCat {
-	class TomCat_API Application
+	class Application
 	{ 
 	public :
-		Application();
+		Application(const std::string& name = "TomCat App");
 
 		virtual ~Application();
 

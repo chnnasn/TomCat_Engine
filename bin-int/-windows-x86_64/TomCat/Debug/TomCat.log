@@ -1,4 +1,8 @@
-﻿  Framebuffer.cpp
-  OpenGLFramebuffer.cpp
+﻿  Renderer.cpp
+  Renderer2D.cpp
+D:\github\TomCat_Engine\TomCat\src\TomCat\Renderer\Renderer2D.cpp(121,21): warning C4244: “初始化”: 从“__int64”转换到“uint32_t”，可能丢失数据
+  (编译源文件“/src/TomCat/Renderer/Renderer2D.cpp”)
+  
   正在生成代码...
+Window.obj : warning LNK4006: "public: static class std::unique_ptr<class TomCat::Window,struct std::default_delete<class TomCat::Window> > __cdecl TomCat::Window::Create(struct TomCat::WindowProps const &)" (?Create@Window@TomCat@@SA?AV?$unique_ptr@VWindow@TomCat@@U?$default_delete@VWindow@TomCat@@@std@@@std@@AEBUWindowProps@2@@Z) 已在 WindowsWindow.obj 中定义；已忽略第二个定义
   TomCat.vcxproj -> D:\github\TomCat_Engine\bin\-windows-x86_64\TomCat\TomCat.lib

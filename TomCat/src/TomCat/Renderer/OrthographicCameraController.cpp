@@ -11,7 +11,6 @@ namespace TomCat {
 	
 	}
 
-
 	void OrthographicCameraController::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
@@ -68,6 +67,12 @@ namespace TomCat {
 		dispatcher.Dispatch<WindowResizeEvent>(TC_Bind_Event_Fn(OrthographicCameraController::OnWindowResized));
 	}
 
+	void OrthographicCameraController::OnResize(float width, float height)
+	{
+		m_AspectRatio = width / height;
+		m_Camera.SetProjection(-m_AspectRatio * m_ZoomLevel, m_AspectRatio * m_ZoomLevel, -m_ZoomLevel, m_ZoomLevel);
+	}
+
 	bool OrthographicCameraController:: OnMouseScrolled(MouseScrolledEvent& e)
 	{
 		TC_PROFILE_FUNCTION();
@@ -83,8 +88,7 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		m_AspectRatio = (float)e.GetWidth() / (float)e.GetHeight();
-		m_Camera.SetProjection(-m_AspectRatio * m_ZoomLevel, m_AspectRatio * m_ZoomLevel, -m_ZoomLevel, m_ZoomLevel);
+		OnResize((float)e.GetWidth(), (float)e.GetHeight());
 		return false;
 	}
 

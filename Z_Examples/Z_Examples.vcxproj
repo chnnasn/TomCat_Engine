@@ -137,9 +137,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\ExampleLayer.h" />
     <ClInclude Include="src\Z_Examples2D.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\ExampleLayer.cpp" />
     <ClCompile Include="src\Z_Examples2D.cpp" />
     <ClCompile Include="src\Z_ExamplesApp.cpp" />
   </ItemGroup>
