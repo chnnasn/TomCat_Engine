@@ -1420,6 +1420,7 @@
       <Filter>vendor\stb_image</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Renderer2D.h" />
+    <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">

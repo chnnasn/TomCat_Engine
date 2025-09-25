@@ -146,6 +146,7 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
     <ClInclude Include="src\TomCat\Renderer\Renderer2D.h" />
     <ClInclude Include="src\TomCat.h" />
     <ClInclude Include="src\TomCat\Core\Application.h" />

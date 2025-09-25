@@ -8,16 +8,17 @@ int main(int argc,char** argv) {
 
 	TomCat::Log::Init();
 
-	TC_Core_Warn("Init LOG");
-
-	TC_Info("Hello");
-
-
+	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Startup.json");
 	auto app = TomCat::CreateApplication();
-
-	app->Run();
-
-	delete app;
+	TC_PROFILE_END_SESSION();			 
+										 
+	TC_PROFILE_BEGIN_SESSION("Runtime", "TomCatProfile-Runtime.json");
+	app->Run();							
+	TC_PROFILE_END_SESSION();			
+										
+	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Shutdown.json");
+	delete app;							
+	TC_PROFILE_END_SESSION();
 }
 
 #endif
