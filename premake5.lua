@@ -1,5 +1,6 @@
 workspace "TomCat"
 	architecture "x64"
+	startproject "TomCatInut"
 
 	configurations 
 	{
@@ -163,8 +164,8 @@ project "Z_Examples"
 		runtime "Release"
 		optimize "on" 
 
-project "TomCatInput"
-	location "TomCatInput"
+project "TomCatInut"
+	location "TomCatInut"
 	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++20"
