@@ -18,8 +18,8 @@ namespace TomCat {
 		m_CheckerboardTexture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
 
 		TomCat::FramebufferSpecification fbSpec;
-		fbSpec.Width = 1280;
-		fbSpec.Height = 720;
+		fbSpec.Width = 1920;
+		fbSpec.Height = 1080;
 		m_Framebuffer = TomCat::Framebuffer::Create(fbSpec);
 	}
 
