@@ -15,10 +15,10 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{5DAB6F1B-C960-E810-5255-E2E7BE09DF14}</ProjectGuid>
+    <ProjectGuid>{6D7241B3-592A-8300-C231-5C5CAE081EF1}</ProjectGuid>
     <IgnoreWarnCompileDuplicatedFilename>true</IgnoreWarnCompileDuplicatedFilename>
     <Keyword>Win32Proj</Keyword>
-    <RootNamespace>TomCatInput</RootNamespace>
+    <RootNamespace>TomCatInut</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -55,23 +55,23 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInput\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInput\Debug\</IntDir>
-    <TargetName>TomCatInput</TargetName>
+    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInut\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInut\Debug\</IntDir>
+    <TargetName>TomCatInut</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInput\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInput\Release\</IntDir>
-    <TargetName>TomCatInput</TargetName>
+    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInut\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInut\Release\</IntDir>
+    <TargetName>TomCatInut</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInput\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInput\Dist\</IntDir>
-    <TargetName>TomCatInput</TargetName>
+    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInut\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInut\Dist\</IntDir>
+    <TargetName>TomCatInut</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
