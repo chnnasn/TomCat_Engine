@@ -3,6 +3,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <ImGui/imgui_internal.h>
 
 namespace TomCat {
 
@@ -104,32 +105,23 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		static bool dockspaceOpen = true;
-		static bool opt_fullscreen_persistant = true;
-		bool opt_fullscreen = opt_fullscreen_persistant;
 		static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
 		ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-		if (opt_fullscreen)
-		{
-			ImGuiViewport* viewport = ImGui::GetMainViewport();
-			ImGui::SetNextWindowPos(viewport->Pos);
-			ImGui::SetNextWindowSize(viewport->Size);
-			ImGui::SetNextWindowViewport(viewport->ID);
-			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-			window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-		}
-
-		if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
-			window_flags |= ImGuiWindowFlags_NoBackground;
+		ImGuiViewport* viewport = ImGui::GetMainViewport();
+		ImGui::SetNextWindowPos(viewport->Pos);
+		ImGui::SetNextWindowSize(viewport->Size);
+		ImGui::SetNextWindowViewport(viewport->ID);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+		window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+		window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 		ImGui::Begin("TomCat Editor", &dockspaceOpen, window_flags);
 		ImGui::PopStyleVar();
 
-		if (opt_fullscreen)
-			ImGui::PopStyleVar(2);
+		ImGui::PopStyleVar(2);
 
 		// DockSpace
 		ImGuiIO& io = ImGui::GetIO();
@@ -137,22 +129,65 @@ namespace TomCat {
 		{
 			ImGuiID dockspace_id = ImGui::GetID("TomCatDockSpace");
 			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+
+			// 布局只在第一次运行时设置
+			static bool dockLayoutInitialized = false;
+			if (!dockLayoutInitialized)
+			{
+				dockLayoutInitialized = true;
+				ImGui::DockBuilderRemoveNode(dockspace_id); // 清除之前的布局
+				ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+				ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
+
+				// 顶部：Toolbar（不可移动，无标签栏）
+				ImGuiID dock_id_toolbar = ImGui::DockBuilderSplitNode(
+					dockspace_id, ImGuiDir_Up, 0.08f, nullptr, &dockspace_id);
+				ImGuiDockNode* node_toolbar = ImGui::DockBuilderGetNode(dock_id_toolbar);
+				node_toolbar->LocalFlags |= ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingInCentralNode | ImGuiDockNodeFlags_NoResize;
+
+				// 底部：StatusBar（不可移动，无标签栏）
+				ImGuiID dock_id_status = ImGui::DockBuilderSplitNode(
+					dockspace_id, ImGuiDir_Down, 0.05f, nullptr, &dockspace_id);
+				ImGuiDockNode* node_status = ImGui::DockBuilderGetNode(dock_id_status);
+				node_status->LocalFlags |= ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingInCentralNode | ImGuiDockNodeFlags_NoResize;
+
+				// 中央区域再分左右
+				ImGuiID dock_id_left = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.22f, nullptr, &dockspace_id);
+				ImGuiID dock_id_right = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Right, 0.28f, nullptr, &dockspace_id);
+				ImGuiID dock_id_center = dockspace_id;
+
+				// 停靠窗口
+				ImGui::DockBuilderDockWindow("Toolbar", dock_id_toolbar);
+				ImGui::DockBuilderDockWindow("Status", dock_id_status);
+				ImGui::DockBuilderDockWindow("Hierarchy", dock_id_left);
+				ImGui::DockBuilderDockWindow("Project", dock_id_left);
+				ImGui::DockBuilderDockWindow("Inspector", dock_id_right);
+				ImGui::DockBuilderDockWindow("Console", dock_id_right);
+				ImGui::DockBuilderDockWindow("Scene Settings", dock_id_right);
+				ImGui::DockBuilderDockWindow("Scene", dock_id_center);
+
+				ImGui::DockBuilderFinish(dockspace_id);
+			}
 		}
 
-		// Draw UI Panels
+		// 只绘制菜单栏
 		DrawMenuBar();
+
+		ImGui::End();
+
+		// 独立窗口：Toolbar（始终在最上方）
 		DrawToolbar();
-		
+
+		// 独立窗口：StatusBar（始终在最下方）
+		DrawStatusBar();
+
+		// 其他面板
 		if (m_ShowHierarchy) DrawHierarchyPanel();
 		if (m_ShowInspector) DrawInspectorPanel();
 		if (m_ShowProject) DrawProjectPanel();
 		if (m_ShowConsole) DrawConsolePanel();
 		if (m_ShowSceneSettings) DrawSceneSettingsPanel();
-		
 		DrawViewportPanel();
-		DrawStatusBar();
-
-		ImGui::End();
 	}
 
 	void EditorLayer::OnEvent(TomCat::Event& e)
@@ -341,8 +376,10 @@ namespace TomCat {
 
 	void EditorLayer::DrawToolbar()
 	{
-		ImGui::Begin("Toolbar");
-		
+		// 固定高度
+		ImGui::SetNextWindowSize(ImVec2(0, 48), ImGuiCond_Always); // 48像素高度，可根据需要调整
+		ImGui::Begin("Toolbar", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
 		// Get available width for centering
 		float availableWidth = ImGui::GetContentRegionAvail().x;
 		float buttonWidth = 100.0f;
@@ -645,7 +682,9 @@ namespace TomCat {
 
 	void EditorLayer::DrawStatusBar()
 	{
-		ImGui::Begin("Status");
+		// 固定高度
+		ImGui::SetNextWindowSize(ImVec2(0, 32), ImGuiCond_Always); // 32像素高度，可根据需要调整
+		ImGui::Begin("Status", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
 		// 计算总文本宽度
 		float totalWidth = 0;
