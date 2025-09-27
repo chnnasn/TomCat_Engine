@@ -132,10 +132,9 @@ namespace TomCat {
 
 			// 布局只在第一次运行时设置
 			static bool dockLayoutInitialized = false;
-			if (!dockLayoutInitialized)
+			if (!dockLayoutInitialized && ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
 			{
 				dockLayoutInitialized = true;
-				ImGui::DockBuilderRemoveNode(dockspace_id); // 清除之前的布局
 				ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
 				ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
 
