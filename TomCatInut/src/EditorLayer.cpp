@@ -132,15 +132,16 @@ namespace TomCat {
 
 			// 布局只在第一次运行时设置
 			static bool dockLayoutInitialized = false;
-			if (!dockLayoutInitialized && ImGui::DockBuilderGetNode(dockspace_id) == nullptr)
+			if (!dockLayoutInitialized)
 			{
 				dockLayoutInitialized = true;
+				ImGui::DockBuilderRemoveNode(dockspace_id); // 清除之前的布局
 				ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
 				ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
 
 				// 顶部：Toolbar（不可移动，无标签栏）
 				ImGuiID dock_id_toolbar = ImGui::DockBuilderSplitNode(
-					dockspace_id, ImGuiDir_Up, 0.08f, nullptr, &dockspace_id);
+					dockspace_id, ImGuiDir_Up, 0.06f, nullptr, &dockspace_id);
 				ImGuiDockNode* node_toolbar = ImGui::DockBuilderGetNode(dock_id_toolbar);
 				node_toolbar->LocalFlags |= ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingInCentralNode | ImGuiDockNodeFlags_NoResize;
 
@@ -641,9 +642,23 @@ namespace TomCat {
 		// Lighting settings
 		if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
 		{
-			ImGui::DragFloat3("Light Direction", glm::value_ptr(m_SceneLightDirection), 0.01f);
-			ImGui::DragFloat("Ambient Intensity", &m_SceneAmbientIntensity, 0.01f, 0.0f, 1.0f);
-			ImGui::ColorEdit3("Background Color", glm::value_ptr(m_SceneBackgroundColor));
+			// 设置固定的标签宽度
+			const float labelWidth = 220.0f;
+
+			// Light Direction
+			ImGui::Text("Light Direction");
+			ImGui::SameLine(labelWidth);
+			ImGui::DragFloat3("##Light Direction", glm::value_ptr(m_SceneLightDirection), 0.01f);
+
+			// Ambient Intensity
+			ImGui::Text("Ambient Intensity");
+			ImGui::SameLine(labelWidth);
+			ImGui::DragFloat("##Ambient Intensity", &m_SceneAmbientIntensity, 0.01f, 0.0f, 1.0f);
+
+			// Background Color
+			ImGui::Text("Background Color");
+			ImGui::SameLine(labelWidth);
+			ImGui::ColorEdit3("##Background Color", glm::value_ptr(m_SceneBackgroundColor));
 		}
 		
 		// Renderer settings
