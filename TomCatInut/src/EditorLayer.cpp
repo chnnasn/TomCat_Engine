@@ -429,27 +429,47 @@ namespace TomCat {
 	void EditorLayer::DrawInspectorPanel()
 	{
 		ImGui::Begin("Inspector");
-		
+
 		if (m_SelectedObject)
 		{
 			ImGui::Text("Selected: %s", m_SelectedObject->name.c_str());
 			ImGui::Separator();
-			
-			// Transform component
+
 			if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
 			{
-				ImGui::DragFloat3("Position", glm::value_ptr(m_SelectedTransform.position), 0.1f);
-				ImGui::DragFloat3("Rotation", glm::value_ptr(m_SelectedTransform.rotation), 1.0f);
-				ImGui::DragFloat3("Scale", glm::value_ptr(m_SelectedTransform.scale), 0.1f);
+				// 设置固定的标签宽度
+				const float labelWidth = 120.0f;
+
+				// Position
+				ImGui::Text("Position");
+				ImGui::SameLine(labelWidth);
+				ImGui::DragFloat3("##Position", glm::value_ptr(m_SelectedTransform.position), 0.1f);
+
+				// Rotation
+				ImGui::Text("Rotation");
+				ImGui::SameLine(labelWidth);
+				ImGui::DragFloat3("##Rotation", glm::value_ptr(m_SelectedTransform.rotation), 1.0f);
+
+				// Scale
+				ImGui::Text("Scale");
+				ImGui::SameLine(labelWidth);
+				ImGui::DragFloat3("##Scale", glm::value_ptr(m_SelectedTransform.scale), 0.1f);
 			}
-			
-			// Add component button
+			// Add component button - 居中显示
 			ImGui::Separator();
-			if (ImGui::Button("Add Component"))
+
+			// 计算按钮居中位置
+			float buttonWidth = 240.0f; // 按钮预估宽度
+			float windowWidth = ImGui::GetWindowSize().x;
+			float cursorPosX = (windowWidth - buttonWidth) * 0.5f;
+
+			ImGui::SetCursorPosX(cursorPosX);
+
+			if (ImGui::Button("Add Component", ImVec2(buttonWidth, 0)))
 			{
 				ImGui::OpenPopup("AddComponentPopup");
 			}
-			
+
 			if (ImGui::BeginPopup("AddComponentPopup"))
 			{
 				if (ImGui::MenuItem("Mesh Renderer")) {
@@ -471,7 +491,7 @@ namespace TomCat {
 		{
 			ImGui::Text("No object selected");
 		}
-		
+
 		ImGui::End();
 	}
 
@@ -626,7 +646,21 @@ namespace TomCat {
 	void EditorLayer::DrawStatusBar()
 	{
 		ImGui::Begin("Status");
-		
+
+		// 计算总文本宽度
+		float totalWidth = 0;
+		totalWidth += ImGui::CalcTextSize("Ready").x;
+		totalWidth += ImGui::CalcTextSize("FPS: 000.0").x; // 估算FPS文本宽度
+		totalWidth += ImGui::CalcTextSize("Objects: 0000").x; // 估算Objects文本宽度
+		totalWidth += ImGui::GetStyle().ItemSpacing.x * 4; // SameLine的间距
+		totalWidth += ImGui::GetFrameHeight() * 2; // 两个分隔符的宽度
+
+		// 计算起始位置使其居中
+		float windowWidth = ImGui::GetWindowSize().x;
+		float startPos = (windowWidth - totalWidth) * 0.5f;
+
+		ImGui::SetCursorPosX(startPos);
+
 		ImGui::Text("Ready");
 		ImGui::SameLine();
 		ImGui::Separator();
@@ -636,8 +670,8 @@ namespace TomCat {
 		ImGui::Separator();
 		ImGui::SameLine();
 		ImGui::Text("Objects: %d", (int)m_SceneObjects.size());
-		
-		ImGui::End();
+
+		ImGui::End();;
 	}
 
 	void EditorLayer::AddSceneObject(const std::string& name)
