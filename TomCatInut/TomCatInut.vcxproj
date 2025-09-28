@@ -138,9 +138,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\EditorLayer.h" />
+    <ClInclude Include="src\EditorUIManager.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\EditorLayer.cpp" />
+    <ClCompile Include="src\EditorUIManager.cpp" />
     <ClCompile Include="src\TomCatInputApp.cpp" />
   </ItemGroup>
   <ItemGroup>
