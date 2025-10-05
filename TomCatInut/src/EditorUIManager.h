@@ -63,6 +63,7 @@ namespace TomCat {
 		glm::vec3 m_SceneLightDirection = { 0.5f, -1.0f, 0.3f };
 		float m_SceneAmbientIntensity = 0.3f;
 		glm::vec4 m_SceneBackgroundColor = { 0.1f, 0.1f, 0.1f, 1.0f };
+		bool m_SceneFocuse = false, m_SceneHovered = false;
 
 	private:
 		void AddSceneObject(const std::string& name);

@@ -9,7 +9,7 @@
 
 #include "TomCat/Core/Input.h"
 #include "TomCat/Core/KeyCodes.h"
-#include "TomCat/Core/MouseButtonCodes.h"
+#include "TomCat/Core/MouseCodes.h"
 #include "TomCat/Renderer/OrthographicCameraController.h"
 
 #include "TomCat/ImGui/ImGuiLayer.h"

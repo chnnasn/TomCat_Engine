@@ -63,6 +63,17 @@ namespace TomCat {
 		ImGui::DestroyContext();
 	}
 
+	void ImGuiLayer::OnEvent(Event& e)
+	{
+		if (m_BlockEvents) 
+		{
+			ImGuiIO& io = ImGui::GetIO();
+			e.m_Handled |= e.IsIncategory(EventCategoryMouse) & io.WantCaptureMouse;
+			e.m_Handled |= e.IsIncategory(EventCategoryKeyboard) & io.WantCaptureKeyboard;
+		}
+
+	}
+
 
 	void ImGuiLayer::Begin()
 	{

@@ -38,8 +38,11 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
+		m_SceneFocuse = m_UIManager->m_SceneFocuse;
+
 		// Update
-		m_CameraController.OnUpdate(ts);
+		if(m_SceneFocuse)
+			m_CameraController.OnUpdate(ts);
 
 		// 同步场景背景颜色
 		m_SceneBackgroundColor = m_UIManager->m_SceneBackgroundColor;
@@ -107,27 +110,4 @@ namespace TomCat {
 	{
 		m_CameraController.OnEvent(e);
 	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }

@@ -84,7 +84,7 @@
     <ClInclude Include="src\TomCat\Core\Log.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Core\MouseButtonCodes.h">
+    <ClInclude Include="src\TomCat\Core\MouseCodes.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\Random.h">
@@ -170,9 +170,6 @@
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h">
       <Filter>src\platform\OpenGL</Filter>
-    </ClInclude>
-    <ClInclude Include="src\platform\Window\WindowsInput.h">
-      <Filter>src\platform\Window</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\Window\WindowsWindow.h">
       <Filter>src\platform\Window</Filter>

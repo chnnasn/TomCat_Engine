@@ -1,34 +1,32 @@
 #include "tcpch.h"
-#include "WindowsInput.h"
+#include "TomCat/Core/Input.h"
 #include <glfw/glfw3.h>
 #include "TomCat/Core/Application.h"
 
 namespace TomCat {
 
-	Scope<Input> Input::s_Instance = CreateScope<WindowsInput>();
-
-	bool WindowsInput::IsKeyPressedImpl(int KeyCode)
+	bool Input::IsKeyPressed(KeyCode KeyCode)
 	{
 
 		auto Window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 
-		auto state = glfwGetKey(Window, KeyCode);
+		auto state = glfwGetKey(Window, static_cast<int32_t>(KeyCode));
 
 		return state == GLFW_PRESS || state == GLFW_REPEAT;
 
 	}
 
-	bool WindowsInput::IsMouseButtonPressedImpl(int Button)
+	bool Input::IsMouseButtonPressed(MouseCode Button)
 	{
 
 		auto Window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 
-		auto state = glfwGetMouseButton(Window, Button);
+		auto state = glfwGetMouseButton(Window, static_cast<int32_t>(Button));
 
 		return state == GLFW_PRESS;
 	}
 
-	std::pair<float, float> WindowsInput::GetMousePositonImpl()
+	std::pair<float, float> Input::GetMousePositon()
 	{
 		auto Window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 
@@ -39,16 +37,16 @@ namespace TomCat {
 		return { (float)Xpos ,(float)Ypos };
 	}
 
-	float WindowsInput::GetMouseXImpl()
+	float Input::GetMouseX()
 	{
-		auto [x,y] = GetMousePositonImpl();
+		auto [x,y] = GetMousePositon();
 
 		return x;
 	}
 
-	float WindowsInput::GetMouseYImpl()
+	float Input::GetMouseY()
 	{
-		auto [x, y] = GetMousePositonImpl();
+		auto [x, y] = GetMousePositon();
 
 		return y;
 	}

@@ -40,7 +40,12 @@ namespace TomCat {
 		float m_CameraRotation = 0.0f; //In degrees, in the anti-clockwise direction
 
 		float m_CameraRotationSpeed = 20.0f, m_CameraTranslationSpeed = 1.0f;
-	};
 
+		// 添加鼠标拖动相关成员变量
+		bool m_IsDragging = false;
+		float m_LastMouseX = 0.0f;
+		float m_LastMouseY = 0.0f;
+		float m_MouseDragSensitivity = 0.005f; // 鼠标拖动灵敏度
+	};
 
 }

@@ -518,6 +518,10 @@ namespace TomCat {
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 		ImGui::Begin("Scene");
 		
+		m_SceneFocuse = ImGui::IsWindowFocused();
+		m_SceneHovered = ImGui::IsWindowHovered();
+		Application::Get().GetImGuiLayer()->BlockEvents(!m_SceneFocuse || !m_SceneHovered);
+
 		ImVec2 ViewportPanelSize = ImGui::GetContentRegionAvail();
 		
 		uint32_t actualTextureID = textureID;
