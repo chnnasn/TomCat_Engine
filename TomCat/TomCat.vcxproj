@@ -166,6 +166,7 @@
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
+    <ClInclude Include="src\TomCat\Renderer\Camera.h" />
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
     <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
@@ -178,6 +179,7 @@
     <ClInclude Include="src\TomCat\Renderer\Texture.h" />
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
     <ClInclude Include="src\TomCat\Scene\Components.h" />
+    <ClInclude Include="src\TomCat\Scene\Entity.h" />
     <ClInclude Include="src\TomCat\Scene\Scene.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h" />
@@ -628,6 +630,7 @@
     <ClCompile Include="src\TomCat\Renderer\Shader.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Texture.cpp" />
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
+    <ClCompile Include="src\TomCat\Scene\Entity.cpp" />
     <ClCompile Include="src\TomCat\Scene\Scene.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLContext.cpp" />
