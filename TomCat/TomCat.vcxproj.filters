@@ -1445,6 +1445,7 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Entity.h" />
     <ClInclude Include="src\TomCat\Renderer\Camera.h" />
+    <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
@@ -1541,5 +1542,6 @@
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\Entity.cpp" />
+    <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
   </ItemGroup>
 </Project>

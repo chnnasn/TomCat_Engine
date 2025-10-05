@@ -3,15 +3,13 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <ImGui/imgui_internal.h>
+
 
 namespace TomCat {
 
 	EditorLayer::EditorLayer()
-		: Layer("EditorLayer"), m_CameraController(1920.0f / 1080.0f), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f })
+		: Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f })
 	{
-		// Create UI manager
-		m_UIManager = std::make_unique<EditorUIManager>();
 	}
 
 	void EditorLayer::OnAttach()
@@ -21,19 +19,24 @@ namespace TomCat {
 		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 
 		FramebufferSpecification fbSpec;
-		fbSpec.Width = 1920;
-		fbSpec.Height = 1080;
+		fbSpec.Width = 1280;
+		fbSpec.Height = 720;
 		m_Framebuffer = Framebuffer::Create(fbSpec);
-		
-		// Setup UI style
-		m_UIManager->SetupImGuiStyle();
 
 		m_ActiveScene = CreateRef<Scene>();
-		auto square = m_ActiveScene->CreateEntity("Square");
-		square.AddComponent<SpriteRenderer>(glm::vec4{0.0f,1.0f,0.0f,1.0f});
 
-		m_CameraEntity = m_ActiveScene->CreateEntity("Camera");
-		m_CameraEntity.AddComponent<Camera>(glm::ortho(-16.0f,16.0f,-9.0f,9.0f,-1.0f,1.0f));
+		// Entity
+		auto square = m_ActiveScene->CreateEntity("Green Square");
+		square.AddComponent<SpriteRenderer>(glm::vec4{ 0.0f, 1.0f, 0.0f, 1.0f });
+
+		m_SquareEntity = square;
+
+		m_CameraEntity = m_ActiveScene->CreateEntity("Camera Entity");
+		m_CameraEntity.AddComponent<C_Camera>();
+
+		m_SecondCamera = m_ActiveScene->CreateEntity("Clip-Space Entity");
+		auto& cc = m_SecondCamera.AddComponent<C_Camera>();
+		cc.Primary = false;
 	}
 
 	void EditorLayer::OnDetach()
@@ -45,72 +48,147 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		m_SceneFocuse = m_UIManager->m_SceneFocuse;
+		// Resize
+		if (FramebufferSpecification spec = m_Framebuffer->GetSpecification();
+			m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && // zero sized framebuffer is invalid
+			(spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
+		{
+			m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
+
+			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		}
 
 		// Update
-		if(m_SceneFocuse)
+		if (m_ViewportFocused)
 			m_CameraController.OnUpdate(ts);
-
-		// 如果视口大小发生变化，更新帧缓冲区大小和摄像机的宽高比
-		if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f) {
-			// 更新帧缓冲区大小
-			FramebufferSpecification spec = m_Framebuffer->GetSpecification();
-			if (spec.Width != (uint32_t)m_ViewportSize.x || spec.Height != (uint32_t)m_ViewportSize.y) {
-				spec.Width = (uint32_t)m_ViewportSize.x;
-				spec.Height = (uint32_t)m_ViewportSize.y;
-				m_Framebuffer->Resize(spec.Width, spec.Height);
-				
-				// 更新摄像机的宽高比
-				float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
-				m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
-			}
-		}
 
 		// Render
 		Renderer2D::ResetStats();
 		m_Framebuffer->Bind();
-		RenderCommand::SetClearColor({0.1f,0.1f,0.1f,1.0f});
+		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
 		RenderCommand::Clear();
 
+		// Update scene
 		m_ActiveScene->OnUpdate(ts);
 
 		m_Framebuffer->Unbind();
-
 	}
 
 	void EditorLayer::OnImGuiRender()
 	{
-		// 设置DockSpace
-		m_UIManager->SetupDockSpace();
+		TC_PROFILE_FUNCTION();
 
-		// 独立窗口：Toolbar（始终在最上方）
-		m_UIManager->DrawToolbar();
+		static bool dockspaceOpen = true;
+		static bool opt_fullscreen_persistant = true;
+		bool opt_fullscreen = opt_fullscreen_persistant;
+		static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
-		// 独立窗口：StatusBar（始终在最下方）
-		m_UIManager->DrawStatusBar();
 
-		// 其他面板
-		if (m_UIManager->m_ShowHierarchy) m_UIManager->DrawHierarchyPanel();
-		if (m_UIManager->m_ShowInspector) m_UIManager->DrawInspectorPanel();
-		if (m_UIManager->m_ShowProject) m_UIManager->DrawProjectPanel();
-		if (m_UIManager->m_ShowConsole) m_UIManager->DrawConsolePanel();
-		if (m_UIManager->m_ShowSceneSettings) m_UIManager->DrawSceneSettingsPanel();
-		
-		// Viewport panel with framebuffer texture
+		ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+		if (opt_fullscreen)
+		{
+			ImGuiViewport* viewport = ImGui::GetMainViewport();
+			ImGui::SetNextWindowPos(viewport->Pos);
+			ImGui::SetNextWindowSize(viewport->Size);
+			ImGui::SetNextWindowViewport(viewport->ID);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+			window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+		}
+
+	
+		if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
+			window_flags |= ImGuiWindowFlags_NoBackground;
+
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+		ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
+		ImGui::PopStyleVar();
+
+		if (opt_fullscreen)
+			ImGui::PopStyleVar(2);
+
+
+		ImGuiIO& io = ImGui::GetIO();
+		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
+		{
+			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+		}
+
+		if (ImGui::BeginMenuBar())
+		{
+			if (ImGui::BeginMenu("File"))
+			{
+
+				if (ImGui::MenuItem("Exit")) Application::Get().Close();
+				ImGui::EndMenu();
+			}
+
+			ImGui::EndMenuBar();
+		}
+
+		ImGui::Begin("Settings");
+
+		auto stats = Renderer2D::GetStats();
+		ImGui::Text("Renderer2D Stats:");
+		ImGui::Text("Draw Calls: %d", stats.DrawCalls);
+		ImGui::Text("Quads: %d", stats.QuadCount);
+		ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
+		ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
+
+		if (m_SquareEntity)
+		{
+			ImGui::Separator();
+			auto& tag = m_SquareEntity.GetComponent<Tag>()._Tag;
+			ImGui::Text("%s", tag.c_str());
+
+			auto& squareColor = m_SquareEntity.GetComponent<SpriteRenderer>()._Color;
+			ImGui::ColorEdit4("Square Color", glm::value_ptr(squareColor));
+			ImGui::Separator();
+		}
+
+		ImGui::DragFloat3("Camera Transform",
+			glm::value_ptr(m_CameraEntity.GetComponent<Transform>()._Transform[3]));
+
+		if (ImGui::Checkbox("Camera A", &m_PrimaryCamera))
+		{
+			m_CameraEntity.GetComponent<C_Camera>().Primary = m_PrimaryCamera;
+			m_SecondCamera.GetComponent<C_Camera>().Primary = !m_PrimaryCamera;
+		}
+
+		{
+			auto& camera = m_SecondCamera.GetComponent<C_Camera>()._Camera;
+			float orthoSize = camera.GetOrthographicSize();
+			if (ImGui::DragFloat("Second Camera Ortho Size", &orthoSize))
+				camera.SetOrthographicSize(orthoSize);
+		}
+
+
+		ImGui::End();
+
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
+		ImGui::Begin("Viewport");
+
+		m_ViewportFocused = ImGui::IsWindowFocused();
+		m_ViewportHovered = ImGui::IsWindowHovered();
+		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused || !m_ViewportHovered);
+
+		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
+		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
+
 		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-		// 先保存当前的视口大小
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-		ImGui::Begin("Scene");
-		ImVec2 ViewportPanelSize = ImGui::GetContentRegionAvail();
-		m_ViewportSize = { ViewportPanelSize.x, ViewportPanelSize.y };
+		ImGui::Image((void*)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 		ImGui::End();
 		ImGui::PopStyleVar();
-		// 然后绘制视口面板
-		m_UIManager->DrawViewportPanel(textureID, m_ViewportSize);
+
+		ImGui::End();
 	}
 
 	void EditorLayer::OnEvent(Event& e)
 	{
 		m_CameraController.OnEvent(e);
 	}
+
 }

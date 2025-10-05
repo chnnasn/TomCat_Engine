@@ -2,7 +2,7 @@
 
 #include <glm/glm.hpp>
 
-#include "TomCat/Renderer/Camera.h"
+#include "SceneCamera.h"
 
 namespace TomCat {
 
@@ -45,14 +45,12 @@ namespace TomCat {
 
 	struct C_Camera
 	{
-		TomCat::Camera _Camera;
+		SceneCamera _Camera;
 		bool Primary = true; // TODO: think about moving to Scene
+		bool FixedAspectRatio = false;
 
 		C_Camera() = default;
 		C_Camera(const C_Camera&) = default;
-		C_Camera(const glm::mat4& projection)
-			: _Camera(projection) {
-		}
 	};
 
 }
