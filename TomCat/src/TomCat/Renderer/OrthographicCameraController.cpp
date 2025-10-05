@@ -1,4 +1,4 @@
-	#include "tcpch.h"
+#include "tcpch.h"
 
 #include "OrthographicCameraController.h"
 #include "TomCat/Core/Input.h"
@@ -6,40 +6,50 @@
 namespace TomCat {
 
 	OrthographicCameraController::OrthographicCameraController(float aspectRatio, bool rotation)
-		:m_AspectRatio(aspectRatio),m_Camera(-m_AspectRatio *m_ZoomLevel, m_AspectRatio* m_ZoomLevel,-m_ZoomLevel, m_ZoomLevel),m_Rotation(rotation)
+		:m_AspectRatio(aspectRatio), m_Camera(-m_AspectRatio * m_ZoomLevel, m_AspectRatio* m_ZoomLevel, -m_ZoomLevel, m_ZoomLevel), m_Rotation(rotation)
 	{
-	
+
 	}
 
 	void OrthographicCameraController::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
 
-		if (Input::IsKeyPressed(KeyCode::A))
+		// 鼠标中键拖动控制
+		if (Input::IsMouseButtonPressed(MouseCode::ButtonMiddle))
 		{
-			m_CameraPosition.x -= cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
-			m_CameraPosition.y -= sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
+			auto [currentMouseX, currentMouseY] = Input::GetMousePositon();
+
+			if (!m_IsDragging)
+			{
+				// 第一次按下中键，记录初始位置
+				m_IsDragging = true;
+				m_LastMouseX = currentMouseX;
+				m_LastMouseY = currentMouseY;
+			}
+			else
+			{
+				// 计算鼠标移动增量
+				float deltaX = currentMouseX - m_LastMouseX;
+				float deltaY = currentMouseY - m_LastMouseY;
+
+				// 根据移动增量更新摄像机位置
+				// 注意：这里使用世界坐标，所以移动方向与鼠标方向相反
+				m_CameraPosition.x -= deltaX * m_CameraTranslationSpeed * m_MouseDragSensitivity;
+				m_CameraPosition.y += deltaY * m_CameraTranslationSpeed * m_MouseDragSensitivity;
+
+				// 更新上一帧鼠标位置
+				m_LastMouseX = currentMouseX;
+				m_LastMouseY = currentMouseY;
+			}
+		}
+		else
+		{
+			// 鼠标中键释放时重置拖动状态
+			m_IsDragging = false;
 		}
 
-		if (Input::IsKeyPressed(KeyCode::D))
-		{
-			m_CameraPosition.x += cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
-			m_CameraPosition.y += sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
-		}
-
-		if (Input::IsKeyPressed(KeyCode::S))
-		{
-			m_CameraPosition.x += -sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
-			m_CameraPosition.y += cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
-		}
-
-		if (Input::IsKeyPressed(KeyCode::W))
-		{
-			m_CameraPosition.x -= -sin(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
-			m_CameraPosition.y -= cos(glm::radians(m_CameraRotation)) * m_CameraTranslationSpeed * ts;
-		}
-
-		if (m_Rotation) 
+		if (m_Rotation)
 		{
 			if (Input::IsKeyPressed(KeyCode::E))
 				m_CameraRotation -= m_CameraRotationSpeed * ts;
@@ -52,9 +62,7 @@ namespace TomCat {
 			m_Camera.SetRotation(m_CameraRotation);
 		}
 
-
 		m_Camera.SetPosition(m_CameraPosition);
-
 		m_CameraTranslationSpeed = m_ZoomLevel;
 	}
 
@@ -73,7 +81,7 @@ namespace TomCat {
 		m_Camera.SetProjection(-m_AspectRatio * m_ZoomLevel, m_AspectRatio * m_ZoomLevel, -m_ZoomLevel, m_ZoomLevel);
 	}
 
-	bool OrthographicCameraController:: OnMouseScrolled(MouseScrolledEvent& e)
+	bool OrthographicCameraController::OnMouseScrolled(MouseScrolledEvent& e)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -84,7 +92,7 @@ namespace TomCat {
 
 	}
 
-	bool OrthographicCameraController:: OnWindowResized(WindowResizeEvent& e)
+	bool OrthographicCameraController::OnWindowResized(WindowResizeEvent& e)
 	{
 		TC_PROFILE_FUNCTION();
 
