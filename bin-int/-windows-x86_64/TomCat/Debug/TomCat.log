@@ -1,3 +1,65 @@
-﻿  OrthographicCameraController.cpp
+﻿  tcpch.cpp
+D:\github\TomCat_Engine\TomCat\src\TomCat\Debug\Instrumentor.h(113,22): warning C4267: “初始化”: 从“size_t”转换到“uint32_t”，可能丢失数据
+  (编译源文件“src/tcpch.cpp”)
+  
+  Application.cpp
+  Layer.cpp
+  LayerStack.cpp
+  Log.cpp
+  Window.cpp
+  ImGuiBuild.cpp
+D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiBuild.cpp”)
+      D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiBuild.cpp”)
+      D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+  ImGuiLayer.cpp
+D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiLayer.cpp”)
+      D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiLayer.cpp”)
+      D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+  Buffer.cpp
+  Framebuffer.cpp
+  GraphicsContext.cpp
+  OrthographicCamera.cpp
+  OrthographicCameraController.cpp
+  RenderCommand.cpp
+  Renderer.cpp
+  Renderer2D.cpp
+D:\github\TomCat_Engine\TomCat\src\TomCat\Renderer\Renderer2D.cpp(126,21): warning C4244: “初始化”: 从“__int64”转换到“uint32_t”，可能丢失数据
+  (编译源文件“/src/TomCat/Renderer/Renderer2D.cpp”)
+  
+  RendererAPI.cpp
+  Shader.cpp
+  Texture.cpp
+  VertexArray.cpp
+  Scene.cpp
+  正在生成代码...
+  正在编译...
+  OpenGLBuffer.cpp
+  OpenGLContext.cpp
+  OpenGLFramebuffer.cpp
+  OpenGLRendererAPI.cpp
+  OpenGLShader.cpp
+  OpenGLTexture.cpp
+  OpenGLVertexArray.cpp
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp(79,5): warning C4312: “类型强制转换”: 从“const uint32_t”转换到更大的“const void *”
+  (编译源文件“/src/platform/OpenGL/OpenGLVertexArray.cpp”)
+  
+  WindowsInput.cpp
+  WindowsWindow.cpp
+  stb_image.cpp
+  正在生成代码...
 Window.obj : warning LNK4006: "public: static class std::unique_ptr<class TomCat::Window,struct std::default_delete<class TomCat::Window> > __cdecl TomCat::Window::Create(struct TomCat::WindowProps const &)" (?Create@Window@TomCat@@SA?AV?$unique_ptr@VWindow@TomCat@@U?$default_delete@VWindow@TomCat@@@std@@@std@@AEBUWindowProps@2@@Z) 已在 WindowsWindow.obj 中定义；已忽略第二个定义
   TomCat.vcxproj -> D:\github\TomCat_Engine\bin\-windows-x86_64\TomCat\TomCat.lib

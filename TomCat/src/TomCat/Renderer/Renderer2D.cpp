@@ -154,9 +154,35 @@ namespace	TomCat {
 
 	void Renderer2D::DrawQuad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color)
 	{
-		DrawQuad({ position.x,position.y,0.0f },size,color);
+		DrawQuad({ position.x, position.y, 0.0f }, size, color);
 	}
+
 	void Renderer2D::DrawQuad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color)
+	{
+		TC_PROFILE_FUNCTION();
+
+		glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
+			* glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
+
+		DrawQuad(transform, color);
+	}
+
+	void Renderer2D::DrawQuad(const glm::vec2& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor)
+	{
+		DrawQuad({ position.x, position.y, 0.0f }, size, texture, tilingFactor, tintColor);
+	}
+
+	void Renderer2D::DrawQuad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor)
+	{
+		TC_PROFILE_FUNCTION();
+
+		glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
+			* glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
+
+		DrawQuad(transform, texture, tilingFactor);
+	}
+
+	void Renderer2D::DrawQuad(const glm::mat4& transform, const glm::vec4& color)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -167,9 +193,6 @@ namespace	TomCat {
 
 		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices)
 			FlushAndReset();
-
-		glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
-			* glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
 
 		for (size_t i = 0; i < quadVertexCount; i++)
 		{
@@ -186,13 +209,12 @@ namespace	TomCat {
 		s_Data.Stats.QuadCount++;
 	}
 
-	void Renderer2D::DrawQuad(const glm::vec2& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tiniColor)
+	void Renderer2D::DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const glm::vec4& color)
 	{
-		DrawQuad({ position.x,position.y,0.0f }, size, texture, tilingFactor, tiniColor);
-
+		DrawRotatedQuad({ position.x, position.y, 0.0f }, size, rotation, color);
 	}
 
-	void Renderer2D::DrawQuad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tiniColor)
+	void Renderer2D::DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -222,13 +244,10 @@ namespace	TomCat {
 			s_Data.TextureSlotIndex++;
 		}
 
-		glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
-			* glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
-
 		for (size_t i = 0; i < quadVertexCount; i++)
 		{
 			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[i];
-			s_Data.QuadVertexBufferPtr->Color = tiniColor;
+			s_Data.QuadVertexBufferPtr->Color = tintColor;
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
@@ -238,11 +257,6 @@ namespace	TomCat {
 		s_Data.QuadIndexCount += 6;
 
 		s_Data.Stats.QuadCount++;
-	}
-
-	void Renderer2D::DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const glm::vec4& color)
-	{
-		DrawRotatedQuad({ position.x,position.y,0.0f }, size, rotation,color);
 	}
 
 	void Renderer2D::DrawRotatedQuad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color)
@@ -276,12 +290,12 @@ namespace	TomCat {
 		s_Data.Stats.QuadCount++;
 	}
 
-	void Renderer2D::DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tiniColor )
+	void Renderer2D::DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor)
 	{
-		DrawRotatedQuad({ position.x,position.y,0.0f }, size, rotation, texture, tilingFactor, tiniColor);
+		DrawRotatedQuad({ position.x, position.y, 0.0f }, size, rotation, texture, tilingFactor, tintColor);
 	}
 
-	void Renderer2D::DrawRotatedQuad(const glm::vec3& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tiniColor)
+	void Renderer2D::DrawRotatedQuad(const glm::vec3& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -318,7 +332,7 @@ namespace	TomCat {
 		for (size_t i = 0; i < quadVertexCount; i++)
 		{
 			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[i];
-			s_Data.QuadVertexBufferPtr->Color = tiniColor;
+			s_Data.QuadVertexBufferPtr->Color = tintColor;
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
@@ -339,4 +353,5 @@ namespace	TomCat {
 	{
 		return s_Data.Stats;
 	}
+
 }
