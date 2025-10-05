@@ -525,7 +525,34 @@ namespace TomCat {
 		ImVec2 ViewportPanelSize = ImGui::GetContentRegionAvail();
 		
 		uint32_t actualTextureID = textureID;
-		ImGui::Image((void*)actualTextureID, ImVec2{ ViewportPanelSize.x, ViewportPanelSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		
+		// 确保图像保持正确的宽高比，不会被拉伸变形
+		if (viewportSize.x > 0.0f && viewportSize.y > 0.0f) {
+			// 计算图像应该显示的尺寸，保持原宽高比
+			float viewportAspectRatio = viewportSize.x / viewportSize.y;
+			float windowAspectRatio = ViewportPanelSize.x / ViewportPanelSize.y;
+			
+			ImVec2 imageSize;
+			if (windowAspectRatio > viewportAspectRatio) {
+				// 窗口比视口宽，以高度为基准
+				imageSize.y = ViewportPanelSize.y;
+				imageSize.x = imageSize.y * viewportAspectRatio;
+			} else {
+				// 窗口比视口高，以宽度为基准
+				imageSize.x = ViewportPanelSize.x;
+				imageSize.y = imageSize.x / viewportAspectRatio;
+			}
+			
+			// 居中显示图像
+			ImGui::SetCursorPosX((ViewportPanelSize.x - imageSize.x) * 0.5f);
+			ImGui::SetCursorPosY((ViewportPanelSize.y - imageSize.y) * 0.5f);
+			
+			// 绘制图像
+			ImGui::Image((void*)actualTextureID, ImVec2{ imageSize.x, imageSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		} else {
+			// 如果视口大小无效，默认绘制
+			ImGui::Image((void*)actualTextureID, ImVec2{ ViewportPanelSize.x, ViewportPanelSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		}
 
 		ImGui::End();
 		ImGui::PopStyleVar();

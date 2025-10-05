@@ -50,7 +50,22 @@ namespace TomCat {
 			m_CameraController.OnUpdate(ts);
 
 		// 同步场景背景颜色
-		//m_SceneBackgroundColor = m_UIManager->m_SceneBackgroundColor;
+		m_SceneBackgroundColor = m_UIManager->m_SceneBackgroundColor;
+
+		// 如果视口大小发生变化，更新帧缓冲区大小和摄像机的宽高比
+		if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f) {
+			// 更新帧缓冲区大小
+			TomCat::FramebufferSpecification spec = m_Framebuffer->GetSpecification();
+			if (spec.Width != (uint32_t)m_ViewportSize.x || spec.Height != (uint32_t)m_ViewportSize.y) {
+				spec.Width = (uint32_t)m_ViewportSize.x;
+				spec.Height = (uint32_t)m_ViewportSize.y;
+				m_Framebuffer->Resize(spec.Width, spec.Height);
+				
+				// 更新摄像机的宽高比
+				float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
+				m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
+			}
+		}
 
 		// Render
 		TomCat::Renderer2D::ResetStats();
@@ -87,6 +102,14 @@ namespace TomCat {
 		
 		// Viewport panel with framebuffer texture
 		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
+		// 先保存当前的视口大小
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+		ImGui::Begin("Scene");
+		ImVec2 ViewportPanelSize = ImGui::GetContentRegionAvail();
+		m_ViewportSize = { ViewportPanelSize.x, ViewportPanelSize.y };
+		ImGui::End();
+		ImGui::PopStyleVar();
+		// 然后绘制视口面板
 		m_UIManager->DrawViewportPanel(textureID, m_ViewportSize);
 	}
 
