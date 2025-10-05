@@ -1446,6 +1446,7 @@
     <ClInclude Include="src\TomCat\Scene\Entity.h" />
     <ClInclude Include="src\TomCat\Renderer\Camera.h" />
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
+    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
