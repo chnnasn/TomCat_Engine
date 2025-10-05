@@ -41,6 +41,14 @@ namespace TomCat {
 
 		class CameraController : public ScriptableEntity
 		{
+
+
+			bool m_IsDragging = false;
+			float m_LastMouseX = 0.0f;
+			float m_LastMouseY = 0.0f;
+			float m_MouseDragSensitivity = 0.002f; // 鼠标拖动灵敏度
+
+
 		public:
 			void OnCreate()
 			{
@@ -53,20 +61,42 @@ namespace TomCat {
 			void OnUpdate(Timestep ts)
 			{
 				auto& transform = GetComponent<Transform>()._Transform;
-				float speed = 5.0f;
+				float speed = 1.0f;
 
-				if (Input::IsKeyPressed(KeyCode::A))
-					transform[3][0] -= speed * ts;
-				if (Input::IsKeyPressed(KeyCode::D))
-					transform[3][0] += speed * ts;
-				if (Input::IsKeyPressed(KeyCode::W))
-					transform[3][1] += speed * ts;
-				if (Input::IsKeyPressed(KeyCode::S))
-					transform[3][1] -= speed * ts;
+				if (Input::IsMouseButtonPressed(MouseCode::ButtonMiddle))
+				{
+					auto [currentMouseX, currentMouseY] = Input::GetMousePositon();
+
+					if (!m_IsDragging)
+					{
+						m_IsDragging = true;
+						m_LastMouseX = currentMouseX;
+						m_LastMouseY = currentMouseY;
+					}
+					else
+					{
+						float deltaX = currentMouseX - m_LastMouseX;
+						float deltaY = currentMouseY - m_LastMouseY;
+
+						transform[3][0] += deltaX * -speed * m_MouseDragSensitivity;
+						transform[3][1] -= deltaY * -speed * m_MouseDragSensitivity;
+
+						m_LastMouseX = currentMouseX;
+						m_LastMouseY = currentMouseY;
+					}
+				}
+				else
+				{
+					m_IsDragging = false;
+				}
 			}
 		};
 
+
 		m_CameraEntity.AddComponent<NativeScript>().Bind<CameraController>();
+		m_SecondCamera.AddComponent<NativeScript>().Bind<CameraController>();
+
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 	}
 
 	void EditorLayer::OnDetach()
@@ -159,6 +189,10 @@ namespace TomCat {
 			ImGui::EndMenuBar();
 		}
 
+
+		m_SceneHierarchyPanel.OnImGuiRender();
+
+
 		ImGui::Begin("Settings");
 
 		auto stats = Renderer2D::GetStats();
@@ -191,8 +225,10 @@ namespace TomCat {
 		{
 			auto& camera = m_SecondCamera.GetComponent<C_Camera>()._Camera;
 			float orthoSize = camera.GetOrthographicSize();
-			if (ImGui::DragFloat("Second Camera Ortho Size", &orthoSize))
+			if (ImGui::DragFloat("Second Camera Ortho Size", &orthoSize, 0.1f, 0.1f, 10.0f)) // 最小0.1，最大100
+			{
 				camera.SetOrthographicSize(orthoSize);
+			}
 		}
 
 
