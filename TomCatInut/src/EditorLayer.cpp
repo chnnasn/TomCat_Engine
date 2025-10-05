@@ -33,7 +33,7 @@ namespace TomCat {
 		square.AddComponent<SpriteRenderer>(glm::vec4{0.0f,1.0f,0.0f,1.0f});
 
 		m_CameraEntity = m_ActiveScene->CreateEntity("Camera");
-		m_CameraEntity.AddComponent<Camera>(glm::ortho(-16.0f,16.0f,-9.0f,9.0f,-1.0f,1.0f));
+		m_CameraEntity.AddComponent<C_Camera>();
 	}
 
 	void EditorLayer::OnDetach()
@@ -47,24 +47,17 @@ namespace TomCat {
 
 		m_SceneFocuse = m_UIManager->m_SceneFocuse;
 
+		if (FramebufferSpecification spec = m_Framebuffer->GetSpecification();
+			m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && // zero sized framebuffer is invalid
+			(spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
+		{
+			m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
+		}
+
 		// Update
 		if(m_SceneFocuse)
 			m_CameraController.OnUpdate(ts);
-
-		// 如果视口大小发生变化，更新帧缓冲区大小和摄像机的宽高比
-		if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f) {
-			// 更新帧缓冲区大小
-			FramebufferSpecification spec = m_Framebuffer->GetSpecification();
-			if (spec.Width != (uint32_t)m_ViewportSize.x || spec.Height != (uint32_t)m_ViewportSize.y) {
-				spec.Width = (uint32_t)m_ViewportSize.x;
-				spec.Height = (uint32_t)m_ViewportSize.y;
-				m_Framebuffer->Resize(spec.Width, spec.Height);
-				
-				// 更新摄像机的宽高比
-				float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
-				m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
-			}
-		}
 
 		// Render
 		Renderer2D::ResetStats();
@@ -96,15 +89,23 @@ namespace TomCat {
 		if (m_UIManager->m_ShowConsole) m_UIManager->DrawConsolePanel();
 		if (m_UIManager->m_ShowSceneSettings) m_UIManager->DrawSceneSettingsPanel();
 		
-		// Viewport panel with framebuffer texture
-		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-		// 先保存当前的视口大小
+		// 更新视口大小
+		// 先记录当前窗口大小，在绘制视口前更新m_ViewportSize
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 		ImGui::Begin("Scene");
-		ImVec2 ViewportPanelSize = ImGui::GetContentRegionAvail();
-		m_ViewportSize = { ViewportPanelSize.x, ViewportPanelSize.y };
+		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
+		if (m_ViewportSize != *((glm::vec2*)&viewportPanelSize) && viewportPanelSize.x > 0 && viewportPanelSize.y > 0)
+		{
+		    m_Framebuffer->Resize( (uint32_t)viewportPanelSize.x, (uint32_t)viewportPanelSize.y );
+		    m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
+		    m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		    m_CameraController.OnResize( viewportPanelSize.x, viewportPanelSize.y );
+		}
 		ImGui::End();
 		ImGui::PopStyleVar();
+
+		// Viewport panel with framebuffer texture
+		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
 		// 然后绘制视口面板
 		m_UIManager->DrawViewportPanel(textureID, m_ViewportSize);
 	}
