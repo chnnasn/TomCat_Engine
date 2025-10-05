@@ -2,6 +2,8 @@
 
 #include <glm/glm.hpp>
 
+#include "TomCat/Renderer/Camera.h"
+
 namespace TomCat {
 
 	struct Tag
@@ -32,12 +34,24 @@ namespace TomCat {
 
 	struct SpriteRenderer
 	{
-		glm::vec4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
+		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
 
 		SpriteRenderer() = default;
 		SpriteRenderer(const SpriteRenderer&) = default;
 		SpriteRenderer(const glm::vec4& color)
-			: Color(color) {
+			: _Color(color) {
+		}
+	};
+
+	struct C_Camera
+	{
+		TomCat::Camera _Camera;
+		bool Primary = true; // TODO: think about moving to Scene
+
+		C_Camera() = default;
+		C_Camera(const C_Camera&) = default;
+		C_Camera(const glm::mat4& projection)
+			: _Camera(projection) {
 		}
 	};
 

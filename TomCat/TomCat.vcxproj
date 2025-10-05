@@ -166,6 +166,7 @@
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
+    <ClInclude Include="src\TomCat\Renderer\Camera.h" />
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
     <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
