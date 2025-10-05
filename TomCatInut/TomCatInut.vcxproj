@@ -137,9 +137,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\panels\SceneHierarchyPanel.h" />
     <ClInclude Include="src\EditorLayer.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\panels\SceneHierarchyPanel.cpp" />
     <ClCompile Include="src\EditorLayer.cpp" />
     <ClCompile Include="src\TomCatInputApp.cpp" />
   </ItemGroup>
