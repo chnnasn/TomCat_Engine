@@ -14,6 +14,9 @@
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 
+#include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/Components.h"
+
 //渲染器
 #include "TomCat/Renderer/Renderer.h"
 #include "TomCat/Renderer/Renderer2D.h"

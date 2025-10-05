@@ -22,6 +22,9 @@
     <Filter Include="src\TomCat\Renderer">
       <UniqueIdentifier>{2A8A7466-96EB-5174-1F59-98268BB98833}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Scene">
+      <UniqueIdentifier>{21A2EF5D-0D9B-0EB0-36CD-F3342225EEBB}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\platform">
       <UniqueIdentifier>{41663D6D-2DC9-CC11-D64E-05C8C2909894}</UniqueIdentifier>
     </Filter>
@@ -149,6 +152,12 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h">
       <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Components.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Scene.h">
+      <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h">
       <Filter>src\platform\OpenGL</Filter>
@@ -1492,6 +1501,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp">
       <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Scene.cpp">
+      <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp">
       <Filter>src\platform\OpenGL</Filter>
