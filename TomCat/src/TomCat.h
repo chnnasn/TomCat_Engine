@@ -16,6 +16,7 @@
 
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Components.h"
+#include "TomCat/Scene/Entity.h"
 
 //渲染器
 #include "TomCat/Renderer/Renderer.h"

@@ -12,12 +12,12 @@ namespace TomCat {
 	public:
 		static void Init();
 
-		inline static Ref<spdlog::logger>& GetCoreLogger() { return s_CoreLogger;}
-		inline static Ref<spdlog::logger>& GetClientLogger() { return s_ClinetLogger;}
+		static Ref<spdlog::logger>& GetCoreLogger() { return s_CoreLogger; }
+		static Ref<spdlog::logger>& GetClientLogger() { return s_ClientLogger; }
 
 	private:
 		static Ref<spdlog::logger> s_CoreLogger;
-		static Ref<spdlog::logger> s_ClinetLogger;
+		static Ref<spdlog::logger> s_ClientLogger;
 
 	};
 }

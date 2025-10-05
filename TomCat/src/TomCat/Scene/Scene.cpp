@@ -3,6 +3,7 @@
 
 #include "Components.h"
 #include "TomCat/Renderer/Renderer2D.h"
+#include "Entity.h"
 
 #include <glm/glm.hpp>
 
@@ -49,22 +50,50 @@ namespace TomCat {
 	{
 	}
 
-	entt::entity Scene::CreateEntity()
+	Entity Scene::CreateEntity(const std::string& name)
 	{
-		return m_Registry.create();
+
+		Entity entity = { m_Registry.create(),this };
+		entity.AddComponent<Transform>();
+		auto& tag = entity.AddComponent<Tag>();
+		tag._Tag = name.empty() ? "Enitity" : name;
+		return entity;
 	}
 
 	void Scene::OnUpdate(Timestep ts)
 	{
-		auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
+		// Sprite
+		Camera* MainCamera = nullptr;
+		glm::mat4* cameraTransform = nullptr;
 
-		for (auto entity : group)
 		{
-			const auto& [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
+			auto view = m_Registry.view<Transform, C_Camera>();
 
-			Renderer2D::DrawQuad(transform, sprite.Color);
+			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
+				if (camera.Primary)
+				{
+					MainCamera = &camera._Camera;
+					cameraTransform = &transform._Transform;
+				}
+			});
 		}
 
+		if (MainCamera) 
+		{
+
+			Renderer2D::BeginScene(MainCamera->GetProjection(), *cameraTransform);
+
+			// SpriteRenderer
+			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
+
+			group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
+
+				Renderer2D::DrawQuad(transform, sprite._Color);
+
+			});
+
+			Renderer2D::EndScene();
+		}
 
 	}
 

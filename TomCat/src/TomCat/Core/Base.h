@@ -73,7 +73,7 @@
 
 #define BIT(x) (1<<x)
 
-#define TC_Bind_Event_Fn(x) std::bind(&x,this,std::placeholders::_1)
+#define TC_Bind_Event_Fn(fn) [this](auto&&... args) -> decltype(auto) { return this->fn(std::forward<decltype(args)>(args)...); }
 
 
 namespace TomCat {

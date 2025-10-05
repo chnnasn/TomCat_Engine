@@ -18,21 +18,22 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		m_CheckerboardTexture = TomCat::Texture2D::Create("assets/textures/Checkerboard.png");
+		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 
-		TomCat::FramebufferSpecification fbSpec;
+		FramebufferSpecification fbSpec;
 		fbSpec.Width = 1920;
 		fbSpec.Height = 1080;
-		m_Framebuffer = TomCat::Framebuffer::Create(fbSpec);
+		m_Framebuffer = Framebuffer::Create(fbSpec);
 		
 		// Setup UI style
 		m_UIManager->SetupImGuiStyle();
 
 		m_ActiveScene = CreateRef<Scene>();
-		auto square = m_ActiveScene->CreateEntity();
-		m_ActiveScene->Reg().emplace<Transform>(square);
-		m_ActiveScene->Reg().emplace<SpriteRenderer>(square, glm::vec4{0.0f,1.0f,0.0f,1.0f});
+		auto square = m_ActiveScene->CreateEntity("Square");
+		square.AddComponent<SpriteRenderer>(glm::vec4{0.0f,1.0f,0.0f,1.0f});
 
+		m_CameraEntity = m_ActiveScene->CreateEntity("Camera");
+		m_CameraEntity.AddComponent<Camera>(glm::ortho(-16.0f,16.0f,-9.0f,9.0f,-1.0f,1.0f));
 	}
 
 	void EditorLayer::OnDetach()
@@ -40,7 +41,7 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 	}
 
-	void EditorLayer::OnUpdate(TomCat::Timestep ts)
+	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -50,19 +51,28 @@ namespace TomCat {
 		if(m_SceneFocuse)
 			m_CameraController.OnUpdate(ts);
 
-		// 同步场景背景颜色
-		m_SceneBackgroundColor = m_UIManager->m_SceneBackgroundColor;
+		// 如果视口大小发生变化，更新帧缓冲区大小和摄像机的宽高比
+		if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f) {
+			// 更新帧缓冲区大小
+			FramebufferSpecification spec = m_Framebuffer->GetSpecification();
+			if (spec.Width != (uint32_t)m_ViewportSize.x || spec.Height != (uint32_t)m_ViewportSize.y) {
+				spec.Width = (uint32_t)m_ViewportSize.x;
+				spec.Height = (uint32_t)m_ViewportSize.y;
+				m_Framebuffer->Resize(spec.Width, spec.Height);
+				
+				// 更新摄像机的宽高比
+				float aspectRatio = m_ViewportSize.x / m_ViewportSize.y;
+				m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
+			}
+		}
 
 		// Render
-		TomCat::Renderer2D::ResetStats();
+		Renderer2D::ResetStats();
 		m_Framebuffer->Bind();
-		TomCat::RenderCommand::SetClearColor(m_SceneBackgroundColor);
-		TomCat::RenderCommand::Clear();
-
-		Renderer2D::BeginScene(m_CameraController.GetCamera());
+		RenderCommand::SetClearColor({0.1f,0.1f,0.1f,1.0f});
+		RenderCommand::Clear();
 
 		m_ActiveScene->OnUpdate(ts);
-		Renderer2D::EndScene();
 
 		m_Framebuffer->Unbind();
 
@@ -88,10 +98,18 @@ namespace TomCat {
 		
 		// Viewport panel with framebuffer texture
 		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
+		// 先保存当前的视口大小
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+		ImGui::Begin("Scene");
+		ImVec2 ViewportPanelSize = ImGui::GetContentRegionAvail();
+		m_ViewportSize = { ViewportPanelSize.x, ViewportPanelSize.y };
+		ImGui::End();
+		ImGui::PopStyleVar();
+		// 然后绘制视口面板
 		m_UIManager->DrawViewportPanel(textureID, m_ViewportSize);
 	}
 
-	void EditorLayer::OnEvent(TomCat::Event& e)
+	void EditorLayer::OnEvent(Event& e)
 	{
 		m_CameraController.OnEvent(e);
 	}
