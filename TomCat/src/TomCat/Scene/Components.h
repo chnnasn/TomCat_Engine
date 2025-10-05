@@ -60,23 +60,14 @@ namespace TomCat {
 	{
 		ScriptableEntity* Instance = nullptr;
 
-		void(*InstantiateFunction)(ScriptableEntity*&) = nullptr;
-		void(*DestroyInstanceFunction)(ScriptableEntity*&) = nullptr;
-
-		void(*OnCreateFunction)(ScriptableEntity*) = nullptr;
-		void(*OnDestroyFunction)(ScriptableEntity*) = nullptr;
-		void(*OnUpdateFunction)(ScriptableEntity*, Timestep) = nullptr;
+		ScriptableEntity* (*InstantiateScript)();
+		void (*DestroyScript)(NativeScript*);
 
 		template<typename T>
 		void Bind()
 		{
-			InstantiateFunction = [](ScriptableEntity*& instance) { instance = new T(); };
-			DestroyInstanceFunction = [](ScriptableEntity*& instance) { delete static_cast<T*>(instance); instance = nullptr; };
-
-
-			OnCreateFunction = [](ScriptableEntity* instance) { static_cast<T*>(instance)->OnCreate(); };
-			OnDestroyFunction = [](ScriptableEntity* instance) { static_cast<T*>(instance)->OnDestroy(); };
-			OnUpdateFunction = [](ScriptableEntity* instance, Timestep ts) { static_cast<T*>(instance)->OnUpdate(ts); };
+			InstantiateScript = []() { return static_cast<ScriptableEntity* >(new T()); };
+			DestroyScript = [](NativeScript* nsc) { delete nsc->Instance; nsc->Instance = nullptr; };
 		}
 	};
 
