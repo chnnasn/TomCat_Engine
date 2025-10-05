@@ -30,6 +30,7 @@ namespace TomCat {
 
 		// UI Manager
 		std::unique_ptr<EditorUIManager> m_UIManager;
+		bool m_SceneFocuse = false;
 	};
 
 }

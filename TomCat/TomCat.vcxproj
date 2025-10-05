@@ -155,7 +155,7 @@
     <ClInclude Include="src\TomCat\Core\Layer.h" />
     <ClInclude Include="src\TomCat\Core\LayerStack.h" />
     <ClInclude Include="src\TomCat\Core\Log.h" />
-    <ClInclude Include="src\TomCat\Core\MouseButtonCodes.h" />
+    <ClInclude Include="src\TomCat\Core\MouseCodes.h" />
     <ClInclude Include="src\TomCat\Core\Random.h" />
     <ClInclude Include="src\TomCat\Core\TimeStep.h" />
     <ClInclude Include="src\TomCat\Core\Window.h" />
@@ -184,7 +184,6 @@
     <ClInclude Include="src\platform\OpenGL\OpenGLShader.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLTexture.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h" />
-    <ClInclude Include="src\platform\Window\WindowsInput.h" />
     <ClInclude Include="src\platform\Window\WindowsWindow.h" />
     <ClInclude Include="src\tcpch.h" />
     <ClInclude Include="vendor\glm\glm\common.hpp" />

@@ -1,6 +1,6 @@
 #pragma once
 
-enum class MouseButtonCode
+enum class MouseCode
 {
     // 基本按钮
     ButtonLeft = 0,
