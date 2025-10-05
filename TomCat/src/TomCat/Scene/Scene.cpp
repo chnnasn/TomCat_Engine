@@ -9,41 +9,9 @@
 
 namespace TomCat {
 
-	static void DoMath(const glm::mat4& transform)
-	{
-
-	}
-
-	static void OnTransformConstruct(entt::registry& registry, entt::entity entity)
-	{
-
-	}
-
 	Scene::Scene()
 	{
-#if ENTT_EXAMPLE_CODE
-		entt::entity entity = m_Registry.create();
-		m_Registry.emplace<Transform>(entity, glm::mat4(1.0f));
 
-		m_Registry.on_construct<Transform>().connect<&OnTransformConstruct>();
-
-
-		if (m_Registry.has<Transform>(entity))
-			Transform& transform = m_Registry.get<Transform>(entity);
-
-
-		auto view = m_Registry.view<Transform>();
-		for (auto entity : view)
-		{
-			Transform& transform = view.get<Transform>(entity);
-		}
-
-		auto group = m_Registry.group<Transform>(entt::get<MeshComponent>);
-		for (auto entity : group)
-		{
-			auto& [transform, mesh] = group.get<Transform, MeshComponent>(entity);
-		}
-#endif
 	}
 
 	Scene::~Scene()
@@ -68,15 +36,12 @@ namespace TomCat {
 				{
 					if (!nsc.Instance)
 					{
-						nsc.InstantiateFunction(nsc.Instance);
+						nsc.Instance = nsc.InstantiateScript();
 						nsc.Instance->m_Entity = Entity{ entity, this };
-
-						if (nsc.OnCreateFunction)
-							nsc.OnCreateFunction(nsc.Instance);
+						nsc.Instance->OnCreate();
 					}
 
-					if (nsc.OnUpdateFunction)
-						nsc.OnUpdateFunction(nsc.Instance, ts);
+					nsc.Instance->OnUpdate(ts);
 				});
 		}
 
