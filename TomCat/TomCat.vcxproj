@@ -191,6 +191,7 @@
     <ClInclude Include="src\platform\Window\WindowsWindow.h" />
     <ClInclude Include="src\tcpch.h" />
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
+    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h" />
     <ClInclude Include="vendor\glm\glm\common.hpp" />
     <ClInclude Include="vendor\glm\glm\detail\_features.hpp" />
     <ClInclude Include="vendor\glm\glm\detail\_fixes.hpp" />
