@@ -4,6 +4,18 @@
 
 namespace TomCat {
 
+	struct Tag
+	{
+		std::string _Tag;
+
+		Tag() = default;
+		Tag(const Tag&) = default;
+		Tag(const std::string& tag)
+			: _Tag(tag) {
+		}
+	};
+
+
 	struct Transform
 	{
 		glm::mat4 _Transform{ 1.0f };

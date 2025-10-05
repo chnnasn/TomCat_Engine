@@ -3,6 +3,7 @@
 
 #include "Components.h"
 #include "TomCat/Renderer/Renderer2D.h"
+#include "Entity.h"
 
 #include <glm/glm.hpp>
 
@@ -49,9 +50,14 @@ namespace TomCat {
 	{
 	}
 
-	entt::entity Scene::CreateEntity()
+	Entity Scene::CreateEntity(const std::string& name)
 	{
-		return m_Registry.create();
+
+		Entity entity = { m_Registry.create(),this };
+		entity.AddComponent<Transform>();
+		auto& tag = entity.AddComponent<Tag>();
+		tag._Tag = name.empty() ? "Enitity" : name;
+		return entity;
 	}
 
 	void Scene::OnUpdate(Timestep ts)

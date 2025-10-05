@@ -29,9 +29,8 @@ namespace TomCat {
 		m_UIManager->SetupImGuiStyle();
 
 		m_ActiveScene = CreateRef<Scene>();
-		auto square = m_ActiveScene->CreateEntity();
-		m_ActiveScene->Reg().emplace<Transform>(square);
-		m_ActiveScene->Reg().emplace<SpriteRenderer>(square, glm::vec4{0.0f,1.0f,0.0f,1.0f});
+		auto square = m_ActiveScene->CreateEntity("Square");
+		square.AddComponent<SpriteRenderer>(glm::vec4{0.0f,1.0f,0.0f,1.0f});
 
 	}
 
@@ -51,7 +50,7 @@ namespace TomCat {
 			m_CameraController.OnUpdate(ts);
 
 		// 同步场景背景颜色
-		m_SceneBackgroundColor = m_UIManager->m_SceneBackgroundColor;
+		//m_SceneBackgroundColor = m_UIManager->m_SceneBackgroundColor;
 
 		// Render
 		TomCat::Renderer2D::ResetStats();
