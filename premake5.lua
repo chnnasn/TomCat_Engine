@@ -19,6 +19,7 @@ IncludeDir["Glad"] = "TomCat/vendor/Glad/include"
 IncludeDir["ImGui"] = "TomCat/vendor/ImGui"
 IncludeDir["glm"] = "TomCat/vendor/glm"
 IncludeDir["stb_image"] = "TomCat/vendor/stb_image"
+IncludeDir["entt"] = "TomCat/vendor/entt/include"
 
 group "Dependencies"
 	include "TomCat/vendor/GLFW"
@@ -63,7 +64,8 @@ project "TomCat"
 		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.Glad}",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.stb_image}"
+		"%{IncludeDir.stb_image}",
+		"%{IncludeDir.entt}"
 	}
 
 	
@@ -185,7 +187,8 @@ project "TomCatInut"
 		"TomCat/vendor/spdlog/include",
 		"TomCat/src",
 		"TomCat/vendor",
-		"%{IncludeDir.glm}"
+		"%{IncludeDir.glm}",
+		"%{IncludeDir.entt}"
 	}
 
 	links
