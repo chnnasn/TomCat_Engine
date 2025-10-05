@@ -97,4 +97,19 @@ namespace TomCat {
 
 	}
 
+	void Scene::OnViewportResize(uint32_t width, uint32_t height)
+	{
+		m_ViewportWidth = width;
+		m_ViewportHeight = height;
+
+		// Resize our non-FixedAspectRatio cameras
+		auto view = m_Registry.view<C_Camera>();
+		for (auto entity : view)
+		{
+			auto& camera = view.get<C_Camera>(entity);
+			if (!camera.FixedAspectRatio)
+				camera._Camera.SetViewportSize(width, height);
+		}
+
+	}
 }
