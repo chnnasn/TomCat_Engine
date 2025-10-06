@@ -29,6 +29,9 @@ namespace TomCat {
 		auto square = m_ActiveScene->CreateEntity("Green Square");
 		square.AddComponent<SpriteRenderer>(glm::vec4{ 0.0f, 1.0f, 0.0f, 1.0f });
 
+		auto redSquare = m_ActiveScene->CreateEntity("Red Square");
+		redSquare.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 0.0f, 0.0f, 1.0f });
+
 		m_SquareEntity = square;
 
 		m_CameraEntity = m_ActiveScene->CreateEntity("Camera Entity");
@@ -46,22 +49,22 @@ namespace TomCat {
 			bool m_IsDragging = false;
 			float m_LastMouseX = 0.0f;
 			float m_LastMouseY = 0.0f;
-			float m_MouseDragSensitivity = 0.002f; // 鼠标拖动灵敏度
+			float m_MouseDragSensitivity = 0.005f; // 鼠标拖动灵敏度
 
 
 		public:
-			void OnCreate()
+			virtual void OnCreate() override
 			{
 			}
 
-			void OnDestroy()
+			virtual void OnDestroy() override
 			{
 			}
 
-			void OnUpdate(Timestep ts)
+			virtual void OnUpdate(Timestep ts) override
 			{
 				auto& transform = GetComponent<Transform>()._Transform;
-				float speed = 1.0f;
+				float speed = 3.0f;
 
 				if (Input::IsMouseButtonPressed(MouseCode::ButtonMiddle))
 				{
