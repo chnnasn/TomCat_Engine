@@ -61,7 +61,7 @@ namespace TomCat {
 
 			virtual void OnUpdate(Timestep ts) override
 			{
-				auto& transform = GetComponent<Transform>()._Transform;
+				auto& translation = GetComponent<Transform>()._Translation;
 				float speed = 3.0f;
 
 				if (Input::IsMouseButtonPressed(MouseCode::ButtonMiddle))
@@ -79,8 +79,8 @@ namespace TomCat {
 						float deltaX = currentMouseX - m_LastMouseX;
 						float deltaY = currentMouseY - m_LastMouseY;
 
-						transform[3][0] += deltaX * -speed * m_MouseDragSensitivity;
-						transform[3][1] -= deltaY * -speed * m_MouseDragSensitivity;
+						translation.x += deltaX * -speed * m_MouseDragSensitivity;
+						translation.y -= deltaY * -speed * m_MouseDragSensitivity;
 
 						m_LastMouseX = currentMouseX;
 						m_LastMouseY = currentMouseY;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "SceneCamera.h"
 
@@ -22,16 +23,27 @@ namespace TomCat {
 
 	struct Transform
 	{
-		glm::mat4 _Transform{ 1.0f };
+		glm::vec3 _Translation{0.0f,0.0f,0.0f };
+		glm::vec3 _Rotation{0.0f,0.0f,0.0f };
+		glm::vec3 _Scale{1.0f,1.0f,1.0f };
 
 		Transform() = default;
 		Transform(const Transform&) = default;
-		Transform(const glm::mat4& transform)
-			: _Transform(transform) {
+		Transform(const glm::vec3& translation)
+			: _Translation(translation) {
 		}
 
-		operator glm::mat4& () { return _Transform; }
-		operator const glm::mat4& () const { return _Transform; }
+		glm::mat4 GetTransform() const
+		{
+			glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), _Rotation.x, { 1, 0, 0 })
+				* glm::rotate(glm::mat4(1.0f), _Rotation.y, { 0, 1, 0 })
+				* glm::rotate(glm::mat4(1.0f), _Rotation.z, { 0, 0, 1 });
+
+			return glm::translate(glm::mat4(1.0f), _Translation)
+				* rotation
+				* glm::scale(glm::mat4(1.0f), _Scale);
+		}
+
 	};
 
 	struct SpriteRenderer
