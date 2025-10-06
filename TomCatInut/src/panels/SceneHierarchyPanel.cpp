@@ -167,6 +167,15 @@ namespace TomCat {
 		ImGui::PopID();
 	}
 
+	// 通用的两列布局绘制函数（标签在左侧）
+	static void DrawProperty(const std::string& label, float columnWidth = 100.0f)
+	{
+		ImGui::Columns(2);
+		ImGui::SetColumnWidth(0, columnWidth);
+		ImGui::Text(label.c_str());
+		ImGui::NextColumn();
+	}
+
 	template<typename T, typename UIFunction>
 	static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
 	{
@@ -262,12 +271,18 @@ namespace TomCat {
 		DrawComponent<C_Camera>("Camera", entity, [](auto& component)
 		{
 				auto& camera = component._Camera;
+				float columnWidth = 100.0f;
 
-				ImGui::Checkbox("Primary", &component.Primary);
+				// Primary
+				DrawProperty("Primary", columnWidth);
+				ImGui::Checkbox("##Primary", &component.Primary);
+				ImGui::Columns(1);
 
+				// Projection Type
+				DrawProperty("Projection", columnWidth);
 				const char* projectionTypeStrings[] = { "Perspective", "Orthographic" };
 				const char* currentProjectionTypeString = projectionTypeStrings[(int)camera.GetProjectionType()];
-				if (ImGui::BeginCombo("Projection", currentProjectionTypeString))
+				if (ImGui::BeginCombo("##Projection", currentProjectionTypeString))
 				{
 					for (int i = 0; i < 2; i++)
 					{
@@ -284,43 +299,68 @@ namespace TomCat {
 
 					ImGui::EndCombo();
 				}
+				ImGui::Columns(1);
 
 				if (camera.GetProjectionType() == SceneCamera::ProjectionType::Perspective)
 				{
+					// Vertical FOV
+					DrawProperty("Vertical FOV", columnWidth);
 					float perspectiveVerticalFov = glm::degrees(camera.GetPerspectiveVerticalFOV());
-					if (ImGui::DragFloat("Vertical FOV", &perspectiveVerticalFov))
+					if (ImGui::DragFloat("##VerticalFOV", &perspectiveVerticalFov))
 						camera.SetPerspectiveVerticalFOV(glm::radians(perspectiveVerticalFov));
+					ImGui::Columns(1);
 
+					// Near
+					DrawProperty("Near", columnWidth);
 					float perspectiveNear = camera.GetPerspectiveNearClip();
-					if (ImGui::DragFloat("Near", &perspectiveNear))
+					if (ImGui::DragFloat("##PerspectiveNear", &perspectiveNear))
 						camera.SetPerspectiveNearClip(perspectiveNear);
+					ImGui::Columns(1);
 
+					// Far
+					DrawProperty("Far", columnWidth);
 					float perspectiveFar = camera.GetPerspectiveFarClip();
-					if (ImGui::DragFloat("Far", &perspectiveFar))
+					if (ImGui::DragFloat("##PerspectiveFar", &perspectiveFar))
 						camera.SetPerspectiveFarClip(perspectiveFar);
+					ImGui::Columns(1);
 				}
 
 				if (camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
 				{
+					// Size
+					DrawProperty("Size", columnWidth);
 					float orthoSize = camera.GetOrthographicSize();
-					if (ImGui::DragFloat("Size", &orthoSize))
+					if (ImGui::DragFloat("##OrthoSize", &orthoSize))
 						camera.SetOrthographicSize(orthoSize);
+					ImGui::Columns(1);
 
+					// Near
+					DrawProperty("Near", columnWidth);
 					float orthoNear = camera.GetOrthographicNearClip();
-					if (ImGui::DragFloat("Near", &orthoNear))
+					if (ImGui::DragFloat("##OrthoNear", &orthoNear))
 						camera.SetOrthographicNearClip(orthoNear);
+					ImGui::Columns(1);
 
+					// Far
+					DrawProperty("Far", columnWidth);
 					float orthoFar = camera.GetOrthographicFarClip();
-					if (ImGui::DragFloat("Far", &orthoFar))
+					if (ImGui::DragFloat("##OrthoFar", &orthoFar))
 						camera.SetOrthographicFarClip(orthoFar);
+					ImGui::Columns(1);
 
-					ImGui::Checkbox("Fixed Aspect Ratio", &component.FixedAspectRatio);
+					// Fixed Aspect Ratio
+					DrawProperty("Fixed Aspect Ratio", columnWidth);
+					ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio);
+					ImGui::Columns(1);
 				}
 		});
 
 		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [](auto& component)
 		{
-				ImGui::ColorEdit4("Color", glm::value_ptr(component._Color));
+				float columnWidth = 100.0f;
+				DrawProperty("Color", columnWidth);
+				ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color));
+				ImGui::Columns(1);
 		});
 
 	}
