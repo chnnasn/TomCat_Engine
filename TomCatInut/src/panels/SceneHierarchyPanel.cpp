@@ -158,6 +158,17 @@ namespace TomCat {
 				ImGui::TreePop();
 			}
 		}
+
+
+		if (entity.HasComponent<SpriteRenderer>())
+		{
+			if (ImGui::TreeNodeEx((void*)typeid(SpriteRenderer).hash_code(), ImGuiTreeNodeFlags_DefaultOpen, "Sprite Renderer"))
+			{
+				auto& src = entity.GetComponent<SpriteRenderer>();
+				ImGui::ColorEdit4("Color", glm::value_ptr(src._Color));
+				ImGui::TreePop();
+			}
+		}
 	}
 
 }

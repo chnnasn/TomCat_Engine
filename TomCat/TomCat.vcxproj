@@ -181,6 +181,8 @@
     <ClInclude Include="src\TomCat\Scene\Components.h" />
     <ClInclude Include="src\TomCat\Scene\Entity.h" />
     <ClInclude Include="src\TomCat\Scene\Scene.h" />
+    <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
+    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLFramebuffer.h" />
@@ -190,8 +192,6 @@
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h" />
     <ClInclude Include="src\platform\Window\WindowsWindow.h" />
     <ClInclude Include="src\tcpch.h" />
-    <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
-    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h" />
     <ClInclude Include="vendor\glm\glm\common.hpp" />
     <ClInclude Include="vendor\glm\glm\detail\_features.hpp" />
     <ClInclude Include="vendor\glm\glm\detail\_fixes.hpp" />
@@ -634,6 +634,7 @@
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
     <ClCompile Include="src\TomCat\Scene\Entity.cpp" />
     <ClCompile Include="src\TomCat\Scene\Scene.cpp" />
+    <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLContext.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp" />
@@ -646,7 +647,6 @@
     <ClCompile Include="src\tcpch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
     <ClCompile Include="vendor\stb_image\stb_image.cpp" />
   </ItemGroup>
   <ItemGroup>

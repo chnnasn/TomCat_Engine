@@ -1,7 +1,15 @@
-﻿  Z_Examples2D.cpp
-D:\github\TomCat_Engine\TomCat\src\TomCat\Debug\Instrumentor.h(113,22): warning C4267: “初始化”: 从“size_t”转换到“uint32_t”，可能丢失数据
-  (编译源文件“src/Z_Examples2D.cpp”)
+﻿  ExampleLayer.cpp
+D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“src/ExampleLayer.cpp”)
+      D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
   
+D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“src/ExampleLayer.cpp”)
+      D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+  Z_Examples2D.cpp
 D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
   (编译源文件“src/Z_Examples2D.cpp”)
       D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(25,9):
@@ -12,4 +20,15 @@ D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(75,9): warning C4005: “IMG
       D:\github\TomCat_Engine\TomCat\vendor\imgui\imgui.h(26,9):
       参见“IMGUI_VERSION_NUM”的前一个定义
   
+  Z_ExamplesApp.cpp
+  正在生成代码...
+    正在创建库 D:\github\TomCat_Engine\Z_Examples\..\bin\-windows-x86_64\Z_Examples\Z_Examples.lib 和对象 D:\github\TomCat_Engine\Z_Examples\..\bin\-windows-x86_64\Z_Examples\Z_Examples.exp
+LIBCMTD.lib(initializers.obj) : warning LNK4098: 默认库“libcmt.lib”与其他库的使用冲突；请使用 /NODEFAULTLIB:library
+LINK : warning LNK4217: 符号“?Begin@ImGui@@YA_NPEBDPEA_NH@Z (bool __cdecl ImGui::Begin(char const *,bool *,int))”(在“ ImGui.lib(imgui.obj)”中定义)已由“ExampleLayer.obj”(函数“"public: virtual void __cdecl ExampleLayer::OnImGuiRender(void)" (?OnImGuiRender@ExampleLayer@@UEAAXXZ)”中)导入
+LINK : warning LNK4286: 符号“?Begin@ImGui@@YA_NPEBDPEA_NH@Z (bool __cdecl ImGui::Begin(char const *,bool *,int))”(在“ImGui.lib(imgui.obj)”中定义)已由“Z_Examples2D.obj”导入
+LINK : warning LNK4217: 符号“?End@ImGui@@YAXXZ (void __cdecl ImGui::End(void))”(在“ ImGui.lib(imgui.obj)”中定义)已由“ExampleLayer.obj”(函数“"public: virtual void __cdecl ExampleLayer::OnImGuiRender(void)" (?OnImGuiRender@ExampleLayer@@UEAAXXZ)”中)导入
+LINK : warning LNK4286: 符号“?End@ImGui@@YAXXZ (void __cdecl ImGui::End(void))”(在“ImGui.lib(imgui.obj)”中定义)已由“Z_Examples2D.obj”导入
+LINK : warning LNK4217: 符号“?ColorEdit3@ImGui@@YA_NPEBDQEAMH@Z (bool __cdecl ImGui::ColorEdit3(char const *,float * const,int))”(在“ ImGui.lib(imgui_widgets.obj)”中定义)已由“ExampleLayer.obj”(函数“"public: virtual void __cdecl ExampleLayer::OnImGuiRender(void)" (?OnImGuiRender@ExampleLayer@@UEAAXXZ)”中)导入
+LINK : warning LNK4217: 符号“?Text@ImGui@@YAXPEBDZZ (void __cdecl ImGui::Text(char const *,...))”(在“ ImGui.lib(imgui_widgets.obj)”中定义)已由“Z_Examples2D.obj”(函数“"public: virtual void __cdecl Z_Examples2D::OnImGuiRender(void)" (?OnImGuiRender@Z_Examples2D@@UEAAXXZ)”中)导入
+LINK : warning LNK4217: 符号“?ColorEdit4@ImGui@@YA_NPEBDQEAMH@Z (bool __cdecl ImGui::ColorEdit4(char const *,float * const,int))”(在“ ImGui.lib(imgui_widgets.obj)”中定义)已由“Z_Examples2D.obj”(函数“"public: virtual void __cdecl Z_Examples2D::OnImGuiRender(void)" (?OnImGuiRender@Z_Examples2D@@UEAAXXZ)”中)导入
   Z_Examples.vcxproj -> D:\github\TomCat_Engine\bin\-windows-x86_64\Z_Examples\Z_Examples.exe
