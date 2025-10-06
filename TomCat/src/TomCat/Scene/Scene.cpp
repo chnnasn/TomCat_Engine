@@ -48,7 +48,7 @@ namespace TomCat {
 
 		// Sprite
 		Camera* MainCamera = nullptr;
-		glm::mat4* cameraTransform = nullptr;
+		glm::mat4 cameraTransform;
 
 		{
 			auto view = m_Registry.view<Transform, C_Camera>();
@@ -57,7 +57,7 @@ namespace TomCat {
 				if (camera.Primary)
 				{
 					MainCamera = &camera._Camera;
-					cameraTransform = &transform._Transform;
+					cameraTransform = transform.GetTransform();
 				}
 			});
 		}
@@ -65,14 +65,14 @@ namespace TomCat {
 		if (MainCamera) 
 		{
 
-			Renderer2D::BeginScene(MainCamera->GetProjection(), *cameraTransform);
+			Renderer2D::BeginScene(MainCamera->GetProjection(), cameraTransform);
 
 			// SpriteRenderer
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
 
 			group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
 
-				Renderer2D::DrawQuad(transform, sprite._Color);
+				Renderer2D::DrawQuad(transform.GetTransform(), sprite._Color);
 
 			});
 
