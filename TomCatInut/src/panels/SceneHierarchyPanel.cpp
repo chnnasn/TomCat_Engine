@@ -173,11 +173,32 @@ namespace TomCat {
 	static void DrawProperty(const std::string& label, float columnWidth)
 	{
 		ImGui::Columns(2);
-		ImGui::SetColumnWidth(0, columnWidth);
-		ImGui::Text(label.c_str());
+		ImGui::SetColumnWidth(0, columnWidth + 40.0f);
+
+		// 保存当前光标位置
+		ImVec2 initialCursorPos = ImGui::GetCursorPos();
+
+		// 计算文本区域的可用宽度
+		float textWidth = ImGui::GetColumnWidth() - ImGui::GetStyle().FramePadding.x * 2;
+		ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + textWidth);
+		ImGui::TextWrapped("%s", label.c_str());
+		ImGui::PopTextWrapPos();
+
+		// 计算标签的实际高度
+		float labelHeight = ImGui::GetItemRectSize().y;
+		float singleLineHeight = ImGui::GetTextLineHeightWithSpacing();
+
 		ImGui::NextColumn();
+
+		// 如果标签是多行的，计算垂直偏移量使控件居中
+		if (labelHeight > singleLineHeight) {
+			float verticalOffset = (labelHeight - singleLineHeight) * 0.5f;
+			ImGui::SetCursorPosY(initialCursorPos.y + verticalOffset);
+		}
+
 		// 设置右侧控件宽度并右对齐
 		ImGui::SetNextItemWidth(-1);
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX());
 	}
 
 	template<typename T, typename UIFunction>
