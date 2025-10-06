@@ -9,6 +9,9 @@
 
 namespace TomCat {
 
+	// 前向声明DrawProperty函数
+	static void DrawProperty(const std::string& label, float columnWidth = 100.0f);
+
 	SceneHierarchyPanel::SceneHierarchyPanel(const Ref<Scene>& context)
 	{
 		SetContext(context);
@@ -108,12 +111,11 @@ namespace TomCat {
 
 		ImGui::PushID(label.c_str());
 
-		ImGui::Columns(2);
-		ImGui::SetColumnWidth(0, columnWidth);
-		ImGui::Text(label.c_str());
-		ImGui::NextColumn();
+		// 使用DrawProperty函数设置标签在左侧并右对齐
+		DrawProperty(label, columnWidth);
 
-		ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
+		// 为三个滑块设置宽度
+		ImGui::PushMultiItemsWidths(3, ImGui::GetContentRegionAvail().x);
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{ 0, 0 });
 
 		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
@@ -167,13 +169,15 @@ namespace TomCat {
 		ImGui::PopID();
 	}
 
-	// 通用的两列布局绘制函数（标签在左侧）
-	static void DrawProperty(const std::string& label, float columnWidth = 100.0f)
+	// 通用的两列布局绘制函数（标签在左侧，控件右对齐）
+	static void DrawProperty(const std::string& label, float columnWidth)
 	{
 		ImGui::Columns(2);
 		ImGui::SetColumnWidth(0, columnWidth);
 		ImGui::Text(label.c_str());
 		ImGui::NextColumn();
+		// 设置右侧控件宽度并右对齐
+		ImGui::SetNextItemWidth(-1);
 	}
 
 	template<typename T, typename UIFunction>
