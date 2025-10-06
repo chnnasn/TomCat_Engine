@@ -28,6 +28,11 @@ namespace TomCat {
 		return entity;
 	}
 
+	void Scene::DestroyEntity(Entity entity)
+	{
+		m_Registry.destroy(entity);
+	}
+
 	void Scene::OnUpdate(Timestep ts)
 	{
 
@@ -95,5 +100,37 @@ namespace TomCat {
 				camera._Camera.SetViewportSize(width, height);
 		}
 
+	}
+
+	template<typename T>
+	void Scene::OnComponentAdded(Entity entity, T& component)
+	{
+		static_assert(false);
+	}
+
+	template<>
+	void Scene::OnComponentAdded<Transform>(Entity entity, Transform& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<C_Camera>(Entity entity, C_Camera& component)
+	{
+		component._Camera.SetViewportSize(m_ViewportWidth, m_ViewportHeight);
+	}
+
+	template<>
+	void Scene::OnComponentAdded<SpriteRenderer>(Entity entity, SpriteRenderer& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<Tag>(Entity entity, Tag& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<NativeScript>(Entity entity, NativeScript& component)
+	{
 	}
 }
