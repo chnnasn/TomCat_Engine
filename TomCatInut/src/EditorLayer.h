@@ -26,7 +26,6 @@ namespace TomCat {
 		Ref<Framebuffer> m_Framebuffer;
 
 		Ref<Scene> m_ActiveScene;
-		Entity m_SquareEntity;
 		Entity m_CameraEntity;
 		Entity m_SecondCamera;
 

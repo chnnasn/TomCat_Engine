@@ -7,8 +7,6 @@
 #include <string>
 #include <thread>
 
-
-
 namespace TomCat {
 
 	using FloatingPointMicroseconds = std::chrono::duration<double, std::micro>;

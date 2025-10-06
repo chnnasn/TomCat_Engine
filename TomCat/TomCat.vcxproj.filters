@@ -120,6 +120,9 @@
     <ClInclude Include="src\TomCat\Renderer\Buffer.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Camera.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
@@ -156,7 +159,16 @@
     <ClInclude Include="src\TomCat\Scene\Components.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Entity.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Scene.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SceneCamera.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h">
@@ -1443,10 +1455,6 @@
     <ClInclude Include="vendor\stb_image\stb_image.h">
       <Filter>vendor\stb_image</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Scene\Entity.h" />
-    <ClInclude Include="src\TomCat\Renderer\Camera.h" />
-    <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
-    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
@@ -1506,7 +1514,13 @@
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Entity.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Scene\Scene.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp">
@@ -1542,7 +1556,5 @@
     <ClCompile Include="vendor\stb_image\stb_image.cpp">
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\Scene\Entity.cpp" />
-    <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
   </ItemGroup>
 </Project>

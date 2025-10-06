@@ -130,7 +130,8 @@ project "Z_Examples"
 		"TomCat/vendor/spdlog/include",
 		"TomCat/src",
 		"TomCat/vendor",
-		"%{IncludeDir.glm}"
+		"%{IncludeDir.glm}",
+		"%{IncludeDir.entt}"
 	}
 
 	links
