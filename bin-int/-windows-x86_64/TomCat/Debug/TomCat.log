@@ -1,5 +1,4 @@
-﻿  Framebuffer.cpp
-  OpenGLFramebuffer.cpp
+﻿  OpenGLFramebuffer.cpp
 D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(110,43): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
   (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
   
@@ -17,6 +16,13 @@ D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(146,152
   
 D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(168,41): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
   (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+  OpenGLVertexArray.cpp
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp(82,6): warning C4312: “类型强制转换”: 从“const uint32_t”转换到更大的“const void *”
+  (编译源文件“/src/platform/OpenGL/OpenGLVertexArray.cpp”)
+  
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp(97,6): warning C4312: “类型强制转换”: 从“const uint32_t”转换到更大的“const void *”
+  (编译源文件“/src/platform/OpenGL/OpenGLVertexArray.cpp”)
   
   正在生成代码...
 Window.obj : warning LNK4006: "public: static class std::unique_ptr<class TomCat::Window,struct std::default_delete<class TomCat::Window> > __cdecl TomCat::Window::Create(struct TomCat::WindowProps const &)" (?Create@Window@TomCat@@SA?AV?$unique_ptr@VWindow@TomCat@@U?$default_delete@VWindow@TomCat@@@std@@@std@@AEBUWindowProps@2@@Z) 已在 WindowsWindow.obj 中定义；已忽略第二个定义
