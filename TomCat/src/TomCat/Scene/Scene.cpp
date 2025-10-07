@@ -78,7 +78,7 @@ namespace TomCat {
 			{
 				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
 
-				Renderer2D::DrawQuad(transform.GetTransform(), sprite._Color);
+				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
 			}
 
 			Renderer2D::EndScene();
@@ -95,7 +95,7 @@ namespace TomCat {
 
 		group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
 
-			Renderer2D::DrawQuad(transform.GetTransform(), sprite._Color);
+			Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
 
 			});
 
