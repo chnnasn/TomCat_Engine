@@ -168,6 +168,7 @@
     <ClInclude Include="src\TomCat\Math\Math.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\TomCat\Renderer\Camera.h" />
+    <ClInclude Include="src\TomCat\Renderer\EditorCamera.h" />
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
     <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
@@ -626,6 +627,7 @@
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
     <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp" />

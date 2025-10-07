@@ -1471,6 +1471,7 @@
       <Filter>vendor\stb_image</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Math\Math.h" />
+    <ClInclude Include="src\TomCat\Renderer\EditorCamera.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
@@ -1582,5 +1583,6 @@
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp" />
   </ItemGroup>
 </Project>

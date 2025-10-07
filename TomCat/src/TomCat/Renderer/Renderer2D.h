@@ -6,6 +6,8 @@
 
 #include "TomCat/Renderer/Camera.h"
 
+#include "TomCat/Renderer/EditorCamera.h"
+
 namespace TomCat {
 
 	class Renderer2D
@@ -15,7 +17,8 @@ namespace TomCat {
 		static void Shutdown();
 
 		static void BeginScene(const Camera& camera, const glm::mat4& transform);
-		static void BeginScene(const OrthographicCamera& camera);
+		static void BeginScene(const EditorCamera& camera);
+		static void BeginScene(const OrthographicCamera& camera);//todo remove
 		static void EndScene();
 		static void Flush();
 
@@ -45,7 +48,8 @@ namespace TomCat {
 		static void ResetStats();
 		static Statistics GetStats();
 	private:
-		static void FlushAndReset();
+		static void StartBatch();
+		static void NextBatch();
 	};
 
 }
