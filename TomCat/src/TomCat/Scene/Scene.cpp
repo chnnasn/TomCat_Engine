@@ -33,7 +33,9 @@ namespace TomCat {
 		m_Registry.destroy(entity);
 	}
 
-	void Scene::OnUpdate(Timestep ts)
+
+
+	void Scene::OnUpdateRuntime(Timestep ts)
 	{
 
 		{
@@ -69,21 +71,35 @@ namespace TomCat {
 
 		if (MainCamera) 
 		{
+			Renderer2D::BeginScene(*MainCamera, cameraTransform);
 
-			Renderer2D::BeginScene(MainCamera->GetProjection(), cameraTransform);
-
-			// SpriteRenderer
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
-
-			group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
+			for (auto entity : group)
+			{
+				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
 
 				Renderer2D::DrawQuad(transform.GetTransform(), sprite._Color);
-
-			});
+			}
 
 			Renderer2D::EndScene();
 		}
 
+	}
+
+	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
+	{
+		Renderer2D::BeginScene(camera);
+
+		// SpriteRenderer
+		auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
+
+		group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
+
+			Renderer2D::DrawQuad(transform.GetTransform(), sprite._Color);
+
+			});
+
+		Renderer2D::EndScene();
 	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)

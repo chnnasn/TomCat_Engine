@@ -3,6 +3,8 @@
 #include "TomCat.h"
 #include "Panels/SceneHierarchyPanel.h"
 
+#include "TomCat/Renderer/EditorCamera.h"
+
 namespace TomCat {
 
 	class EditorLayer : public Layer
@@ -36,6 +38,8 @@ namespace TomCat {
 		Entity m_SecondCamera;
 
 		bool m_PrimaryCamera = true;
+
+		EditorCamera m_EditorCamera;
 
 		Ref<Texture2D> m_CheckerboardTexture;
 
