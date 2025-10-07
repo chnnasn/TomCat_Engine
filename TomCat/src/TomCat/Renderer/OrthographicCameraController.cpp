@@ -16,7 +16,7 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		// 鼠标中键拖动控制
-		if (Input::IsMouseButtonPressed(MouseCode::ButtonMiddle))
+		if (Input::IsMouseButtonPressed(Mouse::ButtonMiddle))
 		{
 			auto [currentMouseX, currentMouseY] = Input::GetMousePositon();
 
@@ -51,7 +51,7 @@ namespace TomCat {
 
 		if (m_Rotation)
 		{
-			if (Input::IsKeyPressed(KeyCode::E))
+			if (Input::IsKeyPressed(Key::E))
 				m_CameraRotation -= m_CameraRotationSpeed * ts;
 
 			if (m_CameraRotation > 180.0f)

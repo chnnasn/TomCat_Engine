@@ -18,6 +18,12 @@ namespace TomCat {
 		virtual void OnImGuiRender() override;
 		void OnEvent(Event& e) override;
 	private:
+		bool OnKeyPressed(KeyPressedEvent& e);
+
+		void NewScene();
+		void OpenScene();
+		void SaveSceneAs();
+	private:
 		TomCat::OrthographicCameraController m_CameraController;
 
 		// Temp
