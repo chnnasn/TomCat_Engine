@@ -314,13 +314,19 @@ namespace TomCat {
 		{
 			if (ImGui::MenuItem("Camera"))
 			{
-				m_SelectionContext.AddComponent<C_Camera>();
+				if (!m_SelectionContext.HasComponent<C_Camera>())
+					m_SelectionContext.AddComponent<C_Camera>();
+				else
+					TC_Core_Warn("This entity already has the Camera Component!");
 				ImGui::CloseCurrentPopup();
 			}
 
 			if (ImGui::MenuItem("Sprite Renderer"))
 			{
-				m_SelectionContext.AddComponent<SpriteRenderer>();
+				if (!m_SelectionContext.HasComponent<SpriteRenderer>())
+					m_SelectionContext.AddComponent<SpriteRenderer>();
+				else
+					TC_Core_Warn("This entity already has the Sprite Renderer Component!");
 				ImGui::CloseCurrentPopup();
 			}
 
