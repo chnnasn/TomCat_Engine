@@ -21,6 +21,7 @@ IncludeDir["glm"] = "TomCat/vendor/glm"
 IncludeDir["stb_image"] = "TomCat/vendor/stb_image"
 IncludeDir["entt"] = "TomCat/vendor/entt/include"
 IncludeDir["yaml_cpp"] = "TomCat/vendor/yaml-cpp/include"
+IncludeDir["ImGuizmo"] = "TomCat/vendor/ImGuizmo"
 
 group "Dependencies"
 	include "TomCat/vendor/GLFW"
@@ -48,7 +49,10 @@ project "TomCat"
 		"%{prj.name}/vendor/glm/glm/**.hpp",
 		"%{prj.name}/vendor/glm/glm/**.inl",
 		"%{prj.name}/vendor/stb_image/**.h",
-		"%{prj.name}/vendor/stb_image/**.cpp"
+		"%{prj.name}/vendor/stb_image/**.cpp",
+
+		"%{prj.name}/vendor/ImGuizmo/ImGuizmo.h",
+		"%{prj.name}/vendor/ImGuizmo/ImGuizmo.cpp"
 	}
 
 
@@ -68,7 +72,8 @@ project "TomCat"
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.stb_image}",
 		"%{IncludeDir.entt}",
-		"%{IncludeDir.yaml_cpp}"
+		"%{IncludeDir.yaml_cpp}",
+		"%{IncludeDir.ImGuizmo}"
 	}
 
 	
@@ -82,6 +87,8 @@ project "TomCat"
 	}
 	buildoptions "/utf-8"
 
+filter "files:TomCat/vendor/ImGuizmo/**.cpp"
+    flags { "NoPCH" }
 
 
 	filter "system:windows"
@@ -193,7 +200,8 @@ project "TomCatInut"
 		"TomCat/src",
 		"TomCat/vendor",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
+		"%{IncludeDir.entt}",
+		"%{IncludeDir.ImGuizmo}"
 	}
 
 	links

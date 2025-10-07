@@ -13,3 +13,6 @@
 [submodule "TomCat/vendor/yaml-cpp"]
 	path = TomCat/vendor/yaml-cpp
 	url = https://github.com/TheCherno/yaml-cpp
+[submodule "TomCat/vendor/ImGuizmo"]
+	path = TomCat/vendor/ImGuizmo
+	url = https://github.com/TheCherno/ImGuizmo

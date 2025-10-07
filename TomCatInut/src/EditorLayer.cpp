@@ -6,6 +6,10 @@
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
 
+#include "ImGuizmo.h"
+
+#include "TomCat/Math/Math.h"
+
 
 namespace TomCat {
 
@@ -163,7 +167,7 @@ namespace TomCat {
 			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 		}
 
-	
+
 		if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
 			window_flags |= ImGuiWindowFlags_NoBackground;
 
@@ -194,7 +198,7 @@ namespace TomCat {
 			if (ImGui::BeginMenu("File"))
 			{
 
-				if (ImGui::MenuItem("New","Ctrl + N"))
+				if (ImGui::MenuItem("New", "Ctrl + N"))
 				{
 					NewScene();
 				}
@@ -204,7 +208,7 @@ namespace TomCat {
 					OpenScene();
 				}
 
-				if (ImGui::MenuItem("Save As...", "Ctrl + S"))
+				if (ImGui::MenuItem("Save As...", "Ctrl + Shift + S"))
 				{
 					SaveSceneAs();
 				}
@@ -235,13 +239,63 @@ namespace TomCat {
 
 		m_ViewportFocused = ImGui::IsWindowFocused();
 		m_ViewportHovered = ImGui::IsWindowHovered();
-		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused || !m_ViewportHovered);
+		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
 
 		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
 		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
 		ImGui::Image((void*)textureID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+
+		//Gizmos
+		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+
+		if (selectedEntity && m_GizmoType != -1)
+		{
+			ImGuizmo::SetOrthographic(false);
+			ImGuizmo::SetDrawlist();
+			float windowWidth = (float)ImGui::GetWindowWidth();
+			float windowHeight = (float)ImGui::GetWindowHeight();
+
+			ImGuizmo::SetRect(ImGui::GetWindowPos().x, ImGui::GetWindowPos().y,windowWidth,windowHeight);
+
+			//Camera
+			auto cameraEntity = m_ActiveScene->GetPrimaryCameraEntity();
+			const auto& camera = cameraEntity.GetComponent<C_Camera>()._Camera;
+			const glm::mat4& cameraProjection = camera.GetProjection();
+			glm::mat4 cameraView = glm::inverse(cameraEntity.GetComponent<Transform>().GetTransform());
+
+			// Entity transform
+			auto& tc = selectedEntity.GetComponent<Transform>();
+			glm::mat4 transform = tc.GetTransform();
+
+			// Snapping
+			bool snap = Input::IsKeyPressed(Key::LeftControl);
+			float snapValue = 0.5f; // Snap to 0.5m for translation/scale
+			// Snap to 45 degrees for rotation
+			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
+				snapValue = 45.0f;
+
+			float snapValues[3] = { snapValue, snapValue, snapValue };
+
+			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+				(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
+				nullptr, snap ? snapValues : nullptr);
+
+			if (ImGuizmo::IsUsing())
+			{
+				glm::vec3 translation, rotation, scale;
+				Math::DecomposeTransform(transform, translation, rotation, scale);
+
+				glm::vec3 deltaRotation = rotation - tc._Rotation;
+				tc._Translation = translation;
+				tc._Rotation += deltaRotation;
+				tc._Scale = scale;
+			}
+		}
+
+
+
 		ImGui::End();
 		ImGui::PopStyleVar();
 
@@ -287,6 +341,20 @@ namespace TomCat {
 
 			break;
 		}
+
+		// Gizmos
+		case Key::Q:
+			m_GizmoType = -1;
+			break;
+		case Key::W:
+			m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+			break;
+		case Key::E:
+			m_GizmoType = ImGuizmo::OPERATION::ROTATE;
+			break;
+		case Key::R:
+			m_GizmoType = ImGuizmo::OPERATION::SCALE;
+			break;
 		}
 	}
 
@@ -299,7 +367,7 @@ namespace TomCat {
 
 	void EditorLayer::OpenScene()
 	{
-		std::string filepath = FileDialogs::OpenFile("Hazel Scene (*.hazel)\0*.hazel\0");
+		std::string filepath = FileDialogs::OpenFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
 		if (!filepath.empty())
 		{
 			m_ActiveScene = CreateRef<Scene>();
@@ -313,10 +381,11 @@ namespace TomCat {
 
 	void EditorLayer::SaveSceneAs()
 	{
-		std::string filepath = FileDialogs::SaveFile("Hazel Scene (*.hazel)\0*.hazel\0");
+		std::string filepath = FileDialogs::SaveFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
 		if (!filepath.empty())
 		{
 			SceneSerializer serializer(m_ActiveScene);
 			serializer.Serialize(filepath);
 		}
+	}
 }
