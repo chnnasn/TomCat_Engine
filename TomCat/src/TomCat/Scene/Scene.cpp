@@ -102,6 +102,22 @@ namespace TomCat {
 
 	}
 
+	Entity Scene::GetPrimaryCameraEntity()
+	{
+		auto view = m_Registry.view<C_Camera>();
+
+		for (auto entity:view)
+		{
+			const auto& camera = view.get<C_Camera>(entity);
+
+			if (camera.Primary)
+				return Entity(entity,this);
+
+		}
+
+		return {};
+	}
+
 	template<typename T>
 	void Scene::OnComponentAdded(Entity entity, T& component)
 	{
