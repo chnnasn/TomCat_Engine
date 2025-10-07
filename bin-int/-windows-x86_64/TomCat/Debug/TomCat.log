@@ -1,18 +1,21 @@
 ﻿  Framebuffer.cpp
   OpenGLFramebuffer.cpp
-D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(98,43): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(110,43): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
   (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
   
-D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(107,44): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(119,44): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
   (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
   
-D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(123,89): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(135,89): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
   (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
   
-D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(131,137): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(143,146): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
   (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
   
-D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(153,41): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(146,152): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(168,41): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
   (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
   
   正在生成代码...
