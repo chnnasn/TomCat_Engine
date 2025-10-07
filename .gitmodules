@@ -10,3 +10,6 @@
 [submodule "TomCat/vendor/glm"]
 	path = TomCat/vendor/glm
 	url = https://github.com/g-truc/glm
+[submodule "TomCat/vendor/yaml-cpp"]
+	path = TomCat/vendor/yaml-cpp
+	url = https://github.com/TheCherno/yaml-cpp

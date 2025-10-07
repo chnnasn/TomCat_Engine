@@ -20,11 +20,13 @@ IncludeDir["ImGui"] = "TomCat/vendor/ImGui"
 IncludeDir["glm"] = "TomCat/vendor/glm"
 IncludeDir["stb_image"] = "TomCat/vendor/stb_image"
 IncludeDir["entt"] = "TomCat/vendor/entt/include"
+IncludeDir["yaml_cpp"] = "TomCat/vendor/yaml-cpp/include"
 
 group "Dependencies"
 	include "TomCat/vendor/GLFW"
 	include "TomCat/vendor/Glad"
 	include "TomCat/vendor/ImGui"
+	include "TomCat/vendor/yaml-cpp"
 group ""
 project "TomCat"
 	location "TomCat"
@@ -65,7 +67,8 @@ project "TomCat"
 		"%{IncludeDir.Glad}",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.stb_image}",
-		"%{IncludeDir.entt}"
+		"%{IncludeDir.entt}",
+		"%{IncludeDir.yaml_cpp}"
 	}
 
 	
@@ -74,6 +77,7 @@ project "TomCat"
 		"GLFW",
 		"Glad",
 		"ImGui",
+		"yaml-cpp",
 		"opengl32.lib"
 	}
 	buildoptions "/utf-8"

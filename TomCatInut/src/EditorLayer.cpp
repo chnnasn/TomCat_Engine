@@ -3,6 +3,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "TomCat/Scene/SceneSerializer.h"
 
 
 namespace TomCat {
@@ -24,6 +25,8 @@ namespace TomCat {
 		m_Framebuffer = Framebuffer::Create(fbSpec);
 
 		m_ActiveScene = CreateRef<Scene>();
+
+#if 0
 
 		// Entity
 		auto square = m_ActiveScene->CreateEntity("Green Square");
@@ -96,7 +99,7 @@ namespace TomCat {
 
 		m_CameraEntity.AddComponent<NativeScript>().Bind<CameraController>();
 		m_SecondCamera.AddComponent<NativeScript>().Bind<CameraController>();
-
+#endif
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 	}
 
@@ -189,6 +192,18 @@ namespace TomCat {
 		{
 			if (ImGui::BeginMenu("File"))
 			{
+
+				if (ImGui::MenuItem("Serialize"))
+				{
+					SceneSerializer serializer(m_ActiveScene);
+					serializer.Serialize("assets/scenes/Example.TomCat");
+				}
+
+				if (ImGui::MenuItem("Deserialize"))
+				{
+					SceneSerializer serializer(m_ActiveScene);
+					serializer.Deserialize("assets/scenes/Example.TomCat");
+				}
 
 				if (ImGui::MenuItem("Exit")) Application::Get().Close();
 				ImGui::EndMenu();
