@@ -168,6 +168,9 @@
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SceneSerializer.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
@@ -1521,6 +1524,9 @@
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp">
