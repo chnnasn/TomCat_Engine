@@ -1,3 +1,20 @@
-﻿  EditorCamera.cpp
+﻿  Framebuffer.cpp
+  OpenGLFramebuffer.cpp
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(98,43): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(107,44): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(123,89): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(131,137): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat_Engine\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(153,41): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+  正在生成代码...
 Window.obj : warning LNK4006: "public: static class std::unique_ptr<class TomCat::Window,struct std::default_delete<class TomCat::Window> > __cdecl TomCat::Window::Create(struct TomCat::WindowProps const &)" (?Create@Window@TomCat@@SA?AV?$unique_ptr@VWindow@TomCat@@U?$default_delete@VWindow@TomCat@@@std@@@std@@AEBUWindowProps@2@@Z) 已在 WindowsWindow.obj 中定义；已忽略第二个定义
   TomCat.vcxproj -> D:\github\TomCat_Engine\bin\-windows-x86_64\TomCat\TomCat.lib
