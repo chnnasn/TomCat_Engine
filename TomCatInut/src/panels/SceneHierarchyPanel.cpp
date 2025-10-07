@@ -251,14 +251,53 @@ namespace TomCat {
 		{
 			auto& tag = entity.GetComponent<Tag>()._Tag;
 
+			// 使用string作为中间缓冲，避免直接操作char数组的问题
+			static std::string editBuffer;
+			static Entity editingEntity; // 跟踪正在编辑的实体
+			static bool isEditing = false;
+
+			// 开始编辑时保存当前值到缓冲
+			if (ImGui::IsItemActivated()) {
+				editBuffer = tag;
+				editingEntity = entity;
+				isEditing = true;
+			}
+
+			// 安全的char数组处理
 			char buffer[256];
 			memset(buffer, 0, sizeof(buffer));
-			strcpy_s(buffer, sizeof(buffer), tag.c_str());
-			if (ImGui::InputText("##Tag", buffer, sizeof(buffer)))
+
+			// 安全复制 - 确保即使空字符串也能正确处理
+			const std::string& source = (isEditing && editingEntity == entity) ? editBuffer : tag;
+			if (!source.empty()) {
+				strncpy_s(buffer, sizeof(buffer), source.c_str(), _TRUNCATE);
+			}
+
+			// 设置输入文本标志，允许空输入
+			ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
+
+			if (ImGui::InputText("##Tag", buffer, sizeof(buffer), flags))
+			{
+				// 直接设置，允许空字符串
+				tag = std::string(buffer);
+				isEditing = false;
+				editingEntity = {};
+			}
+
+			// 失去焦点时也确认修改
+			if (isEditing && editingEntity == entity && ImGui::IsItemDeactivated())
 			{
 				tag = std::string(buffer);
+				isEditing = false;
+				editingEntity = {};
+			}
+
+			// 确保Tag永远不会完全为空，提供默认值
+			if (tag.empty()) {
+				tag = "Entity";
 			}
 		}
+
 
 		ImGui::SameLine();
 		ImGui::PushItemWidth(-1);
@@ -287,106 +326,106 @@ namespace TomCat {
 
 		DrawComponent<Transform>("Transform", entity, [](auto& component)
 		{
-				DrawVec3Control("Translation", component._Translation);
-				glm::vec3 rotation = glm::degrees(component._Rotation);
-				DrawVec3Control("Rotation", rotation);
-				component._Rotation = glm::radians(rotation);
-				DrawVec3Control("Scale", component._Scale, 1.0f);
+			DrawVec3Control("Translation", component._Translation);
+			glm::vec3 rotation = glm::degrees(component._Rotation);
+			DrawVec3Control("Rotation", rotation);
+			component._Rotation = glm::radians(rotation);
+			DrawVec3Control("Scale", component._Scale, 1.0f);
 		});
 
 		DrawComponent<C_Camera>("Camera", entity, [](auto& component)
 		{
-				auto& camera = component._Camera;
-				float columnWidth = 100.0f;
+			auto& camera = component._Camera;
+			float columnWidth = 100.0f;
 
-				// Primary
-				DrawProperty("Primary", columnWidth);
-				ImGui::Checkbox("##Primary", &component.Primary);
-				ImGui::Columns(1);
+			// Primary
+			DrawProperty("Primary", columnWidth);
+			ImGui::Checkbox("##Primary", &component.Primary);
+			ImGui::Columns(1);
 
-				// Projection Type
-				DrawProperty("Projection", columnWidth);
-				const char* projectionTypeStrings[] = { "Perspective", "Orthographic" };
-				const char* currentProjectionTypeString = projectionTypeStrings[(int)camera.GetProjectionType()];
-				if (ImGui::BeginCombo("##Projection", currentProjectionTypeString))
+			// Projection Type
+			DrawProperty("Projection", columnWidth);
+			const char* projectionTypeStrings[] = { "Perspective", "Orthographic" };
+			const char* currentProjectionTypeString = projectionTypeStrings[(int)camera.GetProjectionType()];
+			if (ImGui::BeginCombo("##Projection", currentProjectionTypeString))
+			{
+				for (int i = 0; i < 2; i++)
 				{
-					for (int i = 0; i < 2; i++)
+					bool isSelected = currentProjectionTypeString == projectionTypeStrings[i];
+					if (ImGui::Selectable(projectionTypeStrings[i], isSelected))
 					{
-						bool isSelected = currentProjectionTypeString == projectionTypeStrings[i];
-						if (ImGui::Selectable(projectionTypeStrings[i], isSelected))
-						{
-							currentProjectionTypeString = projectionTypeStrings[i];
-							camera.SetProjectionType((SceneCamera::ProjectionType)i);
-						}
-
-						if (isSelected)
-							ImGui::SetItemDefaultFocus();
+						currentProjectionTypeString = projectionTypeStrings[i];
+						camera.SetProjectionType((SceneCamera::ProjectionType)i);
 					}
 
-					ImGui::EndCombo();
+					if (isSelected)
+						ImGui::SetItemDefaultFocus();
 				}
+
+				ImGui::EndCombo();
+			}
+			ImGui::Columns(1);
+
+			if (camera.GetProjectionType() == SceneCamera::ProjectionType::Perspective)
+			{
+				// Vertical FOV
+				DrawProperty("Vertical FOV", columnWidth);
+				float perspectiveVerticalFov = glm::degrees(camera.GetPerspectiveVerticalFOV());
+				if (ImGui::DragFloat("##VerticalFOV", &perspectiveVerticalFov))
+					camera.SetPerspectiveVerticalFOV(glm::radians(perspectiveVerticalFov));
 				ImGui::Columns(1);
 
-				if (camera.GetProjectionType() == SceneCamera::ProjectionType::Perspective)
-				{
-					// Vertical FOV
-					DrawProperty("Vertical FOV", columnWidth);
-					float perspectiveVerticalFov = glm::degrees(camera.GetPerspectiveVerticalFOV());
-					if (ImGui::DragFloat("##VerticalFOV", &perspectiveVerticalFov))
-						camera.SetPerspectiveVerticalFOV(glm::radians(perspectiveVerticalFov));
-					ImGui::Columns(1);
+				// Near
+				DrawProperty("Near", columnWidth);
+				float perspectiveNear = camera.GetPerspectiveNearClip();
+				if (ImGui::DragFloat("##PerspectiveNear", &perspectiveNear))
+					camera.SetPerspectiveNearClip(perspectiveNear);
+				ImGui::Columns(1);
 
-					// Near
-					DrawProperty("Near", columnWidth);
-					float perspectiveNear = camera.GetPerspectiveNearClip();
-					if (ImGui::DragFloat("##PerspectiveNear", &perspectiveNear))
-						camera.SetPerspectiveNearClip(perspectiveNear);
-					ImGui::Columns(1);
+				// Far
+				DrawProperty("Far", columnWidth);
+				float perspectiveFar = camera.GetPerspectiveFarClip();
+				if (ImGui::DragFloat("##PerspectiveFar", &perspectiveFar))
+					camera.SetPerspectiveFarClip(perspectiveFar);
+				ImGui::Columns(1);
+			}
 
-					// Far
-					DrawProperty("Far", columnWidth);
-					float perspectiveFar = camera.GetPerspectiveFarClip();
-					if (ImGui::DragFloat("##PerspectiveFar", &perspectiveFar))
-						camera.SetPerspectiveFarClip(perspectiveFar);
-					ImGui::Columns(1);
-				}
+			if (camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
+			{
+				// Size
+				DrawProperty("Size", columnWidth);
+				float orthoSize = camera.GetOrthographicSize();
+				if (ImGui::DragFloat("##OrthoSize", &orthoSize))
+					camera.SetOrthographicSize(orthoSize);
+				ImGui::Columns(1);
 
-				if (camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
-				{
-					// Size
-					DrawProperty("Size", columnWidth);
-					float orthoSize = camera.GetOrthographicSize();
-					if (ImGui::DragFloat("##OrthoSize", &orthoSize))
-						camera.SetOrthographicSize(orthoSize);
-					ImGui::Columns(1);
+				// Near
+				DrawProperty("Near", columnWidth);
+				float orthoNear = camera.GetOrthographicNearClip();
+				if (ImGui::DragFloat("##OrthoNear", &orthoNear))
+					camera.SetOrthographicNearClip(orthoNear);
+				ImGui::Columns(1);
 
-					// Near
-					DrawProperty("Near", columnWidth);
-					float orthoNear = camera.GetOrthographicNearClip();
-					if (ImGui::DragFloat("##OrthoNear", &orthoNear))
-						camera.SetOrthographicNearClip(orthoNear);
-					ImGui::Columns(1);
+				// Far
+				DrawProperty("Far", columnWidth);
+				float orthoFar = camera.GetOrthographicFarClip();
+				if (ImGui::DragFloat("##OrthoFar", &orthoFar))
+					camera.SetOrthographicFarClip(orthoFar);
+				ImGui::Columns(1);
 
-					// Far
-					DrawProperty("Far", columnWidth);
-					float orthoFar = camera.GetOrthographicFarClip();
-					if (ImGui::DragFloat("##OrthoFar", &orthoFar))
-						camera.SetOrthographicFarClip(orthoFar);
-					ImGui::Columns(1);
-
-					// Fixed Aspect Ratio
-					DrawProperty("Fixed Aspect Ratio", columnWidth);
-					ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio);
-					ImGui::Columns(1);
-				}
+				// Fixed Aspect Ratio
+				DrawProperty("Fixed Aspect Ratio", columnWidth);
+				ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio);
+				ImGui::Columns(1);
+			}
 		});
 
 		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [](auto& component)
 		{
-				float columnWidth = 100.0f;
-				DrawProperty("Color", columnWidth);
-				ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color));
-				ImGui::Columns(1);
+			float columnWidth = 100.0f;
+			DrawProperty("Color", columnWidth);
+			ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color));
+			ImGui::Columns(1);
 		});
 
 	}
