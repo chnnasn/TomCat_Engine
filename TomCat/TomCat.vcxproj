@@ -54,20 +54,20 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCat\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCat\Debug\</IntDir>
+    <OutDir>$(ProjectDir)..\bin\Debug-windows-x86_64\TomCat\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\Debug-windows-x86_64\TomCat\</IntDir>
     <TargetName>TomCat</TargetName>
     <TargetExt>.lib</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCat\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCat\Release\</IntDir>
+    <OutDir>$(ProjectDir)..\bin\Release-windows-x86_64\TomCat\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\Release-windows-x86_64\TomCat\</IntDir>
     <TargetName>TomCat</TargetName>
     <TargetExt>.lib</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCat\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCat\Dist\</IntDir>
+    <OutDir>$(ProjectDir)..\bin\Dist-windows-x86_64\TomCat\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\Dist-windows-x86_64\TomCat\</IntDir>
     <TargetName>TomCat</TargetName>
     <TargetExt>.lib</TargetExt>
   </PropertyGroup>
@@ -80,7 +80,9 @@
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
+      <MinimalRebuild>false</MinimalRebuild>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
@@ -106,6 +108,7 @@
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
@@ -132,6 +135,7 @@
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>

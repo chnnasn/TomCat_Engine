@@ -1,0 +1,56 @@
+﻿  imgui.cpp
+  imgui_demo.cpp
+  imgui_draw.cpp
+  imgui_tables.cpp
+  imgui_widgets.cpp
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“imgui_demo.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“imgui_demo.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“imgui_draw.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“imgui_draw.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“imgui.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“imgui.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“imgui_tables.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“imgui_tables.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“imgui_widgets.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“imgui_widgets.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+  ImGui.vcxproj -> D:\github\TomCat\TomCat\vendor\ImGui\bin\Debug-windows-x86_64\ImGui\ImGui.lib
