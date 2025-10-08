@@ -1,10 +1,5 @@
-[11:32:05] [info] TomCat: Create window TomCat 1920 1080
-[11:32:05] [info] TomCat: OpenGL Info
-[11:32:05] [info] TomCat: Vendor: NVIDIA Corporation
-[11:32:05] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
-[11:32:05] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
-[11:32:10] [trace] TomCat: Deserializing scene 'Untitled'
-[11:32:10] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Left
-[11:32:10] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Right
-[11:32:10] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Camera
-[11:32:10] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Top
+[11:46:08] [info] TomCat: Create window TomCat 1920 1080
+[11:46:09] [info] TomCat: OpenGL Info
+[11:46:09] [info] TomCat: Vendor: NVIDIA Corporation
+[11:46:09] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
+[11:46:09] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
