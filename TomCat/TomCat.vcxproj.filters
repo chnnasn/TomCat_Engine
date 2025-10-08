@@ -19,6 +19,9 @@
     <Filter Include="src\TomCat\ImGui">
       <UniqueIdentifier>{2EAA3F5D-1AA3-5EAF-43D5-43342F2D3EBB}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Math">
+      <UniqueIdentifier>{5D096131-C994-CEF5-D2A5-51EA3EB02AF6}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Renderer">
       <UniqueIdentifier>{2A8A7466-96EB-5174-1F59-98268BB98833}</UniqueIdentifier>
     </Filter>
@@ -123,10 +126,16 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
       <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Math\Math.h">
+      <Filter>src\TomCat\Math</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Buffer.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Camera.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\EditorCamera.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h">
@@ -1470,8 +1479,6 @@
     <ClInclude Include="vendor\stb_image\stb_image.h">
       <Filter>vendor\stb_image</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Math\Math.h" />
-    <ClInclude Include="src\TomCat\Renderer\EditorCamera.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
@@ -1495,7 +1502,13 @@
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Math\Math.cpp">
+      <Filter>src\TomCat\Math</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp">
@@ -1582,7 +1595,5 @@
     <ClCompile Include="vendor\stb_image\stb_image.cpp">
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\Math\Math.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp" />
   </ItemGroup>
 </Project>
