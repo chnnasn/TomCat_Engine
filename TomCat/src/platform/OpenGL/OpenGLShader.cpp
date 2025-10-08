@@ -64,8 +64,7 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		std::string result;
-		std::ifstream in(filepath, std::ios::in | std::ios::binary);
-
+		std::ifstream in(filepath, std::ios::in | std::ios::binary); // ifstream closes itself due to RAII
 		if (in)
 		{
 			in.seekg(0, std::ios::end);
@@ -74,22 +73,21 @@ namespace TomCat {
 			{
 				result.resize(size);
 				in.seekg(0, std::ios::beg);
-				in.read(&result[0], result.size());
-				in.close();
+				in.read(&result[0], size);
 			}
 			else
 			{
+				
 				TC_Core_Error("Could not read from file '{0}'", filepath);
 			}
-
 		}
 		else
 		{
-			TC_Core_Error("can not open");
+			TC_Core_Error("Could not open file '{0}'", filepath);
 		}
+
 		return result;
 	}
-
 
 	std::unordered_map<GLenum, std::string> OpenGLShader::PreProcess(const std::string& source)
 	{
@@ -225,6 +223,13 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		UploadUniformFloat(name, value);
+	}
+
+	void OpenGLShader::SetFloat2(const std::string& name, const glm::vec2& value)
+	{
+		TC_PROFILE_FUNCTION();
+
+		UploadUniformFloat2(name, value);
 	}
 
 	 void OpenGLShader::SetFloat3(const std::string& name, const glm::vec3& value)

@@ -1,0 +1,97 @@
+﻿  tcpch.cpp
+  Application.cpp
+  Layer.cpp
+  LayerStack.cpp
+  Log.cpp
+  Window.cpp
+  ImGuiBuild.cpp
+  ImGuiLayer.cpp
+  Math.cpp
+  Buffer.cpp
+  EditorCamera.cpp
+  Framebuffer.cpp
+  GraphicsContext.cpp
+  OrthographicCamera.cpp
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiLayer.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiLayer.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiBuild.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“/src/TomCat/ImGui/ImGuiBuild.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+D:\github\TomCat\TomCat\src\TomCat\Math\Math.cpp(37,16): warning C4101: “Pdum3”: 未引用的局部变量
+  (编译源文件“/src/TomCat/Math/Math.cpp”)
+  
+  OrthographicCameraController.cpp
+  RenderCommand.cpp
+  Renderer.cpp
+  Renderer2D.cpp
+  RendererAPI.cpp
+  Shader.cpp
+  Texture.cpp
+  VertexArray.cpp
+  Entity.cpp
+  Scene.cpp
+  SceneCamera.cpp
+  SceneSerializer.cpp
+  OpenGLBuffer.cpp
+  OpenGLContext.cpp
+  OpenGLFramebuffer.cpp
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(110,43): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(119,44): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(135,89): warning C4267: “参数”: 从“size_t”转换到“uint32_t”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(143,146): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(146,152): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLFramebuffer.cpp(168,41): warning C4267: “参数”: 从“size_t”转换到“GLsizei”，可能丢失数据
+  (编译源文件“/src/platform/OpenGL/OpenGLFramebuffer.cpp”)
+  
+  OpenGLRendererAPI.cpp
+  OpenGLShader.cpp
+  OpenGLTexture.cpp
+  OpenGLVertexArray.cpp
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp(82,6): warning C4312: “类型强制转换”: 从“const uint32_t”转换到更大的“const void *”
+  (编译源文件“/src/platform/OpenGL/OpenGLVertexArray.cpp”)
+  
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLVertexArray.cpp(97,6): warning C4312: “类型强制转换”: 从“const uint32_t”转换到更大的“const void *”
+  (编译源文件“/src/platform/OpenGL/OpenGLVertexArray.cpp”)
+  
+  WindowsInput.cpp
+  WindowsPlatformUtils.cpp
+  WindowsWindow.cpp
+  stb_image.cpp
+  ImGuizmo.cpp
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
+  (编译源文件“vendor/ImGuizmo/ImGuizmo.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(25,9):
+      参见“IMGUI_VERSION”的前一个定义
+  
+D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
+  (编译源文件“vendor/ImGuizmo/ImGuizmo.cpp”)
+      D:\github\TomCat\TomCat\vendor\ImGui\imgui.h(26,9):
+      参见“IMGUI_VERSION_NUM”的前一个定义
+  
+Window.obj : warning LNK4006: "public: static class std::unique_ptr<class TomCat::Window,struct std::default_delete<class TomCat::Window> > __cdecl TomCat::Window::Create(struct TomCat::WindowProps const &)" (?Create@Window@TomCat@@SA?AV?$unique_ptr@VWindow@TomCat@@U?$default_delete@VWindow@TomCat@@@std@@@std@@AEBUWindowProps@2@@Z) 已在 WindowsWindow.obj 中定义；已忽略第二个定义
+  TomCat.vcxproj -> D:\github\TomCat\bin\Debug-windows-x86_64\TomCat\TomCat.lib

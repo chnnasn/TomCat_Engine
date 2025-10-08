@@ -55,22 +55,22 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInut\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInut\Debug\</IntDir>
+    <OutDir>$(ProjectDir)..\bin\Debug-windows-x86_64\TomCatInut\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\Debug-windows-x86_64\TomCatInut\</IntDir>
     <TargetName>TomCatInut</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInut\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInut\Release\</IntDir>
+    <OutDir>$(ProjectDir)..\bin\Release-windows-x86_64\TomCatInut\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\Release-windows-x86_64\TomCatInut\</IntDir>
     <TargetName>TomCatInut</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(ProjectDir)..\bin\-windows-x86_64\TomCatInut\</OutDir>
-    <IntDir>$(ProjectDir)..\bin-int\-windows-x86_64\TomCatInut\Dist\</IntDir>
+    <OutDir>$(ProjectDir)..\bin\Dist-windows-x86_64\TomCatInut\</OutDir>
+    <IntDir>$(ProjectDir)..\bin-int\Dist-windows-x86_64\TomCatInut\</IntDir>
     <TargetName>TomCatInut</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
@@ -82,7 +82,9 @@
       <AdditionalIncludeDirectories>..\TomCat\vendor\spdlog\include;..\TomCat\src;..\TomCat\vendor;..\TomCat\vendor\glm;..\TomCat\vendor\entt\include;..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
+      <MinimalRebuild>false</MinimalRebuild>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
@@ -104,6 +106,7 @@
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
@@ -126,6 +129,7 @@
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
