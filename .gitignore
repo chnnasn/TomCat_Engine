@@ -47,3 +47,9 @@ bin - int/
 
 #Files
 .user
+
+
+# Directories
+TomCat/vendor/VulkanSDK
+TomCatInut/assets/cache
+scripts/__pycache__

@@ -1,3 +1,4 @@
+D:\github\TomCat\TomCat\src\platform\OpenGL\OpenGLUniformBuffer.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\OpenGLUniformBuffer.obj
 D:\github\TomCat\TomCat\src\TomCat\Core\Application.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\Application.obj
 D:\github\TomCat\TomCat\src\TomCat\Core\Layer.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\Layer.obj
 D:\github\TomCat\TomCat\src\TomCat\Core\LayerStack.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\LayerStack.obj
@@ -34,5 +35,6 @@ D:\github\TomCat\TomCat\src\platform\Window\WindowsInput.cpp;D:\github\TomCat\bi
 D:\github\TomCat\TomCat\src\platform\Window\WindowsPlatformUtils.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\WindowsPlatformUtils.obj
 D:\github\TomCat\TomCat\src\platform\Window\WindowsWindow.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\WindowsWindow.obj
 D:\github\TomCat\TomCat\src\tcpch.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\tcpch.obj
+D:\github\TomCat\TomCat\src\TomCat\Renderer\UniformBuffer.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\UniformBuffer.obj
 D:\github\TomCat\TomCat\vendor\ImGuizmo\ImGuizmo.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\ImGuizmo.obj
 D:\github\TomCat\TomCat\vendor\stb_image\stb_image.cpp;D:\github\TomCat\bin-int\Debug-windows-x86_64\TomCat\stb_image.obj

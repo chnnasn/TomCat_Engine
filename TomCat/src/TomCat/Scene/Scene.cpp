@@ -148,7 +148,8 @@ namespace TomCat {
 	template<>
 	void Scene::OnComponentAdded<C_Camera>(Entity entity, C_Camera& component)
 	{
-		component._Camera.SetViewportSize(m_ViewportWidth, m_ViewportHeight);
+		if (m_ViewportWidth > 0 && m_ViewportHeight > 0)
+			component._Camera.SetViewportSize(m_ViewportWidth, m_ViewportHeight);
 	}
 
 	template<>

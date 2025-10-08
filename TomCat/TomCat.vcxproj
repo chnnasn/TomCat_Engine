@@ -76,12 +76,12 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;IMGUI_API=_declspec(dllexport);;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;D:\Vulkan\1.4.328.0\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <MinimalRebuild>false</MinimalRebuild>
-      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -92,7 +92,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <Lib>
-      <AdditionalDependencies>opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;vendor\VulkanSDK\Lib\shaderc_sharedd.lib;vendor\VulkanSDK\Lib\spirv-cross-cored.lib;vendor\VulkanSDK\Lib\spirv-cross-glsld.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -100,14 +100,14 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;IMGUI_API=_declspec(dllexport);;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;D:\Vulkan\1.4.328.0\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -119,7 +119,7 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <Lib>
-      <AdditionalDependencies>opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;D:\Vulkan\1.4.328.0\Lib\shaderc_shared.lib;D:\Vulkan\1.4.328.0\Lib\spirv-cross-core.lib;D:\Vulkan\1.4.328.0\Lib\spirv-cross-glsl.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
@@ -127,14 +127,14 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;IMGUI_API=_declspec(dllexport);;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;D:\Vulkan\1.4.328.0\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -146,7 +146,7 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <Lib>
-      <AdditionalDependencies>opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;D:\Vulkan\1.4.328.0\Lib\shaderc_shared.lib;D:\Vulkan\1.4.328.0\Lib\spirv-cross-core.lib;D:\Vulkan\1.4.328.0\Lib\spirv-cross-glsl.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -162,6 +162,7 @@
     <ClInclude Include="src\TomCat\Core\MouseCodes.h" />
     <ClInclude Include="src\TomCat\Core\Random.h" />
     <ClInclude Include="src\TomCat\Core\TimeStep.h" />
+    <ClInclude Include="src\TomCat\Core\Timer.h" />
     <ClInclude Include="src\TomCat\Core\Window.h" />
     <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
     <ClInclude Include="src\TomCat\Events\ApplicationEvent.h" />
@@ -183,6 +184,7 @@
     <ClInclude Include="src\TomCat\Renderer\RendererAPI.h" />
     <ClInclude Include="src\TomCat\Renderer\Shader.h" />
     <ClInclude Include="src\TomCat\Renderer\Texture.h" />
+    <ClInclude Include="src\TomCat\Renderer\UniformBuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
     <ClInclude Include="src\TomCat\Scene\Components.h" />
     <ClInclude Include="src\TomCat\Scene\Entity.h" />
@@ -197,6 +199,7 @@
     <ClInclude Include="src\platform\OpenGL\OpenGLRendererAPI.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLShader.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLTexture.h" />
+    <ClInclude Include="src\platform\OpenGL\OpenGLUniformBuffer.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h" />
     <ClInclude Include="src\platform\Window\WindowsWindow.h" />
     <ClInclude Include="src\tcpch.h" />
@@ -642,6 +645,7 @@
     <ClCompile Include="src\TomCat\Renderer\RendererAPI.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Shader.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Texture.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\UniformBuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
     <ClCompile Include="src\TomCat\Scene\Entity.cpp" />
     <ClCompile Include="src\TomCat\Scene\Scene.cpp" />
@@ -653,6 +657,7 @@
     <ClCompile Include="src\platform\OpenGL\OpenGLRendererAPI.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLShader.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLTexture.cpp" />
+    <ClCompile Include="src\platform\OpenGL\OpenGLUniformBuffer.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp" />
     <ClCompile Include="src\platform\Window\WindowsInput.cpp" />
     <ClCompile Include="src\platform\Window\WindowsPlatformUtils.cpp" />

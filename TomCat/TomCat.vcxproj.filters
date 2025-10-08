@@ -105,6 +105,9 @@
     <ClInclude Include="src\TomCat\Core\TimeStep.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\Timer.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\Window.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -168,6 +171,9 @@
     <ClInclude Include="src\TomCat\Renderer\Texture.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\UniformBuffer.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
@@ -208,6 +214,9 @@
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLTexture.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLUniformBuffer.h">
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h">
@@ -1541,6 +1550,9 @@
     <ClCompile Include="src\TomCat\Renderer\Texture.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\UniformBuffer.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
@@ -1572,6 +1584,9 @@
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLTexture.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLUniformBuffer.cpp">
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp">

@@ -2,7 +2,7 @@ project "TomCat"
 	kind"StaticLib"
 	language "C++"
 	cppdialect"C++20"
-	staticruntime "on"
+	staticruntime "off"
 
 	targetdir ("%{wks.location}/bin/" .. outputdir .."/%{prj.name}")
 	objdir ("%{wks.location}/bin-int/" .. outputdir .."/%{prj.name}")
@@ -41,7 +41,9 @@ project "TomCat"
 		"%{IncludeDir.stb_image}",
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.yaml_cpp}",
-		"%{IncludeDir.ImGuizmo}"
+
+		"%{IncludeDir.ImGuizmo}",
+		"%{IncludeDir.VulkanSDK}"
 	}
 
 	
@@ -67,7 +69,6 @@ filter "files:vendor/ImGuizmo/**.cpp"
 		"TC_PLAYTFORM_WINDOWS",
 		"TC_BUILD_DLL",
 		"GLFW_INCLUDE_NONE",
-		"IMGUI_API=_declspec(dllexport);"
 	}
 
 	filter "configurations:Debug"
@@ -75,13 +76,34 @@ filter "files:vendor/ImGuizmo/**.cpp"
 		runtime "Debug"
 		symbols "on"
 
+		links
+		{
+			"%{Library.ShaderC_Debug}",
+			"%{Library.SPIRV_Cross_Debug}",
+			"%{Library.SPIRV_Cross_GLSL_Debug}"
+		}
+
 	filter "configurations:Release"
 		defines "TC_RELEASE"
 		runtime "Release"
 		optimize "on"
+
+		links
+		{
+			"%{Library.ShaderC_Release}",
+			"%{Library.SPIRV_Cross_Release}",
+			"%{Library.SPIRV_Cross_GLSL_Release}"
+		}
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
 		runtime "Release"
 		optimize "on"
 
+		
+		links
+		{
+			"%{Library.ShaderC_Release}",
+			"%{Library.SPIRV_Cross_Release}",
+			"%{Library.SPIRV_Cross_GLSL_Release}"
+		}
