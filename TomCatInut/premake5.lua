@@ -2,7 +2,7 @@ project "TomCatInut"
 	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++20"
-	staticruntime "on"
+	staticruntime "off"
 
 	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("%{wks.location}/bin-int/" .. outputdir .. "/%{prj.name}")
@@ -43,6 +43,10 @@ project "TomCatInut"
 		defines "TC_DEBUG"
 		runtime "Debug"
 		symbols "on"
+		postbuildcommands {
+
+			"{COPY} \"%{LibraryDir.VulkanSDK_Debug}/../Bin/shaderc_sharedd.dll\" \"%{cfg.targetdir}\""
+		}
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"

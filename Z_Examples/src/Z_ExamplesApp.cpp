@@ -21,7 +21,7 @@ public:
 };
 
 
-TomCat::Application* TomCat::CreateApplication() {
-
-	return new Examples();
-}
+//TomCat::Application* TomCat::CreateApplication() {
+//
+//	return new Examples();
+//}

@@ -1,10 +1,23 @@
-[19:34:06] [info] TomCat: Create window TomCat 1920 1080
-[19:34:07] [info] TomCat: OpenGL Info
-[19:34:07] [info] TomCat: Vendor: NVIDIA Corporation
-[19:34:07] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
-[19:34:07] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
-[19:34:12] [trace] TomCat: Deserializing scene 'Untitled'
-[19:34:12] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Left
-[19:34:12] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Right
-[19:34:12] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Camera
-[19:34:12] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Top
+[22:13:44] [info] TomCat: Create window TomCatInput 1920 1080
+[22:13:45] [info] TomCat: OpenGL Info
+[22:13:45] [info] TomCat: Vendor: NVIDIA Corporation
+[22:13:45] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
+[22:13:45] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
+[22:13:45] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER assets/shaders/Texture.glsl
+[22:13:45] [trace] TomCat:     1 uniform buffers
+[22:13:45] [trace] TomCat:     0 resources
+[22:13:45] [trace] TomCat: Uniform buffers:
+[22:13:45] [trace] TomCat:   _47_49
+[22:13:45] [trace] TomCat:     Size = 64
+[22:13:45] [trace] TomCat:     Binding = 0
+[22:13:45] [trace] TomCat:     Members = 1
+[22:13:45] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER assets/shaders/Texture.glsl
+[22:13:45] [trace] TomCat:     0 uniform buffers
+[22:13:45] [trace] TomCat:     1 resources
+[22:13:45] [trace] TomCat: Uniform buffers:
+[22:13:45] [warning] TomCat: Shader creation took 14.172003 ms
+[22:13:52] [trace] TomCat: Deserializing scene 'Untitled'
+[22:13:52] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Left
+[22:13:52] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Right
+[22:13:52] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Camera
+[22:13:52] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Top

@@ -8,8 +8,8 @@ namespace TomCat {
 	class TomCatInput : public Application
 	{
 	public:
-		TomCatInput()
-			: Application("TomCat")
+		TomCatInput(ApplicationCommandLineArgs args)
+			: Application("TomCatInput", args)
 		{
 			PushLayer(new EditorLayer());
 		}
@@ -19,9 +19,9 @@ namespace TomCat {
 		}
 	};
 
-	Application* CreateApplication()
+	Application* CreateApplication(ApplicationCommandLineArgs args)
 	{
-		return new TomCatInput();
+		return new TomCatInput(args);
 	}
 
 }
