@@ -10,6 +10,8 @@
 
 #include "ScriptableEntity.h"
 
+#include "TomCat/Renderer/Texture.h"
+
 namespace TomCat {
 
 	struct Tag
@@ -50,6 +52,8 @@ namespace TomCat {
 	struct SpriteRenderer
 	{
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
+		Ref<Texture2D>Texture;
+		float TilingFactor = 1.0f;
 
 		SpriteRenderer() = default;
 		SpriteRenderer(const SpriteRenderer&) = default;

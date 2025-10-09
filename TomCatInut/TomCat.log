@@ -1,18 +1,23 @@
-[13:09:01] [info] TomCat: Create window TomCatInput 1920 1080
-[13:09:02] [info] TomCat: OpenGL Info
-[13:09:02] [info] TomCat: Vendor: NVIDIA Corporation
-[13:09:02] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
-[13:09:02] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
-[13:09:02] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER assets/shaders/Texture.glsl
-[13:09:02] [trace] TomCat:     1 uniform buffers
-[13:09:02] [trace] TomCat:     0 resources
-[13:09:02] [trace] TomCat: Uniform buffers:
-[13:09:02] [trace] TomCat:   _47_49
-[13:09:02] [trace] TomCat:     Size = 64
-[13:09:02] [trace] TomCat:     Binding = 0
-[13:09:02] [trace] TomCat:     Members = 1
-[13:09:02] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER assets/shaders/Texture.glsl
-[13:09:02] [trace] TomCat:     0 uniform buffers
-[13:09:02] [trace] TomCat:     1 resources
-[13:09:02] [trace] TomCat: Uniform buffers:
-[13:09:02] [warning] TomCat: Shader creation took 9.921001 ms
+[15:55:23] [info] TomCat: Create window TomCatInput 1920 1080
+[15:55:24] [info] TomCat: OpenGL Info
+[15:55:24] [info] TomCat: Vendor: NVIDIA Corporation
+[15:55:24] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
+[15:55:24] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
+[15:55:24] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER assets/shaders/Texture.glsl
+[15:55:24] [trace] TomCat:     1 uniform buffers
+[15:55:24] [trace] TomCat:     0 resources
+[15:55:24] [trace] TomCat: Uniform buffers:
+[15:55:24] [trace] TomCat:   _47_49
+[15:55:24] [trace] TomCat:     Size = 64
+[15:55:24] [trace] TomCat:     Binding = 0
+[15:55:24] [trace] TomCat:     Members = 1
+[15:55:24] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER assets/shaders/Texture.glsl
+[15:55:24] [trace] TomCat:     0 uniform buffers
+[15:55:24] [trace] TomCat:     1 resources
+[15:55:24] [trace] TomCat: Uniform buffers:
+[15:55:24] [warning] TomCat: Shader creation took 18.493 ms
+[15:55:26] [trace] TomCat: Deserializing scene 'Untitled'
+[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Top
+[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Camera
+[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Right
+[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Left
