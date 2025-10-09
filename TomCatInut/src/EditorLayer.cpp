@@ -256,6 +256,8 @@ namespace TomCat {
 
 		m_SceneHierarchyPanel.OnImGuiRender();
 
+		m_ContentBrowserPanel.OnImGuiRender();
+
 		ImGui::Begin("Stats");
 
 		std::string name = "None";
@@ -291,7 +293,8 @@ namespace TomCat {
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
 		uint64_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-		ImGui::Image(reinterpret_cast<void*>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		ImGui::Image(reinterpret_cast<void*>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
+			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
 		//Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
