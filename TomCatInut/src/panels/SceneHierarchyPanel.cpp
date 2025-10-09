@@ -7,7 +7,12 @@
 
 #include "TomCat/Scene/Components.h"
 
+#include<filesystem>
+
 namespace TomCat {
+
+	extern const std::filesystem::path g_AssetPath;
+
 
 	// 前向声明DrawProperty函数
 	static void DrawProperty(const std::string& label, float columnWidth = 100.0f);
@@ -15,10 +20,12 @@ namespace TomCat {
 	SceneHierarchyPanel::SceneHierarchyPanel(const Ref<Scene>& context)
 	{
 		SetContext(context);
+
 	}
 
 	void SceneHierarchyPanel::SetContext(const Ref<Scene>& context)
 	{
+
 		m_Context = context;
 		m_SelectionContext = {};
 	}
@@ -433,10 +440,53 @@ namespace TomCat {
 
 		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [](auto& component)
 		{
+
 			float columnWidth = 100.0f;
 			DrawProperty("Color", columnWidth);
 			ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color));
 			ImGui::Columns(1);
+
+
+			DrawProperty("Sprite", columnWidth);
+
+			// 显示纹理名称的输入框（只读）
+			std::string textureName = "None";
+			if (component.Texture)
+			{
+				// 直接使用文件路径来提取文件名
+				if (component.Texture->GetPath().length() > 0)
+				{
+
+					textureName = std::filesystem::path(component.Texture->GetPath()).stem().string();
+				}
+				else
+				{
+					textureName = "Missing";
+				}
+			}
+
+
+			// 将输入框替换为按钮
+			ImGui::Button(textureName.c_str(), ImVec2(-1, 0));
+
+			// 拖拽目标
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PROJECT_ITEM"))
+				{
+					const wchar_t* path = (const wchar_t*)payload->Data;
+					std::filesystem::path texturePath = std::filesystem::path(g_AssetPath) / path;
+					component.Texture = Texture2D::Create(texturePath.string());
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			ImGui::Columns(1);
+
+			DrawProperty("Tiling Factor", columnWidth);
+			ImGui::DragFloat("##Tiling Factor", &component.TilingFactor, 0.1f, 0.0f, 100.0f);
+			ImGui::Columns(1);
+
 		});
 
 	}
