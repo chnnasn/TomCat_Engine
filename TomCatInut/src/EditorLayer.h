@@ -4,6 +4,7 @@
 #include "Panels/SceneHierarchyPanel.h"
 
 #include "TomCat/Renderer/EditorCamera.h"
+#include "Panels/ContentBrowserPanel.h"
 
 namespace TomCat {
 
@@ -57,6 +58,7 @@ namespace TomCat {
 
 		// Panels
 		SceneHierarchyPanel m_SceneHierarchyPanel;
+		ContentBrowserPanel m_ContentBrowserPanel;
 	};
 
 }
