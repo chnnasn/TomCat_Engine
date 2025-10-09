@@ -169,6 +169,7 @@
     <ClInclude Include="src\TomCat\Events\Event.h" />
     <ClInclude Include="src\TomCat\Events\KeyEvent.h" />
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
+    <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
@@ -631,6 +632,7 @@
     <ClCompile Include="src\TomCat\Core\Log.cpp" />
     <ClCompile Include="src\TomCat\Core\Window.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp" />
+    <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />

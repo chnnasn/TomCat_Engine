@@ -50,9 +50,20 @@ namespace TomCat {
 		};
 		static void ResetStats();
 		static Statistics GetStats();
+		
+		// 控制批处理模式
+		static void SetUseBatching(bool useBatching);
+		static bool GetUseBatching();
 	private:
 		static void StartBatch();
 		static void NextBatch();
+		
+		// 控制是否使用批处理模式
+		static bool s_UseBatching;
+
+		// 立即渲染单个四边形的辅助函数（非批处理模式）
+		static void DrawQuadImmediate(const glm::mat4& transform, const glm::vec4& color, int entityID = -1);
+		static void DrawQuadImmediate(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1);
 	};
 
 }

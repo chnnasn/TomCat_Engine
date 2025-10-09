@@ -1,23 +1,23 @@
-[15:55:23] [info] TomCat: Create window TomCatInput 1920 1080
-[15:55:24] [info] TomCat: OpenGL Info
-[15:55:24] [info] TomCat: Vendor: NVIDIA Corporation
-[15:55:24] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
-[15:55:24] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
-[15:55:24] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER assets/shaders/Texture.glsl
-[15:55:24] [trace] TomCat:     1 uniform buffers
-[15:55:24] [trace] TomCat:     0 resources
-[15:55:24] [trace] TomCat: Uniform buffers:
-[15:55:24] [trace] TomCat:   _47_49
-[15:55:24] [trace] TomCat:     Size = 64
-[15:55:24] [trace] TomCat:     Binding = 0
-[15:55:24] [trace] TomCat:     Members = 1
-[15:55:24] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER assets/shaders/Texture.glsl
-[15:55:24] [trace] TomCat:     0 uniform buffers
-[15:55:24] [trace] TomCat:     1 resources
-[15:55:24] [trace] TomCat: Uniform buffers:
-[15:55:24] [warning] TomCat: Shader creation took 18.493 ms
-[15:55:26] [trace] TomCat: Deserializing scene 'Untitled'
-[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Top
-[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Camera
-[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Right
-[15:55:26] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Left
+[12:35:00] [info] TomCat: Create window TomCatInput 1920 1080
+[12:35:00] [info] TomCat: OpenGL Info
+[12:35:00] [info] TomCat: Vendor: NVIDIA Corporation
+[12:35:00] [info] TomCat: Renderer: NVIDIA GeForce MX450/PCIe/SSE2
+[12:35:00] [info] TomCat: Version: 4.6.0 NVIDIA 560.94
+[12:35:00] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER assets/shaders/Texture.glsl
+[12:35:00] [trace] TomCat:     1 uniform buffers
+[12:35:00] [trace] TomCat:     0 resources
+[12:35:00] [trace] TomCat: Uniform buffers:
+[12:35:00] [trace] TomCat:   _47_49
+[12:35:00] [trace] TomCat:     Size = 64
+[12:35:00] [trace] TomCat:     Binding = 0
+[12:35:00] [trace] TomCat:     Members = 1
+[12:35:00] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER assets/shaders/Texture.glsl
+[12:35:00] [trace] TomCat:     0 uniform buffers
+[12:35:00] [trace] TomCat:     1 resources
+[12:35:00] [trace] TomCat: Uniform buffers:
+[12:35:00] [warning] TomCat: Shader creation took 11.612902 ms
+[12:35:04] [trace] TomCat: Deserializing scene 'Untitled'
+[12:35:04] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Top
+[12:35:04] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Camera
+[12:35:04] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Right
+[12:35:04] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Left
