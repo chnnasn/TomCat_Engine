@@ -32,7 +32,9 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::OnImGuiRender()
 	{
-		ImGui::Begin("Hierarchy");
+		static bool hierarchyWindowOpen = true;
+
+		ImGui::Begin("Hierarchy",&hierarchyWindowOpen, ImGuiWindowFlags_MenuBar);
 
 		m_Context->m_Registry.view<entt::entity>().each([&](auto entityID)
 			{
@@ -54,7 +56,9 @@ namespace TomCat {
 
 		ImGui::End();
 
-		ImGui::Begin("Inspector");
+		static bool inspectorWindowOpen = true;
+
+		ImGui::Begin("Inspector",&inspectorWindowOpen, ImGuiWindowFlags_MenuBar);
 		if (m_SelectionContext)
 		{
 			DrawComponents(m_SelectionContext);
@@ -70,51 +74,55 @@ namespace TomCat {
 	}
 
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
+{
+	// 检查实体是否有效
+	if (!entity)
+		return;
+
+	auto& tag = entity.GetComponent<Tag>()._Tag;
+
+	// 设置选中状态
+	ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns;
+	bool isSelected = (m_SelectionContext == entity);
+
+	// 绘制实体项
+	if (ImGui::Selectable(tag.c_str(), isSelected, flags))
 	{
-		auto& tag = entity.GetComponent<Tag>()._Tag;
+		m_SelectionContext = entity;
 
-		// 设置选中状态
-		ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns;
-		bool isSelected = (m_SelectionContext == entity);
-
-		// 绘制实体项
-		if (ImGui::Selectable(tag.c_str(), isSelected, flags))
+		// 双击重命名（可选功能）
+		if (ImGui::IsMouseDoubleClicked(0))
 		{
-			m_SelectionContext = entity;
-
-			// 双击重命名（可选功能）
-			if (ImGui::IsMouseDoubleClicked(0))
-			{
-				// 可以在这里添加重命名逻辑
-			}
-		}
-
-		// 右键菜单
-		bool entityDeleted = false;
-		if (ImGui::BeginPopupContextItem())
-		{
-			if (ImGui::MenuItem("Delete Entity"))
-				entityDeleted = true;
-
-			ImGui::EndPopup();
-		}
-
-		// 拖拽功能（可选）
-		if (ImGui::BeginDragDropSource())
-		{
-			ImGui::SetDragDropPayload("SCENE_ENTITY", &entity, sizeof(Entity));
-			ImGui::Text("Move %s", tag.c_str());
-			ImGui::EndDragDropSource();
-		}
-
-		// 处理删除
-		if (entityDeleted)
-		{
-			m_Context->DestroyEntity(entity);
-			if (m_SelectionContext == entity)
-				m_SelectionContext = {};
+			// 可以在这里添加重命名逻辑
 		}
 	}
+
+	// 右键菜单
+	bool entityDeleted = false;
+	if (ImGui::BeginPopupContextItem())
+	{
+		if (ImGui::MenuItem("Delete Entity"))
+			entityDeleted = true;
+
+		ImGui::EndPopup();
+	}
+
+	// 拖拽功能（可选）
+	if (ImGui::BeginDragDropSource())
+	{
+		ImGui::SetDragDropPayload("SCENE_ENTITY", &entity, sizeof(Entity));
+		ImGui::Text("Move %s", tag.c_str());
+		ImGui::EndDragDropSource();
+	}
+
+	// 处理删除
+	if (entityDeleted)
+	{
+		m_Context->DestroyEntity(entity);
+		if (m_SelectionContext == entity)
+			m_SelectionContext = {};
+	}
+}
 
 	static void DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f, float columnWidth = 100.0f)
 	{
@@ -215,53 +223,61 @@ namespace TomCat {
 	}
 
 	template<typename T, typename UIFunction>
-	static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
+static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
+{
+	// 检查实体是否有效
+	if (!entity)
+		return;
+
+	const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+	if (entity.HasComponent<T>())
 	{
-		const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
-		if (entity.HasComponent<T>())
+		auto& component = entity.GetComponent<T>();
+		ImVec2 contentRegionAvailable = ImGui::GetContentRegionAvail();
+
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
+		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
+		ImGui::Separator();
+		bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags, name.c_str());
+		ImGui::PopStyleVar(
+		);
+		ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
+		if (ImGui::Button("+", ImVec2{ lineHeight, lineHeight }))
 		{
-			auto& component = entity.GetComponent<T>();
-			ImVec2 contentRegionAvailable = ImGui::GetContentRegionAvail();
-
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
-			float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
-			ImGui::Separator();
-			bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags, name.c_str());
-			ImGui::PopStyleVar(
-			);
-			ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
-			if (ImGui::Button("+", ImVec2{ lineHeight, lineHeight }))
-			{
-				ImGui::OpenPopup("ComponentSettings");
-			}
-
-			bool removeComponent = false;
-			if (ImGui::BeginPopup("ComponentSettings"))
-			{
-				if(name != "Transform")
-					if (ImGui::MenuItem("Remove component"))
-						removeComponent = true;
-
-				ImGui::EndPopup();
-			}
-
-			if (open)
-			{
-				uiFunction(component);
-				ImGui::TreePop();
-			}
-
-			if (removeComponent)
-				entity.RemoveComponent<T>();
+			ImGui::OpenPopup("ComponentSettings");
 		}
+
+		bool removeComponent = false;
+		if (ImGui::BeginPopup("ComponentSettings"))
+		{
+			if(name != "Transform")
+				if (ImGui::MenuItem("Remove component"))
+					removeComponent = true;
+
+			ImGui::EndPopup();
+		}
+
+		if (open)
+		{
+			uiFunction(component);
+			ImGui::TreePop();
+		}
+
+		if (removeComponent)
+			entity.RemoveComponent<T>();
+	}
 	}
 
 
 	void SceneHierarchyPanel::DrawComponents(Entity entity)
+{
+	// 检查实体是否有效
+	if (!entity)
+		return;
+
+	if (entity.HasComponent<Tag>())
 	{
-		if (entity.HasComponent<Tag>())
-		{
-			auto& tag = entity.GetComponent<Tag>()._Tag;
+		auto& tag = entity.GetComponent<Tag>()._Tag;
 
 			// 使用string作为中间缓冲，避免直接操作char数组的问题
 			static std::string editBuffer;
@@ -320,22 +336,24 @@ namespace TomCat {
 		if (ImGui::BeginPopup("AddComponent"))
 		{
 			if (ImGui::MenuItem("Camera"))
-			{
-				if (!m_SelectionContext.HasComponent<C_Camera>())
-					m_SelectionContext.AddComponent<C_Camera>();
-				else
-					TC_Core_Warn("This entity already has the Camera Component!");
-				ImGui::CloseCurrentPopup();
-			}
+		{
+			// 确保选中的实体有效
+			if (m_SelectionContext && !m_SelectionContext.HasComponent<C_Camera>())
+				m_SelectionContext.AddComponent<C_Camera>();
+			else if (m_SelectionContext)
+				TC_Core_Warn("This entity already has the Camera Component!");
+			ImGui::CloseCurrentPopup();
+		}
 
-			if (ImGui::MenuItem("Sprite Renderer"))
-			{
-				if (!m_SelectionContext.HasComponent<SpriteRenderer>())
-					m_SelectionContext.AddComponent<SpriteRenderer>();
-				else
-					TC_Core_Warn("This entity already has the Sprite Renderer Component!");
-				ImGui::CloseCurrentPopup();
-			}
+		if (ImGui::MenuItem("Sprite Renderer"))
+		{
+			// 确保选中的实体有效
+			if (m_SelectionContext && !m_SelectionContext.HasComponent<SpriteRenderer>())
+				m_SelectionContext.AddComponent<SpriteRenderer>();
+			else if (m_SelectionContext)
+				TC_Core_Warn("This entity already has the Sprite Renderer Component!");
+			ImGui::CloseCurrentPopup();
+		}
 
 			ImGui::EndPopup();
 		}
@@ -449,14 +467,11 @@ namespace TomCat {
 
 			DrawProperty("Sprite", columnWidth);
 
-			// 显示纹理名称的输入框（只读）
 			std::string textureName = "None";
 			if (component.Texture)
 			{
-				// 直接使用文件路径来提取文件名
 				if (component.Texture->GetPath().length() > 0)
 				{
-
 					textureName = std::filesystem::path(component.Texture->GetPath()).stem().string();
 				}
 				else
@@ -466,13 +481,11 @@ namespace TomCat {
 			}
 
 
-			// 将输入框替换为按钮
 			ImGui::Button(textureName.c_str(), ImVec2(-1, 0));
 
-			// 拖拽目标
 			if (ImGui::BeginDragDropTarget())
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PROJECT_ITEM"))
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE"))
 				{
 					const wchar_t* path = (const wchar_t*)payload->Data;
 					std::filesystem::path texturePath = std::filesystem::path(g_AssetPath) / path;

@@ -24,7 +24,7 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
+		//m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 
 		FramebufferSpecification fbSpec;
 		fbSpec.Attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
@@ -260,27 +260,34 @@ namespace TomCat {
 
 		m_ContentBrowserPanel.OnImGuiRender();
 
-		ImGui::Begin("Stats");
-
-		std::string name = "None";
-		if (m_HoveredEntity)
-			name = m_HoveredEntity.GetComponent<Tag>()._Tag;
-		ImGui::Text("Hovered Entity : %s",name.c_str());
-
-
-		auto stats = Renderer2D::GetStats();
-		ImGui::Text("Renderer2D Stats:");
-		ImGui::Text("Draw Calls: %d", stats.DrawCalls);
-		ImGui::Text("Quads: %d", stats.QuadCount);
-		ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
-		ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
-
-		ImGui::End();
-
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
 		static bool sceneWindowOpen = true;
-		ImGui::Begin("Scene", &sceneWindowOpen);
+
+		ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);//菜单栏不算入内容
+
+		if (ImGui::BeginMenuBar())
+		{
+			if (ImGui::BeginMenu("Stats"))
+			{
+				std::string name = "None";
+				if (m_HoveredEntity)
+					name = m_HoveredEntity.GetComponent<Tag>()._Tag;
+				ImGui::Text("Hovered Entity : %s", name.c_str());
+
+				auto stats = Renderer2D::GetStats();
+				ImGui::Text("Stats:");
+				ImGui::Text("Draw Calls: %d", stats.DrawCalls);
+				ImGui::Text("Quads: %d", stats.QuadCount);
+				ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
+				ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
+
+				ImGui::EndMenu();
+			}
+
+			ImGui::EndMenuBar();
+		}
+
 
 		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
 		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
@@ -295,20 +302,32 @@ namespace TomCat {
 		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
+		// 然后渲染场景图像
 		uint64_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
 		ImGui::Image(reinterpret_cast<void*>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
+
 		if (ImGui::BeginDragDropTarget())
 		{
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PROJECT_ITEM"))
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TOMCAT_SCENE"))
 			{
 				const wchar_t* path = (const wchar_t*)payload->Data;
 				OpenScene(std::filesystem::path(g_AssetPath) / path);
 			}
+			else if(const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE")){
+				const wchar_t* path = (const wchar_t*)payload->Data;
+				std::filesystem::path texturePath = std::filesystem::path(g_AssetPath) / path;
+				std::string fileName = texturePath.stem().string();
+
+				auto Square = m_ActiveScene->CreateEntity(fileName);
+				auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
+
+				SpriteR.Texture = Texture2D::Create(texturePath.string());
+			}
+
 			ImGui::EndDragDropTarget();
 		}
-
 
 
 		//Gizmos
@@ -334,32 +353,37 @@ namespace TomCat {
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
 
 			// Entity transform
-			auto& tc = selectedEntity.GetComponent<Transform>();
-			glm::mat4 transform = tc.GetTransform();
-
-			// Snapping
-			bool snap = Input::IsKeyPressed(Key::LeftControl);
-			float snapValue = 0.5f; // Snap to 0.5m for translation/scale
-			// Snap to 45 degrees for rotation
-			if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
-				snapValue = 45.0f;
-
-			float snapValues[3] = { snapValue, snapValue, snapValue };
-
-			ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-				(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
-				nullptr, snap ? snapValues : nullptr);
-
-			if (ImGuizmo::IsUsing())
+			if (selectedEntity.HasComponent<Transform>())
 			{
-				glm::vec3 translation, rotation, scale;
-				Math::DecomposeTransform(transform, translation, rotation, scale);
+				auto& tc = selectedEntity.GetComponent<Transform>();
+				glm::mat4 transform = tc.GetTransform();
 
-				glm::vec3 deltaRotation = rotation - tc._Rotation;
-				tc._Translation = translation;
-				tc._Rotation += deltaRotation;
-				tc._Scale = scale;
+				// Snapping
+				bool snap = Input::IsKeyPressed(Key::LeftControl);
+				float snapValue = 0.5f; // Snap to 0.5m for translation/scale
+				// Snap to 45 degrees for rotation
+				if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
+					snapValue = 45.0f;
+
+				float snapValues[3] = { snapValue, snapValue, snapValue };
+
+				ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
+					(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
+					nullptr, snap ? snapValues : nullptr);
+
+				if (ImGuizmo::IsUsing())
+				{
+					glm::vec3 translation, rotation, scale;
+					Math::DecomposeTransform(transform, translation, rotation, scale);
+
+					glm::vec3 deltaRotation = rotation - tc._Rotation;
+					tc._Translation = translation;
+					tc._Rotation += deltaRotation;
+					tc._Scale = scale;
+				}
 			}
+
+
 		}
 
 
@@ -445,19 +469,26 @@ namespace TomCat {
 	{
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
-			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt))
-				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
+			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt) && m_HoveredEntity)
+		{
+			// Only select the entity if it's valid
+			m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
+		}
 		}
 		return false;
 	}
 
 
 	void EditorLayer::NewScene()
-	{
-		m_ActiveScene = CreateRef<Scene>();
-		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-	}
+{
+	// Create a new scene
+	m_ActiveScene = CreateRef<Scene>();
+	m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+	m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+	
+	// Clear the selection to prevent accessing invalid entities
+	m_SceneHierarchyPanel.SetSelectedEntity({});
+}
 
 	void EditorLayer::OpenScene()
 	{
@@ -466,18 +497,23 @@ namespace TomCat {
 		{
 			OpenScene(filepath);
 		}
+
 	}
 
 	void EditorLayer::OpenScene(const std::filesystem::path& path)
-	{
-		m_ActiveScene = CreateRef<Scene>();
-		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+{
+	// Create a new scene
+	m_ActiveScene = CreateRef<Scene>();
+	m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+	m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 
-		SceneSerializer serializer(m_ActiveScene);
-		serializer.Deserialize(path.string());
+	// Clear the selection to prevent accessing invalid entities
+	m_SceneHierarchyPanel.SetSelectedEntity({});
 
-	}
+	SceneSerializer serializer(m_ActiveScene);
+	serializer.Deserialize(path.string());
+
+}
 
 	void EditorLayer::SaveSceneAs()
 	{

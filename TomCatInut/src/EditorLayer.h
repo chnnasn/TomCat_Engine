@@ -12,6 +12,7 @@ namespace TomCat {
 	{
 	public:
 		EditorLayer();
+
 		virtual ~EditorLayer() = default;
 
 		virtual void OnAttach() override;
@@ -46,7 +47,7 @@ namespace TomCat {
 
 		EditorCamera m_EditorCamera;
 
-		Ref<Texture2D> m_CheckerboardTexture;
+		//Ref<Texture2D> m_CheckerboardTexture;
 
 		bool m_ViewportFocused = false, m_ViewportHovered = false;
 		glm::vec2 m_ViewportSize = { 0.0f, 0.0f };

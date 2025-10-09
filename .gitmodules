@@ -3,7 +3,7 @@
 	url = https://github.com/gabime/spdlog
 [submodule "TomCat/vendor/GLFW"]
 	path = TomCat/vendor/GLFW
-	url = https://github.com/TheCherno/glfw
+	url = https://github.com/chnnasn/glfw
 [submodule "TomCat/vendor/ImGui"]
 	path = TomCat/vendor/ImGui
 	url = https://github.com/TheCherno/imgui

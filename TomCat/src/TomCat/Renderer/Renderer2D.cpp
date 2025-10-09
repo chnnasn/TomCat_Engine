@@ -56,8 +56,9 @@ namespace TomCat {
 	};
 
 	static Renderer2DData s_Data;
+bool Renderer2D::s_UseBatching = false; // 默认不启用批处理
 
-	void Renderer2D::Init()
+void Renderer2D::Init()
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -225,9 +226,13 @@ namespace TomCat {
 	}
 
 	void Renderer2D::DrawQuad(const glm::mat4& transform, const glm::vec4& color, int entityID)
-	{
-		TC_PROFILE_FUNCTION();
+{
+	TC_PROFILE_FUNCTION();
 
+	// 根据是否启用批处理来选择渲染方式
+	if (s_UseBatching)
+	{
+		// 原始批处理方式
 		constexpr size_t quadVertexCount = 4;
 		const float textureIndex = 0.0f; // White Texture
 		constexpr glm::vec2 textureCoords[] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
@@ -251,11 +256,21 @@ namespace TomCat {
 
 		s_Data.Stats.QuadCount++;
 	}
+	else
+	{
+		// 非批处理方式，立即渲染
+		DrawQuadImmediate(transform, color, entityID);
+	}
+}
 
 	void Renderer2D::DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor, int entityID)
-	{
-		TC_PROFILE_FUNCTION();
+{
+	TC_PROFILE_FUNCTION();
 
+	// 根据是否启用批处理来选择渲染方式
+	if (s_UseBatching)
+	{
+		// 原始批处理方式
 		constexpr size_t quadVertexCount = 4;
 		constexpr glm::vec2 textureCoords[] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
 
@@ -297,6 +312,12 @@ namespace TomCat {
 
 		s_Data.Stats.QuadCount++;
 	}
+	else
+	{
+		// 非批处理方式，立即渲染
+		DrawQuadImmediate(transform, texture, tilingFactor, tintColor, entityID);
+	}
+}
 
 	void Renderer2D::DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const glm::vec4& color)
 	{
@@ -346,6 +367,123 @@ namespace TomCat {
 	Renderer2D::Statistics Renderer2D::GetStats()
 	{
 		return s_Data.Stats;
+	}
+
+	// 控制批处理模式的方法
+	void Renderer2D::SetUseBatching(bool useBatching)
+	{
+		s_UseBatching = useBatching;
+	}
+
+	bool Renderer2D::GetUseBatching()
+	{
+		return s_UseBatching;
+	}
+
+	// 立即渲染单个四边形（非批处理模式）
+	void Renderer2D::DrawQuadImmediate(const glm::mat4& transform, const glm::vec4& color, int entityID)
+	{
+		// 这里是单物体渲染的实现，不使用批处理
+		// 暂时保存当前的批处理状态
+		uint32_t originalQuadIndexCount = s_Data.QuadIndexCount;
+		QuadVertex* originalQuadVertexBufferPtr = s_Data.QuadVertexBufferPtr;
+		uint32_t originalTextureSlotIndex = s_Data.TextureSlotIndex;
+		bool originalUseBatching = s_UseBatching;
+		
+		// 临时启用批处理来利用现有的渲染资源
+		s_UseBatching = true;
+		
+		// 创建一个新的批次
+		StartBatch();
+		
+		// 直接实现绘制逻辑，避免递归调用
+		constexpr size_t quadVertexCount = 4;
+		const float textureIndex = 0.0f; // White Texture
+		constexpr glm::vec2 textureCoords[] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
+		const float tilingFactor = 1.0f;
+
+		for (size_t i = 0; i < quadVertexCount; i++)
+		{
+			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[i];
+			s_Data.QuadVertexBufferPtr->Color = color;
+			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
+			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
+			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
+			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr++;
+		}
+
+		s_Data.QuadIndexCount += 6;
+		s_Data.Stats.QuadCount++;
+		
+		// 立即刷新渲染
+		Flush();
+		
+		// 恢复原始的批处理状态
+		s_Data.QuadIndexCount = originalQuadIndexCount;
+		s_Data.QuadVertexBufferPtr = originalQuadVertexBufferPtr;
+		s_Data.TextureSlotIndex = originalTextureSlotIndex;
+		s_UseBatching = originalUseBatching;
+	}
+
+	void Renderer2D::DrawQuadImmediate(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor, int entityID)
+	{
+		// 这里是单物体渲染的实现，不使用批处理
+		// 暂时保存当前的批处理状态
+		uint32_t originalQuadIndexCount = s_Data.QuadIndexCount;
+		QuadVertex* originalQuadVertexBufferPtr = s_Data.QuadVertexBufferPtr;
+		uint32_t originalTextureSlotIndex = s_Data.TextureSlotIndex;
+		bool originalUseBatching = s_UseBatching;
+		
+		// 临时启用批处理来利用现有的渲染资源
+		s_UseBatching = true;
+		
+		// 创建一个新的批次
+		StartBatch();
+		
+		// 直接实现绘制逻辑，避免递归调用
+		constexpr size_t quadVertexCount = 4;
+		constexpr glm::vec2 textureCoords[] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
+
+		float textureIndex = 0.0f;
+		for (uint32_t i = 1; i < s_Data.TextureSlotIndex; i++)
+		{
+			if (*s_Data.TextureSlots[i] == *texture)
+			{
+				textureIndex = (float)i;
+				break;
+			}
+		}
+
+		if (textureIndex == 0.0f)
+		{
+			textureIndex = (float)s_Data.TextureSlotIndex;
+			s_Data.TextureSlots[s_Data.TextureSlotIndex] = texture;
+			s_Data.TextureSlotIndex++;
+		}
+
+		for (size_t i = 0; i < quadVertexCount; i++)
+		{
+			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[i];
+			s_Data.QuadVertexBufferPtr->Color = tintColor;
+			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
+			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
+			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
+			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr++;
+		}
+
+		s_Data.QuadIndexCount += 6;
+		s_Data.Stats.QuadCount++;
+		
+		// 立即刷新渲染
+		Flush();
+		
+		// 恢复原始的批处理状态
+		s_Data.QuadIndexCount = originalQuadIndexCount;
+		s_Data.QuadVertexBufferPtr = originalQuadVertexBufferPtr;
+		s_Data.TextureSlotIndex = originalTextureSlotIndex;
+		s_UseBatching = originalUseBatching;
 	}
 
 }
