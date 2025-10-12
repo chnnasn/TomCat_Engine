@@ -1,59 +1,14 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="..">
-      <UniqueIdentifier>{61705900-4DFC-870B-B6AA-880BA255880B}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\TomCat">
-      <UniqueIdentifier>{B8244542-248F-F9B8-6DCD-AA5ED976D70D}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\TomCat\vendor">
-      <UniqueIdentifier>{153C79B0-0135-9802-2A67-7D8716BF770E}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\TomCat\vendor\GLFW">
-      <UniqueIdentifier>{74CC150E-E038-D108-A92C-69661558F370}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\TomCat\vendor\Glad">
-      <UniqueIdentifier>{1C58160E-88C4-D108-51B8-6966BDE3F370}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\TomCat\vendor\ImGui">
-      <UniqueIdentifier>{FFAC05D1-EBA6-2E23-D413-C533C0AC948F}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\TomCat\vendor\yaml-cpp">
-      <UniqueIdentifier>{670A4156-D3CC-74E0-1C7D-036D887E4DBE}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\TomCatInut">
-      <UniqueIdentifier>{D8AB6275-446C-DEAB-0DA7-272979262388}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="..\Z_Examples">
-      <UniqueIdentifier>{0800F74A-74C0-7281-3DFB-BBFEA97AB75D}</UniqueIdentifier>
+    <Filter Include="Manager">
+      <UniqueIdentifier>{40C44515-ACA3-C4B0-B5BB-4F87211A2B12}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\TomCat\premake5.lua">
-      <Filter>..\TomCat</Filter>
+    <None Include="..\..\Builder\Manager\premake5.lua">
+      <Filter>Manager</Filter>
     </None>
-    <None Include="..\..\TomCat\vendor\GLFW\premake5.lua">
-      <Filter>..\TomCat\vendor\GLFW</Filter>
-    </None>
-    <None Include="..\..\TomCat\vendor\Glad\premake5.lua">
-      <Filter>..\TomCat\vendor\Glad</Filter>
-    </None>
-    <None Include="..\..\TomCat\vendor\ImGui\premake5.lua">
-      <Filter>..\TomCat\vendor\ImGui</Filter>
-    </None>
-    <None Include="..\..\TomCat\vendor\yaml-cpp\premake5.lua">
-      <Filter>..\TomCat\vendor\yaml-cpp</Filter>
-    </None>
-    <None Include="..\..\TomCatInut\premake5.lua">
-      <Filter>..\TomCatInut</Filter>
-    </None>
-    <None Include="..\..\Z_Examples\premake5.lua">
-      <Filter>..\Z_Examples</Filter>
-    </None>
-    <None Include="..\..\premake5.lua">
-      <Filter>..</Filter>
-    </None>
-    <None Include="premake5.lua" />
+    <None Include="..\..\Builder\premake5.lua" />
   </ItemGroup>
 </Project>

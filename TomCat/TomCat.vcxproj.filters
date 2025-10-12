@@ -126,6 +126,9 @@
     <ClInclude Include="src\TomCat\Events\MouseEvent.h">
       <Filter>src\TomCat\Events</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h">
+      <Filter>src\TomCat\ImGui</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
       <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
@@ -1488,7 +1491,6 @@
     <ClInclude Include="vendor\stb_image\stb_image.h">
       <Filter>vendor\stb_image</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
@@ -1507,6 +1509,9 @@
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp">
+      <Filter>src\TomCat\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp">
@@ -1611,6 +1616,5 @@
     <ClCompile Include="vendor\stb_image\stb_image.cpp">
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
   </ItemGroup>
 </Project>

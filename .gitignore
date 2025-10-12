@@ -43,13 +43,13 @@
 #Diractories
 .vs/
 bin/
-bin - int/
+bin-int/
+.codemap/
 
 #Files
 .user
 
 
 # Directories
-TomCat/vendor/VulkanSDK
 TomCatInut/assets/cache
 scripts/__pycache__

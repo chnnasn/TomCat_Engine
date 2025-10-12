@@ -1,0 +1,18 @@
+[00:49:09] [info] TomCat: Create window TomCatManager 1920 1080
+[00:49:09] [info] TomCat: OpenGL Info
+[00:49:09] [info] TomCat: Vendor: Intel
+[00:49:09] [info] TomCat: Renderer: Intel(R) RaptorLake-S Mobile Graphics Controller
+[00:49:09] [info] TomCat: Version: 4.6.0 - Build 32.0.101.7076
+[00:49:09] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER assets/shaders/Texture.glsl
+[00:49:09] [trace] TomCat:     1 uniform buffers
+[00:49:09] [trace] TomCat:     0 resources
+[00:49:09] [trace] TomCat: Uniform buffers:
+[00:49:09] [trace] TomCat:   _46_48
+[00:49:09] [trace] TomCat:     Size = 64
+[00:49:09] [trace] TomCat:     Binding = 0
+[00:49:09] [trace] TomCat:     Members = 1
+[00:49:09] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER assets/shaders/Texture.glsl
+[00:49:09] [trace] TomCat:     0 uniform buffers
+[00:49:09] [trace] TomCat:     1 resources
+[00:49:09] [trace] TomCat: Uniform buffers:
+[00:49:09] [warning] TomCat: Shader creation took 93.37742 ms
