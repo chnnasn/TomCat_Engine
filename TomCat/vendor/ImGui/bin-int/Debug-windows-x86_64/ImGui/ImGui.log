@@ -1,15 +1,1 @@
-﻿  imgui.cpp
-D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(74,9): warning C4005: “IMGUI_VERSION”: 宏重定义
-  (编译源文件“imgui.cpp”)
-      D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(25,9):
-      参见“IMGUI_VERSION”的前一个定义
-  
-D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(75,9): warning C4005: “IMGUI_VERSION_NUM”: 宏重定义
-  (编译源文件“imgui.cpp”)
-      D:\github\TomCat_Engine\TomCat\vendor\ImGui\imgui.h(26,9):
-      参见“IMGUI_VERSION_NUM”的前一个定义
-  
-D:\github\TomCat_Engine\TomCat\src\TomCat\ImGui\ImGuiCallback.h(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
-  (编译源文件“imgui.cpp”)
-  
-  ImGui.vcxproj -> D:\github\TomCat_Engine\TomCat\vendor\ImGui\bin\Debug-windows-x86_64\ImGui\ImGui.lib
+﻿  ImGui.vcxproj -> E:\Github\TomCat_Engine\TomCat\vendor\ImGui\bin\Debug-windows-x86_64\ImGui\ImGui.lib

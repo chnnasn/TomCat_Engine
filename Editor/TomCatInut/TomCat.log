@@ -1,0 +1,23 @@
+[00:06:01] [info] TomCat: Create window TomCatInput 1920 1080
+[00:06:01] [info] TomCat: OpenGL Info
+[00:06:01] [info] TomCat: Vendor: Intel
+[00:06:01] [info] TomCat: Renderer: Intel(R) RaptorLake-S Mobile Graphics Controller
+[00:06:01] [info] TomCat: Version: 4.6.0 - Build 32.0.101.7076
+[00:06:01] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER assets/shaders/Texture.glsl
+[00:06:01] [trace] TomCat:     1 uniform buffers
+[00:06:01] [trace] TomCat:     0 resources
+[00:06:01] [trace] TomCat: Uniform buffers:
+[00:06:01] [trace] TomCat:   _46_48
+[00:06:01] [trace] TomCat:     Size = 64
+[00:06:01] [trace] TomCat:     Binding = 0
+[00:06:01] [trace] TomCat:     Members = 1
+[00:06:01] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER assets/shaders/Texture.glsl
+[00:06:01] [trace] TomCat:     0 uniform buffers
+[00:06:01] [trace] TomCat:     1 resources
+[00:06:01] [trace] TomCat: Uniform buffers:
+[00:06:01] [warning] TomCat: Shader creation took 57.84161 ms
+[00:06:18] [trace] TomCat: Deserializing scene 'Untitled'
+[00:06:18] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Top
+[00:06:18] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Camera
+[00:06:18] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Right
+[00:06:18] [trace] TomCat: Deserialized entity with ID = 12837192831273, name = Left
