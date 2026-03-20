@@ -22,6 +22,9 @@
     <Filter Include="src\TomCat\Math">
       <UniqueIdentifier>{5D096131-C994-CEF5-D2A5-51EA3EB02AF6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Project">
+      <UniqueIdentifier>{4A2A22D5-360E-E32A-9F6E-DD7D8B71CDAC}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Renderer">
       <UniqueIdentifier>{2A8A7466-96EB-5174-1F59-98268BB98833}</UniqueIdentifier>
     </Filter>
@@ -134,6 +137,12 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Project\Project.h">
+      <Filter>src\TomCat\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Project\ProjectManager.h">
+      <Filter>src\TomCat\Project</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Buffer.h">
       <Filter>src\TomCat\Renderer</Filter>
@@ -1519,6 +1528,12 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Math\Math.cpp">
       <Filter>src\TomCat\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Project\Project.cpp">
+      <Filter>src\TomCat\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Project\ProjectManager.cpp">
+      <Filter>src\TomCat\Project</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp">
       <Filter>src\TomCat\Renderer</Filter>

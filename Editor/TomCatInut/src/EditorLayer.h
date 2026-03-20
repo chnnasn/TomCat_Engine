@@ -5,6 +5,8 @@
 
 #include "TomCat/Renderer/EditorCamera.h"
 #include "Panels/ContentBrowserPanel.h"
+#include "TomCat/Project/Project.h"
+#include "TomCat/Project/ProjectManager.h"
 
 namespace TomCat {
 
@@ -28,11 +30,16 @@ namespace TomCat {
 		void NewScene();
 		void OpenScene();
 		void OpenScene(const std::filesystem::path& path);
+		void SaveScene();
 		void SaveSceneAs();
+		
+		void OpenProject();
+		void SaveProject();
+		
+		std::filesystem::path GetProjectScenePath() const;
 	private:
 		TomCat::OrthographicCameraController m_CameraController;
 
-		// Temp
 		Ref<VertexArray> m_SquareVA;
 		Ref<Shader> m_FlatColorShader;
 		Ref<Framebuffer> m_Framebuffer;
@@ -47,8 +54,6 @@ namespace TomCat {
 
 		EditorCamera m_EditorCamera;
 
-		//Ref<Texture2D> m_CheckerboardTexture;
-
 		bool m_ViewportFocused = false, m_ViewportHovered = false;
 		glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
 
@@ -58,9 +63,12 @@ namespace TomCat {
 
 		int m_GizmoType = -1;
 
-		// Panels
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
+		
+		Ref<Project> m_CurrentProject;
+		std::filesystem::path m_CurrentScenePath;
+		bool m_SceneDirty = false;
 	};
 
 }

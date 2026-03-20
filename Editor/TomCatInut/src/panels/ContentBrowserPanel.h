@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include "TomCat/Renderer/Texture.h"
+#include "TomCat/Project/Project.h"
 
 namespace TomCat {
 
@@ -15,22 +16,24 @@ namespace TomCat {
 		};
 
 		ContentBrowserPanel();
+		void SetProject(Ref<Project> project) { m_Project = project; }
 
 		void OnImGuiRender();
 	private:
 		std::filesystem::path m_CurrentDirectory;
-		std::filesystem::path m_SelectedDirectory; // 存储在树状视图中选中的目录
+		std::filesystem::path m_SelectedDirectory;
 
 		Ref<Texture2D> m_DirectoryIcon;
 		Ref<Texture2D> m_FileIcon;
 
-		// 缓存图片预览，避免重复加载
 		std::unordered_map<std::string, Ref<Texture2D>> m_ImageCache;
 
 		LayoutMode m_LayoutMode;
+		Ref<Project> m_Project;
 
-		// 递归函数，用于显示多级目录结构
+		void DisplayFileNode(const std::filesystem::path& path);
 		void DisplayDirectoryRecursive(const std::filesystem::path& directoryPath, bool isRoot);
+		void DisplayDirectoryFlat(const std::filesystem::path& directoryPath);
 	};
 }
 

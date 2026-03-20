@@ -172,6 +172,8 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
+    <ClInclude Include="src\TomCat\Project\Project.h" />
+    <ClInclude Include="src\TomCat\Project\ProjectManager.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\TomCat\Renderer\Camera.h" />
     <ClInclude Include="src\TomCat\Renderer\EditorCamera.h" />
@@ -635,6 +637,8 @@
     <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
+    <ClCompile Include="src\TomCat\Project\Project.cpp" />
+    <ClCompile Include="src\TomCat\Project\ProjectManager.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp" />
