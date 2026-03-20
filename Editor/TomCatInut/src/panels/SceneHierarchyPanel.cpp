@@ -6,6 +6,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "TomCat/Scene/Components.h"
+#include "TomCat/Project/ProjectManager.h"
 
 #include<filesystem>
 
@@ -487,8 +488,10 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			{
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE"))
 				{
+					auto project = ProjectManager::Get().GetActiveProject();
+					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
 					const wchar_t* path = (const wchar_t*)payload->Data;
-					std::filesystem::path texturePath = std::filesystem::path(g_AssetPath) / path;
+					std::filesystem::path texturePath = assetPath / path;
 					component.Texture = Texture2D::Create(texturePath.string());
 				}
 				ImGui::EndDragDropTarget();

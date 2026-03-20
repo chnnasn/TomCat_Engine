@@ -5,6 +5,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
+#include "TomCat/Project/ProjectManager.h"
 
 #include "ImGuizmo.h"
 
@@ -18,13 +19,12 @@ namespace TomCat {
 	EditorLayer::EditorLayer()
 		: Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f })
 	{
+		m_CurrentProject = ProjectManager::Get().GetActiveProject();
 	}
 
 	void EditorLayer::OnAttach()
 	{
 		TC_PROFILE_FUNCTION();
-
-		//m_CheckerboardTexture = Texture2D::Create("assets/textures/Checkerboard.png");
 
 		FramebufferSpecification fbSpec;
 		fbSpec.Attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
@@ -34,90 +34,25 @@ namespace TomCat {
 
 		m_ActiveScene = CreateRef<Scene>();
 
-		auto commandLineArgs = Application::Get().GetCommandLineArgs();
-		if (commandLineArgs.Count > 1)
+		if (m_CurrentProject)
 		{
-			auto sceneFilePath = commandLineArgs[1];
-			SceneSerializer serializer(m_ActiveScene);
-			serializer.Deserialize(sceneFilePath);
+			auto startScenePath = m_CurrentProject->GetStartScenePath();
+			if (!startScenePath.empty() && std::filesystem::exists(startScenePath))
+			{
+				SceneSerializer serializer(m_ActiveScene);
+				if (serializer.Deserialize(startScenePath.string()))
+				{
+					m_CurrentScenePath = startScenePath;
+				}
+			}
+			else
+			{
+				m_SceneDirty = true;
+			}
 		}
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 
-#if 0
-
-		// Entity
-		auto square = m_ActiveScene->CreateEntity("Green Square");
-		square.AddComponent<SpriteRenderer>(glm::vec4{ 0.0f, 1.0f, 0.0f, 1.0f });
-
-		auto redSquare = m_ActiveScene->CreateEntity("Red Square");
-		redSquare.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 0.0f, 0.0f, 1.0f });
-
-		m_CameraEntity = m_ActiveScene->CreateEntity("Camera A");
-		m_CameraEntity.AddComponent<C_Camera>();
-
-		m_SecondCamera = m_ActiveScene->CreateEntity("Camera B");
-		auto& cc = m_SecondCamera.AddComponent<C_Camera>();
-		cc.Primary = false;
-
-
-		class CameraController : public ScriptableEntity
-		{
-
-
-			bool m_IsDragging = false;
-			float m_LastMouseX = 0.0f;
-			float m_LastMouseY = 0.0f;
-			float m_MouseDragSensitivity = 0.005f; // 鼠标拖动灵敏度
-
-
-		public:
-			virtual void OnCreate() override
-			{
-			}
-
-			virtual void OnDestroy() override
-			{
-			}
-
-			virtual void OnUpdate(Timestep ts) override
-			{
-				auto& translation = GetComponent<Transform>()._Translation;
-				float speed = 3.0f;
-
-				if (Input::IsMouseButtonPressed(MouseCode::ButtonMiddle))
-				{
-					auto [currentMouseX, currentMouseY] = Input::GetMousePositon();
-
-					if (!m_IsDragging)
-					{
-						m_IsDragging = true;
-						m_LastMouseX = currentMouseX;
-						m_LastMouseY = currentMouseY;
-					}
-					else
-					{
-						float deltaX = currentMouseX - m_LastMouseX;
-						float deltaY = currentMouseY - m_LastMouseY;
-
-						translation.x += deltaX * -speed * m_MouseDragSensitivity;
-						translation.y -= deltaY * -speed * m_MouseDragSensitivity;
-
-						m_LastMouseX = currentMouseX;
-						m_LastMouseY = currentMouseY;
-					}
-				}
-				else
-				{
-					m_IsDragging = false;
-				}
-			}
-		};
-
-
-		m_CameraEntity.AddComponent<NativeScript>().Bind<CameraController>();
-		m_SecondCamera.AddComponent<NativeScript>().Bind<CameraController>();
-#endif
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 	}
 
@@ -232,23 +167,58 @@ namespace TomCat {
 		{
 			if (ImGui::BeginMenu("File"))
 			{
+				if (ImGui::MenuItem("Open Project"))
+				{
+					OpenProject();
+				}
 
-				if (ImGui::MenuItem("New", "Ctrl + N"))
+				if (ImGui::MenuItem("Save Project"))
+				{
+					SaveProject();
+				}
+
+				ImGui::Separator();
+
+				if (ImGui::MenuItem("New Scene", "Ctrl + N"))
 				{
 					NewScene();
 				}
 
-				if (ImGui::MenuItem("Open,,,", "Ctrl + O"))
+				if (ImGui::MenuItem("Open Scene...", "Ctrl + O"))
 				{
 					OpenScene();
 				}
 
-				if (ImGui::MenuItem("Save As...", "Ctrl + Shift + S"))
+				if (ImGui::MenuItem("Save Scene", "Ctrl + S"))
+				{
+					SaveScene();
+				}
+
+				if (ImGui::MenuItem("Save Scene As...", "Ctrl + Shift + S"))
 				{
 					SaveSceneAs();
 				}
 
+				ImGui::Separator();
+
 				if (ImGui::MenuItem("Exit")) Application::Get().Close();
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Project"))
+			{
+				if (m_CurrentProject)
+				{
+					ImGui::Text("Project: %s", m_CurrentProject->GetName().c_str());
+					ImGui::Text("Path: %s", m_CurrentProject->GetProjectPath().string().c_str());
+					ImGui::Separator();
+					ImGui::Text("Version: %s", m_CurrentProject->GetVersion().c_str());
+					ImGui::Text("Author: %s", m_CurrentProject->GetConfig().Author.c_str());
+				}
+				else
+				{
+					ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No project loaded");
+				}
 				ImGui::EndMenu();
 			}
 
@@ -310,14 +280,16 @@ namespace TomCat {
 
 		if (ImGui::BeginDragDropTarget())
 		{
+			std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
+			
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TOMCAT_SCENE"))
 			{
 				const wchar_t* path = (const wchar_t*)payload->Data;
-				OpenScene(std::filesystem::path(g_AssetPath) / path);
+				OpenScene(assetPath / path);
 			}
 			else if(const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE")){
 				const wchar_t* path = (const wchar_t*)payload->Data;
-				std::filesystem::path texturePath = std::filesystem::path(g_AssetPath) / path;
+				std::filesystem::path texturePath = assetPath / path;
 				std::string fileName = texturePath.stem().string();
 
 				auto Square = m_ActiveScene->CreateEntity(fileName);
@@ -433,6 +405,8 @@ namespace TomCat {
 		{
 			if (control && shift)
 				SaveSceneAs();
+			else if (control)
+				SaveScene();
 
 			break;
 		}
@@ -480,48 +454,127 @@ namespace TomCat {
 
 
 	void EditorLayer::NewScene()
-{
-	// Create a new scene
-	m_ActiveScene = CreateRef<Scene>();
-	m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-	m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-	
-	// Clear the selection to prevent accessing invalid entities
-	m_SceneHierarchyPanel.SetSelectedEntity({});
-}
+	{
+		m_ActiveScene = CreateRef<Scene>();
+		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneHierarchyPanel.SetSelectedEntity({});
+		m_CurrentScenePath.clear();
+		m_SceneDirty = true;
+		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+	}
 
 	void EditorLayer::OpenScene()
 	{
+		std::string defaultPath = GetProjectScenePath().string();
+		if (defaultPath.empty())
+		{
+			defaultPath = m_CurrentProject ? m_CurrentProject->GetScenePath().string() : "";
+		}
+
 		std::string filepath = FileDialogs::OpenFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
+		if (filepath.empty())
+		{
+			filepath = FileDialogs::OpenFile("TomCat Scene (*.tcproj)\0*.tcproj\0");
+		}
 		if (!filepath.empty())
 		{
 			OpenScene(filepath);
 		}
-
 	}
 
 	void EditorLayer::OpenScene(const std::filesystem::path& path)
-{
-	// Create a new scene
-	m_ActiveScene = CreateRef<Scene>();
-	m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-	m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+	{
+		m_ActiveScene = CreateRef<Scene>();
+		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneHierarchyPanel.SetSelectedEntity({});
 
-	// Clear the selection to prevent accessing invalid entities
-	m_SceneHierarchyPanel.SetSelectedEntity({});
+		SceneSerializer serializer(m_ActiveScene);
+		if (serializer.Deserialize(path.string()))
+		{
+			m_CurrentScenePath = path;
+			m_SceneDirty = false;
+		}
+		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+	}
 
-	SceneSerializer serializer(m_ActiveScene);
-	serializer.Deserialize(path.string());
-
-}
+	void EditorLayer::SaveScene()
+	{
+		if (m_CurrentScenePath.empty())
+		{
+			SaveSceneAs();
+		}
+		else
+		{
+			SceneSerializer serializer(m_ActiveScene);
+			serializer.Serialize(m_CurrentScenePath.string());
+			m_SceneDirty = false;
+		}
+	}
 
 	void EditorLayer::SaveSceneAs()
 	{
+		std::string defaultPath = GetProjectScenePath().string();
+		if (defaultPath.empty() && m_CurrentProject)
+		{
+			defaultPath = m_CurrentProject->GetScenePath().string();
+		}
+
 		std::string filepath = FileDialogs::SaveFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
+		if (filepath.empty())
+		{
+			filepath = FileDialogs::SaveFile("TomCat Scene (*.tcproj)\0*.tcproj\0");
+		}
 		if (!filepath.empty())
 		{
 			SceneSerializer serializer(m_ActiveScene);
 			serializer.Serialize(filepath);
+			m_CurrentScenePath = filepath;
+			m_SceneDirty = false;
 		}
+	}
+
+	void EditorLayer::OpenProject()
+	{
+		std::string filepath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
+		if (!filepath.empty())
+		{
+			auto project = ProjectManager::Get().LoadProject(filepath);
+			if (project)
+			{
+				m_CurrentProject = project;
+				NewScene();
+				
+				auto startScenePath = project->GetStartScenePath();
+				if (!startScenePath.empty() && std::filesystem::exists(startScenePath))
+				{
+					OpenScene(startScenePath);
+				}
+				m_ContentBrowserPanel.SetProject(m_CurrentProject);
+			}
+		}
+	}
+
+	void EditorLayer::SaveProject()
+	{
+		if (m_CurrentProject)
+		{
+			m_CurrentProject->Save();
+		}
+	}
+
+	std::filesystem::path EditorLayer::GetProjectScenePath() const
+	{
+		if (!m_CurrentProject)
+			return std::filesystem::path();
+		
+		if (!m_CurrentScenePath.empty())
+		{
+			if (m_CurrentScenePath.parent_path() == m_CurrentProject->GetScenePath())
+				return m_CurrentScenePath;
+		}
+		
+		return m_CurrentProject->GetScenePath();
 	}
 }
