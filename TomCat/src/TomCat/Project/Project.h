@@ -12,11 +12,10 @@ namespace TomCat {
 		std::string Name = "Untitled Project";
 		std::string Version = "1.0.0";
 		std::string Description = "";
-		std::string Author = "";
+		std::string EditorVersion = "";
+		std::string LastOperationTime = "";
 		std::filesystem::path AssetDirectory = "Assets";
-		std::filesystem::path SceneDirectory = "Assets/Scenes";
-		std::filesystem::path ScriptDirectory = "Assets/Scripts";
-		std::string StartScene = "";
+		//std::string StartScene = "";
 	};
 
 	class Project
@@ -26,23 +25,19 @@ namespace TomCat {
 		Project(const std::filesystem::path& projectPath);
 
 		const std::filesystem::path& GetProjectPath() const { return m_ProjectPath; }
-		const std::filesystem::path& GetProjectDirectory() const { return m_ProjectDirectory; }
 		const ProjectConfig& GetConfig() const { return m_Config; }
 		
 		void SetConfig(const ProjectConfig& config) { m_Config = config; }
 		
 		const std::string& GetName() const { return m_Config.Name; }
-		const std::string& GetVersion() const { return m_Config.Version; }
-		
-		std::filesystem::path GetAssetPath() const;
-		std::filesystem::path GetScenePath() const;
-		std::filesystem::path GetScriptPath() const;
-		
-		std::filesystem::path GetStartScenePath() const;
+		const std::string& GetEditorVersion() const { return m_Config.EditorVersion; }
+		const std::string& GetLastOperationTime() const { return m_Config.LastOperationTime; }
+		std::string GetLastOperationTimeAgo() const;
+		void UpdateLastOperationTime();
+
+		std::filesystem::path GetAssetPath() const { return m_Directory / m_Config.AssetDirectory; };
+
 		void SetStartScene(const std::string& sceneName);
-		
-		time_t GetLastModified() const { return m_LastModified; }
-		void UpdateLastModified();
 		
 		bool IsValid() const { return !m_ProjectPath.empty(); }
 		
@@ -53,9 +48,8 @@ namespace TomCat {
 
 	private:
 		std::filesystem::path m_ProjectPath;
-		std::filesystem::path m_ProjectDirectory;
+		std::filesystem::path m_Directory;
 		ProjectConfig m_Config;
-		time_t m_LastModified = 0;
 	};
 
 }

@@ -10,7 +10,7 @@
 
 namespace TomCat {
 
-	extern const std::filesystem::path g_AssetPath = "assets";
+    extern const std::filesystem::path g_AssetPath = "Assets";
 
 	static const std::unordered_set<std::string> s_ImageExtensions = {
 		".png", ".jpg", ".jpeg", ".bmp", ".tga", ".gif", ".webp", ".psd", ".hdr", ".pic"
@@ -30,15 +30,15 @@ namespace TomCat {
 		auto project = ProjectManager::Get().GetActiveProject();
 		if (project)
 		{
-			m_CurrentDirectory = project->GetAssetPath();
+            m_CurrentDirectory = project->GetAssetPath();
 		}
-		else
-		{
-			m_CurrentDirectory = g_AssetPath;
-		}
+        else
+        {
+            m_CurrentDirectory = g_AssetPath;
+        }
 		
-		m_DirectoryIcon = Texture2D::Create("Resources/Icons/ContentBrowser/DirectoryIcon.png");
-		m_FileIcon = Texture2D::Create("Resources/Icons/ContentBrowser/FileIcon.png");
+		m_DirectoryIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/DirectoryIcon.png");
+		m_FileIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/FileIcon.png");
 
 		TomCat::RegisterWindowMoreOptionsCallback("Project", [](ImVec2 pos) {
 
@@ -50,256 +50,259 @@ namespace TomCat {
 	}
 
 	// 原有的递归函数，用于 One Column 模式（有折叠功能）
-	void ContentBrowserPanel::DisplayDirectoryRecursive(const std::filesystem::path& directoryPath, bool isRoot)
-	{
-		std::string displayName = isRoot ? "Assets" : directoryPath.filename().string();
-		ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow;
+    void ContentBrowserPanel::DisplayDirectoryRecursive(const std::filesystem::path& directoryPath, bool isRoot)
+    {
+        std::string displayName = isRoot ? "Assets" : directoryPath.filename().string();
+        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow;
 
-		// 检查当前是否选中该目录
-		if (m_SelectedDirectory == directoryPath)
-		{
-			nodeFlags |= ImGuiTreeNodeFlags_Selected;
-		}
+        // 检查当前是否选中该目录
+        if (m_SelectedDirectory == directoryPath)
+        {
+            nodeFlags |= ImGuiTreeNodeFlags_Selected;
+        }
 
-		bool nodeOpen = ImGui::TreeNodeEx(displayName.c_str(), nodeFlags);
+        bool nodeOpen = ImGui::TreeNodeEx(displayName.c_str(), nodeFlags);
 
-		// 处理点击事件
-		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
-		{
-			m_SelectedDirectory = directoryPath;
-		}
+        // 处理点击事件
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        {
+            m_SelectedDirectory = directoryPath;
+        }
 
-		if (nodeOpen)
-		{
-			try
-			{
-				for (auto& entry : std::filesystem::directory_iterator(directoryPath))
-				{
-					const auto& path = entry.path();
+        if (nodeOpen)
+        {
+            try
+            {
+                // 添加调试输出
+                TC_Core_Info("Scanning directory: {0}", directoryPath.string());
+                int itemCount = 0;
 
-					if (entry.is_directory())
-					{
-						DisplayDirectoryRecursive(path, false);
-					}
-					else
-					{
-						DisplayFileNode(path);
-					}
-				}
-			}
-			catch (const std::filesystem::filesystem_error& e)
-			{
-				TC_Core_Error("Failed to read directory: {0}", e.what());
-			}
+                for (auto& entry : std::filesystem::directory_iterator(directoryPath))
+                {
+                    const auto& path = entry.path();
+                    itemCount++;
 
-			ImGui::TreePop();
-		}
-	}
+                    // 调试输出每个找到的项目
+                    TC_Core_Info("Found item: {0} (is_directory: {1})", path.string(), entry.is_directory());
+
+                    if (entry.is_directory())
+                    {
+                        DisplayDirectoryRecursive(path, false);
+                    }
+                    else
+                    {
+                        DisplayFileNode(path);
+                    }
+                }
+
+                TC_Core_Info("Total items found: {0}", itemCount);
+            }
+            catch (const std::filesystem::filesystem_error& e)
+            {
+                TC_Core_Error("Failed to read directory: {0}", e.what());
+            }
+
+            ImGui::TreePop();
+        }
+    }
 
 	// 新增：用于 Two Column 左侧面板的平面显示（只显示一级，无折叠）
-	void ContentBrowserPanel::DisplayDirectoryFlat(const std::filesystem::path& directoryPath)
-	{
-		// 检查目录是否存在且可访问
-		if (!std::filesystem::exists(directoryPath) || !std::filesystem::is_directory(directoryPath))
-		{
-			TC_Core_Error("Directory does not exist or is not accessible: {0}", directoryPath.string());
-			return;
-		}
+    void ContentBrowserPanel::DisplayDirectoryFlat(const std::filesystem::path& directoryPath)
+    {
+        // 检查目录是否存在且可访问
+        if (!std::filesystem::exists(directoryPath) || !std::filesystem::is_directory(directoryPath))
+        {
+            TC_Core_Error("Directory does not exist or is not accessible: {0}", directoryPath.string());
+            return;
+        }
 
-		// 根节点使用 Leaf 标志，无三角标，不可展开
-		ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        // 根节点使用 Leaf 标志，无三角标，不可展开
+        ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-		// 检查根目录是否被选中
-		if (m_SelectedDirectory == directoryPath)
-		{
-			rootFlags |= ImGuiTreeNodeFlags_Selected;
-		}
+        // 检查根目录是否被选中
+        if (m_SelectedDirectory == directoryPath)
+        {
+            rootFlags |= ImGuiTreeNodeFlags_Selected;
+        }
 
-		float firstLevelIndent = -30.0f; // 改为你想要的数值
-		ImGui::Indent(firstLevelIndent);
+        float firstLevelIndent = -30.0f; // 改为你想要的数值
+        ImGui::Indent(firstLevelIndent);
 
-		// 显示 assets 根节点
-		ImGui::TreeNodeEx("Assets", rootFlags);
+        // 显示 assets 根节点
+        ImGui::TreeNodeEx("Assets", rootFlags);
 
-		// 处理根目录点击
-		if (ImGui::IsItemClicked())
-		{
-			m_SelectedDirectory = directoryPath;
-		}
+        // 处理根目录点击
+        if (ImGui::IsItemClicked())
+        {
+            m_SelectedDirectory = directoryPath;
+        }
 
-		// 遍历 assets 下的一级项目
-		try
-		{
-			for (auto& entry : std::filesystem::directory_iterator(directoryPath))
-			{
-			const auto& path = entry.path();
-			std::string name = path.filename().string();
-			bool isDirectory = entry.is_directory();
+        // 遍历 assets 下的一级项目
+        try
+        {
+            for (auto& entry : std::filesystem::directory_iterator(directoryPath))
+            {
+                const auto& path = entry.path();
+                std::string name = path.filename().string();
+                bool isDirectory = entry.is_directory();
 
-			// 添加缩进
-			ImGui::Indent(20.0f);
+                // 添加缩进
+                ImGui::Indent(20.0f);
 
-			ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+                ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-			// 检查是否被选中
-			if (m_SelectedDirectory == path)
-			{
-				nodeFlags |= ImGuiTreeNodeFlags_Selected;
-			}
+                // 检查是否被选中
+                if (m_SelectedDirectory == path)
+                {
+                    nodeFlags |= ImGuiTreeNodeFlags_Selected;
+                }
 
-			// 显示项目（目录或文件）
-			if (isDirectory)
-			{
+                // 显示项目（目录或文件）
+                if (isDirectory)
+                {
+                    ImGui::TreeNodeEx(name.c_str(), nodeFlags);
 
-				ImGui::TreeNodeEx(name.c_str(), nodeFlags);
+                    // 处理点击事件 - 只允许选择目录
+                    if (ImGui::IsItemClicked())
+                    {
+                        m_SelectedDirectory = path;
+                    }
+                }
+                else
+                {
+                    // 文件：显示文件图标或图片预览
+                    std::string extension = path.extension().string();
+                    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
 
-				// 处理点击事件
-				if (ImGui::IsItemClicked())
-				{
-					m_SelectedDirectory = path;
-				}
-			}
-			else
-			{
-				// 文件：显示文件图标或图片预览
-				std::string extension = path.extension().string();
-				std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+                    if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
+                    {
+                        // 图片文件显示缩略图
+                        std::string filepath = path.string();
+                        auto it = m_ImageCache.find(filepath);
+                        Ref<Texture2D> icon;
 
-				if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
-				{
-					// 图片文件显示缩略图
-					std::string filepath = path.string();
-					auto it = m_ImageCache.find(filepath);
-					Ref<Texture2D> icon;
+                        if (it != m_ImageCache.end())
+                        {
+                            icon = it->second;
+                        }
+                        else
+                        {
+                            icon = Texture2D::Create(filepath);
+                            m_ImageCache[filepath] = icon;
+                        }
 
-					if (it != m_ImageCache.end())
-					{
-						icon = it->second;
-					}
-					else
-					{
-						icon = Texture2D::Create(filepath);
-						m_ImageCache[filepath] = icon;
-					}
+                        float textHeight = ImGui::GetFontSize();
+                        float previewSize = textHeight;
+                        ImGui::Image((ImTextureID)icon->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
+                        ImGui::SameLine();
+                    }
+                    else
+                    {
+                        // 普通文件显示文件图标
+                        float textHeight = ImGui::GetFontSize();
+                        float iconSize = textHeight;
+                        ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { iconSize, iconSize }, { 0, 1 }, { 1, 0 });
+                        ImGui::SameLine();
+                    }
 
-					float textHeight = ImGui::GetFontSize();
-					float previewSize = textHeight;
-					ImGui::Image((ImTextureID)icon->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
-					ImGui::SameLine();
-				}
-				else
-				{
-					// 普通文件显示文件图标
-					float textHeight = ImGui::GetFontSize();
-					float iconSize = textHeight;
-					ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { iconSize, iconSize }, { 0, 1 }, { 1, 0 });
-					ImGui::SameLine();
-				}
+                    ImGui::TreeNodeEx(name.c_str(), nodeFlags);
 
-				ImGui::TreeNodeEx(name.c_str(), nodeFlags);
+                    // 处理点击事件 - 文件不更新 m_SelectedDirectory
+                    // 移除了文件点击时更新 m_SelectedDirectory 的代码
+                }
 
-				// 处理点击事件
-				if (ImGui::IsItemClicked())
-				{
-					m_SelectedDirectory = path;
-				}
-			}
-
-			// 取消缩进
-			ImGui::Unindent(20.0f);
-			}
-		}
-		catch (const std::filesystem::filesystem_error& e)
-		{
-			TC_Core_Error("Failed to read directory: {0}", e.what());
-		}
-	}
+                // 取消缩进
+                ImGui::Unindent(20.0f);
+            }
+        }
+        catch (const std::filesystem::filesystem_error& e)
+        {
+            TC_Core_Error("Failed to read directory: {0}", e.what());
+        }
+    }
 
 	// 文件节点显示函数
-	void ContentBrowserPanel::DisplayFileNode(const std::filesystem::path& path)
-	{
-		std::string name = path.filename().string();
-		ImGuiTreeNodeFlags fileNodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    void ContentBrowserPanel::DisplayFileNode(const std::filesystem::path& path)
+    {
+        std::string name = path.filename().string();
+        ImGuiTreeNodeFlags fileNodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 
-		// 检查是否为图片文件并显示预览
-		std::string extension = path.extension().string();
-		std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+        // 检查是否为图片文件并显示预览
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
 
-		if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
-		{
-			// 尝试从缓存中获取
-			std::string filepath = path.string();
-			auto it = m_ImageCache.find(filepath);
-			Ref<Texture2D> icon;
+        if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
+        {
+            // 尝试从缓存中获取
+            std::string filepath = path.string();
+            auto it = m_ImageCache.find(filepath);
+            Ref<Texture2D> icon;
 
-			if (it != m_ImageCache.end())
-			{
-				icon = it->second;
-			}
-			else
-			{
-				// 加载图片并缓存
-				icon = Texture2D::Create(filepath);
-				m_ImageCache[filepath] = icon;
-			}
+            if (it != m_ImageCache.end())
+            {
+                icon = it->second;
+            }
+            else
+            {
+                // 加载图片并缓存
+                icon = Texture2D::Create(filepath);
+                m_ImageCache[filepath] = icon;
+            }
 
-			// 获取当前字体的行高
-			float textHeight = ImGui::GetFontSize();
-			float previewSize = textHeight;
+            // 获取当前字体的行高
+            float textHeight = ImGui::GetFontSize();
+            float previewSize = textHeight;
 
-			// 在文件名左侧显示与文字高度相同的缩略图
-			ImGui::Image((ImTextureID)icon->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
-			ImGui::SameLine();
-		}
-		else
-		{
-			// 对于非图片文件，在左侧显示文件图标
-			float textHeight = ImGui::GetFontSize();
-			float iconSize = textHeight;
-			ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { iconSize, iconSize }, { 0, 1 }, { 1, 0 });
-			ImGui::SameLine();
-		}
+            // 在文件名左侧显示与文字高度相同的缩略图
+            ImGui::Image((ImTextureID)icon->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
+            ImGui::SameLine();
+        }
+        else
+        {
+            // 对于非图片文件，在左侧显示文件图标
+            float textHeight = ImGui::GetFontSize();
+            float iconSize = textHeight;
+            ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { iconSize, iconSize }, { 0, 1 }, { 1, 0 });
+            ImGui::SameLine();
+        }
 
-		ImGui::TreeNodeEx(name.c_str(), fileNodeFlags);
+        ImGui::TreeNodeEx(name.c_str(), fileNodeFlags);
 
-		// 处理文件点击事件
-		if (ImGui::IsItemClicked())
-		{
-			m_SelectedDirectory = path;
-		}
+        // 实现拖拽功能 - 修复点
+        if (ImGui::BeginDragDropSource())
+        {
+            // 修复：直接从 ProjectManager 获取项目，而不是使用未初始化的 m_Project
+            auto project = ProjectManager::Get().GetActiveProject();
+            std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
+            auto relativePath = std::filesystem::relative(path, assetPath);
+            const wchar_t* itemPath = relativePath.c_str();
 
-		// 实现拖拽功能
-		if (ImGui::BeginDragDropSource())
-		{
-			std::filesystem::path assetPath = m_Project ? m_Project->GetAssetPath() : g_AssetPath;
-			auto relativePath = std::filesystem::relative(path, assetPath);
-			const wchar_t* itemPath = relativePath.c_str();
+            std::wstring ext = relativePath.extension().wstring();
 
-			std::wstring ext = relativePath.extension().wstring();
+            TC_Core_Assert(!ext.empty());
 
-			TC_Core_Assert(!ext.empty());
+            if (ext == L".tomcat" || ext == L".tcproj")
+            {
+                ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+            }
+            else if (s_ImageExtensionsW.find(ext) != s_ImageExtensionsW.end())
+            {
+                ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+            }
 
-			if (ext == L".tomcat" || ext == L".tcproj")
-			{
-				ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-			}
-			else if (s_ImageExtensionsW.find(ext) != s_ImageExtensionsW.end())
-			{
-				ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-			}
+            ImGui::EndDragDropSource();
+        }
 
-			ImGui::EndDragDropSource();
-		}
+        // 图片悬浮预览功能
+        if (ImGui::IsItemHovered() && s_ImageExtensions.find(extension) != s_ImageExtensions.end())
+        {
+            ImGui::BeginTooltip();
+            float previewSize = 200.0f;
+            ImGui::Image((ImTextureID)m_ImageCache[path.string()]->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
+            ImGui::EndTooltip();
+        }
+    }
 
-		// 图片悬浮预览功能
-		if (ImGui::IsItemHovered() && s_ImageExtensions.find(extension) != s_ImageExtensions.end())
-		{
-			ImGui::BeginTooltip();
-			float previewSize = 200.0f;
-			ImGui::Image((ImTextureID)m_ImageCache[path.string()]->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
-			ImGui::EndTooltip();
-		}
-	}
     void ContentBrowserPanel::OnImGuiRender()
     {
         static bool projectWindowOpen = true;
@@ -370,6 +373,10 @@ namespace TomCat {
             // ========== 可拖拽分隔条 ==========
             float availableHeight = ImGui::GetContentRegionAvail().y;
             float splitterHitAreaWidth = 10.0f;
+
+            // 避免零尺寸导致 ImGui 断言失败
+            if (availableHeight <= 0.0f)
+                availableHeight = 1.0f;
 
             ImGui::InvisibleButton("Splitter", ImVec2(splitterHitAreaWidth, availableHeight));
 
@@ -526,8 +533,6 @@ namespace TomCat {
                 ImGui::PopStyleVar(2);
 
                 // 关键：将光标位置设置到面包屑下方，不留空隙
-                // 使用 SetCursorPosY 而不是加上 breadcrumbHeight，因为光标位置已经在面包屑底部
-                // 但需要确保下一个子窗口从面包屑底部开始
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY());
 
                 // ========== 内容显示区域 ==========
@@ -551,114 +556,166 @@ namespace TomCat {
 
                 ImGui::Columns(columnCount, 0, false);
 
-                // 检查目录是否存在且可访问
-                if (!std::filesystem::exists(displayPath) || !std::filesystem::is_directory(displayPath))
+                // ========== 路径回退逻辑 ==========
+                std::filesystem::path actualDisplayPath = displayPath;
+                bool useVirtualPath = false;
+
+                // 检查物理目录是否存在
+                if (!std::filesystem::exists(actualDisplayPath) || !std::filesystem::is_directory(actualDisplayPath))
                 {
-                    TC_Core_Error("Display path does not exist or is not accessible: {0}", displayPath.string());
-                }
-                else
-                {
-                    try
+                    // 物理路径不存在，尝试使用相对于 exe 的虚拟路径
+                    std::filesystem::path virtualPath = std::filesystem::current_path() / "Packages" / "TetxProject" / "Assets";
+
+                    if (std::filesystem::exists(virtualPath) && std::filesystem::is_directory(virtualPath))
                     {
-                        for (auto& directoryEntry : std::filesystem::directory_iterator(displayPath))
-                        {
-                    const auto& path = directoryEntry.path();
-                    auto relativePathItem = std::filesystem::relative(path, assetPath);
-                    std::string filenameString = relativePathItem.filename().string();
-
-                ImGui::PushID(filenameString.c_str());
-                Ref<Texture2D> icon;
-
-                if (directoryEntry.is_directory())
-                {
-                    icon = m_DirectoryIcon;
-                }
-                else
-                {
-                    std::string extension = path.extension().string();
-                    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
-
-                    if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
-                    {
-                        std::string filepath = path.string();
-                        auto it = m_ImageCache.find(filepath);
-                        if (it != m_ImageCache.end())
-                        {
-                            icon = it->second;
-                        }
-                        else
-                        {
-                            icon = Texture2D::Create(filepath);
-                            m_ImageCache[filepath] = icon;
-                        }
+                        actualDisplayPath = virtualPath;
+                        useVirtualPath = true;
+                        TC_Core_Info("Using virtual path: {0}", actualDisplayPath.string());
                     }
                     else
                     {
-                        icon = m_FileIcon;
+                        // 如果虚拟路径也不存在，尝试使用 m_CurrentDirectory
+                        if (std::filesystem::exists(m_CurrentDirectory) && std::filesystem::is_directory(m_CurrentDirectory))
+                        {
+                            actualDisplayPath = m_CurrentDirectory;
+                            useVirtualPath = true;
+                            TC_Core_Info("Using m_CurrentDirectory: {0}", actualDisplayPath.string());
+                        }
+                        else
+                        {
+                            TC_Core_Error("Display path does not exist or is not accessible: {0}", displayPath.string());
+                            ImGui::TextDisabled("Cannot access assets directory");
+                            ImGui::EndChild();
+                            ImGui::PopStyleVar(3);
+                            ImGui::EndChild();  // RightPanel
+                            ImGui::PopStyleVar(3);  // 最外层样式
+                            ImGui::End();  // Window
+                            return;
+                        }
                     }
                 }
 
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-                ImGui::ImageButton((ImTextureID)icon->GetRendererID(), { thumbnailSize, thumbnailSize }, { 0, 1 }, { 1, 0 });
-
-                if (ImGui::BeginDragDropSource())
+                try
                 {
-                    const wchar_t* itemPath = relativePathItem.c_str();
-                    std::wstring extension = relativePathItem.extension().wstring();
-                    TC_Core_Assert(!extension.empty());
-
-                    if (extension == L".tomcat" || extension == L".tcproj")
+                    for (auto& directoryEntry : std::filesystem::directory_iterator(actualDisplayPath))
                     {
-                        ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-                    }
-                    else if (s_ImageExtensionsW.find(extension) != s_ImageExtensionsW.end())
-                    {
-                        ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-                    }
+                        const auto& path = directoryEntry.path();
 
-                    ImGui::EndDragDropSource();
-                }
+                        // 计算相对路径时，如果使用了虚拟路径，需要特殊处理
+                        std::filesystem::path relativePathItem;
+                        if (useVirtualPath)
+                        {
+                            // 如果使用虚拟路径，尝试从虚拟路径中提取相对部分
+                            std::filesystem::path virtualBase = std::filesystem::current_path() / "Packages" / "TetxProject" / "Assets";
+                            if (path.string().find(virtualBase.string()) == 0)
+                            {
+                                relativePathItem = std::filesystem::relative(path, virtualBase);
+                            }
+                            else
+                            {
+                                relativePathItem = path.filename();
+                            }
+                        }
+                        else
+                        {
+                            relativePathItem = std::filesystem::relative(path, assetPath);
+                        }
 
-                ImGui::PopStyleColor(3);
+                        std::string filenameString = relativePathItem.filename().string();
 
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                {
-                    if (directoryEntry.is_directory())
-                    {
-                        m_SelectedDirectory = path;
-                    }
-                }
+                        ImGui::PushID(filenameString.c_str());
+                        Ref<Texture2D> icon;
 
-                ImGui::TextWrapped(filenameString.c_str());
-                ImGui::NextColumn();
-                ImGui::PopID();
+                        if (directoryEntry.is_directory())
+                        {
+                            icon = m_DirectoryIcon;
+                        }
+                        else
+                        {
+                            std::string extension = path.extension().string();
+                            std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+                            if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
+                            {
+                                std::string filepath = path.string();
+                                auto it = m_ImageCache.find(filepath);
+                                if (it != m_ImageCache.end())
+                                {
+                                    icon = it->second;
+                                }
+                                else
+                                {
+                                    icon = Texture2D::Create(filepath);
+                                    m_ImageCache[filepath] = icon;
+                                }
+                            }
+                            else
+                            {
+                                icon = m_FileIcon;
+                            }
+                        }
+
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
+                        ImGui::ImageButton((ImTextureID)icon->GetRendererID(), { thumbnailSize, thumbnailSize }, { 0, 1 }, { 1, 0 });
+
+                        if (ImGui::BeginDragDropSource())
+                        {
+                            const wchar_t* itemPath = relativePathItem.c_str();
+                            std::wstring extension = relativePathItem.extension().wstring();
+                            TC_Core_Assert(!extension.empty());
+
+                            if (extension == L".tomcat" || extension == L".tcproj")
+                            {
+                                ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                            }
+                            else if (s_ImageExtensionsW.find(extension) != s_ImageExtensionsW.end())
+                            {
+                                ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                            }
+
+                            ImGui::EndDragDropSource();
+                        }
+
+                        ImGui::PopStyleColor(3);
+
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                        {
+                            if (directoryEntry.is_directory())
+                            {
+                                m_SelectedDirectory = path;
+                            }
+                        }
+
+                        ImGui::TextWrapped(filenameString.c_str());
+                        ImGui::NextColumn();
+                        ImGui::PopID();
                     }
                 }
                 catch (const std::filesystem::filesystem_error& e)
                 {
                     TC_Core_Error("Failed to read display directory: {0}", e.what());
+                    ImGui::TextDisabled("Error reading directory: %s", e.what());
                 }
-            }
 
-            ImGui::Columns(1);
+                ImGui::Columns(1);
 
-            if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl)
-            {
-                float scrollDelta = ImGui::GetIO().MouseWheel;
-                if (scrollDelta != 0)
+                if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl)
                 {
-                    thumbnailSize -= scrollDelta * 8.0f;
-                    thumbnailSize = std::max(128.0f, std::min(512.0f, thumbnailSize));
-                    float oldRatio = padding / thumbnailSize;
-                    padding = thumbnailSize * oldRatio;
-                    padding = std::max(0.0f, std::min(32.0f, padding));
+                    float scrollDelta = ImGui::GetIO().MouseWheel;
+                    if (scrollDelta != 0)
+                    {
+                        thumbnailSize -= scrollDelta * 8.0f;
+                        thumbnailSize = std::max(128.0f, std::min(512.0f, thumbnailSize));
+                        float oldRatio = padding / thumbnailSize;
+                        padding = thumbnailSize * oldRatio;
+                        padding = std::max(0.0f, std::min(32.0f, padding));
+                    }
                 }
-            }
 
-            ImGui::EndChild();  // ContentArea
-            ImGui::PopStyleVar(3);  // 弹出 ContentArea 的样式
+                ImGui::EndChild();  // ContentArea
+                ImGui::PopStyleVar(3);  // 弹出 ContentArea 的样式
             }
             else
             {

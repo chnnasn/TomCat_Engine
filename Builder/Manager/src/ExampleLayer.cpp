@@ -9,18 +9,20 @@
 
 #include "TomCat/Math/Math.h"
 #include <fstream>
-#include <ctime>
 
 namespace TomCat {
 
-	extern const std::filesystem::path g_AssetPath;
+	std::vector<std::string> m_Editers;
 
 	ExampleLayer::ExampleLayer()
 		: Layer("FileManager"), m_SelectedMenu(0)
 	{
 		ProjectManager::Get().SetProjectDirectory(std::filesystem::current_path() / "Projects");
+		ProjectManager::Get().SetEditorDirectory(std::filesystem::current_path() / "Editors");
 		ProjectManager::Get().ScanProjects();
 		m_Projects = ProjectManager::Get().GetProjects();
+		
+		m_Editers = ProjectManager::Get().GetEditorDirectoryFiles();
 	}
 
 	void ExampleLayer::OnAttach()
@@ -190,7 +192,6 @@ namespace TomCat {
 			m_Projects = ProjectManager::Get().GetProjects();
 		}
 	}
-
 	void ExampleLayer::RenderProjectList()
 	{
 		ImGui::BeginChild("ProjectList", ImVec2(0, 0), true);
@@ -222,64 +223,77 @@ namespace TomCat {
 			}
 			else
 			{
+				float actionButtonWidth = 100.0f;
+				float availableWidth = ImGui::GetContentRegionAvail().x;
+				float otherColumnsWidth = availableWidth - actionButtonWidth;
+
+				float nameRatio = 0.35f;
+				float versionRatio = 0.35f;
+				float modifiedRatio = 0.3f;
+
+				float nameWidth = otherColumnsWidth * nameRatio;
+				float versionWidth = otherColumnsWidth * versionRatio;
+				float modifiedWidth = otherColumnsWidth * modifiedRatio;
+
 				ImGui::Text("Name");
-				ImGui::SameLine(200);
-				ImGui::Text("Version");
-				ImGui::SameLine(300);
-				ImGui::Text("Author");
-				ImGui::SameLine(450);
-				ImGui::Text("Last Modified");
-				ImGui::SameLine(600);
+				ImGui::SameLine(nameWidth);
+				ImGui::Text("EditorVersion");
+				ImGui::SameLine(nameWidth + versionWidth);
+				ImGui::Text("Last Operation");
+				ImGui::SameLine(nameWidth + versionWidth + modifiedWidth);
 				ImGui::Text("Actions");
 				ImGui::Separator();
 
 				for (const auto& project : m_Projects)
 				{
-					ImGui::Selectable(project->GetName().c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
-					ImGui::SameLine(200);
-					ImGui::Text(project->GetVersion().c_str());
-					ImGui::SameLine(300);
-					ImGui::Text(project->GetConfig().Author.c_str());
-					ImGui::SameLine(450);
-					
-					time_t modTime = project->GetLastModified();
-					if (modTime > 0)
-					{
-						struct tm timeInfo;
-						if (localtime_s(&timeInfo, &modTime) == 0)
-						{
-							char timeBuffer[80];
-							if (strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M", &timeInfo) > 0)
-							{
-								ImGui::Text(timeBuffer);
-							}
-							else
-							{
-								ImGui::Text("Unknown");
-							}
-						}
-						else
-						{
-							ImGui::Text("Unknown");
-						}
-					}
-					else
-					{
-						ImGui::Text("Unknown");
-					}
-
-					ImGui::SameLine(600);
 					ImGui::PushID(project->GetName().c_str());
-					if (ImGui::Button("Open", ImVec2(60, 0)))
+
+					float textHeight = ImGui::GetTextLineHeight();
+					float buttonHeight = ImGui::GetFrameHeight();
+					float rowHeight = (textHeight > buttonHeight) ? textHeight : buttonHeight;
+
+					float verticalPadding = 4.0f;
+					rowHeight += verticalPadding;
+
+					ImVec2 rowStartPos = ImGui::GetCursorScreenPos();
+
+					float verticalOffset = (rowHeight - textHeight) * 0.5f;
+					float buttonVerticalOffset = (rowHeight - buttonHeight) * 0.5f;
+
+					ImGui::SetCursorScreenPos(ImVec2(rowStartPos.x, rowStartPos.y + verticalOffset));
+					ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.4f, 0.6f, 0.3f));
+					ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.2f, 0.3f, 0.5f, 0.3f));
+
+					if (ImGui::Selectable(project->GetName().c_str(), false,
+						ImGuiSelectableFlags_AllowDoubleClick,
+						ImVec2(nameWidth * 0.95, textHeight)))
 					{
-						OpenProject(project);
+						if (ImGui::IsMouseDoubleClicked(0))
+						{
+							OpenProject(project);
+						}
 					}
-					ImGui::SameLine();
-					if (ImGui::Button("Delete", ImVec2(60, 0)))
+					ImGui::PopStyleColor(2);
+
+					ImGui::SameLine(0, 0);
+					ImGui::SetCursorScreenPos(ImVec2(rowStartPos.x + nameWidth, rowStartPos.y + verticalOffset));
+					ImGui::Text("%s", project->GetEditorVersion().c_str());
+
+					ImGui::SameLine(0, 0);
+					ImGui::SetCursorScreenPos(ImVec2(rowStartPos.x + nameWidth + versionWidth, rowStartPos.y + verticalOffset));
+					ImGui::Text("%s", project->GetLastOperationTimeAgo().c_str());
+
+					ImGui::SetCursorScreenPos(ImVec2((rowStartPos.x + nameWidth + versionWidth + modifiedWidth) * 0.99,
+						rowStartPos.y + buttonVerticalOffset));
+
+					if (ImGui::Button("Delete", ImVec2(actionButtonWidth, 0)))
 					{
 						DeleteProject(project);
 					}
+
 					ImGui::PopID();
+
+					ImGui::Separator();
 				}
 			}
 		}
@@ -288,7 +302,19 @@ namespace TomCat {
 
 	void ExampleLayer::RenderNewProjectDialog()
 	{
-		ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Always);
+		// 使用局部变量，不要用成员变量（或者确保成员变量被正确初始化）
+		static int selectedVersion = 0;
+
+		// 在显示对话框前刷新编辑器列表
+		static bool needsRefresh = true;
+		if (needsRefresh)
+		{
+			m_Editers = ProjectManager::Get().GetEditorDirectoryFiles();
+			needsRefresh = false;
+			selectedVersion = 0;
+		}
+
+		ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_Always);
 		ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
 		if (ImGui::Begin("New Project", &m_ShowNewProjectDialog, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize))
@@ -296,8 +322,43 @@ namespace TomCat {
 			ImGui::Text("Project Name:");
 			ImGui::InputText("##Name", m_NewProjectName, sizeof(m_NewProjectName));
 
-			ImGui::Text("Author:");
-			ImGui::InputText("##Author", m_NewProjectAuthor, sizeof(m_NewProjectAuthor));
+			// 检查编辑器列表是否为空
+			if (m_Editers.empty())
+			{
+				ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+					"No editor versions found. Please check Editor Directory in Start Settings.");
+			}
+			else
+			{
+				// 确保 selectedVersion 在有效范围内
+				if (selectedVersion >= (int)m_Editers.size())
+				{
+					selectedVersion = 0;
+				}
+
+				// 修复1: 检查索引有效性
+				const char* previewValue = m_Editers[selectedVersion].c_str();
+
+				if (ImGui::BeginCombo("##EditorVersion", previewValue))
+				{
+					for (int i = 0; i < (int)m_Editers.size(); i++)
+					{
+						bool is_selected = (selectedVersion == i);
+
+						// 修复2: 使用 m_Editers[i] 而不是 m_Editers[m_SelectedVersion]
+						if (ImGui::Selectable(m_Editers[i].c_str(), is_selected))
+						{
+							selectedVersion = i;
+						}
+
+						if (is_selected)
+						{
+							ImGui::SetItemDefaultFocus();
+						}
+					}
+					ImGui::EndCombo();
+				}
+			}
 
 			ImGui::Text("Description:");
 			ImGui::InputTextMultiline("##Description", m_NewProjectDescription, sizeof(m_NewProjectDescription), ImVec2(0, 80));
@@ -324,18 +385,26 @@ namespace TomCat {
 			if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0)))
 			{
 				m_ShowNewProjectDialog = false;
+				needsRefresh = true; // 下次打开时刷新
 			}
 
 			ImGui::SameLine();
+
+			// 如果没有编辑器版本，禁用创建按钮
+			if (m_Editers.empty())
+			{
+				ImGui::BeginDisabled();
+			}
+
 			if (ImGui::Button("Create", ImVec2(buttonWidth, 0)))
 			{
-				if (strlen(m_NewProjectName) > 0)
+				if (strlen(m_NewProjectName) > 0 && !m_Editers.empty())
 				{
 					ProjectConfig config;
 					config.Name = m_NewProjectName;
-					config.Author = m_NewProjectAuthor;
 					config.Description = m_NewProjectDescription;
 					config.Version = "1.0.0";
+					config.EditorVersion = m_Editers[selectedVersion];
 
 					std::filesystem::path projectPath = m_NewProjectPath / m_NewProjectName / "Project.tcproj";
 					auto project = ProjectManager::Get().CreateProject(projectPath, config);
@@ -343,11 +412,20 @@ namespace TomCat {
 					{
 						m_Projects = ProjectManager::Get().GetProjects();
 						m_ShowNewProjectDialog = false;
+						needsRefresh = true;
 					}
 				}
 			}
+
+			if (m_Editers.empty())
+			{
+				ImGui::EndDisabled();
+				ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+					"Cannot create project: No editor version available");
+			}
+
+			ImGui::End();
 		}
-		ImGui::End();
 	}
 
 	void ExampleLayer::RenderStartSettings()
@@ -371,6 +449,20 @@ namespace TomCat {
 					m_Projects = ProjectManager::Get().GetProjects();
 				}
 			}
+
+			ImGui::Text("Editor Directory:");
+			ImGui::Text(ProjectManager::Get().GetEditorDirectory().string().c_str());
+			ImGui::SameLine();
+			if (ImGui::Button("Change"))
+			{
+				std::string path = FileDialogs::OpenFolder();
+				if (!path.empty())
+				{
+					ProjectManager::Get().SetEditorDirectory(path);
+				}
+			}
+
+
 
 			ImGui::Spacing();
 			ImGui::Separator();

@@ -38,23 +38,34 @@ project "Manager"
 	defines
 	{
 		"TC_PLAYTFORM_WINDOWS",
-		"IMGUI_API=_declspec(dllimport);"
+		"IMGUI_API=_declspec(dllimport);",
+		"YAML_CPP_STATIC_DEFINE" 
 	}
 
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
 		runtime "Debug"
 		symbols "on"
+
 		postbuildcommands { 
-			"{COPY} %{LibraryDir.VulkanSDK_Debug}/../Bin/shaderc_sharedd.dll %{cfg.targetdir}" 
+			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
+			"{COPYDIR} %{prj.location}/Editors %{cfg.targetdir}/Editors"
 		}
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"
 		runtime "Release"
 		optimize "on"
+		postbuildcommands {
+			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
+			"{COPYDIR} %{prj.location}/Editors %{cfg.targetdir}/Editors"
+		}
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
 		runtime "Release"
 		optimize "on"
+		postbuildcommands {
+			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
+			"{COPYDIR} %{prj.location}/Editors %{cfg.targetdir}/Editors"
+		}

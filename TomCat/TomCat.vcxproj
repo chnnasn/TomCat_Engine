@@ -54,20 +54,20 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <OutDir>$(ProjectDir)..\Builder\bin\Debug-windows-x86_64\TomCat\</OutDir>
-    <IntDir>$(ProjectDir)..\Builder\bin-int\Debug-windows-x86_64\TomCat\</IntDir>
+    <OutDir>$(ProjectDir)bin\Debug-windows-x86_64\TomCat\</OutDir>
+    <IntDir>$(ProjectDir)bin-int\Debug-windows-x86_64\TomCat\</IntDir>
     <TargetName>TomCat</TargetName>
     <TargetExt>.lib</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <OutDir>$(ProjectDir)..\Builder\bin\Release-windows-x86_64\TomCat\</OutDir>
-    <IntDir>$(ProjectDir)..\Builder\bin-int\Release-windows-x86_64\TomCat\</IntDir>
+    <OutDir>$(ProjectDir)bin\Release-windows-x86_64\TomCat\</OutDir>
+    <IntDir>$(ProjectDir)bin-int\Release-windows-x86_64\TomCat\</IntDir>
     <TargetName>TomCat</TargetName>
     <TargetExt>.lib</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
-    <OutDir>$(ProjectDir)..\Builder\bin\Dist-windows-x86_64\TomCat\</OutDir>
-    <IntDir>$(ProjectDir)..\Builder\bin-int\Dist-windows-x86_64\TomCat\</IntDir>
+    <OutDir>$(ProjectDir)bin\Dist-windows-x86_64\TomCat\</OutDir>
+    <IntDir>$(ProjectDir)bin-int\Dist-windows-x86_64\TomCat\</IntDir>
     <TargetName>TomCat</TargetName>
     <TargetExt>.lib</TargetExt>
   </PropertyGroup>
@@ -76,7 +76,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;D:\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
@@ -100,7 +100,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;D:\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -127,7 +127,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;D:\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>

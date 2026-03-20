@@ -12,12 +12,14 @@ namespace TomCat {
 		std::string Title;
 		uint32_t Width;
 		uint32_t Height;
+		std::string IconPath;
 
 
 		WindowProps(const std::string& title = "TomCat Engine",
 			uint32_t  width = 1920,
-			uint32_t  height = 1080)
-			:Title(title), Width(width), Height(height)
+			uint32_t  height = 1080,
+			const std::string& iconPath = "")
+			:Title(title), Width(width), Height(height), IconPath(iconPath)
 		{
 		}
 	};

@@ -6,13 +6,13 @@
 
 namespace TomCat {
 
-	static const char* s_DefaultProjectPath = "Packages/TetxProject/Project.tcproj";
+	
 
 	class TomCatInput : public Application
 	{
 	public:
 		TomCatInput(ApplicationCommandLineArgs args)
-			: Application("TomCatInput", args)
+			: Application("TomCatEditor","Packages/Resources/Icons/Logo.ico", args)
 		{
 			Ref<Project> project = nullptr;
 			
@@ -20,14 +20,6 @@ namespace TomCat {
 			{
 				std::string projectPath = args[1];
 				project = ProjectManager::Get().LoadProject(projectPath);
-			}
-			else
-			{
-				std::filesystem::path defaultPath = std::filesystem::current_path() / s_DefaultProjectPath;
-				if (std::filesystem::exists(defaultPath))
-				{
-					project = ProjectManager::Get().LoadProject(defaultPath);
-				}
 			}
 			
 			if (project)

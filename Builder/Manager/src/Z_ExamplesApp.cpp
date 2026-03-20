@@ -1,6 +1,5 @@
 #include <TomCat.h>
 #include <TomCat/Core/EntryPoint.h>
-
 #include "ExampleLayer.h"
 
 namespace TomCat {
@@ -9,8 +8,9 @@ namespace TomCat {
 	{
 	public:
 		Manager(ApplicationCommandLineArgs args)
-			: Application("TomCatManager", args)
+			: Application("TomCatHub", "Packages/icon/HubLogo.ico", args)
 		{
+
 			PushLayer(new ExampleLayer());
 		}
 

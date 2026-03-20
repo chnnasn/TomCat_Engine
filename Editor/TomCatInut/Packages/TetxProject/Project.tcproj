@@ -1,9 +1,0 @@
-Project:
-  Name: TetxProject
-  Version: 1.0.0
-  Description: ""
-  Author: ""
-  AssetDirectory: Assets
-  SceneDirectory: Assets/Scenes
-  ScriptDirectory: Assets/Scripts
-  StartScene: ""

@@ -33,10 +33,13 @@ namespace TomCat {
 		void SaveScene();
 		void SaveSceneAs();
 		
+		void OnStatePlay();
+		void OnStateStop();
+
+		void UI_Toolbar();
+
 		void OpenProject();
 		void SaveProject();
-		
-		std::filesystem::path GetProjectScenePath() const;
 	private:
 		TomCat::OrthographicCameraController m_CameraController;
 
@@ -66,6 +69,17 @@ namespace TomCat {
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
 		
+		Ref<Texture2D> m_IconPlay, m_IconStop;
+
+
+		enum  SceneState
+		{
+			Edit = 0,
+			Play = 1
+		};
+
+		SceneState m_SceneState = SceneState::Edit;
+
 		Ref<Project> m_CurrentProject;
 		std::filesystem::path m_CurrentScenePath;
 		bool m_SceneDirty = false;
