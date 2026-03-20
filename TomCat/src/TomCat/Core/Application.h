@@ -29,7 +29,9 @@ namespace TomCat {
 	class Application
 	{ 
 	public :
-		Application(const std::string& name = "TomCat App", ApplicationCommandLineArgs args = ApplicationCommandLineArgs());
+		Application(const std::string& name = "TomCat App", 
+					const std::string& iconPath = "",
+					ApplicationCommandLineArgs args = ApplicationCommandLineArgs());
 
 		virtual ~Application();
 

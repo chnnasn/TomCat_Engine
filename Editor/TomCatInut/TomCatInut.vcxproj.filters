@@ -13,6 +13,7 @@
     <ClInclude Include="src\panels\SceneHierarchyPanel.h">
       <Filter>panels</Filter>
     </ClInclude>
+    <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\EditorLayer.cpp" />
@@ -23,5 +24,11 @@
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp">
       <Filter>panels</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="TomCatInut.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="Packages\icon\Logo.ico" />
   </ItemGroup>
 </Project>

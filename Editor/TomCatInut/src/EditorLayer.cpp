@@ -26,6 +26,10 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
+
+		m_IconPlay = Texture2D::Create("Packages/Resources/Icons/PlayButton.png");
+		m_IconStop = Texture2D::Create("Packages/Resources/Icons/StopButton.png");
+
 		FramebufferSpecification fbSpec;
 		fbSpec.Attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
 		fbSpec.Width = 1280;
@@ -36,19 +40,7 @@ namespace TomCat {
 
 		if (m_CurrentProject)
 		{
-			auto startScenePath = m_CurrentProject->GetStartScenePath();
-			if (!startScenePath.empty() && std::filesystem::exists(startScenePath))
-			{
-				SceneSerializer serializer(m_ActiveScene);
-				if (serializer.Deserialize(startScenePath.string()))
-				{
-					m_CurrentScenePath = startScenePath;
-				}
-			}
-			else
-			{
-				m_SceneDirty = true;
-			}
+			m_SceneDirty = true;
 		}
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
@@ -77,13 +69,7 @@ namespace TomCat {
 
 			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		}
-
-		// Update
-		if (m_ViewportFocused)
-			m_CameraController.OnUpdate(ts);
-
-		m_EditorCamera.OnUpdate(ts);
-
+	
 		// Render
 		Renderer2D::ResetStats();
 		m_Framebuffer->Bind();
@@ -94,8 +80,31 @@ namespace TomCat {
 		// Clear our entity ID attachment to -1
 		m_Framebuffer->ClearAttachment(1, -1);
 
+
+		switch (m_SceneState) 
+		{
+			case SceneState::Edit:
+			{
+				// Update
+				if (m_ViewportFocused)
+					m_CameraController.OnUpdate(ts);
+
+				m_EditorCamera.OnUpdate(ts);
+
+				m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
+				break;
+			}
+
+			case SceneState::Play: 
+			{
+				m_ActiveScene->OnUpdateRuntime(ts);
+				break;
+			}
+
+		}
+
 		// Update scene
-		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
+
 
 		auto [mx, my] = ImGui::GetMousePos();
 		mx -= m_ViewportBounds[0].x;
@@ -123,7 +132,6 @@ namespace TomCat {
 		bool opt_fullscreen = opt_fullscreen_persistant;
 		static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
-
 		ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
 		if (opt_fullscreen)
 		{
@@ -137,7 +145,6 @@ namespace TomCat {
 			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 		}
 
-
 		if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
 			window_flags |= ImGuiWindowFlags_NoBackground;
 
@@ -148,21 +155,7 @@ namespace TomCat {
 		if (opt_fullscreen)
 			ImGui::PopStyleVar(2);
 
-
-		ImGuiIO& io = ImGui::GetIO();
-
-		ImGuiStyle& style = ImGui::GetStyle();
-		float minWinSizeX = style.WindowMinSize.x;
-		style.WindowMinSize.x = 370.0f;
-
-		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
-		{
-			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
-		}
-
-		style.WindowMinSize.x = minWinSizeX;
-
+		// 菜单栏
 		if (ImGui::BeginMenuBar())
 		{
 			if (ImGui::BeginMenu("File"))
@@ -209,11 +202,10 @@ namespace TomCat {
 			{
 				if (m_CurrentProject)
 				{
-					ImGui::Text("Project: %s", m_CurrentProject->GetName().c_str());
+					ImGui::Text("ProjectName: %s", m_CurrentProject->GetName().c_str());
 					ImGui::Text("Path: %s", m_CurrentProject->GetProjectPath().string().c_str());
 					ImGui::Separator();
-					ImGui::Text("Version: %s", m_CurrentProject->GetVersion().c_str());
-					ImGui::Text("Author: %s", m_CurrentProject->GetConfig().Author.c_str());
+					ImGui::Text("EditorVersion: %s", m_CurrentProject->GetEditorVersion().c_str());
 				}
 				else
 				{
@@ -225,16 +217,39 @@ namespace TomCat {
 			ImGui::EndMenuBar();
 		}
 
+		float toolbarHeight = 48.0f;
+		ImGui::BeginChild("ToolbarRegion", ImVec2(0, toolbarHeight), false,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+		UI_Toolbar();
+		ImGui::EndChild();
+
+		ImGui::Separator();
+
+		ImGui::BeginChild("DockSpaceRegion", ImVec2(0, 0), false,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+		ImGuiIO& io = ImGui::GetIO();
+		ImGuiStyle& style = ImGui::GetStyle();
+		float minWinSizeX = style.WindowMinSize.x;
+		style.WindowMinSize.x = 370.0f;
+
+		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
+		{
+			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+		}
+
+		style.WindowMinSize.x = minWinSizeX;
+
+		ImGui::EndChild(); 
 
 		m_SceneHierarchyPanel.OnImGuiRender();
-
 		m_ContentBrowserPanel.OnImGuiRender();
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-
 		static bool sceneWindowOpen = true;
 
-		ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);//菜单栏不算入内容
+		ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);
 
 		if (ImGui::BeginMenuBar())
 		{
@@ -254,10 +269,8 @@ namespace TomCat {
 
 				ImGui::EndMenu();
 			}
-
 			ImGui::EndMenuBar();
 		}
-
 
 		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
 		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
@@ -272,37 +285,32 @@ namespace TomCat {
 		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
-		// 然后渲染场景图像
 		uint64_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
 		ImGui::Image(reinterpret_cast<void*>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
-
 		if (ImGui::BeginDragDropTarget())
 		{
 			std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
-			
+
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TOMCAT_SCENE"))
 			{
 				const wchar_t* path = (const wchar_t*)payload->Data;
 				OpenScene(assetPath / path);
 			}
-			else if(const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE")){
+			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE")) {
 				const wchar_t* path = (const wchar_t*)payload->Data;
 				std::filesystem::path texturePath = assetPath / path;
 				std::string fileName = texturePath.stem().string();
 
 				auto Square = m_ActiveScene->CreateEntity(fileName);
 				auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-
 				SpriteR.Texture = Texture2D::Create(texturePath.string());
 			}
-
 			ImGui::EndDragDropTarget();
 		}
 
-
-		//Gizmos
+		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
 		if (selectedEntity && m_GizmoType != -1)
@@ -310,37 +318,28 @@ namespace TomCat {
 			ImGuizmo::SetOrthographic(false);
 			ImGuizmo::SetDrawlist();
 
-			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y, m_ViewportBounds[1].x - m_ViewportBounds[0].x,
+			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
+				m_ViewportBounds[1].x - m_ViewportBounds[0].x,
 				m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 
-			//Camera
-			// Runtime camera from entity
-			// auto cameraEntity = m_ActiveScene->GetPrimaryCameraEntity();
-			// const auto& camera = cameraEntity.GetComponent<CameraComponent>().Camera;
-			// const glm::mat4& cameraProjection = camera.GetProjection();
-			// glm::mat4 cameraView = glm::inverse(cameraEntity.GetComponent<TransformComponent>().GetTransform());
-
-			// Editor camera
 			const glm::mat4& cameraProjection = m_EditorCamera.GetProjection();
 			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
 
-			// Entity transform
 			if (selectedEntity.HasComponent<Transform>())
 			{
 				auto& tc = selectedEntity.GetComponent<Transform>();
 				glm::mat4 transform = tc.GetTransform();
 
-				// Snapping
 				bool snap = Input::IsKeyPressed(Key::LeftControl);
-				float snapValue = 0.5f; // Snap to 0.5m for translation/scale
-				// Snap to 45 degrees for rotation
+				float snapValue = 0.5f;
 				if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
 					snapValue = 45.0f;
 
 				float snapValues[3] = { snapValue, snapValue, snapValue };
 
 				ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-					(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
+					(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL,
+					glm::value_ptr(transform),
 					nullptr, snap ? snapValues : nullptr);
 
 				if (ImGuizmo::IsUsing())
@@ -354,16 +353,60 @@ namespace TomCat {
 					tc._Scale = scale;
 				}
 			}
-
-
 		}
-
-
 
 		ImGui::End();
 		ImGui::PopStyleVar();
 
 		ImGui::End();
+	}
+
+	void EditorLayer::UI_Toolbar()
+	{
+		float size = 40;
+		float padding = 4;
+
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, padding));
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+		auto& colors = ImGui::GetStyle().Colors;
+		const auto& buttonHovered = colors[ImGuiCol_ButtonHovered];
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(buttonHovered.x, buttonHovered.y, buttonHovered.z, 0.5f));
+		const auto& buttonActive = colors[ImGuiCol_ButtonActive];
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(buttonActive.x, buttonActive.y, buttonActive.z, 0.5f));
+
+		float windowWidth = ImGui::GetWindowWidth();
+		ImGui::SetCursorPosX((windowWidth - size) * 0.5f);
+
+		Ref<Texture2D> icon = m_SceneState == SceneState::Edit ? m_IconPlay : m_IconStop;
+
+		if (ImGui::ImageButton((ImTextureID)icon->GetRendererID(), ImVec2(size, size),
+			ImVec2(0, 0), ImVec2(1, 1), 0))
+		{
+			if (m_SceneState == SceneState::Edit)
+			{
+				OnStatePlay();
+			}
+			else if (m_SceneState == SceneState::Play)
+			{
+				OnStateStop();
+			}
+		}
+
+		ImGui::PopStyleVar();
+		ImGui::PopStyleColor(3);
+	}
+
+
+	void EditorLayer::OnStatePlay()
+	{
+
+		m_SceneState = SceneState::Play;
+
+	}
+
+	void EditorLayer::OnStateStop()
+	{
+		m_SceneState = SceneState::Edit;
 	}
 
 	void EditorLayer::OnEvent(Event& e)
@@ -466,12 +509,6 @@ namespace TomCat {
 
 	void EditorLayer::OpenScene()
 	{
-		std::string defaultPath = GetProjectScenePath().string();
-		if (defaultPath.empty())
-		{
-			defaultPath = m_CurrentProject ? m_CurrentProject->GetScenePath().string() : "";
-		}
-
 		std::string filepath = FileDialogs::OpenFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
 		if (filepath.empty())
 		{
@@ -515,12 +552,6 @@ namespace TomCat {
 
 	void EditorLayer::SaveSceneAs()
 	{
-		std::string defaultPath = GetProjectScenePath().string();
-		if (defaultPath.empty() && m_CurrentProject)
-		{
-			defaultPath = m_CurrentProject->GetScenePath().string();
-		}
-
 		std::string filepath = FileDialogs::SaveFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
 		if (filepath.empty())
 		{
@@ -535,6 +566,7 @@ namespace TomCat {
 		}
 	}
 
+
 	void EditorLayer::OpenProject()
 	{
 		std::string filepath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
@@ -545,12 +577,6 @@ namespace TomCat {
 			{
 				m_CurrentProject = project;
 				NewScene();
-				
-				auto startScenePath = project->GetStartScenePath();
-				if (!startScenePath.empty() && std::filesystem::exists(startScenePath))
-				{
-					OpenScene(startScenePath);
-				}
 				m_ContentBrowserPanel.SetProject(m_CurrentProject);
 			}
 		}
@@ -562,19 +588,5 @@ namespace TomCat {
 		{
 			m_CurrentProject->Save();
 		}
-	}
-
-	std::filesystem::path EditorLayer::GetProjectScenePath() const
-	{
-		if (!m_CurrentProject)
-			return std::filesystem::path();
-		
-		if (!m_CurrentScenePath.empty())
-		{
-			if (m_CurrentScenePath.parent_path() == m_CurrentProject->GetScenePath())
-				return m_CurrentScenePath;
-		}
-		
-		return m_CurrentProject->GetScenePath();
 	}
 }

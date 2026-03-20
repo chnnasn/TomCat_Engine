@@ -4,8 +4,8 @@ project "TomCat"
 	cppdialect"C++20"
 	staticruntime "off"
 
-	targetdir ("%{wks.location}/bin/" .. outputdir .."/%{prj.name}")
-	objdir ("%{wks.location}/bin-int/" .. outputdir .."/%{prj.name}")
+targetdir ("../TomCat/bin/" .. outputdir .."/%{prj.name}")
+objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 
 	pchheader "tcpch.h"
 	pchsource "src/tcpch.cpp"
@@ -27,7 +27,8 @@ project "TomCat"
 	defines
 	{
 		"_CRT_SECURE_NO_WARNINGS",
-		"GLFW_INCLUDE_NONE"
+		"GLFW_INCLUDE_NONE",
+		"YAML_CPP_STATIC_DEFINE"
 	}
 
 	includedirs
@@ -69,19 +70,8 @@ filter "files:vendor/ImGuizmo/**.cpp"
 		"TC_PLAYTFORM_WINDOWS",
 		"TC_BUILD_DLL",
 		"GLFW_INCLUDE_NONE",
+		"YAML_CPP_STATIC_DEFINE" 
 	}
-
-	filter "configurations:Debug"
-		defines "TC_DEBUG"
-		runtime "Debug"
-		symbols "on"
-
-		links
-		{
-			"%{Library.ShaderC_Debug}",
-			"%{Library.SPIRV_Cross_Debug}",
-			"%{Library.SPIRV_Cross_GLSL_Debug}"
-		}
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"
@@ -94,16 +84,30 @@ filter "files:vendor/ImGuizmo/**.cpp"
 			"%{Library.SPIRV_Cross_Release}",
 			"%{Library.SPIRV_Cross_GLSL_Release}"
 		}
+		
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
 		runtime "Release"
 		optimize "on"
 
-		
 		links
 		{
 			"%{Library.ShaderC_Release}",
 			"%{Library.SPIRV_Cross_Release}",
 			"%{Library.SPIRV_Cross_GLSL_Release}"
 		}
+		
+
+	filter "configurations:Debug"
+		defines "TC_DEBUG"
+		runtime "Debug"
+		symbols "on"
+
+		links
+		{
+			"%{Library.ShaderC_Debug}",
+			"%{Library.SPIRV_Cross_Debug}",
+			"%{Library.SPIRV_Cross_GLSL_Debug}"
+		}
+		

@@ -39,12 +39,13 @@ namespace TomCat {
 			data = stbi_load(path.c_str(), &width, &height, &channels, 0);
 		}
 
-		TC_Core_Assert(data,"missing image");
+		TC_Core_Assert(data, "Failed to load image: {0}", path);
+		TC_Core_Assert(width > 0 && height > 0, "Invalid image dimensions: {0}x{1}", width, height);
 
 		m_Width = width;
 		m_Height = height;
 
-		GLenum internalFormat = 0 ,dataFormat = 0;
+		GLenum internalFormat = 0, dataFormat = 0;
 
 		if (channels == 4)
 		{
@@ -56,21 +57,37 @@ namespace TomCat {
 			internalFormat = GL_RGB8;
 			dataFormat = GL_RGB;
 		}
+		else if (channels == 1)
+		{
+			internalFormat = GL_R8;
+			dataFormat = GL_RED;
+		}
+		else
+		{
+			TC_Core_Assert(false, "Unsupported image format with {0} channels: {1}", channels, path);
+		}
 
 		m_InternalFormat = internalFormat;
-		m_DataFormat = dataFormat; 
+		m_DataFormat = dataFormat;
 
-		glCreateTextures(GL_TEXTURE_2D,1,&m_RendererID);
-		glTextureStorage2D(m_RendererID,1, internalFormat,m_Width,m_Height);
+		glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
+		glTextureStorage2D(m_RendererID, 1, internalFormat, m_Width, m_Height);
 
-		glTextureParameteri(m_RendererID,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+		glTextureParameteri(m_RendererID, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTextureParameteri(m_RendererID, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
 
 		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_S, GL_REPEAT);
 		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
-		glTextureSubImage2D(m_RendererID,0,0,0,m_Width,m_Height, dataFormat,GL_UNSIGNED_BYTE,data);
+		// Set pixel alignment for RGB images (3 bytes per pixel may not be 4-byte aligned)
+		if (channels == 3)
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+		glTextureSubImage2D(m_RendererID, 0, 0, 0, m_Width, m_Height, dataFormat, GL_UNSIGNED_BYTE, data);
+
+		// Reset to default alignment
+		if (channels == 3)
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
 		stbi_image_free(data);
 	}

@@ -8,6 +8,13 @@
 
 #include "Platform/OpenGL/OpenGLContext.h"
 
+#include <stb_image.h>
+
+#ifdef TC_PLATFORM_WINDOWS
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 namespace TomCat {
 
 	static uint8_t s_GLFWWindowCount = 0;
@@ -67,6 +74,103 @@ namespace TomCat {
 
 		glfwSetWindowUserPointer(m_Window, &m_Data);
 		SetVSync(true);
+
+		if (!props.IconPath.empty())
+		{
+			bool iconLoaded = false;
+
+			if (props.IconPath.size() >= 4 &&
+				(props.IconPath.substr(props.IconPath.size() - 4) == ".ico" ||
+				 props.IconPath.substr(props.IconPath.size() - 4) == ".ICO"))
+			{
+#ifdef TC_PLATFORM_WINDOWS
+				HICON hIcon = (HICON)LoadImageA(
+					GetModuleHandle(NULL),
+					props.IconPath.c_str(),
+					IMAGE_ICON,
+					0, 0,
+					LR_LOADFROMFILE | LR_DEFAULTSIZE
+				);
+
+				if (hIcon)
+				{
+					ICONINFO iconInfo;
+					if (GetIconInfo(hIcon, &iconInfo))
+					{
+						BITMAP bm;
+						GetObject(iconInfo.hbmColor ? iconInfo.hbmColor : iconInfo.hbmMask, sizeof(BITMAP), &bm);
+
+						int width = bm.bmWidth;
+						int height = iconInfo.hbmColor ? bm.bmHeight : bm.bmHeight / 2;
+
+						HDC hdc = GetDC(NULL);
+						HDC hdcMem = CreateCompatibleDC(hdc);
+						HBITMAP hbmColor = iconInfo.hbmColor ? iconInfo.hbmColor : iconInfo.hbmMask;
+
+						BITMAPINFO bmi = { 0 };
+						bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+						bmi.bmiHeader.biWidth = width;
+						bmi.bmiHeader.biHeight = -height;
+						bmi.bmiHeader.biPlanes = 1;
+						bmi.bmiHeader.biBitCount = 32;
+						bmi.bmiHeader.biCompression = BI_RGB;
+
+						unsigned char* pixels = new unsigned char[width * height * 4];
+						GetDIBits(hdcMem, hbmColor, 0, height, pixels, &bmi, DIB_RGB_COLORS);
+
+						if (!iconInfo.hbmColor)
+						{
+							for (int i = 0; i < width * height; i++)
+							{
+								unsigned char mask = pixels[i * 4];
+								pixels[i * 4 + 0] = mask;
+								pixels[i * 4 + 1] = mask;
+								pixels[i * 4 + 2] = mask;
+								pixels[i * 4 + 3] = 255;
+							}
+						}
+
+						GLFWimage icon;
+						icon.width = width;
+						icon.height = height;
+						icon.pixels = pixels;
+						glfwSetWindowIcon(m_Window, 1, &icon);
+
+						delete[] pixels;
+						DeleteDC(hdcMem);
+						ReleaseDC(NULL, hdc);
+
+						if (iconInfo.hbmColor) DeleteObject(iconInfo.hbmColor);
+						if (iconInfo.hbmMask) DeleteObject(iconInfo.hbmMask);
+
+						iconLoaded = true;
+					}
+					DestroyIcon(hIcon);
+				}
+#endif
+			}
+
+			if (!iconLoaded)
+			{
+				int width, height, channels;
+				stbi_uc* pixels = stbi_load(props.IconPath.c_str(), &width, &height, &channels, 4);
+				if (pixels)
+				{
+					GLFWimage icon;
+					icon.width = width;
+					icon.height = height;
+					icon.pixels = pixels;
+					glfwSetWindowIcon(m_Window, 1, &icon);
+					stbi_image_free(pixels);
+					iconLoaded = true;
+				}
+			}
+
+			if (!iconLoaded)
+			{
+				TC_Core_Warn("Failed to load window icon: {0}", props.IconPath);
+			}
+		}
 
 		//用于GLFW回调
 		glfwSetWindowSizeCallback(m_Window, [](GLFWwindow* Window, int Width , int Height)

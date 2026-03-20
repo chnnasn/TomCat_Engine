@@ -15,7 +15,11 @@ namespace TomCat {
 		static ProjectManager& Get();
 
 		void SetProjectDirectory(const std::filesystem::path& directory);
+		void SetEditorDirectory(const std::filesystem::path& directory);
 		const std::filesystem::path& GetProjectDirectory() const { return m_ProjectDirectory; }
+		const std::filesystem::path& GetEditorDirectory() const { return m_EditorDirectory; }
+
+		std::vector<std::string> GetEditorDirectoryFiles() const;
 
 		void ScanProjects();
 		const std::vector<Ref<Project>>& GetProjects() const { return m_Projects; }
@@ -42,6 +46,7 @@ namespace TomCat {
 
 	private:
 		std::filesystem::path m_ProjectDirectory;
+		std::filesystem::path m_EditorDirectory;
 		std::vector<Ref<Project>> m_Projects;
 		Ref<Project> m_ActiveProject;
 
