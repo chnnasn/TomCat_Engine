@@ -49,7 +49,6 @@ project "Manager"
 
 		postbuildcommands { 
 			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
-			"{COPYDIR} %{prj.location}/Editors %{cfg.targetdir}/Editors"
 		}
 
 	filter "configurations:Release"
@@ -58,7 +57,6 @@ project "Manager"
 		optimize "on"
 		postbuildcommands {
 			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
-			"{COPYDIR} %{prj.location}/Editors %{cfg.targetdir}/Editors"
 		}
 
 	filter "configurations:Dist"
@@ -67,5 +65,4 @@ project "Manager"
 		optimize "on"
 		postbuildcommands {
 			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
-			"{COPYDIR} %{prj.location}/Editors %{cfg.targetdir}/Editors"
 		}

@@ -23,7 +23,6 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"vendor/ImGuizmo/ImGuizmo.cpp"
 	}
 
-
 	defines
 	{
 		"_CRT_SECURE_NO_WARNINGS",
@@ -31,10 +30,12 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"YAML_CPP_STATIC_DEFINE"
 	}
 
+
 	includedirs
 	{
 		"src",
 		"vendor/spdlog/include",
+		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.Glad}",
@@ -43,13 +44,19 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.yaml_cpp}",
 
+
 		"%{IncludeDir.ImGuizmo}",
 		"%{IncludeDir.VulkanSDK}"
 	}
 
+	libdirs
+	{
+		  "vendor/Box2D/bin/" .. outputdir .."/Box2D"
+	}
 	
 	links 
 	{ 
+		"Box2D",
 		"GLFW",
 		"Glad",
 		"ImGui",
@@ -82,7 +89,7 @@ filter "files:vendor/ImGuizmo/**.cpp"
 		{
 			"%{Library.ShaderC_Release}",
 			"%{Library.SPIRV_Cross_Release}",
-			"%{Library.SPIRV_Cross_GLSL_Release}"
+			"%{Library.SPIRV_Cross_GLSL_Release}",
 		}
 		
 

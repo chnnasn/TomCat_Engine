@@ -35,26 +35,29 @@ namespace TomCat {
 	{
 		static bool hierarchyWindowOpen = true;
 
-		ImGui::Begin("Hierarchy",&hierarchyWindowOpen, ImGuiWindowFlags_MenuBar);
+		ImGui::Begin("Hierarchy", &hierarchyWindowOpen, ImGuiWindowFlags_MenuBar);
 
-		m_Context->m_Registry.view<entt::entity>().each([&](auto entityID)
-			{
-				Entity entity{ entityID , m_Context.get() };
-				DrawEntityNode(entity);
-			});
-
-		if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
-			m_SelectionContext = {};
-
-
-		if (ImGui::BeginPopupContextWindow(0, 1 | ImGuiPopupFlags_NoOpenOverItems))
+		if (m_Context)
 		{
-			if (ImGui::MenuItem("Create Empty Entity"))
-				m_Context->CreateEntity("Empty Entity");
+			m_Context->m_Registry.view<entt::entity>().each([&](auto entityID)
+				{
+					Entity entity{ entityID , m_Context.get() };
+					DrawEntityNode(entity);
+				});
 
-			ImGui::EndPopup();
+
+			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
+				m_SelectionContext = {};
+
+
+			if (ImGui::BeginPopupContextWindow(0, 1))
+			{
+				if (ImGui::MenuItem("Create Empty Entity"))
+						m_Context->CreateEntity("Empty Entity");
+
+				ImGui::EndPopup();
+			}
 		}
-
 		ImGui::End();
 
 		static bool inspectorWindowOpen = true;
@@ -336,25 +339,42 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 
 		if (ImGui::BeginPopup("AddComponent"))
 		{
-			if (ImGui::MenuItem("Camera"))
-		{
-			// 确保选中的实体有效
-			if (m_SelectionContext && !m_SelectionContext.HasComponent<C_Camera>())
-				m_SelectionContext.AddComponent<C_Camera>();
-			else if (m_SelectionContext)
-				TC_Core_Warn("This entity already has the Camera Component!");
-			ImGui::CloseCurrentPopup();
-		}
+			if (!m_SelectionContext.HasComponent<C_Camera>())
+			{
+				if (ImGui::MenuItem("Camera"))
+				{
+					m_SelectionContext.AddComponent<C_Camera>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
 
-		if (ImGui::MenuItem("Sprite Renderer"))
-		{
-			// 确保选中的实体有效
-			if (m_SelectionContext && !m_SelectionContext.HasComponent<SpriteRenderer>())
-				m_SelectionContext.AddComponent<SpriteRenderer>();
-			else if (m_SelectionContext)
-				TC_Core_Warn("This entity already has the Sprite Renderer Component!");
-			ImGui::CloseCurrentPopup();
-		}
+			if (!m_SelectionContext.HasComponent<SpriteRenderer>())
+			{
+				if (ImGui::MenuItem("Sprite Renderer"))
+				{
+					m_SelectionContext.AddComponent<SpriteRenderer>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			
+
+			if (!m_SelectionContext.HasComponent<Rigidbody2D>())
+			{
+				if (ImGui::MenuItem("Rigidbody 2D"))
+				{
+					m_SelectionContext.AddComponent<Rigidbody2D>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
+
+			if (!m_SelectionContext.HasComponent<BoxCollider2D>())
+			{
+				if (ImGui::MenuItem("Box Collider 2D"))
+				{
+					m_SelectionContext.AddComponent<BoxCollider2D>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
 
 			ImGui::EndPopup();
 		}
@@ -492,7 +512,12 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
 					const wchar_t* path = (const wchar_t*)payload->Data;
 					std::filesystem::path texturePath = assetPath / path;
-					component.Texture = Texture2D::Create(texturePath.string());
+
+					Ref<Texture2D> texture = Texture2D::Create(texturePath.string());
+					if (texture->IsLoaded())
+						component.Texture = texture;
+					else
+						TC_Warn("Could not load texture {0}", texturePath.filename().string());
 				}
 				ImGui::EndDragDropTarget();
 			}
@@ -504,6 +529,41 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			ImGui::Columns(1);
 
 		});
+
+		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, [](auto& component)
+			{
+				const char* bodyTypeStrings[] = { "Static", "Dynamic", "Kinematic" };
+				const char* currentBodyTypeString = bodyTypeStrings[(int)component.Type];
+				if (ImGui::BeginCombo("Body Type", currentBodyTypeString))
+				{
+					for (int i = 0; i < 2; i++)
+					{
+						bool isSelected = currentBodyTypeString == bodyTypeStrings[i];
+						if (ImGui::Selectable(bodyTypeStrings[i], isSelected))
+						{
+							currentBodyTypeString = bodyTypeStrings[i];
+							component.Type = (Rigidbody2D::BodyType)i;
+						}
+
+						if (isSelected)
+							ImGui::SetItemDefaultFocus();
+					}
+
+					ImGui::EndCombo();
+				}
+
+				ImGui::Checkbox("Fixed Rotation", &component.FixedRotation);
+			});
+
+		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, [](auto& component)
+			{
+				ImGui::DragFloat2("Offset", glm::value_ptr(component.Offset));
+				ImGui::DragFloat2("Size", glm::value_ptr(component.Size));
+				ImGui::DragFloat("Density", &component.Density, 0.01f, 0.0f, 1.0f);
+				ImGui::DragFloat("Friction", &component.Friction, 0.01f, 0.0f, 1.0f);
+				ImGui::DragFloat("Restitution", &component.Restitution, 0.01f, 0.0f, 1.0f);
+				ImGui::DragFloat("Restitution Threshold", &component.RestitutionThreshold, 0.01f, 0.0f);
+			});
 
 	}
 

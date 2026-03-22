@@ -1,5 +1,7 @@
 #pragma once
-#include"Scene.h"
+#include "TomCat/Core/UUID.h"
+#include "Scene.h"
+#include "Components.h"
 #include"entt.hpp"
 
 namespace TomCat {
@@ -20,6 +22,15 @@ namespace TomCat {
 			m_Scene->OnComponentAdded<T>(*this, component);
 			return component;
 		}
+
+		template<typename T, typename... Args>
+		T& AddOrReplaceComponent(Args&&... args)
+		{
+			T& component = m_Scene->m_Registry.emplace_or_replace<T>(m_EntityHandle, std::forward<Args>(args)...);
+			m_Scene->OnComponentAdded<T>(*this, component);
+			return component;
+		}
+
 
 		template<typename T>
 		T& GetComponent()
@@ -44,6 +55,10 @@ namespace TomCat {
 		operator entt::entity() const { return m_EntityHandle; }
 
 		operator uint32_t() const { return (uint32_t)m_EntityHandle; }
+
+		UUID GetUUID() { return GetComponent<ID>().id; }
+
+		const std::string& GetName() { return GetComponent<Tag>()._Tag; }
 
 		bool operator==(const Entity& other) const
 		{

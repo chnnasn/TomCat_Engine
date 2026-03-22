@@ -44,8 +44,6 @@ namespace TomCat {
 		}
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
-
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 	}
 
 	void EditorLayer::OnDetach()
@@ -384,11 +382,13 @@ namespace TomCat {
 		{
 			if (m_SceneState == SceneState::Edit)
 			{
-				OnStatePlay();
+				OnScenePlay();
+				m_ActiveScene->OnRuntimeStart();
 			}
 			else if (m_SceneState == SceneState::Play)
 			{
-				OnStateStop();
+				OnSceneStop();
+				m_ActiveScene->OnRuntimeStop();
 			}
 		}
 
@@ -397,16 +397,26 @@ namespace TomCat {
 	}
 
 
-	void EditorLayer::OnStatePlay()
+	void EditorLayer::OnScenePlay()
 	{
 
 		m_SceneState = SceneState::Play;
 
+		m_ActiveScene = Scene::Copy(m_EditorScene);
+
+		m_ActiveScene->OnRuntimeStart();
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
 	}
 
-	void EditorLayer::OnStateStop()
+	void EditorLayer::OnSceneStop()
 	{
 		m_SceneState = SceneState::Edit;
+
+		m_ActiveScene->OnRuntimeStop();
+		m_ActiveScene = m_EditorScene;
+
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 	}
 
 	void EditorLayer::OnEvent(Event& e)
@@ -446,10 +456,23 @@ namespace TomCat {
 		}
 		case Key::S:
 		{
-			if (control && shift)
-				SaveSceneAs();
-			else if (control)
-				SaveScene();
+			SaveSceneAs();
+			if (control)
+			{
+				if (shift)
+					SaveSceneAs();
+				else
+					SaveScene();
+			}
+
+			break;
+		}
+
+		// Scene Commands
+		case Key::D:
+		{
+			if (control)
+				OnDuplicateEntity();
 
 			break;
 		}
@@ -505,6 +528,8 @@ namespace TomCat {
 		m_CurrentScenePath.clear();
 		m_SceneDirty = true;
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+
+		m_EditorScenePath = std::filesystem::path();
 	}
 
 	void EditorLayer::OpenScene()
@@ -522,33 +547,38 @@ namespace TomCat {
 
 	void EditorLayer::OpenScene(const std::filesystem::path& path)
 	{
-		m_ActiveScene = CreateRef<Scene>();
-		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
-		m_SceneHierarchyPanel.SetSelectedEntity({});
 
-		SceneSerializer serializer(m_ActiveScene);
+		if (m_SceneState != SceneState::Edit)
+			OnSceneStop();
+
+
+		if (path.extension().string() != ".tomcat")
+		{
+			TC_Warn("Could not load {0} - not a scene file", path.filename().string());
+			return;
+		}
+
+		Ref<Scene> newScene = CreateRef<Scene>();
+		SceneSerializer serializer(newScene);
 		if (serializer.Deserialize(path.string()))
 		{
-			m_CurrentScenePath = path;
-			m_SceneDirty = false;
+			m_EditorScene = newScene;
+			m_EditorScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			m_SceneHierarchyPanel.SetContext(m_EditorScene);
+
+			m_ActiveScene = m_EditorScene;
+			m_EditorScenePath = path;
 		}
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 	}
 
 	void EditorLayer::SaveScene()
 	{
-		if (m_CurrentScenePath.empty())
-		{
-			SaveSceneAs();
-		}
+		if (!m_EditorScenePath.empty())
+			SerializeScene(m_ActiveScene, m_EditorScenePath);
 		else
-		{
-			SceneSerializer serializer(m_ActiveScene);
-			serializer.Serialize(m_CurrentScenePath.string());
-			m_SceneDirty = false;
-		}
-	}
+			SaveSceneAs();
+	}	
 
 	void EditorLayer::SaveSceneAs()
 	{
@@ -559,13 +589,18 @@ namespace TomCat {
 		}
 		if (!filepath.empty())
 		{
-			SceneSerializer serializer(m_ActiveScene);
-			serializer.Serialize(filepath);
+			SerializeScene(m_ActiveScene, filepath);
+			m_EditorScenePath = filepath;
 			m_CurrentScenePath = filepath;
 			m_SceneDirty = false;
 		}
 	}
 
+	void EditorLayer::SerializeScene(Ref<Scene> scene, const std::filesystem::path& path)
+	{
+		SceneSerializer serializer(scene);
+		serializer.Serialize(path.string());
+	}
 
 	void EditorLayer::OpenProject()
 	{
@@ -588,5 +623,15 @@ namespace TomCat {
 		{
 			m_CurrentProject->Save();
 		}
+	}
+
+	void EditorLayer::OnDuplicateEntity()
+	{
+		if (m_SceneState != SceneState::Edit)
+			return;
+
+		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (selectedEntity)
+			m_EditorScene->DuplicateEntity(selectedEntity);
 	}
 }

@@ -94,8 +94,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Debug-windows-x86_64\Manager\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Debug-windows-x86_64\Manager\" &gt; nul)
-xcopy /Q /E /Y /I $(ProjectDir)\Editors ..\bin\Debug-windows-x86_64\Manager\Editors</Command>
+      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Debug-windows-x86_64\Manager\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Debug-windows-x86_64\Manager\" &gt; nul)</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -121,8 +120,7 @@ xcopy /Q /E /Y /I $(ProjectDir)\Editors ..\bin\Debug-windows-x86_64\Manager\Edit
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\Manager\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\Manager\" &gt; nul)
-xcopy /Q /E /Y /I $(ProjectDir)\Editors ..\bin\Release-windows-x86_64\Manager\Editors</Command>
+      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\Manager\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\Manager\" &gt; nul)</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
@@ -148,8 +146,7 @@ xcopy /Q /E /Y /I $(ProjectDir)\Editors ..\bin\Release-windows-x86_64\Manager\Ed
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\Manager\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\Manager\" &gt; nul)
-xcopy /Q /E /Y /I $(ProjectDir)\Editors ..\bin\Dist-windows-x86_64\Manager\Editors</Command>
+      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\Manager\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\Manager\" &gt; nul)</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -169,7 +166,7 @@ xcopy /Q /E /Y /I $(ProjectDir)\Editors ..\bin\Dist-windows-x86_64\Manager\Edito
     <ResourceCompile Include="Manager.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="D:\Downloads\HubLogo.ico" />
+    <Image Include="Packages\icon\HubLogo.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

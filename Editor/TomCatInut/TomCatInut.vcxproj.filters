@@ -4,6 +4,9 @@
     <Filter Include="panels">
       <UniqueIdentifier>{C8213A14-B4C3-64EA-9D7E-783E89BFEB3A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Icon">
+      <UniqueIdentifier>{bc3e8715-27c5-42fa-a02a-d94b112ef5c5}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\EditorLayer.h" />
@@ -29,6 +32,6 @@
     <ResourceCompile Include="TomCatInut.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Packages\icon\Logo.ico" />
+    <Image Include="Packages\Resources\Icons\Logo.ico" />
   </ItemGroup>
 </Project>

@@ -170,7 +170,7 @@
     <ResourceCompile Include="TomCatInut.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Packages\icon\Logo.ico" />
+    <Image Include="Packages\Resources\Icons\Logo.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
