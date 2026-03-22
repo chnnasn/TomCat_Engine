@@ -1,18 +1,30 @@
 #pragma once
 
+#include "SceneCamera.h"
+#include "TomCat/Core/UUID.h"
+#include "TomCat/Renderer/Texture.h"
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include "SceneCamera.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
 
-#include "ScriptableEntity.h"
 
-#include "TomCat/Renderer/Texture.h"
 
 namespace TomCat {
+	
+
+	struct ID
+	{
+		UUID id;
+
+		ID() = default;
+		ID(const ID&) = default;
+		ID(const UUID& uuid)
+			: id(uuid) {}
+	};
 
 	struct Tag
 	{
@@ -72,7 +84,8 @@ namespace TomCat {
 		C_Camera(const C_Camera&) = default;
 	};
 
-
+	// Forward declaration
+	class ScriptableEntity;
 	struct NativeScript
 	{
 		ScriptableEntity* Instance = nullptr;
@@ -86,6 +99,39 @@ namespace TomCat {
 			InstantiateScript = []() { return static_cast<ScriptableEntity* >(new T()); };
 			DestroyScript = [](NativeScript* nsc) { delete nsc->Instance; nsc->Instance = nullptr; };
 		}
+	};
+
+
+	// Physics
+	struct Rigidbody2D
+	{
+		enum class BodyType { Static = 0, Dynamic, Kinematic };
+		BodyType Type = BodyType::Static;
+		bool FixedRotation = false;
+
+		// Storage for runtime
+		void* RuntimeBody = nullptr;
+
+		Rigidbody2D() = default;
+		Rigidbody2D(const Rigidbody2D&) = default;
+	};
+
+	struct BoxCollider2D
+	{
+		glm::vec2 Offset = { 0.0f, 0.0f };
+		glm::vec2 Size = { 0.5f, 0.5f };
+
+		// TODO(Yan): move into physics material in the future maybe
+		float Density = 1.0f;
+		float Friction = 0.5f;
+		float Restitution = 0.0f;
+		float RestitutionThreshold = 0.5f;
+
+		// Storage for runtime
+		void* RuntimeFixture = nullptr;
+
+		BoxCollider2D() = default;
+		BoxCollider2D(const BoxCollider2D&) = default;
 	};
 
 }

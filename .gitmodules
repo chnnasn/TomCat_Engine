@@ -16,3 +16,6 @@
 [submodule "TomCat/vendor/ImGuizmo"]
 	path = TomCat/vendor/ImGuizmo
 	url = https://github.com/TheCherno/ImGuizmo
+[submodule "TomCat/vendor/Box2D"]
+	path = TomCat/vendor/Box2D
+	url = https://github.com/chnnasn/box2d

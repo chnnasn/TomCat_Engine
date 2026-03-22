@@ -111,6 +111,9 @@
     <ClInclude Include="src\TomCat\Core\Timer.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\UUID.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\Window.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -1512,6 +1515,9 @@
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\Log.cpp">
+      <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Core\UUID‎.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\Window.cpp">
