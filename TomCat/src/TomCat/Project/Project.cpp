@@ -130,6 +130,15 @@ namespace TomCat {
 				project->m_Config.Description = configNode["Description"] ? configNode["Description"].as<std::string>() : "";
 				project->m_Config.EditorVersion = configNode["EditorVersion"] ? configNode["EditorVersion"].as<std::string>() : "";
 				project->m_Config.AssetDirectory = configNode["AssetDirectory"] ? configNode["AssetDirectory"].as<std::string>() : "Assets";
+				project->m_Config.ContentBrowserLayout = configNode["ContentBrowserLayout"] ? configNode["ContentBrowserLayout"].as<std::string>() : "TwoColumn";
+				project->m_Config.TwoColumnCurrentFolder = configNode["TwoColumnCurrentFolder"] ? configNode["TwoColumnCurrentFolder"].as<std::string>() : "";
+				// 加载展开的节点
+				if (configNode["ExpandedNodes"]) {
+					for (const auto& node : configNode["ExpandedNodes"]) {
+						project->m_Config.ExpandedNodes.push_back(node.as<std::string>());
+					}
+				}
+				
 				//project->m_Config.StartScene = configNode["StartScene"] ? configNode["StartScene"].as<std::string>() : "";
 				project->m_Config.LastOperationTime = configNode["LastOperationTime"] ? configNode["LastOperationTime"].as<std::string>() : "";
 			}
@@ -159,6 +168,16 @@ namespace TomCat {
 			out << YAML::Key << "Description" << YAML::Value << m_Config.Description;
 			out << YAML::Key << "EditorVersion" << YAML::Value << m_Config.EditorVersion;
 			out << YAML::Key << "AssetDirectory" << YAML::Value << m_Config.AssetDirectory.string();
+			out << YAML::Key << "ContentBrowserLayout" << YAML::Value << m_Config.ContentBrowserLayout;
+			out << YAML::Key << "TwoColumnCurrentFolder" << YAML::Value << m_Config.TwoColumnCurrentFolder;
+			// 保存展开的节点
+			out << YAML::Key << "ExpandedNodes" << YAML::Value;
+			out << YAML::BeginSeq;
+			for (const auto& node : m_Config.ExpandedNodes) {
+				out << YAML::Value << node;
+			}
+			out << YAML::EndSeq;
+			
 			//out << YAML::Key << "StartScene" << YAML::Value << m_Config.StartScene;
 			out << YAML::Key << "LastOperationTime" << YAML::Value << m_Config.LastOperationTime;
 			out << YAML::EndMap;

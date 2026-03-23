@@ -193,6 +193,7 @@ namespace TomCat {
 
 			out << YAML::Key << "Primary" << YAML::Value << cameraComponent.Primary;
 			out << YAML::Key << "FixedAspectRatio" << YAML::Value << cameraComponent.FixedAspectRatio;
+			out << YAML::Key << "BackgroundColor" << YAML::Value << cameraComponent.BackgroundColor;
 
 			out << YAML::EndMap; // CameraComponent
 		}
@@ -327,8 +328,10 @@ namespace TomCat {
 					cc._Camera.SetOrthographicFarClip(cameraProps["OrthographicFar"].as<float>());
 
 					cc.Primary = camera["Primary"].as<bool>();
-					cc.FixedAspectRatio = camera["FixedAspectRatio"].as<bool>();
-				}
+				cc.FixedAspectRatio = camera["FixedAspectRatio"].as<bool>();
+				if (camera["BackgroundColor"])
+					cc.BackgroundColor = camera["BackgroundColor"].as<glm::vec4>();
+			}
 
 				auto spriteRendererComponent = entity["SpriteRenderer"];
 				if (spriteRendererComponent)

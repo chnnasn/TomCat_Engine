@@ -27,10 +27,27 @@ namespace TomCat {
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_LayoutMode(TwoColumn)
 	{
-		auto project = ProjectManager::Get().GetActiveProject();
-		if (project)
+		m_Project = ProjectManager::Get().GetActiveProject();
+		if (m_Project)
 		{
-            m_CurrentDirectory = project->GetAssetPath();
+            m_CurrentDirectory = m_Project->GetAssetPath();
+            std::string layout = m_Project->GetConfig().ContentBrowserLayout;
+            if (layout == "OneColumn")
+                m_LayoutMode = OneColumn;
+            else
+                m_LayoutMode = TwoColumn;
+            
+            std::string twoColumnFolder = m_Project->GetConfig().TwoColumnCurrentFolder;
+            if (!twoColumnFolder.empty())
+            {
+                m_TwoColumnCurrentFolder = twoColumnFolder;
+                m_SelectedDirectory = twoColumnFolder;
+            }
+            
+            for (const auto& node : m_Project->GetConfig().ExpandedNodes)
+            {
+                m_ExpandedNodes.insert(node);
+            }
 		}
         else
         {
@@ -49,6 +66,62 @@ namespace TomCat {
 			});
 	}
 
+	void ContentBrowserPanel::SetProject(Ref<Project> project)
+	{
+		m_Project = project;
+		if (project)
+		{
+            m_CurrentDirectory = project->GetAssetPath();
+            std::string layout = project->GetConfig().ContentBrowserLayout;
+            if (layout == "OneColumn")
+                m_LayoutMode = OneColumn;
+            else
+                m_LayoutMode = TwoColumn;
+            
+            std::string twoColumnFolder = project->GetConfig().TwoColumnCurrentFolder;
+            if (!twoColumnFolder.empty())
+            {
+                m_TwoColumnCurrentFolder = twoColumnFolder;
+                m_SelectedDirectory = twoColumnFolder;
+            }
+            else
+            {
+                m_TwoColumnCurrentFolder = project->GetAssetPath();
+                m_SelectedDirectory = project->GetAssetPath();
+            }
+            
+            m_ExpandedNodes.clear();
+            for (const auto& node : project->GetConfig().ExpandedNodes)
+            {
+                m_ExpandedNodes.insert(node);
+            }
+		}
+	}
+
+	void ContentBrowserPanel::Serialize()
+	{
+		if (m_Project)
+		{
+			ProjectConfig config = m_Project->GetConfig();
+			
+			if (m_LayoutMode == OneColumn)
+				config.ContentBrowserLayout = "OneColumn";
+			else
+				config.ContentBrowserLayout = "TwoColumn";
+			
+			config.TwoColumnCurrentFolder = m_TwoColumnCurrentFolder.string();
+			
+			config.ExpandedNodes.clear();
+			for (const auto& node : m_ExpandedNodes)
+			{
+				config.ExpandedNodes.push_back(node);
+			}
+			
+			m_Project->SetConfig(config);
+			m_Project->Save();
+		}
+	}
+
 	// 原有的递归函数，用于 One Column 模式（有折叠功能）
     void ContentBrowserPanel::DisplayDirectoryRecursive(const std::filesystem::path& directoryPath, bool isRoot)
     {
@@ -61,6 +134,13 @@ namespace TomCat {
             nodeFlags |= ImGuiTreeNodeFlags_Selected;
         }
 
+        // 检查节点是否应该默认打开
+        std::string nodePath = directoryPath.string();
+        if (m_ExpandedNodes.find(nodePath) != m_ExpandedNodes.end())
+        {
+            nodeFlags |= ImGuiTreeNodeFlags_DefaultOpen;
+        }
+
         bool nodeOpen = ImGui::TreeNodeEx(displayName.c_str(), nodeFlags);
 
         // 处理点击事件
@@ -69,12 +149,25 @@ namespace TomCat {
             m_SelectedDirectory = directoryPath;
         }
 
+        // 记录节点打开/关闭状态
+        if (ImGui::IsItemToggledOpen())
+        {
+            if (nodeOpen)
+            {
+                m_ExpandedNodes.insert(nodePath);
+            }
+            else
+            {
+                m_ExpandedNodes.erase(nodePath);
+            }
+        }
+
         if (nodeOpen)
         {
             try
             {
                 // 添加调试输出
-                TC_Core_Info("Scanning directory: {0}", directoryPath.string());
+                //TC_Core_Info("Scanning directory: {0}", directoryPath.string());
                 int itemCount = 0;
 
                 for (auto& entry : std::filesystem::directory_iterator(directoryPath))
@@ -83,7 +176,7 @@ namespace TomCat {
                     itemCount++;
 
                     // 调试输出每个找到的项目
-                    TC_Core_Info("Found item: {0} (is_directory: {1})", path.string(), entry.is_directory());
+                    //TC_Core_Info("Found item: {0} (is_directory: {1})", path.string(), entry.is_directory());
 
                     if (entry.is_directory())
                     {
@@ -95,7 +188,7 @@ namespace TomCat {
                     }
                 }
 
-                TC_Core_Info("Total items found: {0}", itemCount);
+                //TC_Core_Info("Total items found: {0}", itemCount);
             }
             catch (const std::filesystem::filesystem_error& e)
             {
@@ -132,10 +225,11 @@ namespace TomCat {
         ImGui::TreeNodeEx("Assets", rootFlags);
 
         // 处理根目录点击
-        if (ImGui::IsItemClicked())
-        {
-            m_SelectedDirectory = directoryPath;
-        }
+                if (ImGui::IsItemClicked())
+                {
+                    m_SelectedDirectory = directoryPath;
+                    m_TwoColumnCurrentFolder = directoryPath;
+                }
 
         // 遍历 assets 下的一级项目
         try
@@ -166,6 +260,7 @@ namespace TomCat {
                     if (ImGui::IsItemClicked())
                     {
                         m_SelectedDirectory = path;
+                        m_TwoColumnCurrentFolder = path;
                     }
                 }
                 else
@@ -284,10 +379,12 @@ namespace TomCat {
             if (ext == L".tomcat" || ext == L".tcproj")
             {
                 ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
             }
             else if (s_ImageExtensionsW.find(ext) != s_ImageExtensionsW.end())
             {
                 ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                ImGui::Image((ImTextureID)m_ImageCache[path.string()]->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
             }
 
             ImGui::EndDragDropSource();
@@ -322,11 +419,29 @@ namespace TomCat {
             if (ImGui::MenuItem("One Column Layout"))
             {
                 m_LayoutMode = OneColumn;
+                // 更新项目配置并保存
+                auto project = ProjectManager::Get().GetActiveProject();
+                if (project)
+                {
+                    ProjectConfig config = project->GetConfig();
+                    config.ContentBrowserLayout = "OneColumn";
+                    project->SetConfig(config);
+                    project->Save();
+                }
             }
 
             if (ImGui::MenuItem("Two Column Layout"))
             {
                 m_LayoutMode = TwoColumn;
+                // 更新项目配置并保存
+                auto project = ProjectManager::Get().GetActiveProject();
+                if (project)
+                {
+                    ProjectConfig config = project->GetConfig();
+                    config.ContentBrowserLayout = "TwoColumn";
+                    project->SetConfig(config);
+                    project->Save();
+                }
             }
 
             ImGui::EndPopup();
@@ -669,10 +784,12 @@ namespace TomCat {
                             if (extension == L".tomcat" || extension == L".tcproj")
                             {
                                 ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                                ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
                             }
                             else if (s_ImageExtensionsW.find(extension) != s_ImageExtensionsW.end())
                             {
                                 ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                                ImGui::Image((ImTextureID)icon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
                             }
 
                             ImGui::EndDragDropSource();

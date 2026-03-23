@@ -35,75 +35,95 @@ namespace TomCat {
 		fbSpec.Width = 1280;
 		fbSpec.Height = 720;
 		m_Framebuffer = Framebuffer::Create(fbSpec);
+		m_GameFramebuffer = Framebuffer::Create(fbSpec);
 
 		m_ActiveScene = CreateRef<Scene>();
 
 		if (m_CurrentProject)
 		{
 			m_SceneDirty = true;
+			
+			// 读取Project.tcproj目录的imgui.ini文件
+			std::filesystem::path projectDir = m_CurrentProject->GetProjectPath().parent_path();
+			std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
+			if (std::filesystem::exists(imguiIniPath))
+			{
+				// 加载ImGui配置
+				ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
+			}
 		}
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
+
+		m_SceneHierarchyPanel.SetSceneLoadCallback([this](const std::filesystem::path& path) {
+			OpenScene(path);
+		});
+
+		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](const std::filesystem::path& path) {
+			std::string fileName = path.stem().string();
+			auto Square = m_ActiveScene->CreateEntity(fileName);
+			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
+			SpriteR.Texture = Texture2D::Create(path.string());
+		});
 	}
 
 	void EditorLayer::OnDetach()
 	{
 		TC_PROFILE_FUNCTION();
+
+		m_ContentBrowserPanel.Serialize();
+		
+		if (m_CurrentProject)
+		{
+			std::filesystem::path projectDir = m_CurrentProject->GetProjectPath().parent_path();
+			std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
+			
+			ImGui::SaveIniSettingsToDisk(imguiIniPath.string().c_str());
+			
+			m_CurrentProject->Save();
+		}
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
 
-		// Resize
+		// Resize Scene Framebuffer
 		if (FramebufferSpecification spec = m_Framebuffer->GetSpecification();
-			m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && // zero sized framebuffer is invalid
+			m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f &&
 			(spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
 		{
 			m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 			m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
-
 			m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
-
 			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		}
-	
-		// Render
+
+		// Resize Game Framebuffer
+		if (FramebufferSpecification gameSpec = m_GameFramebuffer->GetSpecification();
+			m_GameViewportSize.x > 0.0f && m_GameViewportSize.y > 0.0f &&
+			(gameSpec.Width != m_GameViewportSize.x || gameSpec.Height != m_GameViewportSize.y))
+		{
+			m_GameFramebuffer->Resize((uint32_t)m_GameViewportSize.x, (uint32_t)m_GameViewportSize.y);
+			m_ActiveScene->OnViewportResize((uint32_t)m_GameViewportSize.x, (uint32_t)m_GameViewportSize.y);
+		}
+
+		// Render Scene View (Editor Camera) - Always use EditorCamera with dark gray background
 		Renderer2D::ResetStats();
 		m_Framebuffer->Bind();
 		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
 		RenderCommand::Clear();
-
-
-		// Clear our entity ID attachment to -1
 		m_Framebuffer->ClearAttachment(1, -1);
 
+		// Update
+		if (m_ViewportFocused)
+			m_CameraController.OnUpdate(ts);
+		m_EditorCamera.OnUpdate(ts);
 
-		switch (m_SceneState) 
-		{
-			case SceneState::Edit:
-			{
-				// Update
-				if (m_ViewportFocused)
-					m_CameraController.OnUpdate(ts);
+		// Scene窗口始终使用EditorCamera渲染
+		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 
-				m_EditorCamera.OnUpdate(ts);
-
-				m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
-				break;
-			}
-
-			case SceneState::Play: 
-			{
-				m_ActiveScene->OnUpdateRuntime(ts);
-				break;
-			}
-
-		}
-
-		// Update scene
-
-
+		// Mouse picking for Scene viewport
 		auto [mx, my] = ImGui::GetMousePos();
 		mx -= m_ViewportBounds[0].x;
 		my -= m_ViewportBounds[0].y;
@@ -119,6 +139,20 @@ namespace TomCat {
 		}
 
 		m_Framebuffer->Unbind();
+
+		// Render Game View (Runtime Camera) - Always render runtime camera
+		m_GameFramebuffer->Bind();
+
+		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+		RenderCommand::Clear();
+		m_GameFramebuffer->ClearAttachment(1, -1);
+
+		// Game窗口使用Runtime渲染，背景色由摄像机的BackgroundColor设置
+		if (m_SceneState == SceneState::Play)
+			m_ActiveScene->OnUpdateRuntime(ts);
+		else
+			m_ActiveScene->OnRenderRuntime();
+		m_GameFramebuffer->Unbind();
 	}
 
 	void EditorLayer::OnImGuiRender()
@@ -245,30 +279,9 @@ namespace TomCat {
 		m_ContentBrowserPanel.OnImGuiRender();
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-		static bool sceneWindowOpen = true;
+	static bool sceneWindowOpen = true;
 
-		ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);
-
-		if (ImGui::BeginMenuBar())
-		{
-			if (ImGui::BeginMenu("Stats"))
-			{
-				std::string name = "None";
-				if (m_HoveredEntity)
-					name = m_HoveredEntity.GetComponent<Tag>()._Tag;
-				ImGui::Text("Hovered Entity : %s", name.c_str());
-
-				auto stats = Renderer2D::GetStats();
-				ImGui::Text("Stats:");
-				ImGui::Text("Draw Calls: %d", stats.DrawCalls);
-				ImGui::Text("Quads: %d", stats.QuadCount);
-				ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
-				ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
-
-				ImGui::EndMenu();
-			}
-			ImGui::EndMenuBar();
-		}
+	ImGui::Begin("Scene", &sceneWindowOpen);
 
 		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
 		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
@@ -283,20 +296,16 @@ namespace TomCat {
 		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
-		uint64_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-		ImGui::Image(reinterpret_cast<void*>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
+		uint64_t sceneTextureID = m_Framebuffer->GetColorAttachmentRendererID();
+		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
 		if (ImGui::BeginDragDropTarget())
 		{
 			std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
 
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TOMCAT_SCENE"))
-			{
-				const wchar_t* path = (const wchar_t*)payload->Data;
-				OpenScene(assetPath / path);
-			}
-			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE")) {
+			ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags)) {
 				const wchar_t* path = (const wchar_t*)payload->Data;
 				std::filesystem::path texturePath = assetPath / path;
 				std::string fileName = texturePath.stem().string();
@@ -356,6 +365,44 @@ namespace TomCat {
 		ImGui::End();
 		ImGui::PopStyleVar();
 
+		// Game Window - Always visible
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
+		static bool gameWindowOpen = true;
+
+		ImGui::Begin("Game", &gameWindowOpen, ImGuiWindowFlags_MenuBar);
+
+		if (ImGui::BeginMenuBar())
+		{
+			if (ImGui::BeginMenu("Stats"))
+			{
+				std::string name = "None";
+				if (m_HoveredEntity)
+					name = m_HoveredEntity.GetComponent<Tag>()._Tag;
+				ImGui::Text("Hovered Entity : %s", name.c_str());
+
+				auto stats = Renderer2D::GetStats();
+				ImGui::Text("Stats:");
+				ImGui::Text("Draw Calls: %d", stats.DrawCalls);
+				ImGui::Text("Quads: %d", stats.QuadCount);
+				ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
+				ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
+
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenuBar();
+		}
+
+		ImVec2 gameViewportPanelSize = ImGui::GetContentRegionAvail();
+		m_GameViewportSize = { gameViewportPanelSize.x, gameViewportPanelSize.y };
+
+		// 始终显示GameFramebuffer（Runtime摄像机渲染内容）
+		uint64_t gameTextureID = m_GameFramebuffer->GetColorAttachmentRendererID();
+		ImGui::Image(reinterpret_cast<void*>(gameTextureID), ImVec2{ m_GameViewportSize.x, m_GameViewportSize.y },
+			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+
+		ImGui::End();
+		ImGui::PopStyleVar();
+
 		ImGui::End();
 	}
 
@@ -377,19 +424,33 @@ namespace TomCat {
 
 		Ref<Texture2D> icon = m_SceneState == SceneState::Edit ? m_IconPlay : m_IconStop;
 
+		// 只有当当前有场景时，才允许按下播放按钮
+		if (m_SceneState == SceneState::Edit && !m_EditorScene)
+		{
+			// 如果当前没有场景，禁用播放按钮
+			ImGui::BeginDisabled();
+		}
+
 		if (ImGui::ImageButton((ImTextureID)icon->GetRendererID(), ImVec2(size, size),
 			ImVec2(0, 0), ImVec2(1, 1), 0))
 		{
-			if (m_SceneState == SceneState::Edit)
+			if (m_SceneState == SceneState::Edit && m_EditorScene)
 			{
 				OnScenePlay();
-				m_ActiveScene->OnRuntimeStart();
+				if (m_ActiveScene)
+					m_ActiveScene->OnRuntimeStart();
 			}
 			else if (m_SceneState == SceneState::Play)
 			{
 				OnSceneStop();
-				m_ActiveScene->OnRuntimeStop();
+				if (m_ActiveScene)
+					m_ActiveScene->OnRuntimeStop();
 			}
+		}
+
+		if (m_SceneState == SceneState::Edit && !m_EditorScene)
+		{
+			ImGui::EndDisabled();
 		}
 
 		ImGui::PopStyleVar();
@@ -405,7 +466,10 @@ namespace TomCat {
 		m_ActiveScene = Scene::Copy(m_EditorScene);
 
 		m_ActiveScene->OnRuntimeStart();
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
+
+		// 切换到Game窗口焦点
+		ImGui::SetWindowFocus("Game");
 
 	}
 
@@ -413,10 +477,14 @@ namespace TomCat {
 	{
 		m_SceneState = SceneState::Edit;
 
-		m_ActiveScene->OnRuntimeStop();
+		if (m_ActiveScene)
+			m_ActiveScene->OnRuntimeStop();
 		m_ActiveScene = m_EditorScene;
 
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+
+		// 切换到Scene窗口焦点
+		ImGui::SetWindowFocus("Scene");
 	}
 
 	void EditorLayer::OnEvent(Event& e)
@@ -611,6 +679,16 @@ namespace TomCat {
 			if (project)
 			{
 				m_CurrentProject = project;
+				
+				// 读取Project.tcproj目录的imgui.ini文件
+				std::filesystem::path projectDir = project->GetProjectPath().parent_path();
+				std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
+				if (std::filesystem::exists(imguiIniPath))
+				{
+					// 加载ImGui配置
+					ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
+				}
+				
 				NewScene();
 				m_ContentBrowserPanel.SetProject(m_CurrentProject);
 			}

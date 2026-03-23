@@ -166,7 +166,7 @@
     <ResourceCompile Include="Manager.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Packages\icon\HubLogo.ico" />
+    <Image Include="Packages\Resources\Icons\HubLogo.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

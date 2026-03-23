@@ -1,18 +1,19 @@
-[17:30:52] [info] TomCat: Create window TomCatHub 1920 1080
-[17:30:52] [info] TomCat: OpenGL Info
-[17:30:52] [info] TomCat: Vendor: Intel
-[17:30:52] [info] TomCat: Renderer: Intel(R) RaptorLake-S Mobile Graphics Controller
-[17:30:52] [info] TomCat: Version: 4.6.0 - Build 32.0.101.7076
-[17:30:52] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER Packages/shaders/Texture.glsl
-[17:30:52] [trace] TomCat:     1 uniform buffers
-[17:30:52] [trace] TomCat:     0 resources
-[17:30:52] [trace] TomCat: Uniform buffers:
-[17:30:52] [trace] TomCat:   _46_48
-[17:30:52] [trace] TomCat:     Size = 64
-[17:30:52] [trace] TomCat:     Binding = 0
-[17:30:52] [trace] TomCat:     Members = 1
-[17:30:52] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER Packages/shaders/Texture.glsl
-[17:30:52] [trace] TomCat:     0 uniform buffers
-[17:30:52] [trace] TomCat:     1 resources
-[17:30:52] [trace] TomCat: Uniform buffers:
-[17:30:52] [warning] TomCat: Shader creation took 34.981403 ms
+[09:10:01] [info] TomCat: Create window TomCatHub 1920 1080
+[09:10:02] [info] TomCat: OpenGL Info
+[09:10:02] [info] TomCat: Vendor: Intel
+[09:10:02] [info] TomCat: Renderer: Intel(R) RaptorLake-S Mobile Graphics Controller
+[09:10:02] [info] TomCat: Version: 4.6.0 - Build 32.0.101.7076
+[09:10:02] [warning] TomCat: Failed to load window icon: Packages/icon/HubLogo.ico
+[09:10:02] [trace] TomCat: OpenGLShader::Reflect - GL_VERTEX_SHADER Packages/shaders/Texture.glsl
+[09:10:02] [trace] TomCat:     1 uniform buffers
+[09:10:02] [trace] TomCat:     0 resources
+[09:10:02] [trace] TomCat: Uniform buffers:
+[09:10:02] [trace] TomCat:   _46_48
+[09:10:02] [trace] TomCat:     Size = 64
+[09:10:02] [trace] TomCat:     Binding = 0
+[09:10:02] [trace] TomCat:     Members = 1
+[09:10:02] [trace] TomCat: OpenGLShader::Reflect - GL_FRAGMENT_SHADER Packages/shaders/Texture.glsl
+[09:10:02] [trace] TomCat:     0 uniform buffers
+[09:10:02] [trace] TomCat:     1 resources
+[09:10:02] [trace] TomCat: Uniform buffers:
+[09:10:02] [warning] TomCat: Shader creation took 37.475006 ms

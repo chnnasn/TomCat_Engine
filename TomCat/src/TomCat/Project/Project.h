@@ -8,15 +8,18 @@
 namespace TomCat {
 
 	struct ProjectConfig
-	{
-		std::string Name = "Untitled Project";
-		std::string Version = "1.0.0";
-		std::string Description = "";
-		std::string EditorVersion = "";
-		std::string LastOperationTime = "";
-		std::filesystem::path AssetDirectory = "Assets";
-		//std::string StartScene = "";
-	};
+{
+	std::string Name = "Untitled Project";
+	std::string Version = "1.0.0";
+	std::string Description = "";
+	std::string EditorVersion = "";
+	std::string LastOperationTime = "";
+	std::filesystem::path AssetDirectory = "Assets";
+	std::string ContentBrowserLayout = "TwoColumn";
+	std::string TwoColumnCurrentFolder = "";
+	std::vector<std::string> ExpandedNodes;
+	//std::string StartScene = "";
+};
 
 	class Project
 	{

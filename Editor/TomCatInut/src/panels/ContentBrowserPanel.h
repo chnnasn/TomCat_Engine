@@ -16,7 +16,8 @@ namespace TomCat {
 		};
 
 		ContentBrowserPanel();
-		void SetProject(Ref<Project> project) { m_Project = project; }
+		void SetProject(Ref<Project> project);
+		void Serialize();
 
 		void OnImGuiRender();
 	private:
@@ -30,6 +31,11 @@ namespace TomCat {
 
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
+
+		// 存储树节点的打开状态
+		std::unordered_set<std::string> m_ExpandedNodes;
+		// 存储Two Column模式下当前打开的文件夹
+		std::filesystem::path m_TwoColumnCurrentFolder;
 
 		void DisplayFileNode(const std::filesystem::path& path);
 		void DisplayDirectoryRecursive(const std::filesystem::path& directoryPath, bool isRoot);
