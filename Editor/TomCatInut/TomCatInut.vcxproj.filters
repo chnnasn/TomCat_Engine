@@ -4,8 +4,8 @@
     <Filter Include="panels">
       <UniqueIdentifier>{C8213A14-B4C3-64EA-9D7E-783E89BFEB3A}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Icon">
-      <UniqueIdentifier>{bc3e8715-27c5-42fa-a02a-d94b112ef5c5}</UniqueIdentifier>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{accbb4f6-5ca4-4985-a0cd-7b6dce505dd2}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -16,7 +16,9 @@
     <ClInclude Include="src\panels\SceneHierarchyPanel.h">
       <Filter>panels</Filter>
     </ClInclude>
-    <ClInclude Include="resource.h" />
+    <ClInclude Include="resource.h">
+      <Filter>资源文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\EditorLayer.cpp" />
@@ -29,9 +31,13 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="TomCatInut.rc" />
+    <Image Include="Packages\Resources\Icons\Logo.ico">
+      <Filter>资源文件</Filter>
+    </Image>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Packages\Resources\Icons\Logo.ico" />
+    <ResourceCompile Include="TomCatInut.rc">
+      <Filter>资源文件</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

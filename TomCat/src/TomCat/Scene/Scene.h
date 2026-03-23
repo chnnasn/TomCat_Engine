@@ -29,11 +29,13 @@ namespace TomCat {
 
 		void OnUpdateEditor(Timestep ts,EditorCamera& camera);
 		void OnUpdateRuntime(Timestep ts);
+		void OnRenderRuntime();
 		void OnViewportResize(uint32_t width, uint32_t height);
 
 		void DuplicateEntity(Entity entity);
 
 		Entity GetPrimaryCameraEntity();
+		Entity FindEntityByUUID(UUID uuid);
 	private:
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);

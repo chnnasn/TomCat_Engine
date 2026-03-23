@@ -50,6 +50,7 @@ namespace TomCat {
 		Ref<VertexArray> m_SquareVA;
 		Ref<Shader> m_FlatColorShader;
 		Ref<Framebuffer> m_Framebuffer;
+		Ref<Framebuffer> m_GameFramebuffer;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;
@@ -68,6 +69,9 @@ namespace TomCat {
 
 		glm::vec2 m_ViewportBounds[2];
 
+		// Game Viewport
+		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
+
 		glm::vec4 m_SquareColor = { 0.2f, 0.3f, 0.8f, 1.0f };
 
 		int m_GizmoType = -1;
@@ -76,7 +80,6 @@ namespace TomCat {
 		ContentBrowserPanel m_ContentBrowserPanel;
 		
 		Ref<Texture2D> m_IconPlay, m_IconStop;
-
 
 		enum  SceneState
 		{

@@ -24,11 +24,24 @@ namespace TomCat {
 
 	}
 
-	void SceneHierarchyPanel::SetContext(const Ref<Scene>& context)
+	void SceneHierarchyPanel::SetContext(const Ref<Scene>& context, bool clearSelection, bool remapSelection)
 	{
 
 		m_Context = context;
-		m_SelectionContext = {};
+		if (clearSelection)
+		{
+			m_SelectionContext = {};
+		}
+		else if (remapSelection && m_SelectionContext)
+		{
+			// Try to find the same entity in the new scene by UUID
+			UUID selectedUUID = m_SelectionContext.GetUUID();
+			Entity remappedEntity = m_Context->FindEntityByUUID(selectedUUID);
+			if (remappedEntity)
+				m_SelectionContext = remappedEntity;
+			else
+				m_SelectionContext = {};
+		}
 	}
 
 	void SceneHierarchyPanel::OnImGuiRender()
@@ -58,6 +71,43 @@ namespace TomCat {
 				ImGui::EndPopup();
 			}
 		}
+		else
+		{
+			ImGui::TextDisabled("Drag a scene file here to load");
+		}
+
+		ImVec2 available = ImGui::GetContentRegionAvail();
+		if (available.y > 0)
+		{
+			ImGui::Dummy(available);
+		}
+
+		if (ImGui::BeginDragDropTarget())
+		{
+			ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TOMCAT_SCENE", flags))
+			{
+				const wchar_t* path = (const wchar_t*)payload->Data;
+				if (m_SceneLoadCallback)
+				{
+					auto project = ProjectManager::Get().GetActiveProject();
+					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
+					m_SceneLoadCallback(assetPath / path);
+				}
+			}
+			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags))
+			{
+				const wchar_t* path = (const wchar_t*)payload->Data;
+				if (m_SpriteCreateCallback)
+				{
+					auto project = ProjectManager::Get().GetActiveProject();
+					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
+					m_SpriteCreateCallback(assetPath / path);
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+
 		ImGui::End();
 
 		static bool inspectorWindowOpen = true;
@@ -440,14 +490,19 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 				ImGui::Columns(1);
 
 				// Far
-				DrawProperty("Far", columnWidth);
-				float perspectiveFar = camera.GetPerspectiveFarClip();
-				if (ImGui::DragFloat("##PerspectiveFar", &perspectiveFar))
-					camera.SetPerspectiveFarClip(perspectiveFar);
-				ImGui::Columns(1);
-			}
+			DrawProperty("Far", columnWidth);
+			float perspectiveFar = camera.GetPerspectiveFarClip();
+			if (ImGui::DragFloat("##PerspectiveFar", &perspectiveFar))
+				camera.SetPerspectiveFarClip(perspectiveFar);
+			ImGui::Columns(1);
 
-			if (camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
+			// Background Color
+			DrawProperty("Background Color", columnWidth);
+			ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor));
+			ImGui::Columns(1);
+		}
+
+		if (camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
 			{
 				// Size
 				DrawProperty("Size", columnWidth);
@@ -471,11 +526,16 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 				ImGui::Columns(1);
 
 				// Fixed Aspect Ratio
-				DrawProperty("Fixed Aspect Ratio", columnWidth);
-				ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio);
-				ImGui::Columns(1);
-			}
-		});
+			DrawProperty("Fixed Aspect Ratio", columnWidth);
+			ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio);
+			ImGui::Columns(1);
+
+			// Background Color
+			DrawProperty("Background Color", columnWidth);
+			ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor));
+			ImGui::Columns(1);
+		}
+	});
 
 		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [](auto& component)
 		{

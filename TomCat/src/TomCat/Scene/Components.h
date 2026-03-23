@@ -79,6 +79,7 @@ namespace TomCat {
 		SceneCamera _Camera;
 		bool Primary = true; // TODO: think about moving to Scene
 		bool FixedAspectRatio = false;
+		glm::vec4 BackgroundColor = glm::vec4(0.53f, 0.81f, 0.92f, 1.0f);  // 默认天蓝色
 
 		C_Camera() = default;
 		C_Camera(const C_Camera&) = default;

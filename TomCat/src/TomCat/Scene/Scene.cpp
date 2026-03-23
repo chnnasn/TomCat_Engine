@@ -4,6 +4,7 @@
 #include "Components.h"
 #include "ScriptableEntity.h"
 #include "TomCat/Renderer/Renderer2D.h"
+#include "TomCat/Renderer/RenderCommand.h"
 #include "Entity.h"
 
 #include <glm/glm.hpp>
@@ -64,6 +65,12 @@ namespace TomCat {
 
 	Ref<Scene> Scene::Copy(Ref<Scene> other)
 	{
+		if (!other)
+		{
+			TC_Core_Assert(false, "Scene::Copy called with nullptr");
+			return CreateRef<Scene>();
+		}
+
 		Ref<Scene> newScene = CreateRef<Scene>();
 
 		newScene->m_ViewportWidth = other->m_ViewportWidth;
@@ -102,7 +109,7 @@ namespace TomCat {
 	Entity Scene::CreateEntityWithUUID(UUID uuid, const std::string& name)
 	{
 		Entity entity = { m_Registry.create(), this };
-		auto& idComponent = entity.AddComponent<ID>();
+		entity.AddComponent<ID>(uuid);
 		entity.AddComponent<Transform>();
 		auto& tag = entity.AddComponent<Tag>();
 		tag._Tag = name.empty() ? "Entity" : name;
@@ -163,6 +170,17 @@ namespace TomCat {
 
 	void Scene::OnUpdateRuntime(Timestep ts)
 	{
+		// Set background color from primary camera
+		{
+			auto view = m_Registry.view<Transform, C_Camera>();
+			view.each([](auto entity, Transform& transform, C_Camera& camera) {
+				if (camera.Primary)
+				{
+					RenderCommand::SetClearColor(camera.BackgroundColor);
+					RenderCommand::Clear();
+				}
+			});
+		}
 
 		{
 			m_Registry.view<NativeScript>().each([=](auto entity, auto& nsc)
@@ -251,6 +269,52 @@ namespace TomCat {
 		Renderer2D::EndScene();
 	}
 
+	void Scene::OnRenderRuntime()
+	{
+		// Set background color from primary camera
+		{
+			auto view = m_Registry.view<Transform, C_Camera>();
+			view.each([](auto entity, Transform& transform, C_Camera& camera) {
+				if (camera.Primary)
+				{
+					RenderCommand::SetClearColor(camera.BackgroundColor);
+					RenderCommand::Clear();
+				}
+			});
+		}
+
+		// Sprite
+		Camera* MainCamera = nullptr;
+		glm::mat4 cameraTransform;
+
+		{
+			auto view = m_Registry.view<Transform, C_Camera>();
+
+			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
+				if (camera.Primary)
+				{
+					MainCamera = &camera._Camera;
+					cameraTransform = transform.GetTransform();
+				}
+			});
+		}
+
+		if (MainCamera)
+		{
+			Renderer2D::BeginScene(*MainCamera, cameraTransform);
+
+			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
+			for (auto entity : group)
+			{
+				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
+
+				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
+			}
+
+			Renderer2D::EndScene();
+		}
+	}
+
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)
 	{
 		m_ViewportWidth = width;
@@ -294,6 +358,17 @@ namespace TomCat {
 
 		}
 
+		return {};
+	}
+
+	Entity Scene::FindEntityByUUID(UUID uuid)
+	{
+		auto view = m_Registry.view<ID>();
+		for (auto entity : view)
+		{
+			if (view.get<ID>(entity).id == uuid)
+				return Entity(entity, this);
+		}
 		return {};
 	}
 

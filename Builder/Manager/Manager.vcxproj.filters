@@ -6,23 +6,17 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ExampleLayer.h" />
-    <ClInclude Include="resource.h">
-      <Filter>Icon</Filter>
-    </ClInclude>
+    <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
-    <Filter Include="Icon">
-      <UniqueIdentifier>{d6755aaf-19b5-465b-b1eb-e8a3af3f2b0a}</UniqueIdentifier>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{9e77e6cd-2ad2-4bfb-a078-463debad5fb2}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Packages\icon\HubLogo.ico">
-      <Filter>Icon</Filter>
-    </Image>
+    <ResourceCompile Include="Manager.rc" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="Manager.rc">
-      <Filter>Icon</Filter>
-    </ResourceCompile>
+    <Image Include="Packages\Resources\Icons\HubLogo.ico" />
   </ItemGroup>
 </Project>

@@ -36,10 +36,13 @@ namespace TomCat {
 		ProjectionType GetProjectionType() const { return  m_ProjectionType; };
 		void SetProjectionType(ProjectionType type) { m_ProjectionType = type; RecalculateProjection(); }
 
+		glm::vec4 GetBackgroundColor() const { return m_BackgroundColor; }
+		void SetBackgroundColor(const glm::vec4& color) { m_BackgroundColor = color; }
+
 	private:
 		void RecalculateProjection();
 	private:
-		ProjectionType m_ProjectionType = ProjectionType::Orthographic;
+	ProjectionType m_ProjectionType = ProjectionType::Orthographic;
 
 		float m_PerspectiveFOV = glm::radians(45.0f);
 		float m_PerspectiveNear = 0.01f, m_PerspectiveFar = 1000.0f;
@@ -48,6 +51,7 @@ namespace TomCat {
 		float m_OrthographicNear = -1.0f, m_OrthographicFar = 1.0f;
 
 		float m_AspectRatio = 1.0f;
+		glm::vec4 m_BackgroundColor = glm::vec4(0.53f, 0.81f, 0.92f, 1.0f);  // 默认天蓝色
 	};
 
 }
