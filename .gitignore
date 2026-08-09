@@ -48,6 +48,7 @@ bin-int/
 
 #Files
 .user
+*.user
 
 
 # Directories
@@ -56,3 +57,14 @@ scripts/__pycache__
 
 # TomCat Hub runtime settings
 HubConfig.tomcat
+
+# Build artifacts and runtime logs
+*.tlog
+*.log
+
+# Hub/Editor local folders (not versioned)
+Builder/Manager/Projects/
+Builder/Manager/Packages/cache/
+Editor/TomCatInut/Packages/cache/
+# Packaged releases
+dist/

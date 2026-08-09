@@ -1,43 +1,39 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="panels">
-      <UniqueIdentifier>{C8213A14-B4C3-64EA-9D7E-783E89BFEB3A}</UniqueIdentifier>
+    <Filter Include="src">
+      <UniqueIdentifier>{2DAB880B-99B4-887C-2230-9F7C8E38947C}</UniqueIdentifier>
     </Filter>
-    <Filter Include="资源文件">
-      <UniqueIdentifier>{accbb4f6-5ca4-4985-a0cd-7b6dce505dd2}</UniqueIdentifier>
+    <Filter Include="src\panels">
+      <UniqueIdentifier>{FFFA9871-EBB2-DABE-54BA-B31A409175AF}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\EditorLayer.h" />
+    <ClInclude Include="src\EditorLayer.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\panels\ContentBrowserPanel.h">
-      <Filter>panels</Filter>
+      <Filter>src\panels</Filter>
     </ClInclude>
     <ClInclude Include="src\panels\SceneHierarchyPanel.h">
-      <Filter>panels</Filter>
-    </ClInclude>
-    <ClInclude Include="resource.h">
-      <Filter>资源文件</Filter>
+      <Filter>src\panels</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\EditorLayer.cpp" />
-    <ClCompile Include="src\TomCatInputApp.cpp" />
+    <ClCompile Include="src\EditorLayer.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCatInputApp.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\panels\ContentBrowserPanel.cpp">
-      <Filter>panels</Filter>
+      <Filter>src\panels</Filter>
     </ClCompile>
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp">
-      <Filter>panels</Filter>
+      <Filter>src\panels</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Packages\Resources\Icons\Logo.ico">
-      <Filter>资源文件</Filter>
-    </Image>
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="TomCatInut.rc">
-      <Filter>资源文件</Filter>
-    </ResourceCompile>
+    <ResourceCompile Include="TomCatInut.rc" />
   </ItemGroup>
 </Project>
