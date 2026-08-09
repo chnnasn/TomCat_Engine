@@ -26,27 +26,37 @@ namespace TomCat {
 
 		Ref<Project> CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config);
 		Ref<Project> LoadProject(const std::filesystem::path& projectPath);
+		Ref<Project> AddProject(const std::filesystem::path& projectPath);
 		bool RemoveProject(const std::filesystem::path& projectPath);
 
 		Ref<Project> GetActiveProject() const { return m_ActiveProject; }
 		void SetActiveProject(Ref<Project> project);
 		void OpenProjectInEditor(Ref<Project> project);
 
+		// Hub settings persistence (HubConfig.tomcat next to the working directory).
+		// Projects added from other paths are serialized here (local serialization),
+		// so no separate virtual-mount system is needed.
+		void LoadHubSettings();
+		void SaveHubSettings();
+		const std::vector<std::filesystem::path>& GetKnownProjectPaths() const { return m_KnownProjectPaths; }
+
 		void RegisterProjectCreatedCallback(ProjectCallback callback) { m_OnProjectCreated = callback; }
 		void RegisterProjectLoadedCallback(ProjectCallback callback) { m_OnProjectLoaded = callback; }
 		void RegisterProjectRemovedCallback(ProjectCallback callback) { m_OnProjectRemoved = callback; }
 
 	private:
-		ProjectManager() = default;
+		ProjectManager();
 		~ProjectManager() = default;
 		ProjectManager(const ProjectManager&) = delete;
 		ProjectManager& operator=(const ProjectManager&) = delete;
 
 		bool IsProjectFile(const std::filesystem::path& path) const;
+		std::filesystem::path GetHubSettingsPath() const;
 
 	private:
 		std::filesystem::path m_ProjectDirectory;
 		std::filesystem::path m_EditorDirectory;
+		std::vector<std::filesystem::path> m_KnownProjectPaths;
 		std::vector<Ref<Project>> m_Projects;
 		Ref<Project> m_ActiveProject;
 

@@ -6251,7 +6251,10 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
 
     const bool has_close_button = (p_open != NULL);
     const bool has_collapse_button = !(flags & ImGuiWindowFlags_NoCollapse) && (style.WindowMenuButtonPosition != ImGuiDir_None);
-    const bool has_more_button = true; // Always show "..." button
+    // Flag-controlled: only show the "more options" (U+22EE) button when the feature is
+    // enabled AND this window registered a callback (e.g. Editor "Project" window).
+    // Windows without a callback (such as the Hub Settings dialog) won't show it.
+    const bool has_more_button = TomCat::IsMoreOptionsEnabled() && TomCat::HasWindowMoreOptionsCallback(window->Name ? window->Name : "");
 
     // Close & Collapse button are on the Menu NavLayer and don't default focus (unless there's nothing else on that layer)
     // FIXME-NAV: Might want (or not?) to set the equivalent of ImGuiButtonFlags_NoNavFocus so that mouse clicks on standard title bar items don't necessarily set nav/keyboard ref?
@@ -6331,9 +6334,11 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
             window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonActive));
         else if (hovered)
             window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonHovered));
-        // Draw "..." text
-        ImVec2 text_pos(more_button_rect.Min.x + (button_sz - g.FontSize * 0.75f) * 0.5f, more_button_rect.Min.y + (button_sz - g.FontSize) * 0.5f);
-        window->DrawList->AddText(text_pos, GetColorU32(ImGuiCol_Text), "...");
+        // Draw U+22EE (vertical ellipsis) text
+        const char* more_text = "\u22EE";
+        const ImVec2 more_size = CalcTextSize(more_text);
+        const ImVec2 text_pos(more_button_rect.Min.x + (button_sz - more_size.x) * 0.5f, more_button_rect.Min.y + (button_sz - more_size.y) * 0.5f);
+        window->DrawList->AddText(text_pos, GetColorU32(ImGuiCol_Text), more_text);
     }
 
     window->DC.NavLayerCurrent = ImGuiNavLayer_Main;

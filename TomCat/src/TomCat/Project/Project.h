@@ -37,6 +37,7 @@ namespace TomCat {
 		const std::string& GetLastOperationTime() const { return m_Config.LastOperationTime; }
 		std::string GetLastOperationTimeAgo() const;
 		void UpdateLastOperationTime();
+		void Touch();
 
 		std::filesystem::path GetAssetPath() const { return m_Directory / m_Config.AssetDirectory; };
 

@@ -38,6 +38,12 @@ namespace TomCat {
 		m_Config.LastOperationTime = ss.str();
 	}
 
+	void Project::Touch()
+	{
+		UpdateLastOperationTime();
+		Save();
+	}
+
 	std::string Project::GetLastOperationTimeAgo() const
 	{
 		if (m_Config.LastOperationTime.empty())
@@ -142,9 +148,6 @@ namespace TomCat {
 				//project->m_Config.StartScene = configNode["StartScene"] ? configNode["StartScene"].as<std::string>() : "";
 				project->m_Config.LastOperationTime = configNode["LastOperationTime"] ? configNode["LastOperationTime"].as<std::string>() : "";
 			}
-			
-			project->UpdateLastOperationTime();
-			project->Save();
 			
 			return project;
 		}
