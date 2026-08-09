@@ -13,6 +13,7 @@ namespace TomCat {
 	std::string Version = "1.0.0";
 	std::string Description = "";
 	std::string EditorVersion = "";
+	std::string Template = "3D"; // project template: "2D" or "3D"
 	std::string LastOperationTime = "";
 	std::filesystem::path AssetDirectory = "Assets";
 	std::string ContentBrowserLayout = "TwoColumn";

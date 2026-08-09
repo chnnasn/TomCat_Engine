@@ -39,6 +39,9 @@ namespace TomCat {
 
 		m_ActiveScene = CreateRef<Scene>();
 
+		// Restore editor window layout from <cwd>/imgui.ini (independent of any project)
+		ImGui::LoadIniSettingsFromDisk((std::filesystem::current_path() / "imgui.ini").string().c_str());
+
 		if (m_CurrentProject)
 		{
 			m_SceneDirty = true;
@@ -72,7 +75,10 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		m_ContentBrowserPanel.Serialize();
-		
+
+		// Save window layout + [ContentBrowser] layout into the editor-level imgui.ini
+		m_ContentBrowserPanel.SaveLayoutSetting();
+
 		if (m_CurrentProject)
 		{
 			std::filesystem::path projectDir = m_CurrentProject->GetProjectPath().parent_path();

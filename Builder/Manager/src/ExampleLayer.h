@@ -40,13 +40,21 @@ namespace TomCat {
 		void RenderSidebar(const ImVec2& size);
 		void RenderProjectList();
 		void RenderProjectRow(Ref<Project> project, int index, const ImVec2& rowMin, const ImVec2& rowMax);
+		void RenderInstallsPage(const ImVec2& size);
 		void RenderNewProjectDialog();
 		void RenderSettingsDialog();
+
+		void OpenInExplorer(Ref<Project> project);
+		const char* T(const char* zh, const char* en) const;
+		std::string LocalizedRelativeTime(Ref<Project> project) const;
 
 		bool SortProjects(const Ref<Project>& a, const Ref<Project>& b) const;
 
 	private:
-		int m_SelectedMenu;
+		int m_SelectedMenu = 1; // 1 = Projects, 2 = Installs
+		int m_MenuOpenRow = -1; // which project row has its U+22EE menu open (-1 = none)
+		int m_NewProjectTemplate = 1; // 0 = 2D, 1 = 3D
+		bool m_Chinese = true;
 		std::vector<Ref<Project>> m_Projects;
 		std::vector<Ref<Project>> m_VisibleProjects;
 		Ref<Project> m_SelectedProject;
