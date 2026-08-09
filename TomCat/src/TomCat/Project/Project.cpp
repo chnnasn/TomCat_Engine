@@ -137,7 +137,6 @@ namespace TomCat {
 				project->m_Config.EditorVersion = configNode["EditorVersion"] ? configNode["EditorVersion"].as<std::string>() : "";
 				project->m_Config.Template = configNode["Template"] ? configNode["Template"].as<std::string>() : "3D";
 				project->m_Config.AssetDirectory = configNode["AssetDirectory"] ? configNode["AssetDirectory"].as<std::string>() : "Assets";
-				project->m_Config.ContentBrowserLayout = configNode["ContentBrowserLayout"] ? configNode["ContentBrowserLayout"].as<std::string>() : "TwoColumn";
 				project->m_Config.TwoColumnCurrentFolder = configNode["TwoColumnCurrentFolder"] ? configNode["TwoColumnCurrentFolder"].as<std::string>() : "";
 				// 加载展开的节点
 				if (configNode["ExpandedNodes"]) {
@@ -173,7 +172,6 @@ namespace TomCat {
 			out << YAML::Key << "EditorVersion" << YAML::Value << m_Config.EditorVersion;
 			out << YAML::Key << "Template" << YAML::Value << m_Config.Template;
 			out << YAML::Key << "AssetDirectory" << YAML::Value << m_Config.AssetDirectory.string();
-			out << YAML::Key << "ContentBrowserLayout" << YAML::Value << m_Config.ContentBrowserLayout;
 			out << YAML::Key << "TwoColumnCurrentFolder" << YAML::Value << m_Config.TwoColumnCurrentFolder;
 			// 保存展开的节点
 			out << YAML::Key << "ExpandedNodes" << YAML::Value;

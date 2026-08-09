@@ -84,3 +84,4 @@ if os.path.exists(vendor_src):
 
 print("Running premake...")
 subprocess.call([premake_exe, "vs2022"])
+

@@ -24,12 +24,33 @@ project "TomCatInut"
 		"%{IncludeDir.ImGuizmo}"
 	}
 
+	libdirs
+	{
+		"../../TomCat/vendor/Box2D/bin/" .. outputdir .. "/Box2D",
+		"../../TomCat/vendor/GLFW/bin/" .. outputdir .. "/GLFW",
+		"../../TomCat/vendor/Glad/bin/" .. outputdir .. "/Glad",
+		"../../TomCat/vendor/ImGui/bin/" .. outputdir .. "/ImGui",
+		"../../TomCat/vendor/yaml-cpp/bin/" .. outputdir .. "/yaml-cpp"
+	}
+
 	links
 	{
-		"TomCat"
+		"TomCat",
+		table.unpack(TomCatConsumerLinks)
 	}
 
 	buildoptions "/utf-8"
+
+	filter "configurations:Release"
+		links { table.unpack(TomCatConsumerLinksRelease) }
+
+	filter "configurations:Dist"
+		links { table.unpack(TomCatConsumerLinksRelease) }
+
+	filter "configurations:Debug"
+		links { table.unpack(TomCatConsumerLinksDebug) }
+
+
 
 	filter "system:windows"
 		systemversion "latest"
@@ -46,7 +67,7 @@ project "TomCatInut"
 		runtime "Debug"
 		symbols "on"
 		postbuildcommands {
-			"if defined VULKAN_SDK (if exist \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" copy /Y \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul)",
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
 			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
 			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}
@@ -56,7 +77,7 @@ project "TomCatInut"
 		runtime "Release"
 		optimize "on"
 		postbuildcommands {
-			"if defined VULKAN_SDK (if exist \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" copy /Y \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul)",
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
 			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
 			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}
@@ -66,7 +87,7 @@ project "TomCatInut"
 		runtime "Release"
 		optimize "on"
 		postbuildcommands {
-			"if defined VULKAN_SDK (if exist \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" copy /Y \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul)",
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
 			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
 			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}

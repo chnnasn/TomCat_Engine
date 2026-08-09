@@ -16,7 +16,6 @@ namespace TomCat {
 	std::string Template = "3D"; // project template: "2D" or "3D"
 	std::string LastOperationTime = "";
 	std::filesystem::path AssetDirectory = "Assets";
-	std::string ContentBrowserLayout = "TwoColumn";
 	std::string TwoColumnCurrentFolder = "";
 	std::vector<std::string> ExpandedNodes;
 	//std::string StartScene = "";

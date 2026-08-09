@@ -1,28 +1,31 @@
-# Package-Editor.ps1
-# Builds the Editor, boxes it into a single exe with Enigma Virtual Box,
+# Package-Hub.ps1
+# Builds the Hub (Manager), boxes it into a single exe with Enigma Virtual Box,
 # and outputs ONLY the boxed package (zip) into dist/.
 #
 # Usage:
-#   .\Scripts\Package-Editor.ps1 -Build -Version 0.2.0 -EnigmaProject editor.evb
+#   .\Scripts\Package-Hub.ps1 -Build -Version 0.1.0 -EnigmaProject hub.evb
 #
 param(
     [string]$SourceDir = "",
     [string]$Version = "",
     [string]$MsBuildPath = "D:\Microsoft Visual Studio\Versions\2026 Pro\MSBuild\Current\Bin\MSBuild.exe",
-    [string]$EnigmaProject = "",
+    [string]$EnigmaProject = "hub.evb",
     [string]$EnigmaConsole = "",
     [switch]$Build
 )
 
 $ErrorActionPreference = "Stop"
 
+$ExeName = "Manager.exe"
+$ZipPrefix = "TomCatHub"
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Editor\bin\Release-windows-x86_64\TomCatInut" }
+if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Builder\bin\Release-windows-x86_64\Manager" }
 
 # 1) Optional rebuild
 if ($Build) {
     if (-not (Test-Path $MsBuildPath)) { throw "MSBuild not found: $MsBuildPath" }
-    $proj = Join-Path $RepoRoot "Editor\TomCatInut\TomCatInut.vcxproj"
+    $proj = Join-Path $RepoRoot "Builder\Manager\Manager.vcxproj"
     Write-Host "[1/4] Building Release x64 ..."
     & $MsBuildPath $proj -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
@@ -46,7 +49,7 @@ if ($EnigmaProject) {
         if ($found) { $EnigmaProject = $found }
     }
     if (-not (Test-Path $EnigmaProject)) {
-        throw "Enigma project not found: $EnigmaProject`nPut a .evb in the repo root or Scripts/, or pass a full path via -EnigmaProject."
+        throw "Enigma project not found: $EnigmaProject`nPut hub.evb in Scripts/, or pass a full path via -EnigmaProject."
     }
     $evbText = Get-Content $EnigmaProject -Raw
     if ($evbText -match '<InputFile>(.*?)</InputFile>') { $evbInput = $Matches[1] }
@@ -57,12 +60,12 @@ if ($EnigmaProject) {
 if (-not $Version) { $Version = Get-Date -Format "yyyyMMdd-HHmm" }
 $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$outExe = Join-Path $dist "TomCatEditor-$Version.exe"
+$outExe = Join-Path $dist "$ZipPrefix-$Version.exe"
 if (Test-Path $outExe) { Remove-Item $outExe -Force }
 
-# 4) Stage the built exe where .evb expects its input (e.g. dist\TomCatInut.exe)
+# 4) Stage the built exe where .evb expects its input (e.g. dist\Manager.exe)
 if ($evbInput) {
-    $srcExe = Join-Path $SourceDir "TomCatInut.exe"
+    $srcExe = Join-Path $SourceDir $ExeName
     if (-not (Test-Path $srcExe)) { throw "Built exe not found: $srcExe" }
     New-Item -ItemType Directory -Force -Path (Split-Path $evbInput) | Out-Null
     Copy-Item $srcExe $evbInput -Force
