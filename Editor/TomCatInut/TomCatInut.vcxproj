@@ -89,12 +89,18 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Debug-windows-x86_64\TomCatInut\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Debug-windows-x86_64\TomCatInut\" &gt; nul)</Command>
+      <Command>if defined VULKAN_SDK (if exist "%VULKAN_SDK%\Bin\shaderc_shared.dll" copy /Y "%VULKAN_SDK%\Bin\shaderc_shared.dll" "../bin/Debug-windows-x86_64/TomCatInut\" &gt; nul)
+if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
+copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -114,13 +120,19 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\TomCatInut\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\TomCatInut\" &gt; nul)</Command>
+      <Command>if defined VULKAN_SDK (if exist "%VULKAN_SDK%\Bin\shaderc_shared.dll" copy /Y "%VULKAN_SDK%\Bin\shaderc_shared.dll" "../bin/Release-windows-x86_64/TomCatInut\" &gt; nul)
+if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
+copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
@@ -140,17 +152,22 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <PostBuildEvent>
-      <Command>IF EXIST "D:\VulkanSDK\Bin\shaderc_shared.dll"\ (xcopy /Q /E /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\TomCatInut\" &gt; nul) ELSE (xcopy /Q /Y /I "D:\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\TomCatInut\" &gt; nul)</Command>
+      <Command>if defined VULKAN_SDK (if exist "%VULKAN_SDK%\Bin\shaderc_shared.dll" copy /Y "%VULKAN_SDK%\Bin\shaderc_shared.dll" "../bin/Dist-windows-x86_64/TomCatInut\" &gt; nul)
+if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
+copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="resource.h" />
     <ClInclude Include="src\EditorLayer.h" />
     <ClInclude Include="src\panels\ContentBrowserPanel.h" />
     <ClInclude Include="src\panels\SceneHierarchyPanel.h" />
@@ -162,15 +179,12 @@
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\TomCat\TomCat.vcxproj">
-      <Project>{CDE8E5D3-B98A-10AA-A245-24FE8E8697FA}</Project>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
     <ResourceCompile Include="TomCatInut.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Packages\Resources\Icons\Logo.ico" />
+    <ProjectReference Include="..\..\TomCat\TomCat.vcxproj">
+      <Project>{CDE8E5D3-B98A-10AA-A245-24FE8E8697FA}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <algorithm>
 #include <unordered_set>
+#include <sstream>
 #include <yaml-cpp/yaml.h>
 
 namespace TomCat {
@@ -275,9 +276,12 @@ namespace TomCat {
 		return path.extension() == ".tcproj" && path.filename() == "Project.tcproj";
 	}
 
+
 	std::filesystem::path ProjectManager::GetHubSettingsPath() const
 	{
-		return std::filesystem::current_path() / "HubConfig.tomcat";
+		// Hub settings live in <cwd>/imgui.ini under a custom [HubConfig] section,
+		// kept alongside ImGui's window layout settings (no separate .tomcat file).
+		return std::filesystem::current_path() / "imgui.ini";
 	}
 
 	void ProjectManager::LoadHubSettings()
@@ -286,31 +290,56 @@ namespace TomCat {
 		m_EditorDirectory.clear();
 		m_KnownProjectPaths.clear();
 
-		std::filesystem::path settingsPath = GetHubSettingsPath();
-		if (!std::filesystem::exists(settingsPath))
-			return;
-
-		try
+		std::filesystem::path iniPath = GetHubSettingsPath();
+		bool sawSection = false;
+		if (std::filesystem::exists(iniPath))
 		{
-			YAML::Node data = YAML::LoadFile(settingsPath.string());
-			auto config = data["HubConfig"];
-			if (!config)
-				return;
-
-			m_ProjectDirectory = config["ProjectDirectory"] ? config["ProjectDirectory"].as<std::string>() : "";
-			m_EditorDirectory = config["EditorDirectory"] ? config["EditorDirectory"].as<std::string>() : "";
-
-			if (config["KnownProjects"])
+			std::ifstream fin(iniPath);
+			std::string line;
+			bool inSection = false;
+			while (std::getline(fin, line))
 			{
-				for (const auto& node : config["KnownProjects"])
+				if (line == "[HubConfig]") { inSection = true; sawSection = true; continue; }
+				if (inSection)
 				{
-					m_KnownProjectPaths.emplace_back(node.as<std::string>());
+					if (line.empty() || line[0] == '[') break;
+					if (line.rfind("ProjectDirectory=", 0) == 0) m_ProjectDirectory = line.substr(17);
+					else if (line.rfind("EditorDirectory=", 0) == 0) m_EditorDirectory = line.substr(16);
+					else if (line.rfind("KnownProjects=", 0) == 0) m_KnownProjectPaths.emplace_back(line.substr(14));
 				}
 			}
 		}
-		catch (const std::exception& e)
+
+		// Legacy migration: if there is no [HubConfig] in imgui.ini yet, import the
+		// old HubConfig.tomcat once and persist it to the new location.
+		if (!sawSection)
 		{
-			TC_Core_Error("Failed to load Hub settings: {0}", e.what());
+			std::filesystem::path legacyPath = std::filesystem::current_path() / "HubConfig.tomcat";
+			if (std::filesystem::exists(legacyPath))
+			{
+				try
+				{
+					YAML::Node data = YAML::LoadFile(legacyPath.string());
+					auto config = data["HubConfig"];
+					if (config)
+					{
+						m_ProjectDirectory = config["ProjectDirectory"] ? config["ProjectDirectory"].as<std::string>() : "";
+						m_EditorDirectory = config["EditorDirectory"] ? config["EditorDirectory"].as<std::string>() : "";
+						if (config["KnownProjects"])
+						{
+							for (const auto& node : config["KnownProjects"])
+							{
+								m_KnownProjectPaths.emplace_back(node.as<std::string>());
+							}
+						}
+						SaveHubSettings();
+					}
+				}
+				catch (const std::exception& e)
+				{
+					TC_Core_Error("Failed to load legacy Hub settings: {0}", e.what());
+				}
+			}
 		}
 	}
 
@@ -318,26 +347,40 @@ namespace TomCat {
 	{
 		try
 		{
-			YAML::Emitter out;
-			out << YAML::BeginMap;
-			out << YAML::Key << "HubConfig" << YAML::Value;
-			out << YAML::BeginMap;
-			out << YAML::Key << "ProjectDirectory" << YAML::Value << m_ProjectDirectory.string();
-			out << YAML::Key << "EditorDirectory" << YAML::Value << m_EditorDirectory.string();
+			std::filesystem::path iniPath = GetHubSettingsPath();
 
-			out << YAML::Key << "KnownProjects" << YAML::Value;
-			out << YAML::BeginSeq;
+			// Build the [HubConfig] section text.
+			std::string section = "\n[HubConfig]\n";
+			section += "ProjectDirectory=" + m_ProjectDirectory.string() + "\n";
+			section += "EditorDirectory=" + m_EditorDirectory.string() + "\n";
 			for (const auto& path : m_KnownProjectPaths)
 			{
-				out << YAML::Value << path.string();
+				section += "KnownProjects=" + path.string() + "\n";
 			}
-			out << YAML::EndSeq;
 
-			out << YAML::EndMap;
-			out << YAML::EndMap;
+			// Read the current imgui.ini so other sections (window layout etc.)
+			// are preserved, then replace only the [HubConfig] block.
+			std::string ini;
+			{
+				std::ifstream fin(iniPath);
+				if (fin)
+				{
+					std::stringstream ss;
+					ss << fin.rdbuf();
+					ini = ss.str();
+				}
+			}
 
-			std::ofstream fout(GetHubSettingsPath().string());
-			fout << out.c_str();
+			std::string::size_type pos = ini.find("[HubConfig]");
+			if (pos != std::string::npos)
+			{
+				std::string::size_type next = ini.find("\n[", pos + 1);
+				ini.erase(pos, (next == std::string::npos) ? std::string::npos : next - pos);
+			}
+			ini += section;
+
+			std::ofstream fout(iniPath, std::ios::trunc);
+			fout << ini;
 		}
 		catch (const std::exception& e)
 		{

@@ -10,7 +10,8 @@ project "Manager"
 	files
 	{
 		"src/**.h",
-		"src/**.cpp"
+		"src/**.cpp",
+		"Manager.rc"
 	}
 
 	includedirs
@@ -48,7 +49,9 @@ project "Manager"
 		symbols "on"
 
 		postbuildcommands { 
-			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
+			"if defined VULKAN_SDK (if exist \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" copy /Y \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul)",
+			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
+			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}
 
 	filter "configurations:Release"
@@ -56,7 +59,9 @@ project "Manager"
 		runtime "Release"
 		optimize "on"
 		postbuildcommands {
-			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
+			"if defined VULKAN_SDK (if exist \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" copy /Y \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul)",
+			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
+			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}
 
 	filter "configurations:Dist"
@@ -64,5 +69,7 @@ project "Manager"
 		runtime "Release"
 		optimize "on"
 		postbuildcommands {
-			"{COPY} \"%{LibraryDir.VulkanSDK}/../Bin/shaderc_shared.dll\" \"%{cfg.targetdir}/\"",
+			"if defined VULKAN_SDK (if exist \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" copy /Y \"%VULKAN_SDK%\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul)",
+			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
+			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}

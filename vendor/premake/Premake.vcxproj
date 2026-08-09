@@ -47,16 +47,16 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <OutDir>$(ProjectDir)..\..\Builder\bin\Debug-windows-x86_64\Premake\</OutDir>
-    <IntDir>$(ProjectDir)..\..\Builder\bin-int\Debug-windows-x86_64\Premake\</IntDir>
+    <OutDir>$(ProjectDir)..\..\Editor\bin\Debug-windows-x86_64\Premake\</OutDir>
+    <IntDir>$(ProjectDir)..\..\Editor\bin-int\Debug-windows-x86_64\Premake\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <OutDir>$(ProjectDir)..\..\Builder\bin\Release-windows-x86_64\Premake\</OutDir>
-    <IntDir>$(ProjectDir)..\..\Builder\bin-int\Release-windows-x86_64\Premake\</IntDir>
+    <OutDir>$(ProjectDir)..\..\Editor\bin\Release-windows-x86_64\Premake\</OutDir>
+    <IntDir>$(ProjectDir)..\..\Editor\bin-int\Release-windows-x86_64\Premake\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
-    <OutDir>$(ProjectDir)..\..\Builder\bin\Dist-windows-x86_64\Premake\</OutDir>
-    <IntDir>$(ProjectDir)..\..\Builder\bin-int\Dist-windows-x86_64\Premake\</IntDir>
+    <OutDir>$(ProjectDir)..\..\Editor\bin\Dist-windows-x86_64\Premake\</OutDir>
+    <IntDir>$(ProjectDir)..\..\Editor\bin-int\Dist-windows-x86_64\Premake\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <PostBuildEvent>
@@ -77,8 +77,8 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <None Include="..\..\Builder\Manager\premake5.lua" />
-    <None Include="..\..\Builder\premake5.lua" />
+    <None Include="..\..\Editor\TomCatInut\premake5.lua" />
+    <None Include="..\..\Editor\premake5.lua" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

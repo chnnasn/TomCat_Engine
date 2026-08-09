@@ -70,7 +70,6 @@ namespace TomCat {
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
 		m_Project = project;
-		TC_Core_Info("ContentBrowser SetProject: {0}", project ? project->GetProjectPath().string() : "(null)");
 		if (project)
 		{
             m_CurrentDirectory = project->GetAssetPath();
@@ -113,11 +112,6 @@ namespace TomCat {
 			
 			proj->SetConfig(config);
 			proj->Save();
-			TC_Core_Info("ContentBrowser Serialize: layout={0} -> {1}", config.ContentBrowserLayout, proj->GetProjectPath().string());
-		}
-		else
-		{
-			TC_Core_Error("ContentBrowser Serialize: no project to save!");
 		}
 	}
 
@@ -166,7 +160,6 @@ namespace TomCat {
 
 		std::ofstream fout(GetEditorIniPath(), std::ios::trunc);
 		fout << ini;
-		TC_Core_Info("ContentBrowser layout saved to imgui.ini: {0}", m_LayoutMode == OneColumn ? "OneColumn" : "TwoColumn");
 	}
 
 	// 原有的递归函数，用于 One Column 模式（有折叠功能）
