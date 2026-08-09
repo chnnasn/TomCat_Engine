@@ -2,7 +2,10 @@
 #include "ProjectManager.h"
 
 #include <filesystem>
+#include <fstream>
 #include <algorithm>
+#include <unordered_set>
+#include <yaml-cpp/yaml.h>
 
 namespace TomCat {
 
@@ -12,6 +15,11 @@ namespace TomCat {
 		return instance;
 	}
 
+	ProjectManager::ProjectManager()
+	{
+		LoadHubSettings();
+	}
+
 	void ProjectManager::SetProjectDirectory(const std::filesystem::path& directory)
 	{
 		m_ProjectDirectory = directory;
@@ -19,9 +27,11 @@ namespace TomCat {
 		{
 			std::filesystem::create_directories(directory);
 		}
+
+		SaveHubSettings();
 		ScanProjects();
 	}
-	
+
 	void ProjectManager::SetEditorDirectory(const std::filesystem::path& directory)
 	{
 		m_EditorDirectory = directory;
@@ -29,6 +39,7 @@ namespace TomCat {
 		{
 			std::filesystem::create_directories(directory);
 		}
+		SaveHubSettings();
 	}
 
 	std::vector<std::string> ProjectManager::GetEditorDirectoryFiles() const
@@ -55,30 +66,53 @@ namespace TomCat {
 	void ProjectManager::ScanProjects()
 	{
 		m_Projects.clear();
-		
-		if (!std::filesystem::exists(m_ProjectDirectory))
-			return;
 
-		for (const auto& entry : std::filesystem::directory_iterator(m_ProjectDirectory))
+		std::unordered_set<std::string> seen;
+
+		auto addProjectFile = [&](const std::filesystem::path& file)
 		{
-			if (entry.is_directory())
+			if (!std::filesystem::exists(file))
+				return;
+
+			std::string key = std::filesystem::absolute(file).lexically_normal().string();
+			if (seen.find(key) != seen.end())
+				return;
+
+			auto project = Project::Load(file);
+			if (project)
 			{
+				seen.insert(key);
+				m_Projects.push_back(project);
+			}
+		};
+
+		// 1. Scan the default project directory (one level deep).
+		if (std::filesystem::exists(m_ProjectDirectory))
+		{
+			for (const auto& entry : std::filesystem::directory_iterator(m_ProjectDirectory))
+			{
+				if (!entry.is_directory())
+					continue;
+
 				for (const auto& file : std::filesystem::directory_iterator(entry.path()))
 				{
 					if (IsProjectFile(file.path()))
 					{
-						auto project = Project::Load(file.path());
-						if (project)
-						{
-							m_Projects.push_back(project);
-						}
+						addProjectFile(file.path());
 						break;
 					}
 				}
 			}
 		}
 
-		std::sort(m_Projects.begin(), m_Projects.end(), 
+		// 2. Add projects serialized locally (added from any other path).
+		for (const auto& path : m_KnownProjectPaths)
+		{
+			addProjectFile(path);
+		}
+
+		// 3. Sort by last opened time (descending).
+		std::sort(m_Projects.begin(), m_Projects.end(),
 			[](const Ref<Project>& a, const Ref<Project>& b) {
 				return a->GetLastOperationTime() > b->GetLastOperationTime();
 			});
@@ -90,6 +124,25 @@ namespace TomCat {
 		if (project)
 		{
 			m_Projects.push_back(project);
+
+			// Remember the project even when it lives outside any mount, so it
+			// stays in the list after a restart.
+			auto normalized = std::filesystem::absolute(projectPath).lexically_normal();
+			bool found = false;
+			for (const auto& known : m_KnownProjectPaths)
+			{
+				if (std::filesystem::absolute(known).lexically_normal() == normalized)
+				{
+					found = true;
+					break;
+				}
+			}
+			if (!found)
+			{
+				m_KnownProjectPaths.push_back(projectPath);
+				SaveHubSettings();
+			}
+
 			if (m_OnProjectCreated)
 				m_OnProjectCreated(project);
 		}
@@ -101,9 +154,36 @@ namespace TomCat {
 		auto project = Project::Load(projectPath);
 		if (project)
 		{
+			// Opening a project records the last opened time.
+			project->Touch();
 			m_ActiveProject = project;
 			if (m_OnProjectLoaded)
 				m_OnProjectLoaded(project);
+		}
+		return project;
+	}
+
+	Ref<Project> ProjectManager::AddProject(const std::filesystem::path& projectPath)
+	{
+		auto project = Project::Load(projectPath);
+		if (project)
+		{
+			auto normalized = std::filesystem::absolute(projectPath).lexically_normal();
+			bool found = false;
+			for (const auto& known : m_KnownProjectPaths)
+			{
+				if (std::filesystem::absolute(known).lexically_normal() == normalized)
+				{
+					found = true;
+					break;
+				}
+			}
+			if (!found)
+			{
+				m_KnownProjectPaths.push_back(projectPath);
+				SaveHubSettings();
+			}
+			ScanProjects();
 		}
 		return project;
 	}
@@ -119,11 +199,23 @@ namespace TomCat {
 		{
 			if (m_OnProjectRemoved)
 				m_OnProjectRemoved(*it);
-			
+
 			if (m_ActiveProject && m_ActiveProject->GetProjectPath() == projectPath)
 				m_ActiveProject = nullptr;
-			
+
 			m_Projects.erase(it);
+
+			// Also forget the project in the persisted known list.
+			auto normalized = std::filesystem::absolute(projectPath).lexically_normal();
+			m_KnownProjectPaths.erase(
+				std::remove_if(m_KnownProjectPaths.begin(), m_KnownProjectPaths.end(),
+					[&normalized](const std::filesystem::path& known)
+					{
+						return std::filesystem::absolute(known).lexically_normal() == normalized;
+					}),
+				m_KnownProjectPaths.end());
+			SaveHubSettings();
+
 			return true;
 		}
 		return false;
@@ -139,7 +231,10 @@ namespace TomCat {
 		if (!project)
 			return;
 
-		std::filesystem::path editorPath = ProjectManager::Get().GetEditorDirectory()/ project->GetEditorVersion() / "TomCat.exe";
+		// Record the last opened time before launching the editor.
+		project->Touch();
+
+		std::filesystem::path editorPath = ProjectManager::Get().GetEditorDirectory() / project->GetEditorVersion() / "TomCat.exe";
 
 		TC_Core_Info("Looking for editor at: {0}", editorPath.string());
 
@@ -178,6 +273,76 @@ namespace TomCat {
 	bool ProjectManager::IsProjectFile(const std::filesystem::path& path) const
 	{
 		return path.extension() == ".tcproj" && path.filename() == "Project.tcproj";
+	}
+
+	std::filesystem::path ProjectManager::GetHubSettingsPath() const
+	{
+		return std::filesystem::current_path() / "HubConfig.tomcat";
+	}
+
+	void ProjectManager::LoadHubSettings()
+	{
+		m_ProjectDirectory.clear();
+		m_EditorDirectory.clear();
+		m_KnownProjectPaths.clear();
+
+		std::filesystem::path settingsPath = GetHubSettingsPath();
+		if (!std::filesystem::exists(settingsPath))
+			return;
+
+		try
+		{
+			YAML::Node data = YAML::LoadFile(settingsPath.string());
+			auto config = data["HubConfig"];
+			if (!config)
+				return;
+
+			m_ProjectDirectory = config["ProjectDirectory"] ? config["ProjectDirectory"].as<std::string>() : "";
+			m_EditorDirectory = config["EditorDirectory"] ? config["EditorDirectory"].as<std::string>() : "";
+
+			if (config["KnownProjects"])
+			{
+				for (const auto& node : config["KnownProjects"])
+				{
+					m_KnownProjectPaths.emplace_back(node.as<std::string>());
+				}
+			}
+		}
+		catch (const std::exception& e)
+		{
+			TC_Core_Error("Failed to load Hub settings: {0}", e.what());
+		}
+	}
+
+	void ProjectManager::SaveHubSettings()
+	{
+		try
+		{
+			YAML::Emitter out;
+			out << YAML::BeginMap;
+			out << YAML::Key << "HubConfig" << YAML::Value;
+			out << YAML::BeginMap;
+			out << YAML::Key << "ProjectDirectory" << YAML::Value << m_ProjectDirectory.string();
+			out << YAML::Key << "EditorDirectory" << YAML::Value << m_EditorDirectory.string();
+
+			out << YAML::Key << "KnownProjects" << YAML::Value;
+			out << YAML::BeginSeq;
+			for (const auto& path : m_KnownProjectPaths)
+			{
+				out << YAML::Value << path.string();
+			}
+			out << YAML::EndSeq;
+
+			out << YAML::EndMap;
+			out << YAML::EndMap;
+
+			std::ofstream fout(GetHubSettingsPath().string());
+			fout << out.c_str();
+		}
+		catch (const std::exception& e)
+		{
+			TC_Core_Error("Failed to save Hub settings: {0}", e.what());
+		}
 	}
 
 }

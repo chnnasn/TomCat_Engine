@@ -53,3 +53,6 @@ bin-int/
 # Directories
 TomCatInut/assets/cache
 scripts/__pycache__
+
+# TomCat Hub runtime settings
+HubConfig.tomcat

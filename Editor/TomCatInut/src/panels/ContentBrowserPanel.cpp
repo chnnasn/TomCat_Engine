@@ -405,6 +405,9 @@ namespace TomCat {
         static bool projectWindowOpen = true;
         ImGui::Begin("Project", &projectWindowOpen, ImGuiWindowFlags_MenuBar);
 
+        // ???“????”???U+22EE ⋮??????????
+        DrawWindowMoreOptionsButton("Project");
+
         // 触发弹出菜单
         if (ShowMenu)
         {

@@ -9,6 +9,7 @@
 
 #include <GLFW/glfw3.h>
 #include <Glad/glad.h>
+#include <filesystem>
 
 #include"ImGuizmo.h"
 
@@ -36,10 +37,75 @@ namespace TomCat {
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoMerge;
 
-		io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Bold.ttf", 32.0f);
+				io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Bold.ttf", 32.0f);
 		io.FontDefault = io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Regular.ttf", 32.0f);
 
-		// Setup Dear ImGui style
+		// Make the UI support Chinese and common symbols:
+		//  - simhei.ttf provides Chinese glyphs (2500 common chars + full-width punctuation
+		//    + curly quotes + the rare UI char "?" U+64CE)
+		//  - seguisym.ttf provides U+22EE (vertical ellipsis "?") and other symbols that
+		//    simhei does not have.
+		if (io.Fonts->Fonts.size() >= 2)
+		{
+			// Chinese + punctuation ranges
+			// Note: SimplifiedCommon expands to ~5017 range items, so the buffer must be big
+			// enough (a too-small buffer truncates glyphs and renders "?" for missing chars).
+			static ImWchar cnRanges[16384];
+			{
+				const ImWchar* base = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+				int n = 0;
+				for (; base[n] != 0 && n < 16300; ++n)
+					cnRanges[n] = base[n];
+				static const ImWchar extraRanges[] = {
+					0x2014, 0x2015,   // em dash
+					0x2018, 0x201E,   // curly quotes
+					0x2026, 0x2026,   // ellipsis
+					0x3000, 0x303F,   // CJK punctuation
+					0xFF00, 0xFFEF,   // full-width forms
+0x51FD, 0x51FD, 0x62DF, 0x62DF, 0x62FD, 0x62FD, 0x64CE, 0x64CE, 0x6D4F, 0x6D4F, 0x6E32, 0x6E32, 0x8F91, 0x8F91, 0x903B, 0x903B,
+					0x94AE, 0x94AE,
+					0
+				};
+				for (int i = 0; extraRanges[i] != 0 && n < 16350; ++i)
+					cnRanges[n++] = extraRanges[i];
+				cnRanges[n] = 0;
+			}
+
+			// Symbol ranges (U+22EE and friends) from Segoe UI Symbol
+			static const ImWchar symRanges[] = {
+				0x22EE, 0x22EE,   // vertical ellipsis
+				0x25B6, 0x25B6,   // black right-pointing triangle
+				0x25C0, 0x25C0,   // black left-pointing triangle
+				0x25B2, 0x25B2,   // black up-pointing triangle
+				0x25BC, 0x25BC,   // black down-pointing triangle
+				0x25CF, 0x25CF,   // black circle
+				0x25A0, 0x25A0,   // black square
+				0
+			};
+
+			const char* cnFontPath = "C:/Windows/Fonts/simhei.ttf";
+			const char* symFontPath = "C:/Windows/Fonts/seguisym.ttf";
+
+			ImFontConfig mergeCfg;
+			mergeCfg.MergeMode = true;
+
+			if (std::filesystem::exists(cnFontPath))
+			{
+				mergeCfg.DstFont = io.Fonts->Fonts[0]; // OpenSans-Bold + Chinese
+				io.Fonts->AddFontFromFileTTF(cnFontPath, 32.0f, &mergeCfg, cnRanges);
+				mergeCfg.DstFont = io.Fonts->Fonts[1]; // OpenSans-Regular + Chinese (default)
+				io.Fonts->AddFontFromFileTTF(cnFontPath, 32.0f, &mergeCfg, cnRanges);
+			}
+			if (std::filesystem::exists(symFontPath))
+			{
+				mergeCfg.DstFont = io.Fonts->Fonts[0];
+				io.Fonts->AddFontFromFileTTF(symFontPath, 32.0f, &mergeCfg, symRanges);
+				mergeCfg.DstFont = io.Fonts->Fonts[1];
+				io.Fonts->AddFontFromFileTTF(symFontPath, 32.0f, &mergeCfg, symRanges);
+			}
+		}
+
+// Setup Dear ImGui style
 		ImGui::StyleColorsDark();
 		//ImGui::StyleColorsClassic();
 

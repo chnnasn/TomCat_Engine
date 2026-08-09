@@ -42,6 +42,16 @@ namespace TomCat {
         return more_options_callbacks_.find(key) != more_options_callbacks_.end();
     }
 
+    void WindowCallbacksManager::SetMoreOptionsEnabled(bool enabled)
+    {
+        m_MoreOptionsEnabled = enabled;
+    }
+
+    bool WindowCallbacksManager::IsMoreOptionsEnabled() const
+    {
+        return m_MoreOptionsEnabled;
+    }
+
     // 便捷函数实现
     void RegisterWindowMoreOptionsCallback(const std::string& key, std::function<void(ImVec2)> callback)
     {
@@ -61,6 +71,44 @@ namespace TomCat {
     bool HasWindowMoreOptionsCallback(const std::string& key)
     {
         return WindowCallbacksManager::Get().HasCallback(key);
+    }
+
+    void SetMoreOptionsEnabled(bool enabled)
+    {
+        WindowCallbacksManager::Get().SetMoreOptionsEnabled(enabled);
+    }
+
+    bool IsMoreOptionsEnabled()
+    {
+        return WindowCallbacksManager::Get().IsMoreOptionsEnabled();
+    }
+
+    bool DrawWindowMoreOptionsButton(const char* windowName)
+    {
+        if (!WindowCallbacksManager::Get().IsMoreOptionsEnabled())
+            return false;
+        if (!HasWindowMoreOptionsCallback(windowName))
+            return false;
+
+        ImGuiWindow* window = ImGui::GetCurrentWindow();
+        if (!window)
+            return false;
+
+        const float buttonSize = ImGui::GetFrameHeight();
+        ImVec2 pos = window->TitleBarRect().Min;
+        // Place it on the right side of the title bar (left of the X close button)
+        pos.x = window->TitleBarRect().Max.x - buttonSize * 2.0f - 8.0f;
+        pos.y += 2.0f;
+
+        // U+22EE (vertical ellipsis) button; the glyph is merged from Segoe UI Symbol
+        ImGui::SetCursorScreenPos(pos);
+        bool clicked = ImGui::Button(("\u22EE##more_options_" + std::string(windowName)).c_str(), ImVec2(buttonSize, buttonSize));
+
+        ImVec2 cmin = ImGui::GetItemRectMin();
+        ImVec2 cmax = ImGui::GetItemRectMax();
+        if (clicked)
+            ExecuteWindowMoreOptionsCallback(windowName, ImVec2((cmin.x + cmax.x) * 0.5f, cmax.y));
+        return clicked;
     }
 
 }
