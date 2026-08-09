@@ -1,14 +1,14 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="TomCatInut">
-      <UniqueIdentifier>{6D7241B3-592A-8300-C231-5C5CAE081EF1}</UniqueIdentifier>
+    <Filter Include="Manager">
+      <UniqueIdentifier>{40C44515-ACA3-C4B0-B5BB-4F87211A2B12}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\Editor\TomCatInut\premake5.lua">
-      <Filter>TomCatInut</Filter>
+    <None Include="..\..\Builder\Manager\premake5.lua">
+      <Filter>Manager</Filter>
     </None>
-    <None Include="..\..\Editor\premake5.lua" />
+    <None Include="..\..\Builder\premake5.lua" />
   </ItemGroup>
 </Project>

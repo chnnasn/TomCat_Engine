@@ -19,3 +19,6 @@
 [submodule "TomCat/vendor/Box2D"]
 	path = TomCat/vendor/Box2D
 	url = https://github.com/chnnasn/box2d
+[submodule "vendor/VulkanSDK"]
+	path = vendor/VulkanSDK
+	url = https://github.com/chnnasn/VulkanSDK-Windows.git

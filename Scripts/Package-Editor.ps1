@@ -1,16 +1,9 @@
 # Package-Editor.ps1
-# Packages the TomCatInut (Editor) Release build output into a zip,
-# excluding linker artifacts (*.exp, *.pdb, *.lib). Runtime files such as
-# TomCat.log and the shader cache under Packages/ are packaged as-is.
-#
-# Optional: after zipping, box the editor into a single exe with
-# Enigma Virtual Box (enigmavbconsole.exe) using a .evb project.
+# Builds the Editor, boxes it into a single exe with Enigma Virtual Box,
+# and outputs ONLY the boxed package (zip) into dist/.
 #
 # Usage:
-#   .\Scripts\Package-Editor.ps1                          # package existing build
-#   .\Scripts\Package-Editor.ps1 -Version 0.2.0           # custom zip name
-#   .\Scripts\Package-Editor.ps1 -Build                   # rebuild Release x64 first
-#   .\Scripts\Package-Editor.ps1 -EnigmaProject editor.evb   # also box into single exe
+#   .\Scripts\Package-Editor.ps1 -Build -Version 0.2.0 -EnigmaProject editor.evb
 #
 param(
     [string]$SourceDir = "",
@@ -23,7 +16,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Repo root = parent of the scripts/ folder
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Editor\bin\Release-windows-x86_64\TomCatInut" }
 
@@ -31,39 +23,54 @@ if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Editor\bin\Release-wind
 if ($Build) {
     if (-not (Test-Path $MsBuildPath)) { throw "MSBuild not found: $MsBuildPath" }
     $proj = Join-Path $RepoRoot "Editor\TomCatInut\TomCatInut.vcxproj"
-    Write-Host "[1/5] Building Release x64 ..."
+    Write-Host "[1/4] Building Release x64 ..."
     & $MsBuildPath $proj -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
 } else {
-    Write-Host "[1/5] Skipping build (use -Build to rebuild first)"
+    Write-Host "[1/4] Skipping build (use -Build to rebuild first)"
 }
 
 if (-not (Test-Path $SourceDir)) { throw "Source directory not found: $SourceDir" }
 
-# 2) Zip name
+# 2) Locate .evb and parse its input/output paths
+$evbInput = ""
+$evbOutput = ""
+if ($EnigmaProject) {
+    if (-not (Test-Path $EnigmaProject)) {
+        $candidates = @(
+            (Join-Path (Get-Location) $EnigmaProject),
+            (Join-Path $RepoRoot $EnigmaProject),
+            (Join-Path (Join-Path $RepoRoot "Scripts") $EnigmaProject)
+        )
+        $found = $candidates | Where-Object { Test-Path $_ -PathType Leaf } | Select-Object -First 1
+        if ($found) { $EnigmaProject = $found }
+    }
+    if (-not (Test-Path $EnigmaProject)) {
+        throw "Enigma project not found: $EnigmaProject`nPut a .evb in the repo root or Scripts/, or pass a full path via -EnigmaProject."
+    }
+    $evbText = Get-Content $EnigmaProject -Raw
+    if ($evbText -match '<InputFile>(.*?)</InputFile>') { $evbInput = $Matches[1] }
+    if ($evbText -match '<OutputFile>(.*?)</OutputFile>') { $evbOutput = $Matches[1] }
+}
+
+# 3) Output exe name (no zip: GitHub Actions compresses on artifact upload)
 if (-not $Version) { $Version = Get-Date -Format "yyyyMMdd-HHmm" }
 $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$zip = Join-Path $dist "TomCatEditor-$Version.zip"
-if (Test-Path $zip) { Remove-Item $zip -Force }
+$outExe = Join-Path $dist "TomCatEditor-$Version.exe"
+if (Test-Path $outExe) { Remove-Item $outExe -Force }
 
-# 3) Stage files (exclude linker artifacts & runtime logs)
-$staging = Join-Path $env:TEMP ("TomCatPackage_" + $PID)
-if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $staging | Out-Null
+# 4) Stage the built exe where .evb expects its input (e.g. dist\TomCatInut.exe)
+if ($evbInput) {
+    $srcExe = Join-Path $SourceDir "TomCatInut.exe"
+    if (-not (Test-Path $srcExe)) { throw "Built exe not found: $srcExe" }
+    New-Item -ItemType Directory -Force -Path (Split-Path $evbInput) | Out-Null
+    Copy-Item $srcExe $evbInput -Force
+    Write-Host "[2/4] Staged input exe -> $evbInput"
+}
 
-Write-Host "[2/5] Copying files from $SourceDir"
-robocopy $SourceDir $staging /E /XF "*.exp" "*.pdb" "*.lib" /NFL /NDL /NJH /NJS /NP | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "robocopy failed (exit $LASTEXITCODE)" }
-
-# 4) Compress
-Write-Host "[3/5] Compressing ..."
-Compress-Archive -Path "$staging\*" -DestinationPath $zip -CompressionLevel Optimal
-
-# 5) Optional: Enigma Virtual Box single-exe boxing
+# 5) Enigma boxing
 if ($EnigmaProject) {
-    if (-not (Test-Path $EnigmaProject)) { throw "Enigma project not found: $EnigmaProject" }
-
     if (-not $EnigmaConsole) {
         $candidates = @(
             "D:\Enigma Virtual Box\enigmavbconsole.exe",
@@ -76,7 +83,7 @@ if ($EnigmaProject) {
     }
     if (-not (Test-Path $EnigmaConsole)) { throw "Enigma console not found: $EnigmaConsole" }
 
-    Write-Host "[4/5] Boxing with Enigma Virtual Box ($EnigmaProject) ..."
+    Write-Host "[3/4] Boxing with Enigma Virtual Box ($EnigmaProject) ..."
     Push-Location (Split-Path -Parent $EnigmaProject)
     try {
         & $EnigmaConsole (Split-Path -Leaf $EnigmaProject)
@@ -84,12 +91,21 @@ if ($EnigmaProject) {
         Pop-Location
     }
     if ($LASTEXITCODE -ne 0) { throw "Enigma Virtual Box failed (exit $LASTEXITCODE)" }
-    Write-Host "      -> Boxed exe output is configured inside $EnigmaProject"
 } else {
-    Write-Host "[4/5] Skipping Enigma boxing (pass -EnigmaProject <file.evb> to enable)"
+    Write-Host "[3/4] Skipping Enigma boxing (pass -EnigmaProject <file.evb> to enable)"
 }
 
-Remove-Item $staging -Recurse -Force
+# 6) Keep the boxed exe as the final package (GitHub Actions compresses on upload)
+if ($evbOutput -and (Test-Path $evbOutput)) {
+    Write-Host "[4/4] Final package -> $outExe"
+    Copy-Item $evbOutput $outExe -Force
+    $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
+    Write-Host "Done: $outExe ($sizeMb MB)"
+} else {
+    Write-Host "WARNING: boxed exe not found at '$evbOutput'"
+}
 
-$sizeMb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
-Write-Host "[5/5] Done: $zip ($sizeMb MB)"
+# Cleanup intermediate files inside dist/ (input copy + .evb-named boxed exe); keep the final exe
+$distPrefix = $dist.TrimEnd('\') + '\'
+if ($evbInput -and (Test-Path $evbInput) -and $evbInput.StartsWith($distPrefix)) { Remove-Item $evbInput -Force }
+if ($evbOutput -and (Test-Path $evbOutput) -and $evbOutput.StartsWith($distPrefix)) { Remove-Item $evbOutput -Force }

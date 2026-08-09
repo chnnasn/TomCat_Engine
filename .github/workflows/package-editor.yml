@@ -1,0 +1,143 @@
+name: Package (Editor / Hub / Both)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Pack target'
+        required: true
+        type: choice
+        options:
+          - both
+          - editor
+          - hub
+      version:
+        description: 'Version (e.g. 0.2.0)'
+        required: true
+        type: string
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Enigma Virtual Box (official installer, Inno silent)
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:TEMP "enigmavb.exe"
+          $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+          $ok = $false
+          for ($i = 1; $i -le 5; $i++) {
+            curl.exe -s -L -A $ua -o $exe "https://www.enigmaprotector.com/assets/files/enigmavb.exe"
+            $bytes = [System.IO.File]::ReadAllBytes($exe)
+            if ($bytes.Length -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) { $ok = $true; break }
+            Write-Host "retry $i: got $($bytes.Length) bytes (not a PE), retrying..."
+            Start-Sleep -Seconds 5
+          }
+          if (-not $ok) {
+            Write-Host "::error::Downloaded enigmavb.exe is not a valid PE (got $($bytes.Length) bytes)"
+            exit 1
+          }
+          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+
+      - name: Install premake5
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:TEMP "premake.zip"
+          Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta7/premake-5.0.0-beta7-windows.zip" -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath "$env:TEMP\premake" -Force
+          "PREMAKE=$env:TEMP\premake\premake5.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Locate MSBuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          if (-not $msbuild) { throw "MSBuild not found" }
+          "MSBUILD=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build & Box
+        shell: pwsh
+        env:
+          TARGET: ${{ inputs.target }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Invoke-Gen([string]$wks) {
+            & $env:PREMAKE --file="$wks\premake5.lua" vs2022
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          function Invoke-Build([string]$vcxproj) {
+            & $env:MSBUILD $vcxproj -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          function Invoke-Box([string]$evbName, [string]$srcDir, [string]$srcExe) {
+            if (-not (Test-Path "$srcDir\TomCat.log")) { New-Item -ItemType File -Path "$srcDir\TomCat.log" -Force | Out-Null }
+            New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+            Copy-Item "$srcDir\$srcExe" "dist\$srcExe" -Force
+            $content = Get-Content "Scripts\$evbName" -Raw
+            $content = $content.Replace('E:\Github\TomCat_Engine', $env:GITHUB_WORKSPACE)
+            Set-Content -Path "Scripts\$evbName-ci.evb" -Value $content -NoNewline
+            $evb = @(
+              "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe",
+              "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $evb) { throw "enigmavbconsole.exe not found" }
+            Push-Location "Scripts"
+            try { & $evb "$evbName-ci.evb" } finally { Pop-Location }
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          $ver = $env:VERSION
+          $t = $env:TARGET
+
+          if ($t -eq "editor" -or $t -eq "both") {
+            Write-Host "== Building Editor =="
+            Invoke-Gen "Editor"
+            Invoke-Build "Editor\TomCatInut\TomCatInut.vcxproj"
+            Invoke-Box "editor.evb" "Editor\bin\Release-windows-x86_64\TomCatInut" "TomCatInut.exe"
+            Copy-Item "dist\TomCat.exe" "dist\TomCatEditor-$ver.exe" -Force
+          }
+          if ($t -eq "hub" -or $t -eq "both") {
+            Write-Host "== Building Hub =="
+            Invoke-Gen "Builder"
+            Invoke-Build "Builder\Manager\Manager.vcxproj"
+            Invoke-Box "hub.evb" "Builder\bin\Release-windows-x86_64\Manager" "Manager.exe"
+            Copy-Item "dist\TomCatHub.exe" "dist\TomCatHub-$ver.exe" -Force
+          }
+
+      - name: Upload Editor artifact
+        if: ${{ inputs.target == 'editor' || inputs.target == 'both' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TomCatEditor-${{ inputs.version }}
+          path: dist/TomCatEditor-${{ inputs.version }}.exe
+
+      - name: Upload Hub artifact
+        if: ${{ inputs.target == 'hub' || inputs.target == 'both' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TomCatHub-${{ inputs.version }}
+          path: dist/TomCatHub-${{ inputs.version }}.exe
+
+      - name: Publish to GitHub Release
+        if: ${{ inputs.target == 'both' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ inputs.version }}"
+          $assets = @("dist\TomCatEditor-${{ inputs.version }}.exe", "dist\TomCatHub-${{ inputs.version }}.exe")
+          gh release create $tag $assets --title $tag --generate-notes 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release $tag exists - uploading assets with --clobber"
+            gh release upload $tag $assets --clobber
+          }
+          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::Release publish failed" }
