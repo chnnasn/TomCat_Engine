@@ -19,6 +19,10 @@ namespace TomCat {
 		void SetProject(Ref<Project> project);
 		void Serialize();
 
+		// Editor-level layout setting (persisted inside imgui.ini)
+		void LoadLayoutSetting();
+		void SaveLayoutSetting();
+
 		void OnImGuiRender();
 	private:
 		std::filesystem::path m_CurrentDirectory;

@@ -72,8 +72,8 @@ namespace TomCat {
 
 		if (diff < secondsPerMinute)
 		{
-			int seconds = static_cast<int>(diff);
-			return std::to_string(seconds) + (seconds == 1 ? " second ago" : " seconds ago");
+			// Within a minute: show "Just now" (minute precision only)
+			return "Just now";
 		}
 		else if (diff < secondsPerHour)
 		{
@@ -135,6 +135,7 @@ namespace TomCat {
 				project->m_Config.Version = configNode["Version"] ? configNode["Version"].as<std::string>() : "1.0.0";
 				project->m_Config.Description = configNode["Description"] ? configNode["Description"].as<std::string>() : "";
 				project->m_Config.EditorVersion = configNode["EditorVersion"] ? configNode["EditorVersion"].as<std::string>() : "";
+				project->m_Config.Template = configNode["Template"] ? configNode["Template"].as<std::string>() : "3D";
 				project->m_Config.AssetDirectory = configNode["AssetDirectory"] ? configNode["AssetDirectory"].as<std::string>() : "Assets";
 				project->m_Config.ContentBrowserLayout = configNode["ContentBrowserLayout"] ? configNode["ContentBrowserLayout"].as<std::string>() : "TwoColumn";
 				project->m_Config.TwoColumnCurrentFolder = configNode["TwoColumnCurrentFolder"] ? configNode["TwoColumnCurrentFolder"].as<std::string>() : "";
@@ -170,6 +171,7 @@ namespace TomCat {
 			out << YAML::Key << "Version" << YAML::Value << m_Config.Version;
 			out << YAML::Key << "Description" << YAML::Value << m_Config.Description;
 			out << YAML::Key << "EditorVersion" << YAML::Value << m_Config.EditorVersion;
+			out << YAML::Key << "Template" << YAML::Value << m_Config.Template;
 			out << YAML::Key << "AssetDirectory" << YAML::Value << m_Config.AssetDirectory.string();
 			out << YAML::Key << "ContentBrowserLayout" << YAML::Value << m_Config.ContentBrowserLayout;
 			out << YAML::Key << "TwoColumnCurrentFolder" << YAML::Value << m_Config.TwoColumnCurrentFolder;

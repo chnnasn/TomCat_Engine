@@ -4,6 +4,10 @@
 
 #include <imgui/imgui.h>
 #include <unordered_map>
+#include <cstring>
+
+namespace { int g_ContentBrowserLayout = 0; /* 0=TwoColumn,1=OneColumn */ }
+#include <fstream>
 
 #include "TomCat/ImGui/ImGuiCallback.h"
 #include "TomCat/Project/ProjectManager.h"
@@ -27,16 +31,13 @@ namespace TomCat {
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_LayoutMode(TwoColumn)
 	{
+		// Read the editor-level layout from imgui.ini ([ContentBrowser] section)
+		LoadLayoutSetting();
+
 		m_Project = ProjectManager::Get().GetActiveProject();
 		if (m_Project)
 		{
             m_CurrentDirectory = m_Project->GetAssetPath();
-            std::string layout = m_Project->GetConfig().ContentBrowserLayout;
-            if (layout == "OneColumn")
-                m_LayoutMode = OneColumn;
-            else
-                m_LayoutMode = TwoColumn;
-            
             std::string twoColumnFolder = m_Project->GetConfig().TwoColumnCurrentFolder;
             if (!twoColumnFolder.empty())
             {
@@ -61,7 +62,7 @@ namespace TomCat {
 
 			MenuPosi = ImVec2{pos.x,pos.y+40};
 			
-			ShowMenu = !ShowMenu;
+			ShowMenu = true; // every click opens the menu (popup closes on outside click / CloseCurrentPopup)
 
 			});
 	}
@@ -69,15 +70,10 @@ namespace TomCat {
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
 		m_Project = project;
+		TC_Core_Info("ContentBrowser SetProject: {0}", project ? project->GetProjectPath().string() : "(null)");
 		if (project)
 		{
             m_CurrentDirectory = project->GetAssetPath();
-            std::string layout = project->GetConfig().ContentBrowserLayout;
-            if (layout == "OneColumn")
-                m_LayoutMode = OneColumn;
-            else
-                m_LayoutMode = TwoColumn;
-            
             std::string twoColumnFolder = project->GetConfig().TwoColumnCurrentFolder;
             if (!twoColumnFolder.empty())
             {
@@ -100,15 +96,13 @@ namespace TomCat {
 
 	void ContentBrowserPanel::Serialize()
 	{
-		if (m_Project)
+		// Use our project if set, otherwise fall back to the active project so the
+		// layout change is never lost.
+		Ref<Project> proj = m_Project ? m_Project : ProjectManager::Get().GetActiveProject();
+		if (proj)
 		{
-			ProjectConfig config = m_Project->GetConfig();
-			
-			if (m_LayoutMode == OneColumn)
-				config.ContentBrowserLayout = "OneColumn";
-			else
-				config.ContentBrowserLayout = "TwoColumn";
-			
+			ProjectConfig config = proj->GetConfig();
+			// Note: layout is an editor-level setting (see EditorSettings.tomcat), not stored in the project.
 			config.TwoColumnCurrentFolder = m_TwoColumnCurrentFolder.string();
 			
 			config.ExpandedNodes.clear();
@@ -117,9 +111,62 @@ namespace TomCat {
 				config.ExpandedNodes.push_back(node);
 			}
 			
-			m_Project->SetConfig(config);
-			m_Project->Save();
+			proj->SetConfig(config);
+			proj->Save();
+			TC_Core_Info("ContentBrowser Serialize: layout={0} -> {1}", config.ContentBrowserLayout, proj->GetProjectPath().string());
 		}
+		else
+		{
+			TC_Core_Error("ContentBrowser Serialize: no project to save!");
+		}
+	}
+
+	static std::filesystem::path GetEditorIniPath()
+	{
+		// Editor-level settings live in <cwd>/imgui.ini (independent of any project)
+		return std::filesystem::current_path() / "imgui.ini";
+	}
+
+	void ContentBrowserPanel::LoadLayoutSetting()
+	{
+		std::ifstream fin(GetEditorIniPath());
+		std::string line;
+		bool inSection = false;
+		std::string layout;
+		while (std::getline(fin, line))
+		{
+			if (line == "[ContentBrowser]") { inSection = true; continue; }
+			if (inSection)
+			{
+				if (line.rfind("Layout=", 0) == 0) { layout = line.substr(7); break; }
+				if (line.empty() || line[0] == '[') break;
+			}
+		}
+		g_ContentBrowserLayout = (layout == "OneColumn") ? 1 : 0;
+		m_LayoutMode = g_ContentBrowserLayout ? OneColumn : TwoColumn;
+	}
+
+	void ContentBrowserPanel::SaveLayoutSetting()
+	{
+		g_ContentBrowserLayout = (m_LayoutMode == OneColumn) ? 1 : 0;
+
+		// Get ImGui's window settings text and append our custom [ContentBrowser] section
+		std::string ini;
+		if (const char* settings = ImGui::SaveIniSettingsToMemory())
+			ini = settings;
+
+		// remove an existing [ContentBrowser] block, then append the new one
+		std::string::size_type pos = ini.find("[ContentBrowser]");
+		if (pos != std::string::npos)
+		{
+			std::string::size_type next = ini.find("\n[", pos + 1);
+			ini.erase(pos, (next == std::string::npos) ? std::string::npos : next - pos);
+		}
+		ini += "\n[ContentBrowser]\nLayout=" + std::string(m_LayoutMode == OneColumn ? "OneColumn" : "TwoColumn") + "\n";
+
+		std::ofstream fout(GetEditorIniPath(), std::ios::trunc);
+		fout << ini;
+		TC_Core_Info("ContentBrowser layout saved to imgui.ini: {0}", m_LayoutMode == OneColumn ? "OneColumn" : "TwoColumn");
 	}
 
 	// 原有的递归函数，用于 One Column 模式（有折叠功能）
@@ -405,8 +452,6 @@ namespace TomCat {
         static bool projectWindowOpen = true;
         ImGui::Begin("Project", &projectWindowOpen, ImGuiWindowFlags_MenuBar);
 
-        // ???“????”???U+22EE ⋮??????????
-        DrawWindowMoreOptionsButton("Project");
 
         // 触发弹出菜单
         if (ShowMenu)
@@ -419,32 +464,18 @@ namespace TomCat {
         // 弹出菜单
         if (ImGui::BeginPopup("Project_menu", ImGuiWindowFlags_NoMove))
         {
-            if (ImGui::MenuItem("One Column Layout"))
+                        if (ImGui::MenuItem("One Column Layout"))
             {
                 m_LayoutMode = OneColumn;
-                // 更新项目配置并保存
-                auto project = ProjectManager::Get().GetActiveProject();
-                if (project)
-                {
-                    ProjectConfig config = project->GetConfig();
-                    config.ContentBrowserLayout = "OneColumn";
-                    project->SetConfig(config);
-                    project->Save();
-                }
+                SaveLayoutSetting(); // editor-level setting
+                ImGui::CloseCurrentPopup();
             }
 
             if (ImGui::MenuItem("Two Column Layout"))
             {
                 m_LayoutMode = TwoColumn;
-                // 更新项目配置并保存
-                auto project = ProjectManager::Get().GetActiveProject();
-                if (project)
-                {
-                    ProjectConfig config = project->GetConfig();
-                    config.ContentBrowserLayout = "TwoColumn";
-                    project->SetConfig(config);
-                    project->Save();
-                }
+                SaveLayoutSetting(); // editor-level setting
+                ImGui::CloseCurrentPopup();
             }
 
             ImGui::EndPopup();

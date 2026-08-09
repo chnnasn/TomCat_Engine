@@ -6312,7 +6312,6 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
 
         if (Pressd)
         {
-
             if (g.HoveredWindow || g.NavWindow)
             {
                 ImGuiWindow* target_window = g.HoveredWindow ? g.HoveredWindow : g.NavWindow;
@@ -6334,11 +6333,18 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
             window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonActive));
         else if (hovered)
             window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonHovered));
-        // Draw U+22EE (vertical ellipsis) text
-        const char* more_text = "\u22EE";
-        const ImVec2 more_size = CalcTextSize(more_text);
-        const ImVec2 text_pos(more_button_rect.Min.x + (button_sz - more_size.x) * 0.5f, more_button_rect.Min.y + (button_sz - more_size.y) * 0.5f);
-        window->DrawList->AddText(text_pos, GetColorU32(ImGuiCol_Text), more_text);
+        // Draw U+22EE (vertical ellipsis) as three dots, shifted right toward the close button
+        {
+            const float cx = more_button_rect.Min.x + button_sz * 0.62f;
+            const float cy = more_button_rect.Min.y + button_sz * 0.5f;
+            float r = button_sz * 0.06f;
+            if (r < 1.5f) r = 1.5f;
+            const float gap = button_sz * 0.18f;
+            const ImU32 col = GetColorU32(ImGuiCol_Text);
+            window->DrawList->AddCircleFilled(ImVec2(cx, cy - gap), r, col, 12);
+            window->DrawList->AddCircleFilled(ImVec2(cx, cy), r, col, 12);
+            window->DrawList->AddCircleFilled(ImVec2(cx, cy + gap), r, col, 12);
+        }
     }
 
     window->DC.NavLayerCurrent = ImGuiNavLayer_Main;
@@ -17153,11 +17159,14 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
         if (is_focused || root_node->VisibleWindow == NULL)
             root_node->VisibleWindow = node->VisibleWindow;
 
-    // "..." button (More options button) - Added next to the close button
-    ImVec2 more_button_pos = close_button_pos;
-    //more_button_pos.x -= g.FontSize; // Position to the left of close button
+    // U+22EE (...) button (More options button) - dock title bar: place at the far right
+    // (the close button sits next to the tab name in dock mode, so the menu button goes to
+    // the right end of the title bar)
+    ImVec2 more_button_pos(title_bar_rect.Max.x - g.FontSize - 4.0f, title_bar_rect.Min.y);
     ImRect more_button_rect(more_button_pos.x, more_button_pos.y, more_button_pos.x + g.FontSize, more_button_pos.y + g.FontSize);
-    if (more_button_rect.Min.x >= tab_bar_rect.Min.x)
+    const bool dock_has_callback = node->VisibleWindow && node->VisibleWindow->Name &&
+        TomCat::HasWindowMoreOptionsCallback(node->VisibleWindow->Name);
+    if (more_button_rect.Min.x >= tab_bar_rect.Min.x && TomCat::IsMoreOptionsEnabled() && dock_has_callback)
     {
         bool hovered, held;
 
@@ -17165,20 +17174,12 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
 
         if (Pressd)
         {
-
-            if (g.HoveredWindow || g.NavWindow)
+            // In dock mode always deliver to the dock node's visible window (e.g. "Project")
+            ImGuiWindow* target_window = node->VisibleWindow ? node->VisibleWindow
+                : (g.HoveredWindow ? g.HoveredWindow : g.NavWindow);
+            if (target_window && target_window->Name)
             {
-                ImGuiWindow* target_window = g.HoveredWindow ? g.HoveredWindow : g.NavWindow;
-
-                if (target_window->DockNodeAsHost && target_window->DockNodeAsHost->VisibleWindow)
-                {
-                    target_window = target_window->DockNodeAsHost->VisibleWindow;
-                }
-
-                if (target_window->Name)
-                {
-                    TomCat::ExecuteWindowMoreOptionsCallback(target_window->Name, more_button_pos);
-                }
+                TomCat::ExecuteWindowMoreOptionsCallback(target_window->Name, more_button_pos);
             }
         }
         else if (held && hovered)
@@ -17186,8 +17187,18 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
         else if (hovered)
             host_window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonHovered));
 
-        ImVec2 text_pos(more_button_rect.Min.x + (g.FontSize - g.FontSize * 0.75f) * 0.5f, more_button_rect.Min.y + (g.FontSize - g.FontSize) * 0.5f);
-        host_window->DrawList->AddText(text_pos, GetColorU32(ImGuiCol_Text), "...");
+        // Draw U+22EE (vertical ellipsis) as three dots, shifted right toward the close button
+        {
+            const float cx = more_button_rect.Min.x + g.FontSize * 0.62f;
+            const float cy = more_button_rect.Min.y + g.FontSize * 0.5f;
+            float r = g.FontSize * 0.06f;
+            if (r < 1.5f) r = 1.5f;
+            const float gap = g.FontSize * 0.18f;
+            const ImU32 col = GetColorU32(ImGuiCol_Text);
+            host_window->DrawList->AddCircleFilled(ImVec2(cx, cy - gap), r, col, 12);
+            host_window->DrawList->AddCircleFilled(ImVec2(cx, cy), r, col, 12);
+            host_window->DrawList->AddCircleFilled(ImVec2(cx, cy + gap), r, col, 12);
+        }
     }
 
     // ========== 删除关闭按钮的代码段 ==========
