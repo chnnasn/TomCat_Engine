@@ -19,6 +19,8 @@ on:
 jobs:
   package:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,7 +37,7 @@ jobs:
             curl.exe -s -L -A $ua -o $exe "https://www.enigmaprotector.com/assets/files/enigmavb.exe"
             $bytes = [System.IO.File]::ReadAllBytes($exe)
             if ($bytes.Length -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) { $ok = $true; break }
-            Write-Host "retry $i: got $($bytes.Length) bytes (not a PE), retrying..."
+            Write-Host "retry $($i): got $($bytes.Length) bytes (not a PE), retrying..."
             Start-Sleep -Seconds 5
           }
           if (-not $ok) {
@@ -135,9 +137,15 @@ jobs:
         run: |
           $tag = "v${{ inputs.version }}"
           $assets = @("dist\TomCatEditor-${{ inputs.version }}.exe", "dist\TomCatHub-${{ inputs.version }}.exe")
-          gh release create $tag $assets --title $tag --generate-notes 2>$null
-          if ($LASTEXITCODE -ne 0) {
+          # Check whether the release already exists (no error swallowing)
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag exists - uploading assets with --clobber"
             gh release upload $tag $assets --clobber
+          } else {
+            gh release create $tag $assets --title $tag --generate-notes
           }
-          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::Release publish failed" }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Release publish failed"
+            exit 1
+          }
