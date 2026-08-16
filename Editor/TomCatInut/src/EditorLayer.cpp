@@ -232,6 +232,23 @@ namespace TomCat {
 
 				ImGui::Separator();
 
+				if (ImGui::MenuItem("Import Model (OBJ)"))
+				{
+					ImportModel();
+				}
+
+				if (ImGui::MenuItem("Create 3D Cube"))
+				{
+					CreateMeshEntity("Cube", Mesh::CreateCube(1.0f));
+				}
+
+				if (ImGui::MenuItem("Create 3D Plane"))
+				{
+					CreateMeshEntity("Plane", Mesh::CreatePlane(1.0f, 1.0f));
+				}
+
+				ImGui::Separator();
+
 				if (ImGui::MenuItem("Exit")) Application::Get().Close();
 				ImGui::EndMenu();
 			}
@@ -604,6 +621,56 @@ namespace TomCat {
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 
 		m_EditorScenePath = std::filesystem::path();
+	}
+
+	void EditorLayer::ImportModel()
+	{
+		if (m_SceneState != SceneState::Edit)
+			OnSceneStop();
+
+		if (!m_ActiveScene)
+			NewScene();
+
+		std::string filepath = FileDialogs::OpenFile("OBJ Model (*.obj)\0*.obj\0");
+		if (filepath.empty())
+			return;
+
+		Ref<Mesh> mesh = Mesh::LoadOBJ(filepath);
+		if (!mesh)
+		{
+			TC_Warn("Failed to load model: {0}", filepath);
+			return;
+		}
+
+		std::filesystem::path path(filepath);
+		Entity entity = m_ActiveScene->CreateEntity(path.stem().string());
+		auto& mc = entity.AddComponent<MeshComponent>();
+		mc.MeshAsset = mesh;
+		mc.ModelPath = filepath;
+		mc.Color = glm::vec4(1.0f);
+
+		m_SceneHierarchyPanel.SetSelectedEntity(entity);
+		m_SceneDirty = true;
+	}
+
+	void EditorLayer::CreateMeshEntity(const std::string& name, const Ref<Mesh>& mesh)
+	{
+		if (m_SceneState != SceneState::Edit)
+			OnSceneStop();
+
+		if (!m_ActiveScene)
+			NewScene();
+
+		if (!mesh)
+			return;
+
+		Entity entity = m_ActiveScene->CreateEntity(name);
+		auto& mc = entity.AddComponent<MeshComponent>();
+		mc.MeshAsset = mesh;
+		mc.Color = glm::vec4(1.0f);
+
+		m_SceneHierarchyPanel.SetSelectedEntity(entity);
+		m_SceneDirty = true;
 	}
 
 	void EditorLayer::OpenScene()

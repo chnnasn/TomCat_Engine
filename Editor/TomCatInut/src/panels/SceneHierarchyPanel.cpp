@@ -7,6 +7,7 @@
 
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Utils/PlatformUtils.h"
 
 #include<filesystem>
 
@@ -406,6 +407,15 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 					ImGui::CloseCurrentPopup();
 				}
 			}
+
+			if (!m_SelectionContext.HasComponent<MeshComponent>())
+			{
+				if (ImGui::MenuItem("Mesh Component"))
+				{
+					m_SelectionContext.AddComponent<MeshComponent>();
+					ImGui::CloseCurrentPopup();
+				}
+			}
 			
 
 			if (!m_SelectionContext.HasComponent<Rigidbody2D>())
@@ -588,6 +598,42 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			ImGui::DragFloat("##Tiling Factor", &component.TilingFactor, 0.1f, 0.0f, 100.0f);
 			ImGui::Columns(1);
 
+		});
+
+		DrawComponent<MeshComponent>("Mesh", entity, [](auto& component)
+		{
+			float columnWidth = 100.0f;
+
+			DrawProperty("Model", columnWidth);
+			std::string modelName = "None";
+			if (!component.ModelPath.empty())
+				modelName = std::filesystem::path(component.ModelPath).filename().string();
+			ImGui::Button(modelName.c_str(), ImVec2(-1, 0));
+			ImGui::Columns(1);
+
+			DrawProperty("Load", columnWidth);
+			if (ImGui::Button("Load Model...", ImVec2(-1, 0)))
+			{
+				std::string filepath = FileDialogs::OpenFile("OBJ Model (*.obj)\0*.obj\0");
+				if (!filepath.empty())
+				{
+					Ref<Mesh> mesh = Mesh::LoadOBJ(filepath);
+					if (mesh)
+					{
+						component.MeshAsset = mesh;
+						component.ModelPath = filepath;
+					}
+					else
+						TC_Warn("Could not load model {0}", filepath);
+				}
+			}
+			ImGui::Columns(1);
+
+			DrawProperty("Color", columnWidth);
+			ImGui::ColorEdit4("##MeshColor", glm::value_ptr(component.Color));
+			ImGui::Columns(1);
+
+			ImGui::Checkbox("Use Texture", &component.UseTexture);
 		});
 
 		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, [](auto& component)

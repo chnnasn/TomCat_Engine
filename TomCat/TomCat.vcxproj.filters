@@ -162,6 +162,9 @@
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Mesh.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
@@ -175,6 +178,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Renderer2D.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Renderer3D.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\RendererAPI.h">
@@ -1553,6 +1559,9 @@
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Mesh.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
@@ -1566,6 +1575,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Renderer3D.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\RendererAPI.cpp">

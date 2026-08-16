@@ -4,6 +4,7 @@
 #include "Components.h"
 #include "ScriptableEntity.h"
 #include "TomCat/Renderer/Renderer2D.h"
+#include "TomCat/Renderer/Renderer3D.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "Entity.h"
 
@@ -93,6 +94,7 @@ namespace TomCat {
 		// Copy components (except IDComponent and TagComponent)
 		CopyComponent<Transform>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<SpriteRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
+		CopyComponent<MeshComponent>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<C_Camera>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<NativeScript>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<Rigidbody2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
@@ -238,6 +240,18 @@ namespace TomCat {
 
 		if (MainCamera) 
 		{
+			Renderer3D::BeginScene(*MainCamera, cameraTransform);
+
+			auto meshView = m_Registry.view<Transform, MeshComponent>();
+			for (auto entity : meshView)
+			{
+				auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
+
+				Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
+			}
+
+			Renderer3D::EndScene();
+
 			Renderer2D::BeginScene(*MainCamera, cameraTransform);
 
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
@@ -255,6 +269,18 @@ namespace TomCat {
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		Renderer3D::BeginScene(camera);
+
+		auto meshView = m_Registry.view<Transform, MeshComponent>();
+		for (auto entity : meshView)
+		{
+			auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
+
+			Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
+		}
+
+		Renderer3D::EndScene();
+
 		Renderer2D::BeginScene(camera);
 
 		// SpriteRenderer
@@ -301,6 +327,18 @@ namespace TomCat {
 
 		if (MainCamera)
 		{
+			Renderer3D::BeginScene(*MainCamera, cameraTransform);
+
+			auto meshView = m_Registry.view<Transform, MeshComponent>();
+			for (auto entity : meshView)
+			{
+				auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
+
+				Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
+			}
+
+			Renderer3D::EndScene();
+
 			Renderer2D::BeginScene(*MainCamera, cameraTransform);
 
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
@@ -342,6 +380,7 @@ namespace TomCat {
 		CopyComponentIfExists<NativeScript>(newEntity, entity);
 		CopyComponentIfExists<Rigidbody2D>(newEntity, entity);
 		CopyComponentIfExists<BoxCollider2D>(newEntity, entity);
+		CopyComponentIfExists<MeshComponent>(newEntity, entity);
 	}
 
 
@@ -417,6 +456,11 @@ namespace TomCat {
 
 	template<>
 	void Scene::OnComponentAdded<BoxCollider2D>(Entity entity, BoxCollider2D& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<MeshComponent>(Entity entity, MeshComponent& component)
 	{
 	}
 }

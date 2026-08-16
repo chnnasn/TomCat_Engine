@@ -209,6 +209,19 @@ namespace TomCat {
 			out << YAML::EndMap; // SpriteRendererComponent
 		}
 
+		if (entity.HasComponent<MeshComponent>())
+		{
+			out << YAML::Key << "MeshComponent";
+			out << YAML::BeginMap; // MeshComponent
+
+			auto& meshComponent = entity.GetComponent<MeshComponent>();
+			out << YAML::Key << "ModelPath" << YAML::Value << meshComponent.ModelPath;
+			out << YAML::Key << "Color" << YAML::Value << meshComponent.Color;
+			out << YAML::Key << "UseTexture" << YAML::Value << meshComponent.UseTexture;
+
+			out << YAML::EndMap; // MeshComponent
+		}
+
 		if (entity.HasComponent<Rigidbody2D>())
 		{
 			out << YAML::Key << "Rigidbody2D";
@@ -338,6 +351,18 @@ namespace TomCat {
 				{
 					auto& src = deserializedEntity.AddComponent<SpriteRenderer>();
 					src._Color = spriteRendererComponent["Color"].as<glm::vec4>();
+				}
+
+				auto meshComponent = entity["MeshComponent"];
+				if (meshComponent)
+				{
+					auto& mc = deserializedEntity.AddComponent<MeshComponent>();
+					mc.ModelPath = meshComponent["ModelPath"].as<std::string>();
+					mc.Color = meshComponent["Color"].as<glm::vec4>();
+					mc.UseTexture = meshComponent["UseTexture"].as<bool>();
+
+					if (!mc.ModelPath.empty())
+						mc.MeshAsset = Mesh::LoadOBJ(mc.ModelPath);
 				}
 
 				auto rigidbody2DComponent = entity["Rigidbody2D"];

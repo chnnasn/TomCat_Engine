@@ -185,6 +185,7 @@ void Renderer2D::Init()
 			s_Data.TextureSlots[i]->Bind(i);
 
 		s_Data.TextureShader->Bind();
+		s_Data.QuadVertexArray->Bind();
 		RenderCommand::DrawIndexed(s_Data.QuadVertexArray, s_Data.QuadIndexCount);
 		s_Data.Stats.DrawCalls++;
 	}

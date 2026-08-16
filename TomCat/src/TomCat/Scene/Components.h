@@ -3,6 +3,7 @@
 #include "SceneCamera.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Renderer/Texture.h"
+#include "TomCat/Renderer/Mesh.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -72,6 +73,18 @@ namespace TomCat {
 		SpriteRenderer(const glm::vec4& color)
 			: _Color(color) {
 		}
+	};
+
+	struct MeshComponent
+	{
+		Ref<Mesh> MeshAsset;
+		Ref<Texture2D> AlbedoTexture;
+		glm::vec4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
+		bool UseTexture = false;
+		std::string ModelPath;
+
+		MeshComponent() = default;
+		MeshComponent(const MeshComponent&) = default;
 	};
 
 	struct C_Camera

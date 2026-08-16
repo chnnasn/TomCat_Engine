@@ -2,6 +2,7 @@
 #include "Renderer.h"
 #include "platform/OpenGL/OpenGLShader.h"
 #include "Renderer2D.h"
+#include "Renderer3D.h"
 
 namespace TomCat {
 
@@ -13,11 +14,13 @@ Scope<Renderer::SceneData> Renderer::m_SceneData = CreateScope<Renderer::SceneDa
 
 		RenderCommand::Init();
 		Renderer2D::Init();
+		Renderer3D::Init();
 	}
 
 	void Renderer::Shutdown()
 	{
 		Renderer2D::Shutdown();
+		Renderer3D::Shutdown();
 	}
 
 
