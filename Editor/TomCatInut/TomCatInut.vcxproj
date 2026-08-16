@@ -96,7 +96,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_sharedd.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-cored.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsld.lib;..\..\TomCat\vendor\Assimp\lib\assimp-vc143-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_sharedd.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-cored.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsld.lib;..\..\TomCat\vendor\Assimp-build\lib\Release\assimp-vc143-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\TomCat\vendor\Box2D\bin\Debug-windows-x86_64\Box2D;..\..\TomCat\vendor\GLFW\bin\Debug-windows-x86_64\GLFW;..\..\TomCat\vendor\Glad\bin\Debug-windows-x86_64\Glad;..\..\TomCat\vendor\ImGui\bin\Debug-windows-x86_64\ImGui;..\..\TomCat\vendor\yaml-cpp\bin\Debug-windows-x86_64\yaml-cpp;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
@@ -130,7 +130,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;..\..\TomCat\vendor\Assimp\lib\assimp-vc143-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;..\..\TomCat\vendor\Assimp-build\lib\Release\assimp-vc143-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\TomCat\vendor\Box2D\bin\Release-windows-x86_64\Box2D;..\..\TomCat\vendor\GLFW\bin\Release-windows-x86_64\GLFW;..\..\TomCat\vendor\Glad\bin\Release-windows-x86_64\Glad;..\..\TomCat\vendor\ImGui\bin\Release-windows-x86_64\ImGui;..\..\TomCat\vendor\yaml-cpp\bin\Release-windows-x86_64\yaml-cpp;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
@@ -164,7 +164,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;..\..\TomCat\vendor\Assimp\lib\assimp-vc143-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;..\..\TomCat\vendor\Assimp-build\lib\Release\assimp-vc143-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\TomCat\vendor\Box2D\bin\Dist-windows-x86_64\Box2D;..\..\TomCat\vendor\GLFW\bin\Dist-windows-x86_64\GLFW;..\..\TomCat\vendor\Glad\bin\Dist-windows-x86_64\Glad;..\..\TomCat\vendor\ImGui\bin\Dist-windows-x86_64\ImGui;..\..\TomCat\vendor\yaml-cpp\bin\Dist-windows-x86_64\yaml-cpp;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>

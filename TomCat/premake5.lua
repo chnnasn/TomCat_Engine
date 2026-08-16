@@ -47,7 +47,8 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 
 		"%{IncludeDir.ImGuizmo}",
 		"%{IncludeDir.VulkanSDK}",
-		"%{IncludeDir.Assimp}"
+		"%{IncludeDir.Assimp}",
+		"%{IncludeDir.AssimpBuild}"
 	}
 
 	libdirs
@@ -65,6 +66,10 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"opengl32.lib"
 	}
 	buildoptions "/utf-8"
+
+prebuildcommands {
+	"powershell -NoProfile -ExecutionPolicy Bypass -File \"../Scripts/Build-Assimp.ps1\""
+}
 
 filter "files:vendor/ImGuizmo/**.cpp"
     flags { "NoPCH" }

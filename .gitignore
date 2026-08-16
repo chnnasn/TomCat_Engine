@@ -72,8 +72,6 @@ dist/
 # Assimp build temp
 .assimp_tmp/
 
-# Assimp vendor: keep prebuilt import lib + dll
-!TomCat/vendor/Assimp/lib/
-!TomCat/vendor/Assimp/lib/*
-!TomCat/vendor/Assimp/bin/
-!TomCat/vendor/Assimp/bin/*
+
+# Assimp build output
+TomCat/vendor/Assimp-build/

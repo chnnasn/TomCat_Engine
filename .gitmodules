@@ -22,3 +22,6 @@
 [submodule "vendor/VulkanSDK"]
 	path = vendor/VulkanSDK
 	url = https://github.com/chnnasn/VulkanSDK-Windows.git
+[submodule "TomCat/vendor/Assimp"]
+	path = TomCat/vendor/Assimp
+	url = https://github.com/chnnasn/assimp

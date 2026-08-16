@@ -16,12 +16,13 @@ IncludeDir["SPIRV_Cross"] = "%{wks.location}/../TomCat/vendor/SPIRV-Cross"
 IncludeDir["VulkanSDK"] = "%{wks.location}/../vendor/VulkanSDK/Include"
 IncludeDir["shaderc"] = "%{wks.location}/../vendor/VulkanSDK/Include"
 IncludeDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp/include"
+IncludeDir["AssimpBuild"] = "%{wks.location}/../TomCat/vendor/Assimp-build/include"
 
 LibraryDir = {}
 
 LibraryDir["VulkanSDK"] = "%{wks.location}/../vendor/VulkanSDK/Lib"
 LibraryDir["VulkanSDK_Debug"] = "%{wks.location}/../vendor/VulkanSDK/Lib"
-LibraryDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp/lib"
+LibraryDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp-build/lib/Release"
 
 Library = {}
 Library["Vulkan"] = "%{LibraryDir.VulkanSDK}/vulkan-1.lib"
