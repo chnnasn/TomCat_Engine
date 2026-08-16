@@ -24,6 +24,14 @@ namespace TomCat {
 	L".png", L".jpg", L".jpeg", L".bmp", L".tga", L".gif", L".webp", L".psd", L".hdr", L".pic"
 	};
 
+	static const std::unordered_set<std::string> s_ModelExtensions = {
+		".obj", ".fbx", ".gltf", ".glb", ".dae", ".3ds", ".blend", ".stl", ".ply"
+	};
+
+	static const std::unordered_set<std::wstring> s_ModelExtensionsW = {
+		L".obj", L".fbx", L".gltf", L".glb", L".dae", L".3ds", L".blend", L".stl", L".ply"
+	};
+
 	bool ShowMenu = false;
 
 	ImVec2 MenuPosi;
@@ -426,6 +434,11 @@ namespace TomCat {
                 ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
                 ImGui::Image((ImTextureID)m_ImageCache[path.string()]->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
             }
+            else if (s_ModelExtensionsW.find(ext) != s_ModelExtensionsW.end())
+            {
+                ImGui::SetDragDropPayload("MODEL", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
+            }
 
             ImGui::EndDragDropSource();
         }
@@ -817,6 +830,11 @@ namespace TomCat {
                             {
                                 ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
                                 ImGui::Image((ImTextureID)icon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
+                            }
+                            else if (s_ModelExtensionsW.find(extension) != s_ModelExtensionsW.end())
+                            {
+                                ImGui::SetDragDropPayload("MODEL", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
+                                ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
                             }
 
                             ImGui::EndDragDropSource();

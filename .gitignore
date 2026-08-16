@@ -68,3 +68,12 @@ Builder/Manager/Packages/cache/
 Editor/TomCatInut/Packages/cache/
 # Packaged releases
 dist/
+
+# Assimp build temp
+.assimp_tmp/
+
+# Assimp vendor: keep prebuilt import lib + dll
+!TomCat/vendor/Assimp/lib/
+!TomCat/vendor/Assimp/lib/*
+!TomCat/vendor/Assimp/bin/
+!TomCat/vendor/Assimp/bin/*

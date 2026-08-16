@@ -10,6 +10,8 @@
 
 namespace TomCat {
 
+	class Model;
+
 	class Renderer3D
 	{
 	public:
@@ -23,6 +25,8 @@ namespace TomCat {
 
 		static void DrawMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
 			const Ref<Texture2D>& albedoTexture, const glm::vec4& color, bool useTexture, int entityID = -1);
+
+		static void DrawModel(const Ref<Model>& model, const glm::mat4& transform, int entityID = -1);
 
 		struct Statistics
 		{

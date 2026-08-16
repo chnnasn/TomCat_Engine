@@ -3,6 +3,7 @@
 
 #include "Entity.h"
 #include "Components.h"
+#include "TomCat/Renderer/Model.h"
 
 #include <fstream>
 
@@ -218,6 +219,7 @@ namespace TomCat {
 			out << YAML::Key << "ModelPath" << YAML::Value << meshComponent.ModelPath;
 			out << YAML::Key << "Color" << YAML::Value << meshComponent.Color;
 			out << YAML::Key << "UseTexture" << YAML::Value << meshComponent.UseTexture;
+			out << YAML::Key << "PrimitiveType" << YAML::Value << meshComponent.PrimitiveType;
 
 			out << YAML::EndMap; // MeshComponent
 		}
@@ -360,9 +362,14 @@ namespace TomCat {
 					mc.ModelPath = meshComponent["ModelPath"].as<std::string>();
 					mc.Color = meshComponent["Color"].as<glm::vec4>();
 					mc.UseTexture = meshComponent["UseTexture"].as<bool>();
+					mc.PrimitiveType = meshComponent["PrimitiveType"] ? meshComponent["PrimitiveType"].as<int>() : 0;
 
 					if (!mc.ModelPath.empty())
-						mc.MeshAsset = Mesh::LoadOBJ(mc.ModelPath);
+						mc.Model = Model::Load(mc.ModelPath);
+					else if (mc.PrimitiveType == 1)
+						mc.MeshAsset = Mesh::CreateCube(1.0f);
+					else if (mc.PrimitiveType == 2)
+						mc.MeshAsset = Mesh::CreatePlane(1.0f, 1.0f);
 				}
 
 				auto rigidbody2DComponent = entity["Rigidbody2D"];

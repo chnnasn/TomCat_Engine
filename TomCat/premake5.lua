@@ -46,7 +46,8 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 
 
 		"%{IncludeDir.ImGuizmo}",
-		"%{IncludeDir.VulkanSDK}"
+		"%{IncludeDir.VulkanSDK}",
+		"%{IncludeDir.Assimp}"
 	}
 
 	libdirs

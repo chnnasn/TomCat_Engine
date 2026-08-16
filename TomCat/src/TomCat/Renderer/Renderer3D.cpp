@@ -4,6 +4,7 @@
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/Shader.h"
 #include "TomCat/Renderer/UniformBuffer.h"
+#include "TomCat/Renderer/Model.h"
 
 #include <glad/glad.h>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -106,6 +107,20 @@ namespace TomCat {
 
 		s_Data.Stats.DrawCalls++;
 		s_Data.Stats.MeshCount++;
+	}
+
+	void Renderer3D::DrawModel(const Ref<Model>& model, const glm::mat4& transform, int entityID)
+	{
+		if (!model)
+			return;
+
+		for (const auto& submesh : model->GetSubmeshes())
+		{
+			if (!submesh.Mesh)
+				continue;
+
+			DrawMesh(submesh.Mesh, transform, submesh.DiffuseTexture, submesh.DiffuseColor, submesh.UseTexture, entityID);
+		}
 	}
 
 	void Renderer3D::ResetStats()

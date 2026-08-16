@@ -5,6 +5,7 @@
 #include "ScriptableEntity.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/Renderer3D.h"
+#include "TomCat/Renderer/Model.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "Entity.h"
 
@@ -247,7 +248,10 @@ namespace TomCat {
 			{
 				auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
 
-				Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
+				if (mc.Model)
+					Renderer3D::DrawModel(mc.Model, transform.GetTransform(), (int)entity);
+				else
+					Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
 			}
 
 			Renderer3D::EndScene();
@@ -276,7 +280,10 @@ namespace TomCat {
 		{
 			auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
 
-			Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
+			if (mc.Model)
+				Renderer3D::DrawModel(mc.Model, transform.GetTransform(), (int)entity);
+			else
+				Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
 		}
 
 		Renderer3D::EndScene();
@@ -334,7 +341,10 @@ namespace TomCat {
 			{
 				auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
 
-				Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
+				if (mc.Model)
+					Renderer3D::DrawModel(mc.Model, transform.GetTransform(), (int)entity);
+				else
+					Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
 			}
 
 			Renderer3D::EndScene();

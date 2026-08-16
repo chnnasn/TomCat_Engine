@@ -33,7 +33,8 @@ namespace TomCat {
 		void SaveScene();
 		void SaveSceneAs();
 		void ImportModel();
-		void CreateMeshEntity(const std::string& name, const Ref<Mesh>& mesh);
+		void CreateMeshEntity(const std::string& name, const Ref<Mesh>& mesh, int primitiveType = 0);
+		void CreateModelEntity(const std::filesystem::path& path);
 		
 		void SerializeScene(Ref<Scene> scene, const std::filesystem::path& path);
 

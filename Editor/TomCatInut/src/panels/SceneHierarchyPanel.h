@@ -14,6 +14,7 @@ namespace TomCat {
 	public:
 		using SceneLoadCallback = std::function<void(const std::filesystem::path&)>;
 		using SpriteCreateCallback = std::function<void(const std::filesystem::path&)>;
+		using ModelCreateCallback = std::function<void(const std::filesystem::path&)>;
 
 		SceneHierarchyPanel() = default;
 		SceneHierarchyPanel(const Ref<Scene>& scene);
@@ -28,6 +29,7 @@ namespace TomCat {
 
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
+		void SetModelCreateCallback(const ModelCreateCallback& callback) { m_ModelCreateCallback = callback; }
 	private:
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
@@ -36,6 +38,7 @@ namespace TomCat {
 		Entity m_SelectionContext;
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
+		ModelCreateCallback m_ModelCreateCallback;
 
 	};
 

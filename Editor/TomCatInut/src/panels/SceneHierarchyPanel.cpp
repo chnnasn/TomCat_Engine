@@ -69,6 +69,27 @@ namespace TomCat {
 				if (ImGui::MenuItem("Create Empty Entity"))
 						m_Context->CreateEntity("Empty Entity");
 
+				if (ImGui::BeginMenu("Create 3D Object"))
+				{
+					if (ImGui::MenuItem("Cube"))
+					{
+						Entity e = m_Context->CreateEntity("Cube");
+						auto& mc = e.AddComponent<MeshComponent>();
+						mc.MeshAsset = Mesh::CreateCube(1.0f);
+						mc.PrimitiveType = 1;
+						m_SelectionContext = e;
+					}
+					if (ImGui::MenuItem("Plane"))
+					{
+						Entity e = m_Context->CreateEntity("Plane");
+						auto& mc = e.AddComponent<MeshComponent>();
+						mc.MeshAsset = Mesh::CreatePlane(1.0f, 1.0f);
+						mc.PrimitiveType = 2;
+						m_SelectionContext = e;
+					}
+					ImGui::EndMenu();
+				}
+
 				ImGui::EndPopup();
 			}
 		}
@@ -104,6 +125,16 @@ namespace TomCat {
 					auto project = ProjectManager::Get().GetActiveProject();
 					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
 					m_SpriteCreateCallback(assetPath / path);
+				}
+			}
+			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("MODEL", flags))
+			{
+				const wchar_t* path = (const wchar_t*)payload->Data;
+				if (m_ModelCreateCallback)
+				{
+					auto project = ProjectManager::Get().GetActiveProject();
+					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
+					m_ModelCreateCallback(assetPath / path);
 				}
 			}
 			ImGui::EndDragDropTarget();

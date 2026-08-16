@@ -75,6 +75,8 @@ namespace TomCat {
 		}
 	};
 
+	class Model;
+
 	struct MeshComponent
 	{
 		Ref<Mesh> MeshAsset;
@@ -82,6 +84,8 @@ namespace TomCat {
 		glm::vec4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
 		bool UseTexture = false;
 		std::string ModelPath;
+		int PrimitiveType = 0; // 0=None, 1=Cube, 2=Plane
+		Ref<Model> Model;
 
 		MeshComponent() = default;
 		MeshComponent(const MeshComponent&) = default;

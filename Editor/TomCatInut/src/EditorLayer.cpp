@@ -10,6 +10,7 @@
 #include "ImGuizmo.h"
 
 #include "TomCat/Math/Math.h"
+#include "TomCat/Renderer/Model.h"
 
 
 namespace TomCat {
@@ -67,6 +68,10 @@ namespace TomCat {
 			auto Square = m_ActiveScene->CreateEntity(fileName);
 			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
 			SpriteR.Texture = Texture2D::Create(path.string());
+		});
+
+		m_SceneHierarchyPanel.SetModelCreateCallback([this](const std::filesystem::path& path) {
+			CreateModelEntity(path);
 		});
 	}
 
@@ -232,19 +237,19 @@ namespace TomCat {
 
 				ImGui::Separator();
 
-				if (ImGui::MenuItem("Import Model (OBJ)"))
+				if (ImGui::MenuItem("Import Model..."))
 				{
 					ImportModel();
 				}
 
 				if (ImGui::MenuItem("Create 3D Cube"))
 				{
-					CreateMeshEntity("Cube", Mesh::CreateCube(1.0f));
+					CreateMeshEntity("Cube", Mesh::CreateCube(1.0f), 1);
 				}
 
 				if (ImGui::MenuItem("Create 3D Plane"))
 				{
-					CreateMeshEntity("Plane", Mesh::CreatePlane(1.0f, 1.0f));
+					CreateMeshEntity("Plane", Mesh::CreatePlane(1.0f, 1.0f), 2);
 				}
 
 				ImGui::Separator();
@@ -336,6 +341,10 @@ namespace TomCat {
 				auto Square = m_ActiveScene->CreateEntity(fileName);
 				auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
 				SpriteR.Texture = Texture2D::Create(texturePath.string());
+			}
+			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("MODEL", flags)) {
+				const wchar_t* path = (const wchar_t*)payload->Data;
+				CreateModelEntity(assetPath / path);
 			}
 			ImGui::EndDragDropTarget();
 		}
@@ -631,12 +640,12 @@ namespace TomCat {
 		if (!m_ActiveScene)
 			NewScene();
 
-		std::string filepath = FileDialogs::OpenFile("OBJ Model (*.obj)\0*.obj\0");
+		std::string filepath = FileDialogs::OpenFile("Model (*.obj;*.fbx;*.gltf;*.glb)\0*.obj;*.fbx;*.gltf;*.glb\0");
 		if (filepath.empty())
 			return;
 
-		Ref<Mesh> mesh = Mesh::LoadOBJ(filepath);
-		if (!mesh)
+		Ref<Model> model = Model::Load(filepath);
+		if (!model)
 		{
 			TC_Warn("Failed to load model: {0}", filepath);
 			return;
@@ -645,7 +654,7 @@ namespace TomCat {
 		std::filesystem::path path(filepath);
 		Entity entity = m_ActiveScene->CreateEntity(path.stem().string());
 		auto& mc = entity.AddComponent<MeshComponent>();
-		mc.MeshAsset = mesh;
+		mc.Model = model;
 		mc.ModelPath = filepath;
 		mc.Color = glm::vec4(1.0f);
 
@@ -653,7 +662,7 @@ namespace TomCat {
 		m_SceneDirty = true;
 	}
 
-	void EditorLayer::CreateMeshEntity(const std::string& name, const Ref<Mesh>& mesh)
+	void EditorLayer::CreateMeshEntity(const std::string& name, const Ref<Mesh>& mesh, int primitiveType)
 	{
 		if (m_SceneState != SceneState::Edit)
 			OnSceneStop();
@@ -667,6 +676,32 @@ namespace TomCat {
 		Entity entity = m_ActiveScene->CreateEntity(name);
 		auto& mc = entity.AddComponent<MeshComponent>();
 		mc.MeshAsset = mesh;
+		mc.PrimitiveType = primitiveType;
+		mc.Color = glm::vec4(1.0f);
+
+		m_SceneHierarchyPanel.SetSelectedEntity(entity);
+		m_SceneDirty = true;
+	}
+
+	void EditorLayer::CreateModelEntity(const std::filesystem::path& path)
+	{
+		if (m_SceneState != SceneState::Edit)
+			OnSceneStop();
+
+		if (!m_ActiveScene)
+			NewScene();
+
+		Ref<Model> model = Model::Load(path.string());
+		if (!model)
+		{
+			TC_Warn("Failed to load model: {0}", path.string());
+			return;
+		}
+
+		Entity entity = m_ActiveScene->CreateEntity(path.stem().string());
+		auto& mc = entity.AddComponent<MeshComponent>();
+		mc.Model = model;
+		mc.ModelPath = path.string();
 		mc.Color = glm::vec4(1.0f);
 
 		m_SceneHierarchyPanel.SetSelectedEntity(entity);
