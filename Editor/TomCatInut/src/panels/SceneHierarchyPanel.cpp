@@ -7,6 +7,7 @@
 
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Core/KeyCodes.h"
 
 #include<filesystem>
 
@@ -52,11 +53,35 @@ namespace TomCat {
 
 		if (m_Context)
 		{
+			if (m_EntityToDelete)
+			{
+				Entity entity = m_EntityToDelete;
+				m_EntityToDelete = {};
+				if (m_SelectionContext == entity)
+					m_SelectionContext = {};
+				if (m_ClipboardEntity == entity)
+				{
+					m_ClipboardEntity = {};
+					m_ClipboardScene = nullptr;
+					m_ClipboardIsCut = false;
+				}
+				m_Context->DestroyEntity(entity);
+			}
+			m_EntityToDelete = {};
 			m_Context->m_Registry.view<entt::entity>().each([&](auto entityID)
 				{
 					Entity entity{ entityID , m_Context.get() };
 					DrawEntityNode(entity);
 				});
+
+			if (m_EntityToDelete)
+			{
+				Entity entity = m_EntityToDelete;
+				m_EntityToDelete = {};
+				if (m_SelectionContext == entity)
+					m_SelectionContext = {};
+				m_Context->DestroyEntity(entity);
+			}
 
 
 			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
@@ -65,27 +90,7 @@ namespace TomCat {
 
 			if (ImGui::BeginPopupContextWindow(0, 1))
 			{
-				if (ImGui::MenuItem("Create Empty Entity"))
-				{
-					Entity entity = m_Context->CreateEntity("Empty Entity");
-					m_SelectionContext = entity;
-				}
-
-				if (ImGui::BeginMenu("2D Object"))
-				{
-					if (ImGui::BeginMenu("Sprites"))
-					{
-						if (ImGui::MenuItem("Square"))
-						{
-							Entity square = m_Context->CreateEntity("Square");
-							square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-							m_SelectionContext = square;
-						}
-						ImGui::EndMenu();
-					}
-					ImGui::EndMenu();
-				}
-
+				DrawEntityOperationsMenu();
 				ImGui::EndPopup();
 			}
 		}
@@ -145,6 +150,119 @@ namespace TomCat {
 		m_SelectionContext = entity;
 	}
 
+	bool SceneHierarchyPanel::CanPaste() const
+	{
+		return m_ClipboardEntity && m_ClipboardScene && m_ClipboardScene == m_Context;
+	}
+
+	void SceneHierarchyPanel::BeginRename(Entity entity)
+	{
+		if (!entity)
+			return;
+		m_RenameEntity = entity;
+		strncpy_s(m_RenameBuffer, sizeof(m_RenameBuffer), entity.GetName().c_str(), _TRUNCATE);
+		m_RenameFocus = true;
+	}
+
+	void SceneHierarchyPanel::CutSelectedEntity()
+	{
+		if (!m_SelectionContext)
+			return;
+		m_ClipboardEntity = m_SelectionContext;
+		m_ClipboardScene = m_Context;
+		m_ClipboardIsCut = true;
+	}
+
+	void SceneHierarchyPanel::CopySelectedEntity()
+	{
+		if (!m_SelectionContext)
+			return;
+		m_ClipboardEntity = m_SelectionContext;
+		m_ClipboardScene = m_Context;
+		m_ClipboardIsCut = false;
+	}
+
+	void SceneHierarchyPanel::PasteEntity()
+	{
+		if (!CanPaste())
+			return;
+		Entity pasted = m_Context->DuplicateEntity(m_ClipboardEntity);
+		m_SelectionContext = pasted;
+		if (m_ClipboardIsCut)
+		{
+			m_EntityToDelete = m_ClipboardEntity;
+			m_ClipboardEntity = {};
+			m_ClipboardScene = nullptr;
+			m_ClipboardIsCut = false;
+		}
+	}
+
+	void SceneHierarchyPanel::DuplicateSelectedEntity()
+	{
+		if (m_SelectionContext)
+			m_SelectionContext = m_Context->DuplicateEntity(m_SelectionContext);
+	}
+
+	void SceneHierarchyPanel::DeleteSelectedEntity()
+	{
+		if (m_SelectionContext)
+			m_EntityToDelete = m_SelectionContext;
+	}
+
+	void SceneHierarchyPanel::HandleShortcut(int keyCode, bool control)
+	{
+		switch (keyCode)
+		{
+		case Key::X: if (control) CutSelectedEntity(); break;
+		case Key::C: if (control) CopySelectedEntity(); break;
+		case Key::V: if (control) PasteEntity(); break;
+		case Key::D: if (control) DuplicateSelectedEntity(); break;
+		case Key::F2: BeginRename(m_SelectionContext); break;
+		case Key::Delete: DeleteSelectedEntity(); break;
+		}
+	}
+
+	void SceneHierarchyPanel::DrawEntityOperationsMenu()
+	{
+		const bool hasSelection = (bool)m_SelectionContext;
+		const bool canPaste = CanPaste();
+		if (ImGui::MenuItem("Cut", "Ctrl+X", false, hasSelection)) CutSelectedEntity();
+		if (ImGui::MenuItem("Copy", "Ctrl+C", false, hasSelection)) CopySelectedEntity();
+		if (ImGui::MenuItem("Paste", "Ctrl+V", false, canPaste)) PasteEntity();
+		ImGui::Separator();
+		if (ImGui::MenuItem("Rename", "F2", false, hasSelection)) BeginRename(m_SelectionContext);
+		if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection)) DuplicateSelectedEntity();
+		if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) DeleteSelectedEntity();
+		ImGui::Separator();
+
+		if (ImGui::MenuItem("Create Empty Entity"))
+		{
+			Entity entity = m_Context->CreateEntity("Empty Entity");
+			m_SelectionContext = entity;
+		}
+		if (ImGui::MenuItem("Camera"))
+		{
+			Entity camera = m_Context->CreateEntity("Camera");
+			camera.AddComponent<C_Camera>();
+			m_SelectionContext = camera;
+		}
+
+		if (ImGui::BeginMenu("2D Object"))
+		{
+			if (ImGui::BeginMenu("Sprites"))
+			{
+				if (ImGui::MenuItem("Square"))
+				{
+					Entity square = m_Context->CreateEntity("Square");
+					square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
+					m_SelectionContext = square;
+				}
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenu();
+		}
+	}
+
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
 {
 	// 检查实体是否有效
@@ -157,25 +275,35 @@ namespace TomCat {
 	ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns;
 	bool isSelected = (m_SelectionContext == entity);
 
-	// 绘制实体项
-	if (ImGui::Selectable(tag.c_str(), isSelected, flags))
+	// Draw either the inline rename field or the normal entity row.
+	if (m_RenameEntity == entity)
 	{
-		m_SelectionContext = entity;
-
-		// 双击重命名（可选功能）
-		if (ImGui::IsMouseDoubleClicked(0))
+		if (m_RenameFocus)
 		{
-			// 可以在这里添加重命名逻辑
+			ImGui::SetKeyboardFocusHere();
+			m_RenameFocus = false;
+		}
+		bool commit = ImGui::InputText("##EntityRename", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+		// Clicking outside the input commits the rename just like pressing Enter,
+		// including when the text itself was not changed.
+		if (commit || ImGui::IsItemDeactivated())
+		{
+			if (m_RenameBuffer[0] != '\0')
+				tag = m_RenameBuffer;
+			m_RenameEntity = {};
 		}
 	}
+	else if (ImGui::Selectable(tag.c_str(), isSelected, flags))
+		m_SelectionContext = entity;
+
+	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+		m_SelectionContext = entity;
 
 	// 右键菜单
-	bool entityDeleted = false;
 	if (ImGui::BeginPopupContextItem())
 	{
-		if (ImGui::MenuItem("Delete Entity"))
-			entityDeleted = true;
-
+		m_SelectionContext = entity;
+		DrawEntityOperationsMenu();
 		ImGui::EndPopup();
 	}
 
@@ -187,13 +315,7 @@ namespace TomCat {
 		ImGui::EndDragDropSource();
 	}
 
-	// 处理删除
-	if (entityDeleted)
-	{
-		m_Context->DestroyEntity(entity);
-		if (m_SelectionContext == entity)
-			m_SelectionContext = {};
-	}
+	// Defer destruction until the hierarchy registry has finished iterating.
 }
 
 	static void DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f, float columnWidth = 100.0f)

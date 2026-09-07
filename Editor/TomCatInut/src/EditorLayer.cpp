@@ -677,8 +677,17 @@ namespace TomCat {
 		case Key::D:
 		{
 			if (control)
-				OnDuplicateEntity();
+				m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
 
+			break;
+		}
+		case Key::X:
+		case Key::C:
+		case Key::V:
+		case Key::F2:
+		case Key::Delete:
+		{
+			m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
 			break;
 		}
 
