@@ -306,6 +306,8 @@ namespace TomCat {
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
+		UI_SceneGizmoToolbar();
+
 		if (ImGui::BeginDragDropTarget())
 		{
 			std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
@@ -410,6 +412,101 @@ namespace TomCat {
 		ImGui::PopStyleVar();
 
 		ImGui::End();
+	}
+
+	void EditorLayer::UI_SceneGizmoToolbar()
+	{
+		// Draw directly over the Scene image. This keeps the palette clipped and
+		// owned by the Scene view instead of creating another dockable ImGui window.
+		const float width = 52.0f;
+		const float handleHeight = 28.0f;
+		const float buttonHeight = 50.0f;
+		const float gap = 2.0f;
+		const float height = handleHeight + gap + buttonHeight * 4.0f + gap * 3.0f + 5.0f;
+
+		// Never allow the palette to become stranded outside the Scene view.
+		const float maxOffsetX = m_ViewportSize.x > width + 8.0f ? m_ViewportSize.x - width - 4.0f : 4.0f;
+		const float maxOffsetY = m_ViewportSize.y > height + 8.0f ? m_ViewportSize.y - height - 4.0f : 4.0f;
+		if (m_GizmoToolbarOffset.x < 4.0f) m_GizmoToolbarOffset.x = 4.0f;
+		if (m_GizmoToolbarOffset.y < 4.0f) m_GizmoToolbarOffset.y = 4.0f;
+		if (m_GizmoToolbarOffset.x > maxOffsetX) m_GizmoToolbarOffset.x = maxOffsetX;
+		if (m_GizmoToolbarOffset.y > maxOffsetY) m_GizmoToolbarOffset.y = maxOffsetY;
+
+		ImVec2 topLeft(m_ViewportBounds[0].x + m_GizmoToolbarOffset.x,
+			m_ViewportBounds[0].y + m_GizmoToolbarOffset.y);
+		ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImU32 outer = IM_COL32(38, 38, 40, 245);
+		const ImU32 normal = IM_COL32(82, 82, 84, 245);
+		const ImU32 active = IM_COL32(54, 103, 151, 255);
+		const ImU32 line = IM_COL32(225, 225, 225, 255);
+
+		draw->AddRectFilled(topLeft, bottomRight, outer, 7.0f);
+
+		// The top handle is the only draggable area, matching the reference UI.
+		ImVec2 handleMin(topLeft.x + 5.0f, topLeft.y + 4.0f);
+		ImVec2 handleMax(topLeft.x + width - 5.0f, topLeft.y + handleHeight);
+		ImVec2 handleCenter((handleMin.x + handleMax.x) * 0.5f, (handleMin.y + handleMax.y) * 0.5f);
+		const ImU32 handleLine = IM_COL32(105, 105, 108, 255);
+		for (int i = -1; i <= 1; ++i)
+			draw->AddLine(ImVec2(handleCenter.x - 12.0f, handleCenter.y + i * 5.0f),
+				ImVec2(handleCenter.x + 12.0f, handleCenter.y + i * 5.0f), handleLine, 2.0f);
+		ImGui::SetCursorScreenPos(handleMin);
+		ImGui::InvisibleButton("##scene_tool_drag_handle",
+			ImVec2(handleMax.x - handleMin.x, handleMax.y - handleMin.y));
+		if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+		{
+			ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+			m_GizmoToolbarOffset.x += delta.x;
+			m_GizmoToolbarOffset.y += delta.y;
+			ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+		}
+
+		const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
+			ImGuizmo::OPERATION::ROTATE, ImGuizmo::OPERATION::SCALE };
+		for (int i = 0; i < 4; ++i)
+		{
+			ImVec2 min(topLeft.x + 5.0f, topLeft.y + handleHeight + gap + i * (buttonHeight + gap));
+			ImVec2 max(min.x + width - 10.0f, min.y + buttonHeight);
+			bool selected = m_GizmoType == tools[i];
+			draw->AddRectFilled(min, max, selected ? active : normal, 5.0f);
+
+			// Four compact symbols: cursor, move, rotate and scale.
+			ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+			if (i == 0)
+			{
+				draw->AddTriangleFilled(ImVec2(center.x - 8, center.y - 15),
+					ImVec2(center.x + 9, center.y + 11), ImVec2(center.x - 1, center.y + 8), line);
+				draw->AddLine(ImVec2(center.x - 1, center.y + 8), ImVec2(center.x - 6, center.y + 15), line, 3.0f);
+			}
+			else if (i == 1)
+			{
+				draw->AddLine(ImVec2(center.x - 15, center.y), ImVec2(center.x + 15, center.y), line, 3.0f);
+				draw->AddLine(ImVec2(center.x, center.y - 15), ImVec2(center.x, center.y + 15), line, 3.0f);
+				draw->AddTriangleFilled(ImVec2(center.x - 15, center.y), ImVec2(center.x - 7, center.y - 5), ImVec2(center.x - 7, center.y + 5), line);
+				draw->AddTriangleFilled(ImVec2(center.x + 15, center.y), ImVec2(center.x + 7, center.y - 5), ImVec2(center.x + 7, center.y + 5), line);
+				draw->AddTriangleFilled(ImVec2(center.x, center.y - 15), ImVec2(center.x - 5, center.y - 7), ImVec2(center.x + 5, center.y - 7), line);
+				draw->AddTriangleFilled(ImVec2(center.x, center.y + 15), ImVec2(center.x - 5, center.y + 7), ImVec2(center.x + 5, center.y + 7), line);
+			}
+			else if (i == 2)
+			{
+				draw->AddCircle(center, 14.0f, line, 24, 3.0f);
+				draw->AddTriangleFilled(ImVec2(center.x + 13, center.y - 14), ImVec2(center.x + 4, center.y - 15), ImVec2(center.x + 12, center.y - 5), line);
+			}
+			else
+			{
+				draw->AddLine(ImVec2(min.x + 12, min.y + 16), ImVec2(min.x + 22, min.y + 16), line, 3.0f);
+				draw->AddLine(ImVec2(min.x + 12, min.y + 16), ImVec2(min.x + 12, min.y + 26), line, 3.0f);
+				draw->AddLine(ImVec2(max.x - 12, max.y - 16), ImVec2(max.x - 22, max.y - 16), line, 3.0f);
+				draw->AddLine(ImVec2(max.x - 12, max.y - 16), ImVec2(max.x - 12, max.y - 26), line, 3.0f);
+			}
+
+			ImGui::SetCursorScreenPos(min);
+			ImGui::InvisibleButton((std::string("##scene_tool_") + std::to_string(i)).c_str(),
+				ImVec2(max.x - min.x, max.y - min.y));
+			if (ImGui::IsItemClicked())
+				m_GizmoType = tools[i];
+		}
 	}
 
 	void EditorLayer::UI_Toolbar()

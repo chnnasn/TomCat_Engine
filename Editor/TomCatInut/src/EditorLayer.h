@@ -41,6 +41,7 @@ namespace TomCat {
 		void OnDuplicateEntity();
 
 		void UI_Toolbar();
+		void UI_SceneGizmoToolbar();
 
 		void OpenProject();
 		void SaveProject();
@@ -75,6 +76,7 @@ namespace TomCat {
 		glm::vec4 m_SquareColor = { 0.2f, 0.3f, 0.8f, 1.0f };
 
 		int m_GizmoType = -1;
+		glm::vec2 m_GizmoToolbarOffset = { 16.0f, 16.0f };
 
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
