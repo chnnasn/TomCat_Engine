@@ -112,13 +112,47 @@ namespace TomCat {
 					m_ClipboardIsCut = false;
 				}
 				m_Context->DestroyEntity(entity);
+				if (m_SelectionContext && !m_Context->FindEntityByUUID(m_SelectionContext.GetUUID()))
+					m_SelectionContext = {};
 			}
 			m_EntityToDelete = {};
-			m_Context->m_Registry.view<entt::entity>().each([&](auto entityID)
+			const std::string& sceneName = m_Context->GetSceneName();
+			ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding;
+			bool rootOpen = ImGui::TreeNodeEx((void*)m_Context.get(), rootFlags, "%s", sceneName.c_str());
+
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+				m_SelectionContext = {};
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+				m_SelectionContext = {};
+
+			if (ImGui::BeginPopupContextItem())
+			{
+				m_SelectionContext = {};
+				DrawEntityOperationsMenu();
+				ImGui::EndPopup();
+			}
+
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY"))
 				{
-					Entity entity{ entityID , m_Context.get() };
-					DrawEntityNode(entity);
-				});
+					Entity draggedEntity = *(const Entity*)payload->Data;
+					if (draggedEntity)
+						m_Context->SetParent(draggedEntity, Entity{});
+				}
+				ImGui::EndDragDropTarget();
+			}
+
+			if (rootOpen)
+			{
+				for (UUID rootUUID : m_Context->GetRootEntityUUIDs())
+				{
+					Entity entity = m_Context->FindEntityByUUID(rootUUID);
+					if (entity)
+						DrawEntityNode(entity);
+				}
+				ImGui::TreePop();
+			}
 
 			if (m_EntityToDelete)
 			{
@@ -127,6 +161,8 @@ namespace TomCat {
 				if (m_SelectionContext == entity)
 					m_SelectionContext = {};
 				m_Context->DestroyEntity(entity);
+				if (m_SelectionContext && !m_Context->FindEntityByUUID(m_SelectionContext.GetUUID()))
+					m_SelectionContext = {};
 			}
 
 
@@ -174,6 +210,12 @@ namespace TomCat {
 					m_SpriteCreateCallback(assetPath / path);
 				}
 			}
+			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY", flags))
+			{
+				Entity draggedEntity = *(const Entity*)payload->Data;
+				if (draggedEntity)
+					m_Context->SetParent(draggedEntity, Entity{});
+			}
 			ImGui::EndDragDropTarget();
 		}
 
@@ -198,7 +240,10 @@ namespace TomCat {
 
 	bool SceneHierarchyPanel::CanPaste() const
 	{
-		return m_ClipboardEntity && m_ClipboardScene && m_ClipboardScene == m_Context;
+		if (!m_ClipboardEntity || !m_ClipboardScene || m_ClipboardScene != m_Context)
+			return false;
+
+		return (bool)m_ClipboardScene->FindEntityByUUID(m_ClipboardEntity.GetUUID());
 	}
 
 	void SceneHierarchyPanel::BeginRename(Entity entity)
@@ -279,6 +324,8 @@ namespace TomCat {
 		if (ImGui::MenuItem("Rename", "F2", false, hasSelection)) BeginRename(m_SelectionContext);
 		if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection)) DuplicateSelectedEntity();
 		if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) DeleteSelectedEntity();
+		if (ImGui::MenuItem("Unparent", nullptr, false, hasSelection && m_Context && m_Context->GetParent(m_SelectionContext)))
+			m_Context->SetParent(m_SelectionContext, Entity{});
 		ImGui::Separator();
 
 		if (ImGui::MenuItem("Create Empty Entity"))
@@ -310,65 +357,102 @@ namespace TomCat {
 	}
 
 	void SceneHierarchyPanel::DrawEntityNode(Entity entity)
-{
-	// 检查实体是否有效
-	if (!entity)
-		return;
-
-	auto& tagComponent = entity.GetComponent<Tag>();
-	auto& tag = tagComponent._Tag;
-	const bool visible = tagComponent.Visible;
-	if (!visible)
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
-
-	// 设置选中状态
-	ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns;
-	bool isSelected = (m_SelectionContext == entity);
-
-	// Draw either the inline rename field or the normal entity row.
-	if (m_RenameEntity == entity)
 	{
-		if (m_RenameFocus)
+		if (!entity)
+			return;
+
+		auto& tagComponent = entity.GetComponent<Tag>();
+		auto& tag = tagComponent._Tag;
+		const bool visible = tagComponent.Visible;
+		if (!visible)
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
+
+		const bool isSelected = (m_SelectionContext == entity);
+		const auto children = m_Context->GetChildrenUUIDs(entity);
+		const bool hasChildren = !children.empty();
+
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding;
+		if (isSelected)
+			flags |= ImGuiTreeNodeFlags_Selected;
+		if (!hasChildren)
+			flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+		const bool renameActive = (m_RenameEntity == entity);
+		if (renameActive)
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+
+		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "%s", tag.c_str());
+		const ImVec2 itemMin = ImGui::GetItemRectMin();
+		const ImVec2 itemMax = ImGui::GetItemRectMax();
+		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing();
+		const float textOffsetY = itemMin.y + (itemMax.y - itemMin.y - ImGui::GetTextLineHeight()) * 0.5f;
+
+		if (renameActive)
+			ImGui::PopStyleColor();
+
+		if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+			m_SelectionContext = entity;
+		if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+			m_SelectionContext = entity;
+
+		if (ImGui::BeginPopupContextItem())
 		{
-			ImGui::SetKeyboardFocusHere();
-			m_RenameFocus = false;
+			m_SelectionContext = entity;
+			DrawEntityOperationsMenu();
+			ImGui::EndPopup();
 		}
-		bool commit = ImGui::InputText("##EntityRename", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
-		// Clicking outside the input commits the rename just like pressing Enter,
-		// including when the text itself was not changed.
-		if (commit || ImGui::IsItemDeactivated())
+
+		if (ImGui::BeginDragDropSource())
 		{
-			if (m_RenameBuffer[0] != '\0')
-				tag = m_RenameBuffer;
-			m_RenameEntity = {};
+			ImGui::SetDragDropPayload("SCENE_ENTITY", &entity, sizeof(Entity));
+			ImGui::Text("Move %s", tag.c_str());
+			ImGui::EndDragDropSource();
 		}
+
+		if (ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY"))
+			{
+				Entity draggedEntity = *(const Entity*)payload->Data;
+				if (draggedEntity && draggedEntity != entity)
+					m_Context->SetParent(draggedEntity, entity);
+			}
+			ImGui::EndDragDropTarget();
+		}
+
+		if (renameActive)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(textOffsetX, textOffsetY));
+			ImGui::SetNextItemWidth(std::max(40.0f, itemMax.x - textOffsetX - ImGui::GetStyle().ItemInnerSpacing.x));
+			if (m_RenameFocus)
+			{
+				ImGui::SetKeyboardFocusHere();
+				m_RenameFocus = false;
+			}
+
+			bool commit = ImGui::InputText("##EntityRename", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+			if (commit || ImGui::IsItemDeactivated())
+			{
+				if (m_RenameBuffer[0] != '\0')
+					tag = m_RenameBuffer;
+				m_RenameEntity = {};
+			}
+		}
+
+		if (open && hasChildren)
+		{
+			for (UUID childUUID : children)
+			{
+				Entity child = m_Context->FindEntityByUUID(childUUID);
+				if (child)
+					DrawEntityNode(child);
+			}
+			ImGui::TreePop();
+		}
+
+		if (!visible)
+			ImGui::PopStyleColor();
 	}
-	else if (ImGui::Selectable(tag.c_str(), isSelected, flags))
-		m_SelectionContext = entity;
-
-	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-		m_SelectionContext = entity;
-
-	// 右键菜单
-	if (ImGui::BeginPopupContextItem())
-	{
-		m_SelectionContext = entity;
-		DrawEntityOperationsMenu();
-		ImGui::EndPopup();
-	}
-
-	// 拖拽功能（可选）
-	if (ImGui::BeginDragDropSource())
-	{
-		ImGui::SetDragDropPayload("SCENE_ENTITY", &entity, sizeof(Entity));
-		ImGui::Text("Move %s", tag.c_str());
-		ImGui::EndDragDropSource();
-	}
-	if (!visible)
-		ImGui::PopStyleColor();
-
-	// Defer destruction until the hierarchy registry has finished iterating.
-}
 
 	static void DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f, float columnWidth = 100.0f)
 	{

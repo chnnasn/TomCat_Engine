@@ -732,6 +732,7 @@ namespace TomCat {
 	void EditorLayer::NewScene()
 	{
 		m_EditorScene = CreateRef<Scene>();
+		m_EditorScene->SetSceneName("Untitled");
 		m_ActiveScene = m_EditorScene;
 		AddDefaultMainCamera();
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
@@ -770,6 +771,7 @@ namespace TomCat {
 		}
 
 		NewScene();
+		m_EditorScene->SetSceneName("sample");
 		SerializeScene(m_ActiveScene, samplePath);
 		m_EditorScenePath = samplePath;
 		m_CurrentScenePath = samplePath;
@@ -806,6 +808,7 @@ namespace TomCat {
 		SceneSerializer serializer(newScene);
 		if (serializer.Deserialize(path.string()))
 		{
+			newScene->SetSceneName(path.stem().string());
 			m_EditorScene = newScene;
 			m_EditorScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 			m_SceneHierarchyPanel.SetContext(m_EditorScene);
@@ -842,6 +845,8 @@ namespace TomCat {
 
 	void EditorLayer::SerializeScene(Ref<Scene> scene, const std::filesystem::path& path)
 	{
+		if (scene)
+			scene->SetSceneName(path.stem().string());
 		SceneSerializer serializer(scene);
 		serializer.Serialize(path.string());
 	}
