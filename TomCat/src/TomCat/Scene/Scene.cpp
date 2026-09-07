@@ -133,6 +133,8 @@ namespace TomCat {
 			Entity entity = { e, this };
 			auto& transform = entity.GetComponent<Transform>();
 			auto& rb2d = entity.GetComponent<Rigidbody2D>();
+			if (!rb2d.Enabled)
+				continue;
 
 			b2BodyDef bodyDef;
 			bodyDef.type = Rigidbody2DTypeToBox2DBody(rb2d.Type);
@@ -143,7 +145,7 @@ namespace TomCat {
 			body->SetFixedRotation(rb2d.FixedRotation);
 			rb2d.RuntimeBody = body;
 
-			if (entity.HasComponent<BoxCollider2D>())
+			if (entity.HasComponent<BoxCollider2D>() && entity.GetComponent<BoxCollider2D>().Enabled)
 			{
 				auto& bc2d = entity.GetComponent<BoxCollider2D>();
 
@@ -211,6 +213,8 @@ namespace TomCat {
 				Entity entity = { e, this };
 				auto& transform = entity.GetComponent<Transform>();
 				auto& rb2d = entity.GetComponent<Rigidbody2D>();
+				if (!rb2d.Enabled || !rb2d.RuntimeBody)
+					continue;
 
 				b2Body* body = (b2Body*)rb2d.RuntimeBody;
 				const auto& position = body->GetPosition();
@@ -244,9 +248,9 @@ namespace TomCat {
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
 			for (auto entity : group)
 			{
-				if (!m_Registry.get<Tag>(entity).Visible)
-					continue;
 				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
+				if (!m_Registry.get<Tag>(entity).Visible || !sprite.Enabled)
+					continue;
 
 				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
 			}
@@ -264,7 +268,7 @@ namespace TomCat {
 		auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
 
 		group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
-			if (!m_Registry.get<Tag>(entity).Visible)
+			if (!m_Registry.get<Tag>(entity).Visible || !sprite.Enabled)
 				return;
 
 			Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
@@ -311,9 +315,9 @@ namespace TomCat {
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
 			for (auto entity : group)
 			{
-				if (!m_Registry.get<Tag>(entity).Visible)
-					continue;
 				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
+				if (!m_Registry.get<Tag>(entity).Visible || !sprite.Enabled)
+					continue;
 
 				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
 			}

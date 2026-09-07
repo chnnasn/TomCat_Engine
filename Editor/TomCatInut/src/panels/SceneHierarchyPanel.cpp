@@ -18,6 +18,52 @@ namespace TomCat {
 
 	// 前向声明DrawProperty函数
 	static void DrawProperty(const std::string& label, float columnWidth = 100.0f);
+	static bool DrawCompactCheckbox(const char* id, bool* v, float scale = 0.7f)
+	{
+		ImGuiWindow* window = ImGui::GetCurrentWindow();
+		if (window->SkipItems)
+			return false;
+
+		ImGuiContext& g = *GImGui;
+		const ImGuiStyle& style = g.Style;
+		const ImGuiID widgetID = window->GetID(id);
+
+		const float frameHeight = ImGui::GetFrameHeight();
+		const float squareSize = std::max(1.0f, frameHeight * scale);
+		const ImVec2 pos = window->DC.CursorPos;
+		const ImRect bb(pos, ImVec2(pos.x + frameHeight, pos.y + frameHeight));
+
+		ImGui::ItemSize(bb, style.FramePadding.y);
+		if (!ImGui::ItemAdd(bb, widgetID))
+			return false;
+
+		bool hovered = false;
+		bool held = false;
+		bool pressed = ImGui::ButtonBehavior(bb, widgetID, &hovered, &held);
+		if (pressed)
+		{
+			*v = !(*v);
+			ImGui::MarkItemEdited(widgetID);
+		}
+
+		const ImVec2 boxMin(bb.Min.x + (bb.GetWidth() - squareSize) * 0.5f, bb.Min.y + (bb.GetHeight() - squareSize) * 0.5f);
+		const ImVec2 boxMax(boxMin.x + squareSize, boxMin.y + squareSize);
+		const ImU32 fillColor = ImGui::GetColorU32(ImGuiCol_FrameBg);
+		const ImU32 borderColor = ImGui::GetColorU32(held && hovered ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_Border);
+		const float rounding = style.FrameRounding * 0.75f;
+
+		window->DrawList->AddRectFilled(boxMin, boxMax, fillColor, rounding);
+		window->DrawList->AddRect(boxMin, boxMax, borderColor, rounding, 0, 1.0f);
+
+		if (*v)
+		{
+			const float pad = std::max(1.0f, IM_FLOOR(squareSize / 6.0f));
+			// Draw a slightly smaller checkmark so the box can stay compact.
+			ImGui::RenderCheckMark(window->DrawList, ImVec2(boxMin.x + pad, boxMin.y + pad), ImGui::GetColorU32(ImGuiCol_CheckMark), squareSize - pad * 2.0f);
+		}
+
+		return pressed;
+	}
 
 	SceneHierarchyPanel::SceneHierarchyPanel(const Ref<Scene>& context)
 	{
@@ -269,7 +315,11 @@ namespace TomCat {
 	if (!entity)
 		return;
 
-	auto& tag = entity.GetComponent<Tag>()._Tag;
+	auto& tagComponent = entity.GetComponent<Tag>();
+	auto& tag = tagComponent._Tag;
+	const bool visible = tagComponent.Visible;
+	if (!visible)
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
 
 	// 设置选中状态
 	ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns;
@@ -314,6 +364,8 @@ namespace TomCat {
 		ImGui::Text("Move %s", tag.c_str());
 		ImGui::EndDragDropSource();
 	}
+	if (!visible)
+		ImGui::PopStyleColor();
 
 	// Defer destruction until the hierarchy registry has finished iterating.
 }
@@ -417,6 +469,12 @@ namespace TomCat {
 		ImGui::SetCursorPosX(ImGui::GetCursorPosX());
 	}
 
+	template<typename T> static bool* GetComponentEnabledFlag(T&) { return nullptr; }
+	template<> static bool* GetComponentEnabledFlag<C_Camera>(C_Camera& component) { return &component.Primary; }
+	template<> static bool* GetComponentEnabledFlag<SpriteRenderer>(SpriteRenderer& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<BoxCollider2D>(BoxCollider2D& component) { return &component.Enabled; }
+
 	template<typename T, typename UIFunction>
 static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
 {
@@ -428,19 +486,55 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 	if (entity.HasComponent<T>())
 	{
 		auto& component = entity.GetComponent<T>();
-		ImVec2 contentRegionAvailable = ImGui::GetContentRegionAvail();
 
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
-		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
 		ImGui::Separator();
-		bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), treeNodeFlags, name.c_str());
-		ImGui::PopStyleVar(
-		);
-		ImGui::SameLine(contentRegionAvailable.x - lineHeight * 0.5f);
-		if (ImGui::Button("+", ImVec2{ lineHeight, lineHeight }))
+		// Let ImGui draw the framed, full-width tree row and folding arrow. The
+		// remaining header content is drawn on top of the empty row so every part
+		// stays in one aligned header instead of being laid out as separate rows.
+		const ImGuiTreeNodeFlags headerFlags = treeNodeFlags | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+		bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), headerFlags, "##ComponentHeader");
+		const ImVec2 headerMin = ImGui::GetItemRectMin();
+		const ImVec2 headerMax = ImGui::GetItemRectMax();
+		const float headerHeight = headerMax.y - headerMin.y;
+		ImVec2 afterHeaderCursor = ImGui::GetCursorPos();
+		ImGui::PopStyleVar();
+
+		if (bool* enabled = GetComponentEnabledFlag(component))
+		{
+			const float checkboxPosY = headerMin.y + (headerHeight - ImGui::GetFrameHeight()) * 0.5f;
+			ImGui::SetCursorScreenPos(ImVec2(headerMin.x + headerHeight, checkboxPosY));
+			DrawCompactCheckbox((std::string("##") + name + "_Enabled").c_str(), enabled);
+		}
+
+		const float leftContentX = headerMin.x + headerHeight +
+			(GetComponentEnabledFlag(component) ? headerHeight + ImGui::GetStyle().ItemSpacing.x : 0.0f);
+		const float textY = headerMin.y + (headerHeight - ImGui::GetTextLineHeight()) * 0.5f;
+		ImGui::SetCursorScreenPos(ImVec2(leftContentX, textY));
+		ImGui::TextUnformatted(name.c_str());
+
+		// The component menu is the only right-side control. It uses the exact
+		// header height and draws a vertical three-dot glyph in the same bar.
+		const ImVec2 menuSize{ headerHeight, headerHeight };
+		const ImVec2 menuPos{ headerMax.x - headerHeight, headerMin.y };
+		ImGui::SetCursorScreenPos(menuPos);
+		const std::string menuID = std::string("##ComponentMenu_") + name;
+		bool menuClicked = ImGui::InvisibleButton(menuID.c_str(), menuSize);
+		const bool menuHovered = ImGui::IsItemHovered();
+		const bool menuHeld = ImGui::IsItemActive();
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const ImU32 menuBg = ImGui::GetColorU32(menuHeld ? ImGuiCol_HeaderActive : menuHovered ? ImGuiCol_HeaderHovered : ImGuiCol_Header);
+		drawList->AddRectFilled(menuPos, ImVec2(menuPos.x + headerHeight, menuPos.y + headerHeight), menuBg, ImGui::GetStyle().FrameRounding);
+		const ImVec2 dotCenter{ menuPos.x + headerHeight * 0.5f, menuPos.y + headerHeight * 0.5f };
+		const float dotRadius = std::max(1.5f, headerHeight * 0.07f);
+		const float dotOffset = headerHeight * 0.2f;
+		for (int dot = -1; dot <= 1; dot++)
+			drawList->AddCircleFilled(ImVec2(dotCenter.x, dotCenter.y + dot * dotOffset), dotRadius, ImGui::GetColorU32(ImGuiCol_Text));
+		if (menuClicked)
 		{
 			ImGui::OpenPopup("ComponentSettings");
 		}
+		ImGui::SetCursorPos(afterHeaderCursor);
 
 		bool removeComponent = false;
 		if (ImGui::BeginPopup("ComponentSettings"))
@@ -454,6 +548,7 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 
 		if (open)
 		{
+			ImGui::TreePush((void*)typeid(T).hash_code());
 			uiFunction(component);
 			ImGui::TreePop();
 		}
@@ -499,7 +594,7 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			// 设置输入文本标志，允许空输入
 			ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
 
-			ImGui::Checkbox("##Visible", &entity.GetComponent<Tag>().Visible);
+			DrawCompactCheckbox("##Visible", &entity.GetComponent<Tag>().Visible);
 			ImGui::SameLine();
 			ImGui::SetNextItemWidth(-1.0f);
 			if (ImGui::InputText("##Tag", buffer, sizeof(buffer), flags))
@@ -538,11 +633,6 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 		{
 			auto& camera = component._Camera;
 			float columnWidth = 100.0f;
-
-			// Primary
-			DrawProperty("Primary", columnWidth);
-			ImGui::Checkbox("##Primary", &component.Primary);
-			ImGui::Columns(1);
 
 			// Projection Type
 			DrawProperty("Projection", columnWidth);

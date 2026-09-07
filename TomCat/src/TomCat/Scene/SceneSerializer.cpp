@@ -205,6 +205,7 @@ namespace TomCat {
 			out << YAML::BeginMap; // SpriteRendererComponent
 
 			auto& spriteRenderer = entity.GetComponent<SpriteRenderer>();
+			out << YAML::Key << "Enabled" << YAML::Value << spriteRenderer.Enabled;
 			out << YAML::Key << "Color" << YAML::Value << spriteRenderer._Color;
 
 			out << YAML::EndMap; // SpriteRendererComponent
@@ -216,6 +217,7 @@ namespace TomCat {
 			out << YAML::BeginMap; // Rigidbody2DComponent
 
 			auto& rb2dComponent = entity.GetComponent<Rigidbody2D>();
+			out << YAML::Key << "Enabled" << YAML::Value << rb2dComponent.Enabled;
 			out << YAML::Key << "BodyType" << YAML::Value << RigidBody2DBodyTypeToString(rb2dComponent.Type);
 			out << YAML::Key << "FixedRotation" << YAML::Value << rb2dComponent.FixedRotation;
 
@@ -228,6 +230,7 @@ namespace TomCat {
 			out << YAML::BeginMap; // BoxCollider2DComponent
 
 			auto& bc2dComponent = entity.GetComponent<BoxCollider2D>();
+			out << YAML::Key << "Enabled" << YAML::Value << bc2dComponent.Enabled;
 			out << YAML::Key << "Offset" << YAML::Value << bc2dComponent.Offset;
 			out << YAML::Key << "Size" << YAML::Value << bc2dComponent.Size;
 			out << YAML::Key << "Density" << YAML::Value << bc2dComponent.Density;
@@ -342,6 +345,8 @@ namespace TomCat {
 				if (spriteRendererComponent)
 				{
 					auto& src = deserializedEntity.AddComponent<SpriteRenderer>();
+					if (spriteRendererComponent["Enabled"])
+						src.Enabled = spriteRendererComponent["Enabled"].as<bool>();
 					src._Color = spriteRendererComponent["Color"].as<glm::vec4>();
 				}
 
@@ -349,6 +354,8 @@ namespace TomCat {
 				if (rigidbody2DComponent)
 				{
 					auto& rb2d = deserializedEntity.AddComponent<Rigidbody2D>();
+					if (rigidbody2DComponent["Enabled"])
+						rb2d.Enabled = rigidbody2DComponent["Enabled"].as<bool>();
 					rb2d.Type = RigidBody2DBodyTypeFromString(rigidbody2DComponent["BodyType"].as<std::string>());
 					rb2d.FixedRotation = rigidbody2DComponent["FixedRotation"].as<bool>();
 				}
@@ -357,6 +364,8 @@ namespace TomCat {
 				if (boxCollider2DComponent)
 				{
 					auto& bc2d = deserializedEntity.AddComponent<BoxCollider2D>();
+					if (boxCollider2DComponent["Enabled"])
+						bc2d.Enabled = boxCollider2DComponent["Enabled"].as<bool>();
 					bc2d.Offset = boxCollider2DComponent["Offset"].as<glm::vec2>();
 					bc2d.Size = boxCollider2DComponent["Size"].as<glm::vec2>();
 					bc2d.Density = boxCollider2DComponent["Density"].as<float>();

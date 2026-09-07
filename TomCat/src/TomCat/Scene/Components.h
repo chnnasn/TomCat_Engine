@@ -64,6 +64,7 @@ namespace TomCat {
 
 	struct SpriteRenderer
 	{
+		bool Enabled = true;
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
 		Ref<Texture2D>Texture;
 		float TilingFactor = 1.0f;
@@ -107,6 +108,7 @@ namespace TomCat {
 	// Physics
 	struct Rigidbody2D
 	{
+		bool Enabled = true;
 		enum class BodyType { Static = 0, Dynamic, Kinematic };
 		BodyType Type = BodyType::Static;
 		bool FixedRotation = false;
@@ -120,6 +122,7 @@ namespace TomCat {
 
 	struct BoxCollider2D
 	{
+		bool Enabled = true;
 		glm::vec2 Offset = { 0.0f, 0.0f };
 		glm::vec2 Size = { 0.5f, 0.5f };
 
