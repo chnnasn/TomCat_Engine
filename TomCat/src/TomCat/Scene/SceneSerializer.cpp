@@ -155,6 +155,7 @@ namespace TomCat {
 
 			auto& tag = entity.GetComponent<Tag>()._Tag;
 			out << YAML::Key << "Tag" << YAML::Value << tag;
+			out << YAML::Key << "Visible" << YAML::Value << entity.GetComponent<Tag>().Visible;
 
 			out << YAML::EndMap; // TagComponent
 		}
@@ -295,11 +296,15 @@ namespace TomCat {
 				std::string name;
 				auto tagComponent = entity["Tag"];
 				if (tagComponent)
+				{
 					name = tagComponent["Tag"].as<std::string>();
+				}
 
 				TC_Core_Trace("Deserialized entity with ID = {0}, name = {1}", uuid, name);
 
 				Entity deserializedEntity = m_Scene->CreateEntityWithUUID(uuid, name);
+				if (tagComponent && tagComponent["Visible"])
+					deserializedEntity.GetComponent<Tag>().Visible = tagComponent["Visible"].as<bool>();
 
 				auto transformComponent = entity["Transform"];
 				if (transformComponent)

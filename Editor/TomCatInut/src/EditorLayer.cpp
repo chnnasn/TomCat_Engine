@@ -430,7 +430,7 @@ namespace TomCat {
 		ImVec2 imageMax = ImGui::GetItemRectMax();
 		ImVec2 imageCenter((imageMin.x + imageMax.x) * 0.5f, (imageMin.y + imageMax.y) * 0.5f);
 		const float panelWidth = std::min(520.0f, std::max(300.0f, imageMax.x - imageMin.x - 40.0f));
-		const float panelHeight = 148.0f;
+		const float panelHeight = 112.0f;
 		ImVec2 panelMin(imageCenter.x - panelWidth * 0.5f, imageCenter.y - panelHeight * 0.5f);
 		ImVec2 panelMax(imageCenter.x + panelWidth * 0.5f, imageCenter.y + panelHeight * 0.5f);
 
@@ -438,13 +438,9 @@ namespace TomCat {
 		draw->AddRectFilled(panelMin, panelMax, IM_COL32(82, 82, 82, 235), 18.0f);
 		draw->AddRect(panelMin, panelMax, IM_COL32(112, 112, 112, 255), 18.0f, 0, 1.0f);
 
-		const char* displayText = "Display 1";
 		const char* messageText = "No cameras rendering";
-		ImVec2 displaySize = ImGui::CalcTextSize(displayText);
 		ImVec2 messageSize = ImGui::CalcTextSize(messageText);
-		ImVec2 displayPos(imageCenter.x - displaySize.x * 0.5f, panelMin.y + 34.0f);
-		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, panelMin.y + 78.0f);
-		draw->AddText(displayPos, IM_COL32(245, 245, 245, 255), displayText);
+		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, imageCenter.y - messageSize.y * 0.5f);
 		draw->AddText(messagePos, IM_COL32(245, 245, 245, 255), messageText);
 	}
 
