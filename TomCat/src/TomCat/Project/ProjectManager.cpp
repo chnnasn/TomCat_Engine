@@ -250,7 +250,10 @@ namespace TomCat {
 
 		TC_Core_Info("Editor exists: {0}", std::filesystem::exists(editorPath));
 
-		std::string command = "\"" + editorPath.string() + "\" \"" + project->GetProjectPath().string() + "\"";
+		// Pass the project template explicitly so the editor can choose the
+		// appropriate viewport camera interaction. Unknown/empty values remain 3D.
+		const std::string templateName = project->GetConfig().Template == "2D" ? "2D" : "3D";
+		std::string command = "\"" + editorPath.string() + "\" \"" + project->GetProjectPath().string() + "\" " + templateName;
 		TC_Core_Info("Command: {0}", command);
 
 		STARTUPINFOA si = { sizeof(si) };

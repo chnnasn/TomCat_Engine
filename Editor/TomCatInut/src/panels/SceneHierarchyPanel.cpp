@@ -66,7 +66,25 @@ namespace TomCat {
 			if (ImGui::BeginPopupContextWindow(0, 1))
 			{
 				if (ImGui::MenuItem("Create Empty Entity"))
-						m_Context->CreateEntity("Empty Entity");
+				{
+					Entity entity = m_Context->CreateEntity("Empty Entity");
+					m_SelectionContext = entity;
+				}
+
+				if (ImGui::BeginMenu("2D Object"))
+				{
+					if (ImGui::BeginMenu("Sprites"))
+					{
+						if (ImGui::MenuItem("Square"))
+						{
+							Entity square = m_Context->CreateEntity("Square");
+							square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
+							m_SelectionContext = square;
+						}
+						ImGui::EndMenu();
+					}
+					ImGui::EndMenu();
+				}
 
 				ImGui::EndPopup();
 			}
