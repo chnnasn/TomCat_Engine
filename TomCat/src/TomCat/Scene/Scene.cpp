@@ -331,7 +331,7 @@ namespace TomCat {
 
 	}
 
-	void Scene::DuplicateEntity(Entity entity)
+	Entity Scene::DuplicateEntity(Entity entity)
 	{
 		std::string name = entity.GetName();
 		Entity newEntity = CreateEntity(name);
@@ -342,6 +342,7 @@ namespace TomCat {
 		CopyComponentIfExists<NativeScript>(newEntity, entity);
 		CopyComponentIfExists<Rigidbody2D>(newEntity, entity);
 		CopyComponentIfExists<BoxCollider2D>(newEntity, entity);
+		return newEntity;
 	}
 
 
