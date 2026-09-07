@@ -65,6 +65,7 @@ HubConfig.tomcat
 # Hub/Editor local folders (not versioned)
 Builder/Manager/Projects/
 Builder/Manager/Packages/cache/
+Builder/Manager/Editors/
 Editor/TomCatInut/Packages/cache/
 # Packaged releases
 dist/
