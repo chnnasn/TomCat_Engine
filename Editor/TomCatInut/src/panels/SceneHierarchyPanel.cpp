@@ -329,12 +329,13 @@ namespace TomCat {
 		// 使用DrawProperty函数设置标签在左侧并右对齐
 		DrawProperty(label, columnWidth);
 
-		// 为三个滑块设置宽度
-		ImGui::PushMultiItemsWidths(3, ImGui::GetContentRegionAvail().x);
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{ 0, 0 });
 
 		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
 		ImVec2 buttonSize = { lineHeight + 3.0f, lineHeight };
+		float spacing = ImGui::GetStyle().ItemSpacing.x;
+		float availableWidth = ImGui::GetContentRegionAvail().x;
+		float valueWidth = std::max(20.0f, (availableWidth - buttonSize.x * 3.0f - spacing * 6.0f) / 3.0f);
 
 		// X 按钮（无交互）
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
@@ -346,8 +347,8 @@ namespace TomCat {
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
+		ImGui::SetNextItemWidth(valueWidth);
 		ImGui::DragFloat("##X", &values.x, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::PopItemWidth();
 		ImGui::SameLine();
 
 		// Y 按钮（无交互）
@@ -360,8 +361,8 @@ namespace TomCat {
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
+		ImGui::SetNextItemWidth(valueWidth);
 		ImGui::DragFloat("##Y", &values.y, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::PopItemWidth();
 		ImGui::SameLine();
 
 		// Z 按钮（无交互）
@@ -374,8 +375,8 @@ namespace TomCat {
 		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine();
+		ImGui::SetNextItemWidth(valueWidth);
 		ImGui::DragFloat("##Z", &values.z, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::PopItemWidth();
 
 		ImGui::PopStyleVar();
 
@@ -498,6 +499,9 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			// 设置输入文本标志，允许空输入
 			ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
 
+			ImGui::Checkbox("##Visible", &entity.GetComponent<Tag>().Visible);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(-1.0f);
 			if (ImGui::InputText("##Tag", buffer, sizeof(buffer), flags))
 			{
 				// 直接设置，允许空字符串
@@ -520,56 +524,6 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			}
 		}
 
-
-		ImGui::SameLine();
-		ImGui::PushItemWidth(-1);
-
-		if (ImGui::Button("Add Component"))
-			ImGui::OpenPopup("AddComponent");
-
-		if (ImGui::BeginPopup("AddComponent"))
-		{
-			if (!m_SelectionContext.HasComponent<C_Camera>())
-			{
-				if (ImGui::MenuItem("Camera"))
-				{
-					m_SelectionContext.AddComponent<C_Camera>();
-					ImGui::CloseCurrentPopup();
-				}
-			}
-
-			if (!m_SelectionContext.HasComponent<SpriteRenderer>())
-			{
-				if (ImGui::MenuItem("Sprite Renderer"))
-				{
-					m_SelectionContext.AddComponent<SpriteRenderer>();
-					ImGui::CloseCurrentPopup();
-				}
-			}
-			
-
-			if (!m_SelectionContext.HasComponent<Rigidbody2D>())
-			{
-				if (ImGui::MenuItem("Rigidbody 2D"))
-				{
-					m_SelectionContext.AddComponent<Rigidbody2D>();
-					ImGui::CloseCurrentPopup();
-				}
-			}
-
-			if (!m_SelectionContext.HasComponent<BoxCollider2D>())
-			{
-				if (ImGui::MenuItem("Box Collider 2D"))
-				{
-					m_SelectionContext.AddComponent<BoxCollider2D>();
-					ImGui::CloseCurrentPopup();
-				}
-			}
-
-			ImGui::EndPopup();
-		}
-
-		ImGui::PopItemWidth();
 
 		DrawComponent<Transform>("Transform", entity, [](auto& component)
 		{
@@ -764,6 +718,36 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 				ImGui::DragFloat("Restitution", &component.Restitution, 0.01f, 0.0f, 1.0f);
 				ImGui::DragFloat("Restitution Threshold", &component.RestitutionThreshold, 0.01f, 0.0f);
 			});
+
+		ImGui::Spacing();
+		ImGui::SetNextItemWidth(-1.0f);
+		if (ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f)))
+			ImGui::OpenPopup("AddComponent");
+
+		if (ImGui::BeginPopup("AddComponent"))
+		{
+			if (!entity.HasComponent<C_Camera>() && ImGui::MenuItem("Camera"))
+			{
+				entity.AddComponent<C_Camera>();
+				ImGui::CloseCurrentPopup();
+			}
+			if (!entity.HasComponent<SpriteRenderer>() && ImGui::MenuItem("Sprite Renderer"))
+			{
+				entity.AddComponent<SpriteRenderer>();
+				ImGui::CloseCurrentPopup();
+			}
+			if (!entity.HasComponent<Rigidbody2D>() && ImGui::MenuItem("Rigidbody 2D"))
+			{
+				entity.AddComponent<Rigidbody2D>();
+				ImGui::CloseCurrentPopup();
+			}
+			if (!entity.HasComponent<BoxCollider2D>() && ImGui::MenuItem("Box Collider 2D"))
+			{
+				entity.AddComponent<BoxCollider2D>();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
 
 	}
 

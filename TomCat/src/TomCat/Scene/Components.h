@@ -29,6 +29,7 @@ namespace TomCat {
 	struct Tag
 	{
 		std::string _Tag;
+		bool Visible = true;
 
 		Tag() = default;
 		Tag(const Tag&) = default;

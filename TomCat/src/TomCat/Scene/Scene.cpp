@@ -92,6 +92,7 @@ namespace TomCat {
 
 		// Copy components (except IDComponent and TagComponent)
 		CopyComponent<Transform>(dstSceneRegistry, srcSceneRegistry, enttMap);
+		CopyComponent<Tag>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<SpriteRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<C_Camera>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<NativeScript>(dstSceneRegistry, srcSceneRegistry, enttMap);
@@ -173,8 +174,8 @@ namespace TomCat {
 		// Set background color from primary camera
 		{
 			auto view = m_Registry.view<Transform, C_Camera>();
-			view.each([](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
+			view.each([this](auto entity, Transform& transform, C_Camera& camera) {
+				if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
 				{
 					RenderCommand::SetClearColor(camera.BackgroundColor);
 					RenderCommand::Clear();
@@ -228,7 +229,7 @@ namespace TomCat {
 			auto view = m_Registry.view<Transform, C_Camera>();
 
 			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
+				if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
 				{
 					MainCamera = &camera._Camera;
 					cameraTransform = transform.GetTransform();
@@ -243,6 +244,8 @@ namespace TomCat {
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
 			for (auto entity : group)
 			{
+				if (!m_Registry.get<Tag>(entity).Visible)
+					continue;
 				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
 
 				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
@@ -261,6 +264,8 @@ namespace TomCat {
 		auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
 
 		group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
+			if (!m_Registry.get<Tag>(entity).Visible)
+				return;
 
 			Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
 
@@ -274,8 +279,8 @@ namespace TomCat {
 		// Set background color from primary camera
 		{
 			auto view = m_Registry.view<Transform, C_Camera>();
-			view.each([](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
+			view.each([this](auto entity, Transform& transform, C_Camera& camera) {
+				if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
 				{
 					RenderCommand::SetClearColor(camera.BackgroundColor);
 					RenderCommand::Clear();
@@ -291,7 +296,7 @@ namespace TomCat {
 			auto view = m_Registry.view<Transform, C_Camera>();
 
 			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
+				if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
 				{
 					MainCamera = &camera._Camera;
 					cameraTransform = transform.GetTransform();
@@ -306,6 +311,8 @@ namespace TomCat {
 			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
 			for (auto entity : group)
 			{
+				if (!m_Registry.get<Tag>(entity).Visible)
+					continue;
 				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
 
 				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
@@ -354,7 +361,7 @@ namespace TomCat {
 		{
 			const auto& camera = view.get<C_Camera>(entity);
 
-			if (camera.Primary)
+			if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
 				return Entity(entity,this);
 
 		}
