@@ -13,7 +13,7 @@ namespace TomCat {
 	class EditorLayer : public Layer
 	{
 	public:
-		EditorLayer();
+		explicit EditorLayer(bool is2DMode = false);
 
 		virtual ~EditorLayer() = default;
 
@@ -28,6 +28,8 @@ namespace TomCat {
 		bool OnMouseButtonPressed(MouseButtonPressedEvent& e);
 
 		void NewScene();
+		void OpenOrCreateSampleScene();
+		void AddDefaultMainCamera();
 		void OpenScene();
 		void OpenScene(const std::filesystem::path& path);
 		void SaveScene();
@@ -42,6 +44,7 @@ namespace TomCat {
 
 		void UI_Toolbar();
 		void UI_SceneGizmoToolbar();
+		void UI_GameNoCameraOverlay();
 
 		void OpenProject();
 		void SaveProject();
@@ -90,6 +93,7 @@ namespace TomCat {
 		};
 
 		SceneState m_SceneState = SceneState::Edit;
+		bool m_Is2DMode = false;
 
 		Ref<Project> m_CurrentProject;
 		std::filesystem::path m_CurrentScenePath;

@@ -71,7 +71,14 @@ namespace TomCat {
 		if (Input::IsMouseButtonPressed(Mouse::ButtonMiddle))
 			MousePan(delta);
 		else if (Input::IsMouseButtonPressed(Mouse::ButtonRight))
-			MouseRotate(delta);
+		{
+			// In 2D projects the right mouse button is an alternate pan button;
+			// camera rotation is reserved for 3D projects.
+			if (m_Is2DMode)
+				MousePan(delta);
+			else
+				MouseRotate(delta);
+		}
 		else if (Input::IsKeyPressed(Key::LeftAlt) && Input::IsMouseButtonPressed(Mouse::ButtonLeft))
 			MouseZoom(delta.y);
 

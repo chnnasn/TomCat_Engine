@@ -17,6 +17,8 @@ namespace TomCat {
 
 		void OnUpdate(Timestep ts);
 		void OnEvent(Event& e);
+		void Set2DMode(bool enabled) { m_Is2DMode = enabled; }
+		bool Is2DMode() const { return m_Is2DMode; }
 
 		inline float GetDistance() const { return m_Distance; }
 		inline void SetDistance(float distance) { m_Distance = distance; }
@@ -62,6 +64,7 @@ namespace TomCat {
 		float m_Pitch = 0.0f, m_Yaw = 0.0f;
 
 		float m_ViewportWidth = 1280, m_ViewportHeight = 720;
+		bool m_Is2DMode = false;
 	};
 
 }

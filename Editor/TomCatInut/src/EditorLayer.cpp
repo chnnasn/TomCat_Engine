@@ -16,8 +16,8 @@ namespace TomCat {
 
 	extern const std::filesystem::path g_AssetPath;
 
-	EditorLayer::EditorLayer()
-		: Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f })
+	EditorLayer::EditorLayer(bool is2DMode)
+		: Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f }), m_Is2DMode(is2DMode)
 	{
 		m_CurrentProject = ProjectManager::Get().GetActiveProject();
 	}
@@ -57,6 +57,7 @@ namespace TomCat {
 		}
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
+		m_EditorCamera.Set2DMode(m_Is2DMode);
 
 		m_SceneHierarchyPanel.SetSceneLoadCallback([this](const std::filesystem::path& path) {
 			OpenScene(path);
@@ -68,6 +69,11 @@ namespace TomCat {
 			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
 			SpriteR.Texture = Texture2D::Create(path.string());
 		});
+
+		// Every project starts in a usable sample scene. Existing projects keep
+		// their sample scene and simply reopen it on the next editor launch.
+		if (m_CurrentProject)
+			OpenOrCreateSampleScene();
 	}
 
 	void EditorLayer::OnDetach()
@@ -407,11 +413,39 @@ namespace TomCat {
 		uint64_t gameTextureID = m_GameFramebuffer->GetColorAttachmentRendererID();
 		ImGui::Image(reinterpret_cast<void*>(gameTextureID), ImVec2{ m_GameViewportSize.x, m_GameViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		UI_GameNoCameraOverlay();
 
 		ImGui::End();
 		ImGui::PopStyleVar();
 
 		ImGui::End();
+	}
+
+	void EditorLayer::UI_GameNoCameraOverlay()
+	{
+		if (!m_ActiveScene || m_ActiveScene->GetPrimaryCameraEntity())
+			return;
+
+		ImVec2 imageMin = ImGui::GetItemRectMin();
+		ImVec2 imageMax = ImGui::GetItemRectMax();
+		ImVec2 imageCenter((imageMin.x + imageMax.x) * 0.5f, (imageMin.y + imageMax.y) * 0.5f);
+		const float panelWidth = std::min(520.0f, std::max(300.0f, imageMax.x - imageMin.x - 40.0f));
+		const float panelHeight = 148.0f;
+		ImVec2 panelMin(imageCenter.x - panelWidth * 0.5f, imageCenter.y - panelHeight * 0.5f);
+		ImVec2 panelMax(imageCenter.x + panelWidth * 0.5f, imageCenter.y + panelHeight * 0.5f);
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		draw->AddRectFilled(panelMin, panelMax, IM_COL32(82, 82, 82, 235), 18.0f);
+		draw->AddRect(panelMin, panelMax, IM_COL32(112, 112, 112, 255), 18.0f, 0, 1.0f);
+
+		const char* displayText = "Display 1";
+		const char* messageText = "No cameras rendering";
+		ImVec2 displaySize = ImGui::CalcTextSize(displayText);
+		ImVec2 messageSize = ImGui::CalcTextSize(messageText);
+		ImVec2 displayPos(imageCenter.x - displaySize.x * 0.5f, panelMin.y + 34.0f);
+		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, panelMin.y + 78.0f);
+		draw->AddText(displayPos, IM_COL32(245, 245, 245, 255), displayText);
+		draw->AddText(messagePos, IM_COL32(245, 245, 245, 255), messageText);
 	}
 
 	void EditorLayer::UI_SceneGizmoToolbar()
@@ -692,7 +726,9 @@ namespace TomCat {
 
 	void EditorLayer::NewScene()
 	{
-		m_ActiveScene = CreateRef<Scene>();
+		m_EditorScene = CreateRef<Scene>();
+		m_ActiveScene = m_EditorScene;
+		AddDefaultMainCamera();
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 		m_SceneHierarchyPanel.SetSelectedEntity({});
@@ -701,6 +737,38 @@ namespace TomCat {
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 
 		m_EditorScenePath = std::filesystem::path();
+	}
+
+	void EditorLayer::AddDefaultMainCamera()
+	{
+		if (!m_ActiveScene)
+			return;
+
+		Entity mainCamera = m_ActiveScene->CreateEntity("MainCamera");
+		auto& camera = mainCamera.AddComponent<C_Camera>();
+		if (m_Is2DMode)
+			camera._Camera.SetOrthographic(10.0f, -1.0f, 1.0f);
+		else
+			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
+	}
+
+	void EditorLayer::OpenOrCreateSampleScene()
+	{
+		std::filesystem::path samplePath = m_CurrentProject->GetAssetPath() / "sample.tomcat";
+		std::error_code error;
+		std::filesystem::create_directories(samplePath.parent_path(), error);
+
+		if (std::filesystem::exists(samplePath))
+		{
+			OpenScene(samplePath);
+			return;
+		}
+
+		NewScene();
+		SerializeScene(m_ActiveScene, samplePath);
+		m_EditorScenePath = samplePath;
+		m_CurrentScenePath = samplePath;
+		m_SceneDirty = false;
 	}
 
 	void EditorLayer::OpenScene()
