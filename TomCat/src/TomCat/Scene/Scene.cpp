@@ -7,6 +7,7 @@
 #include "TomCat/Renderer/RenderCommand.h"
 #include "Entity.h"
 
+#include <algorithm>
 #include <glm/glm.hpp>
 
 // Box2D
@@ -63,6 +64,38 @@ namespace TomCat {
 			dst.AddOrReplaceComponent<Component>(src.GetComponent<Component>());
 	}
 
+	static void CopyEntityComponents(Entity dst, Entity src)
+	{
+		CopyComponentIfExists<Tag>(dst, src);
+		CopyComponentIfExists<Transform>(dst, src);
+		CopyComponentIfExists<SpriteRenderer>(dst, src);
+		CopyComponentIfExists<C_Camera>(dst, src);
+		CopyComponentIfExists<NativeScript>(dst, src);
+		CopyComponentIfExists<Rigidbody2D>(dst, src);
+		CopyComponentIfExists<BoxCollider2D>(dst, src);
+	}
+
+	static Entity DuplicateEntityRecursive(Scene* scene, Entity source, Entity parent)
+	{
+		if (!scene || !source)
+			return {};
+
+		Entity duplicate = scene->CreateEntity(source.GetName());
+		CopyEntityComponents(duplicate, source);
+
+		if (parent)
+			scene->SetParent(duplicate, parent);
+
+		for (UUID childUUID : scene->GetChildrenUUIDs(source))
+		{
+			Entity child = scene->FindEntityByUUID(childUUID);
+			if (child)
+				DuplicateEntityRecursive(scene, child, duplicate);
+		}
+
+		return duplicate;
+	}
+
 	Ref<Scene> Scene::Copy(Ref<Scene> other)
 	{
 		if (!other)
@@ -73,6 +106,7 @@ namespace TomCat {
 
 		Ref<Scene> newScene = CreateRef<Scene>();
 
+		newScene->m_SceneName = other->m_SceneName;
 		newScene->m_ViewportWidth = other->m_ViewportWidth;
 		newScene->m_ViewportHeight = other->m_ViewportHeight;
 
@@ -99,6 +133,18 @@ namespace TomCat {
 		CopyComponent<Rigidbody2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<BoxCollider2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
 
+		for (const auto& [childUUID, parentUUID] : other->m_ParentMap)
+		{
+			auto childIt = enttMap.find(childUUID);
+			auto parentIt = enttMap.find(parentUUID);
+			if (childIt == enttMap.end() || parentIt == enttMap.end())
+				continue;
+
+			Entity childEntity = { childIt->second, newScene.get() };
+			Entity parentEntity = { parentIt->second, newScene.get() };
+			newScene->SetParent(childEntity, parentEntity);
+		}
+
 		return newScene;
 	}
 
@@ -120,7 +166,111 @@ namespace TomCat {
 
 	void Scene::DestroyEntity(Entity entity)
 	{
+		if (!entity || !m_Registry.valid(entity))
+			return;
+
+		const UUID entityUUID = entity.GetUUID();
+		auto children = GetChildrenUUIDs(entity);
+		for (UUID childUUID : children)
+		{
+			Entity child = FindEntityByUUID(childUUID);
+			if (child)
+				DestroyEntity(child);
+		}
+
+		SetParent(entity, Entity{});
+		m_ChildrenMap.erase(entityUUID);
 		m_Registry.destroy(entity);
+	}
+
+	void Scene::SetParent(Entity child, Entity parent)
+	{
+		if (!child || !m_Registry.valid(child))
+			return;
+
+		const UUID childUUID = child.GetUUID();
+		const bool hasNewParent = parent && m_Registry.valid(parent);
+		const UUID newParentUUID = hasNewParent ? parent.GetUUID() : UUID(0);
+
+		if (hasNewParent)
+		{
+			if (newParentUUID == childUUID)
+				return;
+
+			UUID cursor = newParentUUID;
+			while (true)
+			{
+				if (cursor == childUUID)
+					return;
+
+				auto parentIt = m_ParentMap.find(cursor);
+				if (parentIt == m_ParentMap.end())
+					break;
+
+				cursor = parentIt->second;
+			}
+		}
+
+		auto existingParentIt = m_ParentMap.find(childUUID);
+		if (existingParentIt != m_ParentMap.end())
+		{
+			const UUID oldParentUUID = existingParentIt->second;
+			auto oldChildrenIt = m_ChildrenMap.find(oldParentUUID);
+			if (oldChildrenIt != m_ChildrenMap.end())
+			{
+				auto& oldChildren = oldChildrenIt->second;
+				oldChildren.erase(std::remove(oldChildren.begin(), oldChildren.end(), childUUID), oldChildren.end());
+				if (oldChildren.empty())
+					m_ChildrenMap.erase(oldChildrenIt);
+			}
+			m_ParentMap.erase(existingParentIt);
+		}
+
+		if (hasNewParent)
+		{
+			auto& children = m_ChildrenMap[newParentUUID];
+			children.erase(std::remove(children.begin(), children.end(), childUUID), children.end());
+			children.push_back(childUUID);
+			m_ParentMap[childUUID] = newParentUUID;
+		}
+	}
+
+	Entity Scene::GetParent(Entity entity)
+	{
+		if (!entity || !m_Registry.valid(entity))
+			return {};
+
+		auto parentIt = m_ParentMap.find(entity.GetUUID());
+		if (parentIt == m_ParentMap.end())
+			return {};
+
+		return FindEntityByUUID(parentIt->second);
+	}
+
+	std::vector<UUID> Scene::GetChildrenUUIDs(Entity entity)
+	{
+		if (!entity || !m_Registry.valid(entity))
+			return {};
+
+		auto childrenIt = m_ChildrenMap.find(entity.GetUUID());
+		if (childrenIt == m_ChildrenMap.end())
+			return {};
+
+		return childrenIt->second;
+	}
+
+	std::vector<UUID> Scene::GetRootEntityUUIDs()
+	{
+		std::vector<UUID> result;
+		auto view = m_Registry.view<ID>();
+		for (auto entity : view)
+		{
+			UUID uuid = view.get<ID>(entity).id;
+			auto parentIt = m_ParentMap.find(uuid);
+			if (parentIt == m_ParentMap.end() || !FindEntityByUUID(parentIt->second))
+				result.push_back(uuid);
+		}
+		return result;
 	}
 
 	void Scene::OnRuntimeStart()
@@ -344,16 +494,11 @@ namespace TomCat {
 
 	Entity Scene::DuplicateEntity(Entity entity)
 	{
-		std::string name = entity.GetName();
-		Entity newEntity = CreateEntity(name);
+		if (!entity || !m_Registry.valid(entity))
+			return {};
 
-		CopyComponentIfExists<Transform>(newEntity, entity);
-		CopyComponentIfExists<SpriteRenderer>(newEntity, entity);
-		CopyComponentIfExists<C_Camera>(newEntity, entity);
-		CopyComponentIfExists<NativeScript>(newEntity, entity);
-		CopyComponentIfExists<Rigidbody2D>(newEntity, entity);
-		CopyComponentIfExists<BoxCollider2D>(newEntity, entity);
-		return newEntity;
+		Entity parent = GetParent(entity);
+		return DuplicateEntityRecursive(this, entity, parent);
 	}
 
 

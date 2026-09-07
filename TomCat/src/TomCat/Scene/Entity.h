@@ -39,7 +39,19 @@ namespace TomCat {
 		}
 
 		template<typename T>
+		const T& GetComponent() const
+		{
+			return m_Scene->m_Registry.get<T>(m_EntityHandle);
+		}
+
+		template<typename T>
 		bool HasComponent()
+		{
+			return m_Scene->m_Registry.all_of<T>(m_EntityHandle);
+		}
+
+		template<typename T>
+		bool HasComponent() const
 		{
 			return m_Scene->m_Registry.all_of<T>(m_EntityHandle);
 		}
@@ -56,9 +68,9 @@ namespace TomCat {
 
 		operator uint32_t() const { return (uint32_t)m_EntityHandle; }
 
-		UUID GetUUID() { return GetComponent<ID>().id; }
+		UUID GetUUID() const { return GetComponent<ID>().id; }
 
-		const std::string& GetName() { return GetComponent<Tag>()._Tag; }
+		const std::string& GetName() const { return GetComponent<Tag>()._Tag; }
 
 		bool operator==(const Entity& other) const
 		{

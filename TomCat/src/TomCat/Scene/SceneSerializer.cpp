@@ -141,7 +141,7 @@ namespace TomCat {
 	{
 	}
 
-	static void SerializeEntity(YAML::Emitter& out, Entity entity)
+	static void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity)
 	{
 		TC_Core_Assert(entity.HasComponent<ID>());
 
@@ -241,6 +241,31 @@ namespace TomCat {
 			out << YAML::EndMap; // BoxCollider2DComponent
 		}
 
+		// Hierarchy relationship
+		out << YAML::Key << "m_Father";
+		Entity parent = scene->GetParent(entity);
+		if (parent)
+		{
+			out << YAML::Flow << YAML::BeginMap;
+			out << YAML::Key << "fileID" << YAML::Value << parent.GetUUID();
+			out << YAML::EndMap << YAML::Block;
+		}
+		else
+		{
+			out << YAML::Flow << YAML::BeginMap;
+			out << YAML::Key << "fileID" << YAML::Value << 0;
+			out << YAML::EndMap << YAML::Block;
+		}
+
+		out << YAML::Key << "m_Children" << YAML::Value << YAML::BeginSeq;
+		for (UUID childUUID : scene->GetChildrenUUIDs(entity))
+		{
+			out << YAML::Flow << YAML::BeginMap;
+			out << YAML::Key << "fileID" << YAML::Value << childUUID;
+			out << YAML::EndMap << YAML::Block;
+		}
+		out << YAML::EndSeq;
+
 		out << YAML::EndMap; // Entity
 	}
 
@@ -248,7 +273,8 @@ namespace TomCat {
 	{
 		YAML::Emitter out;
 		out << YAML::BeginMap;
-		out << YAML::Key << "Scene" << YAML::Value << "Untitled";
+		out << YAML::Key << "SceneName" << YAML::Value << m_Scene->GetSceneName();
+		out << YAML::Key << "Scene" << YAML::Value << m_Scene->GetSceneName();
 		out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
 		m_Scene->m_Registry.view<entt::entity>().each([&](auto entityID)
 			{
@@ -256,7 +282,7 @@ namespace TomCat {
 				if (!entity)
 					return;
 
-				SerializeEntity(out, entity);
+				SerializeEntity(out, m_Scene.get(), entity);
 			});
 		out << YAML::EndSeq;
 		out << YAML::EndMap;
@@ -283,15 +309,18 @@ namespace TomCat {
 			return false;
 		}
 
-		if (!data["Scene"])
+		YAML::Node sceneNameNode = data["SceneName"] ? data["SceneName"] : data["Scene"];
+		if (!sceneNameNode)
 			return false;
 
-		std::string sceneName = data["Scene"].as<std::string>();
+		std::string sceneName = sceneNameNode.as<std::string>();
+		m_Scene->SetSceneName(sceneName);
 		TC_Core_Trace("Deserializing scene '{0}'", sceneName);
 
 		auto entities = data["Entities"];
 		if (entities)
 		{
+			std::vector<std::pair<UUID, UUID>> pendingParents;
 			for (auto entity : entities)
 			{
 				uint64_t uuid = entity["Entity"].as<uint64_t>();
@@ -308,6 +337,14 @@ namespace TomCat {
 				Entity deserializedEntity = m_Scene->CreateEntityWithUUID(uuid, name);
 				if (tagComponent && tagComponent["Visible"])
 					deserializedEntity.GetComponent<Tag>().Visible = tagComponent["Visible"].as<bool>();
+
+				auto fatherNode = entity["m_Father"];
+				if (fatherNode && fatherNode["fileID"])
+				{
+					uint64_t fatherUUID = fatherNode["fileID"].as<uint64_t>();
+					if (fatherUUID != 0)
+						pendingParents.emplace_back(UUID(uuid), UUID(fatherUUID));
+				}
 
 				auto transformComponent = entity["Transform"];
 				if (transformComponent)
@@ -373,7 +410,14 @@ namespace TomCat {
 					bc2d.Restitution = boxCollider2DComponent["Restitution"].as<float>();
 					bc2d.RestitutionThreshold = boxCollider2DComponent["RestitutionThreshold"].as<float>();
 				}
+			}
 
+			for (const auto& [childUUID, parentUUID] : pendingParents)
+			{
+				Entity childEntity = m_Scene->FindEntityByUUID(childUUID);
+				Entity parentEntity = m_Scene->FindEntityByUUID(parentUUID);
+				if (childEntity && parentEntity)
+					m_Scene->SetParent(childEntity, parentEntity);
 			}
 		}
 
