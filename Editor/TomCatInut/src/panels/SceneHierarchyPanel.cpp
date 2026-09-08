@@ -384,6 +384,15 @@ namespace TomCat {
 			flags |= ImGuiTreeNodeFlags_Selected;
 		if (!hasChildren)
 			flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+		// ImGui uses Header (rather than HeaderActive) for an idle selected
+		// tree item.  Scope Unity's blue selection colors to the hierarchy row so
+		// component headers and menus keep their neutral gray treatment.
+		if (isSelected)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(44.0f / 255.0f, 93.0f / 255.0f, 135.0f / 255.0f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(58.0f / 255.0f, 112.0f / 255.0f, 157.0f / 255.0f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(36.0f / 255.0f, 79.0f / 255.0f, 115.0f / 255.0f, 1.0f));
+		}
 
 		const bool renameActive = (m_RenameEntity == entity);
 		if (renameActive)
@@ -397,6 +406,8 @@ namespace TomCat {
 
 		if (renameActive)
 			ImGui::PopStyleColor();
+		if (isSelected)
+			ImGui::PopStyleColor(3);
 
 		if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
 			m_SelectionContext = entity;
@@ -483,9 +494,9 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		float valueWidth = std::max(20.0f, (availableWidth - buttonSize.x * 3.0f - spacing * 6.0f) / 3.0f);
 
 		// X 按钮（无交互）
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.8f, 0.1f, 0.15f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 196.0f / 255.0f, 90.0f / 255.0f, 90.0f / 255.0f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 210.0f / 255.0f, 105.0f / 255.0f, 105.0f / 255.0f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 164.0f / 255.0f, 72.0f / 255.0f, 72.0f / 255.0f, 1.0f });
 		ImGui::PushFont(boldFont);
 		ImGui::Button("X", buttonSize);
 		ImGui::PopFont();
@@ -497,9 +508,9 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		ImGui::SameLine();
 
 		// Y 按钮（无交互）
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.2f, 0.7f, 0.2f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 111.0f / 255.0f, 175.0f / 255.0f, 111.0f / 255.0f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 126.0f / 255.0f, 190.0f / 255.0f, 126.0f / 255.0f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 88.0f / 255.0f, 145.0f / 255.0f, 88.0f / 255.0f, 1.0f });
 		ImGui::PushFont(boldFont);
 		ImGui::Button("Y", buttonSize);
 		ImGui::PopFont();
@@ -511,9 +522,9 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		ImGui::SameLine();
 
 		// Z 按钮（无交互）
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 0.1f, 0.25f, 0.8f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 93.0f / 255.0f, 134.0f / 255.0f, 196.0f / 255.0f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 108.0f / 255.0f, 149.0f / 255.0f, 211.0f / 255.0f, 1.0f });
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 74.0f / 255.0f, 108.0f / 255.0f, 163.0f / 255.0f, 1.0f });
 		ImGui::PushFont(boldFont);
 		ImGui::Button("Z", buttonSize);
 		ImGui::PopFont();

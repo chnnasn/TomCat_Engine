@@ -264,10 +264,13 @@ namespace TomCat {
 			m_ActiveScene->OnViewportResize((uint32_t)m_GameViewportSize.x, (uint32_t)m_GameViewportSize.y);
 		}
 
-		// Render Scene View (Editor Camera) - Always use EditorCamera with dark gray background
+		// Render Scene View (Editor Camera).  Unity's Scene canvas is one step
+		// lighter than the surrounding #383838 panels (#474747); the grid and
+		// selection overlays then provide the additional contrast seen in the
+		// reference.
 		Renderer2D::ResetStats();
 		m_Framebuffer->Bind();
-		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
+		RenderCommand::SetClearColor({ 71.0f / 255.0f, 71.0f / 255.0f, 71.0f / 255.0f, 1 });
 		RenderCommand::Clear();
 		m_Framebuffer->ClearAttachment(1, -1);
 
@@ -406,10 +409,13 @@ namespace TomCat {
 		}
 
 		float toolbarHeight = 48.0f;
+		// Unity keeps the global playbar one step darker than docked panels.
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_TitleBg]);
 		ImGui::BeginChild("ToolbarRegion", ImVec2(0, toolbarHeight), false,
 			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 		UI_Toolbar();
 		ImGui::EndChild();
+		ImGui::PopStyleColor();
 
 		ImGui::Separator();
 
@@ -595,13 +601,15 @@ namespace TomCat {
 		ImVec2 panelMax(imageCenter.x + panelWidth * 0.5f, imageCenter.y + panelHeight * 0.5f);
 
 		ImDrawList* draw = ImGui::GetWindowDrawList();
-		draw->AddRectFilled(panelMin, panelMax, IM_COL32(82, 82, 82, 235), 18.0f);
-		draw->AddRect(panelMin, panelMax, IM_COL32(112, 112, 112, 255), 18.0f, 0, 1.0f);
+		// Unity's empty Game view uses a soft rounded notification card; keep its
+		// larger radius while moving the fill into the reference gray ramp.
+		draw->AddRectFilled(panelMin, panelMax, IM_COL32(98, 98, 98, 235), 18.0f);
+		draw->AddRect(panelMin, panelMax, IM_COL32(140, 140, 140, 255), 18.0f, 0, 1.0f);
 
 		const char* messageText = "No cameras rendering";
 		ImVec2 messageSize = ImGui::CalcTextSize(messageText);
 		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, imageCenter.y - messageSize.y * 0.5f);
-		draw->AddText(messagePos, IM_COL32(245, 245, 245, 255), messageText);
+		draw->AddText(messagePos, IM_COL32(243, 243, 243, 255), messageText);
 	}
 
 	void EditorLayer::UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -698,22 +706,22 @@ namespace TomCat {
 		const ImVec2 gripMax(gripMin.x + 22.0f, gripMin.y + buttonHeight);
 		const ImVec2 gripCenter((gripMin.x + gripMax.x) * 0.5f, (gripMin.y + gripMax.y) * 0.5f);
 		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y - 4.0f),
-			ImVec2(gripCenter.x + 5.0f, gripCenter.y - 4.0f), IM_COL32(120, 120, 125, 255), 1.5f);
+			ImVec2(gripCenter.x + 5.0f, gripCenter.y - 4.0f), IM_COL32(137, 137, 137, 255), 1.5f);
 		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y),
-			ImVec2(gripCenter.x + 5.0f, gripCenter.y), IM_COL32(120, 120, 125, 255), 1.5f);
+			ImVec2(gripCenter.x + 5.0f, gripCenter.y), IM_COL32(137, 137, 137, 255), 1.5f);
 		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y + 4.0f),
-			ImVec2(gripCenter.x + 5.0f, gripCenter.y + 4.0f), IM_COL32(120, 120, 125, 255), 1.5f);
+			ImVec2(gripCenter.x + 5.0f, gripCenter.y + 4.0f), IM_COL32(137, 137, 137, 255), 1.5f);
 		UI_SceneToolbarDragHandle("##scene_mode_row", m_GizmoModeToolbarOffset,
 			m_GizmoModeToolbarDocked, m_GizmoModeToolbarDragging,
 			gripMin, gripMax, 17.0f, true);
 		ImGui::SameLine(0.0f, 4.0f);
 
 		DrawModeButton(m_GizmoPivotMode == GizmoPivotMode::Pivot ? "Pivot" : "Center",
-			ImVec4(0.21f, 0.42f, 0.72f, 1.0f),
+			ImVec4(44.0f / 255.0f, 93.0f / 255.0f, 135.0f / 255.0f, 1.0f),
 			m_GizmoPivotMode == GizmoPivotMode::Pivot, "##scene_gizmo_pivot_popup");
 		ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 		DrawModeButton(m_GizmoSpaceMode == GizmoSpaceMode::Local ? "Local" : "World",
-			ImVec4(0.21f, 0.42f, 0.72f, 1.0f),
+			ImVec4(44.0f / 255.0f, 93.0f / 255.0f, 135.0f / 255.0f, 1.0f),
 			m_GizmoSpaceMode == GizmoSpaceMode::Local, "##scene_gizmo_space_popup");
 
 		ImGui::SameLine(0.0f, 10.0f);
@@ -764,12 +772,12 @@ namespace TomCat {
 			// active bar is not clipped away by the Scene window bounds.
 			ImDrawList* draw = m_GizmoTransformToolbarDragging
 				? ImGui::GetForegroundDrawList() : ImGui::GetWindowDrawList();
-			const ImU32 outer = IM_COL32(38, 38, 40, 245);
-			const ImU32 normal = IM_COL32(82, 82, 84, 245);
-			const ImU32 active = IM_COL32(54, 103, 151, 255);
-			const ImU32 line = IM_COL32(225, 225, 225, 255);
-			const ImU32 handleLine = IM_COL32(105, 105, 108, 255);
-			draw->AddRectFilled(topLeft, bottomRight, outer, 4.0f);
+			const ImU32 outer = IM_COL32(40, 40, 40, 245);
+			const ImU32 normal = IM_COL32(71, 71, 71, 245);
+			const ImU32 active = IM_COL32(44, 93, 135, 255);
+			const ImU32 line = IM_COL32(196, 196, 196, 255);
+			const ImU32 handleLine = IM_COL32(137, 137, 137, 255);
+			draw->AddRectFilled(topLeft, bottomRight, outer, 2.0f);
 
 			ImVec2 handleMin(topLeft.x + dockPadding, topLeft.y + dockPadding);
 			ImVec2 handleMax(handleMin.x + dockHandleWidth, topLeft.y + dockButtonHeight + dockPadding);
@@ -798,8 +806,8 @@ namespace TomCat {
 					topLeft.y + dockPadding);
 				ImVec2 max(min.x + dockButtonWidth, min.y + dockButtonHeight);
 				const bool selected = m_GizmoType == tools[i];
-				draw->AddRectFilled(min, max, selected ? active : normal, 4.0f);
-				draw->AddRect(min, max, selected ? active : IM_COL32(65, 65, 68, 255), 4.0f, 0, 1.0f);
+				draw->AddRectFilled(min, max, selected ? active : normal, 2.0f);
+				draw->AddRect(min, max, selected ? active : IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
 				ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
 				if (i == 0)
 				{
@@ -856,18 +864,18 @@ namespace TomCat {
 		ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
 		ImDrawList* draw = m_GizmoTransformToolbarDragging
 			? ImGui::GetForegroundDrawList() : ImGui::GetWindowDrawList();
-		const ImU32 outer = IM_COL32(38, 38, 40, 245);
-		const ImU32 normal = IM_COL32(82, 82, 84, 245);
-		const ImU32 active = IM_COL32(54, 103, 151, 255);
-		const ImU32 line = IM_COL32(225, 225, 225, 255);
+		const ImU32 outer = IM_COL32(40, 40, 40, 245);
+		const ImU32 normal = IM_COL32(71, 71, 71, 245);
+		const ImU32 active = IM_COL32(44, 93, 135, 255);
+		const ImU32 line = IM_COL32(196, 196, 196, 255);
 
-		draw->AddRectFilled(topLeft, bottomRight, outer, 7.0f);
+		draw->AddRectFilled(topLeft, bottomRight, outer, 2.0f);
 
 		// The top handle is the only draggable area, matching the reference UI.
 		ImVec2 handleMin(topLeft.x + 5.0f, topLeft.y + 4.0f);
 		ImVec2 handleMax(topLeft.x + width - 5.0f, topLeft.y + handleHeight);
 		ImVec2 handleCenter((handleMin.x + handleMax.x) * 0.5f, (handleMin.y + handleMax.y) * 0.5f);
-		const ImU32 handleLine = IM_COL32(105, 105, 108, 255);
+		const ImU32 handleLine = IM_COL32(137, 137, 137, 255);
 		for (int i = -1; i <= 1; ++i)
 			draw->AddLine(ImVec2(handleCenter.x - 12.0f, handleCenter.y + i * 5.0f),
 				ImVec2(handleCenter.x + 12.0f, handleCenter.y + i * 5.0f), handleLine, 2.0f);
@@ -891,7 +899,7 @@ namespace TomCat {
 			ImVec2 min(topLeft.x + 5.0f, topLeft.y + handleHeight + gap + i * (buttonHeight + gap));
 			ImVec2 max(min.x + width - 10.0f, min.y + buttonHeight);
 			bool selected = m_GizmoType == tools[i];
-			draw->AddRectFilled(min, max, selected ? active : normal, 5.0f);
+			draw->AddRectFilled(min, max, selected ? active : normal, 2.0f);
 
 			// Four compact symbols: cursor, move, rotate and scale.
 			ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
@@ -984,13 +992,13 @@ namespace TomCat {
 		ImDrawList* dockDraw = ImGui::GetWindowDrawList();
 		ImDrawList* draw = m_GizmoModeToolbarDragging
 			? ImGui::GetForegroundDrawList() : dockDraw;
-		const ImU32 outer = IM_COL32(38, 38, 40, 245);
-		const ImU32 normal = IM_COL32(82, 82, 84, 245);
-		const ImU32 hover = IM_COL32(92, 92, 96, 245);
-		const ImU32 active = IM_COL32(54, 103, 151, 255);
-		const ImU32 line = IM_COL32(225, 225, 225, 255);
-		const ImU32 arrow = IM_COL32(175, 175, 175, 255);
-		const ImU32 accent = IM_COL32(240, 160, 70, 255);
+		const ImU32 outer = IM_COL32(40, 40, 40, 245);
+		const ImU32 normal = IM_COL32(71, 71, 71, 245);
+		const ImU32 hover = IM_COL32(98, 98, 98, 245);
+		const ImU32 active = IM_COL32(44, 93, 135, 255);
+		const ImU32 line = IM_COL32(196, 196, 196, 255);
+		const ImU32 arrow = IM_COL32(137, 137, 137, 255);
+		const ImU32 accent = IM_COL32(212, 127, 42, 255);
 
 		// Persistent full-width dock zone at the top of the Scene view.  Its
 		// height matches the axis toolbar (slightly taller) and the grey fill
@@ -998,13 +1006,13 @@ namespace TomCat {
 		// the blue drop preview shown while dragging.
 		const ImVec2 dockMin(m_ViewportBounds[0].x, m_GizmoModeDockY);
 		const ImVec2 dockMax(m_ViewportBounds[1].x, m_GizmoModeDockY + m_GizmoModeDockHeight);
-		dockDraw->AddRectFilled(dockMin, dockMax, IM_COL32(36, 36, 36, 255), 3.0f);
+		dockDraw->AddRectFilled(dockMin, dockMax, IM_COL32(40, 40, 40, 255), 0.0f);
 		dockDraw->AddLine(ImVec2(dockMin.x, dockMin.y + 0.5f),
-			ImVec2(dockMax.x, dockMin.y + 0.5f), IM_COL32(55, 55, 55, 255), 1.0f);
+			ImVec2(dockMax.x, dockMin.y + 0.5f), IM_COL32(85, 85, 85, 255), 1.0f);
 		dockDraw->AddLine(ImVec2(dockMin.x, dockMax.y - 0.5f),
-			ImVec2(dockMax.x, dockMax.y - 0.5f), IM_COL32(24, 24, 24, 255), 1.0f);
+			ImVec2(dockMax.x, dockMax.y - 0.5f), IM_COL32(25, 25, 25, 255), 1.0f);
 
-		draw->AddRectFilled(topLeft, bottomRight, outer, 4.0f);
+		draw->AddRectFilled(topLeft, bottomRight, outer, 2.0f);
 
 		// Blue drop preview while dragging near the docked strip.  The preview is
 		// an insertion slot, not a full-width highlight: with one toolbar already
@@ -1032,16 +1040,16 @@ namespace TomCat {
 				m_ViewportBounds[1].x - previewWidth - 4.0f));
 			dockDraw->AddRectFilled(ImVec2(previewX, m_GizmoModeDockY),
 				ImVec2(previewX + previewWidth, m_GizmoModeDockY + m_GizmoModeDockHeight),
-				IM_COL32(55, 130, 205, 75), 2.0f);
+				IM_COL32(44, 93, 135, 85), 1.0f);
 			dockDraw->AddRect(ImVec2(previewX + 1.0f, m_GizmoModeDockY + 1.0f),
 				ImVec2(previewX + previewWidth - 1.0f, m_GizmoModeDockY + m_GizmoModeDockHeight - 1.0f),
-				IM_COL32(80, 165, 235, 230), 2.0f, 0, 2.0f);
+				IM_COL32(80, 165, 235, 230), 1.0f, 0, 1.0f);
 		}
 
 		ImVec2 handleMin(topLeft.x + padding, topLeft.y + padding);
 		ImVec2 handleMax(handleMin.x + handleWidth, topLeft.y + height - padding);
 		ImVec2 handleCenter((handleMin.x + handleMax.x) * 0.5f, (handleMin.y + handleMax.y) * 0.5f);
-		const ImU32 handleLine = IM_COL32(105, 105, 108, 255);
+		const ImU32 handleLine = IM_COL32(137, 137, 137, 255);
 		for (int i = -1; i <= 1; ++i)
 			draw->AddLine(ImVec2(handleCenter.x - 7.0f, handleCenter.y + i * 4.0f),
 				ImVec2(handleCenter.x + 7.0f, handleCenter.y + i * 4.0f), handleLine, 2.0f);
@@ -1059,8 +1067,10 @@ namespace TomCat {
 
 		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool selected, bool hovered)
 		{
-			draw->AddRectFilled(min, max, hovered ? hover : normal, 4.0f);
-			draw->AddRect(min, max, selected ? active : IM_COL32(65, 65, 68, 255), 4.0f, 0, 1.0f);
+			// Keep the blue selected state visible while hovering, as in Unity's
+			// Scene toolbar; hover only changes neutral buttons.
+			draw->AddRectFilled(min, max, selected ? active : (hovered ? hover : normal), 2.0f);
+			draw->AddRect(min, max, selected ? active : IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
 		};
 
 		auto DrawDropArrow = [&](const ImVec2& min, const ImVec2& max)
@@ -1157,12 +1167,17 @@ namespace TomCat {
 		float padding = 4;
 
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, padding));
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
 		auto& colors = ImGui::GetStyle().Colors;
+		// Use a framed Unity-style play control instead of a bare floating icon.
+		// When running, the stop control inherits the same blue selected state as
+		// the hierarchy and Scene toolbars.
+		const ImVec4 buttonColor = m_SceneState == SceneState::Play
+			? colors[ImGuiCol_HeaderActive] : colors[ImGuiCol_Button];
+		ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
 		const auto& buttonHovered = colors[ImGuiCol_ButtonHovered];
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(buttonHovered.x, buttonHovered.y, buttonHovered.z, 0.5f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHovered);
 		const auto& buttonActive = colors[ImGuiCol_ButtonActive];
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(buttonActive.x, buttonActive.y, buttonActive.z, 0.5f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, buttonActive);
 
 		float windowWidth = ImGui::GetWindowWidth();
 		ImGui::SetCursorPosX((windowWidth - size) * 0.5f);

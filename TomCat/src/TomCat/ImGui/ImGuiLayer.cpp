@@ -183,35 +183,127 @@ namespace TomCat {
 
 	void ImGuiLayer::SetDarkThemeColors()
 	{
-		auto& colors = ImGui::GetStyle().Colors;
-		colors[ImGuiCol_WindowBg] = ImVec4{ 0.1f, 0.105f, 0.11f, 1.0f };
+		ImGuiStyle& style = ImGui::GetStyle();
+		ImVec4* colors = style.Colors;
 
-		// Headers
-		colors[ImGuiCol_Header] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
-		colors[ImGuiCol_HeaderHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
-		colors[ImGuiCol_HeaderActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		// Unity's dark editor uses a small, neutral grayscale ramp.  Keeping the
+		// ramp in this shared implementation keeps the editor and Hub consistent.
+		// These values are sampled/rounded from the Unity
+		// reference (panel #383838, toolbar #282828, menu #191919, selection
+		// #2C5D87) instead of relying on ImGui's much darker default theme.
+		const auto Rgb = [](int r, int g, int b, int a = 255)
+		{
+			return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+		};
 
-		// Buttons
-		colors[ImGuiCol_Button] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
-		colors[ImGuiCol_ButtonHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
-		colors[ImGuiCol_ButtonActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		const ImVec4 text = Rgb(196, 196, 196);
+		const ImVec4 textBright = Rgb(243, 243, 243);
+		const ImVec4 textDisabled = Rgb(137, 137, 137);
+		const ImVec4 panel = Rgb(56, 56, 56);       // #383838
+		const ImVec4 panelAlt = Rgb(60, 60, 60);    // #3C3C3C
+		const ImVec4 toolbar = Rgb(40, 40, 40);     // #282828
+		const ImVec4 menu = Rgb(25, 25, 25);        // #191919
+		const ImVec4 frame = Rgb(71, 71, 71);       // #474747
+		const ImVec4 frameHover = Rgb(98, 98, 98);  // #626262
+		const ImVec4 frameActive = Rgb(112, 112, 112);
+		const ImVec4 selection = Rgb(44, 93, 135);  // #2C5D87
+		const ImVec4 selectionHover = Rgb(58, 112, 157);
+		const ImVec4 border = Rgb(25, 25, 25);
+		const ImVec4 borderLight = Rgb(85, 85, 85);
 
-		// Frame BG
-		colors[ImGuiCol_FrameBg] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
-		colors[ImGuiCol_FrameBgHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
-		colors[ImGuiCol_FrameBgActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		colors[ImGuiCol_Text] = text;
+		colors[ImGuiCol_TextDisabled] = textDisabled;
+		colors[ImGuiCol_WindowBg] = panel;
+		colors[ImGuiCol_ChildBg] = panel;
+		colors[ImGuiCol_PopupBg] = panelAlt;
+		colors[ImGuiCol_Border] = border;
+		colors[ImGuiCol_BorderShadow] = Rgb(0, 0, 0, 80);
 
-		// Tabs
-		colors[ImGuiCol_Tab] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TabHovered] = ImVec4{ 0.38f, 0.3805f, 0.381f, 1.0f };
-		colors[ImGuiCol_TabActive] = ImVec4{ 0.28f, 0.2805f, 0.281f, 1.0f };
-		colors[ImGuiCol_TabUnfocused] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TabUnfocusedActive] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
+		// Framed controls (fields, combo boxes, checkboxes and sliders).
+		colors[ImGuiCol_FrameBg] = frame;
+		colors[ImGuiCol_FrameBgHovered] = frameHover;
+		colors[ImGuiCol_FrameBgActive] = frameActive;
 
-		// Title
-		colors[ImGuiCol_TitleBg] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TitleBgActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TitleBgCollapsed] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		// Window/title/menu bars are intentionally one step darker than panels.
+		colors[ImGuiCol_TitleBg] = toolbar;
+		colors[ImGuiCol_TitleBgActive] = toolbar;
+		colors[ImGuiCol_TitleBgCollapsed] = menu;
+		colors[ImGuiCol_MenuBarBg] = menu;
+
+		colors[ImGuiCol_ScrollbarBg] = menu;
+		colors[ImGuiCol_ScrollbarGrab] = frame;
+		colors[ImGuiCol_ScrollbarGrabHovered] = frameHover;
+		colors[ImGuiCol_ScrollbarGrabActive] = frameActive;
+		colors[ImGuiCol_CheckMark] = selectionHover;
+		colors[ImGuiCol_SliderGrab] = borderLight;
+		colors[ImGuiCol_SliderGrabActive] = textBright;
+
+		colors[ImGuiCol_Button] = frame;
+		colors[ImGuiCol_ButtonHovered] = frameHover;
+		colors[ImGuiCol_ButtonActive] = frameActive;
+
+		// Headers drive tree rows, selectable items and menu items.  The blue
+		// active state is the same blue used by Unity's hierarchy selection.
+		colors[ImGuiCol_Header] = toolbar;
+		colors[ImGuiCol_HeaderHovered] = frameHover;
+		colors[ImGuiCol_HeaderActive] = selection;
+
+		colors[ImGuiCol_Separator] = borderLight;
+		colors[ImGuiCol_SeparatorHovered] = selectionHover;
+		colors[ImGuiCol_SeparatorActive] = selection;
+		colors[ImGuiCol_ResizeGrip] = borderLight;
+		colors[ImGuiCol_ResizeGripHovered] = selectionHover;
+		colors[ImGuiCol_ResizeGripActive] = selection;
+
+		// Dock tabs and docking feedback follow the same neutral/blue ramp.
+		colors[ImGuiCol_Tab] = toolbar;
+		colors[ImGuiCol_TabHovered] = frameHover;
+		colors[ImGuiCol_TabActive] = panelAlt;
+		colors[ImGuiCol_TabUnfocused] = menu;
+		colors[ImGuiCol_TabUnfocusedActive] = toolbar;
+		colors[ImGuiCol_DockingPreview] = Rgb(44, 93, 135, 150);
+		colors[ImGuiCol_DockingEmptyBg] = Rgb(48, 48, 48);
+
+		colors[ImGuiCol_PlotLines] = selectionHover;
+		colors[ImGuiCol_PlotLinesHovered] = textBright;
+		colors[ImGuiCol_PlotHistogram] = selection;
+		colors[ImGuiCol_PlotHistogramHovered] = selectionHover;
+		colors[ImGuiCol_TableHeaderBg] = toolbar;
+		colors[ImGuiCol_TableBorderStrong] = borderLight;
+		colors[ImGuiCol_TableBorderLight] = border;
+		colors[ImGuiCol_TableRowBg] = panel;
+		colors[ImGuiCol_TableRowBgAlt] = panelAlt;
+		colors[ImGuiCol_TextSelectedBg] = Rgb(44, 93, 135, 115);
+		colors[ImGuiCol_DragDropTarget] = Rgb(80, 165, 235, 220);
+		colors[ImGuiCol_NavHighlight] = selectionHover;
+		colors[ImGuiCol_NavWindowingHighlight] = textBright;
+		colors[ImGuiCol_NavWindowingDimBg] = Rgb(0, 0, 0, 80);
+		colors[ImGuiCol_ModalWindowDimBg] = Rgb(0, 0, 0, 110);
+
+		// Unity controls are compact and nearly rectangular.  In particular,
+		// removing ImGui's default 7px rounding keeps dock tabs, fields and the
+		// Scene toolbar visually aligned with the reference editor.
+		style.DisabledAlpha = 0.55f;
+		style.WindowPadding = ImVec2(6.0f, 6.0f);
+		style.WindowRounding = 0.0f;
+		style.WindowBorderSize = 1.0f;
+		style.ChildRounding = 0.0f;
+		style.ChildBorderSize = 1.0f;
+		style.PopupRounding = 2.0f;
+		style.PopupBorderSize = 1.0f;
+		style.FramePadding = ImVec2(5.0f, 3.0f);
+		style.FrameRounding = 2.0f;
+		style.FrameBorderSize = 0.0f;
+		style.ItemSpacing = ImVec2(4.0f, 3.0f);
+		style.ItemInnerSpacing = ImVec2(4.0f, 3.0f);
+		style.CellPadding = ImVec2(4.0f, 3.0f);
+		style.IndentSpacing = 16.0f;
+		style.ScrollbarSize = 14.0f;
+		style.ScrollbarRounding = 0.0f;
+		style.GrabMinSize = 10.0f;
+		style.GrabRounding = 2.0f;
+		style.TabRounding = 2.0f;
+		style.TabBorderSize = 1.0f;
 	}
 
 }
