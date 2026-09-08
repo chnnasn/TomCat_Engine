@@ -49,6 +49,9 @@
     <Filter Include="vendor\ImGuizmo">
       <UniqueIdentifier>{73BF7F4C-DF4A-ED10-E85B-700554664911}</UniqueIdentifier>
     </Filter>
+    <Filter Include="vendor\ImGuizmo\src">
+      <UniqueIdentifier>{0AFF83FC-7660-610A-FFCD-A7BC6B2E98C9}</UniqueIdentifier>
+    </Filter>
     <Filter Include="vendor\glm">
       <UniqueIdentifier>{829FC5A8-6E57-07F6-D75E-E051C335A2E6}</UniqueIdentifier>
     </Filter>
@@ -243,8 +246,8 @@
     <ClInclude Include="src\tcpch.h">
       <Filter>src</Filter>
     </ClInclude>
-    <ClInclude Include="vendor\ImGuizmo\ImGuizmo.h">
-      <Filter>vendor\ImGuizmo</Filter>
+    <ClInclude Include="vendor\ImGuizmo\src\ImGuizmo.h">
+      <Filter>vendor\ImGuizmo\src</Filter>
     </ClInclude>
     <ClInclude Include="vendor\glm\glm\common.hpp">
       <Filter>vendor\glm\glm</Filter>
@@ -1631,8 +1634,8 @@
     <ClCompile Include="src\tcpch.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="vendor\ImGuizmo\ImGuizmo.cpp">
-      <Filter>vendor\ImGuizmo</Filter>
+    <ClCompile Include="vendor\ImGuizmo\src\ImGuizmo.cpp">
+      <Filter>vendor\ImGuizmo\src</Filter>
     </ClCompile>
     <ClCompile Include="vendor\stb_image\stb_image.cpp">
       <Filter>vendor\stb_image</Filter>
