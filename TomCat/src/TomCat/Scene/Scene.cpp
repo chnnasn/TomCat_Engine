@@ -116,12 +116,14 @@ namespace TomCat {
 		auto& dstSceneRegistry = newScene->m_Registry;
 		std::unordered_map<UUID, entt::entity> enttMap;
 
-		// Create entities in new scene
-		auto idView = srcSceneRegistry.view<ID>();
-		for (auto e : idView)
+		// Create entities in their original creation order so the hierarchy keeps
+		// newly created items at the bottom after a scene copy.
+		for (UUID uuid : other->m_EntityOrder)
 		{
-			UUID uuid = srcSceneRegistry.get<ID>(e).id;
-			const auto& name = srcSceneRegistry.get<Tag>(e)._Tag;
+			Entity sourceEntity = other->FindEntityByUUID(uuid);
+			if (!sourceEntity)
+				continue;
+			const auto& name = sourceEntity.GetName();
 			Entity newEntity = newScene->CreateEntityWithUUID(uuid, name);
 			enttMap[uuid] = (entt::entity)newEntity;
 		}
@@ -152,7 +154,8 @@ namespace TomCat {
 
 	Entity Scene::CreateEntity(const std::string& name)
 	{
-		return CreateEntityWithUUID(UUID(), name);
+		const std::string baseName = name.empty() ? "Entity" : name;
+		return CreateEntityWithUUID(UUID(), MakeUniqueEntityName(baseName));
 	}
 
 	Entity Scene::CreateEntityWithUUID(UUID uuid, const std::string& name)
@@ -162,7 +165,33 @@ namespace TomCat {
 		entity.AddComponent<Transform>();
 		auto& tag = entity.AddComponent<Tag>();
 		tag._Tag = name.empty() ? "Entity" : name;
+		m_EntityOrder.push_back(uuid);
 		return entity;
+	}
+
+	std::string Scene::MakeUniqueEntityName(const std::string& requestedName) const
+	{
+		const std::string baseName = requestedName.empty() ? "Entity" : requestedName;
+		auto nameExists = [this](const std::string& candidate)
+		{
+			auto view = m_Registry.view<Tag>();
+			for (auto entityID : view)
+			{
+				if (view.get<Tag>(entityID)._Tag == candidate)
+					return true;
+			}
+			return false;
+		};
+
+		if (!nameExists(baseName))
+			return baseName;
+
+		for (uint32_t suffix = 1; ; ++suffix)
+		{
+			std::string candidate = baseName + " (" + std::to_string(suffix) + ")";
+			if (!nameExists(candidate))
+				return candidate;
+		}
 	}
 
 	void Scene::SetWorldTransform(Entity entity, const glm::mat4& worldTransform)
@@ -246,6 +275,7 @@ namespace TomCat {
 
 		SetParent(entity, Entity{});
 		m_ChildrenMap.erase(entityUUID);
+		m_EntityOrder.erase(std::remove(m_EntityOrder.begin(), m_EntityOrder.end(), entityUUID), m_EntityOrder.end());
 		m_Registry.destroy(entity);
 	}
 
@@ -331,10 +361,8 @@ namespace TomCat {
 	std::vector<UUID> Scene::GetRootEntityUUIDs()
 	{
 		std::vector<UUID> result;
-		auto view = m_Registry.view<ID>();
-		for (auto entity : view)
+		for (UUID uuid : m_EntityOrder)
 		{
-			UUID uuid = view.get<ID>(entity).id;
 			auto parentIt = m_ParentMap.find(uuid);
 			if (parentIt == m_ParentMap.end() || !FindEntityByUUID(parentIt->second))
 				result.push_back(uuid);

@@ -280,6 +280,7 @@ namespace TomCat {
 			return;
 		Entity pasted = m_Context->DuplicateEntity(m_ClipboardEntity);
 		m_SelectionContext = pasted;
+		BeginRename(pasted);
 		if (m_ClipboardIsCut)
 		{
 			m_EntityToDelete = m_ClipboardEntity;
@@ -292,7 +293,10 @@ namespace TomCat {
 	void SceneHierarchyPanel::DuplicateSelectedEntity()
 	{
 		if (m_SelectionContext)
+		{
 			m_SelectionContext = m_Context->DuplicateEntity(m_SelectionContext);
+			BeginRename(m_SelectionContext);
+		}
 	}
 
 	void SceneHierarchyPanel::DeleteSelectedEntity()
@@ -333,12 +337,14 @@ namespace TomCat {
 		{
 			Entity entity = m_Context->CreateEntity("Empty Entity");
 			m_SelectionContext = entity;
+			BeginRename(entity);
 		}
 		if (ImGui::MenuItem("Camera"))
 		{
 			Entity camera = m_Context->CreateEntity("Camera");
 			camera.AddComponent<C_Camera>();
 			m_SelectionContext = camera;
+			BeginRename(camera);
 		}
 
 		if (ImGui::BeginMenu("2D Object"))
@@ -350,6 +356,7 @@ namespace TomCat {
 					Entity square = m_Context->CreateEntity("Square");
 					square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
 					m_SelectionContext = square;
+					BeginRename(square);
 				}
 				ImGui::EndMenu();
 			}
