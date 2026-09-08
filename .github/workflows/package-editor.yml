@@ -12,7 +12,7 @@ on:
           - editor
           - hub
       version:
-        description: 'Version (e.g. 0.2.0)'
+        description: 'Release version/tag (e.g. 0.2.0)'
         required: true
         type: string
 
@@ -66,7 +66,6 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ inputs.target }}
-          VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -81,12 +80,22 @@ jobs:
           }
 
           function Invoke-Box([string]$evbName, [string]$srcDir, [string]$srcExe) {
+            . "$env:GITHUB_WORKSPACE\Scripts\EvbTools.ps1"
+            $srcDir = (Resolve-Path -LiteralPath $srcDir).Path
+            $packageDir = Resolve-EvbPackageDirectory -SourceDir $srcDir
+            $packageFileCount = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force).Count
+            Write-Host "Including $packageFileCount file(s) from $packageDir"
             if (-not (Test-Path "$srcDir\TomCat.log")) { New-Item -ItemType File -Path "$srcDir\TomCat.log" -Force | Out-Null }
             New-Item -ItemType Directory -Force -Path "dist" | Out-Null
             Copy-Item "$srcDir\$srcExe" "dist\$srcExe" -Force
+            $outputName = if ($evbName -eq "editor.evb") { "TomCat.exe" } else { "TomCatHub.exe" }
+            if (Test-Path "dist\$outputName") { Remove-Item "dist\$outputName" -Force }
             $content = Get-Content "Scripts\$evbName" -Raw
             $content = $content.Replace('E:\Github\TomCat_Engine', $env:GITHUB_WORKSPACE)
-            Set-Content -Path "Scripts\$evbName-ci.evb" -Value $content -NoNewline
+            $content = Set-EvbProperty -TemplateText $content -ElementName "InputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$srcExe")
+            $content = Set-EvbProperty -TemplateText $content -ElementName "OutputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$outputName")
+            $content = Set-EvbPackageTree -TemplateText $content -PackageSource $packageDir
+            Write-EvbProject -Path "Scripts\$evbName-ci.evb" -Text $content
             $evb = @(
               "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe",
               "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
@@ -95,9 +104,13 @@ jobs:
             Push-Location "Scripts"
             try { & $evb "$evbName-ci.evb" } finally { Pop-Location }
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path "dist\$outputName" -PathType Leaf)) {
+              throw "Enigma Virtual Box did not produce dist\$outputName"
+            }
+            Remove-Item "Scripts\$evbName-ci.evb" -Force -ErrorAction SilentlyContinue
+            Remove-Item "dist\$srcExe" -Force -ErrorAction SilentlyContinue
           }
 
-          $ver = $env:VERSION
           $t = $env:TARGET
 
           if ($t -eq "editor" -or $t -eq "both") {
@@ -105,29 +118,27 @@ jobs:
             Invoke-Gen "Editor"
             Invoke-Build "Editor\TomCatInut\TomCatInut.vcxproj"
             Invoke-Box "editor.evb" "Editor\bin\Release-windows-x86_64\TomCatInut" "TomCatInut.exe"
-            Copy-Item "dist\TomCat.exe" "dist\TomCatEditor-$ver.exe" -Force
           }
           if ($t -eq "hub" -or $t -eq "both") {
             Write-Host "== Building Hub =="
             Invoke-Gen "Builder"
             Invoke-Build "Builder\Manager\Manager.vcxproj"
             Invoke-Box "hub.evb" "Builder\bin\Release-windows-x86_64\Manager" "Manager.exe"
-            Copy-Item "dist\TomCatHub.exe" "dist\TomCatHub-$ver.exe" -Force
           }
 
       - name: Upload Editor artifact
         if: ${{ inputs.target == 'editor' || inputs.target == 'both' }}
         uses: actions/upload-artifact@v4
         with:
-          name: TomCatEditor-${{ inputs.version }}
-          path: dist/TomCatEditor-${{ inputs.version }}.exe
+          name: TomCat
+          path: dist/TomCat.exe
 
       - name: Upload Hub artifact
         if: ${{ inputs.target == 'hub' || inputs.target == 'both' }}
         uses: actions/upload-artifact@v4
         with:
-          name: TomCatHub-${{ inputs.version }}
-          path: dist/TomCatHub-${{ inputs.version }}.exe
+          name: TomCatHub
+          path: dist/TomCatHub.exe
 
       - name: Publish to GitHub Release
         if: ${{ inputs.target == 'both' }}
@@ -136,7 +147,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ inputs.version }}"
-          $assets = @("dist\TomCatEditor-${{ inputs.version }}.exe", "dist\TomCatHub-${{ inputs.version }}.exe")
+          $assets = @("dist\TomCat.exe", "dist\TomCatHub.exe")
           # Check whether the release already exists (no error swallowing)
           gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) {
