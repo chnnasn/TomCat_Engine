@@ -39,7 +39,12 @@ function Get-EvbFileTreeXml {
             [void]$parts.Add("$Indent<File>")
             [void]$parts.Add("$Indent  <Type>3</Type>")
             [void]$parts.Add("$Indent  <Name>$name</Name>")
-            [void]$parts.Add("$Indent  <Action>0</Action>")
+            # EVB uses the Action field on directory nodes for the policy that
+            # controls *new* children.  Action=0 means "new folders and files
+            # become real", which would materialize Packages/cache when the
+            # application writes its shader cache.  Keep package directories
+            # fully virtual so a boxed executable stays self-contained.
+            [void]$parts.Add("$Indent  <Action>3</Action>")
             [void]$parts.Add("$Indent  <OverwriteDateTime>False</OverwriteDateTime>")
             [void]$parts.Add("$Indent  <OverwriteAttributes>False</OverwriteAttributes>")
             [void]$parts.Add("$Indent  <HideFromDialogs>0</HideFromDialogs>")
@@ -100,7 +105,20 @@ function Set-EvbPackageTree {
     }
 
     # Locate the Packages folder node.  The root of an EVB file is `<>`, so a
-    # normal [xml] cast cannot be used here.
+    # normal [xml] cast cannot be used here.  Its Action controls how files
+    # created below the virtual folder are handled; force it to the fully
+    # virtual mode before replacing the generated children.
+    $packageActionPattern = '(?is)(<File\b[^>]*>\s*<Type>\s*3\s*</Type>\s*<Name>\s*Packages\s*</Name>\s*<Action>)\s*\d+\s*(</Action>)'
+    $packageActionMatch = [regex]::Match($TemplateText, $packageActionPattern)
+    if (-not $packageActionMatch.Success) {
+        throw "EVB template does not contain an Action field for the Packages node"
+    }
+    $packageActionEvaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+        param([System.Text.RegularExpressions.Match]$Match)
+        return $Match.Groups[1].Value + "3" + $Match.Groups[2].Value
+    }
+    $TemplateText = [regex]::Replace($TemplateText, $packageActionPattern, $packageActionEvaluator, 1)
+
     $packageMarker = [regex]::Match(
         $TemplateText,
         '(?is)<File\b[^>]*>\s*<Type>\s*3\s*</Type>\s*<Name>\s*Packages\s*</Name>'
@@ -156,6 +174,7 @@ function Set-EvbPackageTree {
     if ($lineStart -lt 0) { $lineStart = 0 } else { $lineStart++ }
     $filesIndent = $TemplateText.Substring($lineStart, $openIndex - $lineStart)
     $entryIndent = $filesIndent + "  "
+
     $tree = Get-EvbFileTreeXml -RootPath (Resolve-Path -LiteralPath $PackageSource).Path -Indent $entryIndent
     if ([string]::IsNullOrEmpty($tree)) {
         $replacement = "`r`n$filesIndent"

@@ -30,7 +30,7 @@
           <File>
             <Type>3</Type>
             <Name>Packages</Name>
-            <Action>0</Action>
+            <Action>3</Action>
             <OverwriteDateTime>False</OverwriteDateTime>
             <OverwriteAttributes>False</OverwriteAttributes>
             <HideFromDialogs>0</HideFromDialogs>
@@ -39,7 +39,7 @@
               <File>
                 <Type>3</Type>
                 <Name>fonts</Name>
-                <Action>0</Action>
+                <Action>3</Action>
                 <OverwriteDateTime>False</OverwriteDateTime>
                 <OverwriteAttributes>False</OverwriteAttributes>
                 <HideFromDialogs>0</HideFromDialogs>
@@ -47,7 +47,7 @@
                   <File>
                     <Type>3</Type>
                     <Name>opensans</Name>
-                    <Action>0</Action>
+                    <Action>3</Action>
                     <OverwriteDateTime>False</OverwriteDateTime>
                     <OverwriteAttributes>False</OverwriteAttributes>
                     <HideFromDialogs>0</HideFromDialogs>
@@ -83,7 +83,7 @@
               <File>
                 <Type>3</Type>
                 <Name>Resources</Name>
-                <Action>0</Action>
+                <Action>3</Action>
                 <OverwriteDateTime>False</OverwriteDateTime>
                 <OverwriteAttributes>False</OverwriteAttributes>
                 <HideFromDialogs>0</HideFromDialogs>
@@ -91,7 +91,7 @@
                   <File>
                     <Type>3</Type>
                     <Name>Icons</Name>
-                    <Action>0</Action>
+                    <Action>3</Action>
                     <OverwriteDateTime>False</OverwriteDateTime>
                     <OverwriteAttributes>False</OverwriteAttributes>
                     <HideFromDialogs>0</HideFromDialogs>
@@ -99,7 +99,7 @@
                       <File>
                         <Type>3</Type>
                         <Name>ContentBrowser</Name>
-                        <Action>0</Action>
+                        <Action>3</Action>
                         <OverwriteDateTime>False</OverwriteDateTime>
                         <OverwriteAttributes>False</OverwriteAttributes>
                         <HideFromDialogs>0</HideFromDialogs>
@@ -209,7 +209,7 @@
               <File>
                 <Type>3</Type>
                 <Name>Shaders</Name>
-                <Action>0</Action>
+                <Action>3</Action>
                 <OverwriteDateTime>False</OverwriteDateTime>
                 <OverwriteAttributes>False</OverwriteAttributes>
                 <HideFromDialogs>0</HideFromDialogs>
