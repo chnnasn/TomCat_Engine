@@ -1,6 +1,10 @@
 #include "EditorLayer.h"
 #include <imgui/imgui.h>
 
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
@@ -18,6 +22,139 @@ namespace TomCat {
 		: Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f }), m_Is2DMode(is2DMode)
 	{
 		m_CurrentProject = ProjectManager::Get().GetActiveProject();
+	}
+
+	void EditorLayer::LoadSceneToolbarLayout()
+	{
+		// Project layouts are loaded after the editor-level layout, so prefer the
+		// project imgui.ini and fall back to the current working directory for
+		// projects created before toolbar persistence was added.
+		auto loadFrom = [&](const std::filesystem::path& iniPath) -> bool
+		{
+			std::ifstream fin(iniPath);
+			if (!fin)
+				return false;
+
+			bool inSection = false;
+			bool foundSection = false;
+			bool hasModeDocked = false;
+			bool hasTransformDocked = false;
+			bool hasModeFirst = false;
+			bool hasModeX = false, hasModeY = false;
+			bool hasTransformX = false, hasTransformY = false;
+			std::string line;
+			while (std::getline(fin, line))
+			{
+				if (!line.empty() && line.back() == '\r')
+					line.pop_back();
+				if (line == "[SceneToolbars]")
+				{
+					inSection = true;
+					foundSection = true;
+					continue;
+				}
+				if (!inSection)
+					continue;
+				if (!line.empty() && line.front() == '[')
+					break;
+				const std::string::size_type equals = line.find('=');
+				if (equals == std::string::npos)
+					continue;
+				const std::string key = line.substr(0, equals);
+				const std::string value = line.substr(equals + 1);
+				auto readBool = [&value](bool& destination, bool& present)
+				{
+					if (value == "1" || value == "true" || value == "True")
+					{
+						destination = true;
+						present = true;
+					}
+					else if (value == "0" || value == "false" || value == "False")
+					{
+						destination = false;
+						present = true;
+					}
+				};
+				auto readFloat = [&value](float& destination, bool& present)
+				{
+					try
+					{
+						destination = std::stof(value);
+						present = true;
+					}
+					catch (const std::exception&)
+					{
+						// Ignore malformed values and retain the in-code default.
+					}
+				};
+
+				if (key == "ModeToolbarDocked")
+					readBool(m_GizmoModeToolbarDocked, hasModeDocked);
+				else if (key == "TransformToolbarDocked")
+					readBool(m_GizmoTransformToolbarDocked, hasTransformDocked);
+				else if (key == "ModeToolbarFirst")
+					readBool(m_GizmoModeToolbarFirst, hasModeFirst);
+				else if (key == "ModeToolbarOffsetX")
+					readFloat(m_GizmoModeToolbarOffset.x, hasModeX);
+				else if (key == "ModeToolbarOffsetY")
+					readFloat(m_GizmoModeToolbarOffset.y, hasModeY);
+				else if (key == "TransformToolbarOffsetX")
+					readFloat(m_GizmoToolbarOffset.x, hasTransformX);
+				else if (key == "TransformToolbarOffsetY")
+					readFloat(m_GizmoToolbarOffset.y, hasTransformY);
+			}
+			return foundSection;
+		};
+
+		bool loaded = false;
+		if (m_CurrentProject)
+			loaded = loadFrom(m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini");
+		if (!loaded)
+			loadFrom(std::filesystem::current_path() / "imgui.ini");
+	}
+
+	void EditorLayer::SaveSceneToolbarLayout()
+	{
+		const std::filesystem::path iniPath = m_CurrentProject
+			? m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini"
+			: std::filesystem::current_path() / "imgui.ini";
+
+		std::string ini;
+		{
+			std::ifstream fin(iniPath);
+			if (fin)
+			{
+				std::stringstream contents;
+				contents << fin.rdbuf();
+				ini = contents.str();
+			}
+		}
+
+		std::ostringstream section;
+		section << "\n[SceneToolbars]\n"
+			<< "ModeToolbarDocked=" << (m_GizmoModeToolbarDocked ? 1 : 0) << "\n"
+			<< "TransformToolbarDocked=" << (m_GizmoTransformToolbarDocked ? 1 : 0) << "\n"
+			<< "ModeToolbarFirst=" << (m_GizmoModeToolbarFirst ? 1 : 0) << "\n"
+			<< std::fixed << std::setprecision(3)
+			<< "ModeToolbarOffsetX=" << m_GizmoModeToolbarOffset.x << "\n"
+			<< "ModeToolbarOffsetY=" << m_GizmoModeToolbarOffset.y << "\n"
+			<< "TransformToolbarOffsetX=" << m_GizmoToolbarOffset.x << "\n"
+			<< "TransformToolbarOffsetY=" << m_GizmoToolbarOffset.y << "\n";
+
+		const std::string sectionName = "[SceneToolbars]";
+		const std::string::size_type sectionPos = ini.find(sectionName);
+		if (sectionPos != std::string::npos)
+		{
+			const std::string::size_type nextSection = ini.find("\n[", sectionPos + sectionName.size());
+			ini.erase(sectionPos, nextSection == std::string::npos ? std::string::npos : nextSection - sectionPos);
+		}
+		if (!ini.empty() && ini.back() != '\n')
+			ini.push_back('\n');
+		ini += section.str();
+
+		std::ofstream fout(iniPath, std::ios::trunc);
+		if (fout)
+			fout << ini;
 	}
 
 	void EditorLayer::OnAttach()
@@ -53,6 +190,11 @@ namespace TomCat {
 				ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
 			}
 		}
+
+		// Restore the custom Scene toolbar arrangement after all ImGui window
+		// settings have been loaded, so the project layout wins over the fallback
+		// editor-level layout.
+		LoadSceneToolbarLayout();
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 		m_EditorCamera.Set2DMode(m_Is2DMode);
@@ -92,6 +234,10 @@ namespace TomCat {
 			
 			m_CurrentProject->Save();
 		}
+
+		// Append the custom section after ImGui writes its own settings; otherwise
+		// SaveIniSettingsToDisk would overwrite the toolbar section.
+		SaveSceneToolbarLayout();
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
@@ -315,11 +461,18 @@ namespace TomCat {
 		// Draw the mode bar in the foreground layer for both docked and floating
 		// states.  The docked position is still computed from the Scene row, while
 		// the foreground draw list keeps it above that row during drag operations.
-		// Foreground primitives are global.  Never submit them while the Scene tab
-		// is hidden (for example when the Game tab occupies the same dock node), or
-		// they will be painted over the Game view using stale Scene coordinates.
-		if (sceneVisible)
+		// Foreground primitives are global.  Do not submit ordinary overlays while
+		// the Scene tab is hidden; an active drag is the one exception below so the
+		// toolbar remains visible while crossing the tab bar.
+		// Keep rendering an active drag even when docking temporarily marks the
+		// Scene tab hidden (for example while the cursor crosses the Scene/Game
+		// tab bar).  Otherwise the drag state has no frame in which to paint and
+		// the anchor toolbar appears to disappear.
+		if (sceneVisible || m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging)
 		{
+			// The mode function lays down the shared dock strip first.  A dragged
+			// toolbar draws only its own body on the viewport foreground list, so
+			// it stays topmost without repainting the strip over the other bar.
 			UI_SceneGizmoModeToolbarOverlay();
 			UI_SceneGizmoToolbar();
 		}
@@ -590,6 +743,96 @@ namespace TomCat {
 	{
 		// Draw directly over the Scene image. This keeps the palette clipped and
 		// owned by the Scene view instead of creating another dockable ImGui window.
+		const float dockPadding = 5.0f;
+		const float dockHandleWidth = 24.0f;
+		const float dockButtonWidth = 34.0f;
+		const float dockButtonHeight = 28.0f;
+		const float dockGap = 4.0f;
+		const float dockWidth = dockPadding * 2.0f + dockHandleWidth + dockGap +
+			dockButtonWidth * 4.0f + dockGap * 3.0f;
+		const float modeWidth = 5.0f * 2.0f + 24.0f + dockGap + 62.0f * 2.0f + dockGap;
+
+		if (m_GizmoTransformToolbarDocked)
+		{
+			const float dockStartX = m_ViewportBounds[0].x + 8.0f;
+			const float transformDockX = (m_GizmoModeToolbarDocked && m_GizmoModeToolbarFirst)
+				? dockStartX + modeWidth + dockGap : dockStartX;
+			ImVec2 topLeft(transformDockX, m_GizmoModeDockY);
+			ImVec2 bottomRight(topLeft.x + dockWidth, topLeft.y + dockButtonHeight + dockPadding * 2.0f);
+			// A docked toolbar may be torn off while the cursor leaves the Scene
+			// window.  Use the viewport foreground list during the drag so the
+			// active bar is not clipped away by the Scene window bounds.
+			ImDrawList* draw = m_GizmoTransformToolbarDragging
+				? ImGui::GetForegroundDrawList() : ImGui::GetWindowDrawList();
+			const ImU32 outer = IM_COL32(38, 38, 40, 245);
+			const ImU32 normal = IM_COL32(82, 82, 84, 245);
+			const ImU32 active = IM_COL32(54, 103, 151, 255);
+			const ImU32 line = IM_COL32(225, 225, 225, 255);
+			const ImU32 handleLine = IM_COL32(105, 105, 108, 255);
+			draw->AddRectFilled(topLeft, bottomRight, outer, 4.0f);
+
+			ImVec2 handleMin(topLeft.x + dockPadding, topLeft.y + dockPadding);
+			ImVec2 handleMax(handleMin.x + dockHandleWidth, topLeft.y + dockButtonHeight + dockPadding);
+			ImVec2 handleCenter((handleMin.x + handleMax.x) * 0.5f, (handleMin.y + handleMax.y) * 0.5f);
+			for (int i = -1; i <= 1; ++i)
+				draw->AddLine(ImVec2(handleCenter.x - 7.0f, handleCenter.y + i * 4.0f),
+					ImVec2(handleCenter.x + 7.0f, handleCenter.y + i * 4.0f), handleLine, 2.0f);
+
+			const bool transformWasDragging = m_GizmoTransformToolbarDragging;
+			UI_SceneToolbarDragHandle("##scene_transform_toolbar_docked", m_GizmoToolbarOffset,
+				m_GizmoTransformToolbarDocked, m_GizmoTransformToolbarDragging,
+				handleMin, handleMax, 0.0f, true);
+			if (transformWasDragging && !m_GizmoTransformToolbarDragging && m_GizmoTransformToolbarDocked)
+			{
+				const float x = ImGui::GetMousePos().x;
+				m_GizmoModeToolbarFirst = !m_GizmoModeToolbarDocked ||
+					x >= dockStartX + modeWidth * 0.5f;
+				SaveSceneToolbarLayout();
+			}
+
+			const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
+				ImGuizmo::OPERATION::ROTATE, ImGuizmo::OPERATION::SCALE };
+			for (int i = 0; i < 4; ++i)
+			{
+				ImVec2 min(topLeft.x + dockPadding + dockHandleWidth + dockGap + i * (dockButtonWidth + dockGap),
+					topLeft.y + dockPadding);
+				ImVec2 max(min.x + dockButtonWidth, min.y + dockButtonHeight);
+				const bool selected = m_GizmoType == tools[i];
+				draw->AddRectFilled(min, max, selected ? active : normal, 4.0f);
+				draw->AddRect(min, max, selected ? active : IM_COL32(65, 65, 68, 255), 4.0f, 0, 1.0f);
+				ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+				if (i == 0)
+				{
+					draw->AddTriangleFilled(ImVec2(c.x - 6, c.y - 10), ImVec2(c.x + 7, c.y + 8),
+						ImVec2(c.x, c.y + 6), line);
+					draw->AddLine(ImVec2(c.x, c.y + 6), ImVec2(c.x - 4, c.y + 11), line, 2.0f);
+				}
+				else if (i == 1)
+				{
+					draw->AddLine(ImVec2(c.x - 9, c.y), ImVec2(c.x + 9, c.y), line, 2.0f);
+					draw->AddLine(ImVec2(c.x, c.y - 9), ImVec2(c.x, c.y + 9), line, 2.0f);
+				}
+				else if (i == 2)
+				{
+					draw->AddCircle(c, 8.0f, line, 20, 2.0f);
+					draw->AddTriangleFilled(ImVec2(c.x + 7, c.y - 8), ImVec2(c.x + 2, c.y - 9), ImVec2(c.x + 7, c.y - 3), line);
+				}
+				else
+				{
+					draw->AddLine(ImVec2(c.x - 8, c.y - 7), ImVec2(c.x - 2, c.y - 7), line, 2.0f);
+					draw->AddLine(ImVec2(c.x - 8, c.y - 7), ImVec2(c.x - 8, c.y - 1), line, 2.0f);
+					draw->AddLine(ImVec2(c.x + 8, c.y + 7), ImVec2(c.x + 2, c.y + 7), line, 2.0f);
+					draw->AddLine(ImVec2(c.x + 8, c.y + 7), ImVec2(c.x + 8, c.y + 1), line, 2.0f);
+				}
+				ImGui::SetCursorScreenPos(min);
+				ImGui::InvisibleButton((std::string("##scene_docked_tool_") + std::to_string(i)).c_str(),
+					ImVec2(max.x - min.x, max.y - min.y));
+				if (ImGui::IsItemClicked())
+					m_GizmoType = tools[i];
+			}
+			return;
+		}
+
 		const float width = 52.0f;
 		const float handleHeight = 28.0f;
 		const float buttonHeight = 50.0f;
@@ -611,7 +854,8 @@ namespace TomCat {
 		ImVec2 topLeft(m_ViewportBounds[0].x + m_GizmoToolbarOffset.x,
 			m_ViewportBounds[0].y + m_GizmoToolbarOffset.y);
 		ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
-		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImDrawList* draw = m_GizmoTransformToolbarDragging
+			? ImGui::GetForegroundDrawList() : ImGui::GetWindowDrawList();
 		const ImU32 outer = IM_COL32(38, 38, 40, 245);
 		const ImU32 normal = IM_COL32(82, 82, 84, 245);
 		const ImU32 active = IM_COL32(54, 103, 151, 255);
@@ -627,9 +871,18 @@ namespace TomCat {
 		for (int i = -1; i <= 1; ++i)
 			draw->AddLine(ImVec2(handleCenter.x - 12.0f, handleCenter.y + i * 5.0f),
 				ImVec2(handleCenter.x + 12.0f, handleCenter.y + i * 5.0f), handleLine, 2.0f);
+		const bool transformWasDragging = m_GizmoTransformToolbarDragging;
 		UI_SceneToolbarDragHandle("##scene_transform_toolbar", m_GizmoToolbarOffset,
 			m_GizmoTransformToolbarDocked, m_GizmoTransformToolbarDragging,
-			handleMin, handleMax, 0.0f, false);
+			handleMin, handleMax, 0.0f, true);
+		if (transformWasDragging && !m_GizmoTransformToolbarDragging && m_GizmoTransformToolbarDocked)
+		{
+			const float modeWidth = 5.0f * 2.0f + 24.0f + 4.0f + 62.0f * 2.0f + 4.0f;
+			const float dockStartX = m_ViewportBounds[0].x + 8.0f;
+			m_GizmoModeToolbarFirst = !m_GizmoModeToolbarDocked ||
+				ImGui::GetMousePos().x >= dockStartX + modeWidth * 0.5f;
+			SaveSceneToolbarLayout();
+		}
 
 		const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
 			ImGuizmo::OPERATION::ROTATE, ImGuizmo::OPERATION::SCALE };
@@ -687,6 +940,14 @@ namespace TomCat {
 		const float gap = 4.0f;
 		const float height = buttonHeight + padding * 2.0f;
 		const float width = padding * 2.0f + handleWidth + gap + buttonWidth * 2.0f + gap;
+		// The Q/W/E/R toolbar uses the same strip when docked.  Keep these
+		// dimensions here (and in its renderer below) so insertion previews and
+		// the two bars always agree about their occupied widths.
+		const float transformHandleWidth = 24.0f;
+		const float transformButtonWidth = 34.0f;
+		const float transformWidth = 5.0f * 2.0f + transformHandleWidth + gap +
+			transformButtonWidth * 4.0f + gap * 3.0f;
+		const float dockGap = 4.0f;
 
 		// While dragging, let the bar follow the mouse freely so it can cover the
 		// Scene top strip.  When idle, keep it inside the viewport while still
@@ -704,8 +965,11 @@ namespace TomCat {
 
 		// Dock to the same strip used by the drop preview. Extend the ImGui item
 		// clip rectangle as well as the drawing clip so the handle stays interactive.
+		const float dockStartX = m_ViewportBounds[0].x + 8.0f;
+		const float modeDockX = (m_GizmoModeToolbarDocked && m_GizmoTransformToolbarDocked && !m_GizmoModeToolbarFirst)
+			? dockStartX + transformWidth + dockGap : dockStartX;
 		ImVec2 topLeft = m_GizmoModeToolbarDocked
-			? ImVec2(m_ViewportBounds[0].x + 8.0f, m_GizmoModeDockY)
+			? ImVec2(modeDockX, m_GizmoModeDockY)
 			: ImVec2(m_ViewportBounds[0].x + m_GizmoModeToolbarOffset.x,
 				m_ViewportBounds[0].y + m_GizmoModeToolbarOffset.y);
 		ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
@@ -713,7 +977,13 @@ namespace TomCat {
 		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
 		ImGui::PushClipRect(ImVec2(ImGui::GetWindowPos().x, m_GizmoModeDockY),
 			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), false);
-		ImDrawList* draw = ImGui::GetWindowDrawList();
+		// Keep the shared strip and insertion preview in the Scene window layer;
+		// otherwise their full-width background would cover the Q/W/E/R bar when
+		// the anchor/mode bar is the one being dragged.  Only the active toolbar
+		// body is promoted to the viewport foreground.
+		ImDrawList* dockDraw = ImGui::GetWindowDrawList();
+		ImDrawList* draw = m_GizmoModeToolbarDragging
+			? ImGui::GetForegroundDrawList() : dockDraw;
 		const ImU32 outer = IM_COL32(38, 38, 40, 245);
 		const ImU32 normal = IM_COL32(82, 82, 84, 245);
 		const ImU32 hover = IM_COL32(92, 92, 96, 245);
@@ -728,30 +998,43 @@ namespace TomCat {
 		// the blue drop preview shown while dragging.
 		const ImVec2 dockMin(m_ViewportBounds[0].x, m_GizmoModeDockY);
 		const ImVec2 dockMax(m_ViewportBounds[1].x, m_GizmoModeDockY + m_GizmoModeDockHeight);
-		draw->AddRectFilled(dockMin, dockMax, IM_COL32(36, 36, 36, 255), 3.0f);
-		draw->AddLine(ImVec2(dockMin.x, dockMin.y + 0.5f),
+		dockDraw->AddRectFilled(dockMin, dockMax, IM_COL32(36, 36, 36, 255), 3.0f);
+		dockDraw->AddLine(ImVec2(dockMin.x, dockMin.y + 0.5f),
 			ImVec2(dockMax.x, dockMin.y + 0.5f), IM_COL32(55, 55, 55, 255), 1.0f);
-		draw->AddLine(ImVec2(dockMin.x, dockMax.y - 0.5f),
+		dockDraw->AddLine(ImVec2(dockMin.x, dockMax.y - 0.5f),
 			ImVec2(dockMax.x, dockMax.y - 0.5f), IM_COL32(24, 24, 24, 255), 1.0f);
 
 		draw->AddRectFilled(topLeft, bottomRight, outer, 4.0f);
 
-		// Blue drop preview while dragging near the docked strip.  It is drawn
-		// after the floating bar background so the highlight stays clearly
-		// visible even when the bar is sitting over the strip.
+		// Blue drop preview while dragging near the docked strip.  The preview is
+		// an insertion slot, not a full-width highlight: with one toolbar already
+		// docked it appears immediately before or after that toolbar, matching the
+		// small left-side preview in the reference UI.
 		const ImVec2 mouse = ImGui::GetMousePos();
-		const bool dockHover = m_GizmoModeToolbarDragging &&
+		const bool anyToolbarDragging = m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging;
+		const bool dockHover = anyToolbarDragging &&
 			mouse.y >= m_GizmoModeDockY - 5.0f &&
 			mouse.y <= m_GizmoModeDockY + m_GizmoModeDockHeight + 5.0f;
 		if (dockHover)
 		{
-			const ImVec2 sceneMin = ImGui::GetWindowPos();
-			const ImVec2 sceneMax(sceneMin.x + ImGui::GetWindowWidth(), sceneMin.y + ImGui::GetWindowHeight());
-			draw->AddRectFilled(ImVec2(sceneMin.x, m_GizmoModeDockY),
-				ImVec2(sceneMax.x, m_GizmoModeDockY + m_GizmoModeDockHeight),
+			const bool draggingMode = m_GizmoModeToolbarDragging;
+			const float previewWidth = draggingMode ? width : transformWidth;
+			const bool otherDocked = draggingMode ? m_GizmoTransformToolbarDocked : m_GizmoModeToolbarDocked;
+			const float otherWidth = draggingMode ? transformWidth : width;
+			float previewX = dockStartX;
+			if (otherDocked)
+			{
+				const float otherX = dockStartX;
+				const bool insertBefore = mouse.x < otherX + otherWidth * 0.5f;
+				previewX = insertBefore ? dockStartX : otherX + otherWidth + dockGap;
+			}
+			previewX = std::max(dockStartX, std::min(previewX,
+				m_ViewportBounds[1].x - previewWidth - 4.0f));
+			dockDraw->AddRectFilled(ImVec2(previewX, m_GizmoModeDockY),
+				ImVec2(previewX + previewWidth, m_GizmoModeDockY + m_GizmoModeDockHeight),
 				IM_COL32(55, 130, 205, 75), 2.0f);
-			draw->AddRect(ImVec2(sceneMin.x + 1.0f, m_GizmoModeDockY + 1.0f),
-				ImVec2(sceneMax.x - 1.0f, m_GizmoModeDockY + m_GizmoModeDockHeight - 1.0f),
+			dockDraw->AddRect(ImVec2(previewX + 1.0f, m_GizmoModeDockY + 1.0f),
+				ImVec2(previewX + previewWidth - 1.0f, m_GizmoModeDockY + m_GizmoModeDockHeight - 1.0f),
 				IM_COL32(80, 165, 235, 230), 2.0f, 0, 2.0f);
 		}
 
@@ -763,9 +1046,16 @@ namespace TomCat {
 			draw->AddLine(ImVec2(handleCenter.x - 7.0f, handleCenter.y + i * 4.0f),
 				ImVec2(handleCenter.x + 7.0f, handleCenter.y + i * 4.0f), handleLine, 2.0f);
 
+		const bool modeWasDragging = m_GizmoModeToolbarDragging;
 		UI_SceneToolbarDragHandle("##scene_gizmo_mode", m_GizmoModeToolbarOffset,
 			m_GizmoModeToolbarDocked, m_GizmoModeToolbarDragging,
 			handleMin, handleMax, 17.0f, true);
+		if (modeWasDragging && !m_GizmoModeToolbarDragging && m_GizmoModeToolbarDocked)
+		{
+			m_GizmoModeToolbarFirst = !m_GizmoTransformToolbarDocked ||
+				ImGui::GetMousePos().x < dockStartX + transformWidth * 0.5f;
+			SaveSceneToolbarLayout();
+		}
 
 		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool selected, bool hovered)
 		{
@@ -1178,6 +1468,9 @@ namespace TomCat {
 		std::string filepath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
 		if (!filepath.empty())
 		{
+			// Preserve the current project's toolbar arrangement before switching
+			// the active project and loading its independent imgui.ini.
+			SaveSceneToolbarLayout();
 			auto project = ProjectManager::Get().LoadProject(filepath);
 			if (project)
 			{
@@ -1191,6 +1484,7 @@ namespace TomCat {
 					// 加载ImGui配置
 					ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
 				}
+				LoadSceneToolbarLayout();
 				
 				NewScene();
 				m_ContentBrowserPanel.SetProject(m_CurrentProject);
@@ -1203,7 +1497,10 @@ namespace TomCat {
 		if (m_CurrentProject)
 		{
 			m_CurrentProject->Save();
+			const std::filesystem::path imguiIniPath = m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini";
+			ImGui::SaveIniSettingsToDisk(imguiIniPath.string().c_str());
 		}
+		SaveSceneToolbarLayout();
 	}
 
 	void EditorLayer::OnDuplicateEntity()

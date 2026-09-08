@@ -61,6 +61,9 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarRow();
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
+		// Persist the Scene toolbar arrangement alongside ImGui's window layout.
+		void LoadSceneToolbarLayout();
+		void SaveSceneToolbarLayout();
 		// Shared drag helper: submits the invisible handle and owns the only
 		// drag/dock state transitions used by both Scene toolbars.
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -106,6 +109,9 @@ namespace TomCat {
 		bool m_GizmoTransformToolbarDocked = false;
 		bool m_GizmoModeToolbarDragging = false;
 		bool m_GizmoTransformToolbarDragging = false;
+		// Order of the two toolbars in the Scene top dock strip.  When false,
+		// the transform (Q/W/E/R) toolbar is placed before the mode toolbar.
+		bool m_GizmoModeToolbarFirst = true;
 		float m_GizmoModeDockY = 0.0f;
 		float m_GizmoModeDockHeight = 0.0f;
 		glm::vec2 m_GizmoModeToolbarOffset = { 16.0f, 10.0f };

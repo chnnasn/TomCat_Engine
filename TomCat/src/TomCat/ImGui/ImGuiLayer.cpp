@@ -35,7 +35,7 @@ namespace TomCat {
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
 		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
 		// Disable ImGui's automatic .ini save so custom sections we append to imgui.ini
-		// (e.g. [ContentBrowser] layout) are never overwritten. Window layouts are saved
+		// (e.g. [ContentBrowser] and [SceneToolbars] layout) are never overwritten. Window layouts are saved
 		// explicitly by the Editor (project folder imgui.ini).
 		io.IniFilename = NULL;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
