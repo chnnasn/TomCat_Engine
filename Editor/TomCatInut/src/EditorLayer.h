@@ -5,8 +5,11 @@
 
 #include "TomCat/Renderer/EditorCamera.h"
 #include "Panels/ContentBrowserPanel.h"
+#include <functional>
 #include "TomCat/Project/Project.h"
 #include "TomCat/Project/ProjectManager.h"
+
+struct ImVec2;
 
 namespace TomCat {
 
@@ -58,6 +61,10 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarRow();
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
+		// Shared drag helper: submits the invisible handle and owns the only
+		// drag/dock state transitions used by both Scene toolbars.
+		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
+			const ImVec2& handleMin, const ImVec2& handleMax, float tearX, bool canDock);
 		void UI_GameNoCameraOverlay();
 
 		void OpenProject();
@@ -96,6 +103,11 @@ namespace TomCat {
 		GizmoPivotMode m_GizmoPivotMode = GizmoPivotMode::Pivot;
 		GizmoSpaceMode m_GizmoSpaceMode = GizmoSpaceMode::Local;
 		bool m_GizmoModeToolbarDocked = true;
+		bool m_GizmoTransformToolbarDocked = false;
+		bool m_GizmoModeToolbarDragging = false;
+		bool m_GizmoTransformToolbarDragging = false;
+		float m_GizmoModeDockY = 0.0f;
+		float m_GizmoModeDockHeight = 0.0f;
 		glm::vec2 m_GizmoModeToolbarOffset = { 16.0f, 10.0f };
 		glm::vec2 m_GizmoToolbarOffset = { 16.0f, 48.0f };
 

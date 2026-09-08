@@ -52,6 +52,7 @@ namespace TomCat {
 		Entity GetPrimaryCameraEntity();
 		Entity FindEntityByUUID(UUID uuid);
 	private:
+		std::string MakeUniqueEntityName(const std::string& requestedName) const;
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
 		void SyncTransformHierarchyRecursive(Entity entity);
@@ -64,6 +65,7 @@ namespace TomCat {
 		b2World* m_PhysicsWorld = nullptr;
 		std::unordered_map<UUID, UUID> m_ParentMap;
 		std::unordered_map<UUID, std::vector<UUID>> m_ChildrenMap;
+		std::vector<UUID> m_EntityOrder;
 
 		friend class Entity;
 		friend class SceneSerializer;

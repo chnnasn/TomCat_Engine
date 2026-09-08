@@ -282,14 +282,12 @@ namespace TomCat {
 		out << YAML::Key << "SceneName" << YAML::Value << m_Scene->GetSceneName();
 		out << YAML::Key << "Scene" << YAML::Value << m_Scene->GetSceneName();
 		out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
-		m_Scene->m_Registry.view<entt::entity>().each([&](auto entityID)
-			{
-				Entity entity = { entityID, m_Scene.get() };
-				if (!entity)
-					return;
-
+		for (UUID uuid : m_Scene->m_EntityOrder)
+		{
+			Entity entity = m_Scene->FindEntityByUUID(uuid);
+			if (entity)
 				SerializeEntity(out, m_Scene.get(), entity);
-			});
+		}
 		out << YAML::EndSeq;
 		out << YAML::EndMap;
 

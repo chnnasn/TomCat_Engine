@@ -291,19 +291,15 @@ namespace TomCat {
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 		static bool sceneWindowOpen = true;
 
-		ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);
-
-		if (ImGui::BeginMenuBar())
-		{
-			UI_SceneGizmoModeToolbarRow();
-			ImGui::EndMenuBar();
-		}
+		const bool sceneVisible = ImGui::Begin("Scene", &sceneWindowOpen);
 
 		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
 		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
 		auto viewportOffset = ImGui::GetWindowPos();
 		m_ViewportBounds[0] = { viewportMinRegion.x + viewportOffset.x, viewportMinRegion.y + viewportOffset.y };
 		m_ViewportBounds[1] = { viewportMaxRegion.x + viewportOffset.x, viewportMaxRegion.y + viewportOffset.y };
+		m_GizmoModeDockY = m_ViewportBounds[0].y + 2.0f;
+		m_GizmoModeDockHeight = 40.0f;
 
 		m_ViewportFocused = ImGui::IsWindowFocused();
 		m_ViewportHovered = ImGui::IsWindowHovered();
@@ -316,9 +312,17 @@ namespace TomCat {
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
-		if (!m_GizmoModeToolbarDocked)
+		// Draw the mode bar in the foreground layer for both docked and floating
+		// states.  The docked position is still computed from the Scene row, while
+		// the foreground draw list keeps it above that row during drag operations.
+		// Foreground primitives are global.  Never submit them while the Scene tab
+		// is hidden (for example when the Game tab occupies the same dock node), or
+		// they will be painted over the Game view using stale Scene coordinates.
+		if (sceneVisible)
+		{
 			UI_SceneGizmoModeToolbarOverlay();
-		UI_SceneGizmoToolbar();
+			UI_SceneGizmoToolbar();
+		}
 
 		if (ImGui::BeginDragDropTarget())
 		{
@@ -447,12 +451,54 @@ namespace TomCat {
 		draw->AddText(messagePos, IM_COL32(245, 245, 245, 255), messageText);
 	}
 
+	void EditorLayer::UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
+		const ImVec2& handleMin, const ImVec2& handleMax, float tearX, bool canDock)
+	{
+		ImGui::PushID(id);
+		ImGui::SetCursorScreenPos(handleMin);
+		ImGui::InvisibleButton("##drag", ImVec2(handleMax.x - handleMin.x, handleMax.y - handleMin.y));
+
+		const bool pressing = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+		if (!dragging && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+		{
+			dragging = true;
+			if (docked)
+			{
+				docked = false;
+				const ImVec2 mouse = ImGui::GetMousePos();
+				offset = { mouse.x - m_ViewportBounds[0].x - tearX,
+					m_GizmoModeDockY - m_ViewportBounds[0].y };
+			}
+		}
+
+		if (dragging && pressing)
+		{
+			const ImVec2 delta = ImGui::GetIO().MouseDelta;
+			offset.x += delta.x;
+			offset.y += delta.y;
+		}
+		else if (dragging)
+		{
+			const ImVec2 mouse = ImGui::GetMousePos();
+			if (canDock &&
+				mouse.y >= m_GizmoModeDockY - 6.0f &&
+				mouse.y <= m_GizmoModeDockY + m_GizmoModeDockHeight + 6.0f)
+			{
+				docked = true;
+				offset = { 16.0f, 10.0f };
+			}
+			dragging = false;
+		}
+
+		ImGui::PopID();
+	}
+
 	void EditorLayer::UI_SceneGizmoModeToolbarRow()
 	{
 		const ImGuiStyle& style = ImGui::GetStyle();
 		const float buttonHeight = ImGui::GetFrameHeight();
-		const float buttonWidth = 92.0f;
-		const float gap = style.ItemInnerSpacing.x;
+		m_GizmoModeDockY = ImGui::GetCursorScreenPos().y;
+		m_GizmoModeDockHeight = buttonHeight;
 
 		auto DrawModeButton = [&](const char* label, ImVec4 selectedColor, bool selected, const char* popupId)
 		{
@@ -477,7 +523,7 @@ namespace TomCat {
 			ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
 			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
 			ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
-			bool clicked = ImGui::Button(label, ImVec2(buttonWidth, buttonHeight));
+			bool clicked = ImGui::Button(label, ImVec2(72.0f, buttonHeight));
 			ImGui::PopStyleColor(3);
 			if (clicked)
 				ImGui::OpenPopup(popupId);
@@ -485,8 +531,6 @@ namespace TomCat {
 
 		if (!m_GizmoModeToolbarDocked)
 		{
-			ImGui::TextDisabled("Gizmo");
-			ImGui::SameLine();
 			const float dockButtonWidth = ImGui::CalcTextSize("Dock").x + style.FramePadding.x * 2.0f;
 			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - dockButtonWidth);
 			if (ImGui::SmallButton("Dock"))
@@ -494,16 +538,32 @@ namespace TomCat {
 			return;
 		}
 
+		// Small grip on the left of the docked strip. Drag it to tear the bar
+		// off into the floating overlay; drag that overlay back here to dock.
+		ImDrawList* rowDraw = ImGui::GetWindowDrawList();
+		const ImVec2 gripMin = ImGui::GetCursorScreenPos();
+		const ImVec2 gripMax(gripMin.x + 22.0f, gripMin.y + buttonHeight);
+		const ImVec2 gripCenter((gripMin.x + gripMax.x) * 0.5f, (gripMin.y + gripMax.y) * 0.5f);
+		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y - 4.0f),
+			ImVec2(gripCenter.x + 5.0f, gripCenter.y - 4.0f), IM_COL32(120, 120, 125, 255), 1.5f);
+		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y),
+			ImVec2(gripCenter.x + 5.0f, gripCenter.y), IM_COL32(120, 120, 125, 255), 1.5f);
+		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y + 4.0f),
+			ImVec2(gripCenter.x + 5.0f, gripCenter.y + 4.0f), IM_COL32(120, 120, 125, 255), 1.5f);
+		UI_SceneToolbarDragHandle("##scene_mode_row", m_GizmoModeToolbarOffset,
+			m_GizmoModeToolbarDocked, m_GizmoModeToolbarDragging,
+			gripMin, gripMax, 17.0f, true);
+		ImGui::SameLine(0.0f, 4.0f);
+
 		DrawModeButton(m_GizmoPivotMode == GizmoPivotMode::Pivot ? "Pivot" : "Center",
 			ImVec4(0.21f, 0.42f, 0.72f, 1.0f),
 			m_GizmoPivotMode == GizmoPivotMode::Pivot, "##scene_gizmo_pivot_popup");
-		ImGui::SameLine(0.0f, gap);
+		ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
 		DrawModeButton(m_GizmoSpaceMode == GizmoSpaceMode::Local ? "Local" : "World",
 			ImVec4(0.21f, 0.42f, 0.72f, 1.0f),
 			m_GizmoSpaceMode == GizmoSpaceMode::Local, "##scene_gizmo_space_popup");
 
-		const float floatButtonWidth = ImGui::CalcTextSize("Float").x + style.FramePadding.x * 2.0f;
-		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - floatButtonWidth);
+		ImGui::SameLine(0.0f, 10.0f);
 		if (ImGui::SmallButton("Float"))
 			m_GizmoModeToolbarDocked = false;
 
@@ -537,12 +597,16 @@ namespace TomCat {
 		const float height = handleHeight + gap + buttonHeight * 4.0f + gap * 3.0f + 5.0f;
 
 		// Never allow the palette to become stranded outside the Scene view.
-		const float maxOffsetX = m_ViewportSize.x > width + 8.0f ? m_ViewportSize.x - width - 4.0f : 4.0f;
-		const float maxOffsetY = m_ViewportSize.y > height + 8.0f ? m_ViewportSize.y - height - 4.0f : 4.0f;
-		if (m_GizmoToolbarOffset.x < 4.0f) m_GizmoToolbarOffset.x = 4.0f;
-		if (m_GizmoToolbarOffset.y < 4.0f) m_GizmoToolbarOffset.y = 4.0f;
-		if (m_GizmoToolbarOffset.x > maxOffsetX) m_GizmoToolbarOffset.x = maxOffsetX;
-		if (m_GizmoToolbarOffset.y > maxOffsetY) m_GizmoToolbarOffset.y = maxOffsetY;
+		// While dragging, leave the offset free so the bar follows the mouse.
+		if (!m_GizmoTransformToolbarDragging)
+		{
+			const float maxOffsetX = m_ViewportSize.x > width + 8.0f ? m_ViewportSize.x - width - 4.0f : 4.0f;
+			const float maxOffsetY = m_ViewportSize.y > height + 8.0f ? m_ViewportSize.y - height - 4.0f : 4.0f;
+			if (m_GizmoToolbarOffset.x < 4.0f) m_GizmoToolbarOffset.x = 4.0f;
+			if (m_GizmoToolbarOffset.y < 4.0f) m_GizmoToolbarOffset.y = 4.0f;
+			if (m_GizmoToolbarOffset.x > maxOffsetX) m_GizmoToolbarOffset.x = maxOffsetX;
+			if (m_GizmoToolbarOffset.y > maxOffsetY) m_GizmoToolbarOffset.y = maxOffsetY;
+		}
 
 		ImVec2 topLeft(m_ViewportBounds[0].x + m_GizmoToolbarOffset.x,
 			m_ViewportBounds[0].y + m_GizmoToolbarOffset.y);
@@ -563,16 +627,9 @@ namespace TomCat {
 		for (int i = -1; i <= 1; ++i)
 			draw->AddLine(ImVec2(handleCenter.x - 12.0f, handleCenter.y + i * 5.0f),
 				ImVec2(handleCenter.x + 12.0f, handleCenter.y + i * 5.0f), handleLine, 2.0f);
-		ImGui::SetCursorScreenPos(handleMin);
-		ImGui::InvisibleButton("##scene_tool_drag_handle",
-			ImVec2(handleMax.x - handleMin.x, handleMax.y - handleMin.y));
-		if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
-		{
-			ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-			m_GizmoToolbarOffset.x += delta.x;
-			m_GizmoToolbarOffset.y += delta.y;
-			ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
-		}
+		UI_SceneToolbarDragHandle("##scene_transform_toolbar", m_GizmoToolbarOffset,
+			m_GizmoTransformToolbarDocked, m_GizmoTransformToolbarDragging,
+			handleMin, handleMax, 0.0f, false);
 
 		const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
 			ImGuizmo::OPERATION::ROTATE, ImGuizmo::OPERATION::SCALE };
@@ -623,25 +680,39 @@ namespace TomCat {
 
 	void EditorLayer::UI_SceneGizmoModeToolbarOverlay()
 	{
-		const float padding = 4.0f;
-		const float handleWidth = 14.0f;
-		const float buttonWidth = 46.0f;
-		const float buttonHeight = 24.0f;
-		const float gap = 2.0f;
-		const float height = 28.0f;
+		const float padding = 5.0f;
+		const float handleWidth = 24.0f;
+		const float buttonWidth = 62.0f;
+		const float buttonHeight = 28.0f;
+		const float gap = 4.0f;
+		const float height = buttonHeight + padding * 2.0f;
 		const float width = padding * 2.0f + handleWidth + gap + buttonWidth * 2.0f + gap;
 
-		const float maxOffsetX = m_ViewportSize.x > width + 8.0f ? m_ViewportSize.x - width - 4.0f : 4.0f;
-		const float maxOffsetY = m_ViewportSize.y > height + 8.0f ? m_ViewportSize.y - height - 4.0f : 4.0f;
-		if (m_GizmoModeToolbarOffset.x < 4.0f) m_GizmoModeToolbarOffset.x = 4.0f;
-		if (m_GizmoModeToolbarOffset.y < 4.0f) m_GizmoModeToolbarOffset.y = 4.0f;
-		if (m_GizmoModeToolbarOffset.x > maxOffsetX) m_GizmoModeToolbarOffset.x = maxOffsetX;
-		if (m_GizmoModeToolbarOffset.y > maxOffsetY) m_GizmoModeToolbarOffset.y = maxOffsetY;
+		// While dragging, let the bar follow the mouse freely so it can cover the
+		// Scene top strip.  When idle, keep it inside the viewport while still
+		// allowing it to sit over that strip if the user parked it there.
+		if (!m_GizmoModeToolbarDragging)
+		{
+			const float maxOffsetX = m_ViewportSize.x > width + 8.0f ? m_ViewportSize.x - width - 4.0f : 4.0f;
+			const float minOffsetY = m_GizmoModeDockY - m_ViewportBounds[0].y + 1.0f;
+			const float maxOffsetY = m_ViewportSize.y > height + 8.0f ? m_ViewportSize.y - height - 4.0f : 4.0f;
+			if (m_GizmoModeToolbarOffset.x < 4.0f) m_GizmoModeToolbarOffset.x = 4.0f;
+			if (m_GizmoModeToolbarOffset.y < minOffsetY) m_GizmoModeToolbarOffset.y = minOffsetY;
+			if (m_GizmoModeToolbarOffset.x > maxOffsetX) m_GizmoModeToolbarOffset.x = maxOffsetX;
+			if (m_GizmoModeToolbarOffset.y > maxOffsetY) m_GizmoModeToolbarOffset.y = maxOffsetY;
+		}
 
-		ImVec2 topLeft(m_ViewportBounds[0].x + m_GizmoModeToolbarOffset.x,
-			m_ViewportBounds[0].y + m_GizmoModeToolbarOffset.y);
+		// Dock to the same strip used by the drop preview. Extend the ImGui item
+		// clip rectangle as well as the drawing clip so the handle stays interactive.
+		ImVec2 topLeft = m_GizmoModeToolbarDocked
+			? ImVec2(m_ViewportBounds[0].x + 8.0f, m_GizmoModeDockY)
+			: ImVec2(m_ViewportBounds[0].x + m_GizmoModeToolbarOffset.x,
+				m_ViewportBounds[0].y + m_GizmoModeToolbarOffset.y);
 		ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
 
+		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
+		ImGui::PushClipRect(ImVec2(ImGui::GetWindowPos().x, m_GizmoModeDockY),
+			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), false);
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		const ImU32 outer = IM_COL32(38, 38, 40, 245);
 		const ImU32 normal = IM_COL32(82, 82, 84, 245);
@@ -651,25 +722,50 @@ namespace TomCat {
 		const ImU32 arrow = IM_COL32(175, 175, 175, 255);
 		const ImU32 accent = IM_COL32(240, 160, 70, 255);
 
+		// Persistent full-width dock zone at the top of the Scene view.  Its
+		// height matches the axis toolbar (slightly taller) and the grey fill
+		// keeps it visually separate from both the dark editor background and
+		// the blue drop preview shown while dragging.
+		const ImVec2 dockMin(m_ViewportBounds[0].x, m_GizmoModeDockY);
+		const ImVec2 dockMax(m_ViewportBounds[1].x, m_GizmoModeDockY + m_GizmoModeDockHeight);
+		draw->AddRectFilled(dockMin, dockMax, IM_COL32(36, 36, 36, 255), 3.0f);
+		draw->AddLine(ImVec2(dockMin.x, dockMin.y + 0.5f),
+			ImVec2(dockMax.x, dockMin.y + 0.5f), IM_COL32(55, 55, 55, 255), 1.0f);
+		draw->AddLine(ImVec2(dockMin.x, dockMax.y - 0.5f),
+			ImVec2(dockMax.x, dockMax.y - 0.5f), IM_COL32(24, 24, 24, 255), 1.0f);
+
 		draw->AddRectFilled(topLeft, bottomRight, outer, 4.0f);
 
-		ImVec2 handleMin(topLeft.x + padding, topLeft.y + 2.0f);
-		ImVec2 handleMax(handleMin.x + handleWidth, topLeft.y + height - 2.0f);
+		// Blue drop preview while dragging near the docked strip.  It is drawn
+		// after the floating bar background so the highlight stays clearly
+		// visible even when the bar is sitting over the strip.
+		const ImVec2 mouse = ImGui::GetMousePos();
+		const bool dockHover = m_GizmoModeToolbarDragging &&
+			mouse.y >= m_GizmoModeDockY - 5.0f &&
+			mouse.y <= m_GizmoModeDockY + m_GizmoModeDockHeight + 5.0f;
+		if (dockHover)
+		{
+			const ImVec2 sceneMin = ImGui::GetWindowPos();
+			const ImVec2 sceneMax(sceneMin.x + ImGui::GetWindowWidth(), sceneMin.y + ImGui::GetWindowHeight());
+			draw->AddRectFilled(ImVec2(sceneMin.x, m_GizmoModeDockY),
+				ImVec2(sceneMax.x, m_GizmoModeDockY + m_GizmoModeDockHeight),
+				IM_COL32(55, 130, 205, 75), 2.0f);
+			draw->AddRect(ImVec2(sceneMin.x + 1.0f, m_GizmoModeDockY + 1.0f),
+				ImVec2(sceneMax.x - 1.0f, m_GizmoModeDockY + m_GizmoModeDockHeight - 1.0f),
+				IM_COL32(80, 165, 235, 230), 2.0f, 0, 2.0f);
+		}
+
+		ImVec2 handleMin(topLeft.x + padding, topLeft.y + padding);
+		ImVec2 handleMax(handleMin.x + handleWidth, topLeft.y + height - padding);
 		ImVec2 handleCenter((handleMin.x + handleMax.x) * 0.5f, (handleMin.y + handleMax.y) * 0.5f);
 		const ImU32 handleLine = IM_COL32(105, 105, 108, 255);
 		for (int i = -1; i <= 1; ++i)
-			draw->AddLine(ImVec2(handleCenter.x - 6.0f, handleCenter.y + i * 4.0f),
-				ImVec2(handleCenter.x + 6.0f, handleCenter.y + i * 4.0f), handleLine, 2.0f);
+			draw->AddLine(ImVec2(handleCenter.x - 7.0f, handleCenter.y + i * 4.0f),
+				ImVec2(handleCenter.x + 7.0f, handleCenter.y + i * 4.0f), handleLine, 2.0f);
 
-		ImGui::SetCursorScreenPos(handleMin);
-		ImGui::InvisibleButton("##scene_mode_drag_handle", ImVec2(handleMax.x - handleMin.x, handleMax.y - handleMin.y));
-		if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
-		{
-			ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-			m_GizmoModeToolbarOffset.x += delta.x;
-			m_GizmoModeToolbarOffset.y += delta.y;
-			ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
-		}
+		UI_SceneToolbarDragHandle("##scene_gizmo_mode", m_GizmoModeToolbarOffset,
+			m_GizmoModeToolbarDocked, m_GizmoModeToolbarDragging,
+			handleMin, handleMax, 17.0f, true);
 
 		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool selected, bool hovered)
 		{
@@ -679,44 +775,44 @@ namespace TomCat {
 
 		auto DrawDropArrow = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c(max.x - 7.0f, (min.y + max.y) * 0.5f + 1.0f);
+			const ImVec2 c(max.x - 8.0f, (min.y + max.y) * 0.5f + 1.0f);
 			draw->AddTriangleFilled(ImVec2(c.x - 3.0f, c.y - 2.0f), ImVec2(c.x + 3.0f, c.y - 2.0f), ImVec2(c.x, c.y + 2.5f), arrow);
 		};
 
 		auto DrawPivotIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 5.0f, c.y - 5.0f), ImVec2(c.x + 5.0f, c.y + 5.0f), line, 0.0f, 0, 1.2f);
-			draw->AddCircleFilled(ImVec2(c.x - 3.0f, c.y + 3.0f), 2.1f, accent);
+			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 6.0f, c.y - 6.0f), ImVec2(c.x + 6.0f, c.y + 6.0f), line, 0.0f, 0, 1.3f);
+			draw->AddCircleFilled(ImVec2(c.x - 3.5f, c.y + 3.5f), 2.4f, accent);
 		};
 
 		auto DrawCenterIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 5.0f, c.y - 5.0f), ImVec2(c.x + 5.0f, c.y + 5.0f), line, 0.0f, 0, 1.2f);
-			draw->AddCircleFilled(c, 2.1f, accent);
+			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 6.0f, c.y - 6.0f), ImVec2(c.x + 6.0f, c.y + 6.0f), line, 0.0f, 0, 1.3f);
+			draw->AddCircleFilled(c, 2.4f, accent);
 		};
 
 		auto DrawLocalIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 5.0f, c.y - 4.5f), ImVec2(c.x + 5.0f, c.y + 5.5f), line, 0.0f, 0, 1.2f);
-			draw->AddLine(ImVec2(c.x - 5.0f, c.y - 1.5f), ImVec2(c.x + 1.0f, c.y - 5.5f), line, 1.4f);
-			draw->AddLine(ImVec2(c.x + 1.0f, c.y - 5.5f), ImVec2(c.x + 5.5f, c.y - 1.0f), line, 1.4f);
-			draw->AddLine(ImVec2(c.x + 5.5f, c.y - 1.0f), ImVec2(c.x + 5.5f, c.y + 4.5f), line, 1.4f);
-			draw->AddCircleFilled(ImVec2(c.x - 2.5f, c.y + 2.5f), 2.0f, accent);
+			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 6.0f, c.y - 5.0f), ImVec2(c.x + 6.0f, c.y + 6.0f), line, 0.0f, 0, 1.3f);
+			draw->AddLine(ImVec2(c.x - 5.5f, c.y - 2.0f), ImVec2(c.x + 1.0f, c.y - 6.0f), line, 1.6f);
+			draw->AddLine(ImVec2(c.x + 1.0f, c.y - 6.0f), ImVec2(c.x + 5.5f, c.y - 1.0f), line, 1.6f);
+			draw->AddLine(ImVec2(c.x + 5.5f, c.y - 1.0f), ImVec2(c.x + 5.5f, c.y + 5.0f), line, 1.6f);
+			draw->AddCircleFilled(ImVec2(c.x - 2.5f, c.y + 2.5f), 2.2f, accent);
 		};
 
 		auto DrawWorldIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
-			draw->AddCircle(c, 5.5f, line, 20, 1.2f);
-			draw->AddLine(ImVec2(c.x - 5.5f, c.y), ImVec2(c.x + 5.5f, c.y), line, 1.2f);
-			draw->AddLine(ImVec2(c.x, c.y - 5.5f), ImVec2(c.x, c.y + 5.5f), line, 1.2f);
-			draw->AddCircleFilled(ImVec2(c.x + 2.0f, c.y - 2.0f), 1.8f, accent);
+			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
+			draw->AddCircle(c, 6.0f, line, 20, 1.3f);
+			draw->AddLine(ImVec2(c.x - 6.0f, c.y), ImVec2(c.x + 6.0f, c.y), line, 1.3f);
+			draw->AddLine(ImVec2(c.x, c.y - 6.0f), ImVec2(c.x, c.y + 6.0f), line, 1.3f);
+			draw->AddCircleFilled(ImVec2(c.x + 2.2f, c.y - 2.2f), 2.0f, accent);
 		};
 
-		const float buttonMinY = topLeft.y + 2.0f;
+		const float buttonMinY = topLeft.y + padding;
 		const ImVec2 pivotMin(topLeft.x + padding + handleWidth + gap, buttonMinY);
 		const ImVec2 pivotMax(pivotMin.x + buttonWidth, pivotMin.y + buttonHeight);
 		const ImVec2 spaceMin(pivotMax.x + gap, buttonMinY);
@@ -761,6 +857,8 @@ namespace TomCat {
 				m_GizmoSpaceMode = GizmoSpaceMode::World;
 			ImGui::EndPopup();
 		}
+		ImGui::PopClipRect();
+		ImGui::SetCursorScreenPos(savedCursor);
 	}
 
 	void EditorLayer::UI_Toolbar()
