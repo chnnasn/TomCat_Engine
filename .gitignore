@@ -46,6 +46,16 @@ bin/
 bin-int/
 .codemap/
 
+# CMake/MSBuild generated metadata
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+*.recipe
+*.lastbuildstate
+*.tlog/
+*.aps
+
 #Files
 .user
 *.user
@@ -53,10 +63,17 @@ bin-int/
 
 # Directories
 TomCatInut/assets/cache
-scripts/__pycache__
+__pycache__/
+*.pyc
 
-# TomCat Hub runtime settings
+# Local third-party and WebAssembly build trees
+.assimp_tmp/
+TomCat/vendor/Assimp-build/
+web/wasm/build/
+
+# Runtime settings and profiling output
 HubConfig.tomcat
+TomCatProfile-*.json
 
 # Build artifacts and runtime logs
 *.tlog
