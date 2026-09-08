@@ -51,17 +51,31 @@ namespace TomCat {
 			return nullptr;
 		}
 
-		static const char* GetCacheDirectory()
+		static std::filesystem::path GetCacheDirectory()
 		{
-			// TODO: make sure the assets directory is valid
-			return "Packages/cache/shader/opengl";
+			// Packages is virtualized by the boxed distribution.  Keeping a
+			// writable shader cache below it makes the virtual folder materialize
+			// next to the executable (and fails on a read-only virtual tree).
+			// Store generated binaries in the system temporary directory instead;
+			// source shaders and all other packaged assets remain under Packages/.
+			std::error_code error;
+			const auto tempDirectory = std::filesystem::temp_directory_path(error);
+			if (!error && !tempDirectory.empty())
+				return tempDirectory / "TomCat" / "cache" / "shader" / "opengl";
+
+			return {};
 		}
 
 		static void CreateCacheDirectoryIfNeeded()
 		{
-			std::string cacheDirectory = GetCacheDirectory();
-			if (!std::filesystem::exists(cacheDirectory))
-				std::filesystem::create_directories(cacheDirectory);
+			const auto cacheDirectory = GetCacheDirectory();
+			if (cacheDirectory.empty())
+				return;
+
+			std::error_code error;
+			std::filesystem::create_directories(cacheDirectory, error);
+			if (error)
+				TC_Core_Warn("Could not create shader cache directory '{0}': {1}", cacheDirectory.string(), error.message());
 		}
 
 		static const char* GLShaderStageCachedOpenGLFileExtension(uint32_t stage)
@@ -205,15 +219,20 @@ namespace TomCat {
 			options.SetOptimizationLevel(shaderc_optimization_level_performance);
 
 		std::filesystem::path cacheDirectory = Utils::GetCacheDirectory();
+		const bool cacheEnabled = !cacheDirectory.empty();
 
 		auto& shaderData = m_VulkanSPIRV;
 		shaderData.clear();
 		for (auto&& [stage, source] : shaderSources)
 		{
 			std::filesystem::path shaderFilePath = m_FilePath;
-			std::filesystem::path cachedPath = cacheDirectory / (shaderFilePath.filename().string() + Utils::GLShaderStageCachedVulkanFileExtension(stage));
+			std::filesystem::path cachedPath = cacheEnabled
+				? cacheDirectory / (shaderFilePath.filename().string() + Utils::GLShaderStageCachedVulkanFileExtension(stage))
+				: std::filesystem::path{};
 
-			std::ifstream in(cachedPath, std::ios::in | std::ios::binary);
+			std::ifstream in;
+			if (cacheEnabled)
+				in.open(cachedPath, std::ios::in | std::ios::binary);
 			if (in.is_open())
 			{
 				in.seekg(0, std::ios::end);
@@ -235,13 +254,16 @@ namespace TomCat {
 
 				shaderData[stage] = std::vector<uint32_t>(module.cbegin(), module.cend());
 
-				std::ofstream out(cachedPath, std::ios::out | std::ios::binary);
-				if (out.is_open())
+				if (cacheEnabled)
 				{
-					auto& data = shaderData[stage];
-					out.write((char*)data.data(), data.size() * sizeof(uint32_t));
-					out.flush();
-					out.close();
+					std::ofstream out(cachedPath, std::ios::out | std::ios::binary);
+					if (out.is_open())
+					{
+						auto& data = shaderData[stage];
+						out.write((char*)data.data(), data.size() * sizeof(uint32_t));
+						out.flush();
+						out.close();
+					}
 				}
 			}
 		}
@@ -262,15 +284,20 @@ namespace TomCat {
 			options.SetOptimizationLevel(shaderc_optimization_level_performance);
 
 		std::filesystem::path cacheDirectory = Utils::GetCacheDirectory();
+		const bool cacheEnabled = !cacheDirectory.empty();
 
 		shaderData.clear();
 		m_OpenGLSourceCode.clear();
 		for (auto&& [stage, spirv] : m_VulkanSPIRV)
 		{
 			std::filesystem::path shaderFilePath = m_FilePath;
-			std::filesystem::path cachedPath = cacheDirectory / (shaderFilePath.filename().string() + Utils::GLShaderStageCachedOpenGLFileExtension(stage));
+			std::filesystem::path cachedPath = cacheEnabled
+				? cacheDirectory / (shaderFilePath.filename().string() + Utils::GLShaderStageCachedOpenGLFileExtension(stage))
+				: std::filesystem::path{};
 
-			std::ifstream in(cachedPath, std::ios::in | std::ios::binary);
+			std::ifstream in;
+			if (cacheEnabled)
+				in.open(cachedPath, std::ios::in | std::ios::binary);
 			if (in.is_open())
 			{
 				in.seekg(0, std::ios::end);
@@ -296,13 +323,16 @@ namespace TomCat {
 
 				shaderData[stage] = std::vector<uint32_t>(module.cbegin(), module.cend());
 
-				std::ofstream out(cachedPath, std::ios::out | std::ios::binary);
-				if (out.is_open())
+				if (cacheEnabled)
 				{
-					auto& data = shaderData[stage];
-					out.write((char*)data.data(), data.size() * sizeof(uint32_t));
-					out.flush();
-					out.close();
+					std::ofstream out(cachedPath, std::ios::out | std::ios::binary);
+					if (out.is_open())
+					{
+						auto& data = shaderData[stage];
+						out.write((char*)data.data(), data.size() * sizeof(uint32_t));
+						out.flush();
+						out.close();
+					}
 				}
 			}
 		}

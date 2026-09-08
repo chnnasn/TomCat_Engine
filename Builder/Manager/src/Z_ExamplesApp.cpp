@@ -8,7 +8,7 @@ namespace TomCat {
 	{
 	public:
 		Manager(ApplicationCommandLineArgs args)
-			: Application("TomCatHub", "Packages/icon/HubLogo.ico", args)
+			: Application("TomCatHub", "Packages/Resources/Icons/HubLogo.ico", args)
 		{
 
 			PushLayer(new ExampleLayer());
