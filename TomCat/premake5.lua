@@ -19,8 +19,8 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"vendor/stb_image/**.h",
 		"vendor/stb_image/**.cpp",
 
-		"vendor/ImGuizmo/src/ImGuizmo.h",
-		"vendor/ImGuizmo/src/ImGuizmo.cpp"
+		"vendor/ImGuizmo/ImGuizmo.h",
+		"vendor/ImGuizmo/ImGuizmo.cpp"
 	}
 
 	defines

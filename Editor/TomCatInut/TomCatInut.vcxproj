@@ -79,7 +79,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <MinimalRebuild>false</MinimalRebuild>
@@ -91,7 +91,7 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -110,7 +110,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -124,7 +124,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -144,7 +144,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -158,7 +158,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>TC_PLAYTFORM_WINDOWS;IMGUI_API=_declspec(dllimport);;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\ImGuizmo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
