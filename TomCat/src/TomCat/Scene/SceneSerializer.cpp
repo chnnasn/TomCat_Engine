@@ -162,15 +162,21 @@ namespace TomCat {
 
 		if (entity.HasComponent<Transform>())
 		{
+			auto& tc = entity.GetComponent<Transform>();
+
 			out << YAML::Key << "Transform";
 			out << YAML::BeginMap; // TransformComponent
-
-			auto& tc = entity.GetComponent<Transform>();
 			out << YAML::Key << "Translation" << YAML::Value << tc._Translation;
 			out << YAML::Key << "Rotation" << YAML::Value << tc._Rotation;
 			out << YAML::Key << "Scale" << YAML::Value << tc._Scale;
-
 			out << YAML::EndMap; // TransformComponent
+
+			out << YAML::Key << "LocalTransform";
+			out << YAML::BeginMap; // LocalTransformComponent
+			out << YAML::Key << "Translation" << YAML::Value << tc._LocalTranslation;
+			out << YAML::Key << "Rotation" << YAML::Value << tc._LocalRotation;
+			out << YAML::Key << "Scale" << YAML::Value << tc._LocalScale;
+			out << YAML::EndMap; // LocalTransformComponent
 		}
 
 		if (entity.HasComponent<C_Camera>())
@@ -356,6 +362,22 @@ namespace TomCat {
 					tc._Scale = transformComponent["Scale"].as<glm::vec3>();
 				}
 
+				auto localTransformComponent = entity["LocalTransform"];
+				if (localTransformComponent)
+				{
+					auto& tc = deserializedEntity.GetComponent<Transform>();
+					tc._LocalTranslation = localTransformComponent["Translation"].as<glm::vec3>();
+					tc._LocalRotation = localTransformComponent["Rotation"].as<glm::vec3>();
+					tc._LocalScale = localTransformComponent["Scale"].as<glm::vec3>();
+				}
+				else
+				{
+					auto& tc = deserializedEntity.GetComponent<Transform>();
+					tc._LocalTranslation = tc._Translation;
+					tc._LocalRotation = tc._Rotation;
+					tc._LocalScale = tc._Scale;
+				}
+
 				auto camera = entity["Camera"];
 				if (camera)
 				{
@@ -419,6 +441,8 @@ namespace TomCat {
 				if (childEntity && parentEntity)
 					m_Scene->SetParent(childEntity, parentEntity);
 			}
+
+			m_Scene->SyncTransformHierarchy();
 		}
 
 		return true;

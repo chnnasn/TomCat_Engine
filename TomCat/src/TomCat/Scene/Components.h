@@ -2,6 +2,7 @@
 
 #include "SceneCamera.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Math/Math.h"
 #include "TomCat/Renderer/Texture.h"
 
 #include <glm/glm.hpp>
@@ -41,23 +42,40 @@ namespace TomCat {
 
 	struct Transform
 	{
-		glm::vec3 _Translation{0.0f,0.0f,0.0f };
-		glm::vec3 _Rotation{0.0f,0.0f,0.0f };
-		glm::vec3 _Scale{1.0f,1.0f,1.0f };
+		// World-space transform.
+		glm::vec3 _Translation{ 0.0f, 0.0f, 0.0f };
+		glm::vec3 _Rotation{ 0.0f, 0.0f, 0.0f };
+		glm::vec3 _Scale{ 1.0f, 1.0f, 1.0f };
+
+		// Local transform relative to the direct parent.
+		glm::vec3 _LocalTranslation{ 0.0f, 0.0f, 0.0f };
+		glm::vec3 _LocalRotation{ 0.0f, 0.0f, 0.0f };
+		glm::vec3 _LocalScale{ 1.0f, 1.0f, 1.0f };
 
 		Transform() = default;
 		Transform(const Transform&) = default;
 		Transform(const glm::vec3& translation)
-			: _Translation(translation) {
+			: _Translation(translation), _LocalTranslation(translation) {
 		}
 
 		glm::mat4 GetTransform() const
 		{
-			glm::mat4 rotation = glm::toMat4(glm::quat(_Rotation));
+			return Math::ComposeTransform(_Translation, _Rotation, _Scale);
+		}
 
-			return glm::translate(glm::mat4(1.0f), _Translation)
-				* rotation
-				* glm::scale(glm::mat4(1.0f), _Scale);
+		glm::mat4 GetLocalTransform() const
+		{
+			return Math::ComposeTransform(_LocalTranslation, _LocalRotation, _LocalScale);
+		}
+
+		void SetTransform(const glm::mat4& transform)
+		{
+			Math::DecomposeTransform(transform, _Translation, _Rotation, _Scale);
+		}
+
+		void SetLocalTransform(const glm::mat4& transform)
+		{
+			Math::DecomposeTransform(transform, _LocalTranslation, _LocalRotation, _LocalScale);
 		}
 
 	};

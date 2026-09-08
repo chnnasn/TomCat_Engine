@@ -31,6 +31,9 @@ namespace TomCat {
 		Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
 		void DestroyEntity(Entity entity);
 		void SetParent(Entity child, Entity parent);
+		void SetWorldTransform(Entity entity, const glm::mat4& worldTransform);
+		void SetLocalTransform(Entity entity, const glm::mat4& localTransform);
+		void SyncTransformHierarchy();
 		Entity GetParent(Entity entity);
 		std::vector<UUID> GetChildrenUUIDs(Entity entity);
 		std::vector<UUID> GetRootEntityUUIDs();
@@ -51,6 +54,8 @@ namespace TomCat {
 	private:
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
+		void SyncTransformHierarchyRecursive(Entity entity);
+		void SyncTransformHierarchyRecursive(Entity entity, const glm::mat4& parentWorldTransform);
 	private:
 		entt::registry m_Registry;
 		std::string m_SceneName = "Untitled";

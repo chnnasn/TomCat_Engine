@@ -8,6 +8,7 @@
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Project/ProjectManager.h"
 #include "TomCat/Core/KeyCodes.h"
+#include "TomCat/Math/Math.h"
 
 #include<filesystem>
 
@@ -454,8 +455,9 @@ namespace TomCat {
 			ImGui::PopStyleColor();
 	}
 
-	static void DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f, float columnWidth = 100.0f)
+static bool DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f, float columnWidth = 100.0f)
 	{
+		(void)resetValue;
 
 		ImGuiIO& io = ImGui::GetIO();
 		auto boldFont = io.Fonts->Fonts[0];
@@ -484,7 +486,7 @@ namespace TomCat {
 
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(valueWidth);
-		ImGui::DragFloat("##X", &values.x, 0.1f, 0.0f, 0.0f, "%.2f");
+		bool changed = ImGui::DragFloat("##X", &values.x, 0.1f, 0.0f, 0.0f, "%.2f");
 		ImGui::SameLine();
 
 		// Y 按钮（无交互）
@@ -498,7 +500,7 @@ namespace TomCat {
 
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(valueWidth);
-		ImGui::DragFloat("##Y", &values.y, 0.1f, 0.0f, 0.0f, "%.2f");
+		changed |= ImGui::DragFloat("##Y", &values.y, 0.1f, 0.0f, 0.0f, "%.2f");
 		ImGui::SameLine();
 
 		// Z 按钮（无交互）
@@ -512,13 +514,14 @@ namespace TomCat {
 
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(valueWidth);
-		ImGui::DragFloat("##Z", &values.z, 0.1f, 0.0f, 0.0f, "%.2f");
+		changed |= ImGui::DragFloat("##Z", &values.z, 0.1f, 0.0f, 0.0f, "%.2f");
 
 		ImGui::PopStyleVar();
 
 		ImGui::Columns(1);
 
 		ImGui::PopID();
+		return changed;
 	}
 
 	// 通用的两列布局绘制函数（标签在左侧，控件右对齐）
@@ -704,13 +707,28 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 		}
 
 
-		DrawComponent<Transform>("Transform", entity, [](auto& component)
+		DrawComponent<Transform>("Transform", entity, [this, entity](auto& component)
 		{
-			DrawVec3Control("Translation", component._Translation);
-			glm::vec3 rotation = glm::degrees(component._Rotation);
-			DrawVec3Control("Rotation", rotation);
-			component._Rotation = glm::radians(rotation);
-			DrawVec3Control("Scale", component._Scale, 1.0f);
+			Entity parent = m_Context ? m_Context->GetParent(entity) : Entity{};
+			const bool hasParent = (bool)parent;
+
+			glm::vec3 translation = hasParent ? component._LocalTranslation : component._Translation;
+			glm::vec3 rotation = glm::degrees(hasParent ? component._LocalRotation : component._Rotation);
+			glm::vec3 scale = hasParent ? component._LocalScale : component._Scale;
+
+			bool changed = false;
+			changed |= DrawVec3Control(hasParent ? "Local Translation" : "Translation", translation);
+			changed |= DrawVec3Control(hasParent ? "Local Rotation" : "Rotation", rotation);
+			changed |= DrawVec3Control(hasParent ? "Local Scale" : "Scale", scale, 1.0f);
+
+			if (changed && m_Context)
+			{
+				glm::mat4 transformMatrix = Math::ComposeTransform(translation, glm::radians(rotation), scale);
+				if (hasParent)
+					m_Context->SetLocalTransform(entity, transformMatrix);
+				else
+					m_Context->SetWorldTransform(entity, transformMatrix);
+			}
 		});
 
 		DrawComponent<C_Camera>("Camera", entity, [](auto& component)
