@@ -549,19 +549,19 @@ namespace TomCat {
 
             ImU32 lineColor;
             if (isResizingSplitter)
-                lineColor = IM_COL32(100, 150, 255, 255);
+                lineColor = IM_COL32(44, 93, 135, 255);      // Unity selection blue
             else if (ImGui::IsItemHovered())
-                lineColor = IM_COL32(150, 150, 150, 255);
+                lineColor = IM_COL32(98, 98, 98, 255);       // #626262
             else
-                lineColor = IM_COL32(80, 80, 80, 255);
+                lineColor = IM_COL32(25, 25, 25, 255);       // #191919
 
             drawList->AddLine(lineStart, lineEnd, lineColor, 2.0f);
             drawList->AddLine(ImVec2(lineCenterX - 1, lineStart.y),
                 ImVec2(lineCenterX - 1, lineEnd.y),
-                IM_COL32(40, 40, 40, 100), 1.0f);
+                IM_COL32(25, 25, 25, 100), 1.0f);
             drawList->AddLine(ImVec2(lineCenterX + 1, lineStart.y),
                 ImVec2(lineCenterX + 1, lineEnd.y),
-                IM_COL32(120, 120, 120, 100), 1.0f);
+                IM_COL32(137, 137, 137, 100), 1.0f);
 
             ImGui::SameLine(0, 0);
             // ========== 分隔条结束 ==========
@@ -578,7 +578,7 @@ namespace TomCat {
 
                 // ========== 面包屑导航栏 ==========
                 // 设置面包屑样式
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 8));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
 
                 // 计算面包屑栏高度
@@ -611,7 +611,7 @@ namespace TomCat {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));  // 悬浮时也透明
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));   // 点击时也透明
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(196.0f / 255.0f, 196.0f / 255.0f, 196.0f / 255.0f, 1.0f));
 
                 // 获取相对于 assets 的路径
                 std::filesystem::path relativePath;
