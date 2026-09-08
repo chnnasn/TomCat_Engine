@@ -24,6 +24,18 @@ namespace TomCat {
 		virtual void OnImGuiRender() override;
 		void OnEvent(Event& e) override;
 	private:
+		enum class GizmoPivotMode
+		{
+			Pivot = 0,
+			Center = 1
+		};
+
+		enum class GizmoSpaceMode
+		{
+			Local = 0,
+			World = 1
+		};
+
 		bool OnKeyPressed(KeyPressedEvent& e);
 		bool OnMouseButtonPressed(MouseButtonPressedEvent& e);
 
@@ -43,6 +55,8 @@ namespace TomCat {
 		void OnDuplicateEntity();
 
 		void UI_Toolbar();
+		void UI_SceneGizmoModeToolbarRow();
+		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		void UI_GameNoCameraOverlay();
 
@@ -79,7 +93,11 @@ namespace TomCat {
 		glm::vec4 m_SquareColor = { 0.2f, 0.3f, 0.8f, 1.0f };
 
 		int m_GizmoType = -1;
-		glm::vec2 m_GizmoToolbarOffset = { 16.0f, 16.0f };
+		GizmoPivotMode m_GizmoPivotMode = GizmoPivotMode::Pivot;
+		GizmoSpaceMode m_GizmoSpaceMode = GizmoSpaceMode::Local;
+		bool m_GizmoModeToolbarDocked = true;
+		glm::vec2 m_GizmoModeToolbarOffset = { 16.0f, 10.0f };
+		glm::vec2 m_GizmoToolbarOffset = { 16.0f, 48.0f };
 
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;

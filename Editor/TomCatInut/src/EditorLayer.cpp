@@ -9,8 +9,6 @@
 
 #include "ImGuizmo.h"
 
-#include "TomCat/Math/Math.h"
-
 
 namespace TomCat {
 
@@ -291,9 +289,15 @@ namespace TomCat {
 		m_ContentBrowserPanel.OnImGuiRender();
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-	static bool sceneWindowOpen = true;
+		static bool sceneWindowOpen = true;
 
-	ImGui::Begin("Scene", &sceneWindowOpen);
+		ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);
+
+		if (ImGui::BeginMenuBar())
+		{
+			UI_SceneGizmoModeToolbarRow();
+			ImGui::EndMenuBar();
+		}
 
 		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
 		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
@@ -312,6 +316,8 @@ namespace TomCat {
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 
+		if (!m_GizmoModeToolbarDocked)
+			UI_SceneGizmoModeToolbarOverlay();
 		UI_SceneGizmoToolbar();
 
 		if (ImGui::BeginDragDropTarget())
@@ -336,6 +342,7 @@ namespace TomCat {
 
 		if (selectedEntity && m_GizmoType != -1)
 		{
+			ImGuizmo::AllowAxisFlip(false);
 			ImGuizmo::SetOrthographic(false);
 			ImGuizmo::SetDrawlist();
 
@@ -359,19 +366,15 @@ namespace TomCat {
 				float snapValues[3] = { snapValue, snapValue, snapValue };
 
 				ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-					(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL,
+					(ImGuizmo::OPERATION)m_GizmoType,
+					m_GizmoSpaceMode == GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
 					glm::value_ptr(transform),
 					nullptr, snap ? snapValues : nullptr);
 
 				if (ImGuizmo::IsUsing())
 				{
-					glm::vec3 translation, rotation, scale;
-					Math::DecomposeTransform(transform, translation, rotation, scale);
-
-					glm::vec3 deltaRotation = rotation - tc._Rotation;
-					tc._Translation = translation;
-					tc._Rotation += deltaRotation;
-					tc._Scale = scale;
+					m_ActiveScene->SetWorldTransform(selectedEntity, transform);
+					m_SceneDirty = true;
 				}
 			}
 		}
@@ -442,6 +445,85 @@ namespace TomCat {
 		ImVec2 messageSize = ImGui::CalcTextSize(messageText);
 		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, imageCenter.y - messageSize.y * 0.5f);
 		draw->AddText(messagePos, IM_COL32(245, 245, 245, 255), messageText);
+	}
+
+	void EditorLayer::UI_SceneGizmoModeToolbarRow()
+	{
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const float buttonHeight = ImGui::GetFrameHeight();
+		const float buttonWidth = 92.0f;
+		const float gap = style.ItemInnerSpacing.x;
+
+		auto DrawModeButton = [&](const char* label, ImVec4 selectedColor, bool selected, const char* popupId)
+		{
+			ImVec4 normalColor = style.Colors[ImGuiCol_Button];
+			ImVec4 hoverColor = style.Colors[ImGuiCol_ButtonHovered];
+			ImVec4 activeColor = style.Colors[ImGuiCol_ButtonActive];
+			if (selected)
+			{
+				normalColor = selectedColor;
+				hoverColor = ImVec4(
+					std::min(1.0f, selectedColor.x + 0.08f),
+					std::min(1.0f, selectedColor.y + 0.08f),
+					std::min(1.0f, selectedColor.z + 0.08f),
+					selectedColor.w);
+				activeColor = ImVec4(
+					std::max(0.0f, selectedColor.x - 0.08f),
+					std::max(0.0f, selectedColor.y - 0.08f),
+					std::max(0.0f, selectedColor.z - 0.08f),
+					selectedColor.w);
+			}
+
+			ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+			bool clicked = ImGui::Button(label, ImVec2(buttonWidth, buttonHeight));
+			ImGui::PopStyleColor(3);
+			if (clicked)
+				ImGui::OpenPopup(popupId);
+		};
+
+		if (!m_GizmoModeToolbarDocked)
+		{
+			ImGui::TextDisabled("Gizmo");
+			ImGui::SameLine();
+			const float dockButtonWidth = ImGui::CalcTextSize("Dock").x + style.FramePadding.x * 2.0f;
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - dockButtonWidth);
+			if (ImGui::SmallButton("Dock"))
+				m_GizmoModeToolbarDocked = true;
+			return;
+		}
+
+		DrawModeButton(m_GizmoPivotMode == GizmoPivotMode::Pivot ? "Pivot" : "Center",
+			ImVec4(0.21f, 0.42f, 0.72f, 1.0f),
+			m_GizmoPivotMode == GizmoPivotMode::Pivot, "##scene_gizmo_pivot_popup");
+		ImGui::SameLine(0.0f, gap);
+		DrawModeButton(m_GizmoSpaceMode == GizmoSpaceMode::Local ? "Local" : "World",
+			ImVec4(0.21f, 0.42f, 0.72f, 1.0f),
+			m_GizmoSpaceMode == GizmoSpaceMode::Local, "##scene_gizmo_space_popup");
+
+		const float floatButtonWidth = ImGui::CalcTextSize("Float").x + style.FramePadding.x * 2.0f;
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - floatButtonWidth);
+		if (ImGui::SmallButton("Float"))
+			m_GizmoModeToolbarDocked = false;
+
+		if (ImGui::BeginPopup("##scene_gizmo_pivot_popup"))
+		{
+			if (ImGui::MenuItem("Pivot", nullptr, m_GizmoPivotMode == GizmoPivotMode::Pivot))
+				m_GizmoPivotMode = GizmoPivotMode::Pivot;
+			if (ImGui::MenuItem("Center", nullptr, m_GizmoPivotMode == GizmoPivotMode::Center))
+				m_GizmoPivotMode = GizmoPivotMode::Center;
+			ImGui::EndPopup();
+		}
+
+		if (ImGui::BeginPopup("##scene_gizmo_space_popup"))
+		{
+			if (ImGui::MenuItem("Local", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::Local))
+				m_GizmoSpaceMode = GizmoSpaceMode::Local;
+			if (ImGui::MenuItem("World", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::World))
+				m_GizmoSpaceMode = GizmoSpaceMode::World;
+			ImGui::EndPopup();
+		}
 	}
 
 	void EditorLayer::UI_SceneGizmoToolbar()
@@ -536,6 +618,148 @@ namespace TomCat {
 				ImVec2(max.x - min.x, max.y - min.y));
 			if (ImGui::IsItemClicked())
 				m_GizmoType = tools[i];
+		}
+	}
+
+	void EditorLayer::UI_SceneGizmoModeToolbarOverlay()
+	{
+		const float padding = 4.0f;
+		const float handleWidth = 14.0f;
+		const float buttonWidth = 46.0f;
+		const float buttonHeight = 24.0f;
+		const float gap = 2.0f;
+		const float height = 28.0f;
+		const float width = padding * 2.0f + handleWidth + gap + buttonWidth * 2.0f + gap;
+
+		const float maxOffsetX = m_ViewportSize.x > width + 8.0f ? m_ViewportSize.x - width - 4.0f : 4.0f;
+		const float maxOffsetY = m_ViewportSize.y > height + 8.0f ? m_ViewportSize.y - height - 4.0f : 4.0f;
+		if (m_GizmoModeToolbarOffset.x < 4.0f) m_GizmoModeToolbarOffset.x = 4.0f;
+		if (m_GizmoModeToolbarOffset.y < 4.0f) m_GizmoModeToolbarOffset.y = 4.0f;
+		if (m_GizmoModeToolbarOffset.x > maxOffsetX) m_GizmoModeToolbarOffset.x = maxOffsetX;
+		if (m_GizmoModeToolbarOffset.y > maxOffsetY) m_GizmoModeToolbarOffset.y = maxOffsetY;
+
+		ImVec2 topLeft(m_ViewportBounds[0].x + m_GizmoModeToolbarOffset.x,
+			m_ViewportBounds[0].y + m_GizmoModeToolbarOffset.y);
+		ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImU32 outer = IM_COL32(38, 38, 40, 245);
+		const ImU32 normal = IM_COL32(82, 82, 84, 245);
+		const ImU32 hover = IM_COL32(92, 92, 96, 245);
+		const ImU32 active = IM_COL32(54, 103, 151, 255);
+		const ImU32 line = IM_COL32(225, 225, 225, 255);
+		const ImU32 arrow = IM_COL32(175, 175, 175, 255);
+		const ImU32 accent = IM_COL32(240, 160, 70, 255);
+
+		draw->AddRectFilled(topLeft, bottomRight, outer, 4.0f);
+
+		ImVec2 handleMin(topLeft.x + padding, topLeft.y + 2.0f);
+		ImVec2 handleMax(handleMin.x + handleWidth, topLeft.y + height - 2.0f);
+		ImVec2 handleCenter((handleMin.x + handleMax.x) * 0.5f, (handleMin.y + handleMax.y) * 0.5f);
+		const ImU32 handleLine = IM_COL32(105, 105, 108, 255);
+		for (int i = -1; i <= 1; ++i)
+			draw->AddLine(ImVec2(handleCenter.x - 6.0f, handleCenter.y + i * 4.0f),
+				ImVec2(handleCenter.x + 6.0f, handleCenter.y + i * 4.0f), handleLine, 2.0f);
+
+		ImGui::SetCursorScreenPos(handleMin);
+		ImGui::InvisibleButton("##scene_mode_drag_handle", ImVec2(handleMax.x - handleMin.x, handleMax.y - handleMin.y));
+		if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+		{
+			ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+			m_GizmoModeToolbarOffset.x += delta.x;
+			m_GizmoModeToolbarOffset.y += delta.y;
+			ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+		}
+
+		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool selected, bool hovered)
+		{
+			draw->AddRectFilled(min, max, hovered ? hover : normal, 4.0f);
+			draw->AddRect(min, max, selected ? active : IM_COL32(65, 65, 68, 255), 4.0f, 0, 1.0f);
+		};
+
+		auto DrawDropArrow = [&](const ImVec2& min, const ImVec2& max)
+		{
+			const ImVec2 c(max.x - 7.0f, (min.y + max.y) * 0.5f + 1.0f);
+			draw->AddTriangleFilled(ImVec2(c.x - 3.0f, c.y - 2.0f), ImVec2(c.x + 3.0f, c.y - 2.0f), ImVec2(c.x, c.y + 2.5f), arrow);
+		};
+
+		auto DrawPivotIcon = [&](const ImVec2& min, const ImVec2& max)
+		{
+			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 5.0f, c.y - 5.0f), ImVec2(c.x + 5.0f, c.y + 5.0f), line, 0.0f, 0, 1.2f);
+			draw->AddCircleFilled(ImVec2(c.x - 3.0f, c.y + 3.0f), 2.1f, accent);
+		};
+
+		auto DrawCenterIcon = [&](const ImVec2& min, const ImVec2& max)
+		{
+			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 5.0f, c.y - 5.0f), ImVec2(c.x + 5.0f, c.y + 5.0f), line, 0.0f, 0, 1.2f);
+			draw->AddCircleFilled(c, 2.1f, accent);
+		};
+
+		auto DrawLocalIcon = [&](const ImVec2& min, const ImVec2& max)
+		{
+			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 5.0f, c.y - 4.5f), ImVec2(c.x + 5.0f, c.y + 5.5f), line, 0.0f, 0, 1.2f);
+			draw->AddLine(ImVec2(c.x - 5.0f, c.y - 1.5f), ImVec2(c.x + 1.0f, c.y - 5.5f), line, 1.4f);
+			draw->AddLine(ImVec2(c.x + 1.0f, c.y - 5.5f), ImVec2(c.x + 5.5f, c.y - 1.0f), line, 1.4f);
+			draw->AddLine(ImVec2(c.x + 5.5f, c.y - 1.0f), ImVec2(c.x + 5.5f, c.y + 4.5f), line, 1.4f);
+			draw->AddCircleFilled(ImVec2(c.x - 2.5f, c.y + 2.5f), 2.0f, accent);
+		};
+
+		auto DrawWorldIcon = [&](const ImVec2& min, const ImVec2& max)
+		{
+			const ImVec2 c((min.x + max.x) * 0.5f - 4.5f, (min.y + max.y) * 0.5f);
+			draw->AddCircle(c, 5.5f, line, 20, 1.2f);
+			draw->AddLine(ImVec2(c.x - 5.5f, c.y), ImVec2(c.x + 5.5f, c.y), line, 1.2f);
+			draw->AddLine(ImVec2(c.x, c.y - 5.5f), ImVec2(c.x, c.y + 5.5f), line, 1.2f);
+			draw->AddCircleFilled(ImVec2(c.x + 2.0f, c.y - 2.0f), 1.8f, accent);
+		};
+
+		const float buttonMinY = topLeft.y + 2.0f;
+		const ImVec2 pivotMin(topLeft.x + padding + handleWidth + gap, buttonMinY);
+		const ImVec2 pivotMax(pivotMin.x + buttonWidth, pivotMin.y + buttonHeight);
+		const ImVec2 spaceMin(pivotMax.x + gap, buttonMinY);
+		const ImVec2 spaceMax(spaceMin.x + buttonWidth, spaceMin.y + buttonHeight);
+
+		ImGui::SetCursorScreenPos(pivotMin);
+		ImGui::InvisibleButton("##scene_gizmo_pivot_mode", ImVec2(pivotMax.x - pivotMin.x, pivotMax.y - pivotMin.y));
+		const bool pivotHovered = ImGui::IsItemHovered();
+		if (ImGui::IsItemClicked())
+			ImGui::OpenPopup("##scene_gizmo_pivot_popup");
+		DrawFrame(pivotMin, pivotMax, m_GizmoPivotMode == GizmoPivotMode::Pivot, pivotHovered || ImGui::IsPopupOpen("##scene_gizmo_pivot_popup"));
+		if (m_GizmoPivotMode == GizmoPivotMode::Pivot)
+			DrawPivotIcon(pivotMin, pivotMax);
+		else
+			DrawCenterIcon(pivotMin, pivotMax);
+		DrawDropArrow(pivotMin, pivotMax);
+		if (ImGui::BeginPopup("##scene_gizmo_pivot_popup"))
+		{
+			if (ImGui::MenuItem("Pivot", nullptr, m_GizmoPivotMode == GizmoPivotMode::Pivot))
+				m_GizmoPivotMode = GizmoPivotMode::Pivot;
+			if (ImGui::MenuItem("Center", nullptr, m_GizmoPivotMode == GizmoPivotMode::Center))
+				m_GizmoPivotMode = GizmoPivotMode::Center;
+			ImGui::EndPopup();
+		}
+
+		ImGui::SetCursorScreenPos(spaceMin);
+		ImGui::InvisibleButton("##scene_gizmo_space_mode", ImVec2(spaceMax.x - spaceMin.x, spaceMax.y - spaceMin.y));
+		const bool spaceHovered = ImGui::IsItemHovered();
+		if (ImGui::IsItemClicked())
+			ImGui::OpenPopup("##scene_gizmo_space_popup");
+		DrawFrame(spaceMin, spaceMax, m_GizmoSpaceMode == GizmoSpaceMode::Local, spaceHovered || ImGui::IsPopupOpen("##scene_gizmo_space_popup"));
+		if (m_GizmoSpaceMode == GizmoSpaceMode::Local)
+			DrawLocalIcon(spaceMin, spaceMax);
+		else
+			DrawWorldIcon(spaceMin, spaceMax);
+		DrawDropArrow(spaceMin, spaceMax);
+		if (ImGui::BeginPopup("##scene_gizmo_space_popup"))
+		{
+			if (ImGui::MenuItem("Local", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::Local))
+				m_GizmoSpaceMode = GizmoSpaceMode::Local;
+			if (ImGui::MenuItem("World", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::World))
+				m_GizmoSpaceMode = GizmoSpaceMode::World;
+			ImGui::EndPopup();
 		}
 	}
 

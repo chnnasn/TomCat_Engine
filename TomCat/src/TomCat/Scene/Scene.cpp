@@ -5,10 +5,12 @@
 #include "ScriptableEntity.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/RenderCommand.h"
+#include "TomCat/Math/Math.h"
 #include "Entity.h"
 
 #include <algorithm>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 
 // Box2D
 #include "box2d/b2_world.h"
@@ -163,6 +165,70 @@ namespace TomCat {
 		return entity;
 	}
 
+	void Scene::SetWorldTransform(Entity entity, const glm::mat4& worldTransform)
+	{
+		if (!entity || !m_Registry.valid(entity) || !entity.HasComponent<Transform>())
+			return;
+
+		auto& transform = entity.GetComponent<Transform>();
+		const Entity parent = GetParent(entity);
+		const glm::mat4 parentWorld = parent ? parent.GetComponent<Transform>().GetTransform() : glm::mat4(1.0f);
+		const glm::mat4 localTransform = glm::inverse(parentWorld) * worldTransform;
+
+		transform.SetTransform(worldTransform);
+		transform.SetLocalTransform(localTransform);
+
+		SyncTransformHierarchyRecursive(entity, parentWorld);
+	}
+
+	void Scene::SetLocalTransform(Entity entity, const glm::mat4& localTransform)
+	{
+		if (!entity || !m_Registry.valid(entity) || !entity.HasComponent<Transform>())
+			return;
+
+		auto& transform = entity.GetComponent<Transform>();
+		const Entity parent = GetParent(entity);
+		const glm::mat4 parentWorld = parent ? parent.GetComponent<Transform>().GetTransform() : glm::mat4(1.0f);
+		const glm::mat4 worldTransform = parentWorld * localTransform;
+
+		transform.SetLocalTransform(localTransform);
+		transform.SetTransform(worldTransform);
+
+		SyncTransformHierarchyRecursive(entity, parentWorld);
+	}
+
+	void Scene::SyncTransformHierarchy()
+	{
+		for (UUID rootUUID : GetRootEntityUUIDs())
+		{
+			Entity root = FindEntityByUUID(rootUUID);
+			if (root)
+				SyncTransformHierarchyRecursive(root, glm::mat4(1.0f));
+		}
+	}
+
+	void Scene::SyncTransformHierarchyRecursive(Entity entity)
+	{
+		SyncTransformHierarchyRecursive(entity, glm::mat4(1.0f));
+	}
+
+	void Scene::SyncTransformHierarchyRecursive(Entity entity, const glm::mat4& parentWorldTransform)
+	{
+		if (!entity || !m_Registry.valid(entity) || !entity.HasComponent<Transform>())
+			return;
+
+		auto& transform = entity.GetComponent<Transform>();
+		const glm::mat4 worldTransform = parentWorldTransform * transform.GetLocalTransform();
+		transform.SetTransform(worldTransform);
+
+		for (UUID childUUID : GetChildrenUUIDs(entity))
+		{
+			Entity child = FindEntityByUUID(childUUID);
+			if (child)
+				SyncTransformHierarchyRecursive(child, worldTransform);
+		}
+	}
+
 
 	void Scene::DestroyEntity(Entity entity)
 	{
@@ -189,6 +255,7 @@ namespace TomCat {
 			return;
 
 		const UUID childUUID = child.GetUUID();
+		glm::mat4 childWorldTransform = child.GetComponent<Transform>().GetTransform();
 		const bool hasNewParent = parent && m_Registry.valid(parent);
 		const UUID newParentUUID = hasNewParent ? parent.GetUUID() : UUID(0);
 
@@ -233,6 +300,8 @@ namespace TomCat {
 			children.push_back(childUUID);
 			m_ParentMap[childUUID] = newParentUUID;
 		}
+
+		SetWorldTransform(child, childWorldTransform);
 	}
 
 	Entity Scene::GetParent(Entity entity)
@@ -368,9 +437,12 @@ namespace TomCat {
 
 				b2Body* body = (b2Body*)rb2d.RuntimeBody;
 				const auto& position = body->GetPosition();
-				transform._Translation.x = position.x;
-				transform._Translation.y = position.y;
-				transform._Rotation.z = body->GetAngle();
+				glm::vec3 translation, rotation, scale;
+				Math::DecomposeTransform(transform.GetTransform(), translation, rotation, scale);
+				translation.x = position.x;
+				translation.y = position.y;
+				rotation.z = body->GetAngle();
+				SetWorldTransform(entity, Math::ComposeTransform(translation, rotation, scale));
 			}
 		}
 
