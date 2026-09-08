@@ -1,15 +1,15 @@
 # Package-Editor.ps1
 # Builds the Editor, boxes it into a single exe with Enigma Virtual Box,
-# and outputs ONLY the boxed package (zip) into dist/.
+# and outputs ONLY the boxed package into dist/.
 #
 # Usage:
-#   .\Scripts\Package-Editor.ps1 -Build -Version 0.2.0 -EnigmaProject editor.evb
+#   .\Scripts\Package-Editor.ps1 -Build -EnigmaProject editor.evb
 #
 param(
     [string]$SourceDir = "",
     [string]$Version = "",
     [string]$MsBuildPath = "D:\Microsoft Visual Studio\Versions\2026 Pro\MSBuild\Current\Bin\MSBuild.exe",
-    [string]$EnigmaProject = "",
+    [string]$EnigmaProject = "editor.evb",
     [string]$EnigmaConsole = "",
     [switch]$Build
 )
@@ -18,6 +18,11 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Editor\bin\Release-windows-x86_64\TomCatInut" }
+$FinalName = "TomCat"
+
+# EVB projects have a legacy, non-standard root element.  Keep recursive
+# Packages manifest generation shared with the Hub script and CI workflow.
+. (Join-Path $PSScriptRoot "EvbTools.ps1")
 
 # 1) Optional rebuild
 if ($Build) {
@@ -30,11 +35,23 @@ if ($Build) {
     Write-Host "[1/4] Skipping build (use -Build to rebuild first)"
 }
 
-if (-not (Test-Path $SourceDir)) { throw "Source directory not found: $SourceDir" }
+if (-not (Test-Path $SourceDir -PathType Container)) { throw "Source directory not found: $SourceDir" }
+$SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
+$packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
+$packageFileCount = @(Get-ChildItem -LiteralPath $packageSource -Recurse -File -Force).Count
+Write-Host "Including $packageFileCount file(s) from $packageSource"
+if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "TomCat.log") -PathType Leaf)) {
+    New-Item -ItemType File -Path (Join-Path $SourceDir "TomCat.log") -Force | Out-Null
+}
+
+$dist = Join-Path $RepoRoot "dist"
+New-Item -ItemType Directory -Force -Path $dist | Out-Null
+$outExe = Join-Path $dist "$FinalName.exe"
 
 # 2) Locate .evb and parse its input/output paths
 $evbInput = ""
 $evbOutput = ""
+$generatedEnigmaProject = ""
 if ($EnigmaProject) {
     if (-not (Test-Path $EnigmaProject)) {
         $candidates = @(
@@ -48,16 +65,26 @@ if ($EnigmaProject) {
     if (-not (Test-Path $EnigmaProject)) {
         throw "Enigma project not found: $EnigmaProject`nPut a .evb in the repo root or Scripts/, or pass a full path via -EnigmaProject."
     }
-    $evbText = Get-Content $EnigmaProject -Raw
+    $templatePath = (Resolve-Path -LiteralPath $EnigmaProject).Path
+    $evbText = Get-Content -LiteralPath $templatePath -Raw
+
+    # Support a custom -SourceDir when running the local packaging script.
+    $defaultSourceDir = Join-Path $RepoRoot "Editor\bin\Release-windows-x86_64\TomCatInut"
+    $evbText = $evbText.Replace('E:\Github\TomCat_Engine', $RepoRoot)
+    $evbText = $evbText.Replace($defaultSourceDir, $SourceDir)
+    $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "InputFile" -Value (Join-Path $dist "TomCatInut.exe")
+    $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "OutputFile" -Value $outExe
+    $evbText = Set-EvbPackageTree -TemplateText $evbText -PackageSource $packageSource
+
+    $generatedEnigmaProject = Join-Path $dist "$FinalName.generated.evb"
+    Write-EvbProject -Path $generatedEnigmaProject -Text $evbText
+    $EnigmaProject = $generatedEnigmaProject
+
     if ($evbText -match '<InputFile>(.*?)</InputFile>') { $evbInput = $Matches[1] }
     if ($evbText -match '<OutputFile>(.*?)</OutputFile>') { $evbOutput = $Matches[1] }
 }
 
-# 3) Output exe name (no zip: GitHub Actions compresses on artifact upload)
-if (-not $Version) { $Version = Get-Date -Format "yyyyMMdd-HHmm" }
-$dist = Join-Path $RepoRoot "dist"
-New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$outExe = Join-Path $dist "TomCatEditor-$Version.exe"
+# 3) Output exe name is intentionally stable; Version is release metadata only.
 if (Test-Path $outExe) { Remove-Item $outExe -Force }
 
 # 4) Stage the built exe where .evb expects its input (e.g. dist\TomCatInut.exe)
@@ -97,15 +124,23 @@ if ($EnigmaProject) {
 
 # 6) Keep the boxed exe as the final package (GitHub Actions compresses on upload)
 if ($evbOutput -and (Test-Path $evbOutput)) {
+    $evbOutputFull = [System.IO.Path]::GetFullPath($evbOutput)
+    $outExeFull = [System.IO.Path]::GetFullPath($outExe)
+    if ($evbOutputFull -ne $outExeFull) {
+        Copy-Item $evbOutput $outExe -Force
+    }
     Write-Host "[4/4] Final package -> $outExe"
-    Copy-Item $evbOutput $outExe -Force
     $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
     Write-Host "Done: $outExe ($sizeMb MB)"
 } else {
-    Write-Host "WARNING: boxed exe not found at '$evbOutput'"
+    throw "Boxed Editor executable not found at '$evbOutput'"
 }
 
 # Cleanup intermediate files inside dist/ (input copy + .evb-named boxed exe); keep the final exe
 $distPrefix = $dist.TrimEnd('\') + '\'
 if ($evbInput -and (Test-Path $evbInput) -and $evbInput.StartsWith($distPrefix)) { Remove-Item $evbInput -Force }
-if ($evbOutput -and (Test-Path $evbOutput) -and $evbOutput.StartsWith($distPrefix)) { Remove-Item $evbOutput -Force }
+if ($evbOutput -and (Test-Path $evbOutput) -and $evbOutput.StartsWith($distPrefix) -and
+    ([System.IO.Path]::GetFullPath($evbOutput) -ne [System.IO.Path]::GetFullPath($outExe))) {
+    Remove-Item $evbOutput -Force
+}
+if ($generatedEnigmaProject -and (Test-Path $generatedEnigmaProject)) { Remove-Item $generatedEnigmaProject -Force }
