@@ -224,11 +224,13 @@ namespace TomCat {
 		colors[ImGuiCol_FrameBgHovered] = frameHover;
 		colors[ImGuiCol_FrameBgActive] = frameActive;
 
-		// Window/title/menu bars are intentionally one step darker than panels.
+		// Window title bars keep the Unity toolbar tone.  MenuBars use the darker
+		// #282828 foundation from the reference strip; individual editor toolbars
+		// can paint their lighter #3C3C3C surface over this base.
 		colors[ImGuiCol_TitleBg] = toolbar;
 		colors[ImGuiCol_TitleBgActive] = toolbar;
 		colors[ImGuiCol_TitleBgCollapsed] = menu;
-		colors[ImGuiCol_MenuBarBg] = menu;
+		colors[ImGuiCol_MenuBarBg] = toolbar;
 
 		colors[ImGuiCol_ScrollbarBg] = menu;
 		colors[ImGuiCol_ScrollbarGrab] = frame;
@@ -255,12 +257,16 @@ namespace TomCat {
 		colors[ImGuiCol_ResizeGripHovered] = selectionHover;
 		colors[ImGuiCol_ResizeGripActive] = selection;
 
-		// Dock tabs and docking feedback follow the same neutral/blue ramp.
-		colors[ImGuiCol_Tab] = toolbar;
-		colors[ImGuiCol_TabHovered] = frameHover;
+		// All tab surfaces share the #3C3C3C reference color.  Focus is shown by
+		// the blue indicator rendered in TabItemEx rather than by recoloring the
+		// entire selected tab.
+		colors[ImGuiCol_Tab] = panelAlt;
+		// Hovering a tab keeps the same base surface; focus is communicated by
+		// the blue top indicator, so the tab never flashes to a different grey.
+		colors[ImGuiCol_TabHovered] = panelAlt;
 		colors[ImGuiCol_TabActive] = panelAlt;
-		colors[ImGuiCol_TabUnfocused] = menu;
-		colors[ImGuiCol_TabUnfocusedActive] = toolbar;
+		colors[ImGuiCol_TabUnfocused] = panelAlt;
+		colors[ImGuiCol_TabUnfocusedActive] = panelAlt;
 		colors[ImGuiCol_DockingPreview] = Rgb(44, 93, 135, 150);
 		colors[ImGuiCol_DockingEmptyBg] = Rgb(48, 48, 48);
 

@@ -8393,6 +8393,19 @@ bool    ImGui::TabItemEx(ImGuiTabBar* tab_bar, const char* label, bool* p_open, 
     ImDrawList* display_draw_list = window->DrawList;
     const ImU32 tab_col = GetColorU32((held || hovered) ? ImGuiCol_TabHovered : tab_contents_visible ? (tab_bar_focused ? ImGuiCol_TabActive : ImGuiCol_TabUnfocusedActive) : (tab_bar_focused ? ImGuiCol_Tab : ImGuiCol_TabUnfocused));
     TabItemBackground(display_draw_list, bb, flags, tab_col);
+
+    // Keep the selected tab surface neutral like the other tabs and mark the
+    // focused window with Unity's compact blue rectangle along the tab's top
+    // edge.  This is deliberately drawn after the tab background so it remains
+    // visible regardless of the tab shape/rounding used by the active dock.
+    if (tab_contents_visible && tab_bar_focused)
+    {
+        const float indicator_height = ImMin(bb.GetHeight(), ImMax(2.0f, style.FramePadding.y + 1.0f));
+        const ImVec2 indicator_min(bb.Min.x + 1.0f, bb.Min.y);
+        const ImVec2 indicator_max(bb.Max.x - 1.0f, bb.Min.y + indicator_height);
+        display_draw_list->AddRectFilled(indicator_min, indicator_max,
+            GetColorU32(ImGuiCol_HeaderActive), 2.0f, ImDrawFlags_RoundCornersTop);
+    }
     RenderNavHighlight(bb, id);
 
     // Select with right mouse button. This is so the common idiom for context menu automatically highlight the current widget.
