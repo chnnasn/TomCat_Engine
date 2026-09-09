@@ -1,11 +1,13 @@
 #include "ExampleLayer.h"
 #include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/ImGui/ImGuiSettings.h"
 
 #include "TomCat/Math/Math.h"
 #include <fstream>
@@ -14,6 +16,7 @@
 #include <cctype>
 #include <algorithm>
 #include <array>
+#include <sstream>
 #include <system_error>
 
 namespace {
@@ -155,6 +158,107 @@ namespace {
 		return WriteGeneratedSampleScene(destination, templateName);
 	}
 
+	std::string ReadIniText(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary);
+		if (!input)
+			return {};
+		std::ostringstream contents;
+		contents << input.rdbuf();
+		return input.bad() ? std::string{} : contents.str();
+	}
+
+	bool HasIniSectionPrefix(const std::string& ini, const char* prefix)
+	{
+		std::istringstream input(ini);
+		std::string line;
+		while (std::getline(input, line))
+		{
+			if (!line.empty() && line.back() == '\r')
+				line.pop_back();
+			if (line.rfind(prefix, 0) == 0)
+				return true;
+		}
+		return false;
+	}
+
+	std::string ExtractIniSectionPrefix(const std::string& ini, const char* prefix)
+	{
+		std::istringstream input(ini);
+		std::ostringstream section;
+		std::string line;
+		bool inSection = false;
+		while (std::getline(input, line))
+		{
+			if (!line.empty() && line.back() == '\r')
+				line.pop_back();
+			if (!inSection && line.rfind(prefix, 0) == 0)
+				inSection = true;
+			else if (inSection && !line.empty() && line[0] == '[')
+				break;
+
+			if (inSection)
+				section << line << '\n';
+		}
+		return section.str();
+	}
+
+	void LoadHubImGuiLayout()
+	{
+		const auto defaultPath = TomCat::ImGuiSettings::GetHubDefaultIniPath();
+		// Reset any state loaded by a previous context before applying the
+		// immutable packaged baseline and this user's override.
+		ImGui::ClearIniSettings();
+		// EVB resolves this relative path from its virtual package.  Loading it
+		// before the user file establishes the immutable baseline every run.
+		const std::string defaultText = ReadIniText(defaultPath);
+		if (!defaultText.empty())
+			ImGui::LoadIniSettingsFromMemory(defaultText.data(), defaultText.size());
+		else
+			ImGui::LoadIniSettingsFromDisk(defaultPath.string().c_str());
+
+		// Capture the effective baseline so a partial user file (for example one
+		// containing [Window] but no [Docking]) cannot clear the packaged dock.
+		size_t baselineSize = 0;
+		const char* baselineData = ImGui::SaveIniSettingsToMemory(&baselineSize);
+		// Prefer the original text because the docking handler may not have
+		// materialized every serialized node until the first frame.
+		std::string baseline = ReadIniText(defaultPath);
+		if (baseline.empty() && baselineData)
+			baseline.assign(baselineData, baselineSize);
+
+		const auto userPath = TomCat::ImGuiSettings::GetHubUserIniPath();
+		std::string user = ReadIniText(userPath);
+		if (HasIniSectionPrefix(user, "[Window]") || HasIniSectionPrefix(user, "[Docking]"))
+		{
+			if (!HasIniSectionPrefix(user, "[Docking]") && HasIniSectionPrefix(baseline, "[Docking]"))
+			{
+				if (!user.empty() && user.back() != '\n')
+					user.push_back('\n');
+				user += ExtractIniSectionPrefix(baseline, "[Docking]");
+			}
+			ImGui::LoadIniSettingsFromMemory(user.data(), user.size());
+		}
+
+		// Loading a baseline is not a user edit and must not trigger an immediate
+		// write back to the per-user file.
+		ImGui::GetIO().WantSaveIniSettings = false;
+	}
+
+	bool SaveHubImGuiLayout()
+	{
+		size_t iniSize = 0;
+		const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
+		if (!iniData)
+			return false;
+
+		// ProjectManager appends/replaces [HubConfig] and atomically writes the
+		// complete file in one operation, so a failure cannot leave a layout-only
+		// file without the current project list.
+		return TomCat::ProjectManager::Get().SaveHubSettings(
+			std::string(iniData, iniSize));
+	}
+
 
 }
 
@@ -165,17 +269,24 @@ namespace TomCat {
 	ExampleLayer::ExampleLayer()
 		: Layer("FileManager"), m_SelectedMenu(0)
 	{
-		ProjectManager::Get().SetProjectDirectory(std::filesystem::current_path() / "Projects");
-		ProjectManager::Get().SetEditorDirectory(std::filesystem::current_path() / "Editors");
-		ProjectManager::Get().ScanProjects();
-		m_Projects = ProjectManager::Get().GetProjects();
+		auto& projectManager = ProjectManager::Get();
+		// Keep the directories restored from %LOCALAPPDATA%. Only initialize
+		// them on the first run; overwriting them on every launch would make the
+		// persisted project list depend on the process working directory.
+		if (projectManager.GetProjectDirectory().empty())
+			projectManager.SetProjectDirectory(std::filesystem::current_path() / "Projects");
+		if (projectManager.GetEditorDirectory().empty())
+			projectManager.SetEditorDirectory(std::filesystem::current_path() / "Editors");
+		projectManager.ScanProjects();
+		m_Projects = projectManager.GetProjects();
 		
-		m_Editers = ProjectManager::Get().GetEditorDirectoryFiles();
+		m_Editers = projectManager.GetEditorDirectoryFiles();
 	}
 
 	void ExampleLayer::OnAttach()
 	{
 		TC_PROFILE_FUNCTION();
+		LoadHubImGuiLayout();
 
 		// Use the same Unity editor palette as the editor executable.  The Hub has
 		// a different layout, but sharing the palette keeps the two applications
@@ -204,6 +315,7 @@ namespace TomCat {
 	void ExampleLayer::OnDetach()
 	{
 		TC_PROFILE_FUNCTION();
+		SaveHubImGuiLayout();
 	}
 
 	void ExampleLayer::OnUpdate(Timestep ts)
@@ -259,6 +371,12 @@ namespace TomCat {
 
 		if (m_ShowSettingsDialog)
 			RenderSettingsDialog();
+
+		if (ImGui::GetIO().WantSaveIniSettings)
+		{
+			if (SaveHubImGuiLayout())
+				ImGui::GetIO().WantSaveIniSettings = false;
+		}
 	}
 
 void ExampleLayer::OnEvent(Event& e)
