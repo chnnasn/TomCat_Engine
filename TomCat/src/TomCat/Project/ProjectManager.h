@@ -33,15 +33,11 @@ namespace TomCat {
 		void SetActiveProject(Ref<Project> project);
 		void OpenProjectInEditor(Ref<Project> project);
 
-		// Hub settings persistence in %LOCALAPPDATA%/TomCat/Hub/imgui.ini.
+		// Hub settings persistence (HubConfig.tomcat next to the working directory).
 		// Projects added from other paths are serialized here (local serialization),
 		// so no separate virtual-mount system is needed.
 		void LoadHubSettings();
-		bool SaveHubSettings();
-		// Atomically persist the current HubConfig together with a serialized
-		// ImGui layout. The Hub uses this overload to avoid a layout-only window
-		// if the second write is interrupted.
-		bool SaveHubSettings(const std::string& layoutIni);
+		void SaveHubSettings();
 		const std::vector<std::filesystem::path>& GetKnownProjectPaths() const { return m_KnownProjectPaths; }
 
 		void RegisterProjectCreatedCallback(ProjectCallback callback) { m_OnProjectCreated = callback; }

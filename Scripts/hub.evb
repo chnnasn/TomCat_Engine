@@ -17,6 +17,18 @@
         <Files>
           <File>
             <Type>2</Type>
+            <Name>imgui.ini</Name>
+            <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\imgui.ini</File>
+            <ActiveX>False</ActiveX>
+            <ActiveXInstall>False</ActiveXInstall>
+            <Action>0</Action>
+            <OverwriteDateTime>False</OverwriteDateTime>
+            <OverwriteAttributes>False</OverwriteAttributes>
+            <PassCommandLine>False</PassCommandLine>
+            <HideFromDialogs>0</HideFromDialogs>
+          </File>
+          <File>
+            <Type>2</Type>
             <Name>Manager.exe</Name>
             <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\Manager.exe</File>
             <ActiveX>False</ActiveX>
@@ -35,28 +47,7 @@
             <OverwriteAttributes>False</OverwriteAttributes>
             <HideFromDialogs>0</HideFromDialogs>
             <Files>
-              <File>
-                <Type>3</Type>
-                <Name>Defaults</Name>
-                <Action>3</Action>
-                <OverwriteDateTime>False</OverwriteDateTime>
-                <OverwriteAttributes>False</OverwriteAttributes>
-                <HideFromDialogs>0</HideFromDialogs>
-                <Files>
-                  <File>
-                    <Type>2</Type>
-                    <Name>imgui.ini</Name>
-                    <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\Packages\Defaults\imgui.ini</File>
-                    <ActiveX>False</ActiveX>
-                    <ActiveXInstall>False</ActiveXInstall>
-                    <Action>0</Action>
-                    <OverwriteDateTime>False</OverwriteDateTime>
-                    <OverwriteAttributes>False</OverwriteAttributes>
-                    <PassCommandLine>False</PassCommandLine>
-                    <HideFromDialogs>0</HideFromDialogs>
-                  </File>
-                </Files>
-              </File>
+              
               <File>
                 <Type>3</Type>
                 <Name>fonts</Name>
@@ -89,60 +80,6 @@
                         <Type>2</Type>
                         <Name>OpenSans-Regular.ttf</Name>
                         <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\Packages\fonts\opensans\OpenSans-Regular.ttf</File>
-                        <ActiveX>False</ActiveX>
-                        <ActiveXInstall>False</ActiveXInstall>
-                        <Action>0</Action>
-                        <OverwriteDateTime>False</OverwriteDateTime>
-                        <OverwriteAttributes>False</OverwriteAttributes>
-                        <PassCommandLine>False</PassCommandLine>
-                        <HideFromDialogs>0</HideFromDialogs>
-                      </File>
-                    </Files>
-                  </File>
-                </Files>
-              </File>
-              <File>
-                <Type>3</Type>
-                <Name>ProjectTemplates</Name>
-                <Action>3</Action>
-                <OverwriteDateTime>False</OverwriteDateTime>
-                <OverwriteAttributes>False</OverwriteAttributes>
-                <HideFromDialogs>0</HideFromDialogs>
-                <Files>
-                  <File>
-                    <Type>3</Type>
-                    <Name>2D</Name>
-                    <Action>3</Action>
-                    <OverwriteDateTime>False</OverwriteDateTime>
-                    <OverwriteAttributes>False</OverwriteAttributes>
-                    <HideFromDialogs>0</HideFromDialogs>
-                    <Files>
-                      <File>
-                        <Type>2</Type>
-                        <Name>sample.tomcat</Name>
-                        <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\Packages\ProjectTemplates\2D\sample.tomcat</File>
-                        <ActiveX>False</ActiveX>
-                        <ActiveXInstall>False</ActiveXInstall>
-                        <Action>0</Action>
-                        <OverwriteDateTime>False</OverwriteDateTime>
-                        <OverwriteAttributes>False</OverwriteAttributes>
-                        <PassCommandLine>False</PassCommandLine>
-                        <HideFromDialogs>0</HideFromDialogs>
-                      </File>
-                    </Files>
-                  </File>
-                  <File>
-                    <Type>3</Type>
-                    <Name>3D</Name>
-                    <Action>3</Action>
-                    <OverwriteDateTime>False</OverwriteDateTime>
-                    <OverwriteAttributes>False</OverwriteAttributes>
-                    <HideFromDialogs>0</HideFromDialogs>
-                    <Files>
-                      <File>
-                        <Type>2</Type>
-                        <Name>sample.tomcat</Name>
-                        <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\Packages\ProjectTemplates\3D\sample.tomcat</File>
                         <ActiveX>False</ActiveX>
                         <ActiveXInstall>False</ActiveXInstall>
                         <Action>0</Action>

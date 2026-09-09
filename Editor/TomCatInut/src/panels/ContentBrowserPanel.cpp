@@ -3,19 +3,13 @@
 #include "ContentBrowserPanel.h"
 
 #include <imgui/imgui.h>
-#include <algorithm>
-#include <system_error>
 #include <unordered_map>
-#include <utility>
-#include <vector>
 #include <cstring>
 
 namespace { int g_ContentBrowserLayout = 0; /* 0=TwoColumn,1=OneColumn */ }
 #include <fstream>
-#include <sstream>
 
 #include "TomCat/ImGui/ImGuiCallback.h"
-#include "TomCat/ImGui/ImGuiSettings.h"
 #include "TomCat/Project/ProjectManager.h"
 
 namespace TomCat {
@@ -37,7 +31,29 @@ namespace TomCat {
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_LayoutMode(TwoColumn)
 	{
-		SetProject(ProjectManager::Get().GetActiveProject());
+		// Read the editor-level layout from imgui.ini ([ContentBrowser] section)
+		LoadLayoutSetting();
+
+		m_Project = ProjectManager::Get().GetActiveProject();
+		if (m_Project)
+		{
+            m_CurrentDirectory = m_Project->GetAssetPath();
+            std::string twoColumnFolder = m_Project->GetConfig().TwoColumnCurrentFolder;
+            if (!twoColumnFolder.empty())
+            {
+                m_TwoColumnCurrentFolder = twoColumnFolder;
+                m_SelectedDirectory = twoColumnFolder;
+            }
+            
+            for (const auto& node : m_Project->GetConfig().ExpandedNodes)
+            {
+                m_ExpandedNodes.insert(node);
+            }
+		}
+        else
+        {
+            m_CurrentDirectory = g_AssetPath;
+        }
 		
 		m_DirectoryIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/DirectoryIcon.png");
 		m_FileIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/FileIcon.png");
@@ -54,228 +70,84 @@ namespace TomCat {
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
 		m_Project = project;
-		m_LayoutIniPath = ImGuiSettings::GetEditorUserIniPath(
-			m_Project ? m_Project->GetProjectPath() : std::filesystem::path{});
-		m_CurrentDirectory.clear();
-		m_SelectedDirectory.clear();
-		m_TwoColumnCurrentFolder.clear();
-		m_ExpandedNodes.clear();
-		m_LayoutMode = TwoColumn;
 		if (project)
 		{
-			m_CurrentDirectory = project->GetAssetPath();
-			m_TwoColumnCurrentFolder = project->GetAssetPath();
-			m_SelectedDirectory = project->GetAssetPath();
-
-			// Older projects serialized these personal view fields in Project.tcproj.
-			// Use them only as a migration fallback; all new writes go to
-			// UserSettings/imgui.ini below.
-			const auto& legacyConfig = project->GetConfig();
-			if (!legacyConfig.TwoColumnCurrentFolder.empty())
-			{
-				m_TwoColumnCurrentFolder = legacyConfig.TwoColumnCurrentFolder;
-				m_SelectedDirectory = legacyConfig.TwoColumnCurrentFolder;
-			}
-			for (const auto& node : legacyConfig.ExpandedNodes)
-				m_ExpandedNodes.insert(node);
+            m_CurrentDirectory = project->GetAssetPath();
+            std::string twoColumnFolder = project->GetConfig().TwoColumnCurrentFolder;
+            if (!twoColumnFolder.empty())
+            {
+                m_TwoColumnCurrentFolder = twoColumnFolder;
+                m_SelectedDirectory = twoColumnFolder;
+            }
+            else
+            {
+                m_TwoColumnCurrentFolder = project->GetAssetPath();
+                m_SelectedDirectory = project->GetAssetPath();
+            }
+            
+            m_ExpandedNodes.clear();
+            for (const auto& node : project->GetConfig().ExpandedNodes)
+            {
+                m_ExpandedNodes.insert(node);
+            }
 		}
-		else
-		{
-			m_CurrentDirectory = g_AssetPath;
-		}
-
-		// Apply the packaged defaults and then the project's user override after
-		// the legacy baseline above, so the user file always wins.
-		LoadLayoutSetting();
 	}
 
 	void ContentBrowserPanel::Serialize()
 	{
-		// Keep this legacy entry point for callers outside the editor. Personal
-		// browser state belongs in the same user INI as the other layout fields;
-		// never mutate Project.tcproj here.
-		SaveLayoutSetting();
+		// Use our project if set, otherwise fall back to the active project so the
+		// layout change is never lost.
+		Ref<Project> proj = m_Project ? m_Project : ProjectManager::Get().GetActiveProject();
+		if (proj)
+		{
+			ProjectConfig config = proj->GetConfig();
+			// Note: layout is an editor-level setting (see EditorSettings.tomcat), not stored in the project.
+			config.TwoColumnCurrentFolder = m_TwoColumnCurrentFolder.string();
+			
+			config.ExpandedNodes.clear();
+			for (const auto& node : m_ExpandedNodes)
+			{
+				config.ExpandedNodes.push_back(node);
+			}
+			
+			proj->SetConfig(config);
+			proj->Save();
+		}
+	}
+
+	static std::filesystem::path GetEditorIniPath()
+	{
+		// Editor-level settings live in <cwd>/imgui.ini (independent of any project)
+		return std::filesystem::current_path() / "imgui.ini";
 	}
 
 	void ContentBrowserPanel::LoadLayoutSetting()
 	{
-		if (m_LayoutIniPath.empty())
-			m_LayoutIniPath = ImGuiSettings::GetEditorUserIniPath();
-
-		struct BrowserLayout
+		std::ifstream fin(GetEditorIniPath());
+		std::string line;
+		bool inSection = false;
+		std::string layout;
+		while (std::getline(fin, line))
 		{
-			std::string layout;
-			std::string currentFolder;
-			std::unordered_set<std::string> expandedNodes;
-			bool hasLayout = false;
-			bool hasCurrentFolder = false;
-			bool hasExpandedNodes = false;
-		};
-		// Keep the legacy project fields as a migration fallback. They represent
-		// the old user's layout and therefore take precedence over the packaged
-		// defaults only when the new UserSettings file has no corresponding key.
-		std::string legacyCurrentFolder;
-		std::unordered_set<std::string> legacyExpandedNodes;
-		if (m_Project)
-		{
-			const auto& legacy = m_Project->GetConfig();
-			legacyCurrentFolder = legacy.TwoColumnCurrentFolder;
-			legacyExpandedNodes.insert(legacy.ExpandedNodes.begin(), legacy.ExpandedNodes.end());
-		}
-
-		auto readFrom = [](const std::filesystem::path& path, BrowserLayout& state) -> bool
-		{
-			std::string contents;
-			if (!ImGuiSettings::ReadTextFile(path, contents))
-				return false;
-			std::istringstream fin(contents);
-
-			std::string line;
-			bool inSection = false;
-			bool foundSection = false;
-			while (std::getline(fin, line))
+			if (line == "[ContentBrowser]") { inSection = true; continue; }
+			if (inSection)
 			{
-				if (!line.empty() && line.back() == '\r')
-					line.pop_back();
-				if (line == "[ContentBrowser]")
-				{
-					inSection = true;
-					foundSection = true;
-					continue;
-				}
-				if (!inSection)
-					continue;
-				if (!line.empty() && line.front() == '[')
-					break;
-				if (line.rfind("Layout=", 0) == 0)
-				{
-					state.layout = line.substr(7);
-					state.hasLayout = true;
-				}
-				else if (line.rfind("TwoColumnCurrentFolder=", 0) == 0)
-				{
-					state.currentFolder = line.substr(23);
-					state.hasCurrentFolder = true;
-				}
-				else if (line.rfind("ExpandedNodesCount=", 0) == 0)
-				{
-					// The count is also the explicit empty-list marker.
-					state.expandedNodes.clear();
-					state.hasExpandedNodes = true;
-				}
-				else if (line.rfind("ExpandedNode=", 0) == 0)
-				{
-					// The first occurrence starts this file's list; subsequent
-					// occurrences add to the same override.
-					if (!state.hasExpandedNodes)
-					{
-						state.expandedNodes.clear();
-						state.hasExpandedNodes = true;
-					}
-					state.expandedNodes.insert(line.substr(13));
-				}
-			}
-			return foundSection;
-		};
-
-		BrowserLayout state;
-		// Defaults are loaded first; an existing project UserSettings file wins.
-		readFrom(ImGuiSettings::GetEditorDefaultIniPath(), state);
-		bool userHasCurrentFolder = false;
-		bool userHasExpandedNodes = false;
-		if (m_LayoutIniPath != ImGuiSettings::GetEditorDefaultIniPath())
-		{
-			BrowserLayout userState;
-			if (readFrom(m_LayoutIniPath, userState))
-			{
-				if (userState.hasLayout)
-				{
-					state.layout = userState.layout;
-					state.hasLayout = true;
-				}
-				if (userState.hasCurrentFolder)
-				{
-					userHasCurrentFolder = true;
-					state.currentFolder = userState.currentFolder;
-					state.hasCurrentFolder = true;
-				}
-				if (userState.hasExpandedNodes)
-				{
-					userHasExpandedNodes = true;
-					state.expandedNodes = std::move(userState.expandedNodes);
-					state.hasExpandedNodes = true;
-				}
+				if (line.rfind("Layout=", 0) == 0) { layout = line.substr(7); break; }
+				if (line.empty() || line[0] == '[') break;
 			}
 		}
-
-		if (state.hasLayout)
-			g_ContentBrowserLayout = (state.layout == "OneColumn") ? 1 : 0;
-		else
-			g_ContentBrowserLayout = (m_LayoutMode == OneColumn) ? 1 : 0;
+		g_ContentBrowserLayout = (layout == "OneColumn") ? 1 : 0;
 		m_LayoutMode = g_ContentBrowserLayout ? OneColumn : TwoColumn;
-
-		if (state.hasCurrentFolder)
-		{
-			const std::filesystem::path candidate(state.currentFolder);
-			std::error_code directoryError;
-			if (!candidate.empty() &&
-				std::filesystem::is_directory(candidate, directoryError) && !directoryError)
-			{
-				m_TwoColumnCurrentFolder = candidate;
-				m_SelectedDirectory = candidate;
-			}
-			else if (m_Project)
-			{
-				m_TwoColumnCurrentFolder = m_Project->GetAssetPath();
-				m_SelectedDirectory = m_Project->GetAssetPath();
-			}
-		}
-		if (state.hasExpandedNodes)
-			m_ExpandedNodes = std::move(state.expandedNodes);
-
-		// A legacy value is a user override, but only for fields that the new
-		// file does not explicitly own. This lets migration preserve old layouts
-		// without defeating a partial UserSettings override.
-		if (!userHasCurrentFolder && !legacyCurrentFolder.empty())
-		{
-			const std::filesystem::path candidate(legacyCurrentFolder);
-			std::error_code directoryError;
-			if (!candidate.empty() && std::filesystem::is_directory(candidate, directoryError) && !directoryError)
-			{
-				m_TwoColumnCurrentFolder = candidate;
-				m_SelectedDirectory = candidate;
-			}
-		}
-		if (!userHasExpandedNodes && !legacyExpandedNodes.empty())
-			m_ExpandedNodes = std::move(legacyExpandedNodes);
 	}
 
-	bool ContentBrowserPanel::SaveLayoutSetting()
+	void ContentBrowserPanel::SaveLayoutSetting()
 	{
-		if (m_LayoutIniPath.empty())
-			m_LayoutIniPath = ImGuiSettings::GetEditorUserIniPath(
-				m_Project ? m_Project->GetProjectPath() : std::filesystem::path{});
 		g_ContentBrowserLayout = (m_LayoutMode == OneColumn) ? 1 : 0;
 
-		// Start with ImGui's live built-in settings. Preserve the other
-		// application-owned section when this method is called directly from the
-		// Content Browser layout menu.
+		// Get ImGui's window settings text and append our custom [ContentBrowser] section
 		std::string ini;
-		size_t settingsSize = 0;
-		if (const char* settings = ImGui::SaveIniSettingsToMemory(&settingsSize))
-			ini.assign(settings, settingsSize);
-		std::string previousIni;
-		if (ImGuiSettings::ReadTextFile(m_LayoutIniPath, previousIni))
-		{
-			const std::string sceneToolbars =
-				ImGuiSettings::ExtractIniSections(previousIni, "[SceneToolbars]");
-			if (!sceneToolbars.empty())
-			{
-				if (!ini.empty() && ini.back() != '\n')
-					ini.push_back('\n');
-				ini += sceneToolbars;
-			}
-		}
+		if (const char* settings = ImGui::SaveIniSettingsToMemory())
+			ini = settings;
 
 		// remove an existing [ContentBrowser] block, then append the new one
 		std::string::size_type pos = ini.find("[ContentBrowser]");
@@ -285,31 +157,9 @@ namespace TomCat {
 			ini.erase(pos, (next == std::string::npos) ? std::string::npos : next - pos);
 		}
 		ini += "\n[ContentBrowser]\nLayout=" + std::string(m_LayoutMode == OneColumn ? "OneColumn" : "TwoColumn") + "\n";
-		ini += "TwoColumnCurrentFolder=" + m_TwoColumnCurrentFolder.string() + "\n";
-		ini += "ExpandedNodesCount=" + std::to_string(m_ExpandedNodes.size()) + "\n";
-		std::vector<std::string> sortedNodes(m_ExpandedNodes.begin(), m_ExpandedNodes.end());
-		std::sort(sortedNodes.begin(), sortedNodes.end());
-		for (const auto& node : sortedNodes)
-			ini += "ExpandedNode=" + node + "\n";
 
-		if (!ImGuiSettings::WriteTextFileAtomically(m_LayoutIniPath, ini))
-			return false;
-
-		// Complete the one-time migration only after the personal file is safely
-		// on disk. This removes obsolete per-user values from Project.tcproj.
-		if (m_Project)
-		{
-			auto config = m_Project->GetConfig();
-			if (!config.TwoColumnCurrentFolder.empty() || !config.ExpandedNodes.empty())
-			{
-				config.TwoColumnCurrentFolder.clear();
-				config.ExpandedNodes.clear();
-				m_Project->SetConfig(config);
-				if (!m_Project->Save())
-					return false;
-			}
-		}
-		return true;
+		std::ofstream fout(GetEditorIniPath(), std::ios::trunc);
+		fout << ini;
 	}
 
 	// 原有的递归函数，用于 One Column 模式（有折叠功能）

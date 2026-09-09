@@ -34,9 +34,9 @@ namespace TomCat {
 		//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
 		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
-		// Disable ImGui's automatic .ini save so the application-owned sections we
-		// append (for example [ContentBrowser] and [SceneToolbars]) are never
-		// overwritten. The Editor/Hub explicitly save to their user-settings paths.
+		// Disable ImGui's automatic .ini save so custom sections we append to imgui.ini
+		// (e.g. [ContentBrowser] and [SceneToolbars] layout) are never overwritten. Window layouts are saved
+		// explicitly by the Editor (project folder imgui.ini).
 		io.IniFilename = NULL;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoMerge;

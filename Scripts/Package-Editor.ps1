@@ -38,10 +38,6 @@ if ($Build) {
 if (-not (Test-Path $SourceDir -PathType Container)) { throw "Source directory not found: $SourceDir" }
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
 $packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
-$defaultIni = Join-Path $packageSource "Defaults\imgui.ini"
-if (-not (Test-Path -LiteralPath $defaultIni -PathType Leaf)) {
-    throw "Packaged Editor default layout not found: $defaultIni"
-}
 $packageFileCount = @(Get-ChildItem -LiteralPath $packageSource -Recurse -File -Force).Count
 Write-Host "Including $packageFileCount file(s) from $packageSource"
 if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "TomCat.log") -PathType Leaf)) {
