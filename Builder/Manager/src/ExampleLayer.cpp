@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cctype>
 #include <algorithm>
+#include <array>
+#include <system_error>
 
 namespace {
 
@@ -22,6 +24,135 @@ namespace {
 		for (auto& c : out)
 			c = (char)std::tolower((unsigned char)c);
 		return out;
+	}
+
+	// The Hub ships the starter scene as a real asset in its Packages tree.  A
+	// packaged executable changes its working directory to the executable's
+	// folder, while a development build may be launched from the repository
+	// root or from Builder/Manager.  Try all of those locations so project
+	// creation behaves identically in both modes.
+	std::vector<std::filesystem::path> SampleTemplateCandidates(const std::string& templateName)
+	{
+		const std::string mode = templateName == "2D" ? "2D" : "3D";
+		const std::filesystem::path relative =
+			std::filesystem::path("Packages") / "ProjectTemplates" / mode / "sample.tomcat";
+		std::vector<std::filesystem::path> candidates;
+		auto addCandidate = [&candidates](const std::filesystem::path& candidate)
+		{
+			const auto normalized = candidate.lexically_normal();
+			if (std::find(candidates.begin(), candidates.end(), normalized) == candidates.end())
+				candidates.push_back(normalized);
+		};
+
+#ifdef _WIN32
+		// A shortcut can choose an unrelated working directory.  The executable
+		// directory is still stable for both the unpacked and EVB-packaged Hub.
+		// Prefer the wide API so projects installed under a non-ASCII path work.
+		std::array<wchar_t, 32768> modulePath{};
+		const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(),
+			static_cast<DWORD>(modulePath.size()));
+		if (length > 0 && length < modulePath.size())
+		{
+			std::filesystem::path executable(std::wstring(modulePath.data(), length));
+			addCandidate(executable.parent_path() / relative);
+		}
+#endif
+
+		std::error_code error;
+		const auto current = std::filesystem::current_path(error);
+		if (!error)
+		{
+			addCandidate(current / relative);
+			// Running Manager from the repository root.
+			addCandidate(current / "Builder" / "Manager" / relative);
+			// Running from the Builder directory.
+			addCandidate(current / "Manager" / relative);
+		}
+
+		return candidates;
+	}
+
+	bool HasNonEmptyFile(const std::filesystem::path& path)
+	{
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(path, error) || error)
+			return false;
+
+		const auto size = std::filesystem::file_size(path, error);
+		return !error && size > 0;
+	}
+
+	bool WriteGeneratedSampleScene(const std::filesystem::path& destination, const std::string& templateName)
+	{
+		// This is only a safety net for a source checkout that has not copied its
+		// Packages directory yet.  Normal Hub builds always use the checked-in
+		// serialized template above.
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName("sample");
+		TomCat::Entity mainCamera = scene->CreateEntityWithUUID(
+			TomCat::UUID(1000000000000000001ULL), "MainCamera");
+		auto& camera = mainCamera.AddComponent<TomCat::C_Camera>();
+		if (templateName == "2D")
+			camera._Camera.SetOrthographic(10.0f, -1.0f, 1.0f);
+		else
+			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
+
+		TomCat::SceneSerializer serializer(scene);
+		serializer.Serialize(destination.string());
+		return HasNonEmptyFile(destination);
+	}
+
+	bool EnsureSampleSceneAsset(const TomCat::Ref<TomCat::Project>& project, const std::string& templateName)
+	{
+		if (!project)
+			return false;
+
+		const std::filesystem::path destination = project->GetAssetPath() / "sample.tomcat";
+		if (HasNonEmptyFile(destination))
+		{
+			return true;
+		}
+
+		std::error_code error;
+		std::filesystem::create_directories(destination.parent_path(), error);
+		if (error)
+		{
+			TC_Core_Error("Could not create the project's asset directory '{0}': {1}",
+				destination.parent_path().string(), error.message());
+			return false;
+		}
+
+		for (const auto& sourcePath : SampleTemplateCandidates(templateName))
+		{
+			// Opening the source directly is intentional: EVB virtual files may not
+			// report normal directory metadata, but they remain readable by streams.
+			std::ifstream source(sourcePath, std::ios::binary);
+			if (!source)
+				continue;
+
+			bool copied = false;
+			{
+				std::ofstream destinationFile(destination, std::ios::binary | std::ios::trunc);
+				if (!destinationFile)
+				{
+					TC_Core_Error("Could not create the sample scene asset '{0}'", destination.string());
+					return false;
+				}
+				destinationFile << source.rdbuf();
+				destinationFile.flush();
+				copied = destinationFile.good();
+			}
+			if (copied && HasNonEmptyFile(destination))
+			{
+				TC_Core_Info("Installed serialized sample scene '{0}'", destination.string());
+				return true;
+			}
+			break;
+		}
+
+		TC_Core_Warn("Static sample template was not found; generating a compatibility asset for '{0}'",
+			destination.string());
+		return WriteGeneratedSampleScene(destination, templateName);
 	}
 
 
@@ -704,11 +835,16 @@ void ExampleLayer::OnEvent(Event& e)
 			config.Template = (m_NewProjectTemplate == 0) ? "2D" : "3D";
 			std::filesystem::path projectPath = m_NewProjectPath / m_NewProjectName / "Project.tcproj";
 			auto project = ProjectManager::Get().CreateProject(projectPath, config);
-			if (project)
+			if (project && EnsureSampleSceneAsset(project, config.Template))
 			{
 				m_Projects = ProjectManager::Get().GetProjects();
 				m_ShowNewProjectDialog = false;
 				needsRefresh = true;
+			}
+			else if (project)
+			{
+				TC_Core_Error("Project '{0}' was created, but its sample scene could not be installed",
+					project->GetProjectPath().parent_path().string());
 			}
 		}
 		ImGui::PopStyleColor(2);

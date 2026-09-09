@@ -211,8 +211,9 @@ namespace TomCat {
 			SpriteR.Texture = Texture2D::Create(path.string());
 		});
 
-		// Every project starts in a usable sample scene. Existing projects keep
-		// their sample scene and simply reopen it on the next editor launch.
+		// Hub-created projects already contain the serialized sample asset.  Keep
+		// the missing-file fallback for projects created before Hub templates were
+		// introduced.
 		if (m_CurrentProject)
 			OpenOrCreateSampleScene();
 	}
@@ -1498,6 +1499,8 @@ namespace TomCat {
 
 			m_ActiveScene = m_EditorScene;
 			m_EditorScenePath = path;
+			m_CurrentScenePath = path;
+			m_SceneDirty = false;
 		}
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 	}
@@ -1546,6 +1549,8 @@ namespace TomCat {
 			if (project)
 			{
 				m_CurrentProject = project;
+				m_Is2DMode = project->GetConfig().Template == "2D";
+				m_EditorCamera.Set2DMode(m_Is2DMode);
 				
 				// 读取Project.tcproj目录的imgui.ini文件
 				std::filesystem::path projectDir = project->GetProjectPath().parent_path();
@@ -1557,7 +1562,11 @@ namespace TomCat {
 				}
 				LoadSceneToolbarLayout();
 				
-				NewScene();
+				// A project created by the Hub already contains the serialized sample
+				// asset.  Keep the same startup behavior when switching projects from
+				// inside the editor; the helper still creates a compatibility scene for
+				// older projects that predate the Hub template.
+				OpenOrCreateSampleScene();
 				m_ContentBrowserPanel.SetProject(m_CurrentProject);
 			}
 		}
