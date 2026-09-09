@@ -43,6 +43,9 @@ namespace TomCat {
 	private:
 		Ref<Scene> m_Context;
 		Entity m_SelectionContext;
+		// 创建子对象后用于强制展开父节点的一次性标记。
+		Entity m_ForceExpandParent;
+		bool m_ForceOpenSceneRoot = false;
 		Entity m_EntityToDelete;
 		Entity m_ClipboardEntity;
 		Ref<Scene> m_ClipboardScene;
