@@ -7,57 +7,16 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
-#include <system_error>
-
-namespace
-{
-	void EnsureUserSettingsIgnored(const std::filesystem::path& projectDirectory)
-	{
-		if (projectDirectory.empty())
-			return;
-
-		const auto ignorePath = projectDirectory / ".gitignore";
-		std::string existing;
-		{
-			std::ifstream input(ignorePath);
-			if (input)
-			{
-				std::ostringstream contents;
-				contents << input.rdbuf();
-				existing = contents.str();
-
-				std::istringstream lines(existing);
-				std::string line;
-				while (std::getline(lines, line))
-				{
-					if (!line.empty() && line.back() == '\r')
-						line.pop_back();
-					if (line == "UserSettings/" || line == "/UserSettings/" ||
-						line == "**/UserSettings/")
-						return;
-				}
-			}
-		}
-
-		std::ofstream output(ignorePath, std::ios::app);
-		if (!output)
-			return;
-		if (!existing.empty() && existing.back() != '\n' && existing.back() != '\r')
-			output << '\n';
-		output << "UserSettings/\n";
-	}
-}
 
 namespace TomCat {
 
 	Project::Project(const std::filesystem::path& projectPath)
 		: m_ProjectPath(projectPath)
 	{
-		std::error_code error;
-		const auto absoluteProjectPath = std::filesystem::absolute(projectPath, error);
-		if (!error)
-			m_ProjectPath = absoluteProjectPath.lexically_normal();
-		m_Directory = m_ProjectPath.parent_path();
+		if (std::filesystem::exists(projectPath))
+		{
+			m_Directory = projectPath.parent_path();
+		}
 	}
 
 	void Project::SetStartScene(const std::string& sceneName)
@@ -147,11 +106,7 @@ namespace TomCat {
 	{
 		auto project = CreateRef<Project>();
 		project->m_ProjectPath = projectPath;
-		std::error_code pathError;
-		const auto absoluteProjectPath = std::filesystem::absolute(projectPath, pathError);
-		if (!pathError)
-			project->m_ProjectPath = absoluteProjectPath.lexically_normal();
-		project->m_Directory = project->m_ProjectPath.parent_path();
+		project-> m_Directory = projectPath.parent_path();
 		project->m_Config = config;
 		
 		project->UpdateLastOperationTime();
@@ -207,10 +162,6 @@ namespace TomCat {
 	{
 		try
 		{
-			// Every created/opened project ignores its local editor state without
-			// replacing any existing project-specific ignore rules.
-			EnsureUserSettingsIgnored(m_Directory);
-
 			YAML::Emitter out;
 			out << YAML::BeginMap;
 			out << YAML::Key << "Project" << YAML::Value;
@@ -221,30 +172,24 @@ namespace TomCat {
 			out << YAML::Key << "EditorVersion" << YAML::Value << m_Config.EditorVersion;
 			out << YAML::Key << "Template" << YAML::Value << m_Config.Template;
 			out << YAML::Key << "AssetDirectory" << YAML::Value << m_Config.AssetDirectory.string();
-			// Preserve non-empty legacy values until the Editor has successfully
-			// migrated them to UserSettings/imgui.ini. New projects never emit these
-			// personal fields, and ContentBrowserPanel clears them after migration.
-			if (!m_Config.TwoColumnCurrentFolder.empty())
-				out << YAML::Key << "TwoColumnCurrentFolder" << YAML::Value << m_Config.TwoColumnCurrentFolder;
-			if (!m_Config.ExpandedNodes.empty())
-			{
-				out << YAML::Key << "ExpandedNodes" << YAML::Value;
-				out << YAML::BeginSeq;
-				for (const auto& node : m_Config.ExpandedNodes)
-					out << YAML::Value << node;
-				out << YAML::EndSeq;
+			out << YAML::Key << "TwoColumnCurrentFolder" << YAML::Value << m_Config.TwoColumnCurrentFolder;
+			// 保存展开的节点
+			out << YAML::Key << "ExpandedNodes" << YAML::Value;
+			out << YAML::BeginSeq;
+			for (const auto& node : m_Config.ExpandedNodes) {
+				out << YAML::Value << node;
 			}
+			out << YAML::EndSeq;
+			
 			//out << YAML::Key << "StartScene" << YAML::Value << m_Config.StartScene;
 			out << YAML::Key << "LastOperationTime" << YAML::Value << m_Config.LastOperationTime;
 			out << YAML::EndMap;
 			out << YAML::EndMap;
 
-			std::ofstream fout(m_ProjectPath, std::ios::trunc);
-			if (!fout)
-				return false;
+			std::ofstream fout(m_ProjectPath.string());
 			fout << out.c_str();
-			fout.flush();
-			return fout.good();
+			
+			return true;
 		}
 		catch (const std::exception& e)
 		{

@@ -175,7 +175,6 @@
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
-    <ClInclude Include="src\TomCat\ImGui\ImGuiSettings.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
     <ClInclude Include="src\TomCat\Project\Project.h" />
     <ClInclude Include="src\TomCat\Project\ProjectManager.h" />

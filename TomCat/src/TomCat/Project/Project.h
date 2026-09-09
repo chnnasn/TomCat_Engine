@@ -16,9 +16,6 @@ namespace TomCat {
 	std::string Template = "3D"; // project template: "2D" or "3D"
 	std::string LastOperationTime = "";
 	std::filesystem::path AssetDirectory = "Assets";
-	// Legacy fields used only to migrate personal Content Browser state from older
-	// Project.tcproj files into UserSettings/imgui.ini. They are preserved while
-	// migration is pending and cleared after the user INI has been written.
 	std::string TwoColumnCurrentFolder = "";
 	std::vector<std::string> ExpandedNodes;
 	//std::string StartScene = "";
