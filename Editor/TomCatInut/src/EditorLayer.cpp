@@ -1,6 +1,7 @@
 #include "EditorLayer.h"
 #include <imgui/imgui.h>
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -443,15 +444,21 @@ namespace TomCat {
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 		static bool sceneWindowOpen = true;
 
-		const bool sceneVisible = ImGui::Begin("Scene", &sceneWindowOpen);
+		// Use the same native menu-bar slot as Hierarchy.  ImGui's dock tab and
+		// menu-bar layout then share one geometry source, eliminating the hand-
+		// positioned gap that appeared with the custom Scene strip.
+		const bool sceneVisible = ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);
 
 		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
 		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
 		auto viewportOffset = ImGui::GetWindowPos();
 		m_ViewportBounds[0] = { viewportMinRegion.x + viewportOffset.x, viewportMinRegion.y + viewportOffset.y };
 		m_ViewportBounds[1] = { viewportMaxRegion.x + viewportOffset.x, viewportMaxRegion.y + viewportOffset.y };
-		m_GizmoModeDockY = m_ViewportBounds[0].y + 2.0f;
-		m_GizmoModeDockHeight = 40.0f;
+		// The content origin is the bottom edge of the native MenuBar.  Derive the
+		// dock row from that edge so the custom Scene toolbar occupies the actual
+		// menu-bar slot (and remains vertically centered at every font/DPI scale).
+		m_GizmoModeDockHeight = ImGui::GetFrameHeight();
+		m_GizmoModeDockY = m_ViewportBounds[0].y - m_GizmoModeDockHeight;
 
 		m_ViewportFocused = ImGui::IsWindowFocused();
 		m_ViewportHovered = ImGui::IsWindowHovered();
@@ -476,11 +483,29 @@ namespace TomCat {
 		// the anchor toolbar appears to disappear.
 		if (sceneVisible || m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging)
 		{
-			// The mode function lays down the shared dock strip first.  A dragged
-			// toolbar draws only its own body on the viewport foreground list, so
-			// it stays topmost without repainting the strip over the other bar.
-			UI_SceneGizmoModeToolbarOverlay();
-			UI_SceneGizmoToolbar();
+			// BeginMenuBar switches ImGui to the same full-width clip/layout region
+			// used by Hierarchy.  Submit the custom controls after the framebuffer
+			// image so their foreground draw order remains above the Scene content.
+			if (sceneVisible && ImGui::BeginMenuBar())
+			{
+				// MenuBarBg is intentionally the darker foundation.  Scene's toolbar
+				// row is an explicit lighter overlay, painted before the controls so
+				// an empty dock still shows the complete top-bar surface.
+				ImGui::GetWindowDrawList()->AddRectFilled(
+					ImVec2(m_ViewportBounds[0].x, m_GizmoModeDockY),
+					ImVec2(m_ViewportBounds[1].x, m_GizmoModeDockY + m_GizmoModeDockHeight),
+					ImGui::GetColorU32(ImGuiCol_Tab));
+				UI_SceneGizmoModeToolbarOverlay();
+				UI_SceneGizmoToolbar();
+				ImGui::EndMenuBar();
+			}
+			else
+			{
+				// Keep the overlay alive if the native menu-bar slot is temporarily
+				// unavailable (for example while the tab is being hidden during a drag).
+				UI_SceneGizmoModeToolbarOverlay();
+				UI_SceneGizmoToolbar();
+			}
 		}
 
 		if (ImGui::BeginDragDropTarget())
@@ -553,7 +578,33 @@ namespace TomCat {
 
 		if (ImGui::BeginMenuBar())
 		{
-			if (ImGui::BeginMenu("Stats"))
+			// Stats is a toolbar control in the Game view, not a text-only menu
+			// entry.  Give it the same full frame height as the neighboring Unity
+			// controls while keeping enough width for the current font/DPI scale.
+			const ImGuiStyle& gameStyle = ImGui::GetStyle();
+			const ImVec2 statsLabelSize = ImGui::CalcTextSize("Stats");
+			const float statsButtonHeight = ImGui::GetFrameHeight();
+			const float statsButtonWidth = std::max(69.0f,
+				statsLabelSize.x + gameStyle.FramePadding.x * 2.0f);
+			// MenuBarBg is the dark foundation now; toolbar controls keep the
+			// lighter neutral surface used by the existing editor chrome.
+			const ImVec4 statsSurface = gameStyle.Colors[ImGuiCol_Tab];
+			const ImVec4 statsHovered = gameStyle.Colors[ImGuiCol_ButtonHovered];
+			const ImVec4 statsActive = gameStyle.Colors[ImGuiCol_ButtonActive];
+			ImGui::PushStyleColor(ImGuiCol_Button, statsSurface);
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, statsHovered);
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, statsActive);
+			const bool statsPressed = ImGui::Button("Stats##GameStatsButton",
+				ImVec2(statsButtonWidth, statsButtonHeight));
+			ImGui::PopStyleColor(3);
+			const ImVec2 statsPopupPos(ImGui::GetItemRectMin().x,
+				ImGui::GetItemRectMax().y);
+
+			if (statsPressed)
+				ImGui::OpenPopup("##GameStatsPopup");
+
+			ImGui::SetNextWindowPos(statsPopupPos, ImGuiCond_Appearing);
+			if (ImGui::BeginPopup("##GameStatsPopup"))
 			{
 				std::string name = "None";
 				if (m_HoveredEntity)
@@ -567,7 +618,7 @@ namespace TomCat {
 				ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
 				ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
 
-				ImGui::EndMenu();
+				ImGui::EndPopup();
 			}
 			ImGui::EndMenuBar();
 		}
@@ -751,6 +802,13 @@ namespace TomCat {
 	{
 		// Draw directly over the Scene image. This keeps the palette clipped and
 		// owned by the Scene view instead of creating another dockable ImGui window.
+		// The native Scene menu bar clips to its own row while it is active; widen
+		// this toolbar pass to the Scene bounds so a floating palette below the row
+		// remains visible and interactive.
+		const float toolbarClipTop = m_GizmoTransformToolbarDragging
+			? ImGui::GetWindowPos().y : m_GizmoModeDockY;
+		ImGui::PushClipRect(ImVec2(ImGui::GetWindowPos().x, toolbarClipTop),
+			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), false);
 		const float dockPadding = 5.0f;
 		const float dockHandleWidth = 24.0f;
 		const float dockButtonWidth = 34.0f;
@@ -765,7 +823,9 @@ namespace TomCat {
 			const float dockStartX = m_ViewportBounds[0].x + 8.0f;
 			const float transformDockX = (m_GizmoModeToolbarDocked && m_GizmoModeToolbarFirst)
 				? dockStartX + modeWidth + dockGap : dockStartX;
-			ImVec2 topLeft(transformDockX, m_GizmoModeDockY);
+			const float transformHeight = dockButtonHeight + dockPadding * 2.0f;
+			const float transformDockOffsetY = (m_GizmoModeDockHeight - transformHeight) * 0.5f;
+			ImVec2 topLeft(transformDockX, m_GizmoModeDockY + transformDockOffsetY);
 			ImVec2 bottomRight(topLeft.x + dockWidth, topLeft.y + dockButtonHeight + dockPadding * 2.0f);
 			// A docked toolbar may be torn off while the cursor leaves the Scene
 			// window.  Use the viewport foreground list during the drag so the
@@ -838,6 +898,7 @@ namespace TomCat {
 				if (ImGui::IsItemClicked())
 					m_GizmoType = tools[i];
 			}
+			ImGui::PopClipRect();
 			return;
 		}
 
@@ -937,6 +998,7 @@ namespace TomCat {
 			if (ImGui::IsItemClicked())
 				m_GizmoType = tools[i];
 		}
+		ImGui::PopClipRect();
 	}
 
 	void EditorLayer::UI_SceneGizmoModeToolbarOverlay()
@@ -976,14 +1038,17 @@ namespace TomCat {
 		const float dockStartX = m_ViewportBounds[0].x + 8.0f;
 		const float modeDockX = (m_GizmoModeToolbarDocked && m_GizmoTransformToolbarDocked && !m_GizmoModeToolbarFirst)
 			? dockStartX + transformWidth + dockGap : dockStartX;
+		const float modeDockOffsetY = (m_GizmoModeDockHeight - height) * 0.5f;
 		ImVec2 topLeft = m_GizmoModeToolbarDocked
-			? ImVec2(modeDockX, m_GizmoModeDockY)
+			? ImVec2(modeDockX, m_GizmoModeDockY + modeDockOffsetY)
 			: ImVec2(m_ViewportBounds[0].x + m_GizmoModeToolbarOffset.x,
 				m_ViewportBounds[0].y + m_GizmoModeToolbarOffset.y);
 		ImVec2 bottomRight(topLeft.x + width, topLeft.y + height);
 
 		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
-		ImGui::PushClipRect(ImVec2(ImGui::GetWindowPos().x, m_GizmoModeDockY),
+		const float toolbarClipTop = (m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging)
+			? ImGui::GetWindowPos().y : m_GizmoModeDockY;
+		ImGui::PushClipRect(ImVec2(ImGui::GetWindowPos().x, toolbarClipTop),
 			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), false);
 		// Keep the shared strip and insertion preview in the Scene window layer;
 		// otherwise their full-width background would cover the Q/W/E/R bar when
@@ -998,18 +1063,11 @@ namespace TomCat {
 		const ImU32 line = IM_COL32(196, 196, 196, 255);
 		const ImU32 arrow = IM_COL32(137, 137, 137, 255);
 		const ImU32 accent = IM_COL32(212, 127, 42, 255);
+		const bool anyToolbarDragging = m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging;
 
-		// Persistent full-width dock zone at the top of the Scene view.  Its
-		// height matches the axis toolbar (slightly taller) and the grey fill
-		// keeps it visually separate from both the dark editor background and
-		// the blue drop preview shown while dragging.
-		const ImVec2 dockMin(m_ViewportBounds[0].x, m_GizmoModeDockY);
-		const ImVec2 dockMax(m_ViewportBounds[1].x, m_GizmoModeDockY + m_GizmoModeDockHeight);
-		dockDraw->AddRectFilled(dockMin, dockMax, IM_COL32(40, 40, 40, 255), 0.0f);
-		dockDraw->AddLine(ImVec2(dockMin.x, dockMin.y + 0.5f),
-			ImVec2(dockMax.x, dockMin.y + 0.5f), IM_COL32(85, 85, 85, 255), 1.0f);
-		dockDraw->AddLine(ImVec2(dockMin.x, dockMax.y - 0.5f),
-			ImVec2(dockMax.x, dockMax.y - 0.5f), IM_COL32(25, 25, 25, 255), 1.0f);
+		// The caller paints the Scene menu-bar overlay before entering this helper.
+		// Keep this pass focused on the toolbar body and insertion preview so the
+		// overlay remains visible in the empty-dock state as well.
 
 		draw->AddRectFilled(topLeft, bottomRight, outer, 2.0f);
 
@@ -1018,7 +1076,6 @@ namespace TomCat {
 		// docked it appears immediately before or after that toolbar, matching the
 		// small left-side preview in the reference UI.
 		const ImVec2 mouse = ImGui::GetMousePos();
-		const bool anyToolbarDragging = m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging;
 		const bool dockHover = anyToolbarDragging &&
 			mouse.y >= m_GizmoModeDockY - 5.0f &&
 			mouse.y <= m_GizmoModeDockY + m_GizmoModeDockHeight + 5.0f;
