@@ -203,6 +203,9 @@ namespace TomCat {
 		m_SceneHierarchyPanel.SetSceneLoadCallback([this](const std::filesystem::path& path) {
 			OpenScene(path);
 		});
+		m_ContentBrowserPanel.SetSceneOpenCallback([this](const std::filesystem::path& path) {
+			OpenScene(path);
+		});
 
 		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](const std::filesystem::path& path) {
 			std::string fileName = path.stem().string();

@@ -76,6 +76,8 @@ namespace TomCat {
 	{
 
 		m_Context = context;
+		m_ForceExpandParent = {};
+		m_ForceOpenSceneRoot = false;
 		if (clearSelection)
 		{
 			m_SelectionContext = {};
@@ -118,6 +120,11 @@ namespace TomCat {
 			}
 			m_EntityToDelete = {};
 			const std::string& sceneName = m_Context->GetSceneName();
+			if (m_ForceOpenSceneRoot)
+			{
+				ImGui::SetNextItemOpen(true);
+				m_ForceOpenSceneRoot = false;
+			}
 			ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding;
 			bool rootOpen = ImGui::TreeNodeEx((void*)m_Context.get(), rootFlags, "%s", sceneName.c_str());
 
@@ -333,18 +340,34 @@ namespace TomCat {
 			m_Context->SetParent(m_SelectionContext, Entity{});
 		ImGui::Separator();
 
+		// 从右键菜单创建的新对象直接作为当前选中实体的子对象；
+		// 选中实体时在节点或空白处右键创建都遵循这个规则。
+		Entity parentForNewObject = m_SelectionContext;
+		auto CreateAsSelectedChild = [&](Entity entity)
+		{
+			if (parentForNewObject)
+			{
+				m_Context->SetParent(entity, parentForNewObject);
+				m_ForceExpandParent = parentForNewObject;
+			}
+			else
+			{
+				m_ForceOpenSceneRoot = true;
+			}
+			m_SelectionContext = entity;
+			BeginRename(entity);
+		};
+
 		if (ImGui::MenuItem("Create Empty Entity"))
 		{
 			Entity entity = m_Context->CreateEntity("Empty Entity");
-			m_SelectionContext = entity;
-			BeginRename(entity);
+			CreateAsSelectedChild(entity);
 		}
 		if (ImGui::MenuItem("Camera"))
 		{
 			Entity camera = m_Context->CreateEntity("Camera");
 			camera.AddComponent<C_Camera>();
-			m_SelectionContext = camera;
-			BeginRename(camera);
+			CreateAsSelectedChild(camera);
 		}
 
 		if (ImGui::BeginMenu("2D Object"))
@@ -355,8 +378,7 @@ namespace TomCat {
 				{
 					Entity square = m_Context->CreateEntity("Square");
 					square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-					m_SelectionContext = square;
-					BeginRename(square);
+					CreateAsSelectedChild(square);
 				}
 				ImGui::EndMenu();
 			}
@@ -384,6 +406,12 @@ namespace TomCat {
 			flags |= ImGuiTreeNodeFlags_Selected;
 		if (!hasChildren)
 			flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+		// 新建的子对象刚创建时，父节点强制展开一次，确保子对象立即可见。
+		if (m_ForceExpandParent == entity)
+		{
+			ImGui::SetNextItemOpen(true);
+			m_ForceExpandParent = {};
+		}
 		// ImGui uses Header (rather than HeaderActive) for an idle selected
 		// tree item.  Scope Unity's blue selection colors to the hierarchy row so
 		// component headers and menus keep their neutral gray treatment.
