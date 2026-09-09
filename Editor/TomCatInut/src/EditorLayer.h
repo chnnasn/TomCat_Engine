@@ -63,7 +63,12 @@ namespace TomCat {
 		void UI_SceneGizmoToolbar();
 		// Persist the Scene toolbar arrangement alongside ImGui's window layout.
 		void LoadSceneToolbarLayout();
-		void SaveSceneToolbarLayout();
+		bool SaveSceneToolbarLayout();
+		// Load the read-only packaged defaults, then the active project's
+		// per-user override. All writes go through this user-settings path.
+		void LoadEditorLayout();
+		bool SaveEditorLayout();
+		std::filesystem::path GetEditorUserSettingsPath() const;
 		// Shared drag helper: submits the invisible handle and owns the only
 		// drag/dock state transitions used by both Scene toolbars.
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -134,6 +139,7 @@ namespace TomCat {
 		Ref<Project> m_CurrentProject;
 		std::filesystem::path m_CurrentScenePath;
 		bool m_SceneDirty = false;
+		bool m_PendingEditorLayoutLoad = false;
 	};
 
 }

@@ -138,6 +138,9 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
       <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\ImGui\ImGuiSettings.h">
+      <Filter>src\TomCat\ImGui</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
     </ClInclude>

@@ -1,5 +1,6 @@
 #include "EditorLayer.h"
 #include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
 
 #include <algorithm>
 #include <fstream>
@@ -11,6 +12,7 @@
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/ImGui/ImGuiSettings.h"
 
 #include "ImGuizmo.h"
 
@@ -25,16 +27,91 @@ namespace TomCat {
 		m_CurrentProject = ProjectManager::Get().GetActiveProject();
 	}
 
+	std::filesystem::path EditorLayer::GetEditorUserSettingsPath() const
+	{
+		return ImGuiSettings::GetEditorUserIniPath(
+			m_CurrentProject ? m_CurrentProject->GetProjectPath() : std::filesystem::path{});
+	}
+
+	void EditorLayer::LoadEditorLayout()
+	{
+		const auto userPath = GetEditorUserSettingsPath();
+		const auto projectFile = m_CurrentProject
+			? m_CurrentProject->GetProjectPath()
+			: std::filesystem::path{};
+		if (!ImGuiSettings::MigrateLegacyEditorIni(projectFile, userPath))
+			TC_Core_Error("Failed to migrate the legacy Editor layout to {0}", userPath.string());
+
+		// Switching projects must not retain the previous project's dock nodes.
+		// ClearIniSettings only clears ImGui's in-memory state; it never touches a
+		// file on disk.
+		ImGui::ClearIniSettings();
+
+		// The packaged file is read-only. An existing UserSettings file is loaded
+		// afterwards so its [Window]/[Docking] values override the defaults.
+		const auto defaultPath = ImGuiSettings::GetEditorDefaultIniPath();
+		std::string defaultIni;
+		const bool defaultRead = ImGuiSettings::ReadTextFile(defaultPath, defaultIni);
+		if (defaultRead && !defaultIni.empty())
+			ImGui::LoadIniSettingsFromMemory(defaultIni.data(), defaultIni.size());
+		else
+			// Keep a compatibility fallback for virtual filesystems whose metadata
+			// layer does not expose the EVB-mounted file to std::ifstream.
+			ImGui::LoadIniSettingsFromDisk(defaultPath.string().c_str());
+		if (!defaultRead || defaultIni.empty())
+		{
+			// Use the effective in-memory baseline for the partial-user merge when
+			// the packaged file was loaded through the virtual filesystem fallback.
+			size_t baselineSize = 0;
+			if (const char* baseline = ImGui::SaveIniSettingsToMemory(&baselineSize))
+				defaultIni.assign(baseline, baselineSize);
+		}
+
+		std::string userIni;
+		if (ImGuiSettings::ReadTextFile(userPath, userIni) &&
+			(ImGuiSettings::HasIniSectionPrefix(userIni, "[Window]") ||
+				ImGuiSettings::HasIniSectionPrefix(userIni, "[Docking]")))
+		{
+			// Dock settings are cleared at the beginning of every ImGui INI load,
+			// whereas window settings merge. A user file created by an older build
+			// may contain only [Window] sections; carry the packaged docking block
+			// into that second load so it cannot erase the default dock tree.
+			if (!ImGuiSettings::HasIniSectionPrefix(userIni, "[Docking]"))
+			{
+				const std::string defaultDocking =
+					ImGuiSettings::ExtractIniSections(defaultIni, "[Docking]");
+				if (!defaultDocking.empty())
+				{
+					if (!userIni.empty() && userIni.back() != '\n')
+						userIni.push_back('\n');
+					userIni += defaultDocking;
+				}
+			}
+			ImGui::LoadIniSettingsFromMemory(userIni.data(), userIni.size());
+		}
+
+		// These application-owned sections are not parsed by Dear ImGui itself.
+		// Load them in the same defaults-then-user order as the built-in sections.
+		m_ContentBrowserPanel.LoadLayoutSetting();
+		LoadSceneToolbarLayout();
+		ImGui::GetIO().WantSaveIniSettings = false;
+	}
+
 	void EditorLayer::LoadSceneToolbarLayout()
 	{
-		// Project layouts are loaded after the editor-level layout, so prefer the
-		// project imgui.ini and fall back to the current working directory for
-		// projects created before toolbar persistence was added.
+		// Start from code defaults on every project switch, then apply the
+		// read-only packaged section and finally the project's user override.
+		m_GizmoModeToolbarDocked = true;
+		m_GizmoTransformToolbarDocked = false;
+		m_GizmoModeToolbarFirst = true;
+		m_GizmoModeToolbarOffset = { 16.0f, 10.0f };
+		m_GizmoToolbarOffset = { 16.0f, 48.0f };
 		auto loadFrom = [&](const std::filesystem::path& iniPath) -> bool
 		{
-			std::ifstream fin(iniPath);
-			if (!fin)
+			std::string contents;
+			if (!ImGuiSettings::ReadTextFile(iniPath, contents))
 				return false;
+			std::istringstream fin(contents);
 
 			bool inSection = false;
 			bool foundSection = false;
@@ -107,28 +184,27 @@ namespace TomCat {
 			return foundSection;
 		};
 
-		bool loaded = false;
-		if (m_CurrentProject)
-			loaded = loadFrom(m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini");
-		if (!loaded)
-			loadFrom(std::filesystem::current_path() / "imgui.ini");
+		loadFrom(ImGuiSettings::GetEditorDefaultIniPath());
+		const auto userPath = GetEditorUserSettingsPath();
+		if (userPath != ImGuiSettings::GetEditorDefaultIniPath())
+			loadFrom(userPath);
 	}
 
-	void EditorLayer::SaveSceneToolbarLayout()
+	bool EditorLayer::SaveSceneToolbarLayout()
 	{
-		const std::filesystem::path iniPath = m_CurrentProject
-			? m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini"
-			: std::filesystem::current_path() / "imgui.ini";
+		const std::filesystem::path iniPath = GetEditorUserSettingsPath();
 
 		std::string ini;
 		{
-			std::ifstream fin(iniPath);
-			if (fin)
-			{
-				std::stringstream contents;
-				contents << fin.rdbuf();
-				ini = contents.str();
-			}
+		ImGuiSettings::ReadTextFile(iniPath, ini);
+		}
+		// A toolbar can be moved before the first automatic ImGui save. Seed the
+		// user file with the current built-in sections instead of creating a file
+		// containing only [SceneToolbars].
+		if (ini.empty())
+		{
+			if (const char* settings = ImGui::SaveIniSettingsToMemory())
+				ini = settings;
 		}
 
 		std::ostringstream section;
@@ -153,9 +229,22 @@ namespace TomCat {
 			ini.push_back('\n');
 		ini += section.str();
 
-		std::ofstream fout(iniPath, std::ios::trunc);
-		if (fout)
-			fout << ini;
+		return ImGuiSettings::WriteTextFileAtomically(iniPath, ini);
+	}
+
+	bool EditorLayer::SaveEditorLayout()
+	{
+		const auto iniPath = GetEditorUserSettingsPath();
+		size_t iniSize = 0;
+		const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
+		const bool builtInSaved = iniData && ImGuiSettings::WriteTextFileAtomically(iniPath, iniData, iniSize);
+		const bool contentBrowserSaved = builtInSaved && m_ContentBrowserPanel.SaveLayoutSetting();
+		const bool sceneToolbarsSaved = contentBrowserSaved && SaveSceneToolbarLayout();
+		if (sceneToolbarsSaved)
+			ImGui::GetIO().WantSaveIniSettings = false;
+		else
+			TC_Core_Error("Failed to save the Editor layout to {0}", iniPath.string());
+		return sceneToolbarsSaved;
 	}
 
 	void EditorLayer::OnAttach()
@@ -175,27 +264,15 @@ namespace TomCat {
 
 		m_ActiveScene = CreateRef<Scene>();
 
-		// Restore editor window layout from <cwd>/imgui.ini (independent of any project)
-		ImGui::LoadIniSettingsFromDisk((std::filesystem::current_path() / "imgui.ini").string().c_str());
-
 		if (m_CurrentProject)
 		{
 			m_SceneDirty = true;
-			
-			// 读取Project.tcproj目录的imgui.ini文件
-			std::filesystem::path projectDir = m_CurrentProject->GetProjectPath().parent_path();
-			std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
-			if (std::filesystem::exists(imguiIniPath))
-			{
-				// 加载ImGui配置
-				ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
-			}
 		}
 
-		// Restore the custom Scene toolbar arrangement after all ImGui window
-		// settings have been loaded, so the project layout wins over the fallback
-		// editor-level layout.
-		LoadSceneToolbarLayout();
+		// Defaults live in the packaged, read-only tree. Only a project's
+		// UserSettings/imgui.ini can override them.
+		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+		LoadEditorLayout();
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 		m_EditorCamera.Set2DMode(m_Is2DMode);
@@ -222,29 +299,27 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		m_ContentBrowserPanel.Serialize();
-
-		// Save window layout + [ContentBrowser] layout into the editor-level imgui.ini
-		m_ContentBrowserPanel.SaveLayoutSetting();
+		// Save all ImGui and application-owned layout sections to UserSettings.
+		SaveEditorLayout();
 
 		if (m_CurrentProject)
 		{
-			std::filesystem::path projectDir = m_CurrentProject->GetProjectPath().parent_path();
-			std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
-			
-			ImGui::SaveIniSettingsToDisk(imguiIniPath.string().c_str());
-			
 			m_CurrentProject->Save();
 		}
-
-		// Append the custom section after ImGui writes its own settings; otherwise
-		// SaveIniSettingsToDisk would overwrite the toolbar section.
-		SaveSceneToolbarLayout();
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
+
+		// Project selection happens inside an ImGui menu while a frame is active.
+		// Apply the new INI before the next frame starts; clearing/rebuilding dock
+		// nodes from inside the previous frame can invalidate live dock pointers.
+		if (m_PendingEditorLayoutLoad)
+		{
+			LoadEditorLayout();
+			m_PendingEditorLayoutLoad = false;
+		}
 
 		// Resize Scene Framebuffer
 		if (FramebufferSpecification spec = m_Framebuffer->GetSpecification();
@@ -637,6 +712,12 @@ namespace TomCat {
 		ImGui::PopStyleVar();
 
 		ImGui::End();
+
+		// Dear ImGui raises this flag after a dock/window change when automatic
+		// disk persistence is disabled. Persist it in the project UserSettings
+		// file, never in the executable's working directory.
+		if (!m_PendingEditorLayoutLoad && ImGui::GetIO().WantSaveIniSettings)
+			SaveEditorLayout();
 	}
 
 	void EditorLayer::UI_GameNoCameraOverlay()
@@ -856,7 +937,7 @@ namespace TomCat {
 				const float x = ImGui::GetMousePos().x;
 				m_GizmoModeToolbarFirst = !m_GizmoModeToolbarDocked ||
 					x >= dockStartX + modeWidth * 0.5f;
-				SaveSceneToolbarLayout();
+				SaveEditorLayout();
 			}
 
 			const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
@@ -951,7 +1032,7 @@ namespace TomCat {
 			const float dockStartX = m_ViewportBounds[0].x + 8.0f;
 			m_GizmoModeToolbarFirst = !m_GizmoModeToolbarDocked ||
 				ImGui::GetMousePos().x >= dockStartX + modeWidth * 0.5f;
-			SaveSceneToolbarLayout();
+			SaveEditorLayout();
 		}
 
 		const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
@@ -1119,7 +1200,7 @@ namespace TomCat {
 		{
 			m_GizmoModeToolbarFirst = !m_GizmoTransformToolbarDocked ||
 				ImGui::GetMousePos().x < dockStartX + transformWidth * 0.5f;
-			SaveSceneToolbarLayout();
+			SaveEditorLayout();
 		}
 
 		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool hovered)
@@ -1424,7 +1505,6 @@ namespace TomCat {
 		m_SceneHierarchyPanel.SetSelectedEntity({});
 		m_CurrentScenePath.clear();
 		m_SceneDirty = true;
-		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 
 		m_EditorScenePath = std::filesystem::path();
 	}
@@ -1502,7 +1582,6 @@ namespace TomCat {
 			m_CurrentScenePath = path;
 			m_SceneDirty = false;
 		}
-		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 	}
 
 	void EditorLayer::SaveScene()
@@ -1542,32 +1621,26 @@ namespace TomCat {
 		std::string filepath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
 		if (!filepath.empty())
 		{
-			// Preserve the current project's toolbar arrangement before switching
-			// the active project and loading its independent imgui.ini.
-			SaveSceneToolbarLayout();
+			// Preserve the current project's complete user layout before switching.
+			SaveEditorLayout();
 			auto project = ProjectManager::Get().LoadProject(filepath);
 			if (project)
 			{
 				m_CurrentProject = project;
 				m_Is2DMode = project->GetConfig().Template == "2D";
 				m_EditorCamera.Set2DMode(m_Is2DMode);
-				
-				// 读取Project.tcproj目录的imgui.ini文件
-				std::filesystem::path projectDir = project->GetProjectPath().parent_path();
-				std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
-				if (std::filesystem::exists(imguiIniPath))
-				{
-					// 加载ImGui配置
-					ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
-				}
-				LoadSceneToolbarLayout();
+
+				// Update the panel's project-specific settings path before loading the
+				// new project's layout. This prevents one frame of the previous
+				// project's ContentBrowser state from being used during a switch.
+				m_ContentBrowserPanel.SetProject(m_CurrentProject);
+				m_PendingEditorLayoutLoad = true;
 				
 				// A project created by the Hub already contains the serialized sample
 				// asset.  Keep the same startup behavior when switching projects from
 				// inside the editor; the helper still creates a compatibility scene for
 				// older projects that predate the Hub template.
 				OpenOrCreateSampleScene();
-				m_ContentBrowserPanel.SetProject(m_CurrentProject);
 			}
 		}
 	}
@@ -1577,10 +1650,8 @@ namespace TomCat {
 		if (m_CurrentProject)
 		{
 			m_CurrentProject->Save();
-			const std::filesystem::path imguiIniPath = m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini";
-			ImGui::SaveIniSettingsToDisk(imguiIniPath.string().c_str());
 		}
-		SaveSceneToolbarLayout();
+		SaveEditorLayout();
 	}
 
 	void EditorLayer::OnDuplicateEntity()

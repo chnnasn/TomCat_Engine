@@ -102,7 +102,7 @@
     <PostBuildEvent>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Debug-windows-x86_64/Manager\" &gt; nul
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
-copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
+</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -136,7 +136,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <PostBuildEvent>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Release-windows-x86_64/Manager\" &gt; nul
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
-copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
+</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
@@ -170,7 +170,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <PostBuildEvent>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Dist-windows-x86_64/Manager\" &gt; nul
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
-copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
+</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
