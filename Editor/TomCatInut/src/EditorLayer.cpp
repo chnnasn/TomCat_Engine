@@ -995,7 +995,6 @@ namespace TomCat {
 		const ImU32 outer = IM_COL32(40, 40, 40, 245);
 		const ImU32 normal = IM_COL32(71, 71, 71, 245);
 		const ImU32 hover = IM_COL32(98, 98, 98, 245);
-		const ImU32 active = IM_COL32(44, 93, 135, 255);
 		const ImU32 line = IM_COL32(196, 196, 196, 255);
 		const ImU32 arrow = IM_COL32(137, 137, 137, 255);
 		const ImU32 accent = IM_COL32(212, 127, 42, 255);
@@ -1065,12 +1064,12 @@ namespace TomCat {
 			SaveSceneToolbarLayout();
 		}
 
-		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool selected, bool hovered)
+		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool hovered)
 		{
-			// Keep the blue selected state visible while hovering, as in Unity's
-			// Scene toolbar; hover only changes neutral buttons.
-			draw->AddRectFilled(min, max, selected ? active : (hovered ? hover : normal), 2.0f);
-			draw->AddRect(min, max, selected ? active : IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
+			// Pivot/space choices are represented by their icon.  Keep the button
+			// surface neutral after a click; only pointer hover may tint it.
+			draw->AddRectFilled(min, max, hovered ? hover : normal, 2.0f);
+			draw->AddRect(min, max, IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
 		};
 
 		auto DrawDropArrow = [&](const ImVec2& min, const ImVec2& max)
@@ -1082,34 +1081,34 @@ namespace TomCat {
 		auto DrawPivotIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
 			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 6.0f, c.y - 6.0f), ImVec2(c.x + 6.0f, c.y + 6.0f), line, 0.0f, 0, 1.3f);
-			draw->AddCircleFilled(ImVec2(c.x - 3.5f, c.y + 3.5f), 2.4f, accent);
+			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
+			draw->AddCircleFilled(ImVec2(c.x - 5.0f, c.y + 5.0f), 3.0f, accent);
 		};
 
 		auto DrawCenterIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
 			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 6.0f, c.y - 6.0f), ImVec2(c.x + 6.0f, c.y + 6.0f), line, 0.0f, 0, 1.3f);
-			draw->AddCircleFilled(c, 2.4f, accent);
+			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
+			draw->AddCircleFilled(c, 3.0f, accent);
 		};
 
 		auto DrawLocalIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
 			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 6.0f, c.y - 5.0f), ImVec2(c.x + 6.0f, c.y + 6.0f), line, 0.0f, 0, 1.3f);
-			draw->AddLine(ImVec2(c.x - 5.5f, c.y - 2.0f), ImVec2(c.x + 1.0f, c.y - 6.0f), line, 1.6f);
-			draw->AddLine(ImVec2(c.x + 1.0f, c.y - 6.0f), ImVec2(c.x + 5.5f, c.y - 1.0f), line, 1.6f);
-			draw->AddLine(ImVec2(c.x + 5.5f, c.y - 1.0f), ImVec2(c.x + 5.5f, c.y + 5.0f), line, 1.6f);
-			draw->AddCircleFilled(ImVec2(c.x - 2.5f, c.y + 2.5f), 2.2f, accent);
+			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 8.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
+			draw->AddLine(ImVec2(c.x - 8.0f, c.y - 3.0f), ImVec2(c.x + 1.5f, c.y - 9.0f), line, 2.0f);
+			draw->AddLine(ImVec2(c.x + 1.5f, c.y - 9.0f), ImVec2(c.x + 8.0f, c.y - 1.5f), line, 2.0f);
+			draw->AddLine(ImVec2(c.x + 8.0f, c.y - 1.5f), ImVec2(c.x + 8.0f, c.y + 8.0f), line, 2.0f);
+			draw->AddCircleFilled(ImVec2(c.x - 3.5f, c.y + 4.0f), 2.8f, accent);
 		};
 
 		auto DrawWorldIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
 			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddCircle(c, 6.0f, line, 20, 1.3f);
-			draw->AddLine(ImVec2(c.x - 6.0f, c.y), ImVec2(c.x + 6.0f, c.y), line, 1.3f);
-			draw->AddLine(ImVec2(c.x, c.y - 6.0f), ImVec2(c.x, c.y + 6.0f), line, 1.3f);
-			draw->AddCircleFilled(ImVec2(c.x + 2.2f, c.y - 2.2f), 2.0f, accent);
+			draw->AddCircle(c, 9.0f, line, 24, 1.8f);
+			draw->AddLine(ImVec2(c.x - 9.0f, c.y), ImVec2(c.x + 9.0f, c.y), line, 1.8f);
+			draw->AddLine(ImVec2(c.x, c.y - 9.0f), ImVec2(c.x, c.y + 9.0f), line, 1.8f);
+			draw->AddCircleFilled(ImVec2(c.x + 3.0f, c.y - 3.0f), 2.8f, accent);
 		};
 
 		const float buttonMinY = topLeft.y + padding;
@@ -1123,7 +1122,7 @@ namespace TomCat {
 		const bool pivotHovered = ImGui::IsItemHovered();
 		if (ImGui::IsItemClicked())
 			ImGui::OpenPopup("##scene_gizmo_pivot_popup");
-		DrawFrame(pivotMin, pivotMax, m_GizmoPivotMode == GizmoPivotMode::Pivot, pivotHovered || ImGui::IsPopupOpen("##scene_gizmo_pivot_popup"));
+		DrawFrame(pivotMin, pivotMax, pivotHovered);
 		if (m_GizmoPivotMode == GizmoPivotMode::Pivot)
 			DrawPivotIcon(pivotMin, pivotMax);
 		else
@@ -1143,7 +1142,7 @@ namespace TomCat {
 		const bool spaceHovered = ImGui::IsItemHovered();
 		if (ImGui::IsItemClicked())
 			ImGui::OpenPopup("##scene_gizmo_space_popup");
-		DrawFrame(spaceMin, spaceMax, m_GizmoSpaceMode == GizmoSpaceMode::Local, spaceHovered || ImGui::IsPopupOpen("##scene_gizmo_space_popup"));
+		DrawFrame(spaceMin, spaceMax, spaceHovered);
 		if (m_GizmoSpaceMode == GizmoSpaceMode::Local)
 			DrawLocalIcon(spaceMin, spaceMax);
 		else
