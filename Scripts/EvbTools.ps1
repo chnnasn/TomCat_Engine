@@ -25,6 +25,21 @@ function Get-EvbFileTreeXml {
     $parts = New-Object 'System.Collections.Generic.List[string]'
 
     foreach ($item in $items) {
+        # Runtime/user state must always remain outside the virtual filesystem.
+        # The root default imgui.ini is declared explicitly by each checked-in
+        # EVB template; never pick up another layout or settings file while
+        # recursively mirroring Packages.
+        $isUserStateDirectory = $item.PSIsContainer -and
+            ($item.Name -ieq "UserSettings" -or $item.Name -ieq "TomCatSettings")
+        $isUserStateFile = -not $item.PSIsContainer -and
+            ($item.Name -ieq "hub.json" -or $item.Name -ieq "editor.json" -or
+             $item.Name -ieq "editor-layout.ini" -or
+             $item.Name -ieq "imgui.ini")
+        if ($isUserStateDirectory -or $isUserStateFile) {
+            Write-Warning "Excluded runtime/user settings from EVB: $($item.FullName)"
+            continue
+        }
+
         # Do not follow junctions/symlinks while walking build output.  Besides
         # avoiding loops, this keeps the EVB manifest inside the source tree.
         if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -73,6 +88,52 @@ function Get-EvbFileTreeXml {
     }
 
     return ($parts -join "`r`n")
+}
+
+function Assert-EvbUserStateExcluded {
+    param(
+        [Parameter(Mandatory)]
+        [string]$TemplateText
+    )
+
+    $forbiddenNamePattern = '(?is)<Name>\s*(?:hub\.json|editor\.json|editor-layout\.ini|UserSettings|TomCatSettings)\s*</Name>'
+    if ($TemplateText -match $forbiddenNamePattern) {
+        throw "EVB project contains runtime/user settings; JSON, editor-layout.ini, UserSettings and TomCatSettings must remain external"
+    }
+
+    $fileSources = [regex]::Matches($TemplateText, '(?is)<File>\s*([^<]*?)\s*</File>')
+    $layoutSources = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($sourceMatch in $fileSources) {
+        $source = [System.Net.WebUtility]::HtmlDecode($sourceMatch.Groups[1].Value.Trim())
+        $components = @($source -split '[\\/]' | Where-Object { $_ -ne '' })
+        foreach ($component in $components) {
+            if ($component -ieq "UserSettings" -or $component -ieq "TomCatSettings") {
+                throw "EVB project contains runtime/user settings path: $source"
+            }
+        }
+        if ($components.Count -gt 0) {
+            $leaf = $components[$components.Count - 1]
+            if ($leaf -ieq "hub.json" -or $leaf -ieq "editor.json" -or
+                $leaf -ieq "editor-layout.ini") {
+                throw "EVB project contains runtime/user settings file: $source"
+            }
+            if ($leaf -ieq "imgui.ini") {
+                [void]$layoutSources.Add($source)
+            }
+        }
+    }
+
+    $layoutEntries = [regex]::Matches(
+        $TemplateText,
+        '(?is)<Name>\s*imgui\.ini\s*</Name>'
+    )
+    if ($layoutEntries.Count -ne 1) {
+        throw "EVB project must contain exactly one packaged default imgui.ini (found $($layoutEntries.Count))"
+    }
+    if ($layoutSources.Count -ne 1 -or
+        $layoutSources[0] -notmatch '(?i)(?:^|[\\/])(?:Editor[\\/]TomCatInut|Builder[\\/]Manager)[\\/]imgui\.ini$') {
+        throw "EVB imgui.ini must come from the checked-in Editor or Hub default layout"
+    }
 }
 
 function Resolve-EvbPackageDirectory {
@@ -221,6 +282,7 @@ function Write-EvbProject {
         [string]$Text
     )
 
+    Assert-EvbUserStateExcluded -TemplateText $Text
     $encoding = New-Object System.Text.UTF8Encoding($true)
     [System.IO.File]::WriteAllText($Path, $Text, $encoding)
 }

@@ -42,7 +42,7 @@ if (-not (Test-Path $SourceDir -PathType Container)) { throw "Source directory n
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
 $packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
 $packageFileCount = @(Get-ChildItem -LiteralPath $packageSource -Recurse -File -Force).Count
-Write-Host "Including $packageFileCount file(s) from $packageSource"
+Write-Host "Scanning $packageFileCount package candidate file(s) from $packageSource"
 if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "TomCat.log") -PathType Leaf)) {
     New-Item -ItemType File -Path (Join-Path $SourceDir "TomCat.log") -Force | Out-Null
 }

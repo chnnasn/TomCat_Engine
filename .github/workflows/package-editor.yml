@@ -84,7 +84,7 @@ jobs:
             $srcDir = (Resolve-Path -LiteralPath $srcDir).Path
             $packageDir = Resolve-EvbPackageDirectory -SourceDir $srcDir
             $packageFileCount = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force).Count
-            Write-Host "Including $packageFileCount file(s) from $packageDir"
+            Write-Host "Scanning $packageFileCount package candidate file(s) from $packageDir"
             if (-not (Test-Path "$srcDir\TomCat.log")) { New-Item -ItemType File -Path "$srcDir\TomCat.log" -Force | Out-Null }
             New-Item -ItemType Directory -Force -Path "dist" | Out-Null
             Copy-Item "$srcDir\$srcExe" "dist\$srcExe" -Force

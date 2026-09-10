@@ -17,12 +17,25 @@ namespace TomCat {
 		std::string Template = "3D";
 		std::filesystem::path AssetDirectory = "Assets";
 		std::filesystem::path StartScene = "sample.tomcat";
-		std::string TwoColumnCurrentFolder;
-		std::vector<std::string> ExpandedNodes;
 
 		// User-local recency metadata. Schema v2 stores this in Hub settings rather
 		// than rewriting the shared project file whenever it is opened.
 		std::string LastOperationTime;
+	};
+
+	// Project-local Editor state. This is intentionally kept outside ProjectConfig
+	// because it is written to UserSettings/editor.json, never Project.tcproj.
+	struct EditorProjectState
+	{
+		std::string ContentBrowserCurrentDirectory = ".";
+		std::vector<std::string> ContentBrowserExpandedNodes;
+	};
+
+	enum class EditorProjectStateLoadResult
+	{
+		Missing,
+		Loaded,
+		Failed
 	};
 
 	class Project
@@ -48,6 +61,13 @@ namespace TomCat {
 		std::filesystem::path GetAssetPath() const { return m_Directory / m_Config.AssetDirectory; };
 
 		bool SetStartScene(const std::filesystem::path& scenePath);
+
+		EditorProjectStateLoadResult LoadEditorState(EditorProjectState& state) const;
+		bool SaveEditorState(const EditorProjectState& state) const;
+		const EditorProjectState* GetLegacyEditorState() const
+		{
+			return m_HasLegacyEditorState ? &m_LegacyEditorState : nullptr;
+		}
 		
 		bool IsValid() const { return !m_ProjectPath.empty(); }
 		
@@ -61,6 +81,8 @@ namespace TomCat {
 		std::filesystem::path m_Directory;
 		ProjectConfig m_Config;
 		std::string m_PreservedDocument;
+		EditorProjectState m_LegacyEditorState;
+		bool m_HasLegacyEditorState = false;
 
 		friend class ProjectManager;
 	};

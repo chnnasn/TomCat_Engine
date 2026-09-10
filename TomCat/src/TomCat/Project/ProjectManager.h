@@ -32,8 +32,9 @@ namespace TomCat {
 		Ref<Project> GetActiveProject() const { return m_ActiveProject; }
 		void OpenProjectInEditor(Ref<Project> project);
 
-		// User-local Hub settings live in the [HubConfig] section of imgui.ini.
-		// The legacy HubConfig.tomcat file is read only for one-way migration.
+		// Non-layout Hub state lives in
+		// %LOCALAPPDATA%/TomCat/TomCatSettings/hub.json.
+		// Legacy INI/YAML settings are read only for one-way migration.
 		void LoadHubSettings();
 		[[nodiscard]] bool SaveHubSettings();
 	private:
@@ -57,6 +58,7 @@ namespace TomCat {
 		std::unordered_set<std::string> m_IgnoredProjectPaths;
 		std::vector<Ref<Project>> m_Projects;
 		Ref<Project> m_ActiveProject;
+		bool m_HubSettingsWriteBlocked = false;
 	};
 
 }

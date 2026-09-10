@@ -73,6 +73,7 @@ web/wasm/build/
 
 # Runtime settings and profiling output
 HubConfig.tomcat
+UserSettings/
 TomCatProfile-*.json
 
 # Build artifacts and runtime logs

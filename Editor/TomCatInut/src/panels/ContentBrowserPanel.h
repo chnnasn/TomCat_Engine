@@ -20,6 +20,7 @@ namespace TomCat {
 
 		ContentBrowserPanel();
 		void SetProject(Ref<Project> project);
+		// Saves non-layout navigation state to project-local UserSettings/editor.json.
 		bool Serialize();
 
 		using SceneOpenCallback = std::function<void(const std::filesystem::path&)>;
@@ -29,7 +30,7 @@ namespace TomCat {
 		void SetAssetRenamedCallback(AssetRenamedCallback callback) { m_AssetRenamedCallback = std::move(callback); }
 		void SetAssetDeletedCallback(AssetDeletedCallback callback) { m_AssetDeletedCallback = std::move(callback); }
 
-		// Editor-level layout setting (persisted inside imgui.ini)
+		// Layout uses LocalAppData without a project, otherwise project UserSettings/imgui.ini.
 		void LoadLayoutSetting();
 		void SaveLayoutSetting();
 
@@ -48,6 +49,7 @@ namespace TomCat {
 
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
+		bool m_ProjectStateWritable = true;
 
 		// 存储树节点的打开状态
 		std::unordered_set<std::string> m_ExpandedNodes;
