@@ -27,6 +27,12 @@ namespace TomCat {
 		virtual void OnImGuiRender() override;
 		void OnEvent(Event& e) override;
 	private:
+		enum class GizmoPivotMode
+		{
+			Pivot = 0,
+			Center = 1
+		};
+
 		enum class GizmoSpaceMode
 		{
 			Local = 0,
@@ -59,6 +65,7 @@ namespace TomCat {
 		void UI_Toolbar();
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
+		void UI_SceneToolbarDockPreview();
 		// Persist the Scene toolbar arrangement alongside ImGui's window layout.
 		void LoadSceneToolbarLayout();
 		void SaveSceneToolbarLayout();
@@ -94,6 +101,7 @@ namespace TomCat {
 		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
 
 		int m_GizmoType = -1;
+		GizmoPivotMode m_GizmoPivotMode = GizmoPivotMode::Pivot;
 		GizmoSpaceMode m_GizmoSpaceMode = GizmoSpaceMode::Local;
 		bool m_GizmoModeToolbarDocked = true;
 		bool m_GizmoTransformToolbarDocked = false;
