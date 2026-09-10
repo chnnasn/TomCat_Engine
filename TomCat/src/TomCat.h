@@ -10,7 +10,6 @@
 #include "TomCat/Core/Input.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/MouseCodes.h"
-#include "TomCat/Renderer/OrthographicCameraController.h"
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 
@@ -29,7 +28,3 @@
 #include "TomCat/Renderer/Framebuffer.h"
 #include "TomCat/Renderer/Buffer.h"
 #include "TomCat/Renderer/VertexArray.h"
-
-#include "TomCat/Renderer/OrthographicCamera.h"
-
-

@@ -5,6 +5,8 @@
 #include"TomCat/Core/Base.h"
 #include "TomCat/Events/Event.h"
 
+#include <filesystem>
+
 namespace TomCat {
 
 	struct WindowProps
@@ -12,14 +14,14 @@ namespace TomCat {
 		std::string Title;
 		uint32_t Width;
 		uint32_t Height;
-		std::string IconPath;
+		std::filesystem::path IconPath;
 
 
 		WindowProps(const std::string& title = "TomCat Engine",
 			uint32_t  width = 1920,
 			uint32_t  height = 1080,
-			const std::string& iconPath = "")
-			:Title(title), Width(width), Height(height), IconPath(iconPath)
+			std::filesystem::path iconPath = {})
+			:Title(title), Width(width), Height(height), IconPath(std::move(iconPath))
 		{
 		}
 	};
@@ -41,6 +43,11 @@ namespace TomCat {
 		virtual void SetEventCallback(const EventCallbackFn& callback) = 0;
 		virtual void SetVSync(bool enabled) = 0;
 		virtual bool IsVSync() const = 0;
+		virtual double GetTimeSeconds() const = 0;
+
+		// Reject a native close request and make the window visible again so the
+		// application can present its own confirmation UI.
+		virtual void CancelCloseRequest() = 0;
 
 		virtual void* GetNativeWindow() const = 0;
 

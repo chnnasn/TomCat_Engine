@@ -4,26 +4,32 @@
 #include <filesystem>
 #include <vector>
 #include <ctime>
+#include <cstdint>
 
 namespace TomCat {
 
 	struct ProjectConfig
-{
-	std::string Name = "Untitled Project";
-	std::string Version = "1.0.0";
-	std::string Description = "";
-	std::string EditorVersion = "";
-	std::string Template = "3D"; // project template: "2D" or "3D"
-	std::string LastOperationTime = "";
-	std::filesystem::path AssetDirectory = "Assets";
-	std::string TwoColumnCurrentFolder = "";
-	std::vector<std::string> ExpandedNodes;
-	//std::string StartScene = "";
-};
+	{
+		std::string Name = "Untitled Project";
+		std::string Version = "1.0.0";
+		std::string Description;
+		std::string EditorVersion;
+		std::string Template = "3D";
+		std::filesystem::path AssetDirectory = "Assets";
+		std::filesystem::path StartScene = "sample.tomcat";
+		std::string TwoColumnCurrentFolder;
+		std::vector<std::string> ExpandedNodes;
+
+		// User-local recency metadata. Schema v2 stores this in Hub settings rather
+		// than rewriting the shared project file whenever it is opened.
+		std::string LastOperationTime;
+	};
 
 	class Project
 	{
 	public:
+		static constexpr uint32_t CurrentSchemaVersion = 2;
+
 		Project() = default;
 		Project(const std::filesystem::path& projectPath);
 
@@ -41,7 +47,7 @@ namespace TomCat {
 
 		std::filesystem::path GetAssetPath() const { return m_Directory / m_Config.AssetDirectory; };
 
-		void SetStartScene(const std::string& sceneName);
+		bool SetStartScene(const std::filesystem::path& scenePath);
 		
 		bool IsValid() const { return !m_ProjectPath.empty(); }
 		
@@ -54,6 +60,9 @@ namespace TomCat {
 		std::filesystem::path m_ProjectPath;
 		std::filesystem::path m_Directory;
 		ProjectConfig m_Config;
+		std::string m_PreservedDocument;
+
+		friend class ProjectManager;
 	};
 
 }

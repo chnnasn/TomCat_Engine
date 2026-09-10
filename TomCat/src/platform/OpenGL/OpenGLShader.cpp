@@ -11,12 +11,34 @@
 #include <spirv_cross/spirv_glsl.hpp>
 
 #include <filesystem>
+#include <iomanip>
+#include <limits>
+#include <stdexcept>
 
 #include "TomCat/Core/Timer.h"
+#include "TomCat/Utils/FileSystemUtils.h"
+#include "TomCat/Utils/PathUtils.h"
 
 namespace TomCat {
 
 	namespace Utils {
+		static constexpr uint64_t FNVOffsetBasis = 14695981039346656037ull;
+		static constexpr uint64_t FNVPrime = 1099511628211ull;
+		static constexpr uint32_t ShaderCacheMagic = 0x43534354u; // "TCSC" in little-endian files
+		static constexpr uint32_t ShaderCacheFormatVersion = 1;
+		static constexpr uint64_t ShaderCacheHeaderSize = sizeof(uint32_t) * 4 + sizeof(uint64_t);
+		static constexpr uint64_t MaxShaderCacheSize = 64ull * 1024ull * 1024ull;
+
+		static uint64_t HashBytes(const void* bytes, size_t size, uint64_t hash = FNVOffsetBasis)
+		{
+			const auto* data = static_cast<const uint8_t*>(bytes);
+			for (size_t i = 0; i < size; ++i)
+			{
+				hash ^= data[i];
+				hash *= FNVPrime;
+			}
+			return hash;
+		}
 
 		static GLenum ShaderTypeFromString(const std::string& type)
 		{
@@ -25,7 +47,6 @@ namespace TomCat {
 			if (type == "fragment" || type == "pixel")
 				return GL_FRAGMENT_SHADER;
 
-			TC_Core_Assert(false, "Unknown shader type!");
 			return 0;
 		}
 
@@ -75,7 +96,7 @@ namespace TomCat {
 			std::error_code error;
 			std::filesystem::create_directories(cacheDirectory, error);
 			if (error)
-				TC_Core_Warn("Could not create shader cache directory '{0}': {1}", cacheDirectory.string(), error.message());
+				TC_Core_Warn("Could not create shader cache directory '{0}': {1}", PathToUTF8(cacheDirectory), error.message());
 		}
 
 		static const char* GLShaderStageCachedOpenGLFileExtension(uint32_t stage)
@@ -100,11 +121,148 @@ namespace TomCat {
 			return "";
 		}
 
+		static std::filesystem::path GetCachePath(const std::string& identity, GLenum stage,
+			const void* content, size_t contentSize, const char* extension)
+		{
+			const auto cacheDirectory = GetCacheDirectory();
+			if (cacheDirectory.empty())
+				return {};
+
+			uint64_t hash = HashBytes(&ShaderCacheFormatVersion, sizeof(ShaderCacheFormatVersion));
+			hash = HashBytes(identity.data(), identity.size(), hash);
+			hash = HashBytes(&stage, sizeof(stage), hash);
+			hash = HashBytes(content, contentSize, hash);
+
+			std::ostringstream hashStream;
+			hashStream << std::hex << std::setw(16) << std::setfill('0') << hash;
+
+			return cacheDirectory / ("shader.v" + std::to_string(ShaderCacheFormatVersion) + "." +
+				hashStream.str() + extension);
+		}
+
+		static void RemoveCachedSPIRV(const std::filesystem::path& path)
+		{
+			if (path.empty())
+				return;
+
+			std::error_code error;
+			std::filesystem::remove(path, error);
+			if (error)
+				TC_Core_Warn("Could not remove shader cache '{0}': {1}", PathToUTF8(path), error.message());
+		}
+
+		static bool ReadCachedSPIRV(const std::filesystem::path& path, GLenum stage, std::vector<uint32_t>& data)
+		{
+			std::ifstream input(path, std::ios::in | std::ios::binary | std::ios::ate);
+			if (!input)
+				return false;
+
+			const std::streamoff size = input.tellg();
+			input.seekg(0, std::ios::beg);
+
+			uint32_t magic = 0;
+			uint32_t version = 0;
+			uint32_t cachedStage = 0;
+			uint32_t wordCount = 0;
+			uint64_t payloadHash = 0;
+			if (size < static_cast<std::streamoff>(ShaderCacheHeaderSize) ||
+				size > static_cast<std::streamoff>(MaxShaderCacheSize) ||
+				!input.read(reinterpret_cast<char*>(&magic), sizeof(magic)) ||
+				!input.read(reinterpret_cast<char*>(&version), sizeof(version)) ||
+				!input.read(reinterpret_cast<char*>(&cachedStage), sizeof(cachedStage)) ||
+				!input.read(reinterpret_cast<char*>(&wordCount), sizeof(wordCount)) ||
+				!input.read(reinterpret_cast<char*>(&payloadHash), sizeof(payloadHash)))
+			{
+				input.close();
+				data.clear();
+				RemoveCachedSPIRV(path);
+				return false;
+			}
+
+			const uint64_t expectedSize = ShaderCacheHeaderSize + static_cast<uint64_t>(wordCount) * sizeof(uint32_t);
+			if (magic != ShaderCacheMagic || version != ShaderCacheFormatVersion ||
+				cachedStage != static_cast<uint32_t>(stage) || wordCount < 5 ||
+				expectedSize != static_cast<uint64_t>(size))
+			{
+				input.close();
+				data.clear();
+				RemoveCachedSPIRV(path);
+				return false;
+			}
+
+			data.resize(wordCount);
+			const auto payloadSize = static_cast<std::streamsize>(static_cast<uint64_t>(wordCount) * sizeof(uint32_t));
+			if (!input.read(reinterpret_cast<char*>(data.data()), payloadSize) ||
+				data.front() != 0x07230203u ||
+				HashBytes(data.data(), static_cast<size_t>(payloadSize)) != payloadHash)
+			{
+				input.close();
+				data.clear();
+				RemoveCachedSPIRV(path);
+				return false;
+			}
+
+			return true;
+		}
+
+		static bool ReplaceCacheFile(const std::filesystem::path& temporaryPath, const std::filesystem::path& path)
+		{
+			std::string error;
+			if (FileSystem::InstallTemporaryFileAtomically(temporaryPath, path, error))
+				return true;
+			TC_Core_Warn("Could not replace shader cache '{0}': {1}", PathToUTF8(path), error);
+			return false;
+		}
+
+		static void WriteCachedSPIRV(const std::filesystem::path& path, GLenum stage, const std::vector<uint32_t>& data)
+		{
+			if (path.empty() || data.size() < 5 || data.size() > std::numeric_limits<uint32_t>::max() ||
+				data.size() * sizeof(uint32_t) > MaxShaderCacheSize - ShaderCacheHeaderSize)
+				return;
+
+			const std::filesystem::path temporaryPath = FileSystem::MakeTemporarySiblingPath(path);
+			if (temporaryPath.empty())
+			{
+				TC_Core_Warn("Could not allocate a temporary shader cache path for '{0}'", PathToUTF8(path));
+				return;
+			}
+
+			const uint32_t magic = ShaderCacheMagic;
+			const uint32_t version = ShaderCacheFormatVersion;
+			const uint32_t cachedStage = static_cast<uint32_t>(stage);
+			const uint32_t wordCount = static_cast<uint32_t>(data.size());
+			const auto payloadSize = static_cast<std::streamsize>(data.size() * sizeof(uint32_t));
+			const uint64_t payloadHash = HashBytes(data.data(), static_cast<size_t>(payloadSize));
+
+			std::ofstream output(temporaryPath, std::ios::out | std::ios::binary | std::ios::trunc);
+			if (!output ||
+				!output.write(reinterpret_cast<const char*>(&magic), sizeof(magic)) ||
+				!output.write(reinterpret_cast<const char*>(&version), sizeof(version)) ||
+				!output.write(reinterpret_cast<const char*>(&cachedStage), sizeof(cachedStage)) ||
+				!output.write(reinterpret_cast<const char*>(&wordCount), sizeof(wordCount)) ||
+				!output.write(reinterpret_cast<const char*>(&payloadHash), sizeof(payloadHash)) ||
+				!output.write(reinterpret_cast<const char*>(data.data()), payloadSize))
+			{
+				output.close();
+				std::error_code ignored;
+				std::filesystem::remove(temporaryPath, ignored);
+				TC_Core_Warn("Could not write shader cache '{0}'", PathToUTF8(path));
+				return;
+			}
+
+			output.close();
+			if (!output || !ReplaceCacheFile(temporaryPath, path))
+			{
+				std::error_code ignored;
+				std::filesystem::remove(temporaryPath, ignored);
+			}
+		}
+
 
 	}
 
-	OpenGLShader::OpenGLShader(const std::string& filepath)
-		: m_FilePath(filepath)
+	OpenGLShader::OpenGLShader(const std::filesystem::path& filepath)
+		: m_Identity(PathToUTF8(filepath))
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -115,68 +273,61 @@ namespace TomCat {
 
 		{
 			Timer timer;
-			CompileOrGetVulkanBinaries(shaderSources);
-			CompileOrGetOpenGLBinaries();
-			CreateProgram();
+			BuildProgram(shaderSources);
 			TC_Core_Warn("Shader creation took {0} ms", timer.ElapsedMillis());
 			
 		}
 
-		// Extract name from filepath
-		auto lastSlash = filepath.find_last_of("/\\");
-		lastSlash = lastSlash == std::string::npos ? 0 : lastSlash + 1;
-		auto lastDot = filepath.rfind('.');
-		auto count = lastDot == std::string::npos ? filepath.size() - lastSlash : lastDot - lastSlash;
-		m_Name = filepath.substr(lastSlash, count);
+		m_Name = PathToUTF8(filepath.stem());
 	}
 
 	OpenGLShader::OpenGLShader(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc)
-		: m_Name(name)
+		: m_Identity(name), m_Name(name)
 	{
 		TC_PROFILE_FUNCTION();
+		Utils::CreateCacheDirectoryIfNeeded();
 
 		std::unordered_map<GLenum, std::string> sources;
 		sources[GL_VERTEX_SHADER] = vertexSrc;
 		sources[GL_FRAGMENT_SHADER] = fragmentSrc;
 
-		CompileOrGetVulkanBinaries(sources);
-		CompileOrGetOpenGLBinaries();
-		CreateProgram();
+		BuildProgram(sources);
 	}
 
 	OpenGLShader::~OpenGLShader()
 	{
 		TC_PROFILE_FUNCTION();
 
-		glDeleteProgram(m_RendererID);
+		if (m_RendererID)
+			glDeleteProgram(m_RendererID);
 	}
 
-	std::string OpenGLShader::ReadFile(const std::string& filepath)
+	std::string OpenGLShader::ReadFile(const std::filesystem::path& filepath)
 	{
 		TC_PROFILE_FUNCTION();
 
-		std::string result;
-		std::ifstream in(filepath, std::ios::in | std::ios::binary); // ifstream closes itself due to RAII
-		if (in)
+		const std::string displayPath = PathToUTF8(filepath);
+		std::ifstream in(filepath, std::ios::in | std::ios::binary | std::ios::ate);
+		if (!in)
 		{
-			in.seekg(0, std::ios::end);
-			size_t size = in.tellg();
-			if (size != -1)
-			{
-				result.resize(size);
-				in.seekg(0, std::ios::beg);
-				in.read(&result[0], size);
-			}
-			else
-			{
-				TC_Core_Error("Could not read from file '{0}'", filepath);
-			}
-		}
-		else
-		{
-			TC_Core_Error("Could not open file '{0}'", filepath);
+			TC_Core_Error("Could not open shader file '{0}'", displayPath);
+			throw std::runtime_error("Could not open shader file: " + displayPath);
 		}
 
+		const std::streamoff fileSize = in.tellg();
+		if (fileSize <= 0)
+		{
+			TC_Core_Error("Shader file is empty or unreadable: '{0}'", displayPath);
+			throw std::runtime_error("Shader file is empty or unreadable: " + displayPath);
+		}
+
+		std::string result(static_cast<size_t>(fileSize), '\0');
+		in.seekg(0, std::ios::beg);
+		if (!in.read(result.data(), fileSize))
+		{
+			TC_Core_Error("Could not read shader file '{0}'", displayPath);
+			throw std::runtime_error("Could not read shader file: " + displayPath);
+		}
 		return result;
 	}
 
@@ -189,28 +340,64 @@ namespace TomCat {
 		const char* typeToken = "#type";
 		size_t typeTokenLength = strlen(typeToken);
 		size_t pos = source.find(typeToken, 0); //Start of shader type declaration line
+		if (pos == std::string::npos)
+			throw std::runtime_error("Shader source contains no #type declarations: " + m_Identity);
+
 		while (pos != std::string::npos)
 		{
 			size_t eol = source.find_first_of("\r\n", pos); //End of shader type declaration line
-			TC_Core_Assert(eol != std::string::npos, "Syntax error");
-			size_t begin = pos + typeTokenLength + 1; //Start of shader type name (after "#type " keyword)
-			std::string type = source.substr(begin, eol - begin);
-			TC_Core_Assert(Utils::ShaderTypeFromString(type), "Invalid shader type specified");
+			if (eol == std::string::npos)
+				throw std::runtime_error("Malformed #type declaration in shader: " + m_Identity);
+
+			size_t begin = source.find_first_not_of(" \t", pos + typeTokenLength);
+			if (begin == std::string::npos || begin >= eol)
+				throw std::runtime_error("Missing shader stage after #type in: " + m_Identity);
+			size_t typeEnd = source.find_last_not_of(" \t\r", eol - 1);
+			std::string type = source.substr(begin, typeEnd - begin + 1);
+			const GLenum stage = Utils::ShaderTypeFromString(type);
+			if (!stage)
+				throw std::runtime_error("Unknown shader stage '" + type + "' in: " + m_Identity);
 
 			size_t nextLinePos = source.find_first_not_of("\r\n", eol); //Start of shader code after shader type declaration line
-			TC_Core_Assert(nextLinePos != std::string::npos, "Syntax error");
+			if (nextLinePos == std::string::npos)
+				throw std::runtime_error("Shader stage has no source in: " + m_Identity);
 			pos = source.find(typeToken, nextLinePos); //Start of next shader type declaration line
 
-			shaderSources[Utils::ShaderTypeFromString(type)] = (pos == std::string::npos) ? source.substr(nextLinePos) : source.substr(nextLinePos, pos - nextLinePos);
+			std::string stageSource = (pos == std::string::npos) ? source.substr(nextLinePos) : source.substr(nextLinePos, pos - nextLinePos);
+			if (stageSource.empty())
+				throw std::runtime_error("Shader stage has empty source in: " + m_Identity);
+			if (!shaderSources.emplace(stage, std::move(stageSource)).second)
+				throw std::runtime_error("Duplicate shader stage in: " + m_Identity);
 		}
 
 		return shaderSources;
 	}
 
-	void OpenGLShader::CompileOrGetVulkanBinaries(const std::unordered_map<GLenum, std::string>& shaderSources)
+	void OpenGLShader::BuildProgram(const std::unordered_map<GLenum, std::string>& shaderSources)
 	{
-		GLuint program = glCreateProgram();
+		m_UsedCachedBinaries = false;
+		try
+		{
+			CompileOrGetVulkanBinaries(shaderSources);
+			CompileOrGetOpenGLBinaries();
+			CreateProgram();
+		}
+		catch (const std::exception& error)
+		{
+			if (!m_UsedCachedBinaries)
+				throw;
 
+			TC_Core_Warn("Shader cache failed for '{0}' ({1}); discarding it and recompiling once",
+				m_Identity, error.what());
+			m_UsedCachedBinaries = false;
+			CompileOrGetVulkanBinaries(shaderSources, true);
+			CompileOrGetOpenGLBinaries(true);
+			CreateProgram();
+		}
+	}
+
+	void OpenGLShader::CompileOrGetVulkanBinaries(const std::unordered_map<GLenum, std::string>& shaderSources, bool forceCompile)
+	{
 		shaderc::Compiler compiler;
 		shaderc::CompileOptions options;
 		options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
@@ -218,53 +405,33 @@ namespace TomCat {
 		if (optimize)
 			options.SetOptimizationLevel(shaderc_optimization_level_performance);
 
-		std::filesystem::path cacheDirectory = Utils::GetCacheDirectory();
-		const bool cacheEnabled = !cacheDirectory.empty();
-
 		auto& shaderData = m_VulkanSPIRV;
 		shaderData.clear();
 		for (auto&& [stage, source] : shaderSources)
 		{
-			std::filesystem::path shaderFilePath = m_FilePath;
-			std::filesystem::path cachedPath = cacheEnabled
-				? cacheDirectory / (shaderFilePath.filename().string() + Utils::GLShaderStageCachedVulkanFileExtension(stage))
-				: std::filesystem::path{};
+			const auto cachedPath = Utils::GetCachePath(m_Identity, stage, source.data(), source.size(),
+				Utils::GLShaderStageCachedVulkanFileExtension(stage));
+			auto& data = shaderData[stage];
+			if (forceCompile)
+				Utils::RemoveCachedSPIRV(cachedPath);
 
-			std::ifstream in;
-			if (cacheEnabled)
-				in.open(cachedPath, std::ios::in | std::ios::binary);
-			if (in.is_open())
+			if (!forceCompile && Utils::ReadCachedSPIRV(cachedPath, stage, data))
 			{
-				in.seekg(0, std::ios::end);
-				auto size = in.tellg();
-				in.seekg(0, std::ios::beg);
-
-				auto& data = shaderData[stage];
-				data.resize(size / sizeof(uint32_t));
-				in.read((char*)data.data(), size);
+				m_UsedCachedBinaries = true;
 			}
 			else
 			{
-				shaderc::SpvCompilationResult module = compiler.CompileGlslToSpv(source, Utils::GLShaderStageToShaderC(stage), m_FilePath.c_str(), options);
+				shaderc::SpvCompilationResult module = compiler.CompileGlslToSpv(source, Utils::GLShaderStageToShaderC(stage), m_Identity.c_str(), options);
 				if (module.GetCompilationStatus() != shaderc_compilation_status_success)
 				{
-					TC_Core_Error(module.GetErrorMessage());
-					TC_Core_Assert(false);
+					TC_Core_Error("Vulkan shader compilation failed ({0}):\n{1}", m_Identity, module.GetErrorMessage());
+					throw std::runtime_error("Vulkan shader compilation failed: " + m_Identity);
 				}
 
-				shaderData[stage] = std::vector<uint32_t>(module.cbegin(), module.cend());
-
-				if (cacheEnabled)
-				{
-					std::ofstream out(cachedPath, std::ios::out | std::ios::binary);
-					if (out.is_open())
-					{
-						auto& data = shaderData[stage];
-						out.write((char*)data.data(), data.size() * sizeof(uint32_t));
-						out.flush();
-						out.close();
-					}
-				}
+				data.assign(module.cbegin(), module.cend());
+				if (data.empty())
+					throw std::runtime_error("Shader compiler returned no Vulkan SPIR-V: " + m_Identity);
+				Utils::WriteCachedSPIRV(cachedPath, stage, data);
 			}
 		}
 
@@ -272,7 +439,7 @@ namespace TomCat {
 			Reflect(stage, data);
 	}
 
-	void OpenGLShader::CompileOrGetOpenGLBinaries()
+	void OpenGLShader::CompileOrGetOpenGLBinaries(bool forceCompile)
 	{
 		auto& shaderData = m_OpenGLSPIRV;
 
@@ -283,30 +450,19 @@ namespace TomCat {
 		if (optimize)
 			options.SetOptimizationLevel(shaderc_optimization_level_performance);
 
-		std::filesystem::path cacheDirectory = Utils::GetCacheDirectory();
-		const bool cacheEnabled = !cacheDirectory.empty();
-
 		shaderData.clear();
 		m_OpenGLSourceCode.clear();
 		for (auto&& [stage, spirv] : m_VulkanSPIRV)
 		{
-			std::filesystem::path shaderFilePath = m_FilePath;
-			std::filesystem::path cachedPath = cacheEnabled
-				? cacheDirectory / (shaderFilePath.filename().string() + Utils::GLShaderStageCachedOpenGLFileExtension(stage))
-				: std::filesystem::path{};
+			const auto cachedPath = Utils::GetCachePath(m_Identity, stage, spirv.data(), spirv.size() * sizeof(uint32_t),
+				Utils::GLShaderStageCachedOpenGLFileExtension(stage));
+			auto& data = shaderData[stage];
+			if (forceCompile)
+				Utils::RemoveCachedSPIRV(cachedPath);
 
-			std::ifstream in;
-			if (cacheEnabled)
-				in.open(cachedPath, std::ios::in | std::ios::binary);
-			if (in.is_open())
+			if (!forceCompile && Utils::ReadCachedSPIRV(cachedPath, stage, data))
 			{
-				in.seekg(0, std::ios::end);
-				auto size = in.tellg();
-				in.seekg(0, std::ios::beg);
-
-				auto& data = shaderData[stage];
-				data.resize(size / sizeof(uint32_t));
-				in.read((char*)data.data(), size);
+				m_UsedCachedBinaries = true;
 			}
 			else
 			{
@@ -314,40 +470,54 @@ namespace TomCat {
 				m_OpenGLSourceCode[stage] = glslCompiler.compile();
 				auto& source = m_OpenGLSourceCode[stage];
 
-				shaderc::SpvCompilationResult module = compiler.CompileGlslToSpv(source, Utils::GLShaderStageToShaderC(stage), m_FilePath.c_str());
+				shaderc::SpvCompilationResult module = compiler.CompileGlslToSpv(source, Utils::GLShaderStageToShaderC(stage), m_Identity.c_str(), options);
 				if (module.GetCompilationStatus() != shaderc_compilation_status_success)
 				{
-					TC_Core_Error(module.GetErrorMessage());
-					TC_Core_Assert(false);
+					TC_Core_Error("OpenGL shader compilation failed ({0}):\n{1}", m_Identity, module.GetErrorMessage());
+					throw std::runtime_error("OpenGL shader compilation failed: " + m_Identity);
 				}
 
-				shaderData[stage] = std::vector<uint32_t>(module.cbegin(), module.cend());
-
-				if (cacheEnabled)
-				{
-					std::ofstream out(cachedPath, std::ios::out | std::ios::binary);
-					if (out.is_open())
-					{
-						auto& data = shaderData[stage];
-						out.write((char*)data.data(), data.size() * sizeof(uint32_t));
-						out.flush();
-						out.close();
-					}
-				}
+				data.assign(module.cbegin(), module.cend());
+				if (data.empty())
+					throw std::runtime_error("Shader compiler returned no OpenGL SPIR-V: " + m_Identity);
+				Utils::WriteCachedSPIRV(cachedPath, stage, data);
 			}
 		}
 	}
 
 	void OpenGLShader::CreateProgram()
 	{
+		if (m_OpenGLSPIRV.empty())
+			throw std::runtime_error("Cannot create an OpenGL program without shader stages: " + m_Identity);
+		if (!glSpecializeShader)
+			throw std::runtime_error("OpenGL SPIR-V specialization is unavailable; OpenGL 4.6 is required");
+
 		GLuint program = glCreateProgram();
+		if (!program)
+			throw std::runtime_error("OpenGL failed to create a shader program: " + m_Identity);
 
 		std::vector<GLuint> shaderIDs;
 		for (auto&& [stage, spirv] : m_OpenGLSPIRV)
 		{
 			GLuint shaderID = shaderIDs.emplace_back(glCreateShader(stage));
-			glShaderBinary(1, &shaderID, GL_SHADER_BINARY_FORMAT_SPIR_V, spirv.data(), spirv.size() * sizeof(uint32_t));
+			glShaderBinary(1, &shaderID, GL_SHADER_BINARY_FORMAT_SPIR_V, spirv.data(), static_cast<GLsizei>(spirv.size() * sizeof(uint32_t)));
 			glSpecializeShader(shaderID, "main", 0, nullptr, nullptr);
+
+			GLint isCompiled = GL_FALSE;
+			glGetShaderiv(shaderID, GL_COMPILE_STATUS, &isCompiled);
+			if (isCompiled == GL_FALSE)
+			{
+				GLint maxLength = 0;
+				glGetShaderiv(shaderID, GL_INFO_LOG_LENGTH, &maxLength);
+				std::vector<GLchar> infoLog(static_cast<size_t>(std::max(maxLength, 1)), '\0');
+				glGetShaderInfoLog(shaderID, maxLength, &maxLength, infoLog.data());
+				TC_Core_Error("Shader specialization failed ({0}, {1}):\n{2}", m_Identity,
+					Utils::GLShaderStageToString(stage), infoLog.data());
+				for (GLuint id : shaderIDs)
+					glDeleteShader(id);
+				glDeleteProgram(program);
+				throw std::runtime_error("Shader specialization failed: " + m_Identity);
+			}
 			glAttachShader(program, shaderID);
 		}
 
@@ -360,14 +530,16 @@ namespace TomCat {
 			GLint maxLength;
 			glGetProgramiv(program, GL_INFO_LOG_LENGTH, &maxLength);
 
-			std::vector<GLchar> infoLog(maxLength);
+			std::vector<GLchar> infoLog(static_cast<size_t>(std::max(maxLength, 1)), '\0');
 			glGetProgramInfoLog(program, maxLength, &maxLength, infoLog.data());
-			TC_Core_Error("Shader linking failed ({0}):\n{1}", m_FilePath, infoLog.data());
+			TC_Core_Error("Shader linking failed ({0}):\n{1}", m_Identity, infoLog.data());
 
 			glDeleteProgram(program);
 
 			for (auto id : shaderIDs)
 				glDeleteShader(id);
+
+			throw std::runtime_error("Shader linking failed: " + m_Identity);
 		}
 
 		for (auto id : shaderIDs)
@@ -384,7 +556,7 @@ namespace TomCat {
 		spirv_cross::Compiler compiler(shaderData);
 		spirv_cross::ShaderResources resources = compiler.get_shader_resources();
 
-		TC_Core_Trace("OpenGLShader::Reflect - {0} {1}", Utils::GLShaderStageToString(stage), m_FilePath);
+		TC_Core_Trace("OpenGLShader::Reflect - {0} {1}", Utils::GLShaderStageToString(stage), m_Identity);
 		TC_Core_Trace("    {0} uniform buffers", resources.uniform_buffers.size());
 		TC_Core_Trace("    {0} resources", resources.sampled_images.size());
 
@@ -392,9 +564,9 @@ namespace TomCat {
 		for (const auto& resource : resources.uniform_buffers)
 		{
 			const auto& bufferType = compiler.get_type(resource.base_type_id);
-			uint32_t bufferSize = compiler.get_declared_struct_size(bufferType);
+			size_t bufferSize = compiler.get_declared_struct_size(bufferType);
 			uint32_t binding = compiler.get_decoration(resource.id, spv::DecorationBinding);
-			int memberCount = bufferType.member_types.size();
+			size_t memberCount = bufferType.member_types.size();
 
 			TC_Core_Trace("  {0}", resource.name);
 			TC_Core_Trace("    Size = {0}", bufferSize);

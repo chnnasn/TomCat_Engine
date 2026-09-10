@@ -33,9 +33,18 @@ namespace TomCat {
 
 	void OpenGLRendererAPI::DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount)
 	{
-		uint32_t count = indexCount ? vertexArray->GetIndexBuffer()->GetCount() : indexCount;
+		if (!vertexArray || !vertexArray->GetIndexBuffer())
+		{
+			TC_Core_Error("DrawIndexed requires a vertex array with an index buffer");
+			return;
+		}
+
+		const uint32_t count = indexCount ? indexCount : vertexArray->GetIndexBuffer()->GetCount();
+		if (count == 0)
+			return;
+
+		vertexArray->Bind();
 		glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
-		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
 }

@@ -49,19 +49,13 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"%{IncludeDir.VulkanSDK}"
 	}
 
-	libdirs
+	dependson
 	{
-		  "vendor/Box2D/bin/" .. outputdir .."/Box2D"
-	}
-	
-	links 
-	{ 
 		"Box2D",
 		"GLFW",
 		"Glad",
 		"ImGui",
-		"yaml-cpp",
-		"opengl32.lib"
+		"yaml-cpp"
 	}
 	buildoptions "/utf-8"
 
@@ -74,10 +68,7 @@ filter "files:vendor/ImGuizmo/**.cpp"
 
 	defines
 	{
-		"TC_PLAYTFORM_WINDOWS",
-		"TC_BUILD_DLL",
-		"GLFW_INCLUDE_NONE",
-		"YAML_CPP_STATIC_DEFINE" 
+		"TC_PLATFORM_WINDOWS",
 	}
 
 	filter "configurations:Release"
@@ -85,36 +76,13 @@ filter "files:vendor/ImGuizmo/**.cpp"
 		runtime "Release"
 		optimize "on"
 
-		links
-		{
-			"%{Library.ShaderC_Release}",
-			"%{Library.SPIRV_Cross_Release}",
-			"%{Library.SPIRV_Cross_GLSL_Release}",
-		}
-		
-
 	filter "configurations:Dist"
 		defines "TC_DIST"
 		runtime "Release"
 		optimize "on"
-
-		links
-		{
-			"%{Library.ShaderC_Release}",
-			"%{Library.SPIRV_Cross_Release}",
-			"%{Library.SPIRV_Cross_GLSL_Release}"
-		}
-		
 
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
 		runtime "Debug"
 		symbols "on"
 
-		links
-		{
-			"%{Library.ShaderC_Debug}",
-			"%{Library.SPIRV_Cross_Debug}",
-			"%{Library.SPIRV_Cross_GLSL_Debug}"
-		}
-		

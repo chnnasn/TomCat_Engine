@@ -26,7 +26,7 @@ namespace TomCat {
 		return state == GLFW_PRESS;
 	}
 
-	std::pair<float, float> Input::GetMousePositon()
+	std::pair<float, float> Input::GetMousePosition()
 	{
 		auto Window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
 
@@ -39,14 +39,14 @@ namespace TomCat {
 
 	float Input::GetMouseX()
 	{
-		auto [x,y] = GetMousePositon();
+		auto [x,y] = GetMousePosition();
 
 		return x;
 	}
 
 	float Input::GetMouseY()
 	{
-		auto [x, y] = GetMousePositon();
+		auto [x, y] = GetMousePosition();
 
 		return y;
 	}

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "TomCat.h"
-#include "TomCat/Renderer/EditorCamera.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Project/ProjectManager.h"
 #include <string>
@@ -36,7 +35,7 @@ namespace TomCat {
 		void AddProject();
 		void NewProject();
 		void OpenProject(Ref<Project> project);
-		void DeleteProject(Ref<Project> project);
+		void RemoveProjectFromHub(Ref<Project> project);
 		void RenderSidebar(const ImVec2& size);
 		void RenderProjectList();
 		void RenderProjectRow(Ref<Project> project, int index, const ImVec2& rowMin, const ImVec2& rowMax);
@@ -57,6 +56,7 @@ namespace TomCat {
 		bool m_Chinese = true;
 		std::vector<Ref<Project>> m_Projects;
 		std::vector<Ref<Project>> m_VisibleProjects;
+		std::vector<std::string> m_Editors;
 		Ref<Project> m_SelectedProject;
 
 		HubSortColumn m_SortColumn = HubSortColumn::Modified;
@@ -66,7 +66,6 @@ namespace TomCat {
 		bool m_ShowNewProjectDialog = false;
 		bool m_ShowSettingsDialog = false;
 		char m_NewProjectName[256] = "";
-		char m_NewProjectAuthor[256] = "";
 		char m_NewProjectDescription[512] = "";
 		std::filesystem::path m_NewProjectPath;
 	};

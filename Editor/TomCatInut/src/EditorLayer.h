@@ -16,7 +16,7 @@ namespace TomCat {
 	class EditorLayer : public Layer
 	{
 	public:
-		explicit EditorLayer(bool is2DMode = false);
+		EditorLayer();
 
 		virtual ~EditorLayer() = default;
 
@@ -27,12 +27,6 @@ namespace TomCat {
 		virtual void OnImGuiRender() override;
 		void OnEvent(Event& e) override;
 	private:
-		enum class GizmoPivotMode
-		{
-			Pivot = 0,
-			Center = 1
-		};
-
 		enum class GizmoSpaceMode
 		{
 			Local = 0,
@@ -41,24 +35,28 @@ namespace TomCat {
 
 		bool OnKeyPressed(KeyPressedEvent& e);
 		bool OnMouseButtonPressed(MouseButtonPressedEvent& e);
+		bool OnMouseButtonReleased(MouseButtonReleasedEvent& e);
+		bool OnWindowClose(WindowCloseEvent& e);
 
 		void NewScene();
-		void OpenOrCreateSampleScene();
+		bool OpenProjectStartScene();
 		void AddDefaultMainCamera();
-		void OpenScene();
-		void OpenScene(const std::filesystem::path& path);
+		bool OpenScene();
+		bool OpenScene(const std::filesystem::path& path);
 		void SaveScene();
 		void SaveSceneAs();
 		
-		void SerializeScene(Ref<Scene> scene, const std::filesystem::path& path);
+		bool SerializeScene(const Ref<Scene>& scene, const std::filesystem::path& path);
+		void ResizeSceneForGameView(const Ref<Scene>& scene);
+		void ResetSceneInteractionState();
+		void RequestDestructiveAction(std::function<bool()> action);
+		void UI_UnsavedChangesModal();
+		void RequestExit();
 
 		void OnScenePlay();
 		void OnSceneStop();
 
-		void OnDuplicateEntity();
-
 		void UI_Toolbar();
-		void UI_SceneGizmoModeToolbarRow();
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		// Persist the Scene toolbar arrangement alongside ImGui's window layout.
@@ -70,29 +68,24 @@ namespace TomCat {
 			const ImVec2& handleMin, const ImVec2& handleMax, float tearX, bool canDock);
 		void UI_GameNoCameraOverlay();
 
-		void OpenProject();
+		bool OpenProject();
+		bool OpenProject(const std::filesystem::path& path);
 		void SaveProject();
 	private:
-		TomCat::OrthographicCameraController m_CameraController;
-
-		Ref<VertexArray> m_SquareVA;
-		Ref<Shader> m_FlatColorShader;
 		Ref<Framebuffer> m_Framebuffer;
 		Ref<Framebuffer> m_GameFramebuffer;
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;
 		std::filesystem::path m_EditorScenePath;
-		Entity m_CameraEntity;
-		Entity m_SecondCamera;
 
 		Entity m_HoveredEntity;
 
-		bool m_PrimaryCamera = true;
-
 		EditorCamera m_EditorCamera;
 
-		bool m_ViewportFocused = false, m_ViewportHovered = false;
+		bool m_ViewportFocused = false;
+		bool m_ViewportCanvasHovered = false;
+		bool m_ViewportCameraDragOwned = false;
 		glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
 
 		glm::vec2 m_ViewportBounds[2];
@@ -100,10 +93,7 @@ namespace TomCat {
 		// Game Viewport
 		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
 
-		glm::vec4 m_SquareColor = { 0.2f, 0.3f, 0.8f, 1.0f };
-
 		int m_GizmoType = -1;
-		GizmoPivotMode m_GizmoPivotMode = GizmoPivotMode::Pivot;
 		GizmoSpaceMode m_GizmoSpaceMode = GizmoSpaceMode::Local;
 		bool m_GizmoModeToolbarDocked = true;
 		bool m_GizmoTransformToolbarDocked = false;
@@ -132,8 +122,15 @@ namespace TomCat {
 		bool m_Is2DMode = false;
 
 		Ref<Project> m_CurrentProject;
-		std::filesystem::path m_CurrentScenePath;
 		bool m_SceneDirty = false;
+
+		bool m_ShowScenePanel = true;
+		bool m_ShowGamePanel = true;
+		bool m_ShowHierarchyPanel = true;
+		bool m_ShowInspectorPanel = true;
+		bool m_ShowProjectPanel = true;
+		bool m_OpenUnsavedChangesModal = false;
+		std::function<bool()> m_PendingUnsavedAction;
 	};
 
 }

@@ -68,14 +68,14 @@ namespace TomCat {
 			return Math::ComposeTransform(_LocalTranslation, _LocalRotation, _LocalScale);
 		}
 
-		void SetTransform(const glm::mat4& transform)
+		bool SetTransform(const glm::mat4& transform)
 		{
-			Math::DecomposeTransform(transform, _Translation, _Rotation, _Scale);
+			return Math::DecomposeTransform(transform, _Translation, _Rotation, _Scale);
 		}
 
-		void SetLocalTransform(const glm::mat4& transform)
+		bool SetLocalTransform(const glm::mat4& transform)
 		{
-			Math::DecomposeTransform(transform, _LocalTranslation, _LocalRotation, _LocalScale);
+			return Math::DecomposeTransform(transform, _LocalTranslation, _LocalRotation, _LocalScale);
 		}
 
 	};
@@ -111,8 +111,8 @@ namespace TomCat {
 	{
 		ScriptableEntity* Instance = nullptr;
 
-		ScriptableEntity* (*InstantiateScript)();
-		void (*DestroyScript)(NativeScript*);
+		ScriptableEntity* (*InstantiateScript)() = nullptr;
+		void (*DestroyScript)(NativeScript*) = nullptr;
 
 		template<typename T>
 		void Bind()

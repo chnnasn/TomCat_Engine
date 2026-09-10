@@ -10,7 +10,11 @@
 
 #include "TomCat/Core/TimeStep.h"
 
+#ifdef TC_PLATFORM_WINDOWS
+int wmain(int argc, wchar_t** argv);
+#else
 int main(int argc, char** argv);
+#endif
 
 namespace TomCat {
 
@@ -30,16 +34,15 @@ namespace TomCat {
 	{ 
 	public :
 		Application(const std::string& name = "TomCat App", 
-					const std::string& iconPath = "",
-					ApplicationCommandLineArgs args = ApplicationCommandLineArgs());
+					std::filesystem::path iconPath = {});
 
 		virtual ~Application();
 
 
 		void OnEvent(Event& e);
 
-		void PushLayer(Layer* Layer);
-		void PushOverLayer(Layer* Layer);
+		void PushLayer(Layer* layer);
+		void PushOverlay(Layer* layer);
 
 
 		Window& GetWindow() { return *m_Window; }
@@ -50,26 +53,26 @@ namespace TomCat {
 
 		static Application& Get() { return *s_Instance; }
 
-		ApplicationCommandLineArgs GetCommandLineArgs() const { return m_CommandLineArgs; }
-
 	private:
 		void Run();
 		bool OnWindowClose(WindowCloseEvent& e);
 		bool OnWindowResize(WindowResizeEvent& e);
 
 	private:
-		ApplicationCommandLineArgs m_CommandLineArgs;
-
 		Scope<Window> m_Window;
-		ImGuiLayer* m_ImGuiLayer;
+		ImGuiLayer* m_ImGuiLayer = nullptr;
 		bool m_Running = true;
-		bool m_Minized = false;
+		bool m_Minimized = false;
 		LayerStack m_LayerStack;
 		float m_LastFrameTime = 0.0f;
 
 	private:
 		static Application* s_Instance;
+#ifdef TC_PLATFORM_WINDOWS
+		friend int ::wmain(int argc, wchar_t** argv);
+#else
 		friend int ::main(int argc, char** argv);
+#endif
 	};
 
 

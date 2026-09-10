@@ -15,6 +15,7 @@ class b2World;
 namespace TomCat {
 
 	class Entity;
+	struct NativeScript;
 
 	class Scene
 	{
@@ -29,11 +30,12 @@ namespace TomCat {
 
 		Entity CreateEntity(const std::string& name = std::string());
 		Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
+		bool RenameEntity(Entity entity, const std::string& requestedName);
 		void DestroyEntity(Entity entity);
-		void SetParent(Entity child, Entity parent);
-		void SetWorldTransform(Entity entity, const glm::mat4& worldTransform);
-		void SetLocalTransform(Entity entity, const glm::mat4& localTransform);
-		void SyncTransformHierarchy();
+		bool SetParent(Entity child, Entity parent);
+		bool SetWorldTransform(Entity entity, const glm::mat4& worldTransform);
+		bool SetLocalTransform(Entity entity, const glm::mat4& localTransform);
+		bool SyncTransformHierarchy();
 		Entity GetParent(Entity entity);
 		std::vector<UUID> GetChildrenUUIDs(Entity entity);
 		std::vector<UUID> GetRootEntityUUIDs();
@@ -53,16 +55,18 @@ namespace TomCat {
 		Entity FindEntityByUUID(UUID uuid);
 	private:
 		std::string MakeUniqueEntityName(const std::string& requestedName) const;
+		bool ValidateTransformHierarchy();
+		static void DestroyNativeScriptInstance(NativeScript& script, const char* context) noexcept;
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
-		void SyncTransformHierarchyRecursive(Entity entity);
-		void SyncTransformHierarchyRecursive(Entity entity, const glm::mat4& parentWorldTransform);
 	private:
 		entt::registry m_Registry;
 		std::string m_SceneName = "Untitled";
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
 
 		b2World* m_PhysicsWorld = nullptr;
+		bool m_RuntimeRunning = false;
+		std::unordered_map<UUID, entt::entity> m_EntityMap;
 		std::unordered_map<UUID, UUID> m_ParentMap;
 		std::unordered_map<UUID, std::vector<UUID>> m_ChildrenMap;
 		std::vector<UUID> m_EntityOrder;

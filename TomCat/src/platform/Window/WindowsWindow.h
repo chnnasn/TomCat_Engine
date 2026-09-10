@@ -21,20 +21,22 @@ namespace TomCat {
 		inline void SetEventCallback(const EventCallbackFn& callback) override { m_Data.EventCallback = callback; }
 		void SetVSync(bool enabled) override;
 		bool IsVSync() const override;
+		double GetTimeSeconds() const override;
+		void CancelCloseRequest() override;
 
-		inline virtual void* GetNativeWindow()const { return m_Window; };
+		inline void* GetNativeWindow() const override { return m_Window; }
 	private:
 		virtual void Init(const WindowProps& props);
 		virtual void Shutdown();
 	private:
-		GLFWwindow* m_Window;
+		GLFWwindow* m_Window = nullptr;
 		Scope<GraphicsContext> m_Context;
 
 		struct WindowData
 		{
 			std::string Title;
 			unsigned int Width, Height;
-			bool VSync;
+			bool VSync = false;
 
 			EventCallbackFn EventCallback;
 		};

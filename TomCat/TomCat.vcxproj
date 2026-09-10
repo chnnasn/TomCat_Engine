@@ -76,7 +76,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLATFORM_WINDOWS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\Box2D\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;..\vendor\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
@@ -92,8 +92,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <Lib>
-      <AdditionalDependencies>opengl32.lib;..\vendor\VulkanSDK\Lib\shaderc_sharedd.lib;..\vendor\VulkanSDK\Lib\spirv-cross-cored.lib;..\vendor\VulkanSDK\Lib\spirv-cross-glsld.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>vendor\Box2D\bin\Debug-windows-x86_64\Box2D;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+	  <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -101,7 +100,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLATFORM_WINDOWS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\Box2D\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;..\vendor\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -120,8 +119,7 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <Lib>
-      <AdditionalDependencies>opengl32.lib;..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>vendor\Box2D\bin\Release-windows-x86_64\Box2D;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+	  <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
@@ -129,7 +127,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLAYTFORM_WINDOWS;TC_BUILD_DLL;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLATFORM_WINDOWS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\Box2D\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;..\vendor\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -148,8 +146,7 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <Lib>
-      <AdditionalDependencies>opengl32.lib;..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>vendor\Box2D\bin\Dist-windows-x86_64\Box2D;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+	  <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -163,7 +160,6 @@
     <ClInclude Include="src\TomCat\Core\LayerStack.h" />
     <ClInclude Include="src\TomCat\Core\Log.h" />
     <ClInclude Include="src\TomCat\Core\MouseCodes.h" />
-    <ClInclude Include="src\TomCat\Core\Random.h" />
     <ClInclude Include="src\TomCat\Core\TimeStep.h" />
     <ClInclude Include="src\TomCat\Core\Timer.h" />
     <ClInclude Include="src\TomCat\Core\UUID.h" />
@@ -171,9 +167,9 @@
     <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
     <ClInclude Include="src\TomCat\Events\ApplicationEvent.h" />
     <ClInclude Include="src\TomCat\Events\Event.h" />
+    <ClInclude Include="src\TomCat\Events\InputModifiers.h" />
     <ClInclude Include="src\TomCat\Events\KeyEvent.h" />
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
-    <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
     <ClInclude Include="src\TomCat\Project\Project.h" />
@@ -183,8 +179,6 @@
     <ClInclude Include="src\TomCat\Renderer\EditorCamera.h" />
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
-    <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h" />
-    <ClInclude Include="src\TomCat\Renderer\OrthographicCameraController.h" />
     <ClInclude Include="src\TomCat\Renderer\RenderCommand.h" />
     <ClInclude Include="src\TomCat\Renderer\Renderer.h" />
     <ClInclude Include="src\TomCat\Renderer\Renderer2D.h" />
@@ -199,6 +193,8 @@
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h" />
     <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h" />
+    <ClInclude Include="src\TomCat\Utils\FileSystemUtils.h" />
+    <ClInclude Include="src\TomCat\Utils\PathUtils.h" />
     <ClInclude Include="src\TomCat\Utils\PlatformUtils.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLContext.h" />
@@ -636,10 +632,9 @@
     <ClCompile Include="src\TomCat\Core\Layer.cpp" />
     <ClCompile Include="src\TomCat\Core\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Core\Log.cpp" />
-    <ClCompile Include="src\TomCat\Core\UUID‎.cpp" />
+    <ClCompile Include="src\TomCat\Core\UUID.cpp" />
     <ClCompile Include="src\TomCat\Core\Window.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp" />
-    <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
     <ClCompile Include="src\TomCat\Project\Project.cpp" />
@@ -648,8 +643,6 @@
     <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp" />
-    <ClCompile Include="src\TomCat\Renderer\OrthographicCameraController.cpp" />
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Renderer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp" />
@@ -662,6 +655,7 @@
     <ClCompile Include="src\TomCat\Scene\Scene.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp" />
+    <ClCompile Include="src\TomCat\Utils\FileSystemUtils.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLContext.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp" />
@@ -684,18 +678,23 @@
   <ItemGroup>
     <ProjectReference Include="vendor\Box2D\Box2D.vcxproj">
       <Project>{A434E80C-1049-10BE-D9CA-B31D459E0CEF}</Project>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <ProjectReference Include="vendor\GLFW\GLFW.vcxproj">
       <Project>{154B857C-0182-860D-AA6E-6C109684020F}</Project>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <ProjectReference Include="vendor\Glad\Glad.vcxproj">
       <Project>{BDD6857C-A90D-870D-52FA-6C103E10030F}</Project>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <ProjectReference Include="vendor\ImGui\ImGui.vcxproj">
       <Project>{C0FF640D-2C14-8DBE-F595-301E616989EF}</Project>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
     <ProjectReference Include="vendor\yaml-cpp\yaml-cpp.vcxproj">
       <Project>{88F1A057-74BE-FB62-9DD7-E90A890331F1}</Project>
+	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

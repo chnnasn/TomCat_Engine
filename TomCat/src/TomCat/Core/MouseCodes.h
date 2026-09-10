@@ -3,8 +3,6 @@
 #include <cstdint>
 
 namespace TomCat {
-
-
     using MouseCode = uint16_t;
 
     namespace Mouse
@@ -20,11 +18,6 @@ namespace TomCat {
             Button6 = 5,
             Button7 = 6,
             Button8 = 7,
-
-            // 别名定义（保持向后兼容）
-            Button1 = ButtonLeft,
-            Button2 = ButtonRight,
-            Button3 = ButtonMiddle,
 
             // 特殊值
             ButtonLast = Button8

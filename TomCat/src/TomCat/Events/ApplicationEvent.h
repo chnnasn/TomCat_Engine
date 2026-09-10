@@ -29,7 +29,7 @@ namespace TomCat {
 
 	};
 
-	class TomCat_API WindowCloseEvent : public Event
+	class WindowCloseEvent : public Event
 	{
 	public:
 		WindowCloseEvent() {}
@@ -39,34 +39,4 @@ namespace TomCat {
 		Event_Class_Category(EventCategoryApplication)
 	};
 
-	class TomCat_API AppTickEvent : public Event
-	{
-	public:
-		AppTickEvent() {}
-
-		Event_Class_Type(AppTick)
-
-		Event_Class_Category(EventCategoryApplication)
-	};
-
-
-	class TomCat_API AppUpdateEvent : public Event
-	{
-	public:
-		AppUpdateEvent() {}
-
-		Event_Class_Type(AppUpdate)
-
-		Event_Class_Category(EventCategoryApplication)
-	};
-
-	class TomCat_API AppRenderEvent : public Event
-	{
-	public:
-		AppRenderEvent() {}
-
-		Event_Class_Type(AppRender)
-
-		Event_Class_Category(EventCategoryApplication)
-	};
 }

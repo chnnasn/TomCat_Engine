@@ -22,10 +22,7 @@ project "ImGui"
 		"imgui_demo.cpp"
 	}
 
-    defines
-	{
-		"IMGUI_API=_declspec(dllexport);"
-	}
+	buildoptions "/utf-8"
 
 	filter "system:windows"
 		systemversion "latest"

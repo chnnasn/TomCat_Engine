@@ -2,9 +2,11 @@
 #include "TomCat/Core/Base.h"
 #include "TomCat/Core/Application.h"
 
-#ifdef TC_PLAYTFORM_WINDOWS
+#ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
 	#include <cwchar>
+	#include <stdexcept>
+	#include <string>
 	#include <vector>
 
 	namespace TomCat {
@@ -44,7 +46,9 @@
 			return;
 
 		const wchar_t* fileName = separator + 1;
-		if (_wcsicmp(fileName, L"TomCat.exe") != 0 && _wcsicmp(fileName, L"TomCatHub.exe") != 0)
+		if (_wcsicmp(fileName, L"TomCat.exe") != 0 &&
+			_wcsicmp(fileName, L"Manager.exe") != 0 &&
+			_wcsicmp(fileName, L"TomCatHub.exe") != 0)
 			return;
 
 		// Preserve the root slash for an executable placed directly on a drive
@@ -56,17 +60,42 @@
 		SetCurrentDirectoryW(modulePath.data());
 	}
 
+	inline std::string WideArgumentToUtf8(const wchar_t* argument)
+	{
+		if (!argument)
+			return {};
+		const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument, -1,
+			nullptr, 0, nullptr, nullptr);
+		if (required <= 0)
+			throw std::runtime_error("Failed to convert a command-line argument to UTF-8");
+		std::string result(static_cast<size_t>(required), '\0');
+		if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argument, -1,
+			result.data(), required, nullptr, nullptr) <= 0)
+			throw std::runtime_error("Failed to convert a command-line argument to UTF-8");
+		result.pop_back();
+		return result;
+	}
+
 	}
 
 extern TomCat::Application* TomCat::CreateApplication(ApplicationCommandLineArgs args);
 
-int main(int argc,char** argv) {
+int wmain(int argc, wchar_t** argv) {
 
 	TomCat::SetPackagedWorkingDirectory();
 	TomCat::Log::Init();
+	std::vector<std::string> utf8Arguments;
+	std::vector<char*> argumentPointers;
+	utf8Arguments.reserve(static_cast<size_t>(argc));
+	argumentPointers.reserve(static_cast<size_t>(argc) + 1);
+	for (int index = 0; index < argc; ++index)
+		utf8Arguments.push_back(TomCat::WideArgumentToUtf8(argv[index]));
+	for (std::string& argument : utf8Arguments)
+		argumentPointers.push_back(argument.data());
+	argumentPointers.push_back(nullptr);
 
 	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Startup.json");
-	auto app = TomCat::CreateApplication({ argc, argv });
+	auto app = TomCat::CreateApplication({ argc, argumentPointers.data() });
 	TC_PROFILE_END_SESSION();			 
 										 
 	TC_PROFILE_BEGIN_SESSION("Runtime", "TomCatProfile-Runtime.json");
@@ -76,6 +105,7 @@ int main(int argc,char** argv) {
 	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Shutdown.json");
 	delete app;							
 	TC_PROFILE_END_SESSION();
+	return 0;
 }
 
 #endif

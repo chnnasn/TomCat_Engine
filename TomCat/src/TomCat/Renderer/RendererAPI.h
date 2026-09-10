@@ -1,6 +1,6 @@
 #pragma once
 
-#include "glm//glm.hpp"
+#include "glm/glm.hpp"
 #include "VertexArray.h"
 
 namespace TomCat {
@@ -8,6 +8,8 @@ namespace TomCat {
 	class RendererAPI 
 	{
 	public:
+		virtual ~RendererAPI() = default;
+
 		enum class	API
 		{
 			None = 0,
