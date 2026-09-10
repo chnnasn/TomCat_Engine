@@ -4,6 +4,14 @@
 
 
 namespace TomCat {
+	struct KeyModifiers
+	{
+		bool Control = false;
+		bool Shift = false;
+		bool Alt = false;
+		bool Super = false;
+	};
+
 	class  KeyEvent : public Event
 	{
 	public:
@@ -23,10 +31,15 @@ namespace TomCat {
 	class KeyPressedEvent : public KeyEvent
 	{
 	public:
-		KeyPressedEvent(int keycode,int repeatCount)
-			: KeyEvent(keycode),m_RepeatCount(repeatCount){}
+		KeyPressedEvent(int keycode, int repeatCount, KeyModifiers modifiers = {})
+			: KeyEvent(keycode), m_RepeatCount(repeatCount), m_Modifiers(modifiers) {}
 
 		inline int GetRepeatCount()const { return m_RepeatCount; }
+		inline const KeyModifiers& GetModifiers() const { return m_Modifiers; }
+		inline bool IsControlDown() const { return m_Modifiers.Control; }
+		inline bool IsShiftDown() const { return m_Modifiers.Shift; }
+		inline bool IsAltDown() const { return m_Modifiers.Alt; }
+		inline bool IsSuperDown() const { return m_Modifiers.Super; }
 
 		std::string ToString() const override
 		{
@@ -38,6 +51,7 @@ namespace TomCat {
 		Event_Class_Type(KeyPressed)
 	private:
 		int m_RepeatCount;
+		KeyModifiers m_Modifiers;
 
 	};
 

@@ -15,7 +15,7 @@ namespace TomCat {
 		EditorCamera() = default;
 		EditorCamera(float fov, float aspectRatio, float nearClip, float farClip);
 
-		void OnUpdate(Timestep ts);
+		void OnUpdate(Timestep ts, bool inputEnabled = true);
 		void OnEvent(Event& e);
 		void Set2DMode(bool enabled) { m_Is2DMode = enabled; }
 		bool Is2DMode() const { return m_Is2DMode; }

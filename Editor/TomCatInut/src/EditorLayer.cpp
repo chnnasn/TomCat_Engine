@@ -282,7 +282,7 @@ namespace TomCat {
 		// Update
 		if (m_ViewportFocused)
 			m_CameraController.OnUpdate(ts);
-		m_EditorCamera.OnUpdate(ts);
+		m_EditorCamera.OnUpdate(ts, m_ViewportFocused && m_ViewportHovered);
 
 		// Scene窗口始终使用EditorCamera渲染
 		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
@@ -1311,7 +1311,8 @@ namespace TomCat {
 	{
 		m_CameraController.OnEvent(e);
 
-		m_EditorCamera.OnEvent(e);
+		if (m_ViewportFocused && m_ViewportHovered)
+			m_EditorCamera.OnEvent(e);
 
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
@@ -1324,33 +1325,40 @@ namespace TomCat {
 		if (e.GetRepeatCount() > 0)
 			return false;
 
-		bool control = Input::IsKeyPressed(Key::LeftControl) || Input::IsKeyPressed(Key::RightControl);
-		bool shift = Input::IsKeyPressed(Key::LeftShift) || Input::IsKeyPressed(Key::RightShift);
+		const bool control = e.IsControlDown();
+		const bool shift = e.IsShiftDown();
+		bool handled = false;
 		switch (e.GetKeyCode())
 		{
 		case Key::N:
 		{
 			if (control)
+			{
 				NewScene();
+				handled = true;
+			}
 
 			break;
 		}
 		case Key::O:
 		{
 			if (control)
+			{
 				OpenScene();
+				handled = true;
+			}
 
 			break;
 		}
 		case Key::S:
 		{
-			SaveSceneAs();
 			if (control)
 			{
 				if (shift)
 					SaveSceneAs();
 				else
 					SaveScene();
+				handled = true;
 			}
 
 			break;
@@ -1360,17 +1368,29 @@ namespace TomCat {
 		case Key::D:
 		{
 			if (control)
+			{
 				m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+				handled = true;
+			}
 
 			break;
 		}
 		case Key::X:
 		case Key::C:
 		case Key::V:
+		{
+			if (control)
+			{
+				m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+				handled = true;
+			}
+			break;
+		}
 		case Key::F2:
 		case Key::Delete:
 		{
 			m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+			handled = true;
 			break;
 		}
 
@@ -1378,28 +1398,42 @@ namespace TomCat {
 		case Key::Q:
 		{
 			if (!ImGuizmo::IsUsing())
+			{
 				m_GizmoType = -1;
+				handled = true;
+			}
 			break;
 		}
 		case Key::W:
 		{
 			if (!ImGuizmo::IsUsing())
+			{
 				m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
+				handled = true;
+			}
 			break;
 		}
 		case Key::E:
 		{
 			if (!ImGuizmo::IsUsing())
+			{
 				m_GizmoType = ImGuizmo::OPERATION::ROTATE;
+				handled = true;
+			}
 			break;
 		}
 		case Key::R:
 		{
 			if (!ImGuizmo::IsUsing())
+			{
 				m_GizmoType = ImGuizmo::OPERATION::SCALE;
+				handled = true;
+			}
 			break;
 		}
 		}
+
+		return handled;
 	}
 
 	bool EditorLayer::OnMouseButtonPressed(MouseButtonPressedEvent& e)

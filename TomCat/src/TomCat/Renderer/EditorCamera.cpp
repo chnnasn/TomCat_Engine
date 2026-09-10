@@ -61,26 +61,28 @@ namespace TomCat {
 		return speed;
 	}
 
-	void EditorCamera::OnUpdate(Timestep ts)
+	void EditorCamera::OnUpdate(Timestep ts, bool inputEnabled)
 	{
-		// 移除 Alt 键的条件，直接检测鼠标中键
 		const glm::vec2& mouse{ Input::GetMouseX(), Input::GetMouseY() };
 		glm::vec2 delta = (mouse - m_InitialMousePosition) * 0.005f;
 		m_InitialMousePosition = mouse;
 
-		if (Input::IsMouseButtonPressed(Mouse::ButtonMiddle))
-			MousePan(delta);
-		else if (Input::IsMouseButtonPressed(Mouse::ButtonRight))
+		if (inputEnabled)
 		{
-			// In 2D projects the right mouse button is an alternate pan button;
-			// camera rotation is reserved for 3D projects.
-			if (m_Is2DMode)
+			if (Input::IsMouseButtonPressed(Mouse::ButtonMiddle))
 				MousePan(delta);
-			else
-				MouseRotate(delta);
+			else if (Input::IsMouseButtonPressed(Mouse::ButtonRight))
+			{
+				// In 2D projects the right mouse button is an alternate pan button;
+				// camera rotation is reserved for 3D projects.
+				if (m_Is2DMode)
+					MousePan(delta);
+				else
+					MouseRotate(delta);
+			}
+			else if (Input::IsKeyPressed(Key::LeftAlt) && Input::IsMouseButtonPressed(Mouse::ButtonLeft))
+				MouseZoom(delta.y);
 		}
-		else if (Input::IsKeyPressed(Key::LeftAlt) && Input::IsMouseButtonPressed(Mouse::ButtonLeft))
-			MouseZoom(delta.y);
 
 		UpdateView();
 	}

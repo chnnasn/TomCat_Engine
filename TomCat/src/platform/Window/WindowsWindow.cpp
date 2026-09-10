@@ -198,12 +198,17 @@ namespace TomCat {
 		glfwSetKeyCallback(m_Window,[](GLFWwindow* Window, int key, int scancode, int action, int mods)
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+			KeyModifiers modifiers;
+			modifiers.Control = (mods & GLFW_MOD_CONTROL) != 0;
+			modifiers.Shift = (mods & GLFW_MOD_SHIFT) != 0;
+			modifiers.Alt = (mods & GLFW_MOD_ALT) != 0;
+			modifiers.Super = (mods & GLFW_MOD_SUPER) != 0;
 
 			switch (action)
 			{
 				case GLFW_PRESS:
 				{
-					KeyPressedEvent event(key,0);
+					KeyPressedEvent event(key, 0, modifiers);
 					Data.EventCallback(event);
 					break;
 				}
@@ -216,7 +221,7 @@ namespace TomCat {
 
 				case GLFW_REPEAT:
 				{
-					KeyPressedEvent event(key, 1);
+					KeyPressedEvent event(key, 1, modifiers);
 					Data.EventCallback(event);
 					break;
 				}
