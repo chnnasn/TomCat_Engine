@@ -26,6 +26,18 @@ namespace TomCat {
 	extern const std::filesystem::path g_AssetPath;
 
 	namespace {
+		constexpr float kSceneToolbarPadding = 5.0f;
+		constexpr float kSceneToolbarHandleWidth = 24.0f;
+		constexpr float kSceneToolbarItemGap = 4.0f;
+		constexpr float kSceneToolbarDockGap = 4.0f;
+		constexpr float kSceneModeButtonWidth = 62.0f;
+		constexpr float kSceneTransformButtonWidth = 34.0f;
+		constexpr float kSceneModeToolbarWidth = kSceneToolbarPadding * 2.0f +
+			kSceneToolbarHandleWidth + kSceneToolbarItemGap +
+			kSceneModeButtonWidth * 2.0f + kSceneToolbarItemGap;
+		constexpr float kSceneTransformToolbarWidth = kSceneToolbarPadding * 2.0f +
+			kSceneToolbarHandleWidth + kSceneToolbarItemGap +
+			kSceneTransformButtonWidth * 4.0f + kSceneToolbarItemGap * 3.0f;
 
 		uint32_t ToFramebufferExtent(float value)
 		{
@@ -810,6 +822,7 @@ namespace TomCat {
 					ImGui::GetColorU32(ImGuiCol_Tab));
 				UI_SceneGizmoModeToolbarOverlay();
 				UI_SceneGizmoToolbar();
+				UI_SceneToolbarDockPreview();
 				ImGui::EndMenuBar();
 			}
 			else
@@ -818,6 +831,7 @@ namespace TomCat {
 				// unavailable (for example while the tab is being hidden during a drag).
 				UI_SceneGizmoModeToolbarOverlay();
 				UI_SceneGizmoToolbar();
+				UI_SceneToolbarDockPreview();
 			}
 		}
 
@@ -1023,14 +1037,13 @@ namespace TomCat {
 			? ImGui::GetWindowPos().y : m_GizmoModeDockY;
 		ImGui::PushClipRect(ImVec2(ImGui::GetWindowPos().x, toolbarClipTop),
 			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), false);
-		const float dockPadding = 5.0f;
-		const float dockHandleWidth = 24.0f;
-		const float dockButtonWidth = 34.0f;
+		const float dockPadding = kSceneToolbarPadding;
+		const float dockHandleWidth = kSceneToolbarHandleWidth;
+		const float dockButtonWidth = kSceneTransformButtonWidth;
 		const float dockButtonHeight = 28.0f;
-		const float dockGap = 4.0f;
-		const float dockWidth = dockPadding * 2.0f + dockHandleWidth + dockGap +
-			dockButtonWidth * 4.0f + dockGap * 3.0f;
-		const float modeWidth = 5.0f * 2.0f + 24.0f + dockGap + 62.0f;
+		const float dockGap = kSceneToolbarItemGap;
+		const float dockWidth = kSceneTransformToolbarWidth;
+		const float modeWidth = kSceneModeToolbarWidth;
 
 		if (m_GizmoTransformToolbarDocked)
 		{
@@ -1160,7 +1173,7 @@ namespace TomCat {
 			handleMin, handleMax, 0.0f, true);
 		if (transformWasDragging && !m_GizmoTransformToolbarDragging && m_GizmoTransformToolbarDocked)
 		{
-			const float modeWidth = 5.0f * 2.0f + 24.0f + 4.0f + 62.0f;
+			const float modeWidth = kSceneModeToolbarWidth;
 			const float dockStartX = m_ViewportBounds[0].x + 8.0f;
 			m_GizmoModeToolbarFirst = !m_GizmoModeToolbarDocked ||
 				ImGui::GetMousePos().x >= dockStartX + modeWidth * 0.5f;
@@ -1217,21 +1230,18 @@ namespace TomCat {
 
 	void EditorLayer::UI_SceneGizmoModeToolbarOverlay()
 	{
-		const float padding = 5.0f;
-		const float handleWidth = 24.0f;
-		const float buttonWidth = 62.0f;
+		const float padding = kSceneToolbarPadding;
+		const float handleWidth = kSceneToolbarHandleWidth;
+		const float buttonWidth = kSceneModeButtonWidth;
 		const float buttonHeight = 28.0f;
-		const float gap = 4.0f;
+		const float gap = kSceneToolbarItemGap;
 		const float height = buttonHeight + padding * 2.0f;
-		const float width = padding * 2.0f + handleWidth + gap + buttonWidth;
+		const float width = kSceneModeToolbarWidth;
 		// The Q/W/E/R toolbar uses the same strip when docked.  Keep these
 		// dimensions here (and in its renderer below) so insertion previews and
 		// the two bars always agree about their occupied widths.
-		const float transformHandleWidth = 24.0f;
-		const float transformButtonWidth = 34.0f;
-		const float transformWidth = 5.0f * 2.0f + transformHandleWidth + gap +
-			transformButtonWidth * 4.0f + gap * 3.0f;
-		const float dockGap = 4.0f;
+		const float transformWidth = kSceneTransformToolbarWidth;
+		const float dockGap = kSceneToolbarDockGap;
 
 		// While dragging, let the bar follow the mouse freely so it can cover the
 		// Scene top strip.  When idle, keep it inside the viewport while still
@@ -1264,10 +1274,8 @@ namespace TomCat {
 			? ImGui::GetWindowPos().y : m_GizmoModeDockY;
 		ImGui::PushClipRect(ImVec2(ImGui::GetWindowPos().x, toolbarClipTop),
 			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), false);
-		// Keep the shared strip and insertion preview in the Scene window layer;
-		// otherwise their full-width background would cover the Q/W/E/R bar when
-		// the anchor/mode bar is the one being dragged.  Only the active toolbar
-		// body is promoted to the viewport foreground.
+		// Keep the idle toolbar body in the Scene window layer. Only the active
+		// toolbar is promoted to the viewport foreground while it is dragged.
 		ImDrawList* dockDraw = ImGui::GetWindowDrawList();
 		ImDrawList* draw = m_GizmoModeToolbarDragging
 			? ImGui::GetForegroundDrawList() : dockDraw;
@@ -1277,44 +1285,11 @@ namespace TomCat {
 		const ImU32 line = IM_COL32(196, 196, 196, 255);
 		const ImU32 arrow = IM_COL32(137, 137, 137, 255);
 		const ImU32 accent = IM_COL32(212, 127, 42, 255);
-		const bool anyToolbarDragging = m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging;
-
 		// The caller paints the Scene menu-bar overlay before entering this helper.
-		// Keep this pass focused on the toolbar body and insertion preview so the
-		// overlay remains visible in the empty-dock state as well.
+		// Keep this pass focused on the toolbar body; the insertion preview is a
+		// final shared pass so neither toolbar can cover it based on call order.
 
 		draw->AddRectFilled(topLeft, bottomRight, outer, 2.0f);
-
-		// Blue drop preview while dragging near the docked strip.  The preview is
-		// an insertion slot, not a full-width highlight: with one toolbar already
-		// docked it appears immediately before or after that toolbar, matching the
-		// small left-side preview in the reference UI.
-		const ImVec2 mouse = ImGui::GetMousePos();
-		const bool dockHover = anyToolbarDragging &&
-			mouse.y >= m_GizmoModeDockY - 5.0f &&
-			mouse.y <= m_GizmoModeDockY + m_GizmoModeDockHeight + 5.0f;
-		if (dockHover)
-		{
-			const bool draggingMode = m_GizmoModeToolbarDragging;
-			const float previewWidth = draggingMode ? width : transformWidth;
-			const bool otherDocked = draggingMode ? m_GizmoTransformToolbarDocked : m_GizmoModeToolbarDocked;
-			const float otherWidth = draggingMode ? transformWidth : width;
-			float previewX = dockStartX;
-			if (otherDocked)
-			{
-				const float otherX = dockStartX;
-				const bool insertBefore = mouse.x < otherX + otherWidth * 0.5f;
-				previewX = insertBefore ? dockStartX : otherX + otherWidth + dockGap;
-			}
-			previewX = std::max(dockStartX, std::min(previewX,
-				m_ViewportBounds[1].x - previewWidth - 4.0f));
-			dockDraw->AddRectFilled(ImVec2(previewX, m_GizmoModeDockY),
-				ImVec2(previewX + previewWidth, m_GizmoModeDockY + m_GizmoModeDockHeight),
-				IM_COL32(44, 93, 135, 85), 1.0f);
-			dockDraw->AddRect(ImVec2(previewX + 1.0f, m_GizmoModeDockY + 1.0f),
-				ImVec2(previewX + previewWidth - 1.0f, m_GizmoModeDockY + m_GizmoModeDockHeight - 1.0f),
-				IM_COL32(80, 165, 235, 230), 1.0f, 0, 1.0f);
-		}
 
 		ImVec2 handleMin(topLeft.x + padding, topLeft.y + padding);
 		ImVec2 handleMax(handleMin.x + handleWidth, topLeft.y + height - padding);
@@ -1337,7 +1312,7 @@ namespace TomCat {
 
 		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool hovered)
 		{
-			// The space choice is represented by its icon. Keep the button
+			// Pivot and space choices are represented by their icons. Keep each button
 			// surface neutral after a click; only pointer hover may tint it.
 			draw->AddRectFilled(min, max, hovered ? hover : normal, 2.0f);
 			draw->AddRect(min, max, IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
@@ -1347,6 +1322,20 @@ namespace TomCat {
 		{
 			const ImVec2 c(max.x - 8.0f, (min.y + max.y) * 0.5f + 1.0f);
 			draw->AddTriangleFilled(ImVec2(c.x - 3.0f, c.y - 2.0f), ImVec2(c.x + 3.0f, c.y - 2.0f), ImVec2(c.x, c.y + 2.5f), arrow);
+		};
+
+		auto DrawPivotIcon = [&](const ImVec2& min, const ImVec2& max)
+		{
+			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
+			draw->AddCircleFilled(ImVec2(c.x - 5.0f, c.y + 5.0f), 3.0f, accent);
+		};
+
+		auto DrawCenterIcon = [&](const ImVec2& min, const ImVec2& max)
+		{
+			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
+			draw->AddCircleFilled(c, 3.0f, accent);
 		};
 
 		auto DrawLocalIcon = [&](const ImVec2& min, const ImVec2& max)
@@ -1369,8 +1358,30 @@ namespace TomCat {
 		};
 
 		const float buttonMinY = topLeft.y + padding;
-		const ImVec2 spaceMin(topLeft.x + padding + handleWidth + gap, buttonMinY);
+		const ImVec2 pivotMin(topLeft.x + padding + handleWidth + gap, buttonMinY);
+		const ImVec2 pivotMax(pivotMin.x + buttonWidth, pivotMin.y + buttonHeight);
+		const ImVec2 spaceMin(pivotMax.x + gap, buttonMinY);
 		const ImVec2 spaceMax(spaceMin.x + buttonWidth, spaceMin.y + buttonHeight);
+
+		ImGui::SetCursorScreenPos(pivotMin);
+		ImGui::InvisibleButton("##scene_gizmo_pivot_mode", ImVec2(pivotMax.x - pivotMin.x, pivotMax.y - pivotMin.y));
+		const bool pivotHovered = ImGui::IsItemHovered();
+		if (ImGui::IsItemClicked())
+			ImGui::OpenPopup("##scene_gizmo_pivot_popup");
+		DrawFrame(pivotMin, pivotMax, pivotHovered);
+		if (m_GizmoPivotMode == GizmoPivotMode::Pivot)
+			DrawPivotIcon(pivotMin, pivotMax);
+		else
+			DrawCenterIcon(pivotMin, pivotMax);
+		DrawDropArrow(pivotMin, pivotMax);
+		if (ImGui::BeginPopup("##scene_gizmo_pivot_popup"))
+		{
+			if (ImGui::MenuItem("Pivot", nullptr, m_GizmoPivotMode == GizmoPivotMode::Pivot))
+				m_GizmoPivotMode = GizmoPivotMode::Pivot;
+			if (ImGui::MenuItem("Center", nullptr, m_GizmoPivotMode == GizmoPivotMode::Center))
+				m_GizmoPivotMode = GizmoPivotMode::Center;
+			ImGui::EndPopup();
+		}
 
 		ImGui::SetCursorScreenPos(spaceMin);
 		ImGui::InvisibleButton("##scene_gizmo_space_mode", ImVec2(spaceMax.x - spaceMin.x, spaceMax.y - spaceMin.y));
@@ -1393,6 +1404,50 @@ namespace TomCat {
 		}
 		ImGui::PopClipRect();
 		ImGui::SetCursorScreenPos(savedCursor);
+	}
+
+	void EditorLayer::UI_SceneToolbarDockPreview()
+	{
+		const bool draggingMode = m_GizmoModeToolbarDragging;
+		const bool draggingTransform = m_GizmoTransformToolbarDragging;
+		if (!draggingMode && !draggingTransform)
+			return;
+
+		const ImVec2 mouse = ImGui::GetMousePos();
+		if (mouse.y < m_GizmoModeDockY - 5.0f ||
+			mouse.y > m_GizmoModeDockY + m_GizmoModeDockHeight + 5.0f)
+			return;
+
+		const float dockStartX = m_ViewportBounds[0].x + 8.0f;
+		const float previewWidth = draggingMode
+			? kSceneModeToolbarWidth : kSceneTransformToolbarWidth;
+		const bool otherDocked = draggingMode
+			? m_GizmoTransformToolbarDocked : m_GizmoModeToolbarDocked;
+		const float otherWidth = draggingMode
+			? kSceneTransformToolbarWidth : kSceneModeToolbarWidth;
+		float previewX = dockStartX;
+		if (otherDocked)
+		{
+			const bool insertBefore = mouse.x < dockStartX + otherWidth * 0.5f;
+			previewX = insertBefore
+				? dockStartX : dockStartX + otherWidth + kSceneToolbarDockGap;
+		}
+		previewX = std::max(dockStartX, std::min(previewX,
+			m_ViewportBounds[1].x - previewWidth - 4.0f));
+
+		// Submit this after both toolbar bodies and on the foreground layer. This
+		// makes the insertion target equally visible in either drag direction.
+		ImDrawList* previewDraw = ImGui::GetForegroundDrawList();
+		previewDraw->PushClipRect(
+			ImVec2(m_ViewportBounds[0].x, m_GizmoModeDockY),
+			ImVec2(m_ViewportBounds[1].x, m_GizmoModeDockY + m_GizmoModeDockHeight), false);
+		previewDraw->AddRectFilled(ImVec2(previewX, m_GizmoModeDockY),
+			ImVec2(previewX + previewWidth, m_GizmoModeDockY + m_GizmoModeDockHeight),
+			IM_COL32(44, 93, 135, 85), 1.0f);
+		previewDraw->AddRect(ImVec2(previewX + 1.0f, m_GizmoModeDockY + 1.0f),
+			ImVec2(previewX + previewWidth - 1.0f, m_GizmoModeDockY + m_GizmoModeDockHeight - 1.0f),
+			IM_COL32(80, 165, 235, 230), 1.0f, 0, 1.0f);
+		previewDraw->PopClipRect();
 	}
 
 	void EditorLayer::UI_Toolbar()
