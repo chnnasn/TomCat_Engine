@@ -5,16 +5,52 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include <cmath>
+
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Project/ProjectManager.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Math/Math.h"
+#include "TomCat/Utils/PathUtils.h"
 
 #include<filesystem>
 
 namespace TomCat {
 
 	extern const std::filesystem::path g_AssetPath;
+
+	namespace {
+
+		std::filesystem::path AbsoluteLexicalPath(const std::filesystem::path& path)
+		{
+			if (path.empty())
+				return {};
+			std::error_code error;
+			const std::filesystem::path absolute = std::filesystem::absolute(path, error);
+			return (error ? path : absolute).lexically_normal();
+		}
+
+		bool TryGetRelativeWithin(const std::filesystem::path& root,
+			const std::filesystem::path& candidate, std::filesystem::path& relative)
+		{
+			const std::filesystem::path normalizedRoot = AbsoluteLexicalPath(root);
+			const std::filesystem::path normalizedCandidate = AbsoluteLexicalPath(candidate);
+			if (normalizedRoot.empty() || normalizedCandidate.empty())
+				return false;
+			relative = normalizedCandidate.lexically_relative(normalizedRoot);
+			if (relative.empty() || relative.is_absolute())
+				return false;
+			for (const auto& part : relative)
+			{
+				if (part == "..")
+					return false;
+			}
+			if (relative == ".")
+				relative.clear();
+			return true;
+		}
+
+	}
 
 
 	// 前向声明DrawProperty函数
@@ -74,18 +110,24 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::SetContext(const Ref<Scene>& context, bool clearSelection, bool remapSelection)
 	{
-
+		UUID selectedUUID{};
+		const bool hadSelection = !clearSelection && remapSelection && (bool)m_SelectionContext;
+		if (hadSelection)
+			selectedUUID = m_SelectionContext.GetUUID();
+		const bool contextChanged = m_Context != context;
 		m_Context = context;
 		m_ForceExpandParent = {};
 		m_ForceOpenSceneRoot = false;
+		m_EntityToDelete = {};
+		m_RenameEntity = {};
+		m_RenameFocus = false;
+		m_TagEditingEntity = {};
+		if (contextChanged)
+			ClearClipboard();
 		if (clearSelection)
-		{
 			m_SelectionContext = {};
-		}
-		else if (remapSelection && m_SelectionContext)
+		else if (hadSelection && m_Context)
 		{
-			// Try to find the same entity in the new scene by UUID
-			UUID selectedUUID = m_SelectionContext.GetUUID();
 			Entity remappedEntity = m_Context->FindEntityByUUID(selectedUUID);
 			if (remappedEntity)
 				m_SelectionContext = remappedEntity;
@@ -94,31 +136,108 @@ namespace TomCat {
 		}
 	}
 
-	void SceneHierarchyPanel::OnImGuiRender()
+	bool SceneHierarchyPanel::RemapSpriteTextureReferences(const Ref<Scene>& scene,
+		const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot)
 	{
-		static bool hierarchyWindowOpen = true;
+		if (!scene || oldRoot.empty() || newRoot.empty())
+			return false;
 
-		ImGui::Begin("Hierarchy", &hierarchyWindowOpen, ImGuiWindowFlags_MenuBar);
-
-		if (m_Context)
+		bool changed = false;
+		auto sprites = scene->m_Registry.view<SpriteRenderer>();
+		for (const entt::entity entity : sprites)
 		{
-			if (m_EntityToDelete)
-			{
-				Entity entity = m_EntityToDelete;
-				m_EntityToDelete = {};
-				if (m_SelectionContext == entity)
-					m_SelectionContext = {};
-				if (m_ClipboardEntity == entity)
-				{
-					m_ClipboardEntity = {};
-					m_ClipboardScene = nullptr;
-					m_ClipboardIsCut = false;
-				}
-				m_Context->DestroyEntity(entity);
-				if (m_SelectionContext && !m_Context->FindEntityByUUID(m_SelectionContext.GetUUID()))
-					m_SelectionContext = {};
-			}
-			m_EntityToDelete = {};
+			auto& sprite = sprites.get<SpriteRenderer>(entity);
+			if (!sprite.Texture || sprite.Texture->GetPath().empty())
+				continue;
+
+			std::filesystem::path relative;
+			const std::filesystem::path& texturePath = sprite.Texture->GetPath();
+			if (!TryGetRelativeWithin(oldRoot, texturePath, relative))
+				continue;
+
+			sprite.Texture = Texture2D::Create(newRoot / relative);
+			changed = true;
+		}
+		return changed;
+	}
+
+	bool SceneHierarchyPanel::ClearSpriteTextureReferences(const Ref<Scene>& scene,
+		const std::filesystem::path& deletedRoot)
+	{
+		if (!scene || deletedRoot.empty())
+			return false;
+
+		bool changed = false;
+		auto sprites = scene->m_Registry.view<SpriteRenderer>();
+		for (const entt::entity entity : sprites)
+		{
+			auto& sprite = sprites.get<SpriteRenderer>(entity);
+			if (!sprite.Texture || sprite.Texture->GetPath().empty())
+				continue;
+
+			std::filesystem::path relative;
+			const std::filesystem::path& texturePath = sprite.Texture->GetPath();
+			if (!TryGetRelativeWithin(deletedRoot, texturePath, relative))
+				continue;
+
+			sprite.Texture.reset();
+			changed = true;
+		}
+		return changed;
+	}
+
+	void SceneHierarchyPanel::ClearClipboard()
+	{
+		m_ClipboardEntity = {};
+		m_ClipboardScene = nullptr;
+		m_ClipboardIsCut = false;
+	}
+
+	void SceneHierarchyPanel::MarkModified()
+	{
+		if (m_SceneModifiedCallback)
+			m_SceneModifiedCallback();
+	}
+
+	bool SceneHierarchyPanel::FlushPendingDeletion()
+	{
+		if (!m_Context || !m_EntityToDelete)
+			return false;
+
+		Entity entity = m_EntityToDelete;
+		m_EntityToDelete = {};
+		UUID selectedUUID{};
+		const bool hadOtherSelection = m_SelectionContext && m_SelectionContext != entity;
+		if (hadOtherSelection)
+			selectedUUID = m_SelectionContext.GetUUID();
+		UUID clipboardUUID{};
+		const bool hadClipboard = m_ClipboardEntity && m_ClipboardScene == m_Context;
+		if (hadClipboard)
+			clipboardUUID = m_ClipboardEntity.GetUUID();
+		if (m_SelectionContext == entity)
+			m_SelectionContext = {};
+		if (m_ClipboardEntity == entity)
+			ClearClipboard();
+		m_Context->DestroyEntity(entity);
+		if (hadOtherSelection && !m_Context->FindEntityByUUID(selectedUUID))
+			m_SelectionContext = {};
+		if (hadClipboard && !m_Context->FindEntityByUUID(clipboardUUID))
+			ClearClipboard();
+		MarkModified();
+		return true;
+	}
+
+	void SceneHierarchyPanel::OnImGuiRender(bool* hierarchyOpen, bool* inspectorOpen)
+	{
+		m_HierarchyFocused = false;
+		if (!hierarchyOpen || *hierarchyOpen)
+		{
+		const bool hierarchyVisible = ImGui::Begin("Hierarchy", hierarchyOpen, ImGuiWindowFlags_MenuBar);
+		m_HierarchyFocused = hierarchyVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+		if (hierarchyVisible && m_Context)
+		{
+			FlushPendingDeletion();
 			const std::string& sceneName = m_Context->GetSceneName();
 			if (m_ForceOpenSceneRoot)
 			{
@@ -145,8 +264,8 @@ namespace TomCat {
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY"))
 				{
 					Entity draggedEntity = *(const Entity*)payload->Data;
-					if (draggedEntity)
-						m_Context->SetParent(draggedEntity, Entity{});
+					if (draggedEntity && m_Context->SetParent(draggedEntity, Entity{}))
+						MarkModified();
 				}
 				ImGui::EndDragDropTarget();
 			}
@@ -162,33 +281,26 @@ namespace TomCat {
 				ImGui::TreePop();
 			}
 
-			if (m_EntityToDelete)
-			{
-				Entity entity = m_EntityToDelete;
-				m_EntityToDelete = {};
-				if (m_SelectionContext == entity)
-					m_SelectionContext = {};
-				m_Context->DestroyEntity(entity);
-				if (m_SelectionContext && !m_Context->FindEntityByUUID(m_SelectionContext.GetUUID()))
-					m_SelectionContext = {};
-			}
+			FlushPendingDeletion();
 
 
-			if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
+			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered())
 				m_SelectionContext = {};
 
 
-			if (ImGui::BeginPopupContextWindow(0, 1))
+			if (ImGui::BeginPopupContextWindow("HierarchyContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
 			{
 				DrawEntityOperationsMenu();
 				ImGui::EndPopup();
 			}
 		}
-		else
+		else if (hierarchyVisible)
 		{
 			ImGui::TextDisabled("Drag a scene file here to load");
 		}
 
+		if (hierarchyVisible)
+		{
 		ImVec2 available = ImGui::GetContentRegionAvail();
 		if (available.y > 0)
 		{
@@ -221,24 +333,25 @@ namespace TomCat {
 			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY", flags))
 			{
 				Entity draggedEntity = *(const Entity*)payload->Data;
-				if (draggedEntity)
-					m_Context->SetParent(draggedEntity, Entity{});
+				if (draggedEntity && m_Context && m_Context->SetParent(draggedEntity, Entity{}))
+				{
+					MarkModified();
+				}
 			}
 			ImGui::EndDragDropTarget();
 		}
-
-		ImGui::End();
-
-		static bool inspectorWindowOpen = true;
-
-		ImGui::Begin("Inspector",&inspectorWindowOpen, ImGuiWindowFlags_MenuBar);
-		if (m_SelectionContext)
-		{
-			DrawComponents(m_SelectionContext);
-
 		}
 
 		ImGui::End();
+		}
+
+		if (!inspectorOpen || *inspectorOpen)
+		{
+			const bool inspectorVisible = ImGui::Begin("Inspector", inspectorOpen, ImGuiWindowFlags_MenuBar);
+			if (inspectorVisible && m_SelectionContext)
+				DrawComponents(m_SelectionContext);
+			ImGui::End();
+		}
 	}
 
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
@@ -286,23 +399,28 @@ namespace TomCat {
 		if (!CanPaste())
 			return;
 		Entity pasted = m_Context->DuplicateEntity(m_ClipboardEntity);
+		if (!pasted)
+			return;
 		m_SelectionContext = pasted;
 		BeginRename(pasted);
 		if (m_ClipboardIsCut)
 		{
 			m_EntityToDelete = m_ClipboardEntity;
-			m_ClipboardEntity = {};
-			m_ClipboardScene = nullptr;
-			m_ClipboardIsCut = false;
+			ClearClipboard();
 		}
+		MarkModified();
 	}
 
 	void SceneHierarchyPanel::DuplicateSelectedEntity()
 	{
 		if (m_SelectionContext)
 		{
-			m_SelectionContext = m_Context->DuplicateEntity(m_SelectionContext);
-			BeginRename(m_SelectionContext);
+			Entity duplicate = m_Context->DuplicateEntity(m_SelectionContext);
+			if (!duplicate)
+				return;
+			m_SelectionContext = duplicate;
+			BeginRename(duplicate);
+			MarkModified();
 		}
 	}
 
@@ -312,17 +430,18 @@ namespace TomCat {
 			m_EntityToDelete = m_SelectionContext;
 	}
 
-	void SceneHierarchyPanel::HandleShortcut(int keyCode, bool control)
+	bool SceneHierarchyPanel::HandleShortcut(int keyCode, bool control)
 	{
 		switch (keyCode)
 		{
-		case Key::X: if (control) CutSelectedEntity(); break;
-		case Key::C: if (control) CopySelectedEntity(); break;
-		case Key::V: if (control) PasteEntity(); break;
-		case Key::D: if (control) DuplicateSelectedEntity(); break;
-		case Key::F2: BeginRename(m_SelectionContext); break;
-		case Key::Delete: DeleteSelectedEntity(); break;
+		case Key::X: if (control && m_SelectionContext) { CutSelectedEntity(); return true; } break;
+		case Key::C: if (control && m_SelectionContext) { CopySelectedEntity(); return true; } break;
+		case Key::V: if (control && CanPaste()) { PasteEntity(); return true; } break;
+		case Key::D: if (control && m_SelectionContext) { DuplicateSelectedEntity(); return true; } break;
+		case Key::F2: if (m_SelectionContext) { BeginRename(m_SelectionContext); return true; } break;
+		case Key::Delete: if (m_SelectionContext) { DeleteSelectedEntity(); return true; } break;
 		}
+		return false;
 	}
 
 	void SceneHierarchyPanel::DrawEntityOperationsMenu()
@@ -337,7 +456,10 @@ namespace TomCat {
 		if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection)) DuplicateSelectedEntity();
 		if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) DeleteSelectedEntity();
 		if (ImGui::MenuItem("Unparent", nullptr, false, hasSelection && m_Context && m_Context->GetParent(m_SelectionContext)))
-			m_Context->SetParent(m_SelectionContext, Entity{});
+		{
+			if (m_Context->SetParent(m_SelectionContext, Entity{}))
+				MarkModified();
+		}
 		ImGui::Separator();
 
 		// 从右键菜单创建的新对象直接作为当前选中实体的子对象；
@@ -356,6 +478,7 @@ namespace TomCat {
 			}
 			m_SelectionContext = entity;
 			BeginRename(entity);
+			MarkModified();
 		};
 
 		if (ImGui::MenuItem("Create Empty Entity"))
@@ -365,8 +488,10 @@ namespace TomCat {
 		}
 		if (ImGui::MenuItem("Camera"))
 		{
+			const bool alreadyHasPrimary = m_Context && (bool)m_Context->GetPrimaryCameraEntity();
 			Entity camera = m_Context->CreateEntity("Camera");
-			camera.AddComponent<C_Camera>();
+			auto& cameraComponent = camera.AddComponent<C_Camera>();
+			cameraComponent.Primary = !alreadyHasPrimary;
 			CreateAsSelectedChild(camera);
 		}
 
@@ -461,8 +586,8 @@ namespace TomCat {
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY"))
 			{
 				Entity draggedEntity = *(const Entity*)payload->Data;
-				if (draggedEntity && draggedEntity != entity)
-					m_Context->SetParent(draggedEntity, entity);
+				if (draggedEntity && draggedEntity != entity && m_Context->SetParent(draggedEntity, entity))
+					MarkModified();
 			}
 			ImGui::EndDragDropTarget();
 		}
@@ -480,8 +605,8 @@ namespace TomCat {
 			bool commit = ImGui::InputText("##EntityRename", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
 			if (commit || ImGui::IsItemDeactivated())
 			{
-				if (m_RenameBuffer[0] != '\0')
-					tag = m_RenameBuffer;
+				if (m_Context->RenameEntity(entity, m_RenameBuffer))
+					MarkModified();
 				m_RenameEntity = {};
 			}
 		}
@@ -603,13 +728,12 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	}
 
 	template<typename T> static bool* GetComponentEnabledFlag(T&) { return nullptr; }
-	template<> static bool* GetComponentEnabledFlag<C_Camera>(C_Camera& component) { return &component.Primary; }
 	template<> static bool* GetComponentEnabledFlag<SpriteRenderer>(SpriteRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<BoxCollider2D>(BoxCollider2D& component) { return &component.Enabled; }
 
-	template<typename T, typename UIFunction>
-static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction)
+	template<typename T, typename UIFunction, typename ModifiedFunction>
+static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction, ModifiedFunction onModified)
 {
 	// 检查实体是否有效
 	if (!entity)
@@ -619,6 +743,7 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 	if (entity.HasComponent<T>())
 	{
 		auto& component = entity.GetComponent<T>();
+		ImGui::PushID(name.c_str());
 
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
 		ImGui::Separator();
@@ -637,7 +762,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 		{
 			const float checkboxPosY = headerMin.y + (headerHeight - ImGui::GetFrameHeight()) * 0.5f;
 			ImGui::SetCursorScreenPos(ImVec2(headerMin.x + headerHeight, checkboxPosY));
-			DrawCompactCheckbox((std::string("##") + name + "_Enabled").c_str(), enabled);
+			if (DrawCompactCheckbox("##Enabled", enabled))
+				onModified();
 		}
 
 		const float leftContentX = headerMin.x + headerHeight +
@@ -687,7 +813,11 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 		}
 
 		if (removeComponent)
+		{
 			entity.RemoveComponent<T>();
+			onModified();
+		}
+		ImGui::PopID();
 	}
 	}
 
@@ -700,262 +830,244 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 
 	if (entity.HasComponent<Tag>())
 	{
-		auto& tag = entity.GetComponent<Tag>()._Tag;
+		auto& tagComponent = entity.GetComponent<Tag>();
+		auto& tag = tagComponent._Tag;
+		if (m_TagEditingEntity != entity)
+		{
+			m_TagEditingEntity = entity;
+			strncpy_s(m_TagEditBuffer, sizeof(m_TagEditBuffer), tag.c_str(), _TRUNCATE);
+		}
 
-			// 使用string作为中间缓冲，避免直接操作char数组的问题
-			static std::string editBuffer;
-			static Entity editingEntity; // 跟踪正在编辑的实体
-			static bool isEditing = false;
-
-			// 开始编辑时保存当前值到缓冲
-			if (ImGui::IsItemActivated()) {
-				editBuffer = tag;
-				editingEntity = entity;
-				isEditing = true;
-			}
-
-			// 安全的char数组处理
-			char buffer[256];
-			memset(buffer, 0, sizeof(buffer));
-
-			// 安全复制 - 确保即使空字符串也能正确处理
-			const std::string& source = (isEditing && editingEntity == entity) ? editBuffer : tag;
-			if (!source.empty()) {
-				strncpy_s(buffer, sizeof(buffer), source.c_str(), _TRUNCATE);
-			}
-
-			// 设置输入文本标志，允许空输入
-			ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue;
-
-			DrawCompactCheckbox("##Visible", &entity.GetComponent<Tag>().Visible);
-			ImGui::SameLine();
-			ImGui::SetNextItemWidth(-1.0f);
-			if (ImGui::InputText("##Tag", buffer, sizeof(buffer), flags))
-			{
-				// 直接设置，允许空字符串
-				tag = std::string(buffer);
-				isEditing = false;
-				editingEntity = {};
-			}
-
-			// 失去焦点时也确认修改
-			if (isEditing && editingEntity == entity && ImGui::IsItemDeactivated())
-			{
-				tag = std::string(buffer);
-				isEditing = false;
-				editingEntity = {};
-			}
-
-			// 确保Tag永远不会完全为空，提供默认值
-			if (tag.empty()) {
-				tag = "Entity";
-			}
+		if (DrawCompactCheckbox("##Visible", &tagComponent.Visible))
+			MarkModified();
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(-1.0f);
+		const bool committed = ImGui::InputText("##Tag", m_TagEditBuffer, sizeof(m_TagEditBuffer),
+			ImGuiInputTextFlags_EnterReturnsTrue);
+		if (committed || ImGui::IsItemDeactivatedAfterEdit())
+		{
+			if (m_Context->RenameEntity(entity, m_TagEditBuffer))
+				MarkModified();
+			strncpy_s(m_TagEditBuffer, sizeof(m_TagEditBuffer), tag.c_str(), _TRUNCATE);
+		}
 		}
 
 
+		const auto onModified = [this]() { MarkModified(); };
 		DrawComponent<Transform>("Transform", entity, [this, entity](auto& component)
 		{
 			Entity parent = m_Context ? m_Context->GetParent(entity) : Entity{};
 			const bool hasParent = (bool)parent;
-
 			glm::vec3 translation = hasParent ? component._LocalTranslation : component._Translation;
 			glm::vec3 rotation = glm::degrees(hasParent ? component._LocalRotation : component._Rotation);
 			glm::vec3 scale = hasParent ? component._LocalScale : component._Scale;
 
-			bool changed = false;
-			changed |= DrawVec3Control(hasParent ? "Local Translation" : "Translation", translation);
+			bool changed = DrawVec3Control(hasParent ? "Local Translation" : "Translation", translation);
 			changed |= DrawVec3Control(hasParent ? "Local Rotation" : "Rotation", rotation);
 			changed |= DrawVec3Control(hasParent ? "Local Scale" : "Scale", scale, 1.0f);
-
 			if (changed && m_Context)
 			{
-				glm::mat4 transformMatrix = Math::ComposeTransform(translation, glm::radians(rotation), scale);
+				const glm::mat4 transform = Math::ComposeTransform(translation, glm::radians(rotation), scale);
 				if (hasParent)
-					m_Context->SetLocalTransform(entity, transformMatrix);
-				else
-					m_Context->SetWorldTransform(entity, transformMatrix);
+				{
+					if (m_Context->SetLocalTransform(entity, transform))
+						MarkModified();
+				}
+				else if (m_Context->SetWorldTransform(entity, transform))
+				{
+					MarkModified();
+				}
 			}
-		});
+		}, onModified);
 
-		DrawComponent<C_Camera>("Camera", entity, [](auto& component)
+		DrawComponent<C_Camera>("Camera", entity, [this](auto& component)
 		{
 			auto& camera = component._Camera;
-			float columnWidth = 100.0f;
+			const float columnWidth = 100.0f;
 
-			// Projection Type
-			DrawProperty("Projection", columnWidth);
-			const char* projectionTypeStrings[] = { "Perspective", "Orthographic" };
-			const char* currentProjectionTypeString = projectionTypeStrings[(int)camera.GetProjectionType()];
-			if (ImGui::BeginCombo("##Projection", currentProjectionTypeString))
+			DrawProperty("Primary", columnWidth);
+			bool primary = component.Primary;
+			if (ImGui::Checkbox("##Primary", &primary))
 			{
-				for (int i = 0; i < 2; i++)
+				if (primary && m_Context)
 				{
-					bool isSelected = currentProjectionTypeString == projectionTypeStrings[i];
-					if (ImGui::Selectable(projectionTypeStrings[i], isSelected))
-					{
-						currentProjectionTypeString = projectionTypeStrings[i];
-						camera.SetProjectionType((SceneCamera::ProjectionType)i);
-					}
+					auto cameras = m_Context->m_Registry.view<C_Camera>();
+					for (auto handle : cameras)
+						cameras.get<C_Camera>(handle).Primary = false;
+				}
+				component.Primary = primary;
+				MarkModified();
+			}
+			ImGui::Columns(1);
 
-					if (isSelected)
+			DrawProperty("Projection", columnWidth);
+			const char* projectionTypes[] = { "Perspective", "Orthographic" };
+			int projection = (int)camera.GetProjectionType();
+			if (ImGui::BeginCombo("##Projection", projectionTypes[projection]))
+			{
+				for (int i = 0; i < 2; ++i)
+				{
+					const bool selected = projection == i;
+					if (ImGui::Selectable(projectionTypes[i], selected))
+					{
+						if (projection != i && camera.SetProjectionType((SceneCamera::ProjectionType)i))
+							MarkModified();
+					}
+					if (selected)
 						ImGui::SetItemDefaultFocus();
 				}
-
 				ImGui::EndCombo();
 			}
 			ImGui::Columns(1);
 
 			if (camera.GetProjectionType() == SceneCamera::ProjectionType::Perspective)
 			{
-				// Vertical FOV
 				DrawProperty("Vertical FOV", columnWidth);
-				float perspectiveVerticalFov = glm::degrees(camera.GetPerspectiveVerticalFOV());
-				if (ImGui::DragFloat("##VerticalFOV", &perspectiveVerticalFov))
-					camera.SetPerspectiveVerticalFOV(glm::radians(perspectiveVerticalFov));
+				float value = glm::degrees(camera.GetPerspectiveVerticalFOV());
+				if (ImGui::DragFloat("##VerticalFOV", &value) && camera.SetPerspectiveVerticalFOV(glm::radians(value))) MarkModified();
 				ImGui::Columns(1);
-
-				// Near
 				DrawProperty("Near", columnWidth);
-				float perspectiveNear = camera.GetPerspectiveNearClip();
-				if (ImGui::DragFloat("##PerspectiveNear", &perspectiveNear))
-					camera.SetPerspectiveNearClip(perspectiveNear);
+				value = camera.GetPerspectiveNearClip();
+				if (ImGui::DragFloat("##PerspectiveNear", &value) && camera.SetPerspectiveNearClip(value)) MarkModified();
 				ImGui::Columns(1);
-
-				// Far
-			DrawProperty("Far", columnWidth);
-			float perspectiveFar = camera.GetPerspectiveFarClip();
-			if (ImGui::DragFloat("##PerspectiveFar", &perspectiveFar))
-				camera.SetPerspectiveFarClip(perspectiveFar);
-			ImGui::Columns(1);
-
-			// Background Color
-			DrawProperty("Background Color", columnWidth);
-			ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor));
-			ImGui::Columns(1);
-		}
-
-		if (camera.GetProjectionType() == SceneCamera::ProjectionType::Orthographic)
-			{
-				// Size
-				DrawProperty("Size", columnWidth);
-				float orthoSize = camera.GetOrthographicSize();
-				if (ImGui::DragFloat("##OrthoSize", &orthoSize))
-					camera.SetOrthographicSize(orthoSize);
-				ImGui::Columns(1);
-
-				// Near
-				DrawProperty("Near", columnWidth);
-				float orthoNear = camera.GetOrthographicNearClip();
-				if (ImGui::DragFloat("##OrthoNear", &orthoNear))
-					camera.SetOrthographicNearClip(orthoNear);
-				ImGui::Columns(1);
-
-				// Far
 				DrawProperty("Far", columnWidth);
-				float orthoFar = camera.GetOrthographicFarClip();
-				if (ImGui::DragFloat("##OrthoFar", &orthoFar))
-					camera.SetOrthographicFarClip(orthoFar);
+				value = camera.GetPerspectiveFarClip();
+				if (ImGui::DragFloat("##PerspectiveFar", &value) && camera.SetPerspectiveFarClip(value)) MarkModified();
 				ImGui::Columns(1);
-
-				// Fixed Aspect Ratio
-			DrawProperty("Fixed Aspect Ratio", columnWidth);
-			ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio);
-			ImGui::Columns(1);
-
-			// Background Color
-			DrawProperty("Background Color", columnWidth);
-			ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor));
-			ImGui::Columns(1);
-		}
-	});
-
-		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [](auto& component)
-		{
-
-			float columnWidth = 100.0f;
-			DrawProperty("Color", columnWidth);
-			ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color));
-			ImGui::Columns(1);
-
-
-			DrawProperty("Sprite", columnWidth);
-
-			std::string textureName = "None";
-			if (component.Texture)
+			}
+			else
 			{
-				if (component.Texture->GetPath().length() > 0)
-				{
-					textureName = std::filesystem::path(component.Texture->GetPath()).stem().string();
-				}
-				else
-				{
-					textureName = "Missing";
-				}
+				DrawProperty("Size", columnWidth);
+				float value = camera.GetOrthographicSize();
+				if (ImGui::DragFloat("##OrthoSize", &value) && camera.SetOrthographicSize(value)) MarkModified();
+				ImGui::Columns(1);
+				DrawProperty("Near", columnWidth);
+				value = camera.GetOrthographicNearClip();
+				if (ImGui::DragFloat("##OrthoNear", &value) && camera.SetOrthographicNearClip(value)) MarkModified();
+				ImGui::Columns(1);
+				DrawProperty("Far", columnWidth);
+				value = camera.GetOrthographicFarClip();
+				if (ImGui::DragFloat("##OrthoFar", &value) && camera.SetOrthographicFarClip(value)) MarkModified();
+				ImGui::Columns(1);
 			}
 
+			DrawProperty("Fixed Aspect Ratio", columnWidth);
+			if (ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio)) MarkModified();
+			ImGui::Columns(1);
+			DrawProperty("Background Color", columnWidth);
+			if (ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor))) MarkModified();
+			ImGui::Columns(1);
+		}, onModified);
 
+		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [this](auto& component)
+		{
+			const float columnWidth = 100.0f;
+			DrawProperty("Color", columnWidth);
+			if (ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color))) MarkModified();
+			ImGui::Columns(1);
+			DrawProperty("Sprite", columnWidth);
+			const std::string textureName = component.Texture && !component.Texture->GetPath().empty()
+				? PathToUTF8(component.Texture->GetPath().stem()) : "None";
 			ImGui::Button(textureName.c_str(), ImVec2(-1, 0));
-
 			if (ImGui::BeginDragDropTarget())
 			{
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE"))
 				{
 					auto project = ProjectManager::Get().GetActiveProject();
-					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-					const wchar_t* path = (const wchar_t*)payload->Data;
-					std::filesystem::path texturePath = assetPath / path;
-
-					Ref<Texture2D> texture = Texture2D::Create(texturePath.string());
-					if (texture->IsLoaded())
-						component.Texture = texture;
-					else
-						TC_Warn("Could not load texture {0}", texturePath.filename().string());
+					const std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
+					const std::filesystem::path texturePath = assetPath / static_cast<const wchar_t*>(payload->Data);
+					Ref<Texture2D> texture = Texture2D::Create(texturePath);
+					if (texture->IsLoaded()) { component.Texture = texture; MarkModified(); }
+					else TC_Warn("Could not load texture {0}", PathToUTF8(texturePath.filename()));
 				}
 				ImGui::EndDragDropTarget();
 			}
-
 			ImGui::Columns(1);
-
 			DrawProperty("Tiling Factor", columnWidth);
-			ImGui::DragFloat("##Tiling Factor", &component.TilingFactor, 0.1f, 0.0f, 100.0f);
-			ImGui::Columns(1);
-
-		});
-
-		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, [](auto& component)
+			float tilingFactor = component.TilingFactor;
+			if (ImGui::DragFloat("##TilingFactor", &tilingFactor, 0.1f, 0.0f, 100.0f,
+				"%.3f", ImGuiSliderFlags_AlwaysClamp))
 			{
-				const char* bodyTypeStrings[] = { "Static", "Dynamic", "Kinematic" };
-				const char* currentBodyTypeString = bodyTypeStrings[(int)component.Type];
-				if (ImGui::BeginCombo("Body Type", currentBodyTypeString))
+				if (!std::isfinite(tilingFactor))
+					tilingFactor = component.TilingFactor;
+				tilingFactor = std::max(0.0f, tilingFactor);
+				if (tilingFactor != component.TilingFactor)
 				{
-					for (int i = 0; i < 2; i++)
-					{
-						bool isSelected = currentBodyTypeString == bodyTypeStrings[i];
-						if (ImGui::Selectable(bodyTypeStrings[i], isSelected))
-						{
-							currentBodyTypeString = bodyTypeStrings[i];
-							component.Type = (Rigidbody2D::BodyType)i;
-						}
-
-						if (isSelected)
-							ImGui::SetItemDefaultFocus();
-					}
-
-					ImGui::EndCombo();
+					component.TilingFactor = tilingFactor;
+					MarkModified();
 				}
+			}
+			ImGui::Columns(1);
+		}, onModified);
 
-				ImGui::Checkbox("Fixed Rotation", &component.FixedRotation);
-			});
-
-		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, [](auto& component)
+		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, [this](auto& component)
+		{
+			const char* bodyTypes[] = { "Static", "Dynamic", "Kinematic" };
+			int bodyType = (int)component.Type;
+			if (ImGui::BeginCombo("Body Type", bodyTypes[bodyType]))
 			{
-				ImGui::DragFloat2("Offset", glm::value_ptr(component.Offset));
-				ImGui::DragFloat2("Size", glm::value_ptr(component.Size));
-				ImGui::DragFloat("Density", &component.Density, 0.01f, 0.0f, 1.0f);
-				ImGui::DragFloat("Friction", &component.Friction, 0.01f, 0.0f, 1.0f);
-				ImGui::DragFloat("Restitution", &component.Restitution, 0.01f, 0.0f, 1.0f);
-				ImGui::DragFloat("Restitution Threshold", &component.RestitutionThreshold, 0.01f, 0.0f);
-			});
+				for (int i = 0; i < 3; ++i)
+				{
+					const bool selected = bodyType == i;
+					if (ImGui::Selectable(bodyTypes[i], selected)) { component.Type = (Rigidbody2D::BodyType)i; MarkModified(); }
+					if (selected) ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+			if (ImGui::Checkbox("Fixed Rotation", &component.FixedRotation)) MarkModified();
+		}, onModified);
+
+		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, [this](auto& component)
+		{
+			glm::vec2 offset = component.Offset;
+			glm::vec2 size = component.Size;
+			float density = component.Density;
+			float friction = component.Friction;
+			float restitution = component.Restitution;
+			float restitutionThreshold = component.RestitutionThreshold;
+
+			bool edited = ImGui::DragFloat2("Offset", glm::value_ptr(offset));
+			edited |= ImGui::DragFloat2("Size", glm::value_ptr(size));
+			edited |= ImGui::DragFloat("Density", &density, 0.01f, 0.0f, 0.0f);
+			edited |= ImGui::DragFloat("Friction", &friction, 0.01f, 0.0f, 1.0f,
+				"%.3f", ImGuiSliderFlags_AlwaysClamp);
+			edited |= ImGui::DragFloat("Restitution", &restitution, 0.01f, 0.0f, 1.0f,
+				"%.3f", ImGuiSliderFlags_AlwaysClamp);
+			edited |= ImGui::DragFloat("Restitution Threshold", &restitutionThreshold, 0.01f, 0.0f, 0.0f);
+			if (edited)
+			{
+				if (!std::isfinite(offset.x) || !std::isfinite(offset.y))
+					offset = component.Offset;
+				if (!std::isfinite(size.x) || !std::isfinite(size.y))
+					size = component.Size;
+				constexpr float minimumSize = 0.0001f;
+				size.x = std::max(minimumSize, size.x);
+				size.y = std::max(minimumSize, size.y);
+				if (!std::isfinite(density)) density = component.Density;
+				if (!std::isfinite(friction)) friction = component.Friction;
+				if (!std::isfinite(restitution)) restitution = component.Restitution;
+				if (!std::isfinite(restitutionThreshold)) restitutionThreshold = component.RestitutionThreshold;
+				density = std::max(0.0f, density);
+				friction = std::clamp(friction, 0.0f, 1.0f);
+				restitution = std::clamp(restitution, 0.0f, 1.0f);
+				restitutionThreshold = std::max(0.0f, restitutionThreshold);
+
+				const bool changed = offset.x != component.Offset.x || offset.y != component.Offset.y ||
+					size.x != component.Size.x || size.y != component.Size.y || density != component.Density ||
+					friction != component.Friction || restitution != component.Restitution ||
+					restitutionThreshold != component.RestitutionThreshold;
+				if (changed)
+				{
+					component.Offset = offset;
+					component.Size = size;
+					component.Density = density;
+					component.Friction = friction;
+					component.Restitution = restitution;
+					component.RestitutionThreshold = restitutionThreshold;
+					MarkModified();
+				}
+			}
+		}, onModified);
 
 		ImGui::Spacing();
 		ImGui::SetNextItemWidth(-1.0f);
@@ -966,22 +1078,28 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 		{
 			if (!entity.HasComponent<C_Camera>() && ImGui::MenuItem("Camera"))
 			{
-				entity.AddComponent<C_Camera>();
+				const bool alreadyHasPrimary = m_Context && (bool)m_Context->GetPrimaryCameraEntity();
+				auto& camera = entity.AddComponent<C_Camera>();
+				camera.Primary = !alreadyHasPrimary;
+				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}
 			if (!entity.HasComponent<SpriteRenderer>() && ImGui::MenuItem("Sprite Renderer"))
 			{
 				entity.AddComponent<SpriteRenderer>();
+				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}
 			if (!entity.HasComponent<Rigidbody2D>() && ImGui::MenuItem("Rigidbody 2D"))
 			{
 				entity.AddComponent<Rigidbody2D>();
+				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}
 			if (!entity.HasComponent<BoxCollider2D>() && ImGui::MenuItem("Box Collider 2D"))
 			{
 				entity.AddComponent<BoxCollider2D>();
+				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();

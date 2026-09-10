@@ -17,6 +17,6 @@
 #include "TomCat/Debug/Instrumentor.h"
 
 
-#ifdef TC_PLAYTFORM_WINDOWS
+#ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
 #endif

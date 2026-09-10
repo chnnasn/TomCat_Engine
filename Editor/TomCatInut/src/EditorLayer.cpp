@@ -2,14 +2,20 @@
 #include <imgui/imgui.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <string_view>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
+#include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Project/ProjectManager.h"
 
 #include "ImGuizmo.h"
@@ -19,10 +25,157 @@ namespace TomCat {
 
 	extern const std::filesystem::path g_AssetPath;
 
-	EditorLayer::EditorLayer(bool is2DMode)
-		: Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_SquareColor({ 0.2f, 0.3f, 0.8f, 1.0f }), m_Is2DMode(is2DMode)
+	namespace {
+
+		uint32_t ToFramebufferExtent(float value)
+		{
+			if (!std::isfinite(value) || value <= 0.0f)
+				return 0;
+			return static_cast<uint32_t>(std::round(std::clamp(value, 1.0f,
+				static_cast<float>(Framebuffer::MaxFramebufferSize))));
+		}
+
+		std::filesystem::path AbsoluteLexicalPath(const std::filesystem::path& path)
+		{
+			if (path.empty())
+				return {};
+			std::error_code error;
+			const std::filesystem::path absolute = std::filesystem::absolute(path, error);
+			return (error ? path : absolute).lexically_normal();
+		}
+
+		bool TryGetRelativeWithin(const std::filesystem::path& root,
+			const std::filesystem::path& candidate, std::filesystem::path& relative)
+		{
+			const std::filesystem::path normalizedRoot = AbsoluteLexicalPath(root);
+			const std::filesystem::path normalizedCandidate = AbsoluteLexicalPath(candidate);
+			if (normalizedRoot.empty() || normalizedCandidate.empty())
+				return false;
+			relative = normalizedCandidate.lexically_relative(normalizedRoot);
+			if (relative.empty() || relative.is_absolute())
+				return false;
+			for (const auto& part : relative)
+			{
+				if (part == "..")
+					return false;
+			}
+			if (relative == ".")
+				relative.clear();
+			return true;
+		}
+
+		bool IsImGuiManagedIniSection(const std::string& header)
+		{
+			return header.rfind("[Window][", 0) == 0 ||
+				header.rfind("[Table][", 0) == 0 ||
+				header.rfind("[Docking][", 0) == 0;
+		}
+
+		std::string::size_type FindIniSectionHeader(const std::string& ini,
+			std::string_view sectionName)
+		{
+			std::string::size_type position = 0;
+			while ((position = ini.find(sectionName, position)) != std::string::npos)
+			{
+				const bool lineStart = position == 0 || ini[position - 1] == '\n';
+				const size_t end = position + sectionName.size();
+				const bool lineEnd = end == ini.size() || ini[end] == '\n' || ini[end] == '\r';
+				if (lineStart && lineEnd)
+					return position;
+				position = end;
+			}
+			return std::string::npos;
+		}
+
+		std::filesystem::path GetEditorSettingsPath()
+		{
+			std::error_code error;
+			const std::filesystem::path currentDirectory = std::filesystem::current_path(error);
+			return error ? std::filesystem::path("imgui.ini") : currentDirectory / "imgui.ini";
+		}
+
+		bool LoadImGuiSettings(const std::filesystem::path& path)
+		{
+			std::ifstream input(path, std::ios::binary);
+			if (!input)
+				return false;
+			std::ostringstream contents;
+			contents << input.rdbuf();
+			if (input.bad())
+				return false;
+			const std::string settings = contents.str();
+			ImGui::LoadIniSettingsFromMemory(settings.data(), settings.size());
+			return true;
+		}
+
+		std::vector<std::string> ReadCustomIniSections(const std::filesystem::path& path)
+		{
+			std::ifstream input(path, std::ios::binary);
+			if (!input)
+				return {};
+			std::ostringstream contents;
+			contents << input.rdbuf();
+			if (input.bad())
+				return {};
+			const std::string ini = contents.str();
+
+			std::vector<std::string> sections;
+			std::string::size_type sectionStart = 0;
+			while (sectionStart < ini.size())
+			{
+				if (ini[sectionStart] != '[' || (sectionStart > 0 && ini[sectionStart - 1] != '\n'))
+				{
+					sectionStart = ini.find("\n[", sectionStart);
+					if (sectionStart == std::string::npos)
+						break;
+					++sectionStart;
+				}
+				const std::string::size_type headerEnd = ini.find('\n', sectionStart);
+				const std::string header = ini.substr(sectionStart,
+					headerEnd == std::string::npos ? std::string::npos : headerEnd - sectionStart);
+				const std::string::size_type nextMarker = headerEnd == std::string::npos
+					? std::string::npos : ini.find("\n[", headerEnd);
+				const std::string::size_type sectionEnd = nextMarker == std::string::npos
+					? ini.size() : nextMarker + 1;
+				if (!IsImGuiManagedIniSection(header))
+					sections.push_back(ini.substr(sectionStart, sectionEnd - sectionStart));
+				if (nextMarker == std::string::npos)
+					break;
+				sectionStart = nextMarker + 1;
+			}
+			return sections;
+		}
+
+		bool SaveImGuiSettingsPreservingCustomSections(const std::filesystem::path& path)
+		{
+			const std::vector<std::string> customSections = ReadCustomIniSections(path);
+			size_t size = 0;
+			const char* settings = ImGui::SaveIniSettingsToMemory(&size);
+			if (!settings)
+				return false;
+
+			std::string ini(settings, size);
+			for (const std::string& section : customSections)
+			{
+				if (!ini.empty() && ini.back() != '\n')
+					ini.push_back('\n');
+				ini += section;
+			}
+			std::string writeError;
+			if (FileSystem::WriteFileAtomically(path, ini, writeError))
+				return true;
+			TC_Core_Error("Failed to save ImGui settings '{0}': {1}", PathToUTF8(path), writeError);
+			return false;
+		}
+
+	}
+
+	EditorLayer::EditorLayer()
+		: Layer("EditorLayer")
 	{
 		m_CurrentProject = ProjectManager::Get().GetActiveProject();
+		if (m_CurrentProject)
+			m_Is2DMode = m_CurrentProject->GetConfig().Template == "2D";
 	}
 
 	void EditorLayer::LoadSceneToolbarLayout()
@@ -111,14 +264,14 @@ namespace TomCat {
 		if (m_CurrentProject)
 			loaded = loadFrom(m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini");
 		if (!loaded)
-			loadFrom(std::filesystem::current_path() / "imgui.ini");
+			loadFrom(GetEditorSettingsPath());
 	}
 
 	void EditorLayer::SaveSceneToolbarLayout()
 	{
 		const std::filesystem::path iniPath = m_CurrentProject
 			? m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini"
-			: std::filesystem::current_path() / "imgui.ini";
+			: GetEditorSettingsPath();
 
 		std::string ini;
 		{
@@ -143,7 +296,7 @@ namespace TomCat {
 			<< "TransformToolbarOffsetY=" << m_GizmoToolbarOffset.y << "\n";
 
 		const std::string sectionName = "[SceneToolbars]";
-		const std::string::size_type sectionPos = ini.find(sectionName);
+		const std::string::size_type sectionPos = FindIniSectionHeader(ini, sectionName);
 		if (sectionPos != std::string::npos)
 		{
 			const std::string::size_type nextSection = ini.find("\n[", sectionPos + sectionName.size());
@@ -153,9 +306,9 @@ namespace TomCat {
 			ini.push_back('\n');
 		ini += section.str();
 
-		std::ofstream fout(iniPath, std::ios::trunc);
-		if (fout)
-			fout << ini;
+		std::string writeError;
+		if (!FileSystem::WriteFileAtomically(iniPath, ini, writeError))
+			TC_Core_Error("Failed to save Scene toolbar layout '{0}': {1}", PathToUTF8(iniPath), writeError);
 	}
 
 	void EditorLayer::OnAttach()
@@ -173,23 +326,16 @@ namespace TomCat {
 		m_Framebuffer = Framebuffer::Create(fbSpec);
 		m_GameFramebuffer = Framebuffer::Create(fbSpec);
 
-		m_ActiveScene = CreateRef<Scene>();
-
-		// Restore editor window layout from <cwd>/imgui.ini (independent of any project)
-		ImGui::LoadIniSettingsFromDisk((std::filesystem::current_path() / "imgui.ini").string().c_str());
+		// Read through filesystem::path so non-ASCII Windows paths do not pass
+		// through Dear ImGui's narrow fopen implementation.
+		LoadImGuiSettings(GetEditorSettingsPath());
 
 		if (m_CurrentProject)
 		{
-			m_SceneDirty = true;
-			
 			// 读取Project.tcproj目录的imgui.ini文件
 			std::filesystem::path projectDir = m_CurrentProject->GetProjectPath().parent_path();
 			std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
-			if (std::filesystem::exists(imguiIniPath))
-			{
-				// 加载ImGui配置
-				ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
-			}
+			LoadImGuiSettings(imguiIniPath);
 		}
 
 		// Restore the custom Scene toolbar arrangement after all ImGui window
@@ -206,28 +352,70 @@ namespace TomCat {
 		m_ContentBrowserPanel.SetSceneOpenCallback([this](const std::filesystem::path& path) {
 			OpenScene(path);
 		});
+		m_ContentBrowserPanel.SetAssetRenamedCallback([this](const std::filesystem::path& oldPath,
+			const std::filesystem::path& newPath) {
+			std::filesystem::path relative;
+			if (!m_EditorScenePath.empty() && TryGetRelativeWithin(oldPath, m_EditorScenePath, relative))
+				m_EditorScenePath = newPath / relative;
 
-		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](const std::filesystem::path& path) {
-			std::string fileName = path.stem().string();
-			auto Square = m_ActiveScene->CreateEntity(fileName);
-			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-			SpriteR.Texture = Texture2D::Create(path.string());
+			const bool editorChanged = m_SceneHierarchyPanel.RemapSpriteTextureReferences(
+				m_EditorScene, oldPath, newPath);
+			if (m_ActiveScene && m_ActiveScene != m_EditorScene)
+				m_SceneHierarchyPanel.RemapSpriteTextureReferences(m_ActiveScene, oldPath, newPath);
+			if (editorChanged)
+				m_SceneDirty = true;
+		});
+		m_ContentBrowserPanel.SetAssetDeletedCallback([this](const std::filesystem::path& deletedPath) {
+			std::filesystem::path relative;
+			if (!m_EditorScenePath.empty() && TryGetRelativeWithin(deletedPath, m_EditorScenePath, relative))
+			{
+				m_EditorScenePath.clear();
+				m_SceneDirty = true;
+			}
+
+			const bool editorChanged = m_SceneHierarchyPanel.ClearSpriteTextureReferences(
+				m_EditorScene, deletedPath);
+			if (m_ActiveScene && m_ActiveScene != m_EditorScene)
+				m_SceneHierarchyPanel.ClearSpriteTextureReferences(m_ActiveScene, deletedPath);
+			if (editorChanged)
+				m_SceneDirty = true;
 		});
 
-		// Hub-created projects already contain the serialized sample asset.  Keep
-		// the missing-file fallback for projects created before Hub templates were
-		// introduced.
+		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](const std::filesystem::path& path) {
+			if (!m_ActiveScene)
+				return;
+			std::string fileName = PathToUTF8(path.stem());
+			auto Square = m_ActiveScene->CreateEntity(fileName);
+			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
+			SpriteR.Texture = Texture2D::Create(path);
+			if (m_SceneState == SceneState::Edit)
+				m_SceneDirty = true;
+		});
+		m_SceneHierarchyPanel.SetSceneModifiedCallback([this]() {
+			if (m_SceneState == SceneState::Edit)
+				m_SceneDirty = true;
+		});
+
 		if (m_CurrentProject)
-			OpenOrCreateSampleScene();
+			OpenProjectStartScene();
+		else
+		{
+			NewScene();
+			m_SceneDirty = false;
+		}
 	}
 
 	void EditorLayer::OnDetach()
 	{
 		TC_PROFILE_FUNCTION();
+		if (m_SceneState == SceneState::Play)
+			OnSceneStop();
 
 		m_ContentBrowserPanel.Serialize();
 
-		// Save window layout + [ContentBrowser] layout into the editor-level imgui.ini
+		// Save the editor-level window layout, then update only the browser's own
+		// custom section. Both operations preserve unrelated custom sections.
+		SaveImGuiSettingsPreservingCustomSections(GetEditorSettingsPath());
 		m_ContentBrowserPanel.SaveLayoutSetting();
 
 		if (m_CurrentProject)
@@ -235,9 +423,8 @@ namespace TomCat {
 			std::filesystem::path projectDir = m_CurrentProject->GetProjectPath().parent_path();
 			std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
 			
-			ImGui::SaveIniSettingsToDisk(imguiIniPath.string().c_str());
+			SaveImGuiSettingsPreservingCustomSections(imguiIniPath);
 			
-			m_CurrentProject->Save();
 		}
 
 		// Append the custom section after ImGui writes its own settings; otherwise
@@ -250,23 +437,25 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		// Resize Scene Framebuffer
+		const uint32_t sceneWidth = ToFramebufferExtent(m_ViewportSize.x);
+		const uint32_t sceneHeight = ToFramebufferExtent(m_ViewportSize.y);
 		if (FramebufferSpecification spec = m_Framebuffer->GetSpecification();
-			m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f &&
-			(spec.Width != m_ViewportSize.x || spec.Height != m_ViewportSize.y))
+			sceneWidth > 0 && sceneHeight > 0 &&
+			(spec.Width != sceneWidth || spec.Height != sceneHeight))
 		{
-			m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-			m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
-			m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
-			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			if (m_Framebuffer->Resize(sceneWidth, sceneHeight))
+				m_EditorCamera.SetViewportSize(static_cast<float>(sceneWidth), static_cast<float>(sceneHeight));
 		}
 
 		// Resize Game Framebuffer
+		const uint32_t gameWidth = ToFramebufferExtent(m_GameViewportSize.x);
+		const uint32_t gameHeight = ToFramebufferExtent(m_GameViewportSize.y);
 		if (FramebufferSpecification gameSpec = m_GameFramebuffer->GetSpecification();
-			m_GameViewportSize.x > 0.0f && m_GameViewportSize.y > 0.0f &&
-			(gameSpec.Width != m_GameViewportSize.x || gameSpec.Height != m_GameViewportSize.y))
+			gameWidth > 0 && gameHeight > 0 &&
+			(gameSpec.Width != gameWidth || gameSpec.Height != gameHeight))
 		{
-			m_GameFramebuffer->Resize((uint32_t)m_GameViewportSize.x, (uint32_t)m_GameViewportSize.y);
-			m_ActiveScene->OnViewportResize((uint32_t)m_GameViewportSize.x, (uint32_t)m_GameViewportSize.y);
+			if (m_GameFramebuffer->Resize(gameWidth, gameHeight))
+				m_ActiveScene->OnViewportResize(gameWidth, gameHeight);
 		}
 
 		// Render Scene View (Editor Camera).  Unity's Scene canvas is one step
@@ -280,9 +469,7 @@ namespace TomCat {
 		m_Framebuffer->ClearAttachment(1, -1);
 
 		// Update
-		if (m_ViewportFocused)
-			m_CameraController.OnUpdate(ts);
-		m_EditorCamera.OnUpdate(ts, m_ViewportFocused && m_ViewportHovered);
+		m_EditorCamera.OnUpdate(ts, m_ViewportCameraDragOwned);
 
 		// Scene窗口始终使用EditorCamera渲染
 		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
@@ -300,6 +487,10 @@ namespace TomCat {
 		{
 			int pixelData = m_Framebuffer->ReadPixel(1, mouseX, mouseY);
 			m_HoveredEntity = pixelData == -1 ? Entity() : Entity((entt::entity)pixelData, m_ActiveScene.get());
+		}
+		else
+		{
+			m_HoveredEntity = {};
 		}
 
 		m_Framebuffer->Unbind();
@@ -390,7 +581,7 @@ namespace TomCat {
 
 				ImGui::Separator();
 
-				if (ImGui::MenuItem("Exit")) Application::Get().Close();
+				if (ImGui::MenuItem("Exit")) RequestExit();
 				ImGui::EndMenu();
 			}
 
@@ -399,7 +590,8 @@ namespace TomCat {
 				if (m_CurrentProject)
 				{
 					ImGui::Text("ProjectName: %s", m_CurrentProject->GetName().c_str());
-					ImGui::Text("Path: %s", m_CurrentProject->GetProjectPath().string().c_str());
+					const std::string projectPath = PathToUTF8(m_CurrentProject->GetProjectPath());
+					ImGui::Text("Path: %s", projectPath.c_str());
 					ImGui::Separator();
 					ImGui::Text("EditorVersion: %s", m_CurrentProject->GetEditorVersion().c_str());
 				}
@@ -407,6 +599,17 @@ namespace TomCat {
 				{
 					ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No project loaded");
 				}
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Window"))
+			{
+				ImGui::MenuItem("Scene", nullptr, &m_ShowScenePanel);
+				ImGui::MenuItem("Game", nullptr, &m_ShowGamePanel);
+				ImGui::Separator();
+				ImGui::MenuItem("Hierarchy", nullptr, &m_ShowHierarchyPanel);
+				ImGui::MenuItem("Inspector", nullptr, &m_ShowInspectorPanel);
+				ImGui::MenuItem("Project", nullptr, &m_ShowProjectPanel);
 				ImGui::EndMenu();
 			}
 
@@ -442,16 +645,23 @@ namespace TomCat {
 
 		ImGui::EndChild(); 
 
-		m_SceneHierarchyPanel.OnImGuiRender();
-		m_ContentBrowserPanel.OnImGuiRender();
+		m_SceneHierarchyPanel.OnImGuiRender(&m_ShowHierarchyPanel, &m_ShowInspectorPanel);
+		m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
 
+		if (m_ShowScenePanel)
+		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-		static bool sceneWindowOpen = true;
 
 		// Use the same native menu-bar slot as Hierarchy.  ImGui's dock tab and
 		// menu-bar layout then share one geometry source, eliminating the hand-
 		// positioned gap that appeared with the custom Scene strip.
-		const bool sceneVisible = ImGui::Begin("Scene", &sceneWindowOpen, ImGuiWindowFlags_MenuBar);
+		const char* sceneTitle = m_SceneDirty ? "Scene *###Scene" : "Scene###Scene";
+		const bool sceneVisible = ImGui::Begin(sceneTitle, &m_ShowScenePanel, ImGuiWindowFlags_MenuBar);
+		if (!sceneVisible)
+		{
+			m_ViewportFocused = false;
+			m_HoveredEntity = {};
+		}
 
 		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
 		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
@@ -465,8 +675,6 @@ namespace TomCat {
 		m_GizmoModeDockY = m_ViewportBounds[0].y - m_GizmoModeDockHeight;
 
 		m_ViewportFocused = ImGui::IsWindowFocused();
-		m_ViewportHovered = ImGui::IsWindowHovered();
-		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused && !m_ViewportHovered);
 
 		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
@@ -474,6 +682,30 @@ namespace TomCat {
 		uint64_t sceneTextureID = m_Framebuffer->GetColorAttachmentRendererID();
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		m_ViewportCanvasHovered = sceneVisible && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportCanvasHovered && !m_ViewportCameraDragOwned);
+
+		// The framebuffer image must remain the current ImGui item while registering
+		// its drop target. Toolbar items submitted later must never steal the target.
+		if (ImGui::BeginDragDropTarget())
+		{
+			const std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
+			const ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags))
+			{
+				const wchar_t* relativePath = static_cast<const wchar_t*>(payload->Data);
+				const std::filesystem::path texturePath = assetPath / relativePath;
+				if (m_ActiveScene)
+				{
+					Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(texturePath.stem()));
+					auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
+					renderer.Texture = Texture2D::Create(texturePath);
+					if (m_SceneState == SceneState::Edit)
+						m_SceneDirty = true;
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
 
 		// Draw the mode bar in the foreground layer for both docked and floating
 		// states.  The docked position is still computed from the Scene row, while
@@ -512,23 +744,6 @@ namespace TomCat {
 			}
 		}
 
-		if (ImGui::BeginDragDropTarget())
-		{
-			std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
-
-			ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags)) {
-				const wchar_t* path = (const wchar_t*)payload->Data;
-				std::filesystem::path texturePath = assetPath / path;
-				std::string fileName = texturePath.stem().string();
-
-				auto Square = m_ActiveScene->CreateEntity(fileName);
-				auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-				SpriteR.Texture = Texture2D::Create(texturePath.string());
-			}
-			ImGui::EndDragDropTarget();
-		}
-
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
@@ -565,20 +780,29 @@ namespace TomCat {
 
 				if (ImGuizmo::IsUsing())
 				{
-					m_ActiveScene->SetWorldTransform(selectedEntity, transform);
-					m_SceneDirty = true;
+					if (m_ActiveScene->SetWorldTransform(selectedEntity, transform)
+						&& m_SceneState == SceneState::Edit)
+						m_SceneDirty = true;
 				}
 			}
 		}
 
 		ImGui::End();
 		ImGui::PopStyleVar();
+		}
+		else
+		{
+			m_ViewportFocused = false;
+			m_ViewportCanvasHovered = false;
+			m_ViewportCameraDragOwned = false;
+			m_HoveredEntity = {};
+		}
 
-		// Game Window - Always visible
+		if (m_ShowGamePanel)
+		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-		static bool gameWindowOpen = true;
 
-		ImGui::Begin("Game", &gameWindowOpen, ImGuiWindowFlags_MenuBar);
+		ImGui::Begin("Game", &m_ShowGamePanel, ImGuiWindowFlags_MenuBar);
 
 		if (ImGui::BeginMenuBar())
 		{
@@ -638,7 +862,9 @@ namespace TomCat {
 
 		ImGui::End();
 		ImGui::PopStyleVar();
+		}
 
+		UI_UnsavedChangesModal();
 		ImGui::End();
 	}
 
@@ -709,99 +935,6 @@ namespace TomCat {
 		ImGui::PopID();
 	}
 
-	void EditorLayer::UI_SceneGizmoModeToolbarRow()
-	{
-		const ImGuiStyle& style = ImGui::GetStyle();
-		const float buttonHeight = ImGui::GetFrameHeight();
-		m_GizmoModeDockY = ImGui::GetCursorScreenPos().y;
-		m_GizmoModeDockHeight = buttonHeight;
-
-		auto DrawModeButton = [&](const char* label, ImVec4 selectedColor, bool selected, const char* popupId)
-		{
-			ImVec4 normalColor = style.Colors[ImGuiCol_Button];
-			ImVec4 hoverColor = style.Colors[ImGuiCol_ButtonHovered];
-			ImVec4 activeColor = style.Colors[ImGuiCol_ButtonActive];
-			if (selected)
-			{
-				normalColor = selectedColor;
-				hoverColor = ImVec4(
-					std::min(1.0f, selectedColor.x + 0.08f),
-					std::min(1.0f, selectedColor.y + 0.08f),
-					std::min(1.0f, selectedColor.z + 0.08f),
-					selectedColor.w);
-				activeColor = ImVec4(
-					std::max(0.0f, selectedColor.x - 0.08f),
-					std::max(0.0f, selectedColor.y - 0.08f),
-					std::max(0.0f, selectedColor.z - 0.08f),
-					selectedColor.w);
-			}
-
-			ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
-			bool clicked = ImGui::Button(label, ImVec2(72.0f, buttonHeight));
-			ImGui::PopStyleColor(3);
-			if (clicked)
-				ImGui::OpenPopup(popupId);
-		};
-
-		if (!m_GizmoModeToolbarDocked)
-		{
-			const float dockButtonWidth = ImGui::CalcTextSize("Dock").x + style.FramePadding.x * 2.0f;
-			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - dockButtonWidth);
-			if (ImGui::SmallButton("Dock"))
-				m_GizmoModeToolbarDocked = true;
-			return;
-		}
-
-		// Small grip on the left of the docked strip. Drag it to tear the bar
-		// off into the floating overlay; drag that overlay back here to dock.
-		ImDrawList* rowDraw = ImGui::GetWindowDrawList();
-		const ImVec2 gripMin = ImGui::GetCursorScreenPos();
-		const ImVec2 gripMax(gripMin.x + 22.0f, gripMin.y + buttonHeight);
-		const ImVec2 gripCenter((gripMin.x + gripMax.x) * 0.5f, (gripMin.y + gripMax.y) * 0.5f);
-		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y - 4.0f),
-			ImVec2(gripCenter.x + 5.0f, gripCenter.y - 4.0f), IM_COL32(137, 137, 137, 255), 1.5f);
-		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y),
-			ImVec2(gripCenter.x + 5.0f, gripCenter.y), IM_COL32(137, 137, 137, 255), 1.5f);
-		rowDraw->AddLine(ImVec2(gripCenter.x - 5.0f, gripCenter.y + 4.0f),
-			ImVec2(gripCenter.x + 5.0f, gripCenter.y + 4.0f), IM_COL32(137, 137, 137, 255), 1.5f);
-		UI_SceneToolbarDragHandle("##scene_mode_row", m_GizmoModeToolbarOffset,
-			m_GizmoModeToolbarDocked, m_GizmoModeToolbarDragging,
-			gripMin, gripMax, 17.0f, true);
-		ImGui::SameLine(0.0f, 4.0f);
-
-		DrawModeButton(m_GizmoPivotMode == GizmoPivotMode::Pivot ? "Pivot" : "Center",
-			ImVec4(44.0f / 255.0f, 93.0f / 255.0f, 135.0f / 255.0f, 1.0f),
-			m_GizmoPivotMode == GizmoPivotMode::Pivot, "##scene_gizmo_pivot_popup");
-		ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
-		DrawModeButton(m_GizmoSpaceMode == GizmoSpaceMode::Local ? "Local" : "World",
-			ImVec4(44.0f / 255.0f, 93.0f / 255.0f, 135.0f / 255.0f, 1.0f),
-			m_GizmoSpaceMode == GizmoSpaceMode::Local, "##scene_gizmo_space_popup");
-
-		ImGui::SameLine(0.0f, 10.0f);
-		if (ImGui::SmallButton("Float"))
-			m_GizmoModeToolbarDocked = false;
-
-		if (ImGui::BeginPopup("##scene_gizmo_pivot_popup"))
-		{
-			if (ImGui::MenuItem("Pivot", nullptr, m_GizmoPivotMode == GizmoPivotMode::Pivot))
-				m_GizmoPivotMode = GizmoPivotMode::Pivot;
-			if (ImGui::MenuItem("Center", nullptr, m_GizmoPivotMode == GizmoPivotMode::Center))
-				m_GizmoPivotMode = GizmoPivotMode::Center;
-			ImGui::EndPopup();
-		}
-
-		if (ImGui::BeginPopup("##scene_gizmo_space_popup"))
-		{
-			if (ImGui::MenuItem("Local", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::Local))
-				m_GizmoSpaceMode = GizmoSpaceMode::Local;
-			if (ImGui::MenuItem("World", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::World))
-				m_GizmoSpaceMode = GizmoSpaceMode::World;
-			ImGui::EndPopup();
-		}
-	}
-
 	void EditorLayer::UI_SceneGizmoToolbar()
 	{
 		// Draw directly over the Scene image. This keeps the palette clipped and
@@ -820,7 +953,7 @@ namespace TomCat {
 		const float dockGap = 4.0f;
 		const float dockWidth = dockPadding * 2.0f + dockHandleWidth + dockGap +
 			dockButtonWidth * 4.0f + dockGap * 3.0f;
-		const float modeWidth = 5.0f * 2.0f + 24.0f + dockGap + 62.0f * 2.0f + dockGap;
+		const float modeWidth = 5.0f * 2.0f + 24.0f + dockGap + 62.0f;
 
 		if (m_GizmoTransformToolbarDocked)
 		{
@@ -950,7 +1083,7 @@ namespace TomCat {
 			handleMin, handleMax, 0.0f, true);
 		if (transformWasDragging && !m_GizmoTransformToolbarDragging && m_GizmoTransformToolbarDocked)
 		{
-			const float modeWidth = 5.0f * 2.0f + 24.0f + 4.0f + 62.0f * 2.0f + 4.0f;
+			const float modeWidth = 5.0f * 2.0f + 24.0f + 4.0f + 62.0f;
 			const float dockStartX = m_ViewportBounds[0].x + 8.0f;
 			m_GizmoModeToolbarFirst = !m_GizmoModeToolbarDocked ||
 				ImGui::GetMousePos().x >= dockStartX + modeWidth * 0.5f;
@@ -1013,7 +1146,7 @@ namespace TomCat {
 		const float buttonHeight = 28.0f;
 		const float gap = 4.0f;
 		const float height = buttonHeight + padding * 2.0f;
-		const float width = padding * 2.0f + handleWidth + gap + buttonWidth * 2.0f + gap;
+		const float width = padding * 2.0f + handleWidth + gap + buttonWidth;
 		// The Q/W/E/R toolbar uses the same strip when docked.  Keep these
 		// dimensions here (and in its renderer below) so insertion previews and
 		// the two bars always agree about their occupied widths.
@@ -1127,7 +1260,7 @@ namespace TomCat {
 
 		auto DrawFrame = [&](const ImVec2& min, const ImVec2& max, bool hovered)
 		{
-			// Pivot/space choices are represented by their icon.  Keep the button
+			// The space choice is represented by its icon. Keep the button
 			// surface neutral after a click; only pointer hover may tint it.
 			draw->AddRectFilled(min, max, hovered ? hover : normal, 2.0f);
 			draw->AddRect(min, max, IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
@@ -1137,20 +1270,6 @@ namespace TomCat {
 		{
 			const ImVec2 c(max.x - 8.0f, (min.y + max.y) * 0.5f + 1.0f);
 			draw->AddTriangleFilled(ImVec2(c.x - 3.0f, c.y - 2.0f), ImVec2(c.x + 3.0f, c.y - 2.0f), ImVec2(c.x, c.y + 2.5f), arrow);
-		};
-
-		auto DrawPivotIcon = [&](const ImVec2& min, const ImVec2& max)
-		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
-			draw->AddCircleFilled(ImVec2(c.x - 5.0f, c.y + 5.0f), 3.0f, accent);
-		};
-
-		auto DrawCenterIcon = [&](const ImVec2& min, const ImVec2& max)
-		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
-			draw->AddCircleFilled(c, 3.0f, accent);
 		};
 
 		auto DrawLocalIcon = [&](const ImVec2& min, const ImVec2& max)
@@ -1173,30 +1292,8 @@ namespace TomCat {
 		};
 
 		const float buttonMinY = topLeft.y + padding;
-		const ImVec2 pivotMin(topLeft.x + padding + handleWidth + gap, buttonMinY);
-		const ImVec2 pivotMax(pivotMin.x + buttonWidth, pivotMin.y + buttonHeight);
-		const ImVec2 spaceMin(pivotMax.x + gap, buttonMinY);
+		const ImVec2 spaceMin(topLeft.x + padding + handleWidth + gap, buttonMinY);
 		const ImVec2 spaceMax(spaceMin.x + buttonWidth, spaceMin.y + buttonHeight);
-
-		ImGui::SetCursorScreenPos(pivotMin);
-		ImGui::InvisibleButton("##scene_gizmo_pivot_mode", ImVec2(pivotMax.x - pivotMin.x, pivotMax.y - pivotMin.y));
-		const bool pivotHovered = ImGui::IsItemHovered();
-		if (ImGui::IsItemClicked())
-			ImGui::OpenPopup("##scene_gizmo_pivot_popup");
-		DrawFrame(pivotMin, pivotMax, pivotHovered);
-		if (m_GizmoPivotMode == GizmoPivotMode::Pivot)
-			DrawPivotIcon(pivotMin, pivotMax);
-		else
-			DrawCenterIcon(pivotMin, pivotMax);
-		DrawDropArrow(pivotMin, pivotMax);
-		if (ImGui::BeginPopup("##scene_gizmo_pivot_popup"))
-		{
-			if (ImGui::MenuItem("Pivot", nullptr, m_GizmoPivotMode == GizmoPivotMode::Pivot))
-				m_GizmoPivotMode = GizmoPivotMode::Pivot;
-			if (ImGui::MenuItem("Center", nullptr, m_GizmoPivotMode == GizmoPivotMode::Center))
-				m_GizmoPivotMode = GizmoPivotMode::Center;
-			ImGui::EndPopup();
-		}
 
 		ImGui::SetCursorScreenPos(spaceMin);
 		ImGui::InvisibleButton("##scene_gizmo_space_mode", ImVec2(spaceMax.x - spaceMin.x, spaceMax.y - spaceMin.y));
@@ -1251,21 +1348,13 @@ namespace TomCat {
 			ImGui::BeginDisabled();
 		}
 
-		if (ImGui::ImageButton((ImTextureID)icon->GetRendererID(), ImVec2(size, size),
+		if (ImGui::ImageButton(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())), ImVec2(size, size),
 			ImVec2(0, 0), ImVec2(1, 1), 0))
 		{
 			if (m_SceneState == SceneState::Edit && m_EditorScene)
-			{
 				OnScenePlay();
-				if (m_ActiveScene)
-					m_ActiveScene->OnRuntimeStart();
-			}
 			else if (m_SceneState == SceneState::Play)
-			{
 				OnSceneStop();
-				if (m_ActiveScene)
-					m_ActiveScene->OnRuntimeStop();
-			}
 		}
 
 		if (m_SceneState == SceneState::Edit && !m_EditorScene)
@@ -1280,13 +1369,16 @@ namespace TomCat {
 
 	void EditorLayer::OnScenePlay()
 	{
-
-		m_SceneState = SceneState::Play;
-
+		if (m_SceneState != SceneState::Edit || !m_EditorScene)
+			return;
 		m_ActiveScene = Scene::Copy(m_EditorScene);
-
+		if (!m_ActiveScene)
+			return;
+		ResizeSceneForGameView(m_ActiveScene);
 		m_ActiveScene->OnRuntimeStart();
+		m_SceneState = SceneState::Play;
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
+		ResetSceneInteractionState();
 
 		// 切换到Game窗口焦点
 		ImGui::SetWindowFocus("Game");
@@ -1295,13 +1387,17 @@ namespace TomCat {
 
 	void EditorLayer::OnSceneStop()
 	{
-		m_SceneState = SceneState::Edit;
+		if (m_SceneState != SceneState::Play)
+			return;
 
-		if (m_ActiveScene)
-			m_ActiveScene->OnRuntimeStop();
+		Ref<Scene> runtimeScene = m_ActiveScene;
+		if (runtimeScene)
+			runtimeScene->OnRuntimeStop();
 		m_ActiveScene = m_EditorScene;
-
-		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
+		m_SceneState = SceneState::Edit;
+		ResizeSceneForGameView(m_ActiveScene);
+		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
+		ResetSceneInteractionState();
 
 		// 切换到Scene窗口焦点
 		ImGui::SetWindowFocus("Scene");
@@ -1309,14 +1405,14 @@ namespace TomCat {
 
 	void EditorLayer::OnEvent(Event& e)
 	{
-		m_CameraController.OnEvent(e);
-
-		if (m_ViewportFocused && m_ViewportHovered)
+		if (m_ViewportCanvasHovered)
 			m_EditorCamera.OnEvent(e);
 
 		EventDispatcher dispatcher(e);
+		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(EditorLayer::OnWindowClose));
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
 		dispatcher.Dispatch<MouseButtonPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonPressed));
+		dispatcher.Dispatch<MouseButtonReleasedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonReleased));
 	}
 
 	bool EditorLayer::OnKeyPressed(KeyPressedEvent& e)
@@ -1327,12 +1423,14 @@ namespace TomCat {
 
 		const bool control = e.IsControlDown();
 		const bool shift = e.IsShiftDown();
+		const bool alt = e.IsAltDown();
+		const bool super = e.IsSuperDown();
 		bool handled = false;
 		switch (e.GetKeyCode())
 		{
 		case Key::N:
 		{
-			if (control)
+			if (control && !shift && !alt && !super)
 			{
 				NewScene();
 				handled = true;
@@ -1342,7 +1440,7 @@ namespace TomCat {
 		}
 		case Key::O:
 		{
-			if (control)
+			if (control && !shift && !alt && !super)
 			{
 				OpenScene();
 				handled = true;
@@ -1352,7 +1450,7 @@ namespace TomCat {
 		}
 		case Key::S:
 		{
-			if (control)
+			if (control && !alt && !super)
 			{
 				if (shift)
 					SaveSceneAs();
@@ -1364,13 +1462,15 @@ namespace TomCat {
 			break;
 		}
 
-		// Scene Commands
+		// Scene commands only belong to the Scene canvas or Hierarchy. This keeps
+		// Delete/Cut/Copy/Paste from leaking out of text fields and Project assets.
 		case Key::D:
 		{
-			if (control)
+			if (!ImGui::GetIO().WantTextInput &&
+				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
+				control && !shift && !alt && !super)
 			{
-				m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
-				handled = true;
+				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
 			}
 
 			break;
@@ -1379,25 +1479,28 @@ namespace TomCat {
 		case Key::C:
 		case Key::V:
 		{
-			if (control)
+			if (!ImGui::GetIO().WantTextInput &&
+				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
+				control && !shift && !alt && !super)
 			{
-				m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
-				handled = true;
+				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
 			}
 			break;
 		}
 		case Key::F2:
 		case Key::Delete:
 		{
-			m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
-			handled = true;
+			if (!ImGui::GetIO().WantTextInput &&
+				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
+				!control && !shift && !alt && !super)
+				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
 			break;
 		}
 
 		// Gizmos
 		case Key::Q:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
 			{
 				m_GizmoType = -1;
 				handled = true;
@@ -1406,7 +1509,7 @@ namespace TomCat {
 		}
 		case Key::W:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
 			{
 				m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
 				handled = true;
@@ -1415,7 +1518,7 @@ namespace TomCat {
 		}
 		case Key::E:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
 			{
 				m_GizmoType = ImGuizmo::OPERATION::ROTATE;
 				handled = true;
@@ -1424,7 +1527,7 @@ namespace TomCat {
 		}
 		case Key::R:
 		{
-			if (!ImGuizmo::IsUsing())
+			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
 			{
 				m_GizmoType = ImGuizmo::OPERATION::SCALE;
 				handled = true;
@@ -1438,32 +1541,69 @@ namespace TomCat {
 
 	bool EditorLayer::OnMouseButtonPressed(MouseButtonPressedEvent& e)
 	{
+		const int button = e.GetMouseButton();
+		const bool altDown = e.IsAltDown();
+		const bool cameraButton = button == Mouse::ButtonMiddle || button == Mouse::ButtonRight ||
+			(button == Mouse::ButtonLeft && altDown);
+		if (cameraButton && m_ViewportFocused && m_ViewportCanvasHovered)
+		{
+			m_ViewportCameraDragOwned = true;
+			return true;
+		}
+
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
-			if (m_ViewportHovered && !ImGuizmo::IsOver() && !Input::IsKeyPressed(Key::LeftAlt) && m_HoveredEntity)
-		{
-			// Only select the entity if it's valid
-			m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
-		}
+			if (m_ViewportCanvasHovered && !ImGuizmo::IsOver() && !altDown)
+			{
+				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
+				return true;
+			}
 		}
 		return false;
+	}
+
+	bool EditorLayer::OnMouseButtonReleased(MouseButtonReleasedEvent& e)
+	{
+		const int button = e.GetMouseButton();
+		if (m_ViewportCameraDragOwned &&
+			(button == Mouse::ButtonLeft || button == Mouse::ButtonMiddle || button == Mouse::ButtonRight))
+		{
+			m_ViewportCameraDragOwned = false;
+			return true;
+		}
+		return false;
+	}
+
+	bool EditorLayer::OnWindowClose(WindowCloseEvent&)
+	{
+		RequestExit();
+		return true;
 	}
 
 
 	void EditorLayer::NewScene()
 	{
+		if (m_SceneDirty)
+		{
+			RequestDestructiveAction([this]() {
+				NewScene();
+				return true;
+			});
+			return;
+		}
+		if (m_SceneState == SceneState::Play)
+			OnSceneStop();
 		m_EditorScene = CreateRef<Scene>();
 		m_EditorScene->SetSceneName("Untitled");
 		m_ActiveScene = m_EditorScene;
 		AddDefaultMainCamera();
-		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+		ResizeSceneForGameView(m_ActiveScene);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 		m_SceneHierarchyPanel.SetSelectedEntity({});
-		m_CurrentScenePath.clear();
 		m_SceneDirty = true;
-		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 
 		m_EditorScenePath = std::filesystem::path();
+		ResetSceneInteractionState();
 	}
 
 	void EditorLayer::AddDefaultMainCamera()
@@ -1479,154 +1619,261 @@ namespace TomCat {
 			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
 	}
 
-	void EditorLayer::OpenOrCreateSampleScene()
+	bool EditorLayer::OpenProjectStartScene()
 	{
-		std::filesystem::path samplePath = m_CurrentProject->GetAssetPath() / "sample.tomcat";
+		if (!m_CurrentProject)
+			return false;
+		const std::filesystem::path startScene =
+			m_CurrentProject->GetAssetPath() / m_CurrentProject->GetConfig().StartScene;
 		std::error_code error;
-		std::filesystem::create_directories(samplePath.parent_path(), error);
-
-		if (std::filesystem::exists(samplePath))
+		if (std::filesystem::is_regular_file(startScene, error))
 		{
-			OpenScene(samplePath);
-			return;
+			if (OpenScene(startScene))
+				return true;
+			TC_Core_Error("Failed to load project start scene: {0}", PathToUTF8(startScene));
+		}
+		else
+		{
+			TC_Warn("Project start scene is missing: {0}", PathToUTF8(startScene));
 		}
 
+		// A project switch must never leave the previous project's scene or path
+		// active when the new start scene is missing or malformed.
 		NewScene();
-		m_EditorScene->SetSceneName("sample");
-		SerializeScene(m_ActiveScene, samplePath);
-		m_EditorScenePath = samplePath;
-		m_CurrentScenePath = samplePath;
-		m_SceneDirty = false;
+		return false;
 	}
 
-	void EditorLayer::OpenScene()
+	bool EditorLayer::OpenScene()
 	{
-		std::string filepath = FileDialogs::OpenFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
-		if (filepath.empty())
-		{
-			filepath = FileDialogs::OpenFile("TomCat Scene (*.tcproj)\0*.tcproj\0");
-		}
-		if (!filepath.empty())
-		{
-			OpenScene(filepath);
-		}
+		const std::filesystem::path filepath = FileDialogs::OpenFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
+		return !filepath.empty() && OpenScene(filepath);
 	}
 
-	void EditorLayer::OpenScene(const std::filesystem::path& path)
+	bool EditorLayer::OpenScene(const std::filesystem::path& path)
 	{
-
-		if (m_SceneState != SceneState::Edit)
-			OnSceneStop();
-
-
-		if (path.extension().string() != ".tomcat")
+		std::string extension = PathToUTF8(path.extension());
+		std::transform(extension.begin(), extension.end(), extension.begin(),
+			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		if (extension != ".tomcat")
 		{
-			TC_Warn("Could not load {0} - not a scene file", path.filename().string());
-			return;
+			TC_Warn("Could not load {0} - not a scene file", PathToUTF8(path.filename()));
+			return false;
+		}
+		if (m_SceneDirty)
+		{
+			RequestDestructiveAction([this, path]() { return OpenScene(path); });
+			return false;
 		}
 
 		Ref<Scene> newScene = CreateRef<Scene>();
 		SceneSerializer serializer(newScene);
-		if (serializer.Deserialize(path.string()))
-		{
-			newScene->SetSceneName(path.stem().string());
-			m_EditorScene = newScene;
-			m_EditorScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-			m_SceneHierarchyPanel.SetContext(m_EditorScene);
+		if (!serializer.Deserialize(path))
+			return false;
 
-			m_ActiveScene = m_EditorScene;
-			m_EditorScenePath = path;
-			m_CurrentScenePath = path;
-			m_SceneDirty = false;
-		}
-		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+		if (m_SceneState == SceneState::Play)
+			OnSceneStop();
+		newScene->SetSceneName(PathToUTF8(path.stem()));
+		m_EditorScene = newScene;
+		ResizeSceneForGameView(m_EditorScene);
+		m_SceneHierarchyPanel.SetContext(m_EditorScene);
+
+		m_ActiveScene = m_EditorScene;
+		m_EditorScenePath = AbsoluteLexicalPath(path);
+		m_SceneDirty = false;
+		ResetSceneInteractionState();
+		return true;
 	}
 
 	void EditorLayer::SaveScene()
 	{
+		if (!m_EditorScene)
+			return;
 		if (!m_EditorScenePath.empty())
-			SerializeScene(m_ActiveScene, m_EditorScenePath);
+		{
+			if (SerializeScene(m_EditorScene, m_EditorScenePath))
+				m_SceneDirty = false;
+		}
 		else
 			SaveSceneAs();
 	}	
 
 	void EditorLayer::SaveSceneAs()
 	{
-		std::string filepath = FileDialogs::SaveFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
-		if (filepath.empty())
-		{
-			filepath = FileDialogs::SaveFile("TomCat Scene (*.tcproj)\0*.tcproj\0");
-		}
+		if (!m_EditorScene)
+			return;
+		std::filesystem::path filepath = FileDialogs::SaveFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
 		if (!filepath.empty())
 		{
-			SerializeScene(m_ActiveScene, filepath);
-			m_EditorScenePath = filepath;
-			m_CurrentScenePath = filepath;
-			m_SceneDirty = false;
-		}
-	}
-
-	void EditorLayer::SerializeScene(Ref<Scene> scene, const std::filesystem::path& path)
-	{
-		if (scene)
-			scene->SetSceneName(path.stem().string());
-		SceneSerializer serializer(scene);
-		serializer.Serialize(path.string());
-	}
-
-	void EditorLayer::OpenProject()
-	{
-		std::string filepath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
-		if (!filepath.empty())
-		{
-			// Preserve the current project's toolbar arrangement before switching
-			// the active project and loading its independent imgui.ini.
-			SaveSceneToolbarLayout();
-			auto project = ProjectManager::Get().LoadProject(filepath);
-			if (project)
+			std::filesystem::path path = std::move(filepath);
+			std::string extension = PathToUTF8(path.extension());
+			std::transform(extension.begin(), extension.end(), extension.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			if (extension != ".tomcat")
+				path.replace_extension(".tomcat");
+			if (SerializeScene(m_EditorScene, path))
 			{
-				m_CurrentProject = project;
-				m_Is2DMode = project->GetConfig().Template == "2D";
-				m_EditorCamera.Set2DMode(m_Is2DMode);
-				
-				// 读取Project.tcproj目录的imgui.ini文件
-				std::filesystem::path projectDir = project->GetProjectPath().parent_path();
-				std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
-				if (std::filesystem::exists(imguiIniPath))
-				{
-					// 加载ImGui配置
-					ImGui::LoadIniSettingsFromDisk(imguiIniPath.string().c_str());
-				}
-				LoadSceneToolbarLayout();
-				
-				// A project created by the Hub already contains the serialized sample
-				// asset.  Keep the same startup behavior when switching projects from
-				// inside the editor; the helper still creates a compatibility scene for
-				// older projects that predate the Hub template.
-				OpenOrCreateSampleScene();
-				m_ContentBrowserPanel.SetProject(m_CurrentProject);
+				m_EditorScenePath = path;
+				m_SceneDirty = false;
 			}
 		}
+	}
+
+	bool EditorLayer::SerializeScene(const Ref<Scene>& scene, const std::filesystem::path& path)
+	{
+		if (!scene || path.empty())
+			return false;
+		const std::string previousName = scene->GetSceneName();
+		scene->SetSceneName(PathToUTF8(path.stem()));
+		SceneSerializer serializer(scene);
+		if (!serializer.Serialize(path))
+		{
+			scene->SetSceneName(previousName);
+			return false;
+		}
+		return true;
+	}
+
+	void EditorLayer::ResizeSceneForGameView(const Ref<Scene>& scene)
+	{
+		const uint32_t width = ToFramebufferExtent(m_GameViewportSize.x);
+		const uint32_t height = ToFramebufferExtent(m_GameViewportSize.y);
+		if (scene && width > 0 && height > 0)
+			scene->OnViewportResize(width, height);
+	}
+
+	void EditorLayer::ResetSceneInteractionState()
+	{
+		m_HoveredEntity = {};
+		m_ViewportCameraDragOwned = false;
+	}
+
+	void EditorLayer::RequestDestructiveAction(std::function<bool()> action)
+	{
+		if (!m_SceneDirty)
+		{
+			action();
+			return;
+		}
+		m_PendingUnsavedAction = std::move(action);
+		m_OpenUnsavedChangesModal = true;
+	}
+
+	void EditorLayer::UI_UnsavedChangesModal()
+	{
+		if (m_OpenUnsavedChangesModal)
+		{
+			ImGui::OpenPopup("Unsaved Scene Changes");
+			m_OpenUnsavedChangesModal = false;
+		}
+
+		std::function<bool()> actionToRun;
+		bool restoreDirtyOnFailure = false;
+		if (ImGui::BeginPopupModal("Unsaved Scene Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::TextUnformatted("The current scene has unsaved changes.");
+			ImGui::TextUnformatted("Save before continuing?");
+			ImGui::Separator();
+			if (ImGui::Button("Save"))
+			{
+				SaveScene();
+				if (!m_SceneDirty)
+				{
+					actionToRun = std::move(m_PendingUnsavedAction);
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Discard"))
+			{
+				m_SceneDirty = false;
+				actionToRun = std::move(m_PendingUnsavedAction);
+				restoreDirtyOnFailure = true;
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				m_PendingUnsavedAction = {};
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+		if (actionToRun && !actionToRun() && restoreDirtyOnFailure)
+			m_SceneDirty = true;
+	}
+
+	void EditorLayer::RequestExit()
+	{
+		RequestDestructiveAction([]() {
+			Application::Get().Close();
+			return true;
+		});
+	}
+
+	bool EditorLayer::OpenProject()
+	{
+		const std::filesystem::path filepath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
+		if (filepath.empty())
+			return false;
+
+		const std::filesystem::path projectPath = filepath;
+		if (m_SceneDirty)
+		{
+			RequestDestructiveAction([this, projectPath]() { return OpenProject(projectPath); });
+			return false;
+		}
+		return OpenProject(projectPath);
+	}
+
+	bool EditorLayer::OpenProject(const std::filesystem::path& path)
+	{
+		if (m_SceneDirty)
+		{
+			RequestDestructiveAction([this, path]() { return OpenProject(path); });
+			return false;
+		}
+
+		// Persist the old project's independent UI state before ProjectManager
+		// changes the globally active project.
+		const std::filesystem::path currentIniPath = m_CurrentProject
+			? m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini"
+			: GetEditorSettingsPath();
+		SaveImGuiSettingsPreservingCustomSections(currentIniPath);
+		SaveSceneToolbarLayout();
+		m_ContentBrowserPanel.Serialize();
+		auto project = ProjectManager::Get().LoadProject(path);
+		if (!project)
+			return false;
+
+		if (m_SceneState == SceneState::Play)
+			OnSceneStop();
+		m_CurrentProject = project;
+		m_Is2DMode = project->GetConfig().Template == "2D";
+		m_EditorCamera.Set2DMode(m_Is2DMode);
+
+		const std::filesystem::path projectDir = project->GetProjectPath().parent_path();
+		const std::filesystem::path imguiIniPath = projectDir / "imgui.ini";
+		LoadImGuiSettings(imguiIniPath);
+		LoadSceneToolbarLayout();
+
+		OpenProjectStartScene();
+		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+		return true;
 	}
 
 	void EditorLayer::SaveProject()
 	{
 		if (m_CurrentProject)
 		{
-			m_CurrentProject->Save();
+			m_ContentBrowserPanel.Serialize();
 			const std::filesystem::path imguiIniPath = m_CurrentProject->GetProjectPath().parent_path() / "imgui.ini";
-			ImGui::SaveIniSettingsToDisk(imguiIniPath.string().c_str());
+			SaveImGuiSettingsPreservingCustomSections(imguiIniPath);
+		}
+		else
+		{
+			SaveImGuiSettingsPreservingCustomSections(GetEditorSettingsPath());
 		}
 		SaveSceneToolbarLayout();
 	}
 
-	void EditorLayer::OnDuplicateEntity()
-	{
-		if (m_SceneState != SceneState::Edit)
-			return;
-
-		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-		if (selectedEntity)
-			m_EditorScene->DuplicateEntity(selectedEntity);
-	}
 }

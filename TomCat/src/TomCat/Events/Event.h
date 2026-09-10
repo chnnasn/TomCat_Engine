@@ -14,8 +14,7 @@ namespace TomCat {
 	enum class EventType 
 	{
 		None = 0,
-		WindowClose, WindowResize, WindowFocus, WindowLostFocus,
-		AppTick,AppUpdate,AppRender,
+		WindowClose, WindowResize,
 		KeyPressed,KeyReleased,KeyTyped,
 		MouseButtonPressed, MouseButtonReleased,MouseMoved, MouseScrolled
 
@@ -36,21 +35,22 @@ namespace TomCat {
 								virtual EventType GetEventType() const override { return GetStaticType(); }\
 								virtual const char* GetName() const override { return #type; }
 
-#define Event_Class_Category(category) virtual int GetCategoryFlogs() const override {return category;}
+#define Event_Class_Category(category) virtual int GetCategoryFlags() const override { return category; }
 
 	class Event
 	{
 		friend class EventDispatcher;
 
 	public:
+		virtual ~Event() = default;
 		virtual EventType GetEventType() const = 0;
 		virtual const char* GetName() const = 0;
-		virtual int GetCategoryFlogs() const = 0;
+		virtual int GetCategoryFlags() const = 0;
 		virtual std::string ToString() const { return GetName(); }
 
-		inline bool IsIncategory(EventCategory category)
+		bool IsInCategory(EventCategory category) const
 		{
-			return GetCategoryFlogs() & category;
+			return (GetCategoryFlags() & category) != 0;
 		}
 
 		bool m_Handled = false;
@@ -75,7 +75,7 @@ namespace TomCat {
 		{
 			if (m_Event.GetEventType() == T::GetStaticType())
 			{
-				m_Event.m_Handled = func(*(T*)&m_Event);
+				m_Event.m_Handled |= func(static_cast<T&>(m_Event));
 				return true;
 			}
 			return false;

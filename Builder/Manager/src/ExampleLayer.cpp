@@ -4,7 +4,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
+#include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Project/ProjectManager.h"
 
 #include "TomCat/Math/Math.h"
@@ -82,6 +84,34 @@ namespace {
 		return !error && size > 0;
 	}
 
+	bool IsValidProjectDirectoryName(const std::string& name)
+	{
+		if (name.empty() || name == "." || name == "..")
+			return false;
+
+		static constexpr const char* invalidCharacters = "<>:\"/\\|?*";
+		if (name.find_first_of(invalidCharacters) != std::string::npos ||
+			static_cast<unsigned char>(name.back()) <= ' ' || name.back() == '.')
+			return false;
+
+		for (const unsigned char character : name)
+		{
+			if (character < 32)
+				return false;
+		}
+
+		std::string baseName = name.substr(0, name.find('.'));
+		std::transform(baseName.begin(), baseName.end(), baseName.begin(),
+			[](unsigned char character) { return static_cast<char>(std::toupper(character)); });
+		static constexpr std::array<const char*, 22> reservedNames = {
+			"CON", "PRN", "AUX", "NUL",
+			"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+			"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+		};
+		return std::none_of(reservedNames.begin(), reservedNames.end(),
+			[&baseName](const char* reserved) { return baseName == reserved; });
+	}
+
 	bool WriteGeneratedSampleScene(const std::filesystem::path& destination, const std::string& templateName)
 	{
 		// This is only a safety net for a source checkout that has not copied its
@@ -98,8 +128,7 @@ namespace {
 			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
 
 		TomCat::SceneSerializer serializer(scene);
-		serializer.Serialize(destination.string());
-		return HasNonEmptyFile(destination);
+		return serializer.Serialize(destination) && HasNonEmptyFile(destination);
 	}
 
 	bool EnsureSampleSceneAsset(const TomCat::Ref<TomCat::Project>& project, const std::string& templateName)
@@ -118,7 +147,7 @@ namespace {
 		if (error)
 		{
 			TC_Core_Error("Could not create the project's asset directory '{0}': {1}",
-				destination.parent_path().string(), error.message());
+				TomCat::PathToUTF8(destination.parent_path()), error.message());
 			return false;
 		}
 
@@ -130,28 +159,23 @@ namespace {
 			if (!source)
 				continue;
 
-			bool copied = false;
-			{
-				std::ofstream destinationFile(destination, std::ios::binary | std::ios::trunc);
-				if (!destinationFile)
-				{
-					TC_Core_Error("Could not create the sample scene asset '{0}'", destination.string());
-					return false;
-				}
-				destinationFile << source.rdbuf();
-				destinationFile.flush();
-				copied = destinationFile.good();
-			}
+			std::ostringstream contents;
+			contents << source.rdbuf();
+			std::string writeError;
+			const bool copied = !source.bad() &&
+				TomCat::FileSystem::WriteFileAtomically(destination, contents.str(), writeError);
 			if (copied && HasNonEmptyFile(destination))
 			{
-				TC_Core_Info("Installed serialized sample scene '{0}'", destination.string());
+				TC_Core_Info("Installed serialized sample scene '{0}'", TomCat::PathToUTF8(destination));
 				return true;
 			}
+			if (!writeError.empty())
+				TC_Core_Error("Could not install sample scene '{0}': {1}", TomCat::PathToUTF8(destination), writeError);
 			break;
 		}
 
-		TC_Core_Warn("Static sample template was not found; generating a compatibility asset for '{0}'",
-			destination.string());
+		TC_Core_Warn("Static sample template was unavailable; generating the scene at '{0}'",
+			TomCat::PathToUTF8(destination));
 		return WriteGeneratedSampleScene(destination, templateName);
 	}
 
@@ -160,17 +184,28 @@ namespace {
 
 namespace TomCat {
 
-	std::vector<std::string> m_Editers;
-
 	ExampleLayer::ExampleLayer()
 		: Layer("FileManager"), m_SelectedMenu(0)
 	{
-		ProjectManager::Get().SetProjectDirectory(std::filesystem::current_path() / "Projects");
-		ProjectManager::Get().SetEditorDirectory(std::filesystem::current_path() / "Editors");
-		ProjectManager::Get().ScanProjects();
-		m_Projects = ProjectManager::Get().GetProjects();
+		auto& projectManager = ProjectManager::Get();
+		std::error_code currentPathError;
+		const std::filesystem::path workingDirectory = std::filesystem::current_path(currentPathError);
+		if (currentPathError)
+			TC_Core_Warn("The current working directory could not be resolved: {0}", currentPathError.message());
+		const std::filesystem::path projectDirectory = projectManager.GetProjectDirectory().empty()
+			? workingDirectory / "Projects" : projectManager.GetProjectDirectory();
+		if (!projectManager.SetProjectDirectory(projectDirectory))
+			TC_Core_Warn("The configured Project directory could not be opened; keeping the previous Hub list");
+		const std::filesystem::path editorDirectory = projectManager.GetEditorDirectory().empty()
+			? workingDirectory / "Editors" : projectManager.GetEditorDirectory();
+		if (!projectManager.SetEditorDirectory(editorDirectory))
+			TC_Core_Warn("The configured Editor directory could not be opened");
+		m_Projects = projectManager.GetProjects();
 		
-		m_Editers = ProjectManager::Get().GetEditorDirectoryFiles();
+		if (auto editors = projectManager.GetEditorDirectoryFiles())
+			m_Editors = std::move(*editors);
+		else
+			m_Editors.clear();
 	}
 
 	void ExampleLayer::OnAttach()
@@ -268,7 +303,7 @@ void ExampleLayer::OnEvent(Event& e)
 
 	void ExampleLayer::AddProject()
 	{
-		std::string projectPath = FileDialogs::OpenFile("TomCat Project (*.tcproj)");
+		const std::filesystem::path projectPath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
 		if (!projectPath.empty())
 		{
 			auto project = ProjectManager::Get().AddProject(projectPath);
@@ -283,29 +318,38 @@ void ExampleLayer::OnEvent(Event& e)
 	{
 		m_ShowNewProjectDialog = true;
 		memset(m_NewProjectName, 0, sizeof(m_NewProjectName));
-		memset(m_NewProjectAuthor, 0, sizeof(m_NewProjectAuthor));
 		memset(m_NewProjectDescription, 0, sizeof(m_NewProjectDescription));
 		const auto& defaultDir = ProjectManager::Get().GetProjectDirectory();
-		m_NewProjectPath = defaultDir.empty() ? (std::filesystem::current_path() / "Projects") : defaultDir;
+		if (!defaultDir.empty())
+		{
+			m_NewProjectPath = defaultDir;
+		}
+		else
+		{
+			std::error_code currentPathError;
+			const std::filesystem::path workingDirectory = std::filesystem::current_path(currentPathError);
+			m_NewProjectPath = currentPathError ? std::filesystem::path{} : workingDirectory / "Projects";
+			if (currentPathError)
+				TC_Core_Warn("The default Project location could not be resolved: {0}", currentPathError.message());
+		}
 	}
 
 	void ExampleLayer::OpenProject(Ref<Project> project)
 	{
 		if (project)
 		{
-			ProjectManager::Get().SetActiveProject(project);
 			ProjectManager::Get().OpenProjectInEditor(project);
-			ProjectManager::Get().ScanProjects();
-			m_Projects = ProjectManager::Get().GetProjects();
+			if (ProjectManager::Get().ScanProjects())
+				m_Projects = ProjectManager::Get().GetProjects();
 		}
 	}
 
-	void ExampleLayer::DeleteProject(Ref<Project> project)
+	void ExampleLayer::RemoveProjectFromHub(Ref<Project> project)
 	{
 		if (project)
 		{
-			ProjectManager::Get().RemoveProject(project->GetProjectPath());
-			m_Projects = ProjectManager::Get().GetProjects();
+			if (ProjectManager::Get().RemoveProject(project->GetProjectPath()))
+				m_Projects = ProjectManager::Get().GetProjects();
 		}
 	}
 			void ExampleLayer::RenderSidebar(const ImVec2& size)
@@ -393,7 +437,7 @@ void ExampleLayer::OnEvent(Event& e)
 		{
 			if (!query.empty())
 			{
-				std::string hay = ToLowerString(project->GetName() + " " + project->GetProjectPath().string());
+				std::string hay = ToLowerString(project->GetName() + " " + PathToUTF8(project->GetProjectPath()));
 				if (hay.find(query) == std::string::npos)
 					continue;
 			}
@@ -573,7 +617,7 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::Text("%s", project->GetName().c_str());
 
 		float nameMaxW = (rowMax.x - actionsW - versionW - modifiedW) - tx - 8.0f;
-		std::string path = project->GetProjectPath().string();
+		std::string path = PathToUTF8(project->GetProjectPath());
 		if (ImGui::CalcTextSize(path.c_str()).x > nameMaxW)
 		{
 			std::string out = path;
@@ -621,7 +665,7 @@ void ExampleLayer::OnEvent(Event& e)
 			m_MenuOpenRow = (m_MenuOpenRow == index) ? -1 : index; // toggle
 		ImGui::PopStyleColor(4);
 
-		// Custom context menu window (Open / Show in Explorer / Delete)
+		// Custom context menu window (Open / Show in Explorer / Remove from Hub)
 		if (m_MenuOpenRow == index)
 		{
 			ImGui::SetNextWindowPos(ImVec2(menuX + btnH, btnY + btnH), ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
@@ -640,7 +684,7 @@ void ExampleLayer::OnEvent(Event& e)
 				if (ImGui::MenuItem(T("\u6253\u5f00\u9879\u76ee", "Open project"))) { OpenProject(project); m_MenuOpenRow = -1; } // ????
 				if (ImGui::MenuItem(T("\u5728\u8d44\u6e90\u7ba1\u7406\u5668\u4e2d\u6253\u5f00", "Show in Explorer"))) { OpenInExplorer(project); m_MenuOpenRow = -1; } // ?????????
 				ImGui::Separator();
-				if (ImGui::MenuItem(T("\u5220\u9664", "Delete"))) { DeleteProject(project); m_MenuOpenRow = -1; } // ??
+				if (ImGui::MenuItem(T("\u4ece Hub \u4e2d\u79fb\u9664", "Remove from Hub"))) { RemoveProjectFromHub(project); m_MenuOpenRow = -1; }
 			}
 			ImGui::End();
 			ImGui::PopStyleVar(3);
@@ -655,7 +699,10 @@ void ExampleLayer::OnEvent(Event& e)
 		static bool needsRefresh = true;
 		if (needsRefresh)
 		{
-			m_Editers = ProjectManager::Get().GetEditorDirectoryFiles();
+			if (auto editors = ProjectManager::Get().GetEditorDirectoryFiles())
+				m_Editors = std::move(*editors);
+			else
+				m_Editors.clear();
 			needsRefresh = false;
 			selectedVersion = 0;
 		}
@@ -695,21 +742,21 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::Text("%s", T("\u7f16\u8f91\u5668\u7248\u672c *", "Editor Version *")); // ????? *
 		ImGui::SetCursorScreenPos(ImVec2(midX, topY + 42.0f));
 		ImGui::SetNextItemWidth(midW);
-		if (m_Editers.empty())
+		if (m_Editors.empty())
 		{
 			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
 				T("\u672a\u627e\u5230\u7f16\u8f91\u5668\u7248\u672c\uff0c\u8bf7\u5728\u8bbe\u7f6e\u4e2d\u68c0\u67e5\u7f16\u8f91\u5668\u76ee\u5f55\u3002", "No editor versions found. Check Editor Directory in Settings."));
 		}
 		else
 		{
-			if (selectedVersion >= (int)m_Editers.size())
+			if (selectedVersion >= (int)m_Editors.size())
 				selectedVersion = 0;
-			if (ImGui::BeginCombo("##EditorVersion", m_Editers[selectedVersion].c_str()))
+			if (ImGui::BeginCombo("##EditorVersion", m_Editors[selectedVersion].c_str()))
 			{
-				for (int i = 0; i < (int)m_Editers.size(); i++)
+				for (int i = 0; i < (int)m_Editors.size(); i++)
 				{
 					bool is_sel = (selectedVersion == i);
-					if (ImGui::Selectable(m_Editers[i].c_str(), is_sel))
+					if (ImGui::Selectable(m_Editors[i].c_str(), is_sel))
 						selectedVersion = i;
 					if (is_sel)
 						ImGui::SetItemDefaultFocus();
@@ -768,7 +815,7 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::Text("%s", T("\u4f4d\u7f6e *", "Location *")); // ?? *
 		y2 += 42.0f;
 		float browseW = 100.0f;
-		std::string loc = m_NewProjectPath.string();
+		std::string loc = PathToUTF8(m_NewProjectPath);
 		float locMax = rightW - browseW - 10.0f;
 		if (ImGui::CalcTextSize(loc.c_str()).x > locMax)
 		{
@@ -790,7 +837,7 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
 		if (ImGui::Button(T("\u6d4f\u89c8", "Browse"), ImVec2(browseW, 44.0f))) // ??
 		{
-			std::string path = FileDialogs::OpenFolder();
+			const std::filesystem::path path = FileDialogs::OpenFolder();
 			if (!path.empty())
 				m_NewProjectPath = path;
 		}
@@ -821,7 +868,12 @@ void ExampleLayer::OnEvent(Event& e)
 		}
 		ImGui::PopStyleColor(2);
 
-		bool canCreate = (strlen(m_NewProjectName) > 0) && !m_Editers.empty();
+		const std::string requestedName = m_NewProjectName;
+		const bool validName = IsValidProjectDirectoryName(requestedName);
+		std::error_code targetError;
+		const std::filesystem::path requestedDirectory = m_NewProjectPath / UTF8ToPath(requestedName);
+		const bool targetExists = validName && std::filesystem::exists(requestedDirectory, targetError);
+		const bool canCreate = validName && !targetExists && !targetError && !m_Editors.empty();
 		ImGui::SetCursorScreenPos(ImVec2(createX, btnY));
 		ImGui::PushStyleColor(ImGuiCol_Button, canCreate ? IM_COL32(44, 93, 135, 255) : IM_COL32(60, 60, 60, 255));
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, canCreate ? IM_COL32(58, 112, 157, 255) : IM_COL32(60, 60, 60, 255));
@@ -831,9 +883,9 @@ void ExampleLayer::OnEvent(Event& e)
 			config.Name = m_NewProjectName;
 			config.Description = m_NewProjectDescription;
 			config.Version = "1.0.0";
-			config.EditorVersion = m_Editers[selectedVersion];
+			config.EditorVersion = m_Editors[selectedVersion];
 			config.Template = (m_NewProjectTemplate == 0) ? "2D" : "3D";
-			std::filesystem::path projectPath = m_NewProjectPath / m_NewProjectName / "Project.tcproj";
+			std::filesystem::path projectPath = requestedDirectory / "Project.tcproj";
 			auto project = ProjectManager::Get().CreateProject(projectPath, config);
 			if (project && EnsureSampleSceneAsset(project, config.Template))
 			{
@@ -844,16 +896,29 @@ void ExampleLayer::OnEvent(Event& e)
 			else if (project)
 			{
 				TC_Core_Error("Project '{0}' was created, but its sample scene could not be installed",
-					project->GetProjectPath().parent_path().string());
+					PathToUTF8(project->GetProjectPath().parent_path()));
 			}
 		}
 		ImGui::PopStyleColor(2);
 
-		if (m_Editers.empty())
+		if (m_Editors.empty())
 		{
 			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
 			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
 				T("\u65e0\u6cd5\u521b\u5efa\u9879\u76ee\uff1a\u6ca1\u6709\u53ef\u7528\u7684\u7f16\u8f91\u5668\u7248\u672c", "Cannot create project: no editor version available"));
+		}
+		else if (!validName)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
+			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
+				T("\u9879\u76ee\u540d\u4e0d\u80fd\u4e3a\u7a7a\uff0c\u4e5f\u4e0d\u80fd\u5305\u542b Windows \u4fdd\u7559\u5b57\u7b26\u6216\u8bbe\u5907\u540d\u3002",
+					"Project name is empty or contains a reserved Windows character or device name."));
+		}
+		else if (targetExists)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
+			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
+				T("\u76ee\u6807\u9879\u76ee\u76ee\u5f55\u5df2\u5b58\u5728\u3002", "The target project directory already exists."));
 		}
 	}
 
@@ -918,17 +983,24 @@ void ExampleLayer::RenderSettingsDialog()
 				bool hov = ImGui::IsItemHovered();
 				if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
 				{
-					std::string path = FileDialogs::OpenFolder();
+					const std::filesystem::path path = FileDialogs::OpenFolder();
 					if (!path.empty())
 					{
+						const std::filesystem::path selectedPath = path;
 						if (isProjectDir)
 						{
-							ProjectManager::Get().SetProjectDirectory(path);
-							m_Projects = ProjectManager::Get().GetProjects();
+							if (ProjectManager::Get().SetProjectDirectory(selectedPath))
+								m_Projects = ProjectManager::Get().GetProjects();
 						}
 						else
 						{
-							ProjectManager::Get().SetEditorDirectory(path);
+							if (ProjectManager::Get().SetEditorDirectory(selectedPath))
+							{
+								if (auto editors = ProjectManager::Get().GetEditorDirectoryFiles())
+									m_Editors = std::move(*editors);
+								else
+									m_Editors.clear();
+							}
 						}
 					}
 				}
@@ -938,7 +1010,7 @@ void ExampleLayer::RenderSettingsDialog()
 				ImGui::Text("%s", T(zhLabel, enLabel));
 				ImGui::SetCursorScreenPos(ImVec2(rowStart.x + 12.0f, rowStart.y + 46.0f));
 				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-				ImGui::Text("%s", trunc(dir.string(), rowSize.x - 24.0f).c_str());
+				ImGui::Text("%s", trunc(PathToUTF8(dir), rowSize.x - 24.0f).c_str());
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
 				ImGui::Spacing();
@@ -971,9 +1043,15 @@ void ExampleLayer::RenderSettingsDialog()
 		if (!project)
 			return;
 		std::filesystem::path dir = project->GetProjectPath().parent_path();
-		if (std::filesystem::exists(dir))
+		std::error_code error;
+		if (std::filesystem::is_directory(dir, error) && !error)
 		{
-			ShellExecuteA(NULL, "open", dir.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+			ShellExecuteW(NULL, L"open", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+		}
+		else if (error)
+		{
+			TC_Core_Error("Could not inspect project directory '{0}': {1}",
+				PathToUTF8(dir), error.message());
 		}
 	}
 
@@ -1041,13 +1119,13 @@ void ExampleLayer::RenderSettingsDialog()
 			float rowW = size.x - pad * 2.0f;
 			float y = cmin.y;
 
-			if (m_Editers.empty())
+			if (m_Editors.empty())
 			{
 				ImGui::SetCursorScreenPos(ImVec2(cmin.x + 8.0f, cmin.y + 12.0f));
 				ImGui::TextDisabled("%s", T("\u5c1a\u672a\u5b89\u88c5\u4efb\u4f55\u7248\u672c\u3002", "No versions installed yet.")); // ?????????
 			}
 
-			for (const auto& ver : m_Editers)
+			for (const auto& ver : m_Editors)
 			{
 				ImVec2 rowMin(cmin.x, y);
 				ImVec2 rowMax(cmin.x + rowW, y + 72.0f);
@@ -1069,7 +1147,7 @@ void ExampleLayer::RenderSettingsDialog()
 
 				// editor path (truncated)
 				std::filesystem::path ep = ProjectManager::Get().GetEditorDirectory() / ver;
-				std::string eps = ep.string();
+				std::string eps = PathToUTF8(ep);
 				float epMax = rowW - 150.0f;
 				if (ImGui::CalcTextSize(eps.c_str()).x > epMax)
 				{

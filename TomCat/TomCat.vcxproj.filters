@@ -102,9 +102,6 @@
     <ClInclude Include="src\TomCat\Core\MouseCodes.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Core\Random.h">
-      <Filter>src\TomCat\Core</Filter>
-    </ClInclude>
     <ClInclude Include="src\TomCat\Core\TimeStep.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -126,14 +123,14 @@
     <ClInclude Include="src\TomCat\Events\Event.h">
       <Filter>src\TomCat\Events</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Events\InputModifiers.h">
+      <Filter>src\TomCat\Events</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Events\KeyEvent.h">
       <Filter>src\TomCat\Events</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Events\MouseEvent.h">
       <Filter>src\TomCat\Events</Filter>
-    </ClInclude>
-    <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h">
-      <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
       <Filter>src\TomCat\ImGui</Filter>
@@ -160,12 +157,6 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="src\TomCat\Renderer\OrthographicCameraController.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\RenderCommand.h">
@@ -211,6 +202,12 @@
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Utils\PlatformUtils.h">
+      <Filter>src\TomCat\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Utils\FileSystemUtils.h">
+      <Filter>src\TomCat\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Utils\PathUtils.h">
       <Filter>src\TomCat\Utils</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h">
@@ -1517,16 +1514,13 @@
     <ClCompile Include="src\TomCat\Core\Log.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\Core\UUID‎.cpp">
+    <ClCompile Include="src\TomCat\Core\UUID.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\Window.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp">
-      <Filter>src\TomCat\ImGui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp">
@@ -1551,12 +1545,6 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="src\TomCat\Renderer\OrthographicCameraController.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp">
@@ -1594,6 +1582,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp">
       <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Utils\FileSystemUtils.cpp">
+      <Filter>src\TomCat\Utils</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp">
       <Filter>src\platform\OpenGL</Filter>

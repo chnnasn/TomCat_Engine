@@ -5,10 +5,17 @@
 #include "TomCat/Events/KeyEvent.h"
 #include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Events/ApplicationEvent.h"
+#include "TomCat/Utils/PathUtils.h"
 
 #include "Platform/OpenGL/OpenGLContext.h"
 
 #include <stb_image.h>
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <limits>
+#include <stdexcept>
+#include <vector>
 
 #ifdef TC_PLATFORM_WINDOWS
 #include <windows.h>
@@ -19,15 +26,73 @@ namespace TomCat {
 
 	static uint8_t s_GLFWWindowCount = 0;
 
-	static void GLFWErrorCallback(int error, const char* description)
+	class GLFWWindowInitializationGuard
 	{
-		TC_Core_Error("GLFW ERROE({0}) :{1}",error,description);
+	public:
+		GLFWWindowInitializationGuard(GLFWwindow*& window, Scope<GraphicsContext>& context) noexcept
+			: m_Window(window), m_Context(context)
+		{
+		}
+
+		GLFWWindowInitializationGuard(const GLFWWindowInitializationGuard&) = delete;
+		GLFWWindowInitializationGuard& operator=(const GLFWWindowInitializationGuard&) = delete;
+
+		~GLFWWindowInitializationGuard() noexcept
+		{
+			if (!m_Active)
+				return;
+
+			m_Context.reset();
+			if (m_Window)
+			{
+				glfwDestroyWindow(m_Window);
+				m_Window = nullptr;
+			}
+
+			if (s_GLFWWindowCount > 0)
+				--s_GLFWWindowCount;
+			if (s_GLFWWindowCount == 0)
+				glfwTerminate();
+		}
+
+		void Release() noexcept { m_Active = false; }
+
+	private:
+		GLFWwindow*& m_Window;
+		Scope<GraphicsContext>& m_Context;
+		bool m_Active = true;
+	};
+
+	static InputModifiers GetInputModifiers(int mods)
+	{
+		InputModifiers modifiers;
+		modifiers.Control = (mods & GLFW_MOD_CONTROL) != 0;
+		modifiers.Shift = (mods & GLFW_MOD_SHIFT) != 0;
+		modifiers.Alt = (mods & GLFW_MOD_ALT) != 0;
+		modifiers.Super = (mods & GLFW_MOD_SUPER) != 0;
+		return modifiers;
 	}
 
-	Scope<Window> Window::Create(const WindowProps& props)
+	static void GLFWErrorCallback(int error, const char* description)
 	{
-	
-		return CreateScope<WindowsWindow>(props);
+		TC_Core_Error("GLFW error ({0}): {1}", error, description);
+	}
+
+	static stbi_uc* LoadImageFile(const std::filesystem::path& path, int* width, int* height,
+		int* channels, int desiredChannels)
+	{
+		std::ifstream input(path, std::ios::binary | std::ios::ate);
+		std::streamoff size = -1;
+		if (input)
+			size = static_cast<std::streamoff>(input.tellg());
+		if (size <= 0 || size > std::numeric_limits<int>::max())
+			return nullptr;
+		std::vector<stbi_uc> encoded(static_cast<size_t>(size));
+		input.seekg(0, std::ios::beg);
+		if (!input.read(reinterpret_cast<char*>(encoded.data()), static_cast<std::streamsize>(size)))
+			return nullptr;
+		return stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()),
+			width, height, channels, desiredChannels);
 	}
 
 	WindowsWindow::WindowsWindow(const WindowProps& props) 
@@ -57,17 +122,28 @@ namespace TomCat {
 		{
 			TC_PROFILE_SCOPE("glfwCreateWindow");
 			//系统关闭时调用glfwTerminate 
-			int success = glfwInit();
-			TC_Core_Assert(success, "不能初始化GLFW");
 			glfwSetErrorCallback(GLFWErrorCallback);
+			int success = glfwInit();
+			if (!success)
+				throw std::runtime_error("Failed to initialize GLFW");
 		}
+
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
 		{
 			TC_PROFILE_SCOPE("glfwCreateWindow");
 			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height, m_Data.Title.c_str(), nullptr, nullptr);
+			if (!m_Window)
+			{
+				if (s_GLFWWindowCount == 0)
+					glfwTerminate();
+				throw std::runtime_error("Failed to create GLFW window");
+			}
 			++s_GLFWWindowCount;
 		}
-
+		GLFWWindowInitializationGuard initializationGuard(m_Window, m_Context);
 
 		m_Context = CreateScope<OpenGLContext>(m_Window);
 		m_Context->Init();
@@ -79,13 +155,14 @@ namespace TomCat {
 		{
 			bool iconLoaded = false;
 
-			if (props.IconPath.size() >= 4 &&
-				(props.IconPath.substr(props.IconPath.size() - 4) == ".ico" ||
-				 props.IconPath.substr(props.IconPath.size() - 4) == ".ICO"))
+			std::string extension = PathToUTF8(props.IconPath.extension());
+			std::transform(extension.begin(), extension.end(), extension.begin(),
+				[](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+			if (extension == ".ico")
 			{
 #ifdef TC_PLATFORM_WINDOWS
-				HICON hIcon = (HICON)LoadImageA(
-					GetModuleHandle(NULL),
+				HICON hIcon = (HICON)LoadImageW(
+					GetModuleHandleW(nullptr),
 					props.IconPath.c_str(),
 					IMAGE_ICON,
 					0, 0,
@@ -153,7 +230,7 @@ namespace TomCat {
 			if (!iconLoaded)
 			{
 				int width, height, channels;
-				stbi_uc* pixels = stbi_load(props.IconPath.c_str(), &width, &height, &channels, 4);
+				stbi_uc* pixels = LoadImageFile(props.IconPath, &width, &height, &channels, 4);
 				if (pixels)
 				{
 					GLFWimage icon;
@@ -168,7 +245,7 @@ namespace TomCat {
 
 			if (!iconLoaded)
 			{
-				TC_Core_Warn("Failed to load window icon: {0}", props.IconPath);
+				TC_Core_Warn("Failed to load window icon: {0}", PathToUTF8(props.IconPath));
 			}
 		}
 
@@ -182,7 +259,8 @@ namespace TomCat {
 
 			WindowResizeEvent event(Width,Height);
 
-			Data.EventCallback(event);
+			if (Data.EventCallback)
+				Data.EventCallback(event);
 		});
 
 		glfwSetWindowCloseCallback(m_Window, [](GLFWwindow* Window)
@@ -191,38 +269,38 @@ namespace TomCat {
 
 			WindowCloseEvent event;
 
-			Data.EventCallback(event);
+			if (Data.EventCallback)
+				Data.EventCallback(event);
 
 		});
 
-		glfwSetKeyCallback(m_Window,[](GLFWwindow* Window, int key, int scancode, int action, int mods)
+		glfwSetKeyCallback(m_Window,[](GLFWwindow* Window, int key, int, int action, int mods)
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
-			KeyModifiers modifiers;
-			modifiers.Control = (mods & GLFW_MOD_CONTROL) != 0;
-			modifiers.Shift = (mods & GLFW_MOD_SHIFT) != 0;
-			modifiers.Alt = (mods & GLFW_MOD_ALT) != 0;
-			modifiers.Super = (mods & GLFW_MOD_SUPER) != 0;
+			const InputModifiers modifiers = GetInputModifiers(mods);
 
 			switch (action)
 			{
 				case GLFW_PRESS:
 				{
 					KeyPressedEvent event(key, 0, modifiers);
-					Data.EventCallback(event);
+					if (Data.EventCallback)
+						Data.EventCallback(event);
 					break;
 				}
 				case GLFW_RELEASE:
 				{
-					KeyReleasedEvent event(key);
-					Data.EventCallback(event);
+					KeyReleasedEvent event(key, modifiers);
+					if (Data.EventCallback)
+						Data.EventCallback(event);
 					break;
 				}
 
 				case GLFW_REPEAT:
 				{
 					KeyPressedEvent event(key, 1, modifiers);
-					Data.EventCallback(event);
+					if (Data.EventCallback)
+						Data.EventCallback(event);
 					break;
 				}
 
@@ -233,19 +311,22 @@ namespace TomCat {
 		glfwSetMouseButtonCallback(m_Window,[](GLFWwindow* Window, int button, int action, int mods)
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+			const InputModifiers modifiers = GetInputModifiers(mods);
 
 			switch (action)
 			{
 				case GLFW_PRESS:
 				{
-					MouseButtonPressedEvent event(button);
-					Data.EventCallback(event);
+					MouseButtonPressedEvent event(button, modifiers);
+					if (Data.EventCallback)
+						Data.EventCallback(event);
 					break;
 				}
 				case GLFW_RELEASE:
 				{
-					MouseButtonReleasedEvent event(button);
-					Data.EventCallback(event);
+					MouseButtonReleasedEvent event(button, modifiers);
+					if (Data.EventCallback)
+						Data.EventCallback(event);
 					break;
 				}
 			}
@@ -257,7 +338,8 @@ namespace TomCat {
 				
 			MouseScrolledEvent event((float)xoffset,(float)yoffset);
 
-			Data.EventCallback(event);
+			if (Data.EventCallback)
+				Data.EventCallback(event);
 		});
 
 		glfwSetCursorPosCallback(m_Window, [](GLFWwindow* Window, double xpos, double ypos)
@@ -266,7 +348,8 @@ namespace TomCat {
 
 			MouseMovedEvent event((float)xpos,(float)ypos);
 
-			Data.EventCallback(event);
+			if (Data.EventCallback)
+				Data.EventCallback(event);
 		});
 
 
@@ -276,17 +359,26 @@ namespace TomCat {
 
 				KeyTypedEvent event(KeyCode);
 
+			if (Data.EventCallback)
 				Data.EventCallback(event);
 		});
+
+		initializationGuard.Release();
 
 	}
 
 		void WindowsWindow::Shutdown()
 		{
 			TC_PROFILE_FUNCTION();
-			glfwDestroyWindow(m_Window);
+			m_Context.reset();
+			if (!m_Window)
+				return;
 
-			--s_GLFWWindowCount;
+			glfwDestroyWindow(m_Window);
+			m_Window = nullptr;
+
+			if (s_GLFWWindowCount > 0)
+				--s_GLFWWindowCount;
 
 			if (s_GLFWWindowCount == 0)
 			{
@@ -317,5 +409,22 @@ namespace TomCat {
 		bool WindowsWindow::IsVSync() const
 		{
 			return m_Data.VSync;
+		}
+
+		double WindowsWindow::GetTimeSeconds() const
+		{
+			return glfwGetTime();
+		}
+
+		void WindowsWindow::CancelCloseRequest()
+		{
+			if (!m_Window)
+				return;
+
+			glfwSetWindowShouldClose(m_Window, GLFW_FALSE);
+			if (glfwGetWindowAttrib(m_Window, GLFW_ICONIFIED) == GLFW_TRUE)
+				glfwRestoreWindow(m_Window);
+			glfwShowWindow(m_Window);
+			glfwFocusWindow(m_Window);
 		}
 }

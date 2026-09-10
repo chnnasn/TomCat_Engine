@@ -1,8 +1,9 @@
 #pragma once
 
-#include<string>
-#include<unordered_map>
-#include<glm/glm.hpp>
+#include <filesystem>
+#include <string>
+#include <unordered_map>
+#include <glm/glm.hpp>
 
 namespace TomCat {
 
@@ -24,7 +25,7 @@ namespace TomCat {
 
 		virtual const std::string& GetName() const = 0;
 
-		static Ref<Shader> Create(const std::string& filepath);
+		static Ref<Shader> Create(const std::filesystem::path& filepath);
 		static Ref<Shader> Create(const std::string& name,const std::string& vertexSrc, const std::string& fragmentSrc);
 	};
 
@@ -33,8 +34,8 @@ namespace TomCat {
 	public:
 		void Add(const std::string& name, const Ref<Shader>& shader);
 		void Add(const Ref<Shader>& shader);
-		Ref<Shader> Load(const std::string& filepath);
-		Ref<Shader> Load(const std::string& name,const std::string& filepath);
+		Ref<Shader> Load(const std::filesystem::path& filepath);
+		Ref<Shader> Load(const std::string& name, const std::filesystem::path& filepath);
 		
 		Ref<Shader> Get(const std::string& name);
 

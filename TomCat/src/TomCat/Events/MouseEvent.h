@@ -1,6 +1,7 @@
 #pragma once
 #include "tcpch.h"
 #include "Event.h"
+#include "InputModifiers.h"
 
 namespace TomCat{
 
@@ -54,21 +55,27 @@ namespace TomCat{
 	{
 	public:
 		inline int GetMouseButton() const { return m_Button; }
+		inline const InputModifiers& GetModifiers() const { return m_Modifiers; }
+		inline bool IsControlDown() const { return m_Modifiers.Control; }
+		inline bool IsShiftDown() const { return m_Modifiers.Shift; }
+		inline bool IsAltDown() const { return m_Modifiers.Alt; }
+		inline bool IsSuperDown() const { return m_Modifiers.Super; }
 
-		Event_Class_Category(EventCategoryMouse | EventCategoryInput)
+		Event_Class_Category(EventCategoryMouse | EventCategoryInput | EventCategoryMouseButton)
 	protected:
-		MouseButtonEvent(int button)
-			: m_Button(button) {
+		MouseButtonEvent(int button, InputModifiers modifiers)
+			: m_Button(button), m_Modifiers(modifiers) {
 		}
 
 		int m_Button;
+		InputModifiers m_Modifiers;
 	};
 
 	class MouseButtonPressedEvent : public MouseButtonEvent
 	{
 	public:
-		MouseButtonPressedEvent(int button)
-			: MouseButtonEvent(button) {
+		MouseButtonPressedEvent(int button, InputModifiers modifiers)
+			: MouseButtonEvent(button, modifiers) {
 		}
 
 		std::string ToString() const override
@@ -84,8 +91,8 @@ namespace TomCat{
 	class MouseButtonReleasedEvent : public MouseButtonEvent
 	{
 	public:
-		MouseButtonReleasedEvent(int button)
-			: MouseButtonEvent(button) {
+		MouseButtonReleasedEvent(int button, InputModifiers modifiers)
+			: MouseButtonEvent(button, modifiers) {
 		}
 
 		std::string ToString() const override

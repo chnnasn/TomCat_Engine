@@ -14,21 +14,28 @@ namespace TomCat {
 	public:
 		using SceneLoadCallback = std::function<void(const std::filesystem::path&)>;
 		using SpriteCreateCallback = std::function<void(const std::filesystem::path&)>;
+		using SceneModifiedCallback = std::function<void()>;
 
 		SceneHierarchyPanel() = default;
 		SceneHierarchyPanel(const Ref<Scene>& scene);
 
 		void SetContext(const Ref<Scene>& scene, bool clearSelection = true, bool remapSelection = false);
 
-		void OnImGuiRender();
+		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr);
 
 		Entity GetSelectedEntity() const { return m_SelectionContext; };
 
 		void SetSelectedEntity(Entity entity);
-		void HandleShortcut(int keyCode, bool control);
+		bool HandleShortcut(int keyCode, bool control);
+		bool IsHierarchyFocused() const { return m_HierarchyFocused; }
+		bool RemapSpriteTextureReferences(const Ref<Scene>& scene,
+			const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot);
+		bool ClearSpriteTextureReferences(const Ref<Scene>& scene,
+			const std::filesystem::path& deletedRoot);
 
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
+		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }
 	private:
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
@@ -40,6 +47,9 @@ namespace TomCat {
 		void DuplicateSelectedEntity();
 		void DeleteSelectedEntity();
 		bool CanPaste() const;
+		bool FlushPendingDeletion();
+		void ClearClipboard();
+		void MarkModified();
 	private:
 		Ref<Scene> m_Context;
 		Entity m_SelectionContext;
@@ -53,8 +63,12 @@ namespace TomCat {
 		Entity m_RenameEntity;
 		char m_RenameBuffer[256] = {};
 		bool m_RenameFocus = false;
+		Entity m_TagEditingEntity;
+		char m_TagEditBuffer[256] = {};
+		bool m_HierarchyFocused = false;
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
+		SceneModifiedCallback m_SceneModifiedCallback;
 
 	};
 

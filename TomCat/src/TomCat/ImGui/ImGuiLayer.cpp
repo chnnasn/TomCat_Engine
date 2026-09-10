@@ -33,7 +33,7 @@ namespace TomCat {
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
 		//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
+		// Multi-viewport stays disabled until engine input is routed for every GLFW platform window.
 		// Disable ImGui's automatic .ini save so custom sections we append to imgui.ini
 		// (e.g. [ContentBrowser] and [SceneToolbars] layout) are never overwritten. Window layouts are saved
 		// explicitly by the Editor (project folder imgui.ini).
@@ -142,8 +142,8 @@ namespace TomCat {
 		if (m_BlockEvents) 
 		{
 			ImGuiIO& io = ImGui::GetIO();
-			e.m_Handled |= e.IsIncategory(EventCategoryMouse) & io.WantCaptureMouse;
-			e.m_Handled |= e.IsIncategory(EventCategoryKeyboard) & io.WantCaptureKeyboard;
+			e.m_Handled |= e.IsInCategory(EventCategoryMouse) && io.WantCaptureMouse;
+			e.m_Handled |= e.IsInCategory(EventCategoryKeyboard) && io.WantCaptureKeyboard;
 		}
 
 	}

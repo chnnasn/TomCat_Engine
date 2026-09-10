@@ -12,5 +12,5 @@ project "Premake"
 	postbuildmessage "Regenerating project files with Premake5!"
 	postbuildcommands
 	{
-		"%{prj.location}bin/premake5 %{_ACTION} --file=\"%{wks.location}premake5.lua\""
+		"if exist \"%{prj.location}bin\\premake5.exe\" (\"%{prj.location}bin\\premake5.exe\" %{_ACTION} --file=\"%{wks.location}premake5.lua\") else (echo Premake5 executable not found - skipping project regeneration.)"
 	}

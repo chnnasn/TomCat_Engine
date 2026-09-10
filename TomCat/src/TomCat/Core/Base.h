@@ -3,14 +3,21 @@
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/MouseCodes.h"
 
+#include <cstdio>
 #include <memory>
+
+#ifdef _MSC_VER
+	#include <intrin.h>
+#endif
 
 // Platform detection using predefined macros
 #ifdef _WIN32
 	/* Windows x64/x86 */
 	#ifdef _WIN64
 		/* Windows x64  */
-		#define TC_PLATFORM_WINDOWS
+		#ifndef TC_PLATFORM_WINDOWS
+			#define TC_PLATFORM_WINDOWS
+		#endif
 	#else
 		/* Windows x86 */
 		#error "x86 Builds are not supported!"
@@ -47,27 +54,33 @@
 	#error "Unknown platform!"
 #endif // End of platform detection
 
-// DLL support
-#ifdef TC_PLATFORM_WINDOWS
-	#if TC_DYNAMIC_LINK
-		#ifdef TC_BUILD_DLL
-			#define TomCat_API __declspec(dllexport)
-		#else
-			#define TomCat_API __declspec(dllimport)
-		#endif
-	#else
-		#define TomCat_API
-	#endif
-#else
-	#error TomCat only supports Windows!
-#endif // End of DLL support
+#if defined(TC_DEBUG) && !defined(TC_ENABLE_ASSERTS)
+	#define TC_ENABLE_ASSERTS
+#endif
 
-#ifdef TC_Core_Assert
-		#define TC_Assert(x, ...) { if(!(x)) { TC_Error("Assertion Failed: {0}", __VA_ARGS__); __debugbreak(); } }
-		#define TC_Core_Assert(x, ...) { if(!(x)) { TC_Core_Error("Assertion Failed: {0}", __VA_ARGS__); __debugbreak(); } }
+namespace TomCat::Detail {
+
+	inline void ReportAssertionFailure(const char* expression, const char* file, int line)
+	{
+		std::fprintf(stderr, "Assertion failed: %s (%s:%d)\n", expression, file, line);
+	}
+
+	inline void ReportAssertionFailure(const char* expression, const char* file, int line, const char* message)
+	{
+		if (message && *message)
+			std::fprintf(stderr, "Assertion failed: %s - %s (%s:%d)\n", expression, message, file, line);
+		else
+			ReportAssertionFailure(expression, file, line);
+	}
+
+}
+
+#ifdef TC_ENABLE_ASSERTS
+	#define TC_Assert(x, ...) do { if (!(x)) { ::TomCat::Detail::ReportAssertionFailure(#x, __FILE__, __LINE__, "" __VA_ARGS__); __debugbreak(); } } while (false)
+	#define TC_Core_Assert(x, ...) TC_Assert(x, __VA_ARGS__)
 #else
-		#define TC_Assert(x, ...)
-		#define TC_Core_Assert(x, ...)
+	#define TC_Assert(x, ...) ((void)0)
+	#define TC_Core_Assert(x, ...) ((void)0)
 #endif
 
 

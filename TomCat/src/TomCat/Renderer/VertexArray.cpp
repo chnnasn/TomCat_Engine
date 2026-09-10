@@ -14,7 +14,7 @@ namespace TomCat {
 
 			case RendererAPI::API::OpenGL: return std::make_shared<OpenGLVertexArray>();
 		}
-		TC_Core_Assert(false, "unknown rendererapi")
+		TC_Core_Assert(false, "unknown rendererapi");
 			return nullptr;
 	}
 

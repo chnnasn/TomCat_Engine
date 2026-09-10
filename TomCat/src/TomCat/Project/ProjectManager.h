@@ -2,48 +2,40 @@
 
 #include "Project.h"
 #include <vector>
-#include <functional>
 #include <memory>
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace TomCat {
 
 	class ProjectManager
 	{
 	public:
-		using ProjectCallback = std::function<void(Ref<Project>)>;
-
 		static ProjectManager& Get();
 
-		void SetProjectDirectory(const std::filesystem::path& directory);
-		void SetEditorDirectory(const std::filesystem::path& directory);
+		[[nodiscard]] bool SetProjectDirectory(const std::filesystem::path& directory);
+		[[nodiscard]] bool SetEditorDirectory(const std::filesystem::path& directory);
 		const std::filesystem::path& GetProjectDirectory() const { return m_ProjectDirectory; }
 		const std::filesystem::path& GetEditorDirectory() const { return m_EditorDirectory; }
 
-		std::vector<std::string> GetEditorDirectoryFiles() const;
+		[[nodiscard]] std::optional<std::vector<std::string>> GetEditorDirectoryFiles() const;
 
-		void ScanProjects();
+		[[nodiscard]] bool ScanProjects();
 		const std::vector<Ref<Project>>& GetProjects() const { return m_Projects; }
 
 		Ref<Project> CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config);
 		Ref<Project> LoadProject(const std::filesystem::path& projectPath);
 		Ref<Project> AddProject(const std::filesystem::path& projectPath);
-		bool RemoveProject(const std::filesystem::path& projectPath);
+		[[nodiscard]] bool RemoveProject(const std::filesystem::path& projectPath);
 
 		Ref<Project> GetActiveProject() const { return m_ActiveProject; }
-		void SetActiveProject(Ref<Project> project);
 		void OpenProjectInEditor(Ref<Project> project);
 
-		// Hub settings persistence (HubConfig.tomcat next to the working directory).
-		// Projects added from other paths are serialized here (local serialization),
-		// so no separate virtual-mount system is needed.
+		// User-local Hub settings live in the [HubConfig] section of imgui.ini.
+		// The legacy HubConfig.tomcat file is read only for one-way migration.
 		void LoadHubSettings();
-		void SaveHubSettings();
-		const std::vector<std::filesystem::path>& GetKnownProjectPaths() const { return m_KnownProjectPaths; }
-
-		void RegisterProjectCreatedCallback(ProjectCallback callback) { m_OnProjectCreated = callback; }
-		void RegisterProjectLoadedCallback(ProjectCallback callback) { m_OnProjectLoaded = callback; }
-		void RegisterProjectRemovedCallback(ProjectCallback callback) { m_OnProjectRemoved = callback; }
-
+		[[nodiscard]] bool SaveHubSettings();
 	private:
 		ProjectManager();
 		~ProjectManager() = default;
@@ -51,18 +43,20 @@ namespace TomCat {
 		ProjectManager& operator=(const ProjectManager&) = delete;
 
 		bool IsProjectFile(const std::filesystem::path& path) const;
-		std::filesystem::path GetHubSettingsPath() const;
+		std::optional<std::filesystem::path> GetHubSettingsPath() const;
+		bool ScanProjectsInternal(bool persistMigratedState);
+		[[nodiscard]] bool RecordProjectOpened(const Ref<Project>& project);
+		void ApplyStoredLastOpenedTime(const Ref<Project>& project,
+			std::unordered_map<std::string, std::string>& lastOpenedTimes) const;
 
 	private:
 		std::filesystem::path m_ProjectDirectory;
 		std::filesystem::path m_EditorDirectory;
 		std::vector<std::filesystem::path> m_KnownProjectPaths;
+		std::unordered_map<std::string, std::string> m_ProjectLastOpenedTimes;
+		std::unordered_set<std::string> m_IgnoredProjectPaths;
 		std::vector<Ref<Project>> m_Projects;
 		Ref<Project> m_ActiveProject;
-
-		ProjectCallback m_OnProjectCreated;
-		ProjectCallback m_OnProjectLoaded;
-		ProjectCallback m_OnProjectRemoved;
 	};
 
 }

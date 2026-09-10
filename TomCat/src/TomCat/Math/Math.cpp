@@ -6,6 +6,9 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 namespace TomCat::Math {
 
 	glm::mat4 ComposeTransform(const glm::vec3& translation, const glm::vec3& rotation, const glm::vec3& scale)
@@ -17,73 +20,76 @@ namespace TomCat::Math {
 
 	bool DecomposeTransform(const glm::mat4& transform, glm::vec3& translation, glm::vec3& rotation, glm::vec3& scale)
 	{
-		// From glm::decompose in matrix_decompose.inl
-
-		using namespace glm;
-		using T = float;
-
-		mat4 LocalMatrix(transform);
-
-		// Normalize the matrix.
-		if (epsilonEqual(LocalMatrix[3][3], static_cast<float>(0), epsilon<T>()))
-			return false;
-
-		// First, isolate perspective.  This is the messiest.
-		if (
-			epsilonNotEqual(LocalMatrix[0][3], static_cast<T>(0), epsilon<T>()) ||
-			epsilonNotEqual(LocalMatrix[1][3], static_cast<T>(0), epsilon<T>()) ||
-			epsilonNotEqual(LocalMatrix[2][3], static_cast<T>(0), epsilon<T>()))
+		for (glm::length_t column = 0; column < 4; ++column)
 		{
-			// Clear the perspective partition
-			LocalMatrix[0][3] = LocalMatrix[1][3] = LocalMatrix[2][3] = static_cast<T>(0);
-			LocalMatrix[3][3] = static_cast<T>(1);
-		}
-
-		// Next take care of translation (easy).
-		translation = vec3(LocalMatrix[3]);
-		LocalMatrix[3] = vec4(0, 0, 0, LocalMatrix[3].w);
-
-		vec3 Row[3], Pdum3;
-
-		// Now get scale and shear.
-		for (length_t i = 0; i < 3; ++i)
-			for (length_t j = 0; j < 3; ++j)
-				Row[i][j] = LocalMatrix[i][j];
-
-		// Compute X scale factor and normalize first row.
-		scale.x = length(Row[0]);
-		Row[0] = detail::scale(Row[0], static_cast<T>(1));
-		scale.y = length(Row[1]);
-		Row[1] = detail::scale(Row[1], static_cast<T>(1));
-		scale.z = length(Row[2]);
-		Row[2] = detail::scale(Row[2], static_cast<T>(1));
-
-		// At this point, the matrix (in rows[]) is orthonormal.
-		// Check for a coordinate system flip.  If the determinant
-		// is -1, then negate the matrix and the scaling factors.
-#if 0
-		Pdum3 = cross(Row[1], Row[2]); // v3Cross(row[1], row[2], Pdum3);
-		if (dot(Row[0], Pdum3) < 0)
-		{
-			for (length_t i = 0; i < 3; i++)
+			for (glm::length_t row = 0; row < 4; ++row)
 			{
-				scale[i] *= static_cast<T>(-1);
-				Row[i] *= static_cast<T>(-1);
+				if (!std::isfinite(transform[column][row]))
+					return false;
 			}
 		}
-#endif
 
-		rotation.y = asin(-Row[0][2]);
-		if (cos(rotation.y) != 0) {
-			rotation.x = atan2(Row[1][2], Row[2][2]);
-			rotation.z = atan2(Row[0][1], Row[0][0]);
+		glm::vec3 newTranslation{};
+		glm::vec3 newScale{};
+		glm::quat orientation{};
+		glm::vec3 skew{};
+		glm::vec4 perspective{};
+		if (!glm::decompose(transform, newScale, orientation, newTranslation, skew, perspective))
+			return false;
+
+		const auto finite3 = [](const glm::vec3& value)
+		{
+			return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+		};
+		const auto finite4 = [](const glm::vec4& value)
+		{
+			return std::isfinite(value.x) && std::isfinite(value.y)
+				&& std::isfinite(value.z) && std::isfinite(value.w);
+		};
+		if (!finite3(newTranslation) || !finite3(newScale) || !finite3(skew)
+			|| !finite4(perspective)
+			|| !std::isfinite(orientation.x) || !std::isfinite(orientation.y)
+			|| !std::isfinite(orientation.z) || !std::isfinite(orientation.w))
+			return false;
+
+		// Transform stores TRS only. Silently discarding perspective or shear would
+		// make reparenting and gizmo operations drift, so reject matrices that this
+		// component cannot represent exactly enough.
+		constexpr float tolerance = 1.0e-4f;
+		if (glm::length(skew) > tolerance
+			|| std::abs(perspective.x) > tolerance
+			|| std::abs(perspective.y) > tolerance
+			|| std::abs(perspective.z) > tolerance
+			|| std::abs(perspective.w - 1.0f) > tolerance)
+			return false;
+
+		const float orientationLength = glm::length(orientation);
+		if (!std::isfinite(orientationLength) || orientationLength <= tolerance)
+			return false;
+		const glm::vec3 newRotation = glm::eulerAngles(glm::normalize(orientation));
+		if (!finite3(newRotation))
+			return false;
+
+		const glm::mat4 reconstructed = ComposeTransform(newTranslation, newRotation, newScale);
+		float largestValue = 1.0f;
+		float largestError = 0.0f;
+		for (glm::length_t column = 0; column < 4; ++column)
+		{
+			for (glm::length_t row = 0; row < 4; ++row)
+			{
+				if (!std::isfinite(reconstructed[column][row]))
+					return false;
+				largestValue = std::max(largestValue, std::abs(transform[column][row]));
+				largestError = std::max(largestError,
+					std::abs(reconstructed[column][row] - transform[column][row]));
+			}
 		}
-		else {
-			rotation.x = atan2(-Row[2][0], Row[1][1]);
-			rotation.z = 0;
-		}
+		if (!std::isfinite(largestError) || largestError > tolerance * largestValue)
+			return false;
 
-
+		translation = newTranslation;
+		rotation = newRotation;
+		scale = newScale;
 		return true;
 	}
 

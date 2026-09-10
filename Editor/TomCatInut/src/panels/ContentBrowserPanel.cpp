@@ -1,246 +1,434 @@
-#include"tcpch.h"
+#include "tcpch.h"
 
 #include "ContentBrowserPanel.h"
 
 #include <imgui/imgui.h>
+
 #include <algorithm>
 #include <cctype>
-#include <unordered_map>
 #include <cstring>
-
-namespace { int g_ContentBrowserLayout = 0; /* 0=TwoColumn,1=OneColumn */ }
 #include <fstream>
+#include <sstream>
+#include <string_view>
+#include <system_error>
+#include <vector>
 
-#include "TomCat/ImGui/ImGuiCallback.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Utils/FileSystemUtils.h"
+#include "TomCat/Utils/PathUtils.h"
 
 namespace TomCat {
 
-    extern const std::filesystem::path g_AssetPath = "Assets";
+	extern const std::filesystem::path g_AssetPath = "Assets";
 
-	static const std::unordered_set<std::string> s_ImageExtensions = {
-		".png", ".jpg", ".jpeg", ".bmp", ".tga", ".gif", ".webp", ".psd", ".hdr", ".pic"
-	};
+	namespace {
 
-	static const std::unordered_set<std::wstring> s_ImageExtensionsW = {
-	L".png", L".jpg", L".jpeg", L".bmp", L".tga", L".gif", L".webp", L".psd", L".hdr", L".pic"
-	};
+		const std::unordered_set<std::string> s_ImageExtensions = {
+			".png", ".jpg", ".jpeg", ".bmp", ".tga", ".gif", ".psd", ".hdr", ".pic"
+		};
 
-	bool ShowMenu = false;
-
-	ImVec2 MenuPosi;
-
-	static std::string TrimCopy(const std::string& value)
-	{
-		std::string result = value;
-		while (!result.empty() && (result.front() == ' ' || result.front() == '\t'))
-			result.erase(result.begin());
-		while (!result.empty() && (result.back() == ' ' || result.back() == '\t'))
-			result.pop_back();
-		return result;
-	}
-
-	static void PushSelectedTreeColors()
-	{
-		ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(44.0f / 255.0f, 93.0f / 255.0f, 135.0f / 255.0f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(58.0f / 255.0f, 112.0f / 255.0f, 157.0f / 255.0f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(36.0f / 255.0f, 79.0f / 255.0f, 115.0f / 255.0f, 1.0f));
-	}
-
-	static bool IsValidEntryName(const std::string& name)
-	{
-		if (name.empty() || name == "." || name == "..")
-			return false;
-		if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos)
-			return false;
-		for (char c : name)
+		std::string ToLower(std::string value)
 		{
-			if (c == '<' || c == '>' || c == ':' || c == '"' || c == '|' || c == '?' || c == '*')
+			std::transform(value.begin(), value.end(), value.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			return value;
+		}
+
+		std::string TrimCopy(const std::string& value)
+		{
+			auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char c) { return std::isspace(c) != 0; });
+			auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) { return std::isspace(c) != 0; }).base();
+			return first < last ? std::string(first, last) : std::string{};
+		}
+
+		std::string::size_type FindIniSectionHeader(const std::string& ini,
+			std::string_view sectionName)
+		{
+			std::string::size_type position = 0;
+			while ((position = ini.find(sectionName, position)) != std::string::npos)
+			{
+				const bool lineStart = position == 0 || ini[position - 1] == '\n';
+				const size_t end = position + sectionName.size();
+				const bool lineEnd = end == ini.size() || ini[end] == '\n' || ini[end] == '\r';
+				if (lineStart && lineEnd)
+					return position;
+				position = end;
+			}
+			return std::string::npos;
+		}
+
+		bool IsValidEntryName(const std::string& name)
+		{
+			if (name.empty() || name == "." || name == "..")
 				return false;
-		}
-		return true;
-	}
-
-	static std::filesystem::path MakeUniqueFolderPath(const std::filesystem::path& parent)
-	{
-		for (int index = 0; index < 10000; ++index)
-		{
-			std::string name = "New Folder";
-			if (index > 0)
-				name += " (" + std::to_string(index) + ")";
-			std::filesystem::path candidate = parent / name;
-			if (!std::filesystem::exists(candidate))
-				return candidate;
-		}
-		return parent / "New Folder";
-	}
-
-	static bool IsPathInside(const std::filesystem::path& parent, const std::filesystem::path& child)
-	{
-		if (child == parent)
-			return false;
-		const std::filesystem::path relative = child.lexically_relative(parent);
-		if (relative.empty())
-			return false;
-		for (const auto& part : relative)
-		{
-			if (part == "..")
+			if (name.find('/') != std::string::npos || name.find('\\') != std::string::npos)
 				return false;
+			return name.find_first_of("<>:\"|?*") == std::string::npos;
 		}
-		return true;
-	}
 
-	static std::filesystem::path RemapPath(const std::filesystem::path& oldPath,
-		const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot)
-	{
-		if (oldPath == oldRoot)
-			return newRoot;
-		if (!IsPathInside(oldRoot, oldPath))
-			return oldPath;
-		const std::filesystem::path relative = oldPath.lexically_relative(oldRoot);
-		return newRoot / relative;
+		std::filesystem::path CanonicalPath(const std::filesystem::path& path)
+		{
+			if (path.empty())
+				return {};
+			std::error_code error;
+			std::filesystem::path result = std::filesystem::weakly_canonical(path, error);
+			if (!error)
+				return result.lexically_normal();
+			error.clear();
+			result = std::filesystem::absolute(path, error);
+			return (error ? path : result).lexically_normal();
+		}
+
+		std::filesystem::path LexicalPath(const std::filesystem::path& path)
+		{
+			if (path.empty())
+				return {};
+			std::error_code error;
+			const std::filesystem::path absolute = std::filesystem::absolute(path, error);
+			return (error ? path : absolute).lexically_normal();
+		}
+
+		bool IsWithinRoot(const std::filesystem::path& root, const std::filesystem::path& candidate, bool allowRoot = true)
+		{
+			const std::filesystem::path normalizedRoot = CanonicalPath(root);
+			const std::filesystem::path normalizedCandidate = CanonicalPath(candidate);
+			if (normalizedRoot.empty() || normalizedCandidate.empty())
+				return false;
+			if (normalizedRoot == normalizedCandidate)
+				return allowRoot;
+			const std::filesystem::path relative = normalizedCandidate.lexically_relative(normalizedRoot);
+			if (relative.empty() || relative.is_absolute())
+				return false;
+			for (const auto& part : relative)
+			{
+				if (part == "..")
+					return false;
+			}
+			return true;
+		}
+
+		bool IsWithinLexicalRoot(const std::filesystem::path& root,
+			const std::filesystem::path& candidate, bool allowRoot = true)
+		{
+			const std::filesystem::path normalizedRoot = LexicalPath(root);
+			const std::filesystem::path normalizedCandidate = LexicalPath(candidate);
+			if (normalizedRoot.empty() || normalizedCandidate.empty())
+				return false;
+			if (normalizedRoot == normalizedCandidate)
+				return allowRoot;
+			const std::filesystem::path relative = normalizedCandidate.lexically_relative(normalizedRoot);
+			if (relative.empty() || relative.is_absolute())
+				return false;
+			for (const auto& part : relative)
+			{
+				if (part == "..")
+					return false;
+			}
+			return true;
+		}
+
+		// Resolve ancestors for containment checks, but deliberately keep the
+		// final component lexical. This allows a symlink inside Assets to be
+		// renamed or removed without ever applying the operation to its target.
+		bool GetManagedMutationPath(const std::filesystem::path& root,
+			const std::filesystem::path& candidate, std::filesystem::path& nativePath,
+			bool mustExist = true)
+		{
+			nativePath = LexicalPath(candidate);
+			const std::filesystem::path nativeRoot = LexicalPath(root);
+			if (nativePath.empty() || nativeRoot.empty() || nativePath == nativeRoot ||
+				!IsWithinRoot(root, nativePath.parent_path()))
+				return false;
+
+			std::error_code error;
+			const std::filesystem::file_status status = std::filesystem::symlink_status(nativePath, error);
+			if (error)
+				return !mustExist && error == std::errc::no_such_file_or_directory;
+			if (!std::filesystem::exists(status))
+				return !mustExist;
+			if (std::filesystem::is_symlink(status))
+				return true;
+
+			// Junctions/reparse directories that resolve outside the asset root are
+			// rejected even if symlink_status does not classify them as symlinks.
+			return IsWithinRoot(root, nativePath, false);
+		}
+
+		bool IsManagedEntry(const std::filesystem::path& root, const std::filesystem::path& candidate)
+		{
+			std::filesystem::path nativePath;
+			return GetManagedMutationPath(root, candidate, nativePath);
+		}
+
+		std::filesystem::path RemapPath(const std::filesystem::path& value,
+			const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot)
+		{
+			const std::filesystem::path normalizedValue = LexicalPath(value);
+			const std::filesystem::path normalizedOldRoot = LexicalPath(oldRoot);
+			if (normalizedValue == normalizedOldRoot)
+				return newRoot;
+			if (!IsWithinLexicalRoot(normalizedOldRoot, normalizedValue, false))
+				return value;
+			return newRoot / normalizedValue.lexically_relative(normalizedOldRoot);
+		}
+
+		std::filesystem::path MakeUniqueFolderPath(const std::filesystem::path& parent)
+		{
+			for (uint32_t index = 0; index < 10000; ++index)
+			{
+				std::string name = "New Folder";
+				if (index > 0)
+					name += " (" + std::to_string(index) + ")";
+				const std::filesystem::path candidate = parent / name;
+				std::error_code error;
+				if (!std::filesystem::exists(candidate, error))
+					return candidate;
+			}
+			return {};
+		}
+
+		std::vector<std::filesystem::directory_entry> ReadDirectory(const std::filesystem::path& directory)
+		{
+			std::vector<std::filesystem::directory_entry> entries;
+			std::error_code error;
+			for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error))
+				entries.emplace_back(*it);
+			if (error)
+				TC_Core_Error("Failed to read directory {0}: {1}", PathToUTF8(directory), error.message());
+			std::sort(entries.begin(), entries.end(), [](const auto& lhs, const auto& rhs) {
+				std::error_code lhsError, rhsError;
+				const bool lhsDirectory = lhs.is_directory(lhsError);
+				const bool rhsDirectory = rhs.is_directory(rhsError);
+				if (lhsDirectory != rhsDirectory)
+					return lhsDirectory;
+				return ToLower(PathToUTF8(lhs.path().filename())) < ToLower(PathToUTF8(rhs.path().filename()));
+			});
+			return entries;
+		}
+
+		bool IsRecursiveDirectory(const std::filesystem::directory_entry& entry)
+		{
+			std::error_code error;
+			const bool directory = entry.is_directory(error);
+			error.clear();
+			return directory && !entry.is_symlink(error);
+		}
+
+		std::filesystem::path GetEditorIniPath()
+		{
+			std::error_code error;
+			const std::filesystem::path currentDirectory = std::filesystem::current_path(error);
+			return error ? std::filesystem::path("imgui.ini") : currentDirectory / "imgui.ini";
+		}
+
 	}
 
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_LayoutMode(TwoColumn)
 	{
-		// Read the editor-level layout from imgui.ini ([ContentBrowser] section)
 		LoadLayoutSetting();
-
-		m_Project = ProjectManager::Get().GetActiveProject();
-		if (m_Project)
-		{
-            m_CurrentDirectory = m_Project->GetAssetPath();
-            std::string twoColumnFolder = m_Project->GetConfig().TwoColumnCurrentFolder;
-            if (!twoColumnFolder.empty())
-            {
-                m_TwoColumnCurrentFolder = twoColumnFolder;
-                m_SelectedDirectory = twoColumnFolder;
-            }
-            
-            for (const auto& node : m_Project->GetConfig().ExpandedNodes)
-            {
-                m_ExpandedNodes.insert(node);
-            }
-		}
-        else
-        {
-            m_CurrentDirectory = g_AssetPath;
-        }
-		
 		m_DirectoryIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/DirectoryIcon.png");
 		m_FileIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/FileIcon.png");
+		SetProject(ProjectManager::Get().GetActiveProject());
+	}
 
-		TomCat::RegisterWindowMoreOptionsCallback("Project", [](ImVec2 pos) {
-
-			MenuPosi = ImVec2{pos.x,pos.y+40};
-			
-			ShowMenu = true; // every click opens the menu (popup closes on outside click / CloseCurrentPopup)
-
-			});
+	std::filesystem::path ContentBrowserPanel::GetAssetRoot() const
+	{
+		return m_Project ? CanonicalPath(m_Project->GetAssetPath()) : CanonicalPath(g_AssetPath);
 	}
 
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
-		m_Project = project;
+		m_Project = std::move(project);
+		m_CurrentDirectory.clear();
+		m_SelectedPath.clear();
+		m_UserSelectedDirectory = false;
+		m_ExpandedNodes.clear();
+		m_PendingOpenDirectories.clear();
 		m_ContextPath.clear();
-		m_ContextIsDirectory = false;
-		m_ContextIsRoot = false;
 		m_PendingCreateFolderParent.clear();
 		m_RenamePath.clear();
-		m_RenameFocus = false;
-		m_UserSelectedDirectory = false;
-		m_PendingOpenDirectories.clear();
-		if (project)
+		m_DeletePath.clear();
+		m_ImageCache.clear();
+		RestoreProjectState();
+	}
+
+	void ContentBrowserPanel::RestoreProjectState()
+	{
+		const std::filesystem::path root = GetAssetRoot();
+		m_CurrentDirectory = root;
+		if (!m_Project)
+			return;
+
+		auto resolveStoredPath = [&](const std::string& stored) {
+			if (stored.empty())
+				return root;
+			const std::filesystem::path value = UTF8ToPath(stored);
+			const std::filesystem::path candidate = value.is_absolute() ? value : root / value;
+			return IsWithinRoot(root, candidate) ? CanonicalPath(candidate) : root;
+		};
+
+		const std::filesystem::path restoredDirectory = resolveStoredPath(m_Project->GetConfig().TwoColumnCurrentFolder);
+		std::error_code error;
+		if (std::filesystem::is_directory(restoredDirectory, error))
+			m_CurrentDirectory = restoredDirectory;
+
+		for (const std::string& stored : m_Project->GetConfig().ExpandedNodes)
 		{
-            m_CurrentDirectory = project->GetAssetPath();
-            std::string twoColumnFolder = project->GetConfig().TwoColumnCurrentFolder;
-            if (!twoColumnFolder.empty())
-            {
-                m_TwoColumnCurrentFolder = twoColumnFolder;
-                m_SelectedDirectory = twoColumnFolder;
-            }
-            else
-            {
-                m_TwoColumnCurrentFolder = project->GetAssetPath();
-                m_SelectedDirectory = project->GetAssetPath();
-            }
-            
-            m_ExpandedNodes.clear();
-            for (const auto& node : project->GetConfig().ExpandedNodes)
-            {
-                m_ExpandedNodes.insert(node);
-            }
+			const std::filesystem::path node = resolveStoredPath(stored);
+			error.clear();
+			if (IsWithinRoot(root, node) && std::filesystem::is_directory(node, error))
+				m_ExpandedNodes.insert(PathToUTF8(node));
 		}
 	}
 
-	void ContentBrowserPanel::FlushPendingCreateFolder()
+	bool ContentBrowserPanel::Serialize()
 	{
-		std::filesystem::path parent = m_PendingCreateFolderParent;
-		m_PendingCreateFolderParent.clear();
-		if (parent.empty())
-			return;
+		if (!m_Project)
+			return false;
+		const std::filesystem::path root = GetAssetRoot();
+		auto storeRelative = [&](const std::filesystem::path& value) {
+			if (!IsWithinRoot(root, value))
+				return std::string(".");
+			std::error_code error;
+			std::filesystem::path relative = std::filesystem::relative(CanonicalPath(value), root, error);
+			return error || relative.empty() ? std::string(".") : PathToUTF8(relative);
+		};
 
-		Ref<Project> project = ProjectManager::Get().GetActiveProject();
-		if (!project)
-			return;
-
-		std::error_code error;
-		if (!std::filesystem::is_directory(parent, error))
-			parent = project->GetAssetPath();
-
-		const std::filesystem::path newFolder = MakeUniqueFolderPath(parent);
-		error.clear();
-		if (!std::filesystem::create_directory(newFolder, error) || error)
+		const ProjectConfig previousConfig = m_Project->GetConfig();
+		ProjectConfig config = previousConfig;
+		config.TwoColumnCurrentFolder = storeRelative(m_CurrentDirectory);
+		config.ExpandedNodes.clear();
+		std::vector<std::string> storedNodes;
+		storedNodes.reserve(m_ExpandedNodes.size());
+		for (const std::string& node : m_ExpandedNodes)
 		{
-			TC_Core_Error("Failed to create folder in {0}: {1}", parent.string(), error.message());
-			return;
+			const std::filesystem::path nodePath = UTF8ToPath(node);
+			if (IsWithinRoot(root, nodePath))
+				storedNodes.push_back(storeRelative(nodePath));
 		}
-
-		// 展开父目录，保证新建文件夹立即可见并进入行内重命名。
-		const std::filesystem::path assetPath = project->GetAssetPath();
-		std::filesystem::path walk = parent;
-		while (!walk.empty())
+		std::sort(storedNodes.begin(), storedNodes.end());
+		config.ExpandedNodes = std::move(storedNodes);
+		m_Project->SetConfig(config);
+		if (!m_Project->Save())
 		{
-			m_ExpandedNodes.insert(walk.string());
-			if (walk == assetPath)
-				break;
-			walk = walk.parent_path();
+			m_Project->SetConfig(previousConfig);
+			TC_Core_Error("Failed to persist Project browser state for {0}", PathToUTF8(m_Project->GetProjectPath()));
+			return false;
 		}
+		return true;
+	}
 
-		if (m_LayoutMode == OneColumn)
+	void ContentBrowserPanel::LoadLayoutSetting()
+	{
+		std::ifstream input(GetEditorIniPath());
+		std::string line;
+		bool inSection = false;
+		while (std::getline(input, line))
 		{
-			// One Column 模式下把新建文件夹本身作为选中项，行内重命名时显示蓝色选中态。
-			m_SelectedDirectory = newFolder;
-			m_UserSelectedDirectory = true;
-			std::filesystem::path walk = parent;
-			while (!walk.empty())
+			if (line == "[ContentBrowser]")
 			{
-				m_PendingOpenDirectories.insert(walk.string());
-				if (walk == assetPath)
-					break;
-				walk = walk.parent_path();
+				inSection = true;
+				continue;
+			}
+			if (!inSection)
+				continue;
+			if (line.rfind("Layout=", 0) == 0)
+			{
+				m_LayoutMode = line.substr(7) == "OneColumn" ? OneColumn : TwoColumn;
+				break;
+			}
+			if (!line.empty() && line.front() == '[')
+				break;
+		}
+	}
+
+	void ContentBrowserPanel::SaveLayoutSetting()
+	{
+		const std::filesystem::path iniPath = GetEditorIniPath();
+		std::string ini;
+		{
+			std::error_code existsError;
+			const bool exists = std::filesystem::exists(iniPath, existsError);
+			if (existsError)
+			{
+				TC_Core_Error("Could not inspect Content Browser settings '{0}': {1}",
+					PathToUTF8(iniPath), existsError.message());
+				return;
+			}
+			std::ifstream input(iniPath, std::ios::binary);
+			if (exists && !input)
+			{
+				TC_Core_Error("Could not read Content Browser settings '{0}'", PathToUTF8(iniPath));
+				return;
+			}
+			if (input)
+			{
+				std::ostringstream contents;
+				contents << input.rdbuf();
+				if (input.bad())
+				{
+					TC_Core_Error("Failed while reading Content Browser settings '{0}'", PathToUTF8(iniPath));
+					return;
+				}
+				ini = contents.str();
 			}
 		}
-		else
+		const std::string sectionName = "[ContentBrowser]";
+		const size_t section = FindIniSectionHeader(ini, sectionName);
+		if (section != std::string::npos)
 		{
-			// Two Column 右侧仍停留在父目录，让新建文件夹出现在内容区。
-			m_SelectedDirectory = parent;
-			m_TwoColumnCurrentFolder = parent;
+			const size_t next = ini.find("\n[", section + sectionName.size());
+			ini.erase(section, next == std::string::npos ? std::string::npos : next - section);
 		}
-		BeginRename(newFolder);
+		if (!ini.empty() && ini.back() != '\n')
+			ini.push_back('\n');
+		ini += "[ContentBrowser]\nLayout=";
+		ini += m_LayoutMode == OneColumn ? "OneColumn\n" : "TwoColumn\n";
+		std::string writeError;
+		if (!FileSystem::WriteFileAtomically(iniPath, ini, writeError))
+			TC_Core_Error("Failed to save Content Browser layout '{0}': {1}", PathToUTF8(iniPath), writeError);
+	}
+
+	void ContentBrowserPanel::OpenAsset(const std::filesystem::path& path, bool isDirectory)
+	{
+		const std::filesystem::path root = GetAssetRoot();
+		const std::filesystem::path managedPath = CanonicalPath(path);
+		std::error_code error;
+		if (!IsWithinRoot(root, managedPath) || !std::filesystem::exists(managedPath, error))
+		{
+			TC_Warn("Refusing to open an asset outside the project root: {0}", PathToUTF8(path));
+			return;
+		}
+		if (isDirectory)
+		{
+			if (!std::filesystem::is_directory(managedPath, error))
+				return;
+			m_CurrentDirectory = managedPath;
+			m_SelectedPath = managedPath;
+			m_UserSelectedDirectory = true;
+			m_ExpandedNodes.insert(PathToUTF8(managedPath));
+			return;
+		}
+
+		if (ToLower(PathToUTF8(managedPath.extension())) == ".tomcat" && m_SceneOpenCallback)
+			m_SceneOpenCallback(managedPath);
+		else
+			TC_Warn("Opening this file type is not supported yet: {0}", PathToUTF8(managedPath.filename()));
 	}
 
 	void ContentBrowserPanel::BeginRename(const std::filesystem::path& path)
 	{
-		if (path.empty())
+		const std::filesystem::path root = GetAssetRoot();
+		std::filesystem::path nativePath;
+		if (!GetManagedMutationPath(root, path, nativePath))
 			return;
-		m_RenamePath = path;
-		m_RenameFocus = true;
-		const std::string name = path.filename().string();
+		m_RenamePath = nativePath;
 		std::fill(std::begin(m_RenameBuffer), std::end(m_RenameBuffer), '\0');
-		if (name.size() < sizeof(m_RenameBuffer))
-			std::copy(name.begin(), name.end(), m_RenameBuffer);
+		const std::string name = PathToUTF8(m_RenamePath.filename());
+		std::copy_n(name.begin(), std::min(name.size(), sizeof(m_RenameBuffer) - 1), m_RenameBuffer);
+		m_RenameFocus = true;
+		m_OpenRenamePopup = true;
 	}
 
 	void ContentBrowserPanel::CancelRename()
@@ -251,232 +439,181 @@ namespace TomCat {
 
 	std::filesystem::path ContentBrowserPanel::CommitRename()
 	{
-		if (m_RenamePath.empty())
-			return {};
-
-		const std::filesystem::path oldPath = m_RenamePath;
+		const std::filesystem::path root = GetAssetRoot();
+		std::filesystem::path oldPath;
 		const std::string newName = TrimCopy(m_RenameBuffer);
-		if (!IsValidEntryName(newName) || newName == oldPath.filename().string())
+		if (!GetManagedMutationPath(root, m_RenamePath, oldPath))
 		{
-			m_RenamePath.clear();
-			m_RenameFocus = false;
+			CancelRename();
 			return {};
 		}
+		if (!IsValidEntryName(newName))
+		{
+			TC_Warn("'{0}' is not a valid asset name", newName);
+			return {};
+		}
+		if (newName == PathToUTF8(oldPath.filename()))
+		{
+			CancelRename();
+			return oldPath;
+		}
 
-		const std::filesystem::path newPath = oldPath.parent_path() / newName;
+		const std::filesystem::path requestedNewPath = oldPath.parent_path() / UTF8ToPath(newName);
+		std::filesystem::path newPath;
 		std::error_code error;
-		if (std::filesystem::exists(newPath, error))
+		const std::filesystem::file_status destinationStatus = std::filesystem::symlink_status(requestedNewPath, error);
+		const bool destinationExists = !error && std::filesystem::exists(destinationStatus);
+		error.clear();
+		if (!GetManagedMutationPath(root, requestedNewPath, newPath, false) || destinationExists)
 		{
-			TC_Warn("Cannot rename to '{0}' - name already exists", newPath.string());
-			m_RenamePath.clear();
-			m_RenameFocus = false;
+			TC_Warn("Cannot rename asset to {0}", PathToUTF8(requestedNewPath));
 			return {};
 		}
 
+		EraseCachedImagesUnder(oldPath);
 		std::filesystem::rename(oldPath, newPath, error);
 		if (error)
 		{
-			TC_Core_Error("Failed to rename {0}: {1}", oldPath.string(), error.message());
-			m_RenamePath.clear();
-			m_RenameFocus = false;
+			TC_Core_Error("Failed to rename {0}: {1}", PathToUTF8(oldPath), error.message());
 			return {};
 		}
 
-		// 同步选择目录、当前目录以及展开节点里记录的所有旧路径。
-		if (m_SelectedDirectory == oldPath)
-			m_SelectedDirectory = newPath;
-		else if (IsPathInside(oldPath, m_SelectedDirectory))
-			m_SelectedDirectory = RemapPath(m_SelectedDirectory, oldPath, newPath);
-
-		if (m_TwoColumnCurrentFolder == oldPath)
-			m_TwoColumnCurrentFolder = newPath;
-		else if (IsPathInside(oldPath, m_TwoColumnCurrentFolder))
-			m_TwoColumnCurrentFolder = RemapPath(m_TwoColumnCurrentFolder, oldPath, newPath);
-
-		if (!m_ExpandedNodes.empty())
-		{
-			std::unordered_set<std::string> remapped;
-			remapped.reserve(m_ExpandedNodes.size());
-			for (const std::string& key : m_ExpandedNodes)
-			{
-				const std::filesystem::path nodePath(key);
-				if (nodePath == oldPath)
-					remapped.insert(newPath.string());
-				else if (IsPathInside(oldPath, nodePath))
-					remapped.insert(RemapPath(nodePath, oldPath, newPath).string());
-				else
-					remapped.insert(key);
-			}
-			m_ExpandedNodes.swap(remapped);
-		}
-
+		m_CurrentDirectory = RemapPath(m_CurrentDirectory, oldPath, newPath);
+		m_SelectedPath = RemapPath(m_SelectedPath, oldPath, newPath);
+		std::unordered_set<std::string> remappedNodes;
+		for (const std::string& node : m_ExpandedNodes)
+			remappedNodes.insert(PathToUTF8(RemapPath(UTF8ToPath(node), oldPath, newPath)));
+		m_ExpandedNodes.swap(remappedNodes);
+		if (m_AssetRenamedCallback)
+			m_AssetRenamedCallback(oldPath, newPath);
 		m_RenamePath.clear();
 		m_RenameFocus = false;
 		return newPath;
 	}
 
-	void ContentBrowserPanel::OpenAsset(const std::filesystem::path& path, bool isDirectory)
+	void ContentBrowserPanel::RequestDeleteAsset(const std::filesystem::path& path, bool isDirectory)
 	{
-		if (isDirectory)
-		{
-			Ref<Project> project = ProjectManager::Get().GetActiveProject();
-			m_SelectedDirectory = path;
-			m_TwoColumnCurrentFolder = path;
-			if (project)
-			{
-				const std::filesystem::path assetPath = project->GetAssetPath();
-				std::filesystem::path walk = path;
-				while (!walk.empty())
-				{
-					m_ExpandedNodes.insert(walk.string());
-					if (walk == assetPath)
-						break;
-					walk = walk.parent_path();
-				}
-			}
-			m_UserSelectedDirectory = true;
+		const std::filesystem::path root = GetAssetRoot();
+		std::filesystem::path nativePath;
+		if (!GetManagedMutationPath(root, path, nativePath))
 			return;
-		}
-
-		std::string extension = path.extension().string();
-		std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-		if ((extension == ".tomcat" || extension == ".tcproj") && m_SceneOpenCallback)
-			m_SceneOpenCallback(path);
-		else
-			TC_Warn("Opening this file type is not supported yet: {0}", path.filename().string());
+		m_DeletePath = nativePath;
+		m_DeleteIsDirectory = isDirectory;
+		m_OpenDeletePopup = true;
 	}
 
-	void ContentBrowserPanel::DeleteAsset(const std::filesystem::path& path, bool isDirectory)
+	void ContentBrowserPanel::EraseCachedImagesUnder(const std::filesystem::path& path)
 	{
-		if (path.empty())
-			return;
+		for (auto it = m_ImageCache.begin(); it != m_ImageCache.end();)
+		{
+			const std::filesystem::path cachedPath = UTF8ToPath(it->first);
+			if (LexicalPath(cachedPath) == LexicalPath(path) || IsWithinLexicalRoot(path, cachedPath, false))
+				it = m_ImageCache.erase(it);
+			else
+				++it;
+		}
+	}
 
-		Ref<Project> project = ProjectManager::Get().GetActiveProject();
-		if (project && path == project->GetAssetPath())
+	void ContentBrowserPanel::DeleteAsset(const std::filesystem::path& path, bool)
+	{
+		const std::filesystem::path root = GetAssetRoot();
+		std::filesystem::path managedPath;
+		if (!GetManagedMutationPath(root, path, managedPath))
+		{
+			TC_Warn("Refusing to delete an asset outside the project root: {0}", PathToUTF8(path));
 			return;
+		}
 
+		EraseCachedImagesUnder(managedPath);
 		std::error_code error;
-		if (isDirectory)
-			std::filesystem::remove_all(path, error);
-		else
-			std::filesystem::remove(path, error);
-
+		const std::filesystem::file_status status = std::filesystem::symlink_status(managedPath, error);
 		if (error)
 		{
-			TC_Core_Error("Failed to delete {0}: {1}", path.string(), error.message());
+			TC_Core_Error("Failed to inspect {0}: {1}", PathToUTF8(managedPath), error.message());
 			return;
 		}
-
-		m_ImageCache.erase(path.string());
-
-		if (m_RenamePath == path)
-			m_RenamePath.clear();
-
-		// 删除后清掉所有位于该路径下的展开节点。
-		if (!m_ExpandedNodes.empty())
+		bool removed = false;
+		if (std::filesystem::is_directory(status) && !std::filesystem::is_symlink(status))
+			removed = std::filesystem::remove_all(managedPath, error) > 0;
+		else
+			removed = std::filesystem::remove(managedPath, error);
+		if (error || !removed)
 		{
-			std::unordered_set<std::string> remaining;
-			for (const std::string& key : m_ExpandedNodes)
-			{
-				const std::filesystem::path nodePath(key);
-				if (nodePath != path && !IsPathInside(path, nodePath))
-					remaining.insert(key);
-			}
-			m_ExpandedNodes.swap(remaining);
+			TC_Core_Error("Failed to delete {0}: {1}", PathToUTF8(managedPath),
+				error ? error.message() : "the entry no longer exists");
+			return;
 		}
+		if (m_AssetDeletedCallback)
+			m_AssetDeletedCallback(managedPath);
 
-		if (m_SelectedDirectory == path || IsPathInside(path, m_SelectedDirectory))
-			m_SelectedDirectory = path.parent_path();
-		if (m_TwoColumnCurrentFolder == path || IsPathInside(path, m_TwoColumnCurrentFolder))
-			m_TwoColumnCurrentFolder = path.parent_path();
-
-		if (m_ContextPath == path)
+		for (auto it = m_ExpandedNodes.begin(); it != m_ExpandedNodes.end();)
+		{
+			const std::filesystem::path expandedPath = UTF8ToPath(*it);
+			if (LexicalPath(expandedPath) == managedPath || IsWithinLexicalRoot(managedPath, expandedPath, false))
+				it = m_ExpandedNodes.erase(it);
+			else
+				++it;
+		}
+		if (LexicalPath(m_CurrentDirectory) == managedPath || IsWithinLexicalRoot(managedPath, m_CurrentDirectory, false))
+			m_CurrentDirectory = IsWithinRoot(root, managedPath.parent_path()) ? managedPath.parent_path() : root;
+		if (LexicalPath(m_SelectedPath) == managedPath || IsWithinLexicalRoot(managedPath, m_SelectedPath, false))
+		{
+			m_SelectedPath.clear();
+			m_UserSelectedDirectory = false;
+		}
+		if (m_ContextPath == managedPath)
 			m_ContextPath.clear();
 	}
 
-	std::filesystem::path ContentBrowserPanel::DrawInlineRename(const std::filesystem::path& path)
+	void ContentBrowserPanel::FlushPendingCreateFolder()
 	{
-		if (path != m_RenamePath)
-			return {};
-
-		const ImVec2 itemMin = ImGui::GetItemRectMin();
-		const ImVec2 itemMax = ImGui::GetItemRectMax();
-		const float textX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing();
-		const float rowHeight = itemMax.y - itemMin.y;
-		const float frameHeight = ImGui::GetFrameHeight();
-		const float textY = itemMin.y + std::max(0.0f, (rowHeight - frameHeight) * 0.5f);
-		const float availableWidth = std::max(80.0f, itemMax.x - textX - ImGui::GetStyle().ItemSpacing.x);
-
-		ImGui::SetCursorScreenPos(ImVec2(textX, textY));
-		if (m_RenameFocus)
+		if (m_PendingCreateFolderParent.empty())
+			return;
+		const std::filesystem::path root = GetAssetRoot();
+		std::filesystem::path parent = CanonicalPath(m_PendingCreateFolderParent);
+		m_PendingCreateFolderParent.clear();
+		std::error_code error;
+		if (!IsWithinRoot(root, parent) || !std::filesystem::is_directory(parent, error))
+			parent = root;
+		const std::filesystem::path newFolder = MakeUniqueFolderPath(parent);
+		if (newFolder.empty() || !std::filesystem::create_directory(newFolder, error) || error)
 		{
-			ImGui::SetKeyboardFocusHere();
-			m_RenameFocus = false;
+			TC_Core_Error("Failed to create folder in {0}: {1}", PathToUTF8(parent), error.message());
+			return;
 		}
-		ImGui::SetNextItemWidth(availableWidth);
-
-		const bool committed = ImGui::InputText("##AssetRename", m_RenameBuffer, sizeof(m_RenameBuffer),
-			ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-		if (committed)
-			return CommitRename();
-		if (ImGui::IsKeyPressed(ImGuiKey_Escape))
-		{
-			CancelRename();
-			return {};
-		}
-		else if (ImGui::IsItemDeactivated())
-			return CommitRename();
-		return {};
+		m_CurrentDirectory = parent;
+		m_SelectedPath = newFolder;
+		m_UserSelectedDirectory = true;
+		m_ExpandedNodes.insert(PathToUTF8(parent));
+		m_PendingOpenDirectories.insert(PathToUTF8(parent));
+		BeginRename(newFolder);
 	}
 
 	void ContentBrowserPanel::DrawContextMenuBody()
 	{
 		if (m_ContextPath.empty())
 			return;
-
 		const std::filesystem::path target = m_ContextPath;
 		const bool isDirectory = m_ContextIsDirectory;
 		const bool isRoot = m_ContextIsRoot;
-		const std::filesystem::path createParent = isDirectory ? target : target.parent_path();
-
 		if (ImGui::BeginMenu("Create"))
 		{
 			if (ImGui::MenuItem("Folder"))
-			{
-				m_PendingCreateFolderParent = createParent;
-				ImGui::CloseCurrentPopup();
-			}
+				m_PendingCreateFolderParent = isDirectory ? target : target.parent_path();
 			ImGui::EndMenu();
 		}
-
 		if (ImGui::MenuItem("Open"))
-		{
 			OpenAsset(target, isDirectory);
-			ImGui::CloseCurrentPopup();
-		}
-
 		if (ImGui::MenuItem("Delete", nullptr, false, !isRoot))
-		{
-			DeleteAsset(target, isDirectory);
-			ImGui::CloseCurrentPopup();
-		}
-
+			RequestDeleteAsset(target, isDirectory);
 		if (ImGui::MenuItem("Rename", nullptr, false, !isRoot))
-		{
 			BeginRename(target);
-			ImGui::CloseCurrentPopup();
-		}
 	}
 
 	void ContentBrowserPanel::DrawNodeContextMenu()
 	{
-		if (m_ContextPath.empty())
-			return;
-		if (ImGui::BeginPopup("ProjectNodeContext"))
-		{
-			DrawContextMenuBody();
-			ImGui::EndPopup();
-		}
+		// Item context menus are rendered next to their owning item so ImGui IDs do
+		// not depend on a later tree/grid stack. Kept as the common call site hook.
 	}
 
 	void ContentBrowserPanel::DrawEmptyContextMenu(const std::filesystem::path& assetRoot)
@@ -484,872 +621,364 @@ namespace TomCat {
 		if (ImGui::BeginPopupContextWindow("ProjectEmptyContext",
 			ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
 		{
-			std::error_code error;
-			const bool hasFolderSelection = !m_SelectedDirectory.empty() &&
-				std::filesystem::is_directory(m_SelectedDirectory, error);
-			m_ContextPath = hasFolderSelection ? m_SelectedDirectory : assetRoot;
+			m_ContextPath = IsWithinRoot(assetRoot, m_CurrentDirectory) ? m_CurrentDirectory : assetRoot;
 			m_ContextIsDirectory = true;
-			m_ContextIsRoot = (m_ContextPath == assetRoot);
+			m_ContextIsRoot = CanonicalPath(m_ContextPath) == CanonicalPath(assetRoot);
 			DrawContextMenuBody();
 			ImGui::EndPopup();
 		}
 	}
 
-	void ContentBrowserPanel::Serialize()
+	void ContentBrowserPanel::DrawRenamePopup()
 	{
-		// Use our project if set, otherwise fall back to the active project so the
-		// layout change is never lost.
-		Ref<Project> proj = m_Project ? m_Project : ProjectManager::Get().GetActiveProject();
-		if (proj)
+		if (m_OpenRenamePopup)
 		{
-			ProjectConfig config = proj->GetConfig();
-			// Note: layout is an editor-level setting (see EditorSettings.tomcat), not stored in the project.
-			config.TwoColumnCurrentFolder = m_TwoColumnCurrentFolder.string();
-			
-			config.ExpandedNodes.clear();
-			for (const auto& node : m_ExpandedNodes)
+			ImGui::OpenPopup("Rename Asset");
+			m_OpenRenamePopup = false;
+		}
+		if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			if (m_RenameFocus)
 			{
-				config.ExpandedNodes.push_back(node);
+				ImGui::SetKeyboardFocusHere();
+				m_RenameFocus = false;
 			}
-			
-			proj->SetConfig(config);
-			proj->Save();
-		}
-	}
-
-	static std::filesystem::path GetEditorIniPath()
-	{
-		// Editor-level settings live in <cwd>/imgui.ini (independent of any project)
-		return std::filesystem::current_path() / "imgui.ini";
-	}
-
-	void ContentBrowserPanel::LoadLayoutSetting()
-	{
-		std::ifstream fin(GetEditorIniPath());
-		std::string line;
-		bool inSection = false;
-		std::string layout;
-		while (std::getline(fin, line))
-		{
-			if (line == "[ContentBrowser]") { inSection = true; continue; }
-			if (inSection)
+			const bool enter = ImGui::InputText("Name", m_RenameBuffer, sizeof(m_RenameBuffer),
+				ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+			if (enter || ImGui::Button("Rename"))
 			{
-				if (line.rfind("Layout=", 0) == 0) { layout = line.substr(7); break; }
-				if (line.empty() || line[0] == '[') break;
+				if (!CommitRename().empty())
+					ImGui::CloseCurrentPopup();
 			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				CancelRename();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
 		}
-		g_ContentBrowserLayout = (layout == "OneColumn") ? 1 : 0;
-		m_LayoutMode = g_ContentBrowserLayout ? OneColumn : TwoColumn;
 	}
 
-	void ContentBrowserPanel::SaveLayoutSetting()
+	void ContentBrowserPanel::DrawDeleteConfirmation()
 	{
-		g_ContentBrowserLayout = (m_LayoutMode == OneColumn) ? 1 : 0;
-
-		// Get ImGui's window settings text and append our custom [ContentBrowser] section
-		std::string ini;
-		if (const char* settings = ImGui::SaveIniSettingsToMemory())
-			ini = settings;
-
-		// remove an existing [ContentBrowser] block, then append the new one
-		std::string::size_type pos = ini.find("[ContentBrowser]");
-		if (pos != std::string::npos)
+		if (m_OpenDeletePopup)
 		{
-			std::string::size_type next = ini.find("\n[", pos + 1);
-			ini.erase(pos, (next == std::string::npos) ? std::string::npos : next - pos);
+			ImGui::OpenPopup("Delete Asset?");
+			m_OpenDeletePopup = false;
 		}
-		ini += "\n[ContentBrowser]\nLayout=" + std::string(m_LayoutMode == OneColumn ? "OneColumn" : "TwoColumn") + "\n";
-
-		std::ofstream fout(GetEditorIniPath(), std::ios::trunc);
-		fout << ini;
+		if (ImGui::BeginPopupModal("Delete Asset?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::TextWrapped("This cannot be undone. Delete '%s'?", PathToUTF8(m_DeletePath.filename()).c_str());
+			if (ImGui::Button("Delete"))
+			{
+				DeleteAsset(m_DeletePath, m_DeleteIsDirectory);
+				m_DeletePath.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				m_DeletePath.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
 	}
 
-	// 原有的递归函数，用于 One Column 模式（有折叠功能）
-    void ContentBrowserPanel::DisplayDirectoryRecursive(const std::filesystem::path& directoryPath, bool isRoot)
-    {
-        std::string displayName = isRoot ? "Assets" : directoryPath.filename().string();
-        std::string nodePath = directoryPath.string();
-
-        // 只有包含内容（文件或子目录）的文件夹才显示折叠箭头；
-        // 空目录按叶子节点渲染。
-        bool hasChildren = false;
-        try
-        {
-            for (auto& entry : std::filesystem::directory_iterator(directoryPath))
-            {
-                hasChildren = true;
-                break;
-            }
-        }
-        catch (const std::filesystem::filesystem_error&)
-        {
-        }
-
-        const bool isSelected = m_UserSelectedDirectory && m_SelectedDirectory == directoryPath;
-        ImGuiTreeNodeFlags nodeFlags = hasChildren
-            ? (ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth)
-            : (ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
-        if (isSelected)
-            nodeFlags |= ImGuiTreeNodeFlags_Selected;
-        if (hasChildren && m_ExpandedNodes.find(nodePath) != m_ExpandedNodes.end())
-        {
-            nodeFlags |= ImGuiTreeNodeFlags_DefaultOpen;
-        }
-        // 新建子对象时强制展开一次父目录，让新建项直接显示出来。
-        if (m_PendingOpenDirectories.erase(nodePath) > 0 && hasChildren)
-            ImGui::SetNextItemOpen(true);
-
-        const bool renaming = (directoryPath == m_RenamePath);
-        if (renaming)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-        if (isSelected)
-            PushSelectedTreeColors();
-        bool nodeOpen = ImGui::TreeNodeEx(displayName.c_str(), nodeFlags);
-        if (isSelected)
-            ImGui::PopStyleColor(3);
-        if (renaming)
-            ImGui::PopStyleColor();
-        const ImVec2 afterHeaderCursor = ImGui::GetCursorPos();
-
-        // 处理点击事件
-        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
-        {
-            m_SelectedDirectory = directoryPath;
-            m_UserSelectedDirectory = true;
-        }
-        if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
-            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
-        {
-            m_ContextPath = directoryPath;
-            m_ContextIsDirectory = true;
-            m_ContextIsRoot = isRoot;
-            m_SelectedDirectory = directoryPath;
-            m_UserSelectedDirectory = true;
-            ImGui::OpenPopup("ProjectNodeContext");
-        }
-
-        // 记录节点打开/关闭状态
-        if (ImGui::IsItemToggledOpen())
-        {
-            if (nodeOpen)
-            {
-                m_ExpandedNodes.insert(nodePath);
-            }
-            else
-            {
-                m_ExpandedNodes.erase(nodePath);
-            }
-        }
-
-        const std::filesystem::path renamedPath = DrawInlineRename(directoryPath);
-        const std::filesystem::path contentDirectory = renamedPath.empty() ? directoryPath : renamedPath;
-        ImGui::SetCursorPos(afterHeaderCursor);
-
-        if (hasChildren && nodeOpen)
-        {
-            try
-            {
-                for (auto& entry : std::filesystem::directory_iterator(contentDirectory))
-                {
-                    const auto& path = entry.path();
-
-                    if (entry.is_directory())
-                    {
-                        DisplayDirectoryRecursive(path, false);
-                    }
-                    else
-                    {
-                        DisplayFileNode(path);
-                    }
-                }
-            }
-            catch (const std::filesystem::filesystem_error& e)
-            {
-                TC_Core_Error("Failed to read directory: {0}", e.what());
-            }
-
-            ImGui::TreePop();
-        }
-    }
-
-	// 新增：用于 Two Column 左侧面板的平面显示（只显示一级，无折叠）
-    void ContentBrowserPanel::DisplayDirectoryFlat(const std::filesystem::path& directoryPath)
-    {
-        // 检查目录是否存在且可访问
-        if (!std::filesystem::exists(directoryPath) || !std::filesystem::is_directory(directoryPath))
-        {
-            TC_Core_Error("Directory does not exist or is not accessible: {0}", directoryPath.string());
-            return;
-        }
-
-        // 根节点使用 Leaf 标志，无三角标，不可展开
-        ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
-            ImGuiTreeNodeFlags_SpanAvailWidth;
-        const bool rootIsSelected = m_UserSelectedDirectory && m_SelectedDirectory == directoryPath;
-        if (rootIsSelected)
-            rootFlags |= ImGuiTreeNodeFlags_Selected;
-
-        float firstLevelIndent = -30.0f; // 改为你想要的数值
-        ImGui::Indent(firstLevelIndent);
-
-        // 显示 assets 根节点
-        const bool renamingRoot = (directoryPath == m_RenamePath);
-        if (renamingRoot)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-        if (rootIsSelected)
-            PushSelectedTreeColors();
-        ImGui::TreeNodeEx("Assets", rootFlags);
-        if (rootIsSelected)
-            ImGui::PopStyleColor(3);
-        if (renamingRoot)
-            ImGui::PopStyleColor();
-        const ImVec2 afterRootCursor = ImGui::GetCursorPos();
-
-        // 处理根目录点击
-        if (ImGui::IsItemClicked())
-        {
-            m_SelectedDirectory = directoryPath;
-            m_TwoColumnCurrentFolder = directoryPath;
-            m_UserSelectedDirectory = true;
-        }
-        if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
-            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
-        {
-            m_ContextPath = directoryPath;
-            m_ContextIsDirectory = true;
-            m_ContextIsRoot = true;
-            ImGui::OpenPopup("ProjectNodeContext");
-            m_UserSelectedDirectory = true;
-        }
-        DrawInlineRename(directoryPath);
-        ImGui::SetCursorPos(afterRootCursor);
-
-        // 遍历 assets 下的一级项目
-        try
-        {
-            for (auto& entry : std::filesystem::directory_iterator(directoryPath))
-            {
-                const auto& path = entry.path();
-                std::string name = path.filename().string();
-                bool isDirectory = entry.is_directory();
-
-                // 添加缩进
-                ImGui::Indent(20.0f);
-
-                ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
-                    ImGuiTreeNodeFlags_SpanAvailWidth;
-
-                // 检查是否被选中
-                const bool childIsSelected = m_UserSelectedDirectory && m_SelectedDirectory == path;
-                if (childIsSelected)
-                {
-                    nodeFlags |= ImGuiTreeNodeFlags_Selected;
-                }
-
-                // 显示项目（目录或文件）
-                if (isDirectory)
-                {
-                    const bool renaming = (path == m_RenamePath);
-                    if (renaming)
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                    if (childIsSelected)
-                        PushSelectedTreeColors();
-                    ImGui::TreeNodeEx(name.c_str(), nodeFlags);
-                    if (childIsSelected)
-                        ImGui::PopStyleColor(3);
-                    if (renaming)
-                        ImGui::PopStyleColor();
-                    const ImVec2 afterHeaderCursor = ImGui::GetCursorPos();
-
-                    // 处理点击事件 - 只允许选择目录
-                    if (ImGui::IsItemClicked())
-                    {
-                        m_SelectedDirectory = path;
-                        m_TwoColumnCurrentFolder = path;
-                        m_UserSelectedDirectory = true;
-                    }
-                    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
-                        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
-                    {
-                        m_ContextPath = path;
-                        m_ContextIsDirectory = true;
-                        m_ContextIsRoot = false;
-                        m_SelectedDirectory = path;
-                        m_TwoColumnCurrentFolder = path;
-                        m_UserSelectedDirectory = true;
-                        ImGui::OpenPopup("ProjectNodeContext");
-                    }
-
-                    DrawInlineRename(path);
-                    ImGui::SetCursorPos(afterHeaderCursor);
-                }
-                else
-                {
-                    DisplayFileNode(path);
-                }
-
-                // 取消缩进
-                ImGui::Unindent(20.0f);
-            }
-        }
-        catch (const std::filesystem::filesystem_error& e)
-        {
-            TC_Core_Error("Failed to read directory: {0}", e.what());
-        }
-    }
-
-	// 文件节点显示函数
-    void ContentBrowserPanel::DisplayFileNode(const std::filesystem::path& path)
-    {
-        std::string name = path.filename().string();
-        ImGuiTreeNodeFlags fileNodeFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
-            ImGuiTreeNodeFlags_SpanAvailWidth;
-
-        // 检查是否为图片文件并显示预览
-        std::string extension = path.extension().string();
-        std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
-
-        if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
-        {
-            // 尝试从缓存中获取
-            std::string filepath = path.string();
-            auto it = m_ImageCache.find(filepath);
-            Ref<Texture2D> icon;
-
-            if (it != m_ImageCache.end())
-            {
-                icon = it->second;
-            }
-            else
-            {
-                // 加载图片并缓存
-                icon = Texture2D::Create(filepath);
-                m_ImageCache[filepath] = icon;
-            }
-
-            // 获取当前字体的行高
-            float textHeight = ImGui::GetFontSize();
-            float previewSize = textHeight;
-
-            // 在文件名左侧显示与文字高度相同的缩略图
-            ImGui::Image((ImTextureID)icon->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
-            ImGui::SameLine();
-        }
-        else
-        {
-            // 对于非图片文件，在左侧显示文件图标
-            float textHeight = ImGui::GetFontSize();
-            float iconSize = textHeight;
-            ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { iconSize, iconSize }, { 0, 1 }, { 1, 0 });
-            ImGui::SameLine();
-        }
-
-        const bool renaming = (path == m_RenamePath);
-        if (renaming)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-        ImGui::TreeNodeEx(name.c_str(), fileNodeFlags);
-        if (renaming)
-            ImGui::PopStyleColor();
-        const ImVec2 afterHeaderCursor = ImGui::GetCursorPos();
-
-        if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
-            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
-        {
-            m_ContextPath = path;
-            m_ContextIsDirectory = false;
-            m_ContextIsRoot = false;
-            ImGui::OpenPopup("ProjectNodeContext");
-        }
-
-        DrawInlineRename(path);
-        ImGui::SetCursorPos(afterHeaderCursor);
-
-        if (renaming)
-            return;
-
-        // 实现拖拽功能 - 修复点
-        if (ImGui::BeginDragDropSource())
-        {
-            // 修复：直接从 ProjectManager 获取项目，而不是使用未初始化的 m_Project
-            auto project = ProjectManager::Get().GetActiveProject();
-            std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-            auto relativePath = std::filesystem::relative(path, assetPath);
-            const wchar_t* itemPath = relativePath.c_str();
-
-            std::wstring ext = relativePath.extension().wstring();
-
-            TC_Core_Assert(!ext.empty());
-
-            if (ext == L".tomcat" || ext == L".tcproj")
-            {
-                ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-                ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
-            }
-            else if (s_ImageExtensionsW.find(ext) != s_ImageExtensionsW.end())
-            {
-                ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-                ImGui::Image((ImTextureID)m_ImageCache[path.string()]->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
-            }
-
-            ImGui::EndDragDropSource();
-        }
-
-        // 图片悬浮预览功能
-        if (ImGui::IsItemHovered() && s_ImageExtensions.find(extension) != s_ImageExtensions.end())
-        {
-            ImGui::BeginTooltip();
-            float previewSize = 200.0f;
-            ImGui::Image((ImTextureID)m_ImageCache[path.string()]->GetRendererID(), { previewSize, previewSize }, { 0, 1 }, { 1, 0 });
-            ImGui::EndTooltip();
-        }
-    }
-
-    void ContentBrowserPanel::OnImGuiRender()
-    {
-        static bool projectWindowOpen = true;
-        ImGui::Begin("Project", &projectWindowOpen, ImGuiWindowFlags_MenuBar);
-
-        FlushPendingCreateFolder();
-
-        // 触发弹出菜单
-        if (ShowMenu)
-        {
-            ImGui::OpenPopup("Project_menu");
-            ImGui::SetNextWindowPos(MenuPosi);
-            ShowMenu = false;
-        }
-
-        // 弹出菜单
-        if (ImGui::BeginPopup("Project_menu", ImGuiWindowFlags_NoMove))
-        {
-                        if (ImGui::MenuItem("One Column Layout"))
-            {
-                m_LayoutMode = OneColumn;
-                SaveLayoutSetting(); // editor-level setting
-                ImGui::CloseCurrentPopup();
-            }
-
-            if (ImGui::MenuItem("Two Column Layout"))
-            {
-                m_LayoutMode = TwoColumn;
-                SaveLayoutSetting(); // editor-level setting
-                ImGui::CloseCurrentPopup();
-            }
-
-            ImGui::EndPopup();
-        }
-
-        // 左右分栏布局
-        static float leftPanelWidth = 250.0f;
-        static bool isResizingSplitter = false;
-
-        // 移除所有可能的内边距
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-
-        // 左侧树状视图
-        ImGui::BeginChild("LeftPanel", m_LayoutMode == TwoColumn ? ImVec2(leftPanelWidth, 0) : ImVec2(0, 0), false);
-
-        auto project = ProjectManager::Get().GetActiveProject();
-        if (project)
-        {
-            std::filesystem::path assetPath = project->GetAssetPath();
-            if (m_LayoutMode == OneColumn)
-            {
-                DisplayDirectoryRecursive(assetPath, true);
-            }
-            else
-            {
-                DisplayDirectoryFlat(assetPath);
-            }
-
-            DrawNodeContextMenu();
-            DrawEmptyContextMenu(assetPath);
-
-            // 点击树面板空白处时取消选中高亮。
-            if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-                !ImGui::IsAnyItemHovered())
-            {
-                m_UserSelectedDirectory = false;
-            }
-        }
-        else
-        {
-            ImGui::TextDisabled("No project loaded");
-            ImGui::TextDisabled("Open a project to view assets");
-        }
-
-        ImGui::EndChild();
-
-        // 右侧预览区域（Two Column 模式）
-        if (m_LayoutMode == TwoColumn)
-        {
-            ImGui::SameLine(0, 0);
-
-            // ========== 可拖拽分隔条 ==========
-            float availableHeight = ImGui::GetContentRegionAvail().y;
-            float splitterHitAreaWidth = 10.0f;
-
-            // 避免零尺寸导致 ImGui 断言失败
-            if (availableHeight <= 0.0f)
-                availableHeight = 1.0f;
-
-            ImGui::InvisibleButton("Splitter", ImVec2(splitterHitAreaWidth, availableHeight));
-
-            if (ImGui::IsItemActive())
-            {
-                isResizingSplitter = true;
-                float delta = ImGui::GetIO().MouseDelta.x;
-                leftPanelWidth += delta;
-                leftPanelWidth = std::max(100.0f, std::min(ImGui::GetWindowWidth() - 200.0f, leftPanelWidth));
-            }
-            else
-            {
-                isResizingSplitter = false;
-            }
-
-            if (ImGui::IsItemHovered() || isResizingSplitter)
-            {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            }
-
-            ImVec2 buttonPos = ImGui::GetItemRectMin();
-            ImVec2 buttonSize = ImGui::GetItemRectSize();
-
-            ImDrawList* drawList = ImGui::GetWindowDrawList();
-            float lineCenterX = buttonPos.x + (splitterHitAreaWidth * 0.5f);
-            ImVec2 lineStart = ImVec2(lineCenterX, buttonPos.y);
-            ImVec2 lineEnd = ImVec2(lineCenterX, buttonPos.y + buttonSize.y);
-
-            ImU32 lineColor;
-            if (isResizingSplitter)
-                lineColor = IM_COL32(44, 93, 135, 255);      // Unity selection blue
-            else if (ImGui::IsItemHovered())
-                lineColor = IM_COL32(98, 98, 98, 255);       // #626262
-            else
-                lineColor = IM_COL32(25, 25, 25, 255);       // #191919
-
-            drawList->AddLine(lineStart, lineEnd, lineColor, 2.0f);
-            drawList->AddLine(ImVec2(lineCenterX - 1, lineStart.y),
-                ImVec2(lineCenterX - 1, lineEnd.y),
-                IM_COL32(25, 25, 25, 100), 1.0f);
-            drawList->AddLine(ImVec2(lineCenterX + 1, lineStart.y),
-                ImVec2(lineCenterX + 1, lineEnd.y),
-                IM_COL32(137, 137, 137, 100), 1.0f);
-
-            ImGui::SameLine(0, 0);
-            // ========== 分隔条结束 ==========
-
-            // RightPanel
-            ImGui::BeginChild("RightPanel", ImVec2(0, 0), false,
-                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-            auto rightPanelProject = ProjectManager::Get().GetActiveProject();
-            if (rightPanelProject)
-            {
-                std::filesystem::path assetPath = rightPanelProject->GetAssetPath();
-                std::filesystem::path displayPath = m_SelectedDirectory.empty() ? assetPath : m_SelectedDirectory;
-
-                // ========== 面包屑导航栏 ==========
-                // 设置面包屑样式
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
-                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
-
-                // 计算面包屑栏高度
-                float breadcrumbHeight = ImGui::GetFrameHeightWithSpacing();
-
-                // 获取 RightPanel 的完整尺寸
-                ImVec2 rightPanelPos = ImGui::GetWindowPos();
-                ImVec2 rightPanelSize = ImGui::GetWindowSize();
-
-                // 获取当前光标位置
-                ImVec2 cursorPos = ImGui::GetCursorPos();
-
-                // 计算绝对位置
-                ImVec2 breadcrumbAbsPos = ImVec2(rightPanelPos.x, rightPanelPos.y + cursorPos.y);
-
-                // 绘制面包屑背景
-                ImDrawList* drawListBg = ImGui::GetWindowDrawList();
-                ImRect breadcrumbRect(
-                    breadcrumbAbsPos,
-                    ImVec2(rightPanelPos.x + rightPanelSize.x, breadcrumbAbsPos.y + breadcrumbHeight)
-                );
-                drawListBg->AddRectFilled(breadcrumbRect.Min, breadcrumbRect.Max, IM_COL32(60, 60, 60, 255));
-
-                // 创建面包屑内容区域
-                ImGui::BeginChild("BreadcrumbContent", ImVec2(-FLT_MIN, breadcrumbHeight), false,
-                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-                    ImGuiWindowFlags_NoBackground);
-
-                // 设置按钮样式 - 完全透明，无悬浮效果
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));  // 悬浮时也透明
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));   // 点击时也透明
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(196.0f / 255.0f, 196.0f / 255.0f, 196.0f / 255.0f, 1.0f));
-
-                // 获取相对于 assets 的路径
-                std::filesystem::path relativePath;
-                if (displayPath == assetPath)
-                {
-                    relativePath = "";
-                }
-                else
-                {
-                    relativePath = std::filesystem::relative(displayPath, assetPath);
-                }
-
-                // 构建面包屑路径
-                std::vector<std::string> breadcrumbs;
-                std::filesystem::path currentPath;
-
-                if (!relativePath.empty())
-                {
-                    for (const auto& part : relativePath)
-                    {
-                        currentPath /= part;
-                        breadcrumbs.push_back(part.string());
-                    }
-                }
-
-                // 垂直居中
-                float buttonHeight = ImGui::GetFrameHeight();
-                float centerOffset = (breadcrumbHeight - buttonHeight) * 0.5f;
-                ImGui::SetCursorPosY(centerOffset);
-
-                // 左对齐 - 从左边距开始
-                ImGui::SetCursorPosX(8.0f);
-
-                // 始终显示 "assets" 根目录
-                if (ImGui::Button("Assets"))
-                {
-                    m_SelectedDirectory = assetPath;
-                    m_UserSelectedDirectory = true;
-                }
-
-                // 显示路径分隔符和子目录
-                std::filesystem::path accumulatedPath = assetPath;
-
-                for (size_t i = 0; i < breadcrumbs.size(); ++i)
-                {
-                    ImGui::SameLine(0, 4);
-                    ImGui::TextDisabled(">");
-
-                    ImGui::SameLine(0, 4);
-                    accumulatedPath /= breadcrumbs[i];
-
-                    if (ImGui::Button(breadcrumbs[i].c_str()))
-                    {
-                        m_SelectedDirectory = accumulatedPath;
-                        m_UserSelectedDirectory = true;
-                    }
-                }
-
-                ImGui::PopStyleColor(4);
-                ImGui::EndChild();
-
-                // 弹出面包屑样式
-                ImGui::PopStyleVar(2);
-
-                // 关键：将光标位置设置到面包屑下方，不留空隙
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY());
-
-                // ========== 内容显示区域 ==========
-                static float padding = 16.0f;
-                static float thumbnailSize = 128.0f;
-                float cellSize = thumbnailSize + padding;
-
-                // 获取内容区域的实际宽度
-                float panelWidth = ImGui::GetContentRegionAvail().x;
-                int columnCount = (int)(panelWidth / cellSize);
-                if (columnCount < 1)
-                    columnCount = 1;
-
-                // 内容区域样式 - 移除顶部内边距
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
-                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-
-                // 内容区域 - 从当前光标位置开始，紧贴面包屑
-                ImGui::BeginChild("ContentArea", ImVec2(0, 0), false);
-
-                ImGui::Columns(columnCount, 0, false);
-
-                // ========== 路径回退逻辑 ==========
-                std::filesystem::path actualDisplayPath = displayPath;
-                bool useVirtualPath = false;
-
-                // 检查物理目录是否存在
-                if (!std::filesystem::exists(actualDisplayPath) || !std::filesystem::is_directory(actualDisplayPath))
-                {
-                    // 物理路径不存在，尝试使用相对于 exe 的虚拟路径
-                    std::filesystem::path virtualPath = std::filesystem::current_path() / "Packages" / "TetxProject" / "Assets";
-
-                    if (std::filesystem::exists(virtualPath) && std::filesystem::is_directory(virtualPath))
-                    {
-                        actualDisplayPath = virtualPath;
-                        useVirtualPath = true;
-                        TC_Core_Info("Using virtual path: {0}", actualDisplayPath.string());
-                    }
-                    else
-                    {
-                        // 如果虚拟路径也不存在，尝试使用 m_CurrentDirectory
-                        if (std::filesystem::exists(m_CurrentDirectory) && std::filesystem::is_directory(m_CurrentDirectory))
-                        {
-                            actualDisplayPath = m_CurrentDirectory;
-                            useVirtualPath = true;
-                            TC_Core_Info("Using m_CurrentDirectory: {0}", actualDisplayPath.string());
-                        }
-                        else
-                        {
-                            TC_Core_Error("Display path does not exist or is not accessible: {0}", displayPath.string());
-                            ImGui::TextDisabled("Cannot access assets directory");
-                            ImGui::EndChild();
-                            ImGui::PopStyleVar(3);
-                            ImGui::EndChild();  // RightPanel
-                            ImGui::PopStyleVar(3);  // 最外层样式
-                            ImGui::End();  // Window
-                            return;
-                        }
-                    }
-                }
-
-                try
-                {
-                    for (auto& directoryEntry : std::filesystem::directory_iterator(actualDisplayPath))
-                    {
-                        const auto& path = directoryEntry.path();
-
-                        // 计算相对路径时，如果使用了虚拟路径，需要特殊处理
-                        std::filesystem::path relativePathItem;
-                        if (useVirtualPath)
-                        {
-                            // 如果使用虚拟路径，尝试从虚拟路径中提取相对部分
-                            std::filesystem::path virtualBase = std::filesystem::current_path() / "Packages" / "TetxProject" / "Assets";
-                            if (path.string().find(virtualBase.string()) == 0)
-                            {
-                                relativePathItem = std::filesystem::relative(path, virtualBase);
-                            }
-                            else
-                            {
-                                relativePathItem = path.filename();
-                            }
-                        }
-                        else
-                        {
-                            relativePathItem = std::filesystem::relative(path, assetPath);
-                        }
-
-                        std::string filenameString = relativePathItem.filename().string();
-
-                        ImGui::PushID(filenameString.c_str());
-                        Ref<Texture2D> icon;
-
-                        if (directoryEntry.is_directory())
-                        {
-                            icon = m_DirectoryIcon;
-                        }
-                        else
-                        {
-                            std::string extension = path.extension().string();
-                            std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
-
-                            if (s_ImageExtensions.find(extension) != s_ImageExtensions.end())
-                            {
-                                std::string filepath = path.string();
-                                auto it = m_ImageCache.find(filepath);
-                                if (it != m_ImageCache.end())
-                                {
-                                    icon = it->second;
-                                }
-                                else
-                                {
-                                    icon = Texture2D::Create(filepath);
-                                    m_ImageCache[filepath] = icon;
-                                }
-                            }
-                            else
-                            {
-                                icon = m_FileIcon;
-                            }
-                        }
-
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-                        ImGui::ImageButton((ImTextureID)icon->GetRendererID(), { thumbnailSize, thumbnailSize }, { 0, 1 }, { 1, 0 });
-
-                        if (ImGui::BeginDragDropSource())
-                        {
-                            const wchar_t* itemPath = relativePathItem.c_str();
-                            std::wstring extension = relativePathItem.extension().wstring();
-                            TC_Core_Assert(!extension.empty());
-
-                            if (extension == L".tomcat" || extension == L".tcproj")
-                            {
-                                ImGui::SetDragDropPayload("TOMCAT_SCENE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-                                ImGui::Image((ImTextureID)m_FileIcon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
-                            }
-                            else if (s_ImageExtensionsW.find(extension) != s_ImageExtensionsW.end())
-                            {
-                                ImGui::SetDragDropPayload("SPRITE", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-                                ImGui::Image((ImTextureID)icon->GetRendererID(), { 64, 64 }, { 0, 1 }, { 1, 0 });
-                            }
-
-                            ImGui::EndDragDropSource();
-                        }
-
-                        ImGui::PopStyleColor(3);
-
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        {
-                            if (directoryEntry.is_directory())
-                            {
-                                m_SelectedDirectory = path;
-                                m_UserSelectedDirectory = true;
-                            }
-                        }
-
-                        ImGui::TextWrapped(filenameString.c_str());
-                        ImGui::NextColumn();
-                        ImGui::PopID();
-                    }
-                }
-                catch (const std::filesystem::filesystem_error& e)
-                {
-                    TC_Core_Error("Failed to read display directory: {0}", e.what());
-                    ImGui::TextDisabled("Error reading directory: %s", e.what());
-                }
-
-                ImGui::Columns(1);
-
-                if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl)
-                {
-                    float scrollDelta = ImGui::GetIO().MouseWheel;
-                    if (scrollDelta != 0)
-                    {
-                        thumbnailSize -= scrollDelta * 8.0f;
-                        thumbnailSize = std::max(128.0f, std::min(512.0f, thumbnailSize));
-                        float oldRatio = padding / thumbnailSize;
-                        padding = thumbnailSize * oldRatio;
-                        padding = std::max(0.0f, std::min(32.0f, padding));
-                    }
-                }
-
-                ImGui::EndChild();  // ContentArea
-                ImGui::PopStyleVar(3);  // 弹出 ContentArea 的样式
-            }
-            else
-            {
-                ImGui::TextDisabled("No project loaded");
-                ImGui::TextDisabled("Open a project to view assets");
-            }
-
-            ImGui::EndChild();  // RightPanel
-        }
-
-        ImGui::PopStyleVar(3);  // 弹出最外层的样式
-        ImGui::End();
-    }
+	Ref<Texture2D> ContentBrowserPanel::GetAssetIcon(const std::filesystem::path& path, bool isDirectory)
+	{
+		if (isDirectory)
+			return m_DirectoryIcon;
+		if (s_ImageExtensions.find(ToLower(PathToUTF8(path.extension()))) == s_ImageExtensions.end())
+			return m_FileIcon;
+		const std::filesystem::path canonicalPath = CanonicalPath(path);
+		const std::string key = PathToUTF8(canonicalPath);
+		auto cached = m_ImageCache.find(key);
+		if (cached != m_ImageCache.end())
+			return cached->second;
+		Ref<Texture2D> texture = Texture2D::Create(canonicalPath);
+		m_ImageCache.emplace(key, texture);
+		return texture;
+	}
+
+	void ContentBrowserPanel::SubmitDragPayload(const std::filesystem::path& path,
+		const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon)
+	{
+		const std::string extension = ToLower(PathToUTF8(path.extension()));
+		const bool isScene = extension == ".tomcat";
+		const bool isImage = s_ImageExtensions.find(extension) != s_ImageExtensions.end();
+		if (!isScene && !isImage)
+			return;
+		if (!IsWithinRoot(assetRoot, path, false))
+			return;
+		std::error_code error;
+		const std::filesystem::path relative = std::filesystem::relative(CanonicalPath(path), assetRoot, error);
+		if (error || relative.empty() || !ImGui::BeginDragDropSource())
+			return;
+		const std::wstring payloadPath = relative.wstring();
+		if (isScene)
+			ImGui::SetDragDropPayload("TOMCAT_SCENE", payloadPath.c_str(), (payloadPath.size() + 1) * sizeof(wchar_t));
+		else
+			ImGui::SetDragDropPayload("SPRITE", payloadPath.c_str(), (payloadPath.size() + 1) * sizeof(wchar_t));
+		ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())),
+			ImVec2(64.0f, 64.0f), ImVec2(0, 1), ImVec2(1, 0));
+		ImGui::EndDragDropSource();
+	}
+
+	void ContentBrowserPanel::DrawFileTreeNode(const std::filesystem::path& path)
+	{
+		const std::filesystem::path root = GetAssetRoot();
+		if (!IsManagedEntry(root, path))
+			return;
+		ImGui::PushID(PathToUTF8(LexicalPath(path)).c_str());
+		const bool selected = m_UserSelectedDirectory && LexicalPath(m_SelectedPath) == LexicalPath(path);
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+			ImGuiTreeNodeFlags_SpanAvailWidth | (selected ? ImGuiTreeNodeFlags_Selected : 0);
+		ImGui::TreeNodeEx("##File", flags, "%s", PathToUTF8(path.filename()).c_str());
+		if (ImGui::IsItemClicked())
+		{
+			m_SelectedPath = path;
+			m_UserSelectedDirectory = true;
+		}
+		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+			OpenAsset(path, false);
+		Ref<Texture2D> icon = GetAssetIcon(path, false);
+		SubmitDragPayload(path, root, icon);
+		if (ImGui::BeginPopupContextItem("Context"))
+		{
+			m_ContextPath = path;
+			m_ContextIsDirectory = false;
+			m_ContextIsRoot = false;
+			DrawContextMenuBody();
+			ImGui::EndPopup();
+		}
+		ImGui::PopID();
+	}
+
+	void ContentBrowserPanel::DrawDirectoryTree(const std::filesystem::path& directoryPath, bool isRoot, bool includeFiles)
+	{
+		const std::filesystem::path root = GetAssetRoot();
+		std::error_code directoryError;
+		if (!IsWithinRoot(root, directoryPath) ||
+			!std::filesystem::is_directory(directoryPath, directoryError) || directoryError)
+			return;
+		const std::string key = PathToUTF8(CanonicalPath(directoryPath));
+		const auto entries = ReadDirectory(directoryPath);
+		const bool hasVisibleChildren = std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
+			return IsManagedEntry(root, entry.path()) && (includeFiles || IsRecursiveDirectory(entry));
+		});
+		const bool selected = m_UserSelectedDirectory && CanonicalPath(m_SelectedPath) == CanonicalPath(directoryPath);
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow |
+			ImGuiTreeNodeFlags_OpenOnDoubleClick | (selected ? ImGuiTreeNodeFlags_Selected : 0);
+		if (!hasVisibleChildren)
+			flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+		if (isRoot || m_ExpandedNodes.find(key) != m_ExpandedNodes.end())
+			flags |= ImGuiTreeNodeFlags_DefaultOpen;
+		if (m_PendingOpenDirectories.erase(key) > 0)
+			ImGui::SetNextItemOpen(true);
+
+		ImGui::PushID(key.c_str());
+		const std::string directoryLabel = isRoot ? "Assets" : PathToUTF8(directoryPath.filename());
+		const bool open = ImGui::TreeNodeEx("##Directory", flags, "%s", directoryLabel.c_str());
+		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+		{
+			m_SelectedPath = directoryPath;
+			m_UserSelectedDirectory = true;
+			if (m_LayoutMode == TwoColumn)
+				m_CurrentDirectory = directoryPath;
+		}
+		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+			OpenAsset(directoryPath, true);
+		if (ImGui::IsItemToggledOpen())
+		{
+			if (open) m_ExpandedNodes.insert(key);
+			else m_ExpandedNodes.erase(key);
+		}
+		if (ImGui::BeginPopupContextItem("Context"))
+		{
+			m_ContextPath = directoryPath;
+			m_ContextIsDirectory = true;
+			m_ContextIsRoot = isRoot;
+			DrawContextMenuBody();
+			ImGui::EndPopup();
+		}
+		if (open && hasVisibleChildren)
+		{
+			for (const auto& entry : entries)
+			{
+				if (!IsManagedEntry(root, entry.path()))
+					continue;
+				if (IsRecursiveDirectory(entry))
+					DrawDirectoryTree(entry.path(), false, includeFiles);
+				else if (includeFiles)
+					DrawFileTreeNode(entry.path());
+			}
+			ImGui::TreePop();
+		}
+		ImGui::PopID();
+	}
+
+	void ContentBrowserPanel::DrawBreadcrumbs(const std::filesystem::path& assetRoot)
+	{
+		if (ImGui::Button("Assets"))
+			OpenAsset(assetRoot, true);
+		std::error_code error;
+		const std::filesystem::path relative = std::filesystem::relative(m_CurrentDirectory, assetRoot, error);
+		if (error || relative == ".")
+			return;
+		std::filesystem::path accumulated = assetRoot;
+		for (const auto& part : relative)
+		{
+			accumulated /= part;
+			ImGui::SameLine();
+			ImGui::TextDisabled(">");
+			ImGui::SameLine();
+			const std::string label = PathToUTF8(part);
+			if (ImGui::Button(label.c_str()))
+				OpenAsset(accumulated, true);
+		}
+	}
+
+	void ContentBrowserPanel::DrawAssetItem(const std::filesystem::directory_entry& entry,
+		const std::filesystem::path& assetRoot)
+	{
+		const std::filesystem::path path = entry.path();
+		if (!IsManagedEntry(assetRoot, path))
+			return;
+		std::error_code error;
+		const bool isDirectory = entry.is_directory(error);
+		Ref<Texture2D> icon = GetAssetIcon(path, isDirectory);
+		const bool selected = m_UserSelectedDirectory && LexicalPath(m_SelectedPath) == LexicalPath(path);
+		ImGui::PushID(PathToUTF8(LexicalPath(path)).c_str());
+		if (selected)
+			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Header));
+		ImGui::ImageButton(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())),
+			ImVec2(m_ThumbnailSize, m_ThumbnailSize),
+			ImVec2(0, 1), ImVec2(1, 0), 0);
+		if (selected)
+			ImGui::PopStyleColor();
+		if (ImGui::IsItemClicked())
+		{
+			m_SelectedPath = path;
+			m_UserSelectedDirectory = true;
+		}
+		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+			OpenAsset(path, isDirectory);
+		if (!isDirectory)
+			SubmitDragPayload(path, assetRoot, icon);
+		if (ImGui::BeginPopupContextItem("Context"))
+		{
+			m_ContextPath = path;
+			m_ContextIsDirectory = isDirectory;
+			m_ContextIsRoot = false;
+			DrawContextMenuBody();
+			ImGui::EndPopup();
+		}
+		ImGui::TextWrapped("%s", PathToUTF8(path.filename()).c_str());
+		if (!isDirectory && s_ImageExtensions.find(ToLower(PathToUTF8(path.extension()))) != s_ImageExtensions.end() && ImGui::IsItemHovered())
+		{
+			ImGui::BeginTooltip();
+			ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())),
+				ImVec2(200.0f, 200.0f), ImVec2(0, 1), ImVec2(1, 0));
+			ImGui::EndTooltip();
+		}
+		ImGui::NextColumn();
+		ImGui::PopID();
+	}
+
+	void ContentBrowserPanel::DrawAssetGrid(const std::filesystem::path& assetRoot)
+	{
+		std::error_code directoryError;
+		if (!IsWithinRoot(assetRoot, m_CurrentDirectory) ||
+			!std::filesystem::is_directory(m_CurrentDirectory, directoryError) || directoryError)
+			m_CurrentDirectory = assetRoot;
+		DrawBreadcrumbs(assetRoot);
+		ImGui::Separator();
+		const float cellSize = m_ThumbnailSize + 16.0f;
+		const int columns = std::max(1, (int)(ImGui::GetContentRegionAvail().x / cellSize));
+		ImGui::Columns(columns, nullptr, false);
+		for (const auto& entry : ReadDirectory(m_CurrentDirectory))
+			DrawAssetItem(entry, assetRoot);
+		ImGui::Columns(1);
+		if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl)
+		{
+			m_ThumbnailSize = std::clamp(m_ThumbnailSize - ImGui::GetIO().MouseWheel * 8.0f, 64.0f, 512.0f);
+		}
+		DrawEmptyContextMenu(assetRoot);
+	}
+
+	void ContentBrowserPanel::OnImGuiRender(bool* open)
+	{
+		if (open && !*open)
+			return;
+		const bool visible = ImGui::Begin("Project", open, ImGuiWindowFlags_MenuBar);
+		if (!visible)
+		{
+			ImGui::End();
+			return;
+		}
+
+		if (ImGui::BeginMenuBar())
+		{
+			if (ImGui::BeginMenu("Layout"))
+			{
+				if (ImGui::MenuItem("One Column", nullptr, m_LayoutMode == OneColumn))
+				{
+					m_LayoutMode = OneColumn;
+					SaveLayoutSetting();
+				}
+				if (ImGui::MenuItem("Two Column", nullptr, m_LayoutMode == TwoColumn))
+				{
+					m_LayoutMode = TwoColumn;
+					SaveLayoutSetting();
+				}
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenuBar();
+		}
+
+		FlushPendingCreateFolder();
+		const std::filesystem::path assetRoot = GetAssetRoot();
+		std::error_code error;
+		if (!m_Project || !std::filesystem::is_directory(assetRoot, error))
+		{
+			ImGui::TextDisabled("No accessible project asset directory");
+			DrawRenamePopup();
+			DrawDeleteConfirmation();
+			ImGui::End();
+			return;
+		}
+
+		if (m_LayoutMode == OneColumn)
+		{
+			DrawDirectoryTree(assetRoot, true, true);
+			DrawEmptyContextMenu(assetRoot);
+		}
+		else
+		{
+			const float splitterWidth = 8.0f;
+			ImGui::BeginChild("DirectoryTree", ImVec2(m_LeftPanelWidth, 0.0f), false);
+			DrawDirectoryTree(assetRoot, true, false);
+			DrawEmptyContextMenu(assetRoot);
+			ImGui::EndChild();
+			ImGui::SameLine(0.0f, 0.0f);
+			ImGui::InvisibleButton("ProjectSplitter", ImVec2(splitterWidth, std::max(1.0f, ImGui::GetContentRegionAvail().y)));
+			if (ImGui::IsItemActive())
+				m_LeftPanelWidth = std::clamp(m_LeftPanelWidth + ImGui::GetIO().MouseDelta.x,
+					120.0f, std::max(120.0f, ImGui::GetWindowWidth() - 240.0f));
+			if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+				ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+			ImGui::SameLine(0.0f, 0.0f);
+			ImGui::BeginChild("AssetGrid", ImVec2(0.0f, 0.0f), false);
+			DrawAssetGrid(assetRoot);
+			ImGui::EndChild();
+		}
+
+		DrawNodeContextMenu();
+		DrawRenamePopup();
+		DrawDeleteConfirmation();
+		ImGui::End();
+	}
 
 }

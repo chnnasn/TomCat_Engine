@@ -1,6 +1,7 @@
 #include <TomCat.h>
 #include <TomCat/Core/EntryPoint.h>
 #include <TomCat/Project/ProjectManager.h>
+#include <TomCat/Utils/PathUtils.h>
 
 #include "EditorLayer.h"
 
@@ -12,32 +13,15 @@ namespace TomCat {
 	{
 	public:
 		TomCatInput(ApplicationCommandLineArgs args)
-			: Application("TomCatEditor","Packages/Resources/Icons/Logo.ico", args)
+			: Application("TomCatEditor", "Packages/Resources/Icons/Logo.ico")
 		{
-			Ref<Project> project = nullptr;
-			bool is2DMode = false; // Editor launched directly defaults to 3D.
-			
 			if (args.Count > 1)
 			{
-				std::string projectPath = args[1];
-				project = ProjectManager::Get().LoadProject(projectPath);
-			}
-			if (args.Count > 2)
-			{
-				std::string mode = args[2];
-				is2DMode = mode == "2D" || mode == "2d";
+				const std::filesystem::path projectPath = UTF8ToPath(args[1]);
+				ProjectManager::Get().LoadProject(projectPath);
 			}
 			
-			if (project)
-			{
-				ProjectManager::Get().SetActiveProject(project);
-			}
-			
-			PushLayer(new EditorLayer(is2DMode));
-		}
-
-		~TomCatInput()
-		{
+			PushLayer(new EditorLayer());
 		}
 	};
 
