@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
@@ -27,6 +28,7 @@ namespace TomCat {
 		const std::unordered_set<std::string> s_ImageExtensions = {
 			".png", ".jpg", ".jpeg", ".bmp", ".tga", ".gif", ".psd", ".hdr", ".pic"
 		};
+		constexpr const char* kAssetDirectoryPayloadID = "TOMCAT_ASSET_DIRECTORY";
 
 		std::string ToLower(std::string value)
 		{
@@ -193,7 +195,10 @@ namespace TomCat {
 			std::vector<std::filesystem::directory_entry> entries;
 			std::error_code error;
 			for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error))
-				entries.emplace_back(*it);
+			{
+				if (!AssetRegistry::IsMetaFile(it->path()))
+					entries.emplace_back(*it);
+			}
 			if (error)
 				TC_Core_Error("Failed to read directory {0}: {1}", PathToUTF8(directory), error.message());
 			std::sort(entries.begin(), entries.end(), [](const auto& lhs, const auto& rhs) {
@@ -274,6 +279,14 @@ namespace TomCat {
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
 		m_Project = std::move(project);
+		if (m_Project)
+		{
+			if (!AssetManager::Get().SetProject(m_Project))
+				TC_Core_Warn("Asset registry scan completed with errors for '{0}'",
+					PathToUTF8(m_Project->GetProjectPath()));
+		}
+		else
+			AssetManager::Get().Shutdown();
 		m_ProjectStateWritable = true;
 		m_CurrentDirectory.clear();
 		m_SelectedPath.clear();
@@ -284,7 +297,6 @@ namespace TomCat {
 		m_PendingCreateFolderParent.clear();
 		m_RenamePath.clear();
 		m_DeletePath.clear();
-		m_ImageCache.clear();
 		LoadLayoutSetting();
 		RestoreProjectState();
 	}
@@ -300,9 +312,6 @@ namespace TomCat {
 		const EditorProjectStateLoadResult loadResult = m_Project->LoadEditorState(state);
 		if (loadResult == EditorProjectStateLoadResult::Failed)
 			m_ProjectStateWritable = false;
-		const EditorProjectState* legacyState = m_Project->GetLegacyEditorState();
-		if (loadResult != EditorProjectStateLoadResult::Loaded && legacyState)
-			state = *legacyState;
 
 		auto resolveStoredPath = [&](const std::string& stored) {
 			if (stored.empty())
@@ -324,15 +333,6 @@ namespace TomCat {
 			error.clear();
 			if (IsWithinRoot(root, node) && std::filesystem::is_directory(node, error))
 				m_ExpandedNodes.insert(PathToUTF8(node));
-		}
-
-		// Perform a one-way migration only when editor.json does not exist. A
-		// malformed/unreadable editor.json is left untouched for manual recovery.
-		if (loadResult == EditorProjectStateLoadResult::Missing && legacyState &&
-			!m_Project->SaveEditorState(state))
-		{
-			TC_Core_Warn("Could not migrate legacy Content Browser state for '{0}'",
-				PathToUTF8(m_Project->GetProjectPath()));
 		}
 	}
 
@@ -481,8 +481,10 @@ namespace TomCat {
 			return;
 		}
 
-		if (ToLower(PathToUTF8(managedPath.extension())) == ".tomcat" && m_SceneOpenCallback)
-			m_SceneOpenCallback(managedPath);
+		const AssetHandle handle = AssetManager::Get().ImportAsset(managedPath);
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+		if (metadata && metadata->Type == AssetType::Scene && m_SceneOpenCallback)
+			m_SceneOpenCallback(handle);
 		else
 			TC_Warn("Opening this file type is not supported yet: {0}", PathToUTF8(managedPath.filename()));
 	}
@@ -493,6 +495,19 @@ namespace TomCat {
 		std::filesystem::path nativePath;
 		if (!GetManagedMutationPath(root, path, nativePath))
 			return;
+		std::error_code typeError;
+		if (!std::filesystem::is_directory(nativePath, typeError))
+		{
+			m_RenameHandle = AssetManager::Get().ImportAsset(nativePath);
+			if (static_cast<uint64_t>(m_RenameHandle) == 0)
+			{
+				TC_Warn("Cannot rename an unregistered or conflicted asset: {0}",
+					PathToUTF8(nativePath));
+				return;
+			}
+		}
+		else
+			m_RenameHandle = AssetHandle(0);
 		m_RenamePath = nativePath;
 		std::fill(std::begin(m_RenameBuffer), std::end(m_RenameBuffer), '\0');
 		const std::string name = PathToUTF8(m_RenamePath.filename());
@@ -504,6 +519,7 @@ namespace TomCat {
 	void ContentBrowserPanel::CancelRename()
 	{
 		m_RenamePath.clear();
+		m_RenameHandle = AssetHandle(0);
 		m_RenameFocus = false;
 	}
 
@@ -533,32 +549,60 @@ namespace TomCat {
 		std::error_code error;
 		const std::filesystem::file_status destinationStatus = std::filesystem::symlink_status(requestedNewPath, error);
 		const bool destinationExists = !error && std::filesystem::exists(destinationStatus);
+		bool destinationConflicts = destinationExists;
+		if (destinationExists)
+		{
+			error.clear();
+			destinationConflicts = !std::filesystem::equivalent(oldPath, requestedNewPath, error) || error;
+		}
 		error.clear();
-		if (!GetManagedMutationPath(root, requestedNewPath, newPath, false) || destinationExists)
+		if (!GetManagedMutationPath(root, requestedNewPath, newPath, false) || destinationConflicts)
 		{
 			TC_Warn("Cannot rename asset to {0}", PathToUTF8(requestedNewPath));
 			return {};
 		}
 
-		EraseCachedImagesUnder(oldPath);
-		std::filesystem::rename(oldPath, newPath, error);
-		if (error)
+		const AssetHandle movedHandle = m_RenameHandle;
+		const bool moved = static_cast<uint64_t>(movedHandle) != 0
+			? AssetManager::Get().MoveAsset(movedHandle, newPath)
+			: AssetManager::Get().MoveAsset(oldPath, newPath);
+		if (!moved)
 		{
-			TC_Core_Error("Failed to rename {0}: {1}", PathToUTF8(oldPath), error.message());
+			TC_Core_Error("Failed to rename asset '{0}' to '{1}'",
+				PathToUTF8(oldPath), PathToUTF8(newPath));
 			return {};
 		}
 
+		if (!ApplyMovedPath(oldPath, newPath, movedHandle))
+			return {};
+		m_RenamePath.clear();
+		m_RenameHandle = AssetHandle(0);
+		m_RenameFocus = false;
+		return newPath;
+	}
+
+	bool ContentBrowserPanel::ApplyMovedPath(const std::filesystem::path& oldPath,
+		const std::filesystem::path& newPath, AssetHandle movedHandle)
+	{
+		if (m_AssetRenamedCallback && !m_AssetRenamedCallback(oldPath, newPath))
+		{
+			const bool rolledBack = static_cast<uint64_t>(movedHandle) != 0
+				? AssetManager::Get().MoveAsset(movedHandle, oldPath)
+				: AssetManager::Get().MoveAsset(newPath, oldPath);
+			if (!rolledBack)
+				TC_Core_Error("Asset move callback failed and the move could not be rolled back: '{0}'",
+					PathToUTF8(newPath));
+			return false;
+		}
 		m_CurrentDirectory = RemapPath(m_CurrentDirectory, oldPath, newPath);
 		m_SelectedPath = RemapPath(m_SelectedPath, oldPath, newPath);
+		m_ContextPath = RemapPath(m_ContextPath, oldPath, newPath);
+		m_DeletePath = RemapPath(m_DeletePath, oldPath, newPath);
 		std::unordered_set<std::string> remappedNodes;
 		for (const std::string& node : m_ExpandedNodes)
 			remappedNodes.insert(PathToUTF8(RemapPath(UTF8ToPath(node), oldPath, newPath)));
 		m_ExpandedNodes.swap(remappedNodes);
-		if (m_AssetRenamedCallback)
-			m_AssetRenamedCallback(oldPath, newPath);
-		m_RenamePath.clear();
-		m_RenameFocus = false;
-		return newPath;
+		return true;
 	}
 
 	void ContentBrowserPanel::RequestDeleteAsset(const std::filesystem::path& path, bool isDirectory)
@@ -569,22 +613,36 @@ namespace TomCat {
 			return;
 		m_DeletePath = nativePath;
 		m_DeleteIsDirectory = isDirectory;
+		m_DeleteHandle = AssetHandle(0);
+		if (!isDirectory)
+		{
+			m_DeleteHandle = AssetManager::Get().ImportAsset(nativePath);
+			if (static_cast<uint64_t>(m_DeleteHandle) == 0)
+			{
+				TC_Warn("Cannot delete an unregistered or conflicted asset through the Content Browser: {0}",
+					PathToUTF8(nativePath));
+				m_DeletePath.clear();
+				return;
+			}
+		}
+		m_DeleteReferences.clear();
+		const std::vector<AssetHandle> handles =
+			AssetManager::Get().GetRegistry().GetHandlesUnderPath(nativePath);
+		std::unordered_set<std::string> seenReferences;
+		for (AssetHandle handle : handles)
+		{
+			for (const AssetReference& reference : AssetManager::Get().FindReferences(handle))
+			{
+				const std::string key = std::to_string(static_cast<uint64_t>(reference.ReferencedAsset)) + "|" +
+					PathToUTF8(reference.FilePath) + "|" + reference.PropertyPath;
+				if (seenReferences.emplace(key).second)
+					m_DeleteReferences.push_back(reference);
+			}
+		}
 		m_OpenDeletePopup = true;
 	}
 
-	void ContentBrowserPanel::EraseCachedImagesUnder(const std::filesystem::path& path)
-	{
-		for (auto it = m_ImageCache.begin(); it != m_ImageCache.end();)
-		{
-			const std::filesystem::path cachedPath = UTF8ToPath(it->first);
-			if (LexicalPath(cachedPath) == LexicalPath(path) || IsWithinLexicalRoot(path, cachedPath, false))
-				it = m_ImageCache.erase(it);
-			else
-				++it;
-		}
-	}
-
-	void ContentBrowserPanel::DeleteAsset(const std::filesystem::path& path, bool)
+	void ContentBrowserPanel::DeleteAsset(const std::filesystem::path& path, bool force)
 	{
 		const std::filesystem::path root = GetAssetRoot();
 		std::filesystem::path managedPath;
@@ -594,23 +652,14 @@ namespace TomCat {
 			return;
 		}
 
-		EraseCachedImagesUnder(managedPath);
-		std::error_code error;
-		const std::filesystem::file_status status = std::filesystem::symlink_status(managedPath, error);
-		if (error)
+		std::vector<AssetReference> references;
+		const bool deleted = !m_DeleteIsDirectory &&
+			static_cast<uint64_t>(m_DeleteHandle) != 0
+			? AssetManager::Get().DeleteAsset(m_DeleteHandle, force, &references)
+			: AssetManager::Get().DeleteAsset(managedPath, force, &references);
+		if (!deleted)
 		{
-			TC_Core_Error("Failed to inspect {0}: {1}", PathToUTF8(managedPath), error.message());
-			return;
-		}
-		bool removed = false;
-		if (std::filesystem::is_directory(status) && !std::filesystem::is_symlink(status))
-			removed = std::filesystem::remove_all(managedPath, error) > 0;
-		else
-			removed = std::filesystem::remove(managedPath, error);
-		if (error || !removed)
-		{
-			TC_Core_Error("Failed to delete {0}: {1}", PathToUTF8(managedPath),
-				error ? error.message() : "the entry no longer exists");
+			TC_Core_Error("Failed to delete asset '{0}'", PathToUTF8(managedPath));
 			return;
 		}
 		if (m_AssetDeletedCallback)
@@ -633,6 +682,8 @@ namespace TomCat {
 		}
 		if (m_ContextPath == managedPath)
 			m_ContextPath.clear();
+		m_DeleteHandle = AssetHandle(0);
+		m_DeleteReferences.clear();
 	}
 
 	void ContentBrowserPanel::FlushPendingCreateFolder()
@@ -740,16 +791,36 @@ namespace TomCat {
 		if (ImGui::BeginPopupModal("Delete Asset?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			ImGui::TextWrapped("This cannot be undone. Delete '%s'?", PathToUTF8(m_DeletePath.filename()).c_str());
-			if (ImGui::Button("Delete"))
+			if (!m_DeleteReferences.empty())
 			{
-				DeleteAsset(m_DeletePath, m_DeleteIsDirectory);
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.15f, 1.0f),
+					"Referenced by %zu project or scene field(s). Forced deletion keeps those references missing:",
+					m_DeleteReferences.size());
+				const size_t shown = std::min<size_t>(m_DeleteReferences.size(), 6);
+				for (size_t index = 0; index < shown; ++index)
+				{
+					const auto& reference = m_DeleteReferences[index];
+					ImGui::BulletText("%s (%s)", PathToUTF8(reference.FilePath).c_str(),
+						reference.PropertyPath.c_str());
+				}
+				if (shown < m_DeleteReferences.size())
+					ImGui::TextDisabled("... and %zu more", m_DeleteReferences.size() - shown);
+			}
+			const char* deleteLabel = m_DeleteReferences.empty() ? "Delete" : "Delete Anyway";
+			if (ImGui::Button(deleteLabel))
+			{
+				DeleteAsset(m_DeletePath, !m_DeleteReferences.empty());
 				m_DeletePath.clear();
+				m_DeleteHandle = AssetHandle(0);
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
 			{
 				m_DeletePath.clear();
+				m_DeleteHandle = AssetHandle(0);
+				m_DeleteReferences.clear();
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::EndPopup();
@@ -760,40 +831,87 @@ namespace TomCat {
 	{
 		if (isDirectory)
 			return m_DirectoryIcon;
-		if (s_ImageExtensions.find(ToLower(PathToUTF8(path.extension()))) == s_ImageExtensions.end())
+		AssetManager& assetManager = AssetManager::Get();
+		const AssetMetadata* metadata = assetManager.GetRegistry().GetMetadata(path);
+		AssetHandle handle = metadata && !metadata->IsMissing
+			? metadata->Handle : assetManager.ImportAsset(path);
+		metadata = assetManager.GetRegistry().GetMetadata(handle);
+		if (!metadata || metadata->Type != AssetType::Texture2D)
 			return m_FileIcon;
-		const std::filesystem::path canonicalPath = CanonicalPath(path);
-		const std::string key = PathToUTF8(canonicalPath);
-		auto cached = m_ImageCache.find(key);
-		if (cached != m_ImageCache.end())
-			return cached->second;
-		Ref<Texture2D> texture = Texture2D::Create(canonicalPath);
-		m_ImageCache.emplace(key, texture);
-		return texture;
+		Ref<Texture2D> texture = assetManager.LoadTexture(handle);
+		return texture ? texture : m_FileIcon;
 	}
 
 	void ContentBrowserPanel::SubmitDragPayload(const std::filesystem::path& path,
 		const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon)
 	{
-		const std::string extension = ToLower(PathToUTF8(path.extension()));
-		const bool isScene = extension == ".tomcat";
-		const bool isImage = s_ImageExtensions.find(extension) != s_ImageExtensions.end();
-		if (!isScene && !isImage)
-			return;
 		if (!IsWithinRoot(assetRoot, path, false))
 			return;
-		std::error_code error;
-		const std::filesystem::path relative = std::filesystem::relative(CanonicalPath(path), assetRoot, error);
-		if (error || relative.empty() || !ImGui::BeginDragDropSource())
+		const AssetHandle handle = AssetManager::Get().ImportAsset(path);
+		const uint64_t rawHandle = static_cast<uint64_t>(handle);
+		if (rawHandle == 0 || !ImGui::BeginDragDropSource())
 			return;
-		const std::wstring payloadPath = relative.wstring();
-		if (isScene)
-			ImGui::SetDragDropPayload("TOMCAT_SCENE", payloadPath.c_str(), (payloadPath.size() + 1) * sizeof(wchar_t));
-		else
-			ImGui::SetDragDropPayload("SPRITE", payloadPath.c_str(), (payloadPath.size() + 1) * sizeof(wchar_t));
+		ImGui::SetDragDropPayload(AssetDragDropPayloadID, &rawHandle, sizeof(rawHandle));
 		ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())),
 			ImVec2(64.0f, 64.0f), ImVec2(0, 1), ImVec2(1, 0));
+		ImGui::TextUnformatted(PathToUTF8(path.filename()).c_str());
 		ImGui::EndDragDropSource();
+	}
+
+	void ContentBrowserPanel::SubmitDirectoryDragPayload(const std::filesystem::path& path,
+		const std::filesystem::path& assetRoot)
+	{
+		if (!IsWithinRoot(assetRoot, path, false) || !ImGui::BeginDragDropSource())
+			return;
+		std::error_code error;
+		const std::filesystem::path relative = std::filesystem::relative(path, assetRoot, error);
+		if (!error && !relative.empty())
+		{
+			const std::wstring payloadPath = relative.wstring();
+			ImGui::SetDragDropPayload(kAssetDirectoryPayloadID, payloadPath.c_str(),
+				(payloadPath.size() + 1) * sizeof(wchar_t));
+			ImGui::TextUnformatted(PathToUTF8(path.filename()).c_str());
+		}
+		ImGui::EndDragDropSource();
+	}
+
+	void ContentBrowserPanel::AcceptAssetMoveTarget(const std::filesystem::path& destinationDirectory)
+	{
+		if (!ImGui::BeginDragDropTarget())
+			return;
+
+		std::filesystem::path source;
+		AssetHandle sourceHandle = AssetHandle(0);
+		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID))
+		{
+			if (payload->DataSize == sizeof(uint64_t))
+			{
+				sourceHandle = AssetHandle(*static_cast<const uint64_t*>(payload->Data));
+				source = AssetManager::Get().ResolvePath(sourceHandle);
+			}
+		}
+		else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetDirectoryPayloadID))
+		{
+			if (payload->DataSize >= static_cast<int>(sizeof(wchar_t)))
+				source = GetAssetRoot() / static_cast<const wchar_t*>(payload->Data);
+		}
+
+		if (!source.empty())
+		{
+			const std::filesystem::path destination = destinationDirectory / source.filename();
+			if (LexicalPath(source.parent_path()) != LexicalPath(destinationDirectory))
+			{
+				const bool moved = static_cast<uint64_t>(sourceHandle) != 0
+					? AssetManager::Get().MoveAsset(sourceHandle, destination)
+					: AssetManager::Get().MoveAsset(source, destination);
+				if (moved)
+					(void)ApplyMovedPath(source, destination, sourceHandle);
+				else
+					TC_Core_Error("Failed to move asset '{0}' to '{1}'",
+						PathToUTF8(source), PathToUTF8(destinationDirectory));
+			}
+		}
+		ImGui::EndDragDropTarget();
 	}
 
 	void ContentBrowserPanel::DrawFileTreeNode(const std::filesystem::path& path)
@@ -865,6 +983,9 @@ namespace TomCat {
 			if (open) m_ExpandedNodes.insert(key);
 			else m_ExpandedNodes.erase(key);
 		}
+		if (!isRoot)
+			SubmitDirectoryDragPayload(directoryPath, root);
+		AcceptAssetMoveTarget(directoryPath);
 		if (ImGui::BeginPopupContextItem("Context"))
 		{
 			m_ContextPath = directoryPath;
@@ -935,7 +1056,12 @@ namespace TomCat {
 		}
 		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 			OpenAsset(path, isDirectory);
-		if (!isDirectory)
+		if (isDirectory)
+		{
+			SubmitDirectoryDragPayload(path, assetRoot);
+			AcceptAssetMoveTarget(path);
+		}
+		else
 			SubmitDragPayload(path, assetRoot, icon);
 		if (ImGui::BeginPopupContextItem("Context"))
 		{

@@ -2,6 +2,7 @@
 
 #include "TomCat/Core/Base.h"
 #include "TomCat/Core/Log.h"
+#include "TomCat/Asset/Asset.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Entity.h"
 
@@ -12,8 +13,8 @@ namespace TomCat {
 	class SceneHierarchyPanel
 	{
 	public:
-		using SceneLoadCallback = std::function<void(const std::filesystem::path&)>;
-		using SpriteCreateCallback = std::function<void(const std::filesystem::path&)>;
+		using SceneLoadCallback = std::function<void(AssetHandle)>;
+		using SpriteCreateCallback = std::function<void(AssetHandle)>;
 		using SceneModifiedCallback = std::function<void()>;
 
 		SceneHierarchyPanel() = default;
@@ -28,11 +29,6 @@ namespace TomCat {
 		void SetSelectedEntity(Entity entity);
 		bool HandleShortcut(int keyCode, bool control);
 		bool IsHierarchyFocused() const { return m_HierarchyFocused; }
-		bool RemapSpriteTextureReferences(const Ref<Scene>& scene,
-			const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot);
-		bool ClearSpriteTextureReferences(const Ref<Scene>& scene,
-			const std::filesystem::path& deletedRoot);
-
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }

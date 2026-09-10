@@ -1,5 +1,5 @@
+SchemaVersion: 3
 SceneName: sample
-Scene: sample
 Entities:
   - Entity: 1000000000000000001
     Tag:
@@ -25,6 +25,4 @@ Entities:
       Primary: true
       FixedAspectRatio: false
       BackgroundColor: [0.53, 0.81, 0.92, 1]
-    m_Father:
-      fileID: 0
-    m_Children: []
+    Parent: 0

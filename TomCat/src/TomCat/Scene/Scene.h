@@ -2,6 +2,7 @@
 #include "entt.hpp"
 #include "TomCat/Core/Timestep.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Asset/Asset.h"
 #include "TomCat/Renderer/EditorCamera.h"
 
 #include <optional>
@@ -53,6 +54,7 @@ namespace TomCat {
 
 		Entity GetPrimaryCameraEntity();
 		Entity FindEntityByUUID(UUID uuid);
+		std::vector<AssetReference> FindAssetReferences(AssetHandle handle);
 	private:
 		std::string MakeUniqueEntityName(const std::string& requestedName) const;
 		bool ValidateTransformHierarchy();

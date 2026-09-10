@@ -22,6 +22,9 @@
     <Filter Include="src\TomCat\Math">
       <UniqueIdentifier>{5D096131-C994-CEF5-D2A5-51EA3EB02AF6}</UniqueIdentifier>
     </Filter>
+	<Filter Include="src\TomCat\Asset">
+	  <UniqueIdentifier>{6F8C9754-774D-46DA-8A4E-4D7D3D9334B9}</UniqueIdentifier>
+	</Filter>
     <Filter Include="src\TomCat\Project">
       <UniqueIdentifier>{4A2A22D5-360E-E32A-9F6E-DD7D8B71CDAC}</UniqueIdentifier>
     </Filter>
@@ -75,6 +78,15 @@
     <ClInclude Include="src\TomCat.h">
       <Filter>src</Filter>
     </ClInclude>
+	<ClInclude Include="src\TomCat\Asset\Asset.h">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClInclude>
+	<ClInclude Include="src\TomCat\Asset\AssetManager.h">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClInclude>
+	<ClInclude Include="src\TomCat\Asset\AssetRegistry.h">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClInclude>
     <ClInclude Include="src\TomCat\Core\Application.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -1502,6 +1514,15 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+	<ClCompile Include="src\TomCat\Asset\Asset.cpp">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClCompile>
+	<ClCompile Include="src\TomCat\Asset\AssetManager.cpp">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClCompile>
+	<ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClCompile>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>

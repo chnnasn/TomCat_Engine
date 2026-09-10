@@ -151,6 +151,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\TomCat.h" />
+	<ClInclude Include="src\TomCat\Asset\Asset.h" />
+	<ClInclude Include="src\TomCat\Asset\AssetManager.h" />
+	<ClInclude Include="src\TomCat\Asset\AssetRegistry.h" />
     <ClInclude Include="src\TomCat\Core\Application.h" />
     <ClInclude Include="src\TomCat\Core\Base.h" />
     <ClInclude Include="src\TomCat\Core\EntryPoint.h" />
@@ -628,6 +631,9 @@
     <ClInclude Include="vendor\stb_image\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
+	<ClCompile Include="src\TomCat\Asset\Asset.cpp" />
+	<ClCompile Include="src\TomCat\Asset\AssetManager.cpp" />
+	<ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp" />
     <ClCompile Include="src\TomCat\Core\Application.cpp" />
     <ClCompile Include="src\TomCat\Core\Layer.cpp" />
     <ClCompile Include="src\TomCat\Core\LayerStack.cpp" />

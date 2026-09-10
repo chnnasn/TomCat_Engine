@@ -11,6 +11,9 @@
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/MouseCodes.h"
 
+#include "TomCat/Asset/Asset.h"
+#include "TomCat/Asset/AssetManager.h"
+
 #include "TomCat/ImGui/ImGuiLayer.h"
 
 #include "TomCat/Scene/Scene.h"

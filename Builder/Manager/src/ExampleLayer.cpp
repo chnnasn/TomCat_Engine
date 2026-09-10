@@ -137,10 +137,20 @@ namespace {
 			return false;
 
 		const std::filesystem::path destination = project->GetAssetPath() / "sample.tomcat";
-		if (HasNonEmptyFile(destination))
+		auto registerSample = [&]()
 		{
-			return true;
-		}
+			TomCat::AssetRegistry registry;
+			if (!registry.Initialize(project->GetAssetPath(), project->GetLibraryPath()))
+				return false;
+			const TomCat::AssetHandle handle = registry.ImportAsset(destination);
+			registry.Shutdown();
+			if (static_cast<uint64_t>(handle) == 0)
+				return false;
+			project->SetStartSceneHandle(handle);
+			return project->SetStartScene("sample.tomcat") && project->Save();
+		};
+		if (HasNonEmptyFile(destination))
+			return registerSample();
 
 		std::error_code error;
 		std::filesystem::create_directories(destination.parent_path(), error);
@@ -167,7 +177,7 @@ namespace {
 			if (copied && HasNonEmptyFile(destination))
 			{
 				TC_Core_Info("Installed serialized sample scene '{0}'", TomCat::PathToUTF8(destination));
-				return true;
+				return registerSample();
 			}
 			if (!writeError.empty())
 				TC_Core_Error("Could not install sample scene '{0}': {1}", TomCat::PathToUTF8(destination), writeError);
@@ -176,7 +186,7 @@ namespace {
 
 		TC_Core_Warn("Static sample template was unavailable; generating the scene at '{0}'",
 			TomCat::PathToUTF8(destination));
-		return WriteGeneratedSampleScene(destination, templateName);
+		return WriteGeneratedSampleScene(destination, templateName) && registerSample();
 	}
 
 

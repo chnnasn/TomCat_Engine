@@ -1049,6 +1049,28 @@ namespace TomCat {
 		return {};
 	}
 
+	std::vector<AssetReference> Scene::FindAssetReferences(AssetHandle handle)
+	{
+		std::vector<AssetReference> references;
+		if (static_cast<uint64_t>(handle) == 0)
+			return references;
+
+		auto view = m_Registry.view<ID, SpriteRenderer>();
+		for (const entt::entity entity : view)
+		{
+			const auto& sprite = view.get<SpriteRenderer>(entity);
+			if (sprite.TextureHandle != handle)
+				continue;
+			const uint64_t entityID = static_cast<uint64_t>(view.get<ID>(entity).id);
+			AssetReference reference;
+			reference.ReferencedAsset = handle;
+			reference.PropertyPath = "Entity " + std::to_string(entityID) +
+				".SpriteRenderer.TextureHandle";
+			references.push_back(std::move(reference));
+		}
+		return references;
+	}
+
 	template<typename T>
 	void Scene::OnComponentAdded(Entity entity, T& component)
 	{

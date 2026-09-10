@@ -613,9 +613,8 @@ namespace TomCat {
 		return ScanProjectsInternal(true);
 	}
 
-	bool ProjectManager::ScanProjectsInternal(bool persistMigratedState)
+	bool ProjectManager::ScanProjectsInternal(bool)
 	{
-		std::unordered_map<std::string, std::string> stagedLastOpenedTimes = m_ProjectLastOpenedTimes;
 		std::vector<Ref<Project>> scannedProjects;
 		std::unordered_set<std::string> seen;
 
@@ -651,7 +650,7 @@ namespace TomCat {
 			}
 			if (project)
 			{
-				ApplyStoredLastOpenedTime(project, stagedLastOpenedTimes);
+				ApplyStoredLastOpenedTime(project, m_ProjectLastOpenedTimes);
 				seen.insert(key);
 				scannedProjects.push_back(project);
 			}
@@ -736,17 +735,6 @@ namespace TomCat {
 			[](const Ref<Project>& a, const Ref<Project>& b) {
 				return a->GetLastOperationTime() > b->GetLastOperationTime();
 			});
-		const bool migratedRecency = stagedLastOpenedTimes.size() != m_ProjectLastOpenedTimes.size();
-		if (migratedRecency)
-		{
-			const std::unordered_map<std::string, std::string> previousLastOpenedTimes = m_ProjectLastOpenedTimes;
-			m_ProjectLastOpenedTimes = std::move(stagedLastOpenedTimes);
-			if (persistMigratedState && !SaveHubSettings())
-			{
-				m_ProjectLastOpenedTimes = previousLastOpenedTimes;
-				return false;
-			}
-		}
 		m_Projects = std::move(scannedProjects);
 		return true;
 	}
@@ -839,8 +827,7 @@ namespace TomCat {
 				return nullptr;
 			}
 
-			const bool migratedRecency = m_ProjectLastOpenedTimes.size() != previousLastOpenedTimes.size();
-			if ((!found || removedFromIgnored || migratedRecency) && !SaveHubSettings())
+			if ((!found || removedFromIgnored) && !SaveHubSettings())
 			{
 				m_KnownProjectPaths = previousKnownProjectPaths;
 				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
@@ -909,12 +896,6 @@ namespace TomCat {
 		if (stored != lastOpenedTimes.end())
 		{
 			project->m_Config.LastOperationTime = stored->second;
-		}
-		else if (!project->m_Config.LastOperationTime.empty())
-		{
-			// One-way migration from the schema-v1 project field. It is removed the
-			// next time the project is explicitly saved.
-			lastOpenedTimes.emplace(key, project->m_Config.LastOperationTime);
 		}
 	}
 

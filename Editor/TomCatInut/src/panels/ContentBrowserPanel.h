@@ -2,8 +2,9 @@
 
 #include <filesystem>
 #include <functional>
-#include <unordered_map>
 #include <unordered_set>
+#include <vector>
+#include "TomCat/Asset/Asset.h"
 #include "TomCat/Renderer/Texture.h"
 #include "TomCat/Project/Project.h"
 
@@ -23,8 +24,8 @@ namespace TomCat {
 		// Saves non-layout navigation state to project-local UserSettings/editor.json.
 		bool Serialize();
 
-		using SceneOpenCallback = std::function<void(const std::filesystem::path&)>;
-		using AssetRenamedCallback = std::function<void(const std::filesystem::path&, const std::filesystem::path&)>;
+		using SceneOpenCallback = std::function<void(AssetHandle)>;
+		using AssetRenamedCallback = std::function<bool(const std::filesystem::path&, const std::filesystem::path&)>;
 		using AssetDeletedCallback = std::function<void(const std::filesystem::path&)>;
 		void SetSceneOpenCallback(SceneOpenCallback callback) { m_SceneOpenCallback = std::move(callback); }
 		void SetAssetRenamedCallback(AssetRenamedCallback callback) { m_AssetRenamedCallback = std::move(callback); }
@@ -45,8 +46,6 @@ namespace TomCat {
 		Ref<Texture2D> m_DirectoryIcon;
 		Ref<Texture2D> m_FileIcon;
 
-		std::unordered_map<std::string, Ref<Texture2D>> m_ImageCache;
-
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
 		bool m_ProjectStateWritable = true;
@@ -65,13 +64,16 @@ namespace TomCat {
 
 		// 行内重命名状态
 		std::filesystem::path m_RenamePath;
+		AssetHandle m_RenameHandle = AssetHandle(0);
 		char m_RenameBuffer[512] = {};
 		bool m_RenameFocus = false;
 		bool m_OpenRenamePopup = false;
 
 		std::filesystem::path m_DeletePath;
+		AssetHandle m_DeleteHandle = AssetHandle(0);
 		bool m_DeleteIsDirectory = false;
 		bool m_OpenDeletePopup = false;
+		std::vector<AssetReference> m_DeleteReferences;
 		float m_LeftPanelWidth = 250.0f;
 		float m_ThumbnailSize = 128.0f;
 
@@ -88,6 +90,10 @@ namespace TomCat {
 		void DrawAssetItem(const std::filesystem::directory_entry& entry, const std::filesystem::path& assetRoot);
 		Ref<Texture2D> GetAssetIcon(const std::filesystem::path& path, bool isDirectory);
 		void SubmitDragPayload(const std::filesystem::path& path, const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon);
+		void SubmitDirectoryDragPayload(const std::filesystem::path& path, const std::filesystem::path& assetRoot);
+		void AcceptAssetMoveTarget(const std::filesystem::path& destinationDirectory);
+		bool ApplyMovedPath(const std::filesystem::path& oldPath,
+			const std::filesystem::path& newPath, AssetHandle movedHandle = AssetHandle(0));
 
 		void FlushPendingCreateFolder();
 		void DrawNodeContextMenu();
@@ -98,8 +104,7 @@ namespace TomCat {
 
 		void OpenAsset(const std::filesystem::path& path, bool isDirectory);
 		void RequestDeleteAsset(const std::filesystem::path& path, bool isDirectory);
-		void DeleteAsset(const std::filesystem::path& path, bool isDirectory);
-		void EraseCachedImagesUnder(const std::filesystem::path& path);
+		void DeleteAsset(const std::filesystem::path& path, bool force);
 		void BeginRename(const std::filesystem::path& path);
 		std::filesystem::path CommitRename();
 		void CancelRename();

@@ -174,11 +174,13 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+	<ClInclude Include="src\CookedPlayerLayer.h" />
     <ClInclude Include="src\EditorLayer.h" />
     <ClInclude Include="src\panels\ContentBrowserPanel.h" />
     <ClInclude Include="src\panels\SceneHierarchyPanel.h" />
   </ItemGroup>
   <ItemGroup>
+	<ClCompile Include="src\CookedPlayerLayer.cpp" />
     <ClCompile Include="src\EditorLayer.cpp" />
     <ClCompile Include="src\TomCatInputApp.cpp" />
     <ClCompile Include="src\panels\ContentBrowserPanel.cpp" />

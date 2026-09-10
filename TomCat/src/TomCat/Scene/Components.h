@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TomCat/Asset/Asset.h"
 #include "SceneCamera.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Math/Math.h"
@@ -84,6 +85,8 @@ namespace TomCat {
 	{
 		bool Enabled = true;
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
+		AssetHandle TextureHandle = AssetHandle(0);
+		// Runtime-only resolved texture. TextureHandle is the serialized source of truth.
 		Ref<Texture2D>Texture;
 		float TilingFactor = 1.0f;
 

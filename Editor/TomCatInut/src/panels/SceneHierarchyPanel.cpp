@@ -8,49 +8,12 @@
 #include <cmath>
 
 #include "TomCat/Scene/Components.h"
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Utils/PathUtils.h"
 
-#include<filesystem>
-
 namespace TomCat {
-
-	extern const std::filesystem::path g_AssetPath;
-
-	namespace {
-
-		std::filesystem::path AbsoluteLexicalPath(const std::filesystem::path& path)
-		{
-			if (path.empty())
-				return {};
-			std::error_code error;
-			const std::filesystem::path absolute = std::filesystem::absolute(path, error);
-			return (error ? path : absolute).lexically_normal();
-		}
-
-		bool TryGetRelativeWithin(const std::filesystem::path& root,
-			const std::filesystem::path& candidate, std::filesystem::path& relative)
-		{
-			const std::filesystem::path normalizedRoot = AbsoluteLexicalPath(root);
-			const std::filesystem::path normalizedCandidate = AbsoluteLexicalPath(candidate);
-			if (normalizedRoot.empty() || normalizedCandidate.empty())
-				return false;
-			relative = normalizedCandidate.lexically_relative(normalizedRoot);
-			if (relative.empty() || relative.is_absolute())
-				return false;
-			for (const auto& part : relative)
-			{
-				if (part == "..")
-					return false;
-			}
-			if (relative == ".")
-				relative.clear();
-			return true;
-		}
-
-	}
 
 
 	// 前向声明DrawProperty函数
@@ -134,56 +97,6 @@ namespace TomCat {
 			else
 				m_SelectionContext = {};
 		}
-	}
-
-	bool SceneHierarchyPanel::RemapSpriteTextureReferences(const Ref<Scene>& scene,
-		const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot)
-	{
-		if (!scene || oldRoot.empty() || newRoot.empty())
-			return false;
-
-		bool changed = false;
-		auto sprites = scene->m_Registry.view<SpriteRenderer>();
-		for (const entt::entity entity : sprites)
-		{
-			auto& sprite = sprites.get<SpriteRenderer>(entity);
-			if (!sprite.Texture || sprite.Texture->GetPath().empty())
-				continue;
-
-			std::filesystem::path relative;
-			const std::filesystem::path& texturePath = sprite.Texture->GetPath();
-			if (!TryGetRelativeWithin(oldRoot, texturePath, relative))
-				continue;
-
-			sprite.Texture = Texture2D::Create(newRoot / relative);
-			changed = true;
-		}
-		return changed;
-	}
-
-	bool SceneHierarchyPanel::ClearSpriteTextureReferences(const Ref<Scene>& scene,
-		const std::filesystem::path& deletedRoot)
-	{
-		if (!scene || deletedRoot.empty())
-			return false;
-
-		bool changed = false;
-		auto sprites = scene->m_Registry.view<SpriteRenderer>();
-		for (const entt::entity entity : sprites)
-		{
-			auto& sprite = sprites.get<SpriteRenderer>(entity);
-			if (!sprite.Texture || sprite.Texture->GetPath().empty())
-				continue;
-
-			std::filesystem::path relative;
-			const std::filesystem::path& texturePath = sprite.Texture->GetPath();
-			if (!TryGetRelativeWithin(deletedRoot, texturePath, relative))
-				continue;
-
-			sprite.Texture.reset();
-			changed = true;
-		}
-		return changed;
 	}
 
 	void SceneHierarchyPanel::ClearClipboard()
@@ -310,24 +223,16 @@ namespace TomCat {
 		if (ImGui::BeginDragDropTarget())
 		{
 			ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TOMCAT_SCENE", flags))
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID, flags))
 			{
-				const wchar_t* path = (const wchar_t*)payload->Data;
-				if (m_SceneLoadCallback)
+				if (payload->DataSize == sizeof(uint64_t))
 				{
-					auto project = ProjectManager::Get().GetActiveProject();
-					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-					m_SceneLoadCallback(assetPath / path);
-				}
-			}
-			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags))
-			{
-				const wchar_t* path = (const wchar_t*)payload->Data;
-				if (m_SpriteCreateCallback)
-				{
-					auto project = ProjectManager::Get().GetActiveProject();
-					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-					m_SpriteCreateCallback(assetPath / path);
+					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+					if (metadata && metadata->Type == AssetType::Scene && m_SceneLoadCallback)
+						m_SceneLoadCallback(handle);
+					else if (metadata && metadata->Type == AssetType::Texture2D && m_SpriteCreateCallback)
+						m_SpriteCreateCallback(handle);
 				}
 			}
 			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY", flags))
@@ -966,21 +871,48 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			if (ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color))) MarkModified();
 			ImGui::Columns(1);
 			DrawProperty("Sprite", columnWidth);
-			const std::string textureName = component.Texture && !component.Texture->GetPath().empty()
-				? PathToUTF8(component.Texture->GetPath().stem()) : "None";
+			std::string textureName = "None";
+			const uint64_t rawTextureHandle = static_cast<uint64_t>(component.TextureHandle);
+			if (rawTextureHandle != 0)
+			{
+				const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(component.TextureHandle);
+				if (metadata)
+				{
+					textureName = PathToUTF8(metadata->FilePath.stem());
+					if (metadata->IsMissing)
+						textureName += " (Missing)";
+				}
+				else
+					textureName = "Missing #" + std::to_string(rawTextureHandle);
+			}
 			ImGui::Button(textureName.c_str(), ImVec2(-1, 0));
 			if (ImGui::BeginDragDropTarget())
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE"))
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID))
 				{
-					auto project = ProjectManager::Get().GetActiveProject();
-					const std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-					const std::filesystem::path texturePath = assetPath / static_cast<const wchar_t*>(payload->Data);
-					Ref<Texture2D> texture = Texture2D::Create(texturePath);
-					if (texture->IsLoaded()) { component.Texture = texture; MarkModified(); }
-					else TC_Warn("Could not load texture {0}", PathToUTF8(texturePath.filename()));
+					if (payload->DataSize == sizeof(uint64_t))
+					{
+						const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+						const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+						if (metadata && metadata->Type == AssetType::Texture2D)
+						{
+							component.TextureHandle = handle;
+							component.Texture = AssetManager::Get().LoadTexture(handle);
+							MarkModified();
+						}
+					}
 				}
 				ImGui::EndDragDropTarget();
+			}
+			if (ImGui::BeginPopupContextItem("SpriteAssetContext"))
+			{
+				if (ImGui::MenuItem("Clear", nullptr, false, rawTextureHandle != 0))
+				{
+					component.TextureHandle = AssetHandle(0);
+					component.Texture.reset();
+					MarkModified();
+				}
+				ImGui::EndPopup();
 			}
 			ImGui::Columns(1);
 			DrawProperty("Tiling Factor", columnWidth);

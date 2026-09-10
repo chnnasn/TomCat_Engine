@@ -13,6 +13,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -446,24 +447,48 @@ namespace TomCat {
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 		m_EditorCamera.Set2DMode(m_Is2DMode);
 
-		m_SceneHierarchyPanel.SetSceneLoadCallback([this](const std::filesystem::path& path) {
-			OpenScene(path);
+		m_SceneHierarchyPanel.SetSceneLoadCallback([this](AssetHandle handle) {
+			const std::filesystem::path path = AssetManager::Get().ResolvePath(handle);
+			if (!path.empty())
+				OpenScene(path);
 		});
-		m_ContentBrowserPanel.SetSceneOpenCallback([this](const std::filesystem::path& path) {
-			OpenScene(path);
+		m_ContentBrowserPanel.SetSceneOpenCallback([this](AssetHandle handle) {
+			const std::filesystem::path path = AssetManager::Get().ResolvePath(handle);
+			if (!path.empty())
+				OpenScene(path);
 		});
 		m_ContentBrowserPanel.SetAssetRenamedCallback([this](const std::filesystem::path& oldPath,
 			const std::filesystem::path& newPath) {
+			const std::filesystem::path previousEditorScenePath = m_EditorScenePath;
+			const std::filesystem::path previousStartScene = m_CurrentProject
+				? m_CurrentProject->GetConfig().StartScene : std::filesystem::path{};
 			std::filesystem::path relative;
 			if (!m_EditorScenePath.empty() && TryGetRelativeWithin(oldPath, m_EditorScenePath, relative))
 				m_EditorScenePath = newPath / relative;
 
-			const bool editorChanged = m_SceneHierarchyPanel.RemapSpriteTextureReferences(
-				m_EditorScene, oldPath, newPath);
-			if (m_ActiveScene && m_ActiveScene != m_EditorScene)
-				m_SceneHierarchyPanel.RemapSpriteTextureReferences(m_ActiveScene, oldPath, newPath);
-			if (editorChanged)
-				m_SceneDirty = true;
+			// StartScene is an authoring locator; StartSceneHandle remains the
+			// authoritative identity across this move.
+			if (m_CurrentProject)
+			{
+				const std::filesystem::path oldStartScene = m_CurrentProject->GetAssetPath() /
+					m_CurrentProject->GetConfig().StartScene;
+				if (TryGetRelativeWithin(oldPath, oldStartScene, relative))
+				{
+					const std::filesystem::path movedStartScene = newPath / relative;
+					std::filesystem::path assetRelative;
+					const bool updated = TryGetRelativeWithin(m_CurrentProject->GetAssetPath(),
+						movedStartScene, assetRelative) &&
+						m_CurrentProject->SetStartScene(assetRelative) && m_CurrentProject->Save();
+					if (!updated)
+					{
+						m_EditorScenePath = previousEditorScenePath;
+						(void)m_CurrentProject->SetStartScene(previousStartScene);
+						TC_Core_Error("The start scene move was rejected because Project.tcproj could not be updated");
+						return false;
+					}
+				}
+			}
+			return true;
 		});
 		m_ContentBrowserPanel.SetAssetDeletedCallback([this](const std::filesystem::path& deletedPath) {
 			std::filesystem::path relative;
@@ -472,28 +497,55 @@ namespace TomCat {
 				m_EditorScenePath.clear();
 				m_SceneDirty = true;
 			}
-
-			const bool editorChanged = m_SceneHierarchyPanel.ClearSpriteTextureReferences(
-				m_EditorScene, deletedPath);
-			if (m_ActiveScene && m_ActiveScene != m_EditorScene)
-				m_SceneHierarchyPanel.ClearSpriteTextureReferences(m_ActiveScene, deletedPath);
-			if (editorChanged)
-				m_SceneDirty = true;
+			if (m_CurrentProject)
+			{
+				const std::filesystem::path startScene = m_CurrentProject->GetAssetPath() /
+					m_CurrentProject->GetConfig().StartScene;
+				if (TryGetRelativeWithin(deletedPath, startScene, relative))
+					TC_Warn("The configured start scene was deleted and is now a missing asset: {0}",
+						PathToUTF8(startScene));
+			}
+			// Sprite handles deliberately survive deletion. AssetManager resolves
+			// them to the shared missing-resource texture until the asset is restored.
 		});
 
-		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](const std::filesystem::path& path) {
+		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](AssetHandle handle) {
 			if (!m_ActiveScene)
 				return;
+			const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+			if (!metadata || metadata->Type != AssetType::Texture2D)
+				return;
+			const std::filesystem::path path = AssetManager::Get().ResolvePath(handle);
 			std::string fileName = PathToUTF8(path.stem());
 			auto Square = m_ActiveScene->CreateEntity(fileName);
 			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-			SpriteR.Texture = Texture2D::Create(path);
+			SpriteR.TextureHandle = handle;
+			SpriteR.Texture = AssetManager::Get().LoadTexture(handle);
 			if (m_SceneState == SceneState::Edit)
 				m_SceneDirty = true;
 		});
 		m_SceneHierarchyPanel.SetSceneModifiedCallback([this]() {
 			if (m_SceneState == SceneState::Edit)
 				m_SceneDirty = true;
+		});
+		AssetManager::Get().SetLiveReferenceProvider([this](AssetHandle handle) {
+			std::vector<AssetReference> references;
+			if (m_EditorScene)
+				references = m_EditorScene->FindAssetReferences(handle);
+			AssetHandle sceneHandle(0);
+			if (!m_EditorScenePath.empty())
+			{
+				if (const AssetMetadata* metadata =
+					AssetManager::Get().GetRegistry().GetMetadata(m_EditorScenePath))
+					sceneHandle = metadata->Handle;
+			}
+			for (AssetReference& reference : references)
+			{
+				reference.ReferencingAsset = sceneHandle;
+				reference.FilePath = m_EditorScenePath.empty()
+					? std::filesystem::path("<Unsaved Scene>") : m_EditorScenePath;
+			}
+			return references;
 		});
 
 		if (m_CurrentProject)
@@ -519,6 +571,8 @@ namespace TomCat {
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
 		m_ContentBrowserPanel.SaveLayoutSetting();
 		SaveSceneToolbarLayout();
+		AssetManager::Get().SetLiveReferenceProvider({});
+		AssetManager::Get().Shutdown();
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
@@ -778,19 +832,22 @@ namespace TomCat {
 		// its drop target. Toolbar items submitted later must never steal the target.
 		if (ImGui::BeginDragDropTarget())
 		{
-			const std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
 			const ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags))
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID, flags))
 			{
-				const wchar_t* relativePath = static_cast<const wchar_t*>(payload->Data);
-				const std::filesystem::path texturePath = assetPath / relativePath;
-				if (m_ActiveScene)
+				if (payload->DataSize == sizeof(uint64_t) && m_ActiveScene)
 				{
-					Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(texturePath.stem()));
-					auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
-					renderer.Texture = Texture2D::Create(texturePath);
-					if (m_SceneState == SceneState::Edit)
-						m_SceneDirty = true;
+					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+					if (metadata && metadata->Type == AssetType::Texture2D)
+					{
+						Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(metadata->FilePath.stem()));
+						auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
+						renderer.TextureHandle = handle;
+						renderer.Texture = AssetManager::Get().LoadTexture(handle);
+						if (m_SceneState == SceneState::Edit)
+							m_SceneDirty = true;
+					}
 				}
 			}
 			ImGui::EndDragDropTarget();
@@ -1755,10 +1812,23 @@ namespace TomCat {
 	{
 		if (!m_CurrentProject)
 			return false;
-		const std::filesystem::path startScene =
-			m_CurrentProject->GetAssetPath() / m_CurrentProject->GetConfig().StartScene;
+		const AssetHandle startSceneHandle = m_CurrentProject->GetConfig().StartSceneHandle;
+		if (static_cast<uint64_t>(startSceneHandle) == 0)
+		{
+			TC_Core_Error("Project has no start scene: StartSceneHandle is 0");
+			NewScene();
+			return false;
+		}
+
+		std::filesystem::path startScene;
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(startSceneHandle);
+		if (metadata && metadata->Type == AssetType::Scene && !metadata->IsMissing)
+			startScene = AssetManager::Get().ResolvePath(startSceneHandle);
+		else
+			TC_Core_Error("Project start scene handle is missing or is not a Scene: {0}",
+				static_cast<uint64_t>(startSceneHandle));
 		std::error_code error;
-		if (std::filesystem::is_regular_file(startScene, error))
+		if (!startScene.empty() && std::filesystem::is_regular_file(startScene, error))
 		{
 			if (OpenScene(startScene))
 				return true;
@@ -1766,7 +1836,9 @@ namespace TomCat {
 		}
 		else
 		{
-			TC_Warn("Project start scene is missing: {0}", PathToUTF8(startScene));
+			TC_Warn("Project start scene is missing: {0}", startScene.empty()
+				? std::to_string(static_cast<uint64_t>(startSceneHandle))
+				: PathToUTF8(startScene));
 		}
 
 		// A project switch must never leave the previous project's scene or path
@@ -1795,6 +1867,18 @@ namespace TomCat {
 		{
 			RequestDestructiveAction([this, path]() { return OpenScene(path); });
 			return false;
+		}
+		if (m_CurrentProject)
+		{
+			const AssetHandle handle = AssetManager::Get().ImportAsset(path);
+			const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+			if (static_cast<uint64_t>(handle) == 0 || !metadata || metadata->IsMissing ||
+				metadata->Type != AssetType::Scene)
+			{
+				TC_Warn("Project scenes must be registered .tomcat assets inside Assets: {0}",
+					PathToUTF8(path));
+				return false;
+			}
 		}
 
 		Ref<Scene> newScene = CreateRef<Scene>();
@@ -1988,8 +2072,8 @@ namespace TomCat {
 		LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject));
 		LoadSceneToolbarLayout();
 
-		OpenProjectStartScene();
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+		OpenProjectStartScene();
 		return true;
 	}
 

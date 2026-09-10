@@ -56,24 +56,55 @@ namespace TomCat {
 			return;
 		}
 
+		LoadEncodedImage(encoded.data(), encoded.size());
+	}
+
+	OpenGLTexture2D::OpenGLTexture2D(const void* encodedData, size_t encodedSize,
+		const std::filesystem::path& sourcePath)
+		: m_Path(sourcePath.lexically_normal())
+	{
+		TC_PROFILE_FUNCTION();
+		LoadEncodedImage(encodedData, encodedSize);
+	}
+
+	bool OpenGLTexture2D::LoadEncodedImage(const void* encodedData, size_t encodedSize)
+	{
+		if (!encodedData || encodedSize == 0 ||
+			encodedSize > static_cast<size_t>((std::numeric_limits<int>::max)()))
+		{
+			TC_Core_Error("Cannot decode texture '{0}': invalid encoded byte buffer",
+				m_Path.empty() ? std::string("<memory>") : PathToUTF8(m_Path));
+			return false;
+		}
+
 		int width = 0, height = 0;
 		stbi_set_flip_vertically_on_load(1);
 		stbi_uc* data = nullptr;
 		{
 			TC_PROFILE_SCOPE("stbi_load_from_memory - OpenGLTexture2D");
-			data = stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()),
-				&width, &height, nullptr, STBI_rgb_alpha);
+			data = stbi_load_from_memory(static_cast<const stbi_uc*>(encodedData),
+				static_cast<int>(encodedSize), &width, &height, nullptr, STBI_rgb_alpha);
 		}
 
-		if (!data)
+		if (!data || width <= 0 || height <= 0)
 		{
-			TC_Core_Error("Failed to decode texture '{0}': {1}", PathToUTF8(m_Path),
+			TC_Core_Error("Failed to decode texture '{0}': {1}",
+				m_Path.empty() ? std::string("<memory>") : PathToUTF8(m_Path),
 				stbi_failure_reason() ? stbi_failure_reason() : "unknown stb_image error");
-			return;
+			if (data)
+				stbi_image_free(data);
+			return false;
 		}
 
 		m_Width = static_cast<uint32_t>(width);
 		m_Height = static_cast<uint32_t>(height);
+		CreateStorageAndUpload(data);
+		stbi_image_free(data);
+		return m_IsLoaded;
+	}
+
+	void OpenGLTexture2D::CreateStorageAndUpload(const void* rgbaPixels)
+	{
 		m_InternalFormat = GL_RGBA8;
 		m_DataFormat = GL_RGBA;
 
@@ -84,10 +115,12 @@ namespace TomCat {
 		glTextureParameteri(m_RendererID, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_S, GL_REPEAT);
 		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_T, GL_REPEAT);
-		glTextureSubImage2D(m_RendererID, 0, 0, 0, m_Width, m_Height, m_DataFormat, GL_UNSIGNED_BYTE, data);
-
-		stbi_image_free(data);
-		m_IsLoaded = true;
+		if (rgbaPixels)
+		{
+			glTextureSubImage2D(m_RendererID, 0, 0, 0, m_Width, m_Height,
+				m_DataFormat, GL_UNSIGNED_BYTE, rgbaPixels);
+		}
+		m_IsLoaded = m_RendererID != 0;
 	}
 
 	OpenGLTexture2D::~OpenGLTexture2D()
