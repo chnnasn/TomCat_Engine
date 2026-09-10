@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 
 #include <yaml-cpp/yaml.h>
@@ -104,9 +105,7 @@ namespace TomCat {
 			return PathToUTF8(relative.lexically_normal());
 		}
 
-		bool NormalizeAndValidateConfig(ProjectConfig& config,
-			const std::filesystem::path& projectDirectory,
-			std::string& errorMessage)
+		bool NormalizeAndValidateConfig(ProjectConfig& config, std::string& errorMessage)
 		{
 			if (config.Name.empty())
 			{
@@ -131,27 +130,248 @@ namespace TomCat {
 				return false;
 			}
 			config.StartScene = config.StartScene.lexically_normal();
+			return true;
+		}
 
-			const std::filesystem::path assetRoot = AbsoluteNormalized(projectDirectory / config.AssetDirectory);
-			if (!config.TwoColumnCurrentFolder.empty())
-			{
-				const std::filesystem::path resolved = ResolveBrowserPath(
-					config.TwoColumnCurrentFolder, projectDirectory, assetRoot);
-				config.TwoColumnCurrentFolder = StoreAssetRelativePath(resolved, assetRoot);
-			}
+		void NormalizeEditorState(EditorProjectState& state,
+			const std::filesystem::path& projectDirectory,
+			const std::filesystem::path& assetRoot)
+		{
+			const std::filesystem::path resolvedCurrent = ResolveBrowserPath(
+				state.ContentBrowserCurrentDirectory, projectDirectory, assetRoot);
+			state.ContentBrowserCurrentDirectory = StoreAssetRelativePath(resolvedCurrent, assetRoot);
+			if (state.ContentBrowserCurrentDirectory.empty())
+				state.ContentBrowserCurrentDirectory = ".";
 
 			std::vector<std::string> validExpandedNodes;
-			validExpandedNodes.reserve(config.ExpandedNodes.size());
-			for (const std::string& node : config.ExpandedNodes)
+			validExpandedNodes.reserve(state.ContentBrowserExpandedNodes.size());
+			for (const std::string& node : state.ContentBrowserExpandedNodes)
 			{
 				const std::filesystem::path resolved = ResolveBrowserPath(node, projectDirectory, assetRoot);
 				const std::string relative = StoreAssetRelativePath(resolved, assetRoot);
 				if (!relative.empty())
 					validExpandedNodes.push_back(relative);
 			}
-			config.ExpandedNodes = std::move(validExpandedNodes);
-			return true;
+			std::sort(validExpandedNodes.begin(), validExpandedNodes.end());
+			validExpandedNodes.erase(std::unique(validExpandedNodes.begin(), validExpandedNodes.end()),
+				validExpandedNodes.end());
+			state.ContentBrowserExpandedNodes = std::move(validExpandedNodes);
 		}
+
+		std::string EscapeJsonString(std::string_view value)
+		{
+			std::ostringstream escaped;
+			escaped << std::hex << std::uppercase;
+			for (const unsigned char character : value)
+			{
+				switch (character)
+				{
+					case '"': escaped << "\\\""; break;
+					case '\\': escaped << "\\\\"; break;
+					case '\b': escaped << "\\b"; break;
+					case '\f': escaped << "\\f"; break;
+					case '\n': escaped << "\\n"; break;
+					case '\r': escaped << "\\r"; break;
+					case '\t': escaped << "\\t"; break;
+					default:
+						if (character < 0x20)
+						{
+							escaped << "\\u00" << std::setw(2) << std::setfill('0')
+								<< static_cast<unsigned int>(character);
+						}
+						else
+							escaped << static_cast<char>(character);
+						break;
+				}
+			}
+			return escaped.str();
+		}
+
+		class JsonSyntaxValidator
+		{
+		public:
+			explicit JsonSyntaxValidator(std::string_view input)
+				: m_Input(input)
+			{
+			}
+
+			bool Validate()
+			{
+				SkipWhitespace();
+				if (!ParseValue(0))
+					return false;
+				SkipWhitespace();
+				return m_Position == m_Input.size();
+			}
+
+		private:
+			void SkipWhitespace()
+			{
+				while (m_Position < m_Input.size())
+				{
+					const char character = m_Input[m_Position];
+					if (character != ' ' && character != '\t' && character != '\r' && character != '\n')
+						break;
+					++m_Position;
+				}
+			}
+
+			bool Consume(char expected)
+			{
+				if (m_Position >= m_Input.size() || m_Input[m_Position] != expected)
+					return false;
+				++m_Position;
+				return true;
+			}
+
+			bool ParseValue(uint32_t depth)
+			{
+				if (depth > 128U || m_Position >= m_Input.size())
+					return false;
+				switch (m_Input[m_Position])
+				{
+					case '{': return ParseObject(depth + 1U);
+					case '[': return ParseArray(depth + 1U);
+					case '"': return ParseString();
+					case 't': return ParseLiteral("true");
+					case 'f': return ParseLiteral("false");
+					case 'n': return ParseLiteral("null");
+					default: return ParseNumber();
+				}
+			}
+
+			bool ParseObject(uint32_t depth)
+			{
+				if (!Consume('{'))
+					return false;
+				SkipWhitespace();
+				if (Consume('}'))
+					return true;
+				while (true)
+				{
+					if (!ParseString())
+						return false;
+					SkipWhitespace();
+					if (!Consume(':'))
+						return false;
+					SkipWhitespace();
+					if (!ParseValue(depth))
+						return false;
+					SkipWhitespace();
+					if (Consume('}'))
+						return true;
+					if (!Consume(','))
+						return false;
+					SkipWhitespace();
+				}
+			}
+
+			bool ParseArray(uint32_t depth)
+			{
+				if (!Consume('['))
+					return false;
+				SkipWhitespace();
+				if (Consume(']'))
+					return true;
+				while (true)
+				{
+					if (!ParseValue(depth))
+						return false;
+					SkipWhitespace();
+					if (Consume(']'))
+						return true;
+					if (!Consume(','))
+						return false;
+					SkipWhitespace();
+				}
+			}
+
+			bool ParseString()
+			{
+				if (!Consume('"'))
+					return false;
+				while (m_Position < m_Input.size())
+				{
+					const unsigned char character = static_cast<unsigned char>(m_Input[m_Position++]);
+					if (character == '"')
+						return true;
+					if (character < 0x20)
+						return false;
+					if (character != '\\')
+						continue;
+					if (m_Position >= m_Input.size())
+						return false;
+					const char escape = m_Input[m_Position++];
+					if (escape == '"' || escape == '\\' || escape == '/' || escape == 'b' ||
+						escape == 'f' || escape == 'n' || escape == 'r' || escape == 't')
+						continue;
+					if (escape != 'u' || m_Position + 4 > m_Input.size())
+						return false;
+					for (size_t index = 0; index < 4; ++index)
+					{
+						const char digit = m_Input[m_Position++];
+						if (!((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f') ||
+							(digit >= 'A' && digit <= 'F')))
+							return false;
+					}
+				}
+				return false;
+			}
+
+			bool ParseLiteral(std::string_view literal)
+			{
+				if (m_Input.substr(m_Position, literal.size()) != literal)
+					return false;
+				m_Position += literal.size();
+				return true;
+			}
+
+			bool ParseNumber()
+			{
+				const size_t start = m_Position;
+				Consume('-');
+				if (m_Position >= m_Input.size())
+					return false;
+				if (m_Input[m_Position] == '0')
+					++m_Position;
+				else
+				{
+					if (m_Input[m_Position] < '1' || m_Input[m_Position] > '9')
+						return false;
+					while (m_Position < m_Input.size() && m_Input[m_Position] >= '0' &&
+						m_Input[m_Position] <= '9')
+						++m_Position;
+				}
+				if (m_Position < m_Input.size() && m_Input[m_Position] == '.')
+				{
+					++m_Position;
+					const size_t fractionStart = m_Position;
+					while (m_Position < m_Input.size() && m_Input[m_Position] >= '0' &&
+						m_Input[m_Position] <= '9')
+						++m_Position;
+					if (m_Position == fractionStart)
+						return false;
+				}
+				if (m_Position < m_Input.size() &&
+					(m_Input[m_Position] == 'e' || m_Input[m_Position] == 'E'))
+				{
+					++m_Position;
+					if (m_Position < m_Input.size() &&
+						(m_Input[m_Position] == '+' || m_Input[m_Position] == '-'))
+						++m_Position;
+					const size_t exponentStart = m_Position;
+					while (m_Position < m_Input.size() && m_Input[m_Position] >= '0' &&
+						m_Input[m_Position] <= '9')
+						++m_Position;
+					if (m_Position == exponentStart)
+						return false;
+				}
+				return m_Position > start;
+			}
+
+			std::string_view m_Input;
+			size_t m_Position = 0;
+		};
 
 		std::string ReadWholeFile(const std::filesystem::path& path)
 		{
@@ -179,6 +399,123 @@ namespace TomCat {
 			return false;
 		}
 		m_Config.StartScene = scenePath.lexically_normal();
+		return true;
+	}
+
+	EditorProjectStateLoadResult Project::LoadEditorState(EditorProjectState& state) const
+	{
+		if (m_ProjectPath.empty())
+			return EditorProjectStateLoadResult::Missing;
+
+		const std::filesystem::path settingsPath = m_Directory / "UserSettings" / "editor.json";
+		std::error_code error;
+		const bool exists = std::filesystem::exists(settingsPath, error);
+		if (error)
+		{
+			TC_Core_Warn("Could not inspect Editor settings '{0}': {1}",
+				PathToUTF8(settingsPath), error.message());
+			return EditorProjectStateLoadResult::Failed;
+		}
+		if (!exists)
+			return EditorProjectStateLoadResult::Missing;
+
+		try
+		{
+			std::ifstream input(settingsPath, std::ios::binary);
+			if (!input)
+				throw std::runtime_error("Could not open the settings file");
+			std::ostringstream contents;
+			contents << input.rdbuf();
+			if (input.bad())
+				throw std::runtime_error("Failed while reading the settings file");
+			const std::string json = contents.str();
+			if (!JsonSyntaxValidator(json).Validate())
+				throw std::runtime_error("File is not valid JSON");
+			YAML::Node root = YAML::Load(json);
+			if (!root.IsMap())
+				throw std::runtime_error("Root must be a JSON object");
+
+			const YAML::Node schemaNode = root["schemaVersion"];
+			if (!schemaNode)
+				throw std::runtime_error("schemaVersion is required");
+			const uint32_t schemaVersion = schemaNode.as<uint32_t>();
+			if (schemaVersion != 1U)
+				throw std::runtime_error("Unsupported schemaVersion " + std::to_string(schemaVersion));
+
+			const YAML::Node browserNode = root["contentBrowser"];
+			if (!browserNode || !browserNode.IsMap())
+				throw std::runtime_error("contentBrowser must be a JSON object");
+
+			EditorProjectState loaded;
+			loaded.ContentBrowserCurrentDirectory = ReadOptional<std::string>(
+				browserNode, "currentDirectory", ".");
+			const YAML::Node expandedNodes = browserNode["expandedNodes"];
+			if (expandedNodes)
+			{
+				if (!expandedNodes.IsSequence())
+					throw std::runtime_error("contentBrowser.expandedNodes must be an array");
+				for (const YAML::Node& node : expandedNodes)
+					loaded.ContentBrowserExpandedNodes.push_back(node.as<std::string>());
+			}
+
+			NormalizeEditorState(loaded, m_Directory, GetAssetPath());
+			state = std::move(loaded);
+			return EditorProjectStateLoadResult::Loaded;
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Warn("Failed to load Editor settings '{0}': {1}",
+				PathToUTF8(settingsPath), exception.what());
+			return EditorProjectStateLoadResult::Failed;
+		}
+	}
+
+	bool Project::SaveEditorState(const EditorProjectState& state) const
+	{
+		if (m_ProjectPath.empty())
+			return false;
+
+		const std::filesystem::path settingsPath = m_Directory / "UserSettings" / "editor.json";
+		std::error_code error;
+		std::filesystem::create_directories(settingsPath.parent_path(), error);
+		if (error)
+		{
+			TC_Core_Error("Could not create Editor settings directory '{0}': {1}",
+				PathToUTF8(settingsPath.parent_path()), error.message());
+			return false;
+		}
+
+		EditorProjectState normalized = state;
+		NormalizeEditorState(normalized, m_Directory, GetAssetPath());
+
+		std::ostringstream json;
+		json << "{\n"
+			<< "  \"schemaVersion\": 1,\n"
+			<< "  \"contentBrowser\": {\n"
+			<< "    \"currentDirectory\": \""
+			<< EscapeJsonString(normalized.ContentBrowserCurrentDirectory) << "\",\n"
+			<< "    \"expandedNodes\": [";
+		for (size_t index = 0; index < normalized.ContentBrowserExpandedNodes.size(); ++index)
+		{
+			if (index == 0)
+				json << '\n';
+			else
+				json << ",\n";
+			json << "      \"" << EscapeJsonString(normalized.ContentBrowserExpandedNodes[index]) << '"';
+		}
+		if (!normalized.ContentBrowserExpandedNodes.empty())
+			json << '\n' << "    ";
+		json << "]\n"
+			<< "  }\n"
+			<< "}\n";
+
+		std::string writeError;
+		if (!FileSystem::WriteFileAtomically(settingsPath, json.str(), writeError))
+		{
+			TC_Core_Error("Failed to save Editor settings '{0}': {1}",
+				PathToUTF8(settingsPath), writeError);
+			return false;
+		}
 		return true;
 	}
 
@@ -308,7 +645,7 @@ namespace TomCat {
 		auto project = CreateRef<Project>(normalizedProjectPath);
 		project->m_Config = config;
 		std::string validationError;
-		if (!NormalizeAndValidateConfig(project->m_Config, project->m_Directory, validationError))
+		if (!NormalizeAndValidateConfig(project->m_Config, validationError))
 		{
 			TC_Core_Error("Cannot create project '{0}': {1}", PathToUTF8(projectPath), validationError);
 			return nullptr;
@@ -378,6 +715,24 @@ namespace TomCat {
 			return nullptr;
 		}
 
+		// Project-local Editor state must never become source content. New projects
+		// receive the ignore rule here; existing projects are left untouched.
+		const std::filesystem::path ignorePath = projectDirectory / ".gitignore";
+		std::error_code ignoreError;
+		const bool ignoreExists = std::filesystem::exists(ignorePath, ignoreError);
+		if (ignoreError)
+		{
+			TC_Core_Warn("Could not inspect project ignore file '{0}': {1}",
+				PathToUTF8(ignorePath), ignoreError.message());
+		}
+		else if (!ignoreExists)
+		{
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(ignorePath, "/UserSettings/\n", writeError))
+				TC_Core_Warn("Could not create project ignore file '{0}': {1}",
+					PathToUTF8(ignorePath), writeError);
+		}
+
 		project->UpdateLastOperationTime();
 		return project;
 	}
@@ -417,20 +772,60 @@ namespace TomCat {
 			config.Template = ReadOptional<std::string>(projectNode, "Template", "3D");
 			config.AssetDirectory = UTF8ToPath(ReadOptional<std::string>(projectNode, "AssetDirectory", "Assets"));
 			config.StartScene = UTF8ToPath(ReadOptional<std::string>(projectNode, "StartScene", "sample.tomcat"));
-			config.TwoColumnCurrentFolder = ReadOptional<std::string>(projectNode, "TwoColumnCurrentFolder", "");
 			config.LastOperationTime = ReadOptional<std::string>(projectNode, "LastOperationTime", "");
-			if (projectNode["ExpandedNodes"])
-			{
-				if (!projectNode["ExpandedNodes"].IsSequence())
-					throw std::runtime_error("Project.ExpandedNodes must be a sequence");
-				for (const YAML::Node& node : projectNode["ExpandedNodes"])
-					config.ExpandedNodes.push_back(node.as<std::string>());
-			}
 
 			std::string validationError;
-			if (!NormalizeAndValidateConfig(config, project->m_Directory, validationError))
+			if (!NormalizeAndValidateConfig(config, validationError))
 				throw std::runtime_error(validationError);
 			project->m_Config = std::move(config);
+
+			// Older project documents stored Content Browser state in Project.tcproj.
+			// Keep it as a read-only migration source. Malformed legacy UI state is
+			// intentionally non-fatal because it is not part of the project definition.
+			const YAML::Node legacyCurrentDirectory = projectNode["TwoColumnCurrentFolder"];
+			const YAML::Node legacyExpandedNodes = projectNode["ExpandedNodes"];
+			project->m_HasLegacyEditorState = static_cast<bool>(legacyCurrentDirectory) ||
+				static_cast<bool>(legacyExpandedNodes);
+			if (legacyCurrentDirectory)
+			{
+				try
+				{
+					project->m_LegacyEditorState.ContentBrowserCurrentDirectory =
+						legacyCurrentDirectory.as<std::string>();
+				}
+				catch (const std::exception& exception)
+				{
+					TC_Core_Warn("Ignoring invalid legacy Project.TwoColumnCurrentFolder in '{0}': {1}",
+						PathToUTF8(projectPath), exception.what());
+				}
+			}
+			if (legacyExpandedNodes)
+			{
+				if (!legacyExpandedNodes.IsSequence())
+				{
+					TC_Core_Warn("Ignoring invalid legacy Project.ExpandedNodes in '{0}'",
+						PathToUTF8(projectPath));
+				}
+				else
+				{
+					for (const YAML::Node& node : legacyExpandedNodes)
+					{
+						try
+						{
+							project->m_LegacyEditorState.ContentBrowserExpandedNodes.push_back(
+								node.as<std::string>());
+						}
+						catch (const std::exception& exception)
+						{
+							TC_Core_Warn("Ignoring an invalid legacy Project.ExpandedNodes entry in '{0}': {1}",
+								PathToUTF8(projectPath), exception.what());
+						}
+					}
+				}
+			}
+			if (project->m_HasLegacyEditorState)
+				NormalizeEditorState(project->m_LegacyEditorState, project->m_Directory, project->GetAssetPath());
+
 			project->m_PreservedDocument = ReadWholeFile(projectPath);
 			return project;
 		}
@@ -448,7 +843,7 @@ namespace TomCat {
 			if (m_ProjectPath.empty())
 				throw std::runtime_error("Project path is empty");
 			std::string validationError;
-			if (!NormalizeAndValidateConfig(m_Config, m_Directory, validationError))
+			if (!NormalizeAndValidateConfig(m_Config, validationError))
 				throw std::runtime_error(validationError);
 
 			std::error_code error;
@@ -494,11 +889,8 @@ namespace TomCat {
 			projectNode["Template"] = m_Config.Template;
 			projectNode["AssetDirectory"] = PathToUTF8(m_Config.AssetDirectory);
 			projectNode["StartScene"] = PathToUTF8(m_Config.StartScene);
-			projectNode["TwoColumnCurrentFolder"] = m_Config.TwoColumnCurrentFolder;
-			YAML::Node expandedNodes(YAML::NodeType::Sequence);
-			for (const std::string& node : m_Config.ExpandedNodes)
-				expandedNodes.push_back(node);
-			projectNode["ExpandedNodes"] = expandedNodes;
+			projectNode.remove("TwoColumnCurrentFolder");
+			projectNode.remove("ExpandedNodes");
 			projectNode.remove("LastOperationTime");
 
 			YAML::Emitter out;
@@ -530,6 +922,8 @@ namespace TomCat {
 		if (!localLastOperationTime.empty())
 			m_Config.LastOperationTime = localLastOperationTime;
 		m_PreservedDocument = std::move(reloaded->m_PreservedDocument);
+		m_LegacyEditorState = std::move(reloaded->m_LegacyEditorState);
+		m_HasLegacyEditorState = reloaded->m_HasLegacyEditorState;
 		return true;
 	}
 

@@ -18,7 +18,7 @@
           <File>
             <Type>2</Type>
             <Name>imgui.ini</Name>
-            <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\imgui.ini</File>
+            <File>E:\Github\TomCat_Engine\Builder\Manager\imgui.ini</File>
             <ActiveX>False</ActiveX>
             <ActiveXInstall>False</ActiveXInstall>
             <Action>0</Action>

@@ -2,34 +2,394 @@
 #include "ProjectManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
+#include "TomCat/Utils/PlatformUtils.h"
 
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
 #include <unordered_set>
-#include <sstream>
 #include <string_view>
 #include <array>
+#include <cstdint>
+#include <iterator>
 #include <yaml-cpp/yaml.h>
 
 namespace TomCat {
 
 	namespace {
-		std::string::size_type FindIniSectionHeader(const std::string& ini,
-			std::string_view sectionName)
+		constexpr int s_HubSettingsSchemaVersion = 1;
+
+		std::string EscapeJsonString(std::string_view value)
 		{
-			std::string::size_type position = 0;
-			while ((position = ini.find(sectionName, position)) != std::string::npos)
+			static constexpr char hex[] = "0123456789ABCDEF";
+			std::string escaped;
+			escaped.reserve(value.size() + 2);
+			escaped.push_back('"');
+			for (const unsigned char character : value)
 			{
-				const bool lineStart = position == 0 || ini[position - 1] == '\n';
-				const size_t end = position + sectionName.size();
-				const bool lineEnd = end == ini.size() || ini[end] == '\n' || ini[end] == '\r';
-				if (lineStart && lineEnd)
-					return position;
-				position = end;
+				switch (character)
+				{
+					case '"': escaped += "\\\""; break;
+					case '\\': escaped += "\\\\"; break;
+					case '\b': escaped += "\\b"; break;
+					case '\f': escaped += "\\f"; break;
+					case '\n': escaped += "\\n"; break;
+					case '\r': escaped += "\\r"; break;
+					case '\t': escaped += "\\t"; break;
+					default:
+						if (character < 0x20)
+						{
+							escaped += "\\u00";
+							escaped.push_back(hex[(character >> 4) & 0x0F]);
+							escaped.push_back(hex[character & 0x0F]);
+						}
+						else
+						{
+							escaped.push_back(static_cast<char>(character));
+						}
+						break;
+				}
 			}
-			return std::string::npos;
+			escaped.push_back('"');
+			return escaped;
 		}
+
+		enum class JsonValueType
+		{
+			Null,
+			Boolean,
+			Number,
+			String,
+			Array,
+			Object
+		};
+
+		struct JsonValue
+		{
+			JsonValueType Type = JsonValueType::Null;
+			std::string Text;
+			std::vector<JsonValue> Array;
+			std::unordered_map<std::string, JsonValue> Object;
+
+			const JsonValue* Find(std::string_view key) const
+			{
+				const auto found = Object.find(std::string(key));
+				return found == Object.end() ? nullptr : &found->second;
+			}
+		};
+
+		class JsonParser
+		{
+		public:
+			explicit JsonParser(std::string_view input)
+				: m_Input(input)
+			{
+			}
+
+			JsonValue Parse()
+			{
+				SkipWhitespace();
+				JsonValue value = ParseValue(0);
+				SkipWhitespace();
+				if (m_Position != m_Input.size())
+					Fail("unexpected trailing data");
+				return value;
+			}
+
+		private:
+			[[noreturn]] void Fail(const char* message) const
+			{
+				throw std::runtime_error(std::string(message) + " at byte " +
+					std::to_string(m_Position));
+			}
+
+			void SkipWhitespace()
+			{
+				while (m_Position < m_Input.size())
+				{
+					const char character = m_Input[m_Position];
+					if (character != ' ' && character != '\t' && character != '\r' && character != '\n')
+						break;
+					++m_Position;
+				}
+			}
+
+			bool Consume(char expected)
+			{
+				if (m_Position >= m_Input.size() || m_Input[m_Position] != expected)
+					return false;
+				++m_Position;
+				return true;
+			}
+
+			void ConsumeLiteral(std::string_view literal)
+			{
+				if (m_Input.substr(m_Position, literal.size()) != literal)
+					Fail("invalid literal");
+				m_Position += literal.size();
+			}
+
+			JsonValue ParseValue(size_t depth)
+			{
+				if (depth > 64)
+					Fail("JSON nesting is too deep");
+				if (m_Position >= m_Input.size())
+					Fail("expected a JSON value");
+
+				switch (m_Input[m_Position])
+				{
+					case 'n':
+						ConsumeLiteral("null");
+						return {};
+					case 't':
+						ConsumeLiteral("true");
+						return { JsonValueType::Boolean, "true" };
+					case 'f':
+						ConsumeLiteral("false");
+						return { JsonValueType::Boolean, "false" };
+					case '"':
+						return { JsonValueType::String, ParseString() };
+					case '[':
+						return ParseArray(depth);
+					case '{':
+						return ParseObject(depth);
+					default:
+						if (m_Input[m_Position] == '-' ||
+							(m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9'))
+						{
+							return { JsonValueType::Number, ParseNumber() };
+						}
+						Fail("invalid JSON value");
+				}
+			}
+
+			JsonValue ParseArray(size_t depth)
+			{
+				JsonValue value;
+				value.Type = JsonValueType::Array;
+				++m_Position;
+				SkipWhitespace();
+				if (Consume(']'))
+					return value;
+
+				while (true)
+				{
+					SkipWhitespace();
+					value.Array.emplace_back(ParseValue(depth + 1));
+					SkipWhitespace();
+					if (Consume(']'))
+						return value;
+					if (!Consume(','))
+						Fail("expected ',' or ']' in array");
+				}
+			}
+
+			JsonValue ParseObject(size_t depth)
+			{
+				JsonValue value;
+				value.Type = JsonValueType::Object;
+				++m_Position;
+				SkipWhitespace();
+				if (Consume('}'))
+					return value;
+
+				while (true)
+				{
+					SkipWhitespace();
+					if (m_Position >= m_Input.size() || m_Input[m_Position] != '"')
+						Fail("expected a string key in object");
+					std::string key = ParseString();
+					SkipWhitespace();
+					if (!Consume(':'))
+						Fail("expected ':' after object key");
+					SkipWhitespace();
+					JsonValue member = ParseValue(depth + 1);
+					if (!value.Object.emplace(std::move(key), std::move(member)).second)
+						Fail("duplicate object key");
+					SkipWhitespace();
+					if (Consume('}'))
+						return value;
+					if (!Consume(','))
+						Fail("expected ',' or '}' in object");
+				}
+			}
+
+			static int HexDigit(char character)
+			{
+				if (character >= '0' && character <= '9')
+					return character - '0';
+				if (character >= 'a' && character <= 'f')
+					return character - 'a' + 10;
+				if (character >= 'A' && character <= 'F')
+					return character - 'A' + 10;
+				return -1;
+			}
+
+			uint32_t ParseHexCodeUnit()
+			{
+				if (m_Position + 4 > m_Input.size())
+					Fail("incomplete Unicode escape");
+				uint32_t value = 0;
+				for (int index = 0; index < 4; ++index)
+				{
+					const int digit = HexDigit(m_Input[m_Position++]);
+					if (digit < 0)
+						Fail("invalid Unicode escape");
+					value = (value << 4) | static_cast<uint32_t>(digit);
+				}
+				return value;
+			}
+
+			static void AppendUTF8(std::string& output, uint32_t codePoint)
+			{
+				if (codePoint <= 0x7F)
+					output.push_back(static_cast<char>(codePoint));
+				else if (codePoint <= 0x7FF)
+				{
+					output.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+					output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+				}
+				else if (codePoint <= 0xFFFF)
+				{
+					output.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+					output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+					output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+				}
+				else
+				{
+					output.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+					output.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+					output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+					output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+				}
+			}
+
+			std::string ParseString()
+			{
+				if (!Consume('"'))
+					Fail("expected string");
+				std::string value;
+				while (m_Position < m_Input.size())
+				{
+					const unsigned char character =
+						static_cast<unsigned char>(m_Input[m_Position++]);
+					if (character == '"')
+						return value;
+					if (character < 0x20)
+						Fail("unescaped control character in string");
+					if (character != '\\')
+					{
+						value.push_back(static_cast<char>(character));
+						continue;
+					}
+
+					if (m_Position >= m_Input.size())
+						Fail("incomplete string escape");
+					const char escape = m_Input[m_Position++];
+					switch (escape)
+					{
+						case '"': value.push_back('"'); break;
+						case '\\': value.push_back('\\'); break;
+						case '/': value.push_back('/'); break;
+						case 'b': value.push_back('\b'); break;
+						case 'f': value.push_back('\f'); break;
+						case 'n': value.push_back('\n'); break;
+						case 'r': value.push_back('\r'); break;
+						case 't': value.push_back('\t'); break;
+						case 'u':
+						{
+							uint32_t codePoint = ParseHexCodeUnit();
+							if (codePoint >= 0xD800 && codePoint <= 0xDBFF)
+							{
+								if (m_Position + 2 > m_Input.size() ||
+									m_Input[m_Position] != '\\' || m_Input[m_Position + 1] != 'u')
+								{
+									Fail("high surrogate is not followed by a low surrogate");
+								}
+								m_Position += 2;
+								const uint32_t lowSurrogate = ParseHexCodeUnit();
+								if (lowSurrogate < 0xDC00 || lowSurrogate > 0xDFFF)
+									Fail("invalid low surrogate");
+								codePoint = 0x10000 +
+									((codePoint - 0xD800) << 10) + (lowSurrogate - 0xDC00);
+							}
+							else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF)
+							{
+								Fail("unexpected low surrogate");
+							}
+							AppendUTF8(value, codePoint);
+							break;
+						}
+						default: Fail("invalid string escape");
+					}
+				}
+				Fail("unterminated string");
+			}
+
+			std::string ParseNumber()
+			{
+				const size_t start = m_Position;
+				Consume('-');
+				if (m_Position >= m_Input.size())
+					Fail("incomplete number");
+				if (m_Input[m_Position] == '0')
+				{
+					++m_Position;
+					if (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						Fail("leading zero in number");
+					}
+				}
+				else
+				{
+					if (m_Input[m_Position] < '1' || m_Input[m_Position] > '9')
+						Fail("invalid number");
+					while (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						++m_Position;
+					}
+				}
+
+				if (m_Position < m_Input.size() && m_Input[m_Position] == '.')
+				{
+					++m_Position;
+					const size_t fractionStart = m_Position;
+					while (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						++m_Position;
+					}
+					if (fractionStart == m_Position)
+						Fail("fraction requires at least one digit");
+				}
+
+				if (m_Position < m_Input.size() &&
+					(m_Input[m_Position] == 'e' || m_Input[m_Position] == 'E'))
+				{
+					++m_Position;
+					if (m_Position < m_Input.size() &&
+						(m_Input[m_Position] == '+' || m_Input[m_Position] == '-'))
+					{
+						++m_Position;
+					}
+					const size_t exponentStart = m_Position;
+					while (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						++m_Position;
+					}
+					if (exponentStart == m_Position)
+						Fail("exponent requires at least one digit");
+				}
+				return std::string(m_Input.substr(start, m_Position - start));
+			}
+
+		private:
+			std::string_view m_Input;
+			size_t m_Position = 0;
+		};
 
 		bool PrepareManagedDirectory(const std::filesystem::path& requestedDirectory,
 			std::filesystem::path& preparedDirectory, const char* description)
@@ -642,16 +1002,10 @@ namespace TomCat {
 
 	std::optional<std::filesystem::path> ProjectManager::GetHubSettingsPath() const
 	{
-		// Hub settings live in <cwd>/imgui.ini under a custom [HubConfig] section,
-		// kept alongside ImGui's window layout settings (no separate .tomcat file).
-		std::error_code error;
-		const std::filesystem::path workingDirectory = std::filesystem::current_path(error);
-		if (error)
-		{
-			TC_Core_Error("Could not resolve the Hub settings directory: {0}", error.message());
+		const std::optional<std::filesystem::path> settingsRoot = GetTomCatSettingsRoot();
+		if (!settingsRoot)
 			return std::nullopt;
-		}
-		return workingDirectory / "imgui.ini";
+		return *settingsRoot / "hub.json";
 	}
 
 	void ProjectManager::LoadHubSettings()
@@ -661,36 +1015,195 @@ namespace TomCat {
 		m_KnownProjectPaths.clear();
 		m_ProjectLastOpenedTimes.clear();
 		m_IgnoredProjectPaths.clear();
+		m_HubSettingsWriteBlocked = false;
+
+		const std::optional<std::filesystem::path> settingsPathResult = GetHubSettingsPath();
+		if (!settingsPathResult)
+			return;
+		const std::filesystem::path& settingsPath = *settingsPathResult;
+
+		std::error_code settingsError;
+		const bool settingsExist = std::filesystem::exists(settingsPath, settingsError);
+		if (settingsError)
+		{
+			m_HubSettingsWriteBlocked = true;
+			TC_Core_Error("Could not inspect Hub settings '{0}': {1}",
+				PathToUTF8(settingsPath), settingsError.message());
+			return;
+		}
+
+		if (settingsExist)
+		{
+			try
+			{
+				std::error_code sizeError;
+				const std::uintmax_t settingsSize = std::filesystem::file_size(settingsPath, sizeError);
+				if (sizeError)
+					throw std::runtime_error("could not inspect the file size: " + sizeError.message());
+				if (settingsSize > 16 * 1024 * 1024)
+					throw std::runtime_error("the file exceeds the 16 MiB safety limit");
+
+				std::ifstream input(settingsPath, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("could not open the file");
+
+				const std::string contents{
+					std::istreambuf_iterator<char>{ input }, std::istreambuf_iterator<char>{} };
+				if (input.bad())
+					throw std::runtime_error("failed while reading the file");
+				const JsonValue root = JsonParser{ contents }.Parse();
+				if (root.Type != JsonValueType::Object)
+					throw std::runtime_error("the JSON root must be an object");
+
+				const JsonValue* schemaVersion = root.Find("schemaVersion");
+				if (!schemaVersion || schemaVersion->Type != JsonValueType::Number)
+					throw std::runtime_error("schemaVersion is missing or invalid");
+				if (schemaVersion->Text != std::to_string(s_HubSettingsSchemaVersion))
+					throw std::runtime_error("unsupported schemaVersion " + schemaVersion->Text);
+
+				std::filesystem::path projectDirectory;
+				std::filesystem::path editorDirectory;
+				std::vector<std::filesystem::path> knownProjectPaths;
+				std::unordered_set<std::string> ignoredProjectPaths;
+				std::unordered_map<std::string, std::string> projectLastOpenedTimes;
+
+				auto readOptionalPath = [&root](const char* name) -> std::filesystem::path
+				{
+					const JsonValue* value = root.Find(name);
+					if (!value)
+						return {};
+					if (value->Type != JsonValueType::String)
+						throw std::runtime_error(std::string(name) + " must be a string");
+					return UTF8ToPath(value->Text);
+				};
+				projectDirectory = readOptionalPath("projectDirectory");
+				editorDirectory = readOptionalPath("editorDirectory");
+
+				const JsonValue* knownProjects = root.Find("knownProjects");
+				if (knownProjects)
+				{
+					if (knownProjects->Type != JsonValueType::Array)
+						throw std::runtime_error("knownProjects must be an array");
+					for (const JsonValue& project : knownProjects->Array)
+					{
+						if (project.Type != JsonValueType::String)
+							throw std::runtime_error("knownProjects entries must be strings");
+						knownProjectPaths.emplace_back(UTF8ToPath(project.Text));
+					}
+				}
+
+				const JsonValue* ignoredProjects = root.Find("ignoredProjects");
+				if (ignoredProjects)
+				{
+					if (ignoredProjects->Type != JsonValueType::Array)
+						throw std::runtime_error("ignoredProjects must be an array");
+					for (const JsonValue& project : ignoredProjects->Array)
+					{
+						if (project.Type != JsonValueType::String)
+							throw std::runtime_error("ignoredProjects entries must be strings");
+						const std::string& path = project.Text;
+						if (!path.empty())
+							ignoredProjectPaths.insert(ProjectPathKey(UTF8ToPath(path)));
+					}
+				}
+
+				const JsonValue* lastOpened = root.Find("projectLastOpened");
+				if (lastOpened)
+				{
+					if (lastOpened->Type != JsonValueType::Array)
+						throw std::runtime_error("projectLastOpened must be an array");
+					for (const JsonValue& entry : lastOpened->Array)
+					{
+						if (entry.Type != JsonValueType::Object)
+							throw std::runtime_error("projectLastOpened entries must be objects");
+						const JsonValue* projectPath = entry.Find("projectPath");
+						const JsonValue* timestamp = entry.Find("lastOpened");
+						if (!projectPath || projectPath->Type != JsonValueType::String ||
+							!timestamp || timestamp->Type != JsonValueType::String)
+						{
+							throw std::runtime_error(
+								"projectLastOpened entries require string projectPath and lastOpened fields");
+						}
+						const std::string& encodedPath = projectPath->Text;
+						const std::string& encodedTimestamp = timestamp->Text;
+						if (!encodedPath.empty() && !encodedTimestamp.empty())
+						{
+							projectLastOpenedTimes[ProjectPathKey(UTF8ToPath(encodedPath))] =
+								encodedTimestamp;
+						}
+					}
+				}
+
+				m_ProjectDirectory = std::move(projectDirectory);
+				m_EditorDirectory = std::move(editorDirectory);
+				m_KnownProjectPaths = std::move(knownProjectPaths);
+				m_IgnoredProjectPaths = std::move(ignoredProjectPaths);
+				m_ProjectLastOpenedTimes = std::move(projectLastOpenedTimes);
+			}
+			catch (const std::exception& error)
+			{
+				// Never silently replace a malformed or unreadable settings file. The
+				// user can repair/delete it, while this process continues with defaults.
+				m_HubSettingsWriteBlocked = true;
+				TC_Core_Error("Failed to load Hub settings '{0}': {1}. Writes are disabled to preserve the file",
+					PathToUTF8(settingsPath), error.what());
+			}
+			return;
+		}
 
 		try
 		{
-		const std::optional<std::filesystem::path> iniPathResult = GetHubSettingsPath();
-		if (!iniPathResult)
-			return;
-		const std::filesystem::path& iniPath = *iniPathResult;
-		bool sawSection = false;
-		std::error_code iniError;
-		const bool iniExists = std::filesystem::exists(iniPath, iniError);
-		if (iniError)
-			throw std::runtime_error("Could not inspect Hub settings");
-		if (iniExists)
-		{
-			std::ifstream fin(iniPath, std::ios::binary);
-			if (!fin)
-				throw std::runtime_error("Could not open Hub settings");
-			std::string line;
-			bool inSection = false;
-			while (std::getline(fin, line))
+			auto getProgramRoot = []()
 			{
-				if (!line.empty() && line.back() == '\r')
-					line.pop_back();
-				if (line == "[HubConfig]") { inSection = true; sawSection = true; continue; }
-				if (inSection)
+				std::array<wchar_t, 32768> modulePath{};
+				const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(),
+					static_cast<DWORD>(modulePath.size()));
+				if (length == 0 || length >= modulePath.size())
 				{
-					if (line.empty() || line[0] == '[') break;
-					if (line.rfind("ProjectDirectory=", 0) == 0) m_ProjectDirectory = UTF8ToPath(line.substr(17));
-					else if (line.rfind("EditorDirectory=", 0) == 0) m_EditorDirectory = UTF8ToPath(line.substr(16));
-					else if (line.rfind("KnownProjects=", 0) == 0) m_KnownProjectPaths.emplace_back(UTF8ToPath(line.substr(14)));
+					throw std::runtime_error("Could not resolve the program directory. Windows error "
+						+ std::to_string(GetLastError()));
+				}
+				return std::filesystem::path(std::wstring(modulePath.data(), length)).parent_path();
+			};
+
+			auto loadIniSection = [this](const std::filesystem::path& path) -> bool
+			{
+				std::error_code pathError;
+				const bool exists = std::filesystem::exists(path, pathError);
+				if (pathError)
+					throw std::runtime_error("Could not inspect legacy Hub settings '" + PathToUTF8(path)
+						+ "': " + pathError.message());
+				if (!exists)
+					return false;
+
+				std::ifstream input(path, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("Could not open legacy Hub settings '" + PathToUTF8(path) + "'");
+
+				bool sawSection = false;
+				bool inSection = false;
+				std::string line;
+				while (std::getline(input, line))
+				{
+					if (!line.empty() && line.back() == '\r')
+						line.pop_back();
+					if (line == "[HubConfig]")
+					{
+						inSection = true;
+						sawSection = true;
+						continue;
+					}
+					if (!inSection)
+						continue;
+					if (line.empty() || line[0] == '[')
+						break;
+
+					if (line.rfind("ProjectDirectory=", 0) == 0)
+						m_ProjectDirectory = UTF8ToPath(line.substr(17));
+					else if (line.rfind("EditorDirectory=", 0) == 0)
+						m_EditorDirectory = UTF8ToPath(line.substr(16));
+					else if (line.rfind("KnownProjects=", 0) == 0)
+						m_KnownProjectPaths.emplace_back(UTF8ToPath(line.substr(14)));
 					else if (line.rfind("IgnoredProjects=", 0) == 0)
 					{
 						const std::string encodedPath = line.substr(16);
@@ -704,40 +1217,45 @@ namespace TomCat {
 						if (separator != std::string::npos && separator > 0 && separator + 1 < value.size())
 						{
 							const std::string timestamp = value.substr(0, separator);
-							const std::string encodedPath = value.substr(separator + 1);
-							const std::filesystem::path projectPath = UTF8ToPath(encodedPath);
+							const std::filesystem::path projectPath = UTF8ToPath(value.substr(separator + 1));
 							m_ProjectLastOpenedTimes[ProjectPathKey(projectPath)] = timestamp;
 						}
 					}
 				}
-			}
-			if (fin.bad())
-				throw std::runtime_error("Failed while reading Hub settings");
-		}
+				if (input.bad())
+					throw std::runtime_error("Failed while reading legacy Hub settings '" + PathToUTF8(path) + "'");
+				return sawSection;
+			};
 
-		// Legacy migration: if there is no [HubConfig] in imgui.ini yet, import the
-		// old HubConfig.tomcat once and persist it to the new location.
-		if (!sawSection)
-		{
-			const std::filesystem::path legacyPath = iniPath.parent_path() / "HubConfig.tomcat";
-			std::error_code legacyError;
-			const bool legacyExists = std::filesystem::exists(legacyPath, legacyError);
-			if (legacyError)
+			const std::filesystem::path legacyLocalRoot =
+				settingsPath.parent_path().parent_path() / "UserSettings";
+			bool migrated = loadIniSection(legacyLocalRoot / "Hub" / "imgui.ini");
+			if (!migrated)
+				migrated = loadIniSection(legacyLocalRoot / "Manager" / "imgui.ini");
+			if (!migrated)
+				migrated = loadIniSection(
+					getProgramRoot() / "UserSettings" / "Manager" / "imgui.ini");
+			if (!migrated)
+				migrated = loadIniSection(getProgramRoot() / "imgui.ini");
+
+			// HubConfig.tomcat predates the INI settings and is the final read-only
+			// migration source.
+			if (!migrated)
 			{
-				TC_Core_Error("Could not inspect legacy Hub settings '{0}': {1}",
-					PathToUTF8(legacyPath), legacyError.message());
-			}
-			else if (legacyExists)
-			{
-				try
+				const std::filesystem::path legacyPath = getProgramRoot() / "HubConfig.tomcat";
+				std::error_code legacyError;
+				const bool legacyExists = std::filesystem::exists(legacyPath, legacyError);
+				if (legacyError)
+					throw std::runtime_error("Could not inspect legacy Hub settings: " + legacyError.message());
+				if (legacyExists)
 				{
 					std::ifstream input(legacyPath, std::ios::binary);
 					if (!input)
 						throw std::runtime_error("Could not open legacy Hub settings");
-					YAML::Node data = YAML::Load(input);
+					const YAML::Node data = YAML::Load(input);
 					if (input.bad())
 						throw std::runtime_error("Failed while reading legacy Hub settings");
-					auto config = data["HubConfig"];
+					const YAML::Node config = data["HubConfig"];
 					if (config)
 					{
 						m_ProjectDirectory = config["ProjectDirectory"]
@@ -747,20 +1265,15 @@ namespace TomCat {
 						if (config["KnownProjects"])
 						{
 							for (const auto& node : config["KnownProjects"])
-							{
 								m_KnownProjectPaths.emplace_back(UTF8ToPath(node.as<std::string>()));
-							}
 						}
-						if (!SaveHubSettings())
-							TC_Core_Warn("Legacy Hub settings were loaded but could not be migrated to imgui.ini");
+						migrated = true;
 					}
 				}
-				catch (const std::exception& e)
-				{
-					TC_Core_Error("Failed to load legacy Hub settings: {0}", e.what());
-				}
 			}
-		}
+
+			if (migrated && !SaveHubSettings())
+				TC_Core_Warn("Legacy Hub settings were loaded but could not be migrated to hub.json");
 		}
 		catch (const std::exception& error)
 		{
@@ -769,7 +1282,7 @@ namespace TomCat {
 			m_KnownProjectPaths.clear();
 			m_ProjectLastOpenedTimes.clear();
 			m_IgnoredProjectPaths.clear();
-			TC_Core_Error("Failed to load Hub settings: {0}", error.what());
+			TC_Core_Error("Failed to migrate legacy Hub settings: {0}", error.what());
 		}
 	}
 
@@ -777,55 +1290,64 @@ namespace TomCat {
 	{
 		try
 		{
-			const std::optional<std::filesystem::path> iniPathResult = GetHubSettingsPath();
-			if (!iniPathResult)
+			if (m_HubSettingsWriteBlocked)
+				throw std::runtime_error(
+					"writes are disabled because the existing hub.json could not be loaded");
+
+			const std::optional<std::filesystem::path> settingsPathResult = GetHubSettingsPath();
+			if (!settingsPathResult)
 				return false;
-			const std::filesystem::path& iniPath = *iniPathResult;
+			const std::filesystem::path& settingsPath = *settingsPathResult;
 
-			// Build the [HubConfig] section text.
-			std::string section = "\n[HubConfig]\n";
-			section += "ProjectDirectory=" + PathToUTF8(m_ProjectDirectory) + "\n";
-			section += "EditorDirectory=" + PathToUTF8(m_EditorDirectory) + "\n";
-			for (const auto& path : m_KnownProjectPaths)
-			{
-				section += "KnownProjects=" + PathToUTF8(path) + "\n";
-			}
-			for (const std::string& path : m_IgnoredProjectPaths)
-				section += "IgnoredProjects=" + path + "\n";
-			for (const auto& [path, timestamp] : m_ProjectLastOpenedTimes)
-				section += "ProjectLastOpened=" + timestamp + "|" + path + "\n";
+			std::error_code directoryError;
+			std::filesystem::create_directories(settingsPath.parent_path(), directoryError);
+			if (directoryError)
+				throw std::runtime_error("Could not create Hub settings directory '"
+					+ PathToUTF8(settingsPath.parent_path()) + "': " + directoryError.message());
+			directoryError.clear();
+			if (!std::filesystem::is_directory(settingsPath.parent_path(), directoryError) || directoryError)
+				throw std::runtime_error("Hub settings parent path is not an accessible directory: "
+					+ PathToUTF8(settingsPath.parent_path()));
 
-			// Read the current imgui.ini so other sections (window layout etc.)
-			// are preserved, then replace only the [HubConfig] block.
-			std::string ini;
-			{
-				std::error_code existsError;
-				const bool exists = std::filesystem::exists(iniPath, existsError);
-				if (existsError)
-					throw std::runtime_error("Could not inspect existing Hub settings");
-				std::ifstream fin(iniPath, std::ios::binary);
-				if (exists && !fin)
-					throw std::runtime_error("Could not open existing Hub settings");
-				if (fin)
-				{
-					std::stringstream ss;
-					ss << fin.rdbuf();
-					if (fin.bad())
-						throw std::runtime_error("Failed while reading existing Hub settings");
-					ini = ss.str();
-				}
-			}
+			std::vector<std::string> ignoredProjects(
+				m_IgnoredProjectPaths.begin(), m_IgnoredProjectPaths.end());
+			std::sort(ignoredProjects.begin(), ignoredProjects.end());
+			std::vector<std::pair<std::string, std::string>> lastOpened(
+				m_ProjectLastOpenedTimes.begin(), m_ProjectLastOpenedTimes.end());
+			std::sort(lastOpened.begin(), lastOpened.end(),
+				[](const auto& left, const auto& right) { return left.first < right.first; });
 
-			std::string::size_type pos = FindIniSectionHeader(ini, "[HubConfig]");
-			if (pos != std::string::npos)
+			std::string json;
+			json += "{\n";
+			json += "  \"schemaVersion\": " + std::to_string(s_HubSettingsSchemaVersion) + ",\n";
+			json += "  \"projectDirectory\": " + EscapeJsonString(PathToUTF8(m_ProjectDirectory)) + ",\n";
+			json += "  \"editorDirectory\": " + EscapeJsonString(PathToUTF8(m_EditorDirectory)) + ",\n";
+			json += "  \"knownProjects\": [\n";
+			for (size_t index = 0; index < m_KnownProjectPaths.size(); ++index)
 			{
-				std::string::size_type next = ini.find("\n[", pos + 1);
-				ini.erase(pos, (next == std::string::npos) ? std::string::npos : next - pos);
+				json += "    " + EscapeJsonString(PathToUTF8(m_KnownProjectPaths[index]));
+				json += index + 1 < m_KnownProjectPaths.size() ? ",\n" : "\n";
 			}
-			ini += section;
+			json += "  ],\n";
+			json += "  \"ignoredProjects\": [\n";
+			for (size_t index = 0; index < ignoredProjects.size(); ++index)
+			{
+				json += "    " + EscapeJsonString(ignoredProjects[index]);
+				json += index + 1 < ignoredProjects.size() ? ",\n" : "\n";
+			}
+			json += "  ],\n";
+			json += "  \"projectLastOpened\": [\n";
+			for (size_t index = 0; index < lastOpened.size(); ++index)
+			{
+				json += "    { \"projectPath\": " + EscapeJsonString(lastOpened[index].first)
+					+ ", \"lastOpened\": " + EscapeJsonString(lastOpened[index].second) + " }";
+				json += index + 1 < lastOpened.size() ? ",\n" : "\n";
+			}
+			json += "  ]\n";
+			json += "}\n";
 
 			std::string writeError;
-			if (!FileSystem::WriteFileAtomically(iniPath, ini, writeError))
+			if (!FileSystem::WriteFileAtomically(settingsPath, json, writeError))
 				throw std::runtime_error("Could not atomically replace Hub settings: " + writeError);
 			return true;
 		}

@@ -5,12 +5,14 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
+#include <shlobj.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
 
 #include "TomCat/Core/Application.h"
 
 #pragma comment(lib, "Ole32.lib")
+#pragma comment(lib, "Shell32.lib")
 
 namespace TomCat {
 	namespace {
@@ -161,6 +163,26 @@ namespace TomCat {
 			return path;
 		}
 
+	}
+
+	std::optional<std::filesystem::path> GetTomCatSettingsRoot()
+	{
+		PWSTR localAppData = nullptr;
+		const HRESULT result = SHGetKnownFolderPath(
+			FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &localAppData);
+		if (FAILED(result) || !localAppData)
+		{
+			if (localAppData)
+				CoTaskMemFree(localAppData);
+			TC_Core_Error("Could not resolve the Windows LocalAppData directory (HRESULT 0x{0:X})",
+				static_cast<uint32_t>(result));
+			return std::nullopt;
+		}
+
+		const std::filesystem::path settingsRoot =
+			std::filesystem::path(localAppData) / "TomCat" / "TomCatSettings";
+		CoTaskMemFree(localAppData);
+		return settingsRoot;
 	}
 
 	std::filesystem::path FileDialogs::OpenFile(const char* filter)

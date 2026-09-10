@@ -2,7 +2,7 @@
 
 ## 文件与职责
 
-每个项目使用根目录下的 `Project.tcproj`。该文件是可纳入版本控制的 YAML 项目配置；Hub 的最近打开时间、已知项目列表和本机目录等用户状态不写入项目文件，而是保存在运行目录 `imgui.ini` 的 `[HubConfig]` 段中。
+每个项目使用根目录下的 `Project.tcproj`。该文件是可纳入版本控制的 YAML 项目配置；Hub 的最近打开时间、已知项目列表和本机目录等用户状态不写入项目文件或 `imgui.ini`，而是保存在真实外部目录 `%LOCALAPPDATA%\TomCat\TomCatSettings\hub.json`。
 
 - `Project`：创建、加载、校验、保存及重新加载项目配置。
 - `ProjectManager`：扫描项目、维护 Hub 本地状态，并启动对应版本的 Editor。
@@ -21,8 +21,6 @@ Project:
   Template: 3D
   AssetDirectory: Assets
   StartScene: Scenes/Main.tomcat
-  TwoColumnCurrentFolder: ""
-  ExpandedNodes: []
 ```
 
 字段约束：
@@ -31,7 +29,7 @@ Project:
 - `Template` 只能是 `2D` 或 `3D`，且是项目模式的唯一真源；Builder 不再向 Editor 传递额外模式参数。
 - `AssetDirectory` 必须是项目内的非空相对路径。
 - `StartScene` 必须是相对于 `AssetDirectory` 的安全相对路径，不能使用绝对路径或 `..` 跳出资源目录。
-- Content Browser 的当前目录和展开节点加载时会限制在项目资源目录内；无效旧路径会被忽略。
+- Content Browser 的当前目录和展开节点属于 Editor 本机状态，保存在项目的 `UserSettings/editor.json`；加载时会限制在项目资源目录内，无效旧路径会被忽略。
 - `LastOperationTime` 是 schema v1 的旧字段。加载时可迁移到 Hub 本地状态，但 schema v2 保存时不再写出。
 
 加载器接受没有 `SchemaVersion` 的 schema v1 文件，以兼容已有项目；高于当前版本的 schema 会被拒绝，避免旧程序覆盖新格式。显式保存时会更新上述已知字段，同时保留文件中的未知扩展字段。仅加载、扫描或打开项目不会重写 `Project.tcproj`。
@@ -43,6 +41,9 @@ Project:
 ```text
 MyGame/
 ├── Project.tcproj
+├── UserSettings/       # Editor 运行时生成，不应提交，也不参与 EVB 打包
+│   ├── imgui.ini       # 仅保存布局
+│   └── editor.json     # 保存非布局 Editor 状态
 └── Assets/
     ├── Scenes/
     │   └── Main.tomcat
@@ -58,6 +59,16 @@ MyGame/
 4. Editor 将 `AssetDirectory / StartScene` 作为启动场景；不存在或无效时保留空白编辑场景并报告错误。
 5. Editor 启动成功后，Builder 才在本地 Hub 配置中记录最近打开时间。
 
+## 布局与用户设置
+
+- Editor 程序根目录的 `imgui.ini` 是只读默认布局，并随 Editor 一起封装进 Enigma Virtual Box。
+- Editor 启动或切换项目时先加载封装的默认布局，再加载当前可写布局。有活动项目时写入该 `Project.tcproj` 同目录下的 `UserSettings/imgui.ini`；无活动项目时写入真实外部目录 `%LOCALAPPDATA%\TomCat\TomCatSettings\editor-layout.ini`。窗口、Docking、Scene 工具栏和 Content Browser 布局均遵循这一选择。
+- Editor 的非布局项目状态写入同一项目下的 `UserSettings/editor.json`，不会混入 `imgui.ini` 或 `Project.tcproj`。
+- Hub 没有用户可调整布局；它仍封装只读的默认 `imgui.ini`，但最近打开时间、已知项目列表、本机项目目录和 Editor 目录只写入 `%LOCALAPPDATA%\TomCat\TomCatSettings\hub.json`。
+- `%LOCALAPPDATA%\TomCat\TomCatSettings` 是 EVB 虚拟树之外的真实文件系统目录；`hub.json`、`editor.json`、`editor-layout.ini`、`UserSettings` 和 `TomCatSettings` 均不参与 EVB 打包。
+- 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成包含 `/UserSettings/` 的 `.gitignore`，现有外部项目应手动加入同一规则。
+- 项目根目录不再读取或生成旧式 `imgui.ini`；它只允许作为 Editor 可执行文件的封装默认布局存在。
+
 ## 场景文件 schema v2
 
 新保存的 `.tomcat` 场景包含顶层 `SchemaVersion: 2`、`SceneName` 和 `Entities`。实体关系只写 `Parent`，不再写旧的 `m_Father` / `m_Children` 双份关系；加载器仍可读取 schema v1 场景。
@@ -72,6 +83,7 @@ Sprite Renderer 会保存 `Color`、`TilingFactor` 以及可选的 `TexturePath`
 
 - 支持读取 schema v1 项目和场景；下一次显式保存只输出当前 schema 的规范字段。
 - 不再提供未实现的运行时场景序列化 API。
-- 项目打开历史属于本机 UI 状态，不应提交到项目仓库。
+- 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。
 - Hub 的“移除项目”只移出列表，不删除磁盘文件；被移除路径保存在 `IgnoredProjects`，默认目录扫描不会自动把它重新加入，用户显式添加、创建或加载时解除忽略。
-- `HubConfig.tomcat` 仅用于一次性迁移；当前 Hub 配置写入 `imgui.ini`。
+- 旧的 `%LOCALAPPDATA%\TomCat\UserSettings\Hub\imgui.ini`、`%LOCALAPPDATA%\TomCat\UserSettings\Manager\imgui.ini`、程序目录 `UserSettings\Manager\imgui.ini`、根目录 `imgui.ini` 中的 `[HubConfig]` 和 `HubConfig.tomcat` 只用于一次性只读迁移；当前 Hub 配置只写入 `%LOCALAPPDATA%\TomCat\TomCatSettings\hub.json`。
+- 旧 `Project.tcproj` 中的 `TwoColumnCurrentFolder` 和 `ExpandedNodes` 只作为一次性只读迁移源；新保存的项目文件不再包含它们。

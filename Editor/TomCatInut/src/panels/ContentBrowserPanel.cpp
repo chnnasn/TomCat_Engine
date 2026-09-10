@@ -16,6 +16,7 @@
 #include "TomCat/Project/ProjectManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
+#include "TomCat/Utils/PlatformUtils.h"
 
 namespace TomCat {
 
@@ -214,11 +215,45 @@ namespace TomCat {
 			return directory && !entry.is_symlink(error);
 		}
 
-		std::filesystem::path GetEditorIniPath()
+		std::filesystem::path GetDefaultEditorLayoutPath()
 		{
 			std::error_code error;
 			const std::filesystem::path currentDirectory = std::filesystem::current_path(error);
 			return error ? std::filesystem::path("imgui.ini") : currentDirectory / "imgui.ini";
+		}
+
+		std::filesystem::path GetEditorLayoutPath(const Ref<Project>& project)
+		{
+			if (project)
+			{
+				if (project->GetProjectPath().empty())
+				{
+					TC_Core_Error("Cannot resolve a Content Browser layout for a project with an empty path");
+					return {};
+				}
+				return project->GetProjectPath().parent_path() / "UserSettings" / "imgui.ini";
+			}
+
+			const std::optional<std::filesystem::path> settingsRoot = GetTomCatSettingsRoot();
+			return settingsRoot ? *settingsRoot / "editor-layout.ini" : std::filesystem::path{};
+		}
+
+		bool EnsureSettingsDirectory(const std::filesystem::path& settingsPath)
+		{
+			if (settingsPath.empty())
+				return false;
+			const std::filesystem::path directory = settingsPath.parent_path();
+			if (directory.empty())
+				return true;
+
+			std::error_code error;
+			std::filesystem::create_directories(directory, error);
+			if (!error)
+				return true;
+
+			TC_Core_Error("Failed to create Content Browser settings directory '{0}': {1}",
+				PathToUTF8(directory), error.message());
+			return false;
 		}
 
 	}
@@ -226,7 +261,6 @@ namespace TomCat {
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_LayoutMode(TwoColumn)
 	{
-		LoadLayoutSetting();
 		m_DirectoryIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/DirectoryIcon.png");
 		m_FileIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/FileIcon.png");
 		SetProject(ProjectManager::Get().GetActiveProject());
@@ -240,6 +274,7 @@ namespace TomCat {
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
 		m_Project = std::move(project);
+		m_ProjectStateWritable = true;
 		m_CurrentDirectory.clear();
 		m_SelectedPath.clear();
 		m_UserSelectedDirectory = false;
@@ -250,6 +285,7 @@ namespace TomCat {
 		m_RenamePath.clear();
 		m_DeletePath.clear();
 		m_ImageCache.clear();
+		LoadLayoutSetting();
 		RestoreProjectState();
 	}
 
@@ -260,6 +296,14 @@ namespace TomCat {
 		if (!m_Project)
 			return;
 
+		EditorProjectState state;
+		const EditorProjectStateLoadResult loadResult = m_Project->LoadEditorState(state);
+		if (loadResult == EditorProjectStateLoadResult::Failed)
+			m_ProjectStateWritable = false;
+		const EditorProjectState* legacyState = m_Project->GetLegacyEditorState();
+		if (loadResult != EditorProjectStateLoadResult::Loaded && legacyState)
+			state = *legacyState;
+
 		auto resolveStoredPath = [&](const std::string& stored) {
 			if (stored.empty())
 				return root;
@@ -268,23 +312,35 @@ namespace TomCat {
 			return IsWithinRoot(root, candidate) ? CanonicalPath(candidate) : root;
 		};
 
-		const std::filesystem::path restoredDirectory = resolveStoredPath(m_Project->GetConfig().TwoColumnCurrentFolder);
+		const std::filesystem::path restoredDirectory = resolveStoredPath(
+			state.ContentBrowserCurrentDirectory);
 		std::error_code error;
 		if (std::filesystem::is_directory(restoredDirectory, error))
 			m_CurrentDirectory = restoredDirectory;
 
-		for (const std::string& stored : m_Project->GetConfig().ExpandedNodes)
+		for (const std::string& stored : state.ContentBrowserExpandedNodes)
 		{
 			const std::filesystem::path node = resolveStoredPath(stored);
 			error.clear();
 			if (IsWithinRoot(root, node) && std::filesystem::is_directory(node, error))
 				m_ExpandedNodes.insert(PathToUTF8(node));
 		}
+
+		// Perform a one-way migration only when editor.json does not exist. A
+		// malformed/unreadable editor.json is left untouched for manual recovery.
+		if (loadResult == EditorProjectStateLoadResult::Missing && legacyState &&
+			!m_Project->SaveEditorState(state))
+		{
+			TC_Core_Warn("Could not migrate legacy Content Browser state for '{0}'",
+				PathToUTF8(m_Project->GetProjectPath()));
+		}
 	}
 
 	bool ContentBrowserPanel::Serialize()
 	{
-		if (!m_Project)
+		// Do not let automatic shutdown persistence overwrite an existing settings
+		// file that failed validation or could not be read during this session.
+		if (!m_Project || !m_ProjectStateWritable)
 			return false;
 		const std::filesystem::path root = GetAssetRoot();
 		auto storeRelative = [&](const std::filesystem::path& value) {
@@ -295,10 +351,8 @@ namespace TomCat {
 			return error || relative.empty() ? std::string(".") : PathToUTF8(relative);
 		};
 
-		const ProjectConfig previousConfig = m_Project->GetConfig();
-		ProjectConfig config = previousConfig;
-		config.TwoColumnCurrentFolder = storeRelative(m_CurrentDirectory);
-		config.ExpandedNodes.clear();
+		EditorProjectState state;
+		state.ContentBrowserCurrentDirectory = storeRelative(m_CurrentDirectory);
 		std::vector<std::string> storedNodes;
 		storedNodes.reserve(m_ExpandedNodes.size());
 		for (const std::string& node : m_ExpandedNodes)
@@ -308,12 +362,12 @@ namespace TomCat {
 				storedNodes.push_back(storeRelative(nodePath));
 		}
 		std::sort(storedNodes.begin(), storedNodes.end());
-		config.ExpandedNodes = std::move(storedNodes);
-		m_Project->SetConfig(config);
-		if (!m_Project->Save())
+		state.ContentBrowserExpandedNodes = std::move(storedNodes);
+		if (!m_Project->SaveEditorState(state))
 		{
-			m_Project->SetConfig(previousConfig);
-			TC_Core_Error("Failed to persist Project browser state for {0}", PathToUTF8(m_Project->GetProjectPath()));
+			m_ProjectStateWritable = false;
+			TC_Core_Error("Failed to persist Content Browser state for {0}",
+				PathToUTF8(m_Project->GetProjectPath()));
 			return false;
 		}
 		return true;
@@ -321,31 +375,47 @@ namespace TomCat {
 
 	void ContentBrowserPanel::LoadLayoutSetting()
 	{
-		std::ifstream input(GetEditorIniPath());
-		std::string line;
-		bool inSection = false;
-		while (std::getline(input, line))
+		// Always reset before default -> selected layout loading so switching
+		// between global/project layouts cannot retain the previous override.
+		m_LayoutMode = TwoColumn;
+
+		auto loadFrom = [this](const std::filesystem::path& path)
 		{
-			if (line == "[ContentBrowser]")
+			std::ifstream input(path, std::ios::binary);
+			std::string line;
+			bool inSection = false;
+			while (std::getline(input, line))
 			{
-				inSection = true;
-				continue;
+				if (!line.empty() && line.back() == '\r')
+					line.pop_back();
+				if (line == "[ContentBrowser]")
+				{
+					inSection = true;
+					continue;
+				}
+				if (!inSection)
+					continue;
+				if (line.rfind("Layout=", 0) == 0)
+				{
+					m_LayoutMode = line.substr(7) == "OneColumn" ? OneColumn : TwoColumn;
+					break;
+				}
+				if (!line.empty() && line.front() == '[')
+					break;
 			}
-			if (!inSection)
-				continue;
-			if (line.rfind("Layout=", 0) == 0)
-			{
-				m_LayoutMode = line.substr(7) == "OneColumn" ? OneColumn : TwoColumn;
-				break;
-			}
-			if (!line.empty() && line.front() == '[')
-				break;
-		}
+		};
+
+		// Custom sections need the same default-then-selected-layout precedence as
+		// ImGui's managed Window/Table/Docking sections.
+		loadFrom(GetDefaultEditorLayoutPath());
+		loadFrom(GetEditorLayoutPath(m_Project));
 	}
 
 	void ContentBrowserPanel::SaveLayoutSetting()
 	{
-		const std::filesystem::path iniPath = GetEditorIniPath();
+		const std::filesystem::path iniPath = GetEditorLayoutPath(m_Project);
+		if (!EnsureSettingsDirectory(iniPath))
+			return;
 		std::string ini;
 		{
 			std::error_code existsError;

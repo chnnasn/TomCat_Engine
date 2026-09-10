@@ -34,9 +34,9 @@ namespace TomCat {
 		//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
 		// Multi-viewport stays disabled until engine input is routed for every GLFW platform window.
-		// Disable ImGui's automatic .ini save so custom sections we append to imgui.ini
-		// (e.g. [ContentBrowser] and [SceneToolbars] layout) are never overwritten. Window layouts are saved
-		// explicitly by the Editor (project folder imgui.ini).
+		// Disable ImGui's narrow-path automatic persistence. The Editor explicitly
+		// stores its selected global/project layout; the Hub keeps its packaged default
+		// layout read-only and stores non-layout state separately in LocalAppData JSON.
 		io.IniFilename = NULL;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoMerge;
