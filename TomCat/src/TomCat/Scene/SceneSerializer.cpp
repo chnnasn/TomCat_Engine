@@ -99,7 +99,7 @@ namespace TomCat {
 
 	namespace {
 
-		constexpr uint32_t kCurrentSceneSchemaVersion = 3;
+		constexpr uint32_t kCurrentSceneSchemaVersion = 4;
 		constexpr float kPi = 3.14159265358979323846f;
 
 		bool IsFinite(float value)
@@ -199,9 +199,24 @@ namespace TomCat {
 
 		void ValidateSprite(const SpriteRenderer& sprite, const std::string& context)
 		{
+			if (sprite.Shape != SpriteShape::Quad && sprite.Shape != SpriteShape::Circle)
+				throw std::runtime_error(context + ".Shape is invalid");
 			RequireUnitColor(sprite._Color, context + ".Color");
 			if (!IsFinite(sprite.TilingFactor) || sprite.TilingFactor < 0.0f)
 				throw std::runtime_error(context + ".TilingFactor must be finite and non-negative");
+			if (!IsFinite(sprite.Thickness) || sprite.Thickness < 0.0f || sprite.Thickness > 1.0f)
+				throw std::runtime_error(context + ".Thickness must be finite and in [0, 1]");
+			if (!IsFinite(sprite.Fade) || sprite.Fade <= 0.0f)
+				throw std::runtime_error(context + ".Fade must be finite and greater than zero");
+		}
+
+		void ValidateLine(const LineRenderer& line, const std::string& context)
+		{
+			RequireUnitColor(line._Color, context + ".Color");
+			RequireFinite(line.Start, context + ".Start");
+			RequireFinite(line.End, context + ".End");
+			if (!IsFinite(line.Width) || line.Width <= 0.0f)
+				throw std::runtime_error(context + ".Width must be finite and greater than zero");
 		}
 
 		void ValidateCollider(const BoxCollider2D& collider, const std::string& context)
@@ -273,6 +288,23 @@ namespace TomCat {
 			throw std::runtime_error("Unknown Rigidbody2D body type '" + value + "'");
 		}
 
+		const char* SpriteShapeToString(SpriteShape shape)
+		{
+			switch (shape)
+			{
+				case SpriteShape::Quad: return "Quad";
+				case SpriteShape::Circle: return "Circle";
+			}
+			throw std::runtime_error("Cannot serialize an unknown SpriteShape");
+		}
+
+		SpriteShape SpriteShapeFromString(const std::string& value)
+		{
+			if (value == "Quad") return SpriteShape::Quad;
+			if (value == "Circle") return SpriteShape::Circle;
+			throw std::runtime_error("Unknown SpriteRenderer shape '" + value + "'");
+		}
+
 		void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity)
 		{
 			const std::string context = "Entity " + std::to_string(static_cast<uint64_t>(entity.GetUUID()));
@@ -329,10 +361,26 @@ namespace TomCat {
 						".SpriteRenderer has a texture but no AssetHandle");
 				out << YAML::Key << "SpriteRenderer" << YAML::Value << YAML::BeginMap;
 				out << YAML::Key << "Enabled" << YAML::Value << sprite.Enabled;
+				out << YAML::Key << "Shape" << YAML::Value << SpriteShapeToString(sprite.Shape);
 				out << YAML::Key << "Color" << YAML::Value << sprite._Color;
 				out << YAML::Key << "TilingFactor" << YAML::Value << sprite.TilingFactor;
 				out << YAML::Key << "TextureHandle" << YAML::Value
 					<< static_cast<uint64_t>(sprite.TextureHandle);
+				out << YAML::Key << "Thickness" << YAML::Value << sprite.Thickness;
+				out << YAML::Key << "Fade" << YAML::Value << sprite.Fade;
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<LineRenderer>())
+			{
+				auto& line = entity.GetComponent<LineRenderer>();
+				ValidateLine(line, context + ".LineRenderer");
+				out << YAML::Key << "LineRenderer" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Enabled" << YAML::Value << line.Enabled;
+				out << YAML::Key << "Color" << YAML::Value << line._Color;
+				out << YAML::Key << "Start" << YAML::Value << line.Start;
+				out << YAML::Key << "End" << YAML::Value << line.End;
+				out << YAML::Key << "Width" << YAML::Value << line.Width;
 				out << YAML::EndMap;
 			}
 
@@ -617,6 +665,9 @@ namespace TomCat {
 				if (entityNode["m_Children"])
 					throw std::runtime_error(context +
 						" uses unsupported legacy field 'm_Children'");
+				if (entityNode["CircleRenderer"])
+					throw std::runtime_error(context +
+						" uses unsupported legacy component 'CircleRenderer'; use SpriteRenderer with Shape: Circle");
 
 				const uint64_t rawUUID = ReadRequired<uint64_t>(entityNode, "Entity", context);
 				const UUID uuid(rawUUID);
@@ -693,15 +744,31 @@ namespace TomCat {
 							".SpriteRenderer uses unsupported legacy field 'TexturePath'; use 'TextureHandle'");
 					auto& sprite = entity.AddComponent<SpriteRenderer>();
 					sprite.Enabled = ReadRequired<bool>(spriteNode, "Enabled", context + ".SpriteRenderer");
+					sprite.Shape = SpriteShapeFromString(ReadRequired<std::string>(
+						spriteNode, "Shape", context + ".SpriteRenderer"));
 					sprite._Color = ReadRequired<glm::vec4>(spriteNode, "Color", context + ".SpriteRenderer");
 					sprite.TilingFactor = ReadRequired<float>(spriteNode, "TilingFactor", context + ".SpriteRenderer");
-					ValidateSprite(sprite, context + ".SpriteRenderer");
-
 					const uint64_t rawTextureHandle = ReadRequired<uint64_t>(
 						spriteNode, "TextureHandle", context + ".SpriteRenderer");
 					sprite.TextureHandle = AssetHandle(rawTextureHandle);
-					if (resolveAssets && rawTextureHandle != 0)
+					sprite.Thickness = ReadRequired<float>(spriteNode, "Thickness", context + ".SpriteRenderer");
+					sprite.Fade = ReadRequired<float>(spriteNode, "Fade", context + ".SpriteRenderer");
+					ValidateSprite(sprite, context + ".SpriteRenderer");
+					if (resolveAssets && sprite.Shape == SpriteShape::Quad && rawTextureHandle != 0)
 						sprite.Texture = AssetManager::Get().LoadTexture(sprite.TextureHandle);
+				}
+
+				YAML::Node lineNode = entityNode["LineRenderer"];
+				if (lineNode)
+				{
+					RequireMap(lineNode, context + ".LineRenderer");
+					auto& line = entity.AddComponent<LineRenderer>();
+					line.Enabled = ReadRequired<bool>(lineNode, "Enabled", context + ".LineRenderer");
+					line._Color = ReadRequired<glm::vec4>(lineNode, "Color", context + ".LineRenderer");
+					line.Start = ReadRequired<glm::vec3>(lineNode, "Start", context + ".LineRenderer");
+					line.End = ReadRequired<glm::vec3>(lineNode, "End", context + ".LineRenderer");
+					line.Width = ReadRequired<float>(lineNode, "Width", context + ".LineRenderer");
+					ValidateLine(line, context + ".LineRenderer");
 				}
 
 				YAML::Node rigidbodyNode = entityNode["Rigidbody2D"];

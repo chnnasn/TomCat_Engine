@@ -880,6 +880,7 @@ namespace TomCat {
 		if (!ImGui::BeginDragDropTarget())
 			return;
 
+		const std::filesystem::path root = GetAssetRoot();
 		std::filesystem::path source;
 		AssetHandle sourceHandle = AssetHandle(0);
 		if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID))
@@ -892,23 +893,88 @@ namespace TomCat {
 		}
 		else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetDirectoryPayloadID))
 		{
-			if (payload->DataSize >= static_cast<int>(sizeof(wchar_t)))
-				source = GetAssetRoot() / static_cast<const wchar_t*>(payload->Data);
+			const bool validSize = payload->Data != nullptr &&
+				payload->DataSize >= static_cast<int>(sizeof(wchar_t)) &&
+				payload->DataSize % static_cast<int>(sizeof(wchar_t)) == 0;
+			if (validSize)
+			{
+				const auto* characters = static_cast<const wchar_t*>(payload->Data);
+				const size_t characterCount = static_cast<size_t>(payload->DataSize) / sizeof(wchar_t);
+				if (characters[characterCount - 1] == L'\0')
+				{
+					const std::wstring relativeText(characters, characterCount - 1);
+					const std::filesystem::path relativePath(relativeText);
+					if (!relativeText.empty() && relativeText.find(L'\0') == std::wstring::npos &&
+						!relativePath.is_absolute() && !relativePath.has_root_name() &&
+						!relativePath.has_root_directory())
+						source = root / relativePath;
+				}
+			}
 		}
 
 		if (!source.empty())
 		{
-			const std::filesystem::path destination = destinationDirectory / source.filename();
-			if (LexicalPath(source.parent_path()) != LexicalPath(destinationDirectory))
+			std::filesystem::path managedSource;
+			const std::filesystem::path managedDestinationDirectory = CanonicalPath(destinationDirectory);
+			std::error_code error;
+			const bool validDestination = IsWithinRoot(root, managedDestinationDirectory) &&
+				std::filesystem::is_directory(managedDestinationDirectory, error) && !error;
+			if (!GetManagedMutationPath(root, source, managedSource) || !validDestination)
 			{
+				TC_Core_Error("Rejected invalid Content Browser move from '{0}' to '{1}'",
+					PathToUTF8(source), PathToUTF8(destinationDirectory));
+			}
+			else if (LexicalPath(managedSource.parent_path()) == LexicalPath(managedDestinationDirectory))
+			{
+				// Dropping an entry into its current parent is a deliberate no-op, not a reorder.
+			}
+			else
+			{
+				error.clear();
+				const std::filesystem::file_status sourceStatus =
+					std::filesystem::symlink_status(managedSource, error);
+				const bool sourceIsDirectory = !error && std::filesystem::is_directory(sourceStatus);
+				if (sourceIsDirectory &&
+					IsWithinLexicalRoot(managedSource, managedDestinationDirectory))
+				{
+					TC_Core_Warn("Cannot move directory '{0}' into itself or one of its descendants",
+						PathToUTF8(managedSource));
+					ImGui::EndDragDropTarget();
+					return;
+				}
+
+				const std::filesystem::path destination =
+					managedDestinationDirectory / managedSource.filename();
+				error.clear();
+				const std::filesystem::file_status destinationStatus =
+					std::filesystem::symlink_status(destination, error);
+				if (!error && std::filesystem::exists(destinationStatus))
+				{
+					TC_Core_Warn("Cannot move '{0}': destination already contains '{1}'",
+						PathToUTF8(managedSource), PathToUTF8(destination.filename()));
+					ImGui::EndDragDropTarget();
+					return;
+				}
+				if (error && error != std::errc::no_such_file_or_directory)
+				{
+					TC_Core_Error("Cannot inspect asset move destination '{0}': {1}",
+						PathToUTF8(destination), error.message());
+					ImGui::EndDragDropTarget();
+					return;
+				}
+
 				const bool moved = static_cast<uint64_t>(sourceHandle) != 0
 					? AssetManager::Get().MoveAsset(sourceHandle, destination)
-					: AssetManager::Get().MoveAsset(source, destination);
+					: AssetManager::Get().MoveAsset(managedSource, destination);
 				if (moved)
-					(void)ApplyMovedPath(source, destination, sourceHandle);
+				{
+					if (!ApplyMovedPath(managedSource, destination, sourceHandle))
+						TC_Core_Error("Asset move callback rejected '{0}' -> '{1}'; rollback was requested",
+							PathToUTF8(managedSource), PathToUTF8(destination));
+				}
 				else
 					TC_Core_Error("Failed to move asset '{0}' to '{1}'",
-						PathToUTF8(source), PathToUTF8(destinationDirectory));
+						PathToUTF8(managedSource), PathToUTF8(destination));
 			}
 		}
 		ImGui::EndDragDropTarget();
@@ -1014,6 +1080,7 @@ namespace TomCat {
 	{
 		if (ImGui::Button("Assets"))
 			OpenAsset(assetRoot, true);
+		AcceptAssetMoveTarget(assetRoot);
 		std::error_code error;
 		const std::filesystem::path relative = std::filesystem::relative(m_CurrentDirectory, assetRoot, error);
 		if (error || relative == ".")
@@ -1025,9 +1092,12 @@ namespace TomCat {
 			ImGui::SameLine();
 			ImGui::TextDisabled(">");
 			ImGui::SameLine();
+			ImGui::PushID(PathToUTF8(accumulated).c_str());
 			const std::string label = PathToUTF8(part);
 			if (ImGui::Button(label.c_str()))
 				OpenAsset(accumulated, true);
+			AcceptAssetMoveTarget(accumulated);
+			ImGui::PopID();
 		}
 	}
 

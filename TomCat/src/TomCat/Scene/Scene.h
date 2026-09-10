@@ -21,6 +21,14 @@ namespace TomCat {
 	class Scene
 	{
 	public:
+		enum class EntityPlacement
+		{
+			Before,
+			Child,
+			After,
+			Root
+		};
+
 		Scene();
 		~Scene();
 
@@ -34,6 +42,7 @@ namespace TomCat {
 		bool RenameEntity(Entity entity, const std::string& requestedName);
 		void DestroyEntity(Entity entity);
 		bool SetParent(Entity child, Entity parent);
+		bool MoveEntity(Entity entity, Entity target, EntityPlacement placement);
 		bool SetWorldTransform(Entity entity, const glm::mat4& worldTransform);
 		bool SetLocalTransform(Entity entity, const glm::mat4& localTransform);
 		bool SyncTransformHierarchy();

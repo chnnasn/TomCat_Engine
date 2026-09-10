@@ -991,6 +991,8 @@ namespace TomCat {
 				ImGui::Text("Stats:");
 				ImGui::Text("Draw Calls: %d", stats.DrawCalls);
 				ImGui::Text("Quads: %d", stats.QuadCount);
+				ImGui::Text("Circles: %d", stats.CircleCount);
+				ImGui::Text("Lines: %d", stats.LineCount);
 				ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
 				ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
 

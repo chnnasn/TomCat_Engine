@@ -24,7 +24,7 @@ namespace TomCat {
 		constexpr uint32_t kPackageHeaderSize = 32;
 		constexpr uint64_t kPackageEntrySize = 32;
 		constexpr size_t kCopyBufferSize = 64 * 1024;
-		constexpr uint32_t kSceneSchemaVersion = 3;
+		constexpr uint32_t kSceneSchemaVersion = 4;
 
 		template<typename UInt>
 		bool WriteLittleEndian(std::ostream& output, UInt value)
@@ -216,7 +216,8 @@ namespace TomCat {
 					}
 					const std::string key = item.first.as<std::string>();
 					const std::string childPath = propertyPath + "." + key;
-					if (key == "TexturePath" || key == "m_Father" || key == "m_Children")
+					if (key == "TexturePath" || key == "m_Father" || key == "m_Children" ||
+						key == "CircleRenderer")
 					{
 						keyPath = childPath;
 						return true;

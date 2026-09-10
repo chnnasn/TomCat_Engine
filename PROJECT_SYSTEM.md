@@ -87,21 +87,23 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 - 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成包含 `/UserSettings/`、`/Library/` 和 `/Cache/` 的 `.gitignore`；加载现有项目时会保留原内容并原子补齐缺失规则。
 - 项目根目录不再读取或生成旧式 `imgui.ini`；它只允许作为 Editor 可执行文件的封装默认布局存在。
 
-## 场景文件 schema v3
+## 场景文件 schema v4
 
-`.tomcat` 场景只接受顶层 `SchemaVersion: 3`、`SceneName` 和 `Entities`。实体、组件以及层级字段必须符合当前 writer 的完整格式；实体关系只使用 `Parent`。缺失版本、其他版本或包含 `Scene`、`m_Father`、`m_Children` 等已移除字段的场景会被直接拒绝。
+`.tomcat` 场景只接受顶层 `SchemaVersion: 4`、`SceneName` 和 `Entities`。实体、组件以及层级字段必须符合当前 writer 的完整格式；实体关系只使用 `Parent`。缺失版本、其他版本或包含 `Scene`、`m_Father`、`m_Children`、独立 `CircleRenderer` 等已移除字段的场景会被直接拒绝。
 
-Sprite Renderer 必须保存 `Enabled`、`Color`、`TilingFactor` 和 `TextureHandle`。`TexturePath` 已被移除，加载、引用检查和 Cook 都不会读取或转换它；发现该字段会直接拒绝场景。显式的 `TextureHandle: 0` 表示无纹理。实体 UUID 必须非零且唯一，父子关系会校验缺失引用、多父节点和环。
+Sprite Renderer 统一承载矩形与圆形，必须保存 `Enabled`、`Shape`（`Quad` 或 `Circle`）、`Color`、`TilingFactor`、`TextureHandle`、`Thickness` 和 `Fade`；矩形使用纹理与平铺参数，圆形使用厚度与边缘渐变参数。Line Renderer 必须保存 `Enabled`、`Color`、局部空间的 `Start`/`End` 以及像素宽度 `Width`。`TexturePath` 和独立 `CircleRenderer` 已被移除，加载、引用检查和 Cook 都不会读取或转换它们；发现这些字段会直接拒绝场景。显式的 `TextureHandle: 0` 表示无纹理。实体 UUID 必须非零且唯一，父子关系会校验缺失引用、多父节点和环。
+
+Hierarchy 中实体可以拖到目标节点的上部、中部或下部，分别成为目标的前一个同级、目标子级或后一个同级；拖到根区域会解除父级。实体顺序由场景的实体顺序持久化。Content Browser 只通过拖入目录或面包屑改变文件与目录层级，不提供手工排序，条目继续使用默认排序；所有实际移动都由资产系统执行。
 
 资源移动或重命名只改变 Registry 中的项目相对路径，场景 Handle 不变，也不需要重写场景。删除前资产系统扫描场景中的 Handle 引用；用户强制删除后引用仍被保留，加载时由 `AssetManager` 返回共享的洋红棋盘占位，以便定位并恢复缺失资源。
 
-场景保存使用与项目文件相同的原子替换并返回 `bool`。反序列化先构造临时场景，只有全部字段和关系校验成功后才替换当前场景，因此损坏或不受支持的文件不会留下半加载状态。变换、相机、颜色和碰撞体数值会检查有限值及有效范围，非法物理参数不会进入 Box2D。
+场景保存使用与项目文件相同的原子替换并返回 `bool`。反序列化先构造临时场景，只有全部字段和关系校验成功后才替换当前场景，因此损坏或不受支持的文件不会留下半加载状态。变换、相机、颜色、圆形参数、线宽和碰撞体数值会检查有限值及有效范围，非法数据不会进入渲染器或 Box2D。
 
 实体变换只存储平移、旋转和缩放（TRS），不保存剪切矩阵。层级重挂、世界/局部变换更新和层级同步会先验证整棵受影响子树；若矩阵无法无损分解为有限 TRS（例如非均匀缩放叠加错位旋转产生剪切），操作整体失败并保留原状态，避免静默近似造成累计漂移。
 
 ## 当前格式边界
 
-- `Project.tcproj` 只接受 schema v3，`.tomcat` 只接受 schema v3，`.tcpak` 只接受 v2；旧格式不会自动迁移、补字段或重新保存。
+- `Project.tcproj` 只接受 schema v3，`.tomcat` 只接受 schema v4，`.tcpak` 只接受 v2；旧格式不会自动迁移、补字段或重新保存。
 - 项目资源加载只接受 `AssetHandle`；`StartScene` 仅是作者定位信息，已移除的 `TexturePath` 不会被读取，两者都不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。
@@ -115,7 +117,7 @@ Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件
 发布时由 `AssetManager` 将资源 Cook 成带启动场景 Handle、Handle/类型索引的 v2 `.tcpak`；
 Player 挂载后通过 `GetCookedStartSceneHandle()` 取得入口，并按 Handle 读取场景和依赖字节，
 不读取原始 `Assets/` 路径、`.tcmeta` 或 `Library/`。项目配置中的 `StartSceneHandle` 是 Cook
-入口的真源，`StartScene` 仅作为 Editor 侧的作者定位信息。Cook 只接受当前 schema v3 场景及
+入口的真源，`StartScene` 仅作为 Editor 侧的作者定位信息。Cook 只接受当前 schema v4 场景及
 `TextureHandle`；任何旧 schema 或路径字段都会使 Cook 失败，不会被转换或带进 Player。挂载器只接受
 当前 v2 包，其他版本直接拒绝。
 

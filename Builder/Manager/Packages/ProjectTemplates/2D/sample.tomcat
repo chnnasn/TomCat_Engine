@@ -1,4 +1,4 @@
-SchemaVersion: 3
+SchemaVersion: 4
 SceneName: sample
 Entities:
   - Entity: 1000000000000000001

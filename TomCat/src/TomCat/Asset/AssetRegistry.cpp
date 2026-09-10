@@ -1,6 +1,7 @@
 #include "tcpch.h"
 #include "AssetRegistry.h"
 
+#include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 
@@ -25,7 +26,7 @@ namespace TomCat {
 
 		constexpr uint32_t kMetadataSchemaVersion = 1;
 		constexpr uint32_t kRegistryCacheSchemaVersion = 1;
-		constexpr uint32_t kSceneSchemaVersion = 3;
+		constexpr uint32_t kSceneSchemaVersion = 4;
 
 		std::string LowerASCII(std::string value)
 		{
@@ -249,7 +250,8 @@ namespace TomCat {
 					}
 					const std::string key = entry.first.as<std::string>();
 					const std::string childPath = propertyPath + "." + key;
-					if (key == "TexturePath" || key == "m_Father" || key == "m_Children")
+					if (key == "TexturePath" || key == "m_Father" || key == "m_Children" ||
+						key == "CircleRenderer")
 					{
 						keyPath = childPath;
 						return true;
@@ -398,6 +400,43 @@ namespace TomCat {
 				remaining -= chunk;
 			}
 			return input.peek() == std::char_traits<char>::eof();
+		}
+
+		bool ReadWholeFile(const std::filesystem::path& path, std::vector<uint8_t>& bytes)
+		{
+			bytes.clear();
+			std::ifstream input(path, std::ios::binary | std::ios::ate);
+			if (!input)
+				return false;
+			const std::streamoff end = input.tellg();
+			if (end < 0 || static_cast<uint64_t>(end) >
+				static_cast<uint64_t>((std::numeric_limits<size_t>::max)()) ||
+				static_cast<uint64_t>(end) > static_cast<uint64_t>(bytes.max_size()))
+				return false;
+
+			try
+			{
+				bytes.resize(static_cast<size_t>(end));
+			}
+			catch (const std::exception&)
+			{
+				return false;
+			}
+
+			input.seekg(0, std::ios::beg);
+			constexpr size_t chunkSize = 64 * 1024;
+			for (size_t copied = 0; copied < bytes.size();)
+			{
+				const size_t chunk = (std::min)(chunkSize, bytes.size() - copied);
+				if (!input.read(reinterpret_cast<char*>(bytes.data() + copied),
+					static_cast<std::streamsize>(chunk)))
+				{
+					bytes.clear();
+					return false;
+				}
+				copied += chunk;
+			}
+			return true;
 		}
 
 	}
@@ -1641,12 +1680,15 @@ namespace TomCat {
 					{
 						try
 						{
-							std::ifstream input(absoluteScene, std::ios::binary);
-							if (!input)
-								throw std::runtime_error("could not open the scene");
+							std::vector<uint8_t> sceneBytes;
+							if (!ReadWholeFile(absoluteScene, sceneBytes))
+								throw std::runtime_error("could not read the scene");
+							if (!SceneSerializer::ValidateCurrentFormat(sceneBytes, absoluteScene))
+								throw std::runtime_error(
+									"scene does not conform to the complete current scene schema");
+							std::string serialized(sceneBytes.begin(), sceneBytes.end());
+							std::istringstream input(std::move(serialized));
 							const YAML::Node root = YAML::Load(input);
-							if (input.bad())
-								throw std::runtime_error("failed while reading the scene");
 							if (!root || !root.IsMap())
 								throw std::runtime_error("scene document must be a map");
 							const YAML::Node schemaVersion = root["SchemaVersion"];
