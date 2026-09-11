@@ -27,6 +27,11 @@ namespace TomCat {
 			s_RendererAPI->Clear();
 		}
 
+		inline static void SetDepthTest(bool enabled)
+		{
+			s_RendererAPI->SetDepthTest(enabled);
+		}
+
 		inline static void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t count = 0)
 		{
 

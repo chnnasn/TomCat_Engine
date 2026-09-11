@@ -97,6 +97,16 @@ namespace TomCat {
 			return true;
 		}
 
+		std::string TrimASCIIWhitespace(std::string value)
+		{
+			auto isWhitespace = [](unsigned char character) { return std::isspace(character) != 0; };
+			value.erase(value.begin(), std::find_if(value.begin(), value.end(),
+				[&](unsigned char character) { return !isWhitespace(character); }));
+			value.erase(std::find_if(value.rbegin(), value.rend(),
+				[&](unsigned char character) { return !isWhitespace(character); }).base(), value.end());
+			return value;
+		}
+
 		bool IsImGuiManagedIniSection(const std::string& header)
 		{
 			return header.rfind("[Window][", 0) == 0 ||
@@ -450,6 +460,7 @@ namespace TomCat {
 		if (!m_EditorIcons->Load())
 			TC_Core_Warn("One or more editor icons could not be loaded");
 		m_SceneHierarchyPanel.SetIcons(m_EditorIcons);
+		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
 		m_ContentBrowserPanel.SetIcons(m_EditorIcons);
 		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 
@@ -662,6 +673,11 @@ namespace TomCat {
 			m_HoveredEntity = {};
 		}
 
+		// Collider overlays are submitted only after entity picking has sampled the
+		// ID attachment. Renderer2D utility primitives intentionally use entity ID
+		// -1, so drawing them any earlier would punch holes in sprite picking.
+		RenderSceneColliderOverlays();
+
 		m_Framebuffer->Unbind();
 
 		// Render Game View (Runtime Camera) - Always render runtime camera
@@ -672,10 +688,13 @@ namespace TomCat {
 		m_GameFramebuffer->ClearAttachment(1, -1);
 
 		// Game窗口使用Runtime渲染，背景色由摄像机的BackgroundColor设置
-		if (m_SceneState == SceneState::Play ||
-			(m_SceneState == SceneState::Pause && m_StepRequested))
+		if (m_SceneState == SceneState::Play)
 		{
 			m_ActiveScene->OnUpdateRuntime(ts);
+		}
+		else if (m_SceneState == SceneState::Pause && m_StepRequested)
+		{
+			m_ActiveScene->OnRuntimeStep();
 			m_StepRequested = false;
 		}
 		else
@@ -683,9 +702,265 @@ namespace TomCat {
 		m_GameFramebuffer->Unbind();
 	}
 
+	void EditorLayer::UpdateWindowTitle()
+	{
+		const std::string projectName = m_CurrentProject && !m_CurrentProject->GetName().empty()
+			? m_CurrentProject->GetName() : "TomCat Editor";
+		std::string sceneName = "Untitled";
+		if (!m_EditorScenePath.empty())
+			sceneName = PathToUTF8(m_EditorScenePath.stem());
+		else if (m_EditorScene)
+		{
+			sceneName = m_EditorScene->GetSceneName();
+		}
+		if (sceneName.empty())
+			sceneName = "Untitled";
+
+		const char* rendererName = Renderer::GetAPI() == RendererAPI::API::OpenGL
+			? "OpenGL" : "No Renderer";
+		std::string title = projectName + " - " + sceneName;
+		if (m_SceneDirty)
+			title += '*';
+		title += " - Windows, Mac, Linux - TomCat Editor";
+		if (m_CurrentProject && !m_CurrentProject->GetEditorVersion().empty())
+		{
+			title += ' ';
+			title += m_CurrentProject->GetEditorVersion();
+		}
+		title += " <";
+		title += rendererName;
+		title += '>';
+
+		if (title == m_LastWindowTitle)
+			return;
+		Application::Get().GetWindow().SetTitle(title);
+		m_LastWindowTitle = std::move(title);
+	}
+
+	void EditorLayer::FocusEditorPanel(const char* panelName, bool& panelVisible)
+	{
+		panelVisible = true;
+		m_PendingPanelFocus = panelName ? panelName : "";
+		const std::string_view name = panelName ? panelName : "";
+		if (name == "Game") m_EditorPanelCycleIndex = 1;
+		else if (name == "Hierarchy") m_EditorPanelCycleIndex = 2;
+		else if (name == "Inspector") m_EditorPanelCycleIndex = 3;
+		else if (name == "Project") m_EditorPanelCycleIndex = 4;
+		else if (name == "Scene") m_EditorPanelCycleIndex = 5;
+	}
+
+	void EditorLayer::CycleEditorPanel(int direction)
+	{
+		constexpr int panelCount = 6;
+		if (direction == 0)
+			return;
+
+		auto isPanelOpen = [this](int index)
+		{
+			switch (index)
+			{
+				case 0: return m_ShowBuildSettingsPanel;
+				case 1: return m_ShowGamePanel;
+				case 2: return m_ShowHierarchyPanel;
+				case 3: return m_ShowInspectorPanel;
+				case 4: return m_ShowProjectPanel;
+				case 5: return m_ShowScenePanel;
+				default: return false;
+			}
+		};
+
+		for (int step = 1; step <= panelCount; ++step)
+		{
+			const int delta = direction > 0 ? step : -step;
+			const int candidate = (m_EditorPanelCycleIndex + delta +
+				panelCount * 2) % panelCount;
+			if (!isPanelOpen(candidate))
+				continue;
+
+			m_EditorPanelCycleIndex = candidate;
+			switch (candidate)
+			{
+				case 0: m_FocusBuildSettingsPanel = true; break;
+				case 1: FocusEditorPanel("Game", m_ShowGamePanel); break;
+				case 2: FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel); break;
+				case 3: FocusEditorPanel("Inspector", m_ShowInspectorPanel); break;
+				case 4: FocusEditorPanel("Project", m_ShowProjectPanel); break;
+				case 5: FocusEditorPanel("Scene", m_ShowScenePanel); break;
+			}
+			return;
+		}
+	}
+
+	void EditorLayer::UI_MainMenuBar()
+	{
+		const ImVec4 menuText(0.055f, 0.065f, 0.080f, 1.0f);
+		const ImVec4 menuTextDisabled(0.48f, 0.50f, 0.54f, 1.0f);
+		const ImVec4 menuSurface(0.985f, 0.988f, 0.992f, 1.0f);
+		const ImVec4 menuSelected(0.925f, 0.935f, 0.948f, 1.0f);
+		const ImVec4 menuHover(0.855f, 0.918f, 0.980f, 1.0f);
+		const ImVec4 menuActive(0.785f, 0.875f, 0.965f, 1.0f);
+		const ImVec4 menuLine(0.78f, 0.80f, 0.83f, 1.0f);
+		ImGui::PushStyleColor(ImGuiCol_Text, menuText);
+		ImGui::PushStyleColor(ImGuiCol_TextDisabled, menuTextDisabled);
+		ImGui::PushStyleColor(ImGuiCol_PopupBg, menuSurface);
+		ImGui::PushStyleColor(ImGuiCol_Header, menuSelected);
+		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, menuHover);
+		ImGui::PushStyleColor(ImGuiCol_HeaderActive, menuActive);
+		ImGui::PushStyleColor(ImGuiCol_Separator, menuLine);
+		ImGui::PushStyleColor(ImGuiCol_Border, menuLine);
+		ImGui::PushStyleColor(ImGuiCol_CheckMark, menuText);
+		ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 1.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+
+		if (ImGui::BeginMenuBar())
+		{
+			if (ImGui::BeginMenu("File"))
+			{
+				if (ImGui::MenuItem("Open Project..."))
+					OpenProject();
+				if (ImGui::MenuItem("Save Project"))
+					SaveProject();
+				if (ImGui::MenuItem("Build Settings..."))
+				{
+					m_ShowBuildSettingsPanel = true;
+					m_FocusBuildSettingsPanel = true;
+					m_EditorPanelCycleIndex = 0;
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("New Scene", "Ctrl+N"))
+					NewScene();
+				if (ImGui::MenuItem("Open Scene...", "Ctrl+O"))
+					OpenScene();
+				if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
+					SaveScene();
+				if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S"))
+					SaveSceneAs();
+				ImGui::Separator();
+				if (ImGui::MenuItem("Exit"))
+					RequestExit();
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Edit"))
+			{
+				ImGui::MenuItem("Undo", "Ctrl+Z", false, false);
+				ImGui::MenuItem("Redo", "Ctrl+Y", false, false);
+				ImGui::Separator();
+				if (ImGui::MenuItem("Project Settings..."))
+					OpenProjectSettingsPanel();
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Assets", m_CurrentProject != nullptr))
+			{
+				m_ContentBrowserPanel.DrawAssetsMenu();
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("GameObject", m_ActiveScene != nullptr))
+			{
+				if (m_SceneHierarchyPanel.DrawGameObjectMenu())
+					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Component"))
+			{
+				ImGui::MenuItem("Add Component...", nullptr, false, false);
+				ImGui::TextDisabled("Use Add Component in the Inspector.");
+				ImGui::EndMenu();
+			}
+
+			auto drawUnavailableMenu = [](const char* label, const char* message)
+			{
+				if (!ImGui::BeginMenu(label))
+					return;
+				ImGui::MenuItem(message, nullptr, false, false);
+				ImGui::EndMenu();
+			};
+			drawUnavailableMenu("Services", "No services configured");
+			drawUnavailableMenu("Jobs", "No jobs available");
+			drawUnavailableMenu("Tools", "No additional tools installed");
+
+			if (ImGui::BeginMenu("Window"))
+			{
+				if (ImGui::BeginMenu("Panels"))
+				{
+					const bool hasFloatingPanel = m_ShowBuildSettingsPanel || m_ShowProjectSettingsPanel ||
+						(m_ShowScenePanel && !m_ScenePanelDocked) ||
+						(m_ShowGamePanel && !m_GamePanelDocked) ||
+						(m_ShowHierarchyPanel && !m_SceneHierarchyPanel.IsHierarchyDocked()) ||
+						(m_ShowInspectorPanel && !m_SceneHierarchyPanel.IsInspectorDocked()) ||
+						(m_ShowProjectPanel && !m_ContentBrowserPanel.IsDocked());
+					if (ImGui::MenuItem("Close all floating panels...", nullptr, false,
+						hasFloatingPanel))
+					{
+						m_ShowBuildSettingsPanel = false;
+						m_ShowProjectSettingsPanel = false;
+						if (!m_ScenePanelDocked) m_ShowScenePanel = false;
+						if (!m_GamePanelDocked) m_ShowGamePanel = false;
+						if (!m_SceneHierarchyPanel.IsHierarchyDocked()) m_ShowHierarchyPanel = false;
+						if (!m_SceneHierarchyPanel.IsInspectorDocked()) m_ShowInspectorPanel = false;
+						if (!m_ContentBrowserPanel.IsDocked()) m_ShowProjectPanel = false;
+					}
+					ImGui::Separator();
+					ImGui::MenuItem("1 Animator", nullptr, false, false);
+					if (ImGui::MenuItem("2 Build Settings"))
+					{
+						m_ShowBuildSettingsPanel = true;
+						m_FocusBuildSettingsPanel = true;
+						m_EditorPanelCycleIndex = 0;
+					}
+					ImGui::MenuItem("3 Console", nullptr, false, false);
+					if (ImGui::MenuItem("4 Game"))
+						FocusEditorPanel("Game", m_ShowGamePanel);
+					if (ImGui::MenuItem("5 Hierarchy"))
+						FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
+					if (ImGui::MenuItem("6 Inspector"))
+						FocusEditorPanel("Inspector", m_ShowInspectorPanel);
+					if (ImGui::MenuItem("7 Project"))
+						FocusEditorPanel("Project", m_ShowProjectPanel);
+					if (ImGui::MenuItem("8 Scene"))
+						FocusEditorPanel("Scene", m_ShowScenePanel);
+					ImGui::EndMenu();
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Next Window", "Ctrl+Tab"))
+					CycleEditorPanel(1);
+				if (ImGui::MenuItem("Previous Window", "Ctrl+Shift+Tab"))
+					CycleEditorPanel(-1);
+				ImGui::Separator();
+				if (ImGui::BeginMenu("Layouts"))
+				{
+					ImGui::MenuItem("Current Layout", nullptr, true, false);
+					ImGui::EndMenu();
+				}
+				ImGui::Separator();
+				ImGui::MenuItem("Version Control", nullptr, false, false);
+				ImGui::BeginMenu("Search", false);
+				ImGui::Separator();
+				ImGui::MenuItem("Asset Store", nullptr, false, false);
+				ImGui::MenuItem("Package Manager", nullptr, false, false);
+				ImGui::EndMenu();
+			}
+
+			if (ImGui::BeginMenu("Help"))
+			{
+				ImGui::MenuItem("TomCat Editor", nullptr, false, false);
+				ImGui::EndMenu();
+			}
+
+			ImGui::EndMenuBar();
+		}
+
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor(9);
+	}
+
 	void EditorLayer::OnImGuiRender()
 	{
 		TC_PROFILE_FUNCTION();
+		UpdateWindowTitle();
 
 		static bool dockspaceOpen = true;
 		static bool opt_fullscreen_persistant = true;
@@ -709,85 +984,15 @@ namespace TomCat {
 			window_flags |= ImGuiWindowFlags_NoBackground;
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+		ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.965f, 0.972f, 0.980f, 1.0f));
 		ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
+		ImGui::PopStyleColor();
 		ImGui::PopStyleVar();
 
 		if (opt_fullscreen)
 			ImGui::PopStyleVar(2);
 
-		// 菜单栏
-		if (ImGui::BeginMenuBar())
-		{
-			if (ImGui::BeginMenu("File"))
-			{
-				if (ImGui::MenuItem("Open Project"))
-				{
-					OpenProject();
-				}
-
-				if (ImGui::MenuItem("Save Project"))
-				{
-					SaveProject();
-				}
-
-				ImGui::Separator();
-
-				if (ImGui::MenuItem("New Scene", "Ctrl + N"))
-				{
-					NewScene();
-				}
-
-				if (ImGui::MenuItem("Open Scene...", "Ctrl + O"))
-				{
-					OpenScene();
-				}
-
-				if (ImGui::MenuItem("Save Scene", "Ctrl + S"))
-				{
-					SaveScene();
-				}
-
-				if (ImGui::MenuItem("Save Scene As...", "Ctrl + Shift + S"))
-				{
-					SaveSceneAs();
-				}
-
-				ImGui::Separator();
-
-				if (ImGui::MenuItem("Exit")) RequestExit();
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("Project"))
-			{
-				if (m_CurrentProject)
-				{
-					ImGui::Text("ProjectName: %s", m_CurrentProject->GetName().c_str());
-					const std::string projectPath = PathToUTF8(m_CurrentProject->GetProjectPath());
-					ImGui::Text("Path: %s", projectPath.c_str());
-					ImGui::Separator();
-					ImGui::Text("EditorVersion: %s", m_CurrentProject->GetEditorVersion().c_str());
-				}
-				else
-				{
-					ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No project loaded");
-				}
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("Window"))
-			{
-				ImGui::MenuItem("Scene", nullptr, &m_ShowScenePanel);
-				ImGui::MenuItem("Game", nullptr, &m_ShowGamePanel);
-				ImGui::Separator();
-				ImGui::MenuItem("Hierarchy", nullptr, &m_ShowHierarchyPanel);
-				ImGui::MenuItem("Inspector", nullptr, &m_ShowInspectorPanel);
-				ImGui::MenuItem("Project", nullptr, &m_ShowProjectPanel);
-				ImGui::EndMenu();
-			}
-
-			ImGui::EndMenuBar();
-		}
+		UI_MainMenuBar();
 
 		float toolbarHeight = 48.0f;
 		// Unity keeps the global playbar one step darker than docked panels.
@@ -818,8 +1023,15 @@ namespace TomCat {
 
 		ImGui::EndChild(); 
 
+		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.OnImGuiRender(&m_ShowHierarchyPanel, &m_ShowInspectorPanel);
+		if (m_SceneHierarchyPanel.IsHierarchyFocused())
+			m_EditorPanelCycleIndex = 2;
+		else if (m_SceneHierarchyPanel.IsInspectorFocused())
+			m_EditorPanelCycleIndex = 3;
 		m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
+		if (m_ContentBrowserPanel.IsFocused())
+			m_EditorPanelCycleIndex = 4;
 
 		if (m_ShowScenePanel)
 		{
@@ -830,6 +1042,7 @@ namespace TomCat {
 		// positioned gap that appeared with the custom Scene strip.
 		const char* sceneTitle = m_SceneDirty ? "Scene *###Scene" : "Scene###Scene";
 		const bool sceneVisible = ImGui::Begin(sceneTitle, &m_ShowScenePanel, ImGuiWindowFlags_MenuBar);
+		m_ScenePanelDocked = ImGui::IsWindowDocked();
 		if (!sceneVisible)
 		{
 			m_ViewportFocused = false;
@@ -848,6 +1061,8 @@ namespace TomCat {
 		m_GizmoModeDockY = m_ViewportBounds[0].y - m_GizmoModeDockHeight;
 
 		m_ViewportFocused = ImGui::IsWindowFocused();
+		if (m_ViewportFocused)
+			m_EditorPanelCycleIndex = 5;
 
 		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
@@ -910,6 +1125,7 @@ namespace TomCat {
 				UI_SceneGizmoModeToolbarOverlay();
 				UI_SceneGizmoToolbar();
 				UI_SceneToolbarDockPreview();
+				UI_SceneColliderVisibilityToggle();
 				ImGui::EndMenuBar();
 			}
 			else
@@ -925,7 +1141,7 @@ namespace TomCat {
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
-		if (selectedEntity && m_GizmoType != -1)
+		if (selectedEntity && m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
 		{
 			ImGuizmo::AllowAxisFlip(false);
 			ImGuizmo::SetOrthographic(false);
@@ -965,6 +1181,11 @@ namespace TomCat {
 			}
 		}
 
+		if (sceneVisible)
+			UI_ColliderEditHandles();
+		else
+			ResetColliderEditState();
+
 		ImGui::End();
 		ImGui::PopStyleVar();
 		}
@@ -981,6 +1202,9 @@ namespace TomCat {
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
 		ImGui::Begin("Game", &m_ShowGamePanel, ImGuiWindowFlags_MenuBar);
+		m_GamePanelDocked = ImGui::IsWindowDocked();
+		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+			m_EditorPanelCycleIndex = 1;
 
 		if (ImGui::BeginMenuBar())
 		{
@@ -1044,7 +1268,14 @@ namespace TomCat {
 		ImGui::PopStyleVar();
 		}
 
+		UI_BuildSettings();
+		UI_ProjectSettings();
 		UI_UnsavedChangesModal();
+		if (!m_PendingPanelFocus.empty())
+		{
+			ImGui::SetWindowFocus(m_PendingPanelFocus.c_str());
+			m_PendingPanelFocus.clear();
+		}
 		ImGui::End();
 	}
 
@@ -1071,6 +1302,1081 @@ namespace TomCat {
 		ImVec2 messageSize = ImGui::CalcTextSize(messageText);
 		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, imageCenter.y - messageSize.y * 0.5f);
 		draw->AddText(messagePos, IM_COL32(243, 243, 243, 255), messageText);
+	}
+
+	void EditorLayer::UI_BuildSettings()
+	{
+		if (!m_ShowBuildSettingsPanel)
+			return;
+
+		if (m_FocusBuildSettingsPanel)
+		{
+			ImGui::SetNextWindowFocus();
+			m_FocusBuildSettingsPanel = false;
+		}
+		ImGui::SetNextWindowSize(ImVec2(900.0f, 720.0f), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSizeConstraints(ImVec2(720.0f, 560.0f), ImVec2(1600.0f, 1200.0f));
+		const bool buildSettingsVisible = ImGui::Begin("Build Settings",
+			&m_ShowBuildSettingsPanel, ImGuiWindowFlags_NoDocking);
+		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+			m_EditorPanelCycleIndex = 0;
+		if (!buildSettingsVisible)
+		{
+			ImGui::End();
+			return;
+		}
+
+		const ProjectConfig* config = m_CurrentProject ? &m_CurrentProject->GetConfig() : nullptr;
+		const bool hasConfiguredStartScene = config
+			&& static_cast<uint64_t>(config->StartSceneHandle) != 0;
+		const AssetMetadata* startSceneMetadata = hasConfiguredStartScene
+			? AssetManager::Get().GetRegistry().GetMetadata(config->StartSceneHandle) : nullptr;
+		const bool startSceneReady = startSceneMetadata && !startSceneMetadata->IsMissing
+			&& startSceneMetadata->Type == AssetType::Scene;
+
+		if (!m_CurrentProject)
+			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
+				"Open a project to inspect its scenes and Player settings.");
+
+		ImGui::TextUnformatted("Scenes In Build");
+		ImGui::BeginChild("##ScenesInBuild", ImVec2(0.0f, 145.0f), true,
+			ImGuiWindowFlags_HorizontalScrollbar);
+		if (hasConfiguredStartScene)
+		{
+			const std::string scenePath = PathToUTF8(config->StartScene);
+			std::string sceneName = PathToUTF8(config->StartScene.stem());
+			if (sceneName.empty())
+				sceneName = scenePath.empty() ? "<Unresolved start scene>" : scenePath;
+
+			const ImGuiTableFlags sceneFlags = ImGuiTableFlags_RowBg |
+				ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
+			if (ImGui::BeginTable("##SceneBuildRows", 3, sceneFlags))
+			{
+				ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_WidthFixed, 30.0f);
+				ImGui::TableSetupColumn("Scene", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 32.0f);
+				ImGui::TableNextRow(0, ImGui::GetFrameHeightWithSpacing());
+				ImGui::TableSetColumnIndex(0);
+				bool included = startSceneReady;
+				ImGui::BeginDisabled();
+				ImGui::Checkbox("##StartSceneIncluded", &included);
+				ImGui::EndDisabled();
+				ImGui::TableSetColumnIndex(1);
+				ImGui::AlignTextToFramePadding();
+				if (startSceneReady)
+					ImGui::TextUnformatted(sceneName.c_str());
+				else
+					ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "%s (Missing)",
+						sceneName.c_str());
+				if (!scenePath.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+					ImGui::SetTooltip("%s", scenePath.c_str());
+				ImGui::TableSetColumnIndex(2);
+				ImGui::AlignTextToFramePadding();
+				const char* indexText = "0";
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f,
+					ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(indexText).x));
+				ImGui::TextUnformatted(indexText);
+				ImGui::EndTable();
+			}
+		}
+		else
+			ImGui::TextDisabled(m_CurrentProject
+				? "No start scene is configured." : "No project is open.");
+		ImGui::EndChild();
+
+		const float addOpenScenesWidth = ImGui::CalcTextSize("Add Open Scenes").x
+			+ ImGui::GetStyle().FramePadding.x * 2.0f;
+		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
+			ImGui::GetWindowContentRegionMax().x - addOpenScenesWidth));
+		ImGui::BeginDisabled();
+		ImGui::Button("Add Open Scenes");
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("The build-scene list will be editable when Player export is implemented.");
+
+		ImGui::TextUnformatted("Platform");
+		const float platformHeight = std::clamp(ImGui::GetContentRegionAvail().y - 150.0f,
+			245.0f, 355.0f);
+		const ImGuiTableFlags platformFlags = ImGuiTableFlags_Resizable |
+			ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
+		if (ImGui::BeginTable("##BuildPlatformColumns", 2, platformFlags,
+			ImVec2(0.0f, platformHeight)))
+		{
+			ImGui::TableSetupColumn("Targets", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+			ImGui::TableSetupColumn("Options", ImGuiTableColumnFlags_WidthStretch, 0.58f);
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::BeginChild("##PlatformList", ImVec2(0.0f, platformHeight), true);
+
+			auto drawPlatformGlyph = [](int kind, const ImVec2& rowMinimum,
+				float rowHeight, ImU32 color)
+			{
+				ImDrawList* draw = ImGui::GetWindowDrawList();
+				const float left = rowMinimum.x + 10.0f;
+				const float centerY = rowMinimum.y + rowHeight * 0.5f;
+				if (kind == 0)
+				{
+					draw->AddRect(ImVec2(left, centerY - 8.0f), ImVec2(left + 24.0f, centerY + 6.0f),
+						color, 2.0f, 0, 1.5f);
+					draw->AddLine(ImVec2(left + 12.0f, centerY + 6.0f),
+						ImVec2(left + 12.0f, centerY + 10.0f), color, 1.5f);
+					draw->AddLine(ImVec2(left + 7.0f, centerY + 10.0f),
+						ImVec2(left + 17.0f, centerY + 10.0f), color, 1.5f);
+				}
+				else if (kind == 1)
+				{
+					for (int row = -1; row <= 1; ++row)
+					{
+						const float top = centerY + static_cast<float>(row) * 7.0f - 2.5f;
+						draw->AddRect(ImVec2(left, top), ImVec2(left + 24.0f, top + 5.0f),
+							color, 1.0f, 0, 1.2f);
+						draw->AddCircleFilled(ImVec2(left + 4.0f, top + 2.5f), 1.0f, color);
+					}
+				}
+				else if (kind == 2)
+				{
+					draw->AddRect(ImVec2(left + 5.0f, centerY - 11.0f),
+						ImVec2(left + 19.0f, centerY + 11.0f), color, 2.0f, 0, 1.5f);
+					draw->AddCircleFilled(ImVec2(left + 12.0f, centerY + 8.0f), 1.0f, color);
+				}
+				else if (kind == 3)
+				{
+					draw->AddCircle(ImVec2(left + 12.0f, centerY), 10.0f, color, 16, 1.3f);
+					draw->AddLine(ImVec2(left + 2.0f, centerY),
+						ImVec2(left + 22.0f, centerY), color, 1.0f);
+					draw->AddLine(ImVec2(left + 12.0f, centerY - 10.0f),
+						ImVec2(left + 12.0f, centerY + 10.0f), color, 1.0f);
+				}
+				else
+				{
+					draw->AddRect(ImVec2(left + 1.0f, centerY - 7.0f),
+						ImVec2(left + 23.0f, centerY + 7.0f), color, 2.0f, 0, 1.3f);
+				}
+			};
+
+			auto drawPlatformRow = [&](const char* label, bool selected, bool disabled, int glyph)
+			{
+				ImGui::PushID(label);
+				if (disabled)
+					ImGui::BeginDisabled();
+				ImGui::Selectable("##PlatformTarget", selected, ImGuiSelectableFlags_None,
+					ImVec2(0.0f, 39.0f));
+				const ImVec2 rowMinimum = ImGui::GetItemRectMin();
+				const float rowHeight = ImGui::GetItemRectSize().y;
+				const ImVec4 textColor = ImGui::GetStyleColorVec4(disabled
+					? ImGuiCol_TextDisabled : ImGuiCol_Text);
+				const ImU32 packedColor = ImGui::ColorConvertFloat4ToU32(textColor);
+				drawPlatformGlyph(glyph, rowMinimum, rowHeight, packedColor);
+				const ImVec2 textSize = ImGui::CalcTextSize(label);
+				ImGui::GetWindowDrawList()->AddText(
+					ImVec2(rowMinimum.x + 43.0f,
+						rowMinimum.y + (rowHeight - textSize.y) * 0.5f), packedColor, label);
+				if (disabled)
+					ImGui::EndDisabled();
+				ImGui::PopID();
+			};
+
+			drawPlatformRow("Windows, Mac, Linux", true, false, 0);
+			drawPlatformRow("Dedicated Server", false, true, 1);
+			drawPlatformRow("Android", false, true, 2);
+			drawPlatformRow("iOS", false, true, 2);
+			drawPlatformRow("PS4", false, true, 4);
+			drawPlatformRow("PS5", false, true, 4);
+			drawPlatformRow("WebGL", false, true, 3);
+			drawPlatformRow("Universal Windows Platform", false, true, 0);
+			ImGui::EndChild();
+
+			ImGui::TableSetColumnIndex(1);
+			ImGui::BeginChild("##PlatformOptions", ImVec2(0.0f, platformHeight), false);
+			const ImVec2 headerStart = ImGui::GetCursorScreenPos();
+			ImGui::Dummy(ImVec2(34.0f, 28.0f));
+			drawPlatformGlyph(0, headerStart, 28.0f,
+				ImGui::GetColorU32(ImGuiCol_Text));
+			ImGui::SameLine();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Windows, Mac, Linux");
+			ImGui::Separator();
+
+			const ImGuiTableFlags optionFlags = ImGuiTableFlags_SizingStretchProp;
+			if (ImGui::BeginTable("##BuildTargetOptions", 2, optionFlags))
+			{
+				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.55f);
+				ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+				auto drawDisabledCombo = [](const char* label, const char* id, const char* preview)
+				{
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::AlignTextToFramePadding();
+					ImGui::TextUnformatted(label);
+					ImGui::TableSetColumnIndex(1);
+					ImGui::SetNextItemWidth(-1.0f);
+					ImGui::BeginDisabled();
+					if (ImGui::BeginCombo(id, preview))
+						ImGui::EndCombo();
+					ImGui::EndDisabled();
+				};
+				auto drawDisabledCheckbox = [](const char* label, const char* id, bool muted)
+				{
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					if (muted)
+						ImGui::TextDisabled("%s", label);
+					else
+						ImGui::TextUnformatted(label);
+					ImGui::TableSetColumnIndex(1);
+					bool value = false;
+					ImGui::BeginDisabled();
+					ImGui::Checkbox(id, &value);
+					ImGui::EndDisabled();
+				};
+
+				drawDisabledCombo("Target Platform", "##TargetPlatform", "Windows");
+				drawDisabledCombo("Architecture", "##Architecture", "Intel 64-bit");
+				drawDisabledCheckbox("Copy PDB files", "##CopyPDB", false);
+				drawDisabledCheckbox("Create Visual Studio Solution", "##CreateSolution", false);
+				drawDisabledCheckbox("Development Build", "##DevelopmentBuild", false);
+				drawDisabledCheckbox("Autoconnect Profiler", "##AutoconnectProfiler", true);
+				drawDisabledCheckbox("Deep Profiling Support", "##DeepProfiling", true);
+				drawDisabledCheckbox("Script Debugging", "##ScriptDebugging", true);
+				drawDisabledCombo("Compression Method", "##CompressionMethod", "Default");
+				ImGui::EndTable();
+			}
+			ImGui::EndChild();
+			ImGui::EndTable();
+		}
+
+		if (ImGui::CollapsingHeader("Asset Import Overrides",
+			ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			if (ImGui::BeginTable("##AssetImportOverrides", 2,
+				ImGuiTableFlags_SizingFixedFit))
+			{
+				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 185.0f);
+				ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 210.0f);
+				const std::array<std::pair<const char*, const char*>, 2> overrides = {
+					std::pair{ "Max Texture Size", "##MaxTextureSize" },
+					std::pair{ "Texture Compression", "##TextureCompression" }
+				};
+				for (const auto& [label, id] : overrides)
+				{
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::AlignTextToFramePadding();
+					ImGui::TextUnformatted(label);
+					ImGui::TableSetColumnIndex(1);
+					ImGui::SetNextItemWidth(-1.0f);
+					ImGui::BeginDisabled();
+					if (ImGui::BeginCombo(id, "No Override"))
+						ImGui::EndCombo();
+					ImGui::EndDisabled();
+				}
+				ImGui::EndTable();
+			}
+		}
+
+		ImGui::Separator();
+		if (ImGui::Button("Player Settings..."))
+			OpenProjectSettingsPanel();
+
+		const float buildWidth = ImGui::CalcTextSize("Build").x
+			+ ImGui::GetStyle().FramePadding.x * 2.0f + 22.0f;
+		const float buildAndRunWidth = ImGui::CalcTextSize("Build And Run").x
+			+ ImGui::GetStyle().FramePadding.x * 2.0f;
+		const float buildButtonsWidth = buildWidth + buildAndRunWidth
+			+ ImGui::GetStyle().ItemSpacing.x;
+		ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 20.0f,
+			ImGui::GetWindowContentRegionMax().x - buildButtonsWidth));
+		ImGui::BeginDisabled();
+		ImGui::Button("Build", ImVec2(buildWidth, 0.0f));
+		ImGui::SameLine();
+		ImGui::Button("Build And Run", ImVec2(buildAndRunWidth, 0.0f));
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Player export is not implemented yet.");
+		ImGui::End();
+	}
+
+	void EditorLayer::OpenProjectSettingsPanel()
+	{
+		if (!m_ShowProjectSettingsPanel || m_ProjectSettingsDraftProject != m_CurrentProject)
+			LoadProjectSettingsDraft();
+		m_ShowProjectSettingsPanel = true;
+		m_FocusProjectSettingsPanel = true;
+	}
+
+	void EditorLayer::ClearProjectSettingsFeedback()
+	{
+		m_ProjectSettingsError.clear();
+		m_ProjectSettingsStatus.clear();
+	}
+
+	void EditorLayer::LoadProjectSettingsDraft()
+	{
+		m_ProjectSettingsDraftProject = m_CurrentProject;
+		m_ProjectSettingsDraft = m_CurrentProject
+			? m_CurrentProject->GetSettings() : ProjectSettings{};
+		SyncProjectSettingsLayerBuffers();
+		m_NewProjectTagBuffer.fill('\0');
+		ClearProjectSettingsFeedback();
+	}
+
+	void EditorLayer::SyncProjectSettingsLayerBuffers()
+	{
+		for (std::size_t layer = 0; layer < Physics2DLayerCount; ++layer)
+		{
+			auto& buffer = m_ProjectLayerNameBuffers[layer];
+			buffer.fill('\0');
+			const std::string& name = m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layer];
+			const std::size_t count = std::min(name.size(), buffer.size() - 1);
+			std::copy_n(name.data(), count, buffer.data());
+		}
+	}
+
+	bool EditorLayer::PersistProjectSettingsDraft()
+	{
+		ClearProjectSettingsFeedback();
+		auto reportValidationError = [this](std::string message)
+		{
+			// Keep an invalid intermediate edit in memory so users can type through
+			// a temporarily duplicate name (for example Player -> PlayerOnly). The
+			// settings file remains on the last valid value until this draft validates.
+			m_ProjectSettingsError = std::move(message);
+			return false;
+		};
+		auto rejectSaveAndRestore = [this](std::string message)
+		{
+			if (m_CurrentProject)
+				m_ProjectSettingsDraft = m_CurrentProject->GetSettings();
+			else
+				m_ProjectSettingsDraft = ProjectSettings{};
+			SyncProjectSettingsLayerBuffers();
+			m_ProjectSettingsError = std::move(message);
+			return false;
+		};
+
+		if (!m_CurrentProject)
+			return rejectSaveAndRestore("No project is open.");
+		if (IsSceneRunning())
+			return rejectSaveAndRestore("Stop Play Mode before changing project settings.");
+		if (m_ProjectSettingsDraft == m_CurrentProject->GetSettings())
+			return true;
+
+		const auto& tags = m_ProjectSettingsDraft.TagsAndLayers.Tags;
+		if (tags.empty() || tags.front() != "Untagged")
+			return reportValidationError("The reserved Untagged tag must remain first.");
+		for (std::size_t index = 0; index < tags.size(); ++index)
+		{
+			if (tags[index].empty())
+				return reportValidationError("Tag names cannot be empty.");
+			if (std::find(tags.begin(), tags.begin() + index, tags[index]) != tags.begin() + index)
+				return reportValidationError("Duplicate tag: " + tags[index]);
+		}
+		const auto& layerNames = m_ProjectSettingsDraft.TagsAndLayers.LayerNames;
+		if (layerNames[0] != "Default")
+			return reportValidationError("Layer 0 must remain Default.");
+		for (std::size_t index = 0; index < layerNames.size(); ++index)
+		{
+			if (layerNames[index].empty())
+				continue;
+			if (std::find(layerNames.begin(), layerNames.begin() + index,
+				layerNames[index]) != layerNames.begin() + index)
+				return reportValidationError("Duplicate layer name: " + layerNames[index]);
+		}
+
+		if (!m_CurrentProject->SetSettings(m_ProjectSettingsDraft))
+			return rejectSaveAndRestore(
+				"Project settings could not be saved. Verify that ProjectSettings.json is writable.");
+
+		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
+		m_ProjectSettingsDraft = m_CurrentProject->GetSettings();
+		SyncProjectSettingsLayerBuffers();
+		m_ProjectSettingsStatus = "Saved automatically to ProjectSettings/ProjectSettings.json.";
+		return true;
+	}
+
+	void EditorLayer::UI_ProjectSettings()
+	{
+		if (!m_ShowProjectSettingsPanel)
+			return;
+		if (m_ProjectSettingsDraftProject != m_CurrentProject)
+			LoadProjectSettingsDraft();
+
+		if (m_FocusProjectSettingsPanel)
+		{
+			ImGui::SetNextWindowFocus();
+			m_FocusProjectSettingsPanel = false;
+		}
+		ImGui::SetNextWindowSize(ImVec2(820.0f, 580.0f), ImGuiCond_FirstUseEver);
+		if (!ImGui::Begin("Project Settings", &m_ShowProjectSettingsPanel,
+			ImGuiWindowFlags_NoDocking))
+		{
+			ImGui::End();
+			return;
+		}
+
+		const bool hasProject = m_CurrentProject != nullptr;
+		const bool editable = hasProject && !IsSceneRunning();
+		if (!hasProject)
+			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
+				"Open a project to edit Tags, Layers, and Physics 2D settings.");
+		else if (IsSceneRunning())
+			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
+				"Project settings are read-only while the scene is running. Stop Play Mode to edit them.");
+
+		const float navigationWidth = 170.0f;
+		ImGui::BeginChild("##ProjectSettingsNavigation", ImVec2(navigationWidth, 0.0f), true);
+		if (ImGui::Selectable("Tags and Layers", m_ProjectSettingsPage == 0))
+			m_ProjectSettingsPage = 0;
+		if (ImGui::Selectable("Physics 2D", m_ProjectSettingsPage == 1))
+			m_ProjectSettingsPage = 1;
+		ImGui::EndChild();
+		ImGui::SameLine();
+
+		ImGui::BeginChild("##ProjectSettingsPage", ImVec2(0.0f, 0.0f), true);
+		ImGui::BeginDisabled(!editable);
+		if (m_ProjectSettingsPage == 0)
+		{
+			ImGui::TextUnformatted("Tags");
+			ImGui::Separator();
+			ImGui::TextDisabled("Untagged is reserved and cannot be removed.");
+			std::size_t tagToRemove = static_cast<std::size_t>(-1);
+			const auto& tags = m_ProjectSettingsDraft.TagsAndLayers.Tags;
+			for (std::size_t index = 0; index < tags.size(); ++index)
+			{
+				ImGui::PushID(static_cast<int>(index));
+				ImGui::TextUnformatted(tags[index].empty() ? "<Empty>" : tags[index].c_str());
+				if (index == 0)
+				{
+					ImGui::SameLine();
+					ImGui::TextDisabled("(Reserved)");
+				}
+				else
+				{
+					const float removeWidth = ImGui::CalcTextSize("Remove").x +
+						ImGui::GetStyle().FramePadding.x * 2.0f;
+					ImGui::SameLine(std::max(ImGui::GetCursorPosX(),
+						ImGui::GetWindowContentRegionMax().x - removeWidth));
+					if (ImGui::SmallButton("Remove"))
+						tagToRemove = index;
+				}
+				ImGui::PopID();
+			}
+			if (tagToRemove != static_cast<std::size_t>(-1))
+			{
+				m_ProjectSettingsDraft.TagsAndLayers.Tags.erase(
+					m_ProjectSettingsDraft.TagsAndLayers.Tags.begin() + tagToRemove);
+				PersistProjectSettingsDraft();
+			}
+
+			ImGui::Spacing();
+			const float addButtonWidth = ImGui::CalcTextSize("Add Tag").x +
+				ImGui::GetStyle().FramePadding.x * 2.0f;
+			ImGui::SetNextItemWidth(std::max(80.0f,
+				ImGui::GetContentRegionAvail().x - addButtonWidth - ImGui::GetStyle().ItemSpacing.x));
+			bool addTag = ImGui::InputTextWithHint("##NewProjectTag", "New tag",
+				m_NewProjectTagBuffer.data(), m_NewProjectTagBuffer.size(),
+				ImGuiInputTextFlags_EnterReturnsTrue);
+			ImGui::SameLine();
+			addTag |= ImGui::Button("Add Tag");
+			if (addTag)
+			{
+				const std::string newTag = TrimASCIIWhitespace(m_NewProjectTagBuffer.data());
+				if (newTag.empty())
+				{
+					ClearProjectSettingsFeedback();
+					m_ProjectSettingsError = "Tag names cannot be empty.";
+				}
+				else if (std::find(m_ProjectSettingsDraft.TagsAndLayers.Tags.begin(),
+					m_ProjectSettingsDraft.TagsAndLayers.Tags.end(), newTag)
+					!= m_ProjectSettingsDraft.TagsAndLayers.Tags.end())
+				{
+					ClearProjectSettingsFeedback();
+					m_ProjectSettingsError = "A tag with that name already exists.";
+				}
+				else
+				{
+					m_ProjectSettingsDraft.TagsAndLayers.Tags.push_back(newTag);
+					if (PersistProjectSettingsDraft())
+						m_NewProjectTagBuffer.fill('\0');
+				}
+			}
+
+			ImGui::Spacing();
+			ImGui::TextUnformatted("Layers");
+			ImGui::Separator();
+			ImGui::TextDisabled("Layer slots are stable. Clear a name to hide that layer from entity menus.");
+			for (std::size_t layer = 0; layer < Physics2DLayerCount; ++layer)
+			{
+				ImGui::PushID(static_cast<int>(layer));
+				ImGui::AlignTextToFramePadding();
+				ImGui::Text("%02u", static_cast<unsigned int>(layer));
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::BeginDisabled(layer == 0);
+				if (ImGui::InputText("##LayerName", m_ProjectLayerNameBuffers[layer].data(),
+					m_ProjectLayerNameBuffers[layer].size()))
+				{
+					m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layer] =
+						m_ProjectLayerNameBuffers[layer].data();
+					PersistProjectSettingsDraft();
+				}
+				ImGui::EndDisabled();
+				if (layer == 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+					ImGui::SetTooltip("Layer 0 is reserved as Default.");
+				ImGui::PopID();
+			}
+		}
+		else
+		{
+			ImGui::TextUnformatted("Physics 2D Layer Collision Matrix");
+			ImGui::Separator();
+			ImGui::TextWrapped("A checked cell allows the two named entity layers to collide. The matrix is symmetric.");
+
+			std::vector<uint8_t> namedLayers;
+			for (uint8_t layer = 0; layer < Physics2DLayerCount; ++layer)
+			{
+				if (!m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layer].empty())
+					namedLayers.push_back(layer);
+			}
+			if (ImGui::Button("Enable All"))
+			{
+				for (std::size_t row = 0; row < namedLayers.size(); ++row)
+					for (std::size_t column = 0; column <= row; ++column)
+						m_ProjectSettingsDraft.Physics2D.SetLayersCollide(
+							namedLayers[row], namedLayers[column], true);
+				PersistProjectSettingsDraft();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Disable All"))
+			{
+				for (std::size_t row = 0; row < namedLayers.size(); ++row)
+					for (std::size_t column = 0; column <= row; ++column)
+						m_ProjectSettingsDraft.Physics2D.SetLayersCollide(
+							namedLayers[row], namedLayers[column], false);
+				PersistProjectSettingsDraft();
+			}
+
+			if (namedLayers.empty())
+				ImGui::TextDisabled("Define at least one named layer on the Tags and Layers page.");
+			else
+			{
+				const ImGuiTableFlags flags = ImGuiTableFlags_Borders |
+					ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit |
+					ImGuiTableFlags_ScrollX;
+				const float matrixHeight = std::min(430.0f,
+					(static_cast<float>(namedLayers.size()) + 2.0f) * ImGui::GetFrameHeightWithSpacing());
+				if (ImGui::BeginTable("##Physics2DLayerMatrix",
+					static_cast<int>(namedLayers.size()) + 1, flags, ImVec2(0.0f, matrixHeight)))
+				{
+					ImGui::TableSetupScrollFreeze(1, 1);
+					ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+					std::array<std::string, Physics2DLayerCount> columnLabels;
+					for (std::size_t column = 0; column < namedLayers.size(); ++column)
+					{
+						columnLabels[column] = std::to_string(
+							static_cast<unsigned int>(namedLayers[column]));
+						ImGui::TableSetupColumn(columnLabels[column].c_str(),
+							ImGuiTableColumnFlags_WidthFixed, 38.0f);
+					}
+					ImGui::TableHeadersRow();
+
+					for (std::size_t row = 0; row < namedLayers.size(); ++row)
+					{
+						const uint8_t layerA = namedLayers[row];
+						ImGui::TableNextRow();
+						ImGui::TableSetColumnIndex(0);
+						const std::string rowLabel = std::to_string(
+							static_cast<unsigned int>(layerA)) + "  " +
+							m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layerA];
+						ImGui::TextUnformatted(rowLabel.c_str());
+						for (std::size_t column = 0; column < namedLayers.size(); ++column)
+						{
+							ImGui::TableSetColumnIndex(static_cast<int>(column) + 1);
+							if (column > row)
+							{
+								ImGui::TextDisabled("-");
+								continue;
+							}
+							const uint8_t layerB = namedLayers[column];
+							bool collide = m_ProjectSettingsDraft.Physics2D.CanLayersCollide(layerA, layerB);
+							ImGui::PushID(static_cast<int>(layerA) * 32 + layerB);
+							if (ImGui::Checkbox("##Collide", &collide))
+							{
+								m_ProjectSettingsDraft.Physics2D.SetLayersCollide(layerA, layerB, collide);
+								PersistProjectSettingsDraft();
+							}
+							if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+								ImGui::SetTooltip("%s / %s",
+									m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layerA].c_str(),
+									m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layerB].c_str());
+							ImGui::PopID();
+						}
+					}
+					ImGui::EndTable();
+				}
+			}
+		}
+		ImGui::EndDisabled();
+
+		ImGui::Separator();
+		ImGui::TextDisabled("Valid changes are saved automatically to ProjectSettings/ProjectSettings.json.");
+		if (!m_ProjectSettingsError.empty())
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+			ImGui::TextWrapped("Error: %s", m_ProjectSettingsError.c_str());
+			ImGui::PopStyleColor();
+		}
+		else if (!m_ProjectSettingsStatus.empty())
+			ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s",
+				m_ProjectSettingsStatus.c_str());
+		ImGui::EndChild();
+		ImGui::End();
+	}
+
+	void EditorLayer::RenderSceneColliderOverlays()
+	{
+		if (!m_ActiveScene)
+			return;
+
+		const SceneHierarchyPanel::ColliderEditMode editMode =
+			m_SceneState == SceneState::Edit
+			? m_SceneHierarchyPanel.GetColliderEditMode()
+			: SceneHierarchyPanel::ColliderEditMode::None;
+		if (!m_ShowColliders && editMode == SceneHierarchyPanel::ColliderEditMode::None)
+			return;
+
+		UUID selectedUUID(0);
+		const Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (selectedEntity && selectedEntity.HasComponent<ID>())
+			selectedUUID = selectedEntity.GetUUID();
+
+		const std::vector<ColliderDebugShape> shapes =
+			m_ActiveScene->GetColliderDebugShapes(m_SceneState != SceneState::Edit);
+		if (shapes.empty())
+			return;
+
+		const float previousLineWidth = Renderer2D::GetLineWidth();
+		Renderer2D::SetLineWidth(2.0f);
+		RenderCommand::SetDepthTest(false);
+		Renderer2D::BeginScene(m_EditorCamera);
+
+		for (const ColliderDebugShape& shape : shapes)
+		{
+			const bool selected = selectedUUID != UUID(0) && shape.EntityID == selectedUUID;
+			const bool edited = selected &&
+				((editMode == SceneHierarchyPanel::ColliderEditMode::Box &&
+					shape.Type == ColliderDebugShapeType::Box) ||
+				 (editMode == SceneHierarchyPanel::ColliderEditMode::Circle &&
+					shape.Type == ColliderDebugShapeType::Circle));
+			if (!m_ShowColliders && !edited)
+				continue;
+
+			const glm::vec4 color = !shape.Enabled
+				? glm::vec4(0.55f, 0.58f, 0.55f, selected ? 0.9f : 0.62f)
+				: edited
+				? glm::vec4(0.45f, 1.0f, 0.35f, 1.0f)
+				: selected
+					? glm::vec4(0.32f, 0.95f, 0.48f, 1.0f)
+					: glm::vec4(0.25f, 0.82f, 0.42f, 0.82f);
+
+			if (shape.Type == ColliderDebugShapeType::Box)
+				Renderer2D::DrawRect(shape.Transform, color, -1);
+			else if (shape.Type == ColliderDebugShapeType::Circle)
+				Renderer2D::DrawCircle(shape.Transform, color, 0.045f, 0.005f, -1);
+		}
+
+		Renderer2D::EndScene();
+		RenderCommand::SetDepthTest(true);
+		Renderer2D::SetLineWidth(previousLineWidth);
+	}
+
+	bool EditorLayer::WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const
+	{
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+			return false;
+
+		const glm::vec4 clip = m_EditorCamera.GetViewProjection() * glm::vec4(worldPosition, 1.0f);
+		if (!std::isfinite(clip.w) || clip.w <= 0.000001f)
+			return false;
+		const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+		if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y))
+			return false;
+
+		screenPosition.x = m_ViewportBounds[0].x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+		screenPosition.y = m_ViewportBounds[0].y + (0.5f - ndc.y * 0.5f) * viewportSize.y;
+		return std::isfinite(screenPosition.x) && std::isfinite(screenPosition.y);
+	}
+
+	bool EditorLayer::ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
+		glm::vec2& worldPosition) const
+	{
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+			return false;
+
+		const float ndcX = ((screenPosition.x - m_ViewportBounds[0].x) / viewportSize.x) * 2.0f - 1.0f;
+		const float ndcY = 1.0f - ((screenPosition.y - m_ViewportBounds[0].y) / viewportSize.y) * 2.0f;
+		const glm::mat4 inverseViewProjection = glm::inverse(m_EditorCamera.GetViewProjection());
+		glm::vec4 nearPoint = inverseViewProjection * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+		glm::vec4 farPoint = inverseViewProjection * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+		if (std::abs(nearPoint.w) <= 0.000001f || std::abs(farPoint.w) <= 0.000001f)
+			return false;
+		nearPoint /= nearPoint.w;
+		farPoint /= farPoint.w;
+
+		const glm::vec3 ray = glm::vec3(farPoint - nearPoint);
+		if (!std::isfinite(ray.z) || std::abs(ray.z) <= 0.000001f)
+			return false;
+		const float distance = (worldZ - nearPoint.z) / ray.z;
+		const glm::vec3 intersection = glm::vec3(nearPoint) + ray * distance;
+		if (!std::isfinite(intersection.x) || !std::isfinite(intersection.y))
+			return false;
+
+		worldPosition = { intersection.x, intersection.y };
+		return true;
+	}
+
+	void EditorLayer::UI_SceneColliderVisibilityToggle()
+	{
+		constexpr float buttonHeight = 24.0f;
+		const ImVec2 labelSize = ImGui::CalcTextSize("Colliders");
+		const float buttonWidth = labelSize.x + 30.0f;
+		const float availableWidth = m_ViewportBounds[1].x - m_ViewportBounds[0].x;
+		if (availableWidth < buttonWidth + 16.0f)
+			return;
+
+		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
+		const ImVec2 minimum(m_ViewportBounds[1].x - buttonWidth - 8.0f,
+			m_GizmoModeDockY + (m_GizmoModeDockHeight - buttonHeight) * 0.5f);
+		const ImVec2 maximum(minimum.x + buttonWidth, minimum.y + buttonHeight);
+		ImGui::SetCursorScreenPos(minimum);
+		ImGui::InvisibleButton("##scene_show_colliders", ImVec2(buttonWidth, buttonHeight));
+		const bool hovered = ImGui::IsItemHovered();
+		if (ImGui::IsItemClicked())
+			m_ShowColliders = !m_ShowColliders;
+		if (hovered)
+			ImGui::SetTooltip("Show collider outlines in the Scene view");
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImU32 fill = m_ShowColliders
+			? IM_COL32(44, 93, 135, 255)
+			: hovered ? IM_COL32(98, 98, 98, 245) : IM_COL32(71, 71, 71, 245);
+		draw->AddRectFilled(minimum, maximum, fill, 2.0f);
+		draw->AddRect(minimum, maximum, IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
+		const ImVec2 indicator(minimum.x + 11.0f, (minimum.y + maximum.y) * 0.5f);
+		draw->AddCircle(indicator, 5.0f,
+			m_ShowColliders ? IM_COL32(120, 238, 116, 255) : IM_COL32(145, 145, 145, 255),
+			20, 1.7f);
+		draw->AddText(ImVec2(minimum.x + 21.0f,
+			minimum.y + (buttonHeight - labelSize.y) * 0.5f), IM_COL32(235, 235, 235, 255), "Colliders");
+		ImGui::SetCursorScreenPos(savedCursor);
+	}
+
+	void EditorLayer::ResetColliderEditState()
+	{
+		m_ActiveColliderHandle = ColliderEditHandle::None;
+		m_ColliderEditEntity = UUID(0);
+		m_ColliderDragStartMouseWorld = { 0.0f, 0.0f };
+		m_ColliderDragStartCenter = { 0.0f, 0.0f };
+		m_ColliderDragStartHalfSize = { 0.0f, 0.0f };
+		m_ColliderDragStartRadius = 0.0f;
+		m_ColliderDragPlaneZ = 0.0f;
+		m_ColliderHandleHovered = false;
+	}
+
+	void EditorLayer::UI_ColliderEditHandles()
+	{
+		m_ColliderHandleHovered = false;
+		const SceneHierarchyPanel::ColliderEditMode editMode = m_SceneHierarchyPanel.GetColliderEditMode();
+		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (m_SceneState != SceneState::Edit ||
+			editMode == SceneHierarchyPanel::ColliderEditMode::None ||
+			!m_ActiveScene ||
+			!selectedEntity || !selectedEntity.HasComponent<Transform>() ||
+			!selectedEntity.HasComponent<ID>())
+		{
+			ResetColliderEditState();
+			return;
+		}
+
+		const UUID selectedUUID = selectedEntity.GetUUID();
+		if (m_ActiveColliderHandle != ColliderEditHandle::None &&
+			m_ColliderEditEntity != selectedUUID)
+			ResetColliderEditState();
+
+		const ColliderDebugShapeType expectedType =
+			editMode == SceneHierarchyPanel::ColliderEditMode::Box
+			? ColliderDebugShapeType::Box : ColliderDebugShapeType::Circle;
+		const std::vector<ColliderDebugShape> shapes = m_ActiveScene->GetColliderDebugShapes(false);
+		const auto shapeIt = std::find_if(shapes.begin(), shapes.end(),
+			[&](const ColliderDebugShape& shape)
+			{
+				return shape.EntityID == selectedUUID && shape.Type == expectedType;
+			});
+		if (shapeIt == shapes.end())
+		{
+			ResetColliderEditState();
+			return;
+		}
+
+		const ColliderDebugShape& shape = *shapeIt;
+		const Transform& transform = selectedEntity.GetComponent<Transform>();
+		const float scaleX = std::abs(transform._Scale.x);
+		const float scaleY = std::abs(transform._Scale.y);
+		const float maximumScale = std::max(scaleX, scaleY);
+		if (scaleX <= 0.000001f || scaleY <= 0.000001f ||
+			(editMode == SceneHierarchyPanel::ColliderEditMode::Circle && maximumScale <= 0.000001f))
+		{
+			ResetColliderEditState();
+			return;
+		}
+
+		const float cosine = std::cos(shape.Rotation);
+		const float sine = std::sin(shape.Rotation);
+		const glm::vec2 right(cosine, sine);
+		const glm::vec2 up(-sine, cosine);
+		const glm::vec2 center = shape.Center;
+		const float handleRadius = 6.0f;
+		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
+			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), true);
+		ImGui::PushID("ColliderEditHandles");
+		ImGui::PushID(static_cast<int>(selectedEntity));
+
+		auto submitHandle = [&](ColliderEditHandle handle, const char* id,
+			const glm::vec2& worldPosition, ImGuiMouseCursor cursor, bool offsetHandle)
+		{
+			glm::vec2 screenPosition;
+			if (!WorldToScreen(glm::vec3(worldPosition, transform._Translation.z), screenPosition))
+				return;
+			if (screenPosition.x < m_ViewportBounds[0].x - handleRadius ||
+				screenPosition.x > m_ViewportBounds[1].x + handleRadius ||
+				screenPosition.y < m_ViewportBounds[0].y - handleRadius ||
+				screenPosition.y > m_ViewportBounds[1].y + handleRadius)
+				return;
+
+			const ImVec2 minimum(screenPosition.x - handleRadius, screenPosition.y - handleRadius);
+			const ImVec2 maximum(screenPosition.x + handleRadius, screenPosition.y + handleRadius);
+			ImGui::SetCursorScreenPos(minimum);
+			ImGui::PushID(id);
+			ImGui::InvisibleButton("##handle", ImVec2(handleRadius * 2.0f, handleRadius * 2.0f));
+			const bool hovered = ImGui::IsItemHovered();
+			const bool active = m_ActiveColliderHandle == handle && ImGui::IsItemActive();
+			m_ColliderHandleHovered = m_ColliderHandleHovered || hovered || active;
+			if (hovered || active)
+				ImGui::SetMouseCursor(cursor);
+
+			if (ImGui::IsItemActivated())
+			{
+				glm::vec2 mouseWorld;
+				const ImVec2 mouse = ImGui::GetMousePos();
+				if (ScreenToWorldOnPlane({ mouse.x, mouse.y }, transform._Translation.z, mouseWorld))
+				{
+					m_ActiveColliderHandle = handle;
+					m_ColliderEditEntity = selectedUUID;
+					m_ColliderDragStartMouseWorld = mouseWorld;
+					m_ColliderDragStartCenter = shape.Center;
+					m_ColliderDragStartHalfSize = shape.HalfSize;
+					m_ColliderDragStartRadius = shape.Radius;
+					m_ColliderDragPlaneZ = transform._Translation.z;
+				}
+			}
+
+			const ImU32 handleColor = active
+				? IM_COL32(255, 176, 65, 255)
+				: hovered ? IM_COL32(220, 255, 185, 255) : IM_COL32(115, 235, 110, 255);
+			if (offsetHandle)
+			{
+				const ImVec2 top(screenPosition.x, screenPosition.y - handleRadius);
+				const ImVec2 rightPoint(screenPosition.x + handleRadius, screenPosition.y);
+				const ImVec2 bottom(screenPosition.x, screenPosition.y + handleRadius);
+				const ImVec2 leftPoint(screenPosition.x - handleRadius, screenPosition.y);
+				draw->AddQuadFilled(top, rightPoint, bottom, leftPoint, IM_COL32(25, 25, 25, 255));
+				draw->AddQuadFilled(ImVec2(top.x, top.y + 1.5f),
+					ImVec2(rightPoint.x - 1.5f, rightPoint.y),
+					ImVec2(bottom.x, bottom.y - 1.5f),
+					ImVec2(leftPoint.x + 1.5f, leftPoint.y), handleColor);
+			}
+			else
+			{
+				draw->AddRectFilled(minimum, maximum, IM_COL32(25, 25, 25, 255), 1.0f);
+				draw->AddRectFilled(ImVec2(minimum.x + 1.5f, minimum.y + 1.5f),
+					ImVec2(maximum.x - 1.5f, maximum.y - 1.5f), handleColor, 1.0f);
+			}
+			ImGui::PopID();
+		};
+
+		if (editMode == SceneHierarchyPanel::ColliderEditMode::Box)
+		{
+			const glm::vec2 halfSize = shape.HalfSize;
+			submitHandle(ColliderEditHandle::BoxLeft, "Left", center - right * halfSize.x,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::BoxRight, "Right", center + right * halfSize.x,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::BoxBottom, "Bottom", center - up * halfSize.y,
+				ImGuiMouseCursor_ResizeNS, false);
+			submitHandle(ColliderEditHandle::BoxTop, "Top", center + up * halfSize.y,
+				ImGuiMouseCursor_ResizeNS, false);
+			submitHandle(ColliderEditHandle::BoxBottomLeft, "BottomLeft",
+				center - right * halfSize.x - up * halfSize.y, ImGuiMouseCursor_ResizeNESW, false);
+			submitHandle(ColliderEditHandle::BoxBottomRight, "BottomRight",
+				center + right * halfSize.x - up * halfSize.y, ImGuiMouseCursor_ResizeNWSE, false);
+			submitHandle(ColliderEditHandle::BoxTopLeft, "TopLeft",
+				center - right * halfSize.x + up * halfSize.y, ImGuiMouseCursor_ResizeNWSE, false);
+			submitHandle(ColliderEditHandle::BoxTopRight, "TopRight",
+				center + right * halfSize.x + up * halfSize.y, ImGuiMouseCursor_ResizeNESW, false);
+		}
+		else
+		{
+			submitHandle(ColliderEditHandle::CircleLeft, "CircleLeft", center - right * shape.Radius,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::CircleRight, "CircleRight", center + right * shape.Radius,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::CircleBottom, "CircleBottom", center - up * shape.Radius,
+				ImGuiMouseCursor_ResizeNS, false);
+			submitHandle(ColliderEditHandle::CircleTop, "CircleTop", center + up * shape.Radius,
+				ImGuiMouseCursor_ResizeNS, false);
+		}
+
+		// Submit the offset handle last so it remains reachable for very small
+		// colliders whose resize handles overlap the center.
+		submitHandle(ColliderEditHandle::Offset, "Offset", center, ImGuiMouseCursor_ResizeAll, true);
+
+		ImGui::PopID();
+		ImGui::PopID();
+		ImGui::PopClipRect();
+		ImGui::SetCursorScreenPos(savedCursor);
+
+		if (m_ActiveColliderHandle == ColliderEditHandle::None)
+			return;
+		if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+		{
+			m_ActiveColliderHandle = ColliderEditHandle::None;
+			return;
+		}
+
+		const ImVec2 mouse = ImGui::GetMousePos();
+		glm::vec2 mouseWorld;
+		if (!ScreenToWorldOnPlane({ mouse.x, mouse.y }, m_ColliderDragPlaneZ, mouseWorld))
+			return;
+		const glm::vec2 mouseDelta = mouseWorld - m_ColliderDragStartMouseWorld;
+
+		auto centerToOffset = [&](const glm::vec2& worldCenter, glm::vec2& offset)
+		{
+			const glm::vec2 relative = worldCenter - glm::vec2(transform._Translation);
+			const float transformCosine = std::cos(transform._Rotation.z);
+			const float transformSine = std::sin(transform._Rotation.z);
+			const glm::vec2 scaledLocal(
+				transformCosine * relative.x + transformSine * relative.y,
+				-transformSine * relative.x + transformCosine * relative.y);
+			if (std::abs(transform._Scale.x) <= 0.000001f ||
+				std::abs(transform._Scale.y) <= 0.000001f)
+				return false;
+			offset = { scaledLocal.x / transform._Scale.x, scaledLocal.y / transform._Scale.y };
+			return std::isfinite(offset.x) && std::isfinite(offset.y);
+		};
+
+		constexpr float minimumComponentExtent = 0.001f;
+		if (editMode == SceneHierarchyPanel::ColliderEditMode::Box &&
+			selectedEntity.HasComponent<BoxCollider2D>())
+		{
+			glm::vec2 newCenter = m_ColliderDragStartCenter;
+			glm::vec2 newHalfSize = m_ColliderDragStartHalfSize;
+			bool resizeX = false;
+			bool resizeY = false;
+			float signX = 0.0f;
+			float signY = 0.0f;
+
+			switch (m_ActiveColliderHandle)
+			{
+			case ColliderEditHandle::BoxLeft: resizeX = true; signX = -1.0f; break;
+			case ColliderEditHandle::BoxRight: resizeX = true; signX = 1.0f; break;
+			case ColliderEditHandle::BoxBottom: resizeY = true; signY = -1.0f; break;
+			case ColliderEditHandle::BoxTop: resizeY = true; signY = 1.0f; break;
+			case ColliderEditHandle::BoxBottomLeft:
+				resizeX = resizeY = true; signX = signY = -1.0f; break;
+			case ColliderEditHandle::BoxBottomRight:
+				resizeX = resizeY = true; signX = 1.0f; signY = -1.0f; break;
+			case ColliderEditHandle::BoxTopLeft:
+				resizeX = resizeY = true; signX = -1.0f; signY = 1.0f; break;
+			case ColliderEditHandle::BoxTopRight:
+				resizeX = resizeY = true; signX = signY = 1.0f; break;
+			default: break;
+			}
+
+			if (m_ActiveColliderHandle == ColliderEditHandle::Offset)
+				newCenter += mouseDelta;
+			if (resizeX)
+			{
+				const glm::vec2 outward = right * signX;
+				const float requestedHalfSize = m_ColliderDragStartHalfSize.x +
+					glm::dot(mouseDelta, outward) * 0.5f;
+				newHalfSize.x = std::max(scaleX * minimumComponentExtent, requestedHalfSize);
+				newCenter += outward * (newHalfSize.x - m_ColliderDragStartHalfSize.x);
+			}
+			if (resizeY)
+			{
+				const glm::vec2 outward = up * signY;
+				const float requestedHalfSize = m_ColliderDragStartHalfSize.y +
+					glm::dot(mouseDelta, outward) * 0.5f;
+				newHalfSize.y = std::max(scaleY * minimumComponentExtent, requestedHalfSize);
+				newCenter += outward * (newHalfSize.y - m_ColliderDragStartHalfSize.y);
+			}
+
+			auto& collider = selectedEntity.GetComponent<BoxCollider2D>();
+			glm::vec2 newOffset;
+			if (centerToOffset(newCenter, newOffset))
+			{
+				const glm::vec2 newSize(newHalfSize.x / scaleX, newHalfSize.y / scaleY);
+				if (glm::length(collider.Offset - newOffset) > 0.000001f ||
+					glm::length(collider.Size - newSize) > 0.000001f)
+				{
+					collider.Offset = newOffset;
+					collider.Size = newSize;
+					m_SceneDirty = true;
+				}
+			}
+		}
+		else if (editMode == SceneHierarchyPanel::ColliderEditMode::Circle &&
+			selectedEntity.HasComponent<CircleCollider2D>())
+		{
+			auto& collider = selectedEntity.GetComponent<CircleCollider2D>();
+			if (m_ActiveColliderHandle == ColliderEditHandle::Offset)
+			{
+				glm::vec2 newOffset;
+				if (centerToOffset(m_ColliderDragStartCenter + mouseDelta, newOffset) &&
+					glm::length(collider.Offset - newOffset) > 0.000001f)
+				{
+					collider.Offset = newOffset;
+					m_SceneDirty = true;
+				}
+			}
+			else
+			{
+				glm::vec2 outward(0.0f);
+				switch (m_ActiveColliderHandle)
+				{
+				case ColliderEditHandle::CircleLeft: outward = -right; break;
+				case ColliderEditHandle::CircleRight: outward = right; break;
+				case ColliderEditHandle::CircleBottom: outward = -up; break;
+				case ColliderEditHandle::CircleTop: outward = up; break;
+				default: break;
+				}
+				if (glm::dot(outward, outward) > 0.0f)
+				{
+					const float worldRadius = std::max(maximumScale * minimumComponentExtent,
+						m_ColliderDragStartRadius + glm::dot(mouseDelta, outward));
+					const float newRadius = worldRadius / maximumScale;
+					if (std::abs(collider.Radius - newRadius) > 0.000001f)
+					{
+						collider.Radius = newRadius;
+						m_SceneDirty = true;
+					}
+				}
+			}
+		}
 	}
 
 	void EditorLayer::UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -1555,7 +2861,7 @@ namespace TomCat {
 			OnScenePause();
 		ImGui::SameLine();
 		if (drawButton("Step", EditorIcon::Step, m_SceneState == SceneState::Pause,
-			false, "Step one frame"))
+			false, "Step one fixed physics frame (1/60 s)"))
 			OnSceneStep();
 		ImGui::SameLine();
 		if (drawButton("Stop", EditorIcon::Stop, running, false, "Stop"))
@@ -1578,6 +2884,7 @@ namespace TomCat {
 		m_ActiveScene->OnRuntimeStart();
 		m_SceneState = SceneState::Play;
 		m_StepRequested = false;
+		m_SceneHierarchyPanel.SetColliderEditingAllowed(false);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
 		ResetSceneInteractionState();
 
@@ -1614,6 +2921,7 @@ namespace TomCat {
 		m_StepRequested = false;
 		ResizeSceneForGameView(m_ActiveScene);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
+		m_SceneHierarchyPanel.SetColliderEditingAllowed(true);
 		ResetSceneInteractionState();
 
 		// 切换到Scene窗口焦点
@@ -1678,6 +2986,17 @@ namespace TomCat {
 
 			break;
 		}
+		case Key::Escape:
+		{
+			if (!ImGui::GetIO().WantTextInput && !control && !shift && !alt && !super &&
+				m_SceneHierarchyPanel.IsEditingCollider())
+			{
+				m_SceneHierarchyPanel.ClearColliderEditMode();
+				ResetColliderEditState();
+				handled = true;
+			}
+			break;
+		}
 
 		// Scene commands only belong to the Scene canvas or Hierarchy. This keeps
 		// Delete/Cut/Copy/Paste from leaking out of text fields and Project assets.
@@ -1688,6 +3007,8 @@ namespace TomCat {
 				control && !shift && !alt && !super)
 			{
 				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
+					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
 			}
 
 			break;
@@ -1701,6 +3022,8 @@ namespace TomCat {
 				control && !shift && !alt && !super)
 			{
 				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
+					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
 			}
 			break;
 		}
@@ -1710,7 +3033,11 @@ namespace TomCat {
 			if (!ImGui::GetIO().WantTextInput &&
 				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
 				!control && !shift && !alt && !super)
+			{
 				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
+					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
+			}
 			break;
 		}
 
@@ -1770,6 +3097,8 @@ namespace TomCat {
 
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
+			if (m_ColliderHandleHovered || m_ActiveColliderHandle != ColliderEditHandle::None)
+				return true;
 			if (m_ViewportCanvasHovered && !ImGuizmo::IsOver() && !altDown)
 			{
 				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
@@ -1782,6 +3111,8 @@ namespace TomCat {
 	bool EditorLayer::OnMouseButtonReleased(MouseButtonReleasedEvent& e)
 	{
 		const int button = e.GetMouseButton();
+		if (button == Mouse::ButtonLeft && m_ActiveColliderHandle != ColliderEditHandle::None)
+			return true;
 		if (m_ViewportCameraDragOwned &&
 			(button == Mouse::ButtonLeft || button == Mouse::ButtonMiddle || button == Mouse::ButtonRight))
 		{
@@ -1992,6 +3323,7 @@ namespace TomCat {
 	{
 		m_HoveredEntity = {};
 		m_ViewportCameraDragOwned = false;
+		ResetColliderEditState();
 	}
 
 	void EditorLayer::RequestDestructiveAction(std::function<bool()> action)
@@ -2094,6 +3426,9 @@ namespace TomCat {
 		if (IsSceneRunning())
 			OnSceneStop();
 		m_CurrentProject = project;
+		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
+		if (m_ShowProjectSettingsPanel)
+			LoadProjectSettingsDraft();
 		m_Is2DMode = project->GetConfig().Template == "2D";
 		m_EditorCamera.Set2DMode(m_Is2DMode);
 

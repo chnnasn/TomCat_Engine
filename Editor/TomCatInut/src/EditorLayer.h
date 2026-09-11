@@ -9,6 +9,10 @@
 #include <functional>
 #include "TomCat/Project/Project.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Project/ProjectSettings.h"
+
+#include <array>
+#include <string>
 
 struct ImVec2;
 
@@ -70,6 +74,13 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		void UI_SceneToolbarDockPreview();
+		void UI_SceneColliderVisibilityToggle();
+		void UI_ColliderEditHandles();
+		void RenderSceneColliderOverlays();
+		bool ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
+			glm::vec2& worldPosition) const;
+		bool WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const;
+		void ResetColliderEditState();
 		// Persist the Scene toolbar arrangement alongside ImGui's window layout.
 		void LoadSceneToolbarLayout();
 		void SaveSceneToolbarLayout();
@@ -78,6 +89,17 @@ namespace TomCat {
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
 			const ImVec2& handleMin, const ImVec2& handleMax, float tearX, bool canDock);
 		void UI_GameNoCameraOverlay();
+		void UI_MainMenuBar();
+		void UI_BuildSettings();
+		void UI_ProjectSettings();
+		void OpenProjectSettingsPanel();
+		void UpdateWindowTitle();
+		void LoadProjectSettingsDraft();
+		void SyncProjectSettingsLayerBuffers();
+		bool PersistProjectSettingsDraft();
+		void ClearProjectSettingsFeedback();
+		void FocusEditorPanel(const char* panelName, bool& panelVisible);
+		void CycleEditorPanel(int direction);
 
 		bool OpenProject();
 		bool OpenProject(const std::filesystem::path& path);
@@ -134,15 +156,59 @@ namespace TomCat {
 		SceneState m_SceneState = SceneState::Edit;
 		bool m_StepRequested = false;
 		bool m_Is2DMode = false;
+		bool m_ShowColliders = true;
+
+		enum class ColliderEditHandle
+		{
+			None = 0,
+			Offset,
+			BoxLeft,
+			BoxRight,
+			BoxBottom,
+			BoxTop,
+			BoxBottomLeft,
+			BoxBottomRight,
+			BoxTopLeft,
+			BoxTopRight,
+			CircleLeft,
+			CircleRight,
+			CircleBottom,
+			CircleTop
+		};
+
+		ColliderEditHandle m_ActiveColliderHandle = ColliderEditHandle::None;
+		UUID m_ColliderEditEntity = UUID(0);
+		glm::vec2 m_ColliderDragStartMouseWorld{ 0.0f };
+		glm::vec2 m_ColliderDragStartCenter{ 0.0f };
+		glm::vec2 m_ColliderDragStartHalfSize{ 0.0f };
+		float m_ColliderDragStartRadius = 0.0f;
+		float m_ColliderDragPlaneZ = 0.0f;
+		bool m_ColliderHandleHovered = false;
 
 		Ref<Project> m_CurrentProject;
 		bool m_SceneDirty = false;
 
 		bool m_ShowScenePanel = true;
 		bool m_ShowGamePanel = true;
+		bool m_ScenePanelDocked = true;
+		bool m_GamePanelDocked = true;
 		bool m_ShowHierarchyPanel = true;
 		bool m_ShowInspectorPanel = true;
 		bool m_ShowProjectPanel = true;
+		bool m_ShowBuildSettingsPanel = false;
+		bool m_FocusBuildSettingsPanel = false;
+		bool m_ShowProjectSettingsPanel = false;
+		bool m_FocusProjectSettingsPanel = false;
+		std::string m_LastWindowTitle;
+		std::string m_PendingPanelFocus;
+		int m_EditorPanelCycleIndex = 5;
+		int m_ProjectSettingsPage = 0;
+		Ref<Project> m_ProjectSettingsDraftProject;
+		ProjectSettings m_ProjectSettingsDraft;
+		std::array<std::array<char, 128>, Physics2DLayerCount> m_ProjectLayerNameBuffers{};
+		std::array<char, 128> m_NewProjectTagBuffer{};
+		std::string m_ProjectSettingsError;
+		std::string m_ProjectSettingsStatus;
 		bool m_OpenUnsavedChangesModal = false;
 		std::function<bool()> m_PendingUnsavedAction;
 	};
