@@ -394,6 +394,16 @@ namespace TomCat {
 			m_Context->SwapBuffers();
 		}
 
+		void WindowsWindow::SetTitle(const std::string& title)
+		{
+			if (m_Data.Title == title)
+				return;
+
+			m_Data.Title = title;
+			if (m_Window)
+				glfwSetWindowTitle(m_Window, m_Data.Title.c_str());
+		}
+
 		void WindowsWindow::SetVSync(bool enabled)
 		{
 			TC_PROFILE_FUNCTION();

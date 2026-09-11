@@ -20,8 +20,9 @@ namespace TomCat {
 	namespace {
 
 		constexpr std::array<char, 8> kPackageMagic = { 'T', 'C', 'P', 'A', 'C', 'K', '0', '1' };
-		constexpr uint32_t kPackageVersion = 2;
-		constexpr uint32_t kPackageHeaderSize = 32;
+		constexpr uint32_t kPackageVersion = 3;
+		// Base manifest (32 bytes) followed by sixteen uint16 collision-mask rows.
+		constexpr uint32_t kPackageHeaderSize = 64;
 		constexpr uint64_t kPackageEntrySize = 32;
 		constexpr size_t kCopyBufferSize = 64 * 1024;
 
@@ -35,6 +36,22 @@ namespace TomCat {
 			output.write(reinterpret_cast<const char*>(bytes.data()),
 				static_cast<std::streamsize>(bytes.size()));
 			return output.good();
+		}
+
+		bool IsSymmetricCollisionMatrix(const Physics2DSettings& settings)
+		{
+			for (std::size_t layerA = 0; layerA < Physics2DLayerCount; ++layerA)
+			{
+				for (std::size_t layerB = layerA; layerB < Physics2DLayerCount; ++layerB)
+				{
+					if (settings.CanLayersCollide(static_cast<uint8_t>(layerA),
+						static_cast<uint8_t>(layerB))
+						!= settings.CanLayersCollide(static_cast<uint8_t>(layerB),
+							static_cast<uint8_t>(layerA)))
+						return false;
+				}
+			}
+			return true;
 		}
 
 		template<typename UInt>
@@ -317,6 +334,15 @@ namespace TomCat {
 		return true;
 	}
 
+	Physics2DSettings AssetManager::GetPhysics2DSettings() const
+	{
+		if (IsCookedPackageMounted())
+			return m_CookedPhysics2DSettings;
+		if (const Ref<Project> project = m_AuthoringProject.lock())
+			return project->GetSettings().Physics2D;
+		return Physics2DSettings{};
+	}
+
 	void AssetManager::Shutdown()
 	{
 		ReleaseAll();
@@ -329,6 +355,7 @@ namespace TomCat {
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
 		m_CookedStartSceneHandle = AssetHandle(0);
+		m_CookedPhysics2DSettings = Physics2DSettings{};
 		m_AuthoringProject.reset();
 		m_UsesProjectConfiguration = false;
 		m_Registry.Shutdown();
@@ -784,6 +811,22 @@ namespace TomCat {
 		}
 		if (!Refresh())
 			return false;
+		Physics2DSettings packagePhysicsSettings;
+		if (m_UsesProjectConfiguration)
+		{
+			const Ref<Project> project = m_AuthoringProject.lock();
+			if (!project)
+			{
+				TC_Core_Error("Cannot cook because the active Project is no longer available");
+				return false;
+			}
+			packagePhysicsSettings = project->GetSettings().Physics2D;
+		}
+		if (!IsSymmetricCollisionMatrix(packagePhysicsSettings))
+		{
+			TC_Core_Error("Cannot cook an asymmetric Physics2D collision matrix");
+			return false;
+		}
 		if (static_cast<uint64_t>(startSceneHandle) != 0)
 		{
 			const AssetMetadata* startScene = m_Registry.GetMetadata(startSceneHandle);
@@ -905,6 +948,8 @@ namespace TomCat {
 			WriteLittleEndian<uint32_t>(output, kPackageHeaderSize) &&
 			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(entries.size())) &&
 			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(startSceneHandle));
+		for (uint16_t mask : packagePhysicsSettings.CollisionMasks)
+			succeeded = succeeded && WriteLittleEndian<uint16_t>(output, mask);
 		for (const SourceEntry& entry : entries)
 		{
 			if (!succeeded)
@@ -978,7 +1023,15 @@ namespace TomCat {
 			!ReadLittleEndian<uint64_t>(input, entryCount) ||
 			!ReadLittleEndian<uint64_t>(input, rawStartSceneHandle))
 			return false;
+		Physics2DSettings mountedPhysicsSettings;
+		for (uint16_t& mask : mountedPhysicsSettings.CollisionMasks)
+		{
+			if (!ReadLittleEndian<uint16_t>(input, mask))
+				return false;
+		}
 		if (headerSize != kPackageHeaderSize || headerSize > packageSize)
+			return false;
+		if (!IsSymmetricCollisionMatrix(mountedPhysicsSettings))
 			return false;
 
 		uint64_t indexSize = 0;
@@ -1056,6 +1109,7 @@ namespace TomCat {
 		m_CookedPackagePath = AbsoluteLexical(packagePath);
 		m_CookedPackageSize = packageSize;
 		m_CookedStartSceneHandle = AssetHandle(rawStartSceneHandle);
+		m_CookedPhysics2DSettings = mountedPhysicsSettings;
 		return true;
 	}
 
@@ -1073,6 +1127,7 @@ namespace TomCat {
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
 		m_CookedStartSceneHandle = AssetHandle(0);
+		m_CookedPhysics2DSettings = Physics2DSettings{};
 	}
 
 }

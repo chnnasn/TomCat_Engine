@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TomCat/Asset/Asset.h"
+#include "ProjectSettings.h"
 
 #include <string>
 #include <filesystem>
@@ -54,8 +55,16 @@ namespace TomCat {
 		const std::filesystem::path& GetProjectPath() const { return m_ProjectPath; }
 		const std::filesystem::path& GetProjectDirectory() const { return m_Directory; }
 		const ProjectConfig& GetConfig() const { return m_Config; }
+		const ProjectSettings& GetSettings() const { return m_Settings; }
+		std::filesystem::path GetSettingsPath() const
+		{
+			return m_Directory / "ProjectSettings" / "ProjectSettings.json";
+		}
 		
 		void SetConfig(const ProjectConfig& config) { m_Config = config; }
+		// Validates and atomically persists shared project settings. The in-memory
+		// value changes only if the file write succeeds.
+		bool SetSettings(const ProjectSettings& settings);
 		
 		const std::string& GetName() const { return m_Config.Name; }
 		const std::string& GetEditorVersion() const { return m_Config.EditorVersion; }
@@ -82,12 +91,14 @@ namespace TomCat {
 		static Ref<Project> CreateNew(const std::filesystem::path& projectPath, const ProjectConfig& config);
 		static Ref<Project> Load(const std::filesystem::path& projectPath);
 		bool Save();
+		bool SaveSettings() const;
 		bool Reload();
 
 	private:
 		std::filesystem::path m_ProjectPath;
 		std::filesystem::path m_Directory;
 		ProjectConfig m_Config;
+		ProjectSettings m_Settings;
 		std::string m_PreservedDocument;
 
 		friend class ProjectManager;

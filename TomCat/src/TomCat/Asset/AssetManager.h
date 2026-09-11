@@ -2,6 +2,7 @@
 
 #include "AssetRegistry.h"
 #include "TomCat/Core/Base.h"
+#include "TomCat/Project/ProjectSettings.h"
 #include "TomCat/Renderer/Texture.h"
 
 #include <cstdint>
@@ -61,8 +62,9 @@ namespace TomCat {
 		AssetRegistry& Registry() { return m_Registry; }
 		const AssetRegistry& Registry() const { return m_Registry; }
 
-		// The current cooked package contains a path-free start-scene manifest followed by a
-		// fixed handle/type/offset/size index and cooked asset bytes. The explicit
+		// The current cooked package contains a path-free start-scene manifest and
+		// project collision matrix, followed by a fixed handle/type/offset/size index
+		// and cooked asset bytes. The explicit
 		// overload can build an asset-only package (handle 0) only when the manager
 		// was initialized without a Project.
 		bool CookToPackage(const std::filesystem::path& packagePath);
@@ -76,6 +78,9 @@ namespace TomCat {
 		{
 			return IsCookedPackageMounted() ? m_CookedStartSceneHandle : AssetHandle(0);
 		}
+		// Authoring reads the active Project; a cooked runtime reads the immutable
+		// matrix embedded in the v3 package header.
+		Physics2DSettings GetPhysics2DSettings() const;
 		bool ReadAssetBytes(AssetHandle handle, std::vector<uint8_t>& bytes,
 			AssetType* type = nullptr) const;
 		std::vector<uint8_t> ReadAssetBytes(AssetHandle handle) const;
@@ -107,6 +112,7 @@ namespace TomCat {
 		std::filesystem::path m_CookedPackagePath;
 		uint64_t m_CookedPackageSize = 0;
 		AssetHandle m_CookedStartSceneHandle = AssetHandle(0);
+		Physics2DSettings m_CookedPhysics2DSettings;
 		std::unordered_map<AssetHandle, CookedEntry> m_CookedEntries;
 		mutable std::ifstream m_CookedPackageStream;
 		mutable std::mutex m_CookedPackageMutex;

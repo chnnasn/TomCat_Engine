@@ -39,6 +39,11 @@ namespace TomCat {
 		void LoadLayoutSetting();
 		void SaveLayoutSetting();
 
+		// Draws the top-level Assets menu using the same commands and target
+		// semantics as the Project panel context menus. The caller owns BeginMenu.
+		void DrawAssetsMenu();
+		bool IsFocused() const { return m_Focused; }
+		bool IsDocked() const { return m_Docked; }
 		void OnImGuiRender(bool* open = nullptr);
 	private:
 		std::filesystem::path m_CurrentDirectory;
@@ -53,16 +58,13 @@ namespace TomCat {
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
 		bool m_ProjectStateWritable = true;
+		bool m_Focused = false;
+		bool m_Docked = true;
 
 		// 存储树节点的打开状态
 		std::unordered_set<std::string> m_ExpandedNodes;
 		// 创建子文件夹后需要强制展开的一次性路径。
 		std::unordered_set<std::string> m_PendingOpenDirectories;
-		// 右键菜单目标
-		std::filesystem::path m_ContextPath;
-		bool m_ContextIsDirectory = false;
-		bool m_ContextIsRoot = false;
-
 		// 等待下一帧创建的文件夹（从右键菜单里创建后立即进入重命名）
 		std::filesystem::path m_PendingCreateFolderParent;
 
@@ -109,7 +111,9 @@ namespace TomCat {
 
 		void FlushPendingCreateFolder();
 		void DrawNodeContextMenu();
-		void DrawContextMenuBody();
+		void DrawContextMenuBody(const std::filesystem::path& target,
+			bool isDirectory, bool isRoot);
+		void DrawLayoutMenu();
 		void DrawEmptyContextMenu(const std::filesystem::path& assetRoot);
 		void DrawRenamePopup();
 		void DrawDeleteConfirmation();

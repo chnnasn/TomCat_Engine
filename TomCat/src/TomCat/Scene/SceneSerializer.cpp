@@ -204,6 +204,27 @@ namespace TomCat {
 				throw std::runtime_error(context + ".TilingFactor must be finite and non-negative");
 		}
 
+		void ValidateEntityMetadata(const EntityMetadata& metadata,
+			const std::string& context)
+		{
+			if (metadata.GameplayTag.empty())
+				throw std::runtime_error(context + ".GameplayTag cannot be empty");
+			if (metadata.Layer >= Physics2DLayerCount)
+				throw std::runtime_error(context + ".Layer must be in [0, 15]");
+			switch (metadata.HierarchyIcon)
+			{
+				case EntityIconMode::Automatic:
+				case EntityIconMode::Entity:
+				case EntityIconMode::Camera:
+				case EntityIconMode::Sprite:
+				case EntityIconMode::Rigidbody2D:
+				case EntityIconMode::Collider2D:
+					break;
+				default:
+					throw std::runtime_error(context + ".HierarchyIcon is invalid");
+			}
+		}
+
 		void ValidateLine(const LineRenderer& line, const std::string& context)
 		{
 			RequireUnitColor(line._Color, context + ".Color");
@@ -213,20 +234,56 @@ namespace TomCat {
 				throw std::runtime_error(context + ".Width must be finite and greater than zero");
 		}
 
+		void ValidatePhysicsMaterial(float density, float friction, float restitution,
+			const std::string& context)
+		{
+			if (!IsFinite(density) || density < 0.0f)
+				throw std::runtime_error(context + ".Density must be finite and non-negative");
+			if (!IsFinite(friction) || friction < 0.0f)
+				throw std::runtime_error(context + ".Friction must be finite and non-negative");
+			if (!IsFinite(restitution) || restitution < 0.0f || restitution > 1.0f)
+				throw std::runtime_error(context + ".Restitution must be in [0, 1]");
+		}
+
+		void ValidateCollisionFilter(uint16_t collisionLayer, const std::string& context)
+		{
+			if (collisionLayer == 0)
+				throw std::runtime_error(context + ".CollisionLayer must contain at least one layer bit");
+		}
+
 		void ValidateCollider(const BoxCollider2D& collider, const std::string& context)
 		{
+			ValidateCollisionFilter(collider.CollisionLayer, context);
 			RequireFinite(collider.Offset, context + ".Offset");
 			RequireFinite(collider.Size, context + ".Size");
 			if (collider.Size.x <= 0.0f || collider.Size.y <= 0.0f)
 				throw std::runtime_error(context + ".Size components must be greater than zero");
-			if (!IsFinite(collider.Density) || collider.Density < 0.0f)
-				throw std::runtime_error(context + ".Density must be finite and non-negative");
-			if (!IsFinite(collider.Friction) || collider.Friction < 0.0f || collider.Friction > 1.0f)
-				throw std::runtime_error(context + ".Friction must be in [0, 1]");
-			if (!IsFinite(collider.Restitution) || collider.Restitution < 0.0f || collider.Restitution > 1.0f)
-				throw std::runtime_error(context + ".Restitution must be in [0, 1]");
+			ValidatePhysicsMaterial(collider.Density, collider.Friction,
+				collider.Restitution, context);
 			if (!IsFinite(collider.RestitutionThreshold) || collider.RestitutionThreshold < 0.0f)
 				throw std::runtime_error(context + ".RestitutionThreshold must be finite and non-negative");
+		}
+
+		void ValidateCollider(const CircleCollider2D& collider, const std::string& context)
+		{
+			ValidateCollisionFilter(collider.CollisionLayer, context);
+			RequireFinite(collider.Offset, context + ".Offset");
+			if (!IsFinite(collider.Radius) || collider.Radius <= 0.0f)
+				throw std::runtime_error(context + ".Radius must be finite and greater than zero");
+			ValidatePhysicsMaterial(collider.Density, collider.Friction,
+				collider.Restitution, context);
+		}
+
+		void ValidateJoint(const DistanceJoint2D& joint, const std::string& context)
+		{
+			RequireFinite(joint.Anchor, context + ".Anchor");
+			RequireFinite(joint.ConnectedAnchor, context + ".ConnectedAnchor");
+			if (!IsFinite(joint.Distance) || joint.Distance <= 0.0f)
+				throw std::runtime_error(context + ".Distance must be finite and greater than zero");
+			if (!IsFinite(joint.Frequency) || joint.Frequency < 0.0f)
+				throw std::runtime_error(context + ".Frequency must be finite and non-negative");
+			if (!IsFinite(joint.Damping) || joint.Damping < 0.0f || joint.Damping > 1.0f)
+				throw std::runtime_error(context + ".Damping must be in [0, 1]");
 		}
 
 		YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec2& value)
@@ -316,6 +373,31 @@ namespace TomCat {
 			throw std::runtime_error("Unknown Rigidbody2D body type '" + value + "'");
 		}
 
+		const char* EntityIconModeToString(EntityIconMode value)
+		{
+			switch (value)
+			{
+				case EntityIconMode::Automatic: return "Automatic";
+				case EntityIconMode::Entity: return "Entity";
+				case EntityIconMode::Camera: return "Camera";
+				case EntityIconMode::Sprite: return "Sprite";
+				case EntityIconMode::Rigidbody2D: return "Rigidbody2D";
+				case EntityIconMode::Collider2D: return "Collider2D";
+			}
+			throw std::runtime_error("Cannot serialize an unknown Entity icon mode");
+		}
+
+		EntityIconMode EntityIconModeFromString(const std::string& value)
+		{
+			if (value == "Automatic") return EntityIconMode::Automatic;
+			if (value == "Entity") return EntityIconMode::Entity;
+			if (value == "Camera") return EntityIconMode::Camera;
+			if (value == "Sprite") return EntityIconMode::Sprite;
+			if (value == "Rigidbody2D") return EntityIconMode::Rigidbody2D;
+			if (value == "Collider2D") return EntityIconMode::Collider2D;
+			throw std::runtime_error("Unknown Entity icon mode '" + value + "'");
+		}
+
 		void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity)
 		{
 			const std::string context = "Entity " + std::to_string(static_cast<uint64_t>(entity.GetUUID()));
@@ -326,6 +408,16 @@ namespace TomCat {
 			out << YAML::Key << "Tag" << YAML::Value << YAML::BeginMap;
 			out << YAML::Key << "Tag" << YAML::Value << tag._Tag;
 			out << YAML::Key << "Visible" << YAML::Value << tag.Visible;
+			out << YAML::EndMap;
+
+			auto& metadata = entity.GetComponent<EntityMetadata>();
+			ValidateEntityMetadata(metadata, context + ".EntityMetadata");
+			out << YAML::Key << "EntityMetadata" << YAML::Value << YAML::BeginMap;
+			out << YAML::Key << "GameplayTag" << YAML::Value << metadata.GameplayTag;
+			out << YAML::Key << "Layer" << YAML::Value
+				<< static_cast<uint32_t>(metadata.Layer);
+			out << YAML::Key << "HierarchyIcon" << YAML::Value
+				<< EntityIconModeToString(metadata.HierarchyIcon);
 			out << YAML::EndMap;
 
 			auto& transform = entity.GetComponent<Transform>();
@@ -408,12 +500,59 @@ namespace TomCat {
 				ValidateCollider(collider, context + ".BoxCollider2D");
 				out << YAML::Key << "BoxCollider2D" << YAML::Value << YAML::BeginMap;
 				out << YAML::Key << "Enabled" << YAML::Value << collider.Enabled;
+				out << YAML::Key << "IsTrigger" << YAML::Value << collider.IsTrigger;
+				out << YAML::Key << "CollisionLayer" << YAML::Value << collider.CollisionLayer;
+				out << YAML::Key << "CollisionMask" << YAML::Value << collider.CollisionMask;
 				out << YAML::Key << "Offset" << YAML::Value << collider.Offset;
 				out << YAML::Key << "Size" << YAML::Value << collider.Size;
 				out << YAML::Key << "Density" << YAML::Value << collider.Density;
 				out << YAML::Key << "Friction" << YAML::Value << collider.Friction;
 				out << YAML::Key << "Restitution" << YAML::Value << collider.Restitution;
 				out << YAML::Key << "RestitutionThreshold" << YAML::Value << collider.RestitutionThreshold;
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<CircleCollider2D>())
+			{
+				auto& collider = entity.GetComponent<CircleCollider2D>();
+				ValidateCollider(collider, context + ".CircleCollider2D");
+				out << YAML::Key << "CircleCollider2D" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Enabled" << YAML::Value << collider.Enabled;
+				out << YAML::Key << "IsTrigger" << YAML::Value << collider.IsTrigger;
+				out << YAML::Key << "CollisionLayer" << YAML::Value << collider.CollisionLayer;
+				out << YAML::Key << "CollisionMask" << YAML::Value << collider.CollisionMask;
+				out << YAML::Key << "Offset" << YAML::Value << collider.Offset;
+				out << YAML::Key << "Radius" << YAML::Value << collider.Radius;
+				out << YAML::Key << "Density" << YAML::Value << collider.Density;
+				out << YAML::Key << "Friction" << YAML::Value << collider.Friction;
+				out << YAML::Key << "Restitution" << YAML::Value << collider.Restitution;
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<DistanceJoint2D>())
+			{
+				auto& joint = entity.GetComponent<DistanceJoint2D>();
+				ValidateJoint(joint, context + ".DistanceJoint2D");
+				if (static_cast<uint64_t>(joint.ConnectedEntity) != 0)
+				{
+					if (joint.ConnectedEntity == entity.GetUUID())
+						throw std::runtime_error(context
+							+ ".DistanceJoint2D cannot connect the entity to itself");
+					if (!scene->FindEntityByUUID(joint.ConnectedEntity))
+						throw std::runtime_error(context
+							+ ".DistanceJoint2D references missing ConnectedEntity "
+							+ std::to_string(static_cast<uint64_t>(joint.ConnectedEntity)));
+				}
+				out << YAML::Key << "DistanceJoint2D" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Enabled" << YAML::Value << joint.Enabled;
+				out << YAML::Key << "ConnectedEntity" << YAML::Value
+					<< static_cast<uint64_t>(joint.ConnectedEntity);
+				out << YAML::Key << "Anchor" << YAML::Value << joint.Anchor;
+				out << YAML::Key << "ConnectedAnchor" << YAML::Value << joint.ConnectedAnchor;
+				out << YAML::Key << "Distance" << YAML::Value << joint.Distance;
+				out << YAML::Key << "Frequency" << YAML::Value << joint.Frequency;
+				out << YAML::Key << "Damping" << YAML::Value << joint.Damping;
+				out << YAML::Key << "CollideConnected" << YAML::Value << joint.CollideConnected;
 				out << YAML::EndMap;
 			}
 
@@ -483,7 +622,8 @@ namespace TomCat {
 			{
 				Entity entity = m_Scene->FindEntityByUUID(uuid);
 				if ((uint64_t)uuid == 0 || !entity || !entity.HasComponent<ID>()
-					|| !entity.HasComponent<Tag>() || !entity.HasComponent<Transform>()
+					|| !entity.HasComponent<Tag>() || !entity.HasComponent<EntityMetadata>()
+					|| !entity.HasComponent<Transform>()
 					|| entity.GetUUID() != uuid || !serializedUUIDs.emplace(uuid).second)
 				{
 					TC_Core_Error("Scene contains an invalid or duplicate UUID {0}", (uint64_t)uuid);
@@ -546,7 +686,10 @@ namespace TomCat {
 				PathToUTF8(filepath));
 			return false;
 		}
-		return DeserializeStream(input, filepath, true);
+		const bool deserialized = DeserializeStream(input, filepath, true);
+		if (deserialized && AssetManager::Get().IsInitialized())
+			m_Scene->SetPhysics2DSettings(AssetManager::Get().GetPhysics2DSettings());
+		return deserialized;
 	}
 
 	bool SceneSerializer::ValidateCurrentFormat(const std::filesystem::path& filepath)
@@ -609,8 +752,11 @@ namespace TomCat {
 		{
 			std::string serialized(bytes.begin(), bytes.end());
 			std::istringstream input(std::move(serialized));
-			return DeserializeStream(input, UTF8ToPath(
+			const bool deserialized = DeserializeStream(input, UTF8ToPath(
 				"CookedScene-" + std::to_string(static_cast<uint64_t>(handle))), true);
+			if (deserialized)
+				m_Scene->SetPhysics2DSettings(assetManager.GetPhysics2DSettings());
+			return deserialized;
 		}
 		catch (const std::exception& error)
 		{
@@ -659,6 +805,7 @@ namespace TomCat {
 			parsedScene->m_ViewportHeight = m_Scene->m_ViewportHeight;
 
 			std::vector<std::pair<UUID, UUID>> pendingParents;
+			std::vector<std::pair<UUID, UUID>> pendingJointConnections;
 			std::unordered_set<UUID> seenUUIDs;
 
 			for (std::size_t index = 0; index < entities.size(); ++index)
@@ -666,8 +813,9 @@ namespace TomCat {
 				const YAML::Node entityNode = entities[index];
 				const std::string context = "Entities[" + std::to_string(index) + "]";
 				RequireExactFields(entityNode, context,
-					{ "Entity", "Tag", "Transform", "LocalTransform", "Parent" },
-					{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D", "BoxCollider2D" });
+					{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
+					{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D", "BoxCollider2D",
+						"CircleCollider2D", "DistanceJoint2D" });
 
 				const uint64_t rawUUID = ReadRequired<uint64_t>(entityNode, "Entity", context);
 				const UUID uuid(rawUUID);
@@ -685,6 +833,21 @@ namespace TomCat {
 				if (!entity)
 					throw std::runtime_error(context + " could not be created");
 				entity.GetComponent<Tag>().Visible = visible;
+
+				YAML::Node metadataNode = entityNode["EntityMetadata"];
+				RequireExactFields(metadataNode, context + ".EntityMetadata",
+					{ "GameplayTag", "Layer", "HierarchyIcon" });
+				auto& metadata = entity.GetComponent<EntityMetadata>();
+				metadata.GameplayTag = ReadRequired<std::string>(metadataNode,
+					"GameplayTag", context + ".EntityMetadata");
+				const uint32_t rawLayer = ReadRequired<uint32_t>(metadataNode,
+					"Layer", context + ".EntityMetadata");
+				if (rawLayer >= Physics2DLayerCount)
+					throw std::runtime_error(context + ".EntityMetadata.Layer must be in [0, 15]");
+				metadata.Layer = static_cast<uint8_t>(rawLayer);
+				metadata.HierarchyIcon = EntityIconModeFromString(ReadRequired<std::string>(
+					metadataNode, "HierarchyIcon", context + ".EntityMetadata"));
+				ValidateEntityMetadata(metadata, context + ".EntityMetadata");
 
 				YAML::Node transformNode = entityNode["Transform"];
 				RequireExactFields(transformNode, context + ".Transform",
@@ -786,10 +949,14 @@ namespace TomCat {
 				if (colliderNode)
 				{
 					RequireExactFields(colliderNode, context + ".BoxCollider2D",
-						{ "Enabled", "Offset", "Size", "Density", "Friction", "Restitution",
+						{ "Enabled", "IsTrigger", "CollisionLayer", "CollisionMask",
+							"Offset", "Size", "Density", "Friction", "Restitution",
 							"RestitutionThreshold" });
 					auto& collider = entity.AddComponent<BoxCollider2D>();
 					collider.Enabled = ReadRequired<bool>(colliderNode, "Enabled", context + ".BoxCollider2D");
+					collider.IsTrigger = ReadRequired<bool>(colliderNode, "IsTrigger", context + ".BoxCollider2D");
+					collider.CollisionLayer = ReadRequired<uint16_t>(colliderNode, "CollisionLayer", context + ".BoxCollider2D");
+					collider.CollisionMask = ReadRequired<uint16_t>(colliderNode, "CollisionMask", context + ".BoxCollider2D");
 					collider.Offset = ReadRequired<glm::vec2>(colliderNode, "Offset", context + ".BoxCollider2D");
 					collider.Size = ReadRequired<glm::vec2>(colliderNode, "Size", context + ".BoxCollider2D");
 					collider.Density = ReadRequired<float>(colliderNode, "Density", context + ".BoxCollider2D");
@@ -799,9 +966,71 @@ namespace TomCat {
 					ValidateCollider(collider, context + ".BoxCollider2D");
 				}
 
+				YAML::Node circleColliderNode = entityNode["CircleCollider2D"];
+				if (circleColliderNode)
+				{
+					RequireExactFields(circleColliderNode, context + ".CircleCollider2D",
+						{ "Enabled", "IsTrigger", "CollisionLayer", "CollisionMask",
+							"Offset", "Radius", "Density", "Friction", "Restitution" });
+					auto& collider = entity.AddComponent<CircleCollider2D>();
+					collider.Enabled = ReadRequired<bool>(circleColliderNode, "Enabled",
+						context + ".CircleCollider2D");
+					collider.IsTrigger = ReadRequired<bool>(circleColliderNode, "IsTrigger",
+						context + ".CircleCollider2D");
+					collider.CollisionLayer = ReadRequired<uint16_t>(circleColliderNode, "CollisionLayer",
+						context + ".CircleCollider2D");
+					collider.CollisionMask = ReadRequired<uint16_t>(circleColliderNode, "CollisionMask",
+						context + ".CircleCollider2D");
+					collider.Offset = ReadRequired<glm::vec2>(circleColliderNode, "Offset",
+						context + ".CircleCollider2D");
+					collider.Radius = ReadRequired<float>(circleColliderNode, "Radius",
+						context + ".CircleCollider2D");
+					collider.Density = ReadRequired<float>(circleColliderNode, "Density",
+						context + ".CircleCollider2D");
+					collider.Friction = ReadRequired<float>(circleColliderNode, "Friction",
+						context + ".CircleCollider2D");
+					collider.Restitution = ReadRequired<float>(circleColliderNode, "Restitution",
+						context + ".CircleCollider2D");
+					ValidateCollider(collider, context + ".CircleCollider2D");
+				}
+
+				YAML::Node distanceJointNode = entityNode["DistanceJoint2D"];
+				if (distanceJointNode)
+				{
+					RequireExactFields(distanceJointNode, context + ".DistanceJoint2D",
+						{ "Enabled", "ConnectedEntity", "Anchor", "ConnectedAnchor", "Distance",
+							"Frequency", "Damping", "CollideConnected" });
+					auto& joint = entity.AddComponent<DistanceJoint2D>();
+					joint.Enabled = ReadRequired<bool>(distanceJointNode, "Enabled", context + ".DistanceJoint2D");
+					joint.ConnectedEntity = UUID(ReadRequired<uint64_t>(distanceJointNode,
+						"ConnectedEntity", context + ".DistanceJoint2D"));
+					joint.Anchor = ReadRequired<glm::vec2>(distanceJointNode, "Anchor", context + ".DistanceJoint2D");
+					joint.ConnectedAnchor = ReadRequired<glm::vec2>(distanceJointNode,
+						"ConnectedAnchor", context + ".DistanceJoint2D");
+					joint.Distance = ReadRequired<float>(distanceJointNode, "Distance", context + ".DistanceJoint2D");
+					joint.Frequency = ReadRequired<float>(distanceJointNode, "Frequency", context + ".DistanceJoint2D");
+					joint.Damping = ReadRequired<float>(distanceJointNode, "Damping", context + ".DistanceJoint2D");
+					joint.CollideConnected = ReadRequired<bool>(distanceJointNode,
+						"CollideConnected", context + ".DistanceJoint2D");
+					ValidateJoint(joint, context + ".DistanceJoint2D");
+					if (static_cast<uint64_t>(joint.ConnectedEntity) != 0)
+						pendingJointConnections.emplace_back(uuid, joint.ConnectedEntity);
+				}
+
 				const uint64_t parentUUID = ReadRequired<uint64_t>(entityNode, "Parent", context);
 				if (parentUUID != 0)
 					pendingParents.emplace_back(uuid, UUID(parentUUID));
+			}
+
+			for (const auto& [ownerUUID, connectedUUID] : pendingJointConnections)
+			{
+				if (ownerUUID == connectedUUID)
+					throw std::runtime_error("Entity " + std::to_string(static_cast<uint64_t>(ownerUUID))
+						+ " cannot connect DistanceJoint2D to itself");
+				if (!parsedScene->FindEntityByUUID(connectedUUID))
+					throw std::runtime_error("Entity " + std::to_string(static_cast<uint64_t>(ownerUUID))
+						+ " references missing DistanceJoint2D entity "
+						+ std::to_string(static_cast<uint64_t>(connectedUUID)));
 			}
 
 			std::unordered_map<UUID, UUID> parentLookup;

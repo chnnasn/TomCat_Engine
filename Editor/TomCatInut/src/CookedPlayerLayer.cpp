@@ -33,6 +33,7 @@ namespace TomCat {
 			Fail("Could not deserialize the cooked start scene");
 			return;
 		}
+		m_RuntimeScene->SetPhysics2DSettings(assetManager.GetPhysics2DSettings());
 
 		Window& window = Application::Get().GetWindow();
 		m_RuntimeScene->OnViewportResize(window.GetWidth(), window.GetHeight());

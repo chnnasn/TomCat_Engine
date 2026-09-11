@@ -366,7 +366,6 @@ namespace TomCat {
 		m_UserSelectedDirectory = false;
 		m_ExpandedNodes.clear();
 		m_PendingOpenDirectories.clear();
-		m_ContextPath.clear();
 		m_ActiveScenePath.clear();
 		m_PendingCreateFolderParent.clear();
 		m_RenamePath.clear();
@@ -699,7 +698,6 @@ namespace TomCat {
 		}
 		m_CurrentDirectory = RemapPath(m_CurrentDirectory, oldPath, newPath);
 		m_SelectedPath = RemapPath(m_SelectedPath, oldPath, newPath);
-		m_ContextPath = RemapPath(m_ContextPath, oldPath, newPath);
 		m_DeletePath = RemapPath(m_DeletePath, oldPath, newPath);
 		std::unordered_set<std::string> remappedNodes;
 		for (const std::string& node : m_ExpandedNodes)
@@ -783,8 +781,6 @@ namespace TomCat {
 			m_SelectedPath.clear();
 			m_UserSelectedDirectory = false;
 		}
-		if (m_ContextPath == managedPath)
-			m_ContextPath.clear();
 		m_DeleteHandle = AssetHandle(0);
 		m_DeleteReferences.clear();
 	}
@@ -816,13 +812,11 @@ namespace TomCat {
 		BeginRename(newFolder);
 	}
 
-	void ContentBrowserPanel::DrawContextMenuBody()
+	void ContentBrowserPanel::DrawContextMenuBody(const std::filesystem::path& target,
+		bool isDirectory, bool isRoot)
 	{
-		if (m_ContextPath.empty())
+		if (target.empty())
 			return;
-		const std::filesystem::path target = m_ContextPath;
-		const bool isDirectory = m_ContextIsDirectory;
-		const bool isRoot = m_ContextIsRoot;
 		const bool writable = IsWritablePath(target);
 		if (!writable)
 		{
@@ -846,6 +840,91 @@ namespace TomCat {
 			BeginRename(target);
 	}
 
+	void ContentBrowserPanel::DrawLayoutMenu()
+	{
+		if (!ImGui::BeginMenu("Layout"))
+			return;
+		if (ImGui::MenuItem("One Column", nullptr, m_LayoutMode == OneColumn))
+		{
+			m_LayoutMode = OneColumn;
+			SaveLayoutSetting();
+		}
+		if (ImGui::MenuItem("Two Column", nullptr, m_LayoutMode == TwoColumn))
+		{
+			m_LayoutMode = TwoColumn;
+			SaveLayoutSetting();
+		}
+		ImGui::EndMenu();
+	}
+
+	void ContentBrowserPanel::DrawAssetsMenu()
+	{
+		if (!m_Project)
+		{
+			ImGui::MenuItem("No project loaded", nullptr, false, false);
+			return;
+		}
+
+		auto resolveExistingTarget = [this](const std::filesystem::path& candidate,
+			bool requireDirectory, std::filesystem::path& target, bool& isDirectory)
+		{
+			if (candidate.empty() || GetRootForPath(candidate).empty())
+				return false;
+
+			std::error_code error;
+			const std::filesystem::file_status status =
+				std::filesystem::symlink_status(candidate, error);
+			if (error || !std::filesystem::exists(status))
+				return false;
+
+			error.clear();
+			isDirectory = std::filesystem::is_directory(candidate, error);
+			if (error || (requireDirectory && !isDirectory))
+				return false;
+
+			target = LexicalPath(candidate);
+			return true;
+		};
+
+		std::filesystem::path target;
+		bool isDirectory = false;
+		const bool hadExplicitSelection = m_UserSelectedDirectory;
+		const bool hasSelectedTarget = hadExplicitSelection &&
+			resolveExistingTarget(m_SelectedPath, false, target, isDirectory);
+		if (hadExplicitSelection && !hasSelectedTarget)
+		{
+			// Never retarget a destructive top-menu command from a vanished asset to
+			// its containing folder. Clear the stale selection and make the user
+			// reopen the menu before exposing commands for a different target.
+			m_SelectedPath.clear();
+			m_UserSelectedDirectory = false;
+			ImGui::MenuItem("Selected asset is no longer available", nullptr, false, false);
+			ImGui::Separator();
+			DrawLayoutMenu();
+			// A menu popup can remain open across frames. Close it now so the next
+			// frame cannot reinterpret this vanished selection as the current folder.
+			ImGui::CloseCurrentPopup();
+			return;
+		}
+		if (!hasSelectedTarget &&
+			!resolveExistingTarget(m_CurrentDirectory, true, target, isDirectory))
+		{
+			const std::filesystem::path assetRoot = GetAssetRoot();
+			if (!resolveExistingTarget(assetRoot, true, target, isDirectory))
+			{
+				ImGui::MenuItem("No accessible Assets directory", nullptr, false, false);
+				return;
+			}
+		}
+
+		const std::filesystem::path targetRoot = GetRootForPath(target);
+		const bool isRoot = !targetRoot.empty() &&
+			CanonicalPath(target) == CanonicalPath(targetRoot);
+		DrawContextMenuBody(target, isDirectory, isRoot);
+		ImGui::Separator();
+		DrawLayoutMenu();
+	}
+
 	void ContentBrowserPanel::DrawNodeContextMenu()
 	{
 		// Item context menus are rendered next to their owning item so ImGui IDs do
@@ -857,25 +936,12 @@ namespace TomCat {
 		if (ImGui::BeginPopupContextWindow("ProjectEmptyContext",
 			ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
 		{
-			m_ContextPath = IsWithinRoot(assetRoot, m_CurrentDirectory) ? m_CurrentDirectory : assetRoot;
-			m_ContextIsDirectory = true;
-			m_ContextIsRoot = CanonicalPath(m_ContextPath) == CanonicalPath(assetRoot);
-			DrawContextMenuBody();
+			const std::filesystem::path target = IsWithinRoot(assetRoot, m_CurrentDirectory)
+				? m_CurrentDirectory : assetRoot;
+			DrawContextMenuBody(target, true,
+				CanonicalPath(target) == CanonicalPath(assetRoot));
 			ImGui::Separator();
-			if (ImGui::BeginMenu("Layout"))
-			{
-				if (ImGui::MenuItem("One Column", nullptr, m_LayoutMode == OneColumn))
-				{
-					m_LayoutMode = OneColumn;
-					SaveLayoutSetting();
-				}
-				if (ImGui::MenuItem("Two Column", nullptr, m_LayoutMode == TwoColumn))
-				{
-					m_LayoutMode = TwoColumn;
-					SaveLayoutSetting();
-				}
-				ImGui::EndMenu();
-			}
+			DrawLayoutMenu();
 			ImGui::EndPopup();
 		}
 	}
@@ -1188,10 +1254,7 @@ namespace TomCat {
 		SubmitDragPayload(path, root, icon);
 		if (ImGui::BeginPopupContextItem("Context"))
 		{
-			m_ContextPath = path;
-			m_ContextIsDirectory = false;
-			m_ContextIsRoot = false;
-			DrawContextMenuBody();
+			DrawContextMenuBody(path, false, false);
 			ImGui::EndPopup();
 		}
 		ImGui::PopID();
@@ -1248,10 +1311,7 @@ namespace TomCat {
 		AcceptAssetMoveTarget(directoryPath);
 		if (ImGui::BeginPopupContextItem("Context"))
 		{
-			m_ContextPath = directoryPath;
-			m_ContextIsDirectory = true;
-			m_ContextIsRoot = isRoot;
-			DrawContextMenuBody();
+			DrawContextMenuBody(directoryPath, true, isRoot);
 			ImGui::EndPopup();
 		}
 		if (open && hasVisibleChildren)
@@ -1335,10 +1395,7 @@ namespace TomCat {
 			SubmitDragPayload(path, root, icon);
 		if (ImGui::BeginPopupContextItem("Context"))
 		{
-			m_ContextPath = path;
-			m_ContextIsDirectory = isDirectory;
-			m_ContextIsRoot = false;
-			DrawContextMenuBody();
+			DrawContextMenuBody(path, isDirectory, false);
 			ImGui::EndPopup();
 		}
 		ImGui::TextWrapped("%s", PathToUTF8(path.filename()).c_str());
@@ -1379,12 +1436,25 @@ namespace TomCat {
 
 	void ContentBrowserPanel::OnImGuiRender(bool* open)
 	{
+		m_Focused = false;
+		// Assets-menu commands must keep advancing even when the docked Project
+		// panel is hidden. Modal popups are also drawn after the panel window so
+		// they always live in the same parent ImGui scope.
+		FlushPendingCreateFolder();
 		if (open && !*open)
+		{
+			DrawRenamePopup();
+			DrawDeleteConfirmation();
 			return;
+		}
 		const bool visible = ImGui::Begin("Project", open);
+		m_Docked = ImGui::IsWindowDocked();
+		m_Focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		if (!visible)
 		{
 			ImGui::End();
+			DrawRenamePopup();
+			DrawDeleteConfirmation();
 			return;
 		}
 
@@ -1418,16 +1488,15 @@ namespace TomCat {
 			ImGui::EndPopup();
 		}
 
-		FlushPendingCreateFolder();
 		const std::filesystem::path assetRoot = GetAssetRoot();
 		const std::filesystem::path packagesRoot = GetPackagesRoot();
 		std::error_code error;
 		if (!m_Project || !std::filesystem::is_directory(assetRoot, error))
 		{
 			ImGui::TextDisabled("No accessible project asset directory");
+			ImGui::End();
 			DrawRenamePopup();
 			DrawDeleteConfirmation();
-			ImGui::End();
 			return;
 		}
 		error.clear();
@@ -1468,9 +1537,9 @@ namespace TomCat {
 		}
 
 		DrawNodeContextMenu();
+		ImGui::End();
 		DrawRenamePopup();
 		DrawDeleteConfirmation();
-		ImGui::End();
 	}
 
 }

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace TomCat {
@@ -85,11 +86,23 @@ namespace TomCat {
 				(registry.GetAssetDirectory() / relativePath).lexically_normal();
 
 			std::error_code error;
-			const bool sourceExists = std::filesystem::is_regular_file(sourcePath, error);
-			if (error)
+			const std::filesystem::file_status sourceStatus =
+				std::filesystem::symlink_status(sourcePath, error);
+			const bool sourceMissing = error == std::errc::no_such_file_or_directory ||
+				(!error && !std::filesystem::exists(sourceStatus));
+			if (error && !sourceMissing)
 			{
 				TC_Core_Error("Could not inspect primitive Sprite asset '{0}': {1}",
 					PathToUTF8(sourcePath), error.message());
+				return AssetHandle(0);
+			}
+			error.clear();
+			const bool sourceExists = !sourceMissing &&
+				std::filesystem::is_regular_file(sourceStatus);
+			if (!sourceMissing && !sourceExists)
+			{
+				TC_Core_Error("Primitive Sprite path is not a regular file: {0}",
+					PathToUTF8(sourcePath));
 				return AssetHandle(0);
 			}
 
