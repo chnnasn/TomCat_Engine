@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TomCat/Asset/Asset.h"
 #include "SceneCamera.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Math/Math.h"
@@ -84,12 +85,29 @@ namespace TomCat {
 	{
 		bool Enabled = true;
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
-		Ref<Texture2D>Texture;
+		AssetHandle SpriteHandle = AssetHandle(0);
+		// Runtime-only resolved sprite. SpriteHandle is the serialized source of truth.
+		Ref<Texture2D> Sprite;
 		float TilingFactor = 1.0f;
 
 		SpriteRenderer() = default;
 		SpriteRenderer(const SpriteRenderer&) = default;
 		SpriteRenderer(const glm::vec4& color)
+			: _Color(color) {
+		}
+	};
+
+	struct LineRenderer
+	{
+		bool Enabled = true;
+		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
+		glm::vec3 Start{ -0.5f, 0.0f, 0.0f };
+		glm::vec3 End{ 0.5f, 0.0f, 0.0f };
+		float Width = 1.0f;
+
+		LineRenderer() = default;
+		LineRenderer(const LineRenderer&) = default;
+		LineRenderer(const glm::vec4& color)
 			: _Color(color) {
 		}
 	};

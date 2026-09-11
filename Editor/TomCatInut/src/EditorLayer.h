@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TomCat.h"
+#include "EditorIcons.h"
 #include "Panels/SceneHierarchyPanel.h"
 
 #include "TomCat/Renderer/EditorCamera.h"
@@ -60,7 +61,10 @@ namespace TomCat {
 		void RequestExit();
 
 		void OnScenePlay();
+		void OnScenePause();
+		void OnSceneStep();
 		void OnSceneStop();
+		bool IsSceneRunning() const;
 
 		void UI_Toolbar();
 		void UI_SceneGizmoModeToolbarOverlay();
@@ -118,15 +122,17 @@ namespace TomCat {
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
 		
-		Ref<Texture2D> m_IconPlay, m_IconStop;
+		Ref<EditorIconSet> m_EditorIcons;
 
 		enum  SceneState
 		{
 			Edit = 0,
-			Play = 1
+			Play = 1,
+			Pause = 2
 		};
 
 		SceneState m_SceneState = SceneState::Edit;
+		bool m_StepRequested = false;
 		bool m_Is2DMode = false;
 
 		Ref<Project> m_CurrentProject;

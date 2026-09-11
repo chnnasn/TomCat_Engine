@@ -5,57 +5,127 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
+#include <vector>
 
 #include "TomCat/Scene/Components.h"
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Utils/PathUtils.h"
 
-#include<filesystem>
-
 namespace TomCat {
 
-	extern const std::filesystem::path g_AssetPath;
+	static constexpr const char* SceneEntityDragDropPayloadID = "SCENE_ENTITY_UUID";
 
-	namespace {
+	enum class HierarchyDropZone
+	{
+		Before,
+		Child,
+		After
+	};
 
-		std::filesystem::path AbsoluteLexicalPath(const std::filesystem::path& path)
+	static Entity GetDraggedSceneEntity(const ImGuiPayload* payload, const Ref<Scene>& scene)
+	{
+		if (!payload || !scene || payload->DataSize != sizeof(uint64_t))
+			return {};
+
+		const uint64_t rawUUID = *static_cast<const uint64_t*>(payload->Data);
+		if (rawUUID == 0)
+			return {};
+		return scene->FindEntityByUUID(UUID(rawUUID));
+	}
+
+	static HierarchyDropZone GetHierarchyDropZone(const ImVec2& itemMin, const ImVec2& itemMax)
+	{
+		const float height = std::max(1.0f, itemMax.y - itemMin.y);
+		const float relativeY = ImGui::GetMousePos().y - itemMin.y;
+		if (relativeY < height / 3.0f)
+			return HierarchyDropZone::Before;
+		if (relativeY > height * 2.0f / 3.0f)
+			return HierarchyDropZone::After;
+		return HierarchyDropZone::Child;
+	}
+
+	static void DrawHierarchyDropPreview(const ImVec2& itemMin, const ImVec2& itemMax,
+		HierarchyDropZone zone)
+	{
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		const ImU32 color = ImGui::GetColorU32(ImGuiCol_DragDropTarget);
+		if (zone == HierarchyDropZone::Child)
+			drawList->AddRect(itemMin, itemMax, color, 2.0f, 0, 2.0f);
+		else
 		{
-			if (path.empty())
-				return {};
-			std::error_code error;
-			const std::filesystem::path absolute = std::filesystem::absolute(path, error);
-			return (error ? path : absolute).lexically_normal();
+			const float y = zone == HierarchyDropZone::Before ? itemMin.y : itemMax.y;
+			drawList->AddLine(ImVec2(itemMin.x, y), ImVec2(itemMax.x, y), color, 2.0f);
 		}
-
-		bool TryGetRelativeWithin(const std::filesystem::path& root,
-			const std::filesystem::path& candidate, std::filesystem::path& relative)
-		{
-			const std::filesystem::path normalizedRoot = AbsoluteLexicalPath(root);
-			const std::filesystem::path normalizedCandidate = AbsoluteLexicalPath(candidate);
-			if (normalizedRoot.empty() || normalizedCandidate.empty())
-				return false;
-			relative = normalizedCandidate.lexically_relative(normalizedRoot);
-			if (relative.empty() || relative.is_absolute())
-				return false;
-			for (const auto& part : relative)
-			{
-				if (part == "..")
-					return false;
-			}
-			if (relative == ".")
-				relative.clear();
-			return true;
-		}
-
 	}
 
 
 	// 前向声明DrawProperty函数
 	static void DrawProperty(const std::string& label, float columnWidth = 100.0f);
-	static bool DrawCompactCheckbox(const char* id, bool* v, float scale = 0.7f)
+	static ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
+	{
+		return texture
+			? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetRendererID()))
+			: nullptr;
+	}
+
+	static void DrawIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
+		const ImVec2& minimum, const ImVec2& maximum, ImU32 tint = IM_COL32_WHITE)
+	{
+		if (!icons)
+			return;
+		const Ref<Texture2D>& texture = icons->Get(icon);
+		if (!texture)
+			return;
+		ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(texture), minimum, maximum,
+			ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
+	}
+
+	static std::string LowerASCII(std::string value)
+	{
+		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+		{
+			return static_cast<char>(std::tolower(character));
+		});
+		return value;
+	}
+
+	static bool MatchesSpriteSearch(const AssetMetadata& metadata, const char* search)
+	{
+		if (!search || search[0] == '\0')
+			return true;
+		const std::string query = LowerASCII(search);
+		return LowerASCII(PathToUTF8(metadata.FilePath)).find(query) != std::string::npos;
+	}
+
+	static float DrawTreeRowIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
+		const ImVec2& itemMin, const ImVec2& itemMax, ImU32 tint = IM_COL32_WHITE)
+	{
+		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.78f),
+			std::max(1.0f, itemMax.y - itemMin.y - 4.0f));
+		const float x = std::round(itemMin.x + ImGui::GetTreeNodeToLabelSpacing());
+		const float y = std::round(itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f);
+		DrawIcon(icons, icon, ImVec2(x, y), ImVec2(x + iconSize, y + iconSize), tint);
+		return iconSize;
+	}
+
+	static float GetHierarchyIconTextGap()
+	{
+		return std::max(3.0f, std::round(ImGui::GetFontSize() * 0.12f));
+	}
+
+	static float GetCompactCheckboxWidth(float scale = 0.68f)
+	{
+		return std::max(10.0f, std::round(ImGui::GetFrameHeight() * scale));
+	}
+
+	static bool DrawCompactCheckbox(const char* id, bool* v, float scale = 0.68f)
 	{
 		ImGuiWindow* window = ImGui::GetCurrentWindow();
 		if (window->SkipItems)
@@ -66,9 +136,9 @@ namespace TomCat {
 		const ImGuiID widgetID = window->GetID(id);
 
 		const float frameHeight = ImGui::GetFrameHeight();
-		const float squareSize = std::max(1.0f, frameHeight * scale);
+		const float squareSize = GetCompactCheckboxWidth(scale);
 		const ImVec2 pos = window->DC.CursorPos;
-		const ImRect bb(pos, ImVec2(pos.x + frameHeight, pos.y + frameHeight));
+		const ImRect bb(pos, ImVec2(pos.x + squareSize, pos.y + frameHeight));
 
 		ImGui::ItemSize(bb, style.FramePadding.y);
 		if (!ImGui::ItemAdd(bb, widgetID))
@@ -83,20 +153,19 @@ namespace TomCat {
 			ImGui::MarkItemEdited(widgetID);
 		}
 
-		const ImVec2 boxMin(bb.Min.x + (bb.GetWidth() - squareSize) * 0.5f, bb.Min.y + (bb.GetHeight() - squareSize) * 0.5f);
-		const ImVec2 boxMax(boxMin.x + squareSize, boxMin.y + squareSize);
-		const ImU32 fillColor = ImGui::GetColorU32(ImGuiCol_FrameBg);
-		const ImU32 borderColor = ImGui::GetColorU32(held && hovered ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_Border);
-		const float rounding = style.FrameRounding * 0.75f;
-
-		window->DrawList->AddRectFilled(boxMin, boxMax, fillColor, rounding);
-		window->DrawList->AddRect(boxMin, boxMax, borderColor, rounding, 0, 1.0f);
-
+		const ImVec2 squareMin(bb.Min.x,
+			std::round(bb.Min.y + (bb.GetHeight() - squareSize) * 0.5f));
+		const ImVec2 squareMax(squareMin.x + squareSize, squareMin.y + squareSize);
+		const ImU32 frameColor = ImGui::GetColorU32(held ? ImGuiCol_FrameBgActive
+			: hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg);
+		ImGui::RenderFrame(squareMin, squareMax, frameColor, true,
+			std::min(2.0f, style.FrameRounding));
 		if (*v)
 		{
-			const float pad = std::max(1.0f, IM_FLOOR(squareSize / 6.0f));
-			// Draw a slightly smaller checkmark so the box can stay compact.
-			ImGui::RenderCheckMark(window->DrawList, ImVec2(boxMin.x + pad, boxMin.y + pad), ImGui::GetColorU32(ImGuiCol_CheckMark), squareSize - pad * 2.0f);
+			const float padding = std::max(2.0f, std::floor(squareSize / 6.0f));
+			ImGui::RenderCheckMark(window->DrawList,
+				ImVec2(squareMin.x + padding, squareMin.y + padding),
+				ImGui::GetColorU32(ImGuiCol_CheckMark), squareSize - padding * 2.0f);
 		}
 
 		return pressed;
@@ -122,6 +191,9 @@ namespace TomCat {
 		m_RenameEntity = {};
 		m_RenameFocus = false;
 		m_TagEditingEntity = {};
+		m_SpritePickerOpen = false;
+		m_SpritePickerEntity = UUID(0);
+		m_SpriteSearch.fill('\0');
 		if (contextChanged)
 			ClearClipboard();
 		if (clearSelection)
@@ -134,56 +206,6 @@ namespace TomCat {
 			else
 				m_SelectionContext = {};
 		}
-	}
-
-	bool SceneHierarchyPanel::RemapSpriteTextureReferences(const Ref<Scene>& scene,
-		const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot)
-	{
-		if (!scene || oldRoot.empty() || newRoot.empty())
-			return false;
-
-		bool changed = false;
-		auto sprites = scene->m_Registry.view<SpriteRenderer>();
-		for (const entt::entity entity : sprites)
-		{
-			auto& sprite = sprites.get<SpriteRenderer>(entity);
-			if (!sprite.Texture || sprite.Texture->GetPath().empty())
-				continue;
-
-			std::filesystem::path relative;
-			const std::filesystem::path& texturePath = sprite.Texture->GetPath();
-			if (!TryGetRelativeWithin(oldRoot, texturePath, relative))
-				continue;
-
-			sprite.Texture = Texture2D::Create(newRoot / relative);
-			changed = true;
-		}
-		return changed;
-	}
-
-	bool SceneHierarchyPanel::ClearSpriteTextureReferences(const Ref<Scene>& scene,
-		const std::filesystem::path& deletedRoot)
-	{
-		if (!scene || deletedRoot.empty())
-			return false;
-
-		bool changed = false;
-		auto sprites = scene->m_Registry.view<SpriteRenderer>();
-		for (const entt::entity entity : sprites)
-		{
-			auto& sprite = sprites.get<SpriteRenderer>(entity);
-			if (!sprite.Texture || sprite.Texture->GetPath().empty())
-				continue;
-
-			std::filesystem::path relative;
-			const std::filesystem::path& texturePath = sprite.Texture->GetPath();
-			if (!TryGetRelativeWithin(deletedRoot, texturePath, relative))
-				continue;
-
-			sprite.Texture.reset();
-			changed = true;
-		}
-		return changed;
 	}
 
 	void SceneHierarchyPanel::ClearClipboard()
@@ -206,6 +228,11 @@ namespace TomCat {
 
 		Entity entity = m_EntityToDelete;
 		m_EntityToDelete = {};
+		if (m_SpritePickerOpen && m_SpritePickerEntity == entity.GetUUID())
+		{
+			m_SpritePickerOpen = false;
+			m_SpritePickerEntity = UUID(0);
+		}
 		UUID selectedUUID{};
 		const bool hadOtherSelection = m_SelectionContext && m_SelectionContext != entity;
 		if (hadOtherSelection)
@@ -232,7 +259,7 @@ namespace TomCat {
 		m_HierarchyFocused = false;
 		if (!hierarchyOpen || *hierarchyOpen)
 		{
-		const bool hierarchyVisible = ImGui::Begin("Hierarchy", hierarchyOpen, ImGuiWindowFlags_MenuBar);
+		const bool hierarchyVisible = ImGui::Begin("Hierarchy", hierarchyOpen);
 		m_HierarchyFocused = hierarchyVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		if (hierarchyVisible && m_Context)
@@ -245,7 +272,17 @@ namespace TomCat {
 				m_ForceOpenSceneRoot = false;
 			}
 			ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding;
-			bool rootOpen = ImGui::TreeNodeEx((void*)m_Context.get(), rootFlags, "%s", sceneName.c_str());
+			bool rootOpen = ImGui::TreeNodeEx((void*)m_Context.get(), rootFlags, "");
+			const ImVec2 rootItemMin = ImGui::GetItemRectMin();
+			const ImVec2 rootItemMax = ImGui::GetItemRectMax();
+			const float rootIconSize = DrawTreeRowIcon(m_Icons, EditorIcon::SceneOpen,
+				rootItemMin, rootItemMax);
+			const float rootTextX = rootItemMin.x + ImGui::GetTreeNodeToLabelSpacing() +
+				rootIconSize + GetHierarchyIconTextGap();
+			const float rootTextY = std::round(rootItemMin.y +
+				(rootItemMax.y - rootItemMin.y - ImGui::GetTextLineHeight()) * 0.5f);
+			ImGui::GetWindowDrawList()->AddText(ImVec2(rootTextX, rootTextY),
+				ImGui::GetColorU32(ImGuiCol_Text), sceneName.c_str());
 
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
 				m_SelectionContext = {};
@@ -261,11 +298,18 @@ namespace TomCat {
 
 			if (ImGui::BeginDragDropTarget())
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY"))
+				const ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptBeforeDelivery |
+					ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+					SceneEntityDragDropPayloadID, flags))
 				{
-					Entity draggedEntity = *(const Entity*)payload->Data;
-					if (draggedEntity && m_Context->SetParent(draggedEntity, Entity{}))
+					Entity draggedEntity = GetDraggedSceneEntity(payload, m_Context);
+					if (draggedEntity && payload->IsDelivery() && m_Context->MoveEntity(
+						draggedEntity, Entity{}, Scene::EntityPlacement::Root))
+					{
+						m_SelectionContext = draggedEntity;
 						MarkModified();
+					}
 				}
 				ImGui::EndDragDropTarget();
 			}
@@ -310,31 +354,26 @@ namespace TomCat {
 		if (ImGui::BeginDragDropTarget())
 		{
 			ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TOMCAT_SCENE", flags))
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID, flags))
 			{
-				const wchar_t* path = (const wchar_t*)payload->Data;
-				if (m_SceneLoadCallback)
+				if (payload->DataSize == sizeof(uint64_t))
 				{
-					auto project = ProjectManager::Get().GetActiveProject();
-					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-					m_SceneLoadCallback(assetPath / path);
+					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+					if (metadata && metadata->Type == AssetType::Scene && m_SceneLoadCallback)
+						m_SceneLoadCallback(handle);
+					else if (metadata && metadata->Type == AssetType::Texture2D && m_SpriteCreateCallback)
+						m_SpriteCreateCallback(handle);
 				}
 			}
-			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags))
+			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				SceneEntityDragDropPayloadID, flags | ImGuiDragDropFlags_AcceptBeforeDelivery))
 			{
-				const wchar_t* path = (const wchar_t*)payload->Data;
-				if (m_SpriteCreateCallback)
+				Entity draggedEntity = GetDraggedSceneEntity(payload, m_Context);
+				if (draggedEntity && payload->IsDelivery() && m_Context->MoveEntity(
+					draggedEntity, Entity{}, Scene::EntityPlacement::Root))
 				{
-					auto project = ProjectManager::Get().GetActiveProject();
-					std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-					m_SpriteCreateCallback(assetPath / path);
-				}
-			}
-			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY", flags))
-			{
-				Entity draggedEntity = *(const Entity*)payload->Data;
-				if (draggedEntity && m_Context && m_Context->SetParent(draggedEntity, Entity{}))
-				{
+					m_SelectionContext = draggedEntity;
 					MarkModified();
 				}
 			}
@@ -347,7 +386,7 @@ namespace TomCat {
 
 		if (!inspectorOpen || *inspectorOpen)
 		{
-			const bool inspectorVisible = ImGui::Begin("Inspector", inspectorOpen, ImGuiWindowFlags_MenuBar);
+			const bool inspectorVisible = ImGui::Begin("Inspector", inspectorOpen);
 			if (inspectorVisible && m_SelectionContext)
 				DrawComponents(m_SelectionContext);
 			ImGui::End();
@@ -356,6 +395,11 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
 	{
+		if (m_SpritePickerOpen && m_SelectionContext != entity)
+		{
+			m_SpritePickerOpen = false;
+			m_SpritePickerEntity = UUID(0);
+		}
 		m_SelectionContext = entity;
 	}
 
@@ -457,7 +501,7 @@ namespace TomCat {
 		if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) DeleteSelectedEntity();
 		if (ImGui::MenuItem("Unparent", nullptr, false, hasSelection && m_Context && m_Context->GetParent(m_SelectionContext)))
 		{
-			if (m_Context->SetParent(m_SelectionContext, Entity{}))
+			if (m_Context->MoveEntity(m_SelectionContext, Entity{}, Scene::EntityPlacement::Root))
 				MarkModified();
 		}
 		ImGui::Separator();
@@ -495,17 +539,43 @@ namespace TomCat {
 			CreateAsSelectedChild(camera);
 		}
 
+		auto CreatePrimitiveSprite = [&](const char* primitiveName)
+		{
+			Entity entity = m_Context->CreateEntity(primitiveName);
+			auto& sprite = entity.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
+			const AssetHandle handle = EnsurePrimitiveSpriteAsset(
+				AssetManager::Get(), primitiveName);
+			if (static_cast<uint64_t>(handle) != 0)
+			{
+				sprite.SpriteHandle = handle;
+				sprite.Sprite = AssetManager::Get().LoadTexture(handle);
+			}
+			else
+			{
+				TC_Core_Error("Could not create or load the '{0}' Sprite asset", primitiveName);
+			}
+			CreateAsSelectedChild(entity);
+		};
+
 		if (ImGui::BeginMenu("2D Object"))
 		{
 			if (ImGui::BeginMenu("Sprites"))
 			{
+				if (ImGui::MenuItem("Circle"))
+					CreatePrimitiveSprite("Circle");
 				if (ImGui::MenuItem("Square"))
-				{
-					Entity square = m_Context->CreateEntity("Square");
-					square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-					CreateAsSelectedChild(square);
-				}
+					CreatePrimitiveSprite("Square");
 				ImGui::EndMenu();
+			}
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu("Effects"))
+		{
+			if (ImGui::MenuItem("Line"))
+			{
+				Entity line = m_Context->CreateEntity("Line");
+				line.AddComponent<LineRenderer>();
+				CreateAsSelectedChild(line);
 			}
 			ImGui::EndMenu();
 		}
@@ -548,17 +618,19 @@ namespace TomCat {
 		}
 
 		const bool renameActive = (m_RenameEntity == entity);
-		if (renameActive)
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-
-		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "%s", tag.c_str());
+		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "");
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
-		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing();
-		const float textOffsetY = itemMin.y + (itemMax.y - itemMin.y - ImGui::GetTextLineHeight()) * 0.5f;
+		const float iconSize = DrawTreeRowIcon(m_Icons, EditorIcon::Entity, itemMin, itemMax,
+			visible ? IM_COL32_WHITE : IM_COL32(150, 150, 150, 210));
+		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing() +
+			iconSize + GetHierarchyIconTextGap();
+		const float textOffsetY = std::round(itemMin.y +
+			(itemMax.y - itemMin.y - ImGui::GetTextLineHeight()) * 0.5f);
+		if (!renameActive)
+			ImGui::GetWindowDrawList()->AddText(ImVec2(textOffsetX, textOffsetY),
+				ImGui::GetColorU32(ImGuiCol_Text), tag.c_str());
 
-		if (renameActive)
-			ImGui::PopStyleColor();
 		if (isSelected)
 			ImGui::PopStyleColor(3);
 
@@ -576,18 +648,41 @@ namespace TomCat {
 
 		if (ImGui::BeginDragDropSource())
 		{
-			ImGui::SetDragDropPayload("SCENE_ENTITY", &entity, sizeof(Entity));
+			const uint64_t entityUUID = static_cast<uint64_t>(entity.GetUUID());
+			ImGui::SetDragDropPayload(SceneEntityDragDropPayloadID, &entityUUID, sizeof(entityUUID));
 			ImGui::Text("Move %s", tag.c_str());
 			ImGui::EndDragDropSource();
 		}
 
 		if (ImGui::BeginDragDropTarget())
 		{
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCENE_ENTITY"))
+			const ImGuiDragDropFlags dropFlags = ImGuiDragDropFlags_AcceptBeforeDelivery |
+				ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				SceneEntityDragDropPayloadID, dropFlags))
 			{
-				Entity draggedEntity = *(const Entity*)payload->Data;
-				if (draggedEntity && draggedEntity != entity && m_Context->SetParent(draggedEntity, entity))
-					MarkModified();
+				Entity draggedEntity = GetDraggedSceneEntity(payload, m_Context);
+				if (draggedEntity && draggedEntity != entity)
+				{
+					const HierarchyDropZone zone = GetHierarchyDropZone(itemMin, itemMax);
+					DrawHierarchyDropPreview(itemMin, itemMax, zone);
+					if (payload->IsDelivery())
+					{
+						Scene::EntityPlacement placement = Scene::EntityPlacement::Child;
+						if (zone == HierarchyDropZone::Before)
+							placement = Scene::EntityPlacement::Before;
+						else if (zone == HierarchyDropZone::After)
+							placement = Scene::EntityPlacement::After;
+
+						if (m_Context->MoveEntity(draggedEntity, entity, placement))
+						{
+							m_SelectionContext = draggedEntity;
+							if (placement == Scene::EntityPlacement::Child)
+								m_ForceExpandParent = entity;
+							MarkModified();
+						}
+					}
+				}
 			}
 			ImGui::EndDragDropTarget();
 		}
@@ -728,12 +823,16 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	}
 
 	template<typename T> static bool* GetComponentEnabledFlag(T&) { return nullptr; }
+	template<> static bool* GetComponentEnabledFlag<C_Camera>(C_Camera& component) { return &component.Primary; }
 	template<> static bool* GetComponentEnabledFlag<SpriteRenderer>(SpriteRenderer& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<LineRenderer>(LineRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<BoxCollider2D>(BoxCollider2D& component) { return &component.Enabled; }
 
 	template<typename T, typename UIFunction, typename ModifiedFunction>
-static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction, ModifiedFunction onModified)
+static void DrawComponent(const std::string& name, Entity entity,
+	const Ref<EditorIconSet>& icons, EditorIcon icon,
+	UIFunction uiFunction, ModifiedFunction onModified)
 {
 	// 检查实体是否有效
 	if (!entity)
@@ -758,16 +857,28 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 		ImVec2 afterHeaderCursor = ImGui::GetCursorPos();
 		ImGui::PopStyleVar();
 
-		if (bool* enabled = GetComponentEnabledFlag(component))
+		bool* enabled = GetComponentEnabledFlag(component);
+		const float contentGap = std::max(3.0f,
+			std::round(ImGui::GetFontSize() * 0.16f));
+		float leftContentX = headerMin.x + ImGui::GetTreeNodeToLabelSpacing();
+		if (icon != EditorIcon::Count)
 		{
-			const float checkboxPosY = headerMin.y + (headerHeight - ImGui::GetFrameHeight()) * 0.5f;
-			ImGui::SetCursorScreenPos(ImVec2(headerMin.x + headerHeight, checkboxPosY));
+			const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.9f),
+				std::max(1.0f, headerHeight - 8.0f));
+			const float iconY = std::round(headerMin.y + (headerHeight - iconSize) * 0.5f);
+			DrawIcon(icons, icon, ImVec2(leftContentX, iconY),
+				ImVec2(leftContentX + iconSize, iconY + iconSize));
+			leftContentX += iconSize + contentGap;
+		}
+		if (enabled)
+		{
+			const float checkboxPosY = headerMin.y +
+				(headerHeight - ImGui::GetFrameHeight()) * 0.5f;
+			ImGui::SetCursorScreenPos(ImVec2(leftContentX, checkboxPosY));
 			if (DrawCompactCheckbox("##Enabled", enabled))
 				onModified();
+			leftContentX += GetCompactCheckboxWidth() + contentGap;
 		}
-
-		const float leftContentX = headerMin.x + headerHeight +
-			(GetComponentEnabledFlag(component) ? headerHeight + ImGui::GetStyle().ItemSpacing.x : 0.0f);
 		const float textY = headerMin.y + (headerHeight - ImGui::GetTextLineHeight()) * 0.5f;
 		ImGui::SetCursorScreenPos(ImVec2(leftContentX, textY));
 		ImGui::TextUnformatted(name.c_str());
@@ -854,7 +965,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 
 
 		const auto onModified = [this]() { MarkModified(); };
-		DrawComponent<Transform>("Transform", entity, [this, entity](auto& component)
+		DrawComponent<Transform>("Transform", entity, m_Icons, EditorIcon::Move,
+			[this, entity](auto& component)
 		{
 			Entity parent = m_Context ? m_Context->GetParent(entity) : Entity{};
 			const bool hasParent = (bool)parent;
@@ -880,25 +992,11 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			}
 		}, onModified);
 
-		DrawComponent<C_Camera>("Camera", entity, [this](auto& component)
+		DrawComponent<C_Camera>("Camera", entity, m_Icons, EditorIcon::Camera,
+			[this, entity](auto& component)
 		{
 			auto& camera = component._Camera;
 			const float columnWidth = 100.0f;
-
-			DrawProperty("Primary", columnWidth);
-			bool primary = component.Primary;
-			if (ImGui::Checkbox("##Primary", &primary))
-			{
-				if (primary && m_Context)
-				{
-					auto cameras = m_Context->m_Registry.view<C_Camera>();
-					for (auto handle : cameras)
-						cameras.get<C_Camera>(handle).Primary = false;
-				}
-				component.Primary = primary;
-				MarkModified();
-			}
-			ImGui::Columns(1);
 
 			DrawProperty("Projection", columnWidth);
 			const char* projectionTypes[] = { "Perspective", "Orthographic" };
@@ -957,32 +1055,255 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			DrawProperty("Background Color", columnWidth);
 			if (ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor))) MarkModified();
 			ImGui::Columns(1);
-		}, onModified);
+		}, [this, entity]() mutable
+		{
+			// Camera uses the compact header checkbox for its Primary state. Keep
+			// the scene invariant that at most one camera can be primary.
+			if (m_Context && entity && entity.HasComponent<C_Camera>())
+			{
+				auto& selectedCamera = entity.GetComponent<C_Camera>();
+				if (selectedCamera.Primary)
+				{
+					auto cameras = m_Context->m_Registry.view<C_Camera>();
+					for (auto handle : cameras)
+						cameras.get<C_Camera>(handle).Primary = false;
+					selectedCamera.Primary = true;
+				}
+			}
+			MarkModified();
+		});
 
-		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [this](auto& component)
+		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, m_Icons, EditorIcon::Sprite,
+			[this, entity](auto& component)
 		{
 			const float columnWidth = 100.0f;
 			DrawProperty("Color", columnWidth);
 			if (ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color))) MarkModified();
 			ImGui::Columns(1);
+
 			DrawProperty("Sprite", columnWidth);
-			const std::string textureName = component.Texture && !component.Texture->GetPath().empty()
-				? PathToUTF8(component.Texture->GetPath().stem()) : "None";
-			ImGui::Button(textureName.c_str(), ImVec2(-1, 0));
+			std::string spriteName = "None";
+			EditorIcon spriteFieldIcon = EditorIcon::Sprite;
+			Ref<Texture2D> spritePreview;
+			const uint64_t rawSpriteHandle = static_cast<uint64_t>(component.SpriteHandle);
+			if (rawSpriteHandle != 0)
+			{
+				const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(
+					component.SpriteHandle);
+				if (metadata && IsSpriteAsset(*metadata))
+				{
+					spriteName = PathToUTF8(metadata->FilePath.stem());
+					if (metadata->IsMissing)
+					{
+						spriteName += " (Missing)";
+						spriteFieldIcon = EditorIcon::Missing;
+					}
+					else
+					{
+						component.Sprite = AssetManager::Get().LoadTexture(component.SpriteHandle);
+						spritePreview = component.Sprite;
+					}
+				}
+				else if (metadata)
+				{
+					spriteName = PathToUTF8(metadata->FilePath.stem()) + " (Not a Sprite)";
+					spriteFieldIcon = EditorIcon::Missing;
+				}
+				else
+				{
+					spriteName = "Missing #" + std::to_string(rawSpriteHandle);
+					spriteFieldIcon = EditorIcon::Missing;
+				}
+			}
+
+			const float pickerButtonWidth = ImGui::GetFrameHeight();
+			const float fieldWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x -
+				pickerButtonWidth - ImGui::GetStyle().ItemInnerSpacing.x);
+			ImGui::Button("##SpriteAssetField", ImVec2(fieldWidth, 0.0f));
+			const ImVec2 spriteButtonMin = ImGui::GetItemRectMin();
+			const ImVec2 spriteButtonMax = ImGui::GetItemRectMax();
+			const float spriteIconSize = std::min(16.0f,
+				std::max(1.0f, spriteButtonMax.y - spriteButtonMin.y - 4.0f));
+			const ImVec2 spriteIconMin(spriteButtonMin.x + 6.0f,
+				spriteButtonMin.y + (spriteButtonMax.y - spriteButtonMin.y - spriteIconSize) * 0.5f);
+			const ImVec2 spriteIconMax(spriteIconMin.x + spriteIconSize, spriteIconMin.y + spriteIconSize);
+			if (spritePreview)
+				ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(spritePreview),
+					spriteIconMin, spriteIconMax, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+			else
+				DrawIcon(m_Icons, spriteFieldIcon, spriteIconMin, spriteIconMax);
+			const ImRect spriteTextClip(
+				ImVec2(spriteIconMax.x + 5.0f, spriteButtonMin.y),
+				ImVec2(spriteButtonMax.x - 4.0f, spriteButtonMax.y));
+			ImGui::RenderTextClipped(spriteTextClip.Min, spriteTextClip.Max,
+				spriteName.c_str(), nullptr, nullptr, ImVec2(0.0f, 0.5f), &spriteTextClip);
+
 			if (ImGui::BeginDragDropTarget())
 			{
-				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE"))
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID))
 				{
-					auto project = ProjectManager::Get().GetActiveProject();
-					const std::filesystem::path assetPath = project ? project->GetAssetPath() : g_AssetPath;
-					const std::filesystem::path texturePath = assetPath / static_cast<const wchar_t*>(payload->Data);
-					Ref<Texture2D> texture = Texture2D::Create(texturePath);
-					if (texture->IsLoaded()) { component.Texture = texture; MarkModified(); }
-					else TC_Warn("Could not load texture {0}", PathToUTF8(texturePath.filename()));
+					if (payload->DataSize == sizeof(uint64_t))
+					{
+						const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+						const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+						if (metadata && IsSpriteAsset(*metadata) && !metadata->IsMissing)
+						{
+							component.SpriteHandle = handle;
+							component.Sprite = AssetManager::Get().LoadTexture(handle);
+							MarkModified();
+						}
+					}
 				}
 				ImGui::EndDragDropTarget();
 			}
+			if (ImGui::BeginPopupContextItem("SpriteAssetContext"))
+			{
+				if (ImGui::MenuItem("Clear", nullptr, false, rawSpriteHandle != 0))
+				{
+					component.SpriteHandle = AssetHandle(0);
+					component.Sprite.reset();
+					MarkModified();
+				}
+				ImGui::EndPopup();
+			}
+
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+			ImGui::Button("##OpenSpritePicker", ImVec2(pickerButtonWidth, 0.0f));
+			const bool openSpritePicker = ImGui::IsItemClicked();
+			const ImVec2 pickerMin = ImGui::GetItemRectMin();
+			const ImVec2 pickerMax = ImGui::GetItemRectMax();
+			const ImVec2 pickerCenter((pickerMin.x + pickerMax.x) * 0.5f,
+				(pickerMin.y + pickerMax.y) * 0.5f);
+			const ImU32 pickerGlyph = ImGui::GetColorU32(ImGuiCol_Text);
+			const float pickerRadius = std::max(3.0f,
+				std::min(pickerMax.x - pickerMin.x, pickerMax.y - pickerMin.y) * 0.28f);
+			ImGui::GetWindowDrawList()->AddCircle(pickerCenter, pickerRadius, pickerGlyph, 16, 1.5f);
+			ImGui::GetWindowDrawList()->AddCircleFilled(pickerCenter,
+				std::max(1.0f, pickerRadius * 0.28f), pickerGlyph, 12);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Select Sprite");
+			if (openSpritePicker)
+			{
+				m_SpriteSearch.fill('\0');
+				m_SpritePickerOpen = true;
+				m_SpritePickerEntity = entity.GetUUID();
+				ImGui::OpenPopup("Select Sprite##SpritePicker");
+			}
+			if (m_SpritePickerOpen && m_SpritePickerEntity != entity.GetUUID())
+				m_SpritePickerOpen = false;
+
+			ImGui::SetNextWindowSize(ImVec2(680.0f, 460.0f), ImGuiCond_Appearing);
+			if (ImGui::BeginPopupModal("Select Sprite##SpritePicker", &m_SpritePickerOpen,
+				ImGuiWindowFlags_NoCollapse))
+			{
+				if (ImGui::IsWindowAppearing())
+					ImGui::SetKeyboardFocusHere();
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::InputTextWithHint("##SpriteSearch", "Search Sprites",
+					m_SpriteSearch.data(), m_SpriteSearch.size());
+
+				std::vector<const AssetMetadata*> sprites;
+				for (const auto& [handle, metadata] :
+					AssetManager::Get().GetRegistry().GetAssets())
+				{
+					if (IsSpriteAsset(metadata) && !metadata.IsMissing &&
+						MatchesSpriteSearch(metadata, m_SpriteSearch.data()))
+						sprites.push_back(&metadata);
+				}
+				std::sort(sprites.begin(), sprites.end(), [](const AssetMetadata* left,
+					const AssetMetadata* right)
+				{
+					return LowerASCII(PathToUTF8(left->FilePath)) <
+						LowerASCII(PathToUTF8(right->FilePath));
+				});
+
+				ImGui::TextDisabled("%zu Sprite%s", sprites.size(), sprites.size() == 1 ? "" : "s");
+				ImGui::Separator();
+				ImGui::BeginChild("SpriteGrid", ImVec2(0.0f, 0.0f), false);
+				constexpr float cellWidth = 96.0f;
+				constexpr float cellHeight = 112.0f;
+				const int columns = std::max(1, static_cast<int>(
+					ImGui::GetContentRegionAvail().x / cellWidth));
+				ImGui::Columns(columns, "SpritePickerColumns", false);
+
+				auto drawSpriteTile = [&](AssetHandle handle, const char* label,
+					const std::filesystem::path* relativePath)
+				{
+					const std::string id = "##Sprite_" +
+						std::to_string(static_cast<uint64_t>(handle));
+					const float tileWidth = std::max(64.0f,
+						ImGui::GetColumnWidth() - ImGui::GetStyle().ItemSpacing.x);
+					const ImVec2 tileSize(tileWidth, cellHeight);
+					const ImVec2 tileMin = ImGui::GetCursorScreenPos();
+					ImGui::InvisibleButton(id.c_str(), tileSize);
+					const bool hovered = ImGui::IsItemHovered();
+					const bool clicked = ImGui::IsItemClicked();
+					const bool selected = component.SpriteHandle == handle;
+					const ImVec2 tileMax(tileMin.x + tileSize.x, tileMin.y + tileSize.y);
+					const bool visible = ImGui::IsRectVisible(tileMin, tileMax);
+					ImDrawList* drawList = ImGui::GetWindowDrawList();
+					const ImU32 background = ImGui::GetColorU32(selected ? ImGuiCol_HeaderActive :
+						hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg);
+					if (visible)
+						drawList->AddRectFilled(tileMin, tileMax, background, 2.0f);
+
+					constexpr float previewPadding = 8.0f;
+					const float previewExtent = std::max(1.0f,
+						std::min(tileSize.x - previewPadding * 2.0f, 76.0f));
+					const ImVec2 previewMin(tileMin.x + (tileSize.x - previewExtent) * 0.5f,
+						tileMin.y + previewPadding);
+					const ImVec2 previewMax(previewMin.x + previewExtent,
+						previewMin.y + previewExtent);
+					if (visible && static_cast<uint64_t>(handle) != 0)
+					{
+						const Ref<Texture2D> texture = AssetManager::Get().LoadTexture(handle);
+						if (texture)
+							drawList->AddImage(ToImGuiTextureID(texture), previewMin, previewMax,
+								ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+					}
+					else if (visible)
+						DrawIcon(m_Icons, EditorIcon::Sprite, previewMin, previewMax,
+							ImGui::GetColorU32(ImGuiCol_TextDisabled));
+
+					const ImRect labelClip(
+						ImVec2(tileMin.x + 4.0f, previewMax.y + 5.0f),
+						ImVec2(tileMin.x + tileSize.x - 4.0f, tileMin.y + tileSize.y - 4.0f));
+					if (visible)
+						ImGui::RenderTextClipped(labelClip.Min, labelClip.Max, label, nullptr,
+							nullptr, ImVec2(0.5f, 0.0f), &labelClip);
+					if (hovered && relativePath)
+						ImGui::SetTooltip("%s", PathToUTF8(*relativePath).c_str());
+					if (clicked)
+					{
+						if (component.SpriteHandle != handle)
+						{
+							component.SpriteHandle = handle;
+							component.Sprite = static_cast<uint64_t>(handle) != 0
+								? AssetManager::Get().LoadTexture(handle) : Ref<Texture2D>{};
+							MarkModified();
+						}
+						m_SpritePickerOpen = false;
+						m_SpritePickerEntity = UUID(0);
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::NextColumn();
+				};
+
+				if (m_SpriteSearch[0] == '\0')
+					drawSpriteTile(AssetHandle(0), "None", nullptr);
+				for (const AssetMetadata* metadata : sprites)
+				{
+					const std::string label = PathToUTF8(metadata->FilePath.stem());
+					drawSpriteTile(metadata->Handle, label.c_str(), &metadata->FilePath);
+				}
+				ImGui::Columns(1);
+				ImGui::EndChild();
+				ImGui::EndPopup();
+			}
+			if (!m_SpritePickerOpen)
+				m_SpritePickerEntity = UUID(0);
 			ImGui::Columns(1);
+
 			DrawProperty("Tiling Factor", columnWidth);
 			float tilingFactor = component.TilingFactor;
 			if (ImGui::DragFloat("##TilingFactor", &tilingFactor, 0.1f, 0.0f, 100.0f,
@@ -1000,7 +1321,56 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			ImGui::Columns(1);
 		}, onModified);
 
-		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, [this](auto& component)
+		DrawComponent<LineRenderer>("Line Renderer", entity, m_Icons, EditorIcon::Count,
+			[this](auto& component)
+		{
+			const float columnWidth = 100.0f;
+
+			DrawProperty("Color", columnWidth);
+			if (ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color)))
+				MarkModified();
+			ImGui::Columns(1);
+
+			DrawProperty("Start", columnWidth);
+			glm::vec3 start = component.Start;
+			if (ImGui::DragFloat3("##Start", glm::value_ptr(start), 0.1f) &&
+				std::isfinite(start.x) && std::isfinite(start.y) && std::isfinite(start.z) &&
+				start != component.Start)
+			{
+				component.Start = start;
+				MarkModified();
+			}
+			ImGui::Columns(1);
+
+			DrawProperty("End", columnWidth);
+			glm::vec3 end = component.End;
+			if (ImGui::DragFloat3("##End", glm::value_ptr(end), 0.1f) &&
+				std::isfinite(end.x) && std::isfinite(end.y) && std::isfinite(end.z) &&
+				end != component.End)
+			{
+				component.End = end;
+				MarkModified();
+			}
+			ImGui::Columns(1);
+
+			DrawProperty("Width", columnWidth);
+			float width = component.Width;
+			if (ImGui::DragFloat("##Width", &width, 0.1f, 0.0f, 0.0f, "%.3f"))
+			{
+				if (!std::isfinite(width))
+					width = component.Width;
+				width = std::max(0.0001f, width);
+				if (width != component.Width)
+				{
+					component.Width = width;
+					MarkModified();
+				}
+			}
+			ImGui::Columns(1);
+		}, onModified);
+
+		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, m_Icons, EditorIcon::Rigidbody2D,
+			[this](auto& component)
 		{
 			const char* bodyTypes[] = { "Static", "Dynamic", "Kinematic" };
 			int bodyType = (int)component.Type;
@@ -1017,7 +1387,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			if (ImGui::Checkbox("Fixed Rotation", &component.FixedRotation)) MarkModified();
 		}, onModified);
 
-		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, [this](auto& component)
+		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, m_Icons, EditorIcon::BoxCollider2D,
+			[this](auto& component)
 		{
 			glm::vec2 offset = component.Offset;
 			glm::vec2 size = component.Size;
@@ -1071,7 +1442,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 
 		ImGui::Spacing();
 		ImGui::SetNextItemWidth(-1.0f);
-		if (ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f)))
+		const bool addComponentPressed = ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f));
+		if (addComponentPressed)
 			ImGui::OpenPopup("AddComponent");
 
 		if (ImGui::BeginPopup("AddComponent"))
@@ -1087,6 +1459,12 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			if (!entity.HasComponent<SpriteRenderer>() && ImGui::MenuItem("Sprite Renderer"))
 			{
 				entity.AddComponent<SpriteRenderer>();
+				MarkModified();
+				ImGui::CloseCurrentPopup();
+			}
+			if (!entity.HasComponent<LineRenderer>() && ImGui::MenuItem("Line Renderer"))
+			{
+				entity.AddComponent<LineRenderer>();
 				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}

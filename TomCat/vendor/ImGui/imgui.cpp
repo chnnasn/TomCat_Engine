@@ -876,6 +876,9 @@ CODE
 #endif
 #include "imgui_internal.h"
 
+// TomCat dock-title more-options callback bridge.
+#include "../../../TomCat/src/TomCat/ImGui/ImGuiCallback.h"
+
 // System includes
 #include <stdio.h>      // vsnprintf, sscanf, printf
 #if defined(_MSC_VER) && _MSC_VER <= 1500 // MSVC 2008 or earlier
@@ -6237,6 +6240,42 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
     }
 }
 
+static void RenderTomCatMoreOptionsButton(ImGuiWindow* host_window,
+    ImGuiWindow* target_window, const ImRect& button_rect)
+{
+    if (target_window == NULL || target_window->Name == NULL ||
+        !TomCat::IsMoreOptionsEnabled() ||
+        !TomCat::HasWindowMoreOptionsCallback(target_window->Name))
+        return;
+
+    ImGuiContext& g = *GImGui;
+    bool hovered = false;
+    bool held = false;
+    const bool pressed = ImGui::ButtonBehavior(button_rect, host_window->GetID("#SETTING"),
+        &hovered, &held, ImGuiButtonFlags_FlattenChildren |
+        ImGuiButtonFlags_AllowItemOverlap | ImGuiButtonFlags_PressedOnClick);
+
+    if (held && hovered)
+        host_window->DrawList->AddRectFilled(button_rect.Min, button_rect.Max,
+            ImGui::GetColorU32(ImGuiCol_ButtonActive));
+    else if (hovered)
+        host_window->DrawList->AddRectFilled(button_rect.Min, button_rect.Max,
+            ImGui::GetColorU32(ImGuiCol_ButtonHovered));
+
+    const float center_x = button_rect.Min.x + button_rect.GetWidth() * 0.62f;
+    const float center_y = (button_rect.Min.y + button_rect.Max.y) * 0.5f;
+    const float radius = ImMax(1.5f, g.FontSize * 0.06f);
+    const float gap = g.FontSize * 0.18f;
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    host_window->DrawList->AddCircleFilled(ImVec2(center_x, center_y - gap), radius, color, 12);
+    host_window->DrawList->AddCircleFilled(ImVec2(center_x, center_y), radius, color, 12);
+    host_window->DrawList->AddCircleFilled(ImVec2(center_x, center_y + gap), radius, color, 12);
+
+    if (pressed)
+        TomCat::ExecuteWindowMoreOptionsCallback(target_window->Name,
+            ImVec2(button_rect.Min.x, button_rect.Max.y));
+}
+
 // When inside a dock node, this is handled in DockNodeCalcTabBarLayout() instead.
 // Render title text, collapse button, close button
 void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& title_bar_rect, const char* name, bool* p_open)
@@ -6247,6 +6286,8 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
 
     const bool has_close_button = (p_open != NULL);
     const bool has_collapse_button = !(flags & ImGuiWindowFlags_NoCollapse) && (style.WindowMenuButtonPosition != ImGuiDir_None);
+    const bool has_more_button = TomCat::IsMoreOptionsEnabled() &&
+        TomCat::HasWindowMoreOptionsCallback(window->Name ? window->Name : "");
     // Close & Collapse button are on the Menu NavLayer and don't default focus (unless there's nothing else on that layer)
     // FIXME-NAV: Might want (or not?) to set the equivalent of ImGuiButtonFlags_NoNavFocus so that mouse clicks on standard title bar items don't necessarily set nav/keyboard ref?
     const ImGuiItemFlags item_flags_backup = g.CurrentItemFlags;
@@ -6260,6 +6301,7 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     float button_sz = g.FontSize;
     ImVec2 close_button_pos;
     ImVec2 collapse_button_pos;
+    ImVec2 more_button_pos;
     if (has_close_button)
     {
         pad_r += button_sz;
@@ -6269,6 +6311,12 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     {
         pad_r += button_sz;
         collapse_button_pos = ImVec2(title_bar_rect.Max.x - pad_r - style.FramePadding.x, title_bar_rect.Min.y);
+    }
+    if (has_more_button)
+    {
+        pad_r += button_sz;
+        more_button_pos = ImVec2(title_bar_rect.Max.x - pad_r - style.FramePadding.x,
+            title_bar_rect.Min.y);
     }
     if (has_collapse_button && style.WindowMenuButtonPosition == ImGuiDir_Left)
     {
@@ -6285,6 +6333,13 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     if (has_close_button)
         if (CloseButton(window->GetID("#CLOSE"), close_button_pos))
             *p_open = false;
+
+    if (has_more_button)
+    {
+        const ImRect more_button_rect(more_button_pos,
+            more_button_pos + ImVec2(button_sz, button_sz));
+        RenderTomCatMoreOptionsButton(window, window, more_button_rect);
+    }
 
     window->DC.NavLayerCurrent = ImGuiNavLayer_Main;
     g.CurrentItemFlags = item_flags_backup;
@@ -17038,6 +17093,17 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
     if (node->VisibleWindow)
         if (is_focused || root_node->VisibleWindow == NULL)
             root_node->VisibleWindow = node->VisibleWindow;
+
+    // TomCat's per-window more-options action is part of the dock title bar,
+    // not an item appended to the tab sequence. Keep it at the absolute right
+    // edge so Project matches the editor chrome used by the original UI.
+    const float more_button_size = g.FontSize;
+    const ImVec2 more_button_pos(title_bar_rect.Max.x - more_button_size - 4.0f,
+        title_bar_rect.Min.y);
+    const ImRect more_button_rect(more_button_pos,
+        more_button_pos + ImVec2(more_button_size, more_button_size));
+    if (more_button_rect.Min.x >= tab_bar_rect.Min.x)
+        RenderTomCatMoreOptionsButton(host_window, node->VisibleWindow, more_button_rect);
 
     // When clicking on the title bar outside of tabs, we still focus the selected tab for that node
     // FIXME: TabItem use AllowItemOverlap so we manually perform a more specific test for now (hovered || held)

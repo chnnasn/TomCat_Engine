@@ -81,6 +81,7 @@ jobs:
 
           function Invoke-Box([string]$evbName, [string]$srcDir, [string]$srcExe) {
             . "$env:GITHUB_WORKSPACE\Scripts\EvbTools.ps1"
+            $isEditor = $evbName -eq "editor.evb"
             $srcDir = (Resolve-Path -LiteralPath $srcDir).Path
             $packageDir = Resolve-EvbPackageDirectory -SourceDir $srcDir
             $packageFileCount = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force).Count
@@ -88,13 +89,19 @@ jobs:
             if (-not (Test-Path "$srcDir\TomCat.log")) { New-Item -ItemType File -Path "$srcDir\TomCat.log" -Force | Out-Null }
             New-Item -ItemType Directory -Force -Path "dist" | Out-Null
             Copy-Item "$srcDir\$srcExe" "dist\$srcExe" -Force
-            $outputName = if ($evbName -eq "editor.evb") { "TomCat.exe" } else { "TomCatHub.exe" }
+            $outputName = if ($isEditor) { "TomCat.exe" } else { "TomCatHub.exe" }
             if (Test-Path "dist\$outputName") { Remove-Item "dist\$outputName" -Force }
             $content = Get-Content "Scripts\$evbName" -Raw
             $content = $content.Replace('E:\Github\TomCat_Engine', $env:GITHUB_WORKSPACE)
             $content = Set-EvbProperty -TemplateText $content -ElementName "InputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$srcExe")
             $content = Set-EvbProperty -TemplateText $content -ElementName "OutputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$outputName")
-            $content = Set-EvbPackageTree -TemplateText $content -PackageSource $packageDir
+            if ($isEditor) {
+              if ($content -match '(?is)<Name>\s*Packages\s*</Name>') {
+                throw "Editor EVB template must not embed Packages"
+              }
+            } else {
+              $content = Set-EvbPackageTree -TemplateText $content -PackageSource $packageDir
+            }
             Write-EvbProject -Path "Scripts\$evbName-ci.evb" -Text $content
             $evb = @(
               "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe",
@@ -109,6 +116,13 @@ jobs:
             }
             Remove-Item "Scripts\$evbName-ci.evb" -Force -ErrorAction SilentlyContinue
             Remove-Item "dist\$srcExe" -Force -ErrorAction SilentlyContinue
+            if ($isEditor) {
+              $externalPackages = Join-Path $env:GITHUB_WORKSPACE "dist\Packages"
+              if (Test-Path -LiteralPath $externalPackages) {
+                Remove-Item -LiteralPath $externalPackages -Recurse -Force
+              }
+              Copy-Item -LiteralPath $packageDir -Destination $externalPackages -Recurse -Force
+            }
           }
 
           $t = $env:TARGET
@@ -118,6 +132,7 @@ jobs:
             Invoke-Gen "Editor"
             Invoke-Build "Editor\TomCatInut\TomCatInut.vcxproj"
             Invoke-Box "editor.evb" "Editor\bin\Release-windows-x86_64\TomCatInut" "TomCatInut.exe"
+            Compress-Archive -LiteralPath @("dist\TomCat.exe", "dist\Packages") -DestinationPath "dist\TomCat.zip" -CompressionLevel Optimal -Force
           }
           if ($t -eq "hub" -or $t -eq "both") {
             Write-Host "== Building Hub =="
@@ -131,7 +146,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TomCat
-          path: dist/TomCat.exe
+          path: dist/TomCat.zip
 
       - name: Upload Hub artifact
         if: ${{ inputs.target == 'hub' || inputs.target == 'both' }}
@@ -147,7 +162,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ inputs.version }}"
-          $assets = @("dist\TomCat.exe", "dist\TomCatHub.exe")
+          $assets = @("dist\TomCat.zip", "dist\TomCatHub.exe")
           # Check whether the release already exists (no error swallowing)
           gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) {

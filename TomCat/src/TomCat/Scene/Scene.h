@@ -2,6 +2,7 @@
 #include "entt.hpp"
 #include "TomCat/Core/Timestep.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Asset/Asset.h"
 #include "TomCat/Renderer/EditorCamera.h"
 
 #include <optional>
@@ -20,6 +21,14 @@ namespace TomCat {
 	class Scene
 	{
 	public:
+		enum class EntityPlacement
+		{
+			Before,
+			Child,
+			After,
+			Root
+		};
+
 		Scene();
 		~Scene();
 
@@ -33,6 +42,7 @@ namespace TomCat {
 		bool RenameEntity(Entity entity, const std::string& requestedName);
 		void DestroyEntity(Entity entity);
 		bool SetParent(Entity child, Entity parent);
+		bool MoveEntity(Entity entity, Entity target, EntityPlacement placement);
 		bool SetWorldTransform(Entity entity, const glm::mat4& worldTransform);
 		bool SetLocalTransform(Entity entity, const glm::mat4& localTransform);
 		bool SyncTransformHierarchy();
@@ -53,6 +63,7 @@ namespace TomCat {
 
 		Entity GetPrimaryCameraEntity();
 		Entity FindEntityByUUID(UUID uuid);
+		std::vector<AssetReference> FindAssetReferences(AssetHandle handle);
 	private:
 		std::string MakeUniqueEntityName(const std::string& requestedName) const;
 		bool ValidateTransformHierarchy();

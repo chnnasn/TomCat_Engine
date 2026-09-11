@@ -74,11 +74,9 @@ namespace TomCat {
 
 		static std::filesystem::path GetCacheDirectory()
 		{
-			// Packages is virtualized by the boxed distribution.  Keeping a
-			// writable shader cache below it makes the virtual folder materialize
-			// next to the executable (and fails on a read-only virtual tree).
-			// Store generated binaries in the system temporary directory instead;
-			// source shaders and all other packaged assets remain under Packages/.
+			// Packages is distributed as read-only editor content. Keep generated
+			// binaries out of that visible tree and in the system temporary directory;
+			// source shaders and the rest of the editor resources remain under Packages/.
 			std::error_code error;
 			const auto tempDirectory = std::filesystem::temp_directory_path(error);
 			if (!error && !tempDirectory.empty())

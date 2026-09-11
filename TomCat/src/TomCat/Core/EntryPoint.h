@@ -101,11 +101,12 @@ int wmain(int argc, wchar_t** argv) {
 	TC_PROFILE_BEGIN_SESSION("Runtime", "TomCatProfile-Runtime.json");
 	app->Run();							
 	TC_PROFILE_END_SESSION();			
+	const int exitCode = app->GetExitCode();
 										
 	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Shutdown.json");
 	delete app;							
 	TC_PROFILE_END_SESSION();
-	return 0;
+	return exitCode;
 }
 
 #endif

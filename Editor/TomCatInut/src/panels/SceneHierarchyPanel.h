@@ -2,9 +2,12 @@
 
 #include "TomCat/Core/Base.h"
 #include "TomCat/Core/Log.h"
+#include "TomCat/Asset/Asset.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Entity.h"
+#include "../EditorIcons.h"
 
+#include <array>
 #include <functional>
 
 namespace TomCat {
@@ -12,14 +15,15 @@ namespace TomCat {
 	class SceneHierarchyPanel
 	{
 	public:
-		using SceneLoadCallback = std::function<void(const std::filesystem::path&)>;
-		using SpriteCreateCallback = std::function<void(const std::filesystem::path&)>;
+		using SceneLoadCallback = std::function<void(AssetHandle)>;
+		using SpriteCreateCallback = std::function<void(AssetHandle)>;
 		using SceneModifiedCallback = std::function<void()>;
 
 		SceneHierarchyPanel() = default;
 		SceneHierarchyPanel(const Ref<Scene>& scene);
 
 		void SetContext(const Ref<Scene>& scene, bool clearSelection = true, bool remapSelection = false);
+		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 
 		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr);
 
@@ -28,11 +32,6 @@ namespace TomCat {
 		void SetSelectedEntity(Entity entity);
 		bool HandleShortcut(int keyCode, bool control);
 		bool IsHierarchyFocused() const { return m_HierarchyFocused; }
-		bool RemapSpriteTextureReferences(const Ref<Scene>& scene,
-			const std::filesystem::path& oldRoot, const std::filesystem::path& newRoot);
-		bool ClearSpriteTextureReferences(const Ref<Scene>& scene,
-			const std::filesystem::path& deletedRoot);
-
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }
@@ -66,6 +65,10 @@ namespace TomCat {
 		Entity m_TagEditingEntity;
 		char m_TagEditBuffer[256] = {};
 		bool m_HierarchyFocused = false;
+		Ref<EditorIconSet> m_Icons;
+		std::array<char, 256> m_SpriteSearch{};
+		bool m_SpritePickerOpen = false;
+		UUID m_SpritePickerEntity = UUID(0);
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;

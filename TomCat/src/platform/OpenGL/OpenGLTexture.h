@@ -3,6 +3,8 @@
 #include "TomCat/Renderer/Texture.h"
 #include <glad/glad.h>
 
+#include <cstddef>
+
 namespace TomCat {
 
 	class OpenGLTexture2D : public Texture2D
@@ -10,6 +12,8 @@ namespace TomCat {
 	public:
 		OpenGLTexture2D(uint32_t width, uint32_t height);
 		OpenGLTexture2D(const std::filesystem::path& path);
+		OpenGLTexture2D(const void* encodedData, size_t encodedSize,
+			const std::filesystem::path& sourcePath = {});
 		virtual ~OpenGLTexture2D();
 
 
@@ -30,6 +34,10 @@ namespace TomCat {
 		{
 			return m_RendererID == other.GetRendererID();
 		}
+
+	private:
+		bool LoadEncodedImage(const void* encodedData, size_t encodedSize);
+		void CreateStorageAndUpload(const void* rgbaPixels);
 
 	private:
 		std::filesystem::path m_Path;

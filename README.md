@@ -14,7 +14,7 @@ A **C++20 2D game engine + editor + project hub**, built on OpenGL / ImGui / Box
 - **Editor**: ImGui-powered ContentBrowser and SceneHierarchy panels with persisted layouts
 - **Hub project manager**: multi-project management, virtual-path mounting, sort by last opened
 - **Chinese support**: dynamically generated Chinese glyph set for ImGui, CN/EN toggle
-- **One-click packaging**: GitHub Actions 3-mode (Editor / Hub / Both), Enigma single-exe boxing
+- **One-click packaging**: GitHub Actions 3-mode (Editor / Hub / Both); boxed executables with external Editor Packages
 
 ## Screenshots
 
@@ -49,7 +49,7 @@ vendor/            premake and third-party dependencies
 ## Packaging
 
 - Local: `Scripts\Package-Editor.ps1` / `Scripts\Package-Hub.ps1`
-- CI: GitHub Actions (`workflow_dispatch` with editor / hub / both), Enigma single-exe boxing + Release publish
+- CI: GitHub Actions (`workflow_dispatch` with editor / hub / both); the Editor is published as `TomCat.zip` (`TomCat.exe` + external `Packages/`), while the Hub remains a boxed executable
 
 ## Roadmap
 

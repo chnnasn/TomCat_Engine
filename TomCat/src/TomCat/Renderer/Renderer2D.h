@@ -21,7 +21,7 @@ namespace TomCat {
 		static void EndScene();
 		static void Flush();
 
-		// Primitives
+		// Filled rectangles (quads)
 		static void DrawQuad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color);
 		static void DrawQuad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color);
 		static void DrawQuad(const glm::vec2& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
@@ -29,21 +29,41 @@ namespace TomCat {
 
 		static void DrawQuad(const glm::mat4& transform, const glm::vec4& color, int entityID = -1);
 		static void DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1);
+		// Procedural circle primitive for colliders, masks, gizmos, and other
+		// utility rendering. Ordinary visible objects use a SpriteRenderer asset.
+		static void DrawCircle(const glm::mat4& transform, const glm::vec4& color,
+			float thickness = 1.0f, float fade = 0.005f, int entityID = -1);
+
+		static void DrawLine(const glm::vec3& start, const glm::vec3& end,
+			const glm::vec4& color, int entityID = -1);
+		// Rectangle outlines rendered as four lines.
+		static void DrawRect(const glm::vec2& position, const glm::vec2& size,
+			const glm::vec4& color, int entityID = -1);
+		static void DrawRect(const glm::vec3& position, const glm::vec2& size,
+			const glm::vec4& color, int entityID = -1);
+		static void DrawRect(const glm::mat4& transform, const glm::vec4& color,
+			int entityID = -1);
+
+		static float GetLineWidth();
+		static void SetLineWidth(float width);
 
 		static void DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const glm::vec4& color);
 		static void DrawRotatedQuad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color);
 		static void DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 		static void DrawRotatedQuad(const glm::vec3& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 
+		// Resolves the SpriteRenderer handle and draws its sprite through the textured-quad path.
 		static void DrawSprite(const glm::mat4& transform, SpriteRenderer& src, int entityID);
 		// Stats
 		struct Statistics
 		{
 			uint32_t DrawCalls = 0;
 			uint32_t QuadCount = 0;
+			uint32_t CircleCount = 0;
+			uint32_t LineCount = 0;
 
-			uint32_t GetTotalVertexCount() { return QuadCount * 4; }
-			uint32_t GetTotalIndexCount() { return QuadCount * 6; }
+			uint32_t GetTotalVertexCount() const { return (QuadCount + CircleCount) * 4 + LineCount * 2; }
+			uint32_t GetTotalIndexCount() const { return (QuadCount + CircleCount) * 6; }
 		};
 		static void ResetStats();
 		static Statistics GetStats();

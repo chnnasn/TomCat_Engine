@@ -13,6 +13,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -38,6 +39,26 @@ namespace TomCat {
 		constexpr float kSceneTransformToolbarWidth = kSceneToolbarPadding * 2.0f +
 			kSceneToolbarHandleWidth + kSceneToolbarItemGap +
 			kSceneTransformButtonWidth * 4.0f + kSceneToolbarItemGap * 3.0f;
+
+		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
+		{
+			return texture
+				? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetRendererID()))
+				: nullptr;
+		}
+
+		void DrawEditorIcon(ImDrawList* drawList, const Ref<EditorIconSet>& icons,
+			EditorIcon icon, const ImVec2& minimum, const ImVec2& maximum,
+			ImU32 tint = IM_COL32_WHITE)
+		{
+			if (!drawList || !icons)
+				return;
+			const Ref<Texture2D>& texture = icons->Get(icon);
+			if (!texture)
+				return;
+			drawList->AddImage(ToImGuiTextureID(texture), minimum, maximum,
+				ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
+		}
 
 		uint32_t ToFramebufferExtent(float value)
 		{
@@ -425,9 +446,12 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-
-		m_IconPlay = Texture2D::Create("Packages/Resources/Icons/PlayButton.png");
-		m_IconStop = Texture2D::Create("Packages/Resources/Icons/StopButton.png");
+		m_EditorIcons = CreateRef<EditorIconSet>();
+		if (!m_EditorIcons->Load())
+			TC_Core_Warn("One or more editor icons could not be loaded");
+		m_SceneHierarchyPanel.SetIcons(m_EditorIcons);
+		m_ContentBrowserPanel.SetIcons(m_EditorIcons);
+		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 
 		FramebufferSpecification fbSpec;
 		fbSpec.Attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
@@ -446,54 +470,108 @@ namespace TomCat {
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 		m_EditorCamera.Set2DMode(m_Is2DMode);
 
-		m_SceneHierarchyPanel.SetSceneLoadCallback([this](const std::filesystem::path& path) {
-			OpenScene(path);
+		m_SceneHierarchyPanel.SetSceneLoadCallback([this](AssetHandle handle) {
+			const std::filesystem::path path = AssetManager::Get().ResolvePath(handle);
+			if (!path.empty())
+				OpenScene(path);
 		});
-		m_ContentBrowserPanel.SetSceneOpenCallback([this](const std::filesystem::path& path) {
-			OpenScene(path);
+		m_ContentBrowserPanel.SetSceneOpenCallback([this](AssetHandle handle) {
+			const std::filesystem::path path = AssetManager::Get().ResolvePath(handle);
+			if (!path.empty())
+				OpenScene(path);
 		});
 		m_ContentBrowserPanel.SetAssetRenamedCallback([this](const std::filesystem::path& oldPath,
 			const std::filesystem::path& newPath) {
+			const std::filesystem::path previousEditorScenePath = m_EditorScenePath;
+			const std::filesystem::path previousStartScene = m_CurrentProject
+				? m_CurrentProject->GetConfig().StartScene : std::filesystem::path{};
 			std::filesystem::path relative;
 			if (!m_EditorScenePath.empty() && TryGetRelativeWithin(oldPath, m_EditorScenePath, relative))
 				m_EditorScenePath = newPath / relative;
 
-			const bool editorChanged = m_SceneHierarchyPanel.RemapSpriteTextureReferences(
-				m_EditorScene, oldPath, newPath);
-			if (m_ActiveScene && m_ActiveScene != m_EditorScene)
-				m_SceneHierarchyPanel.RemapSpriteTextureReferences(m_ActiveScene, oldPath, newPath);
-			if (editorChanged)
-				m_SceneDirty = true;
+			// StartScene is an authoring locator; StartSceneHandle remains the
+			// authoritative identity across this move.
+			if (m_CurrentProject)
+			{
+				const std::filesystem::path oldStartScene = m_CurrentProject->GetAssetPath() /
+					m_CurrentProject->GetConfig().StartScene;
+				if (TryGetRelativeWithin(oldPath, oldStartScene, relative))
+				{
+					const std::filesystem::path movedStartScene = newPath / relative;
+					std::filesystem::path assetRelative;
+					const bool updated = TryGetRelativeWithin(m_CurrentProject->GetAssetPath(),
+						movedStartScene, assetRelative) &&
+						m_CurrentProject->SetStartScene(assetRelative) && m_CurrentProject->Save();
+					if (!updated)
+					{
+						m_EditorScenePath = previousEditorScenePath;
+						m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
+						(void)m_CurrentProject->SetStartScene(previousStartScene);
+						TC_Core_Error("The start scene move was rejected because Project.tcproj could not be updated");
+						return false;
+					}
+				}
+			}
+			m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
+			return true;
 		});
 		m_ContentBrowserPanel.SetAssetDeletedCallback([this](const std::filesystem::path& deletedPath) {
 			std::filesystem::path relative;
 			if (!m_EditorScenePath.empty() && TryGetRelativeWithin(deletedPath, m_EditorScenePath, relative))
 			{
 				m_EditorScenePath.clear();
+				m_ContentBrowserPanel.SetActiveScenePath({});
 				m_SceneDirty = true;
 			}
-
-			const bool editorChanged = m_SceneHierarchyPanel.ClearSpriteTextureReferences(
-				m_EditorScene, deletedPath);
-			if (m_ActiveScene && m_ActiveScene != m_EditorScene)
-				m_SceneHierarchyPanel.ClearSpriteTextureReferences(m_ActiveScene, deletedPath);
-			if (editorChanged)
-				m_SceneDirty = true;
+			if (m_CurrentProject)
+			{
+				const std::filesystem::path startScene = m_CurrentProject->GetAssetPath() /
+					m_CurrentProject->GetConfig().StartScene;
+				if (TryGetRelativeWithin(deletedPath, startScene, relative))
+					TC_Warn("The configured start scene was deleted and is now a missing asset: {0}",
+						PathToUTF8(startScene));
+			}
+			// Sprite handles deliberately survive deletion. AssetManager resolves
+			// them to the shared missing-resource texture until the asset is restored.
 		});
 
-		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](const std::filesystem::path& path) {
+		m_SceneHierarchyPanel.SetSpriteCreateCallback([this](AssetHandle handle) {
 			if (!m_ActiveScene)
 				return;
+			const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+			if (!metadata || metadata->Type != AssetType::Texture2D)
+				return;
+			const std::filesystem::path path = AssetManager::Get().ResolvePath(handle);
 			std::string fileName = PathToUTF8(path.stem());
 			auto Square = m_ActiveScene->CreateEntity(fileName);
 			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-			SpriteR.Texture = Texture2D::Create(path);
+			SpriteR.SpriteHandle = handle;
+			SpriteR.Sprite = AssetManager::Get().LoadTexture(handle);
 			if (m_SceneState == SceneState::Edit)
 				m_SceneDirty = true;
 		});
 		m_SceneHierarchyPanel.SetSceneModifiedCallback([this]() {
 			if (m_SceneState == SceneState::Edit)
 				m_SceneDirty = true;
+		});
+		AssetManager::Get().SetLiveReferenceProvider([this](AssetHandle handle) {
+			std::vector<AssetReference> references;
+			if (m_EditorScene)
+				references = m_EditorScene->FindAssetReferences(handle);
+			AssetHandle sceneHandle(0);
+			if (!m_EditorScenePath.empty())
+			{
+				if (const AssetMetadata* metadata =
+					AssetManager::Get().GetRegistry().GetMetadata(m_EditorScenePath))
+					sceneHandle = metadata->Handle;
+			}
+			for (AssetReference& reference : references)
+			{
+				reference.ReferencingAsset = sceneHandle;
+				reference.FilePath = m_EditorScenePath.empty()
+					? std::filesystem::path("<Unsaved Scene>") : m_EditorScenePath;
+			}
+			return references;
 		});
 
 		if (m_CurrentProject)
@@ -508,7 +586,7 @@ namespace TomCat {
 	void EditorLayer::OnDetach()
 	{
 		TC_PROFILE_FUNCTION();
-		if (m_SceneState == SceneState::Play)
+		if (IsSceneRunning())
 			OnSceneStop();
 
 		if (m_CurrentProject)
@@ -519,6 +597,8 @@ namespace TomCat {
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
 		m_ContentBrowserPanel.SaveLayoutSetting();
 		SaveSceneToolbarLayout();
+		AssetManager::Get().SetLiveReferenceProvider({});
+		AssetManager::Get().Shutdown();
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
@@ -592,8 +672,12 @@ namespace TomCat {
 		m_GameFramebuffer->ClearAttachment(1, -1);
 
 		// Game窗口使用Runtime渲染，背景色由摄像机的BackgroundColor设置
-		if (m_SceneState == SceneState::Play)
+		if (m_SceneState == SceneState::Play ||
+			(m_SceneState == SceneState::Pause && m_StepRequested))
+		{
 			m_ActiveScene->OnUpdateRuntime(ts);
+			m_StepRequested = false;
+		}
 		else
 			m_ActiveScene->OnRenderRuntime();
 		m_GameFramebuffer->Unbind();
@@ -778,19 +862,22 @@ namespace TomCat {
 		// its drop target. Toolbar items submitted later must never steal the target.
 		if (ImGui::BeginDragDropTarget())
 		{
-			const std::filesystem::path assetPath = m_CurrentProject ? m_CurrentProject->GetAssetPath() : g_AssetPath;
 			const ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SPRITE", flags))
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID, flags))
 			{
-				const wchar_t* relativePath = static_cast<const wchar_t*>(payload->Data);
-				const std::filesystem::path texturePath = assetPath / relativePath;
-				if (m_ActiveScene)
+				if (payload->DataSize == sizeof(uint64_t) && m_ActiveScene)
 				{
-					Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(texturePath.stem()));
-					auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
-					renderer.Texture = Texture2D::Create(texturePath);
-					if (m_SceneState == SceneState::Edit)
-						m_SceneDirty = true;
+					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+					if (metadata && metadata->Type == AssetType::Texture2D)
+					{
+						Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(metadata->FilePath.stem()));
+						auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
+						renderer.SpriteHandle = handle;
+						renderer.Sprite = AssetManager::Get().LoadTexture(handle);
+						if (m_SceneState == SceneState::Edit)
+							m_SceneDirty = true;
+					}
 				}
 			}
 			ImGui::EndDragDropTarget();
@@ -934,6 +1021,8 @@ namespace TomCat {
 				ImGui::Text("Stats:");
 				ImGui::Text("Draw Calls: %d", stats.DrawCalls);
 				ImGui::Text("Quads: %d", stats.QuadCount);
+				ImGui::Text("Circles: %d", stats.CircleCount);
+				ImGui::Text("Lines: %d", stats.LineCount);
 				ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
 				ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
 
@@ -1062,7 +1151,6 @@ namespace TomCat {
 			const ImU32 outer = IM_COL32(40, 40, 40, 245);
 			const ImU32 normal = IM_COL32(71, 71, 71, 245);
 			const ImU32 active = IM_COL32(44, 93, 135, 255);
-			const ImU32 line = IM_COL32(196, 196, 196, 255);
 			const ImU32 handleLine = IM_COL32(137, 137, 137, 255);
 			draw->AddRectFilled(topLeft, bottomRight, outer, 2.0f);
 
@@ -1087,6 +1175,8 @@ namespace TomCat {
 
 			const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
 				ImGuizmo::OPERATION::ROTATE, ImGuizmo::OPERATION::SCALE };
+			const EditorIcon toolIcons[] = { EditorIcon::Hand, EditorIcon::Move,
+				EditorIcon::Rotate, EditorIcon::Scale };
 			for (int i = 0; i < 4; ++i)
 			{
 				ImVec2 min(topLeft.x + dockPadding + dockHandleWidth + dockGap + i * (dockButtonWidth + dockGap),
@@ -1095,30 +1185,11 @@ namespace TomCat {
 				const bool selected = m_GizmoType == tools[i];
 				draw->AddRectFilled(min, max, selected ? active : normal, 2.0f);
 				draw->AddRect(min, max, selected ? active : IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
-				ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
-				if (i == 0)
-				{
-					draw->AddTriangleFilled(ImVec2(c.x - 6, c.y - 10), ImVec2(c.x + 7, c.y + 8),
-						ImVec2(c.x, c.y + 6), line);
-					draw->AddLine(ImVec2(c.x, c.y + 6), ImVec2(c.x - 4, c.y + 11), line, 2.0f);
-				}
-				else if (i == 1)
-				{
-					draw->AddLine(ImVec2(c.x - 9, c.y), ImVec2(c.x + 9, c.y), line, 2.0f);
-					draw->AddLine(ImVec2(c.x, c.y - 9), ImVec2(c.x, c.y + 9), line, 2.0f);
-				}
-				else if (i == 2)
-				{
-					draw->AddCircle(c, 8.0f, line, 20, 2.0f);
-					draw->AddTriangleFilled(ImVec2(c.x + 7, c.y - 8), ImVec2(c.x + 2, c.y - 9), ImVec2(c.x + 7, c.y - 3), line);
-				}
-				else
-				{
-					draw->AddLine(ImVec2(c.x - 8, c.y - 7), ImVec2(c.x - 2, c.y - 7), line, 2.0f);
-					draw->AddLine(ImVec2(c.x - 8, c.y - 7), ImVec2(c.x - 8, c.y - 1), line, 2.0f);
-					draw->AddLine(ImVec2(c.x + 8, c.y + 7), ImVec2(c.x + 2, c.y + 7), line, 2.0f);
-					draw->AddLine(ImVec2(c.x + 8, c.y + 7), ImVec2(c.x + 8, c.y + 1), line, 2.0f);
-				}
+				const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+				constexpr float dockIconRadius = 11.0f;
+				DrawEditorIcon(draw, m_EditorIcons, toolIcons[i],
+					ImVec2(center.x - dockIconRadius, center.y - dockIconRadius),
+					ImVec2(center.x + dockIconRadius, center.y + dockIconRadius));
 				ImGui::SetCursorScreenPos(min);
 				ImGui::InvisibleButton((std::string("##scene_docked_tool_") + std::to_string(i)).c_str(),
 					ImVec2(max.x - min.x, max.y - min.y));
@@ -1155,7 +1226,6 @@ namespace TomCat {
 		const ImU32 outer = IM_COL32(40, 40, 40, 245);
 		const ImU32 normal = IM_COL32(71, 71, 71, 245);
 		const ImU32 active = IM_COL32(44, 93, 135, 255);
-		const ImU32 line = IM_COL32(196, 196, 196, 255);
 
 		draw->AddRectFilled(topLeft, bottomRight, outer, 2.0f);
 
@@ -1182,6 +1252,8 @@ namespace TomCat {
 
 		const int tools[] = { -1, ImGuizmo::OPERATION::TRANSLATE,
 			ImGuizmo::OPERATION::ROTATE, ImGuizmo::OPERATION::SCALE };
+		const EditorIcon toolIcons[] = { EditorIcon::Hand, EditorIcon::Move,
+			EditorIcon::Rotate, EditorIcon::Scale };
 		for (int i = 0; i < 4; ++i)
 		{
 			ImVec2 min(topLeft.x + 5.0f, topLeft.y + handleHeight + gap + i * (buttonHeight + gap));
@@ -1189,35 +1261,11 @@ namespace TomCat {
 			bool selected = m_GizmoType == tools[i];
 			draw->AddRectFilled(min, max, selected ? active : normal, 2.0f);
 
-			// Four compact symbols: cursor, move, rotate and scale.
-			ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
-			if (i == 0)
-			{
-				draw->AddTriangleFilled(ImVec2(center.x - 8, center.y - 15),
-					ImVec2(center.x + 9, center.y + 11), ImVec2(center.x - 1, center.y + 8), line);
-				draw->AddLine(ImVec2(center.x - 1, center.y + 8), ImVec2(center.x - 6, center.y + 15), line, 3.0f);
-			}
-			else if (i == 1)
-			{
-				draw->AddLine(ImVec2(center.x - 15, center.y), ImVec2(center.x + 15, center.y), line, 3.0f);
-				draw->AddLine(ImVec2(center.x, center.y - 15), ImVec2(center.x, center.y + 15), line, 3.0f);
-				draw->AddTriangleFilled(ImVec2(center.x - 15, center.y), ImVec2(center.x - 7, center.y - 5), ImVec2(center.x - 7, center.y + 5), line);
-				draw->AddTriangleFilled(ImVec2(center.x + 15, center.y), ImVec2(center.x + 7, center.y - 5), ImVec2(center.x + 7, center.y + 5), line);
-				draw->AddTriangleFilled(ImVec2(center.x, center.y - 15), ImVec2(center.x - 5, center.y - 7), ImVec2(center.x + 5, center.y - 7), line);
-				draw->AddTriangleFilled(ImVec2(center.x, center.y + 15), ImVec2(center.x - 5, center.y + 7), ImVec2(center.x + 5, center.y + 7), line);
-			}
-			else if (i == 2)
-			{
-				draw->AddCircle(center, 14.0f, line, 24, 3.0f);
-				draw->AddTriangleFilled(ImVec2(center.x + 13, center.y - 14), ImVec2(center.x + 4, center.y - 15), ImVec2(center.x + 12, center.y - 5), line);
-			}
-			else
-			{
-				draw->AddLine(ImVec2(min.x + 12, min.y + 16), ImVec2(min.x + 22, min.y + 16), line, 3.0f);
-				draw->AddLine(ImVec2(min.x + 12, min.y + 16), ImVec2(min.x + 12, min.y + 26), line, 3.0f);
-				draw->AddLine(ImVec2(max.x - 12, max.y - 16), ImVec2(max.x - 22, max.y - 16), line, 3.0f);
-				draw->AddLine(ImVec2(max.x - 12, max.y - 16), ImVec2(max.x - 12, max.y - 26), line, 3.0f);
-			}
+			const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+			constexpr float floatingIconRadius = 17.0f;
+			DrawEditorIcon(draw, m_EditorIcons, toolIcons[i],
+				ImVec2(center.x - floatingIconRadius, center.y - floatingIconRadius),
+				ImVec2(center.x + floatingIconRadius, center.y + floatingIconRadius));
 
 			ImGui::SetCursorScreenPos(min);
 			ImGui::InvisibleButton((std::string("##scene_tool_") + std::to_string(i)).c_str(),
@@ -1452,52 +1500,72 @@ namespace TomCat {
 
 	void EditorLayer::UI_Toolbar()
 	{
-		float size = 40;
-		float padding = 4;
+		constexpr float iconSize = 24.0f;
+		constexpr int framePadding = 4;
+		const float buttonSize = iconSize + framePadding * 2.0f;
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
+		const float groupWidth = buttonSize * 4.0f + spacing * 3.0f;
+		ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - groupWidth) * 0.5f));
+		ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(),
+			(ImGui::GetWindowHeight() - buttonSize) * 0.5f));
 
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, padding));
-		auto& colors = ImGui::GetStyle().Colors;
-		// Use a framed Unity-style play control instead of a bare floating icon.
-		// When running, the stop control inherits the same blue selected state as
-		// the hierarchy and Scene toolbars.
-		const ImVec4 buttonColor = m_SceneState == SceneState::Play
-			? colors[ImGuiCol_HeaderActive] : colors[ImGuiCol_Button];
-		ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
-		const auto& buttonHovered = colors[ImGuiCol_ButtonHovered];
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHovered);
-		const auto& buttonActive = colors[ImGuiCol_ButtonActive];
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, buttonActive);
-
-		float windowWidth = ImGui::GetWindowWidth();
-		ImGui::SetCursorPosX((windowWidth - size) * 0.5f);
-
-		Ref<Texture2D> icon = m_SceneState == SceneState::Edit ? m_IconPlay : m_IconStop;
-
-		// 只有当当前有场景时，才允许按下播放按钮
-		if (m_SceneState == SceneState::Edit && !m_EditorScene)
+		auto drawButton = [&](const char* id, EditorIcon icon, bool enabled,
+			bool selected, const char* tooltip)
 		{
-			// 如果当前没有场景，禁用播放按钮
-			ImGui::BeginDisabled();
-		}
+			ImGui::PushID(id);
+			const ImVec4 buttonColor = selected
+				? ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive)
+				: ImGui::GetStyleColorVec4(ImGuiCol_Button);
+			ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
+			if (!enabled)
+				ImGui::BeginDisabled();
 
-		if (ImGui::ImageButton(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())), ImVec2(size, size),
-			ImVec2(0, 0), ImVec2(1, 1), 0))
+			bool pressed = false;
+			const Ref<Texture2D>& texture = m_EditorIcons->Get(icon);
+			if (texture)
+			{
+				pressed = ImGui::ImageButton(ToImGuiTextureID(texture), ImVec2(iconSize, iconSize),
+					ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), framePadding,
+					ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+			}
+			else
+				pressed = ImGui::Button("?", ImVec2(buttonSize, buttonSize));
+
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", tooltip);
+			if (!enabled)
+				ImGui::EndDisabled();
+			ImGui::PopStyleColor();
+			ImGui::PopID();
+			return pressed && enabled;
+		};
+
+		const bool running = IsSceneRunning();
+		if (drawButton("Play", EditorIcon::Play, m_EditorScene != nullptr,
+			running, running ? "Stop" : "Play"))
 		{
-			if (m_SceneState == SceneState::Edit && m_EditorScene)
-				OnScenePlay();
-			else if (m_SceneState == SceneState::Play)
+			if (running)
 				OnSceneStop();
+			else
+				OnScenePlay();
 		}
-
-		if (m_SceneState == SceneState::Edit && !m_EditorScene)
-		{
-			ImGui::EndDisabled();
-		}
-
-		ImGui::PopStyleVar();
-		ImGui::PopStyleColor(3);
+		ImGui::SameLine();
+		if (drawButton("Pause", EditorIcon::Pause, running,
+			m_SceneState == SceneState::Pause, m_SceneState == SceneState::Pause ? "Resume" : "Pause"))
+			OnScenePause();
+		ImGui::SameLine();
+		if (drawButton("Step", EditorIcon::Step, m_SceneState == SceneState::Pause,
+			false, "Step one frame"))
+			OnSceneStep();
+		ImGui::SameLine();
+		if (drawButton("Stop", EditorIcon::Stop, running, false, "Stop"))
+			OnSceneStop();
 	}
 
+	bool EditorLayer::IsSceneRunning() const
+	{
+		return m_SceneState != SceneState::Edit;
+	}
 
 	void EditorLayer::OnScenePlay()
 	{
@@ -1509,6 +1577,7 @@ namespace TomCat {
 		ResizeSceneForGameView(m_ActiveScene);
 		m_ActiveScene->OnRuntimeStart();
 		m_SceneState = SceneState::Play;
+		m_StepRequested = false;
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
 		ResetSceneInteractionState();
 
@@ -1517,9 +1586,24 @@ namespace TomCat {
 
 	}
 
+	void EditorLayer::OnScenePause()
+	{
+		if (m_SceneState == SceneState::Play)
+			m_SceneState = SceneState::Pause;
+		else if (m_SceneState == SceneState::Pause)
+			m_SceneState = SceneState::Play;
+		m_StepRequested = false;
+	}
+
+	void EditorLayer::OnSceneStep()
+	{
+		if (m_SceneState == SceneState::Pause)
+			m_StepRequested = true;
+	}
+
 	void EditorLayer::OnSceneStop()
 	{
-		if (m_SceneState != SceneState::Play)
+		if (!IsSceneRunning())
 			return;
 
 		Ref<Scene> runtimeScene = m_ActiveScene;
@@ -1527,6 +1611,7 @@ namespace TomCat {
 			runtimeScene->OnRuntimeStop();
 		m_ActiveScene = m_EditorScene;
 		m_SceneState = SceneState::Edit;
+		m_StepRequested = false;
 		ResizeSceneForGameView(m_ActiveScene);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
 		ResetSceneInteractionState();
@@ -1723,7 +1808,7 @@ namespace TomCat {
 			});
 			return;
 		}
-		if (m_SceneState == SceneState::Play)
+		if (IsSceneRunning())
 			OnSceneStop();
 		m_EditorScene = CreateRef<Scene>();
 		m_EditorScene->SetSceneName("Untitled");
@@ -1735,6 +1820,7 @@ namespace TomCat {
 		m_SceneDirty = true;
 
 		m_EditorScenePath = std::filesystem::path();
+		m_ContentBrowserPanel.SetActiveScenePath({});
 		ResetSceneInteractionState();
 	}
 
@@ -1755,10 +1841,23 @@ namespace TomCat {
 	{
 		if (!m_CurrentProject)
 			return false;
-		const std::filesystem::path startScene =
-			m_CurrentProject->GetAssetPath() / m_CurrentProject->GetConfig().StartScene;
+		const AssetHandle startSceneHandle = m_CurrentProject->GetConfig().StartSceneHandle;
+		if (static_cast<uint64_t>(startSceneHandle) == 0)
+		{
+			TC_Core_Error("Project has no start scene: StartSceneHandle is 0");
+			NewScene();
+			return false;
+		}
+
+		std::filesystem::path startScene;
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(startSceneHandle);
+		if (metadata && metadata->Type == AssetType::Scene && !metadata->IsMissing)
+			startScene = AssetManager::Get().ResolvePath(startSceneHandle);
+		else
+			TC_Core_Error("Project start scene handle is missing or is not a Scene: {0}",
+				static_cast<uint64_t>(startSceneHandle));
 		std::error_code error;
-		if (std::filesystem::is_regular_file(startScene, error))
+		if (!startScene.empty() && std::filesystem::is_regular_file(startScene, error))
 		{
 			if (OpenScene(startScene))
 				return true;
@@ -1766,7 +1865,9 @@ namespace TomCat {
 		}
 		else
 		{
-			TC_Warn("Project start scene is missing: {0}", PathToUTF8(startScene));
+			TC_Warn("Project start scene is missing: {0}", startScene.empty()
+				? std::to_string(static_cast<uint64_t>(startSceneHandle))
+				: PathToUTF8(startScene));
 		}
 
 		// A project switch must never leave the previous project's scene or path
@@ -1796,13 +1897,25 @@ namespace TomCat {
 			RequestDestructiveAction([this, path]() { return OpenScene(path); });
 			return false;
 		}
+		if (m_CurrentProject)
+		{
+			const AssetHandle handle = AssetManager::Get().ImportAsset(path);
+			const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+			if (static_cast<uint64_t>(handle) == 0 || !metadata || metadata->IsMissing ||
+				metadata->Type != AssetType::Scene)
+			{
+				TC_Warn("Project scenes must be registered .tomcat assets inside Assets: {0}",
+					PathToUTF8(path));
+				return false;
+			}
+		}
 
 		Ref<Scene> newScene = CreateRef<Scene>();
 		SceneSerializer serializer(newScene);
 		if (!serializer.Deserialize(path))
 			return false;
 
-		if (m_SceneState == SceneState::Play)
+		if (IsSceneRunning())
 			OnSceneStop();
 		newScene->SetSceneName(PathToUTF8(path.stem()));
 		m_EditorScene = newScene;
@@ -1811,6 +1924,7 @@ namespace TomCat {
 
 		m_ActiveScene = m_EditorScene;
 		m_EditorScenePath = AbsoluteLexicalPath(path);
+		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 		m_SceneDirty = false;
 		ResetSceneInteractionState();
 		return true;
@@ -1844,7 +1958,8 @@ namespace TomCat {
 				path.replace_extension(".tomcat");
 			if (SerializeScene(m_EditorScene, path))
 			{
-				m_EditorScenePath = path;
+				m_EditorScenePath = AbsoluteLexicalPath(path);
+				m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 				m_SceneDirty = false;
 			}
 		}
@@ -1976,7 +2091,7 @@ namespace TomCat {
 		if (!project)
 			return false;
 
-		if (m_SceneState == SceneState::Play)
+		if (IsSceneRunning())
 			OnSceneStop();
 		m_CurrentProject = project;
 		m_Is2DMode = project->GetConfig().Template == "2D";
@@ -1988,8 +2103,8 @@ namespace TomCat {
 		LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject));
 		LoadSceneToolbarLayout();
 
-		OpenProjectStartScene();
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+		OpenProjectStartScene();
 		return true;
 	}
 

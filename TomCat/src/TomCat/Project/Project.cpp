@@ -4,12 +4,15 @@
 #include "TomCat/Utils/PathUtils.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 
 #include <yaml-cpp/yaml.h>
 
@@ -39,6 +42,19 @@ namespace TomCat {
 			return normalized != ".";
 		}
 
+		bool UsesReservedProjectRoot(const std::filesystem::path& path)
+		{
+			const std::filesystem::path normalized = path.lexically_normal();
+			if (normalized.empty())
+				return false;
+			std::string first = PathToUTF8(*normalized.begin());
+			std::transform(first.begin(), first.end(), first.begin(),
+				[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+			return first == "library" || first == "cache" || first == "usersettings" ||
+				first == ".git" || first == ".svn" || first == ".hg" ||
+				first == ".bzr" || first == ".jj";
+		}
+
 		std::filesystem::path AbsoluteNormalized(const std::filesystem::path& path)
 		{
 			std::error_code error;
@@ -66,22 +82,16 @@ namespace TomCat {
 		}
 
 		std::filesystem::path ResolveBrowserPath(const std::string& storedPath,
-			const std::filesystem::path& projectDirectory,
 			const std::filesystem::path& assetRoot)
 		{
 			if (storedPath.empty())
 				return {};
 
-			std::filesystem::path value = UTF8ToPath(storedPath);
-			if (value.is_absolute())
-				return IsPathWithinOrEqual(assetRoot, value) ? AbsoluteNormalized(value) : std::filesystem::path{};
-
-			const std::filesystem::path legacyCandidate = AbsoluteNormalized(value);
-			if (IsPathWithinOrEqual(assetRoot, legacyCandidate))
-				return legacyCandidate;
-			const std::filesystem::path projectCandidate = AbsoluteNormalized(projectDirectory / value);
-			if (IsPathWithinOrEqual(assetRoot, projectCandidate))
-				return projectCandidate;
+			const std::filesystem::path value = UTF8ToPath(storedPath);
+			if (value.lexically_normal() == ".")
+				return AbsoluteNormalized(assetRoot);
+			if (!IsSafeRelativePath(value))
+				return {};
 			const std::filesystem::path assetCandidate = AbsoluteNormalized(assetRoot / value);
 			return IsPathWithinOrEqual(assetRoot, assetCandidate) ? assetCandidate : std::filesystem::path{};
 		}
@@ -105,6 +115,98 @@ namespace TomCat {
 			return PathToUTF8(relative.lexically_normal());
 		}
 
+		std::string NormalizeBrowserStatePath(const std::string& storedPath,
+			const std::filesystem::path& assetRoot)
+		{
+			std::string normalized = storedPath;
+			std::replace(normalized.begin(), normalized.end(), '\\', '/');
+			for (const std::string_view root : { std::string_view("@assets"), std::string_view("@packages") })
+			{
+				if (normalized == root)
+					return std::string(root);
+				const std::string prefix = std::string(root) + "/";
+				if (normalized.rfind(prefix, 0) != 0)
+					continue;
+
+				const std::filesystem::path relative = UTF8ToPath(normalized.substr(prefix.size()));
+				if (!IsSafeRelativePath(relative))
+					return {};
+				std::string relativeText = PathToUTF8(relative.lexically_normal());
+				std::replace(relativeText.begin(), relativeText.end(), '\\', '/');
+				return prefix + relativeText;
+			}
+
+			// Schema v1 originally stored Assets-relative paths without a root token.
+			const std::filesystem::path resolved = ResolveBrowserPath(storedPath, assetRoot);
+			return StoreAssetRelativePath(resolved, assetRoot);
+		}
+
+		bool EnsureAssetSystemIgnoreRules(const std::filesystem::path& projectDirectory)
+		{
+			const std::filesystem::path ignorePath = projectDirectory / ".gitignore";
+			std::string contents;
+			std::error_code error;
+			const std::filesystem::file_status status =
+				std::filesystem::symlink_status(ignorePath, error);
+			if (error && error != std::errc::no_such_file_or_directory)
+				return false;
+			if (!error && std::filesystem::exists(status))
+			{
+				if (!std::filesystem::is_regular_file(status) || std::filesystem::is_symlink(status))
+					return false;
+				std::ifstream input(ignorePath, std::ios::binary);
+				if (!input)
+					return false;
+				std::ostringstream buffer;
+				buffer << input.rdbuf();
+				if (input.bad())
+					return false;
+				contents = buffer.str();
+			}
+
+			constexpr std::array<std::string_view, 3> required = {
+				"/Library/", "/Cache/", "/UserSettings/"
+			};
+			std::array<bool, required.size()> present{};
+			std::istringstream lines(contents);
+			std::string line;
+			while (std::getline(lines, line))
+			{
+				if (!line.empty() && line.back() == '\r')
+					line.pop_back();
+				for (size_t index = 0; index < required.size(); ++index)
+				{
+					const std::string_view rule = required[index];
+					const std::string_view withoutLeadingSlash = rule.substr(1);
+					if (line == rule || line == withoutLeadingSlash)
+						present[index] = true;
+				}
+			}
+
+			bool changed = false;
+			for (size_t index = 0; index < required.size(); ++index)
+			{
+				if (present[index])
+					continue;
+				if (!contents.empty() && contents.back() != '\n')
+					contents.push_back('\n');
+				contents.append(required[index]);
+				contents.push_back('\n');
+				changed = true;
+			}
+			if (!changed)
+				return true;
+
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(ignorePath, contents, writeError))
+			{
+				TC_Core_Warn("Could not update project ignore file '{0}': {1}",
+					PathToUTF8(ignorePath), writeError);
+				return false;
+			}
+			return true;
+		}
+
 		bool NormalizeAndValidateConfig(ProjectConfig& config, std::string& errorMessage)
 		{
 			if (config.Name.empty())
@@ -123,6 +225,11 @@ namespace TomCat {
 				return false;
 			}
 			config.AssetDirectory = config.AssetDirectory.lexically_normal();
+			if (UsesReservedProjectRoot(config.AssetDirectory))
+			{
+				errorMessage = "Project.AssetDirectory cannot overlap Library, Cache, UserSettings, or version-control metadata";
+				return false;
+			}
 
 			if (!IsSafeRelativePath(config.StartScene))
 			{
@@ -134,12 +241,10 @@ namespace TomCat {
 		}
 
 		void NormalizeEditorState(EditorProjectState& state,
-			const std::filesystem::path& projectDirectory,
 			const std::filesystem::path& assetRoot)
 		{
-			const std::filesystem::path resolvedCurrent = ResolveBrowserPath(
-				state.ContentBrowserCurrentDirectory, projectDirectory, assetRoot);
-			state.ContentBrowserCurrentDirectory = StoreAssetRelativePath(resolvedCurrent, assetRoot);
+			state.ContentBrowserCurrentDirectory = NormalizeBrowserStatePath(
+				state.ContentBrowserCurrentDirectory, assetRoot);
 			if (state.ContentBrowserCurrentDirectory.empty())
 				state.ContentBrowserCurrentDirectory = ".";
 
@@ -147,10 +252,9 @@ namespace TomCat {
 			validExpandedNodes.reserve(state.ContentBrowserExpandedNodes.size());
 			for (const std::string& node : state.ContentBrowserExpandedNodes)
 			{
-				const std::filesystem::path resolved = ResolveBrowserPath(node, projectDirectory, assetRoot);
-				const std::string relative = StoreAssetRelativePath(resolved, assetRoot);
-				if (!relative.empty())
-					validExpandedNodes.push_back(relative);
+				const std::string normalized = NormalizeBrowserStatePath(node, assetRoot);
+				if (!normalized.empty())
+					validExpandedNodes.push_back(normalized);
 			}
 			std::sort(validExpandedNodes.begin(), validExpandedNodes.end());
 			validExpandedNodes.erase(std::unique(validExpandedNodes.begin(), validExpandedNodes.end()),
@@ -383,6 +487,82 @@ namespace TomCat {
 			return input.bad() ? std::string{} : stream.str();
 		}
 
+		template<size_t FieldCount>
+		void RequireExactMapFields(const YAML::Node& node, const std::string& context,
+			const std::array<const char*, FieldCount>& fields)
+		{
+			if (!node || !node.IsMap())
+				throw std::runtime_error(context + " must be a map");
+
+			std::unordered_set<std::string> seenFields;
+			for (const auto& entry : node)
+			{
+				if (!entry.first.IsScalar())
+					throw std::runtime_error(context + " contains a non-scalar field name");
+				const std::string field = entry.first.as<std::string>();
+				if (!seenFields.emplace(field).second)
+					throw std::runtime_error(context + " contains duplicate field '" + field + "'");
+
+				bool known = false;
+				for (const char* expected : fields)
+				{
+					if (field == expected)
+					{
+						known = true;
+						break;
+					}
+				}
+				if (!known)
+					throw std::runtime_error(context + " contains unknown field '" + field + "'");
+			}
+
+			for (const char* field : fields)
+			{
+				if (!node[field])
+					throw std::runtime_error(context + " is missing required field '" + field + "'");
+			}
+		}
+
+		YAML::Node RequireCurrentProjectDocument(const YAML::Node& root)
+		{
+			constexpr std::array<const char*, 2> rootFields = { "SchemaVersion", "Project" };
+			RequireExactMapFields(root, "Project document", rootFields);
+
+			const YAML::Node schemaNode = root["SchemaVersion"];
+			const uint32_t schemaVersion = schemaNode.as<uint32_t>();
+			if (schemaVersion != Project::CurrentSchemaVersion)
+				throw std::runtime_error("Unsupported project SchemaVersion " +
+					std::to_string(schemaVersion) + "; expected " +
+					std::to_string(Project::CurrentSchemaVersion));
+
+			const YAML::Node projectNode = root["Project"];
+			constexpr std::array<const char*, 8> projectFields = {
+				"Name", "Version", "Description", "EditorVersion", "Template",
+				"AssetDirectory", "StartScene", "StartSceneHandle"
+			};
+			RequireExactMapFields(projectNode, "Project", projectFields);
+
+			return projectNode;
+		}
+
+		ProjectConfig ReadCurrentProjectConfig(const YAML::Node& projectNode)
+		{
+			ProjectConfig config;
+			config.Name = projectNode["Name"].as<std::string>();
+			config.Version = projectNode["Version"].as<std::string>();
+			config.Description = projectNode["Description"].as<std::string>();
+			config.EditorVersion = projectNode["EditorVersion"].as<std::string>();
+			config.Template = projectNode["Template"].as<std::string>();
+			config.AssetDirectory = UTF8ToPath(projectNode["AssetDirectory"].as<std::string>());
+			config.StartScene = UTF8ToPath(projectNode["StartScene"].as<std::string>());
+			config.StartSceneHandle = AssetHandle(projectNode["StartSceneHandle"].as<uint64_t>());
+
+			std::string validationError;
+			if (!NormalizeAndValidateConfig(config, validationError))
+				throw std::runtime_error(validationError);
+			return config;
+		}
+
 	}
 
 	Project::Project(const std::filesystem::path& projectPath)
@@ -407,7 +587,7 @@ namespace TomCat {
 		if (m_ProjectPath.empty())
 			return EditorProjectStateLoadResult::Missing;
 
-		const std::filesystem::path settingsPath = m_Directory / "UserSettings" / "editor.json";
+		const std::filesystem::path settingsPath = GetUserSettingsPath() / "editor.json";
 		std::error_code error;
 		const bool exists = std::filesystem::exists(settingsPath, error);
 		if (error)
@@ -458,7 +638,7 @@ namespace TomCat {
 					loaded.ContentBrowserExpandedNodes.push_back(node.as<std::string>());
 			}
 
-			NormalizeEditorState(loaded, m_Directory, GetAssetPath());
+			NormalizeEditorState(loaded, GetAssetPath());
 			state = std::move(loaded);
 			return EditorProjectStateLoadResult::Loaded;
 		}
@@ -475,7 +655,7 @@ namespace TomCat {
 		if (m_ProjectPath.empty())
 			return false;
 
-		const std::filesystem::path settingsPath = m_Directory / "UserSettings" / "editor.json";
+		const std::filesystem::path settingsPath = GetUserSettingsPath() / "editor.json";
 		std::error_code error;
 		std::filesystem::create_directories(settingsPath.parent_path(), error);
 		if (error)
@@ -486,7 +666,7 @@ namespace TomCat {
 		}
 
 		EditorProjectState normalized = state;
-		NormalizeEditorState(normalized, m_Directory, GetAssetPath());
+		NormalizeEditorState(normalized, GetAssetPath());
 
 		std::ostringstream json;
 		json << "{\n"
@@ -715,23 +895,11 @@ namespace TomCat {
 			return nullptr;
 		}
 
-		// Project-local Editor state must never become source content. New projects
-		// receive the ignore rule here; existing projects are left untouched.
-		const std::filesystem::path ignorePath = projectDirectory / ".gitignore";
-		std::error_code ignoreError;
-		const bool ignoreExists = std::filesystem::exists(ignorePath, ignoreError);
-		if (ignoreError)
-		{
-			TC_Core_Warn("Could not inspect project ignore file '{0}': {1}",
-				PathToUTF8(ignorePath), ignoreError.message());
-		}
-		else if (!ignoreExists)
-		{
-			std::string writeError;
-			if (!FileSystem::WriteFileAtomically(ignorePath, "/UserSettings/\n", writeError))
-				TC_Core_Warn("Could not create project ignore file '{0}': {1}",
-					PathToUTF8(ignorePath), writeError);
-		}
+		// Only Assets and their .tcmeta sidecars are project source content. Local
+		// Editor state and derived/imported data must never be committed.
+		if (!EnsureAssetSystemIgnoreRules(projectDirectory))
+			TC_Core_Warn("Could not ensure asset-system ignore rules for '{0}'",
+				PathToUTF8(projectDirectory));
 
 		project->UpdateLastOperationTime();
 		return project;
@@ -751,82 +919,15 @@ namespace TomCat {
 			YAML::Node data = YAML::Load(input);
 			if (input.bad())
 				throw std::runtime_error("Failed while reading the project file");
-			if (!data.IsMap())
-				throw std::runtime_error("Project document must be a map");
-			const uint32_t schemaVersion = data["SchemaVersion"] ? data["SchemaVersion"].as<uint32_t>() : 1U;
-			if (schemaVersion == 0 || schemaVersion > CurrentSchemaVersion)
-				throw std::runtime_error("Unsupported project SchemaVersion " + std::to_string(schemaVersion));
-
-			YAML::Node projectNode = data["Project"];
-			if (!projectNode || !projectNode.IsMap())
-				throw std::runtime_error("Project document is missing the 'Project' map");
-			if (!projectNode["Name"])
-				throw std::runtime_error("Project.Name is required");
+			const YAML::Node projectNode = RequireCurrentProjectDocument(data);
 
 			auto project = CreateRef<Project>(projectPath);
-			ProjectConfig config;
-			config.Name = projectNode["Name"].as<std::string>();
-			config.Version = ReadOptional<std::string>(projectNode, "Version", "1.0.0");
-			config.Description = ReadOptional<std::string>(projectNode, "Description", "");
-			config.EditorVersion = ReadOptional<std::string>(projectNode, "EditorVersion", "");
-			config.Template = ReadOptional<std::string>(projectNode, "Template", "3D");
-			config.AssetDirectory = UTF8ToPath(ReadOptional<std::string>(projectNode, "AssetDirectory", "Assets"));
-			config.StartScene = UTF8ToPath(ReadOptional<std::string>(projectNode, "StartScene", "sample.tomcat"));
-			config.LastOperationTime = ReadOptional<std::string>(projectNode, "LastOperationTime", "");
-
-			std::string validationError;
-			if (!NormalizeAndValidateConfig(config, validationError))
-				throw std::runtime_error(validationError);
-			project->m_Config = std::move(config);
-
-			// Older project documents stored Content Browser state in Project.tcproj.
-			// Keep it as a read-only migration source. Malformed legacy UI state is
-			// intentionally non-fatal because it is not part of the project definition.
-			const YAML::Node legacyCurrentDirectory = projectNode["TwoColumnCurrentFolder"];
-			const YAML::Node legacyExpandedNodes = projectNode["ExpandedNodes"];
-			project->m_HasLegacyEditorState = static_cast<bool>(legacyCurrentDirectory) ||
-				static_cast<bool>(legacyExpandedNodes);
-			if (legacyCurrentDirectory)
-			{
-				try
-				{
-					project->m_LegacyEditorState.ContentBrowserCurrentDirectory =
-						legacyCurrentDirectory.as<std::string>();
-				}
-				catch (const std::exception& exception)
-				{
-					TC_Core_Warn("Ignoring invalid legacy Project.TwoColumnCurrentFolder in '{0}': {1}",
-						PathToUTF8(projectPath), exception.what());
-				}
-			}
-			if (legacyExpandedNodes)
-			{
-				if (!legacyExpandedNodes.IsSequence())
-				{
-					TC_Core_Warn("Ignoring invalid legacy Project.ExpandedNodes in '{0}'",
-						PathToUTF8(projectPath));
-				}
-				else
-				{
-					for (const YAML::Node& node : legacyExpandedNodes)
-					{
-						try
-						{
-							project->m_LegacyEditorState.ContentBrowserExpandedNodes.push_back(
-								node.as<std::string>());
-						}
-						catch (const std::exception& exception)
-						{
-							TC_Core_Warn("Ignoring an invalid legacy Project.ExpandedNodes entry in '{0}': {1}",
-								PathToUTF8(projectPath), exception.what());
-						}
-					}
-				}
-			}
-			if (project->m_HasLegacyEditorState)
-				NormalizeEditorState(project->m_LegacyEditorState, project->m_Directory, project->GetAssetPath());
+			project->m_Config = ReadCurrentProjectConfig(projectNode);
 
 			project->m_PreservedDocument = ReadWholeFile(projectPath);
+			if (!EnsureAssetSystemIgnoreRules(project->m_Directory))
+				TC_Core_Warn("Could not ensure asset-system ignore rules for '{0}'",
+					PathToUTF8(project->m_Directory));
 			return project;
 		}
 		catch (const std::exception& exception)
@@ -860,19 +961,12 @@ namespace TomCat {
 				root = YAML::Load(input);
 				if (input.bad())
 					throw std::runtime_error("Failed while reading the existing project document");
-				if (!root.IsMap() || !root["Project"] || !root["Project"].IsMap())
-					throw std::runtime_error("Refusing to overwrite an invalid existing project document");
-				const uint32_t schemaVersion = root["SchemaVersion"]
-					? root["SchemaVersion"].as<uint32_t>() : 1U;
-				if (schemaVersion == 0 || schemaVersion > CurrentSchemaVersion)
-					throw std::runtime_error("Refusing to overwrite unsupported project SchemaVersion "
-						+ std::to_string(schemaVersion));
+				(void)ReadCurrentProjectConfig(RequireCurrentProjectDocument(root));
 			}
 			else if (!m_PreservedDocument.empty())
 			{
 				root = YAML::Load(m_PreservedDocument);
-				if (!root.IsMap())
-					throw std::runtime_error("Preserved project document is invalid");
+				(void)ReadCurrentProjectConfig(RequireCurrentProjectDocument(root));
 			}
 			else
 			{
@@ -889,9 +983,7 @@ namespace TomCat {
 			projectNode["Template"] = m_Config.Template;
 			projectNode["AssetDirectory"] = PathToUTF8(m_Config.AssetDirectory);
 			projectNode["StartScene"] = PathToUTF8(m_Config.StartScene);
-			projectNode.remove("TwoColumnCurrentFolder");
-			projectNode.remove("ExpandedNodes");
-			projectNode.remove("LastOperationTime");
+			projectNode["StartSceneHandle"] = static_cast<uint64_t>(m_Config.StartSceneHandle);
 
 			YAML::Emitter out;
 			out << root;
@@ -922,8 +1014,6 @@ namespace TomCat {
 		if (!localLastOperationTime.empty())
 			m_Config.LastOperationTime = localLastOperationTime;
 		m_PreservedDocument = std::move(reloaded->m_PreservedDocument);
-		m_LegacyEditorState = std::move(reloaded->m_LegacyEditorState);
-		m_HasLegacyEditorState = reloaded->m_HasLegacyEditorState;
 		return true;
 	}
 

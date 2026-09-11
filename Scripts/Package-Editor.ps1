@@ -1,6 +1,6 @@
 # Package-Editor.ps1
-# Builds the Editor, boxes it into a single exe with Enigma Virtual Box,
-# and outputs ONLY the boxed package into dist/.
+# Builds the Editor, boxes the executable with Enigma Virtual Box, and keeps
+# Packages as an external, inspectable directory beside TomCat.exe.
 #
 # Usage:
 #   .\Scripts\Package-Editor.ps1 -Build -EnigmaProject editor.evb
@@ -20,8 +20,8 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Editor\bin\Release-windows-x86_64\TomCatInut" }
 $FinalName = "TomCat"
 
-# EVB projects have a legacy, non-standard root element.  Keep recursive
-# Packages manifest generation shared with the Hub script and CI workflow.
+# EVB projects have a legacy, non-standard root element. Shared helpers still
+# handle template properties and validation; Editor Packages stay external.
 . (Join-Path $PSScriptRoot "EvbTools.ps1")
 
 # 1) Optional rebuild
@@ -47,6 +47,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "TomCat.log") -PathType L
 $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $outExe = Join-Path $dist "$FinalName.exe"
+$outPackages = Join-Path $dist "Packages"
+$outArchive = Join-Path $dist "$FinalName.zip"
 
 # 2) Locate .evb and parse its input/output paths
 $evbInput = ""
@@ -74,7 +76,9 @@ if ($EnigmaProject) {
     $evbText = $evbText.Replace($defaultSourceDir, $SourceDir)
     $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "InputFile" -Value (Join-Path $dist "TomCatInut.exe")
     $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "OutputFile" -Value $outExe
-    $evbText = Set-EvbPackageTree -TemplateText $evbText -PackageSource $packageSource
+    if ($evbText -match '(?is)<Name>\s*Packages\s*</Name>') {
+        throw "Editor EVB template must not embed Packages; distribute it beside TomCat.exe"
+    }
 
     $generatedEnigmaProject = Join-Path $dist "$FinalName.generated.evb"
     Write-EvbProject -Path $generatedEnigmaProject -Text $evbText
@@ -122,16 +126,24 @@ if ($EnigmaProject) {
     Write-Host "[3/4] Skipping Enigma boxing (pass -EnigmaProject <file.evb> to enable)"
 }
 
-# 6) Keep the boxed exe as the final package (GitHub Actions compresses on upload)
+# 6) Keep the boxed executable and publish the real Packages directory beside it.
 if ($evbOutput -and (Test-Path $evbOutput)) {
     $evbOutputFull = [System.IO.Path]::GetFullPath($evbOutput)
     $outExeFull = [System.IO.Path]::GetFullPath($outExe)
     if ($evbOutputFull -ne $outExeFull) {
         Copy-Item $evbOutput $outExe -Force
     }
-    Write-Host "[4/4] Final package -> $outExe"
+    if (Test-Path -LiteralPath $outPackages) {
+        Remove-Item -LiteralPath $outPackages -Recurse -Force
+    }
+    Copy-Item -LiteralPath $packageSource -Destination $outPackages -Recurse -Force
+    if (Test-Path -LiteralPath $outArchive) {
+        Remove-Item -LiteralPath $outArchive -Force
+    }
+    Compress-Archive -LiteralPath @($outExe, $outPackages) -DestinationPath $outArchive -CompressionLevel Optimal
+    Write-Host "[4/4] Final package -> $outArchive"
     $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
-    Write-Host "Done: $outExe ($sizeMb MB)"
+    Write-Host "Done: $outExe ($sizeMb MB) + $outPackages"
 } else {
     throw "Boxed Editor executable not found at '$evbOutput'"
 }

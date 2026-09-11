@@ -4,6 +4,8 @@
 
 #include<glad/glad.h>
 
+#include <cmath>
+
 namespace TomCat {
 
 	void OpenGLRendererAPI::Init()
@@ -45,6 +47,32 @@ namespace TomCat {
 
 		vertexArray->Bind();
 		glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
+	}
+
+	void OpenGLRendererAPI::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)
+	{
+		if (!vertexArray)
+		{
+			TC_Core_Error("DrawLines requires a vertex array");
+			return;
+		}
+
+		if (vertexCount == 0)
+			return;
+
+		vertexArray->Bind();
+		glDrawArrays(GL_LINES, 0, vertexCount);
+	}
+
+	void OpenGLRendererAPI::SetLineWidth(float width)
+	{
+		if (!std::isfinite(width) || width <= 0.0f)
+		{
+			TC_Core_Error("SetLineWidth requires a finite width greater than zero");
+			return;
+		}
+
+		glLineWidth(width);
 	}
 
 }

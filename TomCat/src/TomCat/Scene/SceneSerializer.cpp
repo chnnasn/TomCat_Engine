@@ -3,12 +3,16 @@
 
 #include "Components.h"
 #include "Entity.h"
+#include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <system_error>
 #include <unordered_map>
@@ -96,7 +100,6 @@ namespace TomCat {
 
 	namespace {
 
-		constexpr uint32_t kCurrentSceneSchemaVersion = 2;
 		constexpr float kPi = 3.14159265358979323846f;
 
 		bool IsFinite(float value)
@@ -201,6 +204,15 @@ namespace TomCat {
 				throw std::runtime_error(context + ".TilingFactor must be finite and non-negative");
 		}
 
+		void ValidateLine(const LineRenderer& line, const std::string& context)
+		{
+			RequireUnitColor(line._Color, context + ".Color");
+			RequireFinite(line.Start, context + ".Start");
+			RequireFinite(line.End, context + ".End");
+			if (!IsFinite(line.Width) || line.Width <= 0.0f)
+				throw std::runtime_error(context + ".Width must be finite and greater than zero");
+		}
+
 		void ValidateCollider(const BoxCollider2D& collider, const std::string& context)
 		{
 			RequireFinite(collider.Offset, context + ".Offset");
@@ -241,6 +253,40 @@ namespace TomCat {
 				throw std::runtime_error(context + " must be a map");
 		}
 
+		bool ContainsField(std::initializer_list<const char*> fields, const std::string& candidate)
+		{
+			for (const char* field : fields)
+			{
+				if (candidate == field)
+					return true;
+			}
+			return false;
+		}
+
+		void RequireExactFields(const YAML::Node& node, const std::string& context,
+			std::initializer_list<const char*> requiredFields,
+			std::initializer_list<const char*> optionalFields = {})
+		{
+			RequireMap(node, context);
+			std::unordered_set<std::string> seenFields;
+			for (const auto& entry : node)
+			{
+				if (!entry.first.IsScalar())
+					throw std::runtime_error(context + " contains a non-scalar field name");
+				const std::string field = entry.first.as<std::string>();
+				if (!seenFields.emplace(field).second)
+					throw std::runtime_error(context + " contains duplicate field '" + field + "'");
+				if (!ContainsField(requiredFields, field) && !ContainsField(optionalFields, field))
+					throw std::runtime_error(context + " contains unknown field '" + field + "'");
+			}
+
+			for (const char* field : requiredFields)
+			{
+				if (!node[field])
+					throw std::runtime_error(context + " is missing required field '" + field + "'");
+			}
+		}
+
 		template<typename T>
 		T ReadRequired(const YAML::Node& node, const char* key, const std::string& context)
 		{
@@ -249,13 +295,6 @@ namespace TomCat {
 			if (!value)
 				throw std::runtime_error(context + " is missing required field '" + key + "'");
 			return value.as<T>();
-		}
-
-		template<typename T>
-		T ReadOptional(const YAML::Node& node, const char* key, const T& fallback)
-		{
-			const YAML::Node value = node ? node[key] : YAML::Node{};
-			return value ? value.as<T>() : fallback;
 		}
 
 		std::string Rigidbody2DBodyTypeToString(Rigidbody2D::BodyType bodyType)
@@ -277,45 +316,7 @@ namespace TomCat {
 			throw std::runtime_error("Unknown Rigidbody2D body type '" + value + "'");
 		}
 
-		std::string MakePortableTexturePath(const std::filesystem::path& texturePath,
-			const std::filesystem::path& scenePath)
-		{
-			if (texturePath.empty())
-				return {};
-
-			std::error_code error;
-			std::filesystem::path texture = std::filesystem::absolute(texturePath, error);
-			if (error)
-				return PathToUTF8(texturePath.lexically_normal());
-
-			std::filesystem::path sceneDirectory = scenePath.parent_path();
-			if (sceneDirectory.empty())
-				sceneDirectory = std::filesystem::current_path(error);
-			else
-				sceneDirectory = std::filesystem::absolute(sceneDirectory, error);
-			if (!error)
-			{
-				std::filesystem::path relative = std::filesystem::relative(texture, sceneDirectory, error);
-				if (!error && !relative.empty())
-					return PathToUTF8(relative.lexically_normal());
-			}
-			return PathToUTF8(texture.lexically_normal());
-		}
-
-		std::filesystem::path ResolveTexturePath(const std::string& storedPath,
-			const std::filesystem::path& scenePath)
-		{
-			std::filesystem::path texturePath = UTF8ToPath(storedPath);
-			if (texturePath.is_absolute())
-				return texturePath.lexically_normal();
-			std::filesystem::path parent = scenePath.parent_path();
-			if (parent.empty())
-				parent = ".";
-			return (parent / texturePath).lexically_normal();
-		}
-
-		void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity,
-			const std::filesystem::path& scenePath)
+		void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity)
 		{
 			const std::string context = "Entity " + std::to_string(static_cast<uint64_t>(entity.GetUUID()));
 			out << YAML::BeginMap;
@@ -366,12 +367,28 @@ namespace TomCat {
 			{
 				auto& sprite = entity.GetComponent<SpriteRenderer>();
 				ValidateSprite(sprite, context + ".SpriteRenderer");
+				if (sprite.Sprite && static_cast<uint64_t>(sprite.SpriteHandle) == 0)
+					throw std::runtime_error(context +
+						".SpriteRenderer has a resolved sprite but no AssetHandle");
 				out << YAML::Key << "SpriteRenderer" << YAML::Value << YAML::BeginMap;
 				out << YAML::Key << "Enabled" << YAML::Value << sprite.Enabled;
+				out << YAML::Key << "SpriteHandle" << YAML::Value
+					<< static_cast<uint64_t>(sprite.SpriteHandle);
 				out << YAML::Key << "Color" << YAML::Value << sprite._Color;
 				out << YAML::Key << "TilingFactor" << YAML::Value << sprite.TilingFactor;
-				if (sprite.Texture && !sprite.Texture->GetPath().empty())
-					out << YAML::Key << "TexturePath" << YAML::Value << MakePortableTexturePath(sprite.Texture->GetPath(), scenePath);
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<LineRenderer>())
+			{
+				auto& line = entity.GetComponent<LineRenderer>();
+				ValidateLine(line, context + ".LineRenderer");
+				out << YAML::Key << "LineRenderer" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Enabled" << YAML::Value << line.Enabled;
+				out << YAML::Key << "Color" << YAML::Value << line._Color;
+				out << YAML::Key << "Start" << YAML::Value << line.Start;
+				out << YAML::Key << "End" << YAML::Value << line.End;
+				out << YAML::Key << "Width" << YAML::Value << line.Width;
 				out << YAML::EndMap;
 			}
 
@@ -419,6 +436,39 @@ namespace TomCat {
 			TC_Core_Error("Cannot serialize a null scene");
 			return false;
 		}
+		if (AssetTypeFromPath(filepath) != AssetType::Scene)
+		{
+			TC_Core_Error("Scene files must use the .tomcat extension: {0}",
+				PathToUTF8(filepath));
+			return false;
+		}
+		std::error_code pathError;
+		const bool pathExists = std::filesystem::exists(filepath, pathError);
+		if (pathError)
+		{
+			TC_Core_Error("Scene destination is not a regular file path: {0}",
+				PathToUTF8(filepath));
+			return false;
+		}
+		if (pathExists)
+		{
+			pathError.clear();
+			const bool isRegularFile = std::filesystem::is_regular_file(filepath, pathError);
+			if (pathError || !isRegularFile)
+			{
+				TC_Core_Error("Scene destination is not a regular file path: {0}",
+					PathToUTF8(filepath));
+				return false;
+			}
+		}
+		AssetManager& assetManager = AssetManager::Get();
+		if (assetManager.GetRegistry().IsInitialized() &&
+			!assetManager.GetRegistry().IsManagedPath(filepath, true))
+		{
+			TC_Core_Error("Scenes in an active project must be saved inside Assets: {0}",
+				PathToUTF8(filepath));
+			return false;
+		}
 
 		try
 		{
@@ -448,11 +498,11 @@ namespace TomCat {
 
 			YAML::Emitter out;
 			out << YAML::BeginMap;
-			out << YAML::Key << "SchemaVersion" << YAML::Value << kCurrentSceneSchemaVersion;
+			out << YAML::Key << "SchemaVersion" << YAML::Value << SceneSerializer::CurrentSchemaVersion;
 			out << YAML::Key << "SceneName" << YAML::Value << m_Scene->GetSceneName();
 			out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
 			for (UUID uuid : m_Scene->m_EntityOrder)
-				SerializeEntity(out, m_Scene.get(), m_Scene->FindEntityByUUID(uuid), filepath);
+				SerializeEntity(out, m_Scene.get(), m_Scene->FindEntityByUUID(uuid));
 			out << YAML::EndSeq << YAML::EndMap;
 
 			if (!out.good())
@@ -462,7 +512,21 @@ namespace TomCat {
 			}
 			std::string writeError;
 			if (FileSystem::WriteFileAtomically(filepath, out.c_str(), writeError))
+			{
+				if (assetManager.GetRegistry().IsInitialized())
+				{
+					const AssetHandle sceneHandle = assetManager.ImportAsset(filepath);
+					const AssetMetadata* metadata = assetManager.GetRegistry().GetMetadata(sceneHandle);
+					if (static_cast<uint64_t>(sceneHandle) == 0 || !metadata ||
+						metadata->IsMissing || metadata->Type != AssetType::Scene)
+					{
+						TC_Core_Error("Scene was written but could not be registered as an asset: {0}",
+							PathToUTF8(filepath));
+						return false;
+					}
+				}
 				return true;
+			}
 			TC_Core_Error("Could not atomically replace scene '{0}': {1}", PathToUTF8(filepath), writeError);
 			return false;
 		}
@@ -475,6 +539,90 @@ namespace TomCat {
 
 	bool SceneSerializer::Deserialize(const std::filesystem::path& filepath)
 	{
+		std::ifstream input(filepath, std::ios::binary);
+		if (!input)
+		{
+			TC_Core_Error("Failed to deserialize scene '{0}': Could not open the scene file",
+				PathToUTF8(filepath));
+			return false;
+		}
+		return DeserializeStream(input, filepath, true);
+	}
+
+	bool SceneSerializer::ValidateCurrentFormat(const std::filesystem::path& filepath)
+	{
+		std::ifstream input(filepath, std::ios::binary | std::ios::ate);
+		if (!input)
+		{
+			TC_Core_Error("Failed to validate scene '{0}': Could not open the scene file",
+				PathToUTF8(filepath));
+			return false;
+		}
+		const std::streamoff end = input.tellg();
+		if (end < 0 || static_cast<uint64_t>(end) >
+			static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
+		{
+			TC_Core_Error("Failed to validate scene '{0}': Scene file is too large",
+				PathToUTF8(filepath));
+			return false;
+		}
+		std::vector<uint8_t> bytes(static_cast<size_t>(end));
+		input.seekg(0, std::ios::beg);
+		if (!bytes.empty() && !input.read(reinterpret_cast<char*>(bytes.data()),
+			static_cast<std::streamsize>(bytes.size())))
+		{
+			TC_Core_Error("Failed to validate scene '{0}': Could not read the scene file",
+				PathToUTF8(filepath));
+			return false;
+		}
+		return ValidateCurrentFormat(bytes, filepath);
+	}
+
+	bool SceneSerializer::ValidateCurrentFormat(const std::vector<uint8_t>& bytes,
+		const std::filesystem::path& diagnosticPath)
+	{
+		std::string serialized(bytes.begin(), bytes.end());
+		std::istringstream input(std::move(serialized));
+		SceneSerializer validator{ CreateRef<Scene>() };
+		return validator.DeserializeStream(input, diagnosticPath, false);
+	}
+
+	bool SceneSerializer::Deserialize(AssetHandle handle)
+	{
+		AssetManager& assetManager = AssetManager::Get();
+		if (!assetManager.IsCookedPackageMounted() || static_cast<uint64_t>(handle) == 0)
+		{
+			TC_Core_Error("A nonzero Scene AssetHandle from a mounted cooked package is required");
+			return false;
+		}
+
+		AssetType type = AssetType::None;
+		std::vector<uint8_t> bytes;
+		if (!assetManager.ReadAssetBytes(handle, bytes, &type) || type != AssetType::Scene)
+		{
+			TC_Core_Error("Cooked asset {0} is unavailable or is not a Scene",
+				static_cast<uint64_t>(handle));
+			return false;
+		}
+
+		try
+		{
+			std::string serialized(bytes.begin(), bytes.end());
+			std::istringstream input(std::move(serialized));
+			return DeserializeStream(input, UTF8ToPath(
+				"CookedScene-" + std::to_string(static_cast<uint64_t>(handle))), true);
+		}
+		catch (const std::exception& error)
+		{
+			TC_Core_Error("Failed to stage cooked scene {0} for deserialization: {1}",
+				static_cast<uint64_t>(handle), error.what());
+			return false;
+		}
+	}
+
+	bool SceneSerializer::DeserializeStream(std::istream& input,
+		const std::filesystem::path& filepath, bool resolveAssets)
+	{
 		if (!m_Scene)
 		{
 			TC_Core_Error("Cannot deserialize into a null scene");
@@ -483,24 +631,21 @@ namespace TomCat {
 
 		try
 		{
-			std::ifstream input(filepath, std::ios::binary);
-			if (!input)
-				throw std::runtime_error("Could not open the scene file");
 			YAML::Node data = YAML::Load(input);
 			if (input.bad())
 				throw std::runtime_error("Failed while reading the scene file");
-			RequireMap(data, "scene document");
+			RequireExactFields(data, "scene document",
+				{ "SchemaVersion", "SceneName", "Entities" });
 
-			const uint32_t schemaVersion = data["SchemaVersion"] ? data["SchemaVersion"].as<uint32_t>() : 1U;
-			if (schemaVersion == 0 || schemaVersion > kCurrentSceneSchemaVersion)
-				throw std::runtime_error("Unsupported scene SchemaVersion " + std::to_string(schemaVersion));
+			const uint32_t schemaVersion = ReadRequired<uint32_t>(
+				data, "SchemaVersion", "scene document");
+			if (schemaVersion != CurrentSchemaVersion)
+				throw std::runtime_error("Scene SchemaVersion must be " +
+					std::to_string(CurrentSchemaVersion) + ", got " +
+					std::to_string(schemaVersion));
 
-			YAML::Node sceneNameNode = data["SceneName"];
-			if (!sceneNameNode && schemaVersion == 1)
-				sceneNameNode = data["Scene"];
-			if (!sceneNameNode)
-				throw std::runtime_error("Scene document is missing required field 'SceneName'");
-			const std::string sceneName = sceneNameNode.as<std::string>();
+			const std::string sceneName = ReadRequired<std::string>(
+				data, "SceneName", "scene document");
 			if (sceneName.empty())
 				throw std::runtime_error("SceneName cannot be empty");
 
@@ -514,14 +659,15 @@ namespace TomCat {
 			parsedScene->m_ViewportHeight = m_Scene->m_ViewportHeight;
 
 			std::vector<std::pair<UUID, UUID>> pendingParents;
-			std::unordered_set<UUID> entitiesWithoutLocalTransform;
 			std::unordered_set<UUID> seenUUIDs;
 
 			for (std::size_t index = 0; index < entities.size(); ++index)
 			{
 				const YAML::Node entityNode = entities[index];
 				const std::string context = "Entities[" + std::to_string(index) + "]";
-				RequireMap(entityNode, context);
+				RequireExactFields(entityNode, context,
+					{ "Entity", "Tag", "Transform", "LocalTransform", "Parent" },
+					{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D", "BoxCollider2D" });
 
 				const uint64_t rawUUID = ReadRequired<uint64_t>(entityNode, "Entity", context);
 				const UUID uuid(rawUUID);
@@ -530,61 +676,41 @@ namespace TomCat {
 				if (!seenUUIDs.emplace(uuid).second)
 					throw std::runtime_error(context + " duplicates UUID " + std::to_string(rawUUID));
 
-				std::string name = "Entity";
 				YAML::Node tagNode = entityNode["Tag"];
-				if (tagNode)
-				{
-					RequireMap(tagNode, context + ".Tag");
-					name = ReadRequired<std::string>(tagNode, "Tag", context + ".Tag");
-				}
-				else if (schemaVersion >= 2)
-					throw std::runtime_error(context + " is missing required component 'Tag'");
+				RequireExactFields(tagNode, context + ".Tag", { "Tag", "Visible" });
+				const std::string name = ReadRequired<std::string>(tagNode, "Tag", context + ".Tag");
+				const bool visible = ReadRequired<bool>(tagNode, "Visible", context + ".Tag");
 
 				Entity entity = parsedScene->CreateEntityWithUUID(uuid, name);
 				if (!entity)
 					throw std::runtime_error(context + " could not be created");
-				if (tagNode)
-					entity.GetComponent<Tag>().Visible = ReadOptional<bool>(tagNode, "Visible", true);
+				entity.GetComponent<Tag>().Visible = visible;
 
 				YAML::Node transformNode = entityNode["Transform"];
-				if (transformNode)
-				{
-					RequireMap(transformNode, context + ".Transform");
-					auto& transform = entity.GetComponent<Transform>();
-					transform._Translation = ReadRequired<glm::vec3>(transformNode, "Translation", context + ".Transform");
-					transform._Rotation = ReadRequired<glm::vec3>(transformNode, "Rotation", context + ".Transform");
-					transform._Scale = ReadRequired<glm::vec3>(transformNode, "Scale", context + ".Transform");
-				}
-				else if (schemaVersion >= 2)
-					throw std::runtime_error(context + " is missing required component 'Transform'");
+				RequireExactFields(transformNode, context + ".Transform",
+					{ "Translation", "Rotation", "Scale" });
+				auto& transform = entity.GetComponent<Transform>();
+				transform._Translation = ReadRequired<glm::vec3>(transformNode, "Translation", context + ".Transform");
+				transform._Rotation = ReadRequired<glm::vec3>(transformNode, "Rotation", context + ".Transform");
+				transform._Scale = ReadRequired<glm::vec3>(transformNode, "Scale", context + ".Transform");
 
 				YAML::Node localTransformNode = entityNode["LocalTransform"];
-				if (localTransformNode)
-				{
-					RequireMap(localTransformNode, context + ".LocalTransform");
-					auto& transform = entity.GetComponent<Transform>();
-					transform._LocalTranslation = ReadRequired<glm::vec3>(localTransformNode, "Translation", context + ".LocalTransform");
-					transform._LocalRotation = ReadRequired<glm::vec3>(localTransformNode, "Rotation", context + ".LocalTransform");
-					transform._LocalScale = ReadRequired<glm::vec3>(localTransformNode, "Scale", context + ".LocalTransform");
-				}
-				else if (schemaVersion >= 2)
-					throw std::runtime_error(context + " is missing required component 'LocalTransform'");
-				else
-				{
-					auto& transform = entity.GetComponent<Transform>();
-					transform._LocalTranslation = transform._Translation;
-					transform._LocalRotation = transform._Rotation;
-					transform._LocalScale = transform._Scale;
-					entitiesWithoutLocalTransform.emplace(uuid);
-				}
+				RequireExactFields(localTransformNode, context + ".LocalTransform",
+					{ "Translation", "Rotation", "Scale" });
+				transform._LocalTranslation = ReadRequired<glm::vec3>(localTransformNode, "Translation", context + ".LocalTransform");
+				transform._LocalRotation = ReadRequired<glm::vec3>(localTransformNode, "Rotation", context + ".LocalTransform");
+				transform._LocalScale = ReadRequired<glm::vec3>(localTransformNode, "Scale", context + ".LocalTransform");
 				ValidateTransform(entity.GetComponent<Transform>(), context + ".Transform");
 
 				YAML::Node cameraNode = entityNode["Camera"];
 				if (cameraNode)
 				{
-					RequireMap(cameraNode, context + ".Camera");
+					RequireExactFields(cameraNode, context + ".Camera",
+						{ "Camera", "Primary", "FixedAspectRatio", "BackgroundColor" });
 					YAML::Node properties = cameraNode["Camera"];
-					RequireMap(properties, context + ".Camera.Camera");
+					RequireExactFields(properties, context + ".Camera.Camera",
+						{ "ProjectionType", "PerspectiveFOV", "PerspectiveNear", "PerspectiveFar",
+							"OrthographicSize", "OrthographicNear", "OrthographicFar" });
 					const int projectionType = ReadRequired<int>(properties, "ProjectionType", context + ".Camera.Camera");
 					if (projectionType < static_cast<int>(SceneCamera::ProjectionType::Perspective)
 						|| projectionType > static_cast<int>(SceneCamera::ProjectionType::Orthographic))
@@ -596,8 +722,11 @@ namespace TomCat {
 					const float orthographicSize = ReadRequired<float>(properties, "OrthographicSize", context + ".Camera.Camera");
 					const float orthographicNear = ReadRequired<float>(properties, "OrthographicNear", context + ".Camera.Camera");
 					const float orthographicFar = ReadRequired<float>(properties, "OrthographicFar", context + ".Camera.Camera");
-					const glm::vec4 backgroundColor = ReadOptional<glm::vec4>(
-						cameraNode, "BackgroundColor", C_Camera{}.BackgroundColor);
+					const bool primary = ReadRequired<bool>(cameraNode, "Primary", context + ".Camera");
+					const bool fixedAspectRatio = ReadRequired<bool>(
+						cameraNode, "FixedAspectRatio", context + ".Camera");
+					const glm::vec4 backgroundColor = ReadRequired<glm::vec4>(
+						cameraNode, "BackgroundColor", context + ".Camera");
 					ValidateCameraValues(perspectiveFov, perspectiveNear, perspectiveFar,
 						orthographicSize, orthographicNear, orthographicFar, backgroundColor, context + ".Camera");
 
@@ -606,54 +735,61 @@ namespace TomCat {
 						|| !camera._Camera.SetOrthographic(orthographicSize, orthographicNear, orthographicFar)
 						|| !camera._Camera.SetProjectionType(static_cast<SceneCamera::ProjectionType>(projectionType)))
 						throw std::runtime_error(context + ".Camera produces a non-finite projection matrix");
-					camera.Primary = ReadOptional<bool>(cameraNode, "Primary", true);
-					camera.FixedAspectRatio = ReadOptional<bool>(cameraNode, "FixedAspectRatio", false);
+					camera.Primary = primary;
+					camera.FixedAspectRatio = fixedAspectRatio;
 					camera.BackgroundColor = backgroundColor;
 				}
 
 				YAML::Node spriteNode = entityNode["SpriteRenderer"];
 				if (spriteNode)
 				{
-					RequireMap(spriteNode, context + ".SpriteRenderer");
+					RequireExactFields(spriteNode, context + ".SpriteRenderer",
+						{ "Enabled", "SpriteHandle", "Color", "TilingFactor" });
 					auto& sprite = entity.AddComponent<SpriteRenderer>();
-					sprite.Enabled = ReadOptional<bool>(spriteNode, "Enabled", true);
+					sprite.Enabled = ReadRequired<bool>(spriteNode, "Enabled", context + ".SpriteRenderer");
+					const uint64_t rawSpriteHandle = ReadRequired<uint64_t>(
+						spriteNode, "SpriteHandle", context + ".SpriteRenderer");
+					sprite.SpriteHandle = AssetHandle(rawSpriteHandle);
 					sprite._Color = ReadRequired<glm::vec4>(spriteNode, "Color", context + ".SpriteRenderer");
-					sprite.TilingFactor = ReadOptional<float>(spriteNode, "TilingFactor", 1.0f);
+					sprite.TilingFactor = ReadRequired<float>(spriteNode, "TilingFactor", context + ".SpriteRenderer");
 					ValidateSprite(sprite, context + ".SpriteRenderer");
+					if (resolveAssets && rawSpriteHandle != 0)
+						sprite.Sprite = AssetManager::Get().LoadTexture(sprite.SpriteHandle);
+				}
 
-					const std::string texturePath = ReadOptional<std::string>(spriteNode, "TexturePath", std::string{});
-					if (!texturePath.empty())
-					{
-						const std::filesystem::path resolved = ResolveTexturePath(texturePath, filepath);
-						try
-						{
-							sprite.Texture = Texture2D::Create(resolved);
-							if (!sprite.Texture || !sprite.Texture->IsLoaded())
-								TC_Core_Warn("Scene texture is missing or unreadable: {0}", PathToUTF8(resolved));
-						}
-						catch (const std::exception& textureError)
-						{
-							TC_Core_Warn("Could not load scene texture '{0}': {1}", PathToUTF8(resolved), textureError.what());
-						}
-					}
+				YAML::Node lineNode = entityNode["LineRenderer"];
+				if (lineNode)
+				{
+					RequireExactFields(lineNode, context + ".LineRenderer",
+						{ "Enabled", "Color", "Start", "End", "Width" });
+					auto& line = entity.AddComponent<LineRenderer>();
+					line.Enabled = ReadRequired<bool>(lineNode, "Enabled", context + ".LineRenderer");
+					line._Color = ReadRequired<glm::vec4>(lineNode, "Color", context + ".LineRenderer");
+					line.Start = ReadRequired<glm::vec3>(lineNode, "Start", context + ".LineRenderer");
+					line.End = ReadRequired<glm::vec3>(lineNode, "End", context + ".LineRenderer");
+					line.Width = ReadRequired<float>(lineNode, "Width", context + ".LineRenderer");
+					ValidateLine(line, context + ".LineRenderer");
 				}
 
 				YAML::Node rigidbodyNode = entityNode["Rigidbody2D"];
 				if (rigidbodyNode)
 				{
-					RequireMap(rigidbodyNode, context + ".Rigidbody2D");
+					RequireExactFields(rigidbodyNode, context + ".Rigidbody2D",
+						{ "Enabled", "BodyType", "FixedRotation" });
 					auto& rigidbody = entity.AddComponent<Rigidbody2D>();
-					rigidbody.Enabled = ReadOptional<bool>(rigidbodyNode, "Enabled", true);
+					rigidbody.Enabled = ReadRequired<bool>(rigidbodyNode, "Enabled", context + ".Rigidbody2D");
 					rigidbody.Type = Rigidbody2DBodyTypeFromString(ReadRequired<std::string>(rigidbodyNode, "BodyType", context + ".Rigidbody2D"));
-					rigidbody.FixedRotation = ReadOptional<bool>(rigidbodyNode, "FixedRotation", false);
+					rigidbody.FixedRotation = ReadRequired<bool>(rigidbodyNode, "FixedRotation", context + ".Rigidbody2D");
 				}
 
 				YAML::Node colliderNode = entityNode["BoxCollider2D"];
 				if (colliderNode)
 				{
-					RequireMap(colliderNode, context + ".BoxCollider2D");
+					RequireExactFields(colliderNode, context + ".BoxCollider2D",
+						{ "Enabled", "Offset", "Size", "Density", "Friction", "Restitution",
+							"RestitutionThreshold" });
 					auto& collider = entity.AddComponent<BoxCollider2D>();
-					collider.Enabled = ReadOptional<bool>(colliderNode, "Enabled", true);
+					collider.Enabled = ReadRequired<bool>(colliderNode, "Enabled", context + ".BoxCollider2D");
 					collider.Offset = ReadRequired<glm::vec2>(colliderNode, "Offset", context + ".BoxCollider2D");
 					collider.Size = ReadRequired<glm::vec2>(colliderNode, "Size", context + ".BoxCollider2D");
 					collider.Density = ReadRequired<float>(colliderNode, "Density", context + ".BoxCollider2D");
@@ -663,15 +799,7 @@ namespace TomCat {
 					ValidateCollider(collider, context + ".BoxCollider2D");
 				}
 
-				uint64_t parentUUID = 0;
-				if (entityNode["Parent"])
-					parentUUID = entityNode["Parent"].as<uint64_t>();
-				else if (entityNode["m_Father"])
-				{
-					YAML::Node legacyParent = entityNode["m_Father"];
-					RequireMap(legacyParent, context + ".m_Father");
-					parentUUID = ReadOptional<uint64_t>(legacyParent, "fileID", 0ULL);
-				}
+				const uint64_t parentUUID = ReadRequired<uint64_t>(entityNode, "Parent", context);
 				if (parentUUID != 0)
 					pendingParents.emplace_back(uuid, UUID(parentUUID));
 			}
@@ -708,13 +836,6 @@ namespace TomCat {
 			{
 				Entity child = parsedScene->FindEntityByUUID(childUUID);
 				Entity parent = parsedScene->FindEntityByUUID(parentUUID);
-				if (entitiesWithoutLocalTransform.find(childUUID) != entitiesWithoutLocalTransform.end())
-				{
-					if (!parsedScene->SetParent(child, parent))
-						throw std::runtime_error(
-							"Cannot migrate a legacy child whose hierarchy transform is singular or contains shear");
-					continue;
-				}
 				parsedScene->m_ParentMap[childUUID] = parentUUID;
 				parsedScene->m_ChildrenMap[parentUUID].push_back(childUUID);
 			}
@@ -733,7 +854,8 @@ namespace TomCat {
 			if (m_Scene->m_ViewportWidth > 0 && m_Scene->m_ViewportHeight > 0)
 				m_Scene->OnViewportResize(m_Scene->m_ViewportWidth, m_Scene->m_ViewportHeight);
 
-			TC_Core_Trace("Deserialized scene '{0}' (schema {1})", sceneName, schemaVersion);
+			TC_Core_Trace("{0} scene '{1}' (schema {2})",
+				resolveAssets ? "Deserialized" : "Validated", sceneName, schemaVersion);
 			return true;
 		}
 		catch (const YAML::Exception& error)
