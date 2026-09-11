@@ -15,6 +15,13 @@ namespace TomCat {
 	class SceneHierarchyPanel
 	{
 	public:
+		enum class ColliderEditMode
+		{
+			None = 0,
+			Box,
+			Circle
+		};
+
 		using SceneLoadCallback = std::function<void(AssetHandle)>;
 		using SpriteCreateCallback = std::function<void(AssetHandle)>;
 		using SceneModifiedCallback = std::function<void()>;
@@ -28,6 +35,20 @@ namespace TomCat {
 		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr);
 
 		Entity GetSelectedEntity() const { return m_SelectionContext; };
+		ColliderEditMode GetColliderEditMode() const;
+		bool IsEditingCollider() const { return GetColliderEditMode() != ColliderEditMode::None; }
+		bool IsColliderEditingAllowed() const { return m_ColliderEditingAllowed; }
+		void SetColliderEditingAllowed(bool allowed)
+		{
+			m_ColliderEditingAllowed = allowed;
+			if (!allowed)
+				ClearColliderEditMode();
+		}
+		void ClearColliderEditMode()
+		{
+			m_ColliderEditMode = ColliderEditMode::None;
+			m_ColliderEditEntity = UUID(0);
+		}
 
 		void SetSelectedEntity(Entity entity);
 		bool HandleShortcut(int keyCode, bool control);
@@ -65,6 +86,9 @@ namespace TomCat {
 		Entity m_TagEditingEntity;
 		char m_TagEditBuffer[256] = {};
 		bool m_HierarchyFocused = false;
+		bool m_ColliderEditingAllowed = true;
+		ColliderEditMode m_ColliderEditMode = ColliderEditMode::None;
+		UUID m_ColliderEditEntity = UUID(0);
 		Ref<EditorIconSet> m_Icons;
 		std::array<char, 256> m_SpriteSearch{};
 		bool m_SpritePickerOpen = false;

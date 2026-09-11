@@ -4,6 +4,8 @@
 #include "Components.h"
 #include"entt.hpp"
 
+#include <type_traits>
+
 namespace TomCat {
 
 	class Entity
@@ -26,8 +28,16 @@ namespace TomCat {
 		template<typename T, typename... Args>
 		T& AddOrReplaceComponent(Args&&... args)
 		{
+			if constexpr (std::is_same_v<T, NativeScript>)
+			{
+				if (m_Scene->m_Registry.all_of<T>(m_EntityHandle))
+					m_Scene->QueueNativeScriptInstanceDestruction(
+						m_Scene->m_Registry.get<T>(m_EntityHandle), "component replacement");
+			}
 			T& component = m_Scene->m_Registry.emplace_or_replace<T>(m_EntityHandle, std::forward<Args>(args)...);
 			m_Scene->OnComponentAdded<T>(*this, component);
+			if constexpr (std::is_same_v<T, NativeScript>)
+				m_Scene->FlushDeferredNativeScriptMutations();
 			return component;
 		}
 
@@ -59,7 +69,15 @@ namespace TomCat {
 		template<typename T>
 		void RemoveComponent()
 		{
+			if (!m_Scene || !m_Scene->m_Registry.valid(m_EntityHandle)
+				|| !m_Scene->m_Registry.all_of<T>(m_EntityHandle))
+				return;
+			if constexpr (std::is_same_v<T, NativeScript>)
+				m_Scene->QueueNativeScriptInstanceDestruction(
+					m_Scene->m_Registry.get<T>(m_EntityHandle), "component removal");
 			m_Scene->m_Registry.remove<T>(m_EntityHandle);
+			if constexpr (std::is_same_v<T, NativeScript>)
+				m_Scene->FlushDeferredNativeScriptMutations();
 		}
 
 		operator bool() const { return m_EntityHandle != entt::null; }

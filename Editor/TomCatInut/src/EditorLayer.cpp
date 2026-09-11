@@ -662,6 +662,11 @@ namespace TomCat {
 			m_HoveredEntity = {};
 		}
 
+		// Collider overlays are submitted only after entity picking has sampled the
+		// ID attachment. Renderer2D utility primitives intentionally use entity ID
+		// -1, so drawing them any earlier would punch holes in sprite picking.
+		RenderSceneColliderOverlays();
+
 		m_Framebuffer->Unbind();
 
 		// Render Game View (Runtime Camera) - Always render runtime camera
@@ -672,10 +677,13 @@ namespace TomCat {
 		m_GameFramebuffer->ClearAttachment(1, -1);
 
 		// Game窗口使用Runtime渲染，背景色由摄像机的BackgroundColor设置
-		if (m_SceneState == SceneState::Play ||
-			(m_SceneState == SceneState::Pause && m_StepRequested))
+		if (m_SceneState == SceneState::Play)
 		{
 			m_ActiveScene->OnUpdateRuntime(ts);
+		}
+		else if (m_SceneState == SceneState::Pause && m_StepRequested)
+		{
+			m_ActiveScene->OnRuntimeStep();
 			m_StepRequested = false;
 		}
 		else
@@ -818,6 +826,7 @@ namespace TomCat {
 
 		ImGui::EndChild(); 
 
+		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.OnImGuiRender(&m_ShowHierarchyPanel, &m_ShowInspectorPanel);
 		m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
 
@@ -910,6 +919,7 @@ namespace TomCat {
 				UI_SceneGizmoModeToolbarOverlay();
 				UI_SceneGizmoToolbar();
 				UI_SceneToolbarDockPreview();
+				UI_SceneColliderVisibilityToggle();
 				ImGui::EndMenuBar();
 			}
 			else
@@ -925,7 +935,7 @@ namespace TomCat {
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
-		if (selectedEntity && m_GizmoType != -1)
+		if (selectedEntity && m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
 		{
 			ImGuizmo::AllowAxisFlip(false);
 			ImGuizmo::SetOrthographic(false);
@@ -964,6 +974,11 @@ namespace TomCat {
 				}
 			}
 		}
+
+		if (sceneVisible)
+			UI_ColliderEditHandles();
+		else
+			ResetColliderEditState();
 
 		ImGui::End();
 		ImGui::PopStyleVar();
@@ -1071,6 +1086,452 @@ namespace TomCat {
 		ImVec2 messageSize = ImGui::CalcTextSize(messageText);
 		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, imageCenter.y - messageSize.y * 0.5f);
 		draw->AddText(messagePos, IM_COL32(243, 243, 243, 255), messageText);
+	}
+
+	void EditorLayer::RenderSceneColliderOverlays()
+	{
+		if (!m_ActiveScene)
+			return;
+
+		const SceneHierarchyPanel::ColliderEditMode editMode =
+			m_SceneState == SceneState::Edit
+			? m_SceneHierarchyPanel.GetColliderEditMode()
+			: SceneHierarchyPanel::ColliderEditMode::None;
+		if (!m_ShowColliders && editMode == SceneHierarchyPanel::ColliderEditMode::None)
+			return;
+
+		UUID selectedUUID(0);
+		const Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (selectedEntity && selectedEntity.HasComponent<ID>())
+			selectedUUID = selectedEntity.GetUUID();
+
+		const std::vector<ColliderDebugShape> shapes =
+			m_ActiveScene->GetColliderDebugShapes(m_SceneState != SceneState::Edit);
+		if (shapes.empty())
+			return;
+
+		const float previousLineWidth = Renderer2D::GetLineWidth();
+		Renderer2D::SetLineWidth(2.0f);
+		RenderCommand::SetDepthTest(false);
+		Renderer2D::BeginScene(m_EditorCamera);
+
+		for (const ColliderDebugShape& shape : shapes)
+		{
+			const bool selected = selectedUUID != UUID(0) && shape.EntityID == selectedUUID;
+			const bool edited = selected &&
+				((editMode == SceneHierarchyPanel::ColliderEditMode::Box &&
+					shape.Type == ColliderDebugShapeType::Box) ||
+				 (editMode == SceneHierarchyPanel::ColliderEditMode::Circle &&
+					shape.Type == ColliderDebugShapeType::Circle));
+			if (!m_ShowColliders && !edited)
+				continue;
+
+			const glm::vec4 color = !shape.Enabled
+				? glm::vec4(0.55f, 0.58f, 0.55f, selected ? 0.9f : 0.62f)
+				: edited
+				? glm::vec4(0.45f, 1.0f, 0.35f, 1.0f)
+				: selected
+					? glm::vec4(0.32f, 0.95f, 0.48f, 1.0f)
+					: glm::vec4(0.25f, 0.82f, 0.42f, 0.82f);
+
+			if (shape.Type == ColliderDebugShapeType::Box)
+				Renderer2D::DrawRect(shape.Transform, color, -1);
+			else if (shape.Type == ColliderDebugShapeType::Circle)
+				Renderer2D::DrawCircle(shape.Transform, color, 0.045f, 0.005f, -1);
+		}
+
+		Renderer2D::EndScene();
+		RenderCommand::SetDepthTest(true);
+		Renderer2D::SetLineWidth(previousLineWidth);
+	}
+
+	bool EditorLayer::WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const
+	{
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+			return false;
+
+		const glm::vec4 clip = m_EditorCamera.GetViewProjection() * glm::vec4(worldPosition, 1.0f);
+		if (!std::isfinite(clip.w) || clip.w <= 0.000001f)
+			return false;
+		const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+		if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y))
+			return false;
+
+		screenPosition.x = m_ViewportBounds[0].x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+		screenPosition.y = m_ViewportBounds[0].y + (0.5f - ndc.y * 0.5f) * viewportSize.y;
+		return std::isfinite(screenPosition.x) && std::isfinite(screenPosition.y);
+	}
+
+	bool EditorLayer::ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
+		glm::vec2& worldPosition) const
+	{
+		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+			return false;
+
+		const float ndcX = ((screenPosition.x - m_ViewportBounds[0].x) / viewportSize.x) * 2.0f - 1.0f;
+		const float ndcY = 1.0f - ((screenPosition.y - m_ViewportBounds[0].y) / viewportSize.y) * 2.0f;
+		const glm::mat4 inverseViewProjection = glm::inverse(m_EditorCamera.GetViewProjection());
+		glm::vec4 nearPoint = inverseViewProjection * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+		glm::vec4 farPoint = inverseViewProjection * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+		if (std::abs(nearPoint.w) <= 0.000001f || std::abs(farPoint.w) <= 0.000001f)
+			return false;
+		nearPoint /= nearPoint.w;
+		farPoint /= farPoint.w;
+
+		const glm::vec3 ray = glm::vec3(farPoint - nearPoint);
+		if (!std::isfinite(ray.z) || std::abs(ray.z) <= 0.000001f)
+			return false;
+		const float distance = (worldZ - nearPoint.z) / ray.z;
+		const glm::vec3 intersection = glm::vec3(nearPoint) + ray * distance;
+		if (!std::isfinite(intersection.x) || !std::isfinite(intersection.y))
+			return false;
+
+		worldPosition = { intersection.x, intersection.y };
+		return true;
+	}
+
+	void EditorLayer::UI_SceneColliderVisibilityToggle()
+	{
+		constexpr float buttonHeight = 24.0f;
+		const ImVec2 labelSize = ImGui::CalcTextSize("Colliders");
+		const float buttonWidth = labelSize.x + 30.0f;
+		const float availableWidth = m_ViewportBounds[1].x - m_ViewportBounds[0].x;
+		if (availableWidth < buttonWidth + 16.0f)
+			return;
+
+		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
+		const ImVec2 minimum(m_ViewportBounds[1].x - buttonWidth - 8.0f,
+			m_GizmoModeDockY + (m_GizmoModeDockHeight - buttonHeight) * 0.5f);
+		const ImVec2 maximum(minimum.x + buttonWidth, minimum.y + buttonHeight);
+		ImGui::SetCursorScreenPos(minimum);
+		ImGui::InvisibleButton("##scene_show_colliders", ImVec2(buttonWidth, buttonHeight));
+		const bool hovered = ImGui::IsItemHovered();
+		if (ImGui::IsItemClicked())
+			m_ShowColliders = !m_ShowColliders;
+		if (hovered)
+			ImGui::SetTooltip("Show collider outlines in the Scene view");
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImU32 fill = m_ShowColliders
+			? IM_COL32(44, 93, 135, 255)
+			: hovered ? IM_COL32(98, 98, 98, 245) : IM_COL32(71, 71, 71, 245);
+		draw->AddRectFilled(minimum, maximum, fill, 2.0f);
+		draw->AddRect(minimum, maximum, IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
+		const ImVec2 indicator(minimum.x + 11.0f, (minimum.y + maximum.y) * 0.5f);
+		draw->AddCircle(indicator, 5.0f,
+			m_ShowColliders ? IM_COL32(120, 238, 116, 255) : IM_COL32(145, 145, 145, 255),
+			20, 1.7f);
+		draw->AddText(ImVec2(minimum.x + 21.0f,
+			minimum.y + (buttonHeight - labelSize.y) * 0.5f), IM_COL32(235, 235, 235, 255), "Colliders");
+		ImGui::SetCursorScreenPos(savedCursor);
+	}
+
+	void EditorLayer::ResetColliderEditState()
+	{
+		m_ActiveColliderHandle = ColliderEditHandle::None;
+		m_ColliderEditEntity = UUID(0);
+		m_ColliderDragStartMouseWorld = { 0.0f, 0.0f };
+		m_ColliderDragStartCenter = { 0.0f, 0.0f };
+		m_ColliderDragStartHalfSize = { 0.0f, 0.0f };
+		m_ColliderDragStartRadius = 0.0f;
+		m_ColliderDragPlaneZ = 0.0f;
+		m_ColliderHandleHovered = false;
+	}
+
+	void EditorLayer::UI_ColliderEditHandles()
+	{
+		m_ColliderHandleHovered = false;
+		const SceneHierarchyPanel::ColliderEditMode editMode = m_SceneHierarchyPanel.GetColliderEditMode();
+		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (m_SceneState != SceneState::Edit ||
+			editMode == SceneHierarchyPanel::ColliderEditMode::None ||
+			!m_ActiveScene ||
+			!selectedEntity || !selectedEntity.HasComponent<Transform>() ||
+			!selectedEntity.HasComponent<ID>())
+		{
+			ResetColliderEditState();
+			return;
+		}
+
+		const UUID selectedUUID = selectedEntity.GetUUID();
+		if (m_ActiveColliderHandle != ColliderEditHandle::None &&
+			m_ColliderEditEntity != selectedUUID)
+			ResetColliderEditState();
+
+		const ColliderDebugShapeType expectedType =
+			editMode == SceneHierarchyPanel::ColliderEditMode::Box
+			? ColliderDebugShapeType::Box : ColliderDebugShapeType::Circle;
+		const std::vector<ColliderDebugShape> shapes = m_ActiveScene->GetColliderDebugShapes(false);
+		const auto shapeIt = std::find_if(shapes.begin(), shapes.end(),
+			[&](const ColliderDebugShape& shape)
+			{
+				return shape.EntityID == selectedUUID && shape.Type == expectedType;
+			});
+		if (shapeIt == shapes.end())
+		{
+			ResetColliderEditState();
+			return;
+		}
+
+		const ColliderDebugShape& shape = *shapeIt;
+		const Transform& transform = selectedEntity.GetComponent<Transform>();
+		const float scaleX = std::abs(transform._Scale.x);
+		const float scaleY = std::abs(transform._Scale.y);
+		const float maximumScale = std::max(scaleX, scaleY);
+		if (scaleX <= 0.000001f || scaleY <= 0.000001f ||
+			(editMode == SceneHierarchyPanel::ColliderEditMode::Circle && maximumScale <= 0.000001f))
+		{
+			ResetColliderEditState();
+			return;
+		}
+
+		const float cosine = std::cos(shape.Rotation);
+		const float sine = std::sin(shape.Rotation);
+		const glm::vec2 right(cosine, sine);
+		const glm::vec2 up(-sine, cosine);
+		const glm::vec2 center = shape.Center;
+		const float handleRadius = 6.0f;
+		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
+			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), true);
+		ImGui::PushID("ColliderEditHandles");
+		ImGui::PushID(static_cast<int>(selectedEntity));
+
+		auto submitHandle = [&](ColliderEditHandle handle, const char* id,
+			const glm::vec2& worldPosition, ImGuiMouseCursor cursor, bool offsetHandle)
+		{
+			glm::vec2 screenPosition;
+			if (!WorldToScreen(glm::vec3(worldPosition, transform._Translation.z), screenPosition))
+				return;
+			if (screenPosition.x < m_ViewportBounds[0].x - handleRadius ||
+				screenPosition.x > m_ViewportBounds[1].x + handleRadius ||
+				screenPosition.y < m_ViewportBounds[0].y - handleRadius ||
+				screenPosition.y > m_ViewportBounds[1].y + handleRadius)
+				return;
+
+			const ImVec2 minimum(screenPosition.x - handleRadius, screenPosition.y - handleRadius);
+			const ImVec2 maximum(screenPosition.x + handleRadius, screenPosition.y + handleRadius);
+			ImGui::SetCursorScreenPos(minimum);
+			ImGui::PushID(id);
+			ImGui::InvisibleButton("##handle", ImVec2(handleRadius * 2.0f, handleRadius * 2.0f));
+			const bool hovered = ImGui::IsItemHovered();
+			const bool active = m_ActiveColliderHandle == handle && ImGui::IsItemActive();
+			m_ColliderHandleHovered = m_ColliderHandleHovered || hovered || active;
+			if (hovered || active)
+				ImGui::SetMouseCursor(cursor);
+
+			if (ImGui::IsItemActivated())
+			{
+				glm::vec2 mouseWorld;
+				const ImVec2 mouse = ImGui::GetMousePos();
+				if (ScreenToWorldOnPlane({ mouse.x, mouse.y }, transform._Translation.z, mouseWorld))
+				{
+					m_ActiveColliderHandle = handle;
+					m_ColliderEditEntity = selectedUUID;
+					m_ColliderDragStartMouseWorld = mouseWorld;
+					m_ColliderDragStartCenter = shape.Center;
+					m_ColliderDragStartHalfSize = shape.HalfSize;
+					m_ColliderDragStartRadius = shape.Radius;
+					m_ColliderDragPlaneZ = transform._Translation.z;
+				}
+			}
+
+			const ImU32 handleColor = active
+				? IM_COL32(255, 176, 65, 255)
+				: hovered ? IM_COL32(220, 255, 185, 255) : IM_COL32(115, 235, 110, 255);
+			if (offsetHandle)
+			{
+				const ImVec2 top(screenPosition.x, screenPosition.y - handleRadius);
+				const ImVec2 rightPoint(screenPosition.x + handleRadius, screenPosition.y);
+				const ImVec2 bottom(screenPosition.x, screenPosition.y + handleRadius);
+				const ImVec2 leftPoint(screenPosition.x - handleRadius, screenPosition.y);
+				draw->AddQuadFilled(top, rightPoint, bottom, leftPoint, IM_COL32(25, 25, 25, 255));
+				draw->AddQuadFilled(ImVec2(top.x, top.y + 1.5f),
+					ImVec2(rightPoint.x - 1.5f, rightPoint.y),
+					ImVec2(bottom.x, bottom.y - 1.5f),
+					ImVec2(leftPoint.x + 1.5f, leftPoint.y), handleColor);
+			}
+			else
+			{
+				draw->AddRectFilled(minimum, maximum, IM_COL32(25, 25, 25, 255), 1.0f);
+				draw->AddRectFilled(ImVec2(minimum.x + 1.5f, minimum.y + 1.5f),
+					ImVec2(maximum.x - 1.5f, maximum.y - 1.5f), handleColor, 1.0f);
+			}
+			ImGui::PopID();
+		};
+
+		if (editMode == SceneHierarchyPanel::ColliderEditMode::Box)
+		{
+			const glm::vec2 halfSize = shape.HalfSize;
+			submitHandle(ColliderEditHandle::BoxLeft, "Left", center - right * halfSize.x,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::BoxRight, "Right", center + right * halfSize.x,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::BoxBottom, "Bottom", center - up * halfSize.y,
+				ImGuiMouseCursor_ResizeNS, false);
+			submitHandle(ColliderEditHandle::BoxTop, "Top", center + up * halfSize.y,
+				ImGuiMouseCursor_ResizeNS, false);
+			submitHandle(ColliderEditHandle::BoxBottomLeft, "BottomLeft",
+				center - right * halfSize.x - up * halfSize.y, ImGuiMouseCursor_ResizeNESW, false);
+			submitHandle(ColliderEditHandle::BoxBottomRight, "BottomRight",
+				center + right * halfSize.x - up * halfSize.y, ImGuiMouseCursor_ResizeNWSE, false);
+			submitHandle(ColliderEditHandle::BoxTopLeft, "TopLeft",
+				center - right * halfSize.x + up * halfSize.y, ImGuiMouseCursor_ResizeNWSE, false);
+			submitHandle(ColliderEditHandle::BoxTopRight, "TopRight",
+				center + right * halfSize.x + up * halfSize.y, ImGuiMouseCursor_ResizeNESW, false);
+		}
+		else
+		{
+			submitHandle(ColliderEditHandle::CircleLeft, "CircleLeft", center - right * shape.Radius,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::CircleRight, "CircleRight", center + right * shape.Radius,
+				ImGuiMouseCursor_ResizeEW, false);
+			submitHandle(ColliderEditHandle::CircleBottom, "CircleBottom", center - up * shape.Radius,
+				ImGuiMouseCursor_ResizeNS, false);
+			submitHandle(ColliderEditHandle::CircleTop, "CircleTop", center + up * shape.Radius,
+				ImGuiMouseCursor_ResizeNS, false);
+		}
+
+		// Submit the offset handle last so it remains reachable for very small
+		// colliders whose resize handles overlap the center.
+		submitHandle(ColliderEditHandle::Offset, "Offset", center, ImGuiMouseCursor_ResizeAll, true);
+
+		ImGui::PopID();
+		ImGui::PopID();
+		ImGui::PopClipRect();
+		ImGui::SetCursorScreenPos(savedCursor);
+
+		if (m_ActiveColliderHandle == ColliderEditHandle::None)
+			return;
+		if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+		{
+			m_ActiveColliderHandle = ColliderEditHandle::None;
+			return;
+		}
+
+		const ImVec2 mouse = ImGui::GetMousePos();
+		glm::vec2 mouseWorld;
+		if (!ScreenToWorldOnPlane({ mouse.x, mouse.y }, m_ColliderDragPlaneZ, mouseWorld))
+			return;
+		const glm::vec2 mouseDelta = mouseWorld - m_ColliderDragStartMouseWorld;
+
+		auto centerToOffset = [&](const glm::vec2& worldCenter, glm::vec2& offset)
+		{
+			const glm::vec2 relative = worldCenter - glm::vec2(transform._Translation);
+			const float transformCosine = std::cos(transform._Rotation.z);
+			const float transformSine = std::sin(transform._Rotation.z);
+			const glm::vec2 scaledLocal(
+				transformCosine * relative.x + transformSine * relative.y,
+				-transformSine * relative.x + transformCosine * relative.y);
+			if (std::abs(transform._Scale.x) <= 0.000001f ||
+				std::abs(transform._Scale.y) <= 0.000001f)
+				return false;
+			offset = { scaledLocal.x / transform._Scale.x, scaledLocal.y / transform._Scale.y };
+			return std::isfinite(offset.x) && std::isfinite(offset.y);
+		};
+
+		constexpr float minimumComponentExtent = 0.001f;
+		if (editMode == SceneHierarchyPanel::ColliderEditMode::Box &&
+			selectedEntity.HasComponent<BoxCollider2D>())
+		{
+			glm::vec2 newCenter = m_ColliderDragStartCenter;
+			glm::vec2 newHalfSize = m_ColliderDragStartHalfSize;
+			bool resizeX = false;
+			bool resizeY = false;
+			float signX = 0.0f;
+			float signY = 0.0f;
+
+			switch (m_ActiveColliderHandle)
+			{
+			case ColliderEditHandle::BoxLeft: resizeX = true; signX = -1.0f; break;
+			case ColliderEditHandle::BoxRight: resizeX = true; signX = 1.0f; break;
+			case ColliderEditHandle::BoxBottom: resizeY = true; signY = -1.0f; break;
+			case ColliderEditHandle::BoxTop: resizeY = true; signY = 1.0f; break;
+			case ColliderEditHandle::BoxBottomLeft:
+				resizeX = resizeY = true; signX = signY = -1.0f; break;
+			case ColliderEditHandle::BoxBottomRight:
+				resizeX = resizeY = true; signX = 1.0f; signY = -1.0f; break;
+			case ColliderEditHandle::BoxTopLeft:
+				resizeX = resizeY = true; signX = -1.0f; signY = 1.0f; break;
+			case ColliderEditHandle::BoxTopRight:
+				resizeX = resizeY = true; signX = signY = 1.0f; break;
+			default: break;
+			}
+
+			if (m_ActiveColliderHandle == ColliderEditHandle::Offset)
+				newCenter += mouseDelta;
+			if (resizeX)
+			{
+				const glm::vec2 outward = right * signX;
+				const float requestedHalfSize = m_ColliderDragStartHalfSize.x +
+					glm::dot(mouseDelta, outward) * 0.5f;
+				newHalfSize.x = std::max(scaleX * minimumComponentExtent, requestedHalfSize);
+				newCenter += outward * (newHalfSize.x - m_ColliderDragStartHalfSize.x);
+			}
+			if (resizeY)
+			{
+				const glm::vec2 outward = up * signY;
+				const float requestedHalfSize = m_ColliderDragStartHalfSize.y +
+					glm::dot(mouseDelta, outward) * 0.5f;
+				newHalfSize.y = std::max(scaleY * minimumComponentExtent, requestedHalfSize);
+				newCenter += outward * (newHalfSize.y - m_ColliderDragStartHalfSize.y);
+			}
+
+			auto& collider = selectedEntity.GetComponent<BoxCollider2D>();
+			glm::vec2 newOffset;
+			if (centerToOffset(newCenter, newOffset))
+			{
+				const glm::vec2 newSize(newHalfSize.x / scaleX, newHalfSize.y / scaleY);
+				if (glm::length(collider.Offset - newOffset) > 0.000001f ||
+					glm::length(collider.Size - newSize) > 0.000001f)
+				{
+					collider.Offset = newOffset;
+					collider.Size = newSize;
+					m_SceneDirty = true;
+				}
+			}
+		}
+		else if (editMode == SceneHierarchyPanel::ColliderEditMode::Circle &&
+			selectedEntity.HasComponent<CircleCollider2D>())
+		{
+			auto& collider = selectedEntity.GetComponent<CircleCollider2D>();
+			if (m_ActiveColliderHandle == ColliderEditHandle::Offset)
+			{
+				glm::vec2 newOffset;
+				if (centerToOffset(m_ColliderDragStartCenter + mouseDelta, newOffset) &&
+					glm::length(collider.Offset - newOffset) > 0.000001f)
+				{
+					collider.Offset = newOffset;
+					m_SceneDirty = true;
+				}
+			}
+			else
+			{
+				glm::vec2 outward(0.0f);
+				switch (m_ActiveColliderHandle)
+				{
+				case ColliderEditHandle::CircleLeft: outward = -right; break;
+				case ColliderEditHandle::CircleRight: outward = right; break;
+				case ColliderEditHandle::CircleBottom: outward = -up; break;
+				case ColliderEditHandle::CircleTop: outward = up; break;
+				default: break;
+				}
+				if (glm::dot(outward, outward) > 0.0f)
+				{
+					const float worldRadius = std::max(maximumScale * minimumComponentExtent,
+						m_ColliderDragStartRadius + glm::dot(mouseDelta, outward));
+					const float newRadius = worldRadius / maximumScale;
+					if (std::abs(collider.Radius - newRadius) > 0.000001f)
+					{
+						collider.Radius = newRadius;
+						m_SceneDirty = true;
+					}
+				}
+			}
+		}
 	}
 
 	void EditorLayer::UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -1555,7 +2016,7 @@ namespace TomCat {
 			OnScenePause();
 		ImGui::SameLine();
 		if (drawButton("Step", EditorIcon::Step, m_SceneState == SceneState::Pause,
-			false, "Step one frame"))
+			false, "Step one fixed physics frame (1/60 s)"))
 			OnSceneStep();
 		ImGui::SameLine();
 		if (drawButton("Stop", EditorIcon::Stop, running, false, "Stop"))
@@ -1578,6 +2039,7 @@ namespace TomCat {
 		m_ActiveScene->OnRuntimeStart();
 		m_SceneState = SceneState::Play;
 		m_StepRequested = false;
+		m_SceneHierarchyPanel.SetColliderEditingAllowed(false);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
 		ResetSceneInteractionState();
 
@@ -1614,6 +2076,7 @@ namespace TomCat {
 		m_StepRequested = false;
 		ResizeSceneForGameView(m_ActiveScene);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
+		m_SceneHierarchyPanel.SetColliderEditingAllowed(true);
 		ResetSceneInteractionState();
 
 		// 切换到Scene窗口焦点
@@ -1676,6 +2139,17 @@ namespace TomCat {
 				handled = true;
 			}
 
+			break;
+		}
+		case Key::Escape:
+		{
+			if (!ImGui::GetIO().WantTextInput && !control && !shift && !alt && !super &&
+				m_SceneHierarchyPanel.IsEditingCollider())
+			{
+				m_SceneHierarchyPanel.ClearColliderEditMode();
+				ResetColliderEditState();
+				handled = true;
+			}
 			break;
 		}
 
@@ -1770,6 +2244,8 @@ namespace TomCat {
 
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
+			if (m_ColliderHandleHovered || m_ActiveColliderHandle != ColliderEditHandle::None)
+				return true;
 			if (m_ViewportCanvasHovered && !ImGuizmo::IsOver() && !altDown)
 			{
 				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
@@ -1782,6 +2258,8 @@ namespace TomCat {
 	bool EditorLayer::OnMouseButtonReleased(MouseButtonReleasedEvent& e)
 	{
 		const int button = e.GetMouseButton();
+		if (button == Mouse::ButtonLeft && m_ActiveColliderHandle != ColliderEditHandle::None)
+			return true;
 		if (m_ViewportCameraDragOwned &&
 			(button == Mouse::ButtonLeft || button == Mouse::ButtonMiddle || button == Mouse::ButtonRight))
 		{
@@ -1992,6 +2470,7 @@ namespace TomCat {
 	{
 		m_HoveredEntity = {};
 		m_ViewportCameraDragOwned = false;
+		ResetColliderEditState();
 	}
 
 	void EditorLayer::RequestDestructiveAction(std::function<bool()> action)

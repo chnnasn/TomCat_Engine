@@ -92,9 +92,9 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 - Hub 只读取当前 `hub.json`；文件不存在时使用默认状态，不扫描或迁移旧 INI/YAML 配置。
 - Content Browser 的 `editor.json` 使用明确的 `@assets` / `@packages` 根前缀保存导航状态；旧版 Assets 相对路径仍可读取，任何越出这两个根目录的值都会回退到 `Assets/`。
 
-## 场景文件 schema v6
+## 场景文件 schema v7
 
-`.tomcat` 场景只接受顶层 `SchemaVersion: 6`、`SceneName` 和 `Entities`。实体、组件以及层级字段必须与当前 writer 的完整字段集合精确匹配；任何层级出现缺失、重复或未知字段都会被拒绝。实体关系只使用 `Parent`。
+`.tomcat` 场景只接受顶层 `SchemaVersion: 7`、`SceneName` 和 `Entities`。实体、组件以及层级字段必须与当前 writer 的完整字段集合精确匹配；任何层级出现缺失、重复或未知字段都会被拒绝。实体关系只使用 `Parent`。
 
 Sprite Renderer 必须保存 `Enabled`、`SpriteHandle`、`Color` 和 `TilingFactor`。`SpriteHandle` 是唯一的 Sprite 来源，运行时通过资产系统解析并统一走 textured-quad 渲染路径；Handle 为零时不渲染，资源缺失时使用资产系统的缺失资源占位。程序化 `DrawCircle` 不作为普通对象的 Sprite 来源，只保留给碰撞体、遮罩和 Gizmo 等工具渲染。Line Renderer 必须保存 `Enabled`、`Color`、局部空间的 `Start`/`End` 以及像素宽度 `Width`。实体 UUID 必须非零且唯一，父子关系会校验缺失引用、多父节点和环。
 
@@ -108,9 +108,25 @@ Hierarchy 中实体可以拖到目标节点的上部、中部或下部，分别�
 
 实体变换只存储平移、旋转和缩放（TRS），不保存剪切矩阵。层级重挂、世界/局部变换更新和层级同步会先验证整棵受影响子树；若矩阵无法无损分解为有限 TRS（例如非均匀缩放叠加错位旋转产生剪切），操作整体失败并保留原状态，避免静默近似造成累计漂移。
 
+## 2D 物理运行时
+
+运行时将脚本和 Box2D 统一推进为固定 `1/60s` 步长。显示帧差先钳制到 `0.25s`，再进入 accumulator；单个显示帧最多执行 8 个物理子步，超过预算的完整欠步会被丢弃，只保留不足一个固定步的余量。Editor 状态语义固定为：Edit 不运行脚本或物理；Play 同时运行两者；Pause 只渲染当前运行副本；Step 清空显示帧余量并精确推进一次脚本和物理；Stop 销毁运行副本并恢复编辑场景。不提供独立 Simulate 状态。
+
+`BoxCollider2D` 和 `CircleCollider2D` 都保存 `Enabled`、`IsTrigger`、`CollisionLayer`、`CollisionMask`、`Offset` 与共享的 Density/Friction/Restitution 材质字段；Box 另存 `Size`、`RestitutionThreshold`，Circle 另存 `Radius`。`CollisionLayer` 至少包含一个位，Mask 可以为零；只有 `(A.Layer & B.Mask) != 0` 且 `(B.Layer & A.Mask) != 0` 时才会建立接触。Trigger 作为 Box2D sensor 参与查询和 Enter/Exit 判定，但不产生碰撞响应。Inspector 的 Edit Collider 句柄直接编辑 Size/Radius/Offset，并使用与 Fixture 创建相同的变换规则。
+
+碰撞体不依赖 `Rigidbody2D` 才能进入物理世界：只挂 Collider 的实体在 Play 中会创建隐式静态 `b2Body`。Circle 在非均匀缩放下不能退化为椭圆，因此 Offset 按带符号 XY 缩放和 Z 旋转变换，Radius 统一乘世界 XY 绝对缩放的最大值；编辑轮廓、运行时 Fixture 和调试轮廓都遵守这一规则。
+
+运行中的 Rigidbody、Collider、Transform 物理相关字段或 `DistanceJoint2D` 被添加、移除或修改后，会在下一次固定步开始前安全重建 Box2D 定义；动态刚体的速度会尽量保留。重建、实体删除和 Stop 都会清除旧 runtime 指针与待派发接触，Box2D world 锁定期间不修改 world。`b2Body` user data 只保存实体 UUID；ContactListener 只收集并按“实体对 + Collision/Trigger 类型”去重，`Step()` 返回后才向 Scene 监听器以及接触双方的 NativeScript `OnCollisionEnter2D/Exit2D`、`OnTriggerEnter2D/Exit2D` 派发，所以回调内删除实体不会留下悬空指针或陈旧 Exit。
+
+Scene 提供带 Layer Mask 和 Trigger 选项的最近命中 `Raycast2D`、按 Entity UUID 去重并稳定排序的 broad-phase `QueryAABB2D`，以及动态刚体的 Force、指定点 Force、Impulse、指定点 Impulse、设置/读取线速度 API。首个 Joint 类型为 `DistanceJoint2D`，保存 Connected Entity UUID、本体/连接端局部 Anchor、Distance、Frequency、Damping 与 Collide Connected；连接始终通过 UUID 解析，不持久化 Box2D 指针。所有这些组件字段都属于 scene schema v7，会随 Scene Copy、实体复制、Cook 和 Player 完整保留，runtime 指针永不序列化。
+
+Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮廓，Play/Pause 从实际 Box2D Fixture 画轮廓。覆盖层使用现有 `DrawRect`、`DrawCircle`、`DrawLine`，默认只进入 Scene framebuffer，不写 Game framebuffer，也不参与实体 ID 拾取。
+
+仓库中的 `Tests/PhysicsRegression` 是 2D 物理回归程序，覆盖固定步进与不同显示帧率、Pause/Step、隐式静态碰撞体、Circle 缩放规则、Trigger/过滤、脚本回调、运行时重建、查询、力与速度、Distance Joint、schema v7 往返、Cooked Player 完整挂载/反序列化和回调删除安全。Windows 生成脚本会同时生成 `Tests/Tests.sln`。
+
 ## 当前格式边界
 
-- `Project.tcproj` 只接受 schema v3，`.tomcat` 只接受 schema v6，`.tcpak` 只接受 v2；旧格式不会自动迁移、补字段或重新保存。
+- `Project.tcproj` 只接受 schema v3，`.tomcat` 只接受 schema v7，`.tcpak` 只接受 v2；旧格式不会自动迁移、补字段或重新保存。
 - 项目资源加载只接受 `AssetHandle`；`StartScene` 仅是作者定位信息，不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。
@@ -122,7 +138,7 @@ Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件
 发布时由 `AssetManager` 将资源 Cook 成带启动场景 Handle、Handle/类型索引的 v2 `.tcpak`；
 Player 挂载后通过 `GetCookedStartSceneHandle()` 取得入口，并按 Handle 读取场景和依赖字节，
 不读取原始 `Assets/` 路径、`.tcmeta` 或 `Library/`。项目配置中的 `StartSceneHandle` 是 Cook
-入口的真源，`StartScene` 仅作为 Editor 侧的作者定位信息。Cook 只接受当前 schema v6 场景及
+入口的真源，`StartScene` 仅作为 Editor 侧的作者定位信息。Cook 只接受当前 schema v7 场景及
 当前字段集合；任何旧 schema 或未知字段都会使 Cook 失败，不会被转换或带进 Player。挂载器只接受
 当前 v2 包，其他版本直接拒绝。
 

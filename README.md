@@ -10,7 +10,7 @@ A **C++20 2D game engine + editor + project hub**, built on OpenGL / ImGui / Box
 
 - **2D rendering pipeline**: OpenGL batched rendering (Renderer2D) with textures, rotation, cameras
 - **ECS scene system**: Entity / Component / Scene with YAML scene serialization
-- **2D physics**: built-in Box2D (rigid bodies, colliders)
+- **2D physics**: fixed-step Box2D runtime with rigid/static bodies, Box/Circle colliders, triggers, filtering, queries, forces, and distance joints
 - **Editor**: ImGui-powered ContentBrowser and SceneHierarchy panels with persisted layouts
 - **Hub project manager**: multi-project management, virtual-path mounting, sort by last opened
 - **Chinese support**: dynamically generated Chinese glyph set for ImGui, CN/EN toggle
@@ -36,12 +36,15 @@ A **C++20 2D game engine + editor + project hub**, built on OpenGL / ImGui / Box
 3. Run `Scripts\Win_GenProjects.bat` to generate the VS projects
 4. Open the generated `.sln` and build (Release x64)
 
+Run the 2D physics regression suite with `powershell -ExecutionPolicy Bypass -File Scripts\Run-PhysicsRegression.ps1`.
+
 ## Directory Layout
 
 ```
 TomCat/            Engine core (rendering, ECS, physics, ImGui integration)
 Editor/TomCatInut/ Editor application
 Builder/Manager/   Hub (project center)
+Tests/             Engine regression test projects
 Scripts/           Build & packaging scripts
 vendor/            premake and third-party dependencies
 ```
@@ -55,11 +58,11 @@ vendor/            premake and third-party dependencies
 
 ### Scene runtime & physics
 
-- [ ] Scene run control: pause / reset (Play / Stop already exist)
-- [ ] Editor physics visualization: circles / lines (collider gizmos)
-- [ ] CircleCollider2D component
-- [ ] Physics simulation mode (simulate without mutating scene data)
-- [ ] Physics regression tests
+- [x] Fixed-step Play / Pause / Step / Stop scene state model (no separate Simulate state)
+- [x] Scene-only Box/Circle collider visualization and Edit Collider handles
+- [x] CircleCollider2D, triggers, collision filtering, queries, motion API, and DistanceJoint2D
+- [x] Deferred engine/native-script Collision and Trigger callbacks
+- [x] Physics regression test suite (`Scripts\Run-PhysicsRegression.ps1`)
 
 ### Scripting (C#)
 

@@ -177,6 +177,21 @@ namespace TomCat {
 
 	}
 
+	SceneHierarchyPanel::ColliderEditMode SceneHierarchyPanel::GetColliderEditMode() const
+	{
+		if (!m_ColliderEditingAllowed || m_ColliderEditMode == ColliderEditMode::None || !m_SelectionContext
+			|| m_SelectionContext.GetUUID() != m_ColliderEditEntity)
+			return ColliderEditMode::None;
+
+		if (m_ColliderEditMode == ColliderEditMode::Box
+			&& !m_SelectionContext.HasComponent<BoxCollider2D>())
+			return ColliderEditMode::None;
+		if (m_ColliderEditMode == ColliderEditMode::Circle
+			&& !m_SelectionContext.HasComponent<CircleCollider2D>())
+			return ColliderEditMode::None;
+		return m_ColliderEditMode;
+	}
+
 	void SceneHierarchyPanel::SetContext(const Ref<Scene>& context, bool clearSelection, bool remapSelection)
 	{
 		UUID selectedUUID{};
@@ -194,6 +209,7 @@ namespace TomCat {
 		m_SpritePickerOpen = false;
 		m_SpritePickerEntity = UUID(0);
 		m_SpriteSearch.fill('\0');
+		ClearColliderEditMode();
 		if (contextChanged)
 			ClearClipboard();
 		if (clearSelection)
@@ -256,6 +272,9 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::OnImGuiRender(bool* hierarchyOpen, bool* inspectorOpen)
 	{
+		if (m_ColliderEditMode != ColliderEditMode::None
+			&& GetColliderEditMode() == ColliderEditMode::None)
+			ClearColliderEditMode();
 		m_HierarchyFocused = false;
 		if (!hierarchyOpen || *hierarchyOpen)
 		{
@@ -395,6 +414,8 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
 	{
+		if (m_SelectionContext != entity)
+			ClearColliderEditMode();
 		if (m_SpritePickerOpen && m_SelectionContext != entity)
 		{
 			m_SpritePickerOpen = false;
@@ -828,11 +849,74 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	template<> static bool* GetComponentEnabledFlag<LineRenderer>(LineRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<BoxCollider2D>(BoxCollider2D& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<CircleCollider2D>(CircleCollider2D& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<DistanceJoint2D>(DistanceJoint2D& component) { return &component.Enabled; }
 
-	template<typename T, typename UIFunction, typename ModifiedFunction>
+	static bool DrawColliderMaterialProperties(float& density, float& friction, float& restitution)
+	{
+		float editedDensity = density;
+		float editedFriction = friction;
+		float editedRestitution = restitution;
+		bool edited = ImGui::DragFloat("Density", &editedDensity, 0.01f, 0.0f, 0.0f);
+		edited |= ImGui::DragFloat("Friction", &editedFriction, 0.01f, 0.0f, 0.0f);
+		edited |= ImGui::DragFloat("Restitution", &editedRestitution, 0.01f, 0.0f, 1.0f,
+			"%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (!edited)
+			return false;
+
+		if (!std::isfinite(editedDensity))
+			editedDensity = density;
+		if (!std::isfinite(editedFriction))
+			editedFriction = friction;
+		if (!std::isfinite(editedRestitution))
+			editedRestitution = restitution;
+		editedDensity = std::max(0.0f, editedDensity);
+		editedFriction = std::max(0.0f, editedFriction);
+		editedRestitution = std::clamp(editedRestitution, 0.0f, 1.0f);
+
+		const bool changed = editedDensity != density || editedFriction != friction
+			|| editedRestitution != restitution;
+		if (changed)
+		{
+			density = editedDensity;
+			friction = editedFriction;
+			restitution = editedRestitution;
+		}
+		return changed;
+	}
+
+	static bool DrawCollisionFilterProperties(bool& isTrigger,
+		uint16_t& collisionLayer, uint16_t& collisionMask)
+	{
+		bool changed = ImGui::Checkbox("Is Trigger", &isTrigger);
+		int editedLayer = static_cast<int>(collisionLayer);
+		int editedMask = static_cast<int>(collisionMask);
+		bool filterEdited = ImGui::InputInt("Layer", &editedLayer, 1, 16);
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+			ImGui::SetTooltip("16-bit Box2D category bits (1-65535).");
+		filterEdited |= ImGui::InputInt("Mask", &editedMask, 1, 16);
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+			ImGui::SetTooltip("16-bit Box2D collision mask bits (0-65535).");
+		if (!filterEdited)
+			return changed;
+
+		editedLayer = std::clamp(editedLayer, 1, 0xFFFF);
+		editedMask = std::clamp(editedMask, 0, 0xFFFF);
+		const uint16_t newLayer = static_cast<uint16_t>(editedLayer);
+		const uint16_t newMask = static_cast<uint16_t>(editedMask);
+		if (newLayer != collisionLayer || newMask != collisionMask)
+		{
+			collisionLayer = newLayer;
+			collisionMask = newMask;
+			changed = true;
+		}
+		return changed;
+	}
+
+template<typename T, typename UIFunction, typename ModifiedFunction>
 static void DrawComponent(const std::string& name, Entity entity,
 	const Ref<EditorIconSet>& icons, EditorIcon icon,
-	UIFunction uiFunction, ModifiedFunction onModified)
+	UIFunction uiFunction, ModifiedFunction onModified, bool editable = true)
 {
 	// 检查实体是否有效
 	if (!entity)
@@ -875,8 +959,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 			const float checkboxPosY = headerMin.y +
 				(headerHeight - ImGui::GetFrameHeight()) * 0.5f;
 			ImGui::SetCursorScreenPos(ImVec2(leftContentX, checkboxPosY));
+			ImGui::BeginDisabled(!editable);
 			if (DrawCompactCheckbox("##Enabled", enabled))
 				onModified();
+			ImGui::EndDisabled();
 			leftContentX += GetCompactCheckboxWidth() + contentGap;
 		}
 		const float textY = headerMin.y + (headerHeight - ImGui::GetTextLineHeight()) * 0.5f;
@@ -889,9 +975,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 		const ImVec2 menuPos{ headerMax.x - headerHeight, headerMin.y };
 		ImGui::SetCursorScreenPos(menuPos);
 		const std::string menuID = std::string("##ComponentMenu_") + name;
+		ImGui::BeginDisabled(!editable);
 		bool menuClicked = ImGui::InvisibleButton(menuID.c_str(), menuSize);
 		const bool menuHovered = ImGui::IsItemHovered();
 		const bool menuHeld = ImGui::IsItemActive();
+		ImGui::EndDisabled();
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		const ImU32 menuBg = ImGui::GetColorU32(menuHeld ? ImGuiCol_HeaderActive : menuHovered ? ImGuiCol_HeaderHovered : ImGuiCol_Header);
 		drawList->AddRectFilled(menuPos, ImVec2(menuPos.x + headerHeight, menuPos.y + headerHeight), menuBg, ImGui::GetStyle().FrameRounding);
@@ -909,9 +997,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 		bool removeComponent = false;
 		if (ImGui::BeginPopup("ComponentSettings"))
 		{
+			ImGui::BeginDisabled(!editable);
 			if(name != "Transform")
 				if (ImGui::MenuItem("Remove component"))
 					removeComponent = true;
+			ImGui::EndDisabled();
 
 			ImGui::EndPopup();
 		}
@@ -919,7 +1009,9 @@ static void DrawComponent(const std::string& name, Entity entity,
 		if (open)
 		{
 			ImGui::TreePush((void*)typeid(T).hash_code());
+			ImGui::BeginDisabled(!editable);
 			uiFunction(component);
+			ImGui::EndDisabled();
 			ImGui::TreePop();
 		}
 
@@ -1385,27 +1477,37 @@ static void DrawComponent(const std::string& name, Entity entity,
 				ImGui::EndCombo();
 			}
 			if (ImGui::Checkbox("Fixed Rotation", &component.FixedRotation)) MarkModified();
-		}, onModified);
+		}, onModified, m_ColliderEditingAllowed);
 
 		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, m_Icons, EditorIcon::BoxCollider2D,
-			[this](auto& component)
+			[this, entity](auto& component)
 		{
+			const bool editingCollider = GetColliderEditMode() == ColliderEditMode::Box;
+			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
+			if (editingCollider)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+			if (ImGui::Button("Edit Collider", ImVec2(-1.0f, 0.0f)))
+			{
+				if (editingCollider)
+					ClearColliderEditMode();
+				else
+				{
+					m_ColliderEditMode = ColliderEditMode::Box;
+					m_ColliderEditEntity = entity.GetUUID();
+				}
+			}
+			if (editingCollider)
+				ImGui::PopStyleColor();
+			ImGui::EndDisabled();
+
 			glm::vec2 offset = component.Offset;
 			glm::vec2 size = component.Size;
-			float density = component.Density;
-			float friction = component.Friction;
-			float restitution = component.Restitution;
-			float restitutionThreshold = component.RestitutionThreshold;
-
-			bool edited = ImGui::DragFloat2("Offset", glm::value_ptr(offset));
-			edited |= ImGui::DragFloat2("Size", glm::value_ptr(size));
-			edited |= ImGui::DragFloat("Density", &density, 0.01f, 0.0f, 0.0f);
-			edited |= ImGui::DragFloat("Friction", &friction, 0.01f, 0.0f, 1.0f,
-				"%.3f", ImGuiSliderFlags_AlwaysClamp);
-			edited |= ImGui::DragFloat("Restitution", &restitution, 0.01f, 0.0f, 1.0f,
-				"%.3f", ImGuiSliderFlags_AlwaysClamp);
-			edited |= ImGui::DragFloat("Restitution Threshold", &restitutionThreshold, 0.01f, 0.0f, 0.0f);
-			if (edited)
+			bool changed = false;
+			changed |= DrawCollisionFilterProperties(component.IsTrigger,
+				component.CollisionLayer, component.CollisionMask);
+			bool geometryEdited = ImGui::DragFloat2("Offset", glm::value_ptr(offset));
+			geometryEdited |= ImGui::DragFloat2("Size", glm::value_ptr(size));
+			if (geometryEdited)
 			{
 				if (!std::isfinite(offset.x) || !std::isfinite(offset.y))
 					offset = component.Offset;
@@ -1414,40 +1516,218 @@ static void DrawComponent(const std::string& name, Entity entity,
 				constexpr float minimumSize = 0.0001f;
 				size.x = std::max(minimumSize, size.x);
 				size.y = std::max(minimumSize, size.y);
-				if (!std::isfinite(density)) density = component.Density;
-				if (!std::isfinite(friction)) friction = component.Friction;
-				if (!std::isfinite(restitution)) restitution = component.Restitution;
-				if (!std::isfinite(restitutionThreshold)) restitutionThreshold = component.RestitutionThreshold;
-				density = std::max(0.0f, density);
-				friction = std::clamp(friction, 0.0f, 1.0f);
-				restitution = std::clamp(restitution, 0.0f, 1.0f);
-				restitutionThreshold = std::max(0.0f, restitutionThreshold);
-
-				const bool changed = offset.x != component.Offset.x || offset.y != component.Offset.y ||
-					size.x != component.Size.x || size.y != component.Size.y || density != component.Density ||
-					friction != component.Friction || restitution != component.Restitution ||
-					restitutionThreshold != component.RestitutionThreshold;
-				if (changed)
+				if (offset.x != component.Offset.x || offset.y != component.Offset.y
+					|| size.x != component.Size.x || size.y != component.Size.y)
 				{
 					component.Offset = offset;
 					component.Size = size;
-					component.Density = density;
-					component.Friction = friction;
-					component.Restitution = restitution;
-					component.RestitutionThreshold = restitutionThreshold;
-					MarkModified();
+					changed = true;
 				}
 			}
-		}, onModified);
+
+			changed |= DrawColliderMaterialProperties(component.Density,
+				component.Friction, component.Restitution);
+			float restitutionThreshold = component.RestitutionThreshold;
+			if (ImGui::DragFloat("Restitution Threshold", &restitutionThreshold, 0.01f, 0.0f, 0.0f))
+			{
+				if (!std::isfinite(restitutionThreshold))
+					restitutionThreshold = component.RestitutionThreshold;
+				restitutionThreshold = std::max(0.0f, restitutionThreshold);
+				if (restitutionThreshold != component.RestitutionThreshold)
+				{
+					component.RestitutionThreshold = restitutionThreshold;
+					changed = true;
+				}
+			}
+			if (changed)
+				MarkModified();
+		}, onModified, m_ColliderEditingAllowed);
+
+		DrawComponent<CircleCollider2D>("Circle Collider 2D", entity, m_Icons, EditorIcon::BoxCollider2D,
+			[this, entity](auto& component)
+		{
+			const bool editingCollider = GetColliderEditMode() == ColliderEditMode::Circle;
+			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
+			if (editingCollider)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+			if (ImGui::Button("Edit Collider", ImVec2(-1.0f, 0.0f)))
+			{
+				if (editingCollider)
+					ClearColliderEditMode();
+				else
+				{
+					m_ColliderEditMode = ColliderEditMode::Circle;
+					m_ColliderEditEntity = entity.GetUUID();
+				}
+			}
+			if (editingCollider)
+				ImGui::PopStyleColor();
+			ImGui::EndDisabled();
+
+			glm::vec2 offset = component.Offset;
+			float radius = component.Radius;
+			bool changed = false;
+			changed |= DrawCollisionFilterProperties(component.IsTrigger,
+				component.CollisionLayer, component.CollisionMask);
+			bool geometryEdited = ImGui::DragFloat2("Offset", glm::value_ptr(offset));
+			geometryEdited |= ImGui::DragFloat("Radius", &radius, 0.01f, 0.0001f, 0.0f);
+			if (geometryEdited)
+			{
+				if (!std::isfinite(offset.x) || !std::isfinite(offset.y))
+					offset = component.Offset;
+				if (!std::isfinite(radius))
+					radius = component.Radius;
+				radius = std::max(0.0001f, radius);
+				if (offset.x != component.Offset.x || offset.y != component.Offset.y
+					|| radius != component.Radius)
+				{
+					component.Offset = offset;
+					component.Radius = radius;
+					changed = true;
+				}
+			}
+
+			ImGui::TextDisabled("Non-uniform scale uses max(abs(X), abs(Y)).");
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+				ImGui::SetTooltip("Box2D circles cannot become ellipses. The largest absolute world X/Y scale keeps the fixture circular.");
+			changed |= DrawColliderMaterialProperties(component.Density,
+				component.Friction, component.Restitution);
+			if (changed)
+				MarkModified();
+		}, onModified, m_ColliderEditingAllowed);
+
+		DrawComponent<DistanceJoint2D>("Distance Joint 2D", entity, m_Icons, EditorIcon::Rigidbody2D,
+			[this, entity](auto& component)
+		{
+			bool changed = false;
+			if (!entity.HasComponent<Rigidbody2D>())
+				ImGui::TextDisabled("Owner Body: implicit static body");
+			uint64_t connectedEntity = static_cast<uint64_t>(component.ConnectedEntity);
+			if (ImGui::InputScalar("Connected Entity UUID", ImGuiDataType_U64, &connectedEntity))
+			{
+				component.ConnectedEntity = UUID(connectedEntity);
+				changed = true;
+			}
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+					SceneEntityDragDropPayloadID))
+				{
+					Entity connected = GetDraggedSceneEntity(payload, m_Context);
+					if (connected && connected != entity &&
+						component.ConnectedEntity != connected.GetUUID())
+					{
+						component.ConnectedEntity = connected.GetUUID();
+						connectedEntity = static_cast<uint64_t>(component.ConnectedEntity);
+						changed = true;
+					}
+				}
+				ImGui::EndDragDropTarget();
+			}
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+				ImGui::SetTooltip("Enter an entity UUID or drag an entity here from Hierarchy. Use 0 for no connection.");
+
+			Entity connected;
+			if (m_Context && connectedEntity != 0)
+				connected = m_Context->FindEntityByUUID(UUID(connectedEntity));
+			if (connectedEntity == 0)
+				ImGui::TextDisabled("Connected Body: None");
+			else if (!connected)
+				ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.28f, 1.0f),
+					"Connected Body: Missing entity");
+			else if (connected == entity)
+				ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+					"Connected Body cannot reference itself");
+			else if (!connected.HasComponent<Rigidbody2D>())
+				ImGui::TextDisabled("Connected Body: %s (implicit static)",
+					connected.GetName().c_str());
+			else
+				ImGui::TextDisabled("Connected Body: %s", connected.GetName().c_str());
+
+			glm::vec2 anchor = component.Anchor;
+			if (ImGui::DragFloat2("Anchor", glm::value_ptr(anchor), 0.01f))
+			{
+				if (std::isfinite(anchor.x) && std::isfinite(anchor.y) && anchor != component.Anchor)
+				{
+					component.Anchor = anchor;
+					changed = true;
+				}
+			}
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+				ImGui::SetTooltip("Unscaled local anchor on this physics body.");
+
+			glm::vec2 connectedAnchor = component.ConnectedAnchor;
+			if (ImGui::DragFloat2("Connected Anchor", glm::value_ptr(connectedAnchor), 0.01f))
+			{
+				if (std::isfinite(connectedAnchor.x) && std::isfinite(connectedAnchor.y)
+					&& connectedAnchor != component.ConnectedAnchor)
+				{
+					component.ConnectedAnchor = connectedAnchor;
+					changed = true;
+				}
+			}
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+				ImGui::SetTooltip("Unscaled local anchor on the connected physics body.");
+
+			float distance = component.Distance;
+			if (ImGui::DragFloat("Distance", &distance, 0.01f, 0.0f, 0.0f, "%.3f"))
+			{
+				if (!std::isfinite(distance))
+					distance = component.Distance;
+				distance = std::max(0.0001f, distance);
+				if (distance != component.Distance)
+				{
+					component.Distance = distance;
+					changed = true;
+				}
+			}
+
+			float frequency = component.Frequency;
+			if (ImGui::DragFloat("Frequency", &frequency, 0.01f, 0.0f, 0.0f, "%.3f Hz"))
+			{
+				if (!std::isfinite(frequency))
+					frequency = component.Frequency;
+				frequency = std::max(0.0f, frequency);
+				if (frequency != component.Frequency)
+				{
+					component.Frequency = frequency;
+					changed = true;
+				}
+			}
+
+			float damping = component.Damping;
+			if (ImGui::DragFloat("Damping", &damping, 0.01f, 0.0f, 1.0f,
+				"%.3f", ImGuiSliderFlags_AlwaysClamp))
+			{
+				if (!std::isfinite(damping))
+					damping = component.Damping;
+				damping = std::clamp(damping, 0.0f, 1.0f);
+				if (damping != component.Damping)
+				{
+					component.Damping = damping;
+					changed = true;
+				}
+			}
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+				ImGui::SetTooltip("Box2D damping ratio in the range 0 to 1.");
+
+			if (ImGui::Checkbox("Collide Connected", &component.CollideConnected))
+				changed = true;
+			if (changed)
+				MarkModified();
+		}, onModified, m_ColliderEditingAllowed);
 
 		ImGui::Spacing();
 		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::BeginDisabled(!m_ColliderEditingAllowed);
 		const bool addComponentPressed = ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f));
+		ImGui::EndDisabled();
 		if (addComponentPressed)
 			ImGui::OpenPopup("AddComponent");
 
 		if (ImGui::BeginPopup("AddComponent"))
 		{
+			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
 			if (!entity.HasComponent<C_Camera>() && ImGui::MenuItem("Camera"))
 			{
 				const bool alreadyHasPrimary = m_Context && (bool)m_Context->GetPrimaryCameraEntity();
@@ -1480,6 +1760,21 @@ static void DrawComponent(const std::string& name, Entity entity,
 				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}
+			if (!entity.HasComponent<CircleCollider2D>() && ImGui::MenuItem("Circle Collider 2D"))
+			{
+				entity.AddComponent<CircleCollider2D>();
+				MarkModified();
+				ImGui::CloseCurrentPopup();
+			}
+			if (!entity.HasComponent<DistanceJoint2D>() && ImGui::MenuItem("Distance Joint 2D"))
+			{
+				if (!entity.HasComponent<Rigidbody2D>())
+					entity.AddComponent<Rigidbody2D>();
+				entity.AddComponent<DistanceJoint2D>();
+				MarkModified();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndDisabled();
 			ImGui::EndPopup();
 		}
 

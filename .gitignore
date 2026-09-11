@@ -56,6 +56,11 @@ CTestTestfile.cmake
 *.tlog/
 *.aps
 
+# Generated regression-test solution/project files (premake is the source of truth)
+Tests/Tests.sln
+Tests/PhysicsRegression/*.vcxproj
+Tests/PhysicsRegression/*.vcxproj.filters
+
 #Files
 .user
 *.user
