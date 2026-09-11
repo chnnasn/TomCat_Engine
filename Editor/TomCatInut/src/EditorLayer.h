@@ -9,6 +9,10 @@
 #include <functional>
 #include "TomCat/Project/Project.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Project/ProjectSettings.h"
+
+#include <array>
+#include <string>
 
 struct ImVec2;
 
@@ -85,6 +89,11 @@ namespace TomCat {
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
 			const ImVec2& handleMin, const ImVec2& handleMax, float tearX, bool canDock);
 		void UI_GameNoCameraOverlay();
+		void UI_BuildSettings();
+		void UI_ProjectSettings();
+		void LoadProjectSettingsDraft();
+		bool ApplyProjectSettingsDraft();
+		void ClearProjectSettingsFeedback();
 
 		bool OpenProject();
 		bool OpenProject(const std::filesystem::path& path);
@@ -178,6 +187,15 @@ namespace TomCat {
 		bool m_ShowHierarchyPanel = true;
 		bool m_ShowInspectorPanel = true;
 		bool m_ShowProjectPanel = true;
+		bool m_ShowBuildSettingsPanel = false;
+		bool m_ShowProjectSettingsPanel = false;
+		int m_ProjectSettingsPage = 0;
+		Ref<Project> m_ProjectSettingsDraftProject;
+		ProjectSettings m_ProjectSettingsDraft;
+		std::array<std::array<char, 128>, Physics2DLayerCount> m_ProjectLayerNameBuffers{};
+		std::array<char, 128> m_NewProjectTagBuffer{};
+		std::string m_ProjectSettingsError;
+		std::string m_ProjectSettingsStatus;
 		bool m_OpenUnsavedChangesModal = false;
 		std::function<bool()> m_PendingUnsavedAction;
 	};

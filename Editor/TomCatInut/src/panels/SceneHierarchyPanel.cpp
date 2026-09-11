@@ -16,6 +16,7 @@
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Math/Math.h"
+#include "TomCat/Project/Project.h"
 #include "TomCat/Utils/PathUtils.h"
 
 namespace TomCat {
@@ -171,10 +172,173 @@ namespace TomCat {
 		return pressed;
 	}
 
+	static EditorIcon ResolveAutomaticEntityEditorIcon(Entity entity)
+	{
+		if (entity.HasComponent<C_Camera>())
+			return EditorIcon::Camera;
+		if (entity.HasComponent<SpriteRenderer>())
+			return EditorIcon::Sprite;
+		if (entity.HasComponent<Rigidbody2D>())
+			return EditorIcon::Rigidbody2D;
+		if (entity.HasComponent<BoxCollider2D>() || entity.HasComponent<CircleCollider2D>())
+			return EditorIcon::BoxCollider2D;
+		return EditorIcon::Entity;
+	}
+
+	static EditorIcon ResolveEntityEditorIcon(Entity entity)
+	{
+		if (!entity || !entity.HasComponent<EntityMetadata>())
+			return EditorIcon::Entity;
+
+		switch (entity.GetComponent<EntityMetadata>().HierarchyIcon)
+		{
+			case EntityIconMode::Automatic: return ResolveAutomaticEntityEditorIcon(entity);
+			case EntityIconMode::Entity: return EditorIcon::Entity;
+			case EntityIconMode::Camera: return EditorIcon::Camera;
+			case EntityIconMode::Sprite: return EditorIcon::Sprite;
+			case EntityIconMode::Rigidbody2D: return EditorIcon::Rigidbody2D;
+			case EntityIconMode::Collider2D: return EditorIcon::BoxCollider2D;
+		}
+		return EditorIcon::Entity;
+	}
+
+	static EditorIcon ResolveEntityIconChoice(Entity entity, EntityIconMode mode)
+	{
+		if (mode == EntityIconMode::Automatic)
+			return ResolveAutomaticEntityEditorIcon(entity);
+		switch (mode)
+		{
+			case EntityIconMode::Entity: return EditorIcon::Entity;
+			case EntityIconMode::Camera: return EditorIcon::Camera;
+			case EntityIconMode::Sprite: return EditorIcon::Sprite;
+			case EntityIconMode::Rigidbody2D: return EditorIcon::Rigidbody2D;
+			case EntityIconMode::Collider2D: return EditorIcon::BoxCollider2D;
+			case EntityIconMode::Automatic: break;
+		}
+		return EditorIcon::Entity;
+	}
+
+	static const char* GetEntityIconModeLabel(EntityIconMode mode)
+	{
+		switch (mode)
+		{
+			case EntityIconMode::Automatic: return "Automatic";
+			case EntityIconMode::Entity: return "Entity";
+			case EntityIconMode::Camera: return "Camera";
+			case EntityIconMode::Sprite: return "Sprite";
+			case EntityIconMode::Rigidbody2D: return "Rigidbody 2D";
+			case EntityIconMode::Collider2D: return "Collider 2D";
+		}
+		return "Entity";
+	}
+
+	static bool DrawEntityIconSelector(const Ref<EditorIconSet>& icons, Entity entity,
+		bool editable)
+	{
+		if (!entity || !entity.HasComponent<EntityMetadata>())
+			return false;
+
+		auto& metadata = entity.GetComponent<EntityMetadata>();
+		const float buttonSize = ImGui::GetFrameHeight();
+		ImGui::PushID("EntityIconSelector");
+		if (!editable)
+			ImGui::BeginDisabled();
+		const bool pressed = ImGui::InvisibleButton("##EntityIconButton",
+			ImVec2(buttonSize, buttonSize));
+		const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+		if (!editable)
+			ImGui::EndDisabled();
+
+		const ImVec2 itemMin = ImGui::GetItemRectMin();
+		const ImVec2 itemMax = ImGui::GetItemRectMax();
+		if (hovered && editable)
+			ImGui::GetWindowDrawList()->AddRectFilled(itemMin, itemMax,
+				ImGui::GetColorU32(ImGuiCol_HeaderHovered), 2.0f);
+		const float padding = std::max(2.0f, std::round(buttonSize * 0.14f));
+		DrawIcon(icons, ResolveEntityEditorIcon(entity),
+			ImVec2(itemMin.x + padding, itemMin.y + padding),
+			ImVec2(itemMax.x - padding, itemMax.y - padding),
+			editable ? IM_COL32_WHITE : IM_COL32(150, 150, 150, 210));
+
+		if (hovered)
+		{
+			if (editable)
+				ImGui::SetTooltip("Entity icon: %s\nClick to change.",
+					GetEntityIconModeLabel(metadata.HierarchyIcon));
+			else
+				ImGui::SetTooltip("Entity icons are read-only while the scene is running.");
+		}
+		if (pressed && editable)
+			ImGui::OpenPopup("EntityIconPicker");
+
+		bool changed = false;
+		if (ImGui::BeginPopup("EntityIconPicker"))
+		{
+			ImGui::TextUnformatted("Entity Icon");
+			ImGui::Separator();
+			struct IconChoice
+			{
+				EntityIconMode Mode;
+				const char* Label;
+			};
+			static constexpr IconChoice choices[] = {
+				{ EntityIconMode::Automatic, "Automatic" },
+				{ EntityIconMode::Entity, "Entity" },
+				{ EntityIconMode::Camera, "Camera" },
+				{ EntityIconMode::Sprite, "Sprite" },
+				{ EntityIconMode::Rigidbody2D, "Rigidbody 2D" },
+				{ EntityIconMode::Collider2D, "Collider 2D" }
+			};
+
+			if (!editable)
+				ImGui::BeginDisabled();
+			for (const IconChoice& choice : choices)
+			{
+				ImGui::PushID(static_cast<int>(choice.Mode));
+				const float rowHeight = ImGui::GetFrameHeight() + 4.0f;
+				const bool selected = metadata.HierarchyIcon == choice.Mode;
+				const bool selectedNow = ImGui::Selectable("##IconChoice", selected,
+					ImGuiSelectableFlags_None, ImVec2(190.0f, rowHeight));
+				const ImVec2 rowMin = ImGui::GetItemRectMin();
+				const float iconPadding = 3.0f;
+				const float iconSize = rowHeight - iconPadding * 2.0f;
+				DrawIcon(icons, ResolveEntityIconChoice(entity, choice.Mode),
+					ImVec2(rowMin.x + iconPadding, rowMin.y + iconPadding),
+					ImVec2(rowMin.x + iconPadding + iconSize, rowMin.y + iconPadding + iconSize));
+				ImGui::GetWindowDrawList()->AddText(
+					ImVec2(rowMin.x + rowHeight + ImGui::GetStyle().ItemInnerSpacing.x,
+						rowMin.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f),
+					ImGui::GetColorU32(ImGuiCol_Text), choice.Label);
+				if (selectedNow && editable)
+				{
+					if (!selected)
+					{
+						metadata.HierarchyIcon = choice.Mode;
+						changed = true;
+					}
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::PopID();
+			}
+			if (!editable)
+				ImGui::EndDisabled();
+			ImGui::EndPopup();
+		}
+		ImGui::PopID();
+		return changed;
+	}
+
 	SceneHierarchyPanel::SceneHierarchyPanel(const Ref<Scene>& context)
 	{
 		SetContext(context);
 
+	}
+
+	void SceneHierarchyPanel::SetProject(const Ref<Project>& project)
+	{
+		m_Project = project;
+		if (m_Context && m_Project)
+			m_Context->SetPhysics2DSettings(m_Project->GetSettings().Physics2D);
 	}
 
 	SceneHierarchyPanel::ColliderEditMode SceneHierarchyPanel::GetColliderEditMode() const
@@ -200,12 +364,14 @@ namespace TomCat {
 			selectedUUID = m_SelectionContext.GetUUID();
 		const bool contextChanged = m_Context != context;
 		m_Context = context;
+		if (m_Context && m_Project)
+			m_Context->SetPhysics2DSettings(m_Project->GetSettings().Physics2D);
 		m_ForceExpandParent = {};
 		m_ForceOpenSceneRoot = false;
 		m_EntityToDelete = {};
 		m_RenameEntity = {};
 		m_RenameFocus = false;
-		m_TagEditingEntity = {};
+		m_NameEditingEntity = {};
 		m_SpritePickerOpen = false;
 		m_SpritePickerEntity = UUID(0);
 		m_SpriteSearch.fill('\0');
@@ -562,19 +728,31 @@ namespace TomCat {
 
 		auto CreatePrimitiveSprite = [&](const char* primitiveName)
 		{
+			AssetManager& assets = AssetManager::Get();
+			if (!m_Project || !assets.GetRegistry().IsInitialized() ||
+				assets.IsCookedPackageMounted())
+			{
+				TC_Core_Warn("Open a writable project before creating a '{0}' Sprite", primitiveName);
+				return;
+			}
+
+			const AssetHandle handle = EnsurePrimitiveSpriteAsset(assets, primitiveName);
+			if (static_cast<uint64_t>(handle) == 0)
+			{
+				TC_Core_Error("Could not create or import the '{0}' Sprite asset", primitiveName);
+				return;
+			}
+			const Ref<Texture2D> texture = assets.LoadTexture(handle);
+			if (!texture || texture == assets.GetMissingTexture())
+			{
+				TC_Core_Error("Could not decode the '{0}' Sprite asset", primitiveName);
+				return;
+			}
+
 			Entity entity = m_Context->CreateEntity(primitiveName);
 			auto& sprite = entity.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
-			const AssetHandle handle = EnsurePrimitiveSpriteAsset(
-				AssetManager::Get(), primitiveName);
-			if (static_cast<uint64_t>(handle) != 0)
-			{
-				sprite.SpriteHandle = handle;
-				sprite.Sprite = AssetManager::Get().LoadTexture(handle);
-			}
-			else
-			{
-				TC_Core_Error("Could not create or load the '{0}' Sprite asset", primitiveName);
-			}
+			sprite.SpriteHandle = handle;
+			sprite.Sprite = texture;
 			CreateAsSelectedChild(entity);
 		};
 
@@ -582,10 +760,18 @@ namespace TomCat {
 		{
 			if (ImGui::BeginMenu("Sprites"))
 			{
+				AssetManager& assets = AssetManager::Get();
+				const bool canCreatePrimitiveSprite = m_Project &&
+					assets.GetRegistry().IsInitialized() && !assets.IsCookedPackageMounted();
+				ImGui::BeginDisabled(!canCreatePrimitiveSprite);
 				if (ImGui::MenuItem("Circle"))
 					CreatePrimitiveSprite("Circle");
 				if (ImGui::MenuItem("Square"))
 					CreatePrimitiveSprite("Square");
+				ImGui::EndDisabled();
+				if (!canCreatePrimitiveSprite &&
+					ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+					ImGui::SetTooltip("Open a writable project to create asset-backed Sprites.");
 				ImGui::EndMenu();
 			}
 			ImGui::EndMenu();
@@ -642,7 +828,7 @@ namespace TomCat {
 		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "");
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
-		const float iconSize = DrawTreeRowIcon(m_Icons, EditorIcon::Entity, itemMin, itemMax,
+		const float iconSize = DrawTreeRowIcon(m_Icons, ResolveEntityEditorIcon(entity), itemMin, itemMax,
 			visible ? IM_COL32_WHITE : IM_COL32(150, 150, 150, 210));
 		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing() +
 			iconSize + GetHierarchyIconTextGap();
@@ -889,26 +1075,12 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		uint16_t& collisionLayer, uint16_t& collisionMask)
 	{
 		bool changed = ImGui::Checkbox("Is Trigger", &isTrigger);
-		int editedLayer = static_cast<int>(collisionLayer);
-		int editedMask = static_cast<int>(collisionMask);
-		bool filterEdited = ImGui::InputInt("Layer", &editedLayer, 1, 16);
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-			ImGui::SetTooltip("16-bit Box2D category bits (1-65535).");
-		filterEdited |= ImGui::InputInt("Mask", &editedMask, 1, 16);
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-			ImGui::SetTooltip("16-bit Box2D collision mask bits (0-65535).");
-		if (!filterEdited)
-			return changed;
-
-		editedLayer = std::clamp(editedLayer, 1, 0xFFFF);
-		editedMask = std::clamp(editedMask, 0, 0xFFFF);
-		const uint16_t newLayer = static_cast<uint16_t>(editedLayer);
-		const uint16_t newMask = static_cast<uint16_t>(editedMask);
-		if (newLayer != collisionLayer || newMask != collisionMask)
+		if (ImGui::TreeNodeEx("Advanced Filter", ImGuiTreeNodeFlags_SpanAvailWidth))
 		{
-			collisionLayer = newLayer;
-			collisionMask = newMask;
-			changed = true;
+			ImGui::TextDisabled("Category Bits: 0x%04X", static_cast<unsigned int>(collisionLayer));
+			ImGui::TextDisabled("Mask Bits: 0x%04X", static_cast<unsigned int>(collisionMask));
+			ImGui::TextWrapped("Read-only fixture filter data. Both this Category/Mask filter and the Entity Layer/Project Physics 2D matrix must allow contact.");
+			ImGui::TreePop();
 		}
 		return changed;
 	}
@@ -1031,29 +1203,167 @@ static void DrawComponent(const std::string& name, Entity entity,
 	if (!entity)
 		return;
 
+	ImGui::PushID(reinterpret_cast<void*>(
+		static_cast<uintptr_t>(static_cast<uint64_t>(entity.GetUUID()))));
 	if (entity.HasComponent<Tag>())
 	{
 		auto& tagComponent = entity.GetComponent<Tag>();
 		auto& tag = tagComponent._Tag;
-		if (m_TagEditingEntity != entity)
+		if (m_NameEditingEntity != entity)
 		{
-			m_TagEditingEntity = entity;
-			strncpy_s(m_TagEditBuffer, sizeof(m_TagEditBuffer), tag.c_str(), _TRUNCATE);
+			m_NameEditingEntity = entity;
+			strncpy_s(m_NameEditBuffer, sizeof(m_NameEditBuffer), tag.c_str(), _TRUNCATE);
 		}
 
+		if (entity.HasComponent<EntityMetadata>())
+		{
+			if (DrawEntityIconSelector(m_Icons, entity, m_ColliderEditingAllowed))
+				MarkModified();
+			ImGui::SameLine(0.0f, 4.0f);
+		}
 		if (DrawCompactCheckbox("##Visible", &tagComponent.Visible))
 			MarkModified();
-		ImGui::SameLine();
+		ImGui::SameLine(0.0f, 5.0f);
 		ImGui::SetNextItemWidth(-1.0f);
-		const bool committed = ImGui::InputText("##Tag", m_TagEditBuffer, sizeof(m_TagEditBuffer),
+		const bool committed = ImGui::InputText("##Name", m_NameEditBuffer, sizeof(m_NameEditBuffer),
 			ImGuiInputTextFlags_EnterReturnsTrue);
 		if (committed || ImGui::IsItemDeactivatedAfterEdit())
 		{
-			if (m_Context->RenameEntity(entity, m_TagEditBuffer))
+			if (m_Context->RenameEntity(entity, m_NameEditBuffer))
 				MarkModified();
-			strncpy_s(m_TagEditBuffer, sizeof(m_TagEditBuffer), tag.c_str(), _TRUNCATE);
+			strncpy_s(m_NameEditBuffer, sizeof(m_NameEditBuffer), tag.c_str(), _TRUNCATE);
 		}
+	}
+
+	if (entity.HasComponent<EntityMetadata>())
+	{
+		auto& metadata = entity.GetComponent<EntityMetadata>();
+		const ProjectSettings* projectSettings = m_Project ? &m_Project->GetSettings() : nullptr;
+		const bool metadataEditable = m_ColliderEditingAllowed && projectSettings != nullptr;
+		ImGui::PushID("EntityMetadata");
+
+		bool tagDefined = false;
+		if (projectSettings)
+		{
+			const auto& projectTags = projectSettings->TagsAndLayers.Tags;
+			tagDefined = std::find(projectTags.begin(), projectTags.end(), metadata.GameplayTag)
+				!= projectTags.end();
 		}
+		std::string tagPreview = metadata.GameplayTag.empty() ? "<Empty>" : metadata.GameplayTag;
+		if (projectSettings && !tagDefined)
+			tagPreview += " (Undefined)";
+
+		const uint8_t currentLayer = metadata.Layer;
+		bool layerDefined = false;
+		std::string layerPreview = "Layer " + std::to_string(static_cast<unsigned int>(currentLayer));
+		if (projectSettings && currentLayer < Physics2DLayerCount)
+		{
+			const std::string& layerName = projectSettings->TagsAndLayers.LayerNames[currentLayer];
+			if (!layerName.empty())
+			{
+				layerDefined = true;
+				layerPreview = layerName;
+			}
+		}
+		if (projectSettings && !layerDefined)
+			layerPreview += " (Undefined)";
+
+		const bool stackMetadataRows = ImGui::GetContentRegionAvail().x < 330.0f;
+		const int metadataColumnCount = stackMetadataRows ? 2 : 4;
+		const ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingStretchProp
+			| ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoPadOuterX;
+		if (ImGui::BeginTable("##TagLayer", metadataColumnCount, tableFlags))
+		{
+			const float labelWidth = ImGui::CalcTextSize("Layer").x
+				+ ImGui::GetStyle().ItemInnerSpacing.x;
+			ImGui::TableSetupColumn("TagLabel", ImGuiTableColumnFlags_WidthFixed, labelWidth);
+			ImGui::TableSetupColumn("TagValue", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+			if (!stackMetadataRows)
+			{
+				ImGui::TableSetupColumn("LayerLabel", ImGuiTableColumnFlags_WidthFixed, labelWidth);
+				ImGui::TableSetupColumn("LayerValue", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+			}
+			ImGui::TableNextRow();
+
+			ImGui::TableSetColumnIndex(0);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Tag");
+			ImGui::TableSetColumnIndex(1);
+			ImGui::SetNextItemWidth(-1.0f);
+			ImGui::BeginDisabled(!metadataEditable);
+			if (ImGui::BeginCombo("##GameplayTag", tagPreview.c_str()))
+			{
+				if (!tagDefined)
+					ImGui::Selectable(tagPreview.c_str(), true, ImGuiSelectableFlags_Disabled);
+				if (projectSettings)
+				{
+					for (const std::string& projectTag : projectSettings->TagsAndLayers.Tags)
+					{
+						const bool selected = metadata.GameplayTag == projectTag;
+						if (ImGui::Selectable(projectTag.c_str(), selected) && !selected)
+						{
+							metadata.GameplayTag = projectTag;
+							MarkModified();
+						}
+						if (selected)
+							ImGui::SetItemDefaultFocus();
+					}
+				}
+				ImGui::EndCombo();
+			}
+			const bool tagHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+			ImGui::EndDisabled();
+
+			if (stackMetadataRows)
+				ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(stackMetadataRows ? 0 : 2);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Layer");
+			ImGui::TableSetColumnIndex(stackMetadataRows ? 1 : 3);
+			ImGui::SetNextItemWidth(-1.0f);
+			ImGui::BeginDisabled(!metadataEditable);
+			if (ImGui::BeginCombo("##EntityLayer", layerPreview.c_str()))
+			{
+				if (!layerDefined)
+					ImGui::Selectable(layerPreview.c_str(), true, ImGuiSelectableFlags_Disabled);
+				if (projectSettings)
+				{
+					for (uint8_t layer = 0; layer < Physics2DLayerCount; ++layer)
+					{
+						const std::string& layerName = projectSettings->TagsAndLayers.LayerNames[layer];
+						if (layerName.empty())
+							continue;
+						const bool selected = metadata.Layer == layer;
+						if (ImGui::Selectable(layerName.c_str(), selected) && !selected)
+						{
+							metadata.Layer = layer;
+							MarkModified();
+						}
+						if (selected)
+							ImGui::SetItemDefaultFocus();
+					}
+				}
+				ImGui::EndCombo();
+			}
+			const bool layerHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+			ImGui::EndDisabled();
+
+			if (!metadataEditable && (tagHovered || layerHovered))
+			{
+				ImGui::SetTooltip("%s", m_ColliderEditingAllowed
+					? "Open a project to choose a Tag or Layer."
+					: "Tag and Layer are read-only while the scene is running.");
+			}
+			ImGui::EndTable();
+		}
+		ImGui::PopID();
+	}
+	else
+	{
+		ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
+			"Entity metadata is missing.");
+	}
+	ImGui::PopID();
 
 
 		const auto onModified = [this]() { MarkModified(); };

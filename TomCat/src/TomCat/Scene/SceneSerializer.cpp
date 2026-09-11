@@ -204,6 +204,27 @@ namespace TomCat {
 				throw std::runtime_error(context + ".TilingFactor must be finite and non-negative");
 		}
 
+		void ValidateEntityMetadata(const EntityMetadata& metadata,
+			const std::string& context)
+		{
+			if (metadata.GameplayTag.empty())
+				throw std::runtime_error(context + ".GameplayTag cannot be empty");
+			if (metadata.Layer >= Physics2DLayerCount)
+				throw std::runtime_error(context + ".Layer must be in [0, 15]");
+			switch (metadata.HierarchyIcon)
+			{
+				case EntityIconMode::Automatic:
+				case EntityIconMode::Entity:
+				case EntityIconMode::Camera:
+				case EntityIconMode::Sprite:
+				case EntityIconMode::Rigidbody2D:
+				case EntityIconMode::Collider2D:
+					break;
+				default:
+					throw std::runtime_error(context + ".HierarchyIcon is invalid");
+			}
+		}
+
 		void ValidateLine(const LineRenderer& line, const std::string& context)
 		{
 			RequireUnitColor(line._Color, context + ".Color");
@@ -352,6 +373,31 @@ namespace TomCat {
 			throw std::runtime_error("Unknown Rigidbody2D body type '" + value + "'");
 		}
 
+		const char* EntityIconModeToString(EntityIconMode value)
+		{
+			switch (value)
+			{
+				case EntityIconMode::Automatic: return "Automatic";
+				case EntityIconMode::Entity: return "Entity";
+				case EntityIconMode::Camera: return "Camera";
+				case EntityIconMode::Sprite: return "Sprite";
+				case EntityIconMode::Rigidbody2D: return "Rigidbody2D";
+				case EntityIconMode::Collider2D: return "Collider2D";
+			}
+			throw std::runtime_error("Cannot serialize an unknown Entity icon mode");
+		}
+
+		EntityIconMode EntityIconModeFromString(const std::string& value)
+		{
+			if (value == "Automatic") return EntityIconMode::Automatic;
+			if (value == "Entity") return EntityIconMode::Entity;
+			if (value == "Camera") return EntityIconMode::Camera;
+			if (value == "Sprite") return EntityIconMode::Sprite;
+			if (value == "Rigidbody2D") return EntityIconMode::Rigidbody2D;
+			if (value == "Collider2D") return EntityIconMode::Collider2D;
+			throw std::runtime_error("Unknown Entity icon mode '" + value + "'");
+		}
+
 		void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity)
 		{
 			const std::string context = "Entity " + std::to_string(static_cast<uint64_t>(entity.GetUUID()));
@@ -362,6 +408,16 @@ namespace TomCat {
 			out << YAML::Key << "Tag" << YAML::Value << YAML::BeginMap;
 			out << YAML::Key << "Tag" << YAML::Value << tag._Tag;
 			out << YAML::Key << "Visible" << YAML::Value << tag.Visible;
+			out << YAML::EndMap;
+
+			auto& metadata = entity.GetComponent<EntityMetadata>();
+			ValidateEntityMetadata(metadata, context + ".EntityMetadata");
+			out << YAML::Key << "EntityMetadata" << YAML::Value << YAML::BeginMap;
+			out << YAML::Key << "GameplayTag" << YAML::Value << metadata.GameplayTag;
+			out << YAML::Key << "Layer" << YAML::Value
+				<< static_cast<uint32_t>(metadata.Layer);
+			out << YAML::Key << "HierarchyIcon" << YAML::Value
+				<< EntityIconModeToString(metadata.HierarchyIcon);
 			out << YAML::EndMap;
 
 			auto& transform = entity.GetComponent<Transform>();
@@ -566,7 +622,8 @@ namespace TomCat {
 			{
 				Entity entity = m_Scene->FindEntityByUUID(uuid);
 				if ((uint64_t)uuid == 0 || !entity || !entity.HasComponent<ID>()
-					|| !entity.HasComponent<Tag>() || !entity.HasComponent<Transform>()
+					|| !entity.HasComponent<Tag>() || !entity.HasComponent<EntityMetadata>()
+					|| !entity.HasComponent<Transform>()
 					|| entity.GetUUID() != uuid || !serializedUUIDs.emplace(uuid).second)
 				{
 					TC_Core_Error("Scene contains an invalid or duplicate UUID {0}", (uint64_t)uuid);
@@ -629,7 +686,10 @@ namespace TomCat {
 				PathToUTF8(filepath));
 			return false;
 		}
-		return DeserializeStream(input, filepath, true);
+		const bool deserialized = DeserializeStream(input, filepath, true);
+		if (deserialized && AssetManager::Get().IsInitialized())
+			m_Scene->SetPhysics2DSettings(AssetManager::Get().GetPhysics2DSettings());
+		return deserialized;
 	}
 
 	bool SceneSerializer::ValidateCurrentFormat(const std::filesystem::path& filepath)
@@ -692,8 +752,11 @@ namespace TomCat {
 		{
 			std::string serialized(bytes.begin(), bytes.end());
 			std::istringstream input(std::move(serialized));
-			return DeserializeStream(input, UTF8ToPath(
+			const bool deserialized = DeserializeStream(input, UTF8ToPath(
 				"CookedScene-" + std::to_string(static_cast<uint64_t>(handle))), true);
+			if (deserialized)
+				m_Scene->SetPhysics2DSettings(assetManager.GetPhysics2DSettings());
+			return deserialized;
 		}
 		catch (const std::exception& error)
 		{
@@ -750,7 +813,7 @@ namespace TomCat {
 				const YAML::Node entityNode = entities[index];
 				const std::string context = "Entities[" + std::to_string(index) + "]";
 				RequireExactFields(entityNode, context,
-					{ "Entity", "Tag", "Transform", "LocalTransform", "Parent" },
+					{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
 					{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D", "BoxCollider2D",
 						"CircleCollider2D", "DistanceJoint2D" });
 
@@ -770,6 +833,21 @@ namespace TomCat {
 				if (!entity)
 					throw std::runtime_error(context + " could not be created");
 				entity.GetComponent<Tag>().Visible = visible;
+
+				YAML::Node metadataNode = entityNode["EntityMetadata"];
+				RequireExactFields(metadataNode, context + ".EntityMetadata",
+					{ "GameplayTag", "Layer", "HierarchyIcon" });
+				auto& metadata = entity.GetComponent<EntityMetadata>();
+				metadata.GameplayTag = ReadRequired<std::string>(metadataNode,
+					"GameplayTag", context + ".EntityMetadata");
+				const uint32_t rawLayer = ReadRequired<uint32_t>(metadataNode,
+					"Layer", context + ".EntityMetadata");
+				if (rawLayer >= Physics2DLayerCount)
+					throw std::runtime_error(context + ".EntityMetadata.Layer must be in [0, 15]");
+				metadata.Layer = static_cast<uint8_t>(rawLayer);
+				metadata.HierarchyIcon = EntityIconModeFromString(ReadRequired<std::string>(
+					metadataNode, "HierarchyIcon", context + ".EntityMetadata"));
+				ValidateEntityMetadata(metadata, context + ".EntityMetadata");
 
 				YAML::Node transformNode = entityNode["Transform"];
 				RequireExactFields(transformNode, context + ".Transform",

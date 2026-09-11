@@ -11,6 +11,7 @@
 #include <functional>
 
 namespace TomCat {
+	class Project;
 
 	class SceneHierarchyPanel
 	{
@@ -30,6 +31,7 @@ namespace TomCat {
 		SceneHierarchyPanel(const Ref<Scene>& scene);
 
 		void SetContext(const Ref<Scene>& scene, bool clearSelection = true, bool remapSelection = false);
+		void SetProject(const Ref<Project>& project);
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 
 		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr);
@@ -72,6 +74,7 @@ namespace TomCat {
 		void MarkModified();
 	private:
 		Ref<Scene> m_Context;
+		Ref<Project> m_Project;
 		Entity m_SelectionContext;
 		// 创建子对象后用于强制展开父节点的一次性标记。
 		Entity m_ForceExpandParent;
@@ -83,8 +86,8 @@ namespace TomCat {
 		Entity m_RenameEntity;
 		char m_RenameBuffer[256] = {};
 		bool m_RenameFocus = false;
-		Entity m_TagEditingEntity;
-		char m_TagEditBuffer[256] = {};
+		Entity m_NameEditingEntity;
+		char m_NameEditBuffer[256] = {};
 		bool m_HierarchyFocused = false;
 		bool m_ColliderEditingAllowed = true;
 		ColliderEditMode m_ColliderEditMode = ColliderEditMode::None;

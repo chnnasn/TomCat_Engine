@@ -98,6 +98,32 @@ namespace TomCat {
 		}
 	};
 
+	// Stable scene data used by the editor to choose an Entity icon. Entity is the
+	// Unity-style default; Automatic may be selected explicitly to resolve from the
+	// current components.
+	enum class EntityIconMode : uint8_t
+	{
+		Automatic = 0,
+		Entity,
+		Camera,
+		Sprite,
+		Rigidbody2D,
+		Collider2D
+	};
+
+	// Project-defined gameplay identity shared by every Entity, including entities
+	// that currently have no renderer or collider. Layer is a stable 0-based slot;
+	// the project's Physics2DSettings decides which entity layers may interact.
+	struct EntityMetadata
+	{
+		std::string GameplayTag = "Untagged";
+		uint8_t Layer = 0;
+		EntityIconMode HierarchyIcon = EntityIconMode::Entity;
+
+		EntityMetadata() = default;
+		EntityMetadata(const EntityMetadata&) = default;
+	};
+
 	struct LineRenderer
 	{
 		bool Enabled = true;

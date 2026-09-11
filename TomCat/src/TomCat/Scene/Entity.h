@@ -90,6 +90,29 @@ namespace TomCat {
 
 		const std::string& GetName() const { return GetComponent<Tag>()._Tag; }
 
+		const std::string& GetGameplayTag() const
+		{
+			return GetComponent<EntityMetadata>().GameplayTag;
+		}
+
+		bool SetGameplayTag(const std::string& gameplayTag)
+		{
+			if (gameplayTag.empty())
+				return false;
+			GetComponent<EntityMetadata>().GameplayTag = gameplayTag;
+			return true;
+		}
+
+		uint8_t GetLayer() const { return GetComponent<EntityMetadata>().Layer; }
+
+		bool SetLayer(uint8_t layer)
+		{
+			if (layer >= Physics2DLayerCount)
+				return false;
+			GetComponent<EntityMetadata>().Layer = layer;
+			return true;
+		}
+
 		bool operator==(const Entity& other) const
 		{
 			return m_EntityHandle == other.m_EntityHandle && m_Scene == other.m_Scene;

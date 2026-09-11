@@ -51,6 +51,7 @@ namespace TomCat {
 			std::transform(first.begin(), first.end(), first.begin(),
 				[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
 			return first == "library" || first == "cache" || first == "usersettings" ||
+				first == "projectsettings" ||
 				first == ".git" || first == ".svn" || first == ".hg" ||
 				first == ".bzr" || first == ".jj";
 		}
@@ -227,7 +228,7 @@ namespace TomCat {
 			config.AssetDirectory = config.AssetDirectory.lexically_normal();
 			if (UsesReservedProjectRoot(config.AssetDirectory))
 			{
-				errorMessage = "Project.AssetDirectory cannot overlap Library, Cache, UserSettings, or version-control metadata";
+				errorMessage = "Project.AssetDirectory cannot overlap Library, Cache, UserSettings, ProjectSettings, or version-control metadata";
 				return false;
 			}
 
@@ -563,11 +564,224 @@ namespace TomCat {
 			return config;
 		}
 
+		constexpr uint32_t kProjectSettingsSchemaVersion = 1;
+
+		bool ValidateProjectSettings(const ProjectSettings& settings,
+			std::string& errorMessage)
+		{
+			if (settings.TagsAndLayers.Tags.empty()
+				|| settings.TagsAndLayers.Tags.front() != "Untagged")
+			{
+				errorMessage = "TagsAndLayers.Tags must begin with the reserved 'Untagged' tag";
+				return false;
+			}
+
+			std::unordered_set<std::string> tags;
+			for (const std::string& tag : settings.TagsAndLayers.Tags)
+			{
+				if (tag.empty())
+				{
+					errorMessage = "TagsAndLayers.Tags cannot contain an empty tag";
+					return false;
+				}
+				if (!tags.emplace(tag).second)
+				{
+					errorMessage = "TagsAndLayers.Tags contains duplicate tag '" + tag + "'";
+					return false;
+				}
+			}
+
+			if (settings.TagsAndLayers.LayerNames[0] != "Default")
+			{
+				errorMessage = "TagsAndLayers.LayerNames[0] must be the reserved 'Default' layer";
+				return false;
+			}
+			std::unordered_set<std::string> layerNames;
+			for (const std::string& layerName : settings.TagsAndLayers.LayerNames)
+			{
+				if (layerName.empty())
+					continue;
+				if (!layerNames.emplace(layerName).second)
+				{
+					errorMessage = "TagsAndLayers.LayerNames contains duplicate layer '" +
+						layerName + "'";
+					return false;
+				}
+			}
+
+			for (std::size_t layerA = 0; layerA < Physics2DLayerCount; ++layerA)
+			{
+				for (std::size_t layerB = layerA; layerB < Physics2DLayerCount; ++layerB)
+				{
+					const bool aAcceptsB = (settings.Physics2D.CollisionMasks[layerA]
+						& (uint16_t(1) << layerB)) != 0;
+					const bool bAcceptsA = (settings.Physics2D.CollisionMasks[layerB]
+						& (uint16_t(1) << layerA)) != 0;
+					if (aAcceptsB != bAcceptsA)
+					{
+						errorMessage = "Physics2D.CollisionMasks must be symmetric";
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+
+		enum class ProjectSettingsLoadResult
+		{
+			Missing,
+			Loaded,
+			Failed
+		};
+
+		ProjectSettingsLoadResult LoadProjectSettingsFile(
+			const std::filesystem::path& path, ProjectSettings& settings,
+			std::string& errorMessage)
+		{
+			std::error_code filesystemError;
+			const bool exists = std::filesystem::exists(path, filesystemError);
+			if (filesystemError)
+			{
+				errorMessage = "Could not inspect project settings: " + filesystemError.message();
+				return ProjectSettingsLoadResult::Failed;
+			}
+			if (!exists)
+			{
+				settings = ProjectSettings{};
+				return ProjectSettingsLoadResult::Missing;
+			}
+			if (!std::filesystem::is_regular_file(path, filesystemError) || filesystemError)
+			{
+				errorMessage = "Project settings path is not a regular file";
+				return ProjectSettingsLoadResult::Failed;
+			}
+
+			try
+			{
+				std::ifstream input(path, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("Could not open project settings");
+				const YAML::Node root = YAML::Load(input);
+				if (input.bad())
+					throw std::runtime_error("Failed while reading project settings");
+				RequireExactMapFields(root, "Project settings document",
+					std::array<const char*, 3>{ "SchemaVersion", "TagsAndLayers", "Physics2D" });
+				const uint32_t schemaVersion = root["SchemaVersion"].as<uint32_t>();
+				if (schemaVersion != kProjectSettingsSchemaVersion)
+					throw std::runtime_error("Unsupported project settings SchemaVersion " +
+						std::to_string(schemaVersion) + "; expected " +
+						std::to_string(kProjectSettingsSchemaVersion));
+
+				const YAML::Node tagsAndLayers = root["TagsAndLayers"];
+				RequireExactMapFields(tagsAndLayers, "TagsAndLayers",
+					std::array<const char*, 2>{ "Tags", "LayerNames" });
+				const YAML::Node tags = tagsAndLayers["Tags"];
+				if (!tags.IsSequence())
+					throw std::runtime_error("TagsAndLayers.Tags must be a sequence");
+				const YAML::Node layerNames = tagsAndLayers["LayerNames"];
+				if (!layerNames.IsSequence() || layerNames.size() != Physics2DLayerCount)
+					throw std::runtime_error("TagsAndLayers.LayerNames must contain exactly 16 entries");
+
+				const YAML::Node physics = root["Physics2D"];
+				RequireExactMapFields(physics, "Physics2D",
+					std::array<const char*, 1>{ "CollisionMasks" });
+				const YAML::Node masks = physics["CollisionMasks"];
+				if (!masks.IsSequence() || masks.size() != Physics2DLayerCount)
+					throw std::runtime_error("Physics2D.CollisionMasks must contain exactly 16 entries");
+
+				ProjectSettings loaded;
+				loaded.TagsAndLayers.Tags.clear();
+				for (const YAML::Node& tag : tags)
+					loaded.TagsAndLayers.Tags.push_back(tag.as<std::string>());
+				for (std::size_t index = 0; index < Physics2DLayerCount; ++index)
+				{
+					loaded.TagsAndLayers.LayerNames[index] = layerNames[index].as<std::string>();
+					loaded.Physics2D.CollisionMasks[index] = masks[index].as<uint16_t>();
+				}
+				if (!ValidateProjectSettings(loaded, errorMessage))
+					return ProjectSettingsLoadResult::Failed;
+				settings = std::move(loaded);
+				return ProjectSettingsLoadResult::Loaded;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = exception.what();
+				return ProjectSettingsLoadResult::Failed;
+			}
+		}
+
 	}
 
 	Project::Project(const std::filesystem::path& projectPath)
 		: m_ProjectPath(projectPath.lexically_normal()), m_Directory(projectPath.parent_path())
 	{
+	}
+
+	bool Project::SaveSettings() const
+	{
+		try
+		{
+			if (m_ProjectPath.empty())
+				throw std::runtime_error("Project path is empty");
+			std::string validationError;
+			if (!ValidateProjectSettings(m_Settings, validationError))
+				throw std::runtime_error(validationError);
+
+			const std::filesystem::path settingsPath = GetSettingsPath();
+			std::error_code directoryError;
+			std::filesystem::create_directories(settingsPath.parent_path(), directoryError);
+			if (directoryError)
+				throw std::runtime_error("Could not create ProjectSettings directory: " +
+					directoryError.message());
+
+			YAML::Emitter output;
+			output << YAML::BeginMap;
+			output << YAML::Key << "SchemaVersion" << YAML::Value
+				<< kProjectSettingsSchemaVersion;
+			output << YAML::Key << "TagsAndLayers" << YAML::Value << YAML::BeginMap;
+			output << YAML::Key << "Tags" << YAML::Value << YAML::BeginSeq;
+			for (const std::string& tag : m_Settings.TagsAndLayers.Tags)
+				output << tag;
+			output << YAML::EndSeq;
+			output << YAML::Key << "LayerNames" << YAML::Value << YAML::BeginSeq;
+			for (const std::string& layerName : m_Settings.TagsAndLayers.LayerNames)
+				output << layerName;
+			output << YAML::EndSeq << YAML::EndMap;
+			output << YAML::Key << "Physics2D" << YAML::Value << YAML::BeginMap;
+			output << YAML::Key << "CollisionMasks" << YAML::Value << YAML::BeginSeq;
+			for (uint16_t mask : m_Settings.Physics2D.CollisionMasks)
+				output << mask;
+			output << YAML::EndSeq << YAML::EndMap << YAML::EndMap;
+			if (!output.good())
+				throw std::runtime_error(output.GetLastError());
+
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(settingsPath, output.c_str(), writeError))
+				throw std::runtime_error("Could not atomically replace project settings: " + writeError);
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Failed to save project settings '{0}': {1}",
+				PathToUTF8(GetSettingsPath()), exception.what());
+			return false;
+		}
+	}
+
+	bool Project::SetSettings(const ProjectSettings& settings)
+	{
+		std::string validationError;
+		if (!ValidateProjectSettings(settings, validationError))
+		{
+			TC_Core_Error("Cannot apply project settings: {0}", validationError);
+			return false;
+		}
+		const ProjectSettings previous = m_Settings;
+		m_Settings = settings;
+		if (SaveSettings())
+			return true;
+		m_Settings = previous;
+		return false;
 	}
 
 	bool Project::SetStartScene(const std::filesystem::path& scenePath)
@@ -888,10 +1102,17 @@ namespace TomCat {
 				}
 			}
 		}
-		if (!project->Save())
+		if (!project->Save() || !project->SaveSettings())
 		{
+			std::error_code cleanupError;
+			std::filesystem::remove(project->GetSettingsPath(), cleanupError);
+			cleanupError.clear();
+			std::filesystem::remove(project->GetSettingsPath().parent_path(), cleanupError);
+			cleanupError.clear();
+			std::filesystem::remove(project->GetProjectPath(), cleanupError);
 			rollbackCreatedDirectories();
-			TC_Core_Error("Could not save new project '{0}'", PathToUTF8(normalizedProjectPath));
+			TC_Core_Error("Could not save new project and its settings '{0}'",
+				PathToUTF8(normalizedProjectPath));
 			return nullptr;
 		}
 
@@ -923,6 +1144,11 @@ namespace TomCat {
 
 			auto project = CreateRef<Project>(projectPath);
 			project->m_Config = ReadCurrentProjectConfig(projectNode);
+			std::string settingsError;
+			const ProjectSettingsLoadResult settingsResult = LoadProjectSettingsFile(
+				project->GetSettingsPath(), project->m_Settings, settingsError);
+			if (settingsResult == ProjectSettingsLoadResult::Failed)
+				throw std::runtime_error("Invalid project settings: " + settingsError);
 
 			project->m_PreservedDocument = ReadWholeFile(projectPath);
 			if (!EnsureAssetSystemIgnoreRules(project->m_Directory))
@@ -1011,6 +1237,7 @@ namespace TomCat {
 			return false;
 		m_Directory = std::move(reloaded->m_Directory);
 		m_Config = std::move(reloaded->m_Config);
+		m_Settings = std::move(reloaded->m_Settings);
 		if (!localLastOperationTime.empty())
 			m_Config.LastOperationTime = localLastOperationTime;
 		m_PreservedDocument = std::move(reloaded->m_PreservedDocument);

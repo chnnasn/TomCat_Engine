@@ -11,13 +11,16 @@
 #include "box2d/b2_fixture.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -25,6 +28,71 @@ namespace {
 	{
 		if (!condition)
 			throw std::runtime_error(message);
+	}
+
+	std::string ReadTextFile(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary);
+		Require(static_cast<bool>(input), "could not open text fixture");
+		return std::string(std::istreambuf_iterator<char>(input),
+			std::istreambuf_iterator<char>());
+	}
+
+	void WriteTextFile(const std::filesystem::path& path, const std::string& contents)
+	{
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		Require(static_cast<bool>(output), "could not create text fixture");
+		output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+		Require(output.good(), "could not write text fixture");
+	}
+
+	std::vector<uint8_t> ReadBinaryFile(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary);
+		Require(static_cast<bool>(input), "could not open binary fixture");
+		return std::vector<uint8_t>(std::istreambuf_iterator<char>(input),
+			std::istreambuf_iterator<char>());
+	}
+
+	void WriteBinaryFile(const std::filesystem::path& path,
+		const std::vector<uint8_t>& contents)
+	{
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		Require(static_cast<bool>(output), "could not create binary fixture");
+		if (!contents.empty())
+			output.write(reinterpret_cast<const char*>(contents.data()),
+				static_cast<std::streamsize>(contents.size()));
+		Require(output.good(), "could not write binary fixture");
+	}
+
+	uint16_t ReadLittleEndian16(const std::vector<uint8_t>& bytes, std::size_t offset)
+	{
+		Require(offset + 2 <= bytes.size(), "binary fixture has no uint16 at requested offset");
+		return static_cast<uint16_t>(bytes[offset])
+			| static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset + 1]) << 8);
+	}
+
+	uint32_t ReadLittleEndian32(const std::vector<uint8_t>& bytes, std::size_t offset)
+	{
+		Require(offset + 4 <= bytes.size(), "binary fixture has no uint32 at requested offset");
+		uint32_t value = 0;
+		for (std::size_t index = 0; index < 4; ++index)
+			value |= static_cast<uint32_t>(bytes[offset + index]) << (index * 8);
+		return value;
+	}
+
+	void WriteLittleEndian16(std::vector<uint8_t>& bytes, std::size_t offset, uint16_t value)
+	{
+		Require(offset + 2 <= bytes.size(), "binary fixture has no uint16 at requested offset");
+		bytes[offset] = static_cast<uint8_t>(value & 0xff);
+		bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xff);
+	}
+
+	void WriteLittleEndian32(std::vector<uint8_t>& bytes, std::size_t offset, uint32_t value)
+	{
+		Require(offset + 4 <= bytes.size(), "binary fixture has no uint32 at requested offset");
+		for (std::size_t index = 0; index < 4; ++index)
+			bytes[offset + index] = static_cast<uint8_t>((value >> (index * 8)) & 0xff);
 	}
 
 	bool Near(float actual, float expected, float tolerance = 1.0e-4f)
@@ -91,6 +159,111 @@ namespace {
 
 		std::filesystem::path Root;
 	};
+
+	void TestProjectSettingsPersistenceAndValidation()
+	{
+		TemporaryCookedProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "Project Settings Regression";
+		config.Template = "2D";
+		config.AssetDirectory = "Assets";
+		config.StartScene = "Main.tomcat";
+		const std::filesystem::path projectPath = environment.Root / "Project.tcproj";
+		auto project = TomCat::Project::CreateNew(projectPath, config);
+		Require(project != nullptr, "CreateNew rejected a valid project settings fixture");
+
+		const TomCat::ProjectSettings defaults;
+		Require(project->GetSettings() == defaults,
+			"CreateNew did not initialize default project settings");
+		Require(project->GetSettingsPath()
+			== environment.Root / "ProjectSettings" / "ProjectSettings.tcsettings",
+			"project settings path is not the project-root ProjectSettings document");
+		Require(std::filesystem::is_regular_file(project->GetSettingsPath()),
+			"CreateNew did not persist default project settings");
+		for (std::size_t layer = 0; layer < TomCat::Physics2DLayerCount; ++layer)
+			Require(defaults.Physics2D.CollisionMasks[layer] == 0xffff,
+				"default collision matrix is not all-on");
+
+		const std::string projectDocument = ReadTextFile(projectPath);
+		Require(projectDocument.find("SchemaVersion: 3") != std::string::npos,
+			"Project.tcproj did not remain at schema v3");
+		Require(projectDocument.find("TagsAndLayers") == std::string::npos
+			&& projectDocument.find("Physics2D") == std::string::npos,
+			"project settings leaked into the strict Project.tcproj document");
+
+		TomCat::ProjectSettings customized;
+		customized.TagsAndLayers.Tags = { "Untagged", "Player", "Enemy" };
+		customized.TagsAndLayers.LayerNames[1] = "Player";
+		customized.TagsAndLayers.LayerNames[2] = "Enemy";
+		customized.Physics2D.SetLayersCollide(1, 2, false);
+		Require(project->SetSettings(customized),
+			"SetSettings rejected valid tags, layers, and symmetric matrix data");
+		Require(project->GetSettings() == customized,
+			"SetSettings did not update the in-memory project settings");
+		Require(project->SaveSettings(), "SaveSettings rejected valid settings");
+
+		auto loaded = TomCat::Project::Load(projectPath);
+		Require(loaded != nullptr && loaded->GetSettings() == customized,
+			"Project::Load did not roundtrip separately persisted settings");
+		const std::string validSettingsDocument = ReadTextFile(project->GetSettingsPath());
+		Require(validSettingsDocument.find("SchemaVersion: 1") != std::string::npos
+			&& validSettingsDocument.find("TagsAndLayers:") != std::string::npos
+			&& validSettingsDocument.find("Physics2D:") != std::string::npos,
+			"settings writer omitted its strict schema or top-level sections");
+
+		auto requireRejected = [&](const TomCat::ProjectSettings& invalid, const char* message)
+		{
+			const TomCat::ProjectSettings before = project->GetSettings();
+			const std::string fileBefore = ReadTextFile(project->GetSettingsPath());
+			Require(!project->SetSettings(invalid), message);
+			Require(project->GetSettings() == before,
+				"rejected settings changed the in-memory project state");
+			Require(ReadTextFile(project->GetSettingsPath()) == fileBefore,
+				"rejected settings changed the persisted project state");
+		};
+
+		TomCat::ProjectSettings invalid = customized;
+		invalid.TagsAndLayers.Tags[0] = "NotUntagged";
+		requireRejected(invalid, "SetSettings accepted a missing reserved Untagged tag");
+		invalid = customized;
+		invalid.TagsAndLayers.Tags.push_back("");
+		requireRejected(invalid, "SetSettings accepted an empty tag");
+		invalid = customized;
+		invalid.TagsAndLayers.Tags.push_back("Player");
+		requireRejected(invalid, "SetSettings accepted a duplicate tag");
+		invalid = customized;
+		invalid.TagsAndLayers.LayerNames[0] = "NotDefault";
+		requireRejected(invalid, "SetSettings accepted a renamed reserved Default layer");
+		invalid = customized;
+		invalid.TagsAndLayers.LayerNames[3] = "Player";
+		requireRejected(invalid, "SetSettings accepted a duplicate nonempty layer name");
+		invalid = customized;
+		invalid.Physics2D.CollisionMasks[1] |= uint16_t(1) << 2;
+		requireRejected(invalid, "SetSettings accepted an asymmetric collision matrix");
+
+		WriteTextFile(project->GetSettingsPath(), validSettingsDocument + "\nUnexpected: true\n");
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"strict settings loader accepted an unknown top-level field");
+		WriteTextFile(project->GetSettingsPath(), validSettingsDocument);
+		std::string wrongSchema = validSettingsDocument;
+		const std::size_t schemaPosition = wrongSchema.find("SchemaVersion: 1");
+		Require(schemaPosition != std::string::npos,
+			"could not locate project settings schema version");
+		wrongSchema.replace(schemaPosition, std::string("SchemaVersion: 1").size(),
+			"SchemaVersion: 2");
+		WriteTextFile(project->GetSettingsPath(), wrongSchema);
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"settings loader accepted an unsupported schema version");
+		WriteTextFile(project->GetSettingsPath(), validSettingsDocument);
+
+		std::error_code removeError;
+		Require(std::filesystem::remove(project->GetSettingsPath(), removeError) && !removeError,
+			"could not remove settings fixture for missing-file compatibility test");
+		auto missingSettings = TomCat::Project::Load(projectPath);
+		Require(missingSettings != nullptr && missingSettings->GetSettings() == defaults,
+			"missing project settings did not load backward-compatible defaults");
+		Require(project->SaveSettings(), "could not restore settings after missing-file test");
+	}
 
 	class FixedStepProbe final : public TomCat::ScriptableEntity
 	{
@@ -613,44 +786,219 @@ namespace {
 		scene.OnRuntimeStop();
 	}
 
+	struct FilterGateResult
+	{
+		int CollisionEnters = 0;
+		int TriggerEnters = 0;
+	};
+
+	FilterGateResult RunProjectAndFixtureFilterCase(bool projectAllows,
+		bool fixtureAllows, bool trigger)
+	{
+		TomCat::Scene scene;
+		TomCat::Physics2DSettings settings;
+		settings.SetLayersCollide(1, 2, projectAllows);
+		scene.SetPhysics2DSettings(settings);
+
+		TomCat::Entity staticEntity = scene.CreateEntity("Independent filter static");
+		staticEntity.GetComponent<TomCat::EntityMetadata>().Layer = 1;
+		auto& staticCollider = staticEntity.AddComponent<TomCat::CircleCollider2D>();
+		staticCollider.Radius = 2.0f;
+		staticCollider.IsTrigger = trigger;
+		// Fixture bits deliberately do not correspond to entity-layer indices.
+		staticCollider.CollisionLayer = 0x0040;
+		staticCollider.CollisionMask = 0x0200;
+
+		TomCat::Entity dynamicEntity = AddCircleBody(scene, "Independent filter dynamic",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 1.0f);
+		dynamicEntity.GetComponent<TomCat::EntityMetadata>().Layer = 2;
+		auto& dynamicCollider = dynamicEntity.GetComponent<TomCat::CircleCollider2D>();
+		dynamicCollider.CollisionLayer = 0x0200;
+		dynamicCollider.CollisionMask = fixtureAllows ? 0x0040 : 0x0000;
+
+		FilterGateResult result;
+		scene.AddCollisionEnter2DListener(
+			[&](const TomCat::CollisionEnter2D&) { ++result.CollisionEnters; });
+		scene.AddTriggerEnter2DListener(
+			[&](const TomCat::TriggerEnter2D&) { ++result.TriggerEnters; });
+		scene.OnRuntimeStart();
+		auto* staticFixture = static_cast<b2Fixture*>(staticCollider.RuntimeFixture);
+		auto* dynamicFixture = static_cast<b2Fixture*>(dynamicCollider.RuntimeFixture);
+		Require(staticFixture && dynamicFixture,
+			"independent filter fixture pair was not created");
+		const b2Filter staticFilter = staticFixture->GetFilterData();
+		const b2Filter dynamicFilter = dynamicFixture->GetFilterData();
+		Require(staticFilter.categoryBits == 0x0040 && staticFilter.maskBits == 0x0200
+			&& dynamicFilter.categoryBits == 0x0200
+			&& dynamicFilter.maskBits == (fixtureAllows ? 0x0040 : 0x0000),
+			"entity project layers overwrote per-fixture Box2D filter bits");
+		scene.OnRuntimeStep();
+		scene.OnRuntimeStop();
+		return result;
+	}
+
+	int RunAsymmetricProjectFilterCase(bool allowOneToTwo, bool reverseCreation)
+	{
+		TomCat::Scene scene;
+		TomCat::Physics2DSettings settings;
+		const uint16_t layerOneBit = uint16_t(1) << 1;
+		const uint16_t layerTwoBit = uint16_t(1) << 2;
+		if (allowOneToTwo)
+		{
+			settings.CollisionMasks[1] |= layerTwoBit;
+			settings.CollisionMasks[2] &= static_cast<uint16_t>(~layerOneBit);
+		}
+		else
+		{
+			settings.CollisionMasks[1] &= static_cast<uint16_t>(~layerTwoBit);
+			settings.CollisionMasks[2] |= layerOneBit;
+		}
+		scene.SetPhysics2DSettings(settings);
+
+		TomCat::Entity staticEntity;
+		TomCat::Entity dynamicEntity;
+		auto createStatic = [&]()
+		{
+			staticEntity = scene.CreateEntity("Asymmetric filter static");
+			staticEntity.GetComponent<TomCat::EntityMetadata>().Layer = 1;
+			auto& collider = staticEntity.AddComponent<TomCat::CircleCollider2D>();
+			collider.Radius = 2.0f;
+		};
+		auto createDynamic = [&]()
+		{
+			dynamicEntity = AddCircleBody(scene, "Asymmetric filter dynamic",
+				TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 1.0f);
+			dynamicEntity.GetComponent<TomCat::EntityMetadata>().Layer = 2;
+		};
+		if (reverseCreation)
+		{
+			createDynamic();
+			createStatic();
+		}
+		else
+		{
+			createStatic();
+			createDynamic();
+		}
+
+		int collisionEnters = 0;
+		scene.AddCollisionEnter2DListener(
+			[&](const TomCat::CollisionEnter2D&) { ++collisionEnters; });
+		scene.OnRuntimeStart();
+		Require(staticEntity.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+			&& dynamicEntity.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture,
+			"asymmetric project-filter fixtures were not created");
+		scene.OnRuntimeStep();
+		scene.OnRuntimeStop();
+		return collisionEnters;
+	}
+
+	void TestProjectMatrixAndFixtureFilters()
+	{
+		FilterGateResult result = RunProjectAndFixtureFilterCase(false, true, false);
+		Require(result.CollisionEnters == 0 && result.TriggerEnters == 0,
+			"project collision matrix did not independently reject a solid contact");
+		result = RunProjectAndFixtureFilterCase(true, false, false);
+		Require(result.CollisionEnters == 0 && result.TriggerEnters == 0,
+			"fixture category/mask did not independently reject a solid contact");
+		result = RunProjectAndFixtureFilterCase(true, true, false);
+		Require(result.CollisionEnters == 1 && result.TriggerEnters == 0,
+			"two enabled independent gates did not admit one solid contact");
+
+		result = RunProjectAndFixtureFilterCase(false, true, true);
+		Require(result.CollisionEnters == 0 && result.TriggerEnters == 0,
+			"project collision matrix did not reject a trigger contact");
+		result = RunProjectAndFixtureFilterCase(true, false, true);
+		Require(result.CollisionEnters == 0 && result.TriggerEnters == 0,
+			"fixture category/mask did not reject a trigger contact");
+		result = RunProjectAndFixtureFilterCase(true, true, true);
+		Require(result.CollisionEnters == 0 && result.TriggerEnters == 1,
+			"two enabled independent gates did not admit one trigger contact");
+
+		for (bool allowOneToTwo : { false, true })
+		{
+			for (bool reverseCreation : { false, true })
+			{
+				Require(RunAsymmetricProjectFilterCase(allowOneToTwo, reverseCreation) == 0,
+					"an asymmetric direct Scene collision matrix admitted a contact");
+			}
+		}
+	}
+
 	void TestQueriesAndMotionAPI()
 	{
 		TomCat::Scene scene;
 		TomCat::Entity solid = scene.CreateEntity("Query solid");
+		solid.GetComponent<TomCat::EntityMetadata>().Layer = 2;
 		auto& solidTransform = solid.GetComponent<TomCat::Transform>();
 		solidTransform._Translation.x = 3.0f;
 		solidTransform._LocalTranslation = solidTransform._Translation;
 		auto& solidBox = solid.AddComponent<TomCat::BoxCollider2D>();
 		solidBox.Size = { 0.5f, 0.5f };
-		solidBox.CollisionLayer = 0x0004;
+		// Raw fixture filters are deliberately unrelated to the entity layer.
+		solidBox.CollisionLayer = 0x0040;
 
 		TomCat::Entity trigger = scene.CreateEntity("Query trigger");
+		trigger.GetComponent<TomCat::EntityMetadata>().Layer = 3;
 		auto& triggerTransform = trigger.GetComponent<TomCat::Transform>();
 		triggerTransform._Translation.x = 6.0f;
 		triggerTransform._LocalTranslation = triggerTransform._Translation;
 		auto& triggerCircle = trigger.AddComponent<TomCat::CircleCollider2D>();
 		triggerCircle.Radius = 1.0f;
 		triggerCircle.IsTrigger = true;
-		triggerCircle.CollisionLayer = 0x0008;
+		triggerCircle.CollisionLayer = 0x0200;
+
+		TomCat::Entity missingMetadata = scene.CreateEntity("Query missing metadata");
+		auto& missingTransform = missingMetadata.GetComponent<TomCat::Transform>();
+		missingTransform._Translation.x = 9.0f;
+		missingTransform._LocalTranslation = missingTransform._Translation;
+		missingMetadata.AddComponent<TomCat::BoxCollider2D>().Size = { 0.5f, 0.5f };
+		missingMetadata.RemoveComponent<TomCat::EntityMetadata>();
+
+		TomCat::Entity invalidMetadata = scene.CreateEntity("Query invalid metadata");
+		invalidMetadata.GetComponent<TomCat::EntityMetadata>().Layer =
+			static_cast<uint8_t>(TomCat::Physics2DLayerCount);
+		auto& invalidTransform = invalidMetadata.GetComponent<TomCat::Transform>();
+		invalidTransform._Translation.x = 11.0f;
+		invalidTransform._LocalTranslation = invalidTransform._Translation;
+		invalidMetadata.AddComponent<TomCat::CircleCollider2D>().Radius = 0.5f;
 
 		TomCat::Entity dynamicEntity = AddCircleBody(scene, "Motion API body",
 			TomCat::Rigidbody2D::BodyType::Dynamic, { 20.0f, 0.0f }, 1.0f);
 		scene.OnRuntimeStart();
 
 		const auto rayHit = scene.Raycast2D({ 0.0f, 0.0f }, { 10.0f, 0.0f }, 0x000C, true);
-		Require(rayHit && rayHit->EntityID == solid.GetUUID() && !rayHit->IsTrigger,
-			"raycast did not return the nearest matching fixture");
+		Require(rayHit && rayHit->EntityID == solid.GetUUID() && !rayHit->IsTrigger
+			&& rayHit->CollisionLayer == 0x0004,
+			"raycast did not return the nearest matching entity layer");
 		const auto triggerRay = scene.Raycast2D({ 4.0f, 0.0f }, { 10.0f, 0.0f }, 0x0008, true);
-		Require(triggerRay && triggerRay->EntityID == trigger.GetUUID() && triggerRay->IsTrigger,
-			"raycast did not include a matching trigger");
+		Require(triggerRay && triggerRay->EntityID == trigger.GetUUID() && triggerRay->IsTrigger
+			&& triggerRay->CollisionLayer == 0x0008,
+			"raycast did not include a trigger on the matching entity layer");
 		Require(!scene.Raycast2D({ 4.0f, 0.0f }, { 10.0f, 0.0f }, 0x0008, false),
 			"raycast includeTriggers=false still returned a sensor");
+		Require(!scene.Raycast2D({ 0.0f, 0.0f }, { 12.0f, 0.0f }, 0x0240, true),
+			"raycast filtered by raw fixture category bits instead of entity layers");
 
-		const auto allHits = scene.QueryAABB2D({ 1.0f, -2.0f }, { 8.0f, 2.0f }, 0x000C, true);
+		const auto allHits = scene.QueryAABB2D({ 1.0f, -2.0f }, { 12.0f, 2.0f }, 0x000C, true);
 		Require(allHits.size() == 2, "AABB query did not return both matching entities");
-		const auto solidHits = scene.QueryAABB2D({ 1.0f, -2.0f }, { 8.0f, 2.0f }, 0x000C, false);
-		Require(solidHits.size() == 1 && solidHits[0].EntityID == solid.GetUUID(),
+		const auto solidHit = std::find_if(allHits.begin(), allHits.end(), [&](const auto& hit)
+		{
+			return hit.EntityID == solid.GetUUID();
+		});
+		const auto triggerHit = std::find_if(allHits.begin(), allHits.end(), [&](const auto& hit)
+		{
+			return hit.EntityID == trigger.GetUUID();
+		});
+		Require(solidHit != allHits.end() && solidHit->CollisionLayer == 0x0004
+			&& triggerHit != allHits.end() && triggerHit->CollisionLayer == 0x0008,
+			"AABB query results did not report entity-layer bits");
+		const auto solidHits = scene.QueryAABB2D({ 1.0f, -2.0f }, { 12.0f, 2.0f }, 0x000C, false);
+		Require(solidHits.size() == 1 && solidHits[0].EntityID == solid.GetUUID()
+			&& solidHits[0].CollisionLayer == 0x0004,
 			"AABB query trigger exclusion failed");
+		Require(scene.QueryAABB2D({ 8.0f, -2.0f }, { 12.0f, 2.0f }, 0xFFFF, true).empty(),
+			"AABB query returned an entity with missing or invalid layer metadata");
 
 		Require(scene.SetLinearVelocity2D(dynamicEntity.GetUUID(), { 3.0f, 4.0f }),
 			"SetLinearVelocity2D rejected a dynamic body");
@@ -774,13 +1122,24 @@ namespace {
 		Require(actual.CollideConnected == expected.CollideConnected, context);
 	}
 
-	void TestSchemaV7PersistenceAndCopies()
+	void TestSchemaV9PersistenceAndCopies()
 	{
-		const std::filesystem::path scenePath =
-			std::filesystem::temp_directory_path() / "tomcat_physics_v7_roundtrip.tomcat";
+		TemporaryCookedProject environment;
+		std::filesystem::create_directories(environment.Root);
+		const std::filesystem::path scenePath = environment.Root / "physics_v9_roundtrip.tomcat";
 		auto source = TomCat::CreateRef<TomCat::Scene>();
-		source->SetSceneName("Physics v7 roundtrip");
+		source->SetSceneName("Physics v9 roundtrip");
 		TomCat::Entity entity = source->CreateEntity("Circle source");
+		Require(entity.HasComponent<TomCat::EntityMetadata>(),
+			"CreateEntity omitted required EntityMetadata");
+		Require(entity.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Untagged"
+			&& entity.GetComponent<TomCat::EntityMetadata>().Layer == 0
+			&& entity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Entity,
+			"CreateEntity did not initialize default EntityMetadata");
+		entity.GetComponent<TomCat::EntityMetadata>().GameplayTag = "Player";
+		entity.GetComponent<TomCat::EntityMetadata>().Layer = 3;
+		entity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon = TomCat::EntityIconMode::Sprite;
 		const TomCat::UUID sourceUUID = entity.GetUUID();
 		auto& circle = entity.AddComponent<TomCat::CircleCollider2D>();
 		circle.Enabled = false;
@@ -796,6 +1155,9 @@ namespace {
 		const TomCat::CircleCollider2D expectedCircle = circle;
 
 		TomCat::Entity target = source->CreateEntity("Joint target");
+		target.GetComponent<TomCat::EntityMetadata>().GameplayTag = "Ground";
+		target.GetComponent<TomCat::EntityMetadata>().Layer = 7;
+		target.GetComponent<TomCat::EntityMetadata>().HierarchyIcon = TomCat::EntityIconMode::Collider2D;
 		const TomCat::UUID targetUUID = target.GetUUID();
 		auto& box = target.AddComponent<TomCat::BoxCollider2D>();
 		box.Enabled = false;
@@ -810,6 +1172,22 @@ namespace {
 		box.RestitutionThreshold = 1.75f;
 		box.RuntimeFixture = reinterpret_cast<void*>(static_cast<uintptr_t>(0x3456));
 		const TomCat::BoxCollider2D expectedBox = box;
+		constexpr std::array<TomCat::EntityIconMode, 6> iconModes = {
+			TomCat::EntityIconMode::Automatic,
+			TomCat::EntityIconMode::Entity,
+			TomCat::EntityIconMode::Camera,
+			TomCat::EntityIconMode::Sprite,
+			TomCat::EntityIconMode::Rigidbody2D,
+			TomCat::EntityIconMode::Collider2D
+		};
+		std::array<TomCat::UUID, iconModes.size()> iconModeEntityUUIDs{};
+		for (std::size_t index = 0; index < iconModes.size(); ++index)
+		{
+			TomCat::Entity iconEntity = source->CreateEntity(
+				"Icon mode " + std::to_string(index));
+			iconEntity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon = iconModes[index];
+			iconModeEntityUUIDs[index] = iconEntity.GetUUID();
+		}
 		auto& joint = entity.AddComponent<TomCat::DistanceJoint2D>();
 		joint.Enabled = false;
 		joint.ConnectedEntity = targetUUID;
@@ -823,11 +1201,17 @@ namespace {
 		const TomCat::DistanceJoint2D expectedJoint = joint;
 
 		auto copiedScene = TomCat::Scene::Copy(source);
-		Require(copiedScene != nullptr, "Scene::Copy failed for physics v7 components");
+		Require(copiedScene != nullptr, "Scene::Copy failed for schema-v9 components");
 		TomCat::Entity copiedEntity = copiedScene->FindEntityByUUID(sourceUUID);
 		Require(copiedEntity && copiedEntity.HasComponent<TomCat::CircleCollider2D>()
-			&& copiedEntity.HasComponent<TomCat::DistanceJoint2D>(),
-			"Scene::Copy omitted a physics v7 component");
+			&& copiedEntity.HasComponent<TomCat::DistanceJoint2D>()
+			&& copiedEntity.HasComponent<TomCat::EntityMetadata>(),
+			"Scene::Copy omitted a schema-v9 component");
+		Require(copiedEntity.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Player"
+			&& copiedEntity.GetComponent<TomCat::EntityMetadata>().Layer == 3
+			&& copiedEntity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Sprite,
+			"Scene::Copy changed EntityMetadata");
 		RequireSameCircleFields(copiedEntity.GetComponent<TomCat::CircleCollider2D>(), expectedCircle,
 			"Scene::Copy changed CircleCollider2D fields");
 		RequireSameJointFields(copiedEntity.GetComponent<TomCat::DistanceJoint2D>(), expectedJoint,
@@ -838,6 +1222,11 @@ namespace {
 		TomCat::Entity copiedTarget = copiedScene->FindEntityByUUID(targetUUID);
 		Require(copiedTarget && copiedTarget.HasComponent<TomCat::BoxCollider2D>(),
 			"Scene::Copy omitted BoxCollider2D");
+		Require(copiedTarget.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Ground"
+			&& copiedTarget.GetComponent<TomCat::EntityMetadata>().Layer == 7
+			&& copiedTarget.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Collider2D,
+			"Scene::Copy changed target EntityMetadata");
 		RequireSameBoxFields(copiedTarget.GetComponent<TomCat::BoxCollider2D>(), expectedBox,
 			"Scene::Copy changed BoxCollider2D fields");
 		Require(copiedTarget.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture == nullptr,
@@ -845,8 +1234,14 @@ namespace {
 
 		TomCat::Entity duplicate = source->DuplicateEntity(entity);
 		Require(duplicate && duplicate.HasComponent<TomCat::CircleCollider2D>()
-			&& duplicate.HasComponent<TomCat::DistanceJoint2D>(),
-			"DuplicateEntity omitted a physics v7 component");
+			&& duplicate.HasComponent<TomCat::DistanceJoint2D>()
+			&& duplicate.HasComponent<TomCat::EntityMetadata>(),
+			"DuplicateEntity omitted a schema-v9 component");
+		Require(duplicate.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Player"
+			&& duplicate.GetComponent<TomCat::EntityMetadata>().Layer == 3
+			&& duplicate.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Sprite,
+			"DuplicateEntity changed EntityMetadata");
 		RequireSameCircleFields(duplicate.GetComponent<TomCat::CircleCollider2D>(), expectedCircle,
 			"DuplicateEntity changed CircleCollider2D fields");
 		RequireSameJointFields(duplicate.GetComponent<TomCat::DistanceJoint2D>(), expectedJoint,
@@ -857,34 +1252,46 @@ namespace {
 		TomCat::Entity duplicateTarget = source->DuplicateEntity(target);
 		Require(duplicateTarget && duplicateTarget.HasComponent<TomCat::BoxCollider2D>(),
 			"DuplicateEntity omitted BoxCollider2D");
+		Require(duplicateTarget.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Ground"
+			&& duplicateTarget.GetComponent<TomCat::EntityMetadata>().Layer == 7
+			&& duplicateTarget.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Collider2D,
+			"DuplicateEntity changed target EntityMetadata");
 		RequireSameBoxFields(duplicateTarget.GetComponent<TomCat::BoxCollider2D>(), expectedBox,
 			"DuplicateEntity changed BoxCollider2D fields");
 		Require(duplicateTarget.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture == nullptr,
 			"DuplicateEntity retained BoxCollider2D RuntimeFixture");
 
 		TomCat::SceneSerializer writer(source);
-		Require(writer.Serialize(scenePath), "physics v7 scene serialization failed");
+		Require(writer.Serialize(scenePath), "schema-v9 scene serialization failed");
 		Require(TomCat::SceneSerializer::ValidateCurrentFormat(scenePath),
-			"serialized physics v7 scene failed strict validation");
-		std::ifstream serializedFile(scenePath, std::ios::binary);
-		const std::string serialized((std::istreambuf_iterator<char>(serializedFile)),
-			std::istreambuf_iterator<char>());
-		serializedFile.close();
-		Require(serialized.find("SchemaVersion: 7") != std::string::npos,
-			"serialized scene did not declare schema v7");
+			"serialized schema-v9 scene failed strict validation");
+		const std::string serialized = ReadTextFile(scenePath);
+		Require(serialized.find("SchemaVersion: 9") != std::string::npos,
+			"serialized scene did not declare schema v9");
 		Require(serialized.find("IsTrigger:") != std::string::npos
 			&& serialized.find("CollisionLayer:") != std::string::npos
 			&& serialized.find("CollisionMask:") != std::string::npos
-			&& serialized.find("DistanceJoint2D:") != std::string::npos,
-			"serialized scene omitted physics v7 fields");
+			&& serialized.find("DistanceJoint2D:") != std::string::npos
+			&& serialized.find("EntityMetadata:") != std::string::npos
+			&& serialized.find("GameplayTag: Player") != std::string::npos
+			&& serialized.find("Layer: 3") != std::string::npos
+			&& serialized.find("HierarchyIcon: Sprite") != std::string::npos,
+			"serialized scene omitted schema-v9 metadata or physics fields");
 
 		auto loaded = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::SceneSerializer reader(loaded);
-		Require(reader.Deserialize(scenePath), "physics v7 scene deserialization failed");
+		Require(reader.Deserialize(scenePath), "schema-v9 scene deserialization failed");
 		TomCat::Entity loadedEntity = loaded->FindEntityByUUID(sourceUUID);
 		Require(loadedEntity && loadedEntity.HasComponent<TomCat::CircleCollider2D>()
-			&& loadedEntity.HasComponent<TomCat::DistanceJoint2D>(),
-			"loaded scene omitted a physics v7 component");
+			&& loadedEntity.HasComponent<TomCat::DistanceJoint2D>()
+			&& loadedEntity.HasComponent<TomCat::EntityMetadata>(),
+			"loaded scene omitted a schema-v9 component");
+		Require(loadedEntity.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Player"
+			&& loadedEntity.GetComponent<TomCat::EntityMetadata>().Layer == 3
+			&& loadedEntity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Sprite,
+			"save/load changed EntityMetadata");
 		RequireSameCircleFields(loadedEntity.GetComponent<TomCat::CircleCollider2D>(), expectedCircle,
 			"save/load changed CircleCollider2D fields");
 		RequireSameJointFields(loadedEntity.GetComponent<TomCat::DistanceJoint2D>(), expectedJoint,
@@ -895,36 +1302,86 @@ namespace {
 		TomCat::Entity loadedTarget = loaded->FindEntityByUUID(targetUUID);
 		Require(loadedTarget && loadedTarget.HasComponent<TomCat::BoxCollider2D>(),
 			"loaded scene omitted BoxCollider2D");
+		Require(loadedTarget.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Ground"
+			&& loadedTarget.GetComponent<TomCat::EntityMetadata>().Layer == 7
+			&& loadedTarget.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Collider2D,
+			"save/load changed target EntityMetadata");
 		RequireSameBoxFields(loadedTarget.GetComponent<TomCat::BoxCollider2D>(), expectedBox,
 			"save/load changed BoxCollider2D fields");
 		Require(loadedTarget.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture == nullptr,
 			"save/load restored BoxCollider2D RuntimeFixture");
+		for (std::size_t index = 0; index < iconModes.size(); ++index)
+		{
+			TomCat::Entity loadedIconEntity = loaded->FindEntityByUUID(iconModeEntityUUIDs[index]);
+			Require(loadedIconEntity
+				&& loadedIconEntity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+					== iconModes[index],
+				"save/load changed one of the supported hierarchy icon tokens");
+		}
 
 		std::string obsolete = serialized;
-		const size_t version = obsolete.find("SchemaVersion: 7");
+		const size_t version = obsolete.find("SchemaVersion: 9");
 		Require(version != std::string::npos, "could not locate serialized schema version");
-		obsolete.replace(version, std::string("SchemaVersion: 7").size(), "SchemaVersion: 6");
-		const std::filesystem::path obsoletePath =
-			std::filesystem::temp_directory_path() / "tomcat_physics_v6_rejected.tomcat";
-		{
-			std::ofstream obsoleteFile(obsoletePath, std::ios::binary | std::ios::trunc);
-			obsoleteFile << obsolete;
-		}
+		obsolete.replace(version, std::string("SchemaVersion: 9").size(), "SchemaVersion: 8");
+		const std::filesystem::path obsoletePath = environment.Root / "schema_v8_rejected.tomcat";
+		WriteTextFile(obsoletePath, obsolete);
 		Require(!TomCat::SceneSerializer::ValidateCurrentFormat(obsoletePath),
-			"strict current-format validation accepted schema v6");
+			"strict current-format validation accepted schema v8");
+		auto obsoleteTarget = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::SceneSerializer obsoleteReader(obsoleteTarget);
+		Require(!obsoleteReader.Deserialize(obsoletePath),
+			"scene reader accepted schema v8 instead of requiring schema v9");
 
 		auto invalidScene = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity invalidOwner = invalidScene->CreateEntity("Invalid joint owner");
 		invalidOwner.AddComponent<TomCat::DistanceJoint2D>().ConnectedEntity = TomCat::UUID(9999999);
-		const std::filesystem::path invalidPath =
-			std::filesystem::temp_directory_path() / "tomcat_physics_invalid_joint.tomcat";
+		const std::filesystem::path invalidPath = environment.Root / "invalid_joint.tomcat";
 		TomCat::SceneSerializer invalidWriter(invalidScene);
 		Require(!invalidWriter.Serialize(invalidPath),
 			"scene writer emitted an unresolved DistanceJoint2D reference");
-		std::error_code error;
-		std::filesystem::remove(scenePath, error);
-		std::filesystem::remove(obsoletePath, error);
-		std::filesystem::remove(invalidPath, error);
+
+		auto invalidMetadataScene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity invalidMetadata = invalidMetadataScene->CreateEntity("Invalid metadata");
+		invalidMetadata.GetComponent<TomCat::EntityMetadata>().Layer =
+			static_cast<uint8_t>(TomCat::Physics2DLayerCount);
+		TomCat::SceneSerializer invalidMetadataWriter(invalidMetadataScene);
+		Require(!invalidMetadataWriter.Serialize(environment.Root / "invalid_metadata_layer.tomcat"),
+			"scene writer accepted an out-of-range EntityMetadata layer");
+		invalidMetadata.GetComponent<TomCat::EntityMetadata>().Layer = 0;
+		invalidMetadata.GetComponent<TomCat::EntityMetadata>().GameplayTag.clear();
+		Require(!invalidMetadataWriter.Serialize(environment.Root / "invalid_metadata_tag.tomcat"),
+			"scene writer accepted an empty EntityMetadata gameplay tag");
+		invalidMetadata.GetComponent<TomCat::EntityMetadata>().GameplayTag = "Untagged";
+		invalidMetadata.GetComponent<TomCat::EntityMetadata>().HierarchyIcon =
+			static_cast<TomCat::EntityIconMode>(255);
+		Require(!invalidMetadataWriter.Serialize(environment.Root / "invalid_metadata_icon.tomcat"),
+			"scene writer accepted an invalid EntityMetadata hierarchy icon");
+
+		std::string unknownIcon = serialized;
+		const size_t iconToken = unknownIcon.find("HierarchyIcon: Sprite");
+		Require(iconToken != std::string::npos, "could not locate serialized hierarchy icon token");
+		unknownIcon.replace(iconToken, std::string("HierarchyIcon: Sprite").size(),
+			"HierarchyIcon: Unknown");
+		const std::filesystem::path unknownIconPath = environment.Root / "unknown_icon.tomcat";
+		WriteTextFile(unknownIconPath, unknownIcon);
+		Require(!TomCat::SceneSerializer::ValidateCurrentFormat(unknownIconPath),
+			"scene validator accepted an unknown hierarchy icon token");
+
+		std::string missingIcon = serialized;
+		const size_t missingIconToken = missingIcon.find("HierarchyIcon: Sprite");
+		Require(missingIconToken != std::string::npos,
+			"could not locate hierarchy icon field for missing-field validation");
+		const size_t missingIconLineStart = missingIcon.rfind('\n', missingIconToken);
+		const size_t missingIconLineEnd = missingIcon.find('\n', missingIconToken);
+		Require(missingIconLineEnd != std::string::npos,
+			"serialized hierarchy icon field did not end with a newline");
+		missingIcon.erase(missingIconLineStart == std::string::npos ? 0 : missingIconLineStart + 1,
+			missingIconLineEnd - (missingIconLineStart == std::string::npos ? 0 : missingIconLineStart + 1) + 1);
+		const std::filesystem::path missingIconPath = environment.Root / "missing_icon.tomcat";
+		WriteTextFile(missingIconPath, missingIcon);
+		Require(!TomCat::SceneSerializer::ValidateCurrentFormat(missingIconPath),
+			"scene validator accepted EntityMetadata without HierarchyIcon");
 	}
 
 	void TestCookedPlayerPhysicsRoundtrip()
@@ -939,14 +1396,24 @@ namespace {
 		auto project = TomCat::Project::CreateNew(
 			environment.Root / "Project.tcproj", config);
 		Require(project != nullptr, "could not create temporary project for cooked physics test");
+		TomCat::ProjectSettings cookedSettings;
+		cookedSettings.TagsAndLayers.Tags = { "Untagged", "Ground", "Player" };
+		cookedSettings.TagsAndLayers.LayerNames[1] = "Ground";
+		cookedSettings.TagsAndLayers.LayerNames[2] = "Player";
+		cookedSettings.Physics2D.SetLayersCollide(1, 2, false);
+		Require(project->SetSettings(cookedSettings),
+			"could not persist the cooked package's Physics2D matrix");
 
 		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
 		Require(assets.SetProject(project),
 			"could not initialize AssetManager for cooked physics test");
 
 		auto source = TomCat::CreateRef<TomCat::Scene>();
-		source->SetSceneName("Cooked physics v7");
+		source->SetSceneName("Cooked physics v9");
 		TomCat::Entity ground = source->CreateEntity("Cooked box");
+		ground.GetComponent<TomCat::EntityMetadata>().GameplayTag = "Ground";
+		ground.GetComponent<TomCat::EntityMetadata>().Layer = 1;
+		ground.GetComponent<TomCat::EntityMetadata>().HierarchyIcon = TomCat::EntityIconMode::Collider2D;
 		const TomCat::UUID groundUUID = ground.GetUUID();
 		ground.AddComponent<TomCat::Rigidbody2D>().Type =
 			TomCat::Rigidbody2D::BodyType::Static;
@@ -963,8 +1430,11 @@ namespace {
 		const TomCat::BoxCollider2D expectedBox = box;
 
 		TomCat::Entity ball = source->CreateEntity("Cooked circle");
+		ball.GetComponent<TomCat::EntityMetadata>().GameplayTag = "Player";
+		ball.GetComponent<TomCat::EntityMetadata>().Layer = 2;
+		ball.GetComponent<TomCat::EntityMetadata>().HierarchyIcon = TomCat::EntityIconMode::Sprite;
 		const TomCat::UUID ballUUID = ball.GetUUID();
-		ball.GetComponent<TomCat::Transform>()._Translation = { 2.0f, 3.0f, 0.0f };
+		ball.GetComponent<TomCat::Transform>()._Translation = { 1.25f, -0.5f, 0.0f };
 		ball.GetComponent<TomCat::Transform>()._LocalTranslation =
 			ball.GetComponent<TomCat::Transform>()._Translation;
 		ball.AddComponent<TomCat::Rigidbody2D>().Type =
@@ -992,7 +1462,7 @@ namespace {
 		const std::filesystem::path sourceScenePath = project->GetAssetPath() / "Main.tomcat";
 		TomCat::SceneSerializer writer(source);
 		Require(writer.Serialize(sourceScenePath),
-			"could not serialize/import schema-v7 physics scene for cooking");
+			"could not serialize/import schema-v9 physics scene for cooking");
 		const TomCat::AssetMetadata* sceneMetadata = assets.Registry().GetMetadata(sourceScenePath);
 		Require(sceneMetadata && sceneMetadata->Type == TomCat::AssetType::Scene
 			&& static_cast<uint64_t>(sceneMetadata->Handle) != 0,
@@ -1005,24 +1475,28 @@ namespace {
 
 		const std::filesystem::path packagePath = environment.Root / "Build" / "Game.tcpak";
 		Require(assets.CookToPackage(packagePath),
-			"schema-v7 physics scene did not cook into a Player package");
+			"schema-v9 physics scene did not cook into a Player package");
 		assets.Shutdown();
 
 		Require(assets.MountCookedPackage(packagePath),
 			"Player path could not mount the cooked physics package");
 		Require(assets.GetCookedStartSceneHandle() == sceneHandle,
 			"cooked package did not preserve its start-scene handle");
+		Require(assets.GetPhysics2DSettings() == cookedSettings.Physics2D,
+			"tcpak v3 did not roundtrip the project Physics2D collision matrix");
 		std::vector<uint8_t> cookedBytes;
 		TomCat::AssetType cookedType = TomCat::AssetType::None;
 		Require(assets.ReadAssetBytes(sceneHandle, cookedBytes, &cookedType)
 			&& cookedType == TomCat::AssetType::Scene
 			&& TomCat::SceneSerializer::ValidateCurrentFormat(cookedBytes, "CookedPhysicsRegression"),
-			"cooked scene payload was not a complete schema-v7 Scene");
+			"cooked scene payload was not a complete schema-v9 Scene");
 
 		auto loaded = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::SceneSerializer reader(loaded);
 		Require(reader.Deserialize(sceneHandle),
 			"Cooked Player scene path could not deserialize physics components");
+		Require(loaded->GetPhysics2DSettings() == cookedSettings.Physics2D,
+			"Cooked Player scene did not receive the mounted package collision matrix");
 		TomCat::Entity loadedGround = loaded->FindEntityByUUID(groundUUID);
 		TomCat::Entity loadedBall = loaded->FindEntityByUUID(ballUUID);
 		Require(loadedGround && loadedBall
@@ -1030,6 +1504,15 @@ namespace {
 			&& loadedGround.HasComponent<TomCat::DistanceJoint2D>()
 			&& loadedBall.HasComponent<TomCat::CircleCollider2D>(),
 			"Cooked Player scene omitted Box/Circle/DistanceJoint components");
+		Require(loadedGround.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Ground"
+			&& loadedGround.GetComponent<TomCat::EntityMetadata>().Layer == 1
+			&& loadedGround.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Collider2D
+			&& loadedBall.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Player"
+			&& loadedBall.GetComponent<TomCat::EntityMetadata>().Layer == 2
+			&& loadedBall.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
+				== TomCat::EntityIconMode::Sprite,
+			"Cooked Player scene changed EntityMetadata");
 		RequireSameBoxFields(loadedGround.GetComponent<TomCat::BoxCollider2D>(), expectedBox,
 			"Cooked Player changed BoxCollider2D fields");
 		RequireSameCircleFields(loadedBall.GetComponent<TomCat::CircleCollider2D>(), expectedCircle,
@@ -1041,17 +1524,71 @@ namespace {
 			&& loadedGround.GetComponent<TomCat::DistanceJoint2D>().RuntimeJoint == nullptr,
 			"cooked deserialization restored runtime physics pointers");
 
+		int triggerEnters = 0;
+		loaded->AddTriggerEnter2DListener(
+			[&](const TomCat::TriggerEnter2D&) { ++triggerEnters; });
 		loaded->OnRuntimeStart();
 		Require(loadedGround.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture != nullptr
 			&& loadedBall.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture != nullptr
 			&& loadedGround.GetComponent<TomCat::DistanceJoint2D>().RuntimeJoint != nullptr,
 			"Cooked Player runtime did not create Box/Circle fixtures and DistanceJoint");
 		loaded->OnRuntimeStep();
+		Require(triggerEnters == 0,
+			"Cooked Player ignored the tcpak v3 project collision matrix");
 		loaded->OnRuntimeStop();
 		Require(loadedGround.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture == nullptr
 			&& loadedBall.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture == nullptr
 			&& loadedGround.GetComponent<TomCat::DistanceJoint2D>().RuntimeJoint == nullptr,
 			"Cooked Player Stop did not clear runtime physics pointers");
+
+		TomCat::Physics2DSettings allowedSettings = cookedSettings.Physics2D;
+		allowedSettings.SetLayersCollide(1, 2, true);
+		loaded->SetPhysics2DSettings(allowedSettings);
+		loaded->OnRuntimeStart();
+		loaded->OnRuntimeStep();
+		Require(triggerEnters == 1,
+			"enabling the project matrix did not admit the cooked trigger pair whose fixture masks match");
+		loaded->OnRuntimeStop();
+
+		assets.Shutdown();
+		const std::vector<uint8_t> validPackage = ReadBinaryFile(packagePath);
+		Require(validPackage.size() >= 64,
+			"cooked package is smaller than the tcpak v3 fixed header");
+		Require(ReadLittleEndian32(validPackage, 8) == 3
+			&& ReadLittleEndian32(validPackage, 12) == 64,
+			"cooked package did not declare tcpak version 3 with its 64-byte header");
+
+		std::vector<uint8_t> legacyVersion = validPackage;
+		WriteLittleEndian32(legacyVersion, 8, 2);
+		const std::filesystem::path legacyPath = environment.Root / "Build" / "LegacyV2.tcpak";
+		WriteBinaryFile(legacyPath, legacyVersion);
+		Require(!assets.MountCookedPackage(legacyPath),
+			"tcpak loader accepted obsolete package version 2");
+
+		std::vector<uint8_t> asymmetric = validPackage;
+		constexpr std::size_t matrixOffset = 32;
+		const std::size_t rowOneOffset = matrixOffset + sizeof(uint16_t);
+		const std::size_t rowTwoOffset = matrixOffset + 2 * sizeof(uint16_t);
+		uint16_t rowOne = ReadLittleEndian16(asymmetric, rowOneOffset);
+		const uint16_t rowTwo = ReadLittleEndian16(asymmetric, rowTwoOffset);
+		Require((rowOne & (uint16_t(1) << 2)) == 0
+			&& (rowTwo & (uint16_t(1) << 1)) == 0,
+			"cooked matrix fixture did not preserve its disabled symmetric pair");
+		rowOne |= uint16_t(1) << 2;
+		WriteLittleEndian16(asymmetric, rowOneOffset, rowOne);
+		const std::filesystem::path asymmetricPath =
+			environment.Root / "Build" / "Asymmetric.tcpak";
+		WriteBinaryFile(asymmetricPath, asymmetric);
+		Require(!assets.MountCookedPackage(asymmetricPath),
+			"tcpak loader accepted an asymmetric Physics2D collision matrix");
+
+		std::vector<uint8_t> truncated = validPackage;
+		truncated.resize(63);
+		const std::filesystem::path truncatedPath =
+			environment.Root / "Build" / "Truncated.tcpak";
+		WriteBinaryFile(truncatedPath, truncated);
+		Require(!assets.MountCookedPackage(truncatedPath),
+			"tcpak loader accepted a truncated v3 fixed header");
 	}
 
 	TomCat::Entity MakeMultiFixtureBody(TomCat::Scene& scene, const char* name,
@@ -1232,6 +1769,7 @@ int main()
 		}
 	};
 
+	run("project settings persistence and validation", TestProjectSettingsPersistenceAndValidation);
 	run("fixed accumulator and exact Step", TestFixedAccumulatorAndStep);
 	run("30/60/144Hz one- and ten-second consistency", TestFrameRateIndependentPhysics);
 	run("Pause render path and exact single-step", TestPauseRenderPathAndSingleStep);
@@ -1240,10 +1778,11 @@ int main()
 	run("authoring/runtime collider outline parity", TestAuthoringAndRuntimeOutlinesMatch);
 	run("Trigger events and native-script callbacks", TestTriggerAndScriptCallbacks);
 	run("layer/mask filtering and runtime rebuild", TestCollisionFilteringAndRuntimeRebuild);
-	run("raycast, AABB query, force, impulse, and velocity", TestQueriesAndMotionAPI);
+	run("project matrix and fixture filters are independent", TestProjectMatrixAndFixtureFilters);
+	run("entity-layer raycast/AABB query and motion APIs", TestQueriesAndMotionAPI);
 	run("DistanceJoint2D runtime creation and rebuild", TestDistanceJoint);
-	run("schema v7 save/load/copy/duplicate", TestSchemaV7PersistenceAndCopies);
-	run("Cooked Player physics roundtrip", TestCookedPlayerPhysicsRoundtrip);
+	run("schema v9 metadata/icon save/load/copy/duplicate", TestSchemaV9PersistenceAndCopies);
+	run("Cooked Player v3 physics roundtrip and validation", TestCookedPlayerPhysicsRoundtrip);
 	run("collision Enter/Exit entity-pair de-duplication", TestCollisionPairDeduplication);
 	run("collision callback deletion safety", TestDeletionDuringCollisionDispatch);
 	run("native-script collision mutation safety", TestNativeScriptMutationDuringCollisionDispatch);

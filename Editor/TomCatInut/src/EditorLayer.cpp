@@ -97,6 +97,16 @@ namespace TomCat {
 			return true;
 		}
 
+		std::string TrimASCIIWhitespace(std::string value)
+		{
+			auto isWhitespace = [](unsigned char character) { return std::isspace(character) != 0; };
+			value.erase(value.begin(), std::find_if(value.begin(), value.end(),
+				[&](unsigned char character) { return !isWhitespace(character); }));
+			value.erase(std::find_if(value.rbegin(), value.rend(),
+				[&](unsigned char character) { return !isWhitespace(character); }).base(), value.end());
+			return value;
+		}
+
 		bool IsImGuiManagedIniSection(const std::string& header)
 		{
 			return header.rfind("[Window][", 0) == 0 ||
@@ -450,6 +460,7 @@ namespace TomCat {
 		if (!m_EditorIcons->Load())
 			TC_Core_Warn("One or more editor icons could not be loaded");
 		m_SceneHierarchyPanel.SetIcons(m_EditorIcons);
+		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
 		m_ContentBrowserPanel.SetIcons(m_EditorIcons);
 		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 
@@ -738,6 +749,9 @@ namespace TomCat {
 					SaveProject();
 				}
 
+				if (ImGui::MenuItem("Build Settings..."))
+					m_ShowBuildSettingsPanel = true;
+
 				ImGui::Separator();
 
 				if (ImGui::MenuItem("New Scene", "Ctrl + N"))
@@ -768,6 +782,13 @@ namespace TomCat {
 
 			if (ImGui::BeginMenu("Project"))
 			{
+				if (ImGui::MenuItem("Project Settings..."))
+				{
+					if (!m_ShowProjectSettingsPanel || m_ProjectSettingsDraftProject != m_CurrentProject)
+						LoadProjectSettingsDraft();
+					m_ShowProjectSettingsPanel = true;
+				}
+				ImGui::Separator();
 				if (m_CurrentProject)
 				{
 					ImGui::Text("ProjectName: %s", m_CurrentProject->GetName().c_str());
@@ -1059,6 +1080,8 @@ namespace TomCat {
 		ImGui::PopStyleVar();
 		}
 
+		UI_BuildSettings();
+		UI_ProjectSettings();
 		UI_UnsavedChangesModal();
 		ImGui::End();
 	}
@@ -1086,6 +1109,410 @@ namespace TomCat {
 		ImVec2 messageSize = ImGui::CalcTextSize(messageText);
 		ImVec2 messagePos(imageCenter.x - messageSize.x * 0.5f, imageCenter.y - messageSize.y * 0.5f);
 		draw->AddText(messagePos, IM_COL32(243, 243, 243, 255), messageText);
+	}
+
+	void EditorLayer::UI_BuildSettings()
+	{
+		if (!m_ShowBuildSettingsPanel)
+			return;
+
+		ImGui::SetNextWindowSize(ImVec2(640.0f, 460.0f), ImGuiCond_FirstUseEver);
+		if (!ImGui::Begin("Build Settings", &m_ShowBuildSettingsPanel))
+		{
+			ImGui::End();
+			return;
+		}
+
+		if (!m_CurrentProject)
+		{
+			ImGui::TextWrapped("Open a project to inspect its scenes and build target.");
+			ImGui::End();
+			return;
+		}
+
+		if (IsSceneRunning())
+			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
+				"Build settings are read-only while the scene is running. Stop Play Mode to continue.");
+
+		ImGui::BeginDisabled(IsSceneRunning());
+		const ProjectConfig& config = m_CurrentProject->GetConfig();
+		const bool hasConfiguredStartScene = static_cast<uint64_t>(config.StartSceneHandle) != 0;
+		const AssetMetadata* startSceneMetadata = hasConfiguredStartScene
+			? AssetManager::Get().GetRegistry().GetMetadata(config.StartSceneHandle) : nullptr;
+		const bool startSceneReady = startSceneMetadata && !startSceneMetadata->IsMissing
+			&& startSceneMetadata->Type == AssetType::Scene;
+		ImGui::TextUnformatted("Scenes In Build");
+		ImGui::Separator();
+		ImGui::BeginChild("##ScenesInBuild", ImVec2(0.0f, 105.0f), true);
+		bool included = startSceneReady;
+		ImGui::BeginDisabled();
+		ImGui::Checkbox("##StartSceneIncluded", &included);
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (hasConfiguredStartScene)
+		{
+			const std::string scenePath = PathToUTF8(config.StartScene);
+			ImGui::Text("0  %s", scenePath.empty() ? "<Unresolved start scene>" : scenePath.c_str());
+			ImGui::SameLine();
+			ImGui::TextDisabled("(Start Scene)");
+			ImGui::TextDisabled("AssetHandle: %llu",
+				static_cast<unsigned long long>(static_cast<uint64_t>(config.StartSceneHandle)));
+			if (!startSceneReady)
+				ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
+					"The configured start-scene asset is missing or invalid.");
+		}
+		else
+		{
+			ImGui::TextDisabled("No start scene is configured.");
+			ImGui::TextWrapped("Set a valid project Start Scene before cooking a Player package.");
+		}
+		ImGui::EndChild();
+
+		ImGui::Spacing();
+		ImGui::TextUnformatted("Platform");
+		ImGui::Separator();
+		ImGui::BeginChild("##BuildPlatform", ImVec2(0.0f, 120.0f), true);
+		ImGui::Selectable("Windows x64", true);
+		ImGui::TextDisabled("Architecture: x64");
+		ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f),
+			"Status: Active build target");
+		ImGui::TextColored(startSceneReady
+			? ImVec4(0.45f, 0.85f, 0.45f, 1.0f)
+			: ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
+			startSceneReady ? "Player: Ready" : "Player: Valid start scene required");
+		ImGui::EndChild();
+		ImGui::EndDisabled();
+		ImGui::End();
+	}
+
+	void EditorLayer::ClearProjectSettingsFeedback()
+	{
+		m_ProjectSettingsError.clear();
+		m_ProjectSettingsStatus.clear();
+	}
+
+	void EditorLayer::LoadProjectSettingsDraft()
+	{
+		m_ProjectSettingsDraftProject = m_CurrentProject;
+		m_ProjectSettingsDraft = m_CurrentProject
+			? m_CurrentProject->GetSettings() : ProjectSettings{};
+		for (std::size_t layer = 0; layer < Physics2DLayerCount; ++layer)
+		{
+			auto& buffer = m_ProjectLayerNameBuffers[layer];
+			buffer.fill('\0');
+			const std::string& name = m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layer];
+			const std::size_t count = std::min(name.size(), buffer.size() - 1);
+			std::copy_n(name.data(), count, buffer.data());
+		}
+		m_NewProjectTagBuffer.fill('\0');
+		ClearProjectSettingsFeedback();
+	}
+
+	bool EditorLayer::ApplyProjectSettingsDraft()
+	{
+		ClearProjectSettingsFeedback();
+		if (!m_CurrentProject)
+		{
+			m_ProjectSettingsError = "No project is open.";
+			return false;
+		}
+		if (IsSceneRunning())
+		{
+			m_ProjectSettingsError = "Stop Play Mode before changing project settings.";
+			return false;
+		}
+		const auto& tags = m_ProjectSettingsDraft.TagsAndLayers.Tags;
+		if (tags.empty() || tags.front() != "Untagged")
+		{
+			m_ProjectSettingsError = "The reserved Untagged tag must remain first.";
+			return false;
+		}
+		for (std::size_t index = 0; index < tags.size(); ++index)
+		{
+			if (tags[index].empty())
+			{
+				m_ProjectSettingsError = "Tag names cannot be empty.";
+				return false;
+			}
+			if (std::find(tags.begin(), tags.begin() + index, tags[index]) != tags.begin() + index)
+			{
+				m_ProjectSettingsError = "Duplicate tag: " + tags[index];
+				return false;
+			}
+		}
+		const auto& layerNames = m_ProjectSettingsDraft.TagsAndLayers.LayerNames;
+		if (layerNames[0] != "Default")
+		{
+			m_ProjectSettingsError = "Layer 0 must remain Default.";
+			return false;
+		}
+		for (std::size_t index = 0; index < layerNames.size(); ++index)
+		{
+			if (layerNames[index].empty())
+				continue;
+			if (std::find(layerNames.begin(), layerNames.begin() + index,
+				layerNames[index]) != layerNames.begin() + index)
+			{
+				m_ProjectSettingsError = "Duplicate layer name: " + layerNames[index];
+				return false;
+			}
+		}
+
+		if (!m_CurrentProject->SetSettings(m_ProjectSettingsDraft))
+		{
+			m_ProjectSettingsError =
+				"Project settings could not be saved. Verify that ProjectSettings.tcsettings is writable.";
+			return false;
+		}
+
+		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
+		LoadProjectSettingsDraft();
+		m_ProjectSettingsStatus = "Project settings saved.";
+		return true;
+	}
+
+	void EditorLayer::UI_ProjectSettings()
+	{
+		if (!m_ShowProjectSettingsPanel)
+			return;
+		if (m_ProjectSettingsDraftProject != m_CurrentProject)
+			LoadProjectSettingsDraft();
+
+		ImGui::SetNextWindowSize(ImVec2(820.0f, 580.0f), ImGuiCond_FirstUseEver);
+		if (!ImGui::Begin("Project Settings", &m_ShowProjectSettingsPanel))
+		{
+			ImGui::End();
+			return;
+		}
+
+		const bool hasProject = m_CurrentProject != nullptr;
+		const bool editable = hasProject && !IsSceneRunning();
+		if (!hasProject)
+			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
+				"Open a project to edit Tags, Layers, and Physics 2D settings.");
+		else if (IsSceneRunning())
+			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
+				"Project settings are read-only while the scene is running. Stop Play Mode to edit them.");
+
+		const float navigationWidth = 170.0f;
+		ImGui::BeginChild("##ProjectSettingsNavigation", ImVec2(navigationWidth, 0.0f), true);
+		if (ImGui::Selectable("Tags and Layers", m_ProjectSettingsPage == 0))
+			m_ProjectSettingsPage = 0;
+		if (ImGui::Selectable("Physics 2D", m_ProjectSettingsPage == 1))
+			m_ProjectSettingsPage = 1;
+		ImGui::EndChild();
+		ImGui::SameLine();
+
+		ImGui::BeginChild("##ProjectSettingsPage", ImVec2(0.0f, 0.0f), true);
+		ImGui::BeginDisabled(!editable);
+		if (m_ProjectSettingsPage == 0)
+		{
+			ImGui::TextUnformatted("Tags");
+			ImGui::Separator();
+			ImGui::TextDisabled("Untagged is reserved and cannot be removed.");
+			std::size_t tagToRemove = static_cast<std::size_t>(-1);
+			const auto& tags = m_ProjectSettingsDraft.TagsAndLayers.Tags;
+			for (std::size_t index = 0; index < tags.size(); ++index)
+			{
+				ImGui::PushID(static_cast<int>(index));
+				ImGui::TextUnformatted(tags[index].empty() ? "<Empty>" : tags[index].c_str());
+				if (index == 0)
+				{
+					ImGui::SameLine();
+					ImGui::TextDisabled("(Reserved)");
+				}
+				else
+				{
+					const float removeWidth = ImGui::CalcTextSize("Remove").x +
+						ImGui::GetStyle().FramePadding.x * 2.0f;
+					ImGui::SameLine(std::max(ImGui::GetCursorPosX(),
+						ImGui::GetWindowContentRegionMax().x - removeWidth));
+					if (ImGui::SmallButton("Remove"))
+						tagToRemove = index;
+				}
+				ImGui::PopID();
+			}
+			if (tagToRemove != static_cast<std::size_t>(-1))
+			{
+				m_ProjectSettingsDraft.TagsAndLayers.Tags.erase(
+					m_ProjectSettingsDraft.TagsAndLayers.Tags.begin() + tagToRemove);
+				ClearProjectSettingsFeedback();
+			}
+
+			ImGui::Spacing();
+			const float addButtonWidth = ImGui::CalcTextSize("Add Tag").x +
+				ImGui::GetStyle().FramePadding.x * 2.0f;
+			ImGui::SetNextItemWidth(std::max(80.0f,
+				ImGui::GetContentRegionAvail().x - addButtonWidth - ImGui::GetStyle().ItemSpacing.x));
+			bool addTag = ImGui::InputTextWithHint("##NewProjectTag", "New tag",
+				m_NewProjectTagBuffer.data(), m_NewProjectTagBuffer.size(),
+				ImGuiInputTextFlags_EnterReturnsTrue);
+			ImGui::SameLine();
+			addTag |= ImGui::Button("Add Tag");
+			if (addTag)
+			{
+				const std::string newTag = TrimASCIIWhitespace(m_NewProjectTagBuffer.data());
+				if (newTag.empty())
+				{
+					ClearProjectSettingsFeedback();
+					m_ProjectSettingsError = "Tag names cannot be empty.";
+				}
+				else if (std::find(m_ProjectSettingsDraft.TagsAndLayers.Tags.begin(),
+					m_ProjectSettingsDraft.TagsAndLayers.Tags.end(), newTag)
+					!= m_ProjectSettingsDraft.TagsAndLayers.Tags.end())
+				{
+					ClearProjectSettingsFeedback();
+					m_ProjectSettingsError = "A tag with that name already exists.";
+				}
+				else
+				{
+					m_ProjectSettingsDraft.TagsAndLayers.Tags.push_back(newTag);
+					m_NewProjectTagBuffer.fill('\0');
+					ClearProjectSettingsFeedback();
+				}
+			}
+
+			ImGui::Spacing();
+			ImGui::TextUnformatted("Layers");
+			ImGui::Separator();
+			ImGui::TextDisabled("Layer slots are stable. Clear a name to hide that layer from entity menus.");
+			for (std::size_t layer = 0; layer < Physics2DLayerCount; ++layer)
+			{
+				ImGui::PushID(static_cast<int>(layer));
+				ImGui::AlignTextToFramePadding();
+				ImGui::Text("%02u", static_cast<unsigned int>(layer));
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::BeginDisabled(layer == 0);
+				if (ImGui::InputText("##LayerName", m_ProjectLayerNameBuffers[layer].data(),
+					m_ProjectLayerNameBuffers[layer].size()))
+				{
+					m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layer] =
+						m_ProjectLayerNameBuffers[layer].data();
+					ClearProjectSettingsFeedback();
+				}
+				ImGui::EndDisabled();
+				if (layer == 0 && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+					ImGui::SetTooltip("Layer 0 is reserved as Default.");
+				ImGui::PopID();
+			}
+		}
+		else
+		{
+			ImGui::TextUnformatted("Physics 2D Layer Collision Matrix");
+			ImGui::Separator();
+			ImGui::TextWrapped("A checked cell allows the two named entity layers to collide. The matrix is symmetric.");
+
+			std::vector<uint8_t> namedLayers;
+			for (uint8_t layer = 0; layer < Physics2DLayerCount; ++layer)
+			{
+				if (!m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layer].empty())
+					namedLayers.push_back(layer);
+			}
+			if (ImGui::Button("Enable All"))
+			{
+				for (std::size_t row = 0; row < namedLayers.size(); ++row)
+					for (std::size_t column = 0; column <= row; ++column)
+						m_ProjectSettingsDraft.Physics2D.SetLayersCollide(
+							namedLayers[row], namedLayers[column], true);
+				ClearProjectSettingsFeedback();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Disable All"))
+			{
+				for (std::size_t row = 0; row < namedLayers.size(); ++row)
+					for (std::size_t column = 0; column <= row; ++column)
+						m_ProjectSettingsDraft.Physics2D.SetLayersCollide(
+							namedLayers[row], namedLayers[column], false);
+				ClearProjectSettingsFeedback();
+			}
+
+			if (namedLayers.empty())
+				ImGui::TextDisabled("Define at least one named layer on the Tags and Layers page.");
+			else
+			{
+				const ImGuiTableFlags flags = ImGuiTableFlags_Borders |
+					ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit |
+					ImGuiTableFlags_ScrollX;
+				const float matrixHeight = std::min(430.0f,
+					(static_cast<float>(namedLayers.size()) + 2.0f) * ImGui::GetFrameHeightWithSpacing());
+				if (ImGui::BeginTable("##Physics2DLayerMatrix",
+					static_cast<int>(namedLayers.size()) + 1, flags, ImVec2(0.0f, matrixHeight)))
+				{
+					ImGui::TableSetupScrollFreeze(1, 1);
+					ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+					std::array<std::string, Physics2DLayerCount> columnLabels;
+					for (std::size_t column = 0; column < namedLayers.size(); ++column)
+					{
+						columnLabels[column] = std::to_string(
+							static_cast<unsigned int>(namedLayers[column]));
+						ImGui::TableSetupColumn(columnLabels[column].c_str(),
+							ImGuiTableColumnFlags_WidthFixed, 38.0f);
+					}
+					ImGui::TableHeadersRow();
+
+					for (std::size_t row = 0; row < namedLayers.size(); ++row)
+					{
+						const uint8_t layerA = namedLayers[row];
+						ImGui::TableNextRow();
+						ImGui::TableSetColumnIndex(0);
+						const std::string rowLabel = std::to_string(
+							static_cast<unsigned int>(layerA)) + "  " +
+							m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layerA];
+						ImGui::TextUnformatted(rowLabel.c_str());
+						for (std::size_t column = 0; column < namedLayers.size(); ++column)
+						{
+							ImGui::TableSetColumnIndex(static_cast<int>(column) + 1);
+							if (column > row)
+							{
+								ImGui::TextDisabled("-");
+								continue;
+							}
+							const uint8_t layerB = namedLayers[column];
+							bool collide = m_ProjectSettingsDraft.Physics2D.CanLayersCollide(layerA, layerB);
+							ImGui::PushID(static_cast<int>(layerA) * 32 + layerB);
+							if (ImGui::Checkbox("##Collide", &collide))
+							{
+								m_ProjectSettingsDraft.Physics2D.SetLayersCollide(layerA, layerB, collide);
+								ClearProjectSettingsFeedback();
+							}
+							if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+								ImGui::SetTooltip("%s / %s",
+									m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layerA].c_str(),
+									m_ProjectSettingsDraft.TagsAndLayers.LayerNames[layerB].c_str());
+							ImGui::PopID();
+						}
+					}
+					ImGui::EndTable();
+				}
+			}
+		}
+		ImGui::EndDisabled();
+
+		ImGui::Separator();
+		const bool draftChanged = hasProject &&
+			m_ProjectSettingsDraft != m_CurrentProject->GetSettings();
+		ImGui::BeginDisabled(!editable || !draftChanged);
+		if (ImGui::Button("Apply"))
+			ApplyProjectSettingsDraft();
+		ImGui::SameLine();
+		if (ImGui::Button("Revert"))
+		{
+			LoadProjectSettingsDraft();
+			m_ProjectSettingsStatus = "Unapplied changes reverted.";
+		}
+		ImGui::EndDisabled();
+		if (!m_ProjectSettingsError.empty())
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+			ImGui::TextWrapped("Error: %s", m_ProjectSettingsError.c_str());
+			ImGui::PopStyleColor();
+		}
+		else if (!m_ProjectSettingsStatus.empty())
+			ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.45f, 1.0f), "%s",
+				m_ProjectSettingsStatus.c_str());
+		ImGui::EndChild();
+		ImGui::End();
 	}
 
 	void EditorLayer::RenderSceneColliderOverlays()
@@ -2573,6 +3000,9 @@ namespace TomCat {
 		if (IsSceneRunning())
 			OnSceneStop();
 		m_CurrentProject = project;
+		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
+		if (m_ShowProjectSettingsPanel)
+			LoadProjectSettingsDraft();
 		m_Is2DMode = project->GetConfig().Template == "2D";
 		m_EditorCamera.Set2DMode(m_Is2DMode);
 

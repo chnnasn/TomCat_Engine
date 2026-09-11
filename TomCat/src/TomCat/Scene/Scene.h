@@ -3,6 +3,7 @@
 #include "TomCat/Core/Timestep.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Asset/Asset.h"
+#include "TomCat/Project/ProjectSettings.h"
 #include "TomCat/Renderer/EditorCamera.h"
 #include "Physics2DEvents.h"
 
@@ -20,6 +21,7 @@ class b2Body;
 namespace TomCat {
 
 	class Entity;
+	class SceneContactFilter2D;
 	class SceneContactListener;
 	class ScriptableEntity;
 	struct NativeScript;
@@ -52,6 +54,8 @@ namespace TomCat {
 		glm::vec2 Normal{ 0.0f };
 		float Fraction = 0.0f;
 		bool IsTrigger = false;
+		// Bit corresponding to EntityMetadata::Layer, not the fixture's raw
+		// Box2D categoryBits value.
 		uint16_t CollisionLayer = 0;
 	};
 
@@ -59,6 +63,8 @@ namespace TomCat {
 	{
 		UUID EntityID{ 0 };
 		bool IsTrigger = false;
+		// Bit corresponding to EntityMetadata::Layer, not the fixture's raw
+		// Box2D categoryBits value.
 		uint16_t CollisionLayer = 0;
 	};
 
@@ -117,6 +123,8 @@ namespace TomCat {
 		void OnRenderRuntime();
 		void OnViewportResize(uint32_t width, uint32_t height);
 		bool IsRuntimeRunning() const { return m_RuntimeRunning; }
+		void SetPhysics2DSettings(const Physics2DSettings& settings);
+		const Physics2DSettings& GetPhysics2DSettings() const { return m_Physics2DSettings; }
 
 		CollisionListenerHandle AddCollisionEnter2DListener(CollisionEnter2DCallback callback);
 		CollisionListenerHandle AddCollisionExit2DListener(CollisionExit2DCallback callback);
@@ -124,13 +132,15 @@ namespace TomCat {
 		CollisionListenerHandle AddTriggerExit2DListener(TriggerExit2DCallback callback);
 		bool RemoveCollision2DListener(CollisionListenerHandle handle);
 
+		// layerMask addresses EntityMetadata::Layer slots (bit N selects layer N).
 		std::optional<RaycastHit2D> Raycast2D(const glm::vec2& start, const glm::vec2& end,
-			uint16_t collisionMask = 0xFFFF, bool includeTriggers = true);
+			uint16_t layerMask = 0xFFFF, bool includeTriggers = true);
 		// Returns at most one result per entity from Box2D's broad-phase AABB query;
 		// a solid fixture is preferred when an entity also has a sensor. Rotated
-		// fixture bounds can be conservative.
+		// fixture bounds can be conservative. layerMask addresses
+		// EntityMetadata::Layer slots (bit N selects layer N).
 		std::vector<PhysicsQueryHit2D> QueryAABB2D(const glm::vec2& lowerBound,
-			const glm::vec2& upperBound, uint16_t collisionMask = 0xFFFF,
+			const glm::vec2& upperBound, uint16_t layerMask = 0xFFFF,
 			bool includeTriggers = true);
 
 		bool ApplyForce2D(UUID entityID, const glm::vec2& force, bool wake = true);
@@ -185,6 +195,7 @@ namespace TomCat {
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
 
 		b2World* m_PhysicsWorld = nullptr;
+		SceneContactFilter2D* m_ContactFilter = nullptr;
 		SceneContactListener* m_ContactListener = nullptr;
 		bool m_RuntimeRunning = false;
 		double m_RuntimeAccumulator = 0.0;
@@ -202,12 +213,14 @@ namespace TomCat {
 		std::unordered_map<UUID, b2Body*> m_RuntimeBodies;
 		uint64_t m_RuntimePhysicsDefinitionHash = 0;
 		bool m_HasRuntimePhysicsDefinition = false;
+		Physics2DSettings m_Physics2DSettings;
 		std::unordered_map<UUID, entt::entity> m_EntityMap;
 		std::unordered_map<UUID, UUID> m_ParentMap;
 		std::unordered_map<UUID, std::vector<UUID>> m_ChildrenMap;
 		std::vector<UUID> m_EntityOrder;
 
 		friend class Entity;
+		friend class SceneContactFilter2D;
 		friend class SceneSerializer;
 		friend class SceneHierarchyPanel;
 

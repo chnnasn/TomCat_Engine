@@ -38,19 +38,22 @@ try {
     & $msbuild "Tests\Tests.sln" "-p:Configuration=$Configuration" `
         "-p:Platform=$Platform" -m -nologo
     if ($LASTEXITCODE -ne 0) {
-        throw "PhysicsRegression build failed."
+        throw "Regression test build failed."
     }
 
     $outputDirectory = "$Configuration-windows-x86_64"
-    $testExecutable = Join-Path $repositoryRoot `
-        "Tests\bin\$outputDirectory\PhysicsRegression\PhysicsRegression.exe"
-    if (-not (Test-Path -LiteralPath $testExecutable)) {
-        throw "PhysicsRegression executable was not produced: $testExecutable"
-    }
+    $regressions = @("PhysicsRegression", "SpriteAssetRegression")
+    foreach ($regression in $regressions) {
+        $testExecutable = Join-Path $repositoryRoot `
+            "Tests\bin\$outputDirectory\$regression\$regression.exe"
+        if (-not (Test-Path -LiteralPath $testExecutable)) {
+            throw "$regression executable was not produced: $testExecutable"
+        }
 
-    & $testExecutable
-    if ($LASTEXITCODE -ne 0) {
-        throw "PhysicsRegression reported one or more failures."
+        & $testExecutable
+        if ($LASTEXITCODE -ne 0) {
+            throw "$regression reported one or more failures."
+        }
     }
 }
 finally {

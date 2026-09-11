@@ -60,6 +60,8 @@ CTestTestfile.cmake
 Tests/Tests.sln
 Tests/PhysicsRegression/*.vcxproj
 Tests/PhysicsRegression/*.vcxproj.filters
+Tests/SpriteAssetRegression/*.vcxproj
+Tests/SpriteAssetRegression/*.vcxproj.filters
 
 #Files
 .user

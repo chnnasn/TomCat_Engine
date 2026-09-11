@@ -292,6 +292,45 @@ namespace TomCat {
 		std::unordered_set<EntityPair, EntityPairHash> m_RebuildCarryActive;
 	};
 
+	class SceneContactFilter2D final : public b2ContactFilter
+	{
+	public:
+		explicit SceneContactFilter2D(Scene* scene)
+			: m_Scene(scene)
+		{
+		}
+
+		bool ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB) override
+		{
+			// Fixture category/mask filtering remains an independent first gate.
+			if (!b2ContactFilter::ShouldCollide(fixtureA, fixtureB))
+				return false;
+			if (!m_Scene || !fixtureA || !fixtureB
+				|| !fixtureA->GetBody() || !fixtureB->GetBody())
+				return false;
+
+			const UUID uuidA(static_cast<uint64_t>(
+				fixtureA->GetBody()->GetUserData().pointer));
+			const UUID uuidB(static_cast<uint64_t>(
+				fixtureB->GetBody()->GetUserData().pointer));
+			Entity entityA = m_Scene->FindEntityByUUID(uuidA);
+			Entity entityB = m_Scene->FindEntityByUUID(uuidB);
+			if (!entityA || !entityB || !entityA.HasComponent<EntityMetadata>()
+				|| !entityB.HasComponent<EntityMetadata>())
+				return false;
+
+			const uint8_t layerA = entityA.GetComponent<EntityMetadata>().Layer;
+			const uint8_t layerB = entityB.GetComponent<EntityMetadata>().Layer;
+			// Project files and cooked packages reject asymmetric matrices. Requiring
+			// both directed bits here also keeps direct Scene API input deterministic.
+			return m_Scene->m_Physics2DSettings.CanLayersCollide(layerA, layerB)
+				&& m_Scene->m_Physics2DSettings.CanLayersCollide(layerB, layerA);
+		}
+
+	private:
+		Scene* m_Scene = nullptr;
+	};
+
 	namespace {
 
 		bool IsValidPhysicsMaterial(float density, float friction, float restitution)
@@ -363,11 +402,35 @@ namespace TomCat {
 			return std::isfinite(value.x) && std::isfinite(value.y);
 		}
 
+		bool TryResolveEntityLayerBit(Scene* scene, b2Fixture* fixture,
+			UUID& entityID, uint16_t& layerBit)
+		{
+			if (!scene || !fixture)
+				return false;
+			b2Body* body = fixture->GetBody();
+			const uint64_t rawUUID = body
+				? static_cast<uint64_t>(body->GetUserData().pointer)
+				: 0;
+			if (rawUUID == 0)
+				return false;
+
+			Entity entity = scene->FindEntityByUUID(UUID(rawUUID));
+			if (!entity || !entity.HasComponent<EntityMetadata>())
+				return false;
+			const uint8_t layer = entity.GetComponent<EntityMetadata>().Layer;
+			if (layer >= Physics2DLayerCount)
+				return false;
+
+			entityID = UUID(rawUUID);
+			layerBit = static_cast<uint16_t>(uint16_t(1) << layer);
+			return true;
+		}
+
 		class ClosestRaycastCallback2D final : public b2RayCastCallback
 		{
 		public:
-			ClosestRaycastCallback2D(uint16_t collisionMask, bool includeTriggers)
-				: m_CollisionMask(collisionMask), m_IncludeTriggers(includeTriggers)
+			ClosestRaycastCallback2D(Scene* scene, uint16_t layerMask, bool includeTriggers)
+				: m_Scene(scene), m_LayerMask(layerMask), m_IncludeTriggers(includeTriggers)
 			{
 			}
 
@@ -376,33 +439,30 @@ namespace TomCat {
 			{
 				if (!fixture || (!m_IncludeTriggers && fixture->IsSensor()))
 					return -1.0f;
-				const uint16_t layer = fixture->GetFilterData().categoryBits;
-				if ((layer & m_CollisionMask) == 0)
-					return -1.0f;
-				b2Body* body = fixture->GetBody();
-				const uint64_t rawUUID = body
-					? static_cast<uint64_t>(body->GetUserData().pointer)
-					: 0;
-				if (rawUUID == 0)
+				UUID entityID{ 0 };
+				uint16_t layerBit = 0;
+				if (!TryResolveEntityLayerBit(m_Scene, fixture, entityID, layerBit)
+					|| (layerBit & m_LayerMask) == 0)
 					return -1.0f;
 
-				Hit = RaycastHit2D{ UUID(rawUUID), { point.x, point.y },
-					{ normal.x, normal.y }, fraction, fixture->IsSensor(), layer };
+				Hit = RaycastHit2D{ entityID, { point.x, point.y },
+					{ normal.x, normal.y }, fraction, fixture->IsSensor(), layerBit };
 				return fraction;
 			}
 
 			std::optional<RaycastHit2D> Hit;
 
 		private:
-			uint16_t m_CollisionMask = 0xFFFF;
+			Scene* m_Scene = nullptr;
+			uint16_t m_LayerMask = 0xFFFF;
 			bool m_IncludeTriggers = true;
 		};
 
 		class AABBQueryCallback2D final : public b2QueryCallback
 		{
 		public:
-			AABBQueryCallback2D(uint16_t collisionMask, bool includeTriggers)
-				: m_CollisionMask(collisionMask), m_IncludeTriggers(includeTriggers)
+			AABBQueryCallback2D(Scene* scene, uint16_t layerMask, bool includeTriggers)
+				: m_Scene(scene), m_LayerMask(layerMask), m_IncludeTriggers(includeTriggers)
 			{
 			}
 
@@ -410,22 +470,19 @@ namespace TomCat {
 			{
 				if (!fixture || (!m_IncludeTriggers && fixture->IsSensor()))
 					return true;
-				const uint16_t layer = fixture->GetFilterData().categoryBits;
-				if ((layer & m_CollisionMask) == 0)
-					return true;
-				b2Body* body = fixture->GetBody();
-				const uint64_t rawUUID = body
-					? static_cast<uint64_t>(body->GetUserData().pointer)
-					: 0;
-				if (rawUUID != 0)
-					Hits.push_back({ UUID(rawUUID), fixture->IsSensor(), layer });
+				UUID entityID{ 0 };
+				uint16_t layerBit = 0;
+				if (TryResolveEntityLayerBit(m_Scene, fixture, entityID, layerBit)
+					&& (layerBit & m_LayerMask) != 0)
+					Hits.push_back({ entityID, fixture->IsSensor(), layerBit });
 				return true;
 			}
 
 			std::vector<PhysicsQueryHit2D> Hits;
 
 		private:
-			uint16_t m_CollisionMask = 0xFFFF;
+			Scene* m_Scene = nullptr;
+			uint16_t m_LayerMask = 0xFFFF;
 			bool m_IncludeTriggers = true;
 		};
 
@@ -729,6 +786,17 @@ namespace TomCat {
 
 	}
 
+	void Scene::SetPhysics2DSettings(const Physics2DSettings& settings)
+	{
+		if (m_Physics2DSettings == settings)
+			return;
+		m_Physics2DSettings = settings;
+		// Existing Box2D contacts must be re-evaluated after a matrix change.
+		// Reuse the normal safe definition boundary instead of mutating a locked world.
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
+	}
+
 	Scene::~Scene()
 	{
 		OnRuntimeStop();
@@ -762,6 +830,7 @@ namespace TomCat {
 		// whole Tag would silently overwrite that name with the source name.
 		if (src.HasComponent<Tag>())
 			dst.GetComponent<Tag>().Visible = src.GetComponent<Tag>().Visible;
+		CopyComponentIfExists<EntityMetadata>(dst, src);
 		CopyComponentIfExists<Transform>(dst, src);
 		CopyComponentIfExists<SpriteRenderer>(dst, src);
 		CopyComponentIfExists<LineRenderer>(dst, src);
@@ -833,6 +902,7 @@ namespace TomCat {
 		{
 			Entity sourceEntity = other->FindEntityByUUID(uuid);
 			if ((uint64_t)uuid == 0 || !sourceEntity || !sourceEntity.HasComponent<Tag>()
+				|| !sourceEntity.HasComponent<EntityMetadata>()
 				|| !sourceEntity.HasComponent<Transform>() || !sourceUUIDs.emplace(uuid).second)
 			{
 				TC_Core_Error("Could not copy scene '{0}' because entity UUID {1} is invalid or duplicated",
@@ -846,6 +916,7 @@ namespace TomCat {
 		newScene->m_SceneName = other->m_SceneName;
 		newScene->m_ViewportWidth = other->m_ViewportWidth;
 		newScene->m_ViewportHeight = other->m_ViewportHeight;
+		newScene->m_Physics2DSettings = other->m_Physics2DSettings;
 
 		auto& srcSceneRegistry = other->m_Registry;
 		auto& dstSceneRegistry = newScene->m_Registry;
@@ -864,6 +935,7 @@ namespace TomCat {
 		}
 
 		// ID and the newly created Tag names stay owned by the destination scene.
+		CopyComponent<EntityMetadata>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<Transform>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		for (const auto& [uuid, destinationEntity] : enttMap)
 		{
@@ -939,6 +1011,7 @@ namespace TomCat {
 
 		Entity entity = { m_Registry.create(), this };
 		entity.AddComponent<ID>(uuid);
+		entity.AddComponent<EntityMetadata>();
 		entity.AddComponent<Transform>();
 		auto& tag = entity.AddComponent<Tag>();
 		tag._Tag = MakeUniqueEntityName(name.empty() ? "Entity" : name);
@@ -1764,6 +1837,8 @@ namespace TomCat {
 	uint64_t Scene::ComputeRuntimePhysicsDefinitionHash() const
 	{
 		uint64_t hash = 1469598103934665603ull;
+		for (uint16_t mask : m_Physics2DSettings.CollisionMasks)
+			HashPhysicsValue(hash, mask);
 		std::unordered_set<UUID> physicsEntities;
 		for (UUID uuid : m_EntityOrder)
 		{
@@ -1791,6 +1866,10 @@ namespace TomCat {
 				continue;
 			const entt::entity entity = mapIt->second;
 			HashPhysicsValue(hash, static_cast<uint64_t>(uuid));
+			const bool hasMetadata = m_Registry.all_of<EntityMetadata>(entity);
+			HashPhysicsValue(hash, hasMetadata);
+			if (hasMetadata)
+				HashPhysicsValue(hash, m_Registry.get<EntityMetadata>(entity).Layer);
 
 			const bool hasTransform = m_Registry.all_of<Transform>(entity);
 			HashPhysicsValue(hash, hasTransform);
@@ -1875,7 +1954,7 @@ namespace TomCat {
 
 	bool Scene::RebuildRuntimePhysicsWorld(bool preserveState)
 	{
-		if (!m_RuntimeRunning || !m_ContactListener)
+		if (!m_RuntimeRunning || !m_ContactListener || !m_ContactFilter)
 			return false;
 		if (m_PhysicsWorld && m_PhysicsWorld->IsLocked())
 			return false;
@@ -1902,6 +1981,7 @@ namespace TomCat {
 		ResetRuntimePhysicsPointers();
 		m_RuntimeBodies.clear();
 		m_PhysicsWorld = new b2World({ 0.0f, -9.8f });
+		m_PhysicsWorld->SetContactFilter(m_ContactFilter);
 		m_PhysicsWorld->SetContactListener(m_ContactListener);
 
 		std::unordered_set<UUID> requiredBodies;
@@ -2148,9 +2228,9 @@ namespace TomCat {
 	}
 
 	std::optional<RaycastHit2D> Scene::Raycast2D(const glm::vec2& start,
-		const glm::vec2& end, uint16_t collisionMask, bool includeTriggers)
+		const glm::vec2& end, uint16_t layerMask, bool includeTriggers)
 	{
-		if (!m_RuntimeRunning || collisionMask == 0 || !IsFinite(start) || !IsFinite(end))
+		if (!m_RuntimeRunning || layerMask == 0 || !IsFinite(start) || !IsFinite(end))
 			return std::nullopt;
 		const glm::vec2 ray = end - start;
 		if (glm::dot(ray, ray) <= std::numeric_limits<float>::epsilon())
@@ -2159,7 +2239,7 @@ namespace TomCat {
 			|| m_PhysicsWorld->IsLocked())
 			return std::nullopt;
 
-		ClosestRaycastCallback2D callback(collisionMask, includeTriggers);
+		ClosestRaycastCallback2D callback(this, layerMask, includeTriggers);
 		m_PhysicsWorld->RayCast(&callback, { start.x, start.y }, { end.x, end.y });
 		if (!callback.Hit || !FindEntityByUUID(callback.Hit->EntityID))
 			return std::nullopt;
@@ -2167,10 +2247,10 @@ namespace TomCat {
 	}
 
 	std::vector<PhysicsQueryHit2D> Scene::QueryAABB2D(const glm::vec2& lowerBound,
-		const glm::vec2& upperBound, uint16_t collisionMask, bool includeTriggers)
+		const glm::vec2& upperBound, uint16_t layerMask, bool includeTriggers)
 	{
 		std::vector<PhysicsQueryHit2D> result;
-		if (!m_RuntimeRunning || collisionMask == 0
+		if (!m_RuntimeRunning || layerMask == 0
 			|| !IsFinite(lowerBound) || !IsFinite(upperBound))
 			return result;
 		if (!SynchronizeRuntimePhysicsDefinitions() || !m_PhysicsWorld
@@ -2182,7 +2262,7 @@ namespace TomCat {
 			std::min(lowerBound.y, upperBound.y));
 		bounds.upperBound.Set(std::max(lowerBound.x, upperBound.x),
 			std::max(lowerBound.y, upperBound.y));
-		AABBQueryCallback2D callback(collisionMask, includeTriggers);
+		AABBQueryCallback2D callback(this, layerMask, includeTriggers);
 		m_PhysicsWorld->QueryAABB(&callback, bounds);
 
 		result.reserve(callback.Hits.size());
@@ -2292,6 +2372,7 @@ namespace TomCat {
 		m_RuntimeBodies.clear();
 		m_HasRuntimePhysicsDefinition = false;
 		ResetRuntimePhysicsPointers();
+		m_ContactFilter = new SceneContactFilter2D(this);
 		m_ContactListener = new SceneContactListener();
 		++m_RuntimeSessionGeneration;
 		m_RuntimeRunning = true;
@@ -2306,6 +2387,8 @@ namespace TomCat {
 		m_RuntimeRunning = false;
 		m_RuntimeAccumulator = 0.0;
 		++m_RuntimeSessionGeneration;
+		if (m_PhysicsWorld)
+			m_PhysicsWorld->SetContactFilter(nullptr);
 		if (m_PhysicsWorld)
 			m_PhysicsWorld->SetContactListener(nullptr);
 		if (m_ContactListener)
@@ -2337,6 +2420,8 @@ namespace TomCat {
 		m_PhysicsWorld = nullptr;
 		delete m_ContactListener;
 		m_ContactListener = nullptr;
+		delete m_ContactFilter;
+		m_ContactFilter = nullptr;
 	}
 
 	void Scene::UpdateRuntimeScripts(Timestep fixedTimestep)
@@ -2748,7 +2833,8 @@ namespace TomCat {
 	Entity Scene::DuplicateEntity(Entity entity)
 	{
 		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
-			|| !entity.HasComponent<ID>() || !entity.HasComponent<Tag>() || !entity.HasComponent<Transform>())
+			|| !entity.HasComponent<ID>() || !entity.HasComponent<Tag>()
+			|| !entity.HasComponent<EntityMetadata>() || !entity.HasComponent<Transform>())
 			return {};
 
 		Entity parent = GetParent(entity);
@@ -2861,6 +2947,17 @@ namespace TomCat {
 	template<>
 	void Scene::OnComponentAdded<Tag>(Entity entity, Tag& component)
 	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<EntityMetadata>(Entity entity, EntityMetadata& component)
+	{
+		if (component.GameplayTag.empty())
+			component.GameplayTag = "Untagged";
+		if (component.Layer >= Physics2DLayerCount)
+			component.Layer = 0;
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
 	}
 
 	template<>
