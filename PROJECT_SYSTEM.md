@@ -82,6 +82,7 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 ## 布局与用户设置
 
 - Editor 程序根目录的 `imgui.ini` 是只读默认布局，并随 Editor 一起封装进 Enigma Virtual Box。
+- Editor 的 `Packages/` 不进入 Enigma 虚拟文件系统，而是与 `TomCat.exe` 一同放在发布目录；Project 面板将它与项目 `Assets/` 作为两个同级根节点展示，并在 UI 与所有资产变更入口中强制只读。
 - Editor 启动或切换项目时先加载封装的默认布局，再加载当前可写布局。有活动项目时写入该 `Project.tcproj` 同目录下的 `UserSettings/imgui.ini`；无活动项目时写入真实外部目录 `%LOCALAPPDATA%\TomCat\TomCatSettings\editor-layout.ini`。窗口、Docking、Scene 工具栏和 Content Browser 布局均遵循这一选择。
 - Editor 的非布局项目状态写入同一项目下的 `UserSettings/editor.json`，不会混入 `imgui.ini` 或 `Project.tcproj`。
 - Hub 没有用户可调整布局；它仍封装只读的默认 `imgui.ini`，但最近打开时间、已知项目列表、本机项目目录和 Editor 目录只写入 `%LOCALAPPDATA%\TomCat\TomCatSettings\hub.json`。
@@ -89,7 +90,7 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 - 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成包含 `/UserSettings/`、`/Library/` 和 `/Cache/` 的 `.gitignore`；加载现有项目时会保留原内容并原子补齐缺失规则。
 - 项目根目录不再读取或生成旧式 `imgui.ini`；它只允许作为 Editor 可执行文件的封装默认布局存在。
 - Hub 只读取当前 `hub.json`；文件不存在时使用默认状态，不扫描或迁移旧 INI/YAML 配置。
-- Content Browser 的 `editor.json` 路径只接受相对于项目 `Assets/` 的安全相对路径，不按进程工作目录或项目根目录尝试旧路径回退。
+- Content Browser 的 `editor.json` 使用明确的 `@assets` / `@packages` 根前缀保存导航状态；旧版 Assets 相对路径仍可读取，任何越出这两个根目录的值都会回退到 `Assets/`。
 
 ## 场景文件 schema v6
 

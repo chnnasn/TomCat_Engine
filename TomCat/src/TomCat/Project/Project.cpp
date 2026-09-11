@@ -115,6 +115,32 @@ namespace TomCat {
 			return PathToUTF8(relative.lexically_normal());
 		}
 
+		std::string NormalizeBrowserStatePath(const std::string& storedPath,
+			const std::filesystem::path& assetRoot)
+		{
+			std::string normalized = storedPath;
+			std::replace(normalized.begin(), normalized.end(), '\\', '/');
+			for (const std::string_view root : { std::string_view("@assets"), std::string_view("@packages") })
+			{
+				if (normalized == root)
+					return std::string(root);
+				const std::string prefix = std::string(root) + "/";
+				if (normalized.rfind(prefix, 0) != 0)
+					continue;
+
+				const std::filesystem::path relative = UTF8ToPath(normalized.substr(prefix.size()));
+				if (!IsSafeRelativePath(relative))
+					return {};
+				std::string relativeText = PathToUTF8(relative.lexically_normal());
+				std::replace(relativeText.begin(), relativeText.end(), '\\', '/');
+				return prefix + relativeText;
+			}
+
+			// Schema v1 originally stored Assets-relative paths without a root token.
+			const std::filesystem::path resolved = ResolveBrowserPath(storedPath, assetRoot);
+			return StoreAssetRelativePath(resolved, assetRoot);
+		}
+
 		bool EnsureAssetSystemIgnoreRules(const std::filesystem::path& projectDirectory)
 		{
 			const std::filesystem::path ignorePath = projectDirectory / ".gitignore";
@@ -217,9 +243,8 @@ namespace TomCat {
 		void NormalizeEditorState(EditorProjectState& state,
 			const std::filesystem::path& assetRoot)
 		{
-			const std::filesystem::path resolvedCurrent = ResolveBrowserPath(
+			state.ContentBrowserCurrentDirectory = NormalizeBrowserStatePath(
 				state.ContentBrowserCurrentDirectory, assetRoot);
-			state.ContentBrowserCurrentDirectory = StoreAssetRelativePath(resolvedCurrent, assetRoot);
 			if (state.ContentBrowserCurrentDirectory.empty())
 				state.ContentBrowserCurrentDirectory = ".";
 
@@ -227,10 +252,9 @@ namespace TomCat {
 			validExpandedNodes.reserve(state.ContentBrowserExpandedNodes.size());
 			for (const std::string& node : state.ContentBrowserExpandedNodes)
 			{
-				const std::filesystem::path resolved = ResolveBrowserPath(node, assetRoot);
-				const std::string relative = StoreAssetRelativePath(resolved, assetRoot);
-				if (!relative.empty())
-					validExpandedNodes.push_back(relative);
+				const std::string normalized = NormalizeBrowserStatePath(node, assetRoot);
+				if (!normalized.empty())
+					validExpandedNodes.push_back(normalized);
 			}
 			std::sort(validExpandedNodes.begin(), validExpandedNodes.end());
 			validExpandedNodes.erase(std::unique(validExpandedNodes.begin(), validExpandedNodes.end()),

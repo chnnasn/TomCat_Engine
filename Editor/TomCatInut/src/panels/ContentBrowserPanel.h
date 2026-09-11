@@ -89,12 +89,16 @@ namespace TomCat {
 		AssetDeletedCallback m_AssetDeletedCallback;
 
 		std::filesystem::path GetAssetRoot() const;
+		std::filesystem::path GetPackagesRoot() const;
+		std::filesystem::path GetRootForPath(const std::filesystem::path& path) const;
+		bool IsWritablePath(const std::filesystem::path& path) const;
 		void RestoreProjectState();
-		void DrawDirectoryTree(const std::filesystem::path& directoryPath, bool isRoot, bool includeFiles);
-		void DrawFileTreeNode(const std::filesystem::path& path);
-		void DrawBreadcrumbs(const std::filesystem::path& assetRoot);
-		void DrawAssetGrid(const std::filesystem::path& assetRoot);
-		void DrawAssetItem(const std::filesystem::directory_entry& entry, const std::filesystem::path& assetRoot);
+		void DrawDirectoryTree(const std::filesystem::path& directoryPath,
+			const std::filesystem::path& root, const char* rootLabel, bool isRoot, bool includeFiles);
+		void DrawFileTreeNode(const std::filesystem::path& path, const std::filesystem::path& root);
+		void DrawBreadcrumbs(const std::filesystem::path& root, const char* rootLabel);
+		void DrawAssetGrid(const std::filesystem::path& root, const char* rootLabel);
+		void DrawAssetItem(const std::filesystem::directory_entry& entry, const std::filesystem::path& root);
 		Ref<Texture2D> GetAssetIcon(const std::filesystem::path& path, bool isDirectory,
 			bool isOpen = false);
 		void SubmitDragPayload(const std::filesystem::path& path, const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon);

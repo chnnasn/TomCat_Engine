@@ -30,6 +30,8 @@ namespace TomCat {
 			".png", ".jpg", ".jpeg", ".bmp", ".tga", ".gif", ".psd", ".hdr", ".pic"
 		};
 		constexpr const char* kAssetDirectoryPayloadID = "TOMCAT_ASSET_DIRECTORY";
+		constexpr const char* kStoredAssetsRoot = "@assets";
+		constexpr const char* kStoredPackagesRoot = "@packages";
 
 		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
 		{
@@ -318,6 +320,30 @@ namespace TomCat {
 		return m_Project ? CanonicalPath(m_Project->GetAssetPath()) : CanonicalPath(g_AssetPath);
 	}
 
+	std::filesystem::path ContentBrowserPanel::GetPackagesRoot() const
+	{
+		// EntryPoint places packaged builds in the executable directory before the
+		// editor starts, so this resolves the same external Packages tree in both
+		// development and distribution builds.
+		return CanonicalPath("Packages");
+	}
+
+	std::filesystem::path ContentBrowserPanel::GetRootForPath(const std::filesystem::path& path) const
+	{
+		const std::filesystem::path packagesRoot = GetPackagesRoot();
+		if (IsWithinRoot(packagesRoot, path))
+			return packagesRoot;
+
+		const std::filesystem::path assetRoot = GetAssetRoot();
+		return IsWithinRoot(assetRoot, path) ? assetRoot : std::filesystem::path{};
+	}
+
+	bool ContentBrowserPanel::IsWritablePath(const std::filesystem::path& path) const
+	{
+		const std::filesystem::path root = GetRootForPath(path);
+		return !root.empty() && LexicalPath(root) == LexicalPath(GetAssetRoot());
+	}
+
 	void ContentBrowserPanel::SetActiveScenePath(const std::filesystem::path& path)
 	{
 		m_ActiveScenePath = path.empty() ? std::filesystem::path{} : LexicalPath(path);
@@ -351,8 +377,9 @@ namespace TomCat {
 
 	void ContentBrowserPanel::RestoreProjectState()
 	{
-		const std::filesystem::path root = GetAssetRoot();
-		m_CurrentDirectory = root;
+		const std::filesystem::path assetRoot = GetAssetRoot();
+		const std::filesystem::path packagesRoot = GetPackagesRoot();
+		m_CurrentDirectory = assetRoot;
 		if (!m_Project)
 			return;
 
@@ -363,10 +390,26 @@ namespace TomCat {
 
 		auto resolveStoredPath = [&](const std::string& stored) {
 			if (stored.empty())
-				return root;
+				return assetRoot;
 			const std::filesystem::path value = UTF8ToPath(stored);
-			const std::filesystem::path candidate = value.is_absolute() ? value : root / value;
-			return IsWithinRoot(root, candidate) ? CanonicalPath(candidate) : root;
+			if (value.is_absolute())
+				return GetRootForPath(value).empty() ? assetRoot : CanonicalPath(value);
+
+			std::string normalized = stored;
+			std::replace(normalized.begin(), normalized.end(), '\\', '/');
+			std::filesystem::path candidate;
+			if (normalized == kStoredAssetsRoot)
+				candidate = assetRoot;
+			else if (normalized.rfind(std::string(kStoredAssetsRoot) + "/", 0) == 0)
+				candidate = assetRoot / UTF8ToPath(normalized.substr(std::strlen(kStoredAssetsRoot) + 1));
+			else if (normalized == kStoredPackagesRoot)
+				candidate = packagesRoot;
+			else if (normalized.rfind(std::string(kStoredPackagesRoot) + "/", 0) == 0)
+				candidate = packagesRoot / UTF8ToPath(normalized.substr(std::strlen(kStoredPackagesRoot) + 1));
+			else
+				candidate = assetRoot / value; // Backward-compatible legacy Assets-relative state.
+
+			return GetRootForPath(candidate).empty() ? assetRoot : CanonicalPath(candidate);
 		};
 
 		const std::filesystem::path restoredDirectory = resolveStoredPath(
@@ -379,7 +422,7 @@ namespace TomCat {
 		{
 			const std::filesystem::path node = resolveStoredPath(stored);
 			error.clear();
-			if (IsWithinRoot(root, node) && std::filesystem::is_directory(node, error))
+			if (!GetRootForPath(node).empty() && std::filesystem::is_directory(node, error))
 				m_ExpandedNodes.insert(PathToUTF8(node));
 		}
 	}
@@ -390,24 +433,30 @@ namespace TomCat {
 		// file that failed validation or could not be read during this session.
 		if (!m_Project || !m_ProjectStateWritable)
 			return false;
-		const std::filesystem::path root = GetAssetRoot();
-		auto storeRelative = [&](const std::filesystem::path& value) {
-			if (!IsWithinRoot(root, value))
-				return std::string(".");
+		auto storePath = [&](const std::filesystem::path& value) {
+			const std::filesystem::path root = GetRootForPath(value);
+			if (root.empty())
+				return std::string(kStoredAssetsRoot);
+			const bool packages = LexicalPath(root) == LexicalPath(GetPackagesRoot());
+			const std::string prefix = packages ? kStoredPackagesRoot : kStoredAssetsRoot;
 			std::error_code error;
 			std::filesystem::path relative = std::filesystem::relative(CanonicalPath(value), root, error);
-			return error || relative.empty() ? std::string(".") : PathToUTF8(relative);
+			if (error || relative.empty() || relative == ".")
+				return prefix;
+			std::string relativeText = PathToUTF8(relative);
+			std::replace(relativeText.begin(), relativeText.end(), '\\', '/');
+			return prefix + "/" + relativeText;
 		};
 
 		EditorProjectState state;
-		state.ContentBrowserCurrentDirectory = storeRelative(m_CurrentDirectory);
+		state.ContentBrowserCurrentDirectory = storePath(m_CurrentDirectory);
 		std::vector<std::string> storedNodes;
 		storedNodes.reserve(m_ExpandedNodes.size());
 		for (const std::string& node : m_ExpandedNodes)
 		{
 			const std::filesystem::path nodePath = UTF8ToPath(node);
-			if (IsWithinRoot(root, nodePath))
-				storedNodes.push_back(storeRelative(nodePath));
+			if (!GetRootForPath(nodePath).empty())
+				storedNodes.push_back(storePath(nodePath));
 		}
 		std::sort(storedNodes.begin(), storedNodes.end());
 		state.ContentBrowserExpandedNodes = std::move(storedNodes);
@@ -510,12 +559,12 @@ namespace TomCat {
 
 	void ContentBrowserPanel::OpenAsset(const std::filesystem::path& path, bool isDirectory)
 	{
-		const std::filesystem::path root = GetAssetRoot();
 		const std::filesystem::path managedPath = CanonicalPath(path);
+		const std::filesystem::path root = GetRootForPath(managedPath);
 		std::error_code error;
-		if (!IsWithinRoot(root, managedPath) || !std::filesystem::exists(managedPath, error))
+		if (root.empty() || !std::filesystem::exists(managedPath, error))
 		{
-			TC_Warn("Refusing to open an asset outside the project root: {0}", PathToUTF8(path));
+			TC_Warn("Refusing to open a file outside the Project Browser roots: {0}", PathToUTF8(path));
 			return;
 		}
 		if (isDirectory)
@@ -526,6 +575,12 @@ namespace TomCat {
 			m_SelectedPath = managedPath;
 			m_UserSelectedDirectory = true;
 			m_ExpandedNodes.insert(PathToUTF8(managedPath));
+			return;
+		}
+		if (!IsWritablePath(managedPath))
+		{
+			TC_Warn("Package files are read-only editor resources and cannot be opened as project assets: {0}",
+				PathToUTF8(managedPath));
 			return;
 		}
 
@@ -743,7 +798,10 @@ namespace TomCat {
 		m_PendingCreateFolderParent.clear();
 		std::error_code error;
 		if (!IsWithinRoot(root, parent) || !std::filesystem::is_directory(parent, error))
-			parent = root;
+		{
+			TC_Core_Warn("Refusing to create a folder outside Assets: {0}", PathToUTF8(parent));
+			return;
+		}
 		const std::filesystem::path newFolder = MakeUniqueFolderPath(parent);
 		if (newFolder.empty() || !std::filesystem::create_directory(newFolder, error) || error)
 		{
@@ -765,6 +823,15 @@ namespace TomCat {
 		const std::filesystem::path target = m_ContextPath;
 		const bool isDirectory = m_ContextIsDirectory;
 		const bool isRoot = m_ContextIsRoot;
+		const bool writable = IsWritablePath(target);
+		if (!writable)
+		{
+			if (ImGui::MenuItem("Open", nullptr, false, isDirectory))
+				OpenAsset(target, true);
+			ImGui::Separator();
+			ImGui::MenuItem("Read Only", nullptr, false, false);
+			return;
+		}
 		if (ImGui::BeginMenu("Create"))
 		{
 			if (ImGui::MenuItem("Folder"))
@@ -910,13 +977,19 @@ namespace TomCat {
 		}
 
 		AssetManager& assetManager = AssetManager::Get();
-		const AssetMetadata* metadata = assetManager.GetRegistry().GetMetadata(path);
-		AssetHandle handle = metadata && !metadata->IsMissing
-			? metadata->Handle : assetManager.ImportAsset(path);
-		metadata = assetManager.GetRegistry().GetMetadata(handle);
+		const bool projectAsset = IsWithinRoot(GetAssetRoot(), path);
+		const AssetMetadata* metadata = nullptr;
+		AssetHandle handle = AssetHandle(0);
+		if (projectAsset)
+		{
+			metadata = assetManager.GetRegistry().GetMetadata(path);
+			handle = metadata && !metadata->IsMissing
+				? metadata->Handle : assetManager.ImportAsset(path);
+			metadata = assetManager.GetRegistry().GetMetadata(handle);
+		}
 		if (metadata && metadata->IsMissing)
 			return icon(EditorIcon::Missing);
-		if (IsReadOnlyPath(path))
+		if (projectAsset && IsReadOnlyPath(path))
 			return icon(EditorIcon::ReadOnly);
 
 		const std::string extension = ToLower(PathToUTF8(path.extension()));
@@ -953,7 +1026,8 @@ namespace TomCat {
 	void ContentBrowserPanel::SubmitDragPayload(const std::filesystem::path& path,
 		const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon)
 	{
-		if (!IsWithinRoot(assetRoot, path, false))
+		if (!IsWritablePath(path) || LexicalPath(assetRoot) != LexicalPath(GetAssetRoot()) ||
+			!IsWithinRoot(assetRoot, path, false))
 			return;
 		const AssetHandle handle = AssetManager::Get().ImportAsset(path);
 		const uint64_t rawHandle = static_cast<uint64_t>(handle);
@@ -970,7 +1044,8 @@ namespace TomCat {
 	void ContentBrowserPanel::SubmitDirectoryDragPayload(const std::filesystem::path& path,
 		const std::filesystem::path& assetRoot)
 	{
-		if (!IsWithinRoot(assetRoot, path, false) || !ImGui::BeginDragDropSource())
+		if (!IsWritablePath(path) || LexicalPath(assetRoot) != LexicalPath(GetAssetRoot()) ||
+			!IsWithinRoot(assetRoot, path, false) || !ImGui::BeginDragDropSource())
 			return;
 		std::error_code error;
 		const std::filesystem::path relative = std::filesystem::relative(path, assetRoot, error);
@@ -986,6 +1061,8 @@ namespace TomCat {
 
 	void ContentBrowserPanel::AcceptAssetMoveTarget(const std::filesystem::path& destinationDirectory)
 	{
+		if (!IsWritablePath(destinationDirectory))
+			return;
 		if (!ImGui::BeginDragDropTarget())
 			return;
 
@@ -1089,9 +1166,9 @@ namespace TomCat {
 		ImGui::EndDragDropTarget();
 	}
 
-	void ContentBrowserPanel::DrawFileTreeNode(const std::filesystem::path& path)
+	void ContentBrowserPanel::DrawFileTreeNode(const std::filesystem::path& path,
+		const std::filesystem::path& root)
 	{
-		const std::filesystem::path root = GetAssetRoot();
 		if (!IsManagedEntry(root, path))
 			return;
 		ImGui::PushID(PathToUTF8(LexicalPath(path)).c_str());
@@ -1120,9 +1197,9 @@ namespace TomCat {
 		ImGui::PopID();
 	}
 
-	void ContentBrowserPanel::DrawDirectoryTree(const std::filesystem::path& directoryPath, bool isRoot, bool includeFiles)
+	void ContentBrowserPanel::DrawDirectoryTree(const std::filesystem::path& directoryPath,
+		const std::filesystem::path& root, const char* rootLabel, bool isRoot, bool includeFiles)
 	{
-		const std::filesystem::path root = GetAssetRoot();
 		std::error_code directoryError;
 		if (!IsWithinRoot(root, directoryPath) ||
 			!std::filesystem::is_directory(directoryPath, directoryError) || directoryError)
@@ -1143,16 +1220,21 @@ namespace TomCat {
 			ImGui::SetNextItemOpen(true);
 
 		ImGui::PushID(key.c_str());
-		const std::string directoryLabel = isRoot ? "Assets" : PathToUTF8(directoryPath.filename());
+		const std::string directoryLabel = isRoot ? rootLabel : PathToUTF8(directoryPath.filename());
 		const bool open = ImGui::TreeNodeEx("##Directory", flags, "     %s", directoryLabel.c_str());
 		DrawTreeIcon(GetAssetIcon(directoryPath, true, open),
 			ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+		if (isRoot && !IsWritablePath(directoryPath) && ImGui::IsItemHovered())
+		{
+			ImGui::BeginTooltip();
+			ImGui::TextUnformatted("Read-only editor packages");
+			ImGui::EndTooltip();
+		}
 		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
 		{
 			m_SelectedPath = directoryPath;
 			m_UserSelectedDirectory = true;
-			if (m_LayoutMode == TwoColumn)
-				m_CurrentDirectory = directoryPath;
+			m_CurrentDirectory = directoryPath;
 		}
 		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 			OpenAsset(directoryPath, true);
@@ -1179,25 +1261,25 @@ namespace TomCat {
 				if (!IsManagedEntry(root, entry.path()))
 					continue;
 				if (IsRecursiveDirectory(entry))
-					DrawDirectoryTree(entry.path(), false, includeFiles);
+					DrawDirectoryTree(entry.path(), root, rootLabel, false, includeFiles);
 				else if (includeFiles)
-					DrawFileTreeNode(entry.path());
+					DrawFileTreeNode(entry.path(), root);
 			}
 			ImGui::TreePop();
 		}
 		ImGui::PopID();
 	}
 
-	void ContentBrowserPanel::DrawBreadcrumbs(const std::filesystem::path& assetRoot)
+	void ContentBrowserPanel::DrawBreadcrumbs(const std::filesystem::path& root, const char* rootLabel)
 	{
-		if (ImGui::Button("Assets"))
-			OpenAsset(assetRoot, true);
-		AcceptAssetMoveTarget(assetRoot);
+		if (ImGui::Button(rootLabel))
+			OpenAsset(root, true);
+		AcceptAssetMoveTarget(root);
 		std::error_code error;
-		const std::filesystem::path relative = std::filesystem::relative(m_CurrentDirectory, assetRoot, error);
+		const std::filesystem::path relative = std::filesystem::relative(m_CurrentDirectory, root, error);
 		if (error || relative == ".")
 			return;
-		std::filesystem::path accumulated = assetRoot;
+		std::filesystem::path accumulated = root;
 		for (const auto& part : relative)
 		{
 			accumulated /= part;
@@ -1214,10 +1296,10 @@ namespace TomCat {
 	}
 
 	void ContentBrowserPanel::DrawAssetItem(const std::filesystem::directory_entry& entry,
-		const std::filesystem::path& assetRoot)
+		const std::filesystem::path& root)
 	{
 		const std::filesystem::path path = entry.path();
-		if (!IsManagedEntry(assetRoot, path))
+		if (!IsManagedEntry(root, path))
 			return;
 		std::error_code error;
 		const bool isDirectory = entry.is_directory(error);
@@ -1246,11 +1328,11 @@ namespace TomCat {
 			OpenAsset(path, isDirectory);
 		if (isDirectory)
 		{
-			SubmitDirectoryDragPayload(path, assetRoot);
+			SubmitDirectoryDragPayload(path, root);
 			AcceptAssetMoveTarget(path);
 		}
 		else
-			SubmitDragPayload(path, assetRoot, icon);
+			SubmitDragPayload(path, root, icon);
 		if (ImGui::BeginPopupContextItem("Context"))
 		{
 			m_ContextPath = path;
@@ -1260,7 +1342,9 @@ namespace TomCat {
 			ImGui::EndPopup();
 		}
 		ImGui::TextWrapped("%s", PathToUTF8(path.filename()).c_str());
-		if (!isDirectory && s_ImageExtensions.find(ToLower(PathToUTF8(path.extension()))) != s_ImageExtensions.end() && ImGui::IsItemHovered())
+		if (!isDirectory && IsWritablePath(path) &&
+			s_ImageExtensions.find(ToLower(PathToUTF8(path.extension()))) != s_ImageExtensions.end() &&
+			ImGui::IsItemHovered())
 		{
 			ImGui::BeginTooltip();
 			if (icon)
@@ -1272,25 +1356,25 @@ namespace TomCat {
 		ImGui::PopID();
 	}
 
-	void ContentBrowserPanel::DrawAssetGrid(const std::filesystem::path& assetRoot)
+	void ContentBrowserPanel::DrawAssetGrid(const std::filesystem::path& root, const char* rootLabel)
 	{
 		std::error_code directoryError;
-		if (!IsWithinRoot(assetRoot, m_CurrentDirectory) ||
+		if (!IsWithinRoot(root, m_CurrentDirectory) ||
 			!std::filesystem::is_directory(m_CurrentDirectory, directoryError) || directoryError)
-			m_CurrentDirectory = assetRoot;
-		DrawBreadcrumbs(assetRoot);
+			m_CurrentDirectory = root;
+		DrawBreadcrumbs(root, rootLabel);
 		ImGui::Separator();
 		const float cellSize = m_ThumbnailSize + 16.0f;
 		const int columns = std::max(1, (int)(ImGui::GetContentRegionAvail().x / cellSize));
 		ImGui::Columns(columns, nullptr, false);
 		for (const auto& entry : ReadDirectory(m_CurrentDirectory))
-			DrawAssetItem(entry, assetRoot);
+			DrawAssetItem(entry, root);
 		ImGui::Columns(1);
 		if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl)
 		{
 			m_ThumbnailSize = std::clamp(m_ThumbnailSize - ImGui::GetIO().MouseWheel * 8.0f, 64.0f, 512.0f);
 		}
-		DrawEmptyContextMenu(assetRoot);
+		DrawEmptyContextMenu(root);
 	}
 
 	void ContentBrowserPanel::OnImGuiRender(bool* open)
@@ -1336,6 +1420,7 @@ namespace TomCat {
 
 		FlushPendingCreateFolder();
 		const std::filesystem::path assetRoot = GetAssetRoot();
+		const std::filesystem::path packagesRoot = GetPackagesRoot();
 		std::error_code error;
 		if (!m_Project || !std::filesystem::is_directory(assetRoot, error))
 		{
@@ -1345,18 +1430,29 @@ namespace TomCat {
 			ImGui::End();
 			return;
 		}
+		error.clear();
+		const bool packagesAvailable = std::filesystem::is_directory(packagesRoot, error) && !error;
+		const std::filesystem::path currentRoot = GetRootForPath(m_CurrentDirectory);
+		const bool browsingPackages = packagesAvailable &&
+			LexicalPath(currentRoot) == LexicalPath(packagesRoot);
+		const std::filesystem::path activeRoot = browsingPackages ? packagesRoot : assetRoot;
+		const char* activeRootLabel = browsingPackages ? "Packages" : "Assets";
 
 		if (m_LayoutMode == OneColumn)
 		{
-			DrawDirectoryTree(assetRoot, true, true);
-			DrawEmptyContextMenu(assetRoot);
+			DrawDirectoryTree(assetRoot, assetRoot, "Assets", true, true);
+			if (packagesAvailable)
+				DrawDirectoryTree(packagesRoot, packagesRoot, "Packages", true, true);
+			DrawEmptyContextMenu(activeRoot);
 		}
 		else
 		{
 			const float splitterWidth = 8.0f;
 			ImGui::BeginChild("DirectoryTree", ImVec2(m_LeftPanelWidth, 0.0f), false);
-			DrawDirectoryTree(assetRoot, true, false);
-			DrawEmptyContextMenu(assetRoot);
+			DrawDirectoryTree(assetRoot, assetRoot, "Assets", true, false);
+			if (packagesAvailable)
+				DrawDirectoryTree(packagesRoot, packagesRoot, "Packages", true, false);
+			DrawEmptyContextMenu(activeRoot);
 			ImGui::EndChild();
 			ImGui::SameLine(0.0f, 0.0f);
 			ImGui::InvisibleButton("ProjectSplitter", ImVec2(splitterWidth, std::max(1.0f, ImGui::GetContentRegionAvail().y)));
@@ -1367,7 +1463,7 @@ namespace TomCat {
 				ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 			ImGui::SameLine(0.0f, 0.0f);
 			ImGui::BeginChild("AssetGrid", ImVec2(0.0f, 0.0f), false);
-			DrawAssetGrid(assetRoot);
+			DrawAssetGrid(activeRoot, activeRootLabel);
 			ImGui::EndChild();
 		}
 
