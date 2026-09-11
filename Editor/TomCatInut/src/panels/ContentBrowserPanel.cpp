@@ -15,6 +15,7 @@
 
 #include "TomCat/Project/ProjectManager.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/ImGui/ImGuiCallback.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
@@ -298,7 +299,18 @@ namespace TomCat {
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_LayoutMode(TwoColumn)
 	{
+		RegisterWindowMoreOptionsCallback("Project", [this](ImVec2 popupAnchor)
+		{
+			m_LayoutOptionsX = popupAnchor.x;
+			m_LayoutOptionsY = popupAnchor.y;
+			m_OpenLayoutOptions = true;
+		});
 		SetProject(ProjectManager::Get().GetActiveProject());
+	}
+
+	ContentBrowserPanel::~ContentBrowserPanel()
+	{
+		RemoveWindowMoreOptionsCallback("Project");
 	}
 
 	std::filesystem::path ContentBrowserPanel::GetAssetRoot() const
@@ -782,6 +794,21 @@ namespace TomCat {
 			m_ContextIsDirectory = true;
 			m_ContextIsRoot = CanonicalPath(m_ContextPath) == CanonicalPath(assetRoot);
 			DrawContextMenuBody();
+			ImGui::Separator();
+			if (ImGui::BeginMenu("Layout"))
+			{
+				if (ImGui::MenuItem("One Column", nullptr, m_LayoutMode == OneColumn))
+				{
+					m_LayoutMode = OneColumn;
+					SaveLayoutSetting();
+				}
+				if (ImGui::MenuItem("Two Column", nullptr, m_LayoutMode == TwoColumn))
+				{
+					m_LayoutMode = TwoColumn;
+					SaveLayoutSetting();
+				}
+				ImGui::EndMenu();
+			}
 			ImGui::EndPopup();
 		}
 	}
@@ -1270,30 +1297,41 @@ namespace TomCat {
 	{
 		if (open && !*open)
 			return;
-		const bool visible = ImGui::Begin("Project", open, ImGuiWindowFlags_MenuBar);
+		const bool visible = ImGui::Begin("Project", open);
 		if (!visible)
 		{
 			ImGui::End();
 			return;
 		}
 
-		if (ImGui::BeginMenuBar())
+		auto drawLayoutOptions = [this]()
 		{
-			if (ImGui::BeginMenu("Layout"))
+			ImGui::TextDisabled("Layout");
+			ImGui::Separator();
+			if (ImGui::MenuItem("One Column", nullptr, m_LayoutMode == OneColumn))
 			{
-				if (ImGui::MenuItem("One Column", nullptr, m_LayoutMode == OneColumn))
-				{
-					m_LayoutMode = OneColumn;
-					SaveLayoutSetting();
-				}
-				if (ImGui::MenuItem("Two Column", nullptr, m_LayoutMode == TwoColumn))
-				{
-					m_LayoutMode = TwoColumn;
-					SaveLayoutSetting();
-				}
-				ImGui::EndMenu();
+				m_LayoutMode = OneColumn;
+				SaveLayoutSetting();
 			}
-			ImGui::EndMenuBar();
+			if (ImGui::MenuItem("Two Column", nullptr, m_LayoutMode == TwoColumn))
+			{
+				m_LayoutMode = TwoColumn;
+				SaveLayoutSetting();
+			}
+		};
+
+		const bool positionLayoutOptions = m_OpenLayoutOptions;
+		if (m_OpenLayoutOptions)
+		{
+			ImGui::OpenPopup("ProjectOptions");
+			m_OpenLayoutOptions = false;
+		}
+		if (positionLayoutOptions)
+			ImGui::SetNextWindowPos(ImVec2(m_LayoutOptionsX, m_LayoutOptionsY), ImGuiCond_Always);
+		if (ImGui::BeginPopup("ProjectOptions"))
+		{
+			drawLayoutOptions();
+			ImGui::EndPopup();
 		}
 
 		FlushPendingCreateFolder();

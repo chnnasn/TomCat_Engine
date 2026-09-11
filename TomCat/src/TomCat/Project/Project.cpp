@@ -12,6 +12,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 
 #include <yaml-cpp/yaml.h>
 
@@ -81,22 +82,16 @@ namespace TomCat {
 		}
 
 		std::filesystem::path ResolveBrowserPath(const std::string& storedPath,
-			const std::filesystem::path& projectDirectory,
 			const std::filesystem::path& assetRoot)
 		{
 			if (storedPath.empty())
 				return {};
 
-			std::filesystem::path value = UTF8ToPath(storedPath);
-			if (value.is_absolute())
-				return IsPathWithinOrEqual(assetRoot, value) ? AbsoluteNormalized(value) : std::filesystem::path{};
-
-			const std::filesystem::path legacyCandidate = AbsoluteNormalized(value);
-			if (IsPathWithinOrEqual(assetRoot, legacyCandidate))
-				return legacyCandidate;
-			const std::filesystem::path projectCandidate = AbsoluteNormalized(projectDirectory / value);
-			if (IsPathWithinOrEqual(assetRoot, projectCandidate))
-				return projectCandidate;
+			const std::filesystem::path value = UTF8ToPath(storedPath);
+			if (value.lexically_normal() == ".")
+				return AbsoluteNormalized(assetRoot);
+			if (!IsSafeRelativePath(value))
+				return {};
 			const std::filesystem::path assetCandidate = AbsoluteNormalized(assetRoot / value);
 			return IsPathWithinOrEqual(assetRoot, assetCandidate) ? assetCandidate : std::filesystem::path{};
 		}
@@ -220,11 +215,10 @@ namespace TomCat {
 		}
 
 		void NormalizeEditorState(EditorProjectState& state,
-			const std::filesystem::path& projectDirectory,
 			const std::filesystem::path& assetRoot)
 		{
 			const std::filesystem::path resolvedCurrent = ResolveBrowserPath(
-				state.ContentBrowserCurrentDirectory, projectDirectory, assetRoot);
+				state.ContentBrowserCurrentDirectory, assetRoot);
 			state.ContentBrowserCurrentDirectory = StoreAssetRelativePath(resolvedCurrent, assetRoot);
 			if (state.ContentBrowserCurrentDirectory.empty())
 				state.ContentBrowserCurrentDirectory = ".";
@@ -233,7 +227,7 @@ namespace TomCat {
 			validExpandedNodes.reserve(state.ContentBrowserExpandedNodes.size());
 			for (const std::string& node : state.ContentBrowserExpandedNodes)
 			{
-				const std::filesystem::path resolved = ResolveBrowserPath(node, projectDirectory, assetRoot);
+				const std::filesystem::path resolved = ResolveBrowserPath(node, assetRoot);
 				const std::string relative = StoreAssetRelativePath(resolved, assetRoot);
 				if (!relative.empty())
 					validExpandedNodes.push_back(relative);
@@ -469,14 +463,48 @@ namespace TomCat {
 			return input.bad() ? std::string{} : stream.str();
 		}
 
+		template<size_t FieldCount>
+		void RequireExactMapFields(const YAML::Node& node, const std::string& context,
+			const std::array<const char*, FieldCount>& fields)
+		{
+			if (!node || !node.IsMap())
+				throw std::runtime_error(context + " must be a map");
+
+			std::unordered_set<std::string> seenFields;
+			for (const auto& entry : node)
+			{
+				if (!entry.first.IsScalar())
+					throw std::runtime_error(context + " contains a non-scalar field name");
+				const std::string field = entry.first.as<std::string>();
+				if (!seenFields.emplace(field).second)
+					throw std::runtime_error(context + " contains duplicate field '" + field + "'");
+
+				bool known = false;
+				for (const char* expected : fields)
+				{
+					if (field == expected)
+					{
+						known = true;
+						break;
+					}
+				}
+				if (!known)
+					throw std::runtime_error(context + " contains unknown field '" + field + "'");
+			}
+
+			for (const char* field : fields)
+			{
+				if (!node[field])
+					throw std::runtime_error(context + " is missing required field '" + field + "'");
+			}
+		}
+
 		YAML::Node RequireCurrentProjectDocument(const YAML::Node& root)
 		{
-			if (!root.IsMap())
-				throw std::runtime_error("Project document must be a map");
+			constexpr std::array<const char*, 2> rootFields = { "SchemaVersion", "Project" };
+			RequireExactMapFields(root, "Project document", rootFields);
 
 			const YAML::Node schemaNode = root["SchemaVersion"];
-			if (!schemaNode)
-				throw std::runtime_error("Project document is missing required field 'SchemaVersion'");
 			const uint32_t schemaVersion = schemaNode.as<uint32_t>();
 			if (schemaVersion != Project::CurrentSchemaVersion)
 				throw std::runtime_error("Unsupported project SchemaVersion " +
@@ -484,28 +512,11 @@ namespace TomCat {
 					std::to_string(Project::CurrentSchemaVersion));
 
 			const YAML::Node projectNode = root["Project"];
-			if (!projectNode || !projectNode.IsMap())
-				throw std::runtime_error("Project document is missing the 'Project' map");
-
-			constexpr std::array<const char*, 8> requiredFields = {
+			constexpr std::array<const char*, 8> projectFields = {
 				"Name", "Version", "Description", "EditorVersion", "Template",
 				"AssetDirectory", "StartScene", "StartSceneHandle"
 			};
-			for (const char* field : requiredFields)
-			{
-				if (!projectNode[field])
-					throw std::runtime_error(std::string("Project.") + field + " is required");
-			}
-
-			constexpr std::array<const char*, 3> retiredFields = {
-				"TwoColumnCurrentFolder", "ExpandedNodes", "LastOperationTime"
-			};
-			for (const char* field : retiredFields)
-			{
-				if (projectNode[field])
-					throw std::runtime_error(std::string("Project.") + field +
-						" is retired and is not accepted by schema 3");
-			}
+			RequireExactMapFields(projectNode, "Project", projectFields);
 
 			return projectNode;
 		}
@@ -603,7 +614,7 @@ namespace TomCat {
 					loaded.ContentBrowserExpandedNodes.push_back(node.as<std::string>());
 			}
 
-			NormalizeEditorState(loaded, m_Directory, GetAssetPath());
+			NormalizeEditorState(loaded, GetAssetPath());
 			state = std::move(loaded);
 			return EditorProjectStateLoadResult::Loaded;
 		}
@@ -631,7 +642,7 @@ namespace TomCat {
 		}
 
 		EditorProjectState normalized = state;
-		NormalizeEditorState(normalized, m_Directory, GetAssetPath());
+		NormalizeEditorState(normalized, GetAssetPath());
 
 		std::ostringstream json;
 		json << "{\n"

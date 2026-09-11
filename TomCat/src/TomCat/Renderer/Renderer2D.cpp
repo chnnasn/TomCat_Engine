@@ -798,24 +798,15 @@ void main()
 
 	void Renderer2D::DrawSprite(const glm::mat4& transform, SpriteRenderer& src, int entityID)
 	{
-		switch (src.Shape)
+		if (static_cast<uint64_t>(src.SpriteHandle) == 0)
 		{
-			case SpriteShape::Circle:
-				DrawCircle(transform, src._Color, src.Thickness, src.Fade, entityID);
-				return;
-			case SpriteShape::Quad:
-				break;
-			default:
-				TC_Core_Warn("DrawSprite received an unsupported SpriteShape");
-				return;
+			src.Sprite.reset();
+			return;
 		}
 
-		if (static_cast<uint64_t>(src.TextureHandle) != 0)
-			src.Texture = AssetManager::Get().LoadTexture(src.TextureHandle);
-		if (src.Texture)
-			DrawQuad(transform, src.Texture, src.TilingFactor, src._Color, entityID);
-		else
-			DrawQuad(transform, src._Color, entityID);
+		src.Sprite = AssetManager::Get().LoadTexture(src.SpriteHandle);
+		if (src.Sprite)
+			DrawQuad(transform, src.Sprite, src.TilingFactor, src._Color, entityID);
 	}
 
 	void Renderer2D::ResetStats()

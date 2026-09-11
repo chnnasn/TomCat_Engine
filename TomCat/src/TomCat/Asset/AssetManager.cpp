@@ -24,7 +24,6 @@ namespace TomCat {
 		constexpr uint32_t kPackageHeaderSize = 32;
 		constexpr uint64_t kPackageEntrySize = 32;
 		constexpr size_t kCopyBufferSize = 64 * 1024;
-		constexpr uint32_t kSceneSchemaVersion = 4;
 
 		template<typename UInt>
 		bool WriteLittleEndian(std::ostream& output, UInt value)
@@ -179,7 +178,7 @@ namespace TomCat {
 				current->Type == expectedType;
 		}
 
-		bool ValidateCookedTextureHandle(const AssetRegistry& registry, uint64_t rawHandle,
+		bool ValidateCookedSpriteHandle(const AssetRegistry& registry, uint64_t rawHandle,
 			const std::filesystem::path& scenePath, const std::string& propertyPath,
 			std::string& errorMessage)
 		{
@@ -193,49 +192,6 @@ namespace TomCat {
 				return false;
 			}
 			return true;
-		}
-
-		bool FindRetiredSceneKey(const YAML::Node& node, std::string& keyPath,
-			const std::string& propertyPath = "$", uint32_t depth = 0)
-		{
-			if (!node)
-				return false;
-			if (depth > 128)
-			{
-				keyPath = propertyPath + " (maximum nesting depth exceeded)";
-				return true;
-			}
-			if (node.IsMap())
-			{
-				for (const auto& item : node)
-				{
-					if (!item.first.IsScalar())
-					{
-						keyPath = propertyPath + " (non-scalar key)";
-						return true;
-					}
-					const std::string key = item.first.as<std::string>();
-					const std::string childPath = propertyPath + "." + key;
-					if (key == "TexturePath" || key == "m_Father" || key == "m_Children" ||
-						key == "CircleRenderer")
-					{
-						keyPath = childPath;
-						return true;
-					}
-					if (FindRetiredSceneKey(item.second, keyPath, childPath, depth + 1))
-						return true;
-				}
-			}
-			else if (node.IsSequence())
-			{
-				for (size_t index = 0; index < node.size(); ++index)
-				{
-					if (FindRetiredSceneKey(node[index], keyPath, propertyPath + "[" +
-						std::to_string(index) + "]", depth + 1))
-						return true;
-				}
-			}
-			return false;
 		}
 
 		bool PrepareSceneBytesForCook(const AssetRegistry& registry,
@@ -260,78 +216,19 @@ namespace TomCat {
 				std::string serialized(sourceBytes.begin(), sourceBytes.end());
 				std::istringstream input(std::move(serialized));
 				const YAML::Node root = YAML::Load(input);
-				if (input.bad() || !root || !root.IsMap())
-				{
-					errorMessage = "Scene '" + PathToUTF8(scenePath) + "' is not a YAML map";
-					return false;
-				}
-				const YAML::Node schemaVersion = root["SchemaVersion"];
-				if (!schemaVersion || !schemaVersion.IsScalar() ||
-					schemaVersion.as<uint32_t>() != kSceneSchemaVersion)
-				{
-					errorMessage = "Scene '" + PathToUTF8(scenePath) +
-						"' must use SchemaVersion " + std::to_string(kSceneSchemaVersion);
-					return false;
-				}
-				if (root["Scene"])
-				{
-					errorMessage = "Scene '" + PathToUTF8(scenePath) +
-						"' contains obsolete top-level key $.Scene";
-					return false;
-				}
-				std::string retiredKeyPath;
-				if (FindRetiredSceneKey(root, retiredKeyPath))
-				{
-					errorMessage = "Scene '" + PathToUTF8(scenePath) +
-						"' contains obsolete or invalid key " + retiredKeyPath;
-					return false;
-				}
-				const YAML::Node sceneName = root["SceneName"];
-				if (!sceneName || !sceneName.IsScalar() || sceneName.as<std::string>().empty())
-				{
-					errorMessage = "Scene '" + PathToUTF8(scenePath) +
-						"' is missing a non-empty SceneName";
-					return false;
-				}
-
 				const YAML::Node entities = root["Entities"];
-				if (!entities || !entities.IsSequence())
-				{
-					errorMessage = "Scene '" + PathToUTF8(scenePath) +
-						"' is missing the Entities sequence";
-					return false;
-				}
-
 				for (size_t index = 0; index < entities.size(); ++index)
 				{
 					const YAML::Node entity = entities[index];
-					if (!entity.IsMap())
-					{
-						errorMessage = "Scene '" + PathToUTF8(scenePath) + "' entity " +
-							std::to_string(index) + " is not a map";
-						return false;
-					}
 					const YAML::Node sprite = entity["SpriteRenderer"];
 					if (!sprite)
 						continue;
-					if (!sprite.IsMap())
-					{
-						errorMessage = "Scene '" + PathToUTF8(scenePath) + "' entity " +
-							std::to_string(index) + " has a non-map SpriteRenderer";
-						return false;
-					}
 
 					const std::string propertyPath = "Entities[" + std::to_string(index) +
-						"].SpriteRenderer.TextureHandle";
-					const YAML::Node handleNode = sprite["TextureHandle"];
-					if (!handleNode || !handleNode.IsScalar())
-					{
-						errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property " +
-							propertyPath + " is required and must be an AssetHandle";
-						return false;
-					}
+						"].SpriteRenderer.SpriteHandle";
+					const YAML::Node handleNode = sprite["SpriteHandle"];
 					const uint64_t rawHandle = handleNode.as<uint64_t>();
-					if (!ValidateCookedTextureHandle(registry, rawHandle, scenePath,
+					if (!ValidateCookedSpriteHandle(registry, rawHandle, scenePath,
 						propertyPath, errorMessage))
 						return false;
 				}

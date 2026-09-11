@@ -81,23 +81,14 @@ namespace TomCat {
 
 	};
 
-	enum class SpriteShape
-	{
-		Quad = 0,
-		Circle = 1
-	};
-
 	struct SpriteRenderer
 	{
 		bool Enabled = true;
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
-		SpriteShape Shape = SpriteShape::Quad;
-		AssetHandle TextureHandle = AssetHandle(0);
-		// Runtime-only resolved texture. TextureHandle is the serialized source of truth.
-		Ref<Texture2D>Texture;
+		AssetHandle SpriteHandle = AssetHandle(0);
+		// Runtime-only resolved sprite. SpriteHandle is the serialized source of truth.
+		Ref<Texture2D> Sprite;
 		float TilingFactor = 1.0f;
-		float Thickness = 1.0f;
-		float Fade = 0.005f;
 
 		SpriteRenderer() = default;
 		SpriteRenderer(const SpriteRenderer&) = default;

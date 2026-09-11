@@ -87,6 +87,9 @@
 	<ClInclude Include="src\TomCat\Asset\AssetRegistry.h">
 	  <Filter>src\TomCat\Asset</Filter>
 	</ClInclude>
+	<ClInclude Include="src\TomCat\Asset\SpriteAsset.h">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClInclude>
     <ClInclude Include="src\TomCat\Core\Application.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -143,6 +146,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Events\MouseEvent.h">
       <Filter>src\TomCat\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h">
+      <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
       <Filter>src\TomCat\ImGui</Filter>
@@ -1523,6 +1529,9 @@
 	<ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp">
 	  <Filter>src\TomCat\Asset</Filter>
 	</ClCompile>
+	<ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp">
+	  <Filter>src\TomCat\Asset</Filter>
+	</ClCompile>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
@@ -1542,6 +1551,9 @@
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp">
+      <Filter>src\TomCat\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp">

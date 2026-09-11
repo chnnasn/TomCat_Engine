@@ -26,7 +26,6 @@ namespace TomCat {
 
 		constexpr uint32_t kMetadataSchemaVersion = 1;
 		constexpr uint32_t kRegistryCacheSchemaVersion = 1;
-		constexpr uint32_t kSceneSchemaVersion = 4;
 
 		std::string LowerASCII(std::string value)
 		{
@@ -227,49 +226,6 @@ namespace TomCat {
 						scenePath, references, complete, depth + 1);
 				}
 			}
-		}
-
-		bool FindRetiredSceneKey(const YAML::Node& node, std::string& keyPath,
-			const std::string& propertyPath = "$", uint32_t depth = 0)
-		{
-			if (!node)
-				return false;
-			if (depth > 128)
-			{
-				keyPath = propertyPath + " (maximum nesting depth exceeded)";
-				return true;
-			}
-			if (node.IsMap())
-			{
-				for (const auto& entry : node)
-				{
-					if (!entry.first.IsScalar())
-					{
-						keyPath = propertyPath + " (non-scalar key)";
-						return true;
-					}
-					const std::string key = entry.first.as<std::string>();
-					const std::string childPath = propertyPath + "." + key;
-					if (key == "TexturePath" || key == "m_Father" || key == "m_Children" ||
-						key == "CircleRenderer")
-					{
-						keyPath = childPath;
-						return true;
-					}
-					if (FindRetiredSceneKey(entry.second, keyPath, childPath, depth + 1))
-						return true;
-				}
-			}
-			else if (node.IsSequence())
-			{
-				for (size_t index = 0; index < node.size(); ++index)
-				{
-					if (FindRetiredSceneKey(node[index], keyPath, propertyPath + "[" +
-						std::to_string(index) + "]", depth + 1))
-						return true;
-				}
-			}
-			return false;
 		}
 
 		bool PathsReferToSameEntry(const std::filesystem::path& left,
@@ -1689,33 +1645,6 @@ namespace TomCat {
 							std::string serialized(sceneBytes.begin(), sceneBytes.end());
 							std::istringstream input(std::move(serialized));
 							const YAML::Node root = YAML::Load(input);
-							if (!root || !root.IsMap())
-								throw std::runtime_error("scene document must be a map");
-							const YAML::Node schemaVersion = root["SchemaVersion"];
-							if (!schemaVersion || !schemaVersion.IsScalar() ||
-								schemaVersion.as<uint32_t>() != kSceneSchemaVersion)
-								throw std::runtime_error("scene must use SchemaVersion " +
-									std::to_string(kSceneSchemaVersion));
-							if (root["Scene"])
-								throw std::runtime_error("scene contains obsolete top-level key $.Scene");
-							std::string retiredKeyPath;
-							if (FindRetiredSceneKey(root, retiredKeyPath))
-								throw std::runtime_error("scene contains obsolete or invalid key " +
-									retiredKeyPath);
-							const YAML::Node entities = root["Entities"];
-							if (!entities || !entities.IsSequence())
-								throw std::runtime_error("scene is missing the Entities sequence");
-							for (size_t entityIndex = 0; entityIndex < entities.size(); ++entityIndex)
-							{
-								const YAML::Node entity = entities[entityIndex];
-								if (!entity.IsMap())
-									throw std::runtime_error("scene entity must be a map");
-								const YAML::Node sprite = entity["SpriteRenderer"];
-								if (sprite && (!sprite.IsMap() || !sprite["TextureHandle"] ||
-									!sprite["TextureHandle"].IsScalar()))
-									throw std::runtime_error(
-										"SpriteRenderer.TextureHandle is required and must be scalar");
-							}
 							const AssetMetadata* sceneMetadata = GetMetadata(relativeScene);
 							const AssetHandle referencing = sceneMetadata && !sceneMetadata->IsMissing
 								? sceneMetadata->Handle : AssetHandle(0);

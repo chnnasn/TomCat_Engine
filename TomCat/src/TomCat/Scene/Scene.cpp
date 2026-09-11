@@ -1260,13 +1260,13 @@ namespace TomCat {
 		for (const entt::entity entity : view)
 		{
 			const auto& sprite = view.get<SpriteRenderer>(entity);
-			if (sprite.TextureHandle != handle)
+			if (sprite.SpriteHandle != handle)
 				continue;
 			const uint64_t entityID = static_cast<uint64_t>(view.get<ID>(entity).id);
 			AssetReference reference;
 			reference.ReferencedAsset = handle;
 			reference.PropertyPath = "Entity " + std::to_string(entityID) +
-				".SpriteRenderer.TextureHandle";
+				".SpriteRenderer.SpriteHandle";
 			references.push_back(std::move(reference));
 		}
 		return references;

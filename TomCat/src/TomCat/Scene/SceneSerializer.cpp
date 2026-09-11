@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -99,7 +100,6 @@ namespace TomCat {
 
 	namespace {
 
-		constexpr uint32_t kCurrentSceneSchemaVersion = 4;
 		constexpr float kPi = 3.14159265358979323846f;
 
 		bool IsFinite(float value)
@@ -199,15 +199,9 @@ namespace TomCat {
 
 		void ValidateSprite(const SpriteRenderer& sprite, const std::string& context)
 		{
-			if (sprite.Shape != SpriteShape::Quad && sprite.Shape != SpriteShape::Circle)
-				throw std::runtime_error(context + ".Shape is invalid");
 			RequireUnitColor(sprite._Color, context + ".Color");
 			if (!IsFinite(sprite.TilingFactor) || sprite.TilingFactor < 0.0f)
 				throw std::runtime_error(context + ".TilingFactor must be finite and non-negative");
-			if (!IsFinite(sprite.Thickness) || sprite.Thickness < 0.0f || sprite.Thickness > 1.0f)
-				throw std::runtime_error(context + ".Thickness must be finite and in [0, 1]");
-			if (!IsFinite(sprite.Fade) || sprite.Fade <= 0.0f)
-				throw std::runtime_error(context + ".Fade must be finite and greater than zero");
 		}
 
 		void ValidateLine(const LineRenderer& line, const std::string& context)
@@ -259,6 +253,40 @@ namespace TomCat {
 				throw std::runtime_error(context + " must be a map");
 		}
 
+		bool ContainsField(std::initializer_list<const char*> fields, const std::string& candidate)
+		{
+			for (const char* field : fields)
+			{
+				if (candidate == field)
+					return true;
+			}
+			return false;
+		}
+
+		void RequireExactFields(const YAML::Node& node, const std::string& context,
+			std::initializer_list<const char*> requiredFields,
+			std::initializer_list<const char*> optionalFields = {})
+		{
+			RequireMap(node, context);
+			std::unordered_set<std::string> seenFields;
+			for (const auto& entry : node)
+			{
+				if (!entry.first.IsScalar())
+					throw std::runtime_error(context + " contains a non-scalar field name");
+				const std::string field = entry.first.as<std::string>();
+				if (!seenFields.emplace(field).second)
+					throw std::runtime_error(context + " contains duplicate field '" + field + "'");
+				if (!ContainsField(requiredFields, field) && !ContainsField(optionalFields, field))
+					throw std::runtime_error(context + " contains unknown field '" + field + "'");
+			}
+
+			for (const char* field : requiredFields)
+			{
+				if (!node[field])
+					throw std::runtime_error(context + " is missing required field '" + field + "'");
+			}
+		}
+
 		template<typename T>
 		T ReadRequired(const YAML::Node& node, const char* key, const std::string& context)
 		{
@@ -286,23 +314,6 @@ namespace TomCat {
 			if (value == "Dynamic") return Rigidbody2D::BodyType::Dynamic;
 			if (value == "Kinematic") return Rigidbody2D::BodyType::Kinematic;
 			throw std::runtime_error("Unknown Rigidbody2D body type '" + value + "'");
-		}
-
-		const char* SpriteShapeToString(SpriteShape shape)
-		{
-			switch (shape)
-			{
-				case SpriteShape::Quad: return "Quad";
-				case SpriteShape::Circle: return "Circle";
-			}
-			throw std::runtime_error("Cannot serialize an unknown SpriteShape");
-		}
-
-		SpriteShape SpriteShapeFromString(const std::string& value)
-		{
-			if (value == "Quad") return SpriteShape::Quad;
-			if (value == "Circle") return SpriteShape::Circle;
-			throw std::runtime_error("Unknown SpriteRenderer shape '" + value + "'");
 		}
 
 		void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity)
@@ -356,18 +367,15 @@ namespace TomCat {
 			{
 				auto& sprite = entity.GetComponent<SpriteRenderer>();
 				ValidateSprite(sprite, context + ".SpriteRenderer");
-				if (sprite.Texture && static_cast<uint64_t>(sprite.TextureHandle) == 0)
+				if (sprite.Sprite && static_cast<uint64_t>(sprite.SpriteHandle) == 0)
 					throw std::runtime_error(context +
-						".SpriteRenderer has a texture but no AssetHandle");
+						".SpriteRenderer has a resolved sprite but no AssetHandle");
 				out << YAML::Key << "SpriteRenderer" << YAML::Value << YAML::BeginMap;
 				out << YAML::Key << "Enabled" << YAML::Value << sprite.Enabled;
-				out << YAML::Key << "Shape" << YAML::Value << SpriteShapeToString(sprite.Shape);
+				out << YAML::Key << "SpriteHandle" << YAML::Value
+					<< static_cast<uint64_t>(sprite.SpriteHandle);
 				out << YAML::Key << "Color" << YAML::Value << sprite._Color;
 				out << YAML::Key << "TilingFactor" << YAML::Value << sprite.TilingFactor;
-				out << YAML::Key << "TextureHandle" << YAML::Value
-					<< static_cast<uint64_t>(sprite.TextureHandle);
-				out << YAML::Key << "Thickness" << YAML::Value << sprite.Thickness;
-				out << YAML::Key << "Fade" << YAML::Value << sprite.Fade;
 				out << YAML::EndMap;
 			}
 
@@ -490,7 +498,7 @@ namespace TomCat {
 
 			YAML::Emitter out;
 			out << YAML::BeginMap;
-			out << YAML::Key << "SchemaVersion" << YAML::Value << kCurrentSceneSchemaVersion;
+			out << YAML::Key << "SchemaVersion" << YAML::Value << SceneSerializer::CurrentSchemaVersion;
 			out << YAML::Key << "SceneName" << YAML::Value << m_Scene->GetSceneName();
 			out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
 			for (UUID uuid : m_Scene->m_EntityOrder)
@@ -626,15 +634,14 @@ namespace TomCat {
 			YAML::Node data = YAML::Load(input);
 			if (input.bad())
 				throw std::runtime_error("Failed while reading the scene file");
-			RequireMap(data, "scene document");
+			RequireExactFields(data, "scene document",
+				{ "SchemaVersion", "SceneName", "Entities" });
 
-			if (data["Scene"])
-				throw std::runtime_error("Legacy scene field 'Scene' is not supported; use 'SceneName'");
 			const uint32_t schemaVersion = ReadRequired<uint32_t>(
 				data, "SchemaVersion", "scene document");
-			if (schemaVersion != kCurrentSceneSchemaVersion)
+			if (schemaVersion != CurrentSchemaVersion)
 				throw std::runtime_error("Scene SchemaVersion must be " +
-					std::to_string(kCurrentSceneSchemaVersion) + ", got " +
+					std::to_string(CurrentSchemaVersion) + ", got " +
 					std::to_string(schemaVersion));
 
 			const std::string sceneName = ReadRequired<std::string>(
@@ -658,16 +665,9 @@ namespace TomCat {
 			{
 				const YAML::Node entityNode = entities[index];
 				const std::string context = "Entities[" + std::to_string(index) + "]";
-				RequireMap(entityNode, context);
-				if (entityNode["m_Father"])
-					throw std::runtime_error(context +
-						" uses unsupported legacy field 'm_Father'; use 'Parent'");
-				if (entityNode["m_Children"])
-					throw std::runtime_error(context +
-						" uses unsupported legacy field 'm_Children'");
-				if (entityNode["CircleRenderer"])
-					throw std::runtime_error(context +
-						" uses unsupported legacy component 'CircleRenderer'; use SpriteRenderer with Shape: Circle");
+				RequireExactFields(entityNode, context,
+					{ "Entity", "Tag", "Transform", "LocalTransform", "Parent" },
+					{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D", "BoxCollider2D" });
 
 				const uint64_t rawUUID = ReadRequired<uint64_t>(entityNode, "Entity", context);
 				const UUID uuid(rawUUID);
@@ -677,7 +677,7 @@ namespace TomCat {
 					throw std::runtime_error(context + " duplicates UUID " + std::to_string(rawUUID));
 
 				YAML::Node tagNode = entityNode["Tag"];
-				RequireMap(tagNode, context + ".Tag");
+				RequireExactFields(tagNode, context + ".Tag", { "Tag", "Visible" });
 				const std::string name = ReadRequired<std::string>(tagNode, "Tag", context + ".Tag");
 				const bool visible = ReadRequired<bool>(tagNode, "Visible", context + ".Tag");
 
@@ -687,14 +687,16 @@ namespace TomCat {
 				entity.GetComponent<Tag>().Visible = visible;
 
 				YAML::Node transformNode = entityNode["Transform"];
-				RequireMap(transformNode, context + ".Transform");
+				RequireExactFields(transformNode, context + ".Transform",
+					{ "Translation", "Rotation", "Scale" });
 				auto& transform = entity.GetComponent<Transform>();
 				transform._Translation = ReadRequired<glm::vec3>(transformNode, "Translation", context + ".Transform");
 				transform._Rotation = ReadRequired<glm::vec3>(transformNode, "Rotation", context + ".Transform");
 				transform._Scale = ReadRequired<glm::vec3>(transformNode, "Scale", context + ".Transform");
 
 				YAML::Node localTransformNode = entityNode["LocalTransform"];
-				RequireMap(localTransformNode, context + ".LocalTransform");
+				RequireExactFields(localTransformNode, context + ".LocalTransform",
+					{ "Translation", "Rotation", "Scale" });
 				transform._LocalTranslation = ReadRequired<glm::vec3>(localTransformNode, "Translation", context + ".LocalTransform");
 				transform._LocalRotation = ReadRequired<glm::vec3>(localTransformNode, "Rotation", context + ".LocalTransform");
 				transform._LocalScale = ReadRequired<glm::vec3>(localTransformNode, "Scale", context + ".LocalTransform");
@@ -703,9 +705,12 @@ namespace TomCat {
 				YAML::Node cameraNode = entityNode["Camera"];
 				if (cameraNode)
 				{
-					RequireMap(cameraNode, context + ".Camera");
+					RequireExactFields(cameraNode, context + ".Camera",
+						{ "Camera", "Primary", "FixedAspectRatio", "BackgroundColor" });
 					YAML::Node properties = cameraNode["Camera"];
-					RequireMap(properties, context + ".Camera.Camera");
+					RequireExactFields(properties, context + ".Camera.Camera",
+						{ "ProjectionType", "PerspectiveFOV", "PerspectiveNear", "PerspectiveFar",
+							"OrthographicSize", "OrthographicNear", "OrthographicFar" });
 					const int projectionType = ReadRequired<int>(properties, "ProjectionType", context + ".Camera.Camera");
 					if (projectionType < static_cast<int>(SceneCamera::ProjectionType::Perspective)
 						|| projectionType > static_cast<int>(SceneCamera::ProjectionType::Orthographic))
@@ -738,30 +743,25 @@ namespace TomCat {
 				YAML::Node spriteNode = entityNode["SpriteRenderer"];
 				if (spriteNode)
 				{
-					RequireMap(spriteNode, context + ".SpriteRenderer");
-					if (spriteNode["TexturePath"])
-						throw std::runtime_error(context +
-							".SpriteRenderer uses unsupported legacy field 'TexturePath'; use 'TextureHandle'");
+					RequireExactFields(spriteNode, context + ".SpriteRenderer",
+						{ "Enabled", "SpriteHandle", "Color", "TilingFactor" });
 					auto& sprite = entity.AddComponent<SpriteRenderer>();
 					sprite.Enabled = ReadRequired<bool>(spriteNode, "Enabled", context + ".SpriteRenderer");
-					sprite.Shape = SpriteShapeFromString(ReadRequired<std::string>(
-						spriteNode, "Shape", context + ".SpriteRenderer"));
+					const uint64_t rawSpriteHandle = ReadRequired<uint64_t>(
+						spriteNode, "SpriteHandle", context + ".SpriteRenderer");
+					sprite.SpriteHandle = AssetHandle(rawSpriteHandle);
 					sprite._Color = ReadRequired<glm::vec4>(spriteNode, "Color", context + ".SpriteRenderer");
 					sprite.TilingFactor = ReadRequired<float>(spriteNode, "TilingFactor", context + ".SpriteRenderer");
-					const uint64_t rawTextureHandle = ReadRequired<uint64_t>(
-						spriteNode, "TextureHandle", context + ".SpriteRenderer");
-					sprite.TextureHandle = AssetHandle(rawTextureHandle);
-					sprite.Thickness = ReadRequired<float>(spriteNode, "Thickness", context + ".SpriteRenderer");
-					sprite.Fade = ReadRequired<float>(spriteNode, "Fade", context + ".SpriteRenderer");
 					ValidateSprite(sprite, context + ".SpriteRenderer");
-					if (resolveAssets && sprite.Shape == SpriteShape::Quad && rawTextureHandle != 0)
-						sprite.Texture = AssetManager::Get().LoadTexture(sprite.TextureHandle);
+					if (resolveAssets && rawSpriteHandle != 0)
+						sprite.Sprite = AssetManager::Get().LoadTexture(sprite.SpriteHandle);
 				}
 
 				YAML::Node lineNode = entityNode["LineRenderer"];
 				if (lineNode)
 				{
-					RequireMap(lineNode, context + ".LineRenderer");
+					RequireExactFields(lineNode, context + ".LineRenderer",
+						{ "Enabled", "Color", "Start", "End", "Width" });
 					auto& line = entity.AddComponent<LineRenderer>();
 					line.Enabled = ReadRequired<bool>(lineNode, "Enabled", context + ".LineRenderer");
 					line._Color = ReadRequired<glm::vec4>(lineNode, "Color", context + ".LineRenderer");
@@ -774,7 +774,8 @@ namespace TomCat {
 				YAML::Node rigidbodyNode = entityNode["Rigidbody2D"];
 				if (rigidbodyNode)
 				{
-					RequireMap(rigidbodyNode, context + ".Rigidbody2D");
+					RequireExactFields(rigidbodyNode, context + ".Rigidbody2D",
+						{ "Enabled", "BodyType", "FixedRotation" });
 					auto& rigidbody = entity.AddComponent<Rigidbody2D>();
 					rigidbody.Enabled = ReadRequired<bool>(rigidbodyNode, "Enabled", context + ".Rigidbody2D");
 					rigidbody.Type = Rigidbody2DBodyTypeFromString(ReadRequired<std::string>(rigidbodyNode, "BodyType", context + ".Rigidbody2D"));
@@ -784,7 +785,9 @@ namespace TomCat {
 				YAML::Node colliderNode = entityNode["BoxCollider2D"];
 				if (colliderNode)
 				{
-					RequireMap(colliderNode, context + ".BoxCollider2D");
+					RequireExactFields(colliderNode, context + ".BoxCollider2D",
+						{ "Enabled", "Offset", "Size", "Density", "Friction", "Restitution",
+							"RestitutionThreshold" });
 					auto& collider = entity.AddComponent<BoxCollider2D>();
 					collider.Enabled = ReadRequired<bool>(colliderNode, "Enabled", context + ".BoxCollider2D");
 					collider.Offset = ReadRequired<glm::vec2>(colliderNode, "Offset", context + ".BoxCollider2D");

@@ -21,6 +21,7 @@ namespace TomCat {
 		};
 
 		ContentBrowserPanel();
+		~ContentBrowserPanel();
 		void SetProject(Ref<Project> project);
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 		void SetActiveScenePath(const std::filesystem::path& path);
@@ -79,6 +80,10 @@ namespace TomCat {
 		std::vector<AssetReference> m_DeleteReferences;
 		float m_LeftPanelWidth = 250.0f;
 		float m_ThumbnailSize = 128.0f;
+		bool m_OpenLayoutOptions = false;
+		float m_LayoutOptionsX = 0.0f;
+		float m_LayoutOptionsY = 0.0f;
+
 		SceneOpenCallback m_SceneOpenCallback;
 		AssetRenamedCallback m_AssetRenamedCallback;
 		AssetDeletedCallback m_AssetDeletedCallback;

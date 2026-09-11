@@ -34,7 +34,6 @@ namespace TomCat {
 
 		// Non-layout Hub state lives in
 		// %LOCALAPPDATA%/TomCat/TomCatSettings/hub.json.
-		// Legacy INI/YAML settings are read only for one-way migration.
 		void LoadHubSettings();
 		[[nodiscard]] bool SaveHubSettings();
 	private:
@@ -45,7 +44,7 @@ namespace TomCat {
 
 		bool IsProjectFile(const std::filesystem::path& path) const;
 		std::optional<std::filesystem::path> GetHubSettingsPath() const;
-		bool ScanProjectsInternal(bool persistMigratedState);
+		bool ScanProjectsInternal();
 		[[nodiscard]] bool RecordProjectOpened(const Ref<Project>& project);
 		void ApplyStoredLastOpenedTime(const Ref<Project>& project,
 			std::unordered_map<std::string, std::string>& lastOpenedTimes) const;

@@ -13,6 +13,7 @@
 
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/SpriteAsset.h"
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 

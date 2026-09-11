@@ -6,10 +6,14 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
+#include <vector>
 
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -81,6 +85,23 @@ namespace TomCat {
 			return;
 		ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(texture), minimum, maximum,
 			ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
+	}
+
+	static std::string LowerASCII(std::string value)
+	{
+		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
+		{
+			return static_cast<char>(std::tolower(character));
+		});
+		return value;
+	}
+
+	static bool MatchesSpriteSearch(const AssetMetadata& metadata, const char* search)
+	{
+		if (!search || search[0] == '\0')
+			return true;
+		const std::string query = LowerASCII(search);
+		return LowerASCII(PathToUTF8(metadata.FilePath)).find(query) != std::string::npos;
 	}
 
 	static float DrawTreeRowIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
@@ -170,6 +191,9 @@ namespace TomCat {
 		m_RenameEntity = {};
 		m_RenameFocus = false;
 		m_TagEditingEntity = {};
+		m_SpritePickerOpen = false;
+		m_SpritePickerEntity = UUID(0);
+		m_SpriteSearch.fill('\0');
 		if (contextChanged)
 			ClearClipboard();
 		if (clearSelection)
@@ -204,6 +228,11 @@ namespace TomCat {
 
 		Entity entity = m_EntityToDelete;
 		m_EntityToDelete = {};
+		if (m_SpritePickerOpen && m_SpritePickerEntity == entity.GetUUID())
+		{
+			m_SpritePickerOpen = false;
+			m_SpritePickerEntity = UUID(0);
+		}
 		UUID selectedUUID{};
 		const bool hadOtherSelection = m_SelectionContext && m_SelectionContext != entity;
 		if (hadOtherSelection)
@@ -230,7 +259,7 @@ namespace TomCat {
 		m_HierarchyFocused = false;
 		if (!hierarchyOpen || *hierarchyOpen)
 		{
-		const bool hierarchyVisible = ImGui::Begin("Hierarchy", hierarchyOpen, ImGuiWindowFlags_MenuBar);
+		const bool hierarchyVisible = ImGui::Begin("Hierarchy", hierarchyOpen);
 		m_HierarchyFocused = hierarchyVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		if (hierarchyVisible && m_Context)
@@ -357,7 +386,7 @@ namespace TomCat {
 
 		if (!inspectorOpen || *inspectorOpen)
 		{
-			const bool inspectorVisible = ImGui::Begin("Inspector", inspectorOpen, ImGuiWindowFlags_MenuBar);
+			const bool inspectorVisible = ImGui::Begin("Inspector", inspectorOpen);
 			if (inspectorVisible && m_SelectionContext)
 				DrawComponents(m_SelectionContext);
 			ImGui::End();
@@ -366,6 +395,11 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
 	{
+		if (m_SpritePickerOpen && m_SelectionContext != entity)
+		{
+			m_SpritePickerOpen = false;
+			m_SpritePickerEntity = UUID(0);
+		}
 		m_SelectionContext = entity;
 	}
 
@@ -505,26 +539,32 @@ namespace TomCat {
 			CreateAsSelectedChild(camera);
 		}
 
+		auto CreatePrimitiveSprite = [&](const char* primitiveName)
+		{
+			Entity entity = m_Context->CreateEntity(primitiveName);
+			auto& sprite = entity.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
+			const AssetHandle handle = EnsurePrimitiveSpriteAsset(
+				AssetManager::Get(), primitiveName);
+			if (static_cast<uint64_t>(handle) != 0)
+			{
+				sprite.SpriteHandle = handle;
+				sprite.Sprite = AssetManager::Get().LoadTexture(handle);
+			}
+			else
+			{
+				TC_Core_Error("Could not create or load the '{0}' Sprite asset", primitiveName);
+			}
+			CreateAsSelectedChild(entity);
+		};
+
 		if (ImGui::BeginMenu("2D Object"))
 		{
 			if (ImGui::BeginMenu("Sprites"))
 			{
-				if (ImGui::MenuItem("Rectangle"))
-				{
-					Entity rectangle = m_Context->CreateEntity("Rectangle");
-					auto& sprite = rectangle.AddComponent<SpriteRenderer>(
-						glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-					sprite.Shape = SpriteShape::Quad;
-					CreateAsSelectedChild(rectangle);
-				}
 				if (ImGui::MenuItem("Circle"))
-				{
-					Entity circle = m_Context->CreateEntity("Circle");
-					auto& sprite = circle.AddComponent<SpriteRenderer>(
-						glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-					sprite.Shape = SpriteShape::Circle;
-					CreateAsSelectedChild(circle);
-				}
+					CreatePrimitiveSprite("Circle");
+				if (ImGui::MenuItem("Square"))
+					CreatePrimitiveSprite("Square");
 				ImGui::EndMenu();
 			}
 			ImGui::EndMenu();
@@ -953,7 +993,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}, onModified);
 
 		DrawComponent<C_Camera>("Camera", entity, m_Icons, EditorIcon::Camera,
-			[this](auto& component)
+			[this, entity](auto& component)
 		{
 			auto& camera = component._Camera;
 			const float columnWidth = 100.0f;
@@ -1034,129 +1074,251 @@ static void DrawComponent(const std::string& name, Entity entity,
 		});
 
 		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, m_Icons, EditorIcon::Sprite,
-			[this](auto& component)
+			[this, entity](auto& component)
 		{
 			const float columnWidth = 100.0f;
 			DrawProperty("Color", columnWidth);
 			if (ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color))) MarkModified();
 			ImGui::Columns(1);
 
-			DrawProperty("Shape", columnWidth);
-			const char* shapeNames[] = { "Rectangle", "Circle" };
-			int shapeIndex = component.Shape == SpriteShape::Circle ? 1 : 0;
-			if (ImGui::BeginCombo("##Shape", shapeNames[shapeIndex]))
+			DrawProperty("Sprite", columnWidth);
+			std::string spriteName = "None";
+			EditorIcon spriteFieldIcon = EditorIcon::Sprite;
+			Ref<Texture2D> spritePreview;
+			const uint64_t rawSpriteHandle = static_cast<uint64_t>(component.SpriteHandle);
+			if (rawSpriteHandle != 0)
 			{
-				for (int i = 0; i < 2; ++i)
+				const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(
+					component.SpriteHandle);
+				if (metadata && IsSpriteAsset(*metadata))
 				{
-					const bool selected = shapeIndex == i;
-					if (ImGui::Selectable(shapeNames[i], selected) && !selected)
+					spriteName = PathToUTF8(metadata->FilePath.stem());
+					if (metadata->IsMissing)
 					{
-						component.Shape = i == 0 ? SpriteShape::Quad : SpriteShape::Circle;
-						MarkModified();
-					}
-					if (selected)
-						ImGui::SetItemDefaultFocus();
-				}
-				ImGui::EndCombo();
-			}
-			ImGui::Columns(1);
-
-			if (component.Shape == SpriteShape::Quad)
-			{
-				DrawProperty("Sprite", columnWidth);
-				std::string textureName = "None";
-				const uint64_t rawTextureHandle = static_cast<uint64_t>(component.TextureHandle);
-				if (rawTextureHandle != 0)
-				{
-					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(component.TextureHandle);
-					if (metadata)
-					{
-						textureName = PathToUTF8(metadata->FilePath.stem());
-						if (metadata->IsMissing)
-							textureName += " (Missing)";
+						spriteName += " (Missing)";
+						spriteFieldIcon = EditorIcon::Missing;
 					}
 					else
-						textureName = "Missing #" + std::to_string(rawTextureHandle);
-				}
-				ImGui::Button(textureName.c_str(), ImVec2(-1, 0));
-				if (ImGui::BeginDragDropTarget())
-				{
-					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID))
 					{
-						if (payload->DataSize == sizeof(uint64_t))
+						component.Sprite = AssetManager::Get().LoadTexture(component.SpriteHandle);
+						spritePreview = component.Sprite;
+					}
+				}
+				else if (metadata)
+				{
+					spriteName = PathToUTF8(metadata->FilePath.stem()) + " (Not a Sprite)";
+					spriteFieldIcon = EditorIcon::Missing;
+				}
+				else
+				{
+					spriteName = "Missing #" + std::to_string(rawSpriteHandle);
+					spriteFieldIcon = EditorIcon::Missing;
+				}
+			}
+
+			const float pickerButtonWidth = ImGui::GetFrameHeight();
+			const float fieldWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x -
+				pickerButtonWidth - ImGui::GetStyle().ItemInnerSpacing.x);
+			ImGui::Button("##SpriteAssetField", ImVec2(fieldWidth, 0.0f));
+			const ImVec2 spriteButtonMin = ImGui::GetItemRectMin();
+			const ImVec2 spriteButtonMax = ImGui::GetItemRectMax();
+			const float spriteIconSize = std::min(16.0f,
+				std::max(1.0f, spriteButtonMax.y - spriteButtonMin.y - 4.0f));
+			const ImVec2 spriteIconMin(spriteButtonMin.x + 6.0f,
+				spriteButtonMin.y + (spriteButtonMax.y - spriteButtonMin.y - spriteIconSize) * 0.5f);
+			const ImVec2 spriteIconMax(spriteIconMin.x + spriteIconSize, spriteIconMin.y + spriteIconSize);
+			if (spritePreview)
+				ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(spritePreview),
+					spriteIconMin, spriteIconMax, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+			else
+				DrawIcon(m_Icons, spriteFieldIcon, spriteIconMin, spriteIconMax);
+			const ImRect spriteTextClip(
+				ImVec2(spriteIconMax.x + 5.0f, spriteButtonMin.y),
+				ImVec2(spriteButtonMax.x - 4.0f, spriteButtonMax.y));
+			ImGui::RenderTextClipped(spriteTextClip.Min, spriteTextClip.Max,
+				spriteName.c_str(), nullptr, nullptr, ImVec2(0.0f, 0.5f), &spriteTextClip);
+
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(AssetDragDropPayloadID))
+				{
+					if (payload->DataSize == sizeof(uint64_t))
+					{
+						const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+						const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
+						if (metadata && IsSpriteAsset(*metadata) && !metadata->IsMissing)
 						{
-							const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
-							const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
-							if (metadata && metadata->Type == AssetType::Texture2D)
-							{
-								component.TextureHandle = handle;
-								component.Texture = AssetManager::Get().LoadTexture(handle);
-								MarkModified();
-							}
+							component.SpriteHandle = handle;
+							component.Sprite = AssetManager::Get().LoadTexture(handle);
+							MarkModified();
 						}
 					}
-					ImGui::EndDragDropTarget();
 				}
-				if (ImGui::BeginPopupContextItem("SpriteAssetContext"))
-				{
-					if (ImGui::MenuItem("Clear", nullptr, false, rawTextureHandle != 0))
-					{
-						component.TextureHandle = AssetHandle(0);
-						component.Texture.reset();
-						MarkModified();
-					}
-					ImGui::EndPopup();
-				}
-				ImGui::Columns(1);
-				DrawProperty("Tiling Factor", columnWidth);
-				float tilingFactor = component.TilingFactor;
-				if (ImGui::DragFloat("##TilingFactor", &tilingFactor, 0.1f, 0.0f, 100.0f,
-					"%.3f", ImGuiSliderFlags_AlwaysClamp))
-				{
-					if (!std::isfinite(tilingFactor))
-						tilingFactor = component.TilingFactor;
-					tilingFactor = std::max(0.0f, tilingFactor);
-					if (tilingFactor != component.TilingFactor)
-					{
-						component.TilingFactor = tilingFactor;
-						MarkModified();
-					}
-				}
-				ImGui::Columns(1);
+				ImGui::EndDragDropTarget();
 			}
-			else
+			if (ImGui::BeginPopupContextItem("SpriteAssetContext"))
 			{
-				DrawProperty("Thickness", columnWidth);
-				float thickness = component.Thickness;
-				if (ImGui::DragFloat("##Thickness", &thickness, 0.01f, 0.0f, 1.0f,
-					"%.3f", ImGuiSliderFlags_AlwaysClamp))
+				if (ImGui::MenuItem("Clear", nullptr, false, rawSpriteHandle != 0))
 				{
-					if (!std::isfinite(thickness))
-						thickness = component.Thickness;
-					thickness = std::clamp(thickness, 0.0f, 1.0f);
-					if (thickness != component.Thickness)
-					{
-						component.Thickness = thickness;
-						MarkModified();
-					}
+					component.SpriteHandle = AssetHandle(0);
+					component.Sprite.reset();
+					MarkModified();
 				}
-				ImGui::Columns(1);
-
-				DrawProperty("Fade", columnWidth);
-				float fade = component.Fade;
-				if (ImGui::DragFloat("##Fade", &fade, 0.001f, 0.0f, 0.0f, "%.4f"))
-				{
-					if (!std::isfinite(fade))
-						fade = component.Fade;
-					fade = std::max(0.0001f, fade);
-					if (fade != component.Fade)
-					{
-						component.Fade = fade;
-						MarkModified();
-					}
-				}
-				ImGui::Columns(1);
+				ImGui::EndPopup();
 			}
+
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+			ImGui::Button("##OpenSpritePicker", ImVec2(pickerButtonWidth, 0.0f));
+			const bool openSpritePicker = ImGui::IsItemClicked();
+			const ImVec2 pickerMin = ImGui::GetItemRectMin();
+			const ImVec2 pickerMax = ImGui::GetItemRectMax();
+			const ImVec2 pickerCenter((pickerMin.x + pickerMax.x) * 0.5f,
+				(pickerMin.y + pickerMax.y) * 0.5f);
+			const ImU32 pickerGlyph = ImGui::GetColorU32(ImGuiCol_Text);
+			const float pickerRadius = std::max(3.0f,
+				std::min(pickerMax.x - pickerMin.x, pickerMax.y - pickerMin.y) * 0.28f);
+			ImGui::GetWindowDrawList()->AddCircle(pickerCenter, pickerRadius, pickerGlyph, 16, 1.5f);
+			ImGui::GetWindowDrawList()->AddCircleFilled(pickerCenter,
+				std::max(1.0f, pickerRadius * 0.28f), pickerGlyph, 12);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Select Sprite");
+			if (openSpritePicker)
+			{
+				m_SpriteSearch.fill('\0');
+				m_SpritePickerOpen = true;
+				m_SpritePickerEntity = entity.GetUUID();
+				ImGui::OpenPopup("Select Sprite##SpritePicker");
+			}
+			if (m_SpritePickerOpen && m_SpritePickerEntity != entity.GetUUID())
+				m_SpritePickerOpen = false;
+
+			ImGui::SetNextWindowSize(ImVec2(680.0f, 460.0f), ImGuiCond_Appearing);
+			if (ImGui::BeginPopupModal("Select Sprite##SpritePicker", &m_SpritePickerOpen,
+				ImGuiWindowFlags_NoCollapse))
+			{
+				if (ImGui::IsWindowAppearing())
+					ImGui::SetKeyboardFocusHere();
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::InputTextWithHint("##SpriteSearch", "Search Sprites",
+					m_SpriteSearch.data(), m_SpriteSearch.size());
+
+				std::vector<const AssetMetadata*> sprites;
+				for (const auto& [handle, metadata] :
+					AssetManager::Get().GetRegistry().GetAssets())
+				{
+					if (IsSpriteAsset(metadata) && !metadata.IsMissing &&
+						MatchesSpriteSearch(metadata, m_SpriteSearch.data()))
+						sprites.push_back(&metadata);
+				}
+				std::sort(sprites.begin(), sprites.end(), [](const AssetMetadata* left,
+					const AssetMetadata* right)
+				{
+					return LowerASCII(PathToUTF8(left->FilePath)) <
+						LowerASCII(PathToUTF8(right->FilePath));
+				});
+
+				ImGui::TextDisabled("%zu Sprite%s", sprites.size(), sprites.size() == 1 ? "" : "s");
+				ImGui::Separator();
+				ImGui::BeginChild("SpriteGrid", ImVec2(0.0f, 0.0f), false);
+				constexpr float cellWidth = 96.0f;
+				constexpr float cellHeight = 112.0f;
+				const int columns = std::max(1, static_cast<int>(
+					ImGui::GetContentRegionAvail().x / cellWidth));
+				ImGui::Columns(columns, "SpritePickerColumns", false);
+
+				auto drawSpriteTile = [&](AssetHandle handle, const char* label,
+					const std::filesystem::path* relativePath)
+				{
+					const std::string id = "##Sprite_" +
+						std::to_string(static_cast<uint64_t>(handle));
+					const float tileWidth = std::max(64.0f,
+						ImGui::GetColumnWidth() - ImGui::GetStyle().ItemSpacing.x);
+					const ImVec2 tileSize(tileWidth, cellHeight);
+					const ImVec2 tileMin = ImGui::GetCursorScreenPos();
+					ImGui::InvisibleButton(id.c_str(), tileSize);
+					const bool hovered = ImGui::IsItemHovered();
+					const bool clicked = ImGui::IsItemClicked();
+					const bool selected = component.SpriteHandle == handle;
+					const ImVec2 tileMax(tileMin.x + tileSize.x, tileMin.y + tileSize.y);
+					const bool visible = ImGui::IsRectVisible(tileMin, tileMax);
+					ImDrawList* drawList = ImGui::GetWindowDrawList();
+					const ImU32 background = ImGui::GetColorU32(selected ? ImGuiCol_HeaderActive :
+						hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg);
+					if (visible)
+						drawList->AddRectFilled(tileMin, tileMax, background, 2.0f);
+
+					constexpr float previewPadding = 8.0f;
+					const float previewExtent = std::max(1.0f,
+						std::min(tileSize.x - previewPadding * 2.0f, 76.0f));
+					const ImVec2 previewMin(tileMin.x + (tileSize.x - previewExtent) * 0.5f,
+						tileMin.y + previewPadding);
+					const ImVec2 previewMax(previewMin.x + previewExtent,
+						previewMin.y + previewExtent);
+					if (visible && static_cast<uint64_t>(handle) != 0)
+					{
+						const Ref<Texture2D> texture = AssetManager::Get().LoadTexture(handle);
+						if (texture)
+							drawList->AddImage(ToImGuiTextureID(texture), previewMin, previewMax,
+								ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+					}
+					else if (visible)
+						DrawIcon(m_Icons, EditorIcon::Sprite, previewMin, previewMax,
+							ImGui::GetColorU32(ImGuiCol_TextDisabled));
+
+					const ImRect labelClip(
+						ImVec2(tileMin.x + 4.0f, previewMax.y + 5.0f),
+						ImVec2(tileMin.x + tileSize.x - 4.0f, tileMin.y + tileSize.y - 4.0f));
+					if (visible)
+						ImGui::RenderTextClipped(labelClip.Min, labelClip.Max, label, nullptr,
+							nullptr, ImVec2(0.5f, 0.0f), &labelClip);
+					if (hovered && relativePath)
+						ImGui::SetTooltip("%s", PathToUTF8(*relativePath).c_str());
+					if (clicked)
+					{
+						if (component.SpriteHandle != handle)
+						{
+							component.SpriteHandle = handle;
+							component.Sprite = static_cast<uint64_t>(handle) != 0
+								? AssetManager::Get().LoadTexture(handle) : Ref<Texture2D>{};
+							MarkModified();
+						}
+						m_SpritePickerOpen = false;
+						m_SpritePickerEntity = UUID(0);
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::NextColumn();
+				};
+
+				if (m_SpriteSearch[0] == '\0')
+					drawSpriteTile(AssetHandle(0), "None", nullptr);
+				for (const AssetMetadata* metadata : sprites)
+				{
+					const std::string label = PathToUTF8(metadata->FilePath.stem());
+					drawSpriteTile(metadata->Handle, label.c_str(), &metadata->FilePath);
+				}
+				ImGui::Columns(1);
+				ImGui::EndChild();
+				ImGui::EndPopup();
+			}
+			if (!m_SpritePickerOpen)
+				m_SpritePickerEntity = UUID(0);
+			ImGui::Columns(1);
+
+			DrawProperty("Tiling Factor", columnWidth);
+			float tilingFactor = component.TilingFactor;
+			if (ImGui::DragFloat("##TilingFactor", &tilingFactor, 0.1f, 0.0f, 100.0f,
+				"%.3f", ImGuiSliderFlags_AlwaysClamp))
+			{
+				if (!std::isfinite(tilingFactor))
+					tilingFactor = component.TilingFactor;
+				tilingFactor = std::max(0.0f, tilingFactor);
+				if (tilingFactor != component.TilingFactor)
+				{
+					component.TilingFactor = tilingFactor;
+					MarkModified();
+				}
+			}
+			ImGui::Columns(1);
 		}, onModified);
 
 		DrawComponent<LineRenderer>("Line Renderer", entity, m_Icons, EditorIcon::Count,
@@ -1280,7 +1442,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 		ImGui::Spacing();
 		ImGui::SetNextItemWidth(-1.0f);
-		if (ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f)))
+		const bool addComponentPressed = ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f));
+		if (addComponentPressed)
 			ImGui::OpenPopup("AddComponent");
 
 		if (ImGui::BeginPopup("AddComponent"))

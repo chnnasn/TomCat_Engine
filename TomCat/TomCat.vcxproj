@@ -154,6 +154,7 @@
 	<ClInclude Include="src\TomCat\Asset\Asset.h" />
 	<ClInclude Include="src\TomCat\Asset\AssetManager.h" />
 	<ClInclude Include="src\TomCat\Asset\AssetRegistry.h" />
+	<ClInclude Include="src\TomCat\Asset\SpriteAsset.h" />
     <ClInclude Include="src\TomCat\Core\Application.h" />
     <ClInclude Include="src\TomCat\Core\Base.h" />
     <ClInclude Include="src\TomCat\Core\EntryPoint.h" />
@@ -173,6 +174,7 @@
     <ClInclude Include="src\TomCat\Events\InputModifiers.h" />
     <ClInclude Include="src\TomCat\Events\KeyEvent.h" />
     <ClInclude Include="src\TomCat\Events\MouseEvent.h" />
+    <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
     <ClInclude Include="src\TomCat\Project\Project.h" />
@@ -634,6 +636,7 @@
 	<ClCompile Include="src\TomCat\Asset\Asset.cpp" />
 	<ClCompile Include="src\TomCat\Asset\AssetManager.cpp" />
 	<ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp" />
+	<ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp" />
     <ClCompile Include="src\TomCat\Core\Application.cpp" />
     <ClCompile Include="src\TomCat\Core\Layer.cpp" />
     <ClCompile Include="src\TomCat\Core\LayerStack.cpp" />
@@ -641,6 +644,7 @@
     <ClCompile Include="src\TomCat\Core\UUID.cpp" />
     <ClCompile Include="src\TomCat\Core\Window.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp" />
+    <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
     <ClCompile Include="src\TomCat\Project\Project.cpp" />

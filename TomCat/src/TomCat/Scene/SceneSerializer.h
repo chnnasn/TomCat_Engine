@@ -2,6 +2,7 @@
 #include "Scene.h"
 #include "TomCat/Asset/Asset.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <iosfwd>
 #include <vector>
@@ -11,6 +12,8 @@ namespace TomCat {
 	class SceneSerializer
 	{
 	public:
+		static constexpr uint32_t CurrentSchemaVersion = 6;
+
 		SceneSerializer(const Ref<Scene>& scene);
 
 		bool Serialize(const std::filesystem::path& filepath);

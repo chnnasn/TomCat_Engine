@@ -7,6 +7,7 @@
 #include "TomCat/Scene/Entity.h"
 #include "../EditorIcons.h"
 
+#include <array>
 #include <functional>
 
 namespace TomCat {
@@ -65,6 +66,9 @@ namespace TomCat {
 		char m_TagEditBuffer[256] = {};
 		bool m_HierarchyFocused = false;
 		Ref<EditorIconSet> m_Icons;
+		std::array<char, 256> m_SpriteSearch{};
+		bool m_SpritePickerOpen = false;
+		UUID m_SpritePickerEntity = UUID(0);
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;

@@ -545,8 +545,8 @@ namespace TomCat {
 			std::string fileName = PathToUTF8(path.stem());
 			auto Square = m_ActiveScene->CreateEntity(fileName);
 			auto& SpriteR = Square.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f, 1.0f, 1.0f, 1.0f });
-			SpriteR.TextureHandle = handle;
-			SpriteR.Texture = AssetManager::Get().LoadTexture(handle);
+			SpriteR.SpriteHandle = handle;
+			SpriteR.Sprite = AssetManager::Get().LoadTexture(handle);
 			if (m_SceneState == SceneState::Edit)
 				m_SceneDirty = true;
 		});
@@ -873,8 +873,8 @@ namespace TomCat {
 					{
 						Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(metadata->FilePath.stem()));
 						auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
-						renderer.TextureHandle = handle;
-						renderer.Texture = AssetManager::Get().LoadTexture(handle);
+						renderer.SpriteHandle = handle;
+						renderer.Sprite = AssetManager::Get().LoadTexture(handle);
 						if (m_SceneState == SceneState::Edit)
 							m_SceneDirty = true;
 					}
