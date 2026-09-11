@@ -5,6 +5,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 #include "TomCat/Scene/Components.h"
@@ -63,7 +64,47 @@ namespace TomCat {
 
 	// 前向声明DrawProperty函数
 	static void DrawProperty(const std::string& label, float columnWidth = 100.0f);
-	static bool DrawCompactCheckbox(const char* id, bool* v, float scale = 0.7f)
+	static ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
+	{
+		return texture
+			? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetRendererID()))
+			: nullptr;
+	}
+
+	static void DrawIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
+		const ImVec2& minimum, const ImVec2& maximum, ImU32 tint = IM_COL32_WHITE)
+	{
+		if (!icons)
+			return;
+		const Ref<Texture2D>& texture = icons->Get(icon);
+		if (!texture)
+			return;
+		ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(texture), minimum, maximum,
+			ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
+	}
+
+	static float DrawTreeRowIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
+		const ImVec2& itemMin, const ImVec2& itemMax, ImU32 tint = IM_COL32_WHITE)
+	{
+		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.78f),
+			std::max(1.0f, itemMax.y - itemMin.y - 4.0f));
+		const float x = std::round(itemMin.x + ImGui::GetTreeNodeToLabelSpacing());
+		const float y = std::round(itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f);
+		DrawIcon(icons, icon, ImVec2(x, y), ImVec2(x + iconSize, y + iconSize), tint);
+		return iconSize;
+	}
+
+	static float GetHierarchyIconTextGap()
+	{
+		return std::max(3.0f, std::round(ImGui::GetFontSize() * 0.12f));
+	}
+
+	static float GetCompactCheckboxWidth(float scale = 0.68f)
+	{
+		return std::max(10.0f, std::round(ImGui::GetFrameHeight() * scale));
+	}
+
+	static bool DrawCompactCheckbox(const char* id, bool* v, float scale = 0.68f)
 	{
 		ImGuiWindow* window = ImGui::GetCurrentWindow();
 		if (window->SkipItems)
@@ -74,9 +115,9 @@ namespace TomCat {
 		const ImGuiID widgetID = window->GetID(id);
 
 		const float frameHeight = ImGui::GetFrameHeight();
-		const float squareSize = std::max(1.0f, frameHeight * scale);
+		const float squareSize = GetCompactCheckboxWidth(scale);
 		const ImVec2 pos = window->DC.CursorPos;
-		const ImRect bb(pos, ImVec2(pos.x + frameHeight, pos.y + frameHeight));
+		const ImRect bb(pos, ImVec2(pos.x + squareSize, pos.y + frameHeight));
 
 		ImGui::ItemSize(bb, style.FramePadding.y);
 		if (!ImGui::ItemAdd(bb, widgetID))
@@ -91,20 +132,19 @@ namespace TomCat {
 			ImGui::MarkItemEdited(widgetID);
 		}
 
-		const ImVec2 boxMin(bb.Min.x + (bb.GetWidth() - squareSize) * 0.5f, bb.Min.y + (bb.GetHeight() - squareSize) * 0.5f);
-		const ImVec2 boxMax(boxMin.x + squareSize, boxMin.y + squareSize);
-		const ImU32 fillColor = ImGui::GetColorU32(ImGuiCol_FrameBg);
-		const ImU32 borderColor = ImGui::GetColorU32(held && hovered ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_Border);
-		const float rounding = style.FrameRounding * 0.75f;
-
-		window->DrawList->AddRectFilled(boxMin, boxMax, fillColor, rounding);
-		window->DrawList->AddRect(boxMin, boxMax, borderColor, rounding, 0, 1.0f);
-
+		const ImVec2 squareMin(bb.Min.x,
+			std::round(bb.Min.y + (bb.GetHeight() - squareSize) * 0.5f));
+		const ImVec2 squareMax(squareMin.x + squareSize, squareMin.y + squareSize);
+		const ImU32 frameColor = ImGui::GetColorU32(held ? ImGuiCol_FrameBgActive
+			: hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg);
+		ImGui::RenderFrame(squareMin, squareMax, frameColor, true,
+			std::min(2.0f, style.FrameRounding));
 		if (*v)
 		{
-			const float pad = std::max(1.0f, IM_FLOOR(squareSize / 6.0f));
-			// Draw a slightly smaller checkmark so the box can stay compact.
-			ImGui::RenderCheckMark(window->DrawList, ImVec2(boxMin.x + pad, boxMin.y + pad), ImGui::GetColorU32(ImGuiCol_CheckMark), squareSize - pad * 2.0f);
+			const float padding = std::max(2.0f, std::floor(squareSize / 6.0f));
+			ImGui::RenderCheckMark(window->DrawList,
+				ImVec2(squareMin.x + padding, squareMin.y + padding),
+				ImGui::GetColorU32(ImGuiCol_CheckMark), squareSize - padding * 2.0f);
 		}
 
 		return pressed;
@@ -203,7 +243,17 @@ namespace TomCat {
 				m_ForceOpenSceneRoot = false;
 			}
 			ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding;
-			bool rootOpen = ImGui::TreeNodeEx((void*)m_Context.get(), rootFlags, "%s", sceneName.c_str());
+			bool rootOpen = ImGui::TreeNodeEx((void*)m_Context.get(), rootFlags, "");
+			const ImVec2 rootItemMin = ImGui::GetItemRectMin();
+			const ImVec2 rootItemMax = ImGui::GetItemRectMax();
+			const float rootIconSize = DrawTreeRowIcon(m_Icons, EditorIcon::SceneOpen,
+				rootItemMin, rootItemMax);
+			const float rootTextX = rootItemMin.x + ImGui::GetTreeNodeToLabelSpacing() +
+				rootIconSize + GetHierarchyIconTextGap();
+			const float rootTextY = std::round(rootItemMin.y +
+				(rootItemMax.y - rootItemMin.y - ImGui::GetTextLineHeight()) * 0.5f);
+			ImGui::GetWindowDrawList()->AddText(ImVec2(rootTextX, rootTextY),
+				ImGui::GetColorU32(ImGuiCol_Text), sceneName.c_str());
 
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
 				m_SelectionContext = {};
@@ -528,17 +578,19 @@ namespace TomCat {
 		}
 
 		const bool renameActive = (m_RenameEntity == entity);
-		if (renameActive)
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-
-		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "%s", tag.c_str());
+		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "");
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
-		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing();
-		const float textOffsetY = itemMin.y + (itemMax.y - itemMin.y - ImGui::GetTextLineHeight()) * 0.5f;
+		const float iconSize = DrawTreeRowIcon(m_Icons, EditorIcon::Entity, itemMin, itemMax,
+			visible ? IM_COL32_WHITE : IM_COL32(150, 150, 150, 210));
+		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing() +
+			iconSize + GetHierarchyIconTextGap();
+		const float textOffsetY = std::round(itemMin.y +
+			(itemMax.y - itemMin.y - ImGui::GetTextLineHeight()) * 0.5f);
+		if (!renameActive)
+			ImGui::GetWindowDrawList()->AddText(ImVec2(textOffsetX, textOffsetY),
+				ImGui::GetColorU32(ImGuiCol_Text), tag.c_str());
 
-		if (renameActive)
-			ImGui::PopStyleColor();
 		if (isSelected)
 			ImGui::PopStyleColor(3);
 
@@ -731,13 +783,16 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	}
 
 	template<typename T> static bool* GetComponentEnabledFlag(T&) { return nullptr; }
+	template<> static bool* GetComponentEnabledFlag<C_Camera>(C_Camera& component) { return &component.Primary; }
 	template<> static bool* GetComponentEnabledFlag<SpriteRenderer>(SpriteRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<LineRenderer>(LineRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<BoxCollider2D>(BoxCollider2D& component) { return &component.Enabled; }
 
 	template<typename T, typename UIFunction, typename ModifiedFunction>
-static void DrawComponent(const std::string& name, Entity entity, UIFunction uiFunction, ModifiedFunction onModified)
+static void DrawComponent(const std::string& name, Entity entity,
+	const Ref<EditorIconSet>& icons, EditorIcon icon,
+	UIFunction uiFunction, ModifiedFunction onModified)
 {
 	// 检查实体是否有效
 	if (!entity)
@@ -762,16 +817,28 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 		ImVec2 afterHeaderCursor = ImGui::GetCursorPos();
 		ImGui::PopStyleVar();
 
-		if (bool* enabled = GetComponentEnabledFlag(component))
+		bool* enabled = GetComponentEnabledFlag(component);
+		const float contentGap = std::max(3.0f,
+			std::round(ImGui::GetFontSize() * 0.16f));
+		float leftContentX = headerMin.x + ImGui::GetTreeNodeToLabelSpacing();
+		if (icon != EditorIcon::Count)
 		{
-			const float checkboxPosY = headerMin.y + (headerHeight - ImGui::GetFrameHeight()) * 0.5f;
-			ImGui::SetCursorScreenPos(ImVec2(headerMin.x + headerHeight, checkboxPosY));
+			const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.9f),
+				std::max(1.0f, headerHeight - 8.0f));
+			const float iconY = std::round(headerMin.y + (headerHeight - iconSize) * 0.5f);
+			DrawIcon(icons, icon, ImVec2(leftContentX, iconY),
+				ImVec2(leftContentX + iconSize, iconY + iconSize));
+			leftContentX += iconSize + contentGap;
+		}
+		if (enabled)
+		{
+			const float checkboxPosY = headerMin.y +
+				(headerHeight - ImGui::GetFrameHeight()) * 0.5f;
+			ImGui::SetCursorScreenPos(ImVec2(leftContentX, checkboxPosY));
 			if (DrawCompactCheckbox("##Enabled", enabled))
 				onModified();
+			leftContentX += GetCompactCheckboxWidth() + contentGap;
 		}
-
-		const float leftContentX = headerMin.x + headerHeight +
-			(GetComponentEnabledFlag(component) ? headerHeight + ImGui::GetStyle().ItemSpacing.x : 0.0f);
 		const float textY = headerMin.y + (headerHeight - ImGui::GetTextLineHeight()) * 0.5f;
 		ImGui::SetCursorScreenPos(ImVec2(leftContentX, textY));
 		ImGui::TextUnformatted(name.c_str());
@@ -858,7 +925,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 
 
 		const auto onModified = [this]() { MarkModified(); };
-		DrawComponent<Transform>("Transform", entity, [this, entity](auto& component)
+		DrawComponent<Transform>("Transform", entity, m_Icons, EditorIcon::Move,
+			[this, entity](auto& component)
 		{
 			Entity parent = m_Context ? m_Context->GetParent(entity) : Entity{};
 			const bool hasParent = (bool)parent;
@@ -884,25 +952,11 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			}
 		}, onModified);
 
-		DrawComponent<C_Camera>("Camera", entity, [this](auto& component)
+		DrawComponent<C_Camera>("Camera", entity, m_Icons, EditorIcon::Camera,
+			[this](auto& component)
 		{
 			auto& camera = component._Camera;
 			const float columnWidth = 100.0f;
-
-			DrawProperty("Primary", columnWidth);
-			bool primary = component.Primary;
-			if (ImGui::Checkbox("##Primary", &primary))
-			{
-				if (primary && m_Context)
-				{
-					auto cameras = m_Context->m_Registry.view<C_Camera>();
-					for (auto handle : cameras)
-						cameras.get<C_Camera>(handle).Primary = false;
-				}
-				component.Primary = primary;
-				MarkModified();
-			}
-			ImGui::Columns(1);
 
 			DrawProperty("Projection", columnWidth);
 			const char* projectionTypes[] = { "Perspective", "Orthographic" };
@@ -961,9 +1015,26 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			DrawProperty("Background Color", columnWidth);
 			if (ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor))) MarkModified();
 			ImGui::Columns(1);
-		}, onModified);
+		}, [this, entity]() mutable
+		{
+			// Camera uses the compact header checkbox for its Primary state. Keep
+			// the scene invariant that at most one camera can be primary.
+			if (m_Context && entity && entity.HasComponent<C_Camera>())
+			{
+				auto& selectedCamera = entity.GetComponent<C_Camera>();
+				if (selectedCamera.Primary)
+				{
+					auto cameras = m_Context->m_Registry.view<C_Camera>();
+					for (auto handle : cameras)
+						cameras.get<C_Camera>(handle).Primary = false;
+					selectedCamera.Primary = true;
+				}
+			}
+			MarkModified();
+		});
 
-		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, [this](auto& component)
+		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, m_Icons, EditorIcon::Sprite,
+			[this](auto& component)
 		{
 			const float columnWidth = 100.0f;
 			DrawProperty("Color", columnWidth);
@@ -1088,7 +1159,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			}
 		}, onModified);
 
-		DrawComponent<LineRenderer>("Line Renderer", entity, [this](auto& component)
+		DrawComponent<LineRenderer>("Line Renderer", entity, m_Icons, EditorIcon::Count,
+			[this](auto& component)
 		{
 			const float columnWidth = 100.0f;
 
@@ -1135,7 +1207,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			ImGui::Columns(1);
 		}, onModified);
 
-		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, [this](auto& component)
+		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, m_Icons, EditorIcon::Rigidbody2D,
+			[this](auto& component)
 		{
 			const char* bodyTypes[] = { "Static", "Dynamic", "Kinematic" };
 			int bodyType = (int)component.Type;
@@ -1152,7 +1225,8 @@ static void DrawComponent(const std::string& name, Entity entity, UIFunction uiF
 			if (ImGui::Checkbox("Fixed Rotation", &component.FixedRotation)) MarkModified();
 		}, onModified);
 
-		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, [this](auto& component)
+		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, m_Icons, EditorIcon::BoxCollider2D,
+			[this](auto& component)
 		{
 			glm::vec2 offset = component.Offset;
 			glm::vec2 size = component.Size;

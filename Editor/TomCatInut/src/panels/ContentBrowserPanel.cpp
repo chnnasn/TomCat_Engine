@@ -30,6 +30,38 @@ namespace TomCat {
 		};
 		constexpr const char* kAssetDirectoryPayloadID = "TOMCAT_ASSET_DIRECTORY";
 
+		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
+		{
+			return texture
+				? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetRendererID()))
+				: nullptr;
+		}
+
+		void DrawTreeIcon(const Ref<Texture2D>& texture, const ImVec2& itemMin,
+			const ImVec2& itemMax, ImU32 tint = IM_COL32_WHITE)
+		{
+			if (!texture)
+				return;
+			const float iconSize = std::min(18.0f, std::max(1.0f, itemMax.y - itemMin.y - 2.0f));
+			const float x = itemMin.x + ImGui::GetTreeNodeToLabelSpacing();
+			const float y = itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f;
+			ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(texture), ImVec2(x, y),
+				ImVec2(x + iconSize, y + iconSize), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
+		}
+
+		bool IsReadOnlyPath(const std::filesystem::path& path)
+		{
+			std::error_code error;
+			const std::filesystem::perms permissions = std::filesystem::status(path, error).permissions();
+			if (error || permissions == std::filesystem::perms::unknown)
+				return false;
+			constexpr std::filesystem::perms writePermissions =
+				std::filesystem::perms::owner_write |
+				std::filesystem::perms::group_write |
+				std::filesystem::perms::others_write;
+			return (permissions & writePermissions) == std::filesystem::perms::none;
+		}
+
 		std::string ToLower(std::string value)
 		{
 			std::transform(value.begin(), value.end(), value.begin(),
@@ -266,14 +298,17 @@ namespace TomCat {
 	ContentBrowserPanel::ContentBrowserPanel()
 		: m_LayoutMode(TwoColumn)
 	{
-		m_DirectoryIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/DirectoryIcon.png");
-		m_FileIcon = Texture2D::Create("Packages/Resources/Icons/ContentBrowser/FileIcon.png");
 		SetProject(ProjectManager::Get().GetActiveProject());
 	}
 
 	std::filesystem::path ContentBrowserPanel::GetAssetRoot() const
 	{
 		return m_Project ? CanonicalPath(m_Project->GetAssetPath()) : CanonicalPath(g_AssetPath);
+	}
+
+	void ContentBrowserPanel::SetActiveScenePath(const std::filesystem::path& path)
+	{
+		m_ActiveScenePath = path.empty() ? std::filesystem::path{} : LexicalPath(path);
 	}
 
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
@@ -294,6 +329,7 @@ namespace TomCat {
 		m_ExpandedNodes.clear();
 		m_PendingOpenDirectories.clear();
 		m_ContextPath.clear();
+		m_ActiveScenePath.clear();
 		m_PendingCreateFolderParent.clear();
 		m_RenamePath.clear();
 		m_DeletePath.clear();
@@ -827,19 +863,64 @@ namespace TomCat {
 		}
 	}
 
-	Ref<Texture2D> ContentBrowserPanel::GetAssetIcon(const std::filesystem::path& path, bool isDirectory)
+	Ref<Texture2D> ContentBrowserPanel::GetAssetIcon(const std::filesystem::path& path,
+		bool isDirectory, bool isOpen)
 	{
+		if (!m_Icons)
+			return {};
+		auto icon = [&](EditorIcon id) { return m_Icons->Get(id); };
+
+		std::error_code statusError;
+		const std::filesystem::file_status linkStatus = std::filesystem::symlink_status(path, statusError);
+		if (!statusError && std::filesystem::is_symlink(linkStatus))
+			return icon(EditorIcon::Link);
+
 		if (isDirectory)
-			return m_DirectoryIcon;
+		{
+			if (LexicalPath(path) == LexicalPath(GetAssetRoot()))
+				return icon(EditorIcon::AssetsRoot);
+			return icon(isOpen ? EditorIcon::FolderOpen : EditorIcon::FolderClosed);
+		}
+
 		AssetManager& assetManager = AssetManager::Get();
 		const AssetMetadata* metadata = assetManager.GetRegistry().GetMetadata(path);
 		AssetHandle handle = metadata && !metadata->IsMissing
 			? metadata->Handle : assetManager.ImportAsset(path);
 		metadata = assetManager.GetRegistry().GetMetadata(handle);
-		if (!metadata || metadata->Type != AssetType::Texture2D)
-			return m_FileIcon;
-		Ref<Texture2D> texture = assetManager.LoadTexture(handle);
-		return texture ? texture : m_FileIcon;
+		if (metadata && metadata->IsMissing)
+			return icon(EditorIcon::Missing);
+		if (IsReadOnlyPath(path))
+			return icon(EditorIcon::ReadOnly);
+
+		const std::string extension = ToLower(PathToUTF8(path.extension()));
+		if (extension == ".tcproj")
+			return icon(EditorIcon::Project);
+		if (extension == ".zip" || extension == ".pak" || extension == ".tcpkg" ||
+			extension == ".unitypackage")
+			return icon(EditorIcon::Package);
+
+		const AssetType type = metadata ? metadata->Type : AssetTypeFromPath(path);
+		switch (type)
+		{
+			case AssetType::Scene:
+				return icon(!m_ActiveScenePath.empty() &&
+					LexicalPath(path) == m_ActiveScenePath ? EditorIcon::SceneOpen : EditorIcon::SceneClosed);
+			case AssetType::Texture2D:
+			{
+				Ref<Texture2D> texture = static_cast<uint64_t>(handle) != 0
+					? assetManager.LoadTexture(handle) : Ref<Texture2D>{};
+				return texture ? texture : icon(EditorIcon::Texture);
+			}
+			case AssetType::Material: return icon(EditorIcon::Material);
+			case AssetType::Shader: return icon(EditorIcon::Shader);
+			case AssetType::Script: return icon(EditorIcon::Script);
+			case AssetType::Mesh: return icon(EditorIcon::Mesh);
+			case AssetType::Audio: return icon(EditorIcon::Audio);
+			case AssetType::Font: return icon(EditorIcon::Font);
+			case AssetType::None:
+			case AssetType::Other:
+			default: return icon(EditorIcon::GenericFile);
+		}
 	}
 
 	void ContentBrowserPanel::SubmitDragPayload(const std::filesystem::path& path,
@@ -852,8 +933,9 @@ namespace TomCat {
 		if (rawHandle == 0 || !ImGui::BeginDragDropSource())
 			return;
 		ImGui::SetDragDropPayload(AssetDragDropPayloadID, &rawHandle, sizeof(rawHandle));
-		ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())),
-			ImVec2(64.0f, 64.0f), ImVec2(0, 1), ImVec2(1, 0));
+		if (icon)
+			ImGui::Image(ToImGuiTextureID(icon), ImVec2(64.0f, 64.0f),
+				ImVec2(0, 1), ImVec2(1, 0));
 		ImGui::TextUnformatted(PathToUTF8(path.filename()).c_str());
 		ImGui::EndDragDropSource();
 	}
@@ -989,7 +1071,8 @@ namespace TomCat {
 		const bool selected = m_UserSelectedDirectory && LexicalPath(m_SelectedPath) == LexicalPath(path);
 		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
 			ImGuiTreeNodeFlags_SpanAvailWidth | (selected ? ImGuiTreeNodeFlags_Selected : 0);
-		ImGui::TreeNodeEx("##File", flags, "%s", PathToUTF8(path.filename()).c_str());
+		ImGui::TreeNodeEx("##File", flags, "     %s", PathToUTF8(path.filename()).c_str());
+		DrawTreeIcon(GetAssetIcon(path, false), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 		if (ImGui::IsItemClicked())
 		{
 			m_SelectedPath = path;
@@ -1034,7 +1117,9 @@ namespace TomCat {
 
 		ImGui::PushID(key.c_str());
 		const std::string directoryLabel = isRoot ? "Assets" : PathToUTF8(directoryPath.filename());
-		const bool open = ImGui::TreeNodeEx("##Directory", flags, "%s", directoryLabel.c_str());
+		const bool open = ImGui::TreeNodeEx("##Directory", flags, "     %s", directoryLabel.c_str());
+		DrawTreeIcon(GetAssetIcon(directoryPath, true, open),
+			ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
 		{
 			m_SelectedPath = directoryPath;
@@ -1110,13 +1195,19 @@ namespace TomCat {
 		std::error_code error;
 		const bool isDirectory = entry.is_directory(error);
 		Ref<Texture2D> icon = GetAssetIcon(path, isDirectory);
+		if (!icon && m_Icons)
+			icon = m_Icons->Get(EditorIcon::GenericFile);
 		const bool selected = m_UserSelectedDirectory && LexicalPath(m_SelectedPath) == LexicalPath(path);
 		ImGui::PushID(PathToUTF8(LexicalPath(path)).c_str());
 		if (selected)
 			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_Header));
-		ImGui::ImageButton(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())),
-			ImVec2(m_ThumbnailSize, m_ThumbnailSize),
-			ImVec2(0, 1), ImVec2(1, 0), 0);
+		if (icon)
+		{
+			ImGui::ImageButton(ToImGuiTextureID(icon), ImVec2(m_ThumbnailSize, m_ThumbnailSize),
+				ImVec2(0, 1), ImVec2(1, 0), 0);
+		}
+		else
+			ImGui::Button("##MissingAssetIcon", ImVec2(m_ThumbnailSize, m_ThumbnailSize));
 		if (selected)
 			ImGui::PopStyleColor();
 		if (ImGui::IsItemClicked())
@@ -1145,8 +1236,9 @@ namespace TomCat {
 		if (!isDirectory && s_ImageExtensions.find(ToLower(PathToUTF8(path.extension()))) != s_ImageExtensions.end() && ImGui::IsItemHovered())
 		{
 			ImGui::BeginTooltip();
-			ImGui::Image(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(icon->GetRendererID())),
-				ImVec2(200.0f, 200.0f), ImVec2(0, 1), ImVec2(1, 0));
+			if (icon)
+				ImGui::Image(ToImGuiTextureID(icon), ImVec2(200.0f, 200.0f),
+					ImVec2(0, 1), ImVec2(1, 0));
 			ImGui::EndTooltip();
 		}
 		ImGui::NextColumn();

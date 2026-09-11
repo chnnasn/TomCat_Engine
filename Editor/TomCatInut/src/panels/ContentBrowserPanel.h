@@ -7,6 +7,7 @@
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Renderer/Texture.h"
 #include "TomCat/Project/Project.h"
+#include "../EditorIcons.h"
 
 namespace TomCat {
 
@@ -21,6 +22,8 @@ namespace TomCat {
 
 		ContentBrowserPanel();
 		void SetProject(Ref<Project> project);
+		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
+		void SetActiveScenePath(const std::filesystem::path& path);
 		// Saves non-layout navigation state to project-local UserSettings/editor.json.
 		bool Serialize();
 
@@ -43,8 +46,8 @@ namespace TomCat {
 		// 避免项目刚打开时 Assets 只是作为默认当前目录而被高亮。
 		bool m_UserSelectedDirectory = false;
 
-		Ref<Texture2D> m_DirectoryIcon;
-		Ref<Texture2D> m_FileIcon;
+		Ref<EditorIconSet> m_Icons;
+		std::filesystem::path m_ActiveScenePath;
 
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
@@ -76,7 +79,6 @@ namespace TomCat {
 		std::vector<AssetReference> m_DeleteReferences;
 		float m_LeftPanelWidth = 250.0f;
 		float m_ThumbnailSize = 128.0f;
-
 		SceneOpenCallback m_SceneOpenCallback;
 		AssetRenamedCallback m_AssetRenamedCallback;
 		AssetDeletedCallback m_AssetDeletedCallback;
@@ -88,7 +90,8 @@ namespace TomCat {
 		void DrawBreadcrumbs(const std::filesystem::path& assetRoot);
 		void DrawAssetGrid(const std::filesystem::path& assetRoot);
 		void DrawAssetItem(const std::filesystem::directory_entry& entry, const std::filesystem::path& assetRoot);
-		Ref<Texture2D> GetAssetIcon(const std::filesystem::path& path, bool isDirectory);
+		Ref<Texture2D> GetAssetIcon(const std::filesystem::path& path, bool isDirectory,
+			bool isOpen = false);
 		void SubmitDragPayload(const std::filesystem::path& path, const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon);
 		void SubmitDirectoryDragPayload(const std::filesystem::path& path, const std::filesystem::path& assetRoot);
 		void AcceptAssetMoveTarget(const std::filesystem::path& destinationDirectory);

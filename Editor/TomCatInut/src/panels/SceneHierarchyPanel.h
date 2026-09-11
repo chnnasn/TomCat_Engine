@@ -5,6 +5,7 @@
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Entity.h"
+#include "../EditorIcons.h"
 
 #include <functional>
 
@@ -21,6 +22,7 @@ namespace TomCat {
 		SceneHierarchyPanel(const Ref<Scene>& scene);
 
 		void SetContext(const Ref<Scene>& scene, bool clearSelection = true, bool remapSelection = false);
+		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 
 		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr);
 
@@ -62,6 +64,7 @@ namespace TomCat {
 		Entity m_TagEditingEntity;
 		char m_TagEditBuffer[256] = {};
 		bool m_HierarchyFocused = false;
+		Ref<EditorIconSet> m_Icons;
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
