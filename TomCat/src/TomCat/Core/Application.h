@@ -34,7 +34,7 @@ namespace TomCat {
 	{ 
 	public :
 		Application(const std::string& name = "TomCat App", 
-					std::filesystem::path iconPath = {});
+					std::filesystem::path iconPath = {}, bool enableImGui = true);
 
 		virtual ~Application();
 
@@ -47,7 +47,8 @@ namespace TomCat {
 
 		Window& GetWindow() { return *m_Window; }
 
-		void Close();
+		void Close(int exitCode = 0);
+		int GetExitCode() const { return m_ExitCode; }
 
 		ImGuiLayer* GetImGuiLayer() { return m_ImGuiLayer; };
 
@@ -63,6 +64,7 @@ namespace TomCat {
 		ImGuiLayer* m_ImGuiLayer = nullptr;
 		bool m_Running = true;
 		bool m_Minimized = false;
+		int m_ExitCode = 0;
 		LayerStack m_LayerStack;
 		float m_LastFrameTime = 0.0f;
 

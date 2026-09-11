@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <iterator>
 #include <unordered_set>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -136,6 +137,40 @@ namespace TomCat {
 			return visited.size() == entityOrder.size();
 		}
 
+		void Render2DComponents(entt::registry& registry)
+		{
+			auto spriteView = registry.view<Transform, SpriteRenderer>();
+			for (const entt::entity entity : spriteView)
+			{
+				auto [transform, sprite] = spriteView.get<Transform, SpriteRenderer>(entity);
+				if (!registry.get<Tag>(entity).Visible || !sprite.Enabled)
+					continue;
+
+				Renderer2D::DrawSprite(transform.GetTransform(), sprite, static_cast<int>(entity));
+			}
+
+			const float previousLineWidth = Renderer2D::GetLineWidth();
+			bool renderedLine = false;
+			auto lineView = registry.view<Transform, LineRenderer>();
+			for (const entt::entity entity : lineView)
+			{
+				auto [transform, line] = lineView.get<Transform, LineRenderer>(entity);
+				if (!registry.get<Tag>(entity).Visible || !line.Enabled
+					|| !std::isfinite(line.Width) || line.Width <= 0.0f)
+					continue;
+
+				const glm::mat4 worldTransform = transform.GetTransform();
+				const glm::vec3 worldStart = glm::vec3(worldTransform * glm::vec4(line.Start, 1.0f));
+				const glm::vec3 worldEnd = glm::vec3(worldTransform * glm::vec4(line.End, 1.0f));
+				Renderer2D::SetLineWidth(line.Width);
+				Renderer2D::DrawLine(worldStart, worldEnd, line._Color, static_cast<int>(entity));
+				renderedLine = true;
+			}
+
+			if (renderedLine)
+				Renderer2D::SetLineWidth(previousLineWidth);
+		}
+
 	}
 
 	void Scene::DestroyNativeScriptInstance(NativeScript& script, const char* context) noexcept
@@ -232,6 +267,7 @@ namespace TomCat {
 			dst.GetComponent<Tag>().Visible = src.GetComponent<Tag>().Visible;
 		CopyComponentIfExists<Transform>(dst, src);
 		CopyComponentIfExists<SpriteRenderer>(dst, src);
+		CopyComponentIfExists<LineRenderer>(dst, src);
 		CopyComponentIfExists<C_Camera>(dst, src);
 		CopyComponentIfExists<NativeScript>(dst, src);
 		CopyComponentIfExists<Rigidbody2D>(dst, src);
@@ -331,6 +367,7 @@ namespace TomCat {
 				dstSceneRegistry.get<Tag>(destinationEntity).Visible = sourceEntity.GetComponent<Tag>().Visible;
 		}
 		CopyComponent<SpriteRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
+		CopyComponent<LineRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<C_Camera>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<NativeScript>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<Rigidbody2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
@@ -343,8 +380,12 @@ namespace TomCat {
 		for (auto entity : dstSceneRegistry.view<BoxCollider2D>())
 			dstSceneRegistry.get<BoxCollider2D>(entity).RuntimeFixture = nullptr;
 
-		for (const auto& [childUUID, parentUUID] : other->m_ParentMap)
+		for (UUID childUUID : other->m_EntityOrder)
 		{
+			auto sourceParentIt = other->m_ParentMap.find(childUUID);
+			if (sourceParentIt == other->m_ParentMap.end())
+				continue;
+			const UUID parentUUID = sourceParentIt->second;
 			auto childIt = enttMap.find(childUUID);
 			auto parentIt = enttMap.find(parentUUID);
 			if (childIt == enttMap.end() || parentIt == enttMap.end())
@@ -679,6 +720,191 @@ namespace TomCat {
 		return true;
 	}
 
+	bool Scene::MoveEntity(Entity entity, Entity target, EntityPlacement placement)
+	{
+		auto isValidSceneEntity = [this](Entity candidate)
+		{
+			return candidate && candidate.m_Scene == this
+				&& m_Registry.valid(candidate.m_EntityHandle)
+				&& candidate.HasComponent<ID>() && candidate.HasComponent<Transform>()
+				&& static_cast<uint64_t>(candidate.GetUUID()) != 0
+				&& FindEntityByUUID(candidate.GetUUID()) == candidate;
+		};
+
+		if (!isValidSceneEntity(entity))
+			return false;
+		if (placement != EntityPlacement::Root && !isValidSceneEntity(target))
+			return false;
+		if (placement != EntityPlacement::Root && entity == target)
+			return false;
+		if (placement != EntityPlacement::Before && placement != EntityPlacement::Child
+			&& placement != EntityPlacement::After && placement != EntityPlacement::Root)
+			return false;
+
+		if (m_EntityOrder.size() != m_EntityMap.size() || !ValidateTransformHierarchy())
+			return false;
+		std::unordered_set<UUID> orderedEntities;
+		for (UUID uuid : m_EntityOrder)
+		{
+			Entity orderedEntity = FindEntityByUUID(uuid);
+			if (!orderedEntity || !orderedEntity.HasComponent<Transform>()
+				|| !orderedEntities.emplace(uuid).second)
+				return false;
+		}
+
+		auto collectSubtree = [this](UUID root, std::unordered_set<UUID>& subtree)
+		{
+			std::vector<UUID> pending{ root };
+			while (!pending.empty())
+			{
+				const UUID current = pending.back();
+				pending.pop_back();
+				Entity currentEntity = FindEntityByUUID(current);
+				if (!currentEntity || !currentEntity.HasComponent<Transform>()
+					|| !subtree.emplace(current).second)
+					return false;
+
+				auto childrenIt = m_ChildrenMap.find(current);
+				if (childrenIt == m_ChildrenMap.end())
+					continue;
+				for (UUID child : childrenIt->second)
+				{
+					auto parentIt = m_ParentMap.find(child);
+					if (parentIt == m_ParentMap.end() || parentIt->second != current)
+						return false;
+					pending.push_back(child);
+				}
+			}
+			return true;
+		};
+
+		const UUID entityUUID = entity.GetUUID();
+		std::unordered_set<UUID> movingSubtree;
+		if (!collectSubtree(entityUUID, movingSubtree))
+			return false;
+
+		UUID targetUUID(0);
+		if (placement != EntityPlacement::Root)
+		{
+			targetUUID = target.GetUUID();
+			if (movingSubtree.find(targetUUID) != movingSubtree.end())
+				return false;
+		}
+
+		bool hasNewParent = false;
+		UUID newParentUUID(0);
+		if (placement == EntityPlacement::Child)
+		{
+			hasNewParent = true;
+			newParentUUID = targetUUID;
+		}
+		else if (placement == EntityPlacement::Before || placement == EntityPlacement::After)
+		{
+			auto targetParentIt = m_ParentMap.find(targetUUID);
+			if (targetParentIt != m_ParentMap.end())
+			{
+				hasNewParent = true;
+				newParentUUID = targetParentIt->second;
+			}
+		}
+		if (hasNewParent && movingSubtree.find(newParentUUID) != movingSubtree.end())
+			return false;
+
+		auto candidateParentMap = m_ParentMap;
+		auto candidateChildrenMap = m_ChildrenMap;
+		auto oldParentIt = candidateParentMap.find(entityUUID);
+		if (oldParentIt != candidateParentMap.end())
+		{
+			auto oldSiblingsIt = candidateChildrenMap.find(oldParentIt->second);
+			if (oldSiblingsIt == candidateChildrenMap.end())
+				return false;
+			auto& oldSiblings = oldSiblingsIt->second;
+			const size_t oldSiblingCount = oldSiblings.size();
+			oldSiblings.erase(std::remove(oldSiblings.begin(), oldSiblings.end(), entityUUID),
+				oldSiblings.end());
+			if (oldSiblings.size() + 1 != oldSiblingCount)
+				return false;
+			if (oldSiblings.empty())
+				candidateChildrenMap.erase(oldSiblingsIt);
+			candidateParentMap.erase(oldParentIt);
+		}
+
+		if (hasNewParent)
+		{
+			auto& newSiblings = candidateChildrenMap[newParentUUID];
+			newSiblings.erase(std::remove(newSiblings.begin(), newSiblings.end(), entityUUID),
+				newSiblings.end());
+			if (placement == EntityPlacement::Child)
+				newSiblings.push_back(entityUUID);
+			else
+			{
+				auto targetIt = std::find(newSiblings.begin(), newSiblings.end(), targetUUID);
+				if (targetIt == newSiblings.end())
+					return false;
+				newSiblings.insert(placement == EntityPlacement::Before ? targetIt : std::next(targetIt),
+					entityUUID);
+			}
+			candidateParentMap[entityUUID] = newParentUUID;
+		}
+
+		std::vector<UUID> movingBlock;
+		std::vector<UUID> candidateOrder;
+		movingBlock.reserve(movingSubtree.size());
+		candidateOrder.reserve(m_EntityOrder.size());
+		for (UUID uuid : m_EntityOrder)
+		{
+			if (movingSubtree.find(uuid) != movingSubtree.end())
+				movingBlock.push_back(uuid);
+			else
+				candidateOrder.push_back(uuid);
+		}
+		if (movingBlock.size() != movingSubtree.size())
+			return false;
+
+		size_t insertionIndex = candidateOrder.size();
+		if (placement == EntityPlacement::Before)
+		{
+			auto targetIt = std::find(candidateOrder.begin(), candidateOrder.end(), targetUUID);
+			if (targetIt == candidateOrder.end())
+				return false;
+			insertionIndex = static_cast<size_t>(std::distance(candidateOrder.begin(), targetIt));
+		}
+		else if (placement == EntityPlacement::After || placement == EntityPlacement::Child)
+		{
+			std::unordered_set<UUID> targetSubtree;
+			if (!collectSubtree(targetUUID, targetSubtree))
+				return false;
+			bool foundTargetSubtree = false;
+			for (size_t index = 0; index < candidateOrder.size(); ++index)
+			{
+				if (targetSubtree.find(candidateOrder[index]) != targetSubtree.end())
+				{
+					insertionIndex = index + 1;
+					foundTargetSubtree = true;
+				}
+			}
+			if (!foundTargetSubtree)
+				return false;
+		}
+		candidateOrder.insert(candidateOrder.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
+			movingBlock.begin(), movingBlock.end());
+
+		if (candidateOrder == m_EntityOrder && candidateParentMap == m_ParentMap
+			&& candidateChildrenMap == m_ChildrenMap)
+			return false;
+
+		Entity newParent = hasNewParent ? FindEntityByUUID(newParentUUID) : Entity{};
+		if (hasNewParent && !newParent)
+			return false;
+		if (!SetParent(entity, newParent))
+			return false;
+
+		m_ParentMap.swap(candidateParentMap);
+		m_ChildrenMap.swap(candidateChildrenMap);
+		m_EntityOrder.swap(candidateOrder);
+		return true;
+	}
+
 	Entity Scene::GetParent(Entity entity)
 	{
 		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
@@ -915,15 +1141,7 @@ namespace TomCat {
 		{
 			Renderer2D::BeginScene(*MainCamera, cameraTransform);
 
-			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
-			for (auto entity : group)
-			{
-				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
-				if (!m_Registry.get<Tag>(entity).Visible || !sprite.Enabled)
-					continue;
-
-				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
-			}
+			Render2DComponents(m_Registry);
 
 			Renderer2D::EndScene();
 		}
@@ -934,16 +1152,7 @@ namespace TomCat {
 	{
 		Renderer2D::BeginScene(camera);
 
-		// SpriteRenderer
-		auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
-
-		group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
-			if (!m_Registry.get<Tag>(entity).Visible || !sprite.Enabled)
-				return;
-
-			Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
-
-			});
+		Render2DComponents(m_Registry);
 
 		Renderer2D::EndScene();
 	}
@@ -982,15 +1191,7 @@ namespace TomCat {
 		{
 			Renderer2D::BeginScene(*MainCamera, cameraTransform);
 
-			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
-			for (auto entity : group)
-			{
-				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
-				if (!m_Registry.get<Tag>(entity).Visible || !sprite.Enabled)
-					continue;
-
-				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
-			}
+			Render2DComponents(m_Registry);
 
 			Renderer2D::EndScene();
 		}
@@ -1049,6 +1250,28 @@ namespace TomCat {
 		return {};
 	}
 
+	std::vector<AssetReference> Scene::FindAssetReferences(AssetHandle handle)
+	{
+		std::vector<AssetReference> references;
+		if (static_cast<uint64_t>(handle) == 0)
+			return references;
+
+		auto view = m_Registry.view<ID, SpriteRenderer>();
+		for (const entt::entity entity : view)
+		{
+			const auto& sprite = view.get<SpriteRenderer>(entity);
+			if (sprite.SpriteHandle != handle)
+				continue;
+			const uint64_t entityID = static_cast<uint64_t>(view.get<ID>(entity).id);
+			AssetReference reference;
+			reference.ReferencedAsset = handle;
+			reference.PropertyPath = "Entity " + std::to_string(entityID) +
+				".SpriteRenderer.SpriteHandle";
+			references.push_back(std::move(reference));
+		}
+		return references;
+	}
+
 	template<typename T>
 	void Scene::OnComponentAdded(Entity entity, T& component)
 	{
@@ -1074,6 +1297,11 @@ namespace TomCat {
 
 	template<>
 	void Scene::OnComponentAdded<SpriteRenderer>(Entity entity, SpriteRenderer& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<LineRenderer>(Entity entity, LineRenderer& component)
 	{
 	}
 

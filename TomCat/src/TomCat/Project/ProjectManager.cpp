@@ -12,7 +12,6 @@
 #include <array>
 #include <cstdint>
 #include <iterator>
-#include <yaml-cpp/yaml.h>
 
 namespace TomCat {
 
@@ -542,7 +541,7 @@ namespace TomCat {
 		const std::vector<Ref<Project>> previousProjects = m_Projects;
 		const std::unordered_map<std::string, std::string> previousLastOpenedTimes = m_ProjectLastOpenedTimes;
 		m_ProjectDirectory = std::move(preparedDirectory);
-		if (!ScanProjectsInternal(false) || !SaveHubSettings())
+		if (!ScanProjectsInternal() || !SaveHubSettings())
 		{
 			m_ProjectDirectory = previousDirectory;
 			m_Projects = previousProjects;
@@ -610,12 +609,11 @@ namespace TomCat {
 
 	bool ProjectManager::ScanProjects()
 	{
-		return ScanProjectsInternal(true);
+		return ScanProjectsInternal();
 	}
 
-	bool ProjectManager::ScanProjectsInternal(bool persistMigratedState)
+	bool ProjectManager::ScanProjectsInternal()
 	{
-		std::unordered_map<std::string, std::string> stagedLastOpenedTimes = m_ProjectLastOpenedTimes;
 		std::vector<Ref<Project>> scannedProjects;
 		std::unordered_set<std::string> seen;
 
@@ -651,7 +649,7 @@ namespace TomCat {
 			}
 			if (project)
 			{
-				ApplyStoredLastOpenedTime(project, stagedLastOpenedTimes);
+				ApplyStoredLastOpenedTime(project, m_ProjectLastOpenedTimes);
 				seen.insert(key);
 				scannedProjects.push_back(project);
 			}
@@ -736,17 +734,6 @@ namespace TomCat {
 			[](const Ref<Project>& a, const Ref<Project>& b) {
 				return a->GetLastOperationTime() > b->GetLastOperationTime();
 			});
-		const bool migratedRecency = stagedLastOpenedTimes.size() != m_ProjectLastOpenedTimes.size();
-		if (migratedRecency)
-		{
-			const std::unordered_map<std::string, std::string> previousLastOpenedTimes = m_ProjectLastOpenedTimes;
-			m_ProjectLastOpenedTimes = std::move(stagedLastOpenedTimes);
-			if (persistMigratedState && !SaveHubSettings())
-			{
-				m_ProjectLastOpenedTimes = previousLastOpenedTimes;
-				return false;
-			}
-		}
 		m_Projects = std::move(scannedProjects);
 		return true;
 	}
@@ -830,7 +817,7 @@ namespace TomCat {
 			if (!found)
 				m_KnownProjectPaths.push_back(projectPath);
 
-			if (!ScanProjectsInternal(false))
+			if (!ScanProjectsInternal())
 			{
 				m_KnownProjectPaths = previousKnownProjectPaths;
 				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
@@ -839,8 +826,7 @@ namespace TomCat {
 				return nullptr;
 			}
 
-			const bool migratedRecency = m_ProjectLastOpenedTimes.size() != previousLastOpenedTimes.size();
-			if ((!found || removedFromIgnored || migratedRecency) && !SaveHubSettings())
+			if ((!found || removedFromIgnored) && !SaveHubSettings())
 			{
 				m_KnownProjectPaths = previousKnownProjectPaths;
 				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
@@ -909,12 +895,6 @@ namespace TomCat {
 		if (stored != lastOpenedTimes.end())
 		{
 			project->m_Config.LastOperationTime = stored->second;
-		}
-		else if (!project->m_Config.LastOperationTime.empty())
-		{
-			// One-way migration from the schema-v1 project field. It is removed the
-			// next time the project is explicitly saved.
-			lastOpenedTimes.emplace(key, project->m_Config.LastOperationTime);
 		}
 	}
 
@@ -1149,140 +1129,6 @@ namespace TomCat {
 					PathToUTF8(settingsPath), error.what());
 			}
 			return;
-		}
-
-		try
-		{
-			auto getProgramRoot = []()
-			{
-				std::array<wchar_t, 32768> modulePath{};
-				const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(),
-					static_cast<DWORD>(modulePath.size()));
-				if (length == 0 || length >= modulePath.size())
-				{
-					throw std::runtime_error("Could not resolve the program directory. Windows error "
-						+ std::to_string(GetLastError()));
-				}
-				return std::filesystem::path(std::wstring(modulePath.data(), length)).parent_path();
-			};
-
-			auto loadIniSection = [this](const std::filesystem::path& path) -> bool
-			{
-				std::error_code pathError;
-				const bool exists = std::filesystem::exists(path, pathError);
-				if (pathError)
-					throw std::runtime_error("Could not inspect legacy Hub settings '" + PathToUTF8(path)
-						+ "': " + pathError.message());
-				if (!exists)
-					return false;
-
-				std::ifstream input(path, std::ios::binary);
-				if (!input)
-					throw std::runtime_error("Could not open legacy Hub settings '" + PathToUTF8(path) + "'");
-
-				bool sawSection = false;
-				bool inSection = false;
-				std::string line;
-				while (std::getline(input, line))
-				{
-					if (!line.empty() && line.back() == '\r')
-						line.pop_back();
-					if (line == "[HubConfig]")
-					{
-						inSection = true;
-						sawSection = true;
-						continue;
-					}
-					if (!inSection)
-						continue;
-					if (line.empty() || line[0] == '[')
-						break;
-
-					if (line.rfind("ProjectDirectory=", 0) == 0)
-						m_ProjectDirectory = UTF8ToPath(line.substr(17));
-					else if (line.rfind("EditorDirectory=", 0) == 0)
-						m_EditorDirectory = UTF8ToPath(line.substr(16));
-					else if (line.rfind("KnownProjects=", 0) == 0)
-						m_KnownProjectPaths.emplace_back(UTF8ToPath(line.substr(14)));
-					else if (line.rfind("IgnoredProjects=", 0) == 0)
-					{
-						const std::string encodedPath = line.substr(16);
-						if (!encodedPath.empty())
-							m_IgnoredProjectPaths.insert(ProjectPathKey(UTF8ToPath(encodedPath)));
-					}
-					else if (line.rfind("ProjectLastOpened=", 0) == 0)
-					{
-						const std::string value = line.substr(18);
-						const size_t separator = value.find('|');
-						if (separator != std::string::npos && separator > 0 && separator + 1 < value.size())
-						{
-							const std::string timestamp = value.substr(0, separator);
-							const std::filesystem::path projectPath = UTF8ToPath(value.substr(separator + 1));
-							m_ProjectLastOpenedTimes[ProjectPathKey(projectPath)] = timestamp;
-						}
-					}
-				}
-				if (input.bad())
-					throw std::runtime_error("Failed while reading legacy Hub settings '" + PathToUTF8(path) + "'");
-				return sawSection;
-			};
-
-			const std::filesystem::path legacyLocalRoot =
-				settingsPath.parent_path().parent_path() / "UserSettings";
-			bool migrated = loadIniSection(legacyLocalRoot / "Hub" / "imgui.ini");
-			if (!migrated)
-				migrated = loadIniSection(legacyLocalRoot / "Manager" / "imgui.ini");
-			if (!migrated)
-				migrated = loadIniSection(
-					getProgramRoot() / "UserSettings" / "Manager" / "imgui.ini");
-			if (!migrated)
-				migrated = loadIniSection(getProgramRoot() / "imgui.ini");
-
-			// HubConfig.tomcat predates the INI settings and is the final read-only
-			// migration source.
-			if (!migrated)
-			{
-				const std::filesystem::path legacyPath = getProgramRoot() / "HubConfig.tomcat";
-				std::error_code legacyError;
-				const bool legacyExists = std::filesystem::exists(legacyPath, legacyError);
-				if (legacyError)
-					throw std::runtime_error("Could not inspect legacy Hub settings: " + legacyError.message());
-				if (legacyExists)
-				{
-					std::ifstream input(legacyPath, std::ios::binary);
-					if (!input)
-						throw std::runtime_error("Could not open legacy Hub settings");
-					const YAML::Node data = YAML::Load(input);
-					if (input.bad())
-						throw std::runtime_error("Failed while reading legacy Hub settings");
-					const YAML::Node config = data["HubConfig"];
-					if (config)
-					{
-						m_ProjectDirectory = config["ProjectDirectory"]
-							? UTF8ToPath(config["ProjectDirectory"].as<std::string>()) : std::filesystem::path{};
-						m_EditorDirectory = config["EditorDirectory"]
-							? UTF8ToPath(config["EditorDirectory"].as<std::string>()) : std::filesystem::path{};
-						if (config["KnownProjects"])
-						{
-							for (const auto& node : config["KnownProjects"])
-								m_KnownProjectPaths.emplace_back(UTF8ToPath(node.as<std::string>()));
-						}
-						migrated = true;
-					}
-				}
-			}
-
-			if (migrated && !SaveHubSettings())
-				TC_Core_Warn("Legacy Hub settings were loaded but could not be migrated to hub.json");
-		}
-		catch (const std::exception& error)
-		{
-			m_ProjectDirectory.clear();
-			m_EditorDirectory.clear();
-			m_KnownProjectPaths.clear();
-			m_ProjectLastOpenedTimes.clear();
-			m_IgnoredProjectPaths.clear();
-			TC_Core_Error("Failed to migrate legacy Hub settings: {0}", error.what());
 		}
 	}
 

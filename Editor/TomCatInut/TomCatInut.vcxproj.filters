@@ -9,6 +9,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+	<ClInclude Include="src\CookedPlayerLayer.h">
+	  <Filter>src</Filter>
+	</ClInclude>
     <ClInclude Include="src\EditorLayer.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -20,6 +23,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+	<ClCompile Include="src\CookedPlayerLayer.cpp">
+	  <Filter>src</Filter>
+	</ClCompile>
     <ClCompile Include="src\EditorLayer.cpp">
       <Filter>src</Filter>
     </ClCompile>

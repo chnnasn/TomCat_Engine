@@ -13,7 +13,8 @@ namespace TomCat {
 
 	Application* Application::s_Instance = nullptr;
 
-	Application::Application(const std::string& name, std::filesystem::path iconPath)
+	Application::Application(const std::string& name, std::filesystem::path iconPath,
+		bool enableImGui)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -30,8 +31,11 @@ namespace TomCat {
 			m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
 			Renderer::Init();
 
-			m_ImGuiLayer = new ImGuiLayer();
-			PushOverlay(m_ImGuiLayer);
+			if (enableImGui)
+			{
+				m_ImGuiLayer = new ImGuiLayer();
+				PushOverlay(m_ImGuiLayer);
+			}
 		}
 		catch (...)
 		{
@@ -70,8 +74,9 @@ namespace TomCat {
 			layer->OnAttach();
 	}
 
-	void Application::Close()
+	void Application::Close(int exitCode)
 	{
+		m_ExitCode = exitCode;
 		m_Running = false;
 
 	}
@@ -146,13 +151,16 @@ namespace TomCat {
 						layer->OnUpdate(timestep);
 				}
 
-				m_ImGuiLayer->Begin();
+				if (m_ImGuiLayer)
 				{
-					TC_PROFILE_SCOPE("LayerStack OnImGuiRender");
-					for (Layer* layer : m_LayerStack)
-						layer->OnImGuiRender();
+					m_ImGuiLayer->Begin();
+					{
+						TC_PROFILE_SCOPE("LayerStack OnImGuiRender");
+						for (Layer* layer : m_LayerStack)
+							layer->OnImGuiRender();
+					}
+					m_ImGuiLayer->End();
 				}
-				m_ImGuiLayer->End();
 
 			}
 

@@ -3,14 +3,13 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Scene/SceneSerializer.h"
-#include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Project/ProjectManager.h"
 
 #include "TomCat/Math/Math.h"
-#include <fstream>
 #include <shellapi.h>
 #include <cstdio>
 #include <cctype>
@@ -26,52 +25,6 @@ namespace {
 		for (auto& c : out)
 			c = (char)std::tolower((unsigned char)c);
 		return out;
-	}
-
-	// The Hub ships the starter scene as a real asset in its Packages tree.  A
-	// packaged executable changes its working directory to the executable's
-	// folder, while a development build may be launched from the repository
-	// root or from Builder/Manager.  Try all of those locations so project
-	// creation behaves identically in both modes.
-	std::vector<std::filesystem::path> SampleTemplateCandidates(const std::string& templateName)
-	{
-		const std::string mode = templateName == "2D" ? "2D" : "3D";
-		const std::filesystem::path relative =
-			std::filesystem::path("Packages") / "ProjectTemplates" / mode / "sample.tomcat";
-		std::vector<std::filesystem::path> candidates;
-		auto addCandidate = [&candidates](const std::filesystem::path& candidate)
-		{
-			const auto normalized = candidate.lexically_normal();
-			if (std::find(candidates.begin(), candidates.end(), normalized) == candidates.end())
-				candidates.push_back(normalized);
-		};
-
-#ifdef _WIN32
-		// A shortcut can choose an unrelated working directory.  The executable
-		// directory is still stable for both the unpacked and EVB-packaged Hub.
-		// Prefer the wide API so projects installed under a non-ASCII path work.
-		std::array<wchar_t, 32768> modulePath{};
-		const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(),
-			static_cast<DWORD>(modulePath.size()));
-		if (length > 0 && length < modulePath.size())
-		{
-			std::filesystem::path executable(std::wstring(modulePath.data(), length));
-			addCandidate(executable.parent_path() / relative);
-		}
-#endif
-
-		std::error_code error;
-		const auto current = std::filesystem::current_path(error);
-		if (!error)
-		{
-			addCandidate(current / relative);
-			// Running Manager from the repository root.
-			addCandidate(current / "Builder" / "Manager" / relative);
-			// Running from the Builder directory.
-			addCandidate(current / "Manager" / relative);
-		}
-
-		return candidates;
 	}
 
 	bool HasNonEmptyFile(const std::filesystem::path& path)
@@ -112,11 +65,10 @@ namespace {
 			[&baseName](const char* reserved) { return baseName == reserved; });
 	}
 
-	bool WriteGeneratedSampleScene(const std::filesystem::path& destination, const std::string& templateName)
+	bool WriteSampleScene(const std::filesystem::path& destination, const std::string& templateName)
 	{
-		// This is only a safety net for a source checkout that has not copied its
-		// Packages directory yet.  Normal Hub builds always use the checked-in
-		// serialized template above.
+		// SceneSerializer owns the current schema version and field set. Generating
+		// starter scenes through it prevents packaged templates from drifting.
 		auto scene = TomCat::CreateRef<TomCat::Scene>();
 		scene->SetSceneName("sample");
 		TomCat::Entity mainCamera = scene->CreateEntityWithUUID(
@@ -137,9 +89,33 @@ namespace {
 			return false;
 
 		const std::filesystem::path destination = project->GetAssetPath() / "sample.tomcat";
+		auto registerSample = [&]()
+		{
+			TomCat::AssetRegistry registry;
+			if (!registry.Initialize(project->GetAssetPath(), project->GetLibraryPath()))
+				return false;
+			const TomCat::AssetHandle circle = TomCat::EnsurePrimitiveSpriteAsset(
+				registry, "Circle");
+			const TomCat::AssetHandle square = TomCat::EnsurePrimitiveSpriteAsset(
+				registry, "Square");
+			const TomCat::AssetHandle handle = registry.ImportAsset(destination);
+			registry.Shutdown();
+			if (static_cast<uint64_t>(circle) == 0 ||
+				static_cast<uint64_t>(square) == 0 ||
+				static_cast<uint64_t>(handle) == 0)
+				return false;
+			project->SetStartSceneHandle(handle);
+			return project->SetStartScene("sample.tomcat") && project->Save();
+		};
 		if (HasNonEmptyFile(destination))
 		{
-			return true;
+			if (!TomCat::SceneSerializer::ValidateCurrentFormat(destination))
+			{
+				TC_Core_Error("Existing starter scene is not in the current format: {0}",
+					TomCat::PathToUTF8(destination));
+				return false;
+			}
+			return registerSample();
 		}
 
 		std::error_code error;
@@ -151,32 +127,7 @@ namespace {
 			return false;
 		}
 
-		for (const auto& sourcePath : SampleTemplateCandidates(templateName))
-		{
-			// Opening the source directly is intentional: EVB virtual files may not
-			// report normal directory metadata, but they remain readable by streams.
-			std::ifstream source(sourcePath, std::ios::binary);
-			if (!source)
-				continue;
-
-			std::ostringstream contents;
-			contents << source.rdbuf();
-			std::string writeError;
-			const bool copied = !source.bad() &&
-				TomCat::FileSystem::WriteFileAtomically(destination, contents.str(), writeError);
-			if (copied && HasNonEmptyFile(destination))
-			{
-				TC_Core_Info("Installed serialized sample scene '{0}'", TomCat::PathToUTF8(destination));
-				return true;
-			}
-			if (!writeError.empty())
-				TC_Core_Error("Could not install sample scene '{0}': {1}", TomCat::PathToUTF8(destination), writeError);
-			break;
-		}
-
-		TC_Core_Warn("Static sample template was unavailable; generating the scene at '{0}'",
-			TomCat::PathToUTF8(destination));
-		return WriteGeneratedSampleScene(destination, templateName);
+		return WriteSampleScene(destination, templateName) && registerSample();
 	}
 
 

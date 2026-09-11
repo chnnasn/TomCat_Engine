@@ -14,7 +14,7 @@
 - **编辑器**：ImGui 驱动的 ContentBrowser、SceneHierarchy 面板，布局持久化
 - **Hub 项目管理器**：多项目管理、虚拟路径挂载、按最近打开排序
 - **中文支持**：为 ImGui 动态生成中文字符集，支持中英切换
-- **一键打包**：GitHub Actions 三模式（Editor / Hub / Both），Enigma 单文件封装
+- **一键打包**：GitHub Actions 三模式（Editor / Hub / Both）；可执行文件封装，Editor 的 Packages 外置
 
 ## 截图
 
@@ -47,7 +47,7 @@
 ## 打包发布
 
 - 本地打包：Scripts\Package-Editor.ps1 / Scripts\Package-Hub.ps1
-- CI 打包：GitHub Actions（workflow_dispatch 选择 editor / hub / both），Enigma 封装单 exe 并发布 Release
+- CI 打包：GitHub Actions（workflow_dispatch 选择 editor / hub / both）；Editor 发布为 `TomCat.zip`（`TomCat.exe` + 外置 `Packages/`），Hub 仍发布为封装后的单 exe
 
 ## Roadmap（待开发）
 
