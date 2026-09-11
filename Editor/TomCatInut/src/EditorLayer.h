@@ -89,11 +89,17 @@ namespace TomCat {
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
 			const ImVec2& handleMin, const ImVec2& handleMax, float tearX, bool canDock);
 		void UI_GameNoCameraOverlay();
+		void UI_MainMenuBar();
 		void UI_BuildSettings();
 		void UI_ProjectSettings();
+		void OpenProjectSettingsPanel();
+		void UpdateWindowTitle();
 		void LoadProjectSettingsDraft();
-		bool ApplyProjectSettingsDraft();
+		void SyncProjectSettingsLayerBuffers();
+		bool PersistProjectSettingsDraft();
 		void ClearProjectSettingsFeedback();
+		void FocusEditorPanel(const char* panelName, bool& panelVisible);
+		void CycleEditorPanel(int direction);
 
 		bool OpenProject();
 		bool OpenProject(const std::filesystem::path& path);
@@ -184,11 +190,18 @@ namespace TomCat {
 
 		bool m_ShowScenePanel = true;
 		bool m_ShowGamePanel = true;
+		bool m_ScenePanelDocked = true;
+		bool m_GamePanelDocked = true;
 		bool m_ShowHierarchyPanel = true;
 		bool m_ShowInspectorPanel = true;
 		bool m_ShowProjectPanel = true;
 		bool m_ShowBuildSettingsPanel = false;
+		bool m_FocusBuildSettingsPanel = false;
 		bool m_ShowProjectSettingsPanel = false;
+		bool m_FocusProjectSettingsPanel = false;
+		std::string m_LastWindowTitle;
+		std::string m_PendingPanelFocus;
+		int m_EditorPanelCycleIndex = 5;
 		int m_ProjectSettingsPage = 0;
 		Ref<Project> m_ProjectSettingsDraftProject;
 		ProjectSettings m_ProjectSettingsDraft;

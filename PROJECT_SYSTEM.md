@@ -38,22 +38,26 @@ Project:
 
 项目文件先写入同目录临时文件；Windows 使用带同目录恢复备份的 `ReplaceFileW` / `MoveFileExW` 原子安装，其他平台使用同文件系统原子重命名，保存结果通过 `bool` 返回给调用方。安装失败时保留已完整写入的临时文件；Windows 若替换中途失败会先尝试恢复原目标，恢复失败则同时保留临时文件和备份，避免清理流程造成二次数据丢失。创建项目会拒绝已有的非空目标目录；若首次保存失败，只逆序删除本次确实创建且仍为空的目录，不递归删除并发出现的内容。
 
-## ProjectSettings/ProjectSettings.tcsettings schema v1
+## ProjectSettings/ProjectSettings.json schema v1
 
-可纳入版本控制的项目级 Tag、Layer 和 2D 碰撞矩阵不写入 `Project.tcproj`，而保存在 `ProjectSettings/ProjectSettings.tcsettings`：
+可纳入版本控制的项目级 Tag、Layer 和 2D 碰撞矩阵不写入 `Project.tcproj`，而保存在 `ProjectSettings/ProjectSettings.json`：
 
-```yaml
-SchemaVersion: 1
-TagsAndLayers:
-  Tags: [Untagged]
-  LayerNames: [Default, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
-Physics2D:
-  CollisionMasks: [65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535]
+```json
+{
+  "schemaVersion": 1,
+  "tagsAndLayers": {
+    "tags": ["Untagged"],
+    "layerNames": ["Default", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+  },
+  "physics2D": {
+    "collisionMasks": [65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535]
+  }
+}
 ```
 
-Loader 只接受 schema v1 及精确的字段集。`Tags` 必须非空且唯一，第一项固定为 `Untagged`；`LayerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。层数选择 16 是因为 Box2D 的 Category/Mask 均为 16 位。`CollisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
+Loader 只接受有效 JSON、schema v1 及精确的 lowerCamel 字段集。`tags` 必须非空且唯一，第一项固定为 `Untagged`；`layerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。层数选择 16 是因为 Box2D 的 Category/Mask 均为 16 位。`collisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
 
-新项目会原子写入默认设置，默认所有 Layer 两两允许碰撞。现有项目缺少该文件时使用同样的内存默认值；文件一旦存在但内容损坏、版本错误或违反约束，整个项目加载失败，不会静默回退。Editor 的 Project Settings 中的 `Tags and Layers` 页管理 Tag 和 Layer 名称，`Physics 2D` 页管理对称碰撞矩阵。
+新项目会原子写入默认设置，默认所有 Layer 两两允许碰撞。为兼容已有项目，仅当 JSON 不存在时才读取旧的 `ProjectSettings/ProjectSettings.tcsettings` schema v1；加载旧文件本身不会改写磁盘，下一次 `SetSettings` 或 `SaveSettings` 会生成权威 JSON。JSON 一旦存在但内容损坏、版本错误或违反约束，整个项目加载失败，不会回退到旧文件掩盖错误。JSON 与旧文件都不存在时使用内存默认值。Editor 的 Project Settings 中的 `Tags and Layers` 页管理 Tag 和 Layer 名称，`Physics 2D` 页管理对称碰撞矩阵；所有有效修改都会立即通过原子替换写入 JSON，不需要额外点击 Apply，保存失败时 UI 会恢复为最后一次成功保存的值并显示错误。
 
 ## 项目结构
 
@@ -61,7 +65,7 @@ Loader 只接受 schema v1 及精确的字段集。`Tags` 必须非空且唯一�
 MyGame/
 ├── Project.tcproj
 ├── ProjectSettings/
-│   └── ProjectSettings.tcsettings # Tag、Layer 与 Physics 2D 碰撞矩阵
+│   └── ProjectSettings.json # Tag、Layer 与 Physics 2D 碰撞矩阵
 ├── .gitignore          # 忽略 Library、Cache、UserSettings，不忽略 .tcmeta
 ├── UserSettings/       # Editor 运行时生成，不应提交，也不参与 EVB 打包
 │   ├── imgui.ini       # 仅保存布局
@@ -90,7 +94,7 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 
 ## 启动流程
 
-1. Builder 加载并严格校验 `Project.tcproj`；若存在 `ProjectSettings/ProjectSettings.tcsettings`，也同时严格校验。
+1. Builder 加载并严格校验 `Project.tcproj`；若存在 `ProjectSettings/ProjectSettings.json`，也同时严格校验；只有 JSON 缺失时才兼容读取旧 `.tcsettings`。
 2. Builder 使用 Unicode 版 `CreateProcessW` 启动 Editor，仅传递项目文件路径；带空格、非 ASCII 字符和 Windows 长路径的参数会被正确引用。
 3. Editor 重新加载项目，从 `Project.Template` 决定 2D/3D 模式。
 4. Editor 只按 `StartSceneHandle` 从 Registry 解析启动场景。Handle 为 0、缺失或类型无效时保留空白编辑场景并报告错误，绝不使用 `StartScene` 路径回退或绑定同路径下的新资源。
@@ -147,7 +151,7 @@ Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮
 
 ## 当前格式边界
 
-- `Project.tcproj` 只接受 schema v3，`ProjectSettings.tcsettings` 只接受 schema v1，`.tomcat` 只接受 schema v9，`.tcpak` 只接受 v3；旧格式不会自动迁移、补字段或重新保存。
+- `Project.tcproj` 只接受 schema v3，`ProjectSettings.json` 只接受 schema v1，`.tomcat` 只接受 schema v9，`.tcpak` 只接受 v3；旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载，首次显式保存设置时写入 JSON，其他旧格式不会自动迁移、补字段或重新保存。
 - 项目资源加载只接受 `AssetHandle`；`StartScene` 仅是作者定位信息，不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。

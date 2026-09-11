@@ -367,6 +367,7 @@ namespace TomCat {
 		if (m_Context && m_Project)
 			m_Context->SetPhysics2DSettings(m_Project->GetSettings().Physics2D);
 		m_ForceExpandParent = {};
+		m_ForceOpenEntityNodes.clear();
 		m_ForceOpenSceneRoot = false;
 		m_EntityToDelete = {};
 		m_RenameEntity = {};
@@ -436,15 +437,42 @@ namespace TomCat {
 		return true;
 	}
 
+	bool SceneHierarchyPanel::DrawGameObjectMenu()
+	{
+		if (!m_Context)
+		{
+			ImGui::BeginDisabled();
+			DrawEntityOperationsMenu();
+			ImGui::EndDisabled();
+			return false;
+		}
+
+		// Hierarchy normally drains this deferred command while rendering. The
+		// top-level menu must do the same when that panel is hidden.
+		FlushPendingDeletion();
+		DrawEntityOperationsMenu();
+		FlushPendingDeletion();
+		// BeginRename always raises this flag, including a repeated Rename command
+		// for the same entity. Bring the Hierarchy forward so its inline editor is
+		// never left waiting invisibly behind a hidden or inactive dock tab.
+		return m_RenameFocus;
+	}
+
 	void SceneHierarchyPanel::OnImGuiRender(bool* hierarchyOpen, bool* inspectorOpen)
 	{
 		if (m_ColliderEditMode != ColliderEditMode::None
 			&& GetColliderEditMode() == ColliderEditMode::None)
 			ClearColliderEditMode();
+		// Keyboard commands can originate from the Scene viewport while Hierarchy
+		// is hidden or covered by another dock tab. Drain deletion before any tree
+		// traversal so it never remains queued until the panel becomes visible.
+		FlushPendingDeletion();
 		m_HierarchyFocused = false;
+		m_InspectorFocused = false;
 		if (!hierarchyOpen || *hierarchyOpen)
 		{
 		const bool hierarchyVisible = ImGui::Begin("Hierarchy", hierarchyOpen);
+		m_HierarchyDocked = ImGui::IsWindowDocked();
 		m_HierarchyFocused = hierarchyVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		if (hierarchyVisible && m_Context)
@@ -572,6 +600,9 @@ namespace TomCat {
 		if (!inspectorOpen || *inspectorOpen)
 		{
 			const bool inspectorVisible = ImGui::Begin("Inspector", inspectorOpen);
+			m_InspectorDocked = ImGui::IsWindowDocked();
+			m_InspectorFocused = inspectorVisible &&
+				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 			if (inspectorVisible && m_SelectionContext)
 				DrawComponents(m_SelectionContext);
 			ImGui::End();
@@ -602,6 +633,18 @@ namespace TomCat {
 	{
 		if (!entity)
 			return;
+		m_ForceOpenSceneRoot = true;
+		if (m_Context)
+		{
+			Entity ancestor = m_Context->GetParent(entity);
+			while (ancestor)
+			{
+				const uint64_t ancestorID = static_cast<uint64_t>(ancestor.GetUUID());
+				if (!m_ForceOpenEntityNodes.insert(ancestorID).second)
+					break;
+				ancestor = m_Context->GetParent(ancestor);
+			}
+		}
 		m_RenameEntity = entity;
 		strncpy_s(m_RenameBuffer, sizeof(m_RenameBuffer), entity.GetName().c_str(), _TRUNCATE);
 		m_RenameFocus = true;
@@ -814,6 +857,8 @@ namespace TomCat {
 			ImGui::SetNextItemOpen(true);
 			m_ForceExpandParent = {};
 		}
+		if (m_ForceOpenEntityNodes.erase(static_cast<uint64_t>(entity.GetUUID())) > 0)
+			ImGui::SetNextItemOpen(true);
 		// ImGui uses Header (rather than HeaderActive) for an idle selected
 		// tree item.  Scope Unity's blue selection colors to the hierarchy row so
 		// component headers and menus keep their neutral gray treatment.
@@ -900,6 +945,7 @@ namespace TomCat {
 			ImGui::SetNextItemWidth(std::max(40.0f, itemMax.x - textOffsetX - ImGui::GetStyle().ItemInnerSpacing.x));
 			if (m_RenameFocus)
 			{
+				ImGui::SetScrollHereY(0.5f);
 				ImGui::SetKeyboardFocusHere();
 				m_RenameFocus = false;
 			}

@@ -58,7 +58,7 @@ namespace TomCat {
 		const ProjectSettings& GetSettings() const { return m_Settings; }
 		std::filesystem::path GetSettingsPath() const
 		{
-			return m_Directory / "ProjectSettings" / "ProjectSettings.tcsettings";
+			return m_Directory / "ProjectSettings" / "ProjectSettings.json";
 		}
 		
 		void SetConfig(const ProjectConfig& config) { m_Config = config; }

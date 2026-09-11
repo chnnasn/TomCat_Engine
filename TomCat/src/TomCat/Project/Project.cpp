@@ -634,9 +634,15 @@ namespace TomCat {
 			Failed
 		};
 
+		enum class ProjectSettingsDocumentFormat
+		{
+			Json,
+			LegacyYaml
+		};
+
 		ProjectSettingsLoadResult LoadProjectSettingsFile(
 			const std::filesystem::path& path, ProjectSettings& settings,
-			std::string& errorMessage)
+			std::string& errorMessage, ProjectSettingsDocumentFormat format)
 		{
 			std::error_code filesystemError;
 			const bool exists = std::filesystem::exists(path, filesystemError);
@@ -661,31 +667,46 @@ namespace TomCat {
 				std::ifstream input(path, std::ios::binary);
 				if (!input)
 					throw std::runtime_error("Could not open project settings");
-				const YAML::Node root = YAML::Load(input);
+				std::ostringstream contents;
+				contents << input.rdbuf();
 				if (input.bad())
 					throw std::runtime_error("Failed while reading project settings");
+				const std::string document = contents.str();
+				if (format == ProjectSettingsDocumentFormat::Json
+					&& !JsonSyntaxValidator(document).Validate())
+				{
+					throw std::runtime_error("Project settings file is not valid JSON");
+				}
+				const YAML::Node root = YAML::Load(document);
+				const bool json = format == ProjectSettingsDocumentFormat::Json;
+				const char* schemaField = json ? "schemaVersion" : "SchemaVersion";
+				const char* tagsAndLayersField = json ? "tagsAndLayers" : "TagsAndLayers";
+				const char* tagsField = json ? "tags" : "Tags";
+				const char* layerNamesField = json ? "layerNames" : "LayerNames";
+				const char* physicsField = json ? "physics2D" : "Physics2D";
+				const char* masksField = json ? "collisionMasks" : "CollisionMasks";
 				RequireExactMapFields(root, "Project settings document",
-					std::array<const char*, 3>{ "SchemaVersion", "TagsAndLayers", "Physics2D" });
-				const uint32_t schemaVersion = root["SchemaVersion"].as<uint32_t>();
+					std::array<const char*, 3>{ schemaField, tagsAndLayersField, physicsField });
+				const uint32_t schemaVersion = root[schemaField].as<uint32_t>();
 				if (schemaVersion != kProjectSettingsSchemaVersion)
 					throw std::runtime_error("Unsupported project settings SchemaVersion " +
 						std::to_string(schemaVersion) + "; expected " +
 						std::to_string(kProjectSettingsSchemaVersion));
 
-				const YAML::Node tagsAndLayers = root["TagsAndLayers"];
+				const YAML::Node tagsAndLayers = root[tagsAndLayersField];
 				RequireExactMapFields(tagsAndLayers, "TagsAndLayers",
-					std::array<const char*, 2>{ "Tags", "LayerNames" });
-				const YAML::Node tags = tagsAndLayers["Tags"];
+					std::array<const char*, 2>{ tagsField, layerNamesField });
+				const YAML::Node tags = tagsAndLayers[tagsField];
 				if (!tags.IsSequence())
 					throw std::runtime_error("TagsAndLayers.Tags must be a sequence");
-				const YAML::Node layerNames = tagsAndLayers["LayerNames"];
+				const YAML::Node layerNames = tagsAndLayers[layerNamesField];
 				if (!layerNames.IsSequence() || layerNames.size() != Physics2DLayerCount)
 					throw std::runtime_error("TagsAndLayers.LayerNames must contain exactly 16 entries");
 
-				const YAML::Node physics = root["Physics2D"];
+				const YAML::Node physics = root[physicsField];
 				RequireExactMapFields(physics, "Physics2D",
-					std::array<const char*, 1>{ "CollisionMasks" });
-				const YAML::Node masks = physics["CollisionMasks"];
+					std::array<const char*, 1>{ masksField });
+				const YAML::Node masks = physics[masksField];
 				if (!masks.IsSequence() || masks.size() != Physics2DLayerCount)
 					throw std::runtime_error("Physics2D.CollisionMasks must contain exactly 16 entries");
 
@@ -734,29 +755,43 @@ namespace TomCat {
 				throw std::runtime_error("Could not create ProjectSettings directory: " +
 					directoryError.message());
 
-			YAML::Emitter output;
-			output << YAML::BeginMap;
-			output << YAML::Key << "SchemaVersion" << YAML::Value
-				<< kProjectSettingsSchemaVersion;
-			output << YAML::Key << "TagsAndLayers" << YAML::Value << YAML::BeginMap;
-			output << YAML::Key << "Tags" << YAML::Value << YAML::BeginSeq;
-			for (const std::string& tag : m_Settings.TagsAndLayers.Tags)
-				output << tag;
-			output << YAML::EndSeq;
-			output << YAML::Key << "LayerNames" << YAML::Value << YAML::BeginSeq;
-			for (const std::string& layerName : m_Settings.TagsAndLayers.LayerNames)
-				output << layerName;
-			output << YAML::EndSeq << YAML::EndMap;
-			output << YAML::Key << "Physics2D" << YAML::Value << YAML::BeginMap;
-			output << YAML::Key << "CollisionMasks" << YAML::Value << YAML::BeginSeq;
-			for (uint16_t mask : m_Settings.Physics2D.CollisionMasks)
-				output << mask;
-			output << YAML::EndSeq << YAML::EndMap << YAML::EndMap;
+			std::ostringstream output;
+			output << "{\n"
+				<< "  \"schemaVersion\": " << kProjectSettingsSchemaVersion << ",\n"
+				<< "  \"tagsAndLayers\": {\n"
+				<< "    \"tags\": [";
+			for (std::size_t index = 0; index < m_Settings.TagsAndLayers.Tags.size(); ++index)
+			{
+				if (index != 0)
+					output << ", ";
+				output << '"' << EscapeJsonString(m_Settings.TagsAndLayers.Tags[index]) << '"';
+			}
+			output << "],\n"
+				<< "    \"layerNames\": [";
+			for (std::size_t index = 0; index < m_Settings.TagsAndLayers.LayerNames.size(); ++index)
+			{
+				if (index != 0)
+					output << ", ";
+				output << '"' << EscapeJsonString(m_Settings.TagsAndLayers.LayerNames[index]) << '"';
+			}
+			output << "]\n"
+				<< "  },\n"
+				<< "  \"physics2D\": {\n"
+				<< "    \"collisionMasks\": [";
+			for (std::size_t index = 0; index < m_Settings.Physics2D.CollisionMasks.size(); ++index)
+			{
+				if (index != 0)
+					output << ", ";
+				output << m_Settings.Physics2D.CollisionMasks[index];
+			}
+			output << "]\n"
+				<< "  }\n"
+				<< "}\n";
 			if (!output.good())
-				throw std::runtime_error(output.GetLastError());
+				throw std::runtime_error("Could not serialize project settings JSON");
 
 			std::string writeError;
-			if (!FileSystem::WriteFileAtomically(settingsPath, output.c_str(), writeError))
+			if (!FileSystem::WriteFileAtomically(settingsPath, output.str(), writeError))
 				throw std::runtime_error("Could not atomically replace project settings: " + writeError);
 			return true;
 		}
@@ -773,7 +808,7 @@ namespace TomCat {
 		std::string validationError;
 		if (!ValidateProjectSettings(settings, validationError))
 		{
-			TC_Core_Error("Cannot apply project settings: {0}", validationError);
+			TC_Core_Error("Cannot save project settings: {0}", validationError);
 			return false;
 		}
 		const ProjectSettings previous = m_Settings;
@@ -1145,8 +1180,17 @@ namespace TomCat {
 			auto project = CreateRef<Project>(projectPath);
 			project->m_Config = ReadCurrentProjectConfig(projectNode);
 			std::string settingsError;
-			const ProjectSettingsLoadResult settingsResult = LoadProjectSettingsFile(
-				project->GetSettingsPath(), project->m_Settings, settingsError);
+			ProjectSettingsLoadResult settingsResult = LoadProjectSettingsFile(
+				project->GetSettingsPath(), project->m_Settings, settingsError,
+				ProjectSettingsDocumentFormat::Json);
+			if (settingsResult == ProjectSettingsLoadResult::Missing)
+			{
+				const std::filesystem::path legacySettingsPath = project->m_Directory
+					/ "ProjectSettings" / "ProjectSettings.tcsettings";
+				settingsResult = LoadProjectSettingsFile(legacySettingsPath,
+					project->m_Settings, settingsError,
+					ProjectSettingsDocumentFormat::LegacyYaml);
+			}
 			if (settingsResult == ProjectSettingsLoadResult::Failed)
 				throw std::runtime_error("Invalid project settings: " + settingsError);
 

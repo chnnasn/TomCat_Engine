@@ -9,6 +9,7 @@
 
 #include <array>
 #include <functional>
+#include <unordered_set>
 
 namespace TomCat {
 	class Project;
@@ -35,6 +36,11 @@ namespace TomCat {
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 
 		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr);
+		// Draws the same command surface used by the Hierarchy context menus so the
+		// editor's top-level GameObject menu cannot drift from them.
+		// Returns true when an inline operation (create/rename) needs the Hierarchy
+		// panel to be shown and focused.
+		bool DrawGameObjectMenu();
 
 		Entity GetSelectedEntity() const { return m_SelectionContext; };
 		ColliderEditMode GetColliderEditMode() const;
@@ -55,6 +61,10 @@ namespace TomCat {
 		void SetSelectedEntity(Entity entity);
 		bool HandleShortcut(int keyCode, bool control);
 		bool IsHierarchyFocused() const { return m_HierarchyFocused; }
+		bool IsInspectorFocused() const { return m_InspectorFocused; }
+		bool HasPendingRenameFocus() const { return m_RenameFocus; }
+		bool IsHierarchyDocked() const { return m_HierarchyDocked; }
+		bool IsInspectorDocked() const { return m_InspectorDocked; }
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }
@@ -78,6 +88,7 @@ namespace TomCat {
 		Entity m_SelectionContext;
 		// 创建子对象后用于强制展开父节点的一次性标记。
 		Entity m_ForceExpandParent;
+		std::unordered_set<uint64_t> m_ForceOpenEntityNodes;
 		bool m_ForceOpenSceneRoot = false;
 		Entity m_EntityToDelete;
 		Entity m_ClipboardEntity;
@@ -89,6 +100,9 @@ namespace TomCat {
 		Entity m_NameEditingEntity;
 		char m_NameEditBuffer[256] = {};
 		bool m_HierarchyFocused = false;
+		bool m_InspectorFocused = false;
+		bool m_HierarchyDocked = true;
+		bool m_InspectorDocked = true;
 		bool m_ColliderEditingAllowed = true;
 		ColliderEditMode m_ColliderEditMode = ColliderEditMode::None;
 		UUID m_ColliderEditEntity = UUID(0);

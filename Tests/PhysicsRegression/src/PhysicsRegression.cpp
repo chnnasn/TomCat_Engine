@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -176,7 +177,7 @@ namespace {
 		Require(project->GetSettings() == defaults,
 			"CreateNew did not initialize default project settings");
 		Require(project->GetSettingsPath()
-			== environment.Root / "ProjectSettings" / "ProjectSettings.tcsettings",
+			== environment.Root / "ProjectSettings" / "ProjectSettings.json",
 			"project settings path is not the project-root ProjectSettings document");
 		Require(std::filesystem::is_regular_file(project->GetSettingsPath()),
 			"CreateNew did not persist default project settings");
@@ -206,10 +207,11 @@ namespace {
 		Require(loaded != nullptr && loaded->GetSettings() == customized,
 			"Project::Load did not roundtrip separately persisted settings");
 		const std::string validSettingsDocument = ReadTextFile(project->GetSettingsPath());
-		Require(validSettingsDocument.find("SchemaVersion: 1") != std::string::npos
-			&& validSettingsDocument.find("TagsAndLayers:") != std::string::npos
-			&& validSettingsDocument.find("Physics2D:") != std::string::npos,
-			"settings writer omitted its strict schema or top-level sections");
+		Require(validSettingsDocument.find("\"schemaVersion\": 1") != std::string::npos
+			&& validSettingsDocument.find("\"tagsAndLayers\": {") != std::string::npos
+			&& validSettingsDocument.find("\"physics2D\": {") != std::string::npos
+			&& validSettingsDocument.find("SchemaVersion:") == std::string::npos,
+			"settings writer did not emit its strict lowerCamel JSON schema");
 
 		auto requireRejected = [&](const TomCat::ProjectSettings& invalid, const char* message)
 		{
@@ -241,24 +243,82 @@ namespace {
 		invalid.Physics2D.CollisionMasks[1] |= uint16_t(1) << 2;
 		requireRejected(invalid, "SetSettings accepted an asymmetric collision matrix");
 
-		WriteTextFile(project->GetSettingsPath(), validSettingsDocument + "\nUnexpected: true\n");
+		std::string unknownField = validSettingsDocument;
+		const std::size_t rootClose = unknownField.rfind("\n}");
+		Require(rootClose != std::string::npos,
+			"could not locate the project settings JSON root terminator");
+		unknownField.replace(rootClose, 2, ",\n  \"unexpected\": true\n}");
+		WriteTextFile(project->GetSettingsPath(), unknownField);
 		Require(TomCat::Project::Load(projectPath) == nullptr,
 			"strict settings loader accepted an unknown top-level field");
+		WriteTextFile(project->GetSettingsPath(), validSettingsDocument + "trailing-data");
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"settings loader accepted invalid JSON syntax");
 		WriteTextFile(project->GetSettingsPath(), validSettingsDocument);
 		std::string wrongSchema = validSettingsDocument;
-		const std::size_t schemaPosition = wrongSchema.find("SchemaVersion: 1");
+		const std::size_t schemaPosition = wrongSchema.find("\"schemaVersion\": 1");
 		Require(schemaPosition != std::string::npos,
 			"could not locate project settings schema version");
-		wrongSchema.replace(schemaPosition, std::string("SchemaVersion: 1").size(),
-			"SchemaVersion: 2");
+		wrongSchema.replace(schemaPosition, std::string("\"schemaVersion\": 1").size(),
+			"\"schemaVersion\": 2");
 		WriteTextFile(project->GetSettingsPath(), wrongSchema);
 		Require(TomCat::Project::Load(projectPath) == nullptr,
 			"settings loader accepted an unsupported schema version");
 		WriteTextFile(project->GetSettingsPath(), validSettingsDocument);
 
+		const std::filesystem::path legacySettingsPath = environment.Root
+			/ "ProjectSettings" / "ProjectSettings.tcsettings";
+		std::ostringstream legacySettings;
+		legacySettings << "SchemaVersion: 1\n"
+			<< "TagsAndLayers:\n"
+			<< "  Tags: [Untagged, Player, Enemy]\n"
+			<< "  LayerNames: [";
+		for (std::size_t index = 0; index < customized.TagsAndLayers.LayerNames.size(); ++index)
+		{
+			if (index != 0)
+				legacySettings << ", ";
+			legacySettings << '"' << customized.TagsAndLayers.LayerNames[index] << '"';
+		}
+		legacySettings << "]\n"
+			<< "Physics2D:\n"
+			<< "  CollisionMasks: [";
+		for (std::size_t index = 0; index < customized.Physics2D.CollisionMasks.size(); ++index)
+		{
+			if (index != 0)
+				legacySettings << ", ";
+			legacySettings << customized.Physics2D.CollisionMasks[index];
+		}
+		legacySettings << "]\n";
+		WriteTextFile(legacySettingsPath, legacySettings.str());
+
+		WriteTextFile(project->GetSettingsPath(), "{ invalid JSON");
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"a valid legacy settings file hid a damaged authoritative JSON file");
+
 		std::error_code removeError;
 		Require(std::filesystem::remove(project->GetSettingsPath(), removeError) && !removeError,
-			"could not remove settings fixture for missing-file compatibility test");
+			"could not remove JSON settings fixture for legacy compatibility test");
+		auto legacySettingsProject = TomCat::Project::Load(projectPath);
+		Require(legacySettingsProject != nullptr
+			&& legacySettingsProject->GetSettings() == customized,
+			"missing JSON settings did not fall back to valid legacy settings");
+		Require(!std::filesystem::exists(project->GetSettingsPath()),
+			"loading legacy settings unexpectedly rewrote the project");
+		Require(legacySettingsProject->SaveSettings(),
+			"SaveSettings could not migrate loaded legacy data to JSON");
+		Require(std::filesystem::is_regular_file(project->GetSettingsPath()),
+			"SaveSettings did not create the authoritative JSON settings file");
+		auto migratedSettingsProject = TomCat::Project::Load(projectPath);
+		Require(migratedSettingsProject != nullptr
+			&& migratedSettingsProject->GetSettings() == customized,
+			"project settings changed while legacy data was saved as JSON");
+
+		removeError.clear();
+		Require(std::filesystem::remove(project->GetSettingsPath(), removeError) && !removeError,
+			"could not remove JSON settings fixture for missing-file test");
+		removeError.clear();
+		Require(std::filesystem::remove(legacySettingsPath, removeError) && !removeError,
+			"could not remove legacy settings fixture for missing-file test");
 		auto missingSettings = TomCat::Project::Load(projectPath);
 		Require(missingSettings != nullptr && missingSettings->GetSettings() == defaults,
 			"missing project settings did not load backward-compatible defaults");
