@@ -216,9 +216,6 @@
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h">
-      <Filter>src\TomCat\Scene</Filter>
-    </ClInclude>
     <ClInclude Include="src\TomCat\Utils\PlatformUtils.h">
       <Filter>src\TomCat\Utils</Filter>
     </ClInclude>

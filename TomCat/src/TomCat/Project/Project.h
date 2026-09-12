@@ -35,6 +35,10 @@ namespace TomCat {
 	{
 		std::string ContentBrowserCurrentDirectory = ".";
 		std::vector<std::string> ContentBrowserExpandedNodes;
+		// User-local absolute path to the executable used for opening C# sources.
+		// Kept out of Project.tcproj because different contributors may use
+		// different editors.
+		std::filesystem::path ExternalScriptEditor;
 	};
 
 	enum class EditorProjectStateLoadResult

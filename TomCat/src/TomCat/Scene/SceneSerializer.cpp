@@ -107,6 +107,11 @@ namespace TomCat {
 			return std::isfinite(value);
 		}
 
+		bool IsFinite(double value)
+		{
+			return std::isfinite(value);
+		}
+
 		bool IsFinite(const glm::vec2& value)
 		{
 			return IsFinite(value.x) && IsFinite(value.y);
@@ -286,6 +291,84 @@ namespace TomCat {
 				throw std::runtime_error(context + ".Damping must be in [0, 1]");
 		}
 
+		bool IsFieldID(const std::string& value)
+		{
+			if (value.size() != 32)
+				return false;
+			for (const unsigned char character : value)
+			{
+				if (!((character >= '0' && character <= '9')
+					|| (character >= 'a' && character <= 'f')))
+					return false;
+			}
+			return true;
+		}
+
+		void ValidateScriptField(const ScriptField& field, const std::string& context)
+		{
+			if (!IsFieldID(field.FieldID))
+				throw std::runtime_error(context
+					+ ".FieldID must contain exactly 32 lowercase hexadecimal characters");
+			if (field.Name.empty())
+				throw std::runtime_error(context + ".Name cannot be empty");
+			if (!IsScriptFieldValueCompatible(field.Type, field.Value))
+				throw std::runtime_error(context + ".Value does not match Type "
+					+ ScriptFieldTypeToString(field.Type));
+
+			switch (field.Type)
+			{
+				case ScriptFieldType::Float:
+					if (!IsFinite(std::get<float>(field.Value)))
+						throw std::runtime_error(context + ".Value must be finite");
+					break;
+				case ScriptFieldType::Double:
+					if (!IsFinite(std::get<double>(field.Value)))
+						throw std::runtime_error(context + ".Value must be finite");
+					break;
+				case ScriptFieldType::Vector2:
+					RequireFinite(std::get<glm::vec2>(field.Value), context + ".Value");
+					break;
+				case ScriptFieldType::Vector3:
+					RequireFinite(std::get<glm::vec3>(field.Value), context + ".Value");
+					break;
+				case ScriptFieldType::Vector4:
+					if (!IsFinite(std::get<glm::vec4>(field.Value)))
+						throw std::runtime_error(context + ".Value must contain only finite numbers");
+					break;
+				case ScriptFieldType::Color:
+					RequireUnitColor(std::get<glm::vec4>(field.Value), context + ".Value");
+					break;
+				default:
+					break;
+			}
+		}
+
+		void ValidateCSharpScripts(const CSharpScripts& scripts, const std::string& context)
+		{
+			std::unordered_set<UUID> attachmentIDs;
+			for (size_t scriptIndex = 0; scriptIndex < scripts.Scripts.size(); ++scriptIndex)
+			{
+				const CSharpScriptEntry& script = scripts.Scripts[scriptIndex];
+				const std::string scriptContext = context + ".Scripts["
+					+ std::to_string(scriptIndex) + "]";
+				if (static_cast<uint64_t>(script.AttachmentID) == 0)
+					throw std::runtime_error(scriptContext + ".AttachmentID cannot be zero");
+				if (!attachmentIDs.emplace(script.AttachmentID).second)
+					throw std::runtime_error(scriptContext + ".AttachmentID is duplicated");
+
+				std::unordered_set<std::string> fieldIDs;
+				for (size_t fieldIndex = 0; fieldIndex < script.Fields.size(); ++fieldIndex)
+				{
+					const ScriptField& field = script.Fields[fieldIndex];
+					const std::string fieldContext = scriptContext + ".Fields["
+						+ std::to_string(fieldIndex) + "]";
+					ValidateScriptField(field, fieldContext);
+					if (!fieldIDs.emplace(field.FieldID).second)
+						throw std::runtime_error(fieldContext + ".FieldID is duplicated");
+				}
+			}
+		}
+
 		YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec2& value)
 		{
 			out << YAML::Flow << YAML::BeginSeq << value.x << value.y << YAML::EndSeq;
@@ -302,6 +385,30 @@ namespace TomCat {
 		{
 			out << YAML::Flow << YAML::BeginSeq << value.x << value.y << value.z << value.w << YAML::EndSeq;
 			return out;
+		}
+
+		void SerializeScriptFieldValue(YAML::Emitter& out, const ScriptField& field)
+		{
+			if (!IsScriptFieldValueCompatible(field.Type, field.Value))
+				throw std::runtime_error("C# script field '" + field.Name
+					+ "' has a value incompatible with its declared type");
+
+			switch (field.Type)
+			{
+				case ScriptFieldType::Bool: out << std::get<bool>(field.Value); break;
+				case ScriptFieldType::Int32: out << std::get<int32_t>(field.Value); break;
+				case ScriptFieldType::Int64:
+				case ScriptFieldType::Enum: out << std::get<int64_t>(field.Value); break;
+				case ScriptFieldType::Float: out << std::get<float>(field.Value); break;
+				case ScriptFieldType::Double: out << std::get<double>(field.Value); break;
+				case ScriptFieldType::String: out << std::get<std::string>(field.Value); break;
+				case ScriptFieldType::Vector2: out << std::get<glm::vec2>(field.Value); break;
+				case ScriptFieldType::Vector3: out << std::get<glm::vec3>(field.Value); break;
+				case ScriptFieldType::Vector4:
+				case ScriptFieldType::Color: out << std::get<glm::vec4>(field.Value); break;
+				case ScriptFieldType::Entity:
+				case ScriptFieldType::AssetRef: out << std::get<uint64_t>(field.Value); break;
+			}
 		}
 
 		void RequireMap(const YAML::Node& node, const std::string& context)
@@ -352,6 +459,38 @@ namespace TomCat {
 			if (!value)
 				throw std::runtime_error(context + " is missing required field '" + key + "'");
 			return value.as<T>();
+		}
+
+		ScriptFieldValue ReadScriptFieldValue(const YAML::Node& fieldNode,
+			ScriptFieldType type, const std::string& context)
+		{
+			switch (type)
+			{
+				case ScriptFieldType::Bool:
+					return ReadRequired<bool>(fieldNode, "Value", context);
+				case ScriptFieldType::Int32:
+					return ReadRequired<int32_t>(fieldNode, "Value", context);
+				case ScriptFieldType::Int64:
+				case ScriptFieldType::Enum:
+					return ReadRequired<int64_t>(fieldNode, "Value", context);
+				case ScriptFieldType::Float:
+					return ReadRequired<float>(fieldNode, "Value", context);
+				case ScriptFieldType::Double:
+					return ReadRequired<double>(fieldNode, "Value", context);
+				case ScriptFieldType::String:
+					return ReadRequired<std::string>(fieldNode, "Value", context);
+				case ScriptFieldType::Vector2:
+					return ReadRequired<glm::vec2>(fieldNode, "Value", context);
+				case ScriptFieldType::Vector3:
+					return ReadRequired<glm::vec3>(fieldNode, "Value", context);
+				case ScriptFieldType::Vector4:
+				case ScriptFieldType::Color:
+					return ReadRequired<glm::vec4>(fieldNode, "Value", context);
+				case ScriptFieldType::Entity:
+				case ScriptFieldType::AssetRef:
+					return ReadRequired<uint64_t>(fieldNode, "Value", context);
+			}
+			throw std::runtime_error(context + ".Type is invalid");
 		}
 
 		std::string Rigidbody2DBodyTypeToString(Rigidbody2D::BodyType bodyType)
@@ -481,6 +620,41 @@ namespace TomCat {
 				out << YAML::Key << "Start" << YAML::Value << line.Start;
 				out << YAML::Key << "End" << YAML::Value << line.End;
 				out << YAML::Key << "Width" << YAML::Value << line.Width;
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<CSharpScripts>())
+			{
+				const auto& scripts = entity.GetComponent<CSharpScripts>();
+				ValidateCSharpScripts(scripts, context + ".CSharpScripts");
+				out << YAML::Key << "CSharpScripts" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Scripts" << YAML::Value << YAML::BeginSeq;
+				for (const CSharpScriptEntry& script : scripts.Scripts)
+				{
+					out << YAML::BeginMap;
+					out << YAML::Key << "AttachmentID" << YAML::Value
+						<< static_cast<uint64_t>(script.AttachmentID);
+					out << YAML::Key << "Enabled" << YAML::Value << script.Enabled;
+					out << YAML::Key << "ScriptHandle" << YAML::Value
+						<< static_cast<uint64_t>(script.ScriptAsset);
+					out << YAML::Key << "ClassName" << YAML::Value
+						<< script.LastKnownClassName;
+					out << YAML::Key << "Fields" << YAML::Value << YAML::BeginSeq;
+					for (const ScriptField& field : script.Fields)
+					{
+						out << YAML::BeginMap;
+						out << YAML::Key << "FieldID" << YAML::Value << field.FieldID;
+						out << YAML::Key << "Name" << YAML::Value << field.Name;
+						out << YAML::Key << "Type" << YAML::Value
+							<< ScriptFieldTypeToString(field.Type);
+						out << YAML::Key << "Value" << YAML::Value;
+						SerializeScriptFieldValue(out, field);
+						out << YAML::EndMap;
+					}
+					out << YAML::EndSeq;
+					out << YAML::EndMap;
+				}
+				out << YAML::EndSeq;
 				out << YAML::EndMap;
 			}
 
@@ -618,6 +792,7 @@ namespace TomCat {
 			}
 
 			std::unordered_set<UUID> serializedUUIDs;
+			std::unordered_set<UUID> serializedAttachmentIDs;
 			for (UUID uuid : m_Scene->m_EntityOrder)
 			{
 				Entity entity = m_Scene->FindEntityByUUID(uuid);
@@ -628,6 +803,20 @@ namespace TomCat {
 				{
 					TC_Core_Error("Scene contains an invalid or duplicate UUID {0}", (uint64_t)uuid);
 					return false;
+				}
+				if (entity.HasComponent<CSharpScripts>())
+				{
+					for (const CSharpScriptEntry& script :
+						entity.GetComponent<CSharpScripts>().Scripts)
+					{
+						if (static_cast<uint64_t>(script.AttachmentID) != 0
+							&& !serializedAttachmentIDs.emplace(script.AttachmentID).second)
+						{
+							TC_Core_Error("Scene contains duplicate C# AttachmentID {0}",
+								static_cast<uint64_t>(script.AttachmentID));
+							return false;
+						}
+					}
 				}
 			}
 			if (!m_Scene->ValidateTransformHierarchy())
@@ -785,10 +974,12 @@ namespace TomCat {
 
 			const uint32_t schemaVersion = ReadRequired<uint32_t>(
 				data, "SchemaVersion", "scene document");
-			if (schemaVersion != CurrentSchemaVersion)
-				throw std::runtime_error("Scene SchemaVersion must be " +
-					std::to_string(CurrentSchemaVersion) + ", got " +
-					std::to_string(schemaVersion));
+			if (schemaVersion != OldestSupportedSchemaVersion
+				&& schemaVersion != CurrentSchemaVersion)
+				throw std::runtime_error("Scene SchemaVersion must be "
+					+ std::to_string(OldestSupportedSchemaVersion) + " or "
+					+ std::to_string(CurrentSchemaVersion) + ", got "
+					+ std::to_string(schemaVersion));
 
 			const std::string sceneName = ReadRequired<std::string>(
 				data, "SceneName", "scene document");
@@ -807,15 +998,29 @@ namespace TomCat {
 			std::vector<std::pair<UUID, UUID>> pendingParents;
 			std::vector<std::pair<UUID, UUID>> pendingJointConnections;
 			std::unordered_set<UUID> seenUUIDs;
+			std::unordered_set<UUID> seenAttachmentIDs;
 
 			for (std::size_t index = 0; index < entities.size(); ++index)
 			{
 				const YAML::Node entityNode = entities[index];
 				const std::string context = "Entities[" + std::to_string(index) + "]";
-				RequireExactFields(entityNode, context,
-					{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
-					{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D", "BoxCollider2D",
-						"CircleCollider2D", "DistanceJoint2D" });
+				if (schemaVersion == CurrentSchemaVersion)
+				{
+					RequireExactFields(entityNode, context,
+						{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
+						{ "Camera", "SpriteRenderer", "LineRenderer", "CSharpScripts",
+							"Rigidbody2D", "BoxCollider2D", "CircleCollider2D",
+							"DistanceJoint2D" });
+				}
+				else
+				{
+					// Schema 9 is accepted only as a migration input and did not
+					// define CSharpScripts. Saving the loaded scene always emits 10.
+					RequireExactFields(entityNode, context,
+						{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
+						{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D",
+							"BoxCollider2D", "CircleCollider2D", "DistanceJoint2D" });
+				}
 
 				const uint64_t rawUUID = ReadRequired<uint64_t>(entityNode, "Entity", context);
 				const UUID uuid(rawUUID);
@@ -932,6 +1137,77 @@ namespace TomCat {
 					line.End = ReadRequired<glm::vec3>(lineNode, "End", context + ".LineRenderer");
 					line.Width = ReadRequired<float>(lineNode, "Width", context + ".LineRenderer");
 					ValidateLine(line, context + ".LineRenderer");
+				}
+
+				YAML::Node csharpScriptsNode = entityNode["CSharpScripts"];
+				if (csharpScriptsNode)
+				{
+					RequireExactFields(csharpScriptsNode, context + ".CSharpScripts",
+						{ "Scripts" });
+					const YAML::Node scriptsNode = csharpScriptsNode["Scripts"];
+					if (!scriptsNode.IsSequence())
+						throw std::runtime_error(context
+							+ ".CSharpScripts.Scripts must be a sequence");
+
+					auto& scripts = entity.AddComponent<CSharpScripts>();
+					scripts.Scripts.reserve(scriptsNode.size());
+					for (size_t scriptIndex = 0; scriptIndex < scriptsNode.size();
+						++scriptIndex)
+					{
+						const YAML::Node scriptNode = scriptsNode[scriptIndex];
+						const std::string scriptContext = context + ".CSharpScripts.Scripts["
+							+ std::to_string(scriptIndex) + "]";
+						RequireExactFields(scriptNode, scriptContext,
+							{ "AttachmentID", "Enabled", "ScriptHandle", "ClassName",
+								"Fields" });
+
+						CSharpScriptEntry script;
+						script.AttachmentID = UUID(ReadRequired<uint64_t>(scriptNode,
+							"AttachmentID", scriptContext));
+						if (static_cast<uint64_t>(script.AttachmentID) == 0
+							|| !seenAttachmentIDs.emplace(script.AttachmentID).second)
+							throw std::runtime_error(scriptContext
+								+ ".AttachmentID must be nonzero and unique across the scene");
+						script.Enabled = ReadRequired<bool>(scriptNode, "Enabled",
+							scriptContext);
+						script.ScriptAsset = AssetHandle(ReadRequired<uint64_t>(scriptNode,
+							"ScriptHandle", scriptContext));
+						script.LastKnownClassName = ReadRequired<std::string>(scriptNode,
+							"ClassName", scriptContext);
+
+						const YAML::Node fieldsNode = scriptNode["Fields"];
+						if (!fieldsNode.IsSequence())
+							throw std::runtime_error(scriptContext
+								+ ".Fields must be a sequence");
+						script.Fields.reserve(fieldsNode.size());
+						for (size_t fieldIndex = 0; fieldIndex < fieldsNode.size();
+							++fieldIndex)
+						{
+							const YAML::Node fieldNode = fieldsNode[fieldIndex];
+							const std::string fieldContext = scriptContext + ".Fields["
+								+ std::to_string(fieldIndex) + "]";
+							RequireExactFields(fieldNode, fieldContext,
+								{ "FieldID", "Name", "Type", "Value" });
+
+							ScriptField field;
+							field.FieldID = ReadRequired<std::string>(fieldNode,
+								"FieldID", fieldContext);
+							field.Name = ReadRequired<std::string>(fieldNode, "Name",
+								fieldContext);
+							const std::string typeName = ReadRequired<std::string>(
+								fieldNode, "Type", fieldContext);
+							if (!TryParseScriptFieldType(typeName, field.Type))
+								throw std::runtime_error(fieldContext
+									+ ".Type contains unknown C# script field type '"
+									+ typeName + "'");
+							field.Value = ReadScriptFieldValue(fieldNode, field.Type,
+								fieldContext);
+							ValidateScriptField(field, fieldContext);
+							script.Fields.emplace_back(std::move(field));
+						}
+						scripts.Scripts.emplace_back(std::move(script));
+					}
+					ValidateCSharpScripts(scripts, context + ".CSharpScripts");
 				}
 
 				YAML::Node rigidbodyNode = entityNode["Rigidbody2D"];

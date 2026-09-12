@@ -44,6 +44,7 @@
 .vs/
 bin/
 bin-int/
+obj/
 .codemap/
 
 # CMake/MSBuild generated metadata
@@ -62,6 +63,8 @@ Tests/PhysicsRegression/*.vcxproj
 Tests/PhysicsRegression/*.vcxproj.filters
 Tests/SpriteAssetRegression/*.vcxproj
 Tests/SpriteAssetRegression/*.vcxproj.filters
+Tests/ScriptCompilerRegression/*.vcxproj
+Tests/ScriptCompilerRegression/*.vcxproj.filters
 
 #Files
 .user

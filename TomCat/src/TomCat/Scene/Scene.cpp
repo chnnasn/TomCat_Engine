@@ -2,7 +2,7 @@
 #include "Scene.h"
 
 #include "Components.h"
-#include "ScriptableEntity.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Math/Math.h"
@@ -628,144 +628,6 @@ namespace TomCat {
 
 	}
 
-	void Scene::QueueNativeScriptInstanceDestruction(NativeScript& script, const char* context)
-	{
-		if (!script.Instance)
-			return;
-
-		DeferredNativeScriptDestruction deferred;
-		deferred.Instance = script.Instance;
-		deferred.InstantiateScript = script.InstantiateScript;
-		deferred.DestroyScript = script.DestroyScript;
-		deferred.Context = context ? context : "native-script mutation";
-		// Store the complete destruction record before detaching ownership. If the
-		// allocation throws, the component still owns its live instance.
-		m_DeferredNativeScriptDestructions.push_back(std::move(deferred));
-		script.Instance = nullptr;
-	}
-
-	void Scene::DestroyDetachedNativeScriptInstance(
-		const DeferredNativeScriptDestruction& script) noexcept
-	{
-		if (!script.Instance)
-			return;
-		const char* context = script.Context.empty()
-			? "native-script mutation" : script.Context.c_str();
-
-		try
-		{
-			script.Instance->OnDestroy();
-		}
-		catch (const std::exception& exception)
-		{
-			TC_Core_Error("Native script OnDestroy failed during {0}: {1}", context, exception.what());
-		}
-		catch (...)
-		{
-			TC_Core_Error("Native script OnDestroy failed during {0} with an unknown exception", context);
-		}
-
-		try
-		{
-			if (script.DestroyScript)
-			{
-				NativeScript detached;
-				detached.Instance = script.Instance;
-				detached.InstantiateScript = script.InstantiateScript;
-				detached.DestroyScript = script.DestroyScript;
-				script.DestroyScript(&detached);
-			}
-			else
-				delete script.Instance;
-		}
-		catch (const std::exception& exception)
-		{
-			TC_Core_Error("Native script destruction failed during {0}: {1}", context, exception.what());
-		}
-		catch (...)
-		{
-			TC_Core_Error("Native script destruction failed during {0} with an unknown exception", context);
-		}
-
-		// Never retry a partially completed custom destroy callback. Runtime and
-		// physics teardown must continue even when user code violates the boundary.
-	}
-
-	void Scene::DestroyNativeScriptInstance(NativeScript& script, const char* context) noexcept
-	{
-		if (!script.Instance)
-			return;
-
-		if (m_NativeCollisionCallbackDepth > 0)
-		{
-			try
-			{
-				QueueNativeScriptInstanceDestruction(script, context);
-			}
-			catch (const std::exception& exception)
-			{
-				TC_Core_Error("Could not defer native script destruction during {0}: {1}",
-					context ? context : "native-script mutation", exception.what());
-			}
-			catch (...)
-			{
-				TC_Core_Error("Could not defer native script destruction during {0}",
-					context ? context : "native-script mutation");
-			}
-			return;
-		}
-
-		DeferredNativeScriptDestruction detached;
-		detached.Instance = script.Instance;
-		detached.InstantiateScript = script.InstantiateScript;
-		detached.DestroyScript = script.DestroyScript;
-		try
-		{
-			detached.Context = context ? context : "native-script mutation";
-		}
-		catch (...)
-		{
-			// Destruction must remain noexcept even if formatting its diagnostic
-			// context runs out of memory.
-		}
-		script.Instance = nullptr;
-		DestroyDetachedNativeScriptInstance(detached);
-	}
-
-	void Scene::FlushDeferredNativeScriptMutations()
-	{
-		if (m_NativeCollisionCallbackDepth > 0 || m_FlushingNativeScriptMutations)
-			return;
-
-		m_FlushingNativeScriptMutations = true;
-		try
-		{
-			while (!m_DeferredNativeScriptDestructions.empty()
-				|| !m_DeferredEntityDestructions.empty())
-			{
-				std::vector<DeferredNativeScriptDestruction> scripts;
-				scripts.swap(m_DeferredNativeScriptDestructions);
-				for (const DeferredNativeScriptDestruction& script : scripts)
-					DestroyDetachedNativeScriptInstance(script);
-
-				std::vector<UUID> entities;
-				entities.swap(m_DeferredEntityDestructions);
-				for (UUID uuid : entities)
-				{
-					Entity entity = FindEntityByUUID(uuid);
-					if (entity)
-						DestroyEntity(entity);
-				}
-			}
-		}
-		catch (...)
-		{
-			m_FlushingNativeScriptMutations = false;
-			throw;
-		}
-		m_FlushingNativeScriptMutations = false;
-	}
-
 	static b2BodyType Rigidbody2DTypeToBox2DBody(Rigidbody2D::BodyType bodyType)
 	{
 		switch (bodyType)
@@ -835,7 +697,7 @@ namespace TomCat {
 		CopyComponentIfExists<SpriteRenderer>(dst, src);
 		CopyComponentIfExists<LineRenderer>(dst, src);
 		CopyComponentIfExists<C_Camera>(dst, src);
-		CopyComponentIfExists<NativeScript>(dst, src);
+		CopyComponentIfExists<CSharpScripts>(dst, src);
 		CopyComponentIfExists<Rigidbody2D>(dst, src);
 		CopyComponentIfExists<BoxCollider2D>(dst, src);
 		CopyComponentIfExists<CircleCollider2D>(dst, src);
@@ -843,8 +705,6 @@ namespace TomCat {
 
 		// Runtime-owned pointers must never be shared by an authoring copy or a
 		// duplicated entity.
-		if (dst.HasComponent<NativeScript>())
-			dst.GetComponent<NativeScript>().Instance = nullptr;
 		if (dst.HasComponent<Rigidbody2D>())
 			dst.GetComponent<Rigidbody2D>().RuntimeBody = nullptr;
 		if (dst.HasComponent<BoxCollider2D>())
@@ -946,14 +806,12 @@ namespace TomCat {
 		CopyComponent<SpriteRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<LineRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<C_Camera>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<NativeScript>(dstSceneRegistry, srcSceneRegistry, enttMap);
+		CopyComponent<CSharpScripts>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<Rigidbody2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<BoxCollider2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<CircleCollider2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
 		CopyComponent<DistanceJoint2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
 
-		for (auto entity : dstSceneRegistry.view<NativeScript>())
-			dstSceneRegistry.get<NativeScript>(entity).Instance = nullptr;
 		for (auto entity : dstSceneRegistry.view<Rigidbody2D>())
 			dstSceneRegistry.get<Rigidbody2D>(entity).RuntimeBody = nullptr;
 		for (auto entity : dstSceneRegistry.view<BoxCollider2D>())
@@ -1158,17 +1016,6 @@ namespace TomCat {
 		if (std::find(m_EntitiesBeingDestroyed.begin(), m_EntitiesBeingDestroyed.end(), entityUUID)
 			!= m_EntitiesBeingDestroyed.end())
 			return;
-		if (m_NativeCollisionCallbackDepth > 0)
-		{
-			// Keep the Entity and active ScriptableEntity alive until its virtual
-			// collision callback returns. The pending UUID also makes later recipients
-			// in the same event batch ineligible for dispatch.
-			if (std::find(m_DeferredEntityDestructions.begin(),
-				m_DeferredEntityDestructions.end(), entityUUID)
-				== m_DeferredEntityDestructions.end())
-				m_DeferredEntityDestructions.push_back(entityUUID);
-			return;
-		}
 		m_EntitiesBeingDestroyed.push_back(entityUUID);
 		std::vector<UUID> children;
 		if (auto childrenIt = m_ChildrenMap.find(entityUUID); childrenIt != m_ChildrenMap.end())
@@ -1183,6 +1030,11 @@ namespace TomCat {
 				DestroyEntity(child);
 			m_ParentMap.erase(childUUID);
 		}
+
+		// Keep the Entity and its serialized attachment records alive while managed
+		// OnDisable/OnDestroy execute. ScriptEngine is a no-op for edit-time scenes.
+		Scripting::ScriptEngine::Get().NotifyEntityDestroyed(
+			*this, static_cast<uint64_t>(entityUUID));
 
 		auto parentIt = m_ParentMap.find(entityUUID);
 		if (parentIt != m_ParentMap.end())
@@ -1199,9 +1051,6 @@ namespace TomCat {
 		}
 		m_ChildrenMap.erase(entityUUID);
 		m_EntityOrder.erase(std::remove(m_EntityOrder.begin(), m_EntityOrder.end(), entityUUID), m_EntityOrder.end());
-
-		if (entity.HasComponent<NativeScript>())
-			DestroyNativeScriptInstance(entity.GetComponent<NativeScript>(), "entity destruction");
 
 		if (entity.HasComponent<BoxCollider2D>())
 			entity.GetComponent<BoxCollider2D>().RuntimeFixture = nullptr;
@@ -1662,6 +1511,32 @@ namespace TomCat {
 		const uint64_t runtimeGeneration = m_RuntimeSessionGeneration;
 		const std::vector<SceneContactListener::PendingEvent> events =
 			m_ContactListener->TakePendingEvents();
+		if (m_ScriptSceneSessionID != 0 && !events.empty())
+		{
+			std::vector<Scripting::NativePhysicsEventV1> managedEvents;
+			managedEvents.reserve(events.size());
+			for (const SceneContactListener::PendingEvent& pending : events)
+			{
+				Scripting::NativePhysicsEventV1 event;
+				if (pending.Pair.IsTrigger)
+					event.Kind = static_cast<uint32_t>(pending.Type
+						== SceneContactListener::PendingType::Enter
+						? Scripting::NativePhysicsEventKind::TriggerEnter
+						: Scripting::NativePhysicsEventKind::TriggerExit);
+				else
+					event.Kind = static_cast<uint32_t>(pending.Type
+						== SceneContactListener::PendingType::Enter
+						? Scripting::NativePhysicsEventKind::CollisionEnter
+						: Scripting::NativePhysicsEventKind::CollisionExit);
+				event.EntityA = { m_ScriptSceneSessionID, pending.Pair.A,
+					m_RuntimeSessionGeneration };
+				event.EntityB = { m_ScriptSceneSessionID, pending.Pair.B,
+					m_RuntimeSessionGeneration };
+				managedEvents.push_back(event);
+			}
+			Scripting::ScriptEngine::Get().DispatchPhysicsEvents(
+				m_ScriptSceneSessionID, managedEvents);
+		}
 
 		// Snapshot callbacks so listener add/remove operations are iteration-safe.
 		// A removed handle is checked again before invocation; listeners added by a
@@ -1705,45 +1580,8 @@ namespace TomCat {
 
 			auto pairStillExists = [&]()
 			{
-				auto destructionPending = [&](UUID uuid)
-				{
-					return std::find(m_DeferredEntityDestructions.begin(),
-						m_DeferredEntityDestructions.end(), uuid)
-						!= m_DeferredEntityDestructions.end();
-				};
 				return m_RuntimeRunning && runtimeGeneration == m_RuntimeSessionGeneration
-					&& !destructionPending(uuidA) && !destructionPending(uuidB)
 					&& FindEntityByUUID(uuidA) == originalA && FindEntityByUUID(uuidB) == originalB;
-			};
-			auto dispatchToParticipatingScripts = [&](const auto& event, auto&& invoke)
-			{
-				const UUID recipients[] = { uuidA, uuidB };
-				for (UUID recipient : recipients)
-				{
-					if (!pairStillExists())
-						break;
-					Entity scriptEntity = FindEntityByUUID(recipient);
-					if (!scriptEntity || !scriptEntity.HasComponent<NativeScript>())
-						continue;
-					auto& nativeScript = scriptEntity.GetComponent<NativeScript>();
-					if (nativeScript.Instance)
-					{
-						ScriptableEntity* instance = nativeScript.Instance;
-						++m_NativeCollisionCallbackDepth;
-						try
-						{
-							invoke(*instance, event);
-						}
-						catch (...)
-						{
-							--m_NativeCollisionCallbackDepth;
-							FlushDeferredNativeScriptMutations();
-							throw;
-						}
-						--m_NativeCollisionCallbackDepth;
-						FlushDeferredNativeScriptMutations();
-					}
-				}
 			};
 
 			if (pending.Pair.IsTrigger)
@@ -1751,11 +1589,6 @@ namespace TomCat {
 				if (pending.Type == SceneContactListener::PendingType::Enter)
 				{
 					const TriggerEnter2D event{ uuidA, uuidB };
-					dispatchToParticipatingScripts(event,
-						[](ScriptableEntity& script, const TriggerEnter2D& triggerEvent)
-						{
-							script.OnTriggerEnter2D(triggerEvent);
-						});
 					for (const auto& [handle, callback] : triggerEnterListeners)
 					{
 						if (!pairStillExists())
@@ -1767,11 +1600,6 @@ namespace TomCat {
 				else
 				{
 					const TriggerExit2D event{ uuidA, uuidB };
-					dispatchToParticipatingScripts(event,
-						[](ScriptableEntity& script, const TriggerExit2D& triggerEvent)
-						{
-							script.OnTriggerExit2D(triggerEvent);
-						});
 					for (const auto& [handle, callback] : triggerExitListeners)
 					{
 						if (!pairStillExists())
@@ -1784,11 +1612,6 @@ namespace TomCat {
 			else if (pending.Type == SceneContactListener::PendingType::Enter)
 			{
 				const CollisionEnter2D event{ uuidA, uuidB };
-				dispatchToParticipatingScripts(event,
-					[](ScriptableEntity& script, const CollisionEnter2D& collisionEvent)
-					{
-						script.OnCollisionEnter2D(collisionEvent);
-					});
 				for (const auto& [handle, callback] : enterListeners)
 				{
 					if (!pairStillExists())
@@ -1800,11 +1623,6 @@ namespace TomCat {
 			else
 			{
 				const CollisionExit2D event{ uuidA, uuidB };
-				dispatchToParticipatingScripts(event,
-					[](ScriptableEntity& script, const CollisionExit2D& collisionEvent)
-					{
-						script.OnCollisionExit2D(collisionEvent);
-					});
 				for (const auto& [handle, callback] : exitListeners)
 				{
 					if (!pairStillExists())
@@ -2363,10 +2181,10 @@ namespace TomCat {
 		return glm::vec2(velocity.x, velocity.y);
 	}
 
-	void Scene::OnRuntimeStart()
+	bool Scene::OnRuntimeStart()
 	{
 		if (m_RuntimeRunning)
-			return;
+			return true;
 
 		m_RuntimeAccumulator = 0.0;
 		m_RuntimeBodies.clear();
@@ -2377,7 +2195,33 @@ namespace TomCat {
 		++m_RuntimeSessionGeneration;
 		m_RuntimeRunning = true;
 		if (!RebuildRuntimePhysicsWorld(false))
+		{
 			TC_Core_Error("Failed to initialize the runtime 2D physics world");
+			OnRuntimeStop();
+			return false;
+		}
+
+		bool hasManagedScripts = false;
+		for (const entt::entity entity : m_Registry.view<CSharpScripts>())
+		{
+			if (!m_Registry.get<CSharpScripts>(entity).Scripts.empty())
+			{
+				hasManagedScripts = true;
+				break;
+			}
+		}
+		if (hasManagedScripts)
+		{
+			m_ScriptSceneSessionID = Scripting::ScriptEngine::Get().StartScene(
+				*this, m_RuntimeSessionGeneration);
+			if (m_ScriptSceneSessionID == 0)
+			{
+				TC_Core_Error("C# scripts are attached, but the managed runtime or current project assembly is unavailable");
+				OnRuntimeStop();
+				return false;
+			}
+		}
+		return true;
 	}
 
 	void Scene::OnRuntimeStop()
@@ -2386,6 +2230,11 @@ namespace TomCat {
 		// synthetic Exit events for a world that is being discarded.
 		m_RuntimeRunning = false;
 		m_RuntimeAccumulator = 0.0;
+		if (m_ScriptSceneSessionID != 0)
+		{
+			Scripting::ScriptEngine::Get().StopScene(m_ScriptSceneSessionID);
+			m_ScriptSceneSessionID = 0;
+		}
 		++m_RuntimeSessionGeneration;
 		if (m_PhysicsWorld)
 			m_PhysicsWorld->SetContactFilter(nullptr);
@@ -2393,23 +2242,6 @@ namespace TomCat {
 			m_PhysicsWorld->SetContactListener(nullptr);
 		if (m_ContactListener)
 			m_ContactListener->Clear();
-
-		std::vector<UUID> scriptedEntities;
-		auto scriptView = m_Registry.view<ID, NativeScript>();
-		scriptedEntities.reserve(scriptView.size_hint());
-		for (entt::entity entity : scriptView)
-			scriptedEntities.push_back(scriptView.get<ID>(entity).id);
-		for (UUID uuid : scriptedEntities)
-		{
-			Entity entity = FindEntityByUUID(uuid);
-			if (!entity || !entity.HasComponent<NativeScript>())
-				continue;
-			auto& script = entity.GetComponent<NativeScript>();
-			if (!script.Instance)
-				continue;
-
-			DestroyNativeScriptInstance(script, "runtime shutdown");
-		}
 
 		ResetRuntimePhysicsPointers();
 		m_RuntimeBodies.clear();
@@ -2422,47 +2254,6 @@ namespace TomCat {
 		m_ContactListener = nullptr;
 		delete m_ContactFilter;
 		m_ContactFilter = nullptr;
-	}
-
-	void Scene::UpdateRuntimeScripts(Timestep fixedTimestep)
-	{
-		// Iterate a UUID snapshot so a script can safely delete another entity.
-		std::vector<UUID> scriptedEntities;
-		auto scriptView = m_Registry.view<ID, NativeScript>();
-		scriptedEntities.reserve(scriptView.size_hint());
-		for (entt::entity entity : scriptView)
-			scriptedEntities.push_back(scriptView.get<ID>(entity).id);
-
-		for (UUID uuid : scriptedEntities)
-		{
-			Entity entity = FindEntityByUUID(uuid);
-			if (!entity || !entity.HasComponent<NativeScript>())
-				continue;
-
-			auto& script = entity.GetComponent<NativeScript>();
-			if (!script.Instance)
-			{
-				if (!script.InstantiateScript)
-				{
-					TC_Core_Warn("NativeScript on entity {0} has not been bound", (uint32_t)entity);
-					continue;
-				}
-				script.Instance = script.InstantiateScript();
-				if (!script.Instance)
-					continue;
-				script.Instance->m_Entity = entity;
-				script.Instance->OnCreate();
-
-				// OnCreate may have removed the component/entity.
-				entity = FindEntityByUUID(uuid);
-				if (!entity || !entity.HasComponent<NativeScript>())
-					continue;
-			}
-
-			auto& currentScript = entity.GetComponent<NativeScript>();
-			if (currentScript.Instance)
-				currentScript.Instance->OnUpdate(fixedTimestep);
-		}
 	}
 
 	void Scene::SynchronizeRuntimeTransforms()
@@ -2496,11 +2287,12 @@ namespace TomCat {
 		if (!SynchronizeRuntimePhysicsDefinitions())
 			return false;
 
-		const Timestep fixedTimestep(FixedRuntimeTimestep);
-		UpdateRuntimeScripts(fixedTimestep);
+		if (m_ScriptSceneSessionID != 0)
+			Scripting::ScriptEngine::Get().FixedUpdateAll(m_ScriptSceneSessionID,
+				FixedRuntimeTimestep);
 		if (!m_RuntimeRunning || !m_PhysicsWorld)
 			return false;
-		// OnCreate/OnUpdate may add, remove, replace, or directly edit physics
+		// Managed callbacks may add, remove, replace, or directly edit physics
 		// components. Reconcile again before entering Box2D's locked Step region.
 		if (!SynchronizeRuntimePhysicsDefinitions())
 			return false;
@@ -2584,6 +2376,12 @@ namespace TomCat {
 			m_RuntimeAccumulator = std::fmod(m_RuntimeAccumulator, fixedTimestep);
 			if (m_RuntimeAccumulator + stepBoundaryTolerance >= fixedTimestep)
 				m_RuntimeAccumulator = 0.0;
+		}
+
+		if (m_RuntimeRunning)
+		{
+			if (m_ScriptSceneSessionID != 0)
+				Scripting::ScriptEngine::Get().UpdateAll(m_ScriptSceneSessionID, frameDelta);
 		}
 
 		RenderRuntimeScene();
@@ -2855,6 +2653,39 @@ namespace TomCat {
 				targetIt != duplicateUUIDs.end())
 				joint.ConnectedEntity = targetIt->second;
 		}
+
+		// Attachment identity belongs to the attachment, not to the script asset.
+		// Duplicates receive fresh IDs, and Entity fields that pointed inside the
+		// duplicated subtree follow their duplicated targets.
+		std::unordered_set<uint64_t> attachmentIDs;
+		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
+		{
+			(void)sourceUUID;
+			Entity duplicatedEntity = FindEntityByUUID(duplicateUUID);
+			if (!duplicatedEntity || !duplicatedEntity.HasComponent<CSharpScripts>())
+				continue;
+			for (CSharpScriptEntry& script : duplicatedEntity.GetComponent<CSharpScripts>().Scripts)
+			{
+				uint64_t attachment = 0;
+				do
+				{
+					script.AttachmentID = UUID();
+					attachment = static_cast<uint64_t>(script.AttachmentID);
+				}
+				while (attachment == 0 || !attachmentIDs.emplace(attachment).second);
+
+				for (ScriptField& field : script.Fields)
+				{
+					if (field.Type != ScriptFieldType::Entity
+						|| !std::holds_alternative<uint64_t>(field.Value))
+						continue;
+					const UUID target(std::get<uint64_t>(field.Value));
+					if (auto targetIt = duplicateUUIDs.find(target);
+						targetIt != duplicateUUIDs.end())
+						field.Value = static_cast<uint64_t>(targetIt->second);
+				}
+			}
+		}
 		return duplicate;
 	}
 
@@ -2903,6 +2734,39 @@ namespace TomCat {
 			reference.PropertyPath = "Entity " + std::to_string(entityID) +
 				".SpriteRenderer.SpriteHandle";
 			references.push_back(std::move(reference));
+		}
+
+		auto scriptsView = m_Registry.view<ID, CSharpScripts>();
+		for (const entt::entity entity : scriptsView)
+		{
+			const uint64_t entityID = static_cast<uint64_t>(scriptsView.get<ID>(entity).id);
+			const auto& scripts = scriptsView.get<CSharpScripts>(entity).Scripts;
+			for (size_t scriptIndex = 0; scriptIndex < scripts.size(); ++scriptIndex)
+			{
+				const CSharpScriptEntry& script = scripts[scriptIndex];
+				if (script.ScriptAsset == handle)
+				{
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.PropertyPath = "Entity " + std::to_string(entityID)
+						+ ".CSharpScripts.Scripts[" + std::to_string(scriptIndex)
+						+ "].ScriptHandle";
+					references.push_back(std::move(reference));
+				}
+				for (const ScriptField& field : script.Fields)
+				{
+					if (field.Type != ScriptFieldType::AssetRef
+						|| !std::holds_alternative<uint64_t>(field.Value)
+						|| std::get<uint64_t>(field.Value) != static_cast<uint64_t>(handle))
+						continue;
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.PropertyPath = "Entity " + std::to_string(entityID)
+						+ ".CSharpScripts.Scripts[" + std::to_string(scriptIndex)
+						+ "].Fields." + field.Name;
+					references.push_back(std::move(reference));
+				}
+			}
 		}
 		return references;
 	}
@@ -2961,11 +2825,8 @@ namespace TomCat {
 	}
 
 	template<>
-	void Scene::OnComponentAdded<NativeScript>(Entity entity, NativeScript& component)
+	void Scene::OnComponentAdded<CSharpScripts>(Entity entity, CSharpScripts& component)
 	{
-		// Script instances belong to one runtime component only. Configuration may
-		// be copied/replaced, but a live instance pointer must never be shared.
-		component.Instance = nullptr;
 	}
 
 	template<>

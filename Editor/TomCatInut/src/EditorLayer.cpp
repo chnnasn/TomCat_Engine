@@ -2,13 +2,21 @@
 #include <imgui/imgui.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
+#include <limits>
 #include <sstream>
 #include <string_view>
+#include <system_error>
 #include <vector>
+
+#ifdef TC_PLATFORM_WINDOWS
+	#include <Windows.h>
+#endif
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -18,6 +26,9 @@
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Scripting/ManagedRuntimeFactory.h"
+#include "TomCat/Scripting/ScriptDiagnosticSink.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 
 #include "ImGuizmo.h"
 
@@ -285,6 +296,618 @@ namespace TomCat {
 			return false;
 		}
 
+		std::string LowerASCII(std::string value)
+		{
+			std::transform(value.begin(), value.end(), value.begin(),
+				[](unsigned char character)
+				{
+					return static_cast<char>(std::tolower(character));
+				});
+			return value;
+		}
+
+		std::string SanitizePlayerDirectoryName(std::string value)
+		{
+			for (char& character : value)
+			{
+				const unsigned char byte = static_cast<unsigned char>(character);
+				if (byte < 0x20 || character == '<' || character == '>' ||
+					character == ':' || character == '"' || character == '/' ||
+					character == '\\' || character == '|' || character == '?' ||
+					character == '*')
+					character = '_';
+			}
+			while (!value.empty() && (value.front() == ' ' || value.front() == '.'))
+				value.erase(value.begin());
+			while (!value.empty() && (value.back() == ' ' || value.back() == '.'))
+				value.pop_back();
+			if (value.empty())
+				value = "TomCatGame";
+
+			std::string stem = value.substr(0, value.find('.'));
+			stem = LowerASCII(std::move(stem));
+			bool reserved = stem == "con" || stem == "prn" || stem == "aux" ||
+				stem == "nul";
+			if (!reserved && stem.size() == 4 &&
+				(stem.rfind("com", 0) == 0 || stem.rfind("lpt", 0) == 0) &&
+				stem[3] >= '1' && stem[3] <= '9')
+				reserved = true;
+			if (reserved)
+				value.insert(value.begin(), '_');
+			return value;
+		}
+
+		bool IsFilesystemReparsePoint(const std::filesystem::path& path)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			const DWORD attributes = GetFileAttributesW(path.c_str());
+			return attributes != INVALID_FILE_ATTRIBUTES &&
+				(attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+			std::error_code error;
+			return std::filesystem::is_symlink(
+				std::filesystem::symlink_status(path, error));
+#endif
+		}
+
+		bool ReadBinaryFileForBuild(const std::filesystem::path& path,
+			std::vector<uint8_t>& bytes, std::string& errorMessage)
+		{
+			bytes.clear();
+			std::error_code error;
+			const uintmax_t fileSize = std::filesystem::file_size(path, error);
+			if (error || fileSize > static_cast<uintmax_t>((std::numeric_limits<size_t>::max)()))
+			{
+				errorMessage = "Could not inspect '" + PathToUTF8(path) + "': " +
+					(error ? error.message() : "file is too large");
+				return false;
+			}
+			std::ifstream input(path, std::ios::binary);
+			if (!input)
+			{
+				errorMessage = "Could not open '" + PathToUTF8(path) + "'.";
+				return false;
+			}
+			bytes.resize(static_cast<size_t>(fileSize));
+			if (!bytes.empty())
+				input.read(reinterpret_cast<char*>(bytes.data()),
+					static_cast<std::streamsize>(bytes.size()));
+			if (!input || input.peek() != std::char_traits<char>::eof())
+			{
+				errorMessage = "Could not read '" + PathToUTF8(path) + "' completely.";
+				bytes.clear();
+				return false;
+			}
+			return true;
+		}
+
+		bool ReadTextFileForBuild(const std::filesystem::path& path,
+			std::string& contents, std::string& errorMessage)
+		{
+			std::ifstream input(path, std::ios::binary);
+			if (!input)
+			{
+				errorMessage = "Could not open '" + PathToUTF8(path) + "'.";
+				return false;
+			}
+			std::ostringstream output;
+			output << input.rdbuf();
+			if (input.bad())
+			{
+				errorMessage = "Could not read '" + PathToUTF8(path) + "'.";
+				return false;
+			}
+			contents = output.str();
+			return true;
+		}
+
+		bool CopyPlayerFile(const std::filesystem::path& source,
+			const std::filesystem::path& destination, std::string& errorMessage)
+		{
+			std::error_code error;
+			const std::filesystem::file_status status =
+				std::filesystem::symlink_status(source, error);
+			if (error || !std::filesystem::is_regular_file(status) ||
+				std::filesystem::is_symlink(status) || IsFilesystemReparsePoint(source))
+			{
+				errorMessage = "Required release file is missing or unsafe: '" +
+					PathToUTF8(source) + "'.";
+				return false;
+			}
+			std::filesystem::create_directories(destination.parent_path(), error);
+			if (error)
+			{
+				errorMessage = "Could not create '" +
+					PathToUTF8(destination.parent_path()) + "': " + error.message();
+				return false;
+			}
+			std::filesystem::copy_file(source, destination,
+				std::filesystem::copy_options::overwrite_existing, error);
+			if (error)
+			{
+				errorMessage = "Could not copy '" + PathToUTF8(source) + "' to '" +
+					PathToUTF8(destination) + "': " + error.message();
+				return false;
+			}
+			return true;
+		}
+
+		bool CopyPlayerDirectory(const std::filesystem::path& source,
+			const std::filesystem::path& destination, std::string& errorMessage)
+		{
+			std::error_code error;
+			const std::filesystem::file_status rootStatus =
+				std::filesystem::symlink_status(source, error);
+			if (error || !std::filesystem::is_directory(rootStatus) ||
+				std::filesystem::is_symlink(rootStatus) || IsFilesystemReparsePoint(source))
+			{
+				errorMessage = "Required release directory is missing or unsafe: '" +
+					PathToUTF8(source) + "'.";
+				return false;
+			}
+			std::filesystem::create_directories(destination, error);
+			if (error)
+			{
+				errorMessage = "Could not create '" + PathToUTF8(destination) +
+					"': " + error.message();
+				return false;
+			}
+
+			std::filesystem::recursive_directory_iterator iterator(source,
+				std::filesystem::directory_options::none, error), end;
+			for (; !error && iterator != end; iterator.increment(error))
+			{
+				const std::filesystem::file_status status = iterator->symlink_status(error);
+				if (error)
+					break;
+				if (std::filesystem::is_symlink(status) ||
+					IsFilesystemReparsePoint(iterator->path()))
+				{
+					errorMessage = "Release inputs may not contain symbolic links: '" +
+						PathToUTF8(iterator->path()) + "'.";
+					return false;
+				}
+				const std::filesystem::path relative =
+					iterator->path().lexically_relative(source);
+				if (relative.empty() || relative.is_absolute())
+				{
+					errorMessage = "Could not derive a safe release-relative path for '" +
+						PathToUTF8(iterator->path()) + "'.";
+					return false;
+				}
+				const std::filesystem::path target = destination / relative;
+				if (std::filesystem::is_directory(status))
+					std::filesystem::create_directories(target, error);
+				else if (std::filesystem::is_regular_file(status))
+				{
+					if (!CopyPlayerFile(iterator->path(), target, errorMessage))
+						return false;
+				}
+				else
+				{
+					errorMessage = "Release inputs contain an unsupported filesystem entry: '" +
+						PathToUTF8(iterator->path()) + "'.";
+					return false;
+				}
+			}
+			if (error)
+			{
+				errorMessage = "Could not enumerate '" + PathToUTF8(source) +
+					"': " + error.message();
+				return false;
+			}
+			return true;
+		}
+
+		bool ParseNumericVersion(std::string_view value,
+			std::vector<uint32_t>& components)
+		{
+			components.clear();
+			size_t cursor = 0;
+			while (cursor < value.size())
+			{
+				const size_t separator = value.find('.', cursor);
+				const size_t end = separator == std::string_view::npos
+					? value.size() : separator;
+				if (end == cursor)
+					return false;
+				uint32_t component = 0;
+				const char* begin = value.data() + cursor;
+				const char* finish = value.data() + end;
+				const auto parsed = std::from_chars(begin, finish, component);
+				if (parsed.ec != std::errc{} || parsed.ptr != finish)
+					return false;
+				components.push_back(component);
+				if (separator == std::string_view::npos)
+					return true;
+				cursor = separator + 1;
+			}
+			return !components.empty();
+		}
+
+		bool NumericVersionLess(std::vector<uint32_t> left,
+			std::vector<uint32_t> right)
+		{
+			const size_t count = std::max(left.size(), right.size());
+			left.resize(count);
+			right.resize(count);
+			return std::lexicographical_compare(left.begin(), left.end(),
+				right.begin(), right.end());
+		}
+
+		bool ReadFrameworkVersion(const std::filesystem::path& runtimeConfig,
+			std::vector<uint32_t>& requestedVersion, std::string& errorMessage)
+		{
+			std::string json;
+			if (!ReadTextFileForBuild(runtimeConfig, json, errorMessage))
+				return false;
+			size_t cursor = json.find("\"framework\"");
+			if (cursor != std::string::npos)
+				cursor = json.find("\"version\"", cursor);
+			if (cursor == std::string::npos)
+			{
+				errorMessage = "TomCat.ScriptHost.runtimeconfig.json has no framework version.";
+				return false;
+			}
+			cursor = json.find(':', cursor);
+			cursor = cursor == std::string::npos ? cursor : json.find('"', cursor + 1);
+			const size_t end = cursor == std::string::npos
+				? cursor : json.find('"', cursor + 1);
+			if (cursor == std::string::npos || end == std::string::npos ||
+				!ParseNumericVersion(std::string_view(json).substr(cursor + 1,
+					end - cursor - 1), requestedVersion) || requestedVersion.size() < 2)
+			{
+				errorMessage = "TomCat.ScriptHost.runtimeconfig.json has an invalid framework version.";
+				return false;
+			}
+			return true;
+		}
+
+		bool FindHighestDotNetVersionDirectory(const std::filesystem::path& root,
+			const std::vector<uint32_t>* requestedFramework,
+			std::filesystem::path& selected, std::string& errorMessage)
+		{
+			selected.clear();
+			std::vector<uint32_t> selectedVersion;
+			std::error_code error;
+			std::filesystem::directory_iterator iterator(root,
+				std::filesystem::directory_options::none, error), end;
+			for (; !error && iterator != end; iterator.increment(error))
+			{
+				if (!iterator->is_directory(error) || error)
+					continue;
+				std::vector<uint32_t> version;
+				if (!ParseNumericVersion(PathToUTF8(iterator->path().filename()), version))
+					continue;
+				if (requestedFramework)
+				{
+					if (version.size() < 2 || (*requestedFramework).size() < 2 ||
+						version[0] != (*requestedFramework)[0] ||
+						version[1] != (*requestedFramework)[1] ||
+						NumericVersionLess(version, *requestedFramework))
+						continue;
+				}
+				if (selected.empty() || NumericVersionLess(selectedVersion, version))
+				{
+					selected = iterator->path();
+					selectedVersion = std::move(version);
+				}
+			}
+			if (error)
+			{
+				errorMessage = "Could not enumerate .NET versions in '" +
+					PathToUTF8(root) + "': " + error.message();
+				return false;
+			}
+			return !selected.empty();
+		}
+
+#ifdef TC_PLATFORM_WINDOWS
+		std::filesystem::path ReadWindowsEnvironmentPath(const wchar_t* name)
+		{
+			const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+			if (required == 0)
+				return {};
+			std::vector<wchar_t> value(static_cast<size_t>(required));
+			const DWORD written = GetEnvironmentVariableW(name, value.data(), required);
+			if (written == 0 || written >= required)
+				return {};
+			return std::filesystem::path(std::wstring(value.data(), written));
+		}
+#endif
+
+		bool ResolvePrivateDotNetPayload(const std::filesystem::path& runtimeConfig,
+			std::filesystem::path& dotnetRoot, std::filesystem::path& hostFxrDirectory,
+			std::filesystem::path& runtimeDirectory, std::string& errorMessage)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			std::vector<uint32_t> requestedFramework;
+			if (!ReadFrameworkVersion(runtimeConfig, requestedFramework, errorMessage))
+				return false;
+
+			std::vector<std::filesystem::path> candidates;
+			const std::filesystem::path configured =
+				ReadWindowsEnvironmentPath(L"DOTNET_ROOT");
+			if (!configured.empty())
+				candidates.push_back(configured);
+			const std::filesystem::path programFiles =
+				ReadWindowsEnvironmentPath(L"ProgramFiles");
+			if (!programFiles.empty())
+				candidates.push_back(programFiles / L"dotnet");
+
+			for (const std::filesystem::path& candidate : candidates)
+			{
+				std::error_code error;
+				const std::filesystem::path absolute =
+					std::filesystem::absolute(candidate, error).lexically_normal();
+				if (error || !std::filesystem::is_directory(
+					absolute / "host" / "fxr", error) || error)
+					continue;
+
+				std::string selectionError;
+				std::filesystem::path selectedHostFxr;
+				std::filesystem::path selectedRuntime;
+				if (!FindHighestDotNetVersionDirectory(absolute / "host" / "fxr",
+					nullptr, selectedHostFxr, selectionError) ||
+					!FindHighestDotNetVersionDirectory(absolute / "shared" /
+						"Microsoft.NETCore.App", &requestedFramework,
+						selectedRuntime, selectionError))
+					continue;
+				if (!std::filesystem::is_regular_file(
+					selectedHostFxr / "hostfxr.dll", error) || error ||
+					!std::filesystem::is_regular_file(
+						selectedRuntime / "hostpolicy.dll", error) || error ||
+					!std::filesystem::is_regular_file(
+						selectedRuntime / "coreclr.dll", error) || error)
+					continue;
+
+				dotnetRoot = absolute;
+				hostFxrDirectory = selectedHostFxr;
+				runtimeDirectory = selectedRuntime;
+				return true;
+			}
+			errorMessage = "Could not resolve the .NET " +
+				std::to_string(requestedFramework[0]) + "." +
+				std::to_string(requestedFramework[1]) +
+				" host and runtime required by TomCat.ScriptHost.";
+			return false;
+#else
+			(void)runtimeConfig;
+			(void)dotnetRoot;
+			(void)hostFxrDirectory;
+			(void)runtimeDirectory;
+			errorMessage = "TomCat Player export is currently implemented for Windows only.";
+			return false;
+#endif
+		}
+
+		bool GetRunningExecutablePath(std::filesystem::path& executable,
+			std::string& errorMessage)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			std::vector<wchar_t> buffer(MAX_PATH);
+			for (;;)
+			{
+				const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+					static_cast<DWORD>(buffer.size()));
+				if (length == 0)
+				{
+					errorMessage = "Could not resolve the Editor executable (Win32 error " +
+						std::to_string(GetLastError()) + ").";
+					return false;
+				}
+				if (length < buffer.size() - 1)
+				{
+					executable = std::filesystem::path(
+						std::wstring(buffer.data(), length)).lexically_normal();
+					return true;
+				}
+				if (buffer.size() >= 32768)
+					break;
+				buffer.resize(buffer.size() * 2);
+			}
+			errorMessage = "The Editor executable path exceeds the Windows path limit.";
+		return false;
+#else
+			(void)executable;
+			errorMessage = "TomCat Player export is currently implemented for Windows only.";
+			return false;
+#endif
+		}
+
+		bool ValidateStagedPlayer(const std::filesystem::path& root,
+			std::string& errorMessage)
+		{
+			for (const std::filesystem::path& required : {
+				root / "TomCatPlayer.exe", root / "Game.tcpak",
+				root / "Managed" / "TomCat.ScriptHost.dll",
+				root / "Managed" / "TomCat.ScriptHost.runtimeconfig.json",
+				root / "Managed" / "TomCat.Managed.dll" })
+			{
+				std::error_code error;
+				if (!std::filesystem::is_regular_file(required, error) || error)
+				{
+					errorMessage = "Staged Player is missing '" +
+						PathToUTF8(required.lexically_relative(root)) + "'.";
+					return false;
+				}
+			}
+
+			std::error_code error;
+			std::filesystem::recursive_directory_iterator iterator(root,
+				std::filesystem::directory_options::none, error), end;
+			for (; !error && iterator != end; iterator.increment(error))
+			{
+				const std::filesystem::file_status status = iterator->symlink_status(error);
+				if (error)
+					break;
+				if (std::filesystem::is_symlink(status) ||
+					IsFilesystemReparsePoint(iterator->path()))
+				{
+					errorMessage = "Staged Player contains an unsafe symbolic link: '" +
+						PathToUTF8(iterator->path().lexically_relative(root)) + "'.";
+					return false;
+				}
+				const std::filesystem::path relative =
+					iterator->path().lexically_relative(root);
+				if (relative.empty() || relative.is_absolute())
+				{
+					errorMessage = "Staged Player contains an invalid path.";
+					return false;
+				}
+				const size_t componentCount = static_cast<size_t>(
+					std::distance(relative.begin(), relative.end()));
+				const std::string first = LowerASCII(PathToUTF8(*relative.begin()));
+				if (std::filesystem::is_directory(status))
+				{
+					if ((componentCount == 1 && first != "managed" && first != "dotnet") ||
+						(componentCount > 1 && first != "dotnet"))
+					{
+						errorMessage = "Staged Player contains an unexpected directory: '" +
+							PathToUTF8(relative) + "'.";
+						return false;
+					}
+				}
+				if (std::filesystem::is_regular_file(status))
+				{
+					const std::string fileName =
+						LowerASCII(PathToUTF8(iterator->path().filename()));
+					const std::string extension =
+						LowerASCII(PathToUTF8(iterator->path().extension()));
+					bool allowed = first == "dotnet";
+					if (componentCount == 1)
+						allowed = fileName == "tomcatplayer.exe" ||
+							fileName == "game.tcpak" || extension == ".dll";
+					else if (first == "managed" && componentCount == 2)
+						allowed = fileName == "tomcat.scripthost.dll" ||
+							fileName == "tomcat.scripthost.runtimeconfig.json" ||
+							fileName == "tomcat.scripthost.deps.json" ||
+							fileName == "tomcat.managed.dll";
+					if (!allowed)
+					{
+						errorMessage = "Staged Player contains an unexpected file: '" +
+							PathToUTF8(relative) + "'.";
+						return false;
+					}
+					if (extension == ".pdb" || extension == ".cs" ||
+						extension == ".csproj" ||
+						extension == ".sln" || extension == ".slnx" ||
+						extension == ".tcproj" || fileName == "last-good.json")
+					{
+						errorMessage = "Authoring input leaked into the staged Player: '" +
+							PathToUTF8(relative) + "'.";
+						return false;
+					}
+				}
+			}
+			if (error)
+			{
+				errorMessage = "Could not validate the staged Player: " + error.message();
+				return false;
+			}
+			return true;
+		}
+
+		bool PublishStagedPlayer(const std::filesystem::path& staging,
+			const std::filesystem::path& output, const std::string& buildID,
+			std::string& errorMessage)
+		{
+			std::error_code error;
+			std::filesystem::path backup = output;
+			backup += ".previous-" + buildID;
+			if (std::filesystem::exists(backup, error) || error)
+			{
+				errorMessage = "Could not reserve a rollback directory for the Player build.";
+				return false;
+			}
+
+			bool movedPrevious = false;
+			const std::filesystem::file_status outputStatus =
+				std::filesystem::symlink_status(output, error);
+			if (!error && std::filesystem::exists(outputStatus))
+			{
+				if (!std::filesystem::is_directory(outputStatus) ||
+					std::filesystem::is_symlink(outputStatus) ||
+					IsFilesystemReparsePoint(output))
+				{
+					errorMessage = "Player output exists but is not a safe directory: '" +
+						PathToUTF8(output) + "'.";
+					return false;
+				}
+				std::filesystem::rename(output, backup, error);
+				if (error)
+				{
+					errorMessage = "Could not replace the previous Player build (close any "
+						"running Player and try again): " + error.message();
+					return false;
+				}
+				movedPrevious = true;
+			}
+			else if (error && error != std::errc::no_such_file_or_directory)
+			{
+				errorMessage = "Could not inspect the Player output directory: " +
+					error.message();
+				return false;
+			}
+
+			error.clear();
+			std::filesystem::rename(staging, output, error);
+			if (error)
+			{
+				const std::string publishError = error.message();
+				if (movedPrevious)
+				{
+					error.clear();
+					std::filesystem::rename(backup, output, error);
+				}
+				errorMessage = "Could not publish the staged Player: " + publishError;
+				if (error)
+					errorMessage += "; rollback also failed: " + error.message();
+				return false;
+			}
+
+			if (movedPrevious)
+			{
+				error.clear();
+				std::filesystem::remove_all(backup, error);
+				if (error)
+					TC_Core_Warn("Player build succeeded, but rollback directory '{0}' "
+						"could not be removed: {1}", PathToUTF8(backup), error.message());
+			}
+			return true;
+		}
+
+		bool LaunchCookedPlayer(const std::filesystem::path& executable,
+			const std::filesystem::path& workingDirectory, std::string& errorMessage)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			std::wstring command = L"\"" + executable.wstring() +
+				L"\" --play-cooked \"Game.tcpak\"";
+			std::vector<wchar_t> mutableCommand(command.begin(), command.end());
+			mutableCommand.push_back(L'\0');
+			STARTUPINFOW startup{};
+			startup.cb = sizeof(startup);
+			PROCESS_INFORMATION process{};
+			const BOOL created = CreateProcessW(executable.c_str(), mutableCommand.data(),
+				nullptr, nullptr, FALSE, 0, nullptr, workingDirectory.c_str(),
+				&startup, &process);
+			if (!created)
+			{
+				errorMessage = "Could not launch TomCatPlayer.exe (Win32 error " +
+					std::to_string(GetLastError()) + ").";
+				return false;
+			}
+			CloseHandle(process.hThread);
+			CloseHandle(process.hProcess);
+			return true;
+#else
+			(void)executable;
+			(void)workingDirectory;
+			errorMessage = "TomCat Player launch is currently implemented for Windows only.";
+			return false;
+#endif
+		}
+
 	}
 
 	EditorLayer::EditorLayer()
@@ -461,8 +1084,73 @@ namespace TomCat {
 			TC_Core_Warn("One or more editor icons could not be loaded");
 		m_SceneHierarchyPanel.SetIcons(m_EditorIcons);
 		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
+		m_SceneHierarchyPanel.SetScriptMetadataProvider([this](AssetHandle handle)
+		{
+			return m_ScriptMetadata.Find(handle);
+		});
 		m_ContentBrowserPanel.SetIcons(m_EditorIcons);
 		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
+		Scripting::SetScriptDiagnosticSink([this](const Scripting::ScriptDiagnostic& diagnostic)
+		{
+			ConsoleMessage message;
+			message.Source = "C# Runtime";
+			message.File = diagnostic.File;
+			message.Line = diagnostic.Line;
+			message.Column = diagnostic.Column;
+			switch (diagnostic.Severity)
+			{
+				case Scripting::ScriptDiagnosticSeverity::Info:
+					message.Severity = ConsoleMessageSeverity::Info;
+					break;
+				case Scripting::ScriptDiagnosticSeverity::Warning:
+					message.Severity = ConsoleMessageSeverity::Warning;
+					break;
+				case Scripting::ScriptDiagnosticSeverity::Error:
+					message.Severity = ConsoleMessageSeverity::Error;
+					break;
+			}
+			const size_t stackStart = diagnostic.Message.find('\n');
+			if (stackStart == std::string::npos)
+				message.Text = diagnostic.Message;
+			else
+			{
+				message.Text = diagnostic.Message.substr(0, stackStart);
+				if (!message.Text.empty() && message.Text.back() == '\r')
+					message.Text.pop_back();
+				message.StackTrace = diagnostic.Message.substr(stackStart + 1);
+			}
+			m_ConsolePanel.Push(std::move(message));
+		});
+
+		m_ScriptCompiler.SetDiagnosticCallback([this](const ScriptCompilerDiagnostic& diagnostic)
+		{
+			ConsoleMessage message;
+			message.Source = "C# Compiler";
+			message.Code = diagnostic.Code;
+			message.Text = diagnostic.Message;
+			message.File = diagnostic.File;
+			message.Line = diagnostic.Line;
+			message.Column = diagnostic.Column;
+			switch (diagnostic.Level)
+			{
+				case ScriptCompilerDiagnostic::Severity::Info:
+					message.Severity = ConsoleMessageSeverity::Info;
+					break;
+				case ScriptCompilerDiagnostic::Severity::Warning:
+					message.Severity = ConsoleMessageSeverity::Warning;
+					break;
+				case ScriptCompilerDiagnostic::Severity::Error:
+					message.Severity = ConsoleMessageSeverity::Error;
+					break;
+			}
+			m_ConsolePanel.Push(std::move(message));
+		});
+		if (m_CurrentProject && m_ScriptCompiler.Configure(m_CurrentProject))
+		{
+			ResetScriptCompileTracking();
+			if (m_ScriptCompiler.IsCurrentSourceBuilt())
+				PrepareManagedRuntime();
+		}
 
 		FramebufferSpecification fbSpec;
 		fbSpec.Attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
@@ -608,13 +1296,83 @@ namespace TomCat {
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
 		m_ContentBrowserPanel.SaveLayoutSetting();
 		SaveSceneToolbarLayout();
+		m_SceneHierarchyPanel.SetScriptMetadataProvider({});
+		m_ScriptMetadata.Clear();
+		Scripting::SetScriptDiagnosticSink({});
+		Scripting::ScriptEngine::Get().SetRuntime({});
+		m_ScriptCompiler.Reset();
 		AssetManager::Get().SetLiveReferenceProvider({});
 		AssetManager::Get().Shutdown();
+	}
+
+	void EditorLayer::ResetScriptCompileTracking()
+	{
+		m_ScriptSourcePollCountdown = 0.0f;
+		m_ScriptCompileDebounceRemaining = 0.65f;
+		m_ObservedScriptSourceHash = m_ScriptCompiler.GetCurrentSourceHash();
+		m_PlayScriptDirtyNoticeShown = false;
+	}
+
+	void EditorLayer::UpdateScriptCompilation(Timestep ts)
+	{
+		ScriptBuildResult completed;
+		if (m_ScriptCompiler.PollCompile(completed))
+		{
+			m_ObservedScriptSourceHash = m_ScriptCompiler.GetCurrentSourceHash();
+			m_ScriptCompileDebounceRemaining = 0.65f;
+			if (completed.Succeeded && m_SceneState == SceneState::Edit)
+				PrepareManagedRuntime();
+		}
+		if (!m_CurrentProject)
+			return;
+
+		const float deltaSeconds = std::clamp(ts.GetSeconds(), 0.0f, 0.25f);
+		m_ScriptSourcePollCountdown -= deltaSeconds;
+		if (!m_ScriptCompiler.IsCompileInProgress() &&
+			m_ScriptSourcePollCountdown <= 0.0f)
+		{
+			m_ScriptSourcePollCountdown = 0.35f;
+			if (m_ScriptCompiler.RefreshSourceState())
+			{
+				const std::string& sourceHash =
+					m_ScriptCompiler.GetCurrentSourceHash();
+				if (sourceHash != m_ObservedScriptSourceHash)
+				{
+					m_ObservedScriptSourceHash = sourceHash;
+					m_ScriptCompileDebounceRemaining = 0.65f;
+				}
+				if (IsSceneRunning() &&
+					!m_ScriptCompiler.IsCurrentSourceBuilt() &&
+					!m_PlayScriptDirtyNoticeShown)
+				{
+					m_PlayScriptDirtyNoticeShown = true;
+					m_ShowConsolePanel = true;
+					m_ConsolePanel.Push(ConsoleMessageSeverity::Warning,
+						"C# source changes were detected. Stop Play to apply them; "
+						"the running scene will keep its current assembly.",
+						"Editor");
+				}
+			}
+		}
+
+		if (m_SceneState == SceneState::Edit &&
+			!m_ScriptCompiler.IsCompileInProgress() &&
+			m_ScriptCompiler.GetState() == ScriptBuildState::Dirty)
+		{
+			m_ScriptCompileDebounceRemaining -= deltaSeconds;
+			if (m_ScriptCompileDebounceRemaining <= 0.0f)
+			{
+				m_ScriptCompileDebounceRemaining = 0.65f;
+				m_ScriptCompiler.StartCompile();
+			}
+		}
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
+		Scripting::ScriptEngine::Get().CaptureInputState();
+		UpdateScriptCompilation(ts);
 
 		// Resize Scene Framebuffer
 		const uint32_t sceneWidth = ToFramebufferExtent(m_ViewportSize.x);
@@ -747,11 +1505,12 @@ namespace TomCat {
 		else if (name == "Inspector") m_EditorPanelCycleIndex = 3;
 		else if (name == "Project") m_EditorPanelCycleIndex = 4;
 		else if (name == "Scene") m_EditorPanelCycleIndex = 5;
+		else if (name == "Console") m_EditorPanelCycleIndex = 6;
 	}
 
 	void EditorLayer::CycleEditorPanel(int direction)
 	{
-		constexpr int panelCount = 6;
+		constexpr int panelCount = 7;
 		if (direction == 0)
 			return;
 
@@ -765,6 +1524,7 @@ namespace TomCat {
 				case 3: return m_ShowInspectorPanel;
 				case 4: return m_ShowProjectPanel;
 				case 5: return m_ShowScenePanel;
+				case 6: return m_ShowConsolePanel;
 				default: return false;
 			}
 		};
@@ -786,6 +1546,7 @@ namespace TomCat {
 				case 3: FocusEditorPanel("Inspector", m_ShowInspectorPanel); break;
 				case 4: FocusEditorPanel("Project", m_ShowProjectPanel); break;
 				case 5: FocusEditorPanel("Scene", m_ShowScenePanel); break;
+				case 6: FocusEditorPanel("Console", m_ShowConsolePanel); break;
 			}
 			return;
 		}
@@ -854,6 +1615,15 @@ namespace TomCat {
 			if (ImGui::BeginMenu("Assets", m_CurrentProject != nullptr))
 			{
 				m_ContentBrowserPanel.DrawAssetsMenu();
+				ImGui::Separator();
+				if (ImGui::MenuItem("Compile C# Scripts", nullptr, false,
+					!IsSceneRunning() && !m_ScriptCompiler.IsCompileInProgress()))
+				{
+					m_ShowConsolePanel = true;
+					m_PendingPanelFocus = "Console";
+					m_ScriptCompileDebounceRemaining = 0.65f;
+					m_ScriptCompiler.StartCompile(true);
+				}
 				ImGui::EndMenu();
 			}
 
@@ -891,7 +1661,8 @@ namespace TomCat {
 						(m_ShowGamePanel && !m_GamePanelDocked) ||
 						(m_ShowHierarchyPanel && !m_SceneHierarchyPanel.IsHierarchyDocked()) ||
 						(m_ShowInspectorPanel && !m_SceneHierarchyPanel.IsInspectorDocked()) ||
-						(m_ShowProjectPanel && !m_ContentBrowserPanel.IsDocked());
+						(m_ShowProjectPanel && !m_ContentBrowserPanel.IsDocked()) ||
+						(m_ShowConsolePanel && !m_ConsolePanel.IsDocked());
 					if (ImGui::MenuItem("Close all floating panels...", nullptr, false,
 						hasFloatingPanel))
 					{
@@ -902,6 +1673,7 @@ namespace TomCat {
 						if (!m_SceneHierarchyPanel.IsHierarchyDocked()) m_ShowHierarchyPanel = false;
 						if (!m_SceneHierarchyPanel.IsInspectorDocked()) m_ShowInspectorPanel = false;
 						if (!m_ContentBrowserPanel.IsDocked()) m_ShowProjectPanel = false;
+						if (!m_ConsolePanel.IsDocked()) m_ShowConsolePanel = false;
 					}
 					ImGui::Separator();
 					ImGui::MenuItem("1 Animator", nullptr, false, false);
@@ -911,7 +1683,8 @@ namespace TomCat {
 						m_FocusBuildSettingsPanel = true;
 						m_EditorPanelCycleIndex = 0;
 					}
-					ImGui::MenuItem("3 Console", nullptr, false, false);
+					if (ImGui::MenuItem("3 Console"))
+						FocusEditorPanel("Console", m_ShowConsolePanel);
 					if (ImGui::MenuItem("4 Game"))
 						FocusEditorPanel("Game", m_ShowGamePanel);
 					if (ImGui::MenuItem("5 Hierarchy"))
@@ -1032,6 +1805,9 @@ namespace TomCat {
 		m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
 		if (m_ContentBrowserPanel.IsFocused())
 			m_EditorPanelCycleIndex = 4;
+		m_ConsolePanel.OnImGuiRender(&m_ShowConsolePanel);
+		if (m_ConsolePanel.IsFocused())
+			m_EditorPanelCycleIndex = 6;
 
 		if (m_ShowScenePanel)
 		{
@@ -1586,14 +2362,294 @@ namespace TomCat {
 			+ ImGui::GetStyle().ItemSpacing.x;
 		ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 20.0f,
 			ImGui::GetWindowContentRegionMax().x - buildButtonsWidth));
-		ImGui::BeginDisabled();
-		ImGui::Button("Build", ImVec2(buildWidth, 0.0f));
+		const bool canBuild = m_CurrentProject && startSceneReady &&
+			!IsSceneRunning() && !m_ScriptCompiler.IsCompileInProgress();
+		ImGui::BeginDisabled(!canBuild);
+		const bool buildPressed = ImGui::Button("Build", ImVec2(buildWidth, 0.0f));
+		const bool buildHovered = ImGui::IsItemHovered(
+			ImGuiHoveredFlags_AllowWhenDisabled);
 		ImGui::SameLine();
-		ImGui::Button("Build And Run", ImVec2(buildAndRunWidth, 0.0f));
+		const bool buildAndRunPressed = ImGui::Button("Build And Run",
+			ImVec2(buildAndRunWidth, 0.0f));
+		const bool buildAndRunHovered = ImGui::IsItemHovered(
+			ImGuiHoveredFlags_AllowWhenDisabled);
 		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("Player export is not implemented yet.");
+		if (!canBuild && (buildHovered || buildAndRunHovered))
+		{
+			if (!m_CurrentProject)
+				ImGui::SetTooltip("Open a project before building a Player.");
+			else if (!startSceneReady)
+				ImGui::SetTooltip("Configure a live Scene asset as the project's Start Scene.");
+			else if (IsSceneRunning())
+				ImGui::SetTooltip("Stop Play mode before building a Player.");
+			else
+				ImGui::SetTooltip("Wait for the background C# compilation to finish.");
+		}
+		if (buildPressed)
+			BuildPlayer(false);
+		else if (buildAndRunPressed)
+			BuildPlayer(true);
+
+		if (!m_PlayerBuildStatus.empty())
+		{
+			ImGui::Spacing();
+			const ImVec4 color = m_PlayerBuildSucceeded
+				? ImVec4(0.45f, 0.86f, 0.48f, 1.0f)
+				: ImVec4(0.95f, 0.42f, 0.38f, 1.0f);
+			ImGui::PushStyleColor(ImGuiCol_Text, color);
+			ImGui::TextWrapped("%s", m_PlayerBuildStatus.c_str());
+			ImGui::PopStyleColor();
+		}
 		ImGui::End();
+	}
+
+	bool EditorLayer::BuildPlayer(bool runAfterBuild)
+	{
+		m_PlayerBuildSucceeded = false;
+		m_PlayerBuildStatus = "Building Player...";
+		auto fail = [this](std::string message)
+		{
+			m_PlayerBuildSucceeded = false;
+			m_PlayerBuildStatus = std::move(message);
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				m_PlayerBuildStatus, "Player Build");
+			TC_Core_Error("{0}", m_PlayerBuildStatus);
+			return false;
+		};
+
+		if (!m_CurrentProject)
+			return fail("Player build failed: no project is open.");
+		if (IsSceneRunning())
+			return fail("Player build failed: stop Play mode before building.");
+		if (m_ScriptCompiler.IsCompileInProgress())
+			return fail("Player build failed: the background C# compilation is still running.");
+
+		const AssetHandle startScene = m_CurrentProject->GetConfig().StartSceneHandle;
+		if (static_cast<uint64_t>(startScene) == 0)
+			return fail("Player build failed: no Start Scene is configured.");
+
+		// A Player build is always based on a newly compiled and validated Release
+		// candidate. Never fall back to the previous last-good artifact here.
+		ScriptBuildResult scriptBuild = m_ScriptCompiler.CompileNow();
+		if (!scriptBuild.Succeeded || scriptBuild.SourceChangedDuringBuild ||
+			scriptBuild.BuildID.empty() || scriptBuild.AssemblyPath.empty())
+		{
+			return fail(scriptBuild.SourceChangedDuringBuild
+				? "Player build failed: C# sources changed during the Release compile. Build again."
+				: "Player build failed: the fresh Release C# candidate did not validate. See Console diagnostics.");
+		}
+		if (!m_ScriptCompiler.RefreshSourceState() ||
+			!m_ScriptCompiler.IsCurrentSourceBuilt() ||
+			m_ScriptCompiler.GetCurrentSourceHash() != scriptBuild.SourceHash ||
+			m_ScriptCompiler.GetLastGoodBuildID() != scriptBuild.BuildID ||
+			AbsoluteLexicalPath(m_ScriptCompiler.GetLastGoodAssemblyPath()) !=
+				AbsoluteLexicalPath(scriptBuild.AssemblyPath))
+		{
+			return fail("Player build failed: the fresh C# candidate no longer matches the current sources.");
+		}
+
+		const std::filesystem::path managedDirectory =
+			m_ScriptCompiler.GetManagedRuntimeDirectory();
+		if (managedDirectory.empty())
+			return fail("Player build failed: TomCat.ScriptHost Release outputs are unavailable.");
+		std::string runtimeError;
+		auto runtime = Scripting::CreateManagedScriptRuntime(managedDirectory,
+			scriptBuild.AssemblyPath, scriptBuild.PdbPath, {}, &runtimeError);
+		if (!runtime || !runtime->IsReady())
+		{
+			if (runtimeError.empty())
+				runtimeError = "managed host initialization failed";
+			return fail("Player build failed: the fresh C# candidate could not be hosted: " +
+				runtimeError);
+		}
+		std::string scriptManifestJson;
+		if (!runtime->ReadProjectMetadata(scriptManifestJson))
+			return fail("Player build failed: the fresh C# manifest could not be read.");
+		std::string metadataError;
+		if (!m_ScriptMetadata.ParseAndReplace(scriptManifestJson, metadataError))
+			return fail("Player build failed: the fresh C# manifest is invalid: " + metadataError);
+
+		Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
+		if (!m_EditorScene)
+			return fail("Player build failed: there is no current scene to reconcile and save.");
+		if (ReconcileManagedScriptFields(m_EditorScene))
+			m_SceneDirty = true;
+		SaveScene();
+		if (m_EditorScenePath.empty() || m_SceneDirty)
+			return fail("Player build failed: save the current scene before building.");
+
+		AssetManager& assetManager = AssetManager::Get();
+		if (!assetManager.Refresh())
+			return fail("Player build failed: the Asset Registry could not be refreshed.");
+		const AssetMetadata* startSceneMetadata =
+			assetManager.GetRegistry().GetMetadata(startScene);
+		if (!startSceneMetadata || startSceneMetadata->IsMissing ||
+			startSceneMetadata->Type != AssetType::Scene)
+			return fail("Player build failed: the configured Start Scene is missing or is not a Scene asset.");
+
+		std::vector<uint8_t> assemblyBytes;
+		std::string fileError;
+		if (!ReadBinaryFileForBuild(scriptBuild.AssemblyPath, assemblyBytes, fileError))
+			return fail("Player build failed: " + fileError);
+
+		std::error_code pathError;
+		const std::filesystem::path projectDirectory =
+			std::filesystem::weakly_canonical(m_CurrentProject->GetProjectDirectory(), pathError);
+		if (pathError || projectDirectory.empty())
+			return fail("Player build failed: the project directory could not be resolved.");
+		const std::filesystem::path buildRoot = projectDirectory / "Build";
+		std::filesystem::create_directories(buildRoot, pathError);
+		if (pathError)
+			return fail("Player build failed: the Build directory could not be created: " +
+				pathError.message());
+		const std::filesystem::path canonicalBuildRoot =
+			std::filesystem::weakly_canonical(buildRoot, pathError);
+		const std::filesystem::path buildRelative =
+			canonicalBuildRoot.lexically_relative(projectDirectory);
+		if (pathError || buildRelative.empty() || buildRelative.is_absolute() ||
+			std::distance(buildRelative.begin(), buildRelative.end()) != 1 ||
+			LowerASCII(PathToUTF8(*buildRelative.begin())) != "build")
+			return fail("Player build failed: the Build directory resolves outside the project.");
+
+		const std::string directoryName =
+			SanitizePlayerDirectoryName(m_CurrentProject->GetName());
+		const std::filesystem::path directoryComponent = UTF8ToPath(directoryName);
+		if (directoryComponent.empty() || directoryComponent != directoryComponent.filename() ||
+			directoryComponent == "." || directoryComponent == "..")
+			return fail("Player build failed: the project name cannot form a safe output directory.");
+		const std::filesystem::path outputDirectory = canonicalBuildRoot / directoryComponent;
+		const std::filesystem::path stagingDirectory = canonicalBuildRoot /
+			UTF8ToPath(directoryName + ".staging-" + scriptBuild.BuildID);
+
+		const std::filesystem::file_status stagingStatus =
+			std::filesystem::symlink_status(stagingDirectory, pathError);
+		if (!pathError && std::filesystem::exists(stagingStatus))
+			return fail("Player build failed: an isolated staging directory already exists.");
+		if (pathError && pathError != std::errc::no_such_file_or_directory)
+			return fail("Player build failed: the staging directory could not be inspected: " +
+				pathError.message());
+		pathError.clear();
+		std::filesystem::create_directory(stagingDirectory, pathError);
+		if (pathError)
+			return fail("Player build failed: the staging directory could not be created: " +
+				pathError.message());
+
+		auto failStaged = [&](std::string message)
+		{
+			std::error_code cleanupError;
+			if (IsFilesystemReparsePoint(stagingDirectory))
+				std::filesystem::remove(stagingDirectory, cleanupError);
+			else
+				std::filesystem::remove_all(stagingDirectory, cleanupError);
+			if (cleanupError)
+				message += " Staging cleanup also failed: " + cleanupError.message();
+			return fail(std::move(message));
+		};
+
+		if (!assetManager.SetManagedCookPayload(std::move(assemblyBytes),
+			scriptManifestJson, scriptBuild.BuildID, {}))
+			return failStaged("Player build failed: the fresh managed payload was rejected.");
+		const bool cooked = assetManager.CookToPackage(
+			stagingDirectory / "Game.tcpak", startScene);
+		assetManager.ClearManagedCookPayload();
+		if (!cooked)
+			return failStaged("Player build failed while cooking Game.tcpak. See preceding diagnostics.");
+
+		std::filesystem::path editorExecutable;
+		if (!GetRunningExecutablePath(editorExecutable, fileError) ||
+			!CopyPlayerFile(editorExecutable,
+				stagingDirectory / "TomCatPlayer.exe", fileError))
+			return failStaged("Player build failed: " + fileError);
+
+		std::filesystem::directory_iterator nativeIterator(
+			editorExecutable.parent_path(), std::filesystem::directory_options::none,
+			pathError), nativeEnd;
+		for (; !pathError && nativeIterator != nativeEnd;
+			nativeIterator.increment(pathError))
+		{
+			std::error_code statusError;
+			const std::filesystem::file_status status =
+				nativeIterator->symlink_status(statusError);
+			if (statusError)
+			{
+				pathError = statusError;
+				break;
+			}
+			if (!std::filesystem::is_regular_file(status) ||
+				LowerASCII(PathToUTF8(nativeIterator->path().extension())) != ".dll")
+				continue;
+			if (!CopyPlayerFile(nativeIterator->path(),
+				stagingDirectory / nativeIterator->path().filename(), fileError))
+				return failStaged("Player build failed: " + fileError);
+		}
+		if (pathError)
+			return failStaged("Player build failed while enumerating native dependencies: " +
+				pathError.message());
+
+		for (const char* fileName : { "TomCat.ScriptHost.dll",
+			"TomCat.ScriptHost.runtimeconfig.json", "TomCat.Managed.dll" })
+		{
+			if (!CopyPlayerFile(managedDirectory / fileName,
+				stagingDirectory / "Managed" / fileName, fileError))
+				return failStaged("Player build failed: " + fileError);
+		}
+		const std::filesystem::path depsSource =
+			managedDirectory / "TomCat.ScriptHost.deps.json";
+		pathError.clear();
+		if (std::filesystem::is_regular_file(depsSource, pathError) && !pathError &&
+			!CopyPlayerFile(depsSource, stagingDirectory / "Managed" /
+				"TomCat.ScriptHost.deps.json", fileError))
+			return failStaged("Player build failed: " + fileError);
+
+		std::filesystem::path dotnetRoot;
+		std::filesystem::path hostFxrDirectory;
+		std::filesystem::path runtimeDirectory;
+		if (!ResolvePrivateDotNetPayload(managedDirectory /
+			"TomCat.ScriptHost.runtimeconfig.json", dotnetRoot,
+			hostFxrDirectory, runtimeDirectory, fileError))
+			return failStaged("Player build failed: " + fileError);
+		if (!CopyPlayerDirectory(hostFxrDirectory, stagingDirectory / "dotnet" /
+			"host" / "fxr" / hostFxrDirectory.filename(), fileError) ||
+			!CopyPlayerDirectory(runtimeDirectory, stagingDirectory / "dotnet" /
+			"shared" / "Microsoft.NETCore.App" / runtimeDirectory.filename(),
+				fileError))
+			return failStaged("Player build failed: " + fileError);
+
+		if (!ValidateStagedPlayer(stagingDirectory, fileError))
+			return failStaged("Player build failed: " + fileError);
+		// Staging a private runtime can take long enough for an external editor to
+		// save another C# revision. Recheck at the publication boundary so a package
+		// is never presented as current after its source snapshot became stale.
+		if (!m_ScriptCompiler.RefreshSourceState() ||
+			!m_ScriptCompiler.IsCurrentSourceBuilt() ||
+			m_ScriptCompiler.GetCurrentSourceHash() != scriptBuild.SourceHash ||
+			m_ScriptCompiler.GetLastGoodBuildID() != scriptBuild.BuildID ||
+			AbsoluteLexicalPath(m_ScriptCompiler.GetLastGoodAssemblyPath()) !=
+				AbsoluteLexicalPath(scriptBuild.AssemblyPath))
+		{
+			return failStaged("Player build failed: C# sources changed while the Player was being staged. Build again.");
+		}
+		if (!PublishStagedPlayer(stagingDirectory, outputDirectory,
+			scriptBuild.BuildID, fileError))
+			return failStaged("Player build failed: " + fileError);
+
+		m_PlayerBuildSucceeded = true;
+		m_PlayerBuildStatus = "Player build succeeded: " + PathToUTF8(outputDirectory) +
+			" (C# build " + scriptBuild.BuildID + ", .NET host " +
+			PathToUTF8(hostFxrDirectory.filename()) + ", runtime " +
+			PathToUTF8(runtimeDirectory.filename()) + ").";
+		m_ConsolePanel.Push(ConsoleMessageSeverity::Info,
+			m_PlayerBuildStatus, "Player Build");
+		TC_Core_Info("{0}", m_PlayerBuildStatus);
+
+		if (runAfterBuild && !LaunchCookedPlayer(outputDirectory /
+			"TomCatPlayer.exe", outputDirectory, fileError))
+		{
+			return fail("Player build succeeded, but Build And Run failed: " + fileError);
+		}
+		return true;
 	}
 
 	void EditorLayer::OpenProjectSettingsPanel()
@@ -2873,16 +3929,133 @@ namespace TomCat {
 		return m_SceneState != SceneState::Edit;
 	}
 
+	bool EditorLayer::PrepareManagedRuntime()
+	{
+		if (IsSceneRunning())
+			return false;
+		m_ScriptMetadata.Clear();
+		Scripting::ScriptEngine::Get().SetRuntime({});
+		auto fail = [this](std::string message)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error, std::move(message),
+				"Script Runtime");
+			return false;
+		};
+
+		const std::filesystem::path managedDirectory =
+			m_ScriptCompiler.GetManagedRuntimeDirectory();
+		if (managedDirectory.empty())
+			return fail("TomCat.ScriptHost outputs could not be located.");
+		const std::filesystem::path assembly =
+			m_ScriptCompiler.GetLastGoodAssemblyPath();
+		std::filesystem::path pdb = assembly;
+		pdb.replace_extension(".pdb");
+		std::error_code pdbError;
+		if (!std::filesystem::is_regular_file(pdb, pdbError) || pdbError)
+			pdb.clear();
+
+		std::string runtimeError;
+		auto runtime = Scripting::CreateManagedScriptRuntime(managedDirectory,
+			assembly, pdb, {}, &runtimeError);
+		if (!runtime)
+		{
+			if (runtimeError.empty())
+				runtimeError = "managed host initialization failed";
+			return fail("The managed runtime could not be initialized: " + runtimeError);
+		}
+
+		std::string manifestJson;
+		if (!runtime->ReadProjectMetadata(manifestJson))
+			return fail("The generated C# script manifest could not be read.");
+		std::string metadataError;
+		if (!m_ScriptMetadata.ParseAndReplace(manifestJson, metadataError))
+			return fail("The generated C# script manifest is invalid: " + metadataError);
+		if (ReconcileManagedScriptFields(m_EditorScene))
+			m_SceneDirty = true;
+
+		Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
+		return true;
+	}
+
+	bool EditorLayer::ReconcileManagedScriptFields(const Ref<Scene>& scene)
+	{
+		if (!scene)
+			return false;
+		bool changed = false;
+		for (UUID entityID : scene->m_EntityOrder)
+		{
+			Entity entity = scene->FindEntityByUUID(entityID);
+			if (!entity || !entity.HasComponent<CSharpScripts>())
+				continue;
+			for (CSharpScriptEntry& entry :
+				entity.GetComponent<CSharpScripts>().Scripts)
+			{
+				const std::optional<EditorScriptMetadata> metadata =
+					m_ScriptMetadata.Find(entry.ScriptAsset);
+				if (!metadata)
+					continue;
+				if (!metadata->TypeName.empty()
+					&& entry.LastKnownClassName != metadata->TypeName)
+				{
+					entry.LastKnownClassName = metadata->TypeName;
+					changed = true;
+				}
+				changed = ReconcileScriptEntryFields(entry, *metadata) || changed;
+			}
+		}
+		return changed;
+	}
+
 	void EditorLayer::OnScenePlay()
 	{
 		if (m_SceneState != SceneState::Edit || !m_EditorScene)
+			return;
+		if (m_CurrentProject)
+		{
+			ScriptBuildResult completed;
+			(void)m_ScriptCompiler.PollCompile(completed);
+			if (m_ScriptCompiler.IsCompileInProgress())
+			{
+				m_ShowConsolePanel = true;
+				m_PendingPanelFocus = "Console";
+				m_ConsolePanel.Push(ConsoleMessageSeverity::Warning,
+					"Play is waiting for the background C# compilation to finish.",
+					"Editor");
+				return;
+			}
+			if (!m_ScriptCompiler.RefreshSourceState() ||
+				!m_ScriptCompiler.IsCurrentSourceBuilt())
+			{
+				m_ShowConsolePanel = true;
+				m_PendingPanelFocus = "Console";
+				m_ScriptCompiler.StartCompile(true);
+				m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+					"Play was blocked because the current C# sources have no validated "
+					"build. Compilation is running in the background.",
+					"Editor");
+				return;
+			}
+		}
+		if (m_CurrentProject && !PrepareManagedRuntime())
 			return;
 		m_ActiveScene = Scene::Copy(m_EditorScene);
 		if (!m_ActiveScene)
 			return;
 		ResizeSceneForGameView(m_ActiveScene);
-		m_ActiveScene->OnRuntimeStart();
+		if (!m_ActiveScene->OnRuntimeStart())
+		{
+			m_ActiveScene = m_EditorScene;
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				"Play could not start because runtime initialization failed. See the preceding diagnostics.",
+				"Editor");
+			return;
+		}
 		m_SceneState = SceneState::Play;
+		m_PlayScriptDirtyNoticeShown = false;
 		m_StepRequested = false;
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(false);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
@@ -2918,6 +4091,9 @@ namespace TomCat {
 			runtimeScene->OnRuntimeStop();
 		m_ActiveScene = m_EditorScene;
 		m_SceneState = SceneState::Edit;
+		m_PlayScriptDirtyNoticeShown = false;
+		m_ScriptSourcePollCountdown = 0.0f;
+		m_ScriptCompileDebounceRemaining = 0.35f;
 		m_StepRequested = false;
 		ResizeSceneForGameView(m_ActiveScene);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
@@ -3439,6 +4615,14 @@ namespace TomCat {
 		LoadSceneToolbarLayout();
 
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+		m_ScriptMetadata.Clear();
+		Scripting::ScriptEngine::Get().SetRuntime({});
+		if (m_ScriptCompiler.Configure(m_CurrentProject))
+		{
+			ResetScriptCompileTracking();
+			if (m_ScriptCompiler.IsCurrentSourceBuilt())
+				PrepareManagedRuntime();
+		}
 		OpenProjectStartScene();
 		return true;
 	}

@@ -263,6 +263,29 @@ namespace TomCat {
 			state.ContentBrowserExpandedNodes = std::move(validExpandedNodes);
 		}
 
+		bool NormalizeExternalScriptEditor(std::filesystem::path& editor,
+			std::string& errorMessage)
+		{
+			if (editor.empty())
+				return true;
+			if (!editor.is_absolute() || !editor.has_filename())
+			{
+				errorMessage = "externalScriptEditor must be an absolute executable path";
+				return false;
+			}
+
+			std::string extension = PathToUTF8(editor.extension());
+			std::transform(extension.begin(), extension.end(), extension.begin(),
+				[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+			if (extension != ".exe")
+			{
+				errorMessage = "externalScriptEditor must name a Windows .exe file";
+				return false;
+			}
+			editor = AbsoluteNormalized(editor);
+			return true;
+		}
+
 		std::string EscapeJsonString(std::string_view value)
 		{
 			std::ostringstream escaped;
@@ -564,7 +587,8 @@ namespace TomCat {
 			return config;
 		}
 
-		constexpr uint32_t kProjectSettingsSchemaVersion = 1;
+		constexpr uint32_t kLegacyProjectSettingsSchemaVersion = 1;
+		constexpr uint32_t kProjectSettingsSchemaVersion = 2;
 
 		bool ValidateProjectSettings(const ProjectSettings& settings,
 			std::string& errorMessage)
@@ -688,9 +712,11 @@ namespace TomCat {
 				RequireExactMapFields(root, "Project settings document",
 					std::array<const char*, 3>{ schemaField, tagsAndLayersField, physicsField });
 				const uint32_t schemaVersion = root[schemaField].as<uint32_t>();
-				if (schemaVersion != kProjectSettingsSchemaVersion)
+				if (schemaVersion != kLegacyProjectSettingsSchemaVersion
+					&& schemaVersion != kProjectSettingsSchemaVersion)
 					throw std::runtime_error("Unsupported project settings SchemaVersion " +
 						std::to_string(schemaVersion) + "; expected " +
+						std::to_string(kLegacyProjectSettingsSchemaVersion) + " or " +
 						std::to_string(kProjectSettingsSchemaVersion));
 
 				const YAML::Node tagsAndLayers = root[tagsAndLayersField];
@@ -878,6 +904,8 @@ namespace TomCat {
 			EditorProjectState loaded;
 			loaded.ContentBrowserCurrentDirectory = ReadOptional<std::string>(
 				browserNode, "currentDirectory", ".");
+			loaded.ExternalScriptEditor = UTF8ToPath(ReadOptional<std::string>(
+				root, "externalScriptEditor", ""));
 			const YAML::Node expandedNodes = browserNode["expandedNodes"];
 			if (expandedNodes)
 			{
@@ -887,6 +915,9 @@ namespace TomCat {
 					loaded.ContentBrowserExpandedNodes.push_back(node.as<std::string>());
 			}
 
+			std::string editorError;
+			if (!NormalizeExternalScriptEditor(loaded.ExternalScriptEditor, editorError))
+				throw std::runtime_error(editorError);
 			NormalizeEditorState(loaded, GetAssetPath());
 			state = std::move(loaded);
 			return EditorProjectStateLoadResult::Loaded;
@@ -915,6 +946,13 @@ namespace TomCat {
 		}
 
 		EditorProjectState normalized = state;
+		std::string editorError;
+		if (!NormalizeExternalScriptEditor(normalized.ExternalScriptEditor, editorError))
+		{
+			TC_Core_Error("Cannot save Editor settings '{0}': {1}",
+				PathToUTF8(settingsPath), editorError);
+			return false;
+		}
 		NormalizeEditorState(normalized, GetAssetPath());
 
 		std::ostringstream json;
@@ -935,7 +973,9 @@ namespace TomCat {
 		if (!normalized.ContentBrowserExpandedNodes.empty())
 			json << '\n' << "    ";
 		json << "]\n"
-			<< "  }\n"
+			<< "  },\n"
+			<< "  \"externalScriptEditor\": \""
+			<< EscapeJsonString(PathToUTF8(normalized.ExternalScriptEditor)) << "\"\n"
 			<< "}\n";
 
 		std::string writeError;

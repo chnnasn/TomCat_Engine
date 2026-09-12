@@ -6,10 +6,13 @@
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Entity.h"
 #include "../EditorIcons.h"
+#include "../Scripting/ScriptEditorMetadata.h"
 
 #include <array>
 #include <functional>
+#include <optional>
 #include <unordered_set>
+#include <utility>
 
 namespace TomCat {
 	class Project;
@@ -27,6 +30,8 @@ namespace TomCat {
 		using SceneLoadCallback = std::function<void(AssetHandle)>;
 		using SpriteCreateCallback = std::function<void(AssetHandle)>;
 		using SceneModifiedCallback = std::function<void()>;
+		using ScriptMetadataProvider =
+			std::function<std::optional<EditorScriptMetadata>(AssetHandle)>;
 
 		SceneHierarchyPanel() = default;
 		SceneHierarchyPanel(const Ref<Scene>& scene);
@@ -68,9 +73,16 @@ namespace TomCat {
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }
+		void SetScriptMetadataProvider(ScriptMetadataProvider provider)
+		{
+			m_ScriptMetadataProvider = std::move(provider);
+		}
 	private:
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
+		void DrawCSharpScripts(Entity entity);
+		bool AttachCSharpScript(Entity entity, AssetHandle handle);
+		bool AcceptCSharpScriptDrop(Entity entity);
 		void DrawEntityOperationsMenu();
 		void BeginRename(Entity entity);
 		void CutSelectedEntity();
@@ -113,6 +125,7 @@ namespace TomCat {
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
+		ScriptMetadataProvider m_ScriptMetadataProvider;
 
 	};
 

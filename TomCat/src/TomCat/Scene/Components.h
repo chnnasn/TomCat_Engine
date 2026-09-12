@@ -5,8 +5,11 @@
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Renderer/Texture.h"
+#include "TomCat/Scripting/ScriptField.h"
 
 #include <cstdint>
+#include <string>
+#include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -150,21 +153,22 @@ namespace TomCat {
 		C_Camera(const C_Camera&) = default;
 	};
 
-	// Forward declaration
-	class ScriptableEntity;
-	struct NativeScript
+	// Authoring/serialization state only. CLR instances and handles are owned by
+	// ScriptEngine and must never enter the ECS registry.
+	struct CSharpScriptEntry
 	{
-		ScriptableEntity* Instance = nullptr;
+		// UUID's default constructor produces a nonzero stable attachment identity.
+		// Scene::Copy preserves it; DuplicateEntity regenerates it for the copy.
+		UUID AttachmentID;
+		bool Enabled = true;
+		AssetHandle ScriptAsset{ 0 };
+		std::string LastKnownClassName;
+		ScriptFieldMap Fields;
+	};
 
-		ScriptableEntity* (*InstantiateScript)() = nullptr;
-		void (*DestroyScript)(NativeScript*) = nullptr;
-
-		template<typename T>
-		void Bind()
-		{
-			InstantiateScript = []() { return static_cast<ScriptableEntity* >(new T()); };
-			DestroyScript = [](NativeScript* nsc) { delete nsc->Instance; nsc->Instance = nullptr; };
-		}
+	struct CSharpScripts
+	{
+		std::vector<CSharpScriptEntry> Scripts;
 	};
 
 

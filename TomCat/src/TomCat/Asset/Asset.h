@@ -16,15 +16,17 @@ namespace TomCat {
 	enum class AssetType : uint16_t
 	{
 		None = 0,
-		Scene,
-		Texture2D,
-		Shader,
-		Audio,
-		Font,
-		Mesh,
-		Material,
-		Script,
-		Other
+		Scene = 1,
+		Texture2D = 2,
+		Shader = 3,
+		Audio = 4,
+		Font = 5,
+		Mesh = 6,
+		Material = 7,
+		// Keep the former Script numeric slot for metadata/package migration while
+		// giving C# source a precise, single-language identity.
+		CSharpScript = 8,
+		Other = 9
 	};
 
 	const char* AssetTypeToString(AssetType type);

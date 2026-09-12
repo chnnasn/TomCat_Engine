@@ -7,6 +7,9 @@
     <Filter Include="src\panels">
       <UniqueIdentifier>{FFFA9871-EBB2-DABE-54BA-B31A409175AF}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Scripting">
+      <UniqueIdentifier>{76D33592-9CD2-43A7-A222-7A4FD8A11772}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
 	<ClInclude Include="src\CookedPlayerLayer.h">
@@ -14,6 +17,18 @@
 	</ClInclude>
     <ClInclude Include="src\EditorLayer.h">
       <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Scripting\ScriptEditorMetadata.h">
+      <Filter>src\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Scripting\ScriptMetadataCache.h">
+      <Filter>src\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Scripting\ScriptProjectCompiler.h">
+      <Filter>src\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\panels\ConsolePanel.h">
+      <Filter>src\panels</Filter>
     </ClInclude>
     <ClInclude Include="src\panels\ContentBrowserPanel.h">
       <Filter>src\panels</Filter>
@@ -29,10 +44,19 @@
     <ClCompile Include="src\EditorLayer.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\Scripting\ScriptProjectCompiler.cpp">
+      <Filter>src\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Scripting\ScriptMetadataCache.cpp">
+      <Filter>src\Scripting</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCatInputApp.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\panels\ContentBrowserPanel.cpp">
+      <Filter>src\panels</Filter>
+    </ClCompile>
+    <ClCompile Include="src\panels\ConsolePanel.cpp">
       <Filter>src\panels</Filter>
     </ClCompile>
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp">

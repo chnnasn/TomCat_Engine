@@ -21,7 +21,6 @@
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Physics2DEvents.h"
-#include "TomCat/Scene/ScriptableEntity.h"
 
 //渲染器
 #include "TomCat/Renderer/Renderer.h"

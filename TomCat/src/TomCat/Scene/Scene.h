@@ -19,12 +19,11 @@ class b2World;
 class b2Body;
 
 namespace TomCat {
+	namespace Scripting { class ScriptEngine; }
 
 	class Entity;
 	class SceneContactFilter2D;
 	class SceneContactListener;
-	class ScriptableEntity;
-	struct NativeScript;
 
 	enum class ColliderDebugShapeType
 	{
@@ -110,7 +109,10 @@ namespace TomCat {
 		std::vector<UUID> GetChildrenUUIDs(Entity entity);
 		std::vector<UUID> GetRootEntityUUIDs();
 
-		void OnRuntimeStart();
+		// Starts physics and the managed scripting scene transactionally. A false
+		// result means all partially-created runtime state has already been rolled
+		// back and the caller must remain outside Play mode.
+		bool OnRuntimeStart();
 		void OnRuntimeStop();
 		// Advances scripts and physics by exactly one fixed 1/60 second step,
 		// independent of the most recent display-frame delta.
@@ -162,23 +164,9 @@ namespace TomCat {
 		Entity FindEntityByUUID(UUID uuid);
 		std::vector<AssetReference> FindAssetReferences(AssetHandle handle);
 	private:
-		struct DeferredNativeScriptDestruction
-		{
-			ScriptableEntity* Instance = nullptr;
-			ScriptableEntity* (*InstantiateScript)() = nullptr;
-			void (*DestroyScript)(NativeScript*) = nullptr;
-			std::string Context;
-		};
-
 		std::string MakeUniqueEntityName(const std::string& requestedName) const;
 		bool ValidateTransformHierarchy();
-		void QueueNativeScriptInstanceDestruction(NativeScript& script, const char* context);
-		void DestroyNativeScriptInstance(NativeScript& script, const char* context) noexcept;
-		void DestroyDetachedNativeScriptInstance(
-			const DeferredNativeScriptDestruction& script) noexcept;
-		void FlushDeferredNativeScriptMutations();
 		bool RunFixedRuntimeStep();
-		void UpdateRuntimeScripts(Timestep fixedTimestep);
 		bool SynchronizeRuntimePhysicsDefinitions();
 		uint64_t ComputeRuntimePhysicsDefinitionHash() const;
 		bool RebuildRuntimePhysicsWorld(bool preserveState);
@@ -200,10 +188,7 @@ namespace TomCat {
 		bool m_RuntimeRunning = false;
 		double m_RuntimeAccumulator = 0.0;
 		uint64_t m_RuntimeSessionGeneration = 0;
-		uint32_t m_NativeCollisionCallbackDepth = 0;
-		bool m_FlushingNativeScriptMutations = false;
-		std::vector<DeferredNativeScriptDestruction> m_DeferredNativeScriptDestructions;
-		std::vector<UUID> m_DeferredEntityDestructions;
+		uint64_t m_ScriptSceneSessionID = 0;
 		std::vector<UUID> m_EntitiesBeingDestroyed;
 		CollisionListenerHandle m_NextCollisionListenerHandle = 1;
 		std::unordered_map<CollisionListenerHandle, CollisionEnter2DCallback> m_CollisionEnterListeners;
@@ -223,6 +208,8 @@ namespace TomCat {
 		friend class SceneContactFilter2D;
 		friend class SceneSerializer;
 		friend class SceneHierarchyPanel;
+		friend class EditorLayer;
+		friend class Scripting::ScriptEngine;
 
 	};
 }

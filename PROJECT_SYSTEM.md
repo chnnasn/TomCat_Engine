@@ -141,7 +141,7 @@ Hierarchy 中实体可以拖到目标节点的上部、中部或下部，分别�
 
 碰撞体不依赖 `Rigidbody2D` 才能进入物理世界：只挂 Collider 的实体在 Play 中会创建隐式静态 `b2Body`。Circle 在非均匀缩放下不能退化为椭圆，因此 Offset 按带符号 XY 缩放和 Z 旋转变换，Radius 统一乘世界 XY 绝对缩放的最大值；编辑轮廓、运行时 Fixture 和调试轮廓都遵守这一规则。
 
-运行中的 Rigidbody、Collider、Transform 物理相关字段或 `DistanceJoint2D` 被添加、移除或修改后，会在下一次固定步开始前安全重建 Box2D 定义；动态刚体的速度会尽量保留。重建、实体删除和 Stop 都会清除旧 runtime 指针与待派发接触，Box2D world 锁定期间不修改 world。`b2Body` user data 只保存实体 UUID；ContactListener 只收集并按“实体对 + Collision/Trigger 类型”去重，`Step()` 返回后才向 Scene 监听器以及接触双方的 NativeScript `OnCollisionEnter2D/Exit2D`、`OnTriggerEnter2D/Exit2D` 派发，所以回调内删除实体不会留下悬空指针或陈旧 Exit。
+运行中的 Rigidbody、Collider、Transform 物理相关字段或 `DistanceJoint2D` 被添加、移除或修改后，会在下一次固定步开始前安全重建 Box2D 定义；动态刚体的速度会尽量保留。重建、实体删除和 Stop 都会清除旧 runtime 指针与待派发接触，Box2D world 锁定期间不修改 world。`b2Body` user data 只保存实体 UUID；ContactListener 只收集并按“实体对 + Collision/Trigger 类型”去重，`Step()` 返回后才向 Scene 监听器和托管脚本的 `OnCollisionEnter2D/Exit2D`、`OnTriggerEnter2D/Exit2D` 派发，所以回调内删除实体不会留下悬空指针或陈旧 Exit。
 
 Scene 提供带 Layer Mask 和 Trigger 选项的最近命中 `Raycast2D`、按 Entity UUID 去重并稳定排序的 broad-phase `QueryAABB2D`，以及动态刚体的 Force、指定点 Force、Impulse、指定点 Impulse、设置/读取线速度 API。查询的 Layer Mask 按 `EntityMetadata.Layer` 的槽位位图解释，不复用 Collider 的底层 Fixture Category Bits。首个 Joint 类型为 `DistanceJoint2D`，保存 Connected Entity UUID、本体/连接端局部 Anchor、Distance、Frequency、Damping 与 Collide Connected；连接始终通过 UUID 解析，不持久化 Box2D 指针。所有这些组件字段与 `EntityMetadata` 都属于 scene schema v9，会随 Scene Copy、实体复制、Cook 和 Player 完整保留，runtime 指针永不序列化。
 

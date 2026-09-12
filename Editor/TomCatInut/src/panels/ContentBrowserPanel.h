@@ -58,6 +58,7 @@ namespace TomCat {
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
 		bool m_ProjectStateWritable = true;
+		std::filesystem::path m_ExternalScriptEditor;
 		bool m_Focused = false;
 		bool m_Docked = true;
 
@@ -67,6 +68,7 @@ namespace TomCat {
 		std::unordered_set<std::string> m_PendingOpenDirectories;
 		// 等待下一帧创建的文件夹（从右键菜单里创建后立即进入重命名）
 		std::filesystem::path m_PendingCreateFolderParent;
+		std::filesystem::path m_PendingCreateScriptParent;
 
 		// 行内重命名状态
 		std::filesystem::path m_RenamePath;
@@ -110,6 +112,7 @@ namespace TomCat {
 			const std::filesystem::path& newPath, AssetHandle movedHandle = AssetHandle(0));
 
 		void FlushPendingCreateFolder();
+		void FlushPendingCreateScript();
 		void DrawNodeContextMenu();
 		void DrawContextMenuBody(const std::filesystem::path& target,
 			bool isDirectory, bool isRoot);
@@ -119,6 +122,8 @@ namespace TomCat {
 		void DrawDeleteConfirmation();
 
 		void OpenAsset(const std::filesystem::path& path, bool isDirectory);
+		bool OpenCSharpScript(const std::filesystem::path& path);
+		void ChooseExternalScriptEditor(const std::filesystem::path& scriptPath);
 		void RequestDeleteAsset(const std::filesystem::path& path, bool isDirectory);
 		void DeleteAsset(const std::filesystem::path& path, bool force);
 		void BeginRename(const std::filesystem::path& path);

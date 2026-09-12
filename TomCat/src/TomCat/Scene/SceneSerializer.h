@@ -12,7 +12,8 @@ namespace TomCat {
 	class SceneSerializer
 	{
 	public:
-		static constexpr uint32_t CurrentSchemaVersion = 9;
+		static constexpr uint32_t CurrentSchemaVersion = 10;
+		static constexpr uint32_t OldestSupportedSchemaVersion = 9;
 
 		SceneSerializer(const Ref<Scene>& scene);
 

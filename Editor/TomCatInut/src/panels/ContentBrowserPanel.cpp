@@ -11,7 +11,13 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
+
+#ifdef TC_PLATFORM_WINDOWS
+#include <shellapi.h>
+#pragma comment(lib, "Shell32.lib")
+#endif
 
 #include "TomCat/Project/ProjectManager.h"
 #include "TomCat/Asset/AssetManager.h"
@@ -225,6 +231,98 @@ namespace TomCat {
 			return {};
 		}
 
+		std::pair<std::filesystem::path, std::string> MakeUniqueCSharpScriptPath(
+			const std::filesystem::path& parent)
+		{
+			for (uint32_t index = 0; index < 10000; ++index)
+			{
+				const std::string className = index == 0
+					? "PlayerController"
+					: "PlayerController" + std::to_string(index);
+				const std::filesystem::path candidate = parent / UTF8ToPath(className + ".cs");
+				std::error_code fileError;
+				const bool fileExists = std::filesystem::exists(candidate, fileError);
+				fileError.clear();
+				const bool metadataExists = std::filesystem::exists(
+					AssetRegistry::GetMetadataPath(candidate), fileError);
+				if (!fileExists && !metadataExists)
+					return { candidate, className };
+			}
+			return {};
+		}
+
+		bool OpenInAssociatedApplication(const std::filesystem::path& path)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			const HINSTANCE result = ShellExecuteW(nullptr, L"open", path.c_str(),
+				nullptr, path.parent_path().c_str(), SW_SHOWNORMAL);
+			return reinterpret_cast<INT_PTR>(result) > 32;
+#else
+			(void)path;
+			return false;
+#endif
+		}
+
+		bool ResolveExternalScriptEditor(const std::filesystem::path& requested,
+			std::filesystem::path& resolved, std::string& errorMessage)
+		{
+			resolved.clear();
+			if (requested.empty())
+			{
+				errorMessage = "No external C# editor is configured";
+				return false;
+			}
+			resolved = CanonicalPath(requested);
+			if (!resolved.is_absolute() || ToLower(PathToUTF8(resolved.extension())) != ".exe")
+			{
+				errorMessage = "The external C# editor must be an absolute .exe path";
+				return false;
+			}
+			std::error_code error;
+			if (!std::filesystem::is_regular_file(resolved, error) || error)
+			{
+				errorMessage = "The configured external C# editor does not exist or is not a regular file: "
+					+ PathToUTF8(resolved);
+				return false;
+			}
+			return true;
+		}
+
+		bool OpenInExternalScriptEditor(const std::filesystem::path& editor,
+			const std::filesystem::path& script, std::string& errorMessage)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			std::error_code error;
+			if (!std::filesystem::is_regular_file(script, error) || error)
+			{
+				errorMessage = "The C# source no longer exists: " + PathToUTF8(script);
+				return false;
+			}
+			const std::wstring scriptArgument = script.native();
+			if (scriptArgument.find(L'\"') != std::wstring::npos)
+			{
+				errorMessage = "The C# source path cannot be represented as a safe command-line argument";
+				return false;
+			}
+			const std::wstring parameters = L"\"" + scriptArgument + L"\"";
+			const HINSTANCE result = ShellExecuteW(nullptr, L"open", editor.c_str(),
+				parameters.c_str(), script.parent_path().c_str(), SW_SHOWNORMAL);
+			const INT_PTR code = reinterpret_cast<INT_PTR>(result);
+			if (code <= 32)
+			{
+				errorMessage = "Windows could not launch the configured C# editor (ShellExecute code "
+					+ std::to_string(code) + ")";
+				return false;
+			}
+			return true;
+#else
+			(void)editor;
+			(void)script;
+			errorMessage = "External C# editor launching is currently implemented for Windows only";
+			return false;
+#endif
+		}
+
 		std::vector<std::filesystem::directory_entry> ReadDirectory(const std::filesystem::path& directory)
 		{
 			std::vector<std::filesystem::directory_entry> entries;
@@ -361,6 +459,7 @@ namespace TomCat {
 		else
 			AssetManager::Get().Shutdown();
 		m_ProjectStateWritable = true;
+		m_ExternalScriptEditor.clear();
 		m_CurrentDirectory.clear();
 		m_SelectedPath.clear();
 		m_UserSelectedDirectory = false;
@@ -368,6 +467,7 @@ namespace TomCat {
 		m_PendingOpenDirectories.clear();
 		m_ActiveScenePath.clear();
 		m_PendingCreateFolderParent.clear();
+		m_PendingCreateScriptParent.clear();
 		m_RenamePath.clear();
 		m_DeletePath.clear();
 		LoadLayoutSetting();
@@ -386,6 +486,8 @@ namespace TomCat {
 		const EditorProjectStateLoadResult loadResult = m_Project->LoadEditorState(state);
 		if (loadResult == EditorProjectStateLoadResult::Failed)
 			m_ProjectStateWritable = false;
+		else if (loadResult == EditorProjectStateLoadResult::Loaded)
+			m_ExternalScriptEditor = state.ExternalScriptEditor;
 
 		auto resolveStoredPath = [&](const std::string& stored) {
 			if (stored.empty())
@@ -449,6 +551,7 @@ namespace TomCat {
 
 		EditorProjectState state;
 		state.ContentBrowserCurrentDirectory = storePath(m_CurrentDirectory);
+		state.ExternalScriptEditor = m_ExternalScriptEditor;
 		std::vector<std::string> storedNodes;
 		storedNodes.reserve(m_ExpandedNodes.size());
 		for (const std::string& node : m_ExpandedNodes)
@@ -587,8 +690,71 @@ namespace TomCat {
 		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
 		if (metadata && metadata->Type == AssetType::Scene && m_SceneOpenCallback)
 			m_SceneOpenCallback(handle);
+		else if (metadata && metadata->Type == AssetType::CSharpScript)
+			OpenCSharpScript(managedPath);
 		else
 			TC_Warn("Opening this file type is not supported yet: {0}", PathToUTF8(managedPath.filename()));
+	}
+
+	bool ContentBrowserPanel::OpenCSharpScript(const std::filesystem::path& path)
+	{
+		const std::filesystem::path scriptPath = CanonicalPath(path);
+		if (!m_ExternalScriptEditor.empty())
+		{
+			std::filesystem::path editor;
+			std::string errorMessage;
+			if (!ResolveExternalScriptEditor(m_ExternalScriptEditor, editor, errorMessage)
+				|| !OpenInExternalScriptEditor(editor, scriptPath, errorMessage))
+			{
+				TC_Core_Error("Could not open C# script '{0}' with the configured editor: {1}. "
+					"Use Open With... to select another editor.", PathToUTF8(scriptPath),
+					errorMessage);
+				return false;
+			}
+			return true;
+		}
+
+		if (!OpenInAssociatedApplication(scriptPath))
+		{
+			TC_Core_Error("Could not open C# script with its associated application: {0}. "
+				"Use Open With... to configure an editor.", PathToUTF8(scriptPath));
+			return false;
+		}
+		return true;
+	}
+
+	void ContentBrowserPanel::ChooseExternalScriptEditor(
+		const std::filesystem::path& scriptPath)
+	{
+		if (!m_Project || !m_ProjectStateWritable)
+		{
+			TC_Core_Error("Cannot configure an external C# editor because project user settings are unavailable");
+			return;
+		}
+
+		const std::filesystem::path selected = FileDialogs::OpenFile(
+			"Windows Executable (*.exe)\0*.exe\0");
+		if (selected.empty())
+			return;
+
+		std::filesystem::path editor;
+		std::string errorMessage;
+		if (!ResolveExternalScriptEditor(selected, editor, errorMessage))
+		{
+			TC_Core_Error("Cannot use the selected C# editor: {0}", errorMessage);
+			return;
+		}
+
+		const std::filesystem::path previous = m_ExternalScriptEditor;
+		m_ExternalScriptEditor = editor;
+		if (!Serialize())
+		{
+			m_ExternalScriptEditor = previous;
+			TC_Core_Error("The selected C# editor could not be persisted to project user settings");
+			return;
+		}
+		TC_Core_Info("External C# editor set to: {0}", PathToUTF8(editor));
+		OpenCSharpScript(scriptPath);
 	}
 
 	void ContentBrowserPanel::BeginRename(const std::filesystem::path& path)
@@ -812,6 +978,64 @@ namespace TomCat {
 		BeginRename(newFolder);
 	}
 
+	void ContentBrowserPanel::FlushPendingCreateScript()
+	{
+		if (m_PendingCreateScriptParent.empty())
+			return;
+
+		const std::filesystem::path root = GetAssetRoot();
+		const std::filesystem::path parent = CanonicalPath(m_PendingCreateScriptParent);
+		m_PendingCreateScriptParent.clear();
+		std::error_code error;
+		if (!IsWithinRoot(root, parent) || !std::filesystem::is_directory(parent, error))
+		{
+			TC_Core_Warn("Refusing to create a C# script outside Assets: {0}", PathToUTF8(parent));
+			return;
+		}
+
+		const auto [scriptPath, className] = MakeUniqueCSharpScriptPath(parent);
+		if (scriptPath.empty())
+		{
+			TC_Core_Error("Could not find a unique C# script name in {0}", PathToUTF8(parent));
+			return;
+		}
+
+		std::string source;
+		source.reserve(256);
+		source += "using TomCat;\n\n";
+		source += "public sealed class " + className + " : TomCatBehaviour\n";
+		source += "{\n";
+		source += "    protected override void OnCreate()\n";
+		source += "    {\n";
+		source += "    }\n\n";
+		source += "    protected override void OnUpdate(float deltaTime)\n";
+		source += "    {\n";
+		source += "    }\n";
+		source += "}\n";
+
+		std::string writeError;
+		if (!FileSystem::WriteFileAtomically(scriptPath, source, writeError))
+		{
+			TC_Core_Error("Failed to create C# script '{0}': {1}",
+				PathToUTF8(scriptPath), writeError);
+			return;
+		}
+
+		const AssetHandle handle = AssetManager::Get().ImportAsset(scriptPath);
+		if (static_cast<uint64_t>(handle) == 0)
+		{
+			TC_Core_Error("C# script was created but could not be imported: {0}",
+				PathToUTF8(scriptPath));
+			return;
+		}
+
+		m_CurrentDirectory = parent;
+		m_SelectedPath = scriptPath;
+		m_UserSelectedDirectory = true;
+		m_ExpandedNodes.insert(PathToUTF8(parent));
+		m_PendingOpenDirectories.insert(PathToUTF8(parent));
+	}
+
 	void ContentBrowserPanel::DrawContextMenuBody(const std::filesystem::path& target,
 		bool isDirectory, bool isRoot)
 	{
@@ -830,10 +1054,17 @@ namespace TomCat {
 		{
 			if (ImGui::MenuItem("Folder"))
 				m_PendingCreateFolderParent = isDirectory ? target : target.parent_path();
+			if (ImGui::MenuItem("C# Script"))
+				m_PendingCreateScriptParent = isDirectory ? target : target.parent_path();
 			ImGui::EndMenu();
 		}
 		if (ImGui::MenuItem("Open"))
 			OpenAsset(target, isDirectory);
+		const bool csharpScript = !isDirectory
+			&& ToLower(PathToUTF8(target.extension())) == ".cs";
+		if (csharpScript && ImGui::MenuItem("Open With...", nullptr, false,
+			m_Project && m_ProjectStateWritable))
+			ChooseExternalScriptEditor(target);
 		if (ImGui::MenuItem("Delete", nullptr, false, !isRoot))
 			RequestDeleteAsset(target, isDirectory);
 		if (ImGui::MenuItem("Rename", nullptr, false, !isRoot))
@@ -1079,7 +1310,7 @@ namespace TomCat {
 			}
 			case AssetType::Material: return icon(EditorIcon::Material);
 			case AssetType::Shader: return icon(EditorIcon::Shader);
-			case AssetType::Script: return icon(EditorIcon::Script);
+			case AssetType::CSharpScript: return icon(EditorIcon::Script);
 			case AssetType::Mesh: return icon(EditorIcon::Mesh);
 			case AssetType::Audio: return icon(EditorIcon::Audio);
 			case AssetType::Font: return icon(EditorIcon::Font);
@@ -1441,6 +1672,7 @@ namespace TomCat {
 		// panel is hidden. Modal popups are also drawn after the panel window so
 		// they always live in the same parent ImGui scope.
 		FlushPendingCreateFolder();
+		FlushPendingCreateScript();
 		if (open && !*open)
 		{
 			DrawRenamePopup();

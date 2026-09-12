@@ -10,6 +10,8 @@
 #include <fstream>
 #include <functional>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -17,6 +19,23 @@
 namespace TomCat {
 
 	class Project;
+
+	// Path-free managed payload embedded in tcpak v4. Host/runtime files remain
+	// beside the Player on disk; only the collectible project assembly is stored
+	// in the package.
+	struct ManagedPackagePayload
+	{
+		uint32_t NativeApiVersion = 0;
+		uint32_t ManagedApiVersion = 0;
+		uint32_t ScriptManifestVersion = 0;
+		std::string TargetFramework;
+		std::string RuntimeIdentifier;
+		std::string BuildID;
+		std::string AssemblySHA256;
+		std::string ScriptManifestJson;
+		std::vector<uint8_t> Assembly;
+		std::vector<uint8_t> Pdb;
+	};
 
 	// Owns loaded project assets. Authoring builds resolve handles through the
 	// registry; a mounted cooked package is deliberately path-free and takes
@@ -70,6 +89,12 @@ namespace TomCat {
 		bool CookToPackage(const std::filesystem::path& packagePath);
 		bool CookToPackage(const std::filesystem::path& packagePath,
 			AssetHandle startSceneHandle);
+		// Tests and non-Editor authoring tools may provide an already validated
+		// Release build explicitly. Normal project cooks discover last-good.json.
+		bool SetManagedCookPayload(std::vector<uint8_t> assembly,
+			std::string scriptManifestJson, std::string buildID,
+			std::vector<uint8_t> pdb = {});
+		void ClearManagedCookPayload() { m_ManagedCookPayloadOverride.reset(); }
 		bool MountCookedPackage(const std::filesystem::path& packagePath);
 		void UnmountCookedPackage();
 		bool IsCookedPackageMounted() const { return !m_CookedPackagePath.empty(); }
@@ -79,8 +104,13 @@ namespace TomCat {
 			return IsCookedPackageMounted() ? m_CookedStartSceneHandle : AssetHandle(0);
 		}
 		// Authoring reads the active Project; a cooked runtime reads the immutable
-		// matrix embedded in the v3 package header.
+		// matrix embedded in the v4 package header.
 		Physics2DSettings GetPhysics2DSettings() const;
+		const ManagedPackagePayload* GetCookedManagedPayload() const
+		{
+			return IsCookedPackageMounted() && m_CookedManagedPayload
+				? &*m_CookedManagedPayload : nullptr;
+		}
 		bool ReadAssetBytes(AssetHandle handle, std::vector<uint8_t>& bytes,
 			AssetType* type = nullptr) const;
 		std::vector<uint8_t> ReadAssetBytes(AssetHandle handle) const;
@@ -113,6 +143,7 @@ namespace TomCat {
 		uint64_t m_CookedPackageSize = 0;
 		AssetHandle m_CookedStartSceneHandle = AssetHandle(0);
 		Physics2DSettings m_CookedPhysics2DSettings;
+		std::optional<ManagedPackagePayload> m_CookedManagedPayload;
 		std::unordered_map<AssetHandle, CookedEntry> m_CookedEntries;
 		mutable std::ifstream m_CookedPackageStream;
 		mutable std::mutex m_CookedPackageMutex;
@@ -122,6 +153,7 @@ namespace TomCat {
 		// package serializes its value, never the authoring path.
 		std::weak_ptr<Project> m_AuthoringProject;
 		bool m_UsesProjectConfiguration = false;
+		std::optional<ManagedPackagePayload> m_ManagedCookPayloadOverride;
 	};
 
 }

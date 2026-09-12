@@ -14,7 +14,7 @@ TomCat 当前优先完成可实际使用的 2D 开发流程。现有 3D 项目�
 - **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化和原子保存
 - **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` Sidecar、Registry 重建、事务化移动/删除和缺失资产占位
 - **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
-- **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、Play/Pause/Step/Stop，以及延迟派发的 NativeScript Collision/Trigger 回调
+- **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、Play/Pause/Step/Stop，以及延迟派发的 C# Collision/Trigger 回调
 - **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector 和 Project 面板，支持项目级布局与用户设置持久化
 - **Cooked Runtime 基础**：按资产 Handle 寻址、无作者路径的 `.tcpak` v3，并为最小 Cooked Player 嵌入项目碰撞矩阵
 - **Hub 项目管理器**：项目创建与发现、Editor 版本选择和用户级最近项目状态
@@ -73,7 +73,7 @@ vendor/            premake 与第三方依赖
 - [x] 固定步长 Play / Pause / Step / Stop 状态模型（不设置独立 Simulate 状态）
 - [x] 仅 Scene 视图显示 Box/Circle 碰撞轮廓，并支持 Edit Collider 句柄
 - [x] CircleCollider2D、隐式静态刚体、Trigger、每 Fixture/项目 Layer 两级碰撞过滤、查询、运动 API 和 DistanceJoint2D
-- [x] 延迟派发的引擎/NativeScript Collision 与 Trigger 回调
+- [x] 延迟派发的引擎监听器/C# Collision 与 Trigger 回调
 - [x] 项目级 Tag、16 个稳定 Layer 和对称 Physics 2D 碰撞矩阵设置
 - [x] Scene Schema v9 持久化与 Cooked Package v3 物理往返
 - [x] 物理回归测试套件（`Scripts\Run-PhysicsRegression.ps1`）

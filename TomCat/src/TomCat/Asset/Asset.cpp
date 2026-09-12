@@ -21,7 +21,7 @@ namespace TomCat {
 			case AssetType::Font: return "Font";
 			case AssetType::Mesh: return "Mesh";
 			case AssetType::Material: return "Material";
-			case AssetType::Script: return "Script";
+			case AssetType::CSharpScript: return "CSharpScript";
 			case AssetType::Other: return "Other";
 		}
 		return "None";
@@ -36,7 +36,10 @@ namespace TomCat {
 		if (value == "Font") return AssetType::Font;
 		if (value == "Mesh") return AssetType::Mesh;
 		if (value == "Material") return AssetType::Material;
-		if (value == "Script") return AssetType::Script;
+		if (value == "CSharpScript") return AssetType::CSharpScript;
+		// Read old sidecars once; Refresh rewrites them according to the source
+		// extension, so .cs becomes CSharpScript and native/Lua source becomes Other.
+		if (value == "Script") return AssetType::CSharpScript;
 		if (value == "Other") return AssetType::Other;
 		return AssetType::None;
 	}
@@ -65,9 +68,7 @@ namespace TomCat {
 			extension == ".glb")
 			return AssetType::Mesh;
 		if (extension == ".tcmat") return AssetType::Material;
-		if (extension == ".cpp" || extension == ".h" || extension == ".hpp" ||
-			extension == ".cs" || extension == ".lua")
-			return AssetType::Script;
+		if (extension == ".cs") return AssetType::CSharpScript;
 		return AssetType::Other;
 	}
 

@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -95,6 +97,199 @@ namespace TomCat {
 			return static_cast<char>(std::tolower(character));
 		});
 		return value;
+	}
+
+	template<typename T>
+	static T ScriptRangeEndpoint(double value)
+	{
+		if (!std::isfinite(value))
+			return T{};
+		if (value <= static_cast<double>(std::numeric_limits<T>::lowest()))
+			return std::numeric_limits<T>::lowest();
+		if (value >= static_cast<double>(std::numeric_limits<T>::max()))
+			return std::numeric_limits<T>::max();
+		return static_cast<T>(value);
+	}
+
+	static void DrawScriptFieldTooltip(const EditorScriptFieldMetadata* metadata)
+	{
+		if (metadata && !metadata->Tooltip.empty() &&
+			ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+			ImGui::SetTooltip("%s", metadata->Tooltip.c_str());
+	}
+
+	static bool DrawScriptFieldValue(ScriptField& field,
+		const EditorScriptFieldMetadata* metadata, bool orphan)
+	{
+		ImGui::PushID(field.FieldID.empty() ? field.Name.c_str() : field.FieldID.c_str());
+		std::string label = field.Name.empty() ? "Unnamed Field" : field.Name;
+		if (metadata && !metadata->Name.empty())
+			label = metadata->Name;
+		if (orphan)
+			label += " (Orphan)";
+
+		if (orphan)
+			ImGui::TextColored(ImVec4(1.0f, 0.68f, 0.25f, 1.0f), "%s", label.c_str());
+		else
+			ImGui::TextUnformatted(label.c_str());
+		if (metadata && field.Type == ScriptFieldType::Enum && !metadata->TypeName.empty())
+		{
+			ImGui::SameLine();
+			ImGui::TextDisabled("(%s)", metadata->TypeName.c_str());
+		}
+		DrawScriptFieldTooltip(metadata);
+		ImGui::SetNextItemWidth(-1.0f);
+
+		if (!IsScriptFieldValueCompatible(field.Type, field.Value))
+		{
+			ImGui::TextDisabled("Stored value is incompatible with %s",
+				ScriptFieldTypeToString(field.Type));
+			bool changed = false;
+			if (ImGui::SmallButton("Reset value"))
+			{
+				field.Value = DefaultScriptFieldValue(field.Type);
+				changed = true;
+			}
+			ImGui::PopID();
+			return changed;
+		}
+
+		const bool hasRange = metadata && metadata->RangeMinimum && metadata->RangeMaximum &&
+			*metadata->RangeMinimum <= *metadata->RangeMaximum;
+		bool changed = false;
+		switch (field.Type)
+		{
+			case ScriptFieldType::Bool:
+				changed = ImGui::Checkbox("##Value", &std::get<bool>(field.Value));
+				break;
+			case ScriptFieldType::Int32:
+			{
+				auto& value = std::get<int32_t>(field.Value);
+				if (hasRange)
+				{
+					const int32_t minimum = ScriptRangeEndpoint<int32_t>(*metadata->RangeMinimum);
+					const int32_t maximum = ScriptRangeEndpoint<int32_t>(*metadata->RangeMaximum);
+					changed = ImGui::SliderScalar("##Value", ImGuiDataType_S32, &value,
+						&minimum, &maximum);
+				}
+				else
+					changed = ImGui::InputScalar("##Value", ImGuiDataType_S32, &value);
+				break;
+			}
+			case ScriptFieldType::Int64:
+			case ScriptFieldType::Enum:
+			{
+				auto& value = std::get<int64_t>(field.Value);
+				if (hasRange)
+				{
+					const int64_t minimum = ScriptRangeEndpoint<int64_t>(*metadata->RangeMinimum);
+					const int64_t maximum = ScriptRangeEndpoint<int64_t>(*metadata->RangeMaximum);
+					changed = ImGui::SliderScalar("##Value", ImGuiDataType_S64, &value,
+						&minimum, &maximum);
+				}
+				else
+					changed = ImGui::InputScalar("##Value", ImGuiDataType_S64, &value);
+				break;
+			}
+			case ScriptFieldType::Float:
+			{
+				auto& value = std::get<float>(field.Value);
+				if (hasRange)
+				{
+					const float minimum = static_cast<float>(*metadata->RangeMinimum);
+					const float maximum = static_cast<float>(*metadata->RangeMaximum);
+					changed = ImGui::SliderFloat("##Value", &value, minimum, maximum);
+				}
+				else
+					changed = ImGui::DragFloat("##Value", &value, 0.01f);
+				break;
+			}
+			case ScriptFieldType::Double:
+			{
+				auto& value = std::get<double>(field.Value);
+				if (hasRange)
+				{
+					const double minimum = *metadata->RangeMinimum;
+					const double maximum = *metadata->RangeMaximum;
+					changed = ImGui::SliderScalar("##Value", ImGuiDataType_Double, &value,
+						&minimum, &maximum, "%.6f");
+				}
+				else
+					changed = ImGui::DragScalar("##Value", ImGuiDataType_Double, &value,
+						0.01f, nullptr, nullptr, "%.6f");
+				break;
+			}
+			case ScriptFieldType::String:
+			{
+				auto& value = std::get<std::string>(field.Value);
+				std::vector<char> buffer(std::max<size_t>(1024, value.size() + 256), '\0');
+				std::copy(value.begin(), value.end(), buffer.begin());
+				if (ImGui::InputText("##Value", buffer.data(), buffer.size()))
+				{
+					value = buffer.data();
+					changed = true;
+				}
+				break;
+			}
+			case ScriptFieldType::Vector2:
+			{
+				auto& value = std::get<glm::vec2>(field.Value);
+				changed = hasRange
+					? ImGui::SliderFloat2("##Value", glm::value_ptr(value),
+						static_cast<float>(*metadata->RangeMinimum),
+						static_cast<float>(*metadata->RangeMaximum))
+					: ImGui::DragFloat2("##Value", glm::value_ptr(value), 0.01f);
+				break;
+			}
+			case ScriptFieldType::Vector3:
+			{
+				auto& value = std::get<glm::vec3>(field.Value);
+				changed = hasRange
+					? ImGui::SliderFloat3("##Value", glm::value_ptr(value),
+						static_cast<float>(*metadata->RangeMinimum),
+						static_cast<float>(*metadata->RangeMaximum))
+					: ImGui::DragFloat3("##Value", glm::value_ptr(value), 0.01f);
+				break;
+			}
+			case ScriptFieldType::Vector4:
+			{
+				auto& value = std::get<glm::vec4>(field.Value);
+				changed = hasRange
+					? ImGui::SliderFloat4("##Value", glm::value_ptr(value),
+						static_cast<float>(*metadata->RangeMinimum),
+						static_cast<float>(*metadata->RangeMaximum))
+					: ImGui::DragFloat4("##Value", glm::value_ptr(value), 0.01f);
+				break;
+			}
+			case ScriptFieldType::Color:
+				changed = ImGui::ColorEdit4("##Value",
+					glm::value_ptr(std::get<glm::vec4>(field.Value)));
+				break;
+			case ScriptFieldType::Entity:
+			case ScriptFieldType::AssetRef:
+			{
+				auto& value = std::get<uint64_t>(field.Value);
+				changed = ImGui::InputScalar("##Value", ImGuiDataType_U64, &value);
+				if (ImGui::BeginDragDropTarget())
+				{
+					const char* payloadID = field.Type == ScriptFieldType::Entity
+						? SceneEntityDragDropPayloadID : AssetDragDropPayloadID;
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(payloadID))
+					{
+						if (payload->DataSize == sizeof(uint64_t))
+						{
+							value = *static_cast<const uint64_t*>(payload->Data);
+							changed = true;
+						}
+					}
+					ImGui::EndDragDropTarget();
+				}
+				break;
+			}
+		}
+		DrawScriptFieldTooltip(metadata);
+		ImGui::PopID();
+		return changed;
 	}
 
 	static bool MatchesSpriteSearch(const AssetMetadata& metadata, const char* search)
@@ -404,6 +599,116 @@ namespace TomCat {
 			m_SceneModifiedCallback();
 	}
 
+	bool SceneHierarchyPanel::AttachCSharpScript(Entity entity, AssetHandle handle)
+	{
+		if (!entity || !m_Context || !m_ColliderEditingAllowed ||
+			static_cast<uint64_t>(handle) == 0)
+			return false;
+		const AssetMetadata* assetMetadata =
+			AssetManager::Get().GetRegistry().GetMetadata(handle);
+		if (!assetMetadata || assetMetadata->IsMissing ||
+			assetMetadata->Type != AssetType::CSharpScript)
+			return false;
+
+		std::optional<EditorScriptMetadata> scriptMetadata;
+		if (m_ScriptMetadataProvider)
+			scriptMetadata = m_ScriptMetadataProvider(handle);
+
+		auto& component = entity.HasComponent<CSharpScripts>()
+			? entity.GetComponent<CSharpScripts>()
+			: entity.AddComponent<CSharpScripts>();
+		if (scriptMetadata && scriptMetadata->DisallowMultiple)
+		{
+			const bool alreadyAttached = std::any_of(component.Scripts.begin(),
+				component.Scripts.end(), [handle](const CSharpScriptEntry& entry)
+				{
+					return entry.ScriptAsset == handle;
+				});
+			if (alreadyAttached)
+			{
+				TC_Warn("Script '{0}' disallows multiple attachments on one entity",
+					PathToUTF8(assetMetadata->FilePath));
+				return false;
+			}
+		}
+
+		CSharpScriptEntry entry;
+		auto attachmentIDIsAvailable = [this](uint64_t candidate)
+		{
+			if (candidate == 0)
+				return false;
+			const auto view = m_Context->m_Registry.view<CSharpScripts>();
+			for (const entt::entity entityHandle : view)
+			{
+				const auto& existingScripts =
+					view.get<CSharpScripts>(entityHandle).Scripts;
+				if (std::any_of(existingScripts.begin(), existingScripts.end(),
+					[candidate](const CSharpScriptEntry& existing)
+					{
+						return static_cast<uint64_t>(existing.AttachmentID) ==
+							candidate;
+					}))
+					return false;
+			}
+			return true;
+		};
+		bool hasUniqueAttachmentID = false;
+		for (uint32_t attempt = 0; attempt < 64; ++attempt)
+		{
+			const uint64_t rawID = static_cast<uint64_t>(entry.AttachmentID);
+			hasUniqueAttachmentID = attachmentIDIsAvailable(rawID);
+			if (hasUniqueAttachmentID)
+				break;
+			entry.AttachmentID = UUID();
+		}
+		if (!hasUniqueAttachmentID)
+		{
+			TC_Core_Error("Could not allocate a unique C# script attachment ID");
+			return false;
+		}
+
+		entry.ScriptAsset = handle;
+		entry.Enabled = true;
+		entry.LastKnownClassName = scriptMetadata && !scriptMetadata->TypeName.empty()
+			? scriptMetadata->TypeName
+			: PathToUTF8(AssetManager::Get().ResolvePath(handle).stem());
+		if (scriptMetadata)
+		{
+			entry.Fields.reserve(scriptMetadata->Fields.size());
+			for (const EditorScriptFieldMetadata& fieldMetadata : scriptMetadata->Fields)
+			{
+				ScriptFieldValue value = fieldMetadata.DefaultValue &&
+					IsScriptFieldValueCompatible(fieldMetadata.Type,
+						*fieldMetadata.DefaultValue)
+					? *fieldMetadata.DefaultValue
+					: DefaultScriptFieldValue(fieldMetadata.Type);
+				entry.Fields.emplace_back(fieldMetadata.FieldID, fieldMetadata.Name,
+					fieldMetadata.Type, std::move(value));
+			}
+		}
+		component.Scripts.push_back(std::move(entry));
+		MarkModified();
+		return true;
+	}
+
+	bool SceneHierarchyPanel::AcceptCSharpScriptDrop(Entity entity)
+	{
+		if (!entity || !m_ColliderEditingAllowed)
+			return false;
+		const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+			AssetDragDropPayloadID, ImGuiDragDropFlags_AcceptBeforeDelivery);
+		if (!payload || payload->DataSize != sizeof(uint64_t))
+			return false;
+		const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+		const AssetMetadata* metadata =
+			AssetManager::Get().GetRegistry().GetMetadata(handle);
+		if (!metadata || metadata->Type != AssetType::CSharpScript)
+			return false;
+		if (payload->IsDelivery())
+			AttachCSharpScript(entity, handle);
+		return true;
+	}
+
 	bool SceneHierarchyPanel::FlushPendingDeletion()
 	{
 		if (!m_Context || !m_EntityToDelete)
@@ -604,7 +909,23 @@ namespace TomCat {
 			m_InspectorFocused = inspectorVisible &&
 				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 			if (inspectorVisible && m_SelectionContext)
+			{
 				DrawComponents(m_SelectionContext);
+				const ImVec2 windowPosition = ImGui::GetWindowPos();
+				const ImVec2 contentMinimum = ImGui::GetWindowContentRegionMin();
+				const ImVec2 contentMaximum = ImGui::GetWindowContentRegionMax();
+				const ImRect dropRect(
+					ImVec2(windowPosition.x + contentMinimum.x,
+						windowPosition.y + contentMinimum.y),
+					ImVec2(windowPosition.x + contentMaximum.x,
+						windowPosition.y + contentMaximum.y));
+				if (ImGui::BeginDragDropTargetCustom(dropRect,
+					ImGui::GetID("##InspectorCSharpScriptDrop")))
+				{
+					AcceptCSharpScriptDrop(m_SelectionContext);
+					ImGui::EndDragDropTarget();
+				}
+			}
 			ImGui::End();
 		}
 	}
@@ -910,6 +1231,8 @@ namespace TomCat {
 		{
 			const ImGuiDragDropFlags dropFlags = ImGuiDragDropFlags_AcceptBeforeDelivery |
 				ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+			const bool acceptedScript = AcceptCSharpScriptDrop(entity);
+			if (!acceptedScript)
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
 				SceneEntityDragDropPayloadID, dropFlags))
 			{
@@ -1240,6 +1563,173 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}
 		ImGui::PopID();
 	}
+	}
+
+	void SceneHierarchyPanel::DrawCSharpScripts(Entity entity)
+	{
+		if (!entity || !entity.HasComponent<CSharpScripts>())
+			return;
+
+		auto& scripts = entity.GetComponent<CSharpScripts>().Scripts;
+		std::optional<size_t> removeIndex;
+		for (size_t scriptIndex = 0; scriptIndex < scripts.size(); ++scriptIndex)
+		{
+			auto& entry = scripts[scriptIndex];
+			const uint64_t attachmentID = static_cast<uint64_t>(entry.AttachmentID);
+			ImGui::PushID(reinterpret_cast<void*>(static_cast<uintptr_t>(attachmentID)));
+
+			const AssetMetadata* assetMetadata =
+				AssetManager::Get().GetRegistry().GetMetadata(entry.ScriptAsset);
+			const bool missing = static_cast<uint64_t>(entry.ScriptAsset) == 0 ||
+				!assetMetadata || assetMetadata->IsMissing ||
+				assetMetadata->Type != AssetType::CSharpScript;
+			std::optional<EditorScriptMetadata> metadata;
+			if (!missing && m_ScriptMetadataProvider)
+				metadata = m_ScriptMetadataProvider(entry.ScriptAsset);
+
+			if (metadata && !metadata->TypeName.empty() &&
+				entry.LastKnownClassName != metadata->TypeName)
+			{
+				entry.LastKnownClassName = metadata->TypeName;
+				MarkModified();
+			}
+			if (metadata && m_ColliderEditingAllowed &&
+				ReconcileScriptEntryFields(entry, *metadata))
+				MarkModified();
+			std::string className = metadata && !metadata->TypeName.empty()
+				? metadata->TypeName : entry.LastKnownClassName;
+			if (className.empty() && assetMetadata)
+				className = PathToUTF8(assetMetadata->FilePath.stem());
+			if (className.empty())
+				className = "Unknown Script";
+			const std::string header = missing
+				? "Missing Script: " + className
+				: className + " (C# Script)";
+
+			ImGui::Separator();
+			if (missing)
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.34f, 0.34f, 1.0f));
+			const bool open = ImGui::TreeNodeEx("##CSharpScriptCard",
+				ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed |
+				ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding,
+				"%s", header.c_str());
+			if (missing)
+				ImGui::PopStyleColor();
+
+			if (ImGui::BeginPopupContextItem("ScriptSettings"))
+			{
+				ImGui::BeginDisabled(!m_ColliderEditingAllowed);
+				if (ImGui::MenuItem("Remove script"))
+					removeIndex = scriptIndex;
+				ImGui::EndDisabled();
+				ImGui::EndPopup();
+			}
+
+			if (open)
+			{
+				ImGui::BeginDisabled(!m_ColliderEditingAllowed);
+				if (ImGui::Checkbox("Enabled", &entry.Enabled))
+					MarkModified();
+				if (assetMetadata)
+					ImGui::TextDisabled("%s", PathToUTF8(assetMetadata->FilePath).c_str());
+				if (missing)
+					ImGui::TextWrapped("The script asset is missing or no longer resolves to a C# script. Stored values are preserved.");
+				else if (!metadata)
+					ImGui::TextDisabled("Managed metadata is unavailable; stored fields are shown as orphans.");
+
+				std::vector<bool> consumed(entry.Fields.size(), false);
+				if (metadata)
+				{
+					std::string lastHeader;
+					for (const EditorScriptFieldMetadata& fieldMetadata : metadata->Fields)
+					{
+						size_t matchedIndex = entry.Fields.size();
+						for (size_t fieldIndex = 0; fieldIndex < entry.Fields.size(); ++fieldIndex)
+						{
+							if (fieldIndex < consumed.size() && consumed[fieldIndex])
+								continue;
+							const ScriptField& stored = entry.Fields[fieldIndex];
+							const bool idMatches = !fieldMetadata.FieldID.empty() &&
+								stored.FieldID == fieldMetadata.FieldID;
+							const bool nameMatches = stored.Name == fieldMetadata.Name ||
+								std::find(fieldMetadata.FormerNames.begin(),
+									fieldMetadata.FormerNames.end(), stored.Name) !=
+									fieldMetadata.FormerNames.end();
+							if ((idMatches || nameMatches) &&
+								IsScriptFieldValueCompatible(fieldMetadata.Type, stored.Value))
+							{
+								matchedIndex = fieldIndex;
+								break;
+							}
+						}
+
+						if (matchedIndex != entry.Fields.size())
+							consumed[matchedIndex] = true;
+						if (fieldMetadata.Hidden)
+							continue;
+						if (!fieldMetadata.Header.empty() && fieldMetadata.Header != lastHeader)
+						{
+							ImGui::Spacing();
+							ImGui::Separator();
+							ImGui::TextDisabled("%s", fieldMetadata.Header.c_str());
+							lastHeader = fieldMetadata.Header;
+						}
+
+						if (matchedIndex != entry.Fields.size())
+						{
+							if (DrawScriptFieldValue(entry.Fields[matchedIndex],
+								&fieldMetadata, false))
+								MarkModified();
+						}
+						else
+						{
+							ScriptField pending(fieldMetadata.FieldID, fieldMetadata.Name,
+								fieldMetadata.Type,
+								ScriptMetadataDefaultValue(fieldMetadata));
+							if (DrawScriptFieldValue(pending, &fieldMetadata, false))
+							{
+								entry.Fields.push_back(std::move(pending));
+								consumed.push_back(true);
+								MarkModified();
+							}
+						}
+					}
+				}
+
+				bool drewOrphanHeader = false;
+				for (size_t fieldIndex = 0; fieldIndex < entry.Fields.size(); ++fieldIndex)
+				{
+					if (fieldIndex < consumed.size() && consumed[fieldIndex])
+						continue;
+					if (!drewOrphanHeader)
+					{
+						ImGui::Spacing();
+						ImGui::Separator();
+						ImGui::TextDisabled("Orphaned serialized fields");
+						drewOrphanHeader = true;
+					}
+					if (DrawScriptFieldValue(entry.Fields[fieldIndex], nullptr, true))
+						MarkModified();
+				}
+				if ((!metadata || metadata->Fields.empty()) && entry.Fields.empty())
+					ImGui::TextDisabled("No serialized fields.");
+
+				ImGui::Spacing();
+				if (ImGui::Button("Remove Script"))
+					removeIndex = scriptIndex;
+				ImGui::EndDisabled();
+				ImGui::TreePop();
+			}
+			ImGui::PopID();
+		}
+
+		if (removeIndex && *removeIndex < scripts.size())
+		{
+			scripts.erase(scripts.begin() + static_cast<std::ptrdiff_t>(*removeIndex));
+			MarkModified();
+			if (scripts.empty())
+				entity.RemoveComponent<CSharpScripts>();
+		}
 	}
 
 
@@ -2073,6 +2563,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 				MarkModified();
 		}, onModified, m_ColliderEditingAllowed);
 
+		DrawCSharpScripts(entity);
 		ImGui::Spacing();
 		ImGui::SetNextItemWidth(-1.0f);
 		ImGui::BeginDisabled(!m_ColliderEditingAllowed);
@@ -2084,6 +2575,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 		if (ImGui::BeginPopup("AddComponent"))
 		{
 			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
+			ImGui::MenuItem("C# Script (drag asset into Inspector)", nullptr, false, false);
+			ImGui::Separator();
 			if (!entity.HasComponent<C_Camera>() && ImGui::MenuItem("Camera"))
 			{
 				const bool alreadyHasPrimary = m_Context && (bool)m_Context->GetPrimaryCameraEntity();

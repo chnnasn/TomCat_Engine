@@ -6,6 +6,9 @@
 
 #include "TomCat/Renderer/EditorCamera.h"
 #include "Panels/ContentBrowserPanel.h"
+#include "Panels/ConsolePanel.h"
+#include "Scripting/ScriptProjectCompiler.h"
+#include "Scripting/ScriptMetadataCache.h"
 #include <functional>
 #include "TomCat/Project/Project.h"
 #include "TomCat/Project/ProjectManager.h"
@@ -91,6 +94,7 @@ namespace TomCat {
 		void UI_GameNoCameraOverlay();
 		void UI_MainMenuBar();
 		void UI_BuildSettings();
+		bool BuildPlayer(bool runAfterBuild);
 		void UI_ProjectSettings();
 		void OpenProjectSettingsPanel();
 		void UpdateWindowTitle();
@@ -100,6 +104,10 @@ namespace TomCat {
 		void ClearProjectSettingsFeedback();
 		void FocusEditorPanel(const char* panelName, bool& panelVisible);
 		void CycleEditorPanel(int direction);
+		bool PrepareManagedRuntime();
+		bool ReconcileManagedScriptFields(const Ref<Scene>& scene);
+		void UpdateScriptCompilation(Timestep ts);
+		void ResetScriptCompileTracking();
 
 		bool OpenProject();
 		bool OpenProject(const std::filesystem::path& path);
@@ -143,6 +151,13 @@ namespace TomCat {
 
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
+		ConsolePanel m_ConsolePanel;
+		ScriptProjectCompiler m_ScriptCompiler;
+		ScriptMetadataCache m_ScriptMetadata;
+		float m_ScriptSourcePollCountdown = 0.0f;
+		float m_ScriptCompileDebounceRemaining = 0.65f;
+		std::string m_ObservedScriptSourceHash;
+		bool m_PlayScriptDirtyNoticeShown = false;
 		
 		Ref<EditorIconSet> m_EditorIcons;
 
@@ -195,8 +210,11 @@ namespace TomCat {
 		bool m_ShowHierarchyPanel = true;
 		bool m_ShowInspectorPanel = true;
 		bool m_ShowProjectPanel = true;
+		bool m_ShowConsolePanel = false;
 		bool m_ShowBuildSettingsPanel = false;
 		bool m_FocusBuildSettingsPanel = false;
+		std::string m_PlayerBuildStatus;
+		bool m_PlayerBuildSucceeded = false;
 		bool m_ShowProjectSettingsPanel = false;
 		bool m_FocusProjectSettingsPanel = false;
 		std::string m_LastWindowTitle;
