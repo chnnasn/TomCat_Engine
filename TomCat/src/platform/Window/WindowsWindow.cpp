@@ -5,6 +5,7 @@
 #include "TomCat/Events/KeyEvent.h"
 #include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Events/ApplicationEvent.h"
+#include "TomCat/Core/Input.h"
 #include "TomCat/Utils/PathUtils.h"
 
 #include "Platform/OpenGL/OpenGLContext.h"
@@ -12,6 +13,7 @@
 #include <stb_image.h>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -108,13 +110,45 @@ namespace TomCat {
 
 	}
 
+	float WindowsWindow::GetDPIScale() const
+	{
+		return m_Data.Metrics.GetDPIScale();
+	}
+
+	void WindowsWindow::RefreshNativeMetrics(bool dispatchEvent)
+	{
+		if (!m_Window)
+			return;
+		int logicalWidth = 0;
+		int logicalHeight = 0;
+		int framebufferWidth = 0;
+		int framebufferHeight = 0;
+		float contentScaleX = 1.0f;
+		float contentScaleY = 1.0f;
+		glfwGetWindowSize(m_Window, &logicalWidth, &logicalHeight);
+		glfwGetFramebufferSize(m_Window, &framebufferWidth, &framebufferHeight);
+		glfwGetWindowContentScale(m_Window, &contentScaleX, &contentScaleY);
+		const WindowMetrics next = WindowMetrics::FromNative(logicalWidth,
+			logicalHeight, framebufferWidth, framebufferHeight, contentScaleX,
+			contentScaleY);
+		const bool changed = next != m_Data.Metrics;
+		m_Data.Metrics = next;
+		m_Data.MetricsDirty = false;
+		if (dispatchEvent && changed && m_Data.EventCallback)
+		{
+			WindowResizeEvent event(next);
+			m_Data.EventCallback(event);
+		}
+	}
+
 	void WindowsWindow::Init(const WindowProps& props)
 	{
 		TC_PROFILE_FUNCTION();
 
 		m_Data.Title = props.Title;
-		m_Data.Width = props.Width;
-		m_Data.Height = props.Height;
+		m_Data.Metrics = WindowMetrics::FromNative(static_cast<int>(props.Width),
+			static_cast<int>(props.Height), static_cast<int>(props.Width),
+			static_cast<int>(props.Height), 1.0f, 1.0f);
 
 		TC_Core_Info("Create window {0} {1} {2}", props.Title, props.Width, props.Height);
 
@@ -131,10 +165,24 @@ namespace TomCat {
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+		glfwWindowHint(GLFW_RESIZABLE, props.Resizable ? GLFW_TRUE : GLFW_FALSE);
+		glfwWindowHint(GLFW_DECORATED,
+			props.DisplayMode == WindowDisplayMode::Borderless
+				? GLFW_FALSE : GLFW_TRUE);
+		GLFWmonitor* monitor = props.DisplayMode
+			== WindowDisplayMode::ExclusiveFullscreen
+			? glfwGetPrimaryMonitor() : nullptr;
+		if (props.DisplayMode == WindowDisplayMode::ExclusiveFullscreen && !monitor)
+		{
+			if (s_GLFWWindowCount == 0)
+				glfwTerminate();
+			throw std::runtime_error("No primary monitor is available for exclusive fullscreen");
+		}
 
 		{
 			TC_PROFILE_SCOPE("glfwCreateWindow");
-			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height, m_Data.Title.c_str(), nullptr, nullptr);
+			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height,
+				m_Data.Title.c_str(), monitor, nullptr);
 			if (!m_Window)
 			{
 				if (s_GLFWWindowCount == 0)
@@ -149,7 +197,8 @@ namespace TomCat {
 		m_Context->Init();
 
 		glfwSetWindowUserPointer(m_Window, &m_Data);
-		SetVSync(true);
+		RefreshNativeMetrics(false);
+		SetVSync(props.VSync);
 
 		if (!props.IconPath.empty())
 		{
@@ -253,15 +302,28 @@ namespace TomCat {
 		glfwSetWindowSizeCallback(m_Window, [](GLFWwindow* Window, int Width , int Height)
 		{
 			WindowData& Data = *(WindowData*) glfwGetWindowUserPointer(Window);
-			
-			Data.Width = Width;
-			Data.Height = Height;
-
-			WindowResizeEvent event(Width,Height);
-
-			if (Data.EventCallback)
-				Data.EventCallback(event);
+			(void)Width;
+			(void)Height;
+			Data.MetricsDirty = true;
 		});
+
+		glfwSetFramebufferSizeCallback(m_Window,
+			[](GLFWwindow* Window, int Width, int Height)
+			{
+				WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+				(void)Width;
+				(void)Height;
+				Data.MetricsDirty = true;
+			});
+
+		glfwSetWindowContentScaleCallback(m_Window,
+			[](GLFWwindow* Window, float XScale, float YScale)
+			{
+				WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+				(void)XScale;
+				(void)YScale;
+				Data.MetricsDirty = true;
+			});
 
 		glfwSetWindowCloseCallback(m_Window, [](GLFWwindow* Window)
 		{
@@ -272,6 +334,24 @@ namespace TomCat {
 			if (Data.EventCallback)
 				Data.EventCallback(event);
 
+		});
+
+		glfwSetWindowFocusCallback(m_Window, [](GLFWwindow* Window, int focused)
+		{
+			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+			Input::NotifyWindowFocus(focused == GLFW_TRUE);
+			if (focused == GLFW_TRUE)
+			{
+				WindowFocusEvent event;
+				if (Data.EventCallback)
+					Data.EventCallback(event);
+			}
+			else
+			{
+				WindowLostFocusEvent event;
+				if (Data.EventCallback)
+					Data.EventCallback(event);
+			}
 		});
 
 		glfwSetKeyCallback(m_Window,[](GLFWwindow* Window, int key, int, int action, int mods)
@@ -335,6 +415,7 @@ namespace TomCat {
 		glfwSetScrollCallback(m_Window,[](GLFWwindow* Window, double xoffset, double yoffset)
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+			Input::NotifyScroll(static_cast<float>(xoffset), static_cast<float>(yoffset));
 				
 			MouseScrolledEvent event((float)xoffset,(float)yoffset);
 
@@ -390,6 +471,11 @@ namespace TomCat {
 		{
 			TC_PROFILE_FUNCTION();
 			glfwPollEvents();
+			// GLFW may deliver logical-size, framebuffer-size and content-scale
+			// callbacks for one monitor/DPI transition. Query the complete native
+			// snapshot once after polling and publish one coherent resize event.
+			if (m_Data.MetricsDirty)
+				RefreshNativeMetrics(true);
 
 			m_Context->SwapBuffers();
 		}

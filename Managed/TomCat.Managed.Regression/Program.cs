@@ -34,6 +34,50 @@ internal static unsafe class Program
 	private static ulong s_requestedPrefabHandle;
 	private static NativeEntityHandleV1 s_requestedPrefabParent;
 	private static NativeVector3 s_requestedPrefabPosition;
+	private static bool s_extendedInputPressed;
+	private static float s_extendedLeftTriggerRaw = -1.0f;
+	private static bool s_healthPresent;
+	private static int s_healthMaximum;
+	private static int s_healthCurrent;
+	private static bool s_healthInvulnerable;
+	private static int s_componentHasCalls;
+	private static int s_componentAddCalls;
+	private static int s_componentRemoveCalls;
+	private static int s_componentGetCalls;
+	private static int s_componentSetCalls;
+	private static NativeEntityHandleV1 s_reservedGameplayEntity;
+	private static NativeEntityHandleV1 s_gameplayParent;
+	private static NativeVector3 s_localTransformPosition;
+	private static bool s_gameplayActive = true;
+	private static bool s_usePerEntityGameplayActivation;
+	private static readonly Dictionary<(ulong SceneSessionId, ulong EntityId,
+		ulong RuntimeGeneration), bool> s_gameplayActiveByEntity = [];
+	private static readonly Dictionary<(ulong SceneSessionId, ulong EntityId,
+		ulong RuntimeGeneration), NativeEntityHandleV1> s_gameplayParentByEntity = [];
+	private static int s_gameplayQueryCalls;
+	private static int s_lastGameplayQueryComponent;
+	private static int s_spriteAnimatorHasCalls;
+	private static int s_spriteAnimatorAddCalls;
+	private static int s_spriteAnimatorRemoveCalls;
+	private static int s_spriteAnimatorPlayCalls;
+	private static int s_spriteAnimatorStopCalls;
+	private static string? s_lastSpriteAnimatorClip;
+	private static bool s_lastSpriteAnimatorRestart;
+	private static int s_spriteAnimatorParameterCalls;
+	private static readonly Dictionary<string, object> s_animatorParameters = [];
+	private static bool s_audioStreaming;
+	private static float s_audioSpatialBlend;
+	private static float s_audioMinDistance = 1.0f;
+	private static float s_audioMaxDistance = 25.0f;
+	private static string s_runtimeUIText = "Ready";
+	private static bool s_runtimeUIButtonFocused;
+	private static bool s_runtimeUICaptured;
+	private const ulong RuntimeUIButtonClickSerial = 41;
+	private static readonly Dictionary<(ulong Component, ulong Property),
+		NativePropertyValueV1> s_registeredRuntimeUIProperties = [];
+	private static readonly Dictionary<(int Component, uint Property),
+		NativePropertyValueV1> s_gameplayProperties = [];
+	private static readonly UTF8Encoding s_strictUtf8 = new(false, true);
 	private static readonly int s_mainManagedThread = Environment.CurrentManagedThreadId;
 
     private static int Main()
@@ -122,8 +166,8 @@ internal static unsafe class Program
 		EntitySetLayer = &StubSetEntityLayer,
 		DestroyEntityDeferred = &StubEntityStatus,
 		HasComponent = &StubHasComponent,
-		AddComponentDeferred = &StubEntityComponent,
-		RemoveComponentDeferred = &StubEntityComponent,
+		AddComponentDeferred = &StubAddEntityComponent,
+		RemoveComponentDeferred = &StubRemoveEntityComponent,
 		TransformGetPosition = &StubGetTransformVector,
 		TransformSetPosition = &StubSetTransformVector,
 		TransformGetRotationEuler = &StubGetTransformVector,
@@ -180,6 +224,7 @@ internal static unsafe class Program
 			managed.BeginUnloadDomain != null && managed.PollUnload != null &&
 			managed.DestroyAttachments != null && managed.InstantiateAttachments != null,
 			"GetManagedApi must populate every V1 export");
+		VerifyOptionalInputCapability(native, bootstrap);
 		VerifyNaturalProxySyntax();
 		VerifyMetadataReceiverToken(managed, assembly, pdb);
 
@@ -226,6 +271,194 @@ internal static unsafe class Program
 		VerifyBackgroundThreadApiGuards();
     }
 
+	private static void VerifyOptionalInputCapability(NativeApiV1 native,
+		delegate* unmanaged[Cdecl]<NativeApiV1*, ManagedApiV1*, int> bootstrap)
+	{
+		NativeApiV2 envelope = new()
+		{
+			V1 = native,
+			QueryCapability = &QueryTestCapability
+		};
+		envelope.V1.Size = (uint)sizeof(NativeApiV2);
+		ManagedApiV1 managed = new()
+		{
+			Version = ManagedAbi.ManagedApiVersion,
+			Size = (uint)sizeof(ManagedApiV1)
+		};
+		Equal(0, bootstrap(&envelope.V1, &managed),
+			"GetManagedApi with NativeApiV2 envelope");
+
+		byte[] missingName = Encoding.UTF8.GetBytes("TomCat.MissingApiV1");
+		byte[] inputName = Encoding.UTF8.GetBytes("TomCat.InputApiV1");
+		byte[] componentName = Encoding.UTF8.GetBytes("TomCat.ComponentApiV1");
+		byte[] gameplayName = Encoding.UTF8.GetBytes("TomCat.GameplayApiV1");
+		byte[] audioSpatialName = Encoding.UTF8.GetBytes("TomCat.AudioSpatialApiV1");
+		byte[] runtimeUIName = Encoding.UTF8.GetBytes("TomCat.RuntimeUIApiV1");
+		fixed (byte* missingPointer = missingName)
+		fixed (byte* inputPointer = inputName)
+		fixed (byte* componentPointer = componentName)
+		fixed (byte* gameplayPointer = gameplayName)
+		fixed (byte* audioSpatialPointer = audioSpatialName)
+		fixed (byte* runtimeUIPointer = runtimeUIName)
+		{
+			uint required = 123;
+			Equal(-3, envelope.QueryCapability(
+				new NativeUtf8View(missingPointer, (ulong)missingName.Length), 1,
+				null, 0, &required), "unknown capability status");
+			Equal(0U, required, "unknown capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(inputPointer, (ulong)inputName.Length), 2,
+				null, 0, &required), "newer input capability version rejection");
+			Equal((uint)sizeof(NativeInputApiV1), required,
+				"input capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(componentPointer, (ulong)componentName.Length), 2,
+				null, 0, &required), "newer component capability version rejection");
+			Equal((uint)sizeof(NativeComponentApiV1), required,
+				"component capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(gameplayPointer, (ulong)gameplayName.Length), 2,
+				null, 0, &required), "newer gameplay capability version rejection");
+			Equal((uint)sizeof(NativeGameplayApiV1), required,
+				"gameplay capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(audioSpatialPointer,
+					(ulong)audioSpatialName.Length), 2, null, 0, &required),
+				"newer audio spatial capability version rejection");
+			Equal((uint)sizeof(NativeAudioSpatialApiV1), required,
+				"audio spatial capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(runtimeUIPointer,
+					(ulong)runtimeUIName.Length), 2, null, 0, &required),
+				"newer runtime UI capability version rejection");
+			Equal((uint)sizeof(NativeRuntimeUIApiV1), required,
+				"runtime UI capability required size");
+		}
+
+		var audioProbe = new AudioSpatialProxyProbe();
+		audioProbe.__Bind(new Entity(SceneSession, 92, RuntimeGeneration),
+			new ScriptInstanceHandle(780), CancellationToken.None);
+		audioProbe.__Create();
+		Check(audioProbe.Passed,
+			"AudioSpatialApiV1 C# property proxy round-trip");
+
+		s_runtimeUIText = "Ready";
+		s_runtimeUIButtonFocused = false;
+		s_runtimeUICaptured = true;
+		s_registeredRuntimeUIProperties.Clear();
+		var runtimeUIProbe = new RuntimeUIProxyProbe();
+		runtimeUIProbe.__Bind(new Entity(SceneSession, 93, RuntimeGeneration),
+			new ScriptInstanceHandle(781), CancellationToken.None);
+		runtimeUIProbe.__Create();
+		Check(runtimeUIProbe.Passed && s_runtimeUIButtonFocused,
+			"RuntimeUIApiV1 text, button, focus and rect proxy round-trip");
+		s_runtimeUICaptured = false;
+
+		var probe = new ExtendedInputProbe();
+		probe.__Bind(new Entity(SceneSession, 91, RuntimeGeneration),
+			new ScriptInstanceHandle(779), CancellationToken.None);
+		s_extendedInputPressed = false;
+		s_extendedLeftTriggerRaw = -1.0f;
+		probe.__Create();
+		s_extendedInputPressed = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(1, probe.StartedCount, "InputAction Started count");
+		Equal(1, probe.PerformedCount, "InputAction Performed count");
+		Check(probe.Action.IsPressed && probe.Action.WasPressedThisFrame,
+			"InputAction press state");
+		Check(!probe.AlternativeButton.IsPressed
+			&& MathF.Abs(probe.AlternativeButton.Value - 0.3f) < 1.0e-6f,
+			"Button alternatives use strongest binding without summing");
+		Check(MathF.Abs(probe.Axis.Value - 0.7f) < 1.0e-6f
+			&& MathF.Abs(probe.ClampedAxis.Value - 1.0f) < 1.0e-6f,
+			"Axis1D bindings aggregate and clamp");
+		Equal(1, probe.AxisStartedCount, "Axis1D Started count");
+		Equal(1, probe.AxisPerformedCount, "Axis1D initial Performed count");
+
+		probe.__Update(1.0f / 60.0f);
+		Equal(1, probe.PerformedCount,
+			"Button Performed only fires on the press threshold crossing");
+		Equal(2, probe.AxisPerformedCount,
+			"actuated Axis1D performs continuously");
+
+		s_runtimeUICaptured = true;
+		probe.RequestRuntimeCaptureTest = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(1, probe.CanceledCount,
+			"runtime UI capture cancels an active Gameplay action");
+		Equal(1, probe.AxisCanceledCount,
+			"runtime UI capture cancels an active Gameplay axis");
+		Equal(1, probe.UiStartedCount,
+			"UI context continues while runtime UI captures Gameplay");
+
+		probe.__Update(1.0f / 60.0f);
+		Equal(1, probe.StartedCount,
+			"held UI-owned input must not restart its Gameplay action");
+		Equal(1, probe.PerformedCount,
+			"held UI-owned input must not perform in Gameplay");
+		Equal(1, probe.CanceledCount,
+			"held UI-owned input must not repeatedly cancel Gameplay");
+
+		s_extendedInputPressed = false;
+		probe.__Update(1.0f / 60.0f);
+		Equal(1, probe.StartedCount,
+			"UI-owned release frame must not restart Gameplay");
+		Equal(1, probe.PerformedCount,
+			"UI-owned release frame must not perform in Gameplay");
+		Equal(1, probe.UiCanceledCount,
+			"UI context must observe the owned control release");
+
+		s_runtimeUICaptured = false;
+		probe.RequestRuntimeCaptureRestore = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(1, probe.StartedCount,
+			"Gameplay must remain idle after Runtime UI releases ownership");
+		Equal(1, probe.PerformedCount,
+			"released Runtime UI ownership must not synthesize a Gameplay press");
+		Equal(2, probe.AxisStartedCount,
+			"Gameplay axis restarts after runtime UI releases capture");
+		Equal(1, probe.UiCanceledCount,
+			"runtime capture test disables its temporary UI context");
+
+		s_extendedInputPressed = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(2, probe.StartedCount,
+			"next independent press starts Gameplay after UI ownership ended");
+		Equal(2, probe.PerformedCount,
+			"next independent press performs Gameplay exactly once");
+
+		probe.RequestUiExclusive = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(2, probe.CanceledCount,
+			"exclusive UI context cancels Gameplay action");
+		Equal(2, probe.UiStartedCount, "exclusive UI context starts UI action");
+		Equal(2, probe.AxisCanceledCount,
+			"exclusive UI context cancels Gameplay axis");
+
+		probe.RequestClearExclusive = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(2, probe.StartedCount,
+			"higher-priority UI consumes shared Gameplay control");
+		Equal(3, probe.AxisStartedCount,
+			"clearing exclusive context re-enables unconsumed Gameplay axis");
+
+		probe.RequestGameplayResume = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(3, probe.StartedCount,
+			"explicit Gameplay re-enable restarts held action");
+		Equal(3, probe.PerformedCount,
+			"re-enabled Button performs once on its new threshold crossing");
+		Equal(2, probe.UiCanceledCount,
+			"disabling UI context cancels its held action");
+
+		s_extendedInputPressed = false;
+		probe.__Update(1.0f / 60.0f);
+		Equal(3, probe.CanceledCount, "InputAction release Canceled count");
+		Check(!probe.Action.IsPressed && probe.Action.WasReleasedThisFrame,
+			"InputAction release state");
+		probe.__Destroy();
+	}
+
 	private static void VerifyNaturalProxySyntax()
 	{
 		s_entityTextSetterCalls = 0;
@@ -238,6 +471,31 @@ internal static unsafe class Program
 		s_requestedPrefabHandle = 0;
 		s_requestedPrefabParent = default;
 		s_requestedPrefabPosition = default;
+		s_healthPresent = true;
+		s_healthMaximum = 100;
+		s_healthCurrent = 100;
+		s_healthInvulnerable = false;
+		s_componentHasCalls = 0;
+		s_componentAddCalls = 0;
+		s_componentRemoveCalls = 0;
+		s_componentGetCalls = 0;
+		s_componentSetCalls = 0;
+		s_reservedGameplayEntity = default;
+		s_gameplayParent = new NativeEntityHandleV1(SceneSession, 42, RuntimeGeneration);
+		s_localTransformPosition = default;
+		s_gameplayActive = true;
+		s_gameplayQueryCalls = 0;
+		s_lastGameplayQueryComponent = 0;
+		s_spriteAnimatorHasCalls = 0;
+		s_spriteAnimatorAddCalls = 0;
+		s_spriteAnimatorRemoveCalls = 0;
+		s_spriteAnimatorPlayCalls = 0;
+		s_spriteAnimatorStopCalls = 0;
+		s_lastSpriteAnimatorClip = null;
+		s_lastSpriteAnimatorRestart = true;
+		s_spriteAnimatorParameterCalls = 0;
+		s_animatorParameters.Clear();
+		s_gameplayProperties.Clear();
 
 		var probe = new NaturalProxySyntaxProbe();
 		probe.__Bind(new Entity(SceneSession, 8, RuntimeGeneration),
@@ -264,6 +522,39 @@ internal static unsafe class Program
 			"TomCatBehaviour.Instantiate parent entity");
 		Equal(6.0f, s_requestedPrefabPosition.X,
 			"TomCatBehaviour.Instantiate world position X");
+		Equal(4, s_componentHasCalls,
+			"registry component generic Has/Get proxy checks");
+		Equal(1, s_componentAddCalls, "registry component Add call");
+		Equal(1, s_componentRemoveCalls, "registry component Remove call");
+		Equal(3, s_componentGetCalls, "registry component property reads");
+		Equal(3, s_componentSetCalls, "registry component property writes");
+		Equal(150, s_healthMaximum, "HealthComponent.Maximum round trip");
+		Equal(75, s_healthCurrent, "HealthComponent.Current round trip");
+		Check(s_healthInvulnerable, "HealthComponent.Invulnerable round trip");
+		Equal(1200UL, s_reservedGameplayEntity.EntityId,
+			"World.CreateEntity reserved handle");
+		Equal(44UL, s_gameplayParent.EntityId, "Entity.Parent deferred setter");
+		Equal(9.0f, s_localTransformPosition.X,
+			"Transform.LocalPosition direct setter X");
+		Equal(3, s_gameplayQueryCalls,
+			"World.All and both registered/native component queries");
+		Equal((int)NativeComponentTypeV1.SpriteAnimator,
+			s_lastGameplayQueryComponent, "World.Query<SpriteAnimator> component type");
+		Equal(2, s_spriteAnimatorHasCalls, "SpriteAnimator Has/Get component calls");
+		Equal(1, s_spriteAnimatorAddCalls, "SpriteAnimator Add component call");
+		Equal(1, s_spriteAnimatorRemoveCalls, "SpriteAnimator Remove component call");
+		Equal(1, s_spriteAnimatorPlayCalls, "SpriteAnimator Play call");
+		Equal(1, s_spriteAnimatorStopCalls, "SpriteAnimator Stop call");
+		Equal("运行😀", s_lastSpriteAnimatorClip,
+			"SpriteAnimator UTF-8 clip name round trip");
+		Check(!s_lastSpriteAnimatorRestart,
+			"SpriteAnimator restart argument round trip");
+		Equal(5, s_spriteAnimatorParameterCalls,
+			"SpriteAnimator parameter API calls");
+		Equal(7, s_animatorParameters["Lives"], "SpriteAnimator Int parameter");
+		Equal(1.25f, s_animatorParameters["Speed"], "SpriteAnimator Float parameter");
+		Equal(false, s_animatorParameters["Grounded"], "SpriteAnimator Bool parameter");
+		Equal(false, s_animatorParameters["Jump"], "SpriteAnimator reset Trigger");
 	}
 
 	private static void VerifyMetadataReceiverToken(ManagedApiV1 managed, byte[] assembly,
@@ -300,7 +591,7 @@ internal static unsafe class Program
 				JsonElement lifecycle = script.GetProperty("lifecycle");
 				Equal(JsonValueKind.Number, lifecycle.ValueKind,
 					"metadata receiver lifecycle must be a native ABI bitmask");
-				Check(lifecycle.TryGetUInt32(out uint bits) && (bits & ~0x3ffU) == 0,
+				Check(lifecycle.TryGetUInt32(out uint bits) && (bits & ~0x7ffU) == 0,
 					"metadata receiver lifecycle contains invalid ABI bits");
 				if (script.GetProperty("typeName").GetString() == "Game.GoodBehaviour")
 				{
@@ -392,7 +683,7 @@ internal static unsafe class Program
 		Equal(ScriptLifecycle.Create | ScriptLifecycle.Enable |
 			ScriptLifecycle.Update | ScriptLifecycle.FixedUpdate |
 			ScriptLifecycle.CollisionEnter2D | ScriptLifecycle.TriggerExit2D |
-			ScriptLifecycle.Disable | ScriptLifecycle.Destroy,
+			ScriptLifecycle.Disable | ScriptLifecycle.Destroy | ScriptLifecycle.LateUpdate,
 			good.Lifecycle, "lifecycle metadata");
         Check((faulty.Lifecycle & ScriptLifecycle.Update) != 0, "faulty lifecycle metadata");
 
@@ -484,6 +775,7 @@ internal static unsafe class Program
 			"dynamic attachment IDs must remain unique for the scene runtime");
 
         int diagnosticsBefore = s_diagnostics;
+		ulong frameBefore = Time.FrameCount;
         scene.UpdateAll(1.0f / 60.0f);
         Equal(ScriptInstanceState.Faulted, scene.GetInstanceState(300), "fault isolation state");
         Equal(1, scene.ReadFieldValue(300, "Updates"), "faulting callback runs once");
@@ -492,9 +784,17 @@ internal static unsafe class Program
         Equal(1, scene.ReadFieldValue(300, "Updates"), "faulted instance is quarantined");
         Equal(2, scene.ReadFieldValue(100, "Updates"), "healthy instance continues");
         Equal(2, scene.ReadFieldValue(200, "Updates"), "second healthy instance continues");
+		Equal(2, scene.ReadFieldValue(100, "LateUpdates"), "late update dispatch");
+		Equal(2, scene.ReadFieldValue(200, "LateUpdates"), "late update execution order");
+		Equal(frameBefore + 2, Time.FrameCount, "frame clock advances once per UpdateAll");
+		Equal(1.0f / 60.0f, Time.DeltaTime, "frame delta clock");
 
-        scene.FixedUpdateAll(1.0f / 50.0f);
+        ulong fixedFrameBefore = Time.FixedFrameCount;
+		scene.FixedUpdateAll(1.0f / 50.0f);
         Equal(1, scene.ReadFieldValue(100, "FixedUpdates"), "fixed update dispatch");
+		Equal(fixedFrameBefore + 1, Time.FixedFrameCount, "fixed clock advances once per step");
+		Equal(1.0f / 50.0f, Time.FixedDeltaTime, "fixed delta clock");
+		Equal(false, Time.InFixedUpdate, "fixed-update clock scope is restored");
         scene.DispatchPhysicsEvents([
             new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter, first, other),
             new ScriptPhysicsEvent(NativePhysicsEventKindV1.TriggerExit, second, other)
@@ -519,6 +819,7 @@ internal static unsafe class Program
 			"remaining attachment stopped after selective teardown");
 
 		VerifySameBatchMutations(domain);
+		VerifyHierarchyActivationConvergence(domain);
 
 		ScriptSceneRuntime duplicateScene = domain.CreateSceneRuntime(SceneSession, RuntimeGeneration);
         Throws<InvalidDataException>(() => duplicateScene.InstantiateAll([
@@ -635,6 +936,239 @@ internal static unsafe class Program
 		Equal(1, removeScene.CallbackTrace.Count(value => value == "500:OnCollisionEnter2D"),
 			"self-removal must suppress later events in the same native batch");
 		removeScene.DestroyAll();
+	}
+
+	private static void VerifyHierarchyActivationConvergence(ScriptDomain domain)
+	{
+		s_usePerEntityGameplayActivation = true;
+		try
+		{
+			VerifyHierarchyUpdateSuppression(domain);
+			VerifyHierarchyFixedUpdateSuppression(domain);
+			VerifyHierarchyPhysicsSuppression(domain);
+			VerifyLifecycleCallbackReversal(domain);
+			VerifyLifecycleOscillationIsBounded(domain);
+		}
+		finally
+		{
+			s_gameplayActiveByEntity.Clear();
+			s_gameplayParentByEntity.Clear();
+			s_gameplayActive = true;
+			s_usePerEntityGameplayActivation = false;
+		}
+	}
+
+	private static void VerifyHierarchyUpdateSuppression(ScriptDomain domain)
+	{
+		const ulong sceneSession = 21;
+		const ulong generation = 17;
+		ResetGameplayActivationGraph();
+		ConfigureGameplayParent(sceneSession, generation, 90, 1, 2);
+		Entity first = new(sceneSession, 1, generation);
+		Entity second = new(sceneSession, 2, generation);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession, generation);
+		scene.InstantiateAll([
+			new ScriptAttachment(first, 910, 1001, true),
+			new ScriptAttachment(second, 911, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":910,"fields":[
+			  {"fieldId":"","name":"Target","type":"Entity","value":90},
+			  {"fieldId":"","name":"DisableTargetOnUpdate","type":"Bool","value":true}
+			]}]}
+			""");
+		scene.InvokeCreateAll();
+
+		scene.UpdateAll(0.01f);
+		Equal(1, scene.ReadFieldValue(910, "Updates"),
+			"parent-disabling Update executes its initiating callback");
+		Equal(0, scene.ReadFieldValue(911, "Updates"),
+			"parent disable suppresses the next Update in the same batch");
+		Equal(0, scene.ReadFieldValue(910, "LateUpdates"),
+			"parent disable suppresses initiating script LateUpdate");
+		Equal(0, scene.ReadFieldValue(911, "LateUpdates"),
+			"parent disable suppresses sibling LateUpdate");
+		Equal(1, scene.ReadFieldValue(910, "Disables"),
+			"parent disable transitions initiating script once");
+		Equal(1, scene.ReadFieldValue(911, "Disables"),
+			"parent disable transitions sibling script once");
+		scene.DestroyAll();
+	}
+
+	private static void VerifyHierarchyFixedUpdateSuppression(ScriptDomain domain)
+	{
+		const ulong sceneSession = 22;
+		const ulong generation = 18;
+		ResetGameplayActivationGraph();
+		ConfigureGameplayParent(sceneSession, generation, 90, 1, 2);
+		Entity first = new(sceneSession, 1, generation);
+		Entity second = new(sceneSession, 2, generation);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession, generation);
+		scene.InstantiateAll([
+			new ScriptAttachment(first, 920, 1001, true),
+			new ScriptAttachment(second, 921, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":920,"fields":[
+			  {"fieldId":"","name":"Target","type":"Entity","value":90},
+			  {"fieldId":"","name":"DisableTargetOnFixedUpdate","type":"Bool","value":true}
+			]}]}
+			""");
+		scene.InvokeCreateAll();
+
+		scene.FixedUpdateAll(1.0f / 60.0f);
+		Equal(1, scene.ReadFieldValue(920, "FixedUpdates"),
+			"parent-disabling FixedUpdate executes its initiating callback");
+		Equal(0, scene.ReadFieldValue(921, "FixedUpdates"),
+			"parent disable suppresses the next FixedUpdate in the same batch");
+		Equal(1, scene.ReadFieldValue(920, "Disables"),
+			"FixedUpdate parent disable transitions initiating script once");
+		Equal(1, scene.ReadFieldValue(921, "Disables"),
+			"FixedUpdate parent disable transitions sibling script once");
+		scene.DestroyAll();
+	}
+
+	private static void VerifyHierarchyPhysicsSuppression(ScriptDomain domain)
+	{
+		const ulong sceneSession = 23;
+		const ulong generation = 19;
+		ResetGameplayActivationGraph();
+		ConfigureGameplayParent(sceneSession, generation, 90, 1, 2);
+		Entity first = new(sceneSession, 1, generation);
+		Entity second = new(sceneSession, 2, generation);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession, generation);
+		scene.InstantiateAll([
+			new ScriptAttachment(first, 930, 1001, true),
+			new ScriptAttachment(second, 931, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":930,"fields":[
+			  {"fieldId":"","name":"Target","type":"Entity","value":90},
+			  {"fieldId":"","name":"DisableTargetOnCollisionEnter","type":"Bool","value":true}
+			]}]}
+			""");
+		scene.InvokeCreateAll();
+
+		scene.DispatchPhysicsEvents([
+			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter, first, second)
+		]);
+		Equal(1, scene.ReadFieldValue(930, "CollisionEnters"),
+			"parent-disabling collision executes its initiating callback");
+		Equal(0, scene.ReadFieldValue(931, "CollisionEnters"),
+			"parent disable suppresses the next collision callback in the same batch");
+		Equal(1, scene.ReadFieldValue(930, "Disables"),
+			"collision parent disable transitions initiating script once");
+		Equal(1, scene.ReadFieldValue(931, "Disables"),
+			"collision parent disable transitions sibling script once");
+		scene.DestroyAll();
+	}
+
+	private static void VerifyLifecycleCallbackReversal(ScriptDomain domain)
+	{
+		const ulong enableSceneSession = 24;
+		const ulong enableGeneration = 20;
+		ResetGameplayActivationGraph();
+		Entity enableEntity = new(enableSceneSession, 1, enableGeneration);
+		ScriptSceneRuntime enableScene = domain.CreateSceneRuntime(
+			enableSceneSession, enableGeneration);
+		enableScene.InstantiateAll([
+			new ScriptAttachment(enableEntity, 940, 1001, true)
+		]);
+		enableScene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":940,"fields":[
+			  {"fieldId":"","name":"DisableSelfOnEnable","type":"Bool","value":true}
+			]}]}
+			""");
+		enableScene.InvokeCreateAll();
+		enableScene.UpdateAll(0.01f);
+		Equal(1, enableScene.ReadFieldValue(940, "Enables"),
+			"OnEnable self-disable enable count");
+		Equal(1, enableScene.ReadFieldValue(940, "Disables"),
+			"OnEnable self-disable converges through OnDisable");
+		Equal(0, enableScene.ReadFieldValue(940, "Updates"),
+			"OnEnable self-disable suppresses Update");
+		enableScene.DestroyAll();
+
+		const ulong disableSceneSession = 25;
+		const ulong disableGeneration = 21;
+		ResetGameplayActivationGraph();
+		Entity disableEntity = new(disableSceneSession, 1, disableGeneration);
+		ScriptSceneRuntime disableScene = domain.CreateSceneRuntime(
+			disableSceneSession, disableGeneration);
+		disableScene.InstantiateAll([
+			new ScriptAttachment(disableEntity, 950, 1001, true)
+		]);
+		disableScene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":950,"fields":[
+			  {"fieldId":"","name":"EnableSelfOnDisable","type":"Bool","value":true}
+			]}]}
+			""");
+		disableScene.InvokeCreateAll();
+		var disableHandle = new NativeEntityHandleV1(
+			disableSceneSession, 1, disableGeneration);
+		s_gameplayActiveByEntity[GameplayEntityKey(disableHandle)] = false;
+		disableScene.UpdateAll(0.01f);
+		Equal(2, disableScene.ReadFieldValue(950, "Enables"),
+			"OnDisable self-enable converges through OnEnable");
+		Equal(1, disableScene.ReadFieldValue(950, "Disables"),
+			"OnDisable self-enable disable count");
+		Equal(1, disableScene.ReadFieldValue(950, "Updates"),
+			"OnDisable self-enable resumes Update after convergence");
+		disableScene.DestroyAll();
+	}
+
+	private static void VerifyLifecycleOscillationIsBounded(ScriptDomain domain)
+	{
+		const ulong sceneSession = 26;
+		const ulong generation = 22;
+		ResetGameplayActivationGraph();
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession, generation);
+		scene.InstantiateAll([
+			new ScriptAttachment(new Entity(sceneSession, 1, generation),
+				960, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":960,"fields":[
+			  {"fieldId":"","name":"DisableSelfOnEnable","type":"Bool","value":true},
+			  {"fieldId":"","name":"EnableSelfOnDisable","type":"Bool","value":true}
+			]}]}
+			""");
+		int diagnosticsBefore = s_diagnostics;
+		scene.InvokeCreateAll();
+
+		Equal(ScriptInstanceState.Faulted, scene.GetInstanceState(960),
+			"non-convergent lifecycle callbacks are quarantined");
+		int transitionCallbacks =
+			(int)scene.ReadFieldValue(960, "Enables")!
+			+ (int)scene.ReadFieldValue(960, "Disables")!;
+		Check(transitionCallbacks > 1 && transitionCallbacks <= 8,
+			"lifecycle oscillation exceeded its bounded transition budget");
+		Equal(diagnosticsBefore + 1, s_diagnostics,
+			"lifecycle oscillation reports one managed diagnostic");
+		scene.UpdateAll(0.01f);
+		Equal(0, scene.ReadFieldValue(960, "Updates"),
+			"quarantined lifecycle oscillator does not receive Update");
+		scene.DestroyAll();
+	}
+
+	private static void ResetGameplayActivationGraph()
+	{
+		s_gameplayActiveByEntity.Clear();
+		s_gameplayParentByEntity.Clear();
+		s_gameplayActive = true;
+	}
+
+	private static void ConfigureGameplayParent(ulong sceneSession,
+		ulong runtimeGeneration, ulong parentId, params ulong[] children)
+	{
+		var parent = new NativeEntityHandleV1(sceneSession, parentId,
+			runtimeGeneration);
+		foreach (ulong childId in children)
+		{
+			var child = new NativeEntityHandleV1(sceneSession, childId,
+				runtimeGeneration);
+			s_gameplayParentByEntity[GameplayEntityKey(child)] = parent;
+		}
 	}
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
@@ -868,10 +1402,30 @@ internal static unsafe class Program
 	private static int StubEntityStatus(NativeEntityHandleV1 entity) => 0;
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int StubHasComponent(NativeEntityHandleV1 entity, int componentType) => 1;
+	private static int StubHasComponent(NativeEntityHandleV1 entity, int componentType)
+	{
+		if (componentType == (int)NativeComponentTypeV1.SpriteAnimator)
+			++s_spriteAnimatorHasCalls;
+		return 1;
+	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int StubEntityComponent(NativeEntityHandleV1 entity, int componentType) => 0;
+	private static int StubAddEntityComponent(NativeEntityHandleV1 entity,
+		int componentType)
+	{
+		if (componentType == (int)NativeComponentTypeV1.SpriteAnimator)
+			++s_spriteAnimatorAddCalls;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRemoveEntityComponent(NativeEntityHandleV1 entity,
+		int componentType)
+	{
+		if (componentType == (int)NativeComponentTypeV1.SpriteAnimator)
+			++s_spriteAnimatorRemoveCalls;
+		return 0;
+	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubGetTransformVector(NativeEntityHandleV1 entity, NativeVector3* value)
@@ -916,6 +1470,696 @@ internal static unsafe class Program
 		if (value is null)
 			return -1;
 		*value = 0;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int QueryTestCapability(NativeUtf8View name, uint minimumVersion,
+		void* output, uint capacity, uint* required)
+	{
+		if (required is null || (name.Data is null && name.Length != 0)
+			|| name.Length > int.MaxValue)
+			return -1;
+		string capability = Encoding.UTF8.GetString(
+			new ReadOnlySpan<byte>(name.Data, (int)name.Length));
+		if (capability == "TomCat.InputApiV1")
+		{
+			*required = (uint)sizeof(NativeInputApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeInputApiV1))
+				return -6;
+			*(NativeInputApiV1*)output = new NativeInputApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeInputApiV1),
+				MaximumGamepads = 16,
+				GamepadButtonCount = 15,
+				GamepadAxisCount = 6,
+				IsMouseButtonHeld = &StubMouseButtonHeld,
+				WasMouseButtonPressed = &StubMouseButtonHeld,
+				WasMouseButtonReleased = &StubMouseButtonReleased,
+				GetScrollDelta = &StubScrollDelta,
+				IsWindowFocused = &StubWindowFocused,
+				IsGamepadConnected = &StubGamepadConnected,
+				WasGamepadConnected = &StubGamepadConnected,
+				WasGamepadDisconnected = &StubGamepadDisconnected,
+				IsGamepadButtonHeld = &StubGamepadButtonHeld,
+				WasGamepadButtonPressed = &StubGamepadButtonHeld,
+				WasGamepadButtonReleased = &StubGamepadButtonReleased,
+				GetGamepadAxis = &StubGamepadAxis,
+				GetGamepadName = &StubGamepadName
+			};
+			return 0;
+		}
+		if (capability == "TomCat.ComponentApiV1")
+		{
+			*required = (uint)sizeof(NativeComponentApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeComponentApiV1))
+				return -6;
+			*(NativeComponentApiV1*)output = new NativeComponentApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeComponentApiV1),
+				Has = &StubRegisteredComponentHas,
+				Add = &StubRegisteredComponentAdd,
+				Remove = &StubRegisteredComponentRemove,
+				GetProperty = &StubRegisteredComponentGetProperty,
+				SetProperty = &StubRegisteredComponentSetProperty
+			};
+			return 0;
+		}
+		if (capability == "TomCat.GameplayApiV1")
+		{
+			*required = (uint)sizeof(NativeGameplayApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeGameplayApiV1))
+				return -6;
+			*(NativeGameplayApiV1*)output = new NativeGameplayApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeGameplayApiV1),
+				CreateEntityDeferred = &StubGameplayCreateEntity,
+				FindEntityByName = &StubGameplayFindEntity,
+				QueryEntities = &StubGameplayQueryEntities,
+				GetParent = &StubGameplayGetParent,
+				SetParentDeferred = &StubGameplaySetParent,
+				GetChildren = &StubGameplayGetChildren,
+				GetActiveSelf = &StubGameplayGetActiveSelf,
+				SetActiveSelf = &StubGameplaySetActiveSelf,
+				GetActiveInHierarchy = &StubGameplayGetActiveInHierarchy,
+				TransformGetLocalPosition = &StubGameplayGetLocalPosition,
+				TransformSetLocalPosition = &StubGameplaySetLocalPosition,
+				TransformGetLocalRotationEuler = &StubGetTransformVector,
+				TransformSetLocalRotationEuler = &StubSetTransformVector,
+				TransformGetLocalScale = &StubGetTransformVector,
+				TransformSetLocalScale = &StubSetTransformVector,
+				GetComponentProperty = &StubGameplayGetComponentProperty,
+				SetComponentProperty = &StubGameplaySetComponentProperty,
+				SpriteAnimatorPlay = &StubGameplaySpriteAnimatorPlay,
+				SpriteAnimatorStop = &StubGameplaySpriteAnimatorStop,
+				SpriteAnimatorSetBool = &StubGameplaySpriteAnimatorSetBool,
+				SpriteAnimatorSetInt = &StubGameplaySpriteAnimatorSetInt,
+				SpriteAnimatorSetFloat = &StubGameplaySpriteAnimatorSetFloat,
+				SpriteAnimatorSetTrigger = &StubGameplaySpriteAnimatorSetTrigger,
+				SpriteAnimatorResetTrigger = &StubGameplaySpriteAnimatorResetTrigger,
+				SpriteAnimatorGetCurrentState = &StubGameplaySpriteAnimatorGetCurrentState
+			};
+			return 0;
+		}
+		if (capability == "TomCat.AudioSpatialApiV1")
+		{
+			*required = (uint)sizeof(NativeAudioSpatialApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeAudioSpatialApiV1))
+				return -6;
+			*(NativeAudioSpatialApiV1*)output = new NativeAudioSpatialApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeAudioSpatialApiV1),
+				GetStreaming = &StubAudioGetStreaming,
+				SetStreaming = &StubAudioSetStreaming,
+				GetSpatialBlend = &StubAudioGetSpatialBlend,
+				SetSpatialBlend = &StubAudioSetSpatialBlend,
+				GetMinDistance = &StubAudioGetMinDistance,
+				SetMinDistance = &StubAudioSetMinDistance,
+				GetMaxDistance = &StubAudioGetMaxDistance,
+				SetMaxDistance = &StubAudioSetMaxDistance
+			};
+			return 0;
+		}
+		if (capability == "TomCat.RuntimeUIApiV1")
+		{
+			*required = (uint)sizeof(NativeRuntimeUIApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeRuntimeUIApiV1))
+				return -6;
+			*(NativeRuntimeUIApiV1*)output = new NativeRuntimeUIApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeRuntimeUIApiV1),
+				GetText = &StubRuntimeUIGetText,
+				SetText = &StubRuntimeUISetText,
+				WasButtonClicked = &StubRuntimeUIButtonClicked,
+				GetButtonClickSerial = &StubRuntimeUIButtonClickSerial,
+				FocusButton = &StubRuntimeUIFocusButton,
+				GetRect = &StubRuntimeUIGetRect,
+				IsGameplayInputCaptured = &StubRuntimeUIInputCaptured
+			};
+			return 0;
+		}
+		*required = 0;
+		return -3;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRuntimeUIGetText(NativeEntityHandleV1 entity,
+		ulong typeId, byte* buffer, uint capacity, uint* required)
+	{
+		if (required is null || typeId != UIText.TypeId)
+			return -1;
+		byte[] bytes = Encoding.UTF8.GetBytes(s_runtimeUIText);
+		*required = (uint)bytes.Length;
+		if (capacity < bytes.Length || (buffer is null && bytes.Length != 0))
+			return -6;
+		bytes.CopyTo(new Span<byte>(buffer, bytes.Length));
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRuntimeUISetText(NativeEntityHandleV1 entity,
+		ulong typeId, NativeUtf8View value)
+	{
+		if (typeId != UIText.TypeId || (value.Data is null && value.Length != 0)
+			|| value.Length > 65536)
+			return -1;
+		try
+		{
+			s_runtimeUIText = s_strictUtf8.GetString(
+				new ReadOnlySpan<byte>(value.Data, (int)value.Length));
+			return 0;
+		}
+		catch (DecoderFallbackException) { return -1; }
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRuntimeUIButtonClicked(NativeEntityHandleV1 entity) => 1;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRuntimeUIButtonClickSerial(NativeEntityHandleV1 entity,
+		ulong* value)
+	{
+		if (value is null) return -1;
+		*value = RuntimeUIButtonClickSerial;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRuntimeUIFocusButton(NativeEntityHandleV1 entity)
+	{
+		s_runtimeUIButtonFocused = true;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRuntimeUIGetRect(NativeEntityHandleV1 entity,
+		NativeVector4* value)
+	{
+		if (value is null) return -1;
+		*value = new NativeVector4 { X = 10.0f, Y = 20.0f, Z = 300.0f, W = 80.0f };
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRuntimeUIInputCaptured() => s_runtimeUICaptured ? 1 : 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioGetStreaming(NativeEntityHandleV1 entity) =>
+		s_audioStreaming ? 1 : 0;
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioSetStreaming(NativeEntityHandleV1 entity, int value)
+	{ s_audioStreaming = value != 0; return 0; }
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioGetSpatialBlend(NativeEntityHandleV1 entity, float* value)
+	{ if (value is null) return -1; *value = s_audioSpatialBlend; return 0; }
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioSetSpatialBlend(NativeEntityHandleV1 entity, float value)
+	{ s_audioSpatialBlend = value; return 0; }
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioGetMinDistance(NativeEntityHandleV1 entity, float* value)
+	{ if (value is null) return -1; *value = s_audioMinDistance; return 0; }
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioSetMinDistance(NativeEntityHandleV1 entity, float value)
+	{ s_audioMinDistance = value; return 0; }
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioGetMaxDistance(NativeEntityHandleV1 entity, float* value)
+	{ if (value is null) return -1; *value = s_audioMaxDistance; return 0; }
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAudioSetMaxDistance(NativeEntityHandleV1 entity, float value)
+	{ s_audioMaxDistance = value; return 0; }
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayCreateEntity(NativeEntityHandleV1 context,
+		NativeUtf8View name, NativeVector3 position, NativeEntityHandleV1 parent,
+		NativeEntityHandleV1* output)
+	{
+		if (output is null || context.SceneSessionId != SceneSession
+			|| context.RuntimeGeneration != RuntimeGeneration)
+			return -1;
+		s_reservedGameplayEntity = new NativeEntityHandleV1(
+			context.SceneSessionId, 1200, context.RuntimeGeneration);
+		*output = s_reservedGameplayEntity;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayFindEntity(NativeEntityHandleV1 context,
+		NativeUtf8View name, NativeEntityHandleV1* output)
+	{
+		if (output is null || name.Data is null || name.Length > int.MaxValue)
+			return -1;
+		string value = Encoding.UTF8.GetString(
+			new ReadOnlySpan<byte>(name.Data, (int)name.Length));
+		if (value != "Target")
+			return -3;
+		*output = new NativeEntityHandleV1(context.SceneSessionId, 44,
+			context.RuntimeGeneration);
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayQueryEntities(NativeEntityHandleV1 context,
+		int componentType, ulong registeredTypeId, NativeEntityHandleV1* output,
+		uint capacity, uint* required)
+	{
+		if (required is null || (componentType != 0 && registeredTypeId != 0))
+			return -1;
+		*required = 2;
+		if (capacity < 2 || output is null)
+			return -6;
+		++s_gameplayQueryCalls;
+		s_lastGameplayQueryComponent = componentType;
+		output[0] = new NativeEntityHandleV1(context.SceneSessionId, 8,
+			context.RuntimeGeneration);
+		output[1] = new NativeEntityHandleV1(context.SceneSessionId, 44,
+			context.RuntimeGeneration);
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayGetParent(NativeEntityHandleV1 entity,
+		NativeEntityHandleV1* output)
+	{
+		if (output is null) return -1;
+		*output = s_gameplayParent;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySetParent(NativeEntityHandleV1 entity,
+		NativeEntityHandleV1 parent)
+	{
+		s_gameplayParent = parent;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayGetChildren(NativeEntityHandleV1 entity,
+		NativeEntityHandleV1* output, uint capacity, uint* required)
+	{
+		if (required is null) return -1;
+		*required = 2;
+		if (capacity < 2 || output is null) return -6;
+		output[0] = new NativeEntityHandleV1(entity.SceneSessionId, 45,
+			entity.RuntimeGeneration);
+		output[1] = new NativeEntityHandleV1(entity.SceneSessionId, 46,
+			entity.RuntimeGeneration);
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayGetActiveSelf(NativeEntityHandleV1 entity) =>
+		StubGameplayActiveSelf(entity) ? 1 : 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayGetActiveInHierarchy(NativeEntityHandleV1 entity)
+	{
+		if (!s_usePerEntityGameplayActivation)
+			return s_gameplayActive ? 1 : 0;
+
+		var visited = new HashSet<(ulong SceneSessionId, ulong EntityId,
+			ulong RuntimeGeneration)>();
+		NativeEntityHandleV1 cursor = entity;
+		while (cursor.EntityId != 0)
+		{
+			var key = GameplayEntityKey(cursor);
+			if (!visited.Add(key) || !StubGameplayActiveSelf(cursor))
+				return 0;
+			if (!s_gameplayParentByEntity.TryGetValue(key,
+				out NativeEntityHandleV1 parent))
+				return 1;
+			cursor = parent;
+		}
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySetActiveSelf(NativeEntityHandleV1 entity,
+		int active)
+	{
+		if (active is not (0 or 1)) return -1;
+		if (s_usePerEntityGameplayActivation)
+			s_gameplayActiveByEntity[GameplayEntityKey(entity)] = active != 0;
+		else
+			s_gameplayActive = active != 0;
+		return 0;
+	}
+
+	private static bool StubGameplayActiveSelf(NativeEntityHandleV1 entity) =>
+		s_gameplayActiveByEntity.TryGetValue(GameplayEntityKey(entity),
+			out bool active) ? active : s_gameplayActive;
+
+	private static (ulong SceneSessionId, ulong EntityId, ulong RuntimeGeneration)
+		GameplayEntityKey(NativeEntityHandleV1 entity) =>
+		(entity.SceneSessionId, entity.EntityId, entity.RuntimeGeneration);
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayGetLocalPosition(NativeEntityHandleV1 entity,
+		NativeVector3* value)
+	{
+		if (value is null) return -1;
+		*value = s_localTransformPosition;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySetLocalPosition(NativeEntityHandleV1 entity,
+		NativeVector3 value)
+	{
+		s_localTransformPosition = value;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplayGetComponentProperty(NativeEntityHandleV1 entity,
+		int componentType, uint propertyId, NativePropertyValueV1* value)
+	{
+		if (value is null || !s_gameplayProperties.TryGetValue(
+			(componentType, propertyId), out NativePropertyValueV1 stored))
+			return -3;
+		*value = stored;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySetComponentProperty(NativeEntityHandleV1 entity,
+		int componentType, uint propertyId, NativePropertyValueV1 value)
+	{
+		s_gameplayProperties[(componentType, propertyId)] = value;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorPlay(NativeEntityHandleV1 entity,
+		NativeUtf8View clipName, int restart)
+	{
+		if ((clipName.Data is null && clipName.Length != 0)
+			|| clipName.Length > int.MaxValue || restart is not (0 or 1))
+			return -1;
+		try
+		{
+			s_lastSpriteAnimatorClip = s_strictUtf8.GetString(
+				new ReadOnlySpan<byte>(clipName.Data, (int)clipName.Length));
+		}
+		catch (DecoderFallbackException)
+		{
+			return -1;
+		}
+		if (string.IsNullOrEmpty(s_lastSpriteAnimatorClip)
+			|| s_lastSpriteAnimatorClip.Contains('\0'))
+			return -1;
+		++s_spriteAnimatorPlayCalls;
+		s_lastSpriteAnimatorRestart = restart != 0;
+		s_gameplayProperties[((int)NativeComponentTypeV1.SpriteAnimator, 702)] =
+			new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.Bool,
+				Integer = 1
+			};
+		s_gameplayProperties[((int)NativeComponentTypeV1.SpriteAnimator, 703)] =
+			new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.UInt32,
+				Integer = 3
+			};
+		return 1;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorStop(NativeEntityHandleV1 entity)
+	{
+		++s_spriteAnimatorStopCalls;
+		s_gameplayProperties[((int)NativeComponentTypeV1.SpriteAnimator, 702)] =
+			new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.Bool,
+				Integer = 0
+			};
+		return 0;
+	}
+
+	private static bool TryReadAnimatorParameter(NativeUtf8View view, out string value)
+	{
+		value = string.Empty;
+		if ((view.Data is null && view.Length != 0) || view.Length > int.MaxValue)
+			return false;
+		try
+		{
+			value = s_strictUtf8.GetString(
+				new ReadOnlySpan<byte>(view.Data, (int)view.Length));
+			return value.Length != 0 && !value.Contains('\0');
+		}
+		catch (DecoderFallbackException)
+		{
+			return false;
+		}
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorSetBool(NativeEntityHandleV1 entity,
+		NativeUtf8View parameter, int value)
+	{
+		if (!TryReadAnimatorParameter(parameter, out string name)
+			|| value is not (0 or 1)) return -1;
+		++s_spriteAnimatorParameterCalls;
+		s_animatorParameters[name] = value != 0;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorSetInt(NativeEntityHandleV1 entity,
+		NativeUtf8View parameter, int value)
+	{
+		if (!TryReadAnimatorParameter(parameter, out string name)) return -1;
+		++s_spriteAnimatorParameterCalls;
+		s_animatorParameters[name] = value;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorSetFloat(NativeEntityHandleV1 entity,
+		NativeUtf8View parameter, float value)
+	{
+		if (!TryReadAnimatorParameter(parameter, out string name)
+			|| !float.IsFinite(value)) return -1;
+		++s_spriteAnimatorParameterCalls;
+		s_animatorParameters[name] = value;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorSetTrigger(NativeEntityHandleV1 entity,
+		NativeUtf8View parameter)
+	{
+		if (!TryReadAnimatorParameter(parameter, out string name)) return -1;
+		++s_spriteAnimatorParameterCalls;
+		s_animatorParameters[name] = true;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorResetTrigger(NativeEntityHandleV1 entity,
+		NativeUtf8View parameter)
+	{
+		if (!TryReadAnimatorParameter(parameter, out string name)) return -1;
+		++s_spriteAnimatorParameterCalls;
+		s_animatorParameters[name] = false;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGameplaySpriteAnimatorGetCurrentState(
+		NativeEntityHandleV1 entity, byte* buffer, uint capacity, uint* required)
+	{
+		if (required is null) return -1;
+		ReadOnlySpan<byte> state = "Running"u8;
+		*required = (uint)state.Length;
+		if (capacity < state.Length || (buffer is null && state.Length != 0)) return -6;
+		state.CopyTo(new Span<byte>(buffer, state.Length));
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentHas(NativeEntityHandleV1 entity,
+		ulong typeId)
+	{
+		if (typeId != HealthComponent.TypeId)
+			return -1;
+		++s_componentHasCalls;
+		return s_healthPresent ? 1 : 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentAdd(NativeEntityHandleV1 entity,
+		ulong typeId)
+	{
+		if (typeId != HealthComponent.TypeId)
+			return -1;
+		++s_componentAddCalls;
+		s_healthPresent = true;
+		s_healthMaximum = 100;
+		s_healthCurrent = 100;
+		s_healthInvulnerable = false;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentRemove(NativeEntityHandleV1 entity,
+		ulong typeId)
+	{
+		if (typeId != HealthComponent.TypeId)
+			return -1;
+		++s_componentRemoveCalls;
+		s_healthPresent = false;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentGetProperty(NativeEntityHandleV1 entity,
+		ulong typeId, ulong propertyId, NativePropertyValueV1* value)
+	{
+		if (value is null)
+			return -3;
+		if (typeId == UIText.TypeId || typeId == TextRenderer.TypeId)
+		{
+			if (!s_registeredRuntimeUIProperties.TryGetValue(
+				(typeId, propertyId), out NativePropertyValueV1 property))
+				return -3;
+			*value = property;
+			return 0;
+		}
+		if (typeId != HealthComponent.TypeId || !s_healthPresent || value is null)
+			return -3;
+		++s_componentGetCalls;
+		*value = propertyId switch
+		{
+			HealthComponent.MaximumPropertyId => new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.Int32,
+				Integer = s_healthMaximum
+			},
+			HealthComponent.CurrentPropertyId => new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.Int32,
+				Integer = s_healthCurrent
+			},
+			HealthComponent.InvulnerablePropertyId => new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.Bool,
+				Integer = s_healthInvulnerable ? 1 : 0
+			},
+			_ => default
+		};
+		return propertyId == HealthComponent.MaximumPropertyId
+			|| propertyId == HealthComponent.CurrentPropertyId
+			|| propertyId == HealthComponent.InvulnerablePropertyId ? 0 : -1;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentSetProperty(NativeEntityHandleV1 entity,
+		ulong typeId, ulong propertyId, NativePropertyValueV1 value)
+	{
+		if (typeId == UIText.TypeId || typeId == TextRenderer.TypeId)
+		{
+			if (value.Kind != NativePropertyKindV1.UInt64)
+				return -1;
+			s_registeredRuntimeUIProperties[(typeId, propertyId)] = value;
+			return 0;
+		}
+		if (typeId != HealthComponent.TypeId || !s_healthPresent)
+			return -3;
+		if (propertyId == HealthComponent.MaximumPropertyId
+			&& value.Kind == NativePropertyKindV1.Int32
+			&& value.Integer is > 0 and <= int.MaxValue
+			&& value.Integer >= s_healthCurrent)
+			s_healthMaximum = (int)value.Integer;
+		else if (propertyId == HealthComponent.CurrentPropertyId
+			&& value.Kind == NativePropertyKindV1.Int32
+			&& value.Integer >= 0 && value.Integer <= s_healthMaximum)
+			s_healthCurrent = (int)value.Integer;
+		else if (propertyId == HealthComponent.InvulnerablePropertyId
+			&& value.Kind == NativePropertyKindV1.Bool
+			&& (value.Integer == 0 || value.Integer == 1))
+			s_healthInvulnerable = value.Integer != 0;
+		else
+			return -1;
+		++s_componentSetCalls;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubMouseButtonHeld(uint button) =>
+		button == (uint)MouseButton.Left && s_extendedInputPressed ? 1 : 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubMouseButtonReleased(uint button) =>
+		button == (uint)MouseButton.Left && !s_extendedInputPressed ? 1 : 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubScrollDelta(NativeVector2* value)
+	{
+		if (value is null) return -1;
+		*value = new NativeVector2 { X = 1.25f, Y = -2.5f };
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubWindowFocused() => 1;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGamepadConnected(uint gamepad) => gamepad == 0 ? 1 : 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGamepadDisconnected(uint gamepad) => 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGamepadButtonHeld(uint gamepad, uint button) =>
+		gamepad == 0 && button == (uint)GamepadButton.South ? 1 : 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGamepadButtonReleased(uint gamepad, uint button) => 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGamepadAxis(uint gamepad, uint axis, float* value)
+	{
+		if (value is null || gamepad != 0 || axis > (uint)GamepadAxis.RightTrigger)
+			return -1;
+		*value = (GamepadAxis)axis switch
+		{
+			GamepadAxis.LeftX => 0.575f,
+			GamepadAxis.LeftTrigger => s_extendedLeftTriggerRaw,
+			GamepadAxis.RightTrigger => -1.0f,
+			_ => 0.0f
+		};
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubGamepadName(uint gamepad, byte* buffer, uint capacity,
+		uint* required)
+	{
+		if (required is null || gamepad >= Input.MaximumGamepads)
+			return -1;
+		ReadOnlySpan<byte> name = "Regression Pad"u8;
+		*required = (uint)name.Length;
+		if (capacity < name.Length || (buffer is null && name.Length != 0))
+			return -6;
+		name.CopyTo(new Span<byte>(buffer, name.Length));
 		return 0;
 	}
 
@@ -1035,7 +2279,98 @@ internal static unsafe class Program
 			Entity.Tag = "natural-tag";
 			Entity.Layer = 5;
 			Transform.Position = new Vector3(1.0f, 2.0f, 3.0f);
+			Transform.LocalPosition = new Vector3(9.0f, 8.0f, 7.0f);
+			if (!Transform.LocalPosition.Equals(new Vector3(9.0f, 8.0f, 7.0f)))
+				throw new InvalidOperationException("Transform local-space round trip failed.");
+			Entity? target = World.Find("Target");
+			if (target is null || target.Id != 44)
+				throw new InvalidOperationException("World.Find returned an unexpected entity.");
+			Entity.Parent = target;
+			if (Entity.Parent != target || Entity.Children.Count != 2)
+				throw new InvalidOperationException("Entity hierarchy bridge failed.");
+			Entity.ActiveSelf = false;
+			if (Entity.ActiveSelf || Entity.ActiveInHierarchy)
+				throw new InvalidOperationException("Entity active-state bridge failed.");
+			Entity.ActiveSelf = true;
+			if (!Entity.ActiveInHierarchy)
+				throw new InvalidOperationException("Entity active hierarchy did not recover.");
+			Entity reserved = World.CreateEntity("Runtime child",
+				new Vector3(2.0f, 3.0f, 4.0f), target);
+			if (reserved.Id != 1200 || World.All.Count != 2
+				|| World.Query<HealthComponent>().Count != 2
+				|| World.Query<SpriteAnimator>().Count != 2)
+				throw new InvalidOperationException("World create/query bridge failed.");
 			GetComponent<Rigidbody2D>().LinearVelocity = new Vector2(4.0f, 5.0f);
+			Rigidbody2D body = GetComponent<Rigidbody2D>();
+			body.Enabled = false;
+			body.BodyType = RigidbodyBodyType.Dynamic;
+			body.FixedRotation = true;
+			if (body.Enabled || body.BodyType != RigidbodyBodyType.Dynamic
+				|| !body.FixedRotation)
+				throw new InvalidOperationException("Rigidbody2D property round trip failed.");
+			BoxCollider2D box = GetComponent<BoxCollider2D>();
+			box.Size = new Vector2(2.0f, 3.0f);
+			box.Density = 2.5f;
+			if (!box.Size.Equals(new Vector2(2.0f, 3.0f)) || box.Density != 2.5f)
+				throw new InvalidOperationException("BoxCollider2D property round trip failed.");
+			CircleCollider2D circle = GetComponent<CircleCollider2D>();
+			circle.Radius = 1.25f;
+			if (circle.Radius != 1.25f)
+				throw new InvalidOperationException("CircleCollider2D property round trip failed.");
+			DistanceJoint2D joint = GetComponent<DistanceJoint2D>();
+			joint.Distance = 4.5f;
+			joint.ConnectedEntity = target;
+			if (joint.Distance != 4.5f || joint.ConnectedEntity != target)
+				throw new InvalidOperationException("DistanceJoint2D property round trip failed.");
+			SpriteRenderer sprite = GetComponent<SpriteRenderer>();
+			sprite.Color = new Color(0.1f, 0.2f, 0.3f, 0.4f);
+			sprite.SortingLayer = -7;
+			sprite.OrderInLayer = 42;
+			if (!sprite.Color.Equals(new Color(0.1f, 0.2f, 0.3f, 0.4f)) ||
+				sprite.SortingLayer != -7 || sprite.OrderInLayer != 42)
+				throw new InvalidOperationException("SpriteRenderer property round trip failed.");
+			if (!Entity.HasComponent<SpriteAnimator>())
+				throw new InvalidOperationException("SpriteAnimator should be queryable.");
+			Entity.RemoveComponent<SpriteAnimator>();
+			Entity.AddComponent<SpriteAnimator>();
+			SpriteAnimator animator = GetComponent<SpriteAnimator>();
+			animator.Enabled = false;
+			animator.Speed = 0.0f;
+			if (animator.Enabled || animator.Speed != 0.0f)
+				throw new InvalidOperationException("SpriteAnimator property round trip failed.");
+			if (!animator.Play("运行😀", restart: false)
+				|| !animator.IsPlaying || animator.CurrentFrame != 3)
+				throw new InvalidOperationException("SpriteAnimator Play bridge failed.");
+			animator.Stop();
+			if (animator.IsPlaying)
+				throw new InvalidOperationException("SpriteAnimator Stop bridge failed.");
+			animator.SetBool("Grounded", false);
+			animator.SetInt("Lives", 7);
+			animator.SetFloat("Speed", 1.25f);
+			animator.SetTrigger("Jump");
+			animator.ResetTrigger("Jump");
+			if (animator.CurrentState != "Running")
+				throw new InvalidOperationException("SpriteAnimator state bridge failed.");
+			Camera camera = GetComponent<Camera>();
+			camera.Primary = true;
+			camera.OrthographicSize = 12.0f;
+			if (!camera.Primary || camera.OrthographicSize != 12.0f)
+				throw new InvalidOperationException("Camera property round trip failed.");
+			if (!Entity.HasComponent<HealthComponent>())
+				throw new InvalidOperationException("HealthComponent should initially exist.");
+			Entity.RemoveComponent<HealthComponent>();
+			if (Entity.HasComponent<HealthComponent>())
+				throw new InvalidOperationException("HealthComponent remove did not apply.");
+			HealthComponent health = Entity.AddComponent<HealthComponent>();
+			if (!Entity.HasComponent<HealthComponent>())
+				throw new InvalidOperationException("HealthComponent add did not apply.");
+			health.Maximum = 150;
+			health.Current = 75;
+			health.Invulnerable = true;
+			HealthComponent roundTrip = Entity.GetComponent<HealthComponent>();
+			if (roundTrip.Maximum != 150 || roundTrip.Current != 75
+				|| !roundTrip.Invulnerable)
+				throw new InvalidOperationException("HealthComponent property round trip failed.");
 			if (SceneManager.ActiveScene.Handle != ActiveSceneHandle ||
 				SceneManager.ActiveBuildIndex != ActiveSceneBuildIndex ||
 				!SceneManager.LoadScene(new SceneAsset(8001)) ||
@@ -1053,6 +2388,8 @@ internal static unsafe class Program
 		{
 			AssertWrongThread(() => _ = Entity.IsValid, "Entity.IsValid");
 			AssertWrongThread(() => _ = Input.IsKeyHeld(KeyCode.Space), "Input.IsKeyHeld");
+			AssertWrongThread(() => InputContext.Enable(InputContext.UI),
+				"InputContext.Enable");
 			AssertWrongThread(() => _ = Physics2D.Raycast(Vector2.Zero, Vector2.One),
 				"Physics2D.Raycast");
 		}
@@ -1061,6 +2398,173 @@ internal static unsafe class Program
 	private sealed class ConstructorInputProbe : TomCatBehaviour
 	{
 		internal ConstructorInputProbe() => _ = Input.IsKeyHeld(KeyCode.Space);
+	}
+
+	private sealed class ExtendedInputProbe : TomCatBehaviour
+	{
+		private InputActionMap _gameplayMap = null!;
+		private InputActionMap _uiMap = null!;
+		internal InputAction Action { get; private set; } = null!;
+		internal InputAction AlternativeButton { get; private set; } = null!;
+		internal InputAction Axis { get; private set; } = null!;
+		internal InputAction ClampedAxis { get; private set; } = null!;
+		internal bool RequestUiExclusive { get; set; }
+		internal bool RequestClearExclusive { get; set; }
+		internal bool RequestGameplayResume { get; set; }
+		internal bool RequestRuntimeCaptureTest { get; set; }
+		internal bool RequestRuntimeCaptureRestore { get; set; }
+		internal int StartedCount { get; private set; }
+		internal int PerformedCount { get; private set; }
+		internal int CanceledCount { get; private set; }
+		internal int UiStartedCount { get; private set; }
+		internal int UiCanceledCount { get; private set; }
+		internal int AxisStartedCount { get; private set; }
+		internal int AxisPerformedCount { get; private set; }
+		internal int AxisCanceledCount { get; private set; }
+
+		protected override void OnCreate()
+		{
+			Check(Input.IsWindowFocused, "V2 input focus state");
+			Equal(new Vector2(1.25f, -2.5f), Input.ScrollDelta,
+				"V2 input scroll delta");
+			Check(Input.IsGamepadConnected() && Input.WasGamepadConnected()
+				&& !Input.WasGamepadDisconnected(), "V2 gamepad hot-plug state");
+			Equal("Regression Pad", Input.GetGamepadName(), "V2 gamepad name");
+			Check(Input.IsGamepadButtonHeld(GamepadButton.South),
+				"V2 gamepad standard button");
+			Check(MathF.Abs(Input.GetGamepadAxis(GamepadAxis.LeftX) - 0.5f) < 1.0e-6f,
+				"V2 gamepad dead-zone normalization");
+			Equal(-1.0f, Input.GetGamepadAxisRaw(GamepadAxis.LeftTrigger),
+				"V2 idle trigger raw value");
+			Equal(0.0f, Input.GetGamepadAxis(GamepadAxis.LeftTrigger),
+				"V2 idle trigger normalized value");
+			s_extendedLeftTriggerRaw = 1.0f;
+			Equal(1.0f, Input.GetGamepadAxisRaw(GamepadAxis.LeftTrigger),
+				"V2 fully pressed trigger raw value");
+			Equal(1.0f, Input.GetGamepadAxis(GamepadAxis.LeftTrigger),
+				"V2 fully pressed trigger normalized value");
+			s_extendedLeftTriggerRaw = -1.0f;
+
+			InputContext.Reset();
+			InputContext.Disable(InputContext.UI);
+			_gameplayMap = new InputActionMap("Regression.Gameplay",
+				InputContext.Gameplay);
+			Action = _gameplayMap.AddAction("Jump")
+				.AddBinding(InputBinding.Mouse(MouseButton.Left));
+			Action.Started += _ => ++StartedCount;
+			Action.Performed += _ => ++PerformedCount;
+			Action.Canceled += _ => ++CanceledCount;
+			AlternativeButton = _gameplayMap.AddAction("AlternativeButton")
+				.AddBinding(InputBinding.Mouse(MouseButton.Left, 0.3f))
+				.AddBinding(InputBinding.Mouse(MouseButton.Left, 0.3f));
+			Axis = _gameplayMap.AddAction("Axis", InputActionType.Axis1D)
+				.AddBinding(InputBinding.GamepadButton(GamepadButton.South, scale: 0.3f))
+				.AddBinding(InputBinding.GamepadButton(GamepadButton.South, scale: 0.4f));
+			Axis.Started += _ => ++AxisStartedCount;
+			Axis.Performed += _ => ++AxisPerformedCount;
+			Axis.Canceled += _ => ++AxisCanceledCount;
+			ClampedAxis = _gameplayMap.AddAction("ClampedAxis", InputActionType.Axis1D)
+				.AddBinding(InputBinding.GamepadButton(GamepadButton.South, scale: 0.8f))
+				.AddBinding(InputBinding.GamepadButton(GamepadButton.South, scale: 0.7f));
+
+			string saved = _gameplayMap.ExportRebinds();
+			Action.Rebind(0, InputBinding.Key(KeyCode.Enter));
+			_gameplayMap.ImportRebinds(saved);
+			Equal(InputBindingKind.MouseButton, Action.Bindings[0].Kind,
+				"InputAction rebind JSON round trip");
+
+			_uiMap = new InputActionMap("Regression.UI", InputContext.UI, priority: 100);
+			InputAction uiAction = _uiMap.AddAction("Submit")
+				.AddBinding(InputBinding.Mouse(MouseButton.Left));
+			uiAction.Started += _ => ++UiStartedCount;
+			uiAction.Canceled += _ => ++UiCanceledCount;
+			_gameplayMap.Enable();
+			_uiMap.Enable();
+		}
+
+		protected override void OnUpdate(float deltaTime)
+		{
+			if (RequestRuntimeCaptureTest)
+			{
+				RequestRuntimeCaptureTest = false;
+				_uiMap.ConsumesInput = false;
+				InputContext.Enable(InputContext.UI);
+			}
+			if (RequestRuntimeCaptureRestore)
+			{
+				RequestRuntimeCaptureRestore = false;
+				InputContext.Disable(InputContext.UI);
+				_uiMap.ConsumesInput = true;
+			}
+			if (RequestUiExclusive)
+			{
+				RequestUiExclusive = false;
+				InputContext.ActivateExclusive(InputContext.UI);
+			}
+			if (RequestClearExclusive)
+			{
+				RequestClearExclusive = false;
+				InputContext.ClearExclusive();
+			}
+			if (RequestGameplayResume)
+			{
+				RequestGameplayResume = false;
+				InputContext.Disable(InputContext.UI);
+				InputContext.Enable(InputContext.Gameplay);
+			}
+			InputActionRuntime.UpdateEnabled(ScriptRuntime.DomainCancellationToken);
+		}
+
+		protected override void OnDestroy()
+		{
+			_uiMap.Disable();
+			_gameplayMap.Disable();
+			InputContext.Reset();
+		}
+	}
+
+	private sealed class RuntimeUIProxyProbe : TomCatBehaviour
+	{
+		internal bool Passed { get; private set; }
+
+		protected override void OnCreate()
+		{
+			var text = new UIText(Entity) { Text = "开始 TomCat 😀" };
+			text.FallbackFont = new AssetRef<FontAsset>(9102);
+			text.EmojiFont = new AssetRef<FontAsset>(9103);
+			var worldText = new TextRenderer(Entity);
+			worldText.FallbackFont = new AssetRef<FontAsset>(9202);
+			worldText.EmojiFont = new AssetRef<FontAsset>(9203);
+			var button = new UIButton(Entity);
+			button.Focus();
+			UIRect rect = new RectTransform(Entity).RuntimeRect;
+			Passed = text.Text == "开始 TomCat 😀"
+				&& text.FallbackFont.Handle == 9102
+				&& text.EmojiFont.Handle == 9103
+				&& worldText.FallbackFont.Handle == 9202
+				&& worldText.EmojiFont.Handle == 9203
+				&& button.WasClickedThisFrame
+				&& button.ClickSerial == RuntimeUIButtonClickSerial
+				&& rect.Equals(new UIRect(10.0f, 20.0f, 300.0f, 80.0f))
+				&& UIEventSystem.IsGameplayInputCaptured;
+		}
+	}
+
+	private sealed class AudioSpatialProxyProbe : TomCatBehaviour
+	{
+		public bool Passed { get; private set; }
+		protected override void OnCreate()
+		{
+			var audio = new AudioSource(Entity);
+			audio.Streaming = true;
+			audio.SpatialBlend = 0.75f;
+			audio.MaxDistance = 80.0f;
+			audio.MinDistance = 2.0f;
+			Passed = audio.Streaming
+				&& MathF.Abs(audio.SpatialBlend - 0.75f) < 1.0e-6f
+				&& MathF.Abs(audio.MinDistance - 2.0f) < 1.0e-6f
+				&& MathF.Abs(audio.MaxDistance - 80.0f) < 1.0e-6f;
+		}
 	}
 
 	private sealed class ConstructorLogProbe : TomCatBehaviour

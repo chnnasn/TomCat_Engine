@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EntityArchive.h"
+#include "TomCat/Core/Version.h"
 #include "TomCat/Scene/Entity.h"
 
 #include <filesystem>
@@ -40,7 +41,7 @@ namespace TomCat {
 	class PrefabArchiveCodec final
 	{
 	public:
-		static constexpr uint32_t CurrentSchemaVersion = 1;
+		static constexpr uint32_t CurrentSchemaVersion = Version::PrefabFormatCurrent;
 
 		static bool CaptureSubtree(const Ref<Scene>& source, Entity root,
 			PrefabArchive& archive, std::string& error);

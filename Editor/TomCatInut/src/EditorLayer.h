@@ -5,6 +5,8 @@
 #include "Panels/SceneHierarchyPanel.h"
 
 #include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Editor/EditorRecoveryService.h"
+#include "TomCat/Editor/SceneHistory.h"
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/ConsolePanel.h"
 #include "Scripting/ScriptProjectCompiler.h"
@@ -25,7 +27,8 @@ namespace TomCat {
 	class EditorLayer : public Layer
 	{
 	public:
-		EditorLayer();
+		explicit EditorLayer(
+			std::filesystem::path startupProjectPath = {});
 
 		virtual ~EditorLayer() = default;
 
@@ -73,7 +76,25 @@ namespace TomCat {
 		void ResetSceneInteractionState();
 		void RequestDestructiveAction(std::function<bool()> action);
 		void UI_UnsavedChangesModal();
+		void UI_RecoveryModal();
 		void RequestExit();
+
+		bool CaptureSceneArchive(std::string& archive) const;
+		void InitializeSceneHistory(bool isSaved);
+		void BeginSceneTransaction(const char* label);
+		void UpdateSceneTransaction();
+		void CommitSceneTransaction();
+		void CommitImmediateSceneTransaction(const char* label);
+		void CancelSceneTransaction();
+		void OnSceneModified(SceneHierarchyPanel::SceneModificationPhase phase);
+		bool ApplyHistorySnapshot(const SceneHistory::Snapshot& snapshot);
+		bool UndoScene();
+		bool RedoScene();
+		void MarkCurrentSceneSaved();
+		bool IsSceneDirty() const { return m_SceneHistory.IsDirty(); }
+		void ScheduleCurrentSceneAutosave();
+		void CheckForRecovery();
+		bool RestorePendingRecovery();
 
 		void OnScenePlay();
 		void OnScenePause();
@@ -108,7 +129,9 @@ namespace TomCat {
 		void UpdateWindowTitle();
 		void LoadProjectSettingsDraft();
 		void SyncProjectSettingsLayerBuffers();
+		void SyncPlayerSettingsBuffers();
 		bool PersistProjectSettingsDraft();
+		bool PersistPlayerSettingsDraft();
 		void ClearProjectSettingsFeedback();
 		void FocusEditorPanel(const char* panelName, bool& panelVisible);
 		void CycleEditorPanel(int direction);
@@ -142,6 +165,7 @@ namespace TomCat {
 
 		// Game Viewport
 		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
+		glm::vec2 m_GameViewportBounds[2]{};
 
 		int m_GizmoType = -1;
 		GizmoPivotMode m_GizmoPivotMode = GizmoPivotMode::Pivot;
@@ -210,7 +234,16 @@ namespace TomCat {
 		bool m_ColliderHandleHovered = false;
 
 		Ref<Project> m_CurrentProject;
-		bool m_SceneDirty = false;
+		std::filesystem::path m_StartupProjectPath;
+		SceneHistory m_SceneHistory;
+		EditorRecoveryService m_RecoveryService;
+		EditorProjectLock m_ProjectLock;
+		std::optional<EditorRecoveryService::RecoveryCandidate> m_PendingRecovery;
+		bool m_OpenRecoveryModal = false;
+		bool m_SceneTransactionChanged = false;
+		bool m_GizmoTransactionActive = false;
+		bool m_ColliderTransactionActive = false;
+		bool m_BypassUnsavedCheck = false;
 
 		bool m_ShowScenePanel = true;
 		bool m_ShowGamePanel = true;
@@ -234,8 +267,15 @@ namespace TomCat {
 		int m_ProjectSettingsPage = 0;
 		Ref<Project> m_ProjectSettingsDraftProject;
 		ProjectSettings m_ProjectSettingsDraft;
+		PlayerSettings m_PlayerSettingsDraft;
 		std::array<std::array<char, 128>, Physics2DLayerCount> m_ProjectLayerNameBuffers{};
 		std::array<char, 128> m_NewProjectTagBuffer{};
+		std::array<char, 129> m_PlayerProductNameBuffer{};
+		std::array<char, 129> m_PlayerCompanyNameBuffer{};
+		std::array<char, 65> m_PlayerVersionBuffer{};
+		std::array<char, 513> m_PlayerSaveDirectoryBuffer{};
+		std::array<char, 513> m_PlayerLogDirectoryBuffer{};
+		std::array<char, 513> m_PlayerCrashDirectoryBuffer{};
 		std::string m_ProjectSettingsError;
 		std::string m_ProjectSettingsStatus;
 		bool m_OpenUnsavedChangesModal = false;

@@ -60,7 +60,7 @@ namespace TomCat::Scripting {
 		configuration.ScriptHostAssemblyPath = managedDirectory
 			/ "TomCat.ScriptHost.dll";
 		configuration.DotNetRoot = dotnetRoot;
-		if (!runtime->Initialize(configuration, BuildNativeApiV1())
+		if (!runtime->Initialize(configuration, BuildNativeApiV2())
 			|| !runtime->SetProjectAssembly(projectAssembly, projectPdb))
 		{
 			if (error)

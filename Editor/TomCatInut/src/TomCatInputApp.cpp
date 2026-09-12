@@ -1,9 +1,11 @@
 #include <TomCat.h>
+#define TC_APPLICATION_PRODUCT TomCat::ApplicationProduct::Editor
 #include <TomCat/Core/EntryPoint.h>
-#include <TomCat/Project/ProjectManager.h>
 #include <TomCat/Utils/PathUtils.h>
 
 #include "EditorLayer.h"
+
+#include <utility>
 
 namespace TomCat {
 
@@ -16,13 +18,13 @@ namespace TomCat {
 			: Application("TomCatEditor",
 				std::filesystem::path("Packages/Resources/Icons/Logo.ico"))
 		{
+			std::filesystem::path startupProjectPath;
 			if (args.Count > 1)
-			{
-				const std::filesystem::path projectPath = UTF8ToPath(args[1]);
-				ProjectManager::Get().LoadProject(projectPath);
-			}
+				startupProjectPath = UTF8ToPath(args[1]);
 			
-			PushLayer(new EditorLayer());
+			// EditorLayer acquires the LocalAppData project lock before allowing
+			// Project::Load to perform any migration or other write.
+			PushLayer(new EditorLayer(std::move(startupProjectPath)));
 		}
 
 	};

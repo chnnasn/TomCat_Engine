@@ -179,7 +179,11 @@ namespace TomCat {
 
 		m_SceneManager = CreateScope<SceneManager>();
 		Window& window = Application::Get().GetWindow();
-		m_SceneManager->SetViewportSize(window.GetWidth(), window.GetHeight());
+		m_SceneManager->SetViewportSize(window.GetFramebufferWidth(),
+			window.GetFramebufferHeight());
+		m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
+			window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
+				window.GetScreenToFramebufferScaleY() });
 		if (!m_SceneManager->ConfigureCookedPackage()
 			|| !m_SceneManager->ActivateRuntime()
 			|| !m_SceneManager->LoadEntryScene())
@@ -208,6 +212,10 @@ namespace TomCat {
 		Scripting::ScriptEngine::Get().CaptureInputState();
 		if (!m_SceneManager)
 			return;
+		Window& window = Application::Get().GetWindow();
+		m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
+			window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
+				window.GetScreenToFramebufferScaleY() });
 		if (const Ref<Scene> scene = m_SceneManager->GetActiveScene())
 			scene->OnUpdateRuntime(timestep);
 		if (!m_SceneManager->CommitPendingTransition()
@@ -226,7 +234,14 @@ namespace TomCat {
 	bool PlayerRuntimeLayer::OnWindowResize(WindowResizeEvent& event)
 	{
 		if (m_SceneManager)
-			m_SceneManager->SetViewportSize(event.GetWidth(), event.GetHeight());
+		{
+			m_SceneManager->SetViewportSize(event.GetFramebufferWidth(),
+				event.GetFramebufferHeight());
+			m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
+				event.GetDPIScale(), {
+					event.GetScreenToFramebufferScaleX(),
+					event.GetScreenToFramebufferScaleY() });
+		}
 		return false;
 	}
 

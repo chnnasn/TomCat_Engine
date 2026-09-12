@@ -15,6 +15,10 @@ namespace TomCat {
 	enum class SerializedAssetReferenceKind : uint8_t
 	{
 		Sprite,
+		SpriteAnimationFrame,
+		AudioSource,
+		Font,
+		UIImage,
 		CSharpScript,
 		ScriptField
 	};

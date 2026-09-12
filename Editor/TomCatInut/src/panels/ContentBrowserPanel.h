@@ -1,7 +1,9 @@
 #pragma once
 
 #include <filesystem>
+#include <array>
 #include <functional>
+#include <string>
 #include <unordered_set>
 #include <vector>
 #include "TomCat/Asset/Asset.h"
@@ -90,6 +92,23 @@ namespace TomCat {
 		bool m_DeleteIsDirectory = false;
 		bool m_OpenDeletePopup = false;
 		std::vector<AssetReference> m_DeleteReferences;
+		struct AtlasSliceDraft
+		{
+			std::string StableID;
+			std::string Name;
+			int Rect[4] = { 0, 0, 1, 1 };
+			float Pivot[2] = { 0.5f, 0.5f };
+			float PixelsPerUnit = 100.0f;
+			float Border[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		};
+		std::filesystem::path m_AtlasEditorPath;
+		AssetHandle m_AtlasEditorHandle = AssetHandle(0);
+		AssetImportSettings m_AtlasBaseSettings;
+		std::vector<AtlasSliceDraft> m_AtlasSlices;
+		std::string m_AtlasEditorError;
+		uint32_t m_AtlasWidth = 1;
+		uint32_t m_AtlasHeight = 1;
+		bool m_OpenAtlasEditorPopup = false;
 		float m_LeftPanelWidth = 250.0f;
 		float m_ThumbnailSize = 128.0f;
 		bool m_OpenLayoutOptions = false;
@@ -129,6 +148,9 @@ namespace TomCat {
 		void DrawEmptyContextMenu(const std::filesystem::path& assetRoot);
 		void DrawRenamePopup();
 		void DrawDeleteConfirmation();
+		void BeginAtlasEditor(const std::filesystem::path& path);
+		void DrawAtlasEditorPopup();
+		bool SaveAtlasEditor();
 
 		void OpenAsset(const std::filesystem::path& path, bool isDirectory);
 		bool OpenCSharpScript(const std::filesystem::path& path);

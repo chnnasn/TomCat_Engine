@@ -256,6 +256,8 @@ namespace TomCat {
 		if (!scene)
 			return;
 		scene->SetPhysics2DSettings(m_Physics2DSettings);
+		scene->SetRuntimeUIViewportMetrics(m_RuntimeUIViewportOrigin,
+			m_RuntimeUIDPIScale, m_RuntimeUIScreenToFramebufferScale);
 		if (m_ViewportWidth > 0 && m_ViewportHeight > 0)
 			scene->OnViewportResize(m_ViewportWidth, m_ViewportHeight);
 	}
@@ -338,6 +340,19 @@ namespace TomCat {
 		m_ViewportHeight = height;
 		if (m_ActiveScene && width > 0 && height > 0)
 			m_ActiveScene->OnViewportResize(width, height);
+	}
+
+	void SceneManager::SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
+		float dpiScale, const glm::vec2& screenToFramebufferScale)
+	{
+		if (!CheckOwnerThread("SetRuntimeUIViewportMetrics"))
+			return;
+		m_RuntimeUIViewportOrigin = screenOrigin;
+		m_RuntimeUIDPIScale = dpiScale;
+		m_RuntimeUIScreenToFramebufferScale = screenToFramebufferScale;
+		if (m_ActiveScene)
+			m_ActiveScene->SetRuntimeUIViewportMetrics(screenOrigin, dpiScale,
+				screenToFramebufferScale);
 	}
 
 	void SceneManager::Stop()

@@ -6,6 +6,7 @@
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <string_view>
 
 namespace TomCat {
 
@@ -25,15 +26,18 @@ namespace TomCat {
 		const std::vector<Ref<Project>>& GetProjects() const { return m_Projects; }
 
 		Ref<Project> CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config);
+		Ref<Project> InspectProject(const std::filesystem::path& projectPath) const;
 		Ref<Project> LoadProject(const std::filesystem::path& projectPath);
 		Ref<Project> AddProject(const std::filesystem::path& projectPath);
 		[[nodiscard]] bool RemoveProject(const std::filesystem::path& projectPath);
 
 		Ref<Project> GetActiveProject() const { return m_ActiveProject; }
+		[[nodiscard]] static std::optional<std::filesystem::path> ResolveEditorExecutable(
+			const std::filesystem::path& editorDirectory, std::string_view editorVersion);
 		void OpenProjectInEditor(Ref<Project> project);
 
 		// Non-layout Hub state lives in
-		// %LOCALAPPDATA%/TomCat/TomCatSettings/hub.json.
+		// %LOCALAPPDATA%/TomCat/Hub/hub.json.
 		void LoadHubSettings();
 		[[nodiscard]] bool SaveHubSettings();
 	private:

@@ -118,7 +118,7 @@ namespace TomCat::Scripting {
 	}
 
 	bool ManagedScriptRuntime::Initialize(
-		const DotNetHost::Configuration& hostConfiguration, const NativeApiV1& nativeApi)
+		const DotNetHost::Configuration& hostConfiguration, const NativeApiV2& nativeApi)
 	{
 		if (IsManagedScriptReloadBlocked())
 		{
@@ -126,7 +126,8 @@ namespace TomCat::Scripting {
 				+ GetManagedScriptReloadBlockReason();
 			return false;
 		}
-		if (nativeApi.Version != NativeApiVersion || nativeApi.Size < sizeof(NativeApiV1))
+		if (nativeApi.V1.Version != NativeApiVersion
+			|| nativeApi.V1.Size < sizeof(NativeApiV1))
 		{
 			m_LastError = "NativeApiV1 version or size mismatch";
 			return false;
@@ -150,7 +151,7 @@ namespace TomCat::Scripting {
 		m_ManagedApi.Version = ManagedApiVersion;
 		m_ManagedApi.Size = sizeof(ManagedApiV1);
 		const auto getManagedApi = reinterpret_cast<GetManagedApiFn>(bootstrap);
-		const int32_t status = getManagedApi(&m_NativeApi, &m_ManagedApi);
+		const int32_t status = getManagedApi(&m_NativeApi.V1, &m_ManagedApi);
 		if (status != 0 || m_ManagedApi.Version != ManagedApiVersion
 			|| m_ManagedApi.Size < sizeof(ManagedApiV1) || !m_ManagedApi.CreateDomain
 			|| !m_ManagedApi.LoadProjectAssembly || !m_ManagedApi.CreateSceneRuntime

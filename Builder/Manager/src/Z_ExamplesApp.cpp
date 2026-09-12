@@ -1,4 +1,5 @@
 #include <TomCat.h>
+#define TC_APPLICATION_PRODUCT TomCat::ApplicationProduct::Hub
 #include <TomCat/Core/EntryPoint.h>
 #include "ExampleLayer.h"
 

@@ -1,12 +1,16 @@
 #include "tcpch.h"
 #include "ScriptEngine.h"
 
+#include "ScriptGlue.h"
+
 #include "TomCat/Core/Input.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Scene/Components.h"
+#include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SceneCommandBuffer.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 
 #include <cmath>
@@ -117,9 +121,36 @@ namespace TomCat::Scripting {
 				case NativeComponentType::CircleCollider2D:
 				case NativeComponentType::DistanceJoint2D:
 				case NativeComponentType::SpriteRenderer:
+				case NativeComponentType::Camera:
+				case NativeComponentType::SpriteAnimator:
 					return true;
 			}
 			return false;
+		}
+
+		bool HasNativeComponent(Entity entity, NativeComponentType type)
+		{
+			if (!entity)
+				return false;
+			switch (type)
+			{
+				case NativeComponentType::Transform: return entity.HasComponent<Transform>();
+				case NativeComponentType::Rigidbody2D: return entity.HasComponent<Rigidbody2D>();
+				case NativeComponentType::BoxCollider2D: return entity.HasComponent<BoxCollider2D>();
+				case NativeComponentType::CircleCollider2D: return entity.HasComponent<CircleCollider2D>();
+				case NativeComponentType::DistanceJoint2D: return entity.HasComponent<DistanceJoint2D>();
+				case NativeComponentType::SpriteRenderer: return entity.HasComponent<SpriteRenderer>();
+				case NativeComponentType::Camera: return entity.HasComponent<C_Camera>();
+				case NativeComponentType::SpriteAnimator: return entity.HasComponent<SpriteAnimator>();
+			}
+			return false;
+		}
+
+		bool SameEntity(const EntityHandleV1& left, const EntityHandleV1& right)
+		{
+			return left.SceneSessionId == right.SceneSessionId
+				&& left.EntityId == right.EntityId
+				&& left.RuntimeGeneration == right.RuntimeGeneration;
 		}
 
 	}
@@ -537,6 +568,50 @@ namespace TomCat::Scripting {
 		return true;
 	}
 
+	bool ScriptEngine::IsPendingCreate(const EntityHandleV1& entity) const
+	{
+		if (entity.SceneSessionId == 0 || entity.EntityId == 0
+			|| entity.RuntimeGeneration == 0)
+			return false;
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		return std::any_of(m_DeferredCommands.begin(), m_DeferredCommands.end(),
+			[&](const DeferredCommand& command)
+			{
+				return command.Kind == DeferredCommandKind::CreateEntity
+					&& command.Entity.SceneSessionId == entity.SceneSessionId
+					&& command.Entity.EntityId == entity.EntityId
+					&& command.Entity.RuntimeGeneration == entity.RuntimeGeneration;
+			});
+	}
+
+	bool ScriptEngine::GetProjectedComponentPresence(const EntityHandleV1& entity,
+		NativeComponentType componentType, bool& present) const
+	{
+		present = false;
+		if (!IsSupportedComponentType(componentType))
+			return false;
+
+		Entity resolved = ResolveEntity(entity);
+		const bool pendingCreate = !resolved && IsPendingCreate(entity);
+		if (!resolved && !pendingCreate)
+			return false;
+		present = resolved ? HasNativeComponent(resolved, componentType)
+			: componentType == NativeComponentType::Transform;
+
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		for (const DeferredCommand& command : m_DeferredCommands)
+		{
+			if (!SameEntity(command.Entity, entity)
+				|| command.ComponentType != componentType)
+				continue;
+			if (command.Kind == DeferredCommandKind::AddComponent)
+				present = true;
+			else if (command.Kind == DeferredCommandKind::RemoveComponent)
+				present = false;
+		}
+		return true;
+	}
+
 	bool ScriptEngine::QueueBehaviourEnabled(uint64_t attachmentId, bool enabled)
 	{
 		if (attachmentId == 0)
@@ -563,7 +638,65 @@ namespace TomCat::Scripting {
 		DeferredCommand command;
 		command.Kind = DeferredCommandKind::DestroyEntity;
 		command.Entity = entity;
-		return ResolveEntity(entity) && QueueCommand(command);
+		return (ResolveEntity(entity) || IsPendingCreate(entity))
+			&& QueueCommand(command);
+	}
+
+	bool ScriptEngine::QueueCreateEntity(const EntityHandleV1& context,
+		std::string name, NativeVector3 worldPosition,
+		const EntityHandleV1& parent, EntityHandleV1& reservedEntity)
+	{
+		reservedEntity = {};
+		if (!IsMainThread() || !ResolveEntity(context) || name.size() > 1024
+			|| !std::isfinite(worldPosition.X) || !std::isfinite(worldPosition.Y)
+			|| !std::isfinite(worldPosition.Z))
+			return false;
+		const bool hasParent = parent.SceneSessionId != 0 || parent.EntityId != 0
+			|| parent.RuntimeGeneration != 0;
+		if (hasParent && (parent.SceneSessionId != context.SceneSessionId
+			|| parent.RuntimeGeneration != context.RuntimeGeneration
+			|| parent.EntityId == 0
+			|| (!ResolveEntity(parent) && !IsPendingCreate(parent))))
+			return false;
+
+		for (uint32_t attempt = 0; attempt < 64; ++attempt)
+		{
+			const EntityHandleV1 candidate{ context.SceneSessionId,
+				static_cast<uint64_t>(UUID()), context.RuntimeGeneration };
+			if (candidate.EntityId == 0 || ResolveEntity(candidate)
+				|| IsPendingCreate(candidate))
+				continue;
+			DeferredCommand command;
+			command.Kind = DeferredCommandKind::CreateEntity;
+			command.Entity = candidate;
+			command.Parent = parent;
+			command.WorldPosition = worldPosition;
+			command.Name = std::move(name);
+			if (!QueueCommand(std::move(command)))
+				return false;
+			reservedEntity = candidate;
+			return true;
+		}
+		return false;
+	}
+
+	bool ScriptEngine::QueueSetParent(const EntityHandleV1& entity,
+		const EntityHandleV1& parent)
+	{
+		if (!IsMainThread() || (!ResolveEntity(entity) && !IsPendingCreate(entity)))
+			return false;
+		const bool hasParent = parent.SceneSessionId != 0 || parent.EntityId != 0
+			|| parent.RuntimeGeneration != 0;
+		if (hasParent && (parent.SceneSessionId != entity.SceneSessionId
+			|| parent.RuntimeGeneration != entity.RuntimeGeneration
+			|| parent.EntityId == 0
+			|| (!ResolveEntity(parent) && !IsPendingCreate(parent))))
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetParent;
+		command.Entity = entity;
+		command.Parent = parent;
+		return QueueCommand(std::move(command));
 	}
 
 	bool ScriptEngine::QueueAddComponent(const EntityHandleV1& entity,
@@ -575,7 +708,8 @@ namespace TomCat::Scripting {
 		command.Kind = DeferredCommandKind::AddComponent;
 		command.Entity = entity;
 		command.ComponentType = componentType;
-		return ResolveEntity(entity) && QueueCommand(command);
+		return (ResolveEntity(entity) || IsPendingCreate(entity))
+			&& QueueCommand(command);
 	}
 
 	bool ScriptEngine::QueueRemoveComponent(const EntityHandleV1& entity,
@@ -588,7 +722,116 @@ namespace TomCat::Scripting {
 		command.Kind = DeferredCommandKind::RemoveComponent;
 		command.Entity = entity;
 		command.ComponentType = componentType;
-		return ResolveEntity(entity) && QueueCommand(command);
+		return (ResolveEntity(entity) || IsPendingCreate(entity))
+			&& QueueCommand(command);
+	}
+
+	bool ScriptEngine::QueueSetComponentProperty(const EntityHandleV1& entity,
+		NativeComponentType componentType, uint32_t propertyId,
+		NativePropertyValueV1 value)
+	{
+		if (!IsMainThread() || !IsSupportedComponentType(componentType)
+			|| propertyId == 0
+			|| (!ResolveEntity(entity) && !IsPendingCreate(entity)))
+			return false;
+		bool present = false;
+		if (!GetProjectedComponentPresence(entity, componentType, present) || !present)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetComponentProperty;
+		command.Entity = entity;
+		command.ComponentType = componentType;
+		command.PropertyId = propertyId;
+		command.PropertyValue = value;
+		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::QueueSetActiveSelf(const EntityHandleV1& entity, bool active)
+	{
+		if (!IsMainThread() || (!ResolveEntity(entity) && !IsPendingCreate(entity)))
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetActiveSelf;
+		command.Entity = entity;
+		command.Enabled = active;
+		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::GetProjectedRegisteredComponentPresence(
+		const EntityHandleV1& entity, uint64_t componentTypeId, bool& present) const
+	{
+		present = false;
+		const ComponentDescriptor* descriptor = componentTypeId == 0 ? nullptr
+			: ComponentRegistry::Get().Find(UUID(componentTypeId));
+		if (!descriptor || !descriptor->ScriptAccessible)
+			return false;
+		Entity resolved = ResolveEntity(entity);
+		if (!resolved && !IsPendingCreate(entity))
+			return false;
+		present = resolved && descriptor->Has(resolved);
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		for (const DeferredCommand& command : m_DeferredCommands)
+		{
+			if (!SameEntity(command.Entity, entity)
+				|| command.RegisteredTypeId != componentTypeId)
+				continue;
+			if (command.Kind == DeferredCommandKind::AddRegisteredComponent)
+				present = true;
+			else if (command.Kind == DeferredCommandKind::RemoveRegisteredComponent)
+				present = false;
+		}
+		return true;
+	}
+
+	bool ScriptEngine::QueueAddRegisteredComponent(const EntityHandleV1& entity,
+		uint64_t componentTypeId)
+	{
+		if (!IsMainThread())
+			return false;
+		bool present = false;
+		if (!GetProjectedRegisteredComponentPresence(entity, componentTypeId, present)
+			|| present)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::AddRegisteredComponent;
+		command.Entity = entity;
+		command.RegisteredTypeId = componentTypeId;
+		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::QueueRemoveRegisteredComponent(const EntityHandleV1& entity,
+		uint64_t componentTypeId)
+	{
+		if (!IsMainThread())
+			return false;
+		bool present = false;
+		if (!GetProjectedRegisteredComponentPresence(entity, componentTypeId, present)
+			|| !present)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::RemoveRegisteredComponent;
+		command.Entity = entity;
+		command.RegisteredTypeId = componentTypeId;
+		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::QueueSetRegisteredComponentProperty(
+		const EntityHandleV1& entity, uint64_t componentTypeId,
+		uint64_t propertyId, NativePropertyValueV1 value)
+	{
+		if (!IsMainThread() || propertyId == 0)
+			return false;
+		bool present = false;
+		if (!GetProjectedRegisteredComponentPresence(entity, componentTypeId, present)
+			|| !present)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetRegisteredComponentProperty;
+		command.Entity = entity;
+		command.RegisteredTypeId = componentTypeId;
+		command.RegisteredPropertyId = propertyId;
+		command.PropertyValue = value;
+		return QueueCommand(std::move(command));
 	}
 
 	bool ScriptEngine::QueueInstantiatePrefab(const EntityHandleV1& context,
@@ -603,7 +846,8 @@ namespace TomCat::Scripting {
 			|| parent.RuntimeGeneration != 0;
 		if (hasParent && (parent.SceneSessionId != context.SceneSessionId
 			|| parent.RuntimeGeneration != context.RuntimeGeneration
-			|| parent.EntityId == 0 || !ResolveEntity(parent)))
+			|| parent.EntityId == 0
+			|| (!ResolveEntity(parent) && !IsPendingCreate(parent))))
 			return false;
 
 		DeferredCommand command;
@@ -636,6 +880,113 @@ namespace TomCat::Scripting {
 		auto runtime = GetRuntime();
 		for (const DeferredCommand& command : commands)
 		{
+			if (command.Kind == DeferredCommandKind::CreateEntity)
+			{
+				Scene* scene = ResolveScene(command.Entity);
+				if (!scene || scene->FindEntityByUUID(UUID(command.Entity.EntityId)))
+					continue;
+				const bool hasParent = command.Parent.SceneSessionId != 0
+					|| command.Parent.EntityId != 0
+					|| command.Parent.RuntimeGeneration != 0;
+				std::optional<UUID> parent;
+				if (hasParent)
+				{
+					Entity parentEntity = ResolveEntity(command.Parent);
+					if (!parentEntity)
+						continue;
+					parent = parentEntity.GetUUID();
+				}
+				SceneCommandBuffer buffer(*scene);
+				std::string error;
+				if (!buffer.CreateEntityWithReservedId(UUID(command.Entity.EntityId),
+					command.Name, parent) || !buffer.Flush(error))
+				{
+					TC_Core_Error("Could not create reserved C# entity {0}: {1}",
+						command.Entity.EntityId, error);
+					continue;
+				}
+				Entity created = scene->FindEntityByUUID(UUID(command.Entity.EntityId));
+				if (!created || !scene->SetWorldTransform(created,
+					Math::ComposeTransform(glm::vec3(command.WorldPosition.X,
+						command.WorldPosition.Y, command.WorldPosition.Z),
+						glm::vec3(0.0f), glm::vec3(1.0f))))
+					TC_Core_Error("Could not apply the initial transform to reserved C# entity {0}",
+						command.Entity.EntityId);
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::SetComponentProperty)
+			{
+				const int32_t status = ApplyGameplayComponentPropertyNow(command.Entity,
+					command.ComponentType, command.PropertyId, command.PropertyValue);
+				if (status != static_cast<int32_t>(ScriptStatus::Success))
+					TC_Core_Error("Could not apply queued C# component property {0} on entity {1}: status {2}",
+						command.PropertyId, command.Entity.EntityId, status);
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::SetActiveSelf)
+			{
+				Entity entity = ResolveEntity(command.Entity);
+				if (!entity || !entity.HasComponent<Tag>())
+				{
+					TC_Core_Error("Could not apply queued C# ActiveSelf on entity {0}",
+						command.Entity.EntityId);
+					continue;
+				}
+				entity.GetComponent<Tag>().Visible = command.Enabled;
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::SetRegisteredComponentProperty)
+			{
+				const int32_t status = ApplyRegisteredComponentPropertyNow(command.Entity,
+					command.RegisteredTypeId, command.RegisteredPropertyId,
+					command.PropertyValue);
+				if (status != static_cast<int32_t>(ScriptStatus::Success))
+					TC_Core_Error("Could not apply queued C# registered property {0} on entity {1}: status {2}",
+						command.RegisteredPropertyId, command.Entity.EntityId, status);
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::AddRegisteredComponent
+				|| command.Kind == DeferredCommandKind::RemoveRegisteredComponent)
+			{
+				Entity entity = ResolveEntity(command.Entity);
+				const ComponentDescriptor* descriptor = ComponentRegistry::Get().Find(
+					UUID(command.RegisteredTypeId));
+				std::string error;
+				const bool adding = command.Kind
+					== DeferredCommandKind::AddRegisteredComponent;
+				if (!entity || !descriptor || !descriptor->ScriptAccessible
+					|| !(adding ? descriptor->Add(entity, error)
+						: descriptor->Remove(entity, error)))
+					TC_Core_Error("Could not {0} queued C# registered component {1} on entity {2}: {3}",
+						adding ? "add" : "remove", command.RegisteredTypeId,
+						command.Entity.EntityId, error);
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::SetParent)
+			{
+				Scene* scene = ResolveScene(command.Entity);
+				Entity child = ResolveEntity(command.Entity);
+				if (!scene || !child)
+					continue;
+				const bool hasParent = command.Parent.SceneSessionId != 0
+					|| command.Parent.EntityId != 0
+					|| command.Parent.RuntimeGeneration != 0;
+				std::optional<UUID> parent;
+				if (hasParent)
+				{
+					Entity parentEntity = ResolveEntity(command.Parent);
+					if (!parentEntity)
+						continue;
+					parent = parentEntity.GetUUID();
+				}
+				SceneCommandBuffer buffer(*scene);
+				std::string error;
+				if (!buffer.ReparentEntity(child.GetUUID(), parent)
+					|| !buffer.Flush(error))
+					TC_Core_Error("Could not reparent C# entity {0}: {1}",
+						command.Entity.EntityId, error);
+				continue;
+			}
 			if (command.Kind == DeferredCommandKind::SetBehaviourEnabled)
 			{
 				bool applied = false;
@@ -784,6 +1135,8 @@ namespace TomCat::Scripting {
 				case NativeComponentType::CircleCollider2D: mutate.template operator()<CircleCollider2D>(); break;
 				case NativeComponentType::DistanceJoint2D: mutate.template operator()<DistanceJoint2D>(); break;
 				case NativeComponentType::SpriteRenderer: mutate.template operator()<SpriteRenderer>(); break;
+				case NativeComponentType::Camera: mutate.template operator()<C_Camera>(); break;
+				case NativeComponentType::SpriteAnimator: mutate.template operator()<SpriteAnimator>(); break;
 			}
 		}
 	}
@@ -828,6 +1181,8 @@ namespace TomCat::Scripting {
 	{
 		if (!IsMainThread())
 			return;
+		m_PreviousWindowFocused = m_WindowFocused;
+		m_WindowFocused = Input::IsWindowFocused();
 		m_PreviousKeys = m_CurrentKeys;
 		for (uint32_t key = 0; key < m_CurrentKeys.size(); ++key)
 		{
@@ -835,12 +1190,41 @@ namespace TomCat::Scripting {
 				|| (key >= 256 && key <= 269) || (key >= 280 && key <= 284)
 				|| (key >= 290 && key <= 314) || (key >= 320 && key <= 336)
 				|| (key >= 340 && key <= 348);
-			m_CurrentKeys[key] = valid && Input::IsKeyPressed(static_cast<KeyCode>(key));
+			m_CurrentKeys[key] = m_WindowFocused && valid
+				&& Input::IsKeyPressed(static_cast<KeyCode>(key));
 		}
+		m_PreviousMouseButtons = m_CurrentMouseButtons;
+		for (uint32_t button = 0; button < m_CurrentMouseButtons.size(); ++button)
+			m_CurrentMouseButtons[button] = m_WindowFocused
+				&& Input::IsMouseButtonPressed(static_cast<MouseCode>(button));
 		m_PreviousMousePosition = m_MousePosition;
 		const auto [x, y] = Input::GetMousePosition();
 		m_MousePosition = { x, y };
-		m_MouseDelta = { x - m_PreviousMousePosition.X, y - m_PreviousMousePosition.Y };
+		m_MouseDelta = !m_WindowFocused || !m_PreviousWindowFocused
+			? NativeVector2{}
+			: NativeVector2{ x - m_PreviousMousePosition.X, y - m_PreviousMousePosition.Y };
+		const auto [scrollX, scrollY] = Input::ConsumeScrollDelta();
+		m_ScrollDelta = m_WindowFocused ? NativeVector2{ scrollX, scrollY }
+			: NativeVector2{};
+
+		m_PreviousGamepads = m_CurrentGamepads;
+		for (uint32_t index = 0; index < m_CurrentGamepads.size(); ++index)
+		{
+			const Input::GamepadSnapshot input = Input::GetGamepadSnapshot(index);
+			auto& output = m_CurrentGamepads[index];
+			output.Connected = input.Connected;
+			output.Name = input.Name;
+			if (m_WindowFocused)
+			{
+				output.Buttons = input.Buttons;
+				output.Axes = input.Axes;
+			}
+			else
+			{
+				output.Buttons.fill(false);
+				output.Axes.fill(0.0f);
+			}
+		}
 	}
 
 	bool ScriptEngine::IsKeyHeld(uint32_t key) const
@@ -858,8 +1242,80 @@ namespace TomCat::Scripting {
 		return key < m_CurrentKeys.size() && !m_CurrentKeys[key] && m_PreviousKeys[key];
 	}
 
+	bool ScriptEngine::IsMouseButtonHeld(uint32_t button) const
+	{
+		return button < m_CurrentMouseButtons.size() && m_CurrentMouseButtons[button];
+	}
+
+	bool ScriptEngine::WasMouseButtonPressed(uint32_t button) const
+	{
+		return button < m_CurrentMouseButtons.size() && m_CurrentMouseButtons[button]
+			&& !m_PreviousMouseButtons[button];
+	}
+
+	bool ScriptEngine::WasMouseButtonReleased(uint32_t button) const
+	{
+		return button < m_CurrentMouseButtons.size() && !m_CurrentMouseButtons[button]
+			&& m_PreviousMouseButtons[button];
+	}
+
 	NativeVector2 ScriptEngine::GetMousePosition() const { return m_MousePosition; }
 	NativeVector2 ScriptEngine::GetMouseDelta() const { return m_MouseDelta; }
+	NativeVector2 ScriptEngine::GetScrollDelta() const { return m_ScrollDelta; }
+	bool ScriptEngine::IsWindowFocused() const { return m_WindowFocused; }
+
+	bool ScriptEngine::IsGamepadConnected(uint32_t gamepad) const
+	{
+		return gamepad < m_CurrentGamepads.size() && m_CurrentGamepads[gamepad].Connected;
+	}
+
+	bool ScriptEngine::WasGamepadConnected(uint32_t gamepad) const
+	{
+		return gamepad < m_CurrentGamepads.size() && m_CurrentGamepads[gamepad].Connected
+			&& !m_PreviousGamepads[gamepad].Connected;
+	}
+
+	bool ScriptEngine::WasGamepadDisconnected(uint32_t gamepad) const
+	{
+		return gamepad < m_CurrentGamepads.size() && !m_CurrentGamepads[gamepad].Connected
+			&& m_PreviousGamepads[gamepad].Connected;
+	}
+
+	bool ScriptEngine::IsGamepadButtonHeld(uint32_t gamepad, uint32_t button) const
+	{
+		return gamepad < m_CurrentGamepads.size()
+			&& button < m_CurrentGamepads[gamepad].Buttons.size()
+			&& m_CurrentGamepads[gamepad].Buttons[button];
+	}
+
+	bool ScriptEngine::WasGamepadButtonPressed(uint32_t gamepad, uint32_t button) const
+	{
+		return gamepad < m_CurrentGamepads.size()
+			&& button < m_CurrentGamepads[gamepad].Buttons.size()
+			&& m_CurrentGamepads[gamepad].Buttons[button]
+			&& !m_PreviousGamepads[gamepad].Buttons[button];
+	}
+
+	bool ScriptEngine::WasGamepadButtonReleased(uint32_t gamepad, uint32_t button) const
+	{
+		return gamepad < m_CurrentGamepads.size()
+			&& button < m_CurrentGamepads[gamepad].Buttons.size()
+			&& !m_CurrentGamepads[gamepad].Buttons[button]
+			&& m_PreviousGamepads[gamepad].Buttons[button];
+	}
+
+	float ScriptEngine::GetGamepadAxis(uint32_t gamepad, uint32_t axis) const
+	{
+		return gamepad < m_CurrentGamepads.size()
+			&& axis < m_CurrentGamepads[gamepad].Axes.size()
+			? m_CurrentGamepads[gamepad].Axes[axis] : 0.0f;
+	}
+
+	const std::string& ScriptEngine::GetGamepadName(uint32_t gamepad) const
+	{
+		static const std::string empty;
+		return gamepad < m_CurrentGamepads.size() ? m_CurrentGamepads[gamepad].Name : empty;
+	}
 
 	uint32_t ScriptEngine::GetModifiers() const
 	{

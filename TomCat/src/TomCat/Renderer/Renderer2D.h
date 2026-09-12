@@ -13,6 +13,29 @@ namespace TomCat {
 	class Renderer2D
 	{
 	public:
+		struct SpriteSortKey
+		{
+			int32_t SortingLayer = 0;
+			int32_t OrderInLayer = 0;
+			uint64_t EntityID = 0;
+		};
+
+		static SpriteSortKey MakeSpriteSortKey(const SpriteRenderer& sprite,
+			uint64_t entityID)
+		{
+			return { sprite.SortingLayer, sprite.OrderInLayer, entityID };
+		}
+
+		static bool SpriteSortLess(const SpriteSortKey& left,
+			const SpriteSortKey& right)
+		{
+			if (left.SortingLayer != right.SortingLayer)
+				return left.SortingLayer < right.SortingLayer;
+			if (left.OrderInLayer != right.OrderInLayer)
+				return left.OrderInLayer < right.OrderInLayer;
+			return left.EntityID < right.EntityID;
+		}
+
 		static void Init();
 		static void Shutdown();
 
@@ -29,6 +52,13 @@ namespace TomCat {
 
 		static void DrawQuad(const glm::mat4& transform, const glm::vec4& color, int entityID = -1);
 		static void DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1);
+		// Sub-region submission used by glyph and sprite atlases. UVs use the
+		// renderer's conventional bottom-left origin and are validated/clamped by
+		// the caller that owns the atlas metadata.
+		static void DrawTexturedQuadRegion(const glm::mat4& transform,
+			const Ref<Texture2D>& texture, const glm::vec2& uvMin,
+			const glm::vec2& uvMax, const glm::vec4& tintColor = glm::vec4(1.0f),
+			int entityID = -1);
 		// Procedural circle primitive for colliders, masks, gizmos, and other
 		// utility rendering. Ordinary visible objects use a SpriteRenderer asset.
 		static void DrawCircle(const glm::mat4& transform, const glm::vec4& color,

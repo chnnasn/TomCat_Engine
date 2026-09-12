@@ -20,6 +20,15 @@ namespace TomCat {
 	class SceneHierarchyPanel
 	{
 	public:
+		enum class SceneModificationPhase
+		{
+			Begin,
+			Update,
+			Commit,
+			Instant,
+			Cancel
+		};
+
 		enum class ColliderEditMode
 		{
 			None = 0,
@@ -29,7 +38,8 @@ namespace TomCat {
 
 		using SceneLoadCallback = std::function<void(AssetHandle)>;
 		using SpriteCreateCallback = std::function<void(AssetHandle)>;
-		using SceneModifiedCallback = std::function<void()>;
+		using SceneModifiedCallback =
+			std::function<void(SceneModificationPhase)>;
 		using PrefabCreateCallback = std::function<bool(Entity)>;
 		using PrefabInstantiateCallback = std::function<Entity(AssetHandle, Entity)>;
 		using ScriptMetadataProvider =
@@ -89,8 +99,17 @@ namespace TomCat {
 			m_ScriptMetadataProvider = std::move(provider);
 		}
 	private:
+		enum class AnimatorRenameTarget
+		{
+			None = 0,
+			Clip,
+			Parameter,
+			State
+		};
+
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
+		void DrawSpriteAnimatorInspector(SpriteAnimator& animator, Entity entity);
 		void DrawCSharpScripts(Entity entity);
 		bool AttachCSharpScript(Entity entity, AssetHandle handle);
 		bool AcceptCSharpScriptDrop(Entity entity);
@@ -105,7 +124,8 @@ namespace TomCat {
 		bool CanPaste() const;
 		bool FlushPendingDeletion();
 		void ClearClipboard();
-		void MarkModified();
+		void MarkModified(bool instant = false);
+		void FinishModificationGesture();
 	private:
 		Ref<Scene> m_Context;
 		Ref<Project> m_Project;
@@ -134,6 +154,11 @@ namespace TomCat {
 		std::array<char, 256> m_SpriteSearch{};
 		bool m_SpritePickerOpen = false;
 		UUID m_SpritePickerEntity = UUID(0);
+		AnimatorRenameTarget m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+		UUID m_AnimatorRenameEntity = UUID(0);
+		size_t m_AnimatorRenameIndex = 0;
+		std::array<char, 128> m_AnimatorRenameBuffer{};
+		std::string m_AnimatorRenameError;
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
@@ -141,6 +166,8 @@ namespace TomCat {
 		PrefabInstantiateCallback m_PrefabInstantiateCallback;
 		ScriptMetadataProvider m_ScriptMetadataProvider;
 		bool m_PrefabCreationAllowed = true;
+		bool m_ModificationGestureActive = false;
+		bool m_CommitAfterPendingDeletion = false;
 
 	};
 

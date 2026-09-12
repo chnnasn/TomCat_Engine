@@ -26,8 +26,59 @@ namespace TomCat {
 
 	namespace {
 
-		constexpr uint32_t kMetadataSchemaVersion = 1;
-		constexpr uint32_t kRegistryCacheSchemaVersion = 1;
+		constexpr uint32_t kMetadataSchemaVersion = 2;
+		constexpr uint32_t kOldestReadableMetadataSchemaVersion = 1;
+		constexpr uint32_t kRegistryCacheSchemaVersion = 2;
+
+		void ReadSpriteSubAssetData(const YAML::Node& parent,
+			SpriteSubAssetData& data)
+		{
+			const YAML::Node sprite = parent["Sprite"];
+			if (!sprite)
+				return;
+			if (!sprite.IsMap() || !sprite["X"] || !sprite["Y"]
+				|| !sprite["Width"] || !sprite["Height"] || !sprite["PivotX"]
+				|| !sprite["PivotY"] || !sprite["PixelsPerUnit"]
+				|| !sprite["BorderLeft"] || !sprite["BorderBottom"]
+				|| !sprite["BorderRight"] || !sprite["BorderTop"])
+				throw std::runtime_error("Sprite sub-asset data is incomplete");
+			data.X = sprite["X"].as<uint32_t>();
+			data.Y = sprite["Y"].as<uint32_t>();
+			data.Width = sprite["Width"].as<uint32_t>();
+			data.Height = sprite["Height"].as<uint32_t>();
+			data.PivotX = sprite["PivotX"].as<float>();
+			data.PivotY = sprite["PivotY"].as<float>();
+			data.PixelsPerUnit = sprite["PixelsPerUnit"].as<float>();
+			data.BorderLeft = sprite["BorderLeft"].as<float>();
+			data.BorderBottom = sprite["BorderBottom"].as<float>();
+			data.BorderRight = sprite["BorderRight"].as<float>();
+			data.BorderTop = sprite["BorderTop"].as<float>();
+			if (data.Width == 0 || data.Height == 0 || !std::isfinite(data.PivotX)
+				|| !std::isfinite(data.PivotY) || data.PivotX < 0.0f
+				|| data.PivotX > 1.0f || data.PivotY < 0.0f || data.PivotY > 1.0f
+				|| !std::isfinite(data.PixelsPerUnit) || data.PixelsPerUnit <= 0.0f
+				|| !std::isfinite(data.BorderLeft) || data.BorderLeft < 0.0f
+				|| !std::isfinite(data.BorderBottom) || data.BorderBottom < 0.0f
+				|| !std::isfinite(data.BorderRight) || data.BorderRight < 0.0f
+				|| !std::isfinite(data.BorderTop) || data.BorderTop < 0.0f
+				|| data.BorderLeft + data.BorderRight > static_cast<float>(data.Width)
+				|| data.BorderBottom + data.BorderTop > static_cast<float>(data.Height))
+				throw std::runtime_error("Sprite sub-asset data is invalid");
+		}
+
+		YAML::Node WriteSpriteSubAssetData(const SpriteSubAssetData& data)
+		{
+			YAML::Node sprite(YAML::NodeType::Map);
+			sprite["X"] = data.X; sprite["Y"] = data.Y;
+			sprite["Width"] = data.Width; sprite["Height"] = data.Height;
+			sprite["PivotX"] = data.PivotX; sprite["PivotY"] = data.PivotY;
+			sprite["PixelsPerUnit"] = data.PixelsPerUnit;
+			sprite["BorderLeft"] = data.BorderLeft;
+			sprite["BorderBottom"] = data.BorderBottom;
+			sprite["BorderRight"] = data.BorderRight;
+			sprite["BorderTop"] = data.BorderTop;
+			return sprite;
+		}
 
 		std::string LowerASCII(std::string value)
 		{
@@ -518,7 +569,8 @@ namespace TomCat {
 	}
 
 	bool AssetRegistry::ReadMetadata(const std::filesystem::path& metadataPath,
-		AssetMetadata& metadata, MetadataTransaction* transaction) const
+		AssetMetadata& metadata, MetadataTransaction* transaction,
+		uint32_t* schemaVersion) const
 	{
 		try
 		{
@@ -534,8 +586,11 @@ namespace TomCat {
 			const YAML::Node root = YAML::Load(input);
 			if (input.bad() || !root.IsMap())
 				throw std::runtime_error("document must be a map");
-			if (!root["SchemaVersion"] ||
-				root["SchemaVersion"].as<uint32_t>() != kMetadataSchemaVersion)
+			if (!root["SchemaVersion"])
+				throw std::runtime_error("unsupported or missing SchemaVersion");
+			const uint32_t parsedSchemaVersion = root["SchemaVersion"].as<uint32_t>();
+			if (parsedSchemaVersion < kOldestReadableMetadataSchemaVersion ||
+				parsedSchemaVersion > kMetadataSchemaVersion)
 				throw std::runtime_error("unsupported or missing SchemaVersion");
 
 			const YAML::Node asset = root["Asset"];
@@ -557,6 +612,36 @@ namespace TomCat {
 				if (!entry.first.IsScalar() || !entry.second.IsScalar())
 					throw std::runtime_error("import setting keys and values must be scalar strings");
 				settings.emplace(entry.first.as<std::string>(), entry.second.as<std::string>());
+			}
+
+			std::vector<AssetSubAsset> subAssets;
+			if (parsedSchemaVersion >= 2)
+			{
+				const YAML::Node serializedSubAssets = asset["SubAssets"];
+				if (!serializedSubAssets || !serializedSubAssets.IsSequence())
+					throw std::runtime_error("Asset.SubAssets is required and must be a sequence");
+				std::unordered_set<uint64_t> handles;
+				std::unordered_set<std::string> persistentIDs;
+				for (const YAML::Node& serialized : serializedSubAssets)
+				{
+					if (!serialized.IsMap() || !serialized["Handle"] ||
+						!serialized["PersistentID"] || !serialized["Name"] ||
+						!serialized["Type"])
+						throw std::runtime_error("sub-asset entry is incomplete");
+					AssetSubAsset subAsset;
+					const uint64_t childHandle = serialized["Handle"].as<uint64_t>();
+					subAsset.PersistentID = serialized["PersistentID"].as<std::string>();
+					subAsset.Name = serialized["Name"].as<std::string>();
+					subAsset.Type = AssetTypeFromString(serialized["Type"].as<std::string>());
+					ReadSpriteSubAssetData(serialized, subAsset.Sprite);
+					if (childHandle == 0 || childHandle == handle ||
+						subAsset.PersistentID.empty() || subAsset.Type == AssetType::None ||
+						!handles.emplace(childHandle).second ||
+						!persistentIDs.emplace(subAsset.PersistentID).second)
+						throw std::runtime_error("sub-asset handles and PersistentIDs must be unique and valid");
+					subAsset.Handle = AssetHandle(childHandle);
+					subAssets.push_back(std::move(subAsset));
+				}
 			}
 
 			MetadataTransaction parsedTransaction;
@@ -597,8 +682,11 @@ namespace TomCat {
 			metadata.Handle = AssetHandle(handle);
 			metadata.Type = type;
 			metadata.ImportSettings = std::move(settings);
+			metadata.SubAssets = std::move(subAssets);
 			if (transaction)
 				*transaction = std::move(parsedTransaction);
+			if (schemaVersion)
+				*schemaVersion = parsedSchemaVersion;
 			return true;
 		}
 		catch (const std::exception& exception)
@@ -615,6 +703,17 @@ namespace TomCat {
 	{
 		if (static_cast<uint64_t>(metadata.Handle) == 0 || metadata.Type == AssetType::None)
 			return false;
+		std::unordered_set<uint64_t> childHandles;
+		std::unordered_set<std::string> childPersistentIDs;
+		for (const AssetSubAsset& child : metadata.SubAssets)
+		{
+			const uint64_t childHandle = static_cast<uint64_t>(child.Handle);
+			if (childHandle == 0 || childHandle == static_cast<uint64_t>(metadata.Handle) ||
+				child.PersistentID.empty() || child.Type == AssetType::None ||
+				!childHandles.emplace(childHandle).second ||
+				!childPersistentIDs.emplace(child.PersistentID).second)
+				return false;
+		}
 		if (transaction && transaction->Type != MetadataTransactionType::None &&
 			!transaction->HasFingerprint)
 			return false;
@@ -633,35 +732,112 @@ namespace TomCat {
 			return false;
 		}
 
-		YAML::Emitter output;
-		output << YAML::BeginMap;
-		output << YAML::Key << "SchemaVersion" << YAML::Value << kMetadataSchemaVersion;
-		output << YAML::Key << "Asset" << YAML::Value << YAML::BeginMap;
-		output << YAML::Key << "Handle" << YAML::Value <<
-			static_cast<uint64_t>(metadata.Handle);
-		output << YAML::Key << "Type" << YAML::Value << AssetTypeToString(metadata.Type);
-		output << YAML::Key << "ImportSettings" << YAML::Value << YAML::BeginMap;
+		// Start from an existing readable v1/v2 document so extension fields owned by
+		// newer importers or tooling survive ordinary settings/sub-asset updates.
+		YAML::Node root(YAML::NodeType::Map);
+		if (replaceExisting && EntryExists(metadataPath))
+		{
+			try
+			{
+				std::ifstream existing(metadataPath, std::ios::binary);
+				root = YAML::Load(existing);
+				if (!existing || !root.IsMap() || !root["SchemaVersion"])
+					throw std::runtime_error("existing metadata is not a versioned map");
+				const uint32_t schema = root["SchemaVersion"].as<uint32_t>();
+				if (schema < kOldestReadableMetadataSchemaVersion ||
+					schema > kMetadataSchemaVersion || !root["Asset"] ||
+					!root["Asset"].IsMap())
+					throw std::runtime_error("existing metadata schema is unsupported");
+			}
+			catch (const std::exception& exception)
+			{
+				TC_Core_Error("Refusing to replace unrecognized metadata '{0}': {1}",
+					PathToUTF8(metadataPath), exception.what());
+				return false;
+			}
+		}
+
+		root["SchemaVersion"] = kMetadataSchemaVersion;
+		YAML::Node asset = root["Asset"];
+		if (!asset || !asset.IsMap())
+		{
+			asset = YAML::Node(YAML::NodeType::Map);
+			root["Asset"] = asset;
+		}
+		asset["Handle"] = static_cast<uint64_t>(metadata.Handle);
+		asset["Type"] = AssetTypeToString(metadata.Type);
+		YAML::Node settings(YAML::NodeType::Map);
 		for (const auto& [key, value] : metadata.ImportSettings)
-			output << YAML::Key << key << YAML::Value << value;
-		output << YAML::EndMap;
-		output << YAML::EndMap;
+			settings[key] = value;
+		asset["ImportSettings"] = settings;
+
+		std::unordered_map<std::string, YAML::Node> existingChildren;
+		const YAML::Node oldChildren = asset["SubAssets"];
+		if (oldChildren && oldChildren.IsSequence())
+		{
+			for (const YAML::Node& child : oldChildren)
+			{
+				if (child.IsMap() && child["PersistentID"] &&
+					child["PersistentID"].IsScalar())
+					existingChildren.emplace(child["PersistentID"].as<std::string>(), child);
+			}
+		}
+		std::vector<const AssetSubAsset*> orderedSubAssets;
+		orderedSubAssets.reserve(metadata.SubAssets.size());
+		for (const AssetSubAsset& child : metadata.SubAssets)
+			orderedSubAssets.push_back(&child);
+		std::sort(orderedSubAssets.begin(), orderedSubAssets.end(),
+			[](const AssetSubAsset* left, const AssetSubAsset* right)
+			{
+				return left->PersistentID < right->PersistentID;
+			});
+		YAML::Node subAssets(YAML::NodeType::Sequence);
+		for (const AssetSubAsset* child : orderedSubAssets)
+		{
+			YAML::Node serialized(YAML::NodeType::Map);
+			const auto old = existingChildren.find(child->PersistentID);
+			if (old != existingChildren.end())
+				serialized = old->second;
+			serialized["Handle"] = static_cast<uint64_t>(child->Handle);
+			serialized["PersistentID"] = child->PersistentID;
+			serialized["Name"] = child->Name;
+			serialized["Type"] = AssetTypeToString(child->Type);
+			if (child->Sprite.Width != 0 && child->Sprite.Height != 0)
+				serialized["Sprite"] = WriteSpriteSubAssetData(child->Sprite);
+			else
+				serialized.remove("Sprite");
+			subAssets.push_back(serialized);
+		}
+		asset["SubAssets"] = subAssets;
+		root["Asset"] = asset;
+
 		if (transaction && transaction->Type != MetadataTransactionType::None)
 		{
-			output << YAML::Key << "Transaction" << YAML::Value << YAML::BeginMap;
-			output << YAML::Key << "Operation" << YAML::Value <<
+			YAML::Node serializedTransaction = root["Transaction"];
+			if (!serializedTransaction || !serializedTransaction.IsMap())
+				serializedTransaction = YAML::Node(YAML::NodeType::Map);
+			serializedTransaction["Operation"] =
 				(transaction->Type == MetadataTransactionType::Move ? "Move" : "Delete");
-			output << YAML::Key << "Source" << YAML::Value << PathToUTF8(transaction->Source);
-			output << YAML::Key << "OriginalSize" << YAML::Value << transaction->OriginalSize;
-			output << YAML::Key << "OriginalHash" << YAML::Value << transaction->OriginalHash;
+			serializedTransaction["Source"] = PathToUTF8(transaction->Source);
+			serializedTransaction["OriginalSize"] = transaction->OriginalSize;
+			serializedTransaction["OriginalHash"] = transaction->OriginalHash;
 			if (transaction->Type == MetadataTransactionType::Move)
-				output << YAML::Key << "Destination" << YAML::Value <<
-					PathToUTF8(transaction->Destination);
+			{
+				serializedTransaction["Destination"] = PathToUTF8(transaction->Destination);
+				serializedTransaction.remove("Staging");
+			}
 			else
-				output << YAML::Key << "Staging" << YAML::Value <<
-					PathToUTF8(transaction->Staging);
-			output << YAML::EndMap;
+			{
+				serializedTransaction["Staging"] = PathToUTF8(transaction->Staging);
+				serializedTransaction.remove("Destination");
+			}
+			root["Transaction"] = serializedTransaction;
 		}
-		output << YAML::EndMap;
+		else
+			root.remove("Transaction");
+
+		YAML::Emitter output;
+		output << root;
 		if (!output.good())
 		{
 			TC_Core_Error("Could not serialize asset metadata '{0}': {1}",
@@ -925,6 +1101,7 @@ namespace TomCat {
 			bool MetadataParsed = false;
 			bool MetadataDamaged = false;
 			bool TransactionFailed = false;
+			uint32_t MetadataSchemaVersion = 0;
 		};
 
 		std::map<std::string, ScanRecord> records;
@@ -1016,27 +1193,37 @@ namespace TomCat {
 
 		std::unordered_map<AssetHandle, std::filesystem::path> declaredClaims;
 		std::unordered_set<AssetHandle> conflictingHandles;
+		std::unordered_set<std::string> conflictingRecords;
 		for (auto& [key, record] : records)
 		{
 			if (!record.HasMetadata || record.AmbiguousMetadata)
 				continue;
 			record.MetadataParsed = ReadMetadata(record.MetadataPath,
-				record.ParsedMetadata, &record.Transaction);
+				record.ParsedMetadata, &record.Transaction,
+				&record.MetadataSchemaVersion);
 			record.MetadataDamaged = !record.MetadataParsed;
 			if (!record.MetadataParsed)
 			{
 				complete = false;
 				continue;
 			}
-			const auto [owner, inserted] = declaredClaims.emplace(
-				record.ParsedMetadata.Handle, record.RelativePath);
-			if (!inserted)
+			auto declareHandle = [&](AssetHandle handle)
 			{
-				conflictingHandles.emplace(record.ParsedMetadata.Handle);
+				const auto [owner, inserted] = declaredClaims.emplace(handle,
+					record.RelativePath);
+				if (inserted)
+					return;
+				conflictingRecords.emplace(key);
+				conflictingRecords.emplace(PathKey(owner->second));
 				TC_Core_Error("Duplicate asset handle {0} in '{1}' and '{2}'; resolve the .tcmeta conflict explicitly",
-					static_cast<uint64_t>(record.ParsedMetadata.Handle), PathToUTF8(owner->second),
+					static_cast<uint64_t>(handle), PathToUTF8(owner->second),
 					PathToUTF8(record.RelativePath));
-			}
+			};
+			declareHandle(record.ParsedMetadata.Handle);
+			for (const AssetSubAsset& child : record.ParsedMetadata.SubAssets)
+				declareHandle(child.Handle);
+			if (conflictingRecords.find(key) != conflictingRecords.end())
+				conflictingHandles.emplace(record.ParsedMetadata.Handle);
 		}
 
 		bool recoveredTransaction = false;
@@ -1068,13 +1255,17 @@ namespace TomCat {
 		std::unordered_map<AssetHandle, std::filesystem::path> claimed;
 		for (auto& [key, record] : records)
 		{
-			if (record.AmbiguousMetadata || record.TransactionFailed)
+			if (record.AmbiguousMetadata || record.TransactionFailed ||
+				conflictingRecords.find(key) != conflictingRecords.end())
 			{
 				if (record.TransactionFailed)
 					TC_Core_Error("Asset transaction is quarantined at '{0}'",
 						PathToUTF8(record.RelativePath));
-				else
+				else if (record.AmbiguousMetadata)
 					TC_Core_Error("Multiple .tcmeta files map to asset path '{0}'",
+						PathToUTF8(record.RelativePath));
+				else
+					TC_Core_Error("Asset metadata is quarantined because one of its handles conflicts: {0}",
 						PathToUTF8(record.RelativePath));
 				complete = false;
 				continue;
@@ -1093,12 +1284,16 @@ namespace TomCat {
 					continue;
 				}
 				metadata = record.ParsedMetadata;
+				metadataNeedsWrite =
+					record.MetadataSchemaVersion < kMetadataSchemaVersion;
 				if (conflictingHandles.find(metadata.Handle) != conflictingHandles.end())
 					continue;
 			}
 			else
 			{
-				metadata.Handle = GenerateUniqueHandle(claimed);
+				do
+					metadata.Handle = GenerateUniqueHandle(claimed);
+				while (declaredClaims.find(metadata.Handle) != declaredClaims.end());
 				metadata.Type = AssetTypeFromPath(record.SourcePath);
 				record.MetadataPath = GetMetadataPath(record.SourcePath);
 				metadataNeedsWrite = true;
@@ -1135,6 +1330,8 @@ namespace TomCat {
 				continue;
 			}
 			claimed.emplace(metadata.Handle, metadata.FilePath);
+			for (const AssetSubAsset& child : metadata.SubAssets)
+				claimed.emplace(child.Handle, metadata.FilePath);
 			m_Assets.insert_or_assign(metadata.Handle, std::move(metadata));
 		}
 
@@ -1898,6 +2095,148 @@ namespace TomCat {
 		return true;
 	}
 
+	const AssetSubAsset* AssetRegistry::GetSubAsset(AssetHandle handle) const
+	{
+		const AssetSubAsset* child = nullptr;
+		(void)GetSubAssetOwner(handle, &child);
+		return child;
+	}
+
+	const AssetMetadata* AssetRegistry::GetSubAssetOwner(AssetHandle handle,
+		const AssetSubAsset** subAsset) const
+	{
+		if (subAsset)
+			*subAsset = nullptr;
+		if (static_cast<uint64_t>(handle) == 0)
+			return nullptr;
+		for (const auto& [parent, metadata] : m_Assets)
+		{
+			for (const AssetSubAsset& child : metadata.SubAssets)
+			{
+				if (child.Handle == handle)
+				{
+					if (subAsset)
+						*subAsset = &child;
+					return &metadata;
+				}
+			}
+		}
+		return nullptr;
+	}
+
+	bool AssetRegistry::SynchronizeSubAssets(AssetHandle parent,
+		const std::vector<AssetSubAsset>& desired,
+		std::vector<AssetSubAsset>* assigned)
+	{
+		if (assigned)
+			assigned->clear();
+		const AssetMetadata* current = GetMetadata(parent);
+		if (!current || current->IsMissing)
+			return false;
+
+		std::unordered_set<std::string> desiredIDs;
+		for (const AssetSubAsset& child : desired)
+		{
+			if (child.PersistentID.empty() || child.Type == AssetType::None ||
+				!desiredIDs.emplace(child.PersistentID).second)
+				return false;
+		}
+
+		const std::filesystem::path metadataPath = GetMetadataPath(GetFileSystemPath(parent));
+		AssetMetadata diskMetadata;
+		if (!ReadMetadata(metadataPath, diskMetadata) || diskMetadata.Handle != parent)
+		{
+			TC_Core_Error("Refusing to overwrite changed metadata for asset {0}",
+				static_cast<uint64_t>(parent));
+			return false;
+		}
+		// Refuse a stale write if another process changed the sub-asset identity set
+		// after this registry snapshot was built.
+		auto identityMap = [](const std::vector<AssetSubAsset>& children)
+		{
+			std::map<std::string, uint64_t> result;
+			for (const AssetSubAsset& child : children)
+				result.emplace(child.PersistentID, static_cast<uint64_t>(child.Handle));
+			return result;
+		};
+		if (diskMetadata.Type != current->Type ||
+			diskMetadata.ImportSettings != current->ImportSettings ||
+			identityMap(diskMetadata.SubAssets) != identityMap(current->SubAssets))
+		{
+			TC_Core_Error("Refusing stale sub-asset update for asset {0}",
+				static_cast<uint64_t>(parent));
+			return false;
+		}
+		auto definitionMap = [](const std::vector<AssetSubAsset>& children)
+		{
+			struct Definition
+			{
+				std::string Name;
+				AssetType Type = AssetType::None;
+				SpriteSubAssetData Sprite;
+				bool operator==(const Definition&) const = default;
+			};
+			std::map<std::string, Definition> result;
+			for (const AssetSubAsset& child : children)
+				result.emplace(child.PersistentID,
+					Definition{ child.Name, child.Type, child.Sprite });
+			return result;
+		};
+		if (definitionMap(desired) == definitionMap(current->SubAssets))
+		{
+			if (assigned)
+				*assigned = current->SubAssets;
+			return true;
+		}
+
+		std::unordered_map<std::string, AssetHandle> existing;
+		for (const AssetSubAsset& child : current->SubAssets)
+			existing.emplace(child.PersistentID, child.Handle);
+		std::unordered_set<AssetHandle> claimed;
+		for (const auto& [handle, metadata] : m_Assets)
+		{
+			claimed.emplace(handle);
+			for (const AssetSubAsset& child : metadata.SubAssets)
+				claimed.emplace(child.Handle);
+		}
+
+		std::vector<AssetSubAsset> synchronized;
+		synchronized.reserve(desired.size());
+		for (const AssetSubAsset& requested : desired)
+		{
+			AssetSubAsset child = requested;
+			const auto retained = existing.find(child.PersistentID);
+			if (retained != existing.end())
+				child.Handle = retained->second;
+			else
+			{
+				do
+					child.Handle = AssetHandle();
+				while (static_cast<uint64_t>(child.Handle) == 0 ||
+					claimed.find(child.Handle) != claimed.end());
+				claimed.emplace(child.Handle);
+			}
+			synchronized.push_back(std::move(child));
+		}
+		std::sort(synchronized.begin(), synchronized.end(),
+			[](const AssetSubAsset& left, const AssetSubAsset& right)
+			{
+				return left.PersistentID < right.PersistentID;
+			});
+
+		diskMetadata.FilePath = current->FilePath;
+		diskMetadata.IsMissing = false;
+		diskMetadata.SubAssets = synchronized;
+		if (!WriteMetadata(metadataPath, diskMetadata))
+			return false;
+		m_Assets.insert_or_assign(parent, std::move(diskMetadata));
+		if (assigned)
+			*assigned = std::move(synchronized);
+		if (!SaveCache())
+			TC_Core_Warn("Sub-assets were saved, but the rebuildable registry cache was not updated");
+		return true;
+	}
+
 	bool AssetRegistry::IsMetaFile(const std::filesystem::path& path)
 	{
 		const std::string name = LowerASCII(PathToUTF8(path.filename()));
@@ -1942,7 +2281,8 @@ namespace TomCat {
 			for (const YAML::Node& entry : assets)
 			{
 				if (!entry.IsMap() || !entry["Handle"] || !entry["Type"] ||
-					!entry["FilePath"] || !entry["ImportSettings"])
+					!entry["FilePath"] || !entry["ImportSettings"] ||
+					!entry["SubAssets"])
 					throw std::runtime_error("cache entry is incomplete");
 				const uint64_t rawHandle = entry["Handle"].as<uint64_t>();
 				const AssetType type = AssetTypeFromString(entry["Type"].as<std::string>());
@@ -1973,6 +2313,30 @@ namespace TomCat {
 						throw std::runtime_error("cache import settings must be scalar strings");
 					metadata.ImportSettings.emplace(setting.first.as<std::string>(),
 						setting.second.as<std::string>());
+				}
+				const YAML::Node subAssets = entry["SubAssets"];
+				if (!subAssets.IsSequence())
+					throw std::runtime_error("cache sub-assets must be a sequence");
+				std::unordered_set<uint64_t> childHandles;
+				std::unordered_set<std::string> persistentIDs;
+				for (const YAML::Node& child : subAssets)
+				{
+					if (!child.IsMap() || !child["Handle"] || !child["PersistentID"] ||
+						!child["Name"] || !child["Type"])
+						throw std::runtime_error("cache sub-asset entry is incomplete");
+					AssetSubAsset parsed;
+					const uint64_t childHandle = child["Handle"].as<uint64_t>();
+					parsed.PersistentID = child["PersistentID"].as<std::string>();
+					parsed.Name = child["Name"].as<std::string>();
+					parsed.Type = AssetTypeFromString(child["Type"].as<std::string>());
+					ReadSpriteSubAssetData(child, parsed.Sprite);
+					if (childHandle == 0 || childHandle == rawHandle ||
+						parsed.PersistentID.empty() || parsed.Type == AssetType::None ||
+						!childHandles.emplace(childHandle).second ||
+						!persistentIDs.emplace(parsed.PersistentID).second)
+						throw std::runtime_error("cache sub-asset entry is invalid");
+					parsed.Handle = AssetHandle(childHandle);
+					metadata.SubAssets.push_back(std::move(parsed));
 				}
 				if (m_Assets.find(metadata.Handle) != m_Assets.end())
 					throw std::runtime_error("cache contains a duplicate handle");
@@ -2025,6 +2389,43 @@ namespace TomCat {
 			for (const auto& [key, value] : metadata->ImportSettings)
 				output << YAML::Key << key << YAML::Value << value;
 			output << YAML::EndMap;
+			output << YAML::Key << "SubAssets" << YAML::Value << YAML::BeginSeq;
+			std::vector<const AssetSubAsset*> orderedChildren;
+			orderedChildren.reserve(metadata->SubAssets.size());
+			for (const AssetSubAsset& child : metadata->SubAssets)
+				orderedChildren.push_back(&child);
+			std::sort(orderedChildren.begin(), orderedChildren.end(),
+				[](const AssetSubAsset* left, const AssetSubAsset* right)
+				{
+					return left->PersistentID < right->PersistentID;
+				});
+			for (const AssetSubAsset* child : orderedChildren)
+			{
+				output << YAML::BeginMap;
+				output << YAML::Key << "Handle" << YAML::Value <<
+					static_cast<uint64_t>(child->Handle);
+				output << YAML::Key << "PersistentID" << YAML::Value << child->PersistentID;
+				output << YAML::Key << "Name" << YAML::Value << child->Name;
+				output << YAML::Key << "Type" << YAML::Value << AssetTypeToString(child->Type);
+				if (child->Sprite.Width != 0 && child->Sprite.Height != 0)
+				{
+					output << YAML::Key << "Sprite" << YAML::Value << YAML::BeginMap;
+					output << YAML::Key << "X" << YAML::Value << child->Sprite.X;
+					output << YAML::Key << "Y" << YAML::Value << child->Sprite.Y;
+					output << YAML::Key << "Width" << YAML::Value << child->Sprite.Width;
+					output << YAML::Key << "Height" << YAML::Value << child->Sprite.Height;
+					output << YAML::Key << "PivotX" << YAML::Value << child->Sprite.PivotX;
+					output << YAML::Key << "PivotY" << YAML::Value << child->Sprite.PivotY;
+					output << YAML::Key << "PixelsPerUnit" << YAML::Value << child->Sprite.PixelsPerUnit;
+					output << YAML::Key << "BorderLeft" << YAML::Value << child->Sprite.BorderLeft;
+					output << YAML::Key << "BorderBottom" << YAML::Value << child->Sprite.BorderBottom;
+					output << YAML::Key << "BorderRight" << YAML::Value << child->Sprite.BorderRight;
+					output << YAML::Key << "BorderTop" << YAML::Value << child->Sprite.BorderTop;
+					output << YAML::EndMap;
+				}
+				output << YAML::EndMap;
+			}
+			output << YAML::EndSeq;
 			output << YAML::EndMap;
 		}
 		output << YAML::EndSeq;

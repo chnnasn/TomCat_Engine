@@ -1,7 +1,10 @@
 #include "tcpch.h"
 #include "AssetManager.h"
+#include "SpriteAsset.h"
 
+#include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
@@ -1392,15 +1395,20 @@ namespace TomCat {
 				return false;
 			}
 
+			const AssetSubAsset* subAsset = nullptr;
 			const AssetMetadata* metadata = registry.GetMetadata(reference.Handle);
-			bool current = metadata && metadata->Type != AssetType::None
+			if (!metadata)
+				metadata = registry.GetSubAssetOwner(reference.Handle, &subAsset);
+			const AssetType effectiveType = subAsset ? subAsset->Type
+				: (metadata ? metadata->Type : AssetType::None);
+			bool current = metadata && effectiveType != AssetType::None
 				&& !metadata->IsMissing;
 			if (current && reference.ExpectedType != AssetType::None)
-				current = metadata->Type == reference.ExpectedType;
+				current = effectiveType == reference.ExpectedType;
 			if (current)
 			{
 				const AssetMetadata* pathMetadata = registry.GetMetadata(metadata->FilePath);
-				current = pathMetadata && pathMetadata->Handle == reference.Handle
+				current = pathMetadata && pathMetadata->Handle == metadata->Handle
 					&& pathMetadata->Type == metadata->Type && !pathMetadata->IsMissing;
 			}
 			if (!current)
@@ -1426,7 +1434,7 @@ namespace TomCat {
 				return false;
 			}
 
-			const std::filesystem::path source = registry.GetFileSystemPath(reference.Handle);
+			const std::filesystem::path source = registry.GetFileSystemPath(metadata->Handle);
 			std::error_code fileError;
 			if (source.empty() || !std::filesystem::is_regular_file(source, fileError)
 				|| fileError)
@@ -1574,6 +1582,22 @@ namespace TomCat {
 			m_Registry.Shutdown();
 			TC_Core_Error("Failed to initialize the asset registry for '{0}'", PathToUTF8(assetRoot));
 		}
+		else if (!m_Database.Initialize(m_Registry, libraryRoot))
+		{
+			m_Registry.Shutdown();
+			m_RegistryInitialized = false;
+			TC_Core_Error("Failed to initialize the asset database for '{0}'",
+				PathToUTF8(assetRoot));
+		}
+		else if (!m_ImportCoordinator.Initialize(m_Registry, m_Database, assetRoot) ||
+			!m_ImportCoordinator.Start())
+		{
+			// Import remains usable through explicit calls if the authoring-only
+			// monitor cannot start.
+			m_ImportCoordinator.Shutdown();
+			TC_Core_Warn("Asset file monitoring is unavailable for '{0}'",
+				PathToUTF8(assetRoot));
+		}
 		return m_RegistryInitialized;
 	}
 
@@ -1635,6 +1659,7 @@ namespace TomCat {
 
 	void AssetManager::Shutdown()
 	{
+		m_ImportCoordinator.Shutdown();
 		ReleaseAll();
 		{
 			std::lock_guard<std::mutex> lock(m_CookedPackageMutex);
@@ -1644,13 +1669,16 @@ namespace TomCat {
 		m_CookedEntries.clear();
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
+		m_CookedPackageVersion = 0;
 		m_CookedEntrySceneHandle = AssetHandle(0);
 		m_CookedBuildSceneHandles.clear();
 		m_CookedPhysics2DSettings = Physics2DSettings{};
+		m_CookedPlayerSettings = PlayerSettings{};
 		m_CookedManagedPayload.reset();
 		m_ManagedCookPayloadOverride.reset();
 		m_AuthoringProject.reset();
 		m_UsesProjectConfiguration = false;
+		m_Database.Shutdown();
 		m_Registry.Shutdown();
 		m_RegistryInitialized = false;
 	}
@@ -1659,7 +1687,8 @@ namespace TomCat {
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted())
 			return false;
-		const bool complete = m_Registry.Refresh();
+		m_ImportCoordinator.CancelPendingImports();
+		const bool complete = m_Database.RefreshRegistry();
 		// Refresh may apply a safe partial scan while reporting damaged sidecars.
 		// Any such metadata change must invalidate both successful and missing loads.
 		ReleaseAll();
@@ -1670,6 +1699,7 @@ namespace TomCat {
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted())
 			return AssetHandle(0);
+		m_ImportCoordinator.CancelPendingImports();
 		const AssetHandle handle = m_Registry.ImportAsset(path);
 		// ImportAsset may perform a full registry refresh (for example when a
 		// duplicate UUID appears or is resolved). A handle can therefore acquire a
@@ -1685,10 +1715,64 @@ namespace TomCat {
 		if (!m_RegistryInitialized || IsCookedPackageMounted() ||
 			static_cast<uint64_t>(handle) == 0)
 			return false;
+		m_ImportCoordinator.CancelPendingImports();
 		if (!m_Registry.SetImportSettings(handle, settings))
 			return false;
 		Release(handle);
+		(void)m_ImportCoordinator.RequestReimport(handle);
 		return true;
+	}
+
+	size_t AssetManager::PumpImportCoordinator(
+		const AssetImportCoordinator::Callback& callback)
+	{
+		return m_ImportCoordinator.PumpMainThread(
+			[this, &callback](const AssetImportEvent& event)
+			{
+				if (static_cast<uint64_t>(event.Handle) != 0)
+					Release(event.Handle);
+				if (callback)
+					callback(event);
+			});
+	}
+
+	AssetLoadResult AssetManager::LoadImportedArtifact(AssetHandle handle,
+		AssetLoadOptions options)
+	{
+		if (IsCookedPackageMounted())
+		{
+			AssetLoadResult result;
+			AssetType type = AssetType::None;
+			if (!ReadAssetBytes(handle, result.Artifact.Bytes, &type))
+			{
+				result.Status = AssetLoadStatus::NotFound;
+				result.Error = "asset handle is not present in the cooked package";
+				return result;
+			}
+			result.Status = AssetLoadStatus::Success;
+			result.Artifact.Handle = handle;
+			result.Artifact.Type = type;
+			result.Artifact.Format = "cooked/tcpak";
+			return result;
+		}
+		if (!m_RegistryInitialized)
+		{
+			AssetLoadResult result;
+			result.Status = AssetLoadStatus::NotInitialized;
+			result.Error = "asset registry is not initialized";
+			return result;
+		}
+		return m_Database.LoadArtifact(handle, std::move(options));
+	}
+
+	std::future<AssetLoadResult> AssetManager::LoadImportedArtifactAsync(
+		AssetHandle handle, AssetLoadOptions options)
+	{
+		return std::async(std::launch::async,
+			[this, handle, options = std::move(options)]() mutable
+			{
+				return LoadImportedArtifact(handle, std::move(options));
+			});
 	}
 
 	Ref<Texture2D> AssetManager::GetMissingTexture()
@@ -1729,6 +1813,7 @@ namespace TomCat {
 			return GetMissingTexture();
 
 		AssetType registeredType = AssetType::None;
+		AssetHandle sourceHandle = handle;
 		if (IsCookedPackageMounted())
 		{
 			const auto cooked = m_CookedEntries.find(handle);
@@ -1740,13 +1825,17 @@ namespace TomCat {
 		{
 			if (!m_RegistryInitialized)
 				return CacheMissingTexture(handle, "asset registry is not initialized");
+			const AssetSubAsset* child = nullptr;
 			const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
+			if (!metadata)
+				metadata = m_Registry.GetSubAssetOwner(handle, &child);
 			if (!metadata || metadata->IsMissing)
 				return CacheMissingTexture(handle, "handle is not present in the asset registry");
 			const AssetMetadata* current = m_Registry.GetMetadata(metadata->FilePath);
-			if (!current || current->Handle != handle || current->IsMissing)
+			if (!current || current->Handle != metadata->Handle || current->IsMissing)
 				return CacheMissingTexture(handle, "handle no longer owns its registered path");
-			registeredType = metadata->Type;
+			registeredType = child ? child->Type : metadata->Type;
+			sourceHandle = metadata->Handle;
 		}
 		if (registeredType != AssetType::Texture2D)
 			return CacheMissingTexture(handle, "asset type is not Texture2D");
@@ -1771,7 +1860,7 @@ namespace TomCat {
 		else
 		{
 			std::error_code error;
-			const std::filesystem::path source = m_Registry.GetFileSystemPath(handle);
+			const std::filesystem::path source = m_Registry.GetFileSystemPath(sourceHandle);
 			const uintmax_t size = source.empty() ? 0 : std::filesystem::file_size(source, error);
 			if (error || source.empty() || size >
 				static_cast<uintmax_t>((std::numeric_limits<int>::max)()))
@@ -1780,12 +1869,28 @@ namespace TomCat {
 
 		AssetType type = AssetType::None;
 		std::vector<uint8_t> bytes;
-		if (!ReadAssetBytes(handle, bytes, &type))
-			return CacheMissingTexture(handle, "asset bytes could not be read");
+		if (IsCookedPackageMounted())
+		{
+			if (!ReadAssetBytes(handle, bytes, &type))
+				return CacheMissingTexture(handle, "asset bytes could not be read");
+		}
+		else
+		{
+			AssetLoadResult imported = LoadImportedArtifact(sourceHandle);
+			if (!imported.Succeeded())
+				return CacheMissingTexture(handle, imported.Error.c_str());
+			type = imported.Artifact.Type;
+			bytes = std::move(imported.Artifact.Bytes);
+		}
 		if (type != registeredType)
 			return CacheMissingTexture(handle, "asset type changed while it was being loaded");
+		ResolvedSpriteAsset cookedSprite;
+		std::span<const uint8_t> atlasBytes;
+		if (IsCookedPackageMounted()
+			&& ParseCookedSpriteSubAsset(bytes, cookedSprite, atlasBytes))
+			bytes.assign(atlasBytes.begin(), atlasBytes.end());
 
-		const std::filesystem::path sourcePath = ResolvePath(handle);
+		const std::filesystem::path sourcePath = ResolvePath(sourceHandle);
 		Ref<Texture2D> texture = Texture2D::Create(bytes.data(), bytes.size(), sourcePath);
 		if (!texture || !texture->IsLoaded())
 			return CacheMissingTexture(handle, "encoded image could not be decoded");
@@ -1794,21 +1899,97 @@ namespace TomCat {
 		return texture;
 	}
 
+	bool AssetManager::ResolveSpriteAsset(AssetHandle handle,
+		ResolvedSpriteAsset& sprite) const
+	{
+		sprite = {};
+		if (static_cast<uint64_t>(handle) == 0)
+			return false;
+		if (IsCookedPackageMounted())
+		{
+			const auto cached = m_SpriteDescriptorCache.find(handle);
+			if (cached != m_SpriteDescriptorCache.end())
+			{
+				sprite = cached->second;
+				return true;
+			}
+			const auto cooked = m_CookedEntries.find(handle);
+			if (cooked == m_CookedEntries.end()
+				|| cooked->second.Type != AssetType::Texture2D)
+				return false;
+			std::vector<uint8_t> bytes;
+			AssetType type = AssetType::None;
+			if (!ReadAssetBytes(handle, bytes, &type)
+				|| type != AssetType::Texture2D)
+				return false;
+			std::span<const uint8_t> atlasBytes;
+			if (ParseCookedSpriteSubAsset(bytes, sprite, atlasBytes))
+			{
+				m_SpriteDescriptorCache.emplace(handle, sprite);
+				return true;
+			}
+			sprite.TextureHandle = handle;
+			m_SpriteDescriptorCache.emplace(handle, sprite);
+			return true;
+		}
+		if (!m_RegistryInitialized)
+			return false;
+		if (const AssetMetadata* direct = m_Registry.GetMetadata(handle))
+		{
+			if (direct->Type != AssetType::Texture2D || direct->IsMissing)
+				return false;
+			sprite.TextureHandle = handle;
+			return true;
+		}
+		const AssetSubAsset* child = nullptr;
+		const AssetMetadata* owner = m_Registry.GetSubAssetOwner(handle, &child);
+		if (!owner || !child || owner->IsMissing
+			|| child->Type != AssetType::Texture2D
+			|| child->Sprite.Width == 0 || child->Sprite.Height == 0)
+			return false;
+		sprite.TextureHandle = owner->Handle;
+		sprite.Data = child->Sprite;
+		sprite.IsSubAsset = true;
+		return true;
+	}
+
 	void AssetManager::Release(AssetHandle handle)
 	{
+		if (m_RegistryInitialized)
+		{
+			if (const AssetMetadata* metadata = m_Registry.GetMetadata(handle))
+			{
+				for (const AssetSubAsset& child : metadata->SubAssets)
+				{
+					m_TextureCache.erase(child.Handle);
+					m_SpriteDescriptorCache.erase(child.Handle);
+				}
+			}
+		}
 		m_TextureCache.erase(handle);
+		m_SpriteDescriptorCache.erase(handle);
+		FontManager::Get().Release(handle);
+		AudioEngine::Get().ReleaseClip(handle);
 	}
 
 	void AssetManager::ReleaseAll()
 	{
 		m_TextureCache.clear();
+		m_SpriteDescriptorCache.clear();
 		m_MissingTexture.reset();
+		FontManager::Get().ReleaseAll();
+		AudioEngine::Get().ReleaseAllClips();
 	}
 
 	void AssetManager::ReleaseHandles(const std::vector<AssetHandle>& handles)
 	{
 		for (const AssetHandle handle : handles)
+		{
 			m_TextureCache.erase(handle);
+			m_SpriteDescriptorCache.erase(handle);
+			FontManager::Get().Release(handle);
+			AudioEngine::Get().ReleaseClip(handle);
+		}
 	}
 
 	bool AssetManager::MoveAsset(const std::filesystem::path& source,
@@ -2009,6 +2190,24 @@ namespace TomCat {
 			? m_Registry.GetFileSystemPath(handle) : std::filesystem::path{};
 	}
 
+	bool AssetManager::TryGetCookedAssetRange(AssetHandle handle,
+		CookedAssetRange& range) const
+	{
+		range = {};
+		if (!IsCookedPackageMounted() || static_cast<uint64_t>(handle) == 0)
+			return false;
+		const auto found = m_CookedEntries.find(handle);
+		if (found == m_CookedEntries.end())
+			return false;
+		range.PackagePath = m_CookedPackagePath;
+		range.Offset = found->second.Offset;
+		range.Size = found->second.Size;
+		range.Type = found->second.Type;
+		return !range.PackagePath.empty() && range.Type != AssetType::None &&
+			range.Offset <= m_CookedPackageSize &&
+			range.Size <= m_CookedPackageSize - range.Offset;
+	}
+
 	bool AssetManager::ReadAssetBytes(AssetHandle handle, std::vector<uint8_t>& bytes,
 		AssetType* type) const
 	{
@@ -2181,6 +2380,7 @@ namespace TomCat {
 		if (!Refresh())
 			return false;
 		Physics2DSettings packagePhysicsSettings;
+		PlayerSettings packagePlayerSettings;
 		std::vector<AssetHandle> packageBuildScenes;
 		if (m_UsesProjectConfiguration)
 		{
@@ -2227,6 +2427,25 @@ namespace TomCat {
 				return false;
 			}
 			packagePhysicsSettings = project->GetSettings().Physics2D;
+			packagePlayerSettings = project->GetPlayerSettings();
+			std::string playerSettingsError;
+			if (!NormalizeAndValidatePlayerSettings(packagePlayerSettings,
+				playerSettingsError))
+			{
+				TC_Core_Error("Cannot cook invalid PlayerSettings: {0}",
+					playerSettingsError);
+				return false;
+			}
+			if (static_cast<uint64_t>(packagePlayerSettings.Icon) != 0)
+			{
+				const AssetMetadata* icon = m_Registry.GetMetadata(packagePlayerSettings.Icon);
+				if (!icon || !IsCurrentAsset(m_Registry, *icon, AssetType::Texture2D))
+				{
+					TC_Core_Error("PlayerSettings.Icon must identify a live Texture2D asset: {0}",
+						static_cast<uint64_t>(packagePlayerSettings.Icon));
+					return false;
+				}
+			}
 		}
 		else if (static_cast<uint64_t>(startSceneHandle) != 0)
 			packageBuildScenes.push_back(startSceneHandle);
@@ -2273,6 +2492,7 @@ namespace TomCat {
 		};
 		for (AssetHandle scene : packageBuildScenes)
 			enqueueAsset(scene);
+		enqueueAsset(packagePlayerSettings.Icon);
 		// Standalone AssetManager users have no build-scene graph. Preserve that
 		// authoring utility mode by treating its current runtime assets as roots;
 		// project cooks always use the strict enabled-scene dependency closure.
@@ -2291,6 +2511,55 @@ namespace TomCat {
 		{
 			const AssetHandle handle = pendingAssets.front();
 			pendingAssets.pop_front();
+			const AssetSubAsset* slicedSprite = nullptr;
+			const AssetMetadata* slicedOwner =
+				m_Registry.GetSubAssetOwner(handle, &slicedSprite);
+			if (slicedOwner && slicedSprite)
+			{
+				if (slicedOwner->IsMissing || slicedSprite->Type != AssetType::Texture2D
+					|| slicedSprite->Sprite.Width == 0 || slicedSprite->Sprite.Height == 0)
+				{
+					TC_Core_Error("Cook Sprite sub-asset {0} is invalid",
+						static_cast<uint64_t>(handle));
+					return false;
+				}
+				const AssetHandle ownerHandle = slicedOwner->Handle;
+				AssetLoadOptions importOptions;
+				importOptions.Platform = "windows-x64";
+				importOptions.Backend = "opengl";
+				AssetLoadResult imported = m_Database.LoadArtifact(ownerHandle,
+					std::move(importOptions));
+				if (!imported.Succeeded())
+				{
+					TC_Core_Error("Cannot import Sprite atlas {0} while cooking: {1}",
+						static_cast<uint64_t>(ownerHandle), imported.Error);
+					return false;
+				}
+				const AssetSubAsset* currentSlice = nullptr;
+				const AssetMetadata* currentOwner =
+					m_Registry.GetSubAssetOwner(handle, &currentSlice);
+				if (!currentOwner || !currentSlice || currentOwner->Handle != ownerHandle)
+				{
+					TC_Core_Error("Sprite sub-asset {0} disappeared during import",
+						static_cast<uint64_t>(handle));
+					return false;
+				}
+				SourceEntry entry;
+				entry.RawHandle = static_cast<uint64_t>(handle);
+				entry.RawType = static_cast<uint16_t>(AssetType::Texture2D);
+				entry.CookedBytes = BuildCookedSpriteSubAsset(ownerHandle,
+					currentSlice->Sprite, imported.Artifact.Bytes);
+				if (entry.CookedBytes.empty())
+				{
+					TC_Core_Error("Could not build cooked Sprite sub-asset {0}",
+						static_cast<uint64_t>(handle));
+					return false;
+				}
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
+				entries.push_back(std::move(entry));
+				continue;
+			}
 			const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
 			if (!metadata || metadata->Type == AssetType::None || metadata->IsMissing)
 			{
@@ -2359,13 +2628,20 @@ namespace TomCat {
 			}
 			else
 			{
-				const uintmax_t fileSize = std::filesystem::file_size(source, error);
-				if (error || fileSize > (std::numeric_limits<uint64_t>::max)())
+				AssetLoadOptions importOptions;
+				importOptions.Platform = "windows-x64";
+				importOptions.Backend = "opengl";
+				AssetLoadResult imported = m_Database.LoadArtifact(handle,
+					std::move(importOptions));
+				if (!imported.Succeeded())
 				{
-					TC_Core_Error("Cannot inspect asset while cooking: {0}", PathToUTF8(source));
+					TC_Core_Error("Cannot import asset {0} while cooking: {1}",
+						static_cast<uint64_t>(handle), imported.Error);
 					return false;
 				}
-				entry.Size = static_cast<uint64_t>(fileSize);
+				entry.CookedBytes = std::move(imported.Artifact.Bytes);
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 			}
 			entries.push_back(std::move(entry));
 			for (uint64_t dependency : discoveredDependencies)
@@ -2424,12 +2700,39 @@ namespace TomCat {
 			return left.RawHandle < right.RawHandle;
 		});
 
+		const std::array<std::string, 6> bootManifestStrings = {
+			packagePlayerSettings.ProductName,
+			packagePlayerSettings.CompanyName,
+			packagePlayerSettings.Version,
+			PathToUTF8(packagePlayerSettings.SaveDirectory),
+			PathToUTF8(packagePlayerSettings.LogDirectory),
+			PathToUTF8(packagePlayerSettings.CrashDirectory)
+		};
+		uint64_t bootManifestBytes = 0;
+		for (const std::string& value : bootManifestStrings)
+		{
+			if (value.size() > RuntimeCompatibility::MaximumBootManifestStringBytes
+				|| !CheckedAdd(bootManifestBytes, static_cast<uint64_t>(value.size()),
+					bootManifestBytes))
+			{
+				TC_Core_Error("PlayerSettings BootManifest string data is too large");
+				return false;
+			}
+		}
+		if (bootManifestBytes > RuntimeCompatibility::MaximumBootManifestBytes)
+		{
+			TC_Core_Error("PlayerSettings BootManifest exceeds its size limit");
+			return false;
+		}
+
 		uint64_t buildSceneBytes = 0;
 		uint64_t packageHeaderSize64 = 0;
 		if (!CheckedMultiply(static_cast<uint64_t>(packageBuildScenes.size()),
 			static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
-			|| !CheckedAdd(RuntimeCompatibility::TcpakBaseHeaderSize,
-				buildSceneBytes, packageHeaderSize64)
+			|| !CheckedAdd(RuntimeCompatibility::TcpakV6BaseHeaderSize,
+				bootManifestBytes, packageHeaderSize64)
+			|| !CheckedAdd(packageHeaderSize64, buildSceneBytes,
+				packageHeaderSize64)
 			|| packageHeaderSize64 > (std::numeric_limits<uint32_t>::max)())
 		{
 			TC_Core_Error("Cooked build-scene manifest is too large");
@@ -2491,6 +2794,29 @@ namespace TomCat {
 				static_cast<uint64_t>(packageBuildScenes.size()));
 		for (uint16_t mask : packagePhysicsSettings.CollisionMasks)
 			succeeded = succeeded && WriteLittleEndian<uint16_t>(output, mask);
+		const uint32_t playerFlags = (packagePlayerSettings.Resizable ? 1U : 0U)
+			| (packagePlayerSettings.VSync ? 2U : 0U);
+		succeeded = succeeded
+			&& WriteLittleEndian<uint32_t>(output,
+				RuntimeCompatibility::BootManifestSchemaVersion)
+			&& WriteLittleEndian<uint32_t>(output,
+				static_cast<uint32_t>(packagePlayerSettings.WindowMode))
+			&& WriteLittleEndian<uint32_t>(output, packagePlayerSettings.Width)
+			&& WriteLittleEndian<uint32_t>(output, packagePlayerSettings.Height)
+			&& WriteLittleEndian<uint64_t>(output,
+				static_cast<uint64_t>(packagePlayerSettings.Icon))
+			&& WriteLittleEndian<uint32_t>(output, playerFlags);
+		for (const std::string& value : bootManifestStrings)
+			succeeded = succeeded && WriteLittleEndian<uint32_t>(output,
+				static_cast<uint32_t>(value.size()));
+		for (const std::string& value : bootManifestStrings)
+		{
+			if (!succeeded)
+				break;
+			if (!value.empty())
+				output.write(value.data(), static_cast<std::streamsize>(value.size()));
+			succeeded = output.good();
+		}
 		for (AssetHandle scene : packageBuildScenes)
 			succeeded = succeeded && WriteLittleEndian<uint64_t>(output,
 				static_cast<uint64_t>(scene));
@@ -2550,7 +2876,7 @@ namespace TomCat {
 			return false;
 		const std::streamoff packageEnd = input.tellg();
 		if (packageEnd < static_cast<std::streamoff>(
-			RuntimeCompatibility::TcpakBaseHeaderSize))
+			RuntimeCompatibility::TcpakV5BaseHeaderSize))
 			return false;
 		const uint64_t packageSize = static_cast<uint64_t>(packageEnd);
 		input.seekg(0, std::ios::beg);
@@ -2564,7 +2890,8 @@ namespace TomCat {
 		if (!input.read(magic.data(), static_cast<std::streamsize>(magic.size())) ||
 			magic != RuntimeCompatibility::TcpakMagic ||
 			!ReadLittleEndian<uint32_t>(input, version) ||
-			version != RuntimeCompatibility::TcpakVersion ||
+			(version != RuntimeCompatibility::OldestSupportedTcpakVersion
+				&& version != RuntimeCompatibility::TcpakVersion) ||
 			!ReadLittleEndian<uint32_t>(input, headerSize) ||
 			!ReadLittleEndian<uint64_t>(input, entryCount) ||
 			!ReadLittleEndian<uint64_t>(input, rawEntrySceneHandle) ||
@@ -2576,13 +2903,84 @@ namespace TomCat {
 			if (!ReadLittleEndian<uint16_t>(input, mask))
 				return false;
 		}
+		PlayerSettings mountedPlayerSettings;
+		uint64_t bootManifestBytes = 0;
+		if (version == RuntimeCompatibility::TcpakVersion)
+		{
+			uint32_t manifestSchema = 0;
+			uint32_t rawWindowMode = 0;
+			uint64_t rawIcon = 0;
+			uint32_t playerFlags = 0;
+			std::array<uint32_t, 6> stringLengths{};
+			if (!ReadLittleEndian<uint32_t>(input, manifestSchema)
+				|| manifestSchema != RuntimeCompatibility::BootManifestSchemaVersion
+				|| !ReadLittleEndian<uint32_t>(input, rawWindowMode)
+				|| !ReadLittleEndian<uint32_t>(input, mountedPlayerSettings.Width)
+				|| !ReadLittleEndian<uint32_t>(input, mountedPlayerSettings.Height)
+				|| !ReadLittleEndian<uint64_t>(input, rawIcon)
+				|| !ReadLittleEndian<uint32_t>(input, playerFlags))
+				return false;
+			for (uint32_t& length : stringLengths)
+			{
+				if (!ReadLittleEndian<uint32_t>(input, length)
+					|| length > RuntimeCompatibility::MaximumBootManifestStringBytes
+					|| !CheckedAdd(bootManifestBytes, length, bootManifestBytes))
+					return false;
+			}
+			if (bootManifestBytes > RuntimeCompatibility::MaximumBootManifestBytes
+				|| rawWindowMode > static_cast<uint32_t>(
+					PlayerWindowMode::ExclusiveFullscreen)
+				|| (playerFlags & ~3U) != 0)
+				return false;
+
+			std::array<std::string*, 6> strings = {
+				&mountedPlayerSettings.ProductName,
+				&mountedPlayerSettings.CompanyName,
+				&mountedPlayerSettings.Version,
+				nullptr, nullptr, nullptr
+			};
+			std::array<std::string, 3> directoryStrings;
+			strings[3] = &directoryStrings[0];
+			strings[4] = &directoryStrings[1];
+			strings[5] = &directoryStrings[2];
+			try
+			{
+				for (size_t index = 0; index < strings.size(); ++index)
+				{
+					strings[index]->resize(stringLengths[index]);
+					if (stringLengths[index] != 0
+						&& !input.read(strings[index]->data(),
+							static_cast<std::streamsize>(stringLengths[index])))
+						return false;
+				}
+			}
+			catch (const std::exception&)
+			{
+				return false;
+			}
+			mountedPlayerSettings.Icon = AssetHandle(rawIcon);
+			mountedPlayerSettings.WindowMode =
+				static_cast<PlayerWindowMode>(rawWindowMode);
+			mountedPlayerSettings.Resizable = (playerFlags & 1U) != 0;
+			mountedPlayerSettings.VSync = (playerFlags & 2U) != 0;
+			mountedPlayerSettings.SaveDirectory = UTF8ToPath(directoryStrings[0]);
+			mountedPlayerSettings.LogDirectory = UTF8ToPath(directoryStrings[1]);
+			mountedPlayerSettings.CrashDirectory = UTF8ToPath(directoryStrings[2]);
+			std::string playerSettingsError;
+			if (!NormalizeAndValidatePlayerSettings(mountedPlayerSettings,
+				playerSettingsError))
+				return false;
+		}
 		uint64_t buildSceneBytes = 0;
 		uint64_t expectedHeaderSize = 0;
+		const uint64_t baseHeaderSize = version == RuntimeCompatibility::TcpakVersion
+			? RuntimeCompatibility::TcpakV6BaseHeaderSize
+			: RuntimeCompatibility::TcpakV5BaseHeaderSize;
 		if (buildSceneCount > RuntimeCompatibility::MaximumBuildSceneCount
 			|| !CheckedMultiply(buildSceneCount,
 				static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
-			|| !CheckedAdd(RuntimeCompatibility::TcpakBaseHeaderSize,
-				buildSceneBytes, expectedHeaderSize)
+			|| !CheckedAdd(baseHeaderSize, bootManifestBytes, expectedHeaderSize)
+			|| !CheckedAdd(expectedHeaderSize, buildSceneBytes, expectedHeaderSize)
 			|| expectedHeaderSize != headerSize || headerSize > packageSize
 			|| buildSceneCount > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
 			return false;
@@ -2694,6 +3092,12 @@ namespace TomCat {
 		{
 			const auto scene = entries.find(buildSceneHandle);
 			if (scene == entries.end() || scene->second.Type != AssetType::Scene)
+				return false;
+		}
+		if (static_cast<uint64_t>(mountedPlayerSettings.Icon) != 0)
+		{
+			const auto icon = entries.find(mountedPlayerSettings.Icon);
+			if (icon == entries.end() || icon->second.Type != AssetType::Texture2D)
 				return false;
 		}
 
@@ -2809,9 +3213,11 @@ namespace TomCat {
 		m_CookedEntries = std::move(entries);
 		m_CookedPackagePath = AbsoluteLexical(packagePath);
 		m_CookedPackageSize = packageSize;
+		m_CookedPackageVersion = version;
 		m_CookedEntrySceneHandle = AssetHandle(rawEntrySceneHandle);
 		m_CookedBuildSceneHandles = std::move(buildSceneHandles);
 		m_CookedPhysics2DSettings = mountedPhysicsSettings;
+		m_CookedPlayerSettings = std::move(mountedPlayerSettings);
 		m_CookedManagedPayload = std::move(mountedManagedPayload);
 		return true;
 	}
@@ -2829,9 +3235,11 @@ namespace TomCat {
 		m_CookedEntries.clear();
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
+		m_CookedPackageVersion = 0;
 		m_CookedEntrySceneHandle = AssetHandle(0);
 		m_CookedBuildSceneHandles.clear();
 		m_CookedPhysics2DSettings = Physics2DSettings{};
+		m_CookedPlayerSettings = PlayerSettings{};
 		m_CookedManagedPayload.reset();
 	}
 

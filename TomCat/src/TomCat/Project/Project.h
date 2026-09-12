@@ -1,7 +1,9 @@
 #pragma once
 
 #include "TomCat/Asset/Asset.h"
+#include "TomCat/Core/Version.h"
 #include "BuildSettings.h"
+#include "PlayerSettings.h"
 #include "ProjectSettings.h"
 
 #include <string>
@@ -15,7 +17,7 @@ namespace TomCat {
 	struct ProjectConfig
 	{
 		std::string Name = "Untitled Project";
-		std::string Version = "1.0.0";
+		std::string Version = std::string(TomCat::Version::ProductVersion);
 		std::string Description;
 		std::string EditorVersion;
 		std::string Template = "3D";
@@ -52,8 +54,10 @@ namespace TomCat {
 	class Project
 	{
 	public:
-		static constexpr uint32_t OldestSupportedSchemaVersion = 3;
-		static constexpr uint32_t CurrentSchemaVersion = 4;
+		static constexpr uint32_t OldestSupportedSchemaVersion =
+			Version::ProjectFormatOldest;
+		static constexpr uint32_t CurrentSchemaVersion =
+			Version::ProjectFormatCurrent;
 
 		Project() = default;
 		Project(const std::filesystem::path& projectPath);
@@ -62,6 +66,7 @@ namespace TomCat {
 		const std::filesystem::path& GetProjectDirectory() const { return m_Directory; }
 		const ProjectConfig& GetConfig() const { return m_Config; }
 		const ProjectSettings& GetSettings() const { return m_Settings; }
+		const PlayerSettings& GetPlayerSettings() const { return m_PlayerSettings; }
 		const BuildSettings& GetBuildSettings() const { return m_BuildSettings; }
 		std::filesystem::path GetSettingsPath() const
 		{
@@ -71,11 +76,16 @@ namespace TomCat {
 		{
 			return m_Directory / "ProjectSettings" / "BuildSettings.json";
 		}
+		std::filesystem::path GetPlayerSettingsPath() const
+		{
+			return m_Directory / "ProjectSettings" / "PlayerSettings.json";
+		}
 		
 		void SetConfig(const ProjectConfig& config) { m_Config = config; }
 		// Validates and atomically persists shared project settings. The in-memory
 		// value changes only if the file write succeeds.
 		bool SetSettings(const ProjectSettings& settings);
+		bool SetPlayerSettings(const PlayerSettings& settings);
 		bool SetBuildSettings(const BuildSettings& settings);
 		
 		const std::string& GetName() const { return m_Config.Name; }
@@ -101,19 +111,26 @@ namespace TomCat {
 		bool IsValid() const { return !m_ProjectPath.empty(); }
 		
 		static Ref<Project> CreateNew(const std::filesystem::path& projectPath, const ProjectConfig& config);
+		// Parses and validates project metadata without migrations, directory
+		// creation, ignore-file updates, or any other write.
+		static Ref<Project> Inspect(const std::filesystem::path& projectPath);
 		static Ref<Project> Load(const std::filesystem::path& projectPath);
 		bool Save();
 		bool SaveSettings() const;
+		bool SavePlayerSettings() const;
 		bool SaveBuildSettings() const;
 		bool Reload();
 
 	private:
+		static Ref<Project> LoadInternal(const std::filesystem::path& projectPath,
+			bool allowWrites);
 		void SynchronizeLegacyStartSceneMirror();
 
 		std::filesystem::path m_ProjectPath;
 		std::filesystem::path m_Directory;
 		ProjectConfig m_Config;
 		ProjectSettings m_Settings;
+		PlayerSettings m_PlayerSettings;
 		BuildSettings m_BuildSettings;
 		std::string m_PreservedDocument;
 

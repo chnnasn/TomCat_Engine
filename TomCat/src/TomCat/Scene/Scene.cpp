@@ -1,10 +1,14 @@
 #include "tcpch.h"
 #include "Scene.h"
 
+#include "TomCat/Audio/AudioSceneRuntime.h"
+
 #include "Components.h"
+#include "SpriteAnimation.h"
 #include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/RenderCommand.h"
+#include "TomCat/Runtime/RuntimeUI.h"
 #include "TomCat/Math/Math.h"
 #include "Entity.h"
 #include "Serialization/ComponentCodecs.h"
@@ -593,16 +597,38 @@ namespace TomCat {
 			return visited.size() == entityOrder.size();
 		}
 
-		void Render2DComponents(entt::registry& registry)
+		void Render2DComponents(Scene& scene, entt::registry& registry)
 		{
 			auto spriteView = registry.view<Transform, SpriteRenderer>();
+			struct SpriteRenderItem
+			{
+				entt::entity Entity = entt::null;
+				Renderer2D::SpriteSortKey SortKey;
+			};
+			std::vector<SpriteRenderItem> sprites;
+			sprites.reserve(spriteView.size_hint());
 			for (const entt::entity entity : spriteView)
 			{
-				auto [transform, sprite] = spriteView.get<Transform, SpriteRenderer>(entity);
-				if (!registry.get<Tag>(entity).Visible || !sprite.Enabled)
+				const auto& sprite = spriteView.get<SpriteRenderer>(entity);
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene))
+					|| !sprite.Enabled)
 					continue;
-
-				Renderer2D::DrawSprite(transform.GetTransform(), sprite, static_cast<int>(entity));
+				const uint64_t entityID = static_cast<uint64_t>(
+					registry.get<ID>(entity).id);
+				sprites.push_back({ entity,
+					Renderer2D::MakeSpriteSortKey(sprite, entityID) });
+			}
+			std::sort(sprites.begin(), sprites.end(),
+				[](const SpriteRenderItem& left, const SpriteRenderItem& right)
+				{
+					return Renderer2D::SpriteSortLess(left.SortKey, right.SortKey);
+				});
+			for (const SpriteRenderItem& item : sprites)
+			{
+				auto [transform, sprite] =
+					spriteView.get<Transform, SpriteRenderer>(item.Entity);
+				Renderer2D::DrawSprite(transform.GetTransform(), sprite,
+					static_cast<int>(item.Entity));
 			}
 
 			const float previousLineWidth = Renderer2D::GetLineWidth();
@@ -611,7 +637,8 @@ namespace TomCat {
 			for (const entt::entity entity : lineView)
 			{
 				auto [transform, line] = lineView.get<Transform, LineRenderer>(entity);
-				if (!registry.get<Tag>(entity).Visible || !line.Enabled
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene))
+					|| !line.Enabled
 					|| !std::isfinite(line.Width) || line.Width <= 0.0f)
 					continue;
 
@@ -625,6 +652,41 @@ namespace TomCat {
 
 			if (renderedLine)
 				Renderer2D::SetLineWidth(previousLineWidth);
+
+			RuntimeUISystem::RenderWorldText(scene, registry);
+		}
+
+		void InitializeSpriteAnimations(Scene& scene, entt::registry& registry)
+		{
+			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
+			for (const entt::entity entity : view)
+			{
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
+				auto [animator, renderer] =
+					view.get<SpriteAnimator, SpriteRenderer>(entity);
+				SpriteAnimatorRuntime::Initialize(animator, renderer);
+			}
+		}
+
+		void UpdateSpriteAnimations(Scene& scene, entt::registry& registry,
+			double deltaSeconds)
+		{
+			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
+			for (const entt::entity entity : view)
+			{
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
+				auto [animator, renderer] =
+					view.get<SpriteAnimator, SpriteRenderer>(entity);
+				SpriteAnimatorRuntime::Update(animator, renderer, deltaSeconds);
+			}
+		}
+
+		void ResetSpriteAnimations(entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<SpriteAnimator>())
+				SpriteAnimatorRuntime::Reset(registry.get<SpriteAnimator>(entity));
 		}
 
 	}
@@ -749,10 +811,12 @@ namespace TomCat {
 		newScene->m_SceneName = other->m_SceneName;
 		newScene->m_ViewportWidth = other->m_ViewportWidth;
 		newScene->m_ViewportHeight = other->m_ViewportHeight;
+		newScene->m_RuntimeUIViewportOrigin = other->m_RuntimeUIViewportOrigin;
+		newScene->m_RuntimeUIDPIScale = other->m_RuntimeUIDPIScale;
+		newScene->m_RuntimeUIScreenToFramebufferScale =
+			other->m_RuntimeUIScreenToFramebufferScale;
 		newScene->m_Physics2DSettings = other->m_Physics2DSettings;
 
-		auto& srcSceneRegistry = other->m_Registry;
-		auto& dstSceneRegistry = newScene->m_Registry;
 		std::unordered_map<UUID, entt::entity> enttMap;
 
 		// Create entities in their original creation order so the hierarchy keeps
@@ -767,32 +831,22 @@ namespace TomCat {
 			enttMap[uuid] = (entt::entity)newEntity;
 		}
 
-		// ID and the newly created Tag names stay owned by the destination scene.
-		CopyComponent<EntityMetadata>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<Transform>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		for (const auto& [uuid, destinationEntity] : enttMap)
+		// ComponentCodecs is the single copy policy consumed by Scene, Duplicate and
+		// Prefab. Registered components therefore join every copy path without a
+		// new Scene.cpp type list.
+		for (const auto& [uuid, destinationHandle] : enttMap)
 		{
 			Entity sourceEntity = other->FindEntityByUUID(uuid);
-			if (sourceEntity && sourceEntity.HasComponent<Tag>())
-				dstSceneRegistry.get<Tag>(destinationEntity).Visible = sourceEntity.GetComponent<Tag>().Visible;
+			Entity destinationEntity(destinationHandle, newScene.get());
+			std::string copyError;
+			if (!ComponentCodecs::CopyAuthoringComponents(sourceEntity,
+				destinationEntity, false, copyError))
+			{
+				TC_Core_Error("Could not copy entity {0}: {1}",
+					static_cast<uint64_t>(uuid), copyError);
+				return nullptr;
+			}
 		}
-		CopyComponent<SpriteRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<LineRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<C_Camera>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<CSharpScripts>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<Rigidbody2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<BoxCollider2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<CircleCollider2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<DistanceJoint2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
-
-		for (auto entity : dstSceneRegistry.view<Rigidbody2D>())
-			dstSceneRegistry.get<Rigidbody2D>(entity).RuntimeBody = nullptr;
-		for (auto entity : dstSceneRegistry.view<BoxCollider2D>())
-			dstSceneRegistry.get<BoxCollider2D>(entity).RuntimeFixture = nullptr;
-		for (auto entity : dstSceneRegistry.view<CircleCollider2D>())
-			dstSceneRegistry.get<CircleCollider2D>(entity).RuntimeFixture = nullptr;
-		for (auto entity : dstSceneRegistry.view<DistanceJoint2D>())
-			dstSceneRegistry.get<DistanceJoint2D>(entity).RuntimeJoint = nullptr;
 
 		for (UUID childUUID : other->m_EntityOrder)
 		{
@@ -1008,6 +1062,11 @@ namespace TomCat {
 		// OnDisable/OnDestroy execute. ScriptEngine is a no-op for edit-time scenes.
 		Scripting::ScriptEngine::Get().NotifyEntityDestroyed(
 			*this, static_cast<uint64_t>(entityUUID));
+		// Managed OnDisable/OnDestroy runs while the component is still usable and
+		// may issue audio commands. Tear down the final voice after those callbacks,
+		// but before the ECS identity disappears.
+		if (entity.HasComponent<AudioSource>())
+			AudioSceneRuntime::DestroySource(entity);
 
 		auto parentIt = m_ParentMap.find(entityUUID);
 		if (parentIt != m_ParentMap.end())
@@ -1054,6 +1113,7 @@ namespace TomCat {
 		// avoids invalidating joints implicitly (DestroyBody destroys every attached
 		// joint) and also keeps all world mutation outside a locked Step callback.
 		m_RuntimeBodies.erase(entityUUID);
+		m_SuspendedRuntimeBodyStates.erase(entityUUID);
 		if (affectsRuntimePhysics)
 			m_HasRuntimePhysicsDefinition = false;
 		// The entity is being removed, so discard every queued/active pair that
@@ -1508,6 +1568,33 @@ namespace TomCat {
 		return FindEntityByUUID(parentIt->second);
 	}
 
+	bool Scene::IsActiveInHierarchy(Entity entity) const
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+
+		UUID cursor = entity.GetUUID();
+		std::unordered_set<UUID> visited;
+		while (static_cast<uint64_t>(cursor) != 0)
+		{
+			if (!visited.emplace(cursor).second)
+				return false;
+			auto entityIt = m_EntityMap.find(cursor);
+			if (entityIt == m_EntityMap.end()
+				|| !m_Registry.valid(entityIt->second)
+				|| !m_Registry.all_of<Tag>(entityIt->second)
+				|| !m_Registry.get<Tag>(entityIt->second).Visible)
+				return false;
+			auto parentIt = m_ParentMap.find(cursor);
+			if (parentIt == m_ParentMap.end())
+				return true;
+			cursor = parentIt->second;
+		}
+		return false;
+	}
+
 	std::vector<UUID> Scene::GetChildrenUUIDs(Entity entity)
 	{
 		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
@@ -1778,12 +1865,18 @@ namespace TomCat {
 			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second))
 				continue;
 			const entt::entity entity = mapIt->second;
+			if (!IsActiveInHierarchy(Entity(entity, const_cast<Scene*>(this))))
+				continue;
 			if (m_Registry.any_of<Rigidbody2D, BoxCollider2D, CircleCollider2D, DistanceJoint2D>(entity))
 				physicsEntities.insert(uuid);
 			if (m_Registry.all_of<DistanceJoint2D>(entity))
 			{
 				const UUID connected = m_Registry.get<DistanceJoint2D>(entity).ConnectedEntity;
-				if (static_cast<uint64_t>(connected) != 0)
+				auto connectedIt = m_EntityMap.find(connected);
+				if (static_cast<uint64_t>(connected) != 0
+					&& connectedIt != m_EntityMap.end()
+					&& IsActiveInHierarchy(Entity(connectedIt->second,
+						const_cast<Scene*>(this))))
 					physicsEntities.insert(connected);
 			}
 		}
@@ -1901,8 +1994,38 @@ namespace TomCat {
 					continue;
 				previousStates.emplace(uuid, RuntimeBodyState{ body->GetPosition(), body->GetAngle(),
 					body->GetLinearVelocity(), body->GetAngularVelocity(), body->IsAwake() });
+				Entity entity = FindEntityByUUID(uuid);
+				if (entity && !IsActiveInHierarchy(entity)
+					&& entity.HasComponent<Rigidbody2D>())
+				{
+					const auto& rigidbody = entity.GetComponent<Rigidbody2D>();
+					if (rigidbody.Enabled
+						&& rigidbody.Type != Rigidbody2D::BodyType::Static)
+					{
+						const b2Vec2 velocity = body->GetLinearVelocity();
+						m_SuspendedRuntimeBodyStates.insert_or_assign(uuid,
+							SuspendedRuntimeBodyState{ velocity.x, velocity.y,
+								body->GetAngularVelocity(), body->IsAwake() });
+					}
+				}
+			}
+			for (auto iterator = m_SuspendedRuntimeBodyStates.begin();
+				iterator != m_SuspendedRuntimeBodyStates.end();)
+			{
+				Entity entity = FindEntityByUUID(iterator->first);
+				const bool remainsSuspendable = entity
+					&& entity.HasComponent<Rigidbody2D>()
+					&& entity.GetComponent<Rigidbody2D>().Enabled
+					&& entity.GetComponent<Rigidbody2D>().Type
+						!= Rigidbody2D::BodyType::Static;
+				if (!remainsSuspendable)
+					iterator = m_SuspendedRuntimeBodyStates.erase(iterator);
+				else
+					++iterator;
 			}
 		}
+		else
+			m_SuspendedRuntimeBodyStates.clear();
 
 		if (m_PhysicsWorld)
 		{
@@ -1920,7 +2043,7 @@ namespace TomCat {
 		for (UUID uuid : m_EntityOrder)
 		{
 			Entity entity = FindEntityByUUID(uuid);
-			if (!entity)
+			if (!entity || !IsActiveInHierarchy(entity))
 				continue;
 			const bool hasRigidbody = entity.HasComponent<Rigidbody2D>();
 			const bool rigidbodyEnabled = hasRigidbody && entity.GetComponent<Rigidbody2D>().Enabled;
@@ -1939,7 +2062,9 @@ namespace TomCat {
 				continue;
 			const auto& joint = entity.GetComponent<DistanceJoint2D>();
 			Entity connected = FindEntityByUUID(joint.ConnectedEntity);
-			if (!joint.Enabled || !connected || joint.ConnectedEntity == uuid)
+			if (!joint.Enabled || !connected || joint.ConnectedEntity == uuid
+				|| !IsActiveInHierarchy(entity)
+				|| !IsActiveInHierarchy(connected))
 				continue;
 			const bool ownerBlocked = entity.HasComponent<Rigidbody2D>()
 				&& !entity.GetComponent<Rigidbody2D>().Enabled;
@@ -1993,12 +2118,25 @@ namespace TomCat {
 				}
 				bodyDef.awake = stateIt->second.Awake;
 			}
+			else if (auto stateIt = m_SuspendedRuntimeBodyStates.find(uuid);
+				stateIt != m_SuspendedRuntimeBodyStates.end())
+			{
+				if (bodyDef.type != b2_staticBody)
+				{
+					bodyDef.linearVelocity.Set(stateIt->second.LinearVelocityX,
+						stateIt->second.LinearVelocityY);
+					bodyDef.angularVelocity = bodyDef.fixedRotation
+						? 0.0f : stateIt->second.AngularVelocity;
+				}
+				bodyDef.awake = stateIt->second.Awake;
+			}
 			bodyDef.userData.pointer = static_cast<uintptr_t>(static_cast<uint64_t>(uuid));
 
 			b2Body* body = m_PhysicsWorld->CreateBody(&bodyDef);
 			m_RuntimeBodies.emplace(uuid, body);
 			if (entity.HasComponent<Rigidbody2D>() && entity.GetComponent<Rigidbody2D>().Enabled)
 				entity.GetComponent<Rigidbody2D>().RuntimeBody = body;
+			m_SuspendedRuntimeBodyStates.erase(uuid);
 		}
 
 		for (UUID uuid : m_EntityOrder)
@@ -2302,6 +2440,7 @@ namespace TomCat {
 
 		m_RuntimeAccumulator = 0.0;
 		m_RuntimeBodies.clear();
+		m_SuspendedRuntimeBodyStates.clear();
 		m_HasRuntimePhysicsDefinition = false;
 		ResetRuntimePhysicsPointers();
 		m_PendingRuntimeEntityCreates.clear();
@@ -2316,6 +2455,9 @@ namespace TomCat {
 			OnRuntimeStop();
 			return false;
 		}
+		AudioSceneRuntime::Start(*this);
+		InitializeSpriteAnimations(*this, m_Registry);
+		RuntimeUISystem::Reset(m_Registry);
 
 		bool hasManagedScripts = false;
 		for (const entt::entity entity : m_Registry.view<CSharpScripts>())
@@ -2344,6 +2486,9 @@ namespace TomCat {
 			// batch with actual attachments reaches this safe point.
 			ArmRuntimeScriptBatchCallback();
 		}
+		// Audio preparation happened before scripts, but PlayOnStart must observe
+		// the hierarchy and source values after managed OnCreate/OnEnable.
+		AudioSceneRuntime::Update(*this, 0.0);
 		return true;
 	}
 
@@ -2360,6 +2505,11 @@ namespace TomCat {
 			Scripting::ScriptEngine::Get().StopScene(m_ScriptSceneSessionID);
 			m_ScriptSceneSessionID = 0;
 		}
+		// OnDestroy may legally touch AudioSource while its Entity is alive. A final
+		// scene-wide sweep guarantees that no callback can leave a voice playing.
+		AudioSceneRuntime::Stop(*this);
+		ResetSpriteAnimations(m_Registry);
+		RuntimeUISystem::Reset(m_Registry);
 		SetRuntimeEntityBatchCreatedCallback({});
 		++m_RuntimeSessionGeneration;
 		if (m_PhysicsWorld)
@@ -2371,6 +2521,7 @@ namespace TomCat {
 
 		ResetRuntimePhysicsPointers();
 		m_RuntimeBodies.clear();
+		m_SuspendedRuntimeBodyStates.clear();
 		m_HasRuntimePhysicsDefinition = false;
 		m_RuntimePhysicsDefinitionHash = 0;
 
@@ -2472,6 +2623,8 @@ namespace TomCat {
 		FlushPendingRuntimeEntityCreates();
 		if (!SynchronizeRuntimePhysicsDefinitions())
 			return false;
+		UpdateSpriteAnimations(*this, m_Registry,
+			static_cast<double>(FixedRuntimeTimestep));
 		return m_RuntimeRunning && m_PhysicsWorld;
 	}
 
@@ -2517,6 +2670,10 @@ namespace TomCat {
 
 		if (m_RuntimeRunning)
 		{
+			RuntimeUISystem::Update(*this, m_Registry, m_ViewportWidth,
+				m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+				m_RuntimeUIViewportOrigin,
+				m_RuntimeUIScreenToFramebufferScale);
 			if (m_ScriptSceneSessionID != 0)
 				Scripting::ScriptEngine::Get().UpdateAll(m_ScriptSceneSessionID, frameDelta);
 			if (!SynchronizeRuntimePhysicsDefinitions())
@@ -2524,6 +2681,7 @@ namespace TomCat {
 			FlushPendingRuntimeEntityCreates();
 			if (!SynchronizeRuntimePhysicsDefinitions())
 				return;
+			AudioSceneRuntime::Update(*this, frameDelta);
 		}
 
 		RenderRuntimeScene();
@@ -2539,8 +2697,17 @@ namespace TomCat {
 
 		// Single-step has no relationship to the most recent display-frame dt.
 		m_RuntimeAccumulator = 0.0;
-		RunFixedRuntimeStep();
+		if (!RunFixedRuntimeStep())
+		{
+			m_RuntimeAccumulator = 0.0;
+			return;
+		}
 		m_RuntimeAccumulator = 0.0;
+		RuntimeUISystem::Update(*this, m_Registry, m_ViewportWidth,
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+			m_RuntimeUIViewportOrigin,
+			m_RuntimeUIScreenToFramebufferScale);
+		AudioSceneRuntime::Update(*this, FixedRuntimeTimestep);
 		RenderRuntimeScene();
 	}
 
@@ -2550,7 +2717,8 @@ namespace TomCat {
 		{
 			auto view = m_Registry.view<Transform, C_Camera>();
 			view.each([this](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
+				if (camera.Primary
+					&& IsActiveInHierarchy(Entity(entity, this)))
 				{
 					RenderCommand::SetClearColor(camera.BackgroundColor);
 					RenderCommand::Clear();
@@ -2565,7 +2733,8 @@ namespace TomCat {
 			auto view = m_Registry.view<Transform, C_Camera>();
 
 			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
+				if (camera.Primary
+					&& IsActiveInHierarchy(Entity(entity, this)))
 				{
 					MainCamera = &camera._Camera;
 					cameraTransform = transform.GetTransform();
@@ -2576,18 +2745,22 @@ namespace TomCat {
 		if (MainCamera)
 		{
 			Renderer2D::BeginScene(*MainCamera, cameraTransform);
-			Render2DComponents(m_Registry);
+			Render2DComponents(*this, m_Registry);
 			Renderer2D::EndScene();
 		}
+		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale);
 	}
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
 		Renderer2D::BeginScene(camera);
 
-		Render2DComponents(m_Registry);
+		Render2DComponents(*this, m_Registry);
 
 		Renderer2D::EndScene();
+		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale);
 	}
 
 	void Scene::OnRenderRuntime()
@@ -2609,6 +2782,23 @@ namespace TomCat {
 				camera._Camera.SetViewportSize(width, height);
 		}
 
+	}
+
+	void Scene::SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
+		float dpiScale, const glm::vec2& screenToFramebufferScale)
+	{
+		m_RuntimeUIViewportOrigin = std::isfinite(screenOrigin.x)
+			&& std::isfinite(screenOrigin.y)
+			? screenOrigin : glm::vec2(0.0f);
+		m_RuntimeUIDPIScale = std::isfinite(dpiScale) && dpiScale > 0.0f
+			? std::clamp(dpiScale, 0.25f, 8.0f) : 1.0f;
+		m_RuntimeUIScreenToFramebufferScale =
+			std::isfinite(screenToFramebufferScale.x)
+			&& std::isfinite(screenToFramebufferScale.y)
+			&& screenToFramebufferScale.x > 0.0f
+			&& screenToFramebufferScale.y > 0.0f
+			? glm::clamp(screenToFramebufferScale, glm::vec2(0.25f),
+				glm::vec2(8.0f)) : glm::vec2(1.0f);
 	}
 
 	std::vector<ColliderDebugShape> Scene::GetColliderDebugShapes(bool useRuntimeFixtures) const
@@ -2825,7 +3015,8 @@ namespace TomCat {
 		{
 			const auto& camera = view.get<C_Camera>(entity);
 
-			if (camera.Primary && m_Registry.get<Tag>(entity).Visible)
+			if (camera.Primary
+				&& IsActiveInHierarchy(Entity(entity, this)))
 				return Entity(entity,this);
 
 		}
@@ -2864,6 +3055,43 @@ namespace TomCat {
 		}
 
 		auto scriptsView = m_Registry.view<ID, CSharpScripts>();
+		auto animatorView = m_Registry.view<ID, SpriteAnimator>();
+		for (const entt::entity entity : animatorView)
+		{
+			const uint64_t entityID = static_cast<uint64_t>(
+				animatorView.get<ID>(entity).id);
+			const auto& clips = animatorView.get<SpriteAnimator>(entity).Clips;
+			for (size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
+			{
+				for (size_t frameIndex = 0;
+					frameIndex < clips[clipIndex].Frames.size(); ++frameIndex)
+				{
+					if (clips[clipIndex].Frames[frameIndex].SpriteHandle != handle)
+						continue;
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.PropertyPath = "Entity " + std::to_string(entityID)
+						+ ".SpriteAnimator.Clips[" + std::to_string(clipIndex)
+						+ "].Frames[" + std::to_string(frameIndex)
+						+ "].SpriteHandle";
+					references.push_back(std::move(reference));
+				}
+			}
+		}
+		auto audioView = m_Registry.view<ID, AudioSource>();
+		for (const entt::entity entity : audioView)
+		{
+			const auto& source = audioView.get<AudioSource>(entity);
+			if (source.Clip != handle)
+				continue;
+			AssetReference reference;
+			reference.ReferencedAsset = handle;
+			reference.PropertyPath = "Entity "
+				+ std::to_string(static_cast<uint64_t>(audioView.get<ID>(entity).id))
+				+ ".AudioSource.Clip";
+			references.push_back(std::move(reference));
+		}
+
 		for (const entt::entity entity : scriptsView)
 		{
 			const uint64_t entityID = static_cast<uint64_t>(scriptsView.get<ID>(entity).id);
@@ -2898,12 +3126,6 @@ namespace TomCat {
 		return references;
 	}
 
-	template<typename T>
-	void Scene::OnComponentAdded(Entity entity, T& component)
-	{
-		//static_assert(false);
-	}
-
 	template<>
 	void Scene::OnComponentAdded<ID>(Entity entity, ID& component)
 	{
@@ -2928,6 +3150,20 @@ namespace TomCat {
 	template<>
 	void Scene::OnComponentAdded<SpriteRenderer>(Entity entity, SpriteRenderer& component)
 	{
+		if (m_RuntimeRunning && entity && IsActiveInHierarchy(entity)
+			&& entity.HasComponent<SpriteAnimator>())
+			SpriteAnimatorRuntime::Initialize(
+				entity.GetComponent<SpriteAnimator>(), component);
+	}
+
+	template<>
+	void Scene::OnComponentAdded<SpriteAnimator>(Entity entity, SpriteAnimator& component)
+	{
+		SpriteAnimatorRuntime::Reset(component);
+		if (m_RuntimeRunning && entity && IsActiveInHierarchy(entity)
+			&& entity.HasComponent<SpriteRenderer>())
+			SpriteAnimatorRuntime::Initialize(
+				component, entity.GetComponent<SpriteRenderer>());
 	}
 
 	template<>

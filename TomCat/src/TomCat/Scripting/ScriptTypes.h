@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 
 #if defined(_WIN32)
@@ -112,7 +113,9 @@ namespace TomCat::Scripting {
 		BoxCollider2D = 3,
 		CircleCollider2D = 4,
 		DistanceJoint2D = 5,
-		SpriteRenderer = 6
+		SpriteRenderer = 6,
+		Camera = 7,
+		SpriteAnimator = 8
 	};
 
 	struct NativeScriptAttachmentV1
@@ -203,6 +206,314 @@ namespace TomCat::Scripting {
 			EntityHandleV1 parent) = nullptr;
 	};
 
+	// NativeApiV1 is a frozen prefix. Optional services are discovered through
+	// this V2 envelope, so adding input/audio/render services never shifts V1.
+	using QueryCapabilityFnV2 = int32_t(TC_SCRIPT_CALL*)(NativeUtf8View name,
+		uint32_t minimumVersion, void* output, uint32_t capacity, uint32_t* required);
+
+	struct NativeApiV2
+	{
+		NativeApiV1 V1;
+		QueryCapabilityFnV2 QueryCapability = nullptr;
+	};
+
+	inline constexpr std::string_view InputCapabilityName = "TomCat.InputApiV1";
+
+	struct NativeInputApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeInputApiV1);
+		uint32_t MaximumGamepads = 16;
+		uint32_t GamepadButtonCount = 15;
+		uint32_t GamepadAxisCount = 6;
+		uint32_t Reserved = 0;
+
+		int32_t(TC_SCRIPT_CALL* IsMouseButtonHeld)(uint32_t button) = nullptr;
+		int32_t(TC_SCRIPT_CALL* WasMouseButtonPressed)(uint32_t button) = nullptr;
+		int32_t(TC_SCRIPT_CALL* WasMouseButtonReleased)(uint32_t button) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetScrollDelta)(NativeVector2* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* IsWindowFocused)() = nullptr;
+		int32_t(TC_SCRIPT_CALL* IsGamepadConnected)(uint32_t gamepad) = nullptr;
+		int32_t(TC_SCRIPT_CALL* WasGamepadConnected)(uint32_t gamepad) = nullptr;
+		int32_t(TC_SCRIPT_CALL* WasGamepadDisconnected)(uint32_t gamepad) = nullptr;
+		int32_t(TC_SCRIPT_CALL* IsGamepadButtonHeld)(uint32_t gamepad,
+			uint32_t button) = nullptr;
+		int32_t(TC_SCRIPT_CALL* WasGamepadButtonPressed)(uint32_t gamepad,
+			uint32_t button) = nullptr;
+		int32_t(TC_SCRIPT_CALL* WasGamepadButtonReleased)(uint32_t gamepad,
+			uint32_t button) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetGamepadAxis)(uint32_t gamepad, uint32_t axis,
+			float* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetGamepadName)(uint32_t gamepad, uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) = nullptr;
+	};
+
+	inline constexpr std::string_view ComponentCapabilityName =
+		"TomCat.ComponentApiV1";
+	inline constexpr std::string_view GameplayCapabilityName =
+		"TomCat.GameplayApiV1";
+
+	inline constexpr std::string_view AudioCapabilityName = "TomCat.AudioApiV1";
+	inline constexpr std::string_view AudioSpatialCapabilityName =
+		"TomCat.AudioSpatialApiV1";
+	inline constexpr std::string_view RuntimeUICapabilityName =
+		"TomCat.RuntimeUIApiV1";
+
+	// Optional audio service discovered through NativeApiV2::QueryCapability.
+	// The frozen NativeApiV1 prefix remains byte-for-byte unchanged.
+	struct NativeAudioApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeAudioApiV1);
+
+		int32_t(TC_SCRIPT_CALL* IsHardwareAvailable)() = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetBackendName)(uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) = nullptr;
+		int32_t(TC_SCRIPT_CALL* HasSource)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* AddSource)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* RemoveSource)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetClip)(EntityHandleV1 entity,
+			uint64_t* clipHandle) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetClip)(EntityHandleV1 entity,
+			uint64_t clipHandle) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetEnabled)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetEnabled)(EntityHandleV1 entity,
+			int32_t enabled) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetPlayOnStart)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetPlayOnStart)(EntityHandleV1 entity,
+			int32_t playOnStart) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetLoop)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetLoop)(EntityHandleV1 entity, int32_t loop) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetVolume)(EntityHandleV1 entity, float* volume) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetVolume)(EntityHandleV1 entity, float volume) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetPitch)(EntityHandleV1 entity, float* pitch) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetPitch)(EntityHandleV1 entity, float pitch) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetMixerGroup)(EntityHandleV1 entity,
+			int32_t* mixerGroup) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetMixerGroup)(EntityHandleV1 entity,
+			int32_t mixerGroup) = nullptr;
+		int32_t(TC_SCRIPT_CALL* Play)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* Pause)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* Stop)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetPlaybackState)(EntityHandleV1 entity,
+			int32_t* state) = nullptr;
+		int32_t(TC_SCRIPT_CALL* HasListener)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* AddListener)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* RemoveListener)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetListenerEnabled)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetListenerEnabled)(EntityHandleV1 entity,
+			int32_t enabled) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetListenerPrimary)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetListenerPrimary)(EntityHandleV1 entity,
+			int32_t primary) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetMixerVolume)(int32_t mixerGroup,
+			float* volume) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetMixerVolume)(int32_t mixerGroup,
+			float volume) = nullptr;
+	};
+
+	// Optional additive audio authoring/runtime fields. Kept separate so the
+	// deployed AudioApiV1 layout remains a frozen binary contract.
+	struct NativeAudioSpatialApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeAudioSpatialApiV1);
+		int32_t(TC_SCRIPT_CALL* GetStreaming)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetStreaming)(EntityHandleV1 entity,
+			int32_t streaming) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetSpatialBlend)(EntityHandleV1 entity,
+			float* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetSpatialBlend)(EntityHandleV1 entity,
+			float value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetMinDistance)(EntityHandleV1 entity,
+			float* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetMinDistance)(EntityHandleV1 entity,
+			float value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetMaxDistance)(EntityHandleV1 entity,
+			float* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetMaxDistance)(EntityHandleV1 entity,
+			float value) = nullptr;
+	};
+
+	// String properties and transient interaction state cannot be represented by
+	// NativeComponentApiV1. Keep those operations in an additive capability so
+	// the frozen component/property ABI remains unchanged.
+	struct NativeRuntimeUIApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeRuntimeUIApiV1);
+
+		int32_t(TC_SCRIPT_CALL* GetText)(EntityHandleV1 entity,
+			uint64_t componentTypeId, uint8_t* buffer, uint32_t capacity,
+			uint32_t* required) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetText)(EntityHandleV1 entity,
+			uint64_t componentTypeId, NativeUtf8View value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* WasButtonClicked)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetButtonClickSerial)(EntityHandleV1 entity,
+			uint64_t* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* FocusButton)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetRect)(EntityHandleV1 entity,
+			NativeVector4* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* IsGameplayInputCaptured)() = nullptr;
+	};
+
+	enum class NativePropertyKindV1 : uint32_t
+	{
+		Bool = 1,
+		Int32,
+		Int64,
+		UInt32,
+		UInt64,
+		Float,
+		Double,
+		Vector2,
+		Vector3,
+		Vector4
+	};
+
+	struct NativePropertyValueV1
+	{
+		uint32_t Kind = 0;
+		uint32_t Reserved = 0;
+		int64_t Integer = 0;
+		double Number = 0.0;
+		NativeVector4 Vector;
+	};
+
+	struct NativeComponentApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeComponentApiV1);
+		int32_t(TC_SCRIPT_CALL* Has)(EntityHandleV1 entity,
+			uint64_t componentTypeId) = nullptr;
+		int32_t(TC_SCRIPT_CALL* Add)(EntityHandleV1 entity,
+			uint64_t componentTypeId) = nullptr;
+		int32_t(TC_SCRIPT_CALL* Remove)(EntityHandleV1 entity,
+			uint64_t componentTypeId) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetProperty)(EntityHandleV1 entity,
+			uint64_t componentTypeId, uint64_t propertyId,
+			NativePropertyValueV1* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetProperty)(EntityHandleV1 entity,
+			uint64_t componentTypeId, uint64_t propertyId,
+			NativePropertyValueV1 value) = nullptr;
+	};
+
+	// Scene/world services intentionally live outside the frozen NativeApiV1.
+	// Structural mutations are deferred by ScriptEngine and the returned entity
+	// handle is a stable reservation that becomes live at the callback safe point.
+	struct NativeGameplayApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeGameplayApiV1);
+
+		int32_t(TC_SCRIPT_CALL* CreateEntityDeferred)(EntityHandleV1 context,
+			NativeUtf8View name, NativeVector3 worldPosition, EntityHandleV1 parent,
+			EntityHandleV1* reservedEntity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* FindEntityByName)(EntityHandleV1 context,
+			NativeUtf8View name, EntityHandleV1* entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* QueryEntities)(EntityHandleV1 context,
+			int32_t componentType, uint64_t registeredTypeId, EntityHandleV1* entities,
+			uint32_t capacity, uint32_t* required) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetParent)(EntityHandleV1 entity,
+			EntityHandleV1* parent) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetParentDeferred)(EntityHandleV1 entity,
+			EntityHandleV1 parent) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetChildren)(EntityHandleV1 entity,
+			EntityHandleV1* children, uint32_t capacity, uint32_t* required) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetActiveSelf)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetActiveSelf)(EntityHandleV1 entity,
+			int32_t active) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetActiveInHierarchy)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* TransformGetLocalPosition)(EntityHandleV1 entity,
+			NativeVector3* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* TransformSetLocalPosition)(EntityHandleV1 entity,
+			NativeVector3 value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* TransformGetLocalRotationEuler)(EntityHandleV1 entity,
+			NativeVector3* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* TransformSetLocalRotationEuler)(EntityHandleV1 entity,
+			NativeVector3 value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* TransformGetLocalScale)(EntityHandleV1 entity,
+			NativeVector3* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* TransformSetLocalScale)(EntityHandleV1 entity,
+			NativeVector3 value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetComponentProperty)(EntityHandleV1 entity,
+			int32_t componentType, uint32_t propertyId,
+			NativePropertyValueV1* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetComponentProperty)(EntityHandleV1 entity,
+			int32_t componentType, uint32_t propertyId,
+			NativePropertyValueV1 value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorPlay)(EntityHandleV1 entity,
+			NativeUtf8View clipName, int32_t restart) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorStop)(EntityHandleV1 entity) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorSetBool)(EntityHandleV1 entity,
+			NativeUtf8View parameter, int32_t value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorSetInt)(EntityHandleV1 entity,
+			NativeUtf8View parameter, int32_t value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorSetFloat)(EntityHandleV1 entity,
+			NativeUtf8View parameter, float value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorSetTrigger)(EntityHandleV1 entity,
+			NativeUtf8View parameter) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorResetTrigger)(EntityHandleV1 entity,
+			NativeUtf8View parameter) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SpriteAnimatorGetCurrentState)(EntityHandleV1 entity,
+			uint8_t* buffer, uint32_t capacity, uint32_t* required) = nullptr;
+	};
+
+	// Capability-local IDs. These values are explicit ABI constants and may only
+	// be appended; they are not persisted in Scene files.
+	namespace GameplayPropertyIds {
+		inline constexpr uint32_t RigidbodyEnabled = 100;
+		inline constexpr uint32_t RigidbodyBodyType = 101;
+		inline constexpr uint32_t RigidbodyFixedRotation = 102;
+		inline constexpr uint32_t SpriteEnabled = 200;
+		inline constexpr uint32_t SpriteColor = 201;
+		inline constexpr uint32_t SpriteAsset = 202;
+		inline constexpr uint32_t SpriteTilingFactor = 203;
+		inline constexpr uint32_t SpriteSortingLayer = 204;
+		inline constexpr uint32_t SpriteOrderInLayer = 205;
+		inline constexpr uint32_t CameraPrimary = 300;
+		inline constexpr uint32_t CameraFixedAspectRatio = 301;
+		inline constexpr uint32_t CameraBackgroundColor = 302;
+		inline constexpr uint32_t CameraProjectionType = 303;
+		inline constexpr uint32_t CameraOrthographicSize = 304;
+		inline constexpr uint32_t CameraOrthographicNear = 305;
+		inline constexpr uint32_t CameraOrthographicFar = 306;
+		inline constexpr uint32_t CameraPerspectiveFov = 307;
+		inline constexpr uint32_t CameraPerspectiveNear = 308;
+		inline constexpr uint32_t CameraPerspectiveFar = 309;
+		inline constexpr uint32_t BoxEnabled = 400;
+		inline constexpr uint32_t BoxIsTrigger = 401;
+		inline constexpr uint32_t BoxCollisionLayer = 402;
+		inline constexpr uint32_t BoxCollisionMask = 403;
+		inline constexpr uint32_t BoxOffset = 404;
+		inline constexpr uint32_t BoxSize = 405;
+		inline constexpr uint32_t BoxDensity = 406;
+		inline constexpr uint32_t BoxFriction = 407;
+		inline constexpr uint32_t BoxRestitution = 408;
+		inline constexpr uint32_t BoxRestitutionThreshold = 409;
+		inline constexpr uint32_t CircleEnabled = 500;
+		inline constexpr uint32_t CircleIsTrigger = 501;
+		inline constexpr uint32_t CircleCollisionLayer = 502;
+		inline constexpr uint32_t CircleCollisionMask = 503;
+		inline constexpr uint32_t CircleOffset = 504;
+		inline constexpr uint32_t CircleRadius = 505;
+		inline constexpr uint32_t CircleDensity = 506;
+		inline constexpr uint32_t CircleFriction = 507;
+		inline constexpr uint32_t CircleRestitution = 508;
+		inline constexpr uint32_t JointEnabled = 600;
+		inline constexpr uint32_t JointConnectedEntity = 601;
+		inline constexpr uint32_t JointAnchor = 602;
+		inline constexpr uint32_t JointConnectedAnchor = 603;
+		inline constexpr uint32_t JointDistance = 604;
+		inline constexpr uint32_t JointFrequency = 605;
+		inline constexpr uint32_t JointDamping = 606;
+		inline constexpr uint32_t JointCollideConnected = 607;
+		inline constexpr uint32_t AnimatorEnabled = 700;
+		inline constexpr uint32_t AnimatorSpeed = 701;
+		inline constexpr uint32_t AnimatorIsPlaying = 702;
+		inline constexpr uint32_t AnimatorCurrentFrame = 703;
+	}
+
 	struct ManagedApiV1
 	{
 		uint32_t Version = ManagedApiVersion;
@@ -241,6 +552,14 @@ namespace TomCat::Scripting {
 		const NativeApiV1* nativeApi, ManagedApiV1* managedApi);
 
 	static_assert(std::is_standard_layout_v<NativeApiV1>);
+	static_assert(std::is_standard_layout_v<NativeApiV2>);
+	static_assert(std::is_standard_layout_v<NativeInputApiV1>);
+	static_assert(std::is_standard_layout_v<NativeAudioApiV1>);
+	static_assert(std::is_standard_layout_v<NativeAudioSpatialApiV1>);
+	static_assert(std::is_standard_layout_v<NativeRuntimeUIApiV1>);
+	static_assert(std::is_standard_layout_v<NativePropertyValueV1>);
+	static_assert(std::is_standard_layout_v<NativeComponentApiV1>);
+	static_assert(offsetof(NativeApiV2, V1) == 0);
 	static_assert(std::is_standard_layout_v<ManagedApiV1>);
 	static_assert(sizeof(NativeByteView) == 16);
 	static_assert(sizeof(EntityHandleV1) == 24);

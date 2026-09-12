@@ -97,6 +97,49 @@ public enum KeyCode : uint
     RightShift = 344, RightControl = 345, RightAlt = 346, RightSuper = 347, Menu = 348
 }
 
+public enum MouseButton : uint
+{
+	Left = 0,
+	Right = 1,
+	Middle = 2,
+	Button4 = 3,
+	Button5 = 4,
+	Button6 = 5,
+	Button7 = 6,
+	Button8 = 7
+}
+
+// Values match GLFW's cross-platform standard gamepad mapping, not device-
+// specific raw button numbers.
+public enum GamepadButton : uint
+{
+	South = 0,
+	East = 1,
+	West = 2,
+	North = 3,
+	LeftBumper = 4,
+	RightBumper = 5,
+	Back = 6,
+	Start = 7,
+	Guide = 8,
+	LeftStick = 9,
+	RightStick = 10,
+	DpadUp = 11,
+	DpadRight = 12,
+	DpadDown = 13,
+	DpadLeft = 14
+}
+
+public enum GamepadAxis : uint
+{
+	LeftX = 0,
+	LeftY = 1,
+	RightX = 2,
+	RightY = 3,
+	LeftTrigger = 4,
+	RightTrigger = 5
+}
+
 [Flags]
 public enum KeyModifiers : uint
 {
@@ -111,6 +154,8 @@ public enum KeyModifiers : uint
 
 public static unsafe class Input
 {
+	public const uint MaximumGamepads = 16;
+
     public static bool IsKeyHeld(KeyCode key) => NativeBridge.InputBoolean(key,
         NativeBridge.InputIsKeyHeld, "Input.IsKeyHeld");
     public static bool WasKeyPressed(KeyCode key) => NativeBridge.InputBoolean(key,
@@ -121,6 +166,60 @@ public static unsafe class Input
         "Input.MousePosition");
     public static Vector2 MouseDelta => NativeBridge.InputVector(NativeBridge.InputGetMouseDelta,
         "Input.MouseDelta");
+	public static bool IsMouseButtonHeld(MouseButton button) => NativeBridge.InputMouseBoolean(
+		(uint)button, NativeBridge.InputIsMouseButtonHeld, "Input.IsMouseButtonHeld");
+	public static bool WasMouseButtonPressed(MouseButton button) => NativeBridge.InputMouseBoolean(
+		(uint)button, NativeBridge.InputWasMouseButtonPressed, "Input.WasMouseButtonPressed");
+	public static bool WasMouseButtonReleased(MouseButton button) => NativeBridge.InputMouseBoolean(
+		(uint)button, NativeBridge.InputWasMouseButtonReleased, "Input.WasMouseButtonReleased");
+	public static Vector2 ScrollDelta => NativeBridge.GetScrollDelta();
+	public static bool IsWindowFocused => NativeBridge.GetWindowFocused();
+
+	public static bool IsGamepadConnected(uint gamepad = 0) => NativeBridge.InputGamepadBoolean(
+		gamepad, NativeBridge.InputIsGamepadConnected, "Input.IsGamepadConnected");
+	public static bool WasGamepadConnected(uint gamepad = 0) => NativeBridge.InputGamepadBoolean(
+		gamepad, NativeBridge.InputWasGamepadConnected, "Input.WasGamepadConnected");
+	public static bool WasGamepadDisconnected(uint gamepad = 0) => NativeBridge.InputGamepadBoolean(
+		gamepad, NativeBridge.InputWasGamepadDisconnected, "Input.WasGamepadDisconnected");
+	public static string GetGamepadName(uint gamepad = 0) => NativeBridge.GetGamepadName(gamepad);
+	public static bool IsGamepadButtonHeld(GamepadButton button, uint gamepad = 0) =>
+		NativeBridge.InputGamepadButtonBoolean(gamepad, (uint)button,
+			NativeBridge.InputIsGamepadButtonHeld, "Input.IsGamepadButtonHeld");
+	public static bool WasGamepadButtonPressed(GamepadButton button, uint gamepad = 0) =>
+		NativeBridge.InputGamepadButtonBoolean(gamepad, (uint)button,
+			NativeBridge.InputWasGamepadButtonPressed, "Input.WasGamepadButtonPressed");
+	public static bool WasGamepadButtonReleased(GamepadButton button, uint gamepad = 0) =>
+		NativeBridge.InputGamepadButtonBoolean(gamepad, (uint)button,
+			NativeBridge.InputWasGamepadButtonReleased, "Input.WasGamepadButtonReleased");
+
+	/// <summary>
+	/// Returns GLFW's standard gamepad value without normalization. Stick axes and
+	/// triggers both use the native [-1, 1] range; an idle trigger is therefore -1.
+	/// </summary>
+	public static float GetGamepadAxisRaw(GamepadAxis axis, uint gamepad = 0) =>
+		NativeBridge.GetGamepadAxis(gamepad, (uint)axis);
+
+	public static float GetGamepadAxis(GamepadAxis axis, uint gamepad = 0,
+		float deadZone = 0.15f)
+	{
+		if (!float.IsFinite(deadZone) || deadZone < 0.0f || deadZone >= 1.0f)
+			throw new ArgumentOutOfRangeException(nameof(deadZone),
+				"Dead zone must be finite and in [0, 1).");
+		float raw = GetGamepadAxisRaw(axis, gamepad);
+		if (axis is GamepadAxis.LeftTrigger or GamepadAxis.RightTrigger)
+		{
+			// GLFW exposes standard triggers as -1 (idle) through +1 (fully held).
+			// Public processed trigger values are conventional one-sided [0, 1].
+			float trigger = Math.Clamp((raw + 1.0f) * 0.5f, 0.0f, 1.0f);
+			if (trigger <= deadZone)
+				return 0.0f;
+			return (trigger - deadZone) / (1.0f - deadZone);
+		}
+		float magnitude = MathF.Abs(raw);
+		if (magnitude <= deadZone)
+			return 0.0f;
+		return MathF.CopySign((magnitude - deadZone) / (1.0f - deadZone), raw);
+	}
     public static KeyModifiers Modifiers => NativeBridge.GetModifiers();
 }
 

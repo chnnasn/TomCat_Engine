@@ -103,6 +103,57 @@ namespace TomCat {
 			return true;
 		}
 
+		bool VisitRegisteredAssetProperty(const YAML::Node& components,
+			const char* componentName, const char* propertyName,
+			const std::string& entityPath, AssetType expectedType,
+			SerializedAssetReferenceKind kind,
+			const AssetReferenceVisitor::Visitor& visitor,
+			std::string& errorMessage)
+		{
+			if (!components)
+				return true;
+			if (!components.IsSequence())
+			{
+				errorMessage = entityPath + ".Components must be an array";
+				return false;
+			}
+			for (size_t componentIndex = 0; componentIndex < components.size();
+				++componentIndex)
+			{
+				const YAML::Node component = components[componentIndex];
+				if (!component.IsMap() || !component["StableName"]
+					|| !component["StableName"].IsScalar())
+					continue;
+				if (component["StableName"].as<std::string>() != componentName)
+					continue;
+				const std::string componentPath = entityPath + ".Components["
+					+ std::to_string(componentIndex) + "]";
+				const YAML::Node properties = component["Properties"];
+				if (!properties || !properties.IsSequence())
+				{
+					errorMessage = componentPath + ".Properties must be an array";
+					return false;
+				}
+				for (size_t propertyIndex = 0; propertyIndex < properties.size();
+					++propertyIndex)
+				{
+					const YAML::Node property = properties[propertyIndex];
+					if (!property.IsMap() || !property["StableName"]
+						|| !property["StableName"].IsScalar())
+						continue;
+					if (property["StableName"].as<std::string>() != propertyName)
+						continue;
+					return VisitHandle(property, "Value", componentPath
+						+ ".Properties[" + std::to_string(propertyIndex) + "]",
+						expectedType, kind, false, visitor, errorMessage);
+				}
+				errorMessage = componentPath + " is missing registered asset property '"
+					+ propertyName + "'";
+				return false;
+			}
+			return true;
+		}
+
 	}
 
 	bool AssetReferenceVisitor::VisitScene(const YAML::Node& sceneDocument,
@@ -203,6 +254,82 @@ namespace TomCat {
 					"SpriteHandle", entityPath + ".SpriteRenderer",
 					AssetType::Texture2D, SerializedAssetReferenceKind::Sprite,
 					false, visitor, errorMessage)))
+					return false;
+
+				const YAML::Node animator = entity["SpriteAnimator"];
+				if (animator)
+				{
+					if (!animator.IsMap())
+					{
+						errorMessage = entityPath + ".SpriteAnimator must be a map";
+						return false;
+					}
+					const YAML::Node clips = animator["Clips"];
+					if (!clips || !clips.IsSequence())
+					{
+						errorMessage = entityPath
+							+ ".SpriteAnimator.Clips must be an array";
+						return false;
+					}
+					for (size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
+					{
+						const YAML::Node clip = clips[clipIndex];
+						const std::string clipPath = entityPath
+							+ ".SpriteAnimator.Clips[" + std::to_string(clipIndex) + "]";
+						if (!clip.IsMap())
+						{
+							errorMessage = clipPath + " must be a map";
+							return false;
+						}
+						const YAML::Node frames = clip["Frames"];
+						if (!frames || !frames.IsSequence())
+						{
+							errorMessage = clipPath + ".Frames must be an array";
+							return false;
+						}
+						for (size_t frameIndex = 0; frameIndex < frames.size(); ++frameIndex)
+						{
+							const YAML::Node frame = frames[frameIndex];
+							const std::string framePath = clipPath + ".Frames["
+								+ std::to_string(frameIndex) + "]";
+							if (!frame.IsMap() || !VisitHandle(frame, "SpriteHandle",
+								framePath, AssetType::Texture2D,
+								SerializedAssetReferenceKind::SpriteAnimationFrame,
+								false, visitor, errorMessage))
+								return false;
+						}
+					}
+				}
+
+				const YAML::Node audio = entity["AudioSource"];
+				if (audio && (!audio.IsMap() || !VisitHandle(audio,
+					"Clip", entityPath + ".AudioSource", AssetType::Audio,
+					SerializedAssetReferenceKind::AudioSource, false, visitor,
+					errorMessage)))
+					return false;
+
+				const YAML::Node registeredComponents = entity["Components"];
+				if (!VisitRegisteredAssetProperty(registeredComponents,
+					"TomCat.TextRenderer", "Font", entityPath, AssetType::Font,
+					SerializedAssetReferenceKind::Font, visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.TextRenderer", "FallbackFont", entityPath, AssetType::Font,
+						SerializedAssetReferenceKind::Font, visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.TextRenderer", "EmojiFont", entityPath, AssetType::Font,
+						SerializedAssetReferenceKind::Font, visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.UIText", "Font", entityPath, AssetType::Font,
+						SerializedAssetReferenceKind::Font, visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.UIText", "FallbackFont", entityPath, AssetType::Font,
+						SerializedAssetReferenceKind::Font, visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.UIText", "EmojiFont", entityPath, AssetType::Font,
+						SerializedAssetReferenceKind::Font, visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.UIImage", "Image", entityPath, AssetType::Texture2D,
+						SerializedAssetReferenceKind::UIImage, visitor, errorMessage))
 					return false;
 
 				const YAML::Node csharpScripts = entity["CSharpScripts"];

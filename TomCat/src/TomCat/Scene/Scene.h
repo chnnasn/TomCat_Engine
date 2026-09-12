@@ -111,6 +111,7 @@ namespace TomCat {
 		Entity GetParent(Entity entity);
 		std::vector<UUID> GetChildrenUUIDs(Entity entity);
 		std::vector<UUID> GetRootEntityUUIDs();
+		bool IsActiveInHierarchy(Entity entity) const;
 
 		// Starts physics and the managed scripting scene transactionally. A false
 		// result means all partially-created runtime state has already been rolled
@@ -127,6 +128,9 @@ namespace TomCat {
 		void OnUpdateRuntime(Timestep ts);
 		void OnRenderRuntime();
 		void OnViewportResize(uint32_t width, uint32_t height);
+		void SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
+			float dpiScale,
+			const glm::vec2& screenToFramebufferScale = glm::vec2(1.0f));
 		bool IsRuntimeRunning() const { return m_RuntimeRunning; }
 		// Prefab commits enqueue a complete UUID batch. Delivery occurs only after
 		// managed callbacks / Box2D locked regions have returned to a Scene safe
@@ -196,6 +200,9 @@ namespace TomCat {
 		entt::registry m_Registry;
 		std::string m_SceneName = "Untitled";
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
+		glm::vec2 m_RuntimeUIViewportOrigin{ 0.0f };
+		float m_RuntimeUIDPIScale = 1.0f;
+		glm::vec2 m_RuntimeUIScreenToFramebufferScale{ 1.0f };
 
 		b2World* m_PhysicsWorld = nullptr;
 		SceneContactFilter2D* m_ContactFilter = nullptr;
@@ -211,6 +218,15 @@ namespace TomCat {
 		std::unordered_map<CollisionListenerHandle, TriggerEnter2DCallback> m_TriggerEnterListeners;
 		std::unordered_map<CollisionListenerHandle, TriggerExit2DCallback> m_TriggerExitListeners;
 		std::unordered_map<UUID, b2Body*> m_RuntimeBodies;
+		struct SuspendedRuntimeBodyState
+		{
+			float LinearVelocityX = 0.0f;
+			float LinearVelocityY = 0.0f;
+			float AngularVelocity = 0.0f;
+			bool Awake = true;
+		};
+		std::unordered_map<UUID, SuspendedRuntimeBodyState>
+			m_SuspendedRuntimeBodyStates;
 		uint64_t m_RuntimePhysicsDefinitionHash = 0;
 		bool m_HasRuntimePhysicsDefinition = false;
 		RuntimeEntityBatchCreatedCallback m_RuntimeEntityBatchCreatedCallback;
@@ -223,6 +239,7 @@ namespace TomCat {
 		std::vector<UUID> m_EntityOrder;
 
 		friend class Entity;
+		friend class RuntimeUISystem;
 		friend class SceneContactFilter2D;
 		friend class SceneSerializer;
 		friend class SceneHierarchyPanel;

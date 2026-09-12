@@ -60,11 +60,12 @@ namespace TomCat {
 		if (extension == ".glsl" || extension == ".vert" || extension == ".frag" ||
 			extension == ".comp" || extension == ".hlsl")
 			return AssetType::Shader;
-		if (extension == ".wav" || extension == ".ogg" || extension == ".mp3" ||
-			extension == ".flac")
+		// Keep type discovery aligned with formats that the P0 importer, cooker and
+		// Player can actually consume end to end. Unsupported containers remain
+		// ordinary files until a decoder/importer is registered for them.
+		if (extension == ".wav")
 			return AssetType::Audio;
-		if (extension == ".ttf" || extension == ".otf" || extension == ".woff" ||
-			extension == ".woff2")
+		if (extension == ".ttf" || extension == ".otf" || extension == ".ttc")
 			return AssetType::Font;
 		if (extension == ".obj" || extension == ".fbx" || extension == ".gltf" ||
 			extension == ".glb")

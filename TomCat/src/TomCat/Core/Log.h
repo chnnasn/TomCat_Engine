@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Base.h"
+#include "ApplicationPaths.h"
 
 #include "spdlog/spdlog.h"
 #include "spdlog/fmt/ostr.h"
@@ -15,7 +16,11 @@ namespace TomCat {
 	class Log
 	{
 	public:
-		static void Init();
+		// Returns true when the file sink was created. Console logging remains
+		// available when LocalAppData cannot be resolved or written.
+		static bool Init(ApplicationProduct product = ApplicationProduct::Unknown,
+			const std::optional<std::filesystem::path>& localAppDataOverride = std::nullopt);
+		static void Shutdown();
 
 		static Ref<spdlog::logger>& GetCoreLogger() { return s_CoreLogger; }
 		static Ref<spdlog::logger>& GetClientLogger() { return s_ClientLogger; }

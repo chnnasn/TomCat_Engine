@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "VersionTools.ps1")
 . (Join-Path $PSScriptRoot "ManagedReleaseTools.ps1")
 
 function Resolve-MSBuild {
@@ -107,23 +108,11 @@ if ($Build) {
 $outputName = "$Configuration-windows-x86_64"
 $playerRoot = Join-Path $repositoryRoot "Player\bin\$outputName\TomCatPlayer"
 $playerExecutable = Join-Path $playerRoot "TomCatPlayer.exe"
-$compatibilityHeader = Get-Content -LiteralPath (Join-Path $repositoryRoot "TomCat\src\TomCat\Runtime\RuntimeCompatibility.h") -Raw
-if ($compatibilityHeader -notmatch 'EngineBuildID\s*=\s*"([^"]+)"') {
-    throw "Could not read EngineBuildID from RuntimeCompatibility.h."
-}
-$engineBuildId = $Matches[1]
-if ($compatibilityHeader -notmatch 'TcpakVersion\s*=\s*([0-9]+)') {
-    throw "Could not read TcpakVersion from RuntimeCompatibility.h."
-}
-$tcpakVersion = [uint32]$Matches[1]
-if ($compatibilityHeader -notmatch 'PlayerAbiVersion\s*=\s*([0-9]+)') {
-    throw "Could not read PlayerAbiVersion from RuntimeCompatibility.h."
-}
-$playerAbiVersion = [uint32]$Matches[1]
-if ($compatibilityHeader -notmatch 'PlayerTemplateSchemaVersion\s*=\s*([0-9]+)') {
-    throw "Could not read PlayerTemplateSchemaVersion from RuntimeCompatibility.h."
-}
-$templateSchemaVersion = [uint32]$Matches[1]
+$versionInfo = Get-TomCatVersionInfo -RepositoryRoot $repositoryRoot
+$engineBuildId = $versionInfo.EngineBuildID
+$tcpakVersion = $versionInfo.TcpakVersion
+$playerAbiVersion = $versionInfo.PlayerAbiVersion
+$templateSchemaVersion = $versionInfo.PlayerTemplateSchemaVersion
 
 $managedRoot = Join-Path $repositoryRoot "Managed\TomCat.ScriptHost\bin\Release\net10.0"
 $vcRuntimeRoot = Resolve-VCReleaseRuntime

@@ -6,6 +6,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -14,6 +15,8 @@
 #include <vector>
 
 #include "TomCat/Scene/Components.h"
+#include "TomCat/Scene/ComponentRegistry.h"
+#include "TomCat/Scene/SpriteAnimatorAuthoring.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/KeyCodes.h"
@@ -299,6 +302,234 @@ namespace TomCat {
 		return LowerASCII(PathToUTF8(metadata.FilePath)).find(query) != std::string::npos;
 	}
 
+	static bool ResolveSelectableSprite(AssetHandle handle,
+		const AssetMetadata*& metadata, const AssetSubAsset*& subAsset)
+	{
+		metadata = nullptr;
+		subAsset = nullptr;
+		if (static_cast<uint64_t>(handle) == 0)
+			return true;
+		AssetRegistry& registry = AssetManager::Get().GetRegistry();
+		metadata = registry.GetMetadata(handle);
+		if (!metadata)
+			metadata = registry.GetSubAssetOwner(handle, &subAsset);
+		return metadata && !metadata->IsMissing && IsSpriteAsset(*metadata)
+			&& (!subAsset || subAsset->Type == AssetType::Texture2D);
+	}
+
+	static std::string AnimatorSpriteLabel(AssetHandle handle)
+	{
+		if (static_cast<uint64_t>(handle) == 0)
+			return "None";
+		const AssetMetadata* metadata = nullptr;
+		const AssetSubAsset* subAsset = nullptr;
+		if (!ResolveSelectableSprite(handle, metadata, subAsset))
+			return "Missing #" + std::to_string(static_cast<uint64_t>(handle));
+		std::string label = PathToUTF8(metadata->FilePath.filename());
+		if (subAsset)
+			label += " / " + subAsset->Name;
+		return label;
+	}
+
+	static bool DrawAnimatorSpriteField(const char* id, AssetHandle& handle)
+	{
+		bool changed = false;
+		const std::string label = AnimatorSpriteLabel(handle);
+		const std::string buttonLabel = label + "###" + id;
+		if (ImGui::Button(buttonLabel.c_str(), ImVec2(-1.0f, 0.0f)))
+			ImGui::OpenPopup("Select Sprite");
+		if (ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				AssetDragDropPayloadID))
+			{
+				if (payload->DataSize == sizeof(uint64_t))
+				{
+					const AssetHandle candidate(
+						*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = nullptr;
+					const AssetSubAsset* subAsset = nullptr;
+					if (ResolveSelectableSprite(candidate, metadata, subAsset)
+						&& candidate != handle)
+					{
+						handle = candidate;
+						changed = true;
+					}
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+		if (ImGui::BeginPopupContextItem("Sprite Context"))
+		{
+			if (ImGui::MenuItem("Clear", nullptr, false,
+				static_cast<uint64_t>(handle) != 0))
+			{
+				handle = AssetHandle(0);
+				changed = true;
+			}
+			ImGui::EndPopup();
+		}
+
+		if (ImGui::BeginPopup("Select Sprite"))
+		{
+			if (ImGui::Selectable("None", static_cast<uint64_t>(handle) == 0))
+			{
+				handle = AssetHandle(0);
+				changed = true;
+				ImGui::CloseCurrentPopup();
+			}
+			std::vector<const AssetMetadata*> sprites;
+			for (const auto& [assetHandle, metadata] :
+				AssetManager::Get().GetRegistry().GetAssets())
+			{
+				(void)assetHandle;
+				if (IsSpriteAsset(metadata) && !metadata.IsMissing)
+					sprites.push_back(&metadata);
+			}
+			std::sort(sprites.begin(), sprites.end(), [](const AssetMetadata* left,
+				const AssetMetadata* right)
+			{
+				return LowerASCII(PathToUTF8(left->FilePath))
+					< LowerASCII(PathToUTF8(right->FilePath));
+			});
+			for (const AssetMetadata* metadata : sprites)
+			{
+				const std::string parentName = PathToUTF8(metadata->FilePath.filename());
+				const std::string parentID = parentName + "###Sprite_"
+					+ std::to_string(static_cast<uint64_t>(metadata->Handle));
+				if (ImGui::Selectable(parentID.c_str(), handle == metadata->Handle))
+				{
+					handle = metadata->Handle;
+					changed = true;
+					ImGui::CloseCurrentPopup();
+				}
+				for (const AssetSubAsset& child : metadata->SubAssets)
+				{
+					if (child.Type != AssetType::Texture2D)
+						continue;
+					ImGui::Indent();
+					const std::string childName = child.Name + "###Sprite_"
+						+ std::to_string(static_cast<uint64_t>(child.Handle));
+					if (ImGui::Selectable(childName.c_str(), handle == child.Handle))
+					{
+						handle = child.Handle;
+						changed = true;
+						ImGui::CloseCurrentPopup();
+					}
+					ImGui::Unindent();
+				}
+			}
+			ImGui::EndPopup();
+		}
+		return changed;
+	}
+
+	static void DrawAnimatorSectionLabel(const char* label)
+	{
+		ImGui::Spacing();
+		ImGui::TextDisabled("%s", label);
+		ImGui::Separator();
+	}
+
+	static bool ResolveRegisteredAssetReference(
+		const AssetPropertyMetadata& semantics, AssetHandle handle,
+		const AssetMetadata*& metadata, const AssetSubAsset*& subAsset)
+	{
+		metadata = nullptr;
+		subAsset = nullptr;
+		if (static_cast<uint64_t>(handle) == 0)
+			return true;
+		AssetRegistry& registry = AssetManager::Get().GetRegistry();
+		metadata = registry.GetMetadata(handle);
+		if (!metadata)
+			metadata = registry.GetSubAssetOwner(handle, &subAsset);
+		const AssetType type = subAsset ? subAsset->Type
+			: metadata ? metadata->Type : AssetType::None;
+		return metadata && !metadata->IsMissing
+			&& semantics.Accepts(type, subAsset != nullptr);
+	}
+
+	static std::string RegisteredAssetReferenceLabel(
+		const AssetPropertyMetadata& semantics, AssetHandle handle)
+	{
+		if (static_cast<uint64_t>(handle) == 0)
+			return "None";
+		const AssetMetadata* metadata = nullptr;
+		const AssetSubAsset* subAsset = nullptr;
+		const bool compatible = ResolveRegisteredAssetReference(semantics,
+			handle, metadata, subAsset);
+		if (!metadata)
+			return "Missing #" + std::to_string(static_cast<uint64_t>(handle));
+		std::string label = PathToUTF8(metadata->FilePath.filename());
+		if (subAsset)
+			label += " / " + subAsset->Name;
+		if (metadata->IsMissing)
+			label += " (Missing)";
+		else if (!compatible)
+			label += " (Incompatible)";
+		return label;
+	}
+
+	static bool DrawRegisteredAssetReference(const PropertyDescriptor& property,
+		AssetHandle& handle)
+	{
+		const AssetPropertyMetadata& semantics = *property.AssetReference;
+		ImGui::TextUnformatted(property.DisplayName.c_str());
+		if (semantics.AllowSubAssets && semantics.AcceptedTypes.size() == 1
+			&& semantics.AcceptedTypes.front() == AssetType::Texture2D)
+			return DrawAnimatorSpriteField("RegisteredSpriteReference", handle);
+
+		bool changed = false;
+		const std::string label = RegisteredAssetReferenceLabel(semantics, handle)
+			+ "###RegisteredAssetReference";
+		ImGui::Button(label.c_str(), ImVec2(-1.0f, 0.0f));
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+		{
+			std::string accepted;
+			for (const AssetType type : semantics.AcceptedTypes)
+			{
+				if (!accepted.empty())
+					accepted += ", ";
+				accepted += AssetTypeToString(type);
+			}
+			ImGui::SetTooltip("Accepted: %s\nDrag an asset here. Right-click to clear.",
+				accepted.c_str());
+		}
+		if (ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				AssetDragDropPayloadID, ImGuiDragDropFlags_AcceptBeforeDelivery))
+			{
+				if (payload->DataSize == sizeof(uint64_t))
+				{
+					const AssetHandle candidate(
+						*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = nullptr;
+					const AssetSubAsset* subAsset = nullptr;
+					if (ResolveRegisteredAssetReference(semantics, candidate,
+						metadata, subAsset) && payload->IsDelivery()
+						&& candidate != handle)
+					{
+						handle = candidate;
+						changed = true;
+					}
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+		if (ImGui::BeginPopupContextItem("RegisteredAssetReferenceContext"))
+		{
+			if (ImGui::MenuItem("Clear", nullptr, false,
+				static_cast<uint64_t>(handle) != 0))
+			{
+				handle = AssetHandle(0);
+				changed = true;
+			}
+			ImGui::EndPopup();
+		}
+		return changed;
+	}
+
 	static float DrawTreeRowIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
 		const ImVec2& itemMin, const ImVec2& itemMax, ImU32 tint = IM_COL32_WHITE)
 	{
@@ -552,6 +783,10 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::SetContext(const Ref<Scene>& context, bool clearSelection, bool remapSelection)
 	{
+		if (m_ModificationGestureActive && m_SceneModifiedCallback)
+			m_SceneModifiedCallback(SceneModificationPhase::Cancel);
+		m_ModificationGestureActive = false;
+		m_CommitAfterPendingDeletion = false;
 		UUID selectedUUID{};
 		const bool hadSelection = !clearSelection && remapSelection && (bool)m_SelectionContext;
 		if (hadSelection)
@@ -570,6 +805,10 @@ namespace TomCat {
 		m_SpritePickerOpen = false;
 		m_SpritePickerEntity = UUID(0);
 		m_SpriteSearch.fill('\0');
+		m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+		m_AnimatorRenameEntity = UUID(0);
+		m_AnimatorRenameBuffer.fill('\0');
+		m_AnimatorRenameError.clear();
 		ClearColliderEditMode();
 		if (contextChanged)
 			ClearClipboard();
@@ -592,10 +831,53 @@ namespace TomCat {
 		m_ClipboardIsCut = false;
 	}
 
-	void SceneHierarchyPanel::MarkModified()
+	void SceneHierarchyPanel::MarkModified(bool instant)
 	{
-		if (m_SceneModifiedCallback)
-			m_SceneModifiedCallback();
+		if (!m_SceneModifiedCallback)
+			return;
+		if (instant)
+		{
+			if (m_ModificationGestureActive)
+				m_SceneModifiedCallback(SceneModificationPhase::Commit);
+			m_ModificationGestureActive = false;
+			m_SceneModifiedCallback(SceneModificationPhase::Instant);
+			return;
+		}
+
+		const bool hasImGui = ImGui::GetCurrentContext() != nullptr;
+		const bool itemActivated = hasImGui && ImGui::IsItemActivated();
+		if (m_ModificationGestureActive && itemActivated)
+		{
+			m_SceneModifiedCallback(SceneModificationPhase::Commit);
+			m_ModificationGestureActive = false;
+		}
+		if (!hasImGui || !ImGui::IsAnyItemActive())
+		{
+			m_SceneModifiedCallback(SceneModificationPhase::Instant);
+			return;
+		}
+		if (!m_ModificationGestureActive)
+		{
+			m_SceneModifiedCallback(SceneModificationPhase::Begin);
+			m_ModificationGestureActive = true;
+		}
+		m_SceneModifiedCallback(SceneModificationPhase::Update);
+		if (ImGui::IsItemDeactivatedAfterEdit())
+		{
+			m_SceneModifiedCallback(SceneModificationPhase::Commit);
+			m_ModificationGestureActive = false;
+		}
+	}
+
+	void SceneHierarchyPanel::FinishModificationGesture()
+	{
+		if (!m_ModificationGestureActive || !m_SceneModifiedCallback)
+			return;
+		if (!ImGui::GetCurrentContext() || !ImGui::IsAnyItemActive())
+		{
+			m_SceneModifiedCallback(SceneModificationPhase::Commit);
+			m_ModificationGestureActive = false;
+		}
 	}
 
 	bool SceneHierarchyPanel::AttachCSharpScript(Entity entity, AssetHandle handle)
@@ -765,7 +1047,14 @@ namespace TomCat {
 			m_SelectionContext = {};
 		if (hadClipboard && !m_Context->FindEntityByUUID(clipboardUUID))
 			ClearClipboard();
-		MarkModified();
+		if (m_CommitAfterPendingDeletion && m_SceneModifiedCallback)
+		{
+			m_SceneModifiedCallback(SceneModificationPhase::Update);
+			m_SceneModifiedCallback(SceneModificationPhase::Commit);
+			m_CommitAfterPendingDeletion = false;
+		}
+		else
+			MarkModified(true);
 		return true;
 	}
 
@@ -968,12 +1257,18 @@ namespace TomCat {
 			}
 			ImGui::End();
 		}
+		FinishModificationGesture();
 	}
 
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
 	{
 		if (m_SelectionContext != entity)
+		{
 			ClearColliderEditMode();
+			m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+			m_AnimatorRenameEntity = UUID(0);
+			m_AnimatorRenameError.clear();
+		}
 		if (m_SpritePickerOpen && m_SelectionContext != entity)
 		{
 			m_SpritePickerOpen = false;
@@ -1038,12 +1333,19 @@ namespace TomCat {
 			return;
 		m_SelectionContext = pasted;
 		BeginRename(pasted);
-		if (m_ClipboardIsCut)
+		const bool cutPaste = m_ClipboardIsCut;
+		if (cutPaste)
 		{
+			if (m_SceneModifiedCallback)
+				m_SceneModifiedCallback(SceneModificationPhase::Begin);
 			m_EntityToDelete = m_ClipboardEntity;
 			ClearClipboard();
+			m_CommitAfterPendingDeletion = true;
+			if (m_SceneModifiedCallback)
+				m_SceneModifiedCallback(SceneModificationPhase::Update);
 		}
-		MarkModified();
+		else
+			MarkModified(true);
 	}
 
 	void SceneHierarchyPanel::DuplicateSelectedEntity()
@@ -1055,7 +1357,7 @@ namespace TomCat {
 				return;
 			m_SelectionContext = duplicate;
 			BeginRename(duplicate);
-			MarkModified();
+			MarkModified(true);
 		}
 	}
 
@@ -1118,7 +1420,7 @@ namespace TomCat {
 			}
 			m_SelectionContext = entity;
 			BeginRename(entity);
-			MarkModified();
+			MarkModified(true);
 		};
 
 		if (ImGui::MenuItem("Create Empty Entity"))
@@ -1447,11 +1749,14 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	template<typename T> static bool* GetComponentEnabledFlag(T&) { return nullptr; }
 	template<> static bool* GetComponentEnabledFlag<C_Camera>(C_Camera& component) { return &component.Primary; }
 	template<> static bool* GetComponentEnabledFlag<SpriteRenderer>(SpriteRenderer& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<SpriteAnimator>(SpriteAnimator& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<LineRenderer>(LineRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<BoxCollider2D>(BoxCollider2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<CircleCollider2D>(CircleCollider2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<DistanceJoint2D>(DistanceJoint2D& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<AudioSource>(AudioSource& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<AudioListener>(AudioListener& component) { return &component.Enabled; }
 
 	static bool DrawColliderMaterialProperties(float& density, float& friction, float& restitution)
 	{
@@ -1609,6 +1914,895 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}
 		ImGui::PopID();
 	}
+	}
+
+	template<typename ModifiedFunction>
+	static void DrawRegisteredComponent(const ComponentDescriptor& descriptor,
+		Entity entity, ModifiedFunction onModified, bool editable)
+	{
+		if (!entity || !descriptor.InspectorVisible || !descriptor.Has(entity))
+			return;
+
+		ImGui::PushID(descriptor.StableName.c_str());
+		ImGui::Separator();
+		const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen
+			| ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth
+			| ImGuiTreeNodeFlags_FramePadding;
+		const bool open = ImGui::TreeNodeEx("##RegisteredComponent", flags,
+			"%s", descriptor.DisplayName.c_str());
+
+		bool remove = false;
+		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 8.0f);
+		ImGui::BeginDisabled(!editable);
+		if (ImGui::SmallButton("..."))
+			ImGui::OpenPopup("RegisteredComponentSettings");
+		ImGui::EndDisabled();
+		if (ImGui::BeginPopup("RegisteredComponentSettings"))
+		{
+			ImGui::BeginDisabled(!editable);
+			if (ImGui::MenuItem("Remove component"))
+				remove = true;
+			ImGui::EndDisabled();
+			ImGui::EndPopup();
+		}
+
+		if (open)
+		{
+			ImGui::BeginDisabled(!editable);
+			for (const PropertyDescriptor& property : descriptor.Properties)
+			{
+				ImGui::PushID(property.StableName.c_str());
+				PropertyValue value = property.Get(entity);
+				bool changed = false;
+				switch (property.Kind)
+				{
+					case PropertyKind::Bool:
+					{
+						bool item = std::get<bool>(value);
+						changed = ImGui::Checkbox(property.DisplayName.c_str(), &item);
+						value = item;
+						break;
+					}
+					case PropertyKind::Int32:
+					{
+						int32_t item = std::get<int32_t>(value);
+						changed = ImGui::DragInt(property.DisplayName.c_str(), &item, 1.0f);
+						value = item;
+						break;
+					}
+					case PropertyKind::Int64:
+					{
+						int64_t item = std::get<int64_t>(value);
+						changed = ImGui::InputScalar(property.DisplayName.c_str(),
+							ImGuiDataType_S64, &item);
+						value = item;
+						break;
+					}
+					case PropertyKind::UInt32:
+					{
+						uint32_t item = std::get<uint32_t>(value);
+						changed = ImGui::InputScalar(property.DisplayName.c_str(),
+							ImGuiDataType_U32, &item);
+						value = item;
+						break;
+					}
+					case PropertyKind::UInt64:
+					{
+						uint64_t item = std::get<uint64_t>(value);
+						if (property.AssetReference)
+						{
+							AssetHandle handle(item);
+							changed = DrawRegisteredAssetReference(property, handle);
+							item = static_cast<uint64_t>(handle);
+						}
+						else
+							changed = ImGui::InputScalar(property.DisplayName.c_str(),
+								ImGuiDataType_U64, &item);
+						value = item;
+						break;
+					}
+					case PropertyKind::Float:
+					{
+						float item = std::get<float>(value);
+						changed = ImGui::DragFloat(property.DisplayName.c_str(), &item, 0.1f);
+						value = item;
+						break;
+					}
+					case PropertyKind::Double:
+					{
+						double item = std::get<double>(value);
+						changed = ImGui::InputDouble(property.DisplayName.c_str(), &item);
+						value = item;
+						break;
+					}
+					case PropertyKind::String:
+					{
+						std::array<char, 1024> buffer{};
+						const std::string& item = std::get<std::string>(value);
+						const size_t count = std::min(item.size(), buffer.size() - 1);
+						std::copy_n(item.data(), count, buffer.data());
+						changed = ImGui::InputText(property.DisplayName.c_str(),
+							buffer.data(), buffer.size());
+						value = std::string(buffer.data());
+						break;
+					}
+					case PropertyKind::Vector2:
+					{
+						auto item = std::get<glm::vec2>(value);
+						changed = ImGui::DragFloat2(property.DisplayName.c_str(),
+							glm::value_ptr(item), 0.1f);
+						value = item;
+						break;
+					}
+					case PropertyKind::Vector3:
+					{
+						auto item = std::get<glm::vec3>(value);
+						changed = ImGui::DragFloat3(property.DisplayName.c_str(),
+							glm::value_ptr(item), 0.1f);
+						value = item;
+						break;
+					}
+					case PropertyKind::Vector4:
+					{
+						auto item = std::get<glm::vec4>(value);
+						changed = ImGui::DragFloat4(property.DisplayName.c_str(),
+							glm::value_ptr(item), 0.1f);
+						value = item;
+						break;
+					}
+				}
+				if (changed)
+				{
+					std::string error;
+					if (property.Set(entity, value, error))
+						onModified();
+					else
+						TC_Core_Warn("Could not set {0}.{1}: {2}", descriptor.StableName,
+							property.StableName, error);
+				}
+				ImGui::PopID();
+			}
+			ImGui::EndDisabled();
+			ImGui::TreePop();
+		}
+
+		if (remove)
+		{
+			std::string error;
+			if (descriptor.Remove(entity, error))
+				onModified();
+			else
+				TC_Core_Warn("Could not remove {0}: {1}", descriptor.StableName, error);
+		}
+		ImGui::PopID();
+	}
+
+	void SceneHierarchyPanel::DrawSpriteAnimatorInspector(SpriteAnimator& animator,
+		Entity entity)
+	{
+		using namespace SpriteAnimatorAuthoring;
+
+		if (m_AnimatorRenameTarget != AnimatorRenameTarget::None
+			&& m_AnimatorRenameEntity != entity.GetUUID())
+		{
+			m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+			m_AnimatorRenameEntity = UUID(0);
+			m_AnimatorRenameError.clear();
+		}
+
+		std::function<void()> pendingMutation;
+		bool requestRenamePopup = false;
+		auto requestRename = [&](AnimatorRenameTarget target, size_t index,
+			const std::string& currentName)
+		{
+			m_AnimatorRenameTarget = target;
+			m_AnimatorRenameEntity = entity.GetUUID();
+			m_AnimatorRenameIndex = index;
+			strncpy_s(m_AnimatorRenameBuffer.data(), m_AnimatorRenameBuffer.size(),
+				currentName.c_str(), _TRUNCATE);
+			m_AnimatorRenameError.clear();
+			requestRenamePopup = true;
+		};
+
+		if (ImGui::Checkbox("Play On Start", &animator.PlayOnStart))
+			MarkModified();
+		float animatorSpeed = animator.Speed;
+		if (ImGui::DragFloat("Speed", &animatorSpeed, 0.05f, 0.0f, 100.0f,
+			"%.2f", ImGuiSliderFlags_AlwaysClamp) && std::isfinite(animatorSpeed))
+		{
+			animatorSpeed = std::clamp(animatorSpeed, 0.0f, 100.0f);
+			if (animatorSpeed != animator.Speed)
+			{
+				animator.Speed = animatorSpeed;
+				MarkModified();
+			}
+		}
+
+		const char* initialClip = animator.InitialClip.empty()
+			? "First clip" : animator.InitialClip.c_str();
+		if (ImGui::BeginCombo("Initial Clip", initialClip))
+		{
+			if (ImGui::Selectable("First clip", animator.InitialClip.empty()))
+			{
+				animator.InitialClip.clear();
+				MarkModified(true);
+			}
+			for (const SpriteAnimationClip& clip : animator.Clips)
+			{
+				if (ImGui::Selectable(clip.Name.c_str(), animator.InitialClip == clip.Name))
+				{
+					animator.InitialClip = clip.Name;
+					MarkModified(true);
+				}
+			}
+			ImGui::EndCombo();
+		}
+
+		if (!animator.States.empty())
+		{
+			const char* initialState = animator.InitialState.empty()
+				? "First state" : animator.InitialState.c_str();
+			if (ImGui::BeginCombo("Initial State", initialState))
+			{
+				if (ImGui::Selectable("First state", animator.InitialState.empty()))
+				{
+					animator.InitialState.clear();
+					MarkModified(true);
+				}
+				for (const AnimatorState& state : animator.States)
+				{
+					if (ImGui::Selectable(state.Name.c_str(),
+						animator.InitialState == state.Name))
+					{
+						animator.InitialState = state.Name;
+						MarkModified(true);
+					}
+				}
+				ImGui::EndCombo();
+			}
+		}
+
+		ImGui::TextDisabled("%zu clips, %zu parameters, %zu states, %zu transitions",
+			animator.Clips.size(), animator.Parameters.size(), animator.States.size(),
+			animator.Transitions.size());
+
+		if (ImGui::TreeNodeEx("Clips", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			for (size_t clipIndex = 0; clipIndex < animator.Clips.size(); ++clipIndex)
+			{
+				SpriteAnimationClip& clip = animator.Clips[clipIndex];
+				ImGui::PushID(static_cast<int>(clipIndex));
+				const bool clipOpen = ImGui::TreeNodeEx("##Clip", 0, "%zu. %s",
+					clipIndex + 1, clip.Name.c_str());
+				if (clipOpen)
+				{
+					if (ImGui::Checkbox("Loop", &clip.Loop))
+						MarkModified();
+					if (ImGui::Button("Rename"))
+						requestRename(AnimatorRenameTarget::Clip, clipIndex, clip.Name);
+					ImGui::SameLine();
+					ImGui::BeginDisabled(clipIndex == 0);
+					if (ImGui::SmallButton("Up") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, clipIndex]()
+						{
+							std::swap(animator.Clips[clipIndex - 1],
+								animator.Clips[clipIndex]);
+							MarkModified(true);
+						};
+					}
+					ImGui::EndDisabled();
+					ImGui::SameLine();
+					ImGui::BeginDisabled(clipIndex + 1 >= animator.Clips.size());
+					if (ImGui::SmallButton("Down") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, clipIndex]()
+						{
+							std::swap(animator.Clips[clipIndex],
+								animator.Clips[clipIndex + 1]);
+							MarkModified(true);
+						};
+					}
+					ImGui::EndDisabled();
+					ImGui::SameLine();
+					ImGui::BeginDisabled(animator.Clips.size() == 1);
+					if (ImGui::SmallButton("Remove") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, clipIndex]()
+						{
+							std::string error;
+							if (RemoveClip(animator, clipIndex, error))
+								MarkModified(true);
+							else if (!error.empty())
+								TC_Core_Warn("Could not remove Animator clip: {0}", error);
+						};
+					}
+					ImGui::EndDisabled();
+
+					DrawAnimatorSectionLabel("Frames");
+					for (size_t frameIndex = 0; frameIndex < clip.Frames.size(); ++frameIndex)
+					{
+						SpriteAnimationFrame& frame = clip.Frames[frameIndex];
+						ImGui::PushID(static_cast<int>(frameIndex));
+						ImGui::Text("Frame %zu", frameIndex + 1);
+						ImGui::SameLine();
+						ImGui::BeginDisabled(frameIndex == 0);
+						if (ImGui::SmallButton("Up") && !pendingMutation)
+						{
+							pendingMutation = [this, &animator, clipIndex, frameIndex]()
+							{
+								auto& frames = animator.Clips[clipIndex].Frames;
+								std::swap(frames[frameIndex - 1], frames[frameIndex]);
+								MarkModified(true);
+							};
+						}
+						ImGui::EndDisabled();
+						ImGui::SameLine();
+						ImGui::BeginDisabled(frameIndex + 1 >= clip.Frames.size());
+						if (ImGui::SmallButton("Down") && !pendingMutation)
+						{
+							pendingMutation = [this, &animator, clipIndex, frameIndex]()
+							{
+								auto& frames = animator.Clips[clipIndex].Frames;
+								std::swap(frames[frameIndex], frames[frameIndex + 1]);
+								MarkModified(true);
+							};
+						}
+						ImGui::EndDisabled();
+						ImGui::SameLine();
+						ImGui::BeginDisabled(clip.Frames.size() == 1);
+						if (ImGui::SmallButton("Remove") && !pendingMutation)
+						{
+							pendingMutation = [this, &animator, clipIndex, frameIndex]()
+							{
+								auto& frames = animator.Clips[clipIndex].Frames;
+								frames.erase(frames.begin()
+									+ static_cast<std::ptrdiff_t>(frameIndex));
+								MarkModified(true);
+							};
+						}
+						ImGui::EndDisabled();
+
+						ImGui::TextDisabled("Sprite");
+						if (DrawAnimatorSpriteField("Sprite", frame.SpriteHandle))
+							MarkModified(true);
+						float duration = frame.DurationSeconds;
+						if (ImGui::DragFloat("Duration (s)", &duration, 0.005f,
+							0.001f, 60.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp)
+							&& std::isfinite(duration))
+						{
+							duration = std::clamp(duration, 0.001f, 60.0f);
+							if (duration != frame.DurationSeconds)
+							{
+								frame.DurationSeconds = duration;
+								MarkModified();
+							}
+						}
+						ImGui::Separator();
+						ImGui::PopID();
+					}
+					if (ImGui::Button("Add Frame") && !pendingMutation)
+					{
+						AssetHandle sprite = AssetHandle(0);
+						if (!clip.Frames.empty())
+							sprite = clip.Frames.back().SpriteHandle;
+						else if (entity.HasComponent<SpriteRenderer>())
+							sprite = entity.GetComponent<SpriteRenderer>().SpriteHandle;
+						pendingMutation = [this, &animator, clipIndex, sprite]()
+						{
+							animator.Clips[clipIndex].Frames.push_back(
+								{ sprite, 1.0f / 12.0f });
+							MarkModified(true);
+						};
+					}
+					ImGui::TreePop();
+				}
+				ImGui::PopID();
+			}
+			if (ImGui::Button("Add Clip") && !pendingMutation)
+			{
+				AssetHandle sprite = AssetHandle(0);
+				if (entity.HasComponent<SpriteRenderer>())
+					sprite = entity.GetComponent<SpriteRenderer>().SpriteHandle;
+				pendingMutation = [this, &animator, sprite]()
+				{
+					SpriteAnimationClip clip;
+					clip.Name = MakeUniqueName(animator.Clips, std::string("Clip"),
+						[](const SpriteAnimationClip& item) { return item.Name; });
+					clip.Frames.push_back({ sprite, 1.0f / 12.0f });
+					animator.Clips.push_back(std::move(clip));
+					MarkModified(true);
+				};
+			}
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNodeEx("Parameters", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			static constexpr const char* typeNames[] =
+				{ "Bool", "Int", "Float", "Trigger" };
+			for (size_t parameterIndex = 0;
+				parameterIndex < animator.Parameters.size(); ++parameterIndex)
+			{
+				AnimatorParameter& parameter = animator.Parameters[parameterIndex];
+				ImGui::PushID(static_cast<int>(parameterIndex));
+				DrawAnimatorSectionLabel(parameter.Name.c_str());
+				if (ImGui::SmallButton("Rename"))
+					requestRename(AnimatorRenameTarget::Parameter, parameterIndex,
+						parameter.Name);
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Remove") && !pendingMutation)
+				{
+					pendingMutation = [this, &animator, parameterIndex]()
+					{
+						std::string error;
+						if (RemoveParameter(animator, parameterIndex, error))
+							MarkModified(true);
+						else if (!error.empty())
+							TC_Core_Warn("Could not remove Animator parameter: {0}", error);
+					};
+				}
+				int type = std::clamp(static_cast<int>(parameter.Type), 0, 3);
+				if (ImGui::BeginCombo("Type", typeNames[type]))
+				{
+					for (int candidate = 0; candidate < 4; ++candidate)
+					{
+						if (ImGui::Selectable(typeNames[candidate], candidate == type)
+							&& SetParameterType(animator, parameterIndex,
+								static_cast<AnimatorParameterType>(candidate)))
+							MarkModified(true);
+					}
+					ImGui::EndCombo();
+				}
+				switch (parameter.Type)
+				{
+					case AnimatorParameterType::Bool:
+						if (ImGui::Checkbox("Default", &parameter.BoolValue))
+							MarkModified();
+						break;
+					case AnimatorParameterType::Int:
+						if (ImGui::InputInt("Default", &parameter.IntValue))
+							MarkModified();
+						break;
+					case AnimatorParameterType::Float:
+					{
+						float value = parameter.FloatValue;
+						if (ImGui::DragFloat("Default", &value, 0.05f)
+							&& std::isfinite(value) && value != parameter.FloatValue)
+						{
+							parameter.FloatValue = value;
+							MarkModified();
+						}
+						break;
+					}
+					case AnimatorParameterType::Trigger:
+						ImGui::TextDisabled("Triggers always start reset.");
+						break;
+				}
+				ImGui::PopID();
+			}
+			if (ImGui::Button("Add Parameter") && !pendingMutation)
+			{
+				pendingMutation = [this, &animator]()
+				{
+					AnimatorParameter parameter;
+					parameter.Name = MakeUniqueName(animator.Parameters,
+						std::string("Parameter"),
+						[](const AnimatorParameter& item) { return item.Name; });
+					animator.Parameters.push_back(std::move(parameter));
+					MarkModified(true);
+				};
+			}
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNodeEx("States", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			for (size_t stateIndex = 0; stateIndex < animator.States.size(); ++stateIndex)
+			{
+				AnimatorState& state = animator.States[stateIndex];
+				ImGui::PushID(static_cast<int>(stateIndex));
+				DrawAnimatorSectionLabel(state.Name.c_str());
+				if (ImGui::SmallButton("Rename"))
+					requestRename(AnimatorRenameTarget::State, stateIndex, state.Name);
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Remove") && !pendingMutation)
+				{
+					pendingMutation = [this, &animator, stateIndex]()
+					{
+						std::string error;
+						if (RemoveState(animator, stateIndex, error))
+							MarkModified(true);
+						else if (!error.empty())
+							TC_Core_Warn("Could not remove Animator state: {0}", error);
+					};
+				}
+				if (ImGui::BeginCombo("Clip", state.Clip.c_str()))
+				{
+					for (const SpriteAnimationClip& clip : animator.Clips)
+					{
+						if (ImGui::Selectable(clip.Name.c_str(), state.Clip == clip.Name))
+						{
+							state.Clip = clip.Name;
+							MarkModified(true);
+						}
+					}
+					ImGui::EndCombo();
+				}
+				float stateSpeed = state.Speed;
+				if (ImGui::DragFloat("Speed", &stateSpeed, 0.05f, 0.01f, 100.0f,
+					"%.2f", ImGuiSliderFlags_AlwaysClamp) && std::isfinite(stateSpeed))
+				{
+					stateSpeed = std::clamp(stateSpeed, 0.01f, 100.0f);
+					if (stateSpeed != state.Speed)
+					{
+						state.Speed = stateSpeed;
+						MarkModified();
+					}
+				}
+				ImGui::PopID();
+			}
+			ImGui::BeginDisabled(animator.Clips.empty());
+			if (ImGui::Button("Add State") && !pendingMutation)
+			{
+				pendingMutation = [this, &animator]()
+				{
+					AnimatorState state;
+					state.Name = MakeUniqueName(animator.States, std::string("State"),
+						[](const AnimatorState& item) { return item.Name; });
+					state.Clip = animator.Clips.front().Name;
+					animator.States.push_back(std::move(state));
+					MarkModified(true);
+				};
+			}
+			ImGui::EndDisabled();
+			ImGui::TreePop();
+		}
+
+		if (ImGui::TreeNodeEx("Transitions", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::TextDisabled("Evaluated top to bottom; first matching transition wins.");
+			for (size_t transitionIndex = 0;
+				transitionIndex < animator.Transitions.size(); ++transitionIndex)
+			{
+				AnimatorTransition& transition = animator.Transitions[transitionIndex];
+				ImGui::PushID(static_cast<int>(transitionIndex));
+				const char* source = transition.AnyState
+					? "AnyState" : transition.FromState.c_str();
+				const bool transitionOpen = ImGui::TreeNodeEx("##Transition", 0,
+					"%zu. %s -> %s", transitionIndex + 1, source,
+					transition.ToState.c_str());
+				if (transitionOpen)
+				{
+					ImGui::BeginDisabled(transitionIndex == 0);
+					if (ImGui::SmallButton("Up") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, transitionIndex]()
+						{
+							std::swap(animator.Transitions[transitionIndex - 1],
+								animator.Transitions[transitionIndex]);
+							MarkModified(true);
+						};
+					}
+					ImGui::EndDisabled();
+					ImGui::SameLine();
+					ImGui::BeginDisabled(transitionIndex + 1 >= animator.Transitions.size());
+					if (ImGui::SmallButton("Down") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, transitionIndex]()
+						{
+							std::swap(animator.Transitions[transitionIndex],
+								animator.Transitions[transitionIndex + 1]);
+							MarkModified(true);
+						};
+					}
+					ImGui::EndDisabled();
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Remove") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, transitionIndex]()
+						{
+							animator.Transitions.erase(animator.Transitions.begin()
+								+ static_cast<std::ptrdiff_t>(transitionIndex));
+							MarkModified(true);
+						};
+					}
+
+					bool anyState = transition.AnyState;
+					if (ImGui::Checkbox("Any State", &anyState))
+					{
+						transition.AnyState = anyState;
+						transition.FromState = anyState || animator.States.empty()
+							? std::string{} : animator.States.front().Name;
+						MarkModified(true);
+					}
+					if (!transition.AnyState)
+					{
+						if (ImGui::BeginCombo("From", transition.FromState.c_str()))
+						{
+							for (const AnimatorState& state : animator.States)
+							{
+								if (ImGui::Selectable(state.Name.c_str(),
+									transition.FromState == state.Name))
+								{
+									transition.FromState = state.Name;
+									MarkModified(true);
+								}
+							}
+							ImGui::EndCombo();
+						}
+					}
+					if (ImGui::BeginCombo("To", transition.ToState.c_str()))
+					{
+						for (const AnimatorState& state : animator.States)
+						{
+							if (ImGui::Selectable(state.Name.c_str(),
+								transition.ToState == state.Name))
+							{
+								transition.ToState = state.Name;
+								MarkModified(true);
+							}
+						}
+						ImGui::EndCombo();
+					}
+
+					bool hasExitTime = transition.ExitTime >= 0.0f;
+					ImGui::BeginDisabled(hasExitTime && transition.Conditions.empty());
+					if (ImGui::Checkbox("Has Exit Time", &hasExitTime))
+					{
+						transition.ExitTime = hasExitTime ? 1.0f : -1.0f;
+						MarkModified(true);
+					}
+					ImGui::EndDisabled();
+					if (transition.ExitTime >= 0.0f)
+					{
+						float exitTime = transition.ExitTime;
+						if (ImGui::SliderFloat("Exit Time", &exitTime, 0.0f, 1.0f,
+							"%.3f", ImGuiSliderFlags_AlwaysClamp)
+							&& std::isfinite(exitTime) && exitTime != transition.ExitTime)
+						{
+							transition.ExitTime = std::clamp(exitTime, 0.0f, 1.0f);
+							MarkModified();
+						}
+					}
+
+					DrawAnimatorSectionLabel("Conditions");
+					for (size_t conditionIndex = 0;
+						conditionIndex < transition.Conditions.size(); ++conditionIndex)
+					{
+						AnimatorCondition& condition = transition.Conditions[conditionIndex];
+						ImGui::PushID(static_cast<int>(conditionIndex));
+						const AnimatorParameter* selectedParameter = nullptr;
+						for (const AnimatorParameter& parameter : animator.Parameters)
+							if (parameter.Name == condition.Parameter)
+								selectedParameter = &parameter;
+						const char* parameterPreview = selectedParameter
+							? selectedParameter->Name.c_str() : "<Missing>";
+						if (ImGui::BeginCombo("Parameter", parameterPreview))
+						{
+							for (const AnimatorParameter& parameter : animator.Parameters)
+							{
+								if (ImGui::Selectable(parameter.Name.c_str(),
+									condition.Parameter == parameter.Name))
+								{
+									condition.Parameter = parameter.Name;
+									condition.Mode = DefaultConditionMode(parameter.Type);
+									condition.Threshold = 0.0f;
+									MarkModified(true);
+								}
+							}
+							ImGui::EndCombo();
+						}
+						selectedParameter = nullptr;
+						for (const AnimatorParameter& parameter : animator.Parameters)
+							if (parameter.Name == condition.Parameter)
+								selectedParameter = &parameter;
+						if (selectedParameter)
+						{
+							if (IsBooleanParameter(selectedParameter->Type))
+							{
+								static constexpr AnimatorConditionMode modes[] =
+									{ AnimatorConditionMode::If, AnimatorConditionMode::IfNot };
+								static constexpr const char* names[] = { "If", "If Not" };
+								const int current = condition.Mode == AnimatorConditionMode::IfNot
+									? 1 : 0;
+								if (ImGui::BeginCombo("Mode", names[current]))
+								{
+									for (int modeIndex = 0; modeIndex < 2; ++modeIndex)
+										if (ImGui::Selectable(names[modeIndex], current == modeIndex))
+										{
+											condition.Mode = modes[modeIndex];
+											MarkModified(true);
+										}
+									ImGui::EndCombo();
+								}
+							}
+							else
+							{
+								static constexpr AnimatorConditionMode modes[] = {
+									AnimatorConditionMode::Greater, AnimatorConditionMode::Less,
+									AnimatorConditionMode::Equals, AnimatorConditionMode::NotEqual };
+								static constexpr const char* names[] =
+									{ "Greater", "Less", "Equals", "Not Equal" };
+								int current = std::clamp(static_cast<int>(condition.Mode)
+									- static_cast<int>(AnimatorConditionMode::Greater), 0, 3);
+								if (ImGui::BeginCombo("Mode", names[current]))
+								{
+									for (int modeIndex = 0; modeIndex < 4; ++modeIndex)
+										if (ImGui::Selectable(names[modeIndex], current == modeIndex))
+										{
+											condition.Mode = modes[modeIndex];
+											MarkModified(true);
+										}
+									ImGui::EndCombo();
+								}
+								if (selectedParameter->Type == AnimatorParameterType::Int)
+								{
+									int threshold = static_cast<int>(condition.Threshold);
+									if (ImGui::InputInt("Threshold", &threshold))
+									{
+										condition.Threshold = static_cast<float>(threshold);
+										MarkModified();
+									}
+								}
+								else
+								{
+									float threshold = condition.Threshold;
+									if (ImGui::DragFloat("Threshold", &threshold, 0.05f)
+										&& std::isfinite(threshold)
+										&& threshold != condition.Threshold)
+									{
+										condition.Threshold = threshold;
+										MarkModified();
+									}
+								}
+							}
+						}
+						ImGui::BeginDisabled(transition.ExitTime < 0.0f
+							&& transition.Conditions.size() == 1);
+						if (ImGui::SmallButton("Remove Condition") && !pendingMutation)
+						{
+							pendingMutation = [this, &animator, transitionIndex,
+								conditionIndex]()
+							{
+								auto& conditions = animator.Transitions[transitionIndex].Conditions;
+								conditions.erase(conditions.begin()
+									+ static_cast<std::ptrdiff_t>(conditionIndex));
+								MarkModified(true);
+							};
+						}
+						ImGui::EndDisabled();
+						ImGui::Separator();
+						ImGui::PopID();
+					}
+					ImGui::BeginDisabled(animator.Parameters.empty());
+					if (ImGui::Button("Add Condition") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, transitionIndex]()
+						{
+							const AnimatorParameter& parameter = animator.Parameters.front();
+							animator.Transitions[transitionIndex].Conditions.push_back(
+								{ parameter.Name, DefaultConditionMode(parameter.Type), 0.0f });
+							MarkModified(true);
+						};
+					}
+					ImGui::EndDisabled();
+					ImGui::TreePop();
+				}
+				ImGui::PopID();
+			}
+			ImGui::BeginDisabled(animator.States.empty());
+			if (ImGui::Button("Add Transition") && !pendingMutation)
+			{
+				pendingMutation = [this, &animator]()
+				{
+					AnimatorTransition transition;
+					transition.FromState = animator.States.front().Name;
+					transition.ToState = animator.States.front().Name;
+					transition.ExitTime = 1.0f;
+					animator.Transitions.push_back(std::move(transition));
+					MarkModified(true);
+				};
+			}
+			ImGui::EndDisabled();
+			ImGui::TreePop();
+		}
+
+		if (requestRenamePopup)
+			ImGui::OpenPopup("Rename Animator Item");
+		bool renamePopupOpen = true;
+		if (ImGui::BeginPopupModal("Rename Animator Item", &renamePopupOpen,
+			ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			if (ImGui::IsWindowAppearing())
+				ImGui::SetKeyboardFocusHere();
+			const bool submitted = ImGui::InputText("Name",
+				m_AnimatorRenameBuffer.data(), m_AnimatorRenameBuffer.size(),
+				ImGuiInputTextFlags_EnterReturnsTrue);
+
+			const std::string candidate(m_AnimatorRenameBuffer.data());
+			SpriteAnimator probe = animator;
+			std::string validationError;
+			bool validChange = false;
+			switch (m_AnimatorRenameTarget)
+			{
+				case AnimatorRenameTarget::Clip:
+					validChange = RenameClip(probe, m_AnimatorRenameIndex,
+						candidate, validationError);
+					break;
+				case AnimatorRenameTarget::Parameter:
+					validChange = RenameParameter(probe, m_AnimatorRenameIndex,
+						candidate, validationError);
+					break;
+				case AnimatorRenameTarget::State:
+					validChange = RenameState(probe, m_AnimatorRenameIndex,
+						candidate, validationError);
+					break;
+				case AnimatorRenameTarget::None:
+					validationError = "Nothing is selected for rename";
+					break;
+			}
+			if (!validChange && validationError.empty())
+				validationError = "Name is unchanged";
+			m_AnimatorRenameError = validationError;
+			if (!m_AnimatorRenameError.empty())
+				ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.32f, 1.0f), "%s",
+					m_AnimatorRenameError.c_str());
+
+			ImGui::BeginDisabled(!validChange);
+			const bool apply = ImGui::Button("Apply") || submitted;
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			const bool cancel = ImGui::Button("Cancel");
+			if (apply && validChange)
+			{
+				std::string error;
+				bool renamed = false;
+				switch (m_AnimatorRenameTarget)
+				{
+					case AnimatorRenameTarget::Clip:
+						renamed = RenameClip(animator, m_AnimatorRenameIndex,
+							candidate, error);
+						break;
+					case AnimatorRenameTarget::Parameter:
+						renamed = RenameParameter(animator, m_AnimatorRenameIndex,
+							candidate, error);
+						break;
+					case AnimatorRenameTarget::State:
+						renamed = RenameState(animator, m_AnimatorRenameIndex,
+							candidate, error);
+						break;
+					case AnimatorRenameTarget::None:
+						break;
+				}
+				if (renamed)
+					MarkModified(true);
+				else if (!error.empty())
+					TC_Core_Warn("Could not rename Animator item: {0}", error);
+				m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+				m_AnimatorRenameEntity = UUID(0);
+				m_AnimatorRenameError.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			else if (cancel || !renamePopupOpen)
+			{
+				m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+				m_AnimatorRenameEntity = UUID(0);
+				m_AnimatorRenameError.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+		else if (m_AnimatorRenameTarget != AnimatorRenameTarget::None
+			&& !requestRenamePopup && !ImGui::IsPopupOpen("Rename Animator Item"))
+		{
+			m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+			m_AnimatorRenameEntity = UUID(0);
+			m_AnimatorRenameError.clear();
+		}
+
+		if (pendingMutation)
+			pendingMutation();
 	}
 
 	void SceneHierarchyPanel::DrawCSharpScripts(Entity entity)
@@ -2072,11 +3266,15 @@ static void DrawComponent(const std::string& name, Entity entity,
 			const uint64_t rawSpriteHandle = static_cast<uint64_t>(component.SpriteHandle);
 			if (rawSpriteHandle != 0)
 			{
-				const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(
-					component.SpriteHandle);
+				AssetRegistry& registry = AssetManager::Get().GetRegistry();
+				const AssetMetadata* metadata = registry.GetMetadata(component.SpriteHandle);
+				const AssetSubAsset* subSprite = nullptr;
+				if (!metadata)
+					metadata = registry.GetSubAssetOwner(component.SpriteHandle, &subSprite);
 				if (metadata && IsSpriteAsset(*metadata))
 				{
-					spriteName = PathToUTF8(metadata->FilePath.stem());
+					spriteName = subSprite ? subSprite->Name
+						: PathToUTF8(metadata->FilePath.stem());
 					if (metadata->IsMissing)
 					{
 						spriteName += " (Missing)";
@@ -2129,8 +3327,13 @@ static void DrawComponent(const std::string& name, Entity entity,
 					if (payload->DataSize == sizeof(uint64_t))
 					{
 						const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
-						const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
-						if (metadata && IsSpriteAsset(*metadata) && !metadata->IsMissing)
+						AssetRegistry& registry = AssetManager::Get().GetRegistry();
+						const AssetMetadata* metadata = registry.GetMetadata(handle);
+						const AssetSubAsset* subSprite = nullptr;
+						if (!metadata)
+							metadata = registry.GetSubAssetOwner(handle, &subSprite);
+						if (metadata && IsSpriteAsset(*metadata) && !metadata->IsMissing
+							&& (!subSprite || subSprite->Type == AssetType::Texture2D))
 						{
 							component.SpriteHandle = handle;
 							component.Sprite = AssetManager::Get().LoadTexture(handle);
@@ -2190,8 +3393,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 				for (const auto& [handle, metadata] :
 					AssetManager::Get().GetRegistry().GetAssets())
 				{
-					if (IsSpriteAsset(metadata) && !metadata.IsMissing &&
-						MatchesSpriteSearch(metadata, m_SpriteSearch.data()))
+					if (IsSpriteAsset(metadata) && !metadata.IsMissing)
 						sprites.push_back(&metadata);
 				}
 				std::sort(sprites.begin(), sprites.end(), [](const AssetMetadata* left,
@@ -2201,7 +3403,19 @@ static void DrawComponent(const std::string& name, Entity entity,
 						LowerASCII(PathToUTF8(right->FilePath));
 				});
 
-				ImGui::TextDisabled("%zu Sprite%s", sprites.size(), sprites.size() == 1 ? "" : "s");
+				size_t spriteCount = 0;
+				const std::string spriteQuery = LowerASCII(m_SpriteSearch.data());
+				for (const AssetMetadata* metadata : sprites)
+				{
+					if (MatchesSpriteSearch(*metadata, m_SpriteSearch.data()))
+						++spriteCount;
+					for (const AssetSubAsset& child : metadata->SubAssets)
+						if (child.Type == AssetType::Texture2D
+							&& (spriteQuery.empty() || LowerASCII(child.Name).find(spriteQuery)
+								!= std::string::npos))
+							++spriteCount;
+				}
+				ImGui::TextDisabled("%zu Sprite%s", spriteCount, spriteCount == 1 ? "" : "s");
 				ImGui::Separator();
 				ImGui::BeginChild("SpriteGrid", ImVec2(0.0f, 0.0f), false);
 				constexpr float cellWidth = 96.0f;
@@ -2242,8 +3456,22 @@ static void DrawComponent(const std::string& name, Entity entity,
 					{
 						const Ref<Texture2D> texture = AssetManager::Get().LoadTexture(handle);
 						if (texture)
-							drawList->AddImage(ToImGuiTextureID(texture), previewMin, previewMax,
-								ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+						{
+							ImVec2 uvMin(0.0f, 1.0f);
+							ImVec2 uvMax(1.0f, 0.0f);
+							ResolvedSpriteAsset resolved;
+							SpriteRenderGeometry geometry;
+							if (AssetManager::Get().ResolveSpriteAsset(handle, resolved)
+								&& resolved.IsSubAsset
+								&& BuildSpriteRenderGeometry(resolved.Data,
+									texture->GetWidth(), texture->GetHeight(), geometry))
+							{
+								uvMin = ImVec2(geometry.UMin, geometry.VMax);
+								uvMax = ImVec2(geometry.UMax, geometry.VMin);
+							}
+							drawList->AddImage(ToImGuiTextureID(texture), previewMin,
+								previewMax, uvMin, uvMax);
+						}
 					}
 					else if (visible)
 						DrawIcon(m_Icons, EditorIcon::Sprite, previewMin, previewMax,
@@ -2277,8 +3505,19 @@ static void DrawComponent(const std::string& name, Entity entity,
 					drawSpriteTile(AssetHandle(0), "None", nullptr);
 				for (const AssetMetadata* metadata : sprites)
 				{
-					const std::string label = PathToUTF8(metadata->FilePath.stem());
-					drawSpriteTile(metadata->Handle, label.c_str(), &metadata->FilePath);
+					if (MatchesSpriteSearch(*metadata, m_SpriteSearch.data()))
+					{
+						const std::string label = PathToUTF8(metadata->FilePath.stem());
+						drawSpriteTile(metadata->Handle, label.c_str(), &metadata->FilePath);
+					}
+					for (const AssetSubAsset& child : metadata->SubAssets)
+					{
+						if (child.Type != AssetType::Texture2D
+							|| (!spriteQuery.empty() && LowerASCII(child.Name).find(spriteQuery)
+								== std::string::npos))
+							continue;
+						drawSpriteTile(child.Handle, child.Name.c_str(), &metadata->FilePath);
+					}
 				}
 				ImGui::Columns(1);
 				ImGui::EndChild();
@@ -2303,6 +3542,12 @@ static void DrawComponent(const std::string& name, Entity entity,
 				}
 			}
 			ImGui::Columns(1);
+		}, onModified);
+
+		DrawComponent<SpriteAnimator>("Sprite Animator", entity, m_Icons,
+			EditorIcon::Sprite, [this, entity](auto& component)
+		{
+			DrawSpriteAnimatorInspector(component, entity);
 		}, onModified);
 
 		DrawComponent<LineRenderer>("Line Renderer", entity, m_Icons, EditorIcon::Count,
@@ -2351,6 +3596,99 @@ static void DrawComponent(const std::string& name, Entity entity,
 				}
 			}
 			ImGui::Columns(1);
+		}, onModified);
+
+		DrawComponent<AudioSource>("Audio Source", entity, m_Icons, EditorIcon::Count,
+			[this](auto& component)
+		{
+			uint64_t clip = static_cast<uint64_t>(component.Clip);
+			if (ImGui::InputScalar("Audio Clip", ImGuiDataType_U64, &clip))
+			{
+				const AssetMetadata* metadata = clip == 0 ? nullptr
+					: AssetManager::Get().GetRegistry().GetMetadata(AssetHandle(clip));
+				if (clip == 0 || (metadata && !metadata->IsMissing
+					&& metadata->Type == AssetType::Audio))
+				{
+					component.Clip = AssetHandle(clip);
+					MarkModified();
+				}
+			}
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+					AssetDragDropPayloadID))
+				{
+					if (payload->DataSize == sizeof(uint64_t))
+					{
+						const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+						const AssetMetadata* metadata = AssetManager::Get().GetRegistry()
+							.GetMetadata(handle);
+						if (metadata && !metadata->IsMissing
+							&& metadata->Type == AssetType::Audio)
+						{
+							component.Clip = handle;
+							MarkModified();
+						}
+					}
+				}
+				ImGui::EndDragDropTarget();
+			}
+			if (ImGui::Checkbox("Play On Start", &component.PlayOnStart)) MarkModified();
+			if (ImGui::Checkbox("Loop", &component.Loop)) MarkModified();
+			if (ImGui::Checkbox("Streaming", &component.Streaming)) MarkModified();
+			float volume = component.Volume;
+			if (ImGui::DragFloat("Volume", &volume, 0.01f, 0.0f, 4.0f,
+				"%.2f", ImGuiSliderFlags_AlwaysClamp) && std::isfinite(volume))
+			{
+				component.Volume = std::clamp(volume, 0.0f, 4.0f);
+				MarkModified();
+			}
+			float pitch = component.Pitch;
+			if (ImGui::DragFloat("Pitch", &pitch, 0.01f, 0.25f, 4.0f,
+				"%.2f", ImGuiSliderFlags_AlwaysClamp) && std::isfinite(pitch))
+			{
+				component.Pitch = std::clamp(pitch, 0.25f, 4.0f);
+				MarkModified();
+			}
+			const char* groups[] = { "Master", "Music", "SFX" };
+			int group = component.MixerGroup;
+			if (ImGui::Combo("Mixer Group", &group, groups, 3))
+			{
+				component.MixerGroup = static_cast<uint8_t>(group);
+				MarkModified();
+			}
+			float blend = component.SpatialBlend;
+			if (ImGui::SliderFloat("Spatial Blend", &blend, 0.0f, 1.0f, "%.2f")
+				&& std::isfinite(blend))
+			{
+				component.SpatialBlend = std::clamp(blend, 0.0f, 1.0f);
+				MarkModified();
+			}
+			float minimum = component.MinDistance;
+			if (ImGui::DragFloat("Min Distance", &minimum, 0.05f, 0.0f,
+				component.MaxDistance - 0.001f, "%.2f",
+				ImGuiSliderFlags_AlwaysClamp) && std::isfinite(minimum))
+			{
+				component.MinDistance = std::max(0.0f,
+					std::min(minimum, component.MaxDistance - 0.001f));
+				MarkModified();
+			}
+			float maximum = component.MaxDistance;
+			if (ImGui::DragFloat("Max Distance", &maximum, 0.05f,
+				component.MinDistance + 0.001f, 100000.0f, "%.2f",
+				ImGuiSliderFlags_AlwaysClamp) && std::isfinite(maximum))
+			{
+				component.MaxDistance = std::max(maximum,
+					component.MinDistance + 0.001f);
+				MarkModified();
+			}
+		}, onModified);
+
+		DrawComponent<AudioListener>("Audio Listener", entity, m_Icons,
+			EditorIcon::Count, [this](auto& component)
+		{
+			if (ImGui::Checkbox("Primary", &component.Primary))
+				MarkModified();
 		}, onModified);
 
 		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, m_Icons, EditorIcon::Rigidbody2D,
@@ -2610,6 +3948,30 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}, onModified, m_ColliderEditingAllowed);
 
 		DrawCSharpScripts(entity);
+		for (const ComponentDescriptor& descriptor :
+			ComponentRegistry::Get().GetDescriptors())
+			DrawRegisteredComponent(descriptor, entity, onModified,
+				m_ColliderEditingAllowed);
+		if (entity.HasComponent<OpaqueComponents>())
+		{
+			for (const OpaqueComponentRecord& missing :
+				entity.GetComponent<OpaqueComponents>().Records)
+			{
+				ImGui::PushID(static_cast<int>(static_cast<uint64_t>(missing.TypeId)));
+				ImGui::Separator();
+				if (ImGui::TreeNodeEx("##MissingComponent",
+					ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth,
+					"Missing Component: %s", missing.StableName.c_str()))
+				{
+					ImGui::Text("Type UUID: %llu",
+						static_cast<unsigned long long>(missing.TypeId));
+					ImGui::Text("Schema: %u", missing.SchemaVersion);
+					ImGui::TextDisabled("Payload is preserved until the component provider is available.");
+					ImGui::TreePop();
+				}
+				ImGui::PopID();
+			}
+		}
 		ImGui::Spacing();
 		ImGui::SetNextItemWidth(-1.0f);
 		ImGui::BeginDisabled(!m_ColliderEditingAllowed);
@@ -2637,9 +3999,35 @@ static void DrawComponent(const std::string& name, Entity entity,
 				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}
+			if (!entity.HasComponent<SpriteAnimator>() && ImGui::MenuItem("Sprite Animator"))
+			{
+				if (!entity.HasComponent<SpriteRenderer>())
+					entity.AddComponent<SpriteRenderer>();
+				SpriteAnimator animator;
+				SpriteAnimationClip clip;
+				clip.Name = "Default";
+				clip.Frames.push_back({ entity.GetComponent<SpriteRenderer>().SpriteHandle,
+					1.0f / 12.0f });
+				animator.Clips.push_back(std::move(clip));
+				entity.AddComponent<SpriteAnimator>(std::move(animator));
+				MarkModified();
+				ImGui::CloseCurrentPopup();
+			}
 			if (!entity.HasComponent<LineRenderer>() && ImGui::MenuItem("Line Renderer"))
 			{
 				entity.AddComponent<LineRenderer>();
+				MarkModified();
+				ImGui::CloseCurrentPopup();
+			}
+			if (!entity.HasComponent<AudioSource>() && ImGui::MenuItem("Audio Source"))
+			{
+				entity.AddComponent<AudioSource>();
+				MarkModified();
+				ImGui::CloseCurrentPopup();
+			}
+			if (!entity.HasComponent<AudioListener>() && ImGui::MenuItem("Audio Listener"))
+			{
+				entity.AddComponent<AudioListener>();
 				MarkModified();
 				ImGui::CloseCurrentPopup();
 			}
@@ -2668,6 +4056,22 @@ static void DrawComponent(const std::string& name, Entity entity,
 				entity.AddComponent<DistanceJoint2D>();
 				MarkModified();
 				ImGui::CloseCurrentPopup();
+			}
+			ImGui::Separator();
+			for (const ComponentDescriptor& descriptor :
+				ComponentRegistry::Get().GetDescriptors())
+			{
+				if (!descriptor.InspectorVisible || descriptor.Has(entity))
+					continue;
+				if (ImGui::MenuItem(descriptor.DisplayName.c_str()))
+				{
+					std::string error;
+					if (descriptor.Add(entity, error))
+						MarkModified();
+					else
+						TC_Core_Warn("Could not add {0}: {1}", descriptor.StableName, error);
+					ImGui::CloseCurrentPopup();
+				}
 			}
 			ImGui::EndDisabled();
 			ImGui::EndPopup();

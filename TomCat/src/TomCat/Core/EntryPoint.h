@@ -84,7 +84,13 @@ extern TomCat::Application* TomCat::CreateApplication(ApplicationCommandLineArgs
 int wmain(int argc, wchar_t** argv) {
 
 	TomCat::SetPackagedWorkingDirectory();
-	TomCat::Log::Init();
+#ifdef TC_APPLICATION_PRODUCT
+	// Product identity is compiled into each executable. This remains correct
+	// when PlayerBuilder safely renames TomCatPlayer.exe to the game product name.
+	TomCat::Log::Init(TC_APPLICATION_PRODUCT);
+#else
+	TomCat::Log::Init(TomCat::ApplicationPaths::IdentifyCurrentExecutable());
+#endif
 	std::vector<std::string> utf8Arguments;
 	std::vector<char*> argumentPointers;
 	utf8Arguments.reserve(static_cast<size_t>(argc));
@@ -107,6 +113,7 @@ int wmain(int argc, wchar_t** argv) {
 	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Shutdown.json");
 	delete app;							
 	TC_PROFILE_END_SESSION();
+	TomCat::Log::Shutdown();
 	return exitCode;
 }
 

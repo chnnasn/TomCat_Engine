@@ -48,10 +48,31 @@ namespace TomCat {
 			bool QueueBehaviourEnabled(uint64_t attachmentId, bool enabled);
 			bool QueueRemoveBehaviour(uint64_t attachmentId);
 			bool QueueDestroyEntity(const EntityHandleV1& entity);
+			bool QueueCreateEntity(const EntityHandleV1& context, std::string name,
+				NativeVector3 worldPosition, const EntityHandleV1& parent,
+				EntityHandleV1& reservedEntity);
+			bool IsPendingCreate(const EntityHandleV1& entity) const;
+			bool GetProjectedComponentPresence(const EntityHandleV1& entity,
+				NativeComponentType componentType, bool& present) const;
+			bool QueueSetParent(const EntityHandleV1& entity,
+				const EntityHandleV1& parent);
 			bool QueueAddComponent(const EntityHandleV1& entity,
 				NativeComponentType componentType);
 			bool QueueRemoveComponent(const EntityHandleV1& entity,
 				NativeComponentType componentType);
+			bool QueueSetComponentProperty(const EntityHandleV1& entity,
+				NativeComponentType componentType, uint32_t propertyId,
+				NativePropertyValueV1 value);
+			bool QueueSetActiveSelf(const EntityHandleV1& entity, bool active);
+			bool GetProjectedRegisteredComponentPresence(const EntityHandleV1& entity,
+				uint64_t componentTypeId, bool& present) const;
+			bool QueueAddRegisteredComponent(const EntityHandleV1& entity,
+				uint64_t componentTypeId);
+			bool QueueRemoveRegisteredComponent(const EntityHandleV1& entity,
+				uint64_t componentTypeId);
+			bool QueueSetRegisteredComponentProperty(const EntityHandleV1& entity,
+				uint64_t componentTypeId, uint64_t propertyId,
+				NativePropertyValueV1 value);
 			bool QueueInstantiatePrefab(const EntityHandleV1& context,
 				uint64_t prefabHandle, NativeVector3 worldPosition,
 				const EntityHandleV1& parent);
@@ -65,8 +86,21 @@ namespace TomCat {
 			bool IsKeyHeld(uint32_t key) const;
 			bool WasKeyPressed(uint32_t key) const;
 			bool WasKeyReleased(uint32_t key) const;
+			bool IsMouseButtonHeld(uint32_t button) const;
+			bool WasMouseButtonPressed(uint32_t button) const;
+			bool WasMouseButtonReleased(uint32_t button) const;
 			NativeVector2 GetMousePosition() const;
 			NativeVector2 GetMouseDelta() const;
+			NativeVector2 GetScrollDelta() const;
+			bool IsWindowFocused() const;
+			bool IsGamepadConnected(uint32_t gamepad) const;
+			bool WasGamepadConnected(uint32_t gamepad) const;
+			bool WasGamepadDisconnected(uint32_t gamepad) const;
+			bool IsGamepadButtonHeld(uint32_t gamepad, uint32_t button) const;
+			bool WasGamepadButtonPressed(uint32_t gamepad, uint32_t button) const;
+			bool WasGamepadButtonReleased(uint32_t gamepad, uint32_t button) const;
+			float GetGamepadAxis(uint32_t gamepad, uint32_t axis) const;
+			const std::string& GetGamepadName(uint32_t gamepad) const;
 			uint32_t GetModifiers() const;
 
 		private:
@@ -85,7 +119,14 @@ namespace TomCat {
 				RemoveComponent,
 				SetBehaviourEnabled,
 				RemoveBehaviour,
-				InstantiatePrefab
+				InstantiatePrefab,
+				CreateEntity,
+				SetParent,
+				SetComponentProperty,
+				SetActiveSelf,
+				AddRegisteredComponent,
+				RemoveRegisteredComponent,
+				SetRegisteredComponentProperty
 			};
 
 			struct DeferredCommand
@@ -97,6 +138,11 @@ namespace TomCat {
 				uint64_t AssetHandle = 0;
 				NativeVector3 WorldPosition;
 				EntityHandleV1 Parent;
+				NativePropertyValueV1 PropertyValue;
+				uint32_t PropertyId = 0;
+				uint64_t RegisteredTypeId = 0;
+				uint64_t RegisteredPropertyId = 0;
+				std::string Name;
 				bool Enabled = false;
 			};
 
@@ -122,9 +168,24 @@ namespace TomCat {
 			std::thread::id m_MainThread;
 			std::array<bool, 512> m_CurrentKeys{};
 			std::array<bool, 512> m_PreviousKeys{};
+			std::array<bool, 8> m_CurrentMouseButtons{};
+			std::array<bool, 8> m_PreviousMouseButtons{};
 			NativeVector2 m_MousePosition{};
 			NativeVector2 m_PreviousMousePosition{};
 			NativeVector2 m_MouseDelta{};
+			NativeVector2 m_ScrollDelta{};
+			bool m_WindowFocused = true;
+			bool m_PreviousWindowFocused = true;
+
+			struct GamepadState
+			{
+				bool Connected = false;
+				std::array<bool, 15> Buttons{};
+				std::array<float, 6> Axes{};
+				std::string Name;
+			};
+			std::array<GamepadState, 16> m_CurrentGamepads{};
+			std::array<GamepadState, 16> m_PreviousGamepads{};
 		};
 
 	}

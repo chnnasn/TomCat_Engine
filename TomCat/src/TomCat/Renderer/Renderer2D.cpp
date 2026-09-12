@@ -6,6 +6,7 @@
 #include "TomCat/Renderer/UniformBuffer.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/SpriteAsset.h"
 #include <glm/gtc/type_ptr.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -613,6 +614,12 @@ void main()
 
 	void Renderer2D::DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor, int entityID)
 	{
+		if (tilingFactor == 1.0f)
+		{
+			DrawTexturedQuadRegion(transform, texture, { 0.0f, 0.0f },
+				{ 1.0f, 1.0f }, tintColor, entityID);
+			return;
+		}
 		TC_PROFILE_FUNCTION();
 
 		constexpr size_t quadVertexCount = 4;
@@ -657,6 +664,53 @@ void main()
 		s_Data.QuadIndexCount += 6;
 
 		s_Data.Stats.QuadCount++;
+	}
+
+	void Renderer2D::DrawTexturedQuadRegion(const glm::mat4& transform,
+		const Ref<Texture2D>& texture, const glm::vec2& uvMin,
+		const glm::vec2& uvMax, const glm::vec4& tintColor, int entityID)
+	{
+		TC_PROFILE_FUNCTION();
+		const glm::vec2 textureCoords[] = {
+			{ uvMin.x, uvMin.y }, { uvMax.x, uvMin.y },
+			{ uvMax.x, uvMax.y }, { uvMin.x, uvMax.y }
+		};
+		const Ref<Texture2D>& resolvedTexture = texture && texture->IsLoaded()
+			? texture : s_Data.WhiteTexture;
+		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices)
+			NextBatch();
+
+		float textureIndex = 0.0f;
+		const bool usesWhiteTexture = *resolvedTexture == *s_Data.WhiteTexture;
+		for (uint32_t index = 1; !usesWhiteTexture
+			&& index < s_Data.TextureSlotIndex; ++index)
+		{
+			if (*s_Data.TextureSlots[index] == *resolvedTexture)
+			{
+				textureIndex = static_cast<float>(index);
+				break;
+			}
+		}
+		if (!usesWhiteTexture && textureIndex == 0.0f)
+		{
+			if (s_Data.TextureSlotIndex >= Renderer2DData::MaxTextureSlots)
+				NextBatch();
+			textureIndex = static_cast<float>(s_Data.TextureSlotIndex);
+			s_Data.TextureSlots[s_Data.TextureSlotIndex++] = resolvedTexture;
+		}
+
+		for (size_t index = 0; index < 4; ++index)
+		{
+			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[index];
+			s_Data.QuadVertexBufferPtr->Color = tintColor;
+			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[index];
+			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
+			s_Data.QuadVertexBufferPtr->TilingFactor = 1.0f;
+			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			++s_Data.QuadVertexBufferPtr;
+		}
+		s_Data.QuadIndexCount += 6;
+		++s_Data.Stats.QuadCount;
 	}
 
 	void Renderer2D::DrawCircle(const glm::mat4& transform, const glm::vec4& color,
@@ -804,9 +858,29 @@ void main()
 			return;
 		}
 
-		src.Sprite = AssetManager::Get().LoadTexture(src.SpriteHandle);
-		if (src.Sprite)
+		AssetManager& assets = AssetManager::Get();
+		src.Sprite = assets.LoadTexture(src.SpriteHandle);
+		if (!src.Sprite)
+			return;
+		ResolvedSpriteAsset resolved;
+		if (!assets.ResolveSpriteAsset(src.SpriteHandle, resolved)
+			|| !resolved.IsSubAsset)
+		{
 			DrawQuad(transform, src.Sprite, src.TilingFactor, src._Color, entityID);
+			return;
+		}
+		SpriteRenderGeometry geometry;
+		if (!BuildSpriteRenderGeometry(resolved.Data, src.Sprite->GetWidth(),
+			src.Sprite->GetHeight(), geometry))
+			return;
+		const glm::mat4 spriteTransform = transform
+			* glm::translate(glm::mat4(1.0f),
+				{ geometry.OffsetX, geometry.OffsetY, 0.0f })
+			* glm::scale(glm::mat4(1.0f),
+				{ geometry.Width, geometry.Height, 1.0f });
+		DrawTexturedQuadRegion(spriteTransform, src.Sprite,
+			{ geometry.UMin, geometry.VMin }, { geometry.UMax, geometry.VMax },
+			src._Color, entityID);
 	}
 
 	void Renderer2D::ResetStats()

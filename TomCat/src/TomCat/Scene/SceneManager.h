@@ -43,6 +43,9 @@ namespace TomCat {
 		void Stop();
 
 		void SetViewportSize(uint32_t width, uint32_t height);
+		void SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
+			float dpiScale,
+			const glm::vec2& screenToFramebufferScale = glm::vec2(1.0f));
 		void SetPhysics2DSettings(const Physics2DSettings& settings)
 		{
 			m_Physics2DSettings = settings;
@@ -88,6 +91,9 @@ namespace TomCat {
 		Physics2DSettings m_Physics2DSettings;
 		uint32_t m_ViewportWidth = 0;
 		uint32_t m_ViewportHeight = 0;
+		glm::vec2 m_RuntimeUIViewportOrigin{ 0.0f };
+		float m_RuntimeUIDPIScale = 1.0f;
+		glm::vec2 m_RuntimeUIScreenToFramebufferScale{ 1.0f };
 
 		Ref<Scene> m_ActiveScene;
 		AssetHandle m_ActiveSceneHandle = AssetHandle(0);

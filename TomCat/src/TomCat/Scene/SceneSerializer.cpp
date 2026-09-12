@@ -2,6 +2,7 @@
 #include "SceneSerializer.h"
 
 #include "Components.h"
+#include "ComponentRegistry.h"
 #include "Entity.h"
 #include "Serialization/SceneArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
@@ -210,6 +211,135 @@ namespace TomCat {
 				throw std::runtime_error(context + ".TilingFactor must be finite and non-negative");
 		}
 
+		void ValidateSpriteAnimator(const SpriteAnimator& animator,
+			const std::string& context)
+		{
+			if (!IsFinite(animator.Speed) || animator.Speed < 0.0f)
+				throw std::runtime_error(context
+					+ ".Speed must be finite and non-negative");
+			if (animator.Clips.empty())
+				throw std::runtime_error(context + ".Clips must not be empty");
+
+			std::unordered_set<std::string> clipNames;
+			bool foundInitialClip = animator.InitialClip.empty();
+			for (size_t clipIndex = 0; clipIndex < animator.Clips.size(); ++clipIndex)
+			{
+				const SpriteAnimationClip& clip = animator.Clips[clipIndex];
+				const std::string clipContext = context + ".Clips["
+					+ std::to_string(clipIndex) + "]";
+				if (clip.Name.empty() || !clipNames.emplace(clip.Name).second)
+					throw std::runtime_error(clipContext
+						+ ".Name must be nonempty and unique");
+				foundInitialClip = foundInitialClip || clip.Name == animator.InitialClip;
+				if (clip.Frames.empty())
+					throw std::runtime_error(clipContext + ".Frames must not be empty");
+				for (size_t frameIndex = 0; frameIndex < clip.Frames.size(); ++frameIndex)
+				{
+					const float duration = clip.Frames[frameIndex].DurationSeconds;
+					if (!IsFinite(duration) || duration <= 0.0f)
+						throw std::runtime_error(clipContext + ".Frames["
+							+ std::to_string(frameIndex)
+							+ "].DurationSeconds must be finite and greater than zero");
+				}
+			}
+			if (!foundInitialClip)
+				throw std::runtime_error(context
+					+ ".InitialClip must name one of Clips or be empty");
+
+			std::unordered_map<std::string, AnimatorParameterType> parameterTypes;
+			for (size_t index = 0; index < animator.Parameters.size(); ++index)
+			{
+				const AnimatorParameter& parameter = animator.Parameters[index];
+				const std::string parameterContext = context + ".Parameters["
+					+ std::to_string(index) + "]";
+				if (parameter.Name.empty()
+					|| !parameterTypes.emplace(parameter.Name, parameter.Type).second)
+					throw std::runtime_error(parameterContext
+						+ ".Name must be nonempty and unique");
+				if (parameter.Type < AnimatorParameterType::Bool
+					|| parameter.Type > AnimatorParameterType::Trigger)
+					throw std::runtime_error(parameterContext + ".Type is invalid");
+				if (!IsFinite(parameter.FloatValue))
+					throw std::runtime_error(parameterContext + ".FloatValue must be finite");
+			}
+
+			std::unordered_set<std::string> stateNames;
+			bool foundInitialState = animator.InitialState.empty();
+			for (size_t index = 0; index < animator.States.size(); ++index)
+			{
+				const AnimatorState& state = animator.States[index];
+				const std::string stateContext = context + ".States["
+					+ std::to_string(index) + "]";
+				if (state.Name.empty() || !stateNames.emplace(state.Name).second)
+					throw std::runtime_error(stateContext
+						+ ".Name must be nonempty and unique");
+				if (clipNames.find(state.Clip) == clipNames.end())
+					throw std::runtime_error(stateContext
+						+ ".Clip must name an existing clip");
+				if (!IsFinite(state.Speed) || state.Speed <= 0.0f)
+					throw std::runtime_error(stateContext
+						+ ".Speed must be finite and greater than zero");
+				foundInitialState = foundInitialState || state.Name == animator.InitialState;
+			}
+			if (!animator.InitialState.empty() && animator.States.empty())
+				throw std::runtime_error(context
+					+ ".InitialState requires at least one State");
+			if (!foundInitialState)
+				throw std::runtime_error(context
+					+ ".InitialState must name an existing State or be empty");
+
+			for (size_t transitionIndex = 0;
+				transitionIndex < animator.Transitions.size(); ++transitionIndex)
+			{
+				const AnimatorTransition& transition =
+					animator.Transitions[transitionIndex];
+				const std::string transitionContext = context + ".Transitions["
+					+ std::to_string(transitionIndex) + "]";
+				if (animator.States.empty()
+					|| stateNames.find(transition.ToState) == stateNames.end())
+					throw std::runtime_error(transitionContext
+						+ ".ToState must name an existing State");
+				if (!transition.AnyState
+					&& stateNames.find(transition.FromState) == stateNames.end())
+					throw std::runtime_error(transitionContext
+						+ ".FromState must name an existing State");
+				if (transition.AnyState && !transition.FromState.empty())
+					throw std::runtime_error(transitionContext
+						+ ".FromState must be empty for AnyState");
+				if (!IsFinite(transition.ExitTime) || transition.ExitTime < -1.0f
+					|| transition.ExitTime > 1.0f)
+					throw std::runtime_error(transitionContext
+						+ ".ExitTime must be -1 or normalized in [0, 1]");
+				if (transition.ExitTime < 0.0f && transition.Conditions.empty())
+					throw std::runtime_error(transitionContext
+						+ " requires an exit time or a condition");
+				for (size_t conditionIndex = 0;
+					conditionIndex < transition.Conditions.size(); ++conditionIndex)
+				{
+					const AnimatorCondition& condition =
+						transition.Conditions[conditionIndex];
+					const std::string conditionContext = transitionContext
+						+ ".Conditions[" + std::to_string(conditionIndex) + "]";
+					const auto parameter = parameterTypes.find(condition.Parameter);
+					if (parameter == parameterTypes.end())
+						throw std::runtime_error(conditionContext
+							+ ".Parameter must name an existing parameter");
+					if (!IsFinite(condition.Threshold))
+						throw std::runtime_error(conditionContext
+							+ ".Threshold must be finite");
+					const bool boolean = parameter->second == AnimatorParameterType::Bool
+						|| parameter->second == AnimatorParameterType::Trigger;
+					const bool booleanMode = condition.Mode == AnimatorConditionMode::If
+						|| condition.Mode == AnimatorConditionMode::IfNot;
+					const bool numericMode = condition.Mode >= AnimatorConditionMode::Greater
+						&& condition.Mode <= AnimatorConditionMode::NotEqual;
+					if ((boolean && !booleanMode) || (!boolean && !numericMode))
+						throw std::runtime_error(conditionContext
+							+ ".Mode is incompatible with the parameter type");
+				}
+			}
+		}
+
 		void ValidateEntityMetadata(const EntityMetadata& metadata,
 			const std::string& context)
 		{
@@ -238,6 +368,30 @@ namespace TomCat {
 			RequireFinite(line.End, context + ".End");
 			if (!IsFinite(line.Width) || line.Width <= 0.0f)
 				throw std::runtime_error(context + ".Width must be finite and greater than zero");
+		}
+
+		void ValidateAudioSource(const AudioSource& source,
+			const std::string& context)
+		{
+			if (!IsFinite(source.Volume) || source.Volume < 0.0f
+				|| source.Volume > 4.0f)
+				throw std::runtime_error(context + ".Volume must be finite and in [0, 4]");
+			if (!IsFinite(source.Pitch) || source.Pitch < 0.25f
+				|| source.Pitch > 4.0f)
+				throw std::runtime_error(context + ".Pitch must be finite and in [0.25, 4]");
+			if (source.MixerGroup > 2)
+				throw std::runtime_error(context + ".MixerGroup must be Master, Music, or SFX");
+			if (!IsFinite(source.SpatialBlend) || source.SpatialBlend < 0.0f
+				|| source.SpatialBlend > 1.0f)
+				throw std::runtime_error(context
+					+ ".SpatialBlend must be finite and in [0, 1]");
+			if (!IsFinite(source.MinDistance) || source.MinDistance < 0.0f)
+				throw std::runtime_error(context
+					+ ".MinDistance must be finite and non-negative");
+			if (!IsFinite(source.MaxDistance)
+				|| source.MaxDistance <= source.MinDistance)
+				throw std::runtime_error(context
+					+ ".MaxDistance must be finite and greater than MinDistance");
 		}
 
 		void ValidatePhysicsMaterial(float density, float friction, float restitution,
@@ -608,6 +762,89 @@ namespace TomCat {
 					<< static_cast<uint64_t>(sprite.SpriteHandle);
 				out << YAML::Key << "Color" << YAML::Value << sprite._Color;
 				out << YAML::Key << "TilingFactor" << YAML::Value << sprite.TilingFactor;
+				out << YAML::Key << "SortingLayer" << YAML::Value << sprite.SortingLayer;
+				out << YAML::Key << "OrderInLayer" << YAML::Value << sprite.OrderInLayer;
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<SpriteAnimator>())
+			{
+				const auto& animator = entity.GetComponent<SpriteAnimator>();
+				ValidateSpriteAnimator(animator, context + ".SpriteAnimator");
+				out << YAML::Key << "SpriteAnimator" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Enabled" << YAML::Value << animator.Enabled;
+				out << YAML::Key << "PlayOnStart" << YAML::Value << animator.PlayOnStart;
+				out << YAML::Key << "InitialClip" << YAML::Value << animator.InitialClip;
+				out << YAML::Key << "Speed" << YAML::Value << animator.Speed;
+				out << YAML::Key << "Clips" << YAML::Value << YAML::BeginSeq;
+				for (const SpriteAnimationClip& clip : animator.Clips)
+				{
+					out << YAML::BeginMap;
+					out << YAML::Key << "Name" << YAML::Value << clip.Name;
+					out << YAML::Key << "Loop" << YAML::Value << clip.Loop;
+					out << YAML::Key << "Frames" << YAML::Value << YAML::BeginSeq;
+					for (const SpriteAnimationFrame& frame : clip.Frames)
+					{
+						out << YAML::BeginMap;
+						out << YAML::Key << "SpriteHandle" << YAML::Value
+							<< static_cast<uint64_t>(frame.SpriteHandle);
+						out << YAML::Key << "DurationSeconds" << YAML::Value
+							<< frame.DurationSeconds;
+						out << YAML::EndMap;
+					}
+					out << YAML::EndSeq;
+					out << YAML::EndMap;
+				}
+				out << YAML::EndSeq;
+				out << YAML::Key << "InitialState" << YAML::Value
+					<< animator.InitialState;
+				out << YAML::Key << "Parameters" << YAML::Value << YAML::BeginSeq;
+				for (const AnimatorParameter& parameter : animator.Parameters)
+				{
+					out << YAML::BeginMap;
+					out << YAML::Key << "Name" << YAML::Value << parameter.Name;
+					out << YAML::Key << "Type" << YAML::Value
+						<< static_cast<uint32_t>(parameter.Type);
+					out << YAML::Key << "BoolValue" << YAML::Value << parameter.BoolValue;
+					out << YAML::Key << "IntValue" << YAML::Value << parameter.IntValue;
+					out << YAML::Key << "FloatValue" << YAML::Value << parameter.FloatValue;
+					out << YAML::EndMap;
+				}
+				out << YAML::EndSeq;
+				out << YAML::Key << "States" << YAML::Value << YAML::BeginSeq;
+				for (const AnimatorState& state : animator.States)
+				{
+					out << YAML::BeginMap;
+					out << YAML::Key << "Name" << YAML::Value << state.Name;
+					out << YAML::Key << "Clip" << YAML::Value << state.Clip;
+					out << YAML::Key << "Speed" << YAML::Value << state.Speed;
+					out << YAML::EndMap;
+				}
+				out << YAML::EndSeq;
+				out << YAML::Key << "Transitions" << YAML::Value << YAML::BeginSeq;
+				for (const AnimatorTransition& transition : animator.Transitions)
+				{
+					out << YAML::BeginMap;
+					out << YAML::Key << "FromState" << YAML::Value << transition.FromState;
+					out << YAML::Key << "ToState" << YAML::Value << transition.ToState;
+					out << YAML::Key << "AnyState" << YAML::Value << transition.AnyState;
+					out << YAML::Key << "ExitTime" << YAML::Value << transition.ExitTime;
+					out << YAML::Key << "Conditions" << YAML::Value << YAML::BeginSeq;
+					for (const AnimatorCondition& condition : transition.Conditions)
+					{
+						out << YAML::BeginMap;
+						out << YAML::Key << "Parameter" << YAML::Value
+							<< condition.Parameter;
+						out << YAML::Key << "Mode" << YAML::Value
+							<< static_cast<uint32_t>(condition.Mode);
+						out << YAML::Key << "Threshold" << YAML::Value
+							<< condition.Threshold;
+						out << YAML::EndMap;
+					}
+					out << YAML::EndSeq;
+					out << YAML::EndMap;
+				}
+				out << YAML::EndSeq;
 				out << YAML::EndMap;
 			}
 
@@ -621,6 +858,39 @@ namespace TomCat {
 				out << YAML::Key << "Start" << YAML::Value << line.Start;
 				out << YAML::Key << "End" << YAML::Value << line.End;
 				out << YAML::Key << "Width" << YAML::Value << line.Width;
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<AudioSource>())
+			{
+				const auto& audio = entity.GetComponent<AudioSource>();
+				ValidateAudioSource(audio, context + ".AudioSource");
+				out << YAML::Key << "AudioSource" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Enabled" << YAML::Value << audio.Enabled;
+				out << YAML::Key << "Clip" << YAML::Value
+					<< static_cast<uint64_t>(audio.Clip);
+				out << YAML::Key << "PlayOnStart" << YAML::Value << audio.PlayOnStart;
+				out << YAML::Key << "Loop" << YAML::Value << audio.Loop;
+				out << YAML::Key << "Streaming" << YAML::Value << audio.Streaming;
+				out << YAML::Key << "Volume" << YAML::Value << audio.Volume;
+				out << YAML::Key << "Pitch" << YAML::Value << audio.Pitch;
+				out << YAML::Key << "SpatialBlend" << YAML::Value
+					<< audio.SpatialBlend;
+				out << YAML::Key << "MinDistance" << YAML::Value
+					<< audio.MinDistance;
+				out << YAML::Key << "MaxDistance" << YAML::Value
+					<< audio.MaxDistance;
+				out << YAML::Key << "MixerGroup" << YAML::Value
+					<< static_cast<uint32_t>(audio.MixerGroup);
+				out << YAML::EndMap;
+			}
+
+			if (entity.HasComponent<AudioListener>())
+			{
+				const auto& listener = entity.GetComponent<AudioListener>();
+				out << YAML::Key << "AudioListener" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "Enabled" << YAML::Value << listener.Enabled;
+				out << YAML::Key << "Primary" << YAML::Value << listener.Primary;
 				out << YAML::EndMap;
 			}
 
@@ -731,6 +1001,11 @@ namespace TomCat {
 				out << YAML::Key << "CollideConnected" << YAML::Value << joint.CollideConnected;
 				out << YAML::EndMap;
 			}
+
+			std::string componentError;
+			if (!ComponentRegistry::Get().EncodeComponents(entity, out,
+				componentError))
+				throw std::runtime_error(context + ".Components: " + componentError);
 
 			Entity parent = scene->GetParent(entity);
 			out << YAML::Key << "Parent" << YAML::Value << (parent ? static_cast<uint64_t>(parent.GetUUID()) : 0ULL);
@@ -1000,11 +1275,11 @@ namespace TomCat {
 
 			const uint32_t schemaVersion = ReadRequired<uint32_t>(
 				data, "SchemaVersion", "scene document");
-			if (schemaVersion != OldestSupportedSchemaVersion
-				&& schemaVersion != CurrentSchemaVersion)
-				throw std::runtime_error("Scene SchemaVersion must be "
-					+ std::to_string(OldestSupportedSchemaVersion) + " or "
-					+ std::to_string(CurrentSchemaVersion) + ", got "
+			if (schemaVersion < OldestSupportedSchemaVersion
+				|| schemaVersion > CurrentSchemaVersion)
+				throw std::runtime_error("Scene SchemaVersion must be in ["
+					+ std::to_string(OldestSupportedSchemaVersion) + ", "
+					+ std::to_string(CurrentSchemaVersion) + "], got "
 					+ std::to_string(schemaVersion));
 
 			const std::string sceneName = ReadRequired<std::string>(
@@ -1031,6 +1306,16 @@ namespace TomCat {
 				const YAML::Node entityNode = entities[index];
 				const std::string context = "Entities[" + std::to_string(index) + "]";
 				if (schemaVersion == CurrentSchemaVersion)
+				{
+					RequireExactFields(entityNode, context,
+						{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform",
+							"Components", "Parent" },
+						{ "Camera", "SpriteRenderer", "LineRenderer", "CSharpScripts",
+							"Rigidbody2D", "BoxCollider2D", "CircleCollider2D",
+							"DistanceJoint2D", "AudioSource", "AudioListener",
+							"SpriteAnimator" });
+				}
+				else if (schemaVersion == 10)
 				{
 					RequireExactFields(entityNode, context,
 						{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
@@ -1138,7 +1423,8 @@ namespace TomCat {
 				if (spriteNode)
 				{
 					RequireExactFields(spriteNode, context + ".SpriteRenderer",
-						{ "Enabled", "SpriteHandle", "Color", "TilingFactor" });
+						{ "Enabled", "SpriteHandle", "Color", "TilingFactor" },
+						{ "SortingLayer", "OrderInLayer" });
 					auto& sprite = entity.AddComponent<SpriteRenderer>();
 					sprite.Enabled = ReadRequired<bool>(spriteNode, "Enabled", context + ".SpriteRenderer");
 					const uint64_t rawSpriteHandle = ReadRequired<uint64_t>(
@@ -1146,9 +1432,173 @@ namespace TomCat {
 					sprite.SpriteHandle = AssetHandle(rawSpriteHandle);
 					sprite._Color = ReadRequired<glm::vec4>(spriteNode, "Color", context + ".SpriteRenderer");
 					sprite.TilingFactor = ReadRequired<float>(spriteNode, "TilingFactor", context + ".SpriteRenderer");
+					if (spriteNode["SortingLayer"])
+						sprite.SortingLayer = ReadRequired<int32_t>(spriteNode,
+							"SortingLayer", context + ".SpriteRenderer");
+					if (spriteNode["OrderInLayer"])
+						sprite.OrderInLayer = ReadRequired<int32_t>(spriteNode,
+							"OrderInLayer", context + ".SpriteRenderer");
 					ValidateSprite(sprite, context + ".SpriteRenderer");
 					if (resolveAssets && rawSpriteHandle != 0)
 						sprite.Sprite = AssetManager::Get().LoadTexture(sprite.SpriteHandle);
+				}
+
+				YAML::Node spriteAnimatorNode = entityNode["SpriteAnimator"];
+				if (spriteAnimatorNode)
+				{
+					RequireExactFields(spriteAnimatorNode, context + ".SpriteAnimator",
+						{ "Enabled", "PlayOnStart", "InitialClip", "Speed", "Clips" },
+						{ "InitialState", "Parameters", "States", "Transitions" });
+					auto& animator = entity.AddComponent<SpriteAnimator>();
+					animator.Enabled = ReadRequired<bool>(spriteAnimatorNode,
+						"Enabled", context + ".SpriteAnimator");
+					animator.PlayOnStart = ReadRequired<bool>(spriteAnimatorNode,
+						"PlayOnStart", context + ".SpriteAnimator");
+					animator.InitialClip = ReadRequired<std::string>(spriteAnimatorNode,
+						"InitialClip", context + ".SpriteAnimator");
+					animator.Speed = ReadRequired<float>(spriteAnimatorNode,
+						"Speed", context + ".SpriteAnimator");
+					const YAML::Node clipsNode = spriteAnimatorNode["Clips"];
+					if (!clipsNode.IsSequence())
+						throw std::runtime_error(context
+							+ ".SpriteAnimator.Clips must be a sequence");
+					animator.Clips.reserve(clipsNode.size());
+					for (size_t clipIndex = 0; clipIndex < clipsNode.size(); ++clipIndex)
+					{
+						const YAML::Node clipNode = clipsNode[clipIndex];
+						const std::string clipContext = context
+							+ ".SpriteAnimator.Clips[" + std::to_string(clipIndex) + "]";
+						RequireExactFields(clipNode, clipContext,
+							{ "Name", "Loop", "Frames" });
+						SpriteAnimationClip clip;
+						clip.Name = ReadRequired<std::string>(clipNode, "Name", clipContext);
+						clip.Loop = ReadRequired<bool>(clipNode, "Loop", clipContext);
+						const YAML::Node framesNode = clipNode["Frames"];
+						if (!framesNode.IsSequence())
+							throw std::runtime_error(clipContext
+								+ ".Frames must be a sequence");
+						clip.Frames.reserve(framesNode.size());
+						for (size_t frameIndex = 0; frameIndex < framesNode.size(); ++frameIndex)
+						{
+							const YAML::Node frameNode = framesNode[frameIndex];
+							const std::string frameContext = clipContext + ".Frames["
+								+ std::to_string(frameIndex) + "]";
+							RequireExactFields(frameNode, frameContext,
+								{ "SpriteHandle", "DurationSeconds" });
+							SpriteAnimationFrame frame;
+							frame.SpriteHandle = AssetHandle(ReadRequired<uint64_t>(
+								frameNode, "SpriteHandle", frameContext));
+							frame.DurationSeconds = ReadRequired<float>(frameNode,
+								"DurationSeconds", frameContext);
+							clip.Frames.push_back(frame);
+						}
+						animator.Clips.push_back(std::move(clip));
+					}
+					if (spriteAnimatorNode["InitialState"])
+						animator.InitialState = ReadRequired<std::string>(
+							spriteAnimatorNode, "InitialState",
+							context + ".SpriteAnimator");
+					const YAML::Node parametersNode = spriteAnimatorNode["Parameters"];
+					if (parametersNode)
+					{
+						if (!parametersNode.IsSequence())
+							throw std::runtime_error(context
+								+ ".SpriteAnimator.Parameters must be a sequence");
+						animator.Parameters.reserve(parametersNode.size());
+						for (size_t index = 0; index < parametersNode.size(); ++index)
+						{
+							const YAML::Node parameterNode = parametersNode[index];
+							const std::string parameterContext = context
+								+ ".SpriteAnimator.Parameters[" + std::to_string(index) + "]";
+							RequireExactFields(parameterNode, parameterContext,
+								{ "Name", "Type", "BoolValue", "IntValue", "FloatValue" });
+							AnimatorParameter parameter;
+							parameter.Name = ReadRequired<std::string>(parameterNode,
+								"Name", parameterContext);
+							parameter.Type = static_cast<AnimatorParameterType>(
+								ReadRequired<uint32_t>(parameterNode, "Type", parameterContext));
+							parameter.BoolValue = ReadRequired<bool>(parameterNode,
+								"BoolValue", parameterContext);
+							parameter.IntValue = ReadRequired<int32_t>(parameterNode,
+								"IntValue", parameterContext);
+							parameter.FloatValue = ReadRequired<float>(parameterNode,
+								"FloatValue", parameterContext);
+							animator.Parameters.push_back(std::move(parameter));
+						}
+					}
+					const YAML::Node statesNode = spriteAnimatorNode["States"];
+					if (statesNode)
+					{
+						if (!statesNode.IsSequence())
+							throw std::runtime_error(context
+								+ ".SpriteAnimator.States must be a sequence");
+						animator.States.reserve(statesNode.size());
+						for (size_t index = 0; index < statesNode.size(); ++index)
+						{
+							const YAML::Node stateNode = statesNode[index];
+							const std::string stateContext = context
+								+ ".SpriteAnimator.States[" + std::to_string(index) + "]";
+							RequireExactFields(stateNode, stateContext,
+								{ "Name", "Clip", "Speed" });
+							AnimatorState state;
+							state.Name = ReadRequired<std::string>(stateNode,
+								"Name", stateContext);
+							state.Clip = ReadRequired<std::string>(stateNode,
+								"Clip", stateContext);
+							state.Speed = ReadRequired<float>(stateNode,
+								"Speed", stateContext);
+							animator.States.push_back(std::move(state));
+						}
+					}
+					const YAML::Node transitionsNode = spriteAnimatorNode["Transitions"];
+					if (transitionsNode)
+					{
+						if (!transitionsNode.IsSequence())
+							throw std::runtime_error(context
+								+ ".SpriteAnimator.Transitions must be a sequence");
+						animator.Transitions.reserve(transitionsNode.size());
+						for (size_t index = 0; index < transitionsNode.size(); ++index)
+						{
+							const YAML::Node transitionNode = transitionsNode[index];
+							const std::string transitionContext = context
+								+ ".SpriteAnimator.Transitions[" + std::to_string(index) + "]";
+							RequireExactFields(transitionNode, transitionContext,
+								{ "FromState", "ToState", "AnyState", "ExitTime", "Conditions" });
+							AnimatorTransition transition;
+							transition.FromState = ReadRequired<std::string>(transitionNode,
+								"FromState", transitionContext);
+							transition.ToState = ReadRequired<std::string>(transitionNode,
+								"ToState", transitionContext);
+							transition.AnyState = ReadRequired<bool>(transitionNode,
+								"AnyState", transitionContext);
+							transition.ExitTime = ReadRequired<float>(transitionNode,
+								"ExitTime", transitionContext);
+							const YAML::Node conditionsNode = transitionNode["Conditions"];
+							if (!conditionsNode.IsSequence())
+								throw std::runtime_error(transitionContext
+									+ ".Conditions must be a sequence");
+							transition.Conditions.reserve(conditionsNode.size());
+							for (size_t conditionIndex = 0;
+								conditionIndex < conditionsNode.size(); ++conditionIndex)
+							{
+								const YAML::Node conditionNode = conditionsNode[conditionIndex];
+								const std::string conditionContext = transitionContext
+									+ ".Conditions[" + std::to_string(conditionIndex) + "]";
+								RequireExactFields(conditionNode, conditionContext,
+									{ "Parameter", "Mode", "Threshold" });
+								AnimatorCondition condition;
+								condition.Parameter = ReadRequired<std::string>(conditionNode,
+									"Parameter", conditionContext);
+								condition.Mode = static_cast<AnimatorConditionMode>(
+									ReadRequired<uint32_t>(conditionNode, "Mode", conditionContext));
+								condition.Threshold = ReadRequired<float>(conditionNode,
+									"Threshold", conditionContext);
+								transition.Conditions.push_back(std::move(condition));
+							}
+							animator.Transitions.push_back(std::move(transition));
+						}
+					}
+					ValidateSpriteAnimator(animator, context + ".SpriteAnimator");
 				}
 
 				YAML::Node lineNode = entityNode["LineRenderer"];
@@ -1240,6 +1690,63 @@ namespace TomCat {
 					ValidateCSharpScripts(scripts, context + ".CSharpScripts");
 				}
 
+				YAML::Node audioSourceNode = entityNode["AudioSource"];
+				if (audioSourceNode)
+				{
+					RequireExactFields(audioSourceNode, context + ".AudioSource",
+						{ "Enabled", "Clip", "PlayOnStart", "Loop", "Volume",
+							"Pitch", "MixerGroup" },
+						{ "Streaming", "SpatialBlend", "MinDistance", "MaxDistance" });
+					auto& audio = entity.AddComponent<AudioSource>();
+					audio.Enabled = ReadRequired<bool>(audioSourceNode, "Enabled",
+						context + ".AudioSource");
+					audio.Clip = AssetHandle(ReadRequired<uint64_t>(audioSourceNode,
+						"Clip", context + ".AudioSource"));
+					audio.PlayOnStart = ReadRequired<bool>(audioSourceNode,
+						"PlayOnStart", context + ".AudioSource");
+					audio.Loop = ReadRequired<bool>(audioSourceNode, "Loop",
+						context + ".AudioSource");
+					if (audioSourceNode["Streaming"])
+						audio.Streaming = ReadRequired<bool>(audioSourceNode,
+							"Streaming", context + ".AudioSource");
+					audio.Volume = ReadRequired<float>(audioSourceNode, "Volume",
+						context + ".AudioSource");
+					audio.Pitch = ReadRequired<float>(audioSourceNode, "Pitch",
+						context + ".AudioSource");
+					if (audioSourceNode["SpatialBlend"])
+						audio.SpatialBlend = ReadRequired<float>(audioSourceNode,
+							"SpatialBlend", context + ".AudioSource");
+					if (audioSourceNode["MinDistance"])
+						audio.MinDistance = ReadRequired<float>(audioSourceNode,
+							"MinDistance", context + ".AudioSource");
+					if (audioSourceNode["MaxDistance"])
+						audio.MaxDistance = ReadRequired<float>(audioSourceNode,
+							"MaxDistance", context + ".AudioSource");
+					const uint32_t mixerGroup = ReadRequired<uint32_t>(audioSourceNode,
+						"MixerGroup", context + ".AudioSource");
+					if (mixerGroup > 2)
+						throw std::runtime_error(context
+							+ ".AudioSource.MixerGroup must be in [0, 2]");
+					audio.MixerGroup = static_cast<uint8_t>(mixerGroup);
+					audio.RuntimeVoice = 0;
+					audio.RuntimeClipHandle = AssetHandle(0);
+					audio.RuntimeAutoPlayEvaluated = false;
+					audio.RuntimeStreaming = false;
+					ValidateAudioSource(audio, context + ".AudioSource");
+				}
+
+				YAML::Node audioListenerNode = entityNode["AudioListener"];
+				if (audioListenerNode)
+				{
+					RequireExactFields(audioListenerNode, context + ".AudioListener",
+						{ "Enabled", "Primary" });
+					auto& listener = entity.AddComponent<AudioListener>();
+					listener.Enabled = ReadRequired<bool>(audioListenerNode, "Enabled",
+						context + ".AudioListener");
+					listener.Primary = ReadRequired<bool>(audioListenerNode, "Primary",
+						context + ".AudioListener");
+				}
+
 				YAML::Node rigidbodyNode = entityNode["Rigidbody2D"];
 				if (rigidbodyNode)
 				{
@@ -1321,6 +1828,14 @@ namespace TomCat {
 					ValidateJoint(joint, context + ".DistanceJoint2D");
 					if (static_cast<uint64_t>(joint.ConnectedEntity) != 0)
 						pendingJointConnections.emplace_back(uuid, joint.ConnectedEntity);
+				}
+
+				if (schemaVersion == CurrentSchemaVersion)
+				{
+					std::string componentError;
+					if (!ComponentRegistry::Get().DecodeComponents(entity,
+						entityNode["Components"], componentError))
+						throw std::runtime_error(context + ".Components: " + componentError);
 				}
 
 				const uint64_t parentUUID = ReadRequired<uint64_t>(entityNode, "Parent", context);

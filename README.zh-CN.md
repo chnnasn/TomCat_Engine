@@ -10,15 +10,18 @@ TomCat 当前优先完成可实际使用的 2D 开发流程。现有 3D 项目�
 
 ## 特性
 
-- **2D 渲染**：OpenGL 批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图与实体拾取
+- **2D 渲染**：OpenGL 批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图、实体拾取、带 Rect/Pivot/PPU/Border 语义的稳定 Sprite Atlas 子资源、确定性 Sprite 排序、动画 Clip 与参数驱动的 Animator 状态机
 - **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化、有序 Build Settings 与帧末单场景替换
-- **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` Sidecar、Registry 重建、事务化移动/删除和缺失资产占位
+- **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` schema-v2 Sidecar、ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、依赖跟踪，以及支持去抖内容监控、反向依赖重导和主线程发布的后台 ImportCoordinator
 - **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
 - **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、Play/Pause/Step/Stop，以及延迟派发的 C# Collision/Trigger 回调
 - **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、诊断、last-good 程序集与 Cooked 托管负载
 - **快照 Prefab**：使用稳定 LocalID 的 `.tcprefab` 实体子树、引用重映射、运行时 C# `Instantiate`，实例化后为普通非关联实体
-- **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector 和 Project 面板，支持项目级布局与用户设置持久化
-- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v5、与 Editor 分离的运行程序、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
+- **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
+- **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
+- **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
+- **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector 和 Project 面板，支持 Undo/Redo、自动保存/恢复、项目锁、项目级布局与用户设置持久化
+- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v6（Player 兼容读取 v5/v6）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、Editor 版本选择和用户级最近项目状态
 - **本地化**：动态生成 ImGui 中文字符集，Hub 支持中英文切换
 - **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、物理、Sprite 资产、脚本编译、SceneManager、Prefab、Cook 与隔离 Player 启动
@@ -82,31 +85,42 @@ vendor/            premake 与第三方依赖
 - [x] CircleCollider2D、隐式静态刚体、Trigger、每 Fixture/项目 Layer 两级碰撞过滤、查询、运动 API 和 DistanceJoint2D
 - [x] 延迟派发的引擎监听器/C# Collision 与 Trigger 回调
 - [x] 项目级 Tag、16 个稳定 Layer 和对称 Physics 2D 碰撞矩阵设置
-- [x] Scene Schema v10 持久化与 Cooked Package v5 物理往返
+- [x] Scene writer v11、reader v9-v11、注册表组件持久化与 Cooked Package v6 物理往返
 - [x] 物理回归测试套件（`Scripts\Run-PhysicsRegression.ps1`）
 
 ### 已完成的 C#、Player、Scene 与 Prefab V1
 
 - [x] 托管运行时、源码生成器、Inspector 字段、last-good 编译、确定性生命周期/物理回调、异常隔离与可回收 Play Domain
 - [x] 独立 win-x64 Player、私有 .NET Runtime、严格版本/Hash Player Template、Build / Build And Run 与 Player 子进程冒烟测试
-- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v5 有序场景、帧末同步 SceneManager 切换与 C# SceneManager API
+- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v6 有序场景与 Player v5/v6 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
 - [x] 使用稳定 LocalID 的快照 Prefab V1、Hierarchy/Joint/C# Entity 重映射、新 AttachmentID、延迟 C# 创建、Editor 创建/拖入操作与 Cook 依赖遍历
-- [ ] 游戏名称、图标、分辨率/全屏/VSync 配置、叠加/异步场景、关联/Nested Prefab、Override/Variant 与存档
+- [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，并嵌入 v6 BootManifest
+- [ ] 叠加/异步场景、关联/Nested Prefab、Override/Variant 与存档
 
 ### 资产管线与 2D 内容生产
 
-- [ ] 带内容 Hash、Importer 版本、派生数据缓存和依赖图的 Importer/Reimport 管线
-- [ ] Audio、Font、Shader、Material、Mesh 和 Script 的强类型运行时资产与 Loader
-- [ ] 后台导入/文件监控，以及平台相关的纹理设置、Mipmap 和压缩
-- [ ] Sprite Atlas/SubTexture、Pivot、Pixels Per Unit、动画、排序层、文字、运行时 UI、Tilemap、粒子和 2D 光照
+- [x] ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、`.tcmeta` schema v2 与依赖图
+- [x] 后台 ImportCoordinator：内容 Hash 校验、去抖/合并、变更资产与传递反向依赖重导，以及主线程 Registry/资源发布
+- [ ] 生产级真实格式转码、平台纹理压缩与 Mipmap 生成
+- [x] 带列表式切片编辑器、Rect/Pivot/Pixels Per Unit/Border 元数据的稳定 Sprite Atlas 子资源，以及自包含的 Cook/Player 载荷
+- [x] 确定性 Sprite 排序、动画 Clip，以及支持 Bool/Int/Float/Trigger 参数、AnyState 和 Exit Time 的 Animator 状态/过渡
+- [x] TTF/OTF/TTC Font 导入、主字体/Fallback/Emoji 运行时字形链与世界空间 Text，以及支持 Anchor、Pivot、布局、裁剪、射线目标、DPI 缩放、鼠标/键盘/手柄控制和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI
+- [ ] 自动 Atlas Packing/Slicing 工具与可视化 Animator Graph 编辑器（不属于 P0）
+- [ ] Tilemap、粒子与 2D 光照
 
 ### 引擎系统与工具链
 
-- [ ] Input Action/Axis、重绑定、输入上下文和手柄支持
-- [ ] 音频播放、AudioSource/Listener、空间音频和 Mixer Bus
-- [ ] Undo/Redo、自动保存/恢复、Editor Console 和可用的 Profiler
+- [x] Input Actions、键盘/鼠标/手柄绑定、输入上下文和重绑定
+- [x] WAV 播放与有界 PCM WAV Streaming、2D 空间音频、设备丢失恢复、AudioSource/AudioListener、Null/XAudio2 后端与 Master/Music/SFX Bus
+- [ ] OGG/Vorbis 解码（当前会明确拒绝不支持的输入，未捆绑解码器）
+
+PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区间，因为 P0 Audio Importer 是逐字节透传；Cooked Player 则读取验证后的 TCPAK 区间。若未来 Authoring Importer 增加音频转码，必须改为暴露并读取验证后的 DDC Payload 区间，而不是源文件区间。
+
+- [x] Undo/Redo、自动保存/恢复与项目锁
+- [ ] Editor Console 与 Profiler
 - [x] 在 Push/PR CI 中运行托管、原生与 Player Release 回归
-- [ ] Scene/Project Schema 迁移工具、组件注册/反射和插件/模块 SDK
+- [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
+- [ ] Scene/Project Schema 迁移工具与插件/模块 SDK
 - [ ] Windows/OpenGL 的 2D 流程成熟后，再增加其他平台与渲染后端
 
 ### 未来 3D 范围

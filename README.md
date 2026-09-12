@@ -12,15 +12,18 @@ but a production 3D renderer is not implemented yet.
 
 ## Features
 
-- **2D rendering**: OpenGL batched sprites, lines, circles, cameras, framebuffer-based Scene/Game views, and entity picking
+- **2D rendering**: OpenGL batched sprites, lines, circles, cameras, framebuffer-based Scene/Game views, entity picking, stable Sprite Atlas subassets with Rect/Pivot/PPU/Border semantics, deterministic sprite sorting, animation clips, and a parameter-driven Animator state machine
 - **Scene system**: ECS entities, parent/child hierarchy, stable UUIDs, strict YAML scene serialization, ordered Build Settings, and frame-end single-scene replacement
-- **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` sidecars, registry rebuilding, transactional move/delete operations, and missing-asset placeholders
+- **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` schema-v2 sidecars, ImporterRegistry, SHA-256 artifact keys, a derived-data cache, dependency tracking, and a background ImportCoordinator with debounced content monitoring, reverse-dependent reimport, and main-thread publication
 - **2D physics**: fixed 60 Hz Box2D runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
 - **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, Play/Pause/Step/Stop, and deferred C# Collision/Trigger callbacks
 - **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, diagnostics, last-good assemblies, and cooked managed payloads
 - **Snapshot Prefabs**: `.tcprefab` entity-subtree snapshots with stable LocalIDs, reference remapping, runtime C# `Instantiate`, and ordinary unlinked instances
-- **Editor**: ImGui Scene, Game, Hierarchy, Inspector, and Project panels with per-project layouts and user settings
-- **Standalone Player**: path-free `.tcpak` v5 packages, an independent non-Editor executable, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
+- **Input**: action maps, keyboard/mouse/gamepad bindings, contexts, and runtime rebinding
+- **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
+- **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
+- **Editor**: ImGui Scene, Game, Hierarchy, Inspector, and Project panels with Undo/Redo, autosave/recovery, project locking, per-project layouts, and user settings
+- **Standalone Player**: path-free `.tcpak` v6 packages with v5/v6 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, Editor version selection, and per-user recent-project state
 - **Localization**: dynamically generated Chinese glyph ranges, with Chinese/English UI switching in the Hub
 - **Regression coverage**: one Release entry point for managed ABI/lifecycle, physics, Sprite assets, script compilation, SceneManager, Prefab, Cook, and isolated Player startup
@@ -84,31 +87,42 @@ vendor/            premake and third-party dependencies
 - [x] CircleCollider2D, implicit static bodies, triggers, per-fixture and project-layer collision filtering, queries, motion API, and DistanceJoint2D
 - [x] Deferred engine/native-script Collision and Trigger callbacks
 - [x] Project Settings for Tags, 16 stable Layers, and the symmetric Physics 2D collision matrix
-- [x] Scene schema v10 persistence and cooked-package v5 physics round trips
+- [x] Scene schema v11 writing with v9-v11 reading, registry-backed components, and cooked-package v6 physics round trips
 - [x] Physics regression suite (`Scripts\Run-PhysicsRegression.ps1`)
 
 ### Completed V1 C#, Player, Scene, and Prefab Milestones
 
 - [x] Managed runtime, source generator, Inspector fields, last-good compilation, deterministic lifecycle/physics callbacks, exception isolation, and collectible Play domains
 - [x] Independent win-x64 Player, private .NET runtime, strict versioned/hash-checked template, Build / Build And Run, and Player process smoke coverage
-- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v5 ordered scenes, synchronous frame-end SceneManager transitions, and C# SceneManager API
+- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v6 ordered scenes with v5/v6 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
 - [x] Snapshot Prefab V1 with stable LocalIDs, hierarchy/Joint/C# Entity remapping, fresh AttachmentIDs, deferred C# creation, Editor creation/drop workflows, and Cook dependency traversal
-- [ ] Product name, icon, resolution/fullscreen/VSync authoring, additive/asynchronous scenes, linked/nested Prefabs, overrides/variants, and save data
+- [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the v6 BootManifest
+- [ ] Additive/asynchronous scenes, linked/nested Prefabs, overrides/variants, and save data
 
 ### Asset Pipeline and 2D Production
 
-- [ ] Importer/Reimport pipeline with content hashes, importer versions, derived-data cache, and dependency graph
-- [ ] Typed runtime assets/loaders for audio, fonts, shaders, materials, meshes, and scripts
-- [ ] Background import/file watching plus platform-aware texture settings, mipmaps, and compression
-- [ ] Sprite atlases/subtextures, pivots, pixels-per-unit semantics, animation, sorting layers, text, runtime UI, tilemaps, particles, and 2D lighting
+- [x] ImporterRegistry, SHA-256 ArtifactKey generation, derived-data cache, `.tcmeta` schema v2, and dependency graph
+- [x] Background ImportCoordinator with content-hash verification, debounce/coalescing, changed-asset plus transitive reverse-dependent reimport, and main-thread registry/resource publication
+- [ ] Production format transcoding, platform texture compression, and mipmap generation
+- [x] Stable Sprite Atlas subassets with a list-based slice editor, Rect/Pivot/Pixels Per Unit/Border metadata, and self-contained Cook/Player payloads
+- [x] Deterministic sprite sorting, animation clips, and Animator states/transitions with Bool/Int/Float/Trigger parameters, AnyState, and exit time
+- [x] TTF/OTF/TTC Font import, primary/fallback/emoji runtime glyph chains and world Text, plus Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI with anchors, pivot, layout, clipping, raycast targeting, DPI scaling, mouse/keyboard/gamepad control, and per-interaction gameplay-input consumption
+- [ ] Automatic atlas packing/slicing tools and a visual Animator graph editor (outside P0)
+- [ ] Tilemaps, particles, and 2D lighting
 
 ### Engine Systems and Tooling
 
-- [ ] Input actions/axes, rebinding, contexts, and gamepad support
-- [ ] Audio playback, sources/listeners, spatial audio, and mixer buses
-- [ ] Undo/Redo, autosave/recovery, Editor console, and an enabled profiler
+- [x] Input Actions, keyboard/mouse/gamepad bindings, contexts, and rebinding
+- [x] WAV playback and bounded PCM WAV streaming, 2D spatial audio, device-loss recovery, AudioSource/AudioListener, Null/XAudio2 backends, and Master/Music/SFX buses
+- [ ] OGG/Vorbis decoding (unsupported inputs are rejected explicitly; no decoder is bundled)
+
+PCM WAV streaming reads a registry-resolved source range in authoring mode because the P0 audio importer is byte-for-byte passthrough, and reads a validated TCPAK range in cooked Players. If the authoring importer later transcodes audio, it must expose and use a validated DDC payload range instead of the source range.
+
+- [x] Undo/Redo, autosave/recovery, and project locking
+- [ ] Editor Console and Profiler
 - [x] Run managed/native/Player Release regressions on push/PR CI
-- [ ] Scene/project schema migration tools, component registration/reflection, and a plugin/module SDK
+- [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
+- [ ] Scene/project schema migration tools and a plugin/module SDK
 - [ ] Additional platforms and rendering backends after the Windows/OpenGL 2D workflow is mature
 
 ### Future 3D Scope

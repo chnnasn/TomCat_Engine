@@ -23,14 +23,24 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install Premake5
+      - name: Verify release scripts
+        shell: pwsh
+        run: .\Scripts\Test-ReleaseScripts.ps1
+
+      - name: Install pinned Premake
         shell: pwsh
         run: |
-          $zip = Join-Path $env:RUNNER_TEMP "premake.zip"
-          $directory = Join-Path $env:RUNNER_TEMP "premake"
-          Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta7/premake-5.0.0-beta7-windows.zip" -OutFile $zip -UseBasicParsing
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          $pins = Get-Content "$env:GITHUB_WORKSPACE\Scripts\ReleaseToolVersions.json" -Raw | ConvertFrom-Json
+          $zip = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version).zip"
+          $directory = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version)"
+          Invoke-WebRequest -Uri $pins.premake.url -OutFile $zip -UseBasicParsing
+          [void](Assert-TomCatFileSha256 -Path $zip -ExpectedHash $pins.premake.sha256)
           Expand-Archive -LiteralPath $zip -DestinationPath $directory -Force
-          "PREMAKE=$(Join-Path $directory 'premake5.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $premake = Join-Path $directory 'premake5.exe'
+          if (-not (Test-Path -LiteralPath $premake -PathType Leaf)) { throw 'Premake executable is missing from the verified archive.' }
+          "PREMAKE=$premake" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Run Release regressions
         shell: pwsh

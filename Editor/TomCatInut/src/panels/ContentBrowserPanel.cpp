@@ -5,9 +5,13 @@
 #include <imgui/imgui.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <fstream>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -21,6 +25,8 @@
 
 #include "TomCat/Project/ProjectManager.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/SpriteAsset.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/ImGui/ImGuiCallback.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -232,6 +238,40 @@ namespace TomCat {
 			return {};
 		}
 
+		struct AtlasInputTextData
+		{
+			std::string* Value = nullptr;
+		};
+
+		int ResizeAtlasInputText(ImGuiInputTextCallbackData* data)
+		{
+			auto* context = static_cast<AtlasInputTextData*>(data->UserData);
+			if (data->EventFlag != ImGuiInputTextFlags_CallbackResize
+				|| !context || !context->Value)
+				return 0;
+			context->Value->resize(static_cast<size_t>(data->BufTextLen));
+			data->Buf = context->Value->data();
+			return 0;
+		}
+
+		bool AtlasInputText(const char* label, std::string& value,
+			ImGuiInputTextFlags flags = 0)
+		{
+			AtlasInputTextData context{ &value };
+			return ImGui::InputText(label, value.data(), value.capacity() + 1,
+				flags | ImGuiInputTextFlags_CallbackResize, ResizeAtlasInputText,
+				&context);
+		}
+
+		std::string AtlasFloat(float value)
+		{
+			char buffer[64]{};
+			const auto converted = std::to_chars(buffer, buffer + sizeof(buffer), value,
+				std::chars_format::general, std::numeric_limits<float>::max_digits10);
+			return converted.ec == std::errc{}
+				? std::string(buffer, converted.ptr) : std::to_string(value);
+		}
+
 		std::pair<std::filesystem::path, std::string> MakeUniqueCSharpScriptPath(
 			const std::filesystem::path& parent)
 		{
@@ -373,7 +413,8 @@ namespace TomCat {
 				return project->GetProjectPath().parent_path() / "UserSettings" / "imgui.ini";
 			}
 
-			const std::optional<std::filesystem::path> settingsRoot = GetTomCatSettingsRoot();
+			const std::optional<std::filesystem::path> settingsRoot =
+				ApplicationPaths::GetProductDataRoot(ApplicationProduct::Editor);
 			return settingsRoot ? *settingsRoot / "editor-layout.ini" : std::filesystem::path{};
 		}
 
@@ -495,6 +536,12 @@ namespace TomCat {
 		m_PendingCreateScriptParent.clear();
 		m_RenamePath.clear();
 		m_DeletePath.clear();
+		m_AtlasEditorPath.clear();
+		m_AtlasEditorHandle = AssetHandle(0);
+		m_AtlasBaseSettings.clear();
+		m_AtlasSlices.clear();
+		m_AtlasEditorError.clear();
+		m_OpenAtlasEditorPopup = false;
 		LoadLayoutSetting();
 		RestoreProjectState();
 	}
@@ -1090,6 +1137,9 @@ namespace TomCat {
 		if (csharpScript && ImGui::MenuItem("Open With...", nullptr, false,
 			m_Project && m_ProjectStateWritable))
 			ChooseExternalScriptEditor(target);
+		if (!isDirectory && AssetTypeFromPath(target) == AssetType::Texture2D
+			&& ImGui::MenuItem("Sprite Atlas..."))
+			BeginAtlasEditor(target);
 		if (ImGui::MenuItem("Delete", nullptr, false, !isRoot))
 			RequestDeleteAsset(target, isDirectory);
 		if (ImGui::MenuItem("Rename", nullptr, false, !isRoot))
@@ -1343,6 +1393,229 @@ namespace TomCat {
 			case AssetType::Other:
 			default: return icon(EditorIcon::GenericFile);
 		}
+	}
+
+	void ContentBrowserPanel::BeginAtlasEditor(const std::filesystem::path& path)
+	{
+		m_AtlasEditorPath.clear();
+		m_AtlasEditorHandle = AssetHandle(0);
+		m_AtlasBaseSettings.clear();
+		m_AtlasSlices.clear();
+		m_AtlasEditorError.clear();
+		if (!m_Project || !IsWritablePath(path)
+			|| AssetTypeFromPath(path) != AssetType::Texture2D)
+			return;
+
+		AssetManager& assets = AssetManager::Get();
+		const AssetHandle handle = assets.ImportAsset(path);
+		const AssetMetadata* metadata = assets.GetRegistry().GetMetadata(handle);
+		if (static_cast<uint64_t>(handle) == 0 || !metadata
+			|| metadata->Type != AssetType::Texture2D || metadata->IsMissing)
+		{
+			TC_Core_Error("Could not open Sprite Atlas settings for '{0}'",
+				PathToUTF8(path));
+			return;
+		}
+
+		m_AtlasEditorPath = path;
+		m_AtlasEditorHandle = handle;
+		m_AtlasBaseSettings = metadata->ImportSettings;
+		if (Ref<Texture2D> texture = assets.LoadTexture(handle))
+		{
+			m_AtlasWidth = std::max(1u, texture->GetWidth());
+			m_AtlasHeight = std::max(1u, texture->GetHeight());
+		}
+		else
+		{
+			m_AtlasWidth = 1;
+			m_AtlasHeight = 1;
+		}
+
+		std::vector<AssetSubAsset> parsed;
+		std::string parseError;
+		if (!ParseSpriteAtlasSettings(m_AtlasBaseSettings, parsed, parseError))
+			m_AtlasEditorError = "Existing settings are invalid: " + parseError;
+		else
+		{
+			for (const AssetSubAsset& source : parsed)
+			{
+				AtlasSliceDraft draft;
+				const std::string_view persistent = source.PersistentID;
+				draft.StableID = persistent.starts_with("sprite:")
+					? persistent.substr(7) : persistent;
+				draft.Name = source.Name;
+				draft.Rect[0] = static_cast<int>(source.Sprite.X);
+				draft.Rect[1] = static_cast<int>(source.Sprite.Y);
+				draft.Rect[2] = static_cast<int>(source.Sprite.Width);
+				draft.Rect[3] = static_cast<int>(source.Sprite.Height);
+				draft.Pivot[0] = source.Sprite.PivotX;
+				draft.Pivot[1] = source.Sprite.PivotY;
+				draft.PixelsPerUnit = source.Sprite.PixelsPerUnit;
+				draft.Border[0] = source.Sprite.BorderLeft;
+				draft.Border[1] = source.Sprite.BorderBottom;
+				draft.Border[2] = source.Sprite.BorderRight;
+				draft.Border[3] = source.Sprite.BorderTop;
+				m_AtlasSlices.push_back(std::move(draft));
+			}
+		}
+		m_OpenAtlasEditorPopup = true;
+	}
+
+	bool ContentBrowserPanel::SaveAtlasEditor()
+	{
+		m_AtlasEditorError.clear();
+		std::unordered_set<std::string> stableIDs;
+		for (size_t index = 0; index < m_AtlasSlices.size(); ++index)
+		{
+			const AtlasSliceDraft& slice = m_AtlasSlices[index];
+			const std::string& id = slice.StableID;
+			const std::string& name = slice.Name;
+			const bool finite = std::isfinite(slice.Pivot[0])
+				&& std::isfinite(slice.Pivot[1])
+				&& std::isfinite(slice.PixelsPerUnit)
+				&& std::all_of(std::begin(slice.Border), std::end(slice.Border),
+					[](float value) { return std::isfinite(value); });
+			const uint64_t right = slice.Rect[0] >= 0 && slice.Rect[2] > 0
+				? static_cast<uint64_t>(slice.Rect[0]) + slice.Rect[2] : 0;
+			const uint64_t bottom = slice.Rect[1] >= 0 && slice.Rect[3] > 0
+				? static_cast<uint64_t>(slice.Rect[1]) + slice.Rect[3] : 0;
+			if (id.empty() || name.empty() || !stableIDs.emplace(id).second
+				|| !finite || slice.Rect[0] < 0 || slice.Rect[1] < 0
+				|| slice.Rect[2] <= 0 || slice.Rect[3] <= 0
+				|| right > m_AtlasWidth || bottom > m_AtlasHeight
+				|| slice.Pivot[0] < 0.0f || slice.Pivot[0] > 1.0f
+				|| slice.Pivot[1] < 0.0f || slice.Pivot[1] > 1.0f
+				|| slice.PixelsPerUnit <= 0.0f
+				|| std::any_of(std::begin(slice.Border), std::end(slice.Border),
+					[](float value) { return value < 0.0f; })
+				|| slice.Border[0] + slice.Border[2] > slice.Rect[2]
+				|| slice.Border[1] + slice.Border[3] > slice.Rect[3])
+			{
+				m_AtlasEditorError = "Slice " + std::to_string(index + 1)
+					+ " has an empty/duplicate ID or invalid Rect, Pivot, PPU or Border.";
+				return false;
+			}
+		}
+
+		AssetImportSettings settings = m_AtlasBaseSettings;
+		for (auto iterator = settings.begin(); iterator != settings.end();)
+		{
+			if (iterator->first.starts_with("Sprite."))
+				iterator = settings.erase(iterator);
+			else
+				++iterator;
+		}
+		settings["SpriteMode"] = m_AtlasSlices.empty() ? "Single" : "Multiple";
+		if (m_AtlasSlices.empty())
+			settings.erase("SpriteAtlasSchema");
+		else
+			settings["SpriteAtlasSchema"] = "2";
+
+		for (const AtlasSliceDraft& slice : m_AtlasSlices)
+		{
+			const std::string prefix = "Sprite." + slice.StableID + ".";
+			settings[prefix + "Name"] = slice.Name;
+			settings[prefix + "Rect"] = std::to_string(slice.Rect[0]) + ","
+				+ std::to_string(slice.Rect[1]) + "," + std::to_string(slice.Rect[2])
+				+ "," + std::to_string(slice.Rect[3]);
+			settings[prefix + "Pivot"] = AtlasFloat(slice.Pivot[0]) + ","
+				+ AtlasFloat(slice.Pivot[1]);
+			settings[prefix + "PixelsPerUnit"] = AtlasFloat(slice.PixelsPerUnit);
+			settings[prefix + "Border"] = AtlasFloat(slice.Border[0]) + ","
+				+ AtlasFloat(slice.Border[1]) + "," + AtlasFloat(slice.Border[2])
+				+ "," + AtlasFloat(slice.Border[3]);
+		}
+
+		std::vector<AssetSubAsset> verified;
+		if (std::string error; !ParseSpriteAtlasSettings(settings, verified, error))
+		{
+			m_AtlasEditorError = error;
+			return false;
+		}
+		if (!AssetManager::Get().SetImportSettings(m_AtlasEditorHandle, settings))
+		{
+			m_AtlasEditorError = "Could not atomically save the .tcmeta import settings.";
+			return false;
+		}
+		m_AtlasBaseSettings = std::move(settings);
+		return true;
+	}
+
+	void ContentBrowserPanel::DrawAtlasEditorPopup()
+	{
+		if (m_OpenAtlasEditorPopup)
+		{
+			ImGui::OpenPopup("Sprite Atlas");
+			m_OpenAtlasEditorPopup = false;
+		}
+		ImGui::SetNextWindowSize(ImVec2(760.0f, 620.0f), ImGuiCond_FirstUseEver);
+		if (!ImGui::BeginPopupModal("Sprite Atlas", nullptr))
+			return;
+
+		ImGui::TextUnformatted(PathToUTF8(m_AtlasEditorPath.filename()).c_str());
+		ImGui::SameLine();
+		ImGui::TextDisabled("%u x %u | empty list = Single Sprite",
+			m_AtlasWidth, m_AtlasHeight);
+		if (!m_AtlasEditorError.empty())
+			ImGui::TextWrapped("%s", m_AtlasEditorError.c_str());
+		const float footer = ImGui::GetFrameHeightWithSpacing() * 2.2f;
+		ImGui::BeginChild("AtlasSliceList", ImVec2(0.0f, -footer), true);
+		std::optional<size_t> remove;
+		for (size_t index = 0; index < m_AtlasSlices.size(); ++index)
+		{
+			AtlasSliceDraft& slice = m_AtlasSlices[index];
+			ImGui::PushID(static_cast<int>(index));
+			const std::string title = slice.Name.empty()
+				? "Unnamed Slice" : slice.Name;
+			if (ImGui::CollapsingHeader((title + "###Slice").c_str(),
+				ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				AtlasInputText("Stable ID", slice.StableID,
+					ImGuiInputTextFlags_ReadOnly);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Persistent identity; renaming the Slice keeps its AssetHandle.");
+				AtlasInputText("Name", slice.Name);
+				ImGui::InputInt4("Rect (X,Y,W,H)", slice.Rect);
+				ImGui::DragFloat2("Pivot", slice.Pivot, 0.01f, 0.0f, 1.0f);
+				ImGui::DragFloat("Pixels Per Unit", &slice.PixelsPerUnit, 1.0f, 0.001f);
+				ImGui::DragFloat4("Border (L,B,R,T)", slice.Border, 0.25f, 0.0f);
+				if (ImGui::Button("Remove Slice"))
+					remove = index;
+			}
+			ImGui::PopID();
+		}
+		if (remove)
+			m_AtlasSlices.erase(m_AtlasSlices.begin() + *remove);
+		ImGui::EndChild();
+
+		if (ImGui::Button("Add Slice"))
+		{
+			AtlasSliceDraft slice;
+			slice.StableID = std::to_string(static_cast<uint64_t>(UUID()));
+			slice.Name = "Sprite " + std::to_string(m_AtlasSlices.size() + 1);
+			slice.Rect[2] = static_cast<int>(std::min<uint32_t>(m_AtlasWidth,
+				static_cast<uint32_t>(std::numeric_limits<int>::max())));
+			slice.Rect[3] = static_cast<int>(std::min<uint32_t>(m_AtlasHeight,
+				static_cast<uint32_t>(std::numeric_limits<int>::max())));
+			m_AtlasSlices.push_back(std::move(slice));
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Save") && SaveAtlasEditor())
+		{
+			m_AtlasEditorPath.clear();
+			m_AtlasEditorHandle = AssetHandle(0);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel"))
+		{
+			m_AtlasEditorPath.clear();
+			m_AtlasEditorHandle = AssetHandle(0);
+			m_AtlasSlices.clear();
+			m_AtlasEditorError.clear();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
 	}
 
 	void ContentBrowserPanel::SubmitDragPayload(const std::filesystem::path& path,
@@ -1729,6 +2002,7 @@ namespace TomCat {
 		{
 			DrawRenamePopup();
 			DrawDeleteConfirmation();
+			DrawAtlasEditorPopup();
 			return;
 		}
 		const bool visible = ImGui::Begin("Project", open);
@@ -1739,6 +2013,7 @@ namespace TomCat {
 			ImGui::End();
 			DrawRenamePopup();
 			DrawDeleteConfirmation();
+			DrawAtlasEditorPopup();
 			return;
 		}
 
@@ -1781,6 +2056,7 @@ namespace TomCat {
 			ImGui::End();
 			DrawRenamePopup();
 			DrawDeleteConfirmation();
+			DrawAtlasEditorPopup();
 			return;
 		}
 		error.clear();
@@ -1824,6 +2100,7 @@ namespace TomCat {
 		ImGui::End();
 		DrawRenamePopup();
 		DrawDeleteConfirmation();
+		DrawAtlasEditorPopup();
 	}
 
 }

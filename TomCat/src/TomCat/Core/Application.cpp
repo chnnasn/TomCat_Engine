@@ -3,6 +3,7 @@
 
 #include "Log.h"
 
+#include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Renderer/Renderer.h"
 
 #include "Input.h"
@@ -15,6 +16,13 @@ namespace TomCat {
 
 	Application::Application(const std::string& name, std::filesystem::path iconPath,
 		bool enableImGui, bool createWindow)
+		: Application(WindowProps(name, 1920, 1080, std::move(iconPath)),
+			enableImGui, createWindow)
+	{
+	}
+
+	Application::Application(WindowProps windowProps, bool enableImGui,
+		bool createWindow)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -26,13 +34,19 @@ namespace TomCat {
 			return;
 		try
 		{
-			m_Window = Window::Create(WindowProps(name, 1920, 1080, std::move(iconPath)));
+			m_Window = Window::Create(windowProps);
 			if (!m_Window)
 				throw std::runtime_error("Failed to create the application window");
 
 			m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
 			Renderer::Init();
 			m_RendererInitialized = true;
+			if (m_Window->GetFramebufferWidth() > 0
+				&& m_Window->GetFramebufferHeight() > 0)
+			{
+				Renderer::OnWindowResize(m_Window->GetFramebufferWidth(),
+					m_Window->GetFramebufferHeight());
+			}
 
 			if (enableImGui)
 			{
@@ -157,6 +171,12 @@ namespace TomCat {
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
+			// Files are hashed and imported on worker threads, but registry updates
+			// and runtime cache invalidation must be published from the application
+			// thread. Pump even while minimized so authoring changes cannot remain
+			// indefinitely queued behind a hidden window.
+			(void)AssetManager::Get().PumpImportCoordinator();
+
 			if (!m_Minimized)
 			{
 				{
@@ -195,14 +215,15 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		if (e.GetWidth() == 0 || e.GetHeight() == 0)
+		if (e.GetFramebufferWidth() == 0 || e.GetFramebufferHeight() == 0)
 		{
 			m_Minimized = true;
 			return false;
 		}
 
 		m_Minimized = false;
-		Renderer::OnWindowResize(e.GetWidth(), e.GetHeight());
+		Renderer::OnWindowResize(e.GetFramebufferWidth(),
+			e.GetFramebufferHeight());
 
 		return false;
 	}

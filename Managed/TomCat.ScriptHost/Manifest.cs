@@ -18,7 +18,8 @@ public enum ScriptLifecycle : uint
     TriggerEnter2D = 1 << 6,
     TriggerExit2D = 1 << 7,
     Disable = 1 << 8,
-    Destroy = 1 << 9
+    Destroy = 1 << 9,
+    LateUpdate = 1 << 10
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ScriptFieldType>))]

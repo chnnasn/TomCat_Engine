@@ -11,13 +11,19 @@
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/MouseCodes.h"
 
+#include "TomCat/Audio/AudioClip.h"
+#include "TomCat/Audio/AudioDevice.h"
+#include "TomCat/Audio/AudioEngine.h"
+
 #include "TomCat/Asset/Asset.h"
+#include "TomCat/Asset/AssetImportCoordinator.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SpriteAnimation.h"
 #include "TomCat/Scene/SceneManager.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"

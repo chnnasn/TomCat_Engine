@@ -19,7 +19,20 @@ internal static unsafe class NativeBridge
 
 	private static readonly object s_bindGate = new();
     private static NativeApiV1 s_api;
+	private static NativeInputApiV1 s_inputApi;
+	private static NativeComponentApiV1 s_componentApi;
+	private static NativeAudioApiV1 s_audioApi;
+	private static NativeAudioSpatialApiV1 s_audioSpatialApi;
+	private static NativeRuntimeUIApiV1 s_runtimeUIApi;
+	private static NativeGameplayApiV1 s_gameplayApi;
+	private static readonly UTF8Encoding s_strictUtf8 = new(false, true);
     private static bool s_bound;
+	private static bool s_inputBound;
+	private static bool s_componentBound;
+	private static bool s_audioBound;
+	private static bool s_audioSpatialBound;
+	private static bool s_runtimeUIBound;
+	private static bool s_gameplayBound;
 
     internal static bool IsBound => Volatile.Read(ref s_bound);
 
@@ -34,6 +47,22 @@ internal static unsafe class NativeBridge
 		NativeApiV1 candidate = *api;
 		if (!HasRequiredCallbacks(candidate))
 			return NativeUnavailable;
+		NativeInputApiV1 inputCandidate = default;
+		bool hasInputCandidate = TryReadInputCapability(api, out inputCandidate);
+		NativeComponentApiV1 componentCandidate = default;
+		bool hasComponentCandidate = TryReadComponentCapability(api,
+			out componentCandidate);
+		NativeAudioApiV1 audioCandidate = default;
+		bool hasAudioCandidate = TryReadAudioCapability(api, out audioCandidate);
+		NativeAudioSpatialApiV1 audioSpatialCandidate = default;
+		bool hasAudioSpatialCandidate = TryReadAudioSpatialCapability(api,
+			out audioSpatialCandidate);
+		NativeRuntimeUIApiV1 runtimeUICandidate = default;
+		bool hasRuntimeUICandidate = TryReadRuntimeUICapability(api,
+			out runtimeUICandidate);
+		NativeGameplayApiV1 gameplayCandidate = default;
+		bool hasGameplayCandidate = TryReadGameplayCapability(api,
+			out gameplayCandidate);
 
 		// Publish only a fully validated table. A rejected rebind leaves the last
 		// complete process-lifetime table and its bound state untouched.
@@ -44,9 +73,244 @@ internal static unsafe class NativeBridge
 				s_api = candidate;
 				Volatile.Write(ref s_bound, true);
 			}
+			if (hasInputCandidate && !s_inputBound)
+			{
+				s_inputApi = inputCandidate;
+				Volatile.Write(ref s_inputBound, true);
+			}
+			if (hasComponentCandidate && !s_componentBound)
+			{
+				s_componentApi = componentCandidate;
+				Volatile.Write(ref s_componentBound, true);
+			}
+			if (hasAudioCandidate && !s_audioBound)
+			{
+				s_audioApi = audioCandidate;
+				Volatile.Write(ref s_audioBound, true);
+			}
+			if (hasAudioSpatialCandidate && !s_audioSpatialBound)
+			{
+				s_audioSpatialApi = audioSpatialCandidate;
+				Volatile.Write(ref s_audioSpatialBound, true);
+			}
+			if (hasRuntimeUICandidate && !s_runtimeUIBound)
+			{
+				s_runtimeUIApi = runtimeUICandidate;
+				Volatile.Write(ref s_runtimeUIBound, true);
+			}
+			if (hasGameplayCandidate && !s_gameplayBound)
+			{
+				s_gameplayApi = gameplayCandidate;
+				Volatile.Write(ref s_gameplayBound, true);
+			}
 		}
         return 0;
     }
+
+	private static bool TryReadInputCapability(NativeApiV1* api,
+		out NativeInputApiV1 input)
+	{
+		input = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.InputApiV1");
+		NativeInputApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeInputApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeInputApiV1))
+				return false;
+		}
+		input = candidate;
+		return input.Version == 1 && input.Size >= (uint)sizeof(NativeInputApiV1)
+			&& input.MaximumGamepads > 0 && input.MaximumGamepads <= 16
+			&& input.GamepadButtonCount >= 15 && input.GamepadAxisCount >= 6
+			&& input.IsMouseButtonHeld != null && input.WasMouseButtonPressed != null
+			&& input.WasMouseButtonReleased != null && input.GetScrollDelta != null
+			&& input.IsWindowFocused != null && input.IsGamepadConnected != null
+			&& input.WasGamepadConnected != null && input.WasGamepadDisconnected != null
+			&& input.IsGamepadButtonHeld != null && input.WasGamepadButtonPressed != null
+			&& input.WasGamepadButtonReleased != null && input.GetGamepadAxis != null
+			&& input.GetGamepadName != null;
+	}
+
+	private static bool TryReadComponentCapability(NativeApiV1* api,
+		out NativeComponentApiV1 component)
+	{
+		component = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.ComponentApiV1");
+		NativeComponentApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeComponentApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeComponentApiV1))
+				return false;
+		}
+		component = candidate;
+		return component.Version == 1
+			&& component.Size >= (uint)sizeof(NativeComponentApiV1)
+			&& component.Has != null && component.Add != null
+			&& component.Remove != null && component.GetProperty != null
+			&& component.SetProperty != null;
+	}
+
+	private static bool TryReadAudioCapability(NativeApiV1* api,
+		out NativeAudioApiV1 audio)
+	{
+		audio = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.AudioApiV1");
+		NativeAudioApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeAudioApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeAudioApiV1))
+				return false;
+		}
+		audio = candidate;
+		return audio.Version == 1 && audio.Size >= (uint)sizeof(NativeAudioApiV1)
+			&& audio.IsHardwareAvailable != null && audio.GetBackendName != null
+			&& audio.HasSource != null && audio.AddSource != null
+			&& audio.RemoveSource != null && audio.GetClip != null
+			&& audio.SetClip != null && audio.GetEnabled != null
+			&& audio.SetEnabled != null && audio.GetPlayOnStart != null
+			&& audio.SetPlayOnStart != null && audio.GetLoop != null
+			&& audio.SetLoop != null && audio.GetVolume != null
+			&& audio.SetVolume != null && audio.GetPitch != null
+			&& audio.SetPitch != null && audio.GetMixerGroup != null
+			&& audio.SetMixerGroup != null && audio.Play != null
+			&& audio.Pause != null && audio.Stop != null
+			&& audio.GetPlaybackState != null && audio.HasListener != null
+			&& audio.AddListener != null && audio.RemoveListener != null
+			&& audio.GetListenerEnabled != null && audio.SetListenerEnabled != null
+			&& audio.GetListenerPrimary != null && audio.SetListenerPrimary != null
+			&& audio.GetMixerVolume != null && audio.SetMixerVolume != null;
+	}
+
+	private static bool TryReadAudioSpatialCapability(NativeApiV1* api,
+		out NativeAudioSpatialApiV1 audio)
+	{
+		audio = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.AudioSpatialApiV1");
+		NativeAudioSpatialApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeAudioSpatialApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeAudioSpatialApiV1))
+				return false;
+		}
+		audio = candidate;
+		return audio.Version == 1
+			&& audio.Size >= (uint)sizeof(NativeAudioSpatialApiV1)
+			&& audio.GetStreaming != null && audio.SetStreaming != null
+			&& audio.GetSpatialBlend != null && audio.SetSpatialBlend != null
+			&& audio.GetMinDistance != null && audio.SetMinDistance != null
+			&& audio.GetMaxDistance != null && audio.SetMaxDistance != null;
+	}
+
+	private static bool TryReadRuntimeUICapability(NativeApiV1* api,
+		out NativeRuntimeUIApiV1 runtimeUI)
+	{
+		runtimeUI = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.RuntimeUIApiV1");
+		NativeRuntimeUIApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeRuntimeUIApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeRuntimeUIApiV1))
+				return false;
+		}
+		runtimeUI = candidate;
+		return runtimeUI.Version == 1
+			&& runtimeUI.Size >= (uint)sizeof(NativeRuntimeUIApiV1)
+			&& runtimeUI.GetText != null && runtimeUI.SetText != null
+			&& runtimeUI.WasButtonClicked != null
+			&& runtimeUI.GetButtonClickSerial != null
+			&& runtimeUI.FocusButton != null && runtimeUI.GetRect != null
+			&& runtimeUI.IsGameplayInputCaptured != null;
+	}
+
+	private static bool TryReadGameplayCapability(NativeApiV1* api,
+		out NativeGameplayApiV1 gameplay)
+	{
+		gameplay = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.GameplayApiV1");
+		NativeGameplayApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeGameplayApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeGameplayApiV1))
+				return false;
+		}
+		gameplay = candidate;
+		uint requiredPrefix = (uint)Marshal.OffsetOf<NativeGameplayApiV1>(
+			nameof(NativeGameplayApiV1.SpriteAnimatorSetBool));
+		return gameplay.Version == 1
+			&& gameplay.Size >= requiredPrefix
+			&& gameplay.CreateEntityDeferred != null
+			&& gameplay.FindEntityByName != null
+			&& gameplay.QueryEntities != null && gameplay.GetParent != null
+			&& gameplay.SetParentDeferred != null && gameplay.GetChildren != null
+			&& gameplay.GetActiveSelf != null && gameplay.SetActiveSelf != null
+			&& gameplay.GetActiveInHierarchy != null
+			&& gameplay.TransformGetLocalPosition != null
+			&& gameplay.TransformSetLocalPosition != null
+			&& gameplay.TransformGetLocalRotationEuler != null
+			&& gameplay.TransformSetLocalRotationEuler != null
+			&& gameplay.TransformGetLocalScale != null
+			&& gameplay.TransformSetLocalScale != null
+			&& gameplay.GetComponentProperty != null
+			&& gameplay.SetComponentProperty != null
+			&& gameplay.SpriteAnimatorPlay != null
+			&& gameplay.SpriteAnimatorStop != null;
+	}
 
 	private static bool HasRequiredCallbacks(NativeApiV1 api) =>
 		api.Log != null && api.EmitDiagnostic != null && api.IsMainThread != null &&
@@ -154,6 +418,158 @@ internal static unsafe class NativeBridge
         Check(s_api.DestroyEntityDeferred(ToNative(entity)), "Entity.Destroy");
     }
 
+	internal static Entity CreateEntity(Entity context, string name,
+		Vector3 worldPosition, Entity? parent)
+	{
+		ArgumentNullException.ThrowIfNull(name);
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.CreateEntityDeferred != null,
+			"World.CreateEntity");
+		byte[] bytes = Encoding.UTF8.GetBytes(name);
+		NativeEntityHandleV1 created = default;
+		NativeEntityHandleV1 parentHandle = parent is null ? default : ToNative(parent);
+		fixed (byte* pointer = bytes)
+		{
+			Check(s_gameplayApi.CreateEntityDeferred(ToNative(context),
+				new NativeUtf8View(pointer, (ulong)bytes.Length), ToNative(worldPosition),
+				parentHandle, &created), "World.CreateEntity");
+		}
+		if (created.EntityId == 0)
+			throw new TomCatException("World.CreateEntity returned an invalid reservation.");
+		return FromNative(created);
+	}
+
+	internal static Entity? FindEntityByName(Entity context, string name)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(name);
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.FindEntityByName != null,
+			"World.Find");
+		byte[] bytes = Encoding.UTF8.GetBytes(name);
+		NativeEntityHandleV1 found = default;
+		fixed (byte* pointer = bytes)
+		{
+			int status = s_gameplayApi.FindEntityByName(ToNative(context),
+				new NativeUtf8View(pointer, (ulong)bytes.Length), &found);
+			if (status == NativeNotFound)
+				return null;
+			Check(status, "World.Find");
+		}
+		return found.EntityId == 0 ? null : FromNative(found);
+	}
+
+	internal static Entity[] QueryEntities(Entity context, int componentType,
+		ulong registeredTypeId)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.QueryEntities != null, "World.Query");
+		uint required = 0;
+		int probeStatus = s_gameplayApi.QueryEntities(ToNative(context), componentType,
+			registeredTypeId, null, 0, &required);
+		if (probeStatus != 0 && probeStatus != NativeBufferTooSmall)
+			Check(probeStatus, "World.Query");
+		if (required == 0)
+			return [];
+		if (required > 1_000_000)
+			throw new TomCatException("World.Query returned an invalid entity count.");
+		NativeEntityHandleV1[] native = GC.AllocateUninitializedArray<NativeEntityHandleV1>(
+			checked((int)required));
+		fixed (NativeEntityHandleV1* values = native)
+		{
+			uint actual = required;
+			Check(s_gameplayApi.QueryEntities(ToNative(context), componentType,
+				registeredTypeId, values, required, &actual), "World.Query");
+			if (actual > required)
+				throw new TomCatException("World.Query changed count while being read.");
+			Entity[] result = new Entity[actual];
+			for (int index = 0; index < result.Length; ++index)
+				result[index] = FromNative(native[index]);
+			return result;
+		}
+	}
+
+	internal static Entity? GetParent(Entity entity)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.GetParent != null, "Entity.Parent");
+		NativeEntityHandleV1 parent = default;
+		Check(s_gameplayApi.GetParent(ToNative(entity), &parent), "Entity.Parent");
+		return parent.EntityId == 0 ? null : FromNative(parent);
+	}
+
+	internal static void SetParent(Entity entity, Entity? parent)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SetParentDeferred != null, "Entity.Parent");
+		Check(s_gameplayApi.SetParentDeferred(ToNative(entity),
+			parent is null ? default : ToNative(parent)), "Entity.Parent");
+	}
+
+	internal static Entity[] GetChildren(Entity entity)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.GetChildren != null, "Entity.Children");
+		uint required = 0;
+		int probeStatus = s_gameplayApi.GetChildren(ToNative(entity), null, 0, &required);
+		if (probeStatus != 0 && probeStatus != NativeBufferTooSmall)
+			Check(probeStatus, "Entity.Children");
+		if (required == 0)
+			return [];
+		if (required > 1_000_000)
+			throw new TomCatException("Entity.Children returned an invalid count.");
+		NativeEntityHandleV1[] native = GC.AllocateUninitializedArray<NativeEntityHandleV1>(
+			checked((int)required));
+		fixed (NativeEntityHandleV1* values = native)
+		{
+			uint actual = required;
+			Check(s_gameplayApi.GetChildren(ToNative(entity), values, required, &actual),
+				"Entity.Children");
+			if (actual > required)
+				throw new TomCatException("Entity.Children changed count while being read.");
+			Entity[] result = new Entity[actual];
+			for (int index = 0; index < result.Length; ++index)
+				result[index] = FromNative(native[index]);
+			return result;
+		}
+	}
+
+	internal static bool GetActiveSelf(Entity entity)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.GetActiveSelf != null, "Entity.ActiveSelf");
+		return ReadBoolean(s_gameplayApi.GetActiveSelf(ToNative(entity)),
+			"Entity.ActiveSelf");
+	}
+
+	internal static void SetActiveSelf(Entity entity, bool active)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SetActiveSelf != null, "Entity.ActiveSelf");
+		Check(s_gameplayApi.SetActiveSelf(ToNative(entity), active ? 1 : 0),
+			"Entity.ActiveSelf");
+	}
+
+	internal static bool GetActiveInHierarchy(Entity entity)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.GetActiveInHierarchy != null,
+			"Entity.ActiveInHierarchy");
+		return ReadBoolean(s_gameplayApi.GetActiveInHierarchy(ToNative(entity)),
+			"Entity.ActiveInHierarchy");
+	}
+
+	// Host-side lifecycle filtering occurs between user callbacks, so it is on
+	// the main thread but intentionally outside ScriptExecutionContext.Enter.
+	internal static bool IsActiveForScriptHost(Entity entity)
+	{
+		if (!Volatile.Read(ref s_gameplayBound)
+			|| s_gameplayApi.GetActiveInHierarchy == null)
+			return true;
+		EnsureMainThread(requireLifecycleContext: false);
+		return ReadBoolean(s_gameplayApi.GetActiveInHierarchy(ToNative(entity)),
+			"ScriptHost.ActiveInHierarchy");
+	}
+
     internal static bool HasComponent(Entity entity, NativeComponentTypeV1 type)
     {
         EnsureMainThread();
@@ -174,6 +590,520 @@ internal static unsafe class NativeBridge
         Require(s_api.RemoveComponentDeferred != null, "Entity.RemoveComponent");
         Check(s_api.RemoveComponentDeferred(ToNative(entity), (int)type), "Entity.RemoveComponent");
     }
+
+	internal static bool HasRegisteredComponent(Entity entity, ulong typeId)
+	{
+		EnsureMainThread();
+		RequireComponent(s_componentApi.Has != null, "Entity.HasComponent");
+		return ReadBoolean(s_componentApi.Has(ToNative(entity), typeId),
+			"Entity.HasComponent");
+	}
+
+	internal static void AddRegisteredComponent(Entity entity, ulong typeId)
+	{
+		EnsureMainThread();
+		RequireComponent(s_componentApi.Add != null, "Entity.AddComponent");
+		Check(s_componentApi.Add(ToNative(entity), typeId), "Entity.AddComponent");
+	}
+
+	internal static void RemoveRegisteredComponent(Entity entity, ulong typeId)
+	{
+		EnsureMainThread();
+		RequireComponent(s_componentApi.Remove != null, "Entity.RemoveComponent");
+		Check(s_componentApi.Remove(ToNative(entity), typeId), "Entity.RemoveComponent");
+	}
+
+	internal static int GetRegisteredInt32(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Int32
+			|| value.Integer < int.MinValue || value.Integer > int.MaxValue)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return (int)value.Integer;
+	}
+
+	internal static void SetRegisteredInt32(Entity entity, ulong typeId,
+		ulong propertyId, int value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Int32,
+			Integer = value
+		}, operation);
+
+	internal static bool GetRegisteredBool(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Bool
+			|| (value.Integer != 0 && value.Integer != 1))
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return value.Integer != 0;
+	}
+
+	internal static void SetRegisteredBool(Entity entity, ulong typeId,
+		ulong propertyId, bool value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Bool,
+			Integer = value ? 1 : 0
+		}, operation);
+
+	internal static ulong GetRegisteredUInt64(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.UInt64)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return unchecked((ulong)value.Integer);
+	}
+
+	internal static void SetRegisteredUInt64(Entity entity, ulong typeId,
+		ulong propertyId, ulong value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.UInt64,
+			Integer = unchecked((long)value)
+		}, operation);
+
+	internal static float GetRegisteredFloat(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Float || !double.IsFinite(value.Number)
+			|| value.Number < -float.MaxValue || value.Number > float.MaxValue)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return (float)value.Number;
+	}
+
+	internal static void SetRegisteredFloat(Entity entity, ulong typeId,
+		ulong propertyId, float value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Float,
+			Number = value
+		}, operation);
+
+	internal static Vector2 GetRegisteredVector2(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Vector2)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return new(value.X, value.Y);
+	}
+
+	internal static void SetRegisteredVector2(Entity entity, ulong typeId,
+		ulong propertyId, Vector2 value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Vector2,
+			X = value.X,
+			Y = value.Y
+		}, operation);
+
+	internal static Vector4 GetRegisteredVector4(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Vector4)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return new(value.X, value.Y, value.Z, value.W);
+	}
+
+	internal static void SetRegisteredVector4(Entity entity, ulong typeId,
+		ulong propertyId, Vector4 value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Vector4,
+			X = value.X,
+			Y = value.Y,
+			Z = value.Z,
+			W = value.W
+		}, operation);
+
+	internal static Color GetRegisteredColor(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		Vector4 value = GetRegisteredVector4(entity, typeId, propertyId, operation);
+		return new(value.X, value.Y, value.Z, value.W);
+	}
+
+	internal static void SetRegisteredColor(Entity entity, ulong typeId,
+		ulong propertyId, Color value, string operation) => SetRegisteredVector4(entity,
+		typeId, propertyId, new(value.R, value.G, value.B, value.A), operation);
+
+	internal static string GetRuntimeUIText(Entity entity, ulong typeId,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireRuntimeUI(s_runtimeUIApi.GetText != null, operation);
+		uint required = 0;
+		int probe = s_runtimeUIApi.GetText(ToNative(entity), typeId, null, 0,
+			&required);
+		if (probe != 0 && probe != NativeBufferTooSmall)
+			Check(probe, operation);
+		if (required == 0)
+			return string.Empty;
+		if (required > 65536)
+			throw new TomCatException($"{operation} returned an invalid UTF-8 length.");
+		byte[] bytes = GC.AllocateUninitializedArray<byte>((int)required);
+		fixed (byte* buffer = bytes)
+		{
+			uint actual = required;
+			Check(s_runtimeUIApi.GetText(ToNative(entity), typeId, buffer,
+				required, &actual), operation);
+			if (actual > required)
+				throw new TomCatException($"{operation} changed length while being read.");
+			return s_strictUtf8.GetString(bytes, 0, (int)actual);
+		}
+	}
+
+	internal static void SetRuntimeUIText(Entity entity, ulong typeId,
+		string value, string operation)
+	{
+		ArgumentNullException.ThrowIfNull(value);
+		EnsureMainThread();
+		RequireRuntimeUI(s_runtimeUIApi.SetText != null, operation);
+		byte[] bytes = s_strictUtf8.GetBytes(value);
+		if (bytes.Length > 65536)
+			throw new ArgumentOutOfRangeException(nameof(value),
+				"Runtime UI text may contain at most 65536 UTF-8 bytes.");
+		fixed (byte* pointer = bytes)
+			Check(s_runtimeUIApi.SetText(ToNative(entity), typeId,
+				new NativeUtf8View(pointer, (ulong)bytes.Length)), operation);
+	}
+
+	internal static bool RuntimeUIButtonWasClicked(Entity entity)
+	{
+		EnsureMainThread();
+		RequireRuntimeUI(s_runtimeUIApi.WasButtonClicked != null,
+			"UIButton.WasClickedThisFrame");
+		return ReadBoolean(s_runtimeUIApi.WasButtonClicked(ToNative(entity)),
+			"UIButton.WasClickedThisFrame");
+	}
+
+	internal static ulong GetRuntimeUIButtonClickSerial(Entity entity)
+	{
+		EnsureMainThread();
+		RequireRuntimeUI(s_runtimeUIApi.GetButtonClickSerial != null,
+			"UIButton.ClickSerial");
+		ulong value = 0;
+		Check(s_runtimeUIApi.GetButtonClickSerial(ToNative(entity), &value),
+			"UIButton.ClickSerial");
+		return value;
+	}
+
+	internal static void FocusRuntimeUIButton(Entity entity)
+	{
+		EnsureMainThread();
+		RequireRuntimeUI(s_runtimeUIApi.FocusButton != null, "UIButton.Focus");
+		Check(s_runtimeUIApi.FocusButton(ToNative(entity)), "UIButton.Focus");
+	}
+
+	internal static Vector4 GetRuntimeUIRect(Entity entity)
+	{
+		EnsureMainThread();
+		RequireRuntimeUI(s_runtimeUIApi.GetRect != null, "RectTransform.RuntimeRect");
+		NativeVector4 value = default;
+		Check(s_runtimeUIApi.GetRect(ToNative(entity), &value),
+			"RectTransform.RuntimeRect");
+		return new(value.X, value.Y, value.Z, value.W);
+	}
+
+	internal static bool IsRuntimeUIInputCaptured()
+	{
+		if (!Volatile.Read(ref s_runtimeUIBound)
+			|| s_runtimeUIApi.IsGameplayInputCaptured == null)
+			return false;
+		EnsureMainThread();
+		return ReadBoolean(s_runtimeUIApi.IsGameplayInputCaptured(),
+			"UIEventSystem.IsGameplayInputCaptured");
+	}
+
+	private static NativePropertyValueV1 GetRegisteredProperty(Entity entity,
+		ulong typeId, ulong propertyId, string operation)
+	{
+		EnsureMainThread();
+		RequireComponent(s_componentApi.GetProperty != null, operation);
+		NativePropertyValueV1 value = default;
+		Check(s_componentApi.GetProperty(ToNative(entity), typeId, propertyId,
+			&value), operation);
+		return value;
+	}
+
+	private static void SetRegisteredProperty(Entity entity, ulong typeId,
+		ulong propertyId, NativePropertyValueV1 value, string operation)
+	{
+		EnsureMainThread();
+		RequireComponent(s_componentApi.SetProperty != null, operation);
+		Check(s_componentApi.SetProperty(ToNative(entity), typeId, propertyId,
+			value), operation);
+	}
+
+	internal static bool GetGameplayBool(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetGameplayProperty(entity, type, propertyId,
+			operation);
+		if (value.Kind != NativePropertyKindV1.Bool
+			|| value.Integer is not (0 or 1))
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return value.Integer != 0;
+	}
+
+	internal static bool SpriteAnimatorPlay(Entity entity, string clip, bool restart)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(clip);
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SpriteAnimatorPlay != null,
+			"SpriteAnimator.Play");
+		byte[] bytes = s_strictUtf8.GetBytes(clip);
+		fixed (byte* pointer = bytes)
+		{
+			return ReadBoolean(s_gameplayApi.SpriteAnimatorPlay(ToNative(entity),
+				new NativeUtf8View(pointer, (ulong)bytes.Length), restart ? 1 : 0),
+				"SpriteAnimator.Play");
+		}
+	}
+
+	internal static void SpriteAnimatorStop(Entity entity)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SpriteAnimatorStop != null,
+			"SpriteAnimator.Stop");
+		Check(s_gameplayApi.SpriteAnimatorStop(ToNative(entity)),
+			"SpriteAnimator.Stop");
+	}
+
+	internal static void SpriteAnimatorSetBool(Entity entity, string parameter, bool value)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(parameter); EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SpriteAnimatorSetBool != null,
+			"SpriteAnimator.SetBool");
+		byte[] bytes = s_strictUtf8.GetBytes(parameter);
+		fixed (byte* pointer = bytes)
+			Check(s_gameplayApi.SpriteAnimatorSetBool(ToNative(entity),
+				new NativeUtf8View(pointer, (ulong)bytes.Length), value ? 1 : 0),
+				"SpriteAnimator.SetBool");
+	}
+
+	internal static void SpriteAnimatorSetInt(Entity entity, string parameter, int value)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(parameter); EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SpriteAnimatorSetInt != null,
+			"SpriteAnimator.SetInt");
+		byte[] bytes = s_strictUtf8.GetBytes(parameter);
+		fixed (byte* pointer = bytes)
+			Check(s_gameplayApi.SpriteAnimatorSetInt(ToNative(entity),
+				new NativeUtf8View(pointer, (ulong)bytes.Length), value),
+				"SpriteAnimator.SetInt");
+	}
+
+	internal static void SpriteAnimatorSetFloat(Entity entity, string parameter, float value)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(parameter);
+		if (!float.IsFinite(value)) throw new ArgumentOutOfRangeException(nameof(value));
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SpriteAnimatorSetFloat != null,
+			"SpriteAnimator.SetFloat");
+		byte[] bytes = s_strictUtf8.GetBytes(parameter);
+		fixed (byte* pointer = bytes)
+			Check(s_gameplayApi.SpriteAnimatorSetFloat(ToNative(entity),
+				new NativeUtf8View(pointer, (ulong)bytes.Length), value),
+				"SpriteAnimator.SetFloat");
+	}
+
+	internal static void SpriteAnimatorSetTrigger(Entity entity, string parameter,
+		bool reset)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(parameter); EnsureMainThread();
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View, int> callback =
+			reset ? s_gameplayApi.SpriteAnimatorResetTrigger
+			: s_gameplayApi.SpriteAnimatorSetTrigger;
+		RequireGameplay(callback != null, reset
+			? "SpriteAnimator.ResetTrigger" : "SpriteAnimator.SetTrigger");
+		byte[] bytes = s_strictUtf8.GetBytes(parameter);
+		fixed (byte* pointer = bytes)
+			Check(callback(ToNative(entity),
+				new NativeUtf8View(pointer, (ulong)bytes.Length)), reset
+				? "SpriteAnimator.ResetTrigger" : "SpriteAnimator.SetTrigger");
+	}
+
+	internal static string SpriteAnimatorGetCurrentState(Entity entity)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SpriteAnimatorGetCurrentState != null,
+			"SpriteAnimator.CurrentState");
+		uint required = 0;
+		int probe = s_gameplayApi.SpriteAnimatorGetCurrentState(
+			ToNative(entity), null, 0, &required);
+		if (probe != 0 && probe != NativeBufferTooSmall)
+			Check(probe, "SpriteAnimator.CurrentState");
+		if (required == 0) return string.Empty;
+		if (required > 1024 * 1024)
+			throw new TomCatException("SpriteAnimator.CurrentState returned an invalid length.");
+		byte[] bytes = GC.AllocateUninitializedArray<byte>((int)required);
+		fixed (byte* buffer = bytes)
+		{
+			uint actual = required;
+			Check(s_gameplayApi.SpriteAnimatorGetCurrentState(ToNative(entity), buffer,
+				required, &actual), "SpriteAnimator.CurrentState");
+			if (actual > required)
+				throw new TomCatException("SpriteAnimator.CurrentState changed length while being read.");
+			return s_strictUtf8.GetString(bytes, 0, (int)actual);
+		}
+	}
+
+	internal static int GetGameplayInt32(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetGameplayProperty(entity, type, propertyId,
+			operation);
+		if (value.Kind != NativePropertyKindV1.Int32
+			|| value.Integer < int.MinValue || value.Integer > int.MaxValue)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return (int)value.Integer;
+	}
+
+	internal static uint GetGameplayUInt32(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetGameplayProperty(entity, type, propertyId,
+			operation);
+		if (value.Kind != NativePropertyKindV1.UInt32
+			|| value.Integer < 0 || (ulong)value.Integer > uint.MaxValue)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return (uint)value.Integer;
+	}
+
+	internal static ulong GetGameplayUInt64(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetGameplayProperty(entity, type, propertyId,
+			operation);
+		if (value.Kind != NativePropertyKindV1.UInt64)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return unchecked((ulong)value.Integer);
+	}
+
+	internal static float GetGameplayFloat(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetGameplayProperty(entity, type, propertyId,
+			operation);
+		if (value.Kind != NativePropertyKindV1.Float || !double.IsFinite(value.Number)
+			|| value.Number < -float.MaxValue || value.Number > float.MaxValue)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return (float)value.Number;
+	}
+
+	internal static Vector2 GetGameplayVector2(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetGameplayProperty(entity, type, propertyId,
+			operation);
+		if (value.Kind != NativePropertyKindV1.Vector2)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return new Vector2(value.X, value.Y);
+	}
+
+	internal static Color GetGameplayColor(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetGameplayProperty(entity, type, propertyId,
+			operation);
+		if (value.Kind != NativePropertyKindV1.Vector4)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return new Color(value.X, value.Y, value.Z, value.W);
+	}
+
+	internal static void SetGameplayBool(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, bool value, string operation) => SetGameplayProperty(entity,
+		type, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Bool,
+			Integer = value ? 1 : 0
+		}, operation);
+
+	internal static void SetGameplayInt32(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, int value, string operation) => SetGameplayProperty(entity,
+		type, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Int32,
+			Integer = value
+		}, operation);
+
+	internal static void SetGameplayUInt32(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, uint value, string operation) => SetGameplayProperty(entity,
+		type, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.UInt32,
+			Integer = value
+		}, operation);
+
+	internal static void SetGameplayUInt64(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, ulong value, string operation) => SetGameplayProperty(entity,
+		type, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.UInt64,
+			Integer = unchecked((long)value)
+		}, operation);
+
+	internal static void SetGameplayFloat(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, float value, string operation) => SetGameplayProperty(entity,
+		type, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Float,
+			Number = value
+		}, operation);
+
+	internal static void SetGameplayVector2(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, Vector2 value, string operation) => SetGameplayProperty(entity,
+		type, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Vector2,
+			X = value.X,
+			Y = value.Y
+		}, operation);
+
+	internal static void SetGameplayColor(Entity entity, NativeComponentTypeV1 type,
+		uint propertyId, Color value, string operation) => SetGameplayProperty(entity,
+		type, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Vector4,
+			X = value.R,
+			Y = value.G,
+			Z = value.B,
+			W = value.A
+		}, operation);
+
+	private static NativePropertyValueV1 GetGameplayProperty(Entity entity,
+		NativeComponentTypeV1 type, uint propertyId, string operation)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.GetComponentProperty != null, operation);
+		NativePropertyValueV1 value = default;
+		Check(s_gameplayApi.GetComponentProperty(ToNative(entity), (int)type,
+			propertyId, &value), operation);
+		return value;
+	}
+
+	private static void SetGameplayProperty(Entity entity,
+		NativeComponentTypeV1 type, uint propertyId, NativePropertyValueV1 value,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireGameplay(s_gameplayApi.SetComponentProperty != null, operation);
+		Check(s_gameplayApi.SetComponentProperty(ToNative(entity), (int)type,
+			propertyId, value), operation);
+	}
 
     internal static Vector3 GetTransformVector(Entity entity,
         delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3*, int> callback, string operation)
@@ -250,6 +1180,307 @@ internal static unsafe class NativeBridge
         Check(s_api.InputGetModifiers(&value), "Input.Modifiers");
         return (KeyModifiers)value;
     }
+
+	internal static bool InputMouseBoolean(uint button,
+		delegate* unmanaged[Cdecl]<uint, int> callback, string operation)
+	{
+		EnsureMainThread();
+		RequireInput(callback != null, operation);
+		return ReadBoolean(callback(button), operation);
+	}
+
+	internal static Vector2 GetScrollDelta()
+	{
+		EnsureMainThread();
+		RequireInput(s_inputApi.GetScrollDelta != null, "Input.ScrollDelta");
+		NativeVector2 value = default;
+		Check(s_inputApi.GetScrollDelta(&value), "Input.ScrollDelta");
+		return new(value.X, value.Y);
+	}
+
+	internal static bool GetWindowFocused()
+	{
+		EnsureMainThread();
+		RequireInput(s_inputApi.IsWindowFocused != null, "Input.IsWindowFocused");
+		return ReadBoolean(s_inputApi.IsWindowFocused(), "Input.IsWindowFocused");
+	}
+
+	internal static bool InputGamepadBoolean(uint gamepad,
+		delegate* unmanaged[Cdecl]<uint, int> callback, string operation)
+	{
+		EnsureMainThread();
+		RequireInput(callback != null, operation);
+		return ReadBoolean(callback(gamepad), operation);
+	}
+
+	internal static bool InputGamepadButtonBoolean(uint gamepad, uint button,
+		delegate* unmanaged[Cdecl]<uint, uint, int> callback, string operation)
+	{
+		EnsureMainThread();
+		RequireInput(callback != null, operation);
+		return ReadBoolean(callback(gamepad, button), operation);
+	}
+
+	internal static float GetGamepadAxis(uint gamepad, uint axis)
+	{
+		EnsureMainThread();
+		RequireInput(s_inputApi.GetGamepadAxis != null, "Input.GetGamepadAxis");
+		float value = 0.0f;
+		Check(s_inputApi.GetGamepadAxis(gamepad, axis, &value),
+			"Input.GetGamepadAxis");
+		return value;
+	}
+
+	internal static bool AudioHasSource(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.HasSource != null, "Entity.HasComponent<AudioSource>");
+		return ReadBoolean(s_audioApi.HasSource(ToNative(entity)),
+			"Entity.HasComponent<AudioSource>");
+	}
+
+	internal static void AudioAddSource(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.AddSource != null, "Entity.AddComponent<AudioSource>");
+		Check(s_audioApi.AddSource(ToNative(entity)), "Entity.AddComponent<AudioSource>");
+	}
+
+	internal static void AudioRemoveSource(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.RemoveSource != null, "Entity.RemoveComponent<AudioSource>");
+		Check(s_audioApi.RemoveSource(ToNative(entity)), "Entity.RemoveComponent<AudioSource>");
+	}
+
+	internal static bool AudioHasListener(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.HasListener != null, "Entity.HasComponent<AudioListener>");
+		return ReadBoolean(s_audioApi.HasListener(ToNative(entity)),
+			"Entity.HasComponent<AudioListener>");
+	}
+
+	internal static void AudioAddListener(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.AddListener != null, "Entity.AddComponent<AudioListener>");
+		Check(s_audioApi.AddListener(ToNative(entity)), "Entity.AddComponent<AudioListener>");
+	}
+
+	internal static void AudioRemoveListener(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.RemoveListener != null,
+			"Entity.RemoveComponent<AudioListener>");
+		Check(s_audioApi.RemoveListener(ToNative(entity)),
+			"Entity.RemoveComponent<AudioListener>");
+	}
+
+	internal static ulong AudioGetClip(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.GetClip != null, "AudioSource.Clip");
+		ulong value = 0;
+		Check(s_audioApi.GetClip(ToNative(entity), &value), "AudioSource.Clip");
+		return value;
+	}
+
+	internal static void AudioSetClip(Entity entity, ulong value)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.SetClip != null, "AudioSource.Clip");
+		Check(s_audioApi.SetClip(ToNative(entity), value), "AudioSource.Clip");
+	}
+
+	internal static bool AudioGetSourceBool(Entity entity,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudio(callback != null, operation);
+		return ReadBoolean(callback(ToNative(entity)), operation);
+	}
+
+	internal static void AudioSetSourceBool(Entity entity, bool value,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudio(callback != null, operation);
+		Check(callback(ToNative(entity), value ? 1 : 0), operation);
+	}
+
+	internal static float AudioGetSourceFloat(Entity entity,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudio(callback != null, operation);
+		float value = 0.0f;
+		Check(callback(ToNative(entity), &value), operation);
+		return value;
+	}
+
+	internal static void AudioSetSourceFloat(Entity entity, float value,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudio(callback != null, operation);
+		Check(callback(ToNative(entity), value), operation);
+	}
+
+	internal static bool AudioGetSpatialBool(Entity entity,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudioSpatial(callback != null, operation);
+		return ReadBoolean(callback(ToNative(entity)), operation);
+	}
+
+	internal static void AudioSetSpatialBool(Entity entity, bool value,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudioSpatial(callback != null, operation);
+		Check(callback(ToNative(entity), value ? 1 : 0), operation);
+	}
+
+	internal static float AudioGetSpatialFloat(Entity entity,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudioSpatial(callback != null, operation);
+		float value = 0.0f;
+		Check(callback(ToNative(entity), &value), operation);
+		return value;
+	}
+
+	internal static void AudioSetSpatialFloat(Entity entity, float value,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudioSpatial(callback != null, operation);
+		Check(callback(ToNative(entity), value), operation);
+	}
+
+	internal static AudioMixerGroup AudioGetMixerGroup(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.GetMixerGroup != null, "AudioSource.MixerGroup");
+		int value = 0;
+		Check(s_audioApi.GetMixerGroup(ToNative(entity), &value),
+			"AudioSource.MixerGroup");
+		if (value is < 0 or > 2)
+			throw new TomCatException("AudioSource.MixerGroup returned an invalid value.");
+		return (AudioMixerGroup)value;
+	}
+
+	internal static void AudioSetMixerGroup(Entity entity, AudioMixerGroup value)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.SetMixerGroup != null, "AudioSource.MixerGroup");
+		Check(s_audioApi.SetMixerGroup(ToNative(entity), (int)value),
+			"AudioSource.MixerGroup");
+	}
+
+	internal static void AudioSourceCommand(Entity entity,
+		delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireAudio(callback != null, operation);
+		Check(callback(ToNative(entity)), operation);
+	}
+
+	internal static AudioPlaybackState AudioGetPlaybackState(Entity entity)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.GetPlaybackState != null, "AudioSource.State");
+		int value = 0;
+		Check(s_audioApi.GetPlaybackState(ToNative(entity), &value),
+			"AudioSource.State");
+		if (value is < 0 or > 2)
+			throw new TomCatException("AudioSource.State returned an invalid value.");
+		return (AudioPlaybackState)value;
+	}
+
+	internal static bool AudioHardwareAvailable()
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.IsHardwareAvailable != null,
+			"AudioSystem.IsHardwareAvailable");
+		return ReadBoolean(s_audioApi.IsHardwareAvailable(),
+			"AudioSystem.IsHardwareAvailable");
+	}
+
+	internal static string AudioBackendName()
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.GetBackendName != null, "AudioSystem.BackendName");
+		uint required = 0;
+		int probe = s_audioApi.GetBackendName(null, 0, &required);
+		if (probe != 0 && probe != NativeBufferTooSmall)
+			Check(probe, "AudioSystem.BackendName");
+		if (required == 0) return string.Empty;
+		if (required > 1024 * 1024)
+			throw new TomCatException("AudioSystem.BackendName returned an invalid length.");
+		byte[] bytes = GC.AllocateUninitializedArray<byte>((int)required);
+		fixed (byte* buffer = bytes)
+		{
+			uint actual = required;
+			Check(s_audioApi.GetBackendName(buffer, required, &actual),
+				"AudioSystem.BackendName");
+			return Encoding.UTF8.GetString(bytes, 0, (int)actual);
+		}
+	}
+
+	internal static float AudioGetMixerVolume(AudioMixerGroup group)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.GetMixerVolume != null, "AudioSystem.GetMixerVolume");
+		float value = 0.0f;
+		Check(s_audioApi.GetMixerVolume((int)group, &value),
+			"AudioSystem.GetMixerVolume");
+		return value;
+	}
+
+	internal static void AudioSetMixerVolume(AudioMixerGroup group, float value)
+	{
+		EnsureMainThread();
+		RequireAudio(s_audioApi.SetMixerVolume != null, "AudioSystem.SetMixerVolume");
+		Check(s_audioApi.SetMixerVolume((int)group, value),
+			"AudioSystem.SetMixerVolume");
+	}
+
+	internal static string GetGamepadName(uint gamepad)
+	{
+		EnsureMainThread();
+		RequireInput(s_inputApi.GetGamepadName != null, "Input.GetGamepadName");
+		uint required = 0;
+		int probe = s_inputApi.GetGamepadName(gamepad, null, 0, &required);
+		if (probe != 0 && probe != NativeBufferTooSmall)
+			Check(probe, "Input.GetGamepadName");
+		if (required == 0)
+			return string.Empty;
+		if (required > 1024 * 1024)
+			throw new TomCatException("Input.GetGamepadName returned an invalid length.");
+		byte[] bytes = GC.AllocateUninitializedArray<byte>((int)required);
+		fixed (byte* buffer = bytes)
+		{
+			uint actual = required;
+			Check(s_inputApi.GetGamepadName(gamepad, buffer, required, &actual),
+				"Input.GetGamepadName");
+			if (actual > required)
+				throw new TomCatException("Input.GetGamepadName changed length while being read.");
+			return Encoding.UTF8.GetString(bytes, 0, (int)actual);
+		}
+	}
 
     internal static RaycastHit2D? Raycast(Entity context, Vector2 start, Vector2 end,
         uint layerMask, bool includeTriggers)
@@ -470,12 +1701,78 @@ internal static unsafe class NativeBridge
             throw new TomCatException($"{operation} is unavailable in NativeApiV1.");
     }
 
+	private static void RequireInput(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_inputBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.InputApiV1 capability.");
+	}
+
+	private static void RequireComponent(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_componentBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.ComponentApiV1 capability.");
+	}
+
+	private static void RequireAudio(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_audioBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.AudioApiV1 capability.");
+	}
+
+	private static void RequireAudioSpatial(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_audioSpatialBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.AudioSpatialApiV1 capability.");
+	}
+
+	private static void RequireRuntimeUI(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_runtimeUIBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.RuntimeUIApiV1 capability.");
+	}
+
+	private static void RequireGameplay(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_gameplayBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.GameplayApiV1 capability.");
+	}
+
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3*, int> TransformGetPosition => s_api.TransformGetPosition;
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3, int> TransformSetPosition => s_api.TransformSetPosition;
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3*, int> TransformGetRotationEuler => s_api.TransformGetRotationEuler;
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3, int> TransformSetRotationEuler => s_api.TransformSetRotationEuler;
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3*, int> TransformGetScale => s_api.TransformGetScale;
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3, int> TransformSetScale => s_api.TransformSetScale;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3*, int> TransformGetLocalPosition
+	{
+		get { RequireGameplay(s_gameplayApi.TransformGetLocalPosition != null, "Transform.LocalPosition"); return s_gameplayApi.TransformGetLocalPosition; }
+	}
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3, int> TransformSetLocalPosition
+	{
+		get { RequireGameplay(s_gameplayApi.TransformSetLocalPosition != null, "Transform.LocalPosition"); return s_gameplayApi.TransformSetLocalPosition; }
+	}
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3*, int> TransformGetLocalRotationEuler
+	{
+		get { RequireGameplay(s_gameplayApi.TransformGetLocalRotationEuler != null, "Transform.LocalRotationEuler"); return s_gameplayApi.TransformGetLocalRotationEuler; }
+	}
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3, int> TransformSetLocalRotationEuler
+	{
+		get { RequireGameplay(s_gameplayApi.TransformSetLocalRotationEuler != null, "Transform.LocalRotationEuler"); return s_gameplayApi.TransformSetLocalRotationEuler; }
+	}
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3*, int> TransformGetLocalScale
+	{
+		get { RequireGameplay(s_gameplayApi.TransformGetLocalScale != null, "Transform.LocalScale"); return s_gameplayApi.TransformGetLocalScale; }
+	}
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector3, int> TransformSetLocalScale
+	{
+		get { RequireGameplay(s_gameplayApi.TransformSetLocalScale != null, "Transform.LocalScale"); return s_gameplayApi.TransformSetLocalScale; }
+	}
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector2, int> RigidbodySetLinearVelocity => s_api.RigidbodySetLinearVelocity;
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector2, int> RigidbodyApplyForce => s_api.RigidbodyApplyForce;
     internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector2, int> RigidbodyApplyLinearImpulse => s_api.RigidbodyApplyLinearImpulse;
@@ -484,4 +1781,38 @@ internal static unsafe class NativeBridge
     internal static delegate* unmanaged[Cdecl]<uint, int> InputWasKeyReleased => s_api.InputWasKeyReleased;
     internal static delegate* unmanaged[Cdecl]<NativeVector2*, int> InputGetMousePosition => s_api.InputGetMousePosition;
     internal static delegate* unmanaged[Cdecl]<NativeVector2*, int> InputGetMouseDelta => s_api.InputGetMouseDelta;
+	internal static delegate* unmanaged[Cdecl]<uint, int> InputIsMouseButtonHeld => s_inputApi.IsMouseButtonHeld;
+	internal static delegate* unmanaged[Cdecl]<uint, int> InputWasMouseButtonPressed => s_inputApi.WasMouseButtonPressed;
+	internal static delegate* unmanaged[Cdecl]<uint, int> InputWasMouseButtonReleased => s_inputApi.WasMouseButtonReleased;
+	internal static delegate* unmanaged[Cdecl]<uint, int> InputIsGamepadConnected => s_inputApi.IsGamepadConnected;
+	internal static delegate* unmanaged[Cdecl]<uint, int> InputWasGamepadConnected => s_inputApi.WasGamepadConnected;
+	internal static delegate* unmanaged[Cdecl]<uint, int> InputWasGamepadDisconnected => s_inputApi.WasGamepadDisconnected;
+	internal static delegate* unmanaged[Cdecl]<uint, uint, int> InputIsGamepadButtonHeld => s_inputApi.IsGamepadButtonHeld;
+	internal static delegate* unmanaged[Cdecl]<uint, uint, int> InputWasGamepadButtonPressed => s_inputApi.WasGamepadButtonPressed;
+	internal static delegate* unmanaged[Cdecl]<uint, uint, int> InputWasGamepadButtonReleased => s_inputApi.WasGamepadButtonReleased;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetEnabled => s_audioApi.GetEnabled;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> AudioSetEnabled => s_audioApi.SetEnabled;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetPlayOnStart => s_audioApi.GetPlayOnStart;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> AudioSetPlayOnStart => s_audioApi.SetPlayOnStart;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetLoop => s_audioApi.GetLoop;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> AudioSetLoop => s_audioApi.SetLoop;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> AudioGetVolume => s_audioApi.GetVolume;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> AudioSetVolume => s_audioApi.SetVolume;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> AudioGetPitch => s_audioApi.GetPitch;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> AudioSetPitch => s_audioApi.SetPitch;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioPlay => s_audioApi.Play;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioPause => s_audioApi.Pause;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioStop => s_audioApi.Stop;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetListenerEnabled => s_audioApi.GetListenerEnabled;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> AudioSetListenerEnabled => s_audioApi.SetListenerEnabled;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetListenerPrimary => s_audioApi.GetListenerPrimary;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> AudioSetListenerPrimary => s_audioApi.SetListenerPrimary;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetStreaming => s_audioSpatialApi.GetStreaming;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> AudioSetStreaming => s_audioSpatialApi.SetStreaming;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> AudioGetSpatialBlend => s_audioSpatialApi.GetSpatialBlend;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> AudioSetSpatialBlend => s_audioSpatialApi.SetSpatialBlend;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> AudioGetMinDistance => s_audioSpatialApi.GetMinDistance;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> AudioSetMinDistance => s_audioSpatialApi.SetMinDistance;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> AudioGetMaxDistance => s_audioSpatialApi.GetMaxDistance;
+	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> AudioSetMaxDistance => s_audioSpatialApi.SetMaxDistance;
 }

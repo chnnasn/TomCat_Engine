@@ -1,6 +1,7 @@
 #pragma once
 #include "Scene.h"
 #include "TomCat/Asset/Asset.h"
+#include "TomCat/Core/Version.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -13,8 +14,8 @@ namespace TomCat {
 	class SceneSerializer
 	{
 	public:
-		static constexpr uint32_t CurrentSchemaVersion = 10;
-		static constexpr uint32_t OldestSupportedSchemaVersion = 9;
+		static constexpr uint32_t CurrentSchemaVersion = Version::SceneFormatCurrent;
+		static constexpr uint32_t OldestSupportedSchemaVersion = Version::SceneFormatOldest;
 
 		SceneSerializer(const Ref<Scene>& scene);
 

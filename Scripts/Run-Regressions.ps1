@@ -91,22 +91,35 @@ try {
     }
 
     $premake = Resolve-Premake
-    Invoke-Checked -Name "Generate native regression solution" -Action {
-        & $premake "--file=Tests\premake5.lua" vs2022
-    }
-    Invoke-Checked -Name "Generate independent Player solution" -Action {
-        & $premake "--file=Player\premake5.lua" vs2022
-    }
-
-    $msbuild = Resolve-MSBuild
-    Invoke-Checked -Name "Build native regressions" -Action {
-        & $msbuild "Tests\Tests.sln" "-p:Configuration=$Configuration" `
-            "-p:Platform=$Platform" -m -v:m -nologo
-    }
-    Invoke-Checked -Name "Build independent Player" -Action {
-        & $msbuild "Player\Player.sln" "-p:Configuration=$Configuration" `
-            "-p:Platform=$Platform" -m -v:m -nologo
-    }
+	$msbuild = Resolve-MSBuild
+	Invoke-Checked -Name "Generate native regression solution" -Action {
+		& $premake "--file=Tests\premake5.lua" vs2022
+	}
+	Invoke-Checked -Name "Build native regressions" -Action {
+		& $msbuild "Tests\Tests.sln" "-p:Configuration=$Configuration" `
+			"-p:Platform=$Platform" -m -v:m -nologo
+	}
+	Invoke-Checked -Name "Generate independent Player solution" -Action {
+		& $premake "--file=Player\premake5.lua" vs2022
+	}
+	Invoke-Checked -Name "Build independent Player" -Action {
+		& $msbuild "Player\Player.sln" "-p:Configuration=$Configuration" `
+			"-p:Platform=$Platform" -m -v:m -nologo
+	}
+	Invoke-Checked -Name "Generate Editor solution" -Action {
+		& $premake "--file=Editor\premake5.lua" vs2022
+	}
+	Invoke-Checked -Name "Build Editor" -Action {
+		& $msbuild "Editor\Editor.sln" "-p:Configuration=$Configuration" `
+			"-p:Platform=$Platform" -m -v:m -nologo
+	}
+	Invoke-Checked -Name "Generate Hub solution" -Action {
+		& $premake "--file=Builder\premake5.lua" vs2022
+	}
+	Invoke-Checked -Name "Build Hub" -Action {
+		& $msbuild "Builder\Builder.sln" "-p:Configuration=$Configuration" `
+			"-p:Platform=$Platform" -m -v:m -nologo
+	}
     $templateBuilder = Join-Path $PSScriptRoot "Build-PlayerTemplate.ps1"
     if (-not (Test-Path -LiteralPath $templateBuilder -PathType Leaf)) {
         throw "Player Template builder was not found: $templateBuilder"
@@ -119,6 +132,10 @@ try {
     Invoke-NativeRegression -Name "PhysicsRegression"
     Invoke-NativeRegression -Name "SpriteAssetRegression"
     Invoke-NativeRegression -Name "ScriptCompilerRegression"
+    Invoke-NativeRegression -Name "P0SafetyRegression"
+    Invoke-NativeRegression -Name "EditorRecoveryRegression"
+	Invoke-NativeRegression -Name "AudioRegression"
+    Invoke-NativeRegression -Name "ImporterRegression"
 
     $playerSmoke = Join-Path $PSScriptRoot "Run-CSharpPlayerSmoke.ps1"
     if (-not (Test-Path -LiteralPath $playerSmoke -PathType Leaf)) {

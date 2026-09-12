@@ -16,7 +16,7 @@ namespace TomCat::Scripting {
 		~ManagedScriptRuntime() override;
 
 		bool Initialize(const DotNetHost::Configuration& hostConfiguration,
-			const NativeApiV1& nativeApi);
+			const NativeApiV2& nativeApi);
 		bool SetProjectAssembly(const std::filesystem::path& assemblyPath,
 			const std::filesystem::path& pdbPath = {});
 		bool ReadProjectMetadata(std::string& manifestJson) override;
@@ -55,7 +55,7 @@ namespace TomCat::Scripting {
 
 	private:
 		DotNetHost m_Host;
-		NativeApiV1 m_NativeApi{};
+		NativeApiV2 m_NativeApi{};
 		ManagedApiV1 m_ManagedApi{};
 		std::vector<uint8_t> m_ProjectAssembly;
 		std::vector<uint8_t> m_ProjectPdb;

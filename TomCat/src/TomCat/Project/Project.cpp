@@ -737,6 +737,84 @@ namespace TomCat {
 			}
 		}
 
+		constexpr uint32_t kPlayerSettingsSchemaVersion = 1;
+
+		enum class PlayerSettingsLoadResult
+		{
+			Missing,
+			Loaded,
+			Failed
+		};
+
+		PlayerSettingsLoadResult LoadPlayerSettingsFile(
+			const std::filesystem::path& path, PlayerSettings& settings,
+			std::string& errorMessage)
+		{
+			std::error_code filesystemError;
+			const bool exists = std::filesystem::exists(path, filesystemError);
+			if (filesystemError)
+			{
+				errorMessage = "Could not inspect Player settings: " + filesystemError.message();
+				return PlayerSettingsLoadResult::Failed;
+			}
+			if (!exists)
+				return PlayerSettingsLoadResult::Missing;
+			if (!std::filesystem::is_regular_file(path, filesystemError) || filesystemError)
+			{
+				errorMessage = "Player settings path is not a regular file";
+				return PlayerSettingsLoadResult::Failed;
+			}
+
+			try
+			{
+				const std::string document = ReadWholeFile(path);
+				if (document.empty() || !JsonSyntaxValidator(document).Validate())
+					throw std::runtime_error("Player settings file is not valid JSON");
+				const YAML::Node root = YAML::Load(document);
+				RequireExactMapFields(root, "Player settings document",
+					std::array<const char*, 7>{ "schemaVersion", "productName",
+						"companyName", "version", "icon", "display", "directories" });
+				const uint32_t schemaVersion = root["schemaVersion"].as<uint32_t>();
+				if (schemaVersion != kPlayerSettingsSchemaVersion)
+					throw std::runtime_error("Unsupported Player settings schemaVersion "
+						+ std::to_string(schemaVersion) + "; expected "
+						+ std::to_string(kPlayerSettingsSchemaVersion));
+
+				const YAML::Node display = root["display"];
+				RequireExactMapFields(display, "PlayerSettings.Display",
+					std::array<const char*, 5>{ "width", "height", "windowMode",
+						"resizable", "vSync" });
+				const YAML::Node directories = root["directories"];
+				RequireExactMapFields(directories, "PlayerSettings.Directories",
+					std::array<const char*, 3>{ "save", "log", "crash" });
+
+				PlayerSettings loaded;
+				loaded.ProductName = root["productName"].as<std::string>();
+				loaded.CompanyName = root["companyName"].as<std::string>();
+				loaded.Version = root["version"].as<std::string>();
+				loaded.Icon = AssetHandle(root["icon"].as<uint64_t>());
+				loaded.Width = display["width"].as<uint32_t>();
+				loaded.Height = display["height"].as<uint32_t>();
+				if (!PlayerWindowModeFromString(
+					display["windowMode"].as<std::string>(), loaded.WindowMode))
+					throw std::runtime_error("PlayerSettings.Display.WindowMode is invalid");
+				loaded.Resizable = display["resizable"].as<bool>();
+				loaded.VSync = display["vSync"].as<bool>();
+				loaded.SaveDirectory = UTF8ToPath(directories["save"].as<std::string>());
+				loaded.LogDirectory = UTF8ToPath(directories["log"].as<std::string>());
+				loaded.CrashDirectory = UTF8ToPath(directories["crash"].as<std::string>());
+				if (!NormalizeAndValidatePlayerSettings(loaded, errorMessage))
+					return PlayerSettingsLoadResult::Failed;
+				settings = std::move(loaded);
+				return PlayerSettingsLoadResult::Loaded;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = exception.what();
+				return PlayerSettingsLoadResult::Failed;
+			}
+		}
+
 		constexpr uint32_t kLegacyProjectSettingsSchemaVersion = 1;
 		constexpr uint32_t kProjectSettingsSchemaVersion = 2;
 
@@ -979,6 +1057,60 @@ namespace TomCat {
 		}
 	}
 
+	bool Project::SavePlayerSettings() const
+	{
+		try
+		{
+			if (m_ProjectPath.empty())
+				throw std::runtime_error("Project path is empty");
+			PlayerSettings normalized = m_PlayerSettings;
+			std::string validationError;
+			if (!NormalizeAndValidatePlayerSettings(normalized, validationError))
+				throw std::runtime_error(validationError);
+
+			const std::filesystem::path settingsPath = GetPlayerSettingsPath();
+			std::error_code directoryError;
+			std::filesystem::create_directories(settingsPath.parent_path(), directoryError);
+			if (directoryError)
+				throw std::runtime_error("Could not create ProjectSettings directory: "
+					+ directoryError.message());
+
+			std::ostringstream output;
+			output << "{\n"
+				<< "  \"schemaVersion\": " << kPlayerSettingsSchemaVersion << ",\n"
+				<< "  \"productName\": \"" << EscapeJsonString(normalized.ProductName) << "\",\n"
+				<< "  \"companyName\": \"" << EscapeJsonString(normalized.CompanyName) << "\",\n"
+				<< "  \"version\": \"" << EscapeJsonString(normalized.Version) << "\",\n"
+				<< "  \"icon\": " << static_cast<uint64_t>(normalized.Icon) << ",\n"
+				<< "  \"display\": {\n"
+				<< "    \"width\": " << normalized.Width << ",\n"
+				<< "    \"height\": " << normalized.Height << ",\n"
+				<< "    \"windowMode\": \""
+				<< PlayerWindowModeToString(normalized.WindowMode) << "\",\n"
+				<< "    \"resizable\": " << (normalized.Resizable ? "true" : "false") << ",\n"
+				<< "    \"vSync\": " << (normalized.VSync ? "true" : "false") << "\n"
+				<< "  },\n"
+				<< "  \"directories\": {\n"
+				<< "    \"save\": \"" << EscapeJsonString(PathToUTF8(normalized.SaveDirectory)) << "\",\n"
+				<< "    \"log\": \"" << EscapeJsonString(PathToUTF8(normalized.LogDirectory)) << "\",\n"
+				<< "    \"crash\": \"" << EscapeJsonString(PathToUTF8(normalized.CrashDirectory)) << "\"\n"
+				<< "  }\n"
+				<< "}\n";
+			if (!output.good())
+				throw std::runtime_error("Could not serialize Player settings JSON");
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(settingsPath, output.str(), writeError))
+				throw std::runtime_error("Could not atomically replace Player settings: " + writeError);
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Failed to save Player settings '{0}': {1}",
+				PathToUTF8(GetPlayerSettingsPath()), exception.what());
+			return false;
+		}
+	}
+
 	bool Project::SaveBuildSettings() const
 	{
 		try
@@ -1047,6 +1179,23 @@ namespace TomCat {
 		if (SaveSettings())
 			return true;
 		m_Settings = previous;
+		return false;
+	}
+
+	bool Project::SetPlayerSettings(const PlayerSettings& settings)
+	{
+		PlayerSettings normalized = settings;
+		std::string validationError;
+		if (!NormalizeAndValidatePlayerSettings(normalized, validationError))
+		{
+			TC_Core_Error("Cannot save Player settings: {0}", validationError);
+			return false;
+		}
+		const PlayerSettings previous = m_PlayerSettings;
+		m_PlayerSettings = std::move(normalized);
+		if (SavePlayerSettings())
+			return true;
+		m_PlayerSettings = previous;
 		return false;
 	}
 
@@ -1406,6 +1555,8 @@ namespace TomCat {
 			return nullptr;
 		}
 		project->m_BuildSettings = BuildSettings{};
+		project->m_PlayerSettings = MakeDefaultPlayerSettings(
+			project->m_Config.Name, project->m_Config.Version);
 		if (static_cast<uint64_t>(project->m_Config.StartSceneHandle) != 0)
 		{
 			BuildSceneSettings entry;
@@ -1481,6 +1632,8 @@ namespace TomCat {
 			cleanupError.clear();
 			std::filesystem::remove(project->GetBuildSettingsPath(), cleanupError);
 			cleanupError.clear();
+			std::filesystem::remove(project->GetPlayerSettingsPath(), cleanupError);
+			cleanupError.clear();
 			std::filesystem::remove(project->GetSettingsPath().parent_path(), cleanupError);
 			cleanupError.clear();
 			std::filesystem::remove(project->GetProjectPath(), cleanupError);
@@ -1500,7 +1653,18 @@ namespace TomCat {
 		return project;
 	}
 
+	Ref<Project> Project::Inspect(const std::filesystem::path& projectPath)
+	{
+		return LoadInternal(projectPath, false);
+	}
+
 	Ref<Project> Project::Load(const std::filesystem::path& projectPath)
+	{
+		return LoadInternal(projectPath, true);
+	}
+
+	Ref<Project> Project::LoadInternal(const std::filesystem::path& projectPath,
+		bool allowWrites)
 	{
 		std::error_code error;
 		if (!std::filesystem::is_regular_file(projectPath, error) || error)
@@ -1558,13 +1722,28 @@ namespace TomCat {
 			if (settingsResult == ProjectSettingsLoadResult::Failed)
 				throw std::runtime_error("Invalid project settings: " + settingsError);
 
+			project->m_PlayerSettings = MakeDefaultPlayerSettings(
+				project->m_Config.Name, project->m_Config.Version);
+			std::string playerSettingsError;
+			const PlayerSettingsLoadResult playerSettingsResult = LoadPlayerSettingsFile(
+				project->GetPlayerSettingsPath(), project->m_PlayerSettings,
+				playerSettingsError);
+			if (playerSettingsResult == PlayerSettingsLoadResult::Failed)
+				throw std::runtime_error("Invalid Player settings: " + playerSettingsError);
+			if (playerSettingsResult == PlayerSettingsLoadResult::Missing
+				&& allowWrites && !project->SavePlayerSettings())
+				throw std::runtime_error("Could not migrate missing ProjectSettings/PlayerSettings.json");
+
 			project->m_PreservedDocument = ReadWholeFile(projectPath);
-			if (schemaVersion != CurrentSchemaVersion && !project->Save())
-				throw std::runtime_error("Could not migrate project and BuildSettings.json to schema " +
-					std::to_string(CurrentSchemaVersion));
-			if (!EnsureAssetSystemIgnoreRules(project->m_Directory))
-				TC_Core_Warn("Could not ensure asset-system ignore rules for '{0}'",
-					PathToUTF8(project->m_Directory));
+			if (allowWrites)
+			{
+				if (schemaVersion != CurrentSchemaVersion && !project->Save())
+					throw std::runtime_error("Could not migrate project and BuildSettings.json to schema " +
+						std::to_string(CurrentSchemaVersion));
+				if (!EnsureAssetSystemIgnoreRules(project->m_Directory))
+					TC_Core_Warn("Could not ensure asset-system ignore rules for '{0}'",
+						PathToUTF8(project->m_Directory));
+			}
 			return project;
 		}
 		catch (const std::exception& exception)
@@ -1584,6 +1763,9 @@ namespace TomCat {
 			if (!NormalizeAndValidateConfig(m_Config, validationError))
 				throw std::runtime_error(validationError);
 			if (!NormalizeAndValidateBuildSettings(m_BuildSettings, validationError))
+				throw std::runtime_error(validationError);
+			PlayerSettings normalizedPlayerSettings = m_PlayerSettings;
+			if (!NormalizeAndValidatePlayerSettings(normalizedPlayerSettings, validationError))
 				throw std::runtime_error(validationError);
 			SynchronizeLegacyStartSceneMirror();
 
@@ -1620,6 +1802,8 @@ namespace TomCat {
 
 			if (!SaveBuildSettings())
 				throw std::runtime_error("Could not save ProjectSettings/BuildSettings.json");
+			if (!SavePlayerSettings())
+				throw std::runtime_error("Could not save ProjectSettings/PlayerSettings.json");
 
 			root["SchemaVersion"] = CurrentSchemaVersion;
 			YAML::Node projectNode(YAML::NodeType::Map);
@@ -1658,6 +1842,7 @@ namespace TomCat {
 		m_Directory = std::move(reloaded->m_Directory);
 		m_Config = std::move(reloaded->m_Config);
 		m_Settings = std::move(reloaded->m_Settings);
+		m_PlayerSettings = std::move(reloaded->m_PlayerSettings);
 		m_BuildSettings = std::move(reloaded->m_BuildSettings);
 		if (!localLastOperationTime.empty())
 			m_Config.LastOperationTime = localLastOperationTime;

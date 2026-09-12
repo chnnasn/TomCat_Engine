@@ -2,8 +2,10 @@
 #include "ComponentCodecs.h"
 
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
+#include "TomCat/Scene/SpriteAnimation.h"
 
 #include <exception>
 
@@ -65,13 +67,19 @@ namespace TomCat {
 				source.GetComponent<EntityMetadata>());
 			destination.AddOrReplaceComponent<Transform>(source.GetComponent<Transform>());
 			CopyIfPresent<SpriteRenderer>(source, destination);
+			CopyIfPresent<SpriteAnimator>(source, destination);
 			CopyIfPresent<LineRenderer>(source, destination);
 			CopyIfPresent<C_Camera>(source, destination);
 			CopyIfPresent<CSharpScripts>(source, destination);
+			CopyIfPresent<AudioSource>(source, destination);
+			CopyIfPresent<AudioListener>(source, destination);
 			CopyIfPresent<Rigidbody2D>(source, destination);
 			CopyIfPresent<BoxCollider2D>(source, destination);
 			CopyIfPresent<CircleCollider2D>(source, destination);
 			CopyIfPresent<DistanceJoint2D>(source, destination);
+			if (!ComponentRegistry::Get().CopyRegisteredComponents(source,
+				destination, error))
+				return false;
 
 			if (destination.HasComponent<SpriteRenderer>())
 			{
@@ -79,6 +87,17 @@ namespace TomCat {
 				sprite.Sprite.reset();
 				if (resolveAssets && static_cast<uint64_t>(sprite.SpriteHandle) != 0)
 					sprite.Sprite = AssetManager::Get().LoadTexture(sprite.SpriteHandle);
+			}
+			if (destination.HasComponent<SpriteAnimator>())
+				SpriteAnimatorRuntime::Reset(
+					destination.GetComponent<SpriteAnimator>());
+			if (destination.HasComponent<AudioSource>())
+			{
+				auto& audio = destination.GetComponent<AudioSource>();
+				audio.RuntimeVoice = 0;
+				audio.RuntimeClipHandle = AssetHandle(0);
+				audio.RuntimeAutoPlayEvaluated = false;
+				audio.RuntimeStreaming = false;
 			}
 			if (destination.HasComponent<Rigidbody2D>())
 				destination.GetComponent<Rigidbody2D>().RuntimeBody = nullptr;

@@ -3,11 +3,19 @@
 #include "tcpch.h"
 
 #include"TomCat/Core/Base.h"
+#include "TomCat/Core/WindowMetrics.h"
 #include "TomCat/Events/Event.h"
 
 #include <filesystem>
 
 namespace TomCat {
+
+	enum class WindowDisplayMode
+	{
+		Windowed,
+		Borderless,
+		ExclusiveFullscreen
+	};
 
 	struct WindowProps
 	{
@@ -15,6 +23,9 @@ namespace TomCat {
 		uint32_t Width;
 		uint32_t Height;
 		std::filesystem::path IconPath;
+		WindowDisplayMode DisplayMode = WindowDisplayMode::Windowed;
+		bool Resizable = true;
+		bool VSync = true;
 
 
 		WindowProps(const std::string& title = "TomCat Engine",
@@ -38,6 +49,24 @@ namespace TomCat {
 
 		virtual uint32_t GetWidth() const = 0;
 		virtual uint32_t GetHeight() const = 0;
+		// Physical default-framebuffer extent used by OpenGL and runtime cameras.
+		// Defaults preserve compatibility with headless/test Window backends.
+		virtual uint32_t GetFramebufferWidth() const { return GetWidth(); }
+		virtual uint32_t GetFramebufferHeight() const { return GetHeight(); }
+		virtual float GetScreenToFramebufferScaleX() const
+		{
+			return GetWidth() > 0 && GetFramebufferWidth() > 0
+				? static_cast<float>(GetFramebufferWidth()) / GetWidth() : 1.0f;
+		}
+		virtual float GetScreenToFramebufferScaleY() const
+		{
+			return GetHeight() > 0 && GetFramebufferHeight() > 0
+				? static_cast<float>(GetFramebufferHeight()) / GetHeight() : 1.0f;
+		}
+		// UI content scale (1.0 at 96 DPI). It is deliberately independent of
+		// the framebuffer ratio: on Windows it can be 1.5 while coordinates and
+		// framebuffer pixels remain 1:1.
+		virtual float GetDPIScale() const { return 1.0f; }
 
 		//窗口属性
 		virtual void SetTitle(const std::string& title) = 0;

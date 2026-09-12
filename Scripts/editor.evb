@@ -41,18 +41,6 @@
           </File>
           <File>
             <Type>2</Type>
-            <Name>TomCat.log</Name>
-            <File>E:\Github\TomCat_Engine\Editor\bin\Release-windows-x86_64\TomCatInut\TomCat.log</File>
-            <ActiveX>False</ActiveX>
-            <ActiveXInstall>False</ActiveXInstall>
-            <Action>0</Action>
-            <OverwriteDateTime>False</OverwriteDateTime>
-            <OverwriteAttributes>False</OverwriteAttributes>
-            <PassCommandLine>False</PassCommandLine>
-            <HideFromDialogs>0</HideFromDialogs>
-          </File>
-          <File>
-            <Type>2</Type>
             <Name>TomCatInut.exe</Name>
             <File>E:\Github\TomCat_Engine\Editor\bin\Release-windows-x86_64\TomCatInut\TomCatInut.exe</File>
             <ActiveX>False</ActiveX>

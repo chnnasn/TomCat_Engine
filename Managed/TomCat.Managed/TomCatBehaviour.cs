@@ -63,6 +63,7 @@ public abstract class TomCatBehaviour
     protected virtual void OnCreate() { }
     protected virtual void OnEnable() { }
     protected virtual void OnUpdate(float deltaTime) { }
+    protected virtual void OnLateUpdate(float deltaTime) { }
     protected virtual void OnFixedUpdate(float fixedDeltaTime) { }
     protected virtual void OnCollisionEnter2D(Collision2D collision) { }
     protected virtual void OnCollisionExit2D(Collision2D collision) { }
@@ -85,6 +86,7 @@ public abstract class TomCatBehaviour
 	internal void __Create() { using var scope = ScriptExecutionContext.Enter(_entity, _domainCancellation); OnCreate(); }
 	internal void __Enable() { using var scope = ScriptExecutionContext.Enter(_entity, _domainCancellation); OnEnable(); }
 	internal void __Update(float dt) { using var scope = ScriptExecutionContext.Enter(_entity, _domainCancellation); OnUpdate(dt); }
+	internal void __LateUpdate(float dt) { using var scope = ScriptExecutionContext.Enter(_entity, _domainCancellation); OnLateUpdate(dt); }
 	internal void __FixedUpdate(float dt) { using var scope = ScriptExecutionContext.Enter(_entity, _domainCancellation); OnFixedUpdate(dt); }
 	internal void __CollisionEnter(Collision2D value) { using var scope = ScriptExecutionContext.Enter(_entity, _domainCancellation); OnCollisionEnter2D(value); }
 	internal void __CollisionExit(Collision2D value) { using var scope = ScriptExecutionContext.Enter(_entity, _domainCancellation); OnCollisionExit2D(value); }

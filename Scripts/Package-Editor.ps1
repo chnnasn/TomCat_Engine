@@ -25,6 +25,15 @@ $FinalName = "TomCat"
 # handle template properties and validation; Editor Packages stay external.
 . (Join-Path $PSScriptRoot "EvbTools.ps1")
 . (Join-Path $PSScriptRoot "ManagedReleaseTools.ps1")
+. (Join-Path $PSScriptRoot "VersionTools.ps1")
+. (Join-Path $PSScriptRoot "ReleaseArtifactTools.ps1")
+
+$versionInfo = Get-TomCatVersionInfo -RepositoryRoot $RepoRoot
+if ($Version -and $Version -ne $versionInfo.ProductVersion) {
+    throw "Requested release version '$Version' does not match Version.h ($($versionInfo.ProductVersion))."
+}
+$Version = $versionInfo.ProductVersion
+Write-Host "[Version] TomCat $Version"
 
 # 1) Optional rebuild
 if ($Build) {
@@ -63,9 +72,6 @@ if ($LASTEXITCODE -ne 0) { throw "Player Template generation failed (exit $LASTE
 $packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
 $packageFileCount = @(Get-ChildItem -LiteralPath $packageSource -Recurse -File -Force).Count
 Write-Host "Scanning $packageFileCount package candidate file(s) from $packageSource"
-if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "TomCat.log") -PathType Leaf)) {
-    New-Item -ItemType File -Path (Join-Path $SourceDir "TomCat.log") -Force | Out-Null
-}
 
 $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
@@ -178,6 +184,7 @@ if ($evbOutput -and (Test-Path $evbOutput)) {
     $archiveInputs = @($outExe, $outPackages, $outManaged)
     $archiveInputs += @($nativeRuntimeFiles | ForEach-Object { Join-Path $dist $_ })
     Compress-Archive -LiteralPath $archiveInputs -DestinationPath $outArchive -CompressionLevel Optimal
+    New-TomCatReleaseMetadata -RepositoryRoot $RepoRoot -DistPath $dist -Target editor -Version $Version | Out-Null
     Write-Host "[Package] Final package -> $outArchive"
     $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
     Write-Host "Done: $outExe ($sizeMb MB) + $outPackages + $outManaged"

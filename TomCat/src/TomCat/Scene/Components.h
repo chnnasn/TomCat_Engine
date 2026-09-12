@@ -93,12 +93,109 @@ namespace TomCat {
 		// Runtime-only resolved sprite. SpriteHandle is the serialized source of truth.
 		Ref<Texture2D> Sprite;
 		float TilingFactor = 1.0f;
+		// Lower layers/orders are submitted first. Numeric layer identities stay
+		// stable if an editor-facing display name is renamed later.
+		int32_t SortingLayer = 0;
+		int32_t OrderInLayer = 0;
 
 		SpriteRenderer() = default;
 		SpriteRenderer(const SpriteRenderer&) = default;
 		SpriteRenderer(const glm::vec4& color)
 			: _Color(color) {
 		}
+	};
+
+	struct SpriteAnimationFrame
+	{
+		// Stable source/sub-asset identity. Paths never enter animation data.
+		AssetHandle SpriteHandle = AssetHandle(0);
+		float DurationSeconds = 1.0f / 12.0f;
+	};
+
+	struct SpriteAnimationClip
+	{
+		std::string Name = "Default";
+		bool Loop = true;
+		std::vector<SpriteAnimationFrame> Frames;
+	};
+
+	enum class AnimatorParameterType : uint8_t
+	{
+		Bool = 0,
+		Int,
+		Float,
+		Trigger
+	};
+
+	struct AnimatorParameter
+	{
+		std::string Name;
+		AnimatorParameterType Type = AnimatorParameterType::Bool;
+		bool BoolValue = false;
+		int32_t IntValue = 0;
+		float FloatValue = 0.0f;
+	};
+
+	enum class AnimatorConditionMode : uint8_t
+	{
+		If = 0,
+		IfNot,
+		Greater,
+		Less,
+		Equals,
+		NotEqual
+	};
+
+	struct AnimatorCondition
+	{
+		std::string Parameter;
+		AnimatorConditionMode Mode = AnimatorConditionMode::If;
+		float Threshold = 0.0f;
+	};
+
+	struct AnimatorState
+	{
+		std::string Name;
+		std::string Clip;
+		float Speed = 1.0f;
+	};
+
+	struct AnimatorTransition
+	{
+		// AnyState ignores FromState. Otherwise FromState must name one state.
+		std::string FromState;
+		std::string ToState;
+		bool AnyState = false;
+		// Negative disables exit time; otherwise this is normalized [0, 1].
+		float ExitTime = -1.0f;
+		std::vector<AnimatorCondition> Conditions;
+	};
+
+	struct SpriteAnimator
+	{
+		static constexpr uint32_t InvalidClipIndex = 0xffffffffu;
+
+		bool Enabled = true;
+		bool PlayOnStart = true;
+		// Empty selects the first clip. Names are unique inside one Animator.
+		std::string InitialClip;
+		float Speed = 1.0f;
+		std::vector<SpriteAnimationClip> Clips;
+		// Empty States preserves V1 direct-clip playback exactly. A state machine
+		// reuses Clips as its immutable frame sources.
+		std::string InitialState;
+		std::vector<AnimatorParameter> Parameters;
+		std::vector<AnimatorState> States;
+		std::vector<AnimatorTransition> Transitions;
+
+		// Transient playback state; never serialized and reset by Scene/Prefab copy.
+		uint32_t RuntimeClipIndex = InvalidClipIndex;
+		uint32_t RuntimeFrameIndex = 0;
+		double RuntimeFrameElapsed = 0.0;
+		bool RuntimePlaying = false;
+		bool RuntimeInitialized = false;
+		uint32_t RuntimeStateIndex = InvalidClipIndex;
+		double RuntimeStateElapsed = 0.0;
 	};
 
 	// Stable scene data used by the editor to choose an Entity icon. Entity is the
@@ -169,6 +266,168 @@ namespace TomCat {
 	struct CSharpScripts
 	{
 		std::vector<CSharpScriptEntry> Scripts;
+	};
+
+	// First component implemented entirely through ComponentRegistry. It is kept
+	// intentionally small so the registry's add/remove, property, copy and
+	// persistence paths have an executable vertical-slice fixture.
+	struct HealthComponent
+	{
+		int32_t Maximum = 100;
+		int32_t Current = 100;
+		bool Invulnerable = false;
+	};
+
+	// Audio references are stable AssetHandles. RuntimeVoice and
+	// RuntimeClipHandle are transient and are always cleared while copying or
+	// deserializing scene/prefab authoring data.
+	struct AudioSource
+	{
+		bool Enabled = true;
+		AssetHandle Clip = AssetHandle(0);
+		bool PlayOnStart = true;
+		bool Loop = false;
+		bool Streaming = false;
+		float Volume = 1.0f;
+		float Pitch = 1.0f;
+		// 0 is transform-independent 2D playback; 1 applies full panning and
+		// distance attenuation against the primary active AudioListener.
+		float SpatialBlend = 0.0f;
+		float MinDistance = 1.0f;
+		float MaxDistance = 25.0f;
+		// Matches AudioMixerGroup: 0 Master, 1 Music, 2 SFX. Kept as a byte in
+		// the scene component to avoid coupling Components.h to the backend.
+		uint8_t MixerGroup = 2;
+
+		uint64_t RuntimeVoice = 0;
+		AssetHandle RuntimeClipHandle = AssetHandle(0);
+		bool RuntimeAutoPlayEvaluated = false;
+		bool RuntimeStreaming = false;
+	};
+
+	struct AudioListener
+	{
+		bool Enabled = true;
+		bool Primary = true;
+	};
+
+	// Runtime text/UI authoring data. These components are rendered by the
+	// engine's Renderer2D path; ImGui remains Editor chrome only.
+	enum class TextAlignment : int32_t
+	{
+		Left = 0,
+		Center = 1,
+		Right = 2
+	};
+
+	struct TextRenderer
+	{
+		bool Enabled = true;
+		AssetHandle Font = AssetHandle(0);
+		AssetHandle FallbackFont = AssetHandle(0);
+		AssetHandle EmojiFont = AssetHandle(0);
+		std::string Text = "Text";
+		float FontSize = 1.0f;
+		glm::vec4 Color{ 1.0f };
+		TextAlignment Alignment = TextAlignment::Left;
+		float MaxWidth = 0.0f;
+		float LineSpacing = 1.0f;
+	};
+
+	enum class CanvasScaleMode : int32_t
+	{
+		ConstantPixelSize = 0,
+		ScaleWithScreenSize = 1
+	};
+
+	struct Canvas
+	{
+		bool Enabled = true;
+		CanvasScaleMode ScaleMode = CanvasScaleMode::ScaleWithScreenSize;
+		glm::vec2 ReferenceResolution{ 1920.0f, 1080.0f };
+		float MatchWidthOrHeight = 0.5f;
+		float ScaleFactor = 1.0f;
+		float ReferenceDPI = 96.0f;
+		int32_t SortingOrder = 0;
+	};
+
+	struct RectTransform
+	{
+		glm::vec2 AnchorMin{ 0.5f, 0.5f };
+		glm::vec2 AnchorMax{ 0.5f, 0.5f };
+		glm::vec2 Pivot{ 0.5f, 0.5f };
+		glm::vec2 AnchoredPosition{ 0.0f };
+		glm::vec2 SizeDelta{ 100.0f, 100.0f };
+		bool ClipChildren = false;
+
+		// Screen-pixel rectangles written by RuntimeUISystem. They are transient
+		// and deliberately omitted from ComponentRegistry persistence.
+		glm::vec4 RuntimeRect{ 0.0f };
+		glm::vec4 RuntimeClipRect{ 0.0f };
+	};
+
+	struct UIImage
+	{
+		bool Enabled = true;
+		AssetHandle Image = AssetHandle(0);
+		glm::vec4 Color{ 1.0f };
+		bool RaycastTarget = true;
+		bool PreserveAspect = false;
+	};
+
+	struct UIText
+	{
+		bool Enabled = true;
+		AssetHandle Font = AssetHandle(0);
+		AssetHandle FallbackFont = AssetHandle(0);
+		AssetHandle EmojiFont = AssetHandle(0);
+		std::string Text = "Text";
+		float FontSize = 24.0f;
+		glm::vec4 Color{ 1.0f };
+		TextAlignment Alignment = TextAlignment::Left;
+		bool Wrap = true;
+		float LineSpacing = 1.0f;
+		bool RaycastTarget = false;
+	};
+
+	struct UIButton
+	{
+		bool Enabled = true;
+		bool Interactable = true;
+		glm::vec4 NormalColor{ 1.0f };
+		glm::vec4 HoverColor{ 0.9f, 0.9f, 0.9f, 1.0f };
+		glm::vec4 PressedColor{ 0.72f, 0.72f, 0.72f, 1.0f };
+		glm::vec4 SelectedColor{ 0.82f, 0.9f, 1.0f, 1.0f };
+
+		bool RuntimeHovered = false;
+		bool RuntimePressed = false;
+		bool RuntimeFocused = false;
+		bool RuntimeClickedThisFrame = false;
+		uint64_t RuntimeClickSerial = 0;
+	};
+
+	struct UIEventSystem
+	{
+		bool Enabled = true;
+		bool ConsumeGameplayInput = true;
+		bool WrapNavigation = true;
+	};
+
+	enum class UILayoutDirection : int32_t
+	{
+		Horizontal = 0,
+		Vertical = 1
+	};
+
+	struct UILayoutGroup
+	{
+		bool Enabled = true;
+		UILayoutDirection Direction = UILayoutDirection::Vertical;
+		float Spacing = 8.0f;
+		// left, bottom, right, top
+		glm::vec4 Padding{ 0.0f };
+		bool ControlChildSize = false;
+		glm::vec2 ChildSize{ 100.0f, 32.0f };
 	};
 
 

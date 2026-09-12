@@ -47,6 +47,15 @@ public struct NativeVector3
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public struct NativeVector4
+{
+	public float X;
+	public float Y;
+	public float Z;
+	public float W;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public struct NativeMatrix4
 {
     public float M11, M12, M13, M14;
@@ -62,7 +71,9 @@ public enum NativeComponentTypeV1 : int
     BoxCollider2D = 3,
     CircleCollider2D = 4,
     DistanceJoint2D = 5,
-    SpriteRenderer = 6
+    SpriteRenderer = 6,
+	Camera = 7,
+	SpriteAnimator = 8
 }
 
 public enum NativePhysicsEventKindV1 : uint
@@ -172,4 +183,203 @@ public unsafe struct NativeApiV1
 	public delegate* unmanaged[Cdecl]<int> SceneRequestReload;
 	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, NativeVector3,
 		NativeEntityHandleV1, int> PrefabInstantiateDeferred;
+}
+
+// The V1 table above is a frozen binary prefix. New native services are copied
+// out through this optional envelope and independently versioned capability tables.
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeApiV2
+{
+	public NativeApiV1 V1;
+	public delegate* unmanaged[Cdecl]<NativeUtf8View, uint, void*, uint, uint*, int> QueryCapability;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeInputApiV1
+{
+	public uint Version;
+	public uint Size;
+	public uint MaximumGamepads;
+	public uint GamepadButtonCount;
+	public uint GamepadAxisCount;
+	public uint Reserved;
+	public delegate* unmanaged[Cdecl]<uint, int> IsMouseButtonHeld;
+	public delegate* unmanaged[Cdecl]<uint, int> WasMouseButtonPressed;
+	public delegate* unmanaged[Cdecl]<uint, int> WasMouseButtonReleased;
+	public delegate* unmanaged[Cdecl]<NativeVector2*, int> GetScrollDelta;
+	public delegate* unmanaged[Cdecl]<int> IsWindowFocused;
+	public delegate* unmanaged[Cdecl]<uint, int> IsGamepadConnected;
+	public delegate* unmanaged[Cdecl]<uint, int> WasGamepadConnected;
+	public delegate* unmanaged[Cdecl]<uint, int> WasGamepadDisconnected;
+	public delegate* unmanaged[Cdecl]<uint, uint, int> IsGamepadButtonHeld;
+	public delegate* unmanaged[Cdecl]<uint, uint, int> WasGamepadButtonPressed;
+	public delegate* unmanaged[Cdecl]<uint, uint, int> WasGamepadButtonReleased;
+	public delegate* unmanaged[Cdecl]<uint, uint, float*, int> GetGamepadAxis;
+	public delegate* unmanaged[Cdecl]<uint, byte*, uint, uint*, int> GetGamepadName;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeGameplayApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		NativeVector3, NativeEntityHandleV1, NativeEntityHandleV1*, int> CreateEntityDeferred;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		NativeEntityHandleV1*, int> FindEntityByName;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, ulong,
+		NativeEntityHandleV1*, uint, uint*, int> QueryEntities;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeEntityHandleV1*, int> GetParent;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeEntityHandleV1, int> SetParentDeferred;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeEntityHandleV1*, uint, uint*, int> GetChildren;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetActiveSelf;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetActiveSelf;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetActiveInHierarchy;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeVector3*, int> TransformGetLocalPosition;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeVector3, int> TransformSetLocalPosition;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeVector3*, int> TransformGetLocalRotationEuler;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeVector3, int> TransformSetLocalRotationEuler;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeVector3*, int> TransformGetLocalScale;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1,
+		NativeVector3, int> TransformSetLocalScale;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, uint,
+		NativePropertyValueV1*, int> GetComponentProperty;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, uint,
+		NativePropertyValueV1, int> SetComponentProperty;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		int, int> SpriteAnimatorPlay;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> SpriteAnimatorStop;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		int, int> SpriteAnimatorSetBool;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		int, int> SpriteAnimatorSetInt;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		float, int> SpriteAnimatorSetFloat;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		int> SpriteAnimatorSetTrigger;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View,
+		int> SpriteAnimatorResetTrigger;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, byte*, uint, uint*,
+		int> SpriteAnimatorGetCurrentState;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeAudioApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<int> IsHardwareAvailable;
+	public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetBackendName;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> HasSource;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AddSource;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> RemoveSource;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong*, int> GetClip;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, int> SetClip;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetEnabled;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetEnabled;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetPlayOnStart;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetPlayOnStart;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetLoop;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetLoop;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> GetVolume;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> SetVolume;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> GetPitch;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> SetPitch;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int*, int> GetMixerGroup;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetMixerGroup;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> Play;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> Pause;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> Stop;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int*, int> GetPlaybackState;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> HasListener;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AddListener;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> RemoveListener;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetListenerEnabled;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetListenerEnabled;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetListenerPrimary;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetListenerPrimary;
+	public delegate* unmanaged[Cdecl]<int, float*, int> GetMixerVolume;
+	public delegate* unmanaged[Cdecl]<int, float, int> SetMixerVolume;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeAudioSpatialApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> GetStreaming;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetStreaming;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> GetSpatialBlend;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> SetSpatialBlend;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> GetMinDistance;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> SetMinDistance;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float*, int> GetMaxDistance;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, float, int> SetMaxDistance;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeRuntimeUIApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, byte*, uint,
+		uint*, int> GetText;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong,
+		NativeUtf8View, int> SetText;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> WasButtonClicked;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong*, int>
+		GetButtonClickSerial;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> FocusButton;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeVector4*, int>
+		GetRect;
+	public delegate* unmanaged[Cdecl]<int> IsGameplayInputCaptured;
+}
+
+public enum NativePropertyKindV1 : uint
+{
+	Bool = 1,
+	Int32,
+	Int64,
+	UInt32,
+	UInt64,
+	Float,
+	Double,
+	Vector2,
+	Vector3,
+	Vector4
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct NativePropertyValueV1
+{
+	public NativePropertyKindV1 Kind;
+	public uint Reserved;
+	public long Integer;
+	public double Number;
+	public float X;
+	public float Y;
+	public float Z;
+	public float W;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeComponentApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, int> Has;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, int> Add;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, int> Remove;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong,
+		NativePropertyValueV1*, int> GetProperty;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong,
+		NativePropertyValueV1, int> SetProperty;
 }

@@ -130,7 +130,7 @@ try {
 	}
 
     if ($playerExecutable) {
-		# Player startup writes TomCat.log beside its executable. Exercise CLI/runtime
+		# Player startup writes its log under LocalAppData. Exercise CLI/runtime
 		# from a disposable copy so the template passed to PlayerBuilder remains an
 		# exact, hash-checked file set.
 		$stagedPlayerRoot = Join-Path $stageRoot "PlayerRuntime"

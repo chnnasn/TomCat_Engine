@@ -504,6 +504,17 @@ namespace TomCat {
 			return value;
 		}
 
+		std::string SanitizeProductStem(std::string value)
+		{
+			value = SanitizeDirectoryName(std::move(value));
+			const std::string lowered = LowerASCII(value);
+			if (lowered.size() > 4 && lowered.ends_with(".exe"))
+				value.resize(value.size() - 4);
+			while (!value.empty() && (value.back() == ' ' || value.back() == '.'))
+				value.pop_back();
+			return value.empty() ? "TomCatGame" : value;
+		}
+
 		bool Publish(const std::filesystem::path& staging,
 			const std::filesystem::path& output, const std::string& buildID,
 			std::string& errorMessage)
@@ -630,8 +641,11 @@ namespace TomCat {
 		if (error)
 			return fail("The Build directory could not be created: " + error.message());
 
-		const std::string directoryName =
-			SanitizeDirectoryName(request.ProjectInstance->GetName());
+		const std::string productStem = SanitizeProductStem(
+			request.ProjectInstance->GetPlayerSettings().ProductName);
+		const std::string directoryName = SanitizeDirectoryName(productStem);
+		const std::filesystem::path playerExecutableName =
+			UTF8ToPath(productStem + ".exe");
 		const std::filesystem::path output = buildRoot / UTF8ToPath(directoryName);
 		const std::filesystem::path staging = buildRoot /
 			UTF8ToPath(directoryName + ".staging-" + request.ScriptBuildID);
@@ -672,6 +686,16 @@ namespace TomCat {
 				return failStaged("A Player template file changed while it was being staged: '" +
 					PathToUTF8(file.RelativePath) + "'.");
 		}
+		const std::filesystem::path templatePlayer = staging / "TomCatPlayer.exe";
+		const std::filesystem::path productPlayer = staging / playerExecutableName;
+		if (NormalizedKey(playerExecutableName) != "tomcatplayer.exe")
+		{
+			error.clear();
+			std::filesystem::rename(templatePlayer, productPlayer, error);
+			if (error)
+				return failStaged("Could not apply the Player ProductName to its executable: "
+					+ error.message());
+		}
 
 		AssetManager& assets = AssetManager::Get();
 		if (!assets.SetManagedCookPayload(std::move(request.ManagedAssembly),
@@ -685,7 +709,11 @@ namespace TomCat {
 
 		std::unordered_set<std::string> expected{ "game.tcpak" };
 		for (const TemplateFile& file : manifest.Files)
-			expected.emplace(NormalizedKey(file.RelativePath));
+		{
+			const std::string key = NormalizedKey(file.RelativePath);
+			expected.emplace(key == "tomcatplayer.exe"
+				? NormalizedKey(playerExecutableName) : key);
+		}
 		std::unordered_set<std::string> actual;
 		std::filesystem::recursive_directory_iterator iterator(staging,
 			std::filesystem::directory_options::none, error), end;
@@ -715,7 +743,7 @@ namespace TomCat {
 
 		result.Succeeded = true;
 		result.OutputDirectory = output;
-		result.PlayerExecutable = output / "TomCatPlayer.exe";
+		result.PlayerExecutable = output / playerExecutableName;
 		result.Message = "Player build succeeded: " + PathToUTF8(output) +
 			" (C# build " + request.ScriptBuildID + ").";
 		return result;

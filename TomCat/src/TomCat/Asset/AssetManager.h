@@ -1,8 +1,12 @@
 #pragma once
 
 #include "AssetRegistry.h"
+#include "AssetDatabase.h"
+#include "SpriteAsset.h"
+#include "AssetImportCoordinator.h"
 #include "TomCat/Core/Base.h"
 #include "TomCat/Project/ProjectSettings.h"
+#include "TomCat/Project/PlayerSettings.h"
 #include "TomCat/Renderer/Texture.h"
 
 #include <cstdint>
@@ -37,6 +41,17 @@ namespace TomCat {
 		std::vector<uint8_t> Pdb;
 	};
 
+	// A validated, immutable byte range in a mounted package. Streaming systems
+	// may open PackagePath independently and read only this range; source paths
+	// are never exposed by a cooked Player.
+	struct CookedAssetRange
+	{
+		std::filesystem::path PackagePath;
+		uint64_t Offset = 0;
+		uint64_t Size = 0;
+		AssetType Type = AssetType::None;
+	};
+
 	// Owns loaded project assets. Authoring builds resolve handles through the
 	// registry; a mounted cooked package is deliberately path-free and takes
 	// precedence over the registry.
@@ -54,8 +69,23 @@ namespace TomCat {
 		bool Refresh();
 		AssetHandle ImportAsset(const std::filesystem::path& path);
 		bool SetImportSettings(AssetHandle handle, const AssetImportSettings& settings);
+		AssetLoadResult LoadImportedArtifact(AssetHandle handle,
+			AssetLoadOptions options = {});
+		std::future<AssetLoadResult> LoadImportedArtifactAsync(AssetHandle handle,
+			AssetLoadOptions options = {});
+		size_t PumpImportCoordinator(
+			const AssetImportCoordinator::Callback& callback = {});
+		void RequestAssetScan() { m_ImportCoordinator.RequestScan(); }
+		AssetImportCoordinator& GetImportCoordinator() { return m_ImportCoordinator; }
+		const AssetImportCoordinator& GetImportCoordinator() const
+		{
+			return m_ImportCoordinator;
+		}
+		AssetDatabase& GetDatabase() { return m_Database; }
+		const AssetDatabase& GetDatabase() const { return m_Database; }
 
 		Ref<Texture2D> LoadTexture(AssetHandle handle);
+		bool ResolveSpriteAsset(AssetHandle handle, ResolvedSpriteAsset& sprite) const;
 		Ref<Texture2D> GetMissingTexture();
 
 		void Release(AssetHandle handle);
@@ -108,6 +138,14 @@ namespace TomCat {
 		{
 			return m_CookedBuildSceneHandles;
 		}
+		uint32_t GetCookedPackageVersion() const
+		{
+			return IsCookedPackageMounted() ? m_CookedPackageVersion : 0;
+		}
+		const PlayerSettings& GetCookedPlayerSettings() const
+		{
+			return m_CookedPlayerSettings;
+		}
 		std::optional<uint32_t> GetCookedBuildSceneIndex(AssetHandle handle) const;
 		AssetHandle GetCookedBuildSceneHandle(uint32_t index) const;
 		// Authoring reads the active Project; a cooked runtime reads the immutable
@@ -121,6 +159,8 @@ namespace TomCat {
 		bool ReadAssetBytes(AssetHandle handle, std::vector<uint8_t>& bytes,
 			AssetType* type = nullptr) const;
 		std::vector<uint8_t> ReadAssetBytes(AssetHandle handle) const;
+		[[nodiscard]] bool TryGetCookedAssetRange(AssetHandle handle,
+			CookedAssetRange& range) const;
 
 	private:
 		struct CookedEntry
@@ -141,16 +181,21 @@ namespace TomCat {
 
 	private:
 		AssetRegistry m_Registry;
+		AssetDatabase m_Database;
+		AssetImportCoordinator m_ImportCoordinator;
 		bool m_RegistryInitialized = false;
 		std::unordered_map<AssetHandle, Ref<Texture2D>> m_TextureCache;
+		mutable std::unordered_map<AssetHandle, ResolvedSpriteAsset> m_SpriteDescriptorCache;
 		Ref<Texture2D> m_MissingTexture;
 		LiveReferenceProvider m_LiveReferenceProvider;
 
 		std::filesystem::path m_CookedPackagePath;
 		uint64_t m_CookedPackageSize = 0;
+		uint32_t m_CookedPackageVersion = 0;
 		AssetHandle m_CookedEntrySceneHandle = AssetHandle(0);
 		std::vector<AssetHandle> m_CookedBuildSceneHandles;
 		Physics2DSettings m_CookedPhysics2DSettings;
+		PlayerSettings m_CookedPlayerSettings;
 		std::optional<ManagedPackagePayload> m_CookedManagedPayload;
 		std::unordered_map<AssetHandle, CookedEntry> m_CookedEntries;
 		mutable std::ifstream m_CookedPackageStream;

@@ -14,8 +14,25 @@ namespace TomCat {
 
 		void OnUpdate() override;
 
-		inline unsigned int GetWidth() const override { return m_Data.Width; }
-		inline unsigned int GetHeight() const override { return m_Data.Height; }
+		inline unsigned int GetWidth() const override { return m_Data.Metrics.LogicalWidth; }
+		inline unsigned int GetHeight() const override { return m_Data.Metrics.LogicalHeight; }
+		inline unsigned int GetFramebufferWidth() const override
+		{
+			return m_Data.Metrics.FramebufferWidth;
+		}
+		inline unsigned int GetFramebufferHeight() const override
+		{
+			return m_Data.Metrics.FramebufferHeight;
+		}
+		inline float GetScreenToFramebufferScaleX() const override
+		{
+			return m_Data.Metrics.GetScreenToFramebufferScaleX();
+		}
+		inline float GetScreenToFramebufferScaleY() const override
+		{
+			return m_Data.Metrics.GetScreenToFramebufferScaleY();
+		}
+		float GetDPIScale() const override;
 
 		// Window attributes
 		void SetTitle(const std::string& title) override;
@@ -29,6 +46,7 @@ namespace TomCat {
 	private:
 		virtual void Init(const WindowProps& props);
 		virtual void Shutdown();
+		void RefreshNativeMetrics(bool dispatchEvent);
 	private:
 		GLFWwindow* m_Window = nullptr;
 		Scope<GraphicsContext> m_Context;
@@ -36,7 +54,8 @@ namespace TomCat {
 		struct WindowData
 		{
 			std::string Title;
-			unsigned int Width, Height;
+			WindowMetrics Metrics;
+			bool MetricsDirty = false;
 			bool VSync = false;
 
 			EventCallbackFn EventCallback;

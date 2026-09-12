@@ -36,6 +36,8 @@ namespace TomCat {
 		Application(const std::string& name = "TomCat App",
 					std::filesystem::path iconPath = {}, bool enableImGui = true,
 					bool createWindow = true);
+		Application(WindowProps windowProps, bool enableImGui,
+			bool createWindow = true);
 
 		virtual ~Application();
 

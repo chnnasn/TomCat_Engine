@@ -16,11 +16,15 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
-  package:
+  build-package:
     runs-on: windows-latest
+    timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,32 +36,51 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Install Enigma Virtual Box (official installer, Inno silent)
+      - name: Verify release scripts
         shell: pwsh
-        run: |
-          $exe = Join-Path $env:TEMP "enigmavb.exe"
-          $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-          $ok = $false
-          for ($i = 1; $i -le 5; $i++) {
-            curl.exe -s -L -A $ua -o $exe "https://www.enigmaprotector.com/assets/files/enigmavb.exe"
-            $bytes = [System.IO.File]::ReadAllBytes($exe)
-            if ($bytes.Length -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) { $ok = $true; break }
-            Write-Host "retry $($i): got $($bytes.Length) bytes (not a PE), retrying..."
-            Start-Sleep -Seconds 5
-          }
-          if (-not $ok) {
-            Write-Host "::error::Downloaded enigmavb.exe is not a valid PE (got $($bytes.Length) bytes)"
-            exit 1
-          }
-          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+        run: .\Scripts\Test-ReleaseScripts.ps1
 
-      - name: Install premake5
+      - name: Install pinned Enigma Virtual Box
         shell: pwsh
         run: |
-          $zip = Join-Path $env:TEMP "premake.zip"
-          Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta7/premake-5.0.0-beta7-windows.zip" -OutFile $zip -UseBasicParsing
-          Expand-Archive -Path $zip -DestinationPath "$env:TEMP\premake" -Force
-          "PREMAKE=$env:TEMP\premake\premake5.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          $pins = Get-Content "$env:GITHUB_WORKSPACE\Scripts\ReleaseToolVersions.json" -Raw | ConvertFrom-Json
+          $exe = Join-Path $env:RUNNER_TEMP "enigmavb-$($pins.enigmaVirtualBox.version).exe"
+          Invoke-WebRequest -Uri $pins.enigmaVirtualBox.url -OutFile $exe -UseBasicParsing
+          [void](Assert-TomCatFileSha256 -Path $exe -ExpectedHash $pins.enigmaVirtualBox.sha256)
+          $signature = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+            throw "EVB installer Authenticode signature is not valid: $($signature.Status)"
+          }
+          if (-not $signature.SignerCertificate.Thumbprint.Equals(
+              $pins.enigmaVirtualBox.signerThumbprint,
+              [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "EVB installer signer mismatch: $($signature.SignerCertificate.Thumbprint)"
+          }
+          $process = Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "EVB installer failed with exit code $($process.ExitCode)." }
+          $evb = @(
+            "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe",
+            "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $evb) { throw "EVB $($pins.enigmaVirtualBox.version) console was not installed." }
+          "EVB_CONSOLE=$evb" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install pinned Premake
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          $pins = Get-Content "$env:GITHUB_WORKSPACE\Scripts\ReleaseToolVersions.json" -Raw | ConvertFrom-Json
+          $zip = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version).zip"
+          $directory = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version)"
+          Invoke-WebRequest -Uri $pins.premake.url -OutFile $zip -UseBasicParsing
+          [void](Assert-TomCatFileSha256 -Path $zip -ExpectedHash $pins.premake.sha256)
+          Expand-Archive -LiteralPath $zip -DestinationPath $directory -Force
+          $premake = Join-Path $directory 'premake5.exe'
+          if (-not (Test-Path -LiteralPath $premake -PathType Leaf)) { throw 'Premake executable is missing from the verified archive.' }
+          "PREMAKE=$premake" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Locate MSBuild
         shell: pwsh
@@ -71,8 +94,14 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ inputs.target }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
+          . "$env:GITHUB_WORKSPACE\Scripts\VersionTools.ps1"
+          $versionInfo = Get-TomCatVersionInfo -RepositoryRoot $env:GITHUB_WORKSPACE
+          if ($env:RELEASE_VERSION -ne $versionInfo.ProductVersion) {
+            throw "Release input '$env:RELEASE_VERSION' does not match Version.h ($($versionInfo.ProductVersion))."
+          }
 
           function Invoke-Gen([string]$wks) {
             & $env:PREMAKE --file="$wks\premake5.lua" vs2022
@@ -91,7 +120,6 @@ jobs:
             $packageDir = Resolve-EvbPackageDirectory -SourceDir $srcDir
             $packageFileCount = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force).Count
             Write-Host "Scanning $packageFileCount package candidate file(s) from $packageDir"
-            if (-not (Test-Path "$srcDir\TomCat.log")) { New-Item -ItemType File -Path "$srcDir\TomCat.log" -Force | Out-Null }
             New-Item -ItemType Directory -Force -Path "dist" | Out-Null
             Copy-Item "$srcDir\$srcExe" "dist\$srcExe" -Force
             $outputName = if ($isEditor) { "TomCat.exe" } else { "TomCatHub.exe" }
@@ -111,13 +139,8 @@ jobs:
               $content = Set-EvbPackageTree -TemplateText $content -PackageSource $packageDir
             }
             Write-EvbProject -Path "Scripts\$evbName-ci.evb" -Text $content
-            $evb = @(
-              "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe",
-              "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
-            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if (-not $evb) { throw "enigmavbconsole.exe not found" }
             Push-Location "Scripts"
-            try { & $evb "$evbName-ci.evb" } finally { Pop-Location }
+            try { & $env:EVB_CONSOLE "$evbName-ci.evb" } finally { Pop-Location }
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             if (-not (Test-Path "dist\$outputName" -PathType Leaf)) {
               throw "Enigma Virtual Box did not produce dist\$outputName"
@@ -163,6 +186,9 @@ jobs:
             Invoke-Box "hub.evb" "Builder\bin\Release-windows-x86_64\Manager" "Manager.exe"
           }
 
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          New-TomCatReleaseMetadata -RepositoryRoot $env:GITHUB_WORKSPACE -DistPath (Join-Path $env:GITHUB_WORKSPACE 'dist') -Target $t -Version $env:RELEASE_VERSION | Out-Null
+
       - name: Upload Editor artifact
         if: ${{ inputs.target == 'editor' || inputs.target == 'both' }}
         uses: actions/upload-artifact@v4
@@ -177,23 +203,74 @@ jobs:
           name: TomCatHub
           path: dist/TomCatHub.exe
 
-      - name: Publish to GitHub Release
-        if: ${{ inputs.target == 'both' }}
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: TomCat-release-metadata
+          if-no-files-found: error
+          path: |
+            dist/SHA256SUMS
+            dist/THIRD_PARTY_NOTICES.txt
+            dist/TomCat.spdx.json
+
+  publish-release:
+    if: ${{ inputs.target == 'both' }}
+    needs: build-package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Editor artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TomCat
+          path: dist
+
+      - name: Download Hub artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TomCatHub
+          path: dist
+
+      - name: Download release metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: TomCat-release-metadata
+          path: dist
+
+      - name: Publish new GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          $tag = "v${{ inputs.version }}"
-          $assets = @("dist\TomCat.zip", "dist\TomCatHub.exe")
-          # Check whether the release already exists (no error swallowing)
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag exists - uploading assets with --clobber"
-            gh release upload $tag $assets --clobber
-          } else {
-            gh release create $tag $assets --title $tag --generate-notes
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:RELEASE_VERSION"
+          $assets = @(
+            "dist\TomCat.zip",
+            "dist\TomCatHub.exe",
+            "dist\SHA256SUMS",
+            "dist\THIRD_PARTY_NOTICES.txt",
+            "dist\TomCat.spdx.json"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Release asset is missing: $asset" }
           }
+          foreach ($line in Get-Content -LiteralPath 'dist\SHA256SUMS') {
+            if ($line -notmatch '^([a-fA-F0-9]{64})  (.+)$') { throw "Invalid SHA256SUMS line: $line" }
+            $expectedHash = $Matches[1]
+            $hashedAsset = Join-Path 'dist' $Matches[2]
+            if (-not (Test-Path -LiteralPath $hashedAsset -PathType Leaf)) { throw "Checksummed asset is missing: $hashedAsset" }
+            $actualHash = (Get-FileHash -LiteralPath $hashedAsset -Algorithm SHA256).Hash
+            if (-not $actualHash.Equals($expectedHash, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Release artifact checksum mismatch: $hashedAsset"
+            }
+          }
+          $null = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            throw "Release $tag already exists. Existing versions are immutable; choose a new version."
+          }
+          & gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::Release publish failed"
-            exit 1
+            throw "Release publish failed with exit code $LASTEXITCODE."
           }

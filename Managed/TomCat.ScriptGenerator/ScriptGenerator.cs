@@ -336,7 +336,8 @@ public sealed class ScriptGenerator : IIncrementalGenerator
             ("OnCreate", 1u << 0), ("OnEnable", 1u << 1), ("OnUpdate", 1u << 2),
             ("OnFixedUpdate", 1u << 3), ("OnCollisionEnter2D", 1u << 4),
             ("OnCollisionExit2D", 1u << 5), ("OnTriggerEnter2D", 1u << 6),
-            ("OnTriggerExit2D", 1u << 7), ("OnDisable", 1u << 8), ("OnDestroy", 1u << 9)
+            ("OnTriggerExit2D", 1u << 7), ("OnDisable", 1u << 8), ("OnDestroy", 1u << 9),
+            ("OnLateUpdate", 1u << 10)
         ];
         foreach ((string name, uint flag) in callbacks)
         {

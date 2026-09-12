@@ -9,6 +9,8 @@ public readonly record struct ScriptPhysicsEvent(NativePhysicsEventKindV1 Kind, 
 
 public sealed class ScriptSceneRuntime : IScriptMutationSink
 {
+	private const int MaximumHierarchyActivationTransitionsPerInstance = 8;
+
     private readonly Dictionary<ulong, ScriptDescriptor> _descriptors;
     private readonly Action _onDestroyed;
 	private readonly CancellationToken _domainCancellation;
@@ -277,12 +279,9 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 				instance.Created = instance.State == ScriptInstanceState.Ready;
 			}
 		}
-		foreach (ScriptInstance instance in batch)
-		{
-			if (instance.Created && instance.Enabled
-				&& instance.State == ScriptInstanceState.Ready)
-				Invoke(instance, "OnEnable", static behaviour => behaviour.__Enable());
-		}
+		// All OnCreate callbacks finish before the first OnEnable. Convergence then
+		// observes any hierarchy mutations made while creating the batch.
+		ConvergeHierarchyActivation();
 	}
 
 	public void SetEnabled(ulong attachmentId, bool enabled)
@@ -296,6 +295,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             return;
         }
 		ApplyEnabled(attachmentId, enabled);
+		ConvergeHierarchyActivation();
 	}
 
 	void IScriptMutationSink.SetBehaviourEnabled(ulong attachmentId, bool enabled)
@@ -320,23 +320,34 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
     public void UpdateAll(float deltaTime)
     {
         ValidateDispatch(deltaTime, nameof(deltaTime));
-        foreach (ScriptInstance instance in _instances)
-        {
-            if (CanDispatch(instance))
-                Invoke(instance, "OnUpdate", behaviour => behaviour.__Update(deltaTime));
-        }
+		TimeRuntime.BeginFrame(deltaTime);
+		if (_instances.Count != 0)
+		{
+			using var inputScope = ScriptExecutionContext.Enter(
+				_instances[0].Attachment.Entity, _domainCancellation);
+			InputActionRuntime.UpdateEnabled(_domainCancellation);
+		}
+		DispatchActiveCallbacks("OnUpdate",
+			behaviour => behaviour.__Update(deltaTime));
+		DispatchActiveCallbacks("OnLateUpdate",
+			behaviour => behaviour.__LateUpdate(deltaTime));
         FlushDeferredChanges();
     }
 
     public void FixedUpdateAll(float fixedDeltaTime)
     {
         ValidateDispatch(fixedDeltaTime, nameof(fixedDeltaTime));
-        foreach (ScriptInstance instance in _instances)
-        {
-            if (CanDispatch(instance))
-                Invoke(instance, "OnFixedUpdate", behaviour => behaviour.__FixedUpdate(fixedDeltaTime));
-        }
-        FlushDeferredChanges();
+		TimeRuntime.BeginFixedStep(fixedDeltaTime);
+		try
+		{
+			DispatchActiveCallbacks("OnFixedUpdate",
+				behaviour => behaviour.__FixedUpdate(fixedDeltaTime));
+			FlushDeferredChanges();
+		}
+		finally
+		{
+			TimeRuntime.EndFixedStep();
+		}
     }
 
     public void DispatchPhysicsEvents(IEnumerable<ScriptPhysicsEvent> events)
@@ -345,6 +356,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         if (!_createInvoked)
             throw new InvalidOperationException("Create callbacks must run before physics events.");
         ArgumentNullException.ThrowIfNull(events);
+		ConvergeHierarchyActivation();
 
         foreach (ScriptPhysicsEvent physicsEvent in events)
         {
@@ -354,7 +366,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
                 physicsEvent.EntityB.RuntimeGeneration != RuntimeGeneration)
                 continue;
 
-            foreach (ScriptInstance instance in _instances)
+            foreach (ScriptInstance instance in _instances.ToArray())
             {
                 if (!CanDispatch(instance))
                     continue;
@@ -388,6 +400,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
                     default:
                         throw new InvalidDataException($"Unknown physics event kind {physicsEvent.Kind}.");
                 }
+				ConvergeHierarchyActivation();
             }
         }
         FlushDeferredChanges();
@@ -424,6 +437,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 			DestroyInstance(_instances[index]);
 		_instances.Clear();
         _instancesByAttachment.Clear();
+		InputActionRuntime.DisableDomain(_domainCancellation);
 		_onDestroyed();
 	}
 
@@ -463,7 +477,8 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		if (instance.State == ScriptInstanceState.Ready)
 		{
 			instance.Enabled = false;
-			Invoke(instance, "OnDisable", static behaviour => behaviour.__Disable());
+			if (instance.HierarchyActive)
+				Invoke(instance, "OnDisable", static behaviour => behaviour.__Disable());
 		}
 		else
 			instance.Enabled = false;
@@ -596,12 +611,71 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         if (enabled)
         {
             instance.Enabled = true;
-            Invoke(instance, "OnEnable", static behaviour => behaviour.__Enable());
+			instance.HierarchyActive = NativeBridge.IsActiveForScriptHost(
+				instance.Attachment.Entity);
+			if (instance.HierarchyActive)
+				Invoke(instance, "OnEnable", static behaviour => behaviour.__Enable());
         }
 		else
 		{
 			instance.Enabled = false;
-			Invoke(instance, "OnDisable", static behaviour => behaviour.__Disable());
+			if (instance.HierarchyActive)
+				Invoke(instance, "OnDisable", static behaviour => behaviour.__Disable());
+		}
+	}
+
+	private void DispatchActiveCallbacks(string callback,
+		Action<TomCatBehaviour> dispatch)
+	{
+		ConvergeHierarchyActivation();
+		foreach (ScriptInstance instance in _instances.ToArray())
+		{
+			if (!CanDispatch(instance))
+				continue;
+			Invoke(instance, callback, dispatch);
+			// ActiveSelf is an immediate native mutation. Settle lifecycle transitions
+			// before considering the next user callback in this dispatch batch.
+			ConvergeHierarchyActivation();
+		}
+	}
+
+	private void ConvergeHierarchyActivation()
+	{
+		var transitions = new Dictionary<ScriptInstance, int>();
+		while (true)
+		{
+			bool changed = false;
+			foreach (ScriptInstance instance in _instances.ToArray())
+			{
+				if (!instance.Created || !instance.Enabled
+					|| instance.State != ScriptInstanceState.Ready || instance.Destroying)
+					continue;
+
+				bool active = NativeBridge.IsActiveForScriptHost(
+					instance.Attachment.Entity);
+				if (active == instance.HierarchyActive)
+					continue;
+
+				changed = true;
+				instance.HierarchyActive = active;
+				int transitionCount = transitions.TryGetValue(instance, out int current)
+					? current + 1 : 1;
+				transitions[instance] = transitionCount;
+				if (transitionCount > MaximumHierarchyActivationTransitionsPerInstance)
+				{
+					MarkFaulted(instance, "HierarchyActivation",
+						new InvalidOperationException(
+							$"OnEnable/OnDisable did not stabilize after "
+							+ $"{MaximumHierarchyActivationTransitionsPerInstance} transitions."));
+					continue;
+				}
+
+				Invoke(instance, active ? "OnEnable" : "OnDisable", active
+					? static behaviour => behaviour.__Enable()
+					: static behaviour => behaviour.__Disable());
+			}
+			if (!changed)
+				return;
 		}
 	}
 
@@ -670,6 +744,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
     }
 
     private static bool CanDispatch(ScriptInstance instance) => instance.Created && instance.Enabled &&
+		instance.HierarchyActive &&
 		instance.State == ScriptInstanceState.Ready && !instance.Destroying
 		&& instance.Behaviour is not null;
 
@@ -722,6 +797,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         internal int Sequence { get; } = sequence;
         internal TomCatBehaviour? Behaviour { get; set; }
         internal bool Enabled { get; set; } = attachment.Enabled;
+		internal bool HierarchyActive { get; set; }
 		internal bool Created { get; set; }
 		internal bool Destroying { get; set; }
 		internal ScriptInstanceState State { get; set; } = ScriptInstanceState.Ready;

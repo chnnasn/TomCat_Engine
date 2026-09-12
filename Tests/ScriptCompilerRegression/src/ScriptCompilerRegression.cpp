@@ -1,4 +1,6 @@
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Audio/AudioEngine.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Project/Project.h"
@@ -77,6 +79,56 @@ namespace {
 			output.write(reinterpret_cast<const char*>(bytes.data()),
 				static_cast<std::streamsize>(bytes.size()));
 		Require(static_cast<bool>(output), "could not write " + path.string());
+	}
+
+	void AppendWaveU16(std::vector<uint8_t>& bytes, uint16_t value)
+	{
+		bytes.push_back(static_cast<uint8_t>(value));
+		bytes.push_back(static_cast<uint8_t>(value >> 8));
+	}
+
+	void AppendWaveU32(std::vector<uint8_t>& bytes, uint32_t value)
+	{
+		bytes.push_back(static_cast<uint8_t>(value));
+		bytes.push_back(static_cast<uint8_t>(value >> 8));
+		bytes.push_back(static_cast<uint8_t>(value >> 16));
+		bytes.push_back(static_cast<uint8_t>(value >> 24));
+	}
+
+	void AppendWaveFourCC(std::vector<uint8_t>& bytes, const char* value)
+	{
+		bytes.insert(bytes.end(), value, value + 4);
+	}
+
+	std::vector<uint8_t> MakePlayerAcceptanceWave()
+	{
+		constexpr uint16_t channels = 1;
+		constexpr uint16_t bits = 16;
+		constexpr uint32_t sampleRate = 8000;
+		constexpr uint32_t frames = 1600;
+		constexpr uint16_t blockAlign = channels * bits / 8;
+		constexpr uint32_t dataSize = frames * blockAlign;
+		std::vector<uint8_t> bytes;
+		bytes.reserve(44 + dataSize);
+		AppendWaveFourCC(bytes, "RIFF");
+		AppendWaveU32(bytes, 36 + dataSize);
+		AppendWaveFourCC(bytes, "WAVE");
+		AppendWaveFourCC(bytes, "fmt ");
+		AppendWaveU32(bytes, 16);
+		AppendWaveU16(bytes, 1);
+		AppendWaveU16(bytes, channels);
+		AppendWaveU32(bytes, sampleRate);
+		AppendWaveU32(bytes, sampleRate * blockAlign);
+		AppendWaveU16(bytes, blockAlign);
+		AppendWaveU16(bytes, bits);
+		AppendWaveFourCC(bytes, "data");
+		AppendWaveU32(bytes, dataSize);
+		for (uint32_t frame = 0; frame < frames; ++frame)
+		{
+			const int16_t sample = static_cast<int16_t>((frame % 64) * 300 - 9600);
+			AppendWaveU16(bytes, static_cast<uint16_t>(sample));
+		}
+		return bytes;
 	}
 
 	std::optional<std::string> ReadEnvironment(const char* name)
@@ -747,13 +799,54 @@ namespace {
 		const std::filesystem::path& workingDirectory,
 		uint32_t expectedScriptExitCode, const std::string& description)
 	{
-		// EntryPoint anchors packaged Player process state to the executable root
-		// before Log::Init, independent of the caller-provided working directory.
-		const std::filesystem::path logPath = player.parent_path() / "TomCat.log";
+		const std::filesystem::path executableLogPath =
+			player.parent_path() / "TomCat.log";
+		struct ExecutableLogSnapshot
+		{
+			bool Exists = false;
+			std::filesystem::file_time_type WriteTime{};
+			std::string Contents;
+		};
+		const auto captureExecutableLog = [&](const char* phase)
+		{
+			ExecutableLogSnapshot snapshot;
+			std::error_code statusError;
+			const std::filesystem::file_status status =
+				std::filesystem::status(executableLogPath, statusError);
+			if (statusError == std::errc::no_such_file_or_directory)
+				return snapshot;
+			Require(!statusError,
+				"could not inspect the executable-directory log " + std::string(phase)
+				+ " " + description + " (code "
+				+ std::to_string(statusError.value()) + ": "
+				+ statusError.message() + ")");
+			if (!std::filesystem::exists(status))
+				return snapshot;
+			Require(std::filesystem::is_regular_file(status),
+				"the executable-directory TomCat.log entry is not a regular file "
+				+ std::string(phase) + " " + description + " (code 0)");
+			snapshot.Exists = true;
+			snapshot.WriteTime = std::filesystem::last_write_time(
+				executableLogPath, statusError);
+			Require(!statusError,
+				"could not read the executable-directory log mtime "
+				+ std::string(phase) + " " + description + " (code "
+				+ std::to_string(statusError.value()) + ": "
+				+ statusError.message() + ")");
+			snapshot.Contents = ReadTextFile(executableLogPath);
+			return snapshot;
+		};
+		const ExecutableLogSnapshot executableLogBefore =
+			captureExecutableLog("before");
+		const auto logPath = TomCat::ApplicationPaths::GetLogFile(
+			TomCat::ApplicationProduct::Player);
 		std::error_code removeError;
-		std::filesystem::remove(logPath, removeError);
-		Require(!removeError,
-			"could not clear the " + description + " log: " + removeError.message());
+		if (logPath)
+		{
+			std::filesystem::remove(*logPath, removeError);
+			Require(!removeError,
+				"could not clear the " + description + " log: " + removeError.message());
+		}
 
 		std::vector<wchar_t> mutableCommand(command.begin(), command.end());
 		mutableCommand.push_back(L'\0');
@@ -790,8 +883,19 @@ namespace {
 		Require(readExitCode != FALSE,
 			"could not read the " + description + " exit code");
 
-		const std::string playerLog = std::filesystem::is_regular_file(logPath)
-			? ReadTextFile(logPath) : std::string{};
+		const ExecutableLogSnapshot executableLogAfter =
+			captureExecutableLog("after");
+		Require(executableLogAfter.Exists == executableLogBefore.Exists,
+			description + " changed the executable-directory TomCat.log existence"
+			+ " (before=" + (executableLogBefore.Exists ? "present" : "absent")
+			+ ", after=" + (executableLogAfter.Exists ? "present" : "absent")
+			+ ", code 0)");
+		if (executableLogBefore.Exists)
+			Require(executableLogAfter.WriteTime == executableLogBefore.WriteTime
+				&& executableLogAfter.Contents == executableLogBefore.Contents,
+				description + " modified TomCat.log beside the executable (code 0)");
+		const std::string playerLog = logPath && std::filesystem::is_regular_file(*logPath)
+			? ReadTextFile(*logPath) : std::string{};
 		Require(exitCode == expectedScriptExitCode,
 			description + " returned exit "
 			+ std::to_string(exitCode) + "; expected the script-only completion code "
@@ -1077,15 +1181,37 @@ public sealed class PrefabSpawnerProbe : TomCatBehaviour
 {
     public PrefabAsset BulletPrefab;
     private int _frame;
+	private float _elapsedSeconds;
+    private InputActionMap _input = null!;
+	private bool _inputValidated;
+    private Entity? _runtimeGroup;
+    private Entity? _runtimeMarker;
+    private bool _runtimeChainValidated;
     protected override void OnCreate()
     {
         if (SceneManager.ActiveBuildIndex != 1 || !BulletPrefab.IsValid)
             Environment.Exit(84);
+        _input = new InputActionMap("Player Acceptance", "Gameplay");
+        _input.AddAction("Jump", InputActionType.Button)
+            .AddBinding(InputBinding.Key(KeyCode.Space));
+        string rebinds = _input.ExportRebinds();
+        _input.ImportRebinds(rebinds);
+        _input.Enable();
         Log.Info("TOMCAT_PLAYER_E2E_SCENE_2_STARTED");
     }
     protected override void OnUpdate(float deltaTime)
     {
         _frame++;
+		_elapsedSeconds += deltaTime;
+		if (!_inputValidated)
+		{
+			if (!_input.Enabled || !_input.TryGetAction("Jump", out var jump) ||
+				jump is null || jump.Bindings.Count != 1 ||
+				jump.Bindings[0] != InputBinding.Key(KeyCode.Space))
+				Environment.Exit(98);
+			_inputValidated = true;
+			Log.Info("TOMCAT_PLAYER_E2E_INPUT_EVALUATED");
+		}
         if (_frame == 1)
         {
             if (PlayerAcceptanceState.Created != 0 ||
@@ -1100,7 +1226,42 @@ public sealed class PrefabSpawnerProbe : TomCatBehaviour
                 Environment.Exit(86);
             Log.Info("TOMCAT_PLAYER_E2E_PREFAB_FRAME_2_QUEUED");
         }
-        else if (_frame > 600)
+        else if (_frame == 3)
+        {
+            _runtimeGroup = World.CreateEntity("C# Runtime Group");
+            _runtimeMarker = World.CreateEntity("C# Runtime Marker",
+                new Vector3(6.0f, 2.0f, 0.0f), _runtimeGroup);
+            _runtimeMarker.AddComponent<SpriteRenderer>();
+            var sprite = _runtimeMarker.GetComponent<SpriteRenderer>();
+            sprite.Color = new Color(0.25f, 0.5f, 0.75f, 1.0f);
+            sprite.SortingLayer = 3;
+            sprite.OrderInLayer = 9;
+            _runtimeMarker.ActiveSelf = false;
+            Log.Info("TOMCAT_PLAYER_E2E_WORLD_CHAIN_QUEUED");
+        }
+        else if (_frame == 4)
+        {
+            if (_runtimeGroup is null || _runtimeMarker is null ||
+                !_runtimeGroup.IsValid || !_runtimeMarker.IsValid ||
+                _runtimeMarker.Parent != _runtimeGroup ||
+                _runtimeMarker.ActiveSelf ||
+                !_runtimeMarker.HasComponent<SpriteRenderer>())
+                Environment.Exit(93);
+            var sprite = _runtimeMarker.GetComponent<SpriteRenderer>();
+            if (!sprite.Color.Equals(new Color(0.25f, 0.5f, 0.75f, 1.0f)) ||
+                sprite.SortingLayer != 3 || sprite.OrderInLayer != 9)
+                Environment.Exit(94);
+            _runtimeChainValidated = true;
+            Log.Info("TOMCAT_PLAYER_E2E_WORLD_CHAIN_COMMITTED");
+        }
+		if (_inputValidated && _runtimeChainValidated &&
+			PlayerAcceptanceState.Created == 2 &&
+            PlayerAcceptanceState.Collisions == 2)
+        {
+            Log.Info("TOMCAT_PLAYER_E2E_INPUT_WORLD_COLLISION_ANIMATION_AUDIO_OK");
+            Environment.Exit(73);
+        }
+		else if (_elapsedSeconds > 12.0f)
             Environment.Exit(87);
     }
 }
@@ -1111,35 +1272,54 @@ namespace E2E;
 public static class PlayerAcceptanceState
 {
     public static int Created;
+    public static int Collisions;
 }
 [DefaultExecutionOrder(-100)]
 public sealed class BulletProbe : TomCatBehaviour
 {
     public int ExpectedSeed = 7;
+    private bool _collided;
     protected override void OnCreate()
     {
         if (SceneManager.ActiveBuildIndex != 1)
             Environment.Exit(88);
         if (ExpectedSeed != 4242)
             Environment.Exit(89);
-        if (!HasComponent<Rigidbody2D>() || !HasComponent<BoxCollider2D>())
+        if (!HasComponent<Rigidbody2D>() || !HasComponent<BoxCollider2D>() ||
+            !HasComponent<SpriteRenderer>() || !HasComponent<SpriteAnimator>() ||
+            !HasComponent<AudioSource>())
             Environment.Exit(90);
 		var body = GetComponent<Rigidbody2D>();
 		body.LinearVelocity = new Vector2(0.0f, 2.0f);
-		if (body.LinearVelocity.Y < 1.5f || body.LinearVelocity.Y > 2.5f)
-			Environment.Exit(92);
+        if (body.LinearVelocity.Y < 1.5f || body.LinearVelocity.Y > 2.5f)
+            Environment.Exit(92);
+        var animator = GetComponent<SpriteAnimator>();
+        animator.Speed = 1.5f;
+        if (animator.Speed != 1.5f)
+            Environment.Exit(95);
     }
     protected override void OnEnable()
     {
         PlayerAcceptanceState.Created++;
         Log.Info("TOMCAT_PLAYER_E2E_PREFAB_ENABLED_" + PlayerAcceptanceState.Created);
-        if (PlayerAcceptanceState.Created == 2)
-        {
-            Log.Info("TOMCAT_PLAYER_E2E_TWO_SCENES_TWO_PREFABS_OK");
-            Environment.Exit(73);
-        }
         if (PlayerAcceptanceState.Created > 2)
             Environment.Exit(91);
+    }
+    protected override void OnCollisionEnter2D(Collision2D collision)
+    {
+        if (_collided)
+            return;
+        var animator = GetComponent<SpriteAnimator>();
+        if (!animator.Play("Hit") || !animator.IsPlaying)
+            Environment.Exit(96);
+        var sound = GetComponent<AudioSource>();
+        sound.Play();
+        if (!sound.IsPlaying)
+            Environment.Exit(97);
+        _collided = true;
+        PlayerAcceptanceState.Collisions++;
+        Log.Info("TOMCAT_PLAYER_E2E_COLLISION_FEEDBACK_" +
+            PlayerAcceptanceState.Collisions);
     }
 }
 )CS" + std::string("// ") + std::string(bulletSourceMarker) + "\n");
@@ -1326,8 +1506,19 @@ public sealed class BulletProbe : TomCatBehaviour
 
 		// Build a second package that exercises the complete standalone Player path:
 		// entry Scene -> frame-end transition -> two cross-frame Prefab requests ->
-		// dynamic C# lifecycle and live Rigidbody2D access. The Prefab is reached only
-		// through a strongly typed serialized script field.
+		// C# InputAction/World chain -> collisions -> animation and WAV playback.
+		// The Prefab is reached only through a strongly typed serialized script field.
+		const std::filesystem::path hitSoundPath =
+			project->GetAssetPath() / "Audio" / "Hit.wav";
+		WriteBytes(hitSoundPath, MakePlayerAcceptanceWave());
+		const TomCat::AssetHandle hitSoundHandle =
+			assets.Registry().ImportAsset(hitSoundPath);
+		const TomCat::AssetMetadata* hitSoundMetadata =
+			assets.Registry().GetMetadata(hitSoundHandle);
+		Require(static_cast<uint64_t>(hitSoundHandle) != 0
+			&& hitSoundMetadata && hitSoundMetadata->Type == TomCat::AssetType::Audio,
+			"could not import the Player acceptance WAV");
+
 		auto prefabSourceScene = TomCat::CreateRef<TomCat::Scene>();
 		prefabSourceScene->SetSceneName("Player acceptance Prefab source");
 		TomCat::Entity bulletRoot = prefabSourceScene->CreateEntity("Runtime bullet");
@@ -1339,6 +1530,23 @@ public sealed class BulletProbe : TomCatBehaviour
 		bulletRoot.AddComponent<TomCat::Rigidbody2D>().Type =
 			TomCat::Rigidbody2D::BodyType::Dynamic;
 		bulletRoot.AddComponent<TomCat::BoxCollider2D>();
+		bulletRoot.AddComponent<TomCat::SpriteRenderer>();
+		TomCat::SpriteAnimator animator;
+		animator.PlayOnStart = false;
+		animator.InitialClip = "Hit";
+		TomCat::SpriteAnimationClip hitClip;
+		hitClip.Name = "Hit";
+		hitClip.Loop = false;
+		hitClip.Frames = {
+			{ TomCat::AssetHandle(0), 0.05f },
+			{ TomCat::AssetHandle(0), 0.05f }
+		};
+		animator.Clips.push_back(std::move(hitClip));
+		bulletRoot.AddComponent<TomCat::SpriteAnimator>(std::move(animator));
+		auto& hitSource = bulletRoot.AddComponent<TomCat::AudioSource>();
+		hitSource.Clip = hitSoundHandle;
+		hitSource.PlayOnStart = false;
+		hitSource.MixerGroup = static_cast<uint8_t>(TomCat::AudioMixerGroup::SFX);
 		const std::filesystem::path prefabPath =
 			project->GetAssetPath() / "Prefabs" / "RuntimeBullet.tcprefab";
 		std::error_code prefabDirectoryError;
@@ -1362,6 +1570,10 @@ public sealed class BulletProbe : TomCatBehaviour
 			"TomCat.PrefabAsset");
 		spawner.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(
 			std::move(spawnerEntry));
+		TomCat::Entity ground = gameplayScene->CreateEntity("Collision ground");
+		SetPosition(ground, { 3.0f, -1.0f, 0.0f });
+		auto& groundCollider = ground.AddComponent<TomCat::BoxCollider2D>();
+		groundCollider.Size = { 8.0f, 0.5f };
 		const std::filesystem::path gameplayScenePath =
 			project->GetAssetPath() / "PlayerGameplay.tomcat";
 		TomCat::SceneSerializer gameplayWriter(gameplayScene);
@@ -1434,6 +1646,10 @@ public sealed class BulletProbe : TomCatBehaviour
 			Require(playerResult.Succeeded,
 				"PlayerBuilder rejected the real hashed template or export inputs: "
 				+ playerResult.Message);
+			Require(playerResult.OutputDirectory.filename() == "Compiled Script E2E"
+				&& playerResult.PlayerExecutable.filename()
+					== "Compiled Script E2E.exe",
+				"PlayerBuilder did not apply the sanitized ProductName to the export directory and executable");
 			Require(std::filesystem::is_regular_file(
 				playerResult.OutputDirectory / "Game.tcpak"),
 				"PlayerBuilder output omitted Game.tcpak");
@@ -1530,12 +1746,15 @@ public sealed class BulletProbe : TomCatBehaviour
 		Require(assets.GetCookedStartSceneHandle() == entryHandle
 			&& buildScenes.size() == 2 && buildScenes[0] == entryHandle
 			&& buildScenes[1] == gameplayHandle,
-			"tcpak v5 did not preserve the ordered two-Scene BuildSettings manifest");
+			"tcpak v6 did not preserve the ordered two-Scene BuildSettings manifest");
 		TomCat::AssetType cookedType = TomCat::AssetType::None;
 		std::vector<uint8_t> cookedAsset;
 		Require(assets.ReadAssetBytes(prefabHandle, cookedAsset, &cookedType)
 			&& cookedType == TomCat::AssetType::Prefab && !cookedAsset.empty(),
 			"Prefab dependency closure omitted the referenced .tcprefab");
+		Require(assets.ReadAssetBytes(hitSoundHandle, cookedAsset, &cookedType)
+			&& cookedType == TomCat::AssetType::Audio && !cookedAsset.empty(),
+			"Prefab dependency closure omitted the referenced WAV artifact");
 		Require(!assets.ReadAssetBytes(sceneHandle, cookedAsset),
 			"strict build-scene closure retained the unrelated lifecycle Scene");
 		for (TomCat::AssetHandle sourceHandle : { lifecycleHandle, faultyHandle,
@@ -1575,7 +1794,7 @@ int main(int argc, char** argv)
 		if (e2eOnly)
 		{
 			TestCompiledScriptCookedRuntime();
-			std::cout << "PASS C# -> scene reload/physics -> tcpak v5 -> private runtime -> real Player scene/Prefab chain\n";
+			std::cout << "PASS C# -> scene reload/physics -> tcpak v6 -> private runtime -> real Player input/World/collision/animation/audio chain\n";
 			return 0;
 		}
 #ifdef TC_PLATFORM_WINDOWS

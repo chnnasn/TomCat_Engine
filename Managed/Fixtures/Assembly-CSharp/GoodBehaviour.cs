@@ -40,6 +40,11 @@ public sealed class GoodBehaviour : TomCatBehaviour
     public bool Armed = true;
     public bool DisableOnCollisionEnter;
     public bool RemoveOnCollisionEnter;
+	public bool DisableTargetOnUpdate;
+	public bool DisableTargetOnFixedUpdate;
+	public bool DisableTargetOnCollisionEnter;
+	public bool DisableSelfOnEnable;
+	public bool EnableSelfOnDisable;
 	public bool RemoveOnDestroy;
 	public bool DomainCancellationCanBeCanceled;
 	public int ObservedStaticCreateSequence;
@@ -47,6 +52,7 @@ public sealed class GoodBehaviour : TomCatBehaviour
     public int Creates;
     public int Enables;
     public int Updates;
+    public int LateUpdates;
     public int FixedUpdates;
     public int CollisionEnters;
     public int TriggerExits;
@@ -62,19 +68,42 @@ public sealed class GoodBehaviour : TomCatBehaviour
 		DomainCancellationCanBeCanceled =
 			ScriptRuntime.DomainCancellationToken.CanBeCanceled;
 	}
-    protected override void OnEnable() => Enables++;
-    protected override void OnUpdate(float deltaTime) => Updates++;
-    protected override void OnFixedUpdate(float fixedDeltaTime) => FixedUpdates++;
+    protected override void OnEnable()
+	{
+		Enables++;
+		if (DisableSelfOnEnable)
+			Entity.ActiveSelf = false;
+	}
+    protected override void OnUpdate(float deltaTime)
+	{
+		Updates++;
+		if (DisableTargetOnUpdate)
+			Target.ActiveSelf = false;
+	}
+    protected override void OnLateUpdate(float deltaTime) => LateUpdates++;
+    protected override void OnFixedUpdate(float fixedDeltaTime)
+	{
+		FixedUpdates++;
+		if (DisableTargetOnFixedUpdate)
+			Target.ActiveSelf = false;
+	}
     protected override void OnCollisionEnter2D(Collision2D collision)
     {
         CollisionEnters++;
+		if (DisableTargetOnCollisionEnter)
+			Target.ActiveSelf = false;
         if (DisableOnCollisionEnter)
             Enabled = false;
         if (RemoveOnCollisionEnter)
             RemoveFromEntity();
     }
     protected override void OnTriggerExit2D(Trigger2D trigger) => TriggerExits++;
-    protected override void OnDisable() => Disables++;
+    protected override void OnDisable()
+	{
+		Disables++;
+		if (EnableSelfOnDisable)
+			Entity.ActiveSelf = true;
+	}
 	protected override void OnDestroy()
 	{
 		Destroys++;
