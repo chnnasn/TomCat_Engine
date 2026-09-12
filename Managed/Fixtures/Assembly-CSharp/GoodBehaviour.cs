@@ -2,8 +2,6 @@ using TomCat;
 
 namespace Game;
 
-public sealed class TextureAsset;
-
 [DefaultExecutionOrder(-100)]
 [DisallowMultipleComponent]
 public sealed class GoodBehaviour : TomCatBehaviour
@@ -27,8 +25,12 @@ public sealed class GoodBehaviour : TomCatBehaviour
     public Vector3 Direction = new(3.0f, 4.0f, 5.0f);
     public Vector4 Mask = new(6.0f, 7.0f, 8.0f, 9.0f);
     public Color Tint = Color.White;
-    public Entity Target;
-    public AssetRef<TextureAsset> Texture;
+    // The scene host replaces this null-forgiving CLR default with the invalid
+    // zero Entity handle before applying serialized values.
+    public Entity Target = null!;
+    public AssetRef<Texture2DAsset> Texture;
+	public SceneAsset NextScene;
+	public PrefabAsset BulletPrefab;
 	public TestMode Mode = TestMode.One;
 	public WideMode WideMode = WideMode.HighBit;
 

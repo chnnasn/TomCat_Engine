@@ -160,7 +160,8 @@ namespace TomCat::Scripting {
 			|| !m_ManagedApi.UpdateAll
 			|| !m_ManagedApi.FixedUpdateAll || !m_ManagedApi.DispatchPhysicsEvents
 			|| !m_ManagedApi.DestroyAll || !m_ManagedApi.BeginUnloadDomain
-			|| !m_ManagedApi.PollUnload || !m_ManagedApi.DestroyAttachments)
+			|| !m_ManagedApi.PollUnload || !m_ManagedApi.DestroyAttachments
+			|| !m_ManagedApi.InstantiateAttachments)
 		{
 			m_LastError = "TomCat.ScriptHost returned an incompatible ManagedApiV1 table";
 			return false;
@@ -388,6 +389,23 @@ namespace TomCat::Scripting {
 		return ConvertStatus(m_ManagedApi.DestroyAttachments(m_SceneRuntimeId,
 			attachmentIds.empty() ? nullptr : attachmentIds.data(),
 			static_cast<uint32_t>(attachmentIds.size())), "Destroy script attachments");
+	}
+
+	ScriptStatus ManagedScriptRuntime::InstantiateAttachments(
+		std::span<const NativeScriptAttachmentV1> attachments,
+		std::string_view fieldsJson)
+	{
+		if (EnsureScene("instantiate script attachments") != ScriptStatus::Success)
+			return ScriptStatus::InvalidState;
+		if (attachments.size() > std::numeric_limits<uint32_t>::max()
+			|| fieldsJson.empty())
+			return ScriptStatus::InvalidArgument;
+		const NativeByteView fields{ reinterpret_cast<const uint8_t*>(fieldsJson.data()),
+			static_cast<uint64_t>(fieldsJson.size()) };
+		return ConvertStatus(m_ManagedApi.InstantiateAttachments(m_SceneRuntimeId,
+			attachments.empty() ? nullptr : attachments.data(),
+			static_cast<uint32_t>(attachments.size()), fields),
+			"Instantiate script attachments");
 	}
 
 	bool ManagedScriptRuntime::PollUnload()

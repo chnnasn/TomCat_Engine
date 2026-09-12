@@ -33,8 +33,9 @@ namespace TomCat {
 	class Application
 	{ 
 	public :
-		Application(const std::string& name = "TomCat App", 
-					std::filesystem::path iconPath = {}, bool enableImGui = true);
+		Application(const std::string& name = "TomCat App",
+					std::filesystem::path iconPath = {}, bool enableImGui = true,
+					bool createWindow = true);
 
 		virtual ~Application();
 
@@ -45,7 +46,12 @@ namespace TomCat {
 		void PushOverlay(Layer* layer);
 
 
-		Window& GetWindow() { return *m_Window; }
+		Window& GetWindow()
+		{
+			TC_Core_Assert(m_Window);
+			return *m_Window;
+		}
+		bool HasWindow() const { return m_Window != nullptr; }
 
 		void Close(int exitCode = 0);
 		int GetExitCode() const { return m_ExitCode; }
@@ -64,6 +70,7 @@ namespace TomCat {
 		ImGuiLayer* m_ImGuiLayer = nullptr;
 		bool m_Running = true;
 		bool m_Minimized = false;
+		bool m_RendererInitialized = false;
 		int m_ExitCode = 0;
 		LayerStack m_LayerStack;
 		float m_LastFrameTime = 0.0f;

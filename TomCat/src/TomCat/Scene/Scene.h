@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -75,6 +76,8 @@ namespace TomCat {
 		using CollisionExit2DCallback = std::function<void(const CollisionExit2D&)>;
 		using TriggerEnter2DCallback = std::function<void(const TriggerEnter2D&)>;
 		using TriggerExit2DCallback = std::function<void(const TriggerExit2D&)>;
+		using RuntimeEntityBatchCreatedCallback =
+			std::function<void(std::span<const UUID>)>;
 
 		static constexpr float FixedRuntimeTimestep = 1.0f / 60.0f;
 		static constexpr float MaximumRuntimeFrameDelta = 0.25f;
@@ -125,6 +128,17 @@ namespace TomCat {
 		void OnRenderRuntime();
 		void OnViewportResize(uint32_t width, uint32_t height);
 		bool IsRuntimeRunning() const { return m_RuntimeRunning; }
+		// Prefab commits enqueue a complete UUID batch. Delivery occurs only after
+		// managed callbacks / Box2D locked regions have returned to a Scene safe
+		// point, allowing ScriptEngine to attach dynamic managed instances safely.
+		void SetRuntimeEntityBatchCreatedCallback(
+			RuntimeEntityBatchCreatedCallback callback);
+		void QueueRuntimeEntityBatchCreated(std::vector<UUID> entityIDs);
+		void FlushPendingRuntimeEntityCreates();
+		size_t GetPendingRuntimeEntityCreateCount() const
+		{
+			return m_PendingRuntimeEntityCreates.size();
+		}
 		void SetPhysics2DSettings(const Physics2DSettings& settings);
 		const Physics2DSettings& GetPhysics2DSettings() const { return m_Physics2DSettings; }
 
@@ -171,6 +185,7 @@ namespace TomCat {
 		uint64_t ComputeRuntimePhysicsDefinitionHash() const;
 		bool RebuildRuntimePhysicsWorld(bool preserveState);
 		void ResetRuntimePhysicsPointers();
+		void ArmRuntimeScriptBatchCallback();
 		b2Body* FindRuntimeBody(UUID entityID) const;
 		void SynchronizeRuntimeTransforms();
 		void DispatchPendingCollisionEvents();
@@ -198,6 +213,9 @@ namespace TomCat {
 		std::unordered_map<UUID, b2Body*> m_RuntimeBodies;
 		uint64_t m_RuntimePhysicsDefinitionHash = 0;
 		bool m_HasRuntimePhysicsDefinition = false;
+		RuntimeEntityBatchCreatedCallback m_RuntimeEntityBatchCreatedCallback;
+		std::vector<UUID> m_PendingRuntimeEntityCreates;
+		bool m_FlushingRuntimeEntityCreates = false;
 		Physics2DSettings m_Physics2DSettings;
 		std::unordered_map<UUID, entt::entity> m_EntityMap;
 		std::unordered_map<UUID, UUID> m_ParentMap;

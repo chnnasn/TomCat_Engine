@@ -21,6 +21,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 	private int _callbackDepth;
 	private bool _flushingDeferredChanges;
 	private bool _traceCallbacks;
+	private int _nextSequence;
     private bool _instantiated;
     private bool _createInvoked;
     private bool _destroyed;
@@ -51,7 +52,6 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         ArgumentNullException.ThrowIfNull(attachments);
 		_instantiated = true;
 
-		int sequence = 0;
 		var seenAttachmentIds = new HashSet<ulong>();
 		foreach (ScriptAttachment attachment in attachments)
 		{
@@ -76,10 +76,11 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
                 throw new InvalidDataException(
                     $"Script '{descriptor.Manifest.TypeName}' disallows multiple attachments on entity {attachment.Entity.Id}.");
 
-            var instance = new ScriptInstance(attachment, descriptor, sequence++);
+			var instance = new ScriptInstance(attachment, descriptor, _nextSequence++);
             try
             {
                 instance.Behaviour = descriptor.ConstructorFactory();
+				InitializeEntityFieldDefaults(instance);
                 // V1 deliberately uses the globally unique AttachmentID as the
                 // ScriptInstanceHandle understood by the native behaviour bridge.
 				instance.Behaviour.__Bind(attachment.Entity,
@@ -95,13 +96,120 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             _instancesByAttachment.Add(attachment.AttachmentId, instance);
         }
 
-        _instances.Sort(static (left, right) =>
-        {
-            int order = left.Descriptor.Manifest.ExecutionOrder.CompareTo(
-                right.Descriptor.Manifest.ExecutionOrder);
-            return order != 0 ? order : left.Sequence.CompareTo(right.Sequence);
-        });
-    }
+		_instances.Sort(CompareInstances);
+	}
+
+	public void InstantiateAttachments(IEnumerable<ScriptAttachment> attachments,
+		string fieldsJson)
+	{
+		ObjectDisposedException.ThrowIf(_destroyed, this);
+		if (!_instantiated || !_createInvoked)
+			throw new InvalidOperationException(
+				"Dynamic attachments require a running scene runtime.");
+		if (_callbackDepth != 0)
+			throw new InvalidOperationException(
+				"Dynamic attachments can only be instantiated at a native safe point.");
+		ArgumentNullException.ThrowIfNull(attachments);
+		ArgumentException.ThrowIfNullOrWhiteSpace(fieldsJson);
+
+		var newInstances = new List<ScriptInstance>();
+		var seenAttachmentIds = new HashSet<ulong>();
+		foreach (ScriptAttachment attachment in attachments)
+		{
+			if (attachment.AttachmentId == 0)
+				throw new InvalidDataException("AttachmentID 0 is reserved.");
+			if (!seenAttachmentIds.Add(attachment.AttachmentId)
+				|| _instancesByAttachment.ContainsKey(attachment.AttachmentId))
+				throw new InvalidDataException(
+					$"Duplicate AttachmentID {attachment.AttachmentId} in one scene runtime.");
+			if (attachment.Entity.SceneSessionId != SceneSessionId
+				|| attachment.Entity.RuntimeGeneration != RuntimeGeneration
+				|| attachment.Entity.Id == 0)
+				throw new InvalidDataException(
+					$"Attachment {attachment.AttachmentId} has an invalid scene Entity handle.");
+			if (!_descriptors.TryGetValue(attachment.ScriptAsset,
+				out ScriptDescriptor? descriptor))
+			{
+				NativeBridge.ReportManagedException(
+					$"Missing C# script asset {attachment.ScriptAsset} on entity "
+					+ $"{attachment.Entity.Id}, attachment {attachment.AttachmentId}; "
+					+ "the attachment was skipped.");
+				continue;
+			}
+			if (descriptor.Manifest.DisallowMultiple
+				&& (_instances.Any(value => value.Attachment.Entity == attachment.Entity
+						&& value.Attachment.ScriptAsset == attachment.ScriptAsset)
+					|| newInstances.Any(value => value.Attachment.Entity == attachment.Entity
+						&& value.Attachment.ScriptAsset == attachment.ScriptAsset)))
+				throw new InvalidDataException(
+					$"Script '{descriptor.Manifest.TypeName}' disallows multiple attachments "
+					+ $"on entity {attachment.Entity.Id}.");
+
+			var instance = new ScriptInstance(attachment, descriptor, _nextSequence++);
+			try
+			{
+				instance.Behaviour = descriptor.ConstructorFactory();
+				InitializeEntityFieldDefaults(instance);
+				instance.Behaviour.__Bind(attachment.Entity,
+					new ScriptInstanceHandle(attachment.AttachmentId),
+					_domainCancellation);
+			}
+			catch (Exception exception)
+			{
+				MarkFaulted(instance, "Constructor", Unwrap(exception));
+			}
+			newInstances.Add(instance);
+		}
+
+		try
+		{
+			foreach (ScriptInstance instance in newInstances)
+			{
+				_instances.Add(instance);
+				_instancesByAttachment.Add(instance.Attachment.AttachmentId, instance);
+			}
+			ApplySerializedFieldsCore(fieldsJson, seenAttachmentIds);
+		}
+		catch
+		{
+			foreach (ScriptInstance instance in newInstances)
+			{
+				_instances.Remove(instance);
+				_instancesByAttachment.Remove(instance.Attachment.AttachmentId);
+				instance.Behaviour = null;
+				instance.State = ScriptInstanceState.Destroyed;
+			}
+			throw;
+		}
+
+		_instances.Sort(CompareInstances);
+		newInstances.Sort(CompareInstances);
+		InvokeCreateBatch(newInstances);
+		FlushDeferredChanges();
+	}
+
+	private static int CompareInstances(ScriptInstance left, ScriptInstance right)
+	{
+		int order = left.Descriptor.Manifest.ExecutionOrder.CompareTo(
+			right.Descriptor.Manifest.ExecutionOrder);
+		return order != 0 ? order : left.Sequence.CompareTo(right.Sequence);
+	}
+
+	private void InitializeEntityFieldDefaults(ScriptInstance instance)
+	{
+		// Entity used to be a value proxy, so an uninitialized serialized field
+		// naturally contained an invalid zero handle. Keep that observable value
+		// after moving the public proxy to a class for natural chained setters.
+		foreach (FieldDescriptor descriptor in instance.Descriptor.FieldsById.Values)
+		{
+			if (descriptor.Manifest.Type == ScriptFieldType.Entity &&
+				descriptor.Field.GetValue(instance.Behaviour) is null)
+			{
+				descriptor.Field.SetValue(instance.Behaviour,
+					new Entity(SceneSessionId, 0, RuntimeGeneration));
+			}
+		}
+	}
 
     public void ApplySerializedFields(string json)
     {
@@ -109,7 +217,12 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         if (!_instantiated || _createInvoked)
             throw new InvalidOperationException("Serialized fields must be applied after InstantiateAll and before InvokeCreateAll.");
         ArgumentException.ThrowIfNullOrWhiteSpace(json);
+		ApplySerializedFieldsCore(json, null);
+	}
 
+	private void ApplySerializedFieldsCore(string json,
+		IReadOnlySet<ulong>? allowedAttachments)
+	{
         using JsonDocument document = JsonDocument.Parse(json, new JsonDocumentOptions
         {
             AllowTrailingCommas = false,
@@ -127,6 +240,10 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             ulong attachmentId = attachmentElement.GetProperty("attachmentId").GetUInt64();
             if (!seenAttachments.Add(attachmentId))
                 throw new InvalidDataException($"Serialized fields contain duplicate AttachmentID {attachmentId}.");
+			if (allowedAttachments is not null
+				&& !allowedAttachments.Contains(attachmentId))
+				throw new InvalidDataException(
+					$"Serialized fields contain AttachmentID {attachmentId} outside the dynamic batch.");
             if (!_instancesByAttachment.TryGetValue(attachmentId, out ScriptInstance? instance) ||
                 instance.Behaviour is null)
                 continue;
@@ -145,22 +262,28 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         if (!_instantiated || _createInvoked)
             throw new InvalidOperationException("InvokeCreateAll requires one completed InstantiateAll call.");
         _createInvoked = true;
-
-        foreach (ScriptInstance instance in _instances)
-        {
-            if (instance.State == ScriptInstanceState.Ready)
-            {
-                Invoke(instance, "OnCreate", static behaviour => behaviour.__Create());
-                instance.Created = instance.State == ScriptInstanceState.Ready;
-            }
-        }
-        foreach (ScriptInstance instance in _instances)
-        {
-            if (instance.Created && instance.Enabled && instance.State == ScriptInstanceState.Ready)
-                Invoke(instance, "OnEnable", static behaviour => behaviour.__Enable());
-        }
+		InvokeCreateBatch(_instances);
         FlushDeferredChanges();
     }
+
+	private void InvokeCreateBatch(IEnumerable<ScriptInstance> instances)
+	{
+		ScriptInstance[] batch = instances.ToArray();
+		foreach (ScriptInstance instance in batch)
+		{
+			if (instance.State == ScriptInstanceState.Ready)
+			{
+				Invoke(instance, "OnCreate", static behaviour => behaviour.__Create());
+				instance.Created = instance.State == ScriptInstanceState.Ready;
+			}
+		}
+		foreach (ScriptInstance instance in batch)
+		{
+			if (instance.Created && instance.Enabled
+				&& instance.State == ScriptInstanceState.Ready)
+				Invoke(instance, "OnEnable", static behaviour => behaviour.__Enable());
+		}
+	}
 
 	public void SetEnabled(ulong attachmentId, bool enabled)
     {

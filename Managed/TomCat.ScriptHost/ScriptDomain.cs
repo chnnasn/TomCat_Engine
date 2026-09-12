@@ -255,7 +255,9 @@ public sealed class ScriptDomain : IDisposable
 				new[] { color.R, color.G, color.B, color.A },
 			ScriptFieldType.Enum when value is not null =>
 				EnumToStorageBits(descriptor.Field.FieldType, value),
-			ScriptFieldType.Entity when value is Entity entity => entity.Id,
+			// Entity is a reference proxy, but its serialized form remains the same
+			// V1 UInt64 handle. An uninitialized field is the invalid zero handle.
+			ScriptFieldType.Entity => value is Entity entity ? entity.Id : 0UL,
 			ScriptFieldType.AssetRef when value is not null =>
 				value.GetType().GetProperty("Handle")?.GetValue(value) as ulong? ?? 0UL,
 			_ => throw new InvalidDataException(

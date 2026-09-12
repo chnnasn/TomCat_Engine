@@ -7,6 +7,9 @@
     <Filter Include="src\TomCat">
       <UniqueIdentifier>{04C24431-F079-867E-5981-5FDA4558216F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Asset">
+      <UniqueIdentifier>{93E9B25C-7FE2-D1AE-A814-B733946CB1BA}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Core">
       <UniqueIdentifier>{DCC85B31-4854-C9F5-5165-4CEABD6F25F6}</UniqueIdentifier>
     </Filter>
@@ -22,17 +25,23 @@
     <Filter Include="src\TomCat\Math">
       <UniqueIdentifier>{5D096131-C994-CEF5-D2A5-51EA3EB02AF6}</UniqueIdentifier>
     </Filter>
-	<Filter Include="src\TomCat\Asset">
-	  <UniqueIdentifier>{6F8C9754-774D-46DA-8A4E-4D7D3D9334B9}</UniqueIdentifier>
-	</Filter>
     <Filter Include="src\TomCat\Project">
       <UniqueIdentifier>{4A2A22D5-360E-E32A-9F6E-DD7D8B71CDAC}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\TomCat\Renderer">
       <UniqueIdentifier>{2A8A7466-96EB-5174-1F59-98268BB98833}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Runtime">
+      <UniqueIdentifier>{37930976-2377-CACB-8CD7-C41E78DAB44D}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Scene">
       <UniqueIdentifier>{21A2EF5D-0D9B-0EB0-36CD-F3342225EEBB}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TomCat\Scene\Serialization">
+      <UniqueIdentifier>{6EA05651-5AC6-20B8-430C-A6832FD14584}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TomCat\Scripting">
+      <UniqueIdentifier>{068C5911-F21A-E3DA-9B39-F7D587A7F380}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\TomCat\Utils">
       <UniqueIdentifier>{64361D5E-502F-3CB0-7961-213565B91BBC}</UniqueIdentifier>
@@ -78,18 +87,18 @@
     <ClInclude Include="src\TomCat.h">
       <Filter>src</Filter>
     </ClInclude>
-	<ClInclude Include="src\TomCat\Asset\Asset.h">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClInclude>
-	<ClInclude Include="src\TomCat\Asset\AssetManager.h">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClInclude>
-	<ClInclude Include="src\TomCat\Asset\AssetRegistry.h">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClInclude>
-	<ClInclude Include="src\TomCat\Asset\SpriteAsset.h">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClInclude>
+    <ClInclude Include="src\TomCat\Asset\Asset.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetManager.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetRegistry.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\SpriteAsset.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\Application.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -156,10 +165,16 @@
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Project\BuildSettings.h">
+      <Filter>src\TomCat\Project</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Project\Project.h">
       <Filter>src\TomCat\Project</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Project\ProjectManager.h">
+      <Filter>src\TomCat\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Project\ProjectSettings.h">
       <Filter>src\TomCat\Project</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Buffer.h">
@@ -201,10 +216,16 @@
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Runtime\RuntimeCompatibility.h">
+      <Filter>src\TomCat\Runtime</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Components.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Entity.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Physics2DEvents.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Scene.h">
@@ -213,16 +234,61 @@
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SceneManager.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Utils\PlatformUtils.h">
-      <Filter>src\TomCat\Utils</Filter>
+    <ClInclude Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\ComponentCodecs.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\EntityArchive.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\PrefabArchiveCodec.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\SceneArchiveCodec.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\DotNetHost.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\IScriptRuntime.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ManagedRuntimeFactory.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ManagedScriptRuntime.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptDiagnosticSink.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptEngine.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptField.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptGlue.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptTypes.h">
+      <Filter>src\TomCat\Scripting</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Utils\FileSystemUtils.h">
       <Filter>src\TomCat\Utils</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Utils\PathUtils.h">
+      <Filter>src\TomCat\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Utils\PlatformUtils.h">
       <Filter>src\TomCat\Utils</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h">
@@ -1517,18 +1583,18 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-	<ClCompile Include="src\TomCat\Asset\Asset.cpp">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClCompile>
-	<ClCompile Include="src\TomCat\Asset\AssetManager.cpp">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClCompile>
-	<ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClCompile>
-	<ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp">
-	  <Filter>src\TomCat\Asset</Filter>
-	</ClCompile>
+    <ClCompile Include="src\TomCat\Asset\Asset.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetManager.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
@@ -1610,8 +1676,41 @@
     <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\SceneManager.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp">
       <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\ComponentCodecs.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\PrefabArchiveCodec.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\SceneArchiveCodec.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\DotNetHost.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ManagedRuntimeFactory.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ManagedScriptRuntime.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ScriptDiagnosticSink.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ScriptEngine.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ScriptGlue.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Utils\FileSystemUtils.cpp">
       <Filter>src\TomCat\Utils</Filter>

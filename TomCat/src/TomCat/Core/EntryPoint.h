@@ -48,7 +48,8 @@
 		const wchar_t* fileName = separator + 1;
 		if (_wcsicmp(fileName, L"TomCat.exe") != 0 &&
 			_wcsicmp(fileName, L"Manager.exe") != 0 &&
-			_wcsicmp(fileName, L"TomCatHub.exe") != 0)
+			_wcsicmp(fileName, L"TomCatHub.exe") != 0 &&
+			_wcsicmp(fileName, L"TomCatPlayer.exe") != 0)
 			return;
 
 		// Preserve the root slash for an executable placed directly on a drive

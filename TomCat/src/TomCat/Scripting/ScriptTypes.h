@@ -1,5 +1,7 @@
 #pragma once
 
+#include "TomCat/Runtime/RuntimeCompatibility.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -12,9 +14,10 @@
 
 namespace TomCat::Scripting {
 
-	inline constexpr uint32_t NativeApiVersion = 1;
-	inline constexpr uint32_t ManagedApiVersion = 1;
-	inline constexpr uint32_t ScriptManifestVersion = 1;
+	inline constexpr uint32_t NativeApiVersion = RuntimeCompatibility::NativeApiVersion;
+	inline constexpr uint32_t ManagedApiVersion = RuntimeCompatibility::ManagedApiVersion;
+	inline constexpr uint32_t ScriptManifestVersion =
+		RuntimeCompatibility::ScriptManifestVersion;
 
 	enum class ScriptStatus : int32_t
 	{
@@ -190,6 +193,14 @@ namespace TomCat::Scripting {
 		int32_t(TC_SCRIPT_CALL* BehaviourSetEnabledDeferred)(uint64_t instanceHandle,
 			int32_t enabled) = nullptr;
 		int32_t(TC_SCRIPT_CALL* BehaviourRemoveDeferred)(uint64_t instanceHandle) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SceneGetActiveHandle)(uint64_t* sceneHandle) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SceneGetActiveBuildIndex)(int32_t* buildIndex) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SceneRequestLoadHandle)(uint64_t sceneHandle) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SceneRequestLoadIndex)(int32_t buildIndex) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SceneRequestReload)() = nullptr;
+		int32_t(TC_SCRIPT_CALL* PrefabInstantiateDeferred)(EntityHandleV1 context,
+			uint64_t prefabHandle, NativeVector3 worldPosition,
+			EntityHandleV1 parent) = nullptr;
 	};
 
 	struct ManagedApiV1
@@ -221,6 +232,9 @@ namespace TomCat::Scripting {
 		int32_t(TC_SCRIPT_CALL* PollUnload)(uint64_t domainId, int32_t* unloaded) = nullptr;
 		int32_t(TC_SCRIPT_CALL* DestroyAttachments)(uint64_t sceneRuntimeId,
 			const uint64_t* attachmentIds, uint32_t count) = nullptr;
+		int32_t(TC_SCRIPT_CALL* InstantiateAttachments)(uint64_t sceneRuntimeId,
+			const NativeScriptAttachmentV1* items, uint32_t count,
+			NativeByteView fieldsJson) = nullptr;
 	};
 
 	using GetManagedApiFn = int32_t(TC_SCRIPT_CALL*)(

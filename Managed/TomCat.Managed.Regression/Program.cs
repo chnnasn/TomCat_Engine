@@ -13,6 +13,8 @@ internal static unsafe class Program
 {
     private const ulong SceneSession = 11;
     private const ulong RuntimeGeneration = 7;
+	private const ulong ActiveSceneHandle = 7001;
+	private const int ActiveSceneBuildIndex = 2;
 	private const ulong MetadataReceiverSentinel = 0xC0DEC0DE5A17UL;
 	private const string ConstructorGuardMessage =
 		"TomCat engine APIs cannot be used from a script constructor or field initializer. Use OnCreate or another lifecycle callback.";
@@ -22,6 +24,16 @@ internal static unsafe class Program
 	private static ulong s_removedAttachment;
 	private static ulong s_metadataReceiverToken;
 	private static string? s_metadataReceiverJson;
+	private static int s_entityTextSetterCalls;
+	private static int s_entityLayerSetterCalls;
+	private static NativeVector3 s_lastTransformPosition;
+	private static NativeVector2 s_lastRigidbodyVelocity;
+	private static ulong s_requestedSceneHandle;
+	private static int s_requestedSceneIndex;
+	private static int s_sceneReloadRequests;
+	private static ulong s_requestedPrefabHandle;
+	private static NativeEntityHandleV1 s_requestedPrefabParent;
+	private static NativeVector3 s_requestedPrefabPosition;
 	private static readonly int s_mainManagedThread = Environment.CurrentManagedThreadId;
 
     private static int Main()
@@ -29,10 +41,11 @@ internal static unsafe class Program
         try
 		{
 			VerifyDescriptorConstructorFactory();
-            VerifyConstructorGuard();
+			VerifyConstructorGuard();
 
-            string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixture");
-            byte[] assembly = File.ReadAllBytes(Path.Combine(fixtureDirectory, "Assembly-CSharp.dll"));
+			string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixture");
+			string fixtureAssemblyPath = Path.Combine(fixtureDirectory, "Assembly-CSharp.dll");
+			byte[] assembly = File.ReadAllBytes(fixtureAssemblyPath);
             string pdbPath = Path.Combine(fixtureDirectory, "Assembly-CSharp.pdb");
             byte[] pdb = File.Exists(pdbPath) ? File.ReadAllBytes(pdbPath) : [];
 			string fixtureBDirectory = Path.Combine(AppContext.BaseDirectory, "FixtureB");
@@ -49,11 +62,23 @@ internal static unsafe class Program
 			ScriptDomain staticReset = BeginRuntimeUnload(assembly, pdb);
 			Check(PollUntilUnloaded(staticReset),
 				"second Play Domain collectible ALC leaked");
-            for (int index = 0; index < 100; ++index)
-            {
-                ScriptDomain metadata = BeginMetadataUnload(assembly, pdb);
-                Check(PollUntilUnloaded(metadata), $"collectible ALC cycle {index + 1} leaked");
-            }
+			Entity? previousCycleEntity = null;
+			for (int index = 0; index < 100; ++index)
+			{
+				ScriptDomain play = BeginPlayCycleUnload(assembly, pdb, index,
+					out Entity cycleEntity);
+				if (previousCycleEntity is not null)
+				{
+					Check(previousCycleEntity != cycleEntity &&
+						previousCycleEntity.RuntimeGeneration != cycleEntity.RuntimeGeneration,
+						$"Play Domain cycle {index + 1} reused an old Entity identity");
+				}
+				previousCycleEntity = cycleEntity;
+				Check(PollUntilUnloaded(play),
+					$"Play Domain collectible ALC cycle {index + 1} leaked");
+				VerifyFileUnlocked(fixtureAssemblyPath,
+					$"Play Domain cycle {index + 1} kept Assembly-CSharp.dll locked");
+			}
 
             Console.WriteLine("TomCat.Managed regression suite passed.");
             return 0;
@@ -96,7 +121,7 @@ internal static unsafe class Program
 		EntityGetLayer = &StubGetEntityLayer,
 		EntitySetLayer = &StubSetEntityLayer,
 		DestroyEntityDeferred = &StubEntityStatus,
-		HasComponent = &StubEntityComponent,
+		HasComponent = &StubHasComponent,
 		AddComponentDeferred = &StubEntityComponent,
 		RemoveComponentDeferred = &StubEntityComponent,
 		TransformGetPosition = &StubGetTransformVector,
@@ -122,7 +147,13 @@ internal static unsafe class Program
 		AssetGetType = &StubAssetGetType,
 		BehaviourGetEnabled = &StubBehaviourGetEnabled,
 		BehaviourSetEnabledDeferred = &SetBehaviourEnabled,
-		BehaviourRemoveDeferred = &RemoveBehaviour
+		BehaviourRemoveDeferred = &RemoveBehaviour,
+		SceneGetActiveHandle = &StubSceneGetActiveHandle,
+		SceneGetActiveBuildIndex = &StubSceneGetActiveBuildIndex,
+		SceneRequestLoadHandle = &StubSceneRequestLoadHandle,
+		SceneRequestLoadIndex = &StubSceneRequestLoadIndex,
+		SceneRequestReload = &StubSceneRequestReload,
+		PrefabInstantiateDeferred = &StubPrefabInstantiate
 	};
 
     private static void VerifyBootstrapAbi(byte[] assembly, byte[] pdb)
@@ -147,8 +178,9 @@ internal static unsafe class Program
             managed.UpdateAll != null && managed.FixedUpdateAll != null &&
 			managed.DispatchPhysicsEvents != null && managed.DestroyAll != null &&
 			managed.BeginUnloadDomain != null && managed.PollUnload != null &&
-			managed.DestroyAttachments != null,
+			managed.DestroyAttachments != null && managed.InstantiateAttachments != null,
 			"GetManagedApi must populate every V1 export");
+		VerifyNaturalProxySyntax();
 		VerifyMetadataReceiverToken(managed, assembly, pdb);
 
 		NativeApiV1 missingRequiredCallback = native;
@@ -194,6 +226,46 @@ internal static unsafe class Program
 		VerifyBackgroundThreadApiGuards();
     }
 
+	private static void VerifyNaturalProxySyntax()
+	{
+		s_entityTextSetterCalls = 0;
+		s_entityLayerSetterCalls = 0;
+		s_lastTransformPosition = default;
+		s_lastRigidbodyVelocity = default;
+		s_requestedSceneHandle = 0;
+		s_requestedSceneIndex = -1;
+		s_sceneReloadRequests = 0;
+		s_requestedPrefabHandle = 0;
+		s_requestedPrefabParent = default;
+		s_requestedPrefabPosition = default;
+
+		var probe = new NaturalProxySyntaxProbe();
+		probe.__Bind(new Entity(SceneSession, 8, RuntimeGeneration),
+			new ScriptInstanceHandle(776));
+		probe.__Create();
+
+		Equal(2, s_entityTextSetterCalls,
+			"Entity.Name and Entity.Tag direct setters");
+		Equal(1, s_entityLayerSetterCalls, "Entity.Layer direct setter");
+		Equal(1.0f, s_lastTransformPosition.X, "Transform.Position direct setter X");
+		Equal(2.0f, s_lastTransformPosition.Y, "Transform.Position direct setter Y");
+		Equal(3.0f, s_lastTransformPosition.Z, "Transform.Position direct setter Z");
+		Equal(4.0f, s_lastRigidbodyVelocity.X,
+			"GetComponent<Rigidbody2D>().LinearVelocity direct setter X");
+		Equal(5.0f, s_lastRigidbodyVelocity.Y,
+			"GetComponent<Rigidbody2D>().LinearVelocity direct setter Y");
+		Equal(8001UL, s_requestedSceneHandle,
+			"SceneManager.LoadScene(SceneAsset) request");
+		Equal(4, s_requestedSceneIndex, "SceneManager.LoadScene(int) request");
+		Equal(1, s_sceneReloadRequests, "SceneManager.ReloadActiveScene request");
+		Equal(9001UL, s_requestedPrefabHandle,
+			"TomCatBehaviour.Instantiate Prefab handle");
+		Equal(8UL, s_requestedPrefabParent.EntityId,
+			"TomCatBehaviour.Instantiate parent entity");
+		Equal(6.0f, s_requestedPrefabPosition.X,
+			"TomCatBehaviour.Instantiate world position X");
+	}
+
 	private static void VerifyMetadataReceiverToken(ManagedApiV1 managed, byte[] assembly,
 		byte[] pdb)
 	{
@@ -222,6 +294,45 @@ internal static unsafe class Program
 			Equal((int)ManagedAbi.ScriptManifestVersion,
 				manifest.RootElement.GetProperty("version").GetInt32(),
 				"metadata receiver manifest version");
+			foreach (JsonElement script in manifest.RootElement
+				.GetProperty("scripts").EnumerateArray())
+			{
+				JsonElement lifecycle = script.GetProperty("lifecycle");
+				Equal(JsonValueKind.Number, lifecycle.ValueKind,
+					"metadata receiver lifecycle must be a native ABI bitmask");
+				Check(lifecycle.TryGetUInt32(out uint bits) && (bits & ~0x3ffU) == 0,
+					"metadata receiver lifecycle contains invalid ABI bits");
+				if (script.GetProperty("typeName").GetString() == "Game.GoodBehaviour")
+				{
+					JsonElement fields = script.GetProperty("fields");
+					JsonElement target = script.GetProperty("fields").EnumerateArray()
+						.Single(field => field.GetProperty("name").GetString() == "Target")
+						.GetProperty("defaultValue");
+					Equal(JsonValueKind.Number, target.ValueKind,
+						"default Entity field must retain its UInt64 wire representation");
+					Equal(0UL, target.GetUInt64(),
+						"default Entity field must remain the invalid zero handle");
+					JsonElement texture = fields.EnumerateArray().Single(field =>
+						field.GetProperty("name").GetString() == "Texture");
+					Equal("AssetRef", texture.GetProperty("type").GetString(),
+						"Texture2D AssetRef generator field token");
+					Equal("TomCat.AssetRef<TomCat.Texture2DAsset>",
+						texture.GetProperty("typeName").GetString(),
+						"Texture2D AssetRef generator type name");
+					JsonElement nextScene = fields.EnumerateArray().Single(field =>
+						field.GetProperty("name").GetString() == "NextScene");
+					Equal("AssetRef", nextScene.GetProperty("type").GetString(),
+						"SceneAsset generator field token");
+					Equal("TomCat.SceneAsset", nextScene.GetProperty("typeName").GetString(),
+						"SceneAsset generator type name");
+					JsonElement bulletPrefab = fields.EnumerateArray().Single(field =>
+						field.GetProperty("name").GetString() == "BulletPrefab");
+					Equal("AssetRef", bulletPrefab.GetProperty("type").GetString(),
+						"PrefabAsset generator field token");
+					Equal("TomCat.PrefabAsset", bulletPrefab.GetProperty("typeName").GetString(),
+						"PrefabAsset generator type name");
+				}
+			}
 		}
 
 		Equal(0, managed.BeginUnloadDomain(domainId),
@@ -354,6 +465,24 @@ internal static unsafe class Program
             "100:OnCreate", "200:OnCreate", "300:OnCreate",
             "100:OnEnable", "200:OnEnable", "300:OnEnable");
 
+		Entity spawned = new(SceneSession, 5, RuntimeGeneration);
+		scene.InstantiateAttachments([
+			new ScriptAttachment(spawned, 250, 1001, true)
+		], $$"""
+			{"attachments":[{"attachmentId":250,"fields":[
+			  {"fieldId":"{{speed.Id}}","name":"_speed","type":"Float","value":33.25}
+			]}]}
+			""");
+		Equal(33.25f, scene.ReadFieldValue(250, "_speed"),
+			"dynamic attachment field restore before OnCreate");
+		Equal(3, scene.ReadFieldValue(250, "ObservedStaticCreateSequence"),
+			"dynamic attachment OnCreate sequence");
+		AssertSuffix(scene.CallbackTrace, "250:OnCreate", "250:OnEnable");
+		Throws<InvalidDataException>(() => scene.InstantiateAttachments([
+			new ScriptAttachment(spawned, 250, 1001, true)
+		], "{\"attachments\":[]}"),
+			"dynamic attachment IDs must remain unique for the scene runtime");
+
         int diagnosticsBefore = s_diagnostics;
         scene.UpdateAll(1.0f / 60.0f);
         Equal(ScriptInstanceState.Faulted, scene.GetInstanceState(300), "fault isolation state");
@@ -432,7 +561,8 @@ internal static unsafe class Program
 
 		scene.DestroyAll();
 		AssertSuffix(scene.CallbackTrace,
-			"100:OnDisable", "300:OnDestroy", "100:OnDestroy");
+			"250:OnDisable", "100:OnDisable", "300:OnDestroy",
+			"250:OnDestroy", "100:OnDestroy");
 
 		domain.BeginUnload();
 		Check(domainCancellation.IsCancellationRequested,
@@ -507,17 +637,66 @@ internal static unsafe class Program
 		removeScene.DestroyAll();
 	}
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static ScriptDomain BeginMetadataUnload(byte[] assembly, byte[] pdb)
-    {
-        var domain = new ScriptDomain(ScriptDomainKind.Metadata);
-        domain.LoadProjectAssembly(assembly, pdb);
-        Equal(2, domain.Manifest.Scripts.Count, "metadata-domain manifest");
-        Throws<InvalidOperationException>(() => domain.CreateSceneRuntime(1, 1),
-            "metadata domains cannot instantiate scripts");
-        domain.BeginUnload();
-        return domain;
-    }
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	private static ScriptDomain BeginPlayCycleUnload(byte[] assembly, byte[] pdb,
+		int cycleIndex, out Entity instantiatedEntity)
+	{
+		var domain = new ScriptDomain(ScriptDomainKind.Play);
+		domain.LoadProjectAssembly(assembly, pdb);
+		Equal(2, domain.Manifest.Scripts.Count,
+			$"Play Domain cycle {cycleIndex + 1} manifest");
+
+		ulong sceneSession = 1000UL + (ulong)cycleIndex;
+		ulong runtimeGeneration = 2000UL + (ulong)cycleIndex;
+		ulong attachmentId = 3000UL + (ulong)cycleIndex;
+		instantiatedEntity = new Entity(sceneSession, 1, runtimeGeneration);
+		Entity target = new(sceneSession, 2, runtimeGeneration);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession,
+			runtimeGeneration);
+		scene.InstantiateAll([
+			new ScriptAttachment(instantiatedEntity, attachmentId, 1001, true)
+		]);
+		int restoredCount = 10000 + cycleIndex;
+		scene.ApplySerializedFields($$"""
+			{"attachments":[{"attachmentId":{{attachmentId}},"fields":[
+			  {"fieldId":"","name":"Count","type":"Int32","value":{{restoredCount}}},
+			  {"fieldId":"","name":"Target","type":"Entity","value":{{target.Id}}}
+			]}]}
+			""");
+		Equal(restoredCount, scene.ReadFieldValue(attachmentId, "Count"),
+			$"Play Domain cycle {cycleIndex + 1} field restore");
+		Equal(target, scene.ReadFieldValue(attachmentId, "Target"),
+			$"Play Domain cycle {cycleIndex + 1} Entity restore");
+
+		scene.InvokeCreateAll();
+		Equal(1, scene.ReadFieldValue(attachmentId, "Creates"),
+			$"Play Domain cycle {cycleIndex + 1} OnCreate");
+		Equal(1, scene.ReadFieldValue(attachmentId, "Enables"),
+			$"Play Domain cycle {cycleIndex + 1} OnEnable");
+		Equal(1, scene.ReadFieldValue(attachmentId,
+			"ObservedStaticCreateSequence"),
+			$"Play Domain cycle {cycleIndex + 1} static reset");
+
+		scene.DestroyAll();
+		Throws<KeyNotFoundException>(() => scene.GetInstanceState(attachmentId),
+			$"Play Domain cycle {cycleIndex + 1} retained a destroyed instance");
+		domain.BeginUnload();
+		return domain;
+	}
+
+	private static void VerifyFileUnlocked(string path, string message)
+	{
+		try
+		{
+			using FileStream stream = new(path, FileMode.Open, FileAccess.ReadWrite,
+				FileShare.None);
+			Check(stream.Length > 0, $"{message}: fixture DLL is empty");
+		}
+		catch (IOException exception)
+		{
+			throw new InvalidOperationException(message, exception);
+		}
+	}
 
     private static bool PollUntilUnloaded(ScriptDomain domain)
     {
@@ -663,7 +842,11 @@ internal static unsafe class Program
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int StubSetEntityText(NativeEntityHandleV1 entity, NativeUtf8View value) => 0;
+	private static int StubSetEntityText(NativeEntityHandleV1 entity, NativeUtf8View value)
+	{
+		++s_entityTextSetterCalls;
+		return 0;
+	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubGetEntityLayer(NativeEntityHandleV1 entity, uint* layer)
@@ -675,10 +858,17 @@ internal static unsafe class Program
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int StubSetEntityLayer(NativeEntityHandleV1 entity, uint layer) => 0;
+	private static int StubSetEntityLayer(NativeEntityHandleV1 entity, uint layer)
+	{
+		++s_entityLayerSetterCalls;
+		return 0;
+	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubEntityStatus(NativeEntityHandleV1 entity) => 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubHasComponent(NativeEntityHandleV1 entity, int componentType) => 1;
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubEntityComponent(NativeEntityHandleV1 entity, int componentType) => 0;
@@ -693,7 +883,11 @@ internal static unsafe class Program
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int StubSetTransformVector(NativeEntityHandleV1 entity, NativeVector3 value) => 0;
+	private static int StubSetTransformVector(NativeEntityHandleV1 entity, NativeVector3 value)
+	{
+		s_lastTransformPosition = value;
+		return 0;
+	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubGetWorldMatrix(NativeEntityHandleV1 entity, NativeMatrix4* value)
@@ -735,7 +929,11 @@ internal static unsafe class Program
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int StubSetRigidbodyVector(NativeEntityHandleV1 entity, NativeVector2 value) => 0;
+	private static int StubSetRigidbodyVector(NativeEntityHandleV1 entity, NativeVector2 value)
+	{
+		s_lastRigidbodyVelocity = value;
+		return 0;
+	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubPhysicsRaycast(NativeEntityHandleV1 context, NativeVector2 start,
@@ -767,6 +965,58 @@ internal static unsafe class Program
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubBehaviourGetEnabled(ulong attachmentId) => 1;
 
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSceneGetActiveHandle(ulong* sceneHandle)
+	{
+		if (sceneHandle is null)
+			return -1;
+		*sceneHandle = ActiveSceneHandle;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSceneGetActiveBuildIndex(int* buildIndex)
+	{
+		if (buildIndex is null)
+			return -1;
+		*buildIndex = ActiveSceneBuildIndex;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSceneRequestLoadHandle(ulong sceneHandle)
+	{
+		s_requestedSceneHandle = sceneHandle;
+		return sceneHandle == 0 ? 0 : 1;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSceneRequestLoadIndex(int buildIndex)
+	{
+		s_requestedSceneIndex = buildIndex;
+		return buildIndex < 0 ? 0 : 1;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSceneRequestReload()
+	{
+		++s_sceneReloadRequests;
+		return 1;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubPrefabInstantiate(NativeEntityHandleV1 context,
+		ulong prefabHandle, NativeVector3 worldPosition, NativeEntityHandleV1 parent)
+	{
+		if (context.SceneSessionId != SceneSession
+			|| context.RuntimeGeneration != RuntimeGeneration)
+			return -1;
+		s_requestedPrefabHandle = prefabHandle;
+		s_requestedPrefabPosition = worldPosition;
+		s_requestedPrefabParent = parent;
+		return prefabHandle == 0 ? 0 : 1;
+	}
+
 	private sealed class ConstructorProbe : TomCatBehaviour
     {
         internal ConstructorProbe() => _ = Entity;
@@ -775,6 +1025,26 @@ internal static unsafe class Program
 	private sealed class RemovalProbe : TomCatBehaviour
 	{
 		protected override void OnCreate() => RemoveFromEntity();
+	}
+
+	private sealed class NaturalProxySyntaxProbe : TomCatBehaviour
+	{
+		protected override void OnCreate()
+		{
+			Entity.Name = "natural-name";
+			Entity.Tag = "natural-tag";
+			Entity.Layer = 5;
+			Transform.Position = new Vector3(1.0f, 2.0f, 3.0f);
+			GetComponent<Rigidbody2D>().LinearVelocity = new Vector2(4.0f, 5.0f);
+			if (SceneManager.ActiveScene.Handle != ActiveSceneHandle ||
+				SceneManager.ActiveBuildIndex != ActiveSceneBuildIndex ||
+				!SceneManager.LoadScene(new SceneAsset(8001)) ||
+				!SceneManager.LoadScene(4) || !SceneManager.ReloadActiveScene())
+				throw new InvalidOperationException("SceneManager bridge returned an unexpected value.");
+			if (!Instantiate(new PrefabAsset(9001), new Vector3(6.0f, 7.0f, 8.0f),
+				Entity))
+				throw new InvalidOperationException("Prefab instantiate bridge returned false.");
+		}
 	}
 
 	private sealed class BackgroundThreadApiProbe : TomCatBehaviour

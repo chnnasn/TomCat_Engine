@@ -11,14 +11,33 @@ public enum AssetType
     Mesh = 6,
     Material = 7,
     CSharpScript = 8,
-    Other = 9
+    Other = 9,
+    Prefab = 10
 }
+
+public sealed class Texture2DAsset;
+public sealed class ShaderAsset;
+public sealed class AudioAsset;
+public sealed class FontAsset;
+public sealed class MeshAsset;
+public sealed class MaterialAsset;
 
 public readonly struct AssetRef<T> : IEquatable<AssetRef<T>>
 {
     public AssetRef(ulong handle) => Handle = handle;
     public ulong Handle { get; }
-    public bool IsValid => Handle != 0 && NativeBridge.AssetIsValid(Handle);
+    private static AssetType ExpectedType => typeof(T) == typeof(Texture2DAsset)
+        ? AssetType.Texture2D
+        : typeof(T) == typeof(ShaderAsset) ? AssetType.Shader
+        : typeof(T) == typeof(AudioAsset) ? AssetType.Audio
+        : typeof(T) == typeof(FontAsset) ? AssetType.Font
+        : typeof(T) == typeof(MeshAsset) ? AssetType.Mesh
+        : typeof(T) == typeof(MaterialAsset) ? AssetType.Material
+        : typeof(T) == typeof(SceneAsset) ? AssetType.Scene
+        : typeof(T) == typeof(PrefabAsset) ? AssetType.Prefab
+        : AssetType.None;
+    public bool IsValid => Handle != 0 && ExpectedType != AssetType.None &&
+        NativeBridge.AssetIsValid(Handle) && NativeBridge.GetAssetType(Handle) == ExpectedType;
     public AssetType Type => Handle == 0 ? AssetType.None : NativeBridge.GetAssetType(Handle);
     public bool Equals(AssetRef<T> other) => Handle == other.Handle;
     public override bool Equals(object? obj) => obj is AssetRef<T> other && Equals(other);
@@ -26,6 +45,34 @@ public readonly struct AssetRef<T> : IEquatable<AssetRef<T>>
     public static bool operator ==(AssetRef<T> left, AssetRef<T> right) => left.Equals(right);
     public static bool operator !=(AssetRef<T> left, AssetRef<T> right) => !left.Equals(right);
     public override string ToString() => Handle == 0 ? "None" : $"Asset({Handle})";
+}
+
+public readonly struct SceneAsset : IEquatable<SceneAsset>
+{
+    public SceneAsset(ulong handle) => Handle = handle;
+    public ulong Handle { get; }
+    public bool IsValid => Handle != 0 && NativeBridge.AssetIsValid(Handle) &&
+        NativeBridge.GetAssetType(Handle) == AssetType.Scene;
+    public bool Equals(SceneAsset other) => Handle == other.Handle;
+    public override bool Equals(object? obj) => obj is SceneAsset other && Equals(other);
+    public override int GetHashCode() => Handle.GetHashCode();
+    public static bool operator ==(SceneAsset left, SceneAsset right) => left.Equals(right);
+    public static bool operator !=(SceneAsset left, SceneAsset right) => !left.Equals(right);
+    public override string ToString() => Handle == 0 ? "None" : $"Scene({Handle})";
+}
+
+public readonly struct PrefabAsset : IEquatable<PrefabAsset>
+{
+    public PrefabAsset(ulong handle) => Handle = handle;
+    public ulong Handle { get; }
+    public bool IsValid => Handle != 0 && NativeBridge.AssetIsValid(Handle) &&
+        NativeBridge.GetAssetType(Handle) == AssetType.Prefab;
+    public bool Equals(PrefabAsset other) => Handle == other.Handle;
+    public override bool Equals(object? obj) => obj is PrefabAsset other && Equals(other);
+    public override int GetHashCode() => Handle.GetHashCode();
+    public static bool operator ==(PrefabAsset left, PrefabAsset right) => left.Equals(right);
+    public static bool operator !=(PrefabAsset left, PrefabAsset right) => !left.Equals(right);
+    public override string ToString() => Handle == 0 ? "None" : $"Prefab({Handle})";
 }
 
 public enum KeyCode : uint

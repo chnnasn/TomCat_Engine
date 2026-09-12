@@ -20,7 +20,8 @@ project "PhysicsRegression"
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
+		"%{IncludeDir.entt}",
+		"%{IncludeDir.yaml_cpp}"
 	}
 
 	libdirs

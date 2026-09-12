@@ -7,6 +7,7 @@
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Math/Math.h"
 #include "Entity.h"
+#include "Serialization/ComponentCodecs.h"
 
 #include <algorithm>
 #include <bit>
@@ -679,42 +680,6 @@ namespace TomCat {
 		}
 	}
 
-	template<typename Component>
-	static void CopyComponentIfExists(Entity dst, Entity src)
-	{
-		if (src.HasComponent<Component>())
-			dst.AddOrReplaceComponent<Component>(src.GetComponent<Component>());
-	}
-
-	static void CopyEntityComponents(Entity dst, Entity src)
-	{
-		// CreateEntity has already assigned the duplicate a unique name. Copying the
-		// whole Tag would silently overwrite that name with the source name.
-		if (src.HasComponent<Tag>())
-			dst.GetComponent<Tag>().Visible = src.GetComponent<Tag>().Visible;
-		CopyComponentIfExists<EntityMetadata>(dst, src);
-		CopyComponentIfExists<Transform>(dst, src);
-		CopyComponentIfExists<SpriteRenderer>(dst, src);
-		CopyComponentIfExists<LineRenderer>(dst, src);
-		CopyComponentIfExists<C_Camera>(dst, src);
-		CopyComponentIfExists<CSharpScripts>(dst, src);
-		CopyComponentIfExists<Rigidbody2D>(dst, src);
-		CopyComponentIfExists<BoxCollider2D>(dst, src);
-		CopyComponentIfExists<CircleCollider2D>(dst, src);
-		CopyComponentIfExists<DistanceJoint2D>(dst, src);
-
-		// Runtime-owned pointers must never be shared by an authoring copy or a
-		// duplicated entity.
-		if (dst.HasComponent<Rigidbody2D>())
-			dst.GetComponent<Rigidbody2D>().RuntimeBody = nullptr;
-		if (dst.HasComponent<BoxCollider2D>())
-			dst.GetComponent<BoxCollider2D>().RuntimeFixture = nullptr;
-		if (dst.HasComponent<CircleCollider2D>())
-			dst.GetComponent<CircleCollider2D>().RuntimeFixture = nullptr;
-		if (dst.HasComponent<DistanceJoint2D>())
-			dst.GetComponent<DistanceJoint2D>().RuntimeJoint = nullptr;
-	}
-
 	static Entity DuplicateEntityRecursive(Scene* scene, Entity source, Entity parent,
 		std::unordered_map<UUID, UUID>& duplicateUUIDs)
 	{
@@ -722,7 +687,15 @@ namespace TomCat {
 			return {};
 
 		Entity duplicate = scene->CreateEntity(source.GetName());
-		CopyEntityComponents(duplicate, source);
+		std::string copyError;
+		if (!ComponentCodecs::CopyAuthoringComponents(source, duplicate, false,
+			copyError))
+		{
+			TC_Core_Error("Could not duplicate entity '{0}': {1}",
+				source.GetName(), copyError);
+			scene->DestroyEntity(duplicate);
+			return {};
+		}
 		duplicateUUIDs[source.GetUUID()] = duplicate.GetUUID();
 
 		if (parent && !scene->SetParent(duplicate, parent))
@@ -1092,6 +1065,147 @@ namespace TomCat {
 		m_Registry.destroy(entity);
 		m_EntitiesBeingDestroyed.erase(std::remove(m_EntitiesBeingDestroyed.begin(),
 			m_EntitiesBeingDestroyed.end(), entityUUID), m_EntitiesBeingDestroyed.end());
+	}
+
+	void Scene::SetRuntimeEntityBatchCreatedCallback(
+		RuntimeEntityBatchCreatedCallback callback)
+	{
+		m_RuntimeEntityBatchCreatedCallback = std::move(callback);
+	}
+
+	void Scene::ArmRuntimeScriptBatchCallback()
+	{
+		const uint64_t runtimeGeneration = m_RuntimeSessionGeneration;
+		SetRuntimeEntityBatchCreatedCallback(
+			[this, runtimeGeneration](std::span<const UUID> entityIDs)
+			{
+				if (!m_RuntimeRunning || m_ScriptSceneSessionID != 0
+					|| runtimeGeneration != m_RuntimeSessionGeneration)
+					return;
+
+				const bool hasManagedAttachments = std::any_of(entityIDs.begin(),
+					entityIDs.end(), [this](UUID entityID)
+					{
+						Entity entity = FindEntityByUUID(entityID);
+						return entity && entity.HasComponent<CSharpScripts>()
+							&& !entity.GetComponent<CSharpScripts>().Scripts.empty();
+					});
+				if (!hasManagedAttachments)
+					return;
+
+				m_ScriptSceneSessionID =
+					Scripting::ScriptEngine::Get().StartSceneForRuntimeBatch(
+						*this, runtimeGeneration, entityIDs);
+				if (m_ScriptSceneSessionID != 0)
+					return;
+
+				TC_Core_Error("A scripted runtime entity batch was rolled back because the managed runtime or current project assembly is unavailable");
+				// StartSceneCore replaces the lazy callback while attempting its
+				// transaction and clears it on failure. Re-arm so a later valid batch
+				// can retry without restarting the native Scene.
+				if (m_RuntimeRunning && runtimeGeneration == m_RuntimeSessionGeneration)
+					ArmRuntimeScriptBatchCallback();
+			});
+	}
+
+	void Scene::QueueRuntimeEntityBatchCreated(std::vector<UUID> entityIDs)
+	{
+		if (!m_RuntimeRunning || entityIDs.empty())
+			return;
+		for (UUID entityID : entityIDs)
+		{
+			if (static_cast<uint64_t>(entityID) != 0 && FindEntityByUUID(entityID))
+				m_PendingRuntimeEntityCreates.push_back(entityID);
+		}
+		if (!m_PendingRuntimeEntityCreates.empty())
+			m_HasRuntimePhysicsDefinition = false;
+	}
+
+	void Scene::FlushPendingRuntimeEntityCreates()
+	{
+		if (!m_RuntimeRunning)
+		{
+			m_PendingRuntimeEntityCreates.clear();
+			return;
+		}
+		if (m_FlushingRuntimeEntityCreates || m_PendingRuntimeEntityCreates.empty())
+			return;
+		// This function is the authoritative safe-point commit. Never expose a
+		// just-created entity to managed OnCreate until its physics proxies exist.
+		// Keep the pending batch intact when physics cannot be synchronized so the
+		// next safe point can retry instead of silently losing lifecycle delivery.
+		if (!SynchronizeRuntimePhysicsDefinitions())
+		{
+			TC_Core_Error("Could not synchronize runtime physics before delivering a created-entity batch");
+			return;
+		}
+
+		std::vector<UUID> batch;
+		batch.swap(m_PendingRuntimeEntityCreates);
+		batch.erase(std::remove_if(batch.begin(), batch.end(), [this](UUID entityID)
+		{
+			return !FindEntityByUUID(entityID);
+		}), batch.end());
+		if (batch.empty())
+			return;
+
+		// Copy the callback before invoking it. Lazy managed-runtime startup
+		// replaces this callback from inside the call, and the active target must
+		// remain alive until it returns.
+		RuntimeEntityBatchCreatedCallback callback =
+			m_RuntimeEntityBatchCreatedCallback;
+		if (!callback)
+		{
+			const bool hasManagedAttachments = std::any_of(batch.begin(), batch.end(),
+				[this](UUID entityID)
+				{
+					Entity entity = FindEntityByUUID(entityID);
+					return entity && entity.HasComponent<CSharpScripts>()
+						&& !entity.GetComponent<CSharpScripts>().Scripts.empty();
+				});
+			if (!hasManagedAttachments)
+				return;
+
+			// This is a defensive invariant path (normal runtime startup always
+			// installs either a lazy or active callback). Never leave scripted
+			// entities alive without their managed lifecycle.
+			TC_Core_Error("Discarding a scripted runtime entity batch because no managed batch callback is installed");
+			for (UUID entityID : batch)
+			{
+				Entity entity = FindEntityByUUID(entityID);
+				if (entity && entity.HasComponent<CSharpScripts>())
+					entity.RemoveComponent<CSharpScripts>();
+			}
+			for (auto iterator = batch.rbegin(); iterator != batch.rend(); ++iterator)
+			{
+				Entity entity = FindEntityByUUID(*iterator);
+				if (entity)
+					DestroyEntity(entity);
+			}
+			if (!SynchronizeRuntimePhysicsDefinitions())
+				TC_Core_Error("Could not synchronize runtime physics after rolling back an undeliverable entity batch");
+			return;
+		}
+
+		m_FlushingRuntimeEntityCreates = true;
+		try
+		{
+			callback(batch);
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Runtime entity-created callback failed: {0}", exception.what());
+		}
+		catch (...)
+		{
+			TC_Core_Error("Runtime entity-created callback failed with an unknown exception");
+		}
+		m_FlushingRuntimeEntityCreates = false;
+		// OnCreate/OnEnable may mutate authoring physics or queue another Prefab.
+		// Reconcile those changes before returning from the same safe boundary;
+		// any newly queued lifecycle batch remains pending for a later flush.
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			TC_Core_Error("Could not synchronize runtime physics after delivering a created-entity batch");
 	}
 
 	bool Scene::SetParent(Entity child, Entity parent)
@@ -2190,6 +2304,8 @@ namespace TomCat {
 		m_RuntimeBodies.clear();
 		m_HasRuntimePhysicsDefinition = false;
 		ResetRuntimePhysicsPointers();
+		m_PendingRuntimeEntityCreates.clear();
+		m_FlushingRuntimeEntityCreates = false;
 		m_ContactFilter = new SceneContactFilter2D(this);
 		m_ContactListener = new SceneContactListener();
 		++m_RuntimeSessionGeneration;
@@ -2221,6 +2337,13 @@ namespace TomCat {
 				return false;
 			}
 		}
+		else
+		{
+			// Do not create CoreCLR state for an empty Scene. The callback consumes
+			// script-free batches and lazily starts a managed Scene only when a
+			// batch with actual attachments reaches this safe point.
+			ArmRuntimeScriptBatchCallback();
+		}
 		return true;
 	}
 
@@ -2230,11 +2353,14 @@ namespace TomCat {
 		// synthetic Exit events for a world that is being discarded.
 		m_RuntimeRunning = false;
 		m_RuntimeAccumulator = 0.0;
+		m_PendingRuntimeEntityCreates.clear();
+		m_FlushingRuntimeEntityCreates = false;
 		if (m_ScriptSceneSessionID != 0)
 		{
 			Scripting::ScriptEngine::Get().StopScene(m_ScriptSceneSessionID);
 			m_ScriptSceneSessionID = 0;
 		}
+		SetRuntimeEntityBatchCreatedCallback({});
 		++m_RuntimeSessionGeneration;
 		if (m_PhysicsWorld)
 			m_PhysicsWorld->SetContactFilter(nullptr);
@@ -2296,6 +2422,12 @@ namespace TomCat {
 		// components. Reconcile again before entering Box2D's locked Step region.
 		if (!SynchronizeRuntimePhysicsDefinitions())
 			return false;
+		// Materialize bodies/joints before dynamic managed OnCreate. Scripts may
+		// then inspect the new physics proxies immediately; reconcile once more in
+		// case OnCreate changes authoring components.
+		FlushPendingRuntimeEntityCreates();
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
 
 		constexpr int32_t velocityIterations = 6;
 		constexpr int32_t positionIterations = 2;
@@ -2335,6 +2467,11 @@ namespace TomCat {
 			m_HasRuntimePhysicsDefinition = true;
 		}
 		DispatchPendingCollisionEvents();
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
+		FlushPendingRuntimeEntityCreates();
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
 		return m_RuntimeRunning && m_PhysicsWorld;
 	}
 
@@ -2382,6 +2519,11 @@ namespace TomCat {
 		{
 			if (m_ScriptSceneSessionID != 0)
 				Scripting::ScriptEngine::Get().UpdateAll(m_ScriptSceneSessionID, frameDelta);
+			if (!SynchronizeRuntimePhysicsDefinitions())
+				return;
+			FlushPendingRuntimeEntityCreates();
+			if (!SynchronizeRuntimePhysicsDefinitions())
+				return;
 		}
 
 		RenderRuntimeScene();
@@ -2636,54 +2778,39 @@ namespace TomCat {
 			return {};
 
 		Entity parent = GetParent(entity);
+		std::unordered_set<uint64_t> attachmentIDs;
+		for (UUID existingUUID : m_EntityOrder)
+		{
+			Entity existing = FindEntityByUUID(existingUUID);
+			if (!existing || !existing.HasComponent<CSharpScripts>())
+				continue;
+			for (const CSharpScriptEntry& script :
+				existing.GetComponent<CSharpScripts>().Scripts)
+			{
+				const uint64_t attachment = static_cast<uint64_t>(script.AttachmentID);
+				if (attachment != 0)
+					attachmentIDs.emplace(attachment);
+			}
+		}
 		std::unordered_map<UUID, UUID> duplicateUUIDs;
 		Entity duplicate = DuplicateEntityRecursive(this, entity, parent, duplicateUUIDs);
 		if (!duplicate)
 			return {};
 
-		// Internal joint references follow the duplicated subtree. References to
-		// entities outside the subtree intentionally continue to target the original.
-		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
-		{
-			Entity duplicatedEntity = FindEntityByUUID(duplicateUUID);
-			if (!duplicatedEntity || !duplicatedEntity.HasComponent<DistanceJoint2D>())
-				continue;
-			auto& joint = duplicatedEntity.GetComponent<DistanceJoint2D>();
-			if (auto targetIt = duplicateUUIDs.find(joint.ConnectedEntity);
-				targetIt != duplicateUUIDs.end())
-				joint.ConnectedEntity = targetIt->second;
-		}
-
-		// Attachment identity belongs to the attachment, not to the script asset.
-		// Duplicates receive fresh IDs, and Entity fields that pointed inside the
-		// duplicated subtree follow their duplicated targets.
-		std::unordered_set<uint64_t> attachmentIDs;
 		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
 		{
 			(void)sourceUUID;
 			Entity duplicatedEntity = FindEntityByUUID(duplicateUUID);
-			if (!duplicatedEntity || !duplicatedEntity.HasComponent<CSharpScripts>())
-				continue;
-			for (CSharpScriptEntry& script : duplicatedEntity.GetComponent<CSharpScripts>().Scripts)
+			std::string remapError;
+			if (!ComponentCodecs::RemapInstanceReferences(duplicatedEntity,
+				duplicateUUIDs,
+				ComponentCodecs::MissingEntityReferencePolicy::Preserve,
+				attachmentIDs, true, remapError))
 			{
-				uint64_t attachment = 0;
-				do
-				{
-					script.AttachmentID = UUID();
-					attachment = static_cast<uint64_t>(script.AttachmentID);
-				}
-				while (attachment == 0 || !attachmentIDs.emplace(attachment).second);
-
-				for (ScriptField& field : script.Fields)
-				{
-					if (field.Type != ScriptFieldType::Entity
-						|| !std::holds_alternative<uint64_t>(field.Value))
-						continue;
-					const UUID target(std::get<uint64_t>(field.Value));
-					if (auto targetIt = duplicateUUIDs.find(target);
-						targetIt != duplicateUUIDs.end())
-						field.Value = static_cast<uint64_t>(targetIt->second);
-				}
+				TC_Core_Error("Could not remap duplicated entity references: {0}",
+					remapError);
+				DestroyEntity(duplicate);
+				return {};
 			}
 		}
 		return duplicate;

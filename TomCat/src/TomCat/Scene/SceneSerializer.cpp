@@ -3,6 +3,7 @@
 
 #include "Components.h"
 #include "Entity.h"
+#include "Serialization/SceneArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -647,6 +648,7 @@ namespace TomCat {
 						out << YAML::Key << "Name" << YAML::Value << field.Name;
 						out << YAML::Key << "Type" << YAML::Value
 							<< ScriptFieldTypeToString(field.Type);
+						out << YAML::Key << "TypeName" << YAML::Value << field.TypeName;
 						out << YAML::Key << "Value" << YAML::Value;
 						SerializeScriptFieldValue(out, field);
 						out << YAML::EndMap;
@@ -742,6 +744,71 @@ namespace TomCat {
 	{
 	}
 
+	bool SceneSerializer::SerializeDocument(std::string& document,
+		std::string& error) const
+	{
+		document.clear();
+		error.clear();
+		if (!m_Scene)
+		{
+			error = "Cannot serialize a null scene";
+			return false;
+		}
+
+		try
+		{
+			if (m_Scene->m_EntityMap.size() != m_Scene->m_EntityOrder.size())
+				throw std::runtime_error(
+					"Scene entity index and serialization order are inconsistent");
+
+			std::unordered_set<UUID> serializedUUIDs;
+			std::unordered_set<UUID> serializedAttachmentIDs;
+			for (UUID uuid : m_Scene->m_EntityOrder)
+			{
+				Entity entity = m_Scene->FindEntityByUUID(uuid);
+				if ((uint64_t)uuid == 0 || !entity || !entity.HasComponent<ID>()
+					|| !entity.HasComponent<Tag>() || !entity.HasComponent<EntityMetadata>()
+					|| !entity.HasComponent<Transform>() || entity.GetUUID() != uuid
+					|| !serializedUUIDs.emplace(uuid).second)
+					throw std::runtime_error("Scene contains an invalid or duplicate UUID "
+						+ std::to_string(static_cast<uint64_t>(uuid)));
+
+				if (!entity.HasComponent<CSharpScripts>())
+					continue;
+				for (const CSharpScriptEntry& script :
+					entity.GetComponent<CSharpScripts>().Scripts)
+				{
+					if (static_cast<uint64_t>(script.AttachmentID) != 0
+						&& !serializedAttachmentIDs.emplace(script.AttachmentID).second)
+						throw std::runtime_error("Scene contains duplicate C# AttachmentID "
+							+ std::to_string(static_cast<uint64_t>(script.AttachmentID)));
+				}
+			}
+			if (!m_Scene->ValidateTransformHierarchy())
+				throw std::runtime_error(
+					"Scene transform hierarchy cannot be synchronized losslessly as TRS values");
+
+			YAML::Emitter out;
+			out << YAML::BeginMap;
+			out << YAML::Key << "SchemaVersion" << YAML::Value
+				<< SceneSerializer::CurrentSchemaVersion;
+			out << YAML::Key << "SceneName" << YAML::Value << m_Scene->GetSceneName();
+			out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
+			for (UUID uuid : m_Scene->m_EntityOrder)
+				SerializeEntity(out, m_Scene.get(), m_Scene->FindEntityByUUID(uuid));
+			out << YAML::EndSeq << YAML::EndMap;
+			if (!out.good())
+				throw std::runtime_error(out.GetLastError());
+			document.assign(out.c_str());
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			error = exception.what();
+			return false;
+		}
+	}
+
 	bool SceneSerializer::Serialize(const std::filesystem::path& filepath)
 	{
 		if (!m_Scene)
@@ -782,65 +849,19 @@ namespace TomCat {
 				PathToUTF8(filepath));
 			return false;
 		}
+		std::string canonicalDocument;
+		std::string canonicalError;
+		if (!SceneArchiveCodec::Encode(m_Scene, canonicalDocument, canonicalError))
+		{
+			TC_Core_Error("Failed to encode scene '{0}': {1}",
+				PathToUTF8(filepath), canonicalError);
+			return false;
+		}
 
 		try
 		{
-			if (m_Scene->m_EntityMap.size() != m_Scene->m_EntityOrder.size())
-			{
-				TC_Core_Error("Scene entity index and serialization order are inconsistent");
-				return false;
-			}
-
-			std::unordered_set<UUID> serializedUUIDs;
-			std::unordered_set<UUID> serializedAttachmentIDs;
-			for (UUID uuid : m_Scene->m_EntityOrder)
-			{
-				Entity entity = m_Scene->FindEntityByUUID(uuid);
-				if ((uint64_t)uuid == 0 || !entity || !entity.HasComponent<ID>()
-					|| !entity.HasComponent<Tag>() || !entity.HasComponent<EntityMetadata>()
-					|| !entity.HasComponent<Transform>()
-					|| entity.GetUUID() != uuid || !serializedUUIDs.emplace(uuid).second)
-				{
-					TC_Core_Error("Scene contains an invalid or duplicate UUID {0}", (uint64_t)uuid);
-					return false;
-				}
-				if (entity.HasComponent<CSharpScripts>())
-				{
-					for (const CSharpScriptEntry& script :
-						entity.GetComponent<CSharpScripts>().Scripts)
-					{
-						if (static_cast<uint64_t>(script.AttachmentID) != 0
-							&& !serializedAttachmentIDs.emplace(script.AttachmentID).second)
-						{
-							TC_Core_Error("Scene contains duplicate C# AttachmentID {0}",
-								static_cast<uint64_t>(script.AttachmentID));
-							return false;
-						}
-					}
-				}
-			}
-			if (!m_Scene->ValidateTransformHierarchy())
-			{
-				TC_Core_Error("Scene transform hierarchy cannot be synchronized losslessly as TRS values");
-				return false;
-			}
-
-			YAML::Emitter out;
-			out << YAML::BeginMap;
-			out << YAML::Key << "SchemaVersion" << YAML::Value << SceneSerializer::CurrentSchemaVersion;
-			out << YAML::Key << "SceneName" << YAML::Value << m_Scene->GetSceneName();
-			out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
-			for (UUID uuid : m_Scene->m_EntityOrder)
-				SerializeEntity(out, m_Scene.get(), m_Scene->FindEntityByUUID(uuid));
-			out << YAML::EndSeq << YAML::EndMap;
-
-			if (!out.good())
-			{
-				TC_Core_Error("Failed to encode scene '{0}': {1}", PathToUTF8(filepath), out.GetLastError());
-				return false;
-			}
 			std::string writeError;
-			if (FileSystem::WriteFileAtomically(filepath, out.c_str(), writeError))
+			if (FileSystem::WriteFileAtomically(filepath, canonicalDocument, writeError))
 			{
 				if (assetManager.GetRegistry().IsInitialized())
 				{
@@ -881,6 +902,14 @@ namespace TomCat {
 		return deserialized;
 	}
 
+	bool SceneSerializer::DeserializeDocument(const std::vector<uint8_t>& bytes,
+		const std::filesystem::path& diagnosticPath, bool resolveAssets)
+	{
+		std::string serialized(bytes.begin(), bytes.end());
+		std::istringstream input(std::move(serialized));
+		return DeserializeStream(input, diagnosticPath, resolveAssets);
+	}
+
 	bool SceneSerializer::ValidateCurrentFormat(const std::filesystem::path& filepath)
 	{
 		std::ifstream input(filepath, std::ios::binary | std::ios::ate);
@@ -913,10 +942,8 @@ namespace TomCat {
 	bool SceneSerializer::ValidateCurrentFormat(const std::vector<uint8_t>& bytes,
 		const std::filesystem::path& diagnosticPath)
 	{
-		std::string serialized(bytes.begin(), bytes.end());
-		std::istringstream input(std::move(serialized));
-		SceneSerializer validator{ CreateRef<Scene>() };
-		return validator.DeserializeStream(input, diagnosticPath, false);
+		return SceneArchiveCodec::Decode(bytes, CreateRef<Scene>(), diagnosticPath,
+			false);
 	}
 
 	bool SceneSerializer::Deserialize(AssetHandle handle)
@@ -939,10 +966,9 @@ namespace TomCat {
 
 		try
 		{
-			std::string serialized(bytes.begin(), bytes.end());
-			std::istringstream input(std::move(serialized));
-			const bool deserialized = DeserializeStream(input, UTF8ToPath(
-				"CookedScene-" + std::to_string(static_cast<uint64_t>(handle))), true);
+			const bool deserialized = SceneArchiveCodec::Decode(bytes, m_Scene,
+				UTF8ToPath("CookedScene-" + std::to_string(
+					static_cast<uint64_t>(handle))), true);
 			if (deserialized)
 				m_Scene->SetPhysics2DSettings(assetManager.GetPhysics2DSettings());
 			return deserialized;
@@ -1187,7 +1213,8 @@ namespace TomCat {
 							const std::string fieldContext = scriptContext + ".Fields["
 								+ std::to_string(fieldIndex) + "]";
 							RequireExactFields(fieldNode, fieldContext,
-								{ "FieldID", "Name", "Type", "Value" });
+								{ "FieldID", "Name", "Type", "Value" },
+								{ "TypeName" });
 
 							ScriptField field;
 							field.FieldID = ReadRequired<std::string>(fieldNode,
@@ -1200,6 +1227,9 @@ namespace TomCat {
 								throw std::runtime_error(fieldContext
 									+ ".Type contains unknown C# script field type '"
 									+ typeName + "'");
+							if (const YAML::Node managedType = fieldNode["TypeName"])
+								field.TypeName = ReadRequired<std::string>(fieldNode,
+									"TypeName", fieldContext);
 							field.Value = ReadScriptFieldValue(fieldNode, field.Type,
 								fieldContext);
 							ValidateScriptField(field, fieldContext);

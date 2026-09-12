@@ -165,4 +165,11 @@ public unsafe struct NativeApiV1
 	public delegate* unmanaged[Cdecl]<ulong, int> BehaviourGetEnabled;
 	public delegate* unmanaged[Cdecl]<ulong, int, int> BehaviourSetEnabledDeferred;
 	public delegate* unmanaged[Cdecl]<ulong, int> BehaviourRemoveDeferred;
+	public delegate* unmanaged[Cdecl]<ulong*, int> SceneGetActiveHandle;
+	public delegate* unmanaged[Cdecl]<int*, int> SceneGetActiveBuildIndex;
+	public delegate* unmanaged[Cdecl]<ulong, int> SceneRequestLoadHandle;
+	public delegate* unmanaged[Cdecl]<int, int> SceneRequestLoadIndex;
+	public delegate* unmanaged[Cdecl]<int> SceneRequestReload;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, NativeVector3,
+		NativeEntityHandleV1, int> PrefabInstantiateDeferred;
 }

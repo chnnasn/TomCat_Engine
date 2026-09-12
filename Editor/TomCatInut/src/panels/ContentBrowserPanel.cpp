@@ -25,6 +25,7 @@
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
+#include "../EditorDragDrop.h"
 
 namespace TomCat {
 
@@ -445,6 +446,30 @@ namespace TomCat {
 	void ContentBrowserPanel::SetActiveScenePath(const std::filesystem::path& path)
 	{
 		m_ActiveScenePath = path.empty() ? std::filesystem::path{} : LexicalPath(path);
+	}
+
+	std::filesystem::path ContentBrowserPanel::GetWritableCreationDirectory() const
+	{
+		if (!m_Project || !IsWritablePath(m_CurrentDirectory))
+			return {};
+		std::error_code error;
+		const std::filesystem::path directory = CanonicalPath(m_CurrentDirectory);
+		return std::filesystem::is_directory(directory, error) && !error
+			? directory : std::filesystem::path{};
+	}
+
+	void ContentBrowserPanel::RevealAsset(const std::filesystem::path& path)
+	{
+		const std::filesystem::path asset = CanonicalPath(path);
+		std::error_code error;
+		if (!m_Project || !IsWritablePath(asset)
+			|| !std::filesystem::is_regular_file(asset, error) || error)
+			return;
+		m_CurrentDirectory = asset.parent_path();
+		m_SelectedPath = asset;
+		m_UserSelectedDirectory = true;
+		m_ExpandedNodes.insert(PathToUTF8(m_CurrentDirectory));
+		m_PendingOpenDirectories.insert(PathToUTF8(m_CurrentDirectory));
 	}
 
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
@@ -1222,7 +1247,7 @@ namespace TomCat {
 			{
 				ImGui::Spacing();
 				ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.15f, 1.0f),
-					"Referenced by %zu project or scene field(s). Forced deletion keeps those references missing:",
+					"Referenced by %zu Build Settings, Scene, Prefab, or C# field(s). Forced deletion keeps those references missing:",
 					m_DeleteReferences.size());
 				const size_t shown = std::min<size_t>(m_DeleteReferences.size(), 6);
 				for (size_t index = 0; index < shown; ++index)
@@ -1362,6 +1387,24 @@ namespace TomCat {
 			return;
 		if (!ImGui::BeginDragDropTarget())
 			return;
+		if (m_EntityPrefabCreateCallback)
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				SceneEntityDragDropPayloadID))
+			{
+				if (payload->IsDelivery() && payload->Data
+					&& payload->DataSize == sizeof(uint64_t))
+				{
+					const uint64_t rawEntity =
+						*static_cast<const uint64_t*>(payload->Data);
+					if (rawEntity != 0)
+						m_EntityPrefabCreateCallback(UUID(rawEntity),
+							CanonicalPath(destinationDirectory));
+				}
+				ImGui::EndDragDropTarget();
+				return;
+			}
+		}
 
 		const std::filesystem::path root = GetAssetRoot();
 		std::filesystem::path source;
@@ -1658,6 +1701,15 @@ namespace TomCat {
 		for (const auto& entry : ReadDirectory(m_CurrentDirectory))
 			DrawAssetItem(entry, root);
 		ImGui::Columns(1);
+		if (ImGui::GetDragDropPayload())
+		{
+			const ImVec2 available = ImGui::GetContentRegionAvail();
+			if (available.x > 1.0f && available.y > 1.0f)
+			{
+				ImGui::InvisibleButton("##CurrentDirectoryDropTarget", available);
+				AcceptAssetMoveTarget(m_CurrentDirectory);
+			}
+		}
 		if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl)
 		{
 			m_ThumbnailSize = std::clamp(m_ThumbnailSize - ImGui::GetIO().MouseWheel * 8.0f, 64.0f, 512.0f);

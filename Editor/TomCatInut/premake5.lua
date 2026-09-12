@@ -21,7 +21,8 @@ project "TomCatInut"
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
-		"%{IncludeDir.ImGuizmo}"
+		"%{IncludeDir.ImGuizmo}",
+		"%{IncludeDir.yaml_cpp}"
 	}
 
 	libdirs

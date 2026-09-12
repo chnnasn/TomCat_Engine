@@ -123,8 +123,9 @@ internal static class JsonOptions
     internal static readonly JsonSerializerOptions Instance = new()
     {
         PropertyNameCaseInsensitive = false,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        Converters = { new JsonStringEnumConverter() }
+        // ScriptLifecycle is a flags bitmask in the native package ABI and must
+        // stay numeric. ScriptFieldType carries its own string-enum converter.
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 }
 

@@ -65,6 +65,11 @@ The exact type tokens are `Bool`, `Int32`, `Int64`, `Float`, `Double`, `String`,
 arrays; Entity and AssetRef values are unsigned 64-bit JSON numbers; enums are signed 64-bit JSON
 numbers. An unknown or type-mismatched field remains native-side orphan data and is not applied.
 
+`AssetRef<T>` accepts the built-in markers `Texture2DAsset`, `ShaderAsset`, `AudioAsset`,
+`FontAsset`, `MeshAsset`, `MaterialAsset`, `SceneAsset`, and `PrefabAsset`. Unsupported markers
+produce compiler error `TCG010`. Both `IsValid` and Cook check the asset's actual type; marker
+support describes asset identity and does not imply that a runtime loader exists for every type.
+
 ## Native bootstrap contract
 
 Initialize CoreCLR once with `TomCat.ScriptHost.runtimeconfig.json`, then use hostfxr's
@@ -110,6 +115,8 @@ int DestroyAll(uint64 sceneRuntimeId)
 int BeginUnloadDomain(uint64 domainId)
 int PollUnload(uint64 domainId, int32* unloaded)
 int DestroyAttachments(uint64 sceneRuntimeId, uint64* attachmentIds, uint32 count)
+int InstantiateAttachments(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items,
+                           uint32 count, NativeByteView fieldsJson)
 ```
 
 `MetadataReceiver` is `int(NativeByteView json, uint64 receiverToken)`. The token is opaque to
@@ -136,8 +143,10 @@ RigidbodyGetLinearVelocity, RigidbodySetLinearVelocity,
 RigidbodyApplyForce, RigidbodyApplyLinearImpulse,
 PhysicsRaycast, PhysicsQueryAabb,
 AssetIsValid, AssetGetType,
-BehaviourGetEnabled, BehaviourSetEnabledDeferred
-BehaviourRemoveDeferred
+BehaviourGetEnabled, BehaviourSetEnabledDeferred, BehaviourRemoveDeferred,
+SceneGetActiveHandle, SceneGetActiveBuildIndex,
+SceneRequestLoadHandle, SceneRequestLoadIndex, SceneRequestReload,
+PrefabInstantiateDeferred
 ```
 
 The authoritative field signatures and blittable layouts are in
@@ -152,6 +161,20 @@ Attachment IDs must be globally random, nonzero, and unique in a scene runtime. 
 Attachment ID itself as `ScriptInstanceHandle.Value`; duplicate IDs are rejected. Native supplies
 attachments in scene-entity order and then mount order. The host performs a stable sort by
 `DefaultExecutionOrder`, using that input sequence as the tie-breaker, and destroys in reverse.
+Prefab-created script attachments enter through `InstantiateAttachments` only after the current
+managed callback returns. Their serialized fields are restored before the new batch receives
+`OnCreate` and `OnEnable`; existing instances never receive those callbacks again.
+
+## Scene and snapshot-Prefab APIs
+
+`SceneManager` exposes the active `SceneAsset` and build index plus synchronous replacement
+requests by scene handle/index and reload. Requests made during a lifecycle or physics callback are
+committed by the native runtime at the frame-end safe point.
+
+Scripts can serialize strongly typed `SceneAsset` and `PrefabAsset` fields. A behavior queues a
+snapshot Prefab with `Instantiate(prefab, worldPosition, optionalParent)`. Prefab instances receive
+fresh Scene UUIDs and AttachmentIDs; hierarchy, `DistanceJoint2D`, and C# `Entity` fields are
+remapped before the batch becomes visible to managed lifecycle dispatch.
 
 ## Load and unload ownership
 

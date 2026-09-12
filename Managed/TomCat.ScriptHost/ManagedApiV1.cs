@@ -22,4 +22,6 @@ public unsafe struct ManagedApiV1
     public delegate* unmanaged[Cdecl]<ulong, int> BeginUnloadDomain;
 	public delegate* unmanaged[Cdecl]<ulong, int*, int> PollUnload;
 	public delegate* unmanaged[Cdecl]<ulong, ulong*, uint, int> DestroyAttachments;
+	public delegate* unmanaged[Cdecl]<ulong, NativeScriptAttachmentV1*, uint, NativeByteView, int>
+		InstantiateAttachments;
 }

@@ -9,6 +9,7 @@ param(
     [string]$SourceDir = "",
     [string]$Version = "",
     [string]$MsBuildPath = "D:\Microsoft Visual Studio\Versions\2026 Pro\MSBuild\Current\Bin\MSBuild.exe",
+    [string]$PremakePath = "",
     [string]$EnigmaProject = "editor.evb",
     [string]$EnigmaConsole = "",
     [switch]$Build
@@ -23,20 +24,42 @@ $FinalName = "TomCat"
 # EVB projects have a legacy, non-standard root element. Shared helpers still
 # handle template properties and validation; Editor Packages stay external.
 . (Join-Path $PSScriptRoot "EvbTools.ps1")
+. (Join-Path $PSScriptRoot "ManagedReleaseTools.ps1")
 
 # 1) Optional rebuild
 if ($Build) {
+    Write-Host "[Managed] Building Release toolchain ..."
+    Build-TomCatManagedRelease -RepositoryRoot $RepoRoot
     if (-not (Test-Path $MsBuildPath)) { throw "MSBuild not found: $MsBuildPath" }
-    $proj = Join-Path $RepoRoot "Editor\TomCatInut\TomCatInut.vcxproj"
-    Write-Host "[1/4] Building Release x64 ..."
-    & $MsBuildPath $proj -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
+    if (-not $PremakePath) {
+        $PremakePath = Join-Path $RepoRoot "vendor\premake\bin\premake5.exe"
+    }
+    if (-not (Test-Path -LiteralPath $PremakePath -PathType Leaf)) {
+        throw "Premake5 not found: $PremakePath. Run Scripts\Setup.bat or pass -PremakePath."
+    }
+    Write-Host "[Player] Generating Player solution ..."
+    & $PremakePath "--file=$(Join-Path $RepoRoot 'Player\premake5.lua')" vs2022
+    if ($LASTEXITCODE -ne 0) { throw "Player project generation failed (exit $LASTEXITCODE)" }
+    Write-Host "[Player] Building Release x64 ..."
+    & $MsBuildPath (Join-Path $RepoRoot "Player\Player.sln") -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
+    if ($LASTEXITCODE -ne 0) { throw "Player build failed (exit $LASTEXITCODE)" }
+    Write-Host "[Editor] Generating Editor solution ..."
+    & $PremakePath "--file=$(Join-Path $RepoRoot 'Editor\premake5.lua')" vs2022
+    if ($LASTEXITCODE -ne 0) { throw "Editor project generation failed (exit $LASTEXITCODE)" }
+    $editorSolution = Join-Path $RepoRoot "Editor\Editor.sln"
+    Write-Host "[Editor] Building Release x64 ..."
+    & $MsBuildPath $editorSolution -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
 } else {
-    Write-Host "[1/4] Skipping build (use -Build to rebuild first)"
+    Write-Host "[Build] Using existing Managed, Player and Editor Release outputs"
 }
 
 if (-not (Test-Path $SourceDir -PathType Container)) { throw "Source directory not found: $SourceDir" }
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
+$playerTemplate = Join-Path $SourceDir "Packages\PlayerTemplates\win-x64"
+Write-Host "[Template] Generating and validating win-x64 Player Template ..."
+& (Join-Path $PSScriptRoot "Build-PlayerTemplate.ps1") -Configuration Release -Destination $playerTemplate
+if ($LASTEXITCODE -ne 0) { throw "Player Template generation failed (exit $LASTEXITCODE)" }
 $packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
 $packageFileCount = @(Get-ChildItem -LiteralPath $packageSource -Recurse -File -Force).Count
 Write-Host "Scanning $packageFileCount package candidate file(s) from $packageSource"
@@ -48,7 +71,16 @@ $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $outExe = Join-Path $dist "$FinalName.exe"
 $outPackages = Join-Path $dist "Packages"
+$outManaged = Join-Path $dist "Managed"
 $outArchive = Join-Path $dist "$FinalName.zip"
+$nativeRuntimeFiles = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+foreach ($name in $nativeRuntimeFiles) {
+    Copy-Item -LiteralPath (Join-Path $playerTemplate $name) -Destination (Join-Path $dist $name) -Force
+}
+
+# Managed is a real, external directory. It must never be embedded into EVB;
+# the Editor needs these exact Release artifacts to compile project scripts.
+Publish-TomCatManagedRelease -RepositoryRoot $RepoRoot -Destination $outManaged
 
 # 2) Locate .evb and parse its input/output paths
 $evbInput = ""
@@ -79,6 +111,9 @@ if ($EnigmaProject) {
     if ($evbText -match '(?is)<Name>\s*Packages\s*</Name>') {
         throw "Editor EVB template must not embed Packages; distribute it beside TomCat.exe"
     }
+    if ($evbText -match '(?is)<Name>\s*Managed\s*</Name>') {
+        throw "Editor EVB template must not embed Managed; distribute it beside TomCat.exe"
+    }
 
     $generatedEnigmaProject = Join-Path $dist "$FinalName.generated.evb"
     Write-EvbProject -Path $generatedEnigmaProject -Text $evbText
@@ -97,7 +132,7 @@ if ($evbInput) {
     if (-not (Test-Path $srcExe)) { throw "Built exe not found: $srcExe" }
     New-Item -ItemType Directory -Force -Path (Split-Path $evbInput) | Out-Null
     Copy-Item $srcExe $evbInput -Force
-    Write-Host "[2/4] Staged input exe -> $evbInput"
+    Write-Host "[EVB] Staged input exe -> $evbInput"
 }
 
 # 5) Enigma boxing
@@ -114,7 +149,7 @@ if ($EnigmaProject) {
     }
     if (-not (Test-Path $EnigmaConsole)) { throw "Enigma console not found: $EnigmaConsole" }
 
-    Write-Host "[3/4] Boxing with Enigma Virtual Box ($EnigmaProject) ..."
+    Write-Host "[EVB] Boxing with Enigma Virtual Box ($EnigmaProject) ..."
     Push-Location (Split-Path -Parent $EnigmaProject)
     try {
         & $EnigmaConsole (Split-Path -Leaf $EnigmaProject)
@@ -123,7 +158,7 @@ if ($EnigmaProject) {
     }
     if ($LASTEXITCODE -ne 0) { throw "Enigma Virtual Box failed (exit $LASTEXITCODE)" }
 } else {
-    Write-Host "[3/4] Skipping Enigma boxing (pass -EnigmaProject <file.evb> to enable)"
+    Write-Host "[EVB] Skipping Enigma boxing (pass -EnigmaProject <file.evb> to enable)"
 }
 
 # 6) Keep the boxed executable and publish the real Packages directory beside it.
@@ -140,10 +175,12 @@ if ($evbOutput -and (Test-Path $evbOutput)) {
     if (Test-Path -LiteralPath $outArchive) {
         Remove-Item -LiteralPath $outArchive -Force
     }
-    Compress-Archive -LiteralPath @($outExe, $outPackages) -DestinationPath $outArchive -CompressionLevel Optimal
-    Write-Host "[4/4] Final package -> $outArchive"
+    $archiveInputs = @($outExe, $outPackages, $outManaged)
+    $archiveInputs += @($nativeRuntimeFiles | ForEach-Object { Join-Path $dist $_ })
+    Compress-Archive -LiteralPath $archiveInputs -DestinationPath $outArchive -CompressionLevel Optimal
+    Write-Host "[Package] Final package -> $outArchive"
     $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
-    Write-Host "Done: $outExe ($sizeMb MB) + $outPackages"
+    Write-Host "Done: $outExe ($sizeMb MB) + $outPackages + $outManaged"
 } else {
     throw "Boxed Editor executable not found at '$evbOutput'"
 }

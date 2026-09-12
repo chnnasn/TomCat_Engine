@@ -4,7 +4,7 @@ internal readonly record struct ScriptInstanceHandle(ulong Value);
 
 public abstract class TomCatBehaviour
 {
-    private Entity _entity;
+    private Entity _entity = null!;
     private ScriptInstanceHandle _instance;
 	private CancellationToken _domainCancellation;
     private bool _bound;
@@ -45,10 +45,20 @@ public abstract class TomCatBehaviour
 		ScriptExecutionContext.NotifyBehaviourRemoved(_instance);
 	}
 
-    protected T GetComponent<T>() where T : struct, IEntityComponent => Entity.GetComponent<T>();
-    protected bool TryGetComponent<T>(out T component) where T : struct, IEntityComponent =>
+    protected T GetComponent<T>() where T : class, IEntityComponent => Entity.GetComponent<T>();
+    protected bool TryGetComponent<T>(out T component) where T : class, IEntityComponent =>
         Entity.TryGetComponent(out component);
-    protected bool HasComponent<T>() where T : struct, IEntityComponent => Entity.HasComponent<T>();
+    protected bool HasComponent<T>() where T : class, IEntityComponent => Entity.HasComponent<T>();
+
+	/// <summary>
+	/// Queues a snapshot Prefab for instantiation after the current lifecycle callback.
+	/// </summary>
+	protected bool Instantiate(PrefabAsset prefab, Vector3 worldPosition,
+		Entity? parent = null)
+	{
+		EnsureBound();
+		return NativeBridge.InstantiatePrefab(_entity, prefab, worldPosition, parent);
+	}
 
     protected virtual void OnCreate() { }
     protected virtual void OnEnable() { }
@@ -93,13 +103,13 @@ public abstract class TomCatBehaviour
 
 internal static class ScriptExecutionContext
 {
-	[ThreadStatic] private static Entity s_current;
+	[ThreadStatic] private static Entity? s_current;
 	[ThreadStatic] private static bool s_hasCurrent;
 	[ThreadStatic] private static CancellationToken s_domainCancellation;
 	[ThreadStatic] private static IScriptMutationSink? s_mutationSink;
 
 	internal static Entity CurrentEntity => s_hasCurrent
-		? s_current
+		? s_current!
 		: throw new TomCatException("Physics2D must be called from a TomCatBehaviour lifecycle callback.");
 	internal static bool IsActive => s_hasCurrent;
 	internal static CancellationToken CurrentDomainCancellationToken => s_hasCurrent
@@ -132,7 +142,7 @@ internal static class ScriptExecutionContext
 	internal static void NotifyEntityDestroyed(Entity entity) =>
 		s_mutationSink?.DestroyEntity(entity);
 
-	internal readonly struct Scope(Entity previous, bool hadPrevious,
+	internal readonly struct Scope(Entity? previous, bool hadPrevious,
 		CancellationToken previousCancellation) : IDisposable
     {
         public void Dispose()

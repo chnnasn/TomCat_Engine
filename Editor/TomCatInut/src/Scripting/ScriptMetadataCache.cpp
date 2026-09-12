@@ -581,7 +581,7 @@ namespace TomCat {
 			if (matched == entry.Fields.size())
 			{
 				entry.Fields.emplace_back(current.FieldID, current.Name, current.Type,
-					ScriptMetadataDefaultValue(current));
+					ScriptMetadataDefaultValue(current), current.TypeName);
 				claimed.push_back(true);
 				changed = true;
 				continue;
@@ -590,11 +590,12 @@ namespace TomCat {
 			claimed[matched] = true;
 			ScriptField& stored = entry.Fields[matched];
 			if (stored.FieldID != current.FieldID || stored.Name != current.Name ||
-				stored.Type != current.Type)
+				stored.Type != current.Type || stored.TypeName != current.TypeName)
 			{
 				stored.FieldID = current.FieldID;
 				stored.Name = current.Name;
 				stored.Type = current.Type;
+				stored.TypeName = current.TypeName;
 				changed = true;
 			}
 		}

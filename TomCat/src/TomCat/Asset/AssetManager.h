@@ -20,7 +20,7 @@ namespace TomCat {
 
 	class Project;
 
-	// Path-free managed payload embedded in tcpak v4. Host/runtime files remain
+	// Path-free managed payload embedded in tcpak v5. Host/runtime files remain
 	// beside the Player on disk; only the collectible project assembly is stored
 	// in the package.
 	struct ManagedPackagePayload
@@ -99,12 +99,19 @@ namespace TomCat {
 		void UnmountCookedPackage();
 		bool IsCookedPackageMounted() const { return !m_CookedPackagePath.empty(); }
 		const std::filesystem::path& GetCookedPackagePath() const { return m_CookedPackagePath; }
-		AssetHandle GetCookedStartSceneHandle() const
+		AssetHandle GetCookedEntrySceneHandle() const
 		{
-			return IsCookedPackageMounted() ? m_CookedStartSceneHandle : AssetHandle(0);
+			return IsCookedPackageMounted() ? m_CookedEntrySceneHandle : AssetHandle(0);
 		}
+		AssetHandle GetCookedStartSceneHandle() const { return GetCookedEntrySceneHandle(); }
+		const std::vector<AssetHandle>& GetCookedBuildSceneHandles() const
+		{
+			return m_CookedBuildSceneHandles;
+		}
+		std::optional<uint32_t> GetCookedBuildSceneIndex(AssetHandle handle) const;
+		AssetHandle GetCookedBuildSceneHandle(uint32_t index) const;
 		// Authoring reads the active Project; a cooked runtime reads the immutable
-		// matrix embedded in the v4 package header.
+		// matrix embedded in the v5 package header.
 		Physics2DSettings GetPhysics2DSettings() const;
 		const ManagedPackagePayload* GetCookedManagedPayload() const
 		{
@@ -141,7 +148,8 @@ namespace TomCat {
 
 		std::filesystem::path m_CookedPackagePath;
 		uint64_t m_CookedPackageSize = 0;
-		AssetHandle m_CookedStartSceneHandle = AssetHandle(0);
+		AssetHandle m_CookedEntrySceneHandle = AssetHandle(0);
+		std::vector<AssetHandle> m_CookedBuildSceneHandles;
 		Physics2DSettings m_CookedPhysics2DSettings;
 		std::optional<ManagedPackagePayload> m_CookedManagedPayload;
 		std::unordered_map<AssetHandle, CookedEntry> m_CookedEntries;
@@ -149,8 +157,8 @@ namespace TomCat {
 		mutable std::mutex m_CookedPackageMutex;
 
 		// Authoring-only input used by the convenience CookToPackage overload.
-		// Project.StartSceneHandle is the stable source of truth; the cooked
-		// package serializes its value, never the authoring path.
+		// ProjectSettings/BuildSettings.json is the stable source of truth; the
+		// cooked package serializes its entry and ordered enabled-scene handles.
 		std::weak_ptr<Project> m_AuthoringProject;
 		bool m_UsesProjectConfiguration = false;
 		std::optional<ManagedPackagePayload> m_ManagedCookPayloadOverride;

@@ -1,6 +1,8 @@
 #include "tcpch.h"
 #include "AssetRegistry.h"
 
+#include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -151,81 +153,6 @@ namespace TomCat {
 			std::filesystem::path source = metadataPath;
 			source.replace_extension();
 			return source;
-		}
-
-		bool HasHandleSuffix(const std::string& key)
-		{
-			constexpr std::string_view suffix = "Handle";
-			return key.size() >= suffix.size() &&
-				key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0;
-		}
-
-		void CollectHandleReferences(const YAML::Node& node, const std::string& propertyPath,
-			const std::unordered_set<uint64_t>& targets, AssetHandle referencingAsset,
-			const std::filesystem::path& scenePath, std::vector<AssetReference>& references,
-			bool& complete, uint32_t depth = 0)
-		{
-			if (depth > 128)
-			{
-				complete = false;
-				return;
-			}
-
-			if (node.IsMap())
-			{
-				for (const auto& entry : node)
-				{
-					std::string key;
-					try
-					{
-						key = entry.first.as<std::string>();
-					}
-					catch (const std::exception&)
-					{
-						complete = false;
-						continue;
-					}
-
-					const YAML::Node value = entry.second;
-					const std::string childPath = propertyPath + "." + key;
-					if (HasHandleSuffix(key))
-					{
-						if (!value.IsScalar())
-							complete = false;
-						else
-						{
-							try
-							{
-								const uint64_t handle = value.as<uint64_t>();
-								if (handle != 0 && targets.find(handle) != targets.end())
-								{
-									AssetReference reference;
-									reference.ReferencedAsset = AssetHandle(handle);
-									reference.ReferencingAsset = referencingAsset;
-									reference.FilePath = scenePath;
-									reference.PropertyPath = childPath;
-									references.emplace_back(std::move(reference));
-								}
-							}
-							catch (const std::exception&)
-							{
-								complete = false;
-							}
-						}
-					}
-					CollectHandleReferences(value, childPath, targets, referencingAsset,
-						scenePath, references, complete, depth + 1);
-				}
-			}
-			else if (node.IsSequence())
-			{
-				for (size_t index = 0; index < node.size(); ++index)
-				{
-					CollectHandleReferences(node[index], propertyPath + "[" +
-						std::to_string(index) + "]", targets, referencingAsset,
-						scenePath, references, complete, depth + 1);
-				}
-			}
 		}
 
 		bool PathsReferToSameEntry(const std::filesystem::path& left,
@@ -1616,7 +1543,8 @@ namespace TomCat {
 			if (statusError)
 				complete = false;
 			else if (std::filesystem::is_regular_file(status) &&
-				AssetTypeFromPath(scenePath) == AssetType::Scene)
+				(AssetTypeFromPath(scenePath) == AssetType::Scene
+					|| AssetTypeFromPath(scenePath) == AssetType::Prefab))
 			{
 				std::filesystem::path absoluteScene, relativeScene;
 				if (!NormalizeManagedPath(scenePath, absoluteScene, relativeScene, false, false))
@@ -1639,21 +1567,50 @@ namespace TomCat {
 							std::vector<uint8_t> sceneBytes;
 							if (!ReadWholeFile(absoluteScene, sceneBytes))
 								throw std::runtime_error("could not read the scene");
-							if (!SceneSerializer::ValidateCurrentFormat(sceneBytes, absoluteScene))
+							const AssetType archiveType = AssetTypeFromPath(absoluteScene);
+							const bool validArchive = archiveType == AssetType::Scene
+								? SceneSerializer::ValidateCurrentFormat(sceneBytes, absoluteScene)
+								: PrefabArchiveCodec::ValidateCurrentFormat(sceneBytes, absoluteScene);
+							if (!validArchive)
 								throw std::runtime_error(
-									"scene does not conform to the complete current scene schema");
+									"archive does not conform to its complete current schema");
 							std::string serialized(sceneBytes.begin(), sceneBytes.end());
 							std::istringstream input(std::move(serialized));
 							const YAML::Node root = YAML::Load(input);
 							const AssetMetadata* sceneMetadata = GetMetadata(relativeScene);
 							const AssetHandle referencing = sceneMetadata && !sceneMetadata->IsMissing
 								? sceneMetadata->Handle : AssetHandle(0);
-							CollectHandleReferences(root, "$", targets, referencing, relativeScene,
-								references, complete);
+							std::string visitorError;
+							const auto collectReference =
+								[&](const SerializedAssetReference& serializedReference)
+								{
+									const uint64_t rawHandle = static_cast<uint64_t>(
+										serializedReference.Handle);
+									if (rawHandle == 0 || targets.find(rawHandle) == targets.end())
+										return true;
+									AssetReference reference;
+									reference.ReferencedAsset = serializedReference.Handle;
+									reference.ReferencingAsset = referencing;
+									reference.FilePath = relativeScene;
+									reference.PropertyPath = serializedReference.PropertyPath;
+									references.emplace_back(std::move(reference));
+									return true;
+								};
+							const bool visited = archiveType == AssetType::Scene
+								? AssetReferenceVisitor::VisitScene(root, collectReference,
+									visitorError)
+								: AssetReferenceVisitor::VisitPrefab(root, collectReference,
+									visitorError);
+							if (!visited)
+							{
+								TC_Core_Error("Could not inspect typed asset references in archive '{0}': {1}",
+									PathToUTF8(relativeScene), visitorError);
+								complete = false;
+							}
 						}
 						catch (const std::exception& exception)
 						{
-							TC_Core_Error("Could not inspect asset references in scene '{0}': {1}",
+							TC_Core_Error("Could not inspect asset references in archive '{0}': {1}",
 								PathToUTF8(relativeScene), exception.what());
 							complete = false;
 						}

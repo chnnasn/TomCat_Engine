@@ -9,10 +9,10 @@
 - Builder (`Manager.exe`)：项目列表、创建/添加/移除项目和 Editor 版本选择。
 - Editor (`TomCat.exe`)：加载项目、按项目模板配置编辑器，并打开启动场景。
 
-## Project.tcproj schema v3
+## Project.tcproj schema v4
 
 ```yaml
-SchemaVersion: 3
+SchemaVersion: 4
 Project:
   Name: MyGame
   Version: 1.0.0
@@ -20,8 +20,6 @@ Project:
   EditorVersion: 1.0.0
   Template: 3D
   AssetDirectory: Assets
-  StartScene: Scenes/Main.tomcat
-  StartSceneHandle: 14891334345401054091
 ```
 
 字段约束：
@@ -29,22 +27,38 @@ Project:
 - `Name` 必须非空。
 - `Template` 只能是 `2D` 或 `3D`，且是项目模式的唯一真源；Builder 不再向 Editor 传递额外模式参数。
 - `AssetDirectory` 必须是项目内的非空相对路径。
-- `StartScene` 必须是相对于 `AssetDirectory` 的安全相对路径，不能使用绝对路径或 `..` 跳出资源目录。
-- `StartSceneHandle` 字段必须存在，是启动场景的唯一身份真源；非零 Handle 可由 Registry 解析并修复仅供作者阅读的 `StartScene` 定位信息。显式的 `0` 表示项目没有入口场景，Editor 保持空白，Cook 会拒绝生成可运行包。
 - Content Browser 的当前目录和展开节点属于 Editor 本机状态，保存在项目的 `UserSettings/editor.json`；加载时会限制在项目资源目录内，越界或不存在的路径会被忽略。
-- `Project` map 只允许上面列出的八个字段；Hub 与 Editor 的本机状态只能写入各自的 JSON 设置文件。
+- `Project` map 只允许上面列出的六个字段；入口场景和场景构建顺序不再保存在 `Project.tcproj`。
 
-加载器只接受显式的 `SchemaVersion: 3`，并要求顶层与 `Project` map 精确匹配当前 writer 定义的字段；缺失、重复或未知字段以及其他版本都会直接拒绝，不执行自动升级或路径到 Handle 的迁移。通常加载和扫描不会重写 `Project.tcproj`；若 `StartSceneHandle` 解析出的当前位置与作者定位字段不同，Editor 会按 Handle 修复 `StartScene` 并原子保存。
+当前 writer 只写 schema v4，并严格校验顶层和 `Project` map。遗留 schema v3 项目仍可加载；其 `StartSceneHandle`/`StartScene` 会迁移到 `ProjectSettings/BuildSettings.json`，随后将项目文件原子升级为 v4。
+
+## ProjectSettings/BuildSettings.json schema v1
+
+```json
+{
+  "schemaVersion": 1,
+  "entrySceneHandle": 14891334345401054091,
+  "scenes": [
+    {
+      "handle": 14891334345401054091,
+      "enabled": true,
+      "pathHint": "Scenes/Main.tomcat"
+    }
+  ]
+}
+```
+
+`BuildSettings.json` 是入口场景与 Scenes In Build 的唯一持久化真源。`scenes` 保留作者顺序；Handle 必须非零且唯一，`pathHint` 只是 `AssetDirectory` 内的作者定位信息。非零 `entrySceneHandle` 必须指向列表中已启用的场景；为 `0` 时没有可运行入口，项目 Cook 会拒绝。schema v4 项目缺少或损坏该文件时加载失败，不从 `Project.tcproj` 回退。
 
 项目文件先写入同目录临时文件；Windows 使用带同目录恢复备份的 `ReplaceFileW` / `MoveFileExW` 原子安装，其他平台使用同文件系统原子重命名，保存结果通过 `bool` 返回给调用方。安装失败时保留已完整写入的临时文件；Windows 若替换中途失败会先尝试恢复原目标，恢复失败则同时保留临时文件和备份，避免清理流程造成二次数据丢失。创建项目会拒绝已有的非空目标目录；若首次保存失败，只逆序删除本次确实创建且仍为空的目录，不递归删除并发出现的内容。
 
-## ProjectSettings/ProjectSettings.json schema v1
+## ProjectSettings/ProjectSettings.json schema v2
 
 可纳入版本控制的项目级 Tag、Layer 和 2D 碰撞矩阵不写入 `Project.tcproj`，而保存在 `ProjectSettings/ProjectSettings.json`：
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "tagsAndLayers": {
     "tags": ["Untagged"],
     "layerNames": ["Default", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]
@@ -55,7 +69,7 @@ Project:
 }
 ```
 
-Loader 只接受有效 JSON、schema v1 及精确的 lowerCamel 字段集。`tags` 必须非空且唯一，第一项固定为 `Untagged`；`layerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。层数选择 16 是因为 Box2D 的 Category/Mask 均为 16 位。`collisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
+Loader 只接受有效 JSON、schema v1/v2 及精确的 lowerCamel 字段集，writer 固定写 schema v2。`tags` 必须非空且唯一，第一项固定为 `Untagged`；`layerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。层数选择 16 是因为 Box2D 的 Category/Mask 均为 16 位。`collisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
 
 新项目会原子写入默认设置，默认所有 Layer 两两允许碰撞。为兼容已有项目，仅当 JSON 不存在时才读取旧的 `ProjectSettings/ProjectSettings.tcsettings` schema v1；加载旧文件本身不会改写磁盘，下一次 `SetSettings` 或 `SaveSettings` 会生成权威 JSON。JSON 一旦存在但内容损坏、版本错误或违反约束，整个项目加载失败，不会回退到旧文件掩盖错误。JSON 与旧文件都不存在时使用内存默认值。Editor 的 Project Settings 中的 `Tags and Layers` 页管理 Tag 和 Layer 名称，`Physics 2D` 页管理对称碰撞矩阵；所有有效修改都会立即通过原子替换写入 JSON，不需要额外点击 Apply，保存失败时 UI 会恢复为最后一次成功保存的值并显示错误。
 
@@ -65,7 +79,8 @@ Loader 只接受有效 JSON、schema v1 及精确的 lowerCamel 字段集。`tag
 MyGame/
 ├── Project.tcproj
 ├── ProjectSettings/
-│   └── ProjectSettings.json # Tag、Layer 与 Physics 2D 碰撞矩阵
+│   ├── ProjectSettings.json # Tag、Layer 与 Physics 2D 碰撞矩阵
+│   └── BuildSettings.json   # 有序 Scenes In Build 与入口场景
 ├── .gitignore          # 忽略 Library、Cache、UserSettings，不忽略 .tcmeta
 ├── UserSettings/       # Editor 运行时生成，不应提交，也不参与 EVB 打包
 │   ├── imgui.ini       # 仅保存布局
@@ -94,10 +109,10 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 
 ## 启动流程
 
-1. Builder 加载并严格校验 `Project.tcproj`；若存在 `ProjectSettings/ProjectSettings.json`，也同时严格校验；只有 JSON 缺失时才兼容读取旧 `.tcsettings`。
+1. Builder 加载并严格校验 `Project.tcproj`、`ProjectSettings/BuildSettings.json`；若存在 `ProjectSettings/ProjectSettings.json`，也同时严格校验；只有后者缺失时才兼容读取旧 `.tcsettings`。
 2. Builder 使用 Unicode 版 `CreateProcessW` 启动 Editor，仅传递项目文件路径；带空格、非 ASCII 字符和 Windows 长路径的参数会被正确引用。
 3. Editor 重新加载项目，从 `Project.Template` 决定 2D/3D 模式。
-4. Editor 只按 `StartSceneHandle` 从 Registry 解析启动场景。Handle 为 0、缺失或类型无效时保留空白编辑场景并报告错误，绝不使用 `StartScene` 路径回退或绑定同路径下的新资源。
+4. Editor 从 `BuildSettings.json` 读取有序 Scenes In Build，并按 `entrySceneHandle` 从 Registry 解析入口场景。Handle 为 0、未启用、缺失或类型无效时保留空白编辑场景并报告错误，绝不使用 `pathHint` 回退或绑定同路径下的新资源。
 5. Editor 启动成功后，Builder 才在本地 Hub 配置中记录最近打开时间。
 
 新建项目的 `sample.tomcat` 由 Builder 直接通过 `SceneSerializer` 生成，不再复制带独立版本字面量的静态场景模板；场景版本与字段集合因此始终来自同一个 writer。
@@ -115,9 +130,9 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 - Hub 只读取当前 `hub.json`；文件不存在时使用默认状态，不扫描或迁移旧 INI/YAML 配置。
 - Content Browser 的 `editor.json` 使用明确的 `@assets` / `@packages` 根前缀保存导航状态；旧版 Assets 相对路径仍可读取，任何越出这两个根目录的值都会回退到 `Assets/`。
 
-## 场景文件 schema v9
+## 场景文件 schema v10
 
-`.tomcat` 场景只接受顶层 `SchemaVersion: 9`、`SceneName` 和 `Entities`。实体、组件以及层级字段必须与当前 writer 的完整字段集合精确匹配；任何层级出现缺失、重复或未知字段都会被拒绝。实体关系只使用 `Parent`。
+`.tomcat` 当前 writer 输出顶层 `SchemaVersion: 10`、`SceneName` 和 `Entities`；schema v9 仅作为严格校验后的只读迁移输入。实体、组件以及层级字段必须与对应版本的完整字段集合精确匹配；任何层级出现缺失、重复或未知字段都会被拒绝。实体关系只使用 `Parent`。
 
 每个实体都必须保存 `EntityMetadata`：`GameplayTag` 是项目定义的非空 Tag 字符串，`Layer` 是 0–15 的稳定槽位索引，`HierarchyIcon` 是 `Automatic` 或稳定的显式图标 token。实体名称仍由 `Tag` 组件保存，不与 Gameplay Tag 混用。Inspector 顶部按“图标、启用、名称”排列，并在下一行并排显示 Tag 与 Layer；Inspector 与 Hierarchy 读取同一图标字段，修改后立即同步。新实体默认使用通用 `Entity` 图标；用户主动选择 `Automatic` 后，才按 Camera、Sprite、Rigidbody2D、Collider2D、普通 Entity 的优先级解析。场景中暂时无法在当前项目设置中解析的旧 Tag/Layer 值会保留为 `Undefined`，不会在加载时擅自改写。
 
@@ -143,16 +158,16 @@ Hierarchy 中实体可以拖到目标节点的上部、中部或下部，分别�
 
 运行中的 Rigidbody、Collider、Transform 物理相关字段或 `DistanceJoint2D` 被添加、移除或修改后，会在下一次固定步开始前安全重建 Box2D 定义；动态刚体的速度会尽量保留。重建、实体删除和 Stop 都会清除旧 runtime 指针与待派发接触，Box2D world 锁定期间不修改 world。`b2Body` user data 只保存实体 UUID；ContactListener 只收集并按“实体对 + Collision/Trigger 类型”去重，`Step()` 返回后才向 Scene 监听器和托管脚本的 `OnCollisionEnter2D/Exit2D`、`OnTriggerEnter2D/Exit2D` 派发，所以回调内删除实体不会留下悬空指针或陈旧 Exit。
 
-Scene 提供带 Layer Mask 和 Trigger 选项的最近命中 `Raycast2D`、按 Entity UUID 去重并稳定排序的 broad-phase `QueryAABB2D`，以及动态刚体的 Force、指定点 Force、Impulse、指定点 Impulse、设置/读取线速度 API。查询的 Layer Mask 按 `EntityMetadata.Layer` 的槽位位图解释，不复用 Collider 的底层 Fixture Category Bits。首个 Joint 类型为 `DistanceJoint2D`，保存 Connected Entity UUID、本体/连接端局部 Anchor、Distance、Frequency、Damping 与 Collide Connected；连接始终通过 UUID 解析，不持久化 Box2D 指针。所有这些组件字段与 `EntityMetadata` 都属于 scene schema v9，会随 Scene Copy、实体复制、Cook 和 Player 完整保留，runtime 指针永不序列化。
+Scene 提供带 Layer Mask 和 Trigger 选项的最近命中 `Raycast2D`、按 Entity UUID 去重并稳定排序的 broad-phase `QueryAABB2D`，以及动态刚体的 Force、指定点 Force、Impulse、指定点 Impulse、设置/读取线速度 API。查询的 Layer Mask 按 `EntityMetadata.Layer` 的槽位位图解释，不复用 Collider 的底层 Fixture Category Bits。首个 Joint 类型为 `DistanceJoint2D`，保存 Connected Entity UUID、本体/连接端局部 Anchor、Distance、Frequency、Damping 与 Collide Connected；连接始终通过 UUID 解析，不持久化 Box2D 指针。所有这些组件字段与 `EntityMetadata` 都属于当前 scene schema v10，会随 Scene Copy、实体复制、Cook 和 Player 完整保留，runtime 指针永不序列化。
 
 Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮廓，Play/Pause 从实际 Box2D Fixture 画轮廓。覆盖层使用现有 `DrawRect`、`DrawCircle`、`DrawLine`，默认只进入 Scene framebuffer，不写 Game framebuffer，也不参与实体 ID 拾取。
 
-仓库中的 `Tests/PhysicsRegression` 是 2D 物理回归程序，覆盖固定步进与不同显示帧率、Pause/Step、隐式静态碰撞体、Circle 缩放规则、Trigger/过滤、脚本回调、运行时重建、查询、力与速度、Distance Joint、schema v9 元数据与图标往返、Cooked Player 完整挂载/反序列化和回调删除安全。`Tests/SpriteAssetRegression` 覆盖 Square/Circle 的首次生成、导入、解码、Handle 稳定性与 Cooked Package 读回。首次运行前先用 `Scripts\Setup.bat` 准备 Premake；统一入口 `Scripts/Run-PhysicsRegression.ps1` 会生成 `Tests/Tests.sln` 并依次运行两套回归。
+仓库中的 `Tests/PhysicsRegression` 覆盖固定步进、SceneManager、Prefab LocalID/重映射、动态脚本安全点、Cook 依赖闭包和 Player 包读回；`Tests/SpriteAssetRegression` 覆盖 Sprite 资产；`Tests/ScriptCompilerRegression` 覆盖 C# 编译、last-good 与私有运行时端到端链路。首次运行前先用 `Scripts\Setup.bat` 准备 Premake；统一入口 `Scripts/Run-Regressions.ps1` 会构建 Managed Release、全部原生回归与独立 Player，并执行模板校验及 Player 冒烟测试。
 
 ## 当前格式边界
 
-- `Project.tcproj` 只接受 schema v3，`ProjectSettings.json` 只接受 schema v1，`.tomcat` 只接受 schema v9，`.tcpak` 只接受 v3；旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载，首次显式保存设置时写入 JSON，其他旧格式不会自动迁移、补字段或重新保存。
-- 项目资源加载只接受 `AssetHandle`；`StartScene` 仅是作者定位信息，不参与身份解析。
+- `Project.tcproj` 当前写 schema v4，并自动迁移严格合法的 v3；`BuildSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v10 并读取 v9/v10；`.tcpak` 只接受 v5。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
+- 项目资源加载只接受 `AssetHandle`；`BuildSettings.json` 中的 `pathHint` 仅是作者定位信息，不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。
 - Hub 的“移除项目”只移出列表，不删除磁盘文件；被移除路径保存在 `IgnoredProjects`，默认目录扫描不会自动把它重新加入，用户显式添加、创建或加载时解除忽略。
@@ -160,17 +175,6 @@ Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮
 ## Cook 与 Player
 
 Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件，用于导入和预览。
-发布时由 `AssetManager` 将资源 Cook 成带启动场景 Handle、Handle/类型索引的 v3 `.tcpak`；
-Player 挂载后通过 `GetCookedStartSceneHandle()` 取得入口，并按 Handle 读取场景和依赖字节，
-不读取原始 `Assets/` 路径、`.tcmeta` 或 `Library/`。项目配置中的 `StartSceneHandle` 是 Cook
-入口的真源，`StartScene` 仅作为 Editor 侧的作者定位信息。v3 包头还以小端序嵌入 16 行 `uint16` 的项目 Physics 2D 碰撞 Mask，Player 挂载时校验对称性并将该设置注入运行时 Scene。Cook 只接受当前 schema v9 场景及
-当前字段集合；任何旧 schema 或未知字段都会使 Cook 失败，不会被转换或带进 Player。挂载器只接受
-当前 v3 包，其他版本直接拒绝。
+发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v5 `.tcpak` 的 build-scene manifest，并保存其中的入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v5 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵和可选的托管发布载荷。场景 v9 输入会规范化为 v10 后写入；缺失、类型错误或未知字段会使 Cook 失败。
 
-当前可执行程序的发布运行入口为 `TomCatInut.exe --play-cooked <Game.tcpak>`。该模式不加载
-项目文件或 Editor Layer：`CookedPlayerLayer` 只接收包路径，挂载包、读取包头中的启动场景
-Handle，再调用 `SceneSerializer::Deserialize(AssetHandle)` 启动运行时场景。没有有效启动场景
-Handle、包索引损坏或资源类型不匹配时会直接拒绝运行，不会回退到源文件路径。
-Player 模式也不会创建 ImGui 层；Renderer2D 的基础 shader 已内嵌到程序，因此运行时不需要
-Editor 的 `Packages/fonts`、`Packages/Shaders` 或系统字体。相对包路径以可执行程序目录解析，
-便于启动器从任意工作目录运行；包缺失、损坏或启动场景无效会返回非零进程退出码。
+独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 只验证 v5 包、兼容版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes，并按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。

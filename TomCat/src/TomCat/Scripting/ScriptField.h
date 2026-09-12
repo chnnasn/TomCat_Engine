@@ -135,13 +135,17 @@ namespace TomCat {
 		std::string FieldID;
 		std::string Name;
 		ScriptFieldType Type = ScriptFieldType::Bool;
+		// Managed field type retained for typed asset references such as
+		// TomCat.SceneAsset and TomCat.PrefabAsset. Empty preserves legacy/orphan
+		// fields whose metadata is unavailable.
+		std::string TypeName;
 		ScriptFieldValue Value = false;
 
 		ScriptField() = default;
 		ScriptField(std::string fieldID, std::string name, ScriptFieldType type,
-			ScriptFieldValue value)
+			ScriptFieldValue value, std::string typeName = {})
 			: FieldID(std::move(fieldID)), Name(std::move(name)), Type(type),
-			  Value(std::move(value))
+			  TypeName(std::move(typeName)), Value(std::move(value))
 		{
 		}
 	};

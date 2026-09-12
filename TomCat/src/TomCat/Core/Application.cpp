@@ -14,7 +14,7 @@ namespace TomCat {
 	Application* Application::s_Instance = nullptr;
 
 	Application::Application(const std::string& name, std::filesystem::path iconPath,
-		bool enableImGui)
+		bool enableImGui, bool createWindow)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -22,6 +22,8 @@ namespace TomCat {
 			throw std::logic_error("Only one TomCat application can exist at a time");
 
 		s_Instance = this;
+		if (!createWindow)
+			return;
 		try
 		{
 			m_Window = Window::Create(WindowProps(name, 1920, 1080, std::move(iconPath)));
@@ -30,6 +32,7 @@ namespace TomCat {
 
 			m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
 			Renderer::Init();
+			m_RendererInitialized = true;
 
 			if (enableImGui)
 			{
@@ -41,7 +44,11 @@ namespace TomCat {
 		{
 			m_LayerStack.Clear();
 			m_ImGuiLayer = nullptr;
-			Renderer::Shutdown();
+			if (m_RendererInitialized)
+			{
+				Renderer::Shutdown();
+				m_RendererInitialized = false;
+			}
 			m_Window.reset();
 			s_Instance = nullptr;
 			throw;
@@ -56,7 +63,11 @@ namespace TomCat {
 
 		m_LayerStack.Clear();
 		m_ImGuiLayer = nullptr;
-		Renderer::Shutdown();
+		if (m_RendererInitialized)
+		{
+			Renderer::Shutdown();
+			m_RendererInitialized = false;
+		}
 		m_Window.reset();
 		s_Instance = nullptr;
 	}
@@ -132,6 +143,10 @@ namespace TomCat {
 	void Application::Run()
 	{
 		TC_PROFILE_FUNCTION();
+		// Command-only applications deliberately avoid GLFW and renderer
+		// initialization. Their constructor completes the operation before Run.
+		if (!m_Window)
+			return;
 		m_LastFrameTime = static_cast<float>(m_Window->GetTimeSeconds());
 
 		while (m_Running) 

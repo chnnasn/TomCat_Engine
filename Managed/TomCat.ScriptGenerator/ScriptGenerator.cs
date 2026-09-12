@@ -35,6 +35,9 @@ public sealed class ScriptGenerator : IIncrementalGenerator
         "Serialized field type is unsupported", "Serialized field '{0}.{1}' has unsupported type '{2}'");
     private static readonly DiagnosticDescriptor DuplicateAsset = Error("TCG009",
         "Duplicate script AssetHandle", "AssetHandle {0} maps to more than one TomCatBehaviour");
+    private static readonly DiagnosticDescriptor UnsupportedAssetMarker = Error("TCG010",
+        "AssetRef marker type is unsupported",
+        "Serialized field '{0}.{1}' uses unsupported AssetRef marker '{2}'; use a built-in TomCat asset marker");
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -219,6 +222,14 @@ public sealed class ScriptGenerator : IIncrementalGenerator
             if (!isPublic && !HasAttribute(field, "TomCat.SerializeFieldAttribute"))
                 continue;
 
+            if (TryGetAssetRefMarker(field.Type, out string assetMarker) &&
+                !IsSupportedAssetMarker(assetMarker))
+            {
+                context.ReportDiagnostic(Diagnostic.Create(UnsupportedAssetMarker,
+                    field.Locations.FirstOrDefault(), script.ToDisplayString(), field.Name,
+                    assetMarker));
+                continue;
+            }
             if (!TryGetFieldType(field.Type, out string token, out string? typeName))
             {
                 context.ReportDiagnostic(Diagnostic.Create(UnsupportedField,
@@ -276,12 +287,18 @@ public sealed class ScriptGenerator : IIncrementalGenerator
             "TomCat.Vector4" => "Vector4",
             "TomCat.Color" => "Color",
             "TomCat.Entity" => "Entity",
+			"TomCat.SceneAsset" => "AssetRef",
+			"TomCat.PrefabAsset" => "AssetRef",
             _ => string.Empty
         };
-        if (!string.IsNullOrEmpty(token))
+		if (!string.IsNullOrEmpty(token))
+		{
+			if (token == "AssetRef")
+				typeName = metadataName;
             return true;
-        if (type is INamedTypeSymbol { Name: "AssetRef", Arity: 1 } named &&
-            named.ContainingNamespace.ToDisplayString() == "TomCat")
+		}
+        if (TryGetAssetRefMarker(type, out string assetMarker) &&
+            IsSupportedAssetMarker(assetMarker))
         {
             token = "AssetRef";
             typeName = metadataName;
@@ -289,6 +306,27 @@ public sealed class ScriptGenerator : IIncrementalGenerator
         }
         return false;
     }
+
+    private static bool TryGetAssetRefMarker(ITypeSymbol type, out string markerName)
+    {
+        markerName = string.Empty;
+        if (type is not INamedTypeSymbol { Name: "AssetRef", Arity: 1 } named ||
+            named.ContainingNamespace.ToDisplayString() != "TomCat")
+            return false;
+        markerName = named.TypeArguments[0]
+            .ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
+        return true;
+    }
+
+    private static bool IsSupportedAssetMarker(string markerName) => markerName is
+        "TomCat.Texture2DAsset" or
+        "TomCat.ShaderAsset" or
+        "TomCat.AudioAsset" or
+        "TomCat.FontAsset" or
+        "TomCat.MeshAsset" or
+        "TomCat.MaterialAsset" or
+        "TomCat.SceneAsset" or
+        "TomCat.PrefabAsset";
 
     private static uint ReadLifecycle(INamedTypeSymbol script)
     {

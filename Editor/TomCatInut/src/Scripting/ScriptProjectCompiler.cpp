@@ -259,7 +259,8 @@ namespace TomCat {
 		}
 
 #ifdef TC_PLATFORM_WINDOWS
-		bool RunDotNetBuild(const std::filesystem::path& projectPath,
+		bool RunDotNetCommand(const std::wstring& arguments,
+			const std::filesystem::path& workingDirectory,
 			std::string& processOutput, int& exitCode, std::string& launchError)
 		{
 			processOutput.clear();
@@ -287,11 +288,9 @@ namespace TomCat {
 			startup.hStdError = writePipe;
 			PROCESS_INFORMATION process{};
 
-			std::wstring command = L"dotnet.exe build \"" + projectPath.wstring() +
-				L"\" --configuration Release --nologo --verbosity minimal";
+			std::wstring command = L"dotnet.exe " + arguments;
 			std::vector<wchar_t> mutableCommand(command.begin(), command.end());
 			mutableCommand.push_back(L'\0');
-			const std::filesystem::path workingDirectory = projectPath.parent_path();
 			const BOOL created = CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr,
 				TRUE, CREATE_NO_WINDOW, nullptr,
 				workingDirectory.empty() ? nullptr : workingDirectory.c_str(), &startup, &process);
@@ -299,7 +298,7 @@ namespace TomCat {
 			writePipe = nullptr;
 			if (!created)
 			{
-				launchError = "Could not start dotnet build (Win32 error " +
+				launchError = "Could not start dotnet.exe (Win32 error " +
 					std::to_string(GetLastError()) + ")";
 				CloseHandle(readPipe);
 				return false;
@@ -320,6 +319,51 @@ namespace TomCat {
 			CloseHandle(process.hProcess);
 			return true;
 		}
+
+		bool RunDotNetBuild(const std::filesystem::path& projectPath,
+			std::string& processOutput, int& exitCode, std::string& launchError)
+		{
+			return RunDotNetCommand(L"build \"" + projectPath.wstring() +
+				L"\" --configuration Release --nologo --verbosity minimal",
+				projectPath.parent_path(), processOutput, exitCode, launchError);
+		}
+
+		bool RunRestrictedDotNetBuild(const std::filesystem::path& projectPath,
+			std::string& processOutput, int& exitCode, std::string& launchError)
+		{
+			// These are command-line global properties, so neither an environment
+			// property nor an imported project can turn the extension points back on.
+			// The script project is engine-generated and deliberately has no NuGet or
+			// third-party managed dependency surface.
+			static constexpr std::array<const wchar_t*, 19> lockedProperties = {
+				L"ImportDirectoryBuildProps=false",
+				L"ImportDirectoryBuildTargets=false",
+				L"ImportDirectoryPackagesProps=false",
+				L"ImportProjectExtensionProps=false",
+				L"ImportProjectExtensionTargets=false",
+				L"RestoreEnableGlobalPackageReference=false",
+				L"ManagePackageVersionsCentrally=false",
+				L"ImportUserLocationsByWildcardBeforeMicrosoftCommonProps=false",
+				L"ImportUserLocationsByWildcardAfterMicrosoftCommonProps=false",
+				L"ImportUserLocationsByWildcardBeforeMicrosoftCommonTargets=false",
+				L"ImportUserLocationsByWildcardAfterMicrosoftCommonTargets=false",
+				L"ImportUserLocationsByWildcardBeforeMicrosoftCSharpTargets=false",
+				L"ImportUserLocationsByWildcardAfterMicrosoftCSharpTargets=false",
+				L"ImportByWildcardBeforeMicrosoftCommonProps=false",
+				L"ImportByWildcardAfterMicrosoftCommonProps=false",
+				L"ImportByWildcardBeforeMicrosoftCommonTargets=false",
+				L"ImportByWildcardAfterMicrosoftCommonTargets=false",
+				L"ImportByWildcardBeforeMicrosoftCSharpTargets=false",
+				L"ImportByWildcardAfterMicrosoftCSharpTargets=false"
+			};
+
+			std::wstring arguments = L"build -noAutoResponse \"" + projectPath.wstring() +
+				L"\" --configuration Release --nologo --verbosity minimal";
+			for (const wchar_t* property : lockedProperties)
+				arguments += L" -p:" + std::wstring(property);
+			return RunDotNetCommand(arguments, projectPath.parent_path(), processOutput,
+				exitCode, launchError);
+		}
 #else
 		bool RunDotNetBuild(const std::filesystem::path&, std::string&, int& exitCode,
 			std::string& launchError)
@@ -328,7 +372,56 @@ namespace TomCat {
 			launchError = "Script compilation is not implemented on this platform";
 			return false;
 		}
+
+		bool RunRestrictedDotNetBuild(const std::filesystem::path&, std::string&,
+			int& exitCode, std::string& launchError)
+		{
+			exitCode = -1;
+			launchError = "Script compilation is not implemented on this platform";
+			return false;
+		}
 #endif
+
+		bool CheckDotNet10Sdk(std::string& errorMessage)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			std::string output;
+			std::string launchError;
+			int exitCode = -1;
+			if (!RunDotNetCommand(L"--list-sdks", {}, output, exitCode, launchError))
+			{
+				errorMessage = ".NET 10 SDK is required to compile TomCat C# scripts, "
+					"but dotnet.exe could not be started. " + launchError +
+					". Install the .NET 10 SDK and ensure dotnet.exe is on PATH.";
+				return false;
+			}
+			if (exitCode != 0)
+			{
+				errorMessage = "Could not query installed .NET SDKs with "
+					"'dotnet --list-sdks' (exit code " + std::to_string(exitCode) + ").";
+				const std::string details = Trim(output);
+				if (!details.empty())
+					errorMessage += " " + details.substr(0, 4000);
+				return false;
+			}
+
+			const std::regex sdk10Pattern(R"(^\s*10\.[0-9]+\.[^\s]+\s+\[)");
+			std::istringstream lines(output);
+			std::string line;
+			while (std::getline(lines, line))
+			{
+				if (std::regex_search(line, sdk10Pattern))
+					return true;
+			}
+			errorMessage = ".NET 10 SDK is required to compile TomCat C# scripts, "
+				"but no 10.x SDK was reported by 'dotnet --list-sdks'. "
+				"Install the .NET 10 SDK from https://dotnet.microsoft.com/download/dotnet/10.0.";
+			return false;
+#else
+			errorMessage = ".NET 10 SDK detection is only supported on Windows x64.";
+			return false;
+#endif
+		}
 
 		std::vector<ScriptCompilerDiagnostic> ParseDiagnostics(const std::string& output)
 		{
@@ -390,6 +483,18 @@ namespace TomCat {
 		m_GeneratorReference = AbsoluteLexical(generatorReference);
 		m_ManagedApiIsProject = m_ManagedApiReference.extension() == ".csproj";
 		m_GeneratorIsProject = m_GeneratorReference.extension() == ".csproj";
+
+		std::string sdkError;
+		if (!CheckDotNet10Sdk(sdkError))
+		{
+			ScriptCompilerDiagnostic diagnostic;
+			diagnostic.Level = ScriptCompilerDiagnostic::Severity::Error;
+			diagnostic.Code = "TCSP0020";
+			diagnostic.Message = std::move(sdkError);
+			Emit(diagnostic);
+			m_State = ScriptBuildState::Failed;
+			return false;
+		}
 
 		if (!ResolveManagedReferences())
 		{
@@ -796,8 +901,62 @@ namespace TomCat {
 
 		const std::filesystem::path objectDirectory =
 			m_ScriptProjectDirectory / "obj" / buildID;
+		const std::filesystem::path disabledImportPath =
+			m_ScriptProjectDirectory / ("TomCat.Imports.Disabled." + buildID);
 		std::ostringstream project;
-		project << "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+		project << "<Project>\n"
+			<< "  <!-- Dependency policy: set these before Sdk.props can discover any "
+				"project-local or per-user imports. -->\n"
+			<< "  <PropertyGroup>\n"
+			<< "    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>\n"
+			<< "    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>\n"
+			<< "    <ImportDirectoryPackagesProps>false</ImportDirectoryPackagesProps>\n"
+			<< "    <ImportProjectExtensionProps>false</ImportProjectExtensionProps>\n"
+			<< "    <ImportProjectExtensionTargets>false</ImportProjectExtensionTargets>\n"
+			<< "    <RestoreEnableGlobalPackageReference>false</RestoreEnableGlobalPackageReference>\n"
+			<< "    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>\n"
+			<< "    <ImportUserLocationsByWildcardBeforeMicrosoftCommonProps>false</ImportUserLocationsByWildcardBeforeMicrosoftCommonProps>\n"
+			<< "    <ImportUserLocationsByWildcardAfterMicrosoftCommonProps>false</ImportUserLocationsByWildcardAfterMicrosoftCommonProps>\n"
+			<< "    <ImportUserLocationsByWildcardBeforeMicrosoftCommonTargets>false</ImportUserLocationsByWildcardBeforeMicrosoftCommonTargets>\n"
+			<< "    <ImportUserLocationsByWildcardAfterMicrosoftCommonTargets>false</ImportUserLocationsByWildcardAfterMicrosoftCommonTargets>\n"
+			<< "    <ImportUserLocationsByWildcardBeforeMicrosoftCSharpTargets>false</ImportUserLocationsByWildcardBeforeMicrosoftCSharpTargets>\n"
+			<< "    <ImportUserLocationsByWildcardAfterMicrosoftCSharpTargets>false</ImportUserLocationsByWildcardAfterMicrosoftCSharpTargets>\n"
+			<< "    <ImportByWildcardBeforeMicrosoftCommonProps>false</ImportByWildcardBeforeMicrosoftCommonProps>\n"
+			<< "    <ImportByWildcardAfterMicrosoftCommonProps>false</ImportByWildcardAfterMicrosoftCommonProps>\n"
+			<< "    <ImportByWildcardBeforeMicrosoftCommonTargets>false</ImportByWildcardBeforeMicrosoftCommonTargets>\n"
+			<< "    <ImportByWildcardAfterMicrosoftCommonTargets>false</ImportByWildcardAfterMicrosoftCommonTargets>\n"
+			<< "    <ImportByWildcardBeforeMicrosoftCSharpTargets>false</ImportByWildcardBeforeMicrosoftCSharpTargets>\n"
+			<< "    <ImportByWildcardAfterMicrosoftCSharpTargets>false</ImportByWildcardAfterMicrosoftCSharpTargets>\n"
+			<< "    <CustomBeforeDirectoryBuildProps />\n"
+			<< "    <CustomAfterDirectoryBuildProps />\n"
+			<< "    <CustomBeforeDirectoryBuildTargets />\n"
+			<< "    <CustomAfterDirectoryBuildTargets />\n"
+			<< "    <CustomBeforeMicrosoftCommonProps>"
+			<< EscapeXml(PathToUTF8(disabledImportPath))
+			<< ".props</CustomBeforeMicrosoftCommonProps>\n"
+			<< "    <CustomAfterMicrosoftCommonProps>"
+			<< EscapeXml(PathToUTF8(disabledImportPath))
+			<< ".props</CustomAfterMicrosoftCommonProps>\n"
+			<< "    <CustomBeforeMicrosoftCommonTargets>"
+			<< EscapeXml(PathToUTF8(disabledImportPath))
+			<< ".targets</CustomBeforeMicrosoftCommonTargets>\n"
+			<< "    <CustomAfterMicrosoftCommonTargets>"
+			<< EscapeXml(PathToUTF8(disabledImportPath))
+			<< ".targets</CustomAfterMicrosoftCommonTargets>\n"
+			<< "    <CustomBeforeMicrosoftCSharpTargets>"
+			<< EscapeXml(PathToUTF8(disabledImportPath))
+			<< ".targets</CustomBeforeMicrosoftCSharpTargets>\n"
+			<< "    <CustomAfterMicrosoftCSharpTargets>"
+			<< EscapeXml(PathToUTF8(disabledImportPath))
+			<< ".targets</CustomAfterMicrosoftCSharpTargets>\n"
+			<< "    <BaseIntermediateOutputPath>"
+			<< EscapeXml(PathToUTF8(objectDirectory))
+			<< "\\</BaseIntermediateOutputPath>\n"
+			<< "    <MSBuildProjectExtensionsPath>"
+			<< EscapeXml(PathToUTF8(objectDirectory))
+			<< "\\</MSBuildProjectExtensionsPath>\n"
+			<< "  </PropertyGroup>\n"
+			<< "  <Import Project=\"Sdk.props\" Sdk=\"Microsoft.NET.Sdk\" />\n"
 			<< "  <PropertyGroup>\n"
 			<< "    <TargetFramework>net10.0</TargetFramework>\n"
 			<< "    <AssemblyName>Assembly-CSharp</AssemblyName>\n"
@@ -824,20 +983,26 @@ namespace TomCat {
 		{
 			project << "    <ProjectReference Include=\""
 				<< EscapeXml(PathToUTF8(m_ManagedApiReference))
-				<< "\"><Private>false</Private></ProjectReference>\n";
+				<< "\"><Private>false</Private>"
+					"<TomCatTrustedReference>true</TomCatTrustedReference>"
+					"</ProjectReference>\n";
 		}
 		else
 		{
 			project << "    <Reference Include=\"TomCat.Managed\"><HintPath>"
 				<< EscapeXml(PathToUTF8(m_ManagedApiReference))
-				<< "</HintPath><Private>false</Private></Reference>\n";
+				<< "</HintPath><Private>false</Private>"
+					"<TomCatTrustedReference>true</TomCatTrustedReference>"
+					"</Reference>\n";
 		}
 
 		if (m_GeneratorIsProject)
 		{
 			project << "    <ProjectReference Include=\""
 				<< EscapeXml(PathToUTF8(m_GeneratorReference))
-				<< "\" OutputItemType=\"Analyzer\" ReferenceOutputAssembly=\"false\" />\n";
+				<< "\" OutputItemType=\"Analyzer\" ReferenceOutputAssembly=\"false\">"
+					"<TomCatTrustedReference>true</TomCatTrustedReference>"
+					"</ProjectReference>\n";
 		}
 		else
 		{
@@ -853,7 +1018,29 @@ namespace TomCat {
 				<< EscapeXml(PathToUTF8(source.AbsolutePath)) << "\" Link=\""
 				<< EscapeXml(PathToUTF8(source.ProjectRelativePath)) << "\" />\n";
 		}
-		project << "  </ItemGroup>\n</Project>\n";
+		project << "  </ItemGroup>\n"
+			// Snapshot only items declared before the trusted SDK target import. This
+			// avoids treating framework references resolved later by the SDK as local
+			// DLL injection while still catching props/central-package additions.
+			<< "  <ItemGroup>\n"
+			<< "    <_TomCatBlockedPackageItem Include=\"@(PackageReference);@(PackageDownload);@(GlobalPackageReference);@(DotNetCliToolReference)\" />\n"
+			<< "    <_TomCatBlockedReference Include=\"@(Reference)\" />\n"
+			<< "    <_TomCatBlockedReference Remove=\"@(_TomCatBlockedReference->WithMetadataValue('TomCatTrustedReference', 'true'))\" />\n"
+			<< "    <_TomCatBlockedProjectReference Include=\"@(ProjectReference)\" />\n"
+			<< "    <_TomCatBlockedProjectReference Remove=\"@(_TomCatBlockedProjectReference->WithMetadataValue('TomCatTrustedReference', 'true'))\" />\n"
+			<< "  </ItemGroup>\n"
+			<< "  <Target Name=\"TomCatValidateBuildInputs\" "
+				"BeforeTargets=\"_GenerateRestoreProjectSpec;CollectPackageReferences;ResolveReferences;CoreCompile\">\n"
+			<< "    <Error Code=\"TCSP0021\" "
+				"Condition=\"'@(_TomCatBlockedPackageItem)' != ''\" "
+				"Text=\"NuGet PackageReference and package download items are disabled for TomCat scripts.\" />\n"
+			<< "    <Error Code=\"TCSP0022\" "
+				"Condition=\"'@(_TomCatBlockedReference)' != '' Or "
+				"'@(_TomCatBlockedProjectReference)' != ''\" "
+				"Text=\"Local or third-party managed references are disabled for TomCat scripts.\" />\n"
+			<< "  </Target>\n"
+			<< "  <Import Project=\"Sdk.targets\" Sdk=\"Microsoft.NET.Sdk\" />\n"
+			<< "</Project>\n";
 
 		return FileSystem::WriteFileAtomically(
 			m_ScriptProjectDirectory / "Assembly-CSharp.csproj", project.str(), errorMessage);
@@ -985,7 +1172,7 @@ namespace TomCat {
 
 		std::string output;
 		std::string launchError;
-		if (!RunDotNetBuild(m_ScriptProjectDirectory / "Assembly-CSharp.csproj",
+		if (!RunRestrictedDotNetBuild(m_ScriptProjectDirectory / "Assembly-CSharp.csproj",
 			output, result.ExitCode, launchError))
 		{
 			ScriptCompilerDiagnostic diagnostic;

@@ -7,6 +7,7 @@
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 
 #include <cmath>
 #include <iomanip>
@@ -161,9 +162,15 @@ namespace TomCat::Scripting {
 
 	std::string ScriptEngine::SerializeFields(Scene& scene) const
 	{
+		return SerializeFields(scene, std::span<const UUID>(scene.m_EntityOrder));
+	}
+
+	std::string ScriptEngine::SerializeFields(Scene& scene,
+		std::span<const UUID> entityIDs) const
+	{
 		std::string output = "{\"attachments\":[";
 		bool firstAttachment = true;
-		for (UUID entityId : scene.m_EntityOrder)
+		for (UUID entityId : entityIDs)
 		{
 			Entity entity = scene.FindEntityByUUID(entityId);
 			if (!entity || !entity.HasComponent<CSharpScripts>())
@@ -197,7 +204,146 @@ namespace TomCat::Scripting {
 		return output;
 	}
 
+	bool ScriptEngine::InstantiateRuntimeAttachments(Scene& scene,
+		uint64_t sceneSessionId, std::span<const UUID> entityIDs)
+	{
+		uint64_t runtimeGeneration = 0;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			const auto binding = m_Scenes.find(sceneSessionId);
+			if (binding == m_Scenes.end() || binding->second.ScenePointer != &scene)
+				return false;
+			runtimeGeneration = binding->second.RuntimeGeneration;
+		}
+
+		auto runtime = GetRuntime();
+		if (!runtime || !runtime->IsReady() || runtimeGeneration == 0)
+			return false;
+		std::vector<NativeScriptAttachmentV1> attachments;
+		for (UUID entityId : entityIDs)
+		{
+			Entity entity = scene.FindEntityByUUID(entityId);
+			if (!entity || !entity.HasComponent<CSharpScripts>())
+				continue;
+			for (const CSharpScriptEntry& script : entity.GetComponent<CSharpScripts>().Scripts)
+			{
+				NativeScriptAttachmentV1 attachment;
+				attachment.Entity = EntityHandleV1{ sceneSessionId,
+					static_cast<uint64_t>(entityId), runtimeGeneration };
+				attachment.AttachmentId = static_cast<uint64_t>(script.AttachmentID);
+				attachment.ScriptAsset = static_cast<uint64_t>(script.ScriptAsset);
+				attachment.Enabled = script.Enabled ? 1 : 0;
+				attachments.push_back(attachment);
+			}
+		}
+		if (attachments.empty())
+			return true;
+
+		const std::string fields = SerializeFields(scene, entityIDs);
+		const ScriptStatus status = runtime->InstantiateAttachments(attachments, fields);
+		if (!IsSuccess(status))
+			ReportFailure("Instantiate dynamic script attachments", status);
+		return IsSuccess(status);
+	}
+
+	void ScriptEngine::RollbackRuntimeEntityBatch(Scene& scene,
+		std::span<const UUID> entityIDs, bool destroyManagedAttachments)
+	{
+		if (destroyManagedAttachments)
+		{
+			std::vector<uint64_t> attachmentIDs;
+			for (UUID entityID : entityIDs)
+			{
+				Entity entity = scene.FindEntityByUUID(entityID);
+				if (!entity || !entity.HasComponent<CSharpScripts>())
+					continue;
+				for (const CSharpScriptEntry& script :
+					entity.GetComponent<CSharpScripts>().Scripts)
+				{
+					const uint64_t attachmentID =
+						static_cast<uint64_t>(script.AttachmentID);
+					if (attachmentID != 0)
+						attachmentIDs.push_back(attachmentID);
+				}
+			}
+			auto runtime = GetRuntime();
+			if (runtime && !attachmentIDs.empty())
+				ReportFailure("Rollback dynamic script attachments",
+					runtime->DestroyAttachments(attachmentIDs));
+		}
+
+		// Remove the serialized records before destroying Entities. When startup
+		// failed there is no live managed Scene left for NotifyEntityDestroyed;
+		// after a dynamic failure the explicit batch destroy above is authoritative.
+		for (UUID entityID : entityIDs)
+		{
+			Entity entity = scene.FindEntityByUUID(entityID);
+			if (entity && entity.HasComponent<CSharpScripts>())
+				entity.RemoveComponent<CSharpScripts>();
+		}
+		for (auto iterator = entityIDs.rbegin(); iterator != entityIDs.rend(); ++iterator)
+		{
+			Entity entity = scene.FindEntityByUUID(*iterator);
+			if (entity)
+				scene.DestroyEntity(entity);
+		}
+	}
+
+	void ScriptEngine::InstallRuntimeEntityBatchCallback(Scene& scene,
+		uint64_t sceneSessionId)
+	{
+		scene.SetRuntimeEntityBatchCreatedCallback(
+			[this, &scene, sceneSessionId](std::span<const UUID> entityIDs)
+			{
+				if (InstantiateRuntimeAttachments(scene, sceneSessionId, entityIDs))
+				{
+					// Managed OnCreate/OnEnable may have queued commands. Commit those
+					// only after the managed batch callback has returned.
+					FlushDeferredCommands(sceneSessionId);
+					return;
+				}
+				RollbackRuntimeEntityBatch(scene, entityIDs, true);
+			});
+	}
+
 	uint64_t ScriptEngine::StartScene(Scene& scene, uint64_t runtimeGeneration)
+	{
+		return StartSceneCore(scene, runtimeGeneration,
+			std::span<const UUID>(scene.m_EntityOrder), true);
+	}
+
+	uint64_t ScriptEngine::StartSceneForRuntimeBatch(Scene& scene,
+		uint64_t runtimeGeneration, std::span<const UUID> entityIDs)
+	{
+		// Anything outside this just-created batch is initial state. This keeps
+		// the first runtime batch on the incremental ABI even when a runtime is
+		// established lazily for a Scene that entered Play without scripts.
+		std::vector<UUID> initialEntityIDs;
+		initialEntityIDs.reserve(scene.m_EntityOrder.size());
+		for (UUID entityID : scene.m_EntityOrder)
+		{
+			if (std::find(entityIDs.begin(), entityIDs.end(), entityID)
+				== entityIDs.end())
+				initialEntityIDs.push_back(entityID);
+		}
+
+		const uint64_t sceneSessionId = StartSceneCore(scene, runtimeGeneration,
+			initialEntityIDs, false);
+		if (sceneSessionId == 0)
+		{
+			RollbackRuntimeEntityBatch(scene, entityIDs, false);
+			return 0;
+		}
+
+		if (!InstantiateRuntimeAttachments(scene, sceneSessionId, entityIDs))
+			RollbackRuntimeEntityBatch(scene, entityIDs, true);
+		else
+			FlushDeferredCommands(sceneSessionId);
+		return sceneSessionId;
+	}
+
+	uint64_t ScriptEngine::StartSceneCore(Scene& scene, uint64_t runtimeGeneration,
+		std::span<const UUID> initialEntityIDs, bool flushPendingCreates)
 	{
 		auto runtime = GetRuntime();
 		if (!runtime || !runtime->IsReady() || runtimeGeneration == 0)
@@ -210,9 +356,10 @@ namespace TomCat::Scripting {
 			while (session == 0 || m_Scenes.find(session) != m_Scenes.end());
 			m_Scenes.emplace(session, SceneBinding{ &scene, runtimeGeneration });
 		}
+		InstallRuntimeEntityBatchCallback(scene, session);
 
 		std::vector<NativeScriptAttachmentV1> attachments;
-		for (UUID entityId : scene.m_EntityOrder)
+		for (UUID entityId : initialEntityIDs)
 		{
 			Entity entity = scene.FindEntityByUUID(entityId);
 			if (!entity || !entity.HasComponent<CSharpScripts>())
@@ -231,11 +378,12 @@ namespace TomCat::Scripting {
 
 		ScriptStatus status = runtime->CreateSceneRuntime(session, runtimeGeneration);
 		if (IsSuccess(status)) status = runtime->InstantiateAll(attachments);
-		const std::string fields = SerializeFields(scene);
+		const std::string fields = SerializeFields(scene, initialEntityIDs);
 		if (IsSuccess(status)) status = runtime->ApplySerializedFields(fields);
 		if (IsSuccess(status)) status = runtime->InvokeCreateAll();
 		if (!IsSuccess(status))
 		{
+			scene.SetRuntimeEntityBatchCreatedCallback({});
 			ReportFailure("StartScene", status);
 			ReportFailure("DestroyAll after failed StartScene", runtime->DestroyAll());
 			bool unloaded = false;
@@ -251,6 +399,8 @@ namespace TomCat::Scripting {
 			return 0;
 		}
 		FlushDeferredCommands(session);
+		if (flushPendingCreates)
+			scene.FlushPendingRuntimeEntityCreates();
 		return session;
 	}
 
@@ -258,6 +408,15 @@ namespace TomCat::Scripting {
 	{
 		if (sceneSessionId == 0)
 			return;
+		Scene* scene = nullptr;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			const auto binding = m_Scenes.find(sceneSessionId);
+			if (binding != m_Scenes.end())
+				scene = binding->second.ScenePointer;
+		}
+		if (scene)
+			scene->SetRuntimeEntityBatchCreatedCallback({});
 		auto runtime = GetRuntime();
 		if (runtime)
 			ReportFailure("DestroyAll", runtime->DestroyAll());
@@ -432,6 +591,30 @@ namespace TomCat::Scripting {
 		return ResolveEntity(entity) && QueueCommand(command);
 	}
 
+	bool ScriptEngine::QueueInstantiatePrefab(const EntityHandleV1& context,
+		uint64_t prefabHandle, NativeVector3 worldPosition,
+		const EntityHandleV1& parent)
+	{
+		if (prefabHandle == 0 || !std::isfinite(worldPosition.X)
+			|| !std::isfinite(worldPosition.Y) || !std::isfinite(worldPosition.Z)
+			|| !ResolveEntity(context))
+			return false;
+		const bool hasParent = parent.SceneSessionId != 0 || parent.EntityId != 0
+			|| parent.RuntimeGeneration != 0;
+		if (hasParent && (parent.SceneSessionId != context.SceneSessionId
+			|| parent.RuntimeGeneration != context.RuntimeGeneration
+			|| parent.EntityId == 0 || !ResolveEntity(parent)))
+			return false;
+
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::InstantiatePrefab;
+		command.Entity = context;
+		command.AssetHandle = prefabHandle;
+		command.WorldPosition = worldPosition;
+		command.Parent = parent;
+		return QueueCommand(command);
+	}
+
 	void ScriptEngine::FlushDeferredCommands(uint64_t sceneSessionId)
 	{
 		std::vector<DeferredCommand> commands;
@@ -535,6 +718,43 @@ namespace TomCat::Scripting {
 						return static_cast<uint64_t>(script.AttachmentID)
 							== command.AttachmentId;
 					}), scripts.end());
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::InstantiatePrefab)
+			{
+				Scene* scene = ResolveScene(command.Entity);
+				if (!scene || !ResolveEntity(command.Entity))
+					continue;
+				PrefabArchive archive;
+				std::string error;
+				if (!PrefabArchiveCodec::Load(TomCat::AssetHandle(command.AssetHandle),
+					archive, error))
+				{
+					TC_Core_Error("Could not load Prefab asset {0}: {1}",
+						command.AssetHandle, error);
+					continue;
+				}
+
+				PrefabInstantiateOptions options;
+				options.RootWorldPosition = glm::vec3(command.WorldPosition.X,
+					command.WorldPosition.Y, command.WorldPosition.Z);
+				const bool hasParent = command.Parent.SceneSessionId != 0
+					|| command.Parent.EntityId != 0
+					|| command.Parent.RuntimeGeneration != 0;
+				if (hasParent)
+				{
+					Entity parent = ResolveEntity(command.Parent);
+					if (!parent)
+						continue;
+					options.Parent = UUID(command.Parent.EntityId);
+				}
+				PrefabInstantiationResult instance;
+				if (!PrefabArchiveCodec::Instantiate(archive, *scene, options,
+					instance, error))
+				{
+					TC_Core_Error("Could not instantiate Prefab asset {0}: {1}",
+						command.AssetHandle, error);
+				}
 				continue;
 			}
 

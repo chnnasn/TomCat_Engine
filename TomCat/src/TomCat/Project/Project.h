@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TomCat/Asset/Asset.h"
+#include "BuildSettings.h"
 #include "ProjectSettings.h"
 
 #include <string>
@@ -19,9 +20,9 @@ namespace TomCat {
 		std::string EditorVersion;
 		std::string Template = "3D";
 		std::filesystem::path AssetDirectory = "Assets";
+		// Deprecated in-memory compatibility mirrors. Project schema v4 never
+		// persists these fields; ProjectSettings/BuildSettings.json is authoritative.
 		std::filesystem::path StartScene = "sample.tomcat";
-		// Stable identity is authoritative. The path is only an author-friendly
-		// locator and is repaired from this handle.
 		AssetHandle StartSceneHandle = AssetHandle(0);
 
 		// User-local recency metadata is stored in Hub settings rather than rewriting
@@ -51,7 +52,8 @@ namespace TomCat {
 	class Project
 	{
 	public:
-		static constexpr uint32_t CurrentSchemaVersion = 3;
+		static constexpr uint32_t OldestSupportedSchemaVersion = 3;
+		static constexpr uint32_t CurrentSchemaVersion = 4;
 
 		Project() = default;
 		Project(const std::filesystem::path& projectPath);
@@ -60,15 +62,21 @@ namespace TomCat {
 		const std::filesystem::path& GetProjectDirectory() const { return m_Directory; }
 		const ProjectConfig& GetConfig() const { return m_Config; }
 		const ProjectSettings& GetSettings() const { return m_Settings; }
+		const BuildSettings& GetBuildSettings() const { return m_BuildSettings; }
 		std::filesystem::path GetSettingsPath() const
 		{
 			return m_Directory / "ProjectSettings" / "ProjectSettings.json";
+		}
+		std::filesystem::path GetBuildSettingsPath() const
+		{
+			return m_Directory / "ProjectSettings" / "BuildSettings.json";
 		}
 		
 		void SetConfig(const ProjectConfig& config) { m_Config = config; }
 		// Validates and atomically persists shared project settings. The in-memory
 		// value changes only if the file write succeeds.
 		bool SetSettings(const ProjectSettings& settings);
+		bool SetBuildSettings(const BuildSettings& settings);
 		
 		const std::string& GetName() const { return m_Config.Name; }
 		const std::string& GetEditorVersion() const { return m_Config.EditorVersion; }
@@ -85,7 +93,7 @@ namespace TomCat {
 		std::filesystem::path GetUserSettingsPath() const { return m_Directory / "UserSettings"; }
 
 		bool SetStartScene(const std::filesystem::path& scenePath);
-		void SetStartSceneHandle(AssetHandle handle) { m_Config.StartSceneHandle = handle; }
+		bool SetStartSceneHandle(AssetHandle handle);
 
 		EditorProjectStateLoadResult LoadEditorState(EditorProjectState& state) const;
 		bool SaveEditorState(const EditorProjectState& state) const;
@@ -96,13 +104,17 @@ namespace TomCat {
 		static Ref<Project> Load(const std::filesystem::path& projectPath);
 		bool Save();
 		bool SaveSettings() const;
+		bool SaveBuildSettings() const;
 		bool Reload();
 
 	private:
+		void SynchronizeLegacyStartSceneMirror();
+
 		std::filesystem::path m_ProjectPath;
 		std::filesystem::path m_Directory;
 		ProjectConfig m_Config;
 		ProjectSettings m_Settings;
+		BuildSettings m_BuildSettings;
 		std::string m_PreservedDocument;
 
 		friend class ProjectManager;

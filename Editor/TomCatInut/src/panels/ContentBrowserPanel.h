@@ -31,9 +31,17 @@ namespace TomCat {
 		using SceneOpenCallback = std::function<void(AssetHandle)>;
 		using AssetRenamedCallback = std::function<bool(const std::filesystem::path&, const std::filesystem::path&)>;
 		using AssetDeletedCallback = std::function<void(const std::filesystem::path&)>;
+		using EntityPrefabCreateCallback =
+			std::function<bool(UUID, const std::filesystem::path&)>;
 		void SetSceneOpenCallback(SceneOpenCallback callback) { m_SceneOpenCallback = std::move(callback); }
 		void SetAssetRenamedCallback(AssetRenamedCallback callback) { m_AssetRenamedCallback = std::move(callback); }
 		void SetAssetDeletedCallback(AssetDeletedCallback callback) { m_AssetDeletedCallback = std::move(callback); }
+		void SetEntityPrefabCreateCallback(EntityPrefabCreateCallback callback)
+		{
+			m_EntityPrefabCreateCallback = std::move(callback);
+		}
+		std::filesystem::path GetWritableCreationDirectory() const;
+		void RevealAsset(const std::filesystem::path& path);
 
 		// Layout uses LocalAppData without a project, otherwise project UserSettings/imgui.ini.
 		void LoadLayoutSetting();
@@ -91,6 +99,7 @@ namespace TomCat {
 		SceneOpenCallback m_SceneOpenCallback;
 		AssetRenamedCallback m_AssetRenamedCallback;
 		AssetDeletedCallback m_AssetDeletedCallback;
+		EntityPrefabCreateCallback m_EntityPrefabCreateCallback;
 
 		std::filesystem::path GetAssetRoot() const;
 		std::filesystem::path GetPackagesRoot() const;

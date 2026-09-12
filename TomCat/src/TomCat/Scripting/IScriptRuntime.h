@@ -32,6 +32,11 @@ namespace TomCat::Scripting {
 		{
 			return ScriptStatus::Success;
 		}
+		virtual ScriptStatus InstantiateAttachments(
+			std::span<const NativeScriptAttachmentV1>, std::string_view)
+		{
+			return ScriptStatus::Unavailable;
+		}
 		virtual bool ReadProjectMetadata(std::string&) { return false; }
 		// Collectible managed runtimes use this to cooperatively verify that their
 		// project domain has unloaded. Native/fake runtimes have nothing to poll.

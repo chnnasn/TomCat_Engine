@@ -2,16 +2,16 @@
 #include <imgui/imgui.h>
 
 #include <algorithm>
-#include <charconv>
 #include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <iterator>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #ifdef TC_PLATFORM_WINDOWS
@@ -21,6 +21,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
@@ -30,6 +31,7 @@
 #include "TomCat/Scripting/ScriptDiagnosticSink.h"
 #include "TomCat/Scripting/ScriptEngine.h"
 
+#include "Player/PlayerBuilder.h"
 #include "ImGuizmo.h"
 
 
@@ -86,6 +88,67 @@ namespace TomCat {
 			std::error_code error;
 			const std::filesystem::path absolute = std::filesystem::absolute(path, error);
 			return (error ? path : absolute).lexically_normal();
+		}
+
+		std::string SanitizePrefabFileStem(std::string value)
+		{
+			for (char& character : value)
+			{
+				const unsigned char byte = static_cast<unsigned char>(character);
+				if (byte < 0x20 || character == '<' || character == '>'
+					|| character == ':' || character == '"' || character == '/'
+					|| character == '\\' || character == '|' || character == '?'
+					|| character == '*')
+					character = '_';
+			}
+			while (!value.empty() && (value.front() == ' ' || value.front() == '.'))
+				value.erase(value.begin());
+			while (!value.empty() && (value.back() == ' ' || value.back() == '.'))
+				value.pop_back();
+			if (value.empty())
+				value = "Prefab";
+
+			std::string deviceName = value.substr(0, value.find('.'));
+			std::transform(deviceName.begin(), deviceName.end(), deviceName.begin(),
+				[](unsigned char character)
+				{
+					return static_cast<char>(std::tolower(character));
+				});
+			bool reserved = deviceName == "con" || deviceName == "prn"
+				|| deviceName == "aux" || deviceName == "nul";
+			if (!reserved && deviceName.size() == 4
+				&& (deviceName.rfind("com", 0) == 0
+					|| deviceName.rfind("lpt", 0) == 0)
+				&& deviceName[3] >= '1' && deviceName[3] <= '9')
+				reserved = true;
+			if (reserved)
+				value.insert(value.begin(), '_');
+			return value;
+		}
+
+		std::filesystem::path MakeUniquePrefabPath(
+			const std::filesystem::path& directory, const std::string& entityName)
+		{
+			const std::string stem = SanitizePrefabFileStem(entityName);
+			for (uint32_t index = 0; index < 10000; ++index)
+			{
+				std::string fileName = stem;
+				if (index > 0)
+					fileName += " (" + std::to_string(index) + ")";
+				const std::filesystem::path candidate =
+					directory / UTF8ToPath(fileName + ".tcprefab");
+				std::error_code error;
+				const bool assetExists = std::filesystem::exists(candidate, error);
+				if (error)
+					return {};
+				const bool metadataExists = std::filesystem::exists(
+					AssetRegistry::GetMetadataPath(candidate), error);
+				if (error)
+					return {};
+				if (!assetExists && !metadataExists)
+					return candidate;
+			}
+			return {};
 		}
 
 		bool TryGetRelativeWithin(const std::filesystem::path& root,
@@ -296,59 +359,6 @@ namespace TomCat {
 			return false;
 		}
 
-		std::string LowerASCII(std::string value)
-		{
-			std::transform(value.begin(), value.end(), value.begin(),
-				[](unsigned char character)
-				{
-					return static_cast<char>(std::tolower(character));
-				});
-			return value;
-		}
-
-		std::string SanitizePlayerDirectoryName(std::string value)
-		{
-			for (char& character : value)
-			{
-				const unsigned char byte = static_cast<unsigned char>(character);
-				if (byte < 0x20 || character == '<' || character == '>' ||
-					character == ':' || character == '"' || character == '/' ||
-					character == '\\' || character == '|' || character == '?' ||
-					character == '*')
-					character = '_';
-			}
-			while (!value.empty() && (value.front() == ' ' || value.front() == '.'))
-				value.erase(value.begin());
-			while (!value.empty() && (value.back() == ' ' || value.back() == '.'))
-				value.pop_back();
-			if (value.empty())
-				value = "TomCatGame";
-
-			std::string stem = value.substr(0, value.find('.'));
-			stem = LowerASCII(std::move(stem));
-			bool reserved = stem == "con" || stem == "prn" || stem == "aux" ||
-				stem == "nul";
-			if (!reserved && stem.size() == 4 &&
-				(stem.rfind("com", 0) == 0 || stem.rfind("lpt", 0) == 0) &&
-				stem[3] >= '1' && stem[3] <= '9')
-				reserved = true;
-			if (reserved)
-				value.insert(value.begin(), '_');
-			return value;
-		}
-
-		bool IsFilesystemReparsePoint(const std::filesystem::path& path)
-		{
-#ifdef TC_PLATFORM_WINDOWS
-			const DWORD attributes = GetFileAttributesW(path.c_str());
-			return attributes != INVALID_FILE_ATTRIBUTES &&
-				(attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-#else
-			std::error_code error;
-			return std::filesystem::is_symlink(
-				std::filesystem::symlink_status(path, error));
-#endif
-		}
 
 		bool ReadBinaryFileForBuild(const std::filesystem::path& path,
 			std::vector<uint8_t>& bytes, std::string& errorMessage)
@@ -381,532 +391,6 @@ namespace TomCat {
 			return true;
 		}
 
-		bool ReadTextFileForBuild(const std::filesystem::path& path,
-			std::string& contents, std::string& errorMessage)
-		{
-			std::ifstream input(path, std::ios::binary);
-			if (!input)
-			{
-				errorMessage = "Could not open '" + PathToUTF8(path) + "'.";
-				return false;
-			}
-			std::ostringstream output;
-			output << input.rdbuf();
-			if (input.bad())
-			{
-				errorMessage = "Could not read '" + PathToUTF8(path) + "'.";
-				return false;
-			}
-			contents = output.str();
-			return true;
-		}
-
-		bool CopyPlayerFile(const std::filesystem::path& source,
-			const std::filesystem::path& destination, std::string& errorMessage)
-		{
-			std::error_code error;
-			const std::filesystem::file_status status =
-				std::filesystem::symlink_status(source, error);
-			if (error || !std::filesystem::is_regular_file(status) ||
-				std::filesystem::is_symlink(status) || IsFilesystemReparsePoint(source))
-			{
-				errorMessage = "Required release file is missing or unsafe: '" +
-					PathToUTF8(source) + "'.";
-				return false;
-			}
-			std::filesystem::create_directories(destination.parent_path(), error);
-			if (error)
-			{
-				errorMessage = "Could not create '" +
-					PathToUTF8(destination.parent_path()) + "': " + error.message();
-				return false;
-			}
-			std::filesystem::copy_file(source, destination,
-				std::filesystem::copy_options::overwrite_existing, error);
-			if (error)
-			{
-				errorMessage = "Could not copy '" + PathToUTF8(source) + "' to '" +
-					PathToUTF8(destination) + "': " + error.message();
-				return false;
-			}
-			return true;
-		}
-
-		bool CopyPlayerDirectory(const std::filesystem::path& source,
-			const std::filesystem::path& destination, std::string& errorMessage)
-		{
-			std::error_code error;
-			const std::filesystem::file_status rootStatus =
-				std::filesystem::symlink_status(source, error);
-			if (error || !std::filesystem::is_directory(rootStatus) ||
-				std::filesystem::is_symlink(rootStatus) || IsFilesystemReparsePoint(source))
-			{
-				errorMessage = "Required release directory is missing or unsafe: '" +
-					PathToUTF8(source) + "'.";
-				return false;
-			}
-			std::filesystem::create_directories(destination, error);
-			if (error)
-			{
-				errorMessage = "Could not create '" + PathToUTF8(destination) +
-					"': " + error.message();
-				return false;
-			}
-
-			std::filesystem::recursive_directory_iterator iterator(source,
-				std::filesystem::directory_options::none, error), end;
-			for (; !error && iterator != end; iterator.increment(error))
-			{
-				const std::filesystem::file_status status = iterator->symlink_status(error);
-				if (error)
-					break;
-				if (std::filesystem::is_symlink(status) ||
-					IsFilesystemReparsePoint(iterator->path()))
-				{
-					errorMessage = "Release inputs may not contain symbolic links: '" +
-						PathToUTF8(iterator->path()) + "'.";
-					return false;
-				}
-				const std::filesystem::path relative =
-					iterator->path().lexically_relative(source);
-				if (relative.empty() || relative.is_absolute())
-				{
-					errorMessage = "Could not derive a safe release-relative path for '" +
-						PathToUTF8(iterator->path()) + "'.";
-					return false;
-				}
-				const std::filesystem::path target = destination / relative;
-				if (std::filesystem::is_directory(status))
-					std::filesystem::create_directories(target, error);
-				else if (std::filesystem::is_regular_file(status))
-				{
-					if (!CopyPlayerFile(iterator->path(), target, errorMessage))
-						return false;
-				}
-				else
-				{
-					errorMessage = "Release inputs contain an unsupported filesystem entry: '" +
-						PathToUTF8(iterator->path()) + "'.";
-					return false;
-				}
-			}
-			if (error)
-			{
-				errorMessage = "Could not enumerate '" + PathToUTF8(source) +
-					"': " + error.message();
-				return false;
-			}
-			return true;
-		}
-
-		bool ParseNumericVersion(std::string_view value,
-			std::vector<uint32_t>& components)
-		{
-			components.clear();
-			size_t cursor = 0;
-			while (cursor < value.size())
-			{
-				const size_t separator = value.find('.', cursor);
-				const size_t end = separator == std::string_view::npos
-					? value.size() : separator;
-				if (end == cursor)
-					return false;
-				uint32_t component = 0;
-				const char* begin = value.data() + cursor;
-				const char* finish = value.data() + end;
-				const auto parsed = std::from_chars(begin, finish, component);
-				if (parsed.ec != std::errc{} || parsed.ptr != finish)
-					return false;
-				components.push_back(component);
-				if (separator == std::string_view::npos)
-					return true;
-				cursor = separator + 1;
-			}
-			return !components.empty();
-		}
-
-		bool NumericVersionLess(std::vector<uint32_t> left,
-			std::vector<uint32_t> right)
-		{
-			const size_t count = std::max(left.size(), right.size());
-			left.resize(count);
-			right.resize(count);
-			return std::lexicographical_compare(left.begin(), left.end(),
-				right.begin(), right.end());
-		}
-
-		bool ReadFrameworkVersion(const std::filesystem::path& runtimeConfig,
-			std::vector<uint32_t>& requestedVersion, std::string& errorMessage)
-		{
-			std::string json;
-			if (!ReadTextFileForBuild(runtimeConfig, json, errorMessage))
-				return false;
-			size_t cursor = json.find("\"framework\"");
-			if (cursor != std::string::npos)
-				cursor = json.find("\"version\"", cursor);
-			if (cursor == std::string::npos)
-			{
-				errorMessage = "TomCat.ScriptHost.runtimeconfig.json has no framework version.";
-				return false;
-			}
-			cursor = json.find(':', cursor);
-			cursor = cursor == std::string::npos ? cursor : json.find('"', cursor + 1);
-			const size_t end = cursor == std::string::npos
-				? cursor : json.find('"', cursor + 1);
-			if (cursor == std::string::npos || end == std::string::npos ||
-				!ParseNumericVersion(std::string_view(json).substr(cursor + 1,
-					end - cursor - 1), requestedVersion) || requestedVersion.size() < 2)
-			{
-				errorMessage = "TomCat.ScriptHost.runtimeconfig.json has an invalid framework version.";
-				return false;
-			}
-			return true;
-		}
-
-		bool FindHighestDotNetVersionDirectory(const std::filesystem::path& root,
-			const std::vector<uint32_t>* requestedFramework,
-			std::filesystem::path& selected, std::string& errorMessage)
-		{
-			selected.clear();
-			std::vector<uint32_t> selectedVersion;
-			std::error_code error;
-			std::filesystem::directory_iterator iterator(root,
-				std::filesystem::directory_options::none, error), end;
-			for (; !error && iterator != end; iterator.increment(error))
-			{
-				if (!iterator->is_directory(error) || error)
-					continue;
-				std::vector<uint32_t> version;
-				if (!ParseNumericVersion(PathToUTF8(iterator->path().filename()), version))
-					continue;
-				if (requestedFramework)
-				{
-					if (version.size() < 2 || (*requestedFramework).size() < 2 ||
-						version[0] != (*requestedFramework)[0] ||
-						version[1] != (*requestedFramework)[1] ||
-						NumericVersionLess(version, *requestedFramework))
-						continue;
-				}
-				if (selected.empty() || NumericVersionLess(selectedVersion, version))
-				{
-					selected = iterator->path();
-					selectedVersion = std::move(version);
-				}
-			}
-			if (error)
-			{
-				errorMessage = "Could not enumerate .NET versions in '" +
-					PathToUTF8(root) + "': " + error.message();
-				return false;
-			}
-			return !selected.empty();
-		}
-
-#ifdef TC_PLATFORM_WINDOWS
-		std::filesystem::path ReadWindowsEnvironmentPath(const wchar_t* name)
-		{
-			const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
-			if (required == 0)
-				return {};
-			std::vector<wchar_t> value(static_cast<size_t>(required));
-			const DWORD written = GetEnvironmentVariableW(name, value.data(), required);
-			if (written == 0 || written >= required)
-				return {};
-			return std::filesystem::path(std::wstring(value.data(), written));
-		}
-#endif
-
-		bool ResolvePrivateDotNetPayload(const std::filesystem::path& runtimeConfig,
-			std::filesystem::path& dotnetRoot, std::filesystem::path& hostFxrDirectory,
-			std::filesystem::path& runtimeDirectory, std::string& errorMessage)
-		{
-#ifdef TC_PLATFORM_WINDOWS
-			std::vector<uint32_t> requestedFramework;
-			if (!ReadFrameworkVersion(runtimeConfig, requestedFramework, errorMessage))
-				return false;
-
-			std::vector<std::filesystem::path> candidates;
-			const std::filesystem::path configured =
-				ReadWindowsEnvironmentPath(L"DOTNET_ROOT");
-			if (!configured.empty())
-				candidates.push_back(configured);
-			const std::filesystem::path programFiles =
-				ReadWindowsEnvironmentPath(L"ProgramFiles");
-			if (!programFiles.empty())
-				candidates.push_back(programFiles / L"dotnet");
-
-			for (const std::filesystem::path& candidate : candidates)
-			{
-				std::error_code error;
-				const std::filesystem::path absolute =
-					std::filesystem::absolute(candidate, error).lexically_normal();
-				if (error || !std::filesystem::is_directory(
-					absolute / "host" / "fxr", error) || error)
-					continue;
-
-				std::string selectionError;
-				std::filesystem::path selectedHostFxr;
-				std::filesystem::path selectedRuntime;
-				if (!FindHighestDotNetVersionDirectory(absolute / "host" / "fxr",
-					nullptr, selectedHostFxr, selectionError) ||
-					!FindHighestDotNetVersionDirectory(absolute / "shared" /
-						"Microsoft.NETCore.App", &requestedFramework,
-						selectedRuntime, selectionError))
-					continue;
-				if (!std::filesystem::is_regular_file(
-					selectedHostFxr / "hostfxr.dll", error) || error ||
-					!std::filesystem::is_regular_file(
-						selectedRuntime / "hostpolicy.dll", error) || error ||
-					!std::filesystem::is_regular_file(
-						selectedRuntime / "coreclr.dll", error) || error)
-					continue;
-
-				dotnetRoot = absolute;
-				hostFxrDirectory = selectedHostFxr;
-				runtimeDirectory = selectedRuntime;
-				return true;
-			}
-			errorMessage = "Could not resolve the .NET " +
-				std::to_string(requestedFramework[0]) + "." +
-				std::to_string(requestedFramework[1]) +
-				" host and runtime required by TomCat.ScriptHost.";
-			return false;
-#else
-			(void)runtimeConfig;
-			(void)dotnetRoot;
-			(void)hostFxrDirectory;
-			(void)runtimeDirectory;
-			errorMessage = "TomCat Player export is currently implemented for Windows only.";
-			return false;
-#endif
-		}
-
-		bool GetRunningExecutablePath(std::filesystem::path& executable,
-			std::string& errorMessage)
-		{
-#ifdef TC_PLATFORM_WINDOWS
-			std::vector<wchar_t> buffer(MAX_PATH);
-			for (;;)
-			{
-				const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
-					static_cast<DWORD>(buffer.size()));
-				if (length == 0)
-				{
-					errorMessage = "Could not resolve the Editor executable (Win32 error " +
-						std::to_string(GetLastError()) + ").";
-					return false;
-				}
-				if (length < buffer.size() - 1)
-				{
-					executable = std::filesystem::path(
-						std::wstring(buffer.data(), length)).lexically_normal();
-					return true;
-				}
-				if (buffer.size() >= 32768)
-					break;
-				buffer.resize(buffer.size() * 2);
-			}
-			errorMessage = "The Editor executable path exceeds the Windows path limit.";
-		return false;
-#else
-			(void)executable;
-			errorMessage = "TomCat Player export is currently implemented for Windows only.";
-			return false;
-#endif
-		}
-
-		bool ValidateStagedPlayer(const std::filesystem::path& root,
-			std::string& errorMessage)
-		{
-			for (const std::filesystem::path& required : {
-				root / "TomCatPlayer.exe", root / "Game.tcpak",
-				root / "Managed" / "TomCat.ScriptHost.dll",
-				root / "Managed" / "TomCat.ScriptHost.runtimeconfig.json",
-				root / "Managed" / "TomCat.Managed.dll" })
-			{
-				std::error_code error;
-				if (!std::filesystem::is_regular_file(required, error) || error)
-				{
-					errorMessage = "Staged Player is missing '" +
-						PathToUTF8(required.lexically_relative(root)) + "'.";
-					return false;
-				}
-			}
-
-			std::error_code error;
-			std::filesystem::recursive_directory_iterator iterator(root,
-				std::filesystem::directory_options::none, error), end;
-			for (; !error && iterator != end; iterator.increment(error))
-			{
-				const std::filesystem::file_status status = iterator->symlink_status(error);
-				if (error)
-					break;
-				if (std::filesystem::is_symlink(status) ||
-					IsFilesystemReparsePoint(iterator->path()))
-				{
-					errorMessage = "Staged Player contains an unsafe symbolic link: '" +
-						PathToUTF8(iterator->path().lexically_relative(root)) + "'.";
-					return false;
-				}
-				const std::filesystem::path relative =
-					iterator->path().lexically_relative(root);
-				if (relative.empty() || relative.is_absolute())
-				{
-					errorMessage = "Staged Player contains an invalid path.";
-					return false;
-				}
-				const size_t componentCount = static_cast<size_t>(
-					std::distance(relative.begin(), relative.end()));
-				const std::string first = LowerASCII(PathToUTF8(*relative.begin()));
-				if (std::filesystem::is_directory(status))
-				{
-					if ((componentCount == 1 && first != "managed" && first != "dotnet") ||
-						(componentCount > 1 && first != "dotnet"))
-					{
-						errorMessage = "Staged Player contains an unexpected directory: '" +
-							PathToUTF8(relative) + "'.";
-						return false;
-					}
-				}
-				if (std::filesystem::is_regular_file(status))
-				{
-					const std::string fileName =
-						LowerASCII(PathToUTF8(iterator->path().filename()));
-					const std::string extension =
-						LowerASCII(PathToUTF8(iterator->path().extension()));
-					bool allowed = first == "dotnet";
-					if (componentCount == 1)
-						allowed = fileName == "tomcatplayer.exe" ||
-							fileName == "game.tcpak" || extension == ".dll";
-					else if (first == "managed" && componentCount == 2)
-						allowed = fileName == "tomcat.scripthost.dll" ||
-							fileName == "tomcat.scripthost.runtimeconfig.json" ||
-							fileName == "tomcat.scripthost.deps.json" ||
-							fileName == "tomcat.managed.dll";
-					if (!allowed)
-					{
-						errorMessage = "Staged Player contains an unexpected file: '" +
-							PathToUTF8(relative) + "'.";
-						return false;
-					}
-					if (extension == ".pdb" || extension == ".cs" ||
-						extension == ".csproj" ||
-						extension == ".sln" || extension == ".slnx" ||
-						extension == ".tcproj" || fileName == "last-good.json")
-					{
-						errorMessage = "Authoring input leaked into the staged Player: '" +
-							PathToUTF8(relative) + "'.";
-						return false;
-					}
-				}
-			}
-			if (error)
-			{
-				errorMessage = "Could not validate the staged Player: " + error.message();
-				return false;
-			}
-			return true;
-		}
-
-		bool PublishStagedPlayer(const std::filesystem::path& staging,
-			const std::filesystem::path& output, const std::string& buildID,
-			std::string& errorMessage)
-		{
-			std::error_code error;
-			std::filesystem::path backup = output;
-			backup += ".previous-" + buildID;
-			if (std::filesystem::exists(backup, error) || error)
-			{
-				errorMessage = "Could not reserve a rollback directory for the Player build.";
-				return false;
-			}
-
-			bool movedPrevious = false;
-			const std::filesystem::file_status outputStatus =
-				std::filesystem::symlink_status(output, error);
-			if (!error && std::filesystem::exists(outputStatus))
-			{
-				if (!std::filesystem::is_directory(outputStatus) ||
-					std::filesystem::is_symlink(outputStatus) ||
-					IsFilesystemReparsePoint(output))
-				{
-					errorMessage = "Player output exists but is not a safe directory: '" +
-						PathToUTF8(output) + "'.";
-					return false;
-				}
-				std::filesystem::rename(output, backup, error);
-				if (error)
-				{
-					errorMessage = "Could not replace the previous Player build (close any "
-						"running Player and try again): " + error.message();
-					return false;
-				}
-				movedPrevious = true;
-			}
-			else if (error && error != std::errc::no_such_file_or_directory)
-			{
-				errorMessage = "Could not inspect the Player output directory: " +
-					error.message();
-				return false;
-			}
-
-			error.clear();
-			std::filesystem::rename(staging, output, error);
-			if (error)
-			{
-				const std::string publishError = error.message();
-				if (movedPrevious)
-				{
-					error.clear();
-					std::filesystem::rename(backup, output, error);
-				}
-				errorMessage = "Could not publish the staged Player: " + publishError;
-				if (error)
-					errorMessage += "; rollback also failed: " + error.message();
-				return false;
-			}
-
-			if (movedPrevious)
-			{
-				error.clear();
-				std::filesystem::remove_all(backup, error);
-				if (error)
-					TC_Core_Warn("Player build succeeded, but rollback directory '{0}' "
-						"could not be removed: {1}", PathToUTF8(backup), error.message());
-			}
-			return true;
-		}
-
-		bool LaunchCookedPlayer(const std::filesystem::path& executable,
-			const std::filesystem::path& workingDirectory, std::string& errorMessage)
-		{
-#ifdef TC_PLATFORM_WINDOWS
-			std::wstring command = L"\"" + executable.wstring() +
-				L"\" --play-cooked \"Game.tcpak\"";
-			std::vector<wchar_t> mutableCommand(command.begin(), command.end());
-			mutableCommand.push_back(L'\0');
-			STARTUPINFOW startup{};
-			startup.cb = sizeof(startup);
-			PROCESS_INFORMATION process{};
-			const BOOL created = CreateProcessW(executable.c_str(), mutableCommand.data(),
-				nullptr, nullptr, FALSE, 0, nullptr, workingDirectory.c_str(),
-				&startup, &process);
-			if (!created)
-			{
-				errorMessage = "Could not launch TomCatPlayer.exe (Win32 error " +
-					std::to_string(GetLastError()) + ").";
-				return false;
-			}
-			CloseHandle(process.hThread);
-			CloseHandle(process.hProcess);
-			return true;
-#else
-			(void)executable;
-			(void)workingDirectory;
-			errorMessage = "TomCat Player launch is currently implemented for Windows only.";
-			return false;
-#endif
-		}
 
 	}
 
@@ -1179,36 +663,60 @@ namespace TomCat {
 			if (!path.empty())
 				OpenScene(path);
 		});
+		m_SceneHierarchyPanel.SetPrefabCreateCallback([this](Entity entity) {
+			return CreatePrefabFromEntity(entity,
+				m_ContentBrowserPanel.GetWritableCreationDirectory());
+		});
+		m_SceneHierarchyPanel.SetPrefabInstantiateCallback(
+			[this](AssetHandle handle, Entity parent) {
+				std::optional<UUID> parentID;
+				if (parent)
+					parentID = parent.GetUUID();
+				return InstantiatePrefab(handle, parentID, std::nullopt);
+			});
+		m_ContentBrowserPanel.SetEntityPrefabCreateCallback(
+			[this](UUID entityID, const std::filesystem::path& directory) {
+				Entity entity = m_ActiveScene
+					? m_ActiveScene->FindEntityByUUID(entityID) : Entity{};
+				return CreatePrefabFromEntity(entity, directory);
+			});
 		m_ContentBrowserPanel.SetAssetRenamedCallback([this](const std::filesystem::path& oldPath,
 			const std::filesystem::path& newPath) {
 			const std::filesystem::path previousEditorScenePath = m_EditorScenePath;
-			const std::filesystem::path previousStartScene = m_CurrentProject
-				? m_CurrentProject->GetConfig().StartScene : std::filesystem::path{};
 			std::filesystem::path relative;
 			if (!m_EditorScenePath.empty() && TryGetRelativeWithin(oldPath, m_EditorScenePath, relative))
 				m_EditorScenePath = newPath / relative;
 
-			// StartScene is an authoring locator; StartSceneHandle remains the
-			// authoritative identity across this move.
 			if (m_CurrentProject)
 			{
-				const std::filesystem::path oldStartScene = m_CurrentProject->GetAssetPath() /
-					m_CurrentProject->GetConfig().StartScene;
-				if (TryGetRelativeWithin(oldPath, oldStartScene, relative))
+				BuildSettings repaired = m_CurrentProject->GetBuildSettings();
+				bool changed = false;
+				for (BuildSceneSettings& scene : repaired.Scenes)
 				{
-					const std::filesystem::path movedStartScene = newPath / relative;
-					std::filesystem::path assetRelative;
-					const bool updated = TryGetRelativeWithin(m_CurrentProject->GetAssetPath(),
-						movedStartScene, assetRelative) &&
-						m_CurrentProject->SetStartScene(assetRelative) && m_CurrentProject->Save();
-					if (!updated)
+					const AssetMetadata* metadata =
+						AssetManager::Get().GetRegistry().GetMetadata(scene.Handle);
+					if (metadata && !metadata->IsMissing && metadata->Type == AssetType::Scene
+						&& metadata->FilePath != scene.PathHint)
 					{
-						m_EditorScenePath = previousEditorScenePath;
-						m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
-						(void)m_CurrentProject->SetStartScene(previousStartScene);
-						TC_Core_Error("The start scene move was rejected because Project.tcproj could not be updated");
-						return false;
+						scene.PathHint = metadata->FilePath;
+						changed = true;
 					}
+				}
+				if (changed && !m_CurrentProject->SetBuildSettings(repaired))
+				{
+					m_EditorScenePath = previousEditorScenePath;
+					m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
+					m_BuildSettingsSucceeded = false;
+					m_BuildSettingsStatus =
+						"Scene move was rejected because BuildSettings.json could not update its PathHints.";
+					TC_Core_Error("{0}", m_BuildSettingsStatus);
+					return false;
+				}
+				if (changed)
+				{
+					m_BuildSettingsSucceeded = true;
+					m_BuildSettingsStatus =
+						"Updated build-scene PathHints in ProjectSettings/BuildSettings.json.";
 				}
 			}
 			m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
@@ -1224,11 +732,20 @@ namespace TomCat {
 			}
 			if (m_CurrentProject)
 			{
-				const std::filesystem::path startScene = m_CurrentProject->GetAssetPath() /
-					m_CurrentProject->GetConfig().StartScene;
-				if (TryGetRelativeWithin(deletedPath, startScene, relative))
-					TC_Warn("The configured start scene was deleted and is now a missing asset: {0}",
-						PathToUTF8(startScene));
+				for (const BuildSceneSettings& scene : m_CurrentProject->GetBuildSettings().Scenes)
+				{
+					const std::filesystem::path hintedPath =
+						m_CurrentProject->GetAssetPath() / scene.PathHint;
+					if (!scene.PathHint.empty()
+						&& TryGetRelativeWithin(deletedPath, hintedPath, relative))
+					{
+						m_BuildSettingsSucceeded = false;
+						m_BuildSettingsStatus = "Build Scene is now missing: "
+							+ PathToUTF8(scene.PathHint)
+							+ ". Its stable Handle and last PathHint were preserved.";
+						TC_Warn("{0}", m_BuildSettingsStatus);
+					}
+				}
 			}
 			// Sprite handles deliberately survive deletion. AssetManager resolves
 			// them to the shared missing-resource texture until the asset is restored.
@@ -1393,7 +910,12 @@ namespace TomCat {
 			(gameSpec.Width != gameWidth || gameSpec.Height != gameHeight))
 		{
 			if (m_GameFramebuffer->Resize(gameWidth, gameHeight))
-				m_ActiveScene->OnViewportResize(gameWidth, gameHeight);
+			{
+				if (IsSceneRunning())
+					m_RuntimeSceneManager.SetViewportSize(gameWidth, gameHeight);
+				else if (m_ActiveScene)
+					m_ActiveScene->OnViewportResize(gameWidth, gameHeight);
+			}
 		}
 
 		// Render Scene View (Editor Camera).  Unity's Scene canvas is one step
@@ -1446,18 +968,23 @@ namespace TomCat {
 		m_GameFramebuffer->ClearAttachment(1, -1);
 
 		// Game窗口使用Runtime渲染，背景色由摄像机的BackgroundColor设置
+		bool runtimeAdvanced = false;
 		if (m_SceneState == SceneState::Play)
 		{
 			m_ActiveScene->OnUpdateRuntime(ts);
+			runtimeAdvanced = true;
 		}
 		else if (m_SceneState == SceneState::Pause && m_StepRequested)
 		{
 			m_ActiveScene->OnRuntimeStep();
 			m_StepRequested = false;
+			runtimeAdvanced = true;
 		}
 		else
 			m_ActiveScene->OnRenderRuntime();
 		m_GameFramebuffer->Unbind();
+		if (runtimeAdvanced)
+			CommitRuntimeSceneTransition();
 	}
 
 	void EditorLayer::UpdateWindowTitle()
@@ -1797,6 +1324,7 @@ namespace TomCat {
 		ImGui::EndChild(); 
 
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
+		m_SceneHierarchyPanel.SetPrefabCreationAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.OnImGuiRender(&m_ShowHierarchyPanel, &m_ShowInspectorPanel);
 		if (m_SceneHierarchyPanel.IsHierarchyFocused())
 			m_EditorPanelCycleIndex = 2;
@@ -1860,7 +1388,8 @@ namespace TomCat {
 				{
 					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
 					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
-					if (metadata && metadata->Type == AssetType::Texture2D)
+					if (metadata && !metadata->IsMissing
+						&& metadata->Type == AssetType::Texture2D)
 					{
 						Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(metadata->FilePath.stem()));
 						auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
@@ -1868,6 +1397,23 @@ namespace TomCat {
 						renderer.Sprite = AssetManager::Get().LoadTexture(handle);
 						if (m_SceneState == SceneState::Edit)
 							m_SceneDirty = true;
+					}
+					else if (metadata && !metadata->IsMissing
+						&& metadata->Type == AssetType::Prefab)
+					{
+						const ImVec2 mouse = ImGui::GetMousePos();
+						glm::vec2 worldPosition{};
+						if (ScreenToWorldOnPlane({ mouse.x, mouse.y }, 0.0f,
+							worldPosition))
+						{
+							InstantiatePrefab(handle, std::nullopt,
+								glm::vec3(worldPosition, 0.0f));
+						}
+						else
+						{
+							ReportPrefabOperation(false,
+								"Could not project the Prefab drop point into the Scene view.");
+						}
 					}
 				}
 			}
@@ -2102,73 +1648,268 @@ namespace TomCat {
 			return;
 		}
 
-		const ProjectConfig* config = m_CurrentProject ? &m_CurrentProject->GetConfig() : nullptr;
-		const bool hasConfiguredStartScene = config
-			&& static_cast<uint64_t>(config->StartSceneHandle) != 0;
-		const AssetMetadata* startSceneMetadata = hasConfiguredStartScene
-			? AssetManager::Get().GetRegistry().GetMetadata(config->StartSceneHandle) : nullptr;
-		const bool startSceneReady = startSceneMetadata && !startSceneMetadata->IsMissing
-			&& startSceneMetadata->Type == AssetType::Scene;
-
 		if (!m_CurrentProject)
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
 				"Open a project to inspect its scenes and Player settings.");
 
 		ImGui::TextUnformatted("Scenes In Build");
-		ImGui::BeginChild("##ScenesInBuild", ImVec2(0.0f, 145.0f), true,
-			ImGuiWindowFlags_HorizontalScrollbar);
-		if (hasConfiguredStartScene)
-		{
-			const std::string scenePath = PathToUTF8(config->StartScene);
-			std::string sceneName = PathToUTF8(config->StartScene.stem());
-			if (sceneName.empty())
-				sceneName = scenePath.empty() ? "<Unresolved start scene>" : scenePath;
+		BuildSettings edited = m_CurrentProject
+			? m_CurrentProject->GetBuildSettings() : BuildSettings{};
+		const bool buildSettingsEditable = m_CurrentProject && !IsSceneRunning();
+		bool buildSettingsChanged = false;
+		std::string buildSettingsChangeDescription;
+		std::optional<std::size_t> removeScene;
+		std::optional<std::pair<std::size_t, std::size_t>> moveScene;
+		AssetRegistry& registry = AssetManager::Get().GetRegistry();
 
+		ImGui::BeginChild("##ScenesInBuild", ImVec2(0.0f, 225.0f), true,
+			ImGuiWindowFlags_HorizontalScrollbar);
+		if (m_CurrentProject && !edited.Scenes.empty())
+		{
 			const ImGuiTableFlags sceneFlags = ImGuiTableFlags_RowBg |
-				ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
-			if (ImGui::BeginTable("##SceneBuildRows", 3, sceneFlags))
+				ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp |
+				ImGuiTableFlags_ScrollY;
+			if (ImGui::BeginTable("##SceneBuildRows", 6, sceneFlags))
 			{
-				ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-				ImGui::TableSetupColumn("Scene", ImGuiTableColumnFlags_WidthStretch);
-				ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 32.0f);
-				ImGui::TableNextRow(0, ImGui::GetFrameHeightWithSpacing());
-				ImGui::TableSetColumnIndex(0);
-				bool included = startSceneReady;
-				ImGui::BeginDisabled();
-				ImGui::Checkbox("##StartSceneIncluded", &included);
-				ImGui::EndDisabled();
-				ImGui::TableSetColumnIndex(1);
-				ImGui::AlignTextToFramePadding();
-				if (startSceneReady)
-					ImGui::TextUnformatted(sceneName.c_str());
-				else
-					ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "%s (Missing)",
-						sceneName.c_str());
-				if (!scenePath.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-					ImGui::SetTooltip("%s", scenePath.c_str());
-				ImGui::TableSetColumnIndex(2);
-				ImGui::AlignTextToFramePadding();
-				const char* indexText = "0";
-				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f,
-					ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(indexText).x));
-				ImGui::TextUnformatted(indexText);
+				ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed, 34.0f);
+				ImGui::TableSetupColumn("Entry", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+				ImGui::TableSetupColumn("Scene / Path Hint", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+				ImGui::TableSetupColumn("Order", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+				ImGui::TableSetupColumn("Remove", ImGuiTableColumnFlags_WidthFixed, 56.0f);
+				ImGui::TableHeadersRow();
+				uint32_t enabledIndex = 0;
+				for (std::size_t index = 0; index < edited.Scenes.size(); ++index)
+				{
+					BuildSceneSettings& scene = edited.Scenes[index];
+					const AssetMetadata* metadata = registry.GetMetadata(scene.Handle);
+					const bool live = metadata && !metadata->IsMissing
+						&& metadata->Type == AssetType::Scene;
+					const bool hasResolvedPath = metadata && !metadata->IsMissing;
+					const std::filesystem::path shownPath = hasResolvedPath
+						? metadata->FilePath : scene.PathHint;
+					std::string label = PathToUTF8(shownPath);
+					if (label.empty())
+						label = "Scene " + std::to_string(static_cast<uint64_t>(scene.Handle));
+
+					ImGui::PushID(static_cast<int>(index));
+					ImGui::TableNextRow(0, ImGui::GetFrameHeightWithSpacing());
+					ImGui::TableSetColumnIndex(0);
+					bool enabled = scene.Enabled;
+					ImGui::BeginDisabled(!buildSettingsEditable);
+					if (ImGui::Checkbox("##Enabled", &enabled))
+					{
+						scene.Enabled = enabled;
+						buildSettingsChanged = true;
+						buildSettingsChangeDescription = enabled
+							? "Enabled build scene." : "Disabled build scene.";
+					}
+					ImGui::EndDisabled();
+
+					ImGui::TableSetColumnIndex(1);
+					const bool isEntry = edited.EntrySceneHandle == scene.Handle;
+					ImGui::BeginDisabled(!buildSettingsEditable);
+					if (ImGui::RadioButton("##Entry", isEntry))
+					{
+						scene.Enabled = true;
+						edited.EntrySceneHandle = scene.Handle;
+						buildSettingsChanged = true;
+						buildSettingsChangeDescription = "Changed Entry Scene.";
+					}
+					ImGui::EndDisabled();
+
+					ImGui::TableSetColumnIndex(2);
+					ImGui::AlignTextToFramePadding();
+					if (live)
+						ImGui::TextUnformatted(label.c_str());
+					else
+						ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
+							"%s (%s)", label.c_str(), !metadata || metadata->IsMissing
+								? "Missing" : "Wrong Type");
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+					{
+						const std::string pathHint = PathToUTF8(scene.PathHint);
+						ImGui::SetTooltip("Handle: %llu\nPathHint: %s",
+							static_cast<unsigned long long>(static_cast<uint64_t>(scene.Handle)),
+							pathHint.empty() ? "<no path hint>" : pathHint.c_str());
+					}
+
+					ImGui::TableSetColumnIndex(3);
+					ImGui::AlignTextToFramePadding();
+					if (scene.Enabled)
+						ImGui::Text("%u", enabledIndex++);
+					else
+						ImGui::TextDisabled("-");
+
+					ImGui::TableSetColumnIndex(4);
+					ImGui::BeginDisabled(!buildSettingsEditable || index == 0);
+					if (ImGui::SmallButton("^"))
+						moveScene = std::pair{ index, index - 1 };
+					ImGui::EndDisabled();
+					ImGui::SameLine(0.0f, 2.0f);
+					ImGui::BeginDisabled(!buildSettingsEditable || index + 1 >= edited.Scenes.size());
+					if (ImGui::SmallButton("v"))
+						moveScene = std::pair{ index, index + 1 };
+					ImGui::EndDisabled();
+
+					ImGui::TableSetColumnIndex(5);
+					ImGui::BeginDisabled(!buildSettingsEditable);
+					if (ImGui::SmallButton("Remove"))
+						removeScene = index;
+					ImGui::EndDisabled();
+					ImGui::PopID();
+				}
 				ImGui::EndTable();
 			}
 		}
 		else
 			ImGui::TextDisabled(m_CurrentProject
-				? "No start scene is configured." : "No project is open.");
+				? "No scenes are configured. Add the saved open Scene or drag a Scene asset here."
+				: "No project is open.");
 		ImGui::EndChild();
 
-		const float addOpenScenesWidth = ImGui::CalcTextSize("Add Open Scenes").x
+		if (buildSettingsEditable && ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				AssetDragDropPayloadID))
+			{
+				if (payload->DataSize == sizeof(uint64_t))
+				{
+					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = registry.GetMetadata(handle);
+					if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Scene)
+					{
+						m_BuildSettingsSucceeded = false;
+						m_BuildSettingsStatus = "Only live Scene assets can be added to Scenes In Build.";
+					}
+					else if (std::any_of(edited.Scenes.begin(), edited.Scenes.end(),
+						[handle](const BuildSceneSettings& scene) { return scene.Handle == handle; }))
+					{
+						m_BuildSettingsSucceeded = false;
+						m_BuildSettingsStatus = "That Scene is already in the build list.";
+					}
+					else
+					{
+						edited.Scenes.push_back({ handle, true, metadata->FilePath });
+						if (static_cast<uint64_t>(edited.EntrySceneHandle) == 0)
+							edited.EntrySceneHandle = handle;
+						buildSettingsChanged = true;
+						buildSettingsChangeDescription = "Added dropped Scene asset.";
+					}
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+
+		if (moveScene)
+		{
+			std::swap(edited.Scenes[moveScene->first], edited.Scenes[moveScene->second]);
+			buildSettingsChanged = true;
+			buildSettingsChangeDescription = "Reordered build scenes.";
+		}
+		if (removeScene)
+		{
+			const AssetHandle removedHandle = edited.Scenes[*removeScene].Handle;
+			edited.Scenes.erase(edited.Scenes.begin() + static_cast<std::ptrdiff_t>(*removeScene));
+			if (edited.EntrySceneHandle == removedHandle)
+				edited.EntrySceneHandle = AssetHandle(0);
+			buildSettingsChanged = true;
+			buildSettingsChangeDescription = "Removed build scene.";
+		}
+		const auto entryIsEnabled = [&edited]()
+		{
+			return std::any_of(edited.Scenes.begin(), edited.Scenes.end(),
+				[&](const BuildSceneSettings& scene)
+				{
+					return scene.Enabled && scene.Handle == edited.EntrySceneHandle;
+				});
+		};
+		if (buildSettingsChanged && !entryIsEnabled())
+		{
+			edited.EntrySceneHandle = AssetHandle(0);
+			for (const BuildSceneSettings& scene : edited.Scenes)
+			{
+				if (scene.Enabled)
+				{
+					edited.EntrySceneHandle = scene.Handle;
+					break;
+				}
+			}
+		}
+
+		const AssetHandle openSceneHandle = GetSavedEditorSceneHandle();
+		const bool openSceneAlreadyAdded = std::any_of(edited.Scenes.begin(), edited.Scenes.end(),
+			[openSceneHandle](const BuildSceneSettings& scene)
+			{
+				return scene.Handle == openSceneHandle;
+			});
+		const bool canAddOpenScene = buildSettingsEditable
+			&& static_cast<uint64_t>(openSceneHandle) != 0 && !openSceneAlreadyAdded;
+		const float addOpenScenesWidth = ImGui::CalcTextSize("Add Open Scene").x
 			+ ImGui::GetStyle().FramePadding.x * 2.0f;
 		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
 			ImGui::GetWindowContentRegionMax().x - addOpenScenesWidth));
-		ImGui::BeginDisabled();
-		ImGui::Button("Add Open Scenes");
+		ImGui::BeginDisabled(!canAddOpenScene);
+		if (ImGui::Button("Add Open Scene"))
+		{
+			const AssetMetadata* metadata = registry.GetMetadata(openSceneHandle);
+			if (metadata && !metadata->IsMissing && metadata->Type == AssetType::Scene)
+			{
+				edited.Scenes.push_back({ openSceneHandle, true, metadata->FilePath });
+				if (static_cast<uint64_t>(edited.EntrySceneHandle) == 0)
+					edited.EntrySceneHandle = openSceneHandle;
+				buildSettingsChanged = true;
+				buildSettingsChangeDescription = "Added the saved open Scene.";
+			}
+		}
 		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("The build-scene list will be editable when Player export is implemented.");
+		{
+			if (!m_CurrentProject)
+				ImGui::SetTooltip("Open a project first.");
+			else if (IsSceneRunning())
+				ImGui::SetTooltip("Stop Play Mode before changing Build Settings.");
+			else if (static_cast<uint64_t>(openSceneHandle) == 0)
+				ImGui::SetTooltip("Save the current Scene inside the project's Assets directory first.");
+			else if (openSceneAlreadyAdded)
+				ImGui::SetTooltip("The open Scene is already in the build list.");
+		}
+
+		if (buildSettingsChanged && m_CurrentProject)
+		{
+			if (m_CurrentProject->SetBuildSettings(edited))
+			{
+				m_BuildSettingsSucceeded = true;
+				m_BuildSettingsStatus = buildSettingsChangeDescription
+					+ " Saved to ProjectSettings/BuildSettings.json.";
+			}
+			else
+			{
+				m_BuildSettingsSucceeded = false;
+				m_BuildSettingsStatus =
+					"Build Settings could not be saved; the previous file and list were preserved.";
+			}
+		}
+		if (!m_BuildSettingsStatus.empty())
+		{
+			const ImVec4 color = m_BuildSettingsSucceeded
+				? ImVec4(0.45f, 0.86f, 0.48f, 1.0f)
+				: ImVec4(0.95f, 0.42f, 0.38f, 1.0f);
+			ImGui::TextColored(color, "%s", m_BuildSettingsStatus.c_str());
+		}
+
+		const BuildSettings& persistedBuildSettings = m_CurrentProject
+			? m_CurrentProject->GetBuildSettings() : edited;
+		const auto persistedEntry = std::find_if(persistedBuildSettings.Scenes.begin(),
+			persistedBuildSettings.Scenes.end(), [&](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled
+					&& scene.Handle == persistedBuildSettings.EntrySceneHandle;
+			});
+		const AssetMetadata* entrySceneMetadata = persistedEntry != persistedBuildSettings.Scenes.end()
+			? registry.GetMetadata(persistedBuildSettings.EntrySceneHandle) : nullptr;
+		const bool entrySceneReady = entrySceneMetadata && !entrySceneMetadata->IsMissing
+			&& entrySceneMetadata->Type == AssetType::Scene;
 
 		ImGui::TextUnformatted("Platform");
 		const float platformHeight = std::clamp(ImGui::GetContentRegionAvail().y - 150.0f,
@@ -2362,7 +2103,7 @@ namespace TomCat {
 			+ ImGui::GetStyle().ItemSpacing.x;
 		ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 20.0f,
 			ImGui::GetWindowContentRegionMax().x - buildButtonsWidth));
-		const bool canBuild = m_CurrentProject && startSceneReady &&
+		const bool canBuild = m_CurrentProject && entrySceneReady &&
 			!IsSceneRunning() && !m_ScriptCompiler.IsCompileInProgress();
 		ImGui::BeginDisabled(!canBuild);
 		const bool buildPressed = ImGui::Button("Build", ImVec2(buildWidth, 0.0f));
@@ -2378,8 +2119,8 @@ namespace TomCat {
 		{
 			if (!m_CurrentProject)
 				ImGui::SetTooltip("Open a project before building a Player.");
-			else if (!startSceneReady)
-				ImGui::SetTooltip("Configure a live Scene asset as the project's Start Scene.");
+			else if (!entrySceneReady)
+				ImGui::SetTooltip("Choose an enabled, live Entry Scene in Build Settings.");
 			else if (IsSceneRunning())
 				ImGui::SetTooltip("Stop Play mode before building a Player.");
 			else
@@ -2426,9 +2167,18 @@ namespace TomCat {
 		if (m_ScriptCompiler.IsCompileInProgress())
 			return fail("Player build failed: the background C# compilation is still running.");
 
-		const AssetHandle startScene = m_CurrentProject->GetConfig().StartSceneHandle;
-		if (static_cast<uint64_t>(startScene) == 0)
-			return fail("Player build failed: no Start Scene is configured.");
+		const BuildSettings& buildSettings = m_CurrentProject->GetBuildSettings();
+		const auto entry = std::find_if(buildSettings.Scenes.begin(),
+			buildSettings.Scenes.end(), [&](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled && scene.Handle == buildSettings.EntrySceneHandle;
+			});
+		if (static_cast<uint64_t>(buildSettings.EntrySceneHandle) == 0
+			|| entry == buildSettings.Scenes.end())
+		{
+			return fail("Player build failed: choose an enabled Entry Scene in Build Settings.");
+		}
+		const AssetHandle entryScene = buildSettings.EntrySceneHandle;
 
 		// A Player build is always based on a newly compiled and validated Release
 		// candidate. Never fall back to the previous last-good artifact here.
@@ -2483,169 +2233,45 @@ namespace TomCat {
 		AssetManager& assetManager = AssetManager::Get();
 		if (!assetManager.Refresh())
 			return fail("Player build failed: the Asset Registry could not be refreshed.");
-		const AssetMetadata* startSceneMetadata =
-			assetManager.GetRegistry().GetMetadata(startScene);
-		if (!startSceneMetadata || startSceneMetadata->IsMissing ||
-			startSceneMetadata->Type != AssetType::Scene)
-			return fail("Player build failed: the configured Start Scene is missing or is not a Scene asset.");
+		const AssetMetadata* entrySceneMetadata =
+			assetManager.GetRegistry().GetMetadata(entryScene);
+		if (!entrySceneMetadata || entrySceneMetadata->IsMissing ||
+			entrySceneMetadata->Type != AssetType::Scene)
+			return fail("Player build failed: the enabled Entry Scene is missing or is not a Scene asset.");
 
 		std::vector<uint8_t> assemblyBytes;
 		std::string fileError;
 		if (!ReadBinaryFileForBuild(scriptBuild.AssemblyPath, assemblyBytes, fileError))
 			return fail("Player build failed: " + fileError);
 
-		std::error_code pathError;
-		const std::filesystem::path projectDirectory =
-			std::filesystem::weakly_canonical(m_CurrentProject->GetProjectDirectory(), pathError);
-		if (pathError || projectDirectory.empty())
-			return fail("Player build failed: the project directory could not be resolved.");
-		const std::filesystem::path buildRoot = projectDirectory / "Build";
-		std::filesystem::create_directories(buildRoot, pathError);
-		if (pathError)
-			return fail("Player build failed: the Build directory could not be created: " +
-				pathError.message());
-		const std::filesystem::path canonicalBuildRoot =
-			std::filesystem::weakly_canonical(buildRoot, pathError);
-		const std::filesystem::path buildRelative =
-			canonicalBuildRoot.lexically_relative(projectDirectory);
-		if (pathError || buildRelative.empty() || buildRelative.is_absolute() ||
-			std::distance(buildRelative.begin(), buildRelative.end()) != 1 ||
-			LowerASCII(PathToUTF8(*buildRelative.begin())) != "build")
-			return fail("Player build failed: the Build directory resolves outside the project.");
-
-		const std::string directoryName =
-			SanitizePlayerDirectoryName(m_CurrentProject->GetName());
-		const std::filesystem::path directoryComponent = UTF8ToPath(directoryName);
-		if (directoryComponent.empty() || directoryComponent != directoryComponent.filename() ||
-			directoryComponent == "." || directoryComponent == "..")
-			return fail("Player build failed: the project name cannot form a safe output directory.");
-		const std::filesystem::path outputDirectory = canonicalBuildRoot / directoryComponent;
-		const std::filesystem::path stagingDirectory = canonicalBuildRoot /
-			UTF8ToPath(directoryName + ".staging-" + scriptBuild.BuildID);
-
-		const std::filesystem::file_status stagingStatus =
-			std::filesystem::symlink_status(stagingDirectory, pathError);
-		if (!pathError && std::filesystem::exists(stagingStatus))
-			return fail("Player build failed: an isolated staging directory already exists.");
-		if (pathError && pathError != std::errc::no_such_file_or_directory)
-			return fail("Player build failed: the staging directory could not be inspected: " +
-				pathError.message());
-		pathError.clear();
-		std::filesystem::create_directory(stagingDirectory, pathError);
-		if (pathError)
-			return fail("Player build failed: the staging directory could not be created: " +
-				pathError.message());
-
-		auto failStaged = [&](std::string message)
+		PlayerBuildRequest request;
+		request.ProjectInstance = m_CurrentProject;
+		request.EntryScene = entryScene;
+		request.TemplateDirectory = PlayerBuilder::FindDefaultTemplateDirectory();
+		request.ManagedAssembly = std::move(assemblyBytes);
+		request.ScriptManifestJson = scriptManifestJson;
+		request.ScriptBuildID = scriptBuild.BuildID;
+		request.ValidateBeforePublish = [this, scriptBuild]()
 		{
-			std::error_code cleanupError;
-			if (IsFilesystemReparsePoint(stagingDirectory))
-				std::filesystem::remove(stagingDirectory, cleanupError);
-			else
-				std::filesystem::remove_all(stagingDirectory, cleanupError);
-			if (cleanupError)
-				message += " Staging cleanup also failed: " + cleanupError.message();
-			return fail(std::move(message));
+			return m_ScriptCompiler.RefreshSourceState() &&
+				m_ScriptCompiler.IsCurrentSourceBuilt() &&
+				m_ScriptCompiler.GetCurrentSourceHash() == scriptBuild.SourceHash &&
+				m_ScriptCompiler.GetLastGoodBuildID() == scriptBuild.BuildID &&
+				AbsoluteLexicalPath(m_ScriptCompiler.GetLastGoodAssemblyPath()) ==
+					AbsoluteLexicalPath(scriptBuild.AssemblyPath);
 		};
-
-		if (!assetManager.SetManagedCookPayload(std::move(assemblyBytes),
-			scriptManifestJson, scriptBuild.BuildID, {}))
-			return failStaged("Player build failed: the fresh managed payload was rejected.");
-		const bool cooked = assetManager.CookToPackage(
-			stagingDirectory / "Game.tcpak", startScene);
-		assetManager.ClearManagedCookPayload();
-		if (!cooked)
-			return failStaged("Player build failed while cooking Game.tcpak. See preceding diagnostics.");
-
-		std::filesystem::path editorExecutable;
-		if (!GetRunningExecutablePath(editorExecutable, fileError) ||
-			!CopyPlayerFile(editorExecutable,
-				stagingDirectory / "TomCatPlayer.exe", fileError))
-			return failStaged("Player build failed: " + fileError);
-
-		std::filesystem::directory_iterator nativeIterator(
-			editorExecutable.parent_path(), std::filesystem::directory_options::none,
-			pathError), nativeEnd;
-		for (; !pathError && nativeIterator != nativeEnd;
-			nativeIterator.increment(pathError))
-		{
-			std::error_code statusError;
-			const std::filesystem::file_status status =
-				nativeIterator->symlink_status(statusError);
-			if (statusError)
-			{
-				pathError = statusError;
-				break;
-			}
-			if (!std::filesystem::is_regular_file(status) ||
-				LowerASCII(PathToUTF8(nativeIterator->path().extension())) != ".dll")
-				continue;
-			if (!CopyPlayerFile(nativeIterator->path(),
-				stagingDirectory / nativeIterator->path().filename(), fileError))
-				return failStaged("Player build failed: " + fileError);
-		}
-		if (pathError)
-			return failStaged("Player build failed while enumerating native dependencies: " +
-				pathError.message());
-
-		for (const char* fileName : { "TomCat.ScriptHost.dll",
-			"TomCat.ScriptHost.runtimeconfig.json", "TomCat.Managed.dll" })
-		{
-			if (!CopyPlayerFile(managedDirectory / fileName,
-				stagingDirectory / "Managed" / fileName, fileError))
-				return failStaged("Player build failed: " + fileError);
-		}
-		const std::filesystem::path depsSource =
-			managedDirectory / "TomCat.ScriptHost.deps.json";
-		pathError.clear();
-		if (std::filesystem::is_regular_file(depsSource, pathError) && !pathError &&
-			!CopyPlayerFile(depsSource, stagingDirectory / "Managed" /
-				"TomCat.ScriptHost.deps.json", fileError))
-			return failStaged("Player build failed: " + fileError);
-
-		std::filesystem::path dotnetRoot;
-		std::filesystem::path hostFxrDirectory;
-		std::filesystem::path runtimeDirectory;
-		if (!ResolvePrivateDotNetPayload(managedDirectory /
-			"TomCat.ScriptHost.runtimeconfig.json", dotnetRoot,
-			hostFxrDirectory, runtimeDirectory, fileError))
-			return failStaged("Player build failed: " + fileError);
-		if (!CopyPlayerDirectory(hostFxrDirectory, stagingDirectory / "dotnet" /
-			"host" / "fxr" / hostFxrDirectory.filename(), fileError) ||
-			!CopyPlayerDirectory(runtimeDirectory, stagingDirectory / "dotnet" /
-			"shared" / "Microsoft.NETCore.App" / runtimeDirectory.filename(),
-				fileError))
-			return failStaged("Player build failed: " + fileError);
-
-		if (!ValidateStagedPlayer(stagingDirectory, fileError))
-			return failStaged("Player build failed: " + fileError);
-		// Staging a private runtime can take long enough for an external editor to
-		// save another C# revision. Recheck at the publication boundary so a package
-		// is never presented as current after its source snapshot became stale.
-		if (!m_ScriptCompiler.RefreshSourceState() ||
-			!m_ScriptCompiler.IsCurrentSourceBuilt() ||
-			m_ScriptCompiler.GetCurrentSourceHash() != scriptBuild.SourceHash ||
-			m_ScriptCompiler.GetLastGoodBuildID() != scriptBuild.BuildID ||
-			AbsoluteLexicalPath(m_ScriptCompiler.GetLastGoodAssemblyPath()) !=
-				AbsoluteLexicalPath(scriptBuild.AssemblyPath))
-		{
-			return failStaged("Player build failed: C# sources changed while the Player was being staged. Build again.");
-		}
-		if (!PublishStagedPlayer(stagingDirectory, outputDirectory,
-			scriptBuild.BuildID, fileError))
-			return failStaged("Player build failed: " + fileError);
+		PlayerBuildResult playerBuild = PlayerBuilder::Build(std::move(request));
+		if (!playerBuild.Succeeded)
+			return fail("Player build failed: " + playerBuild.Message);
 
 		m_PlayerBuildSucceeded = true;
-		m_PlayerBuildStatus = "Player build succeeded: " + PathToUTF8(outputDirectory) +
-			" (C# build " + scriptBuild.BuildID + ", .NET host " +
-			PathToUTF8(hostFxrDirectory.filename()) + ", runtime " +
-			PathToUTF8(runtimeDirectory.filename()) + ").";
+		m_PlayerBuildStatus = playerBuild.Message;
 		m_ConsolePanel.Push(ConsoleMessageSeverity::Info,
 			m_PlayerBuildStatus, "Player Build");
 		TC_Core_Info("{0}", m_PlayerBuildStatus);
 
-		if (runAfterBuild && !LaunchCookedPlayer(outputDirectory /
-			"TomCatPlayer.exe", outputDirectory, fileError))
+		if (runAfterBuild && !PlayerBuilder::Launch(playerBuild.PlayerExecutable,
+			playerBuild.OutputDirectory, fileError))
 		{
 			return fail("Player build succeeded, but Build And Run failed: " + fileError);
 		}
@@ -4012,7 +3638,55 @@ namespace TomCat {
 	{
 		if (m_SceneState != SceneState::Edit || !m_EditorScene)
 			return;
-		if (m_CurrentProject)
+		auto blockPlay = [this](std::string message)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				std::move(message), "Scene Manager");
+		};
+		if (!m_CurrentProject)
+		{
+			blockPlay("Play requires an open project with BuildSettings.json.");
+			return;
+		}
+		if (!AssetManager::Get().Refresh())
+		{
+			blockPlay("Play was blocked because the Asset Registry could not be refreshed.");
+			return;
+		}
+		const AssetHandle currentSceneHandle = GetSavedEditorSceneHandle();
+		if (static_cast<uint64_t>(currentSceneHandle) == 0)
+		{
+			blockPlay("Play requires the current Scene to be saved as a live Scene asset inside Assets.");
+			return;
+		}
+		const BuildSettings& buildSettings = m_CurrentProject->GetBuildSettings();
+		const bool currentSceneEnabled = std::any_of(buildSettings.Scenes.begin(),
+			buildSettings.Scenes.end(), [currentSceneHandle](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled && scene.Handle == currentSceneHandle;
+			});
+		if (!currentSceneEnabled)
+		{
+			blockPlay("Play was blocked because the current saved Scene is not enabled in Build Settings.");
+			return;
+		}
+		const auto entry = std::find_if(buildSettings.Scenes.begin(),
+			buildSettings.Scenes.end(), [&](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled && scene.Handle == buildSettings.EntrySceneHandle;
+			});
+		const AssetMetadata* entryMetadata = entry != buildSettings.Scenes.end()
+			? AssetManager::Get().GetRegistry().GetMetadata(buildSettings.EntrySceneHandle)
+			: nullptr;
+		if (!entryMetadata || entryMetadata->IsMissing
+			|| entryMetadata->Type != AssetType::Scene)
+		{
+			blockPlay("Play requires an enabled, live Entry Scene in Build Settings.");
+			return;
+		}
+
 		{
 			ScriptBuildResult completed;
 			(void)m_ScriptCompiler.PollCompile(completed);
@@ -4038,22 +3712,35 @@ namespace TomCat {
 				return;
 			}
 		}
-		if (m_CurrentProject && !PrepareManagedRuntime())
+		if (!PrepareManagedRuntime())
 			return;
-		m_ActiveScene = Scene::Copy(m_EditorScene);
-		if (!m_ActiveScene)
-			return;
-		ResizeSceneForGameView(m_ActiveScene);
-		if (!m_ActiveScene->OnRuntimeStart())
+		if (!m_RuntimeSceneManager.ConfigureBuildSettings(buildSettings))
 		{
-			m_ActiveScene = m_EditorScene;
-			m_ShowConsolePanel = true;
-			m_PendingPanelFocus = "Console";
-			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
-				"Play could not start because runtime initialization failed. See the preceding diagnostics.",
-				"Editor");
+			blockPlay("Play could not configure Build Settings: "
+				+ m_RuntimeSceneManager.GetLastError());
 			return;
 		}
+		if (!m_RuntimeSceneManager.ActivateRuntime())
+		{
+			blockPlay("Play could not activate SceneManager: "
+				+ m_RuntimeSceneManager.GetLastError());
+			return;
+		}
+		m_RuntimeSceneManager.SetViewportSize(
+			ToFramebufferExtent(m_GameViewportSize.x),
+			ToFramebufferExtent(m_GameViewportSize.y));
+		Ref<Scene> preparedScene = Scene::Copy(m_EditorScene);
+		if (!preparedScene || !m_RuntimeSceneManager.StartPreparedScene(
+			preparedScene, currentSceneHandle))
+		{
+			const std::string detail = preparedScene
+				? m_RuntimeSceneManager.GetLastError() : "the Editor Scene could not be copied";
+			m_RuntimeSceneManager.Stop();
+			blockPlay("Play could not start the current build Scene: " + detail);
+			return;
+		}
+		m_ActiveScene = m_RuntimeSceneManager.GetActiveScene();
+		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 		m_SceneState = SceneState::Play;
 		m_PlayScriptDirtyNoticeShown = false;
 		m_StepRequested = false;
@@ -4086,10 +3773,9 @@ namespace TomCat {
 		if (!IsSceneRunning())
 			return;
 
-		Ref<Scene> runtimeScene = m_ActiveScene;
-		if (runtimeScene)
-			runtimeScene->OnRuntimeStop();
+		m_RuntimeSceneManager.Stop();
 		m_ActiveScene = m_EditorScene;
+		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 		m_SceneState = SceneState::Edit;
 		m_PlayScriptDirtyNoticeShown = false;
 		m_ScriptSourcePollCountdown = 0.0f;
@@ -4348,37 +4034,38 @@ namespace TomCat {
 	{
 		if (!m_CurrentProject)
 			return false;
-		const AssetHandle startSceneHandle = m_CurrentProject->GetConfig().StartSceneHandle;
-		if (static_cast<uint64_t>(startSceneHandle) == 0)
+		const AssetHandle entrySceneHandle =
+			m_CurrentProject->GetBuildSettings().EntrySceneHandle;
+		if (static_cast<uint64_t>(entrySceneHandle) == 0)
 		{
-			TC_Core_Error("Project has no start scene: StartSceneHandle is 0");
+			TC_Core_Error("Project has no Entry Scene in BuildSettings.json");
 			NewScene();
 			return false;
 		}
 
-		std::filesystem::path startScene;
-		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(startSceneHandle);
+		std::filesystem::path entryScene;
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(entrySceneHandle);
 		if (metadata && metadata->Type == AssetType::Scene && !metadata->IsMissing)
-			startScene = AssetManager::Get().ResolvePath(startSceneHandle);
+			entryScene = AssetManager::Get().ResolvePath(entrySceneHandle);
 		else
-			TC_Core_Error("Project start scene handle is missing or is not a Scene: {0}",
-				static_cast<uint64_t>(startSceneHandle));
+			TC_Core_Error("Project Entry Scene handle is missing or is not a Scene: {0}",
+				static_cast<uint64_t>(entrySceneHandle));
 		std::error_code error;
-		if (!startScene.empty() && std::filesystem::is_regular_file(startScene, error))
+		if (!entryScene.empty() && std::filesystem::is_regular_file(entryScene, error))
 		{
-			if (OpenScene(startScene))
+			if (OpenScene(entryScene))
 				return true;
-			TC_Core_Error("Failed to load project start scene: {0}", PathToUTF8(startScene));
+			TC_Core_Error("Failed to load project Entry Scene: {0}", PathToUTF8(entryScene));
 		}
 		else
 		{
-			TC_Warn("Project start scene is missing: {0}", startScene.empty()
-				? std::to_string(static_cast<uint64_t>(startSceneHandle))
-				: PathToUTF8(startScene));
+			TC_Warn("Project Entry Scene is missing: {0}", entryScene.empty()
+				? std::to_string(static_cast<uint64_t>(entrySceneHandle))
+				: PathToUTF8(entryScene));
 		}
 
 		// A project switch must never leave the previous project's scene or path
-		// active when the new start scene is missing or malformed.
+		// active when the new Entry Scene is missing or malformed.
 		NewScene();
 		return false;
 	}
@@ -4487,12 +4174,192 @@ namespace TomCat {
 		return true;
 	}
 
+	AssetHandle EditorLayer::GetSavedEditorSceneHandle() const
+	{
+		if (!m_CurrentProject || m_EditorScenePath.empty())
+			return AssetHandle(0);
+		const AssetRegistry& registry = AssetManager::Get().GetRegistry();
+		const AssetMetadata* metadata = registry.GetMetadata(m_EditorScenePath);
+		if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Scene)
+			return AssetHandle(0);
+		const AssetMetadata* current = registry.GetMetadata(metadata->Handle);
+		return current && !current->IsMissing && current->Type == AssetType::Scene
+			&& current->FilePath == metadata->FilePath
+			? metadata->Handle : AssetHandle(0);
+	}
+
+	void EditorLayer::ReportPrefabOperation(bool succeeded, std::string message)
+	{
+		if (!succeeded)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+		}
+		m_ConsolePanel.Push(succeeded ? ConsoleMessageSeverity::Info
+			: ConsoleMessageSeverity::Error, message, "Prefab");
+		if (succeeded)
+			TC_Core_Info("{0}", message);
+		else
+			TC_Core_Error("{0}", message);
+	}
+
+	bool EditorLayer::CreatePrefabFromEntity(Entity entity,
+		const std::filesystem::path& destinationDirectory)
+	{
+		if (m_SceneState != SceneState::Edit)
+		{
+			ReportPrefabOperation(false,
+				"Creating a Prefab asset is only available in Edit mode.");
+			return false;
+		}
+		if (!m_CurrentProject || !m_EditorScene || !entity)
+		{
+			ReportPrefabOperation(false,
+				"Create Prefab requires a selected Entity in an open project.");
+			return false;
+		}
+
+		Entity source = m_EditorScene->FindEntityByUUID(entity.GetUUID());
+		AssetRegistry& registry = AssetManager::Get().GetRegistry();
+		std::error_code directoryError;
+		const std::filesystem::path directory =
+			AbsoluteLexicalPath(destinationDirectory);
+		if (!source || directory.empty()
+			|| !std::filesystem::is_directory(directory, directoryError)
+			|| directoryError)
+		{
+			ReportPrefabOperation(false,
+				"Browse a writable folder inside Assets before creating a Prefab.");
+			return false;
+		}
+
+		const std::filesystem::path prefabPath =
+			MakeUniquePrefabPath(directory, source.GetName());
+		if (prefabPath.empty() || !registry.IsManagedPath(prefabPath, true))
+		{
+			ReportPrefabOperation(false,
+				"Could not reserve a unique .tcprefab name in the selected Assets folder.");
+			return false;
+		}
+
+		AssetHandle savedHandle(0);
+		if (!PrefabArchiveCodec::SaveSubtree(m_EditorScene, source,
+			prefabPath, &savedHandle)
+			|| static_cast<uint64_t>(savedHandle) == 0)
+		{
+			ReportPrefabOperation(false,
+				"Could not create Prefab '" + PathToUTF8(prefabPath.filename())
+				+ "'. See the preceding validation diagnostic.");
+			return false;
+		}
+
+		m_ContentBrowserPanel.RevealAsset(prefabPath);
+		ReportPrefabOperation(true, "Created Prefab '"
+			+ PathToUTF8(prefabPath.lexically_relative(
+				m_CurrentProject->GetAssetPath())) + "' from Entity '"
+			+ source.GetName() + "'.");
+		return true;
+	}
+
+	Entity EditorLayer::InstantiatePrefab(AssetHandle handle,
+		std::optional<UUID> parent, std::optional<glm::vec3> rootWorldPosition)
+	{
+		if (!m_ActiveScene)
+		{
+			ReportPrefabOperation(false,
+				"Cannot instantiate a Prefab without an active Scene.");
+			return {};
+		}
+		const AssetMetadata* metadata =
+			AssetManager::Get().GetRegistry().GetMetadata(handle);
+		if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Prefab)
+		{
+			ReportPrefabOperation(false,
+				"The dropped asset is missing or is not a Prefab.");
+			return {};
+		}
+		if (IsSceneRunning() && !m_ActiveScene->IsRuntimeRunning())
+		{
+			ReportPrefabOperation(false,
+				"Runtime Prefab creation requires a running Scene safe point.");
+			return {};
+		}
+
+		PrefabArchive archive;
+		std::string error;
+		if (!PrefabArchiveCodec::Load(handle, archive, error))
+		{
+			ReportPrefabOperation(false, "Could not load Prefab '"
+				+ PathToUTF8(metadata->FilePath) + "': " + error);
+			return {};
+		}
+
+		PrefabInstantiateOptions options;
+		options.Parent = parent;
+		options.RootWorldPosition = rootWorldPosition;
+		options.ResolveAssets = true;
+		PrefabInstantiationResult result;
+		if (!PrefabArchiveCodec::Instantiate(archive, *m_ActiveScene,
+			options, result, error) || !result.Root)
+		{
+			ReportPrefabOperation(false, "Could not instantiate Prefab '"
+				+ PathToUTF8(metadata->FilePath) + "': " + error);
+			return {};
+		}
+
+		m_SceneHierarchyPanel.SetSelectedEntity(result.Root);
+		if (m_SceneState == SceneState::Edit)
+			m_SceneDirty = true;
+		ReportPrefabOperation(true, "Instantiated Prefab '"
+			+ PathToUTF8(metadata->FilePath) + "' ("
+			+ std::to_string(result.Entities.size())
+			+ (result.Entities.size() == 1 ? " Entity" : " Entities") + ").");
+		return result.Root;
+	}
+
 	void EditorLayer::ResizeSceneForGameView(const Ref<Scene>& scene)
 	{
 		const uint32_t width = ToFramebufferExtent(m_GameViewportSize.x);
 		const uint32_t height = ToFramebufferExtent(m_GameViewportSize.y);
 		if (scene && width > 0 && height > 0)
 			scene->OnViewportResize(width, height);
+	}
+
+	void EditorLayer::CommitRuntimeSceneTransition()
+	{
+		if (!IsSceneRunning())
+			return;
+		const bool committed = m_RuntimeSceneManager.CommitPendingTransition();
+		Ref<Scene> runtimeScene = m_RuntimeSceneManager.GetActiveScene();
+		if (!runtimeScene)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				"Runtime scene transition failed: " + m_RuntimeSceneManager.GetLastError(),
+				"Scene Manager");
+			OnSceneStop();
+			return;
+		}
+		if (runtimeScene != m_ActiveScene)
+		{
+			m_ActiveScene = std::move(runtimeScene);
+			ResizeSceneForGameView(m_ActiveScene);
+			m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
+			const std::filesystem::path activeScenePath =
+				AssetManager::Get().ResolvePath(
+					m_RuntimeSceneManager.GetActiveSceneHandle());
+			m_ContentBrowserPanel.SetActiveScenePath(activeScenePath);
+			ResetSceneInteractionState();
+		}
+		if (!committed)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				"Runtime scene transition failed: " + m_RuntimeSceneManager.GetLastError(),
+				"Scene Manager");
+		}
 	}
 
 	void EditorLayer::ResetSceneInteractionState()
@@ -4602,6 +4469,10 @@ namespace TomCat {
 		if (IsSceneRunning())
 			OnSceneStop();
 		m_CurrentProject = project;
+		m_BuildSettingsStatus.clear();
+		m_BuildSettingsSucceeded = false;
+		m_PlayerBuildStatus.clear();
+		m_PlayerBuildSucceeded = false;
 		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
 		if (m_ShowProjectSettingsPanel)
 			LoadProjectSettingsDraft();

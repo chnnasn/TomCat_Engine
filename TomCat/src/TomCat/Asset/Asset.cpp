@@ -23,6 +23,7 @@ namespace TomCat {
 			case AssetType::Material: return "Material";
 			case AssetType::CSharpScript: return "CSharpScript";
 			case AssetType::Other: return "Other";
+			case AssetType::Prefab: return "Prefab";
 		}
 		return "None";
 	}
@@ -41,6 +42,7 @@ namespace TomCat {
 		// extension, so .cs becomes CSharpScript and native/Lua source becomes Other.
 		if (value == "Script") return AssetType::CSharpScript;
 		if (value == "Other") return AssetType::Other;
+		if (value == "Prefab") return AssetType::Prefab;
 		return AssetType::None;
 	}
 
@@ -69,6 +71,7 @@ namespace TomCat {
 			return AssetType::Mesh;
 		if (extension == ".tcmat") return AssetType::Material;
 		if (extension == ".cs") return AssetType::CSharpScript;
+		if (extension == ".tcprefab") return AssetType::Prefab;
 		return AssetType::Other;
 	}
 

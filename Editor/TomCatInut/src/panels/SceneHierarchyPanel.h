@@ -30,6 +30,8 @@ namespace TomCat {
 		using SceneLoadCallback = std::function<void(AssetHandle)>;
 		using SpriteCreateCallback = std::function<void(AssetHandle)>;
 		using SceneModifiedCallback = std::function<void()>;
+		using PrefabCreateCallback = std::function<bool(Entity)>;
+		using PrefabInstantiateCallback = std::function<Entity(AssetHandle, Entity)>;
 		using ScriptMetadataProvider =
 			std::function<std::optional<EditorScriptMetadata>(AssetHandle)>;
 
@@ -73,6 +75,15 @@ namespace TomCat {
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }
+		void SetPrefabCreateCallback(PrefabCreateCallback callback)
+		{
+			m_PrefabCreateCallback = std::move(callback);
+		}
+		void SetPrefabInstantiateCallback(PrefabInstantiateCallback callback)
+		{
+			m_PrefabInstantiateCallback = std::move(callback);
+		}
+		void SetPrefabCreationAllowed(bool allowed) { m_PrefabCreationAllowed = allowed; }
 		void SetScriptMetadataProvider(ScriptMetadataProvider provider)
 		{
 			m_ScriptMetadataProvider = std::move(provider);
@@ -83,6 +94,7 @@ namespace TomCat {
 		void DrawCSharpScripts(Entity entity);
 		bool AttachCSharpScript(Entity entity, AssetHandle handle);
 		bool AcceptCSharpScriptDrop(Entity entity);
+		bool AcceptPrefabDrop(Entity parent);
 		void DrawEntityOperationsMenu();
 		void BeginRename(Entity entity);
 		void CutSelectedEntity();
@@ -125,7 +137,10 @@ namespace TomCat {
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
+		PrefabCreateCallback m_PrefabCreateCallback;
+		PrefabInstantiateCallback m_PrefabInstantiateCallback;
 		ScriptMetadataProvider m_ScriptMetadataProvider;
+		bool m_PrefabCreationAllowed = true;
 
 	};
 

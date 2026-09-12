@@ -47,7 +47,8 @@ public static unsafe class EntryPoint
                 DestroyAll = &Exports.DestroyAll,
 				BeginUnloadDomain = &Exports.BeginUnloadDomain,
 				PollUnload = &Exports.PollUnload,
-				DestroyAttachments = &Exports.DestroyAttachments
+				DestroyAttachments = &Exports.DestroyAttachments,
+				InstantiateAttachments = &Exports.InstantiateAttachments
             };
             return HostStatus.Success;
         }
@@ -243,6 +244,31 @@ internal static unsafe class Exports
 			for (int index = 0; index < ids.Length; ++index)
 				ids[index] = attachmentIds[index];
 			HostRegistry.GetScene(sceneRuntimeId).DestroyAttachments(ids);
+		});
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	internal static int InstantiateAttachments(ulong sceneRuntimeId,
+		NativeScriptAttachmentV1* items, uint count, NativeByteView fieldsJson)
+	{
+		if (count != 0 && items is null || count > 1_000_000
+			|| !TryCopy(fieldsJson, allowEmpty: false, out byte[]? bytes))
+			return HostStatus.InvalidArgument;
+		return HostErrors.Guard(nameof(InstantiateAttachments), () =>
+		{
+			var attachments = new ScriptAttachment[count];
+			for (int index = 0; index < attachments.Length; ++index)
+			{
+				NativeScriptAttachmentV1 item = items[index];
+				if (item.Reserved != 0)
+					throw new InvalidDataException(
+						"NativeScriptAttachmentV1.Reserved must be zero.");
+				attachments[index] = new ScriptAttachment(
+					NativeBridge.FromNative(item.Entity), item.AttachmentId,
+					item.ScriptAsset, item.Enabled != 0);
+			}
+			HostRegistry.GetScene(sceneRuntimeId).InstantiateAttachments(
+				attachments, Encoding.UTF8.GetString(bytes!));
 		});
 	}
 

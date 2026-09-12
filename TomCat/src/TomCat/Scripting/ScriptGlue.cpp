@@ -9,9 +9,11 @@
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SceneManager.h"
 #include "TomCat/Utils/PathUtils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -463,6 +465,83 @@ namespace TomCat::Scripting {
 			});
 		}
 
+		int32_t SceneGetActiveHandleCallback(uint64_t* sceneHandle) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!sceneHandle) return Code(ScriptStatus::InvalidArgument);
+				SceneManager* manager = SceneManager::GetRuntime();
+				if (!manager) return Code(ScriptStatus::Unavailable);
+				*sceneHandle = static_cast<uint64_t>(manager->GetActiveSceneHandle());
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t SceneGetActiveBuildIndexCallback(int32_t* buildIndex) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!buildIndex) return Code(ScriptStatus::InvalidArgument);
+				SceneManager* manager = SceneManager::GetRuntime();
+				if (!manager) return Code(ScriptStatus::Unavailable);
+				*buildIndex = manager->GetActiveBuildIndex();
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t SceneRequestLoadHandleCallback(uint64_t sceneHandle) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				SceneManager* manager = SceneManager::GetRuntime();
+				if (!manager) return Code(ScriptStatus::Unavailable);
+				if (sceneHandle == 0) return 0;
+				return manager->RequestLoadScene(AssetHandle(sceneHandle)) ? 1 : 0;
+			});
+		}
+
+		int32_t SceneRequestLoadIndexCallback(int32_t buildIndex) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				SceneManager* manager = SceneManager::GetRuntime();
+				if (!manager) return Code(ScriptStatus::Unavailable);
+				if (buildIndex < 0) return 0;
+				return manager->RequestLoadScene(static_cast<uint32_t>(buildIndex)) ? 1 : 0;
+			});
+		}
+
+		int32_t SceneRequestReloadCallback() noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				SceneManager* manager = SceneManager::GetRuntime();
+				if (!manager) return Code(ScriptStatus::Unavailable);
+				return manager->RequestReload() ? 1 : 0;
+			});
+		}
+
+		int32_t PrefabInstantiateDeferredCallback(EntityHandleV1 context,
+			uint64_t prefabHandle, NativeVector3 worldPosition,
+			EntityHandleV1 parent) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (prefabHandle == 0 || !std::isfinite(worldPosition.X)
+					|| !std::isfinite(worldPosition.Y)
+					|| !std::isfinite(worldPosition.Z))
+					return Code(ScriptStatus::InvalidArgument);
+				return ScriptEngine::Get().QueueInstantiatePrefab(context,
+					prefabHandle, worldPosition, parent) ? 1 : 0;
+			});
+		}
+
 	}
 
 	NativeApiV1 BuildNativeApiV1()
@@ -506,6 +585,12 @@ namespace TomCat::Scripting {
 		api.BehaviourGetEnabled = &BehaviourGetEnabledCallback;
 		api.BehaviourSetEnabledDeferred = &BehaviourSetEnabledCallback;
 		api.BehaviourRemoveDeferred = &BehaviourRemoveCallback;
+		api.SceneGetActiveHandle = &SceneGetActiveHandleCallback;
+		api.SceneGetActiveBuildIndex = &SceneGetActiveBuildIndexCallback;
+		api.SceneRequestLoadHandle = &SceneRequestLoadHandleCallback;
+		api.SceneRequestLoadIndex = &SceneRequestLoadIndexCallback;
+		api.SceneRequestReload = &SceneRequestReloadCallback;
+		api.PrefabInstantiateDeferred = &PrefabInstantiateDeferredCallback;
 		return api;
 	}
 

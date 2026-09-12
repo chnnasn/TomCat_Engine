@@ -26,7 +26,8 @@ namespace TomCat {
 		// Keep the former Script numeric slot for metadata/package migration while
 		// giving C# source a precise, single-language identity.
 		CSharpScript = 8,
-		Other = 9
+		Other = 9,
+		Prefab = 10
 	};
 
 	const char* AssetTypeToString(AssetType type);

@@ -1,10 +1,13 @@
-using System.Runtime.InteropServices;
 using TomCat.Interop;
 
 namespace TomCat;
 
-[StructLayout(LayoutKind.Sequential)]
-public readonly struct Entity : IEquatable<Entity>
+/// <summary>
+/// A stable proxy for an entity owned by the current scene runtime.
+/// The native ABI continues to use <see cref="NativeEntityHandleV1"/>; this
+/// reference type only makes chained property setters behave naturally in C#.
+/// </summary>
+public sealed class Entity : IEquatable<Entity>
 {
     internal Entity(ulong sceneSessionId, ulong id, ulong runtimeGeneration)
     {
@@ -42,14 +45,14 @@ public readonly struct Entity : IEquatable<Entity>
 		ScriptExecutionContext.NotifyEntityDestroyed(this);
 	}
 
-    public T GetComponent<T>() where T : struct, IEntityComponent
+    public T GetComponent<T>() where T : class, IEntityComponent
     {
         if (!HasComponent<T>())
             throw new TomCatException($"Entity {Id} does not have component {typeof(T).Name}.");
         return ComponentProxy<T>.Create(this);
     }
 
-    public bool TryGetComponent<T>(out T component) where T : struct, IEntityComponent
+    public bool TryGetComponent<T>(out T component) where T : class, IEntityComponent
     {
         if (HasComponent<T>())
         {
@@ -57,28 +60,30 @@ public readonly struct Entity : IEquatable<Entity>
             return true;
         }
 
-        component = default;
+        component = null!;
         return false;
     }
 
-    public bool HasComponent<T>() where T : struct, IEntityComponent =>
-        NativeBridge.HasComponent(this, ComponentProxy<T>.Type);
+    public bool HasComponent<T>() where T : class, IEntityComponent =>
+        NativeBridge.HasComponent(this, ComponentProxy<T>.GetNativeType());
 
-    public T AddComponent<T>() where T : struct, IEntityComponent
+    public T AddComponent<T>() where T : class, IEntityComponent
     {
-        NativeBridge.AddComponent(this, ComponentProxy<T>.Type);
+        NativeBridge.AddComponent(this, ComponentProxy<T>.GetNativeType());
         return ComponentProxy<T>.Create(this);
     }
 
-    public void RemoveComponent<T>() where T : struct, IEntityComponent =>
-        NativeBridge.RemoveComponent(this, ComponentProxy<T>.Type);
+    public void RemoveComponent<T>() where T : class, IEntityComponent =>
+        NativeBridge.RemoveComponent(this, ComponentProxy<T>.GetNativeType());
 
-    public bool Equals(Entity other) => SceneSessionId == other.SceneSessionId && Id == other.Id &&
+    public bool Equals(Entity? other) => other is not null &&
+        SceneSessionId == other.SceneSessionId && Id == other.Id &&
         RuntimeGeneration == other.RuntimeGeneration;
     public override bool Equals(object? obj) => obj is Entity other && Equals(other);
     public override int GetHashCode() => HashCode.Combine(SceneSessionId, Id, RuntimeGeneration);
-    public static bool operator ==(Entity left, Entity right) => left.Equals(right);
-    public static bool operator !=(Entity left, Entity right) => !left.Equals(right);
+    public static bool operator ==(Entity? left, Entity? right) =>
+        ReferenceEquals(left, right) || (left is not null && left.Equals(right));
+    public static bool operator !=(Entity? left, Entity? right) => !(left == right);
     public override string ToString() => $"Entity({Id}, session={SceneSessionId}, generation={RuntimeGeneration})";
 }
 
@@ -87,13 +92,11 @@ public interface IEntityComponent
     Entity Entity { get; }
 }
 
-internal static class ComponentProxy<T> where T : struct, IEntityComponent
+internal static class ComponentProxy<T> where T : class, IEntityComponent
 {
-    internal static readonly NativeComponentTypeV1 Type = ResolveType();
-
     internal static T Create(Entity entity)
     {
-        object value = Type switch
+        object value = GetNativeType() switch
         {
             NativeComponentTypeV1.Transform => new Transform(entity),
             NativeComponentTypeV1.Rigidbody2D => new Rigidbody2D(entity),
@@ -106,7 +109,10 @@ internal static class ComponentProxy<T> where T : struct, IEntityComponent
         return (T)value;
     }
 
-    private static NativeComponentTypeV1 ResolveType()
+    // Do not retain typeof(T) in a static field. A project can attempt to call
+    // this generic API with a collectible type, and the default ALC must never
+    // acquire a static reference that prevents the Play Domain from unloading.
+    internal static NativeComponentTypeV1 GetNativeType()
     {
         Type type = typeof(T);
         if (type == typeof(Transform)) return NativeComponentTypeV1.Transform;
@@ -119,7 +125,7 @@ internal static class ComponentProxy<T> where T : struct, IEntityComponent
     }
 }
 
-public readonly unsafe struct Transform : IEntityComponent
+public sealed unsafe class Transform : IEntityComponent
 {
     internal Transform(Entity entity) => Entity = entity;
     public Entity Entity { get; }
@@ -145,7 +151,7 @@ public readonly unsafe struct Transform : IEntityComponent
     public Matrix4 WorldMatrix => NativeBridge.GetWorldMatrix(Entity);
 }
 
-public readonly unsafe struct Rigidbody2D : IEntityComponent
+public sealed unsafe class Rigidbody2D : IEntityComponent
 {
     internal Rigidbody2D(Entity entity) => Entity = entity;
     public Entity Entity { get; }
@@ -164,25 +170,25 @@ public readonly unsafe struct Rigidbody2D : IEntityComponent
         NativeBridge.RigidbodyApplyLinearImpulse, "Rigidbody2D.ApplyLinearImpulse");
 }
 
-public readonly struct BoxCollider2D : IEntityComponent
+public sealed class BoxCollider2D : IEntityComponent
 {
     internal BoxCollider2D(Entity entity) => Entity = entity;
     public Entity Entity { get; }
 }
 
-public readonly struct CircleCollider2D : IEntityComponent
+public sealed class CircleCollider2D : IEntityComponent
 {
     internal CircleCollider2D(Entity entity) => Entity = entity;
     public Entity Entity { get; }
 }
 
-public readonly struct DistanceJoint2D : IEntityComponent
+public sealed class DistanceJoint2D : IEntityComponent
 {
     internal DistanceJoint2D(Entity entity) => Entity = entity;
     public Entity Entity { get; }
 }
 
-public readonly struct SpriteRenderer : IEntityComponent
+public sealed class SpriteRenderer : IEntityComponent
 {
     internal SpriteRenderer(Entity entity) => Entity = entity;
     public Entity Entity { get; }

@@ -1,0 +1,37 @@
+name: Regressions
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Premake5
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP "premake.zip"
+          $directory = Join-Path $env:RUNNER_TEMP "premake"
+          Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta7/premake-5.0.0-beta7-windows.zip" -OutFile $zip -UseBasicParsing
+          Expand-Archive -LiteralPath $zip -DestinationPath $directory -Force
+          "PREMAKE=$(Join-Path $directory 'premake5.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run Release regressions
+        shell: pwsh
+        run: .\Scripts\Run-Regressions.ps1 -Configuration Release -Platform x64 -PremakePath $env:PREMAKE

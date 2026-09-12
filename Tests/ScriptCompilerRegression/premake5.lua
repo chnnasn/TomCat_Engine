@@ -11,6 +11,7 @@ project "ScriptCompilerRegression"
 	{
 		"src/**.h",
 		"src/**.cpp",
+		"../../Editor/TomCatInut/src/Player/PlayerBuilder.cpp",
 		"../../Editor/TomCatInut/src/Scripting/ScriptProjectCompiler.cpp",
 		"../../Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
 	}
@@ -23,7 +24,8 @@ project "ScriptCompilerRegression"
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
+		"%{IncludeDir.entt}",
+		"%{IncludeDir.yaml_cpp}"
 	}
 
 	libdirs

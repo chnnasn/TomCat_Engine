@@ -2,6 +2,7 @@
 #include "Project.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
+#include "TomCat/Runtime/RuntimeCompatibility.h"
 
 #include <algorithm>
 #include <array>
@@ -232,12 +233,6 @@ namespace TomCat {
 				return false;
 			}
 
-			if (!IsSafeRelativePath(config.StartScene))
-			{
-				errorMessage = "Project.StartScene must be a relative path inside AssetDirectory";
-				return false;
-			}
-			config.StartScene = config.StartScene.lexically_normal();
 			return true;
 		}
 
@@ -547,29 +542,40 @@ namespace TomCat {
 			}
 		}
 
-		YAML::Node RequireCurrentProjectDocument(const YAML::Node& root)
+		YAML::Node RequireSupportedProjectDocument(const YAML::Node& root,
+			uint32_t& schemaVersion)
 		{
 			constexpr std::array<const char*, 2> rootFields = { "SchemaVersion", "Project" };
 			RequireExactMapFields(root, "Project document", rootFields);
 
 			const YAML::Node schemaNode = root["SchemaVersion"];
-			const uint32_t schemaVersion = schemaNode.as<uint32_t>();
-			if (schemaVersion != Project::CurrentSchemaVersion)
+			schemaVersion = schemaNode.as<uint32_t>();
+			if (schemaVersion != Project::OldestSupportedSchemaVersion
+				&& schemaVersion != Project::CurrentSchemaVersion)
 				throw std::runtime_error("Unsupported project SchemaVersion " +
 					std::to_string(schemaVersion) + "; expected " +
+					std::to_string(Project::OldestSupportedSchemaVersion) + " or " +
 					std::to_string(Project::CurrentSchemaVersion));
 
 			const YAML::Node projectNode = root["Project"];
-			constexpr std::array<const char*, 8> projectFields = {
+			constexpr std::array<const char*, 6> currentProjectFields = {
+				"Name", "Version", "Description", "EditorVersion", "Template",
+				"AssetDirectory"
+			};
+			constexpr std::array<const char*, 8> legacyProjectFields = {
 				"Name", "Version", "Description", "EditorVersion", "Template",
 				"AssetDirectory", "StartScene", "StartSceneHandle"
 			};
-			RequireExactMapFields(projectNode, "Project", projectFields);
+			if (schemaVersion == Project::CurrentSchemaVersion)
+				RequireExactMapFields(projectNode, "Project", currentProjectFields);
+			else
+				RequireExactMapFields(projectNode, "Project", legacyProjectFields);
 
 			return projectNode;
 		}
 
-		ProjectConfig ReadCurrentProjectConfig(const YAML::Node& projectNode)
+		ProjectConfig ReadProjectConfig(const YAML::Node& projectNode,
+			uint32_t schemaVersion)
 		{
 			ProjectConfig config;
 			config.Name = projectNode["Name"].as<std::string>();
@@ -578,13 +584,157 @@ namespace TomCat {
 			config.EditorVersion = projectNode["EditorVersion"].as<std::string>();
 			config.Template = projectNode["Template"].as<std::string>();
 			config.AssetDirectory = UTF8ToPath(projectNode["AssetDirectory"].as<std::string>());
-			config.StartScene = UTF8ToPath(projectNode["StartScene"].as<std::string>());
-			config.StartSceneHandle = AssetHandle(projectNode["StartSceneHandle"].as<uint64_t>());
+			config.StartScene.clear();
+			config.StartSceneHandle = AssetHandle(0);
+			if (schemaVersion == Project::OldestSupportedSchemaVersion)
+			{
+				config.StartScene = UTF8ToPath(projectNode["StartScene"].as<std::string>());
+				if (!IsSafeRelativePath(config.StartScene))
+					throw std::runtime_error(
+						"Project.StartScene must be a relative path inside AssetDirectory");
+				config.StartScene = config.StartScene.lexically_normal();
+				config.StartSceneHandle = AssetHandle(
+					projectNode["StartSceneHandle"].as<uint64_t>());
+			}
 
 			std::string validationError;
 			if (!NormalizeAndValidateConfig(config, validationError))
 				throw std::runtime_error(validationError);
 			return config;
+		}
+
+		constexpr uint32_t kBuildSettingsSchemaVersion = 1;
+
+		bool NormalizeAndValidateBuildSettings(BuildSettings& settings,
+			std::string& errorMessage)
+		{
+			if (settings.Scenes.size() > RuntimeCompatibility::MaximumBuildSceneCount)
+			{
+				errorMessage = "BuildSettings.Scenes contains too many entries";
+				return false;
+			}
+
+			std::unordered_set<AssetHandle> sceneHandles;
+			bool entrySceneIsEnabled = false;
+			for (std::size_t index = 0; index < settings.Scenes.size(); ++index)
+			{
+				BuildSceneSettings& scene = settings.Scenes[index];
+				if (static_cast<uint64_t>(scene.Handle) == 0)
+				{
+					errorMessage = "BuildSettings.Scenes[" + std::to_string(index) +
+						"].Handle cannot be 0";
+					return false;
+				}
+				if (!sceneHandles.emplace(scene.Handle).second)
+				{
+					errorMessage = "BuildSettings.Scenes contains duplicate handle " +
+						std::to_string(static_cast<uint64_t>(scene.Handle));
+					return false;
+				}
+				if (!scene.PathHint.empty())
+				{
+					if (!IsSafeRelativePath(scene.PathHint))
+					{
+						errorMessage = "BuildSettings.Scenes[" + std::to_string(index) +
+							"].PathHint must be a relative path inside AssetDirectory";
+						return false;
+					}
+					scene.PathHint = scene.PathHint.lexically_normal();
+				}
+				if (scene.Handle == settings.EntrySceneHandle && scene.Enabled)
+					entrySceneIsEnabled = true;
+			}
+
+			if (static_cast<uint64_t>(settings.EntrySceneHandle) != 0 && !entrySceneIsEnabled)
+			{
+				errorMessage = "BuildSettings.EntrySceneHandle must identify an enabled scene in BuildSettings.Scenes";
+				return false;
+			}
+			return true;
+		}
+
+		enum class BuildSettingsLoadResult
+		{
+			Missing,
+			Loaded,
+			Failed
+		};
+
+		BuildSettingsLoadResult LoadBuildSettingsFile(
+			const std::filesystem::path& path, BuildSettings& settings,
+			std::string& errorMessage)
+		{
+			std::error_code filesystemError;
+			const bool exists = std::filesystem::exists(path, filesystemError);
+			if (filesystemError)
+			{
+				errorMessage = "Could not inspect build settings: " + filesystemError.message();
+				return BuildSettingsLoadResult::Failed;
+			}
+			if (!exists)
+			{
+				settings = BuildSettings{};
+				return BuildSettingsLoadResult::Missing;
+			}
+			if (!std::filesystem::is_regular_file(path, filesystemError) || filesystemError)
+			{
+				errorMessage = "Build settings path is not a regular file";
+				return BuildSettingsLoadResult::Failed;
+			}
+
+			try
+			{
+				std::ifstream input(path, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("Could not open build settings");
+				std::ostringstream contents;
+				contents << input.rdbuf();
+				if (input.bad())
+					throw std::runtime_error("Failed while reading build settings");
+				const std::string document = contents.str();
+				if (!JsonSyntaxValidator(document).Validate())
+					throw std::runtime_error("Build settings file is not valid JSON");
+
+				const YAML::Node root = YAML::Load(document);
+				RequireExactMapFields(root, "Build settings document",
+					std::array<const char*, 3>{ "schemaVersion", "entrySceneHandle", "scenes" });
+				const uint32_t schemaVersion = root["schemaVersion"].as<uint32_t>();
+				if (schemaVersion != kBuildSettingsSchemaVersion)
+					throw std::runtime_error("Unsupported build settings schemaVersion " +
+						std::to_string(schemaVersion) + "; expected " +
+						std::to_string(kBuildSettingsSchemaVersion));
+
+				const YAML::Node scenes = root["scenes"];
+				if (!scenes.IsSequence())
+					throw std::runtime_error("BuildSettings.Scenes must be a sequence");
+				if (scenes.size() > RuntimeCompatibility::MaximumBuildSceneCount)
+					throw std::runtime_error("BuildSettings.Scenes contains too many entries");
+
+				BuildSettings loaded;
+				loaded.EntrySceneHandle = AssetHandle(root["entrySceneHandle"].as<uint64_t>());
+				loaded.Scenes.reserve(scenes.size());
+				for (std::size_t index = 0; index < scenes.size(); ++index)
+				{
+					const YAML::Node scene = scenes[index];
+					RequireExactMapFields(scene,
+						"BuildSettings.Scenes[" + std::to_string(index) + "]",
+						std::array<const char*, 3>{ "handle", "enabled", "pathHint" });
+					BuildSceneSettings entry;
+					entry.Handle = AssetHandle(scene["handle"].as<uint64_t>());
+					entry.Enabled = scene["enabled"].as<bool>();
+					entry.PathHint = UTF8ToPath(scene["pathHint"].as<std::string>());
+					loaded.Scenes.push_back(std::move(entry));
+				}
+				if (!NormalizeAndValidateBuildSettings(loaded, errorMessage))
+					return BuildSettingsLoadResult::Failed;
+				settings = std::move(loaded);
+				return BuildSettingsLoadResult::Loaded;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = exception.what();
+				return BuildSettingsLoadResult::Failed;
+			}
 		}
 
 		constexpr uint32_t kLegacyProjectSettingsSchemaVersion = 1;
@@ -829,6 +979,61 @@ namespace TomCat {
 		}
 	}
 
+	bool Project::SaveBuildSettings() const
+	{
+		try
+		{
+			if (m_ProjectPath.empty())
+				throw std::runtime_error("Project path is empty");
+			BuildSettings normalized = m_BuildSettings;
+			std::string validationError;
+			if (!NormalizeAndValidateBuildSettings(normalized, validationError))
+				throw std::runtime_error(validationError);
+
+			const std::filesystem::path settingsPath = GetBuildSettingsPath();
+			std::error_code directoryError;
+			std::filesystem::create_directories(settingsPath.parent_path(), directoryError);
+			if (directoryError)
+				throw std::runtime_error("Could not create ProjectSettings directory: " +
+					directoryError.message());
+
+			std::ostringstream output;
+			output << "{\n"
+				<< "  \"schemaVersion\": " << kBuildSettingsSchemaVersion << ",\n"
+				<< "  \"entrySceneHandle\": "
+				<< static_cast<uint64_t>(normalized.EntrySceneHandle) << ",\n"
+				<< "  \"scenes\": [";
+			for (std::size_t index = 0; index < normalized.Scenes.size(); ++index)
+			{
+				const BuildSceneSettings& scene = normalized.Scenes[index];
+				if (index != 0)
+					output << ',';
+				output << "\n    {\n"
+					<< "      \"handle\": " << static_cast<uint64_t>(scene.Handle) << ",\n"
+					<< "      \"enabled\": " << (scene.Enabled ? "true" : "false") << ",\n"
+					<< "      \"pathHint\": \""
+					<< EscapeJsonString(PathToUTF8(scene.PathHint)) << "\"\n"
+					<< "    }";
+			}
+			if (!normalized.Scenes.empty())
+				output << '\n';
+			output << "  ]\n}\n";
+			if (!output.good())
+				throw std::runtime_error("Could not serialize build settings JSON");
+
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(settingsPath, output.str(), writeError))
+				throw std::runtime_error("Could not atomically replace build settings: " + writeError);
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Failed to save build settings '{0}': {1}",
+				PathToUTF8(GetBuildSettingsPath()), exception.what());
+			return false;
+		}
+	}
+
 	bool Project::SetSettings(const ProjectSettings& settings)
 	{
 		std::string validationError;
@@ -845,6 +1050,44 @@ namespace TomCat {
 		return false;
 	}
 
+	bool Project::SetBuildSettings(const BuildSettings& settings)
+	{
+		BuildSettings normalized = settings;
+		std::string validationError;
+		if (!NormalizeAndValidateBuildSettings(normalized, validationError))
+		{
+			TC_Core_Error("Cannot save build settings: {0}", validationError);
+			return false;
+		}
+
+		const BuildSettings previous = m_BuildSettings;
+		const std::filesystem::path previousStartScene = m_Config.StartScene;
+		const AssetHandle previousStartSceneHandle = m_Config.StartSceneHandle;
+		m_BuildSettings = std::move(normalized);
+		SynchronizeLegacyStartSceneMirror();
+		if (SaveBuildSettings())
+			return true;
+		m_BuildSettings = previous;
+		m_Config.StartScene = previousStartScene;
+		m_Config.StartSceneHandle = previousStartSceneHandle;
+		return false;
+	}
+
+	void Project::SynchronizeLegacyStartSceneMirror()
+	{
+		m_Config.StartSceneHandle = m_BuildSettings.EntrySceneHandle;
+		m_Config.StartScene.clear();
+		if (static_cast<uint64_t>(m_BuildSettings.EntrySceneHandle) == 0)
+			return;
+		const auto entry = std::find_if(m_BuildSettings.Scenes.begin(),
+			m_BuildSettings.Scenes.end(), [this](const BuildSceneSettings& scene)
+			{
+				return scene.Handle == m_BuildSettings.EntrySceneHandle;
+			});
+		if (entry != m_BuildSettings.Scenes.end())
+			m_Config.StartScene = entry->PathHint;
+	}
+
 	bool Project::SetStartScene(const std::filesystem::path& scenePath)
 	{
 		if (!IsSafeRelativePath(scenePath))
@@ -854,6 +1097,49 @@ namespace TomCat {
 			return false;
 		}
 		m_Config.StartScene = scenePath.lexically_normal();
+		for (BuildSceneSettings& scene : m_BuildSettings.Scenes)
+		{
+			if (scene.Handle == m_BuildSettings.EntrySceneHandle)
+			{
+				scene.PathHint = m_Config.StartScene;
+				break;
+			}
+		}
+		return true;
+	}
+
+	bool Project::SetStartSceneHandle(AssetHandle handle)
+	{
+		BuildSettings candidate = m_BuildSettings;
+		candidate.EntrySceneHandle = handle;
+		if (static_cast<uint64_t>(handle) != 0)
+		{
+			auto scene = std::find_if(candidate.Scenes.begin(), candidate.Scenes.end(),
+				[handle](const BuildSceneSettings& value) { return value.Handle == handle; });
+			if (scene == candidate.Scenes.end())
+			{
+				BuildSceneSettings entry;
+				entry.Handle = handle;
+				entry.Enabled = true;
+				entry.PathHint = m_Config.StartScene;
+				candidate.Scenes.push_back(std::move(entry));
+			}
+			else
+			{
+				scene->Enabled = true;
+				if (!m_Config.StartScene.empty())
+					scene->PathHint = m_Config.StartScene;
+			}
+		}
+
+		std::string validationError;
+		if (!NormalizeAndValidateBuildSettings(candidate, validationError))
+		{
+			TC_Core_Error("Cannot set entry scene: {0}", validationError);
+			return false;
+		}
+		m_BuildSettings = std::move(candidate);
+		SynchronizeLegacyStartSceneMirror();
 		return true;
 	}
 
@@ -1119,6 +1405,17 @@ namespace TomCat {
 			TC_Core_Error("Cannot create project '{0}': {1}", PathToUTF8(projectPath), validationError);
 			return nullptr;
 		}
+		project->m_BuildSettings = BuildSettings{};
+		if (static_cast<uint64_t>(project->m_Config.StartSceneHandle) != 0)
+		{
+			BuildSceneSettings entry;
+			entry.Handle = project->m_Config.StartSceneHandle;
+			entry.Enabled = true;
+			entry.PathHint = project->m_Config.StartScene;
+			project->m_BuildSettings.EntrySceneHandle = entry.Handle;
+			project->m_BuildSettings.Scenes.push_back(std::move(entry));
+		}
+		project->SynchronizeLegacyStartSceneMirror();
 
 		const std::filesystem::path assetPath = project->GetAssetPath();
 		std::vector<std::filesystem::path> missingDirectories;
@@ -1182,6 +1479,8 @@ namespace TomCat {
 			std::error_code cleanupError;
 			std::filesystem::remove(project->GetSettingsPath(), cleanupError);
 			cleanupError.clear();
+			std::filesystem::remove(project->GetBuildSettingsPath(), cleanupError);
+			cleanupError.clear();
 			std::filesystem::remove(project->GetSettingsPath().parent_path(), cleanupError);
 			cleanupError.clear();
 			std::filesystem::remove(project->GetProjectPath(), cleanupError);
@@ -1209,16 +1508,41 @@ namespace TomCat {
 
 		try
 		{
-			std::ifstream input(projectPath, std::ios::binary);
-			if (!input)
-				throw std::runtime_error("Could not open the project file");
-			YAML::Node data = YAML::Load(input);
-			if (input.bad())
-				throw std::runtime_error("Failed while reading the project file");
-			const YAML::Node projectNode = RequireCurrentProjectDocument(data);
+			YAML::Node data;
+			{
+				std::ifstream input(projectPath, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("Could not open the project file");
+				data = YAML::Load(input);
+				if (input.bad())
+					throw std::runtime_error("Failed while reading the project file");
+			}
+			uint32_t schemaVersion = 0;
+			const YAML::Node projectNode = RequireSupportedProjectDocument(data, schemaVersion);
 
 			auto project = CreateRef<Project>(projectPath);
-			project->m_Config = ReadCurrentProjectConfig(projectNode);
+			project->m_Config = ReadProjectConfig(projectNode, schemaVersion);
+			std::string buildSettingsError;
+			const BuildSettingsLoadResult buildSettingsResult = LoadBuildSettingsFile(
+				project->GetBuildSettingsPath(), project->m_BuildSettings, buildSettingsError);
+			if (buildSettingsResult == BuildSettingsLoadResult::Failed)
+				throw std::runtime_error("Invalid build settings: " + buildSettingsError);
+			if (buildSettingsResult == BuildSettingsLoadResult::Missing)
+			{
+				if (schemaVersion == CurrentSchemaVersion)
+					throw std::runtime_error("ProjectSettings/BuildSettings.json is required by project schema " +
+						std::to_string(CurrentSchemaVersion));
+				if (static_cast<uint64_t>(project->m_Config.StartSceneHandle) != 0)
+				{
+					BuildSceneSettings entry;
+					entry.Handle = project->m_Config.StartSceneHandle;
+					entry.Enabled = true;
+					entry.PathHint = project->m_Config.StartScene;
+					project->m_BuildSettings.EntrySceneHandle = entry.Handle;
+					project->m_BuildSettings.Scenes.push_back(std::move(entry));
+				}
+			}
+			project->SynchronizeLegacyStartSceneMirror();
 			std::string settingsError;
 			ProjectSettingsLoadResult settingsResult = LoadProjectSettingsFile(
 				project->GetSettingsPath(), project->m_Settings, settingsError,
@@ -1235,6 +1559,9 @@ namespace TomCat {
 				throw std::runtime_error("Invalid project settings: " + settingsError);
 
 			project->m_PreservedDocument = ReadWholeFile(projectPath);
+			if (schemaVersion != CurrentSchemaVersion && !project->Save())
+				throw std::runtime_error("Could not migrate project and BuildSettings.json to schema " +
+					std::to_string(CurrentSchemaVersion));
 			if (!EnsureAssetSystemIgnoreRules(project->m_Directory))
 				TC_Core_Warn("Could not ensure asset-system ignore rules for '{0}'",
 					PathToUTF8(project->m_Directory));
@@ -1256,6 +1583,9 @@ namespace TomCat {
 			std::string validationError;
 			if (!NormalizeAndValidateConfig(m_Config, validationError))
 				throw std::runtime_error(validationError);
+			if (!NormalizeAndValidateBuildSettings(m_BuildSettings, validationError))
+				throw std::runtime_error(validationError);
+			SynchronizeLegacyStartSceneMirror();
 
 			std::error_code error;
 			const bool destinationExists = std::filesystem::exists(m_ProjectPath, error);
@@ -1271,12 +1601,16 @@ namespace TomCat {
 				root = YAML::Load(input);
 				if (input.bad())
 					throw std::runtime_error("Failed while reading the existing project document");
-				(void)ReadCurrentProjectConfig(RequireCurrentProjectDocument(root));
+				uint32_t schemaVersion = 0;
+				const YAML::Node projectNode = RequireSupportedProjectDocument(root, schemaVersion);
+				(void)ReadProjectConfig(projectNode, schemaVersion);
 			}
 			else if (!m_PreservedDocument.empty())
 			{
 				root = YAML::Load(m_PreservedDocument);
-				(void)ReadCurrentProjectConfig(RequireCurrentProjectDocument(root));
+				uint32_t schemaVersion = 0;
+				const YAML::Node projectNode = RequireSupportedProjectDocument(root, schemaVersion);
+				(void)ReadProjectConfig(projectNode, schemaVersion);
 			}
 			else
 			{
@@ -1284,16 +1618,18 @@ namespace TomCat {
 				root["Project"] = YAML::Node(YAML::NodeType::Map);
 			}
 
+			if (!SaveBuildSettings())
+				throw std::runtime_error("Could not save ProjectSettings/BuildSettings.json");
+
 			root["SchemaVersion"] = CurrentSchemaVersion;
-			YAML::Node projectNode = root["Project"];
+			YAML::Node projectNode(YAML::NodeType::Map);
 			projectNode["Name"] = m_Config.Name;
 			projectNode["Version"] = m_Config.Version;
 			projectNode["Description"] = m_Config.Description;
 			projectNode["EditorVersion"] = m_Config.EditorVersion;
 			projectNode["Template"] = m_Config.Template;
 			projectNode["AssetDirectory"] = PathToUTF8(m_Config.AssetDirectory);
-			projectNode["StartScene"] = PathToUTF8(m_Config.StartScene);
-			projectNode["StartSceneHandle"] = static_cast<uint64_t>(m_Config.StartSceneHandle);
+			root["Project"] = projectNode;
 
 			YAML::Emitter out;
 			out << root;
@@ -1322,6 +1658,7 @@ namespace TomCat {
 		m_Directory = std::move(reloaded->m_Directory);
 		m_Config = std::move(reloaded->m_Config);
 		m_Settings = std::move(reloaded->m_Settings);
+		m_BuildSettings = std::move(reloaded->m_BuildSettings);
 		if (!localLastOperationTime.empty())
 			m_Config.LastOperationTime = localLastOperationTime;
 		m_PreservedDocument = std::move(reloaded->m_PreservedDocument);

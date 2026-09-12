@@ -15,6 +15,7 @@
 #include "TomCat/Project/ProjectSettings.h"
 
 #include <array>
+#include <optional>
 #include <string>
 
 struct ImVec2;
@@ -61,7 +62,14 @@ namespace TomCat {
 		void SaveSceneAs();
 		
 		bool SerializeScene(const Ref<Scene>& scene, const std::filesystem::path& path);
+		AssetHandle GetSavedEditorSceneHandle() const;
+		bool CreatePrefabFromEntity(Entity entity,
+			const std::filesystem::path& destinationDirectory);
+		Entity InstantiatePrefab(AssetHandle handle, std::optional<UUID> parent,
+			std::optional<glm::vec3> rootWorldPosition);
+		void ReportPrefabOperation(bool succeeded, std::string message);
 		void ResizeSceneForGameView(const Ref<Scene>& scene);
+		void CommitRuntimeSceneTransition();
 		void ResetSceneInteractionState();
 		void RequestDestructiveAction(std::function<bool()> action);
 		void UI_UnsavedChangesModal();
@@ -118,6 +126,7 @@ namespace TomCat {
 
 		Ref<Scene> m_ActiveScene;
 		Ref<Scene> m_EditorScene;
+		SceneManager m_RuntimeSceneManager;
 		std::filesystem::path m_EditorScenePath;
 
 		Entity m_HoveredEntity;
@@ -213,6 +222,8 @@ namespace TomCat {
 		bool m_ShowConsolePanel = false;
 		bool m_ShowBuildSettingsPanel = false;
 		bool m_FocusBuildSettingsPanel = false;
+		std::string m_BuildSettingsStatus;
+		bool m_BuildSettingsSucceeded = false;
 		std::string m_PlayerBuildStatus;
 		bool m_PlayerBuildSucceeded = false;
 		bool m_ShowProjectSettingsPanel = false;

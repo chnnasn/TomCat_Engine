@@ -66,7 +66,10 @@ internal static unsafe class NativeBridge
 		api.PhysicsRaycast != null && api.PhysicsQueryAabb != null &&
 		api.AssetIsValid != null && api.AssetGetType != null &&
 		api.BehaviourGetEnabled != null && api.BehaviourSetEnabledDeferred != null &&
-		api.BehaviourRemoveDeferred != null;
+		api.BehaviourRemoveDeferred != null && api.SceneGetActiveHandle != null &&
+		api.SceneGetActiveBuildIndex != null && api.SceneRequestLoadHandle != null &&
+		api.SceneRequestLoadIndex != null && api.SceneRequestReload != null &&
+		api.PrefabInstantiateDeferred != null;
 
 	internal static void EnsureMainThread(bool requireLifecycleContext = true)
 	{
@@ -332,6 +335,64 @@ internal static unsafe class NativeBridge
 		Check(s_api.BehaviourRemoveDeferred(instance.Value), "TomCatBehaviour.RemoveFromEntity");
 	}
 
+	internal static ulong GetActiveSceneHandle()
+	{
+		EnsureMainThread();
+		Require(s_api.SceneGetActiveHandle != null, "SceneManager.ActiveScene");
+		ulong handle = 0;
+		Check(s_api.SceneGetActiveHandle(&handle), "SceneManager.ActiveScene");
+		return handle;
+	}
+
+	internal static int GetActiveSceneBuildIndex()
+	{
+		EnsureMainThread();
+		Require(s_api.SceneGetActiveBuildIndex != null, "SceneManager.ActiveBuildIndex");
+		int buildIndex = -1;
+		Check(s_api.SceneGetActiveBuildIndex(&buildIndex),
+			"SceneManager.ActiveBuildIndex");
+		return buildIndex;
+	}
+
+	internal static bool RequestLoadScene(ulong sceneHandle)
+	{
+		EnsureMainThread();
+		Require(s_api.SceneRequestLoadHandle != null, "SceneManager.LoadScene(SceneAsset)");
+		return ReadBoolean(s_api.SceneRequestLoadHandle(sceneHandle),
+			"SceneManager.LoadScene(SceneAsset)");
+	}
+
+	internal static bool RequestLoadScene(int buildIndex)
+	{
+		EnsureMainThread();
+		Require(s_api.SceneRequestLoadIndex != null, "SceneManager.LoadScene(int)");
+		return ReadBoolean(s_api.SceneRequestLoadIndex(buildIndex),
+			"SceneManager.LoadScene(int)");
+	}
+
+	internal static bool RequestReloadScene()
+	{
+		EnsureMainThread();
+		Require(s_api.SceneRequestReload != null, "SceneManager.ReloadActiveScene");
+		return ReadBoolean(s_api.SceneRequestReload(),
+			"SceneManager.ReloadActiveScene");
+	}
+
+	internal static bool InstantiatePrefab(Entity context, PrefabAsset prefab,
+		Vector3 worldPosition, Entity? parent)
+	{
+		EnsureMainThread();
+		Require(s_api.PrefabInstantiateDeferred != null,
+			"TomCatBehaviour.Instantiate");
+		if (prefab.Handle == 0)
+			return false;
+		NativeEntityHandleV1 parentHandle = parent is null
+			? default : ToNative(parent);
+		return ReadBoolean(s_api.PrefabInstantiateDeferred(ToNative(context),
+			prefab.Handle, ToNative(worldPosition), parentHandle),
+			"TomCatBehaviour.Instantiate");
+	}
+
     internal static void WriteLog(int level, string message)
     {
         WithUtf8(message, "Log", view => s_api.Log(level, view), s_api.Log != null);
@@ -376,6 +437,8 @@ internal static unsafe class NativeBridge
     }
 
     private static NativeVector2 ToNative(Vector2 value) => new() { X = value.X, Y = value.Y };
+	private static NativeVector3 ToNative(Vector3 value) =>
+		new() { X = value.X, Y = value.Y, Z = value.Z };
 
     private static void WithUtf8(string value, string operation,
         Func<NativeUtf8View, int> callback, bool available)

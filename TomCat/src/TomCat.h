@@ -18,9 +18,11 @@
 #include "TomCat/ImGui/ImGuiLayer.h"
 
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SceneManager.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Physics2DEvents.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 
 //渲染器
 #include "TomCat/Renderer/Renderer.h"

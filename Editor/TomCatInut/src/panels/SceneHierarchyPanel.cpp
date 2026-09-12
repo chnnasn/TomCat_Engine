@@ -20,10 +20,9 @@
 #include "TomCat/Math/Math.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Utils/PathUtils.h"
+#include "../EditorDragDrop.h"
 
 namespace TomCat {
-
-	static constexpr const char* SceneEntityDragDropPayloadID = "SCENE_ENTITY_UUID";
 
 	enum class HierarchyDropZone
 	{
@@ -709,6 +708,34 @@ namespace TomCat {
 		return true;
 	}
 
+	bool SceneHierarchyPanel::AcceptPrefabDrop(Entity parent)
+	{
+		if (!m_Context || !m_PrefabInstantiateCallback)
+			return false;
+		const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+			AssetDragDropPayloadID, ImGuiDragDropFlags_AcceptBeforeDelivery);
+		if (!payload || payload->DataSize != sizeof(uint64_t))
+			return false;
+		const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+		const AssetMetadata* metadata =
+			AssetManager::Get().GetRegistry().GetMetadata(handle);
+		if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Prefab)
+			return false;
+		if (payload->IsDelivery())
+		{
+			Entity root = m_PrefabInstantiateCallback(handle, parent);
+			if (root)
+			{
+				m_SelectionContext = root;
+				if (parent)
+					m_ForceExpandParent = parent;
+				else
+					m_ForceOpenSceneRoot = true;
+			}
+		}
+		return true;
+	}
+
 	bool SceneHierarchyPanel::FlushPendingDeletion()
 	{
 		if (!m_Context || !m_EntityToDelete)
@@ -818,6 +845,8 @@ namespace TomCat {
 			{
 				const ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptBeforeDelivery |
 					ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+				const bool acceptedPrefab = AcceptPrefabDrop({});
+				if (!acceptedPrefab)
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
 					SceneEntityDragDropPayloadID, flags))
 				{
@@ -882,6 +911,17 @@ namespace TomCat {
 						m_SceneLoadCallback(handle);
 					else if (metadata && metadata->Type == AssetType::Texture2D && m_SpriteCreateCallback)
 						m_SpriteCreateCallback(handle);
+					else if (metadata && !metadata->IsMissing
+						&& metadata->Type == AssetType::Prefab
+						&& m_PrefabInstantiateCallback)
+					{
+						Entity root = m_PrefabInstantiateCallback(handle, {});
+						if (root)
+						{
+							m_SelectionContext = root;
+							m_ForceOpenSceneRoot = true;
+						}
+					}
 				}
 			}
 			else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
@@ -1049,6 +1089,11 @@ namespace TomCat {
 		ImGui::Separator();
 		if (ImGui::MenuItem("Rename", "F2", false, hasSelection)) BeginRename(m_SelectionContext);
 		if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection)) DuplicateSelectedEntity();
+		const bool canCreatePrefab = hasSelection && m_PrefabCreationAllowed
+			&& static_cast<bool>(m_PrefabCreateCallback);
+		if (ImGui::MenuItem("Create Prefab From Selection", nullptr, false,
+			canCreatePrefab))
+			m_PrefabCreateCallback(m_SelectionContext);
 		if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) DeleteSelectedEntity();
 		if (ImGui::MenuItem("Unparent", nullptr, false, hasSelection && m_Context && m_Context->GetParent(m_SelectionContext)))
 		{
@@ -1231,8 +1276,9 @@ namespace TomCat {
 		{
 			const ImGuiDragDropFlags dropFlags = ImGuiDragDropFlags_AcceptBeforeDelivery |
 				ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-			const bool acceptedScript = AcceptCSharpScriptDrop(entity);
-			if (!acceptedScript)
+			const bool acceptedAsset = AcceptCSharpScriptDrop(entity)
+				|| AcceptPrefabDrop(entity);
+			if (!acceptedAsset)
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
 				SceneEntityDragDropPayloadID, dropFlags))
 			{

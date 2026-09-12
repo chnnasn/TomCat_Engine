@@ -2,6 +2,9 @@
 #include "AssetManager.h"
 
 #include "TomCat/Project/Project.h"
+#include "TomCat/Runtime/RuntimeCompatibility.h"
+#include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scripting/ScriptField.h"
 #include "TomCat/Scripting/ScriptTypes.h"
@@ -13,6 +16,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <initializer_list>
 #include <limits>
@@ -28,11 +32,6 @@ namespace TomCat {
 
 	namespace {
 
-		constexpr std::array<char, 8> kPackageMagic = { 'T', 'C', 'P', 'A', 'C', 'K', '0', '1' };
-		constexpr uint32_t kPackageVersion = 4;
-		// Base manifest (32 bytes) followed by sixteen uint16 collision-mask rows.
-		constexpr uint32_t kPackageHeaderSize = 64;
-		constexpr uint64_t kPackageEntrySize = 32;
 		constexpr size_t kCopyBufferSize = 64 * 1024;
 		constexpr uint64_t kManagedPayloadHandle =
 			(std::numeric_limits<uint64_t>::max)();
@@ -367,6 +366,80 @@ namespace TomCat {
 			return false;
 		}
 
+		bool ValidateScriptFieldDefaultValue(const YAML::Node& value,
+			ScriptFieldType type, const std::string& context,
+			std::string& errorMessage)
+		{
+			auto fail = [&](std::string_view expectation)
+			{
+				errorMessage = context + ".defaultValue " + std::string(expectation);
+				return false;
+			};
+			auto validateReal = [&](const YAML::Node& node, bool requireFloatRange)
+			{
+				if (!node || !node.IsScalar())
+					return false;
+				const double parsed = node.as<double>();
+				return std::isfinite(parsed) && (!requireFloatRange
+					|| (parsed >= -static_cast<double>((std::numeric_limits<float>::max)())
+						&& parsed <= static_cast<double>((std::numeric_limits<float>::max)())));
+			};
+			auto validateVector = [&](std::size_t length)
+			{
+				if (!value.IsSequence() || value.size() != length)
+					return false;
+				for (const YAML::Node& element : value)
+				{
+					if (!validateReal(element, true))
+						return false;
+				}
+				return true;
+			};
+
+			try
+			{
+				switch (type)
+				{
+					case ScriptFieldType::Bool:
+						if (!value.IsScalar()) return fail("must be boolean");
+						(void)value.as<bool>();
+						return true;
+					case ScriptFieldType::Int32:
+						if (!value.IsScalar()) return fail("must be a 32-bit integer");
+						(void)value.as<int32_t>();
+						return true;
+					case ScriptFieldType::Int64:
+					case ScriptFieldType::Enum:
+						if (!value.IsScalar()) return fail("must be a 64-bit integer");
+						(void)value.as<int64_t>();
+						return true;
+					case ScriptFieldType::Float:
+						return validateReal(value, true) ? true : fail("must be a finite float");
+					case ScriptFieldType::Double:
+						return validateReal(value, false) ? true : fail("must be a finite number");
+					case ScriptFieldType::String:
+						return value.IsScalar() ? true : fail("must be a string");
+					case ScriptFieldType::Vector2:
+						return validateVector(2) ? true : fail("must be an array of 2 finite floats");
+					case ScriptFieldType::Vector3:
+						return validateVector(3) ? true : fail("must be an array of 3 finite floats");
+					case ScriptFieldType::Vector4:
+					case ScriptFieldType::Color:
+						return validateVector(4) ? true : fail("must be an array of 4 finite floats");
+					case ScriptFieldType::Entity:
+					case ScriptFieldType::AssetRef:
+						if (!value.IsScalar()) return fail("must be an unsigned 64-bit integer");
+						(void)value.as<uint64_t>();
+						return true;
+				}
+			}
+			catch (const std::exception&)
+			{
+				return fail("has the wrong type or is out of range");
+			}
+			return fail("has an unsupported type");
+		}
+
 		bool ValidateScriptManifest(std::string_view json,
 			std::unordered_set<uint64_t>& scriptHandles, std::string& errorMessage)
 		{
@@ -440,7 +513,7 @@ namespace TomCat {
 							{ "id", "name", "type", "isPublic", "hidden",
 								"formerNames" },
 							{ "typeName", "header", "tooltip", "rangeMin",
-								"rangeMax" }, fieldContext, errorMessage))
+								"rangeMax", "defaultValue" }, fieldContext, errorMessage))
 							return false;
 						const std::string id = field["id"].as<std::string>();
 						const std::string name = field["name"].as<std::string>();
@@ -462,19 +535,25 @@ namespace TomCat {
 						}
 						const bool needsManagedType = fieldType == ScriptFieldType::Enum
 							|| fieldType == ScriptFieldType::AssetRef;
-						if (static_cast<bool>(field["typeName"]) != needsManagedType
+						const YAML::Node managedType = field["typeName"];
+						const bool hasManagedType = managedType && !managedType.IsNull();
+						if (hasManagedType != needsManagedType
 							|| (needsManagedType
-								&& !IsNonemptyMetadataString(field["typeName"])))
+								&& !IsNonemptyMetadataString(managedType)))
 						{
 							errorMessage = fieldContext
 								+ " has invalid managed type metadata";
 							return false;
 						}
+						if (field["defaultValue"]
+							&& !ValidateScriptFieldDefaultValue(field["defaultValue"],
+								fieldType, fieldContext, errorMessage))
+							return false;
 						(void)field["isPublic"].as<bool>();
 						(void)field["hidden"].as<bool>();
 						for (const char* optionalText : { "header", "tooltip" })
 						{
-							if (field[optionalText]
+							if (field[optionalText] && !field[optionalText].IsNull()
 								&& !field[optionalText].IsScalar())
 							{
 								errorMessage = fieldContext + "." + optionalText
@@ -482,8 +561,10 @@ namespace TomCat {
 								return false;
 							}
 						}
-						const bool hasMinimum = static_cast<bool>(field["rangeMin"]);
-						const bool hasMaximum = static_cast<bool>(field["rangeMax"]);
+						const bool hasMinimum = field["rangeMin"]
+							&& !field["rangeMin"].IsNull();
+						const bool hasMaximum = field["rangeMax"]
+							&& !field["rangeMax"].IsNull();
 						if (hasMinimum != hasMaximum)
 						{
 							errorMessage = fieldContext
@@ -526,6 +607,74 @@ namespace TomCat {
 			catch (const std::exception& error)
 			{
 				errorMessage = std::string("Invalid script manifest: ") + error.what();
+				return false;
+			}
+		}
+
+		struct ScriptFieldRuntimeSignature
+		{
+			std::string ID;
+			std::string Name;
+			std::string Type;
+			std::string ManagedType;
+			bool operator==(const ScriptFieldRuntimeSignature&) const = default;
+		};
+
+		struct ScriptRuntimeSignature
+		{
+			uint64_t AssetHandle = 0;
+			std::string TypeName;
+			std::vector<ScriptFieldRuntimeSignature> Fields;
+			bool operator==(const ScriptRuntimeSignature&) const = default;
+		};
+
+		bool BuildScriptManifestRuntimeSignature(std::string_view json,
+			std::vector<ScriptRuntimeSignature>& signature,
+			std::string& errorMessage)
+		{
+			signature.clear();
+			try
+			{
+				const YAML::Node scripts = YAML::Load(std::string(json))["scripts"];
+				signature.reserve(scripts.size());
+				for (const YAML::Node& script : scripts)
+				{
+					ScriptRuntimeSignature scriptSignature;
+					scriptSignature.AssetHandle = script["assetHandle"].as<uint64_t>();
+					scriptSignature.TypeName = script["typeName"].as<std::string>();
+					const YAML::Node fields = script["fields"];
+					scriptSignature.Fields.reserve(fields.size());
+					for (const YAML::Node& field : fields)
+					{
+						ScriptFieldRuntimeSignature fieldSignature;
+						fieldSignature.ID = field["id"].as<std::string>();
+						fieldSignature.Name = field["name"].as<std::string>();
+						fieldSignature.Type = field["type"].as<std::string>();
+						const YAML::Node managedType = field["typeName"];
+						if (managedType && !managedType.IsNull())
+							fieldSignature.ManagedType = managedType.as<std::string>();
+						scriptSignature.Fields.push_back(std::move(fieldSignature));
+					}
+					std::sort(scriptSignature.Fields.begin(), scriptSignature.Fields.end(),
+						[](const ScriptFieldRuntimeSignature& left,
+							const ScriptFieldRuntimeSignature& right)
+						{
+							return left.ID < right.ID;
+						});
+					signature.push_back(std::move(scriptSignature));
+				}
+				std::sort(signature.begin(), signature.end(),
+					[](const ScriptRuntimeSignature& left,
+						const ScriptRuntimeSignature& right)
+					{
+						return left.AssetHandle < right.AssetHandle;
+					});
+				return true;
+			}
+			catch (const std::exception& error)
+			{
+				errorMessage = std::string("Could not compare script manifest runtime metadata: ")
+					+ error.what();
 				return false;
 			}
 		}
@@ -1207,51 +1356,6 @@ namespace TomCat {
 			}
 		}
 
-		bool CollectSceneScriptHandles(const YAML::Node& root,
-			bool& hasCSharpScripts, std::unordered_set<uint64_t>& scriptHandles,
-			std::string& errorMessage)
-		{
-			try
-			{
-				const YAML::Node entities = root["Entities"];
-				if (!entities || !entities.IsSequence())
-				{
-					errorMessage = "Scene has no valid Entities array";
-					return false;
-				}
-				for (size_t entityIndex = 0; entityIndex < entities.size(); ++entityIndex)
-				{
-					const YAML::Node component = entities[entityIndex]["CSharpScripts"];
-					if (!component)
-						continue;
-					hasCSharpScripts = true;
-					const YAML::Node scripts = component["Scripts"];
-					if (!scripts || !scripts.IsSequence())
-					{
-						errorMessage = "CSharpScripts.Scripts must be an array";
-						return false;
-					}
-					for (const YAML::Node script : scripts)
-					{
-						const uint64_t handle = script["ScriptHandle"].as<uint64_t>();
-						if (handle == 0 || handle == kManagedPayloadHandle)
-						{
-							errorMessage = "CSharpScripts contains an invalid ScriptHandle";
-							return false;
-						}
-						scriptHandles.emplace(handle);
-					}
-				}
-				return true;
-			}
-			catch (const std::exception& error)
-			{
-				errorMessage = std::string("Could not inspect scene scripts: ")
-					+ error.what();
-				return false;
-			}
-		}
-
 		bool IsCurrentAsset(const AssetRegistry& registry, const AssetMetadata& metadata,
 			AssetType expectedType)
 		{
@@ -1263,41 +1367,79 @@ namespace TomCat {
 				current->Type == expectedType;
 		}
 
-		bool ValidateCookedSpriteHandle(const AssetRegistry& registry, uint64_t rawHandle,
-			const std::filesystem::path& scenePath, const std::string& propertyPath,
+		bool ValidateCookAssetReference(const AssetRegistry& registry,
+			const SerializedAssetReference& reference,
+			const std::filesystem::path& scenePath, bool& hasCSharpScripts,
+			std::unordered_set<uint64_t>& scriptHandles,
+			std::unordered_set<uint64_t>& runtimeDependencies,
 			std::string& errorMessage)
 		{
+			const uint64_t rawHandle = static_cast<uint64_t>(reference.Handle);
+			if (reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+				hasCSharpScripts = true;
 			if (rawHandle == 0)
-				return true;
-			const AssetMetadata* metadata = registry.GetMetadata(AssetHandle(rawHandle));
-			if (!metadata || !IsCurrentAsset(registry, *metadata, AssetType::Texture2D))
 			{
-				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property " + propertyPath +
-					" references missing or non-texture asset " + std::to_string(rawHandle);
+				if (!reference.Required)
+					return true;
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " requires a nonzero AssetHandle";
 				return false;
 			}
-			return true;
-		}
+			if (rawHandle == kManagedPayloadHandle)
+			{
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " uses the reserved managed-payload handle";
+				return false;
+			}
 
-		bool ValidateCookedScriptHandle(const AssetRegistry& registry, uint64_t rawHandle,
-			const std::filesystem::path& scenePath, const std::string& propertyPath,
-			std::string& errorMessage)
-		{
-			if (rawHandle == 0)
+			const AssetMetadata* metadata = registry.GetMetadata(reference.Handle);
+			bool current = metadata && metadata->Type != AssetType::None
+				&& !metadata->IsMissing;
+			if (current && reference.ExpectedType != AssetType::None)
+				current = metadata->Type == reference.ExpectedType;
+			if (current)
 			{
-				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
-					+ propertyPath + " contains a missing C# script";
-				return false;
+				const AssetMetadata* pathMetadata = registry.GetMetadata(metadata->FilePath);
+				current = pathMetadata && pathMetadata->Handle == reference.Handle
+					&& pathMetadata->Type == metadata->Type && !pathMetadata->IsMissing;
 			}
-			const AssetMetadata* metadata = registry.GetMetadata(AssetHandle(rawHandle));
-			if (!metadata || !IsCurrentAsset(registry, *metadata,
-				AssetType::CSharpScript))
+			if (!current)
 			{
+				const std::string expected = reference.ExpectedType == AssetType::None
+					? "runtime asset"
+					: std::string(AssetTypeToString(reference.ExpectedType)) + " asset";
 				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
-					+ propertyPath + " references missing or non-C# script asset "
+					+ reference.PropertyPath
+					+ " references a missing or incorrectly typed " + expected + " "
 					+ std::to_string(rawHandle);
 				return false;
 			}
+
+			if (reference.Kind == SerializedAssetReferenceKind::ScriptField
+				&& (metadata->Type == AssetType::CSharpScript
+					|| IsAuthoringOnlyCookPath(metadata->FilePath)))
+			{
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " references authoring-only asset "
+					+ std::to_string(rawHandle) + " ("
+					+ AssetTypeToString(metadata->Type) + ")";
+				return false;
+			}
+
+			const std::filesystem::path source = registry.GetFileSystemPath(reference.Handle);
+			std::error_code fileError;
+			if (source.empty() || !std::filesystem::is_regular_file(source, fileError)
+				|| fileError)
+			{
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " references asset "
+					+ std::to_string(rawHandle) + " whose source file is missing";
+				return false;
+			}
+			if (reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+				scriptHandles.emplace(rawHandle);
+			else
+				runtimeDependencies.emplace(rawHandle);
 			return true;
 		}
 
@@ -1305,6 +1447,7 @@ namespace TomCat {
 			const std::filesystem::path& scenePath, std::vector<uint8_t>& bytes,
 			bool& hasCSharpScripts,
 			std::unordered_set<uint64_t>& scriptHandles,
+			std::unordered_set<uint64_t>& runtimeDependencies,
 			std::string& errorMessage)
 		{
 			bytes.clear();
@@ -1326,46 +1469,17 @@ namespace TomCat {
 				std::istringstream input(std::move(serialized));
 				YAML::Node root = YAML::Load(input);
 				// Schema 9 is read-only migration input. Every newly emitted scene,
-				// including the normalized copy stored in tcpak v4, uses schema 10.
+				// including the normalized copy stored in tcpak v5, uses schema 10.
 				root["SchemaVersion"] = SceneSerializer::CurrentSchemaVersion;
-				if (!CollectSceneScriptHandles(root, hasCSharpScripts,
-					scriptHandles, errorMessage))
+				if (!AssetReferenceVisitor::VisitScene(root,
+					[&](const SerializedAssetReference& reference)
+					{
+						return ValidateCookAssetReference(registry, reference,
+							scenePath, hasCSharpScripts, scriptHandles,
+							runtimeDependencies,
+							errorMessage);
+					}, errorMessage))
 					return false;
-				const YAML::Node entities = root["Entities"];
-				for (size_t index = 0; index < entities.size(); ++index)
-				{
-					const YAML::Node entity = entities[index];
-					const YAML::Node sprite = entity["SpriteRenderer"];
-					if (sprite)
-					{
-						const std::string propertyPath = "Entities["
-							+ std::to_string(index)
-							+ "].SpriteRenderer.SpriteHandle";
-						const uint64_t rawHandle =
-							sprite["SpriteHandle"].as<uint64_t>();
-						if (!ValidateCookedSpriteHandle(registry, rawHandle,
-							scenePath, propertyPath, errorMessage))
-							return false;
-					}
-
-					const YAML::Node csharpScripts = entity["CSharpScripts"];
-					if (!csharpScripts)
-						continue;
-					const YAML::Node scripts = csharpScripts["Scripts"];
-					for (size_t scriptIndex = 0; scriptIndex < scripts.size();
-						++scriptIndex)
-					{
-						const std::string scriptPropertyPath = "Entities["
-							+ std::to_string(index)
-							+ "].CSharpScripts.Scripts["
-							+ std::to_string(scriptIndex) + "].ScriptHandle";
-						const uint64_t rawScriptHandle =
-							scripts[scriptIndex]["ScriptHandle"].as<uint64_t>();
-						if (!ValidateCookedScriptHandle(registry, rawScriptHandle,
-							scenePath, scriptPropertyPath, errorMessage))
-							return false;
-					}
-				}
 
 				YAML::Emitter output;
 				output << root;
@@ -1383,6 +1497,47 @@ namespace TomCat {
 			{
 				errorMessage = "Could not prepare scene '" + PathToUTF8(scenePath) +
 					"' for cooking: " + error.what();
+				return false;
+			}
+		}
+
+		bool PreparePrefabBytesForCook(const AssetRegistry& registry,
+			const std::filesystem::path& prefabPath, std::vector<uint8_t>& bytes,
+			bool& hasCSharpScripts,
+			std::unordered_set<uint64_t>& scriptHandles,
+			std::unordered_set<uint64_t>& runtimeDependencies,
+			std::string& errorMessage)
+		{
+			bytes.clear();
+			if (!ReadWholeFile(prefabPath, bytes))
+			{
+				errorMessage = "Could not read Prefab '" + PathToUTF8(prefabPath) + "'";
+				return false;
+			}
+			if (!PrefabArchiveCodec::ValidateCurrentFormat(bytes, prefabPath))
+			{
+				errorMessage = "Prefab '" + PathToUTF8(prefabPath)
+					+ "' does not conform to the complete Prefab schema";
+				return false;
+			}
+			try
+			{
+				const std::string serialized(bytes.begin(), bytes.end());
+				const YAML::Node root = YAML::Load(serialized);
+				if (!AssetReferenceVisitor::VisitPrefab(root,
+					[&](const SerializedAssetReference& reference)
+					{
+						return ValidateCookAssetReference(registry, reference,
+							prefabPath, hasCSharpScripts, scriptHandles,
+							runtimeDependencies, errorMessage);
+					}, errorMessage))
+					return false;
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = "Could not prepare Prefab '" + PathToUTF8(prefabPath)
+					+ "' for cooking: " + exception.what();
 				return false;
 			}
 		}
@@ -1434,21 +1589,39 @@ namespace TomCat {
 		m_AuthoringProject = project;
 		m_UsesProjectConfiguration = true;
 
-		const AssetHandle configuredHandle = project->GetConfig().StartSceneHandle;
-		if (static_cast<uint64_t>(configuredHandle) != 0)
+		BuildSettings repaired = project->GetBuildSettings();
+		bool changed = false;
+		for (BuildSceneSettings& scene : repaired.Scenes)
 		{
-			const AssetMetadata* metadata = m_Registry.GetMetadata(configuredHandle);
+			const AssetMetadata* metadata = m_Registry.GetMetadata(scene.Handle);
 			if (metadata && IsCurrentAsset(m_Registry, *metadata, AssetType::Scene) &&
-				metadata->FilePath != project->GetConfig().StartScene)
+				metadata->FilePath != scene.PathHint)
 			{
-				// The UUID is authoritative. Repair the authoring path after an
-				// external move or a crash between an asset move and project save.
-				if (project->SetStartScene(metadata->FilePath) && !project->Save())
-					TC_Core_Warn("StartScene was resolved by Handle, but Project.tcproj could not store its repaired path");
+				scene.PathHint = metadata->FilePath;
+				changed = true;
 			}
-			return true;
 		}
+		if (changed && !project->SetBuildSettings(repaired))
+			TC_Core_Warn("Build scene paths were resolved by Handle, but BuildSettings.json could not be repaired");
 		return true;
+	}
+
+	std::optional<uint32_t> AssetManager::GetCookedBuildSceneIndex(AssetHandle handle) const
+	{
+		if (!IsCookedPackageMounted() || static_cast<uint64_t>(handle) == 0)
+			return std::nullopt;
+		const auto found = std::find(m_CookedBuildSceneHandles.begin(),
+			m_CookedBuildSceneHandles.end(), handle);
+		if (found == m_CookedBuildSceneHandles.end())
+			return std::nullopt;
+		return static_cast<uint32_t>(std::distance(m_CookedBuildSceneHandles.begin(), found));
+	}
+
+	AssetHandle AssetManager::GetCookedBuildSceneHandle(uint32_t index) const
+	{
+		if (!IsCookedPackageMounted() || index >= m_CookedBuildSceneHandles.size())
+			return AssetHandle(0);
+		return m_CookedBuildSceneHandles[index];
 	}
 
 	Physics2DSettings AssetManager::GetPhysics2DSettings() const
@@ -1471,7 +1644,8 @@ namespace TomCat {
 		m_CookedEntries.clear();
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
-		m_CookedStartSceneHandle = AssetHandle(0);
+		m_CookedEntrySceneHandle = AssetHandle(0);
+		m_CookedBuildSceneHandles.clear();
 		m_CookedPhysics2DSettings = Physics2DSettings{};
 		m_CookedManagedPayload.reset();
 		m_ManagedCookPayloadOverride.reset();
@@ -1718,14 +1892,28 @@ namespace TomCat {
 		std::vector<AssetReference> liveReferences;
 		for (AssetHandle handle : handles)
 		{
-			if (const Ref<Project> project = m_AuthoringProject.lock(); project &&
-				project->GetConfig().StartSceneHandle == handle)
+			if (const Ref<Project> project = m_AuthoringProject.lock(); project)
 			{
-				AssetReference reference;
-				reference.ReferencedAsset = handle;
-				reference.FilePath = project->GetProjectPath();
-				reference.PropertyPath = "Project.StartSceneHandle";
-				liveReferences.emplace_back(std::move(reference));
+				const BuildSettings& build = project->GetBuildSettings();
+				if (build.EntrySceneHandle == handle)
+				{
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.FilePath = project->GetBuildSettingsPath();
+					reference.PropertyPath = "BuildSettings.EntrySceneHandle";
+					liveReferences.emplace_back(std::move(reference));
+				}
+				for (std::size_t index = 0; index < build.Scenes.size(); ++index)
+				{
+					if (build.Scenes[index].Handle != handle)
+						continue;
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.FilePath = project->GetBuildSettingsPath();
+					reference.PropertyPath = "BuildSettings.Scenes[" +
+						std::to_string(index) + "].Handle";
+					liveReferences.emplace_back(std::move(reference));
+				}
 			}
 			if (!m_LiveReferenceProvider)
 				continue;
@@ -1776,14 +1964,28 @@ namespace TomCat {
 			static_cast<uint64_t>(handle) == 0)
 			return {};
 		std::vector<AssetReference> references = m_Registry.FindReferences(handle);
-		if (const Ref<Project> project = m_AuthoringProject.lock(); project &&
-			project->GetConfig().StartSceneHandle == handle)
+		if (const Ref<Project> project = m_AuthoringProject.lock(); project)
 		{
-			AssetReference reference;
-			reference.ReferencedAsset = handle;
-			reference.FilePath = project->GetProjectPath();
-			reference.PropertyPath = "Project.StartSceneHandle";
-			references.emplace_back(std::move(reference));
+			const BuildSettings& build = project->GetBuildSettings();
+			if (build.EntrySceneHandle == handle)
+			{
+				AssetReference reference;
+				reference.ReferencedAsset = handle;
+				reference.FilePath = project->GetBuildSettingsPath();
+				reference.PropertyPath = "BuildSettings.EntrySceneHandle";
+				references.emplace_back(std::move(reference));
+			}
+			for (std::size_t index = 0; index < build.Scenes.size(); ++index)
+			{
+				if (build.Scenes[index].Handle != handle)
+					continue;
+				AssetReference reference;
+				reference.ReferencedAsset = handle;
+				reference.FilePath = project->GetBuildSettingsPath();
+				reference.PropertyPath = "BuildSettings.Scenes[" +
+					std::to_string(index) + "].Handle";
+				references.emplace_back(std::move(reference));
+			}
 		}
 		if (m_LiveReferenceProvider)
 		{
@@ -1905,6 +2107,42 @@ namespace TomCat {
 		payload.Pdb = std::move(pdb);
 		payload.AssemblySHA256 = ComputeSHA256(payload.Assembly);
 		std::string errorMessage;
+		std::unordered_set<uint64_t> suppliedHandles;
+		if (!ValidateScriptManifest(payload.ScriptManifestJson, suppliedHandles,
+			errorMessage))
+		{
+			TC_Core_Error("Invalid explicit managed Cook metadata: {0}", errorMessage);
+			return false;
+		}
+		std::string embeddedManifest;
+		std::unordered_set<uint64_t> embeddedHandles;
+		if (!ExtractEmbeddedScriptManifest(payload.Assembly, embeddedManifest,
+			errorMessage)
+			|| !ValidateScriptManifest(embeddedManifest, embeddedHandles, errorMessage))
+		{
+			TC_Core_Error("Invalid explicit managed Cook assembly manifest: {0}",
+				errorMessage);
+			return false;
+		}
+		std::vector<ScriptRuntimeSignature> suppliedSignature;
+		std::vector<ScriptRuntimeSignature> embeddedSignature;
+		if (!BuildScriptManifestRuntimeSignature(payload.ScriptManifestJson,
+			suppliedSignature, errorMessage)
+			|| !BuildScriptManifestRuntimeSignature(embeddedManifest,
+				embeddedSignature, errorMessage))
+		{
+			TC_Core_Error("Invalid explicit managed Cook payload: {0}", errorMessage);
+			return false;
+		}
+		if (suppliedSignature != embeddedSignature)
+		{
+			TC_Core_Error("Invalid explicit managed Cook payload: Editor metadata and Assembly-CSharp.dll disagree on script/field runtime identity");
+			return false;
+		}
+		// Editor metadata may enrich generator output with constructor-derived
+		// defaults and explicit null optional values. The assembly-embedded manifest
+		// is the runtime contract and therefore the canonical package payload.
+		payload.ScriptManifestJson = std::move(embeddedManifest);
 		if (!ValidateManagedPackagePayload(payload, nullptr, errorMessage))
 		{
 			TC_Core_Error("Invalid explicit managed Cook payload: {0}", errorMessage);
@@ -1924,16 +2162,8 @@ namespace TomCat {
 				TC_Core_Error("Cannot cook because the active Project is no longer available");
 				return false;
 			}
-			const AssetHandle startScene = project->GetConfig().StartSceneHandle;
-			const AssetMetadata* metadata = m_Registry.GetMetadata(startScene);
-			if (static_cast<uint64_t>(startScene) == 0 || !metadata ||
-				!IsCurrentAsset(m_Registry, *metadata, AssetType::Scene))
-			{
-				TC_Core_Error("Project StartSceneHandle must identify a live Scene asset: {0}",
-					static_cast<uint64_t>(startScene));
-				return false;
-			}
-			return CookToPackage(packagePath, startScene);
+			return CookToPackage(packagePath,
+				project->GetBuildSettings().EntrySceneHandle);
 		}
 		return CookToPackage(packagePath, AssetHandle(0));
 	}
@@ -1943,11 +2173,6 @@ namespace TomCat {
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted() || packagePath.empty())
 			return false;
-		if (m_UsesProjectConfiguration && static_cast<uint64_t>(startSceneHandle) == 0)
-		{
-			TC_Core_Error("A project cook requires a nonzero StartSceneHandle");
-			return false;
-		}
 		if (IsWithinOrEqual(m_Registry.GetAssetDirectory(), packagePath))
 		{
 			TC_Core_Error("Cooked package must be written outside Assets: {0}", PathToUTF8(packagePath));
@@ -1956,6 +2181,7 @@ namespace TomCat {
 		if (!Refresh())
 			return false;
 		Physics2DSettings packagePhysicsSettings;
+		std::vector<AssetHandle> packageBuildScenes;
 		if (m_UsesProjectConfiguration)
 		{
 			const Ref<Project> project = m_AuthoringProject.lock();
@@ -1964,8 +2190,46 @@ namespace TomCat {
 				TC_Core_Error("Cannot cook because the active Project is no longer available");
 				return false;
 			}
+			const BuildSettings& build = project->GetBuildSettings();
+			if (static_cast<uint64_t>(build.EntrySceneHandle) == 0)
+			{
+				TC_Core_Error("A project cook requires a nonzero BuildSettings.EntrySceneHandle");
+				return false;
+			}
+			if (startSceneHandle != build.EntrySceneHandle)
+			{
+				TC_Core_Error("Explicit cook entry scene {0} does not match BuildSettings.EntrySceneHandle {1}",
+					static_cast<uint64_t>(startSceneHandle),
+					static_cast<uint64_t>(build.EntrySceneHandle));
+				return false;
+			}
+
+			packageBuildScenes.reserve(build.Scenes.size());
+			for (std::size_t index = 0; index < build.Scenes.size(); ++index)
+			{
+				const BuildSceneSettings& scene = build.Scenes[index];
+				if (!scene.Enabled)
+					continue;
+				const AssetMetadata* metadata = m_Registry.GetMetadata(scene.Handle);
+				if (static_cast<uint64_t>(scene.Handle) == 0 || !metadata
+					|| !IsCurrentAsset(m_Registry, *metadata, AssetType::Scene))
+				{
+					TC_Core_Error("BuildSettings.Scenes[{0}] must identify a live Scene asset: {1}",
+						index, static_cast<uint64_t>(scene.Handle));
+					return false;
+				}
+				packageBuildScenes.push_back(scene.Handle);
+			}
+			if (std::find(packageBuildScenes.begin(), packageBuildScenes.end(),
+				startSceneHandle) == packageBuildScenes.end())
+			{
+				TC_Core_Error("BuildSettings.EntrySceneHandle must identify an enabled build scene");
+				return false;
+			}
 			packagePhysicsSettings = project->GetSettings().Physics2D;
 		}
+		else if (static_cast<uint64_t>(startSceneHandle) != 0)
+			packageBuildScenes.push_back(startSceneHandle);
 		if (!IsSymmetricCollisionMatrix(packagePhysicsSettings))
 		{
 			TC_Core_Error("Cannot cook an asymmetric Physics2D collision matrix");
@@ -1999,44 +2263,95 @@ namespace TomCat {
 		entries.reserve(m_Registry.GetAssets().size() + 1);
 		bool hasCSharpScripts = false;
 		std::unordered_set<uint64_t> referencedScriptHandles;
-		for (const auto& [handle, metadata] : m_Registry.GetAssets())
+		std::deque<AssetHandle> pendingAssets;
+		std::unordered_set<uint64_t> queuedAssets;
+		auto enqueueAsset = [&](AssetHandle handle)
 		{
-			if (static_cast<uint64_t>(handle) == 0 || metadata.Type == AssetType::None)
-				continue;
-			if (static_cast<uint64_t>(handle) == kManagedPayloadHandle)
+			const uint64_t rawHandle = static_cast<uint64_t>(handle);
+			if (rawHandle != 0 && queuedAssets.emplace(rawHandle).second)
+				pendingAssets.push_back(handle);
+		};
+		for (AssetHandle scene : packageBuildScenes)
+			enqueueAsset(scene);
+		// Standalone AssetManager users have no build-scene graph. Preserve that
+		// authoring utility mode by treating its current runtime assets as roots;
+		// project cooks always use the strict enabled-scene dependency closure.
+		if (packageBuildScenes.empty() && !m_UsesProjectConfiguration)
+		{
+			for (const auto& [handle, metadata] : m_Registry.GetAssets())
 			{
-				TC_Core_Error("AssetHandle UINT64_MAX is reserved by tcpak v4");
+				if (metadata.Type != AssetType::None
+					&& metadata.Type != AssetType::CSharpScript && !metadata.IsMissing
+					&& !IsAuthoringOnlyCookPath(metadata.FilePath))
+					enqueueAsset(handle);
+			}
+		}
+
+		while (!pendingAssets.empty())
+		{
+			const AssetHandle handle = pendingAssets.front();
+			pendingAssets.pop_front();
+			const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
+			if (!metadata || metadata->Type == AssetType::None || metadata->IsMissing)
+			{
+				TC_Core_Error("Cook dependency {0} is missing",
+					static_cast<uint64_t>(handle));
 				return false;
 			}
-			// C# source is an authoring input. tcpak v4 carries the compiled project
-			// assembly/manifest payload, never Assets/**/*.cs bytes.
-			if (metadata.Type == AssetType::CSharpScript
-				|| IsAuthoringOnlyCookPath(metadata.FilePath))
-				continue;
-			const AssetMetadata* current = m_Registry.GetMetadata(metadata.FilePath);
-			// Missing cache tombstones and shadowed historical records are not source
-			// assets. References to them are rejected while preparing scenes below.
-			if (metadata.IsMissing || !current || current->Handle != handle || current->IsMissing)
-				continue;
+			if (static_cast<uint64_t>(handle) == kManagedPayloadHandle)
+			{
+				TC_Core_Error("AssetHandle UINT64_MAX is reserved by tcpak v5");
+				return false;
+			}
+			if (metadata->Type == AssetType::CSharpScript
+				|| IsAuthoringOnlyCookPath(metadata->FilePath))
+			{
+				TC_Core_Error("Cook dependency {0} is authoring-only",
+					static_cast<uint64_t>(handle));
+				return false;
+			}
+			const AssetMetadata* current = m_Registry.GetMetadata(metadata->FilePath);
+			if (!current || current->Handle != handle || current->IsMissing
+				|| current->Type != metadata->Type)
+			{
+				TC_Core_Error("Cook dependency {0} is stale or shadowed",
+					static_cast<uint64_t>(handle));
+				return false;
+			}
 			const std::filesystem::path source = m_Registry.GetFileSystemPath(handle);
 			std::error_code error;
 			if (source.empty() || !std::filesystem::is_regular_file(source, error) || error)
 			{
 				TC_Core_Error("Cannot cook missing asset {0} ('{1}')",
-					static_cast<uint64_t>(handle), PathToUTF8(metadata.FilePath));
+					static_cast<uint64_t>(handle), PathToUTF8(metadata->FilePath));
 				return false;
 			}
 			SourceEntry entry;
 			entry.RawHandle = static_cast<uint64_t>(handle);
-			entry.RawType = static_cast<uint16_t>(metadata.Type);
+			entry.RawType = static_cast<uint16_t>(metadata->Type);
 			entry.Path = source;
-			if (metadata.Type == AssetType::Scene)
+			std::unordered_set<uint64_t> discoveredDependencies;
+			if (metadata->Type == AssetType::Scene)
 			{
 				std::string sceneError;
 				if (!PrepareSceneBytesForCook(m_Registry, source, entry.CookedBytes,
-					hasCSharpScripts, referencedScriptHandles, sceneError))
+					hasCSharpScripts, referencedScriptHandles,
+					discoveredDependencies, sceneError))
 				{
 					TC_Core_Error("Cannot cook scene: {0}", sceneError);
+					return false;
+				}
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
+			}
+			else if (metadata->Type == AssetType::Prefab)
+			{
+				std::string prefabError;
+				if (!PreparePrefabBytesForCook(m_Registry, source, entry.CookedBytes,
+					hasCSharpScripts, referencedScriptHandles,
+					discoveredDependencies, prefabError))
+				{
+					TC_Core_Error("Cannot cook Prefab: {0}", prefabError);
 					return false;
 				}
 				entry.HasCookedBytes = true;
@@ -2053,6 +2368,8 @@ namespace TomCat {
 				entry.Size = static_cast<uint64_t>(fileSize);
 			}
 			entries.push_back(std::move(entry));
+			for (uint64_t dependency : discoveredDependencies)
+				enqueueAsset(AssetHandle(dependency));
 		}
 
 		std::optional<ManagedPackagePayload> managedPayload;
@@ -2107,10 +2424,24 @@ namespace TomCat {
 			return left.RawHandle < right.RawHandle;
 		});
 
+		uint64_t buildSceneBytes = 0;
+		uint64_t packageHeaderSize64 = 0;
+		if (!CheckedMultiply(static_cast<uint64_t>(packageBuildScenes.size()),
+			static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
+			|| !CheckedAdd(RuntimeCompatibility::TcpakBaseHeaderSize,
+				buildSceneBytes, packageHeaderSize64)
+			|| packageHeaderSize64 > (std::numeric_limits<uint32_t>::max)())
+		{
+			TC_Core_Error("Cooked build-scene manifest is too large");
+			return false;
+		}
+		const uint32_t packageHeaderSize = static_cast<uint32_t>(packageHeaderSize64);
+
 		uint64_t indexSize = 0;
 		uint64_t dataOffset = 0;
-		if (!CheckedMultiply(static_cast<uint64_t>(entries.size()), kPackageEntrySize, indexSize) ||
-			!CheckedAdd(kPackageHeaderSize, indexSize, dataOffset))
+		if (!CheckedMultiply(static_cast<uint64_t>(entries.size()),
+			RuntimeCompatibility::TcpakEntrySize, indexSize) ||
+			!CheckedAdd(packageHeaderSize64, indexSize, dataOffset))
 		{
 			TC_Core_Error("Cooked package index is too large");
 			return false;
@@ -2149,14 +2480,20 @@ namespace TomCat {
 			return false;
 		}
 
-		output.write(kPackageMagic.data(), static_cast<std::streamsize>(kPackageMagic.size()));
+		output.write(RuntimeCompatibility::TcpakMagic.data(),
+			static_cast<std::streamsize>(RuntimeCompatibility::TcpakMagic.size()));
 		bool succeeded = output.good() &&
-			WriteLittleEndian<uint32_t>(output, kPackageVersion) &&
-			WriteLittleEndian<uint32_t>(output, kPackageHeaderSize) &&
+			WriteLittleEndian<uint32_t>(output, RuntimeCompatibility::TcpakVersion) &&
+			WriteLittleEndian<uint32_t>(output, packageHeaderSize) &&
 			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(entries.size())) &&
-			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(startSceneHandle));
+			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(startSceneHandle)) &&
+			WriteLittleEndian<uint64_t>(output,
+				static_cast<uint64_t>(packageBuildScenes.size()));
 		for (uint16_t mask : packagePhysicsSettings.CollisionMasks)
 			succeeded = succeeded && WriteLittleEndian<uint16_t>(output, mask);
+		for (AssetHandle scene : packageBuildScenes)
+			succeeded = succeeded && WriteLittleEndian<uint64_t>(output,
+				static_cast<uint64_t>(scene));
 		for (const SourceEntry& entry : entries)
 		{
 			if (!succeeded)
@@ -2212,23 +2549,26 @@ namespace TomCat {
 		if (!input)
 			return false;
 		const std::streamoff packageEnd = input.tellg();
-		if (packageEnd < static_cast<std::streamoff>(kPackageHeaderSize))
+		if (packageEnd < static_cast<std::streamoff>(
+			RuntimeCompatibility::TcpakBaseHeaderSize))
 			return false;
 		const uint64_t packageSize = static_cast<uint64_t>(packageEnd);
 		input.seekg(0, std::ios::beg);
 
-		std::array<char, kPackageMagic.size()> magic{};
+		std::array<char, RuntimeCompatibility::TcpakMagic.size()> magic{};
 		uint32_t version = 0;
 		uint32_t headerSize = 0;
 		uint64_t entryCount = 0;
-		uint64_t rawStartSceneHandle = 0;
+		uint64_t rawEntrySceneHandle = 0;
+		uint64_t buildSceneCount = 0;
 		if (!input.read(magic.data(), static_cast<std::streamsize>(magic.size())) ||
-			magic != kPackageMagic ||
+			magic != RuntimeCompatibility::TcpakMagic ||
 			!ReadLittleEndian<uint32_t>(input, version) ||
-			version != kPackageVersion ||
+			version != RuntimeCompatibility::TcpakVersion ||
 			!ReadLittleEndian<uint32_t>(input, headerSize) ||
 			!ReadLittleEndian<uint64_t>(input, entryCount) ||
-			!ReadLittleEndian<uint64_t>(input, rawStartSceneHandle))
+			!ReadLittleEndian<uint64_t>(input, rawEntrySceneHandle) ||
+			!ReadLittleEndian<uint64_t>(input, buildSceneCount))
 			return false;
 		Physics2DSettings mountedPhysicsSettings;
 		for (uint16_t& mask : mountedPhysicsSettings.CollisionMasks)
@@ -2236,14 +2576,48 @@ namespace TomCat {
 			if (!ReadLittleEndian<uint16_t>(input, mask))
 				return false;
 		}
-		if (headerSize != kPackageHeaderSize || headerSize > packageSize)
+		uint64_t buildSceneBytes = 0;
+		uint64_t expectedHeaderSize = 0;
+		if (buildSceneCount > RuntimeCompatibility::MaximumBuildSceneCount
+			|| !CheckedMultiply(buildSceneCount,
+				static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
+			|| !CheckedAdd(RuntimeCompatibility::TcpakBaseHeaderSize,
+				buildSceneBytes, expectedHeaderSize)
+			|| expectedHeaderSize != headerSize || headerSize > packageSize
+			|| buildSceneCount > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
 			return false;
 		if (!IsSymmetricCollisionMatrix(mountedPhysicsSettings))
 			return false;
 
+		std::vector<AssetHandle> buildSceneHandles;
+		std::unordered_set<uint64_t> uniqueBuildSceneHandles;
+		try
+		{
+			buildSceneHandles.reserve(static_cast<size_t>(buildSceneCount));
+			uniqueBuildSceneHandles.reserve(static_cast<size_t>(buildSceneCount));
+		}
+		catch (const std::exception&)
+		{
+			return false;
+		}
+		for (uint64_t index = 0; index < buildSceneCount; ++index)
+		{
+			uint64_t rawHandle = 0;
+			if (!ReadLittleEndian<uint64_t>(input, rawHandle) || rawHandle == 0
+				|| rawHandle == kManagedPayloadHandle
+				|| !uniqueBuildSceneHandles.emplace(rawHandle).second)
+				return false;
+			buildSceneHandles.emplace_back(rawHandle);
+		}
+		const bool hasEntryScene = rawEntrySceneHandle != 0;
+		if (hasEntryScene != !buildSceneHandles.empty()
+			|| (hasEntryScene && uniqueBuildSceneHandles.find(rawEntrySceneHandle)
+				== uniqueBuildSceneHandles.end()))
+			return false;
+
 		uint64_t indexSize = 0;
 		uint64_t dataStart = 0;
-		if (!CheckedMultiply(entryCount, kPackageEntrySize, indexSize) ||
+		if (!CheckedMultiply(entryCount, RuntimeCompatibility::TcpakEntrySize, indexSize) ||
 			!CheckedAdd(headerSize, indexSize, dataStart) || dataStart > packageSize ||
 			entryCount > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
 			return false;
@@ -2298,7 +2672,7 @@ namespace TomCat {
 			{
 				if (rawHandle == 0
 					|| rawType == static_cast<uint16_t>(AssetType::None)
-					|| rawType > static_cast<uint16_t>(AssetType::Other)
+					|| rawType > static_cast<uint16_t>(AssetType::Prefab)
 					|| flags != 0 || reserved != 0)
 					return false;
 				const AssetHandle handle(rawHandle);
@@ -2316,10 +2690,10 @@ namespace TomCat {
 			if (occupiedRanges[index].first < occupiedRanges[index - 1].second)
 				return false;
 		}
-		if (rawStartSceneHandle != 0)
+		for (AssetHandle buildSceneHandle : buildSceneHandles)
 		{
-			const auto startScene = entries.find(AssetHandle(rawStartSceneHandle));
-			if (startScene == entries.end() || startScene->second.Type != AssetType::Scene)
+			const auto scene = entries.find(buildSceneHandle);
+			if (scene == entries.end() || scene->second.Type != AssetType::Scene)
 				return false;
 		}
 
@@ -2345,21 +2719,68 @@ namespace TomCat {
 		for (const auto& [handle, entry] : entries)
 		{
 			(void)handle;
-			if (entry.Type != AssetType::Scene)
+			if (entry.Type != AssetType::Scene && entry.Type != AssetType::Prefab)
 				continue;
-			std::vector<uint8_t> sceneBytes;
-			if (!ReadStreamRange(input, entry.Offset, entry.Size, sceneBytes)
-				|| !SceneSerializer::ValidateCurrentFormat(sceneBytes, packagePath))
+			std::vector<uint8_t> archiveBytes;
+			if (!ReadStreamRange(input, entry.Offset, entry.Size, archiveBytes))
+				return false;
+			const bool formatValid = entry.Type == AssetType::Scene
+				? SceneSerializer::ValidateCurrentFormat(archiveBytes, packagePath)
+				: PrefabArchiveCodec::ValidateCurrentFormat(archiveBytes, packagePath);
+			if (!formatValid)
 				return false;
 			try
 			{
-				const std::string serialized(sceneBytes.begin(), sceneBytes.end());
+				const std::string serialized(archiveBytes.begin(), archiveBytes.end());
 				const YAML::Node root = YAML::Load(serialized);
-				if (root["SchemaVersion"].as<uint32_t>()
-					!= SceneSerializer::CurrentSchemaVersion
-					|| !CollectSceneScriptHandles(root, hasCSharpScripts,
-						referencedScriptHandles, validationError))
+				const uint32_t expectedSchema = entry.Type == AssetType::Scene
+					? SceneSerializer::CurrentSchemaVersion
+					: PrefabArchiveCodec::CurrentSchemaVersion;
+				if (root["SchemaVersion"].as<uint32_t>() != expectedSchema)
 					return false;
+				const auto validateReference =
+					[&](const SerializedAssetReference& reference)
+					{
+						const uint64_t rawHandle = static_cast<uint64_t>(reference.Handle);
+						if (reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+						{
+							hasCSharpScripts = true;
+							if (rawHandle == 0 || rawHandle == kManagedPayloadHandle)
+							{
+								validationError = "Cooked archive property "
+									+ reference.PropertyPath
+									+ " contains an invalid ScriptHandle";
+								return false;
+							}
+							referencedScriptHandles.emplace(rawHandle);
+							return true;
+						}
+						if (rawHandle == 0)
+							return true;
+						const auto referenced = entries.find(reference.Handle);
+						if (referenced == entries.end()
+							|| (reference.ExpectedType != AssetType::None
+								&& referenced->second.Type != reference.ExpectedType))
+						{
+							validationError = "Cooked archive property "
+								+ reference.PropertyPath
+								+ " references a missing or incorrectly typed package asset "
+								+ std::to_string(rawHandle);
+							return false;
+						}
+						return true;
+					};
+				const bool referencesValid = entry.Type == AssetType::Scene
+					? AssetReferenceVisitor::VisitScene(root, validateReference,
+						validationError)
+					: AssetReferenceVisitor::VisitPrefab(root, validateReference,
+						validationError);
+				if (!referencesValid)
+				{
+					TC_Core_Error("Rejected cooked archive asset references: {0}",
+						validationError);
+					return false;
+				}
 			}
 			catch (const std::exception&)
 			{
@@ -2368,7 +2789,7 @@ namespace TomCat {
 		}
 		if (hasCSharpScripts && !mountedManagedPayload)
 		{
-			TC_Core_Error("Rejected tcpak v4: a scene has CSharpScripts but no managed payload");
+			TC_Core_Error("Rejected tcpak v5: an archive has CSharpScripts but no managed payload");
 			return false;
 		}
 		if (mountedManagedPayload
@@ -2388,7 +2809,8 @@ namespace TomCat {
 		m_CookedEntries = std::move(entries);
 		m_CookedPackagePath = AbsoluteLexical(packagePath);
 		m_CookedPackageSize = packageSize;
-		m_CookedStartSceneHandle = AssetHandle(rawStartSceneHandle);
+		m_CookedEntrySceneHandle = AssetHandle(rawEntrySceneHandle);
+		m_CookedBuildSceneHandles = std::move(buildSceneHandles);
 		m_CookedPhysics2DSettings = mountedPhysicsSettings;
 		m_CookedManagedPayload = std::move(mountedManagedPayload);
 		return true;
@@ -2407,7 +2829,8 @@ namespace TomCat {
 		m_CookedEntries.clear();
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
-		m_CookedStartSceneHandle = AssetHandle(0);
+		m_CookedEntrySceneHandle = AssetHandle(0);
+		m_CookedBuildSceneHandles.clear();
 		m_CookedPhysics2DSettings = Physics2DSettings{};
 		m_CookedManagedPayload.reset();
 	}

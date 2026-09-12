@@ -4,19 +4,28 @@
     <Filter Include="src">
       <UniqueIdentifier>{2DAB880B-99B4-887C-2230-9F7C8E38947C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Player">
+      <UniqueIdentifier>{A927B427-95DF-F574-FEE6-CED0EABD9065}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\Scripting">
+      <UniqueIdentifier>{6FBC2D98-DB7C-A9CE-A4B7-F24B1037EEAA}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\panels">
       <UniqueIdentifier>{FFFA9871-EBB2-DABE-54BA-B31A409175AF}</UniqueIdentifier>
     </Filter>
-    <Filter Include="src\Scripting">
-      <UniqueIdentifier>{76D33592-9CD2-43A7-A222-7A4FD8A11772}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
-	<ClInclude Include="src\CookedPlayerLayer.h">
-	  <Filter>src</Filter>
-	</ClInclude>
+    <ClInclude Include="src\EditorDragDrop.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\EditorIcons.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorLayer.h">
       <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Player\PlayerBuilder.h">
+      <Filter>src\Player</Filter>
     </ClInclude>
     <ClInclude Include="src\Scripting\ScriptEditorMetadata.h">
       <Filter>src\Scripting</Filter>
@@ -38,25 +47,25 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-	<ClCompile Include="src\CookedPlayerLayer.cpp">
-	  <Filter>src</Filter>
-	</ClCompile>
     <ClCompile Include="src\EditorLayer.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\Scripting\ScriptProjectCompiler.cpp">
-      <Filter>src\Scripting</Filter>
+    <ClCompile Include="src\Player\PlayerBuilder.cpp">
+      <Filter>src\Player</Filter>
     </ClCompile>
     <ClCompile Include="src\Scripting\ScriptMetadataCache.cpp">
+      <Filter>src\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Scripting\ScriptProjectCompiler.cpp">
       <Filter>src\Scripting</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCatInputApp.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\panels\ContentBrowserPanel.cpp">
+    <ClCompile Include="src\panels\ConsolePanel.cpp">
       <Filter>src\panels</Filter>
     </ClCompile>
-    <ClCompile Include="src\panels\ConsolePanel.cpp">
+    <ClCompile Include="src\panels\ContentBrowserPanel.cpp">
       <Filter>src\panels</Filter>
     </ClCompile>
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp">

@@ -37,6 +37,9 @@ namespace TomCat::Scripting {
 			std::span<const NativePhysicsEventV1> events) override;
 		ScriptStatus DestroyAll() override;
 		ScriptStatus DestroyAttachments(std::span<const uint64_t> attachmentIds) override;
+		ScriptStatus InstantiateAttachments(
+			std::span<const NativeScriptAttachmentV1> attachments,
+			std::string_view fieldsJson) override;
 
 		const std::string& GetLastError() const { return m_LastError; }
 		uint64_t GetDomainId() const { return m_DomainId; }
