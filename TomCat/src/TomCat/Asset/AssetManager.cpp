@@ -1,17 +1,37 @@
 #include "tcpch.h"
 #include "AssetManager.h"
+#include "AssetJobSystem.h"
+#include "SpriteAsset.h"
+#include "ShaderArtifact.h"
+#include "TextureArtifact.h"
 
+#include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Renderer/Font.h"
+#include "TomCat/Renderer/Shader.h"
+#include "TomCat/Runtime/RuntimeCompatibility.h"
+#include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Scripting/ScriptField.h"
+#include "TomCat/Scripting/ScriptTypes.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <cmath>
+#include <cstring>
+#include <deque>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <new>
+#include <span>
 #include <sstream>
 #include <type_traits>
+#include <unordered_set>
 
 #include <yaml-cpp/yaml.h>
 
@@ -19,12 +39,652 @@ namespace TomCat {
 
 	namespace {
 
-		constexpr std::array<char, 8> kPackageMagic = { 'T', 'C', 'P', 'A', 'C', 'K', '0', '1' };
-		constexpr uint32_t kPackageVersion = 3;
-		// Base manifest (32 bytes) followed by sixteen uint16 collision-mask rows.
-		constexpr uint32_t kPackageHeaderSize = 64;
-		constexpr uint64_t kPackageEntrySize = 32;
 		constexpr size_t kCopyBufferSize = 64 * 1024;
+		constexpr uint64_t kManagedPayloadHandle =
+			(std::numeric_limits<uint64_t>::max)();
+		constexpr uint16_t kManagedPayloadEntryFlag = 1;
+		constexpr uint32_t kManagedPayloadEntryTag = 0x31444d54; // "TMD1"
+		constexpr std::array<char, 8> kManagedEnvelopeMagic = {
+			'T', 'C', 'M', 'A', 'N', '0', '0', '1' };
+		constexpr uint32_t kManagedEnvelopeVersion = 1;
+		constexpr uint64_t kManagedEnvelopeHeaderSize = 64;
+		constexpr uint64_t kMaximumManagedAssemblySize = 512ULL * 1024ULL * 1024ULL;
+		constexpr uint64_t kMaximumManagedPdbSize = 512ULL * 1024ULL * 1024ULL;
+		constexpr uint64_t kMaximumScriptManifestSize = 16ULL * 1024ULL * 1024ULL;
+		constexpr std::string_view kManagedTargetFramework = "net10.0";
+		constexpr std::string_view kManagedRuntimeIdentifier = "win-x64";
+
+		uint32_t RotateRight(uint32_t value, uint32_t amount)
+		{
+			return (value >> amount) | (value << (32U - amount));
+		}
+
+		class Sha256 final
+		{
+		public:
+			void Update(std::span<const uint8_t> bytes)
+			{
+				m_TotalBytes += static_cast<uint64_t>(bytes.size());
+				size_t offset = 0;
+				if (m_BufferSize != 0)
+				{
+					const size_t copied = (std::min)(bytes.size(),
+						m_Buffer.size() - m_BufferSize);
+					std::memcpy(m_Buffer.data() + m_BufferSize, bytes.data(), copied);
+					m_BufferSize += copied;
+					offset += copied;
+					if (m_BufferSize == m_Buffer.size())
+					{
+						Transform(m_Buffer.data());
+						m_BufferSize = 0;
+					}
+				}
+				while (bytes.size() - offset >= m_Buffer.size())
+				{
+					Transform(bytes.data() + offset);
+					offset += m_Buffer.size();
+				}
+				if (offset < bytes.size())
+				{
+					m_BufferSize = bytes.size() - offset;
+					std::memcpy(m_Buffer.data(), bytes.data() + offset, m_BufferSize);
+				}
+			}
+
+			std::array<uint8_t, 32> Final()
+			{
+				const uint64_t bitLength = m_TotalBytes * 8ULL;
+				std::array<uint8_t, 64> padding{};
+				padding[0] = 0x80;
+				const size_t paddingLength = m_BufferSize < 56
+					? 56 - m_BufferSize : 120 - m_BufferSize;
+				Update(std::span<const uint8_t>(padding.data(), paddingLength));
+				std::array<uint8_t, 8> length{};
+				for (size_t index = 0; index < length.size(); ++index)
+					length[length.size() - 1 - index] = static_cast<uint8_t>(
+						(bitLength >> (index * 8)) & 0xffULL);
+				Update(length);
+
+				std::array<uint8_t, 32> result{};
+				for (size_t word = 0; word < m_State.size(); ++word)
+				{
+					for (size_t byte = 0; byte < 4; ++byte)
+						result[word * 4 + byte] = static_cast<uint8_t>(
+							m_State[word] >> ((3 - byte) * 8));
+				}
+				return result;
+			}
+
+		private:
+			void Transform(const uint8_t* block)
+			{
+				static constexpr std::array<uint32_t, 64> constants = {
+					0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+					0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+					0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+					0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+					0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+					0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+					0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+					0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+					0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+					0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+					0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+					0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+					0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+					0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+					0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+					0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2 };
+				std::array<uint32_t, 64> words{};
+				for (size_t index = 0; index < 16; ++index)
+				{
+					words[index] = (static_cast<uint32_t>(block[index * 4]) << 24)
+						| (static_cast<uint32_t>(block[index * 4 + 1]) << 16)
+						| (static_cast<uint32_t>(block[index * 4 + 2]) << 8)
+						| static_cast<uint32_t>(block[index * 4 + 3]);
+				}
+				for (size_t index = 16; index < words.size(); ++index)
+				{
+					const uint32_t left = RotateRight(words[index - 15], 7)
+						^ RotateRight(words[index - 15], 18)
+						^ (words[index - 15] >> 3);
+					const uint32_t right = RotateRight(words[index - 2], 17)
+						^ RotateRight(words[index - 2], 19)
+						^ (words[index - 2] >> 10);
+					words[index] = words[index - 16] + left
+						+ words[index - 7] + right;
+				}
+
+				uint32_t a = m_State[0];
+				uint32_t b = m_State[1];
+				uint32_t c = m_State[2];
+				uint32_t d = m_State[3];
+				uint32_t e = m_State[4];
+				uint32_t f = m_State[5];
+				uint32_t g = m_State[6];
+				uint32_t h = m_State[7];
+				for (size_t index = 0; index < words.size(); ++index)
+				{
+					const uint32_t sum1 = RotateRight(e, 6) ^ RotateRight(e, 11)
+						^ RotateRight(e, 25);
+					const uint32_t choose = (e & f) ^ (~e & g);
+					const uint32_t temporary1 = h + sum1 + choose
+						+ constants[index] + words[index];
+					const uint32_t sum0 = RotateRight(a, 2) ^ RotateRight(a, 13)
+						^ RotateRight(a, 22);
+					const uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
+					const uint32_t temporary2 = sum0 + majority;
+					h = g;
+					g = f;
+					f = e;
+					e = d + temporary1;
+					d = c;
+					c = b;
+					b = a;
+					a = temporary1 + temporary2;
+				}
+				m_State[0] += a;
+				m_State[1] += b;
+				m_State[2] += c;
+				m_State[3] += d;
+				m_State[4] += e;
+				m_State[5] += f;
+				m_State[6] += g;
+				m_State[7] += h;
+			}
+
+			std::array<uint32_t, 8> m_State = { 0x6a09e667, 0xbb67ae85,
+				0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
+				0x1f83d9ab, 0x5be0cd19 };
+			std::array<uint8_t, 64> m_Buffer{};
+			size_t m_BufferSize = 0;
+			uint64_t m_TotalBytes = 0;
+		};
+
+		std::string ComputeSHA256(std::span<const uint8_t> bytes)
+		{
+			static constexpr char hex[] = "0123456789abcdef";
+			Sha256 hasher;
+			hasher.Update(bytes);
+			const std::array<uint8_t, 32> digest = hasher.Final();
+			std::string result;
+			result.reserve(digest.size() * 2);
+			for (const uint8_t byte : digest)
+			{
+				result.push_back(hex[byte >> 4]);
+				result.push_back(hex[byte & 0x0f]);
+			}
+			return result;
+		}
+
+		bool HasExactFields(const YAML::Node& node,
+			std::initializer_list<std::string_view> required,
+			std::initializer_list<std::string_view> optional,
+			std::string_view context, std::string& errorMessage)
+		{
+			if (!node || !node.IsMap())
+			{
+				errorMessage = std::string(context) + " must be an object";
+				return false;
+			}
+			std::unordered_set<std::string> seen;
+			for (const auto& pair : node)
+			{
+				if (!pair.first.IsScalar())
+				{
+					errorMessage = std::string(context) + " contains a non-string key";
+					return false;
+				}
+				const std::string key = pair.first.as<std::string>();
+				if (!seen.emplace(key).second)
+				{
+					errorMessage = std::string(context) + " contains duplicate key '"
+						+ key + "'";
+					return false;
+				}
+				const auto matches = [&](std::string_view candidate)
+				{
+					return candidate == key;
+				};
+				if (std::find_if(required.begin(), required.end(), matches)
+					== required.end()
+					&& std::find_if(optional.begin(), optional.end(), matches)
+						== optional.end())
+				{
+					errorMessage = std::string(context) + " contains unknown key '"
+						+ key + "'";
+					return false;
+				}
+			}
+			for (const std::string_view field : required)
+			{
+				if (!node[std::string(field)])
+				{
+					errorMessage = std::string(context) + " is missing key '"
+						+ std::string(field) + "'";
+					return false;
+				}
+			}
+			return true;
+		}
+
+		bool IsLowerHex(std::string_view value, size_t length)
+		{
+			if (value.size() != length)
+				return false;
+			for (const unsigned char character : value)
+			{
+				if (!((character >= '0' && character <= '9')
+					|| (character >= 'a' && character <= 'f')))
+					return false;
+			}
+			return true;
+		}
+
+		bool IsSafeBuildID(std::string_view value)
+		{
+			if (value.empty() || value.size() > 128)
+				return false;
+			for (const unsigned char character : value)
+			{
+				if (!(std::isalnum(character) || character == '-'
+					|| character == '_' || character == '.'))
+					return false;
+			}
+			return value != "." && value != "..";
+		}
+
+		bool IsNonemptyMetadataString(const YAML::Node& node)
+		{
+			if (!node || !node.IsScalar())
+				return false;
+			const std::string value = node.as<std::string>();
+			if (value.empty())
+				return false;
+			return std::none_of(value.begin(), value.end(), [](unsigned char character)
+			{
+				return character < 0x20;
+			});
+		}
+
+		bool ExtractEmbeddedScriptManifest(std::span<const uint8_t> assembly,
+			std::string& manifestJson, std::string& errorMessage)
+		{
+			manifestJson.clear();
+			constexpr std::string_view marker = "{\"version\":1,\"scripts\":";
+			for (size_t offset = 0; offset + marker.size() * 2 <= assembly.size();
+				++offset)
+			{
+				bool matches = true;
+				for (size_t index = 0; index < marker.size(); ++index)
+				{
+					if (assembly[offset + index * 2]
+						!= static_cast<uint8_t>(marker[index])
+						|| assembly[offset + index * 2 + 1] != 0)
+					{
+						matches = false;
+						break;
+					}
+				}
+				if (!matches)
+					continue;
+
+				std::string candidate;
+				candidate.reserve(4096);
+				int depth = 0;
+				bool inString = false;
+				bool escaped = false;
+				for (size_t cursor = offset; cursor + 1 < assembly.size(); cursor += 2)
+				{
+					if (assembly[cursor + 1] != 0)
+						break;
+					const char character = static_cast<char>(assembly[cursor]);
+					candidate.push_back(character);
+					if (inString)
+					{
+						if (escaped)
+							escaped = false;
+						else if (character == '\\')
+							escaped = true;
+						else if (character == '"')
+							inString = false;
+						continue;
+					}
+					if (character == '"')
+						inString = true;
+					else if (character == '{' || character == '[')
+						++depth;
+					else if (character == '}' || character == ']')
+					{
+						--depth;
+						if (depth == 0)
+						{
+							manifestJson = std::move(candidate);
+							return true;
+						}
+						if (depth < 0)
+							break;
+					}
+					if (candidate.size() > kMaximumScriptManifestSize)
+						break;
+				}
+			}
+			errorMessage = "Assembly-CSharp.dll does not contain the generated ScriptManifest.Json";
+			return false;
+		}
+
+		bool ValidateScriptFieldDefaultValue(const YAML::Node& value,
+			ScriptFieldType type, const std::string& context,
+			std::string& errorMessage)
+		{
+			auto fail = [&](std::string_view expectation)
+			{
+				errorMessage = context + ".defaultValue " + std::string(expectation);
+				return false;
+			};
+			auto validateReal = [&](const YAML::Node& node, bool requireFloatRange)
+			{
+				if (!node || !node.IsScalar())
+					return false;
+				const double parsed = node.as<double>();
+				return std::isfinite(parsed) && (!requireFloatRange
+					|| (parsed >= -static_cast<double>((std::numeric_limits<float>::max)())
+						&& parsed <= static_cast<double>((std::numeric_limits<float>::max)())));
+			};
+			auto validateVector = [&](std::size_t length)
+			{
+				if (!value.IsSequence() || value.size() != length)
+					return false;
+				for (const YAML::Node& element : value)
+				{
+					if (!validateReal(element, true))
+						return false;
+				}
+				return true;
+			};
+
+			try
+			{
+				switch (type)
+				{
+					case ScriptFieldType::Bool:
+						if (!value.IsScalar()) return fail("must be boolean");
+						(void)value.as<bool>();
+						return true;
+					case ScriptFieldType::Int32:
+						if (!value.IsScalar()) return fail("must be a 32-bit integer");
+						(void)value.as<int32_t>();
+						return true;
+					case ScriptFieldType::Int64:
+					case ScriptFieldType::Enum:
+						if (!value.IsScalar()) return fail("must be a 64-bit integer");
+						(void)value.as<int64_t>();
+						return true;
+					case ScriptFieldType::Float:
+						return validateReal(value, true) ? true : fail("must be a finite float");
+					case ScriptFieldType::Double:
+						return validateReal(value, false) ? true : fail("must be a finite number");
+					case ScriptFieldType::String:
+						return value.IsScalar() ? true : fail("must be a string");
+					case ScriptFieldType::Vector2:
+						return validateVector(2) ? true : fail("must be an array of 2 finite floats");
+					case ScriptFieldType::Vector3:
+						return validateVector(3) ? true : fail("must be an array of 3 finite floats");
+					case ScriptFieldType::Vector4:
+					case ScriptFieldType::Color:
+						return validateVector(4) ? true : fail("must be an array of 4 finite floats");
+					case ScriptFieldType::Entity:
+					case ScriptFieldType::AssetRef:
+						if (!value.IsScalar()) return fail("must be an unsigned 64-bit integer");
+						(void)value.as<uint64_t>();
+						return true;
+				}
+			}
+			catch (const std::exception&)
+			{
+				return fail("has the wrong type or is out of range");
+			}
+			return fail("has an unsupported type");
+		}
+
+		bool ValidateScriptManifest(std::string_view json,
+			std::unordered_set<uint64_t>& scriptHandles, std::string& errorMessage)
+		{
+			scriptHandles.clear();
+			if (json.empty() || json.size() > kMaximumScriptManifestSize
+				|| json.front() != '{' || json.back() != '}'
+				|| json.find('\0') != std::string_view::npos)
+			{
+				errorMessage = "Script manifest is empty, oversized, or not canonical JSON";
+				return false;
+			}
+			try
+			{
+				const YAML::Node root = YAML::Load(std::string(json));
+				if (!HasExactFields(root, { "version", "scripts" }, {},
+					"script manifest", errorMessage)
+					|| root["version"].as<uint32_t>()
+						!= Scripting::ScriptManifestVersion)
+				{
+					if (errorMessage.empty())
+						errorMessage = "Script manifest version is not 1";
+					return false;
+				}
+				const YAML::Node scripts = root["scripts"];
+				if (!scripts.IsSequence())
+				{
+					errorMessage = "Script manifest scripts must be an array";
+					return false;
+				}
+				for (size_t scriptIndex = 0; scriptIndex < scripts.size(); ++scriptIndex)
+				{
+					const YAML::Node script = scripts[scriptIndex];
+					const std::string context = "script manifest scripts["
+						+ std::to_string(scriptIndex) + "]";
+					if (!HasExactFields(script,
+						{ "assetHandle", "typeName", "executionOrder",
+							"disallowMultiple", "lifecycle", "fields" }, {},
+						context, errorMessage))
+						return false;
+					const uint64_t handle = script["assetHandle"].as<uint64_t>();
+					if (handle == 0 || handle == kManagedPayloadHandle
+						|| !scriptHandles.emplace(handle).second
+						|| !IsNonemptyMetadataString(script["typeName"]))
+					{
+						errorMessage = context
+							+ " has an invalid/duplicate handle or typeName";
+						return false;
+					}
+					(void)script["executionOrder"].as<int32_t>();
+					(void)script["disallowMultiple"].as<bool>();
+					const uint32_t lifecycle = script["lifecycle"].as<uint32_t>();
+					if ((lifecycle & ~0x3ffU) != 0)
+					{
+						errorMessage = context + " contains unknown lifecycle bits";
+						return false;
+					}
+					const YAML::Node fields = script["fields"];
+					if (!fields.IsSequence())
+					{
+						errorMessage = context + ".fields must be an array";
+						return false;
+					}
+					std::unordered_set<std::string> fieldIDs;
+					std::unordered_set<std::string> fieldNames;
+					for (size_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex)
+					{
+						const YAML::Node field = fields[fieldIndex];
+						const std::string fieldContext = context + ".fields["
+							+ std::to_string(fieldIndex) + "]";
+						if (!HasExactFields(field,
+							{ "id", "name", "type", "isPublic", "hidden",
+								"formerNames" },
+							{ "typeName", "header", "tooltip", "rangeMin",
+								"rangeMax", "defaultValue" }, fieldContext, errorMessage))
+							return false;
+						const std::string id = field["id"].as<std::string>();
+						const std::string name = field["name"].as<std::string>();
+						if (!IsLowerHex(id, 32) || name.empty()
+							|| !fieldIDs.emplace(id).second
+							|| !fieldNames.emplace(name).second)
+						{
+							errorMessage = fieldContext
+								+ " has an invalid or duplicate field identity";
+							return false;
+						}
+						ScriptFieldType fieldType;
+						const std::string typeName = field["type"].as<std::string>();
+						if (!TryParseScriptFieldType(typeName, fieldType))
+						{
+							errorMessage = fieldContext + " has unknown field type '"
+								+ typeName + "'";
+							return false;
+						}
+						const bool needsManagedType = fieldType == ScriptFieldType::Enum
+							|| fieldType == ScriptFieldType::AssetRef;
+						const YAML::Node managedType = field["typeName"];
+						const bool hasManagedType = managedType && !managedType.IsNull();
+						if (hasManagedType != needsManagedType
+							|| (needsManagedType
+								&& !IsNonemptyMetadataString(managedType)))
+						{
+							errorMessage = fieldContext
+								+ " has invalid managed type metadata";
+							return false;
+						}
+						if (field["defaultValue"]
+							&& !ValidateScriptFieldDefaultValue(field["defaultValue"],
+								fieldType, fieldContext, errorMessage))
+							return false;
+						(void)field["isPublic"].as<bool>();
+						(void)field["hidden"].as<bool>();
+						for (const char* optionalText : { "header", "tooltip" })
+						{
+							if (field[optionalText] && !field[optionalText].IsNull()
+								&& !field[optionalText].IsScalar())
+							{
+								errorMessage = fieldContext + "." + optionalText
+									+ " must be a string";
+								return false;
+							}
+						}
+						const bool hasMinimum = field["rangeMin"]
+							&& !field["rangeMin"].IsNull();
+						const bool hasMaximum = field["rangeMax"]
+							&& !field["rangeMax"].IsNull();
+						if (hasMinimum != hasMaximum)
+						{
+							errorMessage = fieldContext
+								+ " must provide both rangeMin and rangeMax";
+							return false;
+						}
+						if (hasMinimum)
+						{
+							const double minimum = field["rangeMin"].as<double>();
+							const double maximum = field["rangeMax"].as<double>();
+							if (!std::isfinite(minimum) || !std::isfinite(maximum)
+								|| minimum > maximum)
+							{
+								errorMessage = fieldContext + " has an invalid range";
+								return false;
+							}
+						}
+						const YAML::Node formerNames = field["formerNames"];
+						if (!formerNames.IsSequence())
+						{
+							errorMessage = fieldContext + ".formerNames must be an array";
+							return false;
+						}
+						std::unordered_set<std::string> aliases;
+						for (const YAML::Node aliasNode : formerNames)
+						{
+							const std::string alias = aliasNode.as<std::string>();
+							if (alias.empty() || alias == name
+								|| !aliases.emplace(alias).second)
+							{
+								errorMessage = fieldContext
+									+ " has an invalid former field name";
+								return false;
+							}
+						}
+					}
+				}
+				return true;
+			}
+			catch (const std::exception& error)
+			{
+				errorMessage = std::string("Invalid script manifest: ") + error.what();
+				return false;
+			}
+		}
+
+		struct ScriptFieldRuntimeSignature
+		{
+			std::string ID;
+			std::string Name;
+			std::string Type;
+			std::string ManagedType;
+			bool operator==(const ScriptFieldRuntimeSignature&) const = default;
+		};
+
+		struct ScriptRuntimeSignature
+		{
+			uint64_t AssetHandle = 0;
+			std::string TypeName;
+			std::vector<ScriptFieldRuntimeSignature> Fields;
+			bool operator==(const ScriptRuntimeSignature&) const = default;
+		};
+
+		bool BuildScriptManifestRuntimeSignature(std::string_view json,
+			std::vector<ScriptRuntimeSignature>& signature,
+			std::string& errorMessage)
+		{
+			signature.clear();
+			try
+			{
+				const YAML::Node scripts = YAML::Load(std::string(json))["scripts"];
+				signature.reserve(scripts.size());
+				for (const YAML::Node& script : scripts)
+				{
+					ScriptRuntimeSignature scriptSignature;
+					scriptSignature.AssetHandle = script["assetHandle"].as<uint64_t>();
+					scriptSignature.TypeName = script["typeName"].as<std::string>();
+					const YAML::Node fields = script["fields"];
+					scriptSignature.Fields.reserve(fields.size());
+					for (const YAML::Node& field : fields)
+					{
+						ScriptFieldRuntimeSignature fieldSignature;
+						fieldSignature.ID = field["id"].as<std::string>();
+						fieldSignature.Name = field["name"].as<std::string>();
+						fieldSignature.Type = field["type"].as<std::string>();
+						const YAML::Node managedType = field["typeName"];
+						if (managedType && !managedType.IsNull())
+							fieldSignature.ManagedType = managedType.as<std::string>();
+						scriptSignature.Fields.push_back(std::move(fieldSignature));
+					}
+					std::sort(scriptSignature.Fields.begin(), scriptSignature.Fields.end(),
+						[](const ScriptFieldRuntimeSignature& left,
+							const ScriptFieldRuntimeSignature& right)
+						{
+							return left.ID < right.ID;
+						});
+					signature.push_back(std::move(scriptSignature));
+				}
+				std::sort(signature.begin(), signature.end(),
+					[](const ScriptRuntimeSignature& left,
+						const ScriptRuntimeSignature& right)
+					{
+						return left.AssetHandle < right.AssetHandle;
+					});
+				return true;
+			}
+			catch (const std::exception& error)
+			{
+				errorMessage = std::string("Could not compare script manifest runtime metadata: ")
+					+ error.what();
+				return false;
+			}
+		}
 
 		template<typename UInt>
 		bool WriteLittleEndian(std::ostream& output, UInt value)
@@ -184,6 +844,525 @@ namespace TomCat {
 			return input.peek() == std::char_traits<char>::eof();
 		}
 
+		bool ReadStreamRange(std::istream& input, uint64_t offset, uint64_t size,
+			std::vector<uint8_t>& bytes)
+		{
+			bytes.clear();
+			if (offset > static_cast<uint64_t>((std::numeric_limits<std::streamoff>::max)())
+				|| size > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())
+				|| size > bytes.max_size())
+				return false;
+			try
+			{
+				bytes.resize(static_cast<size_t>(size));
+			}
+			catch (const std::exception&)
+			{
+				return false;
+			}
+			input.clear();
+			input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+			if (!input)
+				return false;
+			size_t copied = 0;
+			while (copied < bytes.size())
+			{
+				const size_t chunk = (std::min)(kCopyBufferSize,
+					bytes.size() - copied);
+				if (!input.read(reinterpret_cast<char*>(bytes.data() + copied),
+					static_cast<std::streamsize>(chunk)))
+				{
+					bytes.clear();
+					return false;
+				}
+				copied += chunk;
+			}
+			return true;
+		}
+
+		template<typename UInt>
+		void AppendLittleEndian(std::vector<uint8_t>& output, UInt value)
+		{
+			static_assert(std::is_unsigned_v<UInt>);
+			for (size_t index = 0; index < sizeof(UInt); ++index)
+				output.push_back(static_cast<uint8_t>(
+					(value >> (index * 8)) & static_cast<UInt>(0xff)));
+		}
+
+		void AppendBytes(std::vector<uint8_t>& output, std::string_view value)
+		{
+			output.insert(output.end(), value.begin(), value.end());
+		}
+
+		void AppendBytes(std::vector<uint8_t>& output,
+			std::span<const uint8_t> value)
+		{
+			output.insert(output.end(), value.begin(), value.end());
+		}
+
+		bool ValidateManagedPackagePayload(const ManagedPackagePayload& payload,
+			const std::unordered_set<uint64_t>* requiredScriptHandles,
+			std::string& errorMessage)
+		{
+			if (payload.NativeApiVersion != Scripting::NativeApiVersion
+				|| payload.ManagedApiVersion != Scripting::ManagedApiVersion
+				|| payload.ScriptManifestVersion != Scripting::ScriptManifestVersion
+				|| payload.TargetFramework != kManagedTargetFramework
+				|| payload.RuntimeIdentifier != kManagedRuntimeIdentifier)
+			{
+				errorMessage = "Managed payload ABI, manifest, TFM, or RID is incompatible";
+				return false;
+			}
+			if (!IsSafeBuildID(payload.BuildID)
+				|| !IsLowerHex(payload.AssemblySHA256, 64)
+				|| payload.Assembly.empty()
+				|| payload.Assembly.size() > kMaximumManagedAssemblySize
+				|| payload.Pdb.size() > kMaximumManagedPdbSize
+				|| payload.ScriptManifestJson.empty()
+				|| payload.ScriptManifestJson.size() > kMaximumScriptManifestSize)
+			{
+				errorMessage = "Managed payload sizes, build ID, or SHA-256 are invalid";
+				return false;
+			}
+			if (payload.Assembly.size() < 2 || payload.Assembly[0] != 'M'
+				|| payload.Assembly[1] != 'Z')
+			{
+				errorMessage = "Assembly-CSharp.dll is not a PE image";
+				return false;
+			}
+			if (!payload.Pdb.empty() && (payload.Pdb.size() < 4
+				|| payload.Pdb[0] != 'B' || payload.Pdb[1] != 'S'
+				|| payload.Pdb[2] != 'J' || payload.Pdb[3] != 'B'))
+			{
+				errorMessage = "Assembly-CSharp.pdb is not a portable PDB";
+				return false;
+			}
+			const std::string actualHash = ComputeSHA256(payload.Assembly);
+			if (actualHash != payload.AssemblySHA256)
+			{
+				errorMessage = "Assembly-CSharp.dll SHA-256 does not match the envelope";
+				return false;
+			}
+
+			std::unordered_set<uint64_t> manifestHandles;
+			if (!ValidateScriptManifest(payload.ScriptManifestJson, manifestHandles,
+				errorMessage))
+				return false;
+			std::string embeddedManifest;
+			if (!ExtractEmbeddedScriptManifest(payload.Assembly, embeddedManifest,
+				errorMessage) || embeddedManifest != payload.ScriptManifestJson)
+			{
+				if (errorMessage.empty())
+					errorMessage = "Envelope manifest does not match Assembly-CSharp.dll";
+				return false;
+			}
+			if (requiredScriptHandles)
+			{
+				for (const uint64_t handle : *requiredScriptHandles)
+				{
+					if (manifestHandles.find(handle) == manifestHandles.end())
+					{
+						errorMessage = "Script manifest does not contain attached AssetHandle "
+							+ std::to_string(handle);
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+
+		bool BuildManagedEnvelope(const ManagedPackagePayload& payload,
+			std::vector<uint8_t>& envelope, std::string& errorMessage)
+		{
+			envelope.clear();
+			if (!ValidateManagedPackagePayload(payload, nullptr, errorMessage)
+				|| payload.TargetFramework.size() > (std::numeric_limits<uint32_t>::max)()
+				|| payload.RuntimeIdentifier.size() > (std::numeric_limits<uint32_t>::max)()
+				|| payload.BuildID.size() > (std::numeric_limits<uint32_t>::max)()
+				|| payload.AssemblySHA256.size() > (std::numeric_limits<uint32_t>::max)())
+				return false;
+
+			uint64_t total = kManagedEnvelopeHeaderSize;
+			for (const uint64_t size : {
+				static_cast<uint64_t>(payload.TargetFramework.size()),
+				static_cast<uint64_t>(payload.RuntimeIdentifier.size()),
+				static_cast<uint64_t>(payload.BuildID.size()),
+				static_cast<uint64_t>(payload.AssemblySHA256.size()),
+				static_cast<uint64_t>(payload.ScriptManifestJson.size()),
+				static_cast<uint64_t>(payload.Assembly.size()),
+				static_cast<uint64_t>(payload.Pdb.size()) })
+			{
+				if (!CheckedAdd(total, size, total))
+				{
+					errorMessage = "Managed payload envelope size overflow";
+					return false;
+				}
+			}
+			if (total > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())
+				|| total > envelope.max_size())
+			{
+				errorMessage = "Managed payload envelope is too large";
+				return false;
+			}
+
+			try
+			{
+				envelope.reserve(static_cast<size_t>(total));
+				AppendBytes(envelope, std::string_view(kManagedEnvelopeMagic.data(),
+					kManagedEnvelopeMagic.size()));
+				AppendLittleEndian<uint32_t>(envelope, kManagedEnvelopeVersion);
+				AppendLittleEndian<uint32_t>(envelope, payload.NativeApiVersion);
+				AppendLittleEndian<uint32_t>(envelope, payload.ManagedApiVersion);
+				AppendLittleEndian<uint32_t>(envelope, payload.ScriptManifestVersion);
+				AppendLittleEndian<uint32_t>(envelope,
+					static_cast<uint32_t>(payload.TargetFramework.size()));
+				AppendLittleEndian<uint32_t>(envelope,
+					static_cast<uint32_t>(payload.RuntimeIdentifier.size()));
+				AppendLittleEndian<uint32_t>(envelope,
+					static_cast<uint32_t>(payload.BuildID.size()));
+				AppendLittleEndian<uint32_t>(envelope,
+					static_cast<uint32_t>(payload.AssemblySHA256.size()));
+				AppendLittleEndian<uint64_t>(envelope,
+					static_cast<uint64_t>(payload.ScriptManifestJson.size()));
+				AppendLittleEndian<uint64_t>(envelope,
+					static_cast<uint64_t>(payload.Assembly.size()));
+				AppendLittleEndian<uint64_t>(envelope,
+					static_cast<uint64_t>(payload.Pdb.size()));
+				AppendBytes(envelope, payload.TargetFramework);
+				AppendBytes(envelope, payload.RuntimeIdentifier);
+				AppendBytes(envelope, payload.BuildID);
+				AppendBytes(envelope, payload.AssemblySHA256);
+				AppendBytes(envelope, payload.ScriptManifestJson);
+				AppendBytes(envelope, payload.Assembly);
+				AppendBytes(envelope, payload.Pdb);
+			}
+			catch (const std::exception& error)
+			{
+				envelope.clear();
+				errorMessage = std::string("Could not build managed payload envelope: ")
+					+ error.what();
+				return false;
+			}
+			return envelope.size() == total;
+		}
+
+		template<typename UInt>
+		bool ReadLittleEndian(std::span<const uint8_t> bytes, size_t& cursor,
+			UInt& value)
+		{
+			static_assert(std::is_unsigned_v<UInt>);
+			if (cursor > bytes.size() || sizeof(UInt) > bytes.size() - cursor)
+				return false;
+			value = 0;
+			for (size_t index = 0; index < sizeof(UInt); ++index)
+				value |= static_cast<UInt>(bytes[cursor + index]) << (index * 8);
+			cursor += sizeof(UInt);
+			return true;
+		}
+
+		bool ReadEnvelopeString(std::span<const uint8_t> bytes, size_t& cursor,
+			uint64_t length, std::string& value)
+		{
+			if (length > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())
+				|| cursor > bytes.size() || length > bytes.size() - cursor)
+				return false;
+			value.assign(reinterpret_cast<const char*>(bytes.data() + cursor),
+				static_cast<size_t>(length));
+			cursor += static_cast<size_t>(length);
+			return value.find('\0') == std::string::npos;
+		}
+
+		bool ReadEnvelopeBytes(std::span<const uint8_t> bytes, size_t& cursor,
+			uint64_t length, std::vector<uint8_t>& value)
+		{
+			if (length > static_cast<uint64_t>((std::numeric_limits<size_t>::max)())
+				|| cursor > bytes.size() || length > bytes.size() - cursor)
+				return false;
+			value.assign(bytes.begin() + cursor,
+				bytes.begin() + cursor + static_cast<size_t>(length));
+			cursor += static_cast<size_t>(length);
+			return true;
+		}
+
+		bool ParseManagedEnvelope(std::span<const uint8_t> envelope,
+			ManagedPackagePayload& payload, std::string& errorMessage)
+		{
+			payload = {};
+			if (envelope.size() < kManagedEnvelopeHeaderSize
+				|| !std::equal(kManagedEnvelopeMagic.begin(), kManagedEnvelopeMagic.end(),
+					envelope.begin()))
+			{
+				errorMessage = "Managed payload envelope magic/header is invalid";
+				return false;
+			}
+			try
+			{
+				size_t cursor = kManagedEnvelopeMagic.size();
+				uint32_t envelopeVersion = 0;
+				uint32_t frameworkLength = 0;
+				uint32_t runtimeLength = 0;
+				uint32_t buildLength = 0;
+				uint32_t hashLength = 0;
+				uint64_t manifestLength = 0;
+				uint64_t assemblyLength = 0;
+				uint64_t pdbLength = 0;
+				if (!ReadLittleEndian(envelope, cursor, envelopeVersion)
+					|| !ReadLittleEndian(envelope, cursor, payload.NativeApiVersion)
+					|| !ReadLittleEndian(envelope, cursor, payload.ManagedApiVersion)
+					|| !ReadLittleEndian(envelope, cursor, payload.ScriptManifestVersion)
+					|| !ReadLittleEndian(envelope, cursor, frameworkLength)
+					|| !ReadLittleEndian(envelope, cursor, runtimeLength)
+					|| !ReadLittleEndian(envelope, cursor, buildLength)
+					|| !ReadLittleEndian(envelope, cursor, hashLength)
+					|| !ReadLittleEndian(envelope, cursor, manifestLength)
+					|| !ReadLittleEndian(envelope, cursor, assemblyLength)
+					|| !ReadLittleEndian(envelope, cursor, pdbLength)
+					|| envelopeVersion != kManagedEnvelopeVersion
+					|| cursor != kManagedEnvelopeHeaderSize
+					|| frameworkLength > 64 || runtimeLength > 64
+					|| buildLength > 128 || hashLength != 64
+					|| manifestLength > kMaximumScriptManifestSize
+					|| assemblyLength == 0
+					|| assemblyLength > kMaximumManagedAssemblySize
+					|| pdbLength > kMaximumManagedPdbSize
+					|| !ReadEnvelopeString(envelope, cursor, frameworkLength,
+						payload.TargetFramework)
+					|| !ReadEnvelopeString(envelope, cursor, runtimeLength,
+						payload.RuntimeIdentifier)
+					|| !ReadEnvelopeString(envelope, cursor, buildLength,
+						payload.BuildID)
+					|| !ReadEnvelopeString(envelope, cursor, hashLength,
+						payload.AssemblySHA256)
+					|| !ReadEnvelopeString(envelope, cursor, manifestLength,
+						payload.ScriptManifestJson)
+					|| !ReadEnvelopeBytes(envelope, cursor, assemblyLength,
+						payload.Assembly)
+					|| !ReadEnvelopeBytes(envelope, cursor, pdbLength, payload.Pdb)
+					|| cursor != envelope.size())
+				{
+					errorMessage = "Managed payload envelope fields or lengths are invalid";
+					return false;
+				}
+			}
+			catch (const std::exception& error)
+			{
+				errorMessage = std::string("Could not parse managed payload envelope: ")
+					+ error.what();
+				return false;
+			}
+			return ValidateManagedPackagePayload(payload, nullptr, errorMessage);
+		}
+
+		bool IsSafeRelativePayloadPath(const std::filesystem::path& path)
+		{
+			if (path.empty() || path.is_absolute() || path.has_root_name()
+				|| path.has_root_directory())
+				return false;
+			for (const auto& component : path)
+			{
+				if (component.empty() || component == "." || component == "..")
+					return false;
+			}
+			return true;
+		}
+
+		bool IsAuthoringOnlyCookPath(const std::filesystem::path& path)
+		{
+			std::string extension = PathToUTF8(path.extension());
+			std::transform(extension.begin(), extension.end(), extension.begin(),
+				[](unsigned char character)
+				{
+					return static_cast<char>(std::tolower(character));
+				});
+			if (extension == ".cs" || extension == ".csproj")
+				return true;
+
+			for (const auto& component : path)
+			{
+				std::string name = PathToUTF8(component);
+				std::transform(name.begin(), name.end(), name.begin(),
+					[](unsigned char character)
+					{
+						return static_cast<char>(std::tolower(character));
+					});
+				if (name == "obj" || name == "library")
+					return true;
+			}
+			return false;
+		}
+
+		bool ReadUtf8File(const std::filesystem::path& path, uint64_t maximumSize,
+			std::string& contents)
+		{
+			std::vector<uint8_t> bytes;
+			if (!ReadWholeFile(path, bytes) || bytes.size() > maximumSize
+				|| std::find(bytes.begin(), bytes.end(), uint8_t{ 0 }) != bytes.end())
+				return false;
+			contents.assign(bytes.begin(), bytes.end());
+			return true;
+		}
+
+		bool ValidateScriptAssetMap(const std::filesystem::path& path,
+			const std::unordered_set<uint64_t>& manifestHandles,
+			std::string& errorMessage)
+		{
+			try
+			{
+				std::string json;
+				if (!ReadUtf8File(path, kMaximumScriptManifestSize, json))
+				{
+					errorMessage = "Could not read Library/ScriptProject/ScriptAssets.json";
+					return false;
+				}
+				const YAML::Node root = YAML::Load(json);
+				if (!HasExactFields(root, { "version", "assets" }, {},
+					"ScriptAssets.json", errorMessage)
+					|| root["version"].as<uint32_t>() != 1
+					|| !root["assets"].IsMap())
+				{
+					if (errorMessage.empty())
+						errorMessage = "ScriptAssets.json version/assets are invalid";
+					return false;
+				}
+				std::unordered_set<std::string> paths;
+				std::unordered_set<uint64_t> handles;
+				for (const auto& pair : root["assets"])
+				{
+					const std::string pathText = pair.first.as<std::string>();
+					const std::filesystem::path sourcePath = UTF8ToPath(pathText);
+					std::string extension = PathToUTF8(sourcePath.extension());
+					std::transform(extension.begin(), extension.end(), extension.begin(),
+						[](unsigned char value)
+						{
+							return static_cast<char>(std::tolower(value));
+						});
+					const uint64_t handle = pair.second.as<uint64_t>();
+					if (!IsSafeRelativePayloadPath(sourcePath) || extension != ".cs"
+						|| handle == 0 || handle == kManagedPayloadHandle
+						|| !paths.emplace(PathToUTF8(sourcePath.lexically_normal())).second
+						|| !handles.emplace(handle).second)
+					{
+						errorMessage = "ScriptAssets.json contains an invalid path or handle";
+						return false;
+					}
+				}
+				if (handles != manifestHandles)
+				{
+					errorMessage = "ScriptAssets.json handles do not match the generated manifest";
+					return false;
+				}
+				return true;
+			}
+			catch (const std::exception& error)
+			{
+				errorMessage = std::string("Invalid ScriptAssets.json: ") + error.what();
+				return false;
+			}
+		}
+
+		bool LoadProjectManagedPayload(const Project& project,
+			ManagedPackagePayload& payload, std::string& errorMessage)
+		{
+			try
+			{
+				const std::filesystem::path library = project.GetLibraryPath();
+				const std::filesystem::path assemblies =
+					library / "ScriptAssemblies";
+				const std::filesystem::path lastGoodPath = assemblies / "last-good.json";
+				std::string lastGoodJson;
+				if (!ReadUtf8File(lastGoodPath, 1024 * 1024, lastGoodJson))
+				{
+					errorMessage = "C# scripts require Library/ScriptAssemblies/last-good.json";
+					return false;
+				}
+				const YAML::Node lastGood = YAML::Load(lastGoodJson);
+				if (!HasExactFields(lastGood,
+					{ "version", "sourceHash", "buildId", "assembly" },
+					{ "pdb" }, "last-good.json", errorMessage)
+					|| lastGood["version"].as<uint32_t>() != 1)
+				{
+					if (errorMessage.empty())
+						errorMessage = "last-good.json version is not 1";
+					return false;
+				}
+				const std::string sourceHash = lastGood["sourceHash"].as<std::string>();
+				const std::string buildID = lastGood["buildId"].as<std::string>();
+				if (!IsLowerHex(sourceHash, 16) || !IsSafeBuildID(buildID))
+				{
+					errorMessage = "last-good.json sourceHash or buildId is invalid";
+					return false;
+				}
+
+				const std::filesystem::path rawRelativeAssembly = UTF8ToPath(
+					lastGood["assembly"].as<std::string>());
+				const std::filesystem::path relativeAssembly =
+					rawRelativeAssembly.lexically_normal();
+				const std::filesystem::path expectedAssembly =
+					std::filesystem::path("Build") / buildID / "Assembly-CSharp.dll";
+				if (!IsSafeRelativePayloadPath(rawRelativeAssembly)
+					|| relativeAssembly != expectedAssembly)
+				{
+					errorMessage = "last-good.json assembly path is not the selected immutable build";
+					return false;
+				}
+				const std::filesystem::path assemblyPath =
+					AbsoluteLexical(assemblies / relativeAssembly);
+				if (!IsWithinOrEqual(assemblies, assemblyPath)
+					|| !ReadWholeFile(assemblyPath, payload.Assembly)
+					|| payload.Assembly.empty())
+				{
+					errorMessage = "Could not read the selected Assembly-CSharp.dll";
+					return false;
+				}
+
+				payload.Pdb.clear();
+				if (lastGood["pdb"])
+				{
+					const std::filesystem::path rawRelativePdb = UTF8ToPath(
+						lastGood["pdb"].as<std::string>());
+					const std::filesystem::path relativePdb =
+						rawRelativePdb.lexically_normal();
+					const std::filesystem::path expectedPdb =
+						std::filesystem::path("Build") / buildID / "Assembly-CSharp.pdb";
+					const std::filesystem::path pdbPath =
+						AbsoluteLexical(assemblies / relativePdb);
+					if (!IsSafeRelativePayloadPath(rawRelativePdb)
+						|| relativePdb != expectedPdb
+						|| !IsWithinOrEqual(assemblies, pdbPath)
+						|| !ReadWholeFile(pdbPath, payload.Pdb))
+					{
+						errorMessage = "Could not read the selected Assembly-CSharp.pdb";
+						return false;
+					}
+				}
+
+				payload.NativeApiVersion = Scripting::NativeApiVersion;
+				payload.ManagedApiVersion = Scripting::ManagedApiVersion;
+				payload.ScriptManifestVersion = Scripting::ScriptManifestVersion;
+				payload.TargetFramework = kManagedTargetFramework;
+				payload.RuntimeIdentifier = kManagedRuntimeIdentifier;
+				payload.BuildID = buildID;
+				payload.AssemblySHA256 = ComputeSHA256(payload.Assembly);
+				if (!ExtractEmbeddedScriptManifest(payload.Assembly,
+					payload.ScriptManifestJson, errorMessage))
+					return false;
+
+				std::unordered_set<uint64_t> manifestHandles;
+				if (!ValidateScriptManifest(payload.ScriptManifestJson,
+					manifestHandles, errorMessage)
+					|| !ValidateScriptAssetMap(library / "ScriptProject"
+						/ "ScriptAssets.json", manifestHandles, errorMessage))
+					return false;
+				return ValidateManagedPackagePayload(payload, nullptr, errorMessage);
+			}
+			catch (const std::exception& error)
+			{
+				errorMessage = std::string("Could not load last-good managed payload: ")
+					+ error.what();
+				return false;
+			}
+		}
+
 		bool IsCurrentAsset(const AssetRegistry& registry, const AssetMetadata& metadata,
 			AssetType expectedType)
 		{
@@ -195,24 +1374,92 @@ namespace TomCat {
 				current->Type == expectedType;
 		}
 
-		bool ValidateCookedSpriteHandle(const AssetRegistry& registry, uint64_t rawHandle,
-			const std::filesystem::path& scenePath, const std::string& propertyPath,
+		bool ValidateCookAssetReference(const AssetRegistry& registry,
+			const SerializedAssetReference& reference,
+			const std::filesystem::path& scenePath, bool& hasCSharpScripts,
+			std::unordered_set<uint64_t>& scriptHandles,
+			std::unordered_set<uint64_t>& runtimeDependencies,
 			std::string& errorMessage)
 		{
+			const uint64_t rawHandle = static_cast<uint64_t>(reference.Handle);
+			if (reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+				hasCSharpScripts = true;
 			if (rawHandle == 0)
-				return true;
-			const AssetMetadata* metadata = registry.GetMetadata(AssetHandle(rawHandle));
-			if (!metadata || !IsCurrentAsset(registry, *metadata, AssetType::Texture2D))
 			{
-				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property " + propertyPath +
-					" references missing or non-texture asset " + std::to_string(rawHandle);
+				if (!reference.Required)
+					return true;
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " requires a nonzero AssetHandle";
 				return false;
 			}
+			if (rawHandle == kManagedPayloadHandle)
+			{
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " uses the reserved managed-payload handle";
+				return false;
+			}
+
+			const AssetSubAsset* subAsset = nullptr;
+			const AssetMetadata* metadata = registry.GetMetadata(reference.Handle);
+			if (!metadata)
+				metadata = registry.GetSubAssetOwner(reference.Handle, &subAsset);
+			const AssetType effectiveType = subAsset ? subAsset->Type
+				: (metadata ? metadata->Type : AssetType::None);
+			bool current = metadata && effectiveType != AssetType::None
+				&& !metadata->IsMissing;
+			if (current && reference.ExpectedType != AssetType::None)
+				current = effectiveType == reference.ExpectedType;
+			if (current)
+			{
+				const AssetMetadata* pathMetadata = registry.GetMetadata(metadata->FilePath);
+				current = pathMetadata && pathMetadata->Handle == metadata->Handle
+					&& pathMetadata->Type == metadata->Type && !pathMetadata->IsMissing;
+			}
+			if (!current)
+			{
+				const std::string expected = reference.ExpectedType == AssetType::None
+					? "runtime asset"
+					: std::string(AssetTypeToString(reference.ExpectedType)) + " asset";
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath
+					+ " references a missing or incorrectly typed " + expected + " "
+					+ std::to_string(rawHandle);
+				return false;
+			}
+
+			if (reference.Kind == SerializedAssetReferenceKind::ScriptField
+				&& (metadata->Type == AssetType::CSharpScript
+					|| IsAuthoringOnlyCookPath(metadata->FilePath)))
+			{
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " references authoring-only asset "
+					+ std::to_string(rawHandle) + " ("
+					+ AssetTypeToString(metadata->Type) + ")";
+				return false;
+			}
+
+			const std::filesystem::path source = registry.GetFileSystemPath(metadata->Handle);
+			std::error_code fileError;
+			if (source.empty() || !std::filesystem::is_regular_file(source, fileError)
+				|| fileError)
+			{
+				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+					+ reference.PropertyPath + " references asset "
+					+ std::to_string(rawHandle) + " whose source file is missing";
+				return false;
+			}
+			if (reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+				scriptHandles.emplace(rawHandle);
+			else
+				runtimeDependencies.emplace(rawHandle);
 			return true;
 		}
 
 		bool PrepareSceneBytesForCook(const AssetRegistry& registry,
 			const std::filesystem::path& scenePath, std::vector<uint8_t>& bytes,
+			bool& hasCSharpScripts,
+			std::unordered_set<uint64_t>& scriptHandles,
+			std::unordered_set<uint64_t>& runtimeDependencies,
 			std::string& errorMessage)
 		{
 			bytes.clear();
@@ -232,23 +1479,19 @@ namespace TomCat {
 			{
 				std::string serialized(sourceBytes.begin(), sourceBytes.end());
 				std::istringstream input(std::move(serialized));
-				const YAML::Node root = YAML::Load(input);
-				const YAML::Node entities = root["Entities"];
-				for (size_t index = 0; index < entities.size(); ++index)
-				{
-					const YAML::Node entity = entities[index];
-					const YAML::Node sprite = entity["SpriteRenderer"];
-					if (!sprite)
-						continue;
-
-					const std::string propertyPath = "Entities[" + std::to_string(index) +
-						"].SpriteRenderer.SpriteHandle";
-					const YAML::Node handleNode = sprite["SpriteHandle"];
-					const uint64_t rawHandle = handleNode.as<uint64_t>();
-					if (!ValidateCookedSpriteHandle(registry, rawHandle, scenePath,
-						propertyPath, errorMessage))
-						return false;
-				}
+				YAML::Node root = YAML::Load(input);
+				// Schema 9 is read-only migration input. Every newly emitted scene,
+				// including the normalized copy stored in tcpak v5, uses schema 10.
+				root["SchemaVersion"] = SceneSerializer::CurrentSchemaVersion;
+				if (!AssetReferenceVisitor::VisitScene(root,
+					[&](const SerializedAssetReference& reference)
+					{
+						return ValidateCookAssetReference(registry, reference,
+							scenePath, hasCSharpScripts, scriptHandles,
+							runtimeDependencies,
+							errorMessage);
+					}, errorMessage))
+					return false;
 
 				YAML::Emitter output;
 				output << root;
@@ -270,12 +1513,85 @@ namespace TomCat {
 			}
 		}
 
+		bool PreparePrefabBytesForCook(const AssetRegistry& registry,
+			const std::filesystem::path& prefabPath, std::vector<uint8_t>& bytes,
+			bool& hasCSharpScripts,
+			std::unordered_set<uint64_t>& scriptHandles,
+			std::unordered_set<uint64_t>& runtimeDependencies,
+			std::string& errorMessage)
+		{
+			bytes.clear();
+			if (!ReadWholeFile(prefabPath, bytes))
+			{
+				errorMessage = "Could not read Prefab '" + PathToUTF8(prefabPath) + "'";
+				return false;
+			}
+			if (!PrefabArchiveCodec::ValidateCurrentFormat(bytes, prefabPath))
+			{
+				errorMessage = "Prefab '" + PathToUTF8(prefabPath)
+					+ "' does not conform to the complete Prefab schema";
+				return false;
+			}
+			try
+			{
+				const std::string serialized(bytes.begin(), bytes.end());
+				const YAML::Node root = YAML::Load(serialized);
+				if (!AssetReferenceVisitor::VisitPrefab(root,
+					[&](const SerializedAssetReference& reference)
+					{
+						return ValidateCookAssetReference(registry, reference,
+							prefabPath, hasCSharpScripts, scriptHandles,
+							runtimeDependencies, errorMessage);
+					}, errorMessage))
+					return false;
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = "Could not prepare Prefab '" + PathToUTF8(prefabPath)
+					+ "' for cooking: " + exception.what();
+				return false;
+			}
+		}
+
 		void RemoveTemporaryFile(const std::filesystem::path& path)
 		{
 			if (path.empty())
 				return;
 			std::error_code ignored;
 			std::filesystem::remove(path, ignored);
+		}
+
+		template<typename ArtifactData, AssetType ExpectedType, typename Decoder>
+		DecodedAssetLoadResult<ArtifactData, ExpectedType> DecodeLoadedArtifact(
+			AssetLoadResult loaded, Decoder&& decoder)
+		{
+			DecodedAssetLoadResult<ArtifactData, ExpectedType> result;
+			result.Status = loaded.Status;
+			result.Handle = loaded.Artifact.Handle;
+			result.Type = loaded.Artifact.Type;
+			result.ArtifactKey = std::move(loaded.Artifact.ArtifactKey);
+			result.Format = std::move(loaded.Artifact.Format);
+			result.SubAssets = std::move(loaded.Artifact.SubAssets);
+			result.DependencyKeys = std::move(loaded.Artifact.DependencyKeys);
+			result.FromCache = loaded.Artifact.FromCache;
+			result.Error = std::move(loaded.Error);
+			if (result.Status != AssetLoadStatus::Success)
+				return result;
+			if (result.Type != ExpectedType)
+			{
+				result.Status = AssetLoadStatus::UnsupportedType;
+				result.Error = "asset type does not match the requested decoded loader";
+				return result;
+			}
+			std::string decodeError;
+			if (!decoder(std::move(loaded.Artifact.Bytes), result.Asset, decodeError))
+			{
+				result.Status = AssetLoadStatus::ImportFailed;
+				result.Error = decodeError.empty()
+					? "imported artifact failed typed decoding" : std::move(decodeError);
+			}
+			return result;
 		}
 
 	}
@@ -289,6 +1605,11 @@ namespace TomCat {
 	bool AssetManager::Initialize(const std::filesystem::path& assetRoot,
 		const std::filesystem::path& libraryRoot)
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("AssetManager cannot be initialized from an asset worker thread");
+			return false;
+		}
 		Shutdown();
 		if (assetRoot.empty() || libraryRoot.empty())
 		{
@@ -302,11 +1623,34 @@ namespace TomCat {
 			m_Registry.Shutdown();
 			TC_Core_Error("Failed to initialize the asset registry for '{0}'", PathToUTF8(assetRoot));
 		}
+		else if (!m_Database.Initialize(m_Registry, libraryRoot))
+		{
+			m_Registry.Shutdown();
+			m_RegistryInitialized = false;
+			TC_Core_Error("Failed to initialize the asset database for '{0}'",
+				PathToUTF8(assetRoot));
+		}
+		else if (!m_ImportCoordinator.Initialize(m_Registry, m_Database, assetRoot) ||
+			!m_ImportCoordinator.Start())
+		{
+			// Import remains usable through explicit calls if the authoring-only
+			// monitor cannot start.
+			m_ImportCoordinator.Shutdown();
+			TC_Core_Warn("Asset file monitoring is unavailable for '{0}'",
+				PathToUTF8(assetRoot));
+		}
+		if (m_RegistryInitialized)
+			EnableAsyncLoads();
 		return m_RegistryInitialized;
 	}
 
 	bool AssetManager::SetProject(const Ref<Project>& project)
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("AssetManager project changes are not allowed from an asset worker thread");
+			return false;
+		}
 		if (!project || project->GetProjectPath().empty())
 		{
 			Shutdown();
@@ -317,21 +1661,39 @@ namespace TomCat {
 		m_AuthoringProject = project;
 		m_UsesProjectConfiguration = true;
 
-		const AssetHandle configuredHandle = project->GetConfig().StartSceneHandle;
-		if (static_cast<uint64_t>(configuredHandle) != 0)
+		BuildSettings repaired = project->GetBuildSettings();
+		bool changed = false;
+		for (BuildSceneSettings& scene : repaired.Scenes)
 		{
-			const AssetMetadata* metadata = m_Registry.GetMetadata(configuredHandle);
+			const AssetMetadata* metadata = m_Registry.GetMetadata(scene.Handle);
 			if (metadata && IsCurrentAsset(m_Registry, *metadata, AssetType::Scene) &&
-				metadata->FilePath != project->GetConfig().StartScene)
+				metadata->FilePath != scene.PathHint)
 			{
-				// The UUID is authoritative. Repair the authoring path after an
-				// external move or a crash between an asset move and project save.
-				if (project->SetStartScene(metadata->FilePath) && !project->Save())
-					TC_Core_Warn("StartScene was resolved by Handle, but Project.tcproj could not store its repaired path");
+				scene.PathHint = metadata->FilePath;
+				changed = true;
 			}
-			return true;
 		}
+		if (changed && !project->SetBuildSettings(repaired))
+			TC_Core_Warn("Build scene paths were resolved by Handle, but BuildSettings.json could not be repaired");
 		return true;
+	}
+
+	std::optional<uint32_t> AssetManager::GetCookedBuildSceneIndex(AssetHandle handle) const
+	{
+		if (!IsCookedPackageMounted() || static_cast<uint64_t>(handle) == 0)
+			return std::nullopt;
+		const auto found = std::find(m_CookedBuildSceneHandles.begin(),
+			m_CookedBuildSceneHandles.end(), handle);
+		if (found == m_CookedBuildSceneHandles.end())
+			return std::nullopt;
+		return static_cast<uint32_t>(std::distance(m_CookedBuildSceneHandles.begin(), found));
+	}
+
+	AssetHandle AssetManager::GetCookedBuildSceneHandle(uint32_t index) const
+	{
+		if (!IsCookedPackageMounted() || index >= m_CookedBuildSceneHandles.size())
+			return AssetHandle(0);
+		return m_CookedBuildSceneHandles[index];
 	}
 
 	Physics2DSettings AssetManager::GetPhysics2DSettings() const
@@ -345,6 +1707,12 @@ namespace TomCat {
 
 	void AssetManager::Shutdown()
 	{
+		if (!StopAndWaitForAsyncLoads())
+		{
+			TC_Core_Error("AssetManager shutdown was rejected on an asset worker thread");
+			return;
+		}
+		m_ImportCoordinator.Shutdown();
 		ReleaseAll();
 		{
 			std::lock_guard<std::mutex> lock(m_CookedPackageMutex);
@@ -354,19 +1722,65 @@ namespace TomCat {
 		m_CookedEntries.clear();
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
-		m_CookedStartSceneHandle = AssetHandle(0);
+		m_CookedPackageVersion = 0;
+		m_CookedEntrySceneHandle = AssetHandle(0);
+		m_CookedBuildSceneHandles.clear();
 		m_CookedPhysics2DSettings = Physics2DSettings{};
+		m_CookedPlayerSettings = PlayerSettings{};
+		m_CookedManagedPayload.reset();
+		m_ManagedCookPayloadOverride.reset();
 		m_AuthoringProject.reset();
 		m_UsesProjectConfiguration = false;
+		m_Database.Shutdown();
 		m_Registry.Shutdown();
 		m_RegistryInitialized = false;
+	}
+
+	bool AssetManager::BeginAsyncLoad()
+	{
+		std::lock_guard lock(m_AsyncLoadMutex);
+		if (!m_AcceptingAsyncLoads)
+			return false;
+		++m_AsyncLoadsInFlight;
+		return true;
+	}
+
+	void AssetManager::FinishAsyncLoad() noexcept
+	{
+		bool becameIdle = false;
+		{
+			std::lock_guard lock(m_AsyncLoadMutex);
+			if (m_AsyncLoadsInFlight == 0)
+				return;
+			becameIdle = --m_AsyncLoadsInFlight == 0;
+		}
+		if (becameIdle)
+			m_AsyncLoadsIdle.notify_all();
+	}
+
+	void AssetManager::EnableAsyncLoads()
+	{
+		std::lock_guard lock(m_AsyncLoadMutex);
+		m_AcceptingAsyncLoads = true;
+	}
+
+	bool AssetManager::StopAndWaitForAsyncLoads()
+	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+			return false;
+		std::unique_lock lock(m_AsyncLoadMutex);
+		m_AcceptingAsyncLoads = false;
+		m_AsyncLoadsIdle.wait(lock,
+			[this]() { return m_AsyncLoadsInFlight == 0; });
+		return true;
 	}
 
 	bool AssetManager::Refresh()
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted())
 			return false;
-		const bool complete = m_Registry.Refresh();
+		m_ImportCoordinator.CancelPendingImports();
+		const bool complete = m_Database.RefreshRegistry();
 		// Refresh may apply a safe partial scan while reporting damaged sidecars.
 		// Any such metadata change must invalidate both successful and missing loads.
 		ReleaseAll();
@@ -377,6 +1791,7 @@ namespace TomCat {
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted())
 			return AssetHandle(0);
+		m_ImportCoordinator.CancelPendingImports();
 		const AssetHandle handle = m_Registry.ImportAsset(path);
 		// ImportAsset may perform a full registry refresh (for example when a
 		// duplicate UUID appears or is resolved). A handle can therefore acquire a
@@ -392,10 +1807,567 @@ namespace TomCat {
 		if (!m_RegistryInitialized || IsCookedPackageMounted() ||
 			static_cast<uint64_t>(handle) == 0)
 			return false;
+		m_ImportCoordinator.CancelPendingImports();
 		if (!m_Registry.SetImportSettings(handle, settings))
 			return false;
 		Release(handle);
+		(void)m_ImportCoordinator.RequestReimport(handle);
 		return true;
+	}
+
+	size_t AssetManager::PumpImportCoordinator(
+		const AssetImportCoordinator::Callback& callback)
+	{
+		return m_ImportCoordinator.PumpMainThread(
+			[this, &callback](const AssetImportEvent& event)
+			{
+				if (static_cast<uint64_t>(event.Handle) != 0)
+					Release(event.Handle);
+				if (callback)
+					callback(event);
+			});
+	}
+
+	AssetLoadResult AssetManager::LoadImportedArtifact(AssetHandle handle,
+		AssetLoadOptions options)
+	{
+		if (IsCookedPackageMounted())
+		{
+			AssetLoadResult result;
+			AssetType type = AssetType::None;
+			if (!ReadAssetBytes(handle, result.Artifact.Bytes, &type))
+			{
+				result.Status = AssetLoadStatus::NotFound;
+				result.Error = "asset handle is not present in the cooked package";
+				return result;
+			}
+			result.Status = AssetLoadStatus::Success;
+			result.Artifact.Handle = handle;
+			result.Artifact.Type = type;
+			result.Artifact.Format = "cooked/tcpak";
+			return result;
+		}
+		if (!m_RegistryInitialized)
+		{
+			AssetLoadResult result;
+			result.Status = AssetLoadStatus::NotInitialized;
+			result.Error = "asset registry is not initialized";
+			return result;
+		}
+		return m_Database.LoadArtifact(handle, std::move(options));
+	}
+
+	std::future<AssetLoadResult> AssetManager::LoadImportedArtifactAsync(
+		AssetHandle handle, AssetLoadOptions options)
+	{
+		if (!BeginAsyncLoad())
+		{
+			AssetLoadResult result;
+			result.Status = AssetLoadStatus::NotInitialized;
+			result.Error = "asset manager is not accepting asynchronous loads";
+			std::promise<AssetLoadResult> promise;
+			std::future<AssetLoadResult> future = promise.get_future();
+			promise.set_value(std::move(result));
+			return future;
+		}
+
+		if (!IsCookedPackageMounted())
+		{
+			try
+			{
+				if (m_RegistryInitialized)
+				{
+					std::future<AssetLoadResult> future =
+						m_Database.LoadArtifactAsync(handle, std::move(options));
+					// The database owns the task after successful submission and its
+					// shutdown gate protects the registry for the rest of the load.
+					FinishAsyncLoad();
+					return future;
+				}
+				std::promise<AssetLoadResult> promise;
+				std::future<AssetLoadResult> future = promise.get_future();
+				promise.set_value(LoadImportedArtifact(handle, std::move(options)));
+				FinishAsyncLoad();
+				return future;
+			}
+			catch (...)
+			{
+				FinishAsyncLoad();
+				throw;
+			}
+		}
+		uint64_t reservation = 0;
+		const auto entry = m_CookedEntries.find(handle);
+		if (entry != m_CookedEntries.end())
+			reservation = entry->second.Size;
+		try
+		{
+			return AssetJobSystem::Get().Submit(reservation,
+				[this, handle, options = std::move(options)]() mutable
+				{
+					try
+					{
+						AssetLoadResult result = LoadImportedArtifact(handle,
+							std::move(options));
+						FinishAsyncLoad();
+						return result;
+					}
+					catch (...)
+					{
+						FinishAsyncLoad();
+						throw;
+					}
+				});
+		}
+		catch (...)
+		{
+			FinishAsyncLoad();
+			throw;
+		}
+	}
+
+	DecodedMaterialLoadResult AssetManager::LoadMaterial(AssetHandle handle,
+		AssetLoadOptions options)
+	{
+		return DecodeLoadedArtifact<MaterialArtifact, AssetType::Material>(
+			LoadImportedArtifact(handle, std::move(options)),
+			[](std::vector<uint8_t>&& bytes, MaterialArtifact& artifact,
+				std::string& error)
+			{
+				return DecodeMaterialArtifact(bytes, artifact, error);
+			});
+	}
+
+	std::future<DecodedMaterialLoadResult> AssetManager::LoadMaterialAsync(
+		AssetHandle handle, AssetLoadOptions options)
+	{
+		std::future<AssetLoadResult> untyped = LoadImportedArtifactAsync(handle,
+			std::move(options));
+		return AssetJobSystem::Get().Submit(0,
+			[untyped = std::move(untyped)]() mutable
+			{
+				return DecodeLoadedArtifact<MaterialArtifact, AssetType::Material>(
+					untyped.get(),
+					[](std::vector<uint8_t>&& bytes, MaterialArtifact& artifact,
+						std::string& error)
+					{
+						return DecodeMaterialArtifact(bytes, artifact, error);
+					});
+			});
+	}
+
+	DecodedMeshLoadResult AssetManager::LoadMesh(AssetHandle handle,
+		AssetLoadOptions options)
+	{
+		return DecodeLoadedArtifact<MeshArtifact, AssetType::Mesh>(
+			LoadImportedArtifact(handle, std::move(options)),
+			[](std::vector<uint8_t>&& bytes, MeshArtifact& artifact,
+				std::string& error)
+			{
+				return DecodeMeshArtifact(std::move(bytes), artifact, error);
+			});
+	}
+
+	std::future<DecodedMeshLoadResult> AssetManager::LoadMeshAsync(
+		AssetHandle handle, AssetLoadOptions options)
+	{
+		std::future<AssetLoadResult> untyped = LoadImportedArtifactAsync(handle,
+			std::move(options));
+		return AssetJobSystem::Get().Submit(0,
+			[untyped = std::move(untyped)]() mutable
+			{
+				return DecodeLoadedArtifact<MeshArtifact, AssetType::Mesh>(
+					untyped.get(),
+					[](std::vector<uint8_t>&& bytes, MeshArtifact& artifact,
+						std::string& error)
+					{
+						return DecodeMeshArtifact(std::move(bytes), artifact, error);
+					});
+			});
+	}
+
+	bool AssetManager::RequestCookedTexture(AssetHandle handle, bool prioritize)
+	{
+		if (!IsCookedPackageMounted() || static_cast<uint64_t>(handle) == 0)
+			return false;
+		const auto cooked = m_CookedEntries.find(handle);
+		if (cooked == m_CookedEntries.end()
+			|| cooked->second.Type != AssetType::Texture2D)
+			return false;
+		const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+		if (cooked->second.Size == 0
+			|| cooked->second.Size > limits.MemoryBudgetBytes
+			|| cooked->second.Size > static_cast<uint64_t>(
+				(std::numeric_limits<int>::max)()))
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			m_TextureFailures.emplace(handle,
+				"texture artifact exceeds the streaming memory budget");
+			return false;
+		}
+
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (m_TexturePending.contains(handle)
+				|| m_TextureFailures.contains(handle))
+				return true;
+			if (m_TextureBacklogSet.contains(handle))
+			{
+				if (prioritize && (m_TexturePreloadBacklog.empty()
+					|| m_TexturePreloadBacklog.front() != handle))
+				{
+					const auto existing = std::find(m_TexturePreloadBacklog.begin(),
+						m_TexturePreloadBacklog.end(), handle);
+					if (existing != m_TexturePreloadBacklog.end())
+					{
+						m_TexturePreloadBacklog.erase(existing);
+						m_TexturePreloadBacklog.push_front(handle);
+						TC_Core_Assert(m_TexturePreloadBacklog.front() == handle,
+							"visible texture was not promoted in the preload backlog");
+					}
+				}
+				return true;
+			}
+			if (prioritize)
+				m_TexturePreloadBacklog.push_front(handle);
+			else
+				m_TexturePreloadBacklog.push_back(handle);
+			m_TextureBacklogSet.emplace(handle);
+		}
+		ScheduleTextureBacklog();
+		return true;
+	}
+
+	void AssetManager::ScheduleTextureBacklog()
+	{
+		const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+		const size_t maximumPending = (std::max<size_t>)(2,
+			static_cast<size_t>(limits.WorkerCount) * 2);
+		for (;;)
+		{
+			AssetHandle handle(0);
+			uint64_t generation = 0;
+			CookedEntry entry;
+			std::filesystem::path packagePath;
+			uint32_t packageVersion = 0;
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				if (m_TexturePending.size() >= maximumPending
+					|| m_TexturePreloadBacklog.empty())
+					return;
+				handle = m_TexturePreloadBacklog.front();
+				m_TexturePreloadBacklog.pop_front();
+				m_TextureBacklogSet.erase(handle);
+				const auto found = m_CookedEntries.find(handle);
+				if (found == m_CookedEntries.end()
+					|| found->second.Type != AssetType::Texture2D)
+					continue;
+				entry = found->second;
+				packagePath = m_CookedPackagePath;
+				packageVersion = m_CookedPackageVersion;
+				generation = m_TextureStreamingGeneration;
+				m_TexturePending.emplace(handle);
+				++m_TextureJobsInFlight;
+			}
+
+			bool scheduled = false;
+			try
+			{
+				scheduled = AssetJobSystem::Get().TrySchedule(entry.Size,
+					[this, handle, generation, packagePath = std::move(packagePath),
+						offset = entry.Offset, size = entry.Size,
+						requireArtifact = packageVersion
+						== RuntimeCompatibility::TcpakVersion]() mutable
+					{
+						try
+						{
+							PrepareCookedTexture(handle, generation,
+								std::move(packagePath), offset, size, requireArtifact);
+						}
+						catch (const std::exception& exception)
+						{
+							std::lock_guard lock(m_TextureStreamingMutex);
+							if (generation == m_TextureStreamingGeneration)
+							{
+								m_TexturePending.erase(handle);
+								try { m_TextureFailures[handle] = exception.what(); }
+								catch (...) {}
+							}
+							--m_TextureJobsInFlight;
+							m_TextureStreamingIdle.notify_all();
+						}
+						catch (...)
+						{
+							std::lock_guard lock(m_TextureStreamingMutex);
+							if (generation == m_TextureStreamingGeneration)
+								m_TexturePending.erase(handle);
+							--m_TextureJobsInFlight;
+							m_TextureStreamingIdle.notify_all();
+						}
+					});
+			}
+			catch (const std::exception& exception)
+			{
+				TC_Core_Error("Could not queue texture preload {0}: {1}",
+					static_cast<uint64_t>(handle), exception.what());
+			}
+			if (scheduled)
+				continue;
+
+			// The global executor is at its queue or memory limit. Put this request
+			// back without waiting; a later application-frame pump will retry it.
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				m_TexturePending.erase(handle);
+				if (generation == m_TextureStreamingGeneration
+					&& !m_TextureBacklogSet.contains(handle))
+				{
+					m_TexturePreloadBacklog.push_front(handle);
+					m_TextureBacklogSet.emplace(handle);
+				}
+				--m_TextureJobsInFlight;
+			}
+			m_TextureStreamingIdle.notify_all();
+			return;
+		}
+	}
+
+	void AssetManager::PrepareCookedTexture(AssetHandle handle,
+		uint64_t generation, std::filesystem::path packagePath, uint64_t offset,
+		uint64_t size, bool requireArtifact)
+	{
+		PreparedTexture prepared;
+		prepared.Handle = handle;
+		prepared.Generation = generation;
+		prepared.SourcePath = std::move(packagePath);
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (generation != m_TextureStreamingGeneration)
+			{
+				--m_TextureJobsInFlight;
+				m_TextureStreamingIdle.notify_all();
+				return;
+			}
+		}
+
+		std::ifstream input(prepared.SourcePath, std::ios::binary);
+		if (!input || !ReadStreamRange(input, offset, size, prepared.Bytes))
+			prepared.Error = "texture artifact bytes could not be read";
+		else
+		{
+			ResolvedSpriteAsset sprite;
+			std::span<const uint8_t> atlasBytes;
+			if (ParseCookedSpriteSubAsset(prepared.Bytes, sprite, atlasBytes))
+			{
+				std::vector<uint8_t> payload(atlasBytes.begin(), atlasBytes.end());
+				prepared.Bytes = std::move(payload);
+				prepared.Sprite = sprite;
+				prepared.HasSpriteDescriptor = true;
+			}
+			else
+			{
+				prepared.Sprite.TextureHandle = handle;
+				prepared.HasSpriteDescriptor = true;
+			}
+
+			if (IsTextureArtifact(prepared.Bytes))
+			{
+				TextureArtifactView artifact;
+				if (!ParseTextureArtifact(prepared.Bytes, artifact, prepared.Error))
+					prepared.Bytes.clear();
+				else
+				{
+					// Budget against the worst-case RGBA upload. BC3 may be uploaded
+					// natively, but OpenGL's compatibility fallback decompresses it.
+					for (const TextureArtifactMip& mip : artifact.Mips)
+					{
+						const uint64_t pixels = static_cast<uint64_t>(mip.Width)
+							* static_cast<uint64_t>(mip.Height);
+						if (pixels > ((std::numeric_limits<uint64_t>::max)()
+							- prepared.EstimatedUploadBytes) / 4ULL)
+						{
+							prepared.Error = "texture mip upload size overflows uint64";
+							prepared.Bytes.clear();
+							prepared.EstimatedUploadBytes = 0;
+							break;
+						}
+						prepared.EstimatedUploadBytes += pixels * 4ULL;
+					}
+				}
+			}
+			else if (requireArtifact)
+			{
+				prepared.Error = "current package contains a source image instead of a texture artifact";
+				prepared.Bytes.clear();
+			}
+			else
+				prepared.EstimatedUploadBytes = static_cast<uint64_t>(
+					prepared.Bytes.size());
+		}
+
+		const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+		const uint64_t preparedBudget = (std::max<uint64_t>)(1024ULL * 1024ULL,
+			limits.MemoryBudgetBytes / 2);
+		const size_t preparedCountLimit = (std::max<size_t>)(1,
+			static_cast<size_t>(limits.WorkerCount) * 2);
+		const uint64_t byteCount = static_cast<uint64_t>(prepared.Bytes.size());
+		std::unique_lock lock(m_TextureStreamingMutex);
+		m_TextureStreamingCapacity.wait(lock, [&]()
+		{
+			if (generation != m_TextureStreamingGeneration)
+				return true;
+			if (m_PreparedTextures.empty() && byteCount <= limits.MemoryBudgetBytes)
+				return true;
+			return m_PreparedTextures.size() < preparedCountLimit
+				&& byteCount <= preparedBudget
+				&& m_PreparedTextureBytes <= preparedBudget - byteCount;
+		});
+		if (generation == m_TextureStreamingGeneration)
+		{
+			m_PreparedTextures.emplace_back(std::move(prepared));
+			m_PreparedTextureBytes += byteCount;
+		}
+		--m_TextureJobsInFlight;
+		lock.unlock();
+		m_TextureStreamingIdle.notify_all();
+	}
+
+	size_t AssetManager::BeginCookedTexturePreload()
+	{
+		if (!IsCookedPackageMounted())
+			return 0;
+		std::vector<AssetHandle> handles;
+		handles.reserve(m_CookedEntries.size());
+		for (const auto& [handle, entry] : m_CookedEntries)
+			if (entry.Type == AssetType::Texture2D)
+				handles.push_back(handle);
+		std::sort(handles.begin(), handles.end(), [](AssetHandle left,
+			AssetHandle right)
+		{
+			return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+		});
+		size_t requested = 0;
+		for (const AssetHandle handle : handles)
+		{
+			if (m_TextureCache.contains(handle))
+				continue;
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (m_TexturePending.contains(handle)
+				|| m_TextureBacklogSet.contains(handle)
+				|| m_TextureFailures.contains(handle))
+				continue;
+			m_TexturePreloadBacklog.push_back(handle);
+			m_TextureBacklogSet.emplace(handle);
+			++requested;
+		}
+		ScheduleTextureBacklog();
+		return requested;
+	}
+
+	size_t AssetManager::PumpTexturePublishes(uint32_t maximumUploads,
+		uint64_t maximumUploadBytes)
+	{
+		std::vector<PreparedTexture> ready;
+		uint64_t selectedUploadBytes = 0;
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			while (ready.size() < maximumUploads && !m_PreparedTextures.empty())
+			{
+				const uint64_t nextUploadBytes =
+					m_PreparedTextures.front().EstimatedUploadBytes;
+				if (!ready.empty() && (nextUploadBytes > maximumUploadBytes
+					|| selectedUploadBytes > maximumUploadBytes - nextUploadBytes))
+					break;
+				selectedUploadBytes += nextUploadBytes;
+				m_PreparedTextureBytes -= static_cast<uint64_t>(
+					m_PreparedTextures.front().Bytes.size());
+				ready.emplace_back(std::move(m_PreparedTextures.front()));
+				m_PreparedTextures.pop_front();
+			}
+		}
+		if (!ready.empty())
+			m_TextureStreamingCapacity.notify_all();
+
+		size_t published = 0;
+		for (PreparedTexture& prepared : ready)
+		{
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				if (prepared.Generation != m_TextureStreamingGeneration
+					|| !m_TexturePending.contains(prepared.Handle))
+					continue;
+			}
+
+			Ref<Texture2D> texture;
+			if (prepared.Error.empty() && !prepared.Bytes.empty())
+			{
+				try
+				{
+					texture = Texture2D::Create(prepared.Bytes.data(),
+						prepared.Bytes.size(), prepared.SourcePath);
+				}
+				catch (const std::exception& exception)
+				{
+					prepared.Error = exception.what();
+				}
+				catch (...)
+				{
+					prepared.Error = "unknown error while publishing texture to the GPU";
+				}
+			}
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (prepared.Generation != m_TextureStreamingGeneration
+				|| !m_TexturePending.contains(prepared.Handle))
+				continue;
+			m_TexturePending.erase(prepared.Handle);
+			if (texture && texture->IsLoaded())
+			{
+				m_TextureCache[prepared.Handle] = std::move(texture);
+				if (prepared.HasSpriteDescriptor)
+					m_SpriteDescriptorCache[prepared.Handle] = prepared.Sprite;
+				m_TextureFailures.erase(prepared.Handle);
+				++published;
+			}
+			else
+			{
+				std::string error = prepared.Error.empty()
+					? "texture artifact could not be published to the GPU"
+					: std::move(prepared.Error);
+				m_TextureFailures[prepared.Handle] = error;
+				TC_Core_Warn("Using the missing texture for asset {0}: {1}",
+					static_cast<uint64_t>(prepared.Handle), error);
+			}
+		}
+
+		ScheduleTextureBacklog();
+		return published;
+	}
+
+	TextureStreamingStats AssetManager::GetTextureStreamingStats() const
+	{
+		std::lock_guard lock(m_TextureStreamingMutex);
+		return { m_TexturePreloadBacklog.size(), m_TexturePending.size(),
+			m_PreparedTextures.size(), m_PreparedTextureBytes,
+			m_TextureJobsInFlight };
+	}
+
+	void AssetManager::CancelTextureStreaming(bool waitForJobs)
+	{
+		std::unique_lock lock(m_TextureStreamingMutex);
+		++m_TextureStreamingGeneration;
+		m_TexturePreloadBacklog.clear();
+		m_TextureBacklogSet.clear();
+		m_TexturePending.clear();
+		m_PreparedTextures.clear();
+		m_PreparedTextureBytes = 0;
+		m_TextureFailures.clear();
+		lock.unlock();
+		m_TextureStreamingCapacity.notify_all();
+		if (!waitForJobs)
+			return;
+		lock.lock();
+		m_TextureStreamingIdle.wait(lock,
+			[this]() { return m_TextureJobsInFlight == 0; });
 	}
 
 	Ref<Texture2D> AssetManager::GetMissingTexture()
@@ -436,6 +2408,7 @@ namespace TomCat {
 			return GetMissingTexture();
 
 		AssetType registeredType = AssetType::None;
+		AssetHandle sourceHandle = handle;
 		if (IsCookedPackageMounted())
 		{
 			const auto cooked = m_CookedEntries.find(handle);
@@ -447,13 +2420,17 @@ namespace TomCat {
 		{
 			if (!m_RegistryInitialized)
 				return CacheMissingTexture(handle, "asset registry is not initialized");
+			const AssetSubAsset* child = nullptr;
 			const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
+			if (!metadata)
+				metadata = m_Registry.GetSubAssetOwner(handle, &child);
 			if (!metadata || metadata->IsMissing)
 				return CacheMissingTexture(handle, "handle is not present in the asset registry");
 			const AssetMetadata* current = m_Registry.GetMetadata(metadata->FilePath);
-			if (!current || current->Handle != handle || current->IsMissing)
+			if (!current || current->Handle != metadata->Handle || current->IsMissing)
 				return CacheMissingTexture(handle, "handle no longer owns its registered path");
-			registeredType = metadata->Type;
+			registeredType = child ? child->Type : metadata->Type;
+			sourceHandle = metadata->Handle;
 		}
 		if (registeredType != AssetType::Texture2D)
 			return CacheMissingTexture(handle, "asset type is not Texture2D");
@@ -470,29 +2447,39 @@ namespace TomCat {
 		}
 		if (IsCookedPackageMounted())
 		{
-			const auto cooked = m_CookedEntries.find(handle);
-			if (cooked == m_CookedEntries.end() || cooked->second.Size >
-				static_cast<uint64_t>((std::numeric_limits<int>::max)()))
-				return CacheMissingTexture(handle, "encoded texture exceeds the decoder size limit");
-		}
-		else
-		{
-			std::error_code error;
-			const std::filesystem::path source = m_Registry.GetFileSystemPath(handle);
-			const uintmax_t size = source.empty() ? 0 : std::filesystem::file_size(source, error);
-			if (error || source.empty() || size >
-				static_cast<uintmax_t>((std::numeric_limits<int>::max)()))
-				return CacheMissingTexture(handle, "encoded texture exceeds the decoder size limit");
+			// Package I/O and artifact validation are never performed from a draw
+			// call. Repeated callers observe the same pending request and keep using
+			// the shared placeholder until the frame-start publisher swaps the real
+			// texture into m_TextureCache.
+			bool waitingOrFailed = false;
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				waitingOrFailed = m_TextureFailures.contains(handle)
+					|| m_TexturePending.contains(handle)
+					|| m_TextureBacklogSet.contains(handle);
+			}
+			if (waitingOrFailed)
+				return GetMissingTexture();
+			(void)RequestCookedTexture(handle, true);
+			return GetMissingTexture();
 		}
 
-		AssetType type = AssetType::None;
-		std::vector<uint8_t> bytes;
-		if (!ReadAssetBytes(handle, bytes, &type))
-			return CacheMissingTexture(handle, "asset bytes could not be read");
+		std::error_code error;
+		const std::filesystem::path source = m_Registry.GetFileSystemPath(sourceHandle);
+		const uintmax_t size = source.empty() ? 0 : std::filesystem::file_size(source, error);
+		if (error || source.empty() || size >
+			static_cast<uintmax_t>((std::numeric_limits<int>::max)()))
+			return CacheMissingTexture(handle, "encoded texture exceeds the decoder size limit");
+
+		AssetLoadResult imported = LoadImportedArtifact(sourceHandle);
+		if (!imported.Succeeded())
+			return CacheMissingTexture(handle, imported.Error.c_str());
+		const AssetType type = imported.Artifact.Type;
+		std::vector<uint8_t> bytes = std::move(imported.Artifact.Bytes);
 		if (type != registeredType)
 			return CacheMissingTexture(handle, "asset type changed while it was being loaded");
 
-		const std::filesystem::path sourcePath = ResolvePath(handle);
+		const std::filesystem::path sourcePath = ResolvePath(sourceHandle);
 		Ref<Texture2D> texture = Texture2D::Create(bytes.data(), bytes.size(), sourcePath);
 		if (!texture || !texture->IsLoaded())
 			return CacheMissingTexture(handle, "encoded image could not be decoded");
@@ -501,21 +2488,176 @@ namespace TomCat {
 		return texture;
 	}
 
+	Ref<Shader> AssetManager::LoadShader(AssetHandle handle)
+	{
+		if (static_cast<uint64_t>(handle) == 0)
+			return nullptr;
+		if (const auto cached = m_ShaderCache.find(handle);
+			cached != m_ShaderCache.end())
+			return cached->second;
+
+		ShaderLoadResult loaded = LoadTypedArtifact<AssetType::Shader>(handle);
+		if (!loaded.Succeeded())
+		{
+			TC_Core_Error("Could not load Shader asset {0}: {1}",
+				static_cast<uint64_t>(handle), loaded.Error);
+			return nullptr;
+		}
+
+		const bool cooked = IsCookedPackageMounted();
+		const std::filesystem::path sourcePath = cooked
+			? std::filesystem::path{} : ResolvePath(handle);
+		const std::string name = sourcePath.empty()
+			? "Shader-" + std::to_string(static_cast<uint64_t>(handle))
+			: PathToUTF8(sourcePath.stem());
+		std::string error;
+		Ref<Shader> shader = Shader::CreateFromArtifact(name,
+			loaded.Artifact.Bytes, &error);
+		if (!shader && !cooked && !IsShaderArtifact(loaded.Artifact.Bytes)
+			&& !sourcePath.empty())
+		{
+			// Old authoring caches could contain passthrough GLSL. Keep the source
+			// path operational while the current importer rebuilds that cache; cooked
+			// packages never have a source path and therefore cannot take this branch.
+			try
+			{
+				TC_Core_Warn("Shader asset {0} uses the legacy GLSL fallback",
+					static_cast<uint64_t>(handle));
+				shader = Shader::Create(sourcePath);
+			}
+			catch (const std::exception& exception)
+			{
+				error = exception.what();
+			}
+		}
+		if (!shader)
+		{
+			TC_Core_Error("Could not publish Shader asset {0}: {1}",
+				static_cast<uint64_t>(handle), error.empty()
+					? "artifact is invalid for the active renderer" : error);
+			return nullptr;
+		}
+		m_ShaderCache.emplace(handle, shader);
+		return shader;
+	}
+
+	bool AssetManager::PreloadCookedShaders(std::string& error)
+	{
+		error.clear();
+		if (!IsCookedPackageMounted())
+		{
+			error = "no cooked package is mounted";
+			return false;
+		}
+		std::vector<AssetHandle> handles;
+		for (const auto& [handle, entry] : m_CookedEntries)
+			if (entry.Type == AssetType::Shader)
+				handles.push_back(handle);
+		std::sort(handles.begin(), handles.end(), [](AssetHandle left,
+			AssetHandle right)
+		{
+			return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+		});
+		for (const AssetHandle handle : handles)
+		{
+			if (!LoadShader(handle))
+			{
+				error = "could not publish packaged Shader "
+					+ std::to_string(static_cast<uint64_t>(handle));
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool AssetManager::ResolveSpriteAsset(AssetHandle handle,
+		ResolvedSpriteAsset& sprite) const
+	{
+		sprite = {};
+		if (static_cast<uint64_t>(handle) == 0)
+			return false;
+		if (IsCookedPackageMounted())
+		{
+			const auto cached = m_SpriteDescriptorCache.find(handle);
+			if (cached != m_SpriteDescriptorCache.end())
+			{
+				sprite = cached->second;
+				return true;
+			}
+			const auto cooked = m_CookedEntries.find(handle);
+			if (cooked == m_CookedEntries.end()
+				|| cooked->second.Type != AssetType::Texture2D)
+				return false;
+			// The descriptor shares the same package bytes as the texture. Queue one
+			// background request instead of defeating async loading with a second
+			// synchronous read from Renderer2D.
+			(void)const_cast<AssetManager*>(this)->RequestCookedTexture(handle, true);
+			return false;
+		}
+		if (!m_RegistryInitialized)
+			return false;
+		if (const AssetMetadata* direct = m_Registry.GetMetadata(handle))
+		{
+			if (direct->Type != AssetType::Texture2D || direct->IsMissing)
+				return false;
+			sprite.TextureHandle = handle;
+			return true;
+		}
+		const AssetSubAsset* child = nullptr;
+		const AssetMetadata* owner = m_Registry.GetSubAssetOwner(handle, &child);
+		if (!owner || !child || owner->IsMissing
+			|| child->Type != AssetType::Texture2D
+			|| child->Sprite.Width == 0 || child->Sprite.Height == 0)
+			return false;
+		sprite.TextureHandle = owner->Handle;
+		sprite.Data = child->Sprite;
+		sprite.IsSubAsset = true;
+		return true;
+	}
+
 	void AssetManager::Release(AssetHandle handle)
 	{
+		CancelTextureStreaming(false);
+		if (m_RegistryInitialized)
+		{
+			if (const AssetMetadata* metadata = m_Registry.GetMetadata(handle))
+			{
+				for (const AssetSubAsset& child : metadata->SubAssets)
+				{
+					m_TextureCache.erase(child.Handle);
+					m_SpriteDescriptorCache.erase(child.Handle);
+				}
+			}
+		}
 		m_TextureCache.erase(handle);
+		m_ShaderCache.erase(handle);
+		m_SpriteDescriptorCache.erase(handle);
+		FontManager::Get().Release(handle);
+		AudioEngine::Get().ReleaseClip(handle);
 	}
 
 	void AssetManager::ReleaseAll()
 	{
+		CancelTextureStreaming(true);
 		m_TextureCache.clear();
+		m_ShaderCache.clear();
+		m_SpriteDescriptorCache.clear();
 		m_MissingTexture.reset();
+		FontManager::Get().ReleaseAll();
+		AudioEngine::Get().ReleaseAllClips();
 	}
 
 	void AssetManager::ReleaseHandles(const std::vector<AssetHandle>& handles)
 	{
+		CancelTextureStreaming(false);
 		for (const AssetHandle handle : handles)
+		{
 			m_TextureCache.erase(handle);
+			m_ShaderCache.erase(handle);
+			m_SpriteDescriptorCache.erase(handle);
+			FontManager::Get().Release(handle);
+			AudioEngine::Get().ReleaseClip(handle);
+		}
 	}
 
 	bool AssetManager::MoveAsset(const std::filesystem::path& source,
@@ -599,14 +2741,28 @@ namespace TomCat {
 		std::vector<AssetReference> liveReferences;
 		for (AssetHandle handle : handles)
 		{
-			if (const Ref<Project> project = m_AuthoringProject.lock(); project &&
-				project->GetConfig().StartSceneHandle == handle)
+			if (const Ref<Project> project = m_AuthoringProject.lock(); project)
 			{
-				AssetReference reference;
-				reference.ReferencedAsset = handle;
-				reference.FilePath = project->GetProjectPath();
-				reference.PropertyPath = "Project.StartSceneHandle";
-				liveReferences.emplace_back(std::move(reference));
+				const BuildSettings& build = project->GetBuildSettings();
+				if (build.EntrySceneHandle == handle)
+				{
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.FilePath = project->GetBuildSettingsPath();
+					reference.PropertyPath = "BuildSettings.EntrySceneHandle";
+					liveReferences.emplace_back(std::move(reference));
+				}
+				for (std::size_t index = 0; index < build.Scenes.size(); ++index)
+				{
+					if (build.Scenes[index].Handle != handle)
+						continue;
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.FilePath = project->GetBuildSettingsPath();
+					reference.PropertyPath = "BuildSettings.Scenes[" +
+						std::to_string(index) + "].Handle";
+					liveReferences.emplace_back(std::move(reference));
+				}
 			}
 			if (!m_LiveReferenceProvider)
 				continue;
@@ -657,14 +2813,28 @@ namespace TomCat {
 			static_cast<uint64_t>(handle) == 0)
 			return {};
 		std::vector<AssetReference> references = m_Registry.FindReferences(handle);
-		if (const Ref<Project> project = m_AuthoringProject.lock(); project &&
-			project->GetConfig().StartSceneHandle == handle)
+		if (const Ref<Project> project = m_AuthoringProject.lock(); project)
 		{
-			AssetReference reference;
-			reference.ReferencedAsset = handle;
-			reference.FilePath = project->GetProjectPath();
-			reference.PropertyPath = "Project.StartSceneHandle";
-			references.emplace_back(std::move(reference));
+			const BuildSettings& build = project->GetBuildSettings();
+			if (build.EntrySceneHandle == handle)
+			{
+				AssetReference reference;
+				reference.ReferencedAsset = handle;
+				reference.FilePath = project->GetBuildSettingsPath();
+				reference.PropertyPath = "BuildSettings.EntrySceneHandle";
+				references.emplace_back(std::move(reference));
+			}
+			for (std::size_t index = 0; index < build.Scenes.size(); ++index)
+			{
+				if (build.Scenes[index].Handle != handle)
+					continue;
+				AssetReference reference;
+				reference.ReferencedAsset = handle;
+				reference.FilePath = project->GetBuildSettingsPath();
+				reference.PropertyPath = "BuildSettings.Scenes[" +
+					std::to_string(index) + "].Handle";
+				references.emplace_back(std::move(reference));
+			}
 		}
 		if (m_LiveReferenceProvider)
 		{
@@ -686,6 +2856,24 @@ namespace TomCat {
 		const AssetMetadata* current = m_Registry.GetMetadata(metadata->FilePath);
 		return current && current->Handle == handle
 			? m_Registry.GetFileSystemPath(handle) : std::filesystem::path{};
+	}
+
+	bool AssetManager::TryGetCookedAssetRange(AssetHandle handle,
+		CookedAssetRange& range) const
+	{
+		range = {};
+		if (!IsCookedPackageMounted() || static_cast<uint64_t>(handle) == 0)
+			return false;
+		const auto found = m_CookedEntries.find(handle);
+		if (found == m_CookedEntries.end())
+			return false;
+		range.PackagePath = m_CookedPackagePath;
+		range.Offset = found->second.Offset;
+		range.Size = found->second.Size;
+		range.Type = found->second.Type;
+		return !range.PackagePath.empty() && range.Type != AssetType::None &&
+			range.Offset <= m_CookedPackageSize &&
+			range.Size <= m_CookedPackageSize - range.Offset;
 	}
 
 	bool AssetManager::ReadAssetBytes(AssetHandle handle, std::vector<uint8_t>& bytes,
@@ -770,6 +2958,67 @@ namespace TomCat {
 		return bytes;
 	}
 
+	bool AssetManager::SetManagedCookPayload(std::vector<uint8_t> assembly,
+		std::string scriptManifestJson, std::string buildID,
+		std::vector<uint8_t> pdb)
+	{
+		ManagedPackagePayload payload;
+		payload.NativeApiVersion = Scripting::NativeApiVersion;
+		payload.ManagedApiVersion = Scripting::ManagedApiVersion;
+		payload.ScriptManifestVersion = Scripting::ScriptManifestVersion;
+		payload.TargetFramework = kManagedTargetFramework;
+		payload.RuntimeIdentifier = kManagedRuntimeIdentifier;
+		payload.BuildID = std::move(buildID);
+		payload.ScriptManifestJson = std::move(scriptManifestJson);
+		payload.Assembly = std::move(assembly);
+		payload.Pdb = std::move(pdb);
+		payload.AssemblySHA256 = ComputeSHA256(payload.Assembly);
+		std::string errorMessage;
+		std::unordered_set<uint64_t> suppliedHandles;
+		if (!ValidateScriptManifest(payload.ScriptManifestJson, suppliedHandles,
+			errorMessage))
+		{
+			TC_Core_Error("Invalid explicit managed Cook metadata: {0}", errorMessage);
+			return false;
+		}
+		std::string embeddedManifest;
+		std::unordered_set<uint64_t> embeddedHandles;
+		if (!ExtractEmbeddedScriptManifest(payload.Assembly, embeddedManifest,
+			errorMessage)
+			|| !ValidateScriptManifest(embeddedManifest, embeddedHandles, errorMessage))
+		{
+			TC_Core_Error("Invalid explicit managed Cook assembly manifest: {0}",
+				errorMessage);
+			return false;
+		}
+		std::vector<ScriptRuntimeSignature> suppliedSignature;
+		std::vector<ScriptRuntimeSignature> embeddedSignature;
+		if (!BuildScriptManifestRuntimeSignature(payload.ScriptManifestJson,
+			suppliedSignature, errorMessage)
+			|| !BuildScriptManifestRuntimeSignature(embeddedManifest,
+				embeddedSignature, errorMessage))
+		{
+			TC_Core_Error("Invalid explicit managed Cook payload: {0}", errorMessage);
+			return false;
+		}
+		if (suppliedSignature != embeddedSignature)
+		{
+			TC_Core_Error("Invalid explicit managed Cook payload: Editor metadata and Assembly-CSharp.dll disagree on script/field runtime identity");
+			return false;
+		}
+		// Editor metadata may enrich generator output with constructor-derived
+		// defaults and explicit null optional values. The assembly-embedded manifest
+		// is the runtime contract and therefore the canonical package payload.
+		payload.ScriptManifestJson = std::move(embeddedManifest);
+		if (!ValidateManagedPackagePayload(payload, nullptr, errorMessage))
+		{
+			TC_Core_Error("Invalid explicit managed Cook payload: {0}", errorMessage);
+			return false;
+		}
+		m_ManagedCookPayloadOverride = std::move(payload);
+		return true;
+	}
+
 	bool AssetManager::CookToPackage(const std::filesystem::path& packagePath)
 	{
 		if (m_UsesProjectConfiguration)
@@ -780,16 +3029,8 @@ namespace TomCat {
 				TC_Core_Error("Cannot cook because the active Project is no longer available");
 				return false;
 			}
-			const AssetHandle startScene = project->GetConfig().StartSceneHandle;
-			const AssetMetadata* metadata = m_Registry.GetMetadata(startScene);
-			if (static_cast<uint64_t>(startScene) == 0 || !metadata ||
-				!IsCurrentAsset(m_Registry, *metadata, AssetType::Scene))
-			{
-				TC_Core_Error("Project StartSceneHandle must identify a live Scene asset: {0}",
-					static_cast<uint64_t>(startScene));
-				return false;
-			}
-			return CookToPackage(packagePath, startScene);
+			return CookToPackage(packagePath,
+				project->GetBuildSettings().EntrySceneHandle);
 		}
 		return CookToPackage(packagePath, AssetHandle(0));
 	}
@@ -799,11 +3040,6 @@ namespace TomCat {
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted() || packagePath.empty())
 			return false;
-		if (m_UsesProjectConfiguration && static_cast<uint64_t>(startSceneHandle) == 0)
-		{
-			TC_Core_Error("A project cook requires a nonzero StartSceneHandle");
-			return false;
-		}
 		if (IsWithinOrEqual(m_Registry.GetAssetDirectory(), packagePath))
 		{
 			TC_Core_Error("Cooked package must be written outside Assets: {0}", PathToUTF8(packagePath));
@@ -812,6 +3048,8 @@ namespace TomCat {
 		if (!Refresh())
 			return false;
 		Physics2DSettings packagePhysicsSettings;
+		PlayerSettings packagePlayerSettings;
+		std::vector<AssetHandle> packageBuildScenes;
 		if (m_UsesProjectConfiguration)
 		{
 			const Ref<Project> project = m_AuthoringProject.lock();
@@ -820,8 +3058,65 @@ namespace TomCat {
 				TC_Core_Error("Cannot cook because the active Project is no longer available");
 				return false;
 			}
+			const BuildSettings& build = project->GetBuildSettings();
+			if (static_cast<uint64_t>(build.EntrySceneHandle) == 0)
+			{
+				TC_Core_Error("A project cook requires a nonzero BuildSettings.EntrySceneHandle");
+				return false;
+			}
+			if (startSceneHandle != build.EntrySceneHandle)
+			{
+				TC_Core_Error("Explicit cook entry scene {0} does not match BuildSettings.EntrySceneHandle {1}",
+					static_cast<uint64_t>(startSceneHandle),
+					static_cast<uint64_t>(build.EntrySceneHandle));
+				return false;
+			}
+
+			packageBuildScenes.reserve(build.Scenes.size());
+			for (std::size_t index = 0; index < build.Scenes.size(); ++index)
+			{
+				const BuildSceneSettings& scene = build.Scenes[index];
+				if (!scene.Enabled)
+					continue;
+				const AssetMetadata* metadata = m_Registry.GetMetadata(scene.Handle);
+				if (static_cast<uint64_t>(scene.Handle) == 0 || !metadata
+					|| !IsCurrentAsset(m_Registry, *metadata, AssetType::Scene))
+				{
+					TC_Core_Error("BuildSettings.Scenes[{0}] must identify a live Scene asset: {1}",
+						index, static_cast<uint64_t>(scene.Handle));
+					return false;
+				}
+				packageBuildScenes.push_back(scene.Handle);
+			}
+			if (std::find(packageBuildScenes.begin(), packageBuildScenes.end(),
+				startSceneHandle) == packageBuildScenes.end())
+			{
+				TC_Core_Error("BuildSettings.EntrySceneHandle must identify an enabled build scene");
+				return false;
+			}
 			packagePhysicsSettings = project->GetSettings().Physics2D;
+			packagePlayerSettings = project->GetPlayerSettings();
+			std::string playerSettingsError;
+			if (!NormalizeAndValidatePlayerSettings(packagePlayerSettings,
+				playerSettingsError))
+			{
+				TC_Core_Error("Cannot cook invalid PlayerSettings: {0}",
+					playerSettingsError);
+				return false;
+			}
+			if (static_cast<uint64_t>(packagePlayerSettings.Icon) != 0)
+			{
+				const AssetMetadata* icon = m_Registry.GetMetadata(packagePlayerSettings.Icon);
+				if (!icon || !IsCurrentAsset(m_Registry, *icon, AssetType::Texture2D))
+				{
+					TC_Core_Error("PlayerSettings.Icon must identify a live Texture2D asset: {0}",
+						static_cast<uint64_t>(packagePlayerSettings.Icon));
+					return false;
+				}
+			}
 		}
+		else if (static_cast<uint64_t>(startSceneHandle) != 0)
+			packageBuildScenes.push_back(startSceneHandle);
 		if (!IsSymmetricCollisionMatrix(packagePhysicsSettings))
 		{
 			TC_Core_Error("Cannot cook an asymmetric Physics2D collision matrix");
@@ -840,8 +3135,10 @@ namespace TomCat {
 
 		struct SourceEntry
 		{
-			AssetHandle Handle = AssetHandle(0);
-			AssetType Type = AssetType::None;
+			uint64_t RawHandle = 0;
+			uint16_t RawType = 0;
+			uint16_t Flags = 0;
+			uint32_t Reserved = 0;
 			std::filesystem::path Path;
 			std::vector<uint8_t> CookedBytes;
 			bool HasCookedBytes = false;
@@ -850,32 +3147,133 @@ namespace TomCat {
 		};
 
 		std::vector<SourceEntry> entries;
-		entries.reserve(m_Registry.GetAssets().size());
-		for (const auto& [handle, metadata] : m_Registry.GetAssets())
+		entries.reserve(m_Registry.GetAssets().size() + 1);
+		bool hasCSharpScripts = false;
+		std::unordered_set<uint64_t> referencedScriptHandles;
+		std::deque<AssetHandle> pendingAssets;
+		std::unordered_set<uint64_t> queuedAssets;
+		auto enqueueAsset = [&](AssetHandle handle)
 		{
-			if (static_cast<uint64_t>(handle) == 0 || metadata.Type == AssetType::None)
+			const uint64_t rawHandle = static_cast<uint64_t>(handle);
+			if (rawHandle != 0 && queuedAssets.emplace(rawHandle).second)
+				pendingAssets.push_back(handle);
+		};
+		for (AssetHandle scene : packageBuildScenes)
+			enqueueAsset(scene);
+		enqueueAsset(packagePlayerSettings.Icon);
+		// Standalone AssetManager users have no build-scene graph. Preserve that
+		// authoring utility mode by treating its current runtime assets as roots;
+		// project cooks always use the strict enabled-scene dependency closure.
+		if (packageBuildScenes.empty() && !m_UsesProjectConfiguration)
+		{
+			for (const auto& [handle, metadata] : m_Registry.GetAssets())
+			{
+				if (metadata.Type != AssetType::None
+					&& metadata.Type != AssetType::CSharpScript && !metadata.IsMissing
+					&& !IsAuthoringOnlyCookPath(metadata.FilePath))
+					enqueueAsset(handle);
+			}
+		}
+
+		while (!pendingAssets.empty())
+		{
+			const AssetHandle handle = pendingAssets.front();
+			pendingAssets.pop_front();
+			const AssetSubAsset* slicedSprite = nullptr;
+			const AssetMetadata* slicedOwner =
+				m_Registry.GetSubAssetOwner(handle, &slicedSprite);
+			if (slicedOwner && slicedSprite)
+			{
+				if (slicedOwner->IsMissing || slicedSprite->Type != AssetType::Texture2D
+					|| slicedSprite->Sprite.Width == 0 || slicedSprite->Sprite.Height == 0)
+				{
+					TC_Core_Error("Cook Sprite sub-asset {0} is invalid",
+						static_cast<uint64_t>(handle));
+					return false;
+				}
+				const AssetHandle ownerHandle = slicedOwner->Handle;
+				AssetLoadOptions importOptions;
+				importOptions.Platform = "windows-x64";
+				importOptions.Backend = "opengl";
+				AssetLoadResult imported = m_Database.LoadArtifact(ownerHandle,
+					std::move(importOptions));
+				if (!imported.Succeeded())
+				{
+					TC_Core_Error("Cannot import Sprite atlas {0} while cooking: {1}",
+						static_cast<uint64_t>(ownerHandle), imported.Error);
+					return false;
+				}
+				const AssetSubAsset* currentSlice = nullptr;
+				const AssetMetadata* currentOwner =
+					m_Registry.GetSubAssetOwner(handle, &currentSlice);
+				if (!currentOwner || !currentSlice || currentOwner->Handle != ownerHandle)
+				{
+					TC_Core_Error("Sprite sub-asset {0} disappeared during import",
+						static_cast<uint64_t>(handle));
+					return false;
+				}
+				SourceEntry entry;
+				entry.RawHandle = static_cast<uint64_t>(handle);
+				entry.RawType = static_cast<uint16_t>(AssetType::Texture2D);
+				entry.CookedBytes = BuildCookedSpriteSubAsset(ownerHandle,
+					currentSlice->Sprite, imported.Artifact.Bytes);
+				if (entry.CookedBytes.empty())
+				{
+					TC_Core_Error("Could not build cooked Sprite sub-asset {0}",
+						static_cast<uint64_t>(handle));
+					return false;
+				}
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
+				entries.push_back(std::move(entry));
 				continue;
-			const AssetMetadata* current = m_Registry.GetMetadata(metadata.FilePath);
-			// Missing cache tombstones and shadowed historical records are not source
-			// assets. References to them are rejected while preparing scenes below.
-			if (metadata.IsMissing || !current || current->Handle != handle || current->IsMissing)
-				continue;
+			}
+			const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
+			if (!metadata || metadata->Type == AssetType::None || metadata->IsMissing)
+			{
+				TC_Core_Error("Cook dependency {0} is missing",
+					static_cast<uint64_t>(handle));
+				return false;
+			}
+			if (static_cast<uint64_t>(handle) == kManagedPayloadHandle)
+			{
+				TC_Core_Error("AssetHandle UINT64_MAX is reserved by tcpak v5");
+				return false;
+			}
+			if (metadata->Type == AssetType::CSharpScript
+				|| IsAuthoringOnlyCookPath(metadata->FilePath))
+			{
+				TC_Core_Error("Cook dependency {0} is authoring-only",
+					static_cast<uint64_t>(handle));
+				return false;
+			}
+			const AssetMetadata* current = m_Registry.GetMetadata(metadata->FilePath);
+			if (!current || current->Handle != handle || current->IsMissing
+				|| current->Type != metadata->Type)
+			{
+				TC_Core_Error("Cook dependency {0} is stale or shadowed",
+					static_cast<uint64_t>(handle));
+				return false;
+			}
 			const std::filesystem::path source = m_Registry.GetFileSystemPath(handle);
 			std::error_code error;
 			if (source.empty() || !std::filesystem::is_regular_file(source, error) || error)
 			{
 				TC_Core_Error("Cannot cook missing asset {0} ('{1}')",
-					static_cast<uint64_t>(handle), PathToUTF8(metadata.FilePath));
+					static_cast<uint64_t>(handle), PathToUTF8(metadata->FilePath));
 				return false;
 			}
 			SourceEntry entry;
-			entry.Handle = handle;
-			entry.Type = metadata.Type;
+			entry.RawHandle = static_cast<uint64_t>(handle);
+			entry.RawType = static_cast<uint16_t>(metadata->Type);
 			entry.Path = source;
-			if (metadata.Type == AssetType::Scene)
+			std::unordered_set<uint64_t> discoveredDependencies;
+			if (metadata->Type == AssetType::Scene)
 			{
 				std::string sceneError;
-				if (!PrepareSceneBytesForCook(m_Registry, source, entry.CookedBytes, sceneError))
+				if (!PrepareSceneBytesForCook(m_Registry, source, entry.CookedBytes,
+					hasCSharpScripts, referencedScriptHandles,
+					discoveredDependencies, sceneError))
 				{
 					TC_Core_Error("Cannot cook scene: {0}", sceneError);
 					return false;
@@ -883,27 +3281,138 @@ namespace TomCat {
 				entry.HasCookedBytes = true;
 				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 			}
-			else
+			else if (metadata->Type == AssetType::Prefab)
 			{
-				const uintmax_t fileSize = std::filesystem::file_size(source, error);
-				if (error || fileSize > (std::numeric_limits<uint64_t>::max)())
+				std::string prefabError;
+				if (!PreparePrefabBytesForCook(m_Registry, source, entry.CookedBytes,
+					hasCSharpScripts, referencedScriptHandles,
+					discoveredDependencies, prefabError))
 				{
-					TC_Core_Error("Cannot inspect asset while cooking: {0}", PathToUTF8(source));
+					TC_Core_Error("Cannot cook Prefab: {0}", prefabError);
 					return false;
 				}
-				entry.Size = static_cast<uint64_t>(fileSize);
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
+			}
+			else
+			{
+				AssetLoadOptions importOptions;
+				importOptions.Platform = "windows-x64";
+				importOptions.Backend = "opengl";
+				AssetLoadResult imported = m_Database.LoadArtifact(handle,
+					std::move(importOptions));
+				if (!imported.Succeeded())
+				{
+					TC_Core_Error("Cannot import asset {0} while cooking: {1}",
+						static_cast<uint64_t>(handle), imported.Error);
+					return false;
+				}
+				entry.CookedBytes = std::move(imported.Artifact.Bytes);
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 			}
 			entries.push_back(std::move(entry));
+			for (uint64_t dependency : discoveredDependencies)
+				enqueueAsset(AssetHandle(dependency));
+		}
+
+		std::optional<ManagedPackagePayload> managedPayload;
+		if (m_ManagedCookPayloadOverride)
+			managedPayload = *m_ManagedCookPayloadOverride;
+		else if (hasCSharpScripts)
+		{
+			const Ref<Project> project = m_AuthoringProject.lock();
+			std::string payloadError;
+			ManagedPackagePayload discovered;
+			if (!project || !LoadProjectManagedPayload(*project, discovered, payloadError))
+			{
+				TC_Core_Error("Cannot cook CSharpScripts without a current managed payload: {0}",
+					payloadError.empty() ? "no authoring Project is available" : payloadError);
+				return false;
+			}
+			managedPayload = std::move(discovered);
+		}
+
+		if (managedPayload)
+		{
+			std::string payloadError;
+			if (!ValidateManagedPackagePayload(*managedPayload,
+				&referencedScriptHandles, payloadError))
+			{
+				TC_Core_Error("Cannot cook invalid managed payload: {0}", payloadError);
+				return false;
+			}
+			SourceEntry managedEntry;
+			managedEntry.RawHandle = kManagedPayloadHandle;
+			managedEntry.RawType = static_cast<uint16_t>(AssetType::None);
+			managedEntry.Flags = kManagedPayloadEntryFlag;
+			managedEntry.Reserved = kManagedPayloadEntryTag;
+			std::string envelopeError;
+			if (!BuildManagedEnvelope(*managedPayload, managedEntry.CookedBytes,
+				envelopeError))
+			{
+				TC_Core_Error("Cannot build managed tcpak payload: {0}", envelopeError);
+				return false;
+			}
+			managedEntry.HasCookedBytes = true;
+			managedEntry.Size = static_cast<uint64_t>(managedEntry.CookedBytes.size());
+			entries.push_back(std::move(managedEntry));
+		}
+		else if (hasCSharpScripts)
+		{
+			TC_Core_Error("Cannot cook CSharpScripts without Assembly-CSharp.dll");
+			return false;
 		}
 
 		std::sort(entries.begin(), entries.end(), [](const SourceEntry& left, const SourceEntry& right) {
-			return static_cast<uint64_t>(left.Handle) < static_cast<uint64_t>(right.Handle);
+			return left.RawHandle < right.RawHandle;
 		});
+
+		const std::array<std::string, 6> bootManifestStrings = {
+			packagePlayerSettings.ProductName,
+			packagePlayerSettings.CompanyName,
+			packagePlayerSettings.Version,
+			PathToUTF8(packagePlayerSettings.SaveDirectory),
+			PathToUTF8(packagePlayerSettings.LogDirectory),
+			PathToUTF8(packagePlayerSettings.CrashDirectory)
+		};
+		uint64_t bootManifestBytes = 0;
+		for (const std::string& value : bootManifestStrings)
+		{
+			if (value.size() > RuntimeCompatibility::MaximumBootManifestStringBytes
+				|| !CheckedAdd(bootManifestBytes, static_cast<uint64_t>(value.size()),
+					bootManifestBytes))
+			{
+				TC_Core_Error("PlayerSettings BootManifest string data is too large");
+				return false;
+			}
+		}
+		if (bootManifestBytes > RuntimeCompatibility::MaximumBootManifestBytes)
+		{
+			TC_Core_Error("PlayerSettings BootManifest exceeds its size limit");
+			return false;
+		}
+
+		uint64_t buildSceneBytes = 0;
+		uint64_t packageHeaderSize64 = 0;
+		if (!CheckedMultiply(static_cast<uint64_t>(packageBuildScenes.size()),
+			static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
+			|| !CheckedAdd(RuntimeCompatibility::TcpakV6BaseHeaderSize,
+				bootManifestBytes, packageHeaderSize64)
+			|| !CheckedAdd(packageHeaderSize64, buildSceneBytes,
+				packageHeaderSize64)
+			|| packageHeaderSize64 > (std::numeric_limits<uint32_t>::max)())
+		{
+			TC_Core_Error("Cooked build-scene manifest is too large");
+			return false;
+		}
+		const uint32_t packageHeaderSize = static_cast<uint32_t>(packageHeaderSize64);
 
 		uint64_t indexSize = 0;
 		uint64_t dataOffset = 0;
-		if (!CheckedMultiply(static_cast<uint64_t>(entries.size()), kPackageEntrySize, indexSize) ||
-			!CheckedAdd(kPackageHeaderSize, indexSize, dataOffset))
+		if (!CheckedMultiply(static_cast<uint64_t>(entries.size()),
+			RuntimeCompatibility::TcpakEntrySize, indexSize) ||
+			!CheckedAdd(packageHeaderSize64, indexSize, dataOffset))
 		{
 			TC_Core_Error("Cooked package index is too large");
 			return false;
@@ -942,22 +3451,51 @@ namespace TomCat {
 			return false;
 		}
 
-		output.write(kPackageMagic.data(), static_cast<std::streamsize>(kPackageMagic.size()));
+		output.write(RuntimeCompatibility::TcpakMagic.data(),
+			static_cast<std::streamsize>(RuntimeCompatibility::TcpakMagic.size()));
 		bool succeeded = output.good() &&
-			WriteLittleEndian<uint32_t>(output, kPackageVersion) &&
-			WriteLittleEndian<uint32_t>(output, kPackageHeaderSize) &&
+			WriteLittleEndian<uint32_t>(output, RuntimeCompatibility::TcpakVersion) &&
+			WriteLittleEndian<uint32_t>(output, packageHeaderSize) &&
 			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(entries.size())) &&
-			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(startSceneHandle));
+			WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(startSceneHandle)) &&
+			WriteLittleEndian<uint64_t>(output,
+				static_cast<uint64_t>(packageBuildScenes.size()));
 		for (uint16_t mask : packagePhysicsSettings.CollisionMasks)
 			succeeded = succeeded && WriteLittleEndian<uint16_t>(output, mask);
+		const uint32_t playerFlags = (packagePlayerSettings.Resizable ? 1U : 0U)
+			| (packagePlayerSettings.VSync ? 2U : 0U);
+		succeeded = succeeded
+			&& WriteLittleEndian<uint32_t>(output,
+				RuntimeCompatibility::BootManifestSchemaVersion)
+			&& WriteLittleEndian<uint32_t>(output,
+				static_cast<uint32_t>(packagePlayerSettings.WindowMode))
+			&& WriteLittleEndian<uint32_t>(output, packagePlayerSettings.Width)
+			&& WriteLittleEndian<uint32_t>(output, packagePlayerSettings.Height)
+			&& WriteLittleEndian<uint64_t>(output,
+				static_cast<uint64_t>(packagePlayerSettings.Icon))
+			&& WriteLittleEndian<uint32_t>(output, playerFlags);
+		for (const std::string& value : bootManifestStrings)
+			succeeded = succeeded && WriteLittleEndian<uint32_t>(output,
+				static_cast<uint32_t>(value.size()));
+		for (const std::string& value : bootManifestStrings)
+		{
+			if (!succeeded)
+				break;
+			if (!value.empty())
+				output.write(value.data(), static_cast<std::streamsize>(value.size()));
+			succeeded = output.good();
+		}
+		for (AssetHandle scene : packageBuildScenes)
+			succeeded = succeeded && WriteLittleEndian<uint64_t>(output,
+				static_cast<uint64_t>(scene));
 		for (const SourceEntry& entry : entries)
 		{
 			if (!succeeded)
 				break;
-			succeeded = WriteLittleEndian<uint64_t>(output, static_cast<uint64_t>(entry.Handle)) &&
-				WriteLittleEndian<uint16_t>(output, static_cast<uint16_t>(entry.Type)) &&
-				WriteLittleEndian<uint16_t>(output, 0) &&
-				WriteLittleEndian<uint32_t>(output, 0) &&
+			succeeded = WriteLittleEndian<uint64_t>(output, entry.RawHandle) &&
+				WriteLittleEndian<uint16_t>(output, entry.RawType) &&
+				WriteLittleEndian<uint16_t>(output, entry.Flags) &&
+				WriteLittleEndian<uint32_t>(output, entry.Reserved) &&
 				WriteLittleEndian<uint64_t>(output, entry.Offset) &&
 				WriteLittleEndian<uint64_t>(output, entry.Size);
 		}
@@ -999,29 +3537,38 @@ namespace TomCat {
 
 	bool AssetManager::MountCookedPackage(const std::filesystem::path& packagePath)
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("Cooked packages cannot be mounted from an asset worker thread");
+			return false;
+		}
 		if (packagePath.empty())
 			return false;
 		std::ifstream input(packagePath, std::ios::binary | std::ios::ate);
 		if (!input)
 			return false;
 		const std::streamoff packageEnd = input.tellg();
-		if (packageEnd < static_cast<std::streamoff>(kPackageHeaderSize))
+		if (packageEnd < static_cast<std::streamoff>(
+			RuntimeCompatibility::TcpakV5BaseHeaderSize))
 			return false;
 		const uint64_t packageSize = static_cast<uint64_t>(packageEnd);
 		input.seekg(0, std::ios::beg);
 
-		std::array<char, kPackageMagic.size()> magic{};
+		std::array<char, RuntimeCompatibility::TcpakMagic.size()> magic{};
 		uint32_t version = 0;
 		uint32_t headerSize = 0;
 		uint64_t entryCount = 0;
-		uint64_t rawStartSceneHandle = 0;
+		uint64_t rawEntrySceneHandle = 0;
+		uint64_t buildSceneCount = 0;
 		if (!input.read(magic.data(), static_cast<std::streamsize>(magic.size())) ||
-			magic != kPackageMagic ||
+			magic != RuntimeCompatibility::TcpakMagic ||
 			!ReadLittleEndian<uint32_t>(input, version) ||
-			version != kPackageVersion ||
+			(version != RuntimeCompatibility::OldestSupportedTcpakVersion
+				&& version != RuntimeCompatibility::TcpakVersion) ||
 			!ReadLittleEndian<uint32_t>(input, headerSize) ||
 			!ReadLittleEndian<uint64_t>(input, entryCount) ||
-			!ReadLittleEndian<uint64_t>(input, rawStartSceneHandle))
+			!ReadLittleEndian<uint64_t>(input, rawEntrySceneHandle) ||
+			!ReadLittleEndian<uint64_t>(input, buildSceneCount))
 			return false;
 		Physics2DSettings mountedPhysicsSettings;
 		for (uint16_t& mask : mountedPhysicsSettings.CollisionMasks)
@@ -1029,14 +3576,119 @@ namespace TomCat {
 			if (!ReadLittleEndian<uint16_t>(input, mask))
 				return false;
 		}
-		if (headerSize != kPackageHeaderSize || headerSize > packageSize)
+		PlayerSettings mountedPlayerSettings;
+		uint64_t bootManifestBytes = 0;
+		if (version == RuntimeCompatibility::TcpakVersion)
+		{
+			uint32_t manifestSchema = 0;
+			uint32_t rawWindowMode = 0;
+			uint64_t rawIcon = 0;
+			uint32_t playerFlags = 0;
+			std::array<uint32_t, 6> stringLengths{};
+			if (!ReadLittleEndian<uint32_t>(input, manifestSchema)
+				|| manifestSchema != RuntimeCompatibility::BootManifestSchemaVersion
+				|| !ReadLittleEndian<uint32_t>(input, rawWindowMode)
+				|| !ReadLittleEndian<uint32_t>(input, mountedPlayerSettings.Width)
+				|| !ReadLittleEndian<uint32_t>(input, mountedPlayerSettings.Height)
+				|| !ReadLittleEndian<uint64_t>(input, rawIcon)
+				|| !ReadLittleEndian<uint32_t>(input, playerFlags))
+				return false;
+			for (uint32_t& length : stringLengths)
+			{
+				if (!ReadLittleEndian<uint32_t>(input, length)
+					|| length > RuntimeCompatibility::MaximumBootManifestStringBytes
+					|| !CheckedAdd(bootManifestBytes, length, bootManifestBytes))
+					return false;
+			}
+			if (bootManifestBytes > RuntimeCompatibility::MaximumBootManifestBytes
+				|| rawWindowMode > static_cast<uint32_t>(
+					PlayerWindowMode::ExclusiveFullscreen)
+				|| (playerFlags & ~3U) != 0)
+				return false;
+
+			std::array<std::string*, 6> strings = {
+				&mountedPlayerSettings.ProductName,
+				&mountedPlayerSettings.CompanyName,
+				&mountedPlayerSettings.Version,
+				nullptr, nullptr, nullptr
+			};
+			std::array<std::string, 3> directoryStrings;
+			strings[3] = &directoryStrings[0];
+			strings[4] = &directoryStrings[1];
+			strings[5] = &directoryStrings[2];
+			try
+			{
+				for (size_t index = 0; index < strings.size(); ++index)
+				{
+					strings[index]->resize(stringLengths[index]);
+					if (stringLengths[index] != 0
+						&& !input.read(strings[index]->data(),
+							static_cast<std::streamsize>(stringLengths[index])))
+						return false;
+				}
+			}
+			catch (const std::exception&)
+			{
+				return false;
+			}
+			mountedPlayerSettings.Icon = AssetHandle(rawIcon);
+			mountedPlayerSettings.WindowMode =
+				static_cast<PlayerWindowMode>(rawWindowMode);
+			mountedPlayerSettings.Resizable = (playerFlags & 1U) != 0;
+			mountedPlayerSettings.VSync = (playerFlags & 2U) != 0;
+			mountedPlayerSettings.SaveDirectory = UTF8ToPath(directoryStrings[0]);
+			mountedPlayerSettings.LogDirectory = UTF8ToPath(directoryStrings[1]);
+			mountedPlayerSettings.CrashDirectory = UTF8ToPath(directoryStrings[2]);
+			std::string playerSettingsError;
+			if (!NormalizeAndValidatePlayerSettings(mountedPlayerSettings,
+				playerSettingsError))
+				return false;
+		}
+		uint64_t buildSceneBytes = 0;
+		uint64_t expectedHeaderSize = 0;
+		const uint64_t baseHeaderSize = version == RuntimeCompatibility::TcpakVersion
+			? RuntimeCompatibility::TcpakV6BaseHeaderSize
+			: RuntimeCompatibility::TcpakV5BaseHeaderSize;
+		if (buildSceneCount > RuntimeCompatibility::MaximumBuildSceneCount
+			|| !CheckedMultiply(buildSceneCount,
+				static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
+			|| !CheckedAdd(baseHeaderSize, bootManifestBytes, expectedHeaderSize)
+			|| !CheckedAdd(expectedHeaderSize, buildSceneBytes, expectedHeaderSize)
+			|| expectedHeaderSize != headerSize || headerSize > packageSize
+			|| buildSceneCount > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
 			return false;
 		if (!IsSymmetricCollisionMatrix(mountedPhysicsSettings))
 			return false;
 
+		std::vector<AssetHandle> buildSceneHandles;
+		std::unordered_set<uint64_t> uniqueBuildSceneHandles;
+		try
+		{
+			buildSceneHandles.reserve(static_cast<size_t>(buildSceneCount));
+			uniqueBuildSceneHandles.reserve(static_cast<size_t>(buildSceneCount));
+		}
+		catch (const std::exception&)
+		{
+			return false;
+		}
+		for (uint64_t index = 0; index < buildSceneCount; ++index)
+		{
+			uint64_t rawHandle = 0;
+			if (!ReadLittleEndian<uint64_t>(input, rawHandle) || rawHandle == 0
+				|| rawHandle == kManagedPayloadHandle
+				|| !uniqueBuildSceneHandles.emplace(rawHandle).second)
+				return false;
+			buildSceneHandles.emplace_back(rawHandle);
+		}
+		const bool hasEntryScene = rawEntrySceneHandle != 0;
+		if (hasEntryScene != !buildSceneHandles.empty()
+			|| (hasEntryScene && uniqueBuildSceneHandles.find(rawEntrySceneHandle)
+				== uniqueBuildSceneHandles.end()))
+			return false;
+
 		uint64_t indexSize = 0;
 		uint64_t dataStart = 0;
-		if (!CheckedMultiply(entryCount, kPackageEntrySize, indexSize) ||
+		if (!CheckedMultiply(entryCount, RuntimeCompatibility::TcpakEntrySize, indexSize) ||
 			!CheckedAdd(headerSize, indexSize, dataStart) || dataStart > packageSize ||
 			entryCount > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
 			return false;
@@ -1046,6 +3698,7 @@ namespace TomCat {
 			return false;
 
 		std::unordered_map<AssetHandle, CookedEntry> entries;
+		std::optional<CookedEntry> managedEnvelopeEntry;
 		std::vector<std::pair<uint64_t, uint64_t>> occupiedRanges;
 		try
 		{
@@ -1073,15 +3726,31 @@ namespace TomCat {
 				!ReadLittleEndian<uint64_t>(input, size))
 				return false;
 
-			if (rawHandle == 0 || rawType == static_cast<uint16_t>(AssetType::None) ||
-				rawType > static_cast<uint16_t>(AssetType::Other) || flags != 0 || reserved != 0 ||
-				offset < dataStart || offset > packageSize || size > packageSize - offset)
+			if (offset < dataStart || offset > packageSize
+				|| size > packageSize - offset)
 				return false;
 
-			const AssetHandle handle(rawHandle);
-			if (!entries.emplace(handle,
-				CookedEntry{ static_cast<AssetType>(rawType), offset, size }).second)
-				return false;
+			if (rawHandle == kManagedPayloadHandle)
+			{
+				if (managedEnvelopeEntry
+					|| rawType != static_cast<uint16_t>(AssetType::None)
+					|| flags != kManagedPayloadEntryFlag
+					|| reserved != kManagedPayloadEntryTag || size == 0)
+					return false;
+				managedEnvelopeEntry = CookedEntry{ AssetType::None, offset, size };
+			}
+			else
+			{
+				if (rawHandle == 0
+					|| rawType == static_cast<uint16_t>(AssetType::None)
+					|| rawType > static_cast<uint16_t>(AssetType::Prefab)
+					|| flags != 0 || reserved != 0)
+					return false;
+				const AssetHandle handle(rawHandle);
+				if (!entries.emplace(handle,
+					CookedEntry{ static_cast<AssetType>(rawType), offset, size }).second)
+					return false;
+			}
 			if (size != 0)
 				occupiedRanges.emplace_back(offset, offset + size);
 		}
@@ -1092,13 +3761,124 @@ namespace TomCat {
 			if (occupiedRanges[index].first < occupiedRanges[index - 1].second)
 				return false;
 		}
-		if (rawStartSceneHandle != 0)
+		for (AssetHandle buildSceneHandle : buildSceneHandles)
 		{
-			const auto startScene = entries.find(AssetHandle(rawStartSceneHandle));
-			if (startScene == entries.end() || startScene->second.Type != AssetType::Scene)
+			const auto scene = entries.find(buildSceneHandle);
+			if (scene == entries.end() || scene->second.Type != AssetType::Scene)
+				return false;
+		}
+		if (static_cast<uint64_t>(mountedPlayerSettings.Icon) != 0)
+		{
+			const auto icon = entries.find(mountedPlayerSettings.Icon);
+			if (icon == entries.end() || icon->second.Type != AssetType::Texture2D)
 				return false;
 		}
 
+		std::optional<ManagedPackagePayload> mountedManagedPayload;
+		std::string validationError;
+		if (managedEnvelopeEntry)
+		{
+			std::vector<uint8_t> envelope;
+			if (!ReadStreamRange(input, managedEnvelopeEntry->Offset,
+				managedEnvelopeEntry->Size, envelope))
+				return false;
+			ManagedPackagePayload parsed;
+			if (!ParseManagedEnvelope(envelope, parsed, validationError))
+			{
+				TC_Core_Error("Rejected managed tcpak payload: {0}", validationError);
+				return false;
+			}
+			mountedManagedPayload = std::move(parsed);
+		}
+
+		bool hasCSharpScripts = false;
+		std::unordered_set<uint64_t> referencedScriptHandles;
+		for (const auto& [handle, entry] : entries)
+		{
+			(void)handle;
+			if (entry.Type != AssetType::Scene && entry.Type != AssetType::Prefab)
+				continue;
+			std::vector<uint8_t> archiveBytes;
+			if (!ReadStreamRange(input, entry.Offset, entry.Size, archiveBytes))
+				return false;
+			const bool formatValid = entry.Type == AssetType::Scene
+				? SceneSerializer::ValidateCurrentFormat(archiveBytes, packagePath)
+				: PrefabArchiveCodec::ValidateCurrentFormat(archiveBytes, packagePath);
+			if (!formatValid)
+				return false;
+			try
+			{
+				const std::string serialized(archiveBytes.begin(), archiveBytes.end());
+				const YAML::Node root = YAML::Load(serialized);
+				const uint32_t expectedSchema = entry.Type == AssetType::Scene
+					? SceneSerializer::CurrentSchemaVersion
+					: PrefabArchiveCodec::CurrentSchemaVersion;
+				if (root["SchemaVersion"].as<uint32_t>() != expectedSchema)
+					return false;
+				const auto validateReference =
+					[&](const SerializedAssetReference& reference)
+					{
+						const uint64_t rawHandle = static_cast<uint64_t>(reference.Handle);
+						if (reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+						{
+							hasCSharpScripts = true;
+							if (rawHandle == 0 || rawHandle == kManagedPayloadHandle)
+							{
+								validationError = "Cooked archive property "
+									+ reference.PropertyPath
+									+ " contains an invalid ScriptHandle";
+								return false;
+							}
+							referencedScriptHandles.emplace(rawHandle);
+							return true;
+						}
+						if (rawHandle == 0)
+							return true;
+						const auto referenced = entries.find(reference.Handle);
+						if (referenced == entries.end()
+							|| (reference.ExpectedType != AssetType::None
+								&& referenced->second.Type != reference.ExpectedType))
+						{
+							validationError = "Cooked archive property "
+								+ reference.PropertyPath
+								+ " references a missing or incorrectly typed package asset "
+								+ std::to_string(rawHandle);
+							return false;
+						}
+						return true;
+					};
+				const bool referencesValid = entry.Type == AssetType::Scene
+					? AssetReferenceVisitor::VisitScene(root, validateReference,
+						validationError)
+					: AssetReferenceVisitor::VisitPrefab(root, validateReference,
+						validationError);
+				if (!referencesValid)
+				{
+					TC_Core_Error("Rejected cooked archive asset references: {0}",
+						validationError);
+					return false;
+				}
+			}
+			catch (const std::exception&)
+			{
+				return false;
+			}
+		}
+		if (hasCSharpScripts && !mountedManagedPayload)
+		{
+			TC_Core_Error("Rejected tcpak v5: an archive has CSharpScripts but no managed payload");
+			return false;
+		}
+		if (mountedManagedPayload
+			&& !ValidateManagedPackagePayload(*mountedManagedPayload,
+				&referencedScriptHandles, validationError))
+		{
+			TC_Core_Error("Rejected managed tcpak references: {0}", validationError);
+			return false;
+		}
+
+		if (!StopAndWaitForAsyncLoads())
+			return false;
 		ReleaseAll();
 		{
 			std::lock_guard<std::mutex> lock(m_CookedPackageMutex);
@@ -1108,14 +3888,26 @@ namespace TomCat {
 		m_CookedEntries = std::move(entries);
 		m_CookedPackagePath = AbsoluteLexical(packagePath);
 		m_CookedPackageSize = packageSize;
-		m_CookedStartSceneHandle = AssetHandle(rawStartSceneHandle);
+		m_CookedPackageVersion = version;
+		m_CookedEntrySceneHandle = AssetHandle(rawEntrySceneHandle);
+		m_CookedBuildSceneHandles = std::move(buildSceneHandles);
 		m_CookedPhysics2DSettings = mountedPhysicsSettings;
+		m_CookedPlayerSettings = std::move(mountedPlayerSettings);
+		m_CookedManagedPayload = std::move(mountedManagedPayload);
+		EnableAsyncLoads();
 		return true;
 	}
 
 	void AssetManager::UnmountCookedPackage()
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("Cooked packages cannot be unmounted from an asset worker thread");
+			return;
+		}
 		if (!IsCookedPackageMounted())
+			return;
+		if (!StopAndWaitForAsyncLoads())
 			return;
 		ReleaseAll();
 		{
@@ -1126,8 +3918,14 @@ namespace TomCat {
 		m_CookedEntries.clear();
 		m_CookedPackagePath.clear();
 		m_CookedPackageSize = 0;
-		m_CookedStartSceneHandle = AssetHandle(0);
+		m_CookedPackageVersion = 0;
+		m_CookedEntrySceneHandle = AssetHandle(0);
+		m_CookedBuildSceneHandles.clear();
 		m_CookedPhysics2DSettings = Physics2DSettings{};
+		m_CookedPlayerSettings = PlayerSettings{};
+		m_CookedManagedPayload.reset();
+		if (m_RegistryInitialized)
+			EnableAsyncLoads();
 	}
 
 }

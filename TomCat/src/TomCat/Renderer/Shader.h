@@ -1,8 +1,10 @@
 #pragma once
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <unordered_map>
+#include <cstdint>
 #include <glm/glm.hpp>
 
 namespace TomCat {
@@ -27,6 +29,11 @@ namespace TomCat {
 
 		static Ref<Shader> Create(const std::filesystem::path& filepath);
 		static Ref<Shader> Create(const std::string& name,const std::string& vertexSrc, const std::string& fragmentSrc);
+		// Creates a GPU program directly from an offline shader artifact. The
+		// artifact target must match the active renderer API; no source compiler or
+		// shader cache is touched by this path.
+		static Ref<Shader> CreateFromArtifact(const std::string& name,
+			std::span<const uint8_t> artifact, std::string* error = nullptr);
 	};
 
 	class ShaderLibrary

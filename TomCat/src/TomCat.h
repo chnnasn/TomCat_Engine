@@ -2,6 +2,7 @@
 
 //供程序使用
 #include "TomCat/Core/Application.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Layer.h"
 #include "TomCat/Core/Log.h"
 
@@ -11,17 +12,27 @@
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/MouseCodes.h"
 
+#include "TomCat/Audio/AudioClip.h"
+#include "TomCat/Audio/AudioDevice.h"
+#include "TomCat/Audio/AudioEngine.h"
+
 #include "TomCat/Asset/Asset.h"
+#include "TomCat/Asset/AssetImportCoordinator.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/MaterialArtifact.h"
+#include "TomCat/Asset/MeshArtifact.h"
+#include "TomCat/Asset/ShaderArtifact.h"
 #include "TomCat/Asset/SpriteAsset.h"
 
 #include "TomCat/ImGui/ImGuiLayer.h"
 
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SpriteAnimation.h"
+#include "TomCat/Scene/SceneManager.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Physics2DEvents.h"
-#include "TomCat/Scene/ScriptableEntity.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 
 //渲染器
 #include "TomCat/Renderer/Renderer.h"

@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "components": [
+    {
+      "managedType": "Transform",
+      "stableName": "TomCat.Transform",
+      "typeId": "0x9f00000000000004"
+    },
+    {
+      "managedType": "Camera",
+      "stableName": "TomCat.Camera",
+      "typeId": "0x9f00000000000005",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Primary", "propertyId": "300", "kind": "Bool" },
+        { "name": "FixedAspectRatio", "propertyId": "301", "kind": "Bool" },
+        { "name": "BackgroundColor", "propertyId": "302", "kind": "Color" },
+        { "name": "ProjectionType", "propertyId": "303", "kind": "Int32", "conversion": "Enum", "managedType": "CameraProjectionType" },
+        { "name": "OrthographicSize", "propertyId": "304", "kind": "Float" },
+        { "name": "OrthographicNearClip", "propertyId": "305", "kind": "Float" },
+        { "name": "OrthographicFarClip", "propertyId": "306", "kind": "Float" },
+        { "name": "PerspectiveVerticalFov", "propertyId": "307", "kind": "Float" },
+        { "name": "PerspectiveNearClip", "propertyId": "308", "kind": "Float" },
+        { "name": "PerspectiveFarClip", "propertyId": "309", "kind": "Float" }
+      ]
+    },
+    {
+      "managedType": "SpriteRenderer",
+      "stableName": "TomCat.SpriteRenderer",
+      "typeId": "0x9f00000000000006",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "200", "kind": "Bool" },
+        { "name": "Color", "propertyId": "201", "kind": "Color" },
+        { "name": "Sprite", "propertyId": "202", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<Texture2DAsset>" },
+        { "name": "TilingFactor", "propertyId": "203", "kind": "Float" },
+        { "name": "SortingLayer", "propertyId": "204", "kind": "Int32" },
+        { "name": "OrderInLayer", "propertyId": "205", "kind": "Int32" }
+      ]
+    },
+    {
+      "managedType": "SpriteAnimator",
+      "stableName": "TomCat.SpriteAnimator",
+      "typeId": "0x9f00000000000007",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "700", "kind": "Bool" },
+        { "name": "Speed", "propertyId": "701", "kind": "Float" },
+        { "name": "PlayOnStart", "propertyId": "704", "kind": "Bool" }
+      ]
+    },
+    {
+      "managedType": "AudioSource",
+      "stableName": "TomCat.AudioSource",
+      "typeId": "0x9f0000000000000a",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "900", "kind": "Bool" },
+        { "name": "Clip", "propertyId": "901", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<AudioAsset>" },
+        { "name": "PlayOnStart", "propertyId": "902", "kind": "Bool" },
+        { "name": "Loop", "propertyId": "903", "kind": "Bool" },
+        { "name": "Streaming", "propertyId": "904", "kind": "Bool" },
+        { "name": "Volume", "propertyId": "905", "kind": "Float" },
+        { "name": "Pitch", "propertyId": "906", "kind": "Float" },
+        { "name": "SpatialBlend", "propertyId": "907", "kind": "Float" },
+        { "name": "MinDistance", "propertyId": "908", "kind": "Float" },
+        { "name": "MaxDistance", "propertyId": "909", "kind": "Float" },
+        { "name": "MixerGroup", "propertyId": "910", "kind": "UInt32", "conversion": "Enum", "managedType": "AudioMixerGroup" }
+      ]
+    },
+    {
+      "managedType": "AudioListener",
+      "stableName": "TomCat.AudioListener",
+      "typeId": "0x9f0000000000000b",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "920", "kind": "Bool" },
+        { "name": "Primary", "propertyId": "921", "kind": "Bool" }
+      ]
+    },
+    {
+      "managedType": "Rigidbody2D",
+      "stableName": "TomCat.Rigidbody2D",
+      "typeId": "0x9f0000000000000c",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "100", "kind": "Bool" },
+        { "name": "BodyType", "propertyId": "101", "kind": "Int32", "conversion": "Enum", "managedType": "RigidbodyBodyType" },
+        { "name": "FixedRotation", "propertyId": "102", "kind": "Bool" }
+      ]
+    },
+    {
+      "managedType": "BoxCollider2D",
+      "stableName": "TomCat.BoxCollider2D",
+      "typeId": "0x9f0000000000000d",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "400", "kind": "Bool" },
+        { "name": "IsTrigger", "propertyId": "401", "kind": "Bool" },
+        { "name": "CollisionLayer", "propertyId": "402", "kind": "UInt32" },
+        { "name": "CollisionMask", "propertyId": "403", "kind": "UInt32" },
+        { "name": "Offset", "propertyId": "404", "kind": "Vector2" },
+        { "name": "Size", "propertyId": "405", "kind": "Vector2" },
+        { "name": "Density", "propertyId": "406", "kind": "Float" },
+        { "name": "Friction", "propertyId": "407", "kind": "Float" },
+        { "name": "Restitution", "propertyId": "408", "kind": "Float" },
+        { "name": "RestitutionThreshold", "propertyId": "409", "kind": "Float" }
+      ]
+    },
+    {
+      "managedType": "CircleCollider2D",
+      "stableName": "TomCat.CircleCollider2D",
+      "typeId": "0x9f0000000000000e",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "500", "kind": "Bool" },
+        { "name": "IsTrigger", "propertyId": "501", "kind": "Bool" },
+        { "name": "CollisionLayer", "propertyId": "502", "kind": "UInt32" },
+        { "name": "CollisionMask", "propertyId": "503", "kind": "UInt32" },
+        { "name": "Offset", "propertyId": "504", "kind": "Vector2" },
+        { "name": "Radius", "propertyId": "505", "kind": "Float" },
+        { "name": "Density", "propertyId": "506", "kind": "Float" },
+        { "name": "Friction", "propertyId": "507", "kind": "Float" },
+        { "name": "Restitution", "propertyId": "508", "kind": "Float" }
+      ]
+    },
+    {
+      "managedType": "DistanceJoint2D",
+      "stableName": "TomCat.DistanceJoint2D",
+      "typeId": "0x9f0000000000000f",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "600", "kind": "Bool" },
+        { "name": "Anchor", "propertyId": "602", "kind": "Vector2" },
+        { "name": "ConnectedAnchor", "propertyId": "603", "kind": "Vector2" },
+        { "name": "Distance", "propertyId": "604", "kind": "Float" },
+        { "name": "Frequency", "propertyId": "605", "kind": "Float" },
+        { "name": "Damping", "propertyId": "606", "kind": "Float" },
+        { "name": "CollideConnected", "propertyId": "607", "kind": "Bool" }
+      ]
+    },
+    {
+      "managedType": "HealthComponent",
+      "stableName": "TomCat.HealthComponent",
+      "typeId": "0x8d0df196efd946a1"
+    },
+    {
+      "managedType": "TextRenderer",
+      "stableName": "TomCat.TextRenderer",
+      "typeId": "0x9f01000000000001"
+    },
+    {
+      "managedType": "Canvas",
+      "stableName": "TomCat.Canvas",
+      "typeId": "0x9f01000000000002"
+    },
+    {
+      "managedType": "RectTransform",
+      "stableName": "TomCat.RectTransform",
+      "typeId": "0x9f01000000000003"
+    },
+    {
+      "managedType": "UIImage",
+      "stableName": "TomCat.UIImage",
+      "typeId": "0x9f01000000000004"
+    },
+    {
+      "managedType": "UIText",
+      "stableName": "TomCat.UIText",
+      "typeId": "0x9f01000000000005"
+    },
+    {
+      "managedType": "UIButton",
+      "stableName": "TomCat.UIButton",
+      "typeId": "0x9f01000000000006"
+    },
+    {
+      "managedType": "UIEventSystem",
+      "stableName": "TomCat.UIEventSystem",
+      "typeId": "0x9f01000000000007"
+    },
+    {
+      "managedType": "UILayoutGroup",
+      "stableName": "TomCat.UILayoutGroup",
+      "typeId": "0x9f01000000000008"
+    }
+  ]
+}

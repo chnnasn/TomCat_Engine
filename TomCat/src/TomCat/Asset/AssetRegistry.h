@@ -41,6 +41,12 @@ namespace TomCat {
 
 		[[nodiscard]] bool SetImportSettings(AssetHandle handle,
 			const AssetImportSettings& settings);
+		[[nodiscard]] bool SynchronizeSubAssets(AssetHandle parent,
+			const std::vector<AssetSubAsset>& desired,
+			std::vector<AssetSubAsset>* assigned = nullptr);
+		const AssetSubAsset* GetSubAsset(AssetHandle handle) const;
+		const AssetMetadata* GetSubAssetOwner(AssetHandle handle,
+			const AssetSubAsset** subAsset = nullptr) const;
 
 		static bool IsMetaFile(const std::filesystem::path& path);
 		static std::filesystem::path GetMetadataPath(const std::filesystem::path& sourcePath);
@@ -81,7 +87,8 @@ namespace TomCat {
 			const AssetMetadata& metadata, bool replaceExisting = true,
 			const MetadataTransaction* transaction = nullptr) const;
 		bool ReadMetadata(const std::filesystem::path& metadataPath,
-			AssetMetadata& metadata, MetadataTransaction* transaction = nullptr) const;
+			AssetMetadata& metadata, MetadataTransaction* transaction = nullptr,
+			uint32_t* schemaVersion = nullptr) const;
 		bool RecoverInterruptedTransaction(const std::filesystem::path& metadataPath,
 			const AssetMetadata& metadata, const MetadataTransaction& transaction) const;
 		AssetHandle GenerateUniqueHandle(

@@ -6,10 +6,13 @@
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Entity.h"
 #include "../EditorIcons.h"
+#include "../Scripting/ScriptEditorMetadata.h"
 
 #include <array>
 #include <functional>
+#include <optional>
 #include <unordered_set>
+#include <utility>
 
 namespace TomCat {
 	class Project;
@@ -17,6 +20,15 @@ namespace TomCat {
 	class SceneHierarchyPanel
 	{
 	public:
+		enum class SceneModificationPhase
+		{
+			Begin,
+			Update,
+			Commit,
+			Instant,
+			Cancel
+		};
+
 		enum class ColliderEditMode
 		{
 			None = 0,
@@ -26,7 +38,12 @@ namespace TomCat {
 
 		using SceneLoadCallback = std::function<void(AssetHandle)>;
 		using SpriteCreateCallback = std::function<void(AssetHandle)>;
-		using SceneModifiedCallback = std::function<void()>;
+		using SceneModifiedCallback =
+			std::function<void(SceneModificationPhase)>;
+		using PrefabCreateCallback = std::function<bool(Entity)>;
+		using PrefabInstantiateCallback = std::function<Entity(AssetHandle, Entity)>;
+		using ScriptMetadataProvider =
+			std::function<std::optional<EditorScriptMetadata>(AssetHandle)>;
 
 		SceneHierarchyPanel() = default;
 		SceneHierarchyPanel(const Ref<Scene>& scene);
@@ -68,9 +85,35 @@ namespace TomCat {
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }
+		void SetPrefabCreateCallback(PrefabCreateCallback callback)
+		{
+			m_PrefabCreateCallback = std::move(callback);
+		}
+		void SetPrefabInstantiateCallback(PrefabInstantiateCallback callback)
+		{
+			m_PrefabInstantiateCallback = std::move(callback);
+		}
+		void SetPrefabCreationAllowed(bool allowed) { m_PrefabCreationAllowed = allowed; }
+		void SetScriptMetadataProvider(ScriptMetadataProvider provider)
+		{
+			m_ScriptMetadataProvider = std::move(provider);
+		}
 	private:
+		enum class AnimatorRenameTarget
+		{
+			None = 0,
+			Clip,
+			Parameter,
+			State
+		};
+
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
+		void DrawSpriteAnimatorInspector(SpriteAnimator& animator, Entity entity);
+		void DrawCSharpScripts(Entity entity);
+		bool AttachCSharpScript(Entity entity, AssetHandle handle);
+		bool AcceptCSharpScriptDrop(Entity entity);
+		bool AcceptPrefabDrop(Entity parent);
 		void DrawEntityOperationsMenu();
 		void BeginRename(Entity entity);
 		void CutSelectedEntity();
@@ -81,7 +124,8 @@ namespace TomCat {
 		bool CanPaste() const;
 		bool FlushPendingDeletion();
 		void ClearClipboard();
-		void MarkModified();
+		void MarkModified(bool instant = false);
+		void FinishModificationGesture();
 	private:
 		Ref<Scene> m_Context;
 		Ref<Project> m_Project;
@@ -110,9 +154,20 @@ namespace TomCat {
 		std::array<char, 256> m_SpriteSearch{};
 		bool m_SpritePickerOpen = false;
 		UUID m_SpritePickerEntity = UUID(0);
+		AnimatorRenameTarget m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+		UUID m_AnimatorRenameEntity = UUID(0);
+		size_t m_AnimatorRenameIndex = 0;
+		std::array<char, 128> m_AnimatorRenameBuffer{};
+		std::string m_AnimatorRenameError;
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
+		PrefabCreateCallback m_PrefabCreateCallback;
+		PrefabInstantiateCallback m_PrefabInstantiateCallback;
+		ScriptMetadataProvider m_ScriptMetadataProvider;
+		bool m_PrefabCreationAllowed = true;
+		bool m_ModificationGestureActive = false;
+		bool m_CommitAfterPendingDeletion = false;
 
 	};
 

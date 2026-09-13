@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "ProjectManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
@@ -640,7 +641,7 @@ namespace TomCat {
 			Ref<Project> project;
 			try
 			{
-				project = Project::Load(file);
+				project = InspectProject(file);
 			}
 			catch (const std::exception& exception)
 			{
@@ -776,9 +777,34 @@ namespace TomCat {
 		return project;
 	}
 
+	Ref<Project> ProjectManager::InspectProject(
+		const std::filesystem::path& projectPath) const
+	{
+		return Project::Inspect(projectPath);
+	}
+
+	bool ProjectManager::PreviewProjectMigration(
+		const std::filesystem::path& projectPath,
+		ProjectMigrationPreview& preview, std::string& errorMessage) const
+	{
+		return Project::PreviewMigration(projectPath, preview, errorMessage);
+	}
+
 	Ref<Project> ProjectManager::LoadProject(const std::filesystem::path& projectPath)
 	{
-		auto project = Project::Load(projectPath);
+		return ActivateLoadedProject(Project::Load(projectPath));
+	}
+
+	Ref<Project> ProjectManager::LoadProjectWithMigration(
+		const std::filesystem::path& projectPath,
+		const ProjectMigrationPreview& approvedMigration)
+	{
+		return ActivateLoadedProject(
+			Project::LoadWithMigration(projectPath, approvedMigration));
+	}
+
+	Ref<Project> ProjectManager::ActivateLoadedProject(Ref<Project> project)
+	{
 		if (project)
 		{
 			const std::unordered_set<std::string> previousIgnoredProjectPaths = m_IgnoredProjectPaths;
@@ -795,7 +821,10 @@ namespace TomCat {
 
 	Ref<Project> ProjectManager::AddProject(const std::filesystem::path& projectPath)
 	{
-		auto project = Project::Load(projectPath);
+		// The Hub only needs metadata and must never upgrade a project merely
+		// because the user added it to the list. The Editor owns the preview,
+		// confirmation, write lock and transactional migration flow.
+		auto project = Project::Inspect(projectPath);
 		if (project)
 		{
 			const std::vector<std::filesystem::path> previousKnownProjectPaths = m_KnownProjectPaths;
@@ -921,35 +950,43 @@ namespace TomCat {
 		return false;
 	}
 
+	std::optional<std::filesystem::path> ProjectManager::ResolveEditorExecutable(
+		const std::filesystem::path& editorDirectory, std::string_view editorVersion)
+	{
+		if (editorDirectory.empty() || editorVersion.empty())
+			return std::nullopt;
+		const std::filesystem::path versionDirectory =
+			UTF8ToPath(std::string(editorVersion));
+		if (versionDirectory.is_absolute() || versionDirectory.has_root_name()
+			|| versionDirectory.has_root_directory()
+			|| versionDirectory.filename() != versionDirectory
+			|| versionDirectory == "." || versionDirectory == "..")
+			return std::nullopt;
+		const std::filesystem::path candidate =
+			editorDirectory / versionDirectory / "TomCat.exe";
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(candidate, error) || error)
+			return std::nullopt;
+		return candidate.lexically_normal();
+	}
+
 	void ProjectManager::OpenProjectInEditor(Ref<Project> project)
 	{
 		if (!project)
 			return;
 
-		std::filesystem::path editorPath = ProjectManager::Get().GetEditorDirectory() / project->GetEditorVersion() / "TomCat.exe";
-
-		TC_Core_Info("Looking for editor at: {0}", PathToUTF8(editorPath));
-
-		std::error_code pathError;
-		if (!std::filesystem::is_regular_file(editorPath, pathError) || pathError)
+		const std::filesystem::path requestedPath =
+			m_EditorDirectory / UTF8ToPath(project->GetEditorVersion()) / "TomCat.exe";
+		TC_Core_Info("Looking for editor at: {0}", PathToUTF8(requestedPath));
+		const auto resolvedEditor = ResolveEditorExecutable(
+			m_EditorDirectory, project->GetEditorVersion());
+		if (!resolvedEditor)
 		{
-			std::array<wchar_t, 32768> modulePath{};
-			const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
-			if (length == 0 || length >= modulePath.size())
-			{
-				TC_Core_Error("Could not resolve the Hub executable directory. Error code: {0}", GetLastError());
-				return;
-			}
-			editorPath = std::filesystem::path(std::wstring(modulePath.data(), length)).parent_path() / "TomCat.exe";
-			TC_Core_Info("Fallback to: {0}", PathToUTF8(editorPath));
-		}
-
-		pathError.clear();
-		if (!std::filesystem::is_regular_file(editorPath, pathError) || pathError)
-		{
-			TC_Core_Error("Editor executable was not found: {0}", PathToUTF8(editorPath));
+			TC_Core_Error("The requested Editor version is not installed: {0}",
+				PathToUTF8(requestedPath));
 			return;
 		}
+		const std::filesystem::path& editorPath = *resolvedEditor;
 
 		const std::wstring applicationPath = ExtendedLengthPath(editorPath);
 		const std::wstring projectPath = ExtendedLengthPath(project->GetProjectPath());
@@ -982,7 +1019,8 @@ namespace TomCat {
 
 	std::optional<std::filesystem::path> ProjectManager::GetHubSettingsPath() const
 	{
-		const std::optional<std::filesystem::path> settingsRoot = GetTomCatSettingsRoot();
+		const std::optional<std::filesystem::path> settingsRoot =
+			ApplicationPaths::GetProductDataRoot(ApplicationProduct::Hub);
 		if (!settingsRoot)
 			return std::nullopt;
 		return *settingsRoot / "hub.json";

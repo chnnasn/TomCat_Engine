@@ -1,10 +1,13 @@
 #include "tcpch.h"
 #include "Project.h"
+#include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
+#include "TomCat/Runtime/RuntimeCompatibility.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <fstream>
@@ -142,31 +145,49 @@ namespace TomCat {
 			return StoreAssetRelativePath(resolved, assetRoot);
 		}
 
-		bool EnsureAssetSystemIgnoreRules(const std::filesystem::path& projectDirectory)
+		bool BuildAssetSystemIgnoreRulesUpdate(
+			const std::filesystem::path& projectDirectory, std::string& contents,
+			bool& changed, std::string& errorMessage)
 		{
 			const std::filesystem::path ignorePath = projectDirectory / ".gitignore";
-			std::string contents;
+			contents.clear();
+			changed = false;
+			errorMessage.clear();
 			std::error_code error;
 			const std::filesystem::file_status status =
 				std::filesystem::symlink_status(ignorePath, error);
 			if (error && error != std::errc::no_such_file_or_directory)
+			{
+				errorMessage = "Could not inspect .gitignore: " + error.message();
 				return false;
+			}
 			if (!error && std::filesystem::exists(status))
 			{
 				if (!std::filesystem::is_regular_file(status) || std::filesystem::is_symlink(status))
+				{
+					errorMessage = ".gitignore is not a regular, non-symlink file";
 					return false;
+				}
 				std::ifstream input(ignorePath, std::ios::binary);
 				if (!input)
+				{
+					errorMessage = "Could not open .gitignore";
 					return false;
+				}
 				std::ostringstream buffer;
 				buffer << input.rdbuf();
 				if (input.bad())
+				{
+					errorMessage = "Failed while reading .gitignore";
 					return false;
+				}
 				contents = buffer.str();
 			}
 
-			constexpr std::array<std::string_view, 3> required = {
-				"/Library/", "/Cache/", "/UserSettings/"
+			constexpr std::array<std::string_view, 5> required = {
+				"/Library/", "/Cache/", "/UserSettings/",
+				"/ProjectSettings/MigrationBackups/",
+				"/ProjectSettings/.migration-journal.json"
 			};
 			std::array<bool, required.size()> present{};
 			std::istringstream lines(contents);
@@ -184,7 +205,6 @@ namespace TomCat {
 				}
 			}
 
-			bool changed = false;
 			for (size_t index = 0; index < required.size(); ++index)
 			{
 				if (present[index])
@@ -195,9 +215,25 @@ namespace TomCat {
 				contents.push_back('\n');
 				changed = true;
 			}
+			return true;
+		}
+
+		bool EnsureAssetSystemIgnoreRules(const std::filesystem::path& projectDirectory)
+		{
+			std::string contents;
+			std::string preparationError;
+			bool changed = false;
+			if (!BuildAssetSystemIgnoreRulesUpdate(
+				projectDirectory, contents, changed, preparationError))
+			{
+				TC_Core_Warn("Could not prepare project ignore file '{0}': {1}",
+					PathToUTF8(projectDirectory / ".gitignore"), preparationError);
+				return false;
+			}
 			if (!changed)
 				return true;
 
+			const std::filesystem::path ignorePath = projectDirectory / ".gitignore";
 			std::string writeError;
 			if (!FileSystem::WriteFileAtomically(ignorePath, contents, writeError))
 			{
@@ -232,12 +268,6 @@ namespace TomCat {
 				return false;
 			}
 
-			if (!IsSafeRelativePath(config.StartScene))
-			{
-				errorMessage = "Project.StartScene must be a relative path inside AssetDirectory";
-				return false;
-			}
-			config.StartScene = config.StartScene.lexically_normal();
 			return true;
 		}
 
@@ -261,6 +291,29 @@ namespace TomCat {
 			validExpandedNodes.erase(std::unique(validExpandedNodes.begin(), validExpandedNodes.end()),
 				validExpandedNodes.end());
 			state.ContentBrowserExpandedNodes = std::move(validExpandedNodes);
+		}
+
+		bool NormalizeExternalScriptEditor(std::filesystem::path& editor,
+			std::string& errorMessage)
+		{
+			if (editor.empty())
+				return true;
+			if (!editor.is_absolute() || !editor.has_filename())
+			{
+				errorMessage = "externalScriptEditor must be an absolute executable path";
+				return false;
+			}
+
+			std::string extension = PathToUTF8(editor.extension());
+			std::transform(extension.begin(), extension.end(), extension.begin(),
+				[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+			if (extension != ".exe")
+			{
+				errorMessage = "externalScriptEditor must name a Windows .exe file";
+				return false;
+			}
+			editor = AbsoluteNormalized(editor);
+			return true;
 		}
 
 		std::string EscapeJsonString(std::string_view value)
@@ -524,29 +577,40 @@ namespace TomCat {
 			}
 		}
 
-		YAML::Node RequireCurrentProjectDocument(const YAML::Node& root)
+		YAML::Node RequireSupportedProjectDocument(const YAML::Node& root,
+			uint32_t& schemaVersion)
 		{
 			constexpr std::array<const char*, 2> rootFields = { "SchemaVersion", "Project" };
 			RequireExactMapFields(root, "Project document", rootFields);
 
 			const YAML::Node schemaNode = root["SchemaVersion"];
-			const uint32_t schemaVersion = schemaNode.as<uint32_t>();
-			if (schemaVersion != Project::CurrentSchemaVersion)
+			schemaVersion = schemaNode.as<uint32_t>();
+			if (schemaVersion != Project::OldestSupportedSchemaVersion
+				&& schemaVersion != Project::CurrentSchemaVersion)
 				throw std::runtime_error("Unsupported project SchemaVersion " +
 					std::to_string(schemaVersion) + "; expected " +
+					std::to_string(Project::OldestSupportedSchemaVersion) + " or " +
 					std::to_string(Project::CurrentSchemaVersion));
 
 			const YAML::Node projectNode = root["Project"];
-			constexpr std::array<const char*, 8> projectFields = {
+			constexpr std::array<const char*, 6> currentProjectFields = {
+				"Name", "Version", "Description", "EditorVersion", "Template",
+				"AssetDirectory"
+			};
+			constexpr std::array<const char*, 8> legacyProjectFields = {
 				"Name", "Version", "Description", "EditorVersion", "Template",
 				"AssetDirectory", "StartScene", "StartSceneHandle"
 			};
-			RequireExactMapFields(projectNode, "Project", projectFields);
+			if (schemaVersion == Project::CurrentSchemaVersion)
+				RequireExactMapFields(projectNode, "Project", currentProjectFields);
+			else
+				RequireExactMapFields(projectNode, "Project", legacyProjectFields);
 
 			return projectNode;
 		}
 
-		ProjectConfig ReadCurrentProjectConfig(const YAML::Node& projectNode)
+		ProjectConfig ReadProjectConfig(const YAML::Node& projectNode,
+			uint32_t schemaVersion)
 		{
 			ProjectConfig config;
 			config.Name = projectNode["Name"].as<std::string>();
@@ -555,8 +619,18 @@ namespace TomCat {
 			config.EditorVersion = projectNode["EditorVersion"].as<std::string>();
 			config.Template = projectNode["Template"].as<std::string>();
 			config.AssetDirectory = UTF8ToPath(projectNode["AssetDirectory"].as<std::string>());
-			config.StartScene = UTF8ToPath(projectNode["StartScene"].as<std::string>());
-			config.StartSceneHandle = AssetHandle(projectNode["StartSceneHandle"].as<uint64_t>());
+			config.StartScene.clear();
+			config.StartSceneHandle = AssetHandle(0);
+			if (schemaVersion == Project::OldestSupportedSchemaVersion)
+			{
+				config.StartScene = UTF8ToPath(projectNode["StartScene"].as<std::string>());
+				if (!IsSafeRelativePath(config.StartScene))
+					throw std::runtime_error(
+						"Project.StartScene must be a relative path inside AssetDirectory");
+				config.StartScene = config.StartScene.lexically_normal();
+				config.StartSceneHandle = AssetHandle(
+					projectNode["StartSceneHandle"].as<uint64_t>());
+			}
 
 			std::string validationError;
 			if (!NormalizeAndValidateConfig(config, validationError))
@@ -564,7 +638,220 @@ namespace TomCat {
 			return config;
 		}
 
-		constexpr uint32_t kProjectSettingsSchemaVersion = 1;
+		constexpr uint32_t kBuildSettingsSchemaVersion = 1;
+
+		bool NormalizeAndValidateBuildSettings(BuildSettings& settings,
+			std::string& errorMessage)
+		{
+			if (settings.Scenes.size() > RuntimeCompatibility::MaximumBuildSceneCount)
+			{
+				errorMessage = "BuildSettings.Scenes contains too many entries";
+				return false;
+			}
+
+			std::unordered_set<AssetHandle> sceneHandles;
+			bool entrySceneIsEnabled = false;
+			for (std::size_t index = 0; index < settings.Scenes.size(); ++index)
+			{
+				BuildSceneSettings& scene = settings.Scenes[index];
+				if (static_cast<uint64_t>(scene.Handle) == 0)
+				{
+					errorMessage = "BuildSettings.Scenes[" + std::to_string(index) +
+						"].Handle cannot be 0";
+					return false;
+				}
+				if (!sceneHandles.emplace(scene.Handle).second)
+				{
+					errorMessage = "BuildSettings.Scenes contains duplicate handle " +
+						std::to_string(static_cast<uint64_t>(scene.Handle));
+					return false;
+				}
+				if (!scene.PathHint.empty())
+				{
+					if (!IsSafeRelativePath(scene.PathHint))
+					{
+						errorMessage = "BuildSettings.Scenes[" + std::to_string(index) +
+							"].PathHint must be a relative path inside AssetDirectory";
+						return false;
+					}
+					scene.PathHint = scene.PathHint.lexically_normal();
+				}
+				if (scene.Handle == settings.EntrySceneHandle && scene.Enabled)
+					entrySceneIsEnabled = true;
+			}
+
+			if (static_cast<uint64_t>(settings.EntrySceneHandle) != 0 && !entrySceneIsEnabled)
+			{
+				errorMessage = "BuildSettings.EntrySceneHandle must identify an enabled scene in BuildSettings.Scenes";
+				return false;
+			}
+			return true;
+		}
+
+		enum class BuildSettingsLoadResult
+		{
+			Missing,
+			Loaded,
+			Failed
+		};
+
+		BuildSettingsLoadResult LoadBuildSettingsFile(
+			const std::filesystem::path& path, BuildSettings& settings,
+			std::string& errorMessage)
+		{
+			std::error_code filesystemError;
+			const bool exists = std::filesystem::exists(path, filesystemError);
+			if (filesystemError)
+			{
+				errorMessage = "Could not inspect build settings: " + filesystemError.message();
+				return BuildSettingsLoadResult::Failed;
+			}
+			if (!exists)
+			{
+				settings = BuildSettings{};
+				return BuildSettingsLoadResult::Missing;
+			}
+			if (!std::filesystem::is_regular_file(path, filesystemError) || filesystemError)
+			{
+				errorMessage = "Build settings path is not a regular file";
+				return BuildSettingsLoadResult::Failed;
+			}
+
+			try
+			{
+				std::ifstream input(path, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("Could not open build settings");
+				std::ostringstream contents;
+				contents << input.rdbuf();
+				if (input.bad())
+					throw std::runtime_error("Failed while reading build settings");
+				const std::string document = contents.str();
+				if (!JsonSyntaxValidator(document).Validate())
+					throw std::runtime_error("Build settings file is not valid JSON");
+
+				const YAML::Node root = YAML::Load(document);
+				RequireExactMapFields(root, "Build settings document",
+					std::array<const char*, 3>{ "schemaVersion", "entrySceneHandle", "scenes" });
+				const uint32_t schemaVersion = root["schemaVersion"].as<uint32_t>();
+				if (schemaVersion != kBuildSettingsSchemaVersion)
+					throw std::runtime_error("Unsupported build settings schemaVersion " +
+						std::to_string(schemaVersion) + "; expected " +
+						std::to_string(kBuildSettingsSchemaVersion));
+
+				const YAML::Node scenes = root["scenes"];
+				if (!scenes.IsSequence())
+					throw std::runtime_error("BuildSettings.Scenes must be a sequence");
+				if (scenes.size() > RuntimeCompatibility::MaximumBuildSceneCount)
+					throw std::runtime_error("BuildSettings.Scenes contains too many entries");
+
+				BuildSettings loaded;
+				loaded.EntrySceneHandle = AssetHandle(root["entrySceneHandle"].as<uint64_t>());
+				loaded.Scenes.reserve(scenes.size());
+				for (std::size_t index = 0; index < scenes.size(); ++index)
+				{
+					const YAML::Node scene = scenes[index];
+					RequireExactMapFields(scene,
+						"BuildSettings.Scenes[" + std::to_string(index) + "]",
+						std::array<const char*, 3>{ "handle", "enabled", "pathHint" });
+					BuildSceneSettings entry;
+					entry.Handle = AssetHandle(scene["handle"].as<uint64_t>());
+					entry.Enabled = scene["enabled"].as<bool>();
+					entry.PathHint = UTF8ToPath(scene["pathHint"].as<std::string>());
+					loaded.Scenes.push_back(std::move(entry));
+				}
+				if (!NormalizeAndValidateBuildSettings(loaded, errorMessage))
+					return BuildSettingsLoadResult::Failed;
+				settings = std::move(loaded);
+				return BuildSettingsLoadResult::Loaded;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = exception.what();
+				return BuildSettingsLoadResult::Failed;
+			}
+		}
+
+		constexpr uint32_t kPlayerSettingsSchemaVersion = 1;
+
+		enum class PlayerSettingsLoadResult
+		{
+			Missing,
+			Loaded,
+			Failed
+		};
+
+		PlayerSettingsLoadResult LoadPlayerSettingsFile(
+			const std::filesystem::path& path, PlayerSettings& settings,
+			std::string& errorMessage)
+		{
+			std::error_code filesystemError;
+			const bool exists = std::filesystem::exists(path, filesystemError);
+			if (filesystemError)
+			{
+				errorMessage = "Could not inspect Player settings: " + filesystemError.message();
+				return PlayerSettingsLoadResult::Failed;
+			}
+			if (!exists)
+				return PlayerSettingsLoadResult::Missing;
+			if (!std::filesystem::is_regular_file(path, filesystemError) || filesystemError)
+			{
+				errorMessage = "Player settings path is not a regular file";
+				return PlayerSettingsLoadResult::Failed;
+			}
+
+			try
+			{
+				const std::string document = ReadWholeFile(path);
+				if (document.empty() || !JsonSyntaxValidator(document).Validate())
+					throw std::runtime_error("Player settings file is not valid JSON");
+				const YAML::Node root = YAML::Load(document);
+				RequireExactMapFields(root, "Player settings document",
+					std::array<const char*, 7>{ "schemaVersion", "productName",
+						"companyName", "version", "icon", "display", "directories" });
+				const uint32_t schemaVersion = root["schemaVersion"].as<uint32_t>();
+				if (schemaVersion != kPlayerSettingsSchemaVersion)
+					throw std::runtime_error("Unsupported Player settings schemaVersion "
+						+ std::to_string(schemaVersion) + "; expected "
+						+ std::to_string(kPlayerSettingsSchemaVersion));
+
+				const YAML::Node display = root["display"];
+				RequireExactMapFields(display, "PlayerSettings.Display",
+					std::array<const char*, 5>{ "width", "height", "windowMode",
+						"resizable", "vSync" });
+				const YAML::Node directories = root["directories"];
+				RequireExactMapFields(directories, "PlayerSettings.Directories",
+					std::array<const char*, 3>{ "save", "log", "crash" });
+
+				PlayerSettings loaded;
+				loaded.ProductName = root["productName"].as<std::string>();
+				loaded.CompanyName = root["companyName"].as<std::string>();
+				loaded.Version = root["version"].as<std::string>();
+				loaded.Icon = AssetHandle(root["icon"].as<uint64_t>());
+				loaded.Width = display["width"].as<uint32_t>();
+				loaded.Height = display["height"].as<uint32_t>();
+				if (!PlayerWindowModeFromString(
+					display["windowMode"].as<std::string>(), loaded.WindowMode))
+					throw std::runtime_error("PlayerSettings.Display.WindowMode is invalid");
+				loaded.Resizable = display["resizable"].as<bool>();
+				loaded.VSync = display["vSync"].as<bool>();
+				loaded.SaveDirectory = UTF8ToPath(directories["save"].as<std::string>());
+				loaded.LogDirectory = UTF8ToPath(directories["log"].as<std::string>());
+				loaded.CrashDirectory = UTF8ToPath(directories["crash"].as<std::string>());
+				if (!NormalizeAndValidatePlayerSettings(loaded, errorMessage))
+					return PlayerSettingsLoadResult::Failed;
+				settings = std::move(loaded);
+				return PlayerSettingsLoadResult::Loaded;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = exception.what();
+				return PlayerSettingsLoadResult::Failed;
+			}
+		}
+
+		constexpr uint32_t kLegacyProjectSettingsSchemaVersion = 1;
+		constexpr uint32_t kProjectSettingsSchemaVersion = 2;
 
 		bool ValidateProjectSettings(const ProjectSettings& settings,
 			std::string& errorMessage)
@@ -688,9 +975,11 @@ namespace TomCat {
 				RequireExactMapFields(root, "Project settings document",
 					std::array<const char*, 3>{ schemaField, tagsAndLayersField, physicsField });
 				const uint32_t schemaVersion = root[schemaField].as<uint32_t>();
-				if (schemaVersion != kProjectSettingsSchemaVersion)
+				if (schemaVersion != kLegacyProjectSettingsSchemaVersion
+					&& schemaVersion != kProjectSettingsSchemaVersion)
 					throw std::runtime_error("Unsupported project settings SchemaVersion " +
 						std::to_string(schemaVersion) + "; expected " +
+						std::to_string(kLegacyProjectSettingsSchemaVersion) + " or " +
 						std::to_string(kProjectSettingsSchemaVersion));
 
 				const YAML::Node tagsAndLayers = root[tagsAndLayersField];
@@ -729,6 +1018,1243 @@ namespace TomCat {
 				errorMessage = exception.what();
 				return ProjectSettingsLoadResult::Failed;
 			}
+		}
+
+		constexpr uint32_t kProjectMigrationJournalSchemaVersion = 2;
+		constexpr std::string_view kProjectMigrationJournalName =
+			".migration-journal.json";
+		constexpr std::string_view kProjectMigrationBackupDirectory =
+			"MigrationBackups";
+
+		struct ProjectMigrationJournalEntry
+		{
+			std::filesystem::path RelativeTarget;
+			bool Existed = false;
+			uintmax_t OriginalSize = 0;
+			std::string OriginalSHA256;
+			std::filesystem::path BackupFile;
+		};
+
+		struct ProjectMigrationJournal
+		{
+			std::string TransactionID;
+			std::string State = "prepared";
+			uint32_t SourceSchemaVersion = 0;
+			uint32_t TargetSchemaVersion = 0;
+			bool SettingsDirectoryExisted = false;
+			bool BackupRootExisted = false;
+			std::vector<ProjectMigrationJournalEntry> Entries;
+		};
+
+		struct ProjectMigrationDirectoryGuards
+		{
+			// Root remains pinned through the entire transaction. Active is
+			// progressively extended through ProjectSettings, MigrationBackups,
+			// and the transaction directory as those directories are created.
+			FileSystem::PinnedDirectoryChain Root;
+			FileSystem::PinnedDirectoryChain Active;
+		};
+
+		std::filesystem::path MigrationJournalPath(
+			const std::filesystem::path& projectPath)
+		{
+			return projectPath.parent_path() / "ProjectSettings" /
+				UTF8ToPath(std::string(kProjectMigrationJournalName));
+		}
+
+		std::filesystem::path MigrationBackupRoot(
+			const std::filesystem::path& projectPath)
+		{
+			return projectPath.parent_path() / "ProjectSettings" /
+				UTF8ToPath(std::string(kProjectMigrationBackupDirectory));
+		}
+
+		bool PinMigrationProjectDirectory(const std::filesystem::path& projectPath,
+			FileSystem::PinnedDirectoryChain& guard, std::string& errorMessage)
+		{
+			std::filesystem::path projectDirectory = projectPath.parent_path();
+			std::error_code error;
+			if (projectDirectory.empty())
+				projectDirectory = std::filesystem::current_path(error);
+			if (error)
+			{
+				errorMessage = "Could not resolve the project directory: " +
+					error.message();
+				return false;
+			}
+			if (!guard.Acquire(projectDirectory, errorMessage))
+			{
+				errorMessage = "Could not pin project directory for migration: " +
+					errorMessage;
+				return false;
+			}
+			return true;
+		}
+
+		std::string MigrationSHA256(std::string_view bytes)
+		{
+			return ComputeContentSHA256(std::span<const uint8_t>(
+				reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()));
+		}
+
+		bool IsMigrationSHA256(std::string_view value)
+		{
+			return value.size() == 64 &&
+				std::all_of(value.begin(), value.end(), [](unsigned char character)
+				{
+					return (character >= '0' && character <= '9') ||
+						(character >= 'a' && character <= 'f');
+				});
+		}
+
+		bool MigrationPathComponentEqual(const std::filesystem::path& left,
+			const std::filesystem::path& right)
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			std::string leftText = PathToUTF8(left);
+			std::string rightText = PathToUTF8(right);
+			std::transform(leftText.begin(), leftText.end(), leftText.begin(),
+				[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+			std::transform(rightText.begin(), rightText.end(), rightText.begin(),
+				[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+			return leftText == rightText;
+#else
+			return left == right;
+#endif
+		}
+
+		bool IsMigrationPathWithin(const std::filesystem::path& root,
+			const std::filesystem::path& candidate)
+		{
+			const std::filesystem::path normalizedRoot = root.lexically_normal();
+			const std::filesystem::path normalizedCandidate =
+				candidate.lexically_normal();
+			auto rootPart = normalizedRoot.begin();
+			const auto rootEnd = normalizedRoot.end();
+			auto candidatePart = normalizedCandidate.begin();
+			const auto candidateEnd = normalizedCandidate.end();
+			for (; rootPart != rootEnd; ++rootPart, ++candidatePart)
+			{
+				if (candidatePart == candidateEnd ||
+					!MigrationPathComponentEqual(*rootPart, *candidatePart))
+					return false;
+			}
+			return true;
+		}
+
+		bool IsMissingMigrationPathError(const std::error_code& error)
+		{
+			return error == std::errc::no_such_file_or_directory ||
+				error == std::errc::not_a_directory;
+		}
+
+#ifdef TC_PLATFORM_WINDOWS
+		std::wstring ExtendedMigrationPath(const std::filesystem::path& path)
+		{
+			std::wstring value = path.wstring();
+			if (value.rfind(L"\\\\?\\", 0) == 0)
+				return value;
+			if (value.rfind(L"\\\\", 0) == 0)
+				return L"\\\\?\\UNC\\" + value.substr(2);
+			return L"\\\\?\\" + value;
+		}
+#endif
+
+		bool ValidateNoReparsePathChain(const std::filesystem::path& path,
+			bool allowMissingSuffix, std::string& errorMessage)
+		{
+			std::error_code error;
+			const std::filesystem::path absolute =
+				std::filesystem::absolute(path, error).lexically_normal();
+			if (error || absolute.empty())
+			{
+				errorMessage = "Could not make migration path absolute: " +
+					PathToUTF8(path);
+				return false;
+			}
+
+			auto inspect = [&](const std::filesystem::path& current,
+				bool isLeaf) -> std::optional<bool>
+			{
+				error.clear();
+				const std::filesystem::file_status status =
+					std::filesystem::symlink_status(current, error);
+				if (IsMissingMigrationPathError(error) ||
+					(!error && !std::filesystem::exists(status)))
+				{
+					if (!allowMissingSuffix)
+					{
+						errorMessage = "Migration path does not exist: " +
+							PathToUTF8(current);
+						return false;
+					}
+					return std::nullopt;
+				}
+				if (error)
+				{
+					errorMessage = "Could not inspect migration path ancestor '" +
+						PathToUTF8(current) + "': " + error.message();
+					return false;
+				}
+				if (std::filesystem::is_symlink(status))
+				{
+					errorMessage = "Migration path contains a symlink or reparse point: " +
+						PathToUTF8(current);
+					return false;
+				}
+#ifdef TC_PLATFORM_WINDOWS
+				const DWORD attributes =
+					GetFileAttributesW(ExtendedMigrationPath(current).c_str());
+				if (attributes == INVALID_FILE_ATTRIBUTES)
+				{
+					errorMessage = "Could not inspect migration path attributes: " +
+						PathToUTF8(current);
+					return false;
+				}
+				if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+				{
+					errorMessage = "Migration path contains a symlink or reparse point: " +
+						PathToUTF8(current);
+					return false;
+				}
+#endif
+				if (!isLeaf && !std::filesystem::is_directory(status))
+				{
+					errorMessage = "Migration path ancestor is not a directory: " +
+						PathToUTF8(current);
+					return false;
+				}
+				return true;
+			};
+
+			std::filesystem::path current = absolute.root_path();
+			if (!current.empty())
+			{
+				const std::optional<bool> inspected = inspect(
+					current, current == absolute);
+				if (!inspected.has_value())
+					return allowMissingSuffix;
+				if (!*inspected)
+					return false;
+			}
+			for (const auto& component : absolute.relative_path())
+			{
+				current /= component;
+				const std::optional<bool> inspected = inspect(
+					current, current == absolute);
+				if (!inspected.has_value())
+					return allowMissingSuffix;
+				if (!*inspected)
+					return false;
+			}
+			return true;
+		}
+
+		bool ValidateMigrationPath(const std::filesystem::path& projectPath,
+			const std::filesystem::path& candidate, bool allowMissingSuffix,
+			std::string& errorMessage)
+		{
+			errorMessage.clear();
+			std::error_code error;
+			std::filesystem::path projectDirectory = projectPath.parent_path();
+			if (projectDirectory.empty())
+				projectDirectory = std::filesystem::current_path(error);
+			if (error)
+			{
+				errorMessage = "Could not resolve the project directory";
+				return false;
+			}
+			const std::filesystem::path absoluteRoot =
+				std::filesystem::absolute(projectDirectory, error).lexically_normal();
+			if (error)
+			{
+				errorMessage = "Could not make the project directory absolute";
+				return false;
+			}
+			const std::filesystem::path absoluteCandidate =
+				std::filesystem::absolute(candidate, error).lexically_normal();
+			if (error || !IsMigrationPathWithin(absoluteRoot, absoluteCandidate))
+			{
+				errorMessage = "Migration path escaped the project directory: " +
+					PathToUTF8(candidate);
+				return false;
+			}
+			if (!ValidateNoReparsePathChain(
+				absoluteRoot, false, errorMessage) ||
+				!ValidateNoReparsePathChain(
+					absoluteCandidate, allowMissingSuffix, errorMessage))
+				return false;
+
+			const std::filesystem::path canonicalRoot =
+				std::filesystem::canonical(absoluteRoot, error);
+			if (error)
+			{
+				errorMessage = "Could not canonicalize the project directory: " +
+					error.message();
+				return false;
+			}
+			const std::filesystem::path canonicalCandidate =
+				std::filesystem::weakly_canonical(absoluteCandidate, error);
+			if (error || !IsMigrationPathWithin(canonicalRoot, canonicalCandidate))
+			{
+				errorMessage = "Canonical migration path escaped the project directory: " +
+					PathToUTF8(candidate);
+				return false;
+			}
+			return true;
+		}
+
+		bool RequireNoActiveMigrationJournal(
+			const std::filesystem::path& projectPath, std::string& errorMessage)
+		{
+			const std::filesystem::path journalPath = MigrationJournalPath(projectPath);
+			if (!ValidateMigrationPath(
+				projectPath, projectPath, false, errorMessage) ||
+				!ValidateMigrationPath(
+					projectPath, journalPath, true, errorMessage))
+				return false;
+
+			std::error_code filesystemError;
+			const std::filesystem::file_status journalStatus =
+				std::filesystem::symlink_status(journalPath, filesystemError);
+			if (filesystemError == std::errc::no_such_file_or_directory ||
+				(!filesystemError && !std::filesystem::exists(journalStatus)))
+				return true;
+			if (filesystemError)
+			{
+				errorMessage = "Could not inspect the migration journal: " +
+					filesystemError.message();
+				return false;
+			}
+			errorMessage =
+				"An interrupted migration must be recovered explicitly before loading";
+			return false;
+		}
+
+		bool RemoveMigrationPathSafely(const std::filesystem::path& projectPath,
+			const std::filesystem::path& path, bool requireExisting,
+			std::string& errorMessage)
+		{
+			if (!ValidateMigrationPath(projectPath, path, true, errorMessage))
+				return false;
+			bool removed = false;
+			if (!FileSystem::RemovePathSafely(path, removed, errorMessage))
+				return false;
+			if (requireExisting && !removed)
+			{
+				errorMessage = "Migration path disappeared before safe deletion: " +
+					PathToUTF8(path);
+				return false;
+			}
+			return true;
+		}
+
+		bool ReadFileBytes(const std::filesystem::path& path, std::string& contents,
+			std::string& errorMessage)
+		{
+			contents.clear();
+			std::error_code error;
+			const std::filesystem::file_status status =
+				std::filesystem::symlink_status(path, error);
+			if (error || !std::filesystem::is_regular_file(status) ||
+				std::filesystem::is_symlink(status))
+			{
+				errorMessage = "Path is not a regular, non-symlink file: " +
+					PathToUTF8(path);
+				return false;
+			}
+			std::ifstream input(path, std::ios::binary);
+			if (!input)
+			{
+				errorMessage = "Could not open file: " + PathToUTF8(path);
+				return false;
+			}
+			std::ostringstream buffer;
+			buffer << input.rdbuf();
+			if (input.bad())
+			{
+				errorMessage = "Failed while reading file: " + PathToUTF8(path);
+				return false;
+			}
+			contents = buffer.str();
+			return true;
+		}
+
+		bool ReadMigrationFileBytes(const std::filesystem::path& projectPath,
+			const std::filesystem::path& path, std::string& contents,
+			std::string& errorMessage)
+		{
+			if (!ValidateMigrationPath(projectPath, path, false, errorMessage) ||
+				!ReadFileBytes(path, contents, errorMessage))
+				return false;
+			return ValidateMigrationPath(projectPath, path, false, errorMessage);
+		}
+
+		bool InspectMigrationTarget(const std::filesystem::path& projectPath,
+			const std::filesystem::path& path, bool& existed, uintmax_t& size,
+			std::string& sha256, std::string& errorMessage)
+		{
+			existed = false;
+			size = 0;
+			sha256.clear();
+			if (!ValidateMigrationPath(projectPath, path, true, errorMessage))
+				return false;
+			std::error_code error;
+			const std::filesystem::file_status status =
+				std::filesystem::symlink_status(path, error);
+			if (error == std::errc::no_such_file_or_directory)
+				return true;
+			if (error)
+			{
+				errorMessage = "Could not inspect migration target '" +
+					PathToUTF8(path) + "': " + error.message();
+				return false;
+			}
+			if (!std::filesystem::exists(status))
+				return true;
+			if (!std::filesystem::is_regular_file(status) ||
+				std::filesystem::is_symlink(status))
+			{
+				errorMessage = "Migration target is not a regular, non-symlink file: " +
+					PathToUTF8(path);
+				return false;
+			}
+			std::string contents;
+			if (!ReadMigrationFileBytes(
+				projectPath, path, contents, errorMessage))
+				return false;
+			size = contents.size();
+			sha256 = MigrationSHA256(contents);
+			existed = true;
+			return true;
+		}
+
+		bool AddMigrationChange(ProjectMigrationPreview& preview,
+			const std::filesystem::path& projectPath,
+			const std::filesystem::path& targetPath, std::string reason,
+			std::string& errorMessage)
+		{
+			const std::filesystem::path projectDirectory =
+				projectPath.parent_path().lexically_normal();
+			const std::filesystem::path relative = projectDirectory.empty() ?
+				targetPath.lexically_normal() :
+				targetPath.lexically_normal().lexically_relative(projectDirectory);
+			if (!IsSafeRelativePath(relative))
+			{
+				errorMessage = "Migration target escaped the project directory";
+				return false;
+			}
+			for (const ProjectMigrationChange& existing : preview.Changes)
+			{
+				if (existing.RelativePath == relative)
+					return true;
+			}
+
+			bool existed = false;
+			uintmax_t size = 0;
+			std::string sha256;
+			if (!InspectMigrationTarget(
+				projectPath, targetPath, existed, size, sha256, errorMessage))
+				return false;
+			ProjectMigrationChange change;
+			change.RelativePath = relative;
+			change.Kind = existed ? ProjectMigrationChangeKind::Replace :
+				ProjectMigrationChangeKind::Create;
+			change.OriginalSize = size;
+			change.OriginalSHA256 = std::move(sha256);
+			change.Reason = std::move(reason);
+			preview.Changes.push_back(std::move(change));
+			return true;
+		}
+
+		bool BuildProjectMigrationPreview(
+			const std::filesystem::path& projectPath, uint32_t schemaVersion,
+			bool buildSettingsMissing, bool playerSettingsMissing,
+			ProjectMigrationPreview& preview, std::string& errorMessage)
+		{
+			preview = {};
+			preview.ProjectPath = AbsoluteNormalized(projectPath);
+			preview.SourceSchemaVersion = schemaVersion;
+			preview.TargetSchemaVersion = Project::CurrentSchemaVersion;
+			preview.BackupRoot = std::filesystem::path("ProjectSettings") /
+				UTF8ToPath(std::string(kProjectMigrationBackupDirectory));
+
+			const std::filesystem::path projectDirectory = projectPath.parent_path();
+			if (schemaVersion != Project::CurrentSchemaVersion)
+			{
+				if (!AddMigrationChange(preview, projectPath, projectPath,
+					"upgrade Project.tcproj schema", errorMessage) ||
+					!AddMigrationChange(preview, projectPath,
+						projectDirectory / "ProjectSettings" / "BuildSettings.json",
+						buildSettingsMissing ? "create BuildSettings from the legacy start scene" :
+						"validate and rewrite BuildSettings with the project schema",
+						errorMessage) ||
+					!AddMigrationChange(preview, projectPath,
+						projectDirectory / "ProjectSettings" / "PlayerSettings.json",
+						playerSettingsMissing ? "create default PlayerSettings" :
+						"validate and rewrite PlayerSettings with the project schema",
+						errorMessage))
+					return false;
+			}
+			else if (playerSettingsMissing)
+			{
+				if (!AddMigrationChange(preview, projectPath,
+					projectDirectory / "ProjectSettings" / "PlayerSettings.json",
+					"create required default PlayerSettings", errorMessage))
+					return false;
+			}
+
+			if (!preview.RequiresMigration())
+				return true;
+
+			std::string ignoreContents;
+			bool ignoreChanged = false;
+			if (!BuildAssetSystemIgnoreRulesUpdate(projectDirectory, ignoreContents,
+				ignoreChanged, errorMessage))
+				return false;
+			if (ignoreChanged && !AddMigrationChange(preview, projectPath,
+				projectDirectory / ".gitignore",
+				"add derived-data and user-state ignore rules", errorMessage))
+				return false;
+			return true;
+		}
+
+		bool MigrationPreviewsMatch(const ProjectMigrationPreview& approved,
+			const ProjectMigrationPreview& current)
+		{
+			if (approved.ProjectPath.lexically_normal() !=
+					current.ProjectPath.lexically_normal() ||
+				approved.SourceSchemaVersion != current.SourceSchemaVersion ||
+				approved.TargetSchemaVersion != current.TargetSchemaVersion ||
+				approved.BackupRoot.lexically_normal() !=
+					current.BackupRoot.lexically_normal() ||
+				approved.Changes.size() != current.Changes.size())
+				return false;
+			for (size_t index = 0; index < approved.Changes.size(); ++index)
+			{
+				const ProjectMigrationChange& expected = approved.Changes[index];
+				const ProjectMigrationChange& actual = current.Changes[index];
+				if (expected.RelativePath.lexically_normal() !=
+						actual.RelativePath.lexically_normal() ||
+					expected.Kind != actual.Kind ||
+					expected.OriginalSize != actual.OriginalSize ||
+					expected.OriginalSHA256 != actual.OriginalSHA256 ||
+					expected.Reason != actual.Reason)
+					return false;
+			}
+			return true;
+		}
+
+		bool IsSafeTransactionID(std::string_view value)
+		{
+			if (value.empty() || value.size() > 96)
+				return false;
+			return std::all_of(value.begin(), value.end(), [](unsigned char character)
+			{
+				return std::isalnum(character) || character == '-' || character == '_';
+			});
+		}
+
+		bool IsAllowedMigrationTarget(const std::filesystem::path& projectPath,
+			const std::filesystem::path& relative)
+		{
+			const std::filesystem::path normalized = relative.lexically_normal();
+			return normalized == projectPath.filename() ||
+				normalized == std::filesystem::path("ProjectSettings") / "BuildSettings.json" ||
+				normalized == std::filesystem::path("ProjectSettings") / "PlayerSettings.json" ||
+				normalized == ".gitignore";
+		}
+
+		std::string SerializeMigrationJournal(
+			const ProjectMigrationJournal& journal)
+		{
+			std::ostringstream output;
+			output << "{\n"
+				<< "  \"schemaVersion\": " << kProjectMigrationJournalSchemaVersion << ",\n"
+				<< "  \"transactionId\": \"" << EscapeJsonString(journal.TransactionID) << "\",\n"
+				<< "  \"state\": \"" << EscapeJsonString(journal.State) << "\",\n"
+				<< "  \"sourceSchemaVersion\": " << journal.SourceSchemaVersion << ",\n"
+				<< "  \"targetSchemaVersion\": " << journal.TargetSchemaVersion << ",\n"
+				<< "  \"settingsDirectoryExisted\": "
+				<< (journal.SettingsDirectoryExisted ? "true" : "false") << ",\n"
+				<< "  \"backupRootExisted\": "
+				<< (journal.BackupRootExisted ? "true" : "false") << ",\n"
+				<< "  \"entries\": [";
+			for (size_t index = 0; index < journal.Entries.size(); ++index)
+			{
+				const ProjectMigrationJournalEntry& entry = journal.Entries[index];
+				if (index != 0)
+					output << ',';
+				output << "\n    {\n"
+					<< "      \"target\": \""
+					<< EscapeJsonString(entry.RelativeTarget.generic_string())
+					<< "\",\n"
+					<< "      \"existed\": " << (entry.Existed ? "true" : "false") << ",\n"
+					<< "      \"originalSize\": " << entry.OriginalSize << ",\n"
+					<< "      \"originalSha256\": \""
+					<< EscapeJsonString(entry.OriginalSHA256) << "\",\n"
+					<< "      \"backup\": \""
+					<< EscapeJsonString(entry.BackupFile.generic_string())
+					<< "\"\n"
+					<< "    }";
+			}
+			if (!journal.Entries.empty())
+				output << '\n';
+			output << "  ]\n}\n";
+			return output.str();
+		}
+
+		bool ParseMigrationJournal(const std::filesystem::path& projectPath,
+			std::string_view document, ProjectMigrationJournal& journal,
+			std::string& errorMessage)
+		{
+			try
+			{
+				if (!JsonSyntaxValidator(document).Validate())
+					throw std::runtime_error("migration journal is not valid JSON");
+				const YAML::Node root = YAML::Load(std::string(document));
+				RequireExactMapFields(root, "Migration journal",
+					std::array<const char*, 8>{ "schemaVersion", "transactionId",
+						"state", "sourceSchemaVersion", "targetSchemaVersion",
+						"settingsDirectoryExisted", "backupRootExisted", "entries" });
+				if (root["schemaVersion"].as<uint32_t>() !=
+					kProjectMigrationJournalSchemaVersion)
+					throw std::runtime_error("unsupported migration journal schema");
+
+				ProjectMigrationJournal parsed;
+				parsed.TransactionID = root["transactionId"].as<std::string>();
+				parsed.State = root["state"].as<std::string>();
+				parsed.SourceSchemaVersion = root["sourceSchemaVersion"].as<uint32_t>();
+				parsed.TargetSchemaVersion = root["targetSchemaVersion"].as<uint32_t>();
+				parsed.SettingsDirectoryExisted =
+					root["settingsDirectoryExisted"].as<bool>();
+				parsed.BackupRootExisted = root["backupRootExisted"].as<bool>();
+				if (!IsSafeTransactionID(parsed.TransactionID))
+					throw std::runtime_error("invalid migration transaction id");
+				if (parsed.State != "prepared" && parsed.State != "committed")
+					throw std::runtime_error("invalid migration journal state");
+				if (parsed.TargetSchemaVersion != Project::CurrentSchemaVersion)
+					throw std::runtime_error("migration journal targets another project schema");
+
+				const YAML::Node entries = root["entries"];
+				if (!entries.IsSequence() || entries.size() == 0 || entries.size() > 4)
+					throw std::runtime_error("migration journal entries are invalid");
+				std::unordered_set<std::string> targets;
+				for (size_t index = 0; index < entries.size(); ++index)
+				{
+					const YAML::Node node = entries[index];
+					RequireExactMapFields(node, "Migration journal entry",
+						std::array<const char*, 5>{ "target", "existed",
+							"originalSize", "originalSha256", "backup" });
+					ProjectMigrationJournalEntry entry;
+					entry.RelativeTarget = UTF8ToPath(node["target"].as<std::string>()).
+						lexically_normal();
+					entry.Existed = node["existed"].as<bool>();
+					entry.OriginalSize = node["originalSize"].as<uintmax_t>();
+					entry.OriginalSHA256 =
+						node["originalSha256"].as<std::string>();
+					entry.BackupFile = UTF8ToPath(node["backup"].as<std::string>()).
+						lexically_normal();
+					if (!IsSafeRelativePath(entry.RelativeTarget) ||
+						!IsAllowedMigrationTarget(projectPath, entry.RelativeTarget))
+						throw std::runtime_error("migration journal target is outside the allowed file set");
+					if (!targets.emplace(entry.RelativeTarget.generic_string()).second)
+						throw std::runtime_error("migration journal contains duplicate targets");
+					if (!entry.BackupFile.has_filename() ||
+						entry.BackupFile.parent_path() != std::filesystem::path{} ||
+						entry.BackupFile.extension() != ".bin")
+						throw std::runtime_error("migration journal backup name is invalid");
+					if (entry.Existed && entry.BackupFile.empty())
+						throw std::runtime_error("migration journal is missing an original backup");
+					if (entry.Existed && !IsMigrationSHA256(entry.OriginalSHA256))
+						throw std::runtime_error("migration journal original SHA-256 is invalid");
+					if (!entry.Existed &&
+						(entry.OriginalSize != 0 || !entry.OriginalSHA256.empty()))
+						throw std::runtime_error(
+							"migration journal created-file integrity fields are invalid");
+					parsed.Entries.push_back(std::move(entry));
+				}
+				journal = std::move(parsed);
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				errorMessage = exception.what();
+				return false;
+			}
+		}
+
+		bool WriteMigrationJournalFile(const std::filesystem::path& projectPath,
+			const std::filesystem::path& path,
+			const ProjectMigrationJournal& journal, std::string& errorMessage)
+		{
+			if (!ValidateMigrationPath(projectPath, path, true, errorMessage))
+				return false;
+			const std::string serialized = SerializeMigrationJournal(journal);
+			if (!FileSystem::WriteFileAtomically(path, serialized, errorMessage) ||
+				!ValidateMigrationPath(projectPath, path, false, errorMessage))
+				return false;
+			std::string persisted;
+			if (!ReadMigrationFileBytes(
+				projectPath, path, persisted, errorMessage))
+				return false;
+			if (persisted != serialized)
+			{
+				errorMessage = "Migration journal changed while it was persisted: " +
+					PathToUTF8(path);
+				return false;
+			}
+			return true;
+		}
+
+		void RemoveEmptyMigrationDirectories(const std::filesystem::path& projectPath,
+			const ProjectMigrationJournal& journal)
+		{
+			const std::filesystem::path backupRoot = MigrationBackupRoot(projectPath);
+			std::string validationError;
+			if (!journal.BackupRootExisted)
+				RemoveMigrationPathSafely(
+					projectPath, backupRoot, false, validationError);
+			const std::filesystem::path settingsDirectory =
+				projectPath.parent_path() / "ProjectSettings";
+			if (!journal.SettingsDirectoryExisted)
+				RemoveMigrationPathSafely(
+					projectPath, settingsDirectory, false, validationError);
+		}
+
+		void CleanupPreparedMigrationArtifacts(
+			const std::filesystem::path& projectPath,
+			const ProjectMigrationJournal& journal,
+			const std::filesystem::path& backupDirectory,
+			bool removeActiveJournal)
+		{
+			std::string validationError;
+			if (removeActiveJournal)
+			{
+				const std::filesystem::path activeJournal =
+					MigrationJournalPath(projectPath);
+				RemoveMigrationPathSafely(
+					projectPath, activeJournal, false, validationError);
+			}
+			for (const ProjectMigrationJournalEntry& entry : journal.Entries)
+			{
+				if (!entry.Existed)
+					continue;
+				const std::filesystem::path backup =
+					backupDirectory / entry.BackupFile;
+				RemoveMigrationPathSafely(
+					projectPath, backup, false, validationError);
+			}
+			const std::filesystem::path archivedJournal =
+				backupDirectory / "journal.json";
+			RemoveMigrationPathSafely(
+				projectPath, archivedJournal, false, validationError);
+			RemoveMigrationPathSafely(
+				projectPath, backupDirectory, false, validationError);
+			RemoveEmptyMigrationDirectories(projectPath, journal);
+		}
+
+		bool RestoreMigrationJournal(const std::filesystem::path& projectPath,
+			const ProjectMigrationJournal& journal, std::string& errorMessage,
+			FileSystem::PinnedDirectoryChain* activeDirectoryGuard = nullptr)
+		{
+			const std::filesystem::path journalPath = MigrationJournalPath(projectPath);
+			const std::filesystem::path backupDirectory =
+				MigrationBackupRoot(projectPath) / UTF8ToPath(journal.TransactionID);
+
+			if (journal.State == "committed")
+			{
+				if (!ValidateMigrationPath(
+					projectPath, journalPath, false, errorMessage))
+					return false;
+				if (!RemoveMigrationPathSafely(
+					projectPath, journalPath, true, errorMessage))
+				{
+					errorMessage = "Could not clear committed migration journal: " +
+						errorMessage;
+					return false;
+				}
+				return true;
+			}
+
+			if (!ValidateMigrationPath(
+				projectPath, journalPath, false, errorMessage) ||
+				!ValidateMigrationPath(
+					projectPath, backupDirectory, false, errorMessage))
+				return false;
+
+			// Verify every original backup before touching any target. Keeping the
+			// validated bytes in memory also prevents a later backup-file change
+			// from influencing the restore.
+			std::vector<std::string> originals(journal.Entries.size());
+			for (size_t index = 0; index < journal.Entries.size(); ++index)
+			{
+				const ProjectMigrationJournalEntry& entry = journal.Entries[index];
+				const std::filesystem::path target =
+					projectPath.parent_path() / entry.RelativeTarget;
+				if (!ValidateMigrationPath(
+					projectPath, target, true, errorMessage))
+					return false;
+				const std::filesystem::path backup =
+					backupDirectory / entry.BackupFile;
+				if (!entry.Existed)
+				{
+					if (!ValidateMigrationPath(
+						projectPath, backup, true, errorMessage))
+						return false;
+					std::error_code backupError;
+					const std::filesystem::file_status backupStatus =
+						std::filesystem::symlink_status(backup, backupError);
+					if ((!backupError && std::filesystem::exists(backupStatus)) ||
+						(backupError && !IsMissingMigrationPathError(backupError)))
+					{
+						errorMessage =
+							"Migration journal has an unexpected backup for a created file";
+						return false;
+					}
+					continue;
+				}
+				if (!ReadMigrationFileBytes(
+					projectPath, backup, originals[index], errorMessage))
+					return false;
+				if (originals[index].size() != entry.OriginalSize ||
+					MigrationSHA256(originals[index]) != entry.OriginalSHA256)
+				{
+					errorMessage = "Migration backup SHA-256 or size does not match "
+						"its journal: " + PathToUTF8(backup);
+					return false;
+				}
+			}
+
+			for (size_t reverseIndex = journal.Entries.size();
+				reverseIndex > 0; --reverseIndex)
+			{
+				const size_t index = reverseIndex - 1;
+				const ProjectMigrationJournalEntry& entry = journal.Entries[index];
+				const std::filesystem::path target =
+					projectPath.parent_path() / entry.RelativeTarget;
+				if (entry.Existed)
+				{
+					bool currentExists = false;
+					uintmax_t currentSize = 0;
+					std::string currentSHA256;
+					if (!InspectMigrationTarget(projectPath, target, currentExists,
+						currentSize, currentSHA256, errorMessage))
+						return false;
+					if (!currentExists || currentSize != entry.OriginalSize ||
+						currentSHA256 != entry.OriginalSHA256)
+					{
+						std::string writeError;
+						if (!ValidateMigrationPath(
+							projectPath, target, true, writeError) ||
+							!FileSystem::WriteFileAtomically(
+								target, originals[index], writeError))
+						{
+							errorMessage = "Could not restore '" + PathToUTF8(target) +
+								"': " + writeError;
+							return false;
+						}
+					}
+				}
+				else
+				{
+					bool targetExists = false;
+					uintmax_t targetSize = 0;
+					std::string targetSHA256;
+					if (!InspectMigrationTarget(projectPath, target, targetExists,
+						targetSize, targetSHA256, errorMessage))
+						return false;
+					if (targetExists)
+					{
+						if (!RemoveMigrationPathSafely(
+							projectPath, target, true, errorMessage))
+						{
+							errorMessage = "Could not remove created migration target: " +
+								errorMessage;
+							return false;
+						}
+					}
+				}
+			}
+
+			// The journal is the recovery authority. Remove it only after every
+			// target has been restored and verified.
+			for (const ProjectMigrationJournalEntry& entry : journal.Entries)
+			{
+				const std::filesystem::path target =
+					projectPath.parent_path() / entry.RelativeTarget;
+				if (entry.Existed)
+				{
+					std::string restored;
+					if (!ReadMigrationFileBytes(
+						projectPath, target, restored, errorMessage) ||
+						restored.size() != entry.OriginalSize ||
+						MigrationSHA256(restored) != entry.OriginalSHA256)
+					{
+						errorMessage = "Migration rollback verification failed for '" +
+							PathToUTF8(target) + "'";
+						return false;
+					}
+				}
+				else
+				{
+					if (!ValidateMigrationPath(
+						projectPath, target, true, errorMessage))
+						return false;
+					std::error_code existsError;
+					const std::filesystem::file_status status =
+						std::filesystem::symlink_status(target, existsError);
+					if ((!existsError && std::filesystem::exists(status)) ||
+						(existsError && !IsMissingMigrationPathError(existsError)))
+					{
+						errorMessage = "Migration rollback left a newly-created file";
+						return false;
+					}
+				}
+			}
+
+			if (!RemoveMigrationPathSafely(
+				projectPath, journalPath, true, errorMessage))
+			{
+				errorMessage = "Could not remove completed rollback journal: " +
+					errorMessage;
+				return false;
+			}
+
+			// Cleanup is deliberately file-by-file and empty-directory-only. A
+			// concurrent writer can therefore prevent cleanup without losing data.
+			for (const ProjectMigrationJournalEntry& entry : journal.Entries)
+			{
+				if (!entry.Existed)
+					continue;
+				std::string cleanupError;
+				RemoveMigrationPathSafely(projectPath,
+					backupDirectory / entry.BackupFile, false, cleanupError);
+			}
+			std::string cleanupError;
+			RemoveMigrationPathSafely(projectPath,
+				backupDirectory / "journal.json", false, cleanupError);
+			// Deleting the transaction directory itself requires releasing its
+			// no-FILE_SHARE_DELETE handle. Root remains pinned by the caller, and
+			// each cleanup mutation pins its own complete parent chain.
+			if (activeDirectoryGuard)
+				activeDirectoryGuard->Reset();
+			RemoveMigrationPathSafely(
+				projectPath, backupDirectory, false, cleanupError);
+			RemoveEmptyMigrationDirectories(projectPath, journal);
+			return true;
+		}
+
+		bool PrepareMigrationJournal(const std::filesystem::path& projectPath,
+			const ProjectMigrationPreview& preview, ProjectMigrationJournal& journal,
+			ProjectMigrationDirectoryGuards& guards, std::string& errorMessage)
+		{
+			static std::atomic<uint64_t> transactionCounter{ 0 };
+			journal = {};
+			journal.SourceSchemaVersion = preview.SourceSchemaVersion;
+			journal.TargetSchemaVersion = preview.TargetSchemaVersion;
+			journal.TransactionID = std::to_string(
+				std::chrono::system_clock::now().time_since_epoch().count()) + "-" +
+				std::to_string(transactionCounter.fetch_add(1,
+					std::memory_order_relaxed));
+
+			const std::filesystem::path settingsDirectory =
+				projectPath.parent_path() / "ProjectSettings";
+			const std::filesystem::path backupRoot = MigrationBackupRoot(projectPath);
+			const std::filesystem::path backupDirectory =
+				backupRoot / UTF8ToPath(journal.TransactionID);
+			if (!ValidateMigrationPath(projectPath, projectPath, false, errorMessage) ||
+				!ValidateMigrationPath(
+					projectPath, settingsDirectory, true, errorMessage) ||
+				!ValidateMigrationPath(
+					projectPath, backupRoot, true, errorMessage) ||
+				!ValidateMigrationPath(
+					projectPath, backupDirectory, true, errorMessage))
+				return false;
+
+			FileSystem::PinnedDirectoryChain nextGuard;
+			bool settingsCreated = false;
+			if (!FileSystem::CreateDirectoryAndPin(settingsDirectory, nextGuard,
+				settingsCreated, errorMessage))
+			{
+				errorMessage = "Could not create or pin ProjectSettings for migration: " +
+					errorMessage;
+				return false;
+			}
+			journal.SettingsDirectoryExisted = !settingsCreated;
+			guards.Active = std::move(nextGuard);
+			if (!ValidateMigrationPath(
+				projectPath, settingsDirectory, false, errorMessage))
+			{
+				guards.Active.Reset();
+				RemoveEmptyMigrationDirectories(projectPath, journal);
+				return false;
+			}
+
+			bool backupRootCreated = false;
+			if (!FileSystem::CreateDirectoryAndPin(backupRoot, nextGuard,
+				backupRootCreated, errorMessage))
+			{
+				errorMessage = "Could not create or pin migration backup root: " +
+					errorMessage;
+				guards.Active.Reset();
+				RemoveEmptyMigrationDirectories(projectPath, journal);
+				return false;
+			}
+			journal.BackupRootExisted = !backupRootCreated;
+			guards.Active = std::move(nextGuard);
+			if (!ValidateMigrationPath(
+				projectPath, backupRoot, false, errorMessage))
+			{
+				guards.Active.Reset();
+				RemoveEmptyMigrationDirectories(projectPath, journal);
+				return false;
+			}
+
+			bool backupDirectoryCreated = false;
+			if (!FileSystem::CreateDirectoryAndPin(backupDirectory, nextGuard,
+				backupDirectoryCreated, errorMessage) || !backupDirectoryCreated)
+			{
+				if (errorMessage.empty())
+					errorMessage = "Migration transaction directory already exists";
+				else
+					errorMessage = "Could not create or pin migration backup: " +
+						errorMessage;
+				guards.Active.Reset();
+				RemoveEmptyMigrationDirectories(projectPath, journal);
+				return false;
+			}
+			guards.Active = std::move(nextGuard);
+			if (!ValidateMigrationPath(
+				projectPath, backupDirectory, false, errorMessage))
+			{
+				guards.Active.Reset();
+				std::string cleanupError;
+				RemoveMigrationPathSafely(
+					projectPath, backupDirectory, false, cleanupError);
+				RemoveEmptyMigrationDirectories(projectPath, journal);
+				return false;
+			}
+
+			for (size_t index = 0; index < preview.Changes.size(); ++index)
+			{
+				const ProjectMigrationChange& change = preview.Changes[index];
+				ProjectMigrationJournalEntry entry;
+				entry.RelativeTarget = change.RelativePath;
+				entry.Existed = change.Kind == ProjectMigrationChangeKind::Replace;
+				entry.OriginalSize = change.OriginalSize;
+				entry.OriginalSHA256 = change.OriginalSHA256;
+				entry.BackupFile = "original-" + std::to_string(index) + ".bin";
+				const std::filesystem::path target =
+					projectPath.parent_path() / entry.RelativeTarget;
+				if (!IsSafeRelativePath(entry.RelativeTarget) ||
+					!IsAllowedMigrationTarget(projectPath, entry.RelativeTarget) ||
+					!ValidateMigrationPath(
+						projectPath, target, true, errorMessage))
+					break;
+				if (entry.Existed)
+				{
+					if (!IsMigrationSHA256(entry.OriginalSHA256))
+					{
+						errorMessage = "Migration preview has an invalid original SHA-256";
+						break;
+					}
+					std::string original;
+					if (!ReadMigrationFileBytes(
+						projectPath, target, original, errorMessage) ||
+						original.size() != entry.OriginalSize ||
+						MigrationSHA256(original) != entry.OriginalSHA256)
+					{
+						errorMessage = "Migration target changed while its backup was prepared";
+						break;
+					}
+					const std::filesystem::path backup =
+						backupDirectory / entry.BackupFile;
+					std::string writeError;
+					if (!ValidateMigrationPath(
+						projectPath, backup, true, writeError) ||
+						!FileSystem::WriteFileAtomically(
+							backup, original, writeError))
+					{
+						errorMessage = "Could not write migration backup: " + writeError;
+						break;
+					}
+					std::string backedUp;
+					std::string sourceAfterBackup;
+					if (!ReadMigrationFileBytes(
+						projectPath, backup, backedUp, errorMessage) ||
+						backedUp.size() != entry.OriginalSize ||
+						MigrationSHA256(backedUp) != entry.OriginalSHA256 ||
+						!ReadMigrationFileBytes(
+							projectPath, target, sourceAfterBackup, errorMessage) ||
+						sourceAfterBackup.size() != entry.OriginalSize ||
+						MigrationSHA256(sourceAfterBackup) != entry.OriginalSHA256)
+					{
+						errorMessage =
+							"Migration backup or source failed post-backup SHA-256 verification";
+						break;
+					}
+				}
+				else
+				{
+					if (entry.OriginalSize != 0 || !entry.OriginalSHA256.empty())
+					{
+						errorMessage =
+							"Migration preview has integrity data for a created file";
+						break;
+					}
+					bool targetExists = false;
+					uintmax_t targetSize = 0;
+					std::string targetSHA256;
+					if (!InspectMigrationTarget(projectPath, target, targetExists,
+						targetSize, targetSHA256, errorMessage) || targetExists)
+					{
+						if (errorMessage.empty())
+							errorMessage =
+								"Migration create target appeared after the preview";
+						break;
+					}
+				}
+				journal.Entries.push_back(std::move(entry));
+			}
+
+			if (journal.Entries.size() != preview.Changes.size())
+			{
+				guards.Active.Reset();
+				CleanupPreparedMigrationArtifacts(
+					projectPath, journal, backupDirectory, false);
+				return false;
+			}
+
+			std::string writeError;
+			if (!WriteMigrationJournalFile(
+				projectPath, backupDirectory / "journal.json", journal, writeError) ||
+				!WriteMigrationJournalFile(
+					projectPath, MigrationJournalPath(projectPath), journal, writeError))
+			{
+				errorMessage = "Could not persist migration journal: " + writeError;
+				guards.Active.Reset();
+				CleanupPreparedMigrationArtifacts(
+					projectPath, journal, backupDirectory, true);
+				return false;
+			}
+			return true;
+		}
+
+		bool ValidatePreparedMigrationSources(
+			const std::filesystem::path& projectPath,
+			const ProjectMigrationJournal& journal, std::string& errorMessage)
+		{
+			for (const ProjectMigrationJournalEntry& entry : journal.Entries)
+			{
+				const std::filesystem::path target =
+					projectPath.parent_path() / entry.RelativeTarget;
+				bool existed = false;
+				uintmax_t size = 0;
+				std::string sha256;
+				if (!InspectMigrationTarget(
+					projectPath, target, existed, size, sha256, errorMessage))
+					return false;
+				if (existed != entry.Existed ||
+					(entry.Existed && (size != entry.OriginalSize ||
+						sha256 != entry.OriginalSHA256)))
+				{
+					errorMessage =
+						"Migration target changed after its backup was verified: " +
+						PathToUTF8(target);
+					return false;
+				}
+			}
+			return true;
+		}
+
+		bool ExecuteProjectMigration(Project& project,
+			const ProjectMigrationPreview& preview, std::string& errorMessage)
+		{
+			ProjectMigrationDirectoryGuards guards;
+			if (!PinMigrationProjectDirectory(
+				project.GetProjectPath(), guards.Root, errorMessage))
+				return false;
+			ProjectMigrationJournal journal;
+			if (!PrepareMigrationJournal(
+				project.GetProjectPath(), preview, journal, guards, errorMessage))
+				return false;
+
+			bool writesSucceeded = ValidatePreparedMigrationSources(
+				project.GetProjectPath(), journal, errorMessage);
+			if (preview.SourceSchemaVersion != preview.TargetSchemaVersion)
+			{
+				if (writesSucceeded)
+					writesSucceeded = project.Save();
+			}
+			else if (writesSucceeded)
+				writesSucceeded = project.SavePlayerSettings();
+
+			const bool updatesIgnoreFile = std::any_of(
+				preview.Changes.begin(), preview.Changes.end(),
+				[](const ProjectMigrationChange& change)
+				{
+					return change.RelativePath == ".gitignore";
+				});
+			if (writesSucceeded && updatesIgnoreFile)
+				writesSucceeded = EnsureAssetSystemIgnoreRules(project.GetProjectDirectory());
+
+			if (writesSucceeded && !Project::Inspect(project.GetProjectPath()))
+			{
+				errorMessage = "Migrated project failed read-back validation";
+				writesSucceeded = false;
+			}
+
+			if (!writesSucceeded)
+			{
+				if (errorMessage.empty())
+					errorMessage = "One or more migration writes failed";
+				std::string rollbackError;
+				if (!RestoreMigrationJournal(
+					project.GetProjectPath(), journal, rollbackError,
+					&guards.Active))
+					errorMessage += "; rollback remains journaled: " + rollbackError;
+				return false;
+			}
+
+			journal.State = "committed";
+			const std::filesystem::path backupDirectory =
+				MigrationBackupRoot(project.GetProjectPath()) /
+				UTF8ToPath(journal.TransactionID);
+			std::string writeError;
+			if (!WriteMigrationJournalFile(
+				project.GetProjectPath(), backupDirectory / "journal.json",
+				journal, writeError) ||
+				!WriteMigrationJournalFile(
+					project.GetProjectPath(),
+					MigrationJournalPath(project.GetProjectPath()), journal, writeError))
+			{
+				errorMessage = "Could not commit migration journal: " + writeError;
+				std::string rollbackError;
+				journal.State = "prepared";
+				if (!RestoreMigrationJournal(
+					project.GetProjectPath(), journal, rollbackError,
+					&guards.Active))
+					errorMessage += "; rollback remains journaled: " + rollbackError;
+				return false;
+			}
+
+			if (!ValidateMigrationPath(project.GetProjectPath(),
+				MigrationJournalPath(project.GetProjectPath()), false, writeError))
+			{
+				errorMessage = "Could not validate committed migration journal: " +
+					writeError;
+				return false;
+			}
+			bool journalRemoved = false;
+			if (!FileSystem::RemovePathSafely(
+				MigrationJournalPath(project.GetProjectPath()), journalRemoved,
+				writeError))
+			{
+				TC_Core_Warn("Committed project migration left a cleanup journal: {0}",
+					writeError);
+			}
+			return true;
 		}
 
 	}
@@ -803,6 +2329,115 @@ namespace TomCat {
 		}
 	}
 
+	bool Project::SavePlayerSettings() const
+	{
+		try
+		{
+			if (m_ProjectPath.empty())
+				throw std::runtime_error("Project path is empty");
+			PlayerSettings normalized = m_PlayerSettings;
+			std::string validationError;
+			if (!NormalizeAndValidatePlayerSettings(normalized, validationError))
+				throw std::runtime_error(validationError);
+
+			const std::filesystem::path settingsPath = GetPlayerSettingsPath();
+			std::error_code directoryError;
+			std::filesystem::create_directories(settingsPath.parent_path(), directoryError);
+			if (directoryError)
+				throw std::runtime_error("Could not create ProjectSettings directory: "
+					+ directoryError.message());
+
+			std::ostringstream output;
+			output << "{\n"
+				<< "  \"schemaVersion\": " << kPlayerSettingsSchemaVersion << ",\n"
+				<< "  \"productName\": \"" << EscapeJsonString(normalized.ProductName) << "\",\n"
+				<< "  \"companyName\": \"" << EscapeJsonString(normalized.CompanyName) << "\",\n"
+				<< "  \"version\": \"" << EscapeJsonString(normalized.Version) << "\",\n"
+				<< "  \"icon\": " << static_cast<uint64_t>(normalized.Icon) << ",\n"
+				<< "  \"display\": {\n"
+				<< "    \"width\": " << normalized.Width << ",\n"
+				<< "    \"height\": " << normalized.Height << ",\n"
+				<< "    \"windowMode\": \""
+				<< PlayerWindowModeToString(normalized.WindowMode) << "\",\n"
+				<< "    \"resizable\": " << (normalized.Resizable ? "true" : "false") << ",\n"
+				<< "    \"vSync\": " << (normalized.VSync ? "true" : "false") << "\n"
+				<< "  },\n"
+				<< "  \"directories\": {\n"
+				<< "    \"save\": \"" << EscapeJsonString(PathToUTF8(normalized.SaveDirectory)) << "\",\n"
+				<< "    \"log\": \"" << EscapeJsonString(PathToUTF8(normalized.LogDirectory)) << "\",\n"
+				<< "    \"crash\": \"" << EscapeJsonString(PathToUTF8(normalized.CrashDirectory)) << "\"\n"
+				<< "  }\n"
+				<< "}\n";
+			if (!output.good())
+				throw std::runtime_error("Could not serialize Player settings JSON");
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(settingsPath, output.str(), writeError))
+				throw std::runtime_error("Could not atomically replace Player settings: " + writeError);
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Failed to save Player settings '{0}': {1}",
+				PathToUTF8(GetPlayerSettingsPath()), exception.what());
+			return false;
+		}
+	}
+
+	bool Project::SaveBuildSettings() const
+	{
+		try
+		{
+			if (m_ProjectPath.empty())
+				throw std::runtime_error("Project path is empty");
+			BuildSettings normalized = m_BuildSettings;
+			std::string validationError;
+			if (!NormalizeAndValidateBuildSettings(normalized, validationError))
+				throw std::runtime_error(validationError);
+
+			const std::filesystem::path settingsPath = GetBuildSettingsPath();
+			std::error_code directoryError;
+			std::filesystem::create_directories(settingsPath.parent_path(), directoryError);
+			if (directoryError)
+				throw std::runtime_error("Could not create ProjectSettings directory: " +
+					directoryError.message());
+
+			std::ostringstream output;
+			output << "{\n"
+				<< "  \"schemaVersion\": " << kBuildSettingsSchemaVersion << ",\n"
+				<< "  \"entrySceneHandle\": "
+				<< static_cast<uint64_t>(normalized.EntrySceneHandle) << ",\n"
+				<< "  \"scenes\": [";
+			for (std::size_t index = 0; index < normalized.Scenes.size(); ++index)
+			{
+				const BuildSceneSettings& scene = normalized.Scenes[index];
+				if (index != 0)
+					output << ',';
+				output << "\n    {\n"
+					<< "      \"handle\": " << static_cast<uint64_t>(scene.Handle) << ",\n"
+					<< "      \"enabled\": " << (scene.Enabled ? "true" : "false") << ",\n"
+					<< "      \"pathHint\": \""
+					<< EscapeJsonString(PathToUTF8(scene.PathHint)) << "\"\n"
+					<< "    }";
+			}
+			if (!normalized.Scenes.empty())
+				output << '\n';
+			output << "  ]\n}\n";
+			if (!output.good())
+				throw std::runtime_error("Could not serialize build settings JSON");
+
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(settingsPath, output.str(), writeError))
+				throw std::runtime_error("Could not atomically replace build settings: " + writeError);
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Failed to save build settings '{0}': {1}",
+				PathToUTF8(GetBuildSettingsPath()), exception.what());
+			return false;
+		}
+	}
+
 	bool Project::SetSettings(const ProjectSettings& settings)
 	{
 		std::string validationError;
@@ -819,6 +2454,61 @@ namespace TomCat {
 		return false;
 	}
 
+	bool Project::SetPlayerSettings(const PlayerSettings& settings)
+	{
+		PlayerSettings normalized = settings;
+		std::string validationError;
+		if (!NormalizeAndValidatePlayerSettings(normalized, validationError))
+		{
+			TC_Core_Error("Cannot save Player settings: {0}", validationError);
+			return false;
+		}
+		const PlayerSettings previous = m_PlayerSettings;
+		m_PlayerSettings = std::move(normalized);
+		if (SavePlayerSettings())
+			return true;
+		m_PlayerSettings = previous;
+		return false;
+	}
+
+	bool Project::SetBuildSettings(const BuildSettings& settings)
+	{
+		BuildSettings normalized = settings;
+		std::string validationError;
+		if (!NormalizeAndValidateBuildSettings(normalized, validationError))
+		{
+			TC_Core_Error("Cannot save build settings: {0}", validationError);
+			return false;
+		}
+
+		const BuildSettings previous = m_BuildSettings;
+		const std::filesystem::path previousStartScene = m_Config.StartScene;
+		const AssetHandle previousStartSceneHandle = m_Config.StartSceneHandle;
+		m_BuildSettings = std::move(normalized);
+		SynchronizeLegacyStartSceneMirror();
+		if (SaveBuildSettings())
+			return true;
+		m_BuildSettings = previous;
+		m_Config.StartScene = previousStartScene;
+		m_Config.StartSceneHandle = previousStartSceneHandle;
+		return false;
+	}
+
+	void Project::SynchronizeLegacyStartSceneMirror()
+	{
+		m_Config.StartSceneHandle = m_BuildSettings.EntrySceneHandle;
+		m_Config.StartScene.clear();
+		if (static_cast<uint64_t>(m_BuildSettings.EntrySceneHandle) == 0)
+			return;
+		const auto entry = std::find_if(m_BuildSettings.Scenes.begin(),
+			m_BuildSettings.Scenes.end(), [this](const BuildSceneSettings& scene)
+			{
+				return scene.Handle == m_BuildSettings.EntrySceneHandle;
+			});
+		if (entry != m_BuildSettings.Scenes.end())
+			m_Config.StartScene = entry->PathHint;
+	}
+
 	bool Project::SetStartScene(const std::filesystem::path& scenePath)
 	{
 		if (!IsSafeRelativePath(scenePath))
@@ -828,6 +2518,49 @@ namespace TomCat {
 			return false;
 		}
 		m_Config.StartScene = scenePath.lexically_normal();
+		for (BuildSceneSettings& scene : m_BuildSettings.Scenes)
+		{
+			if (scene.Handle == m_BuildSettings.EntrySceneHandle)
+			{
+				scene.PathHint = m_Config.StartScene;
+				break;
+			}
+		}
+		return true;
+	}
+
+	bool Project::SetStartSceneHandle(AssetHandle handle)
+	{
+		BuildSettings candidate = m_BuildSettings;
+		candidate.EntrySceneHandle = handle;
+		if (static_cast<uint64_t>(handle) != 0)
+		{
+			auto scene = std::find_if(candidate.Scenes.begin(), candidate.Scenes.end(),
+				[handle](const BuildSceneSettings& value) { return value.Handle == handle; });
+			if (scene == candidate.Scenes.end())
+			{
+				BuildSceneSettings entry;
+				entry.Handle = handle;
+				entry.Enabled = true;
+				entry.PathHint = m_Config.StartScene;
+				candidate.Scenes.push_back(std::move(entry));
+			}
+			else
+			{
+				scene->Enabled = true;
+				if (!m_Config.StartScene.empty())
+					scene->PathHint = m_Config.StartScene;
+			}
+		}
+
+		std::string validationError;
+		if (!NormalizeAndValidateBuildSettings(candidate, validationError))
+		{
+			TC_Core_Error("Cannot set entry scene: {0}", validationError);
+			return false;
+		}
+		m_BuildSettings = std::move(candidate);
+		SynchronizeLegacyStartSceneMirror();
 		return true;
 	}
 
@@ -878,6 +2611,8 @@ namespace TomCat {
 			EditorProjectState loaded;
 			loaded.ContentBrowserCurrentDirectory = ReadOptional<std::string>(
 				browserNode, "currentDirectory", ".");
+			loaded.ExternalScriptEditor = UTF8ToPath(ReadOptional<std::string>(
+				root, "externalScriptEditor", ""));
 			const YAML::Node expandedNodes = browserNode["expandedNodes"];
 			if (expandedNodes)
 			{
@@ -887,6 +2622,9 @@ namespace TomCat {
 					loaded.ContentBrowserExpandedNodes.push_back(node.as<std::string>());
 			}
 
+			std::string editorError;
+			if (!NormalizeExternalScriptEditor(loaded.ExternalScriptEditor, editorError))
+				throw std::runtime_error(editorError);
 			NormalizeEditorState(loaded, GetAssetPath());
 			state = std::move(loaded);
 			return EditorProjectStateLoadResult::Loaded;
@@ -915,6 +2653,13 @@ namespace TomCat {
 		}
 
 		EditorProjectState normalized = state;
+		std::string editorError;
+		if (!NormalizeExternalScriptEditor(normalized.ExternalScriptEditor, editorError))
+		{
+			TC_Core_Error("Cannot save Editor settings '{0}': {1}",
+				PathToUTF8(settingsPath), editorError);
+			return false;
+		}
 		NormalizeEditorState(normalized, GetAssetPath());
 
 		std::ostringstream json;
@@ -935,7 +2680,9 @@ namespace TomCat {
 		if (!normalized.ContentBrowserExpandedNodes.empty())
 			json << '\n' << "    ";
 		json << "]\n"
-			<< "  }\n"
+			<< "  },\n"
+			<< "  \"externalScriptEditor\": \""
+			<< EscapeJsonString(PathToUTF8(normalized.ExternalScriptEditor)) << "\"\n"
 			<< "}\n";
 
 		std::string writeError;
@@ -1079,6 +2826,19 @@ namespace TomCat {
 			TC_Core_Error("Cannot create project '{0}': {1}", PathToUTF8(projectPath), validationError);
 			return nullptr;
 		}
+		project->m_BuildSettings = BuildSettings{};
+		project->m_PlayerSettings = MakeDefaultPlayerSettings(
+			project->m_Config.Name, project->m_Config.Version);
+		if (static_cast<uint64_t>(project->m_Config.StartSceneHandle) != 0)
+		{
+			BuildSceneSettings entry;
+			entry.Handle = project->m_Config.StartSceneHandle;
+			entry.Enabled = true;
+			entry.PathHint = project->m_Config.StartScene;
+			project->m_BuildSettings.EntrySceneHandle = entry.Handle;
+			project->m_BuildSettings.Scenes.push_back(std::move(entry));
+		}
+		project->SynchronizeLegacyStartSceneMirror();
 
 		const std::filesystem::path assetPath = project->GetAssetPath();
 		std::vector<std::filesystem::path> missingDirectories;
@@ -1142,6 +2902,10 @@ namespace TomCat {
 			std::error_code cleanupError;
 			std::filesystem::remove(project->GetSettingsPath(), cleanupError);
 			cleanupError.clear();
+			std::filesystem::remove(project->GetBuildSettingsPath(), cleanupError);
+			cleanupError.clear();
+			std::filesystem::remove(project->GetPlayerSettingsPath(), cleanupError);
+			cleanupError.clear();
 			std::filesystem::remove(project->GetSettingsPath().parent_path(), cleanupError);
 			cleanupError.clear();
 			std::filesystem::remove(project->GetProjectPath(), cleanupError);
@@ -1161,24 +2925,193 @@ namespace TomCat {
 		return project;
 	}
 
+	Ref<Project> Project::Inspect(const std::filesystem::path& projectPath)
+	{
+		return LoadInternal(projectPath, true, nullptr);
+	}
+
+	bool Project::PreviewMigration(const std::filesystem::path& projectPath,
+		ProjectMigrationPreview& preview, std::string& errorMessage)
+	{
+		preview = {};
+		errorMessage.clear();
+		try
+		{
+			if (!RequireNoActiveMigrationJournal(projectPath, errorMessage))
+				return false;
+
+			Ref<Project> inspected = Inspect(projectPath);
+			if (!inspected)
+				throw std::runtime_error("Project validation failed");
+
+			std::string projectDocument;
+			if (!ReadMigrationFileBytes(
+				projectPath, projectPath, projectDocument, errorMessage))
+				return false;
+			const YAML::Node root = YAML::Load(projectDocument);
+			uint32_t schemaVersion = 0;
+			(void)RequireSupportedProjectDocument(root, schemaVersion);
+
+			bool buildSettingsExist = false;
+			uintmax_t ignoredSize = 0;
+			std::string ignoredSHA256;
+			if (!InspectMigrationTarget(projectPath,
+				inspected->GetBuildSettingsPath(), buildSettingsExist,
+				ignoredSize, ignoredSHA256, errorMessage))
+				return false;
+			bool playerSettingsExist = false;
+			if (!InspectMigrationTarget(projectPath,
+				inspected->GetPlayerSettingsPath(), playerSettingsExist,
+				ignoredSize, ignoredSHA256, errorMessage))
+				return false;
+
+			return BuildProjectMigrationPreview(projectPath, schemaVersion,
+				!buildSettingsExist, !playerSettingsExist, preview, errorMessage);
+		}
+		catch (const std::exception& exception)
+		{
+			errorMessage = exception.what();
+			return false;
+		}
+	}
+
+	bool Project::RecoverInterruptedMigration(
+		const std::filesystem::path& projectPath, std::string& errorMessage)
+	{
+		errorMessage.clear();
+		ProjectMigrationDirectoryGuards guards;
+		if (!PinMigrationProjectDirectory(projectPath, guards.Root, errorMessage))
+			return false;
+		const std::filesystem::path journalPath = MigrationJournalPath(projectPath);
+		if (!ValidateMigrationPath(
+			projectPath, projectPath, true, errorMessage) ||
+			!ValidateMigrationPath(
+				projectPath, journalPath, true, errorMessage))
+			return false;
+		std::error_code filesystemError;
+		const std::filesystem::file_status status =
+			std::filesystem::symlink_status(journalPath, filesystemError);
+		if (filesystemError == std::errc::no_such_file_or_directory ||
+			(!filesystemError && !std::filesystem::exists(status)))
+			return true;
+		if (filesystemError)
+		{
+			errorMessage = "Could not inspect migration journal: " +
+				filesystemError.message();
+			return false;
+		}
+		if (!std::filesystem::is_regular_file(status) ||
+			std::filesystem::is_symlink(status))
+		{
+			errorMessage = "Migration journal is not a regular, non-symlink file";
+			return false;
+		}
+		if (!guards.Active.Acquire(journalPath.parent_path(), errorMessage))
+		{
+			errorMessage = "Could not pin migration journal directory: " +
+				errorMessage;
+			return false;
+		}
+
+		std::string document;
+		if (!ReadMigrationFileBytes(
+			projectPath, journalPath, document, errorMessage))
+			return false;
+		ProjectMigrationJournal journal;
+		if (!ParseMigrationJournal(projectPath, document, journal, errorMessage))
+			return false;
+		if (journal.State == "prepared")
+		{
+			const std::filesystem::path backupDirectory =
+				MigrationBackupRoot(projectPath) /
+				UTF8ToPath(journal.TransactionID);
+			if (!ValidateMigrationPath(
+				projectPath, backupDirectory, false, errorMessage))
+				return false;
+			FileSystem::PinnedDirectoryChain transactionGuard;
+			if (!transactionGuard.Acquire(backupDirectory, errorMessage))
+			{
+				errorMessage = "Could not pin migration backup directory: " +
+					errorMessage;
+				return false;
+			}
+			guards.Active = std::move(transactionGuard);
+		}
+		if (!RestoreMigrationJournal(
+			projectPath, journal, errorMessage, &guards.Active))
+			return false;
+		TC_Core_Warn("Recovered interrupted project migration '{0}'",
+			journal.TransactionID);
+		return true;
+	}
+
 	Ref<Project> Project::Load(const std::filesystem::path& projectPath)
 	{
+		return LoadInternal(projectPath, false, nullptr);
+	}
+
+	Ref<Project> Project::LoadWithMigration(
+		const std::filesystem::path& projectPath,
+		const ProjectMigrationPreview& approvedMigration)
+	{
+		return LoadInternal(projectPath, false, &approvedMigration);
+	}
+
+	Ref<Project> Project::LoadInternal(const std::filesystem::path& projectPath,
+		bool inspectOnly, const ProjectMigrationPreview* approvedMigration)
+	{
+		if (!inspectOnly)
+		{
+			std::string journalError;
+			if (!RequireNoActiveMigrationJournal(projectPath, journalError))
+			{
+				TC_Core_Error("Could not load project '{0}': {1}",
+					PathToUTF8(projectPath), journalError);
+				return nullptr;
+			}
+		}
+
 		std::error_code error;
 		if (!std::filesystem::is_regular_file(projectPath, error) || error)
 			return nullptr;
 
 		try
 		{
-			std::ifstream input(projectPath, std::ios::binary);
-			if (!input)
-				throw std::runtime_error("Could not open the project file");
-			YAML::Node data = YAML::Load(input);
-			if (input.bad())
-				throw std::runtime_error("Failed while reading the project file");
-			const YAML::Node projectNode = RequireCurrentProjectDocument(data);
+			YAML::Node data;
+			{
+				std::ifstream input(projectPath, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("Could not open the project file");
+				data = YAML::Load(input);
+				if (input.bad())
+					throw std::runtime_error("Failed while reading the project file");
+			}
+			uint32_t schemaVersion = 0;
+			const YAML::Node projectNode = RequireSupportedProjectDocument(data, schemaVersion);
 
 			auto project = CreateRef<Project>(projectPath);
-			project->m_Config = ReadCurrentProjectConfig(projectNode);
+			project->m_Config = ReadProjectConfig(projectNode, schemaVersion);
+			std::string buildSettingsError;
+			const BuildSettingsLoadResult buildSettingsResult = LoadBuildSettingsFile(
+				project->GetBuildSettingsPath(), project->m_BuildSettings, buildSettingsError);
+			if (buildSettingsResult == BuildSettingsLoadResult::Failed)
+				throw std::runtime_error("Invalid build settings: " + buildSettingsError);
+			if (buildSettingsResult == BuildSettingsLoadResult::Missing)
+			{
+				if (schemaVersion == CurrentSchemaVersion)
+					throw std::runtime_error("ProjectSettings/BuildSettings.json is required by project schema " +
+						std::to_string(CurrentSchemaVersion));
+				if (static_cast<uint64_t>(project->m_Config.StartSceneHandle) != 0)
+				{
+					BuildSceneSettings entry;
+					entry.Handle = project->m_Config.StartSceneHandle;
+					entry.Enabled = true;
+					entry.PathHint = project->m_Config.StartScene;
+					project->m_BuildSettings.EntrySceneHandle = entry.Handle;
+					project->m_BuildSettings.Scenes.push_back(std::move(entry));
+				}
+			}
+			project->SynchronizeLegacyStartSceneMirror();
 			std::string settingsError;
 			ProjectSettingsLoadResult settingsResult = LoadProjectSettingsFile(
 				project->GetSettingsPath(), project->m_Settings, settingsError,
@@ -1194,10 +3127,40 @@ namespace TomCat {
 			if (settingsResult == ProjectSettingsLoadResult::Failed)
 				throw std::runtime_error("Invalid project settings: " + settingsError);
 
+			project->m_PlayerSettings = MakeDefaultPlayerSettings(
+				project->m_Config.Name, project->m_Config.Version);
+			std::string playerSettingsError;
+			const PlayerSettingsLoadResult playerSettingsResult = LoadPlayerSettingsFile(
+				project->GetPlayerSettingsPath(), project->m_PlayerSettings,
+				playerSettingsError);
+			if (playerSettingsResult == PlayerSettingsLoadResult::Failed)
+				throw std::runtime_error("Invalid Player settings: " + playerSettingsError);
+
 			project->m_PreservedDocument = ReadWholeFile(projectPath);
-			if (!EnsureAssetSystemIgnoreRules(project->m_Directory))
-				TC_Core_Warn("Could not ensure asset-system ignore rules for '{0}'",
-					PathToUTF8(project->m_Directory));
+			if (!inspectOnly)
+			{
+				ProjectMigrationPreview migration;
+				std::string migrationError;
+				if (!BuildProjectMigrationPreview(projectPath, schemaVersion,
+					buildSettingsResult == BuildSettingsLoadResult::Missing,
+					playerSettingsResult == PlayerSettingsLoadResult::Missing,
+					migration, migrationError))
+					throw std::runtime_error("Could not prepare project migration: " +
+						migrationError);
+				if (approvedMigration &&
+					!MigrationPreviewsMatch(*approvedMigration, migration))
+					throw std::runtime_error(
+						"Approved project migration plan is stale or incomplete");
+				if (migration.RequiresMigration())
+				{
+					if (!approvedMigration)
+						throw std::runtime_error(
+							"Project migration is required; preview and explicitly approve it before loading");
+					if (!ExecuteProjectMigration(*project, migration, migrationError))
+						throw std::runtime_error("Project migration failed: " +
+							migrationError);
+				}
+			}
 			return project;
 		}
 		catch (const std::exception& exception)
@@ -1216,6 +3179,12 @@ namespace TomCat {
 			std::string validationError;
 			if (!NormalizeAndValidateConfig(m_Config, validationError))
 				throw std::runtime_error(validationError);
+			if (!NormalizeAndValidateBuildSettings(m_BuildSettings, validationError))
+				throw std::runtime_error(validationError);
+			PlayerSettings normalizedPlayerSettings = m_PlayerSettings;
+			if (!NormalizeAndValidatePlayerSettings(normalizedPlayerSettings, validationError))
+				throw std::runtime_error(validationError);
+			SynchronizeLegacyStartSceneMirror();
 
 			std::error_code error;
 			const bool destinationExists = std::filesystem::exists(m_ProjectPath, error);
@@ -1231,12 +3200,16 @@ namespace TomCat {
 				root = YAML::Load(input);
 				if (input.bad())
 					throw std::runtime_error("Failed while reading the existing project document");
-				(void)ReadCurrentProjectConfig(RequireCurrentProjectDocument(root));
+				uint32_t schemaVersion = 0;
+				const YAML::Node projectNode = RequireSupportedProjectDocument(root, schemaVersion);
+				(void)ReadProjectConfig(projectNode, schemaVersion);
 			}
 			else if (!m_PreservedDocument.empty())
 			{
 				root = YAML::Load(m_PreservedDocument);
-				(void)ReadCurrentProjectConfig(RequireCurrentProjectDocument(root));
+				uint32_t schemaVersion = 0;
+				const YAML::Node projectNode = RequireSupportedProjectDocument(root, schemaVersion);
+				(void)ReadProjectConfig(projectNode, schemaVersion);
 			}
 			else
 			{
@@ -1244,16 +3217,20 @@ namespace TomCat {
 				root["Project"] = YAML::Node(YAML::NodeType::Map);
 			}
 
+			if (!SaveBuildSettings())
+				throw std::runtime_error("Could not save ProjectSettings/BuildSettings.json");
+			if (!SavePlayerSettings())
+				throw std::runtime_error("Could not save ProjectSettings/PlayerSettings.json");
+
 			root["SchemaVersion"] = CurrentSchemaVersion;
-			YAML::Node projectNode = root["Project"];
+			YAML::Node projectNode(YAML::NodeType::Map);
 			projectNode["Name"] = m_Config.Name;
 			projectNode["Version"] = m_Config.Version;
 			projectNode["Description"] = m_Config.Description;
 			projectNode["EditorVersion"] = m_Config.EditorVersion;
 			projectNode["Template"] = m_Config.Template;
 			projectNode["AssetDirectory"] = PathToUTF8(m_Config.AssetDirectory);
-			projectNode["StartScene"] = PathToUTF8(m_Config.StartScene);
-			projectNode["StartSceneHandle"] = static_cast<uint64_t>(m_Config.StartSceneHandle);
+			root["Project"] = projectNode;
 
 			YAML::Emitter out;
 			out << root;
@@ -1282,6 +3259,8 @@ namespace TomCat {
 		m_Directory = std::move(reloaded->m_Directory);
 		m_Config = std::move(reloaded->m_Config);
 		m_Settings = std::move(reloaded->m_Settings);
+		m_PlayerSettings = std::move(reloaded->m_PlayerSettings);
+		m_BuildSettings = std::move(reloaded->m_BuildSettings);
 		if (!localLastOperationTime.empty())
 			m_Config.LastOperationTime = localLastOperationTime;
 		m_PreservedDocument = std::move(reloaded->m_PreservedDocument);

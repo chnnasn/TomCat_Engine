@@ -1,6 +1,9 @@
 #include "tcpch.h"
 #include "Platform/OpenGL/OpenGLShader.h"
 
+#include "TomCat/Asset/ShaderArtifact.h"
+
+#include <cstring>
 #include <fstream>
 #include <glad/glad.h>
 
@@ -59,6 +62,16 @@ namespace TomCat {
 			}
 			TC_Core_Assert(false);
 			return (shaderc_shader_kind)0;
+		}
+
+		static GLenum ShaderArtifactStageToOpenGL(ShaderArtifactStage stage)
+		{
+			switch (stage)
+			{
+				case ShaderArtifactStage::Vertex: return GL_VERTEX_SHADER;
+				case ShaderArtifactStage::Fragment: return GL_FRAGMENT_SHADER;
+			}
+			return 0;
 		}
 
 		static const char* GLShaderStageToString(GLenum stage)
@@ -292,6 +305,14 @@ namespace TomCat {
 		BuildProgram(sources);
 	}
 
+	OpenGLShader::OpenGLShader(const std::string& name,
+		std::span<const uint8_t> artifact)
+		: m_Identity(name), m_Name(name)
+	{
+		TC_PROFILE_FUNCTION();
+		BuildProgramFromArtifact(artifact);
+	}
+
 	OpenGLShader::~OpenGLShader()
 	{
 		TC_PROFILE_FUNCTION();
@@ -374,6 +395,7 @@ namespace TomCat {
 	void OpenGLShader::BuildProgram(const std::unordered_map<GLenum, std::string>& shaderSources)
 	{
 		m_UsedCachedBinaries = false;
+		m_UniformLocations.clear();
 		try
 		{
 			CompileOrGetVulkanBinaries(shaderSources);
@@ -392,6 +414,57 @@ namespace TomCat {
 			CompileOrGetOpenGLBinaries(true);
 			CreateProgram();
 		}
+	}
+
+	void OpenGLShader::BuildProgramFromArtifact(std::span<const uint8_t> bytes)
+	{
+		ShaderArtifactView artifact;
+		std::string error;
+		if (!ParseShaderArtifact(bytes, artifact, error))
+			throw std::runtime_error("Invalid shader artifact '" + m_Identity
+				+ "': " + error);
+		if (artifact.Target != ShaderArtifactTarget::OpenGL)
+			throw std::runtime_error("Shader artifact target does not match OpenGL: "
+				+ m_Identity);
+
+		m_UsedCachedBinaries = false;
+		m_VulkanSPIRV.clear();
+		m_OpenGLSPIRV.clear();
+		m_OpenGLSourceCode.clear();
+		m_UniformLocations.clear();
+		for (const ShaderResourceView& resource : artifact.Resources)
+		{
+			const bool addressableUniform =
+				resource.Kind == ShaderResourceKind::PlainUniform
+				|| resource.Kind == ShaderResourceKind::SampledImage
+				|| resource.Kind == ShaderResourceKind::SeparateImage
+				|| resource.Kind == ShaderResourceKind::SeparateSampler
+				|| resource.Kind == ShaderResourceKind::StorageImage;
+			if (!addressableUniform || resource.Name.empty()
+				|| resource.Location == UINT32_MAX
+				|| resource.Location > static_cast<uint32_t>(std::numeric_limits<GLint>::max()))
+				continue;
+			const GLint location = static_cast<GLint>(resource.Location);
+			const auto [found, inserted] = m_UniformLocations.emplace(
+				std::string(resource.Name), location);
+			if (!inserted && found->second != location)
+				throw std::runtime_error("Shader artifact contains conflicting uniform locations: "
+					+ m_Identity);
+		}
+		for (const ShaderArtifactStageView& stage : artifact.Stages)
+		{
+			const GLenum glStage = Utils::ShaderArtifactStageToOpenGL(stage.Stage);
+			if (!glStage || stage.EntryPoint != "main"
+				|| stage.Spirv.empty() || stage.Spirv.size() % sizeof(uint32_t) != 0)
+				throw std::runtime_error("Shader artifact contains an unsupported stage: "
+					+ m_Identity);
+			std::vector<uint32_t> spirv(stage.Spirv.size() / sizeof(uint32_t));
+			std::memcpy(spirv.data(), stage.Spirv.data(), stage.Spirv.size());
+			if (!m_OpenGLSPIRV.emplace(glStage, std::move(spirv)).second)
+				throw std::runtime_error("Shader artifact contains a duplicate stage: "
+					+ m_Identity);
+		}
+		CreateProgram();
 	}
 
 	void OpenGLShader::CompileOrGetVulkanBinaries(const std::unordered_map<GLenum, std::string>& shaderSources, bool forceCompile)
@@ -636,50 +709,60 @@ namespace TomCat {
 
 	void OpenGLShader::UploadUniformInt(const std::string& name, int value)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniform1i(location, value);
 	}
 
 	void OpenGLShader::UploadUniformIntArray(const std::string& name, int* values, uint32_t count)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniform1iv(location, count, values);
 	}
 
 	void OpenGLShader::UploadUniformFloat(const std::string& name, float value)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniform1f(location, value);
 	}
 
 	void OpenGLShader::UploadUniformFloat2(const std::string& name, const glm::vec2& value)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniform2f(location, value.x, value.y);
 	}
 
 	void OpenGLShader::UploadUniformFloat3(const std::string& name, const glm::vec3& value)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniform3f(location, value.x, value.y, value.z);
 	}
 
 	void OpenGLShader::UploadUniformFloat4(const std::string& name, const glm::vec4& value)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniform4f(location, value.x, value.y, value.z, value.w);
 	}
 
 	void OpenGLShader::UploadUniformMat3(const std::string& name, const glm::mat3& matrix)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniformMatrix3fv(location, 1, GL_FALSE, glm::value_ptr(matrix));
 	}
 
 	void OpenGLShader::UploadUniformMat4(const std::string& name, const glm::mat4& matrix)
 	{
-		GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		GLint location = GetUniformLocation(name);
 		glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(matrix));
+	}
+
+	GLint OpenGLShader::GetUniformLocation(const std::string& name)
+	{
+		const auto cached = m_UniformLocations.find(name);
+		if (cached != m_UniformLocations.end())
+			return cached->second;
+		const GLint location = glGetUniformLocation(m_RendererID, name.c_str());
+		m_UniformLocations.emplace(name, location);
+		return location;
 	}
 
 }

@@ -3,7 +3,10 @@
 
 #include "Log.h"
 
+#include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Renderer.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 
 #include "Input.h"
 
@@ -14,7 +17,14 @@ namespace TomCat {
 	Application* Application::s_Instance = nullptr;
 
 	Application::Application(const std::string& name, std::filesystem::path iconPath,
-		bool enableImGui)
+		bool enableImGui, bool createWindow)
+		: Application(WindowProps(name, 1920, 1080, std::move(iconPath)),
+			enableImGui, createWindow)
+	{
+	}
+
+	Application::Application(WindowProps windowProps, bool enableImGui,
+		bool createWindow)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -22,14 +32,23 @@ namespace TomCat {
 			throw std::logic_error("Only one TomCat application can exist at a time");
 
 		s_Instance = this;
+		if (!createWindow)
+			return;
 		try
 		{
-			m_Window = Window::Create(WindowProps(name, 1920, 1080, std::move(iconPath)));
+			m_Window = Window::Create(windowProps);
 			if (!m_Window)
 				throw std::runtime_error("Failed to create the application window");
 
 			m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
 			Renderer::Init();
+			m_RendererInitialized = true;
+			if (m_Window->GetFramebufferWidth() > 0
+				&& m_Window->GetFramebufferHeight() > 0)
+			{
+				Renderer::OnWindowResize(m_Window->GetFramebufferWidth(),
+					m_Window->GetFramebufferHeight());
+			}
 
 			if (enableImGui)
 			{
@@ -41,7 +60,11 @@ namespace TomCat {
 		{
 			m_LayerStack.Clear();
 			m_ImGuiLayer = nullptr;
-			Renderer::Shutdown();
+			if (m_RendererInitialized)
+			{
+				Renderer::Shutdown();
+				m_RendererInitialized = false;
+			}
 			m_Window.reset();
 			s_Instance = nullptr;
 			throw;
@@ -56,7 +79,11 @@ namespace TomCat {
 
 		m_LayerStack.Clear();
 		m_ImGuiLayer = nullptr;
-		Renderer::Shutdown();
+		if (m_RendererInitialized)
+		{
+			Renderer::Shutdown();
+			m_RendererInitialized = false;
+		}
 		m_Window.reset();
 		s_Instance = nullptr;
 	}
@@ -132,15 +159,41 @@ namespace TomCat {
 	void Application::Run()
 	{
 		TC_PROFILE_FUNCTION();
+		// Command-only applications deliberately avoid GLFW and renderer
+		// initialization. Their constructor completes the operation before Run.
+		if (!m_Window)
+			return;
 		m_LastFrameTime = static_cast<float>(m_Window->GetTimeSeconds());
 
 		while (m_Running) 
 		{
 			TC_PROFILE_SCOPE("RunLoop");
+			// Poll first, then freeze one immutable input snapshot. Both native
+			// gameplay and managed scripts therefore observe transitions delivered
+			// by this poll, including press+release pairs between display frames.
+			m_Window->PollEvents();
+			Input::BeginFrame();
+			Scripting::ScriptEngine::Get().CaptureInputState();
+			if (!m_Running)
+				break;
 
 			float time = static_cast<float>(m_Window->GetTimeSeconds());
 			Timestep timestep = time - m_LastFrameTime;
 			m_LastFrameTime = time;
+
+			// Files are hashed and imported on worker threads, but registry updates
+			// and runtime cache invalidation must be published from the application
+			// thread. Pump even while minimized so authoring changes cannot remain
+			// indefinitely queued behind a hidden window.
+			(void)AssetManager::Get().PumpImportCoordinator();
+			// Texture workers only read and validate immutable artifacts. OpenGL
+			// object creation stays on this context-owning thread and is metered so a
+			// large preload cannot turn one frame into a long upload stall.
+			(void)AssetManager::Get().PumpTexturePublishes();
+			// Font workers perform artifact reads and glyph rasterization only. Keep
+			// atlas texture creation on the context-owning application thread and
+			// publish a bounded amount before layers render this frame.
+			(void)FontManager::Get().PumpPublishes();
 
 			if (!m_Minimized)
 			{
@@ -164,7 +217,7 @@ namespace TomCat {
 
 			}
 
-			m_Window->OnUpdate();
+			m_Window->Present();
 		}
 	}
 
@@ -180,14 +233,15 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		if (e.GetWidth() == 0 || e.GetHeight() == 0)
+		if (e.GetFramebufferWidth() == 0 || e.GetFramebufferHeight() == 0)
 		{
 			m_Minimized = true;
 			return false;
 		}
 
 		m_Minimized = false;
-		Renderer::OnWindowResize(e.GetWidth(), e.GetHeight());
+		Renderer::OnWindowResize(e.GetFramebufferWidth(),
+			e.GetFramebufferHeight());
 
 		return false;
 	}

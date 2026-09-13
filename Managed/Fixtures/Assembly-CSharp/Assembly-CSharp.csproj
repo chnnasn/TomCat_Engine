@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Assembly-CSharp</AssemblyName>
+    <RootNamespace>Game</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../TomCat.Managed/TomCat.Managed.csproj" />
+    <ProjectReference Include="../../TomCat.ScriptGenerator/TomCat.ScriptGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+    <AdditionalFiles Include="ScriptAssets.json" />
+  </ItemGroup>
+</Project>

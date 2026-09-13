@@ -25,14 +25,22 @@ $FinalName = "TomCatHub"
 . (Join-Path $PSScriptRoot "EvbTools.ps1")
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "VersionTools.ps1")
+. (Join-Path $PSScriptRoot "ReleaseArtifactTools.ps1")
+$versionInfo = Get-TomCatVersionInfo -RepositoryRoot $RepoRoot
+if ($Version -and $Version -ne $versionInfo.ProductVersion) {
+    throw "Requested release version '$Version' does not match Version.h ($($versionInfo.ProductVersion))."
+}
+$Version = $versionInfo.ProductVersion
+Write-Host "[Version] TomCat $Version"
 if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Builder\bin\Release-windows-x86_64\Manager" }
 
 # 1) Optional rebuild
 if ($Build) {
     if (-not (Test-Path $MsBuildPath)) { throw "MSBuild not found: $MsBuildPath" }
-    $proj = Join-Path $RepoRoot "Builder\Manager\Manager.vcxproj"
+    $builderSolution = Join-Path $RepoRoot "Builder\Builder.sln"
     Write-Host "[1/4] Building Release x64 ..."
-    & $MsBuildPath $proj -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
+    & $MsBuildPath $builderSolution -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
 } else {
     Write-Host "[1/4] Skipping build (use -Build to rebuild first)"
@@ -43,9 +51,6 @@ $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
 $packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
 $packageFileCount = @(Get-ChildItem -LiteralPath $packageSource -Recurse -File -Force).Count
 Write-Host "Scanning $packageFileCount package candidate file(s) from $packageSource"
-if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "TomCat.log") -PathType Leaf)) {
-    New-Item -ItemType File -Path (Join-Path $SourceDir "TomCat.log") -Force | Out-Null
-}
 
 $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
@@ -134,6 +139,7 @@ if ($evbOutput -and (Test-Path $evbOutput)) {
     if ($evbOutputFull -ne $outExeFull) {
         Copy-Item $evbOutput $outExe -Force
     }
+    New-TomCatReleaseMetadata -RepositoryRoot $RepoRoot -DistPath $dist -Target hub -Version $Version | Out-Null
     Write-Host "[4/4] Final package -> $outExe"
     $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
     Write-Host "Done: $outExe ($sizeMb MB)"

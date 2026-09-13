@@ -14,7 +14,7 @@ namespace TomCat {
 	enum class EventType 
 	{
 		None = 0,
-		WindowClose, WindowResize,
+		WindowClose, WindowResize, WindowFocus, WindowLostFocus,
 		KeyPressed,KeyReleased,KeyTyped,
 		MouseButtonPressed, MouseButtonReleased,MouseMoved, MouseScrolled
 

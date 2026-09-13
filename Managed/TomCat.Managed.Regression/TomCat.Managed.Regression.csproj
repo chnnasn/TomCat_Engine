@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>TomCat.Managed.Regression</AssemblyName>
+    <RootNamespace>TomCat.Managed.Regression</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TomCat.Managed/TomCat.Managed.csproj" />
+    <ProjectReference Include="../TomCat.ScriptHost/TomCat.ScriptHost.csproj" />
+    <ProjectReference Include="../Fixtures/Assembly-CSharp/Assembly-CSharp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Fixtures/Assembly-CSharp-B/Assembly-CSharp-B.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyManagedFixture" AfterTargets="Build">
+    <ItemGroup>
+      <FixtureOutput Include="../Fixtures/Assembly-CSharp/bin/$(Configuration)/net10.0/Assembly-CSharp.dll" />
+      <FixtureOutput Include="../Fixtures/Assembly-CSharp/bin/$(Configuration)/net10.0/Assembly-CSharp.pdb" Condition="Exists('../Fixtures/Assembly-CSharp/bin/$(Configuration)/net10.0/Assembly-CSharp.pdb')" />
+      <FixtureBOutput Include="../Fixtures/Assembly-CSharp-B/bin/$(Configuration)/net10.0/Assembly-CSharp.dll" />
+      <FixtureBOutput Include="../Fixtures/Assembly-CSharp-B/bin/$(Configuration)/net10.0/Assembly-CSharp.pdb" Condition="Exists('../Fixtures/Assembly-CSharp-B/bin/$(Configuration)/net10.0/Assembly-CSharp.pdb')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FixtureOutput)" DestinationFolder="$(OutDir)Fixture" />
+    <Copy SourceFiles="@(FixtureBOutput)" DestinationFolder="$(OutDir)FixtureB" />
+  </Target>
+</Project>
