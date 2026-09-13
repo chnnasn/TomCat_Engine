@@ -898,6 +898,74 @@ namespace TomCat::Scripting {
 			return api;
 		}
 
+		int32_t ComponentStringGetPropertyCallback(EntityHandleV1 handle,
+			uint64_t typeId, uint64_t propertyId, uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!required) return Code(ScriptStatus::InvalidArgument);
+				*required = 0;
+				const ComponentDescriptor* descriptor = FindScriptComponent(typeId);
+				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
+				const PropertyDescriptor* property = FindProperty(*descriptor, propertyId);
+				if (!property || property->Kind != PropertyKind::String)
+					return Code(ScriptStatus::InvalidArgument);
+				Entity entity = Resolve(handle);
+				if (!entity || !descriptor->Has(entity))
+					return Code(ScriptStatus::NotFound);
+				const PropertyValue value = property->Get(entity);
+				const std::string* text = std::get_if<std::string>(&value);
+				if (!text || text->size() > ComponentStringMaximumBytesV1
+					|| !IsValidUtf8(*text))
+					return Code(ScriptStatus::InvalidState);
+				return WriteUtf8(*text, buffer, capacity, required);
+			});
+		}
+
+		int32_t ComponentStringSetPropertyCallback(EntityHandleV1 handle,
+			uint64_t typeId, uint64_t propertyId, NativeUtf8View value) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				const ComponentDescriptor* descriptor = FindScriptComponent(typeId);
+				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
+				const PropertyDescriptor* property = FindProperty(*descriptor, propertyId);
+				if (!property || property->Kind != PropertyKind::String
+					|| value.Length > ComponentStringMaximumBytesV1)
+					return Code(ScriptStatus::InvalidArgument);
+				std::string decoded;
+				if (!ReadUtf8(value, decoded))
+					return Code(ScriptStatus::InvalidArgument);
+				Entity entity = Resolve(handle);
+				if (!entity || !descriptor->Has(entity))
+				{
+					bool projected = false;
+					if (!ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
+						handle, typeId, projected) || !projected)
+						return Code(ScriptStatus::NotFound);
+					return ScriptEngine::Get().QueueSetRegisteredComponentStringProperty(
+						handle, typeId, propertyId, std::move(decoded))
+						? Code(ScriptStatus::Success)
+						: Code(ScriptStatus::InvalidState);
+				}
+				std::string error;
+				return property->Set(entity, PropertyValue(std::move(decoded)), error)
+					? Code(ScriptStatus::Success)
+					: Code(ScriptStatus::InvalidArgument);
+			});
+		}
+
+		NativeComponentStringApiV1 BuildComponentStringApiV1()
+		{
+			NativeComponentStringApiV1 api;
+			api.GetProperty = &ComponentStringGetPropertyCallback;
+			api.SetProperty = &ComponentStringSetPropertyCallback;
+			return api;
+		}
+
 		NativeUtf8View BorrowComponentSchemaString(const std::string& value)
 		{
 			return {
@@ -2382,6 +2450,17 @@ namespace TomCat::Scripting {
 					std::memcpy(output, &api, sizeof(api));
 					return Code(ScriptStatus::Success);
 				}
+				if (capability == ComponentStringCapabilityName)
+				{
+					const NativeComponentStringApiV1 api = BuildComponentStringApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
 				if (capability == ComponentSchemaCapabilityName)
 				{
 					const NativeComponentSchemaApiV1 api =
@@ -2644,6 +2723,14 @@ namespace TomCat::Scripting {
 		NativePropertyValueV1 value) noexcept
 	{
 		return ComponentSetPropertyCallback(entity, componentTypeId,
+			propertyId, value);
+	}
+
+	int32_t ApplyRegisteredComponentStringPropertyNow(EntityHandleV1 entity,
+		uint64_t componentTypeId, uint64_t propertyId,
+		NativeUtf8View value) noexcept
+	{
+		return ComponentStringSetPropertyCallback(entity, componentTypeId,
 			propertyId, value);
 	}
 

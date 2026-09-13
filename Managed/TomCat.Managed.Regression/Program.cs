@@ -46,6 +46,14 @@ internal static unsafe class Program
 	private static int s_componentRemoveCalls;
 	private static int s_componentGetCalls;
 	private static int s_componentSetCalls;
+	private static bool s_extensionPresent = true;
+	private static int s_extensionCount;
+	private static string s_extensionLabel = string.Empty;
+	private static int s_extensionPropertyGetCalls;
+	private static int s_extensionPropertySetCalls;
+	private static int s_extensionStringGetCalls;
+	private static int s_extensionStringSetCalls;
+	private static bool s_returnMalformedExtensionUtf8;
 	private static NativeEntityHandleV1 s_reservedGameplayEntity;
 	private static NativeEntityHandleV1 s_gameplayParent;
 	private static NativeVector3 s_localTransformPosition;
@@ -72,6 +80,7 @@ internal static unsafe class Program
 	private static float s_audioMinDistance = 1.0f;
 	private static float s_audioMaxDistance = 25.0f;
 	private static string s_runtimeUIText = "Ready";
+	private static string s_worldText = "World";
 	private static bool s_runtimeUIButtonFocused;
 	private static bool s_runtimeUICaptured;
 	private const ulong RuntimeUIButtonClickSerial = 41;
@@ -318,6 +327,8 @@ internal static unsafe class Program
 		byte[] applicationPathsName =
 			Encoding.UTF8.GetBytes("TomCat.ApplicationPathsApiV1");
 		byte[] componentName = Encoding.UTF8.GetBytes("TomCat.ComponentApiV1");
+		byte[] componentStringName =
+			Encoding.UTF8.GetBytes("TomCat.ComponentStringApiV1");
 		byte[] componentSchemaName =
 			Encoding.UTF8.GetBytes("TomCat.ComponentSchemaApiV1");
 		byte[] gameplayName = Encoding.UTF8.GetBytes("TomCat.GameplayApiV1");
@@ -328,6 +339,7 @@ internal static unsafe class Program
 		fixed (byte* inputEventsPointer = inputEventsName)
 		fixed (byte* applicationPathsPointer = applicationPathsName)
 		fixed (byte* componentPointer = componentName)
+		fixed (byte* componentStringPointer = componentStringName)
 		fixed (byte* componentSchemaPointer = componentSchemaName)
 		fixed (byte* gameplayPointer = gameplayName)
 		fixed (byte* audioSpatialPointer = audioSpatialName)
@@ -361,6 +373,12 @@ internal static unsafe class Program
 			Equal((uint)sizeof(NativeComponentApiV1), required,
 				"component capability required size");
 			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(componentStringPointer,
+					(ulong)componentStringName.Length), 2, null, 0, &required),
+				"newer component string capability version rejection");
+			Equal((uint)sizeof(NativeComponentStringApiV1), required,
+				"component string capability required size");
+			Equal(-4, envelope.QueryCapability(
 				new NativeUtf8View(componentSchemaPointer,
 					(ulong)componentSchemaName.Length), 2, null, 0, &required),
 				"newer component schema capability version rejection");
@@ -387,6 +405,8 @@ internal static unsafe class Program
 
 		Check(ComponentSchema.IsAvailable,
 			"managed component schema capability was not bound");
+		Check(RegisteredComponentProperties.IsStringTransportAvailable,
+			"managed component string capability was not bound");
 		IReadOnlyList<ComponentSchemaInfo> schemas = ComponentSchema.GetComponents();
 		Equal(1, schemas.Count, "managed component schema count");
 		ComponentSchemaInfo healthSchema = schemas[0];
@@ -582,6 +602,14 @@ internal static unsafe class Program
 		s_componentRemoveCalls = 0;
 		s_componentGetCalls = 0;
 		s_componentSetCalls = 0;
+		s_extensionPresent = true;
+		s_extensionCount = 0;
+		s_extensionLabel = string.Empty;
+		s_extensionPropertyGetCalls = 0;
+		s_extensionPropertySetCalls = 0;
+		s_extensionStringGetCalls = 0;
+		s_extensionStringSetCalls = 0;
+		s_returnMalformedExtensionUtf8 = false;
 		s_reservedGameplayEntity = default;
 		s_gameplayParent = new NativeEntityHandleV1(SceneSession, 42, RuntimeGeneration);
 		s_localTransformPosition = default;
@@ -632,6 +660,14 @@ internal static unsafe class Program
 		Equal(1, s_componentRemoveCalls, "registry component Remove call");
 		Equal(3, s_componentGetCalls, "registry component property reads");
 		Equal(3, s_componentSetCalls, "registry component property writes");
+		Equal(1, s_extensionPropertyGetCalls,
+			"public plugin numeric property read");
+		Equal(1, s_extensionPropertySetCalls,
+			"public plugin numeric property write");
+		Equal(4, s_extensionStringGetCalls,
+			"public plugin UTF-8 probe/copy and malformed read calls");
+		Equal(1, s_extensionStringSetCalls,
+			"public plugin UTF-8 property write");
 		Equal(150, s_healthMaximum, "HealthComponent.Maximum round trip");
 		Equal(75, s_healthCurrent, "HealthComponent.Current round trip");
 		Check(s_healthInvulnerable, "HealthComponent.Invulnerable round trip");
@@ -1678,6 +1714,22 @@ internal static unsafe class Program
 			};
 			return 0;
 		}
+		if (capability == "TomCat.ComponentStringApiV1")
+		{
+			*required = (uint)sizeof(NativeComponentStringApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeComponentStringApiV1))
+				return -6;
+			*(NativeComponentStringApiV1*)output = new NativeComponentStringApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeComponentStringApiV1),
+				GetProperty = &StubRegisteredComponentGetString,
+				SetProperty = &StubRegisteredComponentSetString
+			};
+			return 0;
+		}
 		if (capability == "TomCat.ComponentSchemaApiV1")
 		{
 			*required = (uint)sizeof(NativeComponentSchemaApiV1);
@@ -2251,6 +2303,8 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentHas(NativeEntityHandleV1 entity,
 		ulong typeId)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+			return s_extensionPresent ? 1 : 0;
 		if (typeId != HealthComponent.TypeId)
 		{
 			if (typeId == 0x9f00000000000007UL)
@@ -2265,6 +2319,14 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentAdd(NativeEntityHandleV1 entity,
 		ulong typeId)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (s_extensionPresent) return -2;
+			s_extensionPresent = true;
+			s_extensionCount = 0;
+			s_extensionLabel = string.Empty;
+			return 0;
+		}
 		if (typeId != HealthComponent.TypeId)
 		{
 			if (typeId == 0x9f00000000000007UL)
@@ -2283,6 +2345,12 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentRemove(NativeEntityHandleV1 entity,
 		ulong typeId)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent) return -3;
+			s_extensionPresent = false;
+			return 0;
+		}
 		if (typeId != HealthComponent.TypeId)
 		{
 			if (typeId == 0x9f00000000000007UL)
@@ -2304,6 +2372,18 @@ internal static unsafe class Program
 	{
 		if (value is null)
 			return -3;
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent || propertyId != ExtensionProxy.CountPropertyId)
+				return -3;
+			++s_extensionPropertyGetCalls;
+			*value = new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.Int32,
+				Integer = s_extensionCount
+			};
+			return 0;
+		}
 		if (typeId is >= 0x9f00000000000004UL and <= 0x9f0000000000000fUL)
 		{
 			if (!s_registeredBuiltInProperties.TryGetValue(
@@ -2351,6 +2431,17 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentSetProperty(NativeEntityHandleV1 entity,
 		ulong typeId, ulong propertyId, NativePropertyValueV1 value)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent || propertyId != ExtensionProxy.CountPropertyId)
+				return -3;
+			if (value.Kind != NativePropertyKindV1.Int32
+				|| value.Integer < int.MinValue || value.Integer > int.MaxValue)
+				return -1;
+			s_extensionCount = (int)value.Integer;
+			++s_extensionPropertySetCalls;
+			return 0;
+		}
 		if (typeId is >= 0x9f00000000000004UL and <= 0x9f0000000000000fUL)
 		{
 			s_registeredBuiltInProperties[(typeId, propertyId)] = value;
@@ -2382,6 +2473,76 @@ internal static unsafe class Program
 			return -1;
 		++s_componentSetCalls;
 		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentGetString(NativeEntityHandleV1 entity,
+		ulong typeId, ulong propertyId, byte* buffer, uint capacity, uint* required)
+	{
+		if (required is null)
+			return -1;
+		*required = 0;
+		string value;
+		if (typeId == ExtensionProxy.TypeId
+			&& propertyId == ExtensionProxy.LabelPropertyId)
+		{
+			if (!s_extensionPresent) return -3;
+			++s_extensionStringGetCalls;
+			if (s_returnMalformedExtensionUtf8)
+			{
+				ReadOnlySpan<byte> malformed = [0xc0, 0xaf];
+				*required = (uint)malformed.Length;
+				if (capacity < malformed.Length || buffer is null) return -6;
+				malformed.CopyTo(new Span<byte>(buffer, malformed.Length));
+				return 0;
+			}
+			value = s_extensionLabel;
+		}
+		else if (typeId == TextRenderer.TypeId
+			&& propertyId == 0x9f01100000000003UL)
+			value = s_worldText;
+		else return -1;
+
+		byte[] bytes = s_strictUtf8.GetBytes(value);
+		*required = (uint)bytes.Length;
+		if (capacity < bytes.Length || (buffer is null && bytes.Length != 0))
+			return -6;
+		bytes.CopyTo(new Span<byte>(buffer, bytes.Length));
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentSetString(NativeEntityHandleV1 entity,
+		ulong typeId, ulong propertyId, NativeUtf8View value)
+	{
+		if ((value.Data is null && value.Length != 0)
+			|| value.Length > RegisteredComponentProperties.MaximumStringUtf8Bytes)
+			return -1;
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent) return -3;
+			if (propertyId != ExtensionProxy.LabelPropertyId) return -1;
+		}
+		else if (typeId != TextRenderer.TypeId
+			|| propertyId != 0x9f01100000000003UL)
+			return -1;
+		try
+		{
+			string decoded = s_strictUtf8.GetString(
+				new ReadOnlySpan<byte>(value.Data, checked((int)value.Length)));
+			if (typeId == ExtensionProxy.TypeId)
+			{
+				s_extensionLabel = decoded;
+				++s_extensionStringSetCalls;
+			}
+			else s_worldText = decoded;
+			return 0;
+		}
+		catch (Exception error) when (error is DecoderFallbackException
+			or OverflowException)
+		{
+			return -1;
+		}
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -2637,8 +2798,36 @@ internal static unsafe class Program
 	{
 		protected override void OnCreate()
 		{
-			if (Entity.GetComponent<ExtensionProxy>().Entity != Entity)
+			ExtensionProxy extension = Entity.GetComponent<ExtensionProxy>();
+			if (extension.Entity != Entity)
 				throw new InvalidOperationException("attribute-discovered plugin component proxy failed.");
+			extension.Count = 73;
+			extension.Label = "插件属性 😀";
+			if (extension.Count != 73 || extension.Label != "插件属性 😀")
+				throw new InvalidOperationException(
+					"public plugin component property round trip failed.");
+			s_returnMalformedExtensionUtf8 = true;
+			bool malformedRejected = false;
+			try { _ = extension.Label; }
+			catch (TomCatException) { malformedRejected = true; }
+			finally { s_returnMalformedExtensionUtf8 = false; }
+			if (!malformedRejected)
+				throw new InvalidOperationException(
+					"malformed native plugin UTF-8 was accepted.");
+			bool invalidManagedStringRejected = false;
+			try { extension.Label = "\ud800"; }
+			catch (ArgumentException) { invalidManagedStringRejected = true; }
+			if (!invalidManagedStringRejected)
+				throw new InvalidOperationException(
+					"invalid managed UTF-16 was accepted by plugin transport.");
+			s_extensionPresent = false;
+			bool unloadedRejected = false;
+			try { _ = extension.Label; }
+			catch (TomCatException) { unloadedRejected = true; }
+			finally { s_extensionPresent = true; }
+			if (!unloadedRejected)
+				throw new InvalidOperationException(
+					"unloaded plugin property remained accessible.");
 			Entity.Name = "natural-name";
 			Entity.Tag = "natural-tag";
 			Entity.Layer = 5;
@@ -2750,8 +2939,24 @@ internal static unsafe class Program
 	private sealed class ExtensionProxy : IEntityComponent
 	{
 		internal const ulong TypeId = 0xd20a1f7c73e04e11UL;
+		internal const ulong CountPropertyId = 0xd20a1f7c73e04e12UL;
+		internal const ulong LabelPropertyId = 0xd20a1f7c73e04e13UL;
 		private ExtensionProxy(Entity entity) => Entity = entity;
 		public Entity Entity { get; }
+		public int Count
+		{
+			get => RegisteredComponentProperties.GetInt32(Entity, TypeId,
+				CountPropertyId);
+			set => RegisteredComponentProperties.SetInt32(Entity, TypeId,
+				CountPropertyId, value);
+		}
+		public string Label
+		{
+			get => RegisteredComponentProperties.GetString(Entity, TypeId,
+				LabelPropertyId);
+			set => RegisteredComponentProperties.SetString(Entity, TypeId,
+				LabelPropertyId, value);
+		}
 	}
 
 	private sealed class BackgroundThreadApiProbe : TomCatBehaviour
@@ -2923,6 +3128,7 @@ internal static unsafe class Program
 			text.FallbackFont = new AssetRef<FontAsset>(9102);
 			text.EmojiFont = new AssetRef<FontAsset>(9103);
 			var worldText = new TextRenderer(Entity);
+			worldText.Text = "World 文本 😀";
 			worldText.FallbackFont = new AssetRef<FontAsset>(9202);
 			worldText.EmojiFont = new AssetRef<FontAsset>(9203);
 			var button = new UIButton(Entity);
@@ -2933,6 +3139,7 @@ internal static unsafe class Program
 				&& text.EmojiFont.Handle == 9103
 				&& worldText.FallbackFont.Handle == 9202
 				&& worldText.EmojiFont.Handle == 9203
+				&& worldText.Text == "World 文本 😀"
 				&& button.WasClickedThisFrame
 				&& button.ClickSerial == RuntimeUIButtonClickSerial
 				&& rect.Equals(new UIRect(10.0f, 20.0f, 300.0f, 80.0f))

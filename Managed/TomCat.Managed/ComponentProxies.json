@@ -147,7 +147,20 @@
     {
       "managedType": "TextRenderer",
       "stableName": "TomCat.TextRenderer",
-      "typeId": "0x9f01000000000001"
+      "typeId": "0x9f01000000000001",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "0x9f01100000000001", "kind": "Bool" },
+        { "name": "Font", "propertyId": "0x9f01100000000002", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<FontAsset>" },
+        { "name": "Text", "propertyId": "0x9f01100000000003", "kind": "String" },
+        { "name": "FontSize", "propertyId": "0x9f01100000000004", "kind": "Float" },
+        { "name": "Color", "propertyId": "0x9f01100000000005", "kind": "Color" },
+        { "name": "Alignment", "propertyId": "0x9f01100000000006", "kind": "Int32", "conversion": "Enum", "managedType": "TextAlignment" },
+        { "name": "MaxWidth", "propertyId": "0x9f01100000000007", "kind": "Float" },
+        { "name": "LineSpacing", "propertyId": "0x9f01100000000008", "kind": "Float" },
+        { "name": "FallbackFont", "propertyId": "0x9f01100000000009", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<FontAsset>" },
+        { "name": "EmojiFont", "propertyId": "0x9f0110000000000a", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<FontAsset>" }
+      ]
     },
     {
       "managedType": "Canvas",

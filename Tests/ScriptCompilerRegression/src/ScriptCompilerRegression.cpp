@@ -3,6 +3,7 @@
 #include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
@@ -20,6 +21,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -30,6 +32,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef TC_PLATFORM_WINDOWS
@@ -1092,7 +1096,39 @@ namespace {
 		return quoted;
 	}
 
-	void RunWindowsProcessAndRequireSuccess(
+	struct WindowsProcess final
+	{
+		HANDLE Handle = nullptr;
+		DWORD Id = 0;
+
+		WindowsProcess() = default;
+		WindowsProcess(const WindowsProcess&) = delete;
+		WindowsProcess& operator=(const WindowsProcess&) = delete;
+		WindowsProcess(WindowsProcess&& other) noexcept
+			: Handle(other.Handle), Id(other.Id)
+		{
+			other.Handle = nullptr;
+			other.Id = 0;
+		}
+		~WindowsProcess()
+		{
+			if (!Handle)
+				return;
+			TerminateProcess(Handle, 125);
+			WaitForSingleObject(Handle, 5000);
+			CloseHandle(Handle);
+		}
+
+		void Close()
+		{
+			if (Handle)
+				CloseHandle(Handle);
+			Handle = nullptr;
+			Id = 0;
+		}
+	};
+
+	WindowsProcess LaunchWindowsProcess(
 		const std::filesystem::path& executable,
 		const std::vector<std::wstring>& arguments,
 		const std::filesystem::path& workingDirectory,
@@ -1118,27 +1154,109 @@ namespace {
 				+ " (Windows error " + std::to_string(GetLastError()) + ")");
 		}
 		CloseHandle(process.hThread);
+		WindowsProcess result;
+		result.Handle = process.hProcess;
+		result.Id = process.dwProcessId;
+		return result;
+	}
 
+	DWORD WaitForWindowsProcess(WindowsProcess& process,
+		const std::string& description)
+	{
 		constexpr DWORD timeoutMilliseconds = 180000;
-		const DWORD waitResult = WaitForSingleObject(process.hProcess,
+		const DWORD waitResult = WaitForSingleObject(process.Handle,
 			timeoutMilliseconds);
 		if (waitResult != WAIT_OBJECT_0)
 		{
-			TerminateProcess(process.hProcess,
+			TerminateProcess(process.Handle,
 				waitResult == WAIT_TIMEOUT ? 124 : 125);
-			WaitForSingleObject(process.hProcess, 5000);
-			CloseHandle(process.hProcess);
+			WaitForSingleObject(process.Handle, 5000);
+			process.Close();
 			throw std::runtime_error(waitResult == WAIT_TIMEOUT
 				? description + " exceeded its 180 second timeout"
 				: "waiting for " + description + " failed");
 		}
 		DWORD exitCode = 1;
-		const BOOL readExitCode = GetExitCodeProcess(process.hProcess, &exitCode);
-		CloseHandle(process.hProcess);
+		const BOOL readExitCode = GetExitCodeProcess(process.Handle, &exitCode);
+		process.Close();
 		Require(readExitCode != FALSE,
 			"could not read the " + description + " exit code");
+		return exitCode;
+	}
+
+	DWORD RunWindowsProcess(
+		const std::filesystem::path& executable,
+		const std::vector<std::wstring>& arguments,
+		const std::filesystem::path& workingDirectory,
+		const std::string& description)
+	{
+		WindowsProcess process = LaunchWindowsProcess(executable, arguments,
+			workingDirectory, description);
+		return WaitForWindowsProcess(process, description);
+	}
+
+	void RunWindowsProcessAndRequireSuccess(
+		const std::filesystem::path& executable,
+		const std::vector<std::wstring>& arguments,
+		const std::filesystem::path& workingDirectory,
+		const std::string& description)
+	{
+		const DWORD exitCode = RunWindowsProcess(executable, arguments,
+			workingDirectory, description);
 		Require(exitCode == 0, description + " returned exit "
 			+ std::to_string(exitCode) + "; expected 0");
+	}
+
+	std::filesystem::path ResolveDefaultProjectLockPath(
+		const std::filesystem::path& projectPath)
+	{
+		const auto productRoot = TomCat::ApplicationPaths::GetProductDataRoot(
+			TomCat::ApplicationProduct::Editor);
+		Require(productRoot.has_value(),
+			"could not resolve the shared Editor/CLI project-lock root");
+		return TomCat::EditorProjectLock::ResolveLockPath(
+			*productRoot, projectPath);
+	}
+
+	void WaitForProjectLockOwner(const std::filesystem::path& projectPath,
+		DWORD processId)
+	{
+		const std::filesystem::path lockPath =
+			ResolveDefaultProjectLockPath(projectPath);
+		const auto deadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(15);
+		std::string lastError = "lock record was not created";
+		while (std::chrono::steady_clock::now() < deadline)
+		{
+			TomCat::ProjectLockRecord record;
+			std::string readError;
+			if (TomCat::EditorProjectLock::ReadRecord(
+				lockPath, record, readError))
+			{
+				if (record.ProcessId == processId
+					&& record.CanonicalProjectPath
+						== TomCat::EditorProjectLock::CanonicalizePath(projectPath)
+					&& TomCat::EditorProjectLock::IsRecordOwnerAlive(record))
+					return;
+				lastError = "lock record belongs to an unexpected process/project";
+			}
+			else if (!readError.empty())
+				lastError = std::move(readError);
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		throw std::runtime_error("TomCatCLI did not publish its live project lock: "
+			+ lastError);
+	}
+
+	void RequireProjectLockReleased(const std::filesystem::path& projectPath,
+		const std::string& description)
+	{
+		const std::filesystem::path lockPath =
+			ResolveDefaultProjectLockPath(projectPath);
+		std::error_code inspectError;
+		const bool exists = std::filesystem::exists(lockPath, inspectError);
+		Require(!inspectError && !exists,
+			description + " left its project lock behind");
 	}
 #endif
 
@@ -1177,14 +1295,69 @@ namespace {
 		ScopedWideEnvironmentVariable restoredProgramFiles(
 			L"ProgramFiles", *programFiles);
 
-		RunWindowsProcessAndRequireSuccess(cliExecutable,
+		const std::filesystem::path earlyFailureProject =
+			projectPath.parent_path() / "Missing-Lock-Release.tcproj";
+		std::error_code cleanupError;
+		std::filesystem::remove(earlyFailureProject, cleanupError);
+		Require(!cleanupError, "could not prepare the CLI early-return lock fixture");
+		const DWORD earlyFailureExit = RunWindowsProcess(cliExecutable,
+			{ L"cook", L"--project", earlyFailureProject.wstring() },
+			projectPath.parent_path(), "TomCatCLI early-return lock probe");
+		Require(earlyFailureExit != 0 && earlyFailureExit != 13,
+			"TomCatCLI early-return lock probe did not reach project inspection");
+		RequireProjectLockReleased(earlyFailureProject,
+			"TomCatCLI early-return path");
+
+		const std::filesystem::path editorBlockedOutput =
+			cookOutput.parent_path() / "Blocked-By-Editor.tcpak";
+		const std::filesystem::path cliBlockedOutput =
+			cookOutput.parent_path() / "Blocked-By-CLI.tcpak";
+		std::filesystem::remove(editorBlockedOutput, cleanupError);
+		Require(!cleanupError, "could not clear the Editor/CLI lock fixture");
+		std::filesystem::remove(cliBlockedOutput, cleanupError);
+		Require(!cleanupError, "could not clear the CLI/CLI lock fixture");
+
+		std::string lockError;
+		TomCat::EditorProjectLock editorLock;
+		Require(editorLock.Acquire(projectPath, lockError)
+				== TomCat::ProjectLockAcquireResult::Acquired,
+			"could not acquire the Editor side of the shared project lock: "
+				+ lockError);
+		const DWORD editorBlockedExit = RunWindowsProcess(cliExecutable,
+			{ L"cook", L"--project", projectPath.wstring(), L"--output",
+				editorBlockedOutput.wstring() },
+			projectPath.parent_path(), "Editor/CLI lock contention probe");
+		Require(editorBlockedExit == 13,
+			"TomCatCLI did not reject a project locked by Editor semantics");
+		editorLock.Release();
+		Require(!std::filesystem::exists(editorBlockedOutput),
+			"lock-rejected TomCatCLI wrote an output package");
+
+		WindowsProcess owningCli = LaunchWindowsProcess(cliExecutable,
 			{ L"cook", L"--project", projectPath.wstring(), L"--output",
 				cookOutput.wstring() },
-			projectPath.parent_path(), "TomCatCLI cook");
+			projectPath.parent_path(), "TomCatCLI lock owner");
+		WaitForProjectLockOwner(projectPath, owningCli.Id);
+		const DWORD cliBlockedExit = RunWindowsProcess(cliExecutable,
+			{ L"cook", L"--project", projectPath.wstring(), L"--output",
+				cliBlockedOutput.wstring() },
+			projectPath.parent_path(), "CLI/CLI lock contention probe");
+		Require(cliBlockedExit == 13,
+			"a second TomCatCLI process entered a project owned by the first");
+		Require(!std::filesystem::exists(cliBlockedOutput),
+			"the lock-rejected competing CLI wrote an output package");
+		const DWORD owningCliExit = WaitForWindowsProcess(
+			owningCli, "TomCatCLI lock owner");
+		Require(owningCliExit == 0, "TomCatCLI lock owner returned exit "
+			+ std::to_string(owningCliExit) + "; expected 0");
+		RequireProjectLockReleased(projectPath,
+			"successful TomCatCLI cook");
 		std::error_code sizeError;
 		const uintmax_t cookedSize = std::filesystem::file_size(cookOutput, sizeError);
 		Require(!sizeError && cookedSize != 0,
 			"TomCatCLI cook returned success without a non-empty package");
+		std::cout << "PASS TomCatCLI shared project lock rejected Editor/CLI "
+			"and CLI/CLI contention and released on every exit path\n";
 		std::cout << "PASS TomCatCLI cook produced a non-empty package\n";
 
 		if (!templateVariable || templateVariable->empty())
@@ -1943,7 +2116,7 @@ public sealed class BulletProbe : TomCatBehaviour
 		Require(assets.GetCookedStartSceneHandle() == entryHandle
 			&& buildScenes.size() == 2 && buildScenes[0] == entryHandle
 			&& buildScenes[1] == gameplayHandle,
-			"tcpak v6 did not preserve the ordered two-Scene BuildSettings manifest");
+			"tcpak v7 did not preserve the ordered two-Scene BuildSettings manifest");
 		TomCat::AssetType cookedType = TomCat::AssetType::None;
 		std::vector<uint8_t> cookedAsset;
 		Require(assets.ReadAssetBytes(prefabHandle, cookedAsset, &cookedType)
@@ -1991,7 +2164,7 @@ int main(int argc, char** argv)
 		if (e2eOnly)
 		{
 			TestCompiledScriptCookedRuntime();
-			std::cout << "PASS C# -> scene reload/physics -> tcpak v6 -> private runtime -> real Player input/World/collision/animation/audio chain\n";
+			std::cout << "PASS C# -> scene reload/physics -> tcpak v7 -> private runtime -> real Player input/World/collision/animation/audio chain\n";
 			return 0;
 		}
 #ifdef TC_PLATFORM_WINDOWS

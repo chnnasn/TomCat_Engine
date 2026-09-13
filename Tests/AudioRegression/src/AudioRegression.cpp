@@ -2,6 +2,7 @@
 #include "TomCat/Audio/AudioDevice.h"
 #include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Audio/AudioSceneRuntime.h"
+#include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
@@ -194,6 +195,8 @@ namespace {
 		std::string error;
 		std::vector<uint8_t> wave = MakeWave(2, 48000, 48000 * 90);
 		const size_t encodedBytes = wave.size();
+		const TomCat::ContentSHA256Digest waveDigest =
+			TomCat::ComputeContentSHA256Digest(wave);
 		const std::vector<uint8_t> packagePrefix(37, 0xA5);
 		const std::filesystem::path path = std::filesystem::temp_directory_path()
 			/ ("TomCatAudioRegression-" + std::to_string(
@@ -216,11 +219,38 @@ namespace {
 		wave.shrink_to_fit();
 		auto source = TomCat::AudioStreamSource::OpenFileRange(path,
 			packagePrefix.size(),
-			encodedBytes, error, "long-music.wav");
+			encodedBytes, error, "long-music.wav", &waveDigest);
 		Require(source && error.empty()
 			&& source->GetEncodedByteCount() == encodedBytes
 			&& source->IsFileBacked() && source->GetResidentByteCount() == 0,
 			"long PCM WAV source retained PCM instead of opening a file range");
+		const std::streamoff damagedOffset = static_cast<std::streamoff>(
+			packagePrefix.size() + encodedBytes / 2);
+		auto flipFixtureByte = [&]()
+		{
+			std::fstream file(path, std::ios::binary | std::ios::in
+				| std::ios::out);
+			Require(static_cast<bool>(file),
+				"long WAV fixture could not be reopened for digest testing");
+			file.seekg(damagedOffset);
+			char value = 0;
+			file.read(&value, 1);
+			Require(static_cast<bool>(file),
+				"long WAV fixture digest byte could not be read");
+			value ^= 0x01;
+			file.seekp(damagedOffset);
+			file.write(&value, 1);
+			file.flush();
+			Require(static_cast<bool>(file),
+				"long WAV fixture digest byte could not be written");
+		};
+		flipFixtureByte();
+		Require(!TomCat::AudioStreamSource::OpenFileRange(path,
+			packagePrefix.size(), encodedBytes, error, "damaged-music.wav",
+			&waveDigest)
+			&& error.find("SHA-256") != std::string::npos,
+			"file-backed audio accepted bytes that no longer matched the tcpak digest");
+		flipFixtureByte();
 		auto reader = source->CreateReader();
 		Require(reader && reader->GetDecoderBufferedByteCount() == 0,
 			"PCM stream decoder retained an unexpected decoded history");

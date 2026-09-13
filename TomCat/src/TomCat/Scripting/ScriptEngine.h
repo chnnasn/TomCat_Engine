@@ -78,6 +78,9 @@ namespace TomCat {
 			bool QueueSetRegisteredComponentProperty(const EntityHandleV1& entity,
 				uint64_t componentTypeId, uint64_t propertyId,
 				NativePropertyValueV1 value);
+			bool QueueSetRegisteredComponentStringProperty(
+				const EntityHandleV1& entity, uint64_t componentTypeId,
+				uint64_t propertyId, std::string value);
 			bool QueueInstantiatePrefab(const EntityHandleV1& context,
 				uint64_t prefabHandle, NativeVector3 worldPosition,
 				const EntityHandleV1& parent);
@@ -134,7 +137,8 @@ namespace TomCat {
 				SetActiveSelf,
 				AddRegisteredComponent,
 				RemoveRegisteredComponent,
-				SetRegisteredComponentProperty
+				SetRegisteredComponentProperty,
+				SetRegisteredComponentStringProperty
 			};
 
 			struct DeferredCommand

@@ -23,6 +23,7 @@ internal static unsafe class NativeBridge
 	private static NativeInputEventsApiV1 s_inputEventsApi;
 	private static NativeApplicationPathsApiV1 s_applicationPathsApi;
 	private static NativeComponentApiV1 s_componentApi;
+	private static NativeComponentStringApiV1 s_componentStringApi;
 	private static NativeComponentSchemaApiV1 s_componentSchemaApi;
 	private static NativeAudioApiV1 s_audioApi;
 	private static NativeAudioSpatialApiV1 s_audioSpatialApi;
@@ -34,6 +35,7 @@ internal static unsafe class NativeBridge
 	private static bool s_inputEventsBound;
 	private static bool s_applicationPathsBound;
 	private static bool s_componentBound;
+	private static bool s_componentStringBound;
 	private static bool s_componentSchemaBound;
 	private static bool s_audioBound;
 	private static bool s_audioSpatialBound;
@@ -64,6 +66,9 @@ internal static unsafe class NativeBridge
 		NativeComponentApiV1 componentCandidate = default;
 		bool hasComponentCandidate = TryReadComponentCapability(api,
 			out componentCandidate);
+		NativeComponentStringApiV1 componentStringCandidate = default;
+		bool hasComponentStringCandidate = TryReadComponentStringCapability(api,
+			out componentStringCandidate);
 		NativeComponentSchemaApiV1 componentSchemaCandidate = default;
 		bool hasComponentSchemaCandidate = TryReadComponentSchemaCapability(api,
 			out componentSchemaCandidate);
@@ -107,6 +112,11 @@ internal static unsafe class NativeBridge
 			{
 				s_componentApi = componentCandidate;
 				Volatile.Write(ref s_componentBound, true);
+			}
+			if (hasComponentStringCandidate && !s_componentStringBound)
+			{
+				s_componentStringApi = componentStringCandidate;
+				Volatile.Write(ref s_componentStringBound, true);
 			}
 			if (hasComponentSchemaCandidate && !s_componentSchemaBound)
 			{
@@ -252,6 +262,35 @@ internal static unsafe class NativeBridge
 			&& component.Has != null && component.Add != null
 			&& component.Remove != null && component.GetProperty != null
 			&& component.SetProperty != null;
+	}
+
+	private static bool TryReadComponentStringCapability(NativeApiV1* api,
+		out NativeComponentStringApiV1 componentString)
+	{
+		componentString = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.ComponentStringApiV1");
+		NativeComponentStringApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeComponentStringApiV1), &required);
+			if (status != 0
+				|| required > (uint)sizeof(NativeComponentStringApiV1))
+				return false;
+		}
+		componentString = candidate;
+		return componentString.Version == 1
+			&& componentString.Size >= (uint)sizeof(NativeComponentStringApiV1)
+			&& componentString.GetProperty != null
+			&& componentString.SetProperty != null;
 	}
 
 	private static bool TryReadComponentSchemaCapability(NativeApiV1* api,
@@ -824,6 +863,24 @@ internal static unsafe class NativeBridge
 			Integer = value
 		}, operation);
 
+	internal static long GetRegisteredInt64(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Int64)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return value.Integer;
+	}
+
+	internal static void SetRegisteredInt64(Entity entity, ulong typeId,
+		ulong propertyId, long value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Int64,
+			Integer = value
+		}, operation);
+
 	internal static uint GetRegisteredUInt32(Entity entity, ulong typeId,
 		ulong propertyId, string operation)
 	{
@@ -831,7 +888,7 @@ internal static unsafe class NativeBridge
 			propertyId, operation);
 		if (value.Kind != NativePropertyKindV1.UInt32
 			|| value.Integer < uint.MinValue || value.Integer > uint.MaxValue)
-			throw new TomCatException($"${operation} returned an incompatible value.");
+			throw new TomCatException($"{operation} returned an incompatible value.");
 		return (uint)value.Integer;
 	}
 
@@ -899,6 +956,25 @@ internal static unsafe class NativeBridge
 			Number = value
 		}, operation);
 
+	internal static double GetRegisteredDouble(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Double
+			|| !double.IsFinite(value.Number))
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return value.Number;
+	}
+
+	internal static void SetRegisteredDouble(Entity entity, ulong typeId,
+		ulong propertyId, double value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Double,
+			Number = value
+		}, operation);
+
 	internal static Vector2 GetRegisteredVector2(Entity entity, ulong typeId,
 		ulong propertyId, string operation)
 	{
@@ -916,6 +992,26 @@ internal static unsafe class NativeBridge
 			Kind = NativePropertyKindV1.Vector2,
 			X = value.X,
 			Y = value.Y
+		}, operation);
+
+	internal static Vector3 GetRegisteredVector3(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.Vector3)
+			throw new TomCatException($"{operation} returned an incompatible value.");
+		return new(value.X, value.Y, value.Z);
+	}
+
+	internal static void SetRegisteredVector3(Entity entity, ulong typeId,
+		ulong propertyId, Vector3 value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.Vector3,
+			X = value.X,
+			Y = value.Y,
+			Z = value.Z
 		}, operation);
 
 	internal static Vector4 GetRegisteredVector4(Entity entity, ulong typeId,
@@ -949,6 +1045,81 @@ internal static unsafe class NativeBridge
 	internal static void SetRegisteredColor(Entity entity, ulong typeId,
 		ulong propertyId, Color value, string operation) => SetRegisteredVector4(entity,
 		typeId, propertyId, new(value.R, value.G, value.B, value.A), operation);
+
+	internal static bool IsComponentStringAvailable =>
+		Volatile.Read(ref s_componentStringBound);
+
+	internal static string GetRegisteredString(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		const uint MaximumBytes = RegisteredComponentProperties.MaximumStringUtf8Bytes;
+		EnsureMainThread();
+		RequireComponentString(s_componentStringApi.GetProperty != null, operation);
+		uint required = 0;
+		int status = s_componentStringApi.GetProperty(ToNative(entity), typeId,
+			propertyId, null, 0, &required);
+		if (status != 0 && status != NativeBufferTooSmall)
+			Check(status, operation);
+		for (int attempt = 0; attempt < 2; ++attempt)
+		{
+			if (required == 0)
+				return string.Empty;
+			if (required > MaximumBytes)
+				throw new TomCatException(
+					$"{operation} returned an invalid UTF-8 length.");
+			byte[] bytes = GC.AllocateUninitializedArray<byte>((int)required);
+			fixed (byte* buffer = bytes)
+			{
+				uint actual = required;
+				status = s_componentStringApi.GetProperty(ToNative(entity), typeId,
+					propertyId, buffer, required, &actual);
+				if (status == NativeBufferTooSmall && actual > required)
+				{
+					required = actual;
+					continue;
+				}
+				Check(status, operation);
+				if (actual > required)
+					throw new TomCatException(
+						$"{operation} returned an invalid UTF-8 length.");
+				try
+				{
+					return s_strictUtf8.GetString(bytes, 0, (int)actual);
+				}
+				catch (DecoderFallbackException error)
+				{
+					throw new TomCatException(
+						$"{operation} returned malformed UTF-8: {error.Message}");
+				}
+			}
+		}
+		throw new TomCatException($"{operation} changed length while being read.");
+	}
+
+	internal static void SetRegisteredString(Entity entity, ulong typeId,
+		ulong propertyId, string value, string operation)
+	{
+		const int MaximumBytes = RegisteredComponentProperties.MaximumStringUtf8Bytes;
+		ArgumentNullException.ThrowIfNull(value);
+		EnsureMainThread();
+		RequireComponentString(s_componentStringApi.SetProperty != null, operation);
+		byte[] bytes;
+		try
+		{
+			bytes = s_strictUtf8.GetBytes(value);
+		}
+		catch (EncoderFallbackException error)
+		{
+			throw new ArgumentException("Value is not valid Unicode.", nameof(value),
+				error);
+		}
+		if (bytes.Length > MaximumBytes)
+			throw new ArgumentOutOfRangeException(nameof(value),
+				$"Registered component strings may contain at most {MaximumBytes} UTF-8 bytes.");
+		fixed (byte* pointer = bytes)
+			Check(s_componentStringApi.SetProperty(ToNative(entity), typeId,
+				propertyId, new NativeUtf8View(pointer, (ulong)bytes.Length)), operation);
+	}
 
 	internal static string GetRuntimeUIText(Entity entity, ulong typeId,
 		string operation)
@@ -2047,6 +2218,13 @@ internal static unsafe class NativeBridge
 		if (!Volatile.Read(ref s_componentBound) || !condition)
 			throw new TomCatException(
 				$"{operation} requires the optional TomCat.ComponentApiV1 capability.");
+	}
+
+	private static void RequireComponentString(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_componentStringBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.ComponentStringApiV1 capability.");
 	}
 
 	private static void RequireComponentSchema(bool condition, string operation)

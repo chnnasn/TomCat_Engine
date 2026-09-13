@@ -1,6 +1,7 @@
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/Input.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Components.h"
@@ -23,6 +24,7 @@
 #include "box2d/b2_fixture.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -34,8 +36,10 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -338,22 +342,24 @@ namespace {
 		Require(package.size() >= TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize,
 			"package fixture has no supported tcpak base header");
 		const uint32_t version = ReadLittleEndian32(package, 8);
-		const uint32_t baseHeaderSize = version
-			== TomCat::RuntimeCompatibility::TcpakVersion
-			? TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
-			: TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize;
+		Require(TomCat::RuntimeCompatibility::IsSupportedTcpakVersion(version),
+			"package fixture has an unsupported tcpak version");
+		const uint32_t baseHeaderSize =
+			TomCat::RuntimeCompatibility::TcpakBaseHeaderSizeForVersion(version);
+		const uint64_t entrySize =
+			TomCat::RuntimeCompatibility::TcpakEntrySizeForVersion(version);
 		const uint32_t headerSize = ReadLittleEndian32(package, 12);
 		Require(headerSize >= baseHeaderSize
 			&& headerSize <= package.size(),
 			"package fixture has an invalid variable header");
 		const uint64_t entryCount = ReadLittleEndian64(package, 16);
 		Require(entryCount <= (package.size() - headerSize)
-			/ TomCat::RuntimeCompatibility::TcpakEntrySize,
+			/ entrySize,
 			"package fixture has an out-of-bounds index");
 		for (uint64_t index = 0; index < entryCount; ++index)
 		{
 			const std::size_t offset = headerSize + static_cast<std::size_t>(index
-				* TomCat::RuntimeCompatibility::TcpakEntrySize);
+				* entrySize);
 			if (ReadLittleEndian64(package, offset)
 				== (std::numeric_limits<uint64_t>::max)())
 				return offset;
@@ -361,52 +367,125 @@ namespace {
 		throw std::runtime_error("package fixture has no managed payload index entry");
 	}
 
-	std::vector<uint8_t> MakeTcpakV5CompatibilityFixture(
-		const std::vector<uint8_t>& v6)
+	void RefreshTcpakEntryDigest(std::vector<uint8_t>& package,
+		std::size_t entryOffset)
 	{
-		Require(v6.size() >= TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
-			&& ReadLittleEndian32(v6, 8) == TomCat::RuntimeCompatibility::TcpakVersion,
-			"v5 compatibility conversion requires a tcpak v6 source");
-		const uint32_t v6HeaderSize = ReadLittleEndian32(v6, 12);
-		const uint64_t entryCount = ReadLittleEndian64(v6, 16);
-		const uint64_t buildSceneCount = ReadLittleEndian64(v6, 32);
-		Require(buildSceneCount <= TomCat::RuntimeCompatibility::MaximumBuildSceneCount,
-			"v6 source has too many build scenes");
-		const uint64_t sceneBytes64 = buildSceneCount * sizeof(uint64_t);
-		Require(sceneBytes64 <= v6HeaderSize
-			&& v6HeaderSize >= TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
-				+ sceneBytes64,
-			"v6 source has an invalid scene table");
-		const std::size_t sceneBytes = static_cast<std::size_t>(sceneBytes64);
-		const std::size_t sceneOffset = v6HeaderSize - sceneBytes;
-		const uint32_t v5HeaderSize = TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize
-			+ static_cast<uint32_t>(sceneBytes);
-		const uint64_t removedBytes = v6HeaderSize - v5HeaderSize;
-		Require(v6HeaderSize <= v6.size()
-			&& entryCount <= (v6.size() - v6HeaderSize)
-				/ TomCat::RuntimeCompatibility::TcpakEntrySize,
-			"v6 source has an invalid index");
+		const uint32_t version = ReadLittleEndian32(package, 8);
+		const uint64_t entrySize =
+			TomCat::RuntimeCompatibility::TcpakEntrySizeForVersion(version);
+		Require(version == TomCat::RuntimeCompatibility::TcpakVersion
+			&& TomCat::RuntimeCompatibility::TcpakHasEntryDigests(version)
+			&& entryOffset <= package.size()
+			&& entrySize <= package.size() - entryOffset,
+			"tcpak digest refresh requires a complete current index entry");
+		const uint64_t payloadOffset = ReadLittleEndian64(package,
+			entryOffset + 16);
+		const uint64_t payloadSize = ReadLittleEndian64(package,
+			entryOffset + 24);
+		Require(payloadOffset <= package.size()
+			&& payloadSize <= package.size() - payloadOffset,
+			"tcpak digest refresh payload is out of range");
+		const TomCat::ContentSHA256Digest digest =
+			TomCat::ComputeContentSHA256Digest(std::span<const uint8_t>(
+				package.data() + static_cast<size_t>(payloadOffset),
+				static_cast<size_t>(payloadSize)));
+		const size_t digestOffset = entryOffset
+			+ static_cast<size_t>(
+				TomCat::RuntimeCompatibility::TcpakLegacyEntrySize);
+		std::copy(digest.begin(), digest.end(),
+			package.begin() + digestOffset);
+	}
 
-		std::vector<uint8_t> v5;
-		v5.reserve(v6.size() - static_cast<std::size_t>(removedBytes));
-		v5.insert(v5.end(), v6.begin(),
-			v6.begin() + TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize);
-		v5.insert(v5.end(), v6.begin() + sceneOffset, v6.begin() + v6HeaderSize);
-		v5.insert(v5.end(), v6.begin() + v6HeaderSize, v6.end());
-		WriteLittleEndian32(v5, 8,
-			TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion);
-		WriteLittleEndian32(v5, 12, v5HeaderSize);
+	std::vector<uint8_t> MakeLegacyTcpakCompatibilityFixture(
+		const std::vector<uint8_t>& current, uint32_t targetVersion)
+	{
+		Require((targetVersion == TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion
+				|| targetVersion == TomCat::RuntimeCompatibility::TcpakBootManifestVersion)
+			&& current.size() >= TomCat::RuntimeCompatibility::TcpakBaseHeaderSize
+			&& ReadLittleEndian32(current, 8)
+				== TomCat::RuntimeCompatibility::TcpakVersion,
+			"legacy conversion requires a current tcpak source and v5/v6 target");
+		const uint32_t currentHeaderSize = ReadLittleEndian32(current, 12);
+		const uint64_t entryCount = ReadLittleEndian64(current, 16);
+		const uint64_t buildSceneCount = ReadLittleEndian64(current, 32);
+		Require(buildSceneCount <= TomCat::RuntimeCompatibility::MaximumBuildSceneCount,
+			"current tcpak source has too many build scenes");
+		const uint64_t sceneBytes64 = buildSceneCount * sizeof(uint64_t);
+		Require(sceneBytes64 <= currentHeaderSize
+			&& currentHeaderSize >= TomCat::RuntimeCompatibility::TcpakBaseHeaderSize
+				+ sceneBytes64,
+			"current tcpak source has an invalid scene table");
+		const std::size_t sceneBytes = static_cast<std::size_t>(sceneBytes64);
+		const std::size_t sceneOffset = currentHeaderSize - sceneBytes;
+		const uint32_t targetHeaderSize =
+			targetVersion == TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion
+			? TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize
+				+ static_cast<uint32_t>(sceneBytes)
+			: currentHeaderSize;
+		const uint64_t currentEntrySize =
+			TomCat::RuntimeCompatibility::TcpakEntrySize;
+		const uint64_t targetEntrySize =
+			TomCat::RuntimeCompatibility::TcpakLegacyEntrySize;
+		Require(currentHeaderSize <= current.size()
+			&& entryCount <= (current.size() - currentHeaderSize)
+				/ TomCat::RuntimeCompatibility::TcpakEntrySize,
+			"current tcpak source has an invalid index");
+		const uint64_t currentDataStart = currentHeaderSize
+			+ entryCount * currentEntrySize;
+		const uint64_t targetDataStart = targetHeaderSize
+			+ entryCount * targetEntrySize;
+		Require(targetDataStart <= currentDataStart
+			&& currentDataStart <= current.size(),
+			"current tcpak source has invalid data offsets");
+		const uint64_t removedBytes = currentDataStart - targetDataStart;
+
+		std::vector<uint8_t> legacy;
+		legacy.reserve(current.size() - static_cast<std::size_t>(removedBytes));
+		if (targetVersion == TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion)
+		{
+			legacy.insert(legacy.end(), current.begin(),
+				current.begin() + TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize);
+			legacy.insert(legacy.end(), current.begin() + sceneOffset,
+				current.begin() + currentHeaderSize);
+		}
+		else
+		{
+			legacy.insert(legacy.end(), current.begin(),
+				current.begin() + currentHeaderSize);
+		}
 		for (uint64_t index = 0; index < entryCount; ++index)
 		{
-			const std::size_t entryOffset = v5HeaderSize
-				+ static_cast<std::size_t>(index
-					* TomCat::RuntimeCompatibility::TcpakEntrySize);
-			const uint64_t dataOffset = ReadLittleEndian64(v5, entryOffset + 16);
+			const std::size_t sourceEntryOffset = currentHeaderSize
+				+ static_cast<std::size_t>(index * currentEntrySize);
+			const std::size_t targetEntryOffset = legacy.size();
+			legacy.insert(legacy.end(), current.begin() + sourceEntryOffset,
+				current.begin() + sourceEntryOffset + targetEntrySize);
+			const uint64_t dataOffset =
+				ReadLittleEndian64(legacy, targetEntryOffset + 16);
 			Require(dataOffset >= removedBytes,
-				"v6 source index cannot be rebased to tcpak v5");
-			WriteLittleEndian64(v5, entryOffset + 16, dataOffset - removedBytes);
+				"current tcpak index cannot be rebased to its legacy layout");
+			WriteLittleEndian64(legacy, targetEntryOffset + 16,
+				dataOffset - removedBytes);
 		}
-		return v5;
+		legacy.insert(legacy.end(), current.begin()
+			+ static_cast<std::size_t>(currentDataStart), current.end());
+		WriteLittleEndian32(legacy, 8, targetVersion);
+		WriteLittleEndian32(legacy, 12, targetHeaderSize);
+		return legacy;
+	}
+
+	std::vector<uint8_t> MakeTcpakV5CompatibilityFixture(
+		const std::vector<uint8_t>& current)
+	{
+		return MakeLegacyTcpakCompatibilityFixture(current,
+			TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion);
+	}
+
+	std::vector<uint8_t> MakeTcpakV6CompatibilityFixture(
+		const std::vector<uint8_t>& current)
+	{
+		return MakeLegacyTcpakCompatibilityFixture(current,
+			TomCat::RuntimeCompatibility::TcpakBootManifestVersion);
 	}
 
 	bool Near(float actual, float expected, float tolerance = 1.0e-4f)
@@ -2974,7 +3053,7 @@ namespace {
 			&& assets.GetCookedBuildSceneHandle(0) == secondaryHandle
 			&& assets.GetCookedBuildSceneHandle(1) == sceneHandle
 			&& static_cast<uint64_t>(assets.GetCookedBuildSceneHandle(2)) == 0,
-			"tcpak v6 did not expose its ordered build-scene manifest and index queries");
+			"tcpak v7 did not expose its ordered build-scene manifest and index queries");
 		Require(assets.GetCookedPackageVersion()
 				== TomCat::RuntimeCompatibility::TcpakVersion
 			&& assets.GetCookedPlayerSettings() == cookedPlayerSettings,
@@ -2986,7 +3065,7 @@ namespace {
 			&& !mountedIconBytes.empty(),
 			"PlayerSettings.Icon was omitted from the strict package dependency closure");
 		Require(assets.GetPhysics2DSettings() == cookedSettings.Physics2D,
-			"tcpak v6 did not roundtrip the project Physics2D collision matrix");
+			"tcpak v7 did not roundtrip the project Physics2D collision matrix");
 		const TomCat::ManagedPackagePayload* mountedPayload =
 			assets.GetCookedManagedPayload();
 		Require(mountedPayload
@@ -3003,7 +3082,7 @@ namespace {
 			"mounted tcpak did not expose the complete validated managed payload");
 		std::vector<uint8_t> forbiddenSourceBytes;
 		Require(!assets.ReadAssetBytes(scriptHandle, forbiddenSourceBytes),
-			"tcpak v5 exposed a C# source asset entry");
+			"tcpak v7 exposed a C# source asset entry");
 		std::vector<uint8_t> cookedBytes;
 		TomCat::AssetType cookedType = TomCat::AssetType::None;
 		Require(assets.ReadAssetBytes(sceneHandle, cookedBytes, &cookedType)
@@ -3067,7 +3146,7 @@ namespace {
 			"Cooked Player runtime did not create Box/Circle fixtures and DistanceJoint");
 		loaded->OnRuntimeStep();
 		Require(triggerEnters == 0,
-			"Cooked Player ignored the tcpak v5 project collision matrix");
+			"Cooked Player ignored the tcpak v7 project collision matrix");
 		loaded->OnRuntimeStop();
 		Require(loadedGround.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture == nullptr
 			&& loadedBall.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture == nullptr
@@ -3089,7 +3168,7 @@ namespace {
 		const std::vector<uint8_t> validPackage = ReadBinaryFile(packagePath);
 		const std::string packageText(validPackage.begin(), validPackage.end());
 		Require(packageText.find(sourceMarker) == std::string::npos,
-			"tcpak v5 contains C# source bytes");
+			"tcpak v7 contains C# source bytes");
 		Require(packageText.find(csprojMarker) == std::string::npos
 			&& packageText.find(objectMarker) == std::string::npos
 			&& packageText.find(nestedLibraryMarker) == std::string::npos
@@ -3098,7 +3177,7 @@ namespace {
 			&& packageText.find("last-good.json") == std::string::npos
 			&& packageText.find("Library/Script") == std::string::npos
 			&& packageText.find(environment.Root.generic_string()) == std::string::npos,
-			"tcpak v5 leaked authoring files or absolute project paths");
+			"tcpak v7 leaked authoring files or absolute project paths");
 		uint32_t bootManifestStringBytes = 0;
 		for (std::size_t offset = 100; offset < 124; offset += sizeof(uint32_t))
 			bootManifestStringBytes += ReadLittleEndian32(validPackage, offset);
@@ -3108,7 +3187,7 @@ namespace {
 		const uint32_t expectedHeaderSize = buildSceneOffset
 			+ 2 * static_cast<uint32_t>(sizeof(uint64_t));
 		Require(validPackage.size() >= expectedHeaderSize,
-			"cooked package is smaller than its tcpak v6 variable header");
+			"cooked package is smaller than its tcpak v7 variable header");
 		Require(ReadLittleEndian32(validPackage, 8)
 				== TomCat::RuntimeCompatibility::TcpakVersion
 			&& ReadLittleEndian32(validPackage, 12) == expectedHeaderSize
@@ -3128,7 +3207,21 @@ namespace {
 				== static_cast<uint64_t>(secondaryHandle)
 			&& ReadLittleEndian64(validPackage, buildSceneOffset + sizeof(uint64_t))
 				== static_cast<uint64_t>(sceneHandle),
-			"cooked package did not declare the tcpak v6 BootManifest and scene header");
+			"cooked package did not declare the tcpak v7 BootManifest and scene header");
+
+		const std::vector<uint8_t> v6Package =
+			MakeTcpakV6CompatibilityFixture(validPackage);
+		const std::filesystem::path v6PackagePath =
+			environment.Root / "Build" / "LegacyV6.tcpak";
+		WriteBinaryFile(v6PackagePath, v6Package);
+		Require(assets.MountCookedPackage(v6PackagePath)
+			&& assets.GetCookedPackageVersion()
+				== TomCat::RuntimeCompatibility::TcpakBootManifestVersion
+			&& assets.GetCookedBuildSceneHandles()
+				== std::vector<TomCat::AssetHandle>{ secondaryHandle, sceneHandle }
+			&& assets.GetCookedPlayerSettings() == cookedPlayerSettings,
+			"Player failed to read tcpak v6 after the v7 digest-index upgrade");
+		assets.UnmountCookedPackage();
 
 		const std::vector<uint8_t> v5Package =
 			MakeTcpakV5CompatibilityFixture(validPackage);
@@ -3157,6 +3250,7 @@ namespace {
 
 		std::vector<uint8_t> incompatibleApi = validPackage;
 		WriteLittleEndian32(incompatibleApi, managedEnvelopeOffset + 12, 2);
+		RefreshTcpakEntryDigest(incompatibleApi, managedIndex);
 		const std::filesystem::path incompatibleApiPath =
 			environment.Root / "Build" / "IncompatibleManagedApi.tcpak";
 		WriteBinaryFile(incompatibleApiPath, incompatibleApi);
@@ -3196,6 +3290,7 @@ namespace {
 			"managed assembly range is outside its envelope");
 		std::vector<uint8_t> badAssemblyHash = validPackage;
 		badAssemblyHash[static_cast<std::size_t>(assemblyOffset64 + 2)] ^= 0x01;
+		RefreshTcpakEntryDigest(badAssemblyHash, managedIndex);
 		const std::filesystem::path badAssemblyHashPath =
 			environment.Root / "Build" / "BadManagedHash.tcpak";
 		WriteBinaryFile(badAssemblyHashPath, badAssemblyHash);
@@ -3215,7 +3310,7 @@ namespace {
 			environment.Root / "Build" / "UnknownBootFlags.tcpak";
 		WriteBinaryFile(unknownBootFlagsPath, unknownBootFlags);
 		Require(!assets.MountCookedPackage(unknownBootFlagsPath),
-			"tcpak v6 loader accepted unknown BootManifest flags");
+			"tcpak v7 loader accepted unknown BootManifest flags");
 
 		std::vector<uint8_t> wrongBootIcon = validPackage;
 		WriteLittleEndian64(wrongBootIcon, 88,
@@ -3224,7 +3319,7 @@ namespace {
 			environment.Root / "Build" / "WrongBootIcon.tcpak";
 		WriteBinaryFile(wrongBootIconPath, wrongBootIcon);
 		Require(!assets.MountCookedPackage(wrongBootIconPath),
-			"tcpak v6 loader accepted a BootManifest icon absent from its Texture2D index");
+			"tcpak v7 loader accepted a BootManifest icon absent from its Texture2D index");
 
 		std::vector<uint8_t> oversizedBootString = validPackage;
 		WriteLittleEndian32(oversizedBootString, 100,
@@ -3233,7 +3328,7 @@ namespace {
 			environment.Root / "Build" / "OversizedBootString.tcpak";
 		WriteBinaryFile(oversizedBootStringPath, oversizedBootString);
 		Require(!assets.MountCookedPackage(oversizedBootStringPath),
-			"tcpak v6 loader accepted an oversized BootManifest string");
+			"tcpak v7 loader accepted an oversized BootManifest string");
 
 		std::vector<uint8_t> mismatchedSceneCount = validPackage;
 		WriteLittleEndian64(mismatchedSceneCount, 32, 1);
@@ -4149,6 +4244,294 @@ namespace {
 			"Component schema bounds and identity validation were not enforced");
 	}
 
+	struct PluginManagedProperties
+	{
+		int32_t Count = 0;
+		std::string Label;
+	};
+
+	constexpr uint64_t PluginManagedProviderId = 0xa21ce22d5c7c48d1ULL;
+	constexpr uint64_t PluginManagedTypeId = 0xb05cd92505784468ULL;
+	constexpr uint64_t PluginManagedCountId = 0xac0a76ef344849fbULL;
+	constexpr uint64_t PluginManagedLabelId = 0xb31adab074094282ULL;
+
+	TomCat::ComponentDescriptor MakePluginManagedPropertiesDescriptor()
+	{
+		TomCat::ComponentDescriptor descriptor;
+		descriptor.ProviderId = TomCat::UUID(PluginManagedProviderId);
+		descriptor.TypeId = TomCat::UUID(PluginManagedTypeId);
+		descriptor.StableName = "Regression.PluginManagedProperties";
+		descriptor.DisplayName = "Plugin Managed Properties";
+		descriptor.ScriptAccessible = true;
+		descriptor.Has = [](TomCat::Entity entity)
+		{
+			return entity && entity.HasComponent<PluginManagedProperties>();
+		};
+		descriptor.Add = [](TomCat::Entity entity, std::string& error)
+		{
+			if (!entity || entity.HasComponent<PluginManagedProperties>())
+			{
+				error = "PluginManagedProperties cannot be added";
+				return false;
+			}
+			entity.AddComponent<PluginManagedProperties>();
+			return true;
+		};
+		descriptor.Remove = [](TomCat::Entity entity, std::string& error)
+		{
+			if (!entity || !entity.HasComponent<PluginManagedProperties>())
+			{
+				error = "PluginManagedProperties is absent";
+				return false;
+			}
+			entity.RemoveComponent<PluginManagedProperties>();
+			return true;
+		};
+		descriptor.Copy = [](TomCat::Entity source, TomCat::Entity destination,
+			std::string& error)
+		{
+			if (!source || !destination
+				|| !source.HasComponent<PluginManagedProperties>())
+			{
+				error = "Invalid PluginManagedProperties copy";
+				return false;
+			}
+			destination.AddOrReplaceComponent<PluginManagedProperties>(
+				source.GetComponent<PluginManagedProperties>());
+			return true;
+		};
+
+		TomCat::PropertyDescriptor count;
+		count.PropertyId = TomCat::UUID(PluginManagedCountId);
+		count.StableName = "Count";
+		count.DisplayName = "Count";
+		count.Kind = TomCat::PropertyKind::Int32;
+		count.Get = [](TomCat::Entity entity) -> TomCat::PropertyValue
+		{
+			return entity.GetComponent<PluginManagedProperties>().Count;
+		};
+		count.Set = [](TomCat::Entity entity, const TomCat::PropertyValue& value,
+			std::string&)
+		{
+			entity.GetComponent<PluginManagedProperties>().Count =
+				std::get<int32_t>(value);
+			return true;
+		};
+		descriptor.Properties.push_back(std::move(count));
+
+		TomCat::PropertyDescriptor label;
+		label.PropertyId = TomCat::UUID(PluginManagedLabelId);
+		label.StableName = "Label";
+		label.DisplayName = "Label";
+		label.Kind = TomCat::PropertyKind::String;
+		label.Get = [](TomCat::Entity entity) -> TomCat::PropertyValue
+		{
+			return entity.GetComponent<PluginManagedProperties>().Label;
+		};
+		label.Set = [](TomCat::Entity entity, const TomCat::PropertyValue& value,
+			std::string&)
+		{
+			entity.GetComponent<PluginManagedProperties>().Label =
+				std::get<std::string>(value);
+			return true;
+		};
+		descriptor.Properties.push_back(std::move(label));
+		return descriptor;
+	}
+
+	void TestRegisteredComponentStringCapability()
+	{
+		using namespace TomCat::Scripting;
+		NativeApiV2 envelope = BuildNativeApiV2();
+		NativeComponentApiV1 components{};
+		NativeComponentStringApiV1 strings{};
+		NativeComponentSchemaApiV1 schema{};
+		uint32_t required = 0;
+		auto query = [&](std::string_view name, auto& table)
+		{
+			const NativeUtf8View view{
+				reinterpret_cast<const uint8_t*>(name.data()), name.size() };
+			return envelope.QueryCapability(view, 1, &table, sizeof(table),
+				&required);
+		};
+		Require(query(ComponentCapabilityName, components)
+			== static_cast<int32_t>(ScriptStatus::Success)
+			&& components.GetProperty && components.SetProperty,
+			"ComponentApiV1 was unavailable to the plugin property regression");
+		Require(query(ComponentStringCapabilityName, strings)
+			== static_cast<int32_t>(ScriptStatus::Success)
+			&& required == sizeof(strings) && strings.Version == 1
+			&& strings.Size == sizeof(strings) && strings.GetProperty
+			&& strings.SetProperty,
+			"ComponentStringApiV1 capability table is incomplete");
+		const NativeUtf8View stringCapabilityView{
+			reinterpret_cast<const uint8_t*>(ComponentStringCapabilityName.data()),
+			ComponentStringCapabilityName.size() };
+		Require(envelope.QueryCapability(stringCapabilityView, 2, nullptr, 0,
+			&required) == static_cast<int32_t>(ScriptStatus::VersionMismatch)
+			&& required == sizeof(strings),
+			"Component string capability did not reject a newer version");
+		Require(envelope.QueryCapability(stringCapabilityView, 1, &strings,
+			sizeof(strings) - 1, &required)
+			== static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& required == sizeof(strings),
+			"Component string capability did not report its complete table size");
+		Require(query(ComponentSchemaCapabilityName, schema)
+			== static_cast<int32_t>(ScriptStatus::Success),
+			"Component schema API was unavailable to the plugin regression");
+
+		TomCat::ComponentRegistry& registry = TomCat::ComponentRegistry::Get();
+		std::string error;
+		Require(registry.Register(MakePluginManagedPropertiesDescriptor(), error),
+			error.c_str());
+		uint32_t componentCount = 0;
+		Require(schema.GetComponentCount(&componentCount)
+			== static_cast<int32_t>(ScriptStatus::Success),
+			"could not enumerate the registered plugin component");
+		bool discovered = false;
+		for (uint32_t index = 0; index < componentCount; ++index)
+		{
+			NativeComponentSchemaInfoV1 component{};
+			Require(schema.GetComponent(index, &component)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"component schema enumeration failed");
+			if (component.TypeId != PluginManagedTypeId)
+				continue;
+			discovered = component.ProviderId == PluginManagedProviderId
+				&& (component.Flags & static_cast<uint32_t>(
+					NativeComponentSchemaFlagsV1::ScriptAccessible)) != 0
+				&& component.PropertyCount == 2;
+			NativeComponentPropertySchemaInfoV1 property{};
+			discovered = discovered
+				&& schema.GetProperty(PluginManagedTypeId, 1, &property)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& property.PropertyId == PluginManagedLabelId
+				&& property.Kind == static_cast<uint32_t>(
+					NativePropertyKindV1::String);
+			break;
+		}
+		Require(discovered,
+			"third-party component string metadata was not discoverable through C# ABI");
+
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity entity = scene.CreateEntity("Managed plugin properties");
+		constexpr uint64_t Generation = 0x7a15;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		Require(session != 0, "could not start plugin property test scene");
+		const EntityHandleV1 handle{ session,
+			static_cast<uint64_t>(entity.GetUUID()), Generation };
+
+		NativePropertyValueV1 count{};
+		count.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+		count.Integer = 73;
+		const std::string queuedLabel = "queued plugin \xe6\xa0\x87\xe7\xad\xbe \xf0\x9f\x98\x80";
+		const NativeUtf8View queuedLabelView{
+			reinterpret_cast<const uint8_t*>(queuedLabel.data()), queuedLabel.size() };
+		Require(components.Add(handle, PluginManagedTypeId)
+			== static_cast<int32_t>(ScriptStatus::Success)
+			&& components.SetProperty(handle, PluginManagedTypeId,
+				PluginManagedCountId, count)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& strings.SetProperty(handle, PluginManagedTypeId,
+				PluginManagedLabelId, queuedLabelView)
+				== static_cast<int32_t>(ScriptStatus::Success),
+			"deferred plugin Add/property chain was rejected");
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		Require(entity.HasComponent<PluginManagedProperties>()
+			&& entity.GetComponent<PluginManagedProperties>().Count == 73
+			&& entity.GetComponent<PluginManagedProperties>().Label == queuedLabel,
+			"deferred plugin numeric/string properties were not committed in order");
+
+		NativePropertyValueV1 readCount{};
+		Require(components.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedCountId, &readCount)
+			== static_cast<int32_t>(ScriptStatus::Success)
+			&& readCount.Kind == static_cast<uint32_t>(NativePropertyKindV1::Int32)
+			&& readCount.Integer == 73,
+			"plugin numeric property did not round-trip through ComponentApiV1");
+		required = 0;
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, nullptr, 0, &required)
+			== static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& required == queuedLabel.size(),
+			"plugin string size probe did not report exact UTF-8 bytes");
+		std::vector<uint8_t> small(required - 1);
+		uint32_t smallRequired = 0;
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, small.data(), static_cast<uint32_t>(small.size()),
+			&smallRequired) == static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& smallRequired == required,
+			"plugin string read accepted an undersized buffer");
+		std::vector<uint8_t> bytes(required);
+		uint32_t actual = 0;
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, bytes.data(), static_cast<uint32_t>(bytes.size()),
+			&actual) == static_cast<int32_t>(ScriptStatus::Success)
+			&& actual == bytes.size()
+			&& std::string(bytes.begin(), bytes.end()) == queuedLabel,
+			"plugin string UTF-8 bytes did not round-trip exactly");
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, nullptr, 0, nullptr)
+			== static_cast<int32_t>(ScriptStatus::InvalidArgument)
+			&& strings.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedCountId, nullptr, 0, &required)
+				== static_cast<int32_t>(ScriptStatus::InvalidArgument)
+			&& components.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedLabelId, &readCount)
+				== static_cast<int32_t>(ScriptStatus::Unavailable),
+			"string/scalar property transports did not reject incompatible calls");
+
+		const std::array<uint8_t, 2> malformed = { 0xc0, 0xaf };
+		const NativeUtf8View malformedView{ malformed.data(), malformed.size() };
+		Require(strings.SetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, malformedView)
+			== static_cast<int32_t>(ScriptStatus::InvalidArgument)
+			&& entity.GetComponent<PluginManagedProperties>().Label == queuedLabel,
+			"malformed UTF-8 mutated a plugin string property");
+		const uint8_t arbitrary = 'x';
+		const NativeUtf8View oversizedView{ &arbitrary,
+			static_cast<uint64_t>(ComponentStringMaximumBytesV1) + 1 };
+		Require(strings.SetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, oversizedView)
+			== static_cast<int32_t>(ScriptStatus::InvalidArgument),
+			"oversized plugin UTF-8 entered the native transport");
+		entity.GetComponent<PluginManagedProperties>().Label.assign("\xc0\xaf", 2);
+		required = 123;
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, nullptr, 0, &required)
+			== static_cast<int32_t>(ScriptStatus::InvalidState)
+			&& required == 0,
+			"native plugin emitted malformed UTF-8 through the C# ABI");
+		entity.GetComponent<PluginManagedProperties>().Label = queuedLabel;
+
+		std::atomic<int32_t> workerStatus{ 0 };
+		std::thread worker([&]()
+		{
+			uint32_t workerRequired = 0;
+			workerStatus.store(strings.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedLabelId, nullptr, 0, &workerRequired));
+		});
+		worker.join();
+		Require(workerStatus.load() == static_cast<int32_t>(ScriptStatus::WrongThread),
+			"plugin string property access was allowed off the script main thread");
+
+		const std::array<TomCat::Entity, 1> liveEntities = { entity };
+		Require(registry.UnregisterProvider(TomCat::UUID(PluginManagedProviderId),
+			liveEntities, error), error.c_str());
+		required = 456;
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, nullptr, 0, &required)
+			== static_cast<int32_t>(ScriptStatus::InvalidArgument)
+			&& required == 0
+			&& components.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedCountId, &readCount)
+				== static_cast<int32_t>(ScriptStatus::InvalidArgument),
+			"provider unload left plugin C# property callbacks reachable");
+		ScriptEngine::Get().StopScene(session);
+	}
+
 	void TestReservedEntityChainedInitializationCapability()
 	{
 		using namespace TomCat::Scripting;
@@ -4508,6 +4891,8 @@ int main(int argc, char** argv)
 		TestInitialOnCreatePrefabPhysicsOrdering);
 	run("component registry schema discovery ABI",
 		TestComponentSchemaCapability);
+	run("third-party component numeric and UTF-8 C# property ABI",
+		TestRegisteredComponentStringCapability);
 	run("reserved C# entity chained initialization capability",
 		TestReservedEntityChainedInitializationCapability);
 	run("managed lifecycle backend, timing, rollback, and unload failure",

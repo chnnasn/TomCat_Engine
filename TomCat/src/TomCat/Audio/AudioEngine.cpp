@@ -129,7 +129,8 @@ namespace TomCat {
 			source = AudioStreamSource::OpenFileRange(range.PackagePath,
 				range.Offset, range.Size, error,
 				"Cooked audio asset "
-					+ std::to_string(static_cast<uint64_t>(handle)));
+					+ std::to_string(static_cast<uint64_t>(handle)),
+				range.HasSHA256Digest ? &range.SHA256Digest : nullptr);
 		}
 		else
 		{

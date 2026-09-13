@@ -35,42 +35,9 @@ public readonly struct UIRect : IEquatable<UIRect>
 	public override string ToString() => $"({X}, {Y}, {Width}, {Height})";
 }
 
-public sealed class TextRenderer : IEntityComponent
+public sealed partial class TextRenderer
 {
-	public const ulong TypeId = 0x9f01000000000001UL;
-	private const ulong EnabledId = 0x9f01100000000001UL;
-	private const ulong FontId = 0x9f01100000000002UL;
-	private const ulong TextId = 0x9f01100000000003UL;
-	private const ulong FontSizeId = 0x9f01100000000004UL;
-	private const ulong ColorId = 0x9f01100000000005UL;
-	private const ulong AlignmentId = 0x9f01100000000006UL;
-	private const ulong MaxWidthId = 0x9f01100000000007UL;
-	private const ulong LineSpacingId = 0x9f01100000000008UL;
-	private const ulong FallbackFontId = 0x9f01100000000009UL;
-	private const ulong EmojiFontId = 0x9f0110000000000aUL;
-
-	internal TextRenderer(Entity entity) => Entity = entity;
-	public Entity Entity { get; }
-	public bool Enabled { get => Bool(EnabledId, "Enabled"); set => Bool(EnabledId, value, "Enabled"); }
-	public AssetRef<FontAsset> Font { get => new(UInt64(FontId, "Font")); set => UInt64(FontId, value.Handle, "Font"); }
-	public AssetRef<FontAsset> FallbackFont { get => new(UInt64(FallbackFontId, "FallbackFont")); set => UInt64(FallbackFontId, value.Handle, "FallbackFont"); }
-	public AssetRef<FontAsset> EmojiFont { get => new(UInt64(EmojiFontId, "EmojiFont")); set => UInt64(EmojiFontId, value.Handle, "EmojiFont"); }
-	public string Text { get => NativeBridge.GetRuntimeUIText(Entity, TypeId, "TextRenderer.Text"); set => NativeBridge.SetRuntimeUIText(Entity, TypeId, value, "TextRenderer.Text"); }
-	public float FontSize { get => Float(FontSizeId, "FontSize"); set => Float(FontSizeId, value, "FontSize"); }
-	public Color Color { get => GetColor(ColorId, "Color"); set => SetColor(ColorId, value, "Color"); }
-	public TextAlignment Alignment { get => (TextAlignment)Int32(AlignmentId, "Alignment"); set => Int32(AlignmentId, (int)value, "Alignment"); }
-	public float MaxWidth { get => Float(MaxWidthId, "MaxWidth"); set => Float(MaxWidthId, value, "MaxWidth"); }
-	public float LineSpacing { get => Float(LineSpacingId, "LineSpacing"); set => Float(LineSpacingId, value, "LineSpacing"); }
-	private bool Bool(ulong id, string name) => NativeBridge.GetRegisteredBool(Entity, TypeId, id, $"TextRenderer.{name}");
-	private void Bool(ulong id, bool value, string name) => NativeBridge.SetRegisteredBool(Entity, TypeId, id, value, $"TextRenderer.{name}");
-	private int Int32(ulong id, string name) => NativeBridge.GetRegisteredInt32(Entity, TypeId, id, $"TextRenderer.{name}");
-	private void Int32(ulong id, int value, string name) => NativeBridge.SetRegisteredInt32(Entity, TypeId, id, value, $"TextRenderer.{name}");
-	private ulong UInt64(ulong id, string name) => NativeBridge.GetRegisteredUInt64(Entity, TypeId, id, $"TextRenderer.{name}");
-	private void UInt64(ulong id, ulong value, string name) => NativeBridge.SetRegisteredUInt64(Entity, TypeId, id, value, $"TextRenderer.{name}");
-	private float Float(ulong id, string name) => NativeBridge.GetRegisteredFloat(Entity, TypeId, id, $"TextRenderer.{name}");
-	private void Float(ulong id, float value, string name) => NativeBridge.SetRegisteredFloat(Entity, TypeId, id, value, $"TextRenderer.{name}");
-	private Color GetColor(ulong id, string name) => NativeBridge.GetRegisteredColor(Entity, TypeId, id, $"TextRenderer.{name}");
-	private void SetColor(ulong id, Color value, string name) => NativeBridge.SetRegisteredColor(Entity, TypeId, id, value, $"TextRenderer.{name}");
+	public const ulong TypeId = RegisteredTypeId;
 }
 
 public sealed class Canvas : IEntityComponent

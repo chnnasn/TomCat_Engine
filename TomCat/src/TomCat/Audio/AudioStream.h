@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TomCat/Core/Base.h"
+#include "TomCat/Asset/ContentHash.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -56,7 +57,8 @@ namespace TomCat {
 		static Ref<AudioStreamSource> OpenFileRange(
 			const std::filesystem::path& path, uint64_t rangeOffset,
 			uint64_t rangeSize, std::string& error,
-			std::string_view sourceName = {});
+			std::string_view sourceName = {},
+			const ContentSHA256Digest* expectedDigest = nullptr);
 
 		const AudioStreamFormat& GetFormat() const { return m_Format; }
 		uint64_t GetFrameCount() const { return m_FrameCount; }

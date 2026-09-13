@@ -142,7 +142,7 @@ namespace TomCat {
 			uint64_t m_TotalBytes = 0;
 		};
 
-		std::string ToLowerHex(const std::array<uint8_t, 32>& digest)
+		std::string ToLowerHex(const ContentSHA256Digest& digest)
 		{
 			static constexpr char hex[] = "0123456789abcdef";
 			std::string result;
@@ -157,11 +157,61 @@ namespace TomCat {
 
 	}
 
-	std::string ComputeContentSHA256(std::span<const uint8_t> bytes)
+	ContentSHA256Digest ComputeContentSHA256Digest(
+		std::span<const uint8_t> bytes)
 	{
 		Sha256 hasher;
 		hasher.Update(bytes);
-		return ToLowerHex(hasher.Final());
+		return hasher.Final();
+	}
+
+	std::string ComputeContentSHA256(std::span<const uint8_t> bytes)
+	{
+		return ToLowerHex(ComputeContentSHA256Digest(bytes));
+	}
+
+	bool ComputeStreamRangeContentSHA256(std::istream& input, uint64_t offset,
+		uint64_t size, ContentSHA256Digest& digest)
+	{
+		digest = {};
+		if (offset > static_cast<uint64_t>(
+			(std::numeric_limits<std::streamoff>::max)()))
+			return false;
+
+		input.clear();
+		input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+		if (!input)
+			return false;
+
+		Sha256 hasher;
+		std::array<uint8_t, 64 * 1024> buffer{};
+		uint64_t remaining = size;
+		while (remaining > 0)
+		{
+			const size_t chunk = static_cast<size_t>((std::min)(remaining,
+				static_cast<uint64_t>(buffer.size())));
+			if (!input.read(reinterpret_cast<char*>(buffer.data()),
+				static_cast<std::streamsize>(chunk)))
+				return false;
+			hasher.Update(std::span<const uint8_t>(buffer.data(), chunk));
+			remaining -= chunk;
+		}
+		digest = hasher.Final();
+		return true;
+	}
+
+	bool VerifyContentSHA256(std::span<const uint8_t> bytes,
+		const ContentSHA256Digest& expectedDigest)
+	{
+		return ComputeContentSHA256Digest(bytes) == expectedDigest;
+	}
+
+	bool VerifyStreamRangeContentSHA256(std::istream& input, uint64_t offset,
+		uint64_t size, const ContentSHA256Digest& expectedDigest)
+	{
+		ContentSHA256Digest actualDigest{};
+		return ComputeStreamRangeContentSHA256(input, offset, size, actualDigest)
+			&& actualDigest == expectedDigest;
 	}
 
 	bool ComputeFileContentSHA256(const std::filesystem::path& path,

@@ -12,6 +12,7 @@
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Shader.h"
+#include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SceneSerializer.h"
@@ -375,6 +376,26 @@ namespace {
 			bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
 	}
 
+	uint32_t ReadLittleEndian32(std::span<const uint8_t> bytes, size_t offset)
+	{
+		Require(offset <= bytes.size() && bytes.size() - offset >= 4,
+			"test LE32 read is out of range");
+		uint32_t value = 0;
+		for (uint32_t index = 0; index < 4; ++index)
+			value |= static_cast<uint32_t>(bytes[offset + index]) << (index * 8);
+		return value;
+	}
+
+	uint64_t ReadLittleEndian64(std::span<const uint8_t> bytes, size_t offset)
+	{
+		Require(offset <= bytes.size() && bytes.size() - offset >= 8,
+			"test LE64 read is out of range");
+		uint64_t value = 0;
+		for (uint32_t index = 0; index < 8; ++index)
+			value |= static_cast<uint64_t>(bytes[offset + index]) << (index * 8);
+		return value;
+	}
+
 	std::vector<uint8_t> MakeFourByFourBMP()
 	{
 		constexpr uint32_t width = 4;
@@ -447,6 +468,21 @@ namespace {
 		output.write(reinterpret_cast<const char*>(bytes.data()),
 			static_cast<std::streamsize>(bytes.size()));
 		Require(static_cast<bool>(output), "could not write complete binary test file");
+	}
+
+	std::vector<uint8_t> ReadBinary(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary | std::ios::ate);
+		Require(static_cast<bool>(input), "could not open binary test file");
+		const std::streamoff end = input.tellg();
+		Require(end >= 0, "binary test file has an invalid size");
+		std::vector<uint8_t> bytes(static_cast<size_t>(end));
+		input.seekg(0, std::ios::beg);
+		if (!bytes.empty())
+			input.read(reinterpret_cast<char*>(bytes.data()), end);
+		Require(static_cast<bool>(input) || bytes.empty(),
+			"could not read complete binary test file");
+		return bytes;
 	}
 
 	std::string ReadText(const std::filesystem::path& path)
@@ -840,6 +876,61 @@ namespace {
 			&& parsed.Target == TomCat::ShaderArtifactTarget::OpenGL
 			&& parsed.Stages.size() == 2,
 			"cooked shader bytes were not a validated OpenGL artifact");
+
+		TomCat::CookedAssetRange cookedRange;
+		Require(manager.TryGetCookedAssetRange(shaderHandle, cookedRange)
+			&& cookedRange.HasSHA256Digest && cookedRange.Size != 0,
+			"tcpak v7 did not expose the Shader payload digest and byte range");
+		manager.UnmountCookedPackage();
+
+		const std::vector<uint8_t> packageBytes = ReadBinary(package);
+		const uint32_t packageVersion = ReadLittleEndian32(packageBytes, 8);
+		const uint32_t headerSize = ReadLittleEndian32(packageBytes, 12);
+		const uint64_t entryCount = ReadLittleEndian64(packageBytes, 16);
+		const uint64_t entrySize =
+			TomCat::RuntimeCompatibility::TcpakEntrySizeForVersion(packageVersion);
+		Require(packageVersion == TomCat::RuntimeCompatibility::TcpakVersion
+			&& TomCat::RuntimeCompatibility::TcpakHasEntryDigests(packageVersion)
+			&& headerSize <= packageBytes.size()
+			&& entryCount <= (packageBytes.size() - headerSize) / entrySize,
+			"cooked Shader package has an invalid tcpak v7 index");
+		size_t shaderDigestOffset = packageBytes.size();
+		for (uint64_t index = 0; index < entryCount; ++index)
+		{
+			const size_t indexOffset = headerSize
+				+ static_cast<size_t>(index * entrySize);
+			if (ReadLittleEndian64(packageBytes, indexOffset)
+				== static_cast<uint64_t>(shaderHandle))
+			{
+				shaderDigestOffset = indexOffset
+					+ static_cast<size_t>(
+						TomCat::RuntimeCompatibility::TcpakLegacyEntrySize);
+				break;
+			}
+		}
+		Require(shaderDigestOffset < packageBytes.size()
+			&& cookedRange.Offset <= packageBytes.size()
+			&& cookedRange.Size <= packageBytes.size() - cookedRange.Offset,
+			"cooked Shader index omitted its payload or digest");
+
+		std::vector<uint8_t> damagedPayload = packageBytes;
+		damagedPayload[static_cast<size_t>(cookedRange.Offset
+			+ cookedRange.Size / 2)] ^= 0x01;
+		const std::filesystem::path damagedPayloadPackage =
+			project.Root / "Damaged Shader Payload.tcpak";
+		WriteBinary(damagedPayloadPackage, damagedPayload);
+		Require(!manager.MountCookedPackage(damagedPayloadPackage),
+			"tcpak v7 mounted a Shader whose payload no longer matched its SHA-256");
+
+		std::vector<uint8_t> damagedDigest = packageBytes;
+		damagedDigest[shaderDigestOffset] ^= 0x01;
+		const std::filesystem::path damagedDigestPackage =
+			project.Root / "Damaged Shader Digest.tcpak";
+		WriteBinary(damagedDigestPackage, damagedDigest);
+		Require(!manager.MountCookedPackage(damagedDigestPackage),
+			"tcpak v7 mounted a Shader whose index digest was corrupted");
+		Require(manager.MountCookedPackage(package),
+			"clean tcpak v7 did not remount after integrity rejection");
 
 		HiddenOpenGLContext context;
 		if (!context.IsAvailable())

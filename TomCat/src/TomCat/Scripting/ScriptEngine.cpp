@@ -939,6 +939,35 @@ namespace TomCat::Scripting {
 		return QueueCommand(std::move(command));
 	}
 
+	bool ScriptEngine::QueueSetRegisteredComponentStringProperty(
+		const EntityHandleV1& entity, uint64_t componentTypeId,
+		uint64_t propertyId, std::string value)
+	{
+		if (!IsMainThread() || propertyId == 0)
+			return false;
+		const ComponentDescriptor* descriptor = componentTypeId == 0 ? nullptr
+			: ComponentRegistry::Get().Find(UUID(componentTypeId));
+		if (!descriptor || !descriptor->ScriptAccessible)
+			return false;
+		const auto property = std::find_if(descriptor->Properties.begin(),
+			descriptor->Properties.end(), [propertyId](const PropertyDescriptor& item)
+			{ return static_cast<uint64_t>(item.PropertyId) == propertyId; });
+		if (property == descriptor->Properties.end()
+			|| property->Kind != PropertyKind::String)
+			return false;
+		bool present = false;
+		if (!GetProjectedRegisteredComponentPresence(entity, componentTypeId, present)
+			|| !present)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetRegisteredComponentStringProperty;
+		command.Entity = entity;
+		command.RegisteredTypeId = componentTypeId;
+		command.RegisteredPropertyId = propertyId;
+		command.Name = std::move(value);
+		return QueueCommand(std::move(command));
+	}
+
 	bool ScriptEngine::QueueInstantiatePrefab(const EntityHandleV1& context,
 		uint64_t prefabHandle, NativeVector3 worldPosition,
 		const EntityHandleV1& parent)
@@ -1047,6 +1076,20 @@ namespace TomCat::Scripting {
 					command.PropertyValue);
 				if (status != static_cast<int32_t>(ScriptStatus::Success))
 					TC_Core_Error("Could not apply queued C# registered property {0} on entity {1}: status {2}",
+						command.RegisteredPropertyId, command.Entity.EntityId, status);
+				continue;
+			}
+			if (command.Kind
+				== DeferredCommandKind::SetRegisteredComponentStringProperty)
+			{
+				const NativeUtf8View value{
+					reinterpret_cast<const uint8_t*>(command.Name.data()),
+					static_cast<uint64_t>(command.Name.size()) };
+				const int32_t status = ApplyRegisteredComponentStringPropertyNow(
+					command.Entity, command.RegisteredTypeId,
+					command.RegisteredPropertyId, value);
+				if (status != static_cast<int32_t>(ScriptStatus::Success))
+					TC_Core_Error("Could not apply queued C# registered string property {0} on entity {1}: status {2}",
 						command.RegisteredPropertyId, command.Entity.EntityId, status);
 				continue;
 			}

@@ -443,6 +443,17 @@ public unsafe struct NativeComponentApiV1
 		NativePropertyValueV1, int> SetProperty;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeComponentStringApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong, byte*,
+		uint, uint*, int> GetProperty;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong,
+		NativeUtf8View, int> SetProperty;
+}
+
 [Flags]
 public enum NativeComponentSchemaFlagsV1 : uint
 {

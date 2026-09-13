@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -75,18 +76,6 @@ namespace {
 	};
 
 #ifdef TC_PLATFORM_WINDOWS
-	struct MountPointReparseData
-	{
-		DWORD ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
-		WORD ReparseDataLength = 0;
-		WORD Reserved = 0;
-		WORD SubstituteNameOffset = 0;
-		WORD SubstituteNameLength = 0;
-		WORD PrintNameOffset = 0;
-		WORD PrintNameLength = 0;
-		WCHAR PathBuffer[1]{};
-	};
-
 	bool CreateDirectoryJunction(const std::filesystem::path& junction,
 		const std::filesystem::path& target)
 	{
@@ -94,7 +83,10 @@ namespace {
 		const std::filesystem::path absoluteTarget =
 			std::filesystem::absolute(target, error).lexically_normal();
 		if (error || !std::filesystem::is_directory(absoluteTarget, error) || error)
+		{
+			SetLastError(error ? static_cast<DWORD>(error.value()) : ERROR_PATH_NOT_FOUND);
 			return false;
+		}
 		if (!CreateDirectoryW(junction.c_str(), nullptr))
 			return false;
 
@@ -104,46 +96,59 @@ namespace {
 		const size_t printBytes = printName.size() * sizeof(wchar_t);
 		const size_t pathBytes = substituteBytes + sizeof(wchar_t) +
 			printBytes + sizeof(wchar_t);
-		const size_t inputBytes =
-			offsetof(MountPointReparseData, PathBuffer) + pathBytes;
+		constexpr size_t mountPointHeaderBytes = 16;
+		const size_t inputBytes = mountPointHeaderBytes + pathBytes;
 		if (inputBytes - 8 > 0xffff || substituteBytes > 0xffff ||
 			printBytes > 0xffff)
 		{
 			RemoveDirectoryW(junction.c_str());
+			SetLastError(ERROR_BUFFER_OVERFLOW);
 			return false;
 		}
 
-		std::vector<uint64_t> storage((inputBytes + sizeof(uint64_t) - 1) /
-			sizeof(uint64_t), 0);
-		auto* data = reinterpret_cast<MountPointReparseData*>(storage.data());
-		data->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
-		data->ReparseDataLength = static_cast<WORD>(inputBytes - 8);
-		data->SubstituteNameLength = static_cast<WORD>(substituteBytes);
-		data->PrintNameOffset =
-			static_cast<WORD>(substituteBytes + sizeof(wchar_t));
-		data->PrintNameLength = static_cast<WORD>(printBytes);
-		std::copy(substitute.begin(), substitute.end(), data->PathBuffer);
-		data->PathBuffer[substitute.size()] = L'\0';
-		WCHAR* printDestination = reinterpret_cast<WCHAR*>(
-			reinterpret_cast<uint8_t*>(data->PathBuffer) +
-			data->PrintNameOffset);
-		std::copy(printName.begin(), printName.end(), printDestination);
-		printDestination[printName.size()] = L'\0';
+		std::vector<uint8_t> data(inputBytes, 0);
+		auto writeWord = [&](size_t offset, WORD value)
+		{
+			data[offset] = static_cast<uint8_t>(value);
+			data[offset + 1] = static_cast<uint8_t>(value >> 8);
+		};
+		auto writeDword = [&](size_t offset, DWORD value)
+		{
+			for (size_t byte = 0; byte < sizeof(value); ++byte)
+				data[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
+		};
+		writeDword(0, IO_REPARSE_TAG_MOUNT_POINT);
+		writeWord(4, static_cast<WORD>(inputBytes - 8));
+		writeWord(10, static_cast<WORD>(substituteBytes));
+		writeWord(12,
+			static_cast<WORD>(substituteBytes + sizeof(wchar_t)));
+		writeWord(14, static_cast<WORD>(printBytes));
+		std::memcpy(data.data() + mountPointHeaderBytes,
+			substitute.data(), substituteBytes);
+		std::memcpy(data.data() + mountPointHeaderBytes + substituteBytes
+			+ sizeof(wchar_t), printName.data(), printBytes);
 
 		const HANDLE directory = CreateFileW(junction.c_str(), GENERIC_WRITE, 0,
 			nullptr, OPEN_EXISTING,
 			FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 		if (directory == INVALID_HANDLE_VALUE)
 		{
+			const DWORD failure = GetLastError();
 			RemoveDirectoryW(junction.c_str());
+			SetLastError(failure);
 			return false;
 		}
 		DWORD returned = 0;
 		const BOOL succeeded = DeviceIoControl(directory, FSCTL_SET_REPARSE_POINT,
-			data, static_cast<DWORD>(inputBytes), nullptr, 0, &returned, nullptr);
+			data.data(), static_cast<DWORD>(inputBytes), nullptr, 0, &returned,
+			nullptr);
+		const DWORD failure = succeeded ? ERROR_SUCCESS : GetLastError();
 		CloseHandle(directory);
 		if (!succeeded)
+		{
 			RemoveDirectoryW(junction.c_str());
+			SetLastError(failure);
+		}
 		return succeeded != FALSE;
 	}
 
@@ -555,14 +560,135 @@ namespace {
 		Require(SnapshotTree(projectDirectory) == beforeUnapprovedRecovery,
 			"default Project::Load changed the interrupted migration tree");
 
+		TomCat::ProjectMigrationRecoveryPreview recoveryPreview;
 		std::string recoveryError;
+		Require(TomCat::Project::PreviewInterruptedMigration(
+			projectPath, recoveryPreview, recoveryError),
+			"interrupted migration preview failed: " + recoveryError);
+		Require(recoveryPreview.HasPendingRecovery() &&
+			recoveryPreview.TransactionID == "recovery-test" &&
+			recoveryPreview.JournalState == "prepared" &&
+			recoveryPreview.WillModifyProjectFiles() &&
+			recoveryPreview.Changes.size() == 3,
+			"interrupted migration preview omitted recovery actions");
+		Require(recoveryPreview.Changes[0].Action ==
+				TomCat::ProjectMigrationRecoveryAction::RestoreOriginal &&
+			recoveryPreview.Changes[1].Action ==
+				TomCat::ProjectMigrationRecoveryAction::RemoveCreatedFile,
+			"interrupted migration preview reported incorrect file actions");
+		Require(SnapshotTree(projectDirectory) == beforeUnapprovedRecovery,
+			"interrupted migration preview modified the project tree");
+
+		WriteText(settingsDirectory / ".migration-journal.json", journal + "\n");
+		const TreeState beforeStaleJournalApproval =
+			SnapshotTree(projectDirectory);
+		Require(!TomCat::Project::RecoverInterruptedMigration(
+			projectPath, recoveryPreview, recoveryError),
+			"recovery accepted a journal changed after approval");
+		Require(SnapshotTree(projectDirectory) == beforeStaleJournalApproval,
+			"stale journal approval changed the interrupted migration tree");
+		WriteText(settingsDirectory / ".migration-journal.json", journal);
+
+		const std::string manualRepair =
+			"SchemaVersion: 4\nProject:\n  Name: UserRepair\n";
+		WriteText(projectPath, manualRepair);
+		const TreeState beforeStaleApproval = SnapshotTree(projectDirectory);
+		Require(!TomCat::Project::RecoverInterruptedMigration(
+			projectPath, recoveryPreview, recoveryError),
+			"recovery accepted an approval made before a manual repair");
+		Require(recoveryError.find("changed after approval") != std::string::npos,
+			"stale recovery approval did not explain that a new review is required");
+		Require(SnapshotTree(projectDirectory) == beforeStaleApproval,
+			"stale recovery approval changed a manually repaired project");
+
+		TomCat::ProjectMigrationRecoveryPreview refreshedPreview;
+		Require(TomCat::Project::PreviewInterruptedMigration(
+			projectPath, refreshedPreview, recoveryError),
+			"refreshed interrupted migration preview failed: " + recoveryError);
+		const std::filesystem::path exportDirectory =
+			temporary.Path / "ExportedRecovery";
+		const TreeState beforeExport = SnapshotTree(projectDirectory);
+		Require(TomCat::Project::ExportInterruptedMigrationBackup(
+			projectPath, refreshedPreview, exportDirectory, recoveryError),
+			"interrupted migration backup export failed: " + recoveryError);
+		Require(SnapshotTree(projectDirectory) == beforeExport,
+			"migration recovery backup export modified the project tree");
+		Require(ReadText(exportDirectory / "Original" / "Project.tcproj")
+				== originalProject &&
+			ReadText(exportDirectory / "Current" / "Project.tcproj")
+				== manualRepair &&
+			ReadText(exportDirectory / "migration-journal.json") == journal,
+			"migration recovery export did not preserve original/current/journal bytes");
+
 		Require(TomCat::Project::RecoverInterruptedMigration(
-			projectPath, recoveryError),
+			projectPath, refreshedPreview, recoveryError),
 			"interrupted migration recovery failed: " + recoveryError);
 		Require(ReadText(projectPath) == originalProject,
 			"journal recovery did not restore original project bytes");
 		Require(!std::filesystem::exists(settingsDirectory),
 			"journal recovery did not remove transaction-created files and directories");
+	}
+
+	void TestAbandonRecoveryKeepsCurrentFilesAndArchive()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory =
+			temporary.Path / "KeepRepair";
+		const std::filesystem::path projectPath =
+			projectDirectory / "Project.tcproj";
+		const std::filesystem::path settingsDirectory =
+			projectDirectory / "ProjectSettings";
+		const std::filesystem::path backupDirectory =
+			settingsDirectory / "MigrationBackups" / "keep-repair";
+		const std::string originalProject =
+			LegacyProjectDocument("KeepRepair");
+		const std::string repairedProject =
+			"SchemaVersion: 4\nProject:\n  Name: RepairedByUser\n";
+		WriteText(projectPath, repairedProject);
+		WriteText(settingsDirectory / "BuildSettings.json",
+			"user repaired build settings");
+		WriteText(settingsDirectory / "PlayerSettings.json",
+			"user repaired player settings");
+		WriteText(backupDirectory / "original-0.bin", originalProject);
+		const std::string journal = PreparedMigrationJournal(
+			"keep-repair", originalProject, false, false);
+		WriteText(backupDirectory / "journal.json", journal);
+		WriteText(settingsDirectory / ".migration-journal.json", journal);
+
+		TomCat::ProjectMigrationRecoveryPreview preview;
+		std::string error;
+		Require(TomCat::Project::PreviewInterruptedMigration(
+			projectPath, preview, error),
+			"keep-current recovery preview failed: " + error);
+		WriteText(backupDirectory / "journal.json", "damaged archive journal");
+		const TreeState beforeUnsafeAbandon = SnapshotTree(projectDirectory);
+		Require(!TomCat::Project::AbandonInterruptedMigrationRecovery(
+			projectPath, preview, error),
+			"keep-current recovery discarded its only valid journal manifest");
+		Require(SnapshotTree(projectDirectory) == beforeUnsafeAbandon &&
+			std::filesystem::is_regular_file(
+				settingsDirectory / ".migration-journal.json"),
+			"failed keep-current preflight changed the project or active journal");
+		WriteText(backupDirectory / "journal.json", journal);
+		Require(TomCat::Project::AbandonInterruptedMigrationRecovery(
+			projectPath, preview, error),
+			"keep-current recovery action failed: " + error);
+		Require(ReadText(projectPath) == repairedProject &&
+			ReadText(settingsDirectory / "BuildSettings.json") ==
+				"user repaired build settings" &&
+			ReadText(settingsDirectory / "PlayerSettings.json") ==
+				"user repaired player settings",
+			"abandoning recovery changed user-repaired project files");
+		Require(!std::filesystem::exists(
+				settingsDirectory / ".migration-journal.json") &&
+			ReadText(backupDirectory / "original-0.bin") == originalProject &&
+			ReadText(backupDirectory / "journal.json") == journal,
+			"abandoning recovery did not preserve its backup archive");
+
+		TomCat::ProjectMigrationRecoveryPreview after;
+		Require(TomCat::Project::PreviewInterruptedMigration(
+			projectPath, after, error) && !after.HasPendingRecovery(),
+			"abandoned recovery remained active: " + error);
 	}
 
 	void TestSameSizeBackupTamperIsRejected()
@@ -593,10 +719,11 @@ namespace {
 		WriteText(backupDirectory / "journal.json", journal);
 		WriteText(settingsDirectory / ".migration-journal.json", journal);
 
+		TomCat::ProjectMigrationRecoveryPreview recoveryPreview;
 		std::string recoveryError;
-		Require(!TomCat::Project::RecoverInterruptedMigration(
-			projectPath, recoveryError),
-			"recovery accepted a same-size modified backup");
+		Require(!TomCat::Project::PreviewInterruptedMigration(
+			projectPath, recoveryPreview, recoveryError),
+			"recovery preview accepted a same-size modified backup");
 		Require(recoveryError.find("SHA-256") != std::string::npos,
 			"same-size backup tamper did not report an integrity failure");
 		Require(ReadText(projectPath) == partialProject,
@@ -627,9 +754,12 @@ namespace {
 		const std::filesystem::path outsideSettings =
 			temporary.Path / "OutsideSettings";
 		std::filesystem::create_directories(outsideSettings);
-		Require(CreateDirectoryJunction(
-			projectDirectory / "ProjectSettings", outsideSettings),
-			"could not create ProjectSettings junction fixture");
+		const bool junctionCreated = CreateDirectoryJunction(
+			projectDirectory / "ProjectSettings", outsideSettings);
+		const DWORD junctionError = junctionCreated ? ERROR_SUCCESS : GetLastError();
+		Require(junctionCreated,
+			"could not create ProjectSettings junction fixture (Win32 error " +
+				std::to_string(junctionError) + ")");
 
 		Require(TomCat::Project::LoadWithMigration(projectPath, preview) == nullptr,
 			"migration followed ProjectSettings after it became a junction");
@@ -667,10 +797,11 @@ namespace {
 			settingsDirectory / "MigrationBackups", outsideBackups),
 			"could not create MigrationBackups junction fixture");
 
+		TomCat::ProjectMigrationRecoveryPreview recoveryPreview;
 		std::string recoveryError;
-		Require(!TomCat::Project::RecoverInterruptedMigration(
-			projectPath, recoveryError),
-			"recovery followed a reparse-point backup ancestor");
+		Require(!TomCat::Project::PreviewInterruptedMigration(
+			projectPath, recoveryPreview, recoveryError),
+			"recovery preview followed a reparse-point backup ancestor");
 		Require(recoveryError.find("reparse point") != std::string::npos,
 			"reparse backup rejection did not report the unsafe ancestor");
 		Require(ReadText(projectPath) == partialProject &&
@@ -809,10 +940,11 @@ namespace {
 			"  ]\n"
 			"}\n");
 
+		TomCat::ProjectMigrationRecoveryPreview recoveryPreview;
 		std::string recoveryError;
-		Require(!TomCat::Project::RecoverInterruptedMigration(
-			projectPath, recoveryError),
-			"migration recovery accepted a journal path escape");
+		Require(!TomCat::Project::PreviewInterruptedMigration(
+			projectPath, recoveryPreview, recoveryError),
+			"migration recovery preview accepted a journal path escape");
 		Require(ReadText(outside) == "must survive",
 			"malicious migration journal modified a path outside the project");
 	}
@@ -1013,6 +1145,7 @@ int main(int argc, char** argv)
 {
 	try
 	{
+
 		if (argc == 3 && std::string_view(argv[1]) == "--log-fallback")
 		{
 			const bool fileSink = TomCat::Log::Init(TomCat::ApplicationProduct::Player,
@@ -1066,6 +1199,7 @@ int main(int argc, char** argv)
 		TestMigrationFailureRollsBackEveryFile();
 #endif
 		TestInterruptedMigrationRecovery();
+		TestAbandonRecoveryKeepsCurrentFilesAndArchive();
 		TestSameSizeBackupTamperIsRejected();
 #ifdef TC_PLATFORM_WINDOWS
 		TestMigrationRejectsReparseAncestorReplacement();

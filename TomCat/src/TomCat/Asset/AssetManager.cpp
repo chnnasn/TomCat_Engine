@@ -201,12 +201,18 @@ namespace TomCat {
 			uint64_t m_TotalBytes = 0;
 		};
 
+		std::array<uint8_t, 32> ComputeSHA256Digest(
+			std::span<const uint8_t> bytes)
+		{
+			Sha256 hasher;
+			hasher.Update(bytes);
+			return hasher.Final();
+		}
+
 		std::string ComputeSHA256(std::span<const uint8_t> bytes)
 		{
 			static constexpr char hex[] = "0123456789abcdef";
-			Sha256 hasher;
-			hasher.Update(bytes);
-			const std::array<uint8_t, 32> digest = hasher.Final();
+			const std::array<uint8_t, 32> digest = ComputeSHA256Digest(bytes);
 			std::string result;
 			result.reserve(digest.size() * 2);
 			for (const uint8_t byte : digest)
@@ -878,6 +884,48 @@ namespace TomCat {
 				copied += chunk;
 			}
 			return true;
+		}
+
+		bool ComputeStreamRangeSHA256(std::istream& input, uint64_t offset,
+			uint64_t size, std::array<uint8_t, 32>& digest)
+		{
+			digest = {};
+			if (offset > static_cast<uint64_t>(
+				(std::numeric_limits<std::streamoff>::max)()))
+				return false;
+
+			input.clear();
+			input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+			if (!input)
+				return false;
+
+			Sha256 hasher;
+			std::array<uint8_t, kCopyBufferSize> buffer{};
+			uint64_t remaining = size;
+			while (remaining > 0)
+			{
+				const size_t chunk = static_cast<size_t>((std::min)(remaining,
+					static_cast<uint64_t>(buffer.size())));
+				if (!input.read(reinterpret_cast<char*>(buffer.data()),
+					static_cast<std::streamsize>(chunk)))
+					return false;
+				hasher.Update(std::span<const uint8_t>(buffer.data(), chunk));
+				remaining -= chunk;
+			}
+			digest = hasher.Final();
+			return true;
+		}
+
+		bool ComputeFileSHA256(const std::filesystem::path& path,
+			uint64_t expectedSize, std::array<uint8_t, 32>& digest)
+		{
+			std::ifstream input(path, std::ios::binary | std::ios::ate);
+			if (!input)
+				return false;
+			const std::streamoff end = input.tellg();
+			if (end < 0 || static_cast<uint64_t>(end) != expectedSize)
+				return false;
+			return ComputeStreamRangeSHA256(input, 0, expectedSize, digest);
 		}
 
 		template<typename UInt>
@@ -2076,13 +2124,16 @@ namespace TomCat {
 				scheduled = AssetJobSystem::Get().TrySchedule(entry.Size,
 					[this, handle, generation, packagePath = std::move(packagePath),
 						offset = entry.Offset, size = entry.Size,
+						expectedDigest = entry.SHA256Digest,
+						verifyDigest = entry.HasSHA256Digest,
 						requireArtifact = packageVersion
-						== RuntimeCompatibility::TcpakVersion]() mutable
+						>= RuntimeCompatibility::TcpakBootManifestVersion]() mutable
 					{
 						try
 						{
 							PrepareCookedTexture(handle, generation,
-								std::move(packagePath), offset, size, requireArtifact);
+								std::move(packagePath), offset, size, expectedDigest,
+								verifyDigest, requireArtifact);
 						}
 						catch (const std::exception& exception)
 						{
@@ -2134,7 +2185,8 @@ namespace TomCat {
 
 	void AssetManager::PrepareCookedTexture(AssetHandle handle,
 		uint64_t generation, std::filesystem::path packagePath, uint64_t offset,
-		uint64_t size, bool requireArtifact)
+		uint64_t size, const std::array<uint8_t, 32>& expectedDigest,
+		bool verifyDigest, bool requireArtifact)
 	{
 		PreparedTexture prepared;
 		prepared.Handle = handle;
@@ -2153,6 +2205,13 @@ namespace TomCat {
 		std::ifstream input(prepared.SourcePath, std::ios::binary);
 		if (!input || !ReadStreamRange(input, offset, size, prepared.Bytes))
 			prepared.Error = "texture artifact bytes could not be read";
+		else if (verifyDigest
+			&& ComputeSHA256Digest(prepared.Bytes) != expectedDigest)
+		{
+			prepared.Error =
+				"texture artifact SHA-256 no longer matches its tcpak index";
+			prepared.Bytes.clear();
+		}
 		else
 		{
 			ResolvedSpriteAsset sprite;
@@ -2871,6 +2930,8 @@ namespace TomCat {
 		range.Offset = found->second.Offset;
 		range.Size = found->second.Size;
 		range.Type = found->second.Type;
+		range.SHA256Digest = found->second.SHA256Digest;
+		range.HasSHA256Digest = found->second.HasSHA256Digest;
 		return !range.PackagePath.empty() && range.Type != AssetType::None &&
 			range.Offset <= m_CookedPackageSize &&
 			range.Size <= m_CookedPackageSize - range.Offset;
@@ -2945,6 +3006,14 @@ namespace TomCat {
 				}
 				copied += chunk;
 			}
+		}
+		if (entry.HasSHA256Digest
+			&& ComputeSHA256Digest(bytes) != entry.SHA256Digest)
+		{
+			TC_Core_Error("Rejected cooked asset {0}: SHA-256 no longer matches "
+				"its tcpak index entry", static_cast<uint64_t>(handle));
+			bytes.clear();
+			return false;
 		}
 		if (type)
 			*type = entry.Type;
@@ -3144,6 +3213,7 @@ namespace TomCat {
 			bool HasCookedBytes = false;
 			uint64_t Offset = 0;
 			uint64_t Size = 0;
+			std::array<uint8_t, 32> SHA256Digest{};
 		};
 
 		std::vector<SourceEntry> entries;
@@ -3368,6 +3438,27 @@ namespace TomCat {
 			return left.RawHandle < right.RawHandle;
 		});
 
+		for (SourceEntry& entry : entries)
+		{
+			if (entry.HasCookedBytes)
+			{
+				if (entry.Size != static_cast<uint64_t>(entry.CookedBytes.size()))
+				{
+					TC_Core_Error("Cooked asset {0} changed size before package hashing",
+						entry.RawHandle);
+					return false;
+				}
+				entry.SHA256Digest = ComputeSHA256Digest(entry.CookedBytes);
+			}
+			else if (!ComputeFileSHA256(entry.Path, entry.Size,
+				entry.SHA256Digest))
+			{
+				TC_Core_Error("Could not hash cooked asset {0} ('{1}')",
+					entry.RawHandle, PathToUTF8(entry.Path));
+				return false;
+			}
+		}
+
 		const std::array<std::string, 6> bootManifestStrings = {
 			packagePlayerSettings.ProductName,
 			packagePlayerSettings.CompanyName,
@@ -3397,7 +3488,7 @@ namespace TomCat {
 		uint64_t packageHeaderSize64 = 0;
 		if (!CheckedMultiply(static_cast<uint64_t>(packageBuildScenes.size()),
 			static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
-			|| !CheckedAdd(RuntimeCompatibility::TcpakV6BaseHeaderSize,
+			|| !CheckedAdd(RuntimeCompatibility::TcpakBaseHeaderSize,
 				bootManifestBytes, packageHeaderSize64)
 			|| !CheckedAdd(packageHeaderSize64, buildSceneBytes,
 				packageHeaderSize64)
@@ -3498,6 +3589,13 @@ namespace TomCat {
 				WriteLittleEndian<uint32_t>(output, entry.Reserved) &&
 				WriteLittleEndian<uint64_t>(output, entry.Offset) &&
 				WriteLittleEndian<uint64_t>(output, entry.Size);
+			if (succeeded)
+			{
+				output.write(reinterpret_cast<const char*>(
+					entry.SHA256Digest.data()),
+					static_cast<std::streamsize>(entry.SHA256Digest.size()));
+				succeeded = output.good();
+			}
 		}
 		for (const SourceEntry& entry : entries)
 		{
@@ -3524,6 +3622,38 @@ namespace TomCat {
 			TC_Core_Error("Failed while writing cooked package '{0}'", PathToUTF8(packagePath));
 			return false;
 		}
+
+		std::ifstream verification(temporary, std::ios::binary);
+		for (size_t index = 0; index < entries.size(); ++index)
+		{
+			const SourceEntry& entry = entries[index];
+			const uint64_t digestOffset = packageHeaderSize64
+				+ static_cast<uint64_t>(index)
+					* RuntimeCompatibility::TcpakEntrySize
+				+ RuntimeCompatibility::TcpakLegacyEntrySize;
+			std::array<uint8_t, 32> storedDigest{};
+			std::array<uint8_t, 32> actualDigest{};
+			if (!verification
+				|| digestOffset > static_cast<uint64_t>(
+					(std::numeric_limits<std::streamoff>::max)())
+				|| !(verification.clear(),
+					verification.seekg(static_cast<std::streamoff>(digestOffset),
+						std::ios::beg),
+					verification.read(reinterpret_cast<char*>(storedDigest.data()),
+						static_cast<std::streamsize>(storedDigest.size())))
+				|| storedDigest != entry.SHA256Digest
+				|| !ComputeStreamRangeSHA256(verification,
+				entry.Offset, entry.Size, actualDigest)
+				|| actualDigest != storedDigest)
+			{
+				verification.close();
+				RemoveTemporaryFile(temporary);
+				TC_Core_Error("Cooked package verification failed for asset {0}",
+					entry.RawHandle);
+				return false;
+			}
+		}
+		verification.close();
 
 		std::string installError;
 		if (!FileSystem::InstallTemporaryFileAtomically(temporary, packagePath, installError))
@@ -3563,8 +3693,7 @@ namespace TomCat {
 		if (!input.read(magic.data(), static_cast<std::streamsize>(magic.size())) ||
 			magic != RuntimeCompatibility::TcpakMagic ||
 			!ReadLittleEndian<uint32_t>(input, version) ||
-			(version != RuntimeCompatibility::OldestSupportedTcpakVersion
-				&& version != RuntimeCompatibility::TcpakVersion) ||
+			!RuntimeCompatibility::IsSupportedTcpakVersion(version) ||
 			!ReadLittleEndian<uint32_t>(input, headerSize) ||
 			!ReadLittleEndian<uint64_t>(input, entryCount) ||
 			!ReadLittleEndian<uint64_t>(input, rawEntrySceneHandle) ||
@@ -3578,7 +3707,7 @@ namespace TomCat {
 		}
 		PlayerSettings mountedPlayerSettings;
 		uint64_t bootManifestBytes = 0;
-		if (version == RuntimeCompatibility::TcpakVersion)
+		if (RuntimeCompatibility::TcpakHasBootManifest(version))
 		{
 			uint32_t manifestSchema = 0;
 			uint32_t rawWindowMode = 0;
@@ -3646,9 +3775,8 @@ namespace TomCat {
 		}
 		uint64_t buildSceneBytes = 0;
 		uint64_t expectedHeaderSize = 0;
-		const uint64_t baseHeaderSize = version == RuntimeCompatibility::TcpakVersion
-			? RuntimeCompatibility::TcpakV6BaseHeaderSize
-			: RuntimeCompatibility::TcpakV5BaseHeaderSize;
+		const uint64_t baseHeaderSize =
+			RuntimeCompatibility::TcpakBaseHeaderSizeForVersion(version);
 		if (buildSceneCount > RuntimeCompatibility::MaximumBuildSceneCount
 			|| !CheckedMultiply(buildSceneCount,
 				static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
@@ -3688,7 +3816,11 @@ namespace TomCat {
 
 		uint64_t indexSize = 0;
 		uint64_t dataStart = 0;
-		if (!CheckedMultiply(entryCount, RuntimeCompatibility::TcpakEntrySize, indexSize) ||
+		const uint64_t entrySize =
+			RuntimeCompatibility::TcpakEntrySizeForVersion(version);
+		const bool hasEntryDigests =
+			RuntimeCompatibility::TcpakHasEntryDigests(version);
+		if (!CheckedMultiply(entryCount, entrySize, indexSize) ||
 			!CheckedAdd(headerSize, indexSize, dataStart) || dataStart > packageSize ||
 			entryCount > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
 			return false;
@@ -3718,12 +3850,17 @@ namespace TomCat {
 			uint32_t reserved = 0;
 			uint64_t offset = 0;
 			uint64_t size = 0;
+			std::array<uint8_t, 32> digest{};
 			if (!ReadLittleEndian<uint64_t>(input, rawHandle) ||
 				!ReadLittleEndian<uint16_t>(input, rawType) ||
 				!ReadLittleEndian<uint16_t>(input, flags) ||
 				!ReadLittleEndian<uint32_t>(input, reserved) ||
 				!ReadLittleEndian<uint64_t>(input, offset) ||
 				!ReadLittleEndian<uint64_t>(input, size))
+				return false;
+			if (hasEntryDigests
+				&& !input.read(reinterpret_cast<char*>(digest.data()),
+					static_cast<std::streamsize>(digest.size())))
 				return false;
 
 			if (offset < dataStart || offset > packageSize
@@ -3737,7 +3874,12 @@ namespace TomCat {
 					|| flags != kManagedPayloadEntryFlag
 					|| reserved != kManagedPayloadEntryTag || size == 0)
 					return false;
-				managedEnvelopeEntry = CookedEntry{ AssetType::None, offset, size };
+				CookedEntry managedEntry;
+				managedEntry.Offset = offset;
+				managedEntry.Size = size;
+				managedEntry.SHA256Digest = digest;
+				managedEntry.HasSHA256Digest = hasEntryDigests;
+				managedEnvelopeEntry = managedEntry;
 			}
 			else
 			{
@@ -3747,8 +3889,13 @@ namespace TomCat {
 					|| flags != 0 || reserved != 0)
 					return false;
 				const AssetHandle handle(rawHandle);
-				if (!entries.emplace(handle,
-					CookedEntry{ static_cast<AssetType>(rawType), offset, size }).second)
+				CookedEntry cookedEntry;
+				cookedEntry.Type = static_cast<AssetType>(rawType);
+				cookedEntry.Offset = offset;
+				cookedEntry.Size = size;
+				cookedEntry.SHA256Digest = digest;
+				cookedEntry.HasSHA256Digest = hasEntryDigests;
+				if (!entries.emplace(handle, cookedEntry).second)
 					return false;
 			}
 			if (size != 0)
@@ -3759,6 +3906,47 @@ namespace TomCat {
 		for (size_t index = 1; index < occupiedRanges.size(); ++index)
 		{
 			if (occupiedRanges[index].first < occupiedRanges[index - 1].second)
+				return false;
+		}
+
+		auto verifyEntryDigest = [&](uint64_t rawHandle,
+			const CookedEntry& entry)
+		{
+			if (!entry.HasSHA256Digest)
+				return true;
+			std::array<uint8_t, 32> actualDigest{};
+			if (!ComputeStreamRangeSHA256(input, entry.Offset, entry.Size,
+				actualDigest) || actualDigest != entry.SHA256Digest)
+			{
+				TC_Core_Error("Rejected tcpak asset {0}: payload SHA-256 does "
+					"not match its index entry", rawHandle);
+				return false;
+			}
+			return true;
+		};
+		std::vector<std::pair<uint64_t, CookedEntry>> digestEntries;
+		try
+		{
+			digestEntries.reserve(entries.size()
+				+ (managedEnvelopeEntry ? 1ULL : 0ULL));
+			for (const auto& [handle, entry] : entries)
+				digestEntries.emplace_back(static_cast<uint64_t>(handle), entry);
+			if (managedEnvelopeEntry)
+				digestEntries.emplace_back(kManagedPayloadHandle,
+					*managedEnvelopeEntry);
+		}
+		catch (const std::exception&)
+		{
+			return false;
+		}
+		std::sort(digestEntries.begin(), digestEntries.end(),
+			[](const auto& left, const auto& right)
+			{
+				return left.second.Offset < right.second.Offset;
+			});
+		for (const auto& [rawHandle, entry] : digestEntries)
+		{
+			if (!verifyEntryDigest(rawHandle, entry))
 				return false;
 		}
 		for (AssetHandle buildSceneHandle : buildSceneHandles)
@@ -3782,6 +3970,14 @@ namespace TomCat {
 			if (!ReadStreamRange(input, managedEnvelopeEntry->Offset,
 				managedEnvelopeEntry->Size, envelope))
 				return false;
+			if (managedEnvelopeEntry->HasSHA256Digest
+				&& ComputeSHA256Digest(envelope)
+					!= managedEnvelopeEntry->SHA256Digest)
+			{
+				TC_Core_Error(
+					"Rejected managed tcpak payload: SHA-256 changed during mount");
+				return false;
+			}
 			ManagedPackagePayload parsed;
 			if (!ParseManagedEnvelope(envelope, parsed, validationError))
 			{
@@ -3801,6 +3997,13 @@ namespace TomCat {
 			std::vector<uint8_t> archiveBytes;
 			if (!ReadStreamRange(input, entry.Offset, entry.Size, archiveBytes))
 				return false;
+			if (entry.HasSHA256Digest
+				&& ComputeSHA256Digest(archiveBytes) != entry.SHA256Digest)
+			{
+				TC_Core_Error("Rejected cooked archive asset {0}: SHA-256 "
+					"changed during mount", static_cast<uint64_t>(handle));
+				return false;
+			}
 			const bool formatValid = entry.Type == AssetType::Scene
 				? SceneSerializer::ValidateCurrentFormat(archiveBytes, packagePath)
 				: PrefabArchiveCodec::ValidateCurrentFormat(archiveBytes, packagePath);
@@ -3866,7 +4069,7 @@ namespace TomCat {
 		}
 		if (hasCSharpScripts && !mountedManagedPayload)
 		{
-			TC_Core_Error("Rejected tcpak v5: an archive has CSharpScripts but no managed payload");
+			TC_Core_Error("Rejected tcpak: an archive has CSharpScripts but no managed payload");
 			return false;
 		}
 		if (mountedManagedPayload

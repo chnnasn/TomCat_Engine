@@ -1756,11 +1756,31 @@ namespace TomCat {
 
 		bool RestoreMigrationJournal(const std::filesystem::path& projectPath,
 			const ProjectMigrationJournal& journal, std::string& errorMessage,
-			FileSystem::PinnedDirectoryChain* activeDirectoryGuard = nullptr)
+			FileSystem::PinnedDirectoryChain* activeDirectoryGuard = nullptr,
+			const ProjectMigrationRecoveryPreview* approvedState = nullptr,
+			std::string_view approvedJournal = {})
 		{
 			const std::filesystem::path journalPath = MigrationJournalPath(projectPath);
 			const std::filesystem::path backupDirectory =
 				MigrationBackupRoot(projectPath) / UTF8ToPath(journal.TransactionID);
+			auto requireApprovedJournal = [&]()
+			{
+				if (approvedJournal.empty())
+					return true;
+				std::string currentJournal;
+				if (!ReadMigrationFileBytes(
+					projectPath, journalPath, currentJournal, errorMessage))
+					return false;
+				if (currentJournal != approvedJournal)
+				{
+					errorMessage =
+						"Migration journal changed after recovery approval";
+					return false;
+				}
+				return true;
+			};
+			if (!requireApprovedJournal())
+				return false;
 
 			if (journal.State == "committed")
 			{
@@ -1833,14 +1853,36 @@ namespace TomCat {
 				const ProjectMigrationJournalEntry& entry = journal.Entries[index];
 				const std::filesystem::path target =
 					projectPath.parent_path() / entry.RelativeTarget;
+				bool currentExists = false;
+				uintmax_t currentSize = 0;
+				std::string currentSHA256;
+				if (!InspectMigrationTarget(projectPath, target, currentExists,
+					currentSize, currentSHA256, errorMessage))
+					return false;
+				if (approvedState)
+				{
+					if (index >= approvedState->Changes.size())
+					{
+						errorMessage =
+							"Approved recovery target set is incomplete";
+						return false;
+					}
+					const ProjectMigrationRecoveryChange& approved =
+						approvedState->Changes[index];
+					if (approved.RelativePath.lexically_normal() !=
+							entry.RelativeTarget.lexically_normal() ||
+						approved.CurrentExists != currentExists ||
+						approved.CurrentSize != currentSize ||
+						approved.CurrentSHA256 != currentSHA256)
+					{
+						errorMessage =
+							"Migration target changed after recovery approval: " +
+							PathToUTF8(target);
+						return false;
+					}
+				}
 				if (entry.Existed)
 				{
-					bool currentExists = false;
-					uintmax_t currentSize = 0;
-					std::string currentSHA256;
-					if (!InspectMigrationTarget(projectPath, target, currentExists,
-						currentSize, currentSHA256, errorMessage))
-						return false;
 					if (!currentExists || currentSize != entry.OriginalSize ||
 						currentSHA256 != entry.OriginalSHA256)
 					{
@@ -1858,13 +1900,7 @@ namespace TomCat {
 				}
 				else
 				{
-					bool targetExists = false;
-					uintmax_t targetSize = 0;
-					std::string targetSHA256;
-					if (!InspectMigrationTarget(projectPath, target, targetExists,
-						targetSize, targetSHA256, errorMessage))
-						return false;
-					if (targetExists)
+					if (currentExists)
 					{
 						if (!RemoveMigrationPathSafely(
 							projectPath, target, true, errorMessage))
@@ -1913,6 +1949,8 @@ namespace TomCat {
 				}
 			}
 
+			if (!requireApprovedJournal())
+				return false;
 			if (!RemoveMigrationPathSafely(
 				projectPath, journalPath, true, errorMessage))
 			{
@@ -2253,6 +2291,190 @@ namespace TomCat {
 			{
 				TC_Core_Warn("Committed project migration left a cleanup journal: {0}",
 					writeError);
+			}
+			return true;
+		}
+
+		bool MigrationRecoveryPreviewsMatch(
+			const ProjectMigrationRecoveryPreview& approved,
+			const ProjectMigrationRecoveryPreview& current)
+		{
+			if (approved.ProjectPath.lexically_normal() !=
+					current.ProjectPath.lexically_normal() ||
+				approved.TransactionID != current.TransactionID ||
+				approved.JournalState != current.JournalState ||
+				approved.JournalSize != current.JournalSize ||
+				approved.JournalSHA256 != current.JournalSHA256 ||
+				approved.BackupDirectory.lexically_normal() !=
+					current.BackupDirectory.lexically_normal() ||
+				approved.Changes.size() != current.Changes.size())
+				return false;
+			for (size_t index = 0; index < approved.Changes.size(); ++index)
+			{
+				const ProjectMigrationRecoveryChange& expected =
+					approved.Changes[index];
+				const ProjectMigrationRecoveryChange& actual =
+					current.Changes[index];
+				if (expected.RelativePath.lexically_normal() !=
+						actual.RelativePath.lexically_normal() ||
+					expected.OriginalExisted != actual.OriginalExisted ||
+					expected.OriginalSize != actual.OriginalSize ||
+					expected.OriginalSHA256 != actual.OriginalSHA256 ||
+					expected.CurrentExists != actual.CurrentExists ||
+					expected.CurrentSize != actual.CurrentSize ||
+					expected.CurrentSHA256 != actual.CurrentSHA256 ||
+					expected.Action != actual.Action)
+					return false;
+			}
+			return true;
+		}
+
+		bool InspectInterruptedMigrationJournal(
+			const std::filesystem::path& projectPath,
+			ProjectMigrationRecoveryPreview& preview,
+			ProjectMigrationJournal& journal, std::string& journalDocument,
+			ProjectMigrationDirectoryGuards& guards, std::string& errorMessage)
+		{
+			preview = {};
+			preview.ProjectPath = AbsoluteNormalized(projectPath);
+			journal = {};
+			journalDocument.clear();
+			errorMessage.clear();
+			if (!PinMigrationProjectDirectory(projectPath, guards.Root, errorMessage))
+				return false;
+
+			const std::filesystem::path journalPath =
+				MigrationJournalPath(projectPath);
+			if (!ValidateMigrationPath(
+				projectPath, projectPath, true, errorMessage) ||
+				!ValidateMigrationPath(
+					projectPath, journalPath, true, errorMessage))
+				return false;
+
+			std::error_code filesystemError;
+			const std::filesystem::file_status status =
+				std::filesystem::symlink_status(journalPath, filesystemError);
+			if (IsMissingMigrationPathError(filesystemError) ||
+				(!filesystemError && !std::filesystem::exists(status)))
+				return true;
+			if (filesystemError)
+			{
+				errorMessage = "Could not inspect migration journal: " +
+					filesystemError.message();
+				return false;
+			}
+			if (!std::filesystem::is_regular_file(status) ||
+				std::filesystem::is_symlink(status))
+			{
+				errorMessage =
+					"Migration journal is not a regular, non-symlink file";
+				return false;
+			}
+			if (!guards.Active.Acquire(journalPath.parent_path(), errorMessage))
+			{
+				errorMessage = "Could not pin migration journal directory: " +
+					errorMessage;
+				return false;
+			}
+			if (!ReadMigrationFileBytes(
+				projectPath, journalPath, journalDocument, errorMessage) ||
+				!ParseMigrationJournal(
+					projectPath, journalDocument, journal, errorMessage))
+				return false;
+
+			preview.TransactionID = journal.TransactionID;
+			preview.JournalState = journal.State;
+			preview.JournalSize = journalDocument.size();
+			preview.JournalSHA256 = MigrationSHA256(journalDocument);
+			preview.BackupDirectory =
+				std::filesystem::path("ProjectSettings") /
+				UTF8ToPath(std::string(kProjectMigrationBackupDirectory)) /
+				UTF8ToPath(journal.TransactionID);
+
+			const std::filesystem::path backupDirectory =
+				MigrationBackupRoot(projectPath) /
+				UTF8ToPath(journal.TransactionID);
+			if (journal.State == "prepared")
+			{
+				if (!ValidateMigrationPath(
+					projectPath, backupDirectory, false, errorMessage))
+					return false;
+				FileSystem::PinnedDirectoryChain transactionGuard;
+				if (!transactionGuard.Acquire(backupDirectory, errorMessage))
+				{
+					errorMessage = "Could not pin migration backup directory: " +
+						errorMessage;
+					return false;
+				}
+				guards.Active = std::move(transactionGuard);
+			}
+
+			preview.Changes.reserve(journal.Entries.size());
+			for (const ProjectMigrationJournalEntry& entry : journal.Entries)
+			{
+				if (journal.State == "prepared")
+				{
+					const std::filesystem::path backup =
+						backupDirectory / entry.BackupFile;
+					if (entry.Existed)
+					{
+						std::string original;
+						if (!ReadMigrationFileBytes(
+							projectPath, backup, original, errorMessage))
+							return false;
+						if (original.size() != entry.OriginalSize ||
+							MigrationSHA256(original) != entry.OriginalSHA256)
+						{
+							errorMessage =
+								"Migration backup SHA-256 or size does not match "
+								"its journal: " + PathToUTF8(backup);
+							return false;
+						}
+					}
+					else
+					{
+						if (!ValidateMigrationPath(
+							projectPath, backup, true, errorMessage))
+							return false;
+						std::error_code backupError;
+						const std::filesystem::file_status backupStatus =
+							std::filesystem::symlink_status(backup, backupError);
+						if ((!backupError && std::filesystem::exists(backupStatus)) ||
+							(backupError &&
+								!IsMissingMigrationPathError(backupError)))
+						{
+							errorMessage =
+								"Migration journal has an unexpected backup for "
+								"a created file";
+							return false;
+						}
+					}
+				}
+
+				ProjectMigrationRecoveryChange change;
+				change.RelativePath = entry.RelativeTarget;
+				change.OriginalExisted = entry.Existed;
+				change.OriginalSize = entry.OriginalSize;
+				change.OriginalSHA256 = entry.OriginalSHA256;
+				const std::filesystem::path target =
+					projectPath.parent_path() / entry.RelativeTarget;
+				if (!InspectMigrationTarget(projectPath, target,
+					change.CurrentExists, change.CurrentSize,
+					change.CurrentSHA256, errorMessage))
+					return false;
+				if (journal.State == "committed")
+					change.Action = ProjectMigrationRecoveryAction::KeepCurrent;
+				else if (entry.Existed)
+					change.Action = change.CurrentExists &&
+						change.CurrentSize == entry.OriginalSize &&
+						change.CurrentSHA256 == entry.OriginalSHA256
+						? ProjectMigrationRecoveryAction::AlreadyRestored
+						: ProjectMigrationRecoveryAction::RestoreOriginal;
+				else
+					change.Action = change.CurrentExists
+						? ProjectMigrationRecoveryAction::RemoveCreatedFile
+						: ProjectMigrationRecoveryAction::AlreadyAbsent;
+				preview.Changes.push_back(std::move(change));
 			}
 			return true;
 		}
@@ -2975,73 +3197,353 @@ namespace TomCat {
 		}
 	}
 
-	bool Project::RecoverInterruptedMigration(
-		const std::filesystem::path& projectPath, std::string& errorMessage)
+	bool Project::PreviewInterruptedMigration(
+		const std::filesystem::path& projectPath,
+		ProjectMigrationRecoveryPreview& preview, std::string& errorMessage)
 	{
-		errorMessage.clear();
+		ProjectMigrationJournal journal;
 		ProjectMigrationDirectoryGuards guards;
-		if (!PinMigrationProjectDirectory(projectPath, guards.Root, errorMessage))
+		std::string journalDocument;
+		return InspectInterruptedMigrationJournal(projectPath, preview,
+			journal, journalDocument, guards, errorMessage);
+	}
+
+	bool Project::RecoverInterruptedMigration(
+		const std::filesystem::path& projectPath,
+		const ProjectMigrationRecoveryPreview& approvedRecovery,
+		std::string& errorMessage)
+	{
+		ProjectMigrationRecoveryPreview current;
+		ProjectMigrationJournal journal;
+		ProjectMigrationDirectoryGuards guards;
+		std::string journalDocument;
+		if (!InspectInterruptedMigrationJournal(projectPath, current,
+			journal, journalDocument, guards, errorMessage))
 			return false;
-		const std::filesystem::path journalPath = MigrationJournalPath(projectPath);
-		if (!ValidateMigrationPath(
-			projectPath, projectPath, true, errorMessage) ||
-			!ValidateMigrationPath(
-				projectPath, journalPath, true, errorMessage))
+		if (!MigrationRecoveryPreviewsMatch(approvedRecovery, current))
+		{
+			errorMessage =
+				"Interrupted migration recovery changed after approval; review it again";
 			return false;
-		std::error_code filesystemError;
-		const std::filesystem::file_status status =
-			std::filesystem::symlink_status(journalPath, filesystemError);
-		if (filesystemError == std::errc::no_such_file_or_directory ||
-			(!filesystemError && !std::filesystem::exists(status)))
+		}
+		if (!current.HasPendingRecovery())
 			return true;
-		if (filesystemError)
+		if (!RestoreMigrationJournal(
+			projectPath, journal, errorMessage, &guards.Active,
+			&current, journalDocument))
+			return false;
+		TC_Core_Warn("Recovered interrupted project migration '{0}'",
+			journal.TransactionID);
+		return true;
+	}
+
+	bool Project::AbandonInterruptedMigrationRecovery(
+		const std::filesystem::path& projectPath,
+		const ProjectMigrationRecoveryPreview& approvedRecovery,
+		std::string& errorMessage)
+	{
+		ProjectMigrationRecoveryPreview current;
+		ProjectMigrationJournal journal;
+		ProjectMigrationDirectoryGuards guards;
+		std::string journalDocument;
+		if (!InspectInterruptedMigrationJournal(projectPath, current,
+			journal, journalDocument, guards, errorMessage))
+			return false;
+		if (!current.HasPendingRecovery())
 		{
-			errorMessage = "Could not inspect migration journal: " +
-				filesystemError.message();
+			errorMessage = "There is no interrupted migration to abandon";
 			return false;
 		}
-		if (!std::filesystem::is_regular_file(status) ||
-			std::filesystem::is_symlink(status))
+		if (!MigrationRecoveryPreviewsMatch(approvedRecovery, current))
 		{
-			errorMessage = "Migration journal is not a regular, non-symlink file";
+			errorMessage =
+				"Interrupted migration recovery changed after approval; review it again";
 			return false;
 		}
-		if (!guards.Active.Acquire(journalPath.parent_path(), errorMessage))
+
+		const std::filesystem::path journalPath =
+			MigrationJournalPath(projectPath);
+		for (const ProjectMigrationRecoveryChange& change : current.Changes)
 		{
-			errorMessage = "Could not pin migration journal directory: " +
+			bool targetExists = false;
+			uintmax_t targetSize = 0;
+			std::string targetSHA256;
+			const std::filesystem::path target =
+				projectPath.parent_path() / change.RelativePath;
+			if (!InspectMigrationTarget(projectPath, target, targetExists,
+				targetSize, targetSHA256, errorMessage))
+				return false;
+			if (targetExists != change.CurrentExists ||
+				targetSize != change.CurrentSize ||
+				targetSHA256 != change.CurrentSHA256)
+			{
+				errorMessage =
+					"Migration target changed after recovery approval: " +
+					PathToUTF8(target);
+				return false;
+			}
+		}
+		std::string currentJournal;
+		if (!ReadMigrationFileBytes(
+			projectPath, journalPath, currentJournal, errorMessage) ||
+			currentJournal != journalDocument)
+		{
+			if (errorMessage.empty())
+				errorMessage =
+					"Migration journal changed after recovery approval";
+			return false;
+		}
+		if (guards.Active.IsAcquired() &&
+			!guards.Active.Verify(errorMessage))
+			return false;
+		if (journal.State == "prepared")
+		{
+			const std::filesystem::path archivedJournal =
+				MigrationBackupRoot(projectPath) /
+				UTF8ToPath(journal.TransactionID) / "journal.json";
+			std::string archivedDocument;
+			if (!ReadMigrationFileBytes(projectPath, archivedJournal,
+				archivedDocument, errorMessage) ||
+				archivedDocument != journalDocument)
+			{
+				if (errorMessage.empty())
+					errorMessage =
+						"Migration backup archive journal does not match the active journal";
+				return false;
+			}
+		}
+		if (!RemoveMigrationPathSafely(
+			projectPath, journalPath, true, errorMessage))
+		{
+			errorMessage =
+				"Could not abandon the interrupted migration recovery: " +
+				errorMessage;
+			return false;
+		}
+		TC_Core_Warn(
+			"Abandoned interrupted project migration recovery '{0}'; "
+			"current files and backup archive were retained",
+			journal.TransactionID);
+		errorMessage.clear();
+		return true;
+	}
+
+	bool Project::ExportInterruptedMigrationBackup(
+		const std::filesystem::path& projectPath,
+		const ProjectMigrationRecoveryPreview& approvedRecovery,
+		const std::filesystem::path& destinationDirectory,
+		std::string& errorMessage)
+	{
+		ProjectMigrationRecoveryPreview current;
+		ProjectMigrationJournal journal;
+		ProjectMigrationDirectoryGuards guards;
+		std::string journalDocument;
+		if (!InspectInterruptedMigrationJournal(projectPath, current,
+			journal, journalDocument, guards, errorMessage))
+			return false;
+		if (!current.HasPendingRecovery())
+		{
+			errorMessage = "There is no interrupted migration to export";
+			return false;
+		}
+		if (!MigrationRecoveryPreviewsMatch(approvedRecovery, current))
+		{
+			errorMessage =
+				"Interrupted migration recovery changed after approval; review it again";
+			return false;
+		}
+		if (destinationDirectory.empty())
+		{
+			errorMessage = "Migration recovery export destination is empty";
+			return false;
+		}
+
+		const std::filesystem::path destination =
+			AbsoluteNormalized(destinationDirectory);
+		if (IsPathWithinOrEqual(projectPath.parent_path(), destination))
+		{
+			errorMessage =
+				"Migration recovery backup must be exported outside the project";
+			return false;
+		}
+		std::error_code filesystemError;
+		const std::filesystem::file_status destinationStatus =
+			std::filesystem::symlink_status(destination, filesystemError);
+		if ((!filesystemError && std::filesystem::exists(destinationStatus)) ||
+			(filesystemError && !IsMissingMigrationPathError(filesystemError)))
+		{
+			errorMessage =
+				"Migration recovery export destination already exists or cannot be inspected";
+			return false;
+		}
+		const std::filesystem::path destinationParent =
+			destination.parent_path();
+		if (!ValidateNoReparsePathChain(
+			destinationParent, false, errorMessage))
+		{
+			errorMessage = "Migration recovery export parent is unsafe: " +
+				errorMessage;
+			return false;
+		}
+		FileSystem::PinnedDirectoryChain exportParentGuard;
+		if (!exportParentGuard.Acquire(destinationParent, errorMessage))
+		{
+			errorMessage = "Could not pin migration recovery export parent: " +
 				errorMessage;
 			return false;
 		}
 
-		std::string document;
-		if (!ReadMigrationFileBytes(
-			projectPath, journalPath, document, errorMessage))
-			return false;
-		ProjectMigrationJournal journal;
-		if (!ParseMigrationJournal(projectPath, document, journal, errorMessage))
-			return false;
-		if (journal.State == "prepared")
+		struct ExportFile
 		{
-			const std::filesystem::path backupDirectory =
-				MigrationBackupRoot(projectPath) /
+			std::filesystem::path RelativePath;
+			std::string Contents;
+		};
+		std::vector<ExportFile> files;
+		files.push_back({ "migration-journal.json", journalDocument });
+		files.push_back({ "README.txt",
+			"TomCat interrupted project migration recovery export\n\n"
+			"Original/ contains the validated pre-migration files.\n"
+			"Current/ contains the affected files as they existed when this "
+			"export was approved.\n"
+			"The project and its active recovery journal were not changed.\n" });
+
+		const std::filesystem::path backupDirectory =
+			MigrationBackupRoot(projectPath) /
 				UTF8ToPath(journal.TransactionID);
-			if (!ValidateMigrationPath(
-				projectPath, backupDirectory, false, errorMessage))
-				return false;
-			FileSystem::PinnedDirectoryChain transactionGuard;
-			if (!transactionGuard.Acquire(backupDirectory, errorMessage))
+		for (size_t index = 0; index < journal.Entries.size(); ++index)
+		{
+			const ProjectMigrationJournalEntry& entry = journal.Entries[index];
+			const ProjectMigrationRecoveryChange& change =
+				current.Changes[index];
+			if (entry.Existed)
 			{
-				errorMessage = "Could not pin migration backup directory: " +
-					errorMessage;
+				std::string original;
+				const std::filesystem::path backup =
+					backupDirectory / entry.BackupFile;
+				if (!ReadMigrationFileBytes(
+					projectPath, backup, original, errorMessage))
+					return false;
+				if (original.size() != entry.OriginalSize ||
+					MigrationSHA256(original) != entry.OriginalSHA256)
+				{
+					errorMessage =
+						"Migration backup changed during export: " +
+						PathToUTF8(backup);
+					return false;
+				}
+				files.push_back({
+					std::filesystem::path("Original") / entry.RelativeTarget,
+					std::move(original) });
+			}
+
+			const std::filesystem::path target =
+				projectPath.parent_path() / entry.RelativeTarget;
+			bool targetExists = false;
+			uintmax_t targetSize = 0;
+			std::string targetSHA256;
+			if (!InspectMigrationTarget(projectPath, target, targetExists,
+				targetSize, targetSHA256, errorMessage))
+				return false;
+			if (targetExists != change.CurrentExists ||
+				targetSize != change.CurrentSize ||
+				targetSHA256 != change.CurrentSHA256)
+			{
+				errorMessage =
+					"Migration target changed during recovery export: " +
+					PathToUTF8(target);
 				return false;
 			}
-			guards.Active = std::move(transactionGuard);
+			if (targetExists)
+			{
+				std::string targetContents;
+				if (!ReadMigrationFileBytes(
+					projectPath, target, targetContents, errorMessage) ||
+					targetContents.size() != targetSize ||
+					MigrationSHA256(targetContents) != targetSHA256)
+				{
+					errorMessage =
+						"Migration target changed while it was exported: " +
+						PathToUTF8(target);
+					return false;
+				}
+				files.push_back({
+					std::filesystem::path("Current") / entry.RelativeTarget,
+					std::move(targetContents) });
+			}
 		}
-		if (!RestoreMigrationJournal(
-			projectPath, journal, errorMessage, &guards.Active))
+
+		const std::filesystem::path staging =
+			FileSystem::MakeTemporarySiblingPath(destination);
+		if (staging.empty())
+		{
+			errorMessage =
+				"Could not allocate a migration recovery export staging path";
 			return false;
-		TC_Core_Warn("Recovered interrupted project migration '{0}'",
-			journal.TransactionID);
+		}
+		filesystemError.clear();
+		if (!std::filesystem::create_directory(staging, filesystemError) ||
+			filesystemError)
+		{
+			errorMessage = "Could not create migration recovery export: " +
+				filesystemError.message();
+			return false;
+		}
+		auto cleanupStaging = [&]()
+		{
+			std::error_code cleanupError;
+			std::filesystem::remove_all(staging, cleanupError);
+		};
+		for (const ExportFile& file : files)
+		{
+			const std::filesystem::path output = staging / file.RelativePath;
+			filesystemError.clear();
+			std::filesystem::create_directories(
+				output.parent_path(), filesystemError);
+			if (filesystemError)
+			{
+				errorMessage =
+					"Could not create migration recovery export directory: " +
+					filesystemError.message();
+				cleanupStaging();
+				return false;
+			}
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(
+				output, file.Contents, writeError))
+			{
+				errorMessage =
+					"Could not write migration recovery export: " + writeError;
+				cleanupStaging();
+				return false;
+			}
+		}
+		filesystemError.clear();
+		if (!exportParentGuard.Verify(errorMessage))
+		{
+			cleanupStaging();
+			return false;
+		}
+		filesystemError.clear();
+		const std::filesystem::file_status publishStatus =
+			std::filesystem::symlink_status(destination, filesystemError);
+		if ((!filesystemError && std::filesystem::exists(publishStatus)) ||
+			(filesystemError && !IsMissingMigrationPathError(filesystemError)))
+		{
+			errorMessage =
+				"Migration recovery export destination appeared before publish";
+			cleanupStaging();
+			return false;
+		}
+		filesystemError.clear();
+		std::filesystem::rename(staging, destination, filesystemError);
+		if (filesystemError)
+		{
+			errorMessage = "Could not publish migration recovery export: " +
+				filesystemError.message();
+			cleanupStaging();
+			return false;
+		}
+		errorMessage.clear();
 		return true;
 	}
 
