@@ -10,24 +10,30 @@ TomCat 当前优先完成可实际使用的 2D 开发流程。现有 3D 项目�
 
 ## 特性
 
-- **2D 渲染**：OpenGL 批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图与实体拾取
-- **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化和原子保存
-- **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` Sidecar、Registry 重建、事务化移动/删除和缺失资产占位
+- **2D 渲染**：OpenGL 批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图、实体拾取、带 Rect/Pivot/PPU/Border 语义的稳定 Sprite Atlas 子资源、确定性 Sprite 排序、动画 Clip 与参数驱动的 Animator 状态机
+- **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化、有序 Build Settings 与帧末单场景替换
+- **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` schema-v2 Sidecar、ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、依赖跟踪，以及支持去抖内容监控、反向依赖重导和主线程发布的后台 ImportCoordinator
 - **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
-- **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、Play/Pause/Step/Stop，以及延迟派发的 NativeScript Collision/Trigger 回调
-- **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector 和 Project 面板，支持项目级布局与用户设置持久化
-- **Cooked Runtime 基础**：按资产 Handle 寻址、无作者路径的 `.tcpak` v3，并为最小 Cooked Player 嵌入项目碰撞矩阵
+- **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、Play/Pause/Step/Stop，以及延迟派发的 C# Collision/Trigger 回调
+- **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、诊断、last-good 程序集与 Cooked 托管负载
+- **快照 Prefab**：使用稳定 LocalID 的 `.tcprefab` 实体子树、引用重映射、运行时 C# `Instantiate`，实例化后为普通非关联实体
+- **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
+- **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
+- **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
+- **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector 和 Project 面板，支持 Undo/Redo、自动保存/恢复、项目锁、项目级布局与用户设置持久化
+- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v6（Player 兼容读取 v5/v6）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、Editor 版本选择和用户级最近项目状态
 - **本地化**：动态生成 ImGui 中文字符集，Hub 支持中英文切换
-- **回归测试**：第一方 2D 物理套件覆盖固定步长、回调、运行时重建、查询、关节、Scene Schema v9 和 Cooked Package 往返
+- **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、物理、Sprite 资产、脚本编译、SceneManager、Prefab、Cook 与隔离 Player 启动
 
 ## 当前范围
 
 - 支持的开发平台：**Windows x64**
 - 渲染后端：**OpenGL 4.6**
 - 当前引擎主范围：**2D**
-- 现有打包脚本发布的是 **Editor 和 Hub**，不是用户制作的独立游戏
-- `.tcpak` 与 `--play-cooked` 是运行时基础；Editor 的 Build Game 流程和独立 Player Target 仍待开发
+- Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
+- 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
+- V1 明确不支持 NuGet/第三方托管 DLL、Play Mode 热重载、脚本调试、叠加/异步场景、Prefab 关联更新、Override、Nested Prefab 和 Variant
 
 ## 构建
 
@@ -35,6 +41,7 @@ TomCat 当前优先完成可实际使用的 2D 开发流程。现有 3D 项目�
 
 - Windows x64，并具备支持 OpenGL 4.6 的显卡与驱动
 - Visual Studio 2022+
+- .NET 10 SDK（Editor 编译项目 C# 脚本必需）
 - Python 3 与 `pip`（供 Setup 辅助脚本使用）
 - premake5（Setup 脚本自动下载）
 
@@ -47,13 +54,15 @@ TomCat 当前优先完成可实际使用的 2D 开发流程。现有 3D 项目�
 3. 运行 Scripts\Win_GenProjects.bat 生成 VS 工程
 4. 根据需要打开 `Editor\Editor.sln`、`Builder\Builder.sln` 或 `Tests\Tests.sln`，并以 Release x64 编译目标
 
-由 `Scripts\Setup.bat` 准备 Premake 后，运行 `powershell -ExecutionPolicy Bypass -File Scripts\Run-PhysicsRegression.ps1` 可生成、编译并执行 2D 物理与基础 Sprite 回归套件。
+由 `Scripts\Setup.bat` 准备 Premake 后，运行 `powershell -ExecutionPolicy Bypass -File Scripts\Run-Regressions.ps1` 可执行完整 Release 回归套件。
 
 ## 目录结构
 
 ```
 TomCat/            引擎核心库（渲染、ECS、物理、ImGui 集成）
 Editor/TomCatInut/ Editor 应用
+Player/            独立 Windows x64 游戏运行时
+Managed/           .NET 10 运行时 API、源码生成器、Host 与回归
 Builder/Manager/   Hub（项目中心）
 Tests/             引擎回归测试工程
 Scripts/           构建与打包脚本
@@ -63,8 +72,9 @@ vendor/            premake 与第三方依赖
 ## Editor 与 Hub 打包
 
 - 本地打包：Scripts\Package-Editor.ps1 / Scripts\Package-Hub.ps1
-- CI 打包：GitHub Actions（workflow_dispatch 选择 editor / hub / both）；Editor 发布为 `TomCat.zip`（`TomCat.exe` + 外置 `Packages/`），Hub 仍发布为封装后的单 exe
-- 这些脚本用于发布 TomCat 本身；目前尚不能把用户项目导出为独立游戏。
+- Push 与 Pull Request 会自动运行统一 Release 回归；打包 Workflow 仍可选择发布 Editor / Hub / 两者
+- Editor 包将 `Managed/` 和 `Packages/PlayerTemplates/win-x64/` 保持为外部目录；UserSettings、项目源码与作者态 JSON 不进入可执行文件
+- Editor 的 **Build** / **Build And Run** 会把已启用 Build Settings 场景 Cook 为 `Game.tcpak`，在 staging 中复制严格 Player Template，校验全部 SHA-256 与兼容版本后原子发布
 
 ## 当前状态与 Roadmap
 
@@ -73,41 +83,44 @@ vendor/            premake 与第三方依赖
 - [x] 固定步长 Play / Pause / Step / Stop 状态模型（不设置独立 Simulate 状态）
 - [x] 仅 Scene 视图显示 Box/Circle 碰撞轮廓，并支持 Edit Collider 句柄
 - [x] CircleCollider2D、隐式静态刚体、Trigger、每 Fixture/项目 Layer 两级碰撞过滤、查询、运动 API 和 DistanceJoint2D
-- [x] 延迟派发的引擎/NativeScript Collision 与 Trigger 回调
+- [x] 延迟派发的引擎监听器/C# Collision 与 Trigger 回调
 - [x] 项目级 Tag、16 个稳定 Layer 和对称 Physics 2D 碰撞矩阵设置
-- [x] Scene Schema v9 持久化与 Cooked Package v3 物理往返
+- [x] Scene writer v11、reader v9-v11、注册表组件持久化与 Cooked Package v6 物理往返
 - [x] 物理回归测试套件（`Scripts\Run-PhysicsRegression.ps1`）
 
-### 下一阶段：项目脚本系统（C#）
+### 已完成的 C#、Player、Scene 与 Prefab V1
 
-- [ ] 集成托管运行时，并构建、加载项目程序集
-- [ ] 可序列化的 C# Script 组件，以及 Inspector 挂载与字段编辑
-- [ ] Entity、Transform、Input、Physics、Scene 的 C++/C# API 桥接
-- [ ] 分离逐显示帧 `OnUpdate` 与固定步长 `OnFixedUpdate`
-- [ ] Collision/Trigger 回调、诊断信息和安全热重载
-- [ ] Cook 时包含编译后的项目程序集
-
-### 游戏导出与运行时
-
-- [ ] 独立 Player Target，以及 Editor 的 Build Game / Build & Run 流程
-- [ ] 游戏名称、图标、分辨率、全屏、VSync 和输出目录等 Build Settings
-- [ ] 启动场景依赖遍历、无用资产裁剪和打包游戏端到端启动测试
-- [ ] SceneManager、运行时切换场景、叠加/异步加载、Prefab 和存档
+- [x] 托管运行时、源码生成器、Inspector 字段、last-good 编译、确定性生命周期/物理回调、异常隔离与可回收 Play Domain
+- [x] 独立 win-x64 Player、私有 .NET Runtime、严格版本/Hash Player Template、Build / Build And Run 与 Player 子进程冒烟测试
+- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v6 有序场景与 Player v5/v6 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
+- [x] 使用稳定 LocalID 的快照 Prefab V1、Hierarchy/Joint/C# Entity 重映射、新 AttachmentID、延迟 C# 创建、Editor 创建/拖入操作与 Cook 依赖遍历
+- [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，并嵌入 v6 BootManifest
+- [ ] 叠加/异步场景、关联/Nested Prefab、Override/Variant 与存档
 
 ### 资产管线与 2D 内容生产
 
-- [ ] 带内容 Hash、Importer 版本、派生数据缓存和依赖图的 Importer/Reimport 管线
-- [ ] Audio、Font、Shader、Material、Mesh 和 Script 的强类型运行时资产与 Loader
-- [ ] 后台导入/文件监控，以及平台相关的纹理设置、Mipmap 和压缩
-- [ ] Sprite Atlas/SubTexture、Pivot、Pixels Per Unit、动画、排序层、文字、运行时 UI、Tilemap、粒子和 2D 光照
+- [x] ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、`.tcmeta` schema v2 与依赖图
+- [x] 后台 ImportCoordinator：内容 Hash 校验、去抖/合并、变更资产与传递反向依赖重导，以及主线程 Registry/资源发布
+- [ ] 生产级真实格式转码、平台纹理压缩与 Mipmap 生成
+- [x] 带列表式切片编辑器、Rect/Pivot/Pixels Per Unit/Border 元数据的稳定 Sprite Atlas 子资源，以及自包含的 Cook/Player 载荷
+- [x] 确定性 Sprite 排序、动画 Clip，以及支持 Bool/Int/Float/Trigger 参数、AnyState 和 Exit Time 的 Animator 状态/过渡
+- [x] TTF/OTF/TTC Font 导入、主字体/Fallback/Emoji 运行时字形链与世界空间 Text，以及支持 Anchor、Pivot、布局、裁剪、射线目标、DPI 缩放、鼠标/键盘/手柄控制和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI
+- [ ] 自动 Atlas Packing/Slicing 工具与可视化 Animator Graph 编辑器（不属于 P0）
+- [ ] Tilemap、粒子与 2D 光照
 
 ### 引擎系统与工具链
 
-- [ ] Input Action/Axis、重绑定、输入上下文和手柄支持
-- [ ] 音频播放、AudioSource/Listener、空间音频和 Mixer Bus
-- [ ] Undo/Redo、自动保存/恢复、Editor Console 和可用的 Profiler
-- [ ] 在 Push/PR CI 中运行回归测试，并把覆盖范围扩展到物理之外
-- [ ] Scene/Project Schema 迁移工具、组件注册/反射和插件/模块 SDK
+- [x] Input Actions、键盘/鼠标/手柄绑定、输入上下文和重绑定
+- [x] WAV 播放与有界 PCM WAV Streaming、2D 空间音频、设备丢失恢复、AudioSource/AudioListener、Null/XAudio2 后端与 Master/Music/SFX Bus
+- [ ] OGG/Vorbis 解码（当前会明确拒绝不支持的输入，未捆绑解码器）
+
+PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区间，因为 P0 Audio Importer 是逐字节透传；Cooked Player 则读取验证后的 TCPAK 区间。若未来 Authoring Importer 增加音频转码，必须改为暴露并读取验证后的 DDC Payload 区间，而不是源文件区间。
+
+- [x] Undo/Redo、自动保存/恢复与项目锁
+- [ ] Editor Console 与 Profiler
+- [x] 在 Push/PR CI 中运行托管、原生与 Player Release 回归
+- [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
+- [ ] Scene/Project Schema 迁移工具与插件/模块 SDK
 - [ ] Windows/OpenGL 的 2D 流程成熟后，再增加其他平台与渲染后端
 
 ### 未来 3D 范围

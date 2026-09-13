@@ -1,10 +1,12 @@
 #pragma once
 #include "Scene.h"
 #include "TomCat/Asset/Asset.h"
+#include "TomCat/Core/Version.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <iosfwd>
+#include <string>
 #include <vector>
 
 namespace TomCat {
@@ -12,11 +14,18 @@ namespace TomCat {
 	class SceneSerializer
 	{
 	public:
-		static constexpr uint32_t CurrentSchemaVersion = 9;
+		static constexpr uint32_t CurrentSchemaVersion = Version::SceneFormatCurrent;
+		static constexpr uint32_t OldestSupportedSchemaVersion = Version::SceneFormatOldest;
 
 		SceneSerializer(const Ref<Scene>& scene);
 
 		bool Serialize(const std::filesystem::path& filepath);
+		// Internal document hooks used by SceneArchiveCodec. They preserve the
+		// serializer's single canonical component schema while allowing Prefabs to
+		// validate through an in-memory synthetic Scene document.
+		bool SerializeDocument(std::string& document, std::string& error) const;
+		bool DeserializeDocument(const std::vector<uint8_t>& bytes,
+			const std::filesystem::path& diagnosticPath, bool resolveAssets);
 
 		bool Deserialize(const std::filesystem::path& filepath);
 		// Parses and validates the complete current scene schema without resolving

@@ -1,12 +1,15 @@
 #pragma once
 #include "TomCat/Core/Base.h"
 #include "TomCat/Core/Application.h"
+#include "TomCat/Core/CrashReporter.h"
 
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
 	#include <cwchar>
+	#include <iterator>
 	#include <stdexcept>
 	#include <string>
+	#include <string_view>
 	#include <vector>
 
 	namespace TomCat {
@@ -48,7 +51,8 @@
 		const wchar_t* fileName = separator + 1;
 		if (_wcsicmp(fileName, L"TomCat.exe") != 0 &&
 			_wcsicmp(fileName, L"Manager.exe") != 0 &&
-			_wcsicmp(fileName, L"TomCatHub.exe") != 0)
+			_wcsicmp(fileName, L"TomCatHub.exe") != 0 &&
+			_wcsicmp(fileName, L"TomCatPlayer.exe") != 0)
 			return;
 
 		// Preserve the root slash for an executable placed directly on a drive
@@ -76,37 +80,149 @@
 		return result;
 	}
 
+	inline std::filesystem::path GetProfileOutputPath(
+		ApplicationProduct product, const std::filesystem::path& fileName)
+	{
+		std::filesystem::path directory;
+		if (const auto gamePaths = ApplicationPaths::GetRuntimeGameDataPaths())
+			directory = gamePaths->Logs / "Profiles";
+		else if (const auto productRoot =
+			ApplicationPaths::GetProductDataRoot(product))
+			directory = *productRoot / "Profiles";
+		if (directory.empty())
+			return fileName;
+		std::error_code error;
+		std::filesystem::create_directories(directory, error);
+		return error ? fileName : directory / fileName;
+	}
+
+	inline bool IsProfilingRequested(int argc, wchar_t** argv) noexcept
+	{
+		for (int index = 1; index < argc; ++index)
+		{
+			if (argv[index] && _wcsicmp(argv[index], L"--profile") == 0)
+				return true;
+		}
+
+		wchar_t value[16]{};
+		const DWORD length = GetEnvironmentVariableW(
+			L"TOMCAT_PROFILE", value, static_cast<DWORD>(std::size(value)));
+		if (length == 0 || length >= std::size(value))
+			return false;
+		return _wcsicmp(value, L"1") == 0 ||
+			_wcsicmp(value, L"true") == 0 ||
+			_wcsicmp(value, L"on") == 0 ||
+			_wcsicmp(value, L"yes") == 0;
+	}
+
 	}
 
 extern TomCat::Application* TomCat::CreateApplication(ApplicationCommandLineArgs args);
 
 int wmain(int argc, wchar_t** argv) {
+	TomCat::ApplicationProduct applicationProduct = TomCat::ApplicationProduct::Unknown;
+	bool profilingEnabled = false;
+	try
+	{
+		TomCat::SetPackagedWorkingDirectory();
+#ifdef TC_APPLICATION_PRODUCT
+	// Product identity is compiled into each executable. This remains correct
+	// when PlayerBuilder safely renames TomCatPlayer.exe to the game product name.
+		applicationProduct = TC_APPLICATION_PRODUCT;
+#else
+		applicationProduct = TomCat::ApplicationPaths::IdentifyCurrentExecutable();
+#endif
+		TomCat::Log::Init(applicationProduct);
+		TomCat::CrashReporter::Install(applicationProduct);
+		profilingEnabled = TomCat::IsProfilingRequested(argc, argv);
+		std::vector<std::string> utf8Arguments;
+		std::vector<char*> argumentPointers;
+		utf8Arguments.reserve(static_cast<size_t>(argc));
+		argumentPointers.reserve(static_cast<size_t>(argc) + 1);
+		for (int index = 0; index < argc; ++index)
+		{
+			// Engine-owned switches must not reach the product's strict parser or be
+			// mistaken for an Editor project path.
+			if (index != 0 && argv[index]
+				&& _wcsicmp(argv[index], L"--profile") == 0)
+				continue;
+			utf8Arguments.push_back(TomCat::WideArgumentToUtf8(argv[index]));
+		}
+		for (std::string& argument : utf8Arguments)
+			argumentPointers.push_back(argument.data());
+		argumentPointers.push_back(nullptr);
 
-	TomCat::SetPackagedWorkingDirectory();
-	TomCat::Log::Init();
-	std::vector<std::string> utf8Arguments;
-	std::vector<char*> argumentPointers;
-	utf8Arguments.reserve(static_cast<size_t>(argc));
-	argumentPointers.reserve(static_cast<size_t>(argc) + 1);
-	for (int index = 0; index < argc; ++index)
-		utf8Arguments.push_back(TomCat::WideArgumentToUtf8(argv[index]));
-	for (std::string& argument : utf8Arguments)
-		argumentPointers.push_back(argument.data());
-	argumentPointers.push_back(nullptr);
+		if (profilingEnabled)
+			TC_PROFILE_BEGIN_SESSION("Startup", TomCat::GetProfileOutputPath(
+				applicationProduct, "TomCatProfile-Startup.json"));
+		TomCat::Scope<TomCat::Application> app(
+			TomCat::CreateApplication({ static_cast<int>(utf8Arguments.size()),
+				argumentPointers.data() }));
+		if (!app)
+			throw std::runtime_error("CreateApplication returned null");
+		if (profilingEnabled)
+			TC_PROFILE_END_SESSION();
 
-	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Startup.json");
-	auto app = TomCat::CreateApplication({ argc, argumentPointers.data() });
-	TC_PROFILE_END_SESSION();			 
-										 
-	TC_PROFILE_BEGIN_SESSION("Runtime", "TomCatProfile-Runtime.json");
-	app->Run();							
-	TC_PROFILE_END_SESSION();			
-	const int exitCode = app->GetExitCode();
-										
-	TC_PROFILE_BEGIN_SESSION("Startup", "TomCatProfile-Shutdown.json");
-	delete app;							
-	TC_PROFILE_END_SESSION();
-	return exitCode;
+		if (profilingEnabled)
+			TC_PROFILE_BEGIN_SESSION("Runtime", TomCat::GetProfileOutputPath(
+				applicationProduct, "TomCatProfile-Runtime.json"));
+		app->Run();
+		if (profilingEnabled)
+			TC_PROFILE_END_SESSION();
+		const int exitCode = app->GetExitCode();
+
+		if (profilingEnabled)
+			TC_PROFILE_BEGIN_SESSION("Shutdown", TomCat::GetProfileOutputPath(
+				applicationProduct, "TomCatProfile-Shutdown.json"));
+		app.reset();
+		if (profilingEnabled)
+			TC_PROFILE_END_SESSION();
+		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+		TomCat::Log::Shutdown();
+		TomCat::CrashReporter::Uninstall();
+		return exitCode;
+	}
+	catch (const std::exception& exception)
+	{
+		if (profilingEnabled)
+			TC_PROFILE_END_SESSION();
+		if (TomCat::Log::GetCoreLogger())
+		{
+			try
+			{
+				TomCat::Log::GetCoreLogger()->critical(
+					"Unhandled application exception: {0}", exception.what());
+				TomCat::Log::Flush();
+			}
+			catch (...) {}
+		}
+		(void)TomCat::CrashReporter::WriteReport(exception.what());
+		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+		TomCat::Log::Shutdown();
+		TomCat::CrashReporter::Uninstall();
+		return 70;
+	}
+	catch (...)
+	{
+		if (profilingEnabled)
+			TC_PROFILE_END_SESSION();
+		if (TomCat::Log::GetCoreLogger())
+		{
+			try
+			{
+				TomCat::Log::GetCoreLogger()->critical(
+					"Unhandled non-standard application exception");
+				TomCat::Log::Flush();
+			}
+			catch (...) {}
+		}
+		(void)TomCat::CrashReporter::WriteReport(
+			"unhandled non-standard application exception");
+		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+		TomCat::Log::Shutdown();
+		TomCat::CrashReporter::Uninstall();
+		return 70;
+	}
 }
 
 #endif

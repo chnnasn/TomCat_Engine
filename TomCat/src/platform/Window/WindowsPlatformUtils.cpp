@@ -165,26 +165,6 @@ namespace TomCat {
 
 	}
 
-	std::optional<std::filesystem::path> GetTomCatSettingsRoot()
-	{
-		PWSTR localAppData = nullptr;
-		const HRESULT result = SHGetKnownFolderPath(
-			FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &localAppData);
-		if (FAILED(result) || !localAppData)
-		{
-			if (localAppData)
-				CoTaskMemFree(localAppData);
-			TC_Core_Error("Could not resolve the Windows LocalAppData directory (HRESULT 0x{0:X})",
-				static_cast<uint32_t>(result));
-			return std::nullopt;
-		}
-
-		const std::filesystem::path settingsRoot =
-			std::filesystem::path(localAppData) / "TomCat" / "TomCatSettings";
-		CoTaskMemFree(localAppData);
-		return settingsRoot;
-	}
-
 	std::filesystem::path FileDialogs::OpenFile(const char* filter)
 	{
 		return ShowDialog(filter, false, false);

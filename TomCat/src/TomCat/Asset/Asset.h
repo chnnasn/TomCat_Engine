@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace TomCat {
 
@@ -16,15 +17,18 @@ namespace TomCat {
 	enum class AssetType : uint16_t
 	{
 		None = 0,
-		Scene,
-		Texture2D,
-		Shader,
-		Audio,
-		Font,
-		Mesh,
-		Material,
-		Script,
-		Other
+		Scene = 1,
+		Texture2D = 2,
+		Shader = 3,
+		Audio = 4,
+		Font = 5,
+		Mesh = 6,
+		Material = 7,
+		// Keep the former Script numeric slot for metadata/package migration while
+		// giving C# source a precise, single-language identity.
+		CSharpScript = 8,
+		Other = 9,
+		Prefab = 10
 	};
 
 	const char* AssetTypeToString(AssetType type);
@@ -35,12 +39,46 @@ namespace TomCat {
 	// own settings without forcing the registry schema to change.
 	using AssetImportSettings = std::map<std::string, std::string>;
 
+	// Importer-owned Sprite slicing data. Rect is expressed in source-image
+	// pixels, Pivot is normalized inside Rect, and Border uses
+	// left/bottom/right/top pixels. Keeping this beside the sub-asset identity
+	// lets .tcmeta v2 preserve the complete deterministic import result.
+	struct SpriteSubAssetData
+	{
+		uint32_t X = 0;
+		uint32_t Y = 0;
+		uint32_t Width = 0;
+		uint32_t Height = 0;
+		float PivotX = 0.5f;
+		float PivotY = 0.5f;
+		float PixelsPerUnit = 100.0f;
+		float BorderLeft = 0.0f;
+		float BorderBottom = 0.0f;
+		float BorderRight = 0.0f;
+		float BorderTop = 0.0f;
+
+		bool operator==(const SpriteSubAssetData&) const = default;
+	};
+
+	// A sub-asset keeps the handle assigned by the sidecar while its importer-owned
+	// PersistentID remains present. Display names may change without breaking
+	// serialized references.
+	struct AssetSubAsset
+	{
+		AssetHandle Handle = AssetHandle(0);
+		std::string PersistentID;
+		std::string Name;
+		AssetType Type = AssetType::None;
+		SpriteSubAssetData Sprite;
+	};
+
 	struct AssetMetadata
 	{
 		AssetHandle Handle = AssetHandle(0);
 		AssetType Type = AssetType::None;
 		std::filesystem::path FilePath; // Relative to the project's Assets directory.
 		AssetImportSettings ImportSettings;
+		std::vector<AssetSubAsset> SubAssets;
 		bool IsMissing = false; // Runtime/cache state; never written to .tcmeta.
 
 		explicit operator bool() const

@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Asset/SpriteAsset.h"
+#include "TomCat/Core/Version.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -350,13 +351,13 @@ void ExampleLayer::OnEvent(Event& e)
 
 		// Footer (centered to match the Settings button)
 		const char* foot1 = T("TomCat 引擎", "TomCat Engine"); // TomCat ??
-		const char* foot2 = "v1.0.0  |  Release";
+		const std::string foot2 = "v" + std::string(Version::ProductVersion) + "  |  Release";
 		ImVec2 f1 = ImGui::CalcTextSize(foot1);
-		ImVec2 f2 = ImGui::CalcTextSize(foot2);
+		ImVec2 f2 = ImGui::CalcTextSize(foot2.c_str());
 		ImGui::SetCursorPos(ImVec2((size.x - f1.x) * 0.5f, size.y - 72.0f));
 		ImGui::TextDisabled("%s", foot1);
 		ImGui::SetCursorPos(ImVec2((size.x - f2.x) * 0.5f, size.y - 44.0f));
-		ImGui::TextDisabled("%s", foot2);
+		ImGui::TextDisabled("%s", foot2.c_str());
 	}
 
 	bool ExampleLayer::SortProjects(const Ref<Project>& a, const Ref<Project>& b) const
@@ -833,7 +834,7 @@ void ExampleLayer::OnEvent(Event& e)
 			ProjectConfig config;
 			config.Name = m_NewProjectName;
 			config.Description = m_NewProjectDescription;
-			config.Version = "1.0.0";
+			config.Version = std::string(Version::ProductVersion);
 			config.EditorVersion = m_Editors[selectedVersion];
 			config.Template = (m_NewProjectTemplate == 0) ? "2D" : "3D";
 			std::filesystem::path projectPath = requestedDirectory / "Project.tcproj";
@@ -974,7 +975,8 @@ void ExampleLayer::RenderSettingsDialog()
 
 			ImGui::Spacing();
 			ImGui::Separator();
-			ImGui::Text("%s", T("\u5f15\u64ce\u7248\u672c\uff1a1.0.0", "Engine Version: 1.0.0")); // ?????1.0.0
+			ImGui::Text("%s %.*s", T("\u5f15\u64ce\u7248\u672c\uff1a", "Engine Version:"),
+				static_cast<int>(Version::ProductVersion.size()), Version::ProductVersion.data());
 			ImGui::Text("%s", T("\u6784\u5efa\uff1aRelease", "Build: Release")); // ???Release
 		}
 		ImGui::End();

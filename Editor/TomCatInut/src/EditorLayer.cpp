@@ -6,19 +6,34 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
+
+#ifdef TC_PLATFORM_WINDOWS
+	#include <Windows.h>
+#endif
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
+#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Scripting/ManagedRuntimeFactory.h"
+#include "TomCat/Scripting/ScriptDiagnosticSink.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 
+#include "Player/PlayerBuilder.h"
 #include "ImGuizmo.h"
 
 
@@ -60,11 +75,15 @@ namespace TomCat {
 				ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
 		}
 
-		uint32_t ToFramebufferExtent(float value)
+		uint32_t ToFramebufferExtent(float value,
+			float screenToFramebufferScale = 1.0f)
 		{
-			if (!std::isfinite(value) || value <= 0.0f)
+			if (!std::isfinite(value) || value <= 0.0f
+				|| !std::isfinite(screenToFramebufferScale)
+				|| screenToFramebufferScale <= 0.0f)
 				return 0;
-			return static_cast<uint32_t>(std::round(std::clamp(value, 1.0f,
+			return static_cast<uint32_t>(std::round(std::clamp(
+				value * screenToFramebufferScale, 1.0f,
 				static_cast<float>(Framebuffer::MaxFramebufferSize))));
 		}
 
@@ -75,6 +94,92 @@ namespace TomCat {
 			std::error_code error;
 			const std::filesystem::path absolute = std::filesystem::absolute(path, error);
 			return (error ? path : absolute).lexically_normal();
+		}
+
+		bool MigrationPreviewsEqual(const ProjectMigrationPreview& left,
+			const ProjectMigrationPreview& right)
+		{
+			if (left.ProjectPath.lexically_normal()
+					!= right.ProjectPath.lexically_normal()
+				|| left.SourceSchemaVersion != right.SourceSchemaVersion
+				|| left.TargetSchemaVersion != right.TargetSchemaVersion
+				|| left.BackupRoot.lexically_normal()
+					!= right.BackupRoot.lexically_normal()
+				|| left.Changes.size() != right.Changes.size())
+				return false;
+			for (size_t index = 0; index < left.Changes.size(); ++index)
+			{
+				const ProjectMigrationChange& a = left.Changes[index];
+				const ProjectMigrationChange& b = right.Changes[index];
+				if (a.RelativePath.lexically_normal()
+						!= b.RelativePath.lexically_normal()
+					|| a.Kind != b.Kind || a.OriginalSize != b.OriginalSize
+					|| a.OriginalSHA256 != b.OriginalSHA256
+					|| a.Reason != b.Reason)
+					return false;
+			}
+			return true;
+		}
+
+		std::string SanitizePrefabFileStem(std::string value)
+		{
+			for (char& character : value)
+			{
+				const unsigned char byte = static_cast<unsigned char>(character);
+				if (byte < 0x20 || character == '<' || character == '>'
+					|| character == ':' || character == '"' || character == '/'
+					|| character == '\\' || character == '|' || character == '?'
+					|| character == '*')
+					character = '_';
+			}
+			while (!value.empty() && (value.front() == ' ' || value.front() == '.'))
+				value.erase(value.begin());
+			while (!value.empty() && (value.back() == ' ' || value.back() == '.'))
+				value.pop_back();
+			if (value.empty())
+				value = "Prefab";
+
+			std::string deviceName = value.substr(0, value.find('.'));
+			std::transform(deviceName.begin(), deviceName.end(), deviceName.begin(),
+				[](unsigned char character)
+				{
+					return static_cast<char>(std::tolower(character));
+				});
+			bool reserved = deviceName == "con" || deviceName == "prn"
+				|| deviceName == "aux" || deviceName == "nul";
+			if (!reserved && deviceName.size() == 4
+				&& (deviceName.rfind("com", 0) == 0
+					|| deviceName.rfind("lpt", 0) == 0)
+				&& deviceName[3] >= '1' && deviceName[3] <= '9')
+				reserved = true;
+			if (reserved)
+				value.insert(value.begin(), '_');
+			return value;
+		}
+
+		std::filesystem::path MakeUniquePrefabPath(
+			const std::filesystem::path& directory, const std::string& entityName)
+		{
+			const std::string stem = SanitizePrefabFileStem(entityName);
+			for (uint32_t index = 0; index < 10000; ++index)
+			{
+				std::string fileName = stem;
+				if (index > 0)
+					fileName += " (" + std::to_string(index) + ")";
+				const std::filesystem::path candidate =
+					directory / UTF8ToPath(fileName + ".tcprefab");
+				std::error_code error;
+				const bool assetExists = std::filesystem::exists(candidate, error);
+				if (error)
+					return {};
+				const bool metadataExists = std::filesystem::exists(
+					AssetRegistry::GetMetadataPath(candidate), error);
+				if (error)
+					return {};
+				if (!assetExists && !metadataExists)
+					return candidate;
+			}
+			return {};
 		}
 
 		bool TryGetRelativeWithin(const std::filesystem::path& root,
@@ -149,7 +254,8 @@ namespace TomCat {
 				return project->GetProjectPath().parent_path() / "UserSettings" / "imgui.ini";
 			}
 
-			const std::optional<std::filesystem::path> settingsRoot = GetTomCatSettingsRoot();
+			const std::optional<std::filesystem::path> settingsRoot =
+				ApplicationPaths::GetProductDataRoot(ApplicationProduct::Editor);
 			return settingsRoot ? *settingsRoot / "editor-layout.ini" : std::filesystem::path{};
 		}
 
@@ -285,14 +391,320 @@ namespace TomCat {
 			return false;
 		}
 
+
+		bool ReadBinaryFileForBuild(const std::filesystem::path& path,
+			std::vector<uint8_t>& bytes, std::string& errorMessage)
+		{
+			bytes.clear();
+			std::error_code error;
+			const uintmax_t fileSize = std::filesystem::file_size(path, error);
+			if (error || fileSize > static_cast<uintmax_t>((std::numeric_limits<size_t>::max)()))
+			{
+				errorMessage = "Could not inspect '" + PathToUTF8(path) + "': " +
+					(error ? error.message() : "file is too large");
+				return false;
+			}
+			std::ifstream input(path, std::ios::binary);
+			if (!input)
+			{
+				errorMessage = "Could not open '" + PathToUTF8(path) + "'.";
+				return false;
+			}
+			bytes.resize(static_cast<size_t>(fileSize));
+			if (!bytes.empty())
+				input.read(reinterpret_cast<char*>(bytes.data()),
+					static_cast<std::streamsize>(bytes.size()));
+			if (!input || input.peek() != std::char_traits<char>::eof())
+			{
+				errorMessage = "Could not read '" + PathToUTF8(path) + "' completely.";
+				bytes.clear();
+				return false;
+			}
+			return true;
+		}
+
+
 	}
 
-	EditorLayer::EditorLayer()
-		: Layer("EditorLayer")
+	EditorLayer::EditorLayer(std::filesystem::path startupProjectPath)
+		: Layer("EditorLayer"),
+		  m_StartupProjectPath(std::move(startupProjectPath))
 	{
 		m_CurrentProject = ProjectManager::Get().GetActiveProject();
 		if (m_CurrentProject)
 			m_Is2DMode = m_CurrentProject->GetConfig().Template == "2D";
+	}
+
+	bool EditorLayer::CaptureSceneArchive(std::string& archive) const
+	{
+		archive.clear();
+		if (!m_EditorScene)
+			return false;
+		std::string error;
+		if (SceneArchiveCodec::Encode(m_EditorScene, archive, error))
+			return true;
+		TC_Core_Error("Could not capture Scene history: {0}", error);
+		return false;
+	}
+
+	void EditorLayer::InitializeSceneHistory(bool isSaved)
+	{
+		CancelSceneTransaction();
+		std::string archive;
+		if (!CaptureSceneArchive(archive))
+			return;
+		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		const uint64_t selectedID =
+			selected ? static_cast<uint64_t>(selected.GetUUID()) : 0;
+		m_SceneHistory.Reset(std::move(archive), selectedID, isSaved);
+		CheckForRecovery();
+	}
+
+	void EditorLayer::BeginSceneTransaction(const char* label)
+	{
+		if (m_SceneState != SceneState::Edit
+			|| !m_EditorScene || m_SceneHistory.HasActiveTransaction())
+			return;
+		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		m_SceneHistory.SetCurrentSelection(
+			selected ? static_cast<uint64_t>(selected.GetUUID()) : 0);
+		m_SceneTransactionChanged = false;
+		m_SceneHistory.BeginTransaction(label ? label : "Scene Edit");
+	}
+
+	void EditorLayer::UpdateSceneTransaction()
+	{
+		if (m_SceneState != SceneState::Edit || !m_EditorScene)
+			return;
+		if (!m_SceneHistory.HasActiveTransaction())
+			BeginSceneTransaction("Scene Edit");
+		m_SceneTransactionChanged = m_SceneHistory.HasActiveTransaction();
+	}
+
+	void EditorLayer::CommitSceneTransaction()
+	{
+		if (!m_SceneHistory.HasActiveTransaction())
+			return;
+		if (m_SceneState != SceneState::Edit || !m_SceneTransactionChanged)
+		{
+			CancelSceneTransaction();
+			return;
+		}
+		std::string archive;
+		if (!CaptureSceneArchive(archive))
+		{
+			CancelSceneTransaction();
+			return;
+		}
+		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		const uint64_t selectedID =
+			selected ? static_cast<uint64_t>(selected.GetUUID()) : 0;
+		const bool committed =
+			m_SceneHistory.CommitTransaction(std::move(archive), selectedID);
+		m_SceneTransactionChanged = false;
+		if (committed)
+			ScheduleCurrentSceneAutosave();
+	}
+
+	void EditorLayer::CommitImmediateSceneTransaction(const char* label)
+	{
+		if (m_SceneState != SceneState::Edit || !m_EditorScene)
+			return;
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		BeginSceneTransaction(label);
+		UpdateSceneTransaction();
+		CommitSceneTransaction();
+	}
+
+	void EditorLayer::CancelSceneTransaction()
+	{
+		m_SceneHistory.CancelTransaction();
+		m_SceneTransactionChanged = false;
+		m_GizmoTransactionActive = false;
+		m_ColliderTransactionActive = false;
+	}
+
+	void EditorLayer::OnSceneModified(
+		SceneHierarchyPanel::SceneModificationPhase phase)
+	{
+		if (m_SceneState != SceneState::Edit)
+			return;
+		switch (phase)
+		{
+			case SceneHierarchyPanel::SceneModificationPhase::Begin:
+				BeginSceneTransaction("Inspector Edit");
+				break;
+			case SceneHierarchyPanel::SceneModificationPhase::Update:
+				UpdateSceneTransaction();
+				break;
+			case SceneHierarchyPanel::SceneModificationPhase::Commit:
+				CommitSceneTransaction();
+				break;
+			case SceneHierarchyPanel::SceneModificationPhase::Instant:
+				CommitImmediateSceneTransaction("Scene Command");
+				break;
+			case SceneHierarchyPanel::SceneModificationPhase::Cancel:
+				CancelSceneTransaction();
+				break;
+		}
+	}
+
+	bool EditorLayer::ApplyHistorySnapshot(
+		const SceneHistory::Snapshot& snapshot)
+	{
+		if (m_SceneState != SceneState::Edit || !snapshot.Archive)
+			return false;
+		const std::vector<uint8_t> bytes(snapshot.Archive->begin(),
+			snapshot.Archive->end());
+		Ref<Scene> restored = CreateRef<Scene>();
+		const std::filesystem::path diagnosticPath = m_EditorScenePath.empty()
+			? std::filesystem::path("<Editor History>")
+			: m_EditorScenePath;
+		if (!SceneArchiveCodec::Decode(bytes, restored, diagnosticPath, true))
+		{
+			TC_Core_Error("Scene history snapshot could not be decoded");
+			return false;
+		}
+
+		m_EditorScene = restored;
+		m_ActiveScene = restored;
+		ResizeSceneForGameView(restored);
+		m_SceneHierarchyPanel.SetContext(restored);
+		if (snapshot.SelectedEntity != 0)
+			m_SceneHierarchyPanel.SetSelectedEntity(
+				restored->FindEntityByUUID(UUID(snapshot.SelectedEntity)));
+		else
+			m_SceneHierarchyPanel.SetSelectedEntity({});
+		ResetSceneInteractionState();
+		return true;
+	}
+
+	bool EditorLayer::UndoScene()
+	{
+		if (m_SceneState != SceneState::Edit)
+			return false;
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		const bool restored = m_SceneHistory.Undo(
+			[this](const SceneHistory::Snapshot& snapshot)
+			{
+				return ApplyHistorySnapshot(snapshot);
+			});
+		return restored;
+	}
+
+	bool EditorLayer::RedoScene()
+	{
+		if (m_SceneState != SceneState::Edit)
+			return false;
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		const bool restored = m_SceneHistory.Redo(
+			[this](const SceneHistory::Snapshot& snapshot)
+			{
+				return ApplyHistorySnapshot(snapshot);
+			});
+		return restored;
+	}
+
+	void EditorLayer::MarkCurrentSceneSaved()
+	{
+		std::string archive;
+		if (!CaptureSceneArchive(archive))
+		{
+			m_SceneHistory.InvalidateSavedState();
+			return;
+		}
+		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		const uint64_t selectedID =
+			selected ? static_cast<uint64_t>(selected.GetUUID()) : 0;
+		if (!m_SceneHistory.RefreshCurrentSnapshot(
+			std::move(archive), selectedID))
+		{
+			m_SceneHistory.InvalidateSavedState();
+			return;
+		}
+		m_SceneHistory.MarkSaved();
+		std::string recoveryError;
+		if (!m_RecoveryService.RemoveRecovery(
+			m_EditorScenePath, recoveryError))
+			TC_Core_Warn("Could not clear saved Scene recovery: {0}",
+				recoveryError);
+	}
+
+	void EditorLayer::ScheduleCurrentSceneAutosave()
+	{
+		const SceneHistory::Snapshot* snapshot =
+			m_SceneHistory.GetCurrentSnapshot();
+		if (!snapshot || !snapshot->Archive
+			|| m_RecoveryService.GetAutosaveDirectory().empty())
+			return;
+		std::string error;
+		if (!m_RecoveryService.ScheduleAutosave(m_EditorScenePath,
+			snapshot->Id, snapshot->SelectedEntity, snapshot->Archive, error))
+			TC_Core_Warn("Scene autosave was not scheduled: {0}", error);
+	}
+
+	void EditorLayer::CheckForRecovery()
+	{
+		m_PendingRecovery.reset();
+		m_OpenRecoveryModal = false;
+		if (m_RecoveryService.GetAutosaveDirectory().empty())
+			return;
+		std::string error;
+		auto recovery =
+			m_RecoveryService.FindRecovery(m_EditorScenePath, error);
+		if (!error.empty())
+		{
+			TC_Core_Warn("Could not inspect Scene recovery: {0}", error);
+			return;
+		}
+		if (recovery)
+		{
+			m_PendingRecovery = std::move(*recovery);
+			m_OpenRecoveryModal = true;
+		}
+	}
+
+	bool EditorLayer::RestorePendingRecovery()
+	{
+		if (!m_PendingRecovery || !m_PendingRecovery->Archive)
+			return false;
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		const SceneHistory::Snapshot* current =
+			m_SceneHistory.GetCurrentSnapshot();
+		if (!current || !current->Archive)
+			return false;
+		const Entity previousSelection =
+			m_SceneHierarchyPanel.GetSelectedEntity();
+		m_SceneHistory.SetCurrentSelection(previousSelection
+			? static_cast<uint64_t>(previousSelection.GetUUID()) : 0);
+		const bool wasDifferent =
+			*current->Archive != *m_PendingRecovery->Archive;
+		SceneHistory::Snapshot recovered;
+		recovered.Archive = m_PendingRecovery->Archive;
+		recovered.SelectedEntity = m_PendingRecovery->SelectedEntity;
+		recovered.Label = "Recovered Autosave";
+		if (!ApplyHistorySnapshot(recovered))
+			return false;
+		if (wasDifferent)
+		{
+			if (!m_SceneHistory.BeginTransaction("Recover Autosave"))
+				return false;
+			const bool committed = m_SceneHistory.CommitTransaction(
+				*recovered.Archive, recovered.SelectedEntity);
+			m_SceneTransactionChanged = false;
+			if (committed)
+				ScheduleCurrentSceneAutosave();
+		}
+		else
+		{
+			CancelSceneTransaction();
+			m_SceneHistory.InvalidateSavedState();
+		}
+		return true;
 	}
 
 	void EditorLayer::LoadSceneToolbarLayout()
@@ -461,8 +873,73 @@ namespace TomCat {
 			TC_Core_Warn("One or more editor icons could not be loaded");
 		m_SceneHierarchyPanel.SetIcons(m_EditorIcons);
 		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
+		m_SceneHierarchyPanel.SetScriptMetadataProvider([this](AssetHandle handle)
+		{
+			return m_ScriptMetadata.Find(handle);
+		});
 		m_ContentBrowserPanel.SetIcons(m_EditorIcons);
 		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
+		Scripting::SetScriptDiagnosticSink([this](const Scripting::ScriptDiagnostic& diagnostic)
+		{
+			ConsoleMessage message;
+			message.Source = "C# Runtime";
+			message.File = diagnostic.File;
+			message.Line = diagnostic.Line;
+			message.Column = diagnostic.Column;
+			switch (diagnostic.Severity)
+			{
+				case Scripting::ScriptDiagnosticSeverity::Info:
+					message.Severity = ConsoleMessageSeverity::Info;
+					break;
+				case Scripting::ScriptDiagnosticSeverity::Warning:
+					message.Severity = ConsoleMessageSeverity::Warning;
+					break;
+				case Scripting::ScriptDiagnosticSeverity::Error:
+					message.Severity = ConsoleMessageSeverity::Error;
+					break;
+			}
+			const size_t stackStart = diagnostic.Message.find('\n');
+			if (stackStart == std::string::npos)
+				message.Text = diagnostic.Message;
+			else
+			{
+				message.Text = diagnostic.Message.substr(0, stackStart);
+				if (!message.Text.empty() && message.Text.back() == '\r')
+					message.Text.pop_back();
+				message.StackTrace = diagnostic.Message.substr(stackStart + 1);
+			}
+			m_ConsolePanel.Push(std::move(message));
+		});
+
+		m_ScriptCompiler.SetDiagnosticCallback([this](const ScriptCompilerDiagnostic& diagnostic)
+		{
+			ConsoleMessage message;
+			message.Source = "C# Compiler";
+			message.Code = diagnostic.Code;
+			message.Text = diagnostic.Message;
+			message.File = diagnostic.File;
+			message.Line = diagnostic.Line;
+			message.Column = diagnostic.Column;
+			switch (diagnostic.Level)
+			{
+				case ScriptCompilerDiagnostic::Severity::Info:
+					message.Severity = ConsoleMessageSeverity::Info;
+					break;
+				case ScriptCompilerDiagnostic::Severity::Warning:
+					message.Severity = ConsoleMessageSeverity::Warning;
+					break;
+				case ScriptCompilerDiagnostic::Severity::Error:
+					message.Severity = ConsoleMessageSeverity::Error;
+					break;
+			}
+			m_ConsolePanel.Push(std::move(message));
+		});
+		if (m_CurrentProject && m_ScriptCompiler.Configure(m_CurrentProject))
+		{
+			ResetScriptCompileTracking();
+			if (m_ScriptCompiler.IsCurrentSourceBuilt())
+				PrepareManagedRuntime();
+		}
 
 		FramebufferSpecification fbSpec;
 		fbSpec.Attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
@@ -491,36 +968,60 @@ namespace TomCat {
 			if (!path.empty())
 				OpenScene(path);
 		});
+		m_SceneHierarchyPanel.SetPrefabCreateCallback([this](Entity entity) {
+			return CreatePrefabFromEntity(entity,
+				m_ContentBrowserPanel.GetWritableCreationDirectory());
+		});
+		m_SceneHierarchyPanel.SetPrefabInstantiateCallback(
+			[this](AssetHandle handle, Entity parent) {
+				std::optional<UUID> parentID;
+				if (parent)
+					parentID = parent.GetUUID();
+				return InstantiatePrefab(handle, parentID, std::nullopt);
+			});
+		m_ContentBrowserPanel.SetEntityPrefabCreateCallback(
+			[this](UUID entityID, const std::filesystem::path& directory) {
+				Entity entity = m_ActiveScene
+					? m_ActiveScene->FindEntityByUUID(entityID) : Entity{};
+				return CreatePrefabFromEntity(entity, directory);
+			});
 		m_ContentBrowserPanel.SetAssetRenamedCallback([this](const std::filesystem::path& oldPath,
 			const std::filesystem::path& newPath) {
 			const std::filesystem::path previousEditorScenePath = m_EditorScenePath;
-			const std::filesystem::path previousStartScene = m_CurrentProject
-				? m_CurrentProject->GetConfig().StartScene : std::filesystem::path{};
 			std::filesystem::path relative;
 			if (!m_EditorScenePath.empty() && TryGetRelativeWithin(oldPath, m_EditorScenePath, relative))
 				m_EditorScenePath = newPath / relative;
 
-			// StartScene is an authoring locator; StartSceneHandle remains the
-			// authoritative identity across this move.
 			if (m_CurrentProject)
 			{
-				const std::filesystem::path oldStartScene = m_CurrentProject->GetAssetPath() /
-					m_CurrentProject->GetConfig().StartScene;
-				if (TryGetRelativeWithin(oldPath, oldStartScene, relative))
+				BuildSettings repaired = m_CurrentProject->GetBuildSettings();
+				bool changed = false;
+				for (BuildSceneSettings& scene : repaired.Scenes)
 				{
-					const std::filesystem::path movedStartScene = newPath / relative;
-					std::filesystem::path assetRelative;
-					const bool updated = TryGetRelativeWithin(m_CurrentProject->GetAssetPath(),
-						movedStartScene, assetRelative) &&
-						m_CurrentProject->SetStartScene(assetRelative) && m_CurrentProject->Save();
-					if (!updated)
+					const AssetMetadata* metadata =
+						AssetManager::Get().GetRegistry().GetMetadata(scene.Handle);
+					if (metadata && !metadata->IsMissing && metadata->Type == AssetType::Scene
+						&& metadata->FilePath != scene.PathHint)
 					{
-						m_EditorScenePath = previousEditorScenePath;
-						m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
-						(void)m_CurrentProject->SetStartScene(previousStartScene);
-						TC_Core_Error("The start scene move was rejected because Project.tcproj could not be updated");
-						return false;
+						scene.PathHint = metadata->FilePath;
+						changed = true;
 					}
+				}
+				if (changed && !m_CurrentProject->SetBuildSettings(repaired))
+				{
+					m_EditorScenePath = previousEditorScenePath;
+					m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
+					m_BuildSettingsSucceeded = false;
+					m_BuildSettingsStatus =
+						"Scene move was rejected because BuildSettings.json could not update its PathHints.";
+					TC_Core_Error("{0}", m_BuildSettingsStatus);
+					return false;
+				}
+				if (changed)
+				{
+					m_BuildSettingsSucceeded = true;
+					m_BuildSettingsStatus =
+						"Updated build-scene PathHints in ProjectSettings/BuildSettings.json.";
 				}
 			}
 			m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
@@ -532,15 +1033,24 @@ namespace TomCat {
 			{
 				m_EditorScenePath.clear();
 				m_ContentBrowserPanel.SetActiveScenePath({});
-				m_SceneDirty = true;
+				m_SceneHistory.InvalidateSavedState();
 			}
 			if (m_CurrentProject)
 			{
-				const std::filesystem::path startScene = m_CurrentProject->GetAssetPath() /
-					m_CurrentProject->GetConfig().StartScene;
-				if (TryGetRelativeWithin(deletedPath, startScene, relative))
-					TC_Warn("The configured start scene was deleted and is now a missing asset: {0}",
-						PathToUTF8(startScene));
+				for (const BuildSceneSettings& scene : m_CurrentProject->GetBuildSettings().Scenes)
+				{
+					const std::filesystem::path hintedPath =
+						m_CurrentProject->GetAssetPath() / scene.PathHint;
+					if (!scene.PathHint.empty()
+						&& TryGetRelativeWithin(deletedPath, hintedPath, relative))
+					{
+						m_BuildSettingsSucceeded = false;
+						m_BuildSettingsStatus = "Build Scene is now missing: "
+							+ PathToUTF8(scene.PathHint)
+							+ ". Its stable Handle and last PathHint were preserved.";
+						TC_Warn("{0}", m_BuildSettingsStatus);
+					}
+				}
 			}
 			// Sprite handles deliberately survive deletion. AssetManager resolves
 			// them to the shared missing-resource texture until the asset is restored.
@@ -559,11 +1069,11 @@ namespace TomCat {
 			SpriteR.SpriteHandle = handle;
 			SpriteR.Sprite = AssetManager::Get().LoadTexture(handle);
 			if (m_SceneState == SceneState::Edit)
-				m_SceneDirty = true;
+				CommitImmediateSceneTransaction("Create Sprite");
 		});
-		m_SceneHierarchyPanel.SetSceneModifiedCallback([this]() {
-			if (m_SceneState == SceneState::Edit)
-				m_SceneDirty = true;
+		m_SceneHierarchyPanel.SetSceneModifiedCallback(
+			[this](SceneHierarchyPanel::SceneModificationPhase phase) {
+			OnSceneModified(phase);
 		});
 		AssetManager::Get().SetLiveReferenceProvider([this](AssetHandle handle) {
 			std::vector<AssetReference> references;
@@ -585,12 +1095,48 @@ namespace TomCat {
 			return references;
 		});
 
-		if (m_CurrentProject)
-			OpenProjectStartScene();
+		if (!m_StartupProjectPath.empty())
+		{
+			const std::filesystem::path startup =
+				std::move(m_StartupProjectPath);
+			m_StartupProjectPath.clear();
+			if (!OpenProject(startup))
+			{
+				std::string recoveryError;
+				if (!m_RecoveryService.Configure({}, recoveryError))
+					TC_Core_Warn("Editor recovery is unavailable: {0}",
+						recoveryError);
+				NewScene();
+				m_SceneHistory.MarkSaved();
+			}
+		}
+		else if (m_CurrentProject)
+		{
+			std::string lockError;
+			EditorProjectLock startupLock;
+			if (startupLock.Acquire(m_CurrentProject->GetProjectPath(),
+				lockError) == ProjectLockAcquireResult::Acquired)
+			{
+				m_ProjectLock = std::move(startupLock);
+				std::string recoveryError;
+				if (!m_RecoveryService.Configure(
+					m_CurrentProject->GetProjectPath(), recoveryError))
+					TC_Core_Warn("Editor recovery is unavailable: {0}",
+						recoveryError);
+				OpenProjectStartScene();
+			}
+			else
+				TC_Core_Error("Project opened without a write lock: {0}",
+					lockError);
+		}
 		else
 		{
+			std::string recoveryError;
+			if (!m_RecoveryService.Configure({}, recoveryError))
+				TC_Core_Warn("Editor recovery is unavailable: {0}",
+					recoveryError);
 			NewScene();
-			m_SceneDirty = false;
+			m_SceneHistory.MarkSaved();
 		}
 	}
 
@@ -599,6 +1145,10 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 		if (IsSceneRunning())
 			OnSceneStop();
+		CommitSceneTransaction();
+		std::string recoveryError;
+		if (!m_RecoveryService.Flush(recoveryError))
+			TC_Core_Warn("Editor recovery flush failed: {0}", recoveryError);
 
 		if (m_CurrentProject)
 			m_ContentBrowserPanel.Serialize();
@@ -608,17 +1158,102 @@ namespace TomCat {
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
 		m_ContentBrowserPanel.SaveLayoutSetting();
 		SaveSceneToolbarLayout();
+		m_SceneHierarchyPanel.SetScriptMetadataProvider({});
+		m_ScriptMetadata.Clear();
+		Scripting::SetScriptDiagnosticSink({});
+		Scripting::ScriptEngine::Get().SetRuntime({});
+		m_ScriptCompiler.Reset();
 		AssetManager::Get().SetLiveReferenceProvider({});
 		AssetManager::Get().Shutdown();
+		m_ProjectLock.Release();
+	}
+
+	void EditorLayer::ResetScriptCompileTracking()
+	{
+		m_ScriptSourcePollCountdown = 0.0f;
+		m_ScriptCompileDebounceRemaining = 0.65f;
+		m_ObservedScriptSourceHash = m_ScriptCompiler.GetCurrentSourceHash();
+		m_PlayScriptDirtyNoticeShown = false;
+	}
+
+	void EditorLayer::UpdateScriptCompilation(Timestep ts)
+	{
+		ScriptBuildResult completed;
+		if (m_ScriptCompiler.PollCompile(completed))
+		{
+			m_ObservedScriptSourceHash = m_ScriptCompiler.GetCurrentSourceHash();
+			m_ScriptCompileDebounceRemaining = 0.65f;
+			if (completed.Succeeded && m_SceneState == SceneState::Edit)
+				PrepareManagedRuntime();
+		}
+		if (!m_CurrentProject)
+			return;
+
+		const float deltaSeconds = std::clamp(ts.GetSeconds(), 0.0f, 0.25f);
+		m_ScriptSourcePollCountdown -= deltaSeconds;
+		if (!m_ScriptCompiler.IsCompileInProgress() &&
+			m_ScriptSourcePollCountdown <= 0.0f)
+		{
+			m_ScriptSourcePollCountdown = 0.35f;
+			if (m_ScriptCompiler.RefreshSourceState())
+			{
+				const std::string& sourceHash =
+					m_ScriptCompiler.GetCurrentSourceHash();
+				if (sourceHash != m_ObservedScriptSourceHash)
+				{
+					m_ObservedScriptSourceHash = sourceHash;
+					m_ScriptCompileDebounceRemaining = 0.65f;
+				}
+				if (IsSceneRunning() &&
+					!m_ScriptCompiler.IsCurrentSourceBuilt() &&
+					!m_PlayScriptDirtyNoticeShown)
+				{
+					m_PlayScriptDirtyNoticeShown = true;
+					m_ShowConsolePanel = true;
+					m_ConsolePanel.Push(ConsoleMessageSeverity::Warning,
+						"C# source changes were detected. Stop Play to apply them; "
+						"the running scene will keep its current assembly.",
+						"Editor");
+				}
+			}
+		}
+
+		if (m_SceneState == SceneState::Edit &&
+			!m_ScriptCompiler.IsCompileInProgress() &&
+			m_ScriptCompiler.GetState() == ScriptBuildState::Dirty)
+		{
+			m_ScriptCompileDebounceRemaining -= deltaSeconds;
+			if (m_ScriptCompileDebounceRemaining <= 0.0f)
+			{
+				m_ScriptCompileDebounceRemaining = 0.65f;
+				m_ScriptCompiler.StartCompile();
+			}
+		}
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
+		Window& applicationWindow = Application::Get().GetWindow();
+		const float runtimeUIDPIScale = applicationWindow.GetDPIScale();
+		const glm::vec2 screenToFramebufferScale{
+			applicationWindow.GetScreenToFramebufferScaleX(),
+			applicationWindow.GetScreenToFramebufferScaleY() };
+		const glm::vec2 runtimeUIOrigin = m_ShowGamePanel
+			? m_GameViewportBounds[0] : glm::vec2(-1000000.0f);
+		if (IsSceneRunning())
+			m_RuntimeSceneManager.SetRuntimeUIViewportMetrics(runtimeUIOrigin,
+				runtimeUIDPIScale, screenToFramebufferScale);
+		else if (m_ActiveScene)
+			m_ActiveScene->SetRuntimeUIViewportMetrics(runtimeUIOrigin,
+				runtimeUIDPIScale, screenToFramebufferScale);
+		UpdateScriptCompilation(ts);
 
 		// Resize Scene Framebuffer
-		const uint32_t sceneWidth = ToFramebufferExtent(m_ViewportSize.x);
-		const uint32_t sceneHeight = ToFramebufferExtent(m_ViewportSize.y);
+		const uint32_t sceneWidth = ToFramebufferExtent(m_ViewportSize.x,
+			screenToFramebufferScale.x);
+		const uint32_t sceneHeight = ToFramebufferExtent(m_ViewportSize.y,
+			screenToFramebufferScale.y);
 		if (FramebufferSpecification spec = m_Framebuffer->GetSpecification();
 			sceneWidth > 0 && sceneHeight > 0 &&
 			(spec.Width != sceneWidth || spec.Height != sceneHeight))
@@ -628,14 +1263,21 @@ namespace TomCat {
 		}
 
 		// Resize Game Framebuffer
-		const uint32_t gameWidth = ToFramebufferExtent(m_GameViewportSize.x);
-		const uint32_t gameHeight = ToFramebufferExtent(m_GameViewportSize.y);
+		const uint32_t gameWidth = ToFramebufferExtent(m_GameViewportSize.x,
+			screenToFramebufferScale.x);
+		const uint32_t gameHeight = ToFramebufferExtent(m_GameViewportSize.y,
+			screenToFramebufferScale.y);
 		if (FramebufferSpecification gameSpec = m_GameFramebuffer->GetSpecification();
 			gameWidth > 0 && gameHeight > 0 &&
 			(gameSpec.Width != gameWidth || gameSpec.Height != gameHeight))
 		{
 			if (m_GameFramebuffer->Resize(gameWidth, gameHeight))
-				m_ActiveScene->OnViewportResize(gameWidth, gameHeight);
+			{
+				if (IsSceneRunning())
+					m_RuntimeSceneManager.SetViewportSize(gameWidth, gameHeight);
+				else if (m_ActiveScene)
+					m_ActiveScene->OnViewportResize(gameWidth, gameHeight);
+			}
 		}
 
 		// Render Scene View (Editor Camera).  Unity's Scene canvas is one step
@@ -660,10 +1302,15 @@ namespace TomCat {
 		my -= m_ViewportBounds[0].y;
 		glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
 		my = viewportSize.y - my;
-		int mouseX = (int)mx;
-		int mouseY = (int)my;
+		const int mouseX = static_cast<int>(std::floor(
+			mx * screenToFramebufferScale.x));
+		const int mouseY = static_cast<int>(std::floor(
+			my * screenToFramebufferScale.y));
 
-		if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
+		if (mx >= 0.0f && my >= 0.0f && mx < viewportSize.x
+			&& my < viewportSize.y && mouseX >= 0 && mouseY >= 0
+			&& mouseX < static_cast<int>(sceneWidth)
+			&& mouseY < static_cast<int>(sceneHeight))
 		{
 			int pixelData = m_Framebuffer->ReadPixel(1, mouseX, mouseY);
 			m_HoveredEntity = pixelData == -1 ? Entity() : Entity((entt::entity)pixelData, m_ActiveScene.get());
@@ -688,18 +1335,23 @@ namespace TomCat {
 		m_GameFramebuffer->ClearAttachment(1, -1);
 
 		// Game窗口使用Runtime渲染，背景色由摄像机的BackgroundColor设置
+		bool runtimeAdvanced = false;
 		if (m_SceneState == SceneState::Play)
 		{
 			m_ActiveScene->OnUpdateRuntime(ts);
+			runtimeAdvanced = true;
 		}
 		else if (m_SceneState == SceneState::Pause && m_StepRequested)
 		{
 			m_ActiveScene->OnRuntimeStep();
 			m_StepRequested = false;
+			runtimeAdvanced = true;
 		}
 		else
 			m_ActiveScene->OnRenderRuntime();
 		m_GameFramebuffer->Unbind();
+		if (runtimeAdvanced)
+			CommitRuntimeSceneTransition();
 	}
 
 	void EditorLayer::UpdateWindowTitle()
@@ -719,7 +1371,7 @@ namespace TomCat {
 		const char* rendererName = Renderer::GetAPI() == RendererAPI::API::OpenGL
 			? "OpenGL" : "No Renderer";
 		std::string title = projectName + " - " + sceneName;
-		if (m_SceneDirty)
+		if (IsSceneDirty())
 			title += '*';
 		title += " - Windows, Mac, Linux - TomCat Editor";
 		if (m_CurrentProject && !m_CurrentProject->GetEditorVersion().empty())
@@ -747,11 +1399,12 @@ namespace TomCat {
 		else if (name == "Inspector") m_EditorPanelCycleIndex = 3;
 		else if (name == "Project") m_EditorPanelCycleIndex = 4;
 		else if (name == "Scene") m_EditorPanelCycleIndex = 5;
+		else if (name == "Console") m_EditorPanelCycleIndex = 6;
 	}
 
 	void EditorLayer::CycleEditorPanel(int direction)
 	{
-		constexpr int panelCount = 6;
+		constexpr int panelCount = 7;
 		if (direction == 0)
 			return;
 
@@ -765,6 +1418,7 @@ namespace TomCat {
 				case 3: return m_ShowInspectorPanel;
 				case 4: return m_ShowProjectPanel;
 				case 5: return m_ShowScenePanel;
+				case 6: return m_ShowConsolePanel;
 				default: return false;
 			}
 		};
@@ -786,6 +1440,7 @@ namespace TomCat {
 				case 3: FocusEditorPanel("Inspector", m_ShowInspectorPanel); break;
 				case 4: FocusEditorPanel("Project", m_ShowProjectPanel); break;
 				case 5: FocusEditorPanel("Scene", m_ShowScenePanel); break;
+				case 6: FocusEditorPanel("Console", m_ShowConsolePanel); break;
 			}
 			return;
 		}
@@ -843,8 +1498,13 @@ namespace TomCat {
 
 			if (ImGui::BeginMenu("Edit"))
 			{
-				ImGui::MenuItem("Undo", "Ctrl+Z", false, false);
-				ImGui::MenuItem("Redo", "Ctrl+Y", false, false);
+				const bool editMode = m_SceneState == SceneState::Edit;
+				if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
+					editMode && m_SceneHistory.CanUndo()))
+					UndoScene();
+				if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
+					editMode && m_SceneHistory.CanRedo()))
+					RedoScene();
 				ImGui::Separator();
 				if (ImGui::MenuItem("Project Settings..."))
 					OpenProjectSettingsPanel();
@@ -854,6 +1514,15 @@ namespace TomCat {
 			if (ImGui::BeginMenu("Assets", m_CurrentProject != nullptr))
 			{
 				m_ContentBrowserPanel.DrawAssetsMenu();
+				ImGui::Separator();
+				if (ImGui::MenuItem("Compile C# Scripts", nullptr, false,
+					!IsSceneRunning() && !m_ScriptCompiler.IsCompileInProgress()))
+				{
+					m_ShowConsolePanel = true;
+					m_PendingPanelFocus = "Console";
+					m_ScriptCompileDebounceRemaining = 0.65f;
+					m_ScriptCompiler.StartCompile(true);
+				}
 				ImGui::EndMenu();
 			}
 
@@ -891,7 +1560,8 @@ namespace TomCat {
 						(m_ShowGamePanel && !m_GamePanelDocked) ||
 						(m_ShowHierarchyPanel && !m_SceneHierarchyPanel.IsHierarchyDocked()) ||
 						(m_ShowInspectorPanel && !m_SceneHierarchyPanel.IsInspectorDocked()) ||
-						(m_ShowProjectPanel && !m_ContentBrowserPanel.IsDocked());
+						(m_ShowProjectPanel && !m_ContentBrowserPanel.IsDocked()) ||
+						(m_ShowConsolePanel && !m_ConsolePanel.IsDocked());
 					if (ImGui::MenuItem("Close all floating panels...", nullptr, false,
 						hasFloatingPanel))
 					{
@@ -902,6 +1572,7 @@ namespace TomCat {
 						if (!m_SceneHierarchyPanel.IsHierarchyDocked()) m_ShowHierarchyPanel = false;
 						if (!m_SceneHierarchyPanel.IsInspectorDocked()) m_ShowInspectorPanel = false;
 						if (!m_ContentBrowserPanel.IsDocked()) m_ShowProjectPanel = false;
+						if (!m_ConsolePanel.IsDocked()) m_ShowConsolePanel = false;
 					}
 					ImGui::Separator();
 					ImGui::MenuItem("1 Animator", nullptr, false, false);
@@ -911,7 +1582,8 @@ namespace TomCat {
 						m_FocusBuildSettingsPanel = true;
 						m_EditorPanelCycleIndex = 0;
 					}
-					ImGui::MenuItem("3 Console", nullptr, false, false);
+					if (ImGui::MenuItem("3 Console"))
+						FocusEditorPanel("Console", m_ShowConsolePanel);
 					if (ImGui::MenuItem("4 Game"))
 						FocusEditorPanel("Game", m_ShowGamePanel);
 					if (ImGui::MenuItem("5 Hierarchy"))
@@ -1024,6 +1696,7 @@ namespace TomCat {
 		ImGui::EndChild(); 
 
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
+		m_SceneHierarchyPanel.SetPrefabCreationAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.OnImGuiRender(&m_ShowHierarchyPanel, &m_ShowInspectorPanel);
 		if (m_SceneHierarchyPanel.IsHierarchyFocused())
 			m_EditorPanelCycleIndex = 2;
@@ -1032,6 +1705,9 @@ namespace TomCat {
 		m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
 		if (m_ContentBrowserPanel.IsFocused())
 			m_EditorPanelCycleIndex = 4;
+		m_ConsolePanel.OnImGuiRender(&m_ShowConsolePanel);
+		if (m_ConsolePanel.IsFocused())
+			m_EditorPanelCycleIndex = 6;
 
 		if (m_ShowScenePanel)
 		{
@@ -1040,7 +1716,8 @@ namespace TomCat {
 		// Use the same native menu-bar slot as Hierarchy.  ImGui's dock tab and
 		// menu-bar layout then share one geometry source, eliminating the hand-
 		// positioned gap that appeared with the custom Scene strip.
-		const char* sceneTitle = m_SceneDirty ? "Scene *###Scene" : "Scene###Scene";
+		const char* sceneTitle = IsSceneDirty()
+			? "Scene *###Scene" : "Scene###Scene";
 		const bool sceneVisible = ImGui::Begin(sceneTitle, &m_ShowScenePanel, ImGuiWindowFlags_MenuBar);
 		m_ScenePanelDocked = ImGui::IsWindowDocked();
 		if (!sceneVisible)
@@ -1084,14 +1761,32 @@ namespace TomCat {
 				{
 					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
 					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
-					if (metadata && metadata->Type == AssetType::Texture2D)
+					if (metadata && !metadata->IsMissing
+						&& metadata->Type == AssetType::Texture2D)
 					{
 						Entity sprite = m_ActiveScene->CreateEntity(PathToUTF8(metadata->FilePath.stem()));
 						auto& renderer = sprite.AddComponent<SpriteRenderer>(glm::vec4{ 1.0f });
 						renderer.SpriteHandle = handle;
 						renderer.Sprite = AssetManager::Get().LoadTexture(handle);
 						if (m_SceneState == SceneState::Edit)
-							m_SceneDirty = true;
+							CommitImmediateSceneTransaction("Create Sprite");
+					}
+					else if (metadata && !metadata->IsMissing
+						&& metadata->Type == AssetType::Prefab)
+					{
+						const ImVec2 mouse = ImGui::GetMousePos();
+						glm::vec2 worldPosition{};
+						if (ScreenToWorldOnPlane({ mouse.x, mouse.y }, 0.0f,
+							worldPosition))
+						{
+							InstantiatePrefab(handle, std::nullopt,
+								glm::vec3(worldPosition, 0.0f));
+						}
+						else
+						{
+							ReportPrefabOperation(false,
+								"Could not project the Prefab drop point into the Scene view.");
+						}
 					}
 				}
 			}
@@ -1174,11 +1869,23 @@ namespace TomCat {
 
 				if (ImGuizmo::IsUsing())
 				{
+					if (m_SceneState == SceneState::Edit
+						&& !m_GizmoTransactionActive)
+					{
+						BeginSceneTransaction("Gizmo Drag");
+						m_GizmoTransactionActive =
+							m_SceneHistory.HasActiveTransaction();
+					}
 					if (m_ActiveScene->SetWorldTransform(selectedEntity, transform)
-						&& m_SceneState == SceneState::Edit)
-						m_SceneDirty = true;
+						&& m_GizmoTransactionActive)
+						UpdateSceneTransaction();
 				}
 			}
+		}
+		if (m_GizmoTransactionActive && !ImGuizmo::IsUsing())
+		{
+			m_GizmoTransactionActive = false;
+			CommitSceneTransaction();
 		}
 
 		if (sceneVisible)
@@ -1262,6 +1969,10 @@ namespace TomCat {
 		uint64_t gameTextureID = m_GameFramebuffer->GetColorAttachmentRendererID();
 		ImGui::Image(reinterpret_cast<void*>(gameTextureID), ImVec2{ m_GameViewportSize.x, m_GameViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		const ImVec2 gameImageMinimum = ImGui::GetItemRectMin();
+		const ImVec2 gameImageMaximum = ImGui::GetItemRectMax();
+		m_GameViewportBounds[0] = { gameImageMinimum.x, gameImageMinimum.y };
+		m_GameViewportBounds[1] = { gameImageMaximum.x, gameImageMaximum.y };
 		UI_GameNoCameraOverlay();
 
 		ImGui::End();
@@ -1271,6 +1982,8 @@ namespace TomCat {
 		UI_BuildSettings();
 		UI_ProjectSettings();
 		UI_UnsavedChangesModal();
+		UI_ProjectMigrationModal();
+		UI_RecoveryModal();
 		if (!m_PendingPanelFocus.empty())
 		{
 			ImGui::SetWindowFocus(m_PendingPanelFocus.c_str());
@@ -1326,73 +2039,268 @@ namespace TomCat {
 			return;
 		}
 
-		const ProjectConfig* config = m_CurrentProject ? &m_CurrentProject->GetConfig() : nullptr;
-		const bool hasConfiguredStartScene = config
-			&& static_cast<uint64_t>(config->StartSceneHandle) != 0;
-		const AssetMetadata* startSceneMetadata = hasConfiguredStartScene
-			? AssetManager::Get().GetRegistry().GetMetadata(config->StartSceneHandle) : nullptr;
-		const bool startSceneReady = startSceneMetadata && !startSceneMetadata->IsMissing
-			&& startSceneMetadata->Type == AssetType::Scene;
-
 		if (!m_CurrentProject)
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
 				"Open a project to inspect its scenes and Player settings.");
 
 		ImGui::TextUnformatted("Scenes In Build");
-		ImGui::BeginChild("##ScenesInBuild", ImVec2(0.0f, 145.0f), true,
-			ImGuiWindowFlags_HorizontalScrollbar);
-		if (hasConfiguredStartScene)
-		{
-			const std::string scenePath = PathToUTF8(config->StartScene);
-			std::string sceneName = PathToUTF8(config->StartScene.stem());
-			if (sceneName.empty())
-				sceneName = scenePath.empty() ? "<Unresolved start scene>" : scenePath;
+		BuildSettings edited = m_CurrentProject
+			? m_CurrentProject->GetBuildSettings() : BuildSettings{};
+		const bool buildSettingsEditable = m_CurrentProject && !IsSceneRunning();
+		bool buildSettingsChanged = false;
+		std::string buildSettingsChangeDescription;
+		std::optional<std::size_t> removeScene;
+		std::optional<std::pair<std::size_t, std::size_t>> moveScene;
+		AssetRegistry& registry = AssetManager::Get().GetRegistry();
 
+		ImGui::BeginChild("##ScenesInBuild", ImVec2(0.0f, 225.0f), true,
+			ImGuiWindowFlags_HorizontalScrollbar);
+		if (m_CurrentProject && !edited.Scenes.empty())
+		{
 			const ImGuiTableFlags sceneFlags = ImGuiTableFlags_RowBg |
-				ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
-			if (ImGui::BeginTable("##SceneBuildRows", 3, sceneFlags))
+				ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp |
+				ImGuiTableFlags_ScrollY;
+			if (ImGui::BeginTable("##SceneBuildRows", 6, sceneFlags))
 			{
-				ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_WidthFixed, 30.0f);
-				ImGui::TableSetupColumn("Scene", ImGuiTableColumnFlags_WidthStretch);
-				ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 32.0f);
-				ImGui::TableNextRow(0, ImGui::GetFrameHeightWithSpacing());
-				ImGui::TableSetColumnIndex(0);
-				bool included = startSceneReady;
-				ImGui::BeginDisabled();
-				ImGui::Checkbox("##StartSceneIncluded", &included);
-				ImGui::EndDisabled();
-				ImGui::TableSetColumnIndex(1);
-				ImGui::AlignTextToFramePadding();
-				if (startSceneReady)
-					ImGui::TextUnformatted(sceneName.c_str());
-				else
-					ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "%s (Missing)",
-						sceneName.c_str());
-				if (!scenePath.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-					ImGui::SetTooltip("%s", scenePath.c_str());
-				ImGui::TableSetColumnIndex(2);
-				ImGui::AlignTextToFramePadding();
-				const char* indexText = "0";
-				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f,
-					ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(indexText).x));
-				ImGui::TextUnformatted(indexText);
+				ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed, 34.0f);
+				ImGui::TableSetupColumn("Entry", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+				ImGui::TableSetupColumn("Scene / Path Hint", ImGuiTableColumnFlags_WidthStretch);
+				ImGui::TableSetupColumn("Index", ImGuiTableColumnFlags_WidthFixed, 42.0f);
+				ImGui::TableSetupColumn("Order", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+				ImGui::TableSetupColumn("Remove", ImGuiTableColumnFlags_WidthFixed, 56.0f);
+				ImGui::TableHeadersRow();
+				uint32_t enabledIndex = 0;
+				for (std::size_t index = 0; index < edited.Scenes.size(); ++index)
+				{
+					BuildSceneSettings& scene = edited.Scenes[index];
+					const AssetMetadata* metadata = registry.GetMetadata(scene.Handle);
+					const bool live = metadata && !metadata->IsMissing
+						&& metadata->Type == AssetType::Scene;
+					const bool hasResolvedPath = metadata && !metadata->IsMissing;
+					const std::filesystem::path shownPath = hasResolvedPath
+						? metadata->FilePath : scene.PathHint;
+					std::string label = PathToUTF8(shownPath);
+					if (label.empty())
+						label = "Scene " + std::to_string(static_cast<uint64_t>(scene.Handle));
+
+					ImGui::PushID(static_cast<int>(index));
+					ImGui::TableNextRow(0, ImGui::GetFrameHeightWithSpacing());
+					ImGui::TableSetColumnIndex(0);
+					bool enabled = scene.Enabled;
+					ImGui::BeginDisabled(!buildSettingsEditable);
+					if (ImGui::Checkbox("##Enabled", &enabled))
+					{
+						scene.Enabled = enabled;
+						buildSettingsChanged = true;
+						buildSettingsChangeDescription = enabled
+							? "Enabled build scene." : "Disabled build scene.";
+					}
+					ImGui::EndDisabled();
+
+					ImGui::TableSetColumnIndex(1);
+					const bool isEntry = edited.EntrySceneHandle == scene.Handle;
+					ImGui::BeginDisabled(!buildSettingsEditable);
+					if (ImGui::RadioButton("##Entry", isEntry))
+					{
+						scene.Enabled = true;
+						edited.EntrySceneHandle = scene.Handle;
+						buildSettingsChanged = true;
+						buildSettingsChangeDescription = "Changed Entry Scene.";
+					}
+					ImGui::EndDisabled();
+
+					ImGui::TableSetColumnIndex(2);
+					ImGui::AlignTextToFramePadding();
+					if (live)
+						ImGui::TextUnformatted(label.c_str());
+					else
+						ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
+							"%s (%s)", label.c_str(), !metadata || metadata->IsMissing
+								? "Missing" : "Wrong Type");
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+					{
+						const std::string pathHint = PathToUTF8(scene.PathHint);
+						ImGui::SetTooltip("Handle: %llu\nPathHint: %s",
+							static_cast<unsigned long long>(static_cast<uint64_t>(scene.Handle)),
+							pathHint.empty() ? "<no path hint>" : pathHint.c_str());
+					}
+
+					ImGui::TableSetColumnIndex(3);
+					ImGui::AlignTextToFramePadding();
+					if (scene.Enabled)
+						ImGui::Text("%u", enabledIndex++);
+					else
+						ImGui::TextDisabled("-");
+
+					ImGui::TableSetColumnIndex(4);
+					ImGui::BeginDisabled(!buildSettingsEditable || index == 0);
+					if (ImGui::SmallButton("^"))
+						moveScene = std::pair{ index, index - 1 };
+					ImGui::EndDisabled();
+					ImGui::SameLine(0.0f, 2.0f);
+					ImGui::BeginDisabled(!buildSettingsEditable || index + 1 >= edited.Scenes.size());
+					if (ImGui::SmallButton("v"))
+						moveScene = std::pair{ index, index + 1 };
+					ImGui::EndDisabled();
+
+					ImGui::TableSetColumnIndex(5);
+					ImGui::BeginDisabled(!buildSettingsEditable);
+					if (ImGui::SmallButton("Remove"))
+						removeScene = index;
+					ImGui::EndDisabled();
+					ImGui::PopID();
+				}
 				ImGui::EndTable();
 			}
 		}
 		else
 			ImGui::TextDisabled(m_CurrentProject
-				? "No start scene is configured." : "No project is open.");
+				? "No scenes are configured. Add the saved open Scene or drag a Scene asset here."
+				: "No project is open.");
 		ImGui::EndChild();
 
-		const float addOpenScenesWidth = ImGui::CalcTextSize("Add Open Scenes").x
+		if (buildSettingsEditable && ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				AssetDragDropPayloadID))
+			{
+				if (payload->DataSize == sizeof(uint64_t))
+				{
+					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata = registry.GetMetadata(handle);
+					if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Scene)
+					{
+						m_BuildSettingsSucceeded = false;
+						m_BuildSettingsStatus = "Only live Scene assets can be added to Scenes In Build.";
+					}
+					else if (std::any_of(edited.Scenes.begin(), edited.Scenes.end(),
+						[handle](const BuildSceneSettings& scene) { return scene.Handle == handle; }))
+					{
+						m_BuildSettingsSucceeded = false;
+						m_BuildSettingsStatus = "That Scene is already in the build list.";
+					}
+					else
+					{
+						edited.Scenes.push_back({ handle, true, metadata->FilePath });
+						if (static_cast<uint64_t>(edited.EntrySceneHandle) == 0)
+							edited.EntrySceneHandle = handle;
+						buildSettingsChanged = true;
+						buildSettingsChangeDescription = "Added dropped Scene asset.";
+					}
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+
+		if (moveScene)
+		{
+			std::swap(edited.Scenes[moveScene->first], edited.Scenes[moveScene->second]);
+			buildSettingsChanged = true;
+			buildSettingsChangeDescription = "Reordered build scenes.";
+		}
+		if (removeScene)
+		{
+			const AssetHandle removedHandle = edited.Scenes[*removeScene].Handle;
+			edited.Scenes.erase(edited.Scenes.begin() + static_cast<std::ptrdiff_t>(*removeScene));
+			if (edited.EntrySceneHandle == removedHandle)
+				edited.EntrySceneHandle = AssetHandle(0);
+			buildSettingsChanged = true;
+			buildSettingsChangeDescription = "Removed build scene.";
+		}
+		const auto entryIsEnabled = [&edited]()
+		{
+			return std::any_of(edited.Scenes.begin(), edited.Scenes.end(),
+				[&](const BuildSceneSettings& scene)
+				{
+					return scene.Enabled && scene.Handle == edited.EntrySceneHandle;
+				});
+		};
+		if (buildSettingsChanged && !entryIsEnabled())
+		{
+			edited.EntrySceneHandle = AssetHandle(0);
+			for (const BuildSceneSettings& scene : edited.Scenes)
+			{
+				if (scene.Enabled)
+				{
+					edited.EntrySceneHandle = scene.Handle;
+					break;
+				}
+			}
+		}
+
+		const AssetHandle openSceneHandle = GetSavedEditorSceneHandle();
+		const bool openSceneAlreadyAdded = std::any_of(edited.Scenes.begin(), edited.Scenes.end(),
+			[openSceneHandle](const BuildSceneSettings& scene)
+			{
+				return scene.Handle == openSceneHandle;
+			});
+		const bool canAddOpenScene = buildSettingsEditable
+			&& static_cast<uint64_t>(openSceneHandle) != 0 && !openSceneAlreadyAdded;
+		const float addOpenScenesWidth = ImGui::CalcTextSize("Add Open Scene").x
 			+ ImGui::GetStyle().FramePadding.x * 2.0f;
 		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
 			ImGui::GetWindowContentRegionMax().x - addOpenScenesWidth));
-		ImGui::BeginDisabled();
-		ImGui::Button("Add Open Scenes");
+		ImGui::BeginDisabled(!canAddOpenScene);
+		if (ImGui::Button("Add Open Scene"))
+		{
+			const AssetMetadata* metadata = registry.GetMetadata(openSceneHandle);
+			if (metadata && !metadata->IsMissing && metadata->Type == AssetType::Scene)
+			{
+				edited.Scenes.push_back({ openSceneHandle, true, metadata->FilePath });
+				if (static_cast<uint64_t>(edited.EntrySceneHandle) == 0)
+					edited.EntrySceneHandle = openSceneHandle;
+				buildSettingsChanged = true;
+				buildSettingsChangeDescription = "Added the saved open Scene.";
+			}
+		}
 		ImGui::EndDisabled();
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("The build-scene list will be editable when Player export is implemented.");
+		{
+			if (!m_CurrentProject)
+				ImGui::SetTooltip("Open a project first.");
+			else if (IsSceneRunning())
+				ImGui::SetTooltip("Stop Play Mode before changing Build Settings.");
+			else if (static_cast<uint64_t>(openSceneHandle) == 0)
+				ImGui::SetTooltip("Save the current Scene inside the project's Assets directory first.");
+			else if (openSceneAlreadyAdded)
+				ImGui::SetTooltip("The open Scene is already in the build list.");
+		}
+
+		if (buildSettingsChanged && m_CurrentProject)
+		{
+			if (m_CurrentProject->SetBuildSettings(edited))
+			{
+				m_BuildSettingsSucceeded = true;
+				m_BuildSettingsStatus = buildSettingsChangeDescription
+					+ " Saved to ProjectSettings/BuildSettings.json.";
+			}
+			else
+			{
+				m_BuildSettingsSucceeded = false;
+				m_BuildSettingsStatus =
+					"Build Settings could not be saved; the previous file and list were preserved.";
+			}
+		}
+		if (!m_BuildSettingsStatus.empty())
+		{
+			const ImVec4 color = m_BuildSettingsSucceeded
+				? ImVec4(0.45f, 0.86f, 0.48f, 1.0f)
+				: ImVec4(0.95f, 0.42f, 0.38f, 1.0f);
+			ImGui::TextColored(color, "%s", m_BuildSettingsStatus.c_str());
+		}
+
+		const BuildSettings& persistedBuildSettings = m_CurrentProject
+			? m_CurrentProject->GetBuildSettings() : edited;
+		const auto persistedEntry = std::find_if(persistedBuildSettings.Scenes.begin(),
+			persistedBuildSettings.Scenes.end(), [&](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled
+					&& scene.Handle == persistedBuildSettings.EntrySceneHandle;
+			});
+		const AssetMetadata* entrySceneMetadata = persistedEntry != persistedBuildSettings.Scenes.end()
+			? registry.GetMetadata(persistedBuildSettings.EntrySceneHandle) : nullptr;
+		const bool entrySceneReady = entrySceneMetadata && !entrySceneMetadata->IsMissing
+			&& entrySceneMetadata->Type == AssetType::Scene;
 
 		ImGui::TextUnformatted("Platform");
 		const float platformHeight = std::clamp(ImGui::GetContentRegionAvail().y - 150.0f,
@@ -1586,14 +2494,179 @@ namespace TomCat {
 			+ ImGui::GetStyle().ItemSpacing.x;
 		ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 20.0f,
 			ImGui::GetWindowContentRegionMax().x - buildButtonsWidth));
-		ImGui::BeginDisabled();
-		ImGui::Button("Build", ImVec2(buildWidth, 0.0f));
+		const bool canBuild = m_CurrentProject && entrySceneReady &&
+			!IsSceneRunning() && !m_ScriptCompiler.IsCompileInProgress();
+		ImGui::BeginDisabled(!canBuild);
+		const bool buildPressed = ImGui::Button("Build", ImVec2(buildWidth, 0.0f));
+		const bool buildHovered = ImGui::IsItemHovered(
+			ImGuiHoveredFlags_AllowWhenDisabled);
 		ImGui::SameLine();
-		ImGui::Button("Build And Run", ImVec2(buildAndRunWidth, 0.0f));
+		const bool buildAndRunPressed = ImGui::Button("Build And Run",
+			ImVec2(buildAndRunWidth, 0.0f));
+		const bool buildAndRunHovered = ImGui::IsItemHovered(
+			ImGuiHoveredFlags_AllowWhenDisabled);
 		ImGui::EndDisabled();
-		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-			ImGui::SetTooltip("Player export is not implemented yet.");
+		if (!canBuild && (buildHovered || buildAndRunHovered))
+		{
+			if (!m_CurrentProject)
+				ImGui::SetTooltip("Open a project before building a Player.");
+			else if (!entrySceneReady)
+				ImGui::SetTooltip("Choose an enabled, live Entry Scene in Build Settings.");
+			else if (IsSceneRunning())
+				ImGui::SetTooltip("Stop Play mode before building a Player.");
+			else
+				ImGui::SetTooltip("Wait for the background C# compilation to finish.");
+		}
+		if (buildPressed)
+			BuildPlayer(false);
+		else if (buildAndRunPressed)
+			BuildPlayer(true);
+
+		if (!m_PlayerBuildStatus.empty())
+		{
+			ImGui::Spacing();
+			const ImVec4 color = m_PlayerBuildSucceeded
+				? ImVec4(0.45f, 0.86f, 0.48f, 1.0f)
+				: ImVec4(0.95f, 0.42f, 0.38f, 1.0f);
+			ImGui::PushStyleColor(ImGuiCol_Text, color);
+			ImGui::TextWrapped("%s", m_PlayerBuildStatus.c_str());
+			ImGui::PopStyleColor();
+		}
 		ImGui::End();
+	}
+
+	bool EditorLayer::BuildPlayer(bool runAfterBuild)
+	{
+		m_PlayerBuildSucceeded = false;
+		m_PlayerBuildStatus = "Building Player...";
+		auto fail = [this](std::string message)
+		{
+			m_PlayerBuildSucceeded = false;
+			m_PlayerBuildStatus = std::move(message);
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				m_PlayerBuildStatus, "Player Build");
+			TC_Core_Error("{0}", m_PlayerBuildStatus);
+			return false;
+		};
+
+		if (!m_CurrentProject)
+			return fail("Player build failed: no project is open.");
+		if (IsSceneRunning())
+			return fail("Player build failed: stop Play mode before building.");
+		if (m_ScriptCompiler.IsCompileInProgress())
+			return fail("Player build failed: the background C# compilation is still running.");
+
+		const BuildSettings& buildSettings = m_CurrentProject->GetBuildSettings();
+		const auto entry = std::find_if(buildSettings.Scenes.begin(),
+			buildSettings.Scenes.end(), [&](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled && scene.Handle == buildSettings.EntrySceneHandle;
+			});
+		if (static_cast<uint64_t>(buildSettings.EntrySceneHandle) == 0
+			|| entry == buildSettings.Scenes.end())
+		{
+			return fail("Player build failed: choose an enabled Entry Scene in Build Settings.");
+		}
+		const AssetHandle entryScene = buildSettings.EntrySceneHandle;
+
+		// A Player build is always based on a newly compiled and validated Release
+		// candidate. Never fall back to the previous last-good artifact here.
+		ScriptBuildResult scriptBuild = m_ScriptCompiler.CompileNow();
+		if (!scriptBuild.Succeeded || scriptBuild.SourceChangedDuringBuild ||
+			scriptBuild.BuildID.empty() || scriptBuild.AssemblyPath.empty())
+		{
+			return fail(scriptBuild.SourceChangedDuringBuild
+				? "Player build failed: C# sources changed during the Release compile. Build again."
+				: "Player build failed: the fresh Release C# candidate did not validate. See Console diagnostics.");
+		}
+		if (!m_ScriptCompiler.RefreshSourceState() ||
+			!m_ScriptCompiler.IsCurrentSourceBuilt() ||
+			m_ScriptCompiler.GetCurrentSourceHash() != scriptBuild.SourceHash ||
+			m_ScriptCompiler.GetLastGoodBuildID() != scriptBuild.BuildID ||
+			AbsoluteLexicalPath(m_ScriptCompiler.GetLastGoodAssemblyPath()) !=
+				AbsoluteLexicalPath(scriptBuild.AssemblyPath))
+		{
+			return fail("Player build failed: the fresh C# candidate no longer matches the current sources.");
+		}
+
+		const std::filesystem::path managedDirectory =
+			m_ScriptCompiler.GetManagedRuntimeDirectory();
+		if (managedDirectory.empty())
+			return fail("Player build failed: TomCat.ScriptHost Release outputs are unavailable.");
+		std::string runtimeError;
+		auto runtime = Scripting::CreateManagedScriptRuntime(managedDirectory,
+			scriptBuild.AssemblyPath, scriptBuild.PdbPath, {}, &runtimeError);
+		if (!runtime || !runtime->IsReady())
+		{
+			if (runtimeError.empty())
+				runtimeError = "managed host initialization failed";
+			return fail("Player build failed: the fresh C# candidate could not be hosted: " +
+				runtimeError);
+		}
+		std::string scriptManifestJson;
+		if (!runtime->ReadProjectMetadata(scriptManifestJson))
+			return fail("Player build failed: the fresh C# manifest could not be read.");
+		std::string metadataError;
+		if (!m_ScriptMetadata.ParseAndReplace(scriptManifestJson, metadataError))
+			return fail("Player build failed: the fresh C# manifest is invalid: " + metadataError);
+
+		Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
+		if (!m_EditorScene)
+			return fail("Player build failed: there is no current scene to reconcile and save.");
+		if (ReconcileManagedScriptFields(m_EditorScene))
+			CommitImmediateSceneTransaction("Reconcile C# Fields");
+		SaveScene();
+		if (m_EditorScenePath.empty() || IsSceneDirty())
+			return fail("Player build failed: save the current scene before building.");
+
+		AssetManager& assetManager = AssetManager::Get();
+		if (!assetManager.Refresh())
+			return fail("Player build failed: the Asset Registry could not be refreshed.");
+		const AssetMetadata* entrySceneMetadata =
+			assetManager.GetRegistry().GetMetadata(entryScene);
+		if (!entrySceneMetadata || entrySceneMetadata->IsMissing ||
+			entrySceneMetadata->Type != AssetType::Scene)
+			return fail("Player build failed: the enabled Entry Scene is missing or is not a Scene asset.");
+
+		std::vector<uint8_t> assemblyBytes;
+		std::string fileError;
+		if (!ReadBinaryFileForBuild(scriptBuild.AssemblyPath, assemblyBytes, fileError))
+			return fail("Player build failed: " + fileError);
+
+		PlayerBuildRequest request;
+		request.ProjectInstance = m_CurrentProject;
+		request.EntryScene = entryScene;
+		request.TemplateDirectory = PlayerBuilder::FindDefaultTemplateDirectory();
+		request.ManagedAssembly = std::move(assemblyBytes);
+		request.ScriptManifestJson = scriptManifestJson;
+		request.ScriptBuildID = scriptBuild.BuildID;
+		request.ValidateBeforePublish = [this, scriptBuild]()
+		{
+			return m_ScriptCompiler.RefreshSourceState() &&
+				m_ScriptCompiler.IsCurrentSourceBuilt() &&
+				m_ScriptCompiler.GetCurrentSourceHash() == scriptBuild.SourceHash &&
+				m_ScriptCompiler.GetLastGoodBuildID() == scriptBuild.BuildID &&
+				AbsoluteLexicalPath(m_ScriptCompiler.GetLastGoodAssemblyPath()) ==
+					AbsoluteLexicalPath(scriptBuild.AssemblyPath);
+		};
+		PlayerBuildResult playerBuild = PlayerBuilder::Build(std::move(request));
+		if (!playerBuild.Succeeded)
+			return fail("Player build failed: " + playerBuild.Message);
+
+		m_PlayerBuildSucceeded = true;
+		m_PlayerBuildStatus = playerBuild.Message;
+		m_ConsolePanel.Push(ConsoleMessageSeverity::Info,
+			m_PlayerBuildStatus, "Player Build");
+		TC_Core_Info("{0}", m_PlayerBuildStatus);
+
+		if (runAfterBuild && !PlayerBuilder::Launch(playerBuild.PlayerExecutable,
+			playerBuild.OutputDirectory, fileError))
+		{
+			return fail("Player build succeeded, but Build And Run failed: " + fileError);
+		}
+		return true;
 	}
 
 	void EditorLayer::OpenProjectSettingsPanel()
@@ -1615,7 +2688,10 @@ namespace TomCat {
 		m_ProjectSettingsDraftProject = m_CurrentProject;
 		m_ProjectSettingsDraft = m_CurrentProject
 			? m_CurrentProject->GetSettings() : ProjectSettings{};
+		m_PlayerSettingsDraft = m_CurrentProject
+			? m_CurrentProject->GetPlayerSettings() : PlayerSettings{};
 		SyncProjectSettingsLayerBuffers();
+		SyncPlayerSettingsBuffers();
 		m_NewProjectTagBuffer.fill('\0');
 		ClearProjectSettingsFeedback();
 	}
@@ -1630,6 +2706,25 @@ namespace TomCat {
 			const std::size_t count = std::min(name.size(), buffer.size() - 1);
 			std::copy_n(name.data(), count, buffer.data());
 		}
+	}
+
+	void EditorLayer::SyncPlayerSettingsBuffers()
+	{
+		auto copy = [](const std::string& value, auto& buffer)
+		{
+			buffer.fill('\0');
+			const std::size_t count = std::min(value.size(), buffer.size() - 1);
+			std::copy_n(value.data(), count, buffer.data());
+		};
+		copy(m_PlayerSettingsDraft.ProductName, m_PlayerProductNameBuffer);
+		copy(m_PlayerSettingsDraft.CompanyName, m_PlayerCompanyNameBuffer);
+		copy(m_PlayerSettingsDraft.Version, m_PlayerVersionBuffer);
+		copy(PathToUTF8(m_PlayerSettingsDraft.SaveDirectory),
+			m_PlayerSaveDirectoryBuffer);
+		copy(PathToUTF8(m_PlayerSettingsDraft.LogDirectory),
+			m_PlayerLogDirectoryBuffer);
+		copy(PathToUTF8(m_PlayerSettingsDraft.CrashDirectory),
+			m_PlayerCrashDirectoryBuffer);
 	}
 
 	bool EditorLayer::PersistProjectSettingsDraft()
@@ -1694,6 +2789,33 @@ namespace TomCat {
 		return true;
 	}
 
+	bool EditorLayer::PersistPlayerSettingsDraft()
+	{
+		ClearProjectSettingsFeedback();
+		auto restore = [this](std::string message)
+		{
+			m_PlayerSettingsDraft = m_CurrentProject
+				? m_CurrentProject->GetPlayerSettings() : PlayerSettings{};
+			SyncPlayerSettingsBuffers();
+			m_ProjectSettingsError = std::move(message);
+			return false;
+		};
+		if (!m_CurrentProject)
+			return restore("No project is open.");
+		if (IsSceneRunning())
+			return restore("Stop Play Mode before changing Player settings.");
+		if (m_PlayerSettingsDraft == m_CurrentProject->GetPlayerSettings())
+			return true;
+		if (!m_CurrentProject->SetPlayerSettings(m_PlayerSettingsDraft))
+			return restore(
+				"Player settings could not be saved. Check the values and PlayerSettings.json permissions.");
+		m_PlayerSettingsDraft = m_CurrentProject->GetPlayerSettings();
+		SyncPlayerSettingsBuffers();
+		m_ProjectSettingsStatus =
+			"Saved automatically to ProjectSettings/PlayerSettings.json.";
+		return true;
+	}
+
 	void EditorLayer::UI_ProjectSettings()
 	{
 		if (!m_ShowProjectSettingsPanel)
@@ -1718,7 +2840,7 @@ namespace TomCat {
 		const bool editable = hasProject && !IsSceneRunning();
 		if (!hasProject)
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
-				"Open a project to edit Tags, Layers, and Physics 2D settings.");
+				"Open a project to edit Player, Tags, Layers, and Physics 2D settings.");
 		else if (IsSceneRunning())
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
 				"Project settings are read-only while the scene is running. Stop Play Mode to edit them.");
@@ -1729,6 +2851,8 @@ namespace TomCat {
 			m_ProjectSettingsPage = 0;
 		if (ImGui::Selectable("Physics 2D", m_ProjectSettingsPage == 1))
 			m_ProjectSettingsPage = 1;
+		if (ImGui::Selectable("Player", m_ProjectSettingsPage == 2))
+			m_ProjectSettingsPage = 2;
 		ImGui::EndChild();
 		ImGui::SameLine();
 
@@ -1826,7 +2950,7 @@ namespace TomCat {
 				ImGui::PopID();
 			}
 		}
-		else
+		else if (m_ProjectSettingsPage == 1)
 		{
 			ImGui::TextUnformatted("Physics 2D Layer Collision Matrix");
 			ImGui::Separator();
@@ -1916,10 +3040,106 @@ namespace TomCat {
 				}
 			}
 		}
+		else
+		{
+			ImGui::TextUnformatted("Player Identity");
+			ImGui::Separator();
+			auto drawString = [&](const char* label, auto& buffer, std::string& value)
+			{
+				if (ImGui::InputText(label, buffer.data(), buffer.size()))
+					value = buffer.data();
+				if (ImGui::IsItemDeactivatedAfterEdit())
+					PersistPlayerSettingsDraft();
+			};
+			drawString("Product Name", m_PlayerProductNameBuffer,
+				m_PlayerSettingsDraft.ProductName);
+			drawString("Company Name", m_PlayerCompanyNameBuffer,
+				m_PlayerSettingsDraft.CompanyName);
+			drawString("Version", m_PlayerVersionBuffer,
+				m_PlayerSettingsDraft.Version);
+
+			uint64_t rawIcon = static_cast<uint64_t>(m_PlayerSettingsDraft.Icon);
+			if (ImGui::InputScalar("Icon Handle", ImGuiDataType_U64, &rawIcon))
+			{
+				m_PlayerSettingsDraft.Icon = AssetHandle(rawIcon);
+				PersistPlayerSettingsDraft();
+			}
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+					AssetDragDropPayloadID))
+				{
+					if (payload->DataSize == sizeof(uint64_t))
+					{
+						const AssetHandle handle(
+							*static_cast<const uint64_t*>(payload->Data));
+						const AssetMetadata* metadata = AssetManager::Get()
+							.GetRegistry().GetMetadata(handle);
+						if (metadata && !metadata->IsMissing
+							&& metadata->Type == AssetType::Texture2D)
+						{
+							m_PlayerSettingsDraft.Icon = handle;
+							PersistPlayerSettingsDraft();
+						}
+						else
+							m_ProjectSettingsError =
+								"Player icon must be a live Texture2D asset.";
+					}
+				}
+				ImGui::EndDragDropTarget();
+			}
+			ImGui::TextDisabled("Use 0 for no icon, or drag a Texture2D asset onto the field.");
+
+			ImGui::Spacing();
+			ImGui::TextUnformatted("Display");
+			ImGui::Separator();
+			if (ImGui::InputScalar("Width", ImGuiDataType_U32,
+				&m_PlayerSettingsDraft.Width))
+				PersistPlayerSettingsDraft();
+			if (ImGui::InputScalar("Height", ImGuiDataType_U32,
+				&m_PlayerSettingsDraft.Height))
+				PersistPlayerSettingsDraft();
+			const char* windowModes[] = {
+				"Windowed", "Borderless", "Exclusive Fullscreen"
+			};
+			int windowMode = static_cast<int>(m_PlayerSettingsDraft.WindowMode);
+			if (ImGui::Combo("Window Mode", &windowMode, windowModes,
+				static_cast<int>(std::size(windowModes))))
+			{
+				m_PlayerSettingsDraft.WindowMode =
+					static_cast<PlayerWindowMode>(windowMode);
+				PersistPlayerSettingsDraft();
+			}
+			if (ImGui::Checkbox("Resizable", &m_PlayerSettingsDraft.Resizable))
+				PersistPlayerSettingsDraft();
+			if (ImGui::Checkbox("VSync", &m_PlayerSettingsDraft.VSync))
+				PersistPlayerSettingsDraft();
+
+			ImGui::Spacing();
+			ImGui::TextUnformatted("Per-user Directories");
+			ImGui::Separator();
+			auto drawDirectory = [&](const char* label, auto& buffer,
+				std::filesystem::path& value)
+			{
+				if (ImGui::InputText(label, buffer.data(), buffer.size()))
+					value = UTF8ToPath(buffer.data());
+				if (ImGui::IsItemDeactivatedAfterEdit())
+					PersistPlayerSettingsDraft();
+			};
+			drawDirectory("Save Directory", m_PlayerSaveDirectoryBuffer,
+				m_PlayerSettingsDraft.SaveDirectory);
+			drawDirectory("Log Directory", m_PlayerLogDirectoryBuffer,
+				m_PlayerSettingsDraft.LogDirectory);
+			drawDirectory("Crash Directory", m_PlayerCrashDirectoryBuffer,
+				m_PlayerSettingsDraft.CrashDirectory);
+			ImGui::TextDisabled("Directories must be relative and remain under the game's per-user data root.");
+		}
 		ImGui::EndDisabled();
 
 		ImGui::Separator();
-		ImGui::TextDisabled("Valid changes are saved automatically to ProjectSettings/ProjectSettings.json.");
+		ImGui::TextDisabled(m_ProjectSettingsPage == 2
+			? "Valid changes are saved automatically to ProjectSettings/PlayerSettings.json."
+			: "Valid changes are saved automatically to ProjectSettings/ProjectSettings.json.");
 		if (!m_ProjectSettingsError.empty())
 		{
 			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
@@ -2075,6 +3295,11 @@ namespace TomCat {
 
 	void EditorLayer::ResetColliderEditState()
 	{
+		if (m_ColliderTransactionActive)
+		{
+			m_ColliderTransactionActive = false;
+			CommitSceneTransaction();
+		}
 		m_ActiveColliderHandle = ColliderEditHandle::None;
 		m_ColliderEditEntity = UUID(0);
 		m_ColliderDragStartMouseWorld = { 0.0f, 0.0f };
@@ -2174,6 +3399,9 @@ namespace TomCat {
 				const ImVec2 mouse = ImGui::GetMousePos();
 				if (ScreenToWorldOnPlane({ mouse.x, mouse.y }, transform._Translation.z, mouseWorld))
 				{
+					BeginSceneTransaction("Collider Drag");
+					m_ColliderTransactionActive =
+						m_SceneHistory.HasActiveTransaction();
 					m_ActiveColliderHandle = handle;
 					m_ColliderEditEntity = selectedUUID;
 					m_ColliderDragStartMouseWorld = mouseWorld;
@@ -2253,6 +3481,11 @@ namespace TomCat {
 			return;
 		if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
 		{
+			if (m_ColliderTransactionActive)
+			{
+				m_ColliderTransactionActive = false;
+				CommitSceneTransaction();
+			}
 			m_ActiveColliderHandle = ColliderEditHandle::None;
 			return;
 		}
@@ -2335,7 +3568,7 @@ namespace TomCat {
 				{
 					collider.Offset = newOffset;
 					collider.Size = newSize;
-					m_SceneDirty = true;
+					UpdateSceneTransaction();
 				}
 			}
 		}
@@ -2350,7 +3583,7 @@ namespace TomCat {
 					glm::length(collider.Offset - newOffset) > 0.000001f)
 				{
 					collider.Offset = newOffset;
-					m_SceneDirty = true;
+					UpdateSceneTransaction();
 				}
 			}
 			else
@@ -2372,7 +3605,7 @@ namespace TomCat {
 					if (std::abs(collider.Radius - newRadius) > 0.000001f)
 					{
 						collider.Radius = newRadius;
-						m_SceneDirty = true;
+						UpdateSceneTransaction();
 					}
 				}
 			}
@@ -2873,16 +4106,205 @@ namespace TomCat {
 		return m_SceneState != SceneState::Edit;
 	}
 
+	bool EditorLayer::PrepareManagedRuntime()
+	{
+		if (IsSceneRunning())
+			return false;
+		m_ScriptMetadata.Clear();
+		Scripting::ScriptEngine::Get().SetRuntime({});
+		auto fail = [this](std::string message)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error, std::move(message),
+				"Script Runtime");
+			return false;
+		};
+
+		const std::filesystem::path managedDirectory =
+			m_ScriptCompiler.GetManagedRuntimeDirectory();
+		if (managedDirectory.empty())
+			return fail("TomCat.ScriptHost outputs could not be located.");
+		const std::filesystem::path assembly =
+			m_ScriptCompiler.GetLastGoodAssemblyPath();
+		std::filesystem::path pdb = assembly;
+		pdb.replace_extension(".pdb");
+		std::error_code pdbError;
+		if (!std::filesystem::is_regular_file(pdb, pdbError) || pdbError)
+			pdb.clear();
+
+		std::string runtimeError;
+		auto runtime = Scripting::CreateManagedScriptRuntime(managedDirectory,
+			assembly, pdb, {}, &runtimeError);
+		if (!runtime)
+		{
+			if (runtimeError.empty())
+				runtimeError = "managed host initialization failed";
+			return fail("The managed runtime could not be initialized: " + runtimeError);
+		}
+
+		std::string manifestJson;
+		if (!runtime->ReadProjectMetadata(manifestJson))
+			return fail("The generated C# script manifest could not be read.");
+		std::string metadataError;
+		if (!m_ScriptMetadata.ParseAndReplace(manifestJson, metadataError))
+			return fail("The generated C# script manifest is invalid: " + metadataError);
+		if (ReconcileManagedScriptFields(m_EditorScene))
+			CommitImmediateSceneTransaction("Reconcile C# Fields");
+
+		Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
+		return true;
+	}
+
+	bool EditorLayer::ReconcileManagedScriptFields(const Ref<Scene>& scene)
+	{
+		if (!scene)
+			return false;
+		bool changed = false;
+		for (UUID entityID : scene->m_EntityOrder)
+		{
+			Entity entity = scene->FindEntityByUUID(entityID);
+			if (!entity || !entity.HasComponent<CSharpScripts>())
+				continue;
+			for (CSharpScriptEntry& entry :
+				entity.GetComponent<CSharpScripts>().Scripts)
+			{
+				const std::optional<EditorScriptMetadata> metadata =
+					m_ScriptMetadata.Find(entry.ScriptAsset);
+				if (!metadata)
+					continue;
+				if (!metadata->TypeName.empty()
+					&& entry.LastKnownClassName != metadata->TypeName)
+				{
+					entry.LastKnownClassName = metadata->TypeName;
+					changed = true;
+				}
+				changed = ReconcileScriptEntryFields(entry, *metadata) || changed;
+			}
+		}
+		return changed;
+	}
+
 	void EditorLayer::OnScenePlay()
 	{
 		if (m_SceneState != SceneState::Edit || !m_EditorScene)
 			return;
-		m_ActiveScene = Scene::Copy(m_EditorScene);
-		if (!m_ActiveScene)
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		auto blockPlay = [this](std::string message)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				std::move(message), "Scene Manager");
+		};
+		if (!m_CurrentProject)
+		{
+			blockPlay("Play requires an open project with BuildSettings.json.");
 			return;
-		ResizeSceneForGameView(m_ActiveScene);
-		m_ActiveScene->OnRuntimeStart();
+		}
+		if (!AssetManager::Get().Refresh())
+		{
+			blockPlay("Play was blocked because the Asset Registry could not be refreshed.");
+			return;
+		}
+		const AssetHandle currentSceneHandle = GetSavedEditorSceneHandle();
+		if (static_cast<uint64_t>(currentSceneHandle) == 0)
+		{
+			blockPlay("Play requires the current Scene to be saved as a live Scene asset inside Assets.");
+			return;
+		}
+		const BuildSettings& buildSettings = m_CurrentProject->GetBuildSettings();
+		const bool currentSceneEnabled = std::any_of(buildSettings.Scenes.begin(),
+			buildSettings.Scenes.end(), [currentSceneHandle](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled && scene.Handle == currentSceneHandle;
+			});
+		if (!currentSceneEnabled)
+		{
+			blockPlay("Play was blocked because the current saved Scene is not enabled in Build Settings.");
+			return;
+		}
+		const auto entry = std::find_if(buildSettings.Scenes.begin(),
+			buildSettings.Scenes.end(), [&](const BuildSceneSettings& scene)
+			{
+				return scene.Enabled && scene.Handle == buildSettings.EntrySceneHandle;
+			});
+		const AssetMetadata* entryMetadata = entry != buildSettings.Scenes.end()
+			? AssetManager::Get().GetRegistry().GetMetadata(buildSettings.EntrySceneHandle)
+			: nullptr;
+		if (!entryMetadata || entryMetadata->IsMissing
+			|| entryMetadata->Type != AssetType::Scene)
+		{
+			blockPlay("Play requires an enabled, live Entry Scene in Build Settings.");
+			return;
+		}
+
+		{
+			ScriptBuildResult completed;
+			(void)m_ScriptCompiler.PollCompile(completed);
+			if (m_ScriptCompiler.IsCompileInProgress())
+			{
+				m_ShowConsolePanel = true;
+				m_PendingPanelFocus = "Console";
+				m_ConsolePanel.Push(ConsoleMessageSeverity::Warning,
+					"Play is waiting for the background C# compilation to finish.",
+					"Editor");
+				return;
+			}
+			if (!m_ScriptCompiler.RefreshSourceState() ||
+				!m_ScriptCompiler.IsCurrentSourceBuilt())
+			{
+				m_ShowConsolePanel = true;
+				m_PendingPanelFocus = "Console";
+				m_ScriptCompiler.StartCompile(true);
+				m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+					"Play was blocked because the current C# sources have no validated "
+					"build. Compilation is running in the background.",
+					"Editor");
+				return;
+			}
+		}
+		if (!PrepareManagedRuntime())
+			return;
+		if (!m_RuntimeSceneManager.ConfigureBuildSettings(buildSettings))
+		{
+			blockPlay("Play could not configure Build Settings: "
+				+ m_RuntimeSceneManager.GetLastError());
+			return;
+		}
+		if (!m_RuntimeSceneManager.ActivateRuntime())
+		{
+			blockPlay("Play could not activate SceneManager: "
+				+ m_RuntimeSceneManager.GetLastError());
+			return;
+		}
+		Window& applicationWindow = Application::Get().GetWindow();
+		const glm::vec2 screenToFramebufferScale{
+			applicationWindow.GetScreenToFramebufferScaleX(),
+			applicationWindow.GetScreenToFramebufferScaleY() };
+		m_RuntimeSceneManager.SetViewportSize(
+			ToFramebufferExtent(m_GameViewportSize.x,
+				screenToFramebufferScale.x),
+			ToFramebufferExtent(m_GameViewportSize.y,
+				screenToFramebufferScale.y));
+		m_RuntimeSceneManager.SetRuntimeUIViewportMetrics(
+			m_ShowGamePanel ? m_GameViewportBounds[0] : glm::vec2(-1000000.0f),
+			applicationWindow.GetDPIScale(), screenToFramebufferScale);
+		Ref<Scene> preparedScene = Scene::Copy(m_EditorScene);
+		if (!preparedScene || !m_RuntimeSceneManager.StartPreparedScene(
+			preparedScene, currentSceneHandle))
+		{
+			const std::string detail = preparedScene
+				? m_RuntimeSceneManager.GetLastError() : "the Editor Scene could not be copied";
+			m_RuntimeSceneManager.Stop();
+			blockPlay("Play could not start the current build Scene: " + detail);
+			return;
+		}
+		m_ActiveScene = m_RuntimeSceneManager.GetActiveScene();
+		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 		m_SceneState = SceneState::Play;
+		m_PlayScriptDirtyNoticeShown = false;
 		m_StepRequested = false;
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(false);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
@@ -2913,11 +4335,13 @@ namespace TomCat {
 		if (!IsSceneRunning())
 			return;
 
-		Ref<Scene> runtimeScene = m_ActiveScene;
-		if (runtimeScene)
-			runtimeScene->OnRuntimeStop();
+		m_RuntimeSceneManager.Stop();
 		m_ActiveScene = m_EditorScene;
+		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 		m_SceneState = SceneState::Edit;
+		m_PlayScriptDirtyNoticeShown = false;
+		m_ScriptSourcePollCountdown = 0.0f;
+		m_ScriptCompileDebounceRemaining = 0.35f;
 		m_StepRequested = false;
 		ResizeSceneForGameView(m_ActiveScene);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
@@ -2995,6 +4419,22 @@ namespace TomCat {
 				ResetColliderEditState();
 				handled = true;
 			}
+			break;
+		}
+		case Key::Z:
+		{
+			if (!ImGui::GetIO().WantTextInput
+				&& control && !shift && !alt && !super
+				&& m_SceneState == SceneState::Edit)
+				handled = UndoScene();
+			break;
+		}
+		case Key::Y:
+		{
+			if (!ImGui::GetIO().WantTextInput
+				&& control && !shift && !alt && !super
+				&& m_SceneState == SceneState::Edit)
+				handled = RedoScene();
 			break;
 		}
 
@@ -3112,7 +4552,15 @@ namespace TomCat {
 	{
 		const int button = e.GetMouseButton();
 		if (button == Mouse::ButtonLeft && m_ActiveColliderHandle != ColliderEditHandle::None)
+		{
+			if (m_ColliderTransactionActive)
+			{
+				m_ColliderTransactionActive = false;
+				CommitSceneTransaction();
+			}
+			m_ActiveColliderHandle = ColliderEditHandle::None;
 			return true;
+		}
 		if (m_ViewportCameraDragOwned &&
 			(button == Mouse::ButtonLeft || button == Mouse::ButtonMiddle || button == Mouse::ButtonRight))
 		{
@@ -3131,7 +4579,9 @@ namespace TomCat {
 
 	void EditorLayer::NewScene()
 	{
-		if (m_SceneDirty)
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		if (IsSceneDirty() && !m_BypassUnsavedCheck)
 		{
 			RequestDestructiveAction([this]() {
 				NewScene();
@@ -3148,11 +4598,11 @@ namespace TomCat {
 		ResizeSceneForGameView(m_ActiveScene);
 		m_SceneHierarchyPanel.SetContext(m_ActiveScene);
 		m_SceneHierarchyPanel.SetSelectedEntity({});
-		m_SceneDirty = true;
 
 		m_EditorScenePath = std::filesystem::path();
 		m_ContentBrowserPanel.SetActiveScenePath({});
 		ResetSceneInteractionState();
+		InitializeSceneHistory(false);
 	}
 
 	void EditorLayer::AddDefaultMainCamera()
@@ -3172,37 +4622,38 @@ namespace TomCat {
 	{
 		if (!m_CurrentProject)
 			return false;
-		const AssetHandle startSceneHandle = m_CurrentProject->GetConfig().StartSceneHandle;
-		if (static_cast<uint64_t>(startSceneHandle) == 0)
+		const AssetHandle entrySceneHandle =
+			m_CurrentProject->GetBuildSettings().EntrySceneHandle;
+		if (static_cast<uint64_t>(entrySceneHandle) == 0)
 		{
-			TC_Core_Error("Project has no start scene: StartSceneHandle is 0");
+			TC_Core_Error("Project has no Entry Scene in BuildSettings.json");
 			NewScene();
 			return false;
 		}
 
-		std::filesystem::path startScene;
-		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(startSceneHandle);
+		std::filesystem::path entryScene;
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(entrySceneHandle);
 		if (metadata && metadata->Type == AssetType::Scene && !metadata->IsMissing)
-			startScene = AssetManager::Get().ResolvePath(startSceneHandle);
+			entryScene = AssetManager::Get().ResolvePath(entrySceneHandle);
 		else
-			TC_Core_Error("Project start scene handle is missing or is not a Scene: {0}",
-				static_cast<uint64_t>(startSceneHandle));
+			TC_Core_Error("Project Entry Scene handle is missing or is not a Scene: {0}",
+				static_cast<uint64_t>(entrySceneHandle));
 		std::error_code error;
-		if (!startScene.empty() && std::filesystem::is_regular_file(startScene, error))
+		if (!entryScene.empty() && std::filesystem::is_regular_file(entryScene, error))
 		{
-			if (OpenScene(startScene))
+			if (OpenScene(entryScene))
 				return true;
-			TC_Core_Error("Failed to load project start scene: {0}", PathToUTF8(startScene));
+			TC_Core_Error("Failed to load project Entry Scene: {0}", PathToUTF8(entryScene));
 		}
 		else
 		{
-			TC_Warn("Project start scene is missing: {0}", startScene.empty()
-				? std::to_string(static_cast<uint64_t>(startSceneHandle))
-				: PathToUTF8(startScene));
+			TC_Warn("Project Entry Scene is missing: {0}", entryScene.empty()
+				? std::to_string(static_cast<uint64_t>(entrySceneHandle))
+				: PathToUTF8(entryScene));
 		}
 
 		// A project switch must never leave the previous project's scene or path
-		// active when the new start scene is missing or malformed.
+		// active when the new Entry Scene is missing or malformed.
 		NewScene();
 		return false;
 	}
@@ -3215,6 +4666,8 @@ namespace TomCat {
 
 	bool EditorLayer::OpenScene(const std::filesystem::path& path)
 	{
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
 		std::string extension = PathToUTF8(path.extension());
 		std::transform(extension.begin(), extension.end(), extension.begin(),
 			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -3223,7 +4676,7 @@ namespace TomCat {
 			TC_Warn("Could not load {0} - not a scene file", PathToUTF8(path.filename()));
 			return false;
 		}
-		if (m_SceneDirty)
+		if (IsSceneDirty() && !m_BypassUnsavedCheck)
 		{
 			RequestDestructiveAction([this, path]() { return OpenScene(path); });
 			return false;
@@ -3256,8 +4709,8 @@ namespace TomCat {
 		m_ActiveScene = m_EditorScene;
 		m_EditorScenePath = AbsoluteLexicalPath(path);
 		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
-		m_SceneDirty = false;
 		ResetSceneInteractionState();
+		InitializeSceneHistory(true);
 		return true;
 	}
 
@@ -3265,10 +4718,12 @@ namespace TomCat {
 	{
 		if (!m_EditorScene)
 			return;
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
 		if (!m_EditorScenePath.empty())
 		{
 			if (SerializeScene(m_EditorScene, m_EditorScenePath))
-				m_SceneDirty = false;
+				MarkCurrentSceneSaved();
 		}
 		else
 			SaveSceneAs();
@@ -3278,6 +4733,10 @@ namespace TomCat {
 	{
 		if (!m_EditorScene)
 			return;
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		const std::filesystem::path previousRecoverySource =
+			m_EditorScenePath;
 		std::filesystem::path filepath = FileDialogs::SaveFile("TomCat Scene (*.tomcat)\0*.tomcat\0");
 		if (!filepath.empty())
 		{
@@ -3291,7 +4750,16 @@ namespace TomCat {
 			{
 				m_EditorScenePath = AbsoluteLexicalPath(path);
 				m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
-				m_SceneDirty = false;
+				if (previousRecoverySource != m_EditorScenePath)
+				{
+					std::string recoveryError;
+					if (!m_RecoveryService.RemoveRecovery(
+						previousRecoverySource, recoveryError))
+						TC_Core_Warn(
+							"Could not clear previous Scene recovery: {0}",
+							recoveryError);
+				}
+				MarkCurrentSceneSaved();
 			}
 		}
 	}
@@ -3311,12 +4779,195 @@ namespace TomCat {
 		return true;
 	}
 
+	AssetHandle EditorLayer::GetSavedEditorSceneHandle() const
+	{
+		if (!m_CurrentProject || m_EditorScenePath.empty())
+			return AssetHandle(0);
+		const AssetRegistry& registry = AssetManager::Get().GetRegistry();
+		const AssetMetadata* metadata = registry.GetMetadata(m_EditorScenePath);
+		if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Scene)
+			return AssetHandle(0);
+		const AssetMetadata* current = registry.GetMetadata(metadata->Handle);
+		return current && !current->IsMissing && current->Type == AssetType::Scene
+			&& current->FilePath == metadata->FilePath
+			? metadata->Handle : AssetHandle(0);
+	}
+
+	void EditorLayer::ReportPrefabOperation(bool succeeded, std::string message)
+	{
+		if (!succeeded)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+		}
+		m_ConsolePanel.Push(succeeded ? ConsoleMessageSeverity::Info
+			: ConsoleMessageSeverity::Error, message, "Prefab");
+		if (succeeded)
+			TC_Core_Info("{0}", message);
+		else
+			TC_Core_Error("{0}", message);
+	}
+
+	bool EditorLayer::CreatePrefabFromEntity(Entity entity,
+		const std::filesystem::path& destinationDirectory)
+	{
+		if (m_SceneState != SceneState::Edit)
+		{
+			ReportPrefabOperation(false,
+				"Creating a Prefab asset is only available in Edit mode.");
+			return false;
+		}
+		if (!m_CurrentProject || !m_EditorScene || !entity)
+		{
+			ReportPrefabOperation(false,
+				"Create Prefab requires a selected Entity in an open project.");
+			return false;
+		}
+
+		Entity source = m_EditorScene->FindEntityByUUID(entity.GetUUID());
+		AssetRegistry& registry = AssetManager::Get().GetRegistry();
+		std::error_code directoryError;
+		const std::filesystem::path directory =
+			AbsoluteLexicalPath(destinationDirectory);
+		if (!source || directory.empty()
+			|| !std::filesystem::is_directory(directory, directoryError)
+			|| directoryError)
+		{
+			ReportPrefabOperation(false,
+				"Browse a writable folder inside Assets before creating a Prefab.");
+			return false;
+		}
+
+		const std::filesystem::path prefabPath =
+			MakeUniquePrefabPath(directory, source.GetName());
+		if (prefabPath.empty() || !registry.IsManagedPath(prefabPath, true))
+		{
+			ReportPrefabOperation(false,
+				"Could not reserve a unique .tcprefab name in the selected Assets folder.");
+			return false;
+		}
+
+		AssetHandle savedHandle(0);
+		if (!PrefabArchiveCodec::SaveSubtree(m_EditorScene, source,
+			prefabPath, &savedHandle)
+			|| static_cast<uint64_t>(savedHandle) == 0)
+		{
+			ReportPrefabOperation(false,
+				"Could not create Prefab '" + PathToUTF8(prefabPath.filename())
+				+ "'. See the preceding validation diagnostic.");
+			return false;
+		}
+
+		m_ContentBrowserPanel.RevealAsset(prefabPath);
+		ReportPrefabOperation(true, "Created Prefab '"
+			+ PathToUTF8(prefabPath.lexically_relative(
+				m_CurrentProject->GetAssetPath())) + "' from Entity '"
+			+ source.GetName() + "'.");
+		return true;
+	}
+
+	Entity EditorLayer::InstantiatePrefab(AssetHandle handle,
+		std::optional<UUID> parent, std::optional<glm::vec3> rootWorldPosition)
+	{
+		if (!m_ActiveScene)
+		{
+			ReportPrefabOperation(false,
+				"Cannot instantiate a Prefab without an active Scene.");
+			return {};
+		}
+		const AssetMetadata* metadata =
+			AssetManager::Get().GetRegistry().GetMetadata(handle);
+		if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Prefab)
+		{
+			ReportPrefabOperation(false,
+				"The dropped asset is missing or is not a Prefab.");
+			return {};
+		}
+		if (IsSceneRunning() && !m_ActiveScene->IsRuntimeRunning())
+		{
+			ReportPrefabOperation(false,
+				"Runtime Prefab creation requires a running Scene safe point.");
+			return {};
+		}
+
+		PrefabArchive archive;
+		std::string error;
+		if (!PrefabArchiveCodec::Load(handle, archive, error))
+		{
+			ReportPrefabOperation(false, "Could not load Prefab '"
+				+ PathToUTF8(metadata->FilePath) + "': " + error);
+			return {};
+		}
+
+		PrefabInstantiateOptions options;
+		options.Parent = parent;
+		options.RootWorldPosition = rootWorldPosition;
+		options.ResolveAssets = true;
+		PrefabInstantiationResult result;
+		if (!PrefabArchiveCodec::Instantiate(archive, *m_ActiveScene,
+			options, result, error) || !result.Root)
+		{
+			ReportPrefabOperation(false, "Could not instantiate Prefab '"
+				+ PathToUTF8(metadata->FilePath) + "': " + error);
+			return {};
+		}
+
+		m_SceneHierarchyPanel.SetSelectedEntity(result.Root);
+		if (m_SceneState == SceneState::Edit)
+			CommitImmediateSceneTransaction("Instantiate Prefab");
+		ReportPrefabOperation(true, "Instantiated Prefab '"
+			+ PathToUTF8(metadata->FilePath) + "' ("
+			+ std::to_string(result.Entities.size())
+			+ (result.Entities.size() == 1 ? " Entity" : " Entities") + ").");
+		return result.Root;
+	}
+
 	void EditorLayer::ResizeSceneForGameView(const Ref<Scene>& scene)
 	{
-		const uint32_t width = ToFramebufferExtent(m_GameViewportSize.x);
-		const uint32_t height = ToFramebufferExtent(m_GameViewportSize.y);
+		Window& applicationWindow = Application::Get().GetWindow();
+		const uint32_t width = ToFramebufferExtent(m_GameViewportSize.x,
+			applicationWindow.GetScreenToFramebufferScaleX());
+		const uint32_t height = ToFramebufferExtent(m_GameViewportSize.y,
+			applicationWindow.GetScreenToFramebufferScaleY());
 		if (scene && width > 0 && height > 0)
 			scene->OnViewportResize(width, height);
+	}
+
+	void EditorLayer::CommitRuntimeSceneTransition()
+	{
+		if (!IsSceneRunning())
+			return;
+		const bool committed = m_RuntimeSceneManager.CommitPendingTransition();
+		Ref<Scene> runtimeScene = m_RuntimeSceneManager.GetActiveScene();
+		if (!runtimeScene)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				"Runtime scene transition failed: " + m_RuntimeSceneManager.GetLastError(),
+				"Scene Manager");
+			OnSceneStop();
+			return;
+		}
+		if (runtimeScene != m_ActiveScene)
+		{
+			m_ActiveScene = std::move(runtimeScene);
+			ResizeSceneForGameView(m_ActiveScene);
+			m_SceneHierarchyPanel.SetContext(m_ActiveScene, false, true);
+			const std::filesystem::path activeScenePath =
+				AssetManager::Get().ResolvePath(
+					m_RuntimeSceneManager.GetActiveSceneHandle());
+			m_ContentBrowserPanel.SetActiveScenePath(activeScenePath);
+			ResetSceneInteractionState();
+		}
+		if (!committed)
+		{
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				"Runtime scene transition failed: " + m_RuntimeSceneManager.GetLastError(),
+				"Scene Manager");
+		}
 	}
 
 	void EditorLayer::ResetSceneInteractionState()
@@ -3328,7 +4979,9 @@ namespace TomCat {
 
 	void EditorLayer::RequestDestructiveAction(std::function<bool()> action)
 	{
-		if (!m_SceneDirty)
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		if (!IsSceneDirty() || m_BypassUnsavedCheck)
 		{
 			action();
 			return;
@@ -3346,7 +4999,6 @@ namespace TomCat {
 		}
 
 		std::function<bool()> actionToRun;
-		bool restoreDirtyOnFailure = false;
 		if (ImGui::BeginPopupModal("Unsaved Scene Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			ImGui::TextUnformatted("The current scene has unsaved changes.");
@@ -3355,7 +5007,7 @@ namespace TomCat {
 			if (ImGui::Button("Save"))
 			{
 				SaveScene();
-				if (!m_SceneDirty)
+				if (!IsSceneDirty())
 				{
 					actionToRun = std::move(m_PendingUnsavedAction);
 					ImGui::CloseCurrentPopup();
@@ -3364,9 +5016,7 @@ namespace TomCat {
 			ImGui::SameLine();
 			if (ImGui::Button("Discard"))
 			{
-				m_SceneDirty = false;
 				actionToRun = std::move(m_PendingUnsavedAction);
-				restoreDirtyOnFailure = true;
 				ImGui::CloseCurrentPopup();
 			}
 			ImGui::SameLine();
@@ -3377,8 +5027,128 @@ namespace TomCat {
 			}
 			ImGui::EndPopup();
 		}
-		if (actionToRun && !actionToRun() && restoreDirtyOnFailure)
-			m_SceneDirty = true;
+		if (actionToRun)
+		{
+			m_BypassUnsavedCheck = true;
+			actionToRun();
+			m_BypassUnsavedCheck = false;
+		}
+	}
+
+	void EditorLayer::UI_ProjectMigrationModal()
+	{
+		if (m_OpenProjectMigrationModal && m_PendingProjectMigration)
+		{
+			ImGui::OpenPopup("Project Upgrade Preview");
+			m_OpenProjectMigrationModal = false;
+		}
+
+		std::optional<PendingProjectMigration> migrationToRun;
+		if (ImGui::BeginPopupModal("Project Upgrade Preview", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			if (!m_PendingProjectMigration)
+			{
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return;
+			}
+
+			const ProjectMigrationPreview& preview =
+				m_PendingProjectMigration->Preview;
+			ImGui::TextWrapped("Project: %s",
+				PathToUTF8(m_PendingProjectMigration->ProjectPath).c_str());
+			ImGui::Text("Project schema %u will be upgraded to %u.",
+				preview.SourceSchemaVersion, preview.TargetSchemaVersion);
+			ImGui::TextUnformatted(
+				"The files below will be changed in one transaction.");
+			ImGui::TextUnformatted(
+				"The original bytes are backed up before the first write.");
+			ImGui::Text("Backup root: %s",
+				preview.BackupRoot.generic_string().c_str());
+			ImGui::Separator();
+			ImGui::BeginChild("##ProjectMigrationChanges",
+				ImVec2(620.0f, 220.0f), true);
+			for (const ProjectMigrationChange& change : preview.Changes)
+			{
+				const char* operation = change.Kind
+					== ProjectMigrationChangeKind::Create ? "Create" : "Replace";
+				ImGui::TextWrapped("%s  %s  (%llu bytes)%s%s", operation,
+					change.RelativePath.generic_string().c_str(),
+					static_cast<unsigned long long>(change.OriginalSize),
+					change.Reason.empty() ? "" : " - ", change.Reason.c_str());
+			}
+			ImGui::EndChild();
+			ImGui::Separator();
+
+			if (ImGui::Button("Back Up, Upgrade and Open"))
+			{
+				migrationToRun = std::move(m_PendingProjectMigration);
+				m_PendingProjectMigration.reset();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				m_PendingProjectMigration.reset();
+				m_PendingProjectMigrationLock.Release();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		if (migrationToRun)
+		{
+			m_ApprovedProjectMigration = *migrationToRun;
+			m_BypassUnsavedCheck = true;
+			OpenProject(migrationToRun->ProjectPath);
+			m_BypassUnsavedCheck = false;
+		}
+	}
+
+	void EditorLayer::UI_RecoveryModal()
+	{
+		if (m_OpenRecoveryModal && m_PendingRecovery)
+		{
+			ImGui::OpenPopup("Recover Scene");
+			m_OpenRecoveryModal = false;
+		}
+		if (!ImGui::BeginPopupModal("Recover Scene", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize))
+			return;
+
+		ImGui::TextUnformatted(
+			"A newer autosave differs from the scene on disk.");
+		ImGui::TextUnformatted(
+			"Restore loads it into memory as unsaved changes.");
+		ImGui::TextUnformatted("The original scene file will not be overwritten.");
+		ImGui::Separator();
+		if (ImGui::Button("Restore"))
+		{
+			if (RestorePendingRecovery())
+			{
+				m_PendingRecovery.reset();
+				ImGui::CloseCurrentPopup();
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Discard Recovery"))
+		{
+			std::string error;
+			if (m_PendingRecovery
+				&& !m_RecoveryService.RemoveRecovery(
+					m_PendingRecovery->SourceScenePath, error))
+				TC_Core_Warn("Could not discard Scene recovery: {0}", error);
+			m_PendingRecovery.reset();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Not Now"))
+		{
+			m_PendingRecovery.reset();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
 	}
 
 	void EditorLayer::RequestExit()
@@ -3396,7 +5166,7 @@ namespace TomCat {
 			return false;
 
 		const std::filesystem::path projectPath = filepath;
-		if (m_SceneDirty)
+		if (IsSceneDirty() && !m_BypassUnsavedCheck)
 		{
 			RequestDestructiveAction([this, projectPath]() { return OpenProject(projectPath); });
 			return false;
@@ -3406,9 +5176,87 @@ namespace TomCat {
 
 	bool EditorLayer::OpenProject(const std::filesystem::path& path)
 	{
-		if (m_SceneDirty)
+		if (m_SceneHistory.HasActiveTransaction())
+			CommitSceneTransaction();
+		if (IsSceneDirty() && !m_BypassUnsavedCheck)
 		{
 			RequestDestructiveAction([this, path]() { return OpenProject(path); });
+			return false;
+		}
+
+		const std::filesystem::path normalizedPath = AbsoluteLexicalPath(path);
+		const bool alreadyOwns = m_ProjectLock.OwnsProject(normalizedPath);
+		EditorProjectLock candidateLock;
+		if (!alreadyOwns)
+		{
+			if (m_PendingProjectMigrationLock.OwnsProject(normalizedPath))
+				candidateLock = std::move(m_PendingProjectMigrationLock);
+			else
+			{
+				std::string lockError;
+				const ProjectLockAcquireResult lockResult =
+					candidateLock.Acquire(normalizedPath, lockError);
+				if (lockResult != ProjectLockAcquireResult::Acquired)
+				{
+					const std::string message =
+						lockResult == ProjectLockAcquireResult::LiveOwner
+						? "Project open rejected: another Editor instance owns "
+							"the write lock. " + lockError
+						: "Project open rejected: a safe write lock could not be "
+							"created. " + lockError;
+					m_ShowConsolePanel = true;
+					m_PendingPanelFocus = "Console";
+					m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+						message, "Project Lock");
+					TC_Core_Error("{0}", message);
+					return false;
+				}
+			}
+		}
+
+		std::string migrationRecoveryError;
+		if (!Project::RecoverInterruptedMigration(
+			normalizedPath, migrationRecoveryError))
+		{
+			const std::string message = "Project migration recovery failed: "
+				+ migrationRecoveryError;
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				message, "Project Migration");
+			TC_Core_Error("{0}", message);
+			m_ApprovedProjectMigration.reset();
+			return false;
+		}
+		ProjectMigrationPreview migrationPreview;
+		std::string migrationPreviewError;
+		if (!ProjectManager::Get().PreviewProjectMigration(
+			normalizedPath, migrationPreview, migrationPreviewError))
+		{
+			const std::string message = "Project open rejected before migration: "
+				+ migrationPreviewError;
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				message, "Project Migration");
+			TC_Core_Error("{0}", message);
+			m_ApprovedProjectMigration.reset();
+			return false;
+		}
+
+		const bool previewWasApproved = m_ApprovedProjectMigration
+			&& AbsoluteLexicalPath(m_ApprovedProjectMigration->ProjectPath)
+				== normalizedPath
+			&& MigrationPreviewsEqual(
+				m_ApprovedProjectMigration->Preview, migrationPreview);
+		m_ApprovedProjectMigration.reset();
+		if (migrationPreview.RequiresMigration() && !previewWasApproved)
+		{
+			m_PendingProjectMigration = PendingProjectMigration{
+				normalizedPath, std::move(migrationPreview) };
+			if (!alreadyOwns)
+				m_PendingProjectMigrationLock = std::move(candidateLock);
+			m_OpenProjectMigrationModal = true;
 			return false;
 		}
 
@@ -3419,13 +5267,22 @@ namespace TomCat {
 		SaveSceneToolbarLayout();
 		if (m_CurrentProject)
 			m_ContentBrowserPanel.Serialize();
-		auto project = ProjectManager::Get().LoadProject(path);
+		auto project = migrationPreview.RequiresMigration()
+			? ProjectManager::Get().LoadProjectWithMigration(
+				normalizedPath, migrationPreview)
+			: ProjectManager::Get().LoadProject(normalizedPath);
 		if (!project)
 			return false;
+		if (!alreadyOwns)
+			m_ProjectLock = std::move(candidateLock);
 
 		if (IsSceneRunning())
 			OnSceneStop();
 		m_CurrentProject = project;
+		m_BuildSettingsStatus.clear();
+		m_BuildSettingsSucceeded = false;
+		m_PlayerBuildStatus.clear();
+		m_PlayerBuildSucceeded = false;
 		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
 		if (m_ShowProjectSettingsPanel)
 			LoadProjectSettingsDraft();
@@ -3439,6 +5296,19 @@ namespace TomCat {
 		LoadSceneToolbarLayout();
 
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
+		std::string recoveryError;
+		if (!m_RecoveryService.Configure(
+			m_CurrentProject->GetProjectPath(), recoveryError))
+			TC_Core_Warn("Editor recovery is unavailable: {0}",
+				recoveryError);
+		m_ScriptMetadata.Clear();
+		Scripting::ScriptEngine::Get().SetRuntime({});
+		if (m_ScriptCompiler.Configure(m_CurrentProject))
+		{
+			ResetScriptCompileTracking();
+			if (m_ScriptCompiler.IsCurrentSourceBuilt())
+				PrepareManagedRuntime();
+		}
 		OpenProjectStartScene();
 		return true;
 	}

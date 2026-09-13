@@ -3,6 +3,7 @@
 #include "TomCat/Renderer/Shader.h"
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <span>
 
 namespace TomCat {
 
@@ -11,6 +12,7 @@ namespace TomCat {
 	public:
 		OpenGLShader(const std::filesystem::path& filepath);
 		OpenGLShader(const std::string& name, const std::string& vertexSrc, const std::string& fragmentSrc);
+		OpenGLShader(const std::string& name, std::span<const uint8_t> artifact);
 		virtual ~OpenGLShader();
 
 		virtual void Bind() const override;
@@ -41,10 +43,12 @@ namespace TomCat {
 		std::unordered_map<GLenum, std::string> PreProcess(const std::string& source);
 
 		void BuildProgram(const std::unordered_map<GLenum, std::string>& shaderSources);
+		void BuildProgramFromArtifact(std::span<const uint8_t> artifact);
 		void CompileOrGetVulkanBinaries(const std::unordered_map<GLenum, std::string>& shaderSources, bool forceCompile = false);
 		void CompileOrGetOpenGLBinaries(bool forceCompile = false);
 		void CreateProgram();
 		void Reflect(GLenum stage, const std::vector<uint32_t>& shaderData);
+		GLint GetUniformLocation(const std::string& name);
 	private:
 		uint32_t m_RendererID = 0;
 		std::string m_Identity;
@@ -54,6 +58,7 @@ namespace TomCat {
 		std::unordered_map<GLenum, std::vector<uint32_t>> m_OpenGLSPIRV;
 
 		std::unordered_map<GLenum, std::string> m_OpenGLSourceCode;
+		std::unordered_map<std::string, GLint> m_UniformLocations;
 		bool m_UsedCachedBinaries = false;
 	};
 

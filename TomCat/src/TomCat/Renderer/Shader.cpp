@@ -31,6 +31,32 @@ namespace TomCat {
 		return nullptr;
 	}
 
+	Ref<Shader> Shader::CreateFromArtifact(const std::string& name,
+		std::span<const uint8_t> artifact, std::string* error)
+	{
+		if (error)
+			error->clear();
+		try
+		{
+			switch (Renderer::GetAPI())
+			{
+				case RendererAPI::API::OpenGL:
+					return std::make_shared<OpenGLShader>(name, artifact);
+				case RendererAPI::API::None:
+					if (error) *error = "renderer API is unavailable";
+					return nullptr;
+			}
+			if (error) *error = "renderer API is unsupported";
+			return nullptr;
+		}
+		catch (const std::exception& exception)
+		{
+			if (error)
+				*error = exception.what();
+			return nullptr;
+		}
+	}
+
 	void ShaderLibrary:: Add(const std::string& name, const Ref<Shader>& shader)
 	{
 		if (!shader)

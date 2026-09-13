@@ -1,11 +1,23 @@
 #include "TomCat/Core/Log.h"
+#include "TomCat/Core/Input.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SceneSerializer.h"
-#include "TomCat/Scene/ScriptableEntity.h"
+#include "TomCat/Scripting/DotNetHost.h"
+#include "TomCat/Scripting/IScriptRuntime.h"
+#include "TomCat/Scripting/ScriptEngine.h"
+#include "TomCat/Scripting/ScriptGlue.h"
+
+#include "SceneManagerRegression.h"
+#include "PrefabRegression.h"
+#include "ComponentRegistryRegression.h"
+#include "SceneCommandBufferRegression.h"
+#include "RuntimeUIRegression.h"
+#include "WindowMetricsRegression.h"
 
 #include "box2d/b2_body.h"
 #include "box2d/b2_fixture.h"
@@ -16,14 +28,195 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
+#include <limits>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
+	class ManagedRuntimeProbe final : public TomCat::Scripting::IScriptRuntime
+	{
+	public:
+		enum class PhysicsMutation
+		{
+			None,
+			RemoveRigidbody2D,
+			DestroyEntity
+		};
+
+		bool IsReady() const override { return Ready; }
+		TomCat::Scripting::ScriptStatus CreateSceneRuntime(uint64_t sceneSessionId,
+			uint64_t runtimeGeneration) override
+		{
+			Calls.emplace_back("CreateSceneRuntime");
+			LastSceneSession = sceneSessionId;
+			LastRuntimeGeneration = runtimeGeneration;
+			Active = true;
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus InstantiateAll(
+			std::span<const TomCat::Scripting::NativeScriptAttachmentV1> attachments) override
+		{
+			Calls.emplace_back("InstantiateAll");
+			Attachments.assign(attachments.begin(), attachments.end());
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus ApplySerializedFields(
+			std::string_view fieldsJson) override
+		{
+			Calls.emplace_back("ApplySerializedFields");
+			LastFields.assign(fieldsJson);
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus InvokeCreateAll() override
+		{
+			Calls.emplace_back("InvokeCreateAll");
+			if (InvokeCreateStatus == TomCat::Scripting::ScriptStatus::Success
+				&& InvokeCreateAction)
+				InvokeCreateAction();
+			return InvokeCreateStatus;
+		}
+		TomCat::Scripting::ScriptStatus SetEnabled(uint64_t, bool) override
+		{
+			Calls.emplace_back("SetEnabled");
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus UpdateAll(float deltaTime) override
+		{
+			++UpdateCount;
+			LastUpdateDelta = deltaTime;
+			Calls.emplace_back("UpdateAll");
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus FixedUpdateAll(float fixedDeltaTime) override
+		{
+			++FixedUpdateCount;
+			LastFixedDelta = fixedDeltaTime;
+			Calls.emplace_back("FixedUpdateAll");
+			if (FixedUpdateAction)
+				FixedUpdateAction();
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus DispatchPhysicsEvents(
+			std::span<const TomCat::Scripting::NativePhysicsEventV1> events) override
+		{
+			PhysicsEventCount += static_cast<uint32_t>(events.size());
+			PhysicsEvents.insert(PhysicsEvents.end(), events.begin(), events.end());
+			Calls.emplace_back("DispatchPhysicsEvents");
+			if (PhysicsEventAction)
+				PhysicsEventAction();
+			if (!MutationAttempted && Mutation != PhysicsMutation::None
+				&& !events.empty() && !Attachments.empty())
+			{
+				MutationAttempted = true;
+				if (Mutation == PhysicsMutation::RemoveRigidbody2D)
+					MutationQueued = TomCat::Scripting::ScriptEngine::Get().QueueRemoveComponent(
+						Attachments.front().Entity,
+						TomCat::Scripting::NativeComponentType::Rigidbody2D);
+				else
+					MutationQueued = TomCat::Scripting::ScriptEngine::Get().QueueDestroyEntity(
+						Attachments.front().Entity);
+			}
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus DestroyAll() override
+		{
+			Calls.emplace_back("DestroyAll");
+			Active = false;
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus DestroyAttachments(
+			std::span<const uint64_t> attachmentIds) override
+		{
+			DestroyedAttachmentCount += static_cast<uint32_t>(attachmentIds.size());
+			Calls.emplace_back("DestroyAttachments");
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+		TomCat::Scripting::ScriptStatus InstantiateAttachments(
+			std::span<const TomCat::Scripting::NativeScriptAttachmentV1> attachments,
+			std::string_view fieldsJson) override
+		{
+			++DynamicInstantiateCount;
+			DynamicAttachments.assign(attachments.begin(), attachments.end());
+			DynamicFields.assign(fieldsJson);
+			if (InspectDynamicPhysics)
+			{
+				for (const auto& attachment : attachments)
+				{
+					TomCat::Entity entity = TomCat::Scripting::ScriptEngine::Get()
+						.ResolveEntity(attachment.Entity);
+					DynamicPhysicsReady = DynamicPhysicsReady && entity
+						&& entity.HasComponent<TomCat::Rigidbody2D>()
+						&& entity.HasComponent<TomCat::BoxCollider2D>()
+						&& entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody != nullptr
+						&& entity.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture != nullptr;
+				}
+			}
+			Calls.emplace_back("InstantiateAttachments");
+			return DynamicInstantiateStatus;
+		}
+		bool PollUnload() override { return UnloadSucceeds; }
+		void OnUnloadFailed(std::string_view reason) override
+		{
+			++UnloadFailureCount;
+			LastUnloadFailure.assign(reason);
+		}
+
+		bool Ready = true;
+		bool Active = false;
+		bool UnloadSucceeds = true;
+		TomCat::Scripting::ScriptStatus InvokeCreateStatus =
+			TomCat::Scripting::ScriptStatus::Success;
+		TomCat::Scripting::ScriptStatus DynamicInstantiateStatus =
+			TomCat::Scripting::ScriptStatus::Success;
+		uint64_t LastSceneSession = 0;
+		uint64_t LastRuntimeGeneration = 0;
+		uint32_t UpdateCount = 0;
+		uint32_t FixedUpdateCount = 0;
+		uint32_t PhysicsEventCount = 0;
+		uint32_t DestroyedAttachmentCount = 0;
+		uint32_t UnloadFailureCount = 0;
+		uint32_t DynamicInstantiateCount = 0;
+		float LastUpdateDelta = 0.0f;
+		float LastFixedDelta = 0.0f;
+		PhysicsMutation Mutation = PhysicsMutation::None;
+		bool MutationAttempted = false;
+		bool MutationQueued = false;
+		bool InspectDynamicPhysics = false;
+		bool DynamicPhysicsReady = true;
+		std::function<void()> InvokeCreateAction;
+		std::function<void()> FixedUpdateAction;
+		std::function<void()> PhysicsEventAction;
+		std::string LastFields;
+		std::string LastUnloadFailure;
+		std::string DynamicFields;
+		std::vector<TomCat::Scripting::NativeScriptAttachmentV1> Attachments;
+		std::vector<TomCat::Scripting::NativePhysicsEventV1> PhysicsEvents;
+		std::vector<TomCat::Scripting::NativeScriptAttachmentV1> DynamicAttachments;
+		std::vector<std::string> Calls;
+	};
+
+	class ScriptRuntimeOverride final
+	{
+	public:
+		explicit ScriptRuntimeOverride(std::shared_ptr<TomCat::Scripting::IScriptRuntime> runtime)
+		{
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
+		}
+
+		~ScriptRuntimeOverride()
+		{
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
+		}
+
+		ScriptRuntimeOverride(const ScriptRuntimeOverride&) = delete;
+		ScriptRuntimeOverride& operator=(const ScriptRuntimeOverride&) = delete;
+	};
 
 	void Require(bool condition, const char* message)
 	{
@@ -66,6 +259,22 @@ namespace {
 		Require(output.good(), "could not write binary fixture");
 	}
 
+	std::vector<uint8_t> MakeTestTGA()
+	{
+		// Two opaque BGRA pixels. Positive Cook tests must use an actually
+		// decodable source now that TCPAK v6 packages importer artifacts rather
+		// than blindly copying authoring bytes.
+		std::vector<uint8_t> bytes(18 + 8, 0);
+		bytes[2] = 2;
+		bytes[12] = 2;
+		bytes[14] = 1;
+		bytes[16] = 32;
+		bytes[17] = 0x28;
+		bytes[18] = 0; bytes[19] = 0; bytes[20] = 255; bytes[21] = 255;
+		bytes[22] = 0; bytes[23] = 255; bytes[24] = 0; bytes[25] = 255;
+		return bytes;
+	}
+
 	uint16_t ReadLittleEndian16(const std::vector<uint8_t>& bytes, std::size_t offset)
 	{
 		Require(offset + 2 <= bytes.size(), "binary fixture has no uint16 at requested offset");
@@ -79,6 +288,15 @@ namespace {
 		uint32_t value = 0;
 		for (std::size_t index = 0; index < 4; ++index)
 			value |= static_cast<uint32_t>(bytes[offset + index]) << (index * 8);
+		return value;
+	}
+
+	uint64_t ReadLittleEndian64(const std::vector<uint8_t>& bytes, std::size_t offset)
+	{
+		Require(offset + 8 <= bytes.size(), "binary fixture has no uint64 at requested offset");
+		uint64_t value = 0;
+		for (std::size_t index = 0; index < 8; ++index)
+			value |= static_cast<uint64_t>(bytes[offset + index]) << (index * 8);
 		return value;
 	}
 
@@ -96,6 +314,101 @@ namespace {
 			bytes[offset + index] = static_cast<uint8_t>((value >> (index * 8)) & 0xff);
 	}
 
+	void WriteLittleEndian64(std::vector<uint8_t>& bytes, std::size_t offset, uint64_t value)
+	{
+		Require(offset + 8 <= bytes.size(), "binary fixture has no uint64 at requested offset");
+		for (std::size_t index = 0; index < 8; ++index)
+			bytes[offset + index] = static_cast<uint8_t>((value >> (index * 8)) & 0xff);
+	}
+
+	std::vector<uint8_t> MakeManagedAssemblyFixture(const std::string& manifest)
+	{
+		std::vector<uint8_t> assembly = { 'M', 'Z' };
+		assembly.reserve(assembly.size() + manifest.size() * 2);
+		for (const unsigned char character : manifest)
+		{
+			assembly.push_back(character);
+			assembly.push_back(0);
+		}
+		return assembly;
+	}
+
+	std::size_t FindManagedPackageIndexEntry(const std::vector<uint8_t>& package)
+	{
+		Require(package.size() >= TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize,
+			"package fixture has no supported tcpak base header");
+		const uint32_t version = ReadLittleEndian32(package, 8);
+		const uint32_t baseHeaderSize = version
+			== TomCat::RuntimeCompatibility::TcpakVersion
+			? TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
+			: TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize;
+		const uint32_t headerSize = ReadLittleEndian32(package, 12);
+		Require(headerSize >= baseHeaderSize
+			&& headerSize <= package.size(),
+			"package fixture has an invalid variable header");
+		const uint64_t entryCount = ReadLittleEndian64(package, 16);
+		Require(entryCount <= (package.size() - headerSize)
+			/ TomCat::RuntimeCompatibility::TcpakEntrySize,
+			"package fixture has an out-of-bounds index");
+		for (uint64_t index = 0; index < entryCount; ++index)
+		{
+			const std::size_t offset = headerSize + static_cast<std::size_t>(index
+				* TomCat::RuntimeCompatibility::TcpakEntrySize);
+			if (ReadLittleEndian64(package, offset)
+				== (std::numeric_limits<uint64_t>::max)())
+				return offset;
+		}
+		throw std::runtime_error("package fixture has no managed payload index entry");
+	}
+
+	std::vector<uint8_t> MakeTcpakV5CompatibilityFixture(
+		const std::vector<uint8_t>& v6)
+	{
+		Require(v6.size() >= TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
+			&& ReadLittleEndian32(v6, 8) == TomCat::RuntimeCompatibility::TcpakVersion,
+			"v5 compatibility conversion requires a tcpak v6 source");
+		const uint32_t v6HeaderSize = ReadLittleEndian32(v6, 12);
+		const uint64_t entryCount = ReadLittleEndian64(v6, 16);
+		const uint64_t buildSceneCount = ReadLittleEndian64(v6, 32);
+		Require(buildSceneCount <= TomCat::RuntimeCompatibility::MaximumBuildSceneCount,
+			"v6 source has too many build scenes");
+		const uint64_t sceneBytes64 = buildSceneCount * sizeof(uint64_t);
+		Require(sceneBytes64 <= v6HeaderSize
+			&& v6HeaderSize >= TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
+				+ sceneBytes64,
+			"v6 source has an invalid scene table");
+		const std::size_t sceneBytes = static_cast<std::size_t>(sceneBytes64);
+		const std::size_t sceneOffset = v6HeaderSize - sceneBytes;
+		const uint32_t v5HeaderSize = TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize
+			+ static_cast<uint32_t>(sceneBytes);
+		const uint64_t removedBytes = v6HeaderSize - v5HeaderSize;
+		Require(v6HeaderSize <= v6.size()
+			&& entryCount <= (v6.size() - v6HeaderSize)
+				/ TomCat::RuntimeCompatibility::TcpakEntrySize,
+			"v6 source has an invalid index");
+
+		std::vector<uint8_t> v5;
+		v5.reserve(v6.size() - static_cast<std::size_t>(removedBytes));
+		v5.insert(v5.end(), v6.begin(),
+			v6.begin() + TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize);
+		v5.insert(v5.end(), v6.begin() + sceneOffset, v6.begin() + v6HeaderSize);
+		v5.insert(v5.end(), v6.begin() + v6HeaderSize, v6.end());
+		WriteLittleEndian32(v5, 8,
+			TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion);
+		WriteLittleEndian32(v5, 12, v5HeaderSize);
+		for (uint64_t index = 0; index < entryCount; ++index)
+		{
+			const std::size_t entryOffset = v5HeaderSize
+				+ static_cast<std::size_t>(index
+					* TomCat::RuntimeCompatibility::TcpakEntrySize);
+			const uint64_t dataOffset = ReadLittleEndian64(v5, entryOffset + 16);
+			Require(dataOffset >= removedBytes,
+				"v6 source index cannot be rebased to tcpak v5");
+			WriteLittleEndian64(v5, entryOffset + 16, dataOffset - removedBytes);
+		}
+		return v5;
+	}
+
 	bool Near(float actual, float expected, float tolerance = 1.0e-4f)
 	{
 		return std::abs(actual - expected) <= tolerance;
@@ -106,6 +419,14 @@ namespace {
 	{
 		return Near(actual.x, expected.x, tolerance)
 			&& Near(actual.y, expected.y, tolerance);
+	}
+
+	bool Near(const glm::vec3& actual, const glm::vec3& expected,
+		float tolerance = 1.0e-4f)
+	{
+		return Near(actual.x, expected.x, tolerance)
+			&& Near(actual.y, expected.y, tolerance)
+			&& Near(actual.z, expected.z, tolerance);
 	}
 
 	bool Near(const glm::mat4& actual, const glm::mat4& expected,
@@ -161,6 +482,28 @@ namespace {
 		std::filesystem::path Root;
 	};
 
+	void TestExplicitDotNetRootIsExclusive()
+	{
+		TemporaryCookedProject environment;
+		std::filesystem::create_directories(environment.Root / "Managed");
+		const std::filesystem::path runtimeConfig =
+			environment.Root / "Managed" / "TomCat.ScriptHost.runtimeconfig.json";
+		const std::filesystem::path scriptHost =
+			environment.Root / "Managed" / "TomCat.ScriptHost.dll";
+		WriteTextFile(runtimeConfig, "{}");
+		WriteTextFile(scriptHost, "not loaded because the private runtime is missing");
+
+		TomCat::DotNetHost host;
+		TomCat::DotNetHost::Configuration configuration;
+		configuration.RuntimeConfigPath = runtimeConfig;
+		configuration.ScriptHostAssemblyPath = scriptHost;
+		configuration.DotNetRoot = environment.Root / "MissingPrivateDotNet";
+		Require(!host.Initialize(configuration)
+			&& host.GetLastError().find("explicitly selected private dotnet root")
+				!= std::string::npos,
+			"an explicit Player dotnet root fell back to a global .NET installation");
+	}
+
 	void TestProjectSettingsPersistenceAndValidation()
 	{
 		TemporaryCookedProject environment;
@@ -186,11 +529,109 @@ namespace {
 				"default collision matrix is not all-on");
 
 		const std::string projectDocument = ReadTextFile(projectPath);
-		Require(projectDocument.find("SchemaVersion: 3") != std::string::npos,
-			"Project.tcproj did not remain at schema v3");
+		Require(projectDocument.find("SchemaVersion: 4") != std::string::npos,
+			"Project.tcproj did not use schema v4");
 		Require(projectDocument.find("TagsAndLayers") == std::string::npos
-			&& projectDocument.find("Physics2D") == std::string::npos,
-			"project settings leaked into the strict Project.tcproj document");
+			&& projectDocument.find("Physics2D") == std::string::npos
+			&& projectDocument.find("StartScene") == std::string::npos,
+			"shared settings or legacy StartScene fields leaked into Project.tcproj");
+		Require(project->GetBuildSettingsPath()
+			== environment.Root / "ProjectSettings" / "BuildSettings.json"
+			&& std::filesystem::is_regular_file(project->GetBuildSettingsPath())
+			&& project->GetBuildSettings().Scenes.empty()
+			&& static_cast<uint64_t>(project->GetBuildSettings().EntrySceneHandle) == 0,
+			"CreateNew did not persist default shared BuildSettings");
+
+		TomCat::BuildSettings buildSettings;
+		buildSettings.EntrySceneHandle = TomCat::AssetHandle(101);
+		buildSettings.Scenes = {
+			{ TomCat::AssetHandle(101), true, "Main.tomcat" },
+			{ TomCat::AssetHandle(202), false, "Bonus.tomcat" }
+		};
+		Require(project->SetBuildSettings(buildSettings),
+			"SetBuildSettings rejected a valid ordered scene list");
+		const std::string validBuildSettingsDocument =
+			ReadTextFile(project->GetBuildSettingsPath());
+		Require(validBuildSettingsDocument.find("\"schemaVersion\": 1") != std::string::npos
+			&& validBuildSettingsDocument.find("\"entrySceneHandle\": 101") != std::string::npos
+			&& validBuildSettingsDocument.find("\"enabled\": false") != std::string::npos
+			&& validBuildSettingsDocument.find("\"pathHint\": \"Bonus.tomcat\"") != std::string::npos,
+			"BuildSettings writer did not emit the strict shared JSON schema");
+		auto buildRoundtrip = TomCat::Project::Load(projectPath);
+		Require(buildRoundtrip != nullptr
+			&& buildRoundtrip->GetBuildSettings() == buildSettings
+			&& buildRoundtrip->GetConfig().StartSceneHandle == buildSettings.EntrySceneHandle
+			&& buildRoundtrip->GetConfig().StartScene == "Main.tomcat",
+			"BuildSettings order, flags, PathHints, or compatibility mirror did not roundtrip");
+
+		auto requireBuildRejected = [&](TomCat::BuildSettings invalid, const char* message)
+		{
+			const TomCat::BuildSettings before = project->GetBuildSettings();
+			const std::string fileBefore = ReadTextFile(project->GetBuildSettingsPath());
+			Require(!project->SetBuildSettings(invalid), message);
+			Require(project->GetBuildSettings() == before
+				&& ReadTextFile(project->GetBuildSettingsPath()) == fileBefore,
+				"rejected BuildSettings changed in-memory or persisted state");
+		};
+		TomCat::BuildSettings invalidBuild = buildSettings;
+		invalidBuild.Scenes.push_back(invalidBuild.Scenes.front());
+		requireBuildRejected(invalidBuild, "SetBuildSettings accepted a duplicate scene handle");
+		invalidBuild = buildSettings;
+		invalidBuild.EntrySceneHandle = TomCat::AssetHandle(303);
+		requireBuildRejected(invalidBuild, "SetBuildSettings accepted an entry absent from scenes");
+		invalidBuild = buildSettings;
+		invalidBuild.Scenes.front().Enabled = false;
+		requireBuildRejected(invalidBuild, "SetBuildSettings accepted a disabled entry scene");
+		invalidBuild = buildSettings;
+		invalidBuild.Scenes.front().PathHint = "../Outside.tomcat";
+		requireBuildRejected(invalidBuild, "SetBuildSettings accepted an escaping PathHint");
+
+		std::string unknownBuildField = validBuildSettingsDocument;
+		const std::size_t buildRootClose = unknownBuildField.rfind("\n}");
+		Require(buildRootClose != std::string::npos,
+			"could not locate BuildSettings JSON root terminator");
+		unknownBuildField.replace(buildRootClose, 2,
+			",\n  \"unexpected\": true\n}");
+		WriteTextFile(project->GetBuildSettingsPath(), unknownBuildField);
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"strict BuildSettings loader accepted an unknown top-level field");
+		WriteTextFile(project->GetBuildSettingsPath(), validBuildSettingsDocument + "trailing-data");
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"BuildSettings loader accepted invalid JSON syntax");
+		WriteTextFile(project->GetBuildSettingsPath(), validBuildSettingsDocument);
+		std::error_code buildRemoveError;
+		Require(std::filesystem::remove(project->GetBuildSettingsPath(), buildRemoveError)
+			&& !buildRemoveError && TomCat::Project::Load(projectPath) == nullptr,
+			"schema-v4 project loaded without authoritative BuildSettings.json");
+		WriteTextFile(project->GetBuildSettingsPath(), validBuildSettingsDocument);
+
+		TomCat::EditorProjectState editorState;
+		editorState.ContentBrowserCurrentDirectory = "@assets/Scripts";
+		editorState.ContentBrowserExpandedNodes = { "@assets", "@assets/Scripts" };
+		editorState.ExternalScriptEditor = std::filesystem::absolute(
+			environment.Root / "Tools" / "Code Editor.EXE").lexically_normal();
+		Require(project->SaveEditorState(editorState),
+			"SaveEditorState rejected a valid absolute external C# editor path");
+		TomCat::EditorProjectState loadedEditorState;
+		Require(project->LoadEditorState(loadedEditorState)
+			== TomCat::EditorProjectStateLoadResult::Loaded,
+			"LoadEditorState could not reload project-local editor settings");
+		Require(loadedEditorState.ExternalScriptEditor == editorState.ExternalScriptEditor
+			&& loadedEditorState.ContentBrowserCurrentDirectory == "@assets/Scripts"
+			&& loadedEditorState.ContentBrowserExpandedNodes == editorState.ContentBrowserExpandedNodes,
+			"project-local editor settings did not preserve the configured C# editor and browser state");
+		const std::filesystem::path editorStatePath = project->GetUserSettingsPath()
+			/ "editor.json";
+		const std::string validEditorStateDocument = ReadTextFile(editorStatePath);
+		Require(validEditorStateDocument.find("\"externalScriptEditor\":")
+			!= std::string::npos
+			&& ReadTextFile(projectPath) == projectDocument,
+			"external C# editor persistence was not isolated to UserSettings/editor.json");
+		TomCat::EditorProjectState invalidEditorState = editorState;
+		invalidEditorState.ExternalScriptEditor = "relative-editor.exe";
+		Require(!project->SaveEditorState(invalidEditorState)
+			&& ReadTextFile(editorStatePath) == validEditorStateDocument,
+			"SaveEditorState accepted a relative C# editor path or modified the last valid state");
 
 		TomCat::ProjectSettings customized;
 		customized.TagsAndLayers.Tags = { "Untagged", "Player", "Enemy" };
@@ -207,7 +648,7 @@ namespace {
 		Require(loaded != nullptr && loaded->GetSettings() == customized,
 			"Project::Load did not roundtrip separately persisted settings");
 		const std::string validSettingsDocument = ReadTextFile(project->GetSettingsPath());
-		Require(validSettingsDocument.find("\"schemaVersion\": 1") != std::string::npos
+		Require(validSettingsDocument.find("\"schemaVersion\": 2") != std::string::npos
 			&& validSettingsDocument.find("\"tagsAndLayers\": {") != std::string::npos
 			&& validSettingsDocument.find("\"physics2D\": {") != std::string::npos
 			&& validSettingsDocument.find("SchemaVersion:") == std::string::npos,
@@ -256,11 +697,11 @@ namespace {
 			"settings loader accepted invalid JSON syntax");
 		WriteTextFile(project->GetSettingsPath(), validSettingsDocument);
 		std::string wrongSchema = validSettingsDocument;
-		const std::size_t schemaPosition = wrongSchema.find("\"schemaVersion\": 1");
+		const std::size_t schemaPosition = wrongSchema.find("\"schemaVersion\": 2");
 		Require(schemaPosition != std::string::npos,
 			"could not locate project settings schema version");
-		wrongSchema.replace(schemaPosition, std::string("\"schemaVersion\": 1").size(),
-			"\"schemaVersion\": 2");
+		wrongSchema.replace(schemaPosition, std::string("\"schemaVersion\": 2").size(),
+			"\"schemaVersion\": 3");
 		WriteTextFile(project->GetSettingsPath(), wrongSchema);
 		Require(TomCat::Project::Load(projectPath) == nullptr,
 			"settings loader accepted an unsupported schema version");
@@ -325,169 +766,169 @@ namespace {
 		Require(project->SaveSettings(), "could not restore settings after missing-file test");
 	}
 
-	class FixedStepProbe final : public TomCat::ScriptableEntity
+	void TestPlayerSettingsPersistenceAndValidation()
 	{
-	public:
-		inline static int Creates = 0;
-		inline static int Updates = 0;
-		inline static int Destroys = 0;
-		inline static float LastDelta = 0.0f;
+		TemporaryCookedProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "Player Settings Migration";
+		config.Version = "2.4.6";
+		config.Template = "2D";
+		config.AssetDirectory = "Assets";
+		const std::filesystem::path projectPath = environment.Root / "Project.tcproj";
+		auto project = TomCat::Project::CreateNew(projectPath, config);
+		Require(project != nullptr
+			&& project->GetPlayerSettingsPath() == environment.Root
+				/ "ProjectSettings" / "PlayerSettings.json"
+			&& std::filesystem::is_regular_file(project->GetPlayerSettingsPath())
+			&& project->GetPlayerSettings().ProductName == config.Name
+			&& project->GetPlayerSettings().Version == config.Version,
+			"CreateNew did not persist PlayerSettings defaults from the project identity");
 
-		static void Reset()
-		{
-			Creates = 0;
-			Updates = 0;
-			Destroys = 0;
-			LastDelta = 0.0f;
-		}
+		TomCat::PlayerSettings customized = project->GetPlayerSettings();
+		customized.ProductName = "Moon Rabbit";
+		customized.CompanyName = "Example Studio";
+		customized.Version = "3.1.4";
+		customized.Icon = TomCat::AssetHandle(987654321);
+		customized.Width = 1600;
+		customized.Height = 900;
+		customized.WindowMode = TomCat::PlayerWindowMode::Borderless;
+		customized.Resizable = false;
+		customized.VSync = false;
+		customized.SaveDirectory = "Data/Saves";
+		customized.LogDirectory = "Diagnostics/Logs";
+		customized.CrashDirectory = "Diagnostics/Crashes";
+		Require(project->SetPlayerSettings(customized),
+			"SetPlayerSettings rejected a valid complete settings document");
+		const std::string validDocument = ReadTextFile(project->GetPlayerSettingsPath());
+		Require(validDocument.find("\"schemaVersion\": 1") != std::string::npos
+			&& validDocument.find("\"productName\": \"Moon Rabbit\"") != std::string::npos
+			&& validDocument.find("\"windowMode\": \"Borderless\"") != std::string::npos
+			&& validDocument.find("\"save\": \"Data/Saves\"") != std::string::npos,
+			"PlayerSettings writer did not emit its strict versioned JSON schema");
+		auto roundtrip = TomCat::Project::Load(projectPath);
+		Require(roundtrip != nullptr && roundtrip->GetPlayerSettings() == customized,
+			"PlayerSettings fields did not roundtrip through Project::Load");
 
-	protected:
-		void OnCreate() override { ++Creates; }
-		void OnUpdate(TomCat::Timestep timestep) override
+		auto requireRejected = [&](TomCat::PlayerSettings invalid, const char* message)
 		{
-			++Updates;
-			LastDelta = timestep.GetSeconds();
-		}
-		void OnDestroy() override { ++Destroys; }
-	};
-
-	class PhysicsEventProbe final : public TomCat::ScriptableEntity
-	{
-	public:
-		inline static int CollisionEnters = 0;
-		inline static int CollisionExits = 0;
-		inline static int TriggerEnters = 0;
-		inline static int TriggerExits = 0;
-		inline static bool SawInvalidSelfPair = false;
-
-		static void Reset()
-		{
-			CollisionEnters = 0;
-			CollisionExits = 0;
-			TriggerEnters = 0;
-			TriggerExits = 0;
-			SawInvalidSelfPair = false;
-		}
-
-	protected:
-		void OnCollisionEnter2D(const TomCat::CollisionEnter2D& event) override
-		{
-			++CollisionEnters;
-			SawInvalidSelfPair |= !Contains(event, GetComponent<TomCat::ID>().id);
-		}
-		void OnCollisionExit2D(const TomCat::CollisionExit2D& event) override
-		{
-			++CollisionExits;
-			SawInvalidSelfPair |= !Contains(event, GetComponent<TomCat::ID>().id);
-		}
-		void OnTriggerEnter2D(const TomCat::TriggerEnter2D& event) override
-		{
-			++TriggerEnters;
-			SawInvalidSelfPair |= !Contains(event, GetComponent<TomCat::ID>().id);
-		}
-		void OnTriggerExit2D(const TomCat::TriggerExit2D& event) override
-		{
-			++TriggerExits;
-			SawInvalidSelfPair |= !Contains(event, GetComponent<TomCat::ID>().id);
-		}
-	};
-
-	class ReplacementScriptProbe final : public TomCat::ScriptableEntity
-	{
-	public:
-		inline static int Creates = 0;
-		inline static int Updates = 0;
-		inline static int Destroys = 0;
-
-		static void Reset()
-		{
-			Creates = 0;
-			Updates = 0;
-			Destroys = 0;
-		}
-
-	protected:
-		void OnCreate() override { ++Creates; }
-		void OnUpdate(TomCat::Timestep) override { ++Updates; }
-		void OnDestroy() override { ++Destroys; }
-	};
-
-	class CollisionMutationProbe final : public TomCat::ScriptableEntity
-	{
-	public:
-		enum class Action
-		{
-			RemoveComponent,
-			ReplaceComponent,
-			DestroyEntity
+			const TomCat::PlayerSettings before = project->GetPlayerSettings();
+			const std::string fileBefore = ReadTextFile(project->GetPlayerSettingsPath());
+			Require(!project->SetPlayerSettings(invalid), message);
+			Require(project->GetPlayerSettings() == before
+				&& ReadTextFile(project->GetPlayerSettingsPath()) == fileBefore,
+				"rejected PlayerSettings changed in-memory or persisted state");
 		};
+		TomCat::PlayerSettings invalid = customized;
+		invalid.ProductName.clear();
+		requireRejected(invalid, "PlayerSettings accepted an empty ProductName");
+		invalid = customized;
+		invalid.Width = 0;
+		requireRejected(invalid, "PlayerSettings accepted an invalid window width");
+		invalid = customized;
+		invalid.SaveDirectory = "../Outside";
+		requireRejected(invalid, "PlayerSettings accepted an escaping save directory");
 
-		inline static TomCat::Scene* ActiveScene = nullptr;
-		inline static Action PendingAction = Action::RemoveComponent;
-		inline static int CollisionEnters = 0;
-		inline static int Destroys = 0;
-		inline static bool InCollisionCallback = false;
-		inline static bool DestroyedDuringCallback = false;
-		inline static bool CallbackContinuedSafely = false;
-		inline static bool EntityWasValidDuringDestroy = false;
-		inline static TomCat::UUID Self{ 0 };
+		std::string unknownField = validDocument;
+		const std::size_t rootClose = unknownField.rfind("\n}");
+		Require(rootClose != std::string::npos,
+			"could not locate PlayerSettings JSON root terminator");
+		unknownField.replace(rootClose, 2, ",\n  \"unexpected\": true\n}");
+		WriteTextFile(project->GetPlayerSettingsPath(), unknownField);
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"strict PlayerSettings loader accepted an unknown top-level field");
+		std::string wrongMode = validDocument;
+		const std::string modeToken = "\"windowMode\": \"Borderless\"";
+		const std::size_t modePosition = wrongMode.find(modeToken);
+		Require(modePosition != std::string::npos,
+			"could not locate PlayerSettings window mode token");
+		wrongMode.replace(modePosition, modeToken.size(),
+			"\"windowMode\": \"Maximized\"");
+		WriteTextFile(project->GetPlayerSettingsPath(), wrongMode);
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"strict PlayerSettings loader accepted an unknown WindowMode");
+		WriteTextFile(project->GetPlayerSettingsPath(), validDocument + "trailing-data");
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"PlayerSettings loader accepted trailing non-JSON data");
+		WriteTextFile(project->GetPlayerSettingsPath(), validDocument);
 
-		static void Reset(TomCat::Scene& scene, Action action)
-		{
-			ActiveScene = &scene;
-			PendingAction = action;
-			CollisionEnters = 0;
-			Destroys = 0;
-			InCollisionCallback = false;
-			DestroyedDuringCallback = false;
-			CallbackContinuedSafely = false;
-			EntityWasValidDuringDestroy = false;
-			Self = TomCat::UUID(0);
-			ReplacementScriptProbe::Reset();
-		}
+		std::error_code removeError;
+		Require(std::filesystem::remove(project->GetPlayerSettingsPath(), removeError)
+			&& !removeError, "could not remove PlayerSettings migration fixture");
+		auto inspected = TomCat::Project::Inspect(projectPath);
+		Require(inspected != nullptr
+			&& inspected->GetPlayerSettings().ProductName == config.Name
+			&& inspected->GetPlayerSettings().Version == config.Version
+			&& !std::filesystem::exists(project->GetPlayerSettingsPath()),
+			"read-only project inspection wrote PlayerSettings migration output");
+		TomCat::ProjectMigrationPreview migrationPreview;
+		std::string migrationPreviewError;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, migrationPreview, migrationPreviewError),
+			"missing PlayerSettings migration preview failed");
+		Require(TomCat::Project::Load(projectPath) == nullptr
+			&& !std::filesystem::exists(project->GetPlayerSettingsPath()),
+			"default Project::Load implicitly created missing PlayerSettings");
+		auto migrated = TomCat::Project::LoadWithMigration(
+			projectPath, migrationPreview);
+		Require(migrated != nullptr
+			&& migrated->GetPlayerSettings().ProductName == config.Name
+			&& migrated->GetPlayerSettings().Version == config.Version
+			&& std::filesystem::is_regular_file(project->GetPlayerSettingsPath()),
+			"approved migration did not create missing PlayerSettings defaults");
+	}
 
-	protected:
-		void OnCollisionEnter2D(const TomCat::CollisionEnter2D&) override
-		{
-			++CollisionEnters;
-			InCollisionCallback = true;
-			Self = GetComponent<TomCat::ID>().id;
-			TomCat::Entity entity = ActiveScene ? ActiveScene->FindEntityByUUID(Self) : TomCat::Entity{};
-			if (entity)
-			{
-				switch (PendingAction)
-				{
-				case Action::RemoveComponent:
-					entity.RemoveComponent<TomCat::NativeScript>();
-					break;
-				case Action::ReplaceComponent:
-					entity.AddOrReplaceComponent<TomCat::NativeScript>().Bind<ReplacementScriptProbe>();
-					break;
-				case Action::DestroyEntity:
-					ActiveScene->DestroyEntity(entity);
-					break;
-				}
-			}
+	void TestLegacyProjectBuildSettingsMigration()
+	{
+		TemporaryCookedProject environment;
+		std::filesystem::create_directories(environment.Root / "Assets");
+		const std::filesystem::path projectPath = environment.Root / "Legacy.tcproj";
+		constexpr uint64_t legacyHandle = 0xf123456789abcdefULL;
+		std::ostringstream legacyProject;
+		legacyProject
+			<< "SchemaVersion: 3\n"
+			<< "Project:\n"
+			<< "  Name: Legacy Build Settings\n"
+			<< "  Version: 1.0.0\n"
+			<< "  Description: ''\n"
+			<< "  EditorVersion: ''\n"
+			<< "  Template: 2D\n"
+			<< "  AssetDirectory: Assets\n"
+			<< "  StartScene: Scenes/Legacy.tomcat\n"
+			<< "  StartSceneHandle: " << legacyHandle << "\n";
+		WriteTextFile(projectPath, legacyProject.str());
 
-			// All three operations must leave the active C++ object and its Entity
-			// usable until this virtual callback returns.
-			const TomCat::Entity stillAlive = ActiveScene
-				? ActiveScene->FindEntityByUUID(Self) : TomCat::Entity{};
-			CallbackContinuedSafely = stillAlive
-				&& GetComponent<TomCat::ID>().id == Self;
-			InCollisionCallback = false;
-		}
-
-		void OnDestroy() override
-		{
-			++Destroys;
-			DestroyedDuringCallback |= InCollisionCallback;
-			const TomCat::Entity entity = ActiveScene
-				? ActiveScene->FindEntityByUUID(Self) : TomCat::Entity{};
-			EntityWasValidDuringDestroy = entity
-				&& GetComponent<TomCat::ID>().id == Self;
-		}
-	};
+		TomCat::ProjectMigrationPreview migrationPreview;
+		std::string migrationPreviewError;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, migrationPreview, migrationPreviewError),
+			"legacy project migration preview failed");
+		Require(TomCat::Project::Load(projectPath) == nullptr
+			&& ReadTextFile(projectPath) == legacyProject.str()
+			&& !std::filesystem::exists(
+				environment.Root / "ProjectSettings" / "BuildSettings.json"),
+			"default Project::Load implicitly migrated a schema-v3 project");
+		auto migrated = TomCat::Project::LoadWithMigration(
+			projectPath, migrationPreview);
+		Require(migrated != nullptr,
+			"approved schema-v3 project migration was rejected");
+		const TomCat::BuildSettings& build = migrated->GetBuildSettings();
+		Require(build.EntrySceneHandle == TomCat::AssetHandle(legacyHandle)
+			&& build.Scenes.size() == 1
+			&& build.Scenes[0].Handle == TomCat::AssetHandle(legacyHandle)
+			&& build.Scenes[0].Enabled
+			&& build.Scenes[0].PathHint == "Scenes/Legacy.tomcat",
+			"legacy StartSceneHandle did not migrate into authoritative BuildSettings");
+		const std::string migratedProject = ReadTextFile(projectPath);
+		Require(migratedProject.find("SchemaVersion: 4") != std::string::npos
+			&& migratedProject.find("StartScene") == std::string::npos,
+			"legacy project was not rewritten without duplicate StartScene truth");
+		const std::string migratedBuild = ReadTextFile(migrated->GetBuildSettingsPath());
+		Require(migratedBuild.find(std::to_string(legacyHandle)) != std::string::npos,
+			"BuildSettings migration lost an unsigned 64-bit scene handle");
+		auto reloaded = TomCat::Project::Load(projectPath);
+		Require(reloaded != nullptr && reloaded->GetBuildSettings() == build,
+			"migrated schema-v4 project did not reload its BuildSettings unchanged");
+	}
 
 	TomCat::Entity AddCircleBody(TomCat::Scene& scene, const char* name,
 		TomCat::Rigidbody2D::BodyType bodyType, const glm::vec2& position,
@@ -503,6 +944,88 @@ namespace {
 		return entity;
 	}
 
+	void AttachManagedProbe(TomCat::Entity entity, uint64_t scriptAsset)
+	{
+		TomCat::CSharpScriptEntry script;
+		script.AttachmentID = TomCat::UUID();
+		script.ScriptAsset = TomCat::AssetHandle(scriptAsset);
+		script.LastKnownClassName = "Game.PhysicsRegressionProbe";
+		entity.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(std::move(script));
+	}
+
+	void TestManagedTransformSettersRespectHierarchy()
+	{
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity parent = scene.CreateEntity("Managed transform parent");
+		TomCat::Entity child = scene.CreateEntity("Managed transform child");
+
+		const glm::mat4 parentWorld = TomCat::Math::ComposeTransform(
+			{ 10.0f, -4.0f, 2.0f }, { 0.0f, 0.0f, 0.35f },
+			{ 2.0f, 2.0f, 2.0f });
+		const glm::mat4 childWorld = TomCat::Math::ComposeTransform(
+			{ 3.0f, 5.0f, -1.0f }, { 0.0f, 0.0f, -0.2f },
+			{ 0.75f, 0.75f, 0.75f });
+		Require(scene.SetWorldTransform(parent, parentWorld)
+			&& scene.SetWorldTransform(child, childWorld)
+			&& scene.SetParent(child, parent),
+			"could not create the managed Transform hierarchy fixture");
+		AttachManagedProbe(child, 8110);
+		Require(scene.OnRuntimeStart(),
+			"managed Transform hierarchy fixture did not start");
+
+		const TomCat::Scripting::NativeApiV1 api =
+			TomCat::Scripting::BuildNativeApiV1();
+		const TomCat::Scripting::EntityHandleV1 handle{
+			runtime->LastSceneSession,
+			static_cast<uint64_t>(child.GetUUID()),
+			runtime->LastRuntimeGeneration
+		};
+		auto requireSynchronized = [&]()
+		{
+			const auto& parentTransform = parent.GetComponent<TomCat::Transform>();
+			const auto& childTransform = child.GetComponent<TomCat::Transform>();
+			Require(Near(parentTransform.GetTransform() * childTransform.GetLocalTransform(),
+				childTransform.GetTransform(), 3.0e-4f),
+				"managed world Transform setter left child local/world values inconsistent");
+		};
+		requireSynchronized();
+
+		const glm::vec3 requestedPosition{ 20.0f, 6.0f, -2.5f };
+		Require(api.TransformSetPosition(handle,
+			{ requestedPosition.x, requestedPosition.y, requestedPosition.z }) == 0,
+			"managed Transform.position setter rejected a live child Entity");
+		Require(Near(child.GetComponent<TomCat::Transform>()._Translation,
+			requestedPosition),
+			"managed Transform.position setter did not update world position");
+		requireSynchronized();
+
+		const glm::vec3 requestedRotation{ 0.0f, 0.0f, -0.65f };
+		Require(api.TransformSetRotationEuler(handle,
+			{ requestedRotation.x, requestedRotation.y, requestedRotation.z }) == 0,
+			"managed Transform.rotation setter rejected a live child Entity");
+		Require(Near(child.GetComponent<TomCat::Transform>()._Rotation,
+			requestedRotation, 3.0e-4f),
+			"managed Transform.rotation setter did not update world rotation");
+		requireSynchronized();
+
+		const glm::vec3 requestedScale{ 1.25f, 1.25f, 1.25f };
+		Require(api.TransformSetScale(handle,
+			{ requestedScale.x, requestedScale.y, requestedScale.z }) == 0,
+			"managed Transform.scale setter rejected a live child Entity");
+		Require(Near(child.GetComponent<TomCat::Transform>()._Scale,
+			requestedScale, 3.0e-4f),
+			"managed Transform.scale setter did not update world scale");
+		requireSynchronized();
+
+		TomCat::Scripting::NativeVector3 readback{};
+		Require(api.TransformGetPosition(handle, &readback) == 0
+			&& Near(glm::vec3(readback.X, readback.Y, readback.Z), requestedPosition),
+			"managed Transform getter did not return the synchronized world position");
+		scene.OnRuntimeStop();
+	}
+
 	void MoveRuntimeBody(TomCat::Entity entity, const glm::vec2& position)
 	{
 		auto* body = static_cast<b2Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
@@ -512,32 +1035,34 @@ namespace {
 
 	void TestFixedAccumulatorAndStep()
 	{
-		FixedStepProbe::Reset();
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
 		TomCat::Scene scene;
 		TomCat::Entity entity = scene.CreateEntity("Fixed step probe");
-		entity.AddComponent<TomCat::NativeScript>().Bind<FixedStepProbe>();
-		scene.OnRuntimeStart();
+		AttachManagedProbe(entity, 8101);
+		Require(scene.OnRuntimeStart(), "managed fixed-step probe did not start");
 
 		scene.OnUpdateRuntime(TomCat::Timestep(1.0f / 120.0f));
-		Require(FixedStepProbe::Updates == 0, "half step advanced simulation early");
+		Require(runtime->FixedUpdateCount == 0, "half step advanced simulation early");
 		scene.OnUpdateRuntime(TomCat::Timestep(1.0f / 120.0f));
-		Require(FixedStepProbe::Creates == 1, "script was not created exactly once");
-		Require(FixedStepProbe::Updates == 1, "two half steps did not produce one fixed update");
-		Require(Near(FixedStepProbe::LastDelta, TomCat::Scene::FixedRuntimeTimestep),
-			"script did not receive the fixed timestep");
+		Require(runtime->FixedUpdateCount == 1,
+			"two half steps did not produce one managed fixed update");
+		Require(Near(runtime->LastFixedDelta, TomCat::Scene::FixedRuntimeTimestep),
+			"managed script did not receive the fixed timestep");
 
 		scene.OnUpdateRuntime(TomCat::Timestep(1.0f));
-		Require(FixedStepProbe::Updates == 1 + static_cast<int>(TomCat::Scene::MaximumRuntimeSubsteps),
+		Require(runtime->FixedUpdateCount == 1 + TomCat::Scene::MaximumRuntimeSubsteps,
 			"hitch was not capped at the maximum substep count");
 		scene.OnUpdateRuntime(TomCat::Timestep(0.0f));
-		Require(FixedStepProbe::Updates == 1 + static_cast<int>(TomCat::Scene::MaximumRuntimeSubsteps),
+		Require(runtime->FixedUpdateCount == 1 + TomCat::Scene::MaximumRuntimeSubsteps,
 			"overdue whole steps were not discarded after substep cap");
 
 		scene.OnRuntimeStep();
-		Require(FixedStepProbe::Updates == 2 + static_cast<int>(TomCat::Scene::MaximumRuntimeSubsteps),
-			"single-step did not advance exactly one fixed update");
+		Require(runtime->FixedUpdateCount == 2 + TomCat::Scene::MaximumRuntimeSubsteps,
+			"single-step did not advance exactly one managed fixed update");
 		scene.OnRuntimeStop();
-		Require(FixedStepProbe::Destroys == 1, "script was not destroyed exactly once on stop");
+		Require(!runtime->Calls.empty() && runtime->Calls.back() == "DestroyAll",
+			"managed fixed-step runtime was not destroyed on stop");
 	}
 
 	struct FallingBodyResult
@@ -579,30 +1104,275 @@ namespace {
 		CompareFrameRatePhysics(10);
 	}
 
+	void TestIncrementalPhysicsSynchronizationPreservesObjectIdentity()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity changed = AddCircleBody(scene, "Incremental changed",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { -5.0f, 0.0f });
+		TomCat::Entity untouched = AddCircleBody(scene, "Incremental untouched",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 5.0f, 0.0f });
+		Require(scene.OnRuntimeStart(), "incremental physics scene did not start");
+
+		void* changedBody = changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedBody = untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedFixture =
+			untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture;
+		Require(changedBody && untouchedBody && untouchedFixture,
+			"incremental identity fixtures were not materialized");
+
+		changed.GetComponent<TomCat::CircleCollider2D>().Radius = 0.75f;
+		scene.OnRuntimeStep();
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody,
+			"collider edit replaced its owning Box2D body");
+		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"collider edit replaced an unrelated body or fixture");
+
+		auto& box = changed.AddComponent<TomCat::BoxCollider2D>();
+		box.Size = { 0.25f, 0.5f };
+		scene.OnRuntimeStep();
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"targeted fixture addition rebuilt existing Box2D objects");
+
+		auto& changedRigidbody = changed.GetComponent<TomCat::Rigidbody2D>();
+		changedRigidbody.Type = TomCat::Rigidbody2D::BodyType::Kinematic;
+		changedRigidbody.FixedRotation = true;
+		scene.OnRuntimeStep();
+		Require(changedRigidbody.RuntimeBody == changedBody
+			&& static_cast<b2Body*>(changedBody)->GetType() == b2_kinematicBody
+			&& static_cast<b2Body*>(changedBody)->IsFixedRotation(),
+			"Rigidbody2D definition edit did not mutate the existing body in place");
+		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"body definition edit rebuilt unrelated Box2D objects");
+
+		auto& joint = changed.AddComponent<TomCat::DistanceJoint2D>();
+		joint.ConnectedEntity = untouched.GetUUID();
+		joint.Distance = 10.0f;
+		scene.OnRuntimeStep();
+		Require(joint.RuntimeJoint != nullptr
+			&& changedRigidbody.RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody,
+			"joint addition rebuilt one of its endpoint bodies");
+		joint.Distance = 9.0f;
+		scene.OnRuntimeStep();
+		Require(joint.RuntimeJoint != nullptr
+			&& changedRigidbody.RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"joint edit rebuilt endpoint bodies or an unrelated fixture");
+
+		scene.DestroyEntity(changed);
+		scene.OnRuntimeStep();
+		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"entity removal rebuilt an unrelated Box2D body or fixture");
+		scene.OnRuntimeStop();
+	}
+
+	void TestPhysicsSynchronizationStageCoalescing()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity changed = AddCircleBody(scene, "Sync statistics changed",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { -20.0f, 10.0f });
+		TomCat::Entity untouched = AddCircleBody(scene, "Sync statistics untouched",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 20.0f, 10.0f });
+		Require(scene.OnRuntimeStart(), "sync statistics scene did not start");
+
+		void* changedBody = changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedBody = untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedFixture =
+			untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture;
+		Require(changedBody && untouchedBody && untouchedFixture,
+			"sync statistics fixtures were not materialized");
+
+		scene.ResetRuntimePhysicsSyncStatistics();
+		scene.OnUpdateRuntime(TomCat::Timestep(
+			TomCat::Scene::FixedRuntimeTimestep * 4.0f));
+		const TomCat::RuntimePhysicsSyncStatistics stable =
+			scene.GetRuntimePhysicsSyncStatistics();
+		Require(stable.DefinitionScans == 1,
+			"one unchanged display frame repeated the full physics definition scan");
+		Require(stable.CoalescedRequests > 1,
+			"same-stage physics synchronization requests were not coalesced");
+		Require(stable.WorldRebuilds == 0 && stable.BodiesCreated == 0
+			&& stable.BodiesDestroyed == 0 && stable.BodiesUpdatedInPlace == 0
+			&& stable.BoxFixturesCreated == 0
+			&& stable.BoxFixturesDestroyed == 0
+			&& stable.CircleFixturesCreated == 0
+			&& stable.CircleFixturesDestroyed == 0
+			&& stable.DistanceJointsCreated == 0
+			&& stable.DistanceJointsDestroyed == 0,
+			"an unchanged display frame mutated runtime physics definitions");
+
+		scene.ResetRuntimePhysicsSyncStatistics();
+		changed.GetComponent<TomCat::CircleCollider2D>().Radius = 0.875f;
+		scene.OnUpdateRuntime(TomCat::Timestep(0.0f));
+		const TomCat::RuntimePhysicsSyncStatistics colliderEdit =
+			scene.GetRuntimePhysicsSyncStatistics();
+		Require(colliderEdit.DefinitionScans == 1,
+			"a direct public collider-field edit triggered repeated definition scans");
+		Require(colliderEdit.WorldRebuilds == 0
+			&& colliderEdit.BodiesCreated == 0
+			&& colliderEdit.BodiesDestroyed == 0
+			&& colliderEdit.BodiesUpdatedInPlace == 0
+			&& colliderEdit.BoxFixturesCreated == 0
+			&& colliderEdit.BoxFixturesDestroyed == 0
+			&& colliderEdit.CircleFixturesCreated == 1
+			&& colliderEdit.CircleFixturesDestroyed == 1
+			&& colliderEdit.DistanceJointsCreated == 0
+			&& colliderEdit.DistanceJointsDestroyed == 0,
+			"one collider edit changed Box2D objects outside its target fixture");
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"one collider edit replaced an owning or unrelated Box2D object");
+
+		scene.ResetRuntimePhysicsSyncStatistics();
+		changed.GetComponent<TomCat::Rigidbody2D>().Type =
+			TomCat::Rigidbody2D::BodyType::Kinematic;
+		scene.OnUpdateRuntime(TomCat::Timestep(0.0f));
+		const TomCat::RuntimePhysicsSyncStatistics bodyEdit =
+			scene.GetRuntimePhysicsSyncStatistics();
+		Require(bodyEdit.DefinitionScans == 1 && bodyEdit.WorldRebuilds == 0
+			&& bodyEdit.BodiesCreated == 0 && bodyEdit.BodiesDestroyed == 0
+			&& bodyEdit.BodiesUpdatedInPlace == 1
+			&& bodyEdit.BoxFixturesCreated == 0
+			&& bodyEdit.BoxFixturesDestroyed == 0
+			&& bodyEdit.CircleFixturesCreated == 0
+			&& bodyEdit.CircleFixturesDestroyed == 0
+			&& bodyEdit.DistanceJointsCreated == 0
+			&& bodyEdit.DistanceJointsDestroyed == 0,
+			"one Rigidbody2D edit did not remain a single in-place body update");
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"one body edit replaced the target or an unrelated Box2D object");
+		scene.OnRuntimeStop();
+	}
+
+	void TestPhysicsRenderInterpolation()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity bodyEntity = AddCircleBody(scene, "Interpolated parent",
+			TomCat::Rigidbody2D::BodyType::Kinematic, { 0.0f, 0.0f });
+		TomCat::Entity child = scene.CreateEntity("Interpolated child");
+		auto& childTransform = child.GetComponent<TomCat::Transform>();
+		childTransform._Translation.x = 2.0f;
+		childTransform._LocalTranslation = childTransform._Translation;
+		Require(scene.SetParent(child, bodyEntity),
+			"could not create interpolation hierarchy fixture");
+		Require(scene.OnRuntimeStart(), "interpolation scene did not start");
+
+		auto* body = static_cast<b2Body*>(
+			bodyEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		Require(body != nullptr, "interpolation body was not materialized");
+		body->SetLinearVelocity({ 6.0f, 0.0f });
+		body->SetAngularVelocity(6.0f);
+
+		scene.OnUpdateRuntime(TomCat::Timestep(
+			TomCat::Scene::FixedRuntimeTimestep * 1.5f));
+		Require(Near(scene.GetRuntimeInterpolationAlpha(), 0.5f, 2.0e-4f),
+			"runtime interpolation alpha did not preserve the fixed-step remainder");
+		const auto& current = bodyEntity.GetComponent<TomCat::Transform>();
+		Require(Near(current._Translation.x, 0.1f, 2.0e-4f)
+			&& Near(current._Rotation.z, 0.1f, 2.0e-4f),
+			"ECS did not retain the authoritative current physics pose");
+
+		const glm::mat4 parentRender =
+			scene.GetRuntimeRenderTransform(bodyEntity.GetUUID());
+		Require(Near(parentRender[3].x, 0.05f, 2.0e-4f)
+			&& Near(parentRender[0][0], std::cos(0.05f), 2.0e-4f),
+			"render transform was not halfway between previous and current poses");
+		const glm::mat4 childRender =
+			scene.GetRuntimeRenderTransform(child.GetUUID());
+		Require(Near(childRender[3].x, 0.05f + 2.0f * std::cos(0.05f), 3.0e-4f)
+			&& Near(childRender[3].y, 2.0f * std::sin(0.05f), 3.0e-4f),
+			"non-physics child did not inherit its parent's interpolated pose");
+		Require(Near(bodyEntity.GetComponent<TomCat::Transform>()._Translation.x,
+			0.1f, 2.0e-4f),
+			"reading an interpolated render transform mutated ECS authoring state");
+
+		scene.OnRuntimeStep();
+		Require(Near(scene.GetRuntimeInterpolationAlpha(), 1.0f)
+			&& Near(scene.GetRuntimeRenderTransform(bodyEntity.GetUUID())[3].x,
+				0.2f, 3.0e-4f),
+			"manual single-step did not present the newly completed physics pose");
+		scene.OnRuntimeStop();
+	}
+
+	void TestIncrementalFixtureContactContinuity()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity trigger = scene.CreateEntity("Incremental contact trigger");
+		auto& triggerCollider = trigger.AddComponent<TomCat::CircleCollider2D>();
+		triggerCollider.Radius = 2.0f;
+		triggerCollider.IsTrigger = true;
+		TomCat::Entity visitor = AddCircleBody(scene, "Incremental contact visitor",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 0.25f);
+
+		int enters = 0;
+		int exits = 0;
+		scene.AddTriggerEnter2DListener(
+			[&](const TomCat::TriggerEnter2D&) { ++enters; });
+		scene.AddTriggerExit2DListener(
+			[&](const TomCat::TriggerExit2D&) { ++exits; });
+		Require(scene.OnRuntimeStart(), "incremental contact scene did not start");
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 0,
+			"initial persistent trigger pair was not reported once");
+
+		void* visitorBody = visitor.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		triggerCollider.Friction = 0.75f;
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 0
+			&& visitor.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == visitorBody,
+			"fixture replacement emitted a false contact transition or rebuilt its peer");
+
+		triggerCollider.Offset.x = 10.0f;
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 1,
+			"moving a recreated fixture away did not emit one final Exit");
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 1,
+			"separated incremental fixtures emitted duplicate transitions");
+		scene.OnRuntimeStop();
+	}
+
 	void TestPauseRenderPathAndSingleStep()
 	{
-		FixedStepProbe::Reset();
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
 		TomCat::Scene scene;
 		TomCat::Entity entity = AddCircleBody(scene, "Paused body",
 			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f });
-		entity.AddComponent<TomCat::NativeScript>().Bind<FixedStepProbe>();
-		scene.OnRuntimeStart();
+		AttachManagedProbe(entity, 8102);
+		Require(scene.OnRuntimeStart(), "managed pause probe did not start");
 		scene.OnRuntimeStep();
 		auto* body = static_cast<b2Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(body != nullptr, "paused test body did not receive a runtime body");
 		const float pausedPosition = body->GetPosition().y;
-		const int pausedUpdates = FixedStepProbe::Updates;
+		const uint32_t pausedUpdates = runtime->FixedUpdateCount;
 
 		for (int frame = 0; frame < 20; ++frame)
 			scene.OnRenderRuntime();
-		Require(FixedStepProbe::Updates == pausedUpdates,
-			"render-only pause path advanced scripts");
+		Require(runtime->FixedUpdateCount == pausedUpdates && runtime->UpdateCount == 0,
+			"render-only pause path advanced managed scripts");
 		Require(Near(body->GetPosition().y, pausedPosition),
 			"render-only pause path advanced physics");
 
 		scene.OnRuntimeStep();
-		Require(FixedStepProbe::Updates == pausedUpdates + 1,
-			"paused single-step did not advance scripts exactly once");
+		Require(runtime->FixedUpdateCount == pausedUpdates + 1,
+			"paused single-step did not advance managed scripts exactly once");
 		Require(body->GetPosition().y < pausedPosition,
 			"paused single-step did not advance physics exactly one step");
 		scene.OnRuntimeStop();
@@ -711,43 +1481,101 @@ namespace {
 		scene.OnRuntimeStop();
 	}
 
-	void TestTriggerAndScriptCallbacks()
+	void TestTriggerAndManagedCallbacks()
 	{
-		PhysicsEventProbe::Reset();
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
 		TomCat::Scene scene;
 		TomCat::Entity trigger = scene.CreateEntity("Trigger");
 		auto& triggerCollider = trigger.AddComponent<TomCat::CircleCollider2D>();
 		triggerCollider.Radius = 2.0f;
 		triggerCollider.IsTrigger = true;
-		trigger.AddComponent<TomCat::NativeScript>().Bind<PhysicsEventProbe>();
+		AttachManagedProbe(trigger, 8103);
 		TomCat::Entity body = AddCircleBody(scene, "Trigger visitor",
 			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 0.5f);
-		body.AddComponent<TomCat::NativeScript>().Bind<PhysicsEventProbe>();
+		AttachManagedProbe(body, 8104);
+		const TomCat::UUID triggerUUID = trigger.GetUUID();
+		const TomCat::UUID bodyUUID = body.GetUUID();
 
 		int collisionEnters = 0;
 		int triggerEnters = 0;
 		int triggerExits = 0;
+		bool invalidListenerPair = false;
 		scene.AddCollisionEnter2DListener([&](const TomCat::CollisionEnter2D&) { ++collisionEnters; });
-		scene.AddTriggerEnter2DListener([&](const TomCat::TriggerEnter2D&) { ++triggerEnters; });
-		scene.AddTriggerExit2DListener([&](const TomCat::TriggerExit2D&) { ++triggerExits; });
-		scene.OnRuntimeStart();
+		scene.AddTriggerEnter2DListener([&](const TomCat::TriggerEnter2D& event)
+		{
+			++triggerEnters;
+			invalidListenerPair |= !Contains(event, triggerUUID) || !Contains(event, bodyUUID);
+		});
+		scene.AddTriggerExit2DListener([&](const TomCat::TriggerExit2D& event)
+		{
+			++triggerExits;
+			invalidListenerPair |= !Contains(event, triggerUUID) || !Contains(event, bodyUUID);
+		});
+		Require(scene.OnRuntimeStart(), "managed trigger probe did not start");
+
+		auto& scriptEngine = TomCat::Scripting::ScriptEngine::Get();
+		std::vector<bool> fixedInputEdges;
+		std::vector<bool> physicsInputEdges;
+		std::vector<size_t> fixedInputEventCounts;
+		std::vector<size_t> physicsInputEventCounts;
+		runtime->FixedUpdateAction = [&]()
+		{
+			fixedInputEdges.push_back(scriptEngine.WasKeyPressed(65)
+				&& scriptEngine.WasKeyReleased(65));
+			fixedInputEventCounts.push_back(scriptEngine.GetInputEvents().size());
+		};
+		runtime->PhysicsEventAction = [&]()
+		{
+			physicsInputEdges.push_back(scriptEngine.WasKeyPressed(65)
+				&& scriptEngine.WasKeyReleased(65));
+			physicsInputEventCounts.push_back(scriptEngine.GetInputEvents().size());
+		};
+		TomCat::Input::ClearState();
+		TomCat::Input::NotifyKey(65, TomCat::InputEventQueue::Action::Pressed, 50.0);
+		TomCat::Input::NotifyKey(65, TomCat::InputEventQueue::Action::Released, 50.1);
+		TomCat::Input::BeginFrame();
+		scriptEngine.CaptureInputState();
+
 		scene.OnRuntimeStep();
 		Require(triggerEnters == 1 && collisionEnters == 0,
 			"sensor contact was not routed exclusively as TriggerEnter2D");
-		Require(PhysicsEventProbe::TriggerEnters == 2
-			&& PhysicsEventProbe::CollisionEnters == 0,
-			"both participating scripts did not receive TriggerEnter2D exactly once");
-		Require(!PhysicsEventProbe::SawInvalidSelfPair,
-			"script received a physics event for an unrelated entity pair");
+		Require(runtime->PhysicsEvents.size() == 1
+			&& runtime->PhysicsEvents.front().Kind == static_cast<uint32_t>(
+				TomCat::Scripting::NativePhysicsEventKind::TriggerEnter),
+			"managed runtime did not receive one TriggerEnter2D event");
+		const auto& managedEnter = runtime->PhysicsEvents.front();
+		const bool managedPairMatches =
+			(managedEnter.EntityA.EntityId == static_cast<uint64_t>(triggerUUID)
+				&& managedEnter.EntityB.EntityId == static_cast<uint64_t>(bodyUUID))
+			|| (managedEnter.EntityA.EntityId == static_cast<uint64_t>(bodyUUID)
+				&& managedEnter.EntityB.EntityId == static_cast<uint64_t>(triggerUUID));
+		Require(managedPairMatches && !invalidListenerPair,
+			"trigger callbacks received an unrelated entity pair");
 
 		MoveRuntimeBody(body, { 10.0f, 0.0f });
 		scene.OnRuntimeStep();
-		Require(triggerExits == 1 && PhysicsEventProbe::TriggerExits == 2,
-			"TriggerExit2D was not delivered exactly once globally and once per script");
+		Require(triggerExits == 1 && runtime->PhysicsEvents.size() == 2
+			&& runtime->PhysicsEvents.back().Kind == static_cast<uint32_t>(
+				TomCat::Scripting::NativePhysicsEventKind::TriggerExit),
+			"TriggerExit2D was not delivered once to listeners and the managed runtime");
+		Require(fixedInputEdges.size() == 2 && physicsInputEdges.size() == 2
+			&& fixedInputEdges[0] && physicsInputEdges[0]
+			&& !fixedInputEdges[1] && !physicsInputEdges[1],
+			"Scene fixed-step input edges were not shared then consumed across physics callbacks");
+		Require(fixedInputEventCounts.size() == 2
+			&& physicsInputEventCounts.size() == 2
+			&& fixedInputEventCounts[0] == 2
+			&& physicsInputEventCounts[0] == 2
+			&& fixedInputEventCounts[1] == 0
+			&& physicsInputEventCounts[1] == 0,
+			"Scene fixed-step ordered batch was replayed or cleared before physics callbacks");
 		scene.OnRuntimeStep();
-		Require(triggerEnters == 1 && triggerExits == 1,
+		Require(triggerEnters == 1 && triggerExits == 1
+			&& runtime->PhysicsEvents.size() == 2,
 			"persistent separation emitted duplicate trigger events");
 		scene.OnRuntimeStop();
+		TomCat::Input::ClearState();
 	}
 
 	void TestCollisionFilteringAndRuntimeRebuild()
@@ -760,6 +1588,9 @@ namespace {
 		staticCollider.CollisionMask = 0x0002;
 		TomCat::Entity dynamicEntity = AddCircleBody(scene, "Filtered dynamic",
 			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 1.0f);
+		TomCat::Entity dynamicParent = scene.CreateEntity("Filtered parent");
+		Require(scene.SetParent(dynamicEntity, dynamicParent),
+			"could not create active-hierarchy physics fixture");
 		auto& dynamicCollider = dynamicEntity.GetComponent<TomCat::CircleCollider2D>();
 		dynamicCollider.CollisionLayer = 0x0002;
 		dynamicCollider.CollisionMask = 0x0000;
@@ -774,6 +1605,19 @@ namespace {
 		scene.OnRuntimeStep();
 		Require(enters == 1,
 			"runtime filter edit did not rebuild fixtures and enable contact at a safe step boundary");
+
+		dynamicParent.GetComponent<TomCat::Tag>().Visible = false;
+		scene.OnRuntimeStep();
+		Require(!scene.IsActiveInHierarchy(dynamicEntity)
+			&& dynamicEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == nullptr
+			&& dynamicCollider.RuntimeFixture == nullptr,
+			"disabling a parent left child physics active");
+		dynamicParent.GetComponent<TomCat::Tag>().Visible = true;
+		scene.OnRuntimeStep();
+		Require(scene.IsActiveInHierarchy(dynamicEntity)
+			&& dynamicEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody != nullptr
+			&& dynamicCollider.RuntimeFixture != nullptr,
+			"re-enabling a parent did not restore child physics");
 
 		dynamicCollider.Radius = 3.0f;
 		scene.OnRuntimeStep();
@@ -844,6 +1688,182 @@ namespace {
 			&& static_cast<b2Body*>(addedRigidbody.RuntimeBody)->GetType() == b2_dynamicBody,
 			"runtime Rigidbody2D addition did not replace the implicit static body");
 		scene.OnRuntimeStop();
+	}
+
+	void TestInactiveHierarchyPreservesRuntimeBodyState()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity parent = scene.CreateEntity("Suspended body parent");
+		TomCat::Entity child = AddCircleBody(scene, "Suspended body child",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 0.5f);
+		Require(scene.SetParent(child, parent),
+			"could not create suspended-body hierarchy fixture");
+		Require(scene.OnRuntimeStart(), "suspended-body Scene did not start");
+
+		auto& rigidbody = child.GetComponent<TomCat::Rigidbody2D>();
+		auto* body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		Require(body != nullptr, "dynamic hierarchy body was not created");
+		body->SetLinearVelocity({ 3.25f, -1.5f });
+		body->SetAngularVelocity(2.75f);
+		body->SetAwake(true);
+
+		parent.GetComponent<TomCat::Tag>().Visible = false;
+		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value()
+			&& rigidbody.RuntimeBody == nullptr,
+			"inactive hierarchy retained a live dynamic body");
+		parent.GetComponent<TomCat::Tag>().Visible = true;
+		const auto restoredVelocity = scene.GetLinearVelocity2D(child.GetUUID());
+		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		Require(restoredVelocity.has_value()
+			&& Near(*restoredVelocity, { 3.25f, -1.5f })
+			&& body && Near(body->GetAngularVelocity(), 2.75f)
+			&& body->IsAwake(),
+			"re-enabled hierarchy lost dynamic velocity, angular velocity, or awake state");
+
+		body->SetLinearVelocity({ 0.0f, 0.0f });
+		body->SetAngularVelocity(0.0f);
+		body->SetAwake(false);
+		parent.GetComponent<TomCat::Tag>().Visible = false;
+		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
+			"sleeping hierarchy body was not suspended");
+		parent.GetComponent<TomCat::Tag>().Visible = true;
+		Require(scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
+			"sleeping hierarchy body was not restored");
+		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		Require(body && !body->IsAwake(),
+			"re-enabled hierarchy woke a previously sleeping body");
+
+		body->SetAwake(true);
+		body->SetLinearVelocity({ 6.0f, -4.0f });
+		body->SetAngularVelocity(3.0f);
+		parent.GetComponent<TomCat::Tag>().Visible = false;
+		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
+			"body was not suspended before runtime Stop cleanup");
+		scene.OnRuntimeStop();
+		parent.GetComponent<TomCat::Tag>().Visible = true;
+		Require(scene.OnRuntimeStart(), "Scene did not restart after suspended body Stop");
+		const auto restartVelocity = scene.GetLinearVelocity2D(child.GetUUID());
+		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		Require(restartVelocity.has_value()
+			&& Near(*restartVelocity, { 0.0f, 0.0f })
+			&& body && Near(body->GetAngularVelocity(), 0.0f),
+			"runtime Stop leaked suspended motion into the next session");
+
+		body->SetLinearVelocity({ 8.0f, 2.0f });
+		body->SetAngularVelocity(5.0f);
+		parent.GetComponent<TomCat::Tag>().Visible = false;
+		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
+			"body was not suspended before entity destruction");
+		const TomCat::UUID childID = child.GetUUID();
+		scene.DestroyEntity(child);
+		TomCat::Entity replacement = scene.CreateEntityWithUUID(childID,
+			"Replacement suspended body");
+		auto& replacementBody = replacement.AddComponent<TomCat::Rigidbody2D>();
+		replacementBody.Type = TomCat::Rigidbody2D::BodyType::Dynamic;
+		replacement.AddComponent<TomCat::CircleCollider2D>();
+		Require(scene.SetParent(replacement, parent),
+			"could not parent replacement body");
+		parent.GetComponent<TomCat::Tag>().Visible = true;
+		const auto replacementVelocity = scene.GetLinearVelocity2D(childID);
+		body = static_cast<b2Body*>(replacementBody.RuntimeBody);
+		Require(replacementVelocity.has_value()
+			&& Near(*replacementVelocity, { 0.0f, 0.0f })
+			&& body && Near(body->GetAngularVelocity(), 0.0f),
+			"destroyed entity leaked suspended motion into a replacement UUID");
+		scene.OnRuntimeStop();
+	}
+
+	void TestInactiveRuntimeSpriteComponentsStayUninitialized()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity parent = scene.CreateEntity("Inactive sprite parent");
+		parent.GetComponent<TomCat::Tag>().Visible = false;
+		TomCat::Entity rendererAddedLater = scene.CreateEntity("Renderer added later");
+		rendererAddedLater.AddComponent<TomCat::SpriteAnimator>();
+		TomCat::Entity animatorAddedLater = scene.CreateEntity("Animator added later");
+		animatorAddedLater.AddComponent<TomCat::SpriteRenderer>();
+		Require(scene.SetParent(rendererAddedLater, parent)
+			&& scene.SetParent(animatorAddedLater, parent),
+			"could not create inactive sprite hierarchy fixture");
+		Require(scene.OnRuntimeStart(), "inactive sprite Scene did not start");
+
+		rendererAddedLater.AddComponent<TomCat::SpriteRenderer>();
+		animatorAddedLater.AddComponent<TomCat::SpriteAnimator>();
+		Require(!rendererAddedLater.GetComponent<TomCat::SpriteAnimator>()
+				.RuntimeInitialized
+			&& !animatorAddedLater.GetComponent<TomCat::SpriteAnimator>()
+				.RuntimeInitialized,
+			"runtime component addition initialized an inactive SpriteAnimator");
+
+		parent.GetComponent<TomCat::Tag>().Visible = true;
+		scene.OnRuntimeStep();
+		Require(rendererAddedLater.GetComponent<TomCat::SpriteAnimator>()
+				.RuntimeInitialized
+			&& animatorAddedLater.GetComponent<TomCat::SpriteAnimator>()
+				.RuntimeInitialized,
+			"reactivated SpriteAnimators did not initialize at the next safe step");
+		scene.OnRuntimeStop();
+	}
+
+	void TestAudioAutoPlayWaitsForManagedCreate()
+	{
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity scripted = scene.CreateEntity("OnCreate disables audio");
+		auto& source = scripted.AddComponent<TomCat::AudioSource>();
+		source.Clip = TomCat::AssetHandle(777);
+		source.PlayOnStart = true;
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = TomCat::UUID();
+		entry.ScriptAsset = TomCat::AssetHandle(9101);
+		entry.LastKnownClassName = "Game.DisableAudioOnCreate";
+		scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+		TomCat::Entity activeControl = scene.CreateEntity("Active autoplay control");
+		auto& controlSource = activeControl.AddComponent<TomCat::AudioSource>();
+		controlSource.PlayOnStart = true;
+
+		bool observedPreparedSource = false;
+		runtime->InvokeCreateAction = [&]
+		{
+			const auto& liveSource = scripted.GetComponent<TomCat::AudioSource>();
+			observedPreparedSource = liveSource.RuntimeVoice == 0
+				&& !liveSource.RuntimeAutoPlayEvaluated;
+			scripted.GetComponent<TomCat::Tag>().Visible = false;
+		};
+		Require(scene.OnRuntimeStart(), "managed audio-order Scene did not start");
+		Require(observedPreparedSource,
+			"PlayOnStart was evaluated before managed OnCreate");
+		Require(!scene.IsActiveInHierarchy(scripted)
+			&& scripted.GetComponent<TomCat::AudioSource>().RuntimeVoice == 0
+			&& !scripted.GetComponent<TomCat::AudioSource>()
+				.RuntimeAutoPlayEvaluated,
+			"OnCreate-disabled AudioSource leaked an autoplay attempt");
+		Require(controlSource.RuntimeAutoPlayEvaluated,
+			"active PlayOnStart source was not reconciled after managed OnCreate");
+		scene.OnRuntimeStop();
+	}
+
+	void TestRuntimeStepShortCircuitsAfterFixedStop()
+	{
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity scripted = scene.CreateEntity("Fixed stop probe");
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = TomCat::UUID();
+		entry.ScriptAsset = TomCat::AssetHandle(9102);
+		scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+		auto& source = scripted.AddComponent<TomCat::AudioSource>();
+		source.PlayOnStart = false;
+		Require(scene.OnRuntimeStart(), "fixed-stop Scene did not start");
+		source.RuntimeAutoPlayEvaluated = false;
+		runtime->FixedUpdateAction = [&] { scene.OnRuntimeStop(); };
+
+		scene.OnRuntimeStep();
+		Require(!scene.IsRuntimeRunning()
+			&& !source.RuntimeAutoPlayEvaluated,
+			"OnRuntimeStep continued into audio/render work after fixed-step failure");
 	}
 
 	struct FilterGateResult
@@ -1182,13 +2202,100 @@ namespace {
 		Require(actual.CollideConnected == expected.CollideConnected, context);
 	}
 
-	void TestSchemaV9PersistenceAndCopies()
+	void RequireSameScriptField(const TomCat::ScriptField& actual,
+		const TomCat::ScriptField& expected, const char* context)
+	{
+		Require(actual.FieldID == expected.FieldID && actual.Name == expected.Name
+			&& actual.Type == expected.Type, context);
+		Require(TomCat::IsScriptFieldValueCompatible(actual.Type, actual.Value)
+			&& TomCat::IsScriptFieldValueCompatible(expected.Type, expected.Value),
+			context);
+		switch (actual.Type)
+		{
+			case TomCat::ScriptFieldType::Bool:
+				Require(std::get<bool>(actual.Value) == std::get<bool>(expected.Value),
+					context);
+				break;
+			case TomCat::ScriptFieldType::Int32:
+				Require(std::get<int32_t>(actual.Value)
+					== std::get<int32_t>(expected.Value), context);
+				break;
+			case TomCat::ScriptFieldType::Int64:
+			case TomCat::ScriptFieldType::Enum:
+				Require(std::get<int64_t>(actual.Value)
+					== std::get<int64_t>(expected.Value), context);
+				break;
+			case TomCat::ScriptFieldType::Float:
+				Require(Near(std::get<float>(actual.Value),
+					std::get<float>(expected.Value)), context);
+				break;
+			case TomCat::ScriptFieldType::Double:
+				Require(std::abs(std::get<double>(actual.Value)
+					- std::get<double>(expected.Value)) <= 1.0e-10, context);
+				break;
+			case TomCat::ScriptFieldType::String:
+				Require(std::get<std::string>(actual.Value)
+					== std::get<std::string>(expected.Value), context);
+				break;
+			case TomCat::ScriptFieldType::Vector2:
+				Require(Near(std::get<glm::vec2>(actual.Value),
+					std::get<glm::vec2>(expected.Value)), context);
+				break;
+			case TomCat::ScriptFieldType::Vector3:
+			{
+				const glm::vec3& left = std::get<glm::vec3>(actual.Value);
+				const glm::vec3& right = std::get<glm::vec3>(expected.Value);
+				Require(Near(left.x, right.x) && Near(left.y, right.y)
+					&& Near(left.z, right.z), context);
+				break;
+			}
+			case TomCat::ScriptFieldType::Vector4:
+			case TomCat::ScriptFieldType::Color:
+			{
+				const glm::vec4& left = std::get<glm::vec4>(actual.Value);
+				const glm::vec4& right = std::get<glm::vec4>(expected.Value);
+				Require(Near(left.x, right.x) && Near(left.y, right.y)
+					&& Near(left.z, right.z) && Near(left.w, right.w), context);
+				break;
+			}
+			case TomCat::ScriptFieldType::Entity:
+			case TomCat::ScriptFieldType::AssetRef:
+				Require(std::get<uint64_t>(actual.Value)
+					== std::get<uint64_t>(expected.Value), context);
+				break;
+		}
+	}
+
+	void RequireSameCSharpScripts(const TomCat::CSharpScripts& actual,
+		const TomCat::CSharpScripts& expected, bool sameAttachmentIDs,
+		const char* context)
+	{
+		Require(actual.Scripts.size() == expected.Scripts.size(), context);
+		for (size_t scriptIndex = 0; scriptIndex < actual.Scripts.size();
+			++scriptIndex)
+		{
+			const auto& left = actual.Scripts[scriptIndex];
+			const auto& right = expected.Scripts[scriptIndex];
+			Require((left.AttachmentID == right.AttachmentID)
+				== sameAttachmentIDs, context);
+			Require(left.Enabled == right.Enabled
+				&& left.ScriptAsset == right.ScriptAsset
+				&& left.LastKnownClassName == right.LastKnownClassName
+				&& left.Fields.size() == right.Fields.size(), context);
+			for (size_t fieldIndex = 0; fieldIndex < left.Fields.size();
+				++fieldIndex)
+				RequireSameScriptField(left.Fields[fieldIndex],
+					right.Fields[fieldIndex], context);
+		}
+	}
+
+	void TestSchemaV11PersistenceAndCopies()
 	{
 		TemporaryCookedProject environment;
 		std::filesystem::create_directories(environment.Root);
-		const std::filesystem::path scenePath = environment.Root / "physics_v9_roundtrip.tomcat";
+		const std::filesystem::path scenePath = environment.Root / "physics_v11_roundtrip.tomcat";
 		auto source = TomCat::CreateRef<TomCat::Scene>();
-		source->SetSceneName("Physics v9 roundtrip");
+		source->SetSceneName("Physics v11 roundtrip");
 		TomCat::Entity entity = source->CreateEntity("Circle source");
 		Require(entity.HasComponent<TomCat::EntityMetadata>(),
 			"CreateEntity omitted required EntityMetadata");
@@ -1260,13 +2367,65 @@ namespace {
 		joint.RuntimeJoint = reinterpret_cast<void*>(static_cast<uintptr_t>(0x5678));
 		const TomCat::DistanceJoint2D expectedJoint = joint;
 
+		auto& csharpScripts = entity.AddComponent<TomCat::CSharpScripts>();
+		TomCat::CSharpScriptEntry controller;
+		controller.Enabled = true;
+		controller.ScriptAsset = TomCat::AssetHandle(7001);
+		controller.LastKnownClassName = "Game.PlayerController";
+		controller.Fields.emplace_back("00000000000000000000000000000001",
+			"_enabled", TomCat::ScriptFieldType::Bool, true);
+		controller.Fields.emplace_back("00000000000000000000000000000002",
+			"_lives", TomCat::ScriptFieldType::Int32, int32_t{ -42 });
+		controller.Fields.emplace_back("00000000000000000000000000000003",
+			"_score", TomCat::ScriptFieldType::Int64, int64_t{ -5000000000LL });
+		controller.Fields.emplace_back("00000000000000000000000000000004",
+			"_speed", TomCat::ScriptFieldType::Float, 12.25f);
+		controller.Fields.emplace_back("00000000000000000000000000000005",
+			"_precision", TomCat::ScriptFieldType::Double, -0.125);
+		controller.Fields.emplace_back("00000000000000000000000000000006",
+			"_label", TomCat::ScriptFieldType::String,
+			std::string("saved even when metadata disappears"));
+		controller.Fields.emplace_back("00000000000000000000000000000007",
+			"_v2", TomCat::ScriptFieldType::Vector2,
+			glm::vec2{ 1.5f, -2.5f });
+		controller.Fields.emplace_back("00000000000000000000000000000008",
+			"_v3", TomCat::ScriptFieldType::Vector3,
+			glm::vec3{ 1.0f, 2.0f, 3.0f });
+		controller.Fields.emplace_back("00000000000000000000000000000009",
+			"_v4", TomCat::ScriptFieldType::Vector4,
+			glm::vec4{ 4.0f, 5.0f, 6.0f, 7.0f });
+		controller.Fields.emplace_back("0000000000000000000000000000000a",
+			"_color", TomCat::ScriptFieldType::Color,
+			glm::vec4{ 0.1f, 0.2f, 0.3f, 0.4f });
+		controller.Fields.emplace_back("0000000000000000000000000000000b",
+			"_state", TomCat::ScriptFieldType::Enum, int64_t{ -3 });
+		controller.Fields.emplace_back("0000000000000000000000000000000c",
+			"_target", TomCat::ScriptFieldType::Entity,
+			static_cast<uint64_t>(targetUUID));
+		controller.Fields.emplace_back("0000000000000000000000000000000d",
+			"_prefab", TomCat::ScriptFieldType::AssetRef, uint64_t{ 9001 });
+		csharpScripts.Scripts.emplace_back(std::move(controller));
+
+		// This attachment and field intentionally have no current compiler metadata.
+		// They must remain as raw authoring data rather than being deleted.
+		TomCat::CSharpScriptEntry missing;
+		missing.Enabled = false;
+		missing.ScriptAsset = TomCat::AssetHandle(7002);
+		missing.LastKnownClassName = "Game.RemovedBehaviour";
+		missing.Fields.emplace_back("ffffffffffffffffffffffffffffffff",
+			"_removedField", TomCat::ScriptFieldType::String,
+			std::string("orphan-value"));
+		csharpScripts.Scripts.emplace_back(std::move(missing));
+		const TomCat::CSharpScripts expectedScripts = csharpScripts;
+
 		auto copiedScene = TomCat::Scene::Copy(source);
-		Require(copiedScene != nullptr, "Scene::Copy failed for schema-v9 components");
+		Require(copiedScene != nullptr, "Scene::Copy failed for schema-v11 components");
 		TomCat::Entity copiedEntity = copiedScene->FindEntityByUUID(sourceUUID);
 		Require(copiedEntity && copiedEntity.HasComponent<TomCat::CircleCollider2D>()
 			&& copiedEntity.HasComponent<TomCat::DistanceJoint2D>()
-			&& copiedEntity.HasComponent<TomCat::EntityMetadata>(),
-			"Scene::Copy omitted a schema-v9 component");
+			&& copiedEntity.HasComponent<TomCat::EntityMetadata>()
+			&& copiedEntity.HasComponent<TomCat::CSharpScripts>(),
+			"Scene::Copy omitted a schema-v11 component");
 		Require(copiedEntity.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Player"
 			&& copiedEntity.GetComponent<TomCat::EntityMetadata>().Layer == 3
 			&& copiedEntity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
@@ -1276,6 +2435,9 @@ namespace {
 			"Scene::Copy changed CircleCollider2D fields");
 		RequireSameJointFields(copiedEntity.GetComponent<TomCat::DistanceJoint2D>(), expectedJoint,
 			"Scene::Copy changed DistanceJoint2D fields");
+		RequireSameCSharpScripts(copiedEntity.GetComponent<TomCat::CSharpScripts>(),
+			expectedScripts, true,
+			"Scene::Copy changed C# fields or stable attachment identities");
 		Require(copiedEntity.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture == nullptr
 			&& copiedEntity.GetComponent<TomCat::DistanceJoint2D>().RuntimeJoint == nullptr,
 			"Scene::Copy retained runtime physics pointers");
@@ -1295,8 +2457,9 @@ namespace {
 		TomCat::Entity duplicate = source->DuplicateEntity(entity);
 		Require(duplicate && duplicate.HasComponent<TomCat::CircleCollider2D>()
 			&& duplicate.HasComponent<TomCat::DistanceJoint2D>()
-			&& duplicate.HasComponent<TomCat::EntityMetadata>(),
-			"DuplicateEntity omitted a schema-v9 component");
+			&& duplicate.HasComponent<TomCat::EntityMetadata>()
+			&& duplicate.HasComponent<TomCat::CSharpScripts>(),
+			"DuplicateEntity omitted a schema-v11 component");
 		Require(duplicate.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Player"
 			&& duplicate.GetComponent<TomCat::EntityMetadata>().Layer == 3
 			&& duplicate.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
@@ -1306,6 +2469,9 @@ namespace {
 			"DuplicateEntity changed CircleCollider2D fields");
 		RequireSameJointFields(duplicate.GetComponent<TomCat::DistanceJoint2D>(), expectedJoint,
 			"DuplicateEntity changed DistanceJoint2D fields");
+		RequireSameCSharpScripts(duplicate.GetComponent<TomCat::CSharpScripts>(),
+			expectedScripts, false,
+			"DuplicateEntity failed to preserve fields with fresh attachment identities");
 		Require(duplicate.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture == nullptr
 			&& duplicate.GetComponent<TomCat::DistanceJoint2D>().RuntimeJoint == nullptr,
 			"DuplicateEntity retained runtime physics pointers");
@@ -1323,12 +2489,12 @@ namespace {
 			"DuplicateEntity retained BoxCollider2D RuntimeFixture");
 
 		TomCat::SceneSerializer writer(source);
-		Require(writer.Serialize(scenePath), "schema-v9 scene serialization failed");
+		Require(writer.Serialize(scenePath), "schema-v11 scene serialization failed");
 		Require(TomCat::SceneSerializer::ValidateCurrentFormat(scenePath),
-			"serialized schema-v9 scene failed strict validation");
+			"serialized schema-v11 scene failed strict validation");
 		const std::string serialized = ReadTextFile(scenePath);
-		Require(serialized.find("SchemaVersion: 9") != std::string::npos,
-			"serialized scene did not declare schema v9");
+		Require(serialized.find("SchemaVersion: 11") != std::string::npos,
+			"serialized scene did not declare schema v11");
 		Require(serialized.find("IsTrigger:") != std::string::npos
 			&& serialized.find("CollisionLayer:") != std::string::npos
 			&& serialized.find("CollisionMask:") != std::string::npos
@@ -1336,17 +2502,21 @@ namespace {
 			&& serialized.find("EntityMetadata:") != std::string::npos
 			&& serialized.find("GameplayTag: Player") != std::string::npos
 			&& serialized.find("Layer: 3") != std::string::npos
-			&& serialized.find("HierarchyIcon: Sprite") != std::string::npos,
-			"serialized scene omitted schema-v9 metadata or physics fields");
+			&& serialized.find("HierarchyIcon: Sprite") != std::string::npos
+			&& serialized.find("CSharpScripts:") != std::string::npos
+			&& serialized.find("Type: AssetRef") != std::string::npos
+			&& serialized.find("orphan-value") != std::string::npos,
+			"serialized scene omitted schema-v11 script, metadata, or physics fields");
 
 		auto loaded = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::SceneSerializer reader(loaded);
-		Require(reader.Deserialize(scenePath), "schema-v9 scene deserialization failed");
+		Require(reader.Deserialize(scenePath), "schema-v11 scene deserialization failed");
 		TomCat::Entity loadedEntity = loaded->FindEntityByUUID(sourceUUID);
 		Require(loadedEntity && loadedEntity.HasComponent<TomCat::CircleCollider2D>()
 			&& loadedEntity.HasComponent<TomCat::DistanceJoint2D>()
-			&& loadedEntity.HasComponent<TomCat::EntityMetadata>(),
-			"loaded scene omitted a schema-v9 component");
+			&& loadedEntity.HasComponent<TomCat::EntityMetadata>()
+			&& loadedEntity.HasComponent<TomCat::CSharpScripts>(),
+			"loaded scene omitted a schema-v11 component");
 		Require(loadedEntity.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Player"
 			&& loadedEntity.GetComponent<TomCat::EntityMetadata>().Layer == 3
 			&& loadedEntity.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
@@ -1356,6 +2526,9 @@ namespace {
 			"save/load changed CircleCollider2D fields");
 		RequireSameJointFields(loadedEntity.GetComponent<TomCat::DistanceJoint2D>(), expectedJoint,
 			"save/load changed DistanceJoint2D fields");
+		RequireSameCSharpScripts(loadedEntity.GetComponent<TomCat::CSharpScripts>(),
+			expectedScripts, true,
+			"save/load changed C# fields, orphans, or attachment identities");
 		Require(loadedEntity.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture == nullptr
 			&& loadedEntity.GetComponent<TomCat::DistanceJoint2D>().RuntimeJoint == nullptr,
 			"save/load restored runtime physics pointers");
@@ -1380,10 +2553,27 @@ namespace {
 				"save/load changed one of the supported hierarchy icon tokens");
 		}
 
+		YAML::Node legacyV10Node = YAML::Load(serialized);
+		legacyV10Node["SchemaVersion"] = 10;
+		for (YAML::Node entityNode : legacyV10Node["Entities"])
+			entityNode.remove("Components");
+		YAML::Emitter legacyV10Emitter;
+		legacyV10Emitter << legacyV10Node;
+		const std::filesystem::path legacyV10AdapterPath =
+			environment.Root / "legacy_v10_accepted.tomcat";
+		WriteTextFile(legacyV10AdapterPath, legacyV10Emitter.c_str());
+		Require(TomCat::SceneSerializer::ValidateCurrentFormat(legacyV10AdapterPath),
+			"schema-v10 adapter input was rejected");
+		auto legacyV10Loaded = TomCat::CreateRef<TomCat::Scene>();
+		Require(TomCat::SceneSerializer(legacyV10Loaded).Deserialize(legacyV10AdapterPath)
+			&& legacyV10Loaded->FindEntityByUUID(sourceUUID)
+				.HasComponent<TomCat::CSharpScripts>(),
+			"schema-v10 adapter lost CSharpScripts");
+
 		std::string obsolete = serialized;
-		const size_t version = obsolete.find("SchemaVersion: 9");
+		const size_t version = obsolete.find("SchemaVersion: 11");
 		Require(version != std::string::npos, "could not locate serialized schema version");
-		obsolete.replace(version, std::string("SchemaVersion: 9").size(), "SchemaVersion: 8");
+		obsolete.replace(version, std::string("SchemaVersion: 11").size(), "SchemaVersion: 8");
 		const std::filesystem::path obsoletePath = environment.Root / "schema_v8_rejected.tomcat";
 		WriteTextFile(obsoletePath, obsolete);
 		Require(!TomCat::SceneSerializer::ValidateCurrentFormat(obsoletePath),
@@ -1391,7 +2581,71 @@ namespace {
 		auto obsoleteTarget = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::SceneSerializer obsoleteReader(obsoleteTarget);
 		Require(!obsoleteReader.Deserialize(obsoletePath),
-			"scene reader accepted schema v8 instead of requiring schema v9");
+			"scene reader accepted schema v8 instead of requiring schema 9 through 11");
+
+		auto legacySource = TomCat::CreateRef<TomCat::Scene>();
+		legacySource->SetSceneName("Schema 9 migration");
+		legacySource->CreateEntity("Legacy entity");
+		const std::filesystem::path legacyV10Path =
+			environment.Root / "legacy_source_v11.tomcat";
+		TomCat::SceneSerializer legacyWriter(legacySource);
+		Require(legacyWriter.Serialize(legacyV10Path),
+			"could not create a script-free schema-v11 migration fixture");
+		YAML::Node legacyV9Node = YAML::Load(ReadTextFile(legacyV10Path));
+		legacyV9Node["SchemaVersion"] = 9;
+		for (YAML::Node entityNode : legacyV9Node["Entities"])
+			entityNode.remove("Components");
+		YAML::Emitter legacyV9Emitter;
+		legacyV9Emitter << legacyV9Node;
+		std::string legacyV9 = legacyV9Emitter.c_str();
+		const std::filesystem::path legacyV9Path =
+			environment.Root / "legacy_v9_accepted.tomcat";
+		WriteTextFile(legacyV9Path, legacyV9);
+		Require(TomCat::SceneSerializer::ValidateCurrentFormat(legacyV9Path),
+			"schema-v9 migration input was rejected");
+		auto legacyLoaded = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::SceneSerializer legacyReader(legacyLoaded);
+		Require(legacyReader.Deserialize(legacyV9Path),
+			"schema-v9 migration input did not deserialize");
+		Require(!legacyLoaded->GetRootEntityUUIDs().empty(),
+			"schema-v9 migration input lost its entity");
+		const std::filesystem::path migratedV10Path =
+			environment.Root / "legacy_resaved_as_v11.tomcat";
+		TomCat::SceneSerializer migratedWriter(legacyLoaded);
+		Require(migratedWriter.Serialize(migratedV10Path)
+			&& ReadTextFile(migratedV10Path).find("SchemaVersion: 11")
+				!= std::string::npos,
+			"saving schema-v9 migration input did not upgrade it to schema 11");
+
+		YAML::Node illegalV9Node = YAML::Load(serialized);
+		illegalV9Node["SchemaVersion"] = 9;
+		for (YAML::Node entityNode : illegalV9Node["Entities"])
+			entityNode.remove("Components");
+		YAML::Emitter illegalV9Emitter;
+		illegalV9Emitter << illegalV9Node;
+		std::string illegalV9Scripts = illegalV9Emitter.c_str();
+		const std::filesystem::path illegalV9ScriptsPath =
+			environment.Root / "schema_v9_with_v10_scripts.tomcat";
+		WriteTextFile(illegalV9ScriptsPath, illegalV9Scripts);
+		Require(!TomCat::SceneSerializer::ValidateCurrentFormat(
+			illegalV9ScriptsPath),
+			"strict schema-v9 migration accepted a schema-v10 CSharpScripts field");
+
+		auto duplicateAttachmentScene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::CSharpScriptEntry duplicateAttachment;
+		duplicateAttachment.AttachmentID = TomCat::UUID(424242);
+		duplicateAttachment.ScriptAsset = TomCat::AssetHandle(7001);
+		duplicateAttachment.LastKnownClassName = "Game.DuplicateAttachment";
+		duplicateAttachmentScene->CreateEntity("First attachment owner")
+			.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(
+				duplicateAttachment);
+		duplicateAttachmentScene->CreateEntity("Second attachment owner")
+			.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(
+				duplicateAttachment);
+		TomCat::SceneSerializer duplicateAttachmentWriter(duplicateAttachmentScene);
+		Require(!duplicateAttachmentWriter.Serialize(
+			environment.Root / "duplicate_attachment_ids.tomcat"),
+			"scene writer accepted one C# AttachmentID on two different entities");
 
 		auto invalidScene = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity invalidOwner = invalidScene->CreateEntity("Invalid joint owner");
@@ -1446,6 +2700,28 @@ namespace {
 
 	void TestCookedPlayerPhysicsRoundtrip()
 	{
+		Require(TomCat::AssetTypeFromPath("Player.cs")
+				== TomCat::AssetType::CSharpScript
+			&& TomCat::AssetTypeFromPath("Player.cpp")
+				== TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("Player.h")
+				== TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("Player.lua")
+				== TomCat::AssetType::Other,
+			"asset classification still mixes C#, C++, headers, or Lua");
+		Require(TomCat::AssetTypeFromPath("Music.wav") == TomCat::AssetType::Audio
+			&& TomCat::AssetTypeFromPath("Music.WAV") == TomCat::AssetType::Audio
+			&& TomCat::AssetTypeFromPath("Music.ogg") == TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("Music.mp3") == TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("Music.flac") == TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("Text.ttf") == TomCat::AssetType::Font
+			&& TomCat::AssetTypeFromPath("Text.TTF") == TomCat::AssetType::Font
+			&& TomCat::AssetTypeFromPath("Text.otf") == TomCat::AssetType::Font
+			&& TomCat::AssetTypeFromPath("Text.ttc") == TomCat::AssetType::Font
+			&& TomCat::AssetTypeFromPath("Text.woff") == TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("Text.woff2") == TomCat::AssetType::Other,
+			"asset discovery advertises a format without a P0 importer/Player path");
+
 		TemporaryCookedProject environment;
 		TomCat::ProjectConfig config;
 		config.Name = "Physics Cook Regression";
@@ -1464,17 +2740,80 @@ namespace {
 		Require(project->SetSettings(cookedSettings),
 			"could not persist the cooked package's Physics2D matrix");
 
+		const std::filesystem::path scriptPath =
+			project->GetAssetPath() / "CookedPlayerProbe.cs";
+		const std::filesystem::path iconPath =
+			project->GetAssetPath() / "PlayerIcon.tga";
+		const std::string sourceMarker =
+			"TOMCAT_CSHARP_SOURCE_MUST_NOT_BE_COOKED_6b3a177b";
+		const std::string csprojMarker =
+			"TOMCAT_CSPROJ_MUST_NOT_BE_COOKED_9f71d0aa";
+		const std::string objectMarker =
+			"TOMCAT_OBJ_MUST_NOT_BE_COOKED_294cdc32";
+		const std::string nestedLibraryMarker =
+			"TOMCAT_LIBRARY_MUST_NOT_BE_COOKED_e98e59f1";
+		WriteTextFile(scriptPath,
+			"using TomCat; // " + sourceMarker
+			+ "\npublic sealed class CookedPlayerProbe : TomCatBehaviour {}\n");
+		WriteBinaryFile(iconPath, MakeTestTGA());
+		std::filesystem::create_directories(project->GetAssetPath() / "obj");
+		std::filesystem::create_directories(project->GetAssetPath() / "Library");
+		WriteTextFile(project->GetAssetPath() / "Assembly-CSharp.csproj", csprojMarker);
+		WriteTextFile(project->GetAssetPath() / "obj" / "authoring.bin", objectMarker);
+		WriteTextFile(project->GetAssetPath() / "Library" / "authoring.bin",
+			nestedLibraryMarker);
+
 		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
 		Require(assets.SetProject(project),
 			"could not initialize AssetManager for cooked physics test");
+		const TomCat::AssetMetadata* scriptMetadata =
+			assets.Registry().GetMetadata(scriptPath);
+		Require(scriptMetadata && !scriptMetadata->IsMissing
+			&& scriptMetadata->Type == TomCat::AssetType::CSharpScript
+			&& static_cast<uint64_t>(scriptMetadata->Handle) != 0,
+			".cs source did not receive a stable CSharpScript AssetHandle");
+		const TomCat::AssetHandle scriptHandle = scriptMetadata->Handle;
+		const TomCat::AssetMetadata* iconMetadata =
+			assets.Registry().GetMetadata(iconPath);
+		Require(iconMetadata && !iconMetadata->IsMissing
+			&& iconMetadata->Type == TomCat::AssetType::Texture2D,
+			"Player icon fixture was not imported as Texture2D");
+		const TomCat::AssetHandle iconHandle = iconMetadata->Handle;
+		TomCat::PlayerSettings cookedPlayerSettings = project->GetPlayerSettings();
+		cookedPlayerSettings.ProductName = "Cooked Moon Rabbit";
+		cookedPlayerSettings.CompanyName = "TomCat Regression Studio";
+		cookedPlayerSettings.Version = "6.0.1";
+		cookedPlayerSettings.Icon = iconHandle;
+		cookedPlayerSettings.Width = 1366;
+		cookedPlayerSettings.Height = 768;
+		cookedPlayerSettings.WindowMode = TomCat::PlayerWindowMode::Borderless;
+		cookedPlayerSettings.Resizable = false;
+		cookedPlayerSettings.VSync = false;
+		cookedPlayerSettings.SaveDirectory = "State/Saves";
+		cookedPlayerSettings.LogDirectory = "State/Logs";
+		cookedPlayerSettings.CrashDirectory = "State/Crashes";
+		Require(project->SetPlayerSettings(cookedPlayerSettings),
+			"could not persist the cooked package PlayerSettings fixture");
 
 		auto source = TomCat::CreateRef<TomCat::Scene>();
-		source->SetSceneName("Cooked physics v9");
+		source->SetSceneName("Cooked physics v11");
 		TomCat::Entity ground = source->CreateEntity("Cooked box");
 		ground.GetComponent<TomCat::EntityMetadata>().GameplayTag = "Ground";
 		ground.GetComponent<TomCat::EntityMetadata>().Layer = 1;
 		ground.GetComponent<TomCat::EntityMetadata>().HierarchyIcon = TomCat::EntityIconMode::Collider2D;
 		const TomCat::UUID groundUUID = ground.GetUUID();
+		auto& cookedHealth = ground.AddComponent<TomCat::HealthComponent>();
+		cookedHealth.Maximum = 320;
+		cookedHealth.Current = 123;
+		cookedHealth.Invulnerable = true;
+		auto& scripts = ground.AddComponent<TomCat::CSharpScripts>();
+		TomCat::CSharpScriptEntry script;
+		script.ScriptAsset = scriptHandle;
+		script.LastKnownClassName = "CookedPlayerProbe";
+		script.Fields.emplace_back("11111111111111111111111111111111",
+			"_orphanedBuildValue", TomCat::ScriptFieldType::Float, 6.5f);
+		scripts.Scripts.emplace_back(std::move(script));
+		const TomCat::CSharpScripts expectedScripts = scripts;
 		ground.AddComponent<TomCat::Rigidbody2D>().Type =
 			TomCat::Rigidbody2D::BodyType::Static;
 		auto& box = ground.AddComponent<TomCat::BoxCollider2D>();
@@ -1522,34 +2861,155 @@ namespace {
 		const std::filesystem::path sourceScenePath = project->GetAssetPath() / "Main.tomcat";
 		TomCat::SceneSerializer writer(source);
 		Require(writer.Serialize(sourceScenePath),
-			"could not serialize/import schema-v9 physics scene for cooking");
+			"could not serialize/import schema-v11 physics scene for cooking");
 		const TomCat::AssetMetadata* sceneMetadata = assets.Registry().GetMetadata(sourceScenePath);
 		Require(sceneMetadata && sceneMetadata->Type == TomCat::AssetType::Scene
 			&& static_cast<uint64_t>(sceneMetadata->Handle) != 0,
 			"serialized physics scene was not registered as a Scene asset");
 		const TomCat::AssetHandle sceneHandle = sceneMetadata->Handle;
-		Require(project->SetStartScene("Main.tomcat"),
-			"could not set temporary project's start-scene path");
-		project->SetStartSceneHandle(sceneHandle);
-		Require(project->Save(), "could not save temporary project's start-scene handle");
+		auto secondary = TomCat::CreateRef<TomCat::Scene>();
+		secondary->SetSceneName("Secondary build scene");
+		secondary->CreateEntity("Secondary marker");
+		const std::filesystem::path secondaryScenePath =
+			project->GetAssetPath() / "Secondary.tomcat";
+		TomCat::SceneSerializer secondaryWriter(secondary);
+		Require(secondaryWriter.Serialize(secondaryScenePath),
+			"could not serialize secondary build-scene fixture");
+		const TomCat::AssetMetadata* secondaryMetadata =
+			assets.Registry().GetMetadata(secondaryScenePath);
+		Require(secondaryMetadata && secondaryMetadata->Type == TomCat::AssetType::Scene,
+			"secondary build-scene fixture was not imported");
+		const TomCat::AssetHandle secondaryHandle = secondaryMetadata->Handle;
+
+		TomCat::BuildSettings buildSettings;
+		buildSettings.EntrySceneHandle = sceneHandle;
+		buildSettings.Scenes = {
+			{ secondaryHandle, true, "Secondary.tomcat" },
+			{ sceneHandle, true, "Main.tomcat" }
+		};
+		Require(project->SetBuildSettings(buildSettings),
+			"could not persist ordered multi-scene BuildSettings");
+
+		TomCat::BuildSettings invalidBuild = buildSettings;
+		invalidBuild.Scenes[0].Handle = scriptHandle;
+		Require(project->SetBuildSettings(invalidBuild)
+			&& !assets.CookToPackage(environment.Root / "Build" / "WrongBuildSceneType.tcpak"),
+			"cook accepted a CSharpScript handle in the enabled build-scene list");
+		invalidBuild.Scenes[0].Handle = TomCat::AssetHandle(0x7fff001122334455ULL);
+		Require(project->SetBuildSettings(invalidBuild)
+			&& !assets.CookToPackage(environment.Root / "Build" / "MissingBuildScene.tcpak"),
+			"cook accepted a missing enabled build-scene handle");
+		Require(project->SetBuildSettings(buildSettings),
+			"could not restore valid multi-scene BuildSettings");
+		TomCat::PlayerSettings invalidPlayerSettings = cookedPlayerSettings;
+		invalidPlayerSettings.Icon = scriptHandle;
+		Require(project->SetPlayerSettings(invalidPlayerSettings)
+			&& !assets.CookToPackage(environment.Root / "Build" / "WrongPlayerIconType.tcpak"),
+			"cook accepted a non-Texture2D PlayerSettings.Icon handle");
+		invalidPlayerSettings.Icon = TomCat::AssetHandle(0x7fff001122334455ULL);
+		Require(project->SetPlayerSettings(invalidPlayerSettings)
+			&& !assets.CookToPackage(environment.Root / "Build" / "MissingPlayerIcon.tcpak"),
+			"cook accepted a missing PlayerSettings.Icon handle");
+		Require(project->SetPlayerSettings(cookedPlayerSettings),
+			"could not restore valid PlayerSettings after icon validation probes");
+
+		const std::filesystem::path missingPayloadPath =
+			environment.Root / "Build" / "MissingManagedPayload.tcpak";
+		assets.ClearManagedCookPayload();
+		Require(!assets.CookToPackage(missingPayloadPath),
+			"cook accepted a scene with CSharpScripts but no last-good managed payload");
+
+		std::ostringstream manifestBuilder;
+		manifestBuilder
+			<< "{\"version\":1,\"scripts\":[{\"assetHandle\":"
+			<< static_cast<uint64_t>(scriptHandle)
+			<< ",\"typeName\":\"CookedPlayerProbe\",\"executionOrder\":0,"
+				"\"disallowMultiple\":false,\"lifecycle\":0,\"fields\":[]}]}";
+		const std::string managedManifest = manifestBuilder.str();
+		const std::vector<uint8_t> managedAssembly =
+			MakeManagedAssemblyFixture(managedManifest);
+		const std::vector<uint8_t> managedPdb = { 'B', 'S', 'J', 'B', 1, 0, 0, 0 };
+		const std::string buildID = "regression-build-1";
+		const std::filesystem::path assemblies =
+			project->GetLibraryPath() / "ScriptAssemblies";
+		const std::filesystem::path buildDirectory =
+			assemblies / "Build" / buildID;
+		std::error_code managedDirectoryError;
+		std::filesystem::create_directories(buildDirectory, managedDirectoryError);
+		std::filesystem::create_directories(
+			project->GetLibraryPath() / "ScriptProject", managedDirectoryError);
+		Require(!managedDirectoryError,
+			"could not create authoring managed-payload fixture directories");
+		WriteBinaryFile(buildDirectory / "Assembly-CSharp.dll", managedAssembly);
+		WriteBinaryFile(buildDirectory / "Assembly-CSharp.pdb", managedPdb);
+		WriteTextFile(assemblies / "last-good.json",
+			"{\n"
+			"  \"version\": 1,\n"
+			"  \"sourceHash\": \"0123456789abcdef\",\n"
+			"  \"buildId\": \"" + buildID + "\",\n"
+			"  \"assembly\": \"Build/" + buildID + "/Assembly-CSharp.dll\",\n"
+			"  \"pdb\": \"Build/" + buildID + "/Assembly-CSharp.pdb\"\n"
+			"}\n");
+		WriteTextFile(project->GetLibraryPath() / "ScriptProject" / "ScriptAssets.json",
+			"{\n  \"version\": 1,\n  \"assets\": {\n"
+			"    \"CookedPlayerProbe.cs\": "
+			+ std::to_string(static_cast<uint64_t>(scriptHandle))
+			+ "\n  }\n}\n");
 
 		const std::filesystem::path packagePath = environment.Root / "Build" / "Game.tcpak";
 		Require(assets.CookToPackage(packagePath),
-			"schema-v9 physics scene did not cook into a Player package");
+			"schema-v11 physics scene and last-good assembly did not cook into a Player package");
 		assets.Shutdown();
 
 		Require(assets.MountCookedPackage(packagePath),
 			"Player path could not mount the cooked physics package");
 		Require(assets.GetCookedStartSceneHandle() == sceneHandle,
 			"cooked package did not preserve its start-scene handle");
+		Require(assets.GetCookedEntrySceneHandle() == sceneHandle
+			&& assets.GetCookedBuildSceneHandles()
+				== std::vector<TomCat::AssetHandle>{ secondaryHandle, sceneHandle }
+			&& assets.GetCookedBuildSceneIndex(secondaryHandle) == 0
+			&& assets.GetCookedBuildSceneIndex(sceneHandle) == 1
+			&& !assets.GetCookedBuildSceneIndex(TomCat::AssetHandle(999999))
+			&& assets.GetCookedBuildSceneHandle(0) == secondaryHandle
+			&& assets.GetCookedBuildSceneHandle(1) == sceneHandle
+			&& static_cast<uint64_t>(assets.GetCookedBuildSceneHandle(2)) == 0,
+			"tcpak v6 did not expose its ordered build-scene manifest and index queries");
+		Require(assets.GetCookedPackageVersion()
+				== TomCat::RuntimeCompatibility::TcpakVersion
+			&& assets.GetCookedPlayerSettings() == cookedPlayerSettings,
+			"headless pre-window tcpak parsing did not preserve the v6 BootManifest");
+		std::vector<uint8_t> mountedIconBytes;
+		TomCat::AssetType mountedIconType = TomCat::AssetType::None;
+		Require(assets.ReadAssetBytes(iconHandle, mountedIconBytes, &mountedIconType)
+			&& mountedIconType == TomCat::AssetType::Texture2D
+			&& !mountedIconBytes.empty(),
+			"PlayerSettings.Icon was omitted from the strict package dependency closure");
 		Require(assets.GetPhysics2DSettings() == cookedSettings.Physics2D,
-			"tcpak v3 did not roundtrip the project Physics2D collision matrix");
+			"tcpak v6 did not roundtrip the project Physics2D collision matrix");
+		const TomCat::ManagedPackagePayload* mountedPayload =
+			assets.GetCookedManagedPayload();
+		Require(mountedPayload
+			&& mountedPayload->NativeApiVersion == 1
+			&& mountedPayload->ManagedApiVersion == 1
+			&& mountedPayload->ScriptManifestVersion == 1
+			&& mountedPayload->TargetFramework == "net10.0"
+			&& mountedPayload->RuntimeIdentifier == "win-x64"
+			&& mountedPayload->BuildID == buildID
+			&& mountedPayload->AssemblySHA256.size() == 64
+			&& mountedPayload->ScriptManifestJson == managedManifest
+			&& mountedPayload->Assembly == managedAssembly
+			&& mountedPayload->Pdb == managedPdb,
+			"mounted tcpak did not expose the complete validated managed payload");
+		std::vector<uint8_t> forbiddenSourceBytes;
+		Require(!assets.ReadAssetBytes(scriptHandle, forbiddenSourceBytes),
+			"tcpak v5 exposed a C# source asset entry");
 		std::vector<uint8_t> cookedBytes;
 		TomCat::AssetType cookedType = TomCat::AssetType::None;
 		Require(assets.ReadAssetBytes(sceneHandle, cookedBytes, &cookedType)
 			&& cookedType == TomCat::AssetType::Scene
 			&& TomCat::SceneSerializer::ValidateCurrentFormat(cookedBytes, "CookedPhysicsRegression"),
-			"cooked scene payload was not a complete schema-v9 Scene");
+			"cooked scene payload was not a complete schema-v11 Scene");
 
 		auto loaded = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::SceneSerializer reader(loaded);
@@ -1562,8 +3022,18 @@ namespace {
 		Require(loadedGround && loadedBall
 			&& loadedGround.HasComponent<TomCat::BoxCollider2D>()
 			&& loadedGround.HasComponent<TomCat::DistanceJoint2D>()
+			&& loadedGround.HasComponent<TomCat::CSharpScripts>()
+			&& loadedGround.HasComponent<TomCat::HealthComponent>()
 			&& loadedBall.HasComponent<TomCat::CircleCollider2D>(),
-			"Cooked Player scene omitted Box/Circle/DistanceJoint components");
+			"Cooked Player scene omitted scripts, physics, or registered components");
+		const auto& loadedHealth = loadedGround.GetComponent<TomCat::HealthComponent>();
+		Require(loadedHealth.Maximum == 320 && loadedHealth.Current == 123
+			&& loadedHealth.Invulnerable,
+			"Cooked Player scene changed registered Health data");
+		RequireSameCSharpScripts(
+			loadedGround.GetComponent<TomCat::CSharpScripts>(),
+			expectedScripts, true,
+			"Cooked Player scene changed C# attachment data");
 		Require(loadedGround.GetComponent<TomCat::EntityMetadata>().GameplayTag == "Ground"
 			&& loadedGround.GetComponent<TomCat::EntityMetadata>().Layer == 1
 			&& loadedGround.GetComponent<TomCat::EntityMetadata>().HierarchyIcon
@@ -1587,14 +3057,17 @@ namespace {
 		int triggerEnters = 0;
 		loaded->AddTriggerEnter2DListener(
 			[&](const TomCat::TriggerEnter2D&) { ++triggerEnters; });
-		loaded->OnRuntimeStart();
+		auto managedRuntime = std::make_shared<ManagedRuntimeProbe>();
+		TomCat::Scripting::ScriptEngine::Get().SetRuntime(managedRuntime);
+		Require(loaded->OnRuntimeStart(),
+			"Cooked Player scene could not start its managed runtime");
 		Require(loadedGround.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture != nullptr
 			&& loadedBall.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture != nullptr
 			&& loadedGround.GetComponent<TomCat::DistanceJoint2D>().RuntimeJoint != nullptr,
 			"Cooked Player runtime did not create Box/Circle fixtures and DistanceJoint");
 		loaded->OnRuntimeStep();
 		Require(triggerEnters == 0,
-			"Cooked Player ignored the tcpak v3 project collision matrix");
+			"Cooked Player ignored the tcpak v5 project collision matrix");
 		loaded->OnRuntimeStop();
 		Require(loadedGround.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture == nullptr
 			&& loadedBall.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture == nullptr
@@ -1604,29 +3077,194 @@ namespace {
 		TomCat::Physics2DSettings allowedSettings = cookedSettings.Physics2D;
 		allowedSettings.SetLayersCollide(1, 2, true);
 		loaded->SetPhysics2DSettings(allowedSettings);
-		loaded->OnRuntimeStart();
+		Require(loaded->OnRuntimeStart(),
+			"Cooked Player scene could not restart its managed runtime");
 		loaded->OnRuntimeStep();
 		Require(triggerEnters == 1,
 			"enabling the project matrix did not admit the cooked trigger pair whose fixture masks match");
 		loaded->OnRuntimeStop();
+		TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
 
 		assets.Shutdown();
 		const std::vector<uint8_t> validPackage = ReadBinaryFile(packagePath);
-		Require(validPackage.size() >= 64,
-			"cooked package is smaller than the tcpak v3 fixed header");
-		Require(ReadLittleEndian32(validPackage, 8) == 3
-			&& ReadLittleEndian32(validPackage, 12) == 64,
-			"cooked package did not declare tcpak version 3 with its 64-byte header");
+		const std::string packageText(validPackage.begin(), validPackage.end());
+		Require(packageText.find(sourceMarker) == std::string::npos,
+			"tcpak v5 contains C# source bytes");
+		Require(packageText.find(csprojMarker) == std::string::npos
+			&& packageText.find(objectMarker) == std::string::npos
+			&& packageText.find(nestedLibraryMarker) == std::string::npos
+			&& packageText.find("Assembly-CSharp.csproj") == std::string::npos
+			&& packageText.find("ScriptAssets.json") == std::string::npos
+			&& packageText.find("last-good.json") == std::string::npos
+			&& packageText.find("Library/Script") == std::string::npos
+			&& packageText.find(environment.Root.generic_string()) == std::string::npos,
+			"tcpak v5 leaked authoring files or absolute project paths");
+		uint32_t bootManifestStringBytes = 0;
+		for (std::size_t offset = 100; offset < 124; offset += sizeof(uint32_t))
+			bootManifestStringBytes += ReadLittleEndian32(validPackage, offset);
+		const uint32_t buildSceneOffset =
+			TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
+			+ bootManifestStringBytes;
+		const uint32_t expectedHeaderSize = buildSceneOffset
+			+ 2 * static_cast<uint32_t>(sizeof(uint64_t));
+		Require(validPackage.size() >= expectedHeaderSize,
+			"cooked package is smaller than its tcpak v6 variable header");
+		Require(ReadLittleEndian32(validPackage, 8)
+				== TomCat::RuntimeCompatibility::TcpakVersion
+			&& ReadLittleEndian32(validPackage, 12) == expectedHeaderSize
+			&& ReadLittleEndian64(validPackage, 24)
+				== static_cast<uint64_t>(sceneHandle)
+			&& ReadLittleEndian64(validPackage, 32) == 2
+			&& ReadLittleEndian32(validPackage, 72)
+				== TomCat::RuntimeCompatibility::BootManifestSchemaVersion
+			&& ReadLittleEndian32(validPackage, 76)
+				== static_cast<uint32_t>(TomCat::PlayerWindowMode::Borderless)
+			&& ReadLittleEndian32(validPackage, 80) == 1366
+			&& ReadLittleEndian32(validPackage, 84) == 768
+			&& ReadLittleEndian64(validPackage, 88)
+				== static_cast<uint64_t>(iconHandle)
+			&& ReadLittleEndian32(validPackage, 96) == 0
+			&& ReadLittleEndian64(validPackage, buildSceneOffset)
+				== static_cast<uint64_t>(secondaryHandle)
+			&& ReadLittleEndian64(validPackage, buildSceneOffset + sizeof(uint64_t))
+				== static_cast<uint64_t>(sceneHandle),
+			"cooked package did not declare the tcpak v6 BootManifest and scene header");
+
+		const std::vector<uint8_t> v5Package =
+			MakeTcpakV5CompatibilityFixture(validPackage);
+		const std::filesystem::path v5PackagePath =
+			environment.Root / "Build" / "LegacyV5.tcpak";
+		WriteBinaryFile(v5PackagePath, v5Package);
+		Require(assets.MountCookedPackage(v5PackagePath)
+			&& assets.GetCookedPackageVersion()
+				== TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion
+			&& assets.GetCookedBuildSceneHandles()
+				== std::vector<TomCat::AssetHandle>{ secondaryHandle, sceneHandle }
+			&& assets.GetCookedPlayerSettings() == TomCat::PlayerSettings{},
+			"Player failed to read tcpak v5 with safe default PlayerSettings");
+		assets.UnmountCookedPackage();
+
+		const std::size_t managedIndex = FindManagedPackageIndexEntry(validPackage);
+		const uint64_t managedEnvelopeOffset64 =
+			ReadLittleEndian64(validPackage, managedIndex + 16);
+		const uint64_t managedEnvelopeSize64 =
+			ReadLittleEndian64(validPackage, managedIndex + 24);
+		Require(managedEnvelopeOffset64 <= validPackage.size()
+			&& managedEnvelopeSize64 <= validPackage.size() - managedEnvelopeOffset64,
+			"managed envelope index range is outside its package");
+		const std::size_t managedEnvelopeOffset =
+			static_cast<std::size_t>(managedEnvelopeOffset64);
+
+		std::vector<uint8_t> incompatibleApi = validPackage;
+		WriteLittleEndian32(incompatibleApi, managedEnvelopeOffset + 12, 2);
+		const std::filesystem::path incompatibleApiPath =
+			environment.Root / "Build" / "IncompatibleManagedApi.tcpak";
+		WriteBinaryFile(incompatibleApiPath, incompatibleApi);
+		Require(!assets.MountCookedPackage(incompatibleApiPath),
+			"tcpak loader accepted an incompatible managed NativeApi version");
+
+		std::vector<uint8_t> missingManagedEntry = validPackage;
+		WriteLittleEndian64(missingManagedEntry, managedIndex,
+			(std::numeric_limits<uint64_t>::max)() - 1);
+		WriteLittleEndian16(missingManagedEntry, managedIndex + 8,
+			static_cast<uint16_t>(TomCat::AssetType::Other));
+		WriteLittleEndian16(missingManagedEntry, managedIndex + 10, 0);
+		WriteLittleEndian32(missingManagedEntry, managedIndex + 12, 0);
+		const std::filesystem::path missingManagedEntryPath =
+			environment.Root / "Build" / "MissingManagedEntry.tcpak";
+		WriteBinaryFile(missingManagedEntryPath, missingManagedEntry);
+		Require(!assets.MountCookedPackage(missingManagedEntryPath),
+			"tcpak loader accepted CSharpScripts without a managed envelope entry");
+
+		const uint32_t frameworkLength =
+			ReadLittleEndian32(validPackage, managedEnvelopeOffset + 24);
+		const uint32_t runtimeLength =
+			ReadLittleEndian32(validPackage, managedEnvelopeOffset + 28);
+		const uint32_t buildLength =
+			ReadLittleEndian32(validPackage, managedEnvelopeOffset + 32);
+		const uint32_t hashLength =
+			ReadLittleEndian32(validPackage, managedEnvelopeOffset + 36);
+		const uint64_t manifestLength =
+			ReadLittleEndian64(validPackage, managedEnvelopeOffset + 40);
+		const uint64_t assemblyLength =
+			ReadLittleEndian64(validPackage, managedEnvelopeOffset + 48);
+		const uint64_t assemblyOffset64 = managedEnvelopeOffset64 + 64
+			+ frameworkLength + runtimeLength + buildLength + hashLength
+			+ manifestLength;
+		Require(assemblyLength > 2 && assemblyOffset64 <= validPackage.size()
+			&& assemblyLength <= validPackage.size() - assemblyOffset64,
+			"managed assembly range is outside its envelope");
+		std::vector<uint8_t> badAssemblyHash = validPackage;
+		badAssemblyHash[static_cast<std::size_t>(assemblyOffset64 + 2)] ^= 0x01;
+		const std::filesystem::path badAssemblyHashPath =
+			environment.Root / "Build" / "BadManagedHash.tcpak";
+		WriteBinaryFile(badAssemblyHashPath, badAssemblyHash);
+		Require(!assets.MountCookedPackage(badAssemblyHashPath),
+			"tcpak loader accepted a managed assembly whose SHA-256 no longer matched");
 
 		std::vector<uint8_t> legacyVersion = validPackage;
-		WriteLittleEndian32(legacyVersion, 8, 2);
-		const std::filesystem::path legacyPath = environment.Root / "Build" / "LegacyV2.tcpak";
+		WriteLittleEndian32(legacyVersion, 8, 4);
+		const std::filesystem::path legacyPath = environment.Root / "Build" / "LegacyV4.tcpak";
 		WriteBinaryFile(legacyPath, legacyVersion);
 		Require(!assets.MountCookedPackage(legacyPath),
-			"tcpak loader accepted obsolete package version 2");
+			"tcpak loader accepted obsolete package version 4");
+
+		std::vector<uint8_t> unknownBootFlags = validPackage;
+		WriteLittleEndian32(unknownBootFlags, 96, 4);
+		const std::filesystem::path unknownBootFlagsPath =
+			environment.Root / "Build" / "UnknownBootFlags.tcpak";
+		WriteBinaryFile(unknownBootFlagsPath, unknownBootFlags);
+		Require(!assets.MountCookedPackage(unknownBootFlagsPath),
+			"tcpak v6 loader accepted unknown BootManifest flags");
+
+		std::vector<uint8_t> wrongBootIcon = validPackage;
+		WriteLittleEndian64(wrongBootIcon, 88,
+			static_cast<uint64_t>(scriptHandle));
+		const std::filesystem::path wrongBootIconPath =
+			environment.Root / "Build" / "WrongBootIcon.tcpak";
+		WriteBinaryFile(wrongBootIconPath, wrongBootIcon);
+		Require(!assets.MountCookedPackage(wrongBootIconPath),
+			"tcpak v6 loader accepted a BootManifest icon absent from its Texture2D index");
+
+		std::vector<uint8_t> oversizedBootString = validPackage;
+		WriteLittleEndian32(oversizedBootString, 100,
+			TomCat::RuntimeCompatibility::MaximumBootManifestStringBytes + 1);
+		const std::filesystem::path oversizedBootStringPath =
+			environment.Root / "Build" / "OversizedBootString.tcpak";
+		WriteBinaryFile(oversizedBootStringPath, oversizedBootString);
+		Require(!assets.MountCookedPackage(oversizedBootStringPath),
+			"tcpak v6 loader accepted an oversized BootManifest string");
+
+		std::vector<uint8_t> mismatchedSceneCount = validPackage;
+		WriteLittleEndian64(mismatchedSceneCount, 32, 1);
+		const std::filesystem::path mismatchedSceneCountPath =
+			environment.Root / "Build" / "MismatchedBuildSceneCount.tcpak";
+		WriteBinaryFile(mismatchedSceneCountPath, mismatchedSceneCount);
+		Require(!assets.MountCookedPackage(mismatchedSceneCountPath),
+			"tcpak loader accepted a build-scene count inconsistent with headerSize");
+
+		std::vector<uint8_t> duplicateBuildScene = validPackage;
+		WriteLittleEndian64(duplicateBuildScene,
+			buildSceneOffset,
+			static_cast<uint64_t>(sceneHandle));
+		const std::filesystem::path duplicateBuildScenePath =
+			environment.Root / "Build" / "DuplicateBuildScene.tcpak";
+		WriteBinaryFile(duplicateBuildScenePath, duplicateBuildScene);
+		Require(!assets.MountCookedPackage(duplicateBuildScenePath),
+			"tcpak loader accepted duplicate ordered build-scene handles");
+
+		std::vector<uint8_t> missingBuildScene = validPackage;
+		WriteLittleEndian64(missingBuildScene,
+			buildSceneOffset,
+			0x7fff001122334455ULL);
+		const std::filesystem::path missingBuildScenePath =
+			environment.Root / "Build" / "MissingBuildSceneManifestAsset.tcpak";
+		WriteBinaryFile(missingBuildScenePath, missingBuildScene);
+		Require(!assets.MountCookedPackage(missingBuildScenePath),
+			"tcpak loader accepted a build-scene handle absent from the asset index");
 
 		std::vector<uint8_t> asymmetric = validPackage;
-		constexpr std::size_t matrixOffset = 32;
+		constexpr std::size_t matrixOffset = 40;
 		const std::size_t rowOneOffset = matrixOffset + sizeof(uint16_t);
 		const std::size_t rowTwoOffset = matrixOffset + 2 * sizeof(uint16_t);
 		uint16_t rowOne = ReadLittleEndian16(asymmetric, rowOneOffset);
@@ -1643,12 +3281,373 @@ namespace {
 			"tcpak loader accepted an asymmetric Physics2D collision matrix");
 
 		std::vector<uint8_t> truncated = validPackage;
-		truncated.resize(63);
+		truncated.resize(TomCat::RuntimeCompatibility::TcpakBaseHeaderSize - 1);
 		const std::filesystem::path truncatedPath =
 			environment.Root / "Build" / "Truncated.tcpak";
 		WriteBinaryFile(truncatedPath, truncated);
 		Require(!assets.MountCookedPackage(truncatedPath),
-			"tcpak loader accepted a truncated v3 fixed header");
+			"tcpak loader accepted a truncated v5 base header");
+	}
+
+	void TestTypedAssetReferenceGraphAndCookValidation()
+	{
+		TemporaryCookedProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "Typed Asset Reference Regression";
+		config.Template = "2D";
+		config.AssetDirectory = "Assets";
+		config.StartScene = "Main.tomcat";
+		auto project = TomCat::Project::CreateNew(
+			environment.Root / "Project.tcproj", config);
+		Require(project != nullptr,
+			"could not create a temporary typed-reference project");
+
+		const std::filesystem::path scriptPath =
+			project->GetAssetPath() / "ReferenceProbe.cs";
+		const std::filesystem::path referencedTexturePath =
+			project->GetAssetPath() / "Referenced.tga";
+		const std::filesystem::path entityValueTexturePath =
+			project->GetAssetPath() / "EntityValue.tga";
+		const std::filesystem::path unusedTexturePath =
+			project->GetAssetPath() / "Unused.tga";
+		WriteTextFile(scriptPath,
+			"using TomCat; public sealed class ReferenceProbe : TomCatBehaviour {}\n");
+		WriteBinaryFile(referencedTexturePath, MakeTestTGA());
+		WriteBinaryFile(entityValueTexturePath, MakeTestTGA());
+		WriteBinaryFile(unusedTexturePath, MakeTestTGA());
+
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.SetProject(project),
+			"could not initialize assets for typed-reference regression");
+		const TomCat::AssetMetadata* scriptMetadata =
+			assets.Registry().GetMetadata(scriptPath);
+		const TomCat::AssetMetadata* referencedTextureMetadata =
+			assets.Registry().GetMetadata(referencedTexturePath);
+		const TomCat::AssetMetadata* entityValueTextureMetadata =
+			assets.Registry().GetMetadata(entityValueTexturePath);
+		const TomCat::AssetMetadata* unusedTextureMetadata =
+			assets.Registry().GetMetadata(unusedTexturePath);
+		Require(scriptMetadata && !scriptMetadata->IsMissing
+			&& scriptMetadata->Type == TomCat::AssetType::CSharpScript,
+			"typed-reference script fixture was not imported as CSharpScript");
+		Require(referencedTextureMetadata && !referencedTextureMetadata->IsMissing
+			&& referencedTextureMetadata->Type == TomCat::AssetType::Texture2D
+			&& entityValueTextureMetadata && !entityValueTextureMetadata->IsMissing
+			&& entityValueTextureMetadata->Type == TomCat::AssetType::Texture2D
+			&& unusedTextureMetadata && !unusedTextureMetadata->IsMissing
+			&& unusedTextureMetadata->Type == TomCat::AssetType::Texture2D,
+			"typed-reference texture fixtures were not imported as Texture2D");
+		const TomCat::AssetHandle scriptHandle = scriptMetadata->Handle;
+		const TomCat::AssetHandle referencedTextureHandle =
+			referencedTextureMetadata->Handle;
+		const TomCat::AssetHandle entityValueTextureHandle =
+			entityValueTextureMetadata->Handle;
+		const TomCat::AssetHandle unusedTextureHandle = unusedTextureMetadata->Handle;
+
+		auto dependencyScene = TomCat::CreateRef<TomCat::Scene>();
+		dependencyScene->SetSceneName("Prefab typed Scene dependency");
+		dependencyScene->CreateEntity("Dependency scene entity");
+		const std::filesystem::path dependencyScenePath =
+			project->GetAssetPath() / "PrefabDependency.tomcat";
+		Require(TomCat::SceneSerializer(dependencyScene).Serialize(dependencyScenePath),
+			"could not serialize Prefab Scene dependency");
+		const TomCat::AssetMetadata* dependencySceneMetadata =
+			assets.Registry().GetMetadata(dependencyScenePath);
+		Require(dependencySceneMetadata
+			&& dependencySceneMetadata->Type == TomCat::AssetType::Scene,
+			"Prefab Scene dependency was not imported");
+		const TomCat::AssetHandle dependencySceneHandle = dependencySceneMetadata->Handle;
+
+		auto prefabSource = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity prefabRoot = prefabSource->CreateEntity("Typed dependency Prefab");
+		auto& prefabSprite = prefabRoot.AddComponent<TomCat::SpriteRenderer>();
+		prefabSprite.SpriteHandle = referencedTextureHandle;
+		TomCat::CSharpScriptEntry prefabScript;
+		prefabScript.ScriptAsset = scriptHandle;
+		prefabScript.LastKnownClassName = "ReferenceProbe";
+		prefabScript.Fields.emplace_back("dddddddddddddddddddddddddddddddd",
+			"NextScene", TomCat::ScriptFieldType::AssetRef,
+			static_cast<uint64_t>(dependencySceneHandle), "TomCat.SceneAsset");
+		prefabRoot.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(prefabScript);
+		const std::filesystem::path prefabPath =
+			project->GetAssetPath() / "Dependency.tcprefab";
+		TomCat::AssetHandle prefabHandle{ 0 };
+		Require(TomCat::PrefabArchiveCodec::SaveSubtree(prefabSource, prefabRoot,
+			prefabPath, &prefabHandle) && static_cast<uint64_t>(prefabHandle) != 0,
+			"could not serialize/import typed dependency Prefab");
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName("Typed references");
+		TomCat::Entity entity = scene->CreateEntity("Reference owner");
+		auto& scripts = entity.AddComponent<TomCat::CSharpScripts>();
+		TomCat::CSharpScriptEntry attachment;
+		attachment.ScriptAsset = scriptHandle;
+		attachment.LastKnownClassName = "ReferenceProbe";
+		attachment.Fields.emplace_back("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"_notNamedHandle", TomCat::ScriptFieldType::AssetRef,
+			static_cast<uint64_t>(referencedTextureHandle),
+			"TomCat.AssetRef<TomCat.Texture2DAsset>");
+		attachment.Fields.emplace_back("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"_looksLikeAssetHandle", TomCat::ScriptFieldType::Entity,
+			static_cast<uint64_t>(entityValueTextureHandle));
+		attachment.Fields.emplace_back("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			"Spawnable", TomCat::ScriptFieldType::AssetRef,
+			static_cast<uint64_t>(prefabHandle), "TomCat.PrefabAsset");
+		attachment.Fields.emplace_back("ffffffffffffffffffffffffffffffff",
+			"GenericScene", TomCat::ScriptFieldType::AssetRef,
+			static_cast<uint64_t>(dependencySceneHandle),
+			"TomCat.AssetRef<TomCat.SceneAsset>");
+		attachment.Fields.emplace_back("99999999999999999999999999999999",
+			"GenericPrefab", TomCat::ScriptFieldType::AssetRef,
+			static_cast<uint64_t>(prefabHandle),
+			"TomCat.AssetRef<TomCat.PrefabAsset>");
+		scripts.Scripts.emplace_back(std::move(attachment));
+
+		const std::filesystem::path scenePath =
+			project->GetAssetPath() / "Main.tomcat";
+		auto saveScene = [&]()
+		{
+			TomCat::SceneSerializer writer(scene);
+			Require(writer.Serialize(scenePath),
+				"could not serialize typed-reference scene fixture");
+		};
+		saveScene();
+		const TomCat::AssetMetadata* sceneMetadata =
+			assets.Registry().GetMetadata(scenePath);
+		Require(sceneMetadata && sceneMetadata->Type == TomCat::AssetType::Scene,
+			"typed-reference scene fixture was not imported");
+		const TomCat::AssetHandle sceneHandle = sceneMetadata->Handle;
+		Require(project->SetStartScene("Main.tomcat"),
+			"could not set typed-reference start-scene path");
+		project->SetStartSceneHandle(sceneHandle);
+		Require(project->Save(),
+			"could not save typed-reference start-scene handle");
+
+		const std::vector<TomCat::AssetReference> startSceneReferences =
+			assets.FindReferences(sceneHandle);
+		Require(std::any_of(startSceneReferences.begin(), startSceneReferences.end(),
+			[&](const TomCat::AssetReference& reference)
+			{
+				return reference.ReferencedAsset == sceneHandle
+					&& reference.FilePath == project->GetBuildSettingsPath()
+					&& reference.PropertyPath == "BuildSettings.EntrySceneHandle";
+			}), "BuildSettings entry scene is absent from the unified asset reference graph");
+		std::vector<TomCat::AssetReference> deleteReferences;
+		Require(!assets.DeleteAsset(sceneHandle, false, &deleteReferences)
+			&& std::filesystem::is_regular_file(scenePath)
+			&& std::any_of(deleteReferences.begin(), deleteReferences.end(),
+				[](const TomCat::AssetReference& reference)
+				{
+					return reference.PropertyPath == "BuildSettings.EntrySceneHandle";
+				}), "unforced deletion removed the configured entry scene");
+
+		const std::vector<TomCat::AssetReference> typedReferences =
+			assets.FindReferences(referencedTextureHandle);
+		Require(std::any_of(typedReferences.begin(), typedReferences.end(),
+			[&](const TomCat::AssetReference& reference)
+			{
+				return reference.ReferencedAsset == referencedTextureHandle
+					&& reference.ReferencingAsset == sceneHandle
+					&& reference.PropertyPath.find(".Fields[0].Value")
+						!= std::string::npos;
+			}), "AssetRef field was not discovered from its serialized field Type");
+		Require(assets.FindReferences(entityValueTextureHandle).empty(),
+			"non-AssetRef script field was mistaken for an asset reference by its name/value");
+		const std::vector<TomCat::AssetReference> prefabReferences =
+			assets.FindReferences(prefabHandle);
+		Require(std::any_of(prefabReferences.begin(), prefabReferences.end(),
+			[&](const TomCat::AssetReference& reference)
+			{
+				return reference.ReferencedAsset == prefabHandle
+					&& reference.ReferencingAsset == sceneHandle
+					&& reference.PropertyPath.find(".Fields[2].Value")
+						!= std::string::npos;
+			}), "typed PrefabAsset field was absent from the deletion reference graph");
+		const std::vector<TomCat::AssetReference> dependencySceneReferences =
+			assets.FindReferences(dependencySceneHandle);
+		Require(std::any_of(dependencySceneReferences.begin(),
+			dependencySceneReferences.end(), [&](const TomCat::AssetReference& reference)
+			{
+				return reference.ReferencedAsset == dependencySceneHandle
+					&& reference.ReferencingAsset == prefabHandle;
+			}), "Prefab typed SceneAsset dependency was absent from the reference graph");
+		deleteReferences.clear();
+		Require(!assets.DeleteAsset(referencedTextureHandle, false, &deleteReferences)
+			&& std::filesystem::is_regular_file(referencedTexturePath)
+			&& !deleteReferences.empty(),
+			"unforced deletion ignored a serialized AssetRef field");
+
+		std::ostringstream manifestBuilder;
+		manifestBuilder
+			<< "{\"version\":1,\"scripts\":[{\"assetHandle\":"
+			<< static_cast<uint64_t>(scriptHandle)
+			<< ",\"typeName\":\"ReferenceProbe\",\"executionOrder\":0,"
+				"\"disallowMultiple\":false,\"lifecycle\":0,\"fields\":[{"
+				"\"id\":\"cccccccccccccccccccccccccccccccc\","
+				"\"name\":\"Speed\",\"type\":\"Float\","
+				"\"isPublic\":true,\"hidden\":false,\"formerNames\":[],"
+				"\"typeName\":null,\"header\":null,\"tooltip\":null,"
+				"\"rangeMin\":null,\"rangeMax\":null,\"defaultValue\":1.5}]}]}";
+		const std::string managedManifest = manifestBuilder.str();
+		std::string invalidDefaultManifest = managedManifest;
+		const std::size_t defaultPosition = invalidDefaultManifest.find("\"defaultValue\":1.5");
+		Require(defaultPosition != std::string::npos,
+			"could not locate manifest defaultValue fixture");
+		invalidDefaultManifest.replace(defaultPosition,
+			std::string("\"defaultValue\":1.5").size(),
+			"\"defaultValue\":\"not-a-float\"");
+		Require(!assets.SetManagedCookPayload(
+			MakeManagedAssemblyFixture(invalidDefaultManifest), invalidDefaultManifest,
+			"typed-reference-invalid-default"),
+			"managed payload validator accepted a defaultValue incompatible with its field type");
+		std::ostringstream embeddedManifestBuilder;
+		embeddedManifestBuilder
+			<< "{\"version\":1,\"scripts\":[{\"assetHandle\":"
+			<< static_cast<uint64_t>(scriptHandle)
+			<< ",\"typeName\":\"ReferenceProbe\",\"executionOrder\":0,"
+				"\"disallowMultiple\":false,\"lifecycle\":0,\"fields\":[{"
+				"\"id\":\"cccccccccccccccccccccccccccccccc\","
+				"\"name\":\"Speed\",\"type\":\"Float\","
+				"\"isPublic\":true,\"hidden\":false,\"formerNames\":[]}]}]}";
+		const std::string embeddedManifest = embeddedManifestBuilder.str();
+		std::string staleEditorManifest = managedManifest;
+		const std::size_t fieldNamePosition = staleEditorManifest.find("\"name\":\"Speed\"");
+		Require(fieldNamePosition != std::string::npos,
+			"could not locate manifest field-identity fixture");
+		staleEditorManifest.replace(fieldNamePosition,
+			std::string("\"name\":\"Speed\"").size(), "\"name\":\"StaleSpeed\"");
+		Require(!assets.SetManagedCookPayload(
+			MakeManagedAssemblyFixture(embeddedManifest), staleEditorManifest,
+			"typed-reference-stale-metadata"),
+			"managed payload accepted stale Editor field identity despite matching script handles");
+		Require(assets.SetManagedCookPayload(
+			MakeManagedAssemblyFixture(embeddedManifest), managedManifest,
+			"typed-reference-build"),
+			"could not reconcile enriched Editor metadata with the assembly manifest");
+
+		TomCat::CSharpScriptEntry& savedAttachment = scripts.Scripts.front();
+		TomCat::ScriptField& assetField = savedAttachment.Fields.front();
+		TomCat::ScriptField& prefabField = savedAttachment.Fields[2];
+		TomCat::ScriptField& genericSceneField = savedAttachment.Fields[3];
+		TomCat::ScriptField& genericPrefabField = savedAttachment.Fields[4];
+		const uint64_t missingHandle = 0x7fff000012345678ULL;
+
+		savedAttachment.ScriptAsset = TomCat::AssetHandle(missingHandle);
+		saveScene();
+		Require(!assets.CookToPackage(environment.Root / "Build" / "MissingScript.tcpak"),
+			"cook accepted a missing nonzero ScriptHandle");
+
+		savedAttachment.ScriptAsset = referencedTextureHandle;
+		saveScene();
+		Require(!assets.CookToPackage(environment.Root / "Build" / "WrongScriptType.tcpak"),
+			"cook accepted a Texture2D as a CSharpScript handle");
+
+		savedAttachment.ScriptAsset = scriptHandle;
+		assetField.Value = missingHandle;
+		saveScene();
+		Require(!assets.CookToPackage(environment.Root / "Build" / "MissingAssetRef.tcpak"),
+			"cook accepted an AssetRef whose handle does not exist");
+
+		assetField.Value = static_cast<uint64_t>(scriptHandle);
+		saveScene();
+		Require(!assets.CookToPackage(environment.Root / "Build" / "WrongAssetRefType.tcpak"),
+			"cook accepted an authoring-only CSharpScript as a runtime AssetRef");
+
+		assetField.Value = static_cast<uint64_t>(referencedTextureHandle);
+		prefabField.Value = static_cast<uint64_t>(referencedTextureHandle);
+		saveScene();
+		Require(!assets.CookToPackage(environment.Root / "Build" / "WrongPrefabType.tcpak"),
+			"cook accepted a Texture2D for a typed PrefabAsset field");
+
+		prefabField.Value = static_cast<uint64_t>(prefabHandle);
+		saveScene();
+		genericSceneField.Value = static_cast<uint64_t>(referencedTextureHandle);
+		saveScene();
+		Require(!assets.CookToPackage(
+			environment.Root / "Build" / "WrongGenericSceneType.tcpak"),
+			"cook accepted a Texture2D for AssetRef<SceneAsset>");
+
+		genericSceneField.Value = static_cast<uint64_t>(dependencySceneHandle);
+		genericPrefabField.Value = static_cast<uint64_t>(referencedTextureHandle);
+		saveScene();
+		Require(!assets.CookToPackage(
+			environment.Root / "Build" / "WrongGenericPrefabType.tcpak"),
+			"cook accepted a Texture2D for AssetRef<PrefabAsset>");
+
+		genericPrefabField.Value = static_cast<uint64_t>(prefabHandle);
+		genericSceneField.TypeName = "TomCat.AssetRef<Game.UnknownAsset>";
+		saveScene();
+		Require(!assets.CookToPackage(
+			environment.Root / "Build" / "UnknownGenericAssetType.tcpak"),
+			"cook accepted an AssetRef<T> with an unsupported asset type");
+
+		genericSceneField.TypeName = "TomCat.AssetRef<TomCat.SceneAsset>";
+		saveScene();
+		const std::filesystem::path validPackage =
+			environment.Root / "Build" / "TypedReferences.tcpak";
+		Require(assets.CookToPackage(validPackage),
+			"cook rejected valid typed Script and AssetRef handles");
+		assets.Shutdown();
+		Require(assets.MountCookedPackage(validPackage),
+			"package mount rejected a valid typed asset-reference closure");
+		Require(assets.GetCookedManagedPayload()
+			&& assets.GetCookedManagedPayload()->ScriptManifestJson == embeddedManifest,
+			"tcpak did not canonicalize runtime metadata to the assembly-embedded manifest");
+		std::vector<uint8_t> dependencyBytes;
+		TomCat::AssetType dependencyType = TomCat::AssetType::None;
+		Require(assets.ReadAssetBytes(prefabHandle, dependencyBytes, &dependencyType)
+			&& dependencyType == TomCat::AssetType::Prefab
+			&& assets.ReadAssetBytes(referencedTextureHandle, dependencyBytes,
+				&dependencyType)
+			&& dependencyType == TomCat::AssetType::Texture2D
+			&& assets.ReadAssetBytes(dependencySceneHandle, dependencyBytes,
+				&dependencyType)
+			&& dependencyType == TomCat::AssetType::Scene,
+			"Scene -> Prefab -> Texture/Script/Scene dependency closure was incomplete");
+		Require(!assets.ReadAssetBytes(unusedTextureHandle, dependencyBytes),
+			"unreferenced runtime asset leaked into the cooked dependency closure");
+		assets.Shutdown();
+	}
+
+	void TestScriptFreeCookWithoutManagedPayload()
+	{
+		TemporaryCookedProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "Script Free Cook Regression";
+		config.Template = "2D";
+		config.AssetDirectory = "Assets";
+		config.StartScene = "Main.tomcat";
+		auto project = TomCat::Project::CreateNew(
+			environment.Root / "Project.tcproj", config);
+		Require(project != nullptr,
+			"could not create a temporary script-free project");
+
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.SetProject(project),
+			"could not initialize AssetManager for script-free cook");
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->CreateEntity("No managed runtime required");
+		const std::filesystem::path scenePath =
+			project->GetAssetPath() / "Main.tomcat";
+		TomCat::SceneSerializer writer(scene);
+		Require(writer.Serialize(scenePath),
+			"could not serialize the script-free start scene");
+		const TomCat::AssetMetadata* sceneMetadata =
+			assets.Registry().GetMetadata(scenePath);
+		Require(sceneMetadata && sceneMetadata->Type == TomCat::AssetType::Scene,
+			"script-free start scene was not imported");
+		project->SetStartSceneHandle(sceneMetadata->Handle);
+		Require(project->Save(), "could not save the script-free start-scene handle");
+
+		assets.ClearManagedCookPayload();
+		const std::filesystem::path packagePath =
+			environment.Root / "Build" / "ScriptFree.tcpak";
+		Require(assets.CookToPackage(packagePath),
+			"script-free scene incorrectly required a managed payload");
+		assets.Shutdown();
+		Require(assets.MountCookedPackage(packagePath)
+			&& assets.GetCookedManagedPayload() == nullptr,
+			"script-free tcpak unexpectedly exposed a managed payload");
 	}
 
 	TomCat::Entity MakeMultiFixtureBody(TomCat::Scene& scene, const char* name,
@@ -1665,14 +3664,15 @@ namespace {
 
 	void TestCollisionPairDeduplication()
 	{
-		PhysicsEventProbe::Reset();
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
 		TomCat::Scene scene;
 		TomCat::Entity entityA = MakeMultiFixtureBody(scene, "Static",
 			TomCat::Rigidbody2D::BodyType::Static);
 		TomCat::Entity entityB = MakeMultiFixtureBody(scene, "Dynamic",
 			TomCat::Rigidbody2D::BodyType::Dynamic);
-		entityA.AddComponent<TomCat::NativeScript>().Bind<PhysicsEventProbe>();
-		entityB.AddComponent<TomCat::NativeScript>().Bind<PhysicsEventProbe>();
+		AttachManagedProbe(entityA, 8105);
+		AttachManagedProbe(entityB, 8106);
 		int enters = 0;
 		int exits = 0;
 		uint64_t lastA = 0;
@@ -1685,21 +3685,28 @@ namespace {
 		});
 		scene.AddCollisionExit2DListener([&](const TomCat::CollisionExit2D&) { ++exits; });
 
-		scene.OnRuntimeStart();
+		Require(scene.OnRuntimeStart(), "managed collision de-duplication probe did not start");
 		scene.OnRuntimeStep();
 		Require(enters == 1, "multiple fixtures emitted more than one entity-pair Enter");
-		Require(PhysicsEventProbe::CollisionEnters == 2,
-			"collision Enter did not reach both participating scripts exactly once");
+		Require(runtime->PhysicsEvents.size() == 1
+			&& runtime->PhysicsEvents.front().Kind == static_cast<uint32_t>(
+				TomCat::Scripting::NativePhysicsEventKind::CollisionEnter),
+			"managed runtime did not receive one de-duplicated CollisionEnter2D event");
 		Require(lastA < lastB, "collision UUID pair was not canonicalized");
+		Require(runtime->PhysicsEvents.front().EntityA.EntityId == lastA
+			&& runtime->PhysicsEvents.front().EntityB.EntityId == lastB,
+			"managed and native listeners received different canonical collision pairs");
 		scene.OnRuntimeStep();
-		Require(enters == 1 && exits == 0 && PhysicsEventProbe::CollisionEnters == 2,
+		Require(enters == 1 && exits == 0 && runtime->PhysicsEvents.size() == 1,
 			"persistent contact emitted duplicate events");
 
 		MoveRuntimeBody(entityB, { 100.0f, 0.0f });
 		scene.OnRuntimeStep();
 		Require(enters == 1 && exits == 1, "entity-pair Exit was not emitted exactly once");
-		Require(PhysicsEventProbe::CollisionExits == 2,
-			"collision Exit did not reach both participating scripts exactly once");
+		Require(runtime->PhysicsEvents.size() == 2
+			&& runtime->PhysicsEvents.back().Kind == static_cast<uint32_t>(
+				TomCat::Scripting::NativePhysicsEventKind::CollisionExit),
+			"managed runtime did not receive one de-duplicated CollisionExit2D event");
 		scene.OnRuntimeStop();
 	}
 
@@ -1740,111 +3747,772 @@ namespace {
 		scene.OnRuntimeStop();
 	}
 
-	void TestNativeScriptMutationDuringCollisionDispatch()
+	void TestManagedMutationDuringCollisionDispatch()
 	{
-		auto runMutation = [](CollisionMutationProbe::Action action)
+		auto runMutation = [](ManagedRuntimeProbe::PhysicsMutation action)
 		{
+			auto runtime = std::make_shared<ManagedRuntimeProbe>();
+			runtime->Mutation = action;
+			ScriptRuntimeOverride runtimeOverride(runtime);
 			TomCat::Scene scene;
-			CollisionMutationProbe::Reset(scene, action);
 			TomCat::Entity scripted = AddCircleBody(scene, "Mutating script",
 				TomCat::Rigidbody2D::BodyType::Static, { 0.0f, 0.0f }, 2.0f);
 			const TomCat::UUID scriptedUUID = scripted.GetUUID();
-			scripted.AddComponent<TomCat::NativeScript>().Bind<CollisionMutationProbe>();
+			AttachManagedProbe(scripted, 8107);
 			AddCircleBody(scene, "Mutation contact",
 				TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 2.0f);
 
 			int laterListenerCalls = 0;
 			scene.AddCollisionEnter2DListener(
 				[&](const TomCat::CollisionEnter2D&) { ++laterListenerCalls; });
-			scene.OnRuntimeStart();
+			Require(scene.OnRuntimeStart(),
+				"managed collision-mutation probe did not start");
 			scene.OnRuntimeStep();
 
-			Require(CollisionMutationProbe::CollisionEnters == 1,
-				"mutating native script did not receive CollisionEnter2D exactly once");
-			Require(CollisionMutationProbe::CallbackContinuedSafely,
-				"native script or Entity died before its collision callback returned");
-			Require(CollisionMutationProbe::Destroys == 1
-				&& !CollisionMutationProbe::DestroyedDuringCallback
-				&& CollisionMutationProbe::EntityWasValidDuringDestroy,
-				"native script destruction did not run once at a safe callback boundary");
+			Require(runtime->PhysicsEventCount == 1
+				&& runtime->MutationAttempted && runtime->MutationQueued,
+				"managed physics callback did not queue its deferred mutation");
 
 			TomCat::Entity survivingScripted = scene.FindEntityByUUID(scriptedUUID);
-			if (action == CollisionMutationProbe::Action::DestroyEntity)
+			if (action == ManagedRuntimeProbe::PhysicsMutation::DestroyEntity)
 			{
 				Require(!survivingScripted,
-					"DestroyEntity requested by a native collision callback was not flushed");
+					"DestroyEntity requested by a managed collision callback was not flushed");
 				Require(laterListenerCalls == 0,
-					"collision dispatch continued after a script deleted a participant");
+					"listener dispatch continued after managed code deleted a participant");
+				Require(runtime->DestroyedAttachmentCount == 1,
+					"managed attachment was not destroyed with its Entity");
 			}
 			else
 			{
-				Require(survivingScripted, "component mutation unexpectedly deleted its Entity");
+				Require(survivingScripted,
+					"managed component mutation unexpectedly deleted its Entity");
 				Require(laterListenerCalls == 1,
-					"component-only script mutation incorrectly cancelled the Scene event");
-				if (action == CollisionMutationProbe::Action::RemoveComponent)
-					Require(!survivingScripted.HasComponent<TomCat::NativeScript>(),
-						"native script component removal was not committed");
-				else
-				{
-					Require(survivingScripted.HasComponent<TomCat::NativeScript>()
-						&& survivingScripted.GetComponent<TomCat::NativeScript>().Instance == nullptr,
-						"native script replacement retained the destroyed runtime instance");
-					scene.OnRuntimeStep();
-					Require(ReplacementScriptProbe::Creates == 1
-						&& ReplacementScriptProbe::Updates == 1,
-						"replacement native script was not created on the next fixed step");
-				}
+					"component-only managed mutation incorrectly cancelled the Scene event");
+				Require(!survivingScripted.HasComponent<TomCat::Rigidbody2D>(),
+					"managed Rigidbody2D removal was not committed at callback return");
 			}
 
 			scene.OnRuntimeStop();
-			Require(CollisionMutationProbe::Destroys == 1,
-				"mutated native script instance was destroyed more than once");
-			if (action == CollisionMutationProbe::Action::ReplaceComponent)
-				Require(ReplacementScriptProbe::Destroys == 1,
-					"replacement native script was not destroyed on runtime stop");
 		};
 
-		runMutation(CollisionMutationProbe::Action::RemoveComponent);
-		runMutation(CollisionMutationProbe::Action::ReplaceComponent);
-		runMutation(CollisionMutationProbe::Action::DestroyEntity);
+		runMutation(ManagedRuntimeProbe::PhysicsMutation::RemoveRigidbody2D);
+		runMutation(ManagedRuntimeProbe::PhysicsMutation::DestroyEntity);
+	}
+
+	void TestPrefabDynamicAttachmentBridge()
+	{
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+
+		TomCat::Scene scene;
+		TomCat::Entity existing = scene.CreateEntity("Existing script-free entity");
+
+		auto source = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity prefabRoot = source->CreateEntity("Dynamic managed Prefab");
+		TomCat::Entity prefabChild = source->CreateEntity("Dynamic child");
+		Require(source->SetParent(prefabChild, prefabRoot),
+			"could not create dynamic Prefab hierarchy");
+		TomCat::CSharpScriptEntry dynamicScript;
+		dynamicScript.ScriptAsset = TomCat::AssetHandle(7002);
+		dynamicScript.LastKnownClassName = "Game.DynamicPrefab";
+		dynamicScript.Fields.emplace_back("12121212121212121212121212121212",
+			"Seed", TomCat::ScriptFieldType::Int32, int32_t{ 42 });
+		dynamicScript.Fields.emplace_back("34343434343434343434343434343434",
+			"Target", TomCat::ScriptFieldType::Entity,
+			static_cast<uint64_t>(prefabChild.GetUUID()));
+		prefabRoot.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(dynamicScript);
+		TomCat::PrefabArchive archive;
+		std::string error;
+		Require(TomCat::PrefabArchiveCodec::CaptureSubtree(source, prefabRoot,
+			archive, error), error.c_str());
+
+		Require(scene.OnRuntimeStart(),
+			"could not start managed dynamic-Prefab regression Scene");
+		Require(!runtime->Active && runtime->Calls.empty(),
+			"an initially script-free Scene eagerly created a managed Scene runtime");
+		TomCat::PrefabInstantiateOptions options;
+		options.ResolveAssets = false;
+		TomCat::PrefabInstantiationResult successful;
+		Require(TomCat::PrefabArchiveCodec::Instantiate(archive, scene, options,
+			successful, error), error.c_str());
+		Require(runtime->DynamicInstantiateCount == 0
+			&& scene.GetPendingRuntimeEntityCreateCount() == 2,
+			"dynamic attachments were instantiated before the Scene safe point");
+		scene.OnRuntimeStep();
+		Require(runtime->Active && runtime->Calls.size() >= 5
+			&& runtime->Calls[0] == "CreateSceneRuntime"
+			&& runtime->Calls[1] == "InstantiateAll"
+			&& runtime->Calls[2] == "ApplySerializedFields"
+			&& runtime->Calls[3] == "InvokeCreateAll"
+			&& runtime->Calls[4] == "InstantiateAttachments"
+			&& runtime->Attachments.empty()
+			&& runtime->LastFields == "{\"attachments\":[]}"
+			&& runtime->DynamicInstantiateCount == 1
+			&& runtime->DynamicAttachments.size() == 1
+			&& runtime->DynamicAttachments.front().Entity.EntityId
+				== static_cast<uint64_t>(successful.Root.GetUUID())
+			&& runtime->DynamicAttachments.front().Entity.SceneSessionId
+				== runtime->LastSceneSession,
+			"lazy Scene runtime bootstrap did not keep the Prefab batch on the incremental lifecycle ABI");
+		const uint64_t successfulAttachment = static_cast<uint64_t>(
+			successful.Root.GetComponent<TomCat::CSharpScripts>().Scripts.front()
+				.AttachmentID);
+		Require(runtime->DynamicAttachments.front().AttachmentId
+				== successfulAttachment
+			&& runtime->DynamicFields.find("12121212121212121212121212121212")
+				!= std::string::npos
+			&& runtime->DynamicFields.find("\"value\":42") != std::string::npos,
+			"dynamic attachment fields were missing from the lazy runtime batch");
+
+		runtime->DynamicInstantiateStatus =
+			TomCat::Scripting::ScriptStatus::ManagedException;
+		TomCat::PrefabInstantiationResult failed;
+		Require(TomCat::PrefabArchiveCodec::Instantiate(archive, scene, options,
+			failed, error), error.c_str());
+		std::vector<TomCat::UUID> failedIDs;
+		for (const auto& [localID, sceneID] : failed.LocalToSceneUUID)
+		{
+			(void)localID;
+			failedIDs.push_back(sceneID);
+		}
+		const uint32_t destroysBeforeFailure = runtime->DestroyedAttachmentCount;
+		scene.OnRuntimeStep();
+		Require(runtime->DynamicInstantiateCount == 2
+			&& runtime->DestroyedAttachmentCount == destroysBeforeFailure + 1,
+			"failed dynamic attachment batch was not reported and rolled back");
+		Require(std::all_of(failedIDs.begin(), failedIDs.end(),
+			[&](TomCat::UUID entityID)
+			{
+				return !scene.FindEntityByUUID(entityID);
+			}), "managed Prefab attachment failure did not roll back the entire entity batch");
+		Require(scene.FindEntityByUUID(successful.Root.GetUUID())
+			&& scene.FindEntityByUUID(existing.GetUUID()),
+			"dynamic rollback removed entities outside its failed batch");
+		scene.OnRuntimeStop();
+
+		// A script-free Player package intentionally has no managed runtime. Its
+		// pure native batches must still drain, while a scripted batch is rejected
+		// atomically instead of accumulating forever or skipping lifecycle calls.
+		TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
+		TomCat::Scene nativeOnlyScene;
+		TomCat::Entity nativeSurvivor = nativeOnlyScene.CreateEntity("Native survivor");
+		Require(nativeOnlyScene.OnRuntimeStart(),
+			"script-free Scene could not start without a managed runtime");
+		// Exercise the defensive seam explicitly as well as the normal lazy
+		// callback path used above.
+		nativeOnlyScene.SetRuntimeEntityBatchCreatedCallback({});
+		TomCat::Entity nativeBatch = nativeOnlyScene.CreateEntity("Native batch");
+		nativeOnlyScene.QueueRuntimeEntityBatchCreated({ nativeBatch.GetUUID() });
+		nativeOnlyScene.OnRuntimeStep();
+		Require(nativeOnlyScene.GetPendingRuntimeEntityCreateCount() == 0
+			&& nativeOnlyScene.FindEntityByUUID(nativeBatch.GetUUID()),
+			"script-free pending runtime batch was not consumed without CoreCLR");
+
+		TomCat::PrefabInstantiationResult rejected;
+		Require(TomCat::PrefabArchiveCodec::Instantiate(archive, nativeOnlyScene,
+			options, rejected, error), error.c_str());
+		std::vector<TomCat::UUID> rejectedIDs;
+		for (const auto& [localID, sceneID] : rejected.LocalToSceneUUID)
+		{
+			(void)localID;
+			rejectedIDs.push_back(sceneID);
+		}
+		nativeOnlyScene.OnRuntimeStep();
+		Require(nativeOnlyScene.GetPendingRuntimeEntityCreateCount() == 0
+			&& std::all_of(rejectedIDs.begin(), rejectedIDs.end(),
+				[&](TomCat::UUID entityID)
+				{
+					return !nativeOnlyScene.FindEntityByUUID(entityID);
+				})
+			&& nativeOnlyScene.FindEntityByUUID(nativeSurvivor.GetUUID()),
+			"scripted batch without a managed runtime was not atomically rejected");
+		nativeOnlyScene.OnRuntimeStop();
+	}
+
+	void TestInitialOnCreatePrefabPhysicsOrdering()
+	{
+		TemporaryCookedProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "Initial OnCreate Prefab Physics Regression";
+		config.Template = "2D";
+		config.AssetDirectory = "Assets";
+		auto project = TomCat::Project::CreateNew(
+			environment.Root / "Project.tcproj", config);
+		Require(project != nullptr,
+			"could not create the initial-OnCreate Prefab test project");
+
+		const std::filesystem::path scriptPath =
+			project->GetAssetPath() / "SpawnProbe.cs";
+		WriteTextFile(scriptPath,
+			"using TomCat; public sealed class SpawnProbe : TomCatBehaviour {}\n");
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.SetProject(project),
+			"could not initialize assets for initial-OnCreate Prefab test");
+		const TomCat::AssetMetadata* scriptMetadata =
+			assets.Registry().GetMetadata(scriptPath);
+		Require(scriptMetadata && !scriptMetadata->IsMissing
+			&& scriptMetadata->Type == TomCat::AssetType::CSharpScript,
+			"initial-OnCreate script fixture was not imported");
+		const TomCat::AssetHandle scriptHandle = scriptMetadata->Handle;
+
+		auto prefabSource = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity prefabRoot = prefabSource->CreateEntity("OnCreate physics Prefab");
+		prefabRoot.AddComponent<TomCat::Rigidbody2D>().Type =
+			TomCat::Rigidbody2D::BodyType::Dynamic;
+		prefabRoot.AddComponent<TomCat::BoxCollider2D>();
+		TomCat::CSharpScriptEntry prefabScript;
+		prefabScript.ScriptAsset = scriptHandle;
+		prefabScript.LastKnownClassName = "SpawnProbe";
+		prefabRoot.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(prefabScript);
+		const std::filesystem::path prefabPath =
+			project->GetAssetPath() / "OnCreatePhysics.tcprefab";
+		TomCat::AssetHandle prefabHandle{ 0 };
+		Require(TomCat::PrefabArchiveCodec::SaveSubtree(prefabSource, prefabRoot,
+			prefabPath, &prefabHandle) && static_cast<uint64_t>(prefabHandle) != 0,
+			"could not save/import the initial-OnCreate physics Prefab");
+
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		runtime->InspectDynamicPhysics = true;
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity spawner = scene.CreateEntity("Initial managed spawner");
+		TomCat::CSharpScriptEntry spawnerScript;
+		spawnerScript.ScriptAsset = scriptHandle;
+		spawnerScript.LastKnownClassName = "SpawnProbe";
+		spawner.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(spawnerScript);
+
+		bool queuedFromInitialCreate = false;
+		runtime->InvokeCreateAction = [&]
+		{
+			if (runtime->Attachments.empty())
+				return;
+			queuedFromInitialCreate = TomCat::Scripting::ScriptEngine::Get()
+				.QueueInstantiatePrefab(runtime->Attachments.front().Entity,
+					static_cast<uint64_t>(prefabHandle),
+					TomCat::Scripting::NativeVector3{ 8.0f, 9.0f, 0.0f },
+					TomCat::Scripting::EntityHandleV1{});
+		};
+
+		Require(scene.OnRuntimeStart(),
+			"initial scripted Scene failed to start");
+		Require(queuedFromInitialCreate
+			&& runtime->DynamicInstantiateCount == 1
+			&& runtime->DynamicAttachments.size() == 1
+			&& runtime->DynamicPhysicsReady
+			&& runtime->FixedUpdateCount == 0
+			&& scene.GetPendingRuntimeEntityCreateCount() == 0,
+			"initial OnCreate Prefab reached dynamic lifecycle before its physics proxies were ready");
+		Require(runtime->Calls.size() >= 5
+			&& runtime->Calls[3] == "InvokeCreateAll"
+			&& runtime->Calls[4] == "InstantiateAttachments",
+			"initial OnCreate Prefab was not delivered through the safe-point incremental ABI");
+		TomCat::Entity spawned = TomCat::Scripting::ScriptEngine::Get().ResolveEntity(
+			runtime->DynamicAttachments.front().Entity);
+		Require(spawned
+			&& spawned.GetComponent<TomCat::Rigidbody2D>().RuntimeBody != nullptr
+			&& spawned.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture != nullptr,
+			"initial OnCreate Prefab physics proxies did not survive safe-point delivery");
+		scene.OnRuntimeStop();
+	}
+
+	void TestComponentSchemaCapability()
+	{
+		using namespace TomCat::Scripting;
+		NativeApiV2 envelope = BuildNativeApiV2();
+		NativeComponentSchemaApiV1 schema{};
+		uint32_t required = 0;
+		const std::string capabilityName(ComponentSchemaCapabilityName);
+		const NativeUtf8View capabilityView{
+			reinterpret_cast<const uint8_t*>(capabilityName.data()),
+			capabilityName.size() };
+		Require(envelope.QueryCapability(capabilityView, 1, &schema,
+			sizeof(schema), &required) == static_cast<int32_t>(ScriptStatus::Success)
+			&& required == sizeof(schema) && schema.Version == 1
+			&& schema.Size == sizeof(schema) && schema.GetComponentCount
+			&& schema.GetComponent && schema.GetPropertyCount && schema.GetProperty,
+			"TomCat.ComponentSchemaApiV1 capability table is incomplete");
+		Require(envelope.QueryCapability(capabilityView, 2, nullptr, 0, &required)
+			== static_cast<int32_t>(ScriptStatus::VersionMismatch)
+			&& required == sizeof(schema),
+			"Component schema capability did not reject a newer version");
+
+		uint32_t count = 0;
+		const auto descriptors = TomCat::ComponentRegistry::Get().GetDescriptors();
+		Require(schema.GetComponentCount(&count)
+			== static_cast<int32_t>(ScriptStatus::Success)
+			&& count == descriptors.size(),
+			"Component schema capability did not enumerate every descriptor");
+		auto text = [](NativeUtf8View value)
+		{
+			return std::string_view(reinterpret_cast<const char*>(value.Data),
+				static_cast<size_t>(value.Length));
+		};
+		auto expectedKind = [](TomCat::PropertyKind kind)
+		{
+			switch (kind)
+			{
+				case TomCat::PropertyKind::Bool:
+					return NativePropertyKindV1::Bool;
+				case TomCat::PropertyKind::Int32:
+					return NativePropertyKindV1::Int32;
+				case TomCat::PropertyKind::Int64:
+					return NativePropertyKindV1::Int64;
+				case TomCat::PropertyKind::UInt32:
+					return NativePropertyKindV1::UInt32;
+				case TomCat::PropertyKind::UInt64:
+					return NativePropertyKindV1::UInt64;
+				case TomCat::PropertyKind::Float:
+					return NativePropertyKindV1::Float;
+				case TomCat::PropertyKind::Double:
+					return NativePropertyKindV1::Double;
+				case TomCat::PropertyKind::String:
+					return NativePropertyKindV1::String;
+				case TomCat::PropertyKind::Vector2:
+					return NativePropertyKindV1::Vector2;
+				case TomCat::PropertyKind::Vector3:
+					return NativePropertyKindV1::Vector3;
+				case TomCat::PropertyKind::Vector4:
+					return NativePropertyKindV1::Vector4;
+			}
+			throw std::runtime_error("Unhandled component property kind");
+		};
+
+		for (uint32_t componentIndex = 0; componentIndex < count;
+			++componentIndex)
+		{
+			NativeComponentSchemaInfoV1 component{};
+			const TomCat::ComponentDescriptor& descriptor =
+				descriptors[componentIndex];
+			Require(schema.GetComponent(componentIndex, &component)
+				== static_cast<int32_t>(ScriptStatus::Success)
+				&& component.TypeId == static_cast<uint64_t>(descriptor.TypeId)
+				&& component.ProviderId
+					== static_cast<uint64_t>(descriptor.ProviderId)
+				&& component.SchemaVersion == descriptor.SchemaVersion
+				&& component.PropertyCount == descriptor.Properties.size()
+				&& text(component.StableName) == descriptor.StableName
+				&& text(component.DisplayName) == descriptor.DisplayName,
+				"Component schema metadata did not match its registry descriptor");
+			const uint32_t expectedFlags =
+				(descriptor.ScriptAccessible
+					? static_cast<uint32_t>(
+						NativeComponentSchemaFlagsV1::ScriptAccessible) : 0u)
+				| (descriptor.InspectorVisible
+					? static_cast<uint32_t>(
+						NativeComponentSchemaFlagsV1::InspectorVisible) : 0u);
+			Require(component.Flags == expectedFlags,
+				"Component schema flags did not match the registry");
+
+			uint32_t propertyCount = 0;
+			Require(schema.GetPropertyCount(component.TypeId, &propertyCount)
+				== static_cast<int32_t>(ScriptStatus::Success)
+				&& propertyCount == descriptor.Properties.size(),
+				"Component schema property count was inconsistent");
+			for (uint32_t propertyIndex = 0; propertyIndex < propertyCount;
+				++propertyIndex)
+			{
+				NativeComponentPropertySchemaInfoV1 property{};
+				const TomCat::PropertyDescriptor& descriptorProperty =
+					descriptor.Properties[propertyIndex];
+				Require(schema.GetProperty(component.TypeId, propertyIndex,
+					&property) == static_cast<int32_t>(ScriptStatus::Success)
+					&& property.ComponentTypeId == component.TypeId
+					&& property.PropertyId
+						== static_cast<uint64_t>(descriptorProperty.PropertyId)
+					&& property.Kind == static_cast<uint32_t>(
+						expectedKind(descriptorProperty.Kind))
+					&& text(property.StableName)
+						== descriptorProperty.StableName
+					&& text(property.DisplayName)
+						== descriptorProperty.DisplayName,
+					"Component property schema did not match its registry descriptor");
+				const uint32_t propertyFlags =
+					(descriptorProperty.AssetReference
+						? static_cast<uint32_t>(
+							NativeComponentPropertyFlagsV1::AssetReference) : 0u)
+					| (descriptorProperty.EntityReference
+						? static_cast<uint32_t>(
+							NativeComponentPropertyFlagsV1::EntityReference) : 0u);
+				Require(property.Flags == propertyFlags,
+					"Component property schema flags did not match the registry");
+			}
+		}
+
+		NativeComponentSchemaInfoV1 missing{};
+		Require(schema.GetComponent(count, &missing)
+			== static_cast<int32_t>(ScriptStatus::NotFound)
+			&& schema.GetComponent(0, nullptr)
+				== static_cast<int32_t>(ScriptStatus::InvalidArgument)
+			&& schema.GetPropertyCount(0, &count)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"Component schema bounds and identity validation were not enforced");
+	}
+
+	void TestReservedEntityChainedInitializationCapability()
+	{
+		using namespace TomCat::Scripting;
+		NativeApiV2 envelope = BuildNativeApiV2();
+		NativeGameplayApiV1 gameplay{};
+		NativeComponentApiV1 components{};
+		uint32_t required = 0;
+		const std::string capabilityName(GameplayCapabilityName);
+		const NativeUtf8View capabilityView{
+			reinterpret_cast<const uint8_t*>(capabilityName.data()),
+			capabilityName.size() };
+		Require(envelope.QueryCapability(capabilityView, 1, &gameplay,
+			sizeof(gameplay), &required) == static_cast<int32_t>(ScriptStatus::Success)
+			&& required == sizeof(gameplay) && gameplay.CreateEntityDeferred
+			&& gameplay.SetComponentProperty && gameplay.SetActiveSelf
+			&& gameplay.SetParentDeferred,
+			"TomCat.GameplayApiV1 capability table is incomplete");
+		const std::string componentCapabilityName(ComponentCapabilityName);
+		const NativeUtf8View componentCapabilityView{
+			reinterpret_cast<const uint8_t*>(componentCapabilityName.data()),
+			componentCapabilityName.size() };
+		Require(envelope.QueryCapability(componentCapabilityView, 1, &components,
+			sizeof(components), &required) == static_cast<int32_t>(ScriptStatus::Success)
+			&& components.Has && components.Add && components.SetProperty,
+			"TomCat.ComponentApiV1 capability table is incomplete");
+
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity context = scene.CreateEntity("Reserved entity context");
+		constexpr uint64_t Generation = 0x51a7;
+		EntityHandleV1 pendingParent{};
+		EntityHandleV1 pendingChild{};
+		std::string callbackFailure;
+		auto record = [&](bool condition, const char* message)
+		{
+			if (!condition && callbackFailure.empty())
+				callbackFailure = message;
+			return condition;
+		};
+		runtime->InvokeCreateAction = [&]()
+		{
+			const EntityHandleV1 contextHandle{ runtime->LastSceneSession,
+				static_cast<uint64_t>(context.GetUUID()), Generation };
+			const NativeVector3 parentPosition{ 1.0f, 2.0f, 0.0f };
+			const NativeVector3 childPosition{ 4.0f, 5.0f, 0.0f };
+			const std::string parentName = "Reserved parent";
+			const std::string childName = "Reserved child";
+			const NativeUtf8View parentNameView{
+				reinterpret_cast<const uint8_t*>(parentName.data()), parentName.size() };
+			const NativeUtf8View childNameView{
+				reinterpret_cast<const uint8_t*>(childName.data()), childName.size() };
+			if (!record(gameplay.CreateEntityDeferred(contextHandle, parentNameView,
+				parentPosition, {}, &pendingParent)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"could not reserve the pending parent")) return;
+			if (!record(gameplay.CreateEntityDeferred(contextHandle, childNameView,
+				childPosition, {}, &pendingChild)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"could not reserve the pending child")) return;
+
+			if (!record(envelope.V1.AddComponentDeferred(pendingChild,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D))
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending BoxCollider2D add was rejected")) return;
+			if (!record(envelope.V1.HasComponent(pendingChild,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D)) == 1,
+				"pending BoxCollider2D was not visible to GetComponent")) return;
+			NativePropertyValueV1 size{};
+			size.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector2);
+			size.Vector = { 2.5f, 3.5f, 0.0f, 0.0f };
+			if (!record(gameplay.SetComponentProperty(pendingChild,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+				GameplayPropertyIds::BoxSize, size)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending BoxCollider2D.Size write was rejected")) return;
+
+			if (!record(envelope.V1.AddComponentDeferred(pendingChild,
+				static_cast<int32_t>(NativeComponentType::SpriteRenderer))
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending SpriteRenderer add was rejected")) return;
+			if (!record(envelope.V1.HasComponent(pendingChild,
+				static_cast<int32_t>(NativeComponentType::SpriteRenderer)) == 1,
+				"pending SpriteRenderer was not visible to GetComponent")) return;
+			NativePropertyValueV1 color{};
+			color.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector4);
+			color.Vector = { 0.25f, 0.5f, 0.75f, 1.0f };
+			if (!record(gameplay.SetComponentProperty(pendingChild,
+				static_cast<int32_t>(NativeComponentType::SpriteRenderer),
+				GameplayPropertyIds::SpriteColor, color)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending SpriteRenderer.Color write was rejected")) return;
+
+			if (!record(components.Add(pendingChild, TomCat::ComponentIds::Health)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending registered Health add was rejected")) return;
+			if (!record(components.Has(pendingChild, TomCat::ComponentIds::Health) == 1,
+				"pending registered Health was not visible to GetComponent")) return;
+			NativePropertyValueV1 maximum{};
+			maximum.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+			maximum.Integer = 250;
+			if (!record(components.SetProperty(pendingChild,
+				TomCat::ComponentIds::Health,
+				TomCat::ComponentIds::HealthProperties::Maximum, maximum)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending Health.Maximum write was rejected")) return;
+			NativePropertyValueV1 current = maximum;
+			current.Integer = 175;
+			if (!record(components.SetProperty(pendingChild,
+				TomCat::ComponentIds::Health,
+				TomCat::ComponentIds::HealthProperties::Current, current)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending Health.Current write was rejected")) return;
+
+			NativePropertyValueV1 invalidSize = size;
+			invalidSize.Vector.X = -1.0f;
+			if (!record(gameplay.SetComponentProperty(pendingChild,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+				GameplayPropertyIds::BoxSize, invalidSize)
+				== static_cast<int32_t>(ScriptStatus::InvalidArgument),
+				"invalid pending property value entered the command queue")) return;
+			EntityHandleV1 wrongGeneration = pendingChild;
+			++wrongGeneration.RuntimeGeneration;
+			if (!record(envelope.V1.AddComponentDeferred(wrongGeneration,
+				static_cast<int32_t>(NativeComponentType::Rigidbody2D))
+				!= static_cast<int32_t>(ScriptStatus::Success),
+				"wrong-generation pending handle entered the command queue")) return;
+			if (!record(gameplay.SetActiveSelf(pendingChild, 0)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending ActiveSelf write was rejected")) return;
+			record(gameplay.SetParentDeferred(pendingChild, pendingParent)
+				== static_cast<int32_t>(ScriptStatus::Success),
+				"pending-to-pending parent assignment was rejected");
+		};
+
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		bool committed = session != 0 && callbackFailure.empty();
+		TomCat::Entity parent;
+		TomCat::Entity child;
+		if (committed)
+		{
+			parent = scene.FindEntityByUUID(TomCat::UUID(pendingParent.EntityId));
+			child = scene.FindEntityByUUID(TomCat::UUID(pendingChild.EntityId));
+			committed = parent && child
+				&& child.HasComponent<TomCat::BoxCollider2D>()
+				&& child.HasComponent<TomCat::SpriteRenderer>()
+				&& child.HasComponent<TomCat::HealthComponent>()
+				&& child.HasComponent<TomCat::Tag>()
+				&& !child.GetComponent<TomCat::Tag>().Visible
+				&& scene.GetParent(child) == parent;
+		}
+		if (committed)
+		{
+			const auto& box = child.GetComponent<TomCat::BoxCollider2D>();
+			const auto& sprite = child.GetComponent<TomCat::SpriteRenderer>();
+			const auto& health = child.GetComponent<TomCat::HealthComponent>();
+			committed = std::abs(box.Size.x - 2.5f) < 0.0001f
+				&& std::abs(box.Size.y - 3.5f) < 0.0001f
+				&& std::abs(sprite._Color.r - 0.25f) < 0.0001f
+				&& std::abs(sprite._Color.g - 0.5f) < 0.0001f
+				&& std::abs(sprite._Color.b - 0.75f) < 0.0001f
+				&& std::abs(sprite._Color.a - 1.0f) < 0.0001f
+				&& health.Maximum == 250 && health.Current == 175;
+		}
+		bool pendingPrefabParentAccepted = false;
+		if (session != 0)
+		{
+			const EntityHandleV1 contextHandle{ session,
+				static_cast<uint64_t>(context.GetUUID()), Generation };
+			EntityHandleV1 prefabParent{};
+			const NativeVector3 position{};
+			pendingPrefabParentAccepted = ScriptEngine::Get().QueueCreateEntity(
+				contextHandle, "Pending Prefab parent", position, {}, prefabParent)
+				&& envelope.V1.PrefabInstantiateDeferred(contextHandle, 0x424242,
+					position, prefabParent) == 1;
+			ScriptEngine::Get().StopScene(session);
+		}
+		Require(callbackFailure.empty(), callbackFailure.empty()
+			? "reserved entity callback failed" : callbackFailure.c_str());
+		Require(committed,
+			"reserved entity chain was not committed in Create/Add/property/Active/Parent order");
+		Require(pendingPrefabParentAccepted,
+			"Prefab instantiate did not accept a same-session pending parent");
+	}
+
+	void TestManagedScriptLifecycleBackend()
+	{
+		for (const int frameRate : { 30, 60, 144 })
+		{
+			auto runtime = std::make_shared<ManagedRuntimeProbe>();
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime(runtime);
+			TomCat::Scene scene;
+			TomCat::Entity scripted = scene.CreateEntity("Managed lifecycle probe");
+			TomCat::CSharpScriptEntry entry;
+			entry.AttachmentID = TomCat::UUID();
+			entry.ScriptAsset = TomCat::AssetHandle(9001);
+			entry.LastKnownClassName = "Game.LifecycleProbe";
+			scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+
+			Require(scene.OnRuntimeStart(),
+				"managed fake backend could not start a scripted scene");
+			Require(runtime->Calls.size() >= 4
+				&& runtime->Calls[0] == "CreateSceneRuntime"
+				&& runtime->Calls[1] == "InstantiateAll"
+				&& runtime->Calls[2] == "ApplySerializedFields"
+				&& runtime->Calls[3] == "InvokeCreateAll",
+				"managed scene startup callbacks were not ordered transactionally");
+			Require(runtime->Attachments.size() == 1
+				&& runtime->Attachments[0].AttachmentId
+					== static_cast<uint64_t>(entry.AttachmentID)
+				&& runtime->Attachments[0].Entity.SceneSessionId
+					== runtime->LastSceneSession,
+				"managed attachment identity was not bound to the active scene session");
+			Require(!TomCat::Scripting::ScriptEngine::Get().QueueAddComponent(
+				runtime->Attachments[0].Entity,
+				static_cast<TomCat::Scripting::NativeComponentType>(999))
+				&& !TomCat::Scripting::ScriptEngine::Get().QueueRemoveComponent(
+					runtime->Attachments[0].Entity,
+					static_cast<TomCat::Scripting::NativeComponentType>(999)),
+				"invalid managed component types entered the deferred command queue");
+
+			for (int frame = 0; frame < frameRate; ++frame)
+				scene.OnUpdateRuntime(TomCat::Timestep(1.0f
+					/ static_cast<float>(frameRate)));
+			Require(runtime->UpdateCount == static_cast<uint32_t>(frameRate),
+				"managed OnUpdate was not called once per display frame");
+			Require(runtime->FixedUpdateCount == 60,
+				"managed OnFixedUpdate was not fixed at 60 Hz");
+			const uint32_t updatesBeforeStep = runtime->UpdateCount;
+			scene.OnRuntimeStep();
+			Require(runtime->FixedUpdateCount == 61
+				&& runtime->UpdateCount == updatesBeforeStep,
+				"managed Step did not perform exactly one fixed update and zero display updates");
+			scene.OnRuntimeStop();
+			Require(!runtime->Calls.empty() && runtime->Calls.back() == "DestroyAll",
+				"managed Stop did not destroy the scene runtime");
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
+		}
+
+		{
+			auto runtime = std::make_shared<ManagedRuntimeProbe>();
+			runtime->InvokeCreateStatus = TomCat::Scripting::ScriptStatus::ManagedException;
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime(runtime);
+			TomCat::Scene scene;
+			TomCat::Entity entity = scene.CreateEntity("Managed start failure");
+			entity.AddComponent<TomCat::BoxCollider2D>();
+			TomCat::CSharpScriptEntry entry;
+			entry.AttachmentID = TomCat::UUID();
+			entry.ScriptAsset = TomCat::AssetHandle(9002);
+			entity.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+			Require(!scene.OnRuntimeStart(),
+				"managed startup failure incorrectly entered Play");
+			Require(entity.GetComponent<TomCat::BoxCollider2D>().RuntimeFixture == nullptr
+				&& !runtime->Active,
+				"managed startup failure did not roll back scripts and physics");
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
+		}
+
+		{
+			auto runtime = std::make_shared<ManagedRuntimeProbe>();
+			runtime->UnloadSucceeds = false;
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime(runtime);
+			TomCat::Scene scene;
+			TomCat::CSharpScriptEntry entry;
+			entry.AttachmentID = TomCat::UUID();
+			entry.ScriptAsset = TomCat::AssetHandle(9003);
+			scene.CreateEntity("Managed unload failure")
+				.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+			Require(scene.OnRuntimeStart(),
+				"managed unload-failure probe could not start");
+			scene.OnRuntimeStop();
+			Require(runtime->UnloadFailureCount == 1
+				&& !runtime->LastUnloadFailure.empty(),
+				"ScriptEngine did not issue the terminal unload-failure notification");
+			TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
+		}
 	}
 
 }
 
-int main()
+int main(int argc, char** argv)
 {
 	TomCat::Log::Init();
 	int failures = 0;
+	const std::string_view filter = argc > 1 && argv[1] ? argv[1] : "";
 	auto run = [&](const char* name, auto&& test)
 	{
+		if (!filter.empty() && std::string_view(name).find(filter) == std::string_view::npos)
+			return;
+		std::cout << "RUN  " << name << std::endl;
 		try
 		{
 			test();
-			std::cout << "PASS " << name << '\n';
+			std::cout << "PASS " << name << std::endl;
 		}
 		catch (const std::exception& exception)
 		{
 			++failures;
-			std::cerr << "FAIL " << name << ": " << exception.what() << '\n';
+			std::cerr << "FAIL " << name << ": " << exception.what() << std::endl;
 		}
 	};
 
 	run("project settings persistence and validation", TestProjectSettingsPersistenceAndValidation);
+	run("PlayerSettings strict schema, roundtrip, and migration",
+		TestPlayerSettingsPersistenceAndValidation);
+	run("legacy project BuildSettings migration", TestLegacyProjectBuildSettingsMigration);
+	run("explicit Player dotnet root is exclusive", TestExplicitDotNetRootIsExclusive);
 	run("fixed accumulator and exact Step", TestFixedAccumulatorAndStep);
+	run("managed Transform world setters preserve hierarchy",
+		TestManagedTransformSettersRespectHierarchy);
 	run("30/60/144Hz one- and ten-second consistency", TestFrameRateIndependentPhysics);
+	run("incremental physics synchronization preserves object identity",
+		TestIncrementalPhysicsSynchronizationPreservesObjectIdentity);
+	run("physics synchronization safe-stage coalescing and targeted mutation statistics",
+		TestPhysicsSynchronizationStageCoalescing);
+	run("fixed-step physics render interpolation", TestPhysicsRenderInterpolation);
+	run("incremental fixture contact continuity",
+		TestIncrementalFixtureContactContinuity);
 	run("Pause render path and exact single-step", TestPauseRenderPathAndSingleStep);
 	run("collider-only static runtime body", TestColliderOnlyStaticBody);
 	run("CircleCollider2D non-uniform fixture", TestCircleNonUniformScaleFixture);
 	run("authoring/runtime collider outline parity", TestAuthoringAndRuntimeOutlinesMatch);
-	run("Trigger events and native-script callbacks", TestTriggerAndScriptCallbacks);
+	run("Trigger events and managed callbacks", TestTriggerAndManagedCallbacks);
 	run("layer/mask filtering and runtime rebuild", TestCollisionFilteringAndRuntimeRebuild);
+	run("inactive hierarchy preserves dynamic body state and clears stale cache",
+		TestInactiveHierarchyPreservesRuntimeBodyState);
+	run("inactive runtime sprite components wait for reactivation",
+		TestInactiveRuntimeSpriteComponentsStayUninitialized);
+	run("audio autoplay waits for managed OnCreate",
+		TestAudioAutoPlayWaitsForManagedCreate);
+	run("single runtime step short-circuits after fixed stop",
+		TestRuntimeStepShortCircuitsAfterFixedStop);
 	run("project matrix and fixture filters are independent", TestProjectMatrixAndFixtureFilters);
 	run("entity-layer raycast/AABB query and motion APIs", TestQueriesAndMotionAPI);
 	run("DistanceJoint2D runtime creation and rebuild", TestDistanceJoint);
-	run("schema v9 metadata/icon save/load/copy/duplicate", TestSchemaV9PersistenceAndCopies);
-	run("Cooked Player v3 physics roundtrip and validation", TestCookedPlayerPhysicsRoundtrip);
+	run("schema v11 scripts/metadata save/load/copy/duplicate and v9/v10 migration",
+		TestSchemaV11PersistenceAndCopies);
+	run("component registry Health vertical slice and opaque roundtrip",
+		ComponentRegistryRegression::Run);
+	run("SceneCommandBuffer create/destroy/reparent transaction",
+		SceneCommandBufferRegression::Run);
+	run("Prefab LocalID transaction, remap, and runtime safe point",
+		PrefabRegression::Run);
+	run("typed asset reference graph and Cook validation",
+		TestTypedAssetReferenceGraphAndCookValidation);
+	run("Cooked Player v5 physics and build-scene roundtrip", TestCookedPlayerPhysicsRoundtrip);
+	run("script-free tcpak v5 needs no managed payload", TestScriptFreeCookWithoutManagedPayload);
+	run("Font, Text and Runtime UI P0", TomCat::Tests::RunRuntimeUIRegression);
+	run("logical window/framebuffer/DPI coordinate contract",
+		TomCat::Tests::RunWindowMetricsRegression);
 	run("collision Enter/Exit entity-pair de-duplication", TestCollisionPairDeduplication);
 	run("collision callback deletion safety", TestDeletionDuringCollisionDispatch);
-	run("native-script collision mutation safety", TestNativeScriptMutationDuringCollisionDispatch);
+	run("managed collision mutation safety", TestManagedMutationDuringCollisionDispatch);
+	run("Prefab dynamic managed attachment ABI and rollback",
+		TestPrefabDynamicAttachmentBridge);
+	run("initial OnCreate Prefab physics before dynamic lifecycle",
+		TestInitialOnCreatePrefabPhysicsOrdering);
+	run("component registry schema discovery ABI",
+		TestComponentSchemaCapability);
+	run("reserved C# entity chained initialization capability",
+		TestReservedEntityChainedInitializationCapability);
+	run("managed lifecycle backend, timing, rollback, and unload failure",
+		TestManagedScriptLifecycleBackend);
+	run("single SceneManager deferred transition, reload, rollback, and generation",
+		SceneManagerRegression::Run);
 	return failures == 0 ? 0 : 1;
 }

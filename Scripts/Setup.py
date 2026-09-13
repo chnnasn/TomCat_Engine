@@ -3,6 +3,8 @@ import subprocess
 import sys
 import zipfile
 import shutil
+import hashlib
+import json
 
 # 首先检查和安装必要的包
 import CheckPython
@@ -16,16 +18,33 @@ premake_dir = "vendor/premake/bin"
 premake_exe = os.path.join(premake_dir, "premake5.exe")
 
 if not os.path.exists(premake_exe):
-    print("Premake5 not found. Downloading...")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    tool_manifest_path = os.path.join(script_dir, "ReleaseToolVersions.json")
+    with open(tool_manifest_path, "r", encoding="utf-8") as manifest_file:
+        tool_manifest = json.load(manifest_file)
+    premake_release = tool_manifest["premake"]
+    print(f"Premake {premake_release['version']} not found. Downloading pinned release...")
     
     # Create directory if it doesn't exist
     os.makedirs(premake_dir, exist_ok=True)
     
     # Download premake5
-    premake_url = "https://github.com/premake/premake-core/releases/download/v5.0.0-beta7/premake-5.0.0-beta7-windows.zip"
+    premake_url = premake_release["url"]
     zip_path = os.path.join(premake_dir, "premake.zip")
     
     Utils.DownloadFile(premake_url, zip_path)
+
+    digest = hashlib.sha256()
+    with open(zip_path, "rb") as downloaded_archive:
+        for block in iter(lambda: downloaded_archive.read(1024 * 1024), b""):
+            digest.update(block)
+    actual_hash = digest.hexdigest().upper()
+    expected_hash = premake_release["sha256"].upper()
+    if actual_hash != expected_hash:
+        os.remove(zip_path)
+        raise RuntimeError(
+            f"Premake SHA-256 mismatch: expected {expected_hash}, got {actual_hash}"
+        )
     
     # Extract the zip file
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -34,7 +53,7 @@ if not os.path.exists(premake_exe):
     # Remove the zip file
     os.remove(zip_path)
     
-    print("Premake5 downloaded and extracted successfully.")
+    print(f"Premake {premake_release['version']} verified and extracted successfully.")
 
 # 移动 vendor 文件夹到上一级目录（合并）
 current_dir = os.path.dirname(os.path.abspath(__file__))

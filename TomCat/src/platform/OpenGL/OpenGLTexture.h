@@ -4,6 +4,7 @@
 #include <glad/glad.h>
 
 #include <cstddef>
+#include <span>
 
 namespace TomCat {
 
@@ -37,6 +38,7 @@ namespace TomCat {
 
 	private:
 		bool LoadEncodedImage(const void* encodedData, size_t encodedSize);
+		bool LoadArtifact(std::span<const uint8_t> bytes);
 		void CreateStorageAndUpload(const void* rgbaPixels);
 
 	private:
@@ -45,6 +47,7 @@ namespace TomCat {
 		uint32_t m_Width = 0, m_Height = 0;
 		uint32_t m_RendererID = 0;
 		GLenum m_InternalFormat = 0, m_DataFormat = 0;
+		bool m_Compressed = false;
 	};
 
 

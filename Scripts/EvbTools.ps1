@@ -34,7 +34,7 @@ function Get-EvbFileTreeXml {
         $isUserStateFile = -not $item.PSIsContainer -and
             ($item.Name -ieq "hub.json" -or $item.Name -ieq "editor.json" -or
              $item.Name -ieq "editor-layout.ini" -or
-             $item.Name -ieq "imgui.ini")
+             $item.Name -ieq "imgui.ini" -or $item.Name -ieq "TomCat.log")
         if ($isUserStateDirectory -or $isUserStateFile) {
             Write-Warning "Excluded runtime/user settings from EVB: $($item.FullName)"
             continue
@@ -96,9 +96,9 @@ function Assert-EvbUserStateExcluded {
         [string]$TemplateText
     )
 
-    $forbiddenNamePattern = '(?is)<Name>\s*(?:hub\.json|editor\.json|editor-layout\.ini|UserSettings|TomCatSettings)\s*</Name>'
+    $forbiddenNamePattern = '(?is)<Name>\s*(?:hub\.json|editor\.json|editor-layout\.ini|TomCat\.log|UserSettings|TomCatSettings)\s*</Name>'
     if ($TemplateText -match $forbiddenNamePattern) {
-        throw "EVB project contains runtime/user settings; JSON, editor-layout.ini, UserSettings and TomCatSettings must remain external"
+        throw "EVB project contains runtime/user state; logs, JSON, editor-layout.ini, UserSettings and TomCatSettings must remain external"
     }
 
     $fileSources = [regex]::Matches($TemplateText, '(?is)<File>\s*([^<]*?)\s*</File>')
@@ -114,7 +114,7 @@ function Assert-EvbUserStateExcluded {
         if ($components.Count -gt 0) {
             $leaf = $components[$components.Count - 1]
             if ($leaf -ieq "hub.json" -or $leaf -ieq "editor.json" -or
-                $leaf -ieq "editor-layout.ini") {
+                $leaf -ieq "editor-layout.ini" -or $leaf -ieq "TomCat.log") {
                 throw "EVB project contains runtime/user settings file: $source"
             }
             if ($leaf -ieq "imgui.ini") {

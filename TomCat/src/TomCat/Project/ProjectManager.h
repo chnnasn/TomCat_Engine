@@ -6,6 +6,7 @@
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <string_view>
 
 namespace TomCat {
 
@@ -25,15 +26,22 @@ namespace TomCat {
 		const std::vector<Ref<Project>>& GetProjects() const { return m_Projects; }
 
 		Ref<Project> CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config);
+		Ref<Project> InspectProject(const std::filesystem::path& projectPath) const;
+		[[nodiscard]] bool PreviewProjectMigration(const std::filesystem::path& projectPath,
+			ProjectMigrationPreview& preview, std::string& errorMessage) const;
 		Ref<Project> LoadProject(const std::filesystem::path& projectPath);
+		Ref<Project> LoadProjectWithMigration(const std::filesystem::path& projectPath,
+			const ProjectMigrationPreview& approvedMigration);
 		Ref<Project> AddProject(const std::filesystem::path& projectPath);
 		[[nodiscard]] bool RemoveProject(const std::filesystem::path& projectPath);
 
 		Ref<Project> GetActiveProject() const { return m_ActiveProject; }
+		[[nodiscard]] static std::optional<std::filesystem::path> ResolveEditorExecutable(
+			const std::filesystem::path& editorDirectory, std::string_view editorVersion);
 		void OpenProjectInEditor(Ref<Project> project);
 
 		// Non-layout Hub state lives in
-		// %LOCALAPPDATA%/TomCat/TomCatSettings/hub.json.
+		// %LOCALAPPDATA%/TomCat/Hub/hub.json.
 		void LoadHubSettings();
 		[[nodiscard]] bool SaveHubSettings();
 	private:
@@ -43,6 +51,7 @@ namespace TomCat {
 		ProjectManager& operator=(const ProjectManager&) = delete;
 
 		bool IsProjectFile(const std::filesystem::path& path) const;
+		Ref<Project> ActivateLoadedProject(Ref<Project> project);
 		std::optional<std::filesystem::path> GetHubSettingsPath() const;
 		bool ScanProjectsInternal();
 		[[nodiscard]] bool RecordProjectOpened(const Ref<Project>& project);

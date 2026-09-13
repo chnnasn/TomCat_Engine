@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "assets": {
+    "GoodBehaviour.cs": 1001,
+    "FaultyBehaviour.cs": 1002
+  }
+}

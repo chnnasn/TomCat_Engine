@@ -76,7 +76,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLATFORM_WINDOWS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_PLATFORM_WINDOWS;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\Box2D\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;..\vendor\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
@@ -91,16 +91,13 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
-    <Lib>
-	  <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLATFORM_WINDOWS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_PLATFORM_WINDOWS;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\Box2D\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;..\vendor\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -118,16 +115,13 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
-    <Lib>
-	  <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
     <ClCompile>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>tcpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;TC_PLATFORM_WINDOWS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;GLFW_INCLUDE_NONE;YAML_CPP_STATIC_DEFINE;TC_PLATFORM_WINDOWS;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;vendor\Box2D\include;vendor\GLFW\include;vendor\ImGui;vendor\Glad\include;vendor\glm;vendor\stb_image;vendor\entt\include;vendor\yaml-cpp\include;vendor\ImGuizmo;..\vendor\VulkanSDK\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -145,20 +139,38 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
-    <Lib>
-	  <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
-    </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\TomCat.h" />
-	<ClInclude Include="src\TomCat\Asset\Asset.h" />
-	<ClInclude Include="src\TomCat\Asset\AssetManager.h" />
-	<ClInclude Include="src\TomCat\Asset\AssetRegistry.h" />
-	<ClInclude Include="src\TomCat\Asset\SpriteAsset.h" />
+    <ClInclude Include="src\TomCat\Asset\ArtifactKey.h" />
+    <ClInclude Include="src\TomCat\Asset\Asset.h" />
+    <ClInclude Include="src\TomCat\Asset\AssetDatabase.h" />
+    <ClInclude Include="src\TomCat\Asset\AssetImportCoordinator.h" />
+    <ClInclude Include="src\TomCat\Asset\AssetJobSystem.h" />
+    <ClInclude Include="src\TomCat\Asset\AssetManager.h" />
+    <ClInclude Include="src\TomCat\Asset\AssetRegistry.h" />
+    <ClInclude Include="src\TomCat\Asset\AudioArtifact.h" />
+    <ClInclude Include="src\TomCat\Asset\ContentHash.h" />
+    <ClInclude Include="src\TomCat\Asset\DerivedDataCache.h" />
+    <ClInclude Include="src\TomCat\Asset\Importer.h" />
+    <ClInclude Include="src\TomCat\Asset\ImporterRegistry.h" />
+    <ClInclude Include="src\TomCat\Asset\MaterialArtifact.h" />
+    <ClInclude Include="src\TomCat\Asset\MeshArtifact.h" />
+    <ClInclude Include="src\TomCat\Asset\ShaderArtifact.h" />
+    <ClInclude Include="src\TomCat\Asset\SpriteAsset.h" />
+    <ClInclude Include="src\TomCat\Asset\TextureArtifact.h" />
+    <ClInclude Include="src\TomCat\Audio\AudioClip.h" />
+    <ClInclude Include="src\TomCat\Audio\AudioDevice.h" />
+    <ClInclude Include="src\TomCat\Audio\AudioEngine.h" />
+    <ClInclude Include="src\TomCat\Audio\AudioSceneRuntime.h" />
+    <ClInclude Include="src\TomCat\Audio\AudioStream.h" />
     <ClInclude Include="src\TomCat\Core\Application.h" />
+    <ClInclude Include="src\TomCat\Core\ApplicationPaths.h" />
     <ClInclude Include="src\TomCat\Core\Base.h" />
+    <ClInclude Include="src\TomCat\Core\CrashReporter.h" />
     <ClInclude Include="src\TomCat\Core\EntryPoint.h" />
     <ClInclude Include="src\TomCat\Core\Input.h" />
+    <ClInclude Include="src\TomCat\Core\InputEventQueue.h" />
     <ClInclude Include="src\TomCat\Core\KeyCodes.h" />
     <ClInclude Include="src\TomCat\Core\Layer.h" />
     <ClInclude Include="src\TomCat\Core\LayerStack.h" />
@@ -167,8 +179,12 @@
     <ClInclude Include="src\TomCat\Core\TimeStep.h" />
     <ClInclude Include="src\TomCat\Core\Timer.h" />
     <ClInclude Include="src\TomCat\Core\UUID.h" />
+    <ClInclude Include="src\TomCat\Core\Version.h" />
     <ClInclude Include="src\TomCat\Core\Window.h" />
+    <ClInclude Include="src\TomCat\Core\WindowMetrics.h" />
     <ClInclude Include="src\TomCat\Debug\Instrumentor.h" />
+    <ClInclude Include="src\TomCat\Editor\EditorRecoveryService.h" />
+    <ClInclude Include="src\TomCat\Editor\SceneHistory.h" />
     <ClInclude Include="src\TomCat\Events\ApplicationEvent.h" />
     <ClInclude Include="src\TomCat\Events\Event.h" />
     <ClInclude Include="src\TomCat\Events\InputModifiers.h" />
@@ -177,11 +193,15 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
+    <ClInclude Include="src\TomCat\Project\BuildSettings.h" />
+    <ClInclude Include="src\TomCat\Project\PlayerSettings.h" />
     <ClInclude Include="src\TomCat\Project\Project.h" />
     <ClInclude Include="src\TomCat\Project\ProjectManager.h" />
+    <ClInclude Include="src\TomCat\Project\ProjectSettings.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\TomCat\Renderer\Camera.h" />
     <ClInclude Include="src\TomCat\Renderer\EditorCamera.h" />
+    <ClInclude Include="src\TomCat\Renderer\Font.h" />
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h" />
     <ClInclude Include="src\TomCat\Renderer\RenderCommand.h" />
@@ -192,12 +212,35 @@
     <ClInclude Include="src\TomCat\Renderer\Texture.h" />
     <ClInclude Include="src\TomCat\Renderer\UniformBuffer.h" />
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
+    <ClInclude Include="src\TomCat\Runtime\RuntimeCompatibility.h" />
+    <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h" />
+    <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h" />
+    <ClInclude Include="src\TomCat\Scene\ComponentRegistry.h" />
     <ClInclude Include="src\TomCat\Scene\Components.h" />
     <ClInclude Include="src\TomCat\Scene\Entity.h" />
+    <ClInclude Include="src\TomCat\Scene\Physics2DEvents.h" />
+    <ClInclude Include="src\TomCat\Scene\RuntimeUIComponentDescriptors.h" />
     <ClInclude Include="src\TomCat\Scene\Scene.h" />
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
+    <ClInclude Include="src\TomCat\Scene\SceneCommandBuffer.h" />
+    <ClInclude Include="src\TomCat\Scene\SceneManager.h" />
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h" />
-    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h" />
+    <ClInclude Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.h" />
+    <ClInclude Include="src\TomCat\Scene\Serialization\ComponentCodecs.h" />
+    <ClInclude Include="src\TomCat\Scene\Serialization\EntityArchive.h" />
+    <ClInclude Include="src\TomCat\Scene\Serialization\PrefabArchiveCodec.h" />
+    <ClInclude Include="src\TomCat\Scene\Serialization\SceneArchiveCodec.h" />
+    <ClInclude Include="src\TomCat\Scene\SpriteAnimation.h" />
+    <ClInclude Include="src\TomCat\Scene\SpriteAnimatorAuthoring.h" />
+    <ClInclude Include="src\TomCat\Scripting\DotNetHost.h" />
+    <ClInclude Include="src\TomCat\Scripting\IScriptRuntime.h" />
+    <ClInclude Include="src\TomCat\Scripting\ManagedRuntimeFactory.h" />
+    <ClInclude Include="src\TomCat\Scripting\ManagedScriptRuntime.h" />
+    <ClInclude Include="src\TomCat\Scripting\ScriptDiagnosticSink.h" />
+    <ClInclude Include="src\TomCat\Scripting\ScriptEngine.h" />
+    <ClInclude Include="src\TomCat\Scripting\ScriptField.h" />
+    <ClInclude Include="src\TomCat\Scripting\ScriptGlue.h" />
+    <ClInclude Include="src\TomCat\Scripting\ScriptTypes.h" />
     <ClInclude Include="src\TomCat\Utils\FileSystemUtils.h" />
     <ClInclude Include="src\TomCat\Utils\PathUtils.h" />
     <ClInclude Include="src\TomCat\Utils\PlatformUtils.h" />
@@ -633,24 +676,48 @@
     <ClInclude Include="vendor\stb_image\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
-	<ClCompile Include="src\TomCat\Asset\Asset.cpp" />
-	<ClCompile Include="src\TomCat\Asset\AssetManager.cpp" />
-	<ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp" />
-	<ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp" />
+    <ClCompile Include="src\TomCat\Asset\ArtifactKey.cpp" />
+    <ClCompile Include="src\TomCat\Asset\Asset.cpp" />
+    <ClCompile Include="src\TomCat\Asset\AssetDatabase.cpp" />
+    <ClCompile Include="src\TomCat\Asset\AssetImportCoordinator.cpp" />
+    <ClCompile Include="src\TomCat\Asset\AssetJobSystem.cpp" />
+    <ClCompile Include="src\TomCat\Asset\AssetManager.cpp" />
+    <ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp" />
+    <ClCompile Include="src\TomCat\Asset\AudioArtifact.cpp" />
+    <ClCompile Include="src\TomCat\Asset\ContentHash.cpp" />
+    <ClCompile Include="src\TomCat\Asset\DerivedDataCache.cpp" />
+    <ClCompile Include="src\TomCat\Asset\ImporterRegistry.cpp" />
+    <ClCompile Include="src\TomCat\Asset\MaterialArtifact.cpp" />
+    <ClCompile Include="src\TomCat\Asset\MeshArtifact.cpp" />
+    <ClCompile Include="src\TomCat\Asset\ShaderArtifact.cpp" />
+    <ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp" />
+    <ClCompile Include="src\TomCat\Asset\TextureArtifact.cpp" />
+    <ClCompile Include="src\TomCat\Audio\AudioClip.cpp" />
+    <ClCompile Include="src\TomCat\Audio\AudioEngine.cpp" />
+    <ClCompile Include="src\TomCat\Audio\AudioSceneRuntime.cpp" />
+    <ClCompile Include="src\TomCat\Audio\AudioStream.cpp" />
+    <ClCompile Include="src\TomCat\Audio\NullAudioDevice.cpp" />
+    <ClCompile Include="src\TomCat\Audio\WindowsAudioDevice.cpp" />
     <ClCompile Include="src\TomCat\Core\Application.cpp" />
+    <ClCompile Include="src\TomCat\Core\ApplicationPaths.cpp" />
+    <ClCompile Include="src\TomCat\Core\CrashReporter.cpp" />
     <ClCompile Include="src\TomCat\Core\Layer.cpp" />
     <ClCompile Include="src\TomCat\Core\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Core\Log.cpp" />
     <ClCompile Include="src\TomCat\Core\UUID.cpp" />
     <ClCompile Include="src\TomCat\Core\Window.cpp" />
+    <ClCompile Include="src\TomCat\Editor\EditorRecoveryService.cpp" />
+    <ClCompile Include="src\TomCat\Editor\SceneHistory.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
+    <ClCompile Include="src\TomCat\Project\PlayerSettings.cpp" />
     <ClCompile Include="src\TomCat\Project\Project.cpp" />
     <ClCompile Include="src\TomCat\Project\ProjectManager.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp" />
+    <ClCompile Include="src\TomCat\Renderer\Font.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp" />
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp" />
@@ -661,10 +728,26 @@
     <ClCompile Include="src\TomCat\Renderer\Texture.cpp" />
     <ClCompile Include="src\TomCat\Renderer\UniformBuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
+    <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp" />
+    <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp" />
+    <ClCompile Include="src\TomCat\Scene\ComponentRegistry.cpp" />
     <ClCompile Include="src\TomCat\Scene\Entity.cpp" />
+    <ClCompile Include="src\TomCat\Scene\RuntimeUIComponentDescriptors.cpp" />
     <ClCompile Include="src\TomCat\Scene\Scene.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
+    <ClCompile Include="src\TomCat\Scene\SceneCommandBuffer.cpp" />
+    <ClCompile Include="src\TomCat\Scene\SceneManager.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp" />
+    <ClCompile Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.cpp" />
+    <ClCompile Include="src\TomCat\Scene\Serialization\ComponentCodecs.cpp" />
+    <ClCompile Include="src\TomCat\Scene\Serialization\PrefabArchiveCodec.cpp" />
+    <ClCompile Include="src\TomCat\Scene\Serialization\SceneArchiveCodec.cpp" />
+    <ClCompile Include="src\TomCat\Scripting\DotNetHost.cpp" />
+    <ClCompile Include="src\TomCat\Scripting\ManagedRuntimeFactory.cpp" />
+    <ClCompile Include="src\TomCat\Scripting\ManagedScriptRuntime.cpp" />
+    <ClCompile Include="src\TomCat\Scripting\ScriptDiagnosticSink.cpp" />
+    <ClCompile Include="src\TomCat\Scripting\ScriptEngine.cpp" />
+    <ClCompile Include="src\TomCat\Scripting\ScriptGlue.cpp" />
     <ClCompile Include="src\TomCat\Utils\FileSystemUtils.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLContext.cpp" />
@@ -684,28 +767,6 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="vendor\stb_image\stb_image.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="vendor\Box2D\Box2D.vcxproj">
-      <Project>{A434E80C-1049-10BE-D9CA-B31D459E0CEF}</Project>
-	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <ProjectReference Include="vendor\GLFW\GLFW.vcxproj">
-      <Project>{154B857C-0182-860D-AA6E-6C109684020F}</Project>
-	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <ProjectReference Include="vendor\Glad\Glad.vcxproj">
-      <Project>{BDD6857C-A90D-870D-52FA-6C103E10030F}</Project>
-	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <ProjectReference Include="vendor\ImGui\ImGui.vcxproj">
-      <Project>{C0FF640D-2C14-8DBE-F595-301E616989EF}</Project>
-	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <ProjectReference Include="vendor\yaml-cpp\yaml-cpp.vcxproj">
-      <Project>{88F1A057-74BE-FB62-9DD7-E90A890331F1}</Project>
-	  <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

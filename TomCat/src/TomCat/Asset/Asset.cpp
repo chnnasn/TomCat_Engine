@@ -21,8 +21,9 @@ namespace TomCat {
 			case AssetType::Font: return "Font";
 			case AssetType::Mesh: return "Mesh";
 			case AssetType::Material: return "Material";
-			case AssetType::Script: return "Script";
+			case AssetType::CSharpScript: return "CSharpScript";
 			case AssetType::Other: return "Other";
+			case AssetType::Prefab: return "Prefab";
 		}
 		return "None";
 	}
@@ -36,8 +37,12 @@ namespace TomCat {
 		if (value == "Font") return AssetType::Font;
 		if (value == "Mesh") return AssetType::Mesh;
 		if (value == "Material") return AssetType::Material;
-		if (value == "Script") return AssetType::Script;
+		if (value == "CSharpScript") return AssetType::CSharpScript;
+		// Read old sidecars once; Refresh rewrites them according to the source
+		// extension, so .cs becomes CSharpScript and native/Lua source becomes Other.
+		if (value == "Script") return AssetType::CSharpScript;
 		if (value == "Other") return AssetType::Other;
+		if (value == "Prefab") return AssetType::Prefab;
 		return AssetType::None;
 	}
 
@@ -52,22 +57,20 @@ namespace TomCat {
 			extension == ".bmp" || extension == ".tga" || extension == ".gif" ||
 			extension == ".psd" || extension == ".hdr" || extension == ".pic")
 			return AssetType::Texture2D;
-		if (extension == ".glsl" || extension == ".vert" || extension == ".frag" ||
-			extension == ".comp" || extension == ".hlsl")
+		if (extension == ".glsl" || extension == ".vert" || extension == ".frag")
 			return AssetType::Shader;
-		if (extension == ".wav" || extension == ".ogg" || extension == ".mp3" ||
-			extension == ".flac")
+		// Keep type discovery aligned with formats that the P0 importer, cooker and
+		// Player can actually consume end to end. Unsupported containers remain
+		// ordinary files until a decoder/importer is registered for them.
+		if (extension == ".wav")
 			return AssetType::Audio;
-		if (extension == ".ttf" || extension == ".otf" || extension == ".woff" ||
-			extension == ".woff2")
+		if (extension == ".ttf" || extension == ".otf" || extension == ".ttc")
 			return AssetType::Font;
-		if (extension == ".obj" || extension == ".fbx" || extension == ".gltf" ||
-			extension == ".glb")
+		if (extension == ".obj")
 			return AssetType::Mesh;
 		if (extension == ".tcmat") return AssetType::Material;
-		if (extension == ".cpp" || extension == ".h" || extension == ".hpp" ||
-			extension == ".cs" || extension == ".lua")
-			return AssetType::Script;
+		if (extension == ".cs") return AssetType::CSharpScript;
+		if (extension == ".tcprefab") return AssetType::Prefab;
 		return AssetType::Other;
 	}
 

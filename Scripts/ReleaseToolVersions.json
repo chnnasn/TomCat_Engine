@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "premake": {
+    "version": "5.0.0-beta7",
+    "url": "https://github.com/premake/premake-core/releases/download/v5.0.0-beta7/premake-5.0.0-beta7-windows.zip",
+    "sha256": "8BAEC7B265FD43050F006EF47000457FA93B6FAFBB1EAD7E333E862A467C2E95"
+  },
+  "enigmaVirtualBox": {
+    "version": "11.30",
+    "url": "https://www.enigmaprotector.com/assets/files/enigmavb.exe",
+    "sha256": "AB743F5E3DD927A288E126BBB053D367F270592E89378C9A06B7F3B15FA1EE35",
+    "signerThumbprint": "2603B1C2032C7C286F56FB80A638A2B1EC8E8AC9"
+  }
+}
