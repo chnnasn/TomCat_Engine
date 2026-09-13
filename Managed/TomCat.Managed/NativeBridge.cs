@@ -20,7 +20,10 @@ internal static unsafe class NativeBridge
 	private static readonly object s_bindGate = new();
     private static NativeApiV1 s_api;
 	private static NativeInputApiV1 s_inputApi;
+	private static NativeInputEventsApiV1 s_inputEventsApi;
+	private static NativeApplicationPathsApiV1 s_applicationPathsApi;
 	private static NativeComponentApiV1 s_componentApi;
+	private static NativeComponentSchemaApiV1 s_componentSchemaApi;
 	private static NativeAudioApiV1 s_audioApi;
 	private static NativeAudioSpatialApiV1 s_audioSpatialApi;
 	private static NativeRuntimeUIApiV1 s_runtimeUIApi;
@@ -28,7 +31,10 @@ internal static unsafe class NativeBridge
 	private static readonly UTF8Encoding s_strictUtf8 = new(false, true);
     private static bool s_bound;
 	private static bool s_inputBound;
+	private static bool s_inputEventsBound;
+	private static bool s_applicationPathsBound;
 	private static bool s_componentBound;
+	private static bool s_componentSchemaBound;
 	private static bool s_audioBound;
 	private static bool s_audioSpatialBound;
 	private static bool s_runtimeUIBound;
@@ -49,9 +55,18 @@ internal static unsafe class NativeBridge
 			return NativeUnavailable;
 		NativeInputApiV1 inputCandidate = default;
 		bool hasInputCandidate = TryReadInputCapability(api, out inputCandidate);
+		NativeInputEventsApiV1 inputEventsCandidate = default;
+		bool hasInputEventsCandidate = TryReadInputEventsCapability(api,
+			out inputEventsCandidate);
+		NativeApplicationPathsApiV1 applicationPathsCandidate = default;
+		bool hasApplicationPathsCandidate = TryReadApplicationPathsCapability(api,
+			out applicationPathsCandidate);
 		NativeComponentApiV1 componentCandidate = default;
 		bool hasComponentCandidate = TryReadComponentCapability(api,
 			out componentCandidate);
+		NativeComponentSchemaApiV1 componentSchemaCandidate = default;
+		bool hasComponentSchemaCandidate = TryReadComponentSchemaCapability(api,
+			out componentSchemaCandidate);
 		NativeAudioApiV1 audioCandidate = default;
 		bool hasAudioCandidate = TryReadAudioCapability(api, out audioCandidate);
 		NativeAudioSpatialApiV1 audioSpatialCandidate = default;
@@ -78,10 +93,25 @@ internal static unsafe class NativeBridge
 				s_inputApi = inputCandidate;
 				Volatile.Write(ref s_inputBound, true);
 			}
+			if (hasInputEventsCandidate && !s_inputEventsBound)
+			{
+				s_inputEventsApi = inputEventsCandidate;
+				Volatile.Write(ref s_inputEventsBound, true);
+			}
+			if (hasApplicationPathsCandidate && !s_applicationPathsBound)
+			{
+				s_applicationPathsApi = applicationPathsCandidate;
+				Volatile.Write(ref s_applicationPathsBound, true);
+			}
 			if (hasComponentCandidate && !s_componentBound)
 			{
 				s_componentApi = componentCandidate;
 				Volatile.Write(ref s_componentBound, true);
+			}
+			if (hasComponentSchemaCandidate && !s_componentSchemaBound)
+			{
+				s_componentSchemaApi = componentSchemaCandidate;
+				Volatile.Write(ref s_componentSchemaBound, true);
 			}
 			if (hasAudioCandidate && !s_audioBound)
 			{
@@ -141,6 +171,60 @@ internal static unsafe class NativeBridge
 			&& input.GetGamepadName != null;
 	}
 
+	private static bool TryReadInputEventsCapability(NativeApiV1* api,
+		out NativeInputEventsApiV1 inputEvents)
+	{
+		inputEvents = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.InputEventsApiV1");
+		NativeInputEventsApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeInputEventsApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeInputEventsApiV1))
+				return false;
+		}
+		inputEvents = candidate;
+		return inputEvents.Version == 1
+			&& inputEvents.Size >= (uint)sizeof(NativeInputEventsApiV1)
+			&& inputEvents.GetBatchInfo != null && inputEvents.CopyEvents != null;
+	}
+
+	private static bool TryReadApplicationPathsCapability(NativeApiV1* api,
+		out NativeApplicationPathsApiV1 applicationPaths)
+	{
+		applicationPaths = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.ApplicationPathsApiV1");
+		NativeApplicationPathsApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeApplicationPathsApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeApplicationPathsApiV1))
+				return false;
+		}
+		applicationPaths = candidate;
+		return applicationPaths.Version == 1
+			&& applicationPaths.Size >= (uint)sizeof(NativeApplicationPathsApiV1)
+			&& applicationPaths.GetSaveDirectory != null
+			&& applicationPaths.GetLogDirectory != null
+			&& applicationPaths.GetCrashDirectory != null;
+	}
+
 	private static bool TryReadComponentCapability(NativeApiV1* api,
 		out NativeComponentApiV1 component)
 	{
@@ -168,6 +252,34 @@ internal static unsafe class NativeBridge
 			&& component.Has != null && component.Add != null
 			&& component.Remove != null && component.GetProperty != null
 			&& component.SetProperty != null;
+	}
+
+	private static bool TryReadComponentSchemaCapability(NativeApiV1* api,
+		out NativeComponentSchemaApiV1 schema)
+	{
+		schema = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.ComponentSchemaApiV1");
+		NativeComponentSchemaApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeComponentSchemaApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeComponentSchemaApiV1))
+				return false;
+		}
+		schema = candidate;
+		return schema.Version == 1
+			&& schema.Size >= (uint)sizeof(NativeComponentSchemaApiV1)
+			&& schema.GetComponentCount != null && schema.GetComponent != null
+			&& schema.GetPropertyCount != null && schema.GetProperty != null;
 	}
 
 	private static bool TryReadAudioCapability(NativeApiV1* api,
@@ -613,6 +725,86 @@ internal static unsafe class NativeBridge
 		Check(s_componentApi.Remove(ToNative(entity), typeId), "Entity.RemoveComponent");
 	}
 
+	internal static bool IsComponentSchemaAvailable =>
+		Volatile.Read(ref s_componentSchemaBound);
+
+	internal static IReadOnlyList<ComponentSchemaInfo> GetComponentSchemas()
+	{
+		const uint MaximumComponents = 65_536;
+		const uint MaximumPropertiesPerComponent = 65_536;
+		const uint MaximumTotalProperties = 1_048_576;
+
+		EnsureMainThread(requireLifecycleContext: false);
+		RequireComponentSchema(s_componentSchemaApi.GetComponentCount != null,
+			"ComponentSchema.GetComponents");
+		uint componentCount = 0;
+		Check(s_componentSchemaApi.GetComponentCount(&componentCount),
+			"ComponentSchema.GetComponents");
+		if (componentCount > MaximumComponents)
+			throw new TomCatException(
+				"ComponentSchema.GetComponents returned too many components.");
+
+		List<ComponentSchemaInfo> components = new((int)componentCount);
+		HashSet<ulong> componentIds = [];
+		uint totalProperties = 0;
+		for (uint componentIndex = 0; componentIndex < componentCount;
+			++componentIndex)
+		{
+			NativeComponentSchemaInfoV1 nativeComponent = default;
+			Check(s_componentSchemaApi.GetComponent(componentIndex, &nativeComponent),
+				"ComponentSchema.GetComponent");
+			if (nativeComponent.TypeId == 0 || nativeComponent.SchemaVersion == 0
+				|| !componentIds.Add(nativeComponent.TypeId))
+				throw new TomCatException(
+					"ComponentSchema.GetComponent returned invalid component identity.");
+
+			uint propertyCount = 0;
+			Check(s_componentSchemaApi.GetPropertyCount(nativeComponent.TypeId,
+				&propertyCount), "ComponentSchema.GetProperties");
+			if (propertyCount != nativeComponent.PropertyCount
+				|| propertyCount > MaximumPropertiesPerComponent
+				|| totalProperties > MaximumTotalProperties - propertyCount)
+				throw new TomCatException(
+					"ComponentSchema.GetProperties returned an invalid property count.");
+			totalProperties += propertyCount;
+
+			List<ComponentPropertySchemaInfo> properties = new((int)propertyCount);
+			HashSet<ulong> propertyIds = [];
+			for (uint propertyIndex = 0; propertyIndex < propertyCount;
+				++propertyIndex)
+			{
+				NativeComponentPropertySchemaInfoV1 nativeProperty = default;
+				Check(s_componentSchemaApi.GetProperty(nativeComponent.TypeId,
+					propertyIndex, &nativeProperty),
+					"ComponentSchema.GetProperty");
+				if (nativeProperty.ComponentTypeId != nativeComponent.TypeId
+					|| nativeProperty.PropertyId == 0
+					|| !propertyIds.Add(nativeProperty.PropertyId)
+					|| !Enum.IsDefined(nativeProperty.Kind))
+					throw new TomCatException(
+						"ComponentSchema.GetProperty returned invalid metadata.");
+				properties.Add(new ComponentPropertySchemaInfo(
+					nativeProperty.PropertyId,
+					(ComponentPropertyKind)nativeProperty.Kind,
+					(ComponentPropertySchemaFlags)nativeProperty.Flags,
+					CopyUtf8(nativeProperty.StableName,
+						"ComponentSchema.Property.StableName"),
+					CopyUtf8(nativeProperty.DisplayName,
+						"ComponentSchema.Property.DisplayName")));
+			}
+
+			components.Add(new ComponentSchemaInfo(nativeComponent.TypeId,
+				nativeComponent.ProviderId, nativeComponent.SchemaVersion,
+				(ComponentSchemaFlags)nativeComponent.Flags,
+				CopyUtf8(nativeComponent.StableName,
+					"ComponentSchema.Component.StableName"),
+				CopyUtf8(nativeComponent.DisplayName,
+					"ComponentSchema.Component.DisplayName"),
+				properties.AsReadOnly()));
+		}
+		return components.AsReadOnly();
+	}
+
 	internal static int GetRegisteredInt32(Entity entity, ulong typeId,
 		ulong propertyId, string operation)
 	{
@@ -629,6 +821,25 @@ internal static unsafe class NativeBridge
 		typeId, propertyId, new NativePropertyValueV1
 		{
 			Kind = NativePropertyKindV1.Int32,
+			Integer = value
+		}, operation);
+
+	internal static uint GetRegisteredUInt32(Entity entity, ulong typeId,
+		ulong propertyId, string operation)
+	{
+		NativePropertyValueV1 value = GetRegisteredProperty(entity, typeId,
+			propertyId, operation);
+		if (value.Kind != NativePropertyKindV1.UInt32
+			|| value.Integer < uint.MinValue || value.Integer > uint.MaxValue)
+			throw new TomCatException($"${operation} returned an incompatible value.");
+		return (uint)value.Integer;
+	}
+
+	internal static void SetRegisteredUInt32(Entity entity, ulong typeId,
+		ulong propertyId, uint value, string operation) => SetRegisteredProperty(entity,
+		typeId, propertyId, new NativePropertyValueV1
+		{
+			Kind = NativePropertyKindV1.UInt32,
 			Integer = value
 		}, operation);
 
@@ -1205,6 +1416,97 @@ internal static unsafe class NativeBridge
 		return ReadBoolean(s_inputApi.IsWindowFocused(), "Input.IsWindowFocused");
 	}
 
+	internal static InputEventBatch GetInputEventBatch()
+	{
+		EnsureMainThread();
+		RequireInputEvents(s_inputEventsApi.GetBatchInfo != null
+			&& s_inputEventsApi.CopyEvents != null, "Input.EventBatch");
+		NativeInputEventBatchInfoV1 info = default;
+		Check(s_inputEventsApi.GetBatchInfo(&info), "Input.EventBatch.GetBatchInfo");
+		if (info.EventCount > 16_384)
+			throw new TomCatException("Input event batch exceeds the native safety limit.");
+
+		NativeInputEventV1[] nativeEvents = new NativeInputEventV1[info.EventCount];
+		uint required = 0;
+		fixed (NativeInputEventV1* pointer = nativeEvents)
+		{
+			Check(s_inputEventsApi.CopyEvents(pointer, (uint)nativeEvents.Length,
+				&required), "Input.EventBatch.CopyEvents");
+		}
+		if (required != info.EventCount)
+			throw new TomCatException("Input event batch changed while it was being read.");
+
+		InputEvent[] events = new InputEvent[nativeEvents.Length];
+		ulong previousSequence = 0;
+		for (int index = 0; index < nativeEvents.Length; ++index)
+		{
+			NativeInputEventV1 value = nativeEvents[index];
+			if (!double.IsFinite(value.TimestampSeconds)
+				|| value.Sequence == 0
+				|| (index != 0 && value.Sequence <= previousSequence)
+				|| value.FrameNumber < info.FirstFrameNumber
+				|| value.FrameNumber > info.LastFrameNumber)
+				throw new TomCatException("Native input event ordering metadata is invalid.");
+			InputEventDevice device = value.Device switch
+			{
+				NativeInputDeviceV1.Keyboard => InputEventDevice.Keyboard,
+				NativeInputDeviceV1.MouseButton => InputEventDevice.MouseButton,
+				NativeInputDeviceV1.GamepadConnection => InputEventDevice.GamepadConnection,
+				NativeInputDeviceV1.GamepadButton => InputEventDevice.GamepadButton,
+				_ => throw new TomCatException("Native input event device is invalid.")
+			};
+			InputEventAction action = value.Action switch
+			{
+				NativeInputActionV1.Pressed => InputEventAction.Pressed,
+				NativeInputActionV1.Released => InputEventAction.Released,
+				NativeInputActionV1.Repeated => InputEventAction.Repeated,
+				_ => throw new TomCatException("Native input event action is invalid.")
+			};
+			events[index] = new InputEvent(value.Sequence, value.TimestampSeconds,
+				value.FrameNumber, device, action, value.Code, value.DeviceIndex);
+			previousSequence = value.Sequence;
+		}
+		if (events.Length != 0 && (events[0].Sequence != info.FirstSequence
+			|| events[^1].Sequence != info.LastSequence))
+			throw new TomCatException("Native input event batch sequence range is invalid.");
+		return new InputEventBatch(info.FirstFrameNumber, info.LastFrameNumber,
+			info.FirstSequence, info.LastSequence, info.DroppedEventCount, events);
+	}
+
+	internal static string? GetApplicationDirectory(
+		delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> callback,
+		string operation)
+	{
+		EnsureMainThread();
+		RequireApplicationPaths(callback != null, operation);
+		uint required = 0;
+		int probe = callback(null, 0, &required);
+		if (probe == NativeNotFound)
+			return null;
+		if (probe != 0 && probe != NativeBufferTooSmall)
+			Check(probe, operation);
+		if (required > 1024 * 1024)
+			throw new TomCatException($"{operation} returned an invalid length.");
+		if (required == 0)
+			return string.Empty;
+		byte[] bytes = new byte[required];
+		fixed (byte* pointer = bytes)
+		{
+			uint actual = 0;
+			Check(callback(pointer, required, &actual), operation);
+			if (actual != required)
+				throw new TomCatException($"{operation} changed length while being read.");
+		}
+		try
+		{
+			return s_strictUtf8.GetString(bytes);
+		}
+		catch (DecoderFallbackException error)
+		{
+			throw new TomCatException($"{operation} returned invalid UTF-8: {error.Message}");
+		}
+	}
+
 	internal static bool InputGamepadBoolean(uint gamepad,
 		delegate* unmanaged[Cdecl]<uint, int> callback, string operation)
 	{
@@ -1671,6 +1973,24 @@ internal static unsafe class NativeBridge
 	private static NativeVector3 ToNative(Vector3 value) =>
 		new() { X = value.X, Y = value.Y, Z = value.Z };
 
+	private static string CopyUtf8(NativeUtf8View value, string operation)
+	{
+		if (value.Length == 0)
+			return string.Empty;
+		if (value.Data is null || value.Length > int.MaxValue)
+			throw new TomCatException($"{operation} returned an invalid UTF-8 view.");
+		try
+		{
+			return s_strictUtf8.GetString(
+				new ReadOnlySpan<byte>(value.Data, (int)value.Length));
+		}
+		catch (DecoderFallbackException error)
+		{
+			throw new TomCatException(
+				$"{operation} returned malformed UTF-8: {error.Message}");
+		}
+	}
+
     private static void WithUtf8(string value, string operation,
         Func<NativeUtf8View, int> callback, bool available)
     {
@@ -1708,11 +2028,32 @@ internal static unsafe class NativeBridge
 				$"{operation} requires the optional TomCat.InputApiV1 capability.");
 	}
 
+	private static void RequireInputEvents(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_inputEventsBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.InputEventsApiV1 capability.");
+	}
+
+	private static void RequireApplicationPaths(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_applicationPathsBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.ApplicationPathsApiV1 capability.");
+	}
+
 	private static void RequireComponent(bool condition, string operation)
 	{
 		if (!Volatile.Read(ref s_componentBound) || !condition)
 			throw new TomCatException(
 				$"{operation} requires the optional TomCat.ComponentApiV1 capability.");
+	}
+
+	private static void RequireComponentSchema(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_componentSchemaBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.ComponentSchemaApiV1 capability.");
 	}
 
 	private static void RequireAudio(bool condition, string operation)
@@ -1790,6 +2131,9 @@ internal static unsafe class NativeBridge
 	internal static delegate* unmanaged[Cdecl]<uint, uint, int> InputIsGamepadButtonHeld => s_inputApi.IsGamepadButtonHeld;
 	internal static delegate* unmanaged[Cdecl]<uint, uint, int> InputWasGamepadButtonPressed => s_inputApi.WasGamepadButtonPressed;
 	internal static delegate* unmanaged[Cdecl]<uint, uint, int> InputWasGamepadButtonReleased => s_inputApi.WasGamepadButtonReleased;
+	internal static delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> ApplicationGetSaveDirectory => s_applicationPathsApi.GetSaveDirectory;
+	internal static delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> ApplicationGetLogDirectory => s_applicationPathsApi.GetLogDirectory;
+	internal static delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> ApplicationGetCrashDirectory => s_applicationPathsApi.GetCrashDirectory;
 	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetEnabled => s_audioApi.GetEnabled;
 	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> AudioSetEnabled => s_audioApi.SetEnabled;
 	internal static delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> AudioGetPlayOnStart => s_audioApi.GetPlayOnStart;

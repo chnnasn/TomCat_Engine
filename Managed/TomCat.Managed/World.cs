@@ -24,8 +24,6 @@ public static class World
 		Entity context = ScriptExecutionContext.CurrentEntity;
 		if (ComponentProxy<T>.TryGetRegisteredTypeId(out ulong registeredTypeId))
 			return NativeBridge.QueryEntities(context, 0, registeredTypeId);
-		if (ComponentProxy<T>.TryGetNativeType(out var nativeType))
-			return NativeBridge.QueryEntities(context, (int)nativeType, 0);
 		throw new TomCatException($"{typeof(T).FullName} is not a queryable TomCat component.");
 	}
 

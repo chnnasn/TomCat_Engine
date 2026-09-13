@@ -1,4 +1,5 @@
 #include "TomCat/Core/Log.h"
+#include "TomCat/Core/Input.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Runtime/RuntimeCompatibility.h"
@@ -107,6 +108,8 @@ namespace {
 			PhysicsEventCount += static_cast<uint32_t>(events.size());
 			PhysicsEvents.insert(PhysicsEvents.end(), events.begin(), events.end());
 			Calls.emplace_back("DispatchPhysicsEvents");
+			if (PhysicsEventAction)
+				PhysicsEventAction();
 			if (!MutationAttempted && Mutation != PhysicsMutation::None
 				&& !events.empty() && !Attachments.empty())
 			{
@@ -188,6 +191,7 @@ namespace {
 		bool DynamicPhysicsReady = true;
 		std::function<void()> InvokeCreateAction;
 		std::function<void()> FixedUpdateAction;
+		std::function<void()> PhysicsEventAction;
 		std::string LastFields;
 		std::string LastUnloadFailure;
 		std::string DynamicFields;
@@ -856,12 +860,21 @@ namespace {
 			&& inspected->GetPlayerSettings().Version == config.Version
 			&& !std::filesystem::exists(project->GetPlayerSettingsPath()),
 			"read-only project inspection wrote PlayerSettings migration output");
-		auto migrated = TomCat::Project::Load(projectPath);
+		TomCat::ProjectMigrationPreview migrationPreview;
+		std::string migrationPreviewError;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, migrationPreview, migrationPreviewError),
+			"missing PlayerSettings migration preview failed");
+		Require(TomCat::Project::Load(projectPath) == nullptr
+			&& !std::filesystem::exists(project->GetPlayerSettingsPath()),
+			"default Project::Load implicitly created missing PlayerSettings");
+		auto migrated = TomCat::Project::LoadWithMigration(
+			projectPath, migrationPreview);
 		Require(migrated != nullptr
 			&& migrated->GetPlayerSettings().ProductName == config.Name
 			&& migrated->GetPlayerSettings().Version == config.Version
 			&& std::filesystem::is_regular_file(project->GetPlayerSettingsPath()),
-			"normal project load did not migrate missing PlayerSettings defaults");
+			"approved migration did not create missing PlayerSettings defaults");
 	}
 
 	void TestLegacyProjectBuildSettingsMigration()
@@ -884,9 +897,20 @@ namespace {
 			<< "  StartSceneHandle: " << legacyHandle << "\n";
 		WriteTextFile(projectPath, legacyProject.str());
 
-		auto migrated = TomCat::Project::Load(projectPath);
+		TomCat::ProjectMigrationPreview migrationPreview;
+		std::string migrationPreviewError;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, migrationPreview, migrationPreviewError),
+			"legacy project migration preview failed");
+		Require(TomCat::Project::Load(projectPath) == nullptr
+			&& ReadTextFile(projectPath) == legacyProject.str()
+			&& !std::filesystem::exists(
+				environment.Root / "ProjectSettings" / "BuildSettings.json"),
+			"default Project::Load implicitly migrated a schema-v3 project");
+		auto migrated = TomCat::Project::LoadWithMigration(
+			projectPath, migrationPreview);
 		Require(migrated != nullptr,
-			"Project::Load rejected a supported schema-v3 project migration input");
+			"approved schema-v3 project migration was rejected");
 		const TomCat::BuildSettings& build = migrated->GetBuildSettings();
 		Require(build.EntrySceneHandle == TomCat::AssetHandle(legacyHandle)
 			&& build.Scenes.size() == 1
@@ -1080,6 +1104,250 @@ namespace {
 		CompareFrameRatePhysics(10);
 	}
 
+	void TestIncrementalPhysicsSynchronizationPreservesObjectIdentity()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity changed = AddCircleBody(scene, "Incremental changed",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { -5.0f, 0.0f });
+		TomCat::Entity untouched = AddCircleBody(scene, "Incremental untouched",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 5.0f, 0.0f });
+		Require(scene.OnRuntimeStart(), "incremental physics scene did not start");
+
+		void* changedBody = changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedBody = untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedFixture =
+			untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture;
+		Require(changedBody && untouchedBody && untouchedFixture,
+			"incremental identity fixtures were not materialized");
+
+		changed.GetComponent<TomCat::CircleCollider2D>().Radius = 0.75f;
+		scene.OnRuntimeStep();
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody,
+			"collider edit replaced its owning Box2D body");
+		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"collider edit replaced an unrelated body or fixture");
+
+		auto& box = changed.AddComponent<TomCat::BoxCollider2D>();
+		box.Size = { 0.25f, 0.5f };
+		scene.OnRuntimeStep();
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"targeted fixture addition rebuilt existing Box2D objects");
+
+		auto& changedRigidbody = changed.GetComponent<TomCat::Rigidbody2D>();
+		changedRigidbody.Type = TomCat::Rigidbody2D::BodyType::Kinematic;
+		changedRigidbody.FixedRotation = true;
+		scene.OnRuntimeStep();
+		Require(changedRigidbody.RuntimeBody == changedBody
+			&& static_cast<b2Body*>(changedBody)->GetType() == b2_kinematicBody
+			&& static_cast<b2Body*>(changedBody)->IsFixedRotation(),
+			"Rigidbody2D definition edit did not mutate the existing body in place");
+		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"body definition edit rebuilt unrelated Box2D objects");
+
+		auto& joint = changed.AddComponent<TomCat::DistanceJoint2D>();
+		joint.ConnectedEntity = untouched.GetUUID();
+		joint.Distance = 10.0f;
+		scene.OnRuntimeStep();
+		Require(joint.RuntimeJoint != nullptr
+			&& changedRigidbody.RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody,
+			"joint addition rebuilt one of its endpoint bodies");
+		joint.Distance = 9.0f;
+		scene.OnRuntimeStep();
+		Require(joint.RuntimeJoint != nullptr
+			&& changedRigidbody.RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"joint edit rebuilt endpoint bodies or an unrelated fixture");
+
+		scene.DestroyEntity(changed);
+		scene.OnRuntimeStep();
+		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"entity removal rebuilt an unrelated Box2D body or fixture");
+		scene.OnRuntimeStop();
+	}
+
+	void TestPhysicsSynchronizationStageCoalescing()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity changed = AddCircleBody(scene, "Sync statistics changed",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { -20.0f, 10.0f });
+		TomCat::Entity untouched = AddCircleBody(scene, "Sync statistics untouched",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 20.0f, 10.0f });
+		Require(scene.OnRuntimeStart(), "sync statistics scene did not start");
+
+		void* changedBody = changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedBody = untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		void* untouchedFixture =
+			untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture;
+		Require(changedBody && untouchedBody && untouchedFixture,
+			"sync statistics fixtures were not materialized");
+
+		scene.ResetRuntimePhysicsSyncStatistics();
+		scene.OnUpdateRuntime(TomCat::Timestep(
+			TomCat::Scene::FixedRuntimeTimestep * 4.0f));
+		const TomCat::RuntimePhysicsSyncStatistics stable =
+			scene.GetRuntimePhysicsSyncStatistics();
+		Require(stable.DefinitionScans == 1,
+			"one unchanged display frame repeated the full physics definition scan");
+		Require(stable.CoalescedRequests > 1,
+			"same-stage physics synchronization requests were not coalesced");
+		Require(stable.WorldRebuilds == 0 && stable.BodiesCreated == 0
+			&& stable.BodiesDestroyed == 0 && stable.BodiesUpdatedInPlace == 0
+			&& stable.BoxFixturesCreated == 0
+			&& stable.BoxFixturesDestroyed == 0
+			&& stable.CircleFixturesCreated == 0
+			&& stable.CircleFixturesDestroyed == 0
+			&& stable.DistanceJointsCreated == 0
+			&& stable.DistanceJointsDestroyed == 0,
+			"an unchanged display frame mutated runtime physics definitions");
+
+		scene.ResetRuntimePhysicsSyncStatistics();
+		changed.GetComponent<TomCat::CircleCollider2D>().Radius = 0.875f;
+		scene.OnUpdateRuntime(TomCat::Timestep(0.0f));
+		const TomCat::RuntimePhysicsSyncStatistics colliderEdit =
+			scene.GetRuntimePhysicsSyncStatistics();
+		Require(colliderEdit.DefinitionScans == 1,
+			"a direct public collider-field edit triggered repeated definition scans");
+		Require(colliderEdit.WorldRebuilds == 0
+			&& colliderEdit.BodiesCreated == 0
+			&& colliderEdit.BodiesDestroyed == 0
+			&& colliderEdit.BodiesUpdatedInPlace == 0
+			&& colliderEdit.BoxFixturesCreated == 0
+			&& colliderEdit.BoxFixturesDestroyed == 0
+			&& colliderEdit.CircleFixturesCreated == 1
+			&& colliderEdit.CircleFixturesDestroyed == 1
+			&& colliderEdit.DistanceJointsCreated == 0
+			&& colliderEdit.DistanceJointsDestroyed == 0,
+			"one collider edit changed Box2D objects outside its target fixture");
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"one collider edit replaced an owning or unrelated Box2D object");
+
+		scene.ResetRuntimePhysicsSyncStatistics();
+		changed.GetComponent<TomCat::Rigidbody2D>().Type =
+			TomCat::Rigidbody2D::BodyType::Kinematic;
+		scene.OnUpdateRuntime(TomCat::Timestep(0.0f));
+		const TomCat::RuntimePhysicsSyncStatistics bodyEdit =
+			scene.GetRuntimePhysicsSyncStatistics();
+		Require(bodyEdit.DefinitionScans == 1 && bodyEdit.WorldRebuilds == 0
+			&& bodyEdit.BodiesCreated == 0 && bodyEdit.BodiesDestroyed == 0
+			&& bodyEdit.BodiesUpdatedInPlace == 1
+			&& bodyEdit.BoxFixturesCreated == 0
+			&& bodyEdit.BoxFixturesDestroyed == 0
+			&& bodyEdit.CircleFixturesCreated == 0
+			&& bodyEdit.CircleFixturesDestroyed == 0
+			&& bodyEdit.DistanceJointsCreated == 0
+			&& bodyEdit.DistanceJointsDestroyed == 0,
+			"one Rigidbody2D edit did not remain a single in-place body update");
+		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody
+			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
+			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
+				== untouchedFixture,
+			"one body edit replaced the target or an unrelated Box2D object");
+		scene.OnRuntimeStop();
+	}
+
+	void TestPhysicsRenderInterpolation()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity bodyEntity = AddCircleBody(scene, "Interpolated parent",
+			TomCat::Rigidbody2D::BodyType::Kinematic, { 0.0f, 0.0f });
+		TomCat::Entity child = scene.CreateEntity("Interpolated child");
+		auto& childTransform = child.GetComponent<TomCat::Transform>();
+		childTransform._Translation.x = 2.0f;
+		childTransform._LocalTranslation = childTransform._Translation;
+		Require(scene.SetParent(child, bodyEntity),
+			"could not create interpolation hierarchy fixture");
+		Require(scene.OnRuntimeStart(), "interpolation scene did not start");
+
+		auto* body = static_cast<b2Body*>(
+			bodyEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		Require(body != nullptr, "interpolation body was not materialized");
+		body->SetLinearVelocity({ 6.0f, 0.0f });
+		body->SetAngularVelocity(6.0f);
+
+		scene.OnUpdateRuntime(TomCat::Timestep(
+			TomCat::Scene::FixedRuntimeTimestep * 1.5f));
+		Require(Near(scene.GetRuntimeInterpolationAlpha(), 0.5f, 2.0e-4f),
+			"runtime interpolation alpha did not preserve the fixed-step remainder");
+		const auto& current = bodyEntity.GetComponent<TomCat::Transform>();
+		Require(Near(current._Translation.x, 0.1f, 2.0e-4f)
+			&& Near(current._Rotation.z, 0.1f, 2.0e-4f),
+			"ECS did not retain the authoritative current physics pose");
+
+		const glm::mat4 parentRender =
+			scene.GetRuntimeRenderTransform(bodyEntity.GetUUID());
+		Require(Near(parentRender[3].x, 0.05f, 2.0e-4f)
+			&& Near(parentRender[0][0], std::cos(0.05f), 2.0e-4f),
+			"render transform was not halfway between previous and current poses");
+		const glm::mat4 childRender =
+			scene.GetRuntimeRenderTransform(child.GetUUID());
+		Require(Near(childRender[3].x, 0.05f + 2.0f * std::cos(0.05f), 3.0e-4f)
+			&& Near(childRender[3].y, 2.0f * std::sin(0.05f), 3.0e-4f),
+			"non-physics child did not inherit its parent's interpolated pose");
+		Require(Near(bodyEntity.GetComponent<TomCat::Transform>()._Translation.x,
+			0.1f, 2.0e-4f),
+			"reading an interpolated render transform mutated ECS authoring state");
+
+		scene.OnRuntimeStep();
+		Require(Near(scene.GetRuntimeInterpolationAlpha(), 1.0f)
+			&& Near(scene.GetRuntimeRenderTransform(bodyEntity.GetUUID())[3].x,
+				0.2f, 3.0e-4f),
+			"manual single-step did not present the newly completed physics pose");
+		scene.OnRuntimeStop();
+	}
+
+	void TestIncrementalFixtureContactContinuity()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity trigger = scene.CreateEntity("Incremental contact trigger");
+		auto& triggerCollider = trigger.AddComponent<TomCat::CircleCollider2D>();
+		triggerCollider.Radius = 2.0f;
+		triggerCollider.IsTrigger = true;
+		TomCat::Entity visitor = AddCircleBody(scene, "Incremental contact visitor",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 0.0f }, 0.25f);
+
+		int enters = 0;
+		int exits = 0;
+		scene.AddTriggerEnter2DListener(
+			[&](const TomCat::TriggerEnter2D&) { ++enters; });
+		scene.AddTriggerExit2DListener(
+			[&](const TomCat::TriggerExit2D&) { ++exits; });
+		Require(scene.OnRuntimeStart(), "incremental contact scene did not start");
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 0,
+			"initial persistent trigger pair was not reported once");
+
+		void* visitorBody = visitor.GetComponent<TomCat::Rigidbody2D>().RuntimeBody;
+		triggerCollider.Friction = 0.75f;
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 0
+			&& visitor.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == visitorBody,
+			"fixture replacement emitted a false contact transition or rebuilt its peer");
+
+		triggerCollider.Offset.x = 10.0f;
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 1,
+			"moving a recreated fixture away did not emit one final Exit");
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 1,
+			"separated incremental fixtures emitted duplicate transitions");
+		scene.OnRuntimeStop();
+	}
+
 	void TestPauseRenderPathAndSingleStep()
 	{
 		auto runtime = std::make_shared<ManagedRuntimeProbe>();
@@ -1245,6 +1513,30 @@ namespace {
 			invalidListenerPair |= !Contains(event, triggerUUID) || !Contains(event, bodyUUID);
 		});
 		Require(scene.OnRuntimeStart(), "managed trigger probe did not start");
+
+		auto& scriptEngine = TomCat::Scripting::ScriptEngine::Get();
+		std::vector<bool> fixedInputEdges;
+		std::vector<bool> physicsInputEdges;
+		std::vector<size_t> fixedInputEventCounts;
+		std::vector<size_t> physicsInputEventCounts;
+		runtime->FixedUpdateAction = [&]()
+		{
+			fixedInputEdges.push_back(scriptEngine.WasKeyPressed(65)
+				&& scriptEngine.WasKeyReleased(65));
+			fixedInputEventCounts.push_back(scriptEngine.GetInputEvents().size());
+		};
+		runtime->PhysicsEventAction = [&]()
+		{
+			physicsInputEdges.push_back(scriptEngine.WasKeyPressed(65)
+				&& scriptEngine.WasKeyReleased(65));
+			physicsInputEventCounts.push_back(scriptEngine.GetInputEvents().size());
+		};
+		TomCat::Input::ClearState();
+		TomCat::Input::NotifyKey(65, TomCat::InputEventQueue::Action::Pressed, 50.0);
+		TomCat::Input::NotifyKey(65, TomCat::InputEventQueue::Action::Released, 50.1);
+		TomCat::Input::BeginFrame();
+		scriptEngine.CaptureInputState();
+
 		scene.OnRuntimeStep();
 		Require(triggerEnters == 1 && collisionEnters == 0,
 			"sensor contact was not routed exclusively as TriggerEnter2D");
@@ -1267,11 +1559,23 @@ namespace {
 			&& runtime->PhysicsEvents.back().Kind == static_cast<uint32_t>(
 				TomCat::Scripting::NativePhysicsEventKind::TriggerExit),
 			"TriggerExit2D was not delivered once to listeners and the managed runtime");
+		Require(fixedInputEdges.size() == 2 && physicsInputEdges.size() == 2
+			&& fixedInputEdges[0] && physicsInputEdges[0]
+			&& !fixedInputEdges[1] && !physicsInputEdges[1],
+			"Scene fixed-step input edges were not shared then consumed across physics callbacks");
+		Require(fixedInputEventCounts.size() == 2
+			&& physicsInputEventCounts.size() == 2
+			&& fixedInputEventCounts[0] == 2
+			&& physicsInputEventCounts[0] == 2
+			&& fixedInputEventCounts[1] == 0
+			&& physicsInputEventCounts[1] == 0,
+			"Scene fixed-step ordered batch was replayed or cleared before physics callbacks");
 		scene.OnRuntimeStep();
 		Require(triggerEnters == 1 && triggerExits == 1
 			&& runtime->PhysicsEvents.size() == 2,
 			"persistent separation emitted duplicate trigger events");
 		scene.OnRuntimeStop();
+		TomCat::Input::ClearState();
 	}
 
 	void TestCollisionFilteringAndRuntimeRebuild()
@@ -3712,6 +4016,139 @@ namespace {
 		scene.OnRuntimeStop();
 	}
 
+	void TestComponentSchemaCapability()
+	{
+		using namespace TomCat::Scripting;
+		NativeApiV2 envelope = BuildNativeApiV2();
+		NativeComponentSchemaApiV1 schema{};
+		uint32_t required = 0;
+		const std::string capabilityName(ComponentSchemaCapabilityName);
+		const NativeUtf8View capabilityView{
+			reinterpret_cast<const uint8_t*>(capabilityName.data()),
+			capabilityName.size() };
+		Require(envelope.QueryCapability(capabilityView, 1, &schema,
+			sizeof(schema), &required) == static_cast<int32_t>(ScriptStatus::Success)
+			&& required == sizeof(schema) && schema.Version == 1
+			&& schema.Size == sizeof(schema) && schema.GetComponentCount
+			&& schema.GetComponent && schema.GetPropertyCount && schema.GetProperty,
+			"TomCat.ComponentSchemaApiV1 capability table is incomplete");
+		Require(envelope.QueryCapability(capabilityView, 2, nullptr, 0, &required)
+			== static_cast<int32_t>(ScriptStatus::VersionMismatch)
+			&& required == sizeof(schema),
+			"Component schema capability did not reject a newer version");
+
+		uint32_t count = 0;
+		const auto descriptors = TomCat::ComponentRegistry::Get().GetDescriptors();
+		Require(schema.GetComponentCount(&count)
+			== static_cast<int32_t>(ScriptStatus::Success)
+			&& count == descriptors.size(),
+			"Component schema capability did not enumerate every descriptor");
+		auto text = [](NativeUtf8View value)
+		{
+			return std::string_view(reinterpret_cast<const char*>(value.Data),
+				static_cast<size_t>(value.Length));
+		};
+		auto expectedKind = [](TomCat::PropertyKind kind)
+		{
+			switch (kind)
+			{
+				case TomCat::PropertyKind::Bool:
+					return NativePropertyKindV1::Bool;
+				case TomCat::PropertyKind::Int32:
+					return NativePropertyKindV1::Int32;
+				case TomCat::PropertyKind::Int64:
+					return NativePropertyKindV1::Int64;
+				case TomCat::PropertyKind::UInt32:
+					return NativePropertyKindV1::UInt32;
+				case TomCat::PropertyKind::UInt64:
+					return NativePropertyKindV1::UInt64;
+				case TomCat::PropertyKind::Float:
+					return NativePropertyKindV1::Float;
+				case TomCat::PropertyKind::Double:
+					return NativePropertyKindV1::Double;
+				case TomCat::PropertyKind::String:
+					return NativePropertyKindV1::String;
+				case TomCat::PropertyKind::Vector2:
+					return NativePropertyKindV1::Vector2;
+				case TomCat::PropertyKind::Vector3:
+					return NativePropertyKindV1::Vector3;
+				case TomCat::PropertyKind::Vector4:
+					return NativePropertyKindV1::Vector4;
+			}
+			throw std::runtime_error("Unhandled component property kind");
+		};
+
+		for (uint32_t componentIndex = 0; componentIndex < count;
+			++componentIndex)
+		{
+			NativeComponentSchemaInfoV1 component{};
+			const TomCat::ComponentDescriptor& descriptor =
+				descriptors[componentIndex];
+			Require(schema.GetComponent(componentIndex, &component)
+				== static_cast<int32_t>(ScriptStatus::Success)
+				&& component.TypeId == static_cast<uint64_t>(descriptor.TypeId)
+				&& component.ProviderId
+					== static_cast<uint64_t>(descriptor.ProviderId)
+				&& component.SchemaVersion == descriptor.SchemaVersion
+				&& component.PropertyCount == descriptor.Properties.size()
+				&& text(component.StableName) == descriptor.StableName
+				&& text(component.DisplayName) == descriptor.DisplayName,
+				"Component schema metadata did not match its registry descriptor");
+			const uint32_t expectedFlags =
+				(descriptor.ScriptAccessible
+					? static_cast<uint32_t>(
+						NativeComponentSchemaFlagsV1::ScriptAccessible) : 0u)
+				| (descriptor.InspectorVisible
+					? static_cast<uint32_t>(
+						NativeComponentSchemaFlagsV1::InspectorVisible) : 0u);
+			Require(component.Flags == expectedFlags,
+				"Component schema flags did not match the registry");
+
+			uint32_t propertyCount = 0;
+			Require(schema.GetPropertyCount(component.TypeId, &propertyCount)
+				== static_cast<int32_t>(ScriptStatus::Success)
+				&& propertyCount == descriptor.Properties.size(),
+				"Component schema property count was inconsistent");
+			for (uint32_t propertyIndex = 0; propertyIndex < propertyCount;
+				++propertyIndex)
+			{
+				NativeComponentPropertySchemaInfoV1 property{};
+				const TomCat::PropertyDescriptor& descriptorProperty =
+					descriptor.Properties[propertyIndex];
+				Require(schema.GetProperty(component.TypeId, propertyIndex,
+					&property) == static_cast<int32_t>(ScriptStatus::Success)
+					&& property.ComponentTypeId == component.TypeId
+					&& property.PropertyId
+						== static_cast<uint64_t>(descriptorProperty.PropertyId)
+					&& property.Kind == static_cast<uint32_t>(
+						expectedKind(descriptorProperty.Kind))
+					&& text(property.StableName)
+						== descriptorProperty.StableName
+					&& text(property.DisplayName)
+						== descriptorProperty.DisplayName,
+					"Component property schema did not match its registry descriptor");
+				const uint32_t propertyFlags =
+					(descriptorProperty.AssetReference
+						? static_cast<uint32_t>(
+							NativeComponentPropertyFlagsV1::AssetReference) : 0u)
+					| (descriptorProperty.EntityReference
+						? static_cast<uint32_t>(
+							NativeComponentPropertyFlagsV1::EntityReference) : 0u);
+				Require(property.Flags == propertyFlags,
+					"Component property schema flags did not match the registry");
+			}
+		}
+
+		NativeComponentSchemaInfoV1 missing{};
+		Require(schema.GetComponent(count, &missing)
+			== static_cast<int32_t>(ScriptStatus::NotFound)
+			&& schema.GetComponent(0, nullptr)
+				== static_cast<int32_t>(ScriptStatus::InvalidArgument)
+			&& schema.GetPropertyCount(0, &count)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"Component schema bounds and identity validation were not enforced");
+	}
+
 	void TestReservedEntityChainedInitializationCapability()
 	{
 		using namespace TomCat::Scripting;
@@ -4023,6 +4460,13 @@ int main(int argc, char** argv)
 	run("managed Transform world setters preserve hierarchy",
 		TestManagedTransformSettersRespectHierarchy);
 	run("30/60/144Hz one- and ten-second consistency", TestFrameRateIndependentPhysics);
+	run("incremental physics synchronization preserves object identity",
+		TestIncrementalPhysicsSynchronizationPreservesObjectIdentity);
+	run("physics synchronization safe-stage coalescing and targeted mutation statistics",
+		TestPhysicsSynchronizationStageCoalescing);
+	run("fixed-step physics render interpolation", TestPhysicsRenderInterpolation);
+	run("incremental fixture contact continuity",
+		TestIncrementalFixtureContactContinuity);
 	run("Pause render path and exact single-step", TestPauseRenderPathAndSingleStep);
 	run("collider-only static runtime body", TestColliderOnlyStaticBody);
 	run("CircleCollider2D non-uniform fixture", TestCircleNonUniformScaleFixture);
@@ -4062,6 +4506,8 @@ int main(int argc, char** argv)
 		TestPrefabDynamicAttachmentBridge);
 	run("initial OnCreate Prefab physics before dynamic lifecycle",
 		TestInitialOnCreatePrefabPhysicsOrdering);
+	run("component registry schema discovery ABI",
+		TestComponentSchemaCapability);
 	run("reserved C# entity chained initialization capability",
 		TestReservedEntityChainedInitializationCapability);
 	run("managed lifecycle backend, timing, rollback, and unload failure",

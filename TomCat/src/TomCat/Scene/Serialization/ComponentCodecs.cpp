@@ -11,41 +11,6 @@
 
 namespace TomCat {
 
-	namespace {
-
-		template<typename Component>
-		void CopyIfPresent(Entity source, Entity destination)
-		{
-			if (source.HasComponent<Component>())
-				destination.AddOrReplaceComponent<Component>(source.GetComponent<Component>());
-		}
-
-		bool RemapEntityValue(uint64_t& value,
-			const std::unordered_map<UUID, UUID>& entityMap,
-			ComponentCodecs::MissingEntityReferencePolicy missingPolicy,
-			const std::string& context, std::string& error)
-		{
-			if (value == 0)
-				return true;
-			const auto mapped = entityMap.find(UUID(value));
-			if (mapped != entityMap.end())
-			{
-				value = static_cast<uint64_t>(mapped->second);
-				return true;
-			}
-			if (missingPolicy == ComponentCodecs::MissingEntityReferencePolicy::Preserve)
-				return true;
-			if (missingPolicy == ComponentCodecs::MissingEntityReferencePolicy::Clear)
-			{
-				value = 0;
-				return true;
-			}
-			error = context + " references an entity outside the instantiated archive";
-			return false;
-		}
-
-	}
-
 	bool ComponentCodecs::CopyAuthoringComponents(Entity source, Entity destination,
 		bool resolveAssets, std::string& error)
 	{
@@ -61,22 +26,8 @@ namespace TomCat {
 
 		try
 		{
-			// CreateEntity has already chosen the destination name.
-			destination.GetComponent<Tag>().Visible = source.GetComponent<Tag>().Visible;
-			destination.AddOrReplaceComponent<EntityMetadata>(
-				source.GetComponent<EntityMetadata>());
-			destination.AddOrReplaceComponent<Transform>(source.GetComponent<Transform>());
-			CopyIfPresent<SpriteRenderer>(source, destination);
-			CopyIfPresent<SpriteAnimator>(source, destination);
-			CopyIfPresent<LineRenderer>(source, destination);
-			CopyIfPresent<C_Camera>(source, destination);
-			CopyIfPresent<CSharpScripts>(source, destination);
-			CopyIfPresent<AudioSource>(source, destination);
-			CopyIfPresent<AudioListener>(source, destination);
-			CopyIfPresent<Rigidbody2D>(source, destination);
-			CopyIfPresent<BoxCollider2D>(source, destination);
-			CopyIfPresent<CircleCollider2D>(source, destination);
-			CopyIfPresent<DistanceJoint2D>(source, destination);
+			// Every engine and module authoring component is copied by its
+			// descriptor. Adding a component no longer requires another edit here.
 			if (!ComponentRegistry::Get().CopyRegisteredComponents(source,
 				destination, error))
 				return false;
@@ -130,15 +81,9 @@ namespace TomCat {
 			return false;
 		}
 
-		if (entity.HasComponent<DistanceJoint2D>())
-		{
-			auto& joint = entity.GetComponent<DistanceJoint2D>();
-			uint64_t connected = static_cast<uint64_t>(joint.ConnectedEntity);
-			if (!RemapEntityValue(connected, entityMap, missingPolicy,
-				"DistanceJoint2D.ConnectedEntity", error))
-				return false;
-			joint.ConnectedEntity = UUID(connected);
-		}
+		if (!ComponentRegistry::Get().RemapEntityReferences(entity, entityMap,
+			missingPolicy, error))
+			return false;
 
 		if (!entity.HasComponent<CSharpScripts>())
 			return true;
@@ -162,22 +107,6 @@ namespace TomCat {
 					error = "C# AttachmentID must be nonzero and unique";
 					return false;
 				}
-			}
-
-			for (ScriptField& field : script.Fields)
-			{
-				if (field.Type != ScriptFieldType::Entity)
-					continue;
-				if (!std::holds_alternative<uint64_t>(field.Value))
-				{
-					error = "C# Entity field '" + field.Name + "' has an incompatible value";
-					return false;
-				}
-				uint64_t value = std::get<uint64_t>(field.Value);
-				if (!RemapEntityValue(value, entityMap, missingPolicy,
-					"C# Entity field '" + field.Name + "'", error))
-					return false;
-				field.Value = value;
 			}
 		}
 		return true;

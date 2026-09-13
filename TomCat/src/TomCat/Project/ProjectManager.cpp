@@ -783,9 +783,28 @@ namespace TomCat {
 		return Project::Inspect(projectPath);
 	}
 
+	bool ProjectManager::PreviewProjectMigration(
+		const std::filesystem::path& projectPath,
+		ProjectMigrationPreview& preview, std::string& errorMessage) const
+	{
+		return Project::PreviewMigration(projectPath, preview, errorMessage);
+	}
+
 	Ref<Project> ProjectManager::LoadProject(const std::filesystem::path& projectPath)
 	{
-		auto project = Project::Load(projectPath);
+		return ActivateLoadedProject(Project::Load(projectPath));
+	}
+
+	Ref<Project> ProjectManager::LoadProjectWithMigration(
+		const std::filesystem::path& projectPath,
+		const ProjectMigrationPreview& approvedMigration)
+	{
+		return ActivateLoadedProject(
+			Project::LoadWithMigration(projectPath, approvedMigration));
+	}
+
+	Ref<Project> ProjectManager::ActivateLoadedProject(Ref<Project> project)
+	{
 		if (project)
 		{
 			const std::unordered_set<std::string> previousIgnoredProjectPaths = m_IgnoredProjectPaths;
@@ -802,7 +821,10 @@ namespace TomCat {
 
 	Ref<Project> ProjectManager::AddProject(const std::filesystem::path& projectPath)
 	{
-		auto project = Project::Load(projectPath);
+		// The Hub only needs metadata and must never upgrade a project merely
+		// because the user added it to the list. The Editor owns the preview,
+		// confirmation, write lock and transactional migration flow.
+		auto project = Project::Inspect(projectPath);
 		if (project)
 		{
 			const std::vector<std::filesystem::path> previousKnownProjectPaths = m_KnownProjectPaths;

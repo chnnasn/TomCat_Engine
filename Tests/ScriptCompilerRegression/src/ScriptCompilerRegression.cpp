@@ -173,6 +173,45 @@ namespace {
 		std::optional<std::string> m_Previous;
 	};
 
+#ifdef TC_PLATFORM_WINDOWS
+	std::optional<std::wstring> ReadWideEnvironment(const wchar_t* name)
+	{
+		wchar_t* value = nullptr;
+		size_t length = 0;
+		if (_wdupenv_s(&value, &length, name) != 0 || !value)
+			return std::nullopt;
+		std::wstring result(value);
+		std::free(value);
+		return result;
+	}
+
+	class ScopedWideEnvironmentVariable final
+	{
+	public:
+		ScopedWideEnvironmentVariable(const wchar_t* name,
+			const std::wstring& value)
+			: m_Name(name), m_Previous(ReadWideEnvironment(name))
+		{
+			Require(SetEnvironmentVariableW(m_Name.c_str(), value.c_str()) != FALSE,
+				"could not update the external CLI process environment");
+		}
+
+		~ScopedWideEnvironmentVariable()
+		{
+			SetEnvironmentVariableW(m_Name.c_str(),
+				m_Previous ? m_Previous->c_str() : nullptr);
+		}
+
+		ScopedWideEnvironmentVariable(const ScopedWideEnvironmentVariable&) = delete;
+		ScopedWideEnvironmentVariable& operator=(
+			const ScopedWideEnvironmentVariable&) = delete;
+
+	private:
+		std::wstring m_Name;
+		std::optional<std::wstring> m_Previous;
+	};
+#endif
+
 	class ScopedDotNetEnvironmentIsolation final
 	{
 	public:
@@ -1025,6 +1064,160 @@ namespace {
 #endif
 	}
 
+#ifdef TC_PLATFORM_WINDOWS
+	std::wstring QuoteWindowsArgument(std::wstring_view argument)
+	{
+		std::wstring quoted(1, L'"');
+		size_t backslashes = 0;
+		for (const wchar_t character : argument)
+		{
+			if (character == L'\\')
+			{
+				++backslashes;
+				continue;
+			}
+			if (character == L'"')
+			{
+				quoted.append(backslashes * 2 + 1, L'\\');
+				quoted.push_back(character);
+				backslashes = 0;
+				continue;
+			}
+			quoted.append(backslashes, L'\\');
+			backslashes = 0;
+			quoted.push_back(character);
+		}
+		quoted.append(backslashes * 2, L'\\');
+		quoted.push_back(L'"');
+		return quoted;
+	}
+
+	void RunWindowsProcessAndRequireSuccess(
+		const std::filesystem::path& executable,
+		const std::vector<std::wstring>& arguments,
+		const std::filesystem::path& workingDirectory,
+		const std::string& description)
+	{
+		std::wstring command = QuoteWindowsArgument(executable.wstring());
+		for (const std::wstring& argument : arguments)
+		{
+			command.push_back(L' ');
+			command += QuoteWindowsArgument(argument);
+		}
+		std::vector<wchar_t> mutableCommand(command.begin(), command.end());
+		mutableCommand.push_back(L'\0');
+		STARTUPINFOW startup{};
+		startup.cb = sizeof(startup);
+		PROCESS_INFORMATION process{};
+		const BOOL created = CreateProcessW(executable.c_str(),
+			mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+			nullptr, workingDirectory.c_str(), &startup, &process);
+		if (created == FALSE)
+		{
+			throw std::runtime_error("could not launch " + description
+				+ " (Windows error " + std::to_string(GetLastError()) + ")");
+		}
+		CloseHandle(process.hThread);
+
+		constexpr DWORD timeoutMilliseconds = 180000;
+		const DWORD waitResult = WaitForSingleObject(process.hProcess,
+			timeoutMilliseconds);
+		if (waitResult != WAIT_OBJECT_0)
+		{
+			TerminateProcess(process.hProcess,
+				waitResult == WAIT_TIMEOUT ? 124 : 125);
+			WaitForSingleObject(process.hProcess, 5000);
+			CloseHandle(process.hProcess);
+			throw std::runtime_error(waitResult == WAIT_TIMEOUT
+				? description + " exceeded its 180 second timeout"
+				: "waiting for " + description + " failed");
+		}
+		DWORD exitCode = 1;
+		const BOOL readExitCode = GetExitCodeProcess(process.hProcess, &exitCode);
+		CloseHandle(process.hProcess);
+		Require(readExitCode != FALSE,
+			"could not read the " + description + " exit code");
+		Require(exitCode == 0, description + " returned exit "
+			+ std::to_string(exitCode) + "; expected 0");
+	}
+#endif
+
+	void RunTomCatCliEndToEnd(const std::filesystem::path& projectPath,
+		const std::filesystem::path& cookOutput,
+		const std::optional<std::string>& templateVariable,
+		const std::filesystem::path& builtPlayerExecutable)
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		const std::optional<std::wstring> cliVariable =
+			ReadWideEnvironment(L"TOMCAT_E2E_CLI_EXE");
+		if (!cliVariable || cliVariable->empty())
+		{
+			Require(!EnvironmentFlag("TOMCAT_E2E_REQUIRE_CLI"),
+				"TomCatCLI e2e was required, but TOMCAT_E2E_CLI_EXE was not set");
+			std::cout << "SKIP TomCatCLI process e2e (TomCatCLI.exe was not supplied)\n";
+			return;
+		}
+		const std::filesystem::path cliExecutable(*cliVariable);
+		Require(std::filesystem::is_regular_file(cliExecutable),
+			"TOMCAT_E2E_CLI_EXE does not name a TomCatCLI executable");
+
+		const std::optional<std::wstring> sdkPath =
+			ReadWideEnvironment(L"TOMCAT_E2E_CLI_SDK_PATH");
+		const std::optional<std::wstring> dotnetRoot =
+			ReadWideEnvironment(L"TOMCAT_E2E_CLI_DOTNET_ROOT");
+		const std::optional<std::wstring> programFiles =
+			ReadWideEnvironment(L"TOMCAT_E2E_CLI_PROGRAM_FILES");
+		Require(sdkPath && !sdkPath->empty() && dotnetRoot
+			&& !dotnetRoot->empty() && programFiles && !programFiles->empty(),
+			"TomCatCLI e2e did not receive the real .NET SDK environment");
+		ScopedWideEnvironmentVariable restoredPath(L"PATH", *sdkPath);
+		ScopedWideEnvironmentVariable restoredDotNetRoot(L"DOTNET_ROOT", *dotnetRoot);
+		ScopedWideEnvironmentVariable restoredDotNetRootX64(
+			L"DOTNET_ROOT_X64", *dotnetRoot);
+		ScopedWideEnvironmentVariable restoredProgramFiles(
+			L"ProgramFiles", *programFiles);
+
+		RunWindowsProcessAndRequireSuccess(cliExecutable,
+			{ L"cook", L"--project", projectPath.wstring(), L"--output",
+				cookOutput.wstring() },
+			projectPath.parent_path(), "TomCatCLI cook");
+		std::error_code sizeError;
+		const uintmax_t cookedSize = std::filesystem::file_size(cookOutput, sizeError);
+		Require(!sizeError && cookedSize != 0,
+			"TomCatCLI cook returned success without a non-empty package");
+		std::cout << "PASS TomCatCLI cook produced a non-empty package\n";
+
+		if (!templateVariable || templateVariable->empty())
+			return;
+		Require(!builtPlayerExecutable.empty(),
+			"TomCatCLI build did not receive the expected Player output path");
+		const std::filesystem::path buildOutput =
+			builtPlayerExecutable.parent_path();
+		std::error_code removeError;
+		std::filesystem::remove_all(buildOutput, removeError);
+		Require(!removeError && !std::filesystem::exists(buildOutput),
+			"could not clear the previous Player export before TomCatCLI build");
+		RunWindowsProcessAndRequireSuccess(cliExecutable,
+			{ L"build", L"--project", projectPath.wstring(), L"--template",
+				std::filesystem::path(*templateVariable).wstring() },
+			projectPath.parent_path(), "TomCatCLI build");
+		Require(std::filesystem::is_regular_file(builtPlayerExecutable),
+			"TomCatCLI build returned success without the Player executable");
+		const std::filesystem::path builtPackage = buildOutput / "Game.tcpak";
+		const uintmax_t builtPackageSize =
+			std::filesystem::file_size(builtPackage, sizeError);
+		Require(!sizeError && builtPackageSize != 0,
+			"TomCatCLI build returned success without a non-empty Game.tcpak");
+		std::cout << "PASS TomCatCLI build produced a complete Player export\n";
+#else
+		(void)projectPath;
+		(void)cookOutput;
+		(void)templateVariable;
+		(void)builtPlayerExecutable;
+		Require(false, "TomCatCLI process e2e is supported only on Windows x64");
+#endif
+	}
+
 	void TestCookedRuntimeOnly(const std::filesystem::path& packagePath,
 		TomCat::UUID lifecycleEntityID, TomCat::UUID triggerEntityID)
 	{
@@ -1684,6 +1877,10 @@ public sealed class BulletProbe : TomCatBehaviour
 			std::cout << "SKIP real PlayerBuilder export (Player template was not supplied)\n";
 		}
 		assets.Shutdown();
+		const std::filesystem::path cliCookPackage = environment.Root
+			/ "CLI Cook Output" / "Game From TomCatCLI.tcpak";
+		RunTomCatCliEndToEnd(environment.Root / "Project.tcproj", cliCookPackage,
+			templateVariable, builtPlayerExecutable);
 		ValidateWithIndependentPlayer(packagePath);
 		RunFreshPrivateRuntimeProcess(packagePath, lifecycleEntityID,
 			triggerEntityID);

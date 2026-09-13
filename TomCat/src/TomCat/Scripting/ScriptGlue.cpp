@@ -6,6 +6,7 @@
 #include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Audio/AudioSceneRuntime.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Scene/ComponentRegistry.h"
@@ -552,6 +553,96 @@ namespace TomCat::Scripting {
 			return api;
 		}
 
+		int32_t InputEventsGetBatchInfoCallback(
+			NativeInputEventBatchInfoV1* value) noexcept
+		{
+			if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+			if (!value) return Code(ScriptStatus::InvalidArgument);
+			*value = ScriptEngine::Get().GetInputEventBatchInfo();
+			return Code(ScriptStatus::Success);
+		}
+
+		int32_t InputEventsCopyCallback(NativeInputEventV1* events,
+			uint32_t capacity, uint32_t* required) noexcept
+		{
+			if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+			if (!required) return Code(ScriptStatus::InvalidArgument);
+			const auto& source = ScriptEngine::Get().GetInputEvents();
+			if (source.size() > std::numeric_limits<uint32_t>::max())
+				return Code(ScriptStatus::InvalidState);
+			*required = static_cast<uint32_t>(source.size());
+			if (capacity < source.size() || (!events && !source.empty()))
+				return Code(ScriptStatus::BufferTooSmall);
+			if (!source.empty())
+				std::memcpy(events, source.data(),
+					source.size() * sizeof(NativeInputEventV1));
+			return Code(ScriptStatus::Success);
+		}
+
+		NativeInputEventsApiV1 BuildInputEventsApiV1()
+		{
+			NativeInputEventsApiV1 api;
+			api.GetBatchInfo = &InputEventsGetBatchInfoCallback;
+			api.CopyEvents = &InputEventsCopyCallback;
+			return api;
+		}
+
+		int32_t WriteRuntimeDirectory(
+			const std::optional<std::filesystem::path>& directory,
+			uint8_t* buffer, uint32_t capacity, uint32_t* required)
+		{
+			if (!required)
+				return Code(ScriptStatus::InvalidArgument);
+			if (!directory)
+			{
+				*required = 0;
+				return Code(ScriptStatus::NotFound);
+			}
+			return WriteUtf8(PathToUTF8(*directory), buffer, capacity, required);
+		}
+
+		int32_t ApplicationPathsGetSaveDirectoryCallback(uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				return WriteRuntimeDirectory(ApplicationPaths::GetRuntimeSaveDirectory(),
+					buffer, capacity, required);
+			});
+		}
+
+		int32_t ApplicationPathsGetLogDirectoryCallback(uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				return WriteRuntimeDirectory(ApplicationPaths::GetRuntimeLogDirectory(),
+					buffer, capacity, required);
+			});
+		}
+
+		int32_t ApplicationPathsGetCrashDirectoryCallback(uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				return WriteRuntimeDirectory(ApplicationPaths::GetRuntimeCrashDirectory(),
+					buffer, capacity, required);
+			});
+		}
+
+		NativeApplicationPathsApiV1 BuildApplicationPathsApiV1()
+		{
+			NativeApplicationPathsApiV1 api;
+			api.GetSaveDirectory = &ApplicationPathsGetSaveDirectoryCallback;
+			api.GetLogDirectory = &ApplicationPathsGetLogDirectoryCallback;
+			api.GetCrashDirectory = &ApplicationPathsGetCrashDirectoryCallback;
+			return api;
+		}
+
 		const PropertyDescriptor* FindProperty(const ComponentDescriptor& component,
 			uint64_t propertyId)
 		{
@@ -741,6 +832,7 @@ namespace TomCat::Scripting {
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				const ComponentDescriptor* descriptor = FindScriptComponent(typeId);
 				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
+				if (!descriptor->Removable) return Code(ScriptStatus::InvalidState);
 				return ScriptEngine::Get().QueueRemoveRegisteredComponent(handle, typeId)
 					? Code(ScriptStatus::Success)
 					: Code(ScriptStatus::InvalidState);
@@ -803,6 +895,155 @@ namespace TomCat::Scripting {
 			api.Remove = &ComponentRemoveCallback;
 			api.GetProperty = &ComponentGetPropertyCallback;
 			api.SetProperty = &ComponentSetPropertyCallback;
+			return api;
+		}
+
+		NativeUtf8View BorrowComponentSchemaString(const std::string& value)
+		{
+			return {
+				reinterpret_cast<const uint8_t*>(value.data()),
+				static_cast<uint64_t>(value.size())
+			};
+		}
+
+		uint32_t ToNativeSchemaPropertyKind(PropertyKind kind)
+		{
+			switch (kind)
+			{
+				case PropertyKind::Bool:
+					return static_cast<uint32_t>(NativePropertyKindV1::Bool);
+				case PropertyKind::Int32:
+					return static_cast<uint32_t>(NativePropertyKindV1::Int32);
+				case PropertyKind::Int64:
+					return static_cast<uint32_t>(NativePropertyKindV1::Int64);
+				case PropertyKind::UInt32:
+					return static_cast<uint32_t>(NativePropertyKindV1::UInt32);
+				case PropertyKind::UInt64:
+					return static_cast<uint32_t>(NativePropertyKindV1::UInt64);
+				case PropertyKind::Float:
+					return static_cast<uint32_t>(NativePropertyKindV1::Float);
+				case PropertyKind::Double:
+					return static_cast<uint32_t>(NativePropertyKindV1::Double);
+				case PropertyKind::String:
+					return static_cast<uint32_t>(NativePropertyKindV1::String);
+				case PropertyKind::Vector2:
+					return static_cast<uint32_t>(NativePropertyKindV1::Vector2);
+				case PropertyKind::Vector3:
+					return static_cast<uint32_t>(NativePropertyKindV1::Vector3);
+				case PropertyKind::Vector4:
+					return static_cast<uint32_t>(NativePropertyKindV1::Vector4);
+			}
+			return 0;
+		}
+
+		int32_t ComponentSchemaGetComponentCountCallback(uint32_t* count) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!count) return Code(ScriptStatus::InvalidArgument);
+				const size_t size = ComponentRegistry::Get().GetDescriptors().size();
+				if (size > std::numeric_limits<uint32_t>::max())
+					return Code(ScriptStatus::Unavailable);
+				*count = static_cast<uint32_t>(size);
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t ComponentSchemaGetComponentCallback(uint32_t index,
+			NativeComponentSchemaInfoV1* component) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!component) return Code(ScriptStatus::InvalidArgument);
+				const std::span<const ComponentDescriptor> descriptors =
+					ComponentRegistry::Get().GetDescriptors();
+				if (index >= descriptors.size()) return Code(ScriptStatus::NotFound);
+				const ComponentDescriptor& descriptor = descriptors[index];
+				*component = {};
+				component->TypeId = static_cast<uint64_t>(descriptor.TypeId);
+				component->ProviderId = static_cast<uint64_t>(descriptor.ProviderId);
+				component->SchemaVersion = descriptor.SchemaVersion;
+				if (descriptor.Properties.size()
+					> std::numeric_limits<uint32_t>::max())
+					return Code(ScriptStatus::Unavailable);
+				component->PropertyCount =
+					static_cast<uint32_t>(descriptor.Properties.size());
+				if (descriptor.ScriptAccessible)
+					component->Flags |= static_cast<uint32_t>(
+						NativeComponentSchemaFlagsV1::ScriptAccessible);
+				if (descriptor.InspectorVisible)
+					component->Flags |= static_cast<uint32_t>(
+						NativeComponentSchemaFlagsV1::InspectorVisible);
+				component->StableName =
+					BorrowComponentSchemaString(descriptor.StableName);
+				component->DisplayName =
+					BorrowComponentSchemaString(descriptor.DisplayName);
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t ComponentSchemaGetPropertyCountCallback(uint64_t componentTypeId,
+			uint32_t* count) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!count) return Code(ScriptStatus::InvalidArgument);
+				const ComponentDescriptor* descriptor =
+					ComponentRegistry::Get().Find(UUID(componentTypeId));
+				if (!descriptor) return Code(ScriptStatus::NotFound);
+				if (descriptor->Properties.size()
+					> std::numeric_limits<uint32_t>::max())
+					return Code(ScriptStatus::Unavailable);
+				*count = static_cast<uint32_t>(descriptor->Properties.size());
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t ComponentSchemaGetPropertyCallback(uint64_t componentTypeId,
+			uint32_t index, NativeComponentPropertySchemaInfoV1* property) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!property) return Code(ScriptStatus::InvalidArgument);
+				const ComponentDescriptor* descriptor =
+					ComponentRegistry::Get().Find(UUID(componentTypeId));
+				if (!descriptor) return Code(ScriptStatus::NotFound);
+				if (index >= descriptor->Properties.size())
+					return Code(ScriptStatus::NotFound);
+				const PropertyDescriptor& descriptorProperty =
+					descriptor->Properties[index];
+				*property = {};
+				property->ComponentTypeId = componentTypeId;
+				property->PropertyId =
+					static_cast<uint64_t>(descriptorProperty.PropertyId);
+				property->Kind = ToNativeSchemaPropertyKind(
+					descriptorProperty.Kind);
+				if (descriptorProperty.AssetReference)
+					property->Flags |= static_cast<uint32_t>(
+						NativeComponentPropertyFlagsV1::AssetReference);
+				if (descriptorProperty.EntityReference)
+					property->Flags |= static_cast<uint32_t>(
+						NativeComponentPropertyFlagsV1::EntityReference);
+				property->StableName =
+					BorrowComponentSchemaString(descriptorProperty.StableName);
+				property->DisplayName =
+					BorrowComponentSchemaString(descriptorProperty.DisplayName);
+				return property->Kind != 0 ? Code(ScriptStatus::Success)
+					: Code(ScriptStatus::Unavailable);
+			});
+		}
+
+		NativeComponentSchemaApiV1 BuildComponentSchemaApiV1()
+		{
+			NativeComponentSchemaApiV1 api;
+			api.GetComponentCount = &ComponentSchemaGetComponentCountCallback;
+			api.GetComponent = &ComponentSchemaGetComponentCallback;
+			api.GetPropertyCount = &ComponentSchemaGetPropertyCountCallback;
+			api.GetProperty = &ComponentSchemaGetPropertyCallback;
 			return api;
 		}
 
@@ -2108,9 +2349,43 @@ namespace TomCat::Scripting {
 					std::memcpy(output, &api, sizeof(api));
 					return Code(ScriptStatus::Success);
 				}
+				if (capability == InputEventsCapabilityName)
+				{
+					const NativeInputEventsApiV1 api = BuildInputEventsApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
+				if (capability == ApplicationPathsCapabilityName)
+				{
+					const NativeApplicationPathsApiV1 api = BuildApplicationPathsApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
 				if (capability == ComponentCapabilityName)
 				{
 					const NativeComponentApiV1 api = BuildComponentApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
+				if (capability == ComponentSchemaCapabilityName)
+				{
+					const NativeComponentSchemaApiV1 api =
+						BuildComponentSchemaApiV1();
 					*required = sizeof(api);
 					if (minimumVersion > api.Version)
 						return Code(ScriptStatus::VersionMismatch);

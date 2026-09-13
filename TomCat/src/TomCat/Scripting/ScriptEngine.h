@@ -8,6 +8,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace TomCat {
@@ -35,6 +36,10 @@ namespace TomCat {
 				std::span<const UUID> entityIDs);
 			void StopScene(uint64_t sceneSessionId);
 			void UpdateAll(uint64_t sceneSessionId, float deltaTime);
+			// A fixed-step scope owns the scene's pending input batch until Box2D
+			// and its resulting script callbacks have both completed.
+			bool BeginFixedStep(uint64_t sceneSessionId);
+			void EndFixedStep(uint64_t sceneSessionId);
 			void FixedUpdateAll(uint64_t sceneSessionId, float fixedDeltaTime);
 			void DispatchPhysicsEvents(uint64_t sceneSessionId,
 				std::span<const NativePhysicsEventV1> events);
@@ -81,7 +86,8 @@ namespace TomCat {
 			// still alive, so managed OnDisable/OnDestroy can safely inspect Entity.
 			void NotifyEntityDestroyed(Scene& scene, uint64_t entityId);
 
-			// Called once at the start of each display frame by Editor/Player.
+			// Called once by Application after native events have been polled and the
+			// display-frame Input snapshot has been frozen.
 			void CaptureInputState();
 			bool IsKeyHeld(uint32_t key) const;
 			bool WasKeyPressed(uint32_t key) const;
@@ -102,6 +108,8 @@ namespace TomCat {
 			float GetGamepadAxis(uint32_t gamepad, uint32_t axis) const;
 			const std::string& GetGamepadName(uint32_t gamepad) const;
 			uint32_t GetModifiers() const;
+			NativeInputEventBatchInfoV1 GetInputEventBatchInfo() const;
+			const std::vector<NativeInputEventV1>& GetInputEvents() const;
 
 		private:
 			ScriptEngine();
@@ -158,6 +166,31 @@ namespace TomCat {
 			bool InstantiateRuntimeAttachments(Scene& scene, uint64_t sceneSessionId,
 				std::span<const UUID> entityIDs);
 			void ReportFailure(const char* operation, ScriptStatus status) const;
+			enum class InputDispatchPhase : uint8_t
+			{
+				DisplayFrame,
+				FixedUpdate
+			};
+
+			struct FixedInputBatch
+			{
+				uint64_t FirstFrameNumber = 0;
+				uint64_t LastFrameNumber = 0;
+				uint64_t DroppedEventCount = 0;
+				std::vector<NativeInputEventV1> Events;
+				std::array<bool, 512> KeysPressed{};
+				std::array<bool, 512> KeysReleased{};
+				std::array<bool, 8> MouseButtonsPressed{};
+				std::array<bool, 8> MouseButtonsReleased{};
+				std::array<bool, 16> GamepadsConnected{};
+				std::array<bool, 16> GamepadsDisconnected{};
+				std::array<std::array<bool, 15>, 16> GamepadButtonsPressed{};
+				std::array<std::array<bool, 15>, 16> GamepadButtonsReleased{};
+				NativeVector2 MouseDelta{};
+				NativeVector2 ScrollDelta{};
+			};
+
+			void AccumulateCurrentInput(FixedInputBatch& batch) const;
 
 		private:
 			mutable std::mutex m_Mutex;
@@ -167,9 +200,11 @@ namespace TomCat {
 			uint64_t m_NextSceneSessionId = 1;
 			std::thread::id m_MainThread;
 			std::array<bool, 512> m_CurrentKeys{};
-			std::array<bool, 512> m_PreviousKeys{};
+			std::array<bool, 512> m_KeysPressedThisFrame{};
+			std::array<bool, 512> m_KeysReleasedThisFrame{};
 			std::array<bool, 8> m_CurrentMouseButtons{};
-			std::array<bool, 8> m_PreviousMouseButtons{};
+			std::array<bool, 8> m_MouseButtonsPressedThisFrame{};
+			std::array<bool, 8> m_MouseButtonsReleasedThisFrame{};
 			NativeVector2 m_MousePosition{};
 			NativeVector2 m_PreviousMousePosition{};
 			NativeVector2 m_MouseDelta{};
@@ -186,6 +221,21 @@ namespace TomCat {
 			};
 			std::array<GamepadState, 16> m_CurrentGamepads{};
 			std::array<GamepadState, 16> m_PreviousGamepads{};
+			std::array<bool, 16> m_GamepadsConnectedThisFrame{};
+			std::array<bool, 16> m_GamepadsDisconnectedThisFrame{};
+			std::array<std::array<bool, 15>, 16> m_GamepadButtonsPressedThisFrame{};
+			std::array<std::array<bool, 15>, 16> m_GamepadButtonsReleasedThisFrame{};
+			uint64_t m_LastCapturedInputFrame = 0;
+			uint64_t m_InputEventsDroppedThisFrame = 0;
+			std::vector<NativeInputEventV1> m_InputEventsThisFrame;
+			InputDispatchPhase m_InputDispatchPhase = InputDispatchPhase::DisplayFrame;
+			bool m_FixedStepExposesTransitions = false;
+			uint64_t m_ActiveFixedStepSceneSessionId = 0;
+			InputDispatchPhase m_PreviousFixedStepInputDispatchPhase =
+				InputDispatchPhase::DisplayFrame;
+			bool m_PreviousFixedStepExposesTransitions = false;
+			std::unordered_map<uint64_t, FixedInputBatch> m_PendingFixedInput;
+			FixedInputBatch m_ActiveFixedInput;
 		};
 
 	}

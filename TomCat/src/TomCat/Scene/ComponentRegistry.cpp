@@ -1,6 +1,7 @@
 #include "tcpch.h"
 #include "ComponentRegistry.h"
 
+#include "TomCat/Scene/BuiltInComponentDescriptors.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/RuntimeUIComponentDescriptors.h"
 
@@ -14,6 +15,30 @@
 namespace TomCat {
 
 	namespace {
+		bool RemapEntityValue(uint64_t& value,
+			const std::unordered_map<UUID, UUID>& entityMap,
+			MissingEntityReferencePolicy missingPolicy,
+			std::string_view context, std::string& error)
+		{
+			if (value == 0)
+				return true;
+			const auto mapped = entityMap.find(UUID(value));
+			if (mapped != entityMap.end())
+			{
+				value = static_cast<uint64_t>(mapped->second);
+				return true;
+			}
+			if (missingPolicy == MissingEntityReferencePolicy::Preserve)
+				return true;
+			if (missingPolicy == MissingEntityReferencePolicy::Clear)
+			{
+				value = 0;
+				return true;
+			}
+			error = std::string(context)
+				+ " references an entity outside the instantiated archive";
+			return false;
+		}
 
 		bool ContainsOnlyFields(const YAML::Node& node,
 			std::initializer_list<const char*> fields, std::string& error,
@@ -213,6 +238,143 @@ namespace TomCat {
 			}
 		}
 
+		bool PrepareComponentRecord(const ComponentDescriptor& descriptor,
+			const YAML::Node& source, YAML::Node& prepared, bool& compatible,
+			std::string& error)
+		{
+			compatible = false;
+			try
+			{
+				uint32_t version = source["SchemaVersion"].as<uint32_t>();
+				if (version > descriptor.SchemaVersion)
+					return true;
+				prepared = YAML::Load(YAML::Dump(source));
+				while (version < descriptor.SchemaVersion)
+				{
+					const auto migration = std::find_if(descriptor.Migrations.begin(),
+						descriptor.Migrations.end(), [version](const auto& candidate)
+						{
+							return candidate.FromVersion == version;
+						});
+					if (migration == descriptor.Migrations.end())
+						return true;
+					if (!migration->Migrate(prepared, error))
+					{
+						if (error.empty())
+							error = descriptor.StableName + " schema migration failed";
+						return false;
+					}
+					version = migration->ToVersion;
+					prepared["SchemaVersion"] = version;
+					std::string validationError;
+					if (!ContainsOnlyFields(prepared,
+						{ "TypeId", "StableName", "SchemaVersion", "Properties" },
+						validationError, descriptor.StableName)
+						|| prepared["TypeId"].as<uint64_t>()
+							!= static_cast<uint64_t>(descriptor.TypeId)
+						|| prepared["StableName"].as<std::string>()
+							!= descriptor.StableName)
+					{
+						error = validationError.empty()
+							? descriptor.StableName + " migration changed component identity"
+							: validationError;
+						return false;
+					}
+				}
+				compatible = version == descriptor.SchemaVersion;
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				error = descriptor.StableName + " migration: " + exception.what();
+				return false;
+			}
+		}
+
+		bool EncodeComponentRecord(const ComponentDescriptor& descriptor,
+			Entity entity, OpaqueComponentRecord& record, std::string& error)
+		{
+			try
+			{
+				YAML::Emitter output;
+				output << YAML::BeginMap;
+				output << YAML::Key << "TypeId" << YAML::Value
+					<< static_cast<uint64_t>(descriptor.TypeId);
+				output << YAML::Key << "StableName" << YAML::Value
+					<< descriptor.StableName;
+				output << YAML::Key << "SchemaVersion" << YAML::Value
+					<< descriptor.SchemaVersion;
+				output << YAML::Key << "Properties" << YAML::Value;
+				if (!descriptor.Encode(descriptor, entity, output, error))
+					return false;
+				output << YAML::EndMap;
+				if (!output.good())
+				{
+					error = "Could not serialize " + descriptor.StableName
+						+ " before provider unload";
+					return false;
+				}
+				record = { descriptor.TypeId, descriptor.StableName,
+					descriptor.SchemaVersion, output.c_str() };
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				error = descriptor.StableName + ": " + exception.what();
+				return false;
+			}
+		}
+
+		bool DecodeComponentTransactionally(const ComponentDescriptor& descriptor,
+			Entity entity, const YAML::Node& record, std::string& error)
+		{
+			if (descriptor.Has(entity))
+			{
+				error = descriptor.StableName + " already exists on the entity";
+				return false;
+			}
+			if (!descriptor.Add(entity, error))
+				return false;
+			if (!descriptor.Has(entity))
+			{
+				error = descriptor.StableName
+					+ " provider reported success without adding its component";
+				return false;
+			}
+			if (descriptor.Decode(descriptor, entity, record["Properties"], error))
+				return true;
+
+			std::string rollbackError;
+			if (!descriptor.Remove(entity, rollbackError) && !rollbackError.empty())
+				error += "; rollback failed: " + rollbackError;
+			return false;
+		}
+
+		bool MirroredPayloadMatches(const ComponentDescriptor& descriptor,
+			Entity entity, const YAML::Node& properties, std::string& error)
+		{
+			try
+			{
+				YAML::Emitter current;
+				if (!descriptor.Encode(descriptor, entity, current, error)
+					|| !current.good())
+					return false;
+				const YAML::Node expected = YAML::Load(current.c_str());
+				if (YAML::Dump(expected) != YAML::Dump(properties))
+				{
+					error = descriptor.StableName
+						+ " registry payload disagrees with its legacy Scene 11 field";
+					return false;
+				}
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				error = descriptor.StableName + ": " + exception.what();
+				return false;
+			}
+		}
+
 		ComponentDescriptor MakeHealthDescriptor()
 		{
 			ComponentDescriptor descriptor;
@@ -348,6 +510,13 @@ namespace TomCat {
 	ComponentRegistry::ComponentRegistry()
 	{
 		std::string error;
+		for (ComponentDescriptor descriptor : MakeBuiltInComponentDescriptors())
+		{
+			const std::string stableName = descriptor.StableName;
+			if (!Register(std::move(descriptor), error))
+				throw std::runtime_error("Could not register built-in "
+					+ stableName + ": " + error);
+		}
 		if (!Register(MakeHealthDescriptor(), error))
 			throw std::runtime_error("Could not register built-in HealthComponent: " + error);
 		for (ComponentDescriptor descriptor : MakeRuntimeUIComponentDescriptors())
@@ -362,6 +531,12 @@ namespace TomCat {
 	bool ComponentRegistry::Register(ComponentDescriptor descriptor, std::string& error)
 	{
 		error.clear();
+		// Property-only descriptors use the registry's canonical YAML codec. A
+		// provider supplies custom callbacks only for structured component data.
+		if (!descriptor.Encode)
+			descriptor.Encode = &EncodeDescriptor;
+		if (!descriptor.Decode)
+			descriptor.Decode = &DecodeDescriptor;
 		const uint64_t typeId = static_cast<uint64_t>(descriptor.TypeId);
 		if (typeId == 0 || descriptor.StableName.empty() || descriptor.DisplayName.empty()
 			|| descriptor.SchemaVersion == 0 || !descriptor.Has || !descriptor.Add
@@ -412,6 +587,33 @@ namespace TomCat {
 					}
 				}
 			}
+			if (property.EntityReference
+				&& (property.Kind != PropertyKind::UInt64
+					|| property.AssetReference.has_value()))
+			{
+				error = "Entity-reference metadata requires a non-asset UInt64 property";
+				return false;
+			}
+		}
+		std::sort(descriptor.Migrations.begin(), descriptor.Migrations.end(),
+			[](const ComponentSchemaMigration& left,
+				const ComponentSchemaMigration& right)
+			{
+				return left.FromVersion < right.FromVersion;
+			});
+		uint32_t previousFromVersion = 0;
+		for (const ComponentSchemaMigration& migration : descriptor.Migrations)
+		{
+			if (migration.FromVersion == 0
+				|| migration.FromVersion >= migration.ToVersion
+				|| migration.ToVersion > descriptor.SchemaVersion
+				|| !migration.Migrate
+				|| migration.FromVersion == previousFromVersion)
+			{
+				error = "Component schema migrations must be unique, forward-only, and bounded by the current schema";
+				return false;
+			}
+			previousFromVersion = migration.FromVersion;
 		}
 		m_Descriptors.emplace_back(std::move(descriptor));
 		std::sort(m_Descriptors.begin(), m_Descriptors.end(),
@@ -475,6 +677,131 @@ namespace TomCat {
 		return true;
 	}
 
+	bool ComponentRegistry::RemapEntityReferences(Entity entity,
+		const std::unordered_map<UUID, UUID>& entityMap,
+		MissingEntityReferencePolicy missingPolicy, std::string& error) const
+	{
+		error.clear();
+		if (!entity)
+		{
+			error = "Cannot remap references on an invalid entity";
+			return false;
+		}
+
+		const EntityReferenceMapper mapper = [&](uint64_t& value,
+			std::string_view context, std::string& mapperError)
+		{
+			return RemapEntityValue(value, entityMap, missingPolicy, context,
+				mapperError);
+		};
+		try
+		{
+			for (const ComponentDescriptor& descriptor : m_Descriptors)
+			{
+				if (!descriptor.Has(entity))
+					continue;
+				for (const PropertyDescriptor& property : descriptor.Properties)
+				{
+					if (!property.EntityReference)
+						continue;
+					const std::string context = descriptor.StableName + "."
+						+ property.StableName;
+					const PropertyValue current = property.Get(entity);
+					if (!std::holds_alternative<uint64_t>(current))
+					{
+						error = context + " returned an incompatible value";
+						return false;
+					}
+					const uint64_t original = std::get<uint64_t>(current);
+					uint64_t remapped = original;
+					if (!mapper(remapped, context, error))
+						return false;
+					if (remapped != original
+						&& !property.Set(entity, PropertyValue(remapped), error))
+					{
+						if (error.empty())
+							error = context + " rejected the remapped entity";
+						return false;
+					}
+				}
+				if (descriptor.RemapEntityReferences
+					&& !descriptor.RemapEntityReferences(entity, mapper, error))
+				{
+					if (error.empty())
+						error = descriptor.StableName
+							+ " failed to remap structured entity references";
+					return false;
+				}
+			}
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			error = exception.what();
+			return false;
+		}
+	}
+
+	bool ComponentRegistry::EncodeLegacyComponents(Entity entity,
+		YAML::Emitter& output, std::string& error) const
+	{
+		error.clear();
+		try
+		{
+			for (const ComponentDescriptor& descriptor : m_Descriptors)
+			{
+				if (!descriptor.EncodeLegacyFields || !descriptor.Has(entity))
+					continue;
+				if (!descriptor.EncodeLegacyFields(descriptor, entity, output, error))
+				{
+					if (error.empty())
+						error = descriptor.StableName
+							+ " legacy compatibility encoding failed";
+					return false;
+				}
+			}
+			return output.good();
+		}
+		catch (const std::exception& exception)
+		{
+			error = exception.what();
+			return false;
+		}
+	}
+
+	bool ComponentRegistry::DecodeLegacyComponents(Entity entity,
+		const YAML::Node& entityNode, std::string& error) const
+	{
+		error.clear();
+		try
+		{
+			if (!entityNode || !entityNode.IsMap())
+			{
+				error = "Legacy entity fields must be a map";
+				return false;
+			}
+			for (const ComponentDescriptor& descriptor : m_Descriptors)
+			{
+				if (!descriptor.DecodeLegacyFields)
+					continue;
+				if (!descriptor.DecodeLegacyFields(descriptor, entity,
+					entityNode, error))
+				{
+					if (error.empty())
+						error = descriptor.StableName
+							+ " legacy compatibility decoding failed";
+					return false;
+				}
+			}
+			return true;
+		}
+		catch (const std::exception& exception)
+		{
+			error = exception.what();
+			return false;
+		}
+	}
+
 	bool ComponentRegistry::EncodeComponents(Entity entity, YAML::Emitter& output,
 		std::string& error) const
 	{
@@ -485,7 +812,7 @@ namespace TomCat {
 			output << YAML::Key << "Components" << YAML::Value << YAML::BeginSeq;
 			for (const ComponentDescriptor& descriptor : m_Descriptors)
 			{
-				if (!descriptor.Has(entity))
+				if (!descriptor.PersistInComponentSequence || !descriptor.Has(entity))
 					continue;
 				const uint64_t typeId = static_cast<uint64_t>(descriptor.TypeId);
 				emitted.emplace(typeId);
@@ -575,7 +902,12 @@ namespace TomCat {
 					error = context + ".StableName does not match registered TypeId";
 					return false;
 				}
-				if (!descriptor || descriptor->SchemaVersion != schemaVersion)
+				YAML::Node prepared;
+				bool compatible = false;
+				if (descriptor && !PrepareComponentRecord(*descriptor, node,
+					prepared, compatible, error))
+					return false;
+				if (!descriptor || !compatible)
 				{
 					if (!entity.HasComponent<OpaqueComponents>())
 						entity.AddComponent<OpaqueComponents>();
@@ -583,20 +915,207 @@ namespace TomCat {
 						{ UUID(typeId), stableName, schemaVersion, YAML::Dump(node) });
 					continue;
 				}
-				if (descriptor->Has(entity))
+				if (descriptor->Has(entity) && descriptor->DecodeIntoExisting)
 				{
-					error = context + " duplicates an existing component";
+					// Scene 11 writes both representations for compatibility. Reject
+					// disagreement instead of silently choosing one, which also keeps
+					// Prefab reference validation and transaction rollback deterministic.
+					if (!MirroredPayloadMatches(*descriptor, entity,
+						prepared["Properties"], error))
+					{
+						error = context + ": " + error;
+						return false;
+					}
+				}
+				else if (!DecodeComponentTransactionally(*descriptor, entity,
+					prepared, error))
+				{
+					error = context + ": " + error;
 					return false;
 				}
-				if (!descriptor->Add(entity, error)
-					|| !descriptor->Decode(*descriptor, entity, node["Properties"], error))
-					return false;
 			}
 			catch (const std::exception& exception)
 			{
 				error = "Components[" + std::to_string(index) + "]: " + exception.what();
 				return false;
 			}
+		}
+		return true;
+	}
+
+	bool ComponentRegistry::UnregisterProvider(UUID providerId,
+		std::span<const Entity> liveEntities, std::string& error)
+	{
+		error.clear();
+		if (static_cast<uint64_t>(providerId) == 0)
+		{
+			error = "ProviderId zero is reserved for built-in components";
+			return false;
+		}
+		std::vector<const ComponentDescriptor*> descriptors;
+		for (const ComponentDescriptor& descriptor : m_Descriptors)
+			if (descriptor.ProviderId == providerId)
+				descriptors.push_back(&descriptor);
+		if (descriptors.empty())
+		{
+			error = "Component provider is not registered";
+			return false;
+		}
+
+		struct PendingDetach
+		{
+			Entity Target;
+			const ComponentDescriptor* Descriptor = nullptr;
+			OpaqueComponentRecord Record;
+		};
+		std::vector<PendingDetach> pending;
+		for (Entity entity : liveEntities)
+		{
+			if (!entity)
+			{
+				error = "Provider unload received an invalid live entity";
+				return false;
+			}
+			for (const ComponentDescriptor* descriptor : descriptors)
+			{
+				if (!descriptor->Has(entity))
+					continue;
+				if (entity.HasComponent<OpaqueComponents>())
+				{
+					const auto& records = entity.GetComponent<OpaqueComponents>().Records;
+					if (std::any_of(records.begin(), records.end(), [&](const auto& record)
+						{ return record.TypeId == descriptor->TypeId; }))
+					{
+						error = descriptor->StableName
+							+ " already has an opaque record on the entity";
+						return false;
+					}
+				}
+				PendingDetach item;
+				item.Target = entity;
+				item.Descriptor = descriptor;
+				if (!EncodeComponentRecord(*descriptor, entity, item.Record, error))
+					return false;
+				pending.push_back(std::move(item));
+			}
+		}
+
+		auto eraseOpaqueRecord = [](Entity entity, UUID typeId)
+		{
+			if (!entity.HasComponent<OpaqueComponents>())
+				return;
+			auto& records = entity.GetComponent<OpaqueComponents>().Records;
+			records.erase(std::remove_if(records.begin(), records.end(),
+				[typeId](const OpaqueComponentRecord& record)
+				{ return record.TypeId == typeId; }), records.end());
+			if (records.empty())
+				entity.RemoveComponent<OpaqueComponents>();
+		};
+
+		size_t applied = 0;
+		for (; applied < pending.size(); ++applied)
+		{
+			PendingDetach& item = pending[applied];
+			if (!item.Target.HasComponent<OpaqueComponents>())
+				item.Target.AddComponent<OpaqueComponents>();
+			item.Target.GetComponent<OpaqueComponents>().Records.push_back(item.Record);
+			if (!item.Descriptor->Remove(item.Target, error))
+				break;
+		}
+		if (applied != pending.size())
+		{
+			const std::string failure = error.empty()
+				? "Provider component removal failed" : error;
+			const size_t rollbackCount = std::min(applied + 1, pending.size());
+			for (size_t index = rollbackCount; index-- > 0;)
+			{
+				PendingDetach& item = pending[index];
+				eraseOpaqueRecord(item.Target, item.Descriptor->TypeId);
+				if (!item.Descriptor->Has(item.Target))
+				{
+					try
+					{
+						const YAML::Node record = YAML::Load(item.Record.SerializedRecord);
+						std::string rollbackError;
+						if (!DecodeComponentTransactionally(*item.Descriptor,
+							item.Target, record, rollbackError))
+							error = failure + "; rollback failed: " + rollbackError;
+					}
+					catch (const std::exception& exception)
+					{
+						error = failure + "; rollback failed: " + exception.what();
+					}
+				}
+			}
+			if (error.empty()) error = failure;
+			return false;
+		}
+
+		m_Descriptors.erase(std::remove_if(m_Descriptors.begin(), m_Descriptors.end(),
+			[providerId](const ComponentDescriptor& descriptor)
+			{ return descriptor.ProviderId == providerId; }), m_Descriptors.end());
+		return true;
+	}
+
+	bool ComponentRegistry::RehydrateOpaqueComponents(
+		std::span<const Entity> liveEntities, UUID providerId,
+		std::string& error) const
+	{
+		error.clear();
+		if (static_cast<uint64_t>(providerId) == 0)
+		{
+			error = "ProviderId zero is reserved for built-in components";
+			return false;
+		}
+		for (Entity entity : liveEntities)
+		{
+			if (!entity)
+			{
+				error = "Component rehydration received an invalid live entity";
+				return false;
+			}
+			if (!entity.HasComponent<OpaqueComponents>())
+				continue;
+			auto& records = entity.GetComponent<OpaqueComponents>().Records;
+			for (size_t index = 0; index < records.size();)
+			{
+				const ComponentDescriptor* descriptor = Find(records[index].TypeId);
+				if (!descriptor || descriptor->ProviderId != providerId)
+				{
+					++index;
+					continue;
+				}
+				if (descriptor->StableName != records[index].StableName)
+				{
+					error = "Opaque component StableName does not match its registered TypeId";
+					return false;
+				}
+				try
+				{
+					const YAML::Node source = YAML::Load(records[index].SerializedRecord);
+					YAML::Node prepared;
+					bool compatible = false;
+					if (!PrepareComponentRecord(*descriptor, source, prepared,
+						compatible, error))
+						return false;
+					if (!compatible)
+					{
+						++index;
+						continue;
+					}
+					if (!DecodeComponentTransactionally(*descriptor, entity,
+						prepared, error))
+						return false;
+					records.erase(records.begin() + static_cast<std::ptrdiff_t>(index));
+				}
+				catch (const std::exception& exception)
+				{
+					error = descriptor->StableName + ": " + exception.what();
+					return false;
+				}
+			}
+			if (records.empty())
+				entity.RemoveComponent<OpaqueComponents>();
 		}
 		return true;
 	}

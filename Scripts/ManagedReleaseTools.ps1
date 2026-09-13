@@ -35,6 +35,15 @@ function Build-TomCatManagedRelease {
         [string]$RepositoryRoot
     )
 
+    $generator = Join-Path $RepositoryRoot "Scripts\Generate-Component-Proxies.ps1"
+    if (-not (Test-Path -LiteralPath $generator -PathType Leaf)) {
+        throw "Component proxy generator was not found: $generator"
+    }
+    & $generator -Check
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generated component proxy check failed (exit $LASTEXITCODE)."
+    }
+
     $dotnet = Assert-DotNet10Sdk
     $solution = Join-Path $RepositoryRoot "Managed\TomCat.Managed.slnx"
     if (-not (Test-Path -LiteralPath $solution -PathType Leaf)) {

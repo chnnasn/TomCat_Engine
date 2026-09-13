@@ -37,6 +37,10 @@ namespace TomCat {
 			std::span<const uint8_t> payload);
 		[[nodiscard]] std::filesystem::path GetEntryPath(
 			const std::string& artifactKey) const;
+		// Returns the immutable payload subrange inside a validated DDC entry.
+		// This lets stream readers retain a file range instead of resident bytes.
+		[[nodiscard]] bool TryGetPayloadRange(const std::string& artifactKey,
+			std::filesystem::path& path, uint64_t& offset, uint64_t& size) const;
 		[[nodiscard]] DerivedDataCacheStats GetStats() const noexcept;
 
 	private:

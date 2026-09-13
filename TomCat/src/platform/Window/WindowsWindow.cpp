@@ -165,23 +165,45 @@ namespace TomCat {
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-		glfwWindowHint(GLFW_RESIZABLE, props.Resizable ? GLFW_TRUE : GLFW_FALSE);
+		glfwWindowHint(GLFW_RESIZABLE,
+			props.DisplayMode == WindowDisplayMode::Borderless
+				? GLFW_FALSE : (props.Resizable ? GLFW_TRUE : GLFW_FALSE));
 		glfwWindowHint(GLFW_DECORATED,
 			props.DisplayMode == WindowDisplayMode::Borderless
 				? GLFW_FALSE : GLFW_TRUE);
-		GLFWmonitor* monitor = props.DisplayMode
-			== WindowDisplayMode::ExclusiveFullscreen
-			? glfwGetPrimaryMonitor() : nullptr;
-		if (props.DisplayMode == WindowDisplayMode::ExclusiveFullscreen && !monitor)
+
+		const bool fillsMonitor = props.DisplayMode == WindowDisplayMode::Borderless
+			|| props.DisplayMode == WindowDisplayMode::ExclusiveFullscreen;
+		GLFWmonitor* primaryMonitor = fillsMonitor ? glfwGetPrimaryMonitor() : nullptr;
+		if (fillsMonitor && !primaryMonitor)
 		{
 			if (s_GLFWWindowCount == 0)
 				glfwTerminate();
-			throw std::runtime_error("No primary monitor is available for exclusive fullscreen");
+			throw std::runtime_error("No primary monitor is available for fullscreen display");
+		}
+		GLFWmonitor* monitor = props.DisplayMode
+			== WindowDisplayMode::ExclusiveFullscreen ? primaryMonitor : nullptr;
+		int windowWidth = static_cast<int>(props.Width);
+		int windowHeight = static_cast<int>(props.Height);
+		int windowX = 0;
+		int windowY = 0;
+		if (props.DisplayMode == WindowDisplayMode::Borderless)
+		{
+			const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
+			if (!videoMode || videoMode->width <= 0 || videoMode->height <= 0)
+			{
+				if (s_GLFWWindowCount == 0)
+					glfwTerminate();
+				throw std::runtime_error("Primary monitor video mode is unavailable");
+			}
+			windowWidth = videoMode->width;
+			windowHeight = videoMode->height;
+			glfwGetMonitorPos(primaryMonitor, &windowX, &windowY);
 		}
 
 		{
 			TC_PROFILE_SCOPE("glfwCreateWindow");
-			m_Window = glfwCreateWindow((int)props.Width, (int)props.Height,
+			m_Window = glfwCreateWindow(windowWidth, windowHeight,
 				m_Data.Title.c_str(), monitor, nullptr);
 			if (!m_Window)
 			{
@@ -192,6 +214,8 @@ namespace TomCat {
 			++s_GLFWWindowCount;
 		}
 		GLFWWindowInitializationGuard initializationGuard(m_Window, m_Context);
+		if (props.DisplayMode == WindowDisplayMode::Borderless)
+			glfwSetWindowPos(m_Window, windowX, windowY);
 
 		m_Context = CreateScope<OpenGLContext>(m_Window);
 		m_Context->Init();
@@ -199,6 +223,29 @@ namespace TomCat {
 		glfwSetWindowUserPointer(m_Window, &m_Data);
 		RefreshNativeMetrics(false);
 		SetVSync(props.VSync);
+		Input::ClearState();
+		Input::NotifyWindowFocus(
+			glfwGetWindowAttrib(m_Window, GLFW_FOCUSED) == GLFW_TRUE,
+			glfwGetTime());
+		double initialCursorX = 0.0;
+		double initialCursorY = 0.0;
+		glfwGetCursorPos(m_Window, &initialCursorX, &initialCursorY);
+		Input::NotifyMousePosition(static_cast<float>(initialCursorX),
+			static_cast<float>(initialCursorY));
+		glfwSetJoystickCallback([](int joystick, int event)
+		{
+			if (joystick < GLFW_JOYSTICK_1 || joystick > GLFW_JOYSTICK_LAST)
+				return;
+			// The managed API exposes GLFW's standard gamepad mapping. Ignore a
+			// generic joystick connection; a later disconnect is naturally ignored
+			// by Input when no matching gamepad connection was reported.
+			if (event == GLFW_CONNECTED
+				&& glfwJoystickIsGamepad(joystick) != GLFW_TRUE)
+				return;
+			Input::NotifyGamepadConnection(
+				static_cast<uint32_t>(joystick - GLFW_JOYSTICK_1),
+				event == GLFW_CONNECTED, glfwGetTime());
+		});
 
 		if (!props.IconPath.empty())
 		{
@@ -339,7 +386,7 @@ namespace TomCat {
 		glfwSetWindowFocusCallback(m_Window, [](GLFWwindow* Window, int focused)
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
-			Input::NotifyWindowFocus(focused == GLFW_TRUE);
+			Input::NotifyWindowFocus(focused == GLFW_TRUE, glfwGetTime());
 			if (focused == GLFW_TRUE)
 			{
 				WindowFocusEvent event;
@@ -358,11 +405,14 @@ namespace TomCat {
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
 			const InputModifiers modifiers = GetInputModifiers(mods);
+			const double timestamp = glfwGetTime();
 
 			switch (action)
 			{
 				case GLFW_PRESS:
 				{
+					Input::NotifyKey(static_cast<uint32_t>(key),
+						InputEventQueue::Action::Pressed, timestamp);
 					KeyPressedEvent event(key, 0, modifiers);
 					if (Data.EventCallback)
 						Data.EventCallback(event);
@@ -370,6 +420,8 @@ namespace TomCat {
 				}
 				case GLFW_RELEASE:
 				{
+					Input::NotifyKey(static_cast<uint32_t>(key),
+						InputEventQueue::Action::Released, timestamp);
 					KeyReleasedEvent event(key, modifiers);
 					if (Data.EventCallback)
 						Data.EventCallback(event);
@@ -378,6 +430,8 @@ namespace TomCat {
 
 				case GLFW_REPEAT:
 				{
+					Input::NotifyKey(static_cast<uint32_t>(key),
+						InputEventQueue::Action::Repeated, timestamp);
 					KeyPressedEvent event(key, 1, modifiers);
 					if (Data.EventCallback)
 						Data.EventCallback(event);
@@ -392,11 +446,14 @@ namespace TomCat {
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
 			const InputModifiers modifiers = GetInputModifiers(mods);
+			const double timestamp = glfwGetTime();
 
 			switch (action)
 			{
 				case GLFW_PRESS:
 				{
+					Input::NotifyMouseButton(static_cast<uint32_t>(button),
+						InputEventQueue::Action::Pressed, timestamp);
 					MouseButtonPressedEvent event(button, modifiers);
 					if (Data.EventCallback)
 						Data.EventCallback(event);
@@ -404,6 +461,8 @@ namespace TomCat {
 				}
 				case GLFW_RELEASE:
 				{
+					Input::NotifyMouseButton(static_cast<uint32_t>(button),
+						InputEventQueue::Action::Released, timestamp);
 					MouseButtonReleasedEvent event(button, modifiers);
 					if (Data.EventCallback)
 						Data.EventCallback(event);
@@ -426,6 +485,8 @@ namespace TomCat {
 		glfwSetCursorPosCallback(m_Window, [](GLFWwindow* Window, double xpos, double ypos)
 		{
 			WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
+			Input::NotifyMousePosition(static_cast<float>(xpos),
+				static_cast<float>(ypos));
 
 			MouseMovedEvent event((float)xpos,(float)ypos);
 
@@ -467,7 +528,7 @@ namespace TomCat {
 			}
 		}
 
-		void WindowsWindow::OnUpdate()
+		void WindowsWindow::PollEvents()
 		{
 			TC_PROFILE_FUNCTION();
 			glfwPollEvents();
@@ -476,7 +537,11 @@ namespace TomCat {
 			// snapshot once after polling and publish one coherent resize event.
 			if (m_Data.MetricsDirty)
 				RefreshNativeMetrics(true);
+		}
 
+		void WindowsWindow::Present()
+		{
+			TC_PROFILE_FUNCTION();
 			m_Context->SwapBuffers();
 		}
 

@@ -1,5 +1,6 @@
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
+#include "TomCat/Asset/TextureArtifact.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Renderer/Renderer2D.h"
@@ -21,7 +22,10 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace {
 
@@ -229,6 +233,25 @@ namespace {
 			"Sprite transparent order is not layer/order/stable-UUID deterministic");
 		Require(!TomCat::Renderer2D::SpriteSortLess(entries[2].Key, entries[2].Key),
 			"Sprite ordering comparator is not strict");
+	}
+
+	void TestConservativeSpriteCulling()
+	{
+		const glm::mat4 camera = glm::ortho(-5.0f, 5.0f, -5.0f, 5.0f,
+			-10.0f, 10.0f);
+		Require(TomCat::Renderer2D::IsQuadVisible(glm::mat4(1.0f), camera),
+			"centered Sprite was culled");
+		const glm::mat4 outside = glm::translate(glm::mat4(1.0f),
+			glm::vec3(20.0f, 0.0f, 0.0f));
+		Require(!TomCat::Renderer2D::IsQuadVisible(outside, camera),
+			"fully off-camera Sprite was retained");
+		glm::mat4 intersecting = glm::translate(glm::mat4(1.0f),
+			glm::vec3(5.2f, 0.0f, 0.0f));
+		intersecting = glm::rotate(intersecting, glm::radians(45.0f),
+			glm::vec3(0.0f, 0.0f, 1.0f));
+		intersecting = glm::scale(intersecting, glm::vec3(2.0f));
+		Require(TomCat::Renderer2D::IsQuadVisible(intersecting, camera),
+			"rotated Sprite intersecting the camera edge was culled");
 	}
 
 	void TestSpriteAnimatorRuntime()
@@ -505,16 +528,39 @@ namespace {
 			"primitive Sprite payload has an invalid decoder size");
 		int width = 0;
 		int height = 0;
-		int sourceChannels = 0;
-		stbi_uc* pixels = stbi_load_from_memory(bytes.data(),
-			static_cast<int>(bytes.size()), &width, &height, &sourceChannels, 4);
-		Require(pixels != nullptr, "primitive Sprite payload is not decodable by stb_image");
+		std::vector<uint8_t> artifactPixels;
+		stbi_uc* sourcePixels = nullptr;
+		const uint8_t* pixels = nullptr;
+		if (TomCat::IsTextureArtifact(bytes))
+		{
+			TomCat::TextureArtifactView artifact;
+			std::string error;
+			Require(TomCat::ParseTextureArtifact(bytes, artifact, error)
+				&& !artifact.Mips.empty(),
+				"primitive Sprite texture artifact is invalid");
+			Require(TomCat::DecompressTextureMip(artifact.Mips.front(),
+				artifact.Format, artifactPixels, error),
+				"primitive Sprite texture artifact cannot be decoded");
+			width = static_cast<int>(artifact.Width);
+			height = static_cast<int>(artifact.Height);
+			pixels = artifactPixels.data();
+		}
+		else
+		{
+			int sourceChannels = 0;
+			sourcePixels = stbi_load_from_memory(bytes.data(),
+				static_cast<int>(bytes.size()), &width, &height, &sourceChannels, 4);
+			Require(sourcePixels != nullptr,
+				"primitive Sprite source payload is not decodable by stb_image");
+			pixels = sourcePixels;
+		}
 
 		const bool dimensionsMatch = width == 64 && height == 64;
 		const uint8_t cornerAlpha = pixels[3];
 		const size_t center = (static_cast<size_t>(height / 2) * width + width / 2) * 4;
 		const uint8_t centerAlpha = pixels[center + 3];
-		stbi_image_free(pixels);
+		if (sourcePixels)
+			stbi_image_free(sourcePixels);
 
 		Require(dimensionsMatch, "primitive Sprite dimensions changed");
 		Require(centerAlpha == 255, "primitive Sprite center is not opaque");
@@ -638,12 +684,39 @@ namespace {
 			Require(assets.ReadAssetBytes(handle, cooked, &type) &&
 				type == TomCat::AssetType::Texture2D,
 				"Cooked Player could not resolve a primitive Sprite handle");
-			Require(cooked == expected,
-				"cooking changed a primitive Sprite payload");
+			Require(cooked != expected && TomCat::IsTextureArtifact(cooked),
+				"cooking did not replace the primitive source with a texture artifact");
 			RequireDecodablePrimitive(cooked, expectCircle);
 		};
 		requireCooked(square, squareBytes, false);
 		requireCooked(circle, circleBytes, true);
+
+		// Player startup must enqueue package textures without synchronously
+		// decoding or touching OpenGL. This regression intentionally never creates
+		// a renderer; it waits only for the worker-side read/validation stage, then
+		// verifies package unmount cancels and drains all retained state.
+		Require(assets.BeginCookedTexturePreload() >= 2,
+			"cooked texture preload did not discover package textures");
+		Require(assets.BeginCookedTexturePreload() == 0,
+			"repeated cooked texture preload duplicated pending reads");
+		TomCat::TextureStreamingStats streaming;
+		for (uint32_t attempt = 0; attempt < 500; ++attempt)
+		{
+			(void)assets.PumpTexturePublishes(0, 0);
+			streaming = assets.GetTextureStreamingStats();
+			if (streaming.PreparedCount >= 2 && streaming.JobsInFlight == 0)
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		Require(streaming.PreparedCount >= 2
+			&& streaming.PreparedBytes != 0 && streaming.BacklogCount == 0,
+			"cooked texture preload did not prepare artifacts asynchronously");
+		assets.UnmountCookedPackage();
+		streaming = assets.GetTextureStreamingStats();
+		Require(streaming.BacklogCount == 0 && streaming.PendingCount == 0
+			&& streaming.PreparedCount == 0 && streaming.PreparedBytes == 0
+			&& streaming.JobsInFlight == 0,
+			"package unmount retained texture preload jobs or artifact memory");
 	}
 
 	void TestAtlasImportAndCookedSubSprite()
@@ -757,6 +830,7 @@ int main()
 	try
 	{
 		TestStableSpriteOrdering();
+		TestConservativeSpriteCulling();
 		TestSpriteAnimatorRuntime();
 		TestAnimatorStateMachine();
 		TestSpriteAnimatorAuthoringReferences();

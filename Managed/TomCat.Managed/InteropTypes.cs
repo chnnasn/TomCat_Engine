@@ -218,6 +218,64 @@ public unsafe struct NativeInputApiV1
 	public delegate* unmanaged[Cdecl]<uint, byte*, uint, uint*, int> GetGamepadName;
 }
 
+public enum NativeInputDeviceV1 : uint
+{
+	Keyboard = 1,
+	MouseButton = 2,
+	GamepadConnection = 3,
+	GamepadButton = 4
+}
+
+public enum NativeInputActionV1 : uint
+{
+	Pressed = 1,
+	Released = 2,
+	Repeated = 3
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct NativeInputEventV1
+{
+	public ulong Sequence;
+	public double TimestampSeconds;
+	public ulong FrameNumber;
+	public NativeInputDeviceV1 Device;
+	public NativeInputActionV1 Action;
+	public uint Code;
+	public uint DeviceIndex;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct NativeInputEventBatchInfoV1
+{
+	public ulong FirstFrameNumber;
+	public ulong LastFrameNumber;
+	public ulong FirstSequence;
+	public ulong LastSequence;
+	public ulong DroppedEventCount;
+	public uint EventCount;
+	public uint Reserved;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeInputEventsApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeInputEventBatchInfoV1*, int> GetBatchInfo;
+	public delegate* unmanaged[Cdecl]<NativeInputEventV1*, uint, uint*, int> CopyEvents;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeApplicationPathsApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetSaveDirectory;
+	public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetLogDirectory;
+	public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetCrashDirectory;
+}
+
 [StructLayout(LayoutKind.Sequential)]
 public unsafe struct NativeGameplayApiV1
 {
@@ -354,7 +412,8 @@ public enum NativePropertyKindV1 : uint
 	Double,
 	Vector2,
 	Vector3,
-	Vector4
+	Vector4,
+	String
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -382,4 +441,57 @@ public unsafe struct NativeComponentApiV1
 		NativePropertyValueV1*, int> GetProperty;
 	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong,
 		NativePropertyValueV1, int> SetProperty;
+}
+
+[Flags]
+public enum NativeComponentSchemaFlagsV1 : uint
+{
+	None = 0,
+	ScriptAccessible = 1 << 0,
+	InspectorVisible = 1 << 1
+}
+
+[Flags]
+public enum NativeComponentPropertyFlagsV1 : uint
+{
+	None = 0,
+	AssetReference = 1 << 0,
+	EntityReference = 1 << 1
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct NativeComponentSchemaInfoV1
+{
+	public ulong TypeId;
+	public ulong ProviderId;
+	public uint SchemaVersion;
+	public uint PropertyCount;
+	public NativeComponentSchemaFlagsV1 Flags;
+	public uint Reserved;
+	public NativeUtf8View StableName;
+	public NativeUtf8View DisplayName;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct NativeComponentPropertySchemaInfoV1
+{
+	public ulong ComponentTypeId;
+	public ulong PropertyId;
+	public NativePropertyKindV1 Kind;
+	public NativeComponentPropertyFlagsV1 Flags;
+	public NativeUtf8View StableName;
+	public NativeUtf8View DisplayName;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeComponentSchemaApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<uint*, int> GetComponentCount;
+	public delegate* unmanaged[Cdecl]<uint, NativeComponentSchemaInfoV1*, int>
+		GetComponent;
+	public delegate* unmanaged[Cdecl]<ulong, uint*, int> GetPropertyCount;
+	public delegate* unmanaged[Cdecl]<ulong, uint,
+		NativeComponentPropertySchemaInfoV1*, int> GetProperty;
 }

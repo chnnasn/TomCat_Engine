@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TomCat/Core/UUID.h"
+#include "TomCat/Scene/ComponentRegistry.h"
 
 #include <cstdint>
 #include <string>
@@ -17,17 +17,12 @@ namespace TomCat {
 	class ComponentCodecs final
 	{
 	public:
-		enum class MissingEntityReferencePolicy
-		{
-			Preserve,
-			Clear,
-			Reject
-		};
+		using MissingEntityReferencePolicy = TomCat::MissingEntityReferencePolicy;
 
 		static bool CopyAuthoringComponents(Entity source, Entity destination,
 			bool resolveAssets, std::string& error);
 
-		// Remaps DistanceJoint2D and C# Entity fields and always gives copied C#
+		// Remaps every Registry-declared entity reference and always gives copied C#
 		// attachments fresh identities. usedAttachmentIDs must contain identities
 		// already live in the destination Scene.
 		static bool RemapInstanceReferences(Entity entity,

@@ -1,6 +1,11 @@
 #include "tcpch.h"
 #include "ImporterRegistry.h"
+#include "AudioArtifact.h"
+#include "MaterialArtifact.h"
+#include "MeshArtifact.h"
+#include "ShaderArtifact.h"
 #include "SpriteAsset.h"
+#include "TextureArtifact.h"
 
 #include "stb_image.h"
 
@@ -428,13 +433,13 @@ namespace TomCat {
 			{
 				return "tomcat.sprite-atlas";
 			}
-			uint32_t GetVersion() const noexcept override { return 2; }
+			uint32_t GetVersion() const noexcept override { return 3; }
 			AssetType GetAssetType() const noexcept override { return AssetType::Texture2D; }
 
 			AssetImportResult Import(const AssetImportRequest& request) const override
 			{
 				AssetImportResult result;
-				result.Format = "sprite-atlas/v2";
+				result.Format = "texture/tctx-v1";
 				if (request.Type != AssetType::Texture2D)
 				{
 					result.Error = "Sprite importer was invoked for a non-texture asset";
@@ -451,16 +456,11 @@ namespace TomCat {
 					result.Error = "source image is empty or too large";
 					return result;
 				}
-				int width = 0;
-				int height = 0;
-				int channels = 0;
-				if (!stbi_info_from_memory(request.SourceBytes.data(),
-					static_cast<int>(request.SourceBytes.size()), &width, &height,
-					&channels) || width <= 0 || height <= 0)
-				{
-					result.Error = "source image header is not decodable";
+				uint32_t width = 0;
+				uint32_t height = 0;
+				if (!BuildTextureArtifact(request.SourceBytes, request.Settings,
+					request.Platform, result.ArtifactBytes, result.Error, &width, &height))
 					return result;
-				}
 
 				std::vector<AssetSubAsset> sprites;
 				if (!ParseSpriteAtlasSettings(request.Settings, sprites, result.Error))
@@ -480,7 +480,6 @@ namespace TomCat {
 					result.SubAssets.push_back({ sprite.PersistentID, sprite.Name,
 						sprite.Type, sprite.Sprite });
 				}
-				result.ArtifactBytes.assign(request.SourceBytes.begin(), request.SourceBytes.end());
 				return result;
 			}
 		};
@@ -524,6 +523,143 @@ namespace TomCat {
 			AssetType m_Type;
 			std::string m_ID;
 			std::string m_Format;
+		};
+
+		class CompiledShaderImporter final : public IAssetImporter
+		{
+		public:
+			std::string_view GetID() const noexcept override
+			{
+				return "tomcat.shader.spirv";
+			}
+			uint32_t GetVersion() const noexcept override { return 2; }
+			AssetType GetAssetType() const noexcept override { return AssetType::Shader; }
+
+			AssetImportResult Import(const AssetImportRequest& request) const override
+			{
+				AssetImportResult result;
+				result.Format = "shader/spirv-reflection-v1";
+				if (request.Type != AssetType::Shader)
+				{
+					result.Error = "Shader importer was invoked for a non-shader asset";
+					return result;
+				}
+				if (request.IsCancellationRequested())
+				{
+					result.Error = "cancelled";
+					return result;
+				}
+				if (!BuildShaderArtifact(request.SourceBytes, request.SourcePath,
+					request.Settings, request.Backend, result.ArtifactBytes, result.Error))
+					return result;
+				if (request.IsCancellationRequested())
+				{
+					result.ArtifactBytes.clear();
+					result.Error = "cancelled";
+				}
+				return result;
+			}
+		};
+
+		class CanonicalMaterialImporter final : public IAssetImporter
+		{
+		public:
+			std::string_view GetID() const noexcept override
+			{
+				return "tomcat.material.canonical";
+			}
+			uint32_t GetVersion() const noexcept override { return 2; }
+			AssetType GetAssetType() const noexcept override { return AssetType::Material; }
+
+			AssetImportResult Import(const AssetImportRequest& request) const override
+			{
+				AssetImportResult result;
+				result.Format = "material/canonical-v1";
+				if (request.Type != AssetType::Material)
+				{
+					result.Error = "Material importer was invoked for a non-material asset";
+					return result;
+				}
+				if (request.IsCancellationRequested())
+				{
+					result.Error = "cancelled";
+					return result;
+				}
+				(void)BuildMaterialArtifact(request.SourceBytes,
+					result.ArtifactBytes, result.Error);
+				return result;
+			}
+		};
+
+		class ObjMeshImporter final : public IAssetImporter
+		{
+		public:
+			std::string_view GetID() const noexcept override
+			{
+				return "tomcat.mesh.obj";
+			}
+			uint32_t GetVersion() const noexcept override { return 2; }
+			AssetType GetAssetType() const noexcept override { return AssetType::Mesh; }
+
+			AssetImportResult Import(const AssetImportRequest& request) const override
+			{
+				AssetImportResult result;
+				result.Format = "mesh/packed-p3n3uv2-u32-v1";
+				if (request.Type != AssetType::Mesh)
+				{
+					result.Error = "Mesh importer was invoked for a non-mesh asset";
+					return result;
+				}
+				if (request.IsCancellationRequested())
+				{
+					result.Error = "cancelled";
+					return result;
+				}
+				if (!request.Settings.empty())
+				{
+					result.Error = "the built-in OBJ importer has no import settings";
+					return result;
+				}
+				if (!BuildMeshArtifact(request.SourceBytes, request.SourcePath,
+					result.ArtifactBytes, result.Error))
+					return result;
+				if (request.IsCancellationRequested())
+				{
+					result.ArtifactBytes.clear();
+					result.Error = "cancelled";
+				}
+				return result;
+			}
+		};
+
+		class CanonicalAudioImporter final : public IAssetImporter
+		{
+		public:
+			std::string_view GetID() const noexcept override
+			{
+				return "tomcat.audio.pcm16";
+			}
+			uint32_t GetVersion() const noexcept override { return 2; }
+			AssetType GetAssetType() const noexcept override { return AssetType::Audio; }
+
+			AssetImportResult Import(const AssetImportRequest& request) const override
+			{
+				AssetImportResult result;
+				result.Format = "audio/wav-pcm16-stream-v1";
+				if (request.Type != AssetType::Audio)
+				{
+					result.Error = "Audio importer was invoked for a non-audio asset";
+					return result;
+				}
+				if (request.IsCancellationRequested())
+				{
+					result.Error = "cancelled";
+					return result;
+				}
+				(void)BuildAudioArtifact(request.SourceBytes, request.Settings,
+					result.ArtifactBytes, result.Error);
+				return result;
+			}
 		};
 
 		class SfntFontImporter final : public IAssetImporter
@@ -641,18 +777,18 @@ namespace TomCat {
 	void ImporterRegistry::RegisterBuiltInImporters()
 	{
 		struct Descriptor { AssetType Type; const char* ID; const char* Format; };
-		static constexpr std::array<Descriptor, 8> descriptors = {{
-			{ AssetType::Shader, "tomcat.shader.passthrough", "source-shader/v1" },
-			{ AssetType::Material, "tomcat.material.passthrough", "source-material/v1" },
-			{ AssetType::Audio, "tomcat.audio.passthrough", "source-audio/v1" },
-			{ AssetType::Mesh, "tomcat.mesh.passthrough", "source-mesh/v1" },
+		static constexpr std::array<Descriptor, 4> descriptors = {{
 			{ AssetType::Other, "tomcat.other.passthrough", "source-other/v1" },
 			{ AssetType::Scene, "tomcat.scene.passthrough", "scene-archive/v1" },
 			{ AssetType::Prefab, "tomcat.prefab.passthrough", "prefab-archive/v1" },
 			{ AssetType::CSharpScript, "tomcat.csharp.passthrough", "csharp-source/v1" }
 		}};
 		(void)Register(std::make_shared<SpriteTextureImporter>(), false);
+		(void)Register(std::make_shared<CanonicalAudioImporter>(), false);
 		(void)Register(std::make_shared<SfntFontImporter>(), false);
+		(void)Register(std::make_shared<CompiledShaderImporter>(), false);
+		(void)Register(std::make_shared<CanonicalMaterialImporter>(), false);
+		(void)Register(std::make_shared<ObjMeshImporter>(), false);
 		for (const Descriptor& descriptor : descriptors)
 		{
 			(void)Register(std::make_shared<PassthroughImporter>(descriptor.Type,

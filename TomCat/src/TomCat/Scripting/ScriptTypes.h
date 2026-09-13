@@ -218,6 +218,10 @@ namespace TomCat::Scripting {
 	};
 
 	inline constexpr std::string_view InputCapabilityName = "TomCat.InputApiV1";
+	inline constexpr std::string_view InputEventsCapabilityName =
+		"TomCat.InputEventsApiV1";
+	inline constexpr std::string_view ApplicationPathsCapabilityName =
+		"TomCat.ApplicationPathsApiV1";
 
 	struct NativeInputApiV1
 	{
@@ -248,8 +252,69 @@ namespace TomCat::Scripting {
 			uint32_t capacity, uint32_t* required) = nullptr;
 	};
 
+	enum class NativeInputDeviceV1 : uint32_t
+	{
+		Keyboard = 1,
+		MouseButton = 2,
+		GamepadConnection = 3,
+		GamepadButton = 4
+	};
+
+	enum class NativeInputActionV1 : uint32_t
+	{
+		Pressed = 1,
+		Released = 2,
+		Repeated = 3
+	};
+
+	struct NativeInputEventV1
+	{
+		uint64_t Sequence = 0;
+		double TimestampSeconds = 0.0;
+		uint64_t FrameNumber = 0;
+		NativeInputDeviceV1 Device = NativeInputDeviceV1::Keyboard;
+		NativeInputActionV1 Action = NativeInputActionV1::Pressed;
+		uint32_t Code = 0;
+		uint32_t DeviceIndex = 0;
+	};
+
+	struct NativeInputEventBatchInfoV1
+	{
+		uint64_t FirstFrameNumber = 0;
+		uint64_t LastFrameNumber = 0;
+		uint64_t FirstSequence = 0;
+		uint64_t LastSequence = 0;
+		uint64_t DroppedEventCount = 0;
+		uint32_t EventCount = 0;
+		uint32_t Reserved = 0;
+	};
+
+	struct NativeInputEventsApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeInputEventsApiV1);
+		int32_t(TC_SCRIPT_CALL* GetBatchInfo)(
+			NativeInputEventBatchInfoV1* value) = nullptr;
+		int32_t(TC_SCRIPT_CALL* CopyEvents)(NativeInputEventV1* events,
+			uint32_t capacity, uint32_t* required) = nullptr;
+	};
+
+	struct NativeApplicationPathsApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeApplicationPathsApiV1);
+		int32_t(TC_SCRIPT_CALL* GetSaveDirectory)(uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetLogDirectory)(uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetCrashDirectory)(uint8_t* buffer,
+			uint32_t capacity, uint32_t* required) = nullptr;
+	};
+
 	inline constexpr std::string_view ComponentCapabilityName =
 		"TomCat.ComponentApiV1";
+	inline constexpr std::string_view ComponentSchemaCapabilityName =
+		"TomCat.ComponentSchemaApiV1";
 	inline constexpr std::string_view GameplayCapabilityName =
 		"TomCat.GameplayApiV1";
 
@@ -368,7 +433,10 @@ namespace TomCat::Scripting {
 		Double,
 		Vector2,
 		Vector3,
-		Vector4
+		Vector4,
+		// Metadata discovery can describe registry string properties even though
+		// NativeComponentApiV1 intentionally has no string value transport.
+		String
 	};
 
 	struct NativePropertyValueV1
@@ -396,6 +464,60 @@ namespace TomCat::Scripting {
 		int32_t(TC_SCRIPT_CALL* SetProperty)(EntityHandleV1 entity,
 			uint64_t componentTypeId, uint64_t propertyId,
 			NativePropertyValueV1 value) = nullptr;
+	};
+
+	enum class NativeComponentSchemaFlagsV1 : uint32_t
+	{
+		None = 0,
+		ScriptAccessible = 1u << 0,
+		InspectorVisible = 1u << 1
+	};
+
+	enum class NativeComponentPropertyFlagsV1 : uint32_t
+	{
+		None = 0,
+		AssetReference = 1u << 0,
+		EntityReference = 1u << 1
+	};
+
+	// Returned UTF-8 views borrow ComponentRegistry storage. They remain valid
+	// until the next main-thread registry mutation; callers should copy them into
+	// owned memory before triggering a module lifecycle operation.
+	struct NativeComponentSchemaInfoV1
+	{
+		uint64_t TypeId = 0;
+		uint64_t ProviderId = 0;
+		uint32_t SchemaVersion = 0;
+		uint32_t PropertyCount = 0;
+		uint32_t Flags = 0;
+		uint32_t Reserved = 0;
+		NativeUtf8View StableName;
+		NativeUtf8View DisplayName;
+	};
+
+	struct NativeComponentPropertySchemaInfoV1
+	{
+		uint64_t ComponentTypeId = 0;
+		uint64_t PropertyId = 0;
+		uint32_t Kind = 0;
+		uint32_t Flags = 0;
+		NativeUtf8View StableName;
+		NativeUtf8View DisplayName;
+	};
+
+	// Additive discovery surface. NativeComponentApiV1 is a frozen deployed
+	// contract and must not grow when schema metadata gains new fields.
+	struct NativeComponentSchemaApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeComponentSchemaApiV1);
+		int32_t(TC_SCRIPT_CALL* GetComponentCount)(uint32_t* count) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetComponent)(uint32_t index,
+			NativeComponentSchemaInfoV1* component) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetPropertyCount)(uint64_t componentTypeId,
+			uint32_t* count) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetProperty)(uint64_t componentTypeId,
+			uint32_t index, NativeComponentPropertySchemaInfoV1* property) = nullptr;
 	};
 
 	// Scene/world services intentionally live outside the frozen NativeApiV1.
@@ -554,17 +676,26 @@ namespace TomCat::Scripting {
 	static_assert(std::is_standard_layout_v<NativeApiV1>);
 	static_assert(std::is_standard_layout_v<NativeApiV2>);
 	static_assert(std::is_standard_layout_v<NativeInputApiV1>);
+	static_assert(std::is_standard_layout_v<NativeInputEventV1>);
+	static_assert(std::is_standard_layout_v<NativeInputEventBatchInfoV1>);
+	static_assert(std::is_standard_layout_v<NativeInputEventsApiV1>);
+	static_assert(std::is_standard_layout_v<NativeApplicationPathsApiV1>);
 	static_assert(std::is_standard_layout_v<NativeAudioApiV1>);
 	static_assert(std::is_standard_layout_v<NativeAudioSpatialApiV1>);
 	static_assert(std::is_standard_layout_v<NativeRuntimeUIApiV1>);
 	static_assert(std::is_standard_layout_v<NativePropertyValueV1>);
 	static_assert(std::is_standard_layout_v<NativeComponentApiV1>);
+	static_assert(std::is_standard_layout_v<NativeComponentSchemaInfoV1>);
+	static_assert(std::is_standard_layout_v<NativeComponentPropertySchemaInfoV1>);
+	static_assert(std::is_standard_layout_v<NativeComponentSchemaApiV1>);
 	static_assert(offsetof(NativeApiV2, V1) == 0);
 	static_assert(std::is_standard_layout_v<ManagedApiV1>);
 	static_assert(sizeof(NativeByteView) == 16);
 	static_assert(sizeof(EntityHandleV1) == 24);
 	static_assert(sizeof(NativeScriptAttachmentV1) == 48);
 	static_assert(sizeof(NativePhysicsEventV1) == 56);
+	static_assert(sizeof(NativeInputEventV1) == 40);
+	static_assert(sizeof(NativeInputEventBatchInfoV1) == 48);
 
 }
 

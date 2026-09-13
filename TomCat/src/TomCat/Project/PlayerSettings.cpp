@@ -3,7 +3,9 @@
 
 #include "TomCat/Utils/PathUtils.h"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <string_view>
 
 namespace TomCat {
@@ -27,7 +29,7 @@ namespace TomCat {
 		}
 
 		bool ValidateLabel(const std::string& value, std::string_view name,
-			size_t maximumLength, std::string& errorMessage)
+			size_t maximumLength, bool pathSegment, std::string& errorMessage)
 		{
 			if (value.empty() || value.size() > maximumLength)
 			{
@@ -42,6 +44,38 @@ namespace TomCat {
 					errorMessage = std::string(name) + " cannot contain control characters";
 					return false;
 				}
+				if (pathSegment && (character == '<' || character == '>'
+					|| character == ':' || character == '"' || character == '/'
+					|| character == '\\' || character == '|' || character == '?'
+					|| character == '*'))
+				{
+					errorMessage = std::string(name)
+						+ " must be a valid single file-system path segment";
+					return false;
+				}
+			}
+			if (!pathSegment)
+				return true;
+			if (value == "." || value == ".." || value.back() == ' '
+				|| value.back() == '.')
+			{
+				errorMessage = std::string(name)
+					+ " must be a valid single file-system path segment";
+				return false;
+			}
+			std::string base(value.substr(0, value.find('.')));
+			std::transform(base.begin(), base.end(), base.begin(),
+				[](unsigned char character)
+				{
+					return static_cast<char>(std::toupper(character));
+				});
+			if (base == "CON" || base == "PRN" || base == "AUX" || base == "NUL"
+				|| (base.size() == 4 && (base.rfind("COM", 0) == 0
+					|| base.rfind("LPT", 0) == 0)
+					&& base[3] >= '1' && base[3] <= '9'))
+			{
+				errorMessage = std::string(name) + " uses a reserved file-system name";
+				return false;
 			}
 			return true;
 		}
@@ -87,11 +121,11 @@ namespace TomCat {
 		std::string& errorMessage)
 	{
 		if (!ValidateLabel(settings.ProductName, "PlayerSettings.ProductName", 128,
-			errorMessage)
+			true, errorMessage)
 			|| !ValidateLabel(settings.CompanyName, "PlayerSettings.CompanyName", 128,
-				errorMessage)
+				true, errorMessage)
 			|| !ValidateLabel(settings.Version, "PlayerSettings.Version", 64,
-				errorMessage))
+				false, errorMessage))
 			return false;
 		if (settings.Width < 320 || settings.Width > 16384
 			|| settings.Height < 200 || settings.Height > 16384)

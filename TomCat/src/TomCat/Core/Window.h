@@ -45,7 +45,11 @@ namespace TomCat {
 
 		virtual ~Window(){}
 
-		virtual void OnUpdate() = 0;
+		// Application owns the frame boundary: native events are polled first,
+		// input is frozen, gameplay updates run, and only then is the back buffer
+		// presented.
+		virtual void PollEvents() = 0;
+		virtual void Present() = 0;
 
 		virtual uint32_t GetWidth() const = 0;
 		virtual uint32_t GetHeight() const = 0;

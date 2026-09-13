@@ -5,8 +5,10 @@
 #include "TomCat/Renderer/Texture.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <set>
 #include <span>
 #include <string_view>
@@ -71,20 +73,26 @@ namespace TomCat {
 	class RuntimeFont final
 	{
 	public:
-		RuntimeFont(AssetHandle handle,
-			std::vector<std::vector<uint8_t>> sourceChain);
+		RuntimeFont(AssetHandle handle, FontAtlasData atlas,
+			Ref<Texture2D> texture);
 
-		bool EnsureText(std::string_view utf8);
 		AssetHandle GetHandle() const { return m_Handle; }
 		const FontAtlasData& GetAtlas() const { return m_Atlas; }
 		const Ref<Texture2D>& GetTexture() const { return m_Texture; }
 
 	private:
 		AssetHandle m_Handle{ 0 };
-		std::vector<std::vector<uint8_t>> m_SourceChain;
-		std::set<uint32_t> m_Codepoints;
 		FontAtlasData m_Atlas;
 		Ref<Texture2D> m_Texture;
+	};
+
+	struct FontStreamingStats
+	{
+		size_t BacklogCount = 0;
+		size_t JobsInFlight = 0;
+		size_t PreparedCount = 0;
+		uint64_t PreparedBytes = 0;
+		size_t PublishedCount = 0;
 	};
 
 	class FontManager final
@@ -94,12 +102,23 @@ namespace TomCat {
 		Ref<RuntimeFont> Load(AssetHandle handle, std::string_view requiredText,
 			AssetHandle fallbackFont = AssetHandle(0),
 			AssetHandle emojiFont = AssetHandle(0));
+		// Workers read imported font artifacts and rasterize glyphs. The application
+		// thread calls this once per frame to meter Texture2D creation and atomically
+		// publish completed atlases. A growing font keeps its previous atlas alive.
+		size_t PumpPublishes(uint32_t maximumUploads = 2,
+			uint64_t maximumUploadBytes = 16ULL * 1024ULL * 1024ULL);
+		FontStreamingStats GetStreamingStats() const;
 		void Release(AssetHandle handle);
 		void ReleaseAll();
 
 	private:
-		using FontChainKey = std::array<uint64_t, 3>;
-		std::map<FontChainKey, Ref<RuntimeFont>> m_Fonts;
+		FontManager();
+		~FontManager();
+		FontManager(const FontManager&) = delete;
+		FontManager& operator=(const FontManager&) = delete;
+
+		struct Impl;
+		std::unique_ptr<Impl> m_Impl;
 	};
 
 }

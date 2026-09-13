@@ -13,11 +13,14 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 
 class b2World;
 class b2Body;
+class b2Fixture;
+class b2Joint;
 
 namespace TomCat {
 	namespace Scripting { class ScriptEngine; }
@@ -66,6 +69,25 @@ namespace TomCat {
 		// Bit corresponding to EntityMetadata::Layer, not the fixture's raw
 		// Box2D categoryBits value.
 		uint16_t CollisionLayer = 0;
+	};
+
+	// Cumulative counters for runtime physics definition synchronization. These
+	// count definition snapshot scans and Box2D mutations, rather than simulation
+	// steps, so regressions can distinguish safe-point coalescing from object work.
+	struct RuntimePhysicsSyncStatistics
+	{
+		uint64_t DefinitionScans = 0;
+		uint64_t CoalescedRequests = 0;
+		uint64_t WorldRebuilds = 0;
+		uint64_t BodiesCreated = 0;
+		uint64_t BodiesDestroyed = 0;
+		uint64_t BodiesUpdatedInPlace = 0;
+		uint64_t BoxFixturesCreated = 0;
+		uint64_t BoxFixturesDestroyed = 0;
+		uint64_t CircleFixturesCreated = 0;
+		uint64_t CircleFixturesDestroyed = 0;
+		uint64_t DistanceJointsCreated = 0;
+		uint64_t DistanceJointsDestroyed = 0;
 	};
 
 	class Scene
@@ -127,6 +149,11 @@ namespace TomCat {
 		// increments. Rendering still occurs once per display frame.
 		void OnUpdateRuntime(Timestep ts);
 		void OnRenderRuntime();
+		// Physics simulation keeps authoritative current transforms in the ECS.
+		// Rendering reads this matrix to interpolate between the two most recent
+		// fixed poses without feeding a presentation-only pose back into physics.
+		glm::mat4 GetRuntimeRenderTransform(UUID entityID) const;
+		float GetRuntimeInterpolationAlpha() const { return m_RuntimeInterpolationAlpha; }
 		void OnViewportResize(uint32_t width, uint32_t height);
 		void SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
 			float dpiScale,
@@ -145,6 +172,14 @@ namespace TomCat {
 		}
 		void SetPhysics2DSettings(const Physics2DSettings& settings);
 		const Physics2DSettings& GetPhysics2DSettings() const { return m_Physics2DSettings; }
+		const RuntimePhysicsSyncStatistics& GetRuntimePhysicsSyncStatistics() const
+		{
+			return m_RuntimePhysicsSyncStatistics;
+		}
+		void ResetRuntimePhysicsSyncStatistics()
+		{
+			m_RuntimePhysicsSyncStatistics = {};
+		}
 
 		CollisionListenerHandle AddCollisionEnter2DListener(CollisionEnter2DCallback callback);
 		CollisionListenerHandle AddCollisionExit2DListener(CollisionExit2DCallback callback);
@@ -185,14 +220,28 @@ namespace TomCat {
 		std::string MakeUniqueEntityName(const std::string& requestedName) const;
 		bool ValidateTransformHierarchy();
 		bool RunFixedRuntimeStep();
-		bool SynchronizeRuntimePhysicsDefinitions();
+		bool SynchronizeRuntimePhysicsDefinitions(
+			bool observeDirectComponentWrites = false);
+		void InvalidateRuntimePhysicsDefinitionScan();
+		void FlushPendingRuntimeEntityCreatesAtSafePoint();
 		uint64_t ComputeRuntimePhysicsDefinitionHash() const;
+		uint64_t ComputeRuntimePhysicsSettingsHash() const;
+		uint64_t ComputeRuntimeBodyDefinitionHash(UUID entityID) const;
+		struct RuntimePhysicsDefinitions
+		{
+			uint64_t SettingsHash = 0;
+			std::unordered_map<UUID, uint64_t> Bodies;
+			std::unordered_map<UUID, uint64_t> BoxFixtures;
+			std::unordered_map<UUID, uint64_t> CircleFixtures;
+			std::unordered_map<UUID, uint64_t> DistanceJoints;
+		};
+		RuntimePhysicsDefinitions BuildRuntimePhysicsDefinitions() const;
 		bool RebuildRuntimePhysicsWorld(bool preserveState);
 		void ResetRuntimePhysicsPointers();
 		void ArmRuntimeScriptBatchCallback();
 		b2Body* FindRuntimeBody(UUID entityID) const;
 		void SynchronizeRuntimeTransforms();
-		void DispatchPendingCollisionEvents();
+		bool DispatchPendingCollisionEvents();
 		void RenderRuntimeScene();
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
@@ -209,6 +258,7 @@ namespace TomCat {
 		SceneContactListener* m_ContactListener = nullptr;
 		bool m_RuntimeRunning = false;
 		double m_RuntimeAccumulator = 0.0;
+		float m_RuntimeInterpolationAlpha = 1.0f;
 		uint64_t m_RuntimeSessionGeneration = 0;
 		uint64_t m_ScriptSceneSessionID = 0;
 		std::vector<UUID> m_EntitiesBeingDestroyed;
@@ -218,6 +268,18 @@ namespace TomCat {
 		std::unordered_map<CollisionListenerHandle, TriggerEnter2DCallback> m_TriggerEnterListeners;
 		std::unordered_map<CollisionListenerHandle, TriggerExit2DCallback> m_TriggerExitListeners;
 		std::unordered_map<UUID, b2Body*> m_RuntimeBodies;
+		std::unordered_map<UUID, b2Fixture*> m_RuntimeBoxFixtures;
+		std::unordered_map<UUID, b2Fixture*> m_RuntimeCircleFixtures;
+		std::unordered_map<UUID, b2Joint*> m_RuntimeDistanceJoints;
+		RuntimePhysicsDefinitions m_RuntimePhysicsDefinitions;
+		struct RuntimePhysicsPose
+		{
+			glm::vec2 PreviousPosition{ 0.0f };
+			glm::vec2 CurrentPosition{ 0.0f };
+			float PreviousAngle = 0.0f;
+			float CurrentAngle = 0.0f;
+		};
+		std::unordered_map<UUID, RuntimePhysicsPose> m_RuntimePhysicsPoses;
 		struct SuspendedRuntimeBodyState
 		{
 			float LinearVelocityX = 0.0f;
@@ -229,6 +291,8 @@ namespace TomCat {
 			m_SuspendedRuntimeBodyStates;
 		uint64_t m_RuntimePhysicsDefinitionHash = 0;
 		bool m_HasRuntimePhysicsDefinition = false;
+		bool m_RuntimePhysicsDefinitionScanRequired = true;
+		RuntimePhysicsSyncStatistics m_RuntimePhysicsSyncStatistics;
 		RuntimeEntityBatchCreatedCallback m_RuntimeEntityBatchCreatedCallback;
 		std::vector<UUID> m_PendingRuntimeEntityCreates;
 		bool m_FlushingRuntimeEntityCreates = false;

@@ -22,8 +22,8 @@ namespace TomCat {
 			if (args.Count > 1)
 				startupProjectPath = UTF8ToPath(args[1]);
 			
-			// EditorLayer acquires the LocalAppData project lock before allowing
-			// Project::Load to perform any migration or other write.
+			// EditorLayer acquires the LocalAppData project lock, previews the exact
+			// migration, and passes that approved plan to the low-level load API.
 			PushLayer(new EditorLayer(std::move(startupProjectPath)));
 		}
 

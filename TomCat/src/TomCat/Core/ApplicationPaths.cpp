@@ -1,8 +1,12 @@
 #include "tcpch.h"
 #include "ApplicationPaths.h"
 
+#include "TomCat/Utils/PathUtils.h"
+
 #include <algorithm>
+#include <cctype>
 #include <cwctype>
+#include <mutex>
 #include <vector>
 
 #ifdef TC_PLATFORM_WINDOWS
@@ -12,6 +16,62 @@
 #endif
 
 namespace TomCat {
+	namespace {
+
+		std::mutex s_RuntimeGameDataMutex;
+		std::optional<GameDataPaths> s_RuntimeGameDataPaths;
+
+		bool IsSafeIdentitySegment(std::string_view value)
+		{
+			if (value.empty())
+				return false;
+			const std::filesystem::path path = UTF8ToPath(value);
+			if (path.empty() || path.has_root_name() || path.has_root_directory()
+				|| path.filename() != path || path == "." || path == "..")
+				return false;
+			if (value.back() == ' ' || value.back() == '.')
+				return false;
+			for (unsigned char character : value)
+			{
+				if (character < 0x20 || character == 0x7f
+					|| character == '<' || character == '>' || character == ':'
+					|| character == '"' || character == '/' || character == '\\'
+					|| character == '|' || character == '?' || character == '*')
+					return false;
+			}
+
+			std::string base(value.substr(0, value.find('.')));
+			std::transform(base.begin(), base.end(), base.begin(),
+				[](unsigned char character)
+				{
+					return static_cast<char>(std::toupper(character));
+				});
+			if (base == "CON" || base == "PRN" || base == "AUX" || base == "NUL")
+				return false;
+			if (base.size() == 4 && (base.rfind("COM", 0) == 0
+				|| base.rfind("LPT", 0) == 0)
+				&& base[3] >= '1' && base[3] <= '9')
+				return false;
+			return true;
+		}
+
+		bool IsSafeRelativeDirectory(const std::filesystem::path& path)
+		{
+			if (path.empty() || path.is_absolute() || path.has_root_name()
+				|| path.has_root_directory())
+				return false;
+			const std::filesystem::path normalized = path.lexically_normal();
+			if (normalized.empty() || normalized == ".")
+				return false;
+			for (const auto& part : normalized)
+			{
+				if (part == ".." || !IsSafeIdentitySegment(PathToUTF8(part)))
+					return false;
+			}
+			return true;
+		}
+
+	}
 
 	std::string_view ApplicationPaths::GetProductDirectoryName(ApplicationProduct product)
 	{
@@ -104,6 +164,78 @@ namespace TomCat {
 		const auto productRoot = GetProductDataRoot(product);
 		return productRoot ? std::optional<std::filesystem::path>(*productRoot / "TomCat.log")
 			: std::nullopt;
+	}
+
+	std::optional<GameDataPaths> ApplicationPaths::ResolveGameDataPaths(
+		const std::filesystem::path& localAppData,
+		std::string_view companyName,
+		std::string_view productName,
+		const std::filesystem::path& saveDirectory,
+		const std::filesystem::path& logDirectory,
+		const std::filesystem::path& crashDirectory)
+	{
+		if (localAppData.empty() || !IsSafeIdentitySegment(companyName)
+			|| !IsSafeIdentitySegment(productName)
+			|| !IsSafeRelativeDirectory(saveDirectory)
+			|| !IsSafeRelativeDirectory(logDirectory)
+			|| !IsSafeRelativeDirectory(crashDirectory))
+			return std::nullopt;
+
+		GameDataPaths paths;
+		paths.Root = (localAppData / "TomCat" / "Games" / UTF8ToPath(companyName)
+			/ UTF8ToPath(productName)).lexically_normal();
+		paths.Saves = (paths.Root / saveDirectory).lexically_normal();
+		paths.Logs = (paths.Root / logDirectory).lexically_normal();
+		paths.Crashes = (paths.Root / crashDirectory).lexically_normal();
+		return paths;
+	}
+
+	std::optional<GameDataPaths> ApplicationPaths::GetGameDataPaths(
+		std::string_view companyName,
+		std::string_view productName,
+		const std::filesystem::path& saveDirectory,
+		const std::filesystem::path& logDirectory,
+		const std::filesystem::path& crashDirectory)
+	{
+		const auto localAppData = GetLocalAppDataRoot();
+		return localAppData ? ResolveGameDataPaths(*localAppData, companyName,
+			productName, saveDirectory, logDirectory, crashDirectory) : std::nullopt;
+	}
+
+	void ApplicationPaths::SetRuntimeGameDataPaths(const GameDataPaths& paths)
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimeGameDataMutex);
+		s_RuntimeGameDataPaths = paths;
+	}
+
+	void ApplicationPaths::ClearRuntimeGameDataPaths()
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimeGameDataMutex);
+		s_RuntimeGameDataPaths.reset();
+	}
+
+	std::optional<GameDataPaths> ApplicationPaths::GetRuntimeGameDataPaths()
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimeGameDataMutex);
+		return s_RuntimeGameDataPaths;
+	}
+
+	std::optional<std::filesystem::path> ApplicationPaths::GetRuntimeSaveDirectory()
+	{
+		const auto paths = GetRuntimeGameDataPaths();
+		return paths ? std::optional<std::filesystem::path>(paths->Saves) : std::nullopt;
+	}
+
+	std::optional<std::filesystem::path> ApplicationPaths::GetRuntimeLogDirectory()
+	{
+		const auto paths = GetRuntimeGameDataPaths();
+		return paths ? std::optional<std::filesystem::path>(paths->Logs) : std::nullopt;
+	}
+
+	std::optional<std::filesystem::path> ApplicationPaths::GetRuntimeCrashDirectory()
+	{
+		const auto paths = GetRuntimeGameDataPaths();
+		return paths ? std::optional<std::filesystem::path>(paths->Crashes) : std::nullopt;
 	}
 
 }

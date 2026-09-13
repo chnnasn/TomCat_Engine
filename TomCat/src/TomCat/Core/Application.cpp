@@ -4,7 +4,9 @@
 #include "Log.h"
 
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Renderer.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 
 #include "Input.h"
 
@@ -166,6 +168,14 @@ namespace TomCat {
 		while (m_Running) 
 		{
 			TC_PROFILE_SCOPE("RunLoop");
+			// Poll first, then freeze one immutable input snapshot. Both native
+			// gameplay and managed scripts therefore observe transitions delivered
+			// by this poll, including press+release pairs between display frames.
+			m_Window->PollEvents();
+			Input::BeginFrame();
+			Scripting::ScriptEngine::Get().CaptureInputState();
+			if (!m_Running)
+				break;
 
 			float time = static_cast<float>(m_Window->GetTimeSeconds());
 			Timestep timestep = time - m_LastFrameTime;
@@ -176,6 +186,14 @@ namespace TomCat {
 			// thread. Pump even while minimized so authoring changes cannot remain
 			// indefinitely queued behind a hidden window.
 			(void)AssetManager::Get().PumpImportCoordinator();
+			// Texture workers only read and validate immutable artifacts. OpenGL
+			// object creation stays on this context-owning thread and is metered so a
+			// large preload cannot turn one frame into a long upload stall.
+			(void)AssetManager::Get().PumpTexturePublishes();
+			// Font workers perform artifact reads and glyph rasterization only. Keep
+			// atlas texture creation on the context-owning application thread and
+			// publish a bounded amount before layers render this frame.
+			(void)FontManager::Get().PumpPublishes();
 
 			if (!m_Minimized)
 			{
@@ -199,7 +217,7 @@ namespace TomCat {
 
 			}
 
-			m_Window->OnUpdate();
+			m_Window->Present();
 		}
 	}
 

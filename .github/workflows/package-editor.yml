@@ -1,26 +1,83 @@
-name: Package (Editor / Hub / Both)
+name: Protected Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      target:
-        description: 'Pack target'
-        required: true
-        type: choice
-        options:
-          - both
-          - editor
-          - hub
-      version:
-        description: 'Release version/tag (e.g. 0.2.0)'
-        required: true
-        type: string
+  push:
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  release-policy:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.provenance.outputs.version }}
+      regression-run-id: ${{ steps.provenance.outputs.regression-run-id }}
+      regression-run-url: ${{ steps.provenance.outputs.regression-run-url }}
+    steps:
+      - name: Checkout protected tag SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify protected tag, default branch, and same-SHA regressions
+        id: provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TAG_REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          . "$env:GITHUB_WORKSPACE/Scripts/VersionTools.ps1"
+          . "$env:GITHUB_WORKSPACE/Scripts/ReleaseProvenanceTools.ps1"
+
+          $versionInfo = Get-TomCatVersionInfo -RepositoryRoot $env:GITHUB_WORKSPACE
+          $encodedBranch = [uri]::EscapeDataString($env:DEFAULT_BRANCH)
+          $branch = & gh api "repos/$env:GITHUB_REPOSITORY/branches/$encodedBranch" | ConvertFrom-Json
+
+          $tagRef = & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          $tagType = [string]$tagRef.object.type
+          $tagTargetSha = [string]$tagRef.object.sha
+          for ($depth = 0; $tagType -eq 'tag' -and $depth -lt 8; ++$depth) {
+            $annotatedTag = & gh api "repos/$env:GITHUB_REPOSITORY/git/tags/$tagTargetSha" | ConvertFrom-Json
+            $tagType = [string]$annotatedTag.object.type
+            $tagTargetSha = [string]$annotatedTag.object.sha
+          }
+          if ($tagType -ne 'commit') {
+            throw "Release tag does not resolve to a commit after eight annotated-tag levels."
+          }
+
+          $comparison = & gh api "repos/$env:GITHUB_REPOSITORY/compare/$tagTargetSha...$encodedBranch" | ConvertFrom-Json
+          $runs = & gh api -X GET "repos/$env:GITHUB_REPOSITORY/actions/workflows/regressions.yml/runs" `
+            -f "head_sha=$env:RELEASE_SHA" -f "branch=$env:DEFAULT_BRANCH" `
+            -f "status=completed" -f "per_page=100" | ConvertFrom-Json
+          $regression = Assert-TomCatReleaseProvenance `
+            -Tag $env:RELEASE_TAG `
+            -Version $versionInfo.ProductVersion `
+            -CommitSha $env:RELEASE_SHA `
+            -TagTargetSha $tagTargetSha `
+            -DefaultBranch $env:DEFAULT_BRANCH `
+            -TagRefProtected ([System.Convert]::ToBoolean($env:TAG_REF_PROTECTED)) `
+            -DefaultBranchProtected ([bool]$branch.protected) `
+            -DefaultBranchComparisonStatus ([string]$comparison.status) `
+            -RegressionRuns @($runs.workflow_runs)
+
+          "version=$($versionInfo.ProductVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "regression-run-id=$($regression.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "regression-run-url=$($regression.html_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
   build-package:
+    needs: release-policy
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -29,6 +86,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           submodules: recursive
 
       - name: Install .NET 10 SDK
@@ -93,8 +151,11 @@ jobs:
       - name: Build & Box
         shell: pwsh
         env:
-          TARGET: ${{ inputs.target }}
-          RELEASE_VERSION: ${{ inputs.version }}
+          TARGET: both
+          RELEASE_VERSION: ${{ needs.release-policy.outputs.version }}
+          REGRESSION_RUN_ID: ${{ needs.release-policy.outputs.regression-run-id }}
+          REGRESSION_RUN_URL: ${{ needs.release-policy.outputs.regression-run-url }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           $ErrorActionPreference = "Stop"
           . "$env:GITHUB_WORKSPACE\Scripts\VersionTools.ps1"
@@ -167,12 +228,20 @@ jobs:
             Write-Host "== Building Editor =="
             Invoke-Gen "Editor"
             Invoke-Build "Editor\Editor.sln"
+            Write-Host "== Building Headless CLI =="
+            Invoke-Gen "Tools"
+            Invoke-Build "Tools\Tools.sln"
             $editorOutput = Join-Path $env:GITHUB_WORKSPACE "Editor\bin\Release-windows-x86_64\TomCatInut"
+            $cliOutput = Join-Path $env:GITHUB_WORKSPACE "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
+            if (-not (Test-Path -LiteralPath $cliOutput -PathType Leaf)) {
+              throw "Headless CLI build did not produce $cliOutput"
+            }
             & "$env:GITHUB_WORKSPACE\Scripts\Build-PlayerTemplate.ps1" -Configuration Release -Destination (Join-Path $editorOutput "Packages\PlayerTemplates\win-x64")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Invoke-Box "editor.evb" "Editor\bin\Release-windows-x86_64\TomCatInut" "TomCatInut.exe"
+            Copy-Item -LiteralPath $cliOutput -Destination "dist\TomCatCLI.exe" -Force
             Publish-TomCatManagedRelease -RepositoryRoot $env:GITHUB_WORKSPACE -Destination "dist\Managed"
-            $archiveInputs = @("dist\TomCat.exe", "dist\Packages", "dist\Managed")
+            $archiveInputs = @("dist\TomCat.exe", "dist\TomCatCLI.exe", "dist\Packages", "dist\Managed")
             foreach ($name in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
               Copy-Item -LiteralPath (Join-Path $editorOutput "Packages\PlayerTemplates\win-x64\$name") -Destination (Join-Path "dist" $name) -Force
               $archiveInputs += Join-Path "dist" $name
@@ -187,17 +256,32 @@ jobs:
           }
 
           . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
-          New-TomCatReleaseMetadata -RepositoryRoot $env:GITHUB_WORKSPACE -DistPath (Join-Path $env:GITHUB_WORKSPACE 'dist') -Target $t -Version $env:RELEASE_VERSION | Out-Null
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          $provenance = [ordered]@{
+            schemaVersion = 1
+            tag = $env:GITHUB_REF_NAME
+            commitSha = $env:GITHUB_SHA
+            defaultBranch = $env:DEFAULT_BRANCH
+            regressionsWorkflow = '.github/workflows/regressions.yml'
+            regressionsRunId = [long]$env:REGRESSION_RUN_ID
+            regressionsRunUrl = $env:REGRESSION_RUN_URL
+          }
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:GITHUB_WORKSPACE 'dist/RELEASE_PROVENANCE.json'),
+            ($provenance | ConvertTo-Json -Depth 4),
+            $utf8)
+          New-TomCatReleaseMetadata -RepositoryRoot $env:GITHUB_WORKSPACE `
+            -DistPath (Join-Path $env:GITHUB_WORKSPACE 'dist') `
+            -Target $t -Version $env:RELEASE_VERSION `
+            -AdditionalChecksumFiles @('RELEASE_PROVENANCE.json') | Out-Null
 
       - name: Upload Editor artifact
-        if: ${{ inputs.target == 'editor' || inputs.target == 'both' }}
         uses: actions/upload-artifact@v4
         with:
           name: TomCat
           path: dist/TomCat.zip
 
       - name: Upload Hub artifact
-        if: ${{ inputs.target == 'hub' || inputs.target == 'both' }}
         uses: actions/upload-artifact@v4
         with:
           name: TomCatHub
@@ -212,13 +296,16 @@ jobs:
             dist/SHA256SUMS
             dist/THIRD_PARTY_NOTICES.txt
             dist/TomCat.spdx.json
+            dist/RELEASE_PROVENANCE.json
 
   publish-release:
-    if: ${{ inputs.target == 'both' }}
-    needs: build-package
+    needs:
+      - release-policy
+      - build-package
     runs-on: windows-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Download Editor artifact
         uses: actions/download-artifact@v4
@@ -242,7 +329,8 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ needs.release-policy.outputs.version }}
+          RELEASE_SHA: ${{ github.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = "v$env:RELEASE_VERSION"
@@ -251,7 +339,8 @@ jobs:
             "dist\TomCatHub.exe",
             "dist\SHA256SUMS",
             "dist\THIRD_PARTY_NOTICES.txt",
-            "dist\TomCat.spdx.json"
+            "dist\TomCat.spdx.json",
+            "dist\RELEASE_PROVENANCE.json"
           )
           foreach ($asset in $assets) {
             if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Release asset is missing: $asset" }
@@ -266,11 +355,34 @@ jobs:
               throw "Release artifact checksum mismatch: $hashedAsset"
             }
           }
+          $provenance = Get-Content -LiteralPath 'dist\RELEASE_PROVENANCE.json' -Raw |
+            ConvertFrom-Json
+          if ([string]$provenance.tag -ne $tag -or
+              -not ([string]$provenance.commitSha).Equals(
+                $env:RELEASE_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Release provenance does not match tag $tag at $env:RELEASE_SHA."
+          }
+          $tagRef = & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Protected release tag disappeared before publishing." }
+          $tagType = [string]$tagRef.object.type
+          $tagTargetSha = [string]$tagRef.object.sha
+          for ($depth = 0; $tagType -eq 'tag' -and $depth -lt 8; ++$depth) {
+            $annotatedTag = & gh api "repos/$env:GITHUB_REPOSITORY/git/tags/$tagTargetSha" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw "Could not resolve protected annotated tag." }
+            $tagType = [string]$annotatedTag.object.type
+            $tagTargetSha = [string]$annotatedTag.object.sha
+          }
+          if ($tagType -ne 'commit' -or
+              -not $tagTargetSha.Equals(
+                $env:RELEASE_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Protected release tag changed before publishing."
+          }
           $null = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 2>&1
           if ($LASTEXITCODE -eq 0) {
             throw "Release $tag already exists. Existing versions are immutable; choose a new version."
           }
-          & gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --title $tag --generate-notes
+          & gh release create $tag @assets --repo $env:GITHUB_REPOSITORY `
+            --verify-tag --target $env:RELEASE_SHA --title $tag --generate-notes
           if ($LASTEXITCODE -ne 0) {
             throw "Release publish failed with exit code $LASTEXITCODE."
           }

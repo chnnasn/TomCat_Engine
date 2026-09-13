@@ -105,10 +105,16 @@
     <ClInclude Include="src\TomCat\Asset\AssetImportCoordinator.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetJobSystem.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Asset\AssetManager.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Asset\AssetRegistry.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AudioArtifact.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Asset\ContentHash.h">
@@ -123,7 +129,19 @@
     <ClInclude Include="src\TomCat\Asset\ImporterRegistry.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\MaterialArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\MeshArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\ShaderArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Asset\SpriteAsset.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\TextureArtifact.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Audio\AudioClip.h">
@@ -150,10 +168,16 @@
     <ClInclude Include="src\TomCat\Core\Base.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\CrashReporter.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\EntryPoint.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\Input.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Core\InputEventQueue.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\KeyCodes.h">
@@ -284,6 +308,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h">
       <Filter>src\TomCat\Runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h">
+      <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\ComponentRegistry.h">
       <Filter>src\TomCat\Scene</Filter>
@@ -1676,10 +1703,16 @@
     <ClCompile Include="src\TomCat\Asset\AssetImportCoordinator.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetJobSystem.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Asset\AssetManager.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AudioArtifact.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Asset\ContentHash.cpp">
@@ -1691,7 +1724,19 @@
     <ClCompile Include="src\TomCat\Asset\ImporterRegistry.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\MaterialArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\MeshArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\ShaderArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\TextureArtifact.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Audio\AudioClip.cpp">
@@ -1716,6 +1761,9 @@
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\ApplicationPaths.cpp">
+      <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Core\CrashReporter.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\Layer.cpp">
@@ -1801,6 +1849,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp">
       <Filter>src\TomCat\Runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp">
+      <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\ComponentRegistry.cpp">
       <Filter>src\TomCat\Scene</Filter>

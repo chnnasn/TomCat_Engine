@@ -156,6 +156,46 @@ namespace TomCat {
 		return true;
 	}
 
+	bool DerivedDataCache::TryGetPayloadRange(const std::string& artifactKey,
+		std::filesystem::path& path, uint64_t& offset, uint64_t& size) const
+	{
+		path.clear(); offset = 0; size = 0;
+		const std::filesystem::path candidate = GetEntryPath(artifactKey);
+		if (candidate.empty())
+			return false;
+		std::ifstream input(candidate, std::ios::binary | std::ios::ate);
+		std::streamoff end = -1;
+		if (input)
+			end = static_cast<std::streamoff>(input.tellg());
+		if (end < static_cast<std::streamoff>(kHeaderSize)
+			|| static_cast<uint64_t>(end) > kHeaderSize + kMaximumPayloadSize)
+			return false;
+		std::array<uint8_t, kHeaderSize> header{};
+		input.seekg(0, std::ios::beg);
+		if (!input.read(reinterpret_cast<char*>(header.data()), header.size())
+			|| !std::equal(kMagic.begin(), kMagic.end(), header.begin()))
+			return false;
+		size_t cursor = kMagic.size();
+		uint32_t version = 0;
+		uint64_t payloadSize = 0;
+		if (!ReadU32(header, cursor, version) || version != kVersion
+			|| !ReadU64(header, cursor, payloadSize)
+			|| payloadSize > kMaximumPayloadSize
+			|| static_cast<uint64_t>(end) != kHeaderSize + payloadSize)
+			return false;
+		const std::string storedKey(reinterpret_cast<const char*>(
+			header.data() + cursor), 64);
+		cursor += 64;
+		const std::string storedHash(reinterpret_cast<const char*>(
+			header.data() + cursor), 64);
+		if (storedKey != artifactKey || !IsArtifactKey(storedHash))
+			return false;
+		path = candidate;
+		offset = kHeaderSize;
+		size = payloadSize;
+		return true;
+	}
+
 	bool DerivedDataCache::Publish(const std::string& artifactKey,
 		std::span<const uint8_t> payload)
 	{

@@ -1,10 +1,14 @@
 #include "tcpch.h"
 #include "AssetManager.h"
+#include "AssetJobSystem.h"
 #include "SpriteAsset.h"
+#include "ShaderArtifact.h"
+#include "TextureArtifact.h"
 
 #include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Font.h"
+#include "TomCat/Renderer/Shader.h"
 #include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
@@ -1558,6 +1562,38 @@ namespace TomCat {
 			std::filesystem::remove(path, ignored);
 		}
 
+		template<typename ArtifactData, AssetType ExpectedType, typename Decoder>
+		DecodedAssetLoadResult<ArtifactData, ExpectedType> DecodeLoadedArtifact(
+			AssetLoadResult loaded, Decoder&& decoder)
+		{
+			DecodedAssetLoadResult<ArtifactData, ExpectedType> result;
+			result.Status = loaded.Status;
+			result.Handle = loaded.Artifact.Handle;
+			result.Type = loaded.Artifact.Type;
+			result.ArtifactKey = std::move(loaded.Artifact.ArtifactKey);
+			result.Format = std::move(loaded.Artifact.Format);
+			result.SubAssets = std::move(loaded.Artifact.SubAssets);
+			result.DependencyKeys = std::move(loaded.Artifact.DependencyKeys);
+			result.FromCache = loaded.Artifact.FromCache;
+			result.Error = std::move(loaded.Error);
+			if (result.Status != AssetLoadStatus::Success)
+				return result;
+			if (result.Type != ExpectedType)
+			{
+				result.Status = AssetLoadStatus::UnsupportedType;
+				result.Error = "asset type does not match the requested decoded loader";
+				return result;
+			}
+			std::string decodeError;
+			if (!decoder(std::move(loaded.Artifact.Bytes), result.Asset, decodeError))
+			{
+				result.Status = AssetLoadStatus::ImportFailed;
+				result.Error = decodeError.empty()
+					? "imported artifact failed typed decoding" : std::move(decodeError);
+			}
+			return result;
+		}
+
 	}
 
 	AssetManager& AssetManager::Get()
@@ -1569,6 +1605,11 @@ namespace TomCat {
 	bool AssetManager::Initialize(const std::filesystem::path& assetRoot,
 		const std::filesystem::path& libraryRoot)
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("AssetManager cannot be initialized from an asset worker thread");
+			return false;
+		}
 		Shutdown();
 		if (assetRoot.empty() || libraryRoot.empty())
 		{
@@ -1598,11 +1639,18 @@ namespace TomCat {
 			TC_Core_Warn("Asset file monitoring is unavailable for '{0}'",
 				PathToUTF8(assetRoot));
 		}
+		if (m_RegistryInitialized)
+			EnableAsyncLoads();
 		return m_RegistryInitialized;
 	}
 
 	bool AssetManager::SetProject(const Ref<Project>& project)
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("AssetManager project changes are not allowed from an asset worker thread");
+			return false;
+		}
 		if (!project || project->GetProjectPath().empty())
 		{
 			Shutdown();
@@ -1659,6 +1707,11 @@ namespace TomCat {
 
 	void AssetManager::Shutdown()
 	{
+		if (!StopAndWaitForAsyncLoads())
+		{
+			TC_Core_Error("AssetManager shutdown was rejected on an asset worker thread");
+			return;
+		}
 		m_ImportCoordinator.Shutdown();
 		ReleaseAll();
 		{
@@ -1681,6 +1734,45 @@ namespace TomCat {
 		m_Database.Shutdown();
 		m_Registry.Shutdown();
 		m_RegistryInitialized = false;
+	}
+
+	bool AssetManager::BeginAsyncLoad()
+	{
+		std::lock_guard lock(m_AsyncLoadMutex);
+		if (!m_AcceptingAsyncLoads)
+			return false;
+		++m_AsyncLoadsInFlight;
+		return true;
+	}
+
+	void AssetManager::FinishAsyncLoad() noexcept
+	{
+		bool becameIdle = false;
+		{
+			std::lock_guard lock(m_AsyncLoadMutex);
+			if (m_AsyncLoadsInFlight == 0)
+				return;
+			becameIdle = --m_AsyncLoadsInFlight == 0;
+		}
+		if (becameIdle)
+			m_AsyncLoadsIdle.notify_all();
+	}
+
+	void AssetManager::EnableAsyncLoads()
+	{
+		std::lock_guard lock(m_AsyncLoadMutex);
+		m_AcceptingAsyncLoads = true;
+	}
+
+	bool AssetManager::StopAndWaitForAsyncLoads()
+	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+			return false;
+		std::unique_lock lock(m_AsyncLoadMutex);
+		m_AcceptingAsyncLoads = false;
+		m_AsyncLoadsIdle.wait(lock,
+			[this]() { return m_AsyncLoadsInFlight == 0; });
+		return true;
 	}
 
 	bool AssetManager::Refresh()
@@ -1768,11 +1860,514 @@ namespace TomCat {
 	std::future<AssetLoadResult> AssetManager::LoadImportedArtifactAsync(
 		AssetHandle handle, AssetLoadOptions options)
 	{
-		return std::async(std::launch::async,
-			[this, handle, options = std::move(options)]() mutable
+		if (!BeginAsyncLoad())
+		{
+			AssetLoadResult result;
+			result.Status = AssetLoadStatus::NotInitialized;
+			result.Error = "asset manager is not accepting asynchronous loads";
+			std::promise<AssetLoadResult> promise;
+			std::future<AssetLoadResult> future = promise.get_future();
+			promise.set_value(std::move(result));
+			return future;
+		}
+
+		if (!IsCookedPackageMounted())
+		{
+			try
 			{
-				return LoadImportedArtifact(handle, std::move(options));
+				if (m_RegistryInitialized)
+				{
+					std::future<AssetLoadResult> future =
+						m_Database.LoadArtifactAsync(handle, std::move(options));
+					// The database owns the task after successful submission and its
+					// shutdown gate protects the registry for the rest of the load.
+					FinishAsyncLoad();
+					return future;
+				}
+				std::promise<AssetLoadResult> promise;
+				std::future<AssetLoadResult> future = promise.get_future();
+				promise.set_value(LoadImportedArtifact(handle, std::move(options)));
+				FinishAsyncLoad();
+				return future;
+			}
+			catch (...)
+			{
+				FinishAsyncLoad();
+				throw;
+			}
+		}
+		uint64_t reservation = 0;
+		const auto entry = m_CookedEntries.find(handle);
+		if (entry != m_CookedEntries.end())
+			reservation = entry->second.Size;
+		try
+		{
+			return AssetJobSystem::Get().Submit(reservation,
+				[this, handle, options = std::move(options)]() mutable
+				{
+					try
+					{
+						AssetLoadResult result = LoadImportedArtifact(handle,
+							std::move(options));
+						FinishAsyncLoad();
+						return result;
+					}
+					catch (...)
+					{
+						FinishAsyncLoad();
+						throw;
+					}
+				});
+		}
+		catch (...)
+		{
+			FinishAsyncLoad();
+			throw;
+		}
+	}
+
+	DecodedMaterialLoadResult AssetManager::LoadMaterial(AssetHandle handle,
+		AssetLoadOptions options)
+	{
+		return DecodeLoadedArtifact<MaterialArtifact, AssetType::Material>(
+			LoadImportedArtifact(handle, std::move(options)),
+			[](std::vector<uint8_t>&& bytes, MaterialArtifact& artifact,
+				std::string& error)
+			{
+				return DecodeMaterialArtifact(bytes, artifact, error);
 			});
+	}
+
+	std::future<DecodedMaterialLoadResult> AssetManager::LoadMaterialAsync(
+		AssetHandle handle, AssetLoadOptions options)
+	{
+		std::future<AssetLoadResult> untyped = LoadImportedArtifactAsync(handle,
+			std::move(options));
+		return AssetJobSystem::Get().Submit(0,
+			[untyped = std::move(untyped)]() mutable
+			{
+				return DecodeLoadedArtifact<MaterialArtifact, AssetType::Material>(
+					untyped.get(),
+					[](std::vector<uint8_t>&& bytes, MaterialArtifact& artifact,
+						std::string& error)
+					{
+						return DecodeMaterialArtifact(bytes, artifact, error);
+					});
+			});
+	}
+
+	DecodedMeshLoadResult AssetManager::LoadMesh(AssetHandle handle,
+		AssetLoadOptions options)
+	{
+		return DecodeLoadedArtifact<MeshArtifact, AssetType::Mesh>(
+			LoadImportedArtifact(handle, std::move(options)),
+			[](std::vector<uint8_t>&& bytes, MeshArtifact& artifact,
+				std::string& error)
+			{
+				return DecodeMeshArtifact(std::move(bytes), artifact, error);
+			});
+	}
+
+	std::future<DecodedMeshLoadResult> AssetManager::LoadMeshAsync(
+		AssetHandle handle, AssetLoadOptions options)
+	{
+		std::future<AssetLoadResult> untyped = LoadImportedArtifactAsync(handle,
+			std::move(options));
+		return AssetJobSystem::Get().Submit(0,
+			[untyped = std::move(untyped)]() mutable
+			{
+				return DecodeLoadedArtifact<MeshArtifact, AssetType::Mesh>(
+					untyped.get(),
+					[](std::vector<uint8_t>&& bytes, MeshArtifact& artifact,
+						std::string& error)
+					{
+						return DecodeMeshArtifact(std::move(bytes), artifact, error);
+					});
+			});
+	}
+
+	bool AssetManager::RequestCookedTexture(AssetHandle handle, bool prioritize)
+	{
+		if (!IsCookedPackageMounted() || static_cast<uint64_t>(handle) == 0)
+			return false;
+		const auto cooked = m_CookedEntries.find(handle);
+		if (cooked == m_CookedEntries.end()
+			|| cooked->second.Type != AssetType::Texture2D)
+			return false;
+		const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+		if (cooked->second.Size == 0
+			|| cooked->second.Size > limits.MemoryBudgetBytes
+			|| cooked->second.Size > static_cast<uint64_t>(
+				(std::numeric_limits<int>::max)()))
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			m_TextureFailures.emplace(handle,
+				"texture artifact exceeds the streaming memory budget");
+			return false;
+		}
+
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (m_TexturePending.contains(handle)
+				|| m_TextureFailures.contains(handle))
+				return true;
+			if (m_TextureBacklogSet.contains(handle))
+			{
+				if (prioritize && (m_TexturePreloadBacklog.empty()
+					|| m_TexturePreloadBacklog.front() != handle))
+				{
+					const auto existing = std::find(m_TexturePreloadBacklog.begin(),
+						m_TexturePreloadBacklog.end(), handle);
+					if (existing != m_TexturePreloadBacklog.end())
+					{
+						m_TexturePreloadBacklog.erase(existing);
+						m_TexturePreloadBacklog.push_front(handle);
+						TC_Core_Assert(m_TexturePreloadBacklog.front() == handle,
+							"visible texture was not promoted in the preload backlog");
+					}
+				}
+				return true;
+			}
+			if (prioritize)
+				m_TexturePreloadBacklog.push_front(handle);
+			else
+				m_TexturePreloadBacklog.push_back(handle);
+			m_TextureBacklogSet.emplace(handle);
+		}
+		ScheduleTextureBacklog();
+		return true;
+	}
+
+	void AssetManager::ScheduleTextureBacklog()
+	{
+		const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+		const size_t maximumPending = (std::max<size_t>)(2,
+			static_cast<size_t>(limits.WorkerCount) * 2);
+		for (;;)
+		{
+			AssetHandle handle(0);
+			uint64_t generation = 0;
+			CookedEntry entry;
+			std::filesystem::path packagePath;
+			uint32_t packageVersion = 0;
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				if (m_TexturePending.size() >= maximumPending
+					|| m_TexturePreloadBacklog.empty())
+					return;
+				handle = m_TexturePreloadBacklog.front();
+				m_TexturePreloadBacklog.pop_front();
+				m_TextureBacklogSet.erase(handle);
+				const auto found = m_CookedEntries.find(handle);
+				if (found == m_CookedEntries.end()
+					|| found->second.Type != AssetType::Texture2D)
+					continue;
+				entry = found->second;
+				packagePath = m_CookedPackagePath;
+				packageVersion = m_CookedPackageVersion;
+				generation = m_TextureStreamingGeneration;
+				m_TexturePending.emplace(handle);
+				++m_TextureJobsInFlight;
+			}
+
+			bool scheduled = false;
+			try
+			{
+				scheduled = AssetJobSystem::Get().TrySchedule(entry.Size,
+					[this, handle, generation, packagePath = std::move(packagePath),
+						offset = entry.Offset, size = entry.Size,
+						requireArtifact = packageVersion
+						== RuntimeCompatibility::TcpakVersion]() mutable
+					{
+						try
+						{
+							PrepareCookedTexture(handle, generation,
+								std::move(packagePath), offset, size, requireArtifact);
+						}
+						catch (const std::exception& exception)
+						{
+							std::lock_guard lock(m_TextureStreamingMutex);
+							if (generation == m_TextureStreamingGeneration)
+							{
+								m_TexturePending.erase(handle);
+								try { m_TextureFailures[handle] = exception.what(); }
+								catch (...) {}
+							}
+							--m_TextureJobsInFlight;
+							m_TextureStreamingIdle.notify_all();
+						}
+						catch (...)
+						{
+							std::lock_guard lock(m_TextureStreamingMutex);
+							if (generation == m_TextureStreamingGeneration)
+								m_TexturePending.erase(handle);
+							--m_TextureJobsInFlight;
+							m_TextureStreamingIdle.notify_all();
+						}
+					});
+			}
+			catch (const std::exception& exception)
+			{
+				TC_Core_Error("Could not queue texture preload {0}: {1}",
+					static_cast<uint64_t>(handle), exception.what());
+			}
+			if (scheduled)
+				continue;
+
+			// The global executor is at its queue or memory limit. Put this request
+			// back without waiting; a later application-frame pump will retry it.
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				m_TexturePending.erase(handle);
+				if (generation == m_TextureStreamingGeneration
+					&& !m_TextureBacklogSet.contains(handle))
+				{
+					m_TexturePreloadBacklog.push_front(handle);
+					m_TextureBacklogSet.emplace(handle);
+				}
+				--m_TextureJobsInFlight;
+			}
+			m_TextureStreamingIdle.notify_all();
+			return;
+		}
+	}
+
+	void AssetManager::PrepareCookedTexture(AssetHandle handle,
+		uint64_t generation, std::filesystem::path packagePath, uint64_t offset,
+		uint64_t size, bool requireArtifact)
+	{
+		PreparedTexture prepared;
+		prepared.Handle = handle;
+		prepared.Generation = generation;
+		prepared.SourcePath = std::move(packagePath);
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (generation != m_TextureStreamingGeneration)
+			{
+				--m_TextureJobsInFlight;
+				m_TextureStreamingIdle.notify_all();
+				return;
+			}
+		}
+
+		std::ifstream input(prepared.SourcePath, std::ios::binary);
+		if (!input || !ReadStreamRange(input, offset, size, prepared.Bytes))
+			prepared.Error = "texture artifact bytes could not be read";
+		else
+		{
+			ResolvedSpriteAsset sprite;
+			std::span<const uint8_t> atlasBytes;
+			if (ParseCookedSpriteSubAsset(prepared.Bytes, sprite, atlasBytes))
+			{
+				std::vector<uint8_t> payload(atlasBytes.begin(), atlasBytes.end());
+				prepared.Bytes = std::move(payload);
+				prepared.Sprite = sprite;
+				prepared.HasSpriteDescriptor = true;
+			}
+			else
+			{
+				prepared.Sprite.TextureHandle = handle;
+				prepared.HasSpriteDescriptor = true;
+			}
+
+			if (IsTextureArtifact(prepared.Bytes))
+			{
+				TextureArtifactView artifact;
+				if (!ParseTextureArtifact(prepared.Bytes, artifact, prepared.Error))
+					prepared.Bytes.clear();
+				else
+				{
+					// Budget against the worst-case RGBA upload. BC3 may be uploaded
+					// natively, but OpenGL's compatibility fallback decompresses it.
+					for (const TextureArtifactMip& mip : artifact.Mips)
+					{
+						const uint64_t pixels = static_cast<uint64_t>(mip.Width)
+							* static_cast<uint64_t>(mip.Height);
+						if (pixels > ((std::numeric_limits<uint64_t>::max)()
+							- prepared.EstimatedUploadBytes) / 4ULL)
+						{
+							prepared.Error = "texture mip upload size overflows uint64";
+							prepared.Bytes.clear();
+							prepared.EstimatedUploadBytes = 0;
+							break;
+						}
+						prepared.EstimatedUploadBytes += pixels * 4ULL;
+					}
+				}
+			}
+			else if (requireArtifact)
+			{
+				prepared.Error = "current package contains a source image instead of a texture artifact";
+				prepared.Bytes.clear();
+			}
+			else
+				prepared.EstimatedUploadBytes = static_cast<uint64_t>(
+					prepared.Bytes.size());
+		}
+
+		const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+		const uint64_t preparedBudget = (std::max<uint64_t>)(1024ULL * 1024ULL,
+			limits.MemoryBudgetBytes / 2);
+		const size_t preparedCountLimit = (std::max<size_t>)(1,
+			static_cast<size_t>(limits.WorkerCount) * 2);
+		const uint64_t byteCount = static_cast<uint64_t>(prepared.Bytes.size());
+		std::unique_lock lock(m_TextureStreamingMutex);
+		m_TextureStreamingCapacity.wait(lock, [&]()
+		{
+			if (generation != m_TextureStreamingGeneration)
+				return true;
+			if (m_PreparedTextures.empty() && byteCount <= limits.MemoryBudgetBytes)
+				return true;
+			return m_PreparedTextures.size() < preparedCountLimit
+				&& byteCount <= preparedBudget
+				&& m_PreparedTextureBytes <= preparedBudget - byteCount;
+		});
+		if (generation == m_TextureStreamingGeneration)
+		{
+			m_PreparedTextures.emplace_back(std::move(prepared));
+			m_PreparedTextureBytes += byteCount;
+		}
+		--m_TextureJobsInFlight;
+		lock.unlock();
+		m_TextureStreamingIdle.notify_all();
+	}
+
+	size_t AssetManager::BeginCookedTexturePreload()
+	{
+		if (!IsCookedPackageMounted())
+			return 0;
+		std::vector<AssetHandle> handles;
+		handles.reserve(m_CookedEntries.size());
+		for (const auto& [handle, entry] : m_CookedEntries)
+			if (entry.Type == AssetType::Texture2D)
+				handles.push_back(handle);
+		std::sort(handles.begin(), handles.end(), [](AssetHandle left,
+			AssetHandle right)
+		{
+			return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+		});
+		size_t requested = 0;
+		for (const AssetHandle handle : handles)
+		{
+			if (m_TextureCache.contains(handle))
+				continue;
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (m_TexturePending.contains(handle)
+				|| m_TextureBacklogSet.contains(handle)
+				|| m_TextureFailures.contains(handle))
+				continue;
+			m_TexturePreloadBacklog.push_back(handle);
+			m_TextureBacklogSet.emplace(handle);
+			++requested;
+		}
+		ScheduleTextureBacklog();
+		return requested;
+	}
+
+	size_t AssetManager::PumpTexturePublishes(uint32_t maximumUploads,
+		uint64_t maximumUploadBytes)
+	{
+		std::vector<PreparedTexture> ready;
+		uint64_t selectedUploadBytes = 0;
+		{
+			std::lock_guard lock(m_TextureStreamingMutex);
+			while (ready.size() < maximumUploads && !m_PreparedTextures.empty())
+			{
+				const uint64_t nextUploadBytes =
+					m_PreparedTextures.front().EstimatedUploadBytes;
+				if (!ready.empty() && (nextUploadBytes > maximumUploadBytes
+					|| selectedUploadBytes > maximumUploadBytes - nextUploadBytes))
+					break;
+				selectedUploadBytes += nextUploadBytes;
+				m_PreparedTextureBytes -= static_cast<uint64_t>(
+					m_PreparedTextures.front().Bytes.size());
+				ready.emplace_back(std::move(m_PreparedTextures.front()));
+				m_PreparedTextures.pop_front();
+			}
+		}
+		if (!ready.empty())
+			m_TextureStreamingCapacity.notify_all();
+
+		size_t published = 0;
+		for (PreparedTexture& prepared : ready)
+		{
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				if (prepared.Generation != m_TextureStreamingGeneration
+					|| !m_TexturePending.contains(prepared.Handle))
+					continue;
+			}
+
+			Ref<Texture2D> texture;
+			if (prepared.Error.empty() && !prepared.Bytes.empty())
+			{
+				try
+				{
+					texture = Texture2D::Create(prepared.Bytes.data(),
+						prepared.Bytes.size(), prepared.SourcePath);
+				}
+				catch (const std::exception& exception)
+				{
+					prepared.Error = exception.what();
+				}
+				catch (...)
+				{
+					prepared.Error = "unknown error while publishing texture to the GPU";
+				}
+			}
+			std::lock_guard lock(m_TextureStreamingMutex);
+			if (prepared.Generation != m_TextureStreamingGeneration
+				|| !m_TexturePending.contains(prepared.Handle))
+				continue;
+			m_TexturePending.erase(prepared.Handle);
+			if (texture && texture->IsLoaded())
+			{
+				m_TextureCache[prepared.Handle] = std::move(texture);
+				if (prepared.HasSpriteDescriptor)
+					m_SpriteDescriptorCache[prepared.Handle] = prepared.Sprite;
+				m_TextureFailures.erase(prepared.Handle);
+				++published;
+			}
+			else
+			{
+				std::string error = prepared.Error.empty()
+					? "texture artifact could not be published to the GPU"
+					: std::move(prepared.Error);
+				m_TextureFailures[prepared.Handle] = error;
+				TC_Core_Warn("Using the missing texture for asset {0}: {1}",
+					static_cast<uint64_t>(prepared.Handle), error);
+			}
+		}
+
+		ScheduleTextureBacklog();
+		return published;
+	}
+
+	TextureStreamingStats AssetManager::GetTextureStreamingStats() const
+	{
+		std::lock_guard lock(m_TextureStreamingMutex);
+		return { m_TexturePreloadBacklog.size(), m_TexturePending.size(),
+			m_PreparedTextures.size(), m_PreparedTextureBytes,
+			m_TextureJobsInFlight };
+	}
+
+	void AssetManager::CancelTextureStreaming(bool waitForJobs)
+	{
+		std::unique_lock lock(m_TextureStreamingMutex);
+		++m_TextureStreamingGeneration;
+		m_TexturePreloadBacklog.clear();
+		m_TextureBacklogSet.clear();
+		m_TexturePending.clear();
+		m_PreparedTextures.clear();
+		m_PreparedTextureBytes = 0;
+		m_TextureFailures.clear();
+		lock.unlock();
+		m_TextureStreamingCapacity.notify_all();
+		if (!waitForJobs)
+			return;
+		lock.lock();
+		m_TextureStreamingIdle.wait(lock,
+			[this]() { return m_TextureJobsInFlight == 0; });
 	}
 
 	Ref<Texture2D> AssetManager::GetMissingTexture()
@@ -1852,43 +2447,37 @@ namespace TomCat {
 		}
 		if (IsCookedPackageMounted())
 		{
-			const auto cooked = m_CookedEntries.find(handle);
-			if (cooked == m_CookedEntries.end() || cooked->second.Size >
-				static_cast<uint64_t>((std::numeric_limits<int>::max)()))
-				return CacheMissingTexture(handle, "encoded texture exceeds the decoder size limit");
-		}
-		else
-		{
-			std::error_code error;
-			const std::filesystem::path source = m_Registry.GetFileSystemPath(sourceHandle);
-			const uintmax_t size = source.empty() ? 0 : std::filesystem::file_size(source, error);
-			if (error || source.empty() || size >
-				static_cast<uintmax_t>((std::numeric_limits<int>::max)()))
-				return CacheMissingTexture(handle, "encoded texture exceeds the decoder size limit");
+			// Package I/O and artifact validation are never performed from a draw
+			// call. Repeated callers observe the same pending request and keep using
+			// the shared placeholder until the frame-start publisher swaps the real
+			// texture into m_TextureCache.
+			bool waitingOrFailed = false;
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				waitingOrFailed = m_TextureFailures.contains(handle)
+					|| m_TexturePending.contains(handle)
+					|| m_TextureBacklogSet.contains(handle);
+			}
+			if (waitingOrFailed)
+				return GetMissingTexture();
+			(void)RequestCookedTexture(handle, true);
+			return GetMissingTexture();
 		}
 
-		AssetType type = AssetType::None;
-		std::vector<uint8_t> bytes;
-		if (IsCookedPackageMounted())
-		{
-			if (!ReadAssetBytes(handle, bytes, &type))
-				return CacheMissingTexture(handle, "asset bytes could not be read");
-		}
-		else
-		{
-			AssetLoadResult imported = LoadImportedArtifact(sourceHandle);
-			if (!imported.Succeeded())
-				return CacheMissingTexture(handle, imported.Error.c_str());
-			type = imported.Artifact.Type;
-			bytes = std::move(imported.Artifact.Bytes);
-		}
+		std::error_code error;
+		const std::filesystem::path source = m_Registry.GetFileSystemPath(sourceHandle);
+		const uintmax_t size = source.empty() ? 0 : std::filesystem::file_size(source, error);
+		if (error || source.empty() || size >
+			static_cast<uintmax_t>((std::numeric_limits<int>::max)()))
+			return CacheMissingTexture(handle, "encoded texture exceeds the decoder size limit");
+
+		AssetLoadResult imported = LoadImportedArtifact(sourceHandle);
+		if (!imported.Succeeded())
+			return CacheMissingTexture(handle, imported.Error.c_str());
+		const AssetType type = imported.Artifact.Type;
+		std::vector<uint8_t> bytes = std::move(imported.Artifact.Bytes);
 		if (type != registeredType)
 			return CacheMissingTexture(handle, "asset type changed while it was being loaded");
-		ResolvedSpriteAsset cookedSprite;
-		std::span<const uint8_t> atlasBytes;
-		if (IsCookedPackageMounted()
-			&& ParseCookedSpriteSubAsset(bytes, cookedSprite, atlasBytes))
-			bytes.assign(atlasBytes.begin(), atlasBytes.end());
 
 		const std::filesystem::path sourcePath = ResolvePath(sourceHandle);
 		Ref<Texture2D> texture = Texture2D::Create(bytes.data(), bytes.size(), sourcePath);
@@ -1897,6 +2486,88 @@ namespace TomCat {
 
 		m_TextureCache.emplace(handle, texture);
 		return texture;
+	}
+
+	Ref<Shader> AssetManager::LoadShader(AssetHandle handle)
+	{
+		if (static_cast<uint64_t>(handle) == 0)
+			return nullptr;
+		if (const auto cached = m_ShaderCache.find(handle);
+			cached != m_ShaderCache.end())
+			return cached->second;
+
+		ShaderLoadResult loaded = LoadTypedArtifact<AssetType::Shader>(handle);
+		if (!loaded.Succeeded())
+		{
+			TC_Core_Error("Could not load Shader asset {0}: {1}",
+				static_cast<uint64_t>(handle), loaded.Error);
+			return nullptr;
+		}
+
+		const bool cooked = IsCookedPackageMounted();
+		const std::filesystem::path sourcePath = cooked
+			? std::filesystem::path{} : ResolvePath(handle);
+		const std::string name = sourcePath.empty()
+			? "Shader-" + std::to_string(static_cast<uint64_t>(handle))
+			: PathToUTF8(sourcePath.stem());
+		std::string error;
+		Ref<Shader> shader = Shader::CreateFromArtifact(name,
+			loaded.Artifact.Bytes, &error);
+		if (!shader && !cooked && !IsShaderArtifact(loaded.Artifact.Bytes)
+			&& !sourcePath.empty())
+		{
+			// Old authoring caches could contain passthrough GLSL. Keep the source
+			// path operational while the current importer rebuilds that cache; cooked
+			// packages never have a source path and therefore cannot take this branch.
+			try
+			{
+				TC_Core_Warn("Shader asset {0} uses the legacy GLSL fallback",
+					static_cast<uint64_t>(handle));
+				shader = Shader::Create(sourcePath);
+			}
+			catch (const std::exception& exception)
+			{
+				error = exception.what();
+			}
+		}
+		if (!shader)
+		{
+			TC_Core_Error("Could not publish Shader asset {0}: {1}",
+				static_cast<uint64_t>(handle), error.empty()
+					? "artifact is invalid for the active renderer" : error);
+			return nullptr;
+		}
+		m_ShaderCache.emplace(handle, shader);
+		return shader;
+	}
+
+	bool AssetManager::PreloadCookedShaders(std::string& error)
+	{
+		error.clear();
+		if (!IsCookedPackageMounted())
+		{
+			error = "no cooked package is mounted";
+			return false;
+		}
+		std::vector<AssetHandle> handles;
+		for (const auto& [handle, entry] : m_CookedEntries)
+			if (entry.Type == AssetType::Shader)
+				handles.push_back(handle);
+		std::sort(handles.begin(), handles.end(), [](AssetHandle left,
+			AssetHandle right)
+		{
+			return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+		});
+		for (const AssetHandle handle : handles)
+		{
+			if (!LoadShader(handle))
+			{
+				error = "could not publish packaged Shader "
+					+ std::to_string(static_cast<uint64_t>(handle));
+				return false;
+			}
+		}
+		return true;
 	}
 
 	bool AssetManager::ResolveSpriteAsset(AssetHandle handle,
@@ -1917,20 +2588,11 @@ namespace TomCat {
 			if (cooked == m_CookedEntries.end()
 				|| cooked->second.Type != AssetType::Texture2D)
 				return false;
-			std::vector<uint8_t> bytes;
-			AssetType type = AssetType::None;
-			if (!ReadAssetBytes(handle, bytes, &type)
-				|| type != AssetType::Texture2D)
-				return false;
-			std::span<const uint8_t> atlasBytes;
-			if (ParseCookedSpriteSubAsset(bytes, sprite, atlasBytes))
-			{
-				m_SpriteDescriptorCache.emplace(handle, sprite);
-				return true;
-			}
-			sprite.TextureHandle = handle;
-			m_SpriteDescriptorCache.emplace(handle, sprite);
-			return true;
+			// The descriptor shares the same package bytes as the texture. Queue one
+			// background request instead of defeating async loading with a second
+			// synchronous read from Renderer2D.
+			(void)const_cast<AssetManager*>(this)->RequestCookedTexture(handle, true);
+			return false;
 		}
 		if (!m_RegistryInitialized)
 			return false;
@@ -1955,6 +2617,7 @@ namespace TomCat {
 
 	void AssetManager::Release(AssetHandle handle)
 	{
+		CancelTextureStreaming(false);
 		if (m_RegistryInitialized)
 		{
 			if (const AssetMetadata* metadata = m_Registry.GetMetadata(handle))
@@ -1967,6 +2630,7 @@ namespace TomCat {
 			}
 		}
 		m_TextureCache.erase(handle);
+		m_ShaderCache.erase(handle);
 		m_SpriteDescriptorCache.erase(handle);
 		FontManager::Get().Release(handle);
 		AudioEngine::Get().ReleaseClip(handle);
@@ -1974,7 +2638,9 @@ namespace TomCat {
 
 	void AssetManager::ReleaseAll()
 	{
+		CancelTextureStreaming(true);
 		m_TextureCache.clear();
+		m_ShaderCache.clear();
 		m_SpriteDescriptorCache.clear();
 		m_MissingTexture.reset();
 		FontManager::Get().ReleaseAll();
@@ -1983,9 +2649,11 @@ namespace TomCat {
 
 	void AssetManager::ReleaseHandles(const std::vector<AssetHandle>& handles)
 	{
+		CancelTextureStreaming(false);
 		for (const AssetHandle handle : handles)
 		{
 			m_TextureCache.erase(handle);
+			m_ShaderCache.erase(handle);
 			m_SpriteDescriptorCache.erase(handle);
 			FontManager::Get().Release(handle);
 			AudioEngine::Get().ReleaseClip(handle);
@@ -2869,6 +3537,11 @@ namespace TomCat {
 
 	bool AssetManager::MountCookedPackage(const std::filesystem::path& packagePath)
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("Cooked packages cannot be mounted from an asset worker thread");
+			return false;
+		}
 		if (packagePath.empty())
 			return false;
 		std::ifstream input(packagePath, std::ios::binary | std::ios::ate);
@@ -3204,6 +3877,8 @@ namespace TomCat {
 			return false;
 		}
 
+		if (!StopAndWaitForAsyncLoads())
+			return false;
 		ReleaseAll();
 		{
 			std::lock_guard<std::mutex> lock(m_CookedPackageMutex);
@@ -3219,12 +3894,20 @@ namespace TomCat {
 		m_CookedPhysics2DSettings = mountedPhysicsSettings;
 		m_CookedPlayerSettings = std::move(mountedPlayerSettings);
 		m_CookedManagedPayload = std::move(mountedManagedPayload);
+		EnableAsyncLoads();
 		return true;
 	}
 
 	void AssetManager::UnmountCookedPackage()
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("Cooked packages cannot be unmounted from an asset worker thread");
+			return;
+		}
 		if (!IsCookedPackageMounted())
+			return;
+		if (!StopAndWaitForAsyncLoads())
 			return;
 		ReleaseAll();
 		{
@@ -3241,6 +3924,8 @@ namespace TomCat {
 		m_CookedPhysics2DSettings = Physics2DSettings{};
 		m_CookedPlayerSettings = PlayerSettings{};
 		m_CookedManagedPayload.reset();
+		if (m_RegistryInitialized)
+			EnableAsyncLoads();
 	}
 
 }

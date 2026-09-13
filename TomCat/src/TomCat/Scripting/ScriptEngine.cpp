@@ -176,6 +176,13 @@ namespace TomCat::Scripting {
 		}
 		m_Runtime = std::move(runtime);
 		m_DeferredCommands.clear();
+		m_PendingFixedInput.clear();
+		m_ActiveFixedInput = {};
+		m_ActiveFixedStepSceneSessionId = 0;
+		m_InputDispatchPhase = InputDispatchPhase::DisplayFrame;
+		m_FixedStepExposesTransitions = false;
+		m_PreviousFixedStepInputDispatchPhase = InputDispatchPhase::DisplayFrame;
+		m_PreviousFixedStepExposesTransitions = false;
 	}
 
 	std::shared_ptr<IScriptRuntime> ScriptEngine::GetRuntime() const
@@ -386,6 +393,7 @@ namespace TomCat::Scripting {
 			do { session = m_NextSceneSessionId++; }
 			while (session == 0 || m_Scenes.find(session) != m_Scenes.end());
 			m_Scenes.emplace(session, SceneBinding{ &scene, runtimeGeneration });
+			m_PendingFixedInput.try_emplace(session);
 		}
 		InstallRuntimeEntityBatchCallback(scene, session);
 
@@ -427,6 +435,7 @@ namespace TomCat::Scripting {
 			}
 			std::lock_guard<std::mutex> lock(m_Mutex);
 			m_Scenes.erase(session);
+			m_PendingFixedInput.erase(session);
 			return 0;
 		}
 		FlushDeferredCommands(session);
@@ -464,6 +473,7 @@ namespace TomCat::Scripting {
 		}
 		std::lock_guard<std::mutex> lock(m_Mutex);
 		m_Scenes.erase(sceneSessionId);
+		m_PendingFixedInput.erase(sceneSessionId);
 		m_DeferredCommands.erase(std::remove_if(m_DeferredCommands.begin(),
 			m_DeferredCommands.end(), [sceneSessionId](const DeferredCommand& command)
 			{
@@ -477,8 +487,76 @@ namespace TomCat::Scripting {
 		auto runtime = GetRuntime();
 		if (!runtime || !std::isfinite(deltaTime) || deltaTime < 0.0f)
 			return;
-		ReportFailure("UpdateAll", runtime->UpdateAll(deltaTime));
+		const InputDispatchPhase previousPhase = m_InputDispatchPhase;
+		const bool previousFixedTransitions = m_FixedStepExposesTransitions;
+		m_InputDispatchPhase = InputDispatchPhase::DisplayFrame;
+		m_FixedStepExposesTransitions = false;
+		ScriptStatus status;
+		try
+		{
+			status = runtime->UpdateAll(deltaTime);
+		}
+		catch (...)
+		{
+			m_InputDispatchPhase = previousPhase;
+			m_FixedStepExposesTransitions = previousFixedTransitions;
+			throw;
+		}
+		m_InputDispatchPhase = previousPhase;
+		m_FixedStepExposesTransitions = previousFixedTransitions;
+		ReportFailure("UpdateAll", status);
 		FlushDeferredCommands(sceneSessionId);
+	}
+
+	bool ScriptEngine::BeginFixedStep(uint64_t sceneSessionId)
+	{
+		if (sceneSessionId == 0)
+			return false;
+		if (m_ActiveFixedStepSceneSessionId != 0)
+		{
+			TC_Core_Error("Cannot begin fixed step for scene {0}; scene {1} already owns the active fixed-step input batch",
+				sceneSessionId, m_ActiveFixedStepSceneSessionId);
+			return false;
+		}
+
+		m_PreviousFixedStepInputDispatchPhase = m_InputDispatchPhase;
+		m_PreviousFixedStepExposesTransitions = m_FixedStepExposesTransitions;
+		// Update and FixedUpdate are independent readers. Each scene accumulates
+		// frozen display-frame batches until its next physics tick. The first fixed
+		// substep consumes that ordered batch; catch-up substeps see no one-shot
+		// transitions. Keep the consumed batch active through physics event dispatch,
+		// so every managed callback belonging to the substep sees the same input.
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			auto [pending, inserted] = m_PendingFixedInput.try_emplace(sceneSessionId);
+			if (inserted)
+				AccumulateCurrentInput(pending->second);
+			m_ActiveFixedInput = std::move(pending->second);
+			pending->second = {};
+		}
+		m_ActiveFixedStepSceneSessionId = sceneSessionId;
+		m_InputDispatchPhase = InputDispatchPhase::FixedUpdate;
+		m_FixedStepExposesTransitions = m_ActiveFixedInput.LastFrameNumber != 0;
+		return true;
+	}
+
+	void ScriptEngine::EndFixedStep(uint64_t sceneSessionId)
+	{
+		if (m_ActiveFixedStepSceneSessionId == 0)
+			return;
+		if (m_ActiveFixedStepSceneSessionId != sceneSessionId)
+		{
+			TC_Core_Error("Cannot end fixed step for scene {0}; scene {1} owns the active fixed-step input batch",
+				sceneSessionId, m_ActiveFixedStepSceneSessionId);
+			return;
+		}
+
+		m_ActiveFixedInput = {};
+		m_ActiveFixedStepSceneSessionId = 0;
+		m_InputDispatchPhase = m_PreviousFixedStepInputDispatchPhase;
+		m_FixedStepExposesTransitions = m_PreviousFixedStepExposesTransitions;
+		m_PreviousFixedStepInputDispatchPhase = InputDispatchPhase::DisplayFrame;
+		m_PreviousFixedStepExposesTransitions = false;
 	}
 
 	void ScriptEngine::FixedUpdateAll(uint64_t sceneSessionId, float fixedDeltaTime)
@@ -486,8 +564,31 @@ namespace TomCat::Scripting {
 		auto runtime = GetRuntime();
 		if (!runtime || !std::isfinite(fixedDeltaTime) || fixedDeltaTime <= 0.0f)
 			return;
-		ReportFailure("FixedUpdateAll", runtime->FixedUpdateAll(fixedDeltaTime));
-		FlushDeferredCommands(sceneSessionId);
+		const bool ownsFixedStep = m_ActiveFixedStepSceneSessionId == 0;
+		if (ownsFixedStep && !BeginFixedStep(sceneSessionId))
+			return;
+		if (m_ActiveFixedStepSceneSessionId != sceneSessionId)
+		{
+			TC_Core_Error("Cannot dispatch FixedUpdate for scene {0} while scene {1} owns the fixed-step input batch",
+				sceneSessionId, m_ActiveFixedStepSceneSessionId);
+			return;
+		}
+
+		ScriptStatus status;
+		try
+		{
+			status = runtime->FixedUpdateAll(fixedDeltaTime);
+			ReportFailure("FixedUpdateAll", status);
+			FlushDeferredCommands(sceneSessionId);
+		}
+		catch (...)
+		{
+			if (ownsFixedStep)
+				EndFixedStep(sceneSessionId);
+			throw;
+		}
+		if (ownsFixedStep)
+			EndFixedStep(sceneSessionId);
 	}
 
 	void ScriptEngine::DispatchPhysicsEvents(uint64_t sceneSessionId,
@@ -803,6 +904,10 @@ namespace TomCat::Scripting {
 		uint64_t componentTypeId)
 	{
 		if (!IsMainThread())
+			return false;
+		const ComponentDescriptor* descriptor = componentTypeId == 0 ? nullptr
+			: ComponentRegistry::Get().Find(UUID(componentTypeId));
+		if (!descriptor || !descriptor->ScriptAccessible || !descriptor->Removable)
 			return false;
 		bool present = false;
 		if (!GetProjectedRegisteredComponentPresence(entity, componentTypeId, present)
@@ -1181,22 +1286,20 @@ namespace TomCat::Scripting {
 	{
 		if (!IsMainThread())
 			return;
+		const InputEventQueue::FrameSnapshot& frame = Input::GetFrameSnapshot();
+		if (frame.FrameNumber == m_LastCapturedInputFrame)
+			return;
+		m_LastCapturedInputFrame = frame.FrameNumber;
+		m_InputEventsDroppedThisFrame = frame.DroppedEventCount;
+
 		m_PreviousWindowFocused = m_WindowFocused;
 		m_WindowFocused = Input::IsWindowFocused();
-		m_PreviousKeys = m_CurrentKeys;
-		for (uint32_t key = 0; key < m_CurrentKeys.size(); ++key)
-		{
-			const bool valid = (key >= 32 && key <= 96) || (key >= 161 && key <= 162)
-				|| (key >= 256 && key <= 269) || (key >= 280 && key <= 284)
-				|| (key >= 290 && key <= 314) || (key >= 320 && key <= 336)
-				|| (key >= 340 && key <= 348);
-			m_CurrentKeys[key] = m_WindowFocused && valid
-				&& Input::IsKeyPressed(static_cast<KeyCode>(key));
-		}
-		m_PreviousMouseButtons = m_CurrentMouseButtons;
-		for (uint32_t button = 0; button < m_CurrentMouseButtons.size(); ++button)
-			m_CurrentMouseButtons[button] = m_WindowFocused
-				&& Input::IsMouseButtonPressed(static_cast<MouseCode>(button));
+		m_CurrentKeys = frame.KeysHeld;
+		m_KeysPressedThisFrame = frame.KeysPressed;
+		m_KeysReleasedThisFrame = frame.KeysReleased;
+		m_CurrentMouseButtons = frame.MouseButtonsHeld;
+		m_MouseButtonsPressedThisFrame = frame.MouseButtonsPressed;
+		m_MouseButtonsReleasedThisFrame = frame.MouseButtonsReleased;
 		m_PreviousMousePosition = m_MousePosition;
 		const auto [x, y] = Input::GetMousePosition();
 		m_MousePosition = { x, y };
@@ -1224,7 +1327,125 @@ namespace TomCat::Scripting {
 				output.Buttons.fill(false);
 				output.Axes.fill(0.0f);
 			}
+			m_GamepadsConnectedThisFrame[index] = frame.GamepadsConnected[index]
+				|| (output.Connected && !m_PreviousGamepads[index].Connected);
+			m_GamepadsDisconnectedThisFrame[index] = frame.GamepadsDisconnected[index]
+				|| (!output.Connected && m_PreviousGamepads[index].Connected);
+			for (uint32_t button = 0; button < output.Buttons.size(); ++button)
+			{
+				m_GamepadButtonsPressedThisFrame[index][button] =
+					frame.GamepadButtonsPressed[index][button]
+					|| (output.Buttons[button]
+						&& !m_PreviousGamepads[index].Buttons[button]);
+				m_GamepadButtonsReleasedThisFrame[index][button] =
+					frame.GamepadButtonsReleased[index][button]
+					|| (!output.Buttons[button]
+						&& m_PreviousGamepads[index].Buttons[button]);
+			}
 		}
+
+		m_InputEventsThisFrame.clear();
+		m_InputEventsThisFrame.reserve(frame.Events.size());
+		for (const InputEventQueue::Event& event : frame.Events)
+		{
+			NativeInputDeviceV1 device = NativeInputDeviceV1::Keyboard;
+			switch (event.Source)
+			{
+				case InputEventQueue::Device::Keyboard:
+					device = NativeInputDeviceV1::Keyboard;
+					break;
+				case InputEventQueue::Device::Mouse:
+					device = NativeInputDeviceV1::MouseButton;
+					break;
+				case InputEventQueue::Device::GamepadConnection:
+					device = NativeInputDeviceV1::GamepadConnection;
+					break;
+				case InputEventQueue::Device::GamepadButton:
+					device = NativeInputDeviceV1::GamepadButton;
+					break;
+			}
+			NativeInputActionV1 action = NativeInputActionV1::Pressed;
+			switch (event.Transition)
+			{
+				case InputEventQueue::Action::Pressed:
+					action = NativeInputActionV1::Pressed;
+					break;
+				case InputEventQueue::Action::Released:
+					action = NativeInputActionV1::Released;
+					break;
+				case InputEventQueue::Action::Repeated:
+					action = NativeInputActionV1::Repeated;
+					break;
+			}
+			m_InputEventsThisFrame.push_back({ event.Sequence, event.Timestamp,
+				frame.FrameNumber, device, action, event.Code, event.DeviceIndex });
+		}
+
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		for (auto& [sceneSessionId, pending] : m_PendingFixedInput)
+		{
+			(void)sceneSessionId;
+			AccumulateCurrentInput(pending);
+		}
+	}
+
+	void ScriptEngine::AccumulateCurrentInput(FixedInputBatch& batch) const
+	{
+		if (m_LastCapturedInputFrame == 0)
+			return;
+		if (batch.FirstFrameNumber == 0)
+			batch.FirstFrameNumber = m_LastCapturedInputFrame;
+		batch.LastFrameNumber = m_LastCapturedInputFrame;
+		batch.DroppedEventCount += m_InputEventsDroppedThisFrame;
+
+		constexpr size_t maximumPendingEvents = 16384;
+		const size_t incomingCount = m_InputEventsThisFrame.size();
+		if (incomingCount >= maximumPendingEvents)
+		{
+			batch.DroppedEventCount += batch.Events.size()
+				+ incomingCount - maximumPendingEvents;
+			batch.Events.assign(m_InputEventsThisFrame.end() - maximumPendingEvents,
+				m_InputEventsThisFrame.end());
+		}
+		else
+		{
+			const size_t total = batch.Events.size() + incomingCount;
+			if (total > maximumPendingEvents)
+			{
+				const size_t removeCount = total - maximumPendingEvents;
+				batch.Events.erase(batch.Events.begin(),
+					batch.Events.begin() + removeCount);
+				batch.DroppedEventCount += removeCount;
+			}
+			batch.Events.insert(batch.Events.end(), m_InputEventsThisFrame.begin(),
+				m_InputEventsThisFrame.end());
+		}
+
+		auto accumulateFlags = [](auto& destination, const auto& source)
+		{
+			for (size_t index = 0; index < destination.size(); ++index)
+				destination[index] = destination[index] || source[index];
+		};
+		accumulateFlags(batch.KeysPressed, m_KeysPressedThisFrame);
+		accumulateFlags(batch.KeysReleased, m_KeysReleasedThisFrame);
+		accumulateFlags(batch.MouseButtonsPressed,
+			m_MouseButtonsPressedThisFrame);
+		accumulateFlags(batch.MouseButtonsReleased,
+			m_MouseButtonsReleasedThisFrame);
+		accumulateFlags(batch.GamepadsConnected, m_GamepadsConnectedThisFrame);
+		accumulateFlags(batch.GamepadsDisconnected,
+			m_GamepadsDisconnectedThisFrame);
+		for (size_t gamepad = 0; gamepad < batch.GamepadButtonsPressed.size(); ++gamepad)
+		{
+			accumulateFlags(batch.GamepadButtonsPressed[gamepad],
+				m_GamepadButtonsPressedThisFrame[gamepad]);
+			accumulateFlags(batch.GamepadButtonsReleased[gamepad],
+				m_GamepadButtonsReleasedThisFrame[gamepad]);
+		}
+		batch.MouseDelta.X += m_MouseDelta.X;
+		batch.MouseDelta.Y += m_MouseDelta.Y;
+		batch.ScrollDelta.X += m_ScrollDelta.X;
+		batch.ScrollDelta.Y += m_ScrollDelta.Y;
 	}
 
 	bool ScriptEngine::IsKeyHeld(uint32_t key) const
@@ -1234,12 +1455,18 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::WasKeyPressed(uint32_t key) const
 	{
-		return key < m_CurrentKeys.size() && m_CurrentKeys[key] && !m_PreviousKeys[key];
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions && key < m_ActiveFixedInput.KeysPressed.size()
+				&& m_ActiveFixedInput.KeysPressed[key];
+		return key < m_KeysPressedThisFrame.size() && m_KeysPressedThisFrame[key];
 	}
 
 	bool ScriptEngine::WasKeyReleased(uint32_t key) const
 	{
-		return key < m_CurrentKeys.size() && !m_CurrentKeys[key] && m_PreviousKeys[key];
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions && key < m_ActiveFixedInput.KeysReleased.size()
+				&& m_ActiveFixedInput.KeysReleased[key];
+		return key < m_KeysReleasedThisFrame.size() && m_KeysReleasedThisFrame[key];
 	}
 
 	bool ScriptEngine::IsMouseButtonHeld(uint32_t button) const
@@ -1249,19 +1476,37 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::WasMouseButtonPressed(uint32_t button) const
 	{
-		return button < m_CurrentMouseButtons.size() && m_CurrentMouseButtons[button]
-			&& !m_PreviousMouseButtons[button];
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions
+				&& button < m_ActiveFixedInput.MouseButtonsPressed.size()
+				&& m_ActiveFixedInput.MouseButtonsPressed[button];
+		return button < m_MouseButtonsPressedThisFrame.size()
+			&& m_MouseButtonsPressedThisFrame[button];
 	}
 
 	bool ScriptEngine::WasMouseButtonReleased(uint32_t button) const
 	{
-		return button < m_CurrentMouseButtons.size() && !m_CurrentMouseButtons[button]
-			&& m_PreviousMouseButtons[button];
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions
+				&& button < m_ActiveFixedInput.MouseButtonsReleased.size()
+				&& m_ActiveFixedInput.MouseButtonsReleased[button];
+		return button < m_MouseButtonsReleasedThisFrame.size()
+			&& m_MouseButtonsReleasedThisFrame[button];
 	}
 
 	NativeVector2 ScriptEngine::GetMousePosition() const { return m_MousePosition; }
-	NativeVector2 ScriptEngine::GetMouseDelta() const { return m_MouseDelta; }
-	NativeVector2 ScriptEngine::GetScrollDelta() const { return m_ScrollDelta; }
+	NativeVector2 ScriptEngine::GetMouseDelta() const
+	{
+		return m_InputDispatchPhase == InputDispatchPhase::FixedUpdate
+			? (m_FixedStepExposesTransitions ? m_ActiveFixedInput.MouseDelta
+				: NativeVector2{}) : m_MouseDelta;
+	}
+	NativeVector2 ScriptEngine::GetScrollDelta() const
+	{
+		return m_InputDispatchPhase == InputDispatchPhase::FixedUpdate
+			? (m_FixedStepExposesTransitions ? m_ActiveFixedInput.ScrollDelta
+				: NativeVector2{}) : m_ScrollDelta;
+	}
 	bool ScriptEngine::IsWindowFocused() const { return m_WindowFocused; }
 
 	bool ScriptEngine::IsGamepadConnected(uint32_t gamepad) const
@@ -1271,14 +1516,22 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::WasGamepadConnected(uint32_t gamepad) const
 	{
-		return gamepad < m_CurrentGamepads.size() && m_CurrentGamepads[gamepad].Connected
-			&& !m_PreviousGamepads[gamepad].Connected;
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions
+				&& gamepad < m_ActiveFixedInput.GamepadsConnected.size()
+				&& m_ActiveFixedInput.GamepadsConnected[gamepad];
+		return gamepad < m_GamepadsConnectedThisFrame.size()
+			&& m_GamepadsConnectedThisFrame[gamepad];
 	}
 
 	bool ScriptEngine::WasGamepadDisconnected(uint32_t gamepad) const
 	{
-		return gamepad < m_CurrentGamepads.size() && !m_CurrentGamepads[gamepad].Connected
-			&& m_PreviousGamepads[gamepad].Connected;
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions
+				&& gamepad < m_ActiveFixedInput.GamepadsDisconnected.size()
+				&& m_ActiveFixedInput.GamepadsDisconnected[gamepad];
+		return gamepad < m_GamepadsDisconnectedThisFrame.size()
+			&& m_GamepadsDisconnectedThisFrame[gamepad];
 	}
 
 	bool ScriptEngine::IsGamepadButtonHeld(uint32_t gamepad, uint32_t button) const
@@ -1290,18 +1543,26 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::WasGamepadButtonPressed(uint32_t gamepad, uint32_t button) const
 	{
-		return gamepad < m_CurrentGamepads.size()
-			&& button < m_CurrentGamepads[gamepad].Buttons.size()
-			&& m_CurrentGamepads[gamepad].Buttons[button]
-			&& !m_PreviousGamepads[gamepad].Buttons[button];
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions
+				&& gamepad < m_ActiveFixedInput.GamepadButtonsPressed.size()
+				&& button < m_ActiveFixedInput.GamepadButtonsPressed[gamepad].size()
+				&& m_ActiveFixedInput.GamepadButtonsPressed[gamepad][button];
+		return gamepad < m_GamepadButtonsPressedThisFrame.size()
+			&& button < m_GamepadButtonsPressedThisFrame[gamepad].size()
+			&& m_GamepadButtonsPressedThisFrame[gamepad][button];
 	}
 
 	bool ScriptEngine::WasGamepadButtonReleased(uint32_t gamepad, uint32_t button) const
 	{
-		return gamepad < m_CurrentGamepads.size()
-			&& button < m_CurrentGamepads[gamepad].Buttons.size()
-			&& !m_CurrentGamepads[gamepad].Buttons[button]
-			&& m_PreviousGamepads[gamepad].Buttons[button];
+		if (m_InputDispatchPhase == InputDispatchPhase::FixedUpdate)
+			return m_FixedStepExposesTransitions
+				&& gamepad < m_ActiveFixedInput.GamepadButtonsReleased.size()
+				&& button < m_ActiveFixedInput.GamepadButtonsReleased[gamepad].size()
+				&& m_ActiveFixedInput.GamepadButtonsReleased[gamepad][button];
+		return gamepad < m_GamepadButtonsReleasedThisFrame.size()
+			&& button < m_GamepadButtonsReleasedThisFrame[gamepad].size()
+			&& m_GamepadButtonsReleasedThisFrame[gamepad][button];
 	}
 
 	float ScriptEngine::GetGamepadAxis(uint32_t gamepad, uint32_t axis) const
@@ -1325,6 +1586,30 @@ namespace TomCat::Scripting {
 		if (IsKeyHeld(Key::LeftAlt) || IsKeyHeld(Key::RightAlt)) result |= 4u;
 		if (IsKeyHeld(Key::LeftSuper) || IsKeyHeld(Key::RightSuper)) result |= 8u;
 		return result;
+	}
+
+	NativeInputEventBatchInfoV1 ScriptEngine::GetInputEventBatchInfo() const
+	{
+		const bool fixed = m_InputDispatchPhase == InputDispatchPhase::FixedUpdate;
+		const std::vector<NativeInputEventV1>& events = fixed
+			? m_ActiveFixedInput.Events : m_InputEventsThisFrame;
+		NativeInputEventBatchInfoV1 result;
+		result.FirstFrameNumber = fixed ? m_ActiveFixedInput.FirstFrameNumber
+			: m_LastCapturedInputFrame;
+		result.LastFrameNumber = fixed ? m_ActiveFixedInput.LastFrameNumber
+			: m_LastCapturedInputFrame;
+		result.FirstSequence = events.empty() ? 0 : events.front().Sequence;
+		result.LastSequence = events.empty() ? 0 : events.back().Sequence;
+		result.DroppedEventCount = fixed ? m_ActiveFixedInput.DroppedEventCount
+			: m_InputEventsDroppedThisFrame;
+		result.EventCount = static_cast<uint32_t>(events.size());
+		return result;
+	}
+
+	const std::vector<NativeInputEventV1>& ScriptEngine::GetInputEvents() const
+	{
+		return m_InputDispatchPhase == InputDispatchPhase::FixedUpdate
+			? m_ActiveFixedInput.Events : m_InputEventsThisFrame;
 	}
 
 }

@@ -14,6 +14,12 @@ $testExecutable = Join-Path $testOutput "ScriptCompilerRegression.exe"
 if (-not (Test-Path -LiteralPath $testExecutable -PathType Leaf)) {
     throw "ScriptCompilerRegression was not built: $testExecutable"
 }
+$cliOutput = Join-Path $repositoryRoot `
+    "Tools\bin\$outputName\TomCatCLI"
+$cliExecutable = Join-Path $cliOutput "TomCatCLI.exe"
+if (-not (Test-Path -LiteralPath $cliExecutable -PathType Leaf)) {
+    throw "TomCatCLI was not built: $cliExecutable"
+}
 
 $managedSources = [ordered]@{}
 foreach ($entry in $script:TomCatManagedReleaseFileMap.GetEnumerator()) {
@@ -101,6 +107,11 @@ $savedEnvironment = @{
     TOMCAT_E2E_PLAYER_EXE = $env:TOMCAT_E2E_PLAYER_EXE
 	TOMCAT_E2E_PLAYER_TEMPLATE = $env:TOMCAT_E2E_PLAYER_TEMPLATE
     TOMCAT_E2E_REQUIRE_PLAYER = $env:TOMCAT_E2E_REQUIRE_PLAYER
+    TOMCAT_E2E_CLI_EXE = $env:TOMCAT_E2E_CLI_EXE
+    TOMCAT_E2E_REQUIRE_CLI = $env:TOMCAT_E2E_REQUIRE_CLI
+    TOMCAT_E2E_CLI_SDK_PATH = $env:TOMCAT_E2E_CLI_SDK_PATH
+    TOMCAT_E2E_CLI_DOTNET_ROOT = $env:TOMCAT_E2E_CLI_DOTNET_ROOT
+    TOMCAT_E2E_CLI_PROGRAM_FILES = $env:TOMCAT_E2E_CLI_PROGRAM_FILES
 }
 
 function Invoke-PlayerCliProbe {
@@ -122,6 +133,8 @@ try {
     $stageManaged = Join-Path $stageHarness "Managed"
     New-Item -ItemType Directory -Path $stageManaged -Force | Out-Null
     Copy-Item -LiteralPath $testExecutable -Destination $stageHarness
+    $stagedCliExecutable = Join-Path $stageHarness "TomCatCLI.exe"
+    Copy-Item -LiteralPath $cliExecutable -Destination $stagedCliExecutable
     Get-ChildItem -LiteralPath $testOutput -Filter "*.dll" -File |
         Copy-Item -Destination $stageHarness
 	foreach ($entry in $managedSources.GetEnumerator()) {
@@ -162,6 +175,14 @@ try {
     $env:TOMCAT_E2E_DOTNET_ROOT = $privateDotNetRoot
     $env:TOMCAT_E2E_ISOLATE_DOTNET = "1"
     $env:TOMCAT_E2E_REQUIRE_DETACHED = "1"
+	$env:TOMCAT_E2E_CLI_EXE = $stagedCliExecutable
+	$env:TOMCAT_E2E_REQUIRE_CLI = "1"
+	# The regression deliberately clears process-wide .NET discovery after the
+	# first host initialization. Preserve the real SDK environment separately so
+	# the external CLI process can compile the temporary project's C# sources.
+	$env:TOMCAT_E2E_CLI_SDK_PATH = $env:PATH
+	$env:TOMCAT_E2E_CLI_DOTNET_ROOT = $systemDotnetRoot
+	$env:TOMCAT_E2E_CLI_PROGRAM_FILES = $env:ProgramFiles
 	# Candidate validation initializes CoreCLR before the regression deliberately
 	# hides global discovery. Select the packaged runtime from the first host call
 	# so the process-wide CoreCLR identity remains the same throughout the test.

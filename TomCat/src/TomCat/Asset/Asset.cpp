@@ -57,8 +57,7 @@ namespace TomCat {
 			extension == ".bmp" || extension == ".tga" || extension == ".gif" ||
 			extension == ".psd" || extension == ".hdr" || extension == ".pic")
 			return AssetType::Texture2D;
-		if (extension == ".glsl" || extension == ".vert" || extension == ".frag" ||
-			extension == ".comp" || extension == ".hlsl")
+		if (extension == ".glsl" || extension == ".vert" || extension == ".frag")
 			return AssetType::Shader;
 		// Keep type discovery aligned with formats that the P0 importer, cooker and
 		// Player can actually consume end to end. Unsupported containers remain
@@ -67,8 +66,7 @@ namespace TomCat {
 			return AssetType::Audio;
 		if (extension == ".ttf" || extension == ".otf" || extension == ".ttc")
 			return AssetType::Font;
-		if (extension == ".obj" || extension == ".fbx" || extension == ".gltf" ||
-			extension == ".glb")
+		if (extension == ".obj")
 			return AssetType::Mesh;
 		if (extension == ".tcmat") return AssetType::Material;
 		if (extension == ".cs") return AssetType::CSharpScript;

@@ -80,6 +80,10 @@ function Invoke-NativeRegression {
 
 Push-Location $repositoryRoot
 try {
+    Invoke-Checked -Name "Generated component proxy bindings" -Action {
+        & (Join-Path $PSScriptRoot "Generate-Component-Proxies.ps1") -Check
+    }
+
     Invoke-Checked -Name "Managed Release build" -Action {
         Build-TomCatManagedRelease -RepositoryRoot $repositoryRoot
     }
@@ -120,6 +124,18 @@ try {
 		& $msbuild "Builder\Builder.sln" "-p:Configuration=$Configuration" `
 			"-p:Platform=$Platform" -m -v:m -nologo
 	}
+	Invoke-Checked -Name "Generate headless Tools solution" -Action {
+		& $premake "--file=Tools\premake5.lua" vs2022
+	}
+	Invoke-Checked -Name "Build headless TomCatCLI" -Action {
+		& $msbuild "Tools\Tools.sln" "-p:Configuration=$Configuration" `
+			"-p:Platform=$Platform" -m -v:m -nologo
+	}
+	$cli = Join-Path $repositoryRoot `
+		"Tools\bin\$Configuration-windows-x86_64\TomCatCLI\TomCatCLI.exe"
+	Invoke-Checked -Name "TomCatCLI command-line smoke" -Action {
+		& $cli --help
+	}
     $templateBuilder = Join-Path $PSScriptRoot "Build-PlayerTemplate.ps1"
     if (-not (Test-Path -LiteralPath $templateBuilder -PathType Leaf)) {
         throw "Player Template builder was not found: $templateBuilder"
@@ -136,6 +152,7 @@ try {
     Invoke-NativeRegression -Name "EditorRecoveryRegression"
 	Invoke-NativeRegression -Name "AudioRegression"
     Invoke-NativeRegression -Name "ImporterRegression"
+    Invoke-NativeRegression -Name "InputRegression"
 
     $playerSmoke = Join-Path $PSScriptRoot "Run-CSharpPlayerSmoke.ps1"
     if (-not (Test-Path -LiteralPath $playerSmoke -PathType Leaf)) {

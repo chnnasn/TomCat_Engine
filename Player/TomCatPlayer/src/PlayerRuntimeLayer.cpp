@@ -165,6 +165,16 @@ namespace TomCat {
 			Fail("could not mount cooked package '" + PathToUTF8(m_PackagePath) + "'", 4);
 			return;
 		}
+		std::string shaderError;
+		if (!assets.PreloadCookedShaders(shaderError))
+		{
+			Fail("could not publish packaged shaders: " + shaderError);
+			return;
+		}
+		const size_t texturePreloadCount = assets.BeginCookedTexturePreload();
+		if (texturePreloadCount != 0)
+			TC_Core_Info("Queued {0} packaged textures for bounded preload",
+				texturePreloadCount);
 
 		Scripting::ScriptEngine::Get().SetRuntime({});
 		std::shared_ptr<Scripting::IScriptRuntime> runtime;
@@ -209,7 +219,6 @@ namespace TomCat {
 
 	void PlayerRuntimeLayer::OnUpdate(Timestep timestep)
 	{
-		Scripting::ScriptEngine::Get().CaptureInputState();
 		if (!m_SceneManager)
 			return;
 		Window& window = Application::Get().GetWindow();

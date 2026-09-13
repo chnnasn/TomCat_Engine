@@ -35,6 +35,7 @@ internal static unsafe class Program
 	private static NativeEntityHandleV1 s_requestedPrefabParent;
 	private static NativeVector3 s_requestedPrefabPosition;
 	private static bool s_extendedInputPressed;
+	private static bool s_extendedInputPulse;
 	private static float s_extendedLeftTriggerRaw = -1.0f;
 	private static bool s_healthPresent;
 	private static int s_healthMaximum;
@@ -56,6 +57,7 @@ internal static unsafe class Program
 		ulong RuntimeGeneration), NativeEntityHandleV1> s_gameplayParentByEntity = [];
 	private static int s_gameplayQueryCalls;
 	private static int s_lastGameplayQueryComponent;
+	private static ulong s_lastGameplayQueryRegisteredComponent;
 	private static int s_spriteAnimatorHasCalls;
 	private static int s_spriteAnimatorAddCalls;
 	private static int s_spriteAnimatorRemoveCalls;
@@ -73,8 +75,30 @@ internal static unsafe class Program
 	private static bool s_runtimeUIButtonFocused;
 	private static bool s_runtimeUICaptured;
 	private const ulong RuntimeUIButtonClickSerial = 41;
+	private const ulong SchemaProviderId = 0x7a11000000000001UL;
+	private const ulong SchemaAssetPropertyId = 0x7a11000000000002UL;
+	private const string SchemaComponentStableName = "TomCat.HealthComponent";
+	private const string SchemaComponentDisplayName = "Health";
+	private const string SchemaMaximumStableName = "Maximum";
+	private const string SchemaMaximumDisplayName = "Maximum Health";
+	private const string SchemaAssetStableName = "Portrait";
+	private const string SchemaAssetDisplayName = "Portrait Texture";
+	private static readonly nint s_schemaComponentStable =
+		Marshal.StringToCoTaskMemUTF8(SchemaComponentStableName);
+	private static readonly nint s_schemaComponentDisplay =
+		Marshal.StringToCoTaskMemUTF8(SchemaComponentDisplayName);
+	private static readonly nint s_schemaMaximumStable =
+		Marshal.StringToCoTaskMemUTF8(SchemaMaximumStableName);
+	private static readonly nint s_schemaMaximumDisplay =
+		Marshal.StringToCoTaskMemUTF8(SchemaMaximumDisplayName);
+	private static readonly nint s_schemaAssetStable =
+		Marshal.StringToCoTaskMemUTF8(SchemaAssetStableName);
+	private static readonly nint s_schemaAssetDisplay =
+		Marshal.StringToCoTaskMemUTF8(SchemaAssetDisplayName);
 	private static readonly Dictionary<(ulong Component, ulong Property),
 		NativePropertyValueV1> s_registeredRuntimeUIProperties = [];
+	private static readonly Dictionary<(ulong Component, ulong Property),
+		NativePropertyValueV1> s_registeredBuiltInProperties = [];
 	private static readonly Dictionary<(int Component, uint Property),
 		NativePropertyValueV1> s_gameplayProperties = [];
 	private static readonly UTF8Encoding s_strictUtf8 = new(false, true);
@@ -290,13 +314,21 @@ internal static unsafe class Program
 
 		byte[] missingName = Encoding.UTF8.GetBytes("TomCat.MissingApiV1");
 		byte[] inputName = Encoding.UTF8.GetBytes("TomCat.InputApiV1");
+		byte[] inputEventsName = Encoding.UTF8.GetBytes("TomCat.InputEventsApiV1");
+		byte[] applicationPathsName =
+			Encoding.UTF8.GetBytes("TomCat.ApplicationPathsApiV1");
 		byte[] componentName = Encoding.UTF8.GetBytes("TomCat.ComponentApiV1");
+		byte[] componentSchemaName =
+			Encoding.UTF8.GetBytes("TomCat.ComponentSchemaApiV1");
 		byte[] gameplayName = Encoding.UTF8.GetBytes("TomCat.GameplayApiV1");
 		byte[] audioSpatialName = Encoding.UTF8.GetBytes("TomCat.AudioSpatialApiV1");
 		byte[] runtimeUIName = Encoding.UTF8.GetBytes("TomCat.RuntimeUIApiV1");
 		fixed (byte* missingPointer = missingName)
 		fixed (byte* inputPointer = inputName)
+		fixed (byte* inputEventsPointer = inputEventsName)
+		fixed (byte* applicationPathsPointer = applicationPathsName)
 		fixed (byte* componentPointer = componentName)
+		fixed (byte* componentSchemaPointer = componentSchemaName)
 		fixed (byte* gameplayPointer = gameplayName)
 		fixed (byte* audioSpatialPointer = audioSpatialName)
 		fixed (byte* runtimeUIPointer = runtimeUIName)
@@ -312,10 +344,28 @@ internal static unsafe class Program
 			Equal((uint)sizeof(NativeInputApiV1), required,
 				"input capability required size");
 			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(inputEventsPointer,
+					(ulong)inputEventsName.Length), 2, null, 0, &required),
+				"newer input events capability version rejection");
+			Equal((uint)sizeof(NativeInputEventsApiV1), required,
+				"input events capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(applicationPathsPointer,
+					(ulong)applicationPathsName.Length), 2, null, 0, &required),
+				"newer application paths capability version rejection");
+			Equal((uint)sizeof(NativeApplicationPathsApiV1), required,
+				"application paths capability required size");
+			Equal(-4, envelope.QueryCapability(
 				new NativeUtf8View(componentPointer, (ulong)componentName.Length), 2,
 				null, 0, &required), "newer component capability version rejection");
 			Equal((uint)sizeof(NativeComponentApiV1), required,
 				"component capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(componentSchemaPointer,
+					(ulong)componentSchemaName.Length), 2, null, 0, &required),
+				"newer component schema capability version rejection");
+			Equal((uint)sizeof(NativeComponentSchemaApiV1), required,
+				"component schema capability required size");
 			Equal(-4, envelope.QueryCapability(
 				new NativeUtf8View(gameplayPointer, (ulong)gameplayName.Length), 2,
 				null, 0, &required), "newer gameplay capability version rejection");
@@ -334,6 +384,45 @@ internal static unsafe class Program
 			Equal((uint)sizeof(NativeRuntimeUIApiV1), required,
 				"runtime UI capability required size");
 		}
+
+		Check(ComponentSchema.IsAvailable,
+			"managed component schema capability was not bound");
+		IReadOnlyList<ComponentSchemaInfo> schemas = ComponentSchema.GetComponents();
+		Equal(1, schemas.Count, "managed component schema count");
+		ComponentSchemaInfo healthSchema = schemas[0];
+		Check(healthSchema.TypeId == HealthComponent.TypeId
+			&& healthSchema.ProviderId == SchemaProviderId
+			&& healthSchema.SchemaVersion == 3
+			&& healthSchema.StableName == SchemaComponentStableName
+			&& healthSchema.DisplayName == SchemaComponentDisplayName
+			&& healthSchema.IsScriptAccessible && healthSchema.IsInspectorVisible,
+			"managed component schema metadata round-trip");
+		Equal(2, healthSchema.Properties.Count,
+			"managed component property schema count");
+		Check(healthSchema.Properties[0].PropertyId
+				== HealthComponent.MaximumPropertyId
+			&& healthSchema.Properties[0].Kind == ComponentPropertyKind.Int32
+			&& !healthSchema.Properties[0].IsAssetReference
+			&& healthSchema.Properties[0].StableName == SchemaMaximumStableName
+			&& healthSchema.Properties[1].PropertyId == SchemaAssetPropertyId
+			&& healthSchema.Properties[1].Kind == ComponentPropertyKind.UInt64
+			&& healthSchema.Properties[1].IsAssetReference,
+			"managed component property schema metadata round-trip");
+		byte originalNameByte = *(byte*)s_schemaComponentStable;
+		try
+		{
+			*(byte*)s_schemaComponentStable = (byte)'X';
+			Check(healthSchema.StableName == SchemaComponentStableName,
+				"managed schema snapshot retained a native UTF-8 pointer");
+		}
+		finally
+		{
+			*(byte*)s_schemaComponentStable = originalNameByte;
+		}
+		Check(ComponentSchema.TryGetComponent(HealthComponent.TypeId,
+			out ComponentSchemaInfo? foundSchema)
+			&& foundSchema?.SchemaVersion == 3,
+			"managed component schema lookup");
 
 		var audioProbe = new AudioSpatialProxyProbe();
 		audioProbe.__Bind(new Entity(SceneSession, 92, RuntimeGeneration),
@@ -456,6 +545,19 @@ internal static unsafe class Program
 		Equal(3, probe.CanceledCount, "InputAction release Canceled count");
 		Check(!probe.Action.IsPressed && probe.Action.WasReleasedThisFrame,
 			"InputAction release state");
+
+		// The native frozen input snapshot can legitimately expose both edges
+		// while the final held state is neutral. The action layer must preserve
+		// that complete tap instead of rebuilding transitions from IsPressed.
+		s_extendedInputPulse = true;
+		probe.__Update(1.0f / 60.0f);
+		Equal(4, probe.StartedCount, "fast tap InputAction Started count");
+		Equal(4, probe.PerformedCount, "fast tap InputAction Performed count");
+		Equal(4, probe.CanceledCount, "fast tap InputAction Canceled count");
+		Check(!probe.Action.IsPressed && probe.Action.WasPressedThisFrame
+			&& probe.Action.WasReleasedThisFrame,
+			"InputAction preserves a complete same-frame press and release");
+		s_extendedInputPulse = false;
 		probe.__Destroy();
 	}
 
@@ -486,6 +588,7 @@ internal static unsafe class Program
 		s_gameplayActive = true;
 		s_gameplayQueryCalls = 0;
 		s_lastGameplayQueryComponent = 0;
+		s_lastGameplayQueryRegisteredComponent = 0;
 		s_spriteAnimatorHasCalls = 0;
 		s_spriteAnimatorAddCalls = 0;
 		s_spriteAnimatorRemoveCalls = 0;
@@ -496,6 +599,7 @@ internal static unsafe class Program
 		s_spriteAnimatorParameterCalls = 0;
 		s_animatorParameters.Clear();
 		s_gameplayProperties.Clear();
+		s_registeredBuiltInProperties.Clear();
 
 		var probe = new NaturalProxySyntaxProbe();
 		probe.__Bind(new Entity(SceneSession, 8, RuntimeGeneration),
@@ -538,8 +642,10 @@ internal static unsafe class Program
 			"Transform.LocalPosition direct setter X");
 		Equal(3, s_gameplayQueryCalls,
 			"World.All and both registered/native component queries");
-		Equal((int)NativeComponentTypeV1.SpriteAnimator,
-			s_lastGameplayQueryComponent, "World.Query<SpriteAnimator> component type");
+		Equal(0, s_lastGameplayQueryComponent,
+			"World.Query<SpriteAnimator> legacy component type");
+		Equal(0x9f00000000000007UL, s_lastGameplayQueryRegisteredComponent,
+			"World.Query<SpriteAnimator> registered component type");
 		Equal(2, s_spriteAnimatorHasCalls, "SpriteAnimator Has/Get component calls");
 		Equal(1, s_spriteAnimatorAddCalls, "SpriteAnimator Add component call");
 		Equal(1, s_spriteAnimatorRemoveCalls, "SpriteAnimator Remove component call");
@@ -792,6 +898,10 @@ internal static unsafe class Program
         ulong fixedFrameBefore = Time.FixedFrameCount;
 		scene.FixedUpdateAll(1.0f / 50.0f);
         Equal(1, scene.ReadFieldValue(100, "FixedUpdates"), "fixed update dispatch");
+		Equal(9001L, scene.ReadFieldValue(100, "FixedInputFirstSequence"),
+			"managed FixedUpdate reads the active ordered input batch");
+		Equal(2, scene.ReadFieldValue(100, "FixedInputEventCount"),
+			"managed FixedUpdate reads every active input event");
 		Equal(fixedFrameBefore + 1, Time.FixedFrameCount, "fixed clock advances once per step");
 		Equal(1.0f / 50.0f, Time.FixedDeltaTime, "fixed delta clock");
 		Equal(false, Time.InFixedUpdate, "fixed-update clock scope is restored");
@@ -800,6 +910,10 @@ internal static unsafe class Program
             new ScriptPhysicsEvent(NativePhysicsEventKindV1.TriggerExit, second, other)
         ]);
         Equal(1, scene.ReadFieldValue(100, "CollisionEnters"), "collision dispatch");
+		Equal(9001L, scene.ReadFieldValue(100, "CollisionInputFirstSequence"),
+			"managed collision callback reads the enclosing fixed-step input batch");
+		Equal(2, scene.ReadFieldValue(100, "CollisionInputEventCount"),
+			"managed collision callback reads every fixed-step input event");
         Equal(1, scene.ReadFieldValue(200, "TriggerExits"), "trigger dispatch");
 
         scene.SetEnabled(100, false);
@@ -1497,7 +1611,7 @@ internal static unsafe class Program
 				GamepadButtonCount = 15,
 				GamepadAxisCount = 6,
 				IsMouseButtonHeld = &StubMouseButtonHeld,
-				WasMouseButtonPressed = &StubMouseButtonHeld,
+				WasMouseButtonPressed = &StubMouseButtonPressed,
 				WasMouseButtonReleased = &StubMouseButtonReleased,
 				GetScrollDelta = &StubScrollDelta,
 				IsWindowFocused = &StubWindowFocused,
@@ -1509,6 +1623,39 @@ internal static unsafe class Program
 				WasGamepadButtonReleased = &StubGamepadButtonReleased,
 				GetGamepadAxis = &StubGamepadAxis,
 				GetGamepadName = &StubGamepadName
+			};
+			return 0;
+		}
+		if (capability == "TomCat.InputEventsApiV1")
+		{
+			*required = (uint)sizeof(NativeInputEventsApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeInputEventsApiV1))
+				return -6;
+			*(NativeInputEventsApiV1*)output = new NativeInputEventsApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeInputEventsApiV1),
+				GetBatchInfo = &StubInputEventBatchInfo,
+				CopyEvents = &StubInputEvents
+			};
+			return 0;
+		}
+		if (capability == "TomCat.ApplicationPathsApiV1")
+		{
+			*required = (uint)sizeof(NativeApplicationPathsApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeApplicationPathsApiV1))
+				return -6;
+			*(NativeApplicationPathsApiV1*)output = new NativeApplicationPathsApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeApplicationPathsApiV1),
+				GetSaveDirectory = &StubSaveDirectory,
+				GetLogDirectory = &StubLogDirectory,
+				GetCrashDirectory = &StubCrashDirectory
 			};
 			return 0;
 		}
@@ -1529,6 +1676,25 @@ internal static unsafe class Program
 				GetProperty = &StubRegisteredComponentGetProperty,
 				SetProperty = &StubRegisteredComponentSetProperty
 			};
+			return 0;
+		}
+		if (capability == "TomCat.ComponentSchemaApiV1")
+		{
+			*required = (uint)sizeof(NativeComponentSchemaApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeComponentSchemaApiV1))
+				return -6;
+			*(NativeComponentSchemaApiV1*)output =
+				new NativeComponentSchemaApiV1
+				{
+					Version = 1,
+					Size = (uint)sizeof(NativeComponentSchemaApiV1),
+					GetComponentCount = &StubSchemaGetComponentCount,
+					GetComponent = &StubSchemaGetComponent,
+					GetPropertyCount = &StubSchemaGetPropertyCount,
+					GetProperty = &StubSchemaGetProperty
+				};
 			return 0;
 		}
 		if (capability == "TomCat.GameplayApiV1")
@@ -1615,6 +1781,92 @@ internal static unsafe class Program
 		}
 		*required = 0;
 		return -3;
+	}
+
+	private static NativeUtf8View SchemaView(nint pointer, string value) =>
+		new((byte*)pointer, (ulong)Encoding.UTF8.GetByteCount(value));
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSchemaGetComponentCount(uint* count)
+	{
+		if (count is null)
+			return -1;
+		*count = 1;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSchemaGetComponent(uint index,
+		NativeComponentSchemaInfoV1* component)
+	{
+		if (component is null)
+			return -1;
+		if (index != 0)
+			return -3;
+		*component = new NativeComponentSchemaInfoV1
+		{
+			TypeId = HealthComponent.TypeId,
+			ProviderId = SchemaProviderId,
+			SchemaVersion = 3,
+			PropertyCount = 2,
+			Flags = NativeComponentSchemaFlagsV1.ScriptAccessible
+				| NativeComponentSchemaFlagsV1.InspectorVisible,
+			StableName = SchemaView(s_schemaComponentStable,
+				SchemaComponentStableName),
+			DisplayName = SchemaView(s_schemaComponentDisplay,
+				SchemaComponentDisplayName)
+		};
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSchemaGetPropertyCount(ulong componentTypeId,
+		uint* count)
+	{
+		if (count is null)
+			return -1;
+		if (componentTypeId != HealthComponent.TypeId)
+			return -3;
+		*count = 2;
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSchemaGetProperty(ulong componentTypeId, uint index,
+		NativeComponentPropertySchemaInfoV1* property)
+	{
+		if (property is null)
+			return -1;
+		if (componentTypeId != HealthComponent.TypeId || index >= 2)
+			return -3;
+		if (index == 0)
+		{
+			*property = new NativeComponentPropertySchemaInfoV1
+			{
+				ComponentTypeId = componentTypeId,
+				PropertyId = HealthComponent.MaximumPropertyId,
+				Kind = NativePropertyKindV1.Int32,
+				StableName = SchemaView(s_schemaMaximumStable,
+					SchemaMaximumStableName),
+				DisplayName = SchemaView(s_schemaMaximumDisplay,
+					SchemaMaximumDisplayName)
+			};
+		}
+		else
+		{
+			*property = new NativeComponentPropertySchemaInfoV1
+			{
+				ComponentTypeId = componentTypeId,
+				PropertyId = SchemaAssetPropertyId,
+				Kind = NativePropertyKindV1.UInt64,
+				Flags = NativeComponentPropertyFlagsV1.AssetReference,
+				StableName = SchemaView(s_schemaAssetStable,
+					SchemaAssetStableName),
+				DisplayName = SchemaView(s_schemaAssetDisplay,
+					SchemaAssetDisplayName)
+			};
+		}
+		return 0;
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -1744,6 +1996,7 @@ internal static unsafe class Program
 			return -6;
 		++s_gameplayQueryCalls;
 		s_lastGameplayQueryComponent = componentType;
+		s_lastGameplayQueryRegisteredComponent = registeredTypeId;
 		output[0] = new NativeEntityHandleV1(context.SceneSessionId, 8,
 			context.RuntimeGeneration);
 		output[1] = new NativeEntityHandleV1(context.SceneSessionId, 44,
@@ -1999,7 +2252,11 @@ internal static unsafe class Program
 		ulong typeId)
 	{
 		if (typeId != HealthComponent.TypeId)
-			return -1;
+		{
+			if (typeId == 0x9f00000000000007UL)
+				++s_spriteAnimatorHasCalls;
+			return IsTraditionalRegisteredType(typeId) ? 1 : -1;
+		}
 		++s_componentHasCalls;
 		return s_healthPresent ? 1 : 0;
 	}
@@ -2009,7 +2266,11 @@ internal static unsafe class Program
 		ulong typeId)
 	{
 		if (typeId != HealthComponent.TypeId)
-			return -1;
+		{
+			if (typeId == 0x9f00000000000007UL)
+				++s_spriteAnimatorAddCalls;
+			return IsTraditionalRegisteredType(typeId) ? 0 : -1;
+		}
 		++s_componentAddCalls;
 		s_healthPresent = true;
 		s_healthMaximum = 100;
@@ -2023,11 +2284,19 @@ internal static unsafe class Program
 		ulong typeId)
 	{
 		if (typeId != HealthComponent.TypeId)
-			return -1;
+		{
+			if (typeId == 0x9f00000000000007UL)
+				++s_spriteAnimatorRemoveCalls;
+			return IsTraditionalRegisteredType(typeId) ? 0 : -1;
+		}
 		++s_componentRemoveCalls;
 		s_healthPresent = false;
 		return 0;
 	}
+
+	private static bool IsTraditionalRegisteredType(ulong typeId) =>
+		typeId is >= 0x9f00000000000004UL and <= 0x9f0000000000000fUL
+			|| typeId == ExtensionProxy.TypeId;
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubRegisteredComponentGetProperty(NativeEntityHandleV1 entity,
@@ -2035,6 +2304,14 @@ internal static unsafe class Program
 	{
 		if (value is null)
 			return -3;
+		if (typeId is >= 0x9f00000000000004UL and <= 0x9f0000000000000fUL)
+		{
+			if (!s_registeredBuiltInProperties.TryGetValue(
+				(typeId, propertyId), out NativePropertyValueV1 property))
+				return -3;
+			*value = property;
+			return 0;
+		}
 		if (typeId == UIText.TypeId || typeId == TextRenderer.TypeId)
 		{
 			if (!s_registeredRuntimeUIProperties.TryGetValue(
@@ -2074,6 +2351,11 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentSetProperty(NativeEntityHandleV1 entity,
 		ulong typeId, ulong propertyId, NativePropertyValueV1 value)
 	{
+		if (typeId is >= 0x9f00000000000004UL and <= 0x9f0000000000000fUL)
+		{
+			s_registeredBuiltInProperties[(typeId, propertyId)] = value;
+			return 0;
+		}
 		if (typeId == UIText.TypeId || typeId == TextRenderer.TypeId)
 		{
 			if (value.Kind != NativePropertyKindV1.UInt64)
@@ -2107,8 +2389,88 @@ internal static unsafe class Program
 		button == (uint)MouseButton.Left && s_extendedInputPressed ? 1 : 0;
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubInputEventBatchInfo(NativeInputEventBatchInfoV1* value)
+	{
+		if (value is null)
+			return -1;
+		*value = new NativeInputEventBatchInfoV1
+		{
+			FirstFrameNumber = 41,
+			LastFrameNumber = 42,
+			FirstSequence = 9001,
+			LastSequence = 9002,
+			DroppedEventCount = 3,
+			EventCount = 2
+		};
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubInputEvents(NativeInputEventV1* events, uint capacity,
+		uint* required)
+	{
+		if (required is null)
+			return -1;
+		*required = 2;
+		if (events is null || capacity < 2)
+			return -6;
+		events[0] = new NativeInputEventV1
+		{
+			Sequence = 9001,
+			TimestampSeconds = 12.5,
+			FrameNumber = 41,
+			Device = NativeInputDeviceV1.Keyboard,
+			Action = NativeInputActionV1.Pressed,
+			Code = (uint)KeyCode.A
+		};
+		events[1] = new NativeInputEventV1
+		{
+			Sequence = 9002,
+			TimestampSeconds = 12.75,
+			FrameNumber = 42,
+			Device = NativeInputDeviceV1.MouseButton,
+			Action = NativeInputActionV1.Released,
+			Code = (uint)MouseButton.Left
+		};
+		return 0;
+	}
+
+	private static int WriteStubUtf8(ReadOnlySpan<byte> value, byte* buffer,
+		uint capacity, uint* required)
+	{
+		if (required is null)
+			return -1;
+		*required = (uint)value.Length;
+		if (capacity < value.Length || (buffer is null && value.Length != 0))
+			return -6;
+		value.CopyTo(new Span<byte>(buffer, value.Length));
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubSaveDirectory(byte* buffer, uint capacity,
+		uint* required) => WriteStubUtf8(
+			"C:/TomCat/Games/Regression/Saves"u8, buffer, capacity, required);
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubLogDirectory(byte* buffer, uint capacity,
+		uint* required) => WriteStubUtf8(
+			"C:/TomCat/Games/Regression/Logs"u8, buffer, capacity, required);
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubCrashDirectory(byte* buffer, uint capacity,
+		uint* required) => WriteStubUtf8(
+			"C:/TomCat/Games/Regression/Crashes"u8, buffer, capacity, required);
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubMouseButtonPressed(uint button) =>
+		button == (uint)MouseButton.Left
+			&& (s_extendedInputPressed || s_extendedInputPulse) ? 1 : 0;
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubMouseButtonReleased(uint button) =>
-		button == (uint)MouseButton.Left && !s_extendedInputPressed ? 1 : 0;
+		button == (uint)MouseButton.Left
+			&& (!s_extendedInputPressed || s_extendedInputPulse) ? 1 : 0;
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubScrollDelta(NativeVector2* value)
@@ -2275,6 +2637,8 @@ internal static unsafe class Program
 	{
 		protected override void OnCreate()
 		{
+			if (Entity.GetComponent<ExtensionProxy>().Entity != Entity)
+				throw new InvalidOperationException("attribute-discovered plugin component proxy failed.");
 			Entity.Name = "natural-name";
 			Entity.Tag = "natural-tag";
 			Entity.Layer = 5;
@@ -2382,6 +2746,14 @@ internal static unsafe class Program
 		}
 	}
 
+	[RegisteredComponent(ExtensionProxy.TypeId)]
+	private sealed class ExtensionProxy : IEntityComponent
+	{
+		internal const ulong TypeId = 0xd20a1f7c73e04e11UL;
+		private ExtensionProxy(Entity entity) => Entity = entity;
+		public Entity Entity { get; }
+	}
+
 	private sealed class BackgroundThreadApiProbe : TomCatBehaviour
 	{
 		protected override void OnCreate()
@@ -2425,6 +2797,24 @@ internal static unsafe class Program
 		protected override void OnCreate()
 		{
 			Check(Input.IsWindowFocused, "V2 input focus state");
+			InputEventBatch inputBatch = Input.EventBatch;
+			Equal(2, inputBatch.Events.Count, "managed ordered input event count");
+			Check(inputBatch.FirstFrameNumber == 41 && inputBatch.LastFrameNumber == 42
+				&& inputBatch.FirstSequence == 9001 && inputBatch.LastSequence == 9002
+				&& inputBatch.DroppedEventCount == 3
+				&& inputBatch.Events[0].Device == InputEventDevice.Keyboard
+				&& inputBatch.Events[0].Action == InputEventAction.Pressed
+				&& inputBatch.Events[1].Device == InputEventDevice.MouseButton
+				&& inputBatch.Events[1].Action == InputEventAction.Released
+				&& inputBatch.Events[0].TimestampSeconds == 12.5
+				&& inputBatch.Events[1].TimestampSeconds == 12.75,
+				"managed ordered input metadata round-trip");
+			Equal("C:/TomCat/Games/Regression/Saves",
+				TomCat.ApplicationPaths.SaveDirectory, "managed save directory");
+			Equal("C:/TomCat/Games/Regression/Logs",
+				TomCat.ApplicationPaths.LogDirectory, "managed log directory");
+			Equal("C:/TomCat/Games/Regression/Crashes",
+				TomCat.ApplicationPaths.CrashDirectory, "managed crash directory");
 			Equal(new Vector2(1.25f, -2.5f), Input.ScrollDelta,
 				"V2 input scroll delta");
 			Check(Input.IsGamepadConnected() && Input.WasGamepadConnected()

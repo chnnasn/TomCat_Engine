@@ -1,8 +1,17 @@
 #include "TomCat/Asset/AssetDatabase.h"
 #include "TomCat/Asset/AssetImportCoordinator.h"
+#include "TomCat/Asset/AssetJobSystem.h"
+#include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/AssetRegistry.h"
+#include "TomCat/Asset/MaterialArtifact.h"
+#include "TomCat/Asset/MeshArtifact.h"
+#include "TomCat/Asset/ShaderArtifact.h"
+#include "TomCat/Asset/TextureArtifact.h"
+#include "TomCat/Audio/AudioClip.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Project/Project.h"
+#include "TomCat/Renderer/Shader.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SceneSerializer.h"
@@ -20,12 +29,312 @@
 #include <thread>
 #include <vector>
 
+#define GLFW_INCLUDE_NONE
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
+
 namespace {
 
 	void Require(bool condition, const char* message)
 	{
 		if (!condition)
 			throw std::runtime_error(message);
+	}
+
+	class HiddenOpenGLContext final
+	{
+	public:
+		HiddenOpenGLContext()
+		{
+			if (glfwInit() != GLFW_TRUE)
+			{
+				m_UnavailableReason = "GLFW initialization is unavailable";
+				return;
+			}
+			m_GLFWInitialized = true;
+			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+			glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+			m_Window = glfwCreateWindow(32, 32,
+				"TomCat Shader Artifact Regression", nullptr, nullptr);
+			if (!m_Window)
+			{
+				m_UnavailableReason = "an OpenGL 4.6 context is unavailable";
+				Cleanup();
+				return;
+			}
+			glfwMakeContextCurrent(m_Window);
+			if (gladLoadGLLoader(reinterpret_cast<GLADloadproc>(
+				glfwGetProcAddress)) == 0 || !GLAD_GL_VERSION_4_6
+				|| !glSpecializeShader)
+			{
+				m_UnavailableReason =
+					"OpenGL SPIR-V specialization is unavailable";
+				Cleanup();
+				return;
+			}
+			m_Available = true;
+		}
+
+		~HiddenOpenGLContext() { Cleanup(); }
+
+		bool IsAvailable() const { return m_Available; }
+		const std::string& GetUnavailableReason() const
+		{
+			return m_UnavailableReason;
+		}
+
+		HiddenOpenGLContext(const HiddenOpenGLContext&) = delete;
+		HiddenOpenGLContext& operator=(const HiddenOpenGLContext&) = delete;
+
+	private:
+		void Cleanup()
+		{
+			TomCat::AssetManager::Get().ReleaseAll();
+			m_Available = false;
+			if (m_Window)
+			{
+				glfwDestroyWindow(m_Window);
+				m_Window = nullptr;
+			}
+			if (m_GLFWInitialized)
+			{
+				glfwTerminate();
+				m_GLFWInitialized = false;
+			}
+		}
+
+		GLFWwindow* m_Window = nullptr;
+		bool m_GLFWInitialized = false;
+		bool m_Available = false;
+		std::string m_UnavailableReason;
+	};
+
+	void TestBoundedAssetJobSystem()
+	{
+		using namespace std::chrono_literals;
+		auto& jobs = TomCat::AssetJobSystem::Get();
+		constexpr uint64_t memoryBudget = 1024 * 1024;
+		jobs.Configure({ 4, 4, memoryBudget });
+		std::atomic_uint32_t active = 0;
+		std::atomic_uint32_t maximum = 0;
+		std::vector<std::future<void>> futures;
+		for (uint32_t index = 0; index < 4; ++index)
+		{
+			futures.push_back(jobs.Submit(768 * 1024, [&]()
+			{
+				const uint32_t count = ++active;
+				uint32_t observed = maximum.load();
+				while (observed < count
+					&& !maximum.compare_exchange_weak(observed, count)) {}
+				std::this_thread::sleep_for(10ms);
+				--active;
+			}));
+		}
+		for (auto& future : futures)
+			future.get();
+		Require(maximum.load() == 1,
+			"asset job memory reservations did not bound concurrency");
+
+		// A reservation above the configured budget must make progress without
+		// allowing any other reserved task to overlap it.
+		jobs.Configure({ 2, 4, memoryBudget });
+		std::promise<void> oversizedStarted;
+		std::future<void> oversizedStartedFuture = oversizedStarted.get_future();
+		std::promise<void> releaseOversized;
+		std::shared_future<void> releaseOversizedFuture =
+			releaseOversized.get_future().share();
+		std::future<void> oversized = jobs.Submit(memoryBudget * 2,
+			[&]()
+			{
+				oversizedStarted.set_value();
+				releaseOversizedFuture.wait();
+			});
+		oversizedStartedFuture.wait();
+		std::atomic_bool smallRan = false;
+		std::future<void> small;
+		std::exception_ptr smallSubmitFailure;
+		std::thread submitter([&]()
+		{
+			try
+			{
+				small = jobs.Submit(1, [&]() { smallRan = true; });
+			}
+			catch (...)
+			{
+				smallSubmitFailure = std::current_exception();
+			}
+		});
+		std::this_thread::sleep_for(25ms);
+		const bool oversizedStayedExclusive = !smallRan.load();
+		releaseOversized.set_value();
+		oversized.get();
+		submitter.join();
+		if (smallSubmitFailure)
+			std::rethrow_exception(smallSubmitFailure);
+		small.get();
+		Require(oversizedStayedExclusive,
+			"an over-budget asset job did not run exclusively");
+
+		// Queue capacity is independent of worker count and must remain bounded
+		// while the only worker is occupied.
+		jobs.Configure({ 1, 1, memoryBudget });
+		std::promise<void> blockerStarted;
+		std::future<void> blockerStartedFuture = blockerStarted.get_future();
+		std::promise<void> releaseBlocker;
+		std::shared_future<void> releaseBlockerFuture =
+			releaseBlocker.get_future().share();
+		std::promise<void> queuedFinished;
+		std::future<void> queuedFinishedFuture = queuedFinished.get_future();
+		std::future<void> blocker = jobs.Submit(0, [&]()
+		{
+			blockerStarted.set_value();
+			releaseBlockerFuture.wait();
+		});
+		blockerStartedFuture.wait();
+		const bool acceptedQueued = jobs.TrySchedule(0,
+			[&]() { queuedFinished.set_value(); });
+		const bool rejectedOverflow = !jobs.TrySchedule(0, []() {});
+		releaseBlocker.set_value();
+		blocker.get();
+		if (acceptedQueued)
+			queuedFinishedFuture.wait();
+		Require(acceptedQueued && rejectedOverflow,
+			"asset job queue capacity was not enforced");
+
+		// Dependent work submitted by the sole worker executes inline. It may
+		// share the parent's reservation but may not claim additional capacity.
+		jobs.Configure({ 1, 4, memoryBudget });
+		std::future<int> nested = jobs.Submit(4096, [&jobs]()
+		{
+			std::future<int> dependency = jobs.Submit(2048, []() { return 17; });
+			return dependency.get();
+		});
+		Require(nested.get() == 17,
+			"single-worker nested asset submission deadlocked or lost its result");
+		std::future<bool> transitiveBudgetRejected = jobs.Submit(4096, [&jobs]()
+		{
+			std::future<bool> child = jobs.Submit(2048, [&jobs]()
+			{
+				try { (void)jobs.Submit(3072, []() {}); }
+				catch (const std::runtime_error&) { return true; }
+				return false;
+			});
+			return child.get();
+		});
+		Require(transitiveBudgetRejected.get(),
+			"transitive nested work exceeded its direct parent reservation");
+		std::future<bool> nestedBudgetRejected = jobs.Submit(0, [&jobs]()
+		{
+			try
+			{
+				std::future<void> invalid = jobs.Submit(1, []() {});
+				invalid.get();
+			}
+			catch (const std::runtime_error&)
+			{
+				return !jobs.TrySchedule(1, []() {});
+			}
+			return false;
+		});
+		Require(nestedBudgetRejected.get(),
+			"nested asset work bypassed its parent memory reservation");
+
+		std::future<int> exceptional = jobs.Submit(0, []() -> int
+		{
+			throw std::runtime_error("asset job sentinel");
+		});
+		bool exceptionPropagated = false;
+		try
+		{
+			(void)exceptional.get();
+		}
+		catch (const std::runtime_error& exception)
+		{
+			exceptionPropagated = std::string_view(exception.what())
+				== "asset job sentinel";
+		}
+		Require(exceptionPropagated,
+			"asset job exception was not preserved by its future");
+		std::promise<void> fireAndForgetEntered;
+		std::future<void> fireAndForgetEnteredFuture =
+			fireAndForgetEntered.get_future();
+		Require(jobs.TrySchedule(0, [&]()
+		{
+			fireAndForgetEntered.set_value();
+			throw std::runtime_error("expected fire-and-forget test exception");
+		}), "fire-and-forget exception probe was not scheduled");
+		fireAndForgetEnteredFuture.wait();
+		Require(jobs.Submit(0, []() { return 19; }).get() == 19,
+			"fire-and-forget exception terminated the asset worker");
+
+		std::future<uint32_t> lifecycleRejected = jobs.Submit(0, [&jobs]()
+		{
+			uint32_t rejected = 0;
+			try { jobs.Shutdown(); }
+			catch (const std::logic_error&) { rejected |= 1; }
+			try { jobs.Configure({ 1, 1, memoryBudget }); }
+			catch (const std::logic_error&) { rejected |= 2; }
+			return rejected;
+		});
+		Require(lifecycleRejected.get() == 3,
+			"asset worker was allowed to join or reconfigure its own pool");
+
+		// Configure and Shutdown both release the state mutex while joining. Their
+		// wider lifecycle transaction must still be serialized against each other.
+		for (uint32_t iteration = 0; iteration < 4; ++iteration)
+		{
+			std::promise<void> beginLifecycleRace;
+			std::shared_future<void> beginLifecycleRaceFuture =
+				beginLifecycleRace.get_future().share();
+			std::exception_ptr configureFailure;
+			std::exception_ptr shutdownFailure;
+			std::thread configureThread([&]()
+			{
+				beginLifecycleRaceFuture.wait();
+				try { jobs.Configure({ 1, 4, memoryBudget }); }
+				catch (...) { configureFailure = std::current_exception(); }
+			});
+			std::thread shutdownThread([&]()
+			{
+				beginLifecycleRaceFuture.wait();
+				try { jobs.Shutdown(); }
+				catch (...) { shutdownFailure = std::current_exception(); }
+			});
+			beginLifecycleRace.set_value();
+			configureThread.join();
+			shutdownThread.join();
+			if (configureFailure)
+				std::rethrow_exception(configureFailure);
+			if (shutdownFailure)
+				std::rethrow_exception(shutdownFailure);
+			jobs.Configure({ 1, 4, memoryBudget });
+			Require(jobs.Submit(0, []() { return 23; }).get() == 23,
+				"executor did not recover after concurrent lifecycle operations");
+		}
+
+		std::atomic_uint32_t drained = 0;
+		std::vector<std::future<void>> draining;
+		for (uint32_t index = 0; index < 3; ++index)
+		{
+			draining.push_back(jobs.Submit(0, [&]()
+			{
+				std::this_thread::sleep_for(2ms);
+				++drained;
+			}));
+		}
+		jobs.Shutdown();
+		for (auto& future : draining)
+			future.get();
+		Require(drained.load() == draining.size(),
+			"AssetJobSystem::Shutdown abandoned queued work");
+		bool stoppedSubmitRejected = false;
+		try { (void)jobs.Submit(0, []() {}); }
+		catch (const std::runtime_error&) { stoppedSubmitRejected = true; }
+		Require(stoppedSubmitRejected && !jobs.TrySchedule(0, []() {}),
+			"a stopped asset job system accepted new work");
+		jobs.Configure({});
 	}
 
 	void WriteBigEndian16(std::vector<uint8_t>& bytes, size_t offset,
@@ -48,6 +357,78 @@ namespace {
 		bytes[offset + 3] = static_cast<uint8_t>(value);
 	}
 
+	void WriteLittleEndian16(std::vector<uint8_t>& bytes, size_t offset,
+		uint16_t value)
+	{
+		Require(offset <= bytes.size() && bytes.size() - offset >= 2,
+			"test LE16 write is out of range");
+		bytes[offset] = static_cast<uint8_t>(value);
+		bytes[offset + 1] = static_cast<uint8_t>(value >> 8);
+	}
+
+	void WriteLittleEndian32(std::vector<uint8_t>& bytes, size_t offset,
+		uint32_t value)
+	{
+		Require(offset <= bytes.size() && bytes.size() - offset >= 4,
+			"test LE32 write is out of range");
+		for (uint32_t index = 0; index < 4; ++index)
+			bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
+	}
+
+	std::vector<uint8_t> MakeFourByFourBMP()
+	{
+		constexpr uint32_t width = 4;
+		constexpr uint32_t height = 4;
+		constexpr uint32_t pixelOffset = 54;
+		constexpr uint32_t pixelBytes = width * height * 3;
+		std::vector<uint8_t> bytes(pixelOffset + pixelBytes, 0);
+		bytes[0] = 'B'; bytes[1] = 'M';
+		WriteLittleEndian32(bytes, 2, static_cast<uint32_t>(bytes.size()));
+		WriteLittleEndian32(bytes, 10, pixelOffset);
+		WriteLittleEndian32(bytes, 14, 40);
+		WriteLittleEndian32(bytes, 18, width);
+		WriteLittleEndian32(bytes, 22, height);
+		WriteLittleEndian16(bytes, 26, 1);
+		WriteLittleEndian16(bytes, 28, 24);
+		WriteLittleEndian32(bytes, 34, pixelBytes);
+		for (uint32_t y = 0; y < height; ++y)
+		for (uint32_t x = 0; x < width; ++x)
+		{
+			const size_t pixel = pixelOffset + (static_cast<size_t>(y) * width + x) * 3;
+			bytes[pixel] = static_cast<uint8_t>(32 + x * 48);
+			bytes[pixel + 1] = static_cast<uint8_t>(24 + y * 56);
+			bytes[pixel + 2] = static_cast<uint8_t>(16 + (x + y) * 24);
+		}
+		return bytes;
+	}
+
+	std::vector<uint8_t> MakeEightBitWave()
+	{
+		std::vector<uint8_t> bytes;
+		auto fourCC = [&](const char* value)
+		{
+			bytes.insert(bytes.end(), value, value + 4);
+		};
+		auto u16 = [&](uint16_t value)
+		{
+			const size_t offset = bytes.size(); bytes.resize(offset + 2);
+			WriteLittleEndian16(bytes, offset, value);
+		};
+		auto u32 = [&](uint32_t value)
+		{
+			const size_t offset = bytes.size(); bytes.resize(offset + 4);
+			WriteLittleEndian32(bytes, offset, value);
+		};
+		constexpr uint32_t sampleRate = 8000;
+		constexpr uint32_t sampleCount = 4;
+		fourCC("RIFF"); u32(36 + sampleCount); fourCC("WAVE");
+		fourCC("fmt "); u32(16); u16(1); u16(1); u32(sampleRate);
+		u32(sampleRate); u16(1); u16(8);
+		fourCC("data"); u32(sampleCount);
+		bytes.insert(bytes.end(), { 0, 64, 128, 255 });
+		return bytes;
+	}
+
 	void WriteBytes(const std::filesystem::path& path, std::string_view bytes)
 	{
 		std::filesystem::create_directories(path.parent_path());
@@ -55,6 +436,17 @@ namespace {
 		Require(static_cast<bool>(output), "could not create test file");
 		output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 		Require(static_cast<bool>(output), "could not write complete test file");
+	}
+
+	void WriteBinary(const std::filesystem::path& path,
+		std::span<const uint8_t> bytes)
+	{
+		std::filesystem::create_directories(path.parent_path());
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		Require(static_cast<bool>(output), "could not create binary test file");
+		output.write(reinterpret_cast<const char*>(bytes.data()),
+			static_cast<std::streamsize>(bytes.size()));
+		Require(static_cast<bool>(output), "could not write complete binary test file");
 	}
 
 	std::string ReadText(const std::filesystem::path& path)
@@ -69,6 +461,17 @@ namespace {
 			input.read(result.data(), size);
 		Require(static_cast<bool>(input) || result.empty(), "could not read test file");
 		return result;
+	}
+
+	std::string MakeDependencyShader(std::string_view revision)
+	{
+		return "// " + std::string(revision) + "\n"
+			"#type vertex\n#version 450 core\n"
+			"layout(location=0) in vec3 a_Position;\n"
+			"void main(){ gl_Position=vec4(a_Position,1.0); }\n"
+			"#type fragment\n#version 450 core\n"
+			"layout(location=0) out vec4 o_Color;\n"
+			"void main(){ o_Color=vec4(1.0); }\n";
 	}
 
 	class TemporaryProject final
@@ -141,6 +544,619 @@ namespace {
 		mutable std::atomic_uint32_t ActiveInvocations = 0;
 		mutable std::atomic_uint32_t MaxConcurrentInvocations = 0;
 	};
+
+	TomCat::AssetHandle RequireHandle(TomCat::AssetRegistry& registry,
+		const std::filesystem::path& path, TomCat::AssetType expected);
+
+	void TestAsyncAssetOwnerLifecycle()
+	{
+		using namespace std::chrono_literals;
+		TemporaryProject first;
+		TemporaryProject replacement;
+		const std::filesystem::path firstPath = first.Assets / "slow-first.png";
+		const std::filesystem::path replacementPath =
+			replacement.Assets / "slow-replacement.png";
+		WriteBytes(firstPath, "first-owner-lifecycle");
+		WriteBytes(replacementPath, "replacement-owner-lifecycle");
+
+		auto& jobs = TomCat::AssetJobSystem::Get();
+		jobs.Configure({ 1, 8, 64ULL * 1024ULL * 1024ULL });
+		TomCat::AssetManager& manager = TomCat::AssetManager::Get();
+		manager.Shutdown();
+		const TomCat::Ref<TomCat::Project> firstProject =
+			TomCat::CreateRef<TomCat::Project>(first.Root / "First.tcproj");
+		const TomCat::Ref<TomCat::Project> replacementProject =
+			TomCat::CreateRef<TomCat::Project>(replacement.Root / "Replacement.tcproj");
+		Require(manager.SetProject(firstProject),
+			"could not initialize the first async owner project");
+		const TomCat::AssetHandle firstHandle = RequireHandle(manager.GetRegistry(),
+			firstPath, TomCat::AssetType::Texture2D);
+		auto firstImporter = std::make_shared<CountingTextureImporter>();
+		firstImporter->DelayMilliseconds = 0;
+		Require(manager.GetDatabase().GetImporters().Register(firstImporter, true),
+			"could not install the first async owner importer");
+
+		std::atomic_bool decoderEntered = false;
+		std::atomic_bool decoderFinished = false;
+		{
+			std::future<std::optional<size_t>> dropped =
+				manager.GetDatabase().LoadAsync<size_t>(firstHandle,
+					[&](const TomCat::ImportedArtifact& artifact)
+						-> std::optional<size_t>
+					{
+						decoderEntered = true;
+						std::this_thread::sleep_for(150ms);
+						decoderFinished = true;
+						return artifact.Bytes.size();
+					});
+			const auto deadline = std::chrono::steady_clock::now() + 2s;
+			while (!decoderEntered.load() && std::chrono::steady_clock::now() < deadline)
+				std::this_thread::yield();
+			Require(decoderEntered.load(),
+				"the dropped database future did not enter its decoder");
+		}
+		Require(manager.SetProject(replacementProject),
+			"SetProject failed after dropping an in-flight database future");
+		Require(decoderFinished.load(),
+			"SetProject cleared the database before its dropped future completed");
+
+		const TomCat::AssetHandle replacementHandle = RequireHandle(
+			manager.GetRegistry(), replacementPath, TomCat::AssetType::Texture2D);
+		auto replacementImporter = std::make_shared<CountingTextureImporter>();
+		replacementImporter->DelayMilliseconds = 150;
+		Require(manager.GetDatabase().GetImporters().Register(
+			replacementImporter, true),
+			"could not install the replacement async owner importer");
+
+		// Both the database and manager acquire an owner count before Submit. A
+		// stopped executor forces that call to throw; Shutdown below would hang if
+		// either exception path forgot to release its count.
+		manager.GetImportCoordinator().Stop();
+		jobs.Shutdown();
+		bool submitRejected = false;
+		try
+		{
+			std::future<TomCat::AssetLoadResult> rejected =
+				manager.LoadImportedArtifactAsync(replacementHandle);
+		}
+		catch (const std::runtime_error&)
+		{
+			submitRejected = true;
+		}
+		Require(submitRejected,
+			"a stopped asset executor unexpectedly accepted an async load");
+		jobs.Configure({ 1, 8, 64ULL * 1024ULL * 1024ULL });
+
+		std::future<bool> workerProjectChange = jobs.Submit(0,
+			[&manager, replacementProject]()
+			{
+				return manager.SetProject(replacementProject);
+			});
+		Require(!workerProjectChange.get() && manager.IsInitialized(),
+			"an asset worker entered a lifecycle wait or changed the active project");
+
+		{
+			std::future<TomCat::AssetLoadResult> dropped =
+				manager.LoadImportedArtifactAsync(replacementHandle);
+			const auto deadline = std::chrono::steady_clock::now() + 2s;
+			while (replacementImporter->ActiveInvocations.load() == 0
+				&& std::chrono::steady_clock::now() < deadline)
+				std::this_thread::yield();
+			Require(replacementImporter->ActiveInvocations.load() == 1,
+				"the dropped manager future did not enter its importer");
+		}
+		manager.Shutdown();
+		Require(replacementImporter->ActiveInvocations.load() == 0,
+			"AssetManager shutdown returned while a dropped async load was active");
+		const TomCat::AssetLoadResult afterShutdown =
+			manager.LoadImportedArtifactAsync(replacementHandle).get();
+		Require(afterShutdown.Status == TomCat::AssetLoadStatus::NotInitialized,
+			"AssetManager accepted new async work after shutdown began");
+		jobs.Configure({});
+	}
+
+	void TestOfflineTextureArtifacts()
+	{
+		TomCat::ImporterRegistry registry;
+		registry.RegisterBuiltInImporters();
+		const std::shared_ptr<const TomCat::IAssetImporter> importer =
+			registry.Find(TomCat::AssetType::Texture2D);
+		Require(importer && importer->GetVersion() >= 3,
+			"offline texture importer is not registered");
+
+		const std::vector<uint8_t> source = MakeFourByFourBMP();
+		uint64_t textureReservation = 0;
+		uint32_t inspectedWidth = 0, inspectedHeight = 0;
+		std::string error;
+		Require(TomCat::EstimateTextureBuildMemory(source, textureReservation,
+			error, &inspectedWidth, &inspectedHeight)
+			&& inspectedWidth == 4 && inspectedHeight == 4
+			&& textureReservation > source.size() * 6,
+			"texture reservation still scales only with compressed source bytes");
+		TomCat::AssetImportRequest request;
+		request.Type = TomCat::AssetType::Texture2D;
+		request.SourceBytes = source;
+		request.Platform = "editor";
+		TomCat::AssetImportResult rgbaResult = importer->Import(request);
+		Require(rgbaResult.Succeeded() && rgbaResult.Format == "texture/tctx-v1",
+			"editor texture import did not emit a texture artifact");
+		TomCat::TextureArtifactView rgbaView;
+		Require(TomCat::ParseTextureArtifact(rgbaResult.ArtifactBytes, rgbaView, error)
+			&& rgbaView.Width == 4 && rgbaView.Height == 4 && rgbaView.SRGB
+			&& rgbaView.Format == TomCat::TextureArtifactFormat::RGBA8
+			&& rgbaView.Mips.size() == 3
+			&& rgbaView.Mips[1].Width == 2 && rgbaView.Mips[2].Width == 1,
+			"RGBA texture artifact lost dimensions, color space, or mip chain");
+
+		request.Platform = "windows-x64";
+		TomCat::AssetImportResult bc3Result = importer->Import(request);
+		TomCat::TextureArtifactView bc3View;
+		Require(bc3Result.Succeeded()
+			&& TomCat::ParseTextureArtifact(bc3Result.ArtifactBytes, bc3View, error)
+			&& bc3View.Format == TomCat::TextureArtifactFormat::BC3
+			&& bc3View.Mips.size() == 3,
+			"Windows texture import did not emit a BC3 mip chain");
+		std::vector<uint8_t> decoded;
+		Require(TomCat::DecompressTextureMip(bc3View.Mips.front(), bc3View.Format,
+			decoded, error) && decoded.size() == 4 * 4 * 4,
+			"BC3 texture artifact could not use the runtime fallback decoder");
+
+		request.Platform = "editor";
+		request.Settings = { { "colorSpace", "Linear" }, { "mipmaps", "false" },
+			{ "compression", "RGBA8" } };
+		TomCat::AssetImportResult linearResult = importer->Import(request);
+		TomCat::TextureArtifactView linearView;
+		Require(linearResult.Succeeded()
+			&& TomCat::ParseTextureArtifact(linearResult.ArtifactBytes, linearView, error)
+			&& !linearView.SRGB && linearView.Mips.size() == 1,
+			"linear single-mip import settings were ignored");
+
+		linearResult.ArtifactBytes.pop_back();
+		Require(!TomCat::ParseTextureArtifact(linearResult.ArtifactBytes,
+			linearView, error) && !error.empty(),
+			"truncated texture artifact was accepted");
+
+		std::vector<uint8_t> oversizedHeader = source;
+		WriteLittleEndian32(oversizedHeader, 18, 65'535);
+		WriteLittleEndian32(oversizedHeader, 22, 65'535);
+		request.SourceBytes = oversizedHeader;
+		Require(!importer->Import(request).Succeeded(),
+			"oversized texture dimensions reached full pixel decoding");
+	}
+
+	void TestOfflineShaderArtifacts()
+	{
+		TomCat::ImporterRegistry registry;
+		registry.RegisterBuiltInImporters();
+		const auto importer = registry.Find(TomCat::AssetType::Shader);
+		Require(importer && importer->GetID() == "tomcat.shader.spirv"
+			&& importer->GetVersion() >= 2,
+			"compiled shader importer is not registered");
+		const std::string source =
+			"#type vertex\n"
+			"#version 450 core\n"
+			"layout(location = 0) in vec3 a_Position;\n"
+			"uniform mat4 u_ViewProjection;\n"
+			"void main() { gl_Position = u_ViewProjection * vec4(a_Position, 1.0); }\n"
+			"#type fragment\n"
+			"#version 450 core\n"
+			"layout(location = 0) out vec4 o_Color;\n"
+			"uniform sampler2D u_Albedo;\n"
+			"void main() { o_Color = texture(u_Albedo, vec2(0.5)); }\n";
+		TomCat::AssetImportRequest request;
+		request.Type = TomCat::AssetType::Shader;
+		request.SourcePath = "production.glsl";
+		request.SourceBytes = std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(source.data()), source.size());
+		request.Backend = "opengl";
+		const TomCat::AssetImportResult first = importer->Import(request);
+		const TomCat::AssetImportResult second = importer->Import(request);
+		Require(first.Succeeded() && first.Format == "shader/spirv-reflection-v1"
+			&& first.ArtifactBytes == second.ArtifactBytes
+			&& first.ArtifactBytes != std::vector<uint8_t>(request.SourceBytes.begin(),
+				request.SourceBytes.end()),
+			"shader import did not produce deterministic compiled output");
+		TomCat::ShaderArtifactView view;
+		std::string error;
+		Require(TomCat::ParseShaderArtifact(first.ArtifactBytes, view, error)
+			&& view.Target == TomCat::ShaderArtifactTarget::OpenGL
+			&& view.Stages.size() == 2
+			&& view.Stages[0].Stage == TomCat::ShaderArtifactStage::Vertex
+			&& view.Stages[1].Stage == TomCat::ShaderArtifactStage::Fragment
+			&& std::all_of(view.Stages.begin(), view.Stages.end(),
+				[](const TomCat::ShaderArtifactStageView& stage)
+				{ return stage.EntryPoint == "main" && stage.Spirv.size() >= 20; }),
+			"compiled shader artifact lost its SPIR-V stages");
+		Require(std::any_of(view.Resources.begin(), view.Resources.end(),
+			[](const TomCat::ShaderResourceView& resource)
+			{ return resource.Name == "u_Albedo"; })
+			&& std::any_of(view.Resources.begin(), view.Resources.end(),
+				[](const TomCat::ShaderResourceView& resource)
+				{ return resource.Name == "u_ViewProjection"; }),
+			"offline shader reflection omitted declared resources");
+
+		std::vector<uint8_t> truncated = first.ArtifactBytes;
+		truncated.pop_back();
+		Require(!TomCat::ParseShaderArtifact(truncated, view, error),
+			"truncated shader artifact was accepted");
+		const std::string broken = "#type vertex\n#version 450\nvoid main( {\n";
+		request.SourceBytes = std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(broken.data()), broken.size());
+		Require(!importer->Import(request).Succeeded(),
+			"syntactically invalid shader source was accepted");
+		Require(TomCat::AssetTypeFromPath("unsupported.comp") == TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("unsupported.hlsl") == TomCat::AssetType::Other,
+			"unsupported shader languages are still advertised as production assets");
+	}
+
+	void TestCookedShaderRuntimeConsumption()
+	{
+		TemporaryProject project;
+		const std::filesystem::path shaderPath =
+			project.Assets / "Runtime Artifact.glsl";
+		WriteBytes(shaderPath,
+			"#type vertex\n#version 450 core\n"
+			"layout(location=0) in vec3 a_Position;\n"
+			"void main(){ gl_Position=vec4(a_Position,1.0); }\n"
+			"#type fragment\n#version 450 core\n"
+			"layout(location=0) out vec4 o_Color;\n"
+			"uniform vec4 u_Tint;\n"
+			"void main(){ o_Color=u_Tint; }\n");
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"shader runtime registry did not initialize");
+		const TomCat::AssetHandle shaderHandle = RequireHandle(registry,
+			shaderPath, TomCat::AssetType::Shader);
+		registry.Shutdown();
+
+		TomCat::AssetJobSystem::Get().Configure(
+			{ 1, 8, 64ULL * 1024ULL * 1024ULL });
+		TomCat::AssetManager& manager = TomCat::AssetManager::Get();
+		manager.Shutdown();
+		struct ManagerCleanup final
+		{
+			~ManagerCleanup() { TomCat::AssetManager::Get().Shutdown(); }
+		} managerCleanup;
+		Require(manager.Initialize(project.Assets, project.Library),
+			"shader runtime AssetManager did not initialize");
+		const std::filesystem::path package =
+			project.Root / "Cooked Shader Runtime.tcpak";
+		Require(manager.CookToPackage(package, TomCat::AssetHandle(0)),
+			"shader artifact did not cook into an asset-only package");
+		manager.Shutdown();
+		std::error_code removeError;
+		Require(std::filesystem::remove(shaderPath, removeError) && !removeError,
+			"could not remove source GLSL before the cooked runtime test");
+		Require(manager.MountCookedPackage(package),
+			"shader artifact package did not mount without its source GLSL");
+
+		const TomCat::ShaderLoadResult artifact =
+			manager.LoadTypedArtifact<TomCat::AssetType::Shader>(shaderHandle);
+		TomCat::ShaderArtifactView parsed;
+		std::string parseError;
+		Require(artifact.Succeeded()
+			&& TomCat::ParseShaderArtifact(artifact.Artifact.Bytes, parsed, parseError)
+			&& parsed.Target == TomCat::ShaderArtifactTarget::OpenGL
+			&& parsed.Stages.size() == 2,
+			"cooked shader bytes were not a validated OpenGL artifact");
+
+		HiddenOpenGLContext context;
+		if (!context.IsAvailable())
+		{
+			manager.UnmountCookedPackage();
+			std::cout << "SKIP cooked Shader GPU publication: "
+				<< context.GetUnavailableReason() << '\n';
+			return;
+		}
+		std::string preloadError;
+		if (!manager.PreloadCookedShaders(preloadError))
+			throw std::runtime_error("packaged Shader preload failed: " + preloadError);
+		const TomCat::Ref<TomCat::Shader> shader = manager.LoadShader(shaderHandle);
+		Require(shader && manager.LoadShader(shaderHandle) == shader,
+			"cooked Shader artifact was not published or cached");
+		shader->Bind();
+		GLint program = 0;
+		glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+		const auto tintResource = std::find_if(parsed.Resources.begin(),
+			parsed.Resources.end(), [](const TomCat::ShaderResourceView& resource)
+			{
+				return resource.Kind == TomCat::ShaderResourceKind::PlainUniform
+					&& resource.Name == "u_Tint";
+			});
+		Require(program != 0 && tintResource != parsed.Resources.end()
+			&& tintResource->Location != UINT32_MAX,
+			"artifact-backed OpenGL program lost its reflected uniform location");
+		shader->SetFloat4("u_Tint", { 0.25f, 0.5f, 0.75f, 1.0f });
+		GLfloat tint[4] = {};
+		glGetUniformfv(static_cast<GLuint>(program),
+			static_cast<GLint>(tintResource->Location), tint);
+		Require(tint[0] == 0.25f && tint[1] == 0.5f
+			&& tint[2] == 0.75f && tint[3] == 1.0f,
+			"artifact reflection did not address the optimized OpenGL uniform");
+		shader->Unbind();
+		glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+		Require(program == 0,
+			"artifact-backed OpenGL program did not unbind cleanly");
+
+		manager.Release(shaderHandle);
+		const TomCat::Ref<TomCat::Shader> rebuilt =
+			manager.LoadShader(shaderHandle);
+		Require(rebuilt && rebuilt != shader,
+			"Shader release did not invalidate the artifact-backed GPU cache");
+		manager.UnmountCookedPackage();
+		std::cout << "PASS cooked Shader artifact published directly to OpenGL\n";
+	}
+
+	void TestCanonicalMaterialArtifacts()
+	{
+		TomCat::ImporterRegistry registry;
+		registry.RegisterBuiltInImporters();
+		const auto importer = registry.Find(TomCat::AssetType::Material);
+		Require(importer && importer->GetID() == "tomcat.material.canonical"
+			&& importer->GetVersion() >= 2,
+			"canonical material importer is not registered");
+		const std::string source =
+			"SchemaVersion: 1\n"
+			"Shader: 101\n"
+			"Textures:\n"
+			"  Normal: 303\n"
+			"  Albedo: 202\n"
+			"Parameters:\n"
+			"  Tint:\n    Type: Float4\n    Value: [1.0, 0.5, 0.25, 1.0]\n"
+			"  Roughness:\n    Type: Float\n    Value: 0.75\n"
+			"  TwoSided:\n    Type: Bool\n    Value: true\n";
+		TomCat::AssetImportRequest request;
+		request.Type = TomCat::AssetType::Material;
+		request.SourcePath = "surface.tcmat";
+		request.SourceBytes = std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(source.data()), source.size());
+		const TomCat::AssetImportResult result = importer->Import(request);
+		Require(result.Succeeded() && result.Format == "material/canonical-v1",
+			"material source was not normalized into a canonical artifact");
+		TomCat::MaterialArtifactView view;
+		std::string error;
+		Require(TomCat::ParseMaterialArtifact(result.ArtifactBytes, view, error)
+			&& static_cast<uint64_t>(view.Shader) == 101
+			&& view.Textures.size() == 2 && view.Textures[0].Name == "Albedo"
+			&& static_cast<uint64_t>(view.Textures[0].Texture) == 202
+			&& view.Parameters.size() == 3
+			&& view.Parameters[0].Name == "Roughness"
+			&& std::abs(view.Parameters[0].AsFloat() - 0.75f) < 0.0001f
+			&& view.Parameters[1].Name == "Tint"
+			&& view.Parameters[1].ComponentCount() == 4
+			&& view.Parameters[2].Name == "TwoSided"
+			&& view.Parameters[2].AsBool(),
+			"canonical material artifact lost sorted bindings or typed values");
+		std::vector<TomCat::TypedAssetDependency> dependencies;
+		Require(TomCat::ParseMaterialSourceDependencies(request.SourceBytes,
+			dependencies, error) && dependencies.size() == 3
+			&& dependencies[0].ExpectedType == TomCat::AssetType::Shader
+			&& dependencies[1].Name == "Albedo"
+			&& dependencies[1].ExpectedType == TomCat::AssetType::Texture2D,
+			"material source did not expose typed shader/texture dependencies");
+		std::vector<uint8_t> truncated = result.ArtifactBytes;
+		truncated.pop_back();
+		Require(!TomCat::ParseMaterialArtifact(truncated, view, error),
+			"truncated material artifact was accepted");
+
+		const std::string reordered =
+			"Shader: 101\nSchemaVersion: 1\n"
+			"Parameters:\n"
+			"  TwoSided: { Value: true, Type: Bool }\n"
+			"  Roughness: { Value: 0.75, Type: Float }\n"
+			"  Tint: { Value: [1.0, 0.5, 0.25, 1.0], Type: Float4 }\n"
+			"Textures: { Albedo: 202, Normal: 303 }\n";
+		request.SourceBytes = std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(reordered.data()), reordered.size());
+		Require(importer->Import(request).ArtifactBytes == result.ArtifactBytes,
+			"material normalization depends on YAML key order or formatting");
+		const std::string invalid =
+			"SchemaVersion: 1\nShader: 101\nUnknown: true\n";
+		request.SourceBytes = std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(invalid.data()), invalid.size());
+		Require(!importer->Import(request).Succeeded(),
+			"material with an unknown schema field was accepted");
+	}
+
+	void TestTypedMaterialDependencyLoading()
+	{
+		TemporaryProject project;
+		const std::filesystem::path shaderPath = project.Assets / "surface.glsl";
+		const std::filesystem::path texturePath = project.Assets / "surface.bmp";
+		const std::filesystem::path materialPath = project.Assets / "surface.tcmat";
+		const std::filesystem::path meshPath = project.Assets / "surface.obj";
+		const std::filesystem::path audioPath = project.Assets / "surface.wav";
+		WriteBytes(shaderPath,
+			"#type vertex\n#version 450 core\n"
+			"layout(location=0) in vec3 a_Position;\n"
+			"void main(){ gl_Position=vec4(a_Position,1.0); }\n"
+			"#type fragment\n#version 450 core\n"
+			"layout(location=0) out vec4 o_Color;\n"
+			"void main(){ o_Color=vec4(1.0); }\n");
+		const std::vector<uint8_t> bitmap = MakeFourByFourBMP();
+		WriteBinary(texturePath, bitmap);
+		WriteBytes(meshPath,
+			"v 0 0 0\nv 1 0 0\nv 0 1 0\n"
+			"vt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n");
+		WriteBinary(audioPath, MakeEightBitWave());
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"typed material test registry did not initialize");
+		const TomCat::AssetHandle shader = RequireHandle(registry,
+			shaderPath, TomCat::AssetType::Shader);
+		const TomCat::AssetHandle texture = RequireHandle(registry,
+			texturePath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle mesh = RequireHandle(registry,
+			meshPath, TomCat::AssetType::Mesh);
+		const TomCat::AssetHandle audio = RequireHandle(registry,
+			audioPath, TomCat::AssetType::Audio);
+		const std::string materialSource =
+			"SchemaVersion: 1\nShader: " + std::to_string(static_cast<uint64_t>(shader))
+			+ "\nTextures:\n  Albedo: "
+			+ std::to_string(static_cast<uint64_t>(texture))
+			+ "\nParameters:\n  Exposure: { Type: Float, Value: 1.0 }\n";
+		WriteBytes(materialPath, materialSource);
+		const TomCat::AssetHandle material = RequireHandle(registry,
+			materialPath, TomCat::AssetType::Material);
+		registry.Shutdown();
+
+		TomCat::AssetManager& manager = TomCat::AssetManager::Get();
+		manager.Shutdown();
+		TomCat::AssetJobSystem::Get().Configure({ 1, 8, 64ULL * 1024ULL * 1024ULL });
+		Require(manager.Initialize(project.Assets, project.Library),
+			"typed material test manager did not initialize");
+		std::vector<TomCat::AssetHandle> expected = { shader, texture };
+		std::sort(expected.begin(), expected.end(), [](TomCat::AssetHandle left,
+			TomCat::AssetHandle right)
+			{ return static_cast<uint64_t>(left) < static_cast<uint64_t>(right); });
+		Require(manager.GetDatabase().GetDependencies(material) == expected,
+			"typed material references were not discovered by the dependency graph");
+		// Submit every production artifact type through the same one-worker pool.
+		// Each typed continuation is queued only after its untyped producer, so this
+		// also guards the FIFO condition that prevents continuation deadlock.
+		std::future<TomCat::DecodedMaterialLoadResult> materialFuture =
+			manager.LoadMaterialAsync(material);
+		std::future<TomCat::ShaderLoadResult> shaderFuture =
+			manager.LoadTypedArtifactAsync<TomCat::AssetType::Shader>(shader);
+		std::future<TomCat::TypedAssetLoadResult<TomCat::AssetType::Texture2D>>
+			textureFuture = manager.LoadTypedArtifactAsync<
+				TomCat::AssetType::Texture2D>(texture);
+		std::future<TomCat::DecodedMeshLoadResult> meshFuture =
+			manager.LoadMeshAsync(mesh);
+		std::future<TomCat::AudioLoadResult> audioFuture =
+			manager.LoadTypedArtifactAsync<TomCat::AssetType::Audio>(audio);
+		TomCat::DecodedMaterialLoadResult loadedMaterial = materialFuture.get();
+		TomCat::ShaderLoadResult loadedShader = shaderFuture.get();
+		auto loadedTexture = textureFuture.get();
+		TomCat::DecodedMeshLoadResult loadedMesh = meshFuture.get();
+		TomCat::AudioLoadResult loadedAudio = audioFuture.get();
+		TomCat::ShaderArtifactView parsedShader;
+		TomCat::TextureArtifactView parsedTexture;
+		std::string error;
+		Require(loadedMaterial.Succeeded()
+			&& loadedMaterial.Format == "material/canonical-v1"
+			&& loadedMaterial.DependencyKeys.size() == 2
+			&& loadedMaterial.Asset.Shader == shader
+			&& loadedMaterial.Asset.Textures.size() == 1
+			&& loadedMaterial.Asset.Textures[0].Name == "Albedo"
+			&& loadedMaterial.Asset.Textures[0].Texture == texture
+			&& loadedMaterial.Asset.Parameters.size() == 1
+			&& loadedMaterial.Asset.Parameters[0].Name == "Exposure"
+			&& loadedMaterial.Asset.Parameters[0].AsFloat() == 1.0f,
+			"typed async material load did not import dependencies and decode its artifact");
+		Require(loadedShader.Succeeded()
+			&& loadedShader.Artifact.Format == "shader/spirv-reflection-v1"
+			&& TomCat::ParseShaderArtifact(loadedShader.Artifact.Bytes,
+				parsedShader, error)
+			&& parsedShader.Stages.size() == 2,
+			"typed async shader load did not return a validated SPIR-V artifact");
+		Require(loadedTexture.Succeeded()
+			&& TomCat::ParseTextureArtifact(loadedTexture.Artifact.Bytes,
+				parsedTexture, error)
+			&& parsedTexture.Width == 4 && parsedTexture.Height == 4,
+			"typed async texture load did not return an offline texture artifact");
+		Require(loadedMesh.Succeeded()
+			&& loadedMesh.Format == "mesh/packed-p3n3uv2-u32-v1"
+			&& loadedMesh.Asset.GetVertexCount() == 3
+			&& loadedMesh.Asset.GetIndexCount() == 3
+			&& loadedMesh.Asset.GetPackedVertices().size()
+				== 3 * TomCat::MeshArtifactVertexStride
+			&& loadedMesh.Asset.GetPackedIndices().size() == 3 * sizeof(uint32_t),
+			"typed async mesh load did not return validated packed geometry");
+		const TomCat::Ref<TomCat::AudioClip> parsedAudio = TomCat::AudioClip::Decode(
+			loadedAudio.Artifact.Bytes, error);
+		Require(loadedAudio.Succeeded()
+			&& loadedAudio.Artifact.Format == "audio/wav-pcm16-stream-v1"
+			&& parsedAudio && parsedAudio->GetBitsPerSample() == 16,
+			"typed async audio load did not return canonical streaming WAV data");
+		const TomCat::MeshLoadResult wrongType =
+			manager.LoadTypedArtifact<TomCat::AssetType::Mesh>(material);
+		Require(!wrongType.Succeeded()
+			&& wrongType.Status == TomCat::AssetLoadStatus::UnsupportedType,
+			"typed loader accepted an artifact of the wrong asset type");
+		const TomCat::DecodedMeshLoadResult wrongDecodedType =
+			manager.LoadMesh(material);
+		Require(!wrongDecodedType.Succeeded()
+			&& wrongDecodedType.Status == TomCat::AssetLoadStatus::UnsupportedType,
+			"decoded mesh loader accepted a Material artifact");
+		manager.Shutdown();
+		TomCat::AssetJobSystem::Get().Configure({});
+	}
+
+	void TestPackedObjMeshArtifacts()
+	{
+		TomCat::ImporterRegistry registry;
+		registry.RegisterBuiltInImporters();
+		const auto importer = registry.Find(TomCat::AssetType::Mesh);
+		Require(importer && importer->GetID() == "tomcat.mesh.obj"
+			&& importer->GetVersion() >= 2,
+			"OBJ mesh importer is not registered");
+		const std::string source =
+			"v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+			"vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n"
+			"f -4/-4 -3/-3 -2/-2 -1/-1\n";
+		TomCat::AssetImportRequest request;
+		request.Type = TomCat::AssetType::Mesh;
+		request.SourcePath = "quad.obj";
+		request.SourceBytes = std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(source.data()), source.size());
+		const TomCat::AssetImportResult first = importer->Import(request);
+		const TomCat::AssetImportResult second = importer->Import(request);
+		Require(first.Succeeded() && first.Format == "mesh/packed-p3n3uv2-u32-v1"
+			&& first.ArtifactBytes == second.ArtifactBytes,
+			"OBJ import did not emit deterministic packed geometry");
+		TomCat::MeshArtifactView view;
+		std::string error;
+		TomCat::MeshArtifactVertex vertex;
+		uint32_t lastIndex = UINT32_MAX;
+		Require(TomCat::ParseMeshArtifact(first.ArtifactBytes, view, error)
+			&& view.VertexCount == 4 && view.IndexCount == 6
+			&& view.DecodeVertex(0, vertex)
+			&& std::abs(vertex.Normal[2] - 1.0f) < 0.0001f
+			&& view.DecodeIndex(5, lastIndex) && lastIndex == 3,
+			"packed OBJ artifact lost geometry, generated normals, or triangulation");
+		std::vector<uint8_t> truncated = first.ArtifactBytes;
+		truncated.pop_back();
+		Require(!TomCat::ParseMeshArtifact(truncated, view, error),
+			"truncated mesh artifact was accepted");
+		const std::string badFace = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 9\n";
+		request.SourceBytes = std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(badFace.data()), badFace.size());
+		Require(!importer->Import(request).Succeeded(),
+			"OBJ with an out-of-range face index was accepted");
+		request.SourcePath = "unsupported.fbx";
+		Require(!importer->Import(request).Succeeded()
+			&& TomCat::AssetTypeFromPath("unsupported.fbx") == TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("unsupported.gltf") == TomCat::AssetType::Other,
+			"unsupported mesh containers are still advertised as production assets");
+	}
+
+	void TestOfflineAudioArtifact()
+	{
+		TomCat::ImporterRegistry registry;
+		registry.RegisterBuiltInImporters();
+		const auto importer = registry.Find(TomCat::AssetType::Audio);
+		Require(importer && importer->GetVersion() >= 2
+			&& importer->GetID() == "tomcat.audio.pcm16",
+			"canonical audio importer is not registered");
+		const std::vector<uint8_t> source = MakeEightBitWave();
+		TomCat::AssetImportRequest request;
+		request.Type = TomCat::AssetType::Audio;
+		request.SourceBytes = source;
+		const TomCat::AssetImportResult result = importer->Import(request);
+		Require(result.Succeeded()
+			&& result.Format == "audio/wav-pcm16-stream-v1"
+			&& result.ArtifactBytes != source,
+			"audio import did not transcode the source into a derived artifact");
+		std::string error;
+		const TomCat::Ref<TomCat::AudioClip> clip = TomCat::AudioClip::Decode(
+			result.ArtifactBytes, error);
+		Require(clip && clip->GetChannels() == 1 && clip->GetSampleRate() == 8000
+			&& clip->GetBitsPerSample() == 16 && clip->GetFrameCount() == 4,
+			"canonical audio artifact lost format or frame metadata");
+	}
 
 	TomCat::AssetHandle RequireHandle(TomCat::AssetRegistry& registry,
 		const std::filesystem::path& path, TomCat::AssetType expected)
@@ -220,7 +1236,7 @@ namespace {
 		const std::filesystem::path sharedOwnerPath = project.Assets / "shared-owner.png";
 		const std::filesystem::path sharedWaiterPath = project.Assets / "shared-waiter.png";
 		WriteBytes(heroPath, "source-one");
-		WriteBytes(dependencyPath, "shader-one");
+		WriteBytes(dependencyPath, MakeDependencyShader("shader-one"));
 		WriteBytes(futurePath, "future-source");
 		WriteBytes(sharedOwnerPath, "identical-shared-flight");
 		WriteBytes(sharedWaiterPath, "identical-shared-flight");
@@ -354,7 +1370,7 @@ namespace {
 			dependencyAdded.Artifact.ArtifactKey != sourceChanged.Artifact.ArtifactKey &&
 			counting->Invocations == 4,
 			"adding a dependency did not invalidate the artifact key");
-		WriteBytes(dependencyPath, "shader-two");
+		WriteBytes(dependencyPath, MakeDependencyShader("shader-two"));
 		TomCat::AssetLoadResult dependencyChanged = database.LoadArtifact(hero);
 		Require(dependencyChanged.Succeeded() &&
 			dependencyChanged.Artifact.ArtifactKey != dependencyAdded.Artifact.ArtifactKey &&
@@ -423,7 +1439,7 @@ namespace {
 		const std::filesystem::path dependencyPath = project.Assets / "common.glsl";
 		WriteBytes(heroPath, "watch-baseline");
 		WriteBytes(secondaryPath, "secondary-baseline");
-		WriteBytes(dependencyPath, "shader-baseline");
+		WriteBytes(dependencyPath, MakeDependencyShader("shader-baseline"));
 
 		TomCat::AssetRegistry registry;
 		Require(registry.Initialize(project.Assets, project.Library),
@@ -768,7 +1784,7 @@ namespace {
 
 		first = events.size();
 		invocations = counting->Invocations.load();
-		WriteBytes(dependencyPath, "shader-watched-change");
+		WriteBytes(dependencyPath, MakeDependencyShader("shader-watched-change"));
 		coordinator.RequestScan();
 		waitFor([&]()
 		{
@@ -878,10 +1894,19 @@ int main()
 	TomCat::Log::Init();
 	try
 	{
+		TestOfflineTextureArtifacts();
+		TestOfflineShaderArtifacts();
+		TestCookedShaderRuntimeConsumption();
+		TestCanonicalMaterialArtifacts();
+		TestTypedMaterialDependencyLoading();
+		TestAsyncAssetOwnerLifecycle();
+		TestPackedObjMeshArtifacts();
+		TestOfflineAudioArtifact();
 		TestMalformedFontPreflight();
 		TestDeterministicImportPipeline();
 		TestFileMonitorImportCoordinator();
-		std::cout << "PASS deterministic importer, DDC, tcmeta v2, and monitored reimport\n";
+		TestBoundedAssetJobSystem();
+		std::cout << "PASS production artifacts, bounded jobs, DDC, tcmeta v2, and monitored reimport\n";
 		return 0;
 	}
 	catch (const std::exception& exception)

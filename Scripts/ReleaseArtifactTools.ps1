@@ -82,7 +82,9 @@ function New-TomCatReleaseMetadata {
         [string]$Target,
 
         [Parameter(Mandatory)]
-        [string]$Version
+        [string]$Version,
+
+        [string[]]$AdditionalChecksumFiles = @()
     )
 
     $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
@@ -96,6 +98,15 @@ function New-TomCatReleaseMetadata {
         $artifactPath = Join-Path $DistPath $name
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
             throw "Release artifact was not found: $artifactPath"
+        }
+    }
+    foreach ($name in $AdditionalChecksumFiles) {
+        if ([System.IO.Path]::GetFileName($name) -ne $name) {
+            throw "Additional checksum file must be a plain file name: $name"
+        }
+        $additionalPath = Join-Path $DistPath $name
+        if (-not (Test-Path -LiteralPath $additionalPath -PathType Leaf)) {
+            throw "Additional checksum file was not found: $additionalPath"
         }
     }
 
@@ -209,7 +220,9 @@ function New-TomCatReleaseMetadata {
     $sbomPath = Join-Path $DistPath 'TomCat.spdx.json'
     [System.IO.File]::WriteAllText($sbomPath, ($spdx | ConvertTo-Json -Depth 16), $utf8)
 
-    $hashNames = @($artifactNames) + @('THIRD_PARTY_NOTICES.txt', 'TomCat.spdx.json')
+    $hashNames = @($artifactNames) +
+        @('THIRD_PARTY_NOTICES.txt', 'TomCat.spdx.json') +
+        @($AdditionalChecksumFiles)
     $sumLines = foreach ($name in $hashNames | Sort-Object) {
         $hash = (Get-FileHash -LiteralPath (Join-Path $DistPath $name) -Algorithm SHA256).Hash.ToLowerInvariant()
         "$hash  $($name.Replace('\', '/'))"

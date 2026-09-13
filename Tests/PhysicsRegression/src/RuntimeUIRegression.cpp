@@ -1,5 +1,6 @@
 #include "RuntimeUIRegression.h"
 
+#include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Font.h"
@@ -22,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +31,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -1005,6 +1008,26 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		return bytes;
 	}
 
+	TomCat::FontStreamingStats WaitForFontPreparation()
+	{
+		TomCat::FontManager& fonts = TomCat::FontManager::Get();
+		const auto deadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(10);
+		for (;;)
+		{
+			// A zero publication budget retries the non-blocking backlog without
+			// touching Texture2D, so this helper is valid without an OpenGL context.
+			(void)fonts.PumpPublishes(0, 0);
+			const TomCat::FontStreamingStats stats = fonts.GetStreamingStats();
+			if (stats.PreparedCount > 0 && stats.JobsInFlight == 0)
+				return stats;
+			if (std::chrono::steady_clock::now() >= deadline)
+				throw std::runtime_error(
+					"timed out waiting for asynchronous font preparation");
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+	}
+
 	void TestCookedRuntimeUIRoundTrip()
 	{
 		TemporaryUIProject environment;
@@ -1125,6 +1148,41 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& cjk && cjk->SourceIndex == 1 && cjk->AlphaCoverage > 0
 			&& emoji && emoji->SourceIndex == 2 && emoji->AlphaCoverage > 0,
 			"Cooked Player did not preserve primary/CJK/emoji fallback selection");
+
+		TomCat::FontManager& fonts = TomCat::FontManager::Get();
+		fonts.ReleaseAll();
+		TomCat::AssetJobSystem& jobs = TomCat::AssetJobSystem::Get();
+		const TomCat::AssetJobSystem::Limits previousJobLimits = jobs.GetLimits();
+		TomCat::AssetJobSystem::Limits singleWorkerLimits = previousJobLimits;
+		singleWorkerLimits.WorkerCount = 1;
+		jobs.Configure(singleWorkerLimits);
+		RequireUI(!fonts.Load(fontHandle, MixedUTF8, fallbackFontHandle,
+			emojiFontHandle),
+			"first FontManager load synchronously published an atlas");
+		const TomCat::FontStreamingStats preparedStats = WaitForFontPreparation();
+		RequireUI(preparedStats.PreparedCount == 1
+			&& preparedStats.PreparedBytes > 0
+			&& preparedStats.PublishedCount == 0,
+			"font preparation touched GL or escaped the bounded prepared queue");
+		fonts.Release(fontHandle);
+		const TomCat::FontStreamingStats releasedStats = fonts.GetStreamingStats();
+		RequireUI(releasedStats.BacklogCount == 0
+			&& releasedStats.JobsInFlight == 0
+			&& releasedStats.PreparedCount == 0
+			&& releasedStats.PreparedBytes == 0
+			&& releasedStats.PublishedCount == 0,
+			"font release retained prepared or published generation state");
+		(void)fonts.Load(fontHandle, MixedUTF8, fallbackFontHandle, emojiFontHandle);
+		fonts.ReleaseAll();
+		const TomCat::FontStreamingStats cancelledStats = fonts.GetStreamingStats();
+		RequireUI(cancelledStats.BacklogCount == 0
+			&& cancelledStats.JobsInFlight == 0
+			&& cancelledStats.PreparedCount == 0
+			&& cancelledStats.PreparedBytes == 0
+			&& cancelledStats.PublishedCount == 0,
+			"font ReleaseAll did not wait for generation cancellation");
+		jobs.Configure(previousJobLimits);
+
 		auto loaded = TomCat::CreateRef<TomCat::Scene>();
 		RequireUI(TomCat::SceneSerializer(loaded).Deserialize(sceneHandle),
 			"Player path could not deserialize cooked Runtime UI Scene 11");
@@ -1176,6 +1234,39 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 				<< context.GetUnavailableReason() << std::endl;
 			return;
 		}
+		const std::string screenshotText =
+			button.GetComponent<TomCat::UIText>().Text + " "
+			+ second.GetComponent<TomCat::UIText>().Text;
+		RequireUI(!fonts.Load(fontHandle, "Runtime UI", fallbackFontHandle,
+			emojiFontHandle),
+			"screenshot font unexpectedly bypassed asynchronous preparation");
+		(void)WaitForFontPreparation();
+		RequireUI(fonts.PumpPublishes(1,
+			32ULL * 1024ULL * 1024ULL) == 1,
+			"prepared screenshot font was not published on the GL thread");
+		const TomCat::Ref<TomCat::RuntimeFont> originalFont = fonts.Load(
+			fontHandle, "Runtime UI", fallbackFontHandle, emojiFontHandle);
+		RequireUI(originalFont && originalFont->GetTexture()
+			&& !originalFont->GetAtlas().Glyphs.contains(0x1f600u),
+			"published base screenshot font was not visible to render calls");
+		const TomCat::Ref<TomCat::RuntimeFont> growingFont = fonts.Load(
+			fontHandle, screenshotText, fallbackFontHandle, emojiFontHandle);
+		RequireUI(growingFont == originalFont && growingFont->GetTexture(),
+			"glyph growth discarded the previously published atlas");
+		(void)WaitForFontPreparation();
+		RequireUI(fonts.Load(fontHandle, screenshotText, fallbackFontHandle,
+			emojiFontHandle) == originalFont,
+			"prepared glyph growth became visible before main-thread publication");
+		RequireUI(fonts.PumpPublishes(1,
+			32ULL * 1024ULL * 1024ULL) == 1,
+			"prepared glyph growth was not published on the GL thread");
+		const TomCat::Ref<TomCat::RuntimeFont> grownFont = fonts.Load(
+			fontHandle, screenshotText, fallbackFontHandle, emojiFontHandle);
+		RequireUI(grownFont && grownFont != originalFont
+			&& grownFont->GetAtlas().Glyphs.contains(0x1f600u)
+			&& originalFont->GetTexture()
+			&& !originalFont->GetAtlas().Glyphs.contains(0x1f600u),
+			"glyph growth did not atomically replace and preserve the old atlas");
 		for (const ScreenshotCase& screenshot : screenshotCases)
 		{
 			const std::vector<uint8_t> pixels = CaptureRuntimeUI(*loaded,

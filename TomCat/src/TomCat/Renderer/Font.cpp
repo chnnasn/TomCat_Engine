@@ -1,11 +1,17 @@
 #include "tcpch.h"
 #include "Font.h"
 
+#include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
+#include <filesystem>
 #include <limits>
+#include <mutex>
+#include <string>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -446,48 +452,310 @@ namespace TomCat {
 		return true;
 	}
 
-	RuntimeFont::RuntimeFont(AssetHandle handle,
-		std::vector<std::vector<uint8_t>> sourceChain)
-		: m_Handle(handle), m_SourceChain(std::move(sourceChain))
+	RuntimeFont::RuntimeFont(AssetHandle handle, FontAtlasData atlas,
+		Ref<Texture2D> texture)
+		: m_Handle(handle), m_Atlas(std::move(atlas)),
+		m_Texture(std::move(texture))
 	{
-		for (uint32_t codepoint = 32; codepoint <= 126; ++codepoint)
-			m_Codepoints.insert(codepoint);
-		m_Codepoints.insert(FontAtlasBuilder::ReplacementCodepoint);
 	}
 
-	bool RuntimeFont::EnsureText(std::string_view utf8)
+	struct FontManager::Impl final
 	{
-		const std::vector<uint32_t> decoded = FontAtlasBuilder::DecodeUTF8(utf8);
-		std::set<uint32_t> candidateCodepoints = m_Codepoints;
-		bool changed = m_Atlas.Glyphs.empty();
-		for (uint32_t codepoint : decoded)
-			changed = candidateCodepoints.emplace(codepoint).second || changed;
-		if (!changed)
-			return m_Texture && m_Texture->IsLoaded();
+		using FontChainKey = std::array<uint64_t, 3>;
+		static constexpr uint64_t MaximumFontChainBytes =
+			64ULL * 1024ULL * 1024ULL;
+		static constexpr uint64_t MaximumAtlasBytes =
+			32ULL * 1024ULL * 1024ULL;
+		static constexpr uint64_t MaximumRasterWorkingBytes =
+			32ULL * 1024ULL * 1024ULL;
 
-		const std::vector<uint32_t> requested(candidateCodepoints.begin(),
-			candidateCodepoints.end());
-		std::vector<std::span<const uint8_t>> sources;
-		sources.reserve(m_SourceChain.size());
-		for (const std::vector<uint8_t>& source : m_SourceChain)
-			sources.emplace_back(source.data(), source.size());
-		FontAtlasData atlas;
-		if (!FontAtlasBuilder::Build(sources, requested, atlas))
-			return false;
-		Ref<Texture2D> texture = Texture2D::Create(atlas.Width, atlas.Height);
-		if (!texture || !texture->IsLoaded()
-			|| atlas.PixelsRGBA.size() > std::numeric_limits<uint32_t>::max())
-			return false;
-		texture->SetData(atlas.PixelsRGBA.data(),
-			static_cast<uint32_t>(atlas.PixelsRGBA.size()));
-		// Commit the requested codepoint set only after both atlas construction
-		// and GPU publication succeed. A failed growth attempt must remain
-		// retryable and must never make an older atlas appear complete.
-		m_Codepoints = std::move(candidateCodepoints);
-		m_Atlas = std::move(atlas);
-		m_Texture = std::move(texture);
-		return true;
-	}
+		struct FontChainState final
+		{
+			FontChainKey Key{};
+			uint64_t Generation = 1;
+			std::set<uint32_t> RequestedCodepoints;
+			std::set<uint32_t> PublishedCodepoints;
+			std::shared_ptr<AssetLoadCancellation> Cancellation =
+				std::make_shared<AssetLoadCancellation>();
+			Ref<RuntimeFont> Published;
+			bool Backlogged = false;
+			bool Preparing = false;
+			bool Failed = false;
+		};
+
+		struct PreparedFont final
+		{
+			std::shared_ptr<FontChainState> State;
+			uint64_t Generation = 0;
+			std::set<uint32_t> Codepoints;
+			FontAtlasData Atlas;
+			std::string Warning;
+			std::string Error;
+		};
+
+		mutable std::mutex Mutex;
+		std::condition_variable PreparedCapacity;
+		std::condition_variable JobsIdle;
+		std::map<FontChainKey, std::shared_ptr<FontChainState>> Fonts;
+		std::deque<std::shared_ptr<FontChainState>> Backlog;
+		std::deque<PreparedFont> Prepared;
+		uint64_t PreparedBytes = 0;
+		size_t JobsInFlight = 0;
+
+		bool IsCurrentLocked(const std::shared_ptr<FontChainState>& state,
+			uint64_t generation) const
+		{
+			const auto found = Fonts.find(state->Key);
+			return found != Fonts.end() && found->second == state
+				&& state->Generation == generation;
+		}
+
+		void QueueIfNeededLocked(const std::shared_ptr<FontChainState>& state)
+		{
+			if (state->Failed || state->Backlogged || state->Preparing)
+				return;
+			const bool complete = state->Published
+				&& std::includes(state->PublishedCodepoints.begin(),
+					state->PublishedCodepoints.end(),
+					state->RequestedCodepoints.begin(),
+					state->RequestedCodepoints.end());
+			if (complete)
+				return;
+			state->Backlogged = true;
+			Backlog.push_back(state);
+		}
+
+		static void AppendWarning(std::string& target, std::string message)
+		{
+			if (!target.empty())
+				target += "; ";
+			target += std::move(message);
+		}
+
+		void FinishJob(const std::shared_ptr<FontChainState>& state,
+			uint64_t generation, PreparedFont prepared)
+		{
+			const uint64_t byteCount = static_cast<uint64_t>(
+				prepared.Atlas.PixelsRGBA.size());
+			const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+			const uint64_t preparedBudget = (std::max<uint64_t>)(
+				1024ULL * 1024ULL, limits.MemoryBudgetBytes / 2);
+			const size_t preparedCountLimit = (std::max<size_t>)(1,
+				static_cast<size_t>(limits.WorkerCount) * 2);
+
+			std::unique_lock lock(Mutex);
+			PreparedCapacity.wait(lock, [&]()
+			{
+				if (!IsCurrentLocked(state, generation))
+					return true;
+				if (Prepared.empty() && byteCount <= limits.MemoryBudgetBytes)
+					return true;
+				return Prepared.size() < preparedCountLimit
+					&& byteCount <= preparedBudget
+					&& PreparedBytes <= preparedBudget - byteCount;
+			});
+			if (IsCurrentLocked(state, generation))
+			{
+				PreparedBytes += byteCount;
+				Prepared.emplace_back(std::move(prepared));
+			}
+			if (JobsInFlight > 0)
+				--JobsInFlight;
+			lock.unlock();
+			JobsIdle.notify_all();
+		}
+
+		void PrepareFont(const std::shared_ptr<FontChainState>& state,
+			uint64_t generation, std::set<uint32_t> codepoints,
+			uint64_t taskBudget)
+		{
+			PreparedFont prepared;
+			prepared.State = state;
+			prepared.Generation = generation;
+			prepared.Codepoints = std::move(codepoints);
+			try
+			{
+				const uint64_t retainedForAtlasAndRasters = MaximumAtlasBytes
+					+ MaximumRasterWorkingBytes;
+				const uint64_t sourceBudget = (std::min)(MaximumFontChainBytes,
+					taskBudget > retainedForAtlasAndRasters
+						? taskBudget - retainedForAtlasAndRasters : taskBudget / 3);
+				const std::array<AssetHandle, 3> handles = {
+					AssetHandle(state->Key[0]), AssetHandle(state->Key[1]),
+					AssetHandle(state->Key[2])
+				};
+				std::vector<std::vector<uint8_t>> sources(handles.size());
+				uint64_t sourceBytes = 0;
+				AssetManager& assets = AssetManager::Get();
+				for (size_t index = 0; index < handles.size(); ++index)
+				{
+					bool current = false;
+					{
+						std::lock_guard lock(Mutex);
+						current = IsCurrentLocked(state, generation);
+					}
+					if (!current)
+					{
+						FinishJob(state, generation, std::move(prepared));
+						return;
+					}
+					if (static_cast<uint64_t>(handles[index]) == 0)
+						continue;
+					bool duplicate = false;
+					for (size_t previous = 0; previous < index; ++previous)
+						duplicate = duplicate || handles[previous] == handles[index];
+					if (duplicate)
+						continue;
+
+					uint64_t expectedBytes = 0;
+					CookedAssetRange range;
+					if (assets.TryGetCookedAssetRange(handles[index], range))
+					{
+						if (range.Type != AssetType::Font)
+						{
+							AppendWarning(prepared.Warning, "font chain entry "
+								+ std::to_string(index) + " has the wrong cooked type");
+							continue;
+						}
+						expectedBytes = range.Size;
+					}
+					else if (const std::optional<AssetMetadata> metadata =
+						assets.GetDatabase().GetMetadataSnapshot(handles[index]))
+					{
+						std::error_code error;
+						const std::filesystem::path sourcePath =
+							assets.Registry().GetAssetDirectory() / metadata->FilePath;
+						expectedBytes = std::filesystem::file_size(sourcePath, error);
+						if (error)
+							expectedBytes = 0;
+					}
+					if (expectedBytes > sourceBudget - (std::min)(sourceBytes,
+						sourceBudget))
+					{
+						AppendWarning(prepared.Warning, "font chain entry "
+							+ std::to_string(index) + " exceeds the runtime memory budget");
+						continue;
+					}
+
+					AssetLoadOptions options;
+					options.Cancellation = state->Cancellation;
+					FontLoadResult loaded = assets.LoadTypedArtifact<AssetType::Font>(
+						handles[index], std::move(options));
+					if (!loaded.Succeeded())
+					{
+						AppendWarning(prepared.Warning, "font chain entry "
+							+ std::to_string(index) + " is unavailable");
+						continue;
+					}
+					const uint64_t loadedBytes = static_cast<uint64_t>(
+						loaded.Artifact.Bytes.size());
+					if (loadedBytes > sourceBudget - (std::min)(sourceBytes,
+						sourceBudget))
+					{
+						AppendWarning(prepared.Warning, "font chain entry "
+							+ std::to_string(index) + " exceeds the runtime memory budget");
+						continue;
+					}
+					sourceBytes += loadedBytes;
+					sources[index] = std::move(loaded.Artifact.Bytes);
+				}
+
+				std::vector<std::span<const uint8_t>> sourceSpans;
+				sourceSpans.reserve(sources.size());
+				for (const std::vector<uint8_t>& source : sources)
+					sourceSpans.emplace_back(source.data(), source.size());
+				bool current = false;
+				{
+					std::lock_guard lock(Mutex);
+					current = IsCurrentLocked(state, generation);
+				}
+				if (!current)
+				{
+					FinishJob(state, generation, std::move(prepared));
+					return;
+				}
+				const std::vector<uint32_t> requested(prepared.Codepoints.begin(),
+					prepared.Codepoints.end());
+				if (!FontAtlasBuilder::Build(sourceSpans, requested, prepared.Atlas))
+					prepared.Error = "font atlas construction failed";
+				else
+				{
+					const uint64_t atlasBytes = static_cast<uint64_t>(
+						prepared.Atlas.PixelsRGBA.size());
+					if (atlasBytes > MaximumAtlasBytes || sourceBytes > taskBudget
+						|| atlasBytes > taskBudget - sourceBytes)
+					{
+						prepared.Atlas = {};
+						prepared.Error = "font atlas exceeds the runtime memory budget";
+					}
+				}
+			}
+			catch (const std::exception& exception)
+			{
+				prepared.Atlas = {};
+				prepared.Error = exception.what();
+			}
+			catch (...)
+			{
+				prepared.Atlas = {};
+				prepared.Error = "unknown font preparation failure";
+			}
+			FinishJob(state, generation, std::move(prepared));
+		}
+
+		void ScheduleBacklog()
+		{
+			const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
+			const uint64_t taskBudget = (std::min)(limits.MemoryBudgetBytes,
+				MaximumFontChainBytes + MaximumAtlasBytes
+					+ MaximumRasterWorkingBytes);
+			const size_t maximumPending = (std::max<size_t>)(1,
+				static_cast<size_t>(limits.WorkerCount) * 2);
+			for (;;)
+			{
+				std::shared_ptr<FontChainState> state;
+				uint64_t generation = 0;
+				std::set<uint32_t> codepoints;
+				{
+					std::lock_guard lock(Mutex);
+					if (JobsInFlight >= maximumPending || Backlog.empty())
+						return;
+					state = Backlog.front();
+					Backlog.pop_front();
+					state->Backlogged = false;
+					generation = state->Generation;
+					if (!IsCurrentLocked(state, generation) || state->Preparing
+						|| state->Failed)
+						continue;
+					state->Preparing = true;
+					codepoints = state->RequestedCodepoints;
+					++JobsInFlight;
+				}
+
+				const bool scheduled = AssetJobSystem::Get().TrySchedule(taskBudget,
+					[this, state, generation, codepoints = std::move(codepoints),
+						taskBudget]() mutable
+					{
+						PrepareFont(state, generation, std::move(codepoints),
+							taskBudget);
+					});
+				if (scheduled)
+					continue;
+
+				std::lock_guard lock(Mutex);
+				if (JobsInFlight > 0)
+					--JobsInFlight;
+				if (IsCurrentLocked(state, generation))
+				{
+					state->Preparing = false;
+					state->Backlogged = true;
+					Backlog.push_front(state);
+				}
+				JobsIdle.notify_all();
+				return;
+			}
+		}
+	};
 
 	FontManager& FontManager::Get()
 	{
@@ -495,60 +763,234 @@ namespace TomCat {
 		return manager;
 	}
 
+	FontManager::FontManager()
+		: m_Impl(std::make_unique<Impl>())
+	{
+	}
+
+	FontManager::~FontManager()
+	{
+		ReleaseAll();
+	}
+
 	Ref<RuntimeFont> FontManager::Load(AssetHandle handle,
 		std::string_view requiredText, AssetHandle fallbackFont,
 		AssetHandle emojiFont)
 	{
-		const FontChainKey key = { static_cast<uint64_t>(handle),
+		const Impl::FontChainKey key = { static_cast<uint64_t>(handle),
 			static_cast<uint64_t>(fallbackFont), static_cast<uint64_t>(emojiFont) };
-		auto found = m_Fonts.find(key);
-		if (found == m_Fonts.end())
+		const std::vector<uint32_t> decoded = FontAtlasBuilder::DecodeUTF8(
+			requiredText);
+		Ref<RuntimeFont> published;
 		{
-			const std::array<AssetHandle, 3> handles = {
-				handle, fallbackFont, emojiFont
-			};
-			std::vector<std::vector<uint8_t>> sources(handles.size());
-			for (size_t index = 0; index < handles.size(); ++index)
+			std::lock_guard lock(m_Impl->Mutex);
+			auto found = m_Impl->Fonts.find(key);
+			if (found == m_Impl->Fonts.end())
 			{
-				if (static_cast<uint64_t>(handles[index]) == 0)
-					continue;
-				bool duplicate = false;
-				for (size_t previous = 0; previous < index; ++previous)
-					duplicate = duplicate || handles[previous] == handles[index];
-				if (duplicate)
-					continue;
-				AssetLoadResult loaded = AssetManager::Get().LoadImportedArtifact(
-					handles[index]);
-				if (loaded.Succeeded() && loaded.Artifact.Type == AssetType::Font)
-					sources[index] = std::move(loaded.Artifact.Bytes);
-				else
-					TC_Core_Warn("Font chain entry {0} is unavailable: {1}", index,
-						static_cast<uint64_t>(handles[index]));
+				auto state = std::make_shared<Impl::FontChainState>();
+				state->Key = key;
+				for (uint32_t codepoint = 32; codepoint <= 126; ++codepoint)
+					state->RequestedCodepoints.insert(codepoint);
+				state->RequestedCodepoints.insert(
+					FontAtlasBuilder::ReplacementCodepoint);
+				found = m_Impl->Fonts.emplace(key, std::move(state)).first;
 			}
-			found = m_Fonts.emplace(key,
-				CreateRef<RuntimeFont>(handle, std::move(sources))).first;
+			for (uint32_t codepoint : decoded)
+				found->second->RequestedCodepoints.insert(codepoint);
+			m_Impl->QueueIfNeededLocked(found->second);
+			published = found->second->Published;
 		}
-		if (!found->second->EnsureText(requiredText))
-			return nullptr;
-		return found->second;
+		// TrySchedule never waits for executor capacity. If the global queue is
+		// full, the request remains in the FontManager backlog and the next frame
+		// retries it from PumpPublishes.
+		if (!AssetJobSystem::Get().IsWorkerThread())
+			m_Impl->ScheduleBacklog();
+		return published;
+	}
+
+	size_t FontManager::PumpPublishes(uint32_t maximumUploads,
+		uint64_t maximumUploadBytes)
+	{
+		m_Impl->ScheduleBacklog();
+		std::vector<Impl::PreparedFont> ready;
+		uint64_t selectedBytes = 0;
+		{
+			std::lock_guard lock(m_Impl->Mutex);
+			while (ready.size() < maximumUploads && !m_Impl->Prepared.empty())
+			{
+				const uint64_t nextBytes = static_cast<uint64_t>(
+					m_Impl->Prepared.front().Atlas.PixelsRGBA.size());
+				if (!ready.empty() && (nextBytes > maximumUploadBytes
+					|| selectedBytes > maximumUploadBytes - nextBytes))
+					break;
+				selectedBytes += nextBytes;
+				m_Impl->PreparedBytes -= nextBytes;
+				ready.emplace_back(std::move(m_Impl->Prepared.front()));
+				m_Impl->Prepared.pop_front();
+			}
+		}
+		if (!ready.empty())
+			m_Impl->PreparedCapacity.notify_all();
+
+		size_t publishedCount = 0;
+		for (Impl::PreparedFont& prepared : ready)
+		{
+			{
+				std::lock_guard lock(m_Impl->Mutex);
+				if (!m_Impl->IsCurrentLocked(prepared.State,
+					prepared.Generation))
+					continue;
+			}
+
+			Ref<Texture2D> texture;
+			std::string error = std::move(prepared.Error);
+			if (error.empty() && !prepared.Atlas.PixelsRGBA.empty()
+				&& prepared.Atlas.PixelsRGBA.size()
+					<= (std::numeric_limits<uint32_t>::max)())
+			{
+				try
+				{
+					texture = Texture2D::Create(prepared.Atlas.Width,
+						prepared.Atlas.Height);
+					if (texture && texture->IsLoaded())
+						texture->SetData(prepared.Atlas.PixelsRGBA.data(),
+							static_cast<uint32_t>(
+								prepared.Atlas.PixelsRGBA.size()));
+					else
+						error = "font atlas texture creation failed";
+				}
+				catch (const std::exception& exception)
+				{
+					error = exception.what();
+					texture.reset();
+				}
+				catch (...)
+				{
+					error = "unknown failure while publishing the font atlas";
+					texture.reset();
+				}
+			}
+			else if (error.empty())
+				error = "font atlas pixels are invalid";
+
+			Ref<RuntimeFont> runtimeFont;
+			if (error.empty() && texture && texture->IsLoaded())
+			{
+				// Pixel staging is no longer needed once SetData returns. RuntimeFont
+				// keeps only layout metadata and the GPU resource.
+				std::vector<uint8_t>().swap(prepared.Atlas.PixelsRGBA);
+				runtimeFont = CreateRef<RuntimeFont>(
+					AssetHandle(prepared.State->Key[0]), std::move(prepared.Atlas),
+					std::move(texture));
+			}
+
+			bool current = false;
+			{
+				std::lock_guard lock(m_Impl->Mutex);
+				current = m_Impl->IsCurrentLocked(prepared.State,
+					prepared.Generation);
+				if (current)
+				{
+					prepared.State->Preparing = false;
+					if (runtimeFont)
+					{
+						prepared.State->Published = std::move(runtimeFont);
+						prepared.State->PublishedCodepoints =
+							std::move(prepared.Codepoints);
+						prepared.State->Failed = false;
+						++publishedCount;
+						m_Impl->QueueIfNeededLocked(prepared.State);
+					}
+					else
+						prepared.State->Failed = true;
+				}
+			}
+			if (!current)
+				continue;
+			if (!prepared.Warning.empty())
+				TC_Core_Warn("Font {0} prepared with fallback glyphs: {1}",
+					prepared.State->Key[0], prepared.Warning);
+			if (!error.empty())
+				TC_Core_Warn("Font {0} could not be published: {1}",
+					prepared.State->Key[0], error);
+		}
+
+		m_Impl->ScheduleBacklog();
+		return publishedCount;
+	}
+
+	FontStreamingStats FontManager::GetStreamingStats() const
+	{
+		std::lock_guard lock(m_Impl->Mutex);
+		size_t publishedCount = 0;
+		for (const auto& [key, state] : m_Impl->Fonts)
+		{
+			(void)key;
+			publishedCount += state->Published ? 1u : 0u;
+		}
+		return { m_Impl->Backlog.size(), m_Impl->JobsInFlight,
+			m_Impl->Prepared.size(), m_Impl->PreparedBytes, publishedCount };
 	}
 
 	void FontManager::Release(AssetHandle handle)
 	{
 		const uint64_t raw = static_cast<uint64_t>(handle);
-		for (auto iterator = m_Fonts.begin(); iterator != m_Fonts.end();)
+		std::unique_lock lock(m_Impl->Mutex);
+		std::vector<std::shared_ptr<Impl::FontChainState>> removed;
+		for (auto iterator = m_Impl->Fonts.begin();
+			iterator != m_Impl->Fonts.end();)
 		{
 			if (std::find(iterator->first.begin(), iterator->first.end(), raw)
 				!= iterator->first.end())
-				iterator = m_Fonts.erase(iterator);
+			{
+				iterator->second->Cancellation->Cancel();
+				++iterator->second->Generation;
+				removed.push_back(iterator->second);
+				iterator = m_Impl->Fonts.erase(iterator);
+			}
 			else
 				++iterator;
 		}
+		const auto wasRemoved = [&removed](const auto& state)
+		{
+			return std::find(removed.begin(), removed.end(), state)
+				!= removed.end();
+		};
+		std::erase_if(m_Impl->Backlog, wasRemoved);
+		std::erase_if(m_Impl->Prepared,
+			[&](const Impl::PreparedFont& prepared)
+			{
+				if (!wasRemoved(prepared.State))
+					return false;
+				m_Impl->PreparedBytes -= static_cast<uint64_t>(
+					prepared.Atlas.PixelsRGBA.size());
+				return true;
+			});
+		lock.unlock();
+		m_Impl->PreparedCapacity.notify_all();
 	}
 
 	void FontManager::ReleaseAll()
 	{
-		m_Fonts.clear();
+		std::unique_lock lock(m_Impl->Mutex);
+		for (auto& [key, state] : m_Impl->Fonts)
+		{
+			(void)key;
+			state->Cancellation->Cancel();
+			++state->Generation;
+		}
+		m_Impl->Fonts.clear();
+		m_Impl->Backlog.clear();
+		m_Impl->Prepared.clear();
+		m_Impl->PreparedBytes = 0;
+		const bool hasJobs = m_Impl->JobsInFlight != 0;
+		lock.unlock();
+		m_Impl->PreparedCapacity.notify_all();
+		if (!hasJobs || AssetJobSystem::Get().IsWorkerThread())
+			return;
+		lock.lock();
+		m_Impl->JobsIdle.wait(lock,
+			[this]() { return m_Impl->JobsInFlight == 0; });
 	}
 
 }

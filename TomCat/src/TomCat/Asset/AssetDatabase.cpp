@@ -4,6 +4,8 @@
 #include "ArtifactKey.h"
 #include "AssetRegistry.h"
 #include "ContentHash.h"
+#include "MaterialArtifact.h"
+#include "TextureArtifact.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -224,7 +226,8 @@ namespace TomCat {
 
 		bool HasDiscoverableDependencies(AssetType type)
 		{
-			return type == AssetType::Scene || type == AssetType::Prefab;
+			return type == AssetType::Scene || type == AssetType::Prefab
+				|| type == AssetType::Material;
 		}
 
 		class ScopeExit final
@@ -244,6 +247,11 @@ namespace TomCat {
 	bool AssetDatabase::Initialize(AssetRegistry& registry,
 		const std::filesystem::path& libraryDirectory)
 	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+		{
+			TC_Core_Error("AssetDatabase cannot be initialized from an asset worker thread");
+			return false;
+		}
 		Shutdown();
 		if (!registry.IsInitialized() || libraryDirectory.empty() ||
 			!m_Cache.Initialize(libraryDirectory / "DerivedData"))
@@ -255,13 +263,19 @@ namespace TomCat {
 		{
 			std::scoped_lock lock(m_MetadataCommitMutex);
 			if (!RebuildDiscoveredDependenciesLocked())
-				TC_Core_Warn("Some Scene/Prefab dependencies could not be discovered during initialization");
+				TC_Core_Warn("Some Scene/Prefab/Material dependencies could not be discovered during initialization");
 		}
+		EnableAsyncTasks();
 		return true;
 	}
 
 	void AssetDatabase::Shutdown()
 	{
+		if (!StopAndWaitForAsyncTasks())
+		{
+			TC_Core_Error("AssetDatabase shutdown was rejected on an asset worker thread");
+			return;
+		}
 		{
 			std::scoped_lock lock(m_FlightMutex);
 			m_Flights.clear();
@@ -280,6 +294,45 @@ namespace TomCat {
 		m_Importers.Clear();
 		m_Cache.Shutdown();
 		m_Registry = nullptr;
+	}
+
+	bool AssetDatabase::BeginAsyncTask()
+	{
+		std::lock_guard lock(m_AsyncTaskMutex);
+		if (!m_AcceptingAsyncTasks)
+			return false;
+		++m_AsyncTasksInFlight;
+		return true;
+	}
+
+	void AssetDatabase::FinishAsyncTask() noexcept
+	{
+		bool becameIdle = false;
+		{
+			std::lock_guard lock(m_AsyncTaskMutex);
+			if (m_AsyncTasksInFlight == 0)
+				return;
+			becameIdle = --m_AsyncTasksInFlight == 0;
+		}
+		if (becameIdle)
+			m_AsyncTasksIdle.notify_all();
+	}
+
+	void AssetDatabase::EnableAsyncTasks()
+	{
+		std::lock_guard lock(m_AsyncTaskMutex);
+		m_AcceptingAsyncTasks = true;
+	}
+
+	bool AssetDatabase::StopAndWaitForAsyncTasks()
+	{
+		if (AssetJobSystem::Get().IsWorkerThread())
+			return false;
+		std::unique_lock lock(m_AsyncTaskMutex);
+		m_AcceptingAsyncTasks = false;
+		m_AsyncTasksIdle.wait(lock,
+			[this]() { return m_AsyncTasksInFlight == 0; });
+		return true;
 	}
 
 	bool AssetDatabase::SetDependencies(AssetHandle asset,
@@ -398,11 +451,122 @@ namespace TomCat {
 	std::future<AssetLoadResult> AssetDatabase::LoadArtifactAsync(
 		AssetHandle handle, AssetLoadOptions options)
 	{
-		return std::async(std::launch::async,
-			[this, handle, options = std::move(options)]() mutable
+		if (!BeginAsyncTask())
+		{
+			AssetLoadResult result;
+			result.Status = AssetLoadStatus::NotInitialized;
+			result.Error = "asset database is not accepting asynchronous loads";
+			std::promise<AssetLoadResult> promise;
+			std::future<AssetLoadResult> future = promise.get_future();
+			promise.set_value(std::move(result));
+			return future;
+		}
+
+		try
+		{
+			const uint64_t reservation = EstimateJobReservation(handle);
+			return AssetJobSystem::Get().Submit(reservation,
+				[this, handle, options = std::move(options)]() mutable
+				{
+					try
+					{
+						AssetLoadResult result = LoadArtifact(handle, std::move(options));
+						FinishAsyncTask();
+						return result;
+					}
+					catch (...)
+					{
+						FinishAsyncTask();
+						throw;
+					}
+				});
+		}
+		catch (...)
+		{
+			FinishAsyncTask();
+			throw;
+		}
+	}
+
+	uint64_t AssetDatabase::EstimateJobReservation(AssetHandle handle)
+	{
+		uint64_t reservation = 0;
+		std::vector<AssetHandle> pending{ handle };
+		std::unordered_set<AssetHandle> visited;
+		while (!pending.empty())
+		{
+			const AssetHandle current = pending.back();
+			pending.pop_back();
+			if (static_cast<uint64_t>(current) == 0
+				|| !visited.emplace(current).second)
+				continue;
+			reservation = std::max(reservation,
+				EstimateSingleJobReservation(current));
+			std::vector<AssetHandle> dependencies = GetDependencies(current);
+			pending.insert(pending.end(), dependencies.begin(), dependencies.end());
+		}
+		return reservation;
+	}
+
+	uint64_t AssetDatabase::EstimateSingleJobReservation(AssetHandle handle)
+	{
+		if (!m_Registry || static_cast<uint64_t>(handle) == 0)
+			return 0;
+		std::filesystem::path source;
+		AssetType type = AssetType::None;
+		{
+			std::scoped_lock lock(m_MetadataCommitMutex);
+			const AssetMetadata* metadata = m_Registry->GetMetadata(handle);
+			if (!metadata)
+				metadata = m_Registry->GetSubAssetOwner(handle);
+			if (metadata && !metadata->IsMissing)
 			{
-				return LoadArtifact(handle, std::move(options));
-			});
+				source = m_Registry->GetFileSystemPath(metadata->Handle);
+				type = metadata->Type;
+			}
+		}
+		std::error_code error;
+		const uintmax_t sourceBytes = source.empty() ? 0
+			: std::filesystem::file_size(source, error);
+		if (error || sourceBytes == 0)
+			return 0;
+		auto scaled = [sourceBytes](uint64_t multiplier)
+		{
+			return sourceBytes > (std::numeric_limits<uint64_t>::max)() / multiplier
+				? (std::numeric_limits<uint64_t>::max)()
+				: static_cast<uint64_t>(sourceBytes) * multiplier;
+		};
+		uint64_t reservation = scaled(6);
+		switch (type)
+		{
+			case AssetType::Texture2D:
+			{
+				uint64_t texturePeak = 0;
+				std::string estimateError;
+				if (EstimateTextureBuildMemory(source, texturePeak, estimateError))
+					reservation = std::max(reservation, texturePeak);
+				else
+					reservation = std::max(reservation, 16ULL * 1024ULL * 1024ULL);
+				break;
+			}
+			case AssetType::Shader:
+				reservation = std::max(scaled(12), 64ULL * 1024ULL * 1024ULL);
+				break;
+			case AssetType::Mesh:
+				// OBJ parsing keeps source text, vertex build records and ordered-map
+				// nodes alive together before the packed artifact is emitted.
+				reservation = std::max(scaled(32), 64ULL * 1024ULL * 1024ULL);
+				break;
+			case AssetType::Audio:
+				reservation = std::max(scaled(8), 16ULL * 1024ULL * 1024ULL);
+				break;
+			case AssetType::Material:
+				reservation = std::max(scaled(8), 4ULL * 1024ULL * 1024ULL);
+				break;
+			default:
+				break;
+		}
+		return reservation;
 	}
 
 	bool AssetDatabase::RefreshRegistry()
@@ -685,7 +849,7 @@ namespace TomCat {
 			return false;
 		result.Artifact.SubAssets = std::move(assigned);
 		if (refreshDependencies && !RebuildDiscoveredDependenciesLocked())
-			TC_Core_Warn("Some Scene/Prefab dependencies could not be refreshed after import publication");
+			TC_Core_Warn("Some Scene/Prefab/Material dependencies could not be refreshed after import publication");
 		return true;
 	}
 
@@ -841,25 +1005,67 @@ namespace TomCat {
 
 			try
 			{
-				const YAML::Node root = YAML::Load(std::string(bytes.begin(), bytes.end()));
 				std::vector<AssetHandle> found;
 				std::string visitorError;
-				const auto collect = [&](const SerializedAssetReference& reference)
+				bool visited = false;
+				if (metadata.Type == AssetType::Material)
 				{
-					AssetHandle dependency = reference.Handle;
-					if (static_cast<uint64_t>(dependency) == 0)
+					std::vector<TypedAssetDependency> typedDependencies;
+					visited = ParseMaterialSourceDependencies(bytes,
+						typedDependencies, visitorError);
+					if (visited)
+					{
+						for (const TypedAssetDependency& reference : typedDependencies)
+						{
+							AssetHandle dependency = reference.Handle;
+							const AssetSubAsset* child = nullptr;
+							const AssetMetadata* dependencyMetadata =
+								m_Registry->GetMetadata(dependency);
+							if (!dependencyMetadata)
+							{
+								dependencyMetadata = m_Registry->GetSubAssetOwner(
+									dependency, &child);
+								if (dependencyMetadata && child)
+									dependency = dependencyMetadata->Handle;
+							}
+							if (!dependencyMetadata || dependencyMetadata->IsMissing
+								|| dependencyMetadata->Type != reference.ExpectedType)
+							{
+								visitorError = "material dependency '" + reference.Name
+									+ "' is missing or has the wrong asset type";
+								visited = false;
+								break;
+							}
+							if (dependency == metadata.Handle)
+							{
+								visitorError = "material cannot depend on itself";
+								visited = false;
+								break;
+							}
+							found.push_back(dependency);
+						}
+					}
+				}
+				else
+				{
+					const YAML::Node root = YAML::Load(std::string(bytes.begin(), bytes.end()));
+					const auto collect = [&](const SerializedAssetReference& reference)
+					{
+						AssetHandle dependency = reference.Handle;
+						if (static_cast<uint64_t>(dependency) == 0)
+							return true;
+						const AssetSubAsset* child = nullptr;
+						if (const AssetMetadata* owner =
+							m_Registry->GetSubAssetOwner(dependency, &child); owner && child)
+							dependency = owner->Handle;
+						if (dependency != metadata.Handle)
+							found.push_back(dependency);
 						return true;
-					const AssetSubAsset* child = nullptr;
-					if (const AssetMetadata* owner =
-						m_Registry->GetSubAssetOwner(dependency, &child); owner && child)
-						dependency = owner->Handle;
-					if (dependency != metadata.Handle)
-						found.push_back(dependency);
-					return true;
-				};
-				const bool visited = metadata.Type == AssetType::Scene
-					? AssetReferenceVisitor::VisitScene(root, collect, visitorError)
-					: AssetReferenceVisitor::VisitPrefab(root, collect, visitorError);
+					};
+					visited = metadata.Type == AssetType::Scene
+						? AssetReferenceVisitor::VisitScene(root, collect, visitorError)
+						: AssetReferenceVisitor::VisitPrefab(root, collect, visitorError);
+				}
 				if (!visited)
 				{
 					TC_Core_Warn("Could not inspect dependencies for '{0}': {1}",

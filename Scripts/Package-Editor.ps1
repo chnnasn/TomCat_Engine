@@ -59,8 +59,14 @@ if ($Build) {
     Write-Host "[Editor] Building Release x64 ..."
     & $MsBuildPath $editorSolution -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)" }
+    Write-Host "[Tools] Generating headless CLI solution ..."
+    & $PremakePath "--file=$(Join-Path $RepoRoot 'Tools\premake5.lua')" vs2022
+    if ($LASTEXITCODE -ne 0) { throw "Tools project generation failed (exit $LASTEXITCODE)" }
+    Write-Host "[Tools] Building Release x64 ..."
+    & $MsBuildPath (Join-Path $RepoRoot "Tools\Tools.sln") -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
+    if ($LASTEXITCODE -ne 0) { throw "Headless CLI build failed (exit $LASTEXITCODE)" }
 } else {
-    Write-Host "[Build] Using existing Managed, Player and Editor Release outputs"
+    Write-Host "[Build] Using existing Managed, Player, Editor and headless CLI Release outputs"
 }
 
 if (-not (Test-Path $SourceDir -PathType Container)) { throw "Source directory not found: $SourceDir" }
@@ -76,9 +82,15 @@ Write-Host "Scanning $packageFileCount package candidate file(s) from $packageSo
 $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $outExe = Join-Path $dist "$FinalName.exe"
+$outCli = Join-Path $dist "TomCatCLI.exe"
 $outPackages = Join-Path $dist "Packages"
 $outManaged = Join-Path $dist "Managed"
 $outArchive = Join-Path $dist "$FinalName.zip"
+$cliSource = Join-Path $RepoRoot "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
+if (-not (Test-Path -LiteralPath $cliSource -PathType Leaf)) {
+    throw "Headless CLI executable not found: $cliSource. Run with -Build or build Tools\Tools.sln first."
+}
+Copy-Item -LiteralPath $cliSource -Destination $outCli -Force
 $nativeRuntimeFiles = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 foreach ($name in $nativeRuntimeFiles) {
     Copy-Item -LiteralPath (Join-Path $playerTemplate $name) -Destination (Join-Path $dist $name) -Force
@@ -181,13 +193,13 @@ if ($evbOutput -and (Test-Path $evbOutput)) {
     if (Test-Path -LiteralPath $outArchive) {
         Remove-Item -LiteralPath $outArchive -Force
     }
-    $archiveInputs = @($outExe, $outPackages, $outManaged)
+    $archiveInputs = @($outExe, $outCli, $outPackages, $outManaged)
     $archiveInputs += @($nativeRuntimeFiles | ForEach-Object { Join-Path $dist $_ })
     Compress-Archive -LiteralPath $archiveInputs -DestinationPath $outArchive -CompressionLevel Optimal
     New-TomCatReleaseMetadata -RepositoryRoot $RepoRoot -DistPath $dist -Target editor -Version $Version | Out-Null
     Write-Host "[Package] Final package -> $outArchive"
     $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
-    Write-Host "Done: $outExe ($sizeMb MB) + $outPackages + $outManaged"
+    Write-Host "Done: $outExe ($sizeMb MB) + $outCli + $outPackages + $outManaged"
 } else {
     throw "Boxed Editor executable not found at '$evbOutput'"
 }

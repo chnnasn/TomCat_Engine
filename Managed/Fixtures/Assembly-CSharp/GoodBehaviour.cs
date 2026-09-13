@@ -56,6 +56,10 @@ public sealed class GoodBehaviour : TomCatBehaviour
     public int FixedUpdates;
     public int CollisionEnters;
     public int TriggerExits;
+	[HideInInspector] public long FixedInputFirstSequence;
+	[HideInInspector] public int FixedInputEventCount;
+	[HideInInspector] public long CollisionInputFirstSequence;
+	[HideInInspector] public int CollisionInputEventCount;
     public int Disables;
     public int Destroys;
 
@@ -81,15 +85,21 @@ public sealed class GoodBehaviour : TomCatBehaviour
 			Target.ActiveSelf = false;
 	}
     protected override void OnLateUpdate(float deltaTime) => LateUpdates++;
-    protected override void OnFixedUpdate(float fixedDeltaTime)
+	protected override void OnFixedUpdate(float fixedDeltaTime)
 	{
 		FixedUpdates++;
+		InputEventBatch input = Input.EventBatch;
+		FixedInputFirstSequence = unchecked((long)input.FirstSequence);
+		FixedInputEventCount = input.Events.Count;
 		if (DisableTargetOnFixedUpdate)
 			Target.ActiveSelf = false;
 	}
     protected override void OnCollisionEnter2D(Collision2D collision)
     {
         CollisionEnters++;
+		InputEventBatch input = Input.EventBatch;
+		CollisionInputFirstSequence = unchecked((long)input.FirstSequence);
+		CollisionInputEventCount = input.Events.Count;
 		if (DisableTargetOnCollisionEnter)
 			Target.ActiveSelf = false;
         if (DisableOnCollisionEnter)

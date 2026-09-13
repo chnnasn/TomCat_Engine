@@ -61,6 +61,7 @@ namespace TomCat {
 		ImGuiLayer* GetImGuiLayer() { return m_ImGuiLayer; };
 
 		static Application& Get() { return *s_Instance; }
+		static Application* TryGet() { return s_Instance; }
 
 	private:
 		void Run();

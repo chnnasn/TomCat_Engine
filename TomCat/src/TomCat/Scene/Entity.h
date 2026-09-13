@@ -90,6 +90,8 @@ namespace TomCat {
 
 		uint8_t GetLayer() const { return GetComponent<EntityMetadata>().Layer; }
 
+		Scene* GetScene() const { return m_Scene; }
+
 		bool IsActiveInHierarchy() const
 		{
 			return m_Scene && m_Scene->IsActiveInHierarchy(*this);

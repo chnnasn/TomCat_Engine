@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TomCat/Core/Base.h"
+#include "TomCat/Core/InputEventQueue.h"
 
 #include <array>
 #include <string>
@@ -30,11 +31,30 @@ namespace TomCat {
 		static bool IsWindowFocused();
 		static GamepadSnapshot GetGamepadSnapshot(uint32_t index);
 
-		// Window callbacks accumulate transient state until the scripting snapshot
-		// consumes it at the beginning of the next display frame.
+		// Application calls BeginFrame immediately after the display-frame event
+		// poll. The returned snapshot is immutable until the next BeginFrame. GLFW
+		// exposes gamepad buttons as sampled state (not callbacks), so their event
+		// boundary is one BeginFrame sample.
+		static void BeginFrame();
+		static const InputEventQueue::FrameSnapshot& GetFrameSnapshot();
+		static void ClearState();
+
+		// Platform callbacks append ordered transitions while PollEvents runs.
+		static void NotifyKey(uint32_t key, InputEventQueue::Action action,
+			double timestamp);
+		static void NotifyMouseButton(uint32_t button,
+			InputEventQueue::Action action, double timestamp);
+		static void NotifyMousePosition(float x, float y);
 		static void NotifyScroll(float xOffset, float yOffset);
+		// GLFW reports joystick hot-plug as ordered callbacks during PollEvents.
+		// Keep those edges in the same frame queue as keyboard and mouse input so
+		// a connect+disconnect pair between frames is still observable.
+		static void NotifyGamepadConnection(uint32_t gamepad, bool connected,
+			double timestamp);
+		// Kept for source compatibility. The display-frame scroll snapshot is
+		// repeatable and is cleared only by the next BeginFrame.
 		static std::pair<float, float> ConsumeScrollDelta();
-		static void NotifyWindowFocus(bool focused);
+		static void NotifyWindowFocus(bool focused, double timestamp);
 	};
 
 

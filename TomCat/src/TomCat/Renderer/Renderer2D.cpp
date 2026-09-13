@@ -15,6 +15,34 @@
 
 namespace TomCat {
 
+	bool Renderer2D::IsQuadVisible(const glm::mat4& worldTransform,
+		const glm::mat4& viewProjection)
+	{
+		const glm::mat4 clipTransform = viewProjection * worldTransform;
+		const glm::vec4 corners[] = {
+			clipTransform * glm::vec4(-0.5f, -0.5f, 0.0f, 1.0f),
+			clipTransform * glm::vec4( 0.5f, -0.5f, 0.0f, 1.0f),
+			clipTransform * glm::vec4( 0.5f,  0.5f, 0.0f, 1.0f),
+			clipTransform * glm::vec4(-0.5f,  0.5f, 0.0f, 1.0f)
+		};
+		for (const glm::vec4& corner : corners)
+		{
+			if (!std::isfinite(corner.x) || !std::isfinite(corner.y)
+				|| !std::isfinite(corner.z) || !std::isfinite(corner.w))
+				return true;
+		}
+		auto whollyOutside = [&](auto predicate)
+		{
+			return std::all_of(std::begin(corners), std::end(corners), predicate);
+		};
+		return !whollyOutside([](const glm::vec4& point) { return point.x < -point.w; })
+			&& !whollyOutside([](const glm::vec4& point) { return point.x > point.w; })
+			&& !whollyOutside([](const glm::vec4& point) { return point.y < -point.w; })
+			&& !whollyOutside([](const glm::vec4& point) { return point.y > point.w; })
+			&& !whollyOutside([](const glm::vec4& point) { return point.z < -point.w; })
+			&& !whollyOutside([](const glm::vec4& point) { return point.z > point.w; });
+	}
+
 	struct QuadVertex
 	{
 		glm::vec3 Position;

@@ -2,6 +2,7 @@
 
 //供程序使用
 #include "TomCat/Core/Application.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Layer.h"
 #include "TomCat/Core/Log.h"
 
@@ -18,6 +19,9 @@
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Asset/AssetImportCoordinator.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/MaterialArtifact.h"
+#include "TomCat/Asset/MeshArtifact.h"
+#include "TomCat/Asset/ShaderArtifact.h"
 #include "TomCat/Asset/SpriteAsset.h"
 
 #include "TomCat/ImGui/ImGuiLayer.h"

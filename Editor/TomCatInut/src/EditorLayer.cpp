@@ -96,6 +96,31 @@ namespace TomCat {
 			return (error ? path : absolute).lexically_normal();
 		}
 
+		bool MigrationPreviewsEqual(const ProjectMigrationPreview& left,
+			const ProjectMigrationPreview& right)
+		{
+			if (left.ProjectPath.lexically_normal()
+					!= right.ProjectPath.lexically_normal()
+				|| left.SourceSchemaVersion != right.SourceSchemaVersion
+				|| left.TargetSchemaVersion != right.TargetSchemaVersion
+				|| left.BackupRoot.lexically_normal()
+					!= right.BackupRoot.lexically_normal()
+				|| left.Changes.size() != right.Changes.size())
+				return false;
+			for (size_t index = 0; index < left.Changes.size(); ++index)
+			{
+				const ProjectMigrationChange& a = left.Changes[index];
+				const ProjectMigrationChange& b = right.Changes[index];
+				if (a.RelativePath.lexically_normal()
+						!= b.RelativePath.lexically_normal()
+					|| a.Kind != b.Kind || a.OriginalSize != b.OriginalSize
+					|| a.OriginalSHA256 != b.OriginalSHA256
+					|| a.Reason != b.Reason)
+					return false;
+			}
+			return true;
+		}
+
 		std::string SanitizePrefabFileStem(std::string value)
 		{
 			for (char& character : value)
@@ -1209,7 +1234,6 @@ namespace TomCat {
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
-		Scripting::ScriptEngine::Get().CaptureInputState();
 		Window& applicationWindow = Application::Get().GetWindow();
 		const float runtimeUIDPIScale = applicationWindow.GetDPIScale();
 		const glm::vec2 screenToFramebufferScale{
@@ -1958,6 +1982,7 @@ namespace TomCat {
 		UI_BuildSettings();
 		UI_ProjectSettings();
 		UI_UnsavedChangesModal();
+		UI_ProjectMigrationModal();
 		UI_RecoveryModal();
 		if (!m_PendingPanelFocus.empty())
 		{
@@ -5010,6 +5035,77 @@ namespace TomCat {
 		}
 	}
 
+	void EditorLayer::UI_ProjectMigrationModal()
+	{
+		if (m_OpenProjectMigrationModal && m_PendingProjectMigration)
+		{
+			ImGui::OpenPopup("Project Upgrade Preview");
+			m_OpenProjectMigrationModal = false;
+		}
+
+		std::optional<PendingProjectMigration> migrationToRun;
+		if (ImGui::BeginPopupModal("Project Upgrade Preview", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			if (!m_PendingProjectMigration)
+			{
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return;
+			}
+
+			const ProjectMigrationPreview& preview =
+				m_PendingProjectMigration->Preview;
+			ImGui::TextWrapped("Project: %s",
+				PathToUTF8(m_PendingProjectMigration->ProjectPath).c_str());
+			ImGui::Text("Project schema %u will be upgraded to %u.",
+				preview.SourceSchemaVersion, preview.TargetSchemaVersion);
+			ImGui::TextUnformatted(
+				"The files below will be changed in one transaction.");
+			ImGui::TextUnformatted(
+				"The original bytes are backed up before the first write.");
+			ImGui::Text("Backup root: %s",
+				preview.BackupRoot.generic_string().c_str());
+			ImGui::Separator();
+			ImGui::BeginChild("##ProjectMigrationChanges",
+				ImVec2(620.0f, 220.0f), true);
+			for (const ProjectMigrationChange& change : preview.Changes)
+			{
+				const char* operation = change.Kind
+					== ProjectMigrationChangeKind::Create ? "Create" : "Replace";
+				ImGui::TextWrapped("%s  %s  (%llu bytes)%s%s", operation,
+					change.RelativePath.generic_string().c_str(),
+					static_cast<unsigned long long>(change.OriginalSize),
+					change.Reason.empty() ? "" : " - ", change.Reason.c_str());
+			}
+			ImGui::EndChild();
+			ImGui::Separator();
+
+			if (ImGui::Button("Back Up, Upgrade and Open"))
+			{
+				migrationToRun = std::move(m_PendingProjectMigration);
+				m_PendingProjectMigration.reset();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				m_PendingProjectMigration.reset();
+				m_PendingProjectMigrationLock.Release();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		if (migrationToRun)
+		{
+			m_ApprovedProjectMigration = *migrationToRun;
+			m_BypassUnsavedCheck = true;
+			OpenProject(migrationToRun->ProjectPath);
+			m_BypassUnsavedCheck = false;
+		}
+	}
+
 	void EditorLayer::UI_RecoveryModal()
 	{
 		if (m_OpenRecoveryModal && m_PendingRecovery)
@@ -5088,28 +5184,80 @@ namespace TomCat {
 			return false;
 		}
 
-		const bool alreadyOwns = m_ProjectLock.OwnsProject(path);
+		const std::filesystem::path normalizedPath = AbsoluteLexicalPath(path);
+		const bool alreadyOwns = m_ProjectLock.OwnsProject(normalizedPath);
 		EditorProjectLock candidateLock;
 		if (!alreadyOwns)
 		{
-			std::string lockError;
-			const ProjectLockAcquireResult lockResult =
-				candidateLock.Acquire(path, lockError);
-			if (lockResult != ProjectLockAcquireResult::Acquired)
+			if (m_PendingProjectMigrationLock.OwnsProject(normalizedPath))
+				candidateLock = std::move(m_PendingProjectMigrationLock);
+			else
 			{
-				const std::string message =
-					lockResult == ProjectLockAcquireResult::LiveOwner
-					? "Project open rejected: another Editor instance owns "
-						"the write lock. " + lockError
-					: "Project open rejected: a safe write lock could not be "
-						"created. " + lockError;
-				m_ShowConsolePanel = true;
-				m_PendingPanelFocus = "Console";
-				m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
-					message, "Project Lock");
-				TC_Core_Error("{0}", message);
-				return false;
+				std::string lockError;
+				const ProjectLockAcquireResult lockResult =
+					candidateLock.Acquire(normalizedPath, lockError);
+				if (lockResult != ProjectLockAcquireResult::Acquired)
+				{
+					const std::string message =
+						lockResult == ProjectLockAcquireResult::LiveOwner
+						? "Project open rejected: another Editor instance owns "
+							"the write lock. " + lockError
+						: "Project open rejected: a safe write lock could not be "
+							"created. " + lockError;
+					m_ShowConsolePanel = true;
+					m_PendingPanelFocus = "Console";
+					m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+						message, "Project Lock");
+					TC_Core_Error("{0}", message);
+					return false;
+				}
 			}
+		}
+
+		std::string migrationRecoveryError;
+		if (!Project::RecoverInterruptedMigration(
+			normalizedPath, migrationRecoveryError))
+		{
+			const std::string message = "Project migration recovery failed: "
+				+ migrationRecoveryError;
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				message, "Project Migration");
+			TC_Core_Error("{0}", message);
+			m_ApprovedProjectMigration.reset();
+			return false;
+		}
+		ProjectMigrationPreview migrationPreview;
+		std::string migrationPreviewError;
+		if (!ProjectManager::Get().PreviewProjectMigration(
+			normalizedPath, migrationPreview, migrationPreviewError))
+		{
+			const std::string message = "Project open rejected before migration: "
+				+ migrationPreviewError;
+			m_ShowConsolePanel = true;
+			m_PendingPanelFocus = "Console";
+			m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+				message, "Project Migration");
+			TC_Core_Error("{0}", message);
+			m_ApprovedProjectMigration.reset();
+			return false;
+		}
+
+		const bool previewWasApproved = m_ApprovedProjectMigration
+			&& AbsoluteLexicalPath(m_ApprovedProjectMigration->ProjectPath)
+				== normalizedPath
+			&& MigrationPreviewsEqual(
+				m_ApprovedProjectMigration->Preview, migrationPreview);
+		m_ApprovedProjectMigration.reset();
+		if (migrationPreview.RequiresMigration() && !previewWasApproved)
+		{
+			m_PendingProjectMigration = PendingProjectMigration{
+				normalizedPath, std::move(migrationPreview) };
+			if (!alreadyOwns)
+				m_PendingProjectMigrationLock = std::move(candidateLock);
+			m_OpenProjectMigrationModal = true;
+			return false;
 		}
 
 		// Persist the current layout before ProjectManager changes the active
@@ -5119,7 +5267,10 @@ namespace TomCat {
 		SaveSceneToolbarLayout();
 		if (m_CurrentProject)
 			m_ContentBrowserPanel.Serialize();
-		auto project = ProjectManager::Get().LoadProject(path);
+		auto project = migrationPreview.RequiresMigration()
+			? ProjectManager::Get().LoadProjectWithMigration(
+				normalizedPath, migrationPreview)
+			: ProjectManager::Get().LoadProject(normalizedPath);
 		if (!project)
 			return false;
 		if (!alreadyOwns)

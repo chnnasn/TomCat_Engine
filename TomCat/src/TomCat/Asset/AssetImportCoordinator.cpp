@@ -557,7 +557,7 @@ namespace TomCat {
 			{
 				// Keep at most one worker plus one newest request per asset. Repeated
 				// saves replace this slot instead of spawning an unbounded set of
-				// std::async imports while a slow importer is still unwinding.
+				// independent imports while a slow importer is still unwinding.
 				running->Replacement = PendingImport{ revision, candidate.Change,
 					candidate.RelativePath, candidate.Handle,
 					candidate.IsDependency };

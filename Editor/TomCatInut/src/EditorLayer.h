@@ -76,6 +76,7 @@ namespace TomCat {
 		void ResetSceneInteractionState();
 		void RequestDestructiveAction(std::function<bool()> action);
 		void UI_UnsavedChangesModal();
+		void UI_ProjectMigrationModal();
 		void UI_RecoveryModal();
 		void RequestExit();
 
@@ -244,6 +245,15 @@ namespace TomCat {
 		bool m_GizmoTransactionActive = false;
 		bool m_ColliderTransactionActive = false;
 		bool m_BypassUnsavedCheck = false;
+		struct PendingProjectMigration
+		{
+			std::filesystem::path ProjectPath;
+			ProjectMigrationPreview Preview;
+		};
+		std::optional<PendingProjectMigration> m_PendingProjectMigration;
+		std::optional<PendingProjectMigration> m_ApprovedProjectMigration;
+		EditorProjectLock m_PendingProjectMigrationLock;
+		bool m_OpenProjectMigrationModal = false;
 
 		bool m_ShowScenePanel = true;
 		bool m_ShowGamePanel = true;

@@ -152,9 +152,49 @@ public enum KeyModifiers : uint
     NumLock = 1 << 5
 }
 
+public enum InputEventDevice : uint
+{
+	Keyboard = 1,
+	MouseButton = 2,
+	GamepadConnection = 3,
+	GamepadButton = 4
+}
+
+public enum InputEventAction : uint
+{
+	Pressed = 1,
+	Released = 2,
+	Repeated = 3
+}
+
+/// <summary>An ordered digital input transition from the frozen native queue.</summary>
+public readonly record struct InputEvent(ulong Sequence, double TimestampSeconds,
+	ulong FrameNumber, InputEventDevice Device, InputEventAction Action,
+	uint Code, uint DeviceIndex);
+
+/// <summary>
+/// The events visible to the current callback. DroppedEventCount is nonzero only
+/// when a display frame or a scene's pending FixedUpdate batch exceeded 16,384
+/// transitions; edge bitmaps still preserve whether each control changed.
+/// </summary>
+public readonly record struct InputEventBatch(ulong FirstFrameNumber,
+	ulong LastFrameNumber, ulong FirstSequence, ulong LastSequence,
+	ulong DroppedEventCount, IReadOnlyList<InputEvent> Events);
+
+/// <summary>
+/// Input is frozen once after native event polling at the start of each display
+/// frame. OnUpdate observes that frame's ordered transitions. Each scene carries
+/// unconsumed transitions across display frames; its next OnFixedUpdate observes
+/// the accumulated ordered batch exactly once. Later catch-up fixed steps expose
+/// held state but no transition, mouse delta, or scroll delta. Keyboard, mouse,
+/// and gamepad hot-plug edges come from callbacks. GLFW exposes standard gamepad
+/// buttons only as a sampled state, so a complete button tap between two frame
+/// samples is outside this API's observable boundary.
+/// </summary>
 public static unsafe class Input
 {
 	public const uint MaximumGamepads = 16;
+	public static InputEventBatch EventBatch => NativeBridge.GetInputEventBatch();
 
     public static bool IsKeyHeld(KeyCode key) => NativeBridge.InputBoolean(key,
         NativeBridge.InputIsKeyHeld, "Input.IsKeyHeld");
@@ -221,6 +261,21 @@ public static unsafe class Input
 		return MathF.CopySign((magnitude - deadZone) / (1.0f - deadZone), raw);
 	}
     public static KeyModifiers Modifiers => NativeBridge.GetModifiers();
+}
+
+/// <summary>
+/// Per-game writable directories resolved from PlayerSettings beneath the user's
+/// local application-data root. They are null before a Player publishes its
+/// validated package configuration.
+/// </summary>
+public static unsafe class ApplicationPaths
+{
+	public static string? SaveDirectory => NativeBridge.GetApplicationDirectory(
+		NativeBridge.ApplicationGetSaveDirectory, "ApplicationPaths.SaveDirectory");
+	public static string? LogDirectory => NativeBridge.GetApplicationDirectory(
+		NativeBridge.ApplicationGetLogDirectory, "ApplicationPaths.LogDirectory");
+	public static string? CrashDirectory => NativeBridge.GetApplicationDirectory(
+		NativeBridge.ApplicationGetCrashDirectory, "ApplicationPaths.CrashDirectory");
 }
 
 public static class Physics2D

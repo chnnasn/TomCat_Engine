@@ -12,7 +12,8 @@ namespace TomCat {
 		WindowsWindow(const WindowProps& props);
 		virtual ~WindowsWindow();
 
-		void OnUpdate() override;
+		void PollEvents() override;
+		void Present() override;
 
 		inline unsigned int GetWidth() const override { return m_Data.Metrics.LogicalWidth; }
 		inline unsigned int GetHeight() const override { return m_Data.Metrics.LogicalHeight; }

@@ -65,6 +65,11 @@ Tests/SpriteAssetRegression/*.vcxproj
 Tests/SpriteAssetRegression/*.vcxproj.filters
 Tests/ScriptCompilerRegression/*.vcxproj
 Tests/ScriptCompilerRegression/*.vcxproj.filters
+Tests/InputRegression/*.vcxproj
+Tests/InputRegression/*.vcxproj.filters
+Tools/Tools.sln
+Tools/TomCatCLI/*.vcxproj
+Tools/TomCatCLI/*.vcxproj.filters
 
 #Files
 .user

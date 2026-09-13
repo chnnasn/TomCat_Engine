@@ -36,6 +36,12 @@ namespace TomCat {
 			return left.EntityID < right.EntityID;
 		}
 
+		// Conservative homogeneous clip test for the renderer's unit quad. It
+		// rejects only quads wholly outside one camera plane, so rotations,
+		// perspective and near-plane intersections remain safe.
+		static bool IsQuadVisible(const glm::mat4& worldTransform,
+			const glm::mat4& viewProjection);
+
 		static void Init();
 		static void Shutdown();
 

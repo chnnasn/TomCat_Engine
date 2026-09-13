@@ -20,9 +20,8 @@ namespace TomCat {
 		[[nodiscard]] std::vector<AssetType> GetRegisteredTypes() const;
 		void Clear();
 
-		// Registers deterministic byte-preserving importers for the authoring types
-		// currently understood by TomCat. Importers validate the requested type and
-		// source readability; richer format-specific transforms can replace them.
+		// Registers deterministic production importers for render/audio data and
+		// validated archive/source importers for the remaining authoring types.
 		void RegisterBuiltInImporters();
 
 	private:

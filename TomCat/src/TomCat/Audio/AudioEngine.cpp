@@ -134,25 +134,34 @@ namespace TomCat {
 		else
 		{
 			const AssetMetadata* metadata = assets.GetRegistry().GetMetadata(handle);
-			const std::filesystem::path path = assets.ResolvePath(handle);
-			if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Audio
-				|| path.empty())
+			if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Audio)
 			{
 				error = "AssetHandle does not reference an authoring Audio source";
 				return {};
 			}
-			std::error_code fileError;
-			const uint64_t size = std::filesystem::file_size(path, fileError);
-			if (fileError)
+			AssetLoadResult imported = assets.LoadImportedArtifact(handle);
+			if (!imported.Succeeded() || imported.Artifact.Type != AssetType::Audio)
 			{
-				error = "Audio source size could not be read";
+				error = imported.Error.empty()
+					? "Audio artifact could not be imported" : imported.Error;
 				return {};
 			}
-			// The P0 Audio importer is an explicit byte-for-byte passthrough, so its
-			// source range is the same payload published to DDC. If a transcoding
-			// importer replaces it, this branch must resolve that artifact range.
-			source = AudioStreamSource::OpenFileRange(path, 0, size, error,
-				"Audio asset " + std::to_string(static_cast<uint64_t>(handle)));
+			std::filesystem::path artifactPath;
+			uint64_t artifactOffset = 0;
+			uint64_t artifactSize = 0;
+			if (assets.GetDatabase().GetCache().TryGetPayloadRange(
+				imported.Artifact.ArtifactKey, artifactPath, artifactOffset, artifactSize))
+			{
+				source = AudioStreamSource::OpenFileRange(artifactPath,
+					artifactOffset, artifactSize, error,
+					"Audio artifact " + std::to_string(static_cast<uint64_t>(handle)));
+			}
+			else
+			{
+				source = AudioStreamSource::Open(std::move(imported.Artifact.Bytes),
+					error, "Audio artifact "
+						+ std::to_string(static_cast<uint64_t>(handle)));
+			}
 		}
 		if (!source)
 			return {};

@@ -10,8 +10,10 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "TomCat/Scene/Components.h"
@@ -3143,6 +3145,12 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 
 		const auto onModified = [this]() { MarkModified(); };
+		// Rich editor adapters stay in the Editor, while descriptor enumeration is
+		// the sole dispatch source. Third-party descriptors need no adapter: their
+		// property metadata is rendered by DrawRegisteredComponent below.
+		std::unordered_map<uint64_t, std::function<void()>> richInspectors;
+		richInspectors.emplace(ComponentIds::Transform, [&]()
+		{
 		DrawComponent<Transform>("Transform", entity, m_Icons, EditorIcon::Move,
 			[this, entity](auto& component)
 		{
@@ -3169,7 +3177,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 				}
 			}
 		}, onModified);
+		});
 
+		richInspectors.emplace(ComponentIds::Camera, [&]()
+		{
 		DrawComponent<C_Camera>("Camera", entity, m_Icons, EditorIcon::Camera,
 			[this, entity](auto& component)
 		{
@@ -3250,7 +3261,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 			}
 			MarkModified();
 		});
+		});
 
+		richInspectors.emplace(ComponentIds::SpriteRenderer, [&]()
+		{
 		DrawComponent<SpriteRenderer>("Sprite Renderer", entity, m_Icons, EditorIcon::Sprite,
 			[this, entity](auto& component)
 		{
@@ -3543,13 +3557,19 @@ static void DrawComponent(const std::string& name, Entity entity,
 			}
 			ImGui::Columns(1);
 		}, onModified);
+		});
 
+		richInspectors.emplace(ComponentIds::SpriteAnimator, [&]()
+		{
 		DrawComponent<SpriteAnimator>("Sprite Animator", entity, m_Icons,
 			EditorIcon::Sprite, [this, entity](auto& component)
 		{
 			DrawSpriteAnimatorInspector(component, entity);
 		}, onModified);
+		});
 
+		richInspectors.emplace(ComponentIds::LineRenderer, [&]()
+		{
 		DrawComponent<LineRenderer>("Line Renderer", entity, m_Icons, EditorIcon::Count,
 			[this](auto& component)
 		{
@@ -3597,7 +3617,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 			}
 			ImGui::Columns(1);
 		}, onModified);
+		});
 
+		richInspectors.emplace(ComponentIds::AudioSource, [&]()
+		{
 		DrawComponent<AudioSource>("Audio Source", entity, m_Icons, EditorIcon::Count,
 			[this](auto& component)
 		{
@@ -3683,14 +3706,20 @@ static void DrawComponent(const std::string& name, Entity entity,
 				MarkModified();
 			}
 		}, onModified);
+		});
 
+		richInspectors.emplace(ComponentIds::AudioListener, [&]()
+		{
 		DrawComponent<AudioListener>("Audio Listener", entity, m_Icons,
 			EditorIcon::Count, [this](auto& component)
 		{
 			if (ImGui::Checkbox("Primary", &component.Primary))
 				MarkModified();
 		}, onModified);
+		});
 
+		richInspectors.emplace(ComponentIds::Rigidbody2D, [&]()
+		{
 		DrawComponent<Rigidbody2D>("Rigidbody 2D", entity, m_Icons, EditorIcon::Rigidbody2D,
 			[this](auto& component)
 		{
@@ -3708,7 +3737,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 			}
 			if (ImGui::Checkbox("Fixed Rotation", &component.FixedRotation)) MarkModified();
 		}, onModified, m_ColliderEditingAllowed);
+		});
 
+		richInspectors.emplace(ComponentIds::BoxCollider2D, [&]()
+		{
 		DrawComponent<BoxCollider2D>("Box Collider 2D", entity, m_Icons, EditorIcon::BoxCollider2D,
 			[this, entity](auto& component)
 		{
@@ -3772,7 +3804,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 			if (changed)
 				MarkModified();
 		}, onModified, m_ColliderEditingAllowed);
+		});
 
+		richInspectors.emplace(ComponentIds::CircleCollider2D, [&]()
+		{
 		DrawComponent<CircleCollider2D>("Circle Collider 2D", entity, m_Icons, EditorIcon::BoxCollider2D,
 			[this, entity](auto& component)
 		{
@@ -3825,7 +3860,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 			if (changed)
 				MarkModified();
 		}, onModified, m_ColliderEditingAllowed);
+		});
 
+		richInspectors.emplace(ComponentIds::DistanceJoint2D, [&]()
+		{
 		DrawComponent<DistanceJoint2D>("Distance Joint 2D", entity, m_Icons, EditorIcon::Rigidbody2D,
 			[this, entity](auto& component)
 		{
@@ -3946,12 +3984,25 @@ static void DrawComponent(const std::string& name, Entity entity,
 			if (changed)
 				MarkModified();
 		}, onModified, m_ColliderEditingAllowed);
+		});
 
-		DrawCSharpScripts(entity);
+		richInspectors.emplace(ComponentIds::CSharpScripts, [&]()
+		{
+			DrawCSharpScripts(entity);
+		});
 		for (const ComponentDescriptor& descriptor :
 			ComponentRegistry::Get().GetDescriptors())
-			DrawRegisteredComponent(descriptor, entity, onModified,
-				m_ColliderEditingAllowed);
+		{
+			if (!descriptor.InspectorVisible || !descriptor.Has(entity))
+				continue;
+			const auto rich = richInspectors.find(
+				static_cast<uint64_t>(descriptor.TypeId));
+			if (rich != richInspectors.end())
+				rich->second();
+			else if (descriptor.UseGenericInspector)
+				DrawRegisteredComponent(descriptor, entity, onModified,
+					m_ColliderEditingAllowed);
+		}
 		if (entity.HasComponent<OpaqueComponents>())
 		{
 			for (const OpaqueComponentRecord& missing :
@@ -3985,83 +4036,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
 			ImGui::MenuItem("C# Script (drag asset into Inspector)", nullptr, false, false);
 			ImGui::Separator();
-			if (!entity.HasComponent<C_Camera>() && ImGui::MenuItem("Camera"))
-			{
-				const bool alreadyHasPrimary = m_Context && (bool)m_Context->GetPrimaryCameraEntity();
-				auto& camera = entity.AddComponent<C_Camera>();
-				camera.Primary = !alreadyHasPrimary;
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<SpriteRenderer>() && ImGui::MenuItem("Sprite Renderer"))
-			{
-				entity.AddComponent<SpriteRenderer>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<SpriteAnimator>() && ImGui::MenuItem("Sprite Animator"))
-			{
-				if (!entity.HasComponent<SpriteRenderer>())
-					entity.AddComponent<SpriteRenderer>();
-				SpriteAnimator animator;
-				SpriteAnimationClip clip;
-				clip.Name = "Default";
-				clip.Frames.push_back({ entity.GetComponent<SpriteRenderer>().SpriteHandle,
-					1.0f / 12.0f });
-				animator.Clips.push_back(std::move(clip));
-				entity.AddComponent<SpriteAnimator>(std::move(animator));
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<LineRenderer>() && ImGui::MenuItem("Line Renderer"))
-			{
-				entity.AddComponent<LineRenderer>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<AudioSource>() && ImGui::MenuItem("Audio Source"))
-			{
-				entity.AddComponent<AudioSource>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<AudioListener>() && ImGui::MenuItem("Audio Listener"))
-			{
-				entity.AddComponent<AudioListener>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<Rigidbody2D>() && ImGui::MenuItem("Rigidbody 2D"))
-			{
-				entity.AddComponent<Rigidbody2D>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<BoxCollider2D>() && ImGui::MenuItem("Box Collider 2D"))
-			{
-				entity.AddComponent<BoxCollider2D>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<CircleCollider2D>() && ImGui::MenuItem("Circle Collider 2D"))
-			{
-				entity.AddComponent<CircleCollider2D>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			if (!entity.HasComponent<DistanceJoint2D>() && ImGui::MenuItem("Distance Joint 2D"))
-			{
-				if (!entity.HasComponent<Rigidbody2D>())
-					entity.AddComponent<Rigidbody2D>();
-				entity.AddComponent<DistanceJoint2D>();
-				MarkModified();
-				ImGui::CloseCurrentPopup();
-			}
-			ImGui::Separator();
 			for (const ComponentDescriptor& descriptor :
 				ComponentRegistry::Get().GetDescriptors())
 			{
-				if (!descriptor.InspectorVisible || descriptor.Has(entity))
+				if (!descriptor.InspectorVisible || !descriptor.AddableInInspector
+					|| descriptor.Has(entity))
 					continue;
 				if (ImGui::MenuItem(descriptor.DisplayName.c_str()))
 				{

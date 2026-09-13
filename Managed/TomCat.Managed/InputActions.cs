@@ -107,6 +107,22 @@ public readonly record struct InputBinding
 		return value * Scale;
 	}
 
+	// A digital control can be pressed and released inside one native poll. Its
+	// frozen frame then has a neutral held value but both transition bits set.
+	// Keep that pulse available to Button actions instead of reconstructing every
+	// edge from the final held state.
+	internal bool HasPressReleasePulse() => Kind switch
+	{
+		InputBindingKind.Key => Input.WasKeyPressed((KeyCode)Code)
+			&& Input.WasKeyReleased((KeyCode)Code),
+		InputBindingKind.MouseButton => Input.WasMouseButtonPressed((MouseButton)Code)
+			&& Input.WasMouseButtonReleased((MouseButton)Code),
+		InputBindingKind.GamepadButton => Input.WasGamepadButtonPressed(
+			(TomCat.GamepadButton)Code, Gamepad) && Input.WasGamepadButtonReleased(
+				(TomCat.GamepadButton)Code, Gamepad),
+		_ => false
+	};
+
 	internal ControlToken Token => new(Kind, Code, Gamepad);
 }
 
@@ -166,12 +182,23 @@ public sealed class InputAction
 				$"Input action '{Name}' PressPoint must be in (0, 1].");
 
 		float value = 0.0f;
+		bool digitalPulse = false;
+		float digitalPulseValue = 0.0f;
 		var activeControls = new List<ControlToken>(_bindings.Count);
 		foreach (InputBinding binding in _bindings)
 		{
 			if (consumed.Contains(binding.Token))
 				continue;
 			float bindingValue = binding.ReadValue();
+			bool bindingPulsed = Type == InputActionType.Button
+				&& MathF.Abs(binding.Scale) >= PressPoint
+				&& binding.HasPressReleasePulse();
+			if (bindingPulsed)
+			{
+				digitalPulse = true;
+				if (MathF.Abs(binding.Scale) > MathF.Abs(digitalPulseValue))
+					digitalPulseValue = binding.Scale;
+			}
 			if (Type == InputActionType.Button)
 			{
 				// Alternative button bindings are alternatives, not contributors to
@@ -183,18 +210,20 @@ public sealed class InputAction
 			{
 				value += bindingValue;
 			}
-			if (MathF.Abs(bindingValue) > float.Epsilon)
+			if (MathF.Abs(bindingValue) > float.Epsilon || bindingPulsed)
 				activeControls.Add(binding.Token);
 		}
 		Value = Math.Clamp(value, -1.0f, 1.0f);
 		bool actuated = MathF.Abs(Value) >= PressPoint;
-		WasPressedThisFrame = actuated && !_actuated;
-		WasReleasedThisFrame = !actuated && _actuated;
+		WasPressedThisFrame = (actuated && !_actuated) || digitalPulse;
+		WasReleasedThisFrame = (!actuated && _actuated) || digitalPulse;
 
 		if (WasPressedThisFrame)
 		{
-			Started?.Invoke(new(this, InputActionPhase.Started, Value));
-			Performed?.Invoke(new(this, InputActionPhase.Performed, Value));
+			float eventValue = actuated ? Value
+				: Math.Clamp(digitalPulseValue, -1.0f, 1.0f);
+			Started?.Invoke(new(this, InputActionPhase.Started, eventValue));
+			Performed?.Invoke(new(this, InputActionPhase.Performed, eventValue));
 		}
 		else if (actuated && Type == InputActionType.Axis1D)
 		{
@@ -204,7 +233,7 @@ public sealed class InputAction
 			Canceled?.Invoke(new(this, InputActionPhase.Canceled, Value));
 		_actuated = actuated;
 
-		if (controlsToConsume is not null && actuated)
+		if (controlsToConsume is not null && (actuated || digitalPulse))
 			foreach (ControlToken control in activeControls)
 				controlsToConsume.Add(control);
 	}

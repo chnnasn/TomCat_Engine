@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AssetJobSystem.h"
+
 #include "DerivedDataCache.h"
 #include "ImporterRegistry.h"
 
@@ -129,13 +131,42 @@ namespace TomCat {
 			std::function<std::optional<T>(const ImportedArtifact&)> decoder,
 			AssetLoadOptions options = {})
 		{
-			return std::async(std::launch::async,
-				[this, handle, decoder = std::move(decoder),
-				options = std::move(options)]() mutable -> std::optional<T>
-				{
-					AssetLoadResult result = LoadArtifact(handle, std::move(options));
-					return result.Succeeded() ? decoder(result.Artifact) : std::nullopt;
-				});
+			if (!BeginAsyncTask())
+			{
+				std::promise<std::optional<T>> promise;
+				std::future<std::optional<T>> future = promise.get_future();
+				promise.set_value(std::nullopt);
+				return future;
+			}
+
+			try
+			{
+				const uint64_t reservation = EstimateJobReservation(handle);
+				return AssetJobSystem::Get().Submit(reservation,
+					[this, handle, decoder = std::move(decoder),
+					options = std::move(options)]() mutable -> std::optional<T>
+					{
+						try
+						{
+							AssetLoadResult result = LoadArtifact(handle, std::move(options));
+							std::optional<T> decoded = result.Succeeded()
+								? decoder(result.Artifact) : std::nullopt;
+							FinishAsyncTask();
+							return decoded;
+						}
+						catch (...)
+						{
+							FinishAsyncTask();
+							throw;
+						}
+					});
+			}
+			catch (...)
+			{
+				// Submit can reject work while the global executor is stopping.
+				FinishAsyncTask();
+				throw;
+			}
 		}
 
 	private:
@@ -153,6 +184,12 @@ namespace TomCat {
 		bool LoadDependencyCache();
 		bool RebuildDiscoveredDependenciesLocked();
 		bool PersistDependencyGraph() const;
+		uint64_t EstimateJobReservation(AssetHandle handle);
+		uint64_t EstimateSingleJobReservation(AssetHandle handle);
+		bool BeginAsyncTask();
+		void FinishAsyncTask() noexcept;
+		void EnableAsyncTasks();
+		bool StopAndWaitForAsyncTasks();
 
 	private:
 		AssetRegistry* m_Registry = nullptr;
@@ -169,6 +206,10 @@ namespace TomCat {
 		std::condition_variable m_HandleFlightWake;
 		std::unordered_set<AssetHandle> m_ActiveHandleFlights;
 		std::mutex m_MetadataCommitMutex;
+		std::mutex m_AsyncTaskMutex;
+		std::condition_variable m_AsyncTasksIdle;
+		size_t m_AsyncTasksInFlight = 0;
+		bool m_AcceptingAsyncTasks = false;
 	};
 
 }

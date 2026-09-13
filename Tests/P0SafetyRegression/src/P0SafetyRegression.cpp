@@ -1,10 +1,13 @@
 #include <TomCat/Core/ApplicationPaths.h>
+#include <TomCat/Core/CrashReporter.h>
 #include <TomCat/Core/Log.h>
 #include <TomCat/Core/Version.h>
+#include <TomCat/Asset/ContentHash.h>
 #include <TomCat/Project/ProjectManager.h>
 #include <TomCat/Runtime/RuntimeCompatibility.h>
 #include <TomCat/Scene/SceneSerializer.h>
 #include <TomCat/Scene/Serialization/PrefabArchiveCodec.h>
+#include <TomCat/Utils/FileSystemUtils.h>
 #include <TomCat/Utils/PathUtils.h>
 
 #include <algorithm>
@@ -21,6 +24,7 @@
 
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
+	#include <winioctl.h>
 #endif
 
 namespace {
@@ -70,6 +74,115 @@ namespace {
 		std::filesystem::path m_Previous;
 	};
 
+#ifdef TC_PLATFORM_WINDOWS
+	struct MountPointReparseData
+	{
+		DWORD ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+		WORD ReparseDataLength = 0;
+		WORD Reserved = 0;
+		WORD SubstituteNameOffset = 0;
+		WORD SubstituteNameLength = 0;
+		WORD PrintNameOffset = 0;
+		WORD PrintNameLength = 0;
+		WCHAR PathBuffer[1]{};
+	};
+
+	bool CreateDirectoryJunction(const std::filesystem::path& junction,
+		const std::filesystem::path& target)
+	{
+		std::error_code error;
+		const std::filesystem::path absoluteTarget =
+			std::filesystem::absolute(target, error).lexically_normal();
+		if (error || !std::filesystem::is_directory(absoluteTarget, error) || error)
+			return false;
+		if (!CreateDirectoryW(junction.c_str(), nullptr))
+			return false;
+
+		const std::wstring substitute = L"\\??\\" + absoluteTarget.wstring();
+		const std::wstring printName = absoluteTarget.wstring();
+		const size_t substituteBytes = substitute.size() * sizeof(wchar_t);
+		const size_t printBytes = printName.size() * sizeof(wchar_t);
+		const size_t pathBytes = substituteBytes + sizeof(wchar_t) +
+			printBytes + sizeof(wchar_t);
+		const size_t inputBytes =
+			offsetof(MountPointReparseData, PathBuffer) + pathBytes;
+		if (inputBytes - 8 > 0xffff || substituteBytes > 0xffff ||
+			printBytes > 0xffff)
+		{
+			RemoveDirectoryW(junction.c_str());
+			return false;
+		}
+
+		std::vector<uint64_t> storage((inputBytes + sizeof(uint64_t) - 1) /
+			sizeof(uint64_t), 0);
+		auto* data = reinterpret_cast<MountPointReparseData*>(storage.data());
+		data->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+		data->ReparseDataLength = static_cast<WORD>(inputBytes - 8);
+		data->SubstituteNameLength = static_cast<WORD>(substituteBytes);
+		data->PrintNameOffset =
+			static_cast<WORD>(substituteBytes + sizeof(wchar_t));
+		data->PrintNameLength = static_cast<WORD>(printBytes);
+		std::copy(substitute.begin(), substitute.end(), data->PathBuffer);
+		data->PathBuffer[substitute.size()] = L'\0';
+		WCHAR* printDestination = reinterpret_cast<WCHAR*>(
+			reinterpret_cast<uint8_t*>(data->PathBuffer) +
+			data->PrintNameOffset);
+		std::copy(printName.begin(), printName.end(), printDestination);
+		printDestination[printName.size()] = L'\0';
+
+		const HANDLE directory = CreateFileW(junction.c_str(), GENERIC_WRITE, 0,
+			nullptr, OPEN_EXISTING,
+			FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+		if (directory == INVALID_HANDLE_VALUE)
+		{
+			RemoveDirectoryW(junction.c_str());
+			return false;
+		}
+		DWORD returned = 0;
+		const BOOL succeeded = DeviceIoControl(directory, FSCTL_SET_REPARSE_POINT,
+			data, static_cast<DWORD>(inputBytes), nullptr, 0, &returned, nullptr);
+		CloseHandle(directory);
+		if (!succeeded)
+			RemoveDirectoryW(junction.c_str());
+		return succeeded != FALSE;
+	}
+
+	bool SameWindowsPath(const std::filesystem::path& left,
+		const std::filesystem::path& right)
+	{
+		std::error_code leftError;
+		std::error_code rightError;
+		const std::wstring leftAbsolute =
+			std::filesystem::absolute(left, leftError).lexically_normal().wstring();
+		const std::wstring rightAbsolute =
+			std::filesystem::absolute(right, rightError).lexically_normal().wstring();
+		return !leftError && !rightError &&
+			CompareStringOrdinal(leftAbsolute.c_str(), -1,
+				rightAbsolute.c_str(), -1, TRUE) == CSTR_EQUAL;
+	}
+
+	class ScopedDirectoryMutationTestHook
+	{
+	public:
+		explicit ScopedDirectoryMutationTestHook(
+			TomCat::FileSystem::DirectoryMutationTestHook hook)
+		{
+			TomCat::FileSystem::SetDirectoryMutationTestHookForTesting(
+				std::move(hook));
+		}
+
+		~ScopedDirectoryMutationTestHook()
+		{
+			TomCat::FileSystem::SetDirectoryMutationTestHookForTesting({});
+		}
+
+		ScopedDirectoryMutationTestHook(
+			const ScopedDirectoryMutationTestHook&) = delete;
+		ScopedDirectoryMutationTestHook& operator=(
+			const ScopedDirectoryMutationTestHook&) = delete;
+	};
+#endif
+
 	void WriteText(const std::filesystem::path& path, const std::string& contents)
 	{
 		std::filesystem::create_directories(path.parent_path());
@@ -77,6 +190,66 @@ namespace {
 		Require(static_cast<bool>(output), "could not create test fixture " + path.string());
 		output << contents;
 		Require(static_cast<bool>(output), "could not write test fixture " + path.string());
+	}
+
+	std::string ReadText(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary);
+		Require(static_cast<bool>(input), "could not open test fixture " + path.string());
+		std::ostringstream contents;
+		contents << input.rdbuf();
+		Require(!input.bad(), "could not read test fixture " + path.string());
+		return contents.str();
+	}
+
+	std::string LegacyProjectDocument(std::string_view name = "LegacyGame")
+	{
+		return "SchemaVersion: 3\n"
+			"Project:\n"
+			"  Name: " + std::string(name) + "\n"
+			"  Version: 1.0.0\n"
+			"  Description: Transactional migration fixture\n"
+			"  EditorVersion: 9.9.9\n"
+			"  Template: 2D\n"
+			"  AssetDirectory: Assets\n"
+			"  StartScene: sample.tomcat\n"
+			"  StartSceneHandle: 123\n";
+	}
+
+	std::string HashText(std::string_view contents)
+	{
+		return TomCat::ComputeContentSHA256(std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(contents.data()), contents.size()));
+	}
+
+	std::string PreparedMigrationJournal(std::string_view transactionID,
+		std::string_view originalProject, bool settingsDirectoryExisted,
+		bool backupRootExisted)
+	{
+		return
+			"{\n"
+			"  \"schemaVersion\": 2,\n"
+			"  \"transactionId\": \"" + std::string(transactionID) + "\",\n"
+			"  \"state\": \"prepared\",\n"
+			"  \"sourceSchemaVersion\": 3,\n"
+			"  \"targetSchemaVersion\": 4,\n"
+			"  \"settingsDirectoryExisted\": " +
+				std::string(settingsDirectoryExisted ? "true" : "false") + ",\n"
+			"  \"backupRootExisted\": " +
+				std::string(backupRootExisted ? "true" : "false") + ",\n"
+			"  \"entries\": [\n"
+			"    { \"target\": \"Project.tcproj\", \"existed\": true, "
+			"\"originalSize\": " + std::to_string(originalProject.size()) +
+			", \"originalSha256\": \"" + HashText(originalProject) +
+			"\", \"backup\": \"original-0.bin\" },\n"
+			"    { \"target\": \"ProjectSettings/BuildSettings.json\", "
+			"\"existed\": false, \"originalSize\": 0, "
+			"\"originalSha256\": \"\", \"backup\": \"original-1.bin\" },\n"
+			"    { \"target\": \"ProjectSettings/PlayerSettings.json\", "
+			"\"existed\": false, \"originalSize\": 0, "
+			"\"originalSha256\": \"\", \"backup\": \"original-2.bin\" }\n"
+			"  ]\n"
+			"}\n";
 	}
 
 	struct EntryState
@@ -130,17 +303,7 @@ namespace {
 		TemporaryDirectory temporary;
 		const std::filesystem::path projectDirectory = temporary.Path / "LegacyGame";
 		const std::filesystem::path projectPath = projectDirectory / "Project.tcproj";
-		WriteText(projectPath,
-			"SchemaVersion: 3\n"
-			"Project:\n"
-			"  Name: LegacyGame\n"
-			"  Version: 1.0.0\n"
-			"  Description: Read-only inspection fixture\n"
-			"  EditorVersion: 9.9.9\n"
-			"  Template: 2D\n"
-			"  AssetDirectory: Assets\n"
-			"  StartScene: sample.tomcat\n"
-			"  StartSceneHandle: 123\n");
+		WriteText(projectPath, LegacyProjectDocument());
 
 		const TreeState before = SnapshotTree(projectDirectory);
 		for (int iteration = 0; iteration < 100; ++iteration)
@@ -151,6 +314,24 @@ namespace {
 			Require(project->GetBuildSettings().EntrySceneHandle == TomCat::AssetHandle(123),
 				"InspectProject did not construct the legacy in-memory BuildSettings view");
 		}
+		TomCat::ProjectMigrationPreview preview;
+		std::string previewError;
+		Require(TomCat::ProjectManager::Get().PreviewProjectMigration(
+			projectPath, preview, previewError),
+			"migration preview failed: " + previewError);
+		Require(preview.SourceSchemaVersion == 3 &&
+			preview.TargetSchemaVersion == TomCat::Project::CurrentSchemaVersion,
+			"migration preview reported the wrong schema transition");
+		Require(preview.Changes.size() == 4,
+			"migration preview did not enumerate Project, Build, Player, and .gitignore");
+		{
+			ScopedCurrentDirectory projectWorkingDirectory(projectDirectory);
+			TomCat::ProjectMigrationPreview relativePreview;
+			Require(TomCat::Project::PreviewMigration(
+				"Project.tcproj", relativePreview, previewError) &&
+				relativePreview.Changes.size() == preview.Changes.size(),
+				"migration preview failed for a CWD-relative project path");
+		}
 		const TreeState after = SnapshotTree(projectDirectory);
 		Require(before == after,
 			"100 InspectProject calls changed project contents, entries, size, or mtime");
@@ -159,6 +340,481 @@ namespace {
 		Require(!std::filesystem::exists(
 			projectDirectory / "ProjectSettings" / "BuildSettings.json"),
 			"InspectProject migrated BuildSettings.json");
+	}
+
+	void TestTransactionalProjectMigration()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory = temporary.Path / "LegacyGame";
+		const std::filesystem::path projectPath = projectDirectory / "Project.tcproj";
+		const std::string originalProject = LegacyProjectDocument();
+		const std::string originalIgnore = "custom-rule\n";
+		WriteText(projectPath, originalProject);
+		WriteText(projectDirectory / ".gitignore", originalIgnore);
+
+		TomCat::ProjectMigrationPreview preview;
+		std::string previewError;
+		Require(TomCat::Project::PreviewMigration(projectPath, preview, previewError),
+			"could not preview transactional migration: " + previewError);
+		Require(preview.RequiresMigration() && preview.Changes.size() == 4,
+			"transactional migration preview omitted an affected file");
+		Require(preview.ProjectPath ==
+			std::filesystem::weakly_canonical(projectPath),
+			"migration preview was not bound to its absolute project path");
+
+		const std::filesystem::path replayDirectory = temporary.Path / "ReplayGame";
+		const std::filesystem::path replayProjectPath =
+			replayDirectory / "Project.tcproj";
+		WriteText(replayProjectPath, originalProject);
+		WriteText(replayDirectory / ".gitignore", originalIgnore);
+		const TreeState beforeCrossProjectReplay = SnapshotTree(replayDirectory);
+		Require(TomCat::Project::LoadWithMigration(
+			replayProjectPath, preview) == nullptr,
+			"migration approval for one project was replayed against another project");
+		Require(SnapshotTree(replayDirectory) == beforeCrossProjectReplay,
+			"cross-project migration plan rejection changed the target project tree");
+
+		const TreeState beforeUnapprovedLoad = SnapshotTree(projectDirectory);
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"default Project::Load implicitly migrated a legacy project");
+		Require(SnapshotTree(projectDirectory) == beforeUnapprovedLoad,
+			"default Project::Load changed the project tree while rejecting migration");
+
+		auto project = TomCat::Project::LoadWithMigration(projectPath, preview);
+		Require(project != nullptr, "transactional legacy project migration failed");
+		Require(ReadText(projectPath).find("SchemaVersion: 4") != std::string::npos,
+			"transaction did not upgrade Project.tcproj");
+		Require(std::filesystem::is_regular_file(project->GetBuildSettingsPath()) &&
+			std::filesystem::is_regular_file(project->GetPlayerSettingsPath()),
+			"transaction did not publish both settings documents");
+		const std::string migratedIgnore = ReadText(projectDirectory / ".gitignore");
+		Require(migratedIgnore.find("custom-rule") != std::string::npos &&
+			migratedIgnore.find("/Library/") != std::string::npos &&
+			migratedIgnore.find("/Cache/") != std::string::npos &&
+			migratedIgnore.find("/UserSettings/") != std::string::npos,
+			"transaction did not preserve and extend .gitignore");
+
+		const std::filesystem::path activeJournal =
+			projectDirectory / "ProjectSettings" / ".migration-journal.json";
+		Require(!std::filesystem::exists(activeJournal),
+			"committed migration left an active recovery journal");
+		const std::filesystem::path backupRoot =
+			projectDirectory / "ProjectSettings" / "MigrationBackups";
+		std::vector<std::filesystem::path> backups;
+		for (const auto& entry : std::filesystem::directory_iterator(backupRoot))
+		{
+			if (entry.is_directory())
+				backups.push_back(entry.path());
+		}
+		Require(backups.size() == 1,
+			"committed migration did not retain exactly one full backup");
+		const std::string archiveJournal = ReadText(backups.front() / "journal.json");
+		Require(archiveJournal.find("\"schemaVersion\": 2") != std::string::npos &&
+			archiveJournal.find("\"state\": \"committed\"") != std::string::npos &&
+			archiveJournal.find("\"originalSha256\": \"" +
+				HashText(originalProject) + "\"") != std::string::npos &&
+			archiveJournal.find("\"originalSha256\": \"" +
+				HashText(originalIgnore) + "\"") != std::string::npos,
+			"retained migration journal omitted state or original SHA-256 data");
+
+		bool projectWasBackedUp = false;
+		bool ignoreWasBackedUp = false;
+		for (const auto& entry : std::filesystem::directory_iterator(backups.front()))
+		{
+			if (!entry.is_regular_file() || entry.path().extension() != ".bin")
+				continue;
+			const std::string bytes = ReadText(entry.path());
+			projectWasBackedUp |= bytes == originalProject;
+			ignoreWasBackedUp |= bytes == originalIgnore;
+		}
+		Require(projectWasBackedUp && ignoreWasBackedUp,
+			"full migration backup did not preserve original bytes");
+	}
+
+	void TestMigrationPreviewDetectsSameSizeReplacement()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory =
+			temporary.Path / "PreviewHash";
+		const std::filesystem::path projectPath =
+			projectDirectory / "Project.tcproj";
+		const std::string firstDocument = LegacyProjectDocument("HashAlpha");
+		const std::string secondDocument = LegacyProjectDocument("HashBravo");
+		Require(firstDocument.size() == secondDocument.size(),
+			"same-size preview fixture has different lengths");
+		WriteText(projectPath, firstDocument);
+
+		TomCat::ProjectMigrationPreview firstPreview;
+		std::string previewError;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, firstPreview, previewError),
+			"first hash preview failed: " + previewError);
+		WriteText(projectPath, secondDocument);
+		TomCat::ProjectMigrationPreview secondPreview;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, secondPreview, previewError),
+			"second hash preview failed: " + previewError);
+
+		auto projectChange = [&](const TomCat::ProjectMigrationPreview& preview)
+			-> const TomCat::ProjectMigrationChange&
+		{
+			const auto found = std::find_if(preview.Changes.begin(),
+				preview.Changes.end(), [&](const TomCat::ProjectMigrationChange& change)
+				{
+					return change.RelativePath == projectPath.filename();
+				});
+			Require(found != preview.Changes.end(),
+				"migration preview omitted the project file");
+			return *found;
+		};
+		const TomCat::ProjectMigrationChange& first = projectChange(firstPreview);
+		const TomCat::ProjectMigrationChange& second = projectChange(secondPreview);
+		Require(first.OriginalSize == second.OriginalSize &&
+			first.OriginalSHA256.size() == 64 &&
+			second.OriginalSHA256.size() == 64 &&
+			first.OriginalSHA256 != second.OriginalSHA256,
+			"migration preview did not detect a same-size file replacement");
+
+		const TreeState beforeStalePlan = SnapshotTree(projectDirectory);
+		Require(TomCat::Project::LoadWithMigration(
+			projectPath, firstPreview) == nullptr,
+			"migration accepted an approved plan after a same-size source replacement");
+		Require(SnapshotTree(projectDirectory) == beforeStalePlan,
+			"stale migration plan rejection changed the project tree");
+	}
+
+#ifdef TC_PLATFORM_WINDOWS
+	void TestMigrationFailureRollsBackEveryFile()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory = temporary.Path / "LockedGame";
+		const std::filesystem::path projectPath = projectDirectory / "Project.tcproj";
+		const std::string originalProject = LegacyProjectDocument("LockedGame");
+		WriteText(projectPath, originalProject);
+		TomCat::ProjectMigrationPreview preview;
+		std::string previewError;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, preview, previewError),
+			"could not preview locked migration fixture: " + previewError);
+
+		const HANDLE projectLock = CreateFileW(projectPath.c_str(), GENERIC_READ,
+			FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		Require(projectLock != INVALID_HANDLE_VALUE,
+			"could not lock the project fixture against replacement");
+		auto project = TomCat::Project::LoadWithMigration(projectPath, preview);
+		CloseHandle(projectLock);
+
+		Require(project == nullptr,
+			"migration unexpectedly succeeded while Project.tcproj was replacement-locked");
+		Require(ReadText(projectPath) == originalProject,
+			"failed migration did not restore the original Project.tcproj bytes");
+		Require(!std::filesystem::exists(
+			projectDirectory / "ProjectSettings" / "BuildSettings.json") &&
+			!std::filesystem::exists(
+				projectDirectory / "ProjectSettings" / "PlayerSettings.json"),
+			"failed migration left one side of the cross-file settings update");
+		Require(!std::filesystem::exists(
+			projectDirectory / "ProjectSettings" / ".migration-journal.json") &&
+			!std::filesystem::exists(
+				projectDirectory / "ProjectSettings" / "MigrationBackups"),
+			"successful rollback left an active journal or transaction backup");
+		Require(!std::filesystem::exists(projectDirectory / ".gitignore"),
+			"failed migration leaked a later .gitignore update");
+	}
+#endif
+
+	void TestInterruptedMigrationRecovery()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory = temporary.Path / "CrashedGame";
+		const std::filesystem::path projectPath = projectDirectory / "Project.tcproj";
+		const std::string originalProject = LegacyProjectDocument("CrashedGame");
+		WriteText(projectPath, originalProject);
+
+		const std::filesystem::path settingsDirectory =
+			projectDirectory / "ProjectSettings";
+		const std::filesystem::path backupDirectory =
+			settingsDirectory / "MigrationBackups" / "recovery-test";
+		WriteText(backupDirectory / "original-0.bin", originalProject);
+		WriteText(projectPath,
+			"SchemaVersion: 4\nProject:\n  Name: CrashedGame\n"
+			"  Version: 1.0.0\n  Description: partial\n"
+			"  EditorVersion: 9.9.9\n  Template: 2D\n"
+			"  AssetDirectory: Assets\n");
+		WriteText(settingsDirectory / "BuildSettings.json", "partial build");
+		WriteText(settingsDirectory / "PlayerSettings.json", "partial player");
+
+		const std::string journal = PreparedMigrationJournal(
+			"recovery-test", originalProject, false, false);
+		WriteText(backupDirectory / "journal.json", journal);
+		WriteText(settingsDirectory / ".migration-journal.json", journal);
+
+		const TreeState beforeUnapprovedRecovery = SnapshotTree(projectDirectory);
+		Require(TomCat::Project::Load(projectPath) == nullptr,
+			"default Project::Load implicitly recovered an interrupted migration");
+		Require(SnapshotTree(projectDirectory) == beforeUnapprovedRecovery,
+			"default Project::Load changed the interrupted migration tree");
+
+		std::string recoveryError;
+		Require(TomCat::Project::RecoverInterruptedMigration(
+			projectPath, recoveryError),
+			"interrupted migration recovery failed: " + recoveryError);
+		Require(ReadText(projectPath) == originalProject,
+			"journal recovery did not restore original project bytes");
+		Require(!std::filesystem::exists(settingsDirectory),
+			"journal recovery did not remove transaction-created files and directories");
+	}
+
+	void TestSameSizeBackupTamperIsRejected()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory =
+			temporary.Path / "TamperedBackup";
+		const std::filesystem::path projectPath =
+			projectDirectory / "Project.tcproj";
+		const std::string originalProject =
+			LegacyProjectDocument("TamperedBackup");
+		const std::string partialProject =
+			"SchemaVersion: 4\nProject:\n  Name: TamperedBackup\n";
+		const std::filesystem::path settingsDirectory =
+			projectDirectory / "ProjectSettings";
+		const std::filesystem::path backupDirectory =
+			settingsDirectory / "MigrationBackups" / "tamper-test";
+		std::string tamperedBackup = originalProject;
+		Require(!tamperedBackup.empty(), "tamper fixture was unexpectedly empty");
+		tamperedBackup[0] = tamperedBackup[0] == 'X' ? 'Y' : 'X';
+		Require(tamperedBackup.size() == originalProject.size(),
+			"tamper fixture changed backup size");
+
+		WriteText(projectPath, partialProject);
+		WriteText(backupDirectory / "original-0.bin", tamperedBackup);
+		const std::string journal = PreparedMigrationJournal(
+			"tamper-test", originalProject, true, true);
+		WriteText(backupDirectory / "journal.json", journal);
+		WriteText(settingsDirectory / ".migration-journal.json", journal);
+
+		std::string recoveryError;
+		Require(!TomCat::Project::RecoverInterruptedMigration(
+			projectPath, recoveryError),
+			"recovery accepted a same-size modified backup");
+		Require(recoveryError.find("SHA-256") != std::string::npos,
+			"same-size backup tamper did not report an integrity failure");
+		Require(ReadText(projectPath) == partialProject,
+			"backup preflight failure modified a migration target");
+		Require(std::filesystem::is_regular_file(
+			settingsDirectory / ".migration-journal.json") &&
+			ReadText(backupDirectory / "original-0.bin") == tamperedBackup,
+			"failed integrity recovery discarded its journal evidence");
+	}
+
+#ifdef TC_PLATFORM_WINDOWS
+	void TestMigrationRejectsReparseAncestorReplacement()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory =
+			temporary.Path / "ReparseMigration";
+		const std::filesystem::path projectPath =
+			projectDirectory / "Project.tcproj";
+		const std::string originalProject =
+			LegacyProjectDocument("ReparseMigration");
+		WriteText(projectPath, originalProject);
+
+		TomCat::ProjectMigrationPreview preview;
+		std::string previewError;
+		Require(TomCat::Project::PreviewMigration(
+			projectPath, preview, previewError),
+			"could not create reparse replacement preview: " + previewError);
+		const std::filesystem::path outsideSettings =
+			temporary.Path / "OutsideSettings";
+		std::filesystem::create_directories(outsideSettings);
+		Require(CreateDirectoryJunction(
+			projectDirectory / "ProjectSettings", outsideSettings),
+			"could not create ProjectSettings junction fixture");
+
+		Require(TomCat::Project::LoadWithMigration(projectPath, preview) == nullptr,
+			"migration followed ProjectSettings after it became a junction");
+		Require(ReadText(projectPath) == originalProject,
+			"reparse ancestor rejection modified the project file");
+		Require(std::filesystem::is_empty(outsideSettings),
+			"migration wrote through a ProjectSettings junction");
+	}
+
+	void TestRecoveryRejectsReparseBackupAncestor()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory =
+			temporary.Path / "ReparseRecovery";
+		const std::filesystem::path projectPath =
+			projectDirectory / "Project.tcproj";
+		const std::string originalProject =
+			LegacyProjectDocument("ReparseRecovery");
+		const std::string partialProject =
+			"SchemaVersion: 4\nProject:\n  Name: ReparseRecovery\n";
+		const std::filesystem::path settingsDirectory =
+			projectDirectory / "ProjectSettings";
+		const std::filesystem::path outsideBackups =
+			temporary.Path / "OutsideBackups";
+		const std::filesystem::path outsideTransaction =
+			outsideBackups / "reparse-recovery";
+		const std::string journal = PreparedMigrationJournal(
+			"reparse-recovery", originalProject, true, true);
+
+		WriteText(projectPath, partialProject);
+		WriteText(outsideTransaction / "original-0.bin", originalProject);
+		WriteText(outsideTransaction / "journal.json", journal);
+		WriteText(settingsDirectory / ".migration-journal.json", journal);
+		Require(CreateDirectoryJunction(
+			settingsDirectory / "MigrationBackups", outsideBackups),
+			"could not create MigrationBackups junction fixture");
+
+		std::string recoveryError;
+		Require(!TomCat::Project::RecoverInterruptedMigration(
+			projectPath, recoveryError),
+			"recovery followed a reparse-point backup ancestor");
+		Require(recoveryError.find("reparse point") != std::string::npos,
+			"reparse backup rejection did not report the unsafe ancestor");
+		Require(ReadText(projectPath) == partialProject &&
+			ReadText(outsideTransaction / "original-0.bin") == originalProject,
+			"reparse backup rejection modified a target or outside backup");
+	}
+
+	void TestMigrationPinsMutationParentsAgainstReplacement()
+	{
+		auto runCase = [](std::string_view caseName, bool replaceBackupRoot)
+		{
+			TemporaryDirectory temporary;
+			const std::filesystem::path projectDirectory =
+				temporary.Path / std::string(caseName);
+			const std::filesystem::path projectPath =
+				projectDirectory / "Project.tcproj";
+			WriteText(projectPath, LegacyProjectDocument(caseName));
+			TomCat::ProjectMigrationPreview preview;
+			std::string previewError;
+			Require(TomCat::Project::PreviewMigration(
+				projectPath, preview, previewError),
+				"could not preview pinned-parent migration: " + previewError);
+			const std::filesystem::path outside = temporary.Path / "Outside";
+			std::filesystem::create_directories(outside);
+			const std::filesystem::path protectedDirectory = replaceBackupRoot ?
+				projectDirectory / "ProjectSettings" / "MigrationBackups" :
+				projectDirectory / "ProjectSettings";
+			const std::filesystem::path parked = replaceBackupRoot ?
+				projectDirectory / "MigrationBackups-parked" :
+				projectDirectory / "ProjectSettings-parked";
+
+			bool attempted = false;
+			bool replacementSucceeded = false;
+			bool junctionCreated = false;
+			DWORD replacementError = ERROR_SUCCESS;
+			TomCat::Ref<TomCat::Project> migrated;
+			{
+				ScopedDirectoryMutationTestHook hook(
+					[&](const std::filesystem::path& pinnedDirectory)
+					{
+						if (attempted ||
+							!SameWindowsPath(pinnedDirectory, protectedDirectory))
+							return;
+						attempted = true;
+						if (MoveFileExW(protectedDirectory.c_str(), parked.c_str(),
+							MOVEFILE_WRITE_THROUGH))
+						{
+							replacementSucceeded = true;
+							junctionCreated = CreateDirectoryJunction(
+								protectedDirectory, outside);
+						}
+						else
+							replacementError = GetLastError();
+					});
+				migrated = TomCat::Project::LoadWithMigration(projectPath, preview);
+			}
+
+			Require(attempted,
+				"migration did not reach the protected directory mutation hook");
+			Require(!replacementSucceeded,
+				"a pinned migration parent was renamed and replaced during mutation" +
+				std::string(junctionCreated ? " (junction installed)" : ""));
+			Require(replacementError == ERROR_SHARING_VIOLATION ||
+				replacementError == ERROR_ACCESS_DENIED ||
+				replacementError == ERROR_LOCK_VIOLATION,
+				"pinned parent replacement was rejected for an unexpected reason: " +
+					std::to_string(replacementError));
+			std::cout << "[migration-race] " << caseName
+				<< " parent rename blocked with Win32 error "
+				<< replacementError << '\n';
+			Require(migrated != nullptr,
+				"migration failed after the pinned-parent replacement was blocked");
+			Require(std::filesystem::is_empty(outside),
+				"migration wrote through the attempted parent replacement");
+		};
+
+		runCase("PinnedProjectSettings", false);
+		runCase("PinnedMigrationBackups", true);
+	}
+
+	void TestAtomicWriteRejectsDestinationReparseRace()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path parent = temporary.Path / "AtomicParent";
+		const std::filesystem::path outside = temporary.Path / "AtomicOutside";
+		std::filesystem::create_directories(parent);
+		std::filesystem::create_directories(outside);
+		const std::filesystem::path destination = parent / "target.txt";
+
+		bool injected = false;
+		std::string writeError;
+		{
+			ScopedDirectoryMutationTestHook hook(
+				[&](const std::filesystem::path& pinnedDirectory)
+				{
+					if (injected || !SameWindowsPath(pinnedDirectory, parent))
+						return;
+					injected = true;
+					Require(CreateDirectoryJunction(destination, outside),
+						"could not inject destination reparse point");
+				});
+			Require(!TomCat::FileSystem::WriteFileAtomically(
+				destination, "must not reach outside", writeError),
+				"atomic write replaced a destination reparse point");
+		}
+		Require(injected,
+			"atomic-write destination reparse race hook did not run");
+		Require(writeError.find("reparse point") != std::string::npos,
+			"atomic-write destination reparse rejection was not reported");
+		Require(std::filesystem::is_empty(outside),
+			"atomic write followed the injected destination reparse point");
+	}
+#endif
+
+	void TestMigrationJournalCannotEscapeProject()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path projectDirectory = temporary.Path / "JournalGuard";
+		const std::filesystem::path projectPath = projectDirectory / "Project.tcproj";
+		const std::filesystem::path outside = temporary.Path / "outside.txt";
+		WriteText(projectPath, LegacyProjectDocument("JournalGuard"));
+		WriteText(outside, "must survive");
+		WriteText(projectDirectory / "ProjectSettings" / ".migration-journal.json",
+			"{\n"
+			"  \"schemaVersion\": 2,\n"
+			"  \"transactionId\": \"escape-test\",\n"
+			"  \"state\": \"prepared\",\n"
+			"  \"sourceSchemaVersion\": 3,\n"
+			"  \"targetSchemaVersion\": 4,\n"
+			"  \"settingsDirectoryExisted\": true,\n"
+			"  \"backupRootExisted\": true,\n"
+			"  \"entries\": [\n"
+			"    { \"target\": \"../outside.txt\", \"existed\": false, "
+			"\"originalSize\": 0, \"originalSha256\": \"\", "
+			"\"backup\": \"original-0.bin\" }\n"
+			"  ]\n"
+			"}\n");
+
+		std::string recoveryError;
+		Require(!TomCat::Project::RecoverInterruptedMigration(
+			projectPath, recoveryError),
+			"migration recovery accepted a journal path escape");
+		Require(ReadText(outside) == "must survive",
+			"malicious migration journal modified a path outside the project");
 	}
 
 	void TestEditorVersionResolutionHasNoFallback()
@@ -210,6 +866,86 @@ namespace {
 			== TomCat::ApplicationProduct::Hub, "development Hub identity mismatch");
 		Require(TomCat::ApplicationPaths::IdentifyExecutable("TomCatPlayer.exe")
 			== TomCat::ApplicationProduct::Player, "Player identity mismatch");
+	}
+
+	void TestGameDataPaths()
+	{
+		const std::filesystem::path localRoot = "C:/Users/Test/AppData/Local";
+		const auto paths = TomCat::ApplicationPaths::ResolveGameDataPaths(
+			localRoot, "TomCat Studio", "Moon Rabbit", "State/Saves",
+			"State/Logs", "Diagnostics/Crashes");
+		Require(paths.has_value(), "valid per-game data paths were rejected");
+		const std::filesystem::path expectedRoot =
+			(localRoot / "TomCat" / "Games" / "TomCat Studio" / "Moon Rabbit")
+				.lexically_normal();
+		Require(paths->Root == expectedRoot
+			&& paths->Saves == expectedRoot / "State/Saves"
+			&& paths->Logs == expectedRoot / "State/Logs"
+			&& paths->Crashes == expectedRoot / "Diagnostics/Crashes",
+			"per-game data paths did not preserve the configured directories");
+		Require(!TomCat::ApplicationPaths::ResolveGameDataPaths(
+			localRoot, "../Studio", "Game", "Saves", "Logs", "Crashes"),
+			"company path traversal was accepted");
+		Require(!TomCat::ApplicationPaths::ResolveGameDataPaths(
+			localRoot, "Studio", "CON", "Saves", "Logs", "Crashes"),
+			"a reserved Windows product directory was accepted");
+		Require(!TomCat::ApplicationPaths::ResolveGameDataPaths(
+			localRoot, "Studio", "Game", "../Saves", "Logs", "Crashes"),
+			"save directory traversal was accepted");
+
+		TomCat::ApplicationPaths::SetRuntimeGameDataPaths(*paths);
+		Require(TomCat::ApplicationPaths::GetRuntimeGameDataPaths() == paths
+			&& TomCat::ApplicationPaths::GetRuntimeSaveDirectory() == paths->Saves
+			&& TomCat::ApplicationPaths::GetRuntimeLogDirectory() == paths->Logs
+			&& TomCat::ApplicationPaths::GetRuntimeCrashDirectory() == paths->Crashes,
+			"Player runtime paths were not published to core consumers");
+		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+		Require(!TomCat::ApplicationPaths::GetRuntimeGameDataPaths(),
+			"Player runtime paths survived explicit shutdown");
+	}
+
+	void TestCrashReport(const std::filesystem::path& root)
+	{
+		const std::filesystem::path crashDirectory = root / "Game" / "Crashes";
+		Require(TomCat::CrashReporter::Configure(crashDirectory,
+			"Regression Studio", "Crash Probe", "7.4.2"),
+			"valid crash directory could not be configured");
+		const std::filesystem::path report =
+			TomCat::CrashReporter::WriteReport("caught regression exception");
+		Require(std::filesystem::is_regular_file(report),
+			"caught exception did not create a crash report");
+#ifdef TC_PLATFORM_WINDOWS
+		std::filesystem::path dump = report;
+		dump.replace_extension(".dmp");
+		std::error_code dumpError;
+		Require(std::filesystem::is_regular_file(dump, dumpError) && !dumpError
+			&& std::filesystem::file_size(dump, dumpError) > 0 && !dumpError,
+			"caught exception did not create a usable Windows minidump");
+#endif
+		std::ifstream input(report, std::ios::binary);
+		std::ostringstream contents;
+		contents << input.rdbuf();
+		const std::string text = contents.str();
+		Require(text.find("Company: Regression Studio") != std::string::npos
+			&& text.find("Product: Crash Probe") != std::string::npos
+			&& text.find("Version: 7.4.2") != std::string::npos
+			&& text.find("Reason: caught regression exception") != std::string::npos,
+			"crash report omitted product identity or exception reason");
+	}
+
+	void TestRotatingLog(const std::filesystem::path& root)
+	{
+		const std::filesystem::path logFile = root / "Game" / "Logs" / "Player.log";
+		Require(TomCat::Log::InitFile(logFile, 512, 2),
+			"explicit per-game rotating log could not be initialized");
+		const std::string payload(240, 'R');
+		for (int index = 0; index < 4; ++index)
+			TC_Core_Info("rotation probe {0}: {1}", index, payload);
+		TomCat::Log::Shutdown();
+		Require(std::filesystem::is_regular_file(logFile)
+			&& std::filesystem::is_regular_file(
+				logFile.parent_path() / "Player.1.log"),
+			"bounded file logger did not rotate the per-game log");
 	}
 
 	void TestUnifiedVersionSource()
@@ -320,11 +1056,31 @@ int main(int argc, char** argv)
 #endif
 
 		TestApplicationPaths();
+		TestGameDataPaths();
 		TestUnifiedVersionSource();
 		TestEditorVersionResolutionHasNoFallback();
 		TestInspectProjectNeverWrites();
-		std::cout << "PASS P0 safety: read-only inspection, exact Editor version, "
-			"LocalAppData paths, and console fallback\n";
+		TestTransactionalProjectMigration();
+		TestMigrationPreviewDetectsSameSizeReplacement();
+#ifdef TC_PLATFORM_WINDOWS
+		TestMigrationFailureRollsBackEveryFile();
+#endif
+		TestInterruptedMigrationRecovery();
+		TestSameSizeBackupTamperIsRejected();
+#ifdef TC_PLATFORM_WINDOWS
+		TestMigrationRejectsReparseAncestorReplacement();
+		TestRecoveryRejectsReparseBackupAncestor();
+		TestMigrationPinsMutationParentsAgainstReplacement();
+		TestAtomicWriteRejectsDestinationReparseRace();
+#endif
+		TestMigrationJournalCannotEscapeProject();
+		TestCrashReport(logging.Path);
+		TestRotatingLog(logging.Path);
+		std::cout << "PASS P0 safety: migration SHA-256 backup/recovery, "
+			"explicit plan authorization, journal/rollback/reparse and "
+			"parent-replacement containment, "
+			"read-only inspection, exact Editor version, per-game data/log/crash paths, "
+			"and console fallback\n";
 		TomCat::Log::Shutdown();
 		return 0;
 	}

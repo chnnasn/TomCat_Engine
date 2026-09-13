@@ -22,82 +22,6 @@
 
 #include <yaml-cpp/yaml.h>
 
-namespace YAML {
-
-	template<>
-	struct convert<glm::vec2>
-	{
-		static Node encode(const glm::vec2& rhs)
-		{
-			Node node;
-			node.push_back(rhs.x);
-			node.push_back(rhs.y);
-			node.SetStyle(EmitterStyle::Flow);
-			return node;
-		}
-
-		static bool decode(const Node& node, glm::vec2& rhs)
-		{
-			if (!node.IsSequence() || node.size() != 2)
-				return false;
-			rhs.x = node[0].as<float>();
-			rhs.y = node[1].as<float>();
-			return true;
-		}
-	};
-
-	template<>
-	struct convert<glm::vec3>
-	{
-		static Node encode(const glm::vec3& rhs)
-		{
-			Node node;
-			node.push_back(rhs.x);
-			node.push_back(rhs.y);
-			node.push_back(rhs.z);
-			node.SetStyle(EmitterStyle::Flow);
-			return node;
-		}
-
-		static bool decode(const Node& node, glm::vec3& rhs)
-		{
-			if (!node.IsSequence() || node.size() != 3)
-				return false;
-			rhs.x = node[0].as<float>();
-			rhs.y = node[1].as<float>();
-			rhs.z = node[2].as<float>();
-			return true;
-		}
-	};
-
-	template<>
-	struct convert<glm::vec4>
-	{
-		static Node encode(const glm::vec4& rhs)
-		{
-			Node node;
-			node.push_back(rhs.x);
-			node.push_back(rhs.y);
-			node.push_back(rhs.z);
-			node.push_back(rhs.w);
-			node.SetStyle(EmitterStyle::Flow);
-			return node;
-		}
-
-		static bool decode(const Node& node, glm::vec4& rhs)
-		{
-			if (!node.IsSequence() || node.size() != 4)
-				return false;
-			rhs.x = node[0].as<float>();
-			rhs.y = node[1].as<float>();
-			rhs.z = node[2].as<float>();
-			rhs.w = node[3].as<float>();
-			return true;
-		}
-	};
-
-}
-
 namespace TomCat {
 
 	namespace {
@@ -524,48 +448,6 @@ namespace TomCat {
 			}
 		}
 
-		YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec2& value)
-		{
-			out << YAML::Flow << YAML::BeginSeq << value.x << value.y << YAML::EndSeq;
-			return out;
-		}
-
-		YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec3& value)
-		{
-			out << YAML::Flow << YAML::BeginSeq << value.x << value.y << value.z << YAML::EndSeq;
-			return out;
-		}
-
-		YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec4& value)
-		{
-			out << YAML::Flow << YAML::BeginSeq << value.x << value.y << value.z << value.w << YAML::EndSeq;
-			return out;
-		}
-
-		void SerializeScriptFieldValue(YAML::Emitter& out, const ScriptField& field)
-		{
-			if (!IsScriptFieldValueCompatible(field.Type, field.Value))
-				throw std::runtime_error("C# script field '" + field.Name
-					+ "' has a value incompatible with its declared type");
-
-			switch (field.Type)
-			{
-				case ScriptFieldType::Bool: out << std::get<bool>(field.Value); break;
-				case ScriptFieldType::Int32: out << std::get<int32_t>(field.Value); break;
-				case ScriptFieldType::Int64:
-				case ScriptFieldType::Enum: out << std::get<int64_t>(field.Value); break;
-				case ScriptFieldType::Float: out << std::get<float>(field.Value); break;
-				case ScriptFieldType::Double: out << std::get<double>(field.Value); break;
-				case ScriptFieldType::String: out << std::get<std::string>(field.Value); break;
-				case ScriptFieldType::Vector2: out << std::get<glm::vec2>(field.Value); break;
-				case ScriptFieldType::Vector3: out << std::get<glm::vec3>(field.Value); break;
-				case ScriptFieldType::Vector4:
-				case ScriptFieldType::Color: out << std::get<glm::vec4>(field.Value); break;
-				case ScriptFieldType::Entity:
-				case ScriptFieldType::AssetRef: out << std::get<uint64_t>(field.Value); break;
-			}
-		}
-
 		void RequireMap(const YAML::Node& node, const std::string& context)
 		{
 			if (!node || !node.IsMap())
@@ -616,368 +498,57 @@ namespace TomCat {
 			return value.as<T>();
 		}
 
-		ScriptFieldValue ReadScriptFieldValue(const YAML::Node& fieldNode,
-			ScriptFieldType type, const std::string& context)
-		{
-			switch (type)
-			{
-				case ScriptFieldType::Bool:
-					return ReadRequired<bool>(fieldNode, "Value", context);
-				case ScriptFieldType::Int32:
-					return ReadRequired<int32_t>(fieldNode, "Value", context);
-				case ScriptFieldType::Int64:
-				case ScriptFieldType::Enum:
-					return ReadRequired<int64_t>(fieldNode, "Value", context);
-				case ScriptFieldType::Float:
-					return ReadRequired<float>(fieldNode, "Value", context);
-				case ScriptFieldType::Double:
-					return ReadRequired<double>(fieldNode, "Value", context);
-				case ScriptFieldType::String:
-					return ReadRequired<std::string>(fieldNode, "Value", context);
-				case ScriptFieldType::Vector2:
-					return ReadRequired<glm::vec2>(fieldNode, "Value", context);
-				case ScriptFieldType::Vector3:
-					return ReadRequired<glm::vec3>(fieldNode, "Value", context);
-				case ScriptFieldType::Vector4:
-				case ScriptFieldType::Color:
-					return ReadRequired<glm::vec4>(fieldNode, "Value", context);
-				case ScriptFieldType::Entity:
-				case ScriptFieldType::AssetRef:
-					return ReadRequired<uint64_t>(fieldNode, "Value", context);
-			}
-			throw std::runtime_error(context + ".Type is invalid");
-		}
-
-		std::string Rigidbody2DBodyTypeToString(Rigidbody2D::BodyType bodyType)
-		{
-			switch (bodyType)
-			{
-				case Rigidbody2D::BodyType::Static: return "Static";
-				case Rigidbody2D::BodyType::Dynamic: return "Dynamic";
-				case Rigidbody2D::BodyType::Kinematic: return "Kinematic";
-			}
-			throw std::runtime_error("Cannot serialize an unknown Rigidbody2D body type");
-		}
-
-		Rigidbody2D::BodyType Rigidbody2DBodyTypeFromString(const std::string& value)
-		{
-			if (value == "Static") return Rigidbody2D::BodyType::Static;
-			if (value == "Dynamic") return Rigidbody2D::BodyType::Dynamic;
-			if (value == "Kinematic") return Rigidbody2D::BodyType::Kinematic;
-			throw std::runtime_error("Unknown Rigidbody2D body type '" + value + "'");
-		}
-
-		const char* EntityIconModeToString(EntityIconMode value)
-		{
-			switch (value)
-			{
-				case EntityIconMode::Automatic: return "Automatic";
-				case EntityIconMode::Entity: return "Entity";
-				case EntityIconMode::Camera: return "Camera";
-				case EntityIconMode::Sprite: return "Sprite";
-				case EntityIconMode::Rigidbody2D: return "Rigidbody2D";
-				case EntityIconMode::Collider2D: return "Collider2D";
-			}
-			throw std::runtime_error("Cannot serialize an unknown Entity icon mode");
-		}
-
-		EntityIconMode EntityIconModeFromString(const std::string& value)
-		{
-			if (value == "Automatic") return EntityIconMode::Automatic;
-			if (value == "Entity") return EntityIconMode::Entity;
-			if (value == "Camera") return EntityIconMode::Camera;
-			if (value == "Sprite") return EntityIconMode::Sprite;
-			if (value == "Rigidbody2D") return EntityIconMode::Rigidbody2D;
-			if (value == "Collider2D") return EntityIconMode::Collider2D;
-			throw std::runtime_error("Unknown Entity icon mode '" + value + "'");
-		}
-
 		void SerializeEntity(YAML::Emitter& out, Scene* scene, Entity entity)
 		{
 			const std::string context = "Entity " + std::to_string(static_cast<uint64_t>(entity.GetUUID()));
 			out << YAML::BeginMap;
 			out << YAML::Key << "Entity" << YAML::Value << entity.GetUUID();
 
-			auto& tag = entity.GetComponent<Tag>();
-			out << YAML::Key << "Tag" << YAML::Value << YAML::BeginMap;
-			out << YAML::Key << "Tag" << YAML::Value << tag._Tag;
-			out << YAML::Key << "Visible" << YAML::Value << tag.Visible;
-			out << YAML::EndMap;
-
 			auto& metadata = entity.GetComponent<EntityMetadata>();
 			ValidateEntityMetadata(metadata, context + ".EntityMetadata");
-			out << YAML::Key << "EntityMetadata" << YAML::Value << YAML::BeginMap;
-			out << YAML::Key << "GameplayTag" << YAML::Value << metadata.GameplayTag;
-			out << YAML::Key << "Layer" << YAML::Value
-				<< static_cast<uint32_t>(metadata.Layer);
-			out << YAML::Key << "HierarchyIcon" << YAML::Value
-				<< EntityIconModeToString(metadata.HierarchyIcon);
-			out << YAML::EndMap;
 
 			auto& transform = entity.GetComponent<Transform>();
 			ValidateTransform(transform, context + ".Transform");
-			out << YAML::Key << "Transform" << YAML::Value << YAML::BeginMap;
-			out << YAML::Key << "Translation" << YAML::Value << transform._Translation;
-			out << YAML::Key << "Rotation" << YAML::Value << transform._Rotation;
-			out << YAML::Key << "Scale" << YAML::Value << transform._Scale;
-			out << YAML::EndMap;
-
-			out << YAML::Key << "LocalTransform" << YAML::Value << YAML::BeginMap;
-			out << YAML::Key << "Translation" << YAML::Value << transform._LocalTranslation;
-			out << YAML::Key << "Rotation" << YAML::Value << transform._LocalRotation;
-			out << YAML::Key << "Scale" << YAML::Value << transform._LocalScale;
-			out << YAML::EndMap;
 
 			if (entity.HasComponent<C_Camera>())
-			{
-				auto& cameraComponent = entity.GetComponent<C_Camera>();
-				ValidateCamera(cameraComponent, context + ".Camera");
-				auto& camera = cameraComponent._Camera;
-				out << YAML::Key << "Camera" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Camera" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "ProjectionType" << YAML::Value << static_cast<int>(camera.GetProjectionType());
-				out << YAML::Key << "PerspectiveFOV" << YAML::Value << camera.GetPerspectiveVerticalFOV();
-				out << YAML::Key << "PerspectiveNear" << YAML::Value << camera.GetPerspectiveNearClip();
-				out << YAML::Key << "PerspectiveFar" << YAML::Value << camera.GetPerspectiveFarClip();
-				out << YAML::Key << "OrthographicSize" << YAML::Value << camera.GetOrthographicSize();
-				out << YAML::Key << "OrthographicNear" << YAML::Value << camera.GetOrthographicNearClip();
-				out << YAML::Key << "OrthographicFar" << YAML::Value << camera.GetOrthographicFarClip();
-				out << YAML::EndMap;
-				out << YAML::Key << "Primary" << YAML::Value << cameraComponent.Primary;
-				out << YAML::Key << "FixedAspectRatio" << YAML::Value << cameraComponent.FixedAspectRatio;
-				out << YAML::Key << "BackgroundColor" << YAML::Value << cameraComponent.BackgroundColor;
-				out << YAML::EndMap;
-			}
+				ValidateCamera(entity.GetComponent<C_Camera>(), context + ".Camera");
 
 			if (entity.HasComponent<SpriteRenderer>())
 			{
-				auto& sprite = entity.GetComponent<SpriteRenderer>();
+				const auto& sprite = entity.GetComponent<SpriteRenderer>();
 				ValidateSprite(sprite, context + ".SpriteRenderer");
 				if (sprite.Sprite && static_cast<uint64_t>(sprite.SpriteHandle) == 0)
-					throw std::runtime_error(context +
-						".SpriteRenderer has a resolved sprite but no AssetHandle");
-				out << YAML::Key << "SpriteRenderer" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << sprite.Enabled;
-				out << YAML::Key << "SpriteHandle" << YAML::Value
-					<< static_cast<uint64_t>(sprite.SpriteHandle);
-				out << YAML::Key << "Color" << YAML::Value << sprite._Color;
-				out << YAML::Key << "TilingFactor" << YAML::Value << sprite.TilingFactor;
-				out << YAML::Key << "SortingLayer" << YAML::Value << sprite.SortingLayer;
-				out << YAML::Key << "OrderInLayer" << YAML::Value << sprite.OrderInLayer;
-				out << YAML::EndMap;
+					throw std::runtime_error(context
+						+ ".SpriteRenderer has a resolved sprite but no AssetHandle");
 			}
 
 			if (entity.HasComponent<SpriteAnimator>())
-			{
-				const auto& animator = entity.GetComponent<SpriteAnimator>();
-				ValidateSpriteAnimator(animator, context + ".SpriteAnimator");
-				out << YAML::Key << "SpriteAnimator" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << animator.Enabled;
-				out << YAML::Key << "PlayOnStart" << YAML::Value << animator.PlayOnStart;
-				out << YAML::Key << "InitialClip" << YAML::Value << animator.InitialClip;
-				out << YAML::Key << "Speed" << YAML::Value << animator.Speed;
-				out << YAML::Key << "Clips" << YAML::Value << YAML::BeginSeq;
-				for (const SpriteAnimationClip& clip : animator.Clips)
-				{
-					out << YAML::BeginMap;
-					out << YAML::Key << "Name" << YAML::Value << clip.Name;
-					out << YAML::Key << "Loop" << YAML::Value << clip.Loop;
-					out << YAML::Key << "Frames" << YAML::Value << YAML::BeginSeq;
-					for (const SpriteAnimationFrame& frame : clip.Frames)
-					{
-						out << YAML::BeginMap;
-						out << YAML::Key << "SpriteHandle" << YAML::Value
-							<< static_cast<uint64_t>(frame.SpriteHandle);
-						out << YAML::Key << "DurationSeconds" << YAML::Value
-							<< frame.DurationSeconds;
-						out << YAML::EndMap;
-					}
-					out << YAML::EndSeq;
-					out << YAML::EndMap;
-				}
-				out << YAML::EndSeq;
-				out << YAML::Key << "InitialState" << YAML::Value
-					<< animator.InitialState;
-				out << YAML::Key << "Parameters" << YAML::Value << YAML::BeginSeq;
-				for (const AnimatorParameter& parameter : animator.Parameters)
-				{
-					out << YAML::BeginMap;
-					out << YAML::Key << "Name" << YAML::Value << parameter.Name;
-					out << YAML::Key << "Type" << YAML::Value
-						<< static_cast<uint32_t>(parameter.Type);
-					out << YAML::Key << "BoolValue" << YAML::Value << parameter.BoolValue;
-					out << YAML::Key << "IntValue" << YAML::Value << parameter.IntValue;
-					out << YAML::Key << "FloatValue" << YAML::Value << parameter.FloatValue;
-					out << YAML::EndMap;
-				}
-				out << YAML::EndSeq;
-				out << YAML::Key << "States" << YAML::Value << YAML::BeginSeq;
-				for (const AnimatorState& state : animator.States)
-				{
-					out << YAML::BeginMap;
-					out << YAML::Key << "Name" << YAML::Value << state.Name;
-					out << YAML::Key << "Clip" << YAML::Value << state.Clip;
-					out << YAML::Key << "Speed" << YAML::Value << state.Speed;
-					out << YAML::EndMap;
-				}
-				out << YAML::EndSeq;
-				out << YAML::Key << "Transitions" << YAML::Value << YAML::BeginSeq;
-				for (const AnimatorTransition& transition : animator.Transitions)
-				{
-					out << YAML::BeginMap;
-					out << YAML::Key << "FromState" << YAML::Value << transition.FromState;
-					out << YAML::Key << "ToState" << YAML::Value << transition.ToState;
-					out << YAML::Key << "AnyState" << YAML::Value << transition.AnyState;
-					out << YAML::Key << "ExitTime" << YAML::Value << transition.ExitTime;
-					out << YAML::Key << "Conditions" << YAML::Value << YAML::BeginSeq;
-					for (const AnimatorCondition& condition : transition.Conditions)
-					{
-						out << YAML::BeginMap;
-						out << YAML::Key << "Parameter" << YAML::Value
-							<< condition.Parameter;
-						out << YAML::Key << "Mode" << YAML::Value
-							<< static_cast<uint32_t>(condition.Mode);
-						out << YAML::Key << "Threshold" << YAML::Value
-							<< condition.Threshold;
-						out << YAML::EndMap;
-					}
-					out << YAML::EndSeq;
-					out << YAML::EndMap;
-				}
-				out << YAML::EndSeq;
-				out << YAML::EndMap;
-			}
+				ValidateSpriteAnimator(entity.GetComponent<SpriteAnimator>(),
+					context + ".SpriteAnimator");
 
 			if (entity.HasComponent<LineRenderer>())
-			{
-				auto& line = entity.GetComponent<LineRenderer>();
-				ValidateLine(line, context + ".LineRenderer");
-				out << YAML::Key << "LineRenderer" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << line.Enabled;
-				out << YAML::Key << "Color" << YAML::Value << line._Color;
-				out << YAML::Key << "Start" << YAML::Value << line.Start;
-				out << YAML::Key << "End" << YAML::Value << line.End;
-				out << YAML::Key << "Width" << YAML::Value << line.Width;
-				out << YAML::EndMap;
-			}
+				ValidateLine(entity.GetComponent<LineRenderer>(),
+					context + ".LineRenderer");
 
 			if (entity.HasComponent<AudioSource>())
-			{
-				const auto& audio = entity.GetComponent<AudioSource>();
-				ValidateAudioSource(audio, context + ".AudioSource");
-				out << YAML::Key << "AudioSource" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << audio.Enabled;
-				out << YAML::Key << "Clip" << YAML::Value
-					<< static_cast<uint64_t>(audio.Clip);
-				out << YAML::Key << "PlayOnStart" << YAML::Value << audio.PlayOnStart;
-				out << YAML::Key << "Loop" << YAML::Value << audio.Loop;
-				out << YAML::Key << "Streaming" << YAML::Value << audio.Streaming;
-				out << YAML::Key << "Volume" << YAML::Value << audio.Volume;
-				out << YAML::Key << "Pitch" << YAML::Value << audio.Pitch;
-				out << YAML::Key << "SpatialBlend" << YAML::Value
-					<< audio.SpatialBlend;
-				out << YAML::Key << "MinDistance" << YAML::Value
-					<< audio.MinDistance;
-				out << YAML::Key << "MaxDistance" << YAML::Value
-					<< audio.MaxDistance;
-				out << YAML::Key << "MixerGroup" << YAML::Value
-					<< static_cast<uint32_t>(audio.MixerGroup);
-				out << YAML::EndMap;
-			}
-
-			if (entity.HasComponent<AudioListener>())
-			{
-				const auto& listener = entity.GetComponent<AudioListener>();
-				out << YAML::Key << "AudioListener" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << listener.Enabled;
-				out << YAML::Key << "Primary" << YAML::Value << listener.Primary;
-				out << YAML::EndMap;
-			}
+				ValidateAudioSource(entity.GetComponent<AudioSource>(),
+					context + ".AudioSource");
 
 			if (entity.HasComponent<CSharpScripts>())
-			{
-				const auto& scripts = entity.GetComponent<CSharpScripts>();
-				ValidateCSharpScripts(scripts, context + ".CSharpScripts");
-				out << YAML::Key << "CSharpScripts" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Scripts" << YAML::Value << YAML::BeginSeq;
-				for (const CSharpScriptEntry& script : scripts.Scripts)
-				{
-					out << YAML::BeginMap;
-					out << YAML::Key << "AttachmentID" << YAML::Value
-						<< static_cast<uint64_t>(script.AttachmentID);
-					out << YAML::Key << "Enabled" << YAML::Value << script.Enabled;
-					out << YAML::Key << "ScriptHandle" << YAML::Value
-						<< static_cast<uint64_t>(script.ScriptAsset);
-					out << YAML::Key << "ClassName" << YAML::Value
-						<< script.LastKnownClassName;
-					out << YAML::Key << "Fields" << YAML::Value << YAML::BeginSeq;
-					for (const ScriptField& field : script.Fields)
-					{
-						out << YAML::BeginMap;
-						out << YAML::Key << "FieldID" << YAML::Value << field.FieldID;
-						out << YAML::Key << "Name" << YAML::Value << field.Name;
-						out << YAML::Key << "Type" << YAML::Value
-							<< ScriptFieldTypeToString(field.Type);
-						out << YAML::Key << "TypeName" << YAML::Value << field.TypeName;
-						out << YAML::Key << "Value" << YAML::Value;
-						SerializeScriptFieldValue(out, field);
-						out << YAML::EndMap;
-					}
-					out << YAML::EndSeq;
-					out << YAML::EndMap;
-				}
-				out << YAML::EndSeq;
-				out << YAML::EndMap;
-			}
-
-			if (entity.HasComponent<Rigidbody2D>())
-			{
-				auto& rigidbody = entity.GetComponent<Rigidbody2D>();
-				out << YAML::Key << "Rigidbody2D" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << rigidbody.Enabled;
-				out << YAML::Key << "BodyType" << YAML::Value << Rigidbody2DBodyTypeToString(rigidbody.Type);
-				out << YAML::Key << "FixedRotation" << YAML::Value << rigidbody.FixedRotation;
-				out << YAML::EndMap;
-			}
+				ValidateCSharpScripts(entity.GetComponent<CSharpScripts>(),
+					context + ".CSharpScripts");
 
 			if (entity.HasComponent<BoxCollider2D>())
-			{
-				auto& collider = entity.GetComponent<BoxCollider2D>();
-				ValidateCollider(collider, context + ".BoxCollider2D");
-				out << YAML::Key << "BoxCollider2D" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << collider.Enabled;
-				out << YAML::Key << "IsTrigger" << YAML::Value << collider.IsTrigger;
-				out << YAML::Key << "CollisionLayer" << YAML::Value << collider.CollisionLayer;
-				out << YAML::Key << "CollisionMask" << YAML::Value << collider.CollisionMask;
-				out << YAML::Key << "Offset" << YAML::Value << collider.Offset;
-				out << YAML::Key << "Size" << YAML::Value << collider.Size;
-				out << YAML::Key << "Density" << YAML::Value << collider.Density;
-				out << YAML::Key << "Friction" << YAML::Value << collider.Friction;
-				out << YAML::Key << "Restitution" << YAML::Value << collider.Restitution;
-				out << YAML::Key << "RestitutionThreshold" << YAML::Value << collider.RestitutionThreshold;
-				out << YAML::EndMap;
-			}
+				ValidateCollider(entity.GetComponent<BoxCollider2D>(),
+					context + ".BoxCollider2D");
 
 			if (entity.HasComponent<CircleCollider2D>())
-			{
-				auto& collider = entity.GetComponent<CircleCollider2D>();
-				ValidateCollider(collider, context + ".CircleCollider2D");
-				out << YAML::Key << "CircleCollider2D" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << collider.Enabled;
-				out << YAML::Key << "IsTrigger" << YAML::Value << collider.IsTrigger;
-				out << YAML::Key << "CollisionLayer" << YAML::Value << collider.CollisionLayer;
-				out << YAML::Key << "CollisionMask" << YAML::Value << collider.CollisionMask;
-				out << YAML::Key << "Offset" << YAML::Value << collider.Offset;
-				out << YAML::Key << "Radius" << YAML::Value << collider.Radius;
-				out << YAML::Key << "Density" << YAML::Value << collider.Density;
-				out << YAML::Key << "Friction" << YAML::Value << collider.Friction;
-				out << YAML::Key << "Restitution" << YAML::Value << collider.Restitution;
-				out << YAML::EndMap;
-			}
+				ValidateCollider(entity.GetComponent<CircleCollider2D>(),
+					context + ".CircleCollider2D");
 
 			if (entity.HasComponent<DistanceJoint2D>())
 			{
-				auto& joint = entity.GetComponent<DistanceJoint2D>();
+				const auto& joint = entity.GetComponent<DistanceJoint2D>();
 				ValidateJoint(joint, context + ".DistanceJoint2D");
 				if (static_cast<uint64_t>(joint.ConnectedEntity) != 0)
 				{
@@ -989,20 +560,14 @@ namespace TomCat {
 							+ ".DistanceJoint2D references missing ConnectedEntity "
 							+ std::to_string(static_cast<uint64_t>(joint.ConnectedEntity)));
 				}
-				out << YAML::Key << "DistanceJoint2D" << YAML::Value << YAML::BeginMap;
-				out << YAML::Key << "Enabled" << YAML::Value << joint.Enabled;
-				out << YAML::Key << "ConnectedEntity" << YAML::Value
-					<< static_cast<uint64_t>(joint.ConnectedEntity);
-				out << YAML::Key << "Anchor" << YAML::Value << joint.Anchor;
-				out << YAML::Key << "ConnectedAnchor" << YAML::Value << joint.ConnectedAnchor;
-				out << YAML::Key << "Distance" << YAML::Value << joint.Distance;
-				out << YAML::Key << "Frequency" << YAML::Value << joint.Frequency;
-				out << YAML::Key << "Damping" << YAML::Value << joint.Damping;
-				out << YAML::Key << "CollideConnected" << YAML::Value << joint.CollideConnected;
-				out << YAML::EndMap;
 			}
 
 			std::string componentError;
+			if (!ComponentRegistry::Get().EncodeLegacyComponents(entity, out,
+				componentError))
+				throw std::runtime_error(context
+					+ ".LegacyComponents: " + componentError);
+			componentError.clear();
 			if (!ComponentRegistry::Get().EncodeComponents(entity, out,
 				componentError))
 				throw std::runtime_error(context + ".Components: " + componentError);
@@ -1342,497 +907,50 @@ namespace TomCat {
 
 				YAML::Node tagNode = entityNode["Tag"];
 				RequireExactFields(tagNode, context + ".Tag", { "Tag", "Visible" });
-				const std::string name = ReadRequired<std::string>(tagNode, "Tag", context + ".Tag");
-				const bool visible = ReadRequired<bool>(tagNode, "Visible", context + ".Tag");
+				const std::string name = ReadRequired<std::string>(
+					tagNode, "Tag", context + ".Tag");
 
 				Entity entity = parsedScene->CreateEntityWithUUID(uuid, name);
 				if (!entity)
 					throw std::runtime_error(context + " could not be created");
-				entity.GetComponent<Tag>().Visible = visible;
 
-				YAML::Node metadataNode = entityNode["EntityMetadata"];
-				RequireExactFields(metadataNode, context + ".EntityMetadata",
-					{ "GameplayTag", "Layer", "HierarchyIcon" });
-				auto& metadata = entity.GetComponent<EntityMetadata>();
-				metadata.GameplayTag = ReadRequired<std::string>(metadataNode,
-					"GameplayTag", context + ".EntityMetadata");
-				const uint32_t rawLayer = ReadRequired<uint32_t>(metadataNode,
-					"Layer", context + ".EntityMetadata");
-				if (rawLayer >= Physics2DLayerCount)
-					throw std::runtime_error(context + ".EntityMetadata.Layer must be in [0, 15]");
-				metadata.Layer = static_cast<uint8_t>(rawLayer);
-				metadata.HierarchyIcon = EntityIconModeFromString(ReadRequired<std::string>(
-					metadataNode, "HierarchyIcon", context + ".EntityMetadata"));
-				ValidateEntityMetadata(metadata, context + ".EntityMetadata");
+				std::string componentError;
+				if (!ComponentRegistry::Get().DecodeLegacyComponents(entity,
+					entityNode, componentError))
+					throw std::runtime_error(context
+						+ ".LegacyComponents: " + componentError);
 
-				YAML::Node transformNode = entityNode["Transform"];
-				RequireExactFields(transformNode, context + ".Transform",
-					{ "Translation", "Rotation", "Scale" });
-				auto& transform = entity.GetComponent<Transform>();
-				transform._Translation = ReadRequired<glm::vec3>(transformNode, "Translation", context + ".Transform");
-				transform._Rotation = ReadRequired<glm::vec3>(transformNode, "Rotation", context + ".Transform");
-				transform._Scale = ReadRequired<glm::vec3>(transformNode, "Scale", context + ".Transform");
-
-				YAML::Node localTransformNode = entityNode["LocalTransform"];
-				RequireExactFields(localTransformNode, context + ".LocalTransform",
-					{ "Translation", "Rotation", "Scale" });
-				transform._LocalTranslation = ReadRequired<glm::vec3>(localTransformNode, "Translation", context + ".LocalTransform");
-				transform._LocalRotation = ReadRequired<glm::vec3>(localTransformNode, "Rotation", context + ".LocalTransform");
-				transform._LocalScale = ReadRequired<glm::vec3>(localTransformNode, "Scale", context + ".LocalTransform");
-				ValidateTransform(entity.GetComponent<Transform>(), context + ".Transform");
-
-				YAML::Node cameraNode = entityNode["Camera"];
-				if (cameraNode)
+				if (resolveAssets && entity.HasComponent<SpriteRenderer>())
 				{
-					RequireExactFields(cameraNode, context + ".Camera",
-						{ "Camera", "Primary", "FixedAspectRatio", "BackgroundColor" });
-					YAML::Node properties = cameraNode["Camera"];
-					RequireExactFields(properties, context + ".Camera.Camera",
-						{ "ProjectionType", "PerspectiveFOV", "PerspectiveNear", "PerspectiveFar",
-							"OrthographicSize", "OrthographicNear", "OrthographicFar" });
-					const int projectionType = ReadRequired<int>(properties, "ProjectionType", context + ".Camera.Camera");
-					if (projectionType < static_cast<int>(SceneCamera::ProjectionType::Perspective)
-						|| projectionType > static_cast<int>(SceneCamera::ProjectionType::Orthographic))
-						throw std::runtime_error(context + ".Camera has an invalid ProjectionType");
-
-					const float perspectiveFov = ReadRequired<float>(properties, "PerspectiveFOV", context + ".Camera.Camera");
-					const float perspectiveNear = ReadRequired<float>(properties, "PerspectiveNear", context + ".Camera.Camera");
-					const float perspectiveFar = ReadRequired<float>(properties, "PerspectiveFar", context + ".Camera.Camera");
-					const float orthographicSize = ReadRequired<float>(properties, "OrthographicSize", context + ".Camera.Camera");
-					const float orthographicNear = ReadRequired<float>(properties, "OrthographicNear", context + ".Camera.Camera");
-					const float orthographicFar = ReadRequired<float>(properties, "OrthographicFar", context + ".Camera.Camera");
-					const bool primary = ReadRequired<bool>(cameraNode, "Primary", context + ".Camera");
-					const bool fixedAspectRatio = ReadRequired<bool>(
-						cameraNode, "FixedAspectRatio", context + ".Camera");
-					const glm::vec4 backgroundColor = ReadRequired<glm::vec4>(
-						cameraNode, "BackgroundColor", context + ".Camera");
-					ValidateCameraValues(perspectiveFov, perspectiveNear, perspectiveFar,
-						orthographicSize, orthographicNear, orthographicFar, backgroundColor, context + ".Camera");
-
-					auto& camera = entity.AddComponent<C_Camera>();
-					if (!camera._Camera.SetPerspective(perspectiveFov, perspectiveNear, perspectiveFar)
-						|| !camera._Camera.SetOrthographic(orthographicSize, orthographicNear, orthographicFar)
-						|| !camera._Camera.SetProjectionType(static_cast<SceneCamera::ProjectionType>(projectionType)))
-						throw std::runtime_error(context + ".Camera produces a non-finite projection matrix");
-					camera.Primary = primary;
-					camera.FixedAspectRatio = fixedAspectRatio;
-					camera.BackgroundColor = backgroundColor;
+					auto& sprite = entity.GetComponent<SpriteRenderer>();
+					if (static_cast<uint64_t>(sprite.SpriteHandle) != 0)
+						sprite.Sprite = AssetManager::Get().LoadTexture(
+							sprite.SpriteHandle);
 				}
 
-				YAML::Node spriteNode = entityNode["SpriteRenderer"];
-				if (spriteNode)
+				if (entity.HasComponent<CSharpScripts>())
 				{
-					RequireExactFields(spriteNode, context + ".SpriteRenderer",
-						{ "Enabled", "SpriteHandle", "Color", "TilingFactor" },
-						{ "SortingLayer", "OrderInLayer" });
-					auto& sprite = entity.AddComponent<SpriteRenderer>();
-					sprite.Enabled = ReadRequired<bool>(spriteNode, "Enabled", context + ".SpriteRenderer");
-					const uint64_t rawSpriteHandle = ReadRequired<uint64_t>(
-						spriteNode, "SpriteHandle", context + ".SpriteRenderer");
-					sprite.SpriteHandle = AssetHandle(rawSpriteHandle);
-					sprite._Color = ReadRequired<glm::vec4>(spriteNode, "Color", context + ".SpriteRenderer");
-					sprite.TilingFactor = ReadRequired<float>(spriteNode, "TilingFactor", context + ".SpriteRenderer");
-					if (spriteNode["SortingLayer"])
-						sprite.SortingLayer = ReadRequired<int32_t>(spriteNode,
-							"SortingLayer", context + ".SpriteRenderer");
-					if (spriteNode["OrderInLayer"])
-						sprite.OrderInLayer = ReadRequired<int32_t>(spriteNode,
-							"OrderInLayer", context + ".SpriteRenderer");
-					ValidateSprite(sprite, context + ".SpriteRenderer");
-					if (resolveAssets && rawSpriteHandle != 0)
-						sprite.Sprite = AssetManager::Get().LoadTexture(sprite.SpriteHandle);
-				}
-
-				YAML::Node spriteAnimatorNode = entityNode["SpriteAnimator"];
-				if (spriteAnimatorNode)
-				{
-					RequireExactFields(spriteAnimatorNode, context + ".SpriteAnimator",
-						{ "Enabled", "PlayOnStart", "InitialClip", "Speed", "Clips" },
-						{ "InitialState", "Parameters", "States", "Transitions" });
-					auto& animator = entity.AddComponent<SpriteAnimator>();
-					animator.Enabled = ReadRequired<bool>(spriteAnimatorNode,
-						"Enabled", context + ".SpriteAnimator");
-					animator.PlayOnStart = ReadRequired<bool>(spriteAnimatorNode,
-						"PlayOnStart", context + ".SpriteAnimator");
-					animator.InitialClip = ReadRequired<std::string>(spriteAnimatorNode,
-						"InitialClip", context + ".SpriteAnimator");
-					animator.Speed = ReadRequired<float>(spriteAnimatorNode,
-						"Speed", context + ".SpriteAnimator");
-					const YAML::Node clipsNode = spriteAnimatorNode["Clips"];
-					if (!clipsNode.IsSequence())
-						throw std::runtime_error(context
-							+ ".SpriteAnimator.Clips must be a sequence");
-					animator.Clips.reserve(clipsNode.size());
-					for (size_t clipIndex = 0; clipIndex < clipsNode.size(); ++clipIndex)
+					for (const CSharpScriptEntry& script :
+						entity.GetComponent<CSharpScripts>().Scripts)
 					{
-						const YAML::Node clipNode = clipsNode[clipIndex];
-						const std::string clipContext = context
-							+ ".SpriteAnimator.Clips[" + std::to_string(clipIndex) + "]";
-						RequireExactFields(clipNode, clipContext,
-							{ "Name", "Loop", "Frames" });
-						SpriteAnimationClip clip;
-						clip.Name = ReadRequired<std::string>(clipNode, "Name", clipContext);
-						clip.Loop = ReadRequired<bool>(clipNode, "Loop", clipContext);
-						const YAML::Node framesNode = clipNode["Frames"];
-						if (!framesNode.IsSequence())
-							throw std::runtime_error(clipContext
-								+ ".Frames must be a sequence");
-						clip.Frames.reserve(framesNode.size());
-						for (size_t frameIndex = 0; frameIndex < framesNode.size(); ++frameIndex)
-						{
-							const YAML::Node frameNode = framesNode[frameIndex];
-							const std::string frameContext = clipContext + ".Frames["
-								+ std::to_string(frameIndex) + "]";
-							RequireExactFields(frameNode, frameContext,
-								{ "SpriteHandle", "DurationSeconds" });
-							SpriteAnimationFrame frame;
-							frame.SpriteHandle = AssetHandle(ReadRequired<uint64_t>(
-								frameNode, "SpriteHandle", frameContext));
-							frame.DurationSeconds = ReadRequired<float>(frameNode,
-								"DurationSeconds", frameContext);
-							clip.Frames.push_back(frame);
-						}
-						animator.Clips.push_back(std::move(clip));
-					}
-					if (spriteAnimatorNode["InitialState"])
-						animator.InitialState = ReadRequired<std::string>(
-							spriteAnimatorNode, "InitialState",
-							context + ".SpriteAnimator");
-					const YAML::Node parametersNode = spriteAnimatorNode["Parameters"];
-					if (parametersNode)
-					{
-						if (!parametersNode.IsSequence())
-							throw std::runtime_error(context
-								+ ".SpriteAnimator.Parameters must be a sequence");
-						animator.Parameters.reserve(parametersNode.size());
-						for (size_t index = 0; index < parametersNode.size(); ++index)
-						{
-							const YAML::Node parameterNode = parametersNode[index];
-							const std::string parameterContext = context
-								+ ".SpriteAnimator.Parameters[" + std::to_string(index) + "]";
-							RequireExactFields(parameterNode, parameterContext,
-								{ "Name", "Type", "BoolValue", "IntValue", "FloatValue" });
-							AnimatorParameter parameter;
-							parameter.Name = ReadRequired<std::string>(parameterNode,
-								"Name", parameterContext);
-							parameter.Type = static_cast<AnimatorParameterType>(
-								ReadRequired<uint32_t>(parameterNode, "Type", parameterContext));
-							parameter.BoolValue = ReadRequired<bool>(parameterNode,
-								"BoolValue", parameterContext);
-							parameter.IntValue = ReadRequired<int32_t>(parameterNode,
-								"IntValue", parameterContext);
-							parameter.FloatValue = ReadRequired<float>(parameterNode,
-								"FloatValue", parameterContext);
-							animator.Parameters.push_back(std::move(parameter));
-						}
-					}
-					const YAML::Node statesNode = spriteAnimatorNode["States"];
-					if (statesNode)
-					{
-						if (!statesNode.IsSequence())
-							throw std::runtime_error(context
-								+ ".SpriteAnimator.States must be a sequence");
-						animator.States.reserve(statesNode.size());
-						for (size_t index = 0; index < statesNode.size(); ++index)
-						{
-							const YAML::Node stateNode = statesNode[index];
-							const std::string stateContext = context
-								+ ".SpriteAnimator.States[" + std::to_string(index) + "]";
-							RequireExactFields(stateNode, stateContext,
-								{ "Name", "Clip", "Speed" });
-							AnimatorState state;
-							state.Name = ReadRequired<std::string>(stateNode,
-								"Name", stateContext);
-							state.Clip = ReadRequired<std::string>(stateNode,
-								"Clip", stateContext);
-							state.Speed = ReadRequired<float>(stateNode,
-								"Speed", stateContext);
-							animator.States.push_back(std::move(state));
-						}
-					}
-					const YAML::Node transitionsNode = spriteAnimatorNode["Transitions"];
-					if (transitionsNode)
-					{
-						if (!transitionsNode.IsSequence())
-							throw std::runtime_error(context
-								+ ".SpriteAnimator.Transitions must be a sequence");
-						animator.Transitions.reserve(transitionsNode.size());
-						for (size_t index = 0; index < transitionsNode.size(); ++index)
-						{
-							const YAML::Node transitionNode = transitionsNode[index];
-							const std::string transitionContext = context
-								+ ".SpriteAnimator.Transitions[" + std::to_string(index) + "]";
-							RequireExactFields(transitionNode, transitionContext,
-								{ "FromState", "ToState", "AnyState", "ExitTime", "Conditions" });
-							AnimatorTransition transition;
-							transition.FromState = ReadRequired<std::string>(transitionNode,
-								"FromState", transitionContext);
-							transition.ToState = ReadRequired<std::string>(transitionNode,
-								"ToState", transitionContext);
-							transition.AnyState = ReadRequired<bool>(transitionNode,
-								"AnyState", transitionContext);
-							transition.ExitTime = ReadRequired<float>(transitionNode,
-								"ExitTime", transitionContext);
-							const YAML::Node conditionsNode = transitionNode["Conditions"];
-							if (!conditionsNode.IsSequence())
-								throw std::runtime_error(transitionContext
-									+ ".Conditions must be a sequence");
-							transition.Conditions.reserve(conditionsNode.size());
-							for (size_t conditionIndex = 0;
-								conditionIndex < conditionsNode.size(); ++conditionIndex)
-							{
-								const YAML::Node conditionNode = conditionsNode[conditionIndex];
-								const std::string conditionContext = transitionContext
-									+ ".Conditions[" + std::to_string(conditionIndex) + "]";
-								RequireExactFields(conditionNode, conditionContext,
-									{ "Parameter", "Mode", "Threshold" });
-								AnimatorCondition condition;
-								condition.Parameter = ReadRequired<std::string>(conditionNode,
-									"Parameter", conditionContext);
-								condition.Mode = static_cast<AnimatorConditionMode>(
-									ReadRequired<uint32_t>(conditionNode, "Mode", conditionContext));
-								condition.Threshold = ReadRequired<float>(conditionNode,
-									"Threshold", conditionContext);
-								transition.Conditions.push_back(std::move(condition));
-							}
-							animator.Transitions.push_back(std::move(transition));
-						}
-					}
-					ValidateSpriteAnimator(animator, context + ".SpriteAnimator");
-				}
-
-				YAML::Node lineNode = entityNode["LineRenderer"];
-				if (lineNode)
-				{
-					RequireExactFields(lineNode, context + ".LineRenderer",
-						{ "Enabled", "Color", "Start", "End", "Width" });
-					auto& line = entity.AddComponent<LineRenderer>();
-					line.Enabled = ReadRequired<bool>(lineNode, "Enabled", context + ".LineRenderer");
-					line._Color = ReadRequired<glm::vec4>(lineNode, "Color", context + ".LineRenderer");
-					line.Start = ReadRequired<glm::vec3>(lineNode, "Start", context + ".LineRenderer");
-					line.End = ReadRequired<glm::vec3>(lineNode, "End", context + ".LineRenderer");
-					line.Width = ReadRequired<float>(lineNode, "Width", context + ".LineRenderer");
-					ValidateLine(line, context + ".LineRenderer");
-				}
-
-				YAML::Node csharpScriptsNode = entityNode["CSharpScripts"];
-				if (csharpScriptsNode)
-				{
-					RequireExactFields(csharpScriptsNode, context + ".CSharpScripts",
-						{ "Scripts" });
-					const YAML::Node scriptsNode = csharpScriptsNode["Scripts"];
-					if (!scriptsNode.IsSequence())
-						throw std::runtime_error(context
-							+ ".CSharpScripts.Scripts must be a sequence");
-
-					auto& scripts = entity.AddComponent<CSharpScripts>();
-					scripts.Scripts.reserve(scriptsNode.size());
-					for (size_t scriptIndex = 0; scriptIndex < scriptsNode.size();
-						++scriptIndex)
-					{
-						const YAML::Node scriptNode = scriptsNode[scriptIndex];
-						const std::string scriptContext = context + ".CSharpScripts.Scripts["
-							+ std::to_string(scriptIndex) + "]";
-						RequireExactFields(scriptNode, scriptContext,
-							{ "AttachmentID", "Enabled", "ScriptHandle", "ClassName",
-								"Fields" });
-
-						CSharpScriptEntry script;
-						script.AttachmentID = UUID(ReadRequired<uint64_t>(scriptNode,
-							"AttachmentID", scriptContext));
 						if (static_cast<uint64_t>(script.AttachmentID) == 0
 							|| !seenAttachmentIDs.emplace(script.AttachmentID).second)
-							throw std::runtime_error(scriptContext
-								+ ".AttachmentID must be nonzero and unique across the scene");
-						script.Enabled = ReadRequired<bool>(scriptNode, "Enabled",
-							scriptContext);
-						script.ScriptAsset = AssetHandle(ReadRequired<uint64_t>(scriptNode,
-							"ScriptHandle", scriptContext));
-						script.LastKnownClassName = ReadRequired<std::string>(scriptNode,
-							"ClassName", scriptContext);
-
-						const YAML::Node fieldsNode = scriptNode["Fields"];
-						if (!fieldsNode.IsSequence())
-							throw std::runtime_error(scriptContext
-								+ ".Fields must be a sequence");
-						script.Fields.reserve(fieldsNode.size());
-						for (size_t fieldIndex = 0; fieldIndex < fieldsNode.size();
-							++fieldIndex)
-						{
-							const YAML::Node fieldNode = fieldsNode[fieldIndex];
-							const std::string fieldContext = scriptContext + ".Fields["
-								+ std::to_string(fieldIndex) + "]";
-							RequireExactFields(fieldNode, fieldContext,
-								{ "FieldID", "Name", "Type", "Value" },
-								{ "TypeName" });
-
-							ScriptField field;
-							field.FieldID = ReadRequired<std::string>(fieldNode,
-								"FieldID", fieldContext);
-							field.Name = ReadRequired<std::string>(fieldNode, "Name",
-								fieldContext);
-							const std::string typeName = ReadRequired<std::string>(
-								fieldNode, "Type", fieldContext);
-							if (!TryParseScriptFieldType(typeName, field.Type))
-								throw std::runtime_error(fieldContext
-									+ ".Type contains unknown C# script field type '"
-									+ typeName + "'");
-							if (const YAML::Node managedType = fieldNode["TypeName"])
-								field.TypeName = ReadRequired<std::string>(fieldNode,
-									"TypeName", fieldContext);
-							field.Value = ReadScriptFieldValue(fieldNode, field.Type,
-								fieldContext);
-							ValidateScriptField(field, fieldContext);
-							script.Fields.emplace_back(std::move(field));
-						}
-						scripts.Scripts.emplace_back(std::move(script));
+							throw std::runtime_error(context
+								+ ".CSharpScripts AttachmentID must be nonzero and "
+								"unique across the scene");
 					}
-					ValidateCSharpScripts(scripts, context + ".CSharpScripts");
 				}
 
-				YAML::Node audioSourceNode = entityNode["AudioSource"];
-				if (audioSourceNode)
+				if (entity.HasComponent<DistanceJoint2D>())
 				{
-					RequireExactFields(audioSourceNode, context + ".AudioSource",
-						{ "Enabled", "Clip", "PlayOnStart", "Loop", "Volume",
-							"Pitch", "MixerGroup" },
-						{ "Streaming", "SpatialBlend", "MinDistance", "MaxDistance" });
-					auto& audio = entity.AddComponent<AudioSource>();
-					audio.Enabled = ReadRequired<bool>(audioSourceNode, "Enabled",
-						context + ".AudioSource");
-					audio.Clip = AssetHandle(ReadRequired<uint64_t>(audioSourceNode,
-						"Clip", context + ".AudioSource"));
-					audio.PlayOnStart = ReadRequired<bool>(audioSourceNode,
-						"PlayOnStart", context + ".AudioSource");
-					audio.Loop = ReadRequired<bool>(audioSourceNode, "Loop",
-						context + ".AudioSource");
-					if (audioSourceNode["Streaming"])
-						audio.Streaming = ReadRequired<bool>(audioSourceNode,
-							"Streaming", context + ".AudioSource");
-					audio.Volume = ReadRequired<float>(audioSourceNode, "Volume",
-						context + ".AudioSource");
-					audio.Pitch = ReadRequired<float>(audioSourceNode, "Pitch",
-						context + ".AudioSource");
-					if (audioSourceNode["SpatialBlend"])
-						audio.SpatialBlend = ReadRequired<float>(audioSourceNode,
-							"SpatialBlend", context + ".AudioSource");
-					if (audioSourceNode["MinDistance"])
-						audio.MinDistance = ReadRequired<float>(audioSourceNode,
-							"MinDistance", context + ".AudioSource");
-					if (audioSourceNode["MaxDistance"])
-						audio.MaxDistance = ReadRequired<float>(audioSourceNode,
-							"MaxDistance", context + ".AudioSource");
-					const uint32_t mixerGroup = ReadRequired<uint32_t>(audioSourceNode,
-						"MixerGroup", context + ".AudioSource");
-					if (mixerGroup > 2)
-						throw std::runtime_error(context
-							+ ".AudioSource.MixerGroup must be in [0, 2]");
-					audio.MixerGroup = static_cast<uint8_t>(mixerGroup);
-					audio.RuntimeVoice = 0;
-					audio.RuntimeClipHandle = AssetHandle(0);
-					audio.RuntimeAutoPlayEvaluated = false;
-					audio.RuntimeStreaming = false;
-					ValidateAudioSource(audio, context + ".AudioSource");
+					const UUID connected = entity.GetComponent<DistanceJoint2D>()
+						.ConnectedEntity;
+					if (static_cast<uint64_t>(connected) != 0)
+						pendingJointConnections.emplace_back(uuid, connected);
 				}
-
-				YAML::Node audioListenerNode = entityNode["AudioListener"];
-				if (audioListenerNode)
-				{
-					RequireExactFields(audioListenerNode, context + ".AudioListener",
-						{ "Enabled", "Primary" });
-					auto& listener = entity.AddComponent<AudioListener>();
-					listener.Enabled = ReadRequired<bool>(audioListenerNode, "Enabled",
-						context + ".AudioListener");
-					listener.Primary = ReadRequired<bool>(audioListenerNode, "Primary",
-						context + ".AudioListener");
-				}
-
-				YAML::Node rigidbodyNode = entityNode["Rigidbody2D"];
-				if (rigidbodyNode)
-				{
-					RequireExactFields(rigidbodyNode, context + ".Rigidbody2D",
-						{ "Enabled", "BodyType", "FixedRotation" });
-					auto& rigidbody = entity.AddComponent<Rigidbody2D>();
-					rigidbody.Enabled = ReadRequired<bool>(rigidbodyNode, "Enabled", context + ".Rigidbody2D");
-					rigidbody.Type = Rigidbody2DBodyTypeFromString(ReadRequired<std::string>(rigidbodyNode, "BodyType", context + ".Rigidbody2D"));
-					rigidbody.FixedRotation = ReadRequired<bool>(rigidbodyNode, "FixedRotation", context + ".Rigidbody2D");
-				}
-
-				YAML::Node colliderNode = entityNode["BoxCollider2D"];
-				if (colliderNode)
-				{
-					RequireExactFields(colliderNode, context + ".BoxCollider2D",
-						{ "Enabled", "IsTrigger", "CollisionLayer", "CollisionMask",
-							"Offset", "Size", "Density", "Friction", "Restitution",
-							"RestitutionThreshold" });
-					auto& collider = entity.AddComponent<BoxCollider2D>();
-					collider.Enabled = ReadRequired<bool>(colliderNode, "Enabled", context + ".BoxCollider2D");
-					collider.IsTrigger = ReadRequired<bool>(colliderNode, "IsTrigger", context + ".BoxCollider2D");
-					collider.CollisionLayer = ReadRequired<uint16_t>(colliderNode, "CollisionLayer", context + ".BoxCollider2D");
-					collider.CollisionMask = ReadRequired<uint16_t>(colliderNode, "CollisionMask", context + ".BoxCollider2D");
-					collider.Offset = ReadRequired<glm::vec2>(colliderNode, "Offset", context + ".BoxCollider2D");
-					collider.Size = ReadRequired<glm::vec2>(colliderNode, "Size", context + ".BoxCollider2D");
-					collider.Density = ReadRequired<float>(colliderNode, "Density", context + ".BoxCollider2D");
-					collider.Friction = ReadRequired<float>(colliderNode, "Friction", context + ".BoxCollider2D");
-					collider.Restitution = ReadRequired<float>(colliderNode, "Restitution", context + ".BoxCollider2D");
-					collider.RestitutionThreshold = ReadRequired<float>(colliderNode, "RestitutionThreshold", context + ".BoxCollider2D");
-					ValidateCollider(collider, context + ".BoxCollider2D");
-				}
-
-				YAML::Node circleColliderNode = entityNode["CircleCollider2D"];
-				if (circleColliderNode)
-				{
-					RequireExactFields(circleColliderNode, context + ".CircleCollider2D",
-						{ "Enabled", "IsTrigger", "CollisionLayer", "CollisionMask",
-							"Offset", "Radius", "Density", "Friction", "Restitution" });
-					auto& collider = entity.AddComponent<CircleCollider2D>();
-					collider.Enabled = ReadRequired<bool>(circleColliderNode, "Enabled",
-						context + ".CircleCollider2D");
-					collider.IsTrigger = ReadRequired<bool>(circleColliderNode, "IsTrigger",
-						context + ".CircleCollider2D");
-					collider.CollisionLayer = ReadRequired<uint16_t>(circleColliderNode, "CollisionLayer",
-						context + ".CircleCollider2D");
-					collider.CollisionMask = ReadRequired<uint16_t>(circleColliderNode, "CollisionMask",
-						context + ".CircleCollider2D");
-					collider.Offset = ReadRequired<glm::vec2>(circleColliderNode, "Offset",
-						context + ".CircleCollider2D");
-					collider.Radius = ReadRequired<float>(circleColliderNode, "Radius",
-						context + ".CircleCollider2D");
-					collider.Density = ReadRequired<float>(circleColliderNode, "Density",
-						context + ".CircleCollider2D");
-					collider.Friction = ReadRequired<float>(circleColliderNode, "Friction",
-						context + ".CircleCollider2D");
-					collider.Restitution = ReadRequired<float>(circleColliderNode, "Restitution",
-						context + ".CircleCollider2D");
-					ValidateCollider(collider, context + ".CircleCollider2D");
-				}
-
-				YAML::Node distanceJointNode = entityNode["DistanceJoint2D"];
-				if (distanceJointNode)
-				{
-					RequireExactFields(distanceJointNode, context + ".DistanceJoint2D",
-						{ "Enabled", "ConnectedEntity", "Anchor", "ConnectedAnchor", "Distance",
-							"Frequency", "Damping", "CollideConnected" });
-					auto& joint = entity.AddComponent<DistanceJoint2D>();
-					joint.Enabled = ReadRequired<bool>(distanceJointNode, "Enabled", context + ".DistanceJoint2D");
-					joint.ConnectedEntity = UUID(ReadRequired<uint64_t>(distanceJointNode,
-						"ConnectedEntity", context + ".DistanceJoint2D"));
-					joint.Anchor = ReadRequired<glm::vec2>(distanceJointNode, "Anchor", context + ".DistanceJoint2D");
-					joint.ConnectedAnchor = ReadRequired<glm::vec2>(distanceJointNode,
-						"ConnectedAnchor", context + ".DistanceJoint2D");
-					joint.Distance = ReadRequired<float>(distanceJointNode, "Distance", context + ".DistanceJoint2D");
-					joint.Frequency = ReadRequired<float>(distanceJointNode, "Frequency", context + ".DistanceJoint2D");
-					joint.Damping = ReadRequired<float>(distanceJointNode, "Damping", context + ".DistanceJoint2D");
-					joint.CollideConnected = ReadRequired<bool>(distanceJointNode,
-						"CollideConnected", context + ".DistanceJoint2D");
-					ValidateJoint(joint, context + ".DistanceJoint2D");
-					if (static_cast<uint64_t>(joint.ConnectedEntity) != 0)
-						pendingJointConnections.emplace_back(uuid, joint.ConnectedEntity);
-				}
-
 				if (schemaVersion == CurrentSchemaVersion)
 				{
-					std::string componentError;
+					componentError.clear();
 					if (!ComponentRegistry::Get().DecodeComponents(entity,
 						entityNode["Components"], componentError))
 						throw std::runtime_error(context + ".Components: " + componentError);

@@ -1,14 +1,40 @@
 #include "tcpch.h"
 #include "Platform/OpenGL/OpenGLTexture.h"
+#include "TomCat/Asset/TextureArtifact.h"
 #include "TomCat/Utils/PathUtils.h"
 
 #include <stb_image.h>
 
 #include <fstream>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 namespace TomCat {
+	namespace {
+		constexpr GLenum GLCompressedRGBA_S3TCDXT5 = 0x83F3;
+		constexpr GLenum GLCompressedSRGBAlpha_S3TCDXT5 = 0x8C4F;
+
+		bool SupportsBC3Textures()
+		{
+			if (!glGetStringi)
+				return false;
+			GLint extensionCount = 0;
+			glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+			for (GLint index = 0; index < extensionCount; ++index)
+			{
+				const auto* raw = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(index));
+				if (!raw)
+					continue;
+				const std::string_view extension(reinterpret_cast<const char*>(raw));
+				if (extension == "GL_EXT_texture_compression_s3tc"
+					|| extension == "GL_EXT_texture_compression_dxt5"
+					|| extension == "GL_NV_texture_compression_vtc")
+					return true;
+			}
+			return false;
+		}
+	}
 
 	OpenGLTexture2D::OpenGLTexture2D(uint32_t width, uint32_t height)
 		: m_Width(width), m_Height(height)
@@ -69,10 +95,20 @@ namespace TomCat {
 
 	bool OpenGLTexture2D::LoadEncodedImage(const void* encodedData, size_t encodedSize)
 	{
-		if (!encodedData || encodedSize == 0 ||
-			encodedSize > static_cast<size_t>((std::numeric_limits<int>::max)()))
+		if (!encodedData || encodedSize == 0)
 		{
 			TC_Core_Error("Cannot decode texture '{0}': invalid encoded byte buffer",
+				m_Path.empty() ? std::string("<memory>") : PathToUTF8(m_Path));
+			return false;
+		}
+
+		const auto bytes = std::span<const uint8_t>(
+			static_cast<const uint8_t*>(encodedData), encodedSize);
+		if (IsTextureArtifact(bytes))
+			return LoadArtifact(bytes);
+		if (encodedSize > static_cast<size_t>((std::numeric_limits<int>::max)()))
+		{
+			TC_Core_Error("Cannot decode texture '{0}': encoded image exceeds the decoder limit",
 				m_Path.empty() ? std::string("<memory>") : PathToUTF8(m_Path));
 			return false;
 		}
@@ -103,10 +139,83 @@ namespace TomCat {
 		return m_IsLoaded;
 	}
 
+	bool OpenGLTexture2D::LoadArtifact(std::span<const uint8_t> bytes)
+	{
+		TextureArtifactView artifact;
+		std::string error;
+		if (!ParseTextureArtifact(bytes, artifact, error))
+		{
+			TC_Core_Error("Failed to load texture artifact '{0}': {1}",
+				m_Path.empty() ? std::string("<memory>") : PathToUTF8(m_Path), error);
+			return false;
+		}
+
+		m_Width = artifact.Width;
+		m_Height = artifact.Height;
+		m_DataFormat = GL_RGBA;
+		m_Compressed = artifact.Format == TextureArtifactFormat::BC3
+			&& SupportsBC3Textures();
+		m_InternalFormat = m_Compressed
+			? (artifact.SRGB ? GLCompressedSRGBAlpha_S3TCDXT5
+				: GLCompressedRGBA_S3TCDXT5)
+			: (artifact.SRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8);
+
+		glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
+		if (!m_RendererID)
+		{
+			TC_Core_Error("Failed to allocate texture artifact '{0}'",
+				m_Path.empty() ? std::string("<memory>") : PathToUTF8(m_Path));
+			return false;
+		}
+		glTextureStorage2D(m_RendererID, static_cast<GLsizei>(artifact.Mips.size()),
+			m_InternalFormat, static_cast<GLsizei>(m_Width), static_cast<GLsizei>(m_Height));
+
+		std::vector<uint8_t> decoded;
+		for (size_t level = 0; level < artifact.Mips.size(); ++level)
+		{
+			const TextureArtifactMip& mip = artifact.Mips[level];
+			if (m_Compressed)
+			{
+				glCompressedTextureSubImage2D(m_RendererID, static_cast<GLint>(level),
+					0, 0, static_cast<GLsizei>(mip.Width), static_cast<GLsizei>(mip.Height),
+					m_InternalFormat, static_cast<GLsizei>(mip.Bytes.size()), mip.Bytes.data());
+				continue;
+			}
+
+			const uint8_t* pixels = mip.Bytes.data();
+			if (artifact.Format == TextureArtifactFormat::BC3)
+			{
+				if (!DecompressTextureMip(mip, artifact.Format, decoded, error))
+				{
+					TC_Core_Error("Failed to decompress texture artifact '{0}': {1}",
+						m_Path.empty() ? std::string("<memory>") : PathToUTF8(m_Path), error);
+					glDeleteTextures(1, &m_RendererID);
+					m_RendererID = 0;
+					return false;
+				}
+				pixels = decoded.data();
+			}
+			glTextureSubImage2D(m_RendererID, static_cast<GLint>(level), 0, 0,
+				static_cast<GLsizei>(mip.Width), static_cast<GLsizei>(mip.Height),
+				m_DataFormat, GL_UNSIGNED_BYTE, pixels);
+		}
+
+		glTextureParameteri(m_RendererID, GL_TEXTURE_MIN_FILTER,
+			artifact.Mips.size() > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+		glTextureParameteri(m_RendererID, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTextureParameteri(m_RendererID, GL_TEXTURE_MAX_LEVEL,
+			static_cast<GLint>(artifact.Mips.size() - 1));
+		m_IsLoaded = true;
+		return true;
+	}
+
 	void OpenGLTexture2D::CreateStorageAndUpload(const void* rgbaPixels)
 	{
 		m_InternalFormat = GL_RGBA8;
 		m_DataFormat = GL_RGBA;
+		m_Compressed = false;
 
 		glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
 		glTextureStorage2D(m_RendererID, 1, m_InternalFormat, m_Width, m_Height);
@@ -137,6 +246,11 @@ namespace TomCat {
 
 		const uint64_t bpp = m_DataFormat == GL_RGBA ? 4ULL : 3ULL;
 		const uint64_t expectedSize = static_cast<uint64_t>(m_Width) * m_Height * bpp;
+		if (m_Compressed)
+		{
+			TC_Core_Error("Cannot update a block-compressed texture with raw pixel data");
+			return;
+		}
 		if (!m_IsLoaded || !m_RendererID || !data || expectedSize > std::numeric_limits<uint32_t>::max()
 			|| size != expectedSize)
 		{
