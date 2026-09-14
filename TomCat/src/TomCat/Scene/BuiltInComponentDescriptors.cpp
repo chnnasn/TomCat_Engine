@@ -40,7 +40,8 @@ namespace TomCat {
 		PropertyDescriptor Property(uint64_t id, std::string stableName,
 			PropertyKind kind, std::function<PropertyValue(Entity)> get,
 			std::function<bool(Entity, const PropertyValue&, std::string&)> set,
-			bool entityReference = false)
+			bool entityReference = false,
+			std::optional<PropertyValue> defaultValue = std::nullopt)
 		{
 			PropertyDescriptor result;
 			result.PropertyId = UUID(id);
@@ -49,8 +50,21 @@ namespace TomCat {
 			result.Kind = kind;
 			result.Get = std::move(get);
 			result.Set = std::move(set);
+			result.DefaultValue = std::move(defaultValue);
 			result.EntityReference = entityReference;
 			return result;
+		}
+
+		void SetPropertyDefault(ComponentDescriptor& descriptor, uint64_t propertyId,
+			PropertyValue value)
+		{
+			const auto property = std::find_if(descriptor.Properties.begin(),
+				descriptor.Properties.end(), [propertyId](const PropertyDescriptor& item)
+				{
+					return static_cast<uint64_t>(item.PropertyId) == propertyId;
+				});
+			if (property != descriptor.Properties.end())
+				property->DefaultValue = std::move(value);
 		}
 
 		template<typename Component>
@@ -134,7 +148,7 @@ namespace TomCat {
 		PropertyDescriptor BoolProperty(uint64_t id, const char* name,
 			bool Component::* member)
 		{
-			return Property(id, name, PropertyKind::Bool,
+			PropertyDescriptor result = Property(id, name, PropertyKind::Bool,
 				[member](Entity entity) -> PropertyValue
 				{ return entity.GetComponent<Component>().*member; },
 				[member](Entity entity, const PropertyValue& value, std::string&)
@@ -142,13 +156,15 @@ namespace TomCat {
 					entity.GetComponent<Component>().*member = std::get<bool>(value);
 					return true;
 				});
+			result.DefaultValue = Component{}.*member;
+			return result;
 		}
 
 		template<typename Component>
 		PropertyDescriptor IntProperty(uint64_t id, const char* name,
 			int32_t Component::* member)
 		{
-			return Property(id, name, PropertyKind::Int32,
+			PropertyDescriptor result = Property(id, name, PropertyKind::Int32,
 				[member](Entity entity) -> PropertyValue
 				{ return entity.GetComponent<Component>().*member; },
 				[member](Entity entity, const PropertyValue& value, std::string&)
@@ -156,6 +172,8 @@ namespace TomCat {
 					entity.GetComponent<Component>().*member = std::get<int32_t>(value);
 					return true;
 				});
+			result.DefaultValue = Component{}.*member;
+			return result;
 		}
 
 		template<typename Component>
@@ -163,7 +181,7 @@ namespace TomCat {
 			float Component::* member, float minimum = -std::numeric_limits<float>::max(),
 			float maximum = std::numeric_limits<float>::max(), bool minimumInclusive = true)
 		{
-			return Property(id, name, PropertyKind::Float,
+			PropertyDescriptor result = Property(id, name, PropertyKind::Float,
 				[member](Entity entity) -> PropertyValue
 				{ return entity.GetComponent<Component>().*member; },
 				[member, minimum, maximum, minimumInclusive, name](Entity entity,
@@ -179,13 +197,15 @@ namespace TomCat {
 					entity.GetComponent<Component>().*member = decoded;
 					return true;
 				});
+			result.DefaultValue = Component{}.*member;
+			return result;
 		}
 
 		template<typename Component>
 		PropertyDescriptor Vector2Property(uint64_t id, const char* name,
 			glm::vec2 Component::* member, bool positive = false)
 		{
-			return Property(id, name, PropertyKind::Vector2,
+			PropertyDescriptor result = Property(id, name, PropertyKind::Vector2,
 				[member](Entity entity) -> PropertyValue
 				{ return entity.GetComponent<Component>().*member; },
 				[member, positive, name](Entity entity, const PropertyValue& value,
@@ -201,13 +221,15 @@ namespace TomCat {
 					entity.GetComponent<Component>().*member = decoded;
 					return true;
 				});
+			result.DefaultValue = Component{}.*member;
+			return result;
 		}
 
 		template<typename Component>
 		PropertyDescriptor Vector3Property(uint64_t id, const char* name,
 			glm::vec3 Component::* member)
 		{
-			return Property(id, name, PropertyKind::Vector3,
+			PropertyDescriptor result = Property(id, name, PropertyKind::Vector3,
 				[member](Entity entity) -> PropertyValue
 				{ return entity.GetComponent<Component>().*member; },
 				[member, name](Entity entity, const PropertyValue& value,
@@ -222,13 +244,15 @@ namespace TomCat {
 					entity.GetComponent<Component>().*member = decoded;
 					return true;
 				});
+			result.DefaultValue = Component{}.*member;
+			return result;
 		}
 
 		template<typename Component>
 		PropertyDescriptor ColorProperty(uint64_t id, const char* name,
 			glm::vec4 Component::* member)
 		{
-			return Property(id, name, PropertyKind::Vector4,
+			PropertyDescriptor result = Property(id, name, PropertyKind::Vector4,
 				[member](Entity entity) -> PropertyValue
 				{ return entity.GetComponent<Component>().*member; },
 				[member, name](Entity entity, const PropertyValue& value,
@@ -243,6 +267,8 @@ namespace TomCat {
 					entity.GetComponent<Component>().*member = decoded;
 					return true;
 				});
+			result.DefaultValue = Component{}.*member;
+			return result;
 		}
 
 		PropertyDescriptor AssetProperty(uint64_t id, const char* name,
@@ -256,6 +282,7 @@ namespace TomCat {
 					access(entity) = AssetHandle(std::get<uint64_t>(value));
 					return true;
 				});
+			result.DefaultValue = uint64_t(0);
 		result.AssetReference = AssetPropertyMetadata{ { type }, true };
 			return result;
 		}
@@ -512,6 +539,11 @@ namespace TomCat {
 					properties, "FixedAspectRatio");
 				legacy["BackgroundColor"] = RequireEncodedProperty(descriptor,
 					properties, "BackgroundColor");
+				// Scene 9-11 Camera data had no independent Enabled field. Keep
+				// ordinary enabled cameras readable by older readers, while retaining
+				// a disabled value when this new state must be represented.
+				if (!RequireEncodedProperty(descriptor, properties, "Enabled").as<bool>())
+					legacy["Enabled"] = false;
 				output << YAML::Key << "Camera" << YAML::Value << legacy;
 				return output.good();
 			};
@@ -771,7 +803,7 @@ namespace TomCat {
 					return true;
 				if (!ValidateLegacyMap(legacy, "Camera",
 					{ "Camera", "Primary", "FixedAspectRatio", "BackgroundColor" },
-					{}, error))
+					{ "Enabled" }, error))
 					return false;
 				const YAML::Node projection = legacy["Camera"];
 				if (!ValidateLegacyMap(projection, "Camera.Camera",
@@ -783,6 +815,8 @@ namespace TomCat {
 				canonical["Primary"] = legacy["Primary"];
 				canonical["FixedAspectRatio"] = legacy["FixedAspectRatio"];
 				canonical["BackgroundColor"] = legacy["BackgroundColor"];
+				if (legacy["Enabled"])
+					canonical["Enabled"] = legacy["Enabled"];
 				canonical["ProjectionType"] = projection["ProjectionType"];
 				canonical["PerspectiveVerticalFov"] = projection["PerspectiveFOV"];
 				canonical["PerspectiveNearClip"] = projection["PerspectiveNear"];
@@ -927,10 +961,14 @@ namespace TomCat {
 					error = "Cannot copy Tag from invalid entities";
 					return false;
 				}
-				destination.GetComponent<Tag>().Visible = source.GetComponent<Tag>().Visible;
+				destination.GetComponent<Tag>().ActiveSelf =
+					source.GetComponent<Tag>().ActiveSelf;
 				return true;
 			};
-			descriptor.Properties = {
+			auto activeSelf = BoolProperty<Tag>(
+				ComponentIds::TagProperties::ActiveSelf, "Visible", &Tag::ActiveSelf);
+			activeSelf.DisplayName = "Active Self";
+			 descriptor.Properties = {
 				Property(ComponentIds::TagProperties::Name, "Name", PropertyKind::String,
 					[](Entity entity) -> PropertyValue { return entity.GetComponent<Tag>()._Tag; },
 					[](Entity entity, const PropertyValue& value, std::string& error)
@@ -940,7 +978,23 @@ namespace TomCat {
 						entity.GetComponent<Tag>()._Tag = name;
 						return true;
 					}),
-				BoolProperty<Tag>(ComponentIds::TagProperties::Visible, "Visible", &Tag::Visible)
+				std::move(activeSelf)
+			};
+			return descriptor;
+		}
+
+		ComponentDescriptor MakeEditorVisibilityDescriptor()
+		{
+			auto descriptor = BaseDescriptor<EditorVisibility>(
+				ComponentIds::EditorVisibility, "TomCat.EditorVisibility",
+				"Editor Visibility");
+			descriptor.InspectorVisible = false;
+			descriptor.UseGenericInspector = false;
+			descriptor.AddableInInspector = false;
+			descriptor.Properties = {
+				BoolProperty<EditorVisibility>(
+					ComponentIds::EditorVisibilityProperties::Hidden,
+					"Hidden", &EditorVisibility::Hidden)
 			};
 			return descriptor;
 		}
@@ -1020,6 +1074,38 @@ namespace TomCat {
 			auto descriptor = BaseDescriptor<C_Camera>(ComponentIds::Camera,
 				"TomCat.Camera", "Camera");
 			descriptor.ScriptAccessible = true;
+			descriptor.SchemaVersion = 2;
+			descriptor.Migrations.push_back({ 1, 2,
+				[](YAML::Node& record, std::string& error)
+				{
+					YAML::Node properties = record["Properties"];
+					if (!properties || !properties.IsSequence())
+					{
+						error = "TomCat.Camera v1 properties must be a sequence";
+						return false;
+					}
+					for (const YAML::Node& property : properties)
+					{
+						if (!property["PropertyId"] || !property["StableName"])
+						{
+							error = "TomCat.Camera v1 property identity is invalid";
+							return false;
+						}
+						if (property["PropertyId"].as<uint64_t>()
+								== ComponentIds::CameraProperties::Enabled
+							|| property["StableName"].as<std::string>() == "Enabled")
+						{
+							error = "TomCat.Camera v1 unexpectedly contains Enabled";
+							return false;
+						}
+					}
+					YAML::Node enabled(YAML::NodeType::Map);
+					enabled["PropertyId"] = ComponentIds::CameraProperties::Enabled;
+					enabled["StableName"] = "Enabled";
+					enabled["Value"] = true;
+					properties.push_back(enabled);
+					return true;
+				} });
 			descriptor.EncodeLegacyFields = LegacyCamera();
 			descriptor.DecodeLegacyFields = LegacyCameraDecode();
 			descriptor.Add = [](Entity entity, std::string& error)
@@ -1033,14 +1119,27 @@ namespace TomCat {
 					return true;
 				Scene* scene = entity.GetScene();
 				const bool alreadyHasPrimary = scene
-					&& static_cast<bool>(scene->GetPrimaryCameraEntity());
+					&& scene->HasAuthoredPrimaryCamera();
 				auto& camera = entity.AddComponent<C_Camera>();
 				camera.Primary = !alreadyHasPrimary;
 				return true;
 			};
 			descriptor.Properties = {
-				BoolProperty<C_Camera>(ComponentIds::CameraProperties::Primary,
-					"Primary", &C_Camera::Primary),
+				Property(ComponentIds::CameraProperties::Primary, "Primary",
+					PropertyKind::Bool,
+					[](Entity entity) -> PropertyValue
+					{ return entity.GetComponent<C_Camera>().Primary; },
+					[](Entity entity, const PropertyValue& value, std::string& error)
+					{
+						Scene* scene = entity.GetScene();
+						if (!scene || !scene->SetCameraPrimary(entity,
+							std::get<bool>(value)))
+						{
+							error = "Camera.Primary target is invalid";
+							return false;
+						}
+						return true;
+					}),
 				BoolProperty<C_Camera>(ComponentIds::CameraProperties::FixedAspectRatio,
 					"FixedAspectRatio", &C_Camera::FixedAspectRatio),
 				ColorProperty<C_Camera>(ComponentIds::CameraProperties::BackgroundColor,
@@ -1074,8 +1173,27 @@ namespace TomCat {
 					[](Entity e, const PropertyValue& v, std::string& error) { if (!e.GetComponent<C_Camera>()._Camera.SetPerspectiveNearClip(std::get<float>(v))) { error = "PerspectiveNearClip is invalid"; return false; } return true; }),
 				Property(ComponentIds::CameraProperties::PerspectiveFar, "PerspectiveFarClip", PropertyKind::Float,
 					[](Entity e) -> PropertyValue { return e.GetComponent<C_Camera>()._Camera.GetPerspectiveFarClip(); },
-					[](Entity e, const PropertyValue& v, std::string& error) { if (!e.GetComponent<C_Camera>()._Camera.SetPerspectiveFarClip(std::get<float>(v))) { error = "PerspectiveFarClip is invalid"; return false; } return true; })
+					[](Entity e, const PropertyValue& v, std::string& error) { if (!e.GetComponent<C_Camera>()._Camera.SetPerspectiveFarClip(std::get<float>(v))) { error = "PerspectiveFarClip is invalid"; return false; } return true; }),
+				BoolProperty<C_Camera>(ComponentIds::CameraProperties::Enabled,
+					"Enabled", &C_Camera::Enabled)
 			};
+			const C_Camera cameraDefaults;
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::Primary,
+				cameraDefaults.Primary);
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::ProjectionType,
+				static_cast<int32_t>(cameraDefaults._Camera.GetProjectionType()));
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::OrthographicSize,
+				cameraDefaults._Camera.GetOrthographicSize());
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::OrthographicNear,
+				cameraDefaults._Camera.GetOrthographicNearClip());
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::OrthographicFar,
+				cameraDefaults._Camera.GetOrthographicFarClip());
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::PerspectiveFov,
+				cameraDefaults._Camera.GetPerspectiveVerticalFOV());
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::PerspectiveNear,
+				cameraDefaults._Camera.GetPerspectiveNearClip());
+			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::PerspectiveFar,
+				cameraDefaults._Camera.GetPerspectiveFarClip());
 			return descriptor;
 		}
 
@@ -1371,6 +1489,8 @@ namespace TomCat {
 						return true;
 					})
 			};
+			SetPropertyDefault(descriptor,
+				ComponentIds::SpriteAnimatorProperties::InitialClip, std::string{});
 			return descriptor;
 		}
 
@@ -1570,86 +1690,21 @@ namespace TomCat {
 			{
 				if (!entity || !entity.HasComponent<AudioSource>())
 				{ error = "Audio Source is not present on the entity"; return false; }
-				AudioSceneRuntime::DestroySource(entity);
+				AudioSceneRuntime::DeferDestroySource(entity);
 				entity.RemoveComponent<AudioSource>();
 				return true;
 			};
 			auto clip = AssetProperty(ComponentIds::AudioSourceProperties::Clip, "Clip",
 				AssetType::Audio, [](Entity entity) -> AssetHandle&
 				{ return entity.GetComponent<AudioSource>().Clip; });
-			auto clipSet = clip.Set;
-			clip.Set = [clipSet](Entity entity, const PropertyValue& value,
-				std::string& error)
-			{
-				auto& source = entity.GetComponent<AudioSource>();
-				const AssetHandle previous = source.Clip;
-				if (!clipSet(entity, value, error))
-					return false;
-				if (source.Clip != previous)
-					AudioSceneRuntime::DestroySource(entity);
-				return true;
-			};
 			auto enabled = BoolProperty<AudioSource>(
 				ComponentIds::AudioSourceProperties::Enabled, "Enabled",
 				&AudioSource::Enabled);
-			auto enabledSet = enabled.Set;
-			enabled.Set = [enabledSet](Entity entity, const PropertyValue& value,
-				std::string& error)
-			{
-				if (!enabledSet(entity, value, error))
-					return false;
-				if (!entity.GetComponent<AudioSource>().Enabled)
-					AudioSceneRuntime::DestroySource(entity);
-				return true;
-			};
 			auto loop = BoolProperty<AudioSource>(
 				ComponentIds::AudioSourceProperties::Loop, "Loop", &AudioSource::Loop);
-			auto loopSet = loop.Set;
-			loop.Set = [loopSet](Entity entity, const PropertyValue& value,
-				std::string& error)
-			{
-				if (!loopSet(entity, value, error))
-					return false;
-				if (entity.GetComponent<AudioSource>().RuntimeVoice != 0
-					&& !AudioSceneRuntime::ApplySettings(entity))
-				{
-					error = "Could not apply Loop to the active audio voice";
-					return false;
-				}
-				return true;
-			};
 			auto streaming = BoolProperty<AudioSource>(
 				ComponentIds::AudioSourceProperties::Streaming, "Streaming",
 				&AudioSource::Streaming);
-			auto streamingSet = streaming.Set;
-			streaming.Set = [streamingSet](Entity entity, const PropertyValue& value,
-				std::string& error)
-			{
-				const bool previous = entity.GetComponent<AudioSource>().Streaming;
-				if (!streamingSet(entity, value, error))
-					return false;
-				if (entity.GetComponent<AudioSource>().Streaming != previous)
-					AudioSceneRuntime::DestroySource(entity);
-				return true;
-			};
-			auto runtimeFloat = [](PropertyDescriptor property)
-			{
-				auto set = property.Set;
-				property.Set = [set](Entity entity, const PropertyValue& value,
-					std::string& error)
-				{
-					if (!set(entity, value, error))
-						return false;
-					if (entity.GetComponent<AudioSource>().RuntimeVoice != 0
-						&& !AudioSceneRuntime::ApplySettings(entity))
-					{
-						error = "Could not apply settings to the active audio voice";
-						return false;
-					}
-					return true;
-				};
-				return property;
-			};
 			auto minDistance = Property(
 				ComponentIds::AudioSourceProperties::MinDistance, "MinDistance",
 				PropertyKind::Float,
@@ -1707,17 +1762,24 @@ namespace TomCat {
 				BoolProperty<AudioSource>(ComponentIds::AudioSourceProperties::PlayOnStart,
 					"PlayOnStart", &AudioSource::PlayOnStart),
 				std::move(loop), std::move(streaming),
-				runtimeFloat(FloatProperty<AudioSource>(
+				FloatProperty<AudioSource>(
 					ComponentIds::AudioSourceProperties::Volume,
-					"Volume", &AudioSource::Volume, 0.0f, 4.0f)),
-				runtimeFloat(FloatProperty<AudioSource>(
+					"Volume", &AudioSource::Volume, 0.0f, 4.0f),
+				FloatProperty<AudioSource>(
 					ComponentIds::AudioSourceProperties::Pitch,
-					"Pitch", &AudioSource::Pitch, 0.25f, 4.0f)),
+					"Pitch", &AudioSource::Pitch, 0.25f, 4.0f),
 				FloatProperty<AudioSource>(ComponentIds::AudioSourceProperties::SpatialBlend,
 					"SpatialBlend", &AudioSource::SpatialBlend, 0.0f, 1.0f),
 				std::move(minDistance), std::move(maxDistance),
-				runtimeFloat(std::move(mixerGroup))
+				std::move(mixerGroup)
 			};
+			const AudioSource audioDefaults;
+			SetPropertyDefault(descriptor, ComponentIds::AudioSourceProperties::MinDistance,
+				audioDefaults.MinDistance);
+			SetPropertyDefault(descriptor, ComponentIds::AudioSourceProperties::MaxDistance,
+				audioDefaults.MaxDistance);
+			SetPropertyDefault(descriptor, ComponentIds::AudioSourceProperties::MixerGroup,
+				static_cast<uint32_t>(audioDefaults.MixerGroup));
 			return descriptor;
 		}
 
@@ -1760,13 +1822,15 @@ namespace TomCat {
 				BoolProperty<Rigidbody2D>(ComponentIds::Rigidbody2DProperties::FixedRotation,
 					"FixedRotation", &Rigidbody2D::FixedRotation)
 			};
+			SetPropertyDefault(descriptor, ComponentIds::Rigidbody2DProperties::BodyType,
+				static_cast<int32_t>(Rigidbody2D{}.Type));
 			return descriptor;
 		}
 
 		PropertyDescriptor CollisionBitsProperty(uint64_t id, const char* name,
 			std::function<uint16_t&(Entity)> access, bool allowZero)
 		{
-			return Property(id, name, PropertyKind::UInt32,
+			PropertyDescriptor property = Property(id, name, PropertyKind::UInt32,
 				[access](Entity entity) -> PropertyValue { return static_cast<uint32_t>(access(entity)); },
 				[access, allowZero, name](Entity entity, const PropertyValue& value, std::string& error)
 				{
@@ -1776,6 +1840,8 @@ namespace TomCat {
 					access(entity) = static_cast<uint16_t>(bits);
 					return true;
 				});
+			property.DefaultValue = allowZero ? uint32_t(0xffff) : uint32_t(1);
+			return property;
 		}
 
 		ComponentDescriptor MakeBoxColliderDescriptor()
@@ -1853,6 +1919,8 @@ namespace TomCat {
 				FloatProperty<DistanceJoint2D>(ComponentIds::DistanceJoint2DProperties::Damping, "Damping", &DistanceJoint2D::Damping, 0.0f, 1.0f),
 				BoolProperty<DistanceJoint2D>(ComponentIds::DistanceJoint2DProperties::CollideConnected, "CollideConnected", &DistanceJoint2D::CollideConnected)
 			};
+			SetPropertyDefault(descriptor,
+				ComponentIds::DistanceJoint2DProperties::ConnectedEntity, uint64_t(0));
 			return descriptor;
 		}
 
@@ -1861,7 +1929,7 @@ namespace TomCat {
 	std::vector<ComponentDescriptor> MakeBuiltInComponentDescriptors()
 	{
 		std::vector<ComponentDescriptor> result;
-		result.reserve(15);
+		result.reserve(16);
 		result.emplace_back(MakeIDDescriptor());
 		result.emplace_back(MakeTagDescriptor());
 		result.emplace_back(MakeEntityMetadataDescriptor());
@@ -1877,6 +1945,7 @@ namespace TomCat {
 		result.emplace_back(MakeBoxColliderDescriptor());
 		result.emplace_back(MakeCircleColliderDescriptor());
 		result.emplace_back(MakeDistanceJointDescriptor());
+		result.emplace_back(MakeEditorVisibilityDescriptor());
 		return result;
 	}
 

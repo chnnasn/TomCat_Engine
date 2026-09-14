@@ -5,7 +5,7 @@ namespace TomCat.Interop;
 public static class ManagedAbi
 {
     public const uint NativeApiVersion = 1;
-    public const uint ManagedApiVersion = 1;
+    public const uint ManagedApiVersion = 2;
     public const uint ScriptManifestVersion = 1;
 }
 
@@ -441,6 +441,35 @@ public unsafe struct NativeComponentApiV1
 		NativePropertyValueV1*, int> GetProperty;
 	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong,
 		NativePropertyValueV1, int> SetProperty;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeComponentStringApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong, byte*,
+		uint, uint*, int> GetProperty;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong, ulong,
+		NativeUtf8View, int> SetProperty;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeDeferredCommandsApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, NativeUtf8View, int>
+		AbortBatch;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeDeferredCallbackTransactionsApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, ulong*, int> BeginCallback;
+	public delegate* unmanaged[Cdecl]<ulong, int> CompleteCallback;
 }
 
 [Flags]

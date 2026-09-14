@@ -586,11 +586,19 @@ namespace TomCat {
 			return false;
 		if (m_SceneHistory.HasActiveTransaction())
 			CommitSceneTransaction();
-		const bool restored = m_SceneHistory.Undo(
+		std::string recoveryError;
+		const bool restored =
+			m_RecoveryService.RestoreHistoryAndScheduleAutosave(
+				m_SceneHistory,
+				EditorRecoveryService::HistoryDirection::Undo,
 			[this](const SceneHistory::Snapshot& snapshot)
 			{
 				return ApplyHistorySnapshot(snapshot);
-			});
+			}, m_EditorScenePath, recoveryError);
+		if (!recoveryError.empty())
+			TC_Core_Warn(
+				"Undo completed but recovery autosave was not scheduled: {0}",
+				recoveryError);
 		return restored;
 	}
 
@@ -600,11 +608,19 @@ namespace TomCat {
 			return false;
 		if (m_SceneHistory.HasActiveTransaction())
 			CommitSceneTransaction();
-		const bool restored = m_SceneHistory.Redo(
+		std::string recoveryError;
+		const bool restored =
+			m_RecoveryService.RestoreHistoryAndScheduleAutosave(
+				m_SceneHistory,
+				EditorRecoveryService::HistoryDirection::Redo,
 			[this](const SceneHistory::Snapshot& snapshot)
 			{
 				return ApplyHistorySnapshot(snapshot);
-			});
+			}, m_EditorScenePath, recoveryError);
+		if (!recoveryError.empty())
+			TC_Core_Warn(
+				"Redo completed but recovery autosave was not scheduled: {0}",
+				recoveryError);
 		return restored;
 	}
 
@@ -1836,7 +1852,9 @@ namespace TomCat {
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
-		if (selectedEntity && m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
+		if (selectedEntity && m_ActiveScene
+			&& m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
+			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
 		{
 			ImGuizmo::AllowAxisFlip(false);
 			ImGuizmo::SetOrthographic(false);
@@ -1982,6 +2000,7 @@ namespace TomCat {
 		UI_BuildSettings();
 		UI_ProjectSettings();
 		UI_UnsavedChangesModal();
+		UI_ProjectMigrationRecoveryModal();
 		UI_ProjectMigrationModal();
 		UI_RecoveryModal();
 		if (!m_PendingPanelFocus.empty())
@@ -3182,6 +3201,10 @@ namespace TomCat {
 
 		for (const ColliderDebugShape& shape : shapes)
 		{
+			const Entity shapeEntity = m_ActiveScene->FindEntityByUUID(shape.EntityID);
+			if (!shapeEntity
+				|| !m_ActiveScene->IsVisibleInEditorHierarchy(shapeEntity))
+				continue;
 			const bool selected = selectedUUID != UUID(0) && shape.EntityID == selectedUUID;
 			const bool edited = selected &&
 				((editMode == SceneHierarchyPanel::ColliderEditMode::Box &&
@@ -3319,7 +3342,8 @@ namespace TomCat {
 			editMode == SceneHierarchyPanel::ColliderEditMode::None ||
 			!m_ActiveScene ||
 			!selectedEntity || !selectedEntity.HasComponent<Transform>() ||
-			!selectedEntity.HasComponent<ID>())
+			!selectedEntity.HasComponent<ID>() ||
+			!m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity))
 		{
 			ResetColliderEditState();
 			return;
@@ -5106,6 +5130,237 @@ namespace TomCat {
 		}
 	}
 
+	void EditorLayer::UI_ProjectMigrationRecoveryModal()
+	{
+		if (m_OpenProjectMigrationRecoveryModal &&
+			m_PendingProjectMigrationRecovery)
+		{
+			ImGui::OpenPopup("Interrupted Project Migration");
+			m_OpenProjectMigrationRecoveryModal = false;
+		}
+
+		std::optional<PendingProjectMigrationRecovery> recoveryToRun;
+		std::optional<PendingProjectMigrationRecovery> abandonedRecoveryToOpen;
+		if (!ImGui::BeginPopupModal("Interrupted Project Migration", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize))
+			return;
+		if (!m_PendingProjectMigrationRecovery)
+		{
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return;
+		}
+
+		const ProjectMigrationRecoveryPreview& preview =
+			m_PendingProjectMigrationRecovery->Preview;
+		auto refreshPendingPreview = [this]() -> std::string
+		{
+			ProjectMigrationRecoveryPreview refreshed;
+			std::string refreshError;
+			if (!m_PendingProjectMigrationRecovery ||
+				!Project::PreviewInterruptedMigration(
+					m_PendingProjectMigrationRecovery->ProjectPath,
+					refreshed, refreshError))
+				return refreshError.empty()
+					? "recovery preview is unavailable" : refreshError;
+			if (!refreshed.HasPendingRecovery())
+				return "the active recovery journal no longer exists";
+			m_PendingProjectMigrationRecovery->Preview =
+				std::move(refreshed);
+			return {};
+		};
+		ImGui::TextWrapped("Project: %s",
+			PathToUTF8(m_PendingProjectMigrationRecovery->ProjectPath).c_str());
+		ImGui::TextWrapped(
+			"An interrupted migration journal was found. Review every action "
+			"before restoring; the Editor has not changed any project file.");
+		if (preview.JournalState == "committed")
+		{
+			ImGui::TextWrapped(
+				"The migration was committed. Recovery keeps the current files "
+				"and clears only the leftover active journal.");
+		}
+		else
+		{
+			ImGui::TextWrapped(
+				"Restore will replace or remove the files listed below. Any "
+				"manual repairs made after the crash are shown as current files.");
+		}
+		ImGui::Text("Transaction: %s", preview.TransactionID.c_str());
+		ImGui::Text("Backup: %s",
+			preview.BackupDirectory.generic_string().c_str());
+		ImGui::TextWrapped(
+			"Original describes the pre-migration state recorded by the journal; "
+			"an absent original means the migration created that file.");
+		ImGui::Separator();
+		ImGui::BeginChild("##ProjectMigrationRecoveryChanges",
+			ImVec2(720.0f, 240.0f), true);
+		for (const ProjectMigrationRecoveryChange& change : preview.Changes)
+		{
+			const char* action = "Keep current";
+			switch (change.Action)
+			{
+				case ProjectMigrationRecoveryAction::RestoreOriginal:
+					action = "Restore original (replaces current)";
+					break;
+				case ProjectMigrationRecoveryAction::RemoveCreatedFile:
+					action = "Remove migration-created file";
+					break;
+				case ProjectMigrationRecoveryAction::AlreadyRestored:
+					action = "Already matches original";
+					break;
+				case ProjectMigrationRecoveryAction::AlreadyAbsent:
+					action = "Already absent";
+					break;
+				case ProjectMigrationRecoveryAction::KeepCurrent:
+					break;
+			}
+			ImGui::TextWrapped("%s  %s", action,
+				change.RelativePath.generic_string().c_str());
+			ImGui::TextDisabled(
+				"Current: %s, %llu bytes | Original: %s, %llu bytes",
+				change.CurrentExists ? "present" : "absent",
+				static_cast<unsigned long long>(change.CurrentSize),
+				change.OriginalExisted ? "present" : "absent",
+				static_cast<unsigned long long>(change.OriginalSize));
+			ImGui::TextWrapped("Current SHA-256: %s",
+				change.CurrentExists ? change.CurrentSHA256.c_str()
+					: "n/a (file is absent)");
+			ImGui::TextWrapped("Original SHA-256: %s",
+				change.OriginalExisted ? change.OriginalSHA256.c_str()
+					: "n/a (file did not exist before migration)");
+		}
+		ImGui::EndChild();
+		ImGui::Separator();
+
+		if (!m_ProjectMigrationRecoveryStatus.empty())
+		{
+			const ImVec4 statusColor =
+				m_ProjectMigrationRecoveryStatusSucceeded
+				? ImVec4(0.35f, 0.78f, 0.45f, 1.0f)
+				: ImVec4(0.95f, 0.38f, 0.32f, 1.0f);
+			ImGui::TextColored(statusColor, "%s",
+				m_ProjectMigrationRecoveryStatus.c_str());
+		}
+		if (preview.JournalState != "committed")
+		{
+			ImGui::TextWrapped(
+				"Keep Current Files removes only the active rollback journal. "
+				"The current project files and transaction backup archive remain.");
+		}
+
+		const char* recoverLabel = preview.JournalState == "committed"
+			? "Keep Files, Clear Journal and Open"
+			: "Restore Originals and Open";
+		if (ImGui::Button(recoverLabel))
+		{
+			recoveryToRun = *m_PendingProjectMigrationRecovery;
+			m_ProjectMigrationRecoveryStatus.clear();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Export Backup..."))
+		{
+			const std::filesystem::path parent = FileDialogs::OpenFolder();
+			if (!parent.empty())
+			{
+				std::filesystem::path destination = parent /
+					("TomCat-Migration-Recovery-" + preview.TransactionID);
+				std::error_code destinationError;
+				for (uint32_t suffix = 1; suffix < 10000; ++suffix)
+				{
+					const bool exists =
+						std::filesystem::exists(destination, destinationError);
+					if (destinationError || !exists)
+						break;
+					destination = parent /
+						("TomCat-Migration-Recovery-" +
+							preview.TransactionID + "-" +
+							std::to_string(suffix));
+				}
+				std::string exportError;
+				if (destinationError)
+				{
+					m_ProjectMigrationRecoveryStatusSucceeded = false;
+					exportError =
+						"could not inspect the selected destination: " +
+						destinationError.message();
+				}
+				else
+				{
+					m_ProjectMigrationRecoveryStatusSucceeded =
+						Project::ExportInterruptedMigrationBackup(
+							m_PendingProjectMigrationRecovery->ProjectPath,
+							preview, destination, exportError);
+				}
+				m_ProjectMigrationRecoveryStatus =
+					m_ProjectMigrationRecoveryStatusSucceeded
+					? "Backup exported to " + PathToUTF8(destination)
+					: "Backup export failed: " + exportError;
+				if (!m_ProjectMigrationRecoveryStatusSucceeded)
+				{
+					const std::string refreshError = refreshPendingPreview();
+					if (!refreshError.empty())
+						m_ProjectMigrationRecoveryStatus +=
+							"; preview refresh failed: " + refreshError;
+				}
+			}
+		}
+		if (preview.JournalState != "committed")
+		{
+			ImGui::SameLine();
+			if (ImGui::Button("Keep Current Files and Open"))
+			{
+				std::string abandonError;
+				if (Project::AbandonInterruptedMigrationRecovery(
+					m_PendingProjectMigrationRecovery->ProjectPath,
+					preview, abandonError))
+				{
+					abandonedRecoveryToOpen =
+						*m_PendingProjectMigrationRecovery;
+					m_ProjectMigrationRecoveryStatus.clear();
+					ImGui::CloseCurrentPopup();
+				}
+				else
+				{
+					m_ProjectMigrationRecoveryStatusSucceeded = false;
+					m_ProjectMigrationRecoveryStatus =
+						"Could not keep current files: " + abandonError;
+					const std::string refreshError = refreshPendingPreview();
+					if (!refreshError.empty())
+						m_ProjectMigrationRecoveryStatus +=
+							"; preview refresh failed: " + refreshError;
+				}
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel"))
+		{
+			m_PendingProjectMigrationRecovery.reset();
+			m_ApprovedProjectMigrationRecovery.reset();
+			m_PendingProjectMigrationRecoveryLock.Release();
+			m_ProjectMigrationRecoveryStatus.clear();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+
+		if (recoveryToRun)
+		{
+			m_PendingProjectMigrationRecovery.reset();
+			m_ApprovedProjectMigrationRecovery = *recoveryToRun;
+			m_BypassUnsavedCheck = true;
+			OpenProject(recoveryToRun->ProjectPath);
+			m_BypassUnsavedCheck = false;
+		}
+		else if (abandonedRecoveryToOpen)
+		{
+			m_PendingProjectMigrationRecovery.reset();
+			m_BypassUnsavedCheck = true;
+			OpenProject(abandonedRecoveryToOpen->ProjectPath);
+			m_BypassUnsavedCheck = false;
+		}
+	}
+
 	void EditorLayer::UI_RecoveryModal()
 	{
 		if (m_OpenRecoveryModal && m_PendingRecovery)
@@ -5189,7 +5444,11 @@ namespace TomCat {
 		EditorProjectLock candidateLock;
 		if (!alreadyOwns)
 		{
-			if (m_PendingProjectMigrationLock.OwnsProject(normalizedPath))
+			if (m_PendingProjectMigrationRecoveryLock.OwnsProject(
+				normalizedPath))
+				candidateLock =
+					std::move(m_PendingProjectMigrationRecoveryLock);
+			else if (m_PendingProjectMigrationLock.OwnsProject(normalizedPath))
 				candidateLock = std::move(m_PendingProjectMigrationLock);
 			else
 			{
@@ -5214,11 +5473,13 @@ namespace TomCat {
 			}
 		}
 
+		ProjectMigrationRecoveryPreview migrationRecoveryPreview;
 		std::string migrationRecoveryError;
-		if (!Project::RecoverInterruptedMigration(
-			normalizedPath, migrationRecoveryError))
+		if (!Project::PreviewInterruptedMigration(
+			normalizedPath, migrationRecoveryPreview, migrationRecoveryError))
 		{
-			const std::string message = "Project migration recovery failed: "
+			const std::string message =
+				"Project migration recovery inspection failed: "
 				+ migrationRecoveryError;
 			m_ShowConsolePanel = true;
 			m_PendingPanelFocus = "Console";
@@ -5226,8 +5487,72 @@ namespace TomCat {
 				message, "Project Migration");
 			TC_Core_Error("{0}", message);
 			m_ApprovedProjectMigration.reset();
+			m_ApprovedProjectMigrationRecovery.reset();
 			return false;
 		}
+		const bool recoveryWasApproved =
+			m_ApprovedProjectMigrationRecovery &&
+			AbsoluteLexicalPath(
+				m_ApprovedProjectMigrationRecovery->ProjectPath)
+				== normalizedPath;
+		if (migrationRecoveryPreview.HasPendingRecovery() &&
+			!recoveryWasApproved)
+		{
+			m_ApprovedProjectMigrationRecovery.reset();
+			m_PendingProjectMigrationRecovery =
+				PendingProjectMigrationRecovery{
+					normalizedPath, std::move(migrationRecoveryPreview) };
+			if (!alreadyOwns)
+				m_PendingProjectMigrationRecoveryLock =
+					std::move(candidateLock);
+			m_ProjectMigrationRecoveryStatus.clear();
+			m_ProjectMigrationRecoveryStatusSucceeded = false;
+			m_OpenProjectMigrationRecoveryModal = true;
+			return false;
+		}
+		if (migrationRecoveryPreview.HasPendingRecovery())
+		{
+			const ProjectMigrationRecoveryPreview approvedRecovery =
+				m_ApprovedProjectMigrationRecovery->Preview;
+			m_ApprovedProjectMigrationRecovery.reset();
+			if (!Project::RecoverInterruptedMigration(
+				normalizedPath, approvedRecovery, migrationRecoveryError))
+			{
+				const std::string message =
+					"Project migration recovery was not applied: " +
+					migrationRecoveryError;
+				ProjectMigrationRecoveryPreview refreshedRecovery;
+				std::string refreshError;
+				if (Project::PreviewInterruptedMigration(
+					normalizedPath, refreshedRecovery, refreshError) &&
+					refreshedRecovery.HasPendingRecovery())
+				{
+					m_PendingProjectMigrationRecovery =
+						PendingProjectMigrationRecovery{
+							normalizedPath, std::move(refreshedRecovery) };
+					if (!alreadyOwns)
+						m_PendingProjectMigrationRecoveryLock =
+							std::move(candidateLock);
+					m_ProjectMigrationRecoveryStatusSucceeded = false;
+					m_ProjectMigrationRecoveryStatus = message;
+					m_OpenProjectMigrationRecoveryModal = true;
+					return false;
+				}
+				m_ShowConsolePanel = true;
+				m_PendingPanelFocus = "Console";
+				m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+					message, "Project Migration");
+				TC_Core_Error("{0}", message);
+				if (!refreshError.empty())
+					TC_Core_Error(
+						"Project migration recovery could not be re-inspected: {0}",
+						refreshError);
+				return false;
+			}
+		}
+		else
+			m_ApprovedProjectMigrationRecovery.reset();
+
 		ProjectMigrationPreview migrationPreview;
 		std::string migrationPreviewError;
 		if (!ProjectManager::Get().PreviewProjectMigration(

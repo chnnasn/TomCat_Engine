@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SceneHistory.h"
+
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -66,6 +68,12 @@ namespace TomCat {
 	class EditorRecoveryService final
 	{
 	public:
+		enum class HistoryDirection
+		{
+			Undo,
+			Redo
+		};
+
 		struct RecoveryCandidate
 		{
 			std::filesystem::path RecoveryPath;
@@ -86,6 +94,14 @@ namespace TomCat {
 		bool ScheduleAutosave(const std::filesystem::path& sourceScenePath,
 			uint64_t stateId, uint64_t selectedEntity,
 			std::shared_ptr<const std::string> archive, std::string& error);
+		// Applies one history traversal and queues the snapshot that actually
+		// became current. A recovery scheduling failure is returned in error but
+		// does not report the already-applied history traversal as failed.
+		bool RestoreHistoryAndScheduleAutosave(SceneHistory& history,
+			HistoryDirection direction,
+			const SceneHistory::RestoreCallback& restore,
+			const std::filesystem::path& sourceScenePath,
+			std::string& error);
 		bool Flush(std::string& error);
 		std::optional<RecoveryCandidate> FindRecovery(
 			const std::filesystem::path& sourceScenePath, std::string& error);

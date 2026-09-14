@@ -76,6 +76,7 @@ namespace TomCat {
 		void ResetSceneInteractionState();
 		void RequestDestructiveAction(std::function<bool()> action);
 		void UI_UnsavedChangesModal();
+		void UI_ProjectMigrationRecoveryModal();
 		void UI_ProjectMigrationModal();
 		void UI_RecoveryModal();
 		void RequestExit();
@@ -250,6 +251,19 @@ namespace TomCat {
 			std::filesystem::path ProjectPath;
 			ProjectMigrationPreview Preview;
 		};
+		struct PendingProjectMigrationRecovery
+		{
+			std::filesystem::path ProjectPath;
+			ProjectMigrationRecoveryPreview Preview;
+		};
+		std::optional<PendingProjectMigrationRecovery>
+			m_PendingProjectMigrationRecovery;
+		std::optional<PendingProjectMigrationRecovery>
+			m_ApprovedProjectMigrationRecovery;
+		EditorProjectLock m_PendingProjectMigrationRecoveryLock;
+		bool m_OpenProjectMigrationRecoveryModal = false;
+		std::string m_ProjectMigrationRecoveryStatus;
+		bool m_ProjectMigrationRecoveryStatusSucceeded = false;
 		std::optional<PendingProjectMigration> m_PendingProjectMigration;
 		std::optional<PendingProjectMigration> m_ApprovedProjectMigration;
 		EditorProjectLock m_PendingProjectMigrationLock;

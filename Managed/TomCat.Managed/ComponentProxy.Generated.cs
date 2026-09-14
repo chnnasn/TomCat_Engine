@@ -87,72 +87,79 @@ public sealed partial class Camera : IEntityComponent
 
     public bool Primary
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x000000000000012cUL, "Camera.Primary");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x000000000000012cUL, value, "Camera.Primary");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x000000000000012cUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x000000000000012cUL, value);
     }
 
     public bool FixedAspectRatio
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x000000000000012dUL, "Camera.FixedAspectRatio");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x000000000000012dUL, value, "Camera.FixedAspectRatio");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x000000000000012dUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x000000000000012dUL, value);
     }
 
     public Color BackgroundColor
     {
-        get => NativeBridge.GetRegisteredColor(Entity, RegisteredTypeId, 0x000000000000012eUL, "Camera.BackgroundColor");
-        set => NativeBridge.SetRegisteredColor(Entity, RegisteredTypeId,
-            0x000000000000012eUL, value, "Camera.BackgroundColor");
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x000000000000012eUL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x000000000000012eUL, value);
     }
 
     public CameraProjectionType ProjectionType
     {
-        get => (CameraProjectionType)NativeBridge.GetRegisteredInt32(Entity, RegisteredTypeId, 0x000000000000012fUL, "Camera.ProjectionType");
-        set => NativeBridge.SetRegisteredInt32(Entity, RegisteredTypeId,
-            0x000000000000012fUL, (int)value, "Camera.ProjectionType");
+        get => (CameraProjectionType)RegisteredComponentProperties.GetInt32(Entity, RegisteredTypeId, 0x000000000000012fUL);
+        set => RegisteredComponentProperties.SetInt32(Entity, RegisteredTypeId,
+            0x000000000000012fUL, (int)value);
     }
 
     public float OrthographicSize
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000130UL, "Camera.OrthographicSize");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000130UL, value, "Camera.OrthographicSize");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000130UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000130UL, value);
     }
 
     public float OrthographicNearClip
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000131UL, "Camera.OrthographicNearClip");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000131UL, value, "Camera.OrthographicNearClip");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000131UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000131UL, value);
     }
 
     public float OrthographicFarClip
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000132UL, "Camera.OrthographicFarClip");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000132UL, value, "Camera.OrthographicFarClip");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000132UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000132UL, value);
     }
 
     public float PerspectiveVerticalFov
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000133UL, "Camera.PerspectiveVerticalFov");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000133UL, value, "Camera.PerspectiveVerticalFov");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000133UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000133UL, value);
     }
 
     public float PerspectiveNearClip
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000134UL, "Camera.PerspectiveNearClip");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000134UL, value, "Camera.PerspectiveNearClip");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000134UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000134UL, value);
     }
 
     public float PerspectiveFarClip
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000135UL, "Camera.PerspectiveFarClip");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000135UL, value, "Camera.PerspectiveFarClip");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000135UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000135UL, value);
+    }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000136UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000136UL, value);
     }
 }
 
@@ -166,44 +173,44 @@ public sealed partial class SpriteRenderer : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x00000000000000c8UL, "SpriteRenderer.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x00000000000000c8UL, value, "SpriteRenderer.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000000c8UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000000c8UL, value);
     }
 
     public Color Color
     {
-        get => NativeBridge.GetRegisteredColor(Entity, RegisteredTypeId, 0x00000000000000c9UL, "SpriteRenderer.Color");
-        set => NativeBridge.SetRegisteredColor(Entity, RegisteredTypeId,
-            0x00000000000000c9UL, value, "SpriteRenderer.Color");
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x00000000000000c9UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x00000000000000c9UL, value);
     }
 
     public AssetRef<Texture2DAsset> Sprite
     {
-        get => new(NativeBridge.GetRegisteredUInt64(Entity, RegisteredTypeId, 0x00000000000000caUL, "SpriteRenderer.Sprite"));
-        set => NativeBridge.SetRegisteredUInt64(Entity, RegisteredTypeId,
-            0x00000000000000caUL, value.Handle, "SpriteRenderer.Sprite");
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x00000000000000caUL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x00000000000000caUL, value.Handle);
     }
 
     public float TilingFactor
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x00000000000000cbUL, "SpriteRenderer.TilingFactor");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x00000000000000cbUL, value, "SpriteRenderer.TilingFactor");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000000cbUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000000cbUL, value);
     }
 
     public int SortingLayer
     {
-        get => NativeBridge.GetRegisteredInt32(Entity, RegisteredTypeId, 0x00000000000000ccUL, "SpriteRenderer.SortingLayer");
-        set => NativeBridge.SetRegisteredInt32(Entity, RegisteredTypeId,
-            0x00000000000000ccUL, value, "SpriteRenderer.SortingLayer");
+        get => RegisteredComponentProperties.GetInt32(Entity, RegisteredTypeId, 0x00000000000000ccUL);
+        set => RegisteredComponentProperties.SetInt32(Entity, RegisteredTypeId,
+            0x00000000000000ccUL, value);
     }
 
     public int OrderInLayer
     {
-        get => NativeBridge.GetRegisteredInt32(Entity, RegisteredTypeId, 0x00000000000000cdUL, "SpriteRenderer.OrderInLayer");
-        set => NativeBridge.SetRegisteredInt32(Entity, RegisteredTypeId,
-            0x00000000000000cdUL, value, "SpriteRenderer.OrderInLayer");
+        get => RegisteredComponentProperties.GetInt32(Entity, RegisteredTypeId, 0x00000000000000cdUL);
+        set => RegisteredComponentProperties.SetInt32(Entity, RegisteredTypeId,
+            0x00000000000000cdUL, value);
     }
 }
 
@@ -217,23 +224,23 @@ public sealed partial class SpriteAnimator : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x00000000000002bcUL, "SpriteAnimator.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x00000000000002bcUL, value, "SpriteAnimator.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000002bcUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000002bcUL, value);
     }
 
     public float Speed
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x00000000000002bdUL, "SpriteAnimator.Speed");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x00000000000002bdUL, value, "SpriteAnimator.Speed");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000002bdUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000002bdUL, value);
     }
 
     public bool PlayOnStart
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x00000000000002c0UL, "SpriteAnimator.PlayOnStart");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x00000000000002c0UL, value, "SpriteAnimator.PlayOnStart");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000002c0UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000002c0UL, value);
     }
 }
 
@@ -247,79 +254,79 @@ public sealed partial class AudioSource : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000384UL, "AudioSource.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000384UL, value, "AudioSource.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000384UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000384UL, value);
     }
 
     public AssetRef<AudioAsset> Clip
     {
-        get => new(NativeBridge.GetRegisteredUInt64(Entity, RegisteredTypeId, 0x0000000000000385UL, "AudioSource.Clip"));
-        set => NativeBridge.SetRegisteredUInt64(Entity, RegisteredTypeId,
-            0x0000000000000385UL, value.Handle, "AudioSource.Clip");
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x0000000000000385UL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x0000000000000385UL, value.Handle);
     }
 
     public bool PlayOnStart
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000386UL, "AudioSource.PlayOnStart");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000386UL, value, "AudioSource.PlayOnStart");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000386UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000386UL, value);
     }
 
     public bool Loop
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000387UL, "AudioSource.Loop");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000387UL, value, "AudioSource.Loop");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000387UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000387UL, value);
     }
 
     public bool Streaming
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000388UL, "AudioSource.Streaming");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000388UL, value, "AudioSource.Streaming");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000388UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000388UL, value);
     }
 
     public float Volume
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000389UL, "AudioSource.Volume");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000389UL, value, "AudioSource.Volume");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000389UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000389UL, value);
     }
 
     public float Pitch
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x000000000000038aUL, "AudioSource.Pitch");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x000000000000038aUL, value, "AudioSource.Pitch");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000038aUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000038aUL, value);
     }
 
     public float SpatialBlend
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x000000000000038bUL, "AudioSource.SpatialBlend");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x000000000000038bUL, value, "AudioSource.SpatialBlend");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000038bUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000038bUL, value);
     }
 
     public float MinDistance
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x000000000000038cUL, "AudioSource.MinDistance");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x000000000000038cUL, value, "AudioSource.MinDistance");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000038cUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000038cUL, value);
     }
 
     public float MaxDistance
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x000000000000038dUL, "AudioSource.MaxDistance");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x000000000000038dUL, value, "AudioSource.MaxDistance");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000038dUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000038dUL, value);
     }
 
     public AudioMixerGroup MixerGroup
     {
-        get => (AudioMixerGroup)NativeBridge.GetRegisteredUInt32(Entity, RegisteredTypeId, 0x000000000000038eUL, "AudioSource.MixerGroup");
-        set => NativeBridge.SetRegisteredUInt32(Entity, RegisteredTypeId,
-            0x000000000000038eUL, (uint)value, "AudioSource.MixerGroup");
+        get => (AudioMixerGroup)RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x000000000000038eUL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x000000000000038eUL, (uint)value);
     }
 }
 
@@ -333,16 +340,16 @@ public sealed partial class AudioListener : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000398UL, "AudioListener.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000398UL, value, "AudioListener.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000398UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000398UL, value);
     }
 
     public bool Primary
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000399UL, "AudioListener.Primary");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000399UL, value, "AudioListener.Primary");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000399UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000399UL, value);
     }
 }
 
@@ -356,23 +363,23 @@ public sealed partial class Rigidbody2D : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000064UL, "Rigidbody2D.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000064UL, value, "Rigidbody2D.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000064UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000064UL, value);
     }
 
     public RigidbodyBodyType BodyType
     {
-        get => (RigidbodyBodyType)NativeBridge.GetRegisteredInt32(Entity, RegisteredTypeId, 0x0000000000000065UL, "Rigidbody2D.BodyType");
-        set => NativeBridge.SetRegisteredInt32(Entity, RegisteredTypeId,
-            0x0000000000000065UL, (int)value, "Rigidbody2D.BodyType");
+        get => (RigidbodyBodyType)RegisteredComponentProperties.GetInt32(Entity, RegisteredTypeId, 0x0000000000000065UL);
+        set => RegisteredComponentProperties.SetInt32(Entity, RegisteredTypeId,
+            0x0000000000000065UL, (int)value);
     }
 
     public bool FixedRotation
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000066UL, "Rigidbody2D.FixedRotation");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000066UL, value, "Rigidbody2D.FixedRotation");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000066UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000066UL, value);
     }
 }
 
@@ -386,72 +393,72 @@ public sealed partial class BoxCollider2D : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000190UL, "BoxCollider2D.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000190UL, value, "BoxCollider2D.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000190UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000190UL, value);
     }
 
     public bool IsTrigger
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000191UL, "BoxCollider2D.IsTrigger");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000191UL, value, "BoxCollider2D.IsTrigger");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000191UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000191UL, value);
     }
 
     public uint CollisionLayer
     {
-        get => NativeBridge.GetRegisteredUInt32(Entity, RegisteredTypeId, 0x0000000000000192UL, "BoxCollider2D.CollisionLayer");
-        set => NativeBridge.SetRegisteredUInt32(Entity, RegisteredTypeId,
-            0x0000000000000192UL, value, "BoxCollider2D.CollisionLayer");
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x0000000000000192UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x0000000000000192UL, value);
     }
 
     public uint CollisionMask
     {
-        get => NativeBridge.GetRegisteredUInt32(Entity, RegisteredTypeId, 0x0000000000000193UL, "BoxCollider2D.CollisionMask");
-        set => NativeBridge.SetRegisteredUInt32(Entity, RegisteredTypeId,
-            0x0000000000000193UL, value, "BoxCollider2D.CollisionMask");
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x0000000000000193UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x0000000000000193UL, value);
     }
 
     public Vector2 Offset
     {
-        get => NativeBridge.GetRegisteredVector2(Entity, RegisteredTypeId, 0x0000000000000194UL, "BoxCollider2D.Offset");
-        set => NativeBridge.SetRegisteredVector2(Entity, RegisteredTypeId,
-            0x0000000000000194UL, value, "BoxCollider2D.Offset");
+        get => RegisteredComponentProperties.GetVector2(Entity, RegisteredTypeId, 0x0000000000000194UL);
+        set => RegisteredComponentProperties.SetVector2(Entity, RegisteredTypeId,
+            0x0000000000000194UL, value);
     }
 
     public Vector2 Size
     {
-        get => NativeBridge.GetRegisteredVector2(Entity, RegisteredTypeId, 0x0000000000000195UL, "BoxCollider2D.Size");
-        set => NativeBridge.SetRegisteredVector2(Entity, RegisteredTypeId,
-            0x0000000000000195UL, value, "BoxCollider2D.Size");
+        get => RegisteredComponentProperties.GetVector2(Entity, RegisteredTypeId, 0x0000000000000195UL);
+        set => RegisteredComponentProperties.SetVector2(Entity, RegisteredTypeId,
+            0x0000000000000195UL, value);
     }
 
     public float Density
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000196UL, "BoxCollider2D.Density");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000196UL, value, "BoxCollider2D.Density");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000196UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000196UL, value);
     }
 
     public float Friction
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000197UL, "BoxCollider2D.Friction");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000197UL, value, "BoxCollider2D.Friction");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000197UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000197UL, value);
     }
 
     public float Restitution
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000198UL, "BoxCollider2D.Restitution");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000198UL, value, "BoxCollider2D.Restitution");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000198UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000198UL, value);
     }
 
     public float RestitutionThreshold
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x0000000000000199UL, "BoxCollider2D.RestitutionThreshold");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x0000000000000199UL, value, "BoxCollider2D.RestitutionThreshold");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000199UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000199UL, value);
     }
 }
 
@@ -465,65 +472,65 @@ public sealed partial class CircleCollider2D : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x00000000000001f4UL, "CircleCollider2D.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x00000000000001f4UL, value, "CircleCollider2D.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000001f4UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000001f4UL, value);
     }
 
     public bool IsTrigger
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x00000000000001f5UL, "CircleCollider2D.IsTrigger");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x00000000000001f5UL, value, "CircleCollider2D.IsTrigger");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000001f5UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000001f5UL, value);
     }
 
     public uint CollisionLayer
     {
-        get => NativeBridge.GetRegisteredUInt32(Entity, RegisteredTypeId, 0x00000000000001f6UL, "CircleCollider2D.CollisionLayer");
-        set => NativeBridge.SetRegisteredUInt32(Entity, RegisteredTypeId,
-            0x00000000000001f6UL, value, "CircleCollider2D.CollisionLayer");
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x00000000000001f6UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x00000000000001f6UL, value);
     }
 
     public uint CollisionMask
     {
-        get => NativeBridge.GetRegisteredUInt32(Entity, RegisteredTypeId, 0x00000000000001f7UL, "CircleCollider2D.CollisionMask");
-        set => NativeBridge.SetRegisteredUInt32(Entity, RegisteredTypeId,
-            0x00000000000001f7UL, value, "CircleCollider2D.CollisionMask");
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x00000000000001f7UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x00000000000001f7UL, value);
     }
 
     public Vector2 Offset
     {
-        get => NativeBridge.GetRegisteredVector2(Entity, RegisteredTypeId, 0x00000000000001f8UL, "CircleCollider2D.Offset");
-        set => NativeBridge.SetRegisteredVector2(Entity, RegisteredTypeId,
-            0x00000000000001f8UL, value, "CircleCollider2D.Offset");
+        get => RegisteredComponentProperties.GetVector2(Entity, RegisteredTypeId, 0x00000000000001f8UL);
+        set => RegisteredComponentProperties.SetVector2(Entity, RegisteredTypeId,
+            0x00000000000001f8UL, value);
     }
 
     public float Radius
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x00000000000001f9UL, "CircleCollider2D.Radius");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x00000000000001f9UL, value, "CircleCollider2D.Radius");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000001f9UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000001f9UL, value);
     }
 
     public float Density
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x00000000000001faUL, "CircleCollider2D.Density");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x00000000000001faUL, value, "CircleCollider2D.Density");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000001faUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000001faUL, value);
     }
 
     public float Friction
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x00000000000001fbUL, "CircleCollider2D.Friction");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x00000000000001fbUL, value, "CircleCollider2D.Friction");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000001fbUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000001fbUL, value);
     }
 
     public float Restitution
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x00000000000001fcUL, "CircleCollider2D.Restitution");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x00000000000001fcUL, value, "CircleCollider2D.Restitution");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000001fcUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000001fcUL, value);
     }
 }
 
@@ -537,50 +544,129 @@ public sealed partial class DistanceJoint2D : IEntityComponent
 
     public bool Enabled
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x0000000000000258UL, "DistanceJoint2D.Enabled");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x0000000000000258UL, value, "DistanceJoint2D.Enabled");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000258UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000258UL, value);
     }
 
     public Vector2 Anchor
     {
-        get => NativeBridge.GetRegisteredVector2(Entity, RegisteredTypeId, 0x000000000000025aUL, "DistanceJoint2D.Anchor");
-        set => NativeBridge.SetRegisteredVector2(Entity, RegisteredTypeId,
-            0x000000000000025aUL, value, "DistanceJoint2D.Anchor");
+        get => RegisteredComponentProperties.GetVector2(Entity, RegisteredTypeId, 0x000000000000025aUL);
+        set => RegisteredComponentProperties.SetVector2(Entity, RegisteredTypeId,
+            0x000000000000025aUL, value);
     }
 
     public Vector2 ConnectedAnchor
     {
-        get => NativeBridge.GetRegisteredVector2(Entity, RegisteredTypeId, 0x000000000000025bUL, "DistanceJoint2D.ConnectedAnchor");
-        set => NativeBridge.SetRegisteredVector2(Entity, RegisteredTypeId,
-            0x000000000000025bUL, value, "DistanceJoint2D.ConnectedAnchor");
+        get => RegisteredComponentProperties.GetVector2(Entity, RegisteredTypeId, 0x000000000000025bUL);
+        set => RegisteredComponentProperties.SetVector2(Entity, RegisteredTypeId,
+            0x000000000000025bUL, value);
     }
 
     public float Distance
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x000000000000025cUL, "DistanceJoint2D.Distance");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x000000000000025cUL, value, "DistanceJoint2D.Distance");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000025cUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000025cUL, value);
     }
 
     public float Frequency
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x000000000000025dUL, "DistanceJoint2D.Frequency");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x000000000000025dUL, value, "DistanceJoint2D.Frequency");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000025dUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000025dUL, value);
     }
 
     public float Damping
     {
-        get => NativeBridge.GetRegisteredFloat(Entity, RegisteredTypeId, 0x000000000000025eUL, "DistanceJoint2D.Damping");
-        set => NativeBridge.SetRegisteredFloat(Entity, RegisteredTypeId,
-            0x000000000000025eUL, value, "DistanceJoint2D.Damping");
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000025eUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000025eUL, value);
     }
 
     public bool CollideConnected
     {
-        get => NativeBridge.GetRegisteredBool(Entity, RegisteredTypeId, 0x000000000000025fUL, "DistanceJoint2D.CollideConnected");
-        set => NativeBridge.SetRegisteredBool(Entity, RegisteredTypeId,
-            0x000000000000025fUL, value, "DistanceJoint2D.CollideConnected");
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x000000000000025fUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x000000000000025fUL, value);
+    }
+}
+
+[RegisteredComponent(0x9f01000000000001UL)]
+public sealed partial class TextRenderer : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f01000000000001UL;
+
+    internal TextRenderer(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01100000000001UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01100000000001UL, value);
+    }
+
+    public AssetRef<FontAsset> Font
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x9f01100000000002UL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x9f01100000000002UL, value.Handle);
+    }
+
+    public string Text
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01100000000003UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01100000000003UL, value);
+    }
+
+    public float FontSize
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01100000000004UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01100000000004UL, value);
+    }
+
+    public Color Color
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x9f01100000000005UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x9f01100000000005UL, value);
+    }
+
+    public TextAlignment Alignment
+    {
+        get => (TextAlignment)RegisteredComponentProperties.GetInt32(Entity, RegisteredTypeId, 0x9f01100000000006UL);
+        set => RegisteredComponentProperties.SetInt32(Entity, RegisteredTypeId,
+            0x9f01100000000006UL, (int)value);
+    }
+
+    public float MaxWidth
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01100000000007UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01100000000007UL, value);
+    }
+
+    public float LineSpacing
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01100000000008UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01100000000008UL, value);
+    }
+
+    public AssetRef<FontAsset> FallbackFont
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x9f01100000000009UL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x9f01100000000009UL, value.Handle);
+    }
+
+    public AssetRef<FontAsset> EmojiFont
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x9f0110000000000aUL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x9f0110000000000aUL, value.Handle);
     }
 }

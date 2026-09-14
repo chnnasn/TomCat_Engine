@@ -129,6 +129,7 @@ namespace TomCat {
 			AssetHandle Handle = AssetHandle(0);
 			bool IsDependency = false;
 			bool Superseded = false;
+			uint32_t StalePublicationRetries = 0;
 			std::optional<PendingImport> Replacement;
 			std::shared_ptr<AssetLoadCancellation> Cancellation;
 			std::future<AssetLoadResult> Future;

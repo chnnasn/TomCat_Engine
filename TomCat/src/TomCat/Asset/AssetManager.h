@@ -11,6 +11,7 @@
 #include "TomCat/Project/PlayerSettings.h"
 #include "TomCat/Renderer/Texture.h"
 
+#include <array>
 #include <cstdint>
 #include <condition_variable>
 #include <deque>
@@ -101,6 +102,8 @@ namespace TomCat {
 		uint64_t Offset = 0;
 		uint64_t Size = 0;
 		AssetType Type = AssetType::None;
+		std::array<uint8_t, 32> SHA256Digest{};
+		bool HasSHA256Digest = false;
 	};
 
 	struct TextureStreamingStats
@@ -293,6 +296,8 @@ namespace TomCat {
 			AssetType Type = AssetType::None;
 			uint64_t Offset = 0;
 			uint64_t Size = 0;
+			std::array<uint8_t, 32> SHA256Digest{};
+			bool HasSHA256Digest = false;
 		};
 
 		struct PreparedTexture
@@ -316,6 +321,7 @@ namespace TomCat {
 		void ScheduleTextureBacklog();
 		void PrepareCookedTexture(AssetHandle handle, uint64_t generation,
 			std::filesystem::path packagePath, uint64_t offset, uint64_t size,
+			const std::array<uint8_t, 32>& expectedDigest, bool verifyDigest,
 			bool requireArtifact);
 		void CancelTextureStreaming(bool waitForJobs);
 		void ReleaseHandles(const std::vector<AssetHandle>& handles);

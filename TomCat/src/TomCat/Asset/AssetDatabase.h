@@ -35,7 +35,10 @@ namespace TomCat {
 		DependencyFailed,
 		DependencyCycle,
 		ImportFailed,
-		Cancelled
+		Cancelled,
+		// Consumed by bounded LoadArtifact retries. It is only surfaced when a
+		// deferred publication exhausts its own fresh-result retries.
+		StaleSnapshot
 	};
 
 	struct AssetLoadOptions
@@ -48,16 +51,46 @@ namespace TomCat {
 		bool DeferMetadataCommit = false;
 	};
 
+	struct AssetDependencySnapshot
+	{
+		// Logical handles serialized by the source. Cook uses these exact handles.
+		std::vector<AssetHandle> Dependencies;
+		// Source assets used to build dependency artifact keys. A Sprite logical
+		// handle resolves to its atlas owner here.
+		std::vector<AssetHandle> ArtifactDependencies;
+		// Present for Scene, Prefab, and Material edges discovered from source.
+		// The digest, dependency list, and revision are published under one graph
+		// lock. Revision changes whenever any dependency graph state changes.
+		std::string SourceSHA256;
+		uint64_t Revision = 0;
+	};
+
+	struct AssetLoadInputSnapshot
+	{
+		AssetMetadata Metadata;
+		std::filesystem::path SourcePath;
+		AssetDependencySnapshot Dependencies;
+		std::string SourceSHA256;
+	};
+
 	struct ImportedArtifact
 	{
 		AssetHandle Handle = AssetHandle(0);
 		AssetType Type = AssetType::None;
 		std::string ArtifactKey;
+		// Hash of the exact source bytes used to build or locate this artifact.
+		// It is runtime metadata and is not serialized into the artifact payload.
+		std::string SourceSHA256;
 		std::string Format;
 		std::vector<uint8_t> Bytes;
 		std::vector<AssetSubAsset> SubAssets;
 		std::vector<std::string> DependencyKeys;
 		bool FromCache = false;
+		// Runtime-only identity used to reject stale deferred sub-asset publication.
+		// These fields are intentionally excluded from the artifact envelope.
+		std::vector<AssetLoadInputSnapshot> LoadSnapshots;
+		std::string LoadPlatform;
+		std::string LoadBackend;
 	};
 
 	struct AssetLoadResult
@@ -90,6 +123,8 @@ namespace TomCat {
 		[[nodiscard]] bool SetDependencies(AssetHandle asset,
 			std::vector<AssetHandle> dependencies);
 		[[nodiscard]] std::vector<AssetHandle> GetDependencies(AssetHandle asset) const;
+		[[nodiscard]] AssetDependencySnapshot GetDependencySnapshot(
+			AssetHandle asset) const;
 		[[nodiscard]] std::vector<AssetHandle> GetDependents(AssetHandle asset,
 			bool transitive = false) const;
 
@@ -105,6 +140,9 @@ namespace TomCat {
 			AssetHandle handle);
 		[[nodiscard]] std::optional<AssetMetadata> GetMetadataSnapshot(
 			const std::filesystem::path& path);
+		[[nodiscard]] std::vector<AssetMetadata> GetAllMetadataSnapshots();
+		[[nodiscard]] bool GetSubAssetSnapshot(AssetHandle handle,
+			AssetMetadata& owner, AssetSubAsset& subAsset);
 		[[nodiscard]] bool FinalizeImportedArtifact(AssetLoadResult& result,
 			bool refreshDependencies = true);
 
@@ -170,15 +208,35 @@ namespace TomCat {
 		}
 
 	private:
+		struct LoadAttempt
+		{
+			uint64_t GraphRevision = 0;
+			std::vector<AssetLoadInputSnapshot> Snapshots;
+		};
+
 		AssetLoadResult LoadArtifactInternal(AssetHandle handle,
-			const AssetLoadOptions& options, std::vector<AssetHandle>& stack);
+			const AssetLoadOptions& options, std::vector<AssetHandle>& stack,
+			LoadAttempt& attempt);
 		AssetLoadResult GetOrImport(const AssetMetadata& metadata,
 			const std::shared_ptr<const IAssetImporter>& importer,
 			const std::filesystem::path& sourcePath,
 			std::span<const uint8_t> sourceBytes, const std::string& sourceHash,
 			std::vector<std::string> dependencyKeys,
+			const AssetLoadOptions& options, const LoadAttempt& attempt);
+		bool ReadLoadSnapshotLocked(AssetHandle handle, AssetLoadInputSnapshot& snapshot) const;
+		bool CaptureLoadSnapshot(AssetHandle handle, LoadAttempt& attempt,
+			size_t& snapshotIndex, AssetLoadResult& failure);
+		bool IsLoadAttemptCurrentLocked(const LoadAttempt& attempt) const;
+		bool AreLoadAttemptSourcesCurrent(const LoadAttempt& attempt,
+			const AssetLoadOptions& options) const;
+		bool IsLoadAttemptCurrent(const LoadAttempt& attempt,
+			const AssetLoadOptions& options, bool validateSources);
+		bool PublishIfLoadAttemptCurrent(const std::string& artifactKey,
+			std::span<const uint8_t> serialized, const LoadAttempt& attempt,
 			const AssetLoadOptions& options);
-		bool FinalizeSubAssets(AssetLoadResult& result, bool refreshDependencies = true);
+		AssetLoadStatus FinalizeSubAssetsForLoad(AssetLoadResult& result,
+			bool refreshDependencies, LoadAttempt& attempt, size_t snapshotIndex,
+			const AssetLoadOptions& options);
 		bool AcquireHandleFlight(AssetHandle handle, const AssetLoadOptions& options);
 		void ReleaseHandleFlight(AssetHandle handle);
 		bool LoadDependencyCache();
@@ -197,7 +255,11 @@ namespace TomCat {
 		DerivedDataCache m_Cache;
 		mutable std::shared_mutex m_GraphMutex;
 		std::unordered_map<AssetHandle, std::vector<AssetHandle>> m_Dependencies;
+		std::unordered_map<AssetHandle, std::vector<AssetHandle>>
+			m_ArtifactDependencies;
 		std::unordered_map<AssetHandle, std::vector<AssetHandle>> m_Dependents;
+		std::unordered_map<AssetHandle, std::string> m_DependencySourceSHA256;
+		uint64_t m_DependencyGraphRevision = 1;
 		mutable std::mutex m_DependencyMutationMutex;
 		mutable std::mutex m_DependencyCacheMutex;
 		std::mutex m_FlightMutex;

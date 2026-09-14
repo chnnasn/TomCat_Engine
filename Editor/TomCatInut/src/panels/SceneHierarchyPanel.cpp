@@ -1399,6 +1399,19 @@ namespace TomCat {
 			canCreatePrefab))
 			m_PrefabCreateCallback(m_SelectionContext);
 		if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) DeleteSelectedEntity();
+		if (hasSelection && m_Context)
+		{
+			const bool hiddenSelf = m_Context->IsEditorHidden(m_SelectionContext);
+			const bool hiddenByParent = !hiddenSelf
+				&& !m_Context->IsVisibleInEditorHierarchy(m_SelectionContext);
+			if (hiddenByParent)
+				ImGui::MenuItem("Hidden in Scene by Parent", nullptr, false, false);
+			else if (ImGui::MenuItem(hiddenSelf ? "Show in Scene" : "Hide in Scene"))
+			{
+				if (m_Context->SetEditorHidden(m_SelectionContext, !hiddenSelf))
+					MarkModified();
+			}
+		}
 		if (ImGui::MenuItem("Unparent", nullptr, false, hasSelection && m_Context && m_Context->GetParent(m_SelectionContext)))
 		{
 			if (m_Context->MoveEntity(m_SelectionContext, Entity{}, Scene::EntityPlacement::Root))
@@ -1432,7 +1445,8 @@ namespace TomCat {
 		}
 		if (ImGui::MenuItem("Camera"))
 		{
-			const bool alreadyHasPrimary = m_Context && (bool)m_Context->GetPrimaryCameraEntity();
+			const bool alreadyHasPrimary = m_Context
+				&& m_Context->HasAuthoredPrimaryCamera();
 			Entity camera = m_Context->CreateEntity("Camera");
 			auto& cameraComponent = camera.AddComponent<C_Camera>();
 			cameraComponent.Primary = !alreadyHasPrimary;
@@ -1508,9 +1522,15 @@ namespace TomCat {
 
 		auto& tagComponent = entity.GetComponent<Tag>();
 		auto& tag = tagComponent._Tag;
-		const bool visible = tagComponent.Visible;
-		if (!visible)
-			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
+		const bool activeInHierarchy = m_Context->IsActiveInHierarchy(entity);
+		const bool visibleInEditor = m_Context->IsVisibleInEditorHierarchy(entity);
+		const bool dimmed = !activeInHierarchy || !visibleInEditor;
+		if (dimmed)
+		{
+			const float alpha = visibleInEditor ? 1.0f : 0.68f;
+			ImGui::PushStyleColor(ImGuiCol_Text,
+				ImVec4(0.45f, 0.45f, 0.45f, alpha));
+		}
 
 		const bool isSelected = (m_SelectionContext == entity);
 		const auto children = m_Context->GetChildrenUUIDs(entity);
@@ -1544,14 +1564,25 @@ namespace TomCat {
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
 		const float iconSize = DrawTreeRowIcon(m_Icons, ResolveEntityEditorIcon(entity), itemMin, itemMax,
-			visible ? IM_COL32_WHITE : IM_COL32(150, 150, 150, 210));
+			!dimmed ? IM_COL32_WHITE
+				: visibleInEditor ? IM_COL32(150, 150, 150, 210)
+				: IM_COL32(125, 125, 125, 150));
 		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing() +
 			iconSize + GetHierarchyIconTextGap();
 		const float textOffsetY = std::round(itemMin.y +
 			(itemMax.y - itemMin.y - ImGui::GetTextLineHeight()) * 0.5f);
 		if (!renameActive)
+		{
 			ImGui::GetWindowDrawList()->AddText(ImVec2(textOffsetX, textOffsetY),
 				ImGui::GetColorU32(ImGuiCol_Text), tag.c_str());
+			if (!visibleInEditor)
+			{
+				const float labelWidth = ImGui::CalcTextSize(tag.c_str()).x;
+				ImGui::GetWindowDrawList()->AddText(
+					ImVec2(textOffsetX + labelWidth + 5.0f, textOffsetY),
+					IM_COL32(135, 135, 135, 175), "[Hidden]");
+			}
+		}
 
 		if (isSelected)
 			ImGui::PopStyleColor(3);
@@ -1643,7 +1674,7 @@ namespace TomCat {
 			ImGui::TreePop();
 		}
 
-		if (!visible)
+		if (dimmed)
 			ImGui::PopStyleColor();
 	}
 
@@ -1749,7 +1780,7 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	}
 
 	template<typename T> static bool* GetComponentEnabledFlag(T&) { return nullptr; }
-	template<> static bool* GetComponentEnabledFlag<C_Camera>(C_Camera& component) { return &component.Primary; }
+	template<> static bool* GetComponentEnabledFlag<C_Camera>(C_Camera& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<SpriteRenderer>(SpriteRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<SpriteAnimator>(SpriteAnimator& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<LineRenderer>(LineRenderer& component) { return &component.Enabled; }
@@ -2999,8 +3030,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 				MarkModified();
 			ImGui::SameLine(0.0f, 4.0f);
 		}
-		if (DrawCompactCheckbox("##Visible", &tagComponent.Visible))
+		if (DrawCompactCheckbox("##ActiveSelf", &tagComponent.ActiveSelf))
 			MarkModified();
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Active Self controls gameplay scripts, rendering, audio, and physics for this Entity and its descendants.");
 		ImGui::SameLine(0.0f, 5.0f);
 		ImGui::SetNextItemWidth(-1.0f);
 		const bool committed = ImGui::InputText("##Name", m_NameEditBuffer, sizeof(m_NameEditBuffer),
@@ -3010,6 +3043,22 @@ static void DrawComponent(const std::string& name, Entity entity,
 			if (m_Context->RenameEntity(entity, m_NameEditBuffer))
 				MarkModified();
 			strncpy_s(m_NameEditBuffer, sizeof(m_NameEditBuffer), tag.c_str(), _TRUNCATE);
+		}
+
+		bool hiddenInScene = m_Context->IsEditorHidden(entity);
+		const bool hiddenByParent = !hiddenInScene
+			&& !m_Context->IsVisibleInEditorHierarchy(entity);
+		if (ImGui::Checkbox("Hidden Self in Scene", &hiddenInScene))
+		{
+			if (m_Context->SetEditorHidden(entity, hiddenInScene))
+				MarkModified();
+		}
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Stores Scene-view hidden state on this Entity. Its descendants inherit the effective hidden state; Game view and runtime behavior are unchanged.");
+		if (hiddenByParent)
+		{
+			ImGui::SameLine();
+			ImGui::TextDisabled("(inherited from parent)");
 		}
 	}
 
@@ -3187,6 +3236,13 @@ static void DrawComponent(const std::string& name, Entity entity,
 			auto& camera = component._Camera;
 			const float columnWidth = 100.0f;
 
+			DrawProperty("Primary", columnWidth);
+			bool primary = component.Primary;
+			if (ImGui::Checkbox("##Primary", &primary) && m_Context
+				&& m_Context->SetCameraPrimary(entity, primary))
+				MarkModified();
+			ImGui::Columns(1);
+
 			DrawProperty("Projection", columnWidth);
 			const char* projectionTypes[] = { "Perspective", "Orthographic" };
 			int projection = (int)camera.GetProjectionType();
@@ -3244,23 +3300,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 			DrawProperty("Background Color", columnWidth);
 			if (ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor))) MarkModified();
 			ImGui::Columns(1);
-		}, [this, entity]() mutable
-		{
-			// Camera uses the compact header checkbox for its Primary state. Keep
-			// the scene invariant that at most one camera can be primary.
-			if (m_Context && entity && entity.HasComponent<C_Camera>())
-			{
-				auto& selectedCamera = entity.GetComponent<C_Camera>();
-				if (selectedCamera.Primary)
-				{
-					auto cameras = m_Context->m_Registry.view<C_Camera>();
-					for (auto handle : cameras)
-						cameras.get<C_Camera>(handle).Primary = false;
-					selectedCamera.Primary = true;
-				}
-			}
-			MarkModified();
-		});
+		}, onModified);
 		});
 
 		richInspectors.emplace(ComponentIds::SpriteRenderer, [&]()

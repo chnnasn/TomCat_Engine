@@ -478,6 +478,46 @@ namespace {
 		TomCat::Input::ClearState();
 	}
 
+	void TestFixedStepRetainsHeldStateWithoutReplayingEdges()
+	{
+		using Action = TomCat::InputEventQueue::Action;
+		TomCat::Input::ClearState();
+		TomCat::Input::NotifyKey(65, Action::Pressed, 50.0);
+		TomCat::Input::BeginFrame();
+
+		auto& engine = TomCat::Scripting::ScriptEngine::Get();
+		engine.CaptureInputState();
+		auto runtime = std::make_shared<RuntimeProbe>();
+		std::vector<InputObservation> observations;
+		runtime->OnFixedUpdate = [&]() { observations.push_back(ObserveInput()); };
+		engine.SetRuntime(runtime);
+
+		engine.FixedUpdateAll(505, 1.0f / 60.0f);
+		engine.FixedUpdateAll(505, 1.0f / 60.0f);
+		Require(observations.size() == 2
+			&& observations[0].KeyHeld && observations[1].KeyHeld,
+			"catch-up fixed step did not retain the frozen held state");
+		Require(observations[0].KeyPressed && !observations[0].KeyReleased
+			&& !observations[1].KeyPressed && !observations[1].KeyReleased,
+			"catch-up fixed step replayed the key press");
+
+		observations.clear();
+		TomCat::Input::NotifyKey(65, Action::Released, 51.0);
+		TomCat::Input::BeginFrame();
+		engine.CaptureInputState();
+		engine.FixedUpdateAll(505, 1.0f / 60.0f);
+		engine.FixedUpdateAll(505, 1.0f / 60.0f);
+		Require(observations.size() == 2
+			&& !observations[0].KeyHeld && !observations[1].KeyHeld,
+			"catch-up fixed step did not retain the frozen released state");
+		Require(!observations[0].KeyPressed && observations[0].KeyReleased
+			&& !observations[1].KeyPressed && !observations[1].KeyReleased,
+			"catch-up fixed step replayed the key release");
+
+		engine.SetRuntime({});
+		TomCat::Input::ClearState();
+	}
+
 	void TestInputEventsCapability()
 	{
 		using namespace TomCat::Scripting;
@@ -529,6 +569,7 @@ int main()
 		TestGamepadHotPlugEntryPointPreservesOrderedEdges();
 		TestManagedUpdateAndFixedConsumption();
 		TestFixedStepScopeIncludesPhysicsCallbacks();
+		TestFixedStepRetainsHeldStateWithoutReplayingEdges();
 		TestInputEventsCapability();
 		std::cout << "Input regression suite passed." << std::endl;
 		return 0;

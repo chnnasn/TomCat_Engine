@@ -21,6 +21,27 @@ internal static unsafe class Program
 	private const string WrongThreadMessage =
 		"WrongThread: TomCat engine APIs may only be used from the main thread.";
 	private static int s_diagnostics;
+	private static int s_abortBatchCalls;
+	private static NativeEntityHandleV1 s_abortBatchContext;
+	private static string? s_abortBatchReason;
+	private static bool s_exposeDeferredCallbackTransactions;
+	private static ScriptSceneRuntime? s_callbackTransactionScene;
+	private static ulong s_openCallbackTransactionToken;
+	private static bool s_openCallbackTransactionAborted;
+	private static ulong s_nextCallbackTransactionToken = 1;
+	private static bool s_drainingCallbackTransactions;
+	private static bool s_failNextCallbackTransactionBegin;
+	private static bool s_failNextCallbackTransactionComplete;
+	private static bool s_failNextAbortBatch;
+	private static int s_callbackTransactionBeginCalls;
+	private static int s_callbackTransactionCompleteCalls;
+	private static readonly Queue<(ulong Token, bool Committed)>
+		s_callbackTransactionAcks = [];
+	private static readonly List<ulong> s_callbackTransactionBeginTokens = [];
+	private static readonly List<ulong> s_callbackTransactionCompleteTokens = [];
+	private static readonly List<ulong> s_callbackTransactionAbortTokens = [];
+	private static readonly List<(ulong Token, bool Committed)>
+		s_callbackTransactionResolvedAcks = [];
 	private static ulong s_removedAttachment;
 	private static ulong s_metadataReceiverToken;
 	private static string? s_metadataReceiverJson;
@@ -46,15 +67,28 @@ internal static unsafe class Program
 	private static int s_componentRemoveCalls;
 	private static int s_componentGetCalls;
 	private static int s_componentSetCalls;
+	private static bool s_extensionPresent = true;
+	private static int s_extensionCount;
+	private static string s_extensionLabel = string.Empty;
+	private static int s_extensionPropertyGetCalls;
+	private static int s_extensionPropertySetCalls;
+	private static int s_extensionStringGetCalls;
+	private static int s_extensionStringSetCalls;
+	private static bool s_returnMalformedExtensionUtf8;
 	private static NativeEntityHandleV1 s_reservedGameplayEntity;
 	private static NativeEntityHandleV1 s_gameplayParent;
+	private static NativeEntityHandleV1 s_gameplayParentOwner;
 	private static NativeVector3 s_localTransformPosition;
 	private static bool s_gameplayActive = true;
 	private static bool s_usePerEntityGameplayActivation;
 	private static readonly Dictionary<(ulong SceneSessionId, ulong EntityId,
 		ulong RuntimeGeneration), bool> s_gameplayActiveByEntity = [];
 	private static readonly Dictionary<(ulong SceneSessionId, ulong EntityId,
+		ulong RuntimeGeneration), bool> s_committedGameplayActiveByEntity = [];
+	private static readonly Dictionary<(ulong SceneSessionId, ulong EntityId,
 		ulong RuntimeGeneration), NativeEntityHandleV1> s_gameplayParentByEntity = [];
+	private static readonly Dictionary<(ulong SceneSessionId, ulong EntityId,
+		ulong RuntimeGeneration), NativeEntityHandleV1> s_committedGameplayParentByEntity = [];
 	private static int s_gameplayQueryCalls;
 	private static int s_lastGameplayQueryComponent;
 	private static ulong s_lastGameplayQueryRegisteredComponent;
@@ -72,6 +106,7 @@ internal static unsafe class Program
 	private static float s_audioMinDistance = 1.0f;
 	private static float s_audioMaxDistance = 25.0f;
 	private static string s_runtimeUIText = "Ready";
+	private static string s_worldText = "World";
 	private static bool s_runtimeUIButtonFocused;
 	private static bool s_runtimeUICaptured;
 	private const ulong RuntimeUIButtonClickSerial = 41;
@@ -147,6 +182,7 @@ internal static unsafe class Program
 				VerifyFileUnlocked(fixtureAssemblyPath,
 					$"Play Domain cycle {index + 1} kept Assembly-CSharp.dll locked");
 			}
+			VerifyDeferredCallbackTransactions(assembly, pdb);
 
             Console.WriteLine("TomCat.Managed regression suite passed.");
             return 0;
@@ -318,6 +354,10 @@ internal static unsafe class Program
 		byte[] applicationPathsName =
 			Encoding.UTF8.GetBytes("TomCat.ApplicationPathsApiV1");
 		byte[] componentName = Encoding.UTF8.GetBytes("TomCat.ComponentApiV1");
+		byte[] componentStringName =
+			Encoding.UTF8.GetBytes("TomCat.ComponentStringApiV1");
+		byte[] deferredCommandsName =
+			Encoding.UTF8.GetBytes("TomCat.DeferredCommandsApiV1");
 		byte[] componentSchemaName =
 			Encoding.UTF8.GetBytes("TomCat.ComponentSchemaApiV1");
 		byte[] gameplayName = Encoding.UTF8.GetBytes("TomCat.GameplayApiV1");
@@ -328,6 +368,8 @@ internal static unsafe class Program
 		fixed (byte* inputEventsPointer = inputEventsName)
 		fixed (byte* applicationPathsPointer = applicationPathsName)
 		fixed (byte* componentPointer = componentName)
+		fixed (byte* componentStringPointer = componentStringName)
+		fixed (byte* deferredCommandsPointer = deferredCommandsName)
 		fixed (byte* componentSchemaPointer = componentSchemaName)
 		fixed (byte* gameplayPointer = gameplayName)
 		fixed (byte* audioSpatialPointer = audioSpatialName)
@@ -361,6 +403,30 @@ internal static unsafe class Program
 			Equal((uint)sizeof(NativeComponentApiV1), required,
 				"component capability required size");
 			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(componentStringPointer,
+					(ulong)componentStringName.Length), 2, null, 0, &required),
+				"newer component string capability version rejection");
+			Equal((uint)sizeof(NativeComponentStringApiV1), required,
+				"component string capability required size");
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(deferredCommandsPointer,
+					(ulong)deferredCommandsName.Length), 2, null, 0, &required),
+				"newer deferred commands capability version rejection");
+			Equal((uint)sizeof(NativeDeferredCommandsApiV1), required,
+				"deferred commands capability required size");
+			NativeDeferredCommandsApiV1 deferredCommands = default;
+			Equal(0, envelope.QueryCapability(
+				new NativeUtf8View(deferredCommandsPointer,
+					(ulong)deferredCommandsName.Length), 1, &deferredCommands,
+				(uint)sizeof(NativeDeferredCommandsApiV1), &required),
+				"deferred commands capability query");
+			Equal(1U, deferredCommands.Version,
+				"deferred commands capability version");
+			Equal((uint)sizeof(NativeDeferredCommandsApiV1), deferredCommands.Size,
+				"deferred commands capability size");
+			Check(deferredCommands.AbortBatch != null,
+				"deferred commands capability abort callback");
+			Equal(-4, envelope.QueryCapability(
 				new NativeUtf8View(componentSchemaPointer,
 					(ulong)componentSchemaName.Length), 2, null, 0, &required),
 				"newer component schema capability version rejection");
@@ -387,6 +453,8 @@ internal static unsafe class Program
 
 		Check(ComponentSchema.IsAvailable,
 			"managed component schema capability was not bound");
+		Check(RegisteredComponentProperties.IsStringTransportAvailable,
+			"managed component string capability was not bound");
 		IReadOnlyList<ComponentSchemaInfo> schemas = ComponentSchema.GetComponents();
 		Equal(1, schemas.Count, "managed component schema count");
 		ComponentSchemaInfo healthSchema = schemas[0];
@@ -559,6 +627,119 @@ internal static unsafe class Program
 			"InputAction preserves a complete same-frame press and release");
 		s_extendedInputPulse = false;
 		probe.__Destroy();
+		VerifyInputActionResetReentrancy();
+	}
+
+	private static void VerifyInputActionResetReentrancy()
+	{
+		using var scope = ScriptExecutionContext.Enter(
+			new Entity(SceneSession, 94, RuntimeGeneration), CancellationToken.None);
+		s_extendedInputPulse = false;
+		s_runtimeUICaptured = false;
+		s_extendedInputPressed = true;
+
+		var activeMap = new InputActionMap("Regression.ReentrantActive");
+		InputAction activeFirst = activeMap.AddAction("First")
+			.AddBinding(InputBinding.Mouse(MouseButton.Left));
+		InputAction activeSecond = activeMap.AddAction("Second")
+			.AddBinding(InputBinding.Mouse(MouseButton.Left));
+		int activeFirstStarted = 0;
+		int activeSecondStarted = 0;
+		int activeFirstCanceled = 0;
+		int activeSecondCanceled = 0;
+		bool reactivateOnCancel = false;
+		activeFirst.Started += _ => ++activeFirstStarted;
+		activeSecond.Started += _ => ++activeSecondStarted;
+		activeFirst.Canceled += _ =>
+		{
+			++activeFirstCanceled;
+			if (reactivateOnCancel)
+			{
+				reactivateOnCancel = false;
+				activeMap.Active = true;
+			}
+		};
+		activeSecond.Canceled += _ => ++activeSecondCanceled;
+		activeMap.Enable();
+		try
+		{
+			activeMap.Update(InputActionUpdatePhase.DisplayFrame, [], true);
+			Check(activeFirst.IsPressed && activeSecond.IsPressed,
+				"two-action Active reentrancy setup");
+			activeMap.Active = false;
+			reactivateOnCancel = true;
+			activeMap.Update(InputActionUpdatePhase.DisplayFrame, [], true);
+			Check(activeMap.Active && !activeFirst.IsPressed && !activeSecond.IsPressed,
+				"Canceled reactivation left a later action actuated");
+			Equal(1, activeFirstCanceled,
+				"Active reset cancels the first action once");
+			Equal(1, activeSecondCanceled,
+				"Active reset cancels every action despite first-handler reactivation");
+			activeMap.Update(InputActionUpdatePhase.DisplayFrame, [], true);
+			Equal(2, activeFirstStarted,
+				"reactivated first action restarts on held input");
+			Equal(2, activeSecondStarted,
+				"reactivated later action restarts after pre-cleared cancellation");
+		}
+		finally
+		{
+			reactivateOnCancel = false;
+			s_extendedInputPressed = false;
+			activeMap.Disable();
+		}
+
+		var captureMap = new InputActionMap("Regression.ReentrantCapture");
+		InputAction captureFirst = captureMap.AddAction("First")
+			.AddBinding(InputBinding.Mouse(MouseButton.Left));
+		InputAction captureSecond = captureMap.AddAction("Second")
+			.AddBinding(InputBinding.Mouse(MouseButton.Left));
+		int captureFirstStarted = 0;
+		int captureSecondStarted = 0;
+		int captureFirstCanceled = 0;
+		int captureSecondCanceled = 0;
+		bool reenableOnCancel = false;
+		captureFirst.Started += _ => ++captureFirstStarted;
+		captureSecond.Started += _ => ++captureSecondStarted;
+		captureFirst.Canceled += _ =>
+		{
+			++captureFirstCanceled;
+			if (reenableOnCancel)
+			{
+				reenableOnCancel = false;
+				captureMap.Enable();
+			}
+		};
+		captureSecond.Canceled += _ => ++captureSecondCanceled;
+		captureMap.Enable();
+		try
+		{
+			s_extendedInputPressed = true;
+			captureMap.Update(InputActionUpdatePhase.DisplayFrame, [], true);
+			Check(captureFirst.IsPressed && captureSecond.IsPressed,
+				"two-action Runtime UI capture setup");
+			s_runtimeUICaptured = true;
+			reenableOnCancel = true;
+			captureMap.Update(InputActionUpdatePhase.DisplayFrame, [], true);
+			Check(captureMap.Enabled && !captureFirst.IsPressed && !captureSecond.IsPressed,
+				"Canceled re-enable left a later UI-captured action actuated");
+			Equal(1, captureFirstCanceled,
+				"Runtime UI capture cancels the first action once");
+			Equal(1, captureSecondCanceled,
+				"Runtime UI capture cancels every action despite first-handler re-enable");
+			s_runtimeUICaptured = false;
+			captureMap.Update(InputActionUpdatePhase.DisplayFrame, [], true);
+			Equal(2, captureFirstStarted,
+				"re-enabled first action restarts after Runtime UI capture");
+			Equal(2, captureSecondStarted,
+				"re-enabled later action restarts after Runtime UI capture");
+		}
+		finally
+		{
+			reenableOnCancel = false;
+			s_runtimeUICaptured = false;
+			s_extendedInputPressed = false;
+			captureMap.Disable();
+		}
 	}
 
 	private static void VerifyNaturalProxySyntax()
@@ -582,8 +763,17 @@ internal static unsafe class Program
 		s_componentRemoveCalls = 0;
 		s_componentGetCalls = 0;
 		s_componentSetCalls = 0;
+		s_extensionPresent = true;
+		s_extensionCount = 0;
+		s_extensionLabel = string.Empty;
+		s_extensionPropertyGetCalls = 0;
+		s_extensionPropertySetCalls = 0;
+		s_extensionStringGetCalls = 0;
+		s_extensionStringSetCalls = 0;
+		s_returnMalformedExtensionUtf8 = false;
 		s_reservedGameplayEntity = default;
 		s_gameplayParent = new NativeEntityHandleV1(SceneSession, 42, RuntimeGeneration);
+		s_gameplayParentOwner = default;
 		s_localTransformPosition = default;
 		s_gameplayActive = true;
 		s_gameplayQueryCalls = 0;
@@ -632,6 +822,14 @@ internal static unsafe class Program
 		Equal(1, s_componentRemoveCalls, "registry component Remove call");
 		Equal(3, s_componentGetCalls, "registry component property reads");
 		Equal(3, s_componentSetCalls, "registry component property writes");
+		Equal(1, s_extensionPropertyGetCalls,
+			"public plugin numeric property read");
+		Equal(1, s_extensionPropertySetCalls,
+			"public plugin numeric property write");
+		Equal(4, s_extensionStringGetCalls,
+			"public plugin UTF-8 probe/copy and malformed read calls");
+		Equal(1, s_extensionStringSetCalls,
+			"public plugin UTF-8 property write");
 		Equal(150, s_healthMaximum, "HealthComponent.Maximum round trip");
 		Equal(75, s_healthCurrent, "HealthComponent.Current round trip");
 		Check(s_healthInvulnerable, "HealthComponent.Invulnerable round trip");
@@ -661,6 +859,10 @@ internal static unsafe class Program
 		Equal(1.25f, s_animatorParameters["Speed"], "SpriteAnimator Float parameter");
 		Equal(false, s_animatorParameters["Grounded"], "SpriteAnimator Bool parameter");
 		Equal(false, s_animatorParameters["Jump"], "SpriteAnimator reset Trigger");
+		// The simple non-hierarchy stub stores one global Parent for this proxy test.
+		// Do not leak it into later ScriptSceneRuntime hierarchy walks.
+		s_gameplayParent = default;
+		s_gameplayParentOwner = default;
 	}
 
 	private static void VerifyMetadataReceiverToken(ManagedApiV1 managed, byte[] assembly,
@@ -915,6 +1117,7 @@ internal static unsafe class Program
 		Equal(2, scene.ReadFieldValue(100, "CollisionInputEventCount"),
 			"managed collision callback reads every fixed-step input event");
         Equal(1, scene.ReadFieldValue(200, "TriggerExits"), "trigger dispatch");
+		VerifyFixedInputActionEvaluation(domain);
 
         scene.SetEnabled(100, false);
         Equal(1, scene.ReadFieldValue(100, "Disables"), "disable callback");
@@ -934,6 +1137,7 @@ internal static unsafe class Program
 
 		VerifySameBatchMutations(domain);
 		VerifyHierarchyActivationConvergence(domain);
+		VerifyCallbackBatchAbort(domain);
 
 		ScriptSceneRuntime duplicateScene = domain.CreateSceneRuntime(SceneSession, RuntimeGeneration);
         Throws<InvalidDataException>(() => duplicateScene.InstantiateAll([
@@ -985,6 +1189,497 @@ internal static unsafe class Program
 		return domain;
     }
 
+	private static void VerifyCallbackBatchAbort(ScriptDomain domain)
+	{
+		const ulong throwingSceneSession = 31;
+		const ulong throwingGeneration = 27;
+		const ulong throwingAttachment = 1300;
+		Entity throwingEntity = new(throwingSceneSession, 5, throwingGeneration);
+		ScriptSceneRuntime throwingScene = domain.CreateSceneRuntime(
+			throwingSceneSession, throwingGeneration);
+		throwingScene.InstantiateAll([
+			new ScriptAttachment(throwingEntity, throwingAttachment, 1001, true)
+		]);
+		throwingScene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":1300,"fields":[
+			 {"fieldId":"","name":"QueueNameThenThrowOnUpdate","type":"Bool","value":true}
+			]}]}
+			""");
+		throwingScene.InvokeCreateAll();
+		ResetAbortBatchCapture();
+		s_entityTextSetterCalls = 0;
+		int diagnosticsBefore = s_diagnostics;
+
+		throwingScene.UpdateAll(0.01f);
+
+		Equal(1, s_entityTextSetterCalls,
+			"faulting callback queued its mutation before throwing");
+		Equal(1, s_abortBatchCalls,
+			"faulting callback aborts its deferred batch exactly once");
+		AssertAbortBatchContext(throwingEntity,
+			"faulting callback abort context");
+		Check(s_abortBatchReason?.Contains(
+			"intentional managed callback transaction failure",
+			StringComparison.Ordinal) == true,
+			"faulting callback abort reason omitted the managed exception");
+		Equal(ScriptInstanceState.Faulted,
+			throwingScene.GetInstanceState(throwingAttachment),
+			"faulting callback must remain quarantined");
+		Equal(diagnosticsBefore + 1, s_diagnostics,
+			"faulting callback reports one diagnostic");
+		throwingScene.DestroyAll();
+
+		const ulong validationSceneSession = 32;
+		const ulong validationGeneration = 28;
+		const ulong validationAttachment = 1301;
+		Entity validationEntity = new(validationSceneSession, 6,
+			validationGeneration);
+		ScriptSceneRuntime validationScene = domain.CreateSceneRuntime(
+			validationSceneSession, validationGeneration);
+		validationScene.InstantiateAll([
+			new ScriptAttachment(validationEntity, validationAttachment, 1001, true)
+		]);
+		validationScene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":1301,"fields":[
+			 {"fieldId":"","name":"QueueNameThenCatchNullTagOnUpdate","type":"Bool","value":true}
+			]}]}
+			""");
+		validationScene.InvokeCreateAll();
+		ResetAbortBatchCapture();
+		s_entityTextSetterCalls = 0;
+		diagnosticsBefore = s_diagnostics;
+
+		validationScene.UpdateAll(0.01f);
+
+		Equal(1, s_entityTextSetterCalls,
+			"caught validation callback queued its first mutation");
+		Equal(1, validationScene.ReadFieldValue(validationAttachment,
+			"CaughtMutationValidationExceptions"),
+			"managed mutation validation exception was caught by the script");
+		Equal(ScriptInstanceState.Ready,
+			validationScene.GetInstanceState(validationAttachment),
+			"caught mutation validation must not fault the script");
+		Equal(diagnosticsBefore, s_diagnostics,
+			"caught mutation validation emitted a managed diagnostic");
+		Equal(1, s_abortBatchCalls,
+			"caught mutation validation poisons its deferred batch exactly once");
+		AssertAbortBatchContext(validationEntity,
+			"caught mutation validation abort context");
+		Equal("Entity.Tag value cannot be null", s_abortBatchReason,
+			"caught mutation validation abort reason");
+
+		validationScene.UpdateAll(0.01f);
+		Equal(2, validationScene.ReadFieldValue(validationAttachment, "Updates"),
+			"caught validation script remains dispatchable");
+		Equal(1, s_abortBatchCalls,
+			"one-shot caught validation does not re-abort later callbacks");
+		validationScene.DestroyAll();
+		VerifyDistanceJointValidationAbort(domain);
+	}
+
+	private static void VerifyDistanceJointValidationAbort(ScriptDomain domain)
+	{
+		const ulong capturedSceneSession = 33;
+		const ulong capturedGeneration = 29;
+		ScriptSceneRuntime captureScene = domain.CreateSceneRuntime(
+			capturedSceneSession, capturedGeneration);
+		captureScene.InstantiateAll([
+			new ScriptAttachment(
+				new Entity(capturedSceneSession, 7, capturedGeneration),
+				1302, 1001, true)
+		]);
+		captureScene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":1302,"fields":[
+			 {"fieldId":"","name":"CaptureCrossSceneJointTargetOnCreate","type":"Bool","value":true}
+			]}]}
+			""");
+		captureScene.InvokeCreateAll();
+
+		VerifyDistanceJointValidationAbortCase(domain,
+			capturedSceneSession, capturedGeneration + 1, 1303,
+			"stale runtime generation");
+		VerifyDistanceJointValidationAbortCase(domain,
+			capturedSceneSession + 1, capturedGeneration, 1304,
+			"cross-scene entity");
+		captureScene.DestroyAll();
+	}
+
+	private static void VerifyDistanceJointValidationAbortCase(
+		ScriptDomain domain, ulong sceneSession, ulong runtimeGeneration,
+		ulong attachmentId, string label)
+	{
+		Entity entity = new(sceneSession, 8, runtimeGeneration);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(
+			sceneSession, runtimeGeneration);
+		scene.InstantiateAll([
+			new ScriptAttachment(entity, attachmentId, 1001, true)
+		]);
+		scene.ApplySerializedFields($$"""
+			{"attachments":[{"attachmentId":{{attachmentId}},"fields":[
+			 {"fieldId":"","name":"QueueNameThenCatchCrossSceneJointOnUpdate","type":"Bool","value":true}
+			]}]}
+			""");
+		scene.InvokeCreateAll();
+		ResetAbortBatchCapture();
+		s_entityTextSetterCalls = 0;
+		int diagnosticsBefore = s_diagnostics;
+
+		scene.UpdateAll(0.01f);
+
+		Equal(1, s_entityTextSetterCalls,
+			$"{label} queued its earlier deferred write");
+		Equal(1, scene.ReadFieldValue(attachmentId,
+			"CaughtMutationValidationExceptions"),
+			$"{label} validation exception was caught by the script");
+		Equal(ScriptInstanceState.Ready, scene.GetInstanceState(attachmentId),
+			$"{label} caught validation keeps the script Ready");
+		Equal(diagnosticsBefore, s_diagnostics,
+			$"{label} caught validation emits no managed diagnostic");
+		Equal(1, s_abortBatchCalls,
+			$"{label} poisons the deferred batch exactly once");
+		AssertAbortBatchContext(entity, $"{label} abort context");
+		Equal(
+			"DistanceJoint2D.ConnectedEntity must belong to the same scene runtime",
+			s_abortBatchReason, $"{label} abort reason");
+
+		scene.UpdateAll(0.01f);
+		Equal(2, scene.ReadFieldValue(attachmentId, "Updates"),
+			$"{label} script remains dispatchable");
+		Equal(1, s_abortBatchCalls,
+			$"{label} one-shot validation does not re-abort");
+		scene.DestroyAll();
+	}
+
+	private static void ResetAbortBatchCapture()
+	{
+		s_abortBatchCalls = 0;
+		s_abortBatchContext = default;
+		s_abortBatchReason = null;
+	}
+
+	private static void AssertAbortBatchContext(Entity expected, string message)
+	{
+		Check(s_abortBatchContext.SceneSessionId == expected.SceneSessionId
+			&& s_abortBatchContext.EntityId == expected.Id
+			&& s_abortBatchContext.RuntimeGeneration == expected.RuntimeGeneration,
+			message);
+	}
+
+	private static void VerifyFixedInputActionEvaluation(ScriptDomain domain)
+	{
+		const ulong sceneSession = 22;
+		const ulong generation = 18;
+		const ulong attachment = 970;
+		s_extendedInputPressed = false;
+		s_extendedInputPulse = false;
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession, generation);
+		try
+		{
+			scene.InstantiateAll([
+				new ScriptAttachment(new Entity(sceneSession, 1, generation),
+					attachment, 1001, true)
+			]);
+			scene.ApplySerializedFields(
+				"{\"attachments\":[{\"attachmentId\":970,\"fields\":[" +
+				"{\"fieldId\":\"\",\"name\":\"EnableInputActionProbe\"," +
+				"\"type\":\"Bool\",\"value\":true}]}]}");
+			scene.InvokeCreateAll();
+
+			// A display frame with no physics step may consume the display action
+			// state. The next fixed step must still observe its own queued edge.
+			scene.UpdateAll(1.0f / 144.0f);
+			s_extendedInputPressed = true;
+			scene.UpdateAll(1.0f / 144.0f);
+			Equal(1, scene.ReadFieldValue(attachment,
+				"UpdateActionPressedObservations"),
+				"display action observes the press");
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateActionStartedEvents"),
+				"display action raises Started outside fixed update");
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateActionPerformedEvents"),
+				"display action raises Performed outside fixed update");
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateAxisPerformedEvents"),
+				"display Axis1D raises Performed on the display timeline");
+			Equal(0, scene.ReadFieldValue(attachment,
+				"FixedActionPressedObservations"),
+				"display evaluation does not mutate fixed action state");
+
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			Equal(1, scene.ReadFieldValue(attachment,
+				"FixedActionPressedObservations"),
+				"first fixed step observes a press already seen by Update");
+			scene.DispatchPhysicsEvents([
+				new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter,
+					new Entity(sceneSession, 1, generation),
+					new Entity(sceneSession, 2, generation))
+			]);
+			Equal(true, scene.ReadFieldValue(attachment,
+				"CollisionObservedFixedTimeline"),
+				"collision callback did not retain the native fixed-step timeline");
+			Equal(1, scene.ReadFieldValue(attachment,
+				"CollisionActionPressedObservations"),
+				"collision callback did not share the current fixed action edge");
+			Equal(false, Time.InFixedUpdate,
+				"physics callback leaked its managed fixed timeline scope");
+			VerifyFixedActionEventsRemainDisplayOnly(scene, attachment);
+			Equal(1, scene.ReadFieldValue(attachment,
+				"FixedActionHeldObservations"),
+				"first fixed step observes the held action");
+
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			scene.DispatchPhysicsEvents([
+				new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter,
+					new Entity(sceneSession, 1, generation),
+					new Entity(sceneSession, 2, generation))
+			]);
+			Equal(1, scene.ReadFieldValue(attachment,
+				"CollisionActionPressedObservations"),
+				"catch-up collision callback replayed the fixed action edge");
+			Equal(1, scene.ReadFieldValue(attachment,
+				"FixedActionPressedObservations"),
+				"catch-up fixed step does not replay the press");
+			VerifyFixedActionEventsRemainDisplayOnly(scene, attachment);
+			Equal(2, scene.ReadFieldValue(attachment,
+				"FixedActionHeldObservations"),
+				"catch-up fixed step retains the held action");
+
+			// Release polling state remains independent across display and fixed
+			// timelines. Public events continue to run only on the display timeline.
+			s_extendedInputPressed = false;
+			scene.UpdateAll(1.0f / 144.0f);
+			Equal(1, scene.ReadFieldValue(attachment,
+				"UpdateActionReleasedObservations"),
+				"display action observes the release");
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateActionCanceledEvents"),
+				"display action raises Canceled outside fixed update");
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			Equal(1, scene.ReadFieldValue(attachment,
+				"FixedActionReleasedObservations"),
+				"fixed action consumes the release exactly once");
+			VerifyFixedActionEventsRemainDisplayOnly(scene, attachment);
+
+			// A complete press/release between polls is one pulse in the first
+			// fixed step and is neutral in the catch-up step.
+			s_extendedInputPulse = true;
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			s_extendedInputPulse = false;
+			VerifyFixedInputActionCounts(scene, attachment, 2, 2);
+			VerifyFixedActionEventsRemainDisplayOnly(scene, attachment);
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			VerifyFixedInputActionCounts(scene, attachment, 2, 2);
+			VerifyFixedActionEventsRemainDisplayOnly(scene, attachment);
+		}
+		finally
+		{
+			s_extendedInputPressed = false;
+			s_extendedInputPulse = false;
+			scene.DestroyAll();
+		}
+
+		VerifyFixedDisableCancellation(domain);
+		VerifyDisplayDisableReentrancy(domain);
+	}
+
+	private static void VerifyFixedDisableCancellation(ScriptDomain domain)
+	{
+		const ulong sceneSession = 23;
+		const ulong generation = 19;
+		const ulong attachment = 971;
+		s_extendedInputPressed = false;
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession, generation);
+		try
+		{
+			scene.InstantiateAll([
+				new ScriptAttachment(new Entity(sceneSession, 1, generation),
+					attachment, 1001, true)
+			]);
+			scene.ApplySerializedFields(
+				"{\"attachments\":[{\"attachmentId\":971,\"fields\":[" +
+				"{\"fieldId\":\"\",\"name\":\"EnableInputActionProbe\"," +
+				"\"type\":\"Bool\",\"value\":true}," +
+				"{\"fieldId\":\"\",\"name\":\"DisableInputActionMapOnFixedUpdate\"," +
+				"\"type\":\"Bool\",\"value\":true}," +
+				"{\"fieldId\":\"\",\"name\":\"ThrowOnInputActionCanceled\"," +
+				"\"type\":\"Bool\",\"value\":true}]}]}");
+			scene.InvokeCreateAll();
+			scene.UpdateAll(1.0f / 144.0f);
+			s_extendedInputPressed = true;
+			scene.UpdateAll(1.0f / 144.0f);
+			Equal(0, scene.ReadFieldValue(attachment, "UpdateActionCanceledEvents"),
+				"actuated display action starts without cancellation");
+
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			Equal(0, scene.ReadFieldValue(attachment, "UpdateActionCanceledEvents"),
+				"FixedUpdate map disable must not raise a fixed-timeline event");
+			s_extendedInputPressed = false;
+			int diagnosticsBefore = s_diagnostics;
+			scene.UpdateAll(1.0f / 144.0f);
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateActionCanceledEvents"),
+				"FixedUpdate map disable defers one Canceled event to display update");
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateAxisCanceledEvents"),
+				"a throwing deferred Canceled handler must not drop later actions");
+			Equal("Jump>Axis", scene.ReadFieldValue(attachment,
+				"InputCancellationTrace"),
+				"deferred Canceled handlers preserve action insertion order");
+			Equal(diagnosticsBefore + 1, s_diagnostics,
+				"deferred Canceled handler exception is reported exactly once");
+			Equal(0, scene.ReadFieldValue(attachment,
+				"UpdateActionReleasedObservations"),
+				"map disable must clear display polling release state");
+
+			scene.FixedUpdateAll(1.0f / 60.0f);
+			Equal(0, scene.ReadFieldValue(attachment,
+				"FixedActionReleasedObservations"),
+				"map disable must clear fixed polling release state");
+			scene.UpdateAll(1.0f / 144.0f);
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateActionCanceledEvents"),
+				"deferred map cancellation is delivered exactly once");
+			Equal(1, scene.ReadFieldValue(attachment, "UpdateAxisCanceledEvents"),
+				"later display updates do not replay deferred cancellation");
+			Equal(0, scene.ReadFieldValue(attachment,
+				"UpdateActionReleasedObservations"),
+				"disabled display polling state remains neutral");
+			Equal(diagnosticsBefore + 1, s_diagnostics,
+				"later updates do not replay the cancellation exception");
+			VerifyFixedActionEventsRemainDisplayOnly(scene, attachment);
+		}
+		finally
+		{
+			s_extendedInputPressed = false;
+			scene.DestroyAll();
+		}
+	}
+
+	private static void VerifyDisplayDisableReentrancy(ScriptDomain domain)
+	{
+		const ulong sceneSession = 24;
+		const ulong generation = 20;
+		s_extendedInputPressed = false;
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(sceneSession, generation);
+		try
+		{
+			scene.InstantiateAll([
+				new ScriptAttachment(new Entity(sceneSession, 1, generation),
+					972, 1001, true)
+			]);
+			scene.ApplySerializedFields(
+				"{\"attachments\":[{\"attachmentId\":972,\"fields\":[" +
+				"{\"fieldId\":\"\",\"name\":\"EnableInputActionProbe\"," +
+				"\"type\":\"Bool\",\"value\":true}," +
+				"{\"fieldId\":\"\",\"name\":\"DisableInputActionMapOnStarted\"," +
+				"\"type\":\"Bool\",\"value\":true}]}]}");
+			scene.InvokeCreateAll();
+			scene.UpdateAll(1.0f / 144.0f);
+			s_extendedInputPressed = true;
+			scene.UpdateAll(1.0f / 144.0f);
+			Equal(1, scene.ReadFieldValue(972, "UpdateActionStartedEvents"),
+				"Started handler runs before its reentrant map disable");
+			Equal(0, scene.ReadFieldValue(972, "UpdateActionPerformedEvents"),
+				"reentrant disable suppresses the remaining action phase");
+			Equal(1, scene.ReadFieldValue(972, "UpdateActionCanceledEvents"),
+				"reentrant disable cancels the newly actuated action once");
+			Equal(0, scene.ReadFieldValue(972, "UpdateAxisPerformedEvents"),
+				"reentrant disable suppresses later actions in the map");
+			Equal(0, scene.ReadFieldValue(972, "UpdateActionHeldObservations"),
+				"reentrant disable clears display held state before OnUpdate");
+			Equal(0, scene.ReadFieldValue(972, "UpdateActionPressedObservations"),
+				"reentrant disable clears display press state before OnUpdate");
+			scene.UpdateAll(1.0f / 144.0f);
+			Equal(1, scene.ReadFieldValue(972, "UpdateActionCanceledEvents"),
+				"disabled map does not replay a reentrant cancellation");
+		}
+		finally
+		{
+			s_extendedInputPressed = false;
+			scene.DestroyAll();
+		}
+
+		const ulong throwingSceneSession = 25;
+		ScriptSceneRuntime throwingScene = domain.CreateSceneRuntime(
+			throwingSceneSession, generation + 1);
+		try
+		{
+			throwingScene.InstantiateAll([
+				new ScriptAttachment(new Entity(throwingSceneSession, 1, generation + 1),
+					973, 1001, true)
+			]);
+			throwingScene.ApplySerializedFields(
+				"{\"attachments\":[{\"attachmentId\":973,\"fields\":[" +
+				"{\"fieldId\":\"\",\"name\":\"EnableInputActionProbe\"," +
+				"\"type\":\"Bool\",\"value\":true}," +
+				"{\"fieldId\":\"\",\"name\":\"DisableInputActionMapWhenPressedInUpdate\"," +
+				"\"type\":\"Bool\",\"value\":true}," +
+				"{\"fieldId\":\"\",\"name\":\"ThrowOnInputActionCanceled\"," +
+				"\"type\":\"Bool\",\"value\":true}]}]}");
+			throwingScene.InvokeCreateAll();
+			throwingScene.UpdateAll(1.0f / 144.0f);
+			s_extendedInputPressed = true;
+			int diagnosticsBefore = s_diagnostics;
+			throwingScene.UpdateAll(1.0f / 144.0f);
+			Equal(1, throwingScene.ReadFieldValue(973,
+				"UpdateActionCanceledEvents"),
+				"synchronous disable dispatches the first cancellation once");
+			Equal(1, throwingScene.ReadFieldValue(973,
+				"UpdateAxisCanceledEvents"),
+				"throwing synchronous cancellation does not drop later actions");
+			Equal("Jump>Axis", throwingScene.ReadFieldValue(973,
+				"InputCancellationTrace"),
+				"synchronous cancellations preserve insertion order");
+			Equal(diagnosticsBefore + 1, s_diagnostics,
+				"throwing synchronous cancellation is diagnosed exactly once");
+			int held = (int)throwingScene.ReadFieldValue(973,
+				"UpdateActionHeldObservations")!;
+			int pressed = (int)throwingScene.ReadFieldValue(973,
+				"UpdateActionPressedObservations")!;
+			int started = (int)throwingScene.ReadFieldValue(973,
+				"UpdateActionStartedEvents")!;
+			int performed = (int)throwingScene.ReadFieldValue(973,
+				"UpdateActionPerformedEvents")!;
+			throwingScene.UpdateAll(1.0f / 144.0f);
+			Equal(held, throwingScene.ReadFieldValue(973,
+				"UpdateActionHeldObservations"),
+				"disabled map does not retain a held polling state");
+			Equal(pressed, throwingScene.ReadFieldValue(973,
+				"UpdateActionPressedObservations"),
+				"disabled map does not retain a press edge");
+			Equal(started, throwingScene.ReadFieldValue(973,
+				"UpdateActionStartedEvents"),
+				"disabled map does not replay Started");
+			Equal(performed, throwingScene.ReadFieldValue(973,
+				"UpdateActionPerformedEvents"),
+				"disabled map does not replay Performed");
+			Equal(diagnosticsBefore + 1, s_diagnostics,
+				"disabled map does not replay the cancellation exception");
+		}
+		finally
+		{
+			s_extendedInputPressed = false;
+			throwingScene.DestroyAll();
+		}
+	}
+
+	private static void VerifyFixedInputActionCounts(ScriptSceneRuntime scene,
+		ulong attachment, int presses, int releases)
+	{
+		Equal(presses, scene.ReadFieldValue(attachment,
+			"FixedActionPressedObservations"), "fixed action press count");
+		Equal(releases, scene.ReadFieldValue(attachment,
+			"FixedActionReleasedObservations"), "fixed action release count");
+	}
+
+	private static void VerifyFixedActionEventsRemainDisplayOnly(
+		ScriptSceneRuntime scene, ulong attachment)
+	{
+		Equal(0, scene.ReadFieldValue(attachment, "FixedActionStartedEvents"),
+			"fixed action must not raise Started");
+		Equal(0, scene.ReadFieldValue(attachment, "FixedActionPerformedEvents"),
+			"fixed action must not raise Performed");
+		Equal(0, scene.ReadFieldValue(attachment, "FixedActionCanceledEvents"),
+			"fixed action must not raise Canceled");
+		Equal(0, scene.ReadFieldValue(attachment, "FixedAxisPerformedEvents"),
+			"held fixed Axis1D must not raise Performed per substep");
+	}
+
 	[MethodImpl(MethodImplOptions.NoInlining)]
 	private static ScriptDomain BeginProjectBSwitchUnload(byte[] assembly, byte[] pdb)
 	{
@@ -1026,9 +1721,81 @@ internal static unsafe class Program
 		]);
 		Equal(1, disableScene.ReadFieldValue(400, "CollisionEnters"),
 			"self-disable must suppress later events in the same native batch");
+		Equal(0, disableScene.ReadFieldValue(400, "Disables"),
+			"self-disable lifecycle must wait for native transaction commit");
+		disableScene.SetEnabled(400, false);
+		disableScene.ResolveDeferredCommandBatch(true);
 		Equal(1, disableScene.ReadFieldValue(400, "Disables"),
-			"self-disable callback count");
+			"native commit applies self-disable lifecycle exactly once");
+		disableScene.UpdateAll(0.01f);
+		Equal(0, disableScene.ReadFieldValue(400, "Updates"),
+			"committed self-disable suppresses subsequent Update");
 		disableScene.DestroyAll();
+
+		ScriptSceneRuntime reentrantEnableScene = domain.CreateSceneRuntime(28, 24);
+		reentrantEnableScene.InstantiateAll([
+			new ScriptAttachment(new Entity(28, 1, 24), 990, 1001, true)
+		]);
+		reentrantEnableScene.ApplySerializedFields(
+			"{\"attachments\":[{\"attachmentId\":990,\"fields\":[" +
+			"{\"fieldId\":\"\",\"name\":\"EnableBehaviourOnDisable\",\"type\":\"Bool\",\"value\":true}]}]}");
+		reentrantEnableScene.InvokeCreateAll();
+		reentrantEnableScene.SetEnabled(990, false);
+		reentrantEnableScene.ResolveDeferredCommandBatch(true);
+		reentrantEnableScene.UpdateAll(0.01f);
+		reentrantEnableScene.DispatchPhysicsEvents([
+			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter,
+				new Entity(28, 1, 24), new Entity(28, 2, 24))
+		]);
+		Equal(1, reentrantEnableScene.ReadFieldValue(990, "Disables"),
+			"authoritative disable invokes OnDisable exactly once");
+		Equal(0, reentrantEnableScene.ReadFieldValue(990, "Updates"),
+			"reentrant next-batch enable must wait for authoritative OnEnable");
+		Equal(0, reentrantEnableScene.ReadFieldValue(990, "CollisionEnters"),
+			"reentrant next-batch enable must not receive physics callbacks");
+		reentrantEnableScene.SetEnabled(990, true);
+		reentrantEnableScene.ResolveDeferredCommandBatch(true);
+		reentrantEnableScene.UpdateAll(0.01f);
+		reentrantEnableScene.DispatchPhysicsEvents([
+			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter,
+				new Entity(28, 1, 24), new Entity(28, 2, 24))
+		]);
+		Equal(2, reentrantEnableScene.ReadFieldValue(990, "Enables"),
+			"authoritative next-batch enable invokes OnEnable exactly once");
+		Equal(1, reentrantEnableScene.ReadFieldValue(990, "Updates"),
+			"authoritatively enabled instance resumes Update");
+		Equal(1, reentrantEnableScene.ReadFieldValue(990, "CollisionEnters"),
+			"authoritatively enabled instance resumes physics callbacks");
+		reentrantEnableScene.DestroyAll();
+
+		ScriptSceneRuntime abortScene = domain.CreateSceneRuntime(27, 23);
+		abortScene.InstantiateAll([
+			new ScriptAttachment(new Entity(27, 1, 23), 980, 1001, true)
+		]);
+		abortScene.ApplySerializedFields(
+			"{\"attachments\":[{\"attachmentId\":980,\"fields\":[" +
+			"{\"fieldId\":\"\",\"name\":\"DisableOnCollisionEnter\",\"type\":\"Bool\",\"value\":true}]}]}");
+		abortScene.InvokeCreateAll();
+		Entity abortEntity = new(27, 1, 23);
+		Entity abortOther = new(27, 2, 23);
+		abortScene.DispatchPhysicsEvents([
+			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter, abortEntity, abortOther),
+			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter, abortEntity, abortOther)
+		]);
+		Equal(1, abortScene.ReadFieldValue(980, "CollisionEnters"),
+			"pending self-disable projects within the callback batch");
+		Equal(0, abortScene.ReadFieldValue(980, "Disables"),
+			"pending self-disable has no lifecycle before transaction resolution");
+		abortScene.ResolveDeferredCommandBatch(false);
+		Equal(0, abortScene.ReadFieldValue(980, "Disables"),
+			"native abort clears the projection without invoking OnDisable");
+		abortScene.DispatchPhysicsEvents([
+			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter, abortEntity, abortOther)
+		]);
+		Equal(2, abortScene.ReadFieldValue(980, "CollisionEnters"),
+			"aborted self-disable no longer suppresses later callbacks");
+		abortScene.ResolveDeferredCommandBatch(false);
+		abortScene.DestroyAll();
 
 		ScriptSceneRuntime removeScene = domain.CreateSceneRuntime(13, 9);
 		removeScene.EnableCallbackTraceForTesting();
@@ -1045,10 +1812,19 @@ internal static unsafe class Program
 			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter, removedEntity, removeOther),
 			new ScriptPhysicsEvent(NativePhysicsEventKindV1.CollisionEnter, removedEntity, removeOther)
 		]);
-		Equal(ScriptInstanceState.Destroyed, removeScene.GetInstanceState(500),
-			"self-removal must become locally visible after its callback");
+		Equal(ScriptInstanceState.Ready, removeScene.GetInstanceState(500),
+			"self-removal lifecycle must wait for native transaction commit");
 		Equal(1, removeScene.CallbackTrace.Count(value => value == "500:OnCollisionEnter2D"),
 			"self-removal must suppress later events in the same native batch");
+		Equal(0, removeScene.CallbackTrace.Count(value => value == "500:OnDisable"),
+			"pending self-removal must not invoke OnDisable");
+		Equal(0, removeScene.CallbackTrace.Count(value => value == "500:OnDestroy"),
+			"pending self-removal must not invoke OnDestroy");
+		removeScene.DestroyAttachments([500]);
+		removeScene.ResolveDeferredCommandBatch(true);
+		AssertSuffix(removeScene.CallbackTrace, "500:OnDisable", "500:OnDestroy");
+		Throws<KeyNotFoundException>(() => removeScene.GetInstanceState(500),
+			"committed self-removal remained addressable");
 		removeScene.DestroyAll();
 	}
 
@@ -1057,19 +1833,190 @@ internal static unsafe class Program
 		s_usePerEntityGameplayActivation = true;
 		try
 		{
+			VerifyCreateLifecycleProjection(domain);
 			VerifyHierarchyUpdateSuppression(domain);
 			VerifyHierarchyFixedUpdateSuppression(domain);
 			VerifyHierarchyPhysicsSuppression(domain);
+			VerifyProjectedReparentSuppression(domain);
+			VerifyHierarchyAbortDoesNotConverge(domain);
 			VerifyLifecycleCallbackReversal(domain);
-			VerifyLifecycleOscillationIsBounded(domain);
+			VerifyLifecycleOscillationAdvancesAcrossCommits(domain);
 		}
 		finally
 		{
 			s_gameplayActiveByEntity.Clear();
+			s_committedGameplayActiveByEntity.Clear();
 			s_gameplayParentByEntity.Clear();
+			s_committedGameplayParentByEntity.Clear();
 			s_gameplayActive = true;
 			s_usePerEntityGameplayActivation = false;
 		}
+	}
+
+	private static void VerifyCreateLifecycleProjection(ScriptDomain domain)
+	{
+		VerifyCreateLifecycleProjectionAbort(domain);
+		VerifyCreateLifecycleProjectionCommit(domain);
+	}
+
+	private static void VerifyCreateLifecycleProjectionAbort(ScriptDomain domain)
+	{
+		const ulong sceneSession = 31;
+		const ulong generation = 27;
+		ResetGameplayActivationGraph();
+		ConfigureGameplayParent(sceneSession, generation, 90, 6);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(
+			sceneSession, generation);
+		scene.EnableCallbackTraceForTesting();
+		scene.InstantiateAll([
+			new ScriptAttachment(new Entity(sceneSession, 1, generation),
+				1100, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 2, generation),
+				1101, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 3, generation),
+				1102, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 4, generation),
+				1103, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 5, generation),
+				1104, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 6, generation),
+				1105, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[
+			 {"attachmentId":1100,"fields":[
+			  {"fieldId":"","name":"DisableBehaviourOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1101,"fields":[
+			  {"fieldId":"","name":"DisableEntityOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1102,"fields":[
+			  {"fieldId":"","name":"RemoveOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1103,"fields":[
+			  {"fieldId":"","name":"DestroyEntityOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1104,"fields":[
+			  {"fieldId":"","name":"Target","type":"Entity","value":90},
+			  {"fieldId":"","name":"DisableTargetOnCreate","type":"Bool","value":true}]}
+			]}
+			""");
+		scene.InvokeCreateAll();
+
+		foreach (ulong attachmentId in new ulong[] { 1100, 1101, 1102, 1103, 1105 })
+			Equal(0, scene.ReadFieldValue(attachmentId, "Enables"),
+				$"create projection invoked premature OnEnable for {attachmentId}");
+		Equal(1, scene.ReadFieldValue(1104, "Enables"),
+			"unaffected create-time parent-disabling behaviour did not enable");
+
+		AbortGameplayHierarchyProjection(scene);
+		foreach (ulong attachmentId in new ulong[] { 1100, 1101, 1102, 1103, 1104, 1105 })
+			Equal(1, scene.ReadFieldValue(attachmentId, "Enables"),
+				$"aborted create projection did not converge OnEnable for {attachmentId}");
+
+		scene.DestroyAll();
+		foreach (ulong attachmentId in new ulong[] { 1100, 1101, 1102, 1103, 1104, 1105 })
+		{
+			Equal(1, scene.CallbackTrace.Count(
+				value => value == $"{attachmentId}:OnDisable"),
+				$"aborted create projection did not pair OnDisable for {attachmentId}");
+			Equal(1, scene.CallbackTrace.Count(
+				value => value == $"{attachmentId}:OnDestroy"),
+				$"aborted create projection did not destroy {attachmentId} exactly once");
+		}
+	}
+
+	private static void VerifyCreateLifecycleProjectionCommit(ScriptDomain domain)
+	{
+		const ulong sceneSession = 32;
+		const ulong generation = 28;
+		ResetGameplayActivationGraph();
+		ConfigureGameplayParent(sceneSession, generation, 90, 6);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(
+			sceneSession, generation);
+		scene.EnableCallbackTraceForTesting();
+		scene.InstantiateAll([
+			new ScriptAttachment(new Entity(sceneSession, 1, generation),
+				1200, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 2, generation),
+				1201, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 3, generation),
+				1202, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 4, generation),
+				1203, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 5, generation),
+				1204, 1001, true),
+			new ScriptAttachment(new Entity(sceneSession, 6, generation),
+				1205, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[
+			 {"attachmentId":1200,"fields":[
+			  {"fieldId":"","name":"DisableBehaviourOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1201,"fields":[
+			  {"fieldId":"","name":"DisableEntityOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1202,"fields":[
+			  {"fieldId":"","name":"RemoveOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1203,"fields":[
+			  {"fieldId":"","name":"DestroyEntityOnCreate","type":"Bool","value":true}]},
+			 {"attachmentId":1204,"fields":[
+			  {"fieldId":"","name":"Target","type":"Entity","value":90},
+			  {"fieldId":"","name":"DisableTargetOnCreate","type":"Bool","value":true}]}
+			]}
+			""");
+		scene.InvokeCreateAll();
+
+		foreach (ulong attachmentId in new ulong[] { 1200, 1201, 1202, 1203, 1205 })
+			Equal(0, scene.ReadFieldValue(attachmentId, "Enables"),
+				$"committed create projection invoked premature OnEnable for {attachmentId}");
+		Equal(1, scene.ReadFieldValue(1204, "Enables"),
+			"unaffected committed create-time behaviour did not enable");
+
+		// Model the authoritative callbacks native emits while replaying the
+		// validated batch, then acknowledge the transaction.
+		scene.SetEnabled(1200, false);
+		scene.DestroyAttachments([1202, 1203]);
+		CommitGameplayHierarchyProjection(scene);
+
+		foreach (ulong attachmentId in new ulong[] { 1200, 1201, 1205 })
+		{
+			Equal(0, scene.ReadFieldValue(attachmentId, "Enables"),
+				$"inactive create commit enabled {attachmentId}");
+			Equal(0, scene.ReadFieldValue(attachmentId, "Disables"),
+				$"inactive create commit emitted unpaired OnDisable for {attachmentId}");
+		}
+		foreach (ulong attachmentId in new ulong[] { 1202, 1203 })
+		{
+			Equal(0, scene.CallbackTrace.Count(
+				value => value == $"{attachmentId}:OnEnable"),
+				$"removed create commit enabled {attachmentId}");
+			Equal(0, scene.CallbackTrace.Count(
+				value => value == $"{attachmentId}:OnDisable"),
+				$"removed create commit emitted unpaired OnDisable for {attachmentId}");
+			Equal(1, scene.CallbackTrace.Count(
+				value => value == $"{attachmentId}:OnDestroy"),
+				$"removed create commit did not destroy {attachmentId} exactly once");
+		}
+
+		// Later authoritative reactivation must begin each surviving lifecycle
+		// exactly once; teardown must then produce its matching OnDisable.
+		scene.SetEnabled(1200, true);
+		var entityHandle = new NativeEntityHandleV1(
+			sceneSession, 2, generation);
+		var parentHandle = new NativeEntityHandleV1(
+			sceneSession, 90, generation);
+		s_gameplayActiveByEntity[GameplayEntityKey(entityHandle)] = true;
+		s_gameplayActiveByEntity[GameplayEntityKey(parentHandle)] = true;
+		CommitGameplayHierarchyProjection(scene);
+		foreach (ulong attachmentId in new ulong[] { 1200, 1201, 1204, 1205 })
+			Equal(1, scene.ReadFieldValue(attachmentId, "Enables"),
+				$"authoritative reactivation did not enable {attachmentId} exactly once");
+
+		scene.DestroyAll();
+		foreach (ulong attachmentId in new ulong[] { 1200, 1201, 1204, 1205 })
+			Equal(1, scene.CallbackTrace.Count(
+				value => value == $"{attachmentId}:OnDisable"),
+				$"reactivated create lifecycle did not pair OnDisable for {attachmentId}");
+		foreach (ulong attachmentId in new ulong[] { 1202, 1203 })
+			Equal(0, scene.CallbackTrace.Count(
+				value => value == $"{attachmentId}:OnDisable"),
+				$"never-enabled removed lifecycle emitted OnDisable for {attachmentId}");
 	}
 
 	private static void VerifyHierarchyUpdateSuppression(ScriptDomain domain)
@@ -1098,14 +2045,22 @@ internal static unsafe class Program
 			"parent-disabling Update executes its initiating callback");
 		Equal(0, scene.ReadFieldValue(911, "Updates"),
 			"parent disable suppresses the next Update in the same batch");
+		Equal(false, scene.ReadFieldValue(910,
+			"TargetActiveInHierarchyAfterMutation"),
+			"public ActiveInHierarchy missed the pending parent disable");
 		Equal(0, scene.ReadFieldValue(910, "LateUpdates"),
 			"parent disable suppresses initiating script LateUpdate");
 		Equal(0, scene.ReadFieldValue(911, "LateUpdates"),
 			"parent disable suppresses sibling LateUpdate");
+		Equal(0, scene.ReadFieldValue(910, "Disables"),
+			"projected parent disable does not run initiating lifecycle");
+		Equal(0, scene.ReadFieldValue(911, "Disables"),
+			"projected parent disable does not run sibling lifecycle");
+		CommitGameplayHierarchyProjection(scene);
 		Equal(1, scene.ReadFieldValue(910, "Disables"),
-			"parent disable transitions initiating script once");
+			"committed parent disable transitions initiating script once");
 		Equal(1, scene.ReadFieldValue(911, "Disables"),
-			"parent disable transitions sibling script once");
+			"committed parent disable transitions sibling script once");
 		scene.DestroyAll();
 	}
 
@@ -1135,10 +2090,15 @@ internal static unsafe class Program
 			"parent-disabling FixedUpdate executes its initiating callback");
 		Equal(0, scene.ReadFieldValue(921, "FixedUpdates"),
 			"parent disable suppresses the next FixedUpdate in the same batch");
+		Equal(0, scene.ReadFieldValue(920, "Disables"),
+			"projected FixedUpdate parent disable has no lifecycle");
+		Equal(0, scene.ReadFieldValue(921, "Disables"),
+			"projected FixedUpdate sibling disable has no lifecycle");
+		CommitGameplayHierarchyProjection(scene);
 		Equal(1, scene.ReadFieldValue(920, "Disables"),
-			"FixedUpdate parent disable transitions initiating script once");
+			"committed FixedUpdate parent disable transitions initiating script");
 		Equal(1, scene.ReadFieldValue(921, "Disables"),
-			"FixedUpdate parent disable transitions sibling script once");
+			"committed FixedUpdate parent disable transitions sibling script");
 		scene.DestroyAll();
 	}
 
@@ -1170,10 +2130,112 @@ internal static unsafe class Program
 			"parent-disabling collision executes its initiating callback");
 		Equal(0, scene.ReadFieldValue(931, "CollisionEnters"),
 			"parent disable suppresses the next collision callback in the same batch");
+		Equal(0, scene.ReadFieldValue(930, "Disables"),
+			"projected collision parent disable has no lifecycle");
+		Equal(0, scene.ReadFieldValue(931, "Disables"),
+			"projected collision sibling disable has no lifecycle");
+		CommitGameplayHierarchyProjection(scene);
 		Equal(1, scene.ReadFieldValue(930, "Disables"),
-			"collision parent disable transitions initiating script once");
+			"committed collision parent disable transitions initiating script");
 		Equal(1, scene.ReadFieldValue(931, "Disables"),
-			"collision parent disable transitions sibling script once");
+			"committed collision parent disable transitions sibling script");
+		scene.DestroyAll();
+	}
+
+	private static void VerifyProjectedReparentSuppression(ScriptDomain domain)
+	{
+		const ulong sceneSession = 29;
+		const ulong generation = 25;
+		ResetGameplayActivationGraph();
+		var inactiveParent = new NativeEntityHandleV1(
+			sceneSession, 90, generation);
+		s_gameplayActiveByEntity[GameplayEntityKey(inactiveParent)] = false;
+		s_committedGameplayActiveByEntity[GameplayEntityKey(inactiveParent)] = false;
+		Entity initiator = new(sceneSession, 1, generation);
+		Entity target = new(sceneSession, 2, generation);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(
+			sceneSession, generation);
+		scene.InstantiateAll([
+			new ScriptAttachment(initiator, 1000, 1001, true),
+			new ScriptAttachment(target, 1001, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":1000,"fields":[
+			  {"fieldId":"","name":"Target","type":"Entity","value":2},
+			  {"fieldId":"","name":"ReparentParent","type":"Entity","value":90},
+			  {"fieldId":"","name":"ReparentTargetOnUpdate","type":"Bool","value":true}
+			]}]}
+			""");
+		scene.InvokeCreateAll();
+
+		scene.UpdateAll(0.01f);
+		Equal(1, scene.ReadFieldValue(1000, "Updates"),
+			"reparenting callback executes before its projected mutation");
+		Equal(0, scene.ReadFieldValue(1001, "Updates"),
+			"projected Parent under an inactive ancestor suppresses later Update");
+		Equal(false, scene.ReadFieldValue(1000,
+			"TargetActiveInHierarchyAfterMutation"),
+			"public ActiveInHierarchy missed the projected reparent");
+		Equal(1, scene.ReadFieldValue(1000, "LateUpdates"),
+			"unrelated initiator remains active after projected reparent");
+		Equal(0, scene.ReadFieldValue(1001, "LateUpdates"),
+			"projected reparent suppresses target LateUpdate");
+		Equal(0, scene.ReadFieldValue(1001, "Disables"),
+			"projected reparent does not run lifecycle before commit");
+
+		CommitGameplayHierarchyProjection(scene);
+		Equal(0, scene.ReadFieldValue(1000, "Disables"),
+			"reparent commit leaves the initiator hierarchy active");
+		Equal(1, scene.ReadFieldValue(1001, "Disables"),
+			"reparent commit converges target OnDisable exactly once");
+		scene.DestroyAll();
+	}
+
+	private static void VerifyHierarchyAbortDoesNotConverge(ScriptDomain domain)
+	{
+		const ulong sceneSession = 30;
+		const ulong generation = 26;
+		ResetGameplayActivationGraph();
+		ConfigureGameplayParent(sceneSession, generation, 90, 1, 2);
+		Entity first = new(sceneSession, 1, generation);
+		Entity second = new(sceneSession, 2, generation);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(
+			sceneSession, generation);
+		scene.InstantiateAll([
+			new ScriptAttachment(first, 1010, 1001, true),
+			new ScriptAttachment(second, 1011, 1001, true)
+		]);
+		scene.ApplySerializedFields("""
+			{"attachments":[{"attachmentId":1010,"fields":[
+			  {"fieldId":"","name":"Target","type":"Entity","value":90},
+			  {"fieldId":"","name":"DisableTargetOnCollisionEnter","type":"Bool","value":true}
+			]}]}
+			""");
+		scene.InvokeCreateAll();
+
+		scene.DispatchPhysicsEvents([
+			new ScriptPhysicsEvent(
+				NativePhysicsEventKindV1.CollisionEnter, first, second)
+		]);
+		Equal(1, scene.ReadFieldValue(1010, "CollisionEnters"),
+			"aborted hierarchy regression queues one parent disable");
+		Equal(0, scene.ReadFieldValue(1011, "CollisionEnters"),
+			"projected parent disable suppresses the sibling in the same batch");
+		Equal(0, scene.ReadFieldValue(1010, "Disables"),
+			"pending parent disable does not run initiating lifecycle");
+		Equal(0, scene.ReadFieldValue(1011, "Disables"),
+			"pending parent disable does not run sibling lifecycle");
+
+		AbortGameplayHierarchyProjection(scene);
+		Equal(0, scene.ReadFieldValue(1010, "Disables"),
+			"hierarchy abort does not invoke initiating OnDisable");
+		Equal(0, scene.ReadFieldValue(1011, "Disables"),
+			"hierarchy abort does not invoke sibling OnDisable");
+		scene.UpdateAll(0.01f);
+		Equal(1, scene.ReadFieldValue(1010, "Updates"),
+			"aborted parent disable restores initiating Update");
+		Equal(1, scene.ReadFieldValue(1011, "Updates"),
+			"aborted parent disable restores sibling Update");
 		scene.DestroyAll();
 	}
 
@@ -1194,13 +2256,16 @@ internal static unsafe class Program
 			]}]}
 			""");
 		enableScene.InvokeCreateAll();
-		enableScene.UpdateAll(0.01f);
 		Equal(1, enableScene.ReadFieldValue(940, "Enables"),
 			"OnEnable self-disable enable count");
-		Equal(1, enableScene.ReadFieldValue(940, "Disables"),
-			"OnEnable self-disable converges through OnDisable");
+		Equal(0, enableScene.ReadFieldValue(940, "Disables"),
+			"OnEnable projected self-disable waits for commit");
+		enableScene.UpdateAll(0.01f);
 		Equal(0, enableScene.ReadFieldValue(940, "Updates"),
-			"OnEnable self-disable suppresses Update");
+			"OnEnable projected self-disable suppresses Update");
+		CommitGameplayHierarchyProjection(enableScene);
+		Equal(1, enableScene.ReadFieldValue(940, "Disables"),
+			"committed OnEnable self-disable invokes OnDisable");
 		enableScene.DestroyAll();
 
 		const ulong disableSceneSession = 25;
@@ -1222,16 +2287,29 @@ internal static unsafe class Program
 			disableSceneSession, 1, disableGeneration);
 		s_gameplayActiveByEntity[GameplayEntityKey(disableHandle)] = false;
 		disableScene.UpdateAll(0.01f);
-		Equal(2, disableScene.ReadFieldValue(950, "Enables"),
-			"OnDisable self-enable converges through OnEnable");
+		Equal(1, disableScene.ReadFieldValue(950, "Enables"),
+			"projected disable does not invoke OnEnable");
+		Equal(0, disableScene.ReadFieldValue(950, "Disables"),
+			"projected disable waits for commit");
+		Equal(0, disableScene.ReadFieldValue(950, "Updates"),
+			"projected disable suppresses Update");
+		CommitGameplayHierarchyProjection(disableScene);
 		Equal(1, disableScene.ReadFieldValue(950, "Disables"),
-			"OnDisable self-enable disable count");
+			"disable commit invokes OnDisable once");
+		disableScene.UpdateAll(0.01f);
+		Equal(0, disableScene.ReadFieldValue(950, "Updates"),
+			"OnDisable reactivation waits for its next commit");
+		CommitGameplayHierarchyProjection(disableScene);
+		Equal(2, disableScene.ReadFieldValue(950, "Enables"),
+			"next commit invokes OnEnable for reentrant activation");
+		disableScene.UpdateAll(0.01f);
 		Equal(1, disableScene.ReadFieldValue(950, "Updates"),
-			"OnDisable self-enable resumes Update after convergence");
+			"committed reactivation resumes Update");
 		disableScene.DestroyAll();
 	}
 
-	private static void VerifyLifecycleOscillationIsBounded(ScriptDomain domain)
+	private static void VerifyLifecycleOscillationAdvancesAcrossCommits(
+		ScriptDomain domain)
 	{
 		const ulong sceneSession = 26;
 		const ulong generation = 22;
@@ -1250,25 +2328,34 @@ internal static unsafe class Program
 		int diagnosticsBefore = s_diagnostics;
 		scene.InvokeCreateAll();
 
-		Equal(ScriptInstanceState.Faulted, scene.GetInstanceState(960),
-			"non-convergent lifecycle callbacks are quarantined");
-		int transitionCallbacks =
-			(int)scene.ReadFieldValue(960, "Enables")!
-			+ (int)scene.ReadFieldValue(960, "Disables")!;
-		Check(transitionCallbacks > 1 && transitionCallbacks <= 8,
-			"lifecycle oscillation exceeded its bounded transition budget");
-		Equal(diagnosticsBefore + 1, s_diagnostics,
-			"lifecycle oscillation reports one managed diagnostic");
+		Equal(ScriptInstanceState.Ready, scene.GetInstanceState(960),
+			"projected lifecycle reversal remains healthy before commit");
+		Equal(1, scene.ReadFieldValue(960, "Enables"),
+			"initial activation invokes OnEnable once");
+		Equal(0, scene.ReadFieldValue(960, "Disables"),
+			"initial projected disable does not converge early");
+		CommitGameplayHierarchyProjection(scene);
+		Equal(1, scene.ReadFieldValue(960, "Disables"),
+			"first commit advances oscillation through OnDisable once");
+		CommitGameplayHierarchyProjection(scene);
+		Equal(2, scene.ReadFieldValue(960, "Enables"),
+			"second commit advances oscillation through OnEnable once");
+		Equal(ScriptInstanceState.Ready, scene.GetInstanceState(960),
+			"cross-batch lifecycle reversal is not a same-commit oscillation");
+		Equal(diagnosticsBefore, s_diagnostics,
+			"cross-batch lifecycle reversal emits no false diagnostic");
 		scene.UpdateAll(0.01f);
 		Equal(0, scene.ReadFieldValue(960, "Updates"),
-			"quarantined lifecycle oscillator does not receive Update");
+			"next projected disable suppresses Update until another commit");
 		scene.DestroyAll();
 	}
 
 	private static void ResetGameplayActivationGraph()
 	{
 		s_gameplayActiveByEntity.Clear();
+		s_committedGameplayActiveByEntity.Clear();
 		s_gameplayParentByEntity.Clear();
+		s_committedGameplayParentByEntity.Clear();
 		s_gameplayActive = true;
 	}
 
@@ -1282,7 +2369,32 @@ internal static unsafe class Program
 			var child = new NativeEntityHandleV1(sceneSession, childId,
 				runtimeGeneration);
 			s_gameplayParentByEntity[GameplayEntityKey(child)] = parent;
+			s_committedGameplayParentByEntity[GameplayEntityKey(child)] = parent;
 		}
+	}
+
+	private static void CommitGameplayHierarchyProjection(
+		ScriptSceneRuntime scene)
+	{
+		s_committedGameplayActiveByEntity.Clear();
+		foreach (var pair in s_gameplayActiveByEntity)
+			s_committedGameplayActiveByEntity[pair.Key] = pair.Value;
+		s_committedGameplayParentByEntity.Clear();
+		foreach (var pair in s_gameplayParentByEntity)
+			s_committedGameplayParentByEntity[pair.Key] = pair.Value;
+		scene.ResolveDeferredCommandBatch(true);
+	}
+
+	private static void AbortGameplayHierarchyProjection(
+		ScriptSceneRuntime scene)
+	{
+		s_gameplayActiveByEntity.Clear();
+		foreach (var pair in s_committedGameplayActiveByEntity)
+			s_gameplayActiveByEntity[pair.Key] = pair.Value;
+		s_gameplayParentByEntity.Clear();
+		foreach (var pair in s_committedGameplayParentByEntity)
+			s_gameplayParentByEntity[pair.Key] = pair.Value;
+		scene.ResolveDeferredCommandBatch(false);
 	}
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
@@ -1344,6 +2456,628 @@ internal static unsafe class Program
 		{
 			throw new InvalidOperationException(message, exception);
 		}
+	}
+
+
+	private static void VerifyDeferredCallbackTransactions(byte[] assembly,
+		byte[] pdb)
+	{
+		s_exposeDeferredCallbackTransactions = true;
+		NativeApiV1 native = CreateCompleteNativeApi();
+		NativeApiV2 envelope = new()
+		{
+			V1 = native,
+			QueryCapability = &QueryTestCapability
+		};
+		envelope.V1.Size = (uint)sizeof(NativeApiV2);
+		ManagedApiV1 managed = new()
+		{
+			Version = ManagedAbi.ManagedApiVersion,
+			Size = (uint)sizeof(ManagedApiV1)
+		};
+		delegate* unmanaged[Cdecl]<NativeApiV1*, ManagedApiV1*, int> bootstrap =
+			&EntryPoint.GetManagedApi;
+
+		byte[] capabilityName = Encoding.UTF8.GetBytes(
+			"TomCat.DeferredCallbackTransactionsApiV1");
+		fixed (byte* name = capabilityName)
+		{
+			uint required = 0;
+			Equal(-4, envelope.QueryCapability(
+				new NativeUtf8View(name, (ulong)capabilityName.Length), 2,
+				null, 0, &required),
+				"newer deferred callback transaction capability rejection");
+			Equal((uint)sizeof(NativeDeferredCallbackTransactionsApiV1), required,
+				"deferred callback transaction capability required size");
+			NativeDeferredCallbackTransactionsApiV1 transactions = default;
+			Equal(0, envelope.QueryCapability(
+				new NativeUtf8View(name, (ulong)capabilityName.Length), 1,
+				&transactions,
+				(uint)sizeof(NativeDeferredCallbackTransactionsApiV1), &required),
+				"deferred callback transaction capability query");
+			Check(transactions.Version == 1
+				&& transactions.Size
+					== (uint)sizeof(NativeDeferredCallbackTransactionsApiV1)
+				&& transactions.BeginCallback != null
+				&& transactions.CompleteCallback != null,
+				"deferred callback transaction capability table");
+		}
+		Equal(0, bootstrap(&envelope.V1, &managed),
+			"GetManagedApi with deferred callback transactions");
+		Check(NativeBridge.SupportsDeferredCallbackTransactions,
+			"deferred callback transaction capability was not bound");
+
+		var domain = new ScriptDomain(ScriptDomainKind.Play);
+		domain.LoadProjectAssembly(assembly, pdb);
+		try
+		{
+			s_usePerEntityGameplayActivation = true;
+			ResetGameplayActivationGraph();
+			ResetCallbackTransactionHarness();
+
+			const ulong oscillatingSceneSession = 41;
+			const ulong oscillatingGeneration = 37;
+			const ulong oscillatingAttachment = 1400;
+			ScriptSceneRuntime oscillatingScene = domain.CreateSceneRuntime(
+				oscillatingSceneSession, oscillatingGeneration);
+			s_callbackTransactionScene = oscillatingScene;
+			oscillatingScene.InstantiateAll([
+				new ScriptAttachment(
+					new Entity(oscillatingSceneSession, 1, oscillatingGeneration),
+					oscillatingAttachment, 1001, true)
+			]);
+			oscillatingScene.ApplySerializedFields("""
+				{"attachments":[{"attachmentId":1400,"fields":[
+				  {"fieldId":"","name":"DisableSelfOnEnable","type":"Bool","value":true},
+				  {"fieldId":"","name":"EnableSelfOnDisable","type":"Bool","value":true}
+				]}]}
+				""");
+			int diagnosticsBefore = s_diagnostics;
+			oscillatingScene.InvokeCreateAll();
+			Equal(ScriptInstanceState.Faulted,
+				oscillatingScene.GetInstanceState(oscillatingAttachment),
+				"callback FIFO lifecycle oscillation was not quarantined");
+			Equal(diagnosticsBefore + 1, s_diagnostics,
+				"callback FIFO lifecycle oscillation diagnostic count");
+			Equal(4, oscillatingScene.ReadFieldValue(
+				oscillatingAttachment, "Enables"),
+				"callback FIFO lifecycle oscillation enable budget");
+			Equal(4, oscillatingScene.ReadFieldValue(
+				oscillatingAttachment, "Disables"),
+				"callback FIFO lifecycle oscillation disable budget");
+			Check(s_callbackTransactionBeginCalls < 32
+				&& s_callbackTransactionBeginCalls
+					== s_callbackTransactionCompleteCalls,
+				"callback FIFO lifecycle oscillation did not terminate");
+			int beginsBeforeTeardown = s_callbackTransactionBeginCalls;
+			int completesBeforeTeardown = s_callbackTransactionCompleteCalls;
+			oscillatingScene.DestroyAll();
+			Equal(beginsBeforeTeardown, s_callbackTransactionBeginCalls,
+				"DestroyAll opened a callback transaction after Scene removal");
+			Equal(completesBeforeTeardown, s_callbackTransactionCompleteCalls,
+				"DestroyAll completed a callback transaction after Scene removal");
+
+			VerifyInputActionCallbackTransactions(domain);
+
+			ResetGameplayActivationGraph();
+			ResetCallbackTransactionHarness();
+			const ulong failingSceneSession = 42;
+			const ulong failingGeneration = 38;
+			const ulong failingAttachment = 1401;
+			ScriptSceneRuntime failingScene = domain.CreateSceneRuntime(
+				failingSceneSession, failingGeneration);
+			s_callbackTransactionScene = failingScene;
+			failingScene.InstantiateAll([
+				new ScriptAttachment(
+					new Entity(failingSceneSession, 1, failingGeneration),
+					failingAttachment, 1001, true)
+			]);
+			failingScene.ApplySerializedFields("{\"attachments\":[]}");
+			failingScene.InvokeCreateAll();
+			s_failNextCallbackTransactionComplete = true;
+			Throws<InvalidOperationException>(
+				() => failingScene.UpdateAll(0.01f),
+				"failed native Complete must surface a protocol fault");
+			FieldInfo awaitingField = typeof(ScriptSceneRuntime).GetField(
+				"_awaitingCallbackProjections",
+				BindingFlags.Instance | BindingFlags.NonPublic)
+				?? throw new MissingFieldException(
+					nameof(ScriptSceneRuntime),
+					"_awaitingCallbackProjections");
+			object awaiting = awaitingField.GetValue(failingScene)
+				?? throw new InvalidOperationException(
+					"callback projection FIFO was null");
+			int awaitingCount = (int)(awaiting.GetType().GetProperty("Count")
+				?.GetValue(awaiting)
+				?? throw new MissingMemberException(
+					"callback projection FIFO Count"));
+			Equal(0, awaitingCount,
+				"failed native Complete left a stale managed FIFO frame");
+			int failureBeginsBeforeTeardown = s_callbackTransactionBeginCalls;
+			int failureCompletesBeforeTeardown =
+				s_callbackTransactionCompleteCalls;
+			failingScene.DestroyAll();
+			Equal(failureBeginsBeforeTeardown,
+				s_callbackTransactionBeginCalls,
+				"failed callback Scene teardown reopened a transaction");
+			Equal(failureCompletesBeforeTeardown,
+				s_callbackTransactionCompleteCalls,
+				"failed callback Scene teardown completed a transaction");
+		}
+		finally
+		{
+			s_callbackTransactionScene = null;
+			s_exposeDeferredCallbackTransactions = false;
+			s_usePerEntityGameplayActivation = false;
+			s_openCallbackTransactionToken = 0;
+			s_drainingCallbackTransactions = false;
+			s_callbackTransactionAcks.Clear();
+			domain.BeginUnload();
+		}
+		Check(PollUntilUnloaded(domain),
+			"deferred callback transaction test Domain leaked");
+	}
+
+	private static void VerifyInputActionCallbackTransactions(
+		ScriptDomain domain)
+	{
+		VerifyInputActionSubscriberIsolation(domain);
+		VerifyNestedInputActionCancellationTransaction(domain);
+		VerifyInputActionCallbackProtocolFailures(domain);
+	}
+
+	private static void VerifyInputActionSubscriberIsolation(ScriptDomain domain)
+	{
+		const ulong sceneSession = 43;
+		const ulong generation = 39;
+		const ulong attachment = 1402;
+		var fixture = CreateInputActionTransactionFixture(domain,
+			sceneSession, generation, attachment, "Regression.CallbackSubscribers");
+		Entity firstTarget = new(sceneSession, 2, generation);
+		Entity secondTarget = new(sceneSession, 3, generation);
+		Entity thirdTarget = new(sceneSession, 4, generation);
+		SetFakeGameplayActive(firstTarget, true);
+		SetFakeGameplayActive(secondTarget, true);
+		SetFakeGameplayActive(thirdTarget, true);
+		int firstRuns = 0;
+		int secondRuns = 0;
+		int thirdRuns = 0;
+		ulong firstToken = 0;
+		ulong secondToken = 0;
+		ulong thirdToken = 0;
+		bool secondSawFirstCommit = false;
+		bool secondSawOwnProjection = false;
+		bool thirdSawSecondRollback = false;
+		fixture.Action.Started += _ =>
+		{
+			++firstRuns;
+			firstToken = s_openCallbackTransactionToken;
+			firstTarget.ActiveSelf = false;
+		};
+		fixture.Action.Started += _ =>
+		{
+			++secondRuns;
+			secondToken = s_openCallbackTransactionToken;
+			secondSawFirstCommit = !firstTarget.ActiveSelf;
+			secondTarget.ActiveSelf = false;
+			secondSawOwnProjection = !secondTarget.ActiveSelf;
+			throw new InvalidOperationException(
+				"intentional InputAction subscriber failure");
+		};
+		fixture.Action.Started += _ =>
+		{
+			++thirdRuns;
+			thirdToken = s_openCallbackTransactionToken;
+			thirdSawSecondRollback = secondTarget.ActiveSelf;
+			thirdTarget.ActiveSelf = false;
+		};
+
+		try
+		{
+			int diagnosticsBefore = s_diagnostics;
+			s_extendedInputPressed = true;
+			fixture.Scene.UpdateAll(1.0f / 60.0f);
+
+			Equal(1, firstRuns,
+				"first healthy InputAction subscriber runs once");
+			Equal(1, secondRuns,
+				"throwing InputAction subscriber runs once");
+			Equal(1, thirdRuns,
+				"later healthy InputAction subscriber survives an earlier failure");
+			Check(firstToken != 0 && secondToken != 0 && thirdToken != 0
+				&& firstToken != secondToken && secondToken != thirdToken,
+				"InputAction subscribers did not receive distinct transactions");
+			Check(secondSawFirstCommit,
+				"second subscriber did not observe the first subscriber commit");
+			Check(secondSawOwnProjection,
+				"throwing subscriber did not observe its staged mutation");
+			Check(thirdSawSecondRollback,
+				"later subscriber did not observe the throwing subscriber rollback");
+			Equal(ScriptInstanceState.Ready,
+				fixture.Scene.GetInstanceState(attachment),
+				"one failing InputAction subscriber faulted the script instance");
+			Equal(diagnosticsBefore + 1, s_diagnostics,
+				"throwing InputAction subscriber diagnostic count");
+			Equal(1, s_abortBatchCalls,
+				"throwing InputAction subscriber abort count");
+			AssertAbortBatchContext(fixture.Owner,
+				"throwing InputAction subscriber abort context");
+			Check(s_abortBatchReason?.Contains(
+				"intentional InputAction subscriber failure",
+				StringComparison.Ordinal) == true,
+				"throwing InputAction subscriber abort reason");
+			Check(s_callbackTransactionAbortTokens.SequenceEqual([secondToken]),
+				"throwing InputAction subscriber aborted the wrong transaction");
+
+			Equal(false, ReadFakeGameplayActive(firstTarget, committed: false),
+				"first healthy InputAction subscriber working state");
+			Equal(false, ReadFakeGameplayActive(firstTarget, committed: true),
+				"first healthy InputAction subscriber commit");
+			Equal(true, ReadFakeGameplayActive(secondTarget, committed: false),
+				"throwing InputAction subscriber working-state rollback");
+			Equal(true, ReadFakeGameplayActive(secondTarget, committed: true),
+				"throwing InputAction subscriber authoritative rollback");
+			Equal(false, ReadFakeGameplayActive(thirdTarget, committed: false),
+				"later healthy InputAction subscriber working state");
+			Equal(false, ReadFakeGameplayActive(thirdTarget, committed: true),
+				"later healthy InputAction subscriber commit");
+
+			Check(s_callbackTransactionBeginTokens.Take(3).SequenceEqual(
+				[firstToken, secondToken, thirdToken]),
+				"InputAction subscriber Begin order");
+			Check(s_callbackTransactionCompleteTokens.Take(3).SequenceEqual(
+				[firstToken, secondToken, thirdToken]),
+				"InputAction subscriber Complete order");
+			var handlerAcks =
+				s_callbackTransactionResolvedAcks.Take(3).ToArray();
+			Equal(3, handlerAcks.Length,
+				"InputAction subscriber acknowledgement count");
+			Check(handlerAcks[0] == (firstToken, true)
+				&& handlerAcks[1] == (secondToken, false)
+				&& handlerAcks[2] == (thirdToken, true),
+				"InputAction subscriber commit/abort acknowledgement order");
+			AssertSuccessfulCallbackTransactionFifo(
+				"InputAction subscriber transaction FIFO");
+		}
+		finally
+		{
+			DestroyInputActionTransactionFixture(domain, fixture.Scene,
+				fixture.Owner, fixture.Map);
+		}
+	}
+
+	private static void VerifyNestedInputActionCancellationTransaction(
+		ScriptDomain domain)
+	{
+		const ulong sceneSession = 44;
+		const ulong generation = 40;
+		const ulong attachment = 1403;
+		var fixture = CreateInputActionTransactionFixture(domain,
+			sceneSession, generation, attachment, "Regression.NestedCancellation");
+		Entity target = new(sceneSession, 2, generation);
+		SetFakeGameplayActive(target, true);
+		ulong startedToken = 0;
+		ulong canceledToken = 0;
+		int beginsBeforeDisable = -1;
+		int beginsAfterDisable = -1;
+		fixture.Action.Canceled += _ =>
+		{
+			canceledToken = s_openCallbackTransactionToken;
+			target.ActiveSelf = false;
+		};
+		fixture.Action.Started += _ =>
+		{
+			startedToken = s_openCallbackTransactionToken;
+			beginsBeforeDisable = s_callbackTransactionBeginCalls;
+			fixture.Map.Disable();
+			beginsAfterDisable = s_callbackTransactionBeginCalls;
+		};
+
+		try
+		{
+			int diagnosticsBefore = s_diagnostics;
+			s_extendedInputPressed = true;
+			fixture.Scene.UpdateAll(1.0f / 60.0f);
+
+			Check(startedToken != 0 && canceledToken == startedToken,
+				"nested Disable/Canceled did not share the Started transaction");
+			Equal(beginsBeforeDisable, beginsAfterDisable,
+				"nested Canceled opened another callback transaction");
+			Check(!fixture.Map.Enabled,
+				"Started handler did not disable its InputAction map");
+			Equal(false, ReadFakeGameplayActive(target, committed: false),
+				"nested Canceled working state");
+			Equal(false, ReadFakeGameplayActive(target, committed: true),
+				"nested Canceled mutation did not commit with Started");
+			Equal(diagnosticsBefore, s_diagnostics,
+				"healthy nested Canceled emitted a diagnostic");
+			Equal(0, s_abortBatchCalls,
+				"healthy nested Canceled aborted its outer transaction");
+			Equal((startedToken, true),
+				s_callbackTransactionResolvedAcks.First(
+					ack => ack.Token == startedToken),
+				"nested Disable/Canceled transaction acknowledgement");
+			AssertSuccessfulCallbackTransactionFifo(
+				"nested Disable/Canceled transaction FIFO");
+		}
+		finally
+		{
+			DestroyInputActionTransactionFixture(domain, fixture.Scene,
+				fixture.Owner, fixture.Map);
+		}
+	}
+
+	private static void VerifyInputActionCallbackProtocolFailures(
+		ScriptDomain domain)
+	{
+		VerifyInputActionCallbackBeginFailure(domain);
+		VerifyInputActionCallbackCompleteFailure(domain);
+		VerifyInputActionCallbackAbortFailure(domain);
+	}
+
+	private static void VerifyInputActionCallbackBeginFailure(ScriptDomain domain)
+	{
+		const ulong sceneSession = 45;
+		const ulong generation = 41;
+		const ulong attachment = 1404;
+		var fixture = CreateInputActionTransactionFixture(domain,
+			sceneSession, generation, attachment, "Regression.BeginFailure");
+		int handlerRuns = 0;
+		fixture.Action.Started += _ => ++handlerRuns;
+		try
+		{
+			s_failNextCallbackTransactionBegin = true;
+			s_extendedInputPressed = true;
+			Throws<DeferredCallbackProtocolException>(
+				() => fixture.Scene.UpdateAll(1.0f / 60.0f),
+				"InputAction Begin protocol failure was swallowed");
+			Equal(0, handlerRuns,
+				"InputAction handler ran after Begin protocol failure");
+			Check(!s_failNextCallbackTransactionBegin,
+				"InputAction Begin failure injection was not consumed");
+			Equal(0, s_callbackTransactionBeginCalls,
+				"failed InputAction Begin counted as an open transaction");
+			Equal(0, s_callbackTransactionCompleteCalls,
+				"failed InputAction Begin attempted Complete");
+			Equal(0, GetAwaitingCallbackProjectionCount(fixture.Scene),
+				"failed InputAction Begin left an awaiting projection");
+		}
+		finally
+		{
+			DestroyInputActionTransactionFixture(domain, fixture.Scene,
+				fixture.Owner, fixture.Map);
+		}
+	}
+
+	private static void VerifyInputActionCallbackCompleteFailure(
+		ScriptDomain domain)
+	{
+		const ulong sceneSession = 46;
+		const ulong generation = 42;
+		const ulong attachment = 1405;
+		var fixture = CreateInputActionTransactionFixture(domain,
+			sceneSession, generation, attachment, "Regression.CompleteFailure");
+		int handlerRuns = 0;
+		ulong handlerToken = 0;
+		fixture.Action.Started += _ =>
+		{
+			++handlerRuns;
+			handlerToken = s_openCallbackTransactionToken;
+		};
+		try
+		{
+			s_failNextCallbackTransactionComplete = true;
+			s_extendedInputPressed = true;
+			Throws<DeferredCallbackProtocolException>(
+				() => fixture.Scene.UpdateAll(1.0f / 60.0f),
+				"InputAction Complete protocol failure was swallowed");
+			Equal(1, handlerRuns,
+				"InputAction handler did not run before Complete failure");
+			Check(handlerToken != 0,
+				"InputAction Complete failure handler had no transaction token");
+			Check(!s_failNextCallbackTransactionComplete,
+				"InputAction Complete failure injection was not consumed");
+			Check(s_callbackTransactionBeginTokens.SequenceEqual([handlerToken]),
+				"InputAction Complete failure Begin sequence");
+			Check(s_callbackTransactionCompleteTokens.SequenceEqual([handlerToken]),
+				"InputAction Complete failure token sequence");
+			Equal(0, s_callbackTransactionResolvedAcks.Count,
+				"failed InputAction Complete produced an acknowledgement");
+			Equal(0, GetAwaitingCallbackProjectionCount(fixture.Scene),
+				"failed InputAction Complete left a stale managed FIFO frame");
+		}
+		finally
+		{
+			DestroyInputActionTransactionFixture(domain, fixture.Scene,
+				fixture.Owner, fixture.Map);
+		}
+	}
+
+	private static void VerifyInputActionCallbackAbortFailure(
+		ScriptDomain domain)
+	{
+		const ulong sceneSession = 47;
+		const ulong generation = 43;
+		const ulong attachment = 1406;
+		var fixture = CreateInputActionTransactionFixture(domain,
+			sceneSession, generation, attachment, "Regression.AbortFailure");
+		Entity target = new(sceneSession, 2, generation);
+		SetFakeGameplayActive(target, true);
+		int handlerRuns = 0;
+		ulong handlerToken = 0;
+		fixture.Action.Started += _ =>
+		{
+			++handlerRuns;
+			handlerToken = s_openCallbackTransactionToken;
+			target.ActiveSelf = false;
+			throw new InvalidOperationException(
+				"intentional abort protocol failure");
+		};
+		try
+		{
+			s_failNextAbortBatch = true;
+			s_extendedInputPressed = true;
+			Throws<DeferredCallbackProtocolException>(
+				() => fixture.Scene.UpdateAll(1.0f / 60.0f),
+				"InputAction Abort protocol failure was swallowed");
+			Equal(1, handlerRuns,
+				"InputAction Abort failure handler run count");
+			Check(handlerToken != 0,
+				"InputAction Abort failure handler had no transaction token");
+			Check(!s_failNextAbortBatch,
+				"InputAction Abort failure injection was not consumed");
+			Equal(1, s_abortBatchCalls,
+				"InputAction Abort failure native call count");
+			AssertAbortBatchContext(fixture.Owner,
+				"InputAction Abort failure context");
+			Check(s_abortBatchReason?.Contains(
+				"intentional abort protocol failure",
+				StringComparison.Ordinal) == true,
+				"InputAction Abort failure reason");
+			Check(s_callbackTransactionBeginTokens.SequenceEqual([handlerToken]),
+				"InputAction Abort failure Begin sequence");
+			Equal(0, s_callbackTransactionCompleteCalls,
+				"failed Abort must suppress native Complete");
+			Equal(0, s_callbackTransactionCompleteTokens.Count,
+				"failed Abort recorded a Complete token");
+			Equal(0, s_callbackTransactionResolvedAcks.Count,
+				"failed Abort produced a commit acknowledgement");
+			Equal(0, s_callbackTransactionAbortTokens.Count,
+				"rejected Abort incorrectly poisoned the native batch");
+			Equal(0, GetAwaitingCallbackProjectionCount(fixture.Scene),
+				"failed Abort left a stale managed FIFO frame");
+			Equal(true, ReadFakeGameplayActive(target, committed: true),
+				"failed Abort committed the callback mutation");
+			Equal(false, ReadFakeGameplayActive(target, committed: false),
+				"Abort failure test did not stage its callback mutation");
+			Equal(handlerToken, s_openCallbackTransactionToken,
+				"failed Abort unexpectedly closed the native transaction");
+		}
+		finally
+		{
+			// The real host fail-stops and destroys the Scene after the surfaced
+			// protocol fault. Reset the in-process native stub before managed cleanup.
+			ResetCallbackTransactionHarness();
+			DestroyInputActionTransactionFixture(domain, fixture.Scene,
+				fixture.Owner, fixture.Map);
+		}
+	}
+
+	private static (ScriptSceneRuntime Scene, Entity Owner, InputActionMap Map,
+		InputAction Action) CreateInputActionTransactionFixture(
+		ScriptDomain domain, ulong sceneSession, ulong generation,
+		ulong attachment, string mapName)
+	{
+		ResetGameplayActivationGraph();
+		ResetCallbackTransactionHarness();
+		ResetAbortBatchCapture();
+		s_extendedInputPressed = false;
+		s_extendedInputPulse = false;
+		Entity owner = new(sceneSession, 1, generation);
+		ScriptSceneRuntime scene = domain.CreateSceneRuntime(
+			sceneSession, generation);
+		s_callbackTransactionScene = scene;
+		scene.InstantiateAll([
+			new ScriptAttachment(owner, attachment, 1001, true)
+		]);
+		scene.ApplySerializedFields("{\"attachments\":[]}");
+		scene.InvokeCreateAll();
+
+		InputActionMap map;
+		InputAction action;
+		using (ScriptExecutionContext.Enter(owner,
+			domain.DomainCancellationToken))
+		{
+			map = new InputActionMap(mapName);
+			action = map.AddAction("Fire")
+				.AddBinding(InputBinding.Mouse(MouseButton.Left));
+			map.Enable();
+		}
+
+		// Discard setup callback tokens; the next display update must begin with the
+		// first InputAction subscriber transaction.
+		ResetCallbackTransactionHarness();
+		ResetAbortBatchCapture();
+		s_callbackTransactionScene = scene;
+		return (scene, owner, map, action);
+	}
+
+	private static void DestroyInputActionTransactionFixture(
+		ScriptDomain domain, ScriptSceneRuntime scene, Entity owner,
+		InputActionMap map)
+	{
+		s_extendedInputPressed = false;
+		s_extendedInputPulse = false;
+		using (ScriptExecutionContext.Enter(owner,
+			domain.DomainCancellationToken))
+			map.Disable();
+		scene.DestroyAll();
+		s_callbackTransactionScene = null;
+	}
+
+	private static void SetFakeGameplayActive(Entity entity, bool active)
+	{
+		var handle = new NativeEntityHandleV1(entity.SceneSessionId,
+			entity.Id, entity.RuntimeGeneration);
+		var key = GameplayEntityKey(handle);
+		s_gameplayActiveByEntity[key] = active;
+		s_committedGameplayActiveByEntity[key] = active;
+	}
+
+	private static bool ReadFakeGameplayActive(Entity entity, bool committed)
+	{
+		var handle = new NativeEntityHandleV1(entity.SceneSessionId,
+			entity.Id, entity.RuntimeGeneration);
+		var key = GameplayEntityKey(handle);
+		Dictionary<(ulong SceneSessionId, ulong EntityId,
+			ulong RuntimeGeneration), bool> states = committed
+				? s_committedGameplayActiveByEntity
+				: s_gameplayActiveByEntity;
+		return states.TryGetValue(key, out bool active)
+			? active : s_gameplayActive;
+	}
+
+	private static void AssertSuccessfulCallbackTransactionFifo(string message)
+	{
+		Check(s_callbackTransactionBeginTokens.SequenceEqual(
+			s_callbackTransactionCompleteTokens),
+			$"{message}: Begin/Complete tokens differ");
+		Check(s_callbackTransactionCompleteTokens.SequenceEqual(
+			s_callbackTransactionResolvedAcks.Select(ack => ack.Token)),
+			$"{message}: Complete/resolve tokens differ");
+	}
+
+	private static int GetAwaitingCallbackProjectionCount(
+		ScriptSceneRuntime scene)
+	{
+		FieldInfo awaitingField = typeof(ScriptSceneRuntime).GetField(
+			"_awaitingCallbackProjections",
+			BindingFlags.Instance | BindingFlags.NonPublic)
+			?? throw new MissingFieldException(nameof(ScriptSceneRuntime),
+				"_awaitingCallbackProjections");
+		object awaiting = awaitingField.GetValue(scene)
+			?? throw new InvalidOperationException(
+				"callback projection FIFO was null");
+		return (int)(awaiting.GetType().GetProperty("Count")?.GetValue(awaiting)
+			?? throw new MissingMemberException(
+				"callback projection FIFO Count"));
+	}
+	private static void ResetCallbackTransactionHarness()
+	{
+		s_callbackTransactionScene = null;
+		s_openCallbackTransactionToken = 0;
+		s_openCallbackTransactionAborted = false;
+		s_drainingCallbackTransactions = false;
+		s_failNextCallbackTransactionBegin = false;
+		s_failNextCallbackTransactionComplete = false;
+		s_failNextAbortBatch = false;
+		s_callbackTransactionBeginCalls = 0;
+		s_callbackTransactionCompleteCalls = 0;
+		s_callbackTransactionAcks.Clear();
+		s_callbackTransactionBeginTokens.Clear();
+		s_callbackTransactionCompleteTokens.Clear();
+		s_callbackTransactionAbortTokens.Clear();
+		s_callbackTransactionResolvedAcks.Clear();
 	}
 
     private static bool PollUntilUnloaded(ScriptDomain domain)
@@ -1626,6 +3360,42 @@ internal static unsafe class Program
 			};
 			return 0;
 		}
+		if (capability == "TomCat.DeferredCommandsApiV1")
+		{
+			*required = (uint)sizeof(NativeDeferredCommandsApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeDeferredCommandsApiV1))
+				return -6;
+			*(NativeDeferredCommandsApiV1*)output = new NativeDeferredCommandsApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeDeferredCommandsApiV1),
+				AbortBatch = &StubAbortBatch
+			};
+			return 0;
+		}
+		if (capability == "TomCat.DeferredCallbackTransactionsApiV1"
+			&& s_exposeDeferredCallbackTransactions)
+		{
+			*required =
+				(uint)sizeof(NativeDeferredCallbackTransactionsApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity
+				< sizeof(NativeDeferredCallbackTransactionsApiV1))
+				return -6;
+			*(NativeDeferredCallbackTransactionsApiV1*)output =
+				new NativeDeferredCallbackTransactionsApiV1
+				{
+					Version = 1,
+					Size =
+						(uint)sizeof(NativeDeferredCallbackTransactionsApiV1),
+					BeginCallback = &StubBeginCallbackTransaction,
+					CompleteCallback = &StubCompleteCallbackTransaction
+				};
+			return 0;
+		}
 		if (capability == "TomCat.InputEventsApiV1")
 		{
 			*required = (uint)sizeof(NativeInputEventsApiV1);
@@ -1675,6 +3445,22 @@ internal static unsafe class Program
 				Remove = &StubRegisteredComponentRemove,
 				GetProperty = &StubRegisteredComponentGetProperty,
 				SetProperty = &StubRegisteredComponentSetProperty
+			};
+			return 0;
+		}
+		if (capability == "TomCat.ComponentStringApiV1")
+		{
+			*required = (uint)sizeof(NativeComponentStringApiV1);
+			if (minimumVersion > 1)
+				return -4;
+			if (output is null || capacity < sizeof(NativeComponentStringApiV1))
+				return -6;
+			*(NativeComponentStringApiV1*)output = new NativeComponentStringApiV1
+			{
+				Version = 1,
+				Size = (uint)sizeof(NativeComponentStringApiV1),
+				GetProperty = &StubRegisteredComponentGetString,
+				SetProperty = &StubRegisteredComponentSetString
 			};
 			return 0;
 		}
@@ -1781,6 +3567,139 @@ internal static unsafe class Program
 		}
 		*required = 0;
 		return -3;
+	}
+
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubBeginCallbackTransaction(
+		NativeEntityHandleV1 context, ulong* token)
+	{
+		if (token is null || s_callbackTransactionScene is null
+			|| context.SceneSessionId
+				!= s_callbackTransactionScene.SceneSessionId
+			|| context.RuntimeGeneration
+				!= s_callbackTransactionScene.RuntimeGeneration
+			|| context.EntityId == 0 || s_openCallbackTransactionToken != 0)
+		{
+			if (token is not null)
+				*token = 0;
+			return -2;
+		}
+		if (s_failNextCallbackTransactionBegin)
+		{
+			s_failNextCallbackTransactionBegin = false;
+			*token = 0;
+			return -2;
+		}
+		do
+		{
+			s_openCallbackTransactionToken =
+				s_nextCallbackTransactionToken++;
+		}
+		while (s_openCallbackTransactionToken == 0);
+		s_openCallbackTransactionAborted = false;
+		*token = s_openCallbackTransactionToken;
+		++s_callbackTransactionBeginCalls;
+		s_callbackTransactionBeginTokens.Add(
+			s_openCallbackTransactionToken);
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubCompleteCallbackTransaction(ulong token)
+	{
+		if (token == 0 || token != s_openCallbackTransactionToken
+			|| s_callbackTransactionScene is null)
+			return -2;
+		bool committed = !s_openCallbackTransactionAborted;
+		s_openCallbackTransactionToken = 0;
+		s_openCallbackTransactionAborted = false;
+		++s_callbackTransactionCompleteCalls;
+		s_callbackTransactionCompleteTokens.Add(token);
+		if (s_failNextCallbackTransactionComplete)
+		{
+			s_failNextCallbackTransactionComplete = false;
+			RestoreFakeGameplayWorkingState();
+			return -2;
+		}
+
+		s_callbackTransactionAcks.Enqueue((token, committed));
+		if (s_drainingCallbackTransactions)
+			return 0;
+		s_drainingCallbackTransactions = true;
+		try
+		{
+			while (s_callbackTransactionAcks.Count != 0)
+			{
+				(ulong completedToken, bool callbackCommitted) =
+					s_callbackTransactionAcks.Dequeue();
+				s_callbackTransactionResolvedAcks.Add(
+					(completedToken, callbackCommitted));
+				if (callbackCommitted)
+					CommitFakeGameplayWorkingState();
+				else
+					RestoreFakeGameplayWorkingState();
+				s_callbackTransactionScene.ResolveDeferredCommandBatch(
+					callbackCommitted);
+			}
+		}
+		finally
+		{
+			s_drainingCallbackTransactions = false;
+		}
+		return 0;
+	}
+
+	private static void CommitFakeGameplayWorkingState()
+	{
+		s_committedGameplayActiveByEntity.Clear();
+		foreach (var pair in s_gameplayActiveByEntity)
+			s_committedGameplayActiveByEntity[pair.Key] = pair.Value;
+		s_committedGameplayParentByEntity.Clear();
+		foreach (var pair in s_gameplayParentByEntity)
+			s_committedGameplayParentByEntity[pair.Key] = pair.Value;
+	}
+
+	private static void RestoreFakeGameplayWorkingState()
+	{
+		s_gameplayActiveByEntity.Clear();
+		foreach (var pair in s_committedGameplayActiveByEntity)
+			s_gameplayActiveByEntity[pair.Key] = pair.Value;
+		s_gameplayParentByEntity.Clear();
+		foreach (var pair in s_committedGameplayParentByEntity)
+			s_gameplayParentByEntity[pair.Key] = pair.Value;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubAbortBatch(NativeEntityHandleV1 context,
+		NativeUtf8View reason)
+	{
+		if ((reason.Data is null && reason.Length != 0)
+			|| reason.Length > int.MaxValue)
+			return -1;
+		try
+		{
+			s_abortBatchContext = context;
+			s_abortBatchReason = s_strictUtf8.GetString(
+				new ReadOnlySpan<byte>(reason.Data, (int)reason.Length));
+			++s_abortBatchCalls;
+			if (s_failNextAbortBatch)
+			{
+				s_failNextAbortBatch = false;
+				return -2;
+			}
+			if (s_openCallbackTransactionToken != 0)
+			{
+				s_openCallbackTransactionAborted = true;
+				s_callbackTransactionAbortTokens.Add(
+					s_openCallbackTransactionToken);
+			}
+			return 0;
+		}
+		catch (DecoderFallbackException)
+		{
+			return -1;
+		}
 	}
 
 	private static NativeUtf8View SchemaView(nint pointer, string value) =>
@@ -2009,7 +3928,15 @@ internal static unsafe class Program
 		NativeEntityHandleV1* output)
 	{
 		if (output is null) return -1;
-		*output = s_gameplayParent;
+		if (s_usePerEntityGameplayActivation)
+		{
+			*output = s_gameplayParentByEntity.TryGetValue(
+				GameplayEntityKey(entity), out NativeEntityHandleV1 parent)
+				? parent : default;
+		}
+		else
+			*output = entity.Equals(s_gameplayParentOwner)
+				? s_gameplayParent : default;
 		return 0;
 	}
 
@@ -2017,7 +3944,19 @@ internal static unsafe class Program
 	private static int StubGameplaySetParent(NativeEntityHandleV1 entity,
 		NativeEntityHandleV1 parent)
 	{
-		s_gameplayParent = parent;
+		if (s_usePerEntityGameplayActivation)
+		{
+			var key = GameplayEntityKey(entity);
+			if (parent.EntityId == 0)
+				s_gameplayParentByEntity.Remove(key);
+			else
+				s_gameplayParentByEntity[key] = parent;
+		}
+		else
+		{
+			s_gameplayParentOwner = entity;
+			s_gameplayParent = parent;
+		}
 		return 0;
 	}
 
@@ -2051,9 +3990,9 @@ internal static unsafe class Program
 		while (cursor.EntityId != 0)
 		{
 			var key = GameplayEntityKey(cursor);
-			if (!visited.Add(key) || !StubGameplayActiveSelf(cursor))
+			if (!visited.Add(key) || !StubGameplayCommittedActiveSelf(cursor))
 				return 0;
-			if (!s_gameplayParentByEntity.TryGetValue(key,
+			if (!s_committedGameplayParentByEntity.TryGetValue(key,
 				out NativeEntityHandleV1 parent))
 				return 1;
 			cursor = parent;
@@ -2075,6 +4014,11 @@ internal static unsafe class Program
 
 	private static bool StubGameplayActiveSelf(NativeEntityHandleV1 entity) =>
 		s_gameplayActiveByEntity.TryGetValue(GameplayEntityKey(entity),
+			out bool active) ? active : s_gameplayActive;
+
+	private static bool StubGameplayCommittedActiveSelf(
+		NativeEntityHandleV1 entity) =>
+		s_committedGameplayActiveByEntity.TryGetValue(GameplayEntityKey(entity),
 			out bool active) ? active : s_gameplayActive;
 
 	private static (ulong SceneSessionId, ulong EntityId, ulong RuntimeGeneration)
@@ -2251,6 +4195,8 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentHas(NativeEntityHandleV1 entity,
 		ulong typeId)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+			return s_extensionPresent ? 1 : 0;
 		if (typeId != HealthComponent.TypeId)
 		{
 			if (typeId == 0x9f00000000000007UL)
@@ -2265,6 +4211,14 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentAdd(NativeEntityHandleV1 entity,
 		ulong typeId)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (s_extensionPresent) return -2;
+			s_extensionPresent = true;
+			s_extensionCount = 0;
+			s_extensionLabel = string.Empty;
+			return 0;
+		}
 		if (typeId != HealthComponent.TypeId)
 		{
 			if (typeId == 0x9f00000000000007UL)
@@ -2283,6 +4237,12 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentRemove(NativeEntityHandleV1 entity,
 		ulong typeId)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent) return -3;
+			s_extensionPresent = false;
+			return 0;
+		}
 		if (typeId != HealthComponent.TypeId)
 		{
 			if (typeId == 0x9f00000000000007UL)
@@ -2304,6 +4264,18 @@ internal static unsafe class Program
 	{
 		if (value is null)
 			return -3;
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent || propertyId != ExtensionProxy.CountPropertyId)
+				return -3;
+			++s_extensionPropertyGetCalls;
+			*value = new NativePropertyValueV1
+			{
+				Kind = NativePropertyKindV1.Int32,
+				Integer = s_extensionCount
+			};
+			return 0;
+		}
 		if (typeId is >= 0x9f00000000000004UL and <= 0x9f0000000000000fUL)
 		{
 			if (!s_registeredBuiltInProperties.TryGetValue(
@@ -2351,6 +4323,17 @@ internal static unsafe class Program
 	private static int StubRegisteredComponentSetProperty(NativeEntityHandleV1 entity,
 		ulong typeId, ulong propertyId, NativePropertyValueV1 value)
 	{
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent || propertyId != ExtensionProxy.CountPropertyId)
+				return -3;
+			if (value.Kind != NativePropertyKindV1.Int32
+				|| value.Integer < int.MinValue || value.Integer > int.MaxValue)
+				return -1;
+			s_extensionCount = (int)value.Integer;
+			++s_extensionPropertySetCalls;
+			return 0;
+		}
 		if (typeId is >= 0x9f00000000000004UL and <= 0x9f0000000000000fUL)
 		{
 			s_registeredBuiltInProperties[(typeId, propertyId)] = value;
@@ -2382,6 +4365,83 @@ internal static unsafe class Program
 			return -1;
 		++s_componentSetCalls;
 		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentGetString(NativeEntityHandleV1 entity,
+		ulong typeId, ulong propertyId, byte* buffer, uint capacity, uint* required)
+	{
+		if (required is null)
+			return -1;
+		*required = 0;
+		string value;
+		if (typeId == ExtensionProxy.TypeId
+			&& propertyId == ExtensionProxy.LabelPropertyId)
+		{
+			if (!s_extensionPresent) return -3;
+			++s_extensionStringGetCalls;
+			if (s_returnMalformedExtensionUtf8)
+			{
+				ReadOnlySpan<byte> malformed = [0xc0, 0xaf];
+				*required = (uint)malformed.Length;
+				if (capacity < malformed.Length || buffer is null) return -6;
+				malformed.CopyTo(new Span<byte>(buffer, malformed.Length));
+				return 0;
+			}
+			value = s_extensionLabel;
+		}
+		else if (typeId == UIText.TypeId
+			&& propertyId == 0x9f01500000000003UL)
+			value = s_runtimeUIText;
+		else if (typeId == TextRenderer.TypeId
+			&& propertyId == 0x9f01100000000003UL)
+			value = s_worldText;
+		else return -1;
+
+		byte[] bytes = s_strictUtf8.GetBytes(value);
+		*required = (uint)bytes.Length;
+		if (capacity < bytes.Length || (buffer is null && bytes.Length != 0))
+			return -6;
+		bytes.CopyTo(new Span<byte>(buffer, bytes.Length));
+		return 0;
+	}
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	private static int StubRegisteredComponentSetString(NativeEntityHandleV1 entity,
+		ulong typeId, ulong propertyId, NativeUtf8View value)
+	{
+		if ((value.Data is null && value.Length != 0)
+			|| value.Length > RegisteredComponentProperties.MaximumStringUtf8Bytes)
+			return -1;
+		if (typeId == ExtensionProxy.TypeId)
+		{
+			if (!s_extensionPresent) return -3;
+			if (propertyId != ExtensionProxy.LabelPropertyId) return -1;
+		}
+		else if (!((typeId == UIText.TypeId
+				&& propertyId == 0x9f01500000000003UL)
+			|| (typeId == TextRenderer.TypeId
+				&& propertyId == 0x9f01100000000003UL)))
+			return -1;
+		try
+		{
+			string decoded = s_strictUtf8.GetString(
+				new ReadOnlySpan<byte>(value.Data, checked((int)value.Length)));
+			if (typeId == ExtensionProxy.TypeId)
+			{
+				s_extensionLabel = decoded;
+				++s_extensionStringSetCalls;
+			}
+			else if (typeId == UIText.TypeId)
+				s_runtimeUIText = decoded;
+			else s_worldText = decoded;
+			return 0;
+		}
+		catch (Exception error) when (error is DecoderFallbackException
+			or OverflowException)
+		{
+			return -1;
+		}
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -2637,8 +4697,36 @@ internal static unsafe class Program
 	{
 		protected override void OnCreate()
 		{
-			if (Entity.GetComponent<ExtensionProxy>().Entity != Entity)
+			ExtensionProxy extension = Entity.GetComponent<ExtensionProxy>();
+			if (extension.Entity != Entity)
 				throw new InvalidOperationException("attribute-discovered plugin component proxy failed.");
+			extension.Count = 73;
+			extension.Label = "插件属性 😀";
+			if (extension.Count != 73 || extension.Label != "插件属性 😀")
+				throw new InvalidOperationException(
+					"public plugin component property round trip failed.");
+			s_returnMalformedExtensionUtf8 = true;
+			bool malformedRejected = false;
+			try { _ = extension.Label; }
+			catch (TomCatException) { malformedRejected = true; }
+			finally { s_returnMalformedExtensionUtf8 = false; }
+			if (!malformedRejected)
+				throw new InvalidOperationException(
+					"malformed native plugin UTF-8 was accepted.");
+			bool invalidManagedStringRejected = false;
+			try { extension.Label = "\ud800"; }
+			catch (ArgumentException) { invalidManagedStringRejected = true; }
+			if (!invalidManagedStringRejected)
+				throw new InvalidOperationException(
+					"invalid managed UTF-16 was accepted by plugin transport.");
+			s_extensionPresent = false;
+			bool unloadedRejected = false;
+			try { _ = extension.Label; }
+			catch (TomCatException) { unloadedRejected = true; }
+			finally { s_extensionPresent = true; }
+			if (!unloadedRejected)
+				throw new InvalidOperationException(
+					"unloaded plugin property remained accessible.");
 			Entity.Name = "natural-name";
 			Entity.Tag = "natural-tag";
 			Entity.Layer = 5;
@@ -2716,9 +4804,10 @@ internal static unsafe class Program
 			if (animator.CurrentState != "Running")
 				throw new InvalidOperationException("SpriteAnimator state bridge failed.");
 			Camera camera = GetComponent<Camera>();
+			camera.Enabled = false;
 			camera.Primary = true;
 			camera.OrthographicSize = 12.0f;
-			if (!camera.Primary || camera.OrthographicSize != 12.0f)
+			if (camera.Enabled || !camera.Primary || camera.OrthographicSize != 12.0f)
 				throw new InvalidOperationException("Camera property round trip failed.");
 			if (!Entity.HasComponent<HealthComponent>())
 				throw new InvalidOperationException("HealthComponent should initially exist.");
@@ -2750,8 +4839,24 @@ internal static unsafe class Program
 	private sealed class ExtensionProxy : IEntityComponent
 	{
 		internal const ulong TypeId = 0xd20a1f7c73e04e11UL;
+		internal const ulong CountPropertyId = 0xd20a1f7c73e04e12UL;
+		internal const ulong LabelPropertyId = 0xd20a1f7c73e04e13UL;
 		private ExtensionProxy(Entity entity) => Entity = entity;
 		public Entity Entity { get; }
+		public int Count
+		{
+			get => RegisteredComponentProperties.GetInt32(Entity, TypeId,
+				CountPropertyId);
+			set => RegisteredComponentProperties.SetInt32(Entity, TypeId,
+				CountPropertyId, value);
+		}
+		public string Label
+		{
+			get => RegisteredComponentProperties.GetString(Entity, TypeId,
+				LabelPropertyId);
+			set => RegisteredComponentProperties.SetString(Entity, TypeId,
+				LabelPropertyId, value);
+		}
 	}
 
 	private sealed class BackgroundThreadApiProbe : TomCatBehaviour
@@ -2902,7 +5007,8 @@ internal static unsafe class Program
 				InputContext.Disable(InputContext.UI);
 				InputContext.Enable(InputContext.Gameplay);
 			}
-			InputActionRuntime.UpdateEnabled(ScriptRuntime.DomainCancellationToken);
+			InputActionRuntime.UpdateEnabled(ScriptRuntime.DomainCancellationToken,
+				InputActionUpdatePhase.DisplayFrame);
 		}
 
 		protected override void OnDestroy()
@@ -2923,6 +5029,7 @@ internal static unsafe class Program
 			text.FallbackFont = new AssetRef<FontAsset>(9102);
 			text.EmojiFont = new AssetRef<FontAsset>(9103);
 			var worldText = new TextRenderer(Entity);
+			worldText.Text = "World 文本 😀";
 			worldText.FallbackFont = new AssetRef<FontAsset>(9202);
 			worldText.EmojiFont = new AssetRef<FontAsset>(9203);
 			var button = new UIButton(Entity);
@@ -2933,6 +5040,7 @@ internal static unsafe class Program
 				&& text.EmojiFont.Handle == 9103
 				&& worldText.FallbackFont.Handle == 9202
 				&& worldText.EmojiFont.Handle == 9203
+				&& worldText.Text == "World 文本 😀"
 				&& button.WasClickedThisFrame
 				&& button.ClickSerial == RuntimeUIButtonClickSerial
 				&& rect.Equals(new UIRect(10.0f, 20.0f, 300.0f, 80.0f))

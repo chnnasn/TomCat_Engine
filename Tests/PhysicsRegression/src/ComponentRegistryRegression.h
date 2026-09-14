@@ -356,6 +356,89 @@ namespace ComponentRegistryRegression {
 		Check(registry.UnregisterProvider(TomCat::UUID(providerId), {}, error), error);
 	}
 
+	inline void TestDisabledSpriteAnimatorInitialization()
+	{
+		const TomCat::AssetHandle authoredSprite(0x5a110001ULL);
+		const TomCat::AssetHandle animatedSprite(0x5a110002ULL);
+		auto makeDisabledAnimator = [animatedSprite]()
+		{
+			TomCat::SpriteAnimationClip clip;
+			clip.Name = "Auto";
+			clip.Loop = true;
+			clip.Frames.push_back({ animatedSprite, 10.0f });
+			TomCat::SpriteAnimator animator;
+			animator.Enabled = false;
+			animator.PlayOnStart = true;
+			animator.InitialClip = clip.Name;
+			animator.Clips.push_back(clip);
+			return animator;
+		};
+		auto makeAuthoredRenderer = [authoredSprite]()
+		{
+			TomCat::SpriteRenderer renderer;
+			renderer.SpriteHandle = authoredSprite;
+			return renderer;
+		};
+
+		TomCat::Scene scene;
+		TomCat::Entity presentAtStart =
+			scene.CreateEntity("Disabled animator present at runtime start");
+		presentAtStart.AddComponent<TomCat::SpriteRenderer>(
+			makeAuthoredRenderer());
+		presentAtStart.AddComponent<TomCat::SpriteAnimator>(
+			makeDisabledAnimator());
+
+		TomCat::Entity rendererAddedAtRuntime =
+			scene.CreateEntity("Renderer added to disabled animator");
+		rendererAddedAtRuntime.AddComponent<TomCat::SpriteAnimator>(
+			makeDisabledAnimator());
+
+		TomCat::Entity animatorAddedAtRuntime =
+			scene.CreateEntity("Disabled animator added to renderer");
+		animatorAddedAtRuntime.AddComponent<TomCat::SpriteRenderer>(
+			makeAuthoredRenderer());
+
+		Check(scene.OnRuntimeStart(),
+			"disabled SpriteAnimator regression Scene did not start");
+		Check(presentAtStart.GetComponent<TomCat::SpriteRenderer>().SpriteHandle
+				== authoredSprite
+			&& !presentAtStart.GetComponent<TomCat::SpriteAnimator>()
+				.RuntimeInitialized,
+			"runtime start initialized a disabled SpriteAnimator or changed its renderer");
+
+		rendererAddedAtRuntime.AddComponent<TomCat::SpriteRenderer>(
+			makeAuthoredRenderer());
+		animatorAddedAtRuntime.AddComponent<TomCat::SpriteAnimator>(
+			makeDisabledAnimator());
+		Check(rendererAddedAtRuntime.GetComponent<TomCat::SpriteRenderer>()
+				.SpriteHandle == authoredSprite
+			&& animatorAddedAtRuntime.GetComponent<TomCat::SpriteRenderer>()
+				.SpriteHandle == authoredSprite
+			&& !rendererAddedAtRuntime.GetComponent<TomCat::SpriteAnimator>()
+				.RuntimeInitialized
+			&& !animatorAddedAtRuntime.GetComponent<TomCat::SpriteAnimator>()
+				.RuntimeInitialized,
+			"dynamic component addition initialized a disabled SpriteAnimator "
+			"or changed its renderer");
+
+		presentAtStart.GetComponent<TomCat::SpriteAnimator>().Enabled = true;
+		rendererAddedAtRuntime.GetComponent<TomCat::SpriteAnimator>().Enabled = true;
+		animatorAddedAtRuntime.GetComponent<TomCat::SpriteAnimator>().Enabled = true;
+		scene.OnRuntimeStep();
+		for (TomCat::Entity entity : {
+			presentAtStart, rendererAddedAtRuntime, animatorAddedAtRuntime })
+		{
+			const auto& animator =
+				entity.GetComponent<TomCat::SpriteAnimator>();
+			Check(animator.RuntimeInitialized && animator.RuntimePlaying
+				&& entity.GetComponent<TomCat::SpriteRenderer>().SpriteHandle
+					== animatedSprite,
+				"re-enabled SpriteAnimator did not lazily initialize PlayOnStart "
+				"on the next fixed step");
+		}
+		scene.OnRuntimeStop();
+	}
+
 	inline void Run()
 	{
 		TomCat::ComponentRegistry& registry = TomCat::ComponentRegistry::Get();
@@ -382,7 +465,8 @@ namespace ComponentRegistryRegression {
 			TomCat::ComponentIds::AudioListener, TomCat::ComponentIds::Rigidbody2D,
 			TomCat::ComponentIds::BoxCollider2D,
 			TomCat::ComponentIds::CircleCollider2D,
-			TomCat::ComponentIds::DistanceJoint2D })
+			TomCat::ComponentIds::DistanceJoint2D,
+			TomCat::ComponentIds::EditorVisibility })
 		{
 			const TomCat::ComponentDescriptor* builtIn = registry.Find(
 				TomCat::UUID(builtInTypeId));
@@ -390,10 +474,27 @@ namespace ComponentRegistryRegression {
 				"a traditional built-in component is absent from ComponentRegistry");
 			Check(builtIn->Copy && builtIn->Encode && builtIn->Decode,
 				"a traditional built-in component lacks canonical registry callbacks");
-			if (builtInTypeId != TomCat::ComponentIds::ID)
+			if (builtInTypeId != TomCat::ComponentIds::ID
+				&& builtInTypeId != TomCat::ComponentIds::EditorVisibility)
 				Check(builtIn->EncodeLegacyFields && builtIn->DecodeLegacyFields,
 					"a traditional built-in component lacks its Scene 9-11 compatibility adapter");
 		}
+
+		const TomCat::ComponentDescriptor* cameraDescriptor = registry.Find(
+			TomCat::UUID(TomCat::ComponentIds::Camera));
+		const auto cameraEnabledProperty = std::find_if(
+			cameraDescriptor->Properties.begin(), cameraDescriptor->Properties.end(),
+			[](const TomCat::PropertyDescriptor& property)
+			{
+				return static_cast<uint64_t>(property.PropertyId)
+					== TomCat::ComponentIds::CameraProperties::Enabled;
+			});
+		Check(cameraDescriptor->SchemaVersion == 2
+			&& cameraDescriptor->Migrations.size() == 1
+			&& cameraEnabledProperty != cameraDescriptor->Properties.end()
+			&& cameraEnabledProperty->Kind == TomCat::PropertyKind::Bool
+			&& cameraEnabledProperty->DefaultValue == TomCat::PropertyValue(true),
+			"Camera descriptor does not expose independent Enabled state or its v1 migration");
 
 		auto requireAssetProperty = [&](uint64_t typeId, uint64_t propertyId,
 			const char* context) -> const TomCat::PropertyDescriptor&
@@ -467,21 +568,33 @@ namespace ComponentRegistryRegression {
 		Check(descriptor->Properties[0].Set(root, int32_t{ 250 }, error), error);
 		Check(descriptor->Properties[1].Set(root, int32_t{ 175 }, error), error);
 		Check(descriptor->Properties[2].Set(root, true, error), error);
+		root.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		Check(source->SetEditorHidden(root, true),
+			"could not hide the registry fixture in the Scene view");
 
 		const TomCat::UUID rootId = root.GetUUID();
 		auto copied = TomCat::Scene::Copy(source);
 		Check(copied != nullptr, "Scene::Copy failed for a registered component");
-		RequireHealth(copied->FindEntityByUUID(rootId), 250, 175, true,
+		TomCat::Entity copiedRoot = copied->FindEntityByUUID(rootId);
+		RequireHealth(copiedRoot, 250, 175, true,
 			"Scene::Copy omitted or changed registered Health");
+		Check(!copiedRoot.GetComponent<TomCat::Tag>().ActiveSelf
+			&& copied->IsEditorHidden(copiedRoot),
+			"Scene::Copy conflated or omitted ActiveSelf/EditorVisibility");
 		TomCat::Entity duplicate = source->DuplicateEntity(root);
 		RequireHealth(duplicate, 250, 175, true,
 			"DuplicateEntity omitted or changed registered Health");
+		Check(!duplicate.GetComponent<TomCat::Tag>().ActiveSelf
+			&& source->IsEditorHidden(duplicate),
+			"DuplicateEntity conflated or omitted ActiveSelf/EditorVisibility");
 
 		std::string sceneDocument;
 		Check(TomCat::SceneArchiveCodec::Encode(source, sceneDocument, error), error);
 		YAML::Node sceneRoot = YAML::Load(sceneDocument);
 		Check(sceneRoot["SchemaVersion"].as<uint32_t>() == 11,
 			"registered component scene did not use Schema 11");
+		Check(!sceneRoot["Entities"][0]["Tag"]["Visible"].as<bool>(),
+			"Scene 11 no longer preserves the historical Tag.Visible wire field");
 		const YAML::Node components = sceneRoot["Entities"][0]["Components"];
 		Check(components && components.IsSequence() && components.size() >= 5
 			&& components[0]["TypeId"].as<uint64_t>()
@@ -489,11 +602,63 @@ namespace ComponentRegistryRegression {
 			&& components[0]["Properties"][1]["PropertyId"].as<uint64_t>()
 				== TomCat::ComponentIds::HealthProperties::Current,
 			"Schema 11 omitted stable component/property UUIDs");
+		auto findComponent = [](const YAML::Node& records,
+			uint64_t typeId) -> YAML::Node
+		{
+			for (const YAML::Node& candidate : records)
+				if (candidate["TypeId"].as<uint64_t>() == typeId)
+					return candidate;
+			return {};
+		};
+		const YAML::Node tagRecord = findComponent(components,
+			TomCat::ComponentIds::Tag);
+		const YAML::Node visibilityRecord = findComponent(components,
+			TomCat::ComponentIds::EditorVisibility);
+		Check(tagRecord && tagRecord["Properties"][1]["PropertyId"].as<uint64_t>()
+				== TomCat::ComponentIds::TagProperties::ActiveSelf
+			&& tagRecord["Properties"][1]["StableName"].as<std::string>() == "Visible"
+			&& !tagRecord["Properties"][1]["Value"].as<bool>(),
+			"Tag.ActiveSelf did not retain property ID 2 and legacy StableName Visible");
+		Check(visibilityRecord
+			&& visibilityRecord["StableName"].as<std::string>()
+				== "TomCat.EditorVisibility"
+			&& visibilityRecord["Properties"][0]["Value"].as<bool>(),
+			"EditorVisibility was not encoded as an independent canonical component");
 		auto loaded = TomCat::CreateRef<TomCat::Scene>();
 		Check(TomCat::SceneArchiveCodec::Decode(Bytes(sceneDocument), loaded,
 			"ComponentRegistry.scene", false), "Schema 11 registry decode failed");
-		RequireHealth(loaded->FindEntityByUUID(rootId), 250, 175, true,
+		TomCat::Entity loadedRoot = loaded->FindEntityByUUID(rootId);
+		RequireHealth(loadedRoot, 250, 175, true,
 			"Scene save/load omitted or changed registered Health");
+		Check(!loadedRoot.GetComponent<TomCat::Tag>().ActiveSelf
+			&& loaded->IsEditorHidden(loadedRoot),
+			"Scene save/load conflated or omitted ActiveSelf/EditorVisibility");
+
+		// Schema 9/10 persisted gameplay activation as Tag.Visible and had no
+		// editor-only visibility component. Decode that wire shape, then prove the
+		// next save keeps the false gameplay value while migrating to Schema 11.
+		YAML::Node legacyRoot = YAML::Clone(sceneRoot);
+		legacyRoot["SchemaVersion"] = 10;
+		for (YAML::Node legacyEntity : legacyRoot["Entities"])
+			legacyEntity.remove("Components");
+		YAML::Emitter legacyEmitter;
+		legacyEmitter << legacyRoot;
+		auto legacyLoaded = TomCat::CreateRef<TomCat::Scene>();
+		Check(TomCat::SceneArchiveCodec::Decode(Bytes(legacyEmitter.c_str()),
+			legacyLoaded, "ComponentRegistry.schema10.scene", false),
+			"Schema 10 Tag.Visible compatibility decode failed");
+		TomCat::Entity legacyLoadedRoot = legacyLoaded->FindEntityByUUID(rootId);
+		Check(legacyLoadedRoot
+			&& !legacyLoadedRoot.GetComponent<TomCat::Tag>().ActiveSelf
+			&& !legacyLoadedRoot.HasComponent<TomCat::EditorVisibility>(),
+			"Schema 10 Tag.Visible was not migrated to gameplay ActiveSelf");
+		std::string migratedDocument;
+		Check(TomCat::SceneArchiveCodec::Encode(legacyLoaded, migratedDocument, error),
+			error);
+		YAML::Node migratedRoot = YAML::Load(migratedDocument);
+		Check(migratedRoot["SchemaVersion"].as<uint32_t>() == 11
+			&& !migratedRoot["Entities"][0]["Tag"]["Visible"].as<bool>(),
+			"Schema 10 ActiveSelf migration did not resave through the stable Visible wire field");
 
 		YAML::Node lowHealthRoot = YAML::Load(sceneDocument);
 		lowHealthRoot["Entities"][0]["Components"][0]["Properties"][0]["Value"] = 50;
@@ -516,6 +681,11 @@ namespace ComponentRegistryRegression {
 			"ComponentRegistry.tcprefab", decodedPrefab, error), error);
 		RequireHealth(decodedPrefab.TemplateScene->FindEntityByUUID(TomCat::UUID(1)),
 			250, 175, true, "Prefab encode/decode omitted registered Health");
+		TomCat::Entity decodedPrefabRoot = decodedPrefab.TemplateScene
+			->FindEntityByUUID(TomCat::UUID(1));
+		Check(!decodedPrefabRoot.GetComponent<TomCat::Tag>().ActiveSelf
+			&& decodedPrefab.TemplateScene->IsEditorHidden(decodedPrefabRoot),
+			"Prefab encode/decode conflated or omitted ActiveSelf/EditorVisibility");
 		TomCat::Scene prefabDestination;
 		TomCat::PrefabInstantiationResult prefabResult;
 		TomCat::PrefabInstantiateOptions options;
@@ -524,6 +694,202 @@ namespace ComponentRegistryRegression {
 			prefabDestination, options, prefabResult, error), error);
 		RequireHealth(prefabResult.Root, 250, 175, true,
 			"Prefab instantiation omitted registered Health");
+		Check(!prefabResult.Root.GetComponent<TomCat::Tag>().ActiveSelf
+			&& prefabDestination.IsEditorHidden(prefabResult.Root),
+			"Prefab instantiation conflated or omitted ActiveSelf/EditorVisibility");
+
+		auto visibilityScene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity visibilityParent = visibilityScene->CreateEntity(
+			"Visibility parent");
+		TomCat::Entity visibilityChild = visibilityScene->CreateEntity(
+			"Visibility child");
+		Check(visibilityScene->SetParent(visibilityChild, visibilityParent),
+			"could not parent the visibility regression Entity");
+		visibilityParent.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		Check(!visibilityScene->IsActiveInHierarchy(visibilityChild)
+			&& visibilityScene->IsVisibleInEditorHierarchy(visibilityChild),
+			"inactive gameplay parent incorrectly hid its child from the Scene view");
+		visibilityParent.GetComponent<TomCat::Tag>().ActiveSelf = true;
+		Check(visibilityScene->SetEditorHidden(visibilityParent, true)
+			&& visibilityScene->IsActiveInHierarchy(visibilityChild)
+			&& !visibilityScene->IsVisibleInEditorHierarchy(visibilityChild),
+			"editor-hidden parent incorrectly disabled gameplay or exposed its child");
+		Check(visibilityScene->SetEditorHidden(visibilityParent, false)
+			&& !visibilityParent.HasComponent<TomCat::EditorVisibility>()
+			&& visibilityScene->IsActiveInHierarchy(visibilityChild)
+			&& visibilityScene->IsVisibleInEditorHierarchy(visibilityChild),
+			"showing an Entity did not restore canonical absent editor visibility state");
+
+		auto cameraScene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity authoredPrimary = cameraScene->CreateEntity(
+			"Inactive authored primary");
+		auto& authoredPrimaryCamera =
+			authoredPrimary.AddComponent<TomCat::C_Camera>();
+		authoredPrimaryCamera.Primary = true;
+		authoredPrimary.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		TomCat::Entity addedCamera = cameraScene->CreateEntity("Added camera");
+		Check(registry.Add(addedCamera,
+			TomCat::UUID(TomCat::ComponentIds::Camera), error), error);
+		Check(cameraScene->HasAuthoredPrimaryCamera()
+			&& !addedCamera.GetComponent<TomCat::C_Camera>().Primary
+			&& !cameraScene->GetPrimaryCameraEntity(),
+			"adding a Camera ignored the inactive authored Primary camera");
+		authoredPrimary.GetComponent<TomCat::Tag>().ActiveSelf = true;
+		authoredPrimaryCamera.Enabled = false;
+		Check(!cameraScene->GetPrimaryCameraEntity(),
+			"disabled Primary Camera remained selected for runtime rendering");
+		authoredPrimaryCamera.Enabled = true;
+		Check(cameraScene->GetPrimaryCameraEntity() == authoredPrimary,
+			"enabled active Primary Camera was not selected");
+		Check(cameraScene->SetCameraPrimary(addedCamera, true)
+			&& !authoredPrimaryCamera.Primary
+			&& addedCamera.GetComponent<TomCat::C_Camera>().Primary,
+			"setting Camera.Primary did not preserve its authored uniqueness");
+		TomCat::Entity duplicatedPrimary = cameraScene->DuplicateEntity(addedCamera);
+		Check(duplicatedPrimary
+			&& duplicatedPrimary.HasComponent<TomCat::C_Camera>()
+			&& !duplicatedPrimary.GetComponent<TomCat::C_Camera>().Primary
+			&& addedCamera.GetComponent<TomCat::C_Camera>().Primary,
+			"DuplicateEntity created a second authored Primary camera");
+		addedCamera.GetComponent<TomCat::C_Camera>().Enabled = false;
+		Check(!cameraScene->GetPrimaryCameraEntity(),
+			"Camera.Enabled did not independently suppress the Primary camera");
+
+		std::string cameraDocument;
+		Check(TomCat::SceneArchiveCodec::Encode(cameraScene, cameraDocument, error),
+			error);
+		YAML::Node cameraRoot = YAML::Load(cameraDocument);
+		YAML::Node addedCameraNode;
+		for (YAML::Node entityNode : cameraRoot["Entities"])
+		{
+			if (entityNode["Entity"].as<uint64_t>()
+				== static_cast<uint64_t>(addedCamera.GetUUID()))
+			{
+				addedCameraNode = entityNode;
+				break;
+			}
+		}
+		Check(addedCameraNode && addedCameraNode["Camera"]["Enabled"]
+				&& !addedCameraNode["Camera"]["Enabled"].as<bool>(),
+			"disabled Camera was lost from the Scene 11 compatibility projection");
+		YAML::Node cameraRecord;
+		for (YAML::Node record : addedCameraNode["Components"])
+		{
+			if (record["TypeId"].as<uint64_t>() == TomCat::ComponentIds::Camera)
+			{
+				cameraRecord = record;
+				break;
+			}
+		}
+		Check(cameraRecord && cameraRecord["SchemaVersion"].as<uint32_t>() == 2
+			&& cameraRecord["Properties"].size() == cameraDescriptor->Properties.size()
+			&& cameraRecord["Properties"][cameraRecord["Properties"].size() - 1]
+				["PropertyId"].as<uint64_t>()
+				== TomCat::ComponentIds::CameraProperties::Enabled
+			&& !cameraRecord["Properties"][cameraRecord["Properties"].size() - 1]
+				["Value"].as<bool>(),
+			"Camera.Enabled was not serialized in the canonical v2 component record");
+		auto cameraRoundTrip = TomCat::CreateRef<TomCat::Scene>();
+		Check(TomCat::SceneArchiveCodec::Decode(Bytes(cameraDocument),
+			cameraRoundTrip, "CameraEnabled.scene", false),
+			"Camera.Enabled Scene 11 round trip failed");
+		TomCat::Entity loadedAddedCamera =
+			cameraRoundTrip->FindEntityByUUID(addedCamera.GetUUID());
+		Check(loadedAddedCamera
+			&& !loadedAddedCamera.GetComponent<TomCat::C_Camera>().Enabled
+			&& loadedAddedCamera.GetComponent<TomCat::C_Camera>().Primary
+			&& !cameraRoundTrip->GetPrimaryCameraEntity(),
+			"Camera.Enabled round trip changed component/runtime selection state");
+
+		YAML::Node cameraV1Root = YAML::Clone(cameraRoot);
+		YAML::Node cameraV1Entity;
+		for (YAML::Node entityNode : cameraV1Root["Entities"])
+		{
+			if (entityNode["Entity"].as<uint64_t>()
+				== static_cast<uint64_t>(addedCamera.GetUUID()))
+			{
+				cameraV1Entity = entityNode;
+				break;
+			}
+		}
+		cameraV1Entity["Camera"].remove("Enabled");
+		for (YAML::Node record : cameraV1Entity["Components"])
+		{
+			if (record["TypeId"].as<uint64_t>() != TomCat::ComponentIds::Camera)
+				continue;
+			record["SchemaVersion"] = 1;
+			YAML::Node v1Properties(YAML::NodeType::Sequence);
+			for (const YAML::Node& property : record["Properties"])
+			{
+				if (property["PropertyId"].as<uint64_t>()
+					!= TomCat::ComponentIds::CameraProperties::Enabled)
+					v1Properties.push_back(YAML::Clone(property));
+			}
+			record["Properties"] = v1Properties;
+			break;
+		}
+		YAML::Emitter cameraV1Emitter;
+		cameraV1Emitter << cameraV1Root;
+		auto migratedCameraScene = TomCat::CreateRef<TomCat::Scene>();
+		Check(TomCat::SceneArchiveCodec::Decode(Bytes(cameraV1Emitter.c_str()),
+			migratedCameraScene, "CameraV1.scene", false),
+			"Camera v1 component record did not migrate to Enabled=true");
+		TomCat::Entity migratedCamera =
+			migratedCameraScene->FindEntityByUUID(addedCamera.GetUUID());
+		Check(migratedCamera
+			&& migratedCamera.GetComponent<TomCat::C_Camera>().Enabled
+			&& migratedCamera.GetComponent<TomCat::C_Camera>().Primary
+			&& migratedCameraScene->GetPrimaryCameraEntity() == migratedCamera,
+			"Camera v1 migration did not default independent Enabled state to true");
+
+		auto cameraPrefabSource = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity cameraPrefabRoot =
+			cameraPrefabSource->CreateEntity("Prefab Primary Camera");
+		cameraPrefabRoot.AddComponent<TomCat::C_Camera>().Primary = true;
+		TomCat::Entity cameraPrefabChild =
+			cameraPrefabSource->CreateEntity("Second Prefab Primary Camera");
+		cameraPrefabChild.AddComponent<TomCat::C_Camera>().Primary = true;
+		Check(cameraPrefabSource->SetParent(cameraPrefabChild, cameraPrefabRoot),
+			"could not parent the second Prefab Primary camera");
+		TomCat::PrefabArchive cameraPrefab;
+		Check(TomCat::PrefabArchiveCodec::CaptureSubtree(cameraPrefabSource,
+			cameraPrefabRoot, cameraPrefab, error), error);
+		TomCat::Scene cameraPrefabDestination;
+		TomCat::Entity existingDestinationPrimary =
+			cameraPrefabDestination.CreateEntity("Existing Primary Camera");
+		existingDestinationPrimary.AddComponent<TomCat::C_Camera>().Primary = true;
+		TomCat::PrefabInstantiationResult cameraPrefabResult;
+		Check(TomCat::PrefabArchiveCodec::Instantiate(cameraPrefab,
+			cameraPrefabDestination, options, cameraPrefabResult, error), error);
+		Check(existingDestinationPrimary.GetComponent<TomCat::C_Camera>().Primary
+			&& cameraPrefabResult.Root.HasComponent<TomCat::C_Camera>()
+			&& !cameraPrefabResult.Root.GetComponent<TomCat::C_Camera>().Primary,
+			"Prefab instantiation replaced or duplicated an existing Primary camera");
+		Check(std::none_of(cameraPrefabResult.Entities.begin(),
+			cameraPrefabResult.Entities.end(), [](TomCat::Entity entity)
+			{
+				return entity.HasComponent<TomCat::C_Camera>()
+					&& entity.GetComponent<TomCat::C_Camera>().Primary;
+			}),
+			"Prefab instantiation retained a Primary camera beside the existing one");
+
+		TomCat::Scene emptyCameraPrefabDestination;
+		TomCat::PrefabInstantiationResult firstPrefabPrimaryResult;
+		Check(TomCat::PrefabArchiveCodec::Instantiate(cameraPrefab,
+			emptyCameraPrefabDestination, options, firstPrefabPrimaryResult, error),
+			error);
+		const size_t importedPrimaryCount = static_cast<size_t>(std::count_if(
+			firstPrefabPrimaryResult.Entities.begin(),
+			firstPrefabPrimaryResult.Entities.end(), [](TomCat::Entity entity)
+			{
+				return entity.HasComponent<TomCat::C_Camera>()
+					&& entity.GetComponent<TomCat::C_Camera>().Primary;
+			}));
+		Check(importedPrimaryCount == 1
+			&& firstPrefabPrimaryResult.Root.GetComponent<TomCat::C_Camera>().Primary
+			&& emptyCameraPrefabDestination.GetPrimaryCameraEntity()
+				== firstPrefabPrimaryResult.Root,
+			"Prefab instantiation did not preserve exactly its first Primary camera");
 
 		// Simulate opening the scene without its component provider. The wrapper is
 		// understood, while the nested payload is intentionally provider-defined.
@@ -570,6 +936,7 @@ namespace ComponentRegistryRegression {
 
 		TestPluginEntityReferenceRemap(registry);
 		TestProviderLifecycle(registry);
+		TestDisabledSpriteAnimatorInitialization();
 	}
 
 }
