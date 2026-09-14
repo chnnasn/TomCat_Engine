@@ -29,6 +29,9 @@ namespace TomCat {
 		std::optional<UUID> s_PointerCaptureTarget;
 		Scene* s_ControlOwnershipScene = nullptr;
 		uint32_t s_ControlOwnership = 0;
+		Scene* s_FixedCaptureStateScene = nullptr;
+		bool s_PendingFixedGameplayInputCapture = false;
+		bool s_FixedCapturePrepared = false;
 
 		constexpr uint32_t KeyboardMoveNextOwner = 1u << 0;
 		constexpr uint32_t KeyboardMovePreviousOwner = 1u << 1;
@@ -43,6 +46,14 @@ namespace TomCat {
 			s_PointerCaptureTarget.reset();
 		}
 
+		bool IsVisible(Scene& scene, Entity entity,
+			RuntimeUIVisibilityMode visibility)
+		{
+			return visibility == RuntimeUIVisibilityMode::Editor
+				? scene.IsVisibleInEditorHierarchy(entity)
+				: scene.IsActiveInHierarchy(entity);
+		}
+
 		void ClearControlOwnership()
 		{
 			s_ControlOwnershipScene = nullptr;
@@ -53,6 +64,13 @@ namespace TomCat {
 		{
 			if (s_ControlOwnership == 0)
 				s_ControlOwnershipScene = nullptr;
+		}
+
+		void ClearFixedCaptureState()
+		{
+			s_FixedCaptureStateScene = nullptr;
+			s_PendingFixedGameplayInputCapture = false;
+			s_FixedCapturePrepared = false;
 		}
 
 		bool Finite(float value) { return std::isfinite(value); }
@@ -174,6 +192,7 @@ namespace TomCat {
 			Scene& SceneValue;
 			entt::registry& Registry;
 			RuntimeUILayoutSnapshot& Snapshot;
+			RuntimeUIVisibilityMode Visibility;
 			std::set<uint64_t> Visited;
 
 			void LayoutChildren(Entity parent, const UIRect& parentRect,
@@ -190,7 +209,7 @@ namespace TomCat {
 					Entity child = SceneValue.FindEntityByUUID(childID);
 					if (!child || !child.HasComponent<RectTransform>()
 						|| child.HasComponent<Canvas>()
-						|| !SceneValue.IsActiveInHierarchy(child)
+						|| !IsVisible(SceneValue, child, Visibility)
 						|| !Visited.emplace(static_cast<uint64_t>(childID)).second)
 						continue;
 					auto& transform = child.GetComponent<RectTransform>();
@@ -227,6 +246,153 @@ namespace TomCat {
 				}
 			}
 		};
+
+		bool WouldCaptureGameplayInput(Scene& scene, entt::registry& registry,
+			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
+			const RuntimeUIInputFrame& input)
+		{
+			UIEventSystem* eventSystem = nullptr;
+			uint64_t eventSystemID = (std::numeric_limits<uint64_t>::max)();
+			for (const entt::entity value : registry.view<UIEventSystem, ID>())
+			{
+				Entity entity(value, &scene);
+				auto& candidate = registry.get<UIEventSystem>(value);
+				const uint64_t id = static_cast<uint64_t>(entity.GetUUID());
+				if (candidate.Enabled && scene.IsActiveInHierarchy(entity)
+					&& id < eventSystemID)
+				{
+					eventSystem = &candidate;
+					eventSystemID = id;
+				}
+			}
+			if (!eventSystem || !eventSystem->ConsumeGameplayInput
+				|| !input.WindowFocused)
+				return false;
+
+			const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildLayout(
+				scene, registry, viewportWidth, viewportHeight, dpi);
+			std::vector<Entity> buttons;
+			for (UUID id : layout.RenderOrder)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (!entity || !entity.HasComponent<UIButton>()
+					|| !entity.HasComponent<RectTransform>())
+					continue;
+				const auto& button = entity.GetComponent<UIButton>();
+				if (button.Enabled && button.Interactable
+					&& scene.IsActiveInHierarchy(entity))
+					buttons.push_back(entity);
+			}
+
+			const glm::vec2 mousePoint(input.PointerPosition.x,
+				static_cast<float>(viewportHeight) - input.PointerPosition.y);
+			bool pointerHandled = false;
+			for (auto item = layout.RenderOrder.rbegin();
+				item != layout.RenderOrder.rend(); ++item)
+			{
+				Entity target = scene.FindEntityByUUID(*item);
+				const auto rectangle = layout.Rectangles.find(*item);
+				const auto clip = layout.Clips.find(*item);
+				if (!target || rectangle == layout.Rectangles.end()
+					|| clip == layout.Clips.end()
+					|| !UIRect::Intersect(rectangle->second, clip->second)
+						.Contains(mousePoint))
+					continue;
+				const bool imageTarget = target.HasComponent<UIImage>()
+					&& target.GetComponent<UIImage>().Enabled
+					&& target.GetComponent<UIImage>().RaycastTarget;
+				const bool textTarget = target.HasComponent<UIText>()
+					&& target.GetComponent<UIText>().Enabled
+					&& target.GetComponent<UIText>().RaycastTarget;
+				if (!imageTarget && !textTarget)
+					continue;
+				pointerHandled = true;
+				break;
+			}
+
+			const bool hadPressed = std::any_of(buttons.begin(), buttons.end(),
+				[](Entity entity)
+				{ return entity.GetComponent<UIButton>().RuntimePressed; });
+			bool validPointerCapture = false;
+			if (s_PointerCaptureScene == &scene && s_PointerCaptureTarget)
+			{
+				Entity captured = scene.FindEntityByUUID(*s_PointerCaptureTarget);
+				validPointerCapture = captured && scene.IsActiveInHierarchy(captured)
+					&& ((captured.HasComponent<UIImage>()
+							&& captured.GetComponent<UIImage>().Enabled
+							&& captured.GetComponent<UIImage>().RaycastTarget)
+						|| (captured.HasComponent<UIText>()
+							&& captured.GetComponent<UIText>().Enabled
+							&& captured.GetComponent<UIText>().RaycastTarget));
+			}
+			// Mirror UpdateWithInput's capture transition without mutating it:
+			// a new press replaces the old target, while an idle frame releases it.
+			if (input.MousePressed)
+				validPointerCapture = pointerHandled;
+			else if (!input.MouseHeld && !input.MouseReleased)
+				validPointerCapture = false;
+			bool handled = (input.MousePressed && pointerHandled)
+				|| (input.MouseHeld && (validPointerCapture || hadPressed))
+				|| (input.MouseReleased
+					&& (pointerHandled || validPointerCapture || hadPressed));
+
+			struct ControlState
+			{
+				uint32_t Ownership;
+				bool Pressed;
+				bool Held;
+				bool Released;
+			};
+			const std::array<ControlState, 6> controls = {{
+				{ KeyboardMoveNextOwner, input.KeyboardMoveNext,
+					input.KeyboardMoveNextHeld, input.KeyboardMoveNextReleased },
+				{ KeyboardMovePreviousOwner, input.KeyboardMovePrevious,
+					input.KeyboardMovePreviousHeld,
+					input.KeyboardMovePreviousReleased },
+				{ KeyboardSubmitOwner, input.KeyboardSubmit,
+					input.KeyboardSubmitHeld, input.KeyboardSubmitReleased },
+				{ GamepadMoveNextOwner, input.GamepadMoveNext,
+					input.GamepadMoveNextHeld, input.GamepadMoveNextReleased },
+				{ GamepadMovePreviousOwner, input.GamepadMovePrevious,
+					input.GamepadMovePreviousHeld, input.GamepadMovePreviousReleased },
+				{ GamepadSubmitOwner, input.GamepadSubmit,
+					input.GamepadSubmitHeld, input.GamepadSubmitReleased }
+			}};
+			if (s_ControlOwnershipScene == &scene)
+			{
+				for (const ControlState& control : controls)
+				{
+					if ((s_ControlOwnership & control.Ownership) != 0
+						&& (control.Pressed || control.Held || control.Released))
+					{
+						handled = true;
+						break;
+					}
+				}
+			}
+
+			const bool navigationPressed = input.KeyboardMoveNext
+				|| input.KeyboardMovePrevious || input.GamepadMoveNext
+				|| input.GamepadMovePrevious;
+			const bool submitPressed = input.KeyboardSubmit || input.GamepadSubmit;
+			return handled || (!buttons.empty()
+				&& (navigationPressed || submitPressed));
+		}
+
+		void PublishDisplayGameplayInputCapture(Scene& scene, bool captured)
+		{
+			if (s_FixedCaptureStateScene != &scene)
+			{
+				s_FixedCaptureStateScene = &scene;
+				s_PendingFixedGameplayInputCapture = false;
+				s_FixedCapturePrepared = false;
+			}
+			if (!s_FixedCapturePrepared)
+				s_PendingFixedGameplayInputCapture =
+					s_PendingFixedGameplayInputCapture || captured;
+			s_FixedCapturePrepared = false;
+			s_GameplayInputCaptured.store(captured, std::memory_order_release);
+		}
 
 	}
 
@@ -322,7 +488,7 @@ namespace TomCat {
 
 	RuntimeUILayoutSnapshot RuntimeUISystem::BuildLayout(Scene& scene,
 		entt::registry& registry, uint32_t viewportWidth, uint32_t viewportHeight,
-		float dpi)
+		float dpi, RuntimeUIVisibilityMode visibility)
 	{
 		RuntimeUILayoutSnapshot snapshot;
 		snapshot.ViewportWidth = viewportWidth;
@@ -336,7 +502,7 @@ namespace TomCat {
 		{
 			Entity entity(value, &scene);
 			const Canvas& canvas = registry.get<Canvas>(value);
-			if (canvas.Enabled && scene.IsActiveInHierarchy(entity))
+			if (canvas.Enabled && IsVisible(scene, entity, visibility))
 				canvases.push_back({ entity, canvas.SortingOrder,
 					static_cast<uint64_t>(entity.GetUUID()) });
 		}
@@ -346,7 +512,7 @@ namespace TomCat {
 			return left.Order != right.Order ? left.Order < right.Order
 				: left.ID < right.ID;
 		});
-		LayoutBuilder builder{ scene, registry, snapshot };
+		LayoutBuilder builder{ scene, registry, snapshot, visibility };
 		const UIRect viewport{ 0.0f, 0.0f, static_cast<float>(viewportWidth),
 			static_cast<float>(viewportHeight) };
 		for (const CanvasItem& item : canvases)
@@ -364,10 +530,11 @@ namespace TomCat {
 	}
 
 	RuntimeUILayoutSnapshot RuntimeUISystem::BuildLayout(Scene& scene,
-		uint32_t viewportWidth, uint32_t viewportHeight, float dpi)
+		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
+		RuntimeUIVisibilityMode visibility)
 	{
 		return BuildLayout(scene, scene.m_Registry, viewportWidth, viewportHeight,
-			dpi);
+			dpi, visibility);
 	}
 
 	glm::vec2 RuntimeUISystem::MapPointerToViewport(
@@ -431,6 +598,78 @@ namespace TomCat {
 		s_GameplayInputCaptured.store(false, std::memory_order_release);
 		ClearPointerCapture();
 		ClearControlOwnership();
+		ClearFixedCaptureState();
+	}
+
+	void RuntimeUISystem::PrepareFixedInputCapture(Scene& scene,
+		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
+		glm::vec2 viewportOrigin, glm::vec2 screenToFramebufferScale)
+	{
+		auto& source = Scripting::ScriptEngine::Get();
+		const auto mouse = source.GetMousePosition();
+		RuntimeUIInputFrame input;
+		input.PointerPosition = MapPointerToViewport({ mouse.X, mouse.Y },
+			viewportOrigin, screenToFramebufferScale);
+		input.WindowFocused = source.IsWindowFocused();
+		input.MousePressed = source.WasMouseButtonPressed(0);
+		input.MouseHeld = source.IsMouseButtonHeld(0);
+		input.MouseReleased = source.WasMouseButtonReleased(0);
+		input.KeyboardMoveNext = source.WasKeyPressed(258)
+			|| source.WasKeyPressed(264) || source.WasKeyPressed(262);
+		input.KeyboardMoveNextHeld = source.IsKeyHeld(258)
+			|| source.IsKeyHeld(264) || source.IsKeyHeld(262);
+		input.KeyboardMoveNextReleased = source.WasKeyReleased(258)
+			|| source.WasKeyReleased(264) || source.WasKeyReleased(262);
+		input.KeyboardMovePrevious = source.WasKeyPressed(265)
+			|| source.WasKeyPressed(263);
+		input.KeyboardMovePreviousHeld = source.IsKeyHeld(265)
+			|| source.IsKeyHeld(263);
+		input.KeyboardMovePreviousReleased = source.WasKeyReleased(265)
+			|| source.WasKeyReleased(263);
+		input.KeyboardSubmit = source.WasKeyPressed(257)
+			|| source.WasKeyPressed(32);
+		input.KeyboardSubmitHeld = source.IsKeyHeld(257)
+			|| source.IsKeyHeld(32);
+		input.KeyboardSubmitReleased = source.WasKeyReleased(257)
+			|| source.WasKeyReleased(32);
+		input.GamepadMoveNext = source.WasGamepadButtonPressed(0, 13)
+			|| source.WasGamepadButtonPressed(0, 12);
+		input.GamepadMoveNextHeld = source.IsGamepadButtonHeld(0, 13)
+			|| source.IsGamepadButtonHeld(0, 12);
+		input.GamepadMoveNextReleased = source.WasGamepadButtonReleased(0, 13)
+			|| source.WasGamepadButtonReleased(0, 12);
+		input.GamepadMovePrevious = source.WasGamepadButtonPressed(0, 11)
+			|| source.WasGamepadButtonPressed(0, 14);
+		input.GamepadMovePreviousHeld = source.IsGamepadButtonHeld(0, 11)
+			|| source.IsGamepadButtonHeld(0, 14);
+		input.GamepadMovePreviousReleased = source.WasGamepadButtonReleased(0, 11)
+			|| source.WasGamepadButtonReleased(0, 14);
+		input.GamepadSubmit = source.WasGamepadButtonPressed(0, 0);
+		input.GamepadSubmitHeld = source.IsGamepadButtonHeld(0, 0);
+		input.GamepadSubmitReleased = source.WasGamepadButtonReleased(0, 0);
+		PrepareFixedInputCaptureWithInput(scene, viewportWidth, viewportHeight, dpi,
+			input);
+	}
+
+	void RuntimeUISystem::PrepareFixedInputCaptureWithInput(Scene& scene,
+		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
+		const RuntimeUIInputFrame& input)
+	{
+		if (s_FixedCaptureStateScene == &scene && s_FixedCapturePrepared)
+			return;
+		if (s_FixedCaptureStateScene != &scene)
+		{
+			s_FixedCaptureStateScene = &scene;
+			s_PendingFixedGameplayInputCapture = false;
+			s_FixedCapturePrepared = false;
+		}
+
+		const bool captured = s_PendingFixedGameplayInputCapture
+			|| WouldCaptureGameplayInput(scene, scene.m_Registry, viewportWidth,
+				viewportHeight, dpi, input);
+		s_PendingFixedGameplayInputCapture = false;
+		s_FixedCapturePrepared = true;
+		s_GameplayInputCaptured.store(captured, std::memory_order_release);
 	}
 
 	void RuntimeUISystem::Update(Scene& scene, entt::registry& registry,
@@ -520,7 +759,7 @@ namespace TomCat {
 				button.RuntimePressed = false;
 				button.RuntimeFocused = false;
 			}
-			s_GameplayInputCaptured.store(false, std::memory_order_release);
+			PublishDisplayGameplayInputCapture(scene, false);
 			ClearPointerCapture();
 			ClearControlOwnership();
 			return;
@@ -529,13 +768,11 @@ namespace TomCat {
 		{
 			for (const entt::entity value : registry.view<UIButton>())
 				registry.get<UIButton>(value).RuntimePressed = false;
-			s_GameplayInputCaptured.store(false, std::memory_order_release);
+			PublishDisplayGameplayInputCapture(scene, false);
 			ClearPointerCapture();
 			ClearControlOwnership();
 			return;
 		}
-		s_GameplayInputCaptured.store(false, std::memory_order_release);
-
 		struct Candidate { Entity Value; UIRect Rect; };
 		std::vector<Candidate> buttons;
 		for (size_t index = 0; index < layout.RenderOrder.size(); ++index)
@@ -773,8 +1010,8 @@ namespace TomCat {
 			s_ControlOwnership |= pressedOwnership;
 			s_ControlOwnershipScene = &scene;
 		}
-		s_GameplayInputCaptured.store(eventSystem->ConsumeGameplayInput
-			&& handledInteraction, std::memory_order_release);
+		PublishDisplayGameplayInputCapture(scene,
+			eventSystem->ConsumeGameplayInput && handledInteraction);
 		for (const ControlState& control : controls)
 		{
 			if ((s_ControlOwnership & control.Ownership) != 0
@@ -791,13 +1028,15 @@ namespace TomCat {
 			dpi, input);
 	}
 
-	void RuntimeUISystem::RenderWorldText(Scene& scene, entt::registry& registry)
+	void RuntimeUISystem::RenderWorldText(Scene& scene, entt::registry& registry,
+		RuntimeUIVisibilityMode visibility)
 	{
 		for (const entt::entity value : registry.view<Transform, TextRenderer>())
 		{
 			Entity entity(value, &scene);
 			auto [transform, text] = registry.get<Transform, TextRenderer>(value);
-			if (!text.Enabled || text.Text.empty() || !scene.IsActiveInHierarchy(entity)
+			if (!text.Enabled || text.Text.empty()
+				|| !IsVisible(scene, entity, visibility)
 				|| !Finite(text.FontSize) || text.FontSize <= 0.0f)
 				continue;
 			Ref<RuntimeFont> font = FontManager::Get().Load(text.Font, text.Text,
@@ -823,12 +1062,13 @@ namespace TomCat {
 	}
 
 	void RuntimeUISystem::RenderScreen(Scene& scene, entt::registry& registry,
-		uint32_t viewportWidth, uint32_t viewportHeight, float dpi)
+		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
+		RuntimeUIVisibilityMode visibility)
 	{
 		if (viewportWidth == 0 || viewportHeight == 0)
 			return;
 		const RuntimeUILayoutSnapshot layout = BuildLayout(scene, registry,
-			viewportWidth, viewportHeight, dpi);
+			viewportWidth, viewportHeight, dpi, visibility);
 		// Script-only and otherwise UI-free scenes must not touch the graphics
 		// backend. This also keeps server/headless runtime updates valid before a
 		// Renderer2D context exists.
@@ -841,7 +1081,7 @@ namespace TomCat {
 		for (UUID id : layout.RenderOrder)
 		{
 			Entity entity = scene.FindEntityByUUID(id);
-			if (!entity || !scene.IsActiveInHierarchy(entity))
+			if (!entity || !IsVisible(scene, entity, visibility))
 				continue;
 			const auto rectangle = layout.Rectangles.find(id);
 			const auto clip = layout.Clips.find(id);
@@ -912,9 +1152,10 @@ namespace TomCat {
 	}
 
 	void RuntimeUISystem::RenderScreen(Scene& scene, uint32_t viewportWidth,
-		uint32_t viewportHeight, float dpi)
+		uint32_t viewportHeight, float dpi, RuntimeUIVisibilityMode visibility)
 	{
-		RenderScreen(scene, scene.m_Registry, viewportWidth, viewportHeight, dpi);
+		RenderScreen(scene, scene.m_Registry, viewportWidth, viewportHeight, dpi,
+			visibility);
 	}
 
 	bool RuntimeUISystem::IsGameplayInputCaptured()

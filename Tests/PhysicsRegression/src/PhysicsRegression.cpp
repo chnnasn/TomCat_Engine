@@ -40,6 +40,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -85,17 +86,20 @@ namespace {
 				InvokeCreateAction();
 			return InvokeCreateStatus;
 		}
-		TomCat::Scripting::ScriptStatus SetEnabled(uint64_t, bool) override
+		TomCat::Scripting::ScriptStatus SetEnabled(
+			uint64_t attachmentId, bool enabled) override
 		{
 			Calls.emplace_back("SetEnabled");
-			return TomCat::Scripting::ScriptStatus::Success;
+			return SetEnabledAction
+				? SetEnabledAction(attachmentId, enabled)
+				: SetEnabledStatus;
 		}
 		TomCat::Scripting::ScriptStatus UpdateAll(float deltaTime) override
 		{
 			++UpdateCount;
 			LastUpdateDelta = deltaTime;
 			Calls.emplace_back("UpdateAll");
-			return TomCat::Scripting::ScriptStatus::Success;
+			return UpdateAllStatus;
 		}
 		TomCat::Scripting::ScriptStatus FixedUpdateAll(float fixedDeltaTime) override
 		{
@@ -104,7 +108,7 @@ namespace {
 			Calls.emplace_back("FixedUpdateAll");
 			if (FixedUpdateAction)
 				FixedUpdateAction();
-			return TomCat::Scripting::ScriptStatus::Success;
+			return FixedUpdateAllStatus;
 		}
 		TomCat::Scripting::ScriptStatus DispatchPhysicsEvents(
 			std::span<const TomCat::Scripting::NativePhysicsEventV1> events) override
@@ -126,7 +130,7 @@ namespace {
 					MutationQueued = TomCat::Scripting::ScriptEngine::Get().QueueDestroyEntity(
 						Attachments.front().Entity);
 			}
-			return TomCat::Scripting::ScriptStatus::Success;
+			return DispatchPhysicsEventsStatus;
 		}
 		TomCat::Scripting::ScriptStatus DestroyAll() override
 		{
@@ -137,9 +141,25 @@ namespace {
 		TomCat::Scripting::ScriptStatus DestroyAttachments(
 			std::span<const uint64_t> attachmentIds) override
 		{
+			++DestroyAttachmentsCallCount;
 			DestroyedAttachmentCount += static_cast<uint32_t>(attachmentIds.size());
 			Calls.emplace_back("DestroyAttachments");
-			return TomCat::Scripting::ScriptStatus::Success;
+			if (DestroyAttachmentsAction)
+				DestroyAttachmentsAction(attachmentIds);
+			return DestroyAttachmentsStatus;
+		}
+		TomCat::Scripting::ScriptStatus ResolveDeferredCommandBatch(
+			bool committed) override
+		{
+			if (committed)
+				++DeferredBatchCommitCount;
+			else
+				++DeferredBatchAbortCount;
+			Calls.emplace_back(committed ? "CommitDeferredBatch"
+				: "AbortDeferredBatch");
+			if (ResolveDeferredBatchAction)
+				ResolveDeferredBatchAction(committed);
+			return ResolveDeferredBatchStatus;
 		}
 		TomCat::Scripting::ScriptStatus InstantiateAttachments(
 			std::span<const TomCat::Scripting::NativeScriptAttachmentV1> attachments,
@@ -162,6 +182,9 @@ namespace {
 				}
 			}
 			Calls.emplace_back("InstantiateAttachments");
+			if (DynamicInstantiateStatus == TomCat::Scripting::ScriptStatus::Success
+				&& DynamicInstantiateAction)
+				DynamicInstantiateAction();
 			return DynamicInstantiateStatus;
 		}
 		bool PollUnload() override { return UnloadSucceeds; }
@@ -176,16 +199,31 @@ namespace {
 		bool UnloadSucceeds = true;
 		TomCat::Scripting::ScriptStatus InvokeCreateStatus =
 			TomCat::Scripting::ScriptStatus::Success;
+		TomCat::Scripting::ScriptStatus UpdateAllStatus =
+			TomCat::Scripting::ScriptStatus::Success;
+		TomCat::Scripting::ScriptStatus FixedUpdateAllStatus =
+			TomCat::Scripting::ScriptStatus::Success;
+		TomCat::Scripting::ScriptStatus DispatchPhysicsEventsStatus =
+			TomCat::Scripting::ScriptStatus::Success;
 		TomCat::Scripting::ScriptStatus DynamicInstantiateStatus =
+			TomCat::Scripting::ScriptStatus::Success;
+		TomCat::Scripting::ScriptStatus SetEnabledStatus =
+			TomCat::Scripting::ScriptStatus::Success;
+		TomCat::Scripting::ScriptStatus DestroyAttachmentsStatus =
+			TomCat::Scripting::ScriptStatus::Success;
+		TomCat::Scripting::ScriptStatus ResolveDeferredBatchStatus =
 			TomCat::Scripting::ScriptStatus::Success;
 		uint64_t LastSceneSession = 0;
 		uint64_t LastRuntimeGeneration = 0;
 		uint32_t UpdateCount = 0;
 		uint32_t FixedUpdateCount = 0;
 		uint32_t PhysicsEventCount = 0;
+		uint32_t DestroyAttachmentsCallCount = 0;
 		uint32_t DestroyedAttachmentCount = 0;
 		uint32_t UnloadFailureCount = 0;
 		uint32_t DynamicInstantiateCount = 0;
+		uint32_t DeferredBatchCommitCount = 0;
+		uint32_t DeferredBatchAbortCount = 0;
 		float LastUpdateDelta = 0.0f;
 		float LastFixedDelta = 0.0f;
 		PhysicsMutation Mutation = PhysicsMutation::None;
@@ -194,8 +232,13 @@ namespace {
 		bool InspectDynamicPhysics = false;
 		bool DynamicPhysicsReady = true;
 		std::function<void()> InvokeCreateAction;
+		std::function<void()> DynamicInstantiateAction;
 		std::function<void()> FixedUpdateAction;
 		std::function<void()> PhysicsEventAction;
+		std::function<TomCat::Scripting::ScriptStatus(uint64_t, bool)>
+			SetEnabledAction;
+		std::function<void(std::span<const uint64_t>)> DestroyAttachmentsAction;
+		std::function<void(bool)> ResolveDeferredBatchAction;
 		std::string LastFields;
 		std::string LastUnloadFailure;
 		std::string DynamicFields;
@@ -1075,6 +1118,8 @@ namespace {
 		Require(api.TransformSetPosition(handle,
 			{ requestedPosition.x, requestedPosition.y, requestedPosition.z }) == 0,
 			"managed Transform.position setter rejected a live child Entity");
+		TomCat::Scripting::ScriptEngine::Get().FlushDeferredCommands(
+			runtime->LastSceneSession);
 		Require(Near(child.GetComponent<TomCat::Transform>()._Translation,
 			requestedPosition),
 			"managed Transform.position setter did not update world position");
@@ -1084,6 +1129,8 @@ namespace {
 		Require(api.TransformSetRotationEuler(handle,
 			{ requestedRotation.x, requestedRotation.y, requestedRotation.z }) == 0,
 			"managed Transform.rotation setter rejected a live child Entity");
+		TomCat::Scripting::ScriptEngine::Get().FlushDeferredCommands(
+			runtime->LastSceneSession);
 		Require(Near(child.GetComponent<TomCat::Transform>()._Rotation,
 			requestedRotation, 3.0e-4f),
 			"managed Transform.rotation setter did not update world rotation");
@@ -1093,6 +1140,8 @@ namespace {
 		Require(api.TransformSetScale(handle,
 			{ requestedScale.x, requestedScale.y, requestedScale.z }) == 0,
 			"managed Transform.scale setter rejected a live child Entity");
+		TomCat::Scripting::ScriptEngine::Get().FlushDeferredCommands(
+			runtime->LastSceneSession);
 		Require(Near(child.GetComponent<TomCat::Transform>()._Scale,
 			requestedScale, 3.0e-4f),
 			"managed Transform.scale setter did not update world scale");
@@ -1685,13 +1734,13 @@ namespace {
 		Require(enters == 1,
 			"runtime filter edit did not rebuild fixtures and enable contact at a safe step boundary");
 
-		dynamicParent.GetComponent<TomCat::Tag>().Visible = false;
+		dynamicParent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		scene.OnRuntimeStep();
 		Require(!scene.IsActiveInHierarchy(dynamicEntity)
 			&& dynamicEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == nullptr
 			&& dynamicCollider.RuntimeFixture == nullptr,
 			"disabling a parent left child physics active");
-		dynamicParent.GetComponent<TomCat::Tag>().Visible = true;
+		dynamicParent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		scene.OnRuntimeStep();
 		Require(scene.IsActiveInHierarchy(dynamicEntity)
 			&& dynamicEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody != nullptr
@@ -1786,11 +1835,11 @@ namespace {
 		body->SetAngularVelocity(2.75f);
 		body->SetAwake(true);
 
-		parent.GetComponent<TomCat::Tag>().Visible = false;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value()
 			&& rigidbody.RuntimeBody == nullptr,
 			"inactive hierarchy retained a live dynamic body");
-		parent.GetComponent<TomCat::Tag>().Visible = true;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		const auto restoredVelocity = scene.GetLinearVelocity2D(child.GetUUID());
 		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
 		Require(restoredVelocity.has_value()
@@ -1802,10 +1851,10 @@ namespace {
 		body->SetLinearVelocity({ 0.0f, 0.0f });
 		body->SetAngularVelocity(0.0f);
 		body->SetAwake(false);
-		parent.GetComponent<TomCat::Tag>().Visible = false;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
 			"sleeping hierarchy body was not suspended");
-		parent.GetComponent<TomCat::Tag>().Visible = true;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		Require(scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
 			"sleeping hierarchy body was not restored");
 		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
@@ -1815,11 +1864,11 @@ namespace {
 		body->SetAwake(true);
 		body->SetLinearVelocity({ 6.0f, -4.0f });
 		body->SetAngularVelocity(3.0f);
-		parent.GetComponent<TomCat::Tag>().Visible = false;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
 			"body was not suspended before runtime Stop cleanup");
 		scene.OnRuntimeStop();
-		parent.GetComponent<TomCat::Tag>().Visible = true;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		Require(scene.OnRuntimeStart(), "Scene did not restart after suspended body Stop");
 		const auto restartVelocity = scene.GetLinearVelocity2D(child.GetUUID());
 		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
@@ -1830,7 +1879,7 @@ namespace {
 
 		body->SetLinearVelocity({ 8.0f, 2.0f });
 		body->SetAngularVelocity(5.0f);
-		parent.GetComponent<TomCat::Tag>().Visible = false;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		Require(!scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
 			"body was not suspended before entity destruction");
 		const TomCat::UUID childID = child.GetUUID();
@@ -1842,7 +1891,7 @@ namespace {
 		replacement.AddComponent<TomCat::CircleCollider2D>();
 		Require(scene.SetParent(replacement, parent),
 			"could not parent replacement body");
-		parent.GetComponent<TomCat::Tag>().Visible = true;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		const auto replacementVelocity = scene.GetLinearVelocity2D(childID);
 		body = static_cast<b2Body*>(replacementBody.RuntimeBody);
 		Require(replacementVelocity.has_value()
@@ -1856,7 +1905,7 @@ namespace {
 	{
 		TomCat::Scene scene;
 		TomCat::Entity parent = scene.CreateEntity("Inactive sprite parent");
-		parent.GetComponent<TomCat::Tag>().Visible = false;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		TomCat::Entity rendererAddedLater = scene.CreateEntity("Renderer added later");
 		rendererAddedLater.AddComponent<TomCat::SpriteAnimator>();
 		TomCat::Entity animatorAddedLater = scene.CreateEntity("Animator added later");
@@ -1874,7 +1923,7 @@ namespace {
 				.RuntimeInitialized,
 			"runtime component addition initialized an inactive SpriteAnimator");
 
-		parent.GetComponent<TomCat::Tag>().Visible = true;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		scene.OnRuntimeStep();
 		Require(rendererAddedLater.GetComponent<TomCat::SpriteAnimator>()
 				.RuntimeInitialized
@@ -1908,7 +1957,7 @@ namespace {
 			const auto& liveSource = scripted.GetComponent<TomCat::AudioSource>();
 			observedPreparedSource = liveSource.RuntimeVoice == 0
 				&& !liveSource.RuntimeAutoPlayEvaluated;
-			scripted.GetComponent<TomCat::Tag>().Visible = false;
+			scripted.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		};
 		Require(scene.OnRuntimeStart(), "managed audio-order Scene did not start");
 		Require(observedPreparedSource,
@@ -3070,7 +3119,7 @@ namespace {
 			assets.GetCookedManagedPayload();
 		Require(mountedPayload
 			&& mountedPayload->NativeApiVersion == 1
-			&& mountedPayload->ManagedApiVersion == 1
+			&& mountedPayload->ManagedApiVersion == 2
 			&& mountedPayload->ScriptManifestVersion == 1
 			&& mountedPayload->TargetFramework == "net10.0"
 			&& mountedPayload->RuntimeIdentifier == "win-x64"
@@ -4098,9 +4147,13 @@ namespace {
 			&& runtime->FixedUpdateCount == 0
 			&& scene.GetPendingRuntimeEntityCreateCount() == 0,
 			"initial OnCreate Prefab reached dynamic lifecycle before its physics proxies were ready");
-		Require(runtime->Calls.size() >= 5
-			&& runtime->Calls[3] == "InvokeCreateAll"
-			&& runtime->Calls[4] == "InstantiateAttachments",
+		const auto invokeCreate = std::find(runtime->Calls.begin(),
+			runtime->Calls.end(), "InvokeCreateAll");
+		const auto instantiateAttachments = std::find(runtime->Calls.begin(),
+			runtime->Calls.end(), "InstantiateAttachments");
+		Require(invokeCreate != runtime->Calls.end()
+			&& instantiateAttachments != runtime->Calls.end()
+			&& invokeCreate < instantiateAttachments,
 			"initial OnCreate Prefab was not delivered through the safe-point incremental ABI");
 		TomCat::Entity spawned = TomCat::Scripting::ScriptEngine::Get().ResolveEntity(
 			runtime->DynamicAttachments.front().Entity);
@@ -4263,6 +4316,7 @@ namespace {
 		descriptor.StableName = "Regression.PluginManagedProperties";
 		descriptor.DisplayName = "Plugin Managed Properties";
 		descriptor.ScriptAccessible = true;
+		descriptor.SupportsTransactionalValidation = true;
 		descriptor.Has = [](TomCat::Entity entity)
 		{
 			return entity && entity.HasComponent<PluginManagedProperties>();
@@ -4306,6 +4360,7 @@ namespace {
 		count.StableName = "Count";
 		count.DisplayName = "Count";
 		count.Kind = TomCat::PropertyKind::Int32;
+		count.DefaultValue = PluginManagedProperties{}.Count;
 		count.Get = [](TomCat::Entity entity) -> TomCat::PropertyValue
 		{
 			return entity.GetComponent<PluginManagedProperties>().Count;
@@ -4324,6 +4379,7 @@ namespace {
 		label.StableName = "Label";
 		label.DisplayName = "Label";
 		label.Kind = TomCat::PropertyKind::String;
+		label.DefaultValue = PluginManagedProperties{}.Label;
 		label.Get = [](TomCat::Entity entity) -> TomCat::PropertyValue
 		{
 			return entity.GetComponent<PluginManagedProperties>().Label;
@@ -4337,6 +4393,492 @@ namespace {
 		};
 		descriptor.Properties.push_back(std::move(label));
 		return descriptor;
+	}
+
+	struct ProviderTransactionComponent
+	{
+		int32_t Value = 0;
+	};
+
+	struct ProviderTransactionEffects
+	{
+		uint32_t CommitAdds = 0;
+		uint32_t CommitRemoves = 0;
+		uint32_t CommitCopies = 0;
+		uint32_t CommitSets = 0;
+		std::unordered_map<uint64_t, int32_t> Sidecar;
+
+		void Reset()
+		{
+			CommitAdds = 0;
+			CommitRemoves = 0;
+			CommitCopies = 0;
+			CommitSets = 0;
+			Sidecar.clear();
+		}
+	};
+
+	constexpr uint64_t ProviderTransactionProviderId = 0x35a6062318b24ee1ULL;
+	constexpr uint64_t ProviderTransactionTypeId = 0x8629ee6aa9184c50ULL;
+	constexpr uint64_t ProviderTransactionRejectedTypeId = 0x8bf882ad41e44d6aULL;
+	constexpr uint64_t ProviderTransactionValueId = 0x8840fe9232cc4bc0ULL;
+
+	TomCat::ComponentDescriptor MakeProviderTransactionDescriptor(
+		const std::shared_ptr<ProviderTransactionEffects>& effects)
+	{
+		TomCat::ComponentDescriptor descriptor;
+		descriptor.ProviderId = TomCat::UUID(ProviderTransactionProviderId);
+		descriptor.TypeId = TomCat::UUID(ProviderTransactionTypeId);
+		descriptor.StableName = "Regression.ProviderTransactionComponent";
+		descriptor.DisplayName = "Provider Transaction Component";
+		descriptor.ScriptAccessible = true;
+		descriptor.SupportsTransactionalValidation = true;
+		descriptor.Has = [](TomCat::Entity entity)
+		{
+			return entity && entity.HasComponent<ProviderTransactionComponent>();
+		};
+		descriptor.Add = [effects](TomCat::Entity entity, std::string& error)
+		{
+			if (!entity || entity.HasComponent<ProviderTransactionComponent>())
+			{
+				error = "ProviderTransactionComponent cannot be added";
+				return false;
+			}
+			entity.AddComponent<ProviderTransactionComponent>();
+			const uint64_t entityId = static_cast<uint64_t>(entity.GetUUID());
+			if (TomCat::GetComponentMutationPhase()
+				== TomCat::ComponentMutationPhase::Commit)
+			{
+				++effects->CommitAdds;
+				effects->Sidecar[entityId] = 0;
+			}
+			return true;
+		};
+		descriptor.Remove = [effects](TomCat::Entity entity, std::string& error)
+		{
+			if (!entity || !entity.HasComponent<ProviderTransactionComponent>())
+			{
+				error = "ProviderTransactionComponent is absent";
+				return false;
+			}
+			const uint64_t entityId = static_cast<uint64_t>(entity.GetUUID());
+			entity.RemoveComponent<ProviderTransactionComponent>();
+			if (TomCat::GetComponentMutationPhase()
+				== TomCat::ComponentMutationPhase::Commit)
+			{
+				++effects->CommitRemoves;
+				effects->Sidecar.erase(entityId);
+			}
+			return true;
+		};
+		descriptor.Copy = [effects](TomCat::Entity source,
+			TomCat::Entity destination, std::string& error)
+		{
+			if (!source || !destination
+				|| !source.HasComponent<ProviderTransactionComponent>())
+			{
+				error = "Invalid ProviderTransactionComponent copy";
+				return false;
+			}
+			const int32_t value =
+				source.GetComponent<ProviderTransactionComponent>().Value;
+			destination.AddOrReplaceComponent<ProviderTransactionComponent>().Value =
+				value;
+			const uint64_t destinationId =
+				static_cast<uint64_t>(destination.GetUUID());
+			if (TomCat::GetComponentMutationPhase()
+				== TomCat::ComponentMutationPhase::Commit)
+			{
+				++effects->CommitCopies;
+				effects->Sidecar[destinationId] = value;
+			}
+			return true;
+		};
+
+		TomCat::PropertyDescriptor value;
+		value.PropertyId = TomCat::UUID(ProviderTransactionValueId);
+		value.StableName = "Value";
+		value.DisplayName = "Value";
+		value.Kind = TomCat::PropertyKind::Int32;
+		value.DefaultValue = ProviderTransactionComponent{}.Value;
+		value.Get = [](TomCat::Entity entity) -> TomCat::PropertyValue
+		{
+			return entity.GetComponent<ProviderTransactionComponent>().Value;
+		};
+		value.Set = [effects](TomCat::Entity entity,
+			const TomCat::PropertyValue& propertyValue, std::string&)
+		{
+			const int32_t typedValue = std::get<int32_t>(propertyValue);
+			entity.GetComponent<ProviderTransactionComponent>().Value = typedValue;
+			const uint64_t entityId = static_cast<uint64_t>(entity.GetUUID());
+			if (TomCat::GetComponentMutationPhase()
+				== TomCat::ComponentMutationPhase::Commit)
+			{
+				++effects->CommitSets;
+				effects->Sidecar[entityId] = typedValue;
+			}
+			return true;
+		};
+		descriptor.Properties.push_back(std::move(value));
+		return descriptor;
+	}
+
+
+	void TestDeferredCommandsCapability()
+	{
+		using namespace TomCat::Scripting;
+		const NativeApiV1 native = BuildNativeApiV1();
+		const NativeApiV2 envelope = BuildNativeApiV2();
+		NativeDeferredCommandsApiV1 deferred{};
+		uint32_t required = 0;
+		const std::string capabilityName(DeferredCommandsCapabilityName);
+		const NativeUtf8View capabilityView{
+			reinterpret_cast<const uint8_t*>(capabilityName.data()),
+			capabilityName.size() };
+
+		Require(envelope.QueryCapability(capabilityView, 1, nullptr, 0,
+			&required) == static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& required == sizeof(deferred),
+			"Deferred commands capability size probe did not report its ABI size");
+		std::array<uint8_t, sizeof(NativeDeferredCommandsApiV1) - 1>
+			undersized{};
+		required = 0;
+		Require(envelope.QueryCapability(capabilityView, 1, undersized.data(),
+			static_cast<uint32_t>(undersized.size()), &required)
+				== static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& required == sizeof(deferred),
+			"Deferred commands capability accepted an undersized ABI buffer");
+		required = 0;
+		Require(envelope.QueryCapability(capabilityView, 2, nullptr, 0,
+			&required) == static_cast<int32_t>(ScriptStatus::VersionMismatch)
+			&& required == sizeof(deferred),
+			"Deferred commands capability did not reject a newer version");
+		required = 0;
+		Require(envelope.QueryCapability(capabilityView, 1, &deferred,
+			sizeof(deferred), &required)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& required == sizeof(deferred) && deferred.Version == 1
+			&& deferred.Size == sizeof(deferred) && deferred.AbortBatch,
+			"TomCat.DeferredCommandsApiV1 capability table is incomplete");
+
+		NativeDeferredCallbackTransactionsApiV1 callbackTransactions{};
+		required = 0;
+		const std::string callbackTransactionsName(
+			DeferredCallbackTransactionsCapabilityName);
+		const NativeUtf8View callbackTransactionsView{
+			reinterpret_cast<const uint8_t*>(callbackTransactionsName.data()),
+			callbackTransactionsName.size() };
+		Require(envelope.QueryCapability(callbackTransactionsView, 1,
+			nullptr, 0, &required)
+				== static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& required == sizeof(callbackTransactions),
+			"Deferred callback transactions size probe did not report its ABI size");
+		std::array<uint8_t,
+			sizeof(NativeDeferredCallbackTransactionsApiV1) - 1>
+			callbackTransactionsUndersized{};
+		required = 0;
+		Require(envelope.QueryCapability(callbackTransactionsView, 1,
+			callbackTransactionsUndersized.data(),
+			static_cast<uint32_t>(callbackTransactionsUndersized.size()),
+			&required) == static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& required == sizeof(callbackTransactions),
+			"Deferred callback transactions accepted an undersized ABI buffer");
+		required = 0;
+		Require(envelope.QueryCapability(callbackTransactionsView, 2,
+			nullptr, 0, &required)
+				== static_cast<int32_t>(ScriptStatus::VersionMismatch)
+			&& required == sizeof(callbackTransactions),
+			"Deferred callback transactions did not reject a newer version");
+		required = 0;
+		Require(envelope.QueryCapability(callbackTransactionsView, 1,
+			&callbackTransactions, sizeof(callbackTransactions), &required)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& required == sizeof(callbackTransactions)
+			&& callbackTransactions.Version == 1
+			&& callbackTransactions.Size == sizeof(callbackTransactions)
+			&& callbackTransactions.BeginCallback
+			&& callbackTransactions.CompleteCallback,
+			"TomCat.DeferredCallbackTransactionsApiV1 capability table is incomplete");
+
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity context = scene.CreateEntity(
+			"Deferred capability context");
+		constexpr uint64_t Generation = 0xd3f3;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene,
+			Generation);
+		Require(session != 0,
+			"could not start deferred capability transaction scene");
+		const EntityHandleV1 contextHandle{ session,
+			static_cast<uint64_t>(context.GetUUID()), Generation };
+		const int32_t boxCollider = static_cast<int32_t>(
+			NativeComponentType::BoxCollider2D);
+
+		Require(native.AddComponentDeferred(contextHandle, boxCollider)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& native.HasComponent(contextHandle, boxCollider) == 1
+			&& !context.HasComponent<TomCat::BoxCollider2D>(),
+			"deferred capability rollback fixture was not queued or projected");
+		const std::string reason = "managed callback regression fault";
+		const NativeUtf8View reasonView{
+			reinterpret_cast<const uint8_t*>(reason.data()), reason.size() };
+		Require(deferred.AbortBatch(contextHandle, reasonView)
+			== static_cast<int32_t>(ScriptStatus::Success),
+			"DeferredCommandsApiV1 AbortBatch rejected a valid Scene context");
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		Require(!context.HasComponent<TomCat::BoxCollider2D>()
+			&& runtime->DeferredBatchCommitCount == 0
+			&& runtime->DeferredBatchAbortCount == 1 && runtime->Active,
+			"AbortBatch did not poison and roll back the complete deferred batch");
+
+		Require(native.AddComponentDeferred(contextHandle, boxCollider)
+			== static_cast<int32_t>(ScriptStatus::Success),
+			"deferred capability remained poisoned after the aborted batch");
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		Require(context.HasComponent<TomCat::BoxCollider2D>()
+			&& runtime->DeferredBatchCommitCount == 1
+			&& runtime->DeferredBatchAbortCount == 1,
+			"a fresh deferred batch did not commit after AbortBatch rollback");
+
+		const uint32_t callbackAbortBaseline =
+			runtime->DeferredBatchAbortCount;
+		uint64_t callbackToken = 0;
+		Require(callbackTransactions.BeginCallback(contextHandle, &callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& callbackToken != 0,
+			"could not begin an isolated managed callback transaction");
+		uint64_t overlappingToken = 99;
+		Require(callbackTransactions.BeginCallback(contextHandle,
+			&overlappingToken) == static_cast<int32_t>(ScriptStatus::InvalidState)
+			&& overlappingToken == 0,
+			"callback transaction accepted an overlapping BeginCallback");
+		Require(native.RemoveComponentDeferred(contextHandle, boxCollider)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& native.HasComponent(contextHandle, boxCollider) == 0
+			&& context.HasComponent<TomCat::BoxCollider2D>(),
+			"callback transaction did not expose its own projected removal");
+		Require(deferred.AbortBatch(contextHandle, reasonView)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& callbackTransactions.CompleteCallback(callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success),
+			"could not complete the aborted callback transaction");
+		Require(context.HasComponent<TomCat::BoxCollider2D>()
+			&& runtime->DeferredBatchAbortCount
+				== callbackAbortBaseline + 1,
+			"aborted callback transaction leaked its projected removal");
+
+		const uint32_t callbackCommitBaseline =
+			runtime->DeferredBatchCommitCount;
+		callbackToken = 0;
+		Require(callbackTransactions.BeginCallback(contextHandle, &callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& native.RemoveComponentDeferred(contextHandle, boxCollider)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& callbackTransactions.CompleteCallback(callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success),
+			"could not commit the callback following an aborted callback");
+		Require(!context.HasComponent<TomCat::BoxCollider2D>()
+			&& runtime->DeferredBatchCommitCount
+				== callbackCommitBaseline + 1,
+			"a failed callback poisoned the following callback transaction");
+
+		bool nestedQueued = false;
+		bool nestedCallbackFailed = false;
+		runtime->ResolveDeferredBatchAction = [&](bool committed)
+		{
+			if (!committed || nestedQueued)
+				return;
+			nestedQueued = true;
+			uint64_t nestedToken = 0;
+			nestedCallbackFailed =
+				callbackTransactions.BeginCallback(contextHandle, &nestedToken)
+					!= static_cast<int32_t>(ScriptStatus::Success)
+				|| native.AddComponentDeferred(contextHandle,
+					static_cast<int32_t>(NativeComponentType::CircleCollider2D))
+					!= static_cast<int32_t>(ScriptStatus::Success)
+				|| callbackTransactions.CompleteCallback(nestedToken)
+					!= static_cast<int32_t>(ScriptStatus::Success);
+		};
+		const uint32_t nestedCommitBaseline =
+			runtime->DeferredBatchCommitCount;
+		callbackToken = 0;
+		Require(callbackTransactions.BeginCallback(contextHandle, &callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& native.AddComponentDeferred(contextHandle, boxCollider)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& callbackTransactions.CompleteCallback(callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success),
+			"could not complete the parent callback transaction");
+		runtime->ResolveDeferredBatchAction = {};
+		Require(nestedQueued && !nestedCallbackFailed
+			&& context.HasComponent<TomCat::BoxCollider2D>()
+			&& context.HasComponent<TomCat::CircleCollider2D>()
+			&& runtime->DeferredBatchCommitCount
+				== nestedCommitBaseline + 2,
+			"nested callback transaction was recursively merged or not drained FIFO");
+
+		const uint32_t emptyCommitBaseline =
+			runtime->DeferredBatchCommitCount;
+		callbackToken = 0;
+		Require(callbackTransactions.BeginCallback(contextHandle, &callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& callbackTransactions.CompleteCallback(callbackToken)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& runtime->DeferredBatchCommitCount == emptyCommitBaseline + 1,
+			"empty callback transaction did not resolve its managed projection frame");
+		ScriptEngine::Get().StopScene(session);
+	}
+
+	void TestThirdPartyTransactionalComponentContract()
+	{
+		using namespace TomCat::Scripting;
+		TomCat::ComponentRegistry& registry = TomCat::ComponentRegistry::Get();
+		auto effects = std::make_shared<ProviderTransactionEffects>();
+		std::string error;
+
+		TomCat::ComponentDescriptor rejected =
+			MakeProviderTransactionDescriptor(effects);
+		rejected.TypeId = TomCat::UUID(ProviderTransactionRejectedTypeId);
+		rejected.StableName = "Regression.NonTransactionalScriptComponent";
+		rejected.DisplayName = "Non-Transactional Script Component";
+		rejected.SupportsTransactionalValidation = false;
+		Require(!registry.Register(std::move(rejected), error)
+			&& registry.Find(TomCat::UUID(ProviderTransactionRejectedTypeId))
+				== nullptr,
+			"third-party ScriptAccessible descriptor bypassed the transactional-validation opt-in");
+
+		error.clear();
+		Require(registry.Register(MakeProviderTransactionDescriptor(effects), error),
+			error.c_str());
+
+		auto copySource = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity source = copySource->CreateEntity("Provider copy source");
+		source.AddComponent<ProviderTransactionComponent>().Value = 17;
+		TomCat::Ref<TomCat::Scene> validationCopy;
+		{
+			TomCat::ComponentMutationPhaseScope validationPhase(
+				TomCat::ComponentMutationPhase::Validation);
+			validationCopy = TomCat::Scene::Copy(copySource);
+		}
+		TomCat::Entity validationCopyEntity = validationCopy
+			? validationCopy->FindEntityByUUID(source.GetUUID()) : TomCat::Entity{};
+		Require(validationCopyEntity
+			&& validationCopyEntity.HasComponent<ProviderTransactionComponent>()
+			&& validationCopyEntity.GetComponent<ProviderTransactionComponent>().Value
+				== 17
+			&& effects->CommitCopies == 0 && effects->Sidecar.empty(),
+			"Scene::Copy validation leaked provider Copy side effects");
+		validationCopy.reset();
+
+		TomCat::Entity commitCopy =
+			copySource->CreateEntity("Provider commit copy");
+		const TomCat::ComponentDescriptor* registered =
+			registry.Find(TomCat::UUID(ProviderTransactionTypeId));
+		error.clear();
+		Require(registered
+			&& registered->Copy(source, commitCopy, error)
+			&& commitCopy.HasComponent<ProviderTransactionComponent>()
+			&& commitCopy.GetComponent<ProviderTransactionComponent>().Value == 17
+			&& effects->CommitCopies == 1
+			&& effects->Sidecar.size() == 1
+			&& effects->Sidecar.at(static_cast<uint64_t>(commitCopy.GetUUID()))
+				== 17,
+			error.empty() ? "provider Copy did not publish exactly once in Commit phase"
+				: error.c_str());
+		source.RemoveComponent<ProviderTransactionComponent>();
+		commitCopy.RemoveComponent<ProviderTransactionComponent>();
+		copySource.reset();
+		effects->Reset();
+
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity target = scene.CreateEntity("Provider transaction target");
+		TomCat::Entity cycleA = scene.CreateEntity("Provider cycle A");
+		TomCat::Entity cycleB = scene.CreateEntity("Provider cycle B");
+		constexpr uint64_t Generation = 0xc017;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		Require(session != 0, "could not start provider transaction scene");
+		const EntityHandleV1 targetHandle{ session,
+			static_cast<uint64_t>(target.GetUUID()), Generation };
+		const EntityHandleV1 cycleAHandle{ session,
+			static_cast<uint64_t>(cycleA.GetUUID()), Generation };
+		const EntityHandleV1 cycleBHandle{ session,
+			static_cast<uint64_t>(cycleB.GetUUID()), Generation };
+		NativePropertyValueV1 property{};
+		property.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+		property.Integer = 41;
+
+		Require(ScriptEngine::Get().QueueAddRegisteredComponent(
+				targetHandle, ProviderTransactionTypeId)
+			&& ScriptEngine::Get().QueueSetRegisteredComponentProperty(
+				targetHandle, ProviderTransactionTypeId,
+				ProviderTransactionValueId, property)
+			&& !target.HasComponent<ProviderTransactionComponent>()
+			&& effects->CommitAdds == 0 && effects->CommitSets == 0
+			&& effects->Sidecar.empty(),
+			"queued provider Add/Set published before transaction commit");
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		const uint64_t targetId = static_cast<uint64_t>(target.GetUUID());
+		Require(target.HasComponent<ProviderTransactionComponent>()
+			&& target.GetComponent<ProviderTransactionComponent>().Value == 41
+			&& effects->CommitAdds == 1 && effects->CommitSets == 1
+			&& effects->CommitRemoves == 0 && effects->CommitCopies == 0
+			&& effects->Sidecar.size() == 1
+			&& effects->Sidecar.at(targetId) == 41,
+			"successful deferred provider Add/Set did not publish exactly once");
+
+		Require(ScriptEngine::Get().QueueRemoveRegisteredComponent(
+				targetHandle, ProviderTransactionTypeId)
+			&& target.HasComponent<ProviderTransactionComponent>()
+			&& effects->CommitRemoves == 0
+			&& effects->Sidecar.contains(targetId),
+			"queued provider Remove published before transaction commit");
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		Require(!target.HasComponent<ProviderTransactionComponent>()
+			&& effects->CommitAdds == 1 && effects->CommitSets == 1
+			&& effects->CommitRemoves == 1 && effects->CommitCopies == 0
+			&& effects->Sidecar.empty(),
+			"successful deferred provider Remove did not publish exactly once");
+
+		const uint32_t commitAddsBeforeAbort = effects->CommitAdds;
+		const uint32_t commitSetsBeforeAbort = effects->CommitSets;
+		const uint32_t commitRemovesBeforeAbort = effects->CommitRemoves;
+		const uint32_t commitCopiesBeforeAbort = effects->CommitCopies;
+		const uint32_t abortsBefore = runtime->DeferredBatchAbortCount;
+		const bool providerAddQueued =
+			ScriptEngine::Get().QueueAddRegisteredComponent(
+				targetHandle, ProviderTransactionTypeId);
+		const bool providerSetQueued =
+			ScriptEngine::Get().QueueSetRegisteredComponentProperty(
+				targetHandle, ProviderTransactionTypeId,
+				ProviderTransactionValueId, property);
+		const bool firstParentQueued =
+			ScriptEngine::Get().QueueSetParent(cycleAHandle, cycleBHandle);
+		const bool cycleRejected =
+			!ScriptEngine::Get().QueueSetParent(cycleBHandle, cycleAHandle);
+		Require(providerAddQueued && providerSetQueued && firstParentQueued
+			&& cycleRejected,
+			"deferred parent cycle was not rejected after queuing provider mutations");
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		Require(!target.HasComponent<ProviderTransactionComponent>()
+			&& !scene.GetParent(cycleA) && !scene.GetParent(cycleB)
+			&& effects->CommitAdds == commitAddsBeforeAbort
+			&& effects->CommitSets == commitSetsBeforeAbort
+			&& effects->CommitRemoves == commitRemovesBeforeAbort
+			&& effects->CommitCopies == commitCopiesBeforeAbort
+			&& effects->Sidecar.empty()
+			&& runtime->DeferredBatchAbortCount == abortsBefore + 1,
+			"parent-cycle abort leaked provider counter or sidecar mutations");
+
+		ScriptEngine::Get().StopScene(session);
+		const std::array<TomCat::Entity, 3> liveEntities{
+			target, cycleA, cycleB };
+		error.clear();
+		Require(registry.UnregisterProvider(
+			TomCat::UUID(ProviderTransactionProviderId), liveEntities, error),
+			error.c_str());
 	}
 
 	void TestRegisteredComponentStringCapability()
@@ -4430,19 +4972,94 @@ namespace {
 		const NativeUtf8View queuedLabelView{
 			reinterpret_cast<const uint8_t*>(queuedLabel.data()), queuedLabel.size() };
 		Require(components.Add(handle, PluginManagedTypeId)
-			== static_cast<int32_t>(ScriptStatus::Success)
-			&& components.SetProperty(handle, PluginManagedTypeId,
+			== static_cast<int32_t>(ScriptStatus::Success),
+			"deferred plugin Add was rejected");
+		NativePropertyValueV1 defaultCount{};
+		uint32_t defaultLabelBytes = 99;
+		Require(components.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedCountId, &defaultCount)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& defaultCount.Integer == 0
+			&& strings.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedLabelId, nullptr, 0, &defaultLabelBytes)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& defaultLabelBytes == 0,
+			"plugin Add getter did not expose explicit numeric/string defaults");
+		Require(components.SetProperty(handle, PluginManagedTypeId,
 				PluginManagedCountId, count)
 				== static_cast<int32_t>(ScriptStatus::Success)
 			&& strings.SetProperty(handle, PluginManagedTypeId,
 				PluginManagedLabelId, queuedLabelView)
 				== static_cast<int32_t>(ScriptStatus::Success),
 			"deferred plugin Add/property chain was rejected");
+		NativePropertyValueV1 projectedCount{};
+		Require(components.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedCountId, &projectedCount)
+			== static_cast<int32_t>(ScriptStatus::Success)
+			&& projectedCount.Kind
+				== static_cast<uint32_t>(NativePropertyKindV1::Int32)
+			&& projectedCount.Integer == 73,
+			"plugin numeric getter did not observe its queued write before flush");
+		uint32_t projectedLabelBytes = 0;
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, nullptr, 0, &projectedLabelBytes)
+			== static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+			&& projectedLabelBytes == queuedLabel.size(),
+			"plugin string getter did not observe its queued write before flush");
+		std::vector<uint8_t> projectedLabel(projectedLabelBytes);
+		Require(strings.GetProperty(handle, PluginManagedTypeId,
+			PluginManagedLabelId, projectedLabel.data(), projectedLabelBytes,
+			&projectedLabelBytes) == static_cast<int32_t>(ScriptStatus::Success)
+			&& std::string(projectedLabel.begin(), projectedLabel.end())
+				== queuedLabel,
+			"plugin string getter returned the wrong queued UTF-8 value");
 		ScriptEngine::Get().FlushDeferredCommands(session);
 		Require(entity.HasComponent<PluginManagedProperties>()
 			&& entity.GetComponent<PluginManagedProperties>().Count == 73
 			&& entity.GetComponent<PluginManagedProperties>().Label == queuedLabel,
 			"deferred plugin numeric/string properties were not committed in order");
+
+		const uint32_t removeAbortBefore =
+			runtime->DeferredBatchAbortCount;
+		Require(components.Remove(handle, PluginManagedTypeId)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& components.SetProperty(handle, PluginManagedTypeId,
+				PluginManagedCountId, count)
+				== static_cast<int32_t>(ScriptStatus::NotFound)
+			&& entity.GetComponent<PluginManagedProperties>().Count == 73,
+			"projected plugin Remove allowed a setter to mutate the live component");
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		Require(entity.HasComponent<PluginManagedProperties>()
+			&& entity.GetComponent<PluginManagedProperties>().Count == 73
+			&& entity.GetComponent<PluginManagedProperties>().Label == queuedLabel
+			&& runtime->DeferredBatchAbortCount == removeAbortBefore + 1,
+			"rejected projected plugin setter did not abort its Remove batch");
+		Require(components.Remove(handle, PluginManagedTypeId)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& components.Add(handle, PluginManagedTypeId)
+				== static_cast<int32_t>(ScriptStatus::Success),
+			"plugin Remove+Add reset was rejected");
+		defaultCount = {};
+		defaultLabelBytes = 99;
+		Require(components.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedCountId, &defaultCount)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& defaultCount.Integer == 0
+			&& strings.GetProperty(handle, PluginManagedTypeId,
+				PluginManagedLabelId, nullptr, 0, &defaultLabelBytes)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& defaultLabelBytes == 0,
+			"plugin Remove+Add getter leaked stale live property values");
+		Require(components.SetProperty(handle, PluginManagedTypeId,
+				PluginManagedCountId, count)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& strings.SetProperty(handle, PluginManagedTypeId,
+				PluginManagedLabelId, queuedLabelView)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& entity.GetComponent<PluginManagedProperties>().Count == 73
+			&& entity.GetComponent<PluginManagedProperties>().Label == queuedLabel,
+			"plugin Remove+Add setters bypassed the deferred structural reset");
+		ScriptEngine::Get().FlushDeferredCommands(session);
 
 		NativePropertyValueV1 readCount{};
 		Require(components.GetProperty(handle, PluginManagedTypeId,
@@ -4497,6 +5114,7 @@ namespace {
 			PluginManagedLabelId, oversizedView)
 			== static_cast<int32_t>(ScriptStatus::InvalidArgument),
 			"oversized plugin UTF-8 entered the native transport");
+		ScriptEngine::Get().FlushDeferredCommands(session);
 		entity.GetComponent<PluginManagedProperties>().Label.assign("\xc0\xaf", 2);
 		required = 123;
 		Require(strings.GetProperty(handle, PluginManagedTypeId,
@@ -4546,8 +5164,9 @@ namespace {
 		Require(envelope.QueryCapability(capabilityView, 1, &gameplay,
 			sizeof(gameplay), &required) == static_cast<int32_t>(ScriptStatus::Success)
 			&& required == sizeof(gameplay) && gameplay.CreateEntityDeferred
-			&& gameplay.SetComponentProperty && gameplay.SetActiveSelf
-			&& gameplay.SetParentDeferred,
+			&& gameplay.GetComponentProperty && gameplay.SetComponentProperty
+			&& gameplay.GetActiveSelf && gameplay.SetActiveSelf
+			&& gameplay.GetParent && gameplay.SetParentDeferred,
 			"TomCat.GameplayApiV1 capability table is incomplete");
 		const std::string componentCapabilityName(ComponentCapabilityName);
 		const NativeUtf8View componentCapabilityView{
@@ -4600,6 +5219,14 @@ namespace {
 			if (!record(envelope.V1.HasComponent(pendingChild,
 				static_cast<int32_t>(NativeComponentType::BoxCollider2D)) == 1,
 				"pending BoxCollider2D was not visible to GetComponent")) return;
+			NativePropertyValueV1 defaultSize{};
+			if (!record(gameplay.GetComponentProperty(pendingChild,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+				GameplayPropertyIds::BoxSize, &defaultSize)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& std::abs(defaultSize.Vector.X - 0.5f) < 0.0001f
+				&& std::abs(defaultSize.Vector.Y - 0.5f) < 0.0001f,
+				"pending builtin Add getter did not expose component defaults")) return;
 			NativePropertyValueV1 size{};
 			size.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector2);
 			size.Vector = { 2.5f, 3.5f, 0.0f, 0.0f };
@@ -4608,6 +5235,16 @@ namespace {
 				GameplayPropertyIds::BoxSize, size)
 				== static_cast<int32_t>(ScriptStatus::Success),
 				"pending BoxCollider2D.Size write was rejected")) return;
+			NativePropertyValueV1 projectedSize{};
+			if (!record(gameplay.GetComponentProperty(pendingChild,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+				GameplayPropertyIds::BoxSize, &projectedSize)
+				== static_cast<int32_t>(ScriptStatus::Success)
+				&& projectedSize.Kind
+					== static_cast<uint32_t>(NativePropertyKindV1::Vector2)
+				&& std::abs(projectedSize.Vector.X - 2.5f) < 0.0001f
+				&& std::abs(projectedSize.Vector.Y - 3.5f) < 0.0001f,
+				"pending BoxCollider2D.Size getter missed its queued write")) return;
 
 			if (!record(envelope.V1.AddComponentDeferred(pendingChild,
 				static_cast<int32_t>(NativeComponentType::SpriteRenderer))
@@ -4624,6 +5261,16 @@ namespace {
 				GameplayPropertyIds::SpriteColor, color)
 				== static_cast<int32_t>(ScriptStatus::Success),
 				"pending SpriteRenderer.Color write was rejected")) return;
+			NativePropertyValueV1 projectedColor{};
+			if (!record(gameplay.GetComponentProperty(pendingChild,
+				static_cast<int32_t>(NativeComponentType::SpriteRenderer),
+				GameplayPropertyIds::SpriteColor, &projectedColor)
+				== static_cast<int32_t>(ScriptStatus::Success)
+				&& projectedColor.Kind
+					== static_cast<uint32_t>(NativePropertyKindV1::Vector4)
+				&& std::abs(projectedColor.Vector.X - 0.25f) < 0.0001f
+				&& std::abs(projectedColor.Vector.Y - 0.5f) < 0.0001f,
+				"pending SpriteRenderer.Color getter missed its queued write")) return;
 
 			if (!record(components.Add(pendingChild, TomCat::ComponentIds::Health)
 				== static_cast<int32_t>(ScriptStatus::Success),
@@ -4645,26 +5292,29 @@ namespace {
 				TomCat::ComponentIds::HealthProperties::Current, current)
 				== static_cast<int32_t>(ScriptStatus::Success),
 				"pending Health.Current write was rejected")) return;
+			NativePropertyValueV1 projectedHealth{};
+			if (!record(components.GetProperty(pendingChild,
+				TomCat::ComponentIds::Health,
+				TomCat::ComponentIds::HealthProperties::Current,
+				&projectedHealth) == static_cast<int32_t>(ScriptStatus::Success)
+				&& projectedHealth.Integer == 175,
+				"pending Health.Current getter missed its queued write")) return;
 
-			NativePropertyValueV1 invalidSize = size;
-			invalidSize.Vector.X = -1.0f;
-			if (!record(gameplay.SetComponentProperty(pendingChild,
-				static_cast<int32_t>(NativeComponentType::BoxCollider2D),
-				GameplayPropertyIds::BoxSize, invalidSize)
-				== static_cast<int32_t>(ScriptStatus::InvalidArgument),
-				"invalid pending property value entered the command queue")) return;
-			EntityHandleV1 wrongGeneration = pendingChild;
-			++wrongGeneration.RuntimeGeneration;
-			if (!record(envelope.V1.AddComponentDeferred(wrongGeneration,
-				static_cast<int32_t>(NativeComponentType::Rigidbody2D))
-				!= static_cast<int32_t>(ScriptStatus::Success),
-				"wrong-generation pending handle entered the command queue")) return;
 			if (!record(gameplay.SetActiveSelf(pendingChild, 0)
 				== static_cast<int32_t>(ScriptStatus::Success),
 				"pending ActiveSelf write was rejected")) return;
-			record(gameplay.SetParentDeferred(pendingChild, pendingParent)
+			if (!record(gameplay.GetActiveSelf(pendingChild) == 0,
+				"pending ActiveSelf getter missed its queued write")) return;
+			if (!record(gameplay.SetParentDeferred(pendingChild, pendingParent)
 				== static_cast<int32_t>(ScriptStatus::Success),
-				"pending-to-pending parent assignment was rejected");
+				"pending-to-pending parent assignment was rejected")) return;
+			EntityHandleV1 projectedParent{};
+			record(gameplay.GetParent(pendingChild, &projectedParent)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& projectedParent.SceneSessionId == pendingParent.SceneSessionId
+				&& projectedParent.EntityId == pendingParent.EntityId
+				&& projectedParent.RuntimeGeneration == pendingParent.RuntimeGeneration,
+				"pending parent getter missed its queued reparent");
 		};
 
 		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
@@ -4680,7 +5330,7 @@ namespace {
 				&& child.HasComponent<TomCat::SpriteRenderer>()
 				&& child.HasComponent<TomCat::HealthComponent>()
 				&& child.HasComponent<TomCat::Tag>()
-				&& !child.GetComponent<TomCat::Tag>().Visible
+				&& !child.GetComponent<TomCat::Tag>().ActiveSelf
 				&& scene.GetParent(child) == parent;
 		}
 		if (committed)
@@ -4701,6 +5351,77 @@ namespace {
 		{
 			const EntityHandleV1 contextHandle{ session,
 				static_cast<uint64_t>(context.GetUUID()), Generation };
+			const EntityHandleV1 childHandle{ session,
+				static_cast<uint64_t>(child.GetUUID()), Generation };
+			NativePropertyValueV1 restoredSize{};
+			restoredSize.Kind =
+				static_cast<uint32_t>(NativePropertyKindV1::Vector2);
+			restoredSize.Vector = { 2.5f, 3.5f, 0.0f, 0.0f };
+			const glm::vec2 liveSizeBeforeReset =
+				child.GetComponent<TomCat::BoxCollider2D>().Size;
+
+			NativePropertyValueV1 invalidSize = restoredSize;
+			invalidSize.Vector.X = -1.0f;
+			const uint32_t invalidAbortBefore =
+				runtime->DeferredBatchAbortCount;
+			const bool invalidSetRejected =
+				gameplay.SetComponentProperty(childHandle,
+					static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+					GameplayPropertyIds::BoxSize, invalidSize)
+					== static_cast<int32_t>(ScriptStatus::InvalidArgument);
+			ScriptEngine::Get().FlushDeferredCommands(session);
+			const bool invalidSetAborted = child.HasComponent<TomCat::BoxCollider2D>()
+				&& child.GetComponent<TomCat::BoxCollider2D>().Size
+					== liveSizeBeforeReset
+				&& runtime->DeferredBatchAbortCount == invalidAbortBefore + 1;
+			EntityHandleV1 wrongGeneration = childHandle;
+			++wrongGeneration.RuntimeGeneration;
+			const bool wrongGenerationRejected =
+				envelope.V1.AddComponentDeferred(wrongGeneration,
+					static_cast<int32_t>(NativeComponentType::Rigidbody2D))
+					!= static_cast<int32_t>(ScriptStatus::Success);
+
+			const uint32_t removeAbortBefore =
+				runtime->DeferredBatchAbortCount;
+			const bool removeRejectedSet =
+				envelope.V1.RemoveComponentDeferred(childHandle,
+					static_cast<int32_t>(NativeComponentType::BoxCollider2D))
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& gameplay.SetComponentProperty(childHandle,
+					static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+					GameplayPropertyIds::BoxSize, restoredSize)
+					== static_cast<int32_t>(ScriptStatus::NotFound);
+			ScriptEngine::Get().FlushDeferredCommands(session);
+			const bool removeAborted = child.HasComponent<TomCat::BoxCollider2D>()
+				&& child.GetComponent<TomCat::BoxCollider2D>().Size
+					== liveSizeBeforeReset
+				&& runtime->DeferredBatchAbortCount == removeAbortBefore + 1;
+
+			NativePropertyValueV1 resetDefault{};
+			const bool removeAddProjected =
+				envelope.V1.RemoveComponentDeferred(childHandle,
+					static_cast<int32_t>(NativeComponentType::BoxCollider2D))
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& envelope.V1.AddComponentDeferred(childHandle,
+					static_cast<int32_t>(NativeComponentType::BoxCollider2D))
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& gameplay.GetComponentProperty(childHandle,
+					static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+					GameplayPropertyIds::BoxSize, &resetDefault)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& std::abs(resetDefault.Vector.X - 0.5f) < 0.0001f
+				&& std::abs(resetDefault.Vector.Y - 0.5f) < 0.0001f
+				&& gameplay.SetComponentProperty(childHandle,
+					static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+					GameplayPropertyIds::BoxSize, restoredSize)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& child.GetComponent<TomCat::BoxCollider2D>().Size
+					== liveSizeBeforeReset;
+			ScriptEngine::Get().FlushDeferredCommands(session);
+			Require(invalidSetRejected && invalidSetAborted
+				&& wrongGenerationRejected && removeRejectedSet
+				&& removeAborted && removeAddProjected,
+				"builtin rejected setter, Remove abort, or Remove+Add projection failed");
 			EntityHandleV1 prefabParent{};
 			const NativeVector3 position{};
 			pendingPrefabParentAccepted = ScriptEngine::Get().QueueCreateEntity(
@@ -4709,12 +5430,1019 @@ namespace {
 					position, prefabParent) == 1;
 			ScriptEngine::Get().StopScene(session);
 		}
+
+		TomCat::Scene atomicScene;
+		TomCat::Entity atomicContext =
+			atomicScene.CreateEntity("Deferred transaction context");
+		EntityHandleV1 cycleA{};
+		EntityHandleV1 cycleB{};
+		std::string atomicCallbackFailure;
+		auto atomicRecord = [&](bool condition, const char* message)
+		{
+			if (!condition && atomicCallbackFailure.empty())
+				atomicCallbackFailure = message;
+			return condition;
+		};
+		runtime->InvokeCreateAction = [&]()
+		{
+			const EntityHandleV1 contextHandle{ runtime->LastSceneSession,
+				static_cast<uint64_t>(atomicContext.GetUUID()), Generation };
+			const NativeVector3 position{};
+			const std::string nameA = "Deferred cycle A";
+			const std::string nameB = "Deferred cycle B";
+			const NativeUtf8View nameAView{
+				reinterpret_cast<const uint8_t*>(nameA.data()), nameA.size() };
+			const NativeUtf8View nameBView{
+				reinterpret_cast<const uint8_t*>(nameB.data()), nameB.size() };
+			if (!atomicRecord(envelope.V1.AddComponentDeferred(contextHandle,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D))
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"could not queue the mutation before the invalid command")) return;
+			if (!atomicRecord(gameplay.CreateEntityDeferred(contextHandle, nameAView,
+				position, {}, &cycleA)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"could not reserve deferred cycle A")) return;
+			if (!atomicRecord(gameplay.CreateEntityDeferred(contextHandle, nameBView,
+				position, {}, &cycleB)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"could not reserve deferred cycle B")) return;
+			if (!atomicRecord(gameplay.SetParentDeferred(cycleB, cycleA)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"could not queue the valid half of the deferred cycle")) return;
+			atomicRecord(gameplay.SetParentDeferred(cycleA, cycleB)
+					!= static_cast<int32_t>(ScriptStatus::Success),
+				"late parent cycle was not rejected by the projected transaction view");
+		};
+		const uint64_t atomicSession =
+			ScriptEngine::Get().StartScene(atomicScene, Generation);
+		const bool atomicRollback = atomicSession != 0
+			&& atomicCallbackFailure.empty()
+			&& runtime->DeferredBatchAbortCount >= 1
+			&& !atomicScene.FindEntityByUUID(TomCat::UUID(cycleA.EntityId))
+			&& !atomicScene.FindEntityByUUID(TomCat::UUID(cycleB.EntityId))
+			&& !atomicContext.HasComponent<TomCat::BoxCollider2D>();
+		if (atomicSession != 0)
+			ScriptEngine::Get().StopScene(atomicSession);
+
 		Require(callbackFailure.empty(), callbackFailure.empty()
 			? "reserved entity callback failed" : callbackFailure.c_str());
 		Require(committed,
 			"reserved entity chain was not committed in Create/Add/property/Active/Parent order");
+		Require(runtime->DeferredBatchCommitCount >= 2,
+			"successful deferred batches did not acknowledge the managed projection");
 		Require(pendingPrefabParentAccepted,
 			"Prefab instantiate did not accept a same-session pending parent");
+		Require(atomicCallbackFailure.empty(), atomicCallbackFailure.empty()
+			? "deferred transaction callback failed"
+			: atomicCallbackFailure.c_str());
+		Require(atomicRollback,
+			"a late parent-cycle failure exposed earlier deferred mutations");
+	}
+
+
+	void TestProjectedTransactionReadYourWritesAndRollback()
+	{
+		using namespace TomCat::Scripting;
+		const NativeApiV1 native = BuildNativeApiV1();
+		const NativeApiV2 envelope = BuildNativeApiV2();
+		NativeGameplayApiV1 gameplay{};
+		NativeComponentApiV1 components{};
+		uint32_t required = 0;
+		const std::string gameplayCapabilityName(GameplayCapabilityName);
+		const NativeUtf8View gameplayCapabilityView{
+			reinterpret_cast<const uint8_t*>(gameplayCapabilityName.data()),
+			gameplayCapabilityName.size() };
+		const std::string componentCapabilityName(ComponentCapabilityName);
+		const NativeUtf8View componentCapabilityView{
+			reinterpret_cast<const uint8_t*>(componentCapabilityName.data()),
+			componentCapabilityName.size() };
+		Require(envelope.QueryCapability(gameplayCapabilityView, 1, &gameplay,
+			sizeof(gameplay), &required) == static_cast<int32_t>(ScriptStatus::Success)
+			&& gameplay.CreateEntityDeferred && gameplay.FindEntityByName
+			&& gameplay.QueryEntities && gameplay.GetParent
+			&& gameplay.SetParentDeferred && gameplay.GetChildren
+			&& gameplay.GetComponentProperty && gameplay.SetComponentProperty,
+			"TomCat.GameplayApiV1 transaction projection functions are unavailable");
+		Require(envelope.QueryCapability(componentCapabilityView, 1, &components,
+			sizeof(components), &required) == static_cast<int32_t>(ScriptStatus::Success)
+			&& components.Has && components.Add && components.GetProperty
+			&& components.SetProperty,
+			"TomCat.ComponentApiV1 transaction projection functions are unavailable");
+
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity context = scene.CreateEntity("Projection context");
+		scene.CreateEntity("Projected duplicate");
+		TomCat::Entity parentA = scene.CreateEntity("Projection parent A");
+		TomCat::Entity parentB = scene.CreateEntity("Projection parent B");
+		TomCat::Entity child = scene.CreateEntity("Projection child");
+		TomCat::Entity mutationTarget =
+			scene.CreateEntity("Projection mutation target");
+		TomCat::Entity removalTarget =
+			scene.CreateEntity("Projection removal target");
+		removalTarget.AddComponent<TomCat::SpriteRenderer>();
+		auto& health = mutationTarget.AddComponent<TomCat::HealthComponent>();
+		health.Maximum = 100;
+		health.Current = 20;
+		const glm::mat4 parentAWorld = TomCat::Math::ComposeTransform(
+			{ 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f },
+			{ 1.0f, 1.0f, 1.0f });
+		const glm::mat4 parentBWorld = TomCat::Math::ComposeTransform(
+			{ 10.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f },
+			{ 1.0f, 1.0f, 1.0f });
+		const glm::mat4 childWorld = TomCat::Math::ComposeTransform(
+			{ 3.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f },
+			{ 1.0f, 1.0f, 1.0f });
+		Require(scene.SetWorldTransform(parentA, parentAWorld)
+			&& scene.SetWorldTransform(parentB, parentBWorld)
+			&& scene.SetWorldTransform(child, childWorld)
+			&& scene.SetParent(child, parentA),
+			"could not establish projected transaction hierarchy fixture");
+
+		constexpr uint64_t Generation = 0x71a9;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		std::string failure;
+		auto check = [&](bool condition, const char* message)
+		{
+			if (!condition && failure.empty())
+				failure = message;
+			return condition;
+		};
+		if (!check(session != 0,
+			"could not start projected transaction scene"))
+			Require(false, failure.c_str());
+
+		const auto handleFor = [&](TomCat::Entity entity)
+		{
+			return EntityHandleV1{ session,
+				static_cast<uint64_t>(entity.GetUUID()), Generation };
+		};
+		const EntityHandleV1 contextHandle = handleFor(context);
+		const EntityHandleV1 parentAHandle = handleFor(parentA);
+		const EntityHandleV1 parentBHandle = handleFor(parentB);
+		const EntityHandleV1 childHandle = handleFor(child);
+		const EntityHandleV1 mutationHandle = handleFor(mutationTarget);
+		const EntityHandleV1 removalHandle = handleFor(removalTarget);
+		auto view = [](const std::string& value)
+		{
+			return NativeUtf8View{
+				reinterpret_cast<const uint8_t*>(value.data()), value.size() };
+		};
+		auto contains = [](const std::vector<EntityHandleV1>& entities,
+			const EntityHandleV1& expected)
+		{
+			return std::any_of(entities.begin(), entities.end(),
+				[&](const EntityHandleV1& candidate)
+				{
+					return candidate.SceneSessionId == expected.SceneSessionId
+						&& candidate.EntityId == expected.EntityId
+						&& candidate.RuntimeGeneration
+							== expected.RuntimeGeneration;
+				});
+		};
+		auto readText = [&](auto getter, const EntityHandleV1& entity,
+			std::string& output)
+		{
+			uint32_t size = 0;
+			const int32_t probe = getter(entity, nullptr, 0, &size);
+			if (probe != static_cast<int32_t>(ScriptStatus::BufferTooSmall)
+				|| size == 0)
+				return false;
+			std::vector<uint8_t> bytes(size);
+			if (getter(entity, bytes.data(), size, &size)
+				!= static_cast<int32_t>(ScriptStatus::Success))
+				return false;
+			output.assign(reinterpret_cast<const char*>(bytes.data()), size);
+			return true;
+		};
+		auto query = [&](int32_t componentType, uint64_t registeredTypeId,
+			std::vector<EntityHandleV1>& output)
+		{
+			uint32_t count = 0;
+			const int32_t probe = gameplay.QueryEntities(contextHandle,
+				componentType, registeredTypeId, nullptr, 0, &count);
+			if ((count == 0
+					&& probe != static_cast<int32_t>(ScriptStatus::Success))
+				|| (count != 0
+					&& probe != static_cast<int32_t>(
+						ScriptStatus::BufferTooSmall)))
+				return false;
+			output.resize(count);
+			if (count == 0)
+				return true;
+			return gameplay.QueryEntities(contextHandle, componentType,
+				registeredTypeId, output.data(), count, &count)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& count == output.size();
+		};
+
+		[&]()
+		{
+			const std::string duplicateName = "Projected duplicate";
+			EntityHandleV1 pendingFirst{};
+			EntityHandleV1 pendingSecond{};
+			if (!check(gameplay.CreateEntityDeferred(contextHandle,
+				view(duplicateName), { 4.0f, 0.0f, 0.0f }, {},
+				&pendingFirst) == static_cast<int32_t>(ScriptStatus::Success),
+				"first pending Create was rejected")) return;
+			if (!check(gameplay.CreateEntityDeferred(contextHandle,
+				view(duplicateName), { 5.0f, 0.0f, 0.0f }, {},
+				&pendingSecond) == static_cast<int32_t>(ScriptStatus::Success),
+				"second pending Create was rejected")) return;
+			if (!check(native.EntityIsAlive(pendingFirst) == 1
+				&& native.EntityIsAlive(pendingSecond) == 1,
+				"pending Create was not alive in the projected view")) return;
+
+			if (!check(native.AddComponentDeferred(pendingFirst,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D))
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"pending builtin Add was rejected")) return;
+			if (!check(components.Add(pendingSecond,
+				TomCat::ComponentIds::Health)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"pending registered Add was rejected")) return;
+			NativePropertyValueV1 pendingHealth{};
+			pendingHealth.Kind =
+				static_cast<uint32_t>(NativePropertyKindV1::Int32);
+			pendingHealth.Integer = 73;
+			if (!check(components.SetProperty(pendingSecond,
+				TomCat::ComponentIds::Health,
+				TomCat::ComponentIds::HealthProperties::Current,
+				pendingHealth) == static_cast<int32_t>(ScriptStatus::Success),
+				"pending registered property write was rejected")) return;
+
+			std::string projectedFirstName;
+			std::string projectedSecondName;
+			if (!check(readText(native.EntityGetName, pendingFirst,
+				projectedFirstName)
+				&& readText(native.EntityGetName, pendingSecond,
+					projectedSecondName)
+				&& projectedFirstName == "Projected duplicate (1)"
+				&& projectedSecondName == "Projected duplicate (2)",
+				"duplicate pending Creates did not reserve deterministic projected names"))
+				return;
+			EntityHandleV1 found{};
+			if (!check(gameplay.FindEntityByName(contextHandle,
+				view(projectedFirstName), &found)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& found.EntityId == pendingFirst.EntityId,
+				"FindEntityByName could not see the first pending Create"))
+				return;
+			if (!check(gameplay.FindEntityByName(contextHandle,
+				view(projectedSecondName), &found)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& found.EntityId == pendingSecond.EntityId,
+				"FindEntityByName could not see the second pending Create"))
+				return;
+
+			std::vector<EntityHandleV1> projectedAll;
+			if (!check(ScriptEngine::Get().GetProjectedEntities(
+				contextHandle, projectedAll)
+				&& contains(projectedAll, pendingFirst)
+				&& contains(projectedAll, pendingSecond),
+				"projected All did not include pending Creates")) return;
+			std::vector<EntityHandleV1> queried;
+			if (!check(query(0, 0, queried)
+				&& contains(queried, pendingFirst)
+				&& contains(queried, pendingSecond),
+				"unfiltered Query did not include pending Creates")) return;
+			if (!check(query(static_cast<int32_t>(
+				NativeComponentType::BoxCollider2D), 0, queried)
+				&& contains(queried, pendingFirst),
+				"builtin component Query missed a projected Add")) return;
+			if (!check(query(0, TomCat::ComponentIds::Health, queried)
+				&& contains(queried, pendingSecond),
+				"registered component Query missed a projected Add")) return;
+			NativePropertyValueV1 projectedPendingHealth{};
+			if (!check(components.GetProperty(pendingSecond,
+				TomCat::ComponentIds::Health,
+				TomCat::ComponentIds::HealthProperties::Current,
+				&projectedPendingHealth)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& projectedPendingHealth.Integer == 73,
+				"registered property getter missed a pending Create write"))
+				return;
+
+			const uint32_t commitsBefore = runtime->DeferredBatchCommitCount;
+			const uint32_t abortsBefore = runtime->DeferredBatchAbortCount;
+			ScriptEngine::Get().FlushDeferredCommands(session);
+			TomCat::Entity committedFirst = scene.FindEntityByUUID(
+				TomCat::UUID(pendingFirst.EntityId));
+			TomCat::Entity committedSecond = scene.FindEntityByUUID(
+				TomCat::UUID(pendingSecond.EntityId));
+			if (!check(committedFirst && committedSecond
+				&& committedFirst.GetName() == projectedFirstName
+				&& committedSecond.GetName() == projectedSecondName
+				&& committedFirst.HasComponent<TomCat::BoxCollider2D>()
+				&& committedSecond.HasComponent<TomCat::HealthComponent>()
+				&& committedSecond.GetComponent<TomCat::HealthComponent>().Current
+					== 73
+				&& runtime->DeferredBatchCommitCount == commitsBefore + 1
+				&& runtime->DeferredBatchAbortCount == abortsBefore,
+				"committed pending Creates diverged from their projected names or components"))
+				return;
+
+			const std::string originalName = mutationTarget.GetName();
+			const std::string originalTag = mutationTarget.GetGameplayTag();
+			const uint32_t originalLayer = mutationTarget.GetLayer();
+			const int32_t originalHealth =
+				mutationTarget.GetComponent<TomCat::HealthComponent>().Current;
+			const glm::vec3 originalParentB =
+				parentB.GetComponent<TomCat::Transform>()._Translation;
+			const glm::vec3 originalChild =
+				child.GetComponent<TomCat::Transform>()._Translation;
+			const uint32_t commitsBeforeAbort =
+				runtime->DeferredBatchCommitCount;
+			const uint32_t abortsBeforeAbort =
+				runtime->DeferredBatchAbortCount;
+
+			EntityHandleV1 rolledBackCreate{};
+			const std::string rollbackName = "Projected rollback create";
+			if (!check(gameplay.CreateEntityDeferred(contextHandle,
+				view(rollbackName), { 8.0f, 0.0f, 0.0f }, {},
+				&rolledBackCreate)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"rollback fixture Create was rejected")) return;
+			if (!check(native.EntitySetName(mutationHandle,
+				view(duplicateName))
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"projected Name write was rejected")) return;
+			const std::string projectedTagValue = "ProjectedPlayer";
+			if (!check(native.EntitySetTag(mutationHandle,
+				view(projectedTagValue))
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"projected Tag write was rejected")) return;
+			if (!check(native.EntitySetLayer(mutationHandle, 7)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"projected Layer write was rejected")) return;
+			if (!check(native.AddComponentDeferred(mutationHandle,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D))
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& native.HasComponent(mutationHandle,
+					static_cast<int32_t>(
+						NativeComponentType::BoxCollider2D)) == 1,
+				"projected builtin Add was not visible")) return;
+			NativePropertyValueV1 projectedBoxSize{};
+			projectedBoxSize.Kind =
+				static_cast<uint32_t>(NativePropertyKindV1::Vector2);
+			projectedBoxSize.Vector = { 2.0f, 3.0f, 0.0f, 0.0f };
+			if (!check(gameplay.SetComponentProperty(mutationHandle,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+				GameplayPropertyIds::BoxSize, projectedBoxSize)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"projected builtin property write was rejected")) return;
+			NativePropertyValueV1 readBoxSize{};
+			if (!check(gameplay.GetComponentProperty(mutationHandle,
+				static_cast<int32_t>(NativeComponentType::BoxCollider2D),
+				GameplayPropertyIds::BoxSize, &readBoxSize)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& std::abs(readBoxSize.Vector.X - 2.0f) < 0.0001f
+				&& std::abs(readBoxSize.Vector.Y - 3.0f) < 0.0001f,
+				"projected builtin property read missed its write")) return;
+			if (!check(native.RemoveComponentDeferred(removalHandle,
+				static_cast<int32_t>(NativeComponentType::SpriteRenderer))
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& native.HasComponent(removalHandle,
+					static_cast<int32_t>(
+						NativeComponentType::SpriteRenderer)) == 0,
+				"projected builtin Remove remained visible")) return;
+
+			NativePropertyValueV1 projectedHealth{};
+			projectedHealth.Kind =
+				static_cast<uint32_t>(NativePropertyKindV1::Int32);
+			projectedHealth.Integer = 77;
+			if (!check(components.SetProperty(mutationHandle,
+				TomCat::ComponentIds::Health,
+				TomCat::ComponentIds::HealthProperties::Current,
+				projectedHealth) == static_cast<int32_t>(ScriptStatus::Success),
+				"projected registered property write was rejected")) return;
+			NativePropertyValueV1 readHealth{};
+			if (!check(components.GetProperty(mutationHandle,
+				TomCat::ComponentIds::Health,
+				TomCat::ComponentIds::HealthProperties::Current,
+				&readHealth) == static_cast<int32_t>(ScriptStatus::Success)
+				&& readHealth.Integer == 77,
+				"projected registered property getter missed its write"))
+				return;
+
+			if (!check(gameplay.SetParentDeferred(childHandle, parentBHandle)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"projected reparent was rejected")) return;
+			EntityHandleV1 projectedParent{};
+			uint32_t childCount = 0;
+			std::array<EntityHandleV1, 1> children{};
+			if (!check(gameplay.GetParent(childHandle, &projectedParent)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& projectedParent.EntityId == parentBHandle.EntityId,
+				"projected parent getter missed its reparent")) return;
+			if (!check(gameplay.GetChildren(parentAHandle, nullptr, 0,
+				&childCount) == static_cast<int32_t>(ScriptStatus::Success)
+				&& childCount == 0,
+				"projected old-parent children retained the reparented child"))
+				return;
+			if (!check(gameplay.GetChildren(parentBHandle, children.data(),
+				static_cast<uint32_t>(children.size()), &childCount)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& childCount == 1
+				&& children[0].EntityId == childHandle.EntityId,
+				"projected new-parent children missed the reparented child"))
+				return;
+
+			const NativeVector3 movedParent{ 20.0f, 0.0f, 0.0f };
+			if (!check(native.TransformSetPosition(parentBHandle, movedParent)
+					== static_cast<int32_t>(ScriptStatus::Success),
+				"projected parent world Transform write was rejected")) return;
+			NativeVector3 projectedChildPosition{};
+			if (!check(native.TransformGetPosition(childHandle,
+				&projectedChildPosition)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& std::abs(projectedChildPosition.X - 13.0f) < 0.0001f
+				&& std::abs(projectedChildPosition.Y) < 0.0001f
+				&& std::abs(projectedChildPosition.Z) < 0.0001f,
+				"projected parent world Transform did not update its child"))
+				return;
+
+			std::string projectedName;
+			std::string projectedTag;
+			uint32_t projectedLayer = 0;
+			if (!check(readText(native.EntityGetName, mutationHandle,
+				projectedName)
+				&& projectedName == "Projected duplicate (3)",
+				"projected Name getter missed its duplicate-resolved write"))
+				return;
+			if (!check(readText(native.EntityGetTag, mutationHandle,
+				projectedTag) && projectedTag == projectedTagValue,
+				"projected Tag getter missed its write")) return;
+			if (!check(native.EntityGetLayer(mutationHandle, &projectedLayer)
+					== static_cast<int32_t>(ScriptStatus::Success)
+				&& projectedLayer == 7,
+				"projected Layer getter missed its write")) return;
+			if (!check(mutationTarget.GetName() == originalName
+				&& mutationTarget.GetGameplayTag() == originalTag
+				&& mutationTarget.GetLayer() == originalLayer
+				&& !mutationTarget.HasComponent<TomCat::BoxCollider2D>()
+				&& removalTarget.HasComponent<TomCat::SpriteRenderer>()
+				&& mutationTarget.GetComponent<TomCat::HealthComponent>().Current
+					== originalHealth
+				&& scene.GetParent(child) == parentA
+				&& parentB.GetComponent<TomCat::Transform>()._Translation
+					== originalParentB
+				&& child.GetComponent<TomCat::Transform>()._Translation
+					== originalChild,
+				"projected writes leaked into live state before Flush"))
+				return;
+
+			if (!check(gameplay.SetParentDeferred(parentBHandle, childHandle)
+					!= static_cast<int32_t>(ScriptStatus::Success),
+				"projected hierarchy cycle was not rejected")) return;
+			ScriptEngine::Get().FlushDeferredCommands(session);
+			if (!check(runtime->DeferredBatchCommitCount == commitsBeforeAbort
+				&& runtime->DeferredBatchAbortCount == abortsBeforeAbort + 1
+				&& runtime->Active,
+				"rejected projected cycle did not abort exactly one batch"))
+				return;
+			if (!check(!scene.FindEntityByUUID(
+					TomCat::UUID(rolledBackCreate.EntityId))
+				&& mutationTarget.GetName() == originalName
+				&& mutationTarget.GetGameplayTag() == originalTag
+				&& mutationTarget.GetLayer() == originalLayer
+				&& !mutationTarget.HasComponent<TomCat::BoxCollider2D>()
+				&& removalTarget.HasComponent<TomCat::SpriteRenderer>()
+				&& mutationTarget.GetComponent<TomCat::HealthComponent>().Current
+					== originalHealth
+				&& scene.GetParent(child) == parentA
+				&& parentB.GetComponent<TomCat::Transform>()._Translation
+					== originalParentB
+				&& child.GetComponent<TomCat::Transform>()._Translation
+					== originalChild,
+				"aborted projected transaction changed live state")) return;
+		}();
+
+		if (runtime->Active)
+			ScriptEngine::Get().StopScene(session);
+		Require(failure.empty(), failure.empty()
+			? "projected transaction regression failed" : failure.c_str());
+	}
+
+	void TestRegisteredAddProjectionMatchesDescriptorSemantics()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity primaryCamera =
+			scene.CreateEntity("Existing primary camera");
+		primaryCamera.AddComponent<TomCat::C_Camera>().Primary = true;
+		TomCat::Entity jointTarget =
+			scene.CreateEntity("Projected joint target");
+		TomCat::Entity animatorTarget =
+			scene.CreateEntity("Projected animator target");
+		TomCat::Entity cameraTarget =
+			scene.CreateEntity("Projected camera target");
+
+		constexpr uint64_t Generation = 0xa66d;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		Require(session != 0,
+			"could not start registered Add projection Scene");
+		auto handle = [session](TomCat::Entity entity)
+		{
+			return EntityHandleV1{ session,
+				static_cast<uint64_t>(entity.GetUUID()), Generation };
+		};
+		const EntityHandleV1 jointHandle = handle(jointTarget);
+		const EntityHandleV1 animatorHandle = handle(animatorTarget);
+		const EntityHandleV1 cameraHandle = handle(cameraTarget);
+
+		Require(ScriptEngine::Get().QueueAddRegisteredComponent(
+				jointHandle, TomCat::ComponentIds::DistanceJoint2D),
+			"could not queue registered DistanceJoint2D Add");
+		bool projectedRigidbody = false;
+		Require(ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
+				jointHandle, TomCat::ComponentIds::Rigidbody2D,
+				projectedRigidbody)
+			&& projectedRigidbody
+			&& !jointTarget.HasComponent<TomCat::Rigidbody2D>()
+			&& !jointTarget.HasComponent<TomCat::DistanceJoint2D>(),
+			"DistanceJoint2D descriptor dependency was absent from projection");
+
+		Require(ScriptEngine::Get().QueueAddRegisteredComponent(
+				animatorHandle, TomCat::ComponentIds::SpriteAnimator),
+			"could not queue registered SpriteAnimator Add");
+		bool projectedRenderer = false;
+		Require(ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
+				animatorHandle, TomCat::ComponentIds::SpriteRenderer,
+				projectedRenderer)
+			&& projectedRenderer
+			&& !animatorTarget.HasComponent<TomCat::SpriteRenderer>()
+			&& !animatorTarget.HasComponent<TomCat::SpriteAnimator>(),
+			"SpriteAnimator descriptor dependency was absent from projection");
+
+		Require(ScriptEngine::Get().QueueAddRegisteredComponent(
+				cameraHandle, TomCat::ComponentIds::Camera),
+			"could not queue registered Camera Add");
+		NativePropertyValueV1 projectedPrimary{};
+		bool useDefault = true;
+		Require(ScriptEngine::Get().TryGetProjectedRegisteredComponentProperty(
+				cameraHandle, TomCat::ComponentIds::Camera,
+				TomCat::ComponentIds::CameraProperties::Primary,
+				projectedPrimary, useDefault)
+			&& projectedPrimary.Kind
+				== static_cast<uint32_t>(NativePropertyKindV1::Bool)
+			&& projectedPrimary.Integer == 0 && !useDefault
+			&& !cameraTarget.HasComponent<TomCat::C_Camera>(),
+			"Camera.Primary projection ignored descriptor Add Scene semantics");
+
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		Require(jointTarget.HasComponent<TomCat::DistanceJoint2D>()
+			&& jointTarget.HasComponent<TomCat::Rigidbody2D>()
+			&& animatorTarget.HasComponent<TomCat::SpriteAnimator>()
+			&& animatorTarget.HasComponent<TomCat::SpriteRenderer>()
+			&& cameraTarget.HasComponent<TomCat::C_Camera>()
+			&& !cameraTarget.GetComponent<TomCat::C_Camera>().Primary,
+			"committed registered Adds disagreed with their projected result");
+		ScriptEngine::Get().StopScene(session);
+	}
+
+	void TestDeferredDisableBeforeSubtreeDestroyOrdering()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity parent =
+			scene.CreateEntity("Deferred lifecycle parent");
+		TomCat::Entity child =
+			scene.CreateEntity("Deferred lifecycle child");
+		Require(scene.SetParent(child, parent),
+			"could not establish deferred lifecycle hierarchy");
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = TomCat::UUID();
+		entry.ScriptAsset = TomCat::AssetHandle(9300);
+		entry.LastKnownClassName = "Game.DeferredLifecycleProbe";
+		child.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+
+		constexpr uint64_t Generation = 0xd15ab1e;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		Require(session != 0 && runtime->Attachments.size() == 1,
+			"could not start deferred lifecycle ordering scene");
+		const uint64_t attachmentId =
+			static_cast<uint64_t>(entry.AttachmentID);
+		const EntityHandleV1 parentHandle{ session,
+			static_cast<uint64_t>(parent.GetUUID()), Generation };
+		const EntityHandleV1 childHandle{ session,
+			static_cast<uint64_t>(child.GetUUID()), Generation };
+
+		bool managedAttachmentDestroyed = false;
+		bool setEnabledSawDisable = false;
+		bool destroySawLiveEntity = false;
+		uint32_t setEnabledObservations = 0;
+		uint32_t destroyObservations = 0;
+		runtime->SetEnabledAction =
+			[&](uint64_t observedAttachmentId, bool enabled)
+		{
+			++setEnabledObservations;
+			setEnabledSawDisable = setEnabledSawDisable
+				|| (observedAttachmentId == attachmentId && !enabled);
+			return managedAttachmentDestroyed
+				? ScriptStatus::NotFound : ScriptStatus::Success;
+		};
+		runtime->DestroyAttachmentsAction =
+			[&](std::span<const uint64_t> attachmentIds)
+		{
+			for (uint64_t observedAttachmentId : attachmentIds)
+			{
+				if (observedAttachmentId != attachmentId)
+					continue;
+				++destroyObservations;
+				TomCat::Entity liveChild =
+					ScriptEngine::Get().ResolveEntity(childHandle);
+				bool attachmentStillPresent = false;
+				if (liveChild && liveChild.HasComponent<TomCat::CSharpScripts>())
+				{
+					const auto& scripts =
+						liveChild.GetComponent<TomCat::CSharpScripts>().Scripts;
+					attachmentStillPresent = std::any_of(scripts.begin(),
+						scripts.end(), [&](const TomCat::CSharpScriptEntry& script)
+						{
+							return static_cast<uint64_t>(script.AttachmentID)
+								== attachmentId;
+						});
+				}
+				destroySawLiveEntity = liveChild
+					&& liveChild.HasComponent<TomCat::Tag>()
+					&& liveChild.HasComponent<TomCat::CSharpScripts>()
+					&& attachmentStillPresent;
+				managedAttachmentDestroyed = true;
+			}
+		};
+
+		const size_t callsBeforeBatch = runtime->Calls.size();
+		const bool queued =
+			ScriptEngine::Get().QueueBehaviourEnabled(attachmentId, false)
+			&& ScriptEngine::Get().QueueDestroyEntity(parentHandle);
+		ScriptEngine::Get().FlushDeferredCommands(session);
+
+		const auto batchBegin = runtime->Calls.begin()
+			+ static_cast<std::ptrdiff_t>(callsBeforeBatch);
+		const auto setEnabledCall = std::find(batchBegin,
+			runtime->Calls.end(), "SetEnabled");
+		const auto destroyCall = std::find(batchBegin,
+			runtime->Calls.end(), "DestroyAttachments");
+		const bool lifecycleOrder = setEnabledCall != runtime->Calls.end()
+			&& destroyCall != runtime->Calls.end()
+			&& setEnabledCall < destroyCall;
+		const bool subtreeDestroyed =
+			!scene.FindEntityByUUID(TomCat::UUID(parentHandle.EntityId))
+			&& !scene.FindEntityByUUID(TomCat::UUID(childHandle.EntityId));
+		const bool batchStayedHealthy = runtime->Active
+			&& runtime->DeferredBatchCommitCount == 1
+			&& runtime->DeferredBatchAbortCount == 0;
+		if (runtime->Active)
+			ScriptEngine::Get().StopScene(session);
+
+		Require(queued,
+			"could not queue disable followed by subtree destruction");
+		Require(setEnabledObservations == 1 && setEnabledSawDisable,
+			"deferred disable was dropped or delivered more than once");
+		Require(destroyObservations == 1 && destroySawLiveEntity,
+			"DestroyAttachments ran after the child ECS identity was removed");
+		Require(lifecycleOrder,
+			"DestroyAttachments was published before the earlier SetEnabled");
+		Require(subtreeDestroyed,
+			"deferred lifecycle parent destroy did not remove its subtree");
+		Require(batchStayedHealthy,
+			"trailing SetEnabled publication targeted an already destroyed attachment and faulted the batch");
+	}
+
+
+
+	void TestDeferredRemoveLastBehaviourBeforeOwnerDestroyOrdering()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity owner =
+			scene.CreateEntity("Deferred last attachment owner");
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = TomCat::UUID();
+		entry.ScriptAsset = TomCat::AssetHandle(9301);
+		entry.LastKnownClassName = "Game.DeferredLastAttachmentProbe";
+		owner.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+
+		constexpr uint64_t Generation = 0x1a57;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		Require(session != 0 && runtime->Attachments.size() == 1,
+			"could not start last-attachment lifecycle ordering scene");
+		const uint64_t attachmentId =
+			static_cast<uint64_t>(entry.AttachmentID);
+		const EntityHandleV1 ownerHandle{ session,
+			static_cast<uint64_t>(owner.GetUUID()), Generation };
+
+		uint32_t matchingDestroyCallbacks = 0;
+		bool destroySawOwnerIdentity = false;
+		runtime->DestroyAttachmentsAction =
+			[&](std::span<const uint64_t> attachmentIds)
+		{
+			for (uint64_t observedAttachmentId : attachmentIds)
+			{
+				if (observedAttachmentId != attachmentId)
+					continue;
+				++matchingDestroyCallbacks;
+				TomCat::Entity liveOwner =
+					ScriptEngine::Get().ResolveEntity(ownerHandle);
+				destroySawOwnerIdentity = liveOwner
+					&& liveOwner.HasComponent<TomCat::Tag>()
+					&& liveOwner.HasComponent<TomCat::CSharpScripts>();
+			}
+		};
+
+		const bool queued =
+			ScriptEngine::Get().QueueRemoveBehaviour(attachmentId)
+			&& ScriptEngine::Get().QueueDestroyEntity(ownerHandle);
+		ScriptEngine::Get().FlushDeferredCommands(session);
+		const bool ownerDestroyed =
+			!scene.FindEntityByUUID(TomCat::UUID(ownerHandle.EntityId));
+		const bool batchStayedHealthy = runtime->Active
+			&& runtime->DeferredBatchCommitCount == 1
+			&& runtime->DeferredBatchAbortCount == 0;
+		if (runtime->Active)
+			ScriptEngine::Get().StopScene(session);
+
+		Require(queued,
+			"could not queue last behaviour removal followed by owner destruction");
+		Require(matchingDestroyCallbacks == 1
+			&& runtime->DestroyAttachmentsCallCount == 1
+			&& runtime->DestroyedAttachmentCount == 1,
+			"last behaviour removal did not publish exactly one attachment destroy");
+		Require(destroySawOwnerIdentity,
+			"last attachment DestroyAttachments ran after owner Entity, Tag, or CSharpScripts teardown");
+		Require(ownerDestroyed,
+			"deferred last-attachment owner destroy did not remove the entity");
+		Require(batchStayedHealthy,
+			"last behaviour removal followed by owner destroy faulted the batch");
+	}
+
+
+	void TestProjectedDestroyBatchSemantics()
+	{
+		using namespace TomCat::Scripting;
+		const NativeApiV1 native = BuildNativeApiV1();
+		const NativeApiV2 envelope = BuildNativeApiV2();
+		NativeGameplayApiV1 gameplay{};
+		uint32_t capabilitySize = 0;
+		const std::string capabilityName(GameplayCapabilityName);
+		const NativeUtf8View capabilityView{
+			reinterpret_cast<const uint8_t*>(capabilityName.data()),
+			capabilityName.size() };
+		Require(envelope.QueryCapability(capabilityView, 1, &gameplay,
+			sizeof(gameplay), &capabilitySize)
+				== static_cast<int32_t>(ScriptStatus::Success)
+			&& gameplay.FindEntityByName && gameplay.QueryEntities
+			&& gameplay.GetParent && gameplay.SetParentDeferred
+			&& gameplay.GetChildren && gameplay.GetActiveSelf
+			&& gameplay.SetActiveSelf && gameplay.GetActiveInHierarchy
+			&& gameplay.TransformGetLocalPosition
+			&& gameplay.TransformSetLocalPosition,
+			"TomCat.GameplayApiV1 hierarchy accessors are unavailable");
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity parent = scene.CreateEntity("Deferred destroy parent");
+		TomCat::Entity child = scene.CreateEntity("Deferred destroy child");
+		Require(scene.SetParent(child, parent),
+			"could not establish deferred-destroy hierarchy");
+		TomCat::Entity observer = scene.CreateEntity("Deferred destroy observer");
+		TomCat::Entity filteredChild = scene.CreateEntity("Filtered destroyed child");
+		Require(scene.SetParent(filteredChild, observer),
+			"could not establish filtered child hierarchy");
+		std::array<uint64_t, 2> attachmentIds{};
+		size_t attachmentIndex = 0;
+		for (TomCat::Entity entity : { parent, child })
+		{
+			TomCat::CSharpScriptEntry entry;
+			entry.AttachmentID = TomCat::UUID();
+			entry.ScriptAsset = TomCat::AssetHandle(9100);
+			entry.LastKnownClassName = "Game.DestroyProjectionProbe";
+			entity.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+			entity.AddComponent<TomCat::AudioSource>();
+			attachmentIds[attachmentIndex++] = static_cast<uint64_t>(entry.AttachmentID);
+		}
+
+		constexpr uint64_t Generation = 0xd357;
+		const uint64_t session = ScriptEngine::Get().StartScene(scene, Generation);
+		Require(session != 0, "could not start deferred-destroy scene");
+		const EntityHandleV1 parentHandle{ session,
+			static_cast<uint64_t>(parent.GetUUID()), Generation };
+		const EntityHandleV1 childHandle{ session,
+			static_cast<uint64_t>(child.GetUUID()), Generation };
+		const EntityHandleV1 observerHandle{ session,
+			static_cast<uint64_t>(observer.GetUUID()), Generation };
+		const EntityHandleV1 filteredChildHandle{ session,
+			static_cast<uint64_t>(filteredChild.GetUUID()), Generation };
+
+		bool destroyCallbacksSawLiveComponents = true;
+		uint32_t destroyCallbackAttachmentCount = 0;
+		std::vector<uint64_t> destroyCallbackAttachmentIds;
+		runtime->DestroyAttachmentsAction =
+			[&](std::span<const uint64_t> destroyedIds)
+		{
+			destroyCallbackAttachmentCount +=
+				static_cast<uint32_t>(destroyedIds.size());
+			for (uint64_t attachmentId : destroyedIds)
+			{
+				destroyCallbackAttachmentIds.push_back(attachmentId);
+				const auto attachment = std::find_if(runtime->Attachments.begin(),
+					runtime->Attachments.end(), [&](const auto& candidate)
+					{
+						return candidate.AttachmentId == attachmentId;
+					});
+				if (attachment == runtime->Attachments.end())
+				{
+					destroyCallbacksSawLiveComponents = false;
+					continue;
+				}
+				TomCat::Entity callbackEntity =
+					ScriptEngine::Get().ResolveEntity(attachment->Entity);
+				bool attachmentStillPresent = false;
+				if (callbackEntity
+					&& callbackEntity.HasComponent<TomCat::CSharpScripts>())
+				{
+					const auto& scripts =
+						callbackEntity.GetComponent<TomCat::CSharpScripts>().Scripts;
+					attachmentStillPresent = std::any_of(scripts.begin(),
+						scripts.end(), [&](const TomCat::CSharpScriptEntry& script)
+						{
+							return static_cast<uint64_t>(script.AttachmentID)
+								== attachmentId;
+						});
+				}
+				destroyCallbacksSawLiveComponents =
+					destroyCallbacksSawLiveComponents && callbackEntity
+					&& callbackEntity.HasComponent<TomCat::Tag>()
+					&& callbackEntity.HasComponent<TomCat::CSharpScripts>()
+					&& callbackEntity.HasComponent<TomCat::AudioSource>()
+					&& attachmentStillPresent;
+			}
+		};
+
+		bool parentAlive = true;
+		bool childAlive = true;
+		bool childBehaviourEnabled = true;
+		uint32_t requiredText = 0;
+		uint32_t layer = 0;
+		NativeVector3 position{};
+		EntityHandleV1 projectedParent{};
+		uint32_t requiredChildren = 0;
+		uint32_t requiredQuery = 0;
+		std::array<EntityHandleV1, 4> queryResults{};
+		const std::string replacement = "must not leak";
+		const std::string destroyedName = "Deferred destroy parent";
+		const NativeUtf8View destroyedNameView{
+			reinterpret_cast<const uint8_t*>(destroyedName.data()),
+			destroyedName.size() };
+		std::string projectionFailure;
+		auto recordProjection = [&](bool condition, const char* message)
+		{
+			if (!condition && projectionFailure.empty())
+				projectionFailure = message;
+			return condition;
+		};
+		bool projected = true;
+		projected = recordProjection(
+			ScriptEngine::Get().QueueDestroyEntity(parentHandle),
+			"initial parent Destroy was rejected") && projected;
+		projected = recordProjection(
+			ScriptEngine::Get().QueueDestroyEntity(parentHandle),
+			"duplicate parent Destroy was not a projected no-op") && projected;
+		projected = recordProjection(
+			ScriptEngine::Get().QueueDestroyEntity(childHandle),
+			"descendant Destroy was not a projected no-op") && projected;
+		projected = recordProjection(
+			ScriptEngine::Get().QueueDestroyEntity(filteredChildHandle),
+			"independent child Destroy was rejected") && projected;
+		projected = recordProjection(
+			ScriptEngine::Get().GetProjectedEntityLiveness(
+				parentHandle, parentAlive) && !parentAlive,
+			"destroyed parent remained alive in the projected snapshot") && projected;
+		projected = recordProjection(
+			ScriptEngine::Get().GetProjectedEntityLiveness(
+				childHandle, childAlive) && !childAlive,
+			"destroyed descendant remained alive in the projected snapshot") && projected;
+		projected = recordProjection(
+			!ScriptEngine::Get().QueueAddComponent(
+				childHandle, NativeComponentType::BoxCollider2D),
+			"component Add accepted a projected-dead entity") && projected;
+		projected = recordProjection(
+			!ScriptEngine::Get().GetBehaviourEnabled(
+				attachmentIds[1], childBehaviourEnabled),
+			"behaviour getter exposed a projected-dead owner") && projected;
+		projected = recordProjection(
+			!ScriptEngine::Get().QueueBehaviourEnabled(attachmentIds[1], false),
+			"behaviour setter accepted a projected-dead owner") && projected;
+		projected = recordProjection(
+			ScriptEngine::Get().QueueRemoveBehaviour(attachmentIds[1]),
+			"behaviour Remove did not accept projected destruction as a no-op")
+			&& projected;
+		projected = recordProjection(
+			ScriptEngine::Get().QueueRemoveBehaviour(attachmentIds[1]),
+			"duplicate behaviour Remove was not a projected no-op") && projected;
+		projected = recordProjection(
+			native.EntityGetName(childHandle, nullptr, 0, &requiredText)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"name getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			native.EntityGetTag(childHandle, nullptr, 0, &requiredText)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"tag getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			native.EntityGetLayer(childHandle, &layer)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"layer getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			native.TransformGetPosition(childHandle, &position)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"world Transform getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			gameplay.GetParent(childHandle, &projectedParent)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"parent getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			gameplay.GetChildren(childHandle, nullptr, 0, &requiredChildren)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"children getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			gameplay.GetChildren(observerHandle, nullptr, 0, &requiredChildren)
+				== static_cast<int32_t>(ScriptStatus::Success)
+				&& requiredChildren == 0,
+			"children getter did not filter a projected-dead child") && projected;
+		projected = recordProjection(
+			gameplay.QueryEntities(observerHandle, 0, 0,
+				queryResults.data(), static_cast<uint32_t>(queryResults.size()),
+				&requiredQuery) == static_cast<int32_t>(ScriptStatus::Success)
+				&& requiredQuery == 1
+				&& queryResults[0].EntityId == observerHandle.EntityId,
+			"entity query did not filter projected-dead entities") && projected;
+		projected = recordProjection(
+			gameplay.FindEntityByName(observerHandle, destroyedNameView,
+				&projectedParent) == static_cast<int32_t>(ScriptStatus::NotFound),
+			"name query found a projected-dead entity") && projected;
+		projected = recordProjection(
+			gameplay.GetActiveSelf(childHandle)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"ActiveSelf getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			gameplay.GetActiveInHierarchy(childHandle)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"ActiveInHierarchy getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			gameplay.TransformGetLocalPosition(childHandle, &position)
+				== static_cast<int32_t>(ScriptStatus::NotFound),
+			"local Transform getter exposed a projected-dead entity") && projected;
+		projected = recordProjection(
+			child.GetName() == "Deferred destroy child"
+				&& child.GetGameplayTag() != replacement
+				&& child.GetLayer() != 7
+				&& child.GetComponent<TomCat::Transform>()._Translation
+					!= glm::vec3(8.0f, 9.0f, 10.0f),
+			"projected-dead writes leaked into the live ECS before commit")
+			&& projected;
+		ScriptEngine::Get().FlushDeferredCommands(session);
+
+		const bool subtreeDestroyed =
+			!scene.FindEntityByUUID(TomCat::UUID(parentHandle.EntityId))
+			&& !scene.FindEntityByUUID(TomCat::UUID(childHandle.EntityId))
+			&& !scene.FindEntityByUUID(TomCat::UUID(filteredChildHandle.EntityId))
+			&& scene.FindEntityByUUID(TomCat::UUID(observerHandle.EntityId));
+		const bool attachmentsPublished =
+			runtime->DestroyedAttachmentCount == 2;
+		const bool callbacksObservedLiveComponents =
+			runtime->DestroyAttachmentsCallCount == 2
+			&& destroyCallbackAttachmentCount == 2
+			&& destroyCallbacksSawLiveComponents
+			&& std::all_of(attachmentIds.begin(), attachmentIds.end(),
+				[&](uint64_t attachmentId)
+				{
+					return std::find(destroyCallbackAttachmentIds.begin(),
+						destroyCallbackAttachmentIds.end(), attachmentId)
+						!= destroyCallbackAttachmentIds.end();
+				});
+		const bool batchCommitted = runtime->DeferredBatchCommitCount == 1
+			&& runtime->DeferredBatchAbortCount == 0;
+		ScriptEngine::Get().StopScene(session);
+
+		Require(projected, projectionFailure.empty()
+			? "projected subtree destruction failed"
+			: projectionFailure.c_str());
+		Require(subtreeDestroyed,
+			"deferred parent destroy did not remove its projected subtree");
+		Require(attachmentsPublished,
+			"deferred subtree destroy did not publish every managed attachment");
+		Require(callbacksObservedLiveComponents,
+			"DestroyAttachments ran after Entity, Tag, CSharpScripts, or AudioSource teardown");
+		Require(batchCommitted,
+			"successful subtree destroy did not commit its managed projection once");
 	}
 
 	void TestManagedScriptLifecycleBackend()
@@ -4752,6 +6480,39 @@ namespace {
 					runtime->Attachments[0].Entity,
 					static_cast<TomCat::Scripting::NativeComponentType>(999)),
 				"invalid managed component types entered the deferred command queue");
+			bool projectedEnabled = false;
+			const uint64_t attachmentId = runtime->Attachments[0].AttachmentId;
+			Require(TomCat::Scripting::ScriptEngine::Get().GetBehaviourEnabled(
+					attachmentId, projectedEnabled) && projectedEnabled
+				&& TomCat::Scripting::ScriptEngine::Get().QueueBehaviourEnabled(
+					attachmentId, false)
+				&& TomCat::Scripting::ScriptEngine::Get().GetBehaviourEnabled(
+					attachmentId, projectedEnabled) && !projectedEnabled
+				&& TomCat::Scripting::ScriptEngine::Get().QueueBehaviourEnabled(
+					attachmentId, true)
+				&& TomCat::Scripting::ScriptEngine::Get().GetBehaviourEnabled(
+					attachmentId, projectedEnabled) && projectedEnabled,
+				"Behaviour.Enabled getter missed its queued write");
+			const uint64_t missingAttachmentId = attachmentId == 1 ? 2 : 1;
+			Require(!TomCat::Scripting::ScriptEngine::Get().QueueBehaviourEnabled(
+					missingAttachmentId, false)
+				&& !TomCat::Scripting::ScriptEngine::Get().QueueRemoveBehaviour(
+					missingAttachmentId),
+				"unknown managed attachment entered the deferred command queue");
+			Require(TomCat::Scripting::ScriptEngine::Get().QueueRemoveBehaviour(
+					attachmentId)
+				&& !TomCat::Scripting::ScriptEngine::Get().QueueBehaviourEnabled(
+					attachmentId, false)
+				&& TomCat::Scripting::ScriptEngine::Get().QueueRemoveBehaviour(
+					attachmentId)
+				&& !TomCat::Scripting::ScriptEngine::Get().GetBehaviourEnabled(
+					attachmentId, projectedEnabled),
+				"RemoveBehaviour projection did not reject Enabled or deduplicate Remove");
+			TomCat::Scripting::ScriptEngine::Get().FlushDeferredCommands(
+				runtime->LastSceneSession);
+			Require(scripted.GetComponent<TomCat::CSharpScripts>().Scripts.empty()
+				&& runtime->DestroyedAttachmentCount == 1,
+				"projected RemoveBehaviour was not published exactly once");
 
 			for (int frame = 0; frame < frameRate; ++frame)
 				scene.OnUpdateRuntime(TomCat::Timestep(1.0f
@@ -4810,6 +6571,450 @@ namespace {
 		}
 	}
 
+
+	void TestManagedDispatchInfrastructureFailuresStopRuntime()
+	{
+		using namespace TomCat::Scripting;
+		enum class DispatchKind
+		{
+			Update,
+			FixedUpdate,
+			PhysicsEvents
+		};
+
+		auto runCase = [](DispatchKind kind, const char* operation)
+		{
+			auto runtime = std::make_shared<ManagedRuntimeProbe>();
+			ScriptRuntimeOverride runtimeOverride(runtime);
+			TomCat::Scene scene;
+			TomCat::Entity scripted =
+				scene.CreateEntity("Managed dispatch failure probe");
+			TomCat::CSharpScriptEntry entry;
+			entry.AttachmentID = TomCat::UUID();
+			entry.ScriptAsset = TomCat::AssetHandle(9199);
+			entry.LastKnownClassName = "Game.DispatchFailureProbe";
+			scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+			Require(scene.OnRuntimeStart(),
+				"managed dispatch-failure Scene could not start");
+			Require(runtime->Attachments.size() == 1,
+				"managed dispatch-failure attachment was not instantiated");
+
+			NativePhysicsEventV1 physicsEvent{};
+			physicsEvent.Kind =
+				static_cast<uint32_t>(NativePhysicsEventKind::CollisionEnter);
+			physicsEvent.EntityA = runtime->Attachments.front().Entity;
+			physicsEvent.EntityB = runtime->Attachments.front().Entity;
+			const std::array<NativePhysicsEventV1, 1> physicsEvents{
+				physicsEvent };
+
+			auto dispatch = [&]
+			{
+				switch (kind)
+				{
+					case DispatchKind::Update:
+						ScriptEngine::Get().UpdateAll(
+							runtime->LastSceneSession, 1.0f / 60.0f);
+						break;
+					case DispatchKind::FixedUpdate:
+						ScriptEngine::Get().FixedUpdateAll(
+							runtime->LastSceneSession, 1.0f / 60.0f);
+						break;
+					case DispatchKind::PhysicsEvents:
+						ScriptEngine::Get().DispatchPhysicsEvents(
+							runtime->LastSceneSession, physicsEvents);
+						break;
+				}
+			};
+			auto dispatchCount = [&]() -> uint32_t
+			{
+				switch (kind)
+				{
+					case DispatchKind::Update:
+						return runtime->UpdateCount;
+					case DispatchKind::FixedUpdate:
+						return runtime->FixedUpdateCount;
+					case DispatchKind::PhysicsEvents:
+						return runtime->PhysicsEventCount;
+				}
+				return 0;
+			};
+			auto injectInfrastructureFailure = [&]
+			{
+				switch (kind)
+				{
+					case DispatchKind::Update:
+						runtime->UpdateAllStatus = ScriptStatus::ManagedException;
+						break;
+					case DispatchKind::FixedUpdate:
+						runtime->FixedUpdateAllStatus =
+							ScriptStatus::ManagedException;
+						break;
+					case DispatchKind::PhysicsEvents:
+						runtime->DispatchPhysicsEventsStatus =
+							ScriptStatus::ManagedException;
+						break;
+				}
+			};
+
+			const auto destroyAllCount = [&]
+			{
+				return static_cast<uint32_t>(std::count(runtime->Calls.begin(),
+					runtime->Calls.end(), "DestroyAll"));
+			};
+
+			// ScriptSceneRuntime contains individual user callback exceptions and
+			// returns Success for the dispatch. That contract must keep Play alive.
+			dispatch();
+			const std::string containedFailure =
+				std::string(operation)
+				+ " stopped Play after a callback-contained exception";
+			Require(dispatchCount() == 1 && scene.IsRuntimeRunning()
+				&& runtime->Active && destroyAllCount() == 0,
+				containedFailure.c_str());
+
+			// A non-Success status escaping the dispatch boundary represents a host
+			// or callback-transaction protocol failure and must tear down Play.
+			injectInfrastructureFailure();
+			dispatch();
+			const std::string stopFailure =
+				std::string(operation)
+				+ " infrastructure failure did not stop Play and DestroyAll once";
+			Require(dispatchCount() == 2 && !scene.IsRuntimeRunning()
+				&& !runtime->Active && destroyAllCount() == 1
+				&& !ScriptEngine::Get().ResolveEntity(
+					runtime->Attachments.front().Entity),
+				stopFailure.c_str());
+		};
+
+		runCase(DispatchKind::Update, "UpdateAll");
+		runCase(DispatchKind::FixedUpdate, "FixedUpdateAll");
+		runCase(DispatchKind::PhysicsEvents, "DispatchPhysicsEvents");
+	}
+
+	void TestDeferredManagedPublicationFailureStopsRuntime()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		runtime->SetEnabledStatus = ScriptStatus::ManagedException;
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity scripted = scene.CreateEntity("Managed publication failure");
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = TomCat::UUID();
+		entry.ScriptAsset = TomCat::AssetHandle(9200);
+		entry.LastKnownClassName = "Game.PublicationFailureProbe";
+		scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+		Require(scene.OnRuntimeStart(),
+			"managed publication-failure scene could not start");
+		Require(runtime->Attachments.size() == 1,
+			"managed publication-failure attachment was not instantiated");
+
+		const uint64_t attachmentId = runtime->Attachments.front().AttachmentId;
+		Require(ScriptEngine::Get().QueueBehaviourEnabled(attachmentId, false),
+			"could not queue the managed publication-failure command");
+		Require(!ScriptEngine::Get().FlushDeferredCommands(
+				runtime->LastSceneSession),
+			"managed publication failure was not returned by the legacy flush");
+
+		Require(!scene.IsRuntimeRunning() && !runtime->Active,
+			"managed publication failure did not stop the Play runtime");
+		Require(runtime->DeferredBatchAbortCount == 1
+			&& runtime->DeferredBatchCommitCount == 0
+			&& std::find(runtime->Calls.begin(), runtime->Calls.end(),
+				"SetEnabled") != runtime->Calls.end()
+			&& std::find(runtime->Calls.begin(), runtime->Calls.end(),
+				"DestroyAll") != runtime->Calls.end()
+			&& std::count(runtime->Calls.begin(), runtime->Calls.end(),
+				"DestroyAll") == 1,
+			"managed publication failure was silently continued, not aborted, or destroyed twice");
+	}
+
+	TomCat::Scripting::NativeDeferredCallbackTransactionsApiV1
+		GetDeferredCallbackTransactionsApi()
+	{
+		using namespace TomCat::Scripting;
+		const NativeApiV2 envelope = BuildNativeApiV2();
+		NativeDeferredCallbackTransactionsApiV1 api{};
+		const std::string capabilityName(
+			DeferredCallbackTransactionsCapabilityName);
+		const NativeUtf8View capabilityView{
+			reinterpret_cast<const uint8_t*>(capabilityName.data()),
+			capabilityName.size() };
+		uint32_t required = 0;
+		Require(envelope.QueryCapability(capabilityView, 1, &api, sizeof(api),
+			&required) == static_cast<int32_t>(ScriptStatus::Success)
+			&& required == sizeof(api) && api.BeginCallback && api.CompleteCallback,
+			"deferred callback transaction capability is unavailable");
+		return api;
+	}
+	enum class DeferredStartupFailureKind
+	{
+		EmptyAcknowledgement,
+		CommitAcknowledgement,
+		AbortAcknowledgement,
+		LivePublication
+	};
+
+	void TestDeferredCallbackStartupProtocolFailures()
+	{
+		using namespace TomCat::Scripting;
+		const NativeDeferredCallbackTransactionsApiV1 callbackTransactions =
+			GetDeferredCallbackTransactionsApi();
+		auto runCase = [&](DeferredStartupFailureKind kind)
+		{
+			auto runtime = std::make_shared<ManagedRuntimeProbe>();
+			if (kind == DeferredStartupFailureKind::LivePublication)
+				runtime->SetEnabledStatus = ScriptStatus::ManagedException;
+			else
+				runtime->ResolveDeferredBatchStatus = ScriptStatus::ManagedException;
+			ScriptRuntimeOverride runtimeOverride(runtime);
+			TomCat::Scene scene;
+			TomCat::Entity scripted = scene.CreateEntity(
+				"Deferred startup protocol failure");
+			TomCat::CSharpScriptEntry entry;
+			entry.AttachmentID = TomCat::UUID();
+			entry.ScriptAsset = TomCat::AssetHandle(9300
+				+ static_cast<uint64_t>(kind));
+			entry.LastKnownClassName = "Game.StartupProtocolFailureProbe";
+			scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+
+			EntityHandleV1 callbackContext{};
+			bool callbackBegan = false;
+			bool mutationRecorded = false;
+			bool callbackCompleted = true;
+			int32_t callbackCompletionStatus =
+				static_cast<int32_t>(ScriptStatus::Success);
+			runtime->InvokeCreateAction = [&]
+			{
+				if (runtime->Attachments.empty())
+				{
+					runtime->InvokeCreateStatus = ScriptStatus::ManagedException;
+					return;
+				}
+				callbackContext = runtime->Attachments.front().Entity;
+				uint64_t token = 0;
+				callbackBegan = callbackTransactions.BeginCallback(
+					callbackContext, &token)
+					== static_cast<int32_t>(ScriptStatus::Success);
+				if (!callbackBegan)
+				{
+					runtime->InvokeCreateStatus = ScriptStatus::ManagedException;
+					return;
+				}
+
+				mutationRecorded = true;
+				switch (kind)
+				{
+					case DeferredStartupFailureKind::EmptyAcknowledgement:
+						break;
+					case DeferredStartupFailureKind::CommitAcknowledgement:
+						mutationRecorded = ScriptEngine::Get().QueueAddComponent(
+							callbackContext, NativeComponentType::BoxCollider2D);
+						break;
+					case DeferredStartupFailureKind::AbortAcknowledgement:
+						mutationRecorded = ScriptEngine::Get()
+							.MarkDeferredCommandBatchFailed(callbackContext,
+								"startup callback requested rollback");
+						break;
+					case DeferredStartupFailureKind::LivePublication:
+						mutationRecorded = ScriptEngine::Get().QueueBehaviourEnabled(
+							runtime->Attachments.front().AttachmentId, false);
+						break;
+				}
+				callbackCompletionStatus = callbackTransactions.CompleteCallback(token);
+				callbackCompleted = callbackCompletionStatus
+					== static_cast<int32_t>(ScriptStatus::Success);
+				if (!callbackCompleted)
+					runtime->InvokeCreateStatus = ScriptStatus::ManagedException;
+			};
+
+			const bool started = scene.OnRuntimeStart();
+			const uint32_t destroyAllCount = static_cast<uint32_t>(std::count(
+				runtime->Calls.begin(), runtime->Calls.end(), "DestroyAll"));
+			const bool expectedCommitAcknowledgement =
+				kind == DeferredStartupFailureKind::EmptyAcknowledgement
+				|| kind == DeferredStartupFailureKind::CommitAcknowledgement;
+			Require(callbackBegan && mutationRecorded && !callbackCompleted
+				&& callbackCompletionStatus
+					== static_cast<int32_t>(ScriptStatus::InvalidState),
+				"startup CompleteCallback did not return its protocol/publication failure");
+			Require(!started && !scene.IsRuntimeRunning() && !runtime->Active,
+				"startup callback protocol failure left the Scene or managed runtime active");
+			Require(destroyAllCount == 1,
+				"startup callback protocol failure did not call DestroyAll exactly once");
+			Require(!ScriptEngine::Get().ResolveEntity(callbackContext),
+				"startup callback protocol failure left a resolvable ScriptEngine binding");
+			Require(expectedCommitAcknowledgement
+					? runtime->DeferredBatchCommitCount == 1
+						&& runtime->DeferredBatchAbortCount == 0
+					: runtime->DeferredBatchAbortCount == 1
+						&& runtime->DeferredBatchCommitCount == 0,
+				"startup callback resolved the wrong managed projection frame");
+			if (kind == DeferredStartupFailureKind::LivePublication)
+				Require(std::find(runtime->Calls.begin(), runtime->Calls.end(),
+					"SetEnabled") != runtime->Calls.end(),
+					"startup live-publication failure fixture did not reach managed publication");
+		};
+
+		runCase(DeferredStartupFailureKind::EmptyAcknowledgement);
+		runCase(DeferredStartupFailureKind::CommitAcknowledgement);
+		runCase(DeferredStartupFailureKind::AbortAcknowledgement);
+		runCase(DeferredStartupFailureKind::LivePublication);
+	}
+
+	void TestLazyDeferredCallbackStartupProtocolFailure()
+	{
+		using namespace TomCat::Scripting;
+		const NativeDeferredCallbackTransactionsApiV1 callbackTransactions =
+			GetDeferredCallbackTransactionsApi();
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		runtime->ResolveDeferredBatchStatus = ScriptStatus::ManagedException;
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		Require(scene.OnRuntimeStart(),
+			"script-free Scene could not start for lazy callback failure regression");
+
+		TomCat::Entity scripted = scene.CreateEntity(
+			"Lazy deferred callback protocol failure");
+		const TomCat::UUID scriptedId = scripted.GetUUID();
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = TomCat::UUID();
+		entry.ScriptAsset = TomCat::AssetHandle(9309);
+		entry.LastKnownClassName = "Game.LazyProtocolFailureProbe";
+		scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+
+		EntityHandleV1 callbackContext{};
+		bool callbackBegan = false;
+		bool mutationRecorded = false;
+		bool callbackCompleted = true;
+		int32_t callbackCompletionStatus =
+			static_cast<int32_t>(ScriptStatus::Success);
+		runtime->DynamicInstantiateAction = [&]
+		{
+			if (runtime->DynamicAttachments.empty())
+			{
+				runtime->DynamicInstantiateStatus = ScriptStatus::ManagedException;
+				return;
+			}
+			callbackContext = runtime->DynamicAttachments.front().Entity;
+			uint64_t token = 0;
+			callbackBegan = callbackTransactions.BeginCallback(
+				callbackContext, &token)
+				== static_cast<int32_t>(ScriptStatus::Success);
+			mutationRecorded = callbackBegan
+				&& ScriptEngine::Get().QueueAddComponent(callbackContext,
+					NativeComponentType::BoxCollider2D);
+			if (mutationRecorded)
+				callbackCompletionStatus =
+					callbackTransactions.CompleteCallback(token);
+			callbackCompleted = callbackCompletionStatus
+				== static_cast<int32_t>(ScriptStatus::Success);
+			if (!callbackCompleted)
+				runtime->DynamicInstantiateStatus = ScriptStatus::ManagedException;
+		};
+
+		scene.QueueRuntimeEntityBatchCreated({ scriptedId });
+		scene.FlushPendingRuntimeEntityCreates();
+		const uint32_t destroyAllCount = static_cast<uint32_t>(std::count(
+			runtime->Calls.begin(), runtime->Calls.end(), "DestroyAll"));
+		Require(callbackBegan && mutationRecorded && !callbackCompleted
+			&& callbackCompletionStatus
+				== static_cast<int32_t>(ScriptStatus::InvalidState),
+			"lazy CompleteCallback did not return its resolver failure");
+		Require(!scene.IsRuntimeRunning() && !runtime->Active
+			&& destroyAllCount == 1,
+			"lazy callback protocol failure left a stale Scene/runtime or destroyed twice");
+		Require(!scene.FindEntityByUUID(scriptedId)
+			&& !ScriptEngine::Get().ResolveEntity(callbackContext),
+			"lazy callback protocol failure published a stale session or retained its batch");
+	}
+
+	void TestDeferredCallbackNestedFatalPropagation()
+	{
+		using namespace TomCat::Scripting;
+		const NativeDeferredCallbackTransactionsApiV1 callbackTransactions =
+			GetDeferredCallbackTransactionsApi();
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		TomCat::Entity scripted = scene.CreateEntity(
+			"Deferred nested fatal propagation");
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = TomCat::UUID();
+		entry.ScriptAsset = TomCat::AssetHandle(9310);
+		entry.LastKnownClassName = "Game.NestedProtocolFailureProbe";
+		scripted.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+		Require(scene.OnRuntimeStart(),
+			"nested callback fatal-propagation Scene could not start");
+		Require(runtime->Attachments.size() == 1,
+			"nested callback fatal-propagation attachment was not instantiated");
+		const EntityHandleV1 context = runtime->Attachments.front().Entity;
+
+		uint32_t resolverCalls = 0;
+		bool nestedBegan = false;
+		bool nestedMutationRecorded = false;
+		bool nestedCompletionAccepted = false;
+		bool outerBegan = false;
+		bool outerMutationRecorded = false;
+		bool outerCompletion = true;
+		int32_t outerCompletionStatus =
+			static_cast<int32_t>(ScriptStatus::Success);
+		runtime->ResolveDeferredBatchAction = [&](bool committed)
+		{
+			++resolverCalls;
+			if (resolverCalls == 1 && committed)
+			{
+				uint64_t nestedToken = 0;
+				nestedBegan = callbackTransactions.BeginCallback(context,
+					&nestedToken) == static_cast<int32_t>(ScriptStatus::Success);
+				nestedMutationRecorded = nestedBegan
+					&& ScriptEngine::Get().QueueAddComponent(context,
+						NativeComponentType::CircleCollider2D);
+				nestedCompletionAccepted = nestedMutationRecorded
+					&& callbackTransactions.CompleteCallback(nestedToken)
+						== static_cast<int32_t>(ScriptStatus::Success);
+			}
+			else if (resolverCalls == 2)
+				runtime->ResolveDeferredBatchStatus = ScriptStatus::ManagedException;
+		};
+		runtime->FixedUpdateAction = [&]
+		{
+			uint64_t outerToken = 0;
+			outerBegan = callbackTransactions.BeginCallback(context, &outerToken)
+				== static_cast<int32_t>(ScriptStatus::Success);
+			outerMutationRecorded = outerBegan
+				&& ScriptEngine::Get().QueueAddComponent(context,
+					NativeComponentType::BoxCollider2D);
+			if (outerMutationRecorded)
+				outerCompletionStatus =
+					callbackTransactions.CompleteCallback(outerToken);
+			outerCompletion = outerCompletionStatus
+				== static_cast<int32_t>(ScriptStatus::Success);
+			if (!outerCompletion)
+				runtime->FixedUpdateAllStatus = ScriptStatus::ManagedException;
+		};
+
+		scene.OnRuntimeStep();
+		const uint32_t destroyAllCount = static_cast<uint32_t>(std::count(
+			runtime->Calls.begin(), runtime->Calls.end(), "DestroyAll"));
+		Require(outerBegan && outerMutationRecorded && nestedBegan
+			&& nestedMutationRecorded && nestedCompletionAccepted,
+			"reentrant callback was not sealed non-recursively during the outer drain");
+		Require(!outerCompletion
+			&& outerCompletionStatus
+				== static_cast<int32_t>(ScriptStatus::InvalidState)
+			&& resolverCalls == 2
+			&& runtime->DeferredBatchCommitCount == 2,
+			"nested fatal result did not propagate through the FIFO drain to outer CompleteCallback");
+		Require(!scene.IsRuntimeRunning() && !runtime->Active
+			&& destroyAllCount == 1
+			&& !ScriptEngine::Get().ResolveEntity(context),
+			"nested callback fatal result did not stop Play exactly once and invalidate its binding");
+		ScriptEngine::Get().StopScene(context.SceneSessionId);
+		Require(std::count(runtime->Calls.begin(), runtime->Calls.end(),
+			"DestroyAll") == 1,
+			"repeated stop after deferred protocol failure destroyed the runtime twice");
+	}
 }
 
 int main(int argc, char** argv)
@@ -4891,12 +7096,36 @@ int main(int argc, char** argv)
 		TestInitialOnCreatePrefabPhysicsOrdering);
 	run("component registry schema discovery ABI",
 		TestComponentSchemaCapability);
+	run("deferred command abort capability ABI and transaction rollback",
+		TestDeferredCommandsCapability);
+	run("third-party component transactional validation phase contract",
+		TestThirdPartyTransactionalComponentContract);
 	run("third-party component numeric and UTF-8 C# property ABI",
 		TestRegisteredComponentStringCapability);
 	run("reserved C# entity chained initialization capability",
 		TestReservedEntityChainedInitializationCapability);
+	run("projected transaction read-your-writes and atomic rollback",
+		TestProjectedTransactionReadYourWritesAndRollback);
+	run("registered Add projection matches descriptor side effects",
+		TestRegisteredAddProjectionMatchesDescriptorSemantics);
+	run("deferred disable precedes subtree attachment destruction",
+		TestDeferredDisableBeforeSubtreeDestroyOrdering);
+	run("deferred last behaviour removal precedes owner destruction",
+		TestDeferredRemoveLastBehaviourBeforeOwnerDestroyOrdering);
+	run("projected duplicate and subtree entity destruction",
+		TestProjectedDestroyBatchSemantics);
 	run("managed lifecycle backend, timing, rollback, and unload failure",
 		TestManagedScriptLifecycleBackend);
+	run("managed dispatch infrastructure failures stop runtime",
+		TestManagedDispatchInfrastructureFailuresStopRuntime);
+	run("startup deferred callback protocol failures stop runtime",
+		TestDeferredCallbackStartupProtocolFailures);
+	run("lazy startup deferred callback failure does not publish stale session",
+		TestLazyDeferredCallbackStartupProtocolFailure);
+	run("nested deferred callback fatal propagates to outer Complete",
+		TestDeferredCallbackNestedFatalPropagation);
+	run("deferred managed publication failure stops runtime",
+		TestDeferredManagedPublicationFailureStopsRuntime);
 	run("single SceneManager deferred transition, reload, rollback, and generation",
 		SceneManagerRegression::Run);
 	return failures == 0 ? 0 : 1;

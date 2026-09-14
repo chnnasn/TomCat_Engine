@@ -196,6 +196,7 @@ namespace TomCat {
 				entity.GetComponent<Component>().*member = converted;
 				return true;
 			};
+			property.DefaultValue = ToPropertyValue(Component{}.*member);
 			return property;
 		}
 

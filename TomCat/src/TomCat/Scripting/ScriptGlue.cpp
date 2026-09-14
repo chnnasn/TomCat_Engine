@@ -59,6 +59,35 @@ namespace TomCat::Scripting {
 			return ScriptEngine::Get().IsMainThread();
 		}
 
+		thread_local bool ApplyComponentPropertyImmediately = false;
+
+		class ImmediateComponentPropertyScope
+		{
+		public:
+			ImmediateComponentPropertyScope()
+				: m_Previous(ApplyComponentPropertyImmediately)
+			{
+				ApplyComponentPropertyImmediately = true;
+			}
+
+			~ImmediateComponentPropertyScope()
+			{
+				ApplyComponentPropertyImmediately = m_Previous;
+			}
+
+		private:
+			bool m_Previous = false;
+		};
+
+		int32_t RejectDeferredMutation(const EntityHandleV1& context,
+			ScriptStatus status, std::string reason)
+		{
+			if (!ApplyComponentPropertyImmediately && RequireMainThread())
+				ScriptEngine::Get().MarkDeferredCommandBatchFailed(
+					context, std::move(reason));
+			return Code(status);
+		}
+
 		bool IsValidUtf8(std::string_view value)
 		{
 			const auto* bytes = reinterpret_cast<const uint8_t*>(value.data());
@@ -158,6 +187,9 @@ namespace TomCat::Scripting {
 
 		Entity Resolve(EntityHandleV1 handle)
 		{
+			bool alive = false;
+			if (!ScriptEngine::Get().GetProjectedEntityLiveness(handle, alive) || !alive)
+				return {};
 			return ScriptEngine::Get().ResolveEntity(handle);
 		}
 
@@ -228,7 +260,12 @@ namespace TomCat::Scripting {
 
 		int32_t EntityIsAliveCallback(EntityHandleV1 handle) noexcept
 		{
-			return Guard([&]() { return Resolve(handle) ? 1 : 0; });
+			return Guard([&]()
+			{
+				bool alive = false;
+				return ScriptEngine::Get().GetProjectedEntityLiveness(handle, alive)
+					? (alive ? 1 : 0) : 0;
+			});
 		}
 
 		int32_t EntityGetNameCallback(EntityHandleV1 handle, uint8_t* buffer,
@@ -237,8 +274,9 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				return entity ? WriteUtf8(entity.GetName(), buffer, capacity, required)
+				std::string name;
+				return ScriptEngine::Get().GetProjectedEntityName(handle, name)
+					? WriteUtf8(name, buffer, capacity, required)
 					: Code(ScriptStatus::NotFound);
 			});
 		}
@@ -248,12 +286,14 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); Scene* scene = ResolveScene(handle);
 				std::string name;
-				if (!entity || !scene) return Code(ScriptStatus::NotFound);
-				if (!ReadUtf8(value, name) || name.empty()) return Code(ScriptStatus::InvalidArgument);
-				return scene->RenameEntity(entity, name) ? Code(ScriptStatus::Success)
-					: Code(ScriptStatus::InvalidState);
+				if (!ReadUtf8(value, name) || name.empty())
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument, "Entity name is invalid");
+				return ScriptEngine::Get().QueueSetEntityName(handle, std::move(name))
+					? Code(ScriptStatus::Success)
+					: RejectDeferredMutation(handle, ScriptStatus::NotFound,
+						"Entity name target is unavailable");
 			});
 		}
 
@@ -263,8 +303,9 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				return entity ? WriteUtf8(entity.GetGameplayTag(), buffer, capacity, required)
+				std::string tag;
+				return ScriptEngine::Get().GetProjectedGameplayTag(handle, tag)
+					? WriteUtf8(tag, buffer, capacity, required)
 					: Code(ScriptStatus::NotFound);
 			});
 		}
@@ -274,11 +315,14 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); std::string tag;
-				if (!entity) return Code(ScriptStatus::NotFound);
-				if (!ReadUtf8(value, tag) || tag.empty()) return Code(ScriptStatus::InvalidArgument);
-				return entity.SetGameplayTag(tag) ? Code(ScriptStatus::Success)
-					: Code(ScriptStatus::InvalidArgument);
+				std::string tag;
+				if (!ReadUtf8(value, tag) || tag.empty())
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument, "Gameplay tag is invalid");
+				return ScriptEngine::Get().QueueSetGameplayTag(handle, std::move(tag))
+					? Code(ScriptStatus::Success)
+					: RejectDeferredMutation(handle, ScriptStatus::NotFound,
+						"Gameplay tag target is unavailable");
 			});
 		}
 
@@ -287,9 +331,9 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				if (!entity || !layer) return Code(ScriptStatus::InvalidArgument);
-				*layer = entity.GetLayer(); return Code(ScriptStatus::Success);
+				if (!layer) return Code(ScriptStatus::InvalidArgument);
+				return ScriptEngine::Get().GetProjectedLayer(handle, *layer)
+					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
 			});
 		}
 
@@ -298,11 +342,10 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				if (!entity) return Code(ScriptStatus::NotFound);
-				return layer <= std::numeric_limits<uint8_t>::max()
-					&& entity.SetLayer(static_cast<uint8_t>(layer))
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidArgument);
+				return ScriptEngine::Get().QueueSetLayer(handle, layer)
+					? Code(ScriptStatus::Success)
+					: RejectDeferredMutation(handle, ScriptStatus::InvalidArgument,
+						"Entity layer target or value is invalid");
 			});
 		}
 
@@ -312,7 +355,9 @@ namespace TomCat::Scripting {
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				return ScriptEngine::Get().QueueDestroyEntity(handle)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
+					? Code(ScriptStatus::Success)
+					: RejectDeferredMutation(handle, ScriptStatus::NotFound,
+						"Entity destroy target is unavailable");
 			});
 		}
 
@@ -348,7 +393,8 @@ namespace TomCat::Scripting {
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				return ScriptEngine::Get().QueueAddComponent(handle,
 					static_cast<NativeComponentType>(type)) ? Code(ScriptStatus::Success)
-					: Code(ScriptStatus::InvalidArgument);
+					: RejectDeferredMutation(handle, ScriptStatus::InvalidArgument,
+						"Component add target or type is invalid");
 			});
 		}
 
@@ -359,64 +405,88 @@ namespace TomCat::Scripting {
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				return ScriptEngine::Get().QueueRemoveComponent(handle,
 					static_cast<NativeComponentType>(type)) ? Code(ScriptStatus::Success)
-					: Code(ScriptStatus::InvalidArgument);
+					: RejectDeferredMutation(handle, ScriptStatus::InvalidArgument,
+						"Component remove target or type is invalid");
 			});
 		}
 
-		template<typename Getter>
 		int32_t GetTransformVector(EntityHandleV1 handle, NativeVector3* output,
-			Getter getter) noexcept
+			uint32_t propertyId) noexcept
 		{
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				if (!entity || !output || !entity.HasComponent<Transform>())
-					return Code(ScriptStatus::NotFound);
-				*output = ToNative(getter(entity.GetComponent<Transform>()));
-				return Code(ScriptStatus::Success);
+				if (!output) return Code(ScriptStatus::InvalidArgument);
+				return ScriptEngine::Get().GetProjectedTransformProperty(
+					handle, propertyId, *output)
+					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
 			});
 		}
 
-		template<typename Setter>
 		int32_t SetTransformVector(EntityHandleV1 handle, NativeVector3 input,
-			Setter setter) noexcept
+			uint32_t propertyId) noexcept
 		{
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); Scene* scene = ResolveScene(handle);
-				if (!entity || !scene || !entity.HasComponent<Transform>())
-					return Code(ScriptStatus::NotFound);
-				auto transform = entity.GetComponent<Transform>();
-				setter(transform, ToGlm(input));
-				return scene->SetWorldTransform(entity, transform.GetTransform())
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidArgument);
+				if (!std::isfinite(input.X) || !std::isfinite(input.Y)
+					|| !std::isfinite(input.Z))
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument, "Transform value is not finite");
+				NativePropertyValueV1 value{};
+				value.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector3);
+				value.Vector = { input.X, input.Y, input.Z, 0.0f };
+				return ScriptEngine::Get().QueueSetComponentProperty(handle,
+					NativeComponentType::Transform, propertyId, value)
+					? Code(ScriptStatus::Success)
+					: RejectDeferredMutation(handle, ScriptStatus::NotFound,
+						"Transform target is unavailable");
 			});
 		}
 
 		int32_t TransformGetPositionCallback(EntityHandleV1 h, NativeVector3* v) noexcept
-		{ return GetTransformVector(h, v, [](const Transform& t) { return t._Translation; }); }
+		{ return GetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::Translation)); }
 		int32_t TransformSetPositionCallback(EntityHandleV1 h, NativeVector3 v) noexcept
-		{ return SetTransformVector(h, v, [](Transform& t, glm::vec3 x) { t._Translation = x; }); }
+		{ return SetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::Translation)); }
 		int32_t TransformGetRotationCallback(EntityHandleV1 h, NativeVector3* v) noexcept
-		{ return GetTransformVector(h, v, [](const Transform& t) { return t._Rotation; }); }
+		{ return GetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::Rotation)); }
 		int32_t TransformSetRotationCallback(EntityHandleV1 h, NativeVector3 v) noexcept
-		{ return SetTransformVector(h, v, [](Transform& t, glm::vec3 x) { t._Rotation = x; }); }
+		{ return SetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::Rotation)); }
 		int32_t TransformGetScaleCallback(EntityHandleV1 h, NativeVector3* v) noexcept
-		{ return GetTransformVector(h, v, [](const Transform& t) { return t._Scale; }); }
+		{ return GetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::Scale)); }
 		int32_t TransformSetScaleCallback(EntityHandleV1 h, NativeVector3 v) noexcept
-		{ return SetTransformVector(h, v, [](Transform& t, glm::vec3 x) { t._Scale = x; }); }
+		{ return SetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::Scale)); }
 
-		int32_t TransformGetWorldMatrixCallback(EntityHandleV1 handle, NativeMatrix4* value) noexcept
+		int32_t TransformGetWorldMatrixCallback(EntityHandleV1 handle,
+			NativeMatrix4* value) noexcept
 		{
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				if (!entity || !value || !entity.HasComponent<Transform>())
+				if (!value) return Code(ScriptStatus::InvalidArgument);
+				NativeVector3 translation{}, rotation{}, scale{};
+				if (!ScriptEngine::Get().GetProjectedTransformProperty(handle,
+						static_cast<uint32_t>(
+							ComponentIds::TransformProperties::Translation),
+						translation)
+					|| !ScriptEngine::Get().GetProjectedTransformProperty(handle,
+						static_cast<uint32_t>(
+							ComponentIds::TransformProperties::Rotation),
+						rotation)
+					|| !ScriptEngine::Get().GetProjectedTransformProperty(handle,
+						static_cast<uint32_t>(
+							ComponentIds::TransformProperties::Scale),
+						scale))
 					return Code(ScriptStatus::NotFound);
-				std::memcpy(value->Values, glm::value_ptr(entity.GetComponent<Transform>().GetTransform()),
+				const glm::mat4 matrix = Math::ComposeTransform(ToGlm(translation),
+					ToGlm(rotation), ToGlm(scale));
+				std::memcpy(value->Values, glm::value_ptr(matrix),
 					sizeof(value->Values));
 				return Code(ScriptStatus::Success);
 			});
@@ -818,10 +888,14 @@ namespace TomCat::Scripting {
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				const ComponentDescriptor* descriptor = FindScriptComponent(typeId);
-				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
+				if (!descriptor)
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered component type is unavailable");
 				return ScriptEngine::Get().QueueAddRegisteredComponent(handle, typeId)
 					? Code(ScriptStatus::Success)
-					: Code(ScriptStatus::InvalidState);
+					: RejectDeferredMutation(handle, ScriptStatus::InvalidState,
+						"Registered component could not be added");
 			});
 		}
 
@@ -831,11 +905,17 @@ namespace TomCat::Scripting {
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				const ComponentDescriptor* descriptor = FindScriptComponent(typeId);
-				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
-				if (!descriptor->Removable) return Code(ScriptStatus::InvalidState);
+				if (!descriptor)
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered component type is unavailable");
+				if (!descriptor->Removable)
+					return RejectDeferredMutation(handle, ScriptStatus::InvalidState,
+						"Registered component is not removable");
 				return ScriptEngine::Get().QueueRemoveRegisteredComponent(handle, typeId)
 					? Code(ScriptStatus::Success)
-					: Code(ScriptStatus::InvalidState);
+					: RejectDeferredMutation(handle, ScriptStatus::InvalidState,
+						"Registered component could not be removed");
 			});
 		}
 
@@ -850,6 +930,25 @@ namespace TomCat::Scripting {
 				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
 				const PropertyDescriptor* property = FindProperty(*descriptor, propertyId);
 				if (!property) return Code(ScriptStatus::InvalidArgument);
+				bool present = false;
+				if (!ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
+					handle, typeId, present) || !present)
+					return Code(ScriptStatus::NotFound);
+				NativePropertyValueV1 projected{};
+				bool useDefault = false;
+				if (ScriptEngine::Get().TryGetProjectedRegisteredComponentProperty(
+					handle, typeId, propertyId, projected, useDefault))
+				{
+					*value = projected;
+					return Code(ScriptStatus::Success);
+				}
+				if (useDefault)
+				{
+					return property->DefaultValue
+						&& WriteNativeProperty(property->Kind,
+							*property->DefaultValue, *value)
+						? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidState);
+				}
 				Entity entity = Resolve(handle);
 				if (!entity || !descriptor->Has(entity)) return Code(ScriptStatus::NotFound);
 				return WriteNativeProperty(property->Kind, property->Get(entity), *value)
@@ -864,26 +963,41 @@ namespace TomCat::Scripting {
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				const ComponentDescriptor* descriptor = FindScriptComponent(typeId);
-				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
+				if (!descriptor)
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered component type is unavailable");
 				const PropertyDescriptor* property = FindProperty(*descriptor, propertyId);
-				if (!property) return Code(ScriptStatus::InvalidArgument);
+				if (!property)
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered component property is unavailable");
 				PropertyValue decoded;
 				if (!ReadNativeProperty(property->Kind, value, decoded))
-					return Code(ScriptStatus::InvalidArgument);
-				Entity entity = Resolve(handle);
-				if (!entity || !descriptor->Has(entity))
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered component property value is invalid");
+				if (!ApplyComponentPropertyImmediately)
 				{
-					bool projected = false;
+					bool present = false;
 					if (!ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
-						handle, typeId, projected) || !projected)
-						return Code(ScriptStatus::NotFound);
+						handle, typeId, present) || !present)
+						return RejectDeferredMutation(handle,
+							ScriptStatus::NotFound,
+							"Registered component property target is unavailable");
 					return ScriptEngine::Get().QueueSetRegisteredComponentProperty(
 						handle, typeId, propertyId, value)
-						? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidState);
+						? Code(ScriptStatus::Success)
+						: RejectDeferredMutation(handle, ScriptStatus::InvalidState,
+							"Registered component property could not be queued");
 				}
+				Entity entity = ScriptEngine::Get().ResolveEntity(handle);
+				if (!entity || !descriptor->Has(entity))
+					return Code(ScriptStatus::NotFound);
 				std::string error;
 				return property->Set(entity, decoded, error)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidArgument);
+					? Code(ScriptStatus::Success)
+					: Code(ScriptStatus::InvalidArgument);
 			});
 		}
 
@@ -912,6 +1026,32 @@ namespace TomCat::Scripting {
 				const PropertyDescriptor* property = FindProperty(*descriptor, propertyId);
 				if (!property || property->Kind != PropertyKind::String)
 					return Code(ScriptStatus::InvalidArgument);
+				bool present = false;
+				if (!ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
+					handle, typeId, present) || !present)
+					return Code(ScriptStatus::NotFound);
+				std::string projected;
+				bool useDefault = false;
+				if (ScriptEngine::Get()
+					.TryGetProjectedRegisteredComponentStringProperty(
+						handle, typeId, propertyId, projected, useDefault))
+				{
+					if (projected.size() > ComponentStringMaximumBytesV1
+						|| !IsValidUtf8(projected))
+						return Code(ScriptStatus::InvalidState);
+					return WriteUtf8(projected, buffer, capacity, required);
+				}
+				if (useDefault)
+				{
+					if (!property->DefaultValue)
+						return Code(ScriptStatus::InvalidState);
+					const std::string* text = std::get_if<std::string>(
+						&*property->DefaultValue);
+					if (!text || text->size() > ComponentStringMaximumBytesV1
+						|| !IsValidUtf8(*text))
+						return Code(ScriptStatus::InvalidState);
+					return WriteUtf8(*text, buffer, capacity, required);
+				}
 				Entity entity = Resolve(handle);
 				if (!entity || !descriptor->Has(entity))
 					return Code(ScriptStatus::NotFound);
@@ -931,26 +1071,38 @@ namespace TomCat::Scripting {
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				const ComponentDescriptor* descriptor = FindScriptComponent(typeId);
-				if (!descriptor) return Code(ScriptStatus::InvalidArgument);
+				if (!descriptor)
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered component type is unavailable");
 				const PropertyDescriptor* property = FindProperty(*descriptor, propertyId);
 				if (!property || property->Kind != PropertyKind::String
 					|| value.Length > ComponentStringMaximumBytesV1)
-					return Code(ScriptStatus::InvalidArgument);
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered string property is unavailable or too large");
 				std::string decoded;
 				if (!ReadUtf8(value, decoded))
-					return Code(ScriptStatus::InvalidArgument);
-				Entity entity = Resolve(handle);
-				if (!entity || !descriptor->Has(entity))
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Registered string property is invalid UTF-8");
+				if (!ApplyComponentPropertyImmediately)
 				{
-					bool projected = false;
+					bool present = false;
 					if (!ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
-						handle, typeId, projected) || !projected)
-						return Code(ScriptStatus::NotFound);
+						handle, typeId, present) || !present)
+						return RejectDeferredMutation(handle,
+							ScriptStatus::NotFound,
+							"Registered string property target is unavailable");
 					return ScriptEngine::Get().QueueSetRegisteredComponentStringProperty(
 						handle, typeId, propertyId, std::move(decoded))
 						? Code(ScriptStatus::Success)
-						: Code(ScriptStatus::InvalidState);
+						: RejectDeferredMutation(handle, ScriptStatus::InvalidState,
+							"Registered string property could not be queued");
 				}
+				Entity entity = ScriptEngine::Get().ResolveEntity(handle);
+				if (!entity || !descriptor->Has(entity))
+					return Code(ScriptStatus::NotFound);
 				std::string error;
 				return property->Set(entity, PropertyValue(std::move(decoded)), error)
 					? Code(ScriptStatus::Success)
@@ -1501,12 +1653,20 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				if (!reserved) return Code(ScriptStatus::InvalidArgument);
+				if (!reserved)
+					return RejectDeferredMutation(context,
+						ScriptStatus::InvalidArgument,
+						"CreateEntity reservation output is null");
 				std::string name;
-				if (!ReadUtf8(nameView, name)) return Code(ScriptStatus::InvalidArgument);
+				if (!ReadUtf8(nameView, name))
+					return RejectDeferredMutation(context,
+						ScriptStatus::InvalidArgument,
+						"CreateEntity name is invalid UTF-8");
 				return ScriptEngine::Get().QueueCreateEntity(context, std::move(name),
 					worldPosition, parent, *reserved)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidArgument);
+					? Code(ScriptStatus::Success)
+					: RejectDeferredMutation(context, ScriptStatus::InvalidArgument,
+						"CreateEntity target, parent, or value is invalid");
 			});
 		}
 
@@ -1516,15 +1676,19 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Scene* scene = ResolveScene(context);
 				std::string name;
-				if (!scene || !output || !ReadUtf8(nameView, name) || name.empty())
+				if (!output || !ReadUtf8(nameView, name) || name.empty())
 					return Code(ScriptStatus::InvalidArgument);
-				for (Entity entity : CollectSceneEntities(*scene))
+				std::vector<EntityHandleV1> entities;
+				if (!ScriptEngine::Get().GetProjectedEntities(context, entities))
+					return Code(ScriptStatus::NotFound);
+				for (const EntityHandleV1& entity : entities)
 				{
-					if (entity.GetName() == name)
+					std::string candidate;
+					if (ScriptEngine::Get().GetProjectedEntityName(entity, candidate)
+						&& candidate == name)
 					{
-						*output = ToHandle(context, entity);
+						*output = entity;
 						return Code(ScriptStatus::Success);
 					}
 				}
@@ -1533,25 +1697,17 @@ namespace TomCat::Scripting {
 			});
 		}
 
-		bool MatchesGameplayQuery(Entity entity, int32_t componentType,
-			uint64_t registeredTypeId)
+		bool MatchesGameplayQueryProjected(const EntityHandleV1& entity,
+			int32_t componentType, uint64_t registeredTypeId)
 		{
+			bool present = false;
 			if (registeredTypeId != 0)
-				return ComponentRegistry::Get().Has(entity, UUID(registeredTypeId));
+				return ScriptEngine::Get().GetProjectedRegisteredComponentPresence(
+					entity, registeredTypeId, present) && present;
 			if (componentType == 0)
 				return true;
-			switch (static_cast<NativeComponentType>(componentType))
-			{
-				case NativeComponentType::Transform: return entity.HasComponent<Transform>();
-				case NativeComponentType::Rigidbody2D: return entity.HasComponent<Rigidbody2D>();
-				case NativeComponentType::BoxCollider2D: return entity.HasComponent<BoxCollider2D>();
-				case NativeComponentType::CircleCollider2D: return entity.HasComponent<CircleCollider2D>();
-				case NativeComponentType::DistanceJoint2D: return entity.HasComponent<DistanceJoint2D>();
-				case NativeComponentType::SpriteRenderer: return entity.HasComponent<SpriteRenderer>();
-				case NativeComponentType::Camera: return entity.HasComponent<C_Camera>();
-				case NativeComponentType::SpriteAnimator: return entity.HasComponent<SpriteAnimator>();
-			}
-			return false;
+			return ScriptEngine::Get().GetProjectedComponentPresence(entity,
+				static_cast<NativeComponentType>(componentType), present) && present;
 		}
 
 		int32_t GameplayQueryEntitiesCallback(EntityHandleV1 context,
@@ -1561,19 +1717,24 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Scene* scene = ResolveScene(context);
-				if (!scene || !required || (componentType < 0)
-					|| (componentType != 0 && registeredTypeId != 0))
+				if (!required || componentType < 0
+					|| (componentType != 0 && registeredTypeId != 0)
+					|| (capacity != 0 && !output))
 					return Code(ScriptStatus::InvalidArgument);
+				std::vector<EntityHandleV1> entities;
+				if (!ScriptEngine::Get().GetProjectedEntities(context, entities))
+					return Code(ScriptStatus::NotFound);
 				std::vector<EntityHandleV1> matches;
-				for (Entity entity : CollectSceneEntities(*scene))
-					if (MatchesGameplayQuery(entity, componentType, registeredTypeId))
-						matches.push_back(ToHandle(context, entity));
+				matches.reserve(entities.size());
+				for (const EntityHandleV1& entity : entities)
+				{
+					if (MatchesGameplayQueryProjected(entity, componentType,
+						registeredTypeId))
+						matches.push_back(entity);
+				}
 				if (matches.size() > std::numeric_limits<uint32_t>::max())
 					return Code(ScriptStatus::InvalidState);
 				*required = static_cast<uint32_t>(matches.size());
-				if (capacity != 0 && !output)
-					return Code(ScriptStatus::InvalidArgument);
 				const uint32_t count = std::min(capacity, *required);
 				if (count != 0)
 					std::copy_n(matches.begin(), count, output);
@@ -1588,9 +1749,9 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); Scene* scene = ResolveScene(handle);
-				if (!entity || !scene || !output) return Code(ScriptStatus::InvalidArgument);
-				*output = ToHandle(handle, scene->GetParent(entity));
+				if (!output) return Code(ScriptStatus::InvalidArgument);
+				if (!ScriptEngine::Get().GetProjectedParent(handle, *output))
+					return Code(ScriptStatus::NotFound);
 				return Code(ScriptStatus::Success);
 			});
 		}
@@ -1612,17 +1773,17 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); Scene* scene = ResolveScene(handle);
-				if (!entity || !scene || !required || (capacity != 0 && !output))
+				if (!required || (capacity != 0 && !output))
 					return Code(ScriptStatus::InvalidArgument);
-				auto children = scene->GetChildrenUUIDs(entity);
+				std::vector<EntityHandleV1> children;
+				if (!ScriptEngine::Get().GetProjectedChildren(handle, children))
+					return Code(ScriptStatus::NotFound);
 				if (children.size() > std::numeric_limits<uint32_t>::max())
 					return Code(ScriptStatus::InvalidState);
 				*required = static_cast<uint32_t>(children.size());
 				const uint32_t count = std::min(capacity, *required);
-				for (uint32_t index = 0; index < count; ++index)
-					output[index] = { handle.SceneSessionId,
-						static_cast<uint64_t>(children[index]), handle.RuntimeGeneration };
+				if (count != 0)
+					std::copy_n(children.begin(), count, output);
 				return capacity < *required ? Code(ScriptStatus::BufferTooSmall)
 					: Code(ScriptStatus::Success);
 			});
@@ -1633,10 +1794,9 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				return entity && entity.HasComponent<Tag>()
-					? (entity.GetComponent<Tag>().Visible ? 1 : 0)
-					: Code(ScriptStatus::NotFound);
+				bool active = false;
+				return ScriptEngine::Get().GetProjectedActiveSelf(handle, active)
+					? (active ? 1 : 0) : Code(ScriptStatus::NotFound);
 			});
 		}
 
@@ -1646,17 +1806,14 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				if (active != 0 && active != 1) return Code(ScriptStatus::InvalidArgument);
-				Entity entity = Resolve(handle);
-				if (entity && entity.HasComponent<Tag>())
-				{
-					entity.GetComponent<Tag>().Visible = active != 0;
-					return Code(ScriptStatus::Success);
-				}
-				if (!ScriptEngine::Get().IsPendingCreate(handle))
-					return Code(ScriptStatus::NotFound);
+				if (active != 0 && active != 1)
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"ActiveSelf value must be zero or one");
 				return ScriptEngine::Get().QueueSetActiveSelf(handle, active != 0)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidState);
+					? Code(ScriptStatus::Success)
+					: RejectDeferredMutation(handle, ScriptStatus::NotFound,
+						"ActiveSelf target is unavailable");
 			});
 		}
 
@@ -1665,56 +1822,37 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); Scene* scene = ResolveScene(handle);
-				if (!entity || !scene) return Code(ScriptStatus::NotFound);
-				return scene->IsActiveInHierarchy(entity) ? 1 : 0;
+				bool active = false;
+				return ScriptEngine::Get().GetProjectedActiveInHierarchy(
+					handle, active) ? (active ? 1 : 0)
+					: Code(ScriptStatus::NotFound);
 			});
 		}
 
-		template<typename Getter>
-		int32_t GetLocalTransformVector(EntityHandleV1 handle,
-			NativeVector3* output, Getter getter) noexcept
-		{
-			return Guard([&]()
-			{
-				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				if (!entity || !output || !entity.HasComponent<Transform>())
-					return Code(ScriptStatus::NotFound);
-				*output = ToNative(getter(entity.GetComponent<Transform>()));
-				return Code(ScriptStatus::Success);
-			});
-		}
-
-		template<typename Setter>
-		int32_t SetLocalTransformVector(EntityHandleV1 handle,
-			NativeVector3 value, Setter setter) noexcept
-		{
-			return Guard([&]()
-			{
-				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); Scene* scene = ResolveScene(handle);
-				if (!entity || !scene || !entity.HasComponent<Transform>())
-					return Code(ScriptStatus::NotFound);
-				auto transform = entity.GetComponent<Transform>();
-				setter(transform, ToGlm(value));
-				return scene->SetLocalTransform(entity, transform.GetLocalTransform())
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidArgument);
-			});
-		}
-
-		int32_t GameplayGetLocalPositionCallback(EntityHandleV1 h, NativeVector3* v) noexcept
-		{ return GetLocalTransformVector(h, v, [](const Transform& t) { return t._LocalTranslation; }); }
-		int32_t GameplaySetLocalPositionCallback(EntityHandleV1 h, NativeVector3 v) noexcept
-		{ return SetLocalTransformVector(h, v, [](Transform& t, glm::vec3 x) { t._LocalTranslation = x; }); }
-		int32_t GameplayGetLocalRotationCallback(EntityHandleV1 h, NativeVector3* v) noexcept
-		{ return GetLocalTransformVector(h, v, [](const Transform& t) { return t._LocalRotation; }); }
-		int32_t GameplaySetLocalRotationCallback(EntityHandleV1 h, NativeVector3 v) noexcept
-		{ return SetLocalTransformVector(h, v, [](Transform& t, glm::vec3 x) { t._LocalRotation = x; }); }
-		int32_t GameplayGetLocalScaleCallback(EntityHandleV1 h, NativeVector3* v) noexcept
-		{ return GetLocalTransformVector(h, v, [](const Transform& t) { return t._LocalScale; }); }
-		int32_t GameplaySetLocalScaleCallback(EntityHandleV1 h, NativeVector3 v) noexcept
-		{ return SetLocalTransformVector(h, v, [](Transform& t, glm::vec3 x) { t._LocalScale = x; }); }
+		int32_t GameplayGetLocalPositionCallback(EntityHandleV1 h,
+			NativeVector3* v) noexcept
+		{ return GetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::LocalTranslation)); }
+		int32_t GameplaySetLocalPositionCallback(EntityHandleV1 h,
+			NativeVector3 v) noexcept
+		{ return SetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::LocalTranslation)); }
+		int32_t GameplayGetLocalRotationCallback(EntityHandleV1 h,
+			NativeVector3* v) noexcept
+		{ return GetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::LocalRotation)); }
+		int32_t GameplaySetLocalRotationCallback(EntityHandleV1 h,
+			NativeVector3 v) noexcept
+		{ return SetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::LocalRotation)); }
+		int32_t GameplayGetLocalScaleCallback(EntityHandleV1 h,
+			NativeVector3* v) noexcept
+		{ return GetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::LocalScale)); }
+		int32_t GameplaySetLocalScaleCallback(EntityHandleV1 h,
+			NativeVector3 v) noexcept
+		{ return SetTransformVector(h, v, static_cast<uint32_t>(
+			ComponentIds::TransformProperties::LocalScale)); }
 
 		NativePropertyValueV1 GameplayBool(bool value)
 		{
@@ -1764,12 +1902,35 @@ namespace TomCat::Scripting {
 			return result;
 		}
 
+		NativePropertyValueV1 GameplayVector3(const glm::vec3& value)
+		{
+			NativePropertyValueV1 result;
+			result.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector3);
+			result.Vector = { value.x, value.y, value.z, 0.0f };
+			return result;
+		}
+
 		NativePropertyValueV1 GameplayVector4(const glm::vec4& value)
 		{
 			NativePropertyValueV1 result;
 			result.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector4);
 			result.Vector = { value.x, value.y, value.z, value.w };
 			return result;
+		}
+
+		uint64_t GameplayRegisteredTypeId(NativeComponentType type)
+		{
+			switch (type)
+			{
+				case NativeComponentType::Rigidbody2D: return ComponentIds::Rigidbody2D;
+				case NativeComponentType::BoxCollider2D: return ComponentIds::BoxCollider2D;
+				case NativeComponentType::CircleCollider2D: return ComponentIds::CircleCollider2D;
+				case NativeComponentType::DistanceJoint2D: return ComponentIds::DistanceJoint2D;
+				case NativeComponentType::SpriteRenderer: return ComponentIds::SpriteRenderer;
+				case NativeComponentType::Camera: return ComponentIds::Camera;
+				case NativeComponentType::SpriteAnimator: return ComponentIds::SpriteAnimator;
+				default: return 0;
+			}
 		}
 
 		bool GameplayReadBool(const NativePropertyValueV1& value, bool& output)
@@ -1829,6 +1990,16 @@ namespace TomCat::Scripting {
 			return true;
 		}
 
+		bool GameplayReadVector3(const NativePropertyValueV1& value, glm::vec3& output)
+		{
+			if (value.Kind != static_cast<uint32_t>(NativePropertyKindV1::Vector3)
+				|| !std::isfinite(value.Vector.X) || !std::isfinite(value.Vector.Y)
+				|| !std::isfinite(value.Vector.Z))
+				return false;
+			output = { value.Vector.X, value.Vector.Y, value.Vector.Z };
+			return true;
+		}
+
 		bool GameplayReadVector4(const NativePropertyValueV1& value, glm::vec4& output)
 		{
 			if (value.Kind != static_cast<uint32_t>(NativePropertyKindV1::Vector4)
@@ -1847,10 +2018,64 @@ namespace TomCat::Scripting {
 			{
 				using namespace GameplayPropertyIds;
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle);
-				if (!entity || !output) return Code(ScriptStatus::InvalidArgument);
-				switch (static_cast<NativeComponentType>(componentType))
+				if (!output) return Code(ScriptStatus::InvalidArgument);
+				const NativeComponentType nativeType =
+					static_cast<NativeComponentType>(componentType);
+				bool present = false;
+				if (!ScriptEngine::Get().GetProjectedComponentPresence(handle,
+					nativeType, present))
+					return Code(ScriptStatus::InvalidArgument);
+				if (!present)
+					return Code(ScriptStatus::NotFound);
+				if (nativeType == NativeComponentType::Transform)
 				{
+					NativeVector3 projected{};
+					if (!ScriptEngine::Get().GetProjectedTransformProperty(
+						handle, propertyId, projected))
+						return Code(ScriptStatus::InvalidArgument);
+					*output = GameplayVector3(ToGlm(projected));
+					return Code(ScriptStatus::Success);
+				}
+				bool useDefault = false;
+				if (ScriptEngine::Get().TryGetProjectedComponentProperty(handle,
+					nativeType, propertyId, *output, useDefault))
+					return Code(ScriptStatus::Success);
+				if (useDefault)
+				{
+					if (nativeType == NativeComponentType::SpriteAnimator
+						&& propertyId == AnimatorIsPlaying)
+					{
+						*output = GameplayBool(false);
+						return Code(ScriptStatus::Success);
+					}
+					if (nativeType == NativeComponentType::SpriteAnimator
+						&& propertyId == AnimatorCurrentFrame)
+					{
+						*output = GameplayUInt32(0);
+						return Code(ScriptStatus::Success);
+					}
+					const ComponentDescriptor* descriptor = FindScriptComponent(
+						GameplayRegisteredTypeId(nativeType));
+					const PropertyDescriptor* property = descriptor
+						? FindProperty(*descriptor, propertyId) : nullptr;
+					return property && property->DefaultValue
+						&& WriteNativeProperty(property->Kind,
+							*property->DefaultValue, *output)
+						? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidState);
+				}
+				Entity entity = Resolve(handle);
+				if (!entity) return Code(ScriptStatus::NotFound);
+				switch (nativeType)
+				{
+					case NativeComponentType::Transform:
+					{
+						NativeVector3 projected{};
+						if (!ScriptEngine::Get().GetProjectedTransformProperty(
+							handle, propertyId, projected))
+							return Code(ScriptStatus::InvalidArgument);
+						*output = GameplayVector3(ToGlm(projected));
+						return Code(ScriptStatus::Success);
+					}
 					case NativeComponentType::Rigidbody2D:
 					{
 						if (!entity.HasComponent<Rigidbody2D>()) return Code(ScriptStatus::NotFound);
@@ -1970,9 +2195,16 @@ namespace TomCat::Scripting {
 			uint64_t unsigned64 = 0;
 			float number = 0.0f;
 			glm::vec2 vector2{};
+			glm::vec3 vector3{};
 			glm::vec4 vector4{};
 			switch (componentType)
 			{
+				case NativeComponentType::Transform:
+					return propertyId >= static_cast<uint32_t>(
+							ComponentIds::TransformProperties::Translation)
+						&& propertyId <= static_cast<uint32_t>(
+							ComponentIds::TransformProperties::LocalScale)
+						&& GameplayReadVector3(input, vector3);
 				case NativeComponentType::Rigidbody2D:
 					return (propertyId == RigidbodyEnabled && GameplayReadBool(input, boolean))
 						|| (propertyId == RigidbodyFixedRotation && GameplayReadBool(input, boolean))
@@ -2067,7 +2299,12 @@ namespace TomCat::Scripting {
 					{
 						const EntityHandleV1 target{ handle.SceneSessionId, unsigned64,
 							handle.RuntimeGeneration };
-						return Resolve(target) || ScriptEngine::Get().IsPendingCreate(target);
+						if (ApplyComponentPropertyImmediately)
+							return static_cast<bool>(
+								ScriptEngine::Get().ResolveEntity(target));
+						bool targetAlive = false;
+						return ScriptEngine::Get().GetProjectedEntityLiveness(
+							target, targetAlive) && targetAlive;
 					}
 				default: return false;
 			}
@@ -2081,27 +2318,65 @@ namespace TomCat::Scripting {
 			{
 				using namespace GameplayPropertyIds;
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				Entity entity = Resolve(handle); Scene* scene = ResolveScene(handle);
-				if (!scene) return Code(ScriptStatus::NotFound);
 				const NativeComponentType nativeType =
 					static_cast<NativeComponentType>(componentType);
 				if (!ValidateGameplayPropertyInput(handle, nativeType, propertyId, input))
-					return Code(ScriptStatus::InvalidArgument);
-				if (!entity || !MatchesGameplayQuery(entity, componentType, 0))
+					return RejectDeferredMutation(handle,
+						ScriptStatus::InvalidArgument,
+						"Component property identifier or value is invalid");
+				if (!ApplyComponentPropertyImmediately)
 				{
-					bool projected = false;
+					bool present = false;
 					if (!ScriptEngine::Get().GetProjectedComponentPresence(handle,
-						nativeType, projected) || !projected)
-						return Code(ScriptStatus::NotFound);
+						nativeType, present) || !present)
+						return RejectDeferredMutation(handle,
+							ScriptStatus::NotFound,
+							"Component property target is unavailable");
 					return ScriptEngine::Get().QueueSetComponentProperty(handle,
 						nativeType, propertyId, input)
-						? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidState);
+						? Code(ScriptStatus::Success)
+						: RejectDeferredMutation(handle, ScriptStatus::InvalidState,
+							"Component property could not be queued");
 				}
+				Entity entity = ScriptEngine::Get().ResolveEntity(handle);
+				Scene* scene = ScriptEngine::Get().ResolveScene(handle);
+				if (!entity || !scene)
+					return Code(ScriptStatus::NotFound);
 				bool boolean = false; int32_t integer = 0; uint32_t unsignedInteger = 0;
 				uint64_t unsigned64 = 0; float number = 0.0f;
-				glm::vec2 vector2{}; glm::vec4 vector4{};
+				glm::vec2 vector2{}; glm::vec3 vector3{}; glm::vec4 vector4{};
 				switch (static_cast<NativeComponentType>(componentType))
 				{
+					case NativeComponentType::Transform:
+					{
+						if (!entity.HasComponent<Transform>()
+							|| !GameplayReadVector3(input, vector3))
+							return Code(ScriptStatus::NotFound);
+						auto transform = entity.GetComponent<Transform>();
+						using namespace ComponentIds::TransformProperties;
+						if (propertyId == static_cast<uint32_t>(Translation))
+							transform._Translation = vector3;
+						else if (propertyId == static_cast<uint32_t>(Rotation))
+							transform._Rotation = vector3;
+						else if (propertyId == static_cast<uint32_t>(Scale))
+							transform._Scale = vector3;
+						else if (propertyId == static_cast<uint32_t>(LocalTranslation))
+							transform._LocalTranslation = vector3;
+						else if (propertyId == static_cast<uint32_t>(LocalRotation))
+							transform._LocalRotation = vector3;
+						else if (propertyId == static_cast<uint32_t>(LocalScale))
+							transform._LocalScale = vector3;
+						else
+							return Code(ScriptStatus::InvalidArgument);
+						const bool worldProperty =
+							propertyId <= static_cast<uint32_t>(Scale);
+						return (worldProperty
+							? scene->SetWorldTransform(entity, transform.GetTransform())
+							: scene->SetLocalTransform(entity,
+								transform.GetLocalTransform()))
+							? Code(ScriptStatus::Success)
+							: Code(ScriptStatus::InvalidArgument);
+					}
 					case NativeComponentType::Rigidbody2D:
 					{
 						if (!entity.HasComponent<Rigidbody2D>()) return Code(ScriptStatus::NotFound);
@@ -2366,6 +2641,69 @@ namespace TomCat::Scripting {
 			});
 		}
 
+		int32_t AbortDeferredCommandBatchCallback(EntityHandleV1 context,
+			NativeUtf8View reasonView) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread())
+					return Code(ScriptStatus::WrongThread);
+				std::string reason;
+				if (reasonView.Length > DeferredCommandFailureMaximumBytesV1
+					|| !ReadUtf8(reasonView, reason))
+					reason = "Managed script callback faulted";
+				return ScriptEngine::Get().MarkDeferredCommandBatchFailed(
+					context, std::move(reason))
+					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
+			});
+		}
+
+		NativeDeferredCommandsApiV1 BuildDeferredCommandsApiV1()
+		{
+			NativeDeferredCommandsApiV1 api;
+			api.AbortBatch = &AbortDeferredCommandBatchCallback;
+			return api;
+		}
+
+		int32_t BeginDeferredCallbackTransactionCallback(
+			EntityHandleV1 context, uint64_t* token) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread())
+					return Code(ScriptStatus::WrongThread);
+				if (!token)
+					return Code(ScriptStatus::InvalidArgument);
+				*token = 0;
+				return ScriptEngine::Get().BeginDeferredCallbackTransaction(
+					context, *token)
+					? Code(ScriptStatus::Success)
+					: Code(ScriptStatus::InvalidState);
+			});
+		}
+
+		int32_t CompleteDeferredCallbackTransactionCallback(
+			uint64_t token) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread())
+					return Code(ScriptStatus::WrongThread);
+				return ScriptEngine::Get().CompleteDeferredCallbackTransaction(token)
+					? Code(ScriptStatus::Success)
+					: Code(ScriptStatus::InvalidState);
+			});
+		}
+
+		NativeDeferredCallbackTransactionsApiV1
+			BuildDeferredCallbackTransactionsApiV1()
+		{
+			NativeDeferredCallbackTransactionsApiV1 api;
+			api.BeginCallback = &BeginDeferredCallbackTransactionCallback;
+			api.CompleteCallback = &CompleteDeferredCallbackTransactionCallback;
+			return api;
+		}
+
 		NativeGameplayApiV1 BuildGameplayApiV1()
 		{
 			NativeGameplayApiV1 api;
@@ -2465,6 +2803,30 @@ namespace TomCat::Scripting {
 				{
 					const NativeComponentSchemaApiV1 api =
 						BuildComponentSchemaApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
+				if (capability == DeferredCommandsCapabilityName)
+				{
+					const NativeDeferredCommandsApiV1 api =
+						BuildDeferredCommandsApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
+				if (capability == DeferredCallbackTransactionsCapabilityName)
+				{
+					const NativeDeferredCallbackTransactionsApiV1 api =
+						BuildDeferredCallbackTransactionsApiV1();
 					*required = sizeof(api);
 					if (minimumVersion > api.Version)
 						return Code(ScriptStatus::VersionMismatch);
@@ -2702,9 +3064,13 @@ namespace TomCat::Scripting {
 				if (prefabHandle == 0 || !std::isfinite(worldPosition.X)
 					|| !std::isfinite(worldPosition.Y)
 					|| !std::isfinite(worldPosition.Z))
-					return Code(ScriptStatus::InvalidArgument);
+					return RejectDeferredMutation(context,
+						ScriptStatus::InvalidArgument,
+						"Prefab handle or world position is invalid");
 				return ScriptEngine::Get().QueueInstantiatePrefab(context,
-					prefabHandle, worldPosition, parent) ? 1 : 0;
+					prefabHandle, worldPosition, parent) ? 1
+					: RejectDeferredMutation(context, ScriptStatus::InvalidArgument,
+						"Prefab context or parent is unavailable");
 			});
 		}
 
@@ -2714,6 +3080,7 @@ namespace TomCat::Scripting {
 		NativeComponentType componentType, uint32_t propertyId,
 		NativePropertyValueV1 value) noexcept
 	{
+		ImmediateComponentPropertyScope immediate;
 		return GameplaySetComponentPropertyCallback(entity,
 			static_cast<int32_t>(componentType), propertyId, value);
 	}
@@ -2722,6 +3089,7 @@ namespace TomCat::Scripting {
 		uint64_t componentTypeId, uint64_t propertyId,
 		NativePropertyValueV1 value) noexcept
 	{
+		ImmediateComponentPropertyScope immediate;
 		return ComponentSetPropertyCallback(entity, componentTypeId,
 			propertyId, value);
 	}
@@ -2730,6 +3098,7 @@ namespace TomCat::Scripting {
 		uint64_t componentTypeId, uint64_t propertyId,
 		NativeUtf8View value) noexcept
 	{
+		ImmediateComponentPropertyScope immediate;
 		return ComponentStringSetPropertyCallback(entity, componentTypeId,
 			propertyId, value);
 	}

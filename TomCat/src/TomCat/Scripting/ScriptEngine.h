@@ -4,8 +4,12 @@
 #include "TomCat/Core/UUID.h"
 
 #include <array>
+#include <cstddef>
+#include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -53,12 +57,51 @@ namespace TomCat {
 			bool QueueBehaviourEnabled(uint64_t attachmentId, bool enabled);
 			bool QueueRemoveBehaviour(uint64_t attachmentId);
 			bool QueueDestroyEntity(const EntityHandleV1& entity);
+			// Appends an explicit abort marker for the current callback batch.
+			// This preserves atomicity when a later mutation is rejected before it
+			// can become a normal deferred command.
+			bool MarkDeferredCommandBatchFailed(const EntityHandleV1& context,
+				std::string reason);
+			// Callback-scoped transactions are layered over the legacy Scene queue.
+			// Begin records the queue suffix owned by one managed callback; Complete
+			// seals it and the outermost completion drains all reentrant batches.
+			bool BeginDeferredCallbackTransaction(const EntityHandleV1& context,
+				uint64_t& token);
+			bool CompleteDeferredCallbackTransaction(uint64_t token);
 			bool QueueCreateEntity(const EntityHandleV1& context, std::string name,
 				NativeVector3 worldPosition, const EntityHandleV1& parent,
 				EntityHandleV1& reservedEntity);
 			bool IsPendingCreate(const EntityHandleV1& entity) const;
+			// Resolves the entity against the ordered command stream. A known entity
+			// that has already been destroyed (including by an ancestor destroy) is
+			// reported with alive=false so duplicate Destroy calls can be no-ops while
+			// every other mutation rejects the projected-dead target.
+			bool GetProjectedEntityLiveness(const EntityHandleV1& entity,
+				bool& alive) const;
+			bool GetProjectedParent(const EntityHandleV1& entity,
+				EntityHandleV1& parent) const;
+			bool GetProjectedChildren(const EntityHandleV1& entity,
+				std::vector<EntityHandleV1>& children) const;
+			bool GetProjectedEntities(const EntityHandleV1& context,
+				std::vector<EntityHandleV1>& entities) const;
+			bool GetProjectedEntityName(const EntityHandleV1& entity,
+				std::string& name) const;
+			bool GetProjectedGameplayTag(const EntityHandleV1& entity,
+				std::string& tag) const;
+			bool GetProjectedLayer(const EntityHandleV1& entity,
+				uint32_t& layer) const;
+			bool GetProjectedActiveInHierarchy(const EntityHandleV1& entity,
+				bool& active) const;
+			bool GetProjectedTransformProperty(const EntityHandleV1& entity,
+				uint32_t propertyId, NativeVector3& value) const;
+			bool QueueSetEntityName(const EntityHandleV1& entity, std::string name);
+			bool QueueSetGameplayTag(const EntityHandleV1& entity, std::string tag);
+			bool QueueSetLayer(const EntityHandleV1& entity, uint32_t layer);
 			bool GetProjectedComponentPresence(const EntityHandleV1& entity,
 				NativeComponentType componentType, bool& present) const;
+			bool TryGetProjectedComponentProperty(const EntityHandleV1& entity,
+				NativeComponentType componentType, uint32_t propertyId,
+				NativePropertyValueV1& value, bool& useDefault) const;
 			bool QueueSetParent(const EntityHandleV1& entity,
 				const EntityHandleV1& parent);
 			bool QueueAddComponent(const EntityHandleV1& entity,
@@ -69,8 +112,17 @@ namespace TomCat {
 				NativeComponentType componentType, uint32_t propertyId,
 				NativePropertyValueV1 value);
 			bool QueueSetActiveSelf(const EntityHandleV1& entity, bool active);
+			bool GetProjectedActiveSelf(const EntityHandleV1& entity,
+				bool& active) const;
 			bool GetProjectedRegisteredComponentPresence(const EntityHandleV1& entity,
 				uint64_t componentTypeId, bool& present) const;
+			bool TryGetProjectedRegisteredComponentProperty(
+				const EntityHandleV1& entity, uint64_t componentTypeId,
+				uint64_t propertyId, NativePropertyValueV1& value,
+				bool& useDefault) const;
+			bool TryGetProjectedRegisteredComponentStringProperty(
+				const EntityHandleV1& entity, uint64_t componentTypeId,
+				uint64_t propertyId, std::string& value, bool& useDefault) const;
 			bool QueueAddRegisteredComponent(const EntityHandleV1& entity,
 				uint64_t componentTypeId);
 			bool QueueRemoveRegisteredComponent(const EntityHandleV1& entity,
@@ -84,7 +136,7 @@ namespace TomCat {
 			bool QueueInstantiatePrefab(const EntityHandleV1& context,
 				uint64_t prefabHandle, NativeVector3 worldPosition,
 				const EntityHandleV1& parent);
-			void FlushDeferredCommands(uint64_t sceneSessionId);
+			bool FlushDeferredCommands(uint64_t sceneSessionId);
 			// Called by Scene while the entity and its pure-data script entries are
 			// still alive, so managed OnDisable/OnDestroy can safely inspect Entity.
 			void NotifyEntityDestroyed(Scene& scene, uint64_t entityId);
@@ -125,6 +177,7 @@ namespace TomCat {
 
 			enum class DeferredCommandKind : uint8_t
 			{
+				AbortBatch,
 				DestroyEntity,
 				AddComponent,
 				RemoveComponent,
@@ -135,6 +188,9 @@ namespace TomCat {
 				SetParent,
 				SetComponentProperty,
 				SetActiveSelf,
+				SetEntityName,
+				SetGameplayTag,
+				SetLayer,
 				AddRegisteredComponent,
 				RemoveRegisteredComponent,
 				SetRegisteredComponentProperty,
@@ -155,10 +211,72 @@ namespace TomCat {
 				uint64_t RegisteredTypeId = 0;
 				uint64_t RegisteredPropertyId = 0;
 				std::string Name;
+				uint32_t Layer = 0;
 				bool Enabled = false;
 			};
 
+			struct OpenDeferredCallbackTransaction
+			{
+				uint64_t Token = 0;
+				EntityHandleV1 Context;
+				size_t CommandOffset = 0;
+			};
+
+			struct SealedDeferredCallbackTransaction
+			{
+				uint64_t Token = 0;
+				EntityHandleV1 Context;
+				std::vector<DeferredCommand> Commands;
+			};
+
+			struct ProjectedEntityState
+			{
+				EntityHandleV1 Handle;
+				uint64_t ParentId = 0;
+				std::string Name;
+				std::string GameplayTag = "Untagged";
+				uint32_t Layer = 0;
+				bool ActiveSelf = true;
+				bool Alive = true;
+				NativeVector3 Translation{};
+				NativeVector3 Rotation{};
+				NativeVector3 Scale{ 1.0f, 1.0f, 1.0f };
+				NativeVector3 LocalTranslation{};
+				NativeVector3 LocalRotation{};
+				NativeVector3 LocalScale{ 1.0f, 1.0f, 1.0f };
+			};
+
+			struct ProjectionSnapshot
+			{
+				uint64_t Revision = 0;
+				uint64_t RuntimeGeneration = 0;
+				bool Valid = true;
+				std::string Error;
+				std::vector<uint64_t> Order;
+				std::unordered_map<uint64_t, ProjectedEntityState> Entities;
+				std::unordered_map<uint64_t, std::vector<uint64_t>> Children;
+				// Validation-only Scene produced by replaying the same ordered command
+				// stream used at commit. Registered component queries read this copy so
+				// descriptor Add side effects are visible inside the recording callback.
+				std::shared_ptr<Scene> ProjectedScene;
+			};
+
+			std::shared_ptr<const ProjectionSnapshot> GetProjectionSnapshot(
+				const EntityHandleV1& context) const;
+			void InvalidateProjectionSnapshots() const;
+			bool DrainDeferredCallbackTransactions();
+			bool CommitDeferredCommandBatch(uint64_t sceneSessionId,
+				std::vector<DeferredCommand> commands, bool resolveEmpty);
+
 			bool QueueCommand(DeferredCommand command);
+			// Returns false for an attachment that never existed in any bound Scene.
+			// A known attachment remains distinguishable after a queued removal so a
+			// duplicate Remove can be an idempotent success while later setters fail.
+			bool GetProjectedBehaviourPresence(uint64_t attachmentId,
+				bool& present, EntityHandleV1* owner = nullptr) const;
+			bool ApplyDeferredCommands(Scene& scene, uint64_t sceneSessionId,
+				const std::vector<DeferredCommand>& commands,
+				bool publishRuntimeSideEffects, std::string& error) const;
 			uint64_t StartSceneCore(Scene& scene, uint64_t runtimeGeneration,
 				std::span<const UUID> initialEntityIDs, bool flushPendingCreates);
 			void InstallRuntimeEntityBatchCallback(Scene& scene, uint64_t sceneSessionId);
@@ -170,6 +288,8 @@ namespace TomCat {
 			bool InstantiateRuntimeAttachments(Scene& scene, uint64_t sceneSessionId,
 				std::span<const UUID> entityIDs);
 			void ReportFailure(const char* operation, ScriptStatus status) const;
+			void StopSceneAfterRuntimeFailure(uint64_t sceneSessionId,
+				const char* operation, ScriptStatus status);
 			enum class InputDispatchPhase : uint8_t
 			{
 				DisplayFrame,
@@ -200,7 +320,17 @@ namespace TomCat {
 			mutable std::mutex m_Mutex;
 			std::shared_ptr<IScriptRuntime> m_Runtime;
 			std::unordered_map<uint64_t, SceneBinding> m_Scenes;
+			std::unordered_set<uint64_t> m_StoppingSceneSessions;
 			std::vector<DeferredCommand> m_DeferredCommands;
+			std::optional<OpenDeferredCallbackTransaction>
+				m_OpenDeferredCallbackTransaction;
+			std::deque<SealedDeferredCallbackTransaction>
+				m_SealedDeferredCallbackTransactions;
+			uint64_t m_NextDeferredCallbackTransactionToken = 1;
+			bool m_DrainingDeferredCallbackTransactions = false;
+			mutable uint64_t m_ProjectionRevision = 1;
+			mutable std::unordered_map<uint64_t,
+				std::shared_ptr<const ProjectionSnapshot>> m_ProjectionSnapshots;
 			uint64_t m_NextSceneSessionId = 1;
 			std::thread::id m_MainThread;
 			std::array<bool, 512> m_CurrentKeys{};

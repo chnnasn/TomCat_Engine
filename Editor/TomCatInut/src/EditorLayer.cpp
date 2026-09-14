@@ -1852,7 +1852,9 @@ namespace TomCat {
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 
-		if (selectedEntity && m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
+		if (selectedEntity && m_ActiveScene
+			&& m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
+			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
 		{
 			ImGuizmo::AllowAxisFlip(false);
 			ImGuizmo::SetOrthographic(false);
@@ -3199,6 +3201,10 @@ namespace TomCat {
 
 		for (const ColliderDebugShape& shape : shapes)
 		{
+			const Entity shapeEntity = m_ActiveScene->FindEntityByUUID(shape.EntityID);
+			if (!shapeEntity
+				|| !m_ActiveScene->IsVisibleInEditorHierarchy(shapeEntity))
+				continue;
 			const bool selected = selectedUUID != UUID(0) && shape.EntityID == selectedUUID;
 			const bool edited = selected &&
 				((editMode == SceneHierarchyPanel::ColliderEditMode::Box &&
@@ -3336,7 +3342,8 @@ namespace TomCat {
 			editMode == SceneHierarchyPanel::ColliderEditMode::None ||
 			!m_ActiveScene ||
 			!selectedEntity || !selectedEntity.HasComponent<Transform>() ||
-			!selectedEntity.HasComponent<ID>())
+			!selectedEntity.HasComponent<ID>() ||
+			!m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity))
 		{
 			ResetColliderEditState();
 			return;

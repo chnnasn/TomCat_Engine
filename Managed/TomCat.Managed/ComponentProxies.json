@@ -21,7 +21,8 @@
         { "name": "OrthographicFarClip", "propertyId": "306", "kind": "Float" },
         { "name": "PerspectiveVerticalFov", "propertyId": "307", "kind": "Float" },
         { "name": "PerspectiveNearClip", "propertyId": "308", "kind": "Float" },
-        { "name": "PerspectiveFarClip", "propertyId": "309", "kind": "Float" }
+        { "name": "PerspectiveFarClip", "propertyId": "309", "kind": "Float" },
+        { "name": "Enabled", "propertyId": "310", "kind": "Bool" }
       ]
     },
     {

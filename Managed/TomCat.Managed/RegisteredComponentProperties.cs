@@ -20,7 +20,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetBool(Entity entity, ulong componentTypeId,
-		ulong propertyId, bool value) => NativeBridge.SetRegisteredBool(Validate(entity,
+		ulong propertyId, bool value) => NativeBridge.SetRegisteredBool(ValidateMutation(entity,
 		componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -30,7 +30,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetInt32(Entity entity, ulong componentTypeId,
-		ulong propertyId, int value) => NativeBridge.SetRegisteredInt32(Validate(entity,
+		ulong propertyId, int value) => NativeBridge.SetRegisteredInt32(ValidateMutation(entity,
 		componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -40,7 +40,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetInt64(Entity entity, ulong componentTypeId,
-		ulong propertyId, long value) => NativeBridge.SetRegisteredInt64(Validate(entity,
+		ulong propertyId, long value) => NativeBridge.SetRegisteredInt64(ValidateMutation(entity,
 		componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -50,7 +50,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetUInt32(Entity entity, ulong componentTypeId,
-		ulong propertyId, uint value) => NativeBridge.SetRegisteredUInt32(Validate(entity,
+		ulong propertyId, uint value) => NativeBridge.SetRegisteredUInt32(ValidateMutation(entity,
 		componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -60,7 +60,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetUInt64(Entity entity, ulong componentTypeId,
-		ulong propertyId, ulong value) => NativeBridge.SetRegisteredUInt64(Validate(entity,
+		ulong propertyId, ulong value) => NativeBridge.SetRegisteredUInt64(ValidateMutation(entity,
 		componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -70,7 +70,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetFloat(Entity entity, ulong componentTypeId,
-		ulong propertyId, float value) => NativeBridge.SetRegisteredFloat(Validate(entity,
+		ulong propertyId, float value) => NativeBridge.SetRegisteredFloat(ValidateMutation(entity,
 		componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -80,7 +80,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetDouble(Entity entity, ulong componentTypeId,
-		ulong propertyId, double value) => NativeBridge.SetRegisteredDouble(Validate(entity,
+		ulong propertyId, double value) => NativeBridge.SetRegisteredDouble(ValidateMutation(entity,
 		componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -90,7 +90,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetVector2(Entity entity, ulong componentTypeId,
-		ulong propertyId, Vector2 value) => NativeBridge.SetRegisteredVector2(Validate(
+		ulong propertyId, Vector2 value) => NativeBridge.SetRegisteredVector2(ValidateMutation(
 		entity, componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -100,7 +100,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetVector3(Entity entity, ulong componentTypeId,
-		ulong propertyId, Vector3 value) => NativeBridge.SetRegisteredVector3(Validate(
+		ulong propertyId, Vector3 value) => NativeBridge.SetRegisteredVector3(ValidateMutation(
 		entity, componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -110,7 +110,7 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetVector4(Entity entity, ulong componentTypeId,
-		ulong propertyId, Vector4 value) => NativeBridge.SetRegisteredVector4(Validate(
+		ulong propertyId, Vector4 value) => NativeBridge.SetRegisteredVector4(ValidateMutation(
 		entity, componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -122,7 +122,7 @@ public static class RegisteredComponentProperties
 
 	/// <summary>Color convenience access for a native Vector4 property.</summary>
 	public static void SetColor(Entity entity, ulong componentTypeId,
-		ulong propertyId, Color value) => NativeBridge.SetRegisteredColor(Validate(
+		ulong propertyId, Color value) => NativeBridge.SetRegisteredColor(ValidateMutation(
 		entity, componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
 
@@ -132,9 +132,28 @@ public static class RegisteredComponentProperties
 		Operation(componentTypeId, propertyId));
 
 	public static void SetString(Entity entity, ulong componentTypeId,
-		ulong propertyId, string value) => NativeBridge.SetRegisteredString(Validate(
+		ulong propertyId, string value) => NativeBridge.SetRegisteredString(ValidateMutation(
 		entity, componentTypeId, propertyId), componentTypeId, propertyId, value,
 		Operation(componentTypeId, propertyId));
+
+	private static Entity ValidateMutation(Entity entity, ulong componentTypeId,
+		ulong propertyId)
+	{
+		ArgumentNullException.ThrowIfNull(entity);
+		if (componentTypeId == 0)
+		{
+			NativeBridge.AbortDeferredCommandBatch(entity,
+				"Registered component type ID cannot be zero");
+			throw new ArgumentOutOfRangeException(nameof(componentTypeId));
+		}
+		if (propertyId == 0)
+		{
+			NativeBridge.AbortDeferredCommandBatch(entity,
+				"Registered component property ID cannot be zero");
+			throw new ArgumentOutOfRangeException(nameof(propertyId));
+		}
+		return entity;
+	}
 
 	private static Entity Validate(Entity entity, ulong componentTypeId,
 		ulong propertyId)

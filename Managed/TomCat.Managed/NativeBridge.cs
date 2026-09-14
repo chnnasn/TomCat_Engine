@@ -9,6 +9,13 @@ public sealed class TomCatException : InvalidOperationException
     public TomCatException(string message) : base(message) { }
 }
 
+internal sealed class DeferredCallbackProtocolException : InvalidOperationException
+{
+    internal DeferredCallbackProtocolException(string message) : base(message) { }
+	internal DeferredCallbackProtocolException(string message, Exception innerException)
+		: base(message, innerException) { }
+}
+
 internal static unsafe class NativeBridge
 {
 	private const int NativeInvalidArgument = -1;
@@ -24,6 +31,9 @@ internal static unsafe class NativeBridge
 	private static NativeApplicationPathsApiV1 s_applicationPathsApi;
 	private static NativeComponentApiV1 s_componentApi;
 	private static NativeComponentStringApiV1 s_componentStringApi;
+	private static NativeDeferredCommandsApiV1 s_deferredCommandsApi;
+	private static NativeDeferredCallbackTransactionsApiV1
+		s_deferredCallbackTransactionsApi;
 	private static NativeComponentSchemaApiV1 s_componentSchemaApi;
 	private static NativeAudioApiV1 s_audioApi;
 	private static NativeAudioSpatialApiV1 s_audioSpatialApi;
@@ -36,13 +46,20 @@ internal static unsafe class NativeBridge
 	private static bool s_applicationPathsBound;
 	private static bool s_componentBound;
 	private static bool s_componentStringBound;
+	private static bool s_deferredCommandsBound;
+	private static bool s_deferredCallbackTransactionsBound;
 	private static bool s_componentSchemaBound;
 	private static bool s_audioBound;
 	private static bool s_audioSpatialBound;
 	private static bool s_runtimeUIBound;
 	private static bool s_gameplayBound;
+	[ThreadStatic] private static ulong s_activeDeferredCallbackToken;
+	[ThreadStatic] private static bool s_deferredAbortProtocolFailed;
 
     internal static bool IsBound => Volatile.Read(ref s_bound);
+	internal static bool SupportsDeferredCallbackTransactions =>
+		Volatile.Read(ref s_deferredCommandsBound)
+		&& Volatile.Read(ref s_deferredCallbackTransactionsBound);
 
     internal static int Bind(NativeApiV1* api)
     {
@@ -69,6 +86,14 @@ internal static unsafe class NativeBridge
 		NativeComponentStringApiV1 componentStringCandidate = default;
 		bool hasComponentStringCandidate = TryReadComponentStringCapability(api,
 			out componentStringCandidate);
+		NativeDeferredCommandsApiV1 deferredCommandsCandidate = default;
+		bool hasDeferredCommandsCandidate = TryReadDeferredCommandsCapability(api,
+			out deferredCommandsCandidate);
+		NativeDeferredCallbackTransactionsApiV1
+			deferredCallbackTransactionsCandidate = default;
+		bool hasDeferredCallbackTransactionsCandidate =
+			TryReadDeferredCallbackTransactionsCapability(api,
+				out deferredCallbackTransactionsCandidate);
 		NativeComponentSchemaApiV1 componentSchemaCandidate = default;
 		bool hasComponentSchemaCandidate = TryReadComponentSchemaCapability(api,
 			out componentSchemaCandidate);
@@ -117,6 +142,18 @@ internal static unsafe class NativeBridge
 			{
 				s_componentStringApi = componentStringCandidate;
 				Volatile.Write(ref s_componentStringBound, true);
+			}
+			if (hasDeferredCommandsCandidate && !s_deferredCommandsBound)
+			{
+				s_deferredCommandsApi = deferredCommandsCandidate;
+				Volatile.Write(ref s_deferredCommandsBound, true);
+			}
+			if (hasDeferredCallbackTransactionsCandidate
+				&& !s_deferredCallbackTransactionsBound)
+			{
+				s_deferredCallbackTransactionsApi =
+					deferredCallbackTransactionsCandidate;
+				Volatile.Write(ref s_deferredCallbackTransactionsBound, true);
 			}
 			if (hasComponentSchemaCandidate && !s_componentSchemaBound)
 			{
@@ -291,6 +328,68 @@ internal static unsafe class NativeBridge
 			&& componentString.Size >= (uint)sizeof(NativeComponentStringApiV1)
 			&& componentString.GetProperty != null
 			&& componentString.SetProperty != null;
+	}
+
+	private static bool TryReadDeferredCommandsCapability(NativeApiV1* api,
+		out NativeDeferredCommandsApiV1 deferredCommands)
+	{
+		deferredCommands = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.DeferredCommandsApiV1");
+		NativeDeferredCommandsApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeDeferredCommandsApiV1), &required);
+			if (status != 0
+				|| required > (uint)sizeof(NativeDeferredCommandsApiV1))
+				return false;
+		}
+		deferredCommands = candidate;
+		return deferredCommands.Version == 1
+			&& deferredCommands.Size >= (uint)sizeof(NativeDeferredCommandsApiV1)
+			&& deferredCommands.AbortBatch != null;
+	}
+
+	private static bool TryReadDeferredCallbackTransactionsCapability(
+		NativeApiV1* api,
+		out NativeDeferredCallbackTransactionsApiV1 transactions)
+	{
+		transactions = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+
+		byte[] name = Encoding.UTF8.GetBytes(
+			"TomCat.DeferredCallbackTransactionsApiV1");
+		NativeDeferredCallbackTransactionsApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate,
+				(uint)sizeof(NativeDeferredCallbackTransactionsApiV1), &required);
+			if (status != 0
+				|| required
+					> (uint)sizeof(NativeDeferredCallbackTransactionsApiV1))
+				return false;
+		}
+		transactions = candidate;
+		return transactions.Version == 1
+			&& transactions.Size
+				>= (uint)sizeof(NativeDeferredCallbackTransactionsApiV1)
+			&& transactions.BeginCallback != null
+			&& transactions.CompleteCallback != null;
 	}
 
 	private static bool TryReadComponentSchemaCapability(NativeApiV1* api,
@@ -541,10 +640,14 @@ internal static unsafe class NativeBridge
     }
 
     internal static void SetEntityName(Entity entity, string value) =>
-        WithUtf8(value, "Entity.Name", view => s_api.EntitySetName(ToNative(entity), view), s_api.EntitySetName != null);
+        WithEntityUtf8(entity, value, "Entity.Name",
+			view => s_api.EntitySetName(ToNative(entity), view),
+			s_api.EntitySetName != null);
 
     internal static void SetEntityTag(Entity entity, string value) =>
-        WithUtf8(value, "Entity.Tag", view => s_api.EntitySetTag(ToNative(entity), view), s_api.EntitySetTag != null);
+        WithEntityUtf8(entity, value, "Entity.Tag",
+			view => s_api.EntitySetTag(ToNative(entity), view),
+			s_api.EntitySetTag != null);
 
     internal static uint GetEntityLayer(Entity entity)
     {
@@ -572,11 +675,27 @@ internal static unsafe class NativeBridge
 	internal static Entity CreateEntity(Entity context, string name,
 		Vector3 worldPosition, Entity? parent)
 	{
-		ArgumentNullException.ThrowIfNull(name);
 		EnsureMainThread();
+		if (name is null)
+		{
+			AbortDeferredCommandBatch(context,
+				"World.CreateEntity name cannot be null");
+			throw new ArgumentNullException(nameof(name));
+		}
 		RequireGameplay(s_gameplayApi.CreateEntityDeferred != null,
 			"World.CreateEntity");
-		byte[] bytes = Encoding.UTF8.GetBytes(name);
+		byte[] bytes;
+		try
+		{
+			bytes = s_strictUtf8.GetBytes(name);
+		}
+		catch (EncoderFallbackException error)
+		{
+			AbortDeferredCommandBatch(context,
+				"World.CreateEntity name is not valid Unicode");
+			throw new ArgumentException("Name is not valid Unicode.", nameof(name),
+				error);
+		}
 		NativeEntityHandleV1 created = default;
 		NativeEntityHandleV1 parentHandle = parent is null ? default : ToNative(parent);
 		fixed (byte* pointer = bytes)
@@ -1100,8 +1219,12 @@ internal static unsafe class NativeBridge
 		ulong propertyId, string value, string operation)
 	{
 		const int MaximumBytes = RegisteredComponentProperties.MaximumStringUtf8Bytes;
-		ArgumentNullException.ThrowIfNull(value);
 		EnsureMainThread();
+		if (value is null)
+		{
+			AbortDeferredCommandBatch(entity, $"{operation} value cannot be null");
+			throw new ArgumentNullException(nameof(value));
+		}
 		RequireComponentString(s_componentStringApi.SetProperty != null, operation);
 		byte[] bytes;
 		try
@@ -1110,12 +1233,18 @@ internal static unsafe class NativeBridge
 		}
 		catch (EncoderFallbackException error)
 		{
+			AbortDeferredCommandBatch(entity,
+				$"{operation} value is not valid Unicode");
 			throw new ArgumentException("Value is not valid Unicode.", nameof(value),
 				error);
 		}
 		if (bytes.Length > MaximumBytes)
+		{
+			AbortDeferredCommandBatch(entity,
+				$"{operation} value exceeds the UTF-8 size limit");
 			throw new ArgumentOutOfRangeException(nameof(value),
 				$"Registered component strings may contain at most {MaximumBytes} UTF-8 bytes.");
+		}
 		fixed (byte* pointer = bytes)
 			Check(s_componentStringApi.SetProperty(ToNative(entity), typeId,
 				propertyId, new NativeUtf8View(pointer, (ulong)bytes.Length)), operation);
@@ -2029,14 +2158,23 @@ internal static unsafe class NativeBridge
     {
         EnsureMainThread();
         Require(s_api.BehaviourSetEnabledDeferred != null, "TomCatBehaviour.Enabled");
-		Check(s_api.BehaviourSetEnabledDeferred(instance.Value, enabled ? 1 : 0), "TomCatBehaviour.Enabled");
+		int status = s_api.BehaviourSetEnabledDeferred(instance.Value,
+			enabled ? 1 : 0);
+		if (status != 0 && ScriptExecutionContext.IsActive)
+			AbortDeferredCommandBatch(ScriptExecutionContext.CurrentEntity,
+				"TomCatBehaviour.Enabled mutation was rejected");
+		Check(status, "TomCatBehaviour.Enabled");
 	}
 
 	internal static void RemoveBehaviour(ScriptInstanceHandle instance)
 	{
 		EnsureMainThread();
 		Require(s_api.BehaviourRemoveDeferred != null, "TomCatBehaviour.RemoveFromEntity");
-		Check(s_api.BehaviourRemoveDeferred(instance.Value), "TomCatBehaviour.RemoveFromEntity");
+		int status = s_api.BehaviourRemoveDeferred(instance.Value);
+		if (status != 0 && ScriptExecutionContext.IsActive)
+			AbortDeferredCommandBatch(ScriptExecutionContext.CurrentEntity,
+				"TomCatBehaviour.RemoveFromEntity mutation was rejected");
+		Check(status, "TomCatBehaviour.RemoveFromEntity");
 	}
 
 	internal static ulong GetActiveSceneHandle()
@@ -2089,7 +2227,11 @@ internal static unsafe class NativeBridge
 		Require(s_api.PrefabInstantiateDeferred != null,
 			"TomCatBehaviour.Instantiate");
 		if (prefab.Handle == 0)
+		{
+			AbortDeferredCommandBatch(context,
+				"Prefab handle is invalid");
 			return false;
+		}
 		NativeEntityHandleV1 parentHandle = parent is null
 			? default : ToNative(parent);
 		return ReadBoolean(s_api.PrefabInstantiateDeferred(ToNative(context),
@@ -2101,6 +2243,94 @@ internal static unsafe class NativeBridge
     {
         WithUtf8(message, "Log", view => s_api.Log(level, view), s_api.Log != null);
     }
+
+	internal static bool TryBeginDeferredCallbackTransaction(Entity context,
+		out ulong token)
+	{
+		token = 0;
+		// Each top-level managed callback owns one transaction on the main thread.
+		// Clear any completed/fail-stopped callback state before opening its successor.
+		s_activeDeferredCallbackToken = 0;
+		s_deferredAbortProtocolFailed = false;
+		if (!SupportsDeferredCallbackTransactions
+			|| s_deferredCallbackTransactionsApi.BeginCallback == null)
+			return false;
+		ulong nativeToken = 0;
+		if (s_deferredCallbackTransactionsApi.BeginCallback(
+			ToNative(context), &nativeToken) != 0 || nativeToken == 0)
+			return false;
+		token = nativeToken;
+		s_activeDeferredCallbackToken = nativeToken;
+		return true;
+	}
+
+	internal static bool CompleteDeferredCallbackTransaction(ulong token)
+	{
+		if (token == 0 || token != s_activeDeferredCallbackToken
+			|| !SupportsDeferredCallbackTransactions
+			|| s_deferredCallbackTransactionsApi.CompleteCallback == null)
+			return false;
+
+		// AbortBatch is the only operation that can guarantee rollback of commands
+		// already staged by a failing callback. If that signal failed, never call
+		// CompleteCallback: native must fail-stop the Scene and discard the open batch.
+		if (s_deferredAbortProtocolFailed)
+		{
+			s_activeDeferredCallbackToken = 0;
+			s_deferredAbortProtocolFailed = false;
+			return false;
+		}
+
+		try
+		{
+			return s_deferredCallbackTransactionsApi.CompleteCallback(token) == 0;
+		}
+		finally
+		{
+			// CompleteCallback may synchronously re-enter managed code and finish
+			// another callback. Do not clear tracking that belongs to that callback.
+			if (s_activeDeferredCallbackToken == token)
+			{
+				s_activeDeferredCallbackToken = 0;
+				s_deferredAbortProtocolFailed = false;
+			}
+		}
+	}
+
+	internal static void AbortDeferredCommandBatch(Entity context, string reason)
+	{
+		// Legacy hosts without this optional capability have no callback transaction
+		// to poison. Once it is bound, a rejected or throwing abort is a protocol
+		// failure: allowing CompleteCallback to run could commit a failed callback.
+		if (!Volatile.Read(ref s_deferredCommandsBound)
+			|| s_deferredCommandsApi.AbortBatch == null)
+			return;
+		try
+		{
+			byte[] bytes = Encoding.UTF8.GetBytes(reason ?? string.Empty);
+			fixed (byte* pointer = bytes)
+			{
+				int status = s_deferredCommandsApi.AbortBatch(ToNative(context),
+					new NativeUtf8View(pointer, (ulong)bytes.Length));
+				if (status != 0)
+				{
+					s_deferredAbortProtocolFailed = true;
+					throw new DeferredCallbackProtocolException(
+						$"Native rejected deferred callback abort with status {status}.");
+				}
+			}
+		}
+		catch (DeferredCallbackProtocolException)
+		{
+			throw;
+		}
+		catch (Exception exception)
+		{
+			s_deferredAbortProtocolFailed = true;
+			throw new DeferredCallbackProtocolException(
+				"Native deferred callback abort threw an exception.", exception);
+		}
+	}
 
     internal static void ReportManagedException(string message, string? file = null, int line = 0, int column = 0)
     {
@@ -2160,6 +2390,33 @@ internal static unsafe class NativeBridge
 			throw new TomCatException(
 				$"{operation} returned malformed UTF-8: {error.Message}");
 		}
+	}
+
+	private static void WithEntityUtf8(Entity entity, string value,
+		string operation, Func<NativeUtf8View, int> callback, bool available)
+	{
+		EnsureMainThread();
+		if (value is null)
+		{
+			AbortDeferredCommandBatch(entity, $"{operation} value cannot be null");
+			throw new ArgumentNullException(nameof(value));
+		}
+		Require(available, operation);
+		byte[] bytes;
+		try
+		{
+			bytes = s_strictUtf8.GetBytes(value);
+		}
+		catch (EncoderFallbackException error)
+		{
+			AbortDeferredCommandBatch(entity,
+				$"{operation} value is not valid Unicode");
+			throw new ArgumentException("Value is not valid Unicode.", nameof(value),
+				error);
+		}
+		fixed (byte* pointer = bytes)
+			Check(callback(new NativeUtf8View(pointer, (ulong)bytes.Length)),
+				operation);
 	}
 
     private static void WithUtf8(string value, string operation,

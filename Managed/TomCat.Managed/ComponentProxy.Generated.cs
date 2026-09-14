@@ -154,6 +154,13 @@ public sealed partial class Camera : IEntityComponent
         set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
             0x0000000000000135UL, value);
     }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000136UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000136UL, value);
+    }
 }
 
 [RegisteredComponent(0x9f00000000000006UL)]

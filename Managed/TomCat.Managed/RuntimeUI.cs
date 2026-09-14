@@ -118,6 +118,7 @@ public sealed class UIText : IEntityComponent
 	public const ulong TypeId = 0x9f01000000000005UL;
 	private const ulong EnabledId = 0x9f01500000000001UL;
 	private const ulong FontId = 0x9f01500000000002UL;
+	private const ulong TextId = 0x9f01500000000003UL;
 	private const ulong FontSizeId = 0x9f01500000000004UL;
 	private const ulong ColorId = 0x9f01500000000005UL;
 	private const ulong AlignmentId = 0x9f01500000000006UL;
@@ -133,7 +134,7 @@ public sealed class UIText : IEntityComponent
 	public AssetRef<FontAsset> Font { get => new(NativeBridge.GetRegisteredUInt64(Entity, TypeId, FontId, "UIText.Font")); set => NativeBridge.SetRegisteredUInt64(Entity, TypeId, FontId, value.Handle, "UIText.Font"); }
 	public AssetRef<FontAsset> FallbackFont { get => new(NativeBridge.GetRegisteredUInt64(Entity, TypeId, FallbackFontId, "UIText.FallbackFont")); set => NativeBridge.SetRegisteredUInt64(Entity, TypeId, FallbackFontId, value.Handle, "UIText.FallbackFont"); }
 	public AssetRef<FontAsset> EmojiFont { get => new(NativeBridge.GetRegisteredUInt64(Entity, TypeId, EmojiFontId, "UIText.EmojiFont")); set => NativeBridge.SetRegisteredUInt64(Entity, TypeId, EmojiFontId, value.Handle, "UIText.EmojiFont"); }
-	public string Text { get => NativeBridge.GetRuntimeUIText(Entity, TypeId, "UIText.Text"); set => NativeBridge.SetRuntimeUIText(Entity, TypeId, value, "UIText.Text"); }
+	public string Text { get => NativeBridge.GetRegisteredString(Entity, TypeId, TextId, "UIText.Text"); set => NativeBridge.SetRegisteredString(Entity, TypeId, TextId, value, "UIText.Text"); }
 	public float FontSize { get => Float(FontSizeId, "FontSize"); set => Float(FontSizeId, value, "FontSize"); }
 	public Color Color { get => NativeBridge.GetRegisteredColor(Entity, TypeId, ColorId, "UIText.Color"); set => NativeBridge.SetRegisteredColor(Entity, TypeId, ColorId, value, "UIText.Color"); }
 	public TextAlignment Alignment { get => (TextAlignment)NativeBridge.GetRegisteredInt32(Entity, TypeId, AlignmentId, "UIText.Alignment"); set => NativeBridge.SetRegisteredInt32(Entity, TypeId, AlignmentId, (int)value, "UIText.Alignment"); }

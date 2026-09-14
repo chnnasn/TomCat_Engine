@@ -757,14 +757,16 @@ namespace {
 		{
 			started = scene->OnRuntimeStart();
 			Require(started, "scene rejected the real compiled managed runtime");
+			TomCat::Entity lifecycle = scene->FindEntityByUUID(lifecycleEntityID);
+			Require(lifecycle && lifecycle.GetGameplayTag() == "enabled",
+				"serialized field or OnCreate/OnEnable order was wrong before the first runtime frame");
 			scene->OnUpdateRuntime(TomCat::Timestep(TomCat::Scene::FixedRuntimeTimestep));
 
-			TomCat::Entity lifecycle = scene->FindEntityByUUID(lifecycleEntityID);
 			TomCat::Entity trigger = scene->FindEntityByUUID(triggerEntityID);
 			Require(lifecycle && trigger,
 				"runtime invalidated smoke-test entities unexpectedly");
 			Require(lifecycle.GetGameplayTag() == "updated",
-				"serialized field or OnCreate/OnEnable/OnFixedUpdate/OnUpdate order was wrong");
+				"faulting earlier script prevented, poisoned, or rolled back the later healthy OnUpdate");
 			Require(lifecycle.GetName() == "collision-received",
 				"compiled C# script did not receive CollisionEnter2D");
 			Require(trigger.GetName() == "trigger-received",
@@ -1511,7 +1513,17 @@ namespace E2E;
 [DefaultExecutionOrder(-100)]
 public sealed class FaultyProbe : TomCatBehaviour
 {
-    protected override void OnUpdate(float dt) => throw new InvalidOperationException("intentional e2e failure");
+    private Entity _lifecycle = null!;
+    protected override void OnCreate()
+    {
+        _lifecycle = World.Find("Lifecycle target")
+            ?? throw new InvalidOperationException("missing lifecycle target");
+    }
+    protected override void OnUpdate(float dt)
+    {
+        _lifecycle.Tag = "faulty-write-must-roll-back";
+        throw new InvalidOperationException("intentional e2e failure");
+    }
 }
 )CS");
 		WriteTextFile(triggerSource, R"CS(using TomCat;
@@ -1602,6 +1614,9 @@ public sealed class PrefabSpawnerProbe : TomCatBehaviour
             sprite.Color = new Color(0.25f, 0.5f, 0.75f, 1.0f);
             sprite.SortingLayer = 3;
             sprite.OrderInLayer = 9;
+            if (!sprite.Color.Equals(new Color(0.25f, 0.5f, 0.75f, 1.0f)) ||
+                sprite.SortingLayer != 3 || sprite.OrderInLayer != 9)
+                Environment.Exit(99);
             _runtimeMarker.ActiveSelf = false;
             Log.Info("TOMCAT_PLAYER_E2E_WORLD_CHAIN_QUEUED");
         }

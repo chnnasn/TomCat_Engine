@@ -318,6 +318,11 @@ namespace TomCat::Scripting {
 	inline constexpr uint32_t ComponentStringMaximumBytesV1 = 16u * 1024u * 1024u;
 	inline constexpr std::string_view ComponentSchemaCapabilityName =
 		"TomCat.ComponentSchemaApiV1";
+	inline constexpr std::string_view DeferredCommandsCapabilityName =
+		"TomCat.DeferredCommandsApiV1";
+	inline constexpr std::string_view DeferredCallbackTransactionsCapabilityName =
+		"TomCat.DeferredCallbackTransactionsApiV1";
+	inline constexpr uint32_t DeferredCommandFailureMaximumBytesV1 = 4096;
 	inline constexpr std::string_view GameplayCapabilityName =
 		"TomCat.GameplayApiV1";
 
@@ -482,6 +487,29 @@ namespace TomCat::Scripting {
 		int32_t(TC_SCRIPT_CALL* SetProperty)(EntityHandleV1 entity,
 			uint64_t componentTypeId, uint64_t propertyId,
 			NativeUtf8View value) = nullptr;
+	};
+
+	// Lets the managed host poison the current Scene transaction when a callback
+	// faults before a failing mutation reaches a native setter.
+	struct NativeDeferredCommandsApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeDeferredCommandsApiV1);
+		int32_t(TC_SCRIPT_CALL* AbortBatch)(EntityHandleV1 context,
+			NativeUtf8View reason) = nullptr;
+	};
+
+	// Opens and synchronously completes one native command transaction for the
+	// outermost managed lifecycle callback. CompleteCallback may trigger managed
+	// lifecycle publication recursively; nested completions are sealed and drained
+	// by the outermost native call.
+	struct NativeDeferredCallbackTransactionsApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeDeferredCallbackTransactionsApiV1);
+		int32_t(TC_SCRIPT_CALL* BeginCallback)(EntityHandleV1 context,
+			uint64_t* token) = nullptr;
+		int32_t(TC_SCRIPT_CALL* CompleteCallback)(uint64_t token) = nullptr;
 	};
 
 	enum class NativeComponentSchemaFlagsV1 : uint32_t
@@ -686,6 +714,10 @@ namespace TomCat::Scripting {
 		int32_t(TC_SCRIPT_CALL* InstantiateAttachments)(uint64_t sceneRuntimeId,
 			const NativeScriptAttachmentV1* items, uint32_t count,
 			NativeByteView fieldsJson) = nullptr;
+		// Added in ManagedApi version 2. Structural command projections are
+		// resolved explicitly so a version-1 host is rejected during bootstrap.
+		int32_t(TC_SCRIPT_CALL* ResolveDeferredCommandBatch)(
+			uint64_t sceneRuntimeId, int32_t committed) = nullptr;
 	};
 
 	using GetManagedApiFn = int32_t(TC_SCRIPT_CALL*)(
@@ -704,6 +736,8 @@ namespace TomCat::Scripting {
 	static_assert(std::is_standard_layout_v<NativePropertyValueV1>);
 	static_assert(std::is_standard_layout_v<NativeComponentApiV1>);
 	static_assert(std::is_standard_layout_v<NativeComponentStringApiV1>);
+	static_assert(std::is_standard_layout_v<NativeDeferredCommandsApiV1>);
+	static_assert(std::is_standard_layout_v<NativeDeferredCallbackTransactionsApiV1>);
 	static_assert(std::is_standard_layout_v<NativeComponentSchemaInfoV1>);
 	static_assert(std::is_standard_layout_v<NativeComponentPropertySchemaInfoV1>);
 	static_assert(std::is_standard_layout_v<NativeComponentSchemaApiV1>);
@@ -720,6 +754,15 @@ namespace TomCat::Scripting {
 	static_assert(offsetof(NativeComponentStringApiV1, GetProperty) == 8);
 	static_assert(offsetof(NativeComponentStringApiV1, SetProperty) == 16);
 	static_assert(sizeof(NativeComponentStringApiV1) == 24);
+	static_assert(offsetof(NativeDeferredCommandsApiV1, Version) == 0);
+	static_assert(offsetof(NativeDeferredCommandsApiV1, Size) == 4);
+	static_assert(offsetof(NativeDeferredCommandsApiV1, AbortBatch) == 8);
+	static_assert(sizeof(NativeDeferredCommandsApiV1) == 16);
+	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, Version) == 0);
+	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, Size) == 4);
+	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, BeginCallback) == 8);
+	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, CompleteCallback) == 16);
+	static_assert(sizeof(NativeDeferredCallbackTransactionsApiV1) == 24);
 
 }
 

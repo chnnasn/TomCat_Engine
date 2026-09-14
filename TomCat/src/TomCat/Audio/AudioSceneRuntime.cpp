@@ -6,12 +6,40 @@
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
 namespace TomCat {
 
 	namespace {
+
+		struct DeferredVoiceDestroy
+		{
+			Scene* Owner = nullptr;
+			AudioVoiceHandle Voice = 0;
+		};
+
+		std::vector<DeferredVoiceDestroy> DeferredVoiceDestroys;
+
+		void FlushDeferredVoiceDestroys(Scene& scene)
+		{
+			AudioEngine& engine = AudioEngine::Get();
+			for (auto iterator = DeferredVoiceDestroys.begin();
+				iterator != DeferredVoiceDestroys.end();)
+			{
+				if (iterator->Owner != &scene)
+				{
+					++iterator;
+					continue;
+				}
+				if (iterator->Voice != 0 && engine.HasVoice(iterator->Voice)
+					&& !engine.DestroyVoice(iterator->Voice))
+					TC_Core_Warn("Could not destroy deferred audio voice {0}",
+						iterator->Voice);
+				iterator = DeferredVoiceDestroys.erase(iterator);
+			}
+		}
 
 		bool ValidSource(const AudioSource& source)
 		{
@@ -84,6 +112,7 @@ namespace TomCat {
 
 	void AudioSceneRuntime::Start(Scene& scene)
 	{
+		FlushDeferredVoiceDestroys(scene);
 		// Prepare runtime fields before managed OnCreate. Auto-play is reconciled by
 		// Update only after managed startup has finalized ActiveSelf and source data.
 		for (Entity entity : CollectEntities(scene))
@@ -100,6 +129,7 @@ namespace TomCat {
 
 	void AudioSceneRuntime::Stop(Scene& scene)
 	{
+		FlushDeferredVoiceDestroys(scene);
 		for (Entity entity : CollectEntities(scene))
 		{
 			if (entity.HasComponent<AudioSource>())
@@ -112,6 +142,7 @@ namespace TomCat {
 
 	void AudioSceneRuntime::Update(Scene& scene, double deltaSeconds)
 	{
+		FlushDeferredVoiceDestroys(scene);
 		AudioEngine::Get().Update(deltaSeconds);
 		const std::vector<Entity> entities = CollectEntities(scene);
 		const ListenerPose listener = FindListener(scene, entities);
@@ -148,7 +179,9 @@ namespace TomCat {
 			}
 			if (source.RuntimeVoice != 0)
 			{
-				ApplySettings(entity);
+				if (!ApplySettings(entity))
+					TC_Core_Warn("Could not reconcile AudioSource settings on entity '{0}'",
+						entity.GetName());
 				AudioSpatialSettings spatial;
 				if (listener.Available)
 				{
@@ -158,7 +191,9 @@ namespace TomCat {
 						listener.Right.y, source.SpatialBlend,
 						source.MinDistance, source.MaxDistance);
 				}
-				AudioEngine::Get().SetSpatial(source.RuntimeVoice, spatial);
+				if (!AudioEngine::Get().SetSpatial(source.RuntimeVoice, spatial))
+					TC_Core_Warn("Could not reconcile AudioSource spatial settings on entity '{0}'",
+						entity.GetName());
 			}
 		}
 	}
@@ -255,6 +290,27 @@ namespace TomCat {
 			&& engine.SetPitch(source.RuntimeVoice, source.Pitch)
 			&& engine.SetMixerGroup(source.RuntimeVoice,
 				ToMixerGroup(source.MixerGroup));
+	}
+
+	void AudioSceneRuntime::DeferDestroySource(Entity entity)
+	{
+		if (!entity || !entity.HasComponent<AudioSource>())
+			return;
+		auto& source = entity.GetComponent<AudioSource>();
+		if (source.RuntimeVoice != 0)
+		{
+			const DeferredVoiceDestroy pending{ entity.GetScene(), source.RuntimeVoice };
+			const bool alreadyQueued = std::any_of(DeferredVoiceDestroys.begin(),
+				DeferredVoiceDestroys.end(), [&](const DeferredVoiceDestroy& item)
+				{
+					return item.Owner == pending.Owner && item.Voice == pending.Voice;
+				});
+			if (!alreadyQueued)
+				DeferredVoiceDestroys.push_back(pending);
+		}
+		source.RuntimeVoice = 0;
+		source.RuntimeClipHandle = AssetHandle(0);
+		source.RuntimeStreaming = false;
 	}
 
 	void AudioSceneRuntime::DestroySource(Entity entity)

@@ -24,4 +24,7 @@ public unsafe struct ManagedApiV1
 	public delegate* unmanaged[Cdecl]<ulong, ulong*, uint, int> DestroyAttachments;
 	public delegate* unmanaged[Cdecl]<ulong, NativeScriptAttachmentV1*, uint, NativeByteView, int>
 		InstantiateAttachments;
+	// Tail field introduced by Managed ABI v2. The historical type name is kept
+	// because the prefix layout remains source compatible.
+	public delegate* unmanaged[Cdecl]<ulong, int, int> ResolveDeferredCommandBatch;
 }

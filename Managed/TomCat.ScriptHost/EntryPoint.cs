@@ -48,7 +48,8 @@ public static unsafe class EntryPoint
 				BeginUnloadDomain = &Exports.BeginUnloadDomain,
 				PollUnload = &Exports.PollUnload,
 				DestroyAttachments = &Exports.DestroyAttachments,
-				InstantiateAttachments = &Exports.InstantiateAttachments
+				InstantiateAttachments = &Exports.InstantiateAttachments,
+				ResolveDeferredCommandBatch = &Exports.ResolveDeferredCommandBatch
             };
             return HostStatus.Success;
         }
@@ -199,6 +200,16 @@ internal static unsafe class Exports
         return HostErrors.Guard(nameof(SetEnabled), () =>
             HostRegistry.GetScene(sceneRuntimeId).SetEnabled(attachmentId, enabled != 0));
     }
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	internal static int ResolveDeferredCommandBatch(ulong sceneRuntimeId, int committed)
+	{
+		if (committed != 0 && committed != 1)
+			return HostStatus.InvalidArgument;
+		return HostErrors.Guard(nameof(ResolveDeferredCommandBatch), () =>
+			HostRegistry.GetScene(sceneRuntimeId)
+				.ResolveDeferredCommandBatch(committed != 0));
+	}
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     internal static int UpdateAll(ulong sceneRuntimeId, float deltaTime) =>

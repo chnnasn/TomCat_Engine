@@ -209,10 +209,9 @@ namespace TomCat {
 			return hasher.Final();
 		}
 
-		std::string ComputeSHA256(std::span<const uint8_t> bytes)
+		std::string SHA256ToString(const std::array<uint8_t, 32>& digest)
 		{
 			static constexpr char hex[] = "0123456789abcdef";
-			const std::array<uint8_t, 32> digest = ComputeSHA256Digest(bytes);
 			std::string result;
 			result.reserve(digest.size() * 2);
 			for (const uint8_t byte : digest)
@@ -221,6 +220,11 @@ namespace TomCat {
 				result.push_back(hex[byte & 0x0f]);
 			}
 			return result;
+		}
+
+		std::string ComputeSHA256(std::span<const uint8_t> bytes)
+		{
+			return SHA256ToString(ComputeSHA256Digest(bytes));
 		}
 
 		bool HasExactFields(const YAML::Node& node,
@@ -928,6 +932,21 @@ namespace TomCat {
 			return ComputeStreamRangeSHA256(input, 0, expectedSize, digest);
 		}
 
+		bool ComputeFileSHA256String(const std::filesystem::path& path,
+			std::string& digest)
+		{
+			digest.clear();
+			std::error_code error;
+			const uintmax_t size = std::filesystem::file_size(path, error);
+			if (error || size > (std::numeric_limits<uint64_t>::max)())
+				return false;
+			std::array<uint8_t, 32> bytes{};
+			if (!ComputeFileSHA256(path, static_cast<uint64_t>(size), bytes))
+				return false;
+			digest = SHA256ToString(bytes);
+			return true;
+		}
+
 		template<typename UInt>
 		void AppendLittleEndian(std::vector<uint8_t>& output, UInt value)
 		{
@@ -1411,18 +1430,20 @@ namespace TomCat {
 			}
 		}
 
-		bool IsCurrentAsset(const AssetRegistry& registry, const AssetMetadata& metadata,
-			AssetType expectedType)
+		bool IsCurrentAsset(AssetDatabase& database,
+			const AssetMetadata& metadata, AssetType expectedType)
 		{
-			if (metadata.IsMissing || metadata.Type != expectedType ||
-				static_cast<uint64_t>(metadata.Handle) == 0)
+			if (metadata.IsMissing || metadata.Type != expectedType
+				|| static_cast<uint64_t>(metadata.Handle) == 0)
 				return false;
-			const AssetMetadata* current = registry.GetMetadata(metadata.FilePath);
-			return current && current->Handle == metadata.Handle && !current->IsMissing &&
-				current->Type == expectedType;
+			const std::optional<AssetMetadata> current =
+				database.GetMetadataSnapshot(metadata.FilePath);
+			return current && current->Handle == metadata.Handle
+				&& !current->IsMissing && current->Type == expectedType;
 		}
 
-		bool ValidateCookAssetReference(const AssetRegistry& registry,
+		bool ValidateCookAssetReference(AssetDatabase& database,
+			const std::filesystem::path& assetDirectory,
 			const SerializedAssetReference& reference,
 			const std::filesystem::path& scenePath, bool& hasCSharpScripts,
 			std::unordered_set<uint64_t>& scriptHandles,
@@ -1447,21 +1468,26 @@ namespace TomCat {
 				return false;
 			}
 
-			const AssetSubAsset* subAsset = nullptr;
-			const AssetMetadata* metadata = registry.GetMetadata(reference.Handle);
-			if (!metadata)
-				metadata = registry.GetSubAssetOwner(reference.Handle, &subAsset);
-			const AssetType effectiveType = subAsset ? subAsset->Type
-				: (metadata ? metadata->Type : AssetType::None);
-			bool current = metadata && effectiveType != AssetType::None
-				&& !metadata->IsMissing;
+			AssetMetadata metadata;
+			AssetSubAsset subAsset;
+			bool isSubAsset = false;
+			if (const std::optional<AssetMetadata> direct =
+				database.GetMetadataSnapshot(reference.Handle))
+				metadata = *direct;
+			else
+				isSubAsset = database.GetSubAssetSnapshot(reference.Handle,
+					metadata, subAsset);
+			const AssetType effectiveType = isSubAsset ? subAsset.Type : metadata.Type;
+			bool current = static_cast<bool>(metadata)
+				&& effectiveType != AssetType::None && !metadata.IsMissing;
 			if (current && reference.ExpectedType != AssetType::None)
 				current = effectiveType == reference.ExpectedType;
 			if (current)
 			{
-				const AssetMetadata* pathMetadata = registry.GetMetadata(metadata->FilePath);
-				current = pathMetadata && pathMetadata->Handle == metadata->Handle
-					&& pathMetadata->Type == metadata->Type && !pathMetadata->IsMissing;
+				const std::optional<AssetMetadata> pathMetadata =
+					database.GetMetadataSnapshot(metadata.FilePath);
+				current = pathMetadata && pathMetadata->Handle == metadata.Handle
+					&& pathMetadata->Type == metadata.Type && !pathMetadata->IsMissing;
 			}
 			if (!current)
 			{
@@ -1476,17 +1502,18 @@ namespace TomCat {
 			}
 
 			if (reference.Kind == SerializedAssetReferenceKind::ScriptField
-				&& (metadata->Type == AssetType::CSharpScript
-					|| IsAuthoringOnlyCookPath(metadata->FilePath)))
+				&& (metadata.Type == AssetType::CSharpScript
+					|| IsAuthoringOnlyCookPath(metadata.FilePath)))
 			{
 				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
 					+ reference.PropertyPath + " references authoring-only asset "
 					+ std::to_string(rawHandle) + " ("
-					+ AssetTypeToString(metadata->Type) + ")";
+					+ AssetTypeToString(metadata.Type) + ")";
 				return false;
 			}
 
-			const std::filesystem::path source = registry.GetFileSystemPath(metadata->Handle);
+			const std::filesystem::path source =
+				(assetDirectory / metadata.FilePath).lexically_normal();
 			std::error_code fileError;
 			if (source.empty() || !std::filesystem::is_regular_file(source, fileError)
 				|| fileError)
@@ -1503,20 +1530,23 @@ namespace TomCat {
 			return true;
 		}
 
-		bool PrepareSceneBytesForCook(const AssetRegistry& registry,
+		bool PrepareSceneBytesForCook(AssetDatabase& database,
+			const std::filesystem::path& assetDirectory,
 			const std::filesystem::path& scenePath, std::vector<uint8_t>& bytes,
 			bool& hasCSharpScripts,
 			std::unordered_set<uint64_t>& scriptHandles,
 			std::unordered_set<uint64_t>& runtimeDependencies,
-			std::string& errorMessage)
+			std::string& sourceSHA256, std::string& errorMessage)
 		{
 			bytes.clear();
+			sourceSHA256.clear();
 			std::vector<uint8_t> sourceBytes;
 			if (!ReadWholeFile(scenePath, sourceBytes))
 			{
 				errorMessage = "Could not read scene '" + PathToUTF8(scenePath) + "'";
 				return false;
 			}
+			sourceSHA256 = ComputeSHA256(sourceBytes);
 			if (!SceneSerializer::ValidateCurrentFormat(sourceBytes, scenePath))
 			{
 				errorMessage = "Scene '" + PathToUTF8(scenePath) +
@@ -1534,10 +1564,9 @@ namespace TomCat {
 				if (!AssetReferenceVisitor::VisitScene(root,
 					[&](const SerializedAssetReference& reference)
 					{
-						return ValidateCookAssetReference(registry, reference,
-							scenePath, hasCSharpScripts, scriptHandles,
-							runtimeDependencies,
-							errorMessage);
+						return ValidateCookAssetReference(database, assetDirectory,
+							reference, scenePath, hasCSharpScripts, scriptHandles,
+							runtimeDependencies, errorMessage);
 					}, errorMessage))
 					return false;
 
@@ -1561,19 +1590,22 @@ namespace TomCat {
 			}
 		}
 
-		bool PreparePrefabBytesForCook(const AssetRegistry& registry,
+		bool PreparePrefabBytesForCook(AssetDatabase& database,
+			const std::filesystem::path& assetDirectory,
 			const std::filesystem::path& prefabPath, std::vector<uint8_t>& bytes,
 			bool& hasCSharpScripts,
 			std::unordered_set<uint64_t>& scriptHandles,
 			std::unordered_set<uint64_t>& runtimeDependencies,
-			std::string& errorMessage)
+			std::string& sourceSHA256, std::string& errorMessage)
 		{
 			bytes.clear();
+			sourceSHA256.clear();
 			if (!ReadWholeFile(prefabPath, bytes))
 			{
 				errorMessage = "Could not read Prefab '" + PathToUTF8(prefabPath) + "'";
 				return false;
 			}
+			sourceSHA256 = ComputeSHA256(bytes);
 			if (!PrefabArchiveCodec::ValidateCurrentFormat(bytes, prefabPath))
 			{
 				errorMessage = "Prefab '" + PathToUTF8(prefabPath)
@@ -1587,8 +1619,8 @@ namespace TomCat {
 				if (!AssetReferenceVisitor::VisitPrefab(root,
 					[&](const SerializedAssetReference& reference)
 					{
-						return ValidateCookAssetReference(registry, reference,
-							prefabPath, hasCSharpScripts, scriptHandles,
+						return ValidateCookAssetReference(database, assetDirectory,
+							reference, prefabPath, hasCSharpScripts, scriptHandles,
 							runtimeDependencies, errorMessage);
 					}, errorMessage))
 					return false;
@@ -1713,9 +1745,10 @@ namespace TomCat {
 		bool changed = false;
 		for (BuildSceneSettings& scene : repaired.Scenes)
 		{
-			const AssetMetadata* metadata = m_Registry.GetMetadata(scene.Handle);
-			if (metadata && IsCurrentAsset(m_Registry, *metadata, AssetType::Scene) &&
-				metadata->FilePath != scene.PathHint)
+			const std::optional<AssetMetadata> metadata =
+				m_Database.GetMetadataSnapshot(scene.Handle);
+			if (metadata && IsCurrentAsset(m_Database, *metadata, AssetType::Scene)
+				&& metadata->FilePath != scene.PathHint)
 			{
 				scene.PathHint = metadata->FilePath;
 				changed = true;
@@ -3109,7 +3142,8 @@ namespace TomCat {
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted() || packagePath.empty())
 			return false;
-		if (IsWithinOrEqual(m_Registry.GetAssetDirectory(), packagePath))
+		const std::filesystem::path assetDirectory = m_Registry.GetAssetDirectory();
+		if (IsWithinOrEqual(assetDirectory, packagePath))
 		{
 			TC_Core_Error("Cooked package must be written outside Assets: {0}", PathToUTF8(packagePath));
 			return false;
@@ -3147,9 +3181,10 @@ namespace TomCat {
 				const BuildSceneSettings& scene = build.Scenes[index];
 				if (!scene.Enabled)
 					continue;
-				const AssetMetadata* metadata = m_Registry.GetMetadata(scene.Handle);
+				const std::optional<AssetMetadata> metadata =
+					m_Database.GetMetadataSnapshot(scene.Handle);
 				if (static_cast<uint64_t>(scene.Handle) == 0 || !metadata
-					|| !IsCurrentAsset(m_Registry, *metadata, AssetType::Scene))
+					|| !IsCurrentAsset(m_Database, *metadata, AssetType::Scene))
 				{
 					TC_Core_Error("BuildSettings.Scenes[{0}] must identify a live Scene asset: {1}",
 						index, static_cast<uint64_t>(scene.Handle));
@@ -3175,8 +3210,9 @@ namespace TomCat {
 			}
 			if (static_cast<uint64_t>(packagePlayerSettings.Icon) != 0)
 			{
-				const AssetMetadata* icon = m_Registry.GetMetadata(packagePlayerSettings.Icon);
-				if (!icon || !IsCurrentAsset(m_Registry, *icon, AssetType::Texture2D))
+				const std::optional<AssetMetadata> icon =
+					m_Database.GetMetadataSnapshot(packagePlayerSettings.Icon);
+				if (!icon || !IsCurrentAsset(m_Database, *icon, AssetType::Texture2D))
 				{
 					TC_Core_Error("PlayerSettings.Icon must identify a live Texture2D asset: {0}",
 						static_cast<uint64_t>(packagePlayerSettings.Icon));
@@ -3193,8 +3229,10 @@ namespace TomCat {
 		}
 		if (static_cast<uint64_t>(startSceneHandle) != 0)
 		{
-			const AssetMetadata* startScene = m_Registry.GetMetadata(startSceneHandle);
-			if (!startScene || !IsCurrentAsset(m_Registry, *startScene, AssetType::Scene))
+			const std::optional<AssetMetadata> startScene =
+				m_Database.GetMetadataSnapshot(startSceneHandle);
+			if (!startScene
+				|| !IsCurrentAsset(m_Database, *startScene, AssetType::Scene))
 			{
 				TC_Core_Error("Cook start scene {0} is missing or is not a Scene asset",
 					static_cast<uint64_t>(startSceneHandle));
@@ -3216,8 +3254,10 @@ namespace TomCat {
 			std::array<uint8_t, 32> SHA256Digest{};
 		};
 
+		const std::vector<AssetMetadata> registryAssets =
+			m_Database.GetAllMetadataSnapshots();
 		std::vector<SourceEntry> entries;
-		entries.reserve(m_Registry.GetAssets().size() + 1);
+		entries.reserve(registryAssets.size() + 1);
 		bool hasCSharpScripts = false;
 		std::unordered_set<uint64_t> referencedScriptHandles;
 		std::deque<AssetHandle> pendingAssets;
@@ -3236,35 +3276,147 @@ namespace TomCat {
 		// project cooks always use the strict enabled-scene dependency closure.
 		if (packageBuildScenes.empty() && !m_UsesProjectConfiguration)
 		{
-			for (const auto& [handle, metadata] : m_Registry.GetAssets())
+			for (const AssetMetadata& metadata : registryAssets)
 			{
 				if (metadata.Type != AssetType::None
 					&& metadata.Type != AssetType::CSharpScript && !metadata.IsMissing
 					&& !IsAuthoringOnlyCookPath(metadata.FilePath))
-					enqueueAsset(handle);
+					enqueueAsset(metadata.Handle);
 			}
 		}
+
+		const uint64_t cookGraphRevision =
+			m_Database.GetDependencySnapshot(AssetHandle(0)).Revision;
+		struct CookObservation
+		{
+			AssetHandle Handle = AssetHandle(0);
+			AssetDependencySnapshot Dependencies;
+			AssetMetadata Metadata;
+			std::filesystem::path SourcePath;
+			std::string SourceSHA256;
+			bool IsSubAsset = false;
+			AssetSubAsset SubAsset;
+			AssetDependencySnapshot OwnerDependencies;
+		};
+		std::vector<CookObservation> observations;
+		observations.reserve(queuedAssets.size());
+
+		const auto sameSubAsset = [](const AssetSubAsset& left,
+			const AssetSubAsset& right)
+		{
+			return left.Handle == right.Handle
+				&& left.PersistentID == right.PersistentID
+				&& left.Name == right.Name && left.Type == right.Type
+				&& left.Sprite == right.Sprite;
+		};
+		const auto sameMetadata = [&sameSubAsset](const AssetMetadata& left,
+			const AssetMetadata& right)
+		{
+			if (left.Handle != right.Handle || left.Type != right.Type
+				|| left.FilePath != right.FilePath
+				|| left.ImportSettings != right.ImportSettings
+				|| left.IsMissing != right.IsMissing
+				|| left.SubAssets.size() != right.SubAssets.size())
+				return false;
+			for (size_t index = 0; index < left.SubAssets.size(); ++index)
+			{
+				if (!sameSubAsset(left.SubAssets[index], right.SubAssets[index]))
+					return false;
+			}
+			return true;
+		};
+		const auto sameDependencySnapshot =
+			[](const AssetDependencySnapshot& left,
+				const AssetDependencySnapshot& right)
+		{
+			return left.Revision == right.Revision
+				&& left.Dependencies == right.Dependencies
+				&& left.ArtifactDependencies == right.ArtifactDependencies
+				&& left.SourceSHA256 == right.SourceSHA256;
+		};
 
 		while (!pendingAssets.empty())
 		{
 			const AssetHandle handle = pendingAssets.front();
 			pendingAssets.pop_front();
-			const AssetSubAsset* slicedSprite = nullptr;
-			const AssetMetadata* slicedOwner =
-				m_Registry.GetSubAssetOwner(handle, &slicedSprite);
-			if (slicedOwner && slicedSprite)
+			const uint64_t rawHandle = static_cast<uint64_t>(handle);
+			if (rawHandle == kManagedPayloadHandle)
 			{
-				if (slicedOwner->IsMissing || slicedSprite->Type != AssetType::Texture2D
-					|| slicedSprite->Sprite.Width == 0 || slicedSprite->Sprite.Height == 0)
+				TC_Core_Error("AssetHandle UINT64_MAX is reserved by tcpak v5");
+				return false;
+			}
+
+			// Every logical asset, including a Sprite slice, owns a graph node.
+			// Capture that node before resolving its storage owner so the exact
+			// dependency closure is queued from one Cook-wide graph epoch.
+			const AssetDependencySnapshot dependencySnapshot =
+				m_Database.GetDependencySnapshot(handle);
+			if (dependencySnapshot.Revision != cookGraphRevision)
+			{
+				TC_Core_Error("Asset dependency graph changed while collecting Cook asset {0}; retry Cook",
+					rawHandle);
+				return false;
+			}
+
+			AssetMetadata slicedOwner;
+			AssetSubAsset slicedSprite;
+			if (m_Database.GetSubAssetSnapshot(handle, slicedOwner, slicedSprite))
+			{
+				for (AssetHandle dependency : dependencySnapshot.Dependencies)
+					enqueueAsset(dependency);
+
+				if (slicedOwner.IsMissing
+					|| static_cast<uint64_t>(slicedOwner.Handle) == 0
+					|| static_cast<uint64_t>(slicedOwner.Handle)
+						== kManagedPayloadHandle
+					|| slicedOwner.Type != AssetType::Texture2D
+					|| slicedSprite.Handle != handle
+					|| slicedSprite.Type != AssetType::Texture2D
+					|| slicedSprite.Sprite.Width == 0
+					|| slicedSprite.Sprite.Height == 0)
 				{
-					TC_Core_Error("Cook Sprite sub-asset {0} is invalid",
-						static_cast<uint64_t>(handle));
+					TC_Core_Error("Cook Sprite sub-asset {0} is invalid", rawHandle);
 					return false;
 				}
-				const AssetHandle ownerHandle = slicedOwner->Handle;
+				const AssetHandle ownerHandle = slicedOwner.Handle;
+				const AssetDependencySnapshot ownerDependencySnapshot =
+					m_Database.GetDependencySnapshot(ownerHandle);
+				if (ownerDependencySnapshot.Revision != cookGraphRevision)
+				{
+					TC_Core_Error("Sprite atlas dependency graph changed while cooking sub-asset {0}; retry Cook",
+						rawHandle);
+					return false;
+				}
+				for (AssetHandle dependency : ownerDependencySnapshot.Dependencies)
+					enqueueAsset(dependency);
+
+				const std::optional<AssetMetadata> ownerByPath =
+					m_Database.GetMetadataSnapshot(slicedOwner.FilePath);
+				if (!ownerByPath || !sameMetadata(*ownerByPath, slicedOwner))
+				{
+					TC_Core_Error("Sprite atlas metadata is stale while cooking sub-asset {0}",
+						rawHandle);
+					return false;
+				}
+				const std::filesystem::path source =
+					(assetDirectory / slicedOwner.FilePath).lexically_normal();
+				std::error_code sourceError;
+				if (source.empty()
+					|| !std::filesystem::is_regular_file(source, sourceError)
+					|| sourceError)
+				{
+					TC_Core_Error("Cannot cook missing Sprite atlas {0} ('{1}')",
+						static_cast<uint64_t>(ownerHandle),
+						PathToUTF8(slicedOwner.FilePath));
+					return false;
+				}
+
 				AssetLoadOptions importOptions;
 				importOptions.Platform = "windows-x64";
 				importOptions.Backend = "opengl";
+				// Cook observes authoring metadata; it must never publish importer
+				// side effects halfway through a package transaction.
+				importOptions.DeferMetadataCommit = true;
 				AssetLoadResult imported = m_Database.LoadArtifact(ownerHandle,
 					std::move(importOptions));
 				if (!imported.Succeeded())
@@ -3273,77 +3425,160 @@ namespace TomCat {
 						static_cast<uint64_t>(ownerHandle), imported.Error);
 					return false;
 				}
-				const AssetSubAsset* currentSlice = nullptr;
-				const AssetMetadata* currentOwner =
-					m_Registry.GetSubAssetOwner(handle, &currentSlice);
-				if (!currentOwner || !currentSlice || currentOwner->Handle != ownerHandle)
+				if (imported.Artifact.Handle != ownerHandle
+					|| imported.Artifact.Type != AssetType::Texture2D
+					|| imported.Artifact.SourceSHA256.empty()
+					|| (!ownerDependencySnapshot.SourceSHA256.empty()
+						&& imported.Artifact.SourceSHA256
+							!= ownerDependencySnapshot.SourceSHA256))
 				{
-					TC_Core_Error("Sprite sub-asset {0} disappeared during import",
-						static_cast<uint64_t>(handle));
+					TC_Core_Error("Imported Sprite atlas {0} does not match its pinned Cook snapshot",
+						static_cast<uint64_t>(ownerHandle));
 					return false;
 				}
+				const auto importedSlice = std::find_if(
+					imported.Artifact.SubAssets.begin(),
+					imported.Artifact.SubAssets.end(),
+					[&slicedSprite](const AssetSubAsset& child)
+					{
+						return child.PersistentID == slicedSprite.PersistentID;
+					});
+				if (importedSlice == imported.Artifact.SubAssets.end()
+					|| importedSlice->Name != slicedSprite.Name
+					|| importedSlice->Type != slicedSprite.Type
+					|| importedSlice->Sprite != slicedSprite.Sprite)
+				{
+					TC_Core_Error("Imported Sprite atlas {0} no longer defines pinned slice {1}",
+						static_cast<uint64_t>(ownerHandle), rawHandle);
+					return false;
+				}
+
+				AssetMetadata currentOwner;
+				AssetSubAsset currentSlice;
+				const std::optional<AssetMetadata> currentOwnerByPath =
+					m_Database.GetMetadataSnapshot(slicedOwner.FilePath);
+				const AssetDependencySnapshot currentSliceDependencies =
+					m_Database.GetDependencySnapshot(handle);
+				const AssetDependencySnapshot currentOwnerDependencies =
+					m_Database.GetDependencySnapshot(ownerHandle);
+				if (!m_Database.GetSubAssetSnapshot(handle, currentOwner, currentSlice)
+					|| !sameMetadata(currentOwner, slicedOwner)
+					|| !sameSubAsset(currentSlice, slicedSprite)
+					|| !currentOwnerByPath
+					|| !sameMetadata(*currentOwnerByPath, slicedOwner)
+					|| !sameDependencySnapshot(currentSliceDependencies,
+						dependencySnapshot)
+					|| !sameDependencySnapshot(currentOwnerDependencies,
+						ownerDependencySnapshot))
+				{
+					TC_Core_Error("Sprite sub-asset {0}, its atlas metadata, or dependency graph changed during Cook",
+						rawHandle);
+					return false;
+				}
+				std::string currentSourceSHA256;
+				if (!ComputeFileSHA256String(source, currentSourceSHA256)
+					|| currentSourceSHA256 != imported.Artifact.SourceSHA256)
+				{
+					TC_Core_Error("Sprite atlas {0} changed while cooking sub-asset {1}; retry Cook",
+						static_cast<uint64_t>(ownerHandle), rawHandle);
+					return false;
+				}
+
 				SourceEntry entry;
-				entry.RawHandle = static_cast<uint64_t>(handle);
+				entry.RawHandle = rawHandle;
 				entry.RawType = static_cast<uint16_t>(AssetType::Texture2D);
 				entry.CookedBytes = BuildCookedSpriteSubAsset(ownerHandle,
-					currentSlice->Sprite, imported.Artifact.Bytes);
+					slicedSprite.Sprite, imported.Artifact.Bytes);
 				if (entry.CookedBytes.empty())
 				{
 					TC_Core_Error("Could not build cooked Sprite sub-asset {0}",
-						static_cast<uint64_t>(handle));
+						rawHandle);
 					return false;
 				}
 				entry.HasCookedBytes = true;
 				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 				entries.push_back(std::move(entry));
+
+				CookObservation observation;
+				observation.Handle = handle;
+				observation.Dependencies = dependencySnapshot;
+				observation.Metadata = slicedOwner;
+				observation.SourcePath = source;
+				observation.SourceSHA256 = imported.Artifact.SourceSHA256;
+				observation.IsSubAsset = true;
+				observation.SubAsset = slicedSprite;
+				observation.OwnerDependencies = ownerDependencySnapshot;
+				observations.push_back(std::move(observation));
 				continue;
 			}
-			const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
-			if (!metadata || metadata->Type == AssetType::None || metadata->IsMissing)
+
+			const std::optional<AssetMetadata> metadataSnapshot =
+				m_Database.GetMetadataSnapshot(handle);
+			if (!metadataSnapshot || metadataSnapshot->Type == AssetType::None
+				|| metadataSnapshot->IsMissing)
 			{
-				TC_Core_Error("Cook dependency {0} is missing",
-					static_cast<uint64_t>(handle));
+				TC_Core_Error("Cook dependency {0} is missing", rawHandle);
 				return false;
 			}
-			if (static_cast<uint64_t>(handle) == kManagedPayloadHandle)
+			const AssetMetadata metadata = *metadataSnapshot;
+			if (metadata.Type == AssetType::CSharpScript
+				|| IsAuthoringOnlyCookPath(metadata.FilePath))
 			{
-				TC_Core_Error("AssetHandle UINT64_MAX is reserved by tcpak v5");
+				TC_Core_Error("Cook dependency {0} is authoring-only", rawHandle);
 				return false;
 			}
-			if (metadata->Type == AssetType::CSharpScript
-				|| IsAuthoringOnlyCookPath(metadata->FilePath))
+			const std::optional<AssetMetadata> current =
+				m_Database.GetMetadataSnapshot(metadata.FilePath);
+			if (!current || !sameMetadata(*current, metadata))
 			{
-				TC_Core_Error("Cook dependency {0} is authoring-only",
-					static_cast<uint64_t>(handle));
+				TC_Core_Error("Cook dependency {0} is stale or shadowed", rawHandle);
 				return false;
 			}
-			const AssetMetadata* current = m_Registry.GetMetadata(metadata->FilePath);
-			if (!current || current->Handle != handle || current->IsMissing
-				|| current->Type != metadata->Type)
+			const bool hasSourceDiscoveredGraph =
+				metadata.Type == AssetType::Scene
+					|| metadata.Type == AssetType::Prefab
+					|| metadata.Type == AssetType::Material;
+			if (hasSourceDiscoveredGraph && dependencySnapshot.SourceSHA256.empty())
 			{
-				TC_Core_Error("Cook dependency {0} is stale or shadowed",
-					static_cast<uint64_t>(handle));
+				TC_Core_Error("Cook dependency graph has no source snapshot for {0} {1}",
+					AssetTypeToString(metadata.Type), rawHandle);
 				return false;
 			}
-			const std::filesystem::path source = m_Registry.GetFileSystemPath(handle);
+			// Scene/Prefab ScriptHandle edges are represented by the managed payload
+			// and validated separately. Every other logical edge re-enters this queue.
+			for (AssetHandle dependency : dependencySnapshot.Dependencies)
+			{
+				const std::optional<AssetMetadata> dependencyMetadata =
+					m_Database.GetMetadataSnapshot(dependency);
+				if ((metadata.Type == AssetType::Scene
+						|| metadata.Type == AssetType::Prefab)
+					&& dependencyMetadata
+					&& dependencyMetadata->Type == AssetType::CSharpScript)
+					continue;
+				enqueueAsset(dependency);
+			}
+			const std::filesystem::path source =
+				(assetDirectory / metadata.FilePath).lexically_normal();
 			std::error_code error;
-			if (source.empty() || !std::filesystem::is_regular_file(source, error) || error)
+			if (source.empty() || !std::filesystem::is_regular_file(source, error)
+				|| error)
 			{
 				TC_Core_Error("Cannot cook missing asset {0} ('{1}')",
-					static_cast<uint64_t>(handle), PathToUTF8(metadata->FilePath));
+					rawHandle, PathToUTF8(metadata.FilePath));
 				return false;
 			}
 			SourceEntry entry;
-			entry.RawHandle = static_cast<uint64_t>(handle);
-			entry.RawType = static_cast<uint16_t>(metadata->Type);
+			entry.RawHandle = rawHandle;
+			entry.RawType = static_cast<uint16_t>(metadata.Type);
 			entry.Path = source;
 			std::unordered_set<uint64_t> discoveredDependencies;
-			if (metadata->Type == AssetType::Scene)
+			std::string cookedSourceSHA256;
+			if (metadata.Type == AssetType::Scene)
 			{
 				std::string sceneError;
-				if (!PrepareSceneBytesForCook(m_Registry, source, entry.CookedBytes,
-					hasCSharpScripts, referencedScriptHandles,
-					discoveredDependencies, sceneError))
+				if (!PrepareSceneBytesForCook(m_Database, assetDirectory, source,
+					entry.CookedBytes, hasCSharpScripts, referencedScriptHandles,
+					discoveredDependencies, cookedSourceSHA256, sceneError))
 				{
 					TC_Core_Error("Cannot cook scene: {0}", sceneError);
 					return false;
@@ -3351,12 +3586,12 @@ namespace TomCat {
 				entry.HasCookedBytes = true;
 				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 			}
-			else if (metadata->Type == AssetType::Prefab)
+			else if (metadata.Type == AssetType::Prefab)
 			{
 				std::string prefabError;
-				if (!PreparePrefabBytesForCook(m_Registry, source, entry.CookedBytes,
-					hasCSharpScripts, referencedScriptHandles,
-					discoveredDependencies, prefabError))
+				if (!PreparePrefabBytesForCook(m_Database, assetDirectory, source,
+					entry.CookedBytes, hasCSharpScripts, referencedScriptHandles,
+					discoveredDependencies, cookedSourceSHA256, prefabError))
 				{
 					TC_Core_Error("Cannot cook Prefab: {0}", prefabError);
 					return false;
@@ -3369,19 +3604,67 @@ namespace TomCat {
 				AssetLoadOptions importOptions;
 				importOptions.Platform = "windows-x64";
 				importOptions.Backend = "opengl";
+				// Cook is a read-only transaction over the pinned authoring snapshot.
+				importOptions.DeferMetadataCommit = true;
 				AssetLoadResult imported = m_Database.LoadArtifact(handle,
 					std::move(importOptions));
 				if (!imported.Succeeded())
 				{
 					TC_Core_Error("Cannot import asset {0} while cooking: {1}",
-						static_cast<uint64_t>(handle), imported.Error);
+						rawHandle, imported.Error);
 					return false;
 				}
+				cookedSourceSHA256 = imported.Artifact.SourceSHA256;
 				entry.CookedBytes = std::move(imported.Artifact.Bytes);
 				entry.HasCookedBytes = true;
 				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 			}
+			const AssetDependencySnapshot currentDependencySnapshot =
+				m_Database.GetDependencySnapshot(handle);
+			if (!sameDependencySnapshot(currentDependencySnapshot,
+				dependencySnapshot))
+			{
+				TC_Core_Error("Asset dependency graph changed while cooking asset {0}; retry Cook to keep closure and artifact keys on one snapshot",
+					rawHandle);
+				return false;
+			}
+			if (!dependencySnapshot.SourceSHA256.empty()
+				&& cookedSourceSHA256 != dependencySnapshot.SourceSHA256)
+			{
+				TC_Core_Error("Asset {0} changed after the Cook dependency snapshot; retry Cook to avoid an incomplete package",
+					rawHandle);
+				return false;
+			}
+			std::string currentSourceSHA256;
+			if (cookedSourceSHA256.empty()
+				|| !ComputeFileSHA256String(source, currentSourceSHA256)
+				|| currentSourceSHA256 != cookedSourceSHA256)
+			{
+				TC_Core_Error("Asset source changed while cooking asset {0}; retry Cook",
+					rawHandle);
+				return false;
+			}
+			const std::optional<AssetMetadata> finalMetadata =
+				m_Database.GetMetadataSnapshot(handle);
+			const std::optional<AssetMetadata> finalPathMetadata =
+				m_Database.GetMetadataSnapshot(metadata.FilePath);
+			if (!finalMetadata || !finalPathMetadata
+				|| !sameMetadata(*finalMetadata, metadata)
+				|| !sameMetadata(*finalPathMetadata, metadata))
+			{
+				TC_Core_Error("Asset metadata changed while cooking asset {0}; retry Cook",
+					rawHandle);
+				return false;
+			}
+
 			entries.push_back(std::move(entry));
+			CookObservation observation;
+			observation.Handle = handle;
+			observation.Dependencies = dependencySnapshot;
+			observation.Metadata = metadata;
+			observation.SourcePath = source;
+			observation.SourceSHA256 = std::move(cookedSourceSHA256);
+			observations.push_back(std::move(observation));
 			for (uint64_t dependency : discoveredDependencies)
 				enqueueAsset(AssetHandle(dependency));
 		}
@@ -3654,6 +3937,92 @@ namespace TomCat {
 			}
 		}
 		verification.close();
+
+		// The package has been built only in a temporary sibling. Revalidate every
+		// source and metadata observation, plus the Cook-wide dependency epoch,
+		// immediately before the atomic install so a mixed snapshot is never
+		// published over the last known-good package.
+		if (m_Database.GetDependencySnapshot(AssetHandle(0)).Revision
+			!= cookGraphRevision)
+		{
+			RemoveTemporaryFile(temporary);
+			TC_Core_Error("Asset dependency graph changed before Cook publication; retry Cook");
+			return false;
+		}
+		for (const CookObservation& observation : observations)
+		{
+			const AssetDependencySnapshot currentDependencies =
+				m_Database.GetDependencySnapshot(observation.Handle);
+			if (!sameDependencySnapshot(currentDependencies,
+				observation.Dependencies))
+			{
+				RemoveTemporaryFile(temporary);
+				TC_Core_Error("Asset dependency graph changed before publishing Cook asset {0}",
+					static_cast<uint64_t>(observation.Handle));
+				return false;
+			}
+
+			AssetMetadata currentMetadata;
+			if (observation.IsSubAsset)
+			{
+				AssetSubAsset currentSubAsset;
+				const AssetDependencySnapshot currentOwnerDependencies =
+					m_Database.GetDependencySnapshot(observation.Metadata.Handle);
+				if (!m_Database.GetSubAssetSnapshot(observation.Handle,
+					currentMetadata, currentSubAsset)
+					|| !sameSubAsset(currentSubAsset, observation.SubAsset)
+					|| !sameDependencySnapshot(currentOwnerDependencies,
+						observation.OwnerDependencies))
+				{
+					RemoveTemporaryFile(temporary);
+					TC_Core_Error("Sprite sub-asset {0} or its atlas graph changed before Cook publication",
+						static_cast<uint64_t>(observation.Handle));
+					return false;
+				}
+			}
+			else
+			{
+				const std::optional<AssetMetadata> direct =
+					m_Database.GetMetadataSnapshot(observation.Handle);
+				if (!direct)
+				{
+					RemoveTemporaryFile(temporary);
+					TC_Core_Error("Cook asset {0} disappeared before publication",
+						static_cast<uint64_t>(observation.Handle));
+					return false;
+				}
+				currentMetadata = *direct;
+			}
+			const std::optional<AssetMetadata> currentByPath =
+				m_Database.GetMetadataSnapshot(observation.Metadata.FilePath);
+			if (!sameMetadata(currentMetadata, observation.Metadata)
+				|| !currentByPath
+				|| !sameMetadata(*currentByPath, observation.Metadata))
+			{
+				RemoveTemporaryFile(temporary);
+				TC_Core_Error("Asset metadata changed before publishing Cook asset {0}",
+					static_cast<uint64_t>(observation.Handle));
+				return false;
+			}
+
+			std::string currentSourceSHA256;
+			if (!ComputeFileSHA256String(observation.SourcePath,
+				currentSourceSHA256)
+				|| currentSourceSHA256 != observation.SourceSHA256)
+			{
+				RemoveTemporaryFile(temporary);
+				TC_Core_Error("Asset source changed before publishing Cook asset {0}",
+					static_cast<uint64_t>(observation.Handle));
+				return false;
+			}
+		}
+		if (m_Database.GetDependencySnapshot(AssetHandle(0)).Revision
+			!= cookGraphRevision)
+		{
+			RemoveTemporaryFile(temporary);
+			TC_Core_Error("Asset dependency graph changed during final Cook validation; retry Cook");
+			return false;
+		}
 
 		std::string installError;
 		if (!FileSystem::InstallTemporaryFileAtomically(temporary, packagePath, installError))
