@@ -134,6 +134,11 @@ namespace TomCat {
 		std::vector<UUID> GetChildrenUUIDs(Entity entity);
 		std::vector<UUID> GetRootEntityUUIDs();
 		bool IsActiveInHierarchy(Entity entity) const;
+		bool IsEditorHidden(Entity entity) const;
+		bool IsVisibleInEditorHierarchy(Entity entity) const;
+		bool SetEditorHidden(Entity entity, bool hidden);
+		bool HasAuthoredPrimaryCamera() const;
+		bool SetCameraPrimary(Entity entity, bool primary);
 
 		// Starts physics and the managed scripting scene transactionally. A false
 		// result means all partially-created runtime state has already been rolled

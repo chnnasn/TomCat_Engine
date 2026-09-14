@@ -32,6 +32,13 @@ namespace TomCat::Scripting {
 		{
 			return ScriptStatus::Success;
 		}
+		// Internal transaction acknowledgement. Managed runtimes keep callback-time
+		// mutations as a projected view until native validation/live replay resolves
+		// the batch. The default keeps native/fake runtimes source-compatible.
+		virtual ScriptStatus ResolveDeferredCommandBatch(bool)
+		{
+			return ScriptStatus::Success;
+		}
 		virtual ScriptStatus InstantiateAttachments(
 			std::span<const NativeScriptAttachmentV1>, std::string_view)
 		{

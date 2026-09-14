@@ -15,6 +15,8 @@ namespace TomCat {
 
 	namespace {
 
+		constexpr uint32_t kMaximumStalePublicationRetries = 4;
+
 		std::string FileKey(const std::filesystem::path& relativePath)
 		{
 			std::string key = PathToUTF8(relativePath.lexically_normal());
@@ -661,6 +663,7 @@ namespace TomCat {
 				iterator->Handle = replacement.Handle;
 				iterator->IsDependency = replacement.IsDependency;
 				iterator->Superseded = false;
+				iterator->StalePublicationRetries = 0;
 				iterator->Replacement.reset();
 				AssetLoadOptions options;
 				options.Platform = m_Options.Platform;
@@ -698,6 +701,45 @@ namespace TomCat {
 			if (result.Succeeded() && !m_Database->FinalizeImportedArtifact(result, false))
 				result = CoordinatorFailure(AssetLoadStatus::ImportFailed,
 					"import succeeded but metadata publication failed");
+
+
+			if (result.Status == AssetLoadStatus::StaleSnapshot
+				&& iterator->StalePublicationRetries
+					< kMaximumStalePublicationRetries)
+			{
+				++iterator->StalePublicationRetries;
+				AssetLoadOptions options;
+				options.Platform = m_Options.Platform;
+				options.Backend = m_Options.Backend;
+				options.Cancellation = std::make_shared<AssetLoadCancellation>();
+				options.DeferMetadataCommit = true;
+				iterator->Cancellation = options.Cancellation;
+				try
+				{
+					// Deferred workers never mutate registry or dependency state. Refresh
+					// from the coordinator's owner thread before starting a fresh attempt.
+					// A failed rebuild retains invalid provenance, so this bounded retry
+					// remains stale rather than publishing old dependency keys.
+					(void)m_Database->RefreshRegistry();
+					iterator->Future = m_Database->LoadArtifactAsync(iterator->Handle,
+						std::move(options));
+					// Never consume an immediately completed retry in this pump. This
+					// bounds work and lets new file changes install a Replacement first.
+					++iterator;
+					continue;
+				}
+				catch (const std::exception& exception)
+				{
+					result = CoordinatorFailure(AssetLoadStatus::ImportFailed,
+						std::string("could not schedule stale publication retry: ")
+						+ exception.what());
+				}
+				catch (...)
+				{
+					result = CoordinatorFailure(AssetLoadStatus::ImportFailed,
+						"could not schedule stale publication retry");
+				}
+			}
 
 			AssetImportEvent event;
 			event.Revision = iterator->Revision;

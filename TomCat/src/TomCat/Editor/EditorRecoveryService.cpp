@@ -614,6 +614,33 @@ namespace TomCat {
 		return true;
 	}
 
+	bool EditorRecoveryService::RestoreHistoryAndScheduleAutosave(
+		SceneHistory& history, HistoryDirection direction,
+		const SceneHistory::RestoreCallback& restore,
+		const std::filesystem::path& sourceScenePath, std::string& error)
+	{
+		error.clear();
+		const bool restored = direction == HistoryDirection::Undo
+			? history.Undo(restore)
+			: history.Redo(restore);
+		if (!restored)
+			return false;
+		if (m_AutosaveDirectory.empty())
+			return true;
+
+		const SceneHistory::Snapshot* snapshot =
+			history.GetCurrentSnapshot();
+		if (!snapshot || !snapshot->Archive)
+		{
+			error =
+				"restored Scene history has no recovery snapshot";
+			return true;
+		}
+		(void)ScheduleAutosave(sourceScenePath, snapshot->Id,
+			snapshot->SelectedEntity, snapshot->Archive, error);
+		return true;
+	}
+
 	bool EditorRecoveryService::Flush(std::string& error)
 	{
 		std::unique_lock lock(m_Mutex);

@@ -644,8 +644,16 @@ namespace TomCat {
 		}
 
 		void Render2DComponents(Scene& scene, entt::registry& registry,
-			const glm::mat4& viewProjection)
+			const glm::mat4& viewProjection,
+			RuntimeUIVisibilityMode visibility)
 		{
+			auto isVisible = [&scene, visibility](entt::entity value)
+			{
+				Entity entity(value, &scene);
+				return visibility == RuntimeUIVisibilityMode::Editor
+					? scene.IsVisibleInEditorHierarchy(entity)
+					: scene.IsActiveInHierarchy(entity);
+			};
 			auto spriteView = registry.view<Transform, SpriteRenderer>();
 			struct SpriteRenderItem
 			{
@@ -658,7 +666,7 @@ namespace TomCat {
 			for (const entt::entity entity : spriteView)
 			{
 				const auto& sprite = spriteView.get<SpriteRenderer>(entity);
-				if (!scene.IsActiveInHierarchy(Entity(entity, &scene))
+				if (!isVisible(entity)
 					|| !sprite.Enabled)
 					continue;
 				const UUID entityID = registry.get<ID>(entity).id;
@@ -688,7 +696,7 @@ namespace TomCat {
 			for (const entt::entity entity : lineView)
 			{
 				auto [transform, line] = lineView.get<Transform, LineRenderer>(entity);
-				if (!scene.IsActiveInHierarchy(Entity(entity, &scene))
+				if (!isVisible(entity)
 					|| !line.Enabled
 					|| !std::isfinite(line.Width) || line.Width <= 0.0f)
 					continue;
@@ -705,7 +713,7 @@ namespace TomCat {
 			if (renderedLine)
 				Renderer2D::SetLineWidth(previousLineWidth);
 
-			RuntimeUISystem::RenderWorldText(scene, registry);
+			RuntimeUISystem::RenderWorldText(scene, registry, visibility);
 		}
 
 		void InitializeSpriteAnimations(Scene& scene, entt::registry& registry)
@@ -810,6 +818,10 @@ namespace TomCat {
 			scene->DestroyEntity(duplicate);
 			return {};
 		}
+		// The source stays in this Scene, so a copied Primary camera must not
+		// compete with the authored camera it came from.
+		if (duplicate.HasComponent<C_Camera>())
+			duplicate.GetComponent<C_Camera>().Primary = false;
 		duplicateUUIDs[source.GetUUID()] = duplicate.GetUUID();
 
 		if (parent && !scene->SetParent(duplicate, parent))
@@ -1655,7 +1667,7 @@ namespace TomCat {
 			if (entityIt == m_EntityMap.end()
 				|| !m_Registry.valid(entityIt->second)
 				|| !m_Registry.all_of<Tag>(entityIt->second)
-				|| !m_Registry.get<Tag>(entityIt->second).Visible)
+				|| !m_Registry.get<Tag>(entityIt->second).ActiveSelf)
 				return false;
 			auto parentIt = m_ParentMap.find(cursor);
 			if (parentIt == m_ParentMap.end())
@@ -1663,6 +1675,102 @@ namespace TomCat {
 			cursor = parentIt->second;
 		}
 		return false;
+	}
+
+	bool Scene::IsEditorHidden(Entity entity) const
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+		return m_Registry.all_of<EditorVisibility>(entity.m_EntityHandle)
+			&& m_Registry.get<EditorVisibility>(entity.m_EntityHandle).Hidden;
+	}
+
+	bool Scene::IsVisibleInEditorHierarchy(Entity entity) const
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+
+		UUID cursor = entity.GetUUID();
+		std::unordered_set<UUID> visited;
+		while (static_cast<uint64_t>(cursor) != 0)
+		{
+			if (!visited.emplace(cursor).second)
+				return false;
+			auto entityIt = m_EntityMap.find(cursor);
+			if (entityIt == m_EntityMap.end()
+				|| !m_Registry.valid(entityIt->second))
+				return false;
+			if (m_Registry.all_of<EditorVisibility>(entityIt->second)
+				&& m_Registry.get<EditorVisibility>(entityIt->second).Hidden)
+				return false;
+			auto parentIt = m_ParentMap.find(cursor);
+			if (parentIt == m_ParentMap.end())
+				return true;
+			cursor = parentIt->second;
+		}
+		return false;
+	}
+
+	bool Scene::SetEditorHidden(Entity entity, bool hidden)
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+
+		const bool hasState = m_Registry.all_of<EditorVisibility>(
+			entity.m_EntityHandle);
+		if (hidden)
+		{
+			if (hasState)
+			{
+				auto& state = m_Registry.get<EditorVisibility>(
+					entity.m_EntityHandle);
+				if (state.Hidden)
+					return false;
+				state.Hidden = true;
+			}
+			else
+			{
+				m_Registry.emplace<EditorVisibility>(entity.m_EntityHandle);
+			}
+			return true;
+		}
+
+		if (!hasState)
+			return false;
+		m_Registry.remove<EditorVisibility>(entity.m_EntityHandle);
+		return true;
+	}
+
+	bool Scene::HasAuthoredPrimaryCamera() const
+	{
+		for (const entt::entity handle : m_Registry.view<C_Camera>())
+		{
+			if (m_Registry.get<C_Camera>(handle).Primary)
+				return true;
+		}
+		return false;
+	}
+
+	bool Scene::SetCameraPrimary(Entity entity, bool primary)
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<C_Camera>())
+			return false;
+
+		if (primary)
+		{
+			for (const entt::entity handle : m_Registry.view<C_Camera>())
+				m_Registry.get<C_Camera>(handle).Primary = false;
+		}
+		entity.GetComponent<C_Camera>().Primary = primary;
+		return true;
 	}
 
 	std::vector<UUID> Scene::GetChildrenUUIDs(Entity entity)
@@ -3358,6 +3466,13 @@ namespace TomCat {
 		ScriptFixedStepScope fixedStepScope(scriptEngine, m_ScriptSceneSessionID);
 		if (!fixedStepScope)
 			return false;
+		// BeginFixedStep activates the accumulated fixed input batch. Freeze the
+		// matching UI ownership decision before managed InputActions evaluate.
+		// RuntimeUISystem keeps this idempotent across catch-up substeps until the
+		// display UI update commits focus/click state once.
+		RuntimeUISystem::PrepareFixedInputCapture(*this, m_ViewportWidth,
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+			m_RuntimeUIViewportOrigin, m_RuntimeUIScreenToFramebufferScale);
 		if (m_ScriptSceneSessionID != 0)
 		{
 			scriptEngine.FixedUpdateAll(m_ScriptSceneSessionID, FixedRuntimeTimestep);
@@ -3601,56 +3716,36 @@ namespace TomCat {
 
 	void Scene::RenderRuntimeScene()
 	{
-		// Set background color from primary camera.
+		Entity mainCameraEntity = GetPrimaryCameraEntity();
+		if (mainCameraEntity)
 		{
-			auto view = m_Registry.view<Transform, C_Camera>();
-			view.each([this](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary
-					&& IsActiveInHierarchy(Entity(entity, this)))
-				{
-					RenderCommand::SetClearColor(camera.BackgroundColor);
-					RenderCommand::Clear();
-				}
-			});
-		}
-
-		Camera* MainCamera = nullptr;
-		glm::mat4 cameraTransform;
-
-		{
-			auto view = m_Registry.view<Transform, C_Camera>();
-
-			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary
-					&& IsActiveInHierarchy(Entity(entity, this)))
-				{
-					MainCamera = &camera._Camera;
-					cameraTransform = GetRuntimeRenderTransform(
-						m_Registry.get<ID>(entity).id);
-				}
-			});
-		}
-
-		if (MainCamera)
-		{
-			Renderer2D::BeginScene(*MainCamera, cameraTransform);
+			auto& camera = mainCameraEntity.GetComponent<C_Camera>();
+			RenderCommand::SetClearColor(camera.BackgroundColor);
+			RenderCommand::Clear();
+			const glm::mat4 cameraTransform = GetRuntimeRenderTransform(
+				mainCameraEntity.GetUUID());
+			Renderer2D::BeginScene(camera._Camera, cameraTransform);
 			Render2DComponents(*this, m_Registry,
-				MainCamera->GetProjection() * glm::inverse(cameraTransform));
+				camera._Camera.GetProjection() * glm::inverse(cameraTransform),
+				RuntimeUIVisibilityMode::Gameplay);
 			Renderer2D::EndScene();
 		}
 		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
-			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale);
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+			RuntimeUIVisibilityMode::Gameplay);
 	}
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
 		Renderer2D::BeginScene(camera);
 
-		Render2DComponents(*this, m_Registry, camera.GetViewProjection());
+		Render2DComponents(*this, m_Registry, camera.GetViewProjection(),
+			RuntimeUIVisibilityMode::Editor);
 
 		Renderer2D::EndScene();
 		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
-			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale);
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+			RuntimeUIVisibilityMode::Editor);
 	}
 
 	void Scene::OnRenderRuntime()
@@ -3900,17 +3995,13 @@ namespace TomCat {
 	Entity Scene::GetPrimaryCameraEntity()
 	{
 		auto view = m_Registry.view<C_Camera>();
-
-		for (auto entity:view)
+		for (const entt::entity handle : view)
 		{
-			const auto& camera = view.get<C_Camera>(entity);
-
-			if (camera.Primary
-				&& IsActiveInHierarchy(Entity(entity, this)))
-				return Entity(entity,this);
-
+			const auto& camera = view.get<C_Camera>(handle);
+			Entity entity(handle, this);
+			if (camera.Enabled && camera.Primary && IsActiveInHierarchy(entity))
+				return entity;
 		}
-
 		return {};
 	}
 

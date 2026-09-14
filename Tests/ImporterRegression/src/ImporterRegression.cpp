@@ -1,17 +1,21 @@
 #include "TomCat/Asset/AssetDatabase.h"
 #include "TomCat/Asset/AssetImportCoordinator.h"
 #include "TomCat/Asset/AssetJobSystem.h"
+#include "TomCat/Asset/ArtifactKey.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/AssetRegistry.h"
+#include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Asset/MaterialArtifact.h"
 #include "TomCat/Asset/MeshArtifact.h"
 #include "TomCat/Asset/ShaderArtifact.h"
+#include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Asset/TextureArtifact.h"
 #include "TomCat/Audio/AudioClip.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Shader.h"
+#include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SceneSerializer.h"
@@ -20,10 +24,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -375,6 +381,26 @@ namespace {
 			bytes[offset + index] = static_cast<uint8_t>(value >> (index * 8));
 	}
 
+	uint32_t ReadLittleEndian32(std::span<const uint8_t> bytes, size_t offset)
+	{
+		Require(offset <= bytes.size() && bytes.size() - offset >= 4,
+			"test LE32 read is out of range");
+		uint32_t value = 0;
+		for (uint32_t index = 0; index < 4; ++index)
+			value |= static_cast<uint32_t>(bytes[offset + index]) << (index * 8);
+		return value;
+	}
+
+	uint64_t ReadLittleEndian64(std::span<const uint8_t> bytes, size_t offset)
+	{
+		Require(offset <= bytes.size() && bytes.size() - offset >= 8,
+			"test LE64 read is out of range");
+		uint64_t value = 0;
+		for (uint32_t index = 0; index < 8; ++index)
+			value |= static_cast<uint64_t>(bytes[offset + index]) << (index * 8);
+		return value;
+	}
+
 	std::vector<uint8_t> MakeFourByFourBMP()
 	{
 		constexpr uint32_t width = 4;
@@ -447,6 +473,33 @@ namespace {
 		output.write(reinterpret_cast<const char*>(bytes.data()),
 			static_cast<std::streamsize>(bytes.size()));
 		Require(static_cast<bool>(output), "could not write complete binary test file");
+	}
+
+	std::vector<uint8_t> ReadBinary(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary | std::ios::ate);
+		Require(static_cast<bool>(input), "could not open binary test file");
+		const std::streamoff end = input.tellg();
+		Require(end >= 0, "binary test file has an invalid size");
+		std::vector<uint8_t> bytes(static_cast<size_t>(end));
+		input.seekg(0, std::ios::beg);
+		if (!bytes.empty())
+			input.read(reinterpret_cast<char*>(bytes.data()), end);
+		Require(static_cast<bool>(input) || bytes.empty(),
+			"could not read complete binary test file");
+		return bytes;
+	}
+
+	std::vector<uint8_t> MakeManagedAssemblyFixture(const std::string& manifest)
+	{
+		std::vector<uint8_t> assembly = { 'M', 'Z' };
+		assembly.reserve(assembly.size() + manifest.size() * 2);
+		for (const unsigned char character : manifest)
+		{
+			assembly.push_back(character);
+			assembly.push_back(0);
+		}
+		return assembly;
 	}
 
 	std::string ReadText(const std::filesystem::path& path)
@@ -543,6 +596,91 @@ namespace {
 		mutable std::atomic_uint32_t DelayMilliseconds = 15;
 		mutable std::atomic_uint32_t ActiveInvocations = 0;
 		mutable std::atomic_uint32_t MaxConcurrentInvocations = 0;
+	};
+
+
+	class BlockingSnapshotTextureImporter final : public TomCat::IAssetImporter
+	{
+	public:
+		std::string_view GetID() const noexcept override
+		{
+			return "regression.texture.blocking-snapshot";
+		}
+		uint32_t GetVersion() const noexcept override { return 1; }
+		TomCat::AssetType GetAssetType() const noexcept override
+		{
+			return TomCat::AssetType::Texture2D;
+		}
+
+		void Arm(TomCat::AssetHandle handle)
+		{
+			std::scoped_lock lock(m_Mutex);
+			m_BlockedHandle = handle;
+			m_Armed = true;
+			m_Entered = false;
+			m_Released = false;
+		}
+
+		bool WaitUntilBlocked() const
+		{
+			std::unique_lock lock(m_Mutex);
+			return m_Wake.wait_for(lock, std::chrono::seconds(5),
+				[this]() { return m_Entered; });
+		}
+
+		void Release()
+		{
+			{
+				std::scoped_lock lock(m_Mutex);
+				m_Released = true;
+			}
+			m_Wake.notify_all();
+		}
+
+		TomCat::AssetImportResult Import(
+			const TomCat::AssetImportRequest& request) const override
+		{
+			Invocations.fetch_add(1);
+			{
+				std::unique_lock lock(m_Mutex);
+				if (m_Armed && request.Handle == m_BlockedHandle)
+				{
+					m_Entered = true;
+					m_Wake.notify_all();
+					m_Wake.wait(lock, [this]() { return m_Released; });
+					m_Armed = false;
+				}
+			}
+
+			TomCat::AssetImportResult result;
+			if (request.IsCancellationRequested())
+			{
+				result.Error = "cancelled";
+				return result;
+			}
+			result.Format = "regression-texture/snapshot-v1";
+			result.ArtifactBytes.assign(request.SourceBytes.begin(),
+				request.SourceBytes.end());
+			std::string childName = "initial";
+			if (const auto setting = request.Settings.find("variant");
+				setting != request.Settings.end())
+				childName = setting->second;
+			result.ArtifactBytes.insert(result.ArtifactBytes.end(),
+				childName.begin(), childName.end());
+			result.SubAssets.push_back({ "sprite:generated", childName,
+				TomCat::AssetType::Texture2D });
+			return result;
+		}
+
+		mutable std::atomic_uint32_t Invocations = 0;
+
+	private:
+		mutable std::mutex m_Mutex;
+		mutable std::condition_variable m_Wake;
+		mutable TomCat::AssetHandle m_BlockedHandle = TomCat::AssetHandle(0);
+		mutable bool m_Armed = false;
+		mutable bool m_Entered = false;
+		mutable bool m_Released = false;
 	};
 
 	TomCat::AssetHandle RequireHandle(TomCat::AssetRegistry& registry,
@@ -841,6 +979,61 @@ namespace {
 			&& parsed.Stages.size() == 2,
 			"cooked shader bytes were not a validated OpenGL artifact");
 
+		TomCat::CookedAssetRange cookedRange;
+		Require(manager.TryGetCookedAssetRange(shaderHandle, cookedRange)
+			&& cookedRange.HasSHA256Digest && cookedRange.Size != 0,
+			"tcpak v7 did not expose the Shader payload digest and byte range");
+		manager.UnmountCookedPackage();
+
+		const std::vector<uint8_t> packageBytes = ReadBinary(package);
+		const uint32_t packageVersion = ReadLittleEndian32(packageBytes, 8);
+		const uint32_t headerSize = ReadLittleEndian32(packageBytes, 12);
+		const uint64_t entryCount = ReadLittleEndian64(packageBytes, 16);
+		const uint64_t entrySize =
+			TomCat::RuntimeCompatibility::TcpakEntrySizeForVersion(packageVersion);
+		Require(packageVersion == TomCat::RuntimeCompatibility::TcpakVersion
+			&& TomCat::RuntimeCompatibility::TcpakHasEntryDigests(packageVersion)
+			&& headerSize <= packageBytes.size()
+			&& entryCount <= (packageBytes.size() - headerSize) / entrySize,
+			"cooked Shader package has an invalid tcpak v7 index");
+		size_t shaderDigestOffset = packageBytes.size();
+		for (uint64_t index = 0; index < entryCount; ++index)
+		{
+			const size_t indexOffset = headerSize
+				+ static_cast<size_t>(index * entrySize);
+			if (ReadLittleEndian64(packageBytes, indexOffset)
+				== static_cast<uint64_t>(shaderHandle))
+			{
+				shaderDigestOffset = indexOffset
+					+ static_cast<size_t>(
+						TomCat::RuntimeCompatibility::TcpakLegacyEntrySize);
+				break;
+			}
+		}
+		Require(shaderDigestOffset < packageBytes.size()
+			&& cookedRange.Offset <= packageBytes.size()
+			&& cookedRange.Size <= packageBytes.size() - cookedRange.Offset,
+			"cooked Shader index omitted its payload or digest");
+
+		std::vector<uint8_t> damagedPayload = packageBytes;
+		damagedPayload[static_cast<size_t>(cookedRange.Offset
+			+ cookedRange.Size / 2)] ^= 0x01;
+		const std::filesystem::path damagedPayloadPackage =
+			project.Root / "Damaged Shader Payload.tcpak";
+		WriteBinary(damagedPayloadPackage, damagedPayload);
+		Require(!manager.MountCookedPackage(damagedPayloadPackage),
+			"tcpak v7 mounted a Shader whose payload no longer matched its SHA-256");
+
+		std::vector<uint8_t> damagedDigest = packageBytes;
+		damagedDigest[shaderDigestOffset] ^= 0x01;
+		const std::filesystem::path damagedDigestPackage =
+			project.Root / "Damaged Shader Digest.tcpak";
+		WriteBinary(damagedDigestPackage, damagedDigest);
+		Require(!manager.MountCookedPackage(damagedDigestPackage),
+			"tcpak v7 mounted a Shader whose index digest was corrupted");
+		Require(manager.MountCookedPackage(package),
+			"clean tcpak v7 did not remount after integrity rejection");
+
 		HiddenOpenGLContext context;
 		if (!context.IsAvailable())
 		{
@@ -1083,6 +1276,702 @@ namespace {
 			"decoded mesh loader accepted a Material artifact");
 		manager.Shutdown();
 		TomCat::AssetJobSystem::Get().Configure({});
+	}
+
+	void TestCookTraversesDatabaseDependencyClosure()
+	{
+		TemporaryProject environment;
+		const std::filesystem::path projectRoot =
+			environment.Root / "CookProject";
+		TomCat::ProjectConfig config;
+		config.Name = "Cook Dependency Closure Regression";
+		config.Template = "2D";
+		config.AssetDirectory = "Assets";
+		config.StartScene = "Main.tomcat";
+		const TomCat::Ref<TomCat::Project> project = TomCat::Project::CreateNew(
+			projectRoot / "Project.tcproj", config);
+		Require(project != nullptr,
+			"could not create project for cook dependency-closure regression");
+
+		const std::filesystem::path scriptPath =
+			project->GetAssetPath() / "CookClosureProbe.cs";
+		const std::filesystem::path shaderPath =
+			project->GetAssetPath() / "surface.glsl";
+		const std::filesystem::path texturePath =
+			project->GetAssetPath() / "surface.bmp";
+		const std::filesystem::path materialOnlyTexturePath =
+			project->GetAssetPath() / "material-only.bmp";
+		const std::filesystem::path unusedTexturePath =
+			project->GetAssetPath() / "unused.bmp";
+		const std::filesystem::path materialPath =
+			project->GetAssetPath() / "surface.tcmat";
+		WriteBytes(scriptPath,
+			"using TomCat; public sealed class CookClosureProbe : TomCatBehaviour {}\n");
+		WriteBytes(shaderPath, MakeDependencyShader("cook-dependency-closure"));
+		const std::vector<uint8_t> bitmap = MakeFourByFourBMP();
+		WriteBinary(texturePath, bitmap);
+		WriteBinary(materialOnlyTexturePath, bitmap);
+		WriteBinary(unusedTexturePath, bitmap);
+
+		TomCat::AssetManager& manager = TomCat::AssetManager::Get();
+		manager.Shutdown();
+		Require(manager.SetProject(project),
+			"could not initialize project asset manager for dependency-closure cook");
+		const TomCat::AssetHandle script = RequireHandle(manager.GetRegistry(),
+			scriptPath, TomCat::AssetType::CSharpScript);
+		const TomCat::AssetHandle shader = RequireHandle(manager.GetRegistry(),
+			shaderPath, TomCat::AssetType::Shader);
+		const TomCat::AssetHandle texture = RequireHandle(manager.GetRegistry(),
+			texturePath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle materialOnlyTexture = RequireHandle(
+			manager.GetRegistry(), materialOnlyTexturePath,
+			TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle unusedTexture = RequireHandle(manager.GetRegistry(),
+			unusedTexturePath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetImportSettings spriteSettings = {
+			{ "SpriteMode", "Multiple" },
+			{ "SpriteAtlasSchema", "2" },
+			{ "Sprite.surface.Name", "Surface Slice" },
+			{ "Sprite.surface.Rect", "0,0,2,2" },
+			{ "Sprite.surface.Pivot", "0.5,0.5" },
+			{ "Sprite.surface.PixelsPerUnit", "100" },
+			{ "Sprite.surface.Border", "0,0,0,0" }
+		};
+		Require(manager.GetRegistry().SetImportSettings(texture, spriteSettings),
+			"could not configure sprite-atlas fixture");
+		TomCat::AssetLoadOptions atlasOptions;
+		atlasOptions.Platform = "windows-x64";
+		atlasOptions.Backend = "opengl";
+		const TomCat::AssetLoadResult atlasArtifact =
+			manager.GetDatabase().LoadArtifact(texture, std::move(atlasOptions));
+		const TomCat::AssetMetadata* atlasMetadata =
+			manager.GetRegistry().GetMetadata(texture);
+		Require(atlasArtifact.Succeeded() && atlasMetadata
+			&& atlasMetadata->SubAssets.size() == 1,
+			"could not import sprite sub-asset fixture");
+		const TomCat::AssetHandle textureSlice =
+			atlasMetadata->SubAssets.front().Handle;
+		Require(static_cast<uint64_t>(textureSlice) != 0,
+			"sprite sub-asset fixture did not receive a stable handle");
+		WriteBytes(materialPath,
+			"SchemaVersion: 1\nShader: "
+			+ std::to_string(static_cast<uint64_t>(shader))
+			+ "\nTextures:\n  Albedo: "
+			+ std::to_string(static_cast<uint64_t>(textureSlice))
+			+ "\n  MaterialOnly: "
+			+ std::to_string(static_cast<uint64_t>(materialOnlyTexture))
+			+ "\nParameters:\n  Exposure: { Type: Float, Value: 1.0 }\n");
+		auto prefabSource = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity prefabRoot = prefabSource->CreateEntity("Direct Sprite Prefab");
+		prefabRoot.AddComponent<TomCat::SpriteRenderer>().SpriteHandle = textureSlice;
+		TomCat::PrefabArchive prefabArchive;
+		std::string prefabError;
+		Require(TomCat::PrefabArchiveCodec::CaptureSubtree(prefabSource, prefabRoot,
+			prefabArchive, prefabError),
+			"could not capture direct Prefab -> Sprite dependency fixture");
+		std::string prefabDocument;
+		Require(TomCat::PrefabArchiveCodec::Encode(prefabArchive, prefabDocument,
+			prefabError),
+			"could not encode direct Prefab -> Sprite dependency fixture");
+		const std::filesystem::path prefabPath =
+			project->GetAssetPath() / "DirectSprite.tcprefab";
+		WriteBytes(prefabPath, prefabDocument);
+		Require(manager.Refresh(),
+			"could not discover material and Prefab fixtures for dependency-closure cook");
+		const TomCat::AssetHandle material = RequireHandle(manager.GetRegistry(),
+			materialPath, TomCat::AssetType::Material);
+		const TomCat::AssetHandle prefab = RequireHandle(manager.GetRegistry(),
+			prefabPath, TomCat::AssetType::Prefab);
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName("Material dependency closure");
+		TomCat::Entity entity = scene->CreateEntity("Material owner");
+		entity.AddComponent<TomCat::SpriteRenderer>().SpriteHandle = textureSlice;
+		auto& scripts = entity.AddComponent<TomCat::CSharpScripts>();
+		TomCat::CSharpScriptEntry attachment;
+		attachment.ScriptAsset = script;
+		attachment.LastKnownClassName = "CookClosureProbe";
+		attachment.Fields.emplace_back("11111111111111111111111111111111",
+			"Surface", TomCat::ScriptFieldType::AssetRef,
+			static_cast<uint64_t>(material),
+			"TomCat.AssetRef<TomCat.MaterialAsset>");
+		attachment.Fields.emplace_back("22222222222222222222222222222222",
+			"Template", TomCat::ScriptFieldType::AssetRef,
+			static_cast<uint64_t>(prefab), "TomCat.PrefabAsset");
+		scripts.Scripts.push_back(std::move(attachment));
+		const std::filesystem::path scenePath =
+			project->GetAssetPath() / "Main.tomcat";
+		TomCat::SceneSerializer sceneWriter(scene);
+		Require(sceneWriter.Serialize(scenePath),
+			"could not serialize Scene -> Material dependency fixture");
+		const TomCat::AssetHandle sceneHandle = RequireHandle(manager.GetRegistry(),
+			scenePath, TomCat::AssetType::Scene);
+		Require(project->SetStartSceneHandle(sceneHandle) && project->Save(),
+			"could not configure the dependency-closure entry scene");
+		Require(manager.Refresh(),
+			"could not rebuild Scene and Material dependency graphs before cook");
+
+		std::vector<TomCat::AssetHandle> expectedSceneDependencies = {
+			script, material, prefab, textureSlice
+		};
+		std::sort(expectedSceneDependencies.begin(), expectedSceneDependencies.end(),
+			[](TomCat::AssetHandle left, TomCat::AssetHandle right)
+			{
+				return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+			});
+		std::vector<TomCat::AssetHandle> expectedMaterialDependencies = {
+			shader, textureSlice, materialOnlyTexture
+		};
+		std::sort(expectedMaterialDependencies.begin(),
+			expectedMaterialDependencies.end(),
+			[](TomCat::AssetHandle left, TomCat::AssetHandle right)
+			{
+				return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+			});
+		const TomCat::AssetDependencySnapshot sceneSnapshot =
+			manager.GetDatabase().GetDependencySnapshot(sceneHandle);
+		const TomCat::AssetDependencySnapshot prefabSnapshot =
+			manager.GetDatabase().GetDependencySnapshot(prefab);
+		Require(sceneSnapshot.Dependencies == expectedSceneDependencies
+			&& manager.GetDatabase().GetDependencies(material)
+				== expectedMaterialDependencies
+			&& prefabSnapshot.Dependencies
+				== std::vector<TomCat::AssetHandle>{ textureSlice }
+			&& std::find(sceneSnapshot.ArtifactDependencies.begin(),
+				sceneSnapshot.ArtifactDependencies.end(), texture)
+				!= sceneSnapshot.ArtifactDependencies.end()
+			&& prefabSnapshot.ArtifactDependencies
+				== std::vector<TomCat::AssetHandle>{ texture },
+			"database did not preserve logical Scene/Prefab Sprite handles while resolving their atlas artifact owner");
+		const std::vector<TomCat::AssetHandle> atlasDependents =
+			manager.GetDatabase().GetDependents(texture);
+		Require(std::find(atlasDependents.begin(), atlasDependents.end(), material)
+				!= atlasDependents.end()
+			&& std::find(atlasDependents.begin(), atlasDependents.end(), sceneHandle)
+				!= atlasDependents.end()
+			&& std::find(atlasDependents.begin(), atlasDependents.end(), prefab)
+				!= atlasDependents.end(),
+			"atlas source changes no longer invalidate logical Sprite dependents");
+		const TomCat::AssetDependencySnapshot materialSnapshot =
+			manager.GetDatabase().GetDependencySnapshot(material);
+		std::vector<TomCat::AssetHandle> expectedArtifactDependencies = {
+			shader, texture, materialOnlyTexture
+		};
+		std::sort(expectedArtifactDependencies.begin(),
+			expectedArtifactDependencies.end(),
+			[](TomCat::AssetHandle left, TomCat::AssetHandle right)
+			{
+				return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+			});
+		Require(materialSnapshot.Dependencies == expectedMaterialDependencies
+			&& materialSnapshot.ArtifactDependencies
+				== expectedArtifactDependencies
+			&& materialSnapshot.SourceSHA256.size() == 64
+			&& materialSnapshot.Revision != 0,
+			"Material dependency graph did not retain its source snapshot");
+		TomCat::AssetLoadOptions materialOptions;
+		materialOptions.Platform = "windows-x64";
+		materialOptions.Backend = "opengl";
+		const TomCat::AssetLoadResult materialArtifact =
+			manager.GetDatabase().LoadArtifact(material, std::move(materialOptions));
+		const TomCat::AssetDependencySnapshot postImportSnapshot =
+			manager.GetDatabase().GetDependencySnapshot(material);
+		Require(materialArtifact.Succeeded()
+			&& materialArtifact.Artifact.SourceSHA256
+				== materialSnapshot.SourceSHA256
+			&& postImportSnapshot.Revision == materialSnapshot.Revision
+			&& materialArtifact.Artifact.DependencyKeys.size() == 3
+			&& std::find(materialArtifact.Artifact.DependencyKeys.begin(),
+				materialArtifact.Artifact.DependencyKeys.end(),
+				atlasArtifact.Artifact.ArtifactKey)
+				!= materialArtifact.Artifact.DependencyKeys.end(),
+			"Material import did not use one dependency/source snapshot or resolve its Sprite to the atlas artifact key");
+
+		Require(manager.GetDatabase().SetDependencies(material,
+			expectedMaterialDependencies),
+			"could not install a temporary explicit Material dependency graph");
+		const TomCat::AssetDependencySnapshot explicitSnapshot =
+			manager.GetDatabase().GetDependencySnapshot(material);
+		Require(explicitSnapshot.Revision != postImportSnapshot.Revision
+			&& explicitSnapshot.SourceSHA256.empty(),
+			"explicit dependency mutation did not advance graph revision");
+		Require(manager.Refresh(),
+			"could not restore source-discovered Material dependencies");
+		const TomCat::AssetDependencySnapshot restoredSnapshot =
+			manager.GetDatabase().GetDependencySnapshot(material);
+		Require(restoredSnapshot.Revision != explicitSnapshot.Revision
+			&& restoredSnapshot.Dependencies == expectedMaterialDependencies
+			&& restoredSnapshot.ArtifactDependencies
+				== expectedArtifactDependencies
+			&& restoredSnapshot.SourceSHA256 == materialSnapshot.SourceSHA256,
+			"source dependency rebuild did not advance revision and restore its exact snapshot");
+
+		std::ostringstream manifest;
+		manifest << "{\"version\":1,\"scripts\":[{\"assetHandle\":"
+			<< static_cast<uint64_t>(script)
+			<< ",\"typeName\":\"CookClosureProbe\",\"executionOrder\":0,"
+				"\"disallowMultiple\":false,\"lifecycle\":0,\"fields\":[]}]}";
+		const std::string manifestJson = manifest.str();
+		Require(manager.SetManagedCookPayload(
+			MakeManagedAssemblyFixture(manifestJson), manifestJson,
+			"cook-dependency-closure"),
+			"could not install managed payload for dependency-closure cook");
+		const std::filesystem::path package =
+			projectRoot / "Build" / "DependencyClosure.tcpak";
+
+		// Exercise every Cook metadata read while Refresh repeatedly updates the
+		// Registry container. Cook must use values copied under AssetDatabase's
+		// metadata gate and either validate that snapshot or reject it cleanly.
+		const std::filesystem::path refreshStaging = projectRoot / "RefreshStaging";
+		std::filesystem::create_directories(refreshStaging);
+		std::vector<std::filesystem::path> stagedRefreshAssets;
+		for (uint32_t index = 0; index < 12; ++index)
+		{
+			const std::filesystem::path staged =
+				refreshStaging / ("refresh-" + std::to_string(index) + ".bmp");
+			WriteBinary(staged, bitmap);
+			stagedRefreshAssets.push_back(staged);
+		}
+		std::atomic_bool beginRefresh = false;
+		std::atomic_bool refreshFailed = false;
+		std::atomic_uint32_t refreshCount = 0;
+		std::thread metadataRefresher([&]()
+		{
+			while (!beginRefresh.load())
+				std::this_thread::yield();
+			for (uint32_t index = 0; index < stagedRefreshAssets.size(); ++index)
+			{
+				std::error_code moveError;
+				std::filesystem::rename(stagedRefreshAssets[index],
+					project->GetAssetPath()
+						/ ("refresh-" + std::to_string(index) + ".bmp"),
+					moveError);
+				if (moveError || !manager.GetDatabase().RefreshRegistry())
+				{
+					refreshFailed = true;
+					return;
+				}
+				++refreshCount;
+			}
+		});
+		beginRefresh = true;
+		const bool cooked = manager.CookToPackage(package);
+		metadataRefresher.join();
+		Require(!refreshFailed && refreshCount != 0,
+			"concurrent metadata Refresh fixture did not execute successfully");
+		Require(cooked,
+			"cook rejected the Scene -> Material closure during safe metadata Refresh");
+		manager.Shutdown();
+
+		Require(manager.MountCookedPackage(package),
+			"could not mount dependency-closure package");
+		std::vector<uint8_t> bytes;
+		TomCat::AssetType type = TomCat::AssetType::None;
+		Require(manager.ReadAssetBytes(sceneHandle, bytes, &type)
+			&& type == TomCat::AssetType::Scene,
+			"dependency-closure package omitted its Scene root");
+		Require(manager.ReadAssetBytes(material, bytes, &type)
+			&& type == TomCat::AssetType::Material,
+			"dependency-closure package omitted its Material");
+		TomCat::MaterialArtifactView cookedMaterial;
+		std::string artifactError;
+		Require(TomCat::ParseMaterialArtifact(bytes, cookedMaterial, artifactError)
+			&& cookedMaterial.Textures.size() == 2
+			&& std::any_of(cookedMaterial.Textures.begin(),
+				cookedMaterial.Textures.end(), [textureSlice](const auto& binding)
+				{ return binding.Texture == textureSlice; })
+			&& std::any_of(cookedMaterial.Textures.begin(),
+				cookedMaterial.Textures.end(),
+				[materialOnlyTexture](const auto& binding)
+				{ return binding.Texture == materialOnlyTexture; }),
+			"cooked Material did not preserve all logical Texture handles");
+		Require(manager.ReadAssetBytes(prefab, bytes, &type)
+			&& type == TomCat::AssetType::Prefab,
+			"dependency-closure package omitted its direct Sprite Prefab");
+		Require(manager.ReadAssetBytes(shader, bytes, &type)
+			&& type == TomCat::AssetType::Shader,
+			"dependency-closure package omitted its Shader");
+		Require(manager.ReadAssetBytes(textureSlice, bytes, &type)
+			&& type == TomCat::AssetType::Texture2D,
+			"dependency-closure package omitted its exact Sprite sub-asset");
+		TomCat::ResolvedSpriteAsset cookedSprite;
+		std::span<const uint8_t> cookedAtlas;
+		Require(TomCat::ParseCookedSpriteSubAsset(bytes, cookedSprite, cookedAtlas)
+			&& cookedSprite.TextureHandle == texture && !cookedAtlas.empty(),
+			"packaged Sprite sub-asset did not retain its source atlas payload");
+		Require(manager.ReadAssetBytes(materialOnlyTexture, bytes, &type)
+			&& type == TomCat::AssetType::Texture2D,
+			"dependency-closure package omitted the Material-only Texture");
+		Require(!manager.ReadAssetBytes(texture, bytes),
+			"Sprite source atlas leaked into the strict logical-handle closure");
+		Require(!manager.ReadAssetBytes(unusedTexture, bytes),
+			"unreferenced texture leaked into strict dependency-closure package");
+		manager.Shutdown();
+	}
+
+	void TestExplicitDependencyRefreshesTransferredSpriteOwner()
+	{
+		TemporaryProject project;
+		const std::filesystem::path dependentPath =
+			project.Assets / "explicit-owner-probe.cs";
+		const std::filesystem::path shaderPath =
+			project.Assets / "explicit-owner.glsl";
+		const std::filesystem::path firstOwnerPath =
+			project.Assets / "owner-a.bmp";
+		const std::filesystem::path secondOwnerPath =
+			project.Assets / "owner-b.bmp";
+		WriteBytes(dependentPath,
+			"public sealed class ExplicitOwnerProbe {}\n");
+		WriteBytes(shaderPath, MakeDependencyShader("explicit-owner"));
+		const std::vector<uint8_t> bitmap = MakeFourByFourBMP();
+		WriteBinary(firstOwnerPath, bitmap);
+		WriteBinary(secondOwnerPath, bitmap);
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"owner-transfer registry initialization failed");
+		const TomCat::AssetHandle dependent = RequireHandle(registry,
+			dependentPath, TomCat::AssetType::CSharpScript);
+		const TomCat::AssetHandle shader = RequireHandle(registry,
+			shaderPath, TomCat::AssetType::Shader);
+		const TomCat::AssetHandle firstOwner = RequireHandle(registry,
+			firstOwnerPath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle secondOwner = RequireHandle(registry,
+			secondOwnerPath, TomCat::AssetType::Texture2D);
+
+		TomCat::AssetSubAsset requested;
+		requested.PersistentID = "sprite:transferred";
+		requested.Name = "Transferred Slice";
+		requested.Type = TomCat::AssetType::Texture2D;
+		std::vector<TomCat::AssetSubAsset> assigned;
+		Require(registry.SynchronizeSubAssets(firstOwner, { requested }, &assigned)
+			&& assigned.size() == 1,
+			"could not seed the transferred Sprite child");
+		const TomCat::AssetHandle slice = assigned.front().Handle;
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"owner-transfer asset database initialization failed");
+		Require(database.SetDependencies(dependent, { slice }),
+			"could not set a non-discoverable logical Sprite dependency");
+		Require(database.SetDependencies(slice, { shader }),
+			"could not use a live Sprite child as an explicit graph source");
+		Require(database.GetDependencySnapshot(dependent).ArtifactDependencies ==
+				std::vector<TomCat::AssetHandle>{ firstOwner }
+			&& database.GetDependencySnapshot(slice).Dependencies ==
+				std::vector<TomCat::AssetHandle>{ shader },
+			"initial explicit dependency graph did not resolve the Sprite owner");
+
+		const auto writeOwnerMetadata = [&](const std::filesystem::path& source,
+			TomCat::AssetHandle owner, bool ownsSlice)
+		{
+			std::string document =
+				"SchemaVersion: 2\nAsset:\n  Handle: "
+				+ std::to_string(static_cast<uint64_t>(owner))
+				+ "\n  Type: Texture2D\n  ImportSettings: {}\n  SubAssets:";
+			if (ownsSlice)
+			{
+				document += "\n    - Handle: "
+					+ std::to_string(static_cast<uint64_t>(slice))
+					+ "\n      PersistentID: sprite:transferred"
+						"\n      Name: Transferred Slice"
+						"\n      Type: Texture2D\n";
+			}
+			else
+				document += " []\n";
+			WriteBytes(TomCat::AssetRegistry::GetMetadataPath(source), document);
+		};
+		writeOwnerMetadata(firstOwnerPath, firstOwner, false);
+		writeOwnerMetadata(secondOwnerPath, secondOwner, true);
+		Require(database.RefreshRegistry(),
+			"registry refresh rejected the valid Sprite owner transfer");
+
+		const TomCat::AssetSubAsset* transferredChild = nullptr;
+		const TomCat::AssetMetadata* transferredOwner =
+			registry.GetSubAssetOwner(slice, &transferredChild);
+		const TomCat::AssetDependencySnapshot transferred =
+			database.GetDependencySnapshot(dependent);
+		const TomCat::AssetDependencySnapshot childSource =
+			database.GetDependencySnapshot(slice);
+		const std::vector<TomCat::AssetHandle> oldOwnerDependents =
+			database.GetDependents(firstOwner);
+		const std::vector<TomCat::AssetHandle> newOwnerDependents =
+			database.GetDependents(secondOwner);
+		Require(transferredOwner && transferredChild
+			&& transferredOwner->Handle == secondOwner
+			&& transferred.Dependencies ==
+				std::vector<TomCat::AssetHandle>{ slice }
+			&& transferred.ArtifactDependencies ==
+				std::vector<TomCat::AssetHandle>{ secondOwner }
+			&& childSource.Dependencies ==
+				std::vector<TomCat::AssetHandle>{ shader }
+			&& std::find(oldOwnerDependents.begin(), oldOwnerDependents.end(),
+				dependent) == oldOwnerDependents.end()
+			&& std::find(newOwnerDependents.begin(), newOwnerDependents.end(),
+				dependent) != newOwnerDependents.end(),
+			"refresh did not re-resolve explicit dependencies to the new Sprite owner");
+
+		database.Shutdown();
+		registry.Shutdown();
+		Require(registry.Initialize(project.Assets, project.Library),
+			"owner-transfer registry restart failed");
+		Require(database.Initialize(registry, project.Library),
+			"owner-transfer dependency cache restart failed");
+		Require(database.GetDependencySnapshot(slice).Dependencies ==
+				std::vector<TomCat::AssetHandle>{ shader }
+			&& database.GetDependencySnapshot(dependent).ArtifactDependencies ==
+				std::vector<TomCat::AssetHandle>{ secondOwner },
+			"dependency cache dropped the live Sprite graph source or its new owner");
+
+		writeOwnerMetadata(secondOwnerPath, secondOwner, false);
+		Require(database.RefreshRegistry()
+			&& registry.GetSubAssetOwner(slice) == nullptr,
+			"registry refresh did not remove the transferred Sprite child");
+		const TomCat::AssetDependencySnapshot removedChildSource =
+			database.GetDependencySnapshot(slice);
+		Require(removedChildSource.Dependencies.empty()
+			&& removedChildSource.ArtifactDependencies.empty(),
+			"refresh retained an explicit dependency graph whose Sprite source disappeared");
+		database.Shutdown();
+		registry.Shutdown();
+	}
+
+	void TestPartialArtifactOwnerRefreshMergesResolvedAndMissingAliases()
+	{
+		TemporaryProject project;
+		const std::filesystem::path dependentPath =
+			project.Assets / "partial-owner-probe.cs";
+		const std::filesystem::path ownerAPath =
+			project.Assets / "partial-owner-a.bmp";
+		const std::filesystem::path ownerBPath =
+			project.Assets / "partial-owner-b.bmp";
+		const std::filesystem::path ownerCPath =
+			project.Assets / "partial-owner-c.bmp";
+		WriteBytes(dependentPath,
+			"public sealed class PartialOwnerProbe {}\n");
+		const std::vector<uint8_t> bitmap = MakeFourByFourBMP();
+		WriteBinary(ownerAPath, bitmap);
+		WriteBinary(ownerBPath, bitmap);
+		WriteBinary(ownerCPath, bitmap);
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"partial owner registry initialization failed");
+		const TomCat::AssetHandle dependent = RequireHandle(registry,
+			dependentPath, TomCat::AssetType::CSharpScript);
+		const TomCat::AssetHandle ownerA = RequireHandle(registry,
+			ownerAPath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle ownerB = RequireHandle(registry,
+			ownerBPath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle ownerC = RequireHandle(registry,
+			ownerCPath, TomCat::AssetType::Texture2D);
+
+		TomCat::AssetSubAsset requestedA;
+		requestedA.PersistentID = "sprite:partial-a";
+		requestedA.Name = "Partial Slice A";
+		requestedA.Type = TomCat::AssetType::Texture2D;
+		TomCat::AssetSubAsset requestedB;
+		requestedB.PersistentID = "sprite:partial-b";
+		requestedB.Name = "Partial Slice B";
+		requestedB.Type = TomCat::AssetType::Texture2D;
+		std::vector<TomCat::AssetSubAsset> assignedA;
+		std::vector<TomCat::AssetSubAsset> assignedB;
+		Require(registry.SynchronizeSubAssets(ownerA, { requestedA }, &assignedA)
+			&& assignedA.size() == 1
+			&& registry.SynchronizeSubAssets(ownerB, { requestedB }, &assignedB)
+			&& assignedB.size() == 1,
+			"could not seed both partial owner Sprite children");
+		const TomCat::AssetHandle sliceA = assignedA.front().Handle;
+		const TomCat::AssetHandle sliceB = assignedB.front().Handle;
+		std::vector<TomCat::AssetHandle> logicalDependencies{ sliceA, sliceB };
+		std::sort(logicalDependencies.begin(), logicalDependencies.end(),
+			[](TomCat::AssetHandle left, TomCat::AssetHandle right)
+			{
+				return static_cast<uint64_t>(left)
+					< static_cast<uint64_t>(right);
+			});
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"partial owner asset database initialization failed");
+		Require(database.SetDependencies(dependent, logicalDependencies),
+			"could not set the two logical Sprite dependencies");
+
+		const auto writeOwnerMetadata = [&](const std::filesystem::path& source,
+			TomCat::AssetHandle owner, TomCat::AssetHandle child,
+			std::string_view persistentID, std::string_view name)
+		{
+			std::string document =
+				"SchemaVersion: 2\nAsset:\n  Handle: "
+				+ std::to_string(static_cast<uint64_t>(owner))
+				+ "\n  Type: Texture2D\n  ImportSettings: {}\n  SubAssets:";
+			if (static_cast<uint64_t>(child) != 0)
+			{
+				document += "\n    - Handle: "
+					+ std::to_string(static_cast<uint64_t>(child))
+					+ "\n      PersistentID: " + std::string(persistentID)
+					+ "\n      Name: " + std::string(name)
+					+ "\n      Type: Texture2D\n";
+			}
+			else
+				document += " []\n";
+			WriteBytes(TomCat::AssetRegistry::GetMetadataPath(source), document);
+		};
+		writeOwnerMetadata(ownerAPath, ownerA, TomCat::AssetHandle(0), {}, {});
+		writeOwnerMetadata(ownerBPath, ownerB, TomCat::AssetHandle(0), {}, {});
+		writeOwnerMetadata(ownerCPath, ownerC, sliceB,
+			"sprite:partial-b", "Partial Slice B");
+		Require(database.RefreshRegistry(),
+			"registry refresh rejected the partial owner change");
+
+		const TomCat::AssetSubAsset* currentB = nullptr;
+		const TomCat::AssetMetadata* currentBOwner =
+			registry.GetSubAssetOwner(sliceB, &currentB);
+		const TomCat::AssetDependencySnapshot refreshed =
+			database.GetDependencySnapshot(dependent);
+		const auto containsHandle = [](const std::vector<TomCat::AssetHandle>& handles,
+			TomCat::AssetHandle handle)
+		{
+			return std::find(handles.begin(), handles.end(), handle) != handles.end();
+		};
+		Require(registry.GetSubAssetOwner(sliceA) == nullptr
+			&& currentBOwner && currentB && currentBOwner->Handle == ownerC
+			&& refreshed.Dependencies == logicalDependencies
+			&& containsHandle(refreshed.ArtifactDependencies, ownerA)
+			&& containsHandle(refreshed.ArtifactDependencies, ownerC)
+			&& containsHandle(database.GetDependents(ownerA), dependent)
+			&& containsHandle(database.GetDependents(ownerC), dependent),
+			"partial refresh did not retain missing owner A while adding owner C");
+
+		database.Shutdown();
+		registry.Shutdown();
+		Require(registry.Initialize(project.Assets, project.Library),
+			"partial owner registry restart failed");
+		Require(database.Initialize(registry, project.Library),
+			"partial owner dependency cache restart failed");
+		const TomCat::AssetDependencySnapshot reloaded =
+			database.GetDependencySnapshot(dependent);
+		Require(reloaded.Dependencies == logicalDependencies
+			&& containsHandle(reloaded.ArtifactDependencies, ownerA)
+			&& containsHandle(reloaded.ArtifactDependencies, ownerC)
+			&& containsHandle(database.GetDependents(ownerA), dependent)
+			&& containsHandle(database.GetDependents(ownerC), dependent),
+			"dependency cache lost the mixed missing and transferred owner aliases");
+		database.Shutdown();
+		registry.Shutdown();
+	}
+
+	void TestDependencyCacheRetainsMissingSpriteOwnerAlias()
+	{
+		TemporaryProject project;
+		const std::filesystem::path shaderPath = project.Assets / "cached.glsl";
+		const std::filesystem::path texturePath = project.Assets / "cached.bmp";
+		const std::filesystem::path materialPath = project.Assets / "cached.tcmat";
+		WriteBytes(shaderPath, MakeDependencyShader("cached-sprite-owner"));
+		WriteBinary(texturePath, MakeFourByFourBMP());
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"cache reload registry initialization failed");
+		const TomCat::AssetHandle shader = RequireHandle(registry, shaderPath,
+			TomCat::AssetType::Shader);
+		const TomCat::AssetHandle texture = RequireHandle(registry, texturePath,
+			TomCat::AssetType::Texture2D);
+		const TomCat::AssetImportSettings spriteSettings = {
+			{ "SpriteMode", "Multiple" },
+			{ "SpriteAtlasSchema", "2" },
+			{ "Sprite.cached.Name", "Cached Slice" },
+			{ "Sprite.cached.Rect", "0,0,2,2" },
+			{ "Sprite.cached.Pivot", "0.5,0.5" },
+			{ "Sprite.cached.PixelsPerUnit", "100" },
+			{ "Sprite.cached.Border", "0,0,0,0" }
+		};
+		Require(registry.SetImportSettings(texture, spriteSettings),
+			"could not configure cached sprite atlas");
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"cache reload asset database initialization failed");
+		TomCat::AssetLoadOptions atlasOptions;
+		atlasOptions.Platform = "windows-x64";
+		atlasOptions.Backend = "opengl";
+		Require(database.LoadArtifact(texture, atlasOptions).Succeeded(),
+			"could not import cached sprite atlas");
+		const TomCat::AssetMetadata* atlas = registry.GetMetadata(texture);
+		Require(atlas && atlas->SubAssets.size() == 1,
+			"cached sprite atlas did not publish one slice");
+		const TomCat::AssetHandle slice = atlas->SubAssets.front().Handle;
+
+		WriteBytes(materialPath,
+			"SchemaVersion: 1\nShader: "
+			+ std::to_string(static_cast<uint64_t>(shader))
+			+ "\nTextures:\n  Albedo: "
+			+ std::to_string(static_cast<uint64_t>(slice))
+			+ "\nParameters: {}\n");
+		Require(database.RefreshRegistry(),
+			"could not discover cached Material dependencies");
+		const TomCat::AssetHandle material = RequireHandle(registry, materialPath,
+			TomCat::AssetType::Material);
+		std::vector<TomCat::AssetHandle> expectedLogical{ shader, slice };
+		std::vector<TomCat::AssetHandle> expectedArtifacts{ shader, texture };
+		const auto sortHandles = [](std::vector<TomCat::AssetHandle>& handles)
+		{
+			std::sort(handles.begin(), handles.end(),
+				[](TomCat::AssetHandle left, TomCat::AssetHandle right)
+				{
+					return static_cast<uint64_t>(left)
+						< static_cast<uint64_t>(right);
+				});
+		};
+		sortHandles(expectedLogical);
+		sortHandles(expectedArtifacts);
+		const TomCat::AssetDependencySnapshot beforeRemoval =
+			database.GetDependencySnapshot(material);
+		Require(beforeRemoval.Dependencies == expectedLogical
+			&& beforeRemoval.ArtifactDependencies == expectedArtifacts,
+			"Material graph did not separate logical slice and atlas artifact dependencies");
+
+		Require(registry.SetImportSettings(texture, { { "SpriteMode", "Single" } }),
+			"could not remove cached sprite slicing settings");
+		Require(database.LoadArtifact(texture, atlasOptions).Succeeded()
+			&& registry.GetSubAssetOwner(slice) == nullptr,
+			"switching the atlas to Single did not remove its old slice");
+		const TomCat::AssetDependencySnapshot afterRemoval =
+			database.GetDependencySnapshot(material);
+		const std::vector<TomCat::AssetHandle> ownerDependents =
+			database.GetDependents(texture);
+		Require(afterRemoval.Dependencies == expectedLogical
+			&& afterRemoval.ArtifactDependencies == expectedArtifacts
+			&& std::find(ownerDependents.begin(), ownerDependents.end(), material)
+				!= ownerDependents.end(),
+			"missing Sprite slice discarded its persisted atlas-owner invalidation edge");
+		const std::filesystem::path cachePath =
+			project.Library / "AssetDependencies.yaml";
+		Require(ReadText(cachePath).find("SchemaVersion: 2") != std::string::npos
+			&& ReadText(cachePath).find("ArtifactDependencies") != std::string::npos,
+			"dependency cache did not persist artifact-owner handles in schema v2");
+
+		database.Shutdown();
+		registry.Shutdown();
+
+		TomCat::AssetRegistry reloadedRegistry;
+		Require(reloadedRegistry.Initialize(project.Assets, project.Library),
+			"could not reload registry after Sprite slice removal");
+		TomCat::AssetDatabase reloadedDatabase;
+		Require(reloadedDatabase.Initialize(reloadedRegistry, project.Library),
+			"could not reload dependency cache after Sprite slice removal");
+		const TomCat::AssetDependencySnapshot reloaded =
+			reloadedDatabase.GetDependencySnapshot(material);
+		const std::vector<TomCat::AssetHandle> reloadedOwnerDependents =
+			reloadedDatabase.GetDependents(texture);
+		Require(reloaded.Dependencies == expectedLogical
+			&& reloaded.ArtifactDependencies == expectedArtifacts
+			&& std::find(reloadedOwnerDependents.begin(),
+				reloadedOwnerDependents.end(), material)
+				!= reloadedOwnerDependents.end(),
+			"dependency cache reload lost the missing slice -> atlas owner reverse edge");
+		reloadedDatabase.Shutdown();
+		reloadedRegistry.Shutdown();
 	}
 
 	void TestPackedObjMeshArtifacts()
@@ -1430,6 +2319,618 @@ namespace {
 			"typed synchronous Load<T> did not decode the imported artifact");
 	}
 
+
+	void TestLoadArtifactRetriesConsistentGraphSnapshot()
+	{
+		TemporaryProject project;
+		const std::filesystem::path rootPath = project.Assets / "snapshot-root.png";
+		const std::filesystem::path oldDependencyPath =
+			project.Assets / "snapshot-old.png";
+		const std::filesystem::path newDependencyPath =
+			project.Assets / "snapshot-new.png";
+		WriteBytes(rootPath, "snapshot-root-source");
+		WriteBytes(oldDependencyPath, "snapshot-old-dependency");
+		WriteBytes(newDependencyPath, "snapshot-new-dependency");
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"snapshot race registry initialization failed");
+		const TomCat::AssetHandle root = RequireHandle(registry, rootPath,
+			TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle oldDependency = RequireHandle(registry,
+			oldDependencyPath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle newDependency = RequireHandle(registry,
+			newDependencyPath, TomCat::AssetType::Texture2D);
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"snapshot race database initialization failed");
+		auto importer = std::make_shared<BlockingSnapshotTextureImporter>();
+		Require(database.GetImporters().Register(importer, true),
+			"snapshot race importer registration failed");
+		TomCat::AssetLoadOptions options;
+		options.Platform = "snapshot-race";
+		options.Backend = "test";
+		options.DeferMetadataCommit = true;
+
+		TomCat::AssetLoadResult newDependencyLoad =
+			database.LoadArtifact(newDependency, options);
+		Require(newDependencyLoad.Succeeded(),
+			"new dependency warm load failed");
+		const std::string newDependencyKey =
+			newDependencyLoad.Artifact.ArtifactKey;
+		Require(database.SetDependencies(root, { oldDependency }),
+			"could not establish the old snapshot dependency");
+
+		TomCat::AssetLoadResult oldRoot = database.LoadArtifact(root, options);
+		Require(oldRoot.Succeeded()
+			&& oldRoot.Artifact.DependencyKeys.size() == 1,
+			"old dependency snapshot warm load failed");
+		const std::string oldRootKey = oldRoot.Artifact.ArtifactKey;
+		const std::string oldDependencyKey =
+			oldRoot.Artifact.DependencyKeys.front();
+		const std::filesystem::path oldRootEntry =
+			database.GetCache().GetEntryPath(oldRootKey);
+		const std::filesystem::path oldDependencyEntry =
+			database.GetCache().GetEntryPath(oldDependencyKey);
+		Require(std::filesystem::exists(oldRootEntry)
+			&& std::filesystem::exists(oldDependencyEntry),
+			"snapshot race warm cache entries are missing");
+		std::error_code removeError;
+		std::filesystem::remove(oldRootEntry, removeError);
+		Require(!removeError, "could not remove the old root cache entry");
+		removeError.clear();
+		std::filesystem::remove(oldDependencyEntry, removeError);
+		Require(!removeError, "could not remove the old dependency cache entry");
+
+		importer->Arm(oldDependency);
+		std::future<TomCat::AssetLoadResult> raced =
+			std::async(std::launch::async, [&database, root, options]()
+			{
+				return database.LoadArtifact(root, options);
+			});
+		const bool blocked = importer->WaitUntilBlocked();
+		if (!blocked)
+			importer->Release();
+		Require(blocked, "snapshot race importer did not reach its gate");
+		const bool graphChanged = database.SetDependencies(root, { newDependency });
+		importer->Release();
+		Require(graphChanged, "could not replace the dependency during import");
+
+		TomCat::AssetLoadResult loaded = raced.get();
+		Require(loaded.Succeeded(),
+			"graph mutation did not retry the complete load tree");
+		Require(loaded.Artifact.DependencyKeys ==
+			std::vector<std::string>{ newDependencyKey },
+			"retried load returned dependency keys from the stale graph");
+		Require(loaded.Artifact.ArtifactKey != oldRootKey,
+			"retried load returned the old mixed root artifact key");
+		Require(!std::filesystem::exists(oldRootEntry),
+			"stale dependency keys were published under the old root key");
+		Require(database.GetDependencySnapshot(root).Dependencies ==
+			std::vector<TomCat::AssetHandle>{ newDependency },
+			"final dependency snapshot does not contain the replacement");
+
+		database.Shutdown();
+		registry.Shutdown();
+	}
+
+
+	void TestLoadArtifactRetriesChangedSourceSnapshot()
+	{
+		TemporaryProject project;
+		const std::filesystem::path texturePath =
+			project.Assets / "snapshot-source.png";
+		WriteBytes(texturePath, "source-before-gate");
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"source snapshot registry initialization failed");
+		const TomCat::AssetHandle texture = RequireHandle(registry, texturePath,
+			TomCat::AssetType::Texture2D);
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"source snapshot database initialization failed");
+		auto importer = std::make_shared<BlockingSnapshotTextureImporter>();
+		Require(database.GetImporters().Register(importer, true),
+			"source snapshot importer registration failed");
+
+		TomCat::AssetLoadOptions options;
+		options.Platform = "source-snapshot";
+		options.Backend = "test";
+		options.DeferMetadataCommit = true;
+		TomCat::AssetLoadResult before = database.LoadArtifact(texture, options);
+		Require(before.Succeeded(), "source snapshot warm load failed");
+		const std::string oldArtifactKey = before.Artifact.ArtifactKey;
+		const std::string oldSourceHash = before.Artifact.SourceSHA256;
+		const std::filesystem::path oldEntry =
+			database.GetCache().GetEntryPath(oldArtifactKey);
+		std::error_code removeError;
+		std::filesystem::remove(oldEntry, removeError);
+		Require(!removeError && !std::filesystem::exists(oldEntry),
+			"could not remove the old source snapshot cache entry");
+
+		importer->Arm(texture);
+		std::future<TomCat::AssetLoadResult> raced =
+			std::async(std::launch::async, [&database, texture, options]()
+			{
+				return database.LoadArtifact(texture, options);
+			});
+		const bool blocked = importer->WaitUntilBlocked();
+		if (!blocked)
+			importer->Release();
+		Require(blocked, "source snapshot importer did not reach its gate");
+		WriteBytes(texturePath, "source-after-gate");
+		importer->Release();
+
+		TomCat::AssetLoadResult loaded = raced.get();
+		const std::string expectedPrefix = "source-after-gate";
+		Require(loaded.Succeeded()
+			&& loaded.Artifact.ArtifactKey != oldArtifactKey
+			&& loaded.Artifact.SourceSHA256 != oldSourceHash,
+			"source mutation did not retry from a fresh content snapshot");
+		Require(loaded.Artifact.Bytes.size() >= expectedPrefix.size()
+			&& std::equal(expectedPrefix.begin(), expectedPrefix.end(),
+				loaded.Artifact.Bytes.begin()),
+			"retried import returned bytes from the source before the gate");
+		Require(!std::filesystem::exists(oldEntry),
+			"stale source bytes were published under the old artifact key");
+
+		database.Shutdown();
+		registry.Shutdown();
+	}
+
+
+
+
+	void TestDiscoverableSourceCannotUseStaleDependencyKeys()
+	{
+		TemporaryProject project;
+		const std::filesystem::path shaderPath =
+			project.Assets / "snapshot-material.glsl";
+		const std::filesystem::path oldTexturePath =
+			project.Assets / "snapshot-material-old.png";
+		const std::filesystem::path newTexturePath =
+			project.Assets / "snapshot-material-new.png";
+		const std::filesystem::path materialPath =
+			project.Assets / "snapshot-material.tcmat";
+		WriteBytes(shaderPath, MakeDependencyShader("snapshot-material"));
+		WriteBytes(oldTexturePath, "snapshot-material-old-texture");
+		WriteBytes(newTexturePath, "snapshot-material-new-texture");
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"material snapshot registry initialization failed");
+		const TomCat::AssetHandle shader = RequireHandle(registry, shaderPath,
+			TomCat::AssetType::Shader);
+		const TomCat::AssetHandle oldTexture = RequireHandle(registry,
+			oldTexturePath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle newTexture = RequireHandle(registry,
+			newTexturePath, TomCat::AssetType::Texture2D);
+		auto materialSource = [shader](TomCat::AssetHandle texture)
+		{
+			return std::string("SchemaVersion: 1\nShader: ")
+				+ std::to_string(static_cast<uint64_t>(shader))
+				+ "\nTextures:\n  Albedo: "
+				+ std::to_string(static_cast<uint64_t>(texture))
+				+ "\nParameters: {}\n";
+		};
+		WriteBytes(materialPath, materialSource(oldTexture));
+		const TomCat::AssetHandle material = RequireHandle(registry, materialPath,
+			TomCat::AssetType::Material);
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"material snapshot database initialization failed");
+		auto importer = std::make_shared<BlockingSnapshotTextureImporter>();
+		Require(database.GetImporters().Register(importer, true),
+			"material snapshot texture importer registration failed");
+		TomCat::AssetLoadOptions options;
+		options.Platform = "editor";
+		options.Backend = "opengl";
+		options.DeferMetadataCommit = true;
+
+		TomCat::AssetLoadResult oldTextureLoad =
+			database.LoadArtifact(oldTexture, options);
+		TomCat::AssetLoadResult newTextureLoad =
+			database.LoadArtifact(newTexture, options);
+		TomCat::AssetLoadResult oldMaterial =
+			database.LoadArtifact(material, options);
+		Require(oldTextureLoad.Succeeded() && newTextureLoad.Succeeded()
+			&& oldMaterial.Succeeded(),
+			"material snapshot warm loads failed");
+		const std::string oldMaterialKey = oldMaterial.Artifact.ArtifactKey;
+		const std::string oldTextureKey = oldTextureLoad.Artifact.ArtifactKey;
+		const std::string newTextureKey = newTextureLoad.Artifact.ArtifactKey;
+		const std::filesystem::path oldMaterialEntry =
+			database.GetCache().GetEntryPath(oldMaterialKey);
+		const std::filesystem::path oldTextureEntry =
+			database.GetCache().GetEntryPath(oldTextureKey);
+		std::error_code removeError;
+		std::filesystem::remove(oldMaterialEntry, removeError);
+		Require(!removeError, "could not remove the old material cache entry");
+		removeError.clear();
+		std::filesystem::remove(oldTextureEntry, removeError);
+		Require(!removeError, "could not remove the old material texture cache entry");
+
+		importer->Arm(oldTexture);
+		std::future<TomCat::AssetLoadResult> raced =
+			std::async(std::launch::async, [&database, material, options]()
+			{
+				return database.LoadArtifact(material, options);
+			});
+		const bool blocked = importer->WaitUntilBlocked();
+		if (!blocked)
+			importer->Release();
+		Require(blocked,
+			"material dependency importer did not reach its mutation gate");
+		const std::string changedSource = materialSource(newTexture);
+		const std::vector<uint8_t> changedSourceBytes(changedSource.begin(),
+			changedSource.end());
+		const std::shared_ptr<const TomCat::IAssetImporter> materialImporter =
+			database.GetImporters().Find(TomCat::AssetType::Material);
+		Require(materialImporter != nullptr,
+			"material snapshot importer was unavailable");
+		TomCat::ArtifactKeyInput mixedKeyInput;
+		mixedKeyInput.ImporterID = std::string(materialImporter->GetID());
+		mixedKeyInput.ImporterVersion = materialImporter->GetVersion();
+		mixedKeyInput.Type = TomCat::AssetType::Material;
+		mixedKeyInput.SourceSHA256 =
+			TomCat::ComputeContentSHA256(changedSourceBytes);
+		mixedKeyInput.Settings =
+			oldMaterial.Artifact.LoadSnapshots.front().Metadata.ImportSettings;
+		mixedKeyInput.Platform = options.Platform;
+		mixedKeyInput.Backend = options.Backend;
+		mixedKeyInput.DependencyKeys = oldMaterial.Artifact.DependencyKeys;
+		const std::filesystem::path mixedEntry = database.GetCache().GetEntryPath(
+			TomCat::BuildArtifactKey(std::move(mixedKeyInput)));
+		WriteBytes(materialPath, changedSource);
+		importer->Release();
+
+		TomCat::AssetLoadResult racedResult = raced.get();
+		Require(racedResult.Status == TomCat::AssetLoadStatus::StaleSnapshot,
+			"deferred load accepted a source newer than its dependency graph");
+		Require(!std::filesystem::exists(oldMaterialEntry)
+			&& !std::filesystem::exists(mixedEntry),
+			"stale material inputs were published to the DDC");
+		Require(database.RefreshRegistry(),
+			"material dependency graph did not refresh after the raced source edit");
+
+		TomCat::AssetLoadResult loaded = database.LoadArtifact(material, options);
+		Require(loaded.Succeeded() && loaded.Artifact.ArtifactKey != oldMaterialKey,
+			"fresh material load did not use the refreshed dependency graph");
+		Require(std::find(loaded.Artifact.DependencyKeys.begin(),
+			loaded.Artifact.DependencyKeys.end(), newTextureKey)
+			!= loaded.Artifact.DependencyKeys.end()
+			&& std::find(loaded.Artifact.DependencyKeys.begin(),
+				loaded.Artifact.DependencyKeys.end(), oldTextureKey)
+				== loaded.Artifact.DependencyKeys.end(),
+			"material artifact mixed new source bytes with old dependency keys");
+		TomCat::MaterialArtifactView materialView;
+		std::string parseError;
+		Require(TomCat::ParseMaterialArtifact(loaded.Artifact.Bytes,
+			materialView, parseError)
+			&& materialView.Textures.size() == 1
+			&& materialView.Textures.front().Texture == newTexture,
+			"fresh material artifact did not contain the new texture reference");
+		const TomCat::AssetDependencySnapshot graph =
+			database.GetDependencySnapshot(material);
+		Require(graph.Dependencies.size() == 2
+			&& std::find(graph.Dependencies.begin(), graph.Dependencies.end(),
+				newTexture) != graph.Dependencies.end()
+			&& std::find(graph.Dependencies.begin(), graph.Dependencies.end(),
+				oldTexture) == graph.Dependencies.end(),
+			"material dependency graph was not refreshed before fresh load");
+
+		const std::filesystem::path verifiedEntry =
+			database.GetCache().GetEntryPath(loaded.Artifact.ArtifactKey);
+		removeError.clear();
+		std::filesystem::remove(verifiedEntry, removeError);
+		Require(!removeError,
+			"could not remove the verified material cache entry");
+		WriteBytes(materialPath, "{ malformed-material");
+		Require(!database.RefreshRegistry(),
+			"malformed material unexpectedly produced a dependency graph");
+		const TomCat::AssetDependencySnapshot invalidGraph =
+			database.GetDependencySnapshot(material);
+		Require(!invalidGraph.SourceSHA256.empty()
+			&& invalidGraph.SourceSHA256 == graph.SourceSHA256,
+			"failed dependency discovery discarded its last verified provenance");
+		const TomCat::AssetLoadResult invalid =
+			database.LoadArtifact(material, options);
+		Require(invalid.Status == TomCat::AssetLoadStatus::StaleSnapshot
+			&& !std::filesystem::exists(verifiedEntry),
+			"malformed discoverable source reused old dependency keys or published DDC");
+
+		WriteBytes(materialPath, changedSource);
+		Require(database.RefreshRegistry(),
+			"material dependency graph did not recover after fixing its source");
+		const TomCat::AssetLoadResult recovered =
+			database.LoadArtifact(material, options);
+		Require(recovered.Succeeded()
+			&& std::find(recovered.Artifact.DependencyKeys.begin(),
+				recovered.Artifact.DependencyKeys.end(), newTextureKey)
+				!= recovered.Artifact.DependencyKeys.end(),
+			"material did not load from verified dependencies after recovery");
+
+		database.Shutdown();
+		registry.Shutdown();
+	}
+
+
+	void TestCoordinatorRetriesStaleDeferredFinalization()
+	{
+		TomCat::AssetJobSystem& jobSystem = TomCat::AssetJobSystem::Get();
+		const TomCat::AssetJobSystem::Limits previousJobLimits =
+			jobSystem.GetLimits();
+		TomCat::AssetJobSystem::Limits deterministicJobLimits =
+			previousJobLimits;
+		deterministicJobLimits.WorkerCount = 1;
+		deterministicJobLimits.MaximumQueuedJobs =
+			std::max<size_t>(deterministicJobLimits.MaximumQueuedJobs, 8);
+		jobSystem.Configure(deterministicJobLimits);
+
+		TemporaryProject project;
+		const std::filesystem::path texturePath =
+			project.Assets / "deferred-stale.png";
+		WriteBytes(texturePath, "deferred-stale-source");
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"deferred stale registry initialization failed");
+		const TomCat::AssetHandle texture = RequireHandle(registry, texturePath,
+			TomCat::AssetType::Texture2D);
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"deferred stale database initialization failed");
+		auto importer = std::make_shared<BlockingSnapshotTextureImporter>();
+		Require(database.GetImporters().Register(importer, true),
+			"deferred stale importer registration failed");
+
+		TomCat::AssetImportCoordinatorOptions coordinatorOptions;
+		coordinatorOptions.Platform = "deferred-stale";
+		coordinatorOptions.Backend = "test";
+		TomCat::AssetImportCoordinator coordinator;
+		Require(coordinator.Initialize(registry, database, project.Assets,
+			coordinatorOptions),
+			"deferred stale coordinator initialization failed");
+		std::vector<TomCat::AssetImportEvent> events;
+		auto receive = [&events](const TomCat::AssetImportEvent& event)
+		{
+			events.push_back(event);
+		};
+		auto pumpUntilInvocation = [&](uint32_t expected, const char* failure)
+		{
+			const auto deadline = std::chrono::steady_clock::now()
+				+ std::chrono::seconds(5);
+			while (importer->Invocations.load() < expected
+				&& std::chrono::steady_clock::now() < deadline)
+			{
+				Require(coordinator.PumpMainThread(receive) == 0,
+					"stale retry published an event before finalization");
+				std::this_thread::sleep_for(std::chrono::milliseconds(2));
+			}
+			Require(importer->Invocations.load() >= expected, failure);
+			Require(importer->WaitUntilBlocked(), failure);
+		};
+		auto waitUntilWorkerFutureReady = [&](const char* failure)
+		{
+			// With one FIFO worker, this sentinel cannot complete until the
+			// coordinator's already-running LoadArtifactAsync packaged task has
+			// returned and made its future ready. Do not Pump while waiting.
+			std::future<void> sentinel = jobSystem.Submit(0, []() {});
+			Require(sentinel.wait_for(std::chrono::seconds(5))
+				== std::future_status::ready, failure);
+			sentinel.get();
+		};
+
+		importer->Arm(texture);
+		Require(coordinator.RequestReimport(texture),
+			"could not queue the initial deferred import");
+		pumpUntilInvocation(1, "initial deferred worker did not start");
+		importer->Release();
+		waitUntilWorkerFutureReady(
+			"initial deferred worker future did not become ready");
+
+		Require(registry.SetImportSettings(texture, { { "variant", "stale-one" } }),
+			"could not create the first deferred publication race");
+		importer->Arm(texture);
+		pumpUntilInvocation(2,
+			"first stale finalization was not rescheduled in place");
+		Require(events.empty() && coordinator.GetPendingImportCount() == 1,
+			"first stale finalization was published or dropped");
+		importer->Release();
+		waitUntilWorkerFutureReady(
+			"first stale retry worker future did not become ready");
+
+		Require(registry.SetImportSettings(texture, { { "variant", "stale-two" } }),
+			"could not create the second deferred publication race");
+		importer->Arm(texture);
+		pumpUntilInvocation(3,
+			"second stale finalization was not rescheduled in place");
+		Require(events.empty() && coordinator.GetPendingImportCount() == 1,
+			"second stale finalization was published or dropped");
+		importer->Release();
+		waitUntilWorkerFutureReady(
+			"second stale retry worker future did not become ready");
+
+		const auto publishDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(5);
+		while (events.empty() && std::chrono::steady_clock::now() < publishDeadline)
+		{
+			(void)coordinator.PumpMainThread(receive);
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		const TomCat::AssetMetadata* current = registry.GetMetadata(texture);
+		Require(events.size() == 1 && events.front().Result.Succeeded()
+			&& importer->Invocations.load() == 3
+			&& coordinator.GetPendingImportCount() == 0,
+			"fresh deferred retry was not published exactly once");
+		Require(current && current->ImportSettings.at("variant") == "stale-two"
+			&& current->SubAssets.size() == 1
+			&& current->SubAssets.front().Name == "stale-two",
+			"stale deferred sub-assets overwrote the final fresh import");
+		Require(events.front().Result.Artifact.LoadSnapshots.front()
+				.Metadata.SubAssets.size() == 1
+			&& events.front().Result.Artifact.LoadSnapshots.front()
+				.Metadata.SubAssets.front().Handle
+				== current->SubAssets.front().Handle,
+			"deferred publication identity was not refreshed after commit");
+
+		coordinator.Shutdown();
+		database.Shutdown();
+		registry.Shutdown();
+		jobSystem.Configure(previousJobLimits);
+	}
+
+	void TestCoordinatorRefreshesDiscoverableClosureBeforeStaleRetry()
+	{
+		TomCat::AssetJobSystem& jobSystem = TomCat::AssetJobSystem::Get();
+		const TomCat::AssetJobSystem::Limits previousJobLimits =
+			jobSystem.GetLimits();
+		TomCat::AssetJobSystem::Limits deterministicJobLimits =
+			previousJobLimits;
+		deterministicJobLimits.WorkerCount = 1;
+		deterministicJobLimits.MaximumQueuedJobs =
+			std::max<size_t>(deterministicJobLimits.MaximumQueuedJobs, 8);
+		jobSystem.Configure(deterministicJobLimits);
+
+		TemporaryProject project;
+		const std::filesystem::path shaderPath =
+			project.Assets / "coordinator-material.glsl";
+		const std::filesystem::path oldTexturePath =
+			project.Assets / "coordinator-material-old.png";
+		const std::filesystem::path newTexturePath =
+			project.Assets / "coordinator-material-new.png";
+		const std::filesystem::path materialPath =
+			project.Assets / "coordinator-material.tcmat";
+		WriteBytes(shaderPath, MakeDependencyShader("coordinator-material"));
+		WriteBytes(oldTexturePath, "coordinator-material-old-texture");
+		WriteBytes(newTexturePath, "coordinator-material-new-texture");
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"coordinator material registry initialization failed");
+		const TomCat::AssetHandle shader = RequireHandle(registry, shaderPath,
+			TomCat::AssetType::Shader);
+		const TomCat::AssetHandle oldTexture = RequireHandle(registry,
+			oldTexturePath, TomCat::AssetType::Texture2D);
+		const TomCat::AssetHandle newTexture = RequireHandle(registry,
+			newTexturePath, TomCat::AssetType::Texture2D);
+		auto materialSource = [shader](TomCat::AssetHandle texture)
+		{
+			return std::string("SchemaVersion: 1\nShader: ")
+				+ std::to_string(static_cast<uint64_t>(shader))
+				+ "\nTextures:\n  Albedo: "
+				+ std::to_string(static_cast<uint64_t>(texture))
+				+ "\nParameters: {}\n";
+		};
+		WriteBytes(materialPath, materialSource(oldTexture));
+		const TomCat::AssetHandle material = RequireHandle(registry, materialPath,
+			TomCat::AssetType::Material);
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"coordinator material database initialization failed");
+		auto importer = std::make_shared<BlockingSnapshotTextureImporter>();
+		Require(database.GetImporters().Register(importer, true),
+			"coordinator material texture importer registration failed");
+
+		TomCat::AssetLoadOptions options;
+		options.Platform = "editor";
+		options.Backend = "opengl";
+		options.DeferMetadataCommit = true;
+		const TomCat::AssetLoadResult oldTextureLoad =
+			database.LoadArtifact(oldTexture, options);
+		const TomCat::AssetLoadResult newTextureLoad =
+			database.LoadArtifact(newTexture, options);
+		const TomCat::AssetLoadResult oldMaterialLoad =
+			database.LoadArtifact(material, options);
+		Require(oldTextureLoad.Succeeded() && newTextureLoad.Succeeded()
+			&& oldMaterialLoad.Succeeded(),
+			"coordinator material warm loads failed");
+		std::error_code removeError;
+		std::filesystem::remove(database.GetCache().GetEntryPath(
+			oldTextureLoad.Artifact.ArtifactKey), removeError);
+		Require(!removeError,
+			"could not remove coordinator material's old texture cache entry");
+
+		TomCat::AssetImportCoordinatorOptions coordinatorOptions;
+		coordinatorOptions.Platform = options.Platform;
+		coordinatorOptions.Backend = options.Backend;
+		TomCat::AssetImportCoordinator coordinator;
+		Require(coordinator.Initialize(registry, database, project.Assets,
+			coordinatorOptions),
+			"coordinator material import coordinator initialization failed");
+		std::vector<TomCat::AssetImportEvent> events;
+		auto receive = [&events](const TomCat::AssetImportEvent& event)
+		{
+			events.push_back(event);
+		};
+
+		const uint32_t expectedInvocation = importer->Invocations.load() + 1;
+		importer->Arm(oldTexture);
+		Require(coordinator.RequestReimport(material),
+			"could not queue the raced coordinator material import");
+		const auto startDeadline = std::chrono::steady_clock::now()
+			+ std::chrono::seconds(5);
+		while (importer->Invocations.load() < expectedInvocation
+			&& std::chrono::steady_clock::now() < startDeadline)
+		{
+			Require(coordinator.PumpMainThread(receive) == 0,
+				"raced coordinator material published before its dependency gate");
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		const bool blocked = importer->Invocations.load() >= expectedInvocation
+			&& importer->WaitUntilBlocked();
+		if (!blocked)
+			importer->Release();
+		Require(blocked,
+			"coordinator material dependency did not reach its mutation gate");
+
+		WriteBytes(materialPath, materialSource(newTexture));
+		importer->Release();
+		std::future<void> staleSentinel = jobSystem.Submit(0, []() {});
+		Require(staleSentinel.wait_for(std::chrono::seconds(5))
+			== std::future_status::ready,
+			"raced coordinator material future did not become ready");
+		staleSentinel.get();
+
+		Require(coordinator.PumpMainThread(receive) == 0
+			&& events.empty() && coordinator.GetPendingImportCount() == 1,
+			"stale coordinator material was published or dropped instead of retried");
+		std::future<void> freshSentinel = jobSystem.Submit(0, []() {});
+		Require(freshSentinel.wait_for(std::chrono::seconds(5))
+			== std::future_status::ready,
+			"refreshed coordinator material future did not become ready");
+		freshSentinel.get();
+
+		Require(coordinator.PumpMainThread(receive) == 1
+			&& events.size() == 1 && events.front().Result.Succeeded()
+			&& coordinator.GetPendingImportCount() == 0,
+			"coordinator did not publish the refreshed material exactly once");
+		const std::vector<std::string>& dependencyKeys =
+			events.front().Result.Artifact.DependencyKeys;
+		Require(std::find(dependencyKeys.begin(), dependencyKeys.end(),
+				newTextureLoad.Artifact.ArtifactKey) != dependencyKeys.end()
+			&& std::find(dependencyKeys.begin(), dependencyKeys.end(),
+				oldTextureLoad.Artifact.ArtifactKey) == dependencyKeys.end(),
+			"coordinator stale retry did not rebuild the material dependency closure");
+		const TomCat::AssetDependencySnapshot graph =
+			database.GetDependencySnapshot(material);
+		Require(std::find(graph.Dependencies.begin(), graph.Dependencies.end(),
+				newTexture) != graph.Dependencies.end()
+			&& std::find(graph.Dependencies.begin(), graph.Dependencies.end(),
+				oldTexture) == graph.Dependencies.end(),
+			"coordinator owner-thread refresh did not publish the new material graph");
+
+		coordinator.Shutdown();
+		database.Shutdown();
+		registry.Shutdown();
+		jobSystem.Configure(previousJobLimits);
+	}
+
+
 	void TestFileMonitorImportCoordinator()
 	{
 		TemporaryProject project;
@@ -1466,8 +2967,8 @@ namespace {
 		const TomCat::AssetHandle heroSprite = RequireHeroSubAsset(registry, hero);
 
 		// Build a real Prefab -> sliced Sprite edge and a real Scene -> Prefab edge.
-		// The dependency scanner must normalize the child Sprite handle to its atlas
-		// parent because file monitor events are emitted for the parent source file.
+		// The logical graph keeps the child handle while the artifact graph retains
+		// the atlas owner used by file-monitor invalidation and importer keys.
 		auto prefabSource = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity prefabRoot = prefabSource->CreateEntity("Watched prefab");
 		prefabRoot.AddComponent<TomCat::SpriteRenderer>().SpriteHandle = heroSprite;
@@ -1501,9 +3002,13 @@ namespace {
 			TomCat::AssetType::Scene);
 		Require(database.RefreshRegistry(),
 			"automatic dependency discovery failed to refresh the registry");
-		Require(database.GetDependencies(prefab) ==
-			std::vector<TomCat::AssetHandle>{ hero },
-			"Prefab Sprite child dependency was not normalized to the atlas parent");
+		const TomCat::AssetDependencySnapshot prefabSnapshot =
+			database.GetDependencySnapshot(prefab);
+		Require(prefabSnapshot.Dependencies ==
+				std::vector<TomCat::AssetHandle>{ heroSprite }
+			&& prefabSnapshot.ArtifactDependencies ==
+				std::vector<TomCat::AssetHandle>{ hero },
+			"Prefab dependency graph did not separate the logical Sprite from its atlas artifact owner");
 		Require(database.GetDependencies(scene) ==
 			std::vector<TomCat::AssetHandle>{ prefab },
 			"Scene Prefab dependency was not discovered by AssetReferenceVisitor");
@@ -1529,8 +3034,12 @@ namespace {
 			"monitor database restart failed");
 		Require(database.GetImporters().Register(counting, true),
 			"monitor counting importer restart registration failed");
+		const TomCat::AssetDependencySnapshot restartedPrefabSnapshot =
+			database.GetDependencySnapshot(prefab);
 		Require(RequireHeroSubAsset(registry, hero) == heroSprite
-			&& database.GetDependencies(prefab) ==
+			&& restartedPrefabSnapshot.Dependencies ==
+				std::vector<TomCat::AssetHandle>{ heroSprite }
+			&& restartedPrefabSnapshot.ArtifactDependencies ==
 				std::vector<TomCat::AssetHandle>{ hero }
 			&& database.GetDependencies(scene) ==
 				std::vector<TomCat::AssetHandle>{ prefab },
@@ -1548,7 +3057,11 @@ namespace {
 			"database did not rebuild after deleting Library");
 		Require(database.GetImporters().Register(counting, true),
 			"counting importer registration after Library rebuild failed");
-		Require(database.GetDependencies(prefab) ==
+		const TomCat::AssetDependencySnapshot rebuiltPrefabSnapshot =
+			database.GetDependencySnapshot(prefab);
+		Require(rebuiltPrefabSnapshot.Dependencies ==
+				std::vector<TomCat::AssetHandle>{ heroSprite }
+			&& rebuiltPrefabSnapshot.ArtifactDependencies ==
 				std::vector<TomCat::AssetHandle>{ hero }
 			&& database.GetDependencies(scene) ==
 				std::vector<TomCat::AssetHandle>{ prefab },
@@ -1899,11 +3412,20 @@ int main()
 		TestCookedShaderRuntimeConsumption();
 		TestCanonicalMaterialArtifacts();
 		TestTypedMaterialDependencyLoading();
+		TestCookTraversesDatabaseDependencyClosure();
+		TestExplicitDependencyRefreshesTransferredSpriteOwner();
+		TestPartialArtifactOwnerRefreshMergesResolvedAndMissingAliases();
+		TestDependencyCacheRetainsMissingSpriteOwnerAlias();
 		TestAsyncAssetOwnerLifecycle();
 		TestPackedObjMeshArtifacts();
 		TestOfflineAudioArtifact();
 		TestMalformedFontPreflight();
 		TestDeterministicImportPipeline();
+		TestLoadArtifactRetriesConsistentGraphSnapshot();
+		TestLoadArtifactRetriesChangedSourceSnapshot();
+		TestDiscoverableSourceCannotUseStaleDependencyKeys();
+		TestCoordinatorRetriesStaleDeferredFinalization();
+		TestCoordinatorRefreshesDiscoverableClosureBeforeStaleRetry();
 		TestFileMonitorImportCoordinator();
 		TestBoundedAssetJobSystem();
 		std::cout << "PASS production artifacts, bounded jobs, DDC, tcmeta v2, and monitored reimport\n";

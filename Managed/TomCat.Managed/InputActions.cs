@@ -128,10 +128,28 @@ public readonly record struct InputBinding
 
 internal readonly record struct ControlToken(InputBindingKind Kind, uint Code, uint Gamepad);
 
+/// <summary>
+/// An action is evaluated independently for the display-frame and fixed-step
+/// timelines. Properties read from OnFixedUpdate expose the current fixed input
+/// snapshot; other callbacks expose the display-frame snapshot. The first fixed
+/// step for a scene consumes its pending edges, while catch-up steps retain held
+/// values without replaying Pressed/Released. Started, Performed, and Canceled
+/// retain their display-frame cadence; fixed-step scripts should poll Value,
+/// IsPressed, and WasPressed/ReleasedThisFrame from OnFixedUpdate.
+/// </summary>
 public sealed class InputAction
 {
 	private readonly List<InputBinding> _bindings = [];
-	private bool _actuated;
+	private readonly EvaluationState _displayState = new();
+	private readonly EvaluationState _fixedState = new();
+
+	private sealed class EvaluationState
+	{
+		internal float Value;
+		internal bool Actuated;
+		internal bool WasPressed;
+		internal bool WasReleased;
+	}
 
 	internal InputAction(string name, InputActionType type)
 	{
@@ -142,10 +160,10 @@ public sealed class InputAction
 	public string Name { get; }
 	public InputActionType Type { get; }
 	public float PressPoint { get; set; } = 0.5f;
-	public float Value { get; private set; }
-	public bool IsPressed => _actuated;
-	public bool WasPressedThisFrame { get; private set; }
-	public bool WasReleasedThisFrame { get; private set; }
+	public float Value => CurrentState.Value;
+	public bool IsPressed => CurrentState.Actuated;
+	public bool WasPressedThisFrame => CurrentState.WasPressed;
+	public bool WasReleasedThisFrame => CurrentState.WasReleased;
 	public IReadOnlyList<InputBinding> Bindings => _bindings;
 
 	public event Action<InputActionContext>? Started;
@@ -171,11 +189,15 @@ public sealed class InputAction
 	{
 		_bindings.Clear();
 		_bindings.AddRange(bindings);
-		Reset(false);
+		Clear();
 	}
 
-	internal void Evaluate(HashSet<ControlToken> consumed,
-		HashSet<ControlToken>? controlsToConsume)
+	private EvaluationState CurrentState => TimeRuntime.InFixedUpdate
+		? _fixedState : _displayState;
+
+	internal void Evaluate(InputActionUpdatePhase phase,
+		HashSet<ControlToken> consumed, HashSet<ControlToken>? controlsToConsume,
+		InputActionMap owner, ulong evaluationRevision)
 	{
 		if (!float.IsFinite(PressPoint) || PressPoint <= 0.0f || PressPoint > 1.0f)
 			throw new InvalidOperationException(
@@ -213,41 +235,138 @@ public sealed class InputAction
 			if (MathF.Abs(bindingValue) > float.Epsilon || bindingPulsed)
 				activeControls.Add(binding.Token);
 		}
-		Value = Math.Clamp(value, -1.0f, 1.0f);
-		bool actuated = MathF.Abs(Value) >= PressPoint;
-		WasPressedThisFrame = (actuated && !_actuated) || digitalPulse;
-		WasReleasedThisFrame = (!actuated && _actuated) || digitalPulse;
-
-		if (WasPressedThisFrame)
-		{
-			float eventValue = actuated ? Value
-				: Math.Clamp(digitalPulseValue, -1.0f, 1.0f);
-			Started?.Invoke(new(this, InputActionPhase.Started, eventValue));
-			Performed?.Invoke(new(this, InputActionPhase.Performed, eventValue));
-		}
-		else if (actuated && Type == InputActionType.Axis1D)
-		{
-			Performed?.Invoke(new(this, InputActionPhase.Performed, Value));
-		}
-		if (WasReleasedThisFrame)
-			Canceled?.Invoke(new(this, InputActionPhase.Canceled, Value));
-		_actuated = actuated;
+		EvaluationState state = phase == InputActionUpdatePhase.FixedStep
+			? _fixedState : _displayState;
+		state.Value = Math.Clamp(value, -1.0f, 1.0f);
+		bool actuated = MathF.Abs(state.Value) >= PressPoint;
+		state.WasPressed = (actuated && !state.Actuated) || digitalPulse;
+		state.WasReleased = (!actuated && state.Actuated) || digitalPulse;
+		// Publish the state before invoking user code. Disable clears both timelines;
+		// the owner revision checks below then prevent this evaluation from restoring
+		// stale state or dispatching later actions.
+		state.Actuated = actuated;
 
 		if (controlsToConsume is not null && (actuated || digitalPulse))
 			foreach (ControlToken control in activeControls)
 				controlsToConsume.Add(control);
+
+		// Fixed evaluation is a polling snapshot for OnFixedUpdate and later physics
+		// callbacks in the same native step. Public action events retain their
+		// display-frame cadence.
+		if (phase != InputActionUpdatePhase.DisplayFrame)
+			return;
+
+		if (state.WasPressed)
+		{
+			float eventValue = actuated ? state.Value
+				: Math.Clamp(digitalPulseValue, -1.0f, 1.0f);
+			DispatchSubscribers(Started,
+				new(this, InputActionPhase.Started, eventValue));
+			if (!owner.IsEvaluationCurrent(evaluationRevision))
+				return;
+			DispatchSubscribers(Performed,
+				new(this, InputActionPhase.Performed, eventValue));
+			if (!owner.IsEvaluationCurrent(evaluationRevision))
+				return;
+		}
+		else if (actuated && Type == InputActionType.Axis1D)
+		{
+			DispatchSubscribers(Performed,
+				new(this, InputActionPhase.Performed, state.Value));
+			if (!owner.IsEvaluationCurrent(evaluationRevision))
+				return;
+		}
+		if (state.WasReleased)
+		{
+			DispatchSubscribers(Canceled,
+				new(this, InputActionPhase.Canceled, state.Value));
+			if (!owner.IsEvaluationCurrent(evaluationRevision))
+				return;
+		}
 	}
 
-	internal void Reset(bool invokeCanceled)
+	internal bool ClearForDisable()
 	{
-		bool wasActuated = _actuated;
-		_actuated = false;
-		Value = 0.0f;
-		WasPressedThisFrame = false;
-		WasReleasedThisFrame = wasActuated;
-		if (invokeCanceled && wasActuated)
-			Canceled?.Invoke(new(this, InputActionPhase.Canceled, 0.0f));
+		bool wasActuated = _displayState.Actuated;
+		Clear();
+		return wasActuated;
 	}
+
+	internal void Clear()
+	{
+		ClearState(_displayState);
+		ClearState(_fixedState);
+	}
+
+	internal void DispatchDeferredCanceled() =>
+		DispatchSubscribers(Canceled,
+			new(this, InputActionPhase.Canceled, 0.0f));
+
+	private static void DispatchSubscribers(
+		Action<InputActionContext>? subscribers, InputActionContext context)
+	{
+		if (subscribers is null)
+			return;
+		// Snapshot the multicast list and preserve subscription order. User failures
+		// are isolated to their handler transaction so later subscribers still run;
+		// host protocol failures remain fatal and must escape immediately.
+		List<Exception>? failures = null;
+		foreach (Delegate subscriber in subscribers.GetInvocationList())
+		{
+			var handler = (Action<InputActionContext>)subscriber;
+			try
+			{
+				InputActionRuntime.DispatchCallback(() => handler(context));
+			}
+			catch (DeferredCallbackProtocolException)
+			{
+				throw;
+			}
+			catch (Exception exception)
+			{
+				(failures ??= []).Add(exception);
+			}
+		}
+		if (failures is null)
+			return;
+		if (failures.Count == 1)
+			System.Runtime.ExceptionServices.ExceptionDispatchInfo
+				.Capture(failures[0]).Throw();
+		throw new AggregateException(
+			"One or more InputAction subscribers failed.", failures);
+	}
+
+	internal bool ResetPhase(InputActionUpdatePhase phase)
+	{
+		EvaluationState state = phase == InputActionUpdatePhase.FixedStep
+			? _fixedState : _displayState;
+		bool wasActuated = state.Actuated;
+		ResetState(state);
+		return phase == InputActionUpdatePhase.DisplayFrame && wasActuated;
+	}
+
+	private static void ResetState(EvaluationState state)
+	{
+		bool wasActuated = state.Actuated;
+		state.Actuated = false;
+		state.Value = 0.0f;
+		state.WasPressed = false;
+		state.WasReleased = wasActuated;
+	}
+
+	private static void ClearState(EvaluationState state)
+	{
+		state.Actuated = false;
+		state.Value = 0.0f;
+		state.WasPressed = false;
+		state.WasReleased = false;
+	}
+}
+
+internal enum InputActionUpdatePhase
+{
+	DisplayFrame,
+	FixedStep
 }
 
 /// <summary>
@@ -317,6 +436,9 @@ public sealed class InputActionMap
 
 	private readonly Dictionary<string, InputAction> _actions =
 		new(StringComparer.Ordinal);
+	private CancellationToken _registeredDomain;
+	private bool _hasRegisteredDomain;
+	private ulong _evaluationRevision;
 
 	public InputActionMap(string name, string context = "Gameplay", int priority = 0)
 	{
@@ -331,8 +453,19 @@ public sealed class InputActionMap
 	public string Context { get; }
 	public int Priority { get; set; }
 	public bool ConsumesInput { get; set; } = true;
-	public bool Active { get; set; } = true;
+	public bool Active
+	{
+		get => _active;
+		set
+		{
+			if (_active == value)
+				return;
+			_active = value;
+			unchecked { _evaluationRevision++; }
+		}
+	}
 	public bool Enabled { get; private set; }
+	private bool _active = true;
 	public IReadOnlyCollection<InputAction> Actions => _actions.Values;
 
 	public InputAction AddAction(string name, InputActionType type = InputActionType.Button)
@@ -358,7 +491,10 @@ public sealed class InputActionMap
 		NativeBridge.EnsureMainThread();
 		CancellationToken token = ScriptExecutionContext.CurrentDomainCancellationToken;
 		InputActionRuntime.Register(this, token);
+		_registeredDomain = token;
+		_hasRegisteredDomain = true;
 		Enabled = true;
+		unchecked { _evaluationRevision++; }
 	}
 
 	public void Disable()
@@ -366,8 +502,32 @@ public sealed class InputActionMap
 		NativeBridge.EnsureMainThread();
 		InputActionRuntime.Unregister(this);
 		Enabled = false;
+		unchecked { _evaluationRevision++; }
+		bool deferCancellation = TimeRuntime.InFixedUpdate;
+		CancellationToken registeredDomain = _registeredDomain;
+		bool hadRegisteredDomain = _hasRegisteredDomain;
+		// Clear registration and every action state before invoking user code. A
+		// throwing first Canceled handler therefore cannot leave later actions held,
+		// and a reentrant Enable establishes a new registration that survives.
+		_hasRegisteredDomain = false;
+		var cancellations = new List<InputAction>();
 		foreach (InputAction action in _actions.Values)
-			action.Reset(true);
+			if (action.ClearForDisable())
+				cancellations.Add(action);
+
+		foreach (InputAction action in cancellations)
+		{
+			if (deferCancellation)
+			{
+				if (hadRegisteredDomain)
+					InputActionRuntime.DeferDisplayCancellation(
+						registeredDomain, this, action);
+			}
+			else
+			{
+				DispatchCanceledSafely(action, "Disable");
+			}
+		}
 	}
 
 	public void SaveRebinds(string path)
@@ -433,10 +593,12 @@ public sealed class InputActionMap
 			action.ReplaceBindings(bindings);
 	}
 
-	internal void Update(HashSet<ControlToken> consumed, bool contextEnabled)
+	internal void Update(InputActionUpdatePhase phase,
+		HashSet<ControlToken> consumed, bool contextEnabled)
 	{
 		if (!Enabled)
 			return;
+		ulong evaluationRevision = _evaluationRevision;
 		// The native UI event system owns navigation/submit controls while it is
 		// active. Cancel Gameplay actions before evaluation so a click or gamepad
 		// submit cannot also fire gameplay; maps in the UI context still evaluate.
@@ -445,22 +607,68 @@ public sealed class InputActionMap
 			&& NativeBridge.IsRuntimeUIInputCaptured();
 		if (!Active || !contextEnabled || capturedByRuntimeUI)
 		{
+			// Clear every action before invoking user code. A Canceled handler can
+			// reactivate or re-enable the map, which changes the evaluation revision;
+			// clearing action-by-action would otherwise leave later actions actuated.
+			List<InputAction>? cancellations =
+				phase == InputActionUpdatePhase.DisplayFrame ? [] : null;
 			foreach (InputAction action in _actions.Values)
-				action.Reset(true);
+				if (action.ResetPhase(phase) && cancellations is not null)
+					cancellations.Add(action);
+			if (cancellations is not null)
+				foreach (InputAction action in cancellations)
+					DispatchCanceledSafely(action, "state reset");
 			return;
 		}
 		HashSet<ControlToken>? controlsToConsume = ConsumesInput ? [] : null;
-		foreach (InputAction action in _actions.Values)
-			action.Evaluate(consumed, controlsToConsume);
-		if (controlsToConsume is not null)
-			consumed.UnionWith(controlsToConsume);
+		try
+		{
+			foreach (InputAction action in _actions.Values)
+			{
+				if (!IsEvaluationCurrent(evaluationRevision))
+					break;
+				action.Evaluate(phase, consumed, controlsToConsume, this,
+					evaluationRevision);
+			}
+		}
+		finally
+		{
+			// A handler may disable the map or throw after an action fired. Preserve
+			// that action's input consumption for lower-priority maps this frame.
+			if (controlsToConsume is not null)
+				consumed.UnionWith(controlsToConsume);
+		}
+	}
+
+	internal bool IsEvaluationCurrent(ulong revision) =>
+		Enabled && Active && _evaluationRevision == revision;
+
+	internal void DispatchCanceledSafely(InputAction action, string reason)
+	{
+		try
+		{
+			action.DispatchDeferredCanceled();
+		}
+		catch (DeferredCallbackProtocolException)
+		{
+			throw;
+		}
+		catch (Exception exception)
+		{
+			ForceDisable();
+			string message =
+				$"InputActionMap '{Name}' was disabled after a {reason} " +
+				$"Canceled handler exception: {exception}";
+			NativeBridge.ReportManagedException(message);
+		}
 	}
 
 	internal void ForceDisable()
 	{
 		Enabled = false;
+		unchecked { _evaluationRevision++; }
 		foreach (InputAction action in _actions.Values)
-			action.Reset(false);
+			action.Clear();
 	}
 
 	private sealed class RebindPayload
@@ -481,6 +689,13 @@ internal static class InputActionRuntime
 {
 	private sealed record Registration(WeakReference<InputActionMap> Map,
 		CancellationToken Domain, long Order);
+	private sealed record DeferredCancellation(InputActionMap Map,
+		InputAction Action);
+	private sealed class DeferredCancellationQueue
+	{
+		internal readonly List<DeferredCancellation> Items = [];
+		internal readonly HashSet<InputAction> Membership = [];
+	}
 	private sealed class ContextState
 	{
 		internal readonly HashSet<string> Disabled = new(StringComparer.Ordinal);
@@ -490,7 +705,11 @@ internal static class InputActionRuntime
 	private static readonly object s_gate = new();
 	private static readonly List<Registration> s_registrations = [];
 	private static readonly Dictionary<CancellationToken, ContextState> s_contexts = [];
+	private static readonly Dictionary<CancellationToken, DeferredCancellationQueue>
+		s_deferredDisplayCancellations = [];
 	private static long s_nextOrder;
+	[ThreadStatic]
+	private static Action<Action>? s_callbackDispatcher;
 
 	internal static void Register(InputActionMap map, CancellationToken domain)
 	{
@@ -507,6 +726,22 @@ internal static class InputActionRuntime
 		lock (s_gate)
 			s_registrations.RemoveAll(item =>
 				!item.Map.TryGetTarget(out InputActionMap? target) || ReferenceEquals(target, map));
+	}
+
+	internal static void DeferDisplayCancellation(CancellationToken domain,
+		InputActionMap map, InputAction action)
+	{
+		lock (s_gate)
+		{
+			if (!s_deferredDisplayCancellations.TryGetValue(domain,
+				out DeferredCancellationQueue? queue))
+			{
+				queue = new();
+				s_deferredDisplayCancellations.Add(domain, queue);
+			}
+			if (queue.Membership.Add(action))
+				queue.Items.Add(new(map, action));
+		}
 	}
 
 	internal static bool IsContextEnabled(CancellationToken domain, string context)
@@ -561,9 +796,13 @@ internal static class InputActionRuntime
 			s_contexts.Remove(domain);
 	}
 
-	internal static void UpdateEnabled(CancellationToken domain)
+	internal static void UpdateEnabled(CancellationToken domain,
+		InputActionUpdatePhase phase, Action<Action>? invokeCallback = null)
 	{
 		List<(InputActionMap Map, long Order)> maps;
+		List<DeferredCancellation> deferredCancellations = [];
+		using CallbackDispatcherScope callbackScope =
+			EnterCallbackDispatcher(invokeCallback);
 		lock (s_gate)
 		{
 			s_registrations.RemoveAll(item => item.Domain.IsCancellationRequested
@@ -581,12 +820,27 @@ internal static class InputActionRuntime
 				.OrderByDescending(item => item.Item1.Priority)
 				.ThenBy(item => item.Order)
 				.ToList();
+			if (phase == InputActionUpdatePhase.DisplayFrame
+				&& s_deferredDisplayCancellations.Remove(domain,
+					out DeferredCancellationQueue? cancellations))
+				deferredCancellations = cancellations.Items;
 		}
 
+		foreach (DeferredCancellation cancellation in deferredCancellations)
+			cancellation.Map.DispatchCanceledSafely(
+				cancellation.Action, "deferred");
 		var consumed = new HashSet<ControlToken>();
 		foreach ((InputActionMap map, _) in maps)
 		{
-			try { map.Update(consumed, IsContextEnabled(domain, map.Context)); }
+			try
+			{
+				map.Update(phase, consumed,
+					IsContextEnabled(domain, map.Context));
+			}
+			catch (DeferredCallbackProtocolException)
+			{
+				throw;
+			}
 			catch (Exception exception)
 			{
 				map.ForceDisable();
@@ -606,6 +860,45 @@ internal static class InputActionRuntime
 			s_registrations.RemoveAll(item => item.Domain == domain
 				|| !item.Map.TryGetTarget(out _));
 			s_contexts.Remove(domain);
+			s_deferredDisplayCancellations.Remove(domain);
+		}
+	}
+
+	internal static void DispatchCallback(Action callback)
+	{
+		ArgumentNullException.ThrowIfNull(callback);
+		Action<Action>? dispatcher = s_callbackDispatcher;
+		if (dispatcher is null)
+			callback();
+		else
+			dispatcher(callback);
+	}
+
+	internal static CallbackDispatcherScope EnterCallbackDispatcher(
+		Action<Action>? dispatcher)
+	{
+		if (dispatcher is null)
+			return default;
+		Action<Action>? previous = s_callbackDispatcher;
+		s_callbackDispatcher = dispatcher;
+		return new(previous, restore: true);
+	}
+
+	internal readonly struct CallbackDispatcherScope : IDisposable
+	{
+		private readonly Action<Action>? _previous;
+		private readonly bool _restore;
+
+		internal CallbackDispatcherScope(Action<Action>? previous, bool restore)
+		{
+			_previous = previous;
+			_restore = restore;
+		}
+
+		public void Dispose()
+		{
+			if (_restore)
+				s_callbackDispatcher = _previous;
 		}
 	}
 

@@ -15,6 +15,8 @@
 namespace TomCat {
 
 	namespace {
+		thread_local ComponentMutationPhase CurrentComponentMutationPhase =
+			ComponentMutationPhase::Commit;
 		bool RemapEntityValue(uint64_t& value,
 			const std::unordered_map<UUID, UUID>& entityMap,
 			MissingEntityReferencePolicy missingPolicy,
@@ -142,6 +144,25 @@ namespace TomCat {
 						node[2].as<float>(), node[3].as<float>());
 			}
 			throw std::runtime_error("unsupported property kind");
+		}
+
+		bool PropertyValueMatchesKind(const PropertyValue& value, PropertyKind kind)
+		{
+			switch (kind)
+			{
+				case PropertyKind::Bool: return std::holds_alternative<bool>(value);
+				case PropertyKind::Int32: return std::holds_alternative<int32_t>(value);
+				case PropertyKind::Int64: return std::holds_alternative<int64_t>(value);
+				case PropertyKind::UInt32: return std::holds_alternative<uint32_t>(value);
+				case PropertyKind::UInt64: return std::holds_alternative<uint64_t>(value);
+				case PropertyKind::Float: return std::holds_alternative<float>(value);
+				case PropertyKind::Double: return std::holds_alternative<double>(value);
+				case PropertyKind::String: return std::holds_alternative<std::string>(value);
+				case PropertyKind::Vector2: return std::holds_alternative<glm::vec2>(value);
+				case PropertyKind::Vector3: return std::holds_alternative<glm::vec3>(value);
+				case PropertyKind::Vector4: return std::holds_alternative<glm::vec4>(value);
+			}
+			return false;
 		}
 
 		bool EncodeDescriptor(const ComponentDescriptor& descriptor, Entity entity,
@@ -440,6 +461,7 @@ namespace TomCat {
 			maximum.StableName = "Maximum";
 			maximum.DisplayName = "Maximum";
 			maximum.Kind = PropertyKind::Int32;
+			maximum.DefaultValue = HealthComponent{}.Maximum;
 			maximum.Get = [](Entity entity) -> PropertyValue
 			{
 				return entity.GetComponent<HealthComponent>().Maximum;
@@ -462,6 +484,7 @@ namespace TomCat {
 			current.StableName = "Current";
 			current.DisplayName = "Current";
 			current.Kind = PropertyKind::Int32;
+			current.DefaultValue = HealthComponent{}.Current;
 			current.Get = [](Entity entity) -> PropertyValue
 			{
 				return entity.GetComponent<HealthComponent>().Current;
@@ -484,6 +507,7 @@ namespace TomCat {
 			invulnerable.StableName = "Invulnerable";
 			invulnerable.DisplayName = "Invulnerable";
 			invulnerable.Kind = PropertyKind::Bool;
+			invulnerable.DefaultValue = HealthComponent{}.Invulnerable;
 			invulnerable.Get = [](Entity entity) -> PropertyValue
 			{
 				return entity.GetComponent<HealthComponent>().Invulnerable;
@@ -499,6 +523,23 @@ namespace TomCat {
 			return descriptor;
 		}
 
+	}
+
+	ComponentMutationPhase GetComponentMutationPhase() noexcept
+	{
+		return CurrentComponentMutationPhase;
+	}
+
+	ComponentMutationPhaseScope::ComponentMutationPhaseScope(
+		ComponentMutationPhase phase) noexcept
+		: m_Previous(CurrentComponentMutationPhase)
+	{
+		CurrentComponentMutationPhase = phase;
+	}
+
+	ComponentMutationPhaseScope::~ComponentMutationPhaseScope() noexcept
+	{
+		CurrentComponentMutationPhase = m_Previous;
 	}
 
 	ComponentRegistry& ComponentRegistry::Get()
@@ -546,6 +587,14 @@ namespace TomCat {
 			error = "Component descriptor is incomplete";
 			return false;
 		}
+		if (descriptor.ScriptAccessible
+			&& static_cast<uint64_t>(descriptor.ProviderId) != 0
+			&& !descriptor.SupportsTransactionalValidation)
+		{
+			error = "Third-party script-accessible components must support "
+				"transactional validation phase";
+			return false;
+		}
 		for (const ComponentDescriptor& existing : m_Descriptors)
 		{
 			if (existing.TypeId == descriptor.TypeId
@@ -586,6 +635,13 @@ namespace TomCat {
 						return false;
 					}
 				}
+			}
+			if (descriptor.ScriptAccessible
+				&& (!property.DefaultValue
+					|| !PropertyValueMatchesKind(*property.DefaultValue, property.Kind)))
+			{
+				error = "Script-accessible properties require a type-correct DefaultValue";
+				return false;
 			}
 			if (property.EntityReference
 				&& (property.Kind != PropertyKind::UInt64

@@ -266,7 +266,8 @@ namespace TomCat {
 
 	Ref<AudioStreamSource> AudioStreamSource::OpenFileRange(
 		const std::filesystem::path& path, uint64_t rangeOffset,
-		uint64_t rangeSize, std::string& error, std::string_view sourceName)
+		uint64_t rangeSize, std::string& error, std::string_view sourceName,
+		const ContentSHA256Digest* expectedDigest)
 	{
 		error.clear();
 		std::error_code fileError;
@@ -281,6 +282,14 @@ namespace TomCat {
 		if (!input)
 		{
 			error = WithSource("stream file could not be opened", sourceName);
+			return {};
+		}
+		if (expectedDigest && !VerifyStreamRangeContentSHA256(input,
+			rangeOffset, rangeSize, *expectedDigest))
+		{
+			error = WithSource(
+				"stream file range SHA-256 does not match its tcpak index",
+				sourceName);
 			return {};
 		}
 		const auto read = [&input, rangeOffset, rangeSize](uint64_t offset,

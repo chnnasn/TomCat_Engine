@@ -701,6 +701,7 @@ namespace TomCat {
 			}
 		};
 
+		bool primaryCameraClaimed = destination.HasAuthoredPrimaryCamera();
 		for (const EntityArchive& record : archive.Entities)
 		{
 			const UUID generatedID = localToGenerated.at(UUID(record.LocalID));
@@ -717,6 +718,14 @@ namespace TomCat {
 			{
 				rollback();
 				return false;
+			}
+			if (target.HasComponent<C_Camera>()
+				&& target.GetComponent<C_Camera>().Primary)
+			{
+				if (primaryCameraClaimed)
+					target.GetComponent<C_Camera>().Primary = false;
+				else
+					primaryCameraClaimed = true;
 			}
 		}
 		for (const EntityArchive& record : archive.Entities)

@@ -42,6 +42,7 @@ namespace TomCat {
 		inline constexpr uint64_t BoxCollider2D = 0x9f0000000000000dULL;
 		inline constexpr uint64_t CircleCollider2D = 0x9f0000000000000eULL;
 		inline constexpr uint64_t DistanceJoint2D = 0x9f0000000000000fULL;
+		inline constexpr uint64_t EditorVisibility = 0x9f00000000000010ULL;
 
 		// Property IDs below preserve the numeric IDs exposed by the original
 		// gameplay ABI. They are now persisted 64-bit identities owned by the
@@ -49,7 +50,13 @@ namespace TomCat {
 		namespace IDProperties { inline constexpr uint64_t Value = 1; }
 		namespace TagProperties {
 			inline constexpr uint64_t Name = 1;
-			inline constexpr uint64_t Visible = 2;
+			inline constexpr uint64_t ActiveSelf = 2;
+			// Historical source/wire alias. Property ID 2 has always represented
+			// gameplay activation, so its persisted StableName remains "Visible".
+			inline constexpr uint64_t Visible = ActiveSelf;
+		}
+		namespace EditorVisibilityProperties {
+			inline constexpr uint64_t Hidden = 1;
 		}
 		namespace EntityMetadataProperties {
 			inline constexpr uint64_t GameplayTag = 1;
@@ -88,6 +95,7 @@ namespace TomCat {
 			inline constexpr uint64_t PerspectiveFov = 307;
 			inline constexpr uint64_t PerspectiveNear = 308;
 			inline constexpr uint64_t PerspectiveFar = 309;
+			inline constexpr uint64_t Enabled = 310;
 		}
 		namespace BoxCollider2DProperties {
 			inline constexpr uint64_t Enabled = 400;
@@ -269,6 +277,29 @@ namespace TomCat {
 	using EntityReferenceMapper = std::function<bool(uint64_t&, std::string_view,
 		std::string&)>;
 
+	enum class ComponentMutationPhase : uint8_t
+	{
+		Commit,
+		Validation
+	};
+
+	// Script transactions apply provider callbacks to an isolated Scene first.
+	// Providers use this thread-local phase to suppress sidecars, notifications,
+	// counters, and every other effect outside the supplied Entity.
+	ComponentMutationPhase GetComponentMutationPhase() noexcept;
+
+	class ComponentMutationPhaseScope final
+	{
+	public:
+		explicit ComponentMutationPhaseScope(ComponentMutationPhase phase) noexcept;
+		~ComponentMutationPhaseScope() noexcept;
+		ComponentMutationPhaseScope(const ComponentMutationPhaseScope&) = delete;
+		ComponentMutationPhaseScope& operator=(
+			const ComponentMutationPhaseScope&) = delete;
+	private:
+		ComponentMutationPhase m_Previous;
+	};
+
 	// Optional editor semantics layered over the persisted PropertyKind. Asset
 	// references deliberately remain UInt64 values in Scene 11 and the managed
 	// ABI; this metadata only constrains typed authoring controls.
@@ -295,6 +326,11 @@ namespace TomCat {
 		// Every editor, loader and scripting write goes through this setter so a
 		// component can validate values and issue subsystem dirty notifications.
 		std::function<bool(Entity, const PropertyValue&, std::string&)> Set;
+		// Script-accessible properties provide their value on a trivially fresh
+		// component. Deferred scripting projections replay descriptor Add in the
+		// Validation phase so contextual defaults and component dependencies match
+		// commit; third-party providers must explicitly support that phase.
+		std::optional<PropertyValue> DefaultValue;
 		std::optional<AssetPropertyMetadata> AssetReference;
 		// A persisted UUID that identifies another entity. Prefab/duplicate paths
 		// remap these properties through the Registry instead of a component switch.
@@ -368,7 +404,12 @@ namespace TomCat {
 		bool AddableInInspector = true;
 		// Only components whose structural/property mutations are safe at managed
 		// callback boundaries opt into the ComponentApi capability.
+		// Script-accessible provider callbacks run first in Validation phase on an
+		// isolated Scene and once in Commit phase on the live Scene. Third-party
+		// providers must explicitly acknowledge the phase contract and suppress all
+		// effects outside the supplied validation Entity.
 		bool ScriptAccessible = false;
+		bool SupportsTransactionalValidation = false;
 	};
 
 	// Unknown plugin components are retained as validated YAML records. A scene

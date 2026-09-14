@@ -94,9 +94,11 @@ Version; uint32 Size;`. Native must pass Version 1, at least the V1 table size, 
 callback. Bootstrap validates the complete table before publishing it; a missing callback returns
 unavailable (-8) without replacing an earlier valid binding.
 
-### ManagedApiV1 order
+### ManagedApiV1 layout (Managed ABI version 2)
 
-After `Version` and `Size`, the function pointers are laid out in this exact order:
+The historical struct name is retained because version 2 appends one callback to the stable
+version-1 prefix. After `Version` and `Size`, the function pointers are laid out in this exact
+order:
 
 ```text
 int CreateDomain(int32 domainKind, uint64* domainId)
@@ -117,7 +119,12 @@ int PollUnload(uint64 domainId, int32* unloaded)
 int DestroyAttachments(uint64 sceneRuntimeId, uint64* attachmentIds, uint32 count)
 int InstantiateAttachments(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items,
                            uint32 count, NativeByteView fieldsJson)
+int ResolveDeferredCommandBatch(uint64 sceneRuntimeId, int32 committed)
 ```
+
+`ResolveDeferredCommandBatch` acknowledges the atomic native command batch after staged
+validation and live replay. A zero value discards managed projected lifecycle state; one publishes
+it after the native Scene commit succeeds.
 
 `MetadataReceiver` is `int(NativeByteView json, uint64 receiverToken)`. The token is opaque to
 managed code and resolves only to a short-lived, thread-safe native receive context. Domain kinds are Metadata = 0 and
@@ -149,6 +156,46 @@ SceneRequestLoadHandle, SceneRequestLoadIndex, SceneRequestReload,
 PrefabInstantiateDeferred
 ```
 
+### Deferred callback transactions
+
+The current native host queries and supplies both
+`TomCat.DeferredCommandsApiV1` and
+`TomCat.DeferredCallbackTransactionsApiV1`. The latter has the exact Cdecl
+layout below after `Version` and `Size`:
+
+```text
+int BeginCallback(NativeEntityHandleV1 context, uint64* token)
+int CompleteCallback(uint64 token)
+```
+
+Every top-level lifecycle, update, physics, and display InputAction user callback
+opens one transaction. Commands are visible to later reads in that callback,
+validated against a staged Scene, and then committed together or discarded
+together. `AbortBatch` marks the current transaction for rollback after a
+contained user exception or a caught mutation validation failure. `CompleteCallback`
+seals the command suffix, and native resolves sealed callbacks in FIFO order.
+Native calls `ResolveDeferredCommandBatch` exactly once for every completed
+callback, including an empty callback, so managed lifecycle projections stay
+aligned with native state. The transaction covers operations routed through the
+deferred command buffer: Entity creation/destruction and hierarchy state,
+component and behaviour add/remove or enabled state, built-in and registered
+component property setters, and Prefab instantiation. Immediate runtime controls
+such as physics force/velocity, audio transport or mixer operations, and Animator
+playback take effect synchronously and are outside `AbortBatch` rollback.
+
+For a display InputAction multicast, each top-level subscriber owns a separate
+transaction. Subscribers run in subscription order; a user exception aborts only
+that subscriber, later subscribers still run, and the map is then disabled with one
+diagnostic. Synchronous nested events such as Disable -> Canceled share the outer
+subscriber transaction.
+
+Nested lifecycle callbacks created by commit effects are appended to the same
+non-recursive FIFO drain. A protocol error from Begin, Complete, or the managed
+resolver is fatal to that Play Scene; native stops it instead of continuing with
+an open transaction or a partially synchronized projection. Scene-wide phase
+batching remains compatibility behavior for older hosts that do not publish the
+callback transaction capability.
+
 The authoritative field signatures and blittable layouts are in
 `TomCat.Managed/InteropTypes.cs`; `ManagedApiV1` is in
 `TomCat.ScriptHost/ManagedApiV1.cs`. `NativeByteView`/`NativeUtf8View` are a pointer followed by a
@@ -157,7 +204,7 @@ The authoritative field signatures and blittable layouts are in
 `NativePhysicsEventV1` is `{ uint32 kind, uint32 reserved, Entity A, Entity B }`, where kinds 0..3
 are collision enter, collision exit, trigger enter, and trigger exit.
 
-Attachment IDs must be globally random, nonzero, and unique in a scene runtime. Managed V1 uses the
+Attachment IDs must be globally random, nonzero, and unique in a scene runtime. The managed ABI uses the
 Attachment ID itself as `ScriptInstanceHandle.Value`; duplicate IDs are rejected. Native supplies
 attachments in scene-entity order and then mount order. The host performs a stable sort by
 `DefaultExecutionOrder`, using that input sequence as the tie-breaker, and destroys in reverse.

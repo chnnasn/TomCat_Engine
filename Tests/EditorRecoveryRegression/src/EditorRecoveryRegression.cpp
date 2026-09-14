@@ -190,6 +190,84 @@ namespace {
 			"untitled recovery is unsupported");
 	}
 
+	void TestUndoRedoAutosaveTracksRestoredState()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path productRoot = temporary.Path / "Editor";
+		const std::filesystem::path project =
+			temporary.Path / "Project" / "Project.tcproj";
+		const std::filesystem::path scene =
+			temporary.Path / "Project" / "Assets" / "History.tomcat";
+		WriteText(project, "project");
+		WriteText(scene, "scene-A");
+		std::filesystem::last_write_time(scene,
+			std::filesystem::file_time_type::clock::now()
+				- std::chrono::seconds(10));
+
+		TomCat::SceneHistory history;
+		Require(history.Reset("scene-A", 1, true),
+			"history recovery reset failed");
+		Require(history.BeginTransaction("edit-B") &&
+			history.CommitTransaction("scene-B", 2),
+			"history recovery edit B failed");
+		Require(history.BeginTransaction("edit-C") &&
+			history.CommitTransaction("scene-C", 3),
+			"history recovery edit C failed");
+
+		TomCat::EditorRecoveryService recovery(productRoot);
+		std::string error;
+		Require(recovery.Configure(project, error),
+			"history recovery configure failed: " + error);
+		auto scheduleCurrent = [&]()
+		{
+			const TomCat::SceneHistory::Snapshot* snapshot =
+				history.GetCurrentSnapshot();
+			Require(snapshot && snapshot->Archive,
+				"history recovery current snapshot is missing");
+			Require(recovery.ScheduleAutosave(scene, snapshot->Id,
+				snapshot->SelectedEntity, snapshot->Archive, error),
+				"history recovery autosave scheduling failed: " + error);
+		};
+
+		// Queue the pre-undo state first. The shared Editor history/recovery seam
+		// queues the restored snapshot afterward, so FIFO completion must leave B
+		// as the crash recovery state.
+		scheduleCurrent();
+		Require(recovery.RestoreHistoryAndScheduleAutosave(history,
+			TomCat::EditorRecoveryService::HistoryDirection::Undo,
+			[](const TomCat::SceneHistory::Snapshot& snapshot)
+			{
+				return snapshot.Archive && *snapshot.Archive == "scene-B";
+			}, scene, error), "history recovery undo failed");
+		Require(error.empty(),
+			"undo restored but did not schedule recovery: " + error);
+		const uint64_t undoState = history.GetCurrentStateId();
+		Require(recovery.Flush(error),
+			"history recovery undo flush failed: " + error);
+		auto undoCandidate = recovery.FindRecovery(scene, error);
+		Require(undoCandidate && undoCandidate->Archive &&
+			*undoCandidate->Archive == "scene-B" &&
+			undoCandidate->StateId == undoState,
+			"crash recovery remained at the pre-undo state");
+
+		Require(recovery.RestoreHistoryAndScheduleAutosave(history,
+			TomCat::EditorRecoveryService::HistoryDirection::Redo,
+			[](const TomCat::SceneHistory::Snapshot& snapshot)
+			{
+				return snapshot.Archive && *snapshot.Archive == "scene-C";
+			}, scene, error), "history recovery redo failed");
+		Require(error.empty(),
+			"redo restored but did not schedule recovery: " + error);
+		const uint64_t redoState = history.GetCurrentStateId();
+		Require(recovery.Flush(error),
+			"history recovery redo flush failed: " + error);
+		auto redoCandidate = recovery.FindRecovery(scene, error);
+		Require(redoCandidate && redoCandidate->Archive &&
+			*redoCandidate->Archive == "scene-C" &&
+			redoCandidate->StateId == redoState,
+			"crash recovery did not advance to the redone state");
+	}
+
 	void TestProjectLockStaleAndLive()
 	{
 		TemporaryDirectory temporary;
@@ -251,9 +329,11 @@ int main()
 		TestHistoryBranchAndSelection();
 		TestHistoryMemoryCap();
 		TestImmutableAsyncRecovery();
+		TestUndoRedoAutosaveTracksRestoredState();
 		TestProjectLockStaleAndLive();
 		std::cout << "PASS Editor recovery: history branching/cap/saved state, "
-			"immutable autosave, non-destructive recovery, and stale/live locks\n";
+			"immutable autosave, undo/redo recovery synchronization, "
+			"non-destructive recovery, and stale/live locks\n";
 		return 0;
 	}
 	catch (const std::exception& exception)

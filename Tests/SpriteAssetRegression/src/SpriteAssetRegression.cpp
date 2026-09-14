@@ -15,10 +15,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -61,6 +64,190 @@ namespace {
 		std::filesystem::path Assets;
 		std::filesystem::path Library;
 	};
+
+	class BlockingTextureImportGate final
+	{
+	public:
+		void EnterAndWait()
+		{
+			std::unique_lock lock(m_Mutex);
+			m_Entered = true;
+			m_Changed.notify_all();
+			m_Changed.wait(lock, [this]() { return m_Released; });
+		}
+
+		bool WaitUntilEntered()
+		{
+			std::unique_lock lock(m_Mutex);
+			return m_Changed.wait_for(lock, std::chrono::seconds(10),
+				[this]() { return m_Entered; });
+		}
+
+		void Release()
+		{
+			{
+				std::lock_guard lock(m_Mutex);
+				m_Released = true;
+			}
+			m_Changed.notify_all();
+		}
+
+	private:
+		std::mutex m_Mutex;
+		std::condition_variable m_Changed;
+		bool m_Entered = false;
+		bool m_Released = false;
+	};
+
+	class BlockingTextureImporter final : public TomCat::IAssetImporter
+	{
+	public:
+		BlockingTextureImporter(
+			std::shared_ptr<const TomCat::IAssetImporter> delegate,
+			std::shared_ptr<BlockingTextureImportGate> gate,
+			TomCat::AssetHandle blockedHandle)
+			: m_Delegate(std::move(delegate)), m_Gate(std::move(gate)),
+			  m_BlockedHandle(blockedHandle)
+		{
+		}
+
+		std::string_view GetID() const noexcept override
+		{
+			return "tomcat.regression.blocking-texture";
+		}
+
+		uint32_t GetVersion() const noexcept override
+		{
+			return 1;
+		}
+
+		TomCat::AssetType GetAssetType() const noexcept override
+		{
+			return TomCat::AssetType::Texture2D;
+		}
+
+		TomCat::AssetImportResult Import(
+			const TomCat::AssetImportRequest& request) const override
+		{
+			if (request.Handle == m_BlockedHandle)
+				m_Gate->EnterAndWait();
+			return m_Delegate->Import(request);
+		}
+
+	private:
+		std::shared_ptr<const TomCat::IAssetImporter> m_Delegate;
+		std::shared_ptr<BlockingTextureImportGate> m_Gate;
+		TomCat::AssetHandle m_BlockedHandle = TomCat::AssetHandle(0);
+	};
+
+	class CountingTextureImporter final : public TomCat::IAssetImporter
+	{
+	public:
+		CountingTextureImporter(
+			std::shared_ptr<const TomCat::IAssetImporter> delegate,
+			size_t& importCount)
+			: m_Delegate(std::move(delegate)), m_ImportCount(&importCount)
+		{
+		}
+
+		std::string_view GetID() const noexcept override
+		{
+			return "tomcat.regression.cold-cook-texture";
+		}
+
+		uint32_t GetVersion() const noexcept override
+		{
+			return 1;
+		}
+
+		TomCat::AssetType GetAssetType() const noexcept override
+		{
+			return TomCat::AssetType::Texture2D;
+		}
+
+		TomCat::AssetImportResult Import(
+			const TomCat::AssetImportRequest& request) const override
+		{
+			++*m_ImportCount;
+			return m_Delegate->Import(request);
+		}
+
+	private:
+		std::shared_ptr<const TomCat::IAssetImporter> m_Delegate;
+		size_t* m_ImportCount = nullptr;
+	};
+
+	struct AtlasCookFixture
+	{
+		TomCat::AssetHandle Atlas = TomCat::AssetHandle(0);
+		TomCat::AssetHandle Idle = TomCat::AssetHandle(0);
+		TomCat::AssetHandle Scene = TomCat::AssetHandle(0);
+		std::filesystem::path Source;
+		TomCat::AssetMetadata Owner;
+	};
+
+	AtlasCookFixture PrepareAtlasCookFixture(TomCat::AssetManager& assets,
+		TemporaryAssetProject& environment, std::string_view sceneName)
+	{
+		Require(assets.Initialize(environment.Assets, environment.Library),
+			"concurrent Atlas AssetManager initialization failed");
+		AtlasCookFixture fixture;
+		fixture.Atlas = TomCat::EnsurePrimitiveSpriteAsset(assets, "Square");
+		const TomCat::AssetMetadata* original =
+			assets.Registry().GetMetadata(fixture.Atlas);
+		Require(original != nullptr, "concurrent Atlas source metadata is missing");
+		TomCat::AssetImportSettings settings = original->ImportSettings;
+		settings["SpriteMode"] = "Multiple";
+		settings["SpriteAtlasSchema"] = "2";
+		settings["Sprite.idle.Name"] = "Idle";
+		settings["Sprite.idle.Rect"] = "0,0,32,16";
+		settings["Sprite.idle.Pivot"] = "0.5,0.5";
+		settings["Sprite.idle.PixelsPerUnit"] = "32";
+		settings["Sprite.idle.Border"] = "0,0,0,0";
+		Require(assets.SetImportSettings(fixture.Atlas, settings),
+			"concurrent Atlas import settings could not be saved");
+		TomCat::AssetLoadOptions options;
+		options.Platform = "windows-x64";
+		options.Backend = "opengl";
+		TomCat::AssetLoadResult imported =
+			assets.LoadImportedArtifact(fixture.Atlas, options);
+		Require(imported.Succeeded() && imported.Artifact.SubAssets.size() == 1,
+			"concurrent Atlas importer did not produce its Sprite slice");
+		fixture.Idle = imported.Artifact.SubAssets.front().Handle;
+		TomCat::AssetSubAsset slice;
+		Require(assets.GetDatabase().GetSubAssetSnapshot(fixture.Idle,
+			fixture.Owner, slice), "concurrent Atlas Sprite snapshot is missing");
+		fixture.Source = assets.Registry().GetFileSystemPath(fixture.Atlas);
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName(std::string(sceneName));
+		TomCat::Entity entity = scene->CreateEntity("Sliced Sprite");
+		entity.AddComponent<TomCat::SpriteRenderer>().SpriteHandle = fixture.Idle;
+		const std::filesystem::path scenePath =
+			environment.Assets / (std::string(sceneName) + ".tomcat");
+		Require(TomCat::SceneSerializer(scene).Serialize(scenePath),
+			"concurrent Atlas Scene could not be serialized");
+		const TomCat::AssetMetadata* sceneMetadata =
+			assets.Registry().GetMetadata(scenePath);
+		Require(sceneMetadata != nullptr,
+			"concurrent Atlas Scene metadata is missing");
+		fixture.Scene = sceneMetadata->Handle;
+		return fixture;
+	}
+
+	std::shared_ptr<BlockingTextureImportGate> InstallBlockingTextureImporter(
+		TomCat::AssetManager& assets, TomCat::AssetHandle blockedHandle)
+	{
+		const std::shared_ptr<const TomCat::IAssetImporter> delegate =
+			assets.GetDatabase().GetImporters().Find(TomCat::AssetType::Texture2D);
+		Require(delegate != nullptr, "built-in Texture importer is missing");
+		auto gate = std::make_shared<BlockingTextureImportGate>();
+		Require(assets.GetDatabase().GetImporters().Register(
+			std::make_shared<BlockingTextureImporter>(delegate, gate,
+				blockedHandle), true),
+			"blocking Texture importer could not replace the built-in importer");
+		return gate;
+	}
 
 	std::string RequireSetting(const TomCat::AssetMetadata& metadata,
 		const char* key)
@@ -719,6 +906,98 @@ namespace {
 			"package unmount retained texture preload jobs or artifact memory");
 	}
 
+	void TestColdDirectAtlasCookIsReadOnly()
+	{
+		TemporaryAssetProject environment;
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.Initialize(environment.Assets, environment.Library),
+			"cold direct-atlas AssetManager initialization failed");
+
+		// Use only Registry operations: no AssetManager settings notification,
+		// asynchronous reimport request, artifact load, or coordinator pump may
+		// prewarm the atlas before Cook.
+		const TomCat::AssetHandle atlas =
+			TomCat::EnsurePrimitiveSpriteAsset(assets.Registry(), "Square");
+		const TomCat::AssetMetadata* original = assets.Registry().GetMetadata(atlas);
+		Require(original != nullptr, "cold direct-atlas metadata is missing");
+		TomCat::AssetImportSettings settings = original->ImportSettings;
+		settings["SpriteMode"] = "Multiple";
+		settings["SpriteAtlasSchema"] = "2";
+		settings["Sprite.idle.Name"] = "Idle";
+		settings["Sprite.idle.Rect"] = "0,0,32,16";
+		settings["Sprite.idle.Pivot"] = "0.5,0.5";
+		settings["Sprite.idle.PixelsPerUnit"] = "32";
+		settings["Sprite.idle.Border"] = "0,0,0,0";
+		Require(assets.Registry().SetImportSettings(atlas, settings),
+			"cold direct-atlas settings could not be written through AssetRegistry");
+
+		const std::filesystem::path source =
+			assets.Registry().GetFileSystemPath(atlas);
+		const std::filesystem::path metadataPath =
+			TomCat::AssetRegistry::GetMetadataPath(source);
+		const std::vector<uint8_t> metadataBytesBefore =
+			ReadFileBytes(metadataPath);
+		const std::optional<TomCat::AssetMetadata> metadataBefore =
+			assets.GetDatabase().GetMetadataSnapshot(atlas);
+		Require(metadataBefore && metadataBefore->SubAssets.empty(),
+			"cold direct-atlas unexpectedly had imported sub-assets before Cook");
+		const TomCat::AssetDependencySnapshot graphBefore =
+			assets.GetDatabase().GetDependencySnapshot(atlas);
+
+		std::error_code cacheError;
+		const std::filesystem::path derivedData =
+			environment.Library / "DerivedData";
+		Require(std::filesystem::is_directory(derivedData, cacheError)
+			&& !cacheError && std::filesystem::is_empty(derivedData, cacheError)
+			&& !cacheError,
+			"cold direct-atlas DDC was not empty before Cook");
+
+		const std::shared_ptr<const TomCat::IAssetImporter> delegate =
+			assets.GetDatabase().GetImporters().Find(TomCat::AssetType::Texture2D);
+		Require(delegate != nullptr, "cold direct-atlas Texture importer is missing");
+		size_t importCount = 0;
+		Require(assets.GetDatabase().GetImporters().Register(
+			std::make_shared<CountingTextureImporter>(delegate, importCount), true),
+			"cold direct-atlas counting importer could not be installed");
+
+		const std::filesystem::path package =
+			environment.Root / "Build" / "ColdDirectAtlas.tcpak";
+		Require(assets.CookToPackage(package),
+			"first cold standalone Cook rejected a direct Multiple atlas root");
+		Require(importCount == 1,
+			"cold direct-atlas Cook did not execute exactly one Texture import");
+
+		const std::optional<TomCat::AssetMetadata> metadataAfter =
+			assets.GetDatabase().GetMetadataSnapshot(atlas);
+		const TomCat::AssetDependencySnapshot graphAfter =
+			assets.GetDatabase().GetDependencySnapshot(atlas);
+		Require(metadataAfter
+			&& metadataAfter->Handle == metadataBefore->Handle
+			&& metadataAfter->Type == metadataBefore->Type
+			&& metadataAfter->FilePath == metadataBefore->FilePath
+			&& metadataAfter->ImportSettings == metadataBefore->ImportSettings
+			&& metadataAfter->IsMissing == metadataBefore->IsMissing
+			&& metadataAfter->SubAssets.empty(),
+			"cold direct-atlas Cook mutated Registry metadata or sub-asset state");
+		Require(ReadFileBytes(metadataPath) == metadataBytesBefore,
+			"cold direct-atlas Cook rewrote tcmeta bytes");
+		Require(graphAfter.Revision == graphBefore.Revision
+			&& graphAfter.Dependencies == graphBefore.Dependencies
+			&& graphAfter.ArtifactDependencies == graphBefore.ArtifactDependencies
+			&& graphAfter.SourceSHA256 == graphBefore.SourceSHA256,
+			"cold direct-atlas Cook mutated the dependency graph snapshot");
+
+		assets.Shutdown();
+		Require(assets.MountCookedPackage(package),
+			"cold direct-atlas package could not be mounted");
+		std::vector<uint8_t> cooked;
+		TomCat::AssetType cookedType = TomCat::AssetType::None;
+		Require(assets.ReadAssetBytes(atlas, cooked, &cookedType)
+			&& cookedType == TomCat::AssetType::Texture2D
+			&& TomCat::IsTextureArtifact(cooked),
+			"cold direct-atlas package omitted its target atlas artifact");
+	}
+
 	void TestAtlasImportAndCookedSubSprite()
 	{
 		TemporaryAssetProject environment;
@@ -793,6 +1072,10 @@ namespace {
 			&& reopenedIdle->PersistentID == "sprite:idle"
 			&& reopenedRun->PersistentID == "sprite:run",
 			"tcmeta v2 reopen changed Sprite handles or slice metadata");
+		const TomCat::AssetHandle sliceDependency =
+			TomCat::EnsurePrimitiveSpriteAsset(assets, "Circle");
+		Require(static_cast<uint64_t>(sliceDependency) != 0,
+			"Sprite slice dependency asset could not be created");
 
 		auto scene = TomCat::CreateRef<TomCat::Scene>();
 		scene->SetSceneName("Atlas Cook");
@@ -803,8 +1086,15 @@ namespace {
 			"Atlas Scene could not be serialized");
 		const TomCat::AssetMetadata* sceneMetadata = assets.Registry().GetMetadata(scenePath);
 		Require(sceneMetadata != nullptr, "Atlas Scene was not imported");
+		const TomCat::AssetHandle sceneHandle = sceneMetadata->Handle;
+		Require(assets.GetDatabase().SetDependencies(idle, { sliceDependency }),
+			"Sprite sub-asset explicit dependency could not be recorded");
+		Require(assets.Refresh()
+			&& assets.GetDatabase().GetDependencies(idle)
+				== std::vector<TomCat::AssetHandle>{ sliceDependency },
+			"Sprite sub-asset explicit dependency did not survive registry refresh");
 		const std::filesystem::path package = environment.Root / "Build" / "Atlas.tcpak";
-		Require(assets.CookToPackage(package, sceneMetadata->Handle),
+		Require(assets.CookToPackage(package, sceneHandle),
 			"Cook did not accept the Sprite sub-asset dependency");
 		assets.Shutdown();
 		Require(assets.MountCookedPackage(package),
@@ -814,12 +1104,134 @@ namespace {
 		Require(assets.ReadAssetBytes(idle, cooked, &cookedType)
 			&& cookedType == TomCat::AssetType::Texture2D,
 			"Player package omitted the derived Sprite sub-asset");
+		std::vector<uint8_t> dependencyBytes;
+		Require(assets.ReadAssetBytes(sliceDependency, dependencyBytes, &cookedType)
+			&& cookedType == TomCat::AssetType::Texture2D
+			&& TomCat::IsTextureArtifact(dependencyBytes),
+			"Cook omitted a dependency owned by the Sprite sub-asset graph node");
 		TomCat::ResolvedSpriteAsset resolved;
 		std::span<const uint8_t> atlasBytes;
 		Require(TomCat::ParseCookedSpriteSubAsset(cooked, resolved, atlasBytes)
 			&& resolved.IsSubAsset && resolved.TextureHandle == atlas
 			&& resolved.Data == expectedIdleData && !atlasBytes.empty(),
 			"Cooked Sprite envelope lost its atlas slice metadata or payload");
+	}
+
+	void WritePackageMarker(const std::filesystem::path& path,
+		std::span<const uint8_t> bytes)
+	{
+		std::filesystem::create_directories(path.parent_path());
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		if (!bytes.empty())
+			output.write(reinterpret_cast<const char*>(bytes.data()),
+				static_cast<std::streamsize>(bytes.size()));
+		Require(static_cast<bool>(output), "test package marker could not be written");
+	}
+
+	void TestCookRejectsReservedSubAssetDependency()
+	{
+		TemporaryAssetProject environment;
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		const AtlasCookFixture fixture = PrepareAtlasCookFixture(assets,
+			environment, "ReservedHandle");
+		const TomCat::AssetHandle reserved(
+			(std::numeric_limits<uint64_t>::max)());
+		Require(assets.GetDatabase().SetDependencies(fixture.Idle, { reserved }),
+			"reserved Sprite dependency could not be installed for regression");
+
+		const std::filesystem::path package =
+			environment.Root / "Build" / "ReservedHandle.tcpak";
+		const std::vector<uint8_t> marker = { 'l', 'a', 's', 't', '-', 'g', 'o', 'o', 'd' };
+		WritePackageMarker(package, marker);
+		Require(!assets.CookToPackage(package, fixture.Scene),
+			"Cook accepted UINT64_MAX through a Sprite sub-asset dependency");
+		Require(ReadFileBytes(package) == marker,
+			"failed reserved-handle Cook replaced the last good package");
+	}
+
+	enum class ConcurrentCookMutation : uint8_t
+	{
+		Graph,
+		Slice,
+		Source
+	};
+
+	void TestCookRejectsConcurrentSubAssetMutation(ConcurrentCookMutation mutation,
+		std::string_view testName)
+	{
+		TemporaryAssetProject environment;
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		const AtlasCookFixture fixture =
+			PrepareAtlasCookFixture(assets, environment, testName);
+		const TomCat::AssetHandle tailDependency =
+			TomCat::EnsurePrimitiveSpriteAsset(assets, "Circle");
+		Require(static_cast<uint64_t>(tailDependency) != 0,
+			"concurrent Cook tail dependency could not be created");
+		Require(assets.GetDatabase().SetDependencies(fixture.Idle,
+			{ tailDependency }),
+			"concurrent Cook Sprite dependency could not be installed");
+
+		std::vector<TomCat::AssetSubAsset> changedSlices = fixture.Owner.SubAssets;
+		const auto changedSlice = std::find_if(changedSlices.begin(),
+			changedSlices.end(), [&](const TomCat::AssetSubAsset& child)
+			{
+				return child.Handle == fixture.Idle;
+			});
+		Require(changedSlice != changedSlices.end(),
+			"concurrent Cook fixture lost its Sprite definition");
+		changedSlice->Sprite.X += 1;
+
+		std::vector<uint8_t> changedSource = ReadFileBytes(fixture.Source);
+		changedSource.push_back(0x5a);
+		const std::shared_ptr<BlockingTextureImportGate> gate =
+			InstallBlockingTextureImporter(assets, tailDependency);
+		const std::filesystem::path package =
+			environment.Root / "Build" / (std::string(testName) + ".tcpak");
+		const std::vector<uint8_t> marker = { 'l', 'a', 's', 't', '-', 'g', 'o', 'o', 'd' };
+		WritePackageMarker(package, marker);
+
+		bool cooked = true;
+		std::thread worker([&]()
+			{
+				cooked = assets.CookToPackage(package, fixture.Scene);
+			});
+		const bool entered = gate->WaitUntilEntered();
+		bool mutationSucceeded = false;
+		if (entered)
+		{
+			switch (mutation)
+			{
+				case ConcurrentCookMutation::Graph:
+					mutationSucceeded = assets.GetDatabase().SetDependencies(
+						fixture.Idle, {});
+					break;
+				case ConcurrentCookMutation::Slice:
+					mutationSucceeded = assets.Registry().SynchronizeSubAssets(
+						fixture.Atlas, changedSlices);
+					break;
+				case ConcurrentCookMutation::Source:
+				{
+					std::ofstream output(fixture.Source,
+						std::ios::binary | std::ios::trunc);
+					output.write(reinterpret_cast<const char*>(changedSource.data()),
+						static_cast<std::streamsize>(changedSource.size()));
+					output.close();
+					mutationSucceeded = !output.fail();
+					break;
+				}
+			}
+		}
+		gate->Release();
+		worker.join();
+
+		Require(entered,
+			"Cook did not reach the blocked tail import mutation checkpoint");
+		Require(mutationSucceeded,
+			"concurrent Cook mutation could not be applied at the checkpoint");
+		Require(!cooked,
+			"Cook published a package after its pinned Sprite graph changed");
+		Require(ReadFileBytes(package) == marker,
+			"failed concurrent Cook replaced the last good package");
 	}
 
 }
@@ -836,8 +1248,16 @@ int main()
 		TestSpriteAnimatorAuthoringReferences();
 		TestSpriteAnimationSceneAndPrefabRoundtrip();
 		TestPrimitiveSpriteAuthoringAndCookedPackage();
+		TestColdDirectAtlasCookIsReadOnly();
 		TestAtlasImportAndCookedSubSprite();
-		std::cout << "PASS Sprite Atlas, Animator state machine, Scene/Prefab, and Cook closure\n";
+		TestCookRejectsReservedSubAssetDependency();
+		TestCookRejectsConcurrentSubAssetMutation(
+			ConcurrentCookMutation::Graph, "ConcurrentGraph");
+		TestCookRejectsConcurrentSubAssetMutation(
+			ConcurrentCookMutation::Slice, "ConcurrentSlice");
+		TestCookRejectsConcurrentSubAssetMutation(
+			ConcurrentCookMutation::Source, "ConcurrentSource");
+		std::cout << "PASS Sprite Atlas, Animator state machine, Scene/Prefab, and hardened Cook closure\n";
 		return 0;
 	}
 	catch (const std::exception& exception)

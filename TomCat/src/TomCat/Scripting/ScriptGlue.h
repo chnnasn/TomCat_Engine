@@ -17,5 +17,8 @@ namespace TomCat::Scripting {
 	int32_t ApplyRegisteredComponentPropertyNow(EntityHandleV1 entity,
 		uint64_t componentTypeId, uint64_t propertyId,
 		NativePropertyValueV1 value) noexcept;
+	int32_t ApplyRegisteredComponentStringPropertyNow(EntityHandleV1 entity,
+		uint64_t componentTypeId, uint64_t propertyId,
+		NativeUtf8View value) noexcept;
 
 }

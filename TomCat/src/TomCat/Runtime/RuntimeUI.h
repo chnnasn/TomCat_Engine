@@ -73,6 +73,12 @@ namespace TomCat {
 		std::vector<UUID> RenderOrder;
 	};
 
+	enum class RuntimeUIVisibilityMode : uint8_t
+	{
+		Gameplay = 0,
+		Editor
+	};
+
 	// Deterministic, viewport-local input used by both the live ScriptEngine
 	// snapshot and headless regressions. PointerPosition uses a top-left origin.
 	struct RuntimeUIInputFrame
@@ -107,9 +113,11 @@ namespace TomCat {
 	public:
 		static RuntimeUILayoutSnapshot BuildLayout(Scene& scene,
 			entt::registry& registry, uint32_t viewportWidth,
-			uint32_t viewportHeight, float dpi = 96.0f);
+			uint32_t viewportHeight, float dpi = 96.0f,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static RuntimeUILayoutSnapshot BuildLayout(Scene& scene,
-			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f);
+			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static glm::vec2 MapPointerToViewport(const glm::vec2& screenPosition,
 			const glm::vec2& viewportOrigin,
 			const glm::vec2& screenToFramebufferScale = glm::vec2(1.0f));
@@ -117,6 +125,20 @@ namespace TomCat {
 			const UIRect& clip, float sourceAspect, const glm::vec2& uvMin,
 			const glm::vec2& uvMax, bool preserveAspect, UIImageGeometry& output);
 		static void Reset(entt::registry& registry);
+		// Freeze whether Runtime UI owns the fixed input batch that is active on
+		// ScriptEngine. Call this after BeginFixedStep and before managed actions.
+		// Repeated calls before the next display Update are intentionally idempotent
+		// so every catch-up substep observes the same capture decision.
+		static void PrepareFixedInputCapture(Scene& scene,
+			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
+			glm::vec2 viewportOrigin = glm::vec2(0.0f),
+			glm::vec2 screenToFramebufferScale = glm::vec2(1.0f));
+		// Deterministic overload for headless regression coverage. This only
+		// publishes the fixed capture snapshot; it never dispatches UI events or
+		// mutates focus, pressed, hover, click, or control ownership state.
+		static void PrepareFixedInputCaptureWithInput(Scene& scene,
+			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
+			const RuntimeUIInputFrame& input);
 		static void Update(Scene& scene, entt::registry& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
 			glm::vec2 viewportOrigin = glm::vec2(0.0f),
@@ -126,11 +148,14 @@ namespace TomCat {
 			const RuntimeUIInputFrame& input);
 		static void UpdateWithInput(Scene& scene, uint32_t viewportWidth,
 			uint32_t viewportHeight, float dpi, const RuntimeUIInputFrame& input);
-		static void RenderWorldText(Scene& scene, entt::registry& registry);
+		static void RenderWorldText(Scene& scene, entt::registry& registry,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static void RenderScreen(Scene& scene, entt::registry& registry,
-			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f);
+			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static void RenderScreen(Scene& scene, uint32_t viewportWidth,
-			uint32_t viewportHeight, float dpi = 96.0f);
+			uint32_t viewportHeight, float dpi = 96.0f,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 
 		static bool IsGameplayInputCaptured();
 		static bool WasButtonClicked(Entity entity);

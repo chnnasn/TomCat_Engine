@@ -41,4 +41,17 @@ internal static class TimeRuntime
 	}
 
 	internal static void EndFixedStep() => InFixedUpdate = false;
+
+	// Collision and trigger callbacks are dispatched later in the same native
+	// fixed-step input scope. Re-enter only the managed timeline selector: the
+	// fixed clock and InputAction snapshot were already advanced by FixedUpdateAll.
+	internal static bool BeginFixedCallbackBatch()
+	{
+		bool previous = InFixedUpdate;
+		InFixedUpdate = true;
+		return previous;
+	}
+
+	internal static void EndFixedCallbackBatch(bool previous) =>
+		InFixedUpdate = previous;
 }

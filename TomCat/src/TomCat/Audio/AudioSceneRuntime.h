@@ -19,6 +19,10 @@ namespace TomCat {
 		static bool Stop(Entity entity);
 		static AudioPlaybackState GetState(Entity entity);
 		static bool ApplySettings(Entity entity);
+		// Component transactions remove AudioSource before the runtime can observe it.
+		// Retain only the voice handle here; the backend destroy happens from Update
+		// or Stop after the validated command batch has finished publishing ECS data.
+		static void DeferDestroySource(Entity entity);
 		static void DestroySource(Entity entity);
 	};
 

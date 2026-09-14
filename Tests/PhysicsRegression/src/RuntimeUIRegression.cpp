@@ -453,6 +453,30 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 	void TestLayoutClippingAspectAndInput()
 	{
 		UIFixture fixture = BuildUIFixture();
+		fixture.Canvas.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		const TomCat::RuntimeUILayoutSnapshot inactiveGameplay =
+			TomCat::RuntimeUISystem::BuildLayout(*fixture.Scene, 1920, 1080, 96.0f);
+		const TomCat::RuntimeUILayoutSnapshot inactiveEditor =
+			TomCat::RuntimeUISystem::BuildLayout(*fixture.Scene, 1920, 1080, 96.0f,
+				TomCat::RuntimeUIVisibilityMode::Editor);
+		RequireUI(inactiveGameplay.RenderOrder.empty()
+			&& inactiveEditor.Rectangles.contains(fixture.Canvas.GetUUID())
+			&& inactiveEditor.Rectangles.contains(fixture.First.GetUUID()),
+			"inactive gameplay UI was not kept editable only in the Scene view");
+		fixture.Canvas.GetComponent<TomCat::Tag>().ActiveSelf = true;
+		RequireUI(fixture.Scene->SetEditorHidden(fixture.Canvas, true),
+			"could not hide the Runtime UI fixture in the Scene view");
+		const TomCat::RuntimeUILayoutSnapshot hiddenGameplay =
+			TomCat::RuntimeUISystem::BuildLayout(*fixture.Scene, 1920, 1080, 96.0f);
+		const TomCat::RuntimeUILayoutSnapshot hiddenEditor =
+			TomCat::RuntimeUISystem::BuildLayout(*fixture.Scene, 1920, 1080, 96.0f,
+				TomCat::RuntimeUIVisibilityMode::Editor);
+		RequireUI(hiddenGameplay.Rectangles.contains(fixture.Canvas.GetUUID())
+			&& hiddenGameplay.Rectangles.contains(fixture.First.GetUUID())
+			&& hiddenEditor.RenderOrder.empty(),
+			"editor-only hidden state leaked into gameplay UI visibility");
+		RequireUI(fixture.Scene->SetEditorHidden(fixture.Canvas, false),
+			"could not restore the Runtime UI fixture Scene visibility");
 		TomCat::Entity stretched = fixture.Scene->CreateEntityWithUUID(
 			TomCat::UUID(10006), "Stretched pivot probe");
 		auto& stretchedRect = stretched.AddComponent<TomCat::RectTransform>();
@@ -896,6 +920,107 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"UIEventSystem ConsumeGameplayInput=false still captured Gameplay");
 	}
 
+	void TestFixedInputCaptureSnapshot()
+	{
+		UIFixture fixture = BuildUIFixture();
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, {});
+		const TomCat::RuntimeUILayoutSnapshot layout =
+			TomCat::RuntimeUISystem::BuildLayout(*fixture.Scene, 1920, 1080,
+				96.0f);
+		const TomCat::UIRect firstRect =
+			layout.Rectangles.at(fixture.First.GetUUID());
+		const glm::vec2 pointer(firstRect.X + 10.0f,
+			1080.0f - (firstRect.Y + 10.0f));
+		auto& button = fixture.First.GetComponent<TomCat::UIButton>();
+		const bool focusedBefore = button.RuntimeFocused;
+		const bool pressedBefore = button.RuntimePressed;
+		const bool hoveredBefore = button.RuntimeHovered;
+		const uint64_t clickSerialBefore = button.RuntimeClickSerial;
+
+		TomCat::RuntimeUIInputFrame press;
+		press.PointerPosition = pointer;
+		press.MousePressed = true;
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, press);
+		RequireUI(TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"fixed input prepass did not capture a current-frame UI press");
+		RequireUI(button.RuntimeFocused == focusedBefore
+			&& button.RuntimePressed == pressedBefore
+			&& button.RuntimeHovered == hoveredBefore
+			&& button.RuntimeClickSerial == clickSerialBefore,
+			"fixed input prepass dispatched or mutated Runtime UI interaction state");
+
+		// A catch-up substep has no one-shot edges. The frozen decision must remain
+		// stable until the display UI update, rather than exposing held input to
+		// Gameplay on the second physics tick.
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, {});
+		RequireUI(TomCat::RuntimeUISystem::IsGameplayInputCaptured()
+			&& button.RuntimeClickSerial == clickSerialBefore,
+			"catch-up fixed substep recomputed or dispatched the UI capture");
+
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, press);
+		RequireUI(button.RuntimePressed
+			&& button.RuntimeClickSerial == clickSerialBefore,
+			"display UI update did not commit the prepared press exactly once");
+
+		TomCat::RuntimeUIInputFrame release;
+		release.PointerPosition = pointer;
+		release.MouseReleased = true;
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, release);
+		RequireUI(TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"fixed input prepass did not preserve pointer ownership on release");
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, release);
+		RequireUI(button.RuntimeClickSerial == clickSerialBefore + 1,
+			"display UI update did not dispatch one click after fixed preparation");
+
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, {});
+		RequireUI(!TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"display UI update requeued an interaction already seen by fixed input");
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, {});
+
+		// If several display frames pass without a physics tick, their UI capture
+		// must follow ScriptEngine's accumulated fixed edge batch.
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, press);
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, release);
+		RequireUI(button.RuntimeClickSerial == clickSerialBefore + 2,
+			"no-fixed display frames did not complete their UI click");
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, {});
+		RequireUI(TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"UI capture from no-fixed display frames was lost before physics");
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, {});
+		RequireUI(TomCat::RuntimeUISystem::IsGameplayInputCaptured()
+			&& button.RuntimeClickSerial == clickSerialBefore + 2,
+			"accumulated UI capture was not stable across catch-up substeps");
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, {});
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, {});
+		RequireUI(!TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"consumed accumulated UI capture survived into another fixed frame");
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, {});
+
+		fixture.Canvas.GetComponent<TomCat::UIEventSystem>()
+			.ConsumeGameplayInput = false;
+		TomCat::RuntimeUISystem::PrepareFixedInputCaptureWithInput(
+			*fixture.Scene, 1920, 1080, 96.0f, press);
+		RequireUI(!TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"fixed input prepass ignored ConsumeGameplayInput=false");
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, {});
+	}
+
 	void TestSceneAndPrefabRoundTrip()
 	{
 		UIFixture fixture = BuildUIFixture(TomCat::AssetHandle(4242),
@@ -1293,6 +1418,7 @@ namespace TomCat::Tests {
 	{
 		TestUTF8AndDeterministicFontAtlas();
 		TestLayoutClippingAspectAndInput();
+		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();
 		TestCookedRuntimeUIRoundTrip();
 	}

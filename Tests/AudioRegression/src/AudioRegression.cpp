@@ -2,7 +2,9 @@
 #include "TomCat/Audio/AudioDevice.h"
 #include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Audio/AudioSceneRuntime.h"
+#include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Core/Log.h"
+#include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
@@ -13,6 +15,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstdint>
@@ -101,19 +104,34 @@ namespace {
 			const TomCat::AudioVoiceSettings& settings, std::string& error) override
 		{ return m_Inner->CreateStreamingVoice(std::move(stream), settings, error); }
 		bool DestroyVoice(TomCat::AudioVoiceHandle voice) override
-		{ return m_Inner->DestroyVoice(voice); }
+		{
+			++m_DestroyVoiceCalls;
+			return m_Inner->DestroyVoice(voice);
+		}
 		bool Play(TomCat::AudioVoiceHandle voice) override { return m_Inner->Play(voice); }
 		bool Pause(TomCat::AudioVoiceHandle voice) override { return m_Inner->Pause(voice); }
 		bool Stop(TomCat::AudioVoiceHandle voice) override { return m_Inner->Stop(voice); }
 		bool SetLoop(TomCat::AudioVoiceHandle voice, bool value) override
-		{ return m_Inner->SetLoop(voice, value); }
+		{
+			++m_SettingCalls;
+			return !m_RejectSettingChanges && m_Inner->SetLoop(voice, value);
+		}
 		bool SetVolume(TomCat::AudioVoiceHandle voice, float value) override
-		{ return m_Inner->SetVolume(voice, value); }
+		{
+			++m_SettingCalls;
+			return !m_RejectSettingChanges && m_Inner->SetVolume(voice, value);
+		}
 		bool SetPitch(TomCat::AudioVoiceHandle voice, float value) override
-		{ return m_Inner->SetPitch(voice, value); }
+		{
+			++m_SettingCalls;
+			return !m_RejectSettingChanges && m_Inner->SetPitch(voice, value);
+		}
 		bool SetSpatial(TomCat::AudioVoiceHandle voice,
 			const TomCat::AudioSpatialSettings& value) override
-		{ return m_Inner->SetSpatial(voice, value); }
+		{
+			++m_SettingCalls;
+			return !m_RejectSettingChanges && m_Inner->SetSpatial(voice, value);
+		}
 		TomCat::AudioPlaybackState GetState(TomCat::AudioVoiceHandle voice) const override
 		{ return m_Inner->GetState(voice); }
 		double GetPlaybackSeconds(TomCat::AudioVoiceHandle voice) const override
@@ -124,10 +142,16 @@ namespace {
 			if (m_FailNextUpdate) m_Operational = false;
 		}
 		void FailNextUpdate() { m_FailNextUpdate = true; }
+		void RejectSettingChanges(bool reject) { m_RejectSettingChanges = reject; }
+		size_t GetSettingCallCount() const { return m_SettingCalls; }
+		size_t GetDestroyVoiceCallCount() const { return m_DestroyVoiceCalls; }
 	private:
 		std::unique_ptr<TomCat::IAudioDevice> m_Inner;
 		bool m_Operational = false;
 		bool m_FailNextUpdate = false;
+		bool m_RejectSettingChanges = false;
+		size_t m_SettingCalls = 0;
+		size_t m_DestroyVoiceCalls = 0;
 	};
 
 	void TestWaveDecode()
@@ -194,6 +218,8 @@ namespace {
 		std::string error;
 		std::vector<uint8_t> wave = MakeWave(2, 48000, 48000 * 90);
 		const size_t encodedBytes = wave.size();
+		const TomCat::ContentSHA256Digest waveDigest =
+			TomCat::ComputeContentSHA256Digest(wave);
 		const std::vector<uint8_t> packagePrefix(37, 0xA5);
 		const std::filesystem::path path = std::filesystem::temp_directory_path()
 			/ ("TomCatAudioRegression-" + std::to_string(
@@ -216,11 +242,38 @@ namespace {
 		wave.shrink_to_fit();
 		auto source = TomCat::AudioStreamSource::OpenFileRange(path,
 			packagePrefix.size(),
-			encodedBytes, error, "long-music.wav");
+			encodedBytes, error, "long-music.wav", &waveDigest);
 		Require(source && error.empty()
 			&& source->GetEncodedByteCount() == encodedBytes
 			&& source->IsFileBacked() && source->GetResidentByteCount() == 0,
 			"long PCM WAV source retained PCM instead of opening a file range");
+		const std::streamoff damagedOffset = static_cast<std::streamoff>(
+			packagePrefix.size() + encodedBytes / 2);
+		auto flipFixtureByte = [&]()
+		{
+			std::fstream file(path, std::ios::binary | std::ios::in
+				| std::ios::out);
+			Require(static_cast<bool>(file),
+				"long WAV fixture could not be reopened for digest testing");
+			file.seekg(damagedOffset);
+			char value = 0;
+			file.read(&value, 1);
+			Require(static_cast<bool>(file),
+				"long WAV fixture digest byte could not be read");
+			value ^= 0x01;
+			file.seekp(damagedOffset);
+			file.write(&value, 1);
+			file.flush();
+			Require(static_cast<bool>(file),
+				"long WAV fixture digest byte could not be written");
+		};
+		flipFixtureByte();
+		Require(!TomCat::AudioStreamSource::OpenFileRange(path,
+			packagePrefix.size(), encodedBytes, error, "damaged-music.wav",
+			&waveDigest)
+			&& error.find("SHA-256") != std::string::npos,
+			"file-backed audio accepted bytes that no longer matched the tcpak digest");
+		flipFixtureByte();
 		auto reader = source->CreateReader();
 		Require(reader && reader->GetDecoderBufferedByteCount() == 0,
 			"PCM stream decoder retained an unexpected decoded history");
@@ -459,6 +512,133 @@ namespace {
 			"TomCat.AudioSpatialApiV1 query/table failed");
 	}
 
+	void TestTransactionalAudioComponentMutation()
+	{
+		TomCat::AudioEngine& engine = TomCat::AudioEngine::Get();
+		engine.Shutdown();
+		struct EngineShutdown
+		{
+			TomCat::AudioEngine& Engine;
+			~EngineShutdown() { Engine.Shutdown(); }
+		} shutdown{ engine };
+
+		std::string error;
+		auto injected = std::make_unique<FailingAudioDevice>();
+		FailingAudioDevice* device = injected.get();
+		Require(engine.Initialize(std::move(injected), error),
+			"transaction test could not initialize its audio device");
+		auto clip = TomCat::AudioClip::Decode(MakeWave(1, 8000, 8000), error);
+		Require(clip != nullptr, "transaction test audio clip did not decode");
+		TomCat::AudioVoiceSettings settings;
+		const TomCat::AudioVoiceHandle voice = engine.CreateVoice(clip,
+			TomCat::AudioMixerGroup::SFX, settings, error);
+		Require(voice != 0 && engine.Play(voice),
+			"transaction test live voice did not start");
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity entity = scene->CreateEntity("Transactional audio");
+		auto& source = entity.AddComponent<TomCat::AudioSource>();
+		source.Clip = TomCat::AssetHandle(7001);
+		source.RuntimeClipHandle = source.Clip;
+		source.RuntimeVoice = voice;
+		source.RuntimeAutoPlayEvaluated = true;
+
+		const TomCat::ComponentDescriptor* descriptor =
+			TomCat::ComponentRegistry::Get().Find(
+				TomCat::UUID(TomCat::ComponentIds::AudioSource));
+		Require(descriptor && descriptor->Remove,
+			"AudioSource descriptor is unavailable");
+		auto findProperty = [&](uint64_t propertyId)
+			-> const TomCat::PropertyDescriptor&
+		{
+			const auto found = std::find_if(descriptor->Properties.begin(),
+				descriptor->Properties.end(),
+				[propertyId](const TomCat::PropertyDescriptor& property)
+				{
+					return static_cast<uint64_t>(property.PropertyId) == propertyId;
+				});
+			Require(found != descriptor->Properties.end(),
+				"AudioSource property is unavailable");
+			return *found;
+		};
+		const auto& loopProperty = findProperty(
+			TomCat::ComponentIds::AudioSourceProperties::Loop);
+		const auto& volumeProperty = findProperty(
+			TomCat::ComponentIds::AudioSourceProperties::Volume);
+		const TomCat::PropertyValue loopEnabled = true;
+		const TomCat::PropertyValue invalidVolume = -1.0f;
+
+		TomCat::Ref<TomCat::Scene> staged;
+		{
+			TomCat::ComponentMutationPhaseScope validation(
+				TomCat::ComponentMutationPhase::Validation);
+			staged = TomCat::Scene::Copy(scene);
+		}
+		Require(staged != nullptr, "AudioSource validation snapshot failed");
+		TomCat::Entity stagedEntity = staged->FindEntityByUUID(entity.GetUUID());
+		Require(stagedEntity
+			&& stagedEntity.GetComponent<TomCat::AudioSource>().RuntimeVoice == 0,
+			"AudioSource validation snapshot retained a live voice");
+		{
+			TomCat::ComponentMutationPhaseScope validation(
+				TomCat::ComponentMutationPhase::Validation);
+			error.clear();
+			Require(loopProperty.Set(stagedEntity, loopEnabled, error),
+				"valid staged AudioSource property was rejected");
+			error.clear();
+			Require(!volumeProperty.Set(stagedEntity, invalidVolume, error),
+				"invalid staged AudioSource property was accepted");
+		}
+		Require(!source.Loop && source.RuntimeVoice == voice
+			&& engine.HasVoice(voice)
+			&& engine.GetState(voice) == TomCat::AudioPlaybackState::Playing
+			&& device->GetSettingCallCount() == 0
+			&& device->GetDestroyVoiceCallCount() == 0,
+			"aborted AudioSource property validation changed live ECS or voice state");
+
+		TomCat::Ref<TomCat::Scene> stagedRemoval;
+		{
+			TomCat::ComponentMutationPhaseScope validation(
+				TomCat::ComponentMutationPhase::Validation);
+			stagedRemoval = TomCat::Scene::Copy(scene);
+			Require(stagedRemoval != nullptr,
+				"AudioSource removal validation snapshot failed");
+			TomCat::Entity stagedRemovalEntity =
+				stagedRemoval->FindEntityByUUID(entity.GetUUID());
+			error.clear();
+			Require(descriptor->Remove(stagedRemovalEntity, error),
+				"staged AudioSource removal failed");
+		}
+		Require(entity.HasComponent<TomCat::AudioSource>()
+			&& source.RuntimeVoice == voice && engine.HasVoice(voice)
+			&& engine.GetState(voice) == TomCat::AudioPlaybackState::Playing
+			&& device->GetDestroyVoiceCallCount() == 0,
+			"aborted AudioSource removal changed live ECS or voice state");
+
+		device->RejectSettingChanges(true);
+		error.clear();
+		Require(loopProperty.Set(entity, loopEnabled, error) && source.Loop
+			&& device->GetSettingCallCount() == 0,
+			"AudioSource live replay consulted the audio backend");
+		TomCat::AudioSceneRuntime::Update(*scene, 0.0);
+		Require(device->GetSettingCallCount() > 0 && engine.HasVoice(voice)
+			&& engine.GetState(voice) == TomCat::AudioPlaybackState::Playing,
+			"post-commit AudioSource reconciliation did not report/retry backend settings");
+
+		const size_t destroysBeforeRemove = device->GetDestroyVoiceCallCount();
+		error.clear();
+		Require(descriptor->Remove(entity, error)
+			&& !entity.HasComponent<TomCat::AudioSource>()
+			&& engine.HasVoice(voice)
+			&& engine.GetState(voice) == TomCat::AudioPlaybackState::Playing
+			&& device->GetDestroyVoiceCallCount() == destroysBeforeRemove,
+			"AudioSource removal destroyed its voice during ECS replay");
+		TomCat::AudioSceneRuntime::Update(*scene, 0.0);
+		Require(!engine.HasVoice(voice)
+			&& device->GetDestroyVoiceCallCount() == destroysBeforeRemove + 1,
+			"AudioSource deferred voice destroy was not reconciled after commit");
+	}
+
 	void TestInactiveHierarchyStopsAudio()
 	{
 		TomCat::Scene scene;
@@ -471,7 +651,7 @@ namespace {
 		source.RuntimeClipHandle = source.Clip;
 		source.RuntimeVoice = 123;
 		source.RuntimeAutoPlayEvaluated = true;
-		parent.GetComponent<TomCat::Tag>().Visible = false;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		Require(!scene.IsActiveInHierarchy(child),
 			"disabled parent did not deactivate child");
 		TomCat::AudioSceneRuntime::Update(scene, 0.0);
@@ -497,6 +677,7 @@ int main()
 		TestDefaultBackendColdStart();
 		TestScenePrefabAndReferenceRoundTrip();
 		TestCapabilityTable();
+		TestTransactionalAudioComponentMutation();
 		TestInactiveHierarchyStopsAudio();
 		std::cout << "AudioRegression: PASS\n";
 		return 0;

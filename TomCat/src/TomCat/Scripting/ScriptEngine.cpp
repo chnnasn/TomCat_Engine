@@ -6,11 +6,11 @@
 #include "TomCat/Core/Input.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/Log.h"
+#include "TomCat/Math/Math.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
-#include "TomCat/Scene/SceneCommandBuffer.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 
 #include <cmath>
@@ -146,12 +146,157 @@ namespace TomCat::Scripting {
 			return false;
 		}
 
+		bool WriteProjectedProperty(PropertyKind kind,
+			const PropertyValue& source, NativePropertyValueV1& output)
+		{
+			output = {};
+			switch (kind)
+			{
+				case PropertyKind::Bool:
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Bool);
+					output.Integer = std::get<bool>(source) ? 1 : 0;
+					return true;
+				case PropertyKind::Int32:
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+					output.Integer = std::get<int32_t>(source);
+					return true;
+				case PropertyKind::Int64:
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int64);
+					output.Integer = std::get<int64_t>(source);
+					return true;
+				case PropertyKind::UInt32:
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::UInt32);
+					output.Integer = static_cast<int64_t>(std::get<uint32_t>(source));
+					return true;
+				case PropertyKind::UInt64:
+				{
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::UInt64);
+					const uint64_t value = std::get<uint64_t>(source);
+					std::memcpy(&output.Integer, &value, sizeof(value));
+					return true;
+				}
+				case PropertyKind::Float:
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Float);
+					output.Number = std::get<float>(source);
+					return true;
+				case PropertyKind::Double:
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Double);
+					output.Number = std::get<double>(source);
+					return true;
+				case PropertyKind::Vector2:
+				{
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector2);
+					const glm::vec2 value = std::get<glm::vec2>(source);
+					output.Vector = { value.x, value.y, 0.0f, 0.0f };
+					return true;
+				}
+				case PropertyKind::Vector3:
+				{
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector3);
+					const glm::vec3 value = std::get<glm::vec3>(source);
+					output.Vector = { value.x, value.y, value.z, 0.0f };
+					return true;
+				}
+				case PropertyKind::Vector4:
+				{
+					output.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector4);
+					const glm::vec4 value = std::get<glm::vec4>(source);
+					output.Vector = { value.x, value.y, value.z, value.w };
+					return true;
+				}
+				case PropertyKind::String:
+					return false;
+			}
+			return false;
+		}
+
 		bool SameEntity(const EntityHandleV1& left, const EntityHandleV1& right)
 		{
 			return left.SceneSessionId == right.SceneSessionId
 				&& left.EntityId == right.EntityId
 				&& left.RuntimeGeneration == right.RuntimeGeneration;
 		}
+
+		thread_local Scene* DeferredValidationScene = nullptr;
+		thread_local uint64_t DeferredValidationSceneSessionId = 0;
+		thread_local uint64_t DeferredValidationRuntimeGeneration = 0;
+
+		class DeferredValidationSceneScope
+		{
+		public:
+			DeferredValidationSceneScope(Scene& scene, uint64_t sceneSessionId,
+				uint64_t runtimeGeneration)
+				: m_PreviousScene(DeferredValidationScene),
+				  m_PreviousSceneSessionId(DeferredValidationSceneSessionId),
+				  m_PreviousRuntimeGeneration(DeferredValidationRuntimeGeneration)
+			{
+				DeferredValidationScene = &scene;
+				DeferredValidationSceneSessionId = sceneSessionId;
+				DeferredValidationRuntimeGeneration = runtimeGeneration;
+			}
+
+			~DeferredValidationSceneScope()
+			{
+				DeferredValidationScene = m_PreviousScene;
+				DeferredValidationSceneSessionId = m_PreviousSceneSessionId;
+				DeferredValidationRuntimeGeneration = m_PreviousRuntimeGeneration;
+			}
+
+		private:
+			Scene* m_PreviousScene = nullptr;
+			uint64_t m_PreviousSceneSessionId = 0;
+			uint64_t m_PreviousRuntimeGeneration = 0;
+		};
+
+		enum class DeferredRuntimeEffectKind : uint8_t
+		{
+			SetEnabled,
+			DestroyAttachment
+		};
+
+		struct DeferredRuntimeEffect
+		{
+			DeferredRuntimeEffectKind Kind = DeferredRuntimeEffectKind::SetEnabled;
+			uint64_t AttachmentId = 0;
+			bool Enabled = false;
+		};
+
+		thread_local std::vector<DeferredRuntimeEffect>* DeferredRuntimeEffects = nullptr;
+		thread_local std::unordered_set<uint64_t>* DeferredRemovedBehaviourAttachments = nullptr;
+		thread_local IScriptRuntime* DeferredRuntime = nullptr;
+		thread_local ScriptStatus* DeferredRuntimeFailure = nullptr;
+
+		class DeferredRuntimeEffectScope
+		{
+		public:
+			explicit DeferredRuntimeEffectScope(
+				std::vector<DeferredRuntimeEffect>* effects,
+				std::unordered_set<uint64_t>* removedAttachments,
+				IScriptRuntime* runtime = nullptr,
+				ScriptStatus* runtimeFailure = nullptr)
+				: m_PreviousEffects(DeferredRuntimeEffects),
+				  m_PreviousRemovedAttachments(DeferredRemovedBehaviourAttachments),
+				  m_PreviousRuntime(DeferredRuntime),
+				  m_PreviousRuntimeFailure(DeferredRuntimeFailure)
+			{
+				DeferredRuntimeEffects = effects;
+				DeferredRemovedBehaviourAttachments = removedAttachments;
+				DeferredRuntime = runtime;
+				DeferredRuntimeFailure = runtimeFailure;
+			}
+			~DeferredRuntimeEffectScope()
+			{
+				DeferredRuntimeEffects = m_PreviousEffects;
+				DeferredRemovedBehaviourAttachments = m_PreviousRemovedAttachments;
+				DeferredRuntime = m_PreviousRuntime;
+				DeferredRuntimeFailure = m_PreviousRuntimeFailure;
+			}
+		private:
+			std::vector<DeferredRuntimeEffect>* m_PreviousEffects = nullptr;
+			std::unordered_set<uint64_t>* m_PreviousRemovedAttachments = nullptr;
+			IScriptRuntime* m_PreviousRuntime = nullptr;
+			ScriptStatus* m_PreviousRuntimeFailure = nullptr;
+		};
 
 	}
 
@@ -175,7 +320,11 @@ namespace TomCat::Scripting {
 			return;
 		}
 		m_Runtime = std::move(runtime);
+		m_StoppingSceneSessions.clear();
 		m_DeferredCommands.clear();
+		m_OpenDeferredCallbackTransaction.reset();
+		m_SealedDeferredCallbackTransactions.clear();
+		m_DrainingDeferredCallbackTransactions = false;
 		m_PendingFixedInput.clear();
 		m_ActiveFixedInput = {};
 		m_ActiveFixedStepSceneSessionId = 0;
@@ -196,6 +345,28 @@ namespace TomCat::Scripting {
 		if (status != ScriptStatus::Success)
 			TC_Core_Error("C# script operation {0} failed with status {1}",
 				operation ? operation : "<unknown>", static_cast<int32_t>(status));
+	}
+
+	void ScriptEngine::StopSceneAfterRuntimeFailure(uint64_t sceneSessionId,
+		const char* operation, ScriptStatus status)
+	{
+		ReportFailure(operation, status);
+		TC_Core_Error("Scene session {0} entered a managed script protocol fault during {1}; Play is being stopped",
+			sceneSessionId, operation ? operation : "<unknown>");
+
+		Scene* scene = nullptr;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			const auto binding = m_Scenes.find(sceneSessionId);
+			if (binding != m_Scenes.end())
+				scene = binding->second.ScenePointer;
+		}
+		if (scene && scene->IsRuntimeRunning())
+			scene->OnRuntimeStop();
+		// During StartScene the Scene has not received its session ID yet, so its
+		// OnRuntimeStop cannot release the ScriptEngine binding. The explicit,
+		// idempotent stop closes that startup window as well.
+		StopScene(sceneSessionId);
 	}
 
 	std::string ScriptEngine::SerializeFields(Scene& scene) const
@@ -277,6 +448,7 @@ namespace TomCat::Scripting {
 		if (attachments.empty())
 			return true;
 
+		InvalidateProjectionSnapshots();
 		const std::string fields = SerializeFields(scene, entityIDs);
 		const ScriptStatus status = runtime->InstantiateAttachments(attachments, fields);
 		if (!IsSuccess(status))
@@ -336,11 +508,17 @@ namespace TomCat::Scripting {
 				if (InstantiateRuntimeAttachments(scene, sceneSessionId, entityIDs))
 				{
 					// Managed OnCreate/OnEnable may have queued commands. Commit those
-					// only after the managed batch callback has returned.
+					// only after the managed batch callback has returned. A false result
+					// is fatal and has already stopped the owning Scene session.
 					FlushDeferredCommands(sceneSessionId);
 					return;
 				}
-				RollbackRuntimeEntityBatch(scene, entityIDs, true);
+				bool ownsSession = false;
+				{
+					std::lock_guard<std::mutex> lock(m_Mutex);
+					ownsSession = m_Scenes.find(sceneSessionId) != m_Scenes.end();
+				}
+				RollbackRuntimeEntityBatch(scene, entityIDs, ownsSession);
 			});
 	}
 
@@ -374,9 +552,23 @@ namespace TomCat::Scripting {
 		}
 
 		if (!InstantiateRuntimeAttachments(scene, sceneSessionId, entityIDs))
-			RollbackRuntimeEntityBatch(scene, entityIDs, true);
-		else
-			FlushDeferredCommands(sceneSessionId);
+		{
+			bool ownsSession = false;
+			{
+				std::lock_guard<std::mutex> lock(m_Mutex);
+				ownsSession = m_Scenes.find(sceneSessionId) != m_Scenes.end();
+			}
+			RollbackRuntimeEntityBatch(scene, entityIDs, ownsSession);
+			return ownsSession && scene.IsRuntimeRunning() ? sceneSessionId : 0;
+		}
+		if (!FlushDeferredCommands(sceneSessionId))
+			return 0;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			if (m_Scenes.find(sceneSessionId) == m_Scenes.end()
+				|| !scene.IsRuntimeRunning())
+				return 0;
+		}
 		return sceneSessionId;
 	}
 
@@ -387,6 +579,7 @@ namespace TomCat::Scripting {
 		if (!runtime || !runtime->IsReady() || runtimeGeneration == 0)
 			return 0;
 
+		const bool sceneRuntimeWasRunning = scene.IsRuntimeRunning();
 		uint64_t session = 0;
 		{
 			std::lock_guard<std::mutex> lock(m_Mutex);
@@ -394,8 +587,19 @@ namespace TomCat::Scripting {
 			while (session == 0 || m_Scenes.find(session) != m_Scenes.end());
 			m_Scenes.emplace(session, SceneBinding{ &scene, runtimeGeneration });
 			m_PendingFixedInput.try_emplace(session);
+			++m_ProjectionRevision;
+			m_ProjectionSnapshots.clear();
 		}
 		InstallRuntimeEntityBatchCallback(scene, session);
+		auto sessionIsHealthy = [&]()
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			const auto binding = m_Scenes.find(session);
+			return binding != m_Scenes.end()
+				&& binding->second.ScenePointer == &scene
+				&& binding->second.RuntimeGeneration == runtimeGeneration
+				&& (!sceneRuntimeWasRunning || scene.IsRuntimeRunning());
+		};
 
 		std::vector<NativeScriptAttachmentV1> attachments;
 		for (UUID entityId : initialEntityIDs)
@@ -420,27 +624,59 @@ namespace TomCat::Scripting {
 		const std::string fields = SerializeFields(scene, initialEntityIDs);
 		if (IsSuccess(status)) status = runtime->ApplySerializedFields(fields);
 		if (IsSuccess(status)) status = runtime->InvokeCreateAll();
+		if (IsSuccess(status) && !FlushDeferredCommands(session))
+			status = ScriptStatus::InvalidState;
+		if (IsSuccess(status) && !sessionIsHealthy())
+			status = ScriptStatus::InvalidState;
 		if (!IsSuccess(status))
 		{
 			scene.SetRuntimeEntityBatchCreatedCallback({});
 			ReportFailure("StartScene", status);
-			ReportFailure("DestroyAll after failed StartScene", runtime->DestroyAll());
-			bool unloaded = false;
-			for (uint32_t attempt = 0; attempt < 8 && !unloaded; ++attempt)
-				unloaded = runtime->PollUnload();
-			if (!unloaded)
+			// A synchronous callback protocol fault may already have stopped and
+			// removed this session. Only the owner performs managed teardown.
+			bool ownsSession = false;
 			{
-				TC_Core_Error("The failed Play AssemblyLoadContext did not unload; restart the Editor before loading another script generation");
-				runtime->OnUnloadFailed("The failed Play AssemblyLoadContext did not unload");
+				std::lock_guard<std::mutex> lock(m_Mutex);
+				ownsSession = m_Scenes.find(session) != m_Scenes.end();
 			}
+			if (ownsSession)
+				StopScene(session);
 			std::lock_guard<std::mutex> lock(m_Mutex);
 			m_Scenes.erase(session);
+			m_StoppingSceneSessions.erase(session);
 			m_PendingFixedInput.erase(session);
+			m_DeferredCommands.erase(std::remove_if(
+				m_DeferredCommands.begin(), m_DeferredCommands.end(),
+				[session](const DeferredCommand& command)
+				{
+					return command.Entity.SceneSessionId == session;
+				}), m_DeferredCommands.end());
+			if (m_OpenDeferredCallbackTransaction
+				&& m_OpenDeferredCallbackTransaction->Context.SceneSessionId
+					== session)
+				m_OpenDeferredCallbackTransaction.reset();
+			m_SealedDeferredCallbackTransactions.erase(
+				std::remove_if(m_SealedDeferredCallbackTransactions.begin(),
+					m_SealedDeferredCallbackTransactions.end(),
+					[session](
+						const SealedDeferredCallbackTransaction& transaction)
+					{
+						return transaction.Context.SceneSessionId == session;
+					}),
+				m_SealedDeferredCallbackTransactions.end());
+			++m_ProjectionRevision;
+			m_ProjectionSnapshots.clear();
 			return 0;
 		}
-		FlushDeferredCommands(session);
 		if (flushPendingCreates)
+		{
 			scene.FlushPendingRuntimeEntityCreates();
+			if (!sessionIsHealthy())
+			{
+				StopScene(session);
+				return 0;
+			}
+		}
 		return session;
 	}
 
@@ -452,11 +688,17 @@ namespace TomCat::Scripting {
 		{
 			std::lock_guard<std::mutex> lock(m_Mutex);
 			const auto binding = m_Scenes.find(sceneSessionId);
-			if (binding != m_Scenes.end())
-				scene = binding->second.ScenePointer;
+			// Session ownership makes teardown idempotent. A deferred protocol fault
+			// may stop the Scene synchronously and then surface through the managed
+			// dispatch boundary; the second stop must not destroy a newer/no runtime.
+			if (binding == m_Scenes.end()
+				|| !m_StoppingSceneSessions.emplace(sceneSessionId).second)
+				return;
+			scene = binding->second.ScenePointer;
 		}
 		if (scene)
 			scene->SetRuntimeEntityBatchCreatedCallback({});
+		InvalidateProjectionSnapshots();
 		auto runtime = GetRuntime();
 		if (runtime)
 			ReportFailure("DestroyAll", runtime->DestroyAll());
@@ -473,13 +715,28 @@ namespace TomCat::Scripting {
 		}
 		std::lock_guard<std::mutex> lock(m_Mutex);
 		m_Scenes.erase(sceneSessionId);
+		m_StoppingSceneSessions.erase(sceneSessionId);
 		m_PendingFixedInput.erase(sceneSessionId);
 		m_DeferredCommands.erase(std::remove_if(m_DeferredCommands.begin(),
 			m_DeferredCommands.end(), [sceneSessionId](const DeferredCommand& command)
 			{
-				return command.Entity.SceneSessionId == 0
-					|| command.Entity.SceneSessionId == sceneSessionId;
+				return command.Entity.SceneSessionId == sceneSessionId;
 			}), m_DeferredCommands.end());
+		if (m_OpenDeferredCallbackTransaction
+			&& m_OpenDeferredCallbackTransaction->Context.SceneSessionId
+				== sceneSessionId)
+			m_OpenDeferredCallbackTransaction.reset();
+		m_SealedDeferredCallbackTransactions.erase(
+			std::remove_if(m_SealedDeferredCallbackTransactions.begin(),
+				m_SealedDeferredCallbackTransactions.end(),
+				[sceneSessionId](
+					const SealedDeferredCallbackTransaction& transaction)
+				{
+					return transaction.Context.SceneSessionId == sceneSessionId;
+				}),
+			m_SealedDeferredCallbackTransactions.end());
+		++m_ProjectionRevision;
+		m_ProjectionSnapshots.clear();
 	}
 
 	void ScriptEngine::UpdateAll(uint64_t sceneSessionId, float deltaTime)
@@ -487,6 +744,7 @@ namespace TomCat::Scripting {
 		auto runtime = GetRuntime();
 		if (!runtime || !std::isfinite(deltaTime) || deltaTime < 0.0f)
 			return;
+		InvalidateProjectionSnapshots();
 		const InputDispatchPhase previousPhase = m_InputDispatchPhase;
 		const bool previousFixedTransitions = m_FixedStepExposesTransitions;
 		m_InputDispatchPhase = InputDispatchPhase::DisplayFrame;
@@ -504,7 +762,11 @@ namespace TomCat::Scripting {
 		}
 		m_InputDispatchPhase = previousPhase;
 		m_FixedStepExposesTransitions = previousFixedTransitions;
-		ReportFailure("UpdateAll", status);
+		if (!IsSuccess(status))
+		{
+			StopSceneAfterRuntimeFailure(sceneSessionId, "UpdateAll", status);
+			return;
+		}
 		FlushDeferredCommands(sceneSessionId);
 	}
 
@@ -574,12 +836,16 @@ namespace TomCat::Scripting {
 			return;
 		}
 
+		InvalidateProjectionSnapshots();
 		ScriptStatus status;
 		try
 		{
 			status = runtime->FixedUpdateAll(fixedDeltaTime);
-			ReportFailure("FixedUpdateAll", status);
-			FlushDeferredCommands(sceneSessionId);
+			if (!IsSuccess(status))
+				StopSceneAfterRuntimeFailure(sceneSessionId,
+					"FixedUpdateAll", status);
+			else
+				FlushDeferredCommands(sceneSessionId);
 		}
 		catch (...)
 		{
@@ -597,7 +863,14 @@ namespace TomCat::Scripting {
 		auto runtime = GetRuntime();
 		if (!runtime || events.empty())
 			return;
-		ReportFailure("DispatchPhysicsEvents", runtime->DispatchPhysicsEvents(events));
+		InvalidateProjectionSnapshots();
+		const ScriptStatus status = runtime->DispatchPhysicsEvents(events);
+		if (!IsSuccess(status))
+		{
+			StopSceneAfterRuntimeFailure(sceneSessionId,
+				"DispatchPhysicsEvents", status);
+			return;
+		}
 		FlushDeferredCommands(sceneSessionId);
 	}
 
@@ -606,6 +879,10 @@ namespace TomCat::Scripting {
 		if (handle.SceneSessionId == 0 || handle.EntityId == 0
 			|| handle.RuntimeGeneration == 0)
 			return nullptr;
+		if (DeferredValidationScene
+			&& handle.SceneSessionId == DeferredValidationSceneSessionId
+			&& handle.RuntimeGeneration == DeferredValidationRuntimeGeneration)
+			return DeferredValidationScene;
 		std::lock_guard<std::mutex> lock(m_Mutex);
 		const auto iterator = m_Scenes.find(handle.SceneSessionId);
 		return iterator != m_Scenes.end()
@@ -633,9 +910,11 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::GetBehaviourEnabled(uint64_t attachmentId, bool& enabled) const
 	{
-		if (attachmentId == 0)
+		bool present = false;
+		if (!GetProjectedBehaviourPresence(attachmentId, present) || !present)
 			return false;
 		std::lock_guard<std::mutex> lock(m_Mutex);
+		bool found = false;
 		for (const auto& [ignoredSession, binding] : m_Scenes)
 		{
 			(void)ignoredSession;
@@ -651,22 +930,257 @@ namespace TomCat::Scripting {
 					if (static_cast<uint64_t>(script.AttachmentID) == attachmentId)
 					{
 						enabled = script.Enabled;
-						return true;
+						found = true;
+						break;
 					}
 				}
+				if (found)
+					break;
+			}
+			if (found)
+				break;
+		}
+		for (const DeferredCommand& command : m_DeferredCommands)
+		{
+			if (command.AttachmentId != attachmentId)
+				continue;
+			if (command.Kind == DeferredCommandKind::SetBehaviourEnabled)
+			{
+				enabled = command.Enabled;
+				found = true;
+			}
+			else if (command.Kind == DeferredCommandKind::RemoveBehaviour)
+				found = false;
+		}
+		return found;
+	}
+
+	bool ScriptEngine::GetProjectedBehaviourPresence(uint64_t attachmentId,
+		bool& present, EntityHandleV1* ownerOutput) const
+	{
+		present = false;
+		if (ownerOutput)
+			*ownerOutput = {};
+		if (attachmentId == 0)
+			return false;
+		if (DeferredRemovedBehaviourAttachments
+			&& DeferredRemovedBehaviourAttachments->contains(attachmentId))
+			return true;
+		bool known = false;
+		EntityHandleV1 owner;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			for (const auto& [sceneSessionId, binding] : m_Scenes)
+			{
+				if (!binding.ScenePointer)
+					continue;
+				for (UUID entityId : binding.ScenePointer->m_EntityOrder)
+				{
+					Entity entity = binding.ScenePointer->FindEntityByUUID(entityId);
+					if (!entity || !entity.HasComponent<CSharpScripts>())
+						continue;
+					const auto& scripts = entity.GetComponent<CSharpScripts>().Scripts;
+					if (std::any_of(scripts.begin(), scripts.end(),
+						[&](const CSharpScriptEntry& script)
+						{
+							return static_cast<uint64_t>(script.AttachmentID)
+								== attachmentId;
+						}))
+					{
+						known = true;
+						present = true;
+						owner = { sceneSessionId, static_cast<uint64_t>(entityId),
+							binding.RuntimeGeneration };
+						break;
+					}
+				}
+				if (known)
+					break;
+			}
+			if (!known)
+				return false;
+
+			for (const DeferredCommand& command : m_DeferredCommands)
+			{
+				if (command.AttachmentId == attachmentId
+					&& command.Kind == DeferredCommandKind::RemoveBehaviour)
+					present = false;
 			}
 		}
-		return false;
+		if (ownerOutput)
+			*ownerOutput = owner;
+		if (!present)
+			return true;
+		bool ownerAlive = false;
+		if (!GetProjectedEntityLiveness(owner, ownerAlive))
+			return false;
+		present = ownerAlive;
+		return true;
 	}
 
 	bool ScriptEngine::QueueCommand(DeferredCommand command)
 	{
 		std::lock_guard<std::mutex> lock(m_Mutex);
-		if (command.Entity.SceneSessionId != 0
-			&& m_Scenes.find(command.Entity.SceneSessionId) == m_Scenes.end())
+		if (m_OpenDeferredCallbackTransaction
+			&& (command.Entity.SceneSessionId
+					!= m_OpenDeferredCallbackTransaction->Context.SceneSessionId
+				|| command.Entity.RuntimeGeneration
+					!= m_OpenDeferredCallbackTransaction->Context.RuntimeGeneration))
+		{
+			DeferredCommand abort;
+			abort.Kind = DeferredCommandKind::AbortBatch;
+			abort.Entity = m_OpenDeferredCallbackTransaction->Context;
+			abort.Name = "Deferred callback attempted to mutate a different Scene";
+			m_DeferredCommands.push_back(std::move(abort));
+			++m_ProjectionRevision;
+			m_ProjectionSnapshots.clear();
 			return false;
-		m_DeferredCommands.push_back(command);
+		}
+
+		const auto binding = m_Scenes.find(command.Entity.SceneSessionId);
+		if (command.Entity.SceneSessionId == 0
+			|| command.Entity.EntityId == 0
+			|| command.Entity.RuntimeGeneration == 0
+			|| binding == m_Scenes.end()
+			|| binding->second.RuntimeGeneration
+				!= command.Entity.RuntimeGeneration)
+			return false;
+		m_DeferredCommands.push_back(std::move(command));
+		++m_ProjectionRevision;
+		m_ProjectionSnapshots.clear();
 		return true;
+	}
+
+	bool ScriptEngine::MarkDeferredCommandBatchFailed(
+		const EntityHandleV1& context, std::string reason)
+	{
+		if (!IsMainThread() || context.SceneSessionId == 0
+			|| context.EntityId == 0 || context.RuntimeGeneration == 0)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::AbortBatch;
+		command.Entity = context;
+		command.Name = reason.empty()
+			? "Deferred mutation was rejected" : std::move(reason);
+		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::BeginDeferredCallbackTransaction(
+		const EntityHandleV1& context, uint64_t& token)
+	{
+		token = 0;
+		if (!IsMainThread() || context.SceneSessionId == 0
+			|| context.EntityId == 0 || context.RuntimeGeneration == 0)
+			return false;
+
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		const auto binding = m_Scenes.find(context.SceneSessionId);
+		if (m_OpenDeferredCallbackTransaction || binding == m_Scenes.end()
+			|| !binding->second.ScenePointer
+			|| binding->second.RuntimeGeneration != context.RuntimeGeneration)
+			return false;
+
+		do
+		{
+			token = m_NextDeferredCallbackTransactionToken++;
+		} while (token == 0);
+		m_OpenDeferredCallbackTransaction =
+			OpenDeferredCallbackTransaction{ token, context,
+				m_DeferredCommands.size() };
+		return true;
+	}
+
+	bool ScriptEngine::CompleteDeferredCallbackTransaction(uint64_t token)
+	{
+		if (!IsMainThread() || token == 0)
+			return false;
+
+		bool drain = false;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			if (!m_OpenDeferredCallbackTransaction
+				|| m_OpenDeferredCallbackTransaction->Token != token
+				|| m_OpenDeferredCallbackTransaction->CommandOffset
+					> m_DeferredCommands.size())
+				return false;
+
+			SealedDeferredCallbackTransaction transaction;
+			transaction.Token = token;
+			transaction.Context =
+				m_OpenDeferredCallbackTransaction->Context;
+			const size_t offset =
+				m_OpenDeferredCallbackTransaction->CommandOffset;
+			transaction.Commands.reserve(m_DeferredCommands.size() - offset);
+			for (size_t index = offset; index < m_DeferredCommands.size(); ++index)
+				transaction.Commands.push_back(
+					std::move(m_DeferredCommands[index]));
+			m_DeferredCommands.erase(m_DeferredCommands.begin()
+				+ static_cast<std::ptrdiff_t>(offset),
+				m_DeferredCommands.end());
+			m_OpenDeferredCallbackTransaction.reset();
+			m_SealedDeferredCallbackTransactions.push_back(
+				std::move(transaction));
+			if (!m_SealedDeferredCallbackTransactions.back().Commands.empty())
+			{
+				++m_ProjectionRevision;
+				m_ProjectionSnapshots.clear();
+			}
+			if (!m_DrainingDeferredCallbackTransactions)
+			{
+				m_DrainingDeferredCallbackTransactions = true;
+				drain = true;
+			}
+		}
+		// Reentrant completions only seal their transaction. The outermost drain
+		// processes every sealed callback in FIFO order and reports any fatal
+		// resolver/publication failure through the outermost CompleteCallback.
+		return !drain || DrainDeferredCallbackTransactions();
+	}
+
+	bool ScriptEngine::DrainDeferredCallbackTransactions()
+	{
+		bool succeeded = true;
+		while (true)
+		{
+			SealedDeferredCallbackTransaction transaction;
+			{
+				std::lock_guard<std::mutex> lock(m_Mutex);
+				if (m_SealedDeferredCallbackTransactions.empty())
+				{
+					m_DrainingDeferredCallbackTransactions = false;
+					return succeeded;
+				}
+				transaction = std::move(
+					m_SealedDeferredCallbackTransactions.front());
+				m_SealedDeferredCallbackTransactions.pop_front();
+			}
+
+			try
+			{
+				if (!CommitDeferredCommandBatch(
+					transaction.Context.SceneSessionId,
+					std::move(transaction.Commands), true))
+					succeeded = false;
+			}
+			catch (const std::exception& exception)
+			{
+				succeeded = false;
+				TC_Core_Error("Deferred callback transaction {0} threw while draining: {1}",
+					transaction.Token, exception.what());
+				StopSceneAfterRuntimeFailure(
+					transaction.Context.SceneSessionId,
+					"Drain deferred callback transaction", ScriptStatus::InvalidState);
+			}
+			catch (...)
+			{
+				succeeded = false;
+				TC_Core_Error("Deferred callback transaction {0} threw while draining",
+					transaction.Token);
+				StopSceneAfterRuntimeFailure(
+					transaction.Context.SceneSessionId,
+					"Drain deferred callback transaction", ScriptStatus::InvalidState);
+			}
+		}
 	}
 
 	bool ScriptEngine::IsPendingCreate(const EntityHandleV1& entity) const
@@ -685,6 +1199,775 @@ namespace TomCat::Scripting {
 			});
 	}
 
+
+	std::shared_ptr<const ScriptEngine::ProjectionSnapshot>
+		ScriptEngine::GetProjectionSnapshot(const EntityHandleV1& context) const
+	{
+		if (context.SceneSessionId == 0 || context.EntityId == 0
+			|| context.RuntimeGeneration == 0 || !IsMainThread())
+			return {};
+
+		Scene* scene = nullptr;
+		uint64_t revision = 0;
+		std::vector<DeferredCommand> commands;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			const auto binding = m_Scenes.find(context.SceneSessionId);
+			if (binding == m_Scenes.end() || !binding->second.ScenePointer
+				|| binding->second.RuntimeGeneration != context.RuntimeGeneration)
+				return {};
+			if (const auto cached = m_ProjectionSnapshots.find(
+					context.SceneSessionId);
+				cached != m_ProjectionSnapshots.end() && cached->second
+				&& cached->second->Revision == m_ProjectionRevision
+				&& cached->second->RuntimeGeneration
+					== context.RuntimeGeneration)
+				return cached->second;
+
+			scene = binding->second.ScenePointer;
+			revision = m_ProjectionRevision;
+			commands.reserve(m_DeferredCommands.size());
+			for (const DeferredCommand& command : m_DeferredCommands)
+			{
+				if (command.Entity.SceneSessionId == context.SceneSessionId
+					&& command.Entity.RuntimeGeneration
+						== context.RuntimeGeneration)
+					commands.push_back(command);
+			}
+		}
+
+		auto snapshot = std::make_shared<ProjectionSnapshot>();
+		snapshot->Revision = revision;
+		snapshot->RuntimeGeneration = context.RuntimeGeneration;
+		snapshot->Order.reserve(scene->m_EntityOrder.size() + commands.size());
+		snapshot->Entities.reserve(scene->m_EntityOrder.size() + commands.size());
+		snapshot->Children.reserve(scene->m_ChildrenMap.size() + commands.size());
+
+		auto failProjection = [&](std::string error)
+		{
+			if (snapshot->Valid)
+			{
+				snapshot->Valid = false;
+				snapshot->Error = std::move(error);
+			}
+			return false;
+		};
+
+		auto native = [](const glm::vec3& value)
+		{
+			return NativeVector3{ value.x, value.y, value.z };
+		};
+		auto vector = [](const NativeVector3& value)
+		{
+			return glm::vec3(value.X, value.Y, value.Z);
+		};
+		for (UUID entityId : scene->m_EntityOrder)
+		{
+			Entity entity = scene->FindEntityByUUID(entityId);
+			if (!entity || !entity.HasComponent<Tag>()
+				|| !entity.HasComponent<EntityMetadata>()
+				|| !entity.HasComponent<Transform>())
+			{
+				failProjection("Scene entity " + std::to_string(
+					static_cast<uint64_t>(entityId))
+					+ " is missing a required identity component");
+				break;
+			}
+			const uint64_t id = static_cast<uint64_t>(entityId);
+			if (id == 0 || snapshot->Entities.find(id)
+				!= snapshot->Entities.end())
+			{
+				failProjection("Scene projection contains a duplicate or zero entity ID");
+				break;
+			}
+			const auto& transform = entity.GetComponent<Transform>();
+			ProjectedEntityState state;
+			state.Handle = { context.SceneSessionId, id,
+				context.RuntimeGeneration };
+			state.Name = entity.GetName();
+			state.GameplayTag = entity.GetGameplayTag();
+			state.Layer = entity.GetLayer();
+			state.ActiveSelf = entity.GetComponent<Tag>().ActiveSelf;
+			state.Translation = native(transform._Translation);
+			state.Rotation = native(transform._Rotation);
+			state.Scale = native(transform._Scale);
+			state.LocalTranslation = native(transform._LocalTranslation);
+			state.LocalRotation = native(transform._LocalRotation);
+			state.LocalScale = native(transform._LocalScale);
+			if (const auto parent = scene->m_ParentMap.find(entityId);
+				parent != scene->m_ParentMap.end())
+				state.ParentId = static_cast<uint64_t>(parent->second);
+			snapshot->Order.push_back(id);
+			snapshot->Entities.emplace(id, std::move(state));
+		}
+
+		if (snapshot->Valid)
+		{
+			std::unordered_set<uint64_t> linkedChildren;
+			linkedChildren.reserve(snapshot->Entities.size());
+			for (const auto& [parentIdValue, sceneChildren] :
+				scene->m_ChildrenMap)
+			{
+				const uint64_t parentId = static_cast<uint64_t>(parentIdValue);
+				if (snapshot->Entities.find(parentId)
+					== snapshot->Entities.end())
+				{
+					failProjection("Scene child index references a missing parent");
+					break;
+				}
+				auto& children = snapshot->Children[parentId];
+				children.reserve(sceneChildren.size());
+				std::unordered_set<uint64_t> siblingIds;
+				siblingIds.reserve(sceneChildren.size());
+				for (UUID childIdValue : sceneChildren)
+				{
+					const uint64_t childId =
+						static_cast<uint64_t>(childIdValue);
+					const auto child = snapshot->Entities.find(childId);
+					if (child == snapshot->Entities.end()
+						|| child->second.ParentId != parentId
+						|| !siblingIds.emplace(childId).second
+						|| !linkedChildren.emplace(childId).second)
+					{
+						failProjection("Scene parent and child indexes disagree");
+						break;
+					}
+					children.push_back(childId);
+				}
+				if (!snapshot->Valid)
+					break;
+			}
+			if (snapshot->Valid)
+			{
+				for (const auto& [id, state] : snapshot->Entities)
+				{
+					if (state.ParentId == 0)
+						continue;
+					if (snapshot->Entities.find(state.ParentId)
+							== snapshot->Entities.end()
+						|| linkedChildren.find(id) == linkedChildren.end())
+					{
+						failProjection("Scene hierarchy contains an unindexed parent link");
+						break;
+					}
+				}
+			}
+		}
+
+		auto composeWorld = [&](const ProjectedEntityState& state)
+		{
+			return Math::ComposeTransform(vector(state.Translation),
+				vector(state.Rotation), vector(state.Scale));
+		};
+		auto composeLocal = [&](const ProjectedEntityState& state)
+		{
+			return Math::ComposeTransform(vector(state.LocalTranslation),
+				vector(state.LocalRotation), vector(state.LocalScale));
+		};
+		auto setWorld = [&](ProjectedEntityState& state, const glm::mat4& matrix)
+		{
+			glm::vec3 translation{}, rotation{}, scale{};
+			if (!Math::DecomposeTransform(matrix, translation, rotation, scale))
+				return false;
+			state.Translation = native(translation);
+			state.Rotation = native(rotation);
+			state.Scale = native(scale);
+			return true;
+		};
+		auto setLocal = [&](ProjectedEntityState& state, const glm::mat4& matrix)
+		{
+			glm::vec3 translation{}, rotation{}, scale{};
+			if (!Math::DecomposeTransform(matrix, translation, rotation, scale))
+				return false;
+			state.LocalTranslation = native(translation);
+			state.LocalRotation = native(rotation);
+			state.LocalScale = native(scale);
+			return true;
+		};
+		auto updateLocalFromWorld = [&](ProjectedEntityState& state)
+		{
+			if (state.ParentId == 0)
+			{
+				state.LocalTranslation = state.Translation;
+				state.LocalRotation = state.Rotation;
+				state.LocalScale = state.Scale;
+				return true;
+			}
+			const auto parent = snapshot->Entities.find(state.ParentId);
+			if (parent == snapshot->Entities.end() || !parent->second.Alive)
+				return failProjection("Projected transform parent is unavailable");
+			const glm::mat4 parentWorld = composeWorld(parent->second);
+			const float determinant = glm::determinant(parentWorld);
+			if (!std::isfinite(determinant)
+				|| std::abs(determinant) <= 1.0e-8f)
+				return failProjection(
+					"Projected transform parent matrix is singular");
+			if (!setLocal(state, glm::inverse(parentWorld)
+				* composeWorld(state)))
+				return failProjection(
+					"Projected world transform cannot be represented locally");
+			return true;
+		};
+		auto updateWorldSubtree = [&](uint64_t root)
+		{
+			std::vector<uint64_t> pending{ root };
+			std::unordered_set<uint64_t> visited;
+			while (!pending.empty())
+			{
+				const uint64_t id = pending.back();
+				pending.pop_back();
+				if (!visited.emplace(id).second)
+					return failProjection(
+						"Projected transform hierarchy contains a cycle");
+				auto current = snapshot->Entities.find(id);
+				if (current == snapshot->Entities.end() || !current->second.Alive)
+					return failProjection(
+						"Projected transform subtree contains a missing entity");
+				glm::mat4 world = composeLocal(current->second);
+				if (current->second.ParentId != 0)
+				{
+					const auto parent = snapshot->Entities.find(
+						current->second.ParentId);
+					if (parent == snapshot->Entities.end()
+						|| !parent->second.Alive)
+						return failProjection(
+							"Projected transform subtree has a missing parent");
+					world = composeWorld(parent->second) * world;
+				}
+				if (!setWorld(current->second, world))
+					return failProjection(
+						"Projected local transform cannot be represented in world space");
+				if (const auto children = snapshot->Children.find(id);
+					children != snapshot->Children.end())
+				{
+					for (auto childId = children->second.rbegin();
+						childId != children->second.rend(); ++childId)
+					{
+						const auto child = snapshot->Entities.find(*childId);
+						if (child == snapshot->Entities.end()
+							|| child->second.ParentId != id)
+							return failProjection(
+								"Projected parent and child indexes disagree");
+						if (child->second.Alive)
+							pending.push_back(*childId);
+					}
+				}
+			}
+			return true;
+		};
+		auto validateParentAssignment = [&](uint64_t childId,
+			uint64_t parentId)
+		{
+			if (parentId == 0)
+				return true;
+			std::unordered_set<uint64_t> visited;
+			uint64_t currentId = parentId;
+			while (currentId != 0)
+			{
+				if (currentId == childId)
+					return failProjection(
+						"Projected reparenting would create a cycle");
+				if (!visited.emplace(currentId).second)
+					return failProjection(
+						"Projected hierarchy already contains a cycle");
+				const auto current = snapshot->Entities.find(currentId);
+				if (current == snapshot->Entities.end() || !current->second.Alive)
+					return failProjection(
+						"Projected reparent destination is unavailable");
+				currentId = current->second.ParentId;
+			}
+			return true;
+		};
+		auto destroySubtree = [&](uint64_t root)
+		{
+			std::vector<uint64_t> pending{ root };
+			std::unordered_set<uint64_t> visited;
+			while (!pending.empty())
+			{
+				const uint64_t id = pending.back();
+				pending.pop_back();
+				if (!visited.emplace(id).second)
+					return failProjection(
+						"Projected destroy subtree contains a cycle");
+				auto entity = snapshot->Entities.find(id);
+				if (entity == snapshot->Entities.end())
+					return failProjection(
+						"Projected destroy subtree contains a missing entity");
+				if (!entity->second.Alive)
+					continue;
+				entity->second.Alive = false;
+				if (const auto children = snapshot->Children.find(id);
+					children != snapshot->Children.end())
+				{
+					for (auto childId = children->second.rbegin();
+						childId != children->second.rend(); ++childId)
+					{
+						const auto child = snapshot->Entities.find(*childId);
+						if (child == snapshot->Entities.end()
+							|| child->second.ParentId != id)
+							return failProjection(
+								"Projected parent and child indexes disagree");
+						pending.push_back(*childId);
+					}
+				}
+			}
+			return true;
+		};
+		auto makeUniqueName = [&](const std::string& requestedName)
+		{
+			const std::string baseName = requestedName.empty()
+				? "Entity" : requestedName;
+			auto nameExists = [&](const std::string& candidate)
+			{
+				return std::any_of(snapshot->Entities.begin(),
+					snapshot->Entities.end(), [&](const auto& item)
+					{
+						return item.second.Alive
+							&& item.second.Name == candidate;
+					});
+			};
+			if (!nameExists(baseName))
+				return baseName;
+			for (uint32_t suffix = 1; ; ++suffix)
+			{
+				std::string candidate = baseName + " ("
+					+ std::to_string(suffix) + ")";
+				if (!nameExists(candidate))
+					return candidate;
+			}
+		};
+
+		using namespace ComponentIds::TransformProperties;
+		for (const DeferredCommand& command : commands)
+		{
+			if (!snapshot->Valid)
+				break;
+			const uint64_t id = command.Entity.EntityId;
+			if (command.Kind == DeferredCommandKind::AbortBatch)
+			{
+				failProjection(command.Name.empty()
+					? "Deferred mutation rejected the command batch"
+					: command.Name);
+				break;
+			}
+			if (command.Kind == DeferredCommandKind::CreateEntity)
+			{
+				const bool hasParent = command.Parent.SceneSessionId != 0
+					|| command.Parent.EntityId != 0
+					|| command.Parent.RuntimeGeneration != 0;
+				if (id == 0 || snapshot->Entities.find(id)
+						!= snapshot->Entities.end()
+					|| (hasParent && (command.Parent.SceneSessionId
+							!= context.SceneSessionId
+						|| command.Parent.RuntimeGeneration
+							!= context.RuntimeGeneration
+						|| command.Parent.EntityId == 0)))
+				{
+					failProjection(
+						"Projected create command has an invalid reserved entity");
+					break;
+				}
+				const uint64_t parentId = hasParent
+					? command.Parent.EntityId : 0;
+				if (!validateParentAssignment(id, parentId))
+					break;
+				ProjectedEntityState state;
+				state.Handle = command.Entity;
+				state.ParentId = parentId;
+				state.Name = makeUniqueName(command.Name);
+				state.Translation = command.WorldPosition;
+				state.LocalTranslation = command.WorldPosition;
+				snapshot->Order.push_back(id);
+				snapshot->Entities[id] = std::move(state);
+				if (parentId != 0)
+					snapshot->Children[parentId].push_back(id);
+				if (!updateLocalFromWorld(snapshot->Entities.at(id))
+					|| !updateWorldSubtree(id))
+					break;
+				continue;
+			}
+			auto entity = snapshot->Entities.find(id);
+			if (entity == snapshot->Entities.end())
+			{
+				failProjection("Projected command target is unavailable");
+				break;
+			}
+			ProjectedEntityState& state = entity->second;
+			if (command.Kind == DeferredCommandKind::DestroyEntity)
+			{
+				if (!state.Alive)
+					continue;
+				if (!destroySubtree(id))
+					break;
+			}
+			else if (state.Alive && command.Kind == DeferredCommandKind::SetParent)
+			{
+				const bool hasParent = command.Parent.SceneSessionId != 0
+					|| command.Parent.EntityId != 0
+					|| command.Parent.RuntimeGeneration != 0;
+				if (hasParent && (command.Parent.SceneSessionId
+						!= context.SceneSessionId
+					|| command.Parent.RuntimeGeneration
+						!= context.RuntimeGeneration
+					|| command.Parent.EntityId == 0))
+				{
+					failProjection(
+						"Projected reparent command has an invalid destination");
+					break;
+				}
+				const uint64_t newParentId = hasParent
+					? command.Parent.EntityId : 0;
+				if (newParentId == state.ParentId)
+					continue;
+				if (!validateParentAssignment(id, newParentId))
+					break;
+
+				ProjectedEntityState updatedState = state;
+				updatedState.ParentId = newParentId;
+				if (!updateLocalFromWorld(updatedState))
+					break;
+				if (state.ParentId != 0)
+				{
+					auto oldChildren = snapshot->Children.find(state.ParentId);
+					if (oldChildren == snapshot->Children.end())
+					{
+						failProjection(
+							"Projected reparent source index is unavailable");
+						break;
+					}
+					const size_t oldSize = oldChildren->second.size();
+					std::erase(oldChildren->second, id);
+					if (oldChildren->second.size() == oldSize)
+					{
+						failProjection(
+							"Projected reparent source index is inconsistent");
+						break;
+					}
+				}
+				if (newParentId != 0)
+				{
+					auto& newChildren = snapshot->Children[newParentId];
+					std::erase(newChildren, id);
+					newChildren.push_back(id);
+				}
+				state = std::move(updatedState);
+				if (!updateWorldSubtree(id))
+					break;
+			}
+			else if (state.Alive
+				&& command.Kind == DeferredCommandKind::SetActiveSelf)
+				state.ActiveSelf = command.Enabled;
+			else if (state.Alive
+				&& command.Kind == DeferredCommandKind::SetEntityName)
+			{
+				if (state.Name != command.Name)
+					state.Name = makeUniqueName(command.Name);
+			}
+			else if (state.Alive
+				&& command.Kind == DeferredCommandKind::SetGameplayTag)
+				state.GameplayTag = command.Name;
+			else if (state.Alive
+				&& command.Kind == DeferredCommandKind::SetLayer)
+				state.Layer = command.Layer;
+			else if (state.Alive
+				&& command.Kind == DeferredCommandKind::SetComponentProperty
+				&& command.ComponentType == NativeComponentType::Transform)
+			{
+				NativeVector3 value{ command.PropertyValue.Vector.X,
+					command.PropertyValue.Vector.Y,
+					command.PropertyValue.Vector.Z };
+				if (command.PropertyId == static_cast<uint32_t>(Translation))
+				state.Translation = value;
+				else if (command.PropertyId == static_cast<uint32_t>(Rotation))
+					state.Rotation = value;
+				else if (command.PropertyId == static_cast<uint32_t>(Scale))
+					state.Scale = value;
+				else if (command.PropertyId
+					== static_cast<uint32_t>(LocalTranslation))
+					state.LocalTranslation = value;
+				else if (command.PropertyId
+					== static_cast<uint32_t>(LocalRotation))
+					state.LocalRotation = value;
+				else if (command.PropertyId == static_cast<uint32_t>(LocalScale))
+					state.LocalScale = value;
+				if (command.PropertyId == static_cast<uint32_t>(Translation)
+					|| command.PropertyId == static_cast<uint32_t>(Rotation)
+					|| command.PropertyId == static_cast<uint32_t>(Scale))
+				{
+					if (!updateLocalFromWorld(state)
+						|| !updateWorldSubtree(id))
+						break;
+				}
+				else if (!updateWorldSubtree(id))
+					break;
+			}
+		}
+
+		if (snapshot->Valid)
+		{
+			try
+			{
+				ComponentMutationPhaseScope validationPhase(
+					ComponentMutationPhase::Validation);
+				std::shared_ptr<Scene> nonOwning(scene, [](Scene*) {});
+				snapshot->ProjectedScene = Scene::Copy(nonOwning);
+				if (!snapshot->ProjectedScene)
+					failProjection(
+						"Projected component Scene could not be copied");
+				else
+				{
+					std::string componentProjectionError;
+					DeferredValidationSceneScope validationScope(
+						*snapshot->ProjectedScene, context.SceneSessionId,
+						context.RuntimeGeneration);
+					if (!ApplyDeferredCommands(*snapshot->ProjectedScene,
+						context.SceneSessionId, commands, false,
+						componentProjectionError))
+					{
+						failProjection(
+							"Projected component command replay failed: "
+							+ componentProjectionError);
+					}
+				}
+			}
+			catch (const std::exception& exception)
+			{
+				failProjection(
+					"Projected component command replay threw: "
+					+ std::string(exception.what()));
+			}
+			catch (...)
+			{
+				failProjection(
+					"Projected component command replay threw an unknown exception");
+			}
+		}
+
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			const auto binding = m_Scenes.find(context.SceneSessionId);
+			if (binding == m_Scenes.end()
+				|| binding->second.ScenePointer != scene
+				|| binding->second.RuntimeGeneration
+					!= context.RuntimeGeneration
+				|| m_ProjectionRevision != revision)
+				return {};
+			m_ProjectionSnapshots[context.SceneSessionId] = snapshot;
+		}
+		return snapshot;
+	}
+
+	void ScriptEngine::InvalidateProjectionSnapshots() const
+	{
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		++m_ProjectionRevision;
+		m_ProjectionSnapshots.clear();
+	}
+
+	bool ScriptEngine::GetProjectedEntityLiveness(const EntityHandleV1& entity,
+		bool& alive) const
+	{
+		alive = false;
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto found = snapshot->Entities.find(entity.EntityId);
+		if (found == snapshot->Entities.end())
+			return false;
+		alive = found->second.Alive;
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedParent(const EntityHandleV1& entity,
+		EntityHandleV1& parent) const
+	{
+		parent = {};
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto found = snapshot->Entities.find(entity.EntityId);
+		if (found == snapshot->Entities.end() || !found->second.Alive)
+			return false;
+		if (found->second.ParentId != 0)
+			parent = { entity.SceneSessionId, found->second.ParentId,
+				entity.RuntimeGeneration };
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedChildren(const EntityHandleV1& entity,
+		std::vector<EntityHandleV1>& children) const
+	{
+		children.clear();
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto parent = snapshot->Entities.find(entity.EntityId);
+		if (parent == snapshot->Entities.end() || !parent->second.Alive)
+			return false;
+		const auto projectedChildren = snapshot->Children.find(entity.EntityId);
+		if (projectedChildren == snapshot->Children.end())
+			return true;
+		children.reserve(projectedChildren->second.size());
+		for (uint64_t id : projectedChildren->second)
+		{
+			const auto child = snapshot->Entities.find(id);
+			if (child != snapshot->Entities.end() && child->second.Alive
+				&& child->second.ParentId == entity.EntityId)
+				children.push_back(child->second.Handle);
+		}
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedEntities(const EntityHandleV1& context,
+		std::vector<EntityHandleV1>& entities) const
+	{
+		entities.clear();
+		const auto snapshot = GetProjectionSnapshot(context);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto source = snapshot->Entities.find(context.EntityId);
+		if (source == snapshot->Entities.end() || !source->second.Alive)
+			return false;
+		for (uint64_t id : snapshot->Order)
+		{
+			const auto item = snapshot->Entities.find(id);
+			if (item != snapshot->Entities.end() && item->second.Alive)
+				entities.push_back(item->second.Handle);
+		}
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedEntityName(const EntityHandleV1& entity,
+		std::string& name) const
+	{
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto found = snapshot->Entities.find(entity.EntityId);
+		if (found == snapshot->Entities.end() || !found->second.Alive)
+			return false;
+		name = found->second.Name;
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedGameplayTag(const EntityHandleV1& entity,
+		std::string& tag) const
+	{
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto found = snapshot->Entities.find(entity.EntityId);
+		if (found == snapshot->Entities.end() || !found->second.Alive)
+			return false;
+		tag = found->second.GameplayTag;
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedLayer(const EntityHandleV1& entity,
+		uint32_t& layer) const
+	{
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto found = snapshot->Entities.find(entity.EntityId);
+		if (found == snapshot->Entities.end() || !found->second.Alive)
+			return false;
+		layer = found->second.Layer;
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedActiveInHierarchy(const EntityHandleV1& entity,
+		bool& active) const
+	{
+		active = false;
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		uint64_t current = entity.EntityId;
+		std::unordered_set<uint64_t> visited;
+		while (current != 0 && visited.emplace(current).second)
+		{
+			const auto found = snapshot->Entities.find(current);
+			if (found == snapshot->Entities.end() || !found->second.Alive)
+				return false;
+			if (!found->second.ActiveSelf)
+				return true;
+			current = found->second.ParentId;
+		}
+		if (current != 0)
+			return false;
+		active = true;
+		return true;
+	}
+
+	bool ScriptEngine::GetProjectedTransformProperty(const EntityHandleV1& entity,
+		uint32_t propertyId, NativeVector3& value) const
+	{
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto found = snapshot->Entities.find(entity.EntityId);
+		if (found == snapshot->Entities.end() || !found->second.Alive)
+			return false;
+		using namespace ComponentIds::TransformProperties;
+		if (propertyId == static_cast<uint32_t>(Translation))
+			value = found->second.Translation;
+		else if (propertyId == static_cast<uint32_t>(Rotation))
+			value = found->second.Rotation;
+		else if (propertyId == static_cast<uint32_t>(Scale))
+			value = found->second.Scale;
+		else if (propertyId == static_cast<uint32_t>(LocalTranslation))
+			value = found->second.LocalTranslation;
+		else if (propertyId == static_cast<uint32_t>(LocalRotation))
+			value = found->second.LocalRotation;
+		else if (propertyId == static_cast<uint32_t>(LocalScale))
+			value = found->second.LocalScale;
+		else
+			return false;
+		return true;
+	}
+
+	bool ScriptEngine::QueueSetEntityName(const EntityHandleV1& entity,
+		std::string name)
+	{
+		bool alive = false;
+		if (!IsMainThread() || name.empty() || name.size() > 1024
+			|| !GetProjectedEntityLiveness(entity, alive) || !alive)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetEntityName;
+		command.Entity = entity;
+		command.Name = std::move(name);
+		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::QueueSetGameplayTag(const EntityHandleV1& entity,
+		std::string tag)
+	{
+		bool alive = false;
+		if (!IsMainThread() || tag.empty() || tag.size() > 1024
+			|| !GetProjectedEntityLiveness(entity, alive) || !alive)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetGameplayTag;
+		command.Entity = entity;
+		command.Name = std::move(tag);
+		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::QueueSetLayer(const EntityHandleV1& entity, uint32_t layer)
+	{
+		bool alive = false;
+		if (!IsMainThread() || layer >= Physics2DLayerCount
+			|| !GetProjectedEntityLiveness(entity, alive) || !alive)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetLayer;
+		command.Entity = entity;
+		command.Layer = layer;
+		return QueueCommand(std::move(command));
+	}
+
 	bool ScriptEngine::GetProjectedComponentPresence(const EntityHandleV1& entity,
 		NativeComponentType componentType, bool& present) const
 	{
@@ -692,10 +1975,12 @@ namespace TomCat::Scripting {
 		if (!IsSupportedComponentType(componentType))
 			return false;
 
-		Entity resolved = ResolveEntity(entity);
-		const bool pendingCreate = !resolved && IsPendingCreate(entity);
-		if (!resolved && !pendingCreate)
+		bool alive = false;
+		if (!GetProjectedEntityLiveness(entity, alive))
 			return false;
+		if (!alive)
+			return true;
+		Entity resolved = ResolveEntity(entity);
 		present = resolved ? HasNativeComponent(resolved, componentType)
 			: componentType == NativeComponentType::Transform;
 
@@ -713,12 +1998,58 @@ namespace TomCat::Scripting {
 		return true;
 	}
 
+	bool ScriptEngine::TryGetProjectedComponentProperty(
+		const EntityHandleV1& entity, NativeComponentType componentType,
+		uint32_t propertyId, NativePropertyValueV1& value, bool& useDefault) const
+	{
+		useDefault = false;
+		if (!IsSupportedComponentType(componentType) || propertyId == 0)
+			return false;
+		Entity resolved = ResolveEntity(entity);
+		bool present = resolved ? HasNativeComponent(resolved, componentType)
+			: componentType == NativeComponentType::Transform;
+		useDefault = !resolved && present;
+		bool found = false;
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		for (const DeferredCommand& command : m_DeferredCommands)
+		{
+			if (!SameEntity(command.Entity, entity)
+				|| command.ComponentType != componentType)
+				continue;
+			if (command.Kind == DeferredCommandKind::AddComponent)
+			{
+				if (!present)
+				{
+					present = true;
+					useDefault = true;
+					found = false;
+				}
+			}
+			else if (command.Kind == DeferredCommandKind::RemoveComponent)
+			{
+				present = false;
+				useDefault = false;
+				found = false;
+			}
+			else if (command.Kind == DeferredCommandKind::SetComponentProperty
+				&& present && command.PropertyId == propertyId)
+			{
+				value = command.PropertyValue;
+				found = true;
+			}
+		}
+		return found;
+	}
+
 	bool ScriptEngine::QueueBehaviourEnabled(uint64_t attachmentId, bool enabled)
 	{
-		if (attachmentId == 0)
+		bool present = false;
+		EntityHandleV1 owner;
+		if (!GetProjectedBehaviourPresence(attachmentId, present, &owner) || !present)
 			return false;
 		DeferredCommand command;
 		command.Kind = DeferredCommandKind::SetBehaviourEnabled;
+		command.Entity = owner;
 		command.AttachmentId = attachmentId;
 		command.Enabled = enabled;
 		return QueueCommand(command);
@@ -726,21 +2057,30 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::QueueRemoveBehaviour(uint64_t attachmentId)
 	{
-		if (attachmentId == 0)
+		bool present = false;
+		EntityHandleV1 owner;
+		if (!GetProjectedBehaviourPresence(attachmentId, present, &owner))
 			return false;
+		if (!present)
+			return true;
 		DeferredCommand command;
 		command.Kind = DeferredCommandKind::RemoveBehaviour;
+		command.Entity = owner;
 		command.AttachmentId = attachmentId;
 		return QueueCommand(command);
 	}
 
 	bool ScriptEngine::QueueDestroyEntity(const EntityHandleV1& entity)
 	{
+		bool alive = false;
+		if (!GetProjectedEntityLiveness(entity, alive))
+			return false;
+		if (!alive)
+			return true;
 		DeferredCommand command;
 		command.Kind = DeferredCommandKind::DestroyEntity;
 		command.Entity = entity;
-		return (ResolveEntity(entity) || IsPendingCreate(entity))
-			&& QueueCommand(command);
+		return QueueCommand(command);
 	}
 
 	bool ScriptEngine::QueueCreateEntity(const EntityHandleV1& context,
@@ -748,7 +2088,10 @@ namespace TomCat::Scripting {
 		const EntityHandleV1& parent, EntityHandleV1& reservedEntity)
 	{
 		reservedEntity = {};
-		if (!IsMainThread() || !ResolveEntity(context) || name.size() > 1024
+		bool contextAlive = false;
+		if (!IsMainThread()
+			|| !GetProjectedEntityLiveness(context, contextAlive) || !contextAlive
+			|| name.size() > 1024
 			|| !std::isfinite(worldPosition.X) || !std::isfinite(worldPosition.Y)
 			|| !std::isfinite(worldPosition.Z))
 			return false;
@@ -757,7 +2100,8 @@ namespace TomCat::Scripting {
 		if (hasParent && (parent.SceneSessionId != context.SceneSessionId
 			|| parent.RuntimeGeneration != context.RuntimeGeneration
 			|| parent.EntityId == 0
-			|| (!ResolveEntity(parent) && !IsPendingCreate(parent))))
+			|| ([&]() { bool parentAlive = false;
+				return !GetProjectedEntityLiveness(parent, parentAlive) || !parentAlive; })()))
 			return false;
 
 		for (uint32_t attempt = 0; attempt < 64; ++attempt)
@@ -784,15 +2128,43 @@ namespace TomCat::Scripting {
 	bool ScriptEngine::QueueSetParent(const EntityHandleV1& entity,
 		const EntityHandleV1& parent)
 	{
-		if (!IsMainThread() || (!ResolveEntity(entity) && !IsPendingCreate(entity)))
+		if (!IsMainThread())
 			return false;
+		auto reject = [&](const char* reason)
+		{
+			MarkDeferredCommandBatchFailed(entity, reason);
+			return false;
+		};
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return reject(snapshot && !snapshot->Error.empty()
+				? snapshot->Error.c_str() : "Projected hierarchy is unavailable");
+		const auto projectedEntity = snapshot->Entities.find(entity.EntityId);
+		if (projectedEntity == snapshot->Entities.end()
+			|| !projectedEntity->second.Alive)
+			return reject("Reparent target is unavailable");
 		const bool hasParent = parent.SceneSessionId != 0 || parent.EntityId != 0
 			|| parent.RuntimeGeneration != 0;
 		if (hasParent && (parent.SceneSessionId != entity.SceneSessionId
 			|| parent.RuntimeGeneration != entity.RuntimeGeneration
-			|| parent.EntityId == 0
-			|| (!ResolveEntity(parent) && !IsPendingCreate(parent))))
-			return false;
+			|| parent.EntityId == 0))
+			return reject("Reparent destination belongs to a different Scene");
+		if (hasParent)
+		{
+			uint64_t current = parent.EntityId;
+			std::unordered_set<uint64_t> visited;
+			while (current != 0)
+			{
+				if (current == entity.EntityId
+					|| !visited.emplace(current).second)
+					return reject("Reparenting would create a hierarchy cycle");
+				const auto projectedParent = snapshot->Entities.find(current);
+				if (projectedParent == snapshot->Entities.end()
+					|| !projectedParent->second.Alive)
+					return reject("Reparent destination is unavailable");
+				current = projectedParent->second.ParentId;
+			}
+		}
 		DeferredCommand command;
 		command.Kind = DeferredCommandKind::SetParent;
 		command.Entity = entity;
@@ -809,7 +2181,8 @@ namespace TomCat::Scripting {
 		command.Kind = DeferredCommandKind::AddComponent;
 		command.Entity = entity;
 		command.ComponentType = componentType;
-		return (ResolveEntity(entity) || IsPendingCreate(entity))
+		bool alive = false;
+		return GetProjectedEntityLiveness(entity, alive) && alive
 			&& QueueCommand(command);
 	}
 
@@ -823,7 +2196,8 @@ namespace TomCat::Scripting {
 		command.Kind = DeferredCommandKind::RemoveComponent;
 		command.Entity = entity;
 		command.ComponentType = componentType;
-		return (ResolveEntity(entity) || IsPendingCreate(entity))
+		bool alive = false;
+		return GetProjectedEntityLiveness(entity, alive) && alive
 			&& QueueCommand(command);
 	}
 
@@ -833,7 +2207,10 @@ namespace TomCat::Scripting {
 	{
 		if (!IsMainThread() || !IsSupportedComponentType(componentType)
 			|| propertyId == 0
-			|| (!ResolveEntity(entity) && !IsPendingCreate(entity)))
+			)
+			return false;
+		bool alive = false;
+		if (!GetProjectedEntityLiveness(entity, alive) || !alive)
 			return false;
 		bool present = false;
 		if (!GetProjectedComponentPresence(entity, componentType, present) || !present)
@@ -849,13 +2226,27 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::QueueSetActiveSelf(const EntityHandleV1& entity, bool active)
 	{
-		if (!IsMainThread() || (!ResolveEntity(entity) && !IsPendingCreate(entity)))
+		bool alive = false;
+		if (!IsMainThread() || !GetProjectedEntityLiveness(entity, alive) || !alive)
 			return false;
 		DeferredCommand command;
 		command.Kind = DeferredCommandKind::SetActiveSelf;
 		command.Entity = entity;
 		command.Enabled = active;
 		return QueueCommand(std::move(command));
+	}
+
+	bool ScriptEngine::GetProjectedActiveSelf(const EntityHandleV1& entity,
+		bool& active) const
+	{
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid)
+			return false;
+		const auto found = snapshot->Entities.find(entity.EntityId);
+		if (found == snapshot->Entities.end() || !found->second.Alive)
+			return false;
+		active = found->second.ActiveSelf;
+		return true;
 	}
 
 	bool ScriptEngine::GetProjectedRegisteredComponentPresence(
@@ -866,21 +2257,89 @@ namespace TomCat::Scripting {
 			: ComponentRegistry::Get().Find(UUID(componentTypeId));
 		if (!descriptor || !descriptor->ScriptAccessible)
 			return false;
-		Entity resolved = ResolveEntity(entity);
-		if (!resolved && !IsPendingCreate(entity))
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
 			return false;
-		present = resolved && descriptor->Has(resolved);
-		std::lock_guard<std::mutex> lock(m_Mutex);
-		for (const DeferredCommand& command : m_DeferredCommands)
-		{
-			if (!SameEntity(command.Entity, entity)
-				|| command.RegisteredTypeId != componentTypeId)
-				continue;
-			if (command.Kind == DeferredCommandKind::AddRegisteredComponent)
-				present = true;
-			else if (command.Kind == DeferredCommandKind::RemoveRegisteredComponent)
-				present = false;
-		}
+		const auto state = snapshot->Entities.find(entity.EntityId);
+		if (state == snapshot->Entities.end())
+			return false;
+		if (!state->second.Alive)
+			return true;
+		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
+			UUID(entity.EntityId));
+		if (!projected)
+			return false;
+		present = descriptor->Has(projected);
+		return true;
+	}
+
+	bool ScriptEngine::TryGetProjectedRegisteredComponentProperty(
+		const EntityHandleV1& entity, uint64_t componentTypeId,
+		uint64_t propertyId, NativePropertyValueV1& value,
+		bool& useDefault) const
+	{
+		useDefault = false;
+		if (componentTypeId == 0 || propertyId == 0)
+			return false;
+		const ComponentDescriptor* descriptor = ComponentRegistry::Get().Find(
+			UUID(componentTypeId));
+		if (!descriptor || !descriptor->ScriptAccessible)
+			return false;
+		const auto property = std::find_if(descriptor->Properties.begin(),
+			descriptor->Properties.end(), [propertyId](const PropertyDescriptor& item)
+			{
+				return static_cast<uint64_t>(item.PropertyId) == propertyId;
+			});
+		if (property == descriptor->Properties.end() || !property->Get
+			|| property->Kind == PropertyKind::String)
+			return false;
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
+			return false;
+		const auto state = snapshot->Entities.find(entity.EntityId);
+		if (state == snapshot->Entities.end() || !state->second.Alive)
+			return false;
+		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
+			UUID(entity.EntityId));
+		return projected && descriptor->Has(projected)
+			&& WriteProjectedProperty(property->Kind, property->Get(projected),
+				value);
+	}
+
+	bool ScriptEngine::TryGetProjectedRegisteredComponentStringProperty(
+		const EntityHandleV1& entity, uint64_t componentTypeId,
+		uint64_t propertyId, std::string& value, bool& useDefault) const
+	{
+		useDefault = false;
+		if (componentTypeId == 0 || propertyId == 0)
+			return false;
+		const ComponentDescriptor* descriptor = ComponentRegistry::Get().Find(
+			UUID(componentTypeId));
+		if (!descriptor || !descriptor->ScriptAccessible)
+			return false;
+		const auto property = std::find_if(descriptor->Properties.begin(),
+			descriptor->Properties.end(), [propertyId](const PropertyDescriptor& item)
+			{
+				return static_cast<uint64_t>(item.PropertyId) == propertyId;
+			});
+		if (property == descriptor->Properties.end() || !property->Get
+			|| property->Kind != PropertyKind::String)
+			return false;
+		const auto snapshot = GetProjectionSnapshot(entity);
+		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
+			return false;
+		const auto state = snapshot->Entities.find(entity.EntityId);
+		if (state == snapshot->Entities.end() || !state->second.Alive)
+			return false;
+		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
+			UUID(entity.EntityId));
+		if (!projected || !descriptor->Has(projected))
+			return false;
+		PropertyValue projectedValue = property->Get(projected);
+		const auto projectedString = std::get_if<std::string>(&projectedValue);
+		if (!projectedString)
+			return false;
+		value = *projectedString;
 		return true;
 	}
 
@@ -939,20 +2398,53 @@ namespace TomCat::Scripting {
 		return QueueCommand(std::move(command));
 	}
 
+	bool ScriptEngine::QueueSetRegisteredComponentStringProperty(
+		const EntityHandleV1& entity, uint64_t componentTypeId,
+		uint64_t propertyId, std::string value)
+	{
+		if (!IsMainThread() || propertyId == 0)
+			return false;
+		const ComponentDescriptor* descriptor = componentTypeId == 0 ? nullptr
+			: ComponentRegistry::Get().Find(UUID(componentTypeId));
+		if (!descriptor || !descriptor->ScriptAccessible)
+			return false;
+		const auto property = std::find_if(descriptor->Properties.begin(),
+			descriptor->Properties.end(), [propertyId](const PropertyDescriptor& item)
+			{ return static_cast<uint64_t>(item.PropertyId) == propertyId; });
+		if (property == descriptor->Properties.end()
+			|| property->Kind != PropertyKind::String)
+			return false;
+		bool present = false;
+		if (!GetProjectedRegisteredComponentPresence(entity, componentTypeId, present)
+			|| !present)
+			return false;
+		DeferredCommand command;
+		command.Kind = DeferredCommandKind::SetRegisteredComponentStringProperty;
+		command.Entity = entity;
+		command.RegisteredTypeId = componentTypeId;
+		command.RegisteredPropertyId = propertyId;
+		command.Name = std::move(value);
+		return QueueCommand(std::move(command));
+	}
+
 	bool ScriptEngine::QueueInstantiatePrefab(const EntityHandleV1& context,
 		uint64_t prefabHandle, NativeVector3 worldPosition,
 		const EntityHandleV1& parent)
 	{
 		if (prefabHandle == 0 || !std::isfinite(worldPosition.X)
 			|| !std::isfinite(worldPosition.Y) || !std::isfinite(worldPosition.Z)
-			|| !ResolveEntity(context))
+			)
+			return false;
+		bool contextAlive = false;
+		if (!GetProjectedEntityLiveness(context, contextAlive) || !contextAlive)
 			return false;
 		const bool hasParent = parent.SceneSessionId != 0 || parent.EntityId != 0
 			|| parent.RuntimeGeneration != 0;
 		if (hasParent && (parent.SceneSessionId != context.SceneSessionId
 			|| parent.RuntimeGeneration != context.RuntimeGeneration
 			|| parent.EntityId == 0
-			|| (!ResolveEntity(parent) && !IsPendingCreate(parent))))
+			|| ([&]() { bool parentAlive = false;
+				return !GetProjectedEntityLiveness(parent, parentAlive) || !parentAlive; })()))
 			return false;
 
 		DeferredCommand command;
@@ -964,32 +2456,43 @@ namespace TomCat::Scripting {
 		return QueueCommand(command);
 	}
 
-	void ScriptEngine::FlushDeferredCommands(uint64_t sceneSessionId)
+	bool ScriptEngine::ApplyDeferredCommands(Scene& targetScene,
+		uint64_t sceneSessionId, const std::vector<DeferredCommand>& commands,
+		bool publishRuntimeSideEffects, std::string& error) const
 	{
-		std::vector<DeferredCommand> commands;
+		error.clear();
+		auto runtime = publishRuntimeSideEffects ? GetRuntime() : nullptr;
+		std::vector<UUID> createdEntities;
+		std::vector<DeferredRuntimeEffect> runtimeEffects;
+		std::unordered_set<uint64_t> removedBehaviourAttachments;
+		ScriptStatus immediateRuntimeFailure = ScriptStatus::Success;
+		DeferredRuntimeEffectScope runtimeEffectScope(
+			publishRuntimeSideEffects ? &runtimeEffects : nullptr,
+			publishRuntimeSideEffects ? &removedBehaviourAttachments : nullptr,
+			publishRuntimeSideEffects ? runtime.get() : nullptr,
+			publishRuntimeSideEffects ? &immediateRuntimeFailure : nullptr);
+		for (size_t commandIndex = 0; commandIndex < commands.size();
+			++commandIndex)
 		{
-			std::lock_guard<std::mutex> lock(m_Mutex);
-			for (auto iterator = m_DeferredCommands.begin();
-				iterator != m_DeferredCommands.end();)
+			const DeferredCommand& command = commands[commandIndex];
+			auto fail = [&](std::string reason)
 			{
-				if (iterator->Entity.SceneSessionId == 0
-					|| iterator->Entity.SceneSessionId == sceneSessionId)
-				{
-					commands.push_back(*iterator);
-					iterator = m_DeferredCommands.erase(iterator);
-				}
-				else ++iterator;
-			}
-		}
-
-		auto runtime = GetRuntime();
-		for (const DeferredCommand& command : commands)
-		{
+				error = "Deferred script command " + std::to_string(commandIndex)
+					+ " failed: " + std::move(reason);
+				return false;
+			};
+			if (command.Entity.SceneSessionId != 0
+				&& command.Entity.SceneSessionId != sceneSessionId)
+				return fail("command belongs to a different Scene session");
+			if (command.Kind == DeferredCommandKind::AbortBatch)
+				return fail(command.Name.empty()
+					? "a mutation was rejected while recording the batch"
+					: command.Name);
 			if (command.Kind == DeferredCommandKind::CreateEntity)
 			{
 				Scene* scene = ResolveScene(command.Entity);
 				if (!scene || scene->FindEntityByUUID(UUID(command.Entity.EntityId)))
-					continue;
+					return fail("reserved entity target is unavailable or already exists");
 				const bool hasParent = command.Parent.SceneSessionId != 0
 					|| command.Parent.EntityId != 0
 					|| command.Parent.RuntimeGeneration != 0;
@@ -998,25 +2501,22 @@ namespace TomCat::Scripting {
 				{
 					Entity parentEntity = ResolveEntity(command.Parent);
 					if (!parentEntity)
-						continue;
+						return fail("reserved entity parent is unavailable");
 					parent = parentEntity.GetUUID();
 				}
-				SceneCommandBuffer buffer(*scene);
-				std::string error;
-				if (!buffer.CreateEntityWithReservedId(UUID(command.Entity.EntityId),
-					command.Name, parent) || !buffer.Flush(error))
-				{
-					TC_Core_Error("Could not create reserved C# entity {0}: {1}",
-						command.Entity.EntityId, error);
-					continue;
-				}
-				Entity created = scene->FindEntityByUUID(UUID(command.Entity.EntityId));
+				Entity created = scene->CreateEntityWithUUID(
+					UUID(command.Entity.EntityId), command.Name);
+				if (!created)
+					return fail("could not create the reserved entity");
+				if (parent && !scene->SetParent(created,
+					scene->FindEntityByUUID(*parent)))
+					return fail("could not assign the reserved entity parent");
 				if (!created || !scene->SetWorldTransform(created,
 					Math::ComposeTransform(glm::vec3(command.WorldPosition.X,
 						command.WorldPosition.Y, command.WorldPosition.Z),
 						glm::vec3(0.0f), glm::vec3(1.0f))))
-					TC_Core_Error("Could not apply the initial transform to reserved C# entity {0}",
-						command.Entity.EntityId);
+					return fail("could not apply the reserved entity world transform");
+				createdEntities.push_back(created.GetUUID());
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::SetComponentProperty)
@@ -1024,20 +2524,41 @@ namespace TomCat::Scripting {
 				const int32_t status = ApplyGameplayComponentPropertyNow(command.Entity,
 					command.ComponentType, command.PropertyId, command.PropertyValue);
 				if (status != static_cast<int32_t>(ScriptStatus::Success))
-					TC_Core_Error("Could not apply queued C# component property {0} on entity {1}: status {2}",
-						command.PropertyId, command.Entity.EntityId, status);
+					return fail("component property " + std::to_string(command.PropertyId)
+						+ " returned status " + std::to_string(status));
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::SetActiveSelf)
 			{
 				Entity entity = ResolveEntity(command.Entity);
 				if (!entity || !entity.HasComponent<Tag>())
-				{
-					TC_Core_Error("Could not apply queued C# ActiveSelf on entity {0}",
-						command.Entity.EntityId);
-					continue;
-				}
-				entity.GetComponent<Tag>().Visible = command.Enabled;
+					return fail("ActiveSelf target is unavailable");
+				entity.GetComponent<Tag>().ActiveSelf = command.Enabled;
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::SetEntityName)
+			{
+				Entity entity = ResolveEntity(command.Entity);
+				if (!entity || !entity.HasComponent<Tag>() || command.Name.empty())
+					return fail("entity name target or value is unavailable");
+				if (entity.GetName() != command.Name
+					&& !targetScene.RenameEntity(entity, command.Name))
+					return fail("entity name could not be made unique");
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::SetGameplayTag)
+			{
+				Entity entity = ResolveEntity(command.Entity);
+				if (!entity || !entity.SetGameplayTag(command.Name))
+					return fail("gameplay tag target or value is unavailable");
+				continue;
+			}
+			if (command.Kind == DeferredCommandKind::SetLayer)
+			{
+				Entity entity = ResolveEntity(command.Entity);
+				if (!entity || command.Layer >= Physics2DLayerCount
+					|| !entity.SetLayer(static_cast<uint8_t>(command.Layer)))
+					return fail("entity layer target or value is unavailable");
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::SetRegisteredComponentProperty)
@@ -1046,8 +2567,24 @@ namespace TomCat::Scripting {
 					command.RegisteredTypeId, command.RegisteredPropertyId,
 					command.PropertyValue);
 				if (status != static_cast<int32_t>(ScriptStatus::Success))
-					TC_Core_Error("Could not apply queued C# registered property {0} on entity {1}: status {2}",
-						command.RegisteredPropertyId, command.Entity.EntityId, status);
+					return fail("registered property "
+						+ std::to_string(command.RegisteredPropertyId)
+						+ " returned status " + std::to_string(status));
+				continue;
+			}
+			if (command.Kind
+				== DeferredCommandKind::SetRegisteredComponentStringProperty)
+			{
+				const NativeUtf8View value{
+					reinterpret_cast<const uint8_t*>(command.Name.data()),
+					static_cast<uint64_t>(command.Name.size()) };
+				const int32_t status = ApplyRegisteredComponentStringPropertyNow(
+					command.Entity, command.RegisteredTypeId,
+					command.RegisteredPropertyId, value);
+				if (status != static_cast<int32_t>(ScriptStatus::Success))
+					return fail("registered string property "
+						+ std::to_string(command.RegisteredPropertyId)
+						+ " returned status " + std::to_string(status));
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::AddRegisteredComponent
@@ -1056,15 +2593,17 @@ namespace TomCat::Scripting {
 				Entity entity = ResolveEntity(command.Entity);
 				const ComponentDescriptor* descriptor = ComponentRegistry::Get().Find(
 					UUID(command.RegisteredTypeId));
-				std::string error;
+				std::string componentError;
 				const bool adding = command.Kind
 					== DeferredCommandKind::AddRegisteredComponent;
 				if (!entity || !descriptor || !descriptor->ScriptAccessible
-					|| !(adding ? descriptor->Add(entity, error)
-						: descriptor->Remove(entity, error)))
-					TC_Core_Error("Could not {0} queued C# registered component {1} on entity {2}: {3}",
-						adding ? "add" : "remove", command.RegisteredTypeId,
-						command.Entity.EntityId, error);
+					|| !(adding ? descriptor->Add(entity, componentError)
+						: descriptor->Remove(entity, componentError)))
+					return fail(std::string(adding ? "could not add registered component "
+						: "could not remove registered component ")
+						+ std::to_string(command.RegisteredTypeId)
+						+ (componentError.empty() ? std::string()
+							: ": " + componentError));
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::SetParent)
@@ -1072,7 +2611,7 @@ namespace TomCat::Scripting {
 				Scene* scene = ResolveScene(command.Entity);
 				Entity child = ResolveEntity(command.Entity);
 				if (!scene || !child)
-					continue;
+					return fail("reparent target is unavailable");
 				const bool hasParent = command.Parent.SceneSessionId != 0
 					|| command.Parent.EntityId != 0
 					|| command.Parent.RuntimeGeneration != 0;
@@ -1081,67 +2620,47 @@ namespace TomCat::Scripting {
 				{
 					Entity parentEntity = ResolveEntity(command.Parent);
 					if (!parentEntity)
-						continue;
+						return fail("reparent destination is unavailable");
 					parent = parentEntity.GetUUID();
 				}
-				SceneCommandBuffer buffer(*scene);
-				std::string error;
-				if (!buffer.ReparentEntity(child.GetUUID(), parent)
-					|| !buffer.Flush(error))
-					TC_Core_Error("Could not reparent C# entity {0}: {1}",
-						command.Entity.EntityId, error);
+				Entity parentEntity = parent
+					? scene->FindEntityByUUID(*parent) : Entity{};
+				if (!scene->SetParent(child, parentEntity))
+					return fail("reparenting would create an invalid hierarchy");
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::SetBehaviourEnabled)
 			{
 				bool applied = false;
-				Scene* owner = nullptr;
+				for (UUID entityId : targetScene.m_EntityOrder)
 				{
-					std::lock_guard<std::mutex> lock(m_Mutex);
-					for (auto& [session, binding] : m_Scenes)
+					Entity entity = targetScene.FindEntityByUUID(entityId);
+					if (!entity || !entity.HasComponent<CSharpScripts>()) continue;
+					for (auto& script : entity.GetComponent<CSharpScripts>().Scripts)
 					{
-						if (session != sceneSessionId || !binding.ScenePointer) continue;
-						for (UUID entityId : binding.ScenePointer->m_EntityOrder)
+						if (static_cast<uint64_t>(script.AttachmentID)
+							== command.AttachmentId)
 						{
-							Entity entity = binding.ScenePointer->FindEntityByUUID(entityId);
-							if (!entity || !entity.HasComponent<CSharpScripts>()) continue;
-							for (auto& script : entity.GetComponent<CSharpScripts>().Scripts)
-							{
-								if (static_cast<uint64_t>(script.AttachmentID) == command.AttachmentId)
-								{
-									script.Enabled = command.Enabled;
-									owner = binding.ScenePointer;
-									applied = true;
-									break;
-								}
-							}
-							if (applied) break;
+							script.Enabled = command.Enabled;
+							applied = true;
+							break;
 						}
-						if (applied) break;
 					}
+					if (applied) break;
 				}
-				(void)owner;
-				if (applied && runtime)
-					ReportFailure("SetEnabled", runtime->SetEnabled(
-						command.AttachmentId, command.Enabled));
+				if (!applied)
+					return fail("managed behaviour attachment is unavailable");
+				if (publishRuntimeSideEffects)
+					runtimeEffects.push_back({ DeferredRuntimeEffectKind::SetEnabled,
+						command.AttachmentId, command.Enabled });
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::RemoveBehaviour)
 			{
-				Scene* ownerScene = nullptr;
-				{
-					std::lock_guard<std::mutex> lock(m_Mutex);
-					const auto binding = m_Scenes.find(sceneSessionId);
-					if (binding != m_Scenes.end())
-						ownerScene = binding->second.ScenePointer;
-				}
-				if (!ownerScene)
-					continue;
-
 				Entity owner;
-				for (UUID entityId : ownerScene->m_EntityOrder)
+				for (UUID entityId : targetScene.m_EntityOrder)
 				{
-					Entity candidate = ownerScene->FindEntityByUUID(entityId);
+					Entity candidate = targetScene.FindEntityByUUID(entityId);
 					if (!candidate || !candidate.HasComponent<CSharpScripts>())
 						continue;
 					const auto& scripts = candidate.GetComponent<CSharpScripts>().Scripts;
@@ -1155,18 +2674,10 @@ namespace TomCat::Scripting {
 					}
 				}
 				if (!owner)
-					continue;
+					return fail("managed behaviour attachment is unavailable");
+				if (publishRuntimeSideEffects)
+					removedBehaviourAttachments.insert(command.AttachmentId);
 
-				const std::array<uint64_t, 1> ids{ command.AttachmentId };
-				const ScriptStatus destroyStatus = runtime
-					? runtime->DestroyAttachments(ids) : ScriptStatus::Success;
-				if (!IsSuccess(destroyStatus))
-				{
-					ReportFailure("DestroyAttachments", destroyStatus);
-					continue;
-				}
-				if (!owner || !owner.HasComponent<CSharpScripts>())
-					continue;
 				auto& scripts = owner.GetComponent<CSharpScripts>().Scripts;
 				scripts.erase(std::remove_if(scripts.begin(), scripts.end(),
 					[&](const CSharpScriptEntry& script)
@@ -1174,22 +2685,23 @@ namespace TomCat::Scripting {
 						return static_cast<uint64_t>(script.AttachmentID)
 							== command.AttachmentId;
 					}), scripts.end());
+				if (publishRuntimeSideEffects)
+					runtimeEffects.push_back({
+						DeferredRuntimeEffectKind::DestroyAttachment,
+						command.AttachmentId, false });
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::InstantiatePrefab)
 			{
 				Scene* scene = ResolveScene(command.Entity);
 				if (!scene || !ResolveEntity(command.Entity))
-					continue;
+					return fail("Prefab context is unavailable");
 				PrefabArchive archive;
-				std::string error;
+				std::string prefabError;
 				if (!PrefabArchiveCodec::Load(TomCat::AssetHandle(command.AssetHandle),
-					archive, error))
-				{
-					TC_Core_Error("Could not load Prefab asset {0}: {1}",
-						command.AssetHandle, error);
-					continue;
-				}
+					archive, prefabError))
+					return fail("could not load Prefab "
+						+ std::to_string(command.AssetHandle) + ": " + prefabError);
 
 				PrefabInstantiateOptions options;
 				options.RootWorldPosition = glm::vec3(command.WorldPosition.X,
@@ -1201,28 +2713,41 @@ namespace TomCat::Scripting {
 				{
 					Entity parent = ResolveEntity(command.Parent);
 					if (!parent)
-						continue;
+						return fail("Prefab parent is unavailable");
 					options.Parent = UUID(command.Parent.EntityId);
 				}
 				PrefabInstantiationResult instance;
 				if (!PrefabArchiveCodec::Instantiate(archive, *scene, options,
-					instance, error))
-				{
-					TC_Core_Error("Could not instantiate Prefab asset {0}: {1}",
-						command.AssetHandle, error);
-				}
+					instance, prefabError))
+					return fail("could not instantiate Prefab "
+						+ std::to_string(command.AssetHandle) + ": " + prefabError);
 				continue;
 			}
 
 			Entity entity = ResolveEntity(command.Entity);
-			if (!entity)
-				continue;
 			if (command.Kind == DeferredCommandKind::DestroyEntity)
 			{
+				// QueueDestroyEntity projects subtree destruction and suppresses
+				// duplicates. Treat an already-destroyed target as the same
+				// successful no-op during validation and live replay.
+				if (!entity)
+					continue;
 				Scene* scene = ResolveScene(command.Entity);
-				if (scene) scene->DestroyEntity(entity);
+				if (!scene)
+					return fail("destroy target Scene is unavailable");
+				scene->DestroyEntity(entity);
+				if (!IsSuccess(immediateRuntimeFailure))
+				{
+					ReportFailure("DestroyAttachments", immediateRuntimeFailure);
+					return fail("managed destruction lifecycle returned status "
+						+ std::to_string(static_cast<int32_t>(immediateRuntimeFailure)));
+				}
+				if (scene->FindEntityByUUID(UUID(command.Entity.EntityId)))
+					return fail("entity destruction did not complete");
 				continue;
 			}
+			if (!entity)
+				return fail("entity target is unavailable");
 
 			const bool adding = command.Kind == DeferredCommandKind::AddComponent;
 			auto add = [&]<typename T>() { if (!entity.HasComponent<T>()) entity.AddComponent<T>(); };
@@ -1242,8 +2767,256 @@ namespace TomCat::Scripting {
 				case NativeComponentType::SpriteRenderer: mutate.template operator()<SpriteRenderer>(); break;
 				case NativeComponentType::Camera: mutate.template operator()<C_Camera>(); break;
 				case NativeComponentType::SpriteAnimator: mutate.template operator()<SpriteAnimator>(); break;
+				default: return fail("component type is unsupported");
 			}
 		}
+		if (runtime)
+		{
+			InvalidateProjectionSnapshots();
+			for (const DeferredRuntimeEffect& effect : runtimeEffects)
+			{
+				ScriptStatus status = ScriptStatus::Success;
+				if (effect.Kind == DeferredRuntimeEffectKind::SetEnabled)
+					status = runtime->SetEnabled(effect.AttachmentId, effect.Enabled);
+				else
+				{
+					const std::array<uint64_t, 1> ids{ effect.AttachmentId };
+					status = runtime->DestroyAttachments(ids);
+				}
+				if (!IsSuccess(status))
+				{
+					ReportFailure(effect.Kind == DeferredRuntimeEffectKind::SetEnabled
+						? "SetEnabled" : "DestroyAttachments", status);
+					error = "managed lifecycle publication returned status "
+						+ std::to_string(static_cast<int32_t>(status));
+					return false;
+				}
+			}
+		}
+		if (publishRuntimeSideEffects && targetScene.IsRuntimeRunning()
+			&& !createdEntities.empty())
+			targetScene.QueueRuntimeEntityBatchCreated(std::move(createdEntities));
+		return true;
+	}
+
+	bool ScriptEngine::FlushDeferredCommands(uint64_t sceneSessionId)
+	{
+		if (sceneSessionId == 0)
+			return true;
+
+		std::vector<DeferredCommand> commands;
+		uint64_t blockingCallbackToken = 0;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			// Callback-owned commands must be sealed by CompleteCallback so their
+			// boundary cannot be merged into the legacy Scene-wide batch.
+			if (m_OpenDeferredCallbackTransaction)
+				blockingCallbackToken = m_OpenDeferredCallbackTransaction->Token;
+			else
+			{
+				for (auto iterator = m_DeferredCommands.begin();
+					iterator != m_DeferredCommands.end();)
+				{
+					if (iterator->Entity.SceneSessionId == sceneSessionId)
+					{
+						commands.push_back(std::move(*iterator));
+						iterator = m_DeferredCommands.erase(iterator);
+					}
+					else ++iterator;
+				}
+				if (!commands.empty())
+				{
+					++m_ProjectionRevision;
+					m_ProjectionSnapshots.clear();
+				}
+			}
+		}
+		if (blockingCallbackToken != 0)
+		{
+			TC_Core_Error("Cannot flush legacy deferred commands while managed callback transaction {0} is open",
+				blockingCallbackToken);
+			StopSceneAfterRuntimeFailure(sceneSessionId,
+				"Flush deferred commands", ScriptStatus::InvalidState);
+			return false;
+		}
+		return CommitDeferredCommandBatch(
+			sceneSessionId, std::move(commands), false);
+	}
+
+	bool ScriptEngine::CommitDeferredCommandBatch(uint64_t sceneSessionId,
+		std::vector<DeferredCommand> commands, bool resolveEmpty)
+	{
+		Scene* liveScene = nullptr;
+		uint64_t runtimeGeneration = 0;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			const auto binding = m_Scenes.find(sceneSessionId);
+			if (binding != m_Scenes.end())
+			{
+				liveScene = binding->second.ScenePointer;
+				runtimeGeneration = binding->second.RuntimeGeneration;
+			}
+		}
+		auto runtime = GetRuntime();
+		auto resolveManagedProjection = [&](bool committed)
+		{
+			if (!runtime)
+			{
+				TC_Core_Error("Scene session {0} has no managed runtime to {1} its deferred projection",
+					sceneSessionId, committed ? "commit" : "abort");
+				return false;
+			}
+			ScriptStatus status = ScriptStatus::InvalidState;
+			try
+			{
+				status = runtime->ResolveDeferredCommandBatch(committed);
+			}
+			catch (const std::exception& exception)
+			{
+				TC_Core_Error("C# script operation {0} threw: {1}",
+					committed ? "Commit deferred managed projection"
+						: "Abort deferred managed projection",
+					exception.what());
+				return false;
+			}
+			catch (...)
+			{
+				TC_Core_Error("C# script operation {0} threw",
+					committed ? "Commit deferred managed projection"
+						: "Abort deferred managed projection");
+				return false;
+			}
+			if (!IsSuccess(status))
+				ReportFailure(committed ? "Commit deferred managed projection"
+					: "Abort deferred managed projection", status);
+			return IsSuccess(status);
+		};
+		auto stopAfterFatalPublication = [&](const char* phase)
+		{
+			TC_Core_Error("Scene session {0} entered a script runtime fault during {1}; Play is being stopped",
+				sceneSessionId, phase ? phase : "deferred command publication");
+			// OnRuntimeStart assigns its ScriptEngine session only after StartScene
+			// returns. Stop native runtime systems first, then explicitly stop the
+			// still-owned ScriptEngine session. StopScene is session-idempotent.
+			if (liveScene && liveScene->IsRuntimeRunning())
+				liveScene->OnRuntimeStop();
+			StopScene(sceneSessionId);
+		};
+		auto resolveRejectedBatch = [&]()
+		{
+			if (resolveManagedProjection(false))
+				return true;
+			stopAfterFatalPublication("deferred abort acknowledgement");
+			return false;
+		};
+
+		if (commands.empty())
+		{
+			if (!resolveEmpty)
+				return true;
+			if (resolveManagedProjection(
+				liveScene && runtimeGeneration != 0))
+				return true;
+			stopAfterFatalPublication("empty deferred callback acknowledgement");
+			return false;
+		}
+		if (!liveScene || runtimeGeneration == 0)
+		{
+			TC_Core_Error("Could not commit {0} deferred C# commands because Scene session {1} is unavailable",
+				commands.size(), sceneSessionId);
+			return resolveRejectedBatch();
+		}
+
+		Ref<Scene> nonOwning(liveScene, [](Scene*) {});
+		Ref<Scene> staged;
+		try
+		{
+			ComponentMutationPhaseScope validationPhase(
+				ComponentMutationPhase::Validation);
+			staged = Scene::Copy(nonOwning);
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Deferred C# command batch for Scene session {0} threw while creating its validation snapshot and was aborted before live mutation: {1}",
+				sceneSessionId, exception.what());
+			return resolveRejectedBatch();
+		}
+		catch (...)
+		{
+			TC_Core_Error("Deferred C# command batch for Scene session {0} threw while creating its validation snapshot and was aborted before live mutation",
+				sceneSessionId);
+			return resolveRejectedBatch();
+		}
+		if (!staged)
+		{
+			TC_Core_Error("Deferred C# command batch for Scene session {0} was aborted because its validation snapshot could not be created",
+				sceneSessionId);
+			return resolveRejectedBatch();
+		}
+
+		std::string error;
+		try
+		{
+			ComponentMutationPhaseScope componentValidationPhase(
+				ComponentMutationPhase::Validation);
+			DeferredValidationSceneScope validationScope(*staged,
+				sceneSessionId, runtimeGeneration);
+			if (!ApplyDeferredCommands(*staged, sceneSessionId, commands,
+				false, error))
+			{
+				TC_Core_Error("Deferred C# command batch for Scene session {0} was aborted before live mutation: {1}",
+					sceneSessionId, error);
+				return resolveRejectedBatch();
+			}
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Deferred C# command batch for Scene session {0} threw during validation and was aborted before live mutation: {1}",
+				sceneSessionId, exception.what());
+			return resolveRejectedBatch();
+		}
+		catch (...)
+		{
+			TC_Core_Error("Deferred C# command batch for Scene session {0} threw during validation and was aborted before live mutation",
+				sceneSessionId);
+			return resolveRejectedBatch();
+		}
+
+		bool replaySucceeded = false;
+		try
+		{
+			replaySucceeded = ApplyDeferredCommands(*liveScene, sceneSessionId,
+				commands, true, error);
+			InvalidateProjectionSnapshots();
+			if (!replaySucceeded)
+				TC_Core_Error("Validated deferred C# command batch for Scene session {0} unexpectedly failed during live replay: {1}",
+					sceneSessionId, error);
+		}
+		catch (const std::exception& exception)
+		{
+			replaySucceeded = false;
+			TC_Core_Error("Validated deferred C# command batch for Scene session {0} unexpectedly threw during live replay: {1}",
+				sceneSessionId, exception.what());
+		}
+		catch (...)
+		{
+			replaySucceeded = false;
+			TC_Core_Error("Validated deferred C# command batch for Scene session {0} unexpectedly threw during live replay",
+				sceneSessionId);
+		}
+		if (replaySucceeded && resolveManagedProjection(true))
+			return true;
+
+		// Once the commit acknowledgement was attempted, a second abort
+		// acknowledgement would consume the next callback's projection frame.
+		if (!replaySucceeded)
+			resolveManagedProjection(false);
+		// The validation pass guarantees deterministic command failures occur
+		// before live mutation. A provider callback that changes its result on the
+		// second invocation, a managed lifecycle publication failure, or a failed
+		// commit acknowledgement leaves native and managed state unsynchronized.
+		stopAfterFatalPublication("deferred command publication");
+		return false;
 	}
 
 	void ScriptEngine::NotifyEntityDestroyed(Scene& scene, uint64_t entityId)
@@ -1265,15 +3038,64 @@ namespace TomCat::Scripting {
 		if (sceneSessionId == 0)
 			return;
 
+		InvalidateProjectionSnapshots();
 		Entity entity = scene.FindEntityByUUID(UUID(entityId));
-		if (!entity || !entity.HasComponent<CSharpScripts>())
-			return;
 		std::vector<uint64_t> ids;
-		for (const CSharpScriptEntry& script : entity.GetComponent<CSharpScripts>().Scripts)
+		if (entity && entity.HasComponent<CSharpScripts>())
 		{
-			const uint64_t id = static_cast<uint64_t>(script.AttachmentID);
-			if (id != 0)
-				ids.push_back(id);
+			for (const CSharpScriptEntry& script :
+				entity.GetComponent<CSharpScripts>().Scripts)
+			{
+				const uint64_t id = static_cast<uint64_t>(script.AttachmentID);
+				if (id != 0)
+					ids.push_back(id);
+			}
+		}
+		if (DeferredRuntimeEffects)
+		{
+			for (uint64_t id : ids)
+				if (DeferredRemovedBehaviourAttachments)
+					DeferredRemovedBehaviourAttachments->insert(id);
+			// Every earlier managed effect must publish before any Entity identity
+			// disappears, including RemoveBehaviour(last) followed by DestroyEntity.
+			// Drain the ordered effects even when this Entity no longer has script
+			// entries, then destroy its remaining attachments while getters can still
+			// inspect the Entity and its components.
+			if (DeferredRuntime && DeferredRuntimeFailure)
+			{
+				for (const DeferredRuntimeEffect& effect : *DeferredRuntimeEffects)
+				{
+					ScriptStatus status = ScriptStatus::Success;
+					if (effect.Kind == DeferredRuntimeEffectKind::SetEnabled)
+						status = DeferredRuntime->SetEnabled(
+							effect.AttachmentId, effect.Enabled);
+					else
+					{
+						const std::array<uint64_t, 1> effectIds{
+							effect.AttachmentId };
+						status = DeferredRuntime->DestroyAttachments(effectIds);
+					}
+					if (!IsSuccess(status)
+						&& IsSuccess(*DeferredRuntimeFailure))
+						*DeferredRuntimeFailure = status;
+				}
+				DeferredRuntimeEffects->clear();
+				if (!ids.empty())
+				{
+					const ScriptStatus status =
+						DeferredRuntime->DestroyAttachments(ids);
+					if (!IsSuccess(status)
+						&& IsSuccess(*DeferredRuntimeFailure))
+						*DeferredRuntimeFailure = status;
+				}
+			}
+			else
+			{
+				for (uint64_t id : ids)
+					DeferredRuntimeEffects->push_back({
+						DeferredRuntimeEffectKind::DestroyAttachment, id, false });
+			}
+			return;
 		}
 		if (ids.empty())
 			return;

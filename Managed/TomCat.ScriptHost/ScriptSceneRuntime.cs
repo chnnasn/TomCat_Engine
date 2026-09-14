@@ -9,19 +9,31 @@ public readonly record struct ScriptPhysicsEvent(NativePhysicsEventKindV1 Kind, 
 
 public sealed class ScriptSceneRuntime : IScriptMutationSink
 {
-	private const int MaximumHierarchyActivationTransitionsPerInstance = 8;
+	private const int MaximumLifecycleActivationTransitionsPerInstance = 8;
 
     private readonly Dictionary<ulong, ScriptDescriptor> _descriptors;
     private readonly Action _onDestroyed;
 	private readonly CancellationToken _domainCancellation;
     private readonly List<ScriptInstance> _instances = [];
     private readonly Dictionary<ulong, ScriptInstance> _instancesByAttachment = [];
+	// The legacy dictionaries preserve compatibility with a native host that does
+	// not expose per-callback transactions. A current host uses one projection
+	// frame per user callback, plus a FIFO matching native commit acknowledgements.
 	private readonly Dictionary<ulong, bool> _pendingEnableChanges = [];
 	private readonly HashSet<ulong> _pendingAttachmentRemovals = [];
 	private readonly HashSet<Entity> _pendingEntityDestructions = [];
+	private readonly Dictionary<ulong, bool> _nextBatchEnableChanges = [];
+	private readonly HashSet<ulong> _nextBatchAttachmentRemovals = [];
+	private readonly HashSet<Entity> _nextBatchEntityDestructions = [];
+	private readonly Queue<DeferredProjectionFrame> _awaitingCallbackProjections = [];
+	private readonly Dictionary<ScriptInstance, int>
+		_callbackLifecycleActivationTransitions = [];
+	private DeferredProjectionFrame? _activeCallbackProjection;
 	private readonly List<string> _callbackTrace = [];
 	private int _callbackDepth;
-	private bool _flushingDeferredChanges;
+	private int _authoritativeMutationDepth;
+	private int _deferLifecycleConvergenceDepth;
+	private int _lifecycleConvergenceDepth;
 	private bool _traceCallbacks;
 	private int _nextSequence;
     private bool _instantiated;
@@ -186,6 +198,8 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 
 		_instances.Sort(CompareInstances);
 		newInstances.Sort(CompareInstances);
+		// Scene invokes this only after the preceding native transaction has
+		// resolved, then flushes mutations from these callbacks as their own batch.
 		InvokeCreateBatch(newInstances);
 		FlushDeferredChanges();
 	}
@@ -271,17 +285,38 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 	private void InvokeCreateBatch(IEnumerable<ScriptInstance> instances)
 	{
 		ScriptInstance[] batch = instances.ToArray();
-		foreach (ScriptInstance instance in batch)
+		++_deferLifecycleConvergenceDepth;
+		try
 		{
-			if (instance.State == ScriptInstanceState.Ready)
+			foreach (ScriptInstance instance in batch)
 			{
-				Invoke(instance, "OnCreate", static behaviour => behaviour.__Create());
-				instance.Created = instance.State == ScriptInstanceState.Ready;
+				if (instance.State == ScriptInstanceState.Ready)
+				{
+					Invoke(instance, "OnCreate",
+						static behaviour => behaviour.__Create());
+					instance.Created = instance.State == ScriptInstanceState.Ready;
+				}
 			}
 		}
-		// All OnCreate callbacks finish before the first OnEnable. Convergence then
-		// observes any hierarchy mutations made while creating the batch.
-		ConvergeHierarchyActivation();
+		finally
+		{
+			--_deferLifecycleConvergenceDepth;
+		}
+
+		// All OnCreate callbacks finish before any initial OnEnable. Per-callback
+		// transactions are already authoritative here, so one convergence pass can
+		// reconcile both new and existing instances. A legacy host retains the
+		// projected batch view until its phase-level acknowledgement.
+		if (NativeBridge.SupportsDeferredCallbackTransactions)
+		{
+			ApplyAuthoritativeMutation(ConvergeLifecycleActivation);
+			return;
+		}
+		foreach (ScriptInstance instance in batch)
+		{
+			if (ShouldEnterInitialLifecycle(instance))
+				SetLifecycleActive(instance, true);
+		}
 	}
 
 	public void SetEnabled(ulong attachmentId, bool enabled)
@@ -291,30 +326,32 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             throw new KeyNotFoundException($"Attachment {attachmentId} does not exist.");
         if (_callbackDepth != 0)
         {
-            _pendingEnableChanges[attachmentId] = enabled;
+            RecordPendingEnable(attachmentId, enabled);
             return;
         }
-		ApplyEnabled(attachmentId, enabled);
-		ConvergeHierarchyActivation();
+
+		_pendingEnableChanges.Remove(attachmentId);
+		ApplyAuthoritativeMutation(() =>
+			ApplyEnabled(attachmentId, enabled));
 	}
 
 	void IScriptMutationSink.SetBehaviourEnabled(ulong attachmentId, bool enabled)
 	{
 		if (!_destroyed && _instancesByAttachment.ContainsKey(attachmentId))
-			_pendingEnableChanges[attachmentId] = enabled;
+			RecordPendingEnable(attachmentId, enabled);
 	}
 
 	void IScriptMutationSink.RemoveBehaviour(ulong attachmentId)
 	{
 		if (!_destroyed && _instancesByAttachment.ContainsKey(attachmentId))
-			_pendingAttachmentRemovals.Add(attachmentId);
+			RecordPendingAttachmentRemoval(attachmentId);
 	}
 
 	void IScriptMutationSink.DestroyEntity(Entity entity)
 	{
 		if (!_destroyed && entity.SceneSessionId == SceneSessionId
 			&& entity.RuntimeGeneration == RuntimeGeneration && entity.Id != 0)
-			_pendingEntityDestructions.Add(entity);
+			RecordPendingEntityDestruction(entity);
 	}
 
     public void UpdateAll(float deltaTime)
@@ -325,7 +362,8 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		{
 			using var inputScope = ScriptExecutionContext.Enter(
 				_instances[0].Attachment.Entity, _domainCancellation);
-			InputActionRuntime.UpdateEnabled(_domainCancellation);
+			InputActionRuntime.UpdateEnabled(_domainCancellation,
+				InputActionUpdatePhase.DisplayFrame, InvokeInputActionCallback);
 		}
 		DispatchActiveCallbacks("OnUpdate",
 			behaviour => behaviour.__Update(deltaTime));
@@ -340,6 +378,16 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		TimeRuntime.BeginFixedStep(fixedDeltaTime);
 		try
 		{
+			// Native code enters the scene's fixed-input scope before this call.
+			// Evaluate actions now so the first substep sees accumulated edges and
+			// catch-up substeps see the same held state without replaying them.
+			if (_instances.Count != 0)
+			{
+				using var inputScope = ScriptExecutionContext.Enter(
+					_instances[0].Attachment.Entity, _domainCancellation);
+				InputActionRuntime.UpdateEnabled(_domainCancellation,
+					InputActionUpdatePhase.FixedStep);
+			}
 			DispatchActiveCallbacks("OnFixedUpdate",
 				behaviour => behaviour.__FixedUpdate(fixedDeltaTime));
 			FlushDeferredChanges();
@@ -356,54 +404,61 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         if (!_createInvoked)
             throw new InvalidOperationException("Create callbacks must run before physics events.");
         ArgumentNullException.ThrowIfNull(events);
-		ConvergeHierarchyActivation();
 
-        foreach (ScriptPhysicsEvent physicsEvent in events)
+        bool previousFixedScope = TimeRuntime.BeginFixedCallbackBatch();
+        try
         {
-            if (physicsEvent.EntityA.SceneSessionId != SceneSessionId ||
-                physicsEvent.EntityB.SceneSessionId != SceneSessionId ||
-                physicsEvent.EntityA.RuntimeGeneration != RuntimeGeneration ||
-                physicsEvent.EntityB.RuntimeGeneration != RuntimeGeneration)
-                continue;
-
-            foreach (ScriptInstance instance in _instances.ToArray())
+            foreach (ScriptPhysicsEvent physicsEvent in events)
             {
-                if (!CanDispatch(instance))
-                    continue;
-                Entity self = instance.Attachment.Entity;
-                Entity other;
-                if (self == physicsEvent.EntityA)
-                    other = physicsEvent.EntityB;
-                else if (self == physicsEvent.EntityB)
-                    other = physicsEvent.EntityA;
-                else
+                if (physicsEvent.EntityA.SceneSessionId != SceneSessionId ||
+                    physicsEvent.EntityB.SceneSessionId != SceneSessionId ||
+                    physicsEvent.EntityA.RuntimeGeneration != RuntimeGeneration ||
+                    physicsEvent.EntityB.RuntimeGeneration != RuntimeGeneration)
                     continue;
 
-                switch (physicsEvent.Kind)
+                foreach (ScriptInstance instance in _instances.ToArray())
                 {
-                    case NativePhysicsEventKindV1.CollisionEnter:
-                        Invoke(instance, "OnCollisionEnter2D",
-                            behaviour => behaviour.__CollisionEnter(new Collision2D(self, other)));
-                        break;
-                    case NativePhysicsEventKindV1.CollisionExit:
-                        Invoke(instance, "OnCollisionExit2D",
-                            behaviour => behaviour.__CollisionExit(new Collision2D(self, other)));
-                        break;
-                    case NativePhysicsEventKindV1.TriggerEnter:
-                        Invoke(instance, "OnTriggerEnter2D",
-                            behaviour => behaviour.__TriggerEnter(new Trigger2D(self, other)));
-                        break;
-                    case NativePhysicsEventKindV1.TriggerExit:
-                        Invoke(instance, "OnTriggerExit2D",
-                            behaviour => behaviour.__TriggerExit(new Trigger2D(self, other)));
-                        break;
-                    default:
-                        throw new InvalidDataException($"Unknown physics event kind {physicsEvent.Kind}.");
+                    if (!CanDispatch(instance))
+                        continue;
+                    Entity self = instance.Attachment.Entity;
+                    Entity other;
+                    if (self == physicsEvent.EntityA)
+                        other = physicsEvent.EntityB;
+                    else if (self == physicsEvent.EntityB)
+                        other = physicsEvent.EntityA;
+                    else
+                        continue;
+
+                    switch (physicsEvent.Kind)
+                    {
+                        case NativePhysicsEventKindV1.CollisionEnter:
+                            Invoke(instance, "OnCollisionEnter2D",
+                                behaviour => behaviour.__CollisionEnter(new Collision2D(self, other)));
+                            break;
+                        case NativePhysicsEventKindV1.CollisionExit:
+                            Invoke(instance, "OnCollisionExit2D",
+                                behaviour => behaviour.__CollisionExit(new Collision2D(self, other)));
+                            break;
+                        case NativePhysicsEventKindV1.TriggerEnter:
+                            Invoke(instance, "OnTriggerEnter2D",
+                                behaviour => behaviour.__TriggerEnter(new Trigger2D(self, other)));
+                            break;
+                        case NativePhysicsEventKindV1.TriggerExit:
+                            Invoke(instance, "OnTriggerExit2D",
+                                behaviour => behaviour.__TriggerExit(new Trigger2D(self, other)));
+                            break;
+                        default:
+                            throw new InvalidDataException(
+                                $"Unknown physics event kind {physicsEvent.Kind}.");
+                    }
                 }
-				ConvergeHierarchyActivation();
             }
+            FlushDeferredChanges();
         }
-        FlushDeferredChanges();
+        finally
+        {
+            TimeRuntime.EndFixedCallbackBatch(previousFixedScope);
+        }
     }
 
     public ScriptInstanceState GetInstanceState(ulong attachmentId) =>
@@ -430,6 +485,12 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		_pendingEnableChanges.Clear();
 		_pendingAttachmentRemovals.Clear();
 		_pendingEntityDestructions.Clear();
+		_nextBatchEnableChanges.Clear();
+		_nextBatchAttachmentRemovals.Clear();
+		_nextBatchEntityDestructions.Clear();
+		_activeCallbackProjection = null;
+		_awaitingCallbackProjections.Clear();
+		_callbackLifecycleActivationTransitions.Clear();
 
 		for (int index = _instances.Count - 1; index >= 0; --index)
 			DisableInstanceForDestroy(_instances[index]);
@@ -450,23 +511,45 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		HashSet<ulong> requested = attachmentIds.Where(static id => id != 0).ToHashSet();
 		if (requested.Count == 0)
 			return;
-		for (int index = _instances.Count - 1; index >= 0; --index)
+
+		var destroyedEntities = new HashSet<Entity>();
+		foreach (ulong attachmentId in requested)
 		{
-			ScriptInstance instance = _instances[index];
-			if (requested.Contains(instance.Attachment.AttachmentId))
-				DisableInstanceForDestroy(instance);
+			_pendingEnableChanges.Remove(attachmentId);
+			_pendingAttachmentRemovals.Remove(attachmentId);
+			if (_instancesByAttachment.TryGetValue(attachmentId,
+				out ScriptInstance? instance))
+				destroyedEntities.Add(instance.Attachment.Entity);
 		}
-		for (int index = _instances.Count - 1; index >= 0; --index)
+
+		ApplyAuthoritativeMutation(() =>
 		{
-			ScriptInstance instance = _instances[index];
-			if (!requested.Contains(instance.Attachment.AttachmentId))
-				continue;
-			DestroyInstance(instance);
-			_instancesByAttachment.Remove(instance.Attachment.AttachmentId);
-		_pendingEnableChanges.Remove(instance.Attachment.AttachmentId);
-		_pendingAttachmentRemovals.Remove(instance.Attachment.AttachmentId);
-		_instances.RemoveAt(index);
+			for (int index = _instances.Count - 1; index >= 0; --index)
+			{
+				ScriptInstance instance = _instances[index];
+				if (requested.Contains(instance.Attachment.AttachmentId))
+					DisableInstanceForDestroy(instance);
+			}
+			for (int index = _instances.Count - 1; index >= 0; --index)
+			{
+				ScriptInstance instance = _instances[index];
+				if (!requested.Contains(instance.Attachment.AttachmentId))
+					continue;
+				DestroyInstance(instance);
+				_instancesByAttachment.Remove(instance.Attachment.AttachmentId);
+				_instances.RemoveAt(index);
+			}
+		});
+
+		// Ignore reentrant requests against attachments/entities that the
+		// authoritative native mutation has just removed. Requests targeting other
+		// objects remain projected for the next native batch.
+		foreach (ulong attachmentId in requested)
+		{
+			_nextBatchEnableChanges.Remove(attachmentId);
+			_nextBatchAttachmentRemovals.Remove(attachmentId);
 		}
+		_nextBatchEntityDestructions.RemoveWhere(destroyedEntities.Contains);
 	}
 
 	private void DisableInstanceForDestroy(ScriptInstance instance)
@@ -477,8 +560,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		if (instance.State == ScriptInstanceState.Ready)
 		{
 			instance.Enabled = false;
-			if (instance.HierarchyActive)
-				Invoke(instance, "OnDisable", static behaviour => behaviour.__Disable());
+			SetLifecycleActive(instance, false);
 		}
 		else
 			instance.Enabled = false;
@@ -594,144 +676,196 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 	private void ApplyEnabled(ulong attachmentId, bool enabled)
 	{
 		ScriptInstance instance = _instancesByAttachment[attachmentId];
-		if (instance.Enabled == enabled || instance.State == ScriptInstanceState.Destroyed
-			|| instance.Destroying)
-            return;
-        if (!instance.Created)
-        {
-            instance.Enabled = enabled;
-            return;
-        }
-        if (instance.State == ScriptInstanceState.Faulted)
-        {
-            instance.Enabled = enabled;
-            return;
-        }
-
-        if (enabled)
-        {
-            instance.Enabled = true;
-			instance.HierarchyActive = NativeBridge.IsActiveForScriptHost(
-				instance.Attachment.Entity);
-			if (instance.HierarchyActive)
-				Invoke(instance, "OnEnable", static behaviour => behaviour.__Enable());
-        }
-		else
+		if (instance.State == ScriptInstanceState.Destroyed || instance.Destroying)
+			return;
+		if (!instance.Created)
 		{
-			instance.Enabled = false;
-			if (instance.HierarchyActive)
-				Invoke(instance, "OnDisable", static behaviour => behaviour.__Disable());
+			instance.Enabled = enabled;
+			return;
 		}
+		if (instance.State == ScriptInstanceState.Faulted)
+		{
+			instance.Enabled = enabled;
+			return;
+		}
+
+		instance.Enabled = enabled;
+		SetLifecycleActive(instance, enabled
+			&& NativeBridge.IsActiveForScriptHost(instance.Attachment.Entity));
 	}
 
 	private void DispatchActiveCallbacks(string callback,
 		Action<TomCatBehaviour> dispatch)
 	{
-		ConvergeHierarchyActivation();
 		foreach (ScriptInstance instance in _instances.ToArray())
 		{
 			if (!CanDispatch(instance))
 				continue;
 			Invoke(instance, callback, dispatch);
-			// ActiveSelf is an immediate native mutation. Settle lifecycle transitions
-			// before considering the next user callback in this dispatch batch.
-			ConvergeHierarchyActivation();
 		}
 	}
 
-	private void ConvergeHierarchyActivation()
+	private void ConvergeLifecycleActivation()
 	{
-		var transitions = new Dictionary<ScriptInstance, int>();
-		while (true)
+		// A callback transaction can enqueue another lifecycle callback while native
+		// drains its FIFO. Share one transition budget across that entire drain chain;
+		// legacy phase-level hosts keep their historical per-resolution budget.
+		Dictionary<ScriptInstance, int> transitions =
+			NativeBridge.SupportsDeferredCallbackTransactions
+				? _callbackLifecycleActivationTransitions
+				: new Dictionary<ScriptInstance, int>();
+		++_lifecycleConvergenceDepth;
+		try
 		{
-			bool changed = false;
-			foreach (ScriptInstance instance in _instances.ToArray())
+			while (true)
 			{
-				if (!instance.Created || !instance.Enabled
-					|| instance.State != ScriptInstanceState.Ready || instance.Destroying)
-					continue;
-
-				bool active = NativeBridge.IsActiveForScriptHost(
-					instance.Attachment.Entity);
-				if (active == instance.HierarchyActive)
-					continue;
-
-				changed = true;
-				instance.HierarchyActive = active;
-				int transitionCount = transitions.TryGetValue(instance, out int current)
-					? current + 1 : 1;
-				transitions[instance] = transitionCount;
-				if (transitionCount > MaximumHierarchyActivationTransitionsPerInstance)
+				bool changed = false;
+				foreach (ScriptInstance instance in _instances.ToArray())
 				{
-					MarkFaulted(instance, "HierarchyActivation",
-						new InvalidOperationException(
-							$"OnEnable/OnDisable did not stabilize after "
-							+ $"{MaximumHierarchyActivationTransitionsPerInstance} transitions."));
-					continue;
-				}
+					if (!instance.Created || instance.State != ScriptInstanceState.Ready
+						|| instance.Destroying || instance.Behaviour is null)
+						continue;
 
-				Invoke(instance, active ? "OnEnable" : "OnDisable", active
-					? static behaviour => behaviour.__Enable()
-					: static behaviour => behaviour.__Disable());
+					bool active = instance.Enabled
+						&& NativeBridge.IsActiveForScriptHost(instance.Attachment.Entity);
+					if (active == instance.LifecycleActive)
+						continue;
+
+					changed = true;
+					int transitionCount = transitions.TryGetValue(instance, out int current)
+						? current + 1 : 1;
+					transitions[instance] = transitionCount;
+					if (transitionCount > MaximumLifecycleActivationTransitionsPerInstance)
+					{
+						MarkFaulted(instance, "LifecycleActivation",
+							new InvalidOperationException(
+								$"OnEnable/OnDisable did not stabilize after "
+								+ $"{MaximumLifecycleActivationTransitionsPerInstance} transitions."));
+						continue;
+					}
+
+					SetLifecycleActive(instance, active);
+				}
+				if (!changed)
+					return;
 			}
-			if (!changed)
-				return;
+		}
+		finally
+		{
+			--_lifecycleConvergenceDepth;
+			if (_lifecycleConvergenceDepth == 0
+				&& _activeCallbackProjection is null
+				&& _awaitingCallbackProjections.Count == 0)
+				_callbackLifecycleActivationTransitions.Clear();
 		}
 	}
 
 	private void FlushDeferredChanges()
 	{
-		if (_callbackDepth != 0 || _flushingDeferredChanges)
-			return;
+		// Native owns the transaction boundary. These dictionaries are the managed
+		// projected view until native replays the validated batch and resolves it
+		// through the explicit ManagedApiV2 transaction callback.
+	}
 
-		_flushingDeferredChanges = true;
+	public void ResolveDeferredCommandBatch(bool committed)
+	{
+		if (_awaitingCallbackProjections.Count != 0)
+		{
+			// Native seals callback batches before replay and acknowledges them in FIFO
+			// order. Discard only the projection owned by this callback; authoritative
+			// runtime effects have already updated instances for a committed batch.
+			_awaitingCallbackProjections.Dequeue();
+			if (_deferLifecycleConvergenceDepth == 0)
+				ApplyAuthoritativeMutation(ConvergeLifecycleActivation);
+			return;
+		}
+
+		if (!committed)
+		{
+			_pendingEnableChanges.Clear();
+			_pendingAttachmentRemovals.Clear();
+			_pendingEntityDestructions.Clear();
+			_nextBatchEnableChanges.Clear();
+			_nextBatchAttachmentRemovals.Clear();
+			_nextBatchEntityDestructions.Clear();
+			// A projected mutation may have suppressed the initial OnEnable. Once the
+			// native batch aborts, restore the lifecycle from unchanged authoritative
+			// state and keep mutations queued by that callback for the next batch.
+			ApplyAuthoritativeMutation(ConvergeLifecycleActivation);
+			PromoteNextBatchMutations();
+			return;
+		}
+
+		_pendingEnableChanges.Clear();
+		_pendingAttachmentRemovals.Clear();
+		_pendingEntityDestructions.Clear();
+
+		// Runtime effects from the committed native batch may have queued commands
+		// from OnDisable/OnDestroy. Promote those before lifecycle convergence, then
+		// promote again for commands queued by the convergence callbacks themselves.
+		PromoteNextBatchMutations();
+		ApplyAuthoritativeMutation(ConvergeLifecycleActivation);
+		PromoteNextBatchMutations();
+	}
+
+	private void PromoteNextBatchMutations()
+	{
+		foreach ((ulong attachmentId, bool enabled) in _nextBatchEnableChanges)
+			_pendingEnableChanges[attachmentId] = enabled;
+		_pendingAttachmentRemovals.UnionWith(_nextBatchAttachmentRemovals);
+		_pendingEntityDestructions.UnionWith(_nextBatchEntityDestructions);
+		_nextBatchEnableChanges.Clear();
+		_nextBatchAttachmentRemovals.Clear();
+		_nextBatchEntityDestructions.Clear();
+	}
+
+	private void ApplyAuthoritativeMutation(Action mutation)
+	{
+		++_authoritativeMutationDepth;
 		try
 		{
-			while (_pendingEnableChanges.Count != 0
-				|| _pendingAttachmentRemovals.Count != 0
-				|| _pendingEntityDestructions.Count != 0)
-			{
-				var destroyAttachments = new HashSet<ulong>(_pendingAttachmentRemovals);
-				_pendingAttachmentRemovals.Clear();
-				if (_pendingEntityDestructions.Count != 0)
-				{
-					foreach (ScriptInstance instance in _instances)
-					{
-						if (_pendingEntityDestructions.Contains(instance.Attachment.Entity))
-							destroyAttachments.Add(instance.Attachment.AttachmentId);
-					}
-					_pendingEntityDestructions.Clear();
-				}
-
-				if (destroyAttachments.Count != 0)
-				{
-					foreach (ulong attachmentId in destroyAttachments)
-						_pendingEnableChanges.Remove(attachmentId);
-					for (int index = _instances.Count - 1; index >= 0; --index)
-					{
-						if (destroyAttachments.Contains(_instances[index].Attachment.AttachmentId))
-							DisableInstanceForDestroy(_instances[index]);
-					}
-					for (int index = _instances.Count - 1; index >= 0; --index)
-					{
-						if (destroyAttachments.Contains(_instances[index].Attachment.AttachmentId))
-							DestroyInstance(_instances[index]);
-					}
-				}
-
-				KeyValuePair<ulong, bool>[] pending = _pendingEnableChanges.ToArray();
-				_pendingEnableChanges.Clear();
-				foreach ((ulong attachmentId, bool enabled) in pending)
-				{
-					if (_instancesByAttachment.ContainsKey(attachmentId))
-						ApplyEnabled(attachmentId, enabled);
-				}
-			}
+			mutation();
 		}
 		finally
 		{
-			_flushingDeferredChanges = false;
+			--_authoritativeMutationDepth;
 		}
+	}
+
+	private void RecordPendingEnable(ulong attachmentId, bool enabled)
+	{
+		if (_activeCallbackProjection is not null)
+		{
+			_activeCallbackProjection.EnableChanges[attachmentId] = enabled;
+			return;
+		}
+		Dictionary<ulong, bool> changes = _authoritativeMutationDepth == 0
+			? _pendingEnableChanges : _nextBatchEnableChanges;
+		changes[attachmentId] = enabled;
+	}
+
+	private void RecordPendingAttachmentRemoval(ulong attachmentId)
+	{
+		if (_activeCallbackProjection is not null)
+		{
+			_activeCallbackProjection.AttachmentRemovals.Add(attachmentId);
+			return;
+		}
+		HashSet<ulong> removals = _authoritativeMutationDepth == 0
+			? _pendingAttachmentRemovals : _nextBatchAttachmentRemovals;
+		removals.Add(attachmentId);
+	}
+
+	private void RecordPendingEntityDestruction(Entity entity)
+	{
+		if (_activeCallbackProjection is not null)
+		{
+			_activeCallbackProjection.EntityDestructions.Add(entity);
+			return;
+		}
+		HashSet<Entity> destructions = _authoritativeMutationDepth == 0
+			? _pendingEntityDestructions : _nextBatchEntityDestructions;
+		destructions.Add(entity);
 	}
 
     private void ValidateDispatch(float deltaTime, string parameterName)
@@ -743,10 +877,86 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             throw new ArgumentOutOfRangeException(parameterName);
     }
 
-    private static bool CanDispatch(ScriptInstance instance) => instance.Created && instance.Enabled &&
-		instance.HierarchyActive &&
-		instance.State == ScriptInstanceState.Ready && !instance.Destroying
+	private bool CanDispatch(ScriptInstance instance) =>
+		instance.Created && instance.Enabled && GetProjectedEnabled(instance)
+		&& IsProjectedInstanceAvailable(instance)
+		&& instance.LifecycleActive && IsProjectedActiveInHierarchy(instance)
+		&& instance.State == ScriptInstanceState.Ready && !instance.Destroying
 		&& instance.Behaviour is not null;
+
+	private bool ShouldEnterInitialLifecycle(ScriptInstance instance) =>
+		instance.Created && instance.Enabled && GetProjectedEnabled(instance)
+		&& IsProjectedInstanceAvailable(instance)
+		&& NativeBridge.IsActiveForScriptHost(instance.Attachment.Entity)
+		&& IsProjectedActiveInHierarchy(instance)
+		&& instance.State == ScriptInstanceState.Ready && !instance.Destroying
+		&& instance.Behaviour is not null;
+
+	private void SetLifecycleActive(ScriptInstance instance, bool active)
+	{
+		if (active == instance.LifecycleActive)
+			return;
+		instance.LifecycleActive = active;
+		Invoke(instance, active ? "OnEnable" : "OnDisable", active
+			? static behaviour => behaviour.__Enable()
+			: static behaviour => behaviour.__Disable());
+	}
+
+	private bool IsProjectedActiveInHierarchy(ScriptInstance instance)
+	{
+		using ScriptExecutionContext.Scope scope = ScriptExecutionContext.Enter(
+			instance.Attachment.Entity, _domainCancellation);
+		var visited = new HashSet<Entity>();
+		Entity? current = instance.Attachment.Entity;
+		while (current is not null)
+		{
+			if (!visited.Add(current) || !current.ActiveSelf)
+				return false;
+			current = current.Parent;
+		}
+		return true;
+	}
+
+	private bool GetProjectedEnabled(ScriptInstance instance)
+	{
+		ulong attachmentId = instance.Attachment.AttachmentId;
+		bool enabled = instance.Enabled;
+		if (_activeCallbackProjection is not null)
+		{
+			if (_activeCallbackProjection.EnableChanges.TryGetValue(
+				attachmentId, out bool callbackValue))
+				enabled = callbackValue;
+			return enabled;
+		}
+		if (_pendingEnableChanges.TryGetValue(attachmentId, out bool pending))
+			enabled = pending;
+		if (_nextBatchEnableChanges.TryGetValue(attachmentId, out bool next))
+			enabled = next;
+		return enabled;
+	}
+
+	private bool IsProjectedInstanceAvailable(ScriptInstance instance)
+	{
+		ulong attachmentId = instance.Attachment.AttachmentId;
+		if (_activeCallbackProjection is not null)
+		{
+			if (_activeCallbackProjection.AttachmentRemovals.Contains(attachmentId)
+				|| _activeCallbackProjection.EntityDestructions.Contains(
+					instance.Attachment.Entity))
+				return false;
+		}
+		else if (_pendingAttachmentRemovals.Contains(attachmentId)
+			|| _nextBatchAttachmentRemovals.Contains(attachmentId)
+			|| _pendingEntityDestructions.Contains(instance.Attachment.Entity)
+			|| _nextBatchEntityDestructions.Contains(instance.Attachment.Entity))
+			return false;
+
+		// Native EntityIsAlive includes deferred subtree destruction, so destroying a
+		// parent suppresses callbacks for attachments on all projected-dead children.
+		using ScriptExecutionContext.Scope scope = ScriptExecutionContext.Enter(
+			instance.Attachment.Entity, _domainCancellation);
+		return instance.Attachment.Entity.IsValid;
+	}
 
     private void Invoke(ScriptInstance instance, string callback, Action<TomCatBehaviour> invoke,
         bool allowFaulted = false)
@@ -755,11 +965,15 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             (!allowFaulted && instance.State == ScriptInstanceState.Faulted))
             return;
 
+		DeferredProjectionFrame? projection = BeginCallbackTransaction(
+			instance.Attachment.Entity);
 		++_callbackDepth;
 		if (_traceCallbacks)
 			_callbackTrace.Add($"{instance.Attachment.AttachmentId}:{callback}");
 		using ScriptExecutionContext.MutationScope mutationScope =
 			ScriptExecutionContext.EnterMutationSink(this);
+		using InputActionRuntime.CallbackDispatcherScope inputActionCallbacks =
+			InputActionRuntime.EnterCallbackDispatcher(InvokeInputActionCallback);
 		try
         {
             invoke(instance.Behaviour);
@@ -771,9 +985,104 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		finally
 		{
 			--_callbackDepth;
-			FlushDeferredChanges();
+			CompleteCallbackTransaction(projection);
 		}
     }
+
+	private void InvokeInputActionCallback(Action invoke)
+	{
+		Entity context = ScriptExecutionContext.CurrentEntity;
+		DeferredProjectionFrame? projection = BeginCallbackTransaction(context);
+		++_callbackDepth;
+		using ScriptExecutionContext.MutationScope mutationScope =
+			ScriptExecutionContext.EnterMutationSink(this);
+		try
+		{
+			invoke();
+		}
+		catch (Exception exception)
+		{
+			// CompleteCallback may synchronously commit the sealed suffix. Mark this
+			// handler's transaction aborted before Complete so earlier healthy
+			// subscribers stay committed while this handler's writes roll back.
+			NativeBridge.AbortDeferredCommandBatch(context,
+				$"Managed input action handler threw {exception.GetType().FullName}: " +
+				$"{exception.Message}");
+			throw;
+		}
+		finally
+		{
+			--_callbackDepth;
+			CompleteCallbackTransaction(projection);
+		}
+	}
+
+	private DeferredProjectionFrame? BeginCallbackTransaction(Entity context)
+	{
+		// HostRegistry removes a Scene before DestroyAll invokes OnDisable/OnDestroy.
+		// Teardown mutations are discarded by native StopScene, so they must not
+		// attempt to open a transaction against the already-unregistered Scene.
+		if (_destroyed || _callbackDepth != 0
+			|| _activeCallbackProjection is not null)
+			return null;
+		if (!NativeBridge.SupportsDeferredCallbackTransactions)
+			return null;
+		if (!NativeBridge.TryBeginDeferredCallbackTransaction(context,
+			out ulong token))
+			throw new DeferredCallbackProtocolException(
+				"Native could not begin a managed callback transaction.");
+		var projection = new DeferredProjectionFrame(token);
+		_activeCallbackProjection = projection;
+		return projection;
+	}
+
+	private void CompleteCallbackTransaction(DeferredProjectionFrame? projection)
+	{
+		if (projection is null)
+			return;
+		if (!ReferenceEquals(_activeCallbackProjection, projection))
+			throw new DeferredCallbackProtocolException(
+				"Managed callback projection stack became inconsistent.");
+		_activeCallbackProjection = null;
+		// CompleteCallback can synchronously replay native data and re-enter
+		// ResolveDeferredCommandBatch, so publish the projection frame first.
+		_awaitingCallbackProjections.Enqueue(projection);
+		if (!NativeBridge.CompleteDeferredCallbackTransaction(projection.Token))
+		{
+			// A failed Complete produces no native acknowledgement. Remove this frame
+			// before surfacing the protocol fault so a later acknowledgement cannot
+			// consume the wrong callback projection.
+			RemoveAwaitingCallbackProjection(projection);
+			throw new DeferredCallbackProtocolException(
+				$"Native callback transaction {projection.Token} could not be completed.");
+		}
+	}
+
+	private void RemoveAwaitingCallbackProjection(
+		DeferredProjectionFrame projection)
+	{
+		int count = _awaitingCallbackProjections.Count;
+		bool removed = false;
+		for (int index = 0; index < count; ++index)
+		{
+			DeferredProjectionFrame queued =
+				_awaitingCallbackProjections.Dequeue();
+			if (!removed && ReferenceEquals(queued, projection))
+			{
+				removed = true;
+				continue;
+			}
+			_awaitingCallbackProjections.Enqueue(queued);
+		}
+	}
+
+	private sealed class DeferredProjectionFrame(ulong token)
+	{
+		internal ulong Token { get; } = token;
+		internal Dictionary<ulong, bool> EnableChanges { get; } = [];
+		internal HashSet<ulong> AttachmentRemovals { get; } = [];
+		internal HashSet<Entity> EntityDestructions { get; } = [];
+	}
 
     private static Exception Unwrap(Exception exception) =>
         exception is TargetInvocationException { InnerException: not null } invocation
@@ -786,6 +1095,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         string message = $"Managed script '{instance.Descriptor.Manifest.TypeName}' on entity " +
             $"{instance.Attachment.Entity.Id}, attachment {instance.Attachment.AttachmentId}, " +
             $"callback {callback} threw {exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}";
+		NativeBridge.AbortDeferredCommandBatch(instance.Attachment.Entity, message);
         NativeBridge.ReportManagedException(message);
     }
 
@@ -797,7 +1107,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         internal int Sequence { get; } = sequence;
         internal TomCatBehaviour? Behaviour { get; set; }
         internal bool Enabled { get; set; } = attachment.Enabled;
-		internal bool HierarchyActive { get; set; }
+		internal bool LifecycleActive { get; set; }
 		internal bool Created { get; set; }
 		internal bool Destroying { get; set; }
 		internal ScriptInstanceState State { get; set; } = ScriptInstanceState.Ready;

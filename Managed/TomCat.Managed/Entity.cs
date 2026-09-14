@@ -54,7 +54,27 @@ public sealed class Entity : IEquatable<Entity>
 		set => NativeBridge.SetActiveSelf(this, value);
 	}
 
-	public bool ActiveInHierarchy => NativeBridge.GetActiveInHierarchy(this);
+	/// <summary>
+	/// Whether this Entity and every projected parent are active. Deferred
+	/// ActiveSelf and Parent writes are visible immediately inside the current
+	/// callback batch; lifecycle dispatch still converges from native committed
+	/// state after the batch commits.
+	/// </summary>
+	public bool ActiveInHierarchy
+	{
+		get
+		{
+			var visited = new HashSet<Entity>();
+			Entity? current = this;
+			while (current is not null)
+			{
+				if (!visited.Add(current) || !current.ActiveSelf)
+					return false;
+				current = current.Parent;
+			}
+			return true;
+		}
+	}
 
 	public void Destroy()
 	{
@@ -90,19 +110,37 @@ public sealed class Entity : IEquatable<Entity>
 
     public T AddComponent<T>() where T : class, IEntityComponent
     {
-		if (ComponentProxy<T>.TryGetRegisteredTypeId(out ulong typeId))
-			NativeBridge.AddRegisteredComponent(this, typeId);
-		else
-			throw new TomCatException($"{typeof(T).FullName} is not a registered component proxy.");
-        return ComponentProxy<T>.Create(this);
+		if (!ComponentProxy<T>.TryGetRegisteredTypeId(out ulong typeId))
+		{
+			NativeBridge.AbortDeferredCommandBatch(this,
+				$"{typeof(T).FullName} is not a registered component proxy");
+			throw new TomCatException(
+				$"{typeof(T).FullName} is not a registered component proxy.");
+		}
+		NativeBridge.AddRegisteredComponent(this, typeId);
+		try
+		{
+			return ComponentProxy<T>.Create(this);
+		}
+		catch
+		{
+			NativeBridge.AbortDeferredCommandBatch(this,
+				$"{typeof(T).FullName} could not create its component proxy");
+			throw;
+		}
     }
 
     public void RemoveComponent<T>() where T : class, IEntityComponent
 	{
 		if (ComponentProxy<T>.TryGetRegisteredTypeId(out ulong typeId))
+		{
 			NativeBridge.RemoveRegisteredComponent(this, typeId);
-		else
-			throw new TomCatException($"{typeof(T).FullName} is not a registered component proxy.");
+			return;
+		}
+		NativeBridge.AbortDeferredCommandBatch(this,
+			$"{typeof(T).FullName} is not a registered component proxy");
+		throw new TomCatException(
+			$"{typeof(T).FullName} is not a registered component proxy.");
 	}
 
     public bool Equals(Entity? other) => other is not null &&
@@ -251,8 +289,15 @@ public sealed partial class DistanceJoint2D
 		}
 		set
 		{
-			if (value is not null && (value.SceneSessionId != Entity.SceneSessionId || value.RuntimeGeneration != Entity.RuntimeGeneration))
-				throw new ArgumentException("ConnectedEntity must belong to the same scene runtime.", nameof(value));
+			if (value is not null && (value.SceneSessionId != Entity.SceneSessionId
+				|| value.RuntimeGeneration != Entity.RuntimeGeneration))
+			{
+				const string reason =
+					"DistanceJoint2D.ConnectedEntity must belong to the same scene runtime";
+				NativeBridge.AbortDeferredCommandBatch(Entity, reason);
+				throw new ArgumentException(
+					"ConnectedEntity must belong to the same scene runtime.", nameof(value));
+			}
 			NativeBridge.SetRegisteredUInt64(Entity, RegisteredTypeId, 601, value?.Id ?? 0, "DistanceJoint2D.ConnectedEntity");
 		}
 	}

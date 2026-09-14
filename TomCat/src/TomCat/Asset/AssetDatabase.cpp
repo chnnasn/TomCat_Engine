@@ -32,6 +32,7 @@ namespace TomCat {
 		constexpr uint64_t kMaximumArtifactBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 		constexpr uint32_t kMaximumSubAssets = 1'000'000;
 		constexpr uint32_t kMaximumStringBytes = 1024 * 1024;
+		constexpr uint32_t kMaximumLoadSnapshotAttempts = 4;
 
 		void AppendU16(std::vector<uint8_t>& output, uint16_t value)
 		{
@@ -224,10 +225,145 @@ namespace TomCat {
 				options.Cancellation->IsCancellationRequested();
 		}
 
+		bool SameSubAssets(const std::vector<AssetSubAsset>& left,
+			const std::vector<AssetSubAsset>& right)
+		{
+			if (left.size() != right.size())
+				return false;
+			for (size_t index = 0; index < left.size(); ++index)
+			{
+				const AssetSubAsset& a = left[index];
+				const AssetSubAsset& b = right[index];
+				if (a.Handle != b.Handle || a.PersistentID != b.PersistentID
+					|| a.Name != b.Name || a.Type != b.Type || !(a.Sprite == b.Sprite))
+					return false;
+			}
+			return true;
+		}
+
+		bool SameMetadataExceptSubAssets(const AssetMetadata& left,
+			const AssetMetadata& right)
+		{
+			return left.Handle == right.Handle && left.Type == right.Type
+				&& left.FilePath == right.FilePath
+				&& left.ImportSettings == right.ImportSettings
+				&& left.IsMissing == right.IsMissing;
+		}
+
+		bool SameMetadata(const AssetMetadata& left, const AssetMetadata& right)
+		{
+			return SameMetadataExceptSubAssets(left, right)
+				&& SameSubAssets(left.SubAssets, right.SubAssets);
+		}
+
+		bool SameDependencySnapshot(const AssetDependencySnapshot& left,
+			const AssetDependencySnapshot& right, bool compareRevision = true)
+		{
+			return (!compareRevision || left.Revision == right.Revision)
+				&& left.Dependencies == right.Dependencies
+				&& left.ArtifactDependencies == right.ArtifactDependencies
+				&& left.SourceSHA256 == right.SourceSHA256;
+		}
+
 		bool HasDiscoverableDependencies(AssetType type)
 		{
 			return type == AssetType::Scene || type == AssetType::Prefab
 				|| type == AssetType::Material;
+		}
+
+		bool IsLiveDependencyGraphOwner(const AssetRegistry* registry,
+			AssetHandle handle)
+		{
+			if (!registry)
+				return false;
+			if (const AssetMetadata* metadata = registry->GetMetadata(handle))
+				return !metadata->IsMissing;
+			const AssetSubAsset* child = nullptr;
+			const AssetMetadata* owner = registry->GetSubAssetOwner(handle, &child);
+			return owner && child && !owner->IsMissing;
+		}
+
+		AssetHandle ResolveDependencyArtifactHandle(const AssetRegistry* registry,
+			AssetHandle dependency, bool* resolved = nullptr)
+		{
+			if (resolved)
+				*resolved = false;
+			if (!registry)
+				return dependency;
+			if (registry->GetMetadata(dependency))
+			{
+				if (resolved)
+					*resolved = true;
+				return dependency;
+			}
+			const AssetSubAsset* child = nullptr;
+			if (const AssetMetadata* owner = registry->GetSubAssetOwner(dependency,
+				&child); owner && child)
+			{
+				if (resolved)
+					*resolved = true;
+				return owner->Handle;
+			}
+			return dependency;
+		}
+
+		std::vector<AssetHandle> ResolveArtifactDependencies(
+			const AssetRegistry* registry,
+			const std::vector<AssetHandle>& dependencies,
+			bool* fullyResolved = nullptr)
+		{
+			if (fullyResolved)
+				*fullyResolved = true;
+			std::vector<AssetHandle> resolved;
+			resolved.reserve(dependencies.size());
+			for (AssetHandle dependency : dependencies)
+			{
+				bool dependencyResolved = false;
+				const AssetHandle artifact = ResolveDependencyArtifactHandle(registry,
+					dependency, &dependencyResolved);
+				// A rebuild with partial-resolution tracking merges prior aliases below.
+				// Do not add the unresolved logical child itself as an artifact key.
+				if (dependencyResolved || !fullyResolved)
+					resolved.push_back(artifact);
+				if (!dependencyResolved && fullyResolved)
+					*fullyResolved = false;
+			}
+			std::sort(resolved.begin(), resolved.end(), [](AssetHandle left,
+				AssetHandle right)
+			{
+				return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+			});
+			resolved.erase(std::unique(resolved.begin(), resolved.end()), resolved.end());
+			return resolved;
+		}
+
+		std::unordered_map<AssetHandle, std::vector<AssetHandle>> BuildDependents(
+			const std::unordered_map<AssetHandle, std::vector<AssetHandle>>& dependencies,
+			const std::unordered_map<AssetHandle, std::vector<AssetHandle>>&
+				artifactDependencies)
+		{
+			std::unordered_map<AssetHandle, std::vector<AssetHandle>> dependents;
+			const auto append = [&dependents](AssetHandle owner,
+				const std::vector<AssetHandle>& values)
+			{
+				for (AssetHandle dependency : values)
+					dependents[dependency].push_back(owner);
+			};
+			for (const auto& [owner, values] : dependencies)
+				append(owner, values);
+			for (const auto& [owner, values] : artifactDependencies)
+				append(owner, values);
+			for (auto& [dependency, values] : dependents)
+			{
+				(void)dependency;
+				std::sort(values.begin(), values.end(), [](AssetHandle left,
+					AssetHandle right)
+				{
+					return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+				});
+				values.erase(std::unique(values.begin(), values.end()), values.end());
+			}
+			return dependents;
 		}
 
 		class ScopeExit final
@@ -288,8 +424,15 @@ namespace TomCat {
 		{
 			std::scoped_lock mutationLock(m_DependencyMutationMutex);
 			std::unique_lock lock(m_GraphMutex);
+			const bool changed = !m_Dependencies.empty()
+				|| !m_ArtifactDependencies.empty() || !m_Dependents.empty()
+				|| !m_DependencySourceSHA256.empty();
 			m_Dependencies.clear();
+			m_ArtifactDependencies.clear();
 			m_Dependents.clear();
+			m_DependencySourceSHA256.clear();
+			if (changed && ++m_DependencyGraphRevision == 0)
+				++m_DependencyGraphRevision;
 		}
 		m_Importers.Clear();
 		m_Cache.Shutdown();
@@ -353,12 +496,17 @@ namespace TomCat {
 		dependencies.erase(std::unique(dependencies.begin(), dependencies.end()),
 			dependencies.end());
 
-		// Keep the read/modify/write graph transaction and its cache publication
-		// ordered against a concurrent source-driven rebuild.
+		// Keep metadata resolution, the read/modify/write graph transaction, and
+		// cache publication ordered against a concurrent source-driven rebuild.
+		std::scoped_lock metadataLock(m_MetadataCommitMutex);
 		std::scoped_lock mutationLock(m_DependencyMutationMutex);
 		std::unique_lock lock(m_GraphMutex);
-		for (AssetHandle dependency : dependencies)
+		const std::vector<AssetHandle> artifactDependencies =
+			ResolveArtifactDependencies(m_Registry, dependencies);
+		for (AssetHandle dependency : artifactDependencies)
 		{
+			if (dependency == asset)
+				return false;
 			std::vector<AssetHandle> pending{ dependency };
 			std::unordered_set<AssetHandle> visited;
 			while (!pending.empty())
@@ -369,37 +517,33 @@ namespace TomCat {
 					continue;
 				if (current == asset)
 					return false;
-				const auto next = m_Dependencies.find(current);
-				if (next != m_Dependencies.end())
+				const auto next = m_ArtifactDependencies.find(current);
+				if (next != m_ArtifactDependencies.end())
 					pending.insert(pending.end(), next->second.begin(), next->second.end());
 			}
 		}
 
 		const auto old = m_Dependencies.find(asset);
-		if (old != m_Dependencies.end())
-		{
-			for (AssetHandle dependency : old->second)
-			{
-				auto reverse = m_Dependents.find(dependency);
-				if (reverse == m_Dependents.end())
-					continue;
-				auto& values = reverse->second;
-				values.erase(std::remove(values.begin(), values.end(), asset), values.end());
-				if (values.empty())
-					m_Dependents.erase(reverse);
-			}
-		}
+		const bool dependenciesChanged = old == m_Dependencies.end()
+			|| old->second != dependencies;
+		const auto oldArtifacts = m_ArtifactDependencies.find(asset);
+		const bool artifactDependenciesChanged =
+			oldArtifacts == m_ArtifactDependencies.end()
+			|| oldArtifacts->second != artifactDependencies;
+		const bool sourceSnapshotRemoved =
+			m_DependencySourceSHA256.contains(asset);
 		m_Dependencies.insert_or_assign(asset, dependencies);
-		for (AssetHandle dependency : dependencies)
-		{
-			auto& reverse = m_Dependents[dependency];
-			reverse.push_back(asset);
-			std::sort(reverse.begin(), reverse.end(), [](AssetHandle left, AssetHandle right)
-			{
-				return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
-			});
-			reverse.erase(std::unique(reverse.begin(), reverse.end()), reverse.end());
-		}
+		m_ArtifactDependencies.insert_or_assign(asset, artifactDependencies);
+		// SetDependencies is an explicit graph override, so it no longer represents
+		// a dependency list parsed from one identified source snapshot.
+		m_DependencySourceSHA256.erase(asset);
+		auto dependents = BuildDependents(m_Dependencies, m_ArtifactDependencies);
+		const bool dependentsChanged = dependents != m_Dependents;
+		m_Dependents = std::move(dependents);
+		if ((dependenciesChanged || artifactDependenciesChanged
+			|| dependentsChanged || sourceSnapshotRemoved)
+			&& ++m_DependencyGraphRevision == 0)
+			++m_DependencyGraphRevision;
 		lock.unlock();
 		(void)PersistDependencyGraph();
 		return true;
@@ -410,6 +554,24 @@ namespace TomCat {
 		std::shared_lock lock(m_GraphMutex);
 		const auto found = m_Dependencies.find(asset);
 		return found == m_Dependencies.end() ? std::vector<AssetHandle>{} : found->second;
+	}
+
+	AssetDependencySnapshot AssetDatabase::GetDependencySnapshot(
+		AssetHandle asset) const
+	{
+		std::shared_lock lock(m_GraphMutex);
+		AssetDependencySnapshot snapshot;
+		if (const auto found = m_Dependencies.find(asset);
+			found != m_Dependencies.end())
+			snapshot.Dependencies = found->second;
+		if (const auto found = m_ArtifactDependencies.find(asset);
+			found != m_ArtifactDependencies.end())
+			snapshot.ArtifactDependencies = found->second;
+		if (const auto found = m_DependencySourceSHA256.find(asset);
+			found != m_DependencySourceSHA256.end())
+			snapshot.SourceSHA256 = found->second;
+		snapshot.Revision = m_DependencyGraphRevision;
+		return snapshot;
 	}
 
 	std::vector<AssetHandle> AssetDatabase::GetDependents(AssetHandle asset,
@@ -444,8 +606,25 @@ namespace TomCat {
 	AssetLoadResult AssetDatabase::LoadArtifact(AssetHandle handle,
 		AssetLoadOptions options)
 	{
-		std::vector<AssetHandle> stack;
-		return LoadArtifactInternal(handle, options, stack);
+		for (uint32_t attemptIndex = 0;
+			attemptIndex < kMaximumLoadSnapshotAttempts; ++attemptIndex)
+		{
+			LoadAttempt attempt;
+			std::vector<AssetHandle> stack;
+			AssetLoadResult result = LoadArtifactInternal(handle, options, stack, attempt);
+			if (result.Status != AssetLoadStatus::StaleSnapshot)
+				return result;
+			if (IsCancelled(options))
+				return Failure(AssetLoadStatus::Cancelled, "asset load was cancelled");
+			// A synchronous load owns its metadata publication and can rebuild a
+			// discoverable closure before retrying. Deferred workers remain read-only;
+			// their owner thread refreshes the registry before it reschedules them.
+			if (!options.DeferMetadataCommit)
+				(void)RefreshRegistry();
+		}
+		return Failure(options.DeferMetadataCommit
+			? AssetLoadStatus::StaleSnapshot : AssetLoadStatus::ImportFailed,
+			"asset inputs changed repeatedly while loading");
 	}
 
 	std::future<AssetLoadResult> AssetDatabase::LoadArtifactAsync(
@@ -599,21 +778,262 @@ namespace TomCat {
 		return metadata ? std::optional<AssetMetadata>(*metadata) : std::nullopt;
 	}
 
+	std::vector<AssetMetadata> AssetDatabase::GetAllMetadataSnapshots()
+	{
+		std::scoped_lock lock(m_MetadataCommitMutex);
+		std::vector<AssetMetadata> snapshots;
+		if (!m_Registry)
+			return snapshots;
+		snapshots.reserve(m_Registry->GetAssets().size());
+		for (const auto& [handle, metadata] : m_Registry->GetAssets())
+		{
+			(void)handle;
+			snapshots.push_back(metadata);
+		}
+		return snapshots;
+	}
+
+	bool AssetDatabase::GetSubAssetSnapshot(AssetHandle handle,
+		AssetMetadata& owner, AssetSubAsset& subAsset)
+	{
+		std::scoped_lock lock(m_MetadataCommitMutex);
+		if (!m_Registry)
+			return false;
+		const AssetSubAsset* foundSubAsset = nullptr;
+		const AssetMetadata* foundOwner =
+			m_Registry->GetSubAssetOwner(handle, &foundSubAsset);
+		if (!foundOwner || !foundSubAsset)
+			return false;
+		owner = *foundOwner;
+		subAsset = *foundSubAsset;
+		return true;
+	}
+
+
+
 	bool AssetDatabase::FinalizeImportedArtifact(AssetLoadResult& result,
 		bool refreshDependencies)
 	{
-		if (!result.Succeeded())
+		if (!result.Succeeded() || result.Artifact.LoadSnapshots.empty())
 			return false;
+		const AssetHandle handle = result.Artifact.Handle;
+		const AssetLoadInputSnapshot& rootSnapshot =
+			result.Artifact.LoadSnapshots.front();
+		if (rootSnapshot.Metadata.Handle != handle
+			|| rootSnapshot.SourceSHA256 != result.Artifact.SourceSHA256)
+			return false;
+
 		AssetLoadOptions options;
-		if (!AcquireHandleFlight(result.Artifact.Handle, options))
+		options.Platform = result.Artifact.LoadPlatform;
+		options.Backend = result.Artifact.LoadBackend;
+		LoadAttempt attempt;
+		attempt.GraphRevision = rootSnapshot.Dependencies.Revision;
+		attempt.Snapshots = result.Artifact.LoadSnapshots;
+
+		if (!AcquireHandleFlight(handle, options))
 			return false;
-		ScopeExit handleFlight([this, handle = result.Artifact.Handle]()
-			{ ReleaseHandleFlight(handle); });
-		return FinalizeSubAssets(result, refreshDependencies);
+		AssetLoadStatus status = AssetLoadStatus::Cancelled;
+		{
+			ScopeExit handleFlight([this, handle]() { ReleaseHandleFlight(handle); });
+			status = FinalizeSubAssetsForLoad(result, refreshDependencies,
+				attempt, 0, options);
+		}
+		if (status == AssetLoadStatus::Success)
+		{
+			result.Artifact.LoadSnapshots = std::move(attempt.Snapshots);
+			return true;
+		}
+		if (status == AssetLoadStatus::StaleSnapshot)
+		{
+			// The coordinator treats this as a retryable completion and keeps the
+			// same logical job alive with a fresh deferred load.
+			result.Status = status;
+			result.Error = "asset inputs changed before deferred publication";
+			return true;
+		}
+		return false;
+	}
+
+	bool AssetDatabase::ReadLoadSnapshotLocked(AssetHandle handle,
+		AssetLoadInputSnapshot& snapshot) const
+	{
+		if (!m_Registry)
+			return false;
+		const AssetMetadata* metadata = m_Registry->GetMetadata(handle);
+		if (!metadata || metadata->IsMissing)
+			return false;
+		snapshot = {};
+		snapshot.Metadata = *metadata;
+		snapshot.SourcePath = m_Registry->GetFileSystemPath(handle);
+		if (const auto found = m_Dependencies.find(handle);
+			found != m_Dependencies.end())
+			snapshot.Dependencies.Dependencies = found->second;
+		if (const auto found = m_ArtifactDependencies.find(handle);
+			found != m_ArtifactDependencies.end())
+			snapshot.Dependencies.ArtifactDependencies = found->second;
+		if (const auto found = m_DependencySourceSHA256.find(handle);
+			found != m_DependencySourceSHA256.end())
+			snapshot.Dependencies.SourceSHA256 = found->second;
+		snapshot.Dependencies.Revision = m_DependencyGraphRevision;
+		return true;
+	}
+
+	bool AssetDatabase::CaptureLoadSnapshot(AssetHandle handle,
+		LoadAttempt& attempt, size_t& snapshotIndex, AssetLoadResult& failure)
+	{
+		std::scoped_lock metadataLock(m_MetadataCommitMutex);
+		std::shared_lock graphLock(m_GraphMutex);
+		if (!m_Registry)
+		{
+			failure = Failure(AssetLoadStatus::NotInitialized,
+				"asset database is not initialized");
+			return false;
+		}
+		if (attempt.GraphRevision != 0
+			&& attempt.GraphRevision != m_DependencyGraphRevision)
+		{
+			failure = Failure(AssetLoadStatus::StaleSnapshot,
+				"asset dependency graph changed during load");
+			return false;
+		}
+		AssetLoadInputSnapshot snapshot;
+		if (!ReadLoadSnapshotLocked(handle, snapshot))
+		{
+			failure = Failure(AssetLoadStatus::NotFound, "asset handle is missing");
+			return false;
+		}
+		if (attempt.GraphRevision == 0)
+			attempt.GraphRevision = snapshot.Dependencies.Revision;
+		snapshotIndex = attempt.Snapshots.size();
+		attempt.Snapshots.push_back(std::move(snapshot));
+		return true;
+	}
+
+	bool AssetDatabase::IsLoadAttemptCurrentLocked(
+		const LoadAttempt& attempt) const
+	{
+		if (!m_Registry || attempt.GraphRevision == 0
+			|| attempt.GraphRevision != m_DependencyGraphRevision)
+			return false;
+		for (const AssetLoadInputSnapshot& expected : attempt.Snapshots)
+		{
+			AssetLoadInputSnapshot current;
+			if (!ReadLoadSnapshotLocked(expected.Metadata.Handle, current)
+				|| current.SourcePath != expected.SourcePath
+				|| !SameMetadata(current.Metadata, expected.Metadata)
+				|| !SameDependencySnapshot(current.Dependencies,
+					expected.Dependencies))
+				return false;
+		}
+		return true;
+	}
+
+	bool AssetDatabase::AreLoadAttemptSourcesCurrent(
+		const LoadAttempt& attempt, const AssetLoadOptions& options) const
+	{
+		for (const AssetLoadInputSnapshot& expected : attempt.Snapshots)
+		{
+			if (expected.SourceSHA256.empty())
+				continue;
+			std::string currentHash;
+			std::string hashError;
+			if (!ComputeFileContentSHA256(expected.SourcePath, currentHash, hashError,
+				[&options]() { return IsCancelled(options); })
+				|| currentHash != expected.SourceSHA256)
+				return false;
+		}
+		return true;
+	}
+
+	bool AssetDatabase::IsLoadAttemptCurrent(const LoadAttempt& attempt,
+		const AssetLoadOptions& options, bool validateSources)
+	{
+		std::scoped_lock metadataLock(m_MetadataCommitMutex);
+		std::shared_lock graphLock(m_GraphMutex);
+		return IsLoadAttemptCurrentLocked(attempt)
+			&& (!validateSources || AreLoadAttemptSourcesCurrent(attempt, options));
+	}
+
+	bool AssetDatabase::PublishIfLoadAttemptCurrent(
+		const std::string& artifactKey, std::span<const uint8_t> serialized,
+		const LoadAttempt& attempt, const AssetLoadOptions& options)
+	{
+		// Keep the metadata and graph read gates through Publish. Every runtime
+		// graph writer takes metadata -> graph, so no mutation can enter between
+		// this validation and the immutable DDC publication.
+		std::scoped_lock metadataLock(m_MetadataCommitMutex);
+		std::shared_lock graphLock(m_GraphMutex);
+		if (!IsLoadAttemptCurrentLocked(attempt)
+			|| !AreLoadAttemptSourcesCurrent(attempt, options))
+			return false;
+		(void)m_Cache.Publish(artifactKey, serialized);
+		return true;
+	}
+
+	AssetLoadStatus AssetDatabase::FinalizeSubAssetsForLoad(
+		AssetLoadResult& result, bool refreshDependencies, LoadAttempt& attempt,
+		size_t snapshotIndex, const AssetLoadOptions& options)
+	{
+		if (snapshotIndex >= attempt.Snapshots.size())
+			return AssetLoadStatus::ImportFailed;
+		std::scoped_lock metadataLock(m_MetadataCommitMutex);
+		{
+			std::shared_lock graphLock(m_GraphMutex);
+			if (!IsLoadAttemptCurrentLocked(attempt)
+				|| !AreLoadAttemptSourcesCurrent(attempt, options))
+				return IsCancelled(options) ? AssetLoadStatus::Cancelled
+					: AssetLoadStatus::StaleSnapshot;
+		}
+
+		const std::vector<AssetSubAsset> previousSubAssets =
+			attempt.Snapshots[snapshotIndex].Metadata.SubAssets;
+		std::vector<AssetSubAsset> assigned;
+		if (!m_Registry || !m_Registry->SynchronizeSubAssets(
+			result.Artifact.Handle, result.Artifact.SubAssets, &assigned))
+			return AssetLoadStatus::ImportFailed;
+		result.Artifact.SubAssets = std::move(assigned);
+		const bool subAssetsChanged =
+			!SameSubAssets(previousSubAssets, result.Artifact.SubAssets);
+		if ((refreshDependencies || subAssetsChanged)
+			&& !RebuildDiscoveredDependenciesLocked())
+			TC_Core_Warn("Some Scene/Prefab/Material dependencies could not be refreshed after import publication");
+
+		std::shared_lock graphLock(m_GraphMutex);
+		std::vector<AssetLoadInputSnapshot> refreshed;
+		refreshed.reserve(attempt.Snapshots.size());
+		for (size_t index = 0; index < attempt.Snapshots.size(); ++index)
+		{
+			const AssetLoadInputSnapshot& expected = attempt.Snapshots[index];
+			AssetLoadInputSnapshot current;
+			if (!ReadLoadSnapshotLocked(expected.Metadata.Handle, current)
+				|| current.SourcePath != expected.SourcePath
+				|| !SameDependencySnapshot(current.Dependencies,
+					expected.Dependencies, false))
+				return AssetLoadStatus::StaleSnapshot;
+			if (index == snapshotIndex)
+			{
+				if (!SameMetadataExceptSubAssets(current.Metadata,
+					expected.Metadata)
+					|| !SameSubAssets(current.Metadata.SubAssets,
+						result.Artifact.SubAssets))
+					return AssetLoadStatus::StaleSnapshot;
+			}
+			else if (!SameMetadata(current.Metadata, expected.Metadata))
+				return AssetLoadStatus::StaleSnapshot;
+			current.SourceSHA256 = expected.SourceSHA256;
+			refreshed.push_back(std::move(current));
+		}
+		attempt.GraphRevision = m_DependencyGraphRevision;
+		attempt.Snapshots = std::move(refreshed);
+		if (!AreLoadAttemptSourcesCurrent(attempt, options))
+			return IsCancelled(options) ? AssetLoadStatus::Cancelled
+				: AssetLoadStatus::StaleSnapshot;
+		return AssetLoadStatus::Success;
 	}
 
 	AssetLoadResult AssetDatabase::LoadArtifactInternal(AssetHandle handle,
-		const AssetLoadOptions& options, std::vector<AssetHandle>& stack)
+		const AssetLoadOptions& options, std::vector<AssetHandle>& stack,
+		LoadAttempt& attempt)
 	{
 		if (!m_Registry)
 			return Failure(AssetLoadStatus::NotInitialized, "asset database is not initialized");
@@ -621,17 +1041,18 @@ namespace TomCat {
 			return Failure(AssetLoadStatus::Cancelled, "asset load was cancelled");
 		if (std::find(stack.begin(), stack.end(), handle) != stack.end())
 			return Failure(AssetLoadStatus::DependencyCycle, "asset dependency cycle detected");
-		AssetMetadata metadata;
-		std::filesystem::path sourcePath;
-		{
-			std::scoped_lock lock(m_MetadataCommitMutex);
-			const AssetMetadata* found = m_Registry->GetMetadata(handle);
-			if (!found || found->IsMissing)
-				return Failure(AssetLoadStatus::NotFound, "asset handle is missing");
-			metadata = *found;
-			sourcePath = m_Registry->GetFileSystemPath(handle);
-		}
-		std::shared_ptr<const IAssetImporter> importer =
+		const bool topLevel = stack.empty();
+
+		size_t snapshotIndex = 0;
+		AssetLoadResult snapshotFailure;
+		if (!CaptureLoadSnapshot(handle, attempt, snapshotIndex, snapshotFailure))
+			return snapshotFailure;
+		const AssetMetadata metadata = attempt.Snapshots[snapshotIndex].Metadata;
+		const std::filesystem::path sourcePath =
+			attempt.Snapshots[snapshotIndex].SourcePath;
+		const std::vector<AssetHandle> artifactDependencies =
+			attempt.Snapshots[snapshotIndex].Dependencies.ArtifactDependencies;
+		const std::shared_ptr<const IAssetImporter> importer =
 			m_Importers.Find(metadata.Type);
 		if (!importer)
 			return Failure(AssetLoadStatus::UnsupportedType,
@@ -639,13 +1060,15 @@ namespace TomCat {
 
 		stack.push_back(handle);
 		std::vector<std::string> dependencyKeys;
-		for (AssetHandle dependency : GetDependencies(handle))
+		for (AssetHandle dependency : artifactDependencies)
 		{
-			AssetLoadResult loaded = LoadArtifactInternal(dependency, options, stack);
+			AssetLoadResult loaded =
+				LoadArtifactInternal(dependency, options, stack, attempt);
 			if (!loaded.Succeeded())
 			{
 				stack.pop_back();
-				if (loaded.Status == AssetLoadStatus::Cancelled)
+				if (loaded.Status == AssetLoadStatus::Cancelled
+					|| loaded.Status == AssetLoadStatus::StaleSnapshot)
 					return loaded;
 				return Failure(loaded.Status == AssetLoadStatus::DependencyCycle
 					? AssetLoadStatus::DependencyCycle : AssetLoadStatus::DependencyFailed,
@@ -655,26 +1078,24 @@ namespace TomCat {
 		}
 		stack.pop_back();
 
+		auto staleFailure = [&options]()
+		{
+			return Failure(IsCancelled(options) ? AssetLoadStatus::Cancelled
+				: AssetLoadStatus::StaleSnapshot,
+				IsCancelled(options) ? "asset load was cancelled"
+					: "asset metadata, source, or dependency graph changed during load");
+		};
+		if (!IsLoadAttemptCurrent(attempt, options, false))
+			return staleFailure();
+
 		// Dependencies are resolved before this gate so two cross-referencing
-		// loads cannot deadlock while holding different Handle slots. Once the
-		// slot is acquired, refresh metadata/path and keep it through source read,
-		// hashing, artifact build and synchronous metadata finalization.
+		// loads cannot deadlock while holding different handle slots.
 		if (!AcquireHandleFlight(handle, options))
 			return Failure(AssetLoadStatus::Cancelled,
 				"asset load was cancelled while waiting for an older import");
 		ScopeExit handleFlight([this, handle]() { ReleaseHandleFlight(handle); });
-		{
-			std::scoped_lock lock(m_MetadataCommitMutex);
-			const AssetMetadata* found = m_Registry->GetMetadata(handle);
-			if (!found || found->IsMissing)
-				return Failure(AssetLoadStatus::NotFound, "asset handle is missing");
-			metadata = *found;
-			sourcePath = m_Registry->GetFileSystemPath(handle);
-		}
-		importer = m_Importers.Find(metadata.Type);
-		if (!importer)
-			return Failure(AssetLoadStatus::UnsupportedType,
-				"no importer is registered for the current asset type");
+		if (!IsLoadAttemptCurrent(attempt, options, false))
+			return staleFailure();
 
 		std::vector<uint8_t> sourceBytes;
 		std::string readError;
@@ -685,12 +1106,45 @@ namespace TomCat {
 				AssetLoadStatus::SourceReadFailed, std::move(readError));
 		}
 		const std::string sourceHash = ComputeContentSHA256(sourceBytes);
+		attempt.Snapshots[snapshotIndex].SourceSHA256 = sourceHash;
+		const std::string& dependencySourceHash =
+			attempt.Snapshots[snapshotIndex].Dependencies.SourceSHA256;
+		if (!dependencySourceHash.empty() && dependencySourceHash != sourceHash)
+			return staleFailure();
+		if (!IsLoadAttemptCurrent(attempt, options, true))
+			return staleFailure();
+
 		AssetLoadResult result = GetOrImport(metadata, importer, sourcePath, sourceBytes,
-			sourceHash, std::move(dependencyKeys), options);
-		if (result.Succeeded() && !options.DeferMetadataCommit &&
-			!FinalizeSubAssets(result, true))
-			return Failure(AssetLoadStatus::ImportFailed,
-				"import succeeded but sub-asset metadata could not be committed");
+			sourceHash, std::move(dependencyKeys), options, attempt);
+		if (!result.Succeeded())
+		{
+			if (result.Status == AssetLoadStatus::StaleSnapshot
+				|| result.Status == AssetLoadStatus::Cancelled)
+				return result;
+			if (!IsLoadAttemptCurrent(attempt, options, true))
+				return staleFailure();
+			return result;
+		}
+
+		if (!options.DeferMetadataCommit)
+		{
+			const AssetLoadStatus finalized = FinalizeSubAssetsForLoad(result, true,
+				attempt, snapshotIndex, options);
+			if (finalized != AssetLoadStatus::Success)
+				return finalized == AssetLoadStatus::StaleSnapshot
+					? staleFailure()
+					: Failure(finalized, finalized == AssetLoadStatus::Cancelled
+						? "asset load was cancelled"
+						: "import succeeded but sub-asset metadata could not be committed");
+		}
+		if (!IsLoadAttemptCurrent(attempt, options, true))
+			return staleFailure();
+		if (topLevel)
+		{
+			result.Artifact.LoadSnapshots = attempt.Snapshots;
+			result.Artifact.LoadPlatform = options.Platform;
+			result.Artifact.LoadBackend = options.Backend;
+		}
 		return result;
 	}
 
@@ -698,7 +1152,8 @@ namespace TomCat {
 		const std::shared_ptr<const IAssetImporter>& importer,
 		const std::filesystem::path& sourcePath,
 		std::span<const uint8_t> sourceBytes, const std::string& sourceHash,
-		std::vector<std::string> dependencyKeys, const AssetLoadOptions& options)
+		std::vector<std::string> dependencyKeys, const AssetLoadOptions& options,
+		const LoadAttempt& attempt)
 	{
 		ArtifactKeyInput keyInput;
 		keyInput.ImporterID = std::string(importer->GetID());
@@ -713,6 +1168,13 @@ namespace TomCat {
 		if (artifactKey.empty())
 			return Failure(AssetLoadStatus::ImportFailed, "artifact key input is invalid");
 
+		auto staleFailure = [&options]()
+		{
+			return Failure(IsCancelled(options) ? AssetLoadStatus::Cancelled
+				: AssetLoadStatus::StaleSnapshot,
+				IsCancelled(options) ? "asset load was cancelled"
+					: "asset inputs changed during cache access or import");
+		};
 		auto readCached = [&]() -> std::optional<AssetLoadResult>
 		{
 			std::vector<uint8_t> cached;
@@ -724,6 +1186,7 @@ namespace TomCat {
 			result.Status = AssetLoadStatus::Success;
 			result.Artifact.Handle = metadata.Handle;
 			result.Artifact.ArtifactKey = artifactKey;
+			result.Artifact.SourceSHA256 = sourceHash;
 			result.Artifact.DependencyKeys = dependencyKeys;
 			result.Artifact.FromCache = true;
 			return result;
@@ -731,7 +1194,11 @@ namespace TomCat {
 		for (;;)
 		{
 			if (std::optional<AssetLoadResult> cached = readCached())
+			{
+				if (!IsLoadAttemptCurrent(attempt, options, true))
+					return staleFailure();
 				return std::move(*cached);
+			}
 
 			std::shared_future<AssetLoadResult> flight;
 			std::shared_ptr<std::promise<AssetLoadResult>> ownerPromise;
@@ -760,6 +1227,10 @@ namespace TomCat {
 				AssetLoadResult shared = flight.get();
 				if (shared.Status == AssetLoadStatus::Cancelled && !IsCancelled(options))
 					continue;
+				if (shared.Status == AssetLoadStatus::StaleSnapshot)
+					return shared;
+				if (!IsLoadAttemptCurrent(attempt, options, true))
+					return staleFailure();
 				shared.Artifact.Handle = metadata.Handle;
 				return shared;
 			}
@@ -768,7 +1239,10 @@ namespace TomCat {
 			try
 			{
 				if (std::optional<AssetLoadResult> cached = readCached())
-					result = std::move(*cached);
+				{
+					result = IsLoadAttemptCurrent(attempt, options, true)
+						? std::move(*cached) : staleFailure();
+				}
 				else if (IsCancelled(options))
 					result = Failure(AssetLoadStatus::Cancelled, "asset load was cancelled");
 				else
@@ -795,13 +1269,16 @@ namespace TomCat {
 						if (serialized.empty())
 							result = Failure(AssetLoadStatus::ImportFailed,
 								"importer returned an invalid or oversized artifact");
+						else if (!PublishIfLoadAttemptCurrent(artifactKey, serialized,
+							attempt, options))
+							result = staleFailure();
 						else
 						{
-							(void)m_Cache.Publish(artifactKey, serialized);
 							result.Status = AssetLoadStatus::Success;
 							result.Artifact.Handle = metadata.Handle;
 							result.Artifact.Type = metadata.Type;
 							result.Artifact.ArtifactKey = artifactKey;
+							result.Artifact.SourceSHA256 = sourceHash;
 							result.Artifact.Format = std::move(imported.Format);
 							result.Artifact.Bytes = std::move(imported.ArtifactBytes);
 							result.Artifact.DependencyKeys = dependencyKeys;
@@ -835,22 +1312,6 @@ namespace TomCat {
 			}
 			return result;
 		}
-	}
-
-	bool AssetDatabase::FinalizeSubAssets(AssetLoadResult& result,
-		bool refreshDependencies)
-	{
-		if (!m_Registry)
-			return false;
-		std::scoped_lock lock(m_MetadataCommitMutex);
-		std::vector<AssetSubAsset> assigned;
-		if (!m_Registry->SynchronizeSubAssets(result.Artifact.Handle,
-			result.Artifact.SubAssets, &assigned))
-			return false;
-		result.Artifact.SubAssets = std::move(assigned);
-		if (refreshDependencies && !RebuildDiscoveredDependenciesLocked())
-			TC_Core_Warn("Some Scene/Prefab/Material dependencies could not be refreshed after import publication");
-		return true;
 	}
 
 	bool AssetDatabase::AcquireHandleFlight(AssetHandle handle,
@@ -895,25 +1356,24 @@ namespace TomCat {
 			if (!ReadFileForImport(path, bytes, readError))
 				return false;
 			const YAML::Node root = YAML::Load(std::string(bytes.begin(), bytes.end()));
-			if (!root.IsMap() || !root["SchemaVersion"]
-				|| root["SchemaVersion"].as<uint32_t>() != 1)
+			if (!root.IsMap() || !root["SchemaVersion"])
+				return false;
+			const uint32_t schemaVersion = root["SchemaVersion"].as<uint32_t>();
+			if (schemaVersion != 1 && schemaVersion != 2)
 				return false;
 			const YAML::Node assets = root["Assets"];
 			if (!assets || !assets.IsSequence())
 				return false;
 
 			std::unordered_map<AssetHandle, std::vector<AssetHandle>> dependencies;
-			for (const YAML::Node& entry : assets)
+			std::unordered_map<AssetHandle, std::vector<AssetHandle>>
+				artifactDependencies;
+			const auto readHandles = [](const YAML::Node& sequence,
+				AssetHandle owner, std::vector<AssetHandle>& values)
 			{
-				if (!entry.IsMap() || !entry["Handle"] || !entry["Dependencies"]
-					|| !entry["Dependencies"].IsSequence())
+				if (!sequence || !sequence.IsSequence())
 					return false;
-				const AssetHandle owner(entry["Handle"].as<uint64_t>());
-				const AssetMetadata* metadata = m_Registry->GetMetadata(owner);
-				if (!metadata || metadata->IsMissing)
-					continue;
-				auto& values = dependencies[owner];
-				for (const YAML::Node& dependency : entry["Dependencies"])
+				for (const YAML::Node& dependency : sequence)
 				{
 					const AssetHandle handle(dependency.as<uint64_t>());
 					if (static_cast<uint64_t>(handle) != 0 && handle != owner)
@@ -921,31 +1381,50 @@ namespace TomCat {
 				}
 				std::sort(values.begin(), values.end(), [](AssetHandle left,
 					AssetHandle right)
-					{
-						return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
-					});
+				{
+					return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
+				});
 				values.erase(std::unique(values.begin(), values.end()), values.end());
+				return true;
+			};
+			for (const YAML::Node& entry : assets)
+			{
+				if (!entry.IsMap() || !entry["Handle"] || !entry["Dependencies"])
+					return false;
+				const AssetHandle owner(entry["Handle"].as<uint64_t>());
+				if (!IsLiveDependencyGraphOwner(m_Registry, owner))
+					continue;
+				auto& logicalValues = dependencies[owner];
+				if (!readHandles(entry["Dependencies"], owner, logicalValues))
+					return false;
+				auto& artifactValues = artifactDependencies[owner];
+				if (schemaVersion == 2)
+				{
+					if (!readHandles(entry["ArtifactDependencies"], owner,
+						artifactValues))
+						return false;
+				}
+				else
+				{
+					// Version 1 did not preserve a Sprite slice's atlas owner. Resolve
+					// what is still present so existing projects upgrade automatically.
+					artifactValues = ResolveArtifactDependencies(m_Registry,
+						logicalValues);
+				}
 			}
 
-			std::unordered_map<AssetHandle, std::vector<AssetHandle>> dependents;
-			for (const auto& [owner, values] : dependencies)
-			{
-				for (AssetHandle dependency : values)
-					dependents[dependency].push_back(owner);
-			}
-			for (auto& [dependency, values] : dependents)
-			{
-				(void)dependency;
-				std::sort(values.begin(), values.end(), [](AssetHandle left,
-					AssetHandle right)
-					{
-						return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
-					});
-				values.erase(std::unique(values.begin(), values.end()), values.end());
-			}
+			auto dependents = BuildDependents(dependencies, artifactDependencies);
 			std::unique_lock graphLock(m_GraphMutex);
+			const bool changed = dependencies != m_Dependencies
+				|| artifactDependencies != m_ArtifactDependencies
+				|| dependents != m_Dependents
+				|| !m_DependencySourceSHA256.empty();
 			m_Dependencies = std::move(dependencies);
+			m_ArtifactDependencies = std::move(artifactDependencies);
 			m_Dependents = std::move(dependents);
+			m_DependencySourceSHA256.clear();
+			if (changed && ++m_DependencyGraphRevision == 0)
+				++m_DependencyGraphRevision;
 			return true;
 		}
 		catch (...)
@@ -961,25 +1440,52 @@ namespace TomCat {
 		std::scoped_lock mutationLock(m_DependencyMutationMutex);
 
 		std::unordered_map<AssetHandle, std::vector<AssetHandle>> dependencies;
+		std::unordered_map<AssetHandle, std::vector<AssetHandle>>
+			artifactDependencies;
+		std::unordered_map<AssetHandle, std::string> dependencySourceHashes;
 		{
 			std::shared_lock graphLock(m_GraphMutex);
 			dependencies = m_Dependencies;
+			artifactDependencies = m_ArtifactDependencies;
+			dependencySourceHashes = m_DependencySourceSHA256;
 		}
 		for (auto iterator = dependencies.begin(); iterator != dependencies.end();)
 		{
-			const AssetMetadata* metadata = m_Registry->GetMetadata(iterator->first);
-			if (!metadata || metadata->IsMissing)
+			if (!IsLiveDependencyGraphOwner(m_Registry, iterator->first))
+			{
+				artifactDependencies.erase(iterator->first);
 				iterator = dependencies.erase(iterator);
+			}
+			else
+				++iterator;
+		}
+		for (auto iterator = artifactDependencies.begin();
+			iterator != artifactDependencies.end();)
+		{
+			if (!dependencies.contains(iterator->first))
+				iterator = artifactDependencies.erase(iterator);
 			else
 				++iterator;
 		}
 
 		std::vector<AssetMetadata> discoverable;
+		std::unordered_set<AssetHandle> discoverableHandles;
 		for (const auto& [handle, metadata] : m_Registry->GetAssets())
 		{
 			(void)handle;
 			if (!metadata.IsMissing && HasDiscoverableDependencies(metadata.Type))
+			{
 				discoverable.push_back(metadata);
+				discoverableHandles.emplace(metadata.Handle);
+			}
+		}
+		for (auto iterator = dependencySourceHashes.begin();
+			iterator != dependencySourceHashes.end();)
+		{
+			if (!discoverableHandles.contains(iterator->first))
+				iterator = dependencySourceHashes.erase(iterator);
+			else
+				++iterator;
 		}
 		std::sort(discoverable.begin(), discoverable.end(),
 			[](const AssetMetadata& left, const AssetMetadata& right)
@@ -991,6 +1497,11 @@ namespace TomCat {
 		bool complete = true;
 		for (const AssetMetadata& metadata : discoverable)
 		{
+			// A failed visitor must never turn discovered edges into an explicit,
+			// source-independent graph. Preserve the last verified hash, or install
+			// a non-SHA marker on a cold rebuild so loads stay stale until parsing
+			// succeeds.
+			dependencySourceHashes.try_emplace(metadata.Handle, "<unverified>");
 			const std::filesystem::path source =
 				m_Registry->GetFileSystemPath(metadata.Handle);
 			std::vector<uint8_t> bytes;
@@ -1017,31 +1528,34 @@ namespace TomCat {
 					{
 						for (const TypedAssetDependency& reference : typedDependencies)
 						{
-							AssetHandle dependency = reference.Handle;
+							const AssetHandle dependency = reference.Handle;
 							const AssetSubAsset* child = nullptr;
 							const AssetMetadata* dependencyMetadata =
 								m_Registry->GetMetadata(dependency);
 							if (!dependencyMetadata)
-							{
 								dependencyMetadata = m_Registry->GetSubAssetOwner(
 									dependency, &child);
-								if (dependencyMetadata && child)
-									dependency = dependencyMetadata->Handle;
-							}
+							const AssetType effectiveType = child ? child->Type
+								: (dependencyMetadata ? dependencyMetadata->Type
+									: AssetType::None);
 							if (!dependencyMetadata || dependencyMetadata->IsMissing
-								|| dependencyMetadata->Type != reference.ExpectedType)
+								|| effectiveType != reference.ExpectedType)
 							{
 								visitorError = "material dependency '" + reference.Name
 									+ "' is missing or has the wrong asset type";
 								visited = false;
 								break;
 							}
-							if (dependency == metadata.Handle)
+							if (dependency == metadata.Handle
+								|| dependencyMetadata->Handle == metadata.Handle)
 							{
 								visitorError = "material cannot depend on itself";
 								visited = false;
 								break;
 							}
+							// Keep the serialized logical handle in the graph so Cook
+							// packages an exact Sprite slice. Import dependency keys
+							// resolve this handle to its source atlas separately.
 							found.push_back(dependency);
 						}
 					}
@@ -1051,13 +1565,12 @@ namespace TomCat {
 					const YAML::Node root = YAML::Load(std::string(bytes.begin(), bytes.end()));
 					const auto collect = [&](const SerializedAssetReference& reference)
 					{
-						AssetHandle dependency = reference.Handle;
+						const AssetHandle dependency = reference.Handle;
 						if (static_cast<uint64_t>(dependency) == 0)
 							return true;
-						const AssetSubAsset* child = nullptr;
-						if (const AssetMetadata* owner =
-							m_Registry->GetSubAssetOwner(dependency, &child); owner && child)
-							dependency = owner->Handle;
+						// Preserve the serialized logical handle. Artifact-key imports and
+						// reverse invalidation resolve a Sprite slice to its atlas owner in
+						// the separate artifact dependency graph below.
 						if (dependency != metadata.Handle)
 							found.push_back(dependency);
 						return true;
@@ -1073,16 +1586,27 @@ namespace TomCat {
 					complete = false;
 					continue;
 				}
+				dependencySourceHashes.insert_or_assign(metadata.Handle,
+					ComputeContentSHA256(bytes));
 				std::sort(found.begin(), found.end(), [](AssetHandle left,
 					AssetHandle right)
 					{
 						return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
 					});
 				found.erase(std::unique(found.begin(), found.end()), found.end());
+				std::vector<AssetHandle> foundArtifacts =
+					ResolveArtifactDependencies(m_Registry, found);
 				if (found.empty())
+				{
 					dependencies.erase(metadata.Handle);
+					artifactDependencies.erase(metadata.Handle);
+				}
 				else
+				{
 					dependencies.insert_or_assign(metadata.Handle, std::move(found));
+					artifactDependencies.insert_or_assign(metadata.Handle,
+						std::move(foundArtifacts));
+				}
 			}
 			catch (const std::exception& exception)
 			{
@@ -1092,26 +1616,49 @@ namespace TomCat {
 			}
 		}
 
-		std::unordered_map<AssetHandle, std::vector<AssetHandle>> dependents;
-		for (const auto& [owner, values] : dependencies)
+		// Registry refresh can transfer a stable logical child handle to another
+		// artifact owner. Re-resolve every graph entry, including explicit edges on
+		// asset types that have no source dependency visitor. When a logical child is
+		// temporarily absent, retain its persisted owner so that restoring or changing
+		// the old atlas still invalidates the dependent.
+		for (const auto& [owner, logicalDependencies] : dependencies)
 		{
-			for (AssetHandle dependency : values)
-				dependents[dependency].push_back(owner);
-		}
-		for (auto& [dependency, values] : dependents)
-		{
-			(void)dependency;
-			std::sort(values.begin(), values.end(), [](AssetHandle left,
-				AssetHandle right)
+			bool fullyResolved = false;
+			std::vector<AssetHandle> resolved = ResolveArtifactDependencies(
+				m_Registry, logicalDependencies, &fullyResolved);
+			const auto existing = artifactDependencies.find(owner);
+			if (fullyResolved || existing == artifactDependencies.end())
+				artifactDependencies.insert_or_assign(owner, std::move(resolved));
+			else
+			{
+				// A missing logical child has no current owner mapping. Keep every
+				// persisted alias while also publishing owners resolved in this refresh.
+				resolved.insert(resolved.end(), existing->second.begin(),
+					existing->second.end());
+				std::sort(resolved.begin(), resolved.end(), [](AssetHandle left,
+					AssetHandle right)
 				{
 					return static_cast<uint64_t>(left) < static_cast<uint64_t>(right);
 				});
-			values.erase(std::unique(values.begin(), values.end()), values.end());
+				resolved.erase(std::unique(resolved.begin(), resolved.end()),
+					resolved.end());
+				existing->second = std::move(resolved);
+			}
 		}
+
+		auto dependents = BuildDependents(dependencies, artifactDependencies);
 		{
 			std::unique_lock graphLock(m_GraphMutex);
+			const bool changed = dependencies != m_Dependencies
+				|| artifactDependencies != m_ArtifactDependencies
+				|| dependents != m_Dependents
+				|| dependencySourceHashes != m_DependencySourceSHA256;
 			m_Dependencies = std::move(dependencies);
+			m_ArtifactDependencies = std::move(artifactDependencies);
 			m_Dependents = std::move(dependents);
+			m_DependencySourceSHA256 = std::move(dependencySourceHashes);
+			if (changed && ++m_DependencyGraphRevision == 0)
+				++m_DependencyGraphRevision;
 		}
 		if (!PersistDependencyGraph())
 		{
@@ -1128,32 +1675,49 @@ namespace TomCat {
 		// Serialize cache publication before taking the graph snapshot so an older
 		// writer can never overtake and replace a newer graph on disk.
 		std::scoped_lock cacheLock(m_DependencyCacheMutex);
-		std::vector<std::pair<AssetHandle, std::vector<AssetHandle>>> entries;
+		struct DependencyCacheEntry
+		{
+			AssetHandle Owner;
+			std::vector<AssetHandle> Dependencies;
+			std::vector<AssetHandle> ArtifactDependencies;
+		};
+		std::vector<DependencyCacheEntry> entries;
 		{
 			std::shared_lock graphLock(m_GraphMutex);
 			entries.reserve(m_Dependencies.size());
-			for (const auto& entry : m_Dependencies)
-				entries.push_back(entry);
+			for (const auto& [owner, values] : m_Dependencies)
+			{
+				DependencyCacheEntry entry{ owner, values, {} };
+				if (const auto found = m_ArtifactDependencies.find(owner);
+					found != m_ArtifactDependencies.end())
+					entry.ArtifactDependencies = found->second;
+				entries.push_back(std::move(entry));
+			}
 		}
 		std::sort(entries.begin(), entries.end(), [](const auto& left,
 			const auto& right)
-			{
-				return static_cast<uint64_t>(left.first)
-					< static_cast<uint64_t>(right.first);
-			});
+		{
+			return static_cast<uint64_t>(left.Owner)
+				< static_cast<uint64_t>(right.Owner);
+		});
 
 		YAML::Emitter output;
 		output << YAML::BeginMap
-			<< YAML::Key << "SchemaVersion" << YAML::Value << 1
+			<< YAML::Key << "SchemaVersion" << YAML::Value << 2
 			<< YAML::Key << "Assets" << YAML::Value << YAML::BeginSeq;
-		for (const auto& [owner, values] : entries)
+		for (const DependencyCacheEntry& entry : entries)
 		{
 			output << YAML::BeginMap
 				<< YAML::Key << "Handle" << YAML::Value
-				<< static_cast<uint64_t>(owner)
+				<< static_cast<uint64_t>(entry.Owner)
 				<< YAML::Key << "Dependencies" << YAML::Value << YAML::Flow
 				<< YAML::BeginSeq;
-			for (AssetHandle dependency : values)
+			for (AssetHandle dependency : entry.Dependencies)
+				output << static_cast<uint64_t>(dependency);
+			output << YAML::EndSeq
+				<< YAML::Key << "ArtifactDependencies" << YAML::Value << YAML::Flow
+				<< YAML::BeginSeq;
+			for (AssetHandle dependency : entry.ArtifactDependencies)
 				output << static_cast<uint64_t>(dependency);
 			output << YAML::EndSeq << YAML::EndMap;
 		}
@@ -1166,5 +1730,6 @@ namespace TomCat {
 			m_Registry->GetLibraryDirectory() / "AssetDependencies.yaml",
 			output.c_str(), writeError);
 	}
+
 
 }

@@ -5,6 +5,7 @@
 
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -38,7 +39,8 @@ namespace {
 			<< "  TomCatCLI cook  --project <Project.tcproj> [--output <Game.tcpak>] [--migrate]\n"
 			<< "  TomCatCLI build --project <Project.tcproj> [--template <directory>] [--migrate]\n\n"
 			<< "Both commands compile and validate the current C# sources first. Projects\n"
-			<< "requiring an upgrade are rejected unless --migrate is explicit.\n";
+			<< "requiring an upgrade are rejected unless --migrate is explicit. An\n"
+			<< "interrupted migration must be reviewed and resolved in the Editor.\n";
 	}
 
 	Options ParseOptions(int argc, wchar_t** argv)
@@ -152,12 +154,40 @@ namespace {
 	{
 		TomCat::ProjectMigrationPreview preview;
 		std::string error;
-		if (options.AllowMigration
-			&& !TomCat::Project::RecoverInterruptedMigration(options.ProjectPath, error))
+		TomCat::EditorProjectLock projectLock;
+		const TomCat::ProjectLockAcquireResult lockResult =
+			projectLock.Acquire(options.ProjectPath, error);
+		if (lockResult != TomCat::ProjectLockAcquireResult::Acquired)
 		{
-			std::cerr << "Interrupted project migration recovery failed: "
+			std::cerr << (lockResult == TomCat::ProjectLockAcquireResult::LiveOwner
+				? "Project is already in use by another Editor or TomCatCLI process: "
+				: "Project write lock is unavailable: ")
+				<< error << '\n';
+			return 13;
+		}
+		struct AssetSystemCleanup
+		{
+			~AssetSystemCleanup()
+			{
+				TomCat::AssetManager::Get().Shutdown();
+				TomCat::AssetJobSystem::Get().Shutdown();
+			}
+		} assetSystemCleanup;
+		TomCat::ProjectMigrationRecoveryPreview recoveryPreview;
+		if (!TomCat::Project::PreviewInterruptedMigration(
+			options.ProjectPath, recoveryPreview, error))
+		{
+			std::cerr << "Interrupted project migration inspection failed: "
 				<< error << '\n';
 			return 3;
+		}
+		if (recoveryPreview.HasPendingRecovery())
+		{
+			std::cerr << "Interrupted project migration requires explicit review. "
+				"Open this project in the Editor to recover it, export its backup, "
+				"or abandon the interrupted transaction. TomCatCLI did not change "
+				"the project or its recovery journal.\n";
+			return 14;
 		}
 		if (!TomCat::Project::PreviewMigration(options.ProjectPath, preview, error))
 		{
@@ -280,8 +310,6 @@ int wmain(int argc, wchar_t** argv)
 		PrintHelp();
 	else
 		exitCode = Run(options);
-	TomCat::AssetManager::Get().Shutdown();
-	TomCat::AssetJobSystem::Get().Shutdown();
 	TomCat::Log::Shutdown();
 	return exitCode;
 }

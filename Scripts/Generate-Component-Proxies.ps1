@@ -91,8 +91,9 @@ foreach ($component in $manifest.components) {
             if ($propertyIds.ContainsKey($propertyId)) {
                 throw "Component '$managedType' has duplicate property ID '$propertyIdText'."
             }
-            if ($kind -notin @('Bool', 'Int32', 'UInt32', 'UInt64', 'Float',
-                'Vector2', 'Vector4', 'Color')) {
+            if ($kind -notin @('Bool', 'Int32', 'Int64', 'UInt32', 'UInt64',
+				'Float', 'Double', 'String', 'Vector2', 'Vector3', 'Vector4',
+				'Color')) {
                 throw "Component '$managedType' property '$propertyName' has unsupported kind '$kind'."
             }
             if ($conversion -notin @('Direct', 'Enum', 'AssetRef')) {
@@ -188,10 +189,14 @@ foreach ($entry in $entries | Where-Object GenerateProxy) {
         $nativeType = switch ($property.Kind) {
             'Bool' { 'bool' }
             'Int32' { 'int' }
+			'Int64' { 'long' }
             'UInt32' { 'uint' }
             'UInt64' { 'ulong' }
             'Float' { 'float' }
+			'Double' { 'double' }
+			'String' { 'string' }
             'Vector2' { 'Vector2' }
+			'Vector3' { 'Vector3' }
             'Vector4' { 'Vector4' }
             'Color' { 'Color' }
         }
@@ -201,8 +206,7 @@ foreach ($entry in $entries | Where-Object GenerateProxy) {
             $property.ManagedType
         }
         $bridgeSuffix = $property.Kind
-        $operation = "$($entry.ManagedType).$($property.Name)"
-        $getter = 'NativeBridge.GetRegistered{0}(Entity, RegisteredTypeId, {1}, "{2}")' -f $bridgeSuffix, $propertyIdLiteral, $operation
+		$getter = 'RegisteredComponentProperties.Get{0}(Entity, RegisteredTypeId, {1})' -f $bridgeSuffix, $propertyIdLiteral
         $setterValue = 'value'
         if ($property.Conversion -eq 'Enum') {
             $getter = "($managedType)$getter"
@@ -211,11 +215,11 @@ foreach ($entry in $entries | Where-Object GenerateProxy) {
             } elseif ($property.Kind -eq 'UInt32') {
                 '(uint)value'
             } else {
-                throw "Enum property '$operation' must use Int32 or UInt32."
+                throw "Enum property '$managedType.$($property.Name)' must use Int32 or UInt32."
             }
         } elseif ($property.Conversion -eq 'AssetRef') {
             if ($property.Kind -ne 'UInt64') {
-                throw "AssetRef property '$operation' must use UInt64."
+                throw "AssetRef property '$managedType.$($property.Name)' must use UInt64."
             }
             $getter = "new($getter)"
             $setterValue = 'value.Handle'
@@ -224,8 +228,8 @@ foreach ($entry in $entries | Where-Object GenerateProxy) {
         $lines.Add("    public $managedType $($property.Name)")
         $lines.Add('    {')
         $lines.Add("        get => $getter;")
-        $lines.Add("        set => NativeBridge.SetRegistered$bridgeSuffix(Entity, RegisteredTypeId,")
-        $lines.Add(('            {0}, {1}, "{2}");' -f $propertyIdLiteral, $setterValue, $operation))
+		$lines.Add("        set => RegisteredComponentProperties.Set$bridgeSuffix(Entity, RegisteredTypeId,")
+		$lines.Add(('            {0}, {1});' -f $propertyIdLiteral, $setterValue))
         $lines.Add('    }')
     }
     $lines.Add('}')

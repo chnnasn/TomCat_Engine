@@ -17,11 +17,11 @@ namespace TomCat::Version {
 	inline constexpr uint32_t PrefabFormatCurrent = 1;
 
 	inline constexpr uint32_t TcpakFormatOldest = 5;
-	inline constexpr uint32_t TcpakFormatCurrent = 6;
+	inline constexpr uint32_t TcpakFormatCurrent = 7;
 	inline constexpr uint32_t PlayerTemplateFormatCurrent = 1;
 	inline constexpr uint32_t PlayerAbiCurrent = 1;
 	inline constexpr uint32_t NativeApiCurrent = 1;
-	inline constexpr uint32_t ManagedApiCurrent = 1;
+	inline constexpr uint32_t ManagedApiCurrent = 2;
 	inline constexpr uint32_t ScriptManifestCurrent = 1;
 
 }

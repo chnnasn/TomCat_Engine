@@ -36,6 +36,10 @@ namespace TomCat {
 		static void Initialize(SpriteAnimator& animator, SpriteRenderer& renderer)
 		{
 			Reset(animator);
+			// Disabled animators retain the authored SpriteRenderer. Leaving the
+			// runtime uninitialized makes the first enabled Update apply PlayOnStart.
+			if (!animator.Enabled)
+				return;
 			animator.RuntimeInitialized = true;
 			if (!animator.PlayOnStart)
 				return;
@@ -135,9 +139,13 @@ namespace TomCat {
 		static void Update(SpriteAnimator& animator, SpriteRenderer& renderer,
 			double deltaSeconds)
 		{
+			// Check Enabled before lazy initialization so an initially disabled
+			// animator cannot apply its first frame from the fixed-step update.
+			if (!animator.Enabled)
+				return;
 			if (!animator.RuntimeInitialized)
 				Initialize(animator, renderer);
-			if (!animator.Enabled || !std::isfinite(deltaSeconds)
+			if (!std::isfinite(deltaSeconds)
 				|| deltaSeconds <= 0.0 || !std::isfinite(animator.Speed)
 				|| animator.Speed <= 0.0f)
 				return;

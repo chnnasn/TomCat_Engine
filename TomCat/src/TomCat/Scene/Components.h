@@ -35,7 +35,10 @@ namespace TomCat {
 	struct Tag
 	{
 		std::string _Tag;
-		bool Visible = true;
+		// Gameplay activation. The persisted property is still named "Visible" for
+		// Scene 9-11 compatibility, but its runtime meaning has always matched
+		// Unity-style ActiveSelf.
+		bool ActiveSelf = true;
 
 		Tag() = default;
 		Tag(const Tag&) = default;
@@ -103,6 +106,15 @@ namespace TomCat {
 		SpriteRenderer(const glm::vec4& color)
 			: _Color(color) {
 		}
+	};
+
+	// Authoring-only Scene visibility. This optional component is added only when
+	// an Entity is hidden in the Editor; runtime systems deliberately ignore it.
+	// Keeping this state separate from Tag::ActiveSelf lets authors hide a subtree
+	// without disabling scripts, rendering in Game view, audio, or physics.
+	struct EditorVisibility
+	{
+		bool Hidden = true;
 	};
 
 	struct SpriteAnimationFrame
@@ -242,6 +254,7 @@ namespace TomCat {
 	struct C_Camera
 	{
 		SceneCamera _Camera;
+		bool Enabled = true;
 		bool Primary = true; // TODO: think about moving to Scene
 		bool FixedAspectRatio = false;
 		glm::vec4 BackgroundColor = glm::vec4(0.53f, 0.81f, 0.92f, 1.0f);  // 默认天蓝色

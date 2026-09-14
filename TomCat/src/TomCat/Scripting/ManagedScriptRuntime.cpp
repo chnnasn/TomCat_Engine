@@ -162,7 +162,8 @@ namespace TomCat::Scripting {
 			|| !m_ManagedApi.FixedUpdateAll || !m_ManagedApi.DispatchPhysicsEvents
 			|| !m_ManagedApi.DestroyAll || !m_ManagedApi.BeginUnloadDomain
 			|| !m_ManagedApi.PollUnload || !m_ManagedApi.DestroyAttachments
-			|| !m_ManagedApi.InstantiateAttachments)
+			|| !m_ManagedApi.InstantiateAttachments
+			|| !m_ManagedApi.ResolveDeferredCommandBatch)
 		{
 			m_LastError = "TomCat.ScriptHost returned an incompatible ManagedApiV1 table";
 			return false;
@@ -390,6 +391,16 @@ namespace TomCat::Scripting {
 		return ConvertStatus(m_ManagedApi.DestroyAttachments(m_SceneRuntimeId,
 			attachmentIds.empty() ? nullptr : attachmentIds.data(),
 			static_cast<uint32_t>(attachmentIds.size())), "Destroy script attachments");
+	}
+
+	ScriptStatus ManagedScriptRuntime::ResolveDeferredCommandBatch(bool committed)
+	{
+		if (EnsureScene("resolve deferred script command batch")
+				!= ScriptStatus::Success || !m_ManagedApi.ResolveDeferredCommandBatch)
+			return ScriptStatus::InvalidState;
+		return ConvertStatus(m_ManagedApi.ResolveDeferredCommandBatch(
+			m_SceneRuntimeId, committed ? 1 : 0),
+			"Resolve deferred script command batch");
 	}
 
 	ScriptStatus ManagedScriptRuntime::InstantiateAttachments(
