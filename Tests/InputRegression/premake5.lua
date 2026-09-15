@@ -40,15 +40,24 @@ project "InputRegression"
 		runtime "Debug"
 		symbols "on"
 		links { table.unpack(TomCatConsumerLinksDebug) }
+		postbuildcommands {
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul"
+		}
 
 	filter "configurations:Release"
 		defines "TC_RELEASE"
 		runtime "Release"
 		optimize "on"
 		links { table.unpack(TomCatConsumerLinksRelease) }
+		postbuildcommands {
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul"
+		}
 
 	filter "configurations:Dist"
 		defines "TC_DIST"
 		runtime "Release"
 		optimize "on"
 		links { table.unpack(TomCatConsumerLinksRelease) }
+		postbuildcommands {
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul"
+		}
