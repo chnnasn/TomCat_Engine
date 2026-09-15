@@ -42,6 +42,9 @@ namespace TomCat {
 	extern const std::filesystem::path g_AssetPath;
 
 	namespace {
+		constexpr float kDockedPanelMinimumWidthRatio = 0.08f;
+		constexpr float kDockedPanelCompactMinimumWidth = 96.0f;
+		constexpr float kDockedPanelExpandedMinimumWidth = 220.0f;
 		constexpr float kSceneToolbarPadding = 5.0f;
 		constexpr float kSceneToolbarHandleWidth = 24.0f;
 		constexpr float kSceneToolbarItemGap = 4.0f;
@@ -1875,8 +1878,14 @@ namespace TomCat {
 
 		ImGuiIO& io = ImGui::GetIO();
 		ImGuiStyle& style = ImGui::GetStyle();
-		float minWinSizeX = style.WindowMinSize.x;
-		style.WindowMinSize.x = 370.0f;
+		const float previousMinimumWidth = style.WindowMinSize.x;
+		const float dockspaceWidth = ImGui::GetContentRegionAvail().x;
+		// Docked panels share ImGui's splitter minimum. Keep it compact in a
+		// small editor window and let it grow to a comfortable desktop width.
+		style.WindowMinSize.x = std::clamp(
+			dockspaceWidth * kDockedPanelMinimumWidthRatio,
+			kDockedPanelCompactMinimumWidth,
+			kDockedPanelExpandedMinimumWidth);
 
 		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
 		{
@@ -1884,7 +1893,7 @@ namespace TomCat {
 			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 		}
 
-		style.WindowMinSize.x = minWinSizeX;
+		style.WindowMinSize.x = previousMinimumWidth;
 
 		ImGui::EndChild(); 
 
