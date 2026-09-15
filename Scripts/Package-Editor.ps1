@@ -83,14 +83,20 @@ $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $outExe = Join-Path $dist "$FinalName.exe"
 $outCli = Join-Path $dist "TomCatCLI.exe"
+$outCliShader = Join-Path $dist "shaderc_shared.dll"
 $outPackages = Join-Path $dist "Packages"
 $outManaged = Join-Path $dist "Managed"
 $outArchive = Join-Path $dist "$FinalName.zip"
 $cliSource = Join-Path $RepoRoot "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
+$cliShaderSource = Join-Path (Split-Path -Parent $cliSource) "shaderc_shared.dll"
 if (-not (Test-Path -LiteralPath $cliSource -PathType Leaf)) {
     throw "Headless CLI executable not found: $cliSource. Run with -Build or build Tools\Tools.sln first."
 }
+if (-not (Test-Path -LiteralPath $cliShaderSource -PathType Leaf)) {
+    throw "Headless CLI shader runtime was not found: $cliShaderSource. Run with -Build or rebuild Tools\Tools.sln first."
+}
 Copy-Item -LiteralPath $cliSource -Destination $outCli -Force
+Copy-Item -LiteralPath $cliShaderSource -Destination $outCliShader -Force
 $nativeRuntimeFiles = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 foreach ($name in $nativeRuntimeFiles) {
     Copy-Item -LiteralPath (Join-Path $playerTemplate $name) -Destination (Join-Path $dist $name) -Force
@@ -193,7 +199,7 @@ if ($evbOutput -and (Test-Path $evbOutput)) {
     if (Test-Path -LiteralPath $outArchive) {
         Remove-Item -LiteralPath $outArchive -Force
     }
-    $archiveInputs = @($outExe, $outCli, $outPackages, $outManaged)
+    $archiveInputs = @($outExe, $outCli, $outCliShader, $outPackages, $outManaged)
     $archiveInputs += @($nativeRuntimeFiles | ForEach-Object { Join-Path $dist $_ })
     Compress-Archive -LiteralPath $archiveInputs -DestinationPath $outArchive -CompressionLevel Optimal
     New-TomCatReleaseMetadata -RepositoryRoot $RepoRoot -DistPath $dist -Target editor -Version $Version | Out-Null
