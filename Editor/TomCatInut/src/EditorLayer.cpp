@@ -880,9 +880,184 @@ namespace TomCat {
 			TC_Core_Error("Failed to save Scene toolbar layout '{0}': {1}", PathToUTF8(iniPath), writeError);
 	}
 
+	uint32_t EditorLayer::GetEditorPanelVisibilityMask() const
+	{
+		uint32_t mask = 0;
+		auto add = [&mask](bool visible, uint32_t bit)
+		{
+			if (visible)
+				mask |= 1u << bit;
+		};
+		add(m_ShowScenePanel, 0);
+		add(m_ShowGamePanel, 1);
+		add(m_ShowHierarchyPanel, 2);
+		add(m_ShowInspectorPanel, 3);
+		add(m_ShowProjectPanel, 4);
+		add(m_ShowConsolePanel, 5);
+		add(m_ShowBuildSettingsPanel, 6);
+		add(m_ShowProjectSettingsPanel, 7);
+		return mask;
+	}
+
+	void EditorLayer::LoadEditorPanelLayout()
+	{
+		m_ShowScenePanel = true;
+		m_ShowGamePanel = true;
+		m_ShowHierarchyPanel = true;
+		m_ShowInspectorPanel = true;
+		m_ShowProjectPanel = true;
+		m_ShowConsolePanel = false;
+		m_ShowBuildSettingsPanel = false;
+		m_ShowProjectSettingsPanel = false;
+
+		auto loadFrom = [&](const std::filesystem::path& iniPath)
+		{
+			std::ifstream input(iniPath);
+			if (!input)
+				return;
+
+			bool inSection = false;
+			std::string line;
+			while (std::getline(input, line))
+			{
+				if (!line.empty() && line.back() == '\r')
+					line.pop_back();
+				if (line == "[EditorPanels]")
+				{
+					inSection = true;
+					continue;
+				}
+				if (!inSection)
+					continue;
+				if (!line.empty() && line.front() == '[')
+					break;
+
+				const std::string::size_type equals = line.find('=');
+				if (equals == std::string::npos)
+					continue;
+				const std::string key = line.substr(0, equals);
+				const std::string value = line.substr(equals + 1);
+				bool parsed = false;
+				bool visible = false;
+				if (value == "1" || value == "true" || value == "True")
+				{
+					parsed = true;
+					visible = true;
+				}
+				else if (value == "0" || value == "false" || value == "False")
+					parsed = true;
+				if (!parsed)
+					continue;
+
+				if (key == "Scene") m_ShowScenePanel = visible;
+				else if (key == "Game") m_ShowGamePanel = visible;
+				else if (key == "Hierarchy") m_ShowHierarchyPanel = visible;
+				else if (key == "Inspector") m_ShowInspectorPanel = visible;
+				else if (key == "Project") m_ShowProjectPanel = visible;
+				else if (key == "Console") m_ShowConsolePanel = visible;
+				else if (key == "BuildSettings") m_ShowBuildSettingsPanel = visible;
+				else if (key == "ProjectSettings") m_ShowProjectSettingsPanel = visible;
+			}
+		};
+
+		loadFrom(GetDefaultEditorLayoutPath());
+		loadFrom(GetEditorLayoutPath(m_CurrentProject));
+		m_LastSavedPanelVisibilityMask = GetEditorPanelVisibilityMask();
+		m_PanelVisibilitySnapshotInitialized = true;
+	}
+
+	bool EditorLayer::SaveEditorPanelLayout()
+	{
+		const std::filesystem::path iniPath = GetEditorLayoutPath(m_CurrentProject);
+		if (!EnsureSettingsDirectory(iniPath))
+			return false;
+
+		std::string ini;
+		{
+			std::error_code existsError;
+			const bool exists = std::filesystem::exists(iniPath, existsError);
+			if (existsError)
+			{
+				TC_Core_Error("Could not inspect Editor panel settings '{0}': {1}",
+					PathToUTF8(iniPath), existsError.message());
+				return false;
+			}
+			std::ifstream input(iniPath, std::ios::binary);
+			if (exists && !input)
+			{
+				TC_Core_Error("Could not read Editor panel settings '{0}'", PathToUTF8(iniPath));
+				return false;
+			}
+			if (input)
+			{
+				std::ostringstream contents;
+				contents << input.rdbuf();
+				if (input.bad())
+				{
+					TC_Core_Error("Failed while reading Editor panel settings '{0}'", PathToUTF8(iniPath));
+					return false;
+				}
+				ini = contents.str();
+			}
+		}
+
+		std::ostringstream section;
+		section << "\n[EditorPanels]\n"
+			<< "Scene=" << (m_ShowScenePanel ? 1 : 0) << "\n"
+			<< "Game=" << (m_ShowGamePanel ? 1 : 0) << "\n"
+			<< "Hierarchy=" << (m_ShowHierarchyPanel ? 1 : 0) << "\n"
+			<< "Inspector=" << (m_ShowInspectorPanel ? 1 : 0) << "\n"
+			<< "Project=" << (m_ShowProjectPanel ? 1 : 0) << "\n"
+			<< "Console=" << (m_ShowConsolePanel ? 1 : 0) << "\n"
+			<< "BuildSettings=" << (m_ShowBuildSettingsPanel ? 1 : 0) << "\n"
+			<< "ProjectSettings=" << (m_ShowProjectSettingsPanel ? 1 : 0) << "\n";
+
+		const std::string sectionName = "[EditorPanels]";
+		const std::string::size_type sectionPos = FindIniSectionHeader(ini, sectionName);
+		if (sectionPos != std::string::npos)
+		{
+			const std::string::size_type nextSection = ini.find("\n[", sectionPos + sectionName.size());
+			ini.erase(sectionPos,
+				nextSection == std::string::npos ? std::string::npos : nextSection - sectionPos);
+		}
+		if (!ini.empty() && ini.back() != '\n')
+			ini.push_back('\n');
+		ini += section.str();
+
+		std::string writeError;
+		if (FileSystem::WriteFileAtomically(iniPath, ini, writeError))
+			return true;
+		TC_Core_Error("Failed to save Editor panel layout '{0}': {1}",
+			PathToUTF8(iniPath), writeError);
+		return false;
+	}
+
+	void EditorLayer::SaveEditorLayoutIfNeeded()
+	{
+		ImGuiIO& io = ImGui::GetIO();
+		const uint32_t visibilityMask = GetEditorPanelVisibilityMask();
+		const bool panelVisibilityChanged = !m_PanelVisibilitySnapshotInitialized
+			|| visibilityMask != m_LastSavedPanelVisibilityMask;
+		if (!io.WantSaveIniSettings && !panelVisibilityChanged)
+			return;
+
+		const bool imguiSaved = SaveImGuiSettingsPreservingCustomSections(
+			GetEditorLayoutPath(m_CurrentProject));
+		const bool panelsSaved = SaveEditorPanelLayout();
+		if (!imguiSaved || !panelsSaved)
+			return;
+
+		io.WantSaveIniSettings = false;
+		m_LastSavedPanelVisibilityMask = visibilityMask;
+		m_PanelVisibilitySnapshotInitialized = true;
+	}
+
 	void EditorLayer::OnAttach()
 	{
 		TC_PROFILE_FUNCTION();
+		// ImGui's manual persistence signal is consumed by SaveEditorLayoutIfNeeded.
+		// A short debounce keeps layout changes safe without writing every frame.
+		ImGui::GetIO().IniSavingRate = 1.0f;
 
 		m_EditorIcons = CreateRef<EditorIconSet>();
 		if (!m_EditorIcons->Load())
@@ -970,6 +1145,7 @@ namespace TomCat {
 		LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject));
 
 		LoadSceneToolbarLayout();
+		LoadEditorPanelLayout();
 
 		m_EditorCamera = EditorCamera(30.0f, 1.778f, 0.1f, 1000.0f);
 		m_EditorCamera.Set2DMode(m_Is2DMode);
@@ -1172,6 +1348,7 @@ namespace TomCat {
 		// ImGui-managed state and custom panel sections share either the global
 		// no-project layout or the active project's UserSettings/imgui.ini.
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
+		SaveEditorPanelLayout();
 		m_ContentBrowserPanel.SaveLayoutSetting();
 		SaveSceneToolbarLayout();
 		m_SceneHierarchyPanel.SetScriptMetadataProvider({});
@@ -2009,6 +2186,7 @@ namespace TomCat {
 			m_PendingPanelFocus.clear();
 		}
 		ImGui::End();
+		SaveEditorLayoutIfNeeded();
 	}
 
 	void EditorLayer::UI_GameNoCameraOverlay()
@@ -5586,6 +5764,7 @@ namespace TomCat {
 		// Persist the current layout before ProjectManager changes the active
 		// project. No-project mode writes to the global LocalAppData layout.
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
+		SaveEditorPanelLayout();
 		m_ContentBrowserPanel.SaveLayoutSetting();
 		SaveSceneToolbarLayout();
 		if (m_CurrentProject)
@@ -5617,6 +5796,7 @@ namespace TomCat {
 		LoadImGuiSettings(GetDefaultEditorLayoutPath());
 		LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject));
 		LoadSceneToolbarLayout();
+		LoadEditorPanelLayout();
 
 		m_ContentBrowserPanel.SetProject(m_CurrentProject);
 		std::string recoveryError;
@@ -5641,6 +5821,7 @@ namespace TomCat {
 		if (m_CurrentProject)
 			m_ContentBrowserPanel.Serialize();
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
+		SaveEditorPanelLayout();
 		m_ContentBrowserPanel.SaveLayoutSetting();
 		SaveSceneToolbarLayout();
 	}
