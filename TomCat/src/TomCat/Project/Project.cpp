@@ -312,7 +312,11 @@ namespace TomCat {
 				errorMessage = "externalScriptEditor must name a Windows .exe file";
 				return false;
 			}
-			editor = AbsoluteNormalized(editor);
+			// Preserve the path representation selected by the user. Resolving an
+			// existing parent with weakly_canonical can expand a Windows 8.3 path
+			// (for example RUNNER~1) even when the executable itself does not exist,
+			// which makes a saved setting change after a round trip.
+			editor = editor.lexically_normal();
 			return true;
 		}
 
