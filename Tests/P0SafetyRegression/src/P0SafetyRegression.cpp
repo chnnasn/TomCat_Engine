@@ -1,5 +1,6 @@
 #include <TomCat/Core/ApplicationPaths.h>
 #include <TomCat/Core/CrashReporter.h>
+#include <TomCat/Core/EditorRuntimeBundle.h>
 #include <TomCat/Core/Log.h>
 #include <TomCat/Core/Version.h>
 #include <TomCat/Asset/ContentHash.h>
@@ -17,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -225,6 +227,249 @@ namespace {
 	{
 		return TomCat::ComputeContentSHA256(std::span<const uint8_t>(
 			reinterpret_cast<const uint8_t*>(contents.data()), contents.size()));
+	}
+
+	struct RuntimeFixtureFile
+	{
+		std::string Path;
+		std::string Contents;
+	};
+
+	std::vector<RuntimeFixtureFile> RuntimeFixtureFiles(std::string_view seed)
+	{
+		const std::string marker(seed);
+		return {
+			{ "Managed/TomCat.Managed.dll", "managed-api-" + marker },
+			{ "Managed/TomCat.ScriptHost.dll", "script-host-" + marker },
+			{ "Managed/TomCat.ScriptHost.runtimeconfig.json", "{runtime:" + marker + "}" },
+			{ "Managed/TomCat.ScriptHost.deps.json", "{deps:" + marker + "}" },
+			{ "Managed/TomCat.ScriptGenerator.dll", "generator-" + marker },
+			{ "Packages/PlayerTemplates/win-x64/template.json", "{template:" + marker + "}" },
+			{ "Packages/PlayerTemplates/win-x64/TomCatPlayer.exe", "player-" + marker },
+			{ "TomCatCLI.exe", "cli-runtime-" + marker },
+			{ "shaderc_shared.dll", "shader-runtime-" + marker },
+			{ "msvcp140.dll", "msvcp-runtime-" + marker },
+			{ "vcruntime140.dll", "vcruntime-runtime-" + marker },
+			{ "vcruntime140_1.dll", "vcruntime1-runtime-" + marker }
+		};
+	}
+
+	std::string RuntimeManifestDocument(std::string_view engineBuildID,
+		const std::vector<RuntimeFixtureFile>& files,
+		std::optional<RuntimeFixtureFile> extra = std::nullopt)
+	{
+		std::ostringstream output;
+		output << "{\n"
+			<< "  \"schemaVersion\": 1,\n"
+			<< "  \"engineBuildId\": \"" << engineBuildID << "\",\n"
+			<< "  \"files\": [\n";
+		const size_t count = files.size() + (extra ? 1 : 0);
+		size_t index = 0;
+		auto append = [&](const RuntimeFixtureFile& file)
+		{
+			output << "    { \"path\": \"" << file.Path
+				<< "\", \"size\": " << file.Contents.size()
+				<< ", \"sha256\": \"" << HashText(file.Contents) << "\" }";
+			if (++index != count)
+				output << ',';
+			output << '\n';
+		};
+		for (const RuntimeFixtureFile& file : files)
+			append(file);
+		if (extra)
+			append(*extra);
+		output << "  ]\n}\n";
+		return output.str();
+	}
+
+	std::vector<RuntimeFixtureFile> WriteRuntimePayload(
+		const std::filesystem::path& root, std::string_view engineBuildID,
+		std::string_view seed)
+	{
+		const std::vector<RuntimeFixtureFile> files = RuntimeFixtureFiles(seed);
+		for (const RuntimeFixtureFile& file : files)
+			WriteText(root / TomCat::UTF8ToPath(file.Path), file.Contents);
+		WriteText(root / "runtime-manifest.json",
+			RuntimeManifestDocument(engineBuildID, files));
+		return files;
+	}
+
+	std::string ReadRuntimeFixture(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary);
+		Require(static_cast<bool>(input),
+			"could not open extracted runtime fixture " + path.string());
+		return { std::istreambuf_iterator<char>(input),
+			std::istreambuf_iterator<char>() };
+	}
+
+	void RequireExtractedRuntimeMatches(
+		const TomCat::EditorRuntimeBundleResult& result,
+		const std::vector<RuntimeFixtureFile>& files)
+	{
+		Require(std::filesystem::is_directory(result.Root),
+			"runtime extraction did not publish its root");
+		Require(result.ManagedDirectory == result.Root / "Managed" &&
+			result.PlayerTemplateDirectory == result.Root / "Packages" /
+				"PlayerTemplates" / "win-x64" &&
+			result.CliExecutable == result.Root / "TomCatCLI.exe",
+			"runtime extraction returned inconsistent consumer paths");
+		for (const RuntimeFixtureFile& file : files)
+		{
+			Require(ReadRuntimeFixture(result.Root / TomCat::UTF8ToPath(file.Path))
+				== file.Contents,
+				"runtime extraction changed " + file.Path);
+		}
+		Require(std::filesystem::is_regular_file(
+			result.Root / "runtime-manifest.json"),
+			"runtime extraction did not publish its completion manifest");
+	}
+
+	void TestEditorRuntimeBundleHappyAndWarmCache()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path payload = temporary.Path / "Payload";
+		const std::filesystem::path cache = temporary.Path / "Cache";
+		const std::string engineBuildID(TomCat::Version::EngineBuildID);
+		const auto files = WriteRuntimePayload(payload, engineBuildID, "alpha");
+
+		TomCat::EditorRuntimeBundleResult first;
+		std::string error;
+		const bool extracted =
+			TomCat::EnsureEditorRuntimeBundle(payload, cache, first, error);
+		Require(extracted,
+			"first runtime extraction failed: " + error);
+		Require(!first.ReusedExisting && first.EngineBuildID == engineBuildID &&
+			first.ManifestSHA256.size() == 64,
+			"first runtime extraction reported invalid provenance");
+		RequireExtractedRuntimeMatches(first, files);
+		const auto cliWriteTime =
+			std::filesystem::last_write_time(first.CliExecutable);
+
+		TomCat::EditorRuntimeBundleResult warm;
+		const bool reused =
+			TomCat::EnsureEditorRuntimeBundle(payload, cache, warm, error);
+		Require(reused,
+			"warm runtime cache validation failed: " + error);
+		Require(warm.ReusedExisting && warm.Root == first.Root &&
+			warm.ManifestSHA256 == first.ManifestSHA256,
+			"warm runtime cache did not reuse the validated bundle");
+		Require(std::filesystem::last_write_time(warm.CliExecutable) == cliWriteTime,
+			"warm runtime cache rewrote a validated file");
+		RequireExtractedRuntimeMatches(warm, files);
+	}
+
+	void TestEditorRuntimeBundleRepairsSameSizeTamper()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path payload = temporary.Path / "Payload";
+		const std::filesystem::path cache = temporary.Path / "Cache";
+		const auto files = WriteRuntimePayload(payload,
+			TomCat::Version::EngineBuildID, "bravo");
+
+		TomCat::EditorRuntimeBundleResult original;
+		std::string error;
+		const bool extracted =
+			TomCat::EnsureEditorRuntimeBundle(payload, cache, original, error);
+		Require(extracted,
+			"runtime repair fixture extraction failed: " + error);
+		const std::string expected = ReadRuntimeFixture(original.CliExecutable);
+		WriteText(original.CliExecutable, std::string(expected.size(), 'X'));
+
+		TomCat::EditorRuntimeBundleResult repaired;
+		const bool repairSucceeded =
+			TomCat::EnsureEditorRuntimeBundle(payload, cache, repaired, error);
+		Require(repairSucceeded,
+			"same-size runtime damage was not repaired: " + error);
+		Require(!repaired.ReusedExisting && repaired.Root == original.Root &&
+			ReadRuntimeFixture(repaired.CliExecutable) == expected,
+			"runtime repair reused or preserved damaged bytes");
+		RequireExtractedRuntimeMatches(repaired, files);
+
+		size_t quarantines = 0;
+		for (const auto& entry : std::filesystem::directory_iterator(
+			original.Root.parent_path()))
+		{
+			const std::string name = TomCat::PathToUTF8(entry.path().filename());
+			if (name.starts_with(original.ManifestSHA256 + ".corrupt-"))
+				++quarantines;
+		}
+		Require(quarantines == 1,
+			"damaged runtime was not quarantined before replacement");
+	}
+
+	void TestEditorRuntimeBundleRejectsPathEscape()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path payload = temporary.Path / "Payload";
+		const std::filesystem::path cache = temporary.Path / "Cache";
+		const auto files = RuntimeFixtureFiles("charlie");
+		for (const RuntimeFixtureFile& file : files)
+			WriteText(payload / TomCat::UTF8ToPath(file.Path), file.Contents);
+		const RuntimeFixtureFile escape{ "../outside.txt", "must-not-extract" };
+		WriteText(payload / "runtime-manifest.json",
+			RuntimeManifestDocument(TomCat::Version::EngineBuildID, files, escape));
+
+		TomCat::EditorRuntimeBundleResult result;
+		std::string error;
+		Require(!TomCat::EnsureEditorRuntimeBundle(payload, cache, result, error),
+			"runtime manifest accepted a parent path escape");
+		Require(error.find("unsafe path") != std::string::npos &&
+			!std::filesystem::exists(temporary.Path / "outside.txt") &&
+			result.Root.empty(),
+			"path escape rejection wrote outside the cache or returned a root");
+	}
+
+	void TestEditorRuntimeBundleSeparatesManifestVersions()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path cache = temporary.Path / "Cache";
+		const std::filesystem::path payloadA = temporary.Path / "PayloadA";
+		const std::filesystem::path payloadB = temporary.Path / "PayloadB";
+		const auto filesA = WriteRuntimePayload(
+			payloadA, TomCat::Version::EngineBuildID, "delta");
+		const auto filesB = WriteRuntimePayload(
+			payloadB, TomCat::Version::EngineBuildID, "echoo");
+
+		TomCat::EditorRuntimeBundleResult first;
+		TomCat::EditorRuntimeBundleResult second;
+		std::string error;
+		const bool firstExtracted =
+			TomCat::EnsureEditorRuntimeBundle(payloadA, cache, first, error);
+		Require(firstExtracted,
+			"first manifest version extraction failed: " + error);
+		const bool secondExtracted =
+			TomCat::EnsureEditorRuntimeBundle(payloadB, cache, second, error);
+		Require(secondExtracted,
+			"second manifest version extraction failed: " + error);
+		Require(first.Root != second.Root &&
+			first.ManifestSHA256 != second.ManifestSHA256 &&
+			first.Root.parent_path() == second.Root.parent_path(),
+			"different manifests under one engine version shared a cache root");
+		RequireExtractedRuntimeMatches(first, filesA);
+		RequireExtractedRuntimeMatches(second, filesB);
+
+		TomCat::EditorRuntimeBundleResult firstAgain;
+		Require(TomCat::EnsureEditorRuntimeBundle(
+			payloadA, cache, firstAgain, error) && firstAgain.ReusedExisting &&
+			firstAgain.Root == first.Root,
+			"switching back did not reuse the original manifest cache");
+	}
+
+	void TestEditorRuntimeBundleRejectsWrongEngineBuild()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path payload = temporary.Path / "Payload";
+		const std::filesystem::path cache = temporary.Path / "Cache";
+		WriteRuntimePayload(payload, "TomCat-Wrong-Build", "foxtt");
+
+		TomCat::EditorRuntimeBundleResult result;
+		std::string error;
+		Require(!TomCat::EnsureEditorRuntimeBundle(payload, cache, result, error),
+			"runtime manifest for another engine build was accepted");
+		Require(error.find("does not match this Editor") != std::string::npos &&
+			result.Root.empty() && !std::filesystem::exists(cache),
+			"wrong-build rejection created a cache or reported the wrong error");
 	}
 
 	std::string PreparedMigrationJournal(std::string_view transactionID,
@@ -983,6 +1228,29 @@ namespace {
 		Require(!TomCat::ApplicationPaths::ResolveProductDataRoot(
 			localRoot, TomCat::ApplicationProduct::Unknown),
 			"unknown products must not receive an implicit writable path");
+		const auto runtimeCache =
+			TomCat::ApplicationPaths::ResolveEditorRuntimeCacheRoot(localRoot);
+		Require(runtimeCache && *runtimeCache ==
+			(localRoot / "TomCat" / "Editor" / "Runtime").lexically_normal(),
+			"Editor runtime cache escaped its LocalAppData product root");
+		Require(!TomCat::ApplicationPaths::ResolveEditorRuntimeCacheRoot({}),
+			"an empty LocalAppData root produced an Editor runtime cache");
+
+		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
+		Require(!TomCat::ApplicationPaths::GetRuntimeEditorRoot(),
+			"Editor runtime root was populated before bundle publication");
+		const std::filesystem::path publishedRuntime =
+			localRoot / "TomCat" / "Editor" / "Runtime" / "0.2.0" / "bundle";
+		const std::filesystem::path unnormalizedRuntime =
+			publishedRuntime.parent_path() / "discarded" / ".." /
+			publishedRuntime.filename();
+		TomCat::ApplicationPaths::SetRuntimeEditorRoot(unnormalizedRuntime);
+		Require(TomCat::ApplicationPaths::GetRuntimeEditorRoot() ==
+			std::optional<std::filesystem::path>(unnormalizedRuntime.lexically_normal()),
+			"Editor runtime root was not normalized and published to consumers");
+		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
+		Require(!TomCat::ApplicationPaths::GetRuntimeEditorRoot(),
+			"Editor runtime root survived explicit shutdown");
 
 		Require(TomCat::ApplicationPaths::IdentifyExecutable("TomCat.exe")
 			== TomCat::ApplicationProduct::Editor, "packaged Editor identity mismatch");
@@ -1186,6 +1454,11 @@ int main(int argc, char** argv)
 
 		TestApplicationPaths();
 		TestGameDataPaths();
+		TestEditorRuntimeBundleHappyAndWarmCache();
+		TestEditorRuntimeBundleRepairsSameSizeTamper();
+		TestEditorRuntimeBundleRejectsPathEscape();
+		TestEditorRuntimeBundleSeparatesManifestVersions();
+		TestEditorRuntimeBundleRejectsWrongEngineBuild();
 		TestUnifiedVersionSource();
 		TestEditorVersionResolutionHasNoFallback();
 		TestInspectProjectNeverWrites();
@@ -1209,6 +1482,7 @@ int main(int argc, char** argv)
 		std::cout << "PASS P0 safety: migration SHA-256 backup/recovery, "
 			"explicit plan authorization, journal/rollback/reparse and "
 			"parent-replacement containment, "
+			"Editor runtime extraction/cache repair/version isolation, "
 			"read-only inspection, exact Editor version, per-game data/log/crash paths, "
 			"and console fallback\n";
 		TomCat::Log::Shutdown();

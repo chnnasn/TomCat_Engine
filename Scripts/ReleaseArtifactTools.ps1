@@ -90,9 +90,9 @@ function New-TomCatReleaseMetadata {
     $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
     $DistPath = (Resolve-Path -LiteralPath $DistPath -ErrorAction Stop).Path
     $artifactNames = switch ($Target) {
-        'editor' { @('TomCat.zip') }
+        'editor' { @('TomCat.exe') }
         'hub' { @('TomCatHub.exe') }
-        'both' { @('TomCat.zip', 'TomCatHub.exe') }
+        'both' { @('TomCat.exe', 'TomCatHub.exe') }
     }
     foreach ($name in $artifactNames) {
         $artifactPath = Join-Path $DistPath $name

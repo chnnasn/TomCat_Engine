@@ -45,6 +45,18 @@ namespace TomCat {
 		[[nodiscard]] static std::optional<std::filesystem::path> GetLogFile(
 			ApplicationProduct product);
 
+		// Packaged Editors publish immutable child-process/runtime files below this
+		// LocalAppData cache. The active root is set only after a complete bundle has
+		// been validated and atomically published; development builds leave it unset.
+		[[nodiscard]] static std::optional<std::filesystem::path>
+			ResolveEditorRuntimeCacheRoot(const std::filesystem::path& localAppData);
+		[[nodiscard]] static std::optional<std::filesystem::path>
+			GetEditorRuntimeCacheRoot();
+		static void SetRuntimeEditorRoot(const std::filesystem::path& root);
+		static void ClearRuntimeEditorRoot();
+		[[nodiscard]] static std::optional<std::filesystem::path>
+			GetRuntimeEditorRoot();
+
 		// A game's data is isolated from the generic TomCatPlayer host and from
 		// every other game. Company/product are single path segments; the three
 		// configured directories must remain relative to the game root.

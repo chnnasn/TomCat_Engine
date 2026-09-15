@@ -558,7 +558,10 @@ namespace TomCat {
 				return std::nullopt;
 			}
 
-			const DWORD waitResult = WaitForSingleObject(process.hProcess, 3000);
+			// A large EVB single-file Editor spends a few seconds initializing its
+			// virtual filesystem even though --product-info-json skips extraction.
+			// Keep the probe bounded, but leave enough margin for cold disks and CI.
+			const DWORD waitResult = WaitForSingleObject(process.hProcess, 10000);
 			if (waitResult != WAIT_OBJECT_0)
 			{
 				TerminateProcess(process.hProcess, 124);

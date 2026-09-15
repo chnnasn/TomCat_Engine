@@ -1,6 +1,7 @@
 #include "PlayerBuilder.h"
 
 #include <TomCat/Asset/AssetManager.h>
+#include <TomCat/Core/ApplicationPaths.h>
 #include <TomCat/Core/Log.h>
 #include <TomCat/Project/Project.h>
 #include <TomCat/Runtime/RuntimeCompatibility.h>
@@ -585,6 +586,11 @@ namespace TomCat {
 
 	std::filesystem::path PlayerBuilder::FindDefaultTemplateDirectory()
 	{
+		if (const auto runtimeRoot = ApplicationPaths::GetRuntimeEditorRoot())
+		{
+			return *runtimeRoot / "Packages" /
+				"PlayerTemplates" / "win-x64";
+		}
 #ifdef TC_PLATFORM_WINDOWS
 		std::vector<wchar_t> buffer(MAX_PATH);
 		for (;;)

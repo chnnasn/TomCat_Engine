@@ -17,14 +17,46 @@ function Get-EvbFileTreeXml {
         [Parameter(Mandatory)]
         [string]$RootPath,
 
-        [string]$Indent = "              "
+        [string]$Indent = "              ",
+
+        [ValidateRange(0, 3)]
+        [int]$FileAction = 0,
+
+        [ValidateRange(0, 3)]
+        [int]$DirectoryAction = 3,
+
+        [string[]]$ExcludeRelativePaths = @(),
+
+        [string]$RelativePathPrefix = ""
     )
 
     $items = Get-ChildItem -LiteralPath $RootPath -Force -ErrorAction Stop |
         Sort-Object @{ Expression = { -not $_.PSIsContainer }; Ascending = $true }, Name
     $parts = New-Object 'System.Collections.Generic.List[string]'
 
+    $normalizedExclusions = @($ExcludeRelativePaths | ForEach-Object {
+        ([string]$_).Replace('\', '/').Trim('/')
+    } | Where-Object { $_ })
+
     foreach ($item in $items) {
+        $relativePath = if ([string]::IsNullOrEmpty($RelativePathPrefix)) {
+            $item.Name
+        } else {
+            $RelativePathPrefix.TrimEnd('/', '\') + '/' + $item.Name
+        }
+        $relativePath = $relativePath.Replace('\', '/')
+        $excluded = $false
+        foreach ($candidate in $normalizedExclusions) {
+            if ($relativePath.Equals($candidate,
+                    [System.StringComparison]::OrdinalIgnoreCase) -or
+                $relativePath.StartsWith($candidate + '/',
+                    [System.StringComparison]::OrdinalIgnoreCase)) {
+                $excluded = $true
+                break
+            }
+        }
+        if ($excluded) { continue }
+
         # Runtime/user state must always remain outside the virtual filesystem.
         # The root default imgui.ini is declared explicitly by each checked-in
         # EVB template; never pick up another layout or settings file while
@@ -49,7 +81,11 @@ function Get-EvbFileTreeXml {
         $name = ConvertTo-EvbXmlText $item.Name
         if ($item.PSIsContainer) {
             $childIndent = $Indent + "  "
-            $children = Get-EvbFileTreeXml -RootPath $item.FullName -Indent $childIndent
+            $children = Get-EvbFileTreeXml -RootPath $item.FullName `
+                -Indent $childIndent -FileAction $FileAction `
+                -DirectoryAction $DirectoryAction `
+                -ExcludeRelativePaths $normalizedExclusions `
+                -RelativePathPrefix $relativePath
 
             [void]$parts.Add("$Indent<File>")
             [void]$parts.Add("$Indent  <Type>3</Type>")
@@ -59,7 +95,7 @@ function Get-EvbFileTreeXml {
             # become real", which would materialize Packages/cache when the
             # application writes its shader cache.  Keep package directories
             # fully virtual so a boxed executable stays self-contained.
-            [void]$parts.Add("$Indent  <Action>3</Action>")
+            [void]$parts.Add("$Indent  <Action>$DirectoryAction</Action>")
             [void]$parts.Add("$Indent  <OverwriteDateTime>False</OverwriteDateTime>")
             [void]$parts.Add("$Indent  <OverwriteAttributes>False</OverwriteAttributes>")
             [void]$parts.Add("$Indent  <HideFromDialogs>0</HideFromDialogs>")
@@ -78,7 +114,7 @@ function Get-EvbFileTreeXml {
             [void]$parts.Add("$Indent  <File>$path</File>")
             [void]$parts.Add("$Indent  <ActiveX>False</ActiveX>")
             [void]$parts.Add("$Indent  <ActiveXInstall>False</ActiveXInstall>")
-            [void]$parts.Add("$Indent  <Action>0</Action>")
+            [void]$parts.Add("$Indent  <Action>$FileAction</Action>")
             [void]$parts.Add("$Indent  <OverwriteDateTime>False</OverwriteDateTime>")
             [void]$parts.Add("$Indent  <OverwriteAttributes>False</OverwriteAttributes>")
             [void]$parts.Add("$Indent  <PassCommandLine>False</PassCommandLine>")
@@ -88,6 +124,106 @@ function Get-EvbFileTreeXml {
     }
 
     return ($parts -join "`r`n")
+}
+
+function Set-EvbDirectoryTree {
+    param(
+        [Parameter(Mandatory)]
+        [string]$TemplateText,
+
+        [Parameter(Mandatory)]
+        [string]$NodeName,
+
+        [Parameter(Mandatory)]
+        [string]$SourceDirectory,
+
+        [ValidateRange(0, 3)]
+        [int]$FileAction = 0,
+
+        [ValidateRange(0, 3)]
+        [int]$DirectoryAction = 3,
+
+        [string[]]$ExcludeRelativePaths = @()
+    )
+
+    if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
+        throw "EVB tree source directory not found: $SourceDirectory"
+    }
+
+    $escapedNodeName = [regex]::Escape((ConvertTo-EvbXmlText $NodeName))
+    $nodePattern = "(?is)<File\b[^>]*>\s*<Type>\s*3\s*</Type>\s*<Name>\s*$escapedNodeName\s*</Name>"
+    $nodeMatches = [regex]::Matches($TemplateText, $nodePattern)
+    if ($nodeMatches.Count -ne 1) {
+        throw "EVB template must contain exactly one Type=3 '$NodeName' node (found $($nodeMatches.Count))"
+    }
+    $nodeMarker = $nodeMatches[0]
+
+    $actionPattern = "(?is)(<File\b[^>]*>\s*<Type>\s*3\s*</Type>\s*<Name>\s*$escapedNodeName\s*</Name>\s*<Action>)\s*\d+\s*(</Action>)"
+    $actionMatch = [regex]::Match($TemplateText, $actionPattern)
+    if (-not $actionMatch.Success) {
+        throw "EVB template node '$NodeName' is missing its Action field"
+    }
+    $actionEvaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+        param([System.Text.RegularExpressions.Match]$Match)
+        return $Match.Groups[1].Value + $DirectoryAction + $Match.Groups[2].Value
+    }
+    $TemplateText = [regex]::Replace(
+        $TemplateText, $actionPattern, $actionEvaluator, 1)
+
+    # Re-resolve the marker after replacing its Action because offsets may have
+    # changed when a multi-digit or hand-edited value was normalized.
+    $nodeMarker = [regex]::Match($TemplateText, $nodePattern)
+    $openTag = "<Files>"
+    $closeTag = "</Files>"
+    $openIndex = $TemplateText.IndexOf(
+        $openTag,
+        $nodeMarker.Index + $nodeMarker.Length,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+    if ($openIndex -lt 0) {
+        throw "EVB template node '$NodeName' is missing its <Files> element"
+    }
+
+    # Find the matching closing element while allowing arbitrary nested trees.
+    $contentStart = $openIndex + $openTag.Length
+    $cursor = $contentStart
+    $depth = 1
+    $contentEnd = -1
+    while ($depth -gt 0) {
+        $nextOpen = $TemplateText.IndexOf(
+            $openTag, $cursor, [System.StringComparison]::OrdinalIgnoreCase)
+        $nextClose = $TemplateText.IndexOf(
+            $closeTag, $cursor, [System.StringComparison]::OrdinalIgnoreCase)
+        if ($nextClose -lt 0) {
+            throw "EVB template node '$NodeName' has an unterminated <Files> element"
+        }
+        if ($nextOpen -ge 0 -and $nextOpen -lt $nextClose) {
+            $depth++
+            $cursor = $nextOpen + $openTag.Length
+        } else {
+            $depth--
+            if ($depth -eq 0) { $contentEnd = $nextClose }
+            $cursor = $nextClose + $closeTag.Length
+        }
+    }
+
+    $lineStart = $TemplateText.LastIndexOf("`n", $openIndex)
+    if ($lineStart -lt 0) { $lineStart = 0 } else { $lineStart++ }
+    $filesIndent = $TemplateText.Substring($lineStart, $openIndex - $lineStart)
+    $entryIndent = $filesIndent + "  "
+    $tree = Get-EvbFileTreeXml `
+        -RootPath (Resolve-Path -LiteralPath $SourceDirectory).Path `
+        -Indent $entryIndent -FileAction $FileAction `
+        -DirectoryAction $DirectoryAction `
+        -ExcludeRelativePaths $ExcludeRelativePaths
+    $replacement = if ([string]::IsNullOrEmpty($tree)) {
+        "`r`n$filesIndent"
+    } else {
+        "`r`n$tree`r`n$filesIndent"
+    }
+
+    return $TemplateText.Substring(0, $contentStart) +
+        $replacement + $TemplateText.Substring($contentEnd)
 }
 
 function Assert-EvbUserStateExcluded {
@@ -158,94 +294,175 @@ function Set-EvbPackageTree {
         [string]$TemplateText,
 
         [Parameter(Mandatory)]
-        [string]$PackageSource
+        [string]$PackageSource,
+
+        [string[]]$ExcludeRelativePaths = @()
     )
 
-    if (-not (Test-Path -LiteralPath $PackageSource -PathType Container)) {
-        throw "Packages directory not found: $PackageSource"
-    }
+    return Set-EvbDirectoryTree -TemplateText $TemplateText `
+        -NodeName "Packages" -SourceDirectory $PackageSource `
+        -FileAction 0 -DirectoryAction 3 `
+        -ExcludeRelativePaths $ExcludeRelativePaths
+}
 
-    # Locate the Packages folder node.  The root of an EVB file is `<>`, so a
-    # normal [xml] cast cannot be used here.  Its Action controls how files
-    # created below the virtual folder are handled; force it to the fully
-    # virtual mode before replacing the generated children.
-    $packageActionPattern = '(?is)(<File\b[^>]*>\s*<Type>\s*3\s*</Type>\s*<Name>\s*Packages\s*</Name>\s*<Action>)\s*\d+\s*(</Action>)'
-    $packageActionMatch = [regex]::Match($TemplateText, $packageActionPattern)
-    if (-not $packageActionMatch.Success) {
-        throw "EVB template does not contain an Action field for the Packages node"
-    }
-    $packageActionEvaluator = [System.Text.RegularExpressions.MatchEvaluator]{
-        param([System.Text.RegularExpressions.Match]$Match)
-        return $Match.Groups[1].Value + "3" + $Match.Groups[2].Value
-    }
-    $TemplateText = [regex]::Replace($TemplateText, $packageActionPattern, $packageActionEvaluator, 1)
+function Test-TomCatRuntimePathSegment {
+    param([AllowEmptyString()][string]$Value)
 
-    $packageMarker = [regex]::Match(
-        $TemplateText,
-        '(?is)<File\b[^>]*>\s*<Type>\s*3\s*</Type>\s*<Name>\s*Packages\s*</Name>'
-    )
-    if (-not $packageMarker.Success) {
-        throw "EVB template does not contain a Type=3 Packages node"
+    if ([string]::IsNullOrEmpty($Value) -or $Value -eq '.' -or $Value -eq '..' -or
+        $Value.EndsWith(' ') -or $Value.EndsWith('.')) {
+        return $false
     }
-
-    $openTag = "<Files>"
-    $closeTag = "</Files>"
-    $openIndex = $TemplateText.IndexOf(
-        $openTag,
-        $packageMarker.Index + $packageMarker.Length,
-        [System.StringComparison]::OrdinalIgnoreCase
-    )
-    if ($openIndex -lt 0) {
-        throw "Packages node is missing its <Files> element"
-    }
-
-    # Find the matching closing </Files>, accounting for nested directories.
-    $contentStart = $openIndex + $openTag.Length
-    $cursor = $contentStart
-    $depth = 1
-    $contentEnd = -1
-    while ($depth -gt 0) {
-        $nextOpen = $TemplateText.IndexOf(
-            $openTag,
-            $cursor,
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
-        $nextClose = $TemplateText.IndexOf(
-            $closeTag,
-            $cursor,
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
-        if ($nextClose -lt 0) {
-            throw "Packages node has an unterminated <Files> element"
-        }
-
-        if ($nextOpen -ge 0 -and $nextOpen -lt $nextClose) {
-            $depth++
-            $cursor = $nextOpen + $openTag.Length
-        } else {
-            $depth--
-            if ($depth -eq 0) {
-                $contentEnd = $nextClose
-            }
-            $cursor = $nextClose + $closeTag.Length
+    $invalidCharacters = '<>:"/\|?*'
+    foreach ($character in $Value.ToCharArray()) {
+        $codePoint = [int]$character
+        if ($codePoint -lt 0x20 -or $codePoint -eq 0x7f -or
+            $invalidCharacters.IndexOf($character) -ge 0) {
+            return $false
         }
     }
+    $baseName = $Value.Split('.')[0].ToUpperInvariant()
+    if ($baseName -in @('CON', 'PRN', 'AUX', 'NUL') -or
+        $baseName -match '^(?:COM|LPT)[1-9]$') {
+        return $false
+    }
+    return $true
+}
 
-    $lineStart = $TemplateText.LastIndexOf("`n", $openIndex)
-    if ($lineStart -lt 0) { $lineStart = 0 } else { $lineStart++ }
-    $filesIndent = $TemplateText.Substring($lineStart, $openIndex - $lineStart)
-    $entryIndent = $filesIndent + "  "
+function New-TomCatRuntimeManifest {
+    param(
+        [Parameter(Mandatory)]
+        [string]$PayloadRoot,
 
-    $tree = Get-EvbFileTreeXml -RootPath (Resolve-Path -LiteralPath $PackageSource).Path -Indent $entryIndent
-    if ([string]::IsNullOrEmpty($tree)) {
-        $replacement = "`r`n$filesIndent"
-    } else {
-        $replacement = "`r`n$tree`r`n$filesIndent"
+        [Parameter(Mandatory)]
+        [string]$EngineBuildId
+    )
+
+    $maximumManifestBytes = [uint64]4194304
+    $maximumRuntimeFiles = 10000
+    $maximumRuntimeFileBytes = [uint64]2147483648
+    $maximumRuntimeBytes = [uint64]4294967296
+    if ([System.Text.Encoding]::UTF8.GetByteCount($EngineBuildId) -gt 128 -or
+        -not (Test-TomCatRuntimePathSegment -Value $EngineBuildId)) {
+        throw "Engine build ID is not safe for a runtime payload: '$EngineBuildId'"
+    }
+    $payload = (Resolve-Path -LiteralPath $PayloadRoot -ErrorAction Stop).Path.TrimEnd('\', '/')
+    $payloadPrefix = $payload + '\'
+    $manifestPath = Join-Path $payload 'runtime-manifest.json'
+    if (Test-Path -LiteralPath $manifestPath) {
+        Remove-Item -LiteralPath $manifestPath -Force
     }
 
-    return $TemplateText.Substring(0, $contentStart) +
-        $replacement +
-        $TemplateText.Substring($contentEnd)
+    $expectedRootEntries = @(
+        'Managed',
+        'Packages',
+        'TomCatCLI.exe',
+        'msvcp140.dll',
+        'shaderc_shared.dll',
+        'vcruntime140.dll',
+        'vcruntime140_1.dll'
+    ) | Sort-Object
+    $actualRootEntries = @(Get-ChildItem -LiteralPath $payload -Force |
+        Select-Object -ExpandProperty Name | Sort-Object)
+    $rootDifference = @(Compare-Object -ReferenceObject $expectedRootEntries `
+        -DifferenceObject $actualRootEntries)
+    if ($rootDifference.Count -ne 0) {
+        throw "Runtime payload root does not match its strict whitelist: $($rootDifference | Out-String)"
+    }
+
+    $managedRoot = Join-Path $payload 'Managed'
+    $expectedManagedFiles = @(
+        'TomCat.Managed.dll',
+        'TomCat.ScriptGenerator.dll',
+        'TomCat.ScriptHost.deps.json',
+        'TomCat.ScriptHost.dll',
+        'TomCat.ScriptHost.runtimeconfig.json'
+    ) | Sort-Object
+    $actualManagedEntries = @(Get-ChildItem -LiteralPath $managedRoot -Force |
+        Select-Object -ExpandProperty Name | Sort-Object)
+    $managedDifference = @(Compare-Object -ReferenceObject $expectedManagedFiles `
+        -DifferenceObject $actualManagedEntries)
+    if ($managedDifference.Count -ne 0) {
+        throw "Runtime Managed directory does not match its strict whitelist: $($managedDifference | Out-String)"
+    }
+
+    $templateRoot = Join-Path $payload 'Packages\PlayerTemplates\win-x64'
+    foreach ($requiredPath in @(
+            'template.json',
+            'TomCatPlayer.exe',
+            'Managed\TomCat.Managed.dll',
+            'dotnet\host\fxr')) {
+        $candidate = Join-Path $templateRoot $requiredPath
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            throw "Runtime Player template is missing required content: $candidate"
+        }
+    }
+
+    $allEntries = @(Get-ChildItem -LiteralPath $payload -Recurse -Force)
+    $reparsePoints = @($allEntries | Where-Object {
+        ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    })
+    if ($reparsePoints.Count -ne 0) {
+        throw "Runtime payload must not contain reparse points: $($reparsePoints.FullName -join ', ')"
+    }
+    $pdbFiles = @($allEntries | Where-Object {
+        -not $_.PSIsContainer -and $_.Extension -ieq '.pdb'
+    })
+    if ($pdbFiles.Count -ne 0) {
+        throw "Runtime payload must not contain PDB files: $($pdbFiles.FullName -join ', ')"
+    }
+
+    $records = New-Object 'System.Collections.Generic.List[object]'
+    $payloadFiles = @($allEntries | Where-Object { -not $_.PSIsContainer } |
+        Sort-Object FullName)
+    if ($payloadFiles.Count -gt $maximumRuntimeFiles) {
+        throw "Runtime payload contains more than $maximumRuntimeFiles files."
+    }
+    $runtimeBytes = [uint64]0
+    $pathKeys = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in $payloadFiles) {
+        if (-not $file.FullName.StartsWith(
+                $payloadPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Runtime payload file escaped its root: $($file.FullName)"
+        }
+        $relativePath = $file.FullName.Substring($payloadPrefix.Length).Replace('\', '/')
+        if ([string]::IsNullOrWhiteSpace($relativePath) -or
+            $relativePath.StartsWith('/') -or
+            [System.Text.Encoding]::UTF8.GetByteCount($relativePath) -gt 4096 -or
+            @($relativePath.Split('/') | Where-Object {
+                -not (Test-TomCatRuntimePathSegment -Value $_)
+            }).Count -ne 0 -or
+            -not $pathKeys.Add($relativePath)) {
+            throw "Runtime payload contains an unsafe relative path: $relativePath"
+        }
+        $fileLength = [uint64]$file.Length
+        if ($fileLength -gt $maximumRuntimeFileBytes -or
+            $runtimeBytes -gt $maximumRuntimeBytes - $fileLength) {
+            throw "Runtime payload file or aggregate size exceeds its limit: $relativePath"
+        }
+        $runtimeBytes += $fileLength
+        [void]$records.Add([ordered]@{
+            path = $relativePath
+            size = [long]$fileLength
+            sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        })
+    }
+    if ($records.Count -eq 0) {
+        throw 'Runtime payload manifest cannot be empty.'
+    }
+
+    $manifest = [ordered]@{
+        schemaVersion = 1
+        engineBuildId = $EngineBuildId
+        files = $records.ToArray()
+    }
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    $manifestJson = $manifest | ConvertTo-Json -Depth 6
+    if ([uint64]$encoding.GetByteCount($manifestJson) -gt $maximumManifestBytes) {
+        throw "Runtime manifest exceeds its $maximumManifestBytes-byte limit."
+    }
+    [System.IO.File]::WriteAllText($manifestPath, $manifestJson, $encoding)
+    return $manifestPath
 }
 
 function Set-EvbProperty {

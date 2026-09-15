@@ -171,6 +171,9 @@
     <ClInclude Include="src\TomCat\Core\CrashReporter.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\EditorRuntimeBundle.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\EntryPoint.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -1764,6 +1767,9 @@
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\CrashReporter.cpp">
+      <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Core\EditorRuntimeBundle.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\Layer.cpp">

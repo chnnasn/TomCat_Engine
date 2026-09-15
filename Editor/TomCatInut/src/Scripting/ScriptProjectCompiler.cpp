@@ -2,6 +2,7 @@
 #include "ScriptMetadataCache.h"
 
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Utils/FileSystemUtils.h"
@@ -545,6 +546,36 @@ namespace TomCat {
 			m_ManagedSolution.clear();
 		if (!IsManagedRuntimeDirectory(m_ManagedRuntimeDirectory))
 			m_ManagedRuntimeDirectory.clear();
+
+		// A boxed Editor materializes the managed toolchain in its immutable,
+		// versioned runtime cache. Prefer that validated generation as one unit so
+		// repository ancestors or stale files beside the launcher cannot mix
+		// assemblies from different builds.
+		if (const auto runtimeRoot = ApplicationPaths::GetRuntimeEditorRoot())
+		{
+			const std::filesystem::path managed = *runtimeRoot / "Managed";
+			const std::filesystem::path api = managed / "TomCat.Managed.dll";
+			const std::filesystem::path generator = managed /
+				"TomCat.ScriptGenerator.dll";
+			if (IsManagedRuntimeDirectory(managed) && IsRegularFile(api)
+				&& IsRegularFile(generator))
+			{
+				m_ManagedApiReference = AbsoluteLexical(api);
+				m_GeneratorReference = AbsoluteLexical(generator);
+				m_ManagedRuntimeDirectory = AbsoluteLexical(managed);
+				m_ManagedApiIsProject = false;
+				m_GeneratorIsProject = false;
+				return true;
+			}
+
+			ScriptCompilerDiagnostic diagnostic;
+			diagnostic.Level = ScriptCompilerDiagnostic::Severity::Error;
+			diagnostic.Code = "TCSP0013";
+			diagnostic.Message = "The verified packaged Editor runtime no longer "
+				"contains a complete Managed toolchain.";
+			record(std::move(diagnostic));
+			return false;
+		}
 
 		const std::filesystem::path executableDirectory = ExecutableDirectory();
 		for (const std::filesystem::path& candidate : {

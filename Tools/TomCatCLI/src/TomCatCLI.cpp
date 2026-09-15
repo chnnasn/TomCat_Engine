@@ -43,6 +43,24 @@ namespace {
 			<< "interrupted migration must be reviewed and resolved in the Editor.\n";
 	}
 
+	bool MakeAbsolute(std::filesystem::path& path, std::string_view option,
+		std::string& error)
+	{
+		if (path.empty())
+			return true;
+		std::error_code pathError;
+		const std::filesystem::path absolute =
+			std::filesystem::absolute(path, pathError);
+		if (pathError)
+		{
+			error = "could not resolve " + std::string(option) + " path: " +
+				pathError.message();
+			return false;
+		}
+		path = absolute.lexically_normal();
+		return true;
+	}
+
 	Options ParseOptions(int argc, wchar_t** argv)
 	{
 		Options result;
@@ -98,6 +116,11 @@ namespace {
 			result.Error = "--template is valid only for build";
 		if (result.Operation == Command::Build && !result.OutputPath.empty())
 			result.Error = "--output is valid only for cook; build publishes to the project Build directory";
+		if (result.Error.empty() &&
+			(!MakeAbsolute(result.ProjectPath, "--project", result.Error) ||
+				!MakeAbsolute(result.OutputPath, "--output", result.Error) ||
+				!MakeAbsolute(result.TemplatePath, "--template", result.Error)))
+			return result;
 		return result;
 	}
 

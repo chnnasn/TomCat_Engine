@@ -5,7 +5,7 @@
   <Files>
     <Enabled>True</Enabled>
     <DeleteExtractedOnExit>False</DeleteExtractedOnExit>
-    <CompressFiles>False</CompressFiles>
+    <CompressFiles>True</CompressFiles>
     <Files>
       <File>
         <Type>3</Type>
@@ -30,7 +30,7 @@
           <File>
             <Type>2</Type>
             <Name>shaderc_shared.dll</Name>
-            <File>E:\Github\TomCat_Engine\Editor\bin\Release-windows-x86_64\TomCatInut\shaderc_shared.dll</File>
+            <File>E:\Github\TomCat_Engine\dist\.tomcat-editor-staging\payload\shaderc_shared.dll</File>
             <ActiveX>False</ActiveX>
             <ActiveXInstall>False</ActiveXInstall>
             <Action>0</Action>
@@ -41,8 +41,8 @@
           </File>
           <File>
             <Type>2</Type>
-            <Name>TomCatInut.exe</Name>
-            <File>E:\Github\TomCat_Engine\Editor\bin\Release-windows-x86_64\TomCatInut\TomCatInut.exe</File>
+            <Name>msvcp140.dll</Name>
+            <File>E:\Github\TomCat_Engine\dist\.tomcat-editor-staging\payload\msvcp140.dll</File>
             <ActiveX>False</ActiveX>
             <ActiveXInstall>False</ActiveXInstall>
             <Action>0</Action>
@@ -50,6 +50,50 @@
             <OverwriteAttributes>False</OverwriteAttributes>
             <PassCommandLine>False</PassCommandLine>
             <HideFromDialogs>0</HideFromDialogs>
+          </File>
+          <File>
+            <Type>2</Type>
+            <Name>vcruntime140.dll</Name>
+            <File>E:\Github\TomCat_Engine\dist\.tomcat-editor-staging\payload\vcruntime140.dll</File>
+            <ActiveX>False</ActiveX>
+            <ActiveXInstall>False</ActiveXInstall>
+            <Action>0</Action>
+            <OverwriteDateTime>False</OverwriteDateTime>
+            <OverwriteAttributes>False</OverwriteAttributes>
+            <PassCommandLine>False</PassCommandLine>
+            <HideFromDialogs>0</HideFromDialogs>
+          </File>
+          <File>
+            <Type>2</Type>
+            <Name>vcruntime140_1.dll</Name>
+            <File>E:\Github\TomCat_Engine\dist\.tomcat-editor-staging\payload\vcruntime140_1.dll</File>
+            <ActiveX>False</ActiveX>
+            <ActiveXInstall>False</ActiveXInstall>
+            <Action>0</Action>
+            <OverwriteDateTime>False</OverwriteDateTime>
+            <OverwriteAttributes>False</OverwriteAttributes>
+            <PassCommandLine>False</PassCommandLine>
+            <HideFromDialogs>0</HideFromDialogs>
+          </File>
+          <File>
+            <Type>3</Type>
+            <Name>Packages</Name>
+            <Action>3</Action>
+            <OverwriteDateTime>False</OverwriteDateTime>
+            <OverwriteAttributes>False</OverwriteAttributes>
+            <HideFromDialogs>0</HideFromDialogs>
+            <Files>
+            </Files>
+          </File>
+          <File>
+            <Type>3</Type>
+            <Name>.tomcat-runtime</Name>
+            <Action>3</Action>
+            <OverwriteDateTime>False</OverwriteDateTime>
+            <OverwriteAttributes>False</OverwriteAttributes>
+            <HideFromDialogs>0</HideFromDialogs>
+            <Files>
+            </Files>
           </File>
         </Files>
       </File>

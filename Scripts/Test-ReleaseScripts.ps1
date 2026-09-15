@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'ReleaseArtifactTools.ps1')
 . (Join-Path $PSScriptRoot 'ReleaseProvenanceTools.ps1')
+. (Join-Path $PSScriptRoot 'EvbTools.ps1')
 
 $parseFailures = New-Object 'System.Collections.Generic.List[string]'
 foreach ($script in Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File | Sort-Object Name) {
@@ -66,31 +67,76 @@ if ($buildJob -notmatch '(?m)^    permissions:\s*\r?\n      contents: read\s*$')
 foreach ($requiredCliPackaging in @(
     'Invoke-Gen "Tools"',
     'Invoke-Build "Tools\Tools.sln"',
-    'dist\TomCatCLI.exe'
+    'Package-Editor.ps1',
+    'dist/TomCat.exe',
+    '--product-info-json',
+    '--cli help',
+    'tomcat-editor-probe-cwd',
+    'tomcat-editor-cold-cwd',
+    'tomcat-editor-warm-cwd',
+    'Samples\PhysicsPlayground',
+    'PhysicsPlayground\Project.tcproj',
+    'Assert-NoExternalEditorRuntime'
 )) {
     if ($buildJob -notmatch [regex]::Escape($requiredCliPackaging)) {
-        throw "Release build does not package the headless CLI requirement '$requiredCliPackaging'."
+        throw "Release build does not satisfy the single-file Editor requirement '$requiredCliPackaging'."
     }
 }
-if ($buildJob -notmatch '(?m)^\s*Copy-Item -LiteralPath \$cliOutput -Destination "dist\\TomCatCLI\.exe" -Force\s*$') {
-    throw 'Release build must stage the freshly built TomCatCLI.exe in dist.'
+if ($workflow -match 'TomCat\.zip' -or $buildJob -match 'Compress-Archive') {
+    throw 'Official releases must publish the EVB-boxed TomCat.exe directly, without an Editor ZIP.'
 }
-if ($buildJob -notmatch '(?m)^\s*\$archiveInputs\s*=\s*@\([^\r\n]*"dist\\TomCatCLI\.exe"[^\r\n]*\)\s*$' -or
-    $buildJob -notmatch '(?m)^\s*Compress-Archive -LiteralPath \$archiveInputs\b') {
-    throw 'Official Editor archive inputs must contain TomCatCLI.exe.'
+if ($buildJob -match '(?m)^\s*Copy-Item[^\r\n]+-Destination\s+"dist\\(?:TomCatCLI\.exe|Managed|Packages)') {
+    throw 'Official releases must not stage Editor runtime payload files beside TomCat.exe.'
 }
 $localPackageScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Package-Editor.ps1') -Raw
-foreach ($requiredCliPackaging in @('Tools\premake5.lua', 'Tools\Tools.sln', 'TomCatCLI.exe')) {
+foreach ($requiredCliPackaging in @(
+        'Tools\premake5.lua',
+        'Tools\Tools.sln',
+        'TomCatCLI.exe',
+        'New-TomCatRuntimeManifest',
+        'Set-EvbPackageTree',
+        'PlayerTemplates',
+        '.tomcat-runtime')) {
     if ($localPackageScript -notmatch [regex]::Escape($requiredCliPackaging)) {
-        throw "Local Editor packaging does not include the headless CLI requirement '$requiredCliPackaging'."
+        throw "Local Editor packaging does not embed the runtime requirement '$requiredCliPackaging'."
     }
 }
-if ($localPackageScript -notmatch '(?m)^\s*Copy-Item -LiteralPath \$cliSource -Destination \$outCli -Force\s*$') {
-    throw 'Local Editor packaging must stage the freshly built headless CLI output.'
+if ($localPackageScript -match 'Compress-Archive' -or
+    $localPackageScript -match '\$archiveInputs' -or
+    $localPackageScript -match 'Final package -> \$outArchive') {
+    throw 'Local Editor packaging must finish as one EVB executable, without an archive.'
 }
-if ($localPackageScript -notmatch '(?m)^\s*\$archiveInputs\s*=\s*@\([^\r\n]*\$outCli[^\r\n]*\)\s*$' -or
-    $localPackageScript -notmatch '(?m)^\s*Compress-Archive -LiteralPath \$archiveInputs\b') {
-    throw 'Local Editor archive inputs must contain TomCatCLI.exe.'
+foreach ($atomicPackagingRequirement in @(
+        '$stagedBoxedExe',
+        '[System.IO.File]::Move',
+        '$packageSucceeded',
+        'Join-Path $dist "TomCat"')) {
+    if ($localPackageScript -notmatch [regex]::Escape($atomicPackagingRequirement)) {
+        throw "Local Editor packaging is missing atomic publication/cleanup requirement '$atomicPackagingRequirement'."
+    }
+}
+$evbToolsScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'EvbTools.ps1') -Raw
+foreach ($runtimeLimit in @(
+        '$maximumManifestBytes = [uint64]4194304',
+        '$maximumRuntimeFiles = 10000',
+        '$maximumRuntimeFileBytes = [uint64]2147483648',
+        '$maximumRuntimeBytes = [uint64]4294967296')) {
+    if ($evbToolsScript -notmatch [regex]::Escape($runtimeLimit)) {
+        throw "Runtime manifest producer is missing C++ reader limit '$runtimeLimit'."
+    }
+}
+$editorTemplate = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'editor.evb') -Raw
+if ($editorTemplate -notmatch '<CompressFiles>True</CompressFiles>' -or
+    $editorTemplate -notmatch '(?is)<Name>\s*Packages\s*</Name>' -or
+    $editorTemplate -notmatch '(?is)<Name>\s*\.tomcat-runtime\s*</Name>') {
+    throw 'Editor EVB template must compress and expose Packages plus .tomcat-runtime marker trees.'
+}
+foreach ($runtimeName in @(
+        'shaderc_shared.dll', 'msvcp140.dll', 'vcruntime140.dll',
+        'vcruntime140_1.dll')) {
+    if ($editorTemplate -notmatch "(?is)<Name>\s*$([regex]::Escape($runtimeName))\s*</Name>") {
+        throw "Editor EVB root does not virtualize required native runtime $runtimeName."
+    }
 }
 if ($publishJob -notmatch '(?m)^    permissions:\s*\r?\n      contents: write\s*$') {
     throw 'Publish job must hold the repository write permission separately.'
@@ -103,6 +149,9 @@ if ($workflow -notmatch 'RELEASE_PROVENANCE\.json') {
 }
 if ($publishJob -notmatch '(?s)gh release create.*--verify-tag.*--target \$env:RELEASE_SHA') {
     throw 'Release publishing must verify the existing tag and bind it to the checked SHA.'
+}
+if ($publishJob -notmatch [regex]::Escape('dist\TomCat.exe')) {
+    throw 'Release publishing must attach the single-file TomCat.exe.'
 }
 
 $commitSha = '0123456789abcdef0123456789abcdef01234567'
@@ -181,7 +230,160 @@ try {
     catch { $mismatchRejected = $true }
     if (-not $mismatchRejected) { throw 'Checksum helper accepted a mismatched hash.' }
 
-    Copy-Item -LiteralPath $fixture -Destination (Join-Path $tempRoot 'TomCat.zip')
+    $packagesFixture = Join-Path $tempRoot 'PackagesFixture'
+    $packageResources = Join-Path $packagesFixture 'Resources'
+    $excludedTemplates = Join-Path $packagesFixture 'PlayerTemplates'
+    New-Item -ItemType Directory -Path $packageResources, $excludedTemplates -Force | Out-Null
+    Copy-Item -LiteralPath $fixture -Destination (Join-Path $packageResources 'a&b.bin')
+    Copy-Item -LiteralPath $fixture -Destination (Join-Path $excludedTemplates 'must-not-be-virtual.bin')
+
+    $payloadRoot = Join-Path $tempRoot 'RuntimePayload'
+    $managedRoot = Join-Path $payloadRoot 'Managed'
+    $templateRoot = Join-Path $payloadRoot 'Packages\PlayerTemplates\win-x64'
+    New-Item -ItemType Directory -Path $managedRoot, `
+        (Join-Path $templateRoot 'Managed'), `
+        (Join-Path $templateRoot 'dotnet\host\fxr\10.0.0') -Force | Out-Null
+    foreach ($name in @(
+            'TomCat.Managed.dll',
+            'TomCat.ScriptGenerator.dll',
+            'TomCat.ScriptHost.deps.json',
+            'TomCat.ScriptHost.dll',
+            'TomCat.ScriptHost.runtimeconfig.json')) {
+        Copy-Item -LiteralPath $fixture -Destination (Join-Path $managedRoot $name)
+    }
+    foreach ($name in @(
+            'TomCatCLI.exe', 'shaderc_shared.dll', 'msvcp140.dll',
+            'vcruntime140.dll', 'vcruntime140_1.dll')) {
+        Copy-Item -LiteralPath $fixture -Destination (Join-Path $payloadRoot $name)
+    }
+    foreach ($relativePath in @(
+            'template.json',
+            'TomCatPlayer.exe',
+            'Managed\TomCat.Managed.dll',
+            'dotnet\host\fxr\10.0.0\hostfxr.dll')) {
+        Copy-Item -LiteralPath $fixture -Destination (Join-Path $templateRoot $relativePath)
+    }
+
+    $runtimeManifestPath = New-TomCatRuntimeManifest `
+        -PayloadRoot $payloadRoot -EngineBuildId 'TomCat-test'
+    $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
+    $manifestFields = @($runtimeManifest.PSObject.Properties.Name | Sort-Object)
+    if (@(Compare-Object @('engineBuildId', 'files', 'schemaVersion') $manifestFields).Count -ne 0 -or
+        $runtimeManifest.schemaVersion -ne 1 -or
+        $runtimeManifest.engineBuildId -ne 'TomCat-test') {
+        throw 'Runtime manifest does not have the strict schemaVersion/engineBuildId/files contract.'
+    }
+    $payloadFilesWithoutManifest = @(Get-ChildItem -LiteralPath $payloadRoot -Recurse -File |
+        Where-Object { $_.FullName -ne $runtimeManifestPath })
+    if (@($runtimeManifest.files).Count -ne $payloadFilesWithoutManifest.Count) {
+        throw 'Runtime manifest does not enumerate every payload file exactly once.'
+    }
+    foreach ($record in @($runtimeManifest.files)) {
+        $entryFields = @($record.PSObject.Properties.Name | Sort-Object)
+        if (@(Compare-Object @('path', 'sha256', 'size') $entryFields).Count -ne 0 -or
+            [string]$record.path -eq 'runtime-manifest.json' -or
+            [string]$record.path -match '\\' -or
+            [string]$record.path -match '(^|/)\.\.(/|$)') {
+            throw "Runtime manifest contains an invalid entry: $($record | ConvertTo-Json -Compress)"
+        }
+        $payloadFile = Join-Path $payloadRoot ([string]$record.path).Replace('/', '\')
+        if (-not (Test-Path -LiteralPath $payloadFile -PathType Leaf) -or
+            [long]$record.size -ne (Get-Item -LiteralPath $payloadFile).Length -or
+            -not ([string]$record.sha256).Equals(
+                (Get-FileHash -LiteralPath $payloadFile -Algorithm SHA256).Hash,
+                [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Runtime manifest entry does not match its payload file: $($record.path)"
+        }
+    }
+
+    if (-not (Test-TomCatRuntimePathSegment -Value 'TomCat-test')) {
+        throw 'Runtime path-segment validation rejected a valid build ID.'
+    }
+    foreach ($invalidBuildId in @('bad:id', 'CON', 'LPT1.txt', 'trailing.', ('x' * 129))) {
+        $invalidBuildIdRejected = $false
+        try {
+            [void](New-TomCatRuntimeManifest -PayloadRoot $payloadRoot `
+                -EngineBuildId $invalidBuildId)
+        } catch {
+            $invalidBuildIdRejected = $true
+        }
+        if (-not $invalidBuildIdRejected) {
+            throw "Runtime manifest accepted unsafe engineBuildId '$invalidBuildId'."
+        }
+    }
+
+    $evbFixture = @'
+<>
+  <Files>
+    <Files>
+      <File>
+        <Type>3</Type>
+        <Name>Packages</Name>
+        <Action>0</Action>
+        <Files></Files>
+      </File>
+      <File>
+        <Type>3</Type>
+        <Name>.tomcat-runtime</Name>
+        <Action>0</Action>
+        <Files></Files>
+      </File>
+    </Files>
+  </Files>
+</>
+'@
+    $packagesOnlyProject = Set-EvbPackageTree -TemplateText $evbFixture `
+        -PackageSource $packagesFixture -ExcludeRelativePaths @('PlayerTemplates')
+    if ($packagesOnlyProject -notmatch '<Name>a&amp;b\.bin</Name>' -or
+        $packagesOnlyProject -match '<Name>must-not-be-virtual\.bin</Name>' -or
+        $packagesOnlyProject -match '<Name>PlayerTemplates</Name>') {
+        throw 'EVB Packages generation did not exclude PlayerTemplates or escape file names.'
+    }
+    $completeEditorProject = Set-EvbDirectoryTree -TemplateText $packagesOnlyProject `
+        -NodeName '.tomcat-runtime' -SourceDirectory $payloadRoot `
+        -FileAction 0 -DirectoryAction 3
+    foreach ($requiredRuntimeEntry in @(
+            'runtime-manifest.json', 'TomCatCLI.exe', 'PlayerTemplates')) {
+        if ($completeEditorProject -notmatch "(?is)<Name>\s*$([regex]::Escape($requiredRuntimeEntry))\s*</Name>") {
+            throw "EVB runtime tree is missing $requiredRuntimeEntry."
+        }
+    }
+    $runtimeMarkerIndex = $completeEditorProject.IndexOf(
+        '<Name>.tomcat-runtime</Name>',
+        [System.StringComparison]::OrdinalIgnoreCase)
+    if ($runtimeMarkerIndex -lt 0) {
+        throw 'EVB runtime payload marker could not be located after tree generation.'
+    }
+    if ($completeEditorProject -notmatch
+        '(?is)<File>\s*<Type>\s*3\s*</Type>\s*<Name>\s*\.tomcat-runtime\s*</Name>\s*<Action>\s*3\s*</Action>') {
+        throw 'The .tomcat-runtime root directory must use Action=3.'
+    }
+    $runtimeFragment = $completeEditorProject.Substring($runtimeMarkerIndex)
+    $runtimeDirectories = @([regex]::Matches($runtimeFragment,
+        '(?is)<File>\s*<Type>\s*3\s*</Type>.*?<Action>\s*([0-3])\s*</Action>'))
+    $runtimeFiles = @([regex]::Matches($runtimeFragment,
+        '(?is)<File>\s*<Type>\s*2\s*</Type>.*?<Action>\s*([0-3])\s*</Action>'))
+    if ($runtimeDirectories.Count -eq 0 -or
+        @($runtimeDirectories | Where-Object { $_.Groups[1].Value -ne '3' }).Count -ne 0) {
+        throw 'Every .tomcat-runtime directory must use Action=3 so the EVB source tree remains fully virtual.'
+    }
+    if ($runtimeFiles.Count -eq 0 -or
+        @($runtimeFiles | Where-Object { $_.Groups[1].Value -ne '0' }).Count -ne 0) {
+        throw 'Every .tomcat-runtime file must use Action=0 so the Editor controls physical extraction.'
+    }
+
+    $actionFixture = @'
+<><Files><Files><File><Type>3</Type><Name>ActionFixture</Name><Action>3</Action><Files></Files></File></Files></Files></>
+'@
+    $customActionProject = Set-EvbDirectoryTree -TemplateText $actionFixture `
+        -NodeName 'ActionFixture' -SourceDirectory $packageResources `
+        -FileAction 2 -DirectoryAction 0
+    if ($customActionProject -notmatch '(?is)<Name>\s*ActionFixture\s*</Name>\s*<Action>0</Action>' -or
+        $customActionProject -notmatch '(?is)<Name>\s*a&amp;b\.bin\s*</Name>.*?<Action>2</Action>') {
+        throw 'Generic EVB tree generation did not honor custom file/directory actions.'
+    }
+
+    Copy-Item -LiteralPath $fixture -Destination (Join-Path $tempRoot 'TomCat.exe')
     Copy-Item -LiteralPath $fixture -Destination (Join-Path $tempRoot 'TomCatHub.exe')
     Copy-Item -LiteralPath $fixture -Destination (Join-Path $tempRoot 'RELEASE_PROVENANCE.json')
     $metadata = New-TomCatReleaseMetadata -RepositoryRoot $repositoryRoot `

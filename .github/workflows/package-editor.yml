@@ -176,29 +176,19 @@ jobs:
 
           function Invoke-Box([string]$evbName, [string]$srcDir, [string]$srcExe) {
             . "$env:GITHUB_WORKSPACE\Scripts\EvbTools.ps1"
-            $isEditor = $evbName -eq "editor.evb"
             $srcDir = (Resolve-Path -LiteralPath $srcDir).Path
             $packageDir = Resolve-EvbPackageDirectory -SourceDir $srcDir
             $packageFileCount = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force).Count
             Write-Host "Scanning $packageFileCount package candidate file(s) from $packageDir"
             New-Item -ItemType Directory -Force -Path "dist" | Out-Null
             Copy-Item "$srcDir\$srcExe" "dist\$srcExe" -Force
-            $outputName = if ($isEditor) { "TomCat.exe" } else { "TomCatHub.exe" }
+            $outputName = "TomCatHub.exe"
             if (Test-Path "dist\$outputName") { Remove-Item "dist\$outputName" -Force }
             $content = Get-Content "Scripts\$evbName" -Raw
             $content = $content.Replace('E:\Github\TomCat_Engine', $env:GITHUB_WORKSPACE)
             $content = Set-EvbProperty -TemplateText $content -ElementName "InputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$srcExe")
             $content = Set-EvbProperty -TemplateText $content -ElementName "OutputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$outputName")
-            if ($isEditor) {
-              if ($content -match '(?is)<Name>\s*Packages\s*</Name>') {
-                throw "Editor EVB template must not embed Packages"
-              }
-              if ($content -match '(?is)<Name>\s*Managed\s*</Name>') {
-                throw "Editor EVB template must not embed Managed"
-              }
-            } else {
-              $content = Set-EvbPackageTree -TemplateText $content -PackageSource $packageDir
-            }
+            $content = Set-EvbPackageTree -TemplateText $content -PackageSource $packageDir
             Write-EvbProject -Path "Scripts\$evbName-ci.evb" -Text $content
             Push-Location "Scripts"
             try { & $env:EVB_CONSOLE "$evbName-ci.evb" } finally { Pop-Location }
@@ -208,13 +198,6 @@ jobs:
             }
             Remove-Item "Scripts\$evbName-ci.evb" -Force -ErrorAction SilentlyContinue
             Remove-Item "dist\$srcExe" -Force -ErrorAction SilentlyContinue
-            if ($isEditor) {
-              $externalPackages = Join-Path $env:GITHUB_WORKSPACE "dist\Packages"
-              if (Test-Path -LiteralPath $externalPackages) {
-                Remove-Item -LiteralPath $externalPackages -Recurse -Force
-              }
-              Copy-Item -LiteralPath $packageDir -Destination $externalPackages -Recurse -Force
-            }
           }
 
           $t = $env:TARGET
@@ -240,18 +223,144 @@ jobs:
             if (-not (Test-Path -LiteralPath $cliShaderOutput -PathType Leaf)) {
               throw "Headless CLI build did not produce $cliShaderOutput"
             }
-            & "$env:GITHUB_WORKSPACE\Scripts\Build-PlayerTemplate.ps1" -Configuration Release -Destination (Join-Path $editorOutput "Packages\PlayerTemplates\win-x64")
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            Invoke-Box "editor.evb" "Editor\bin\Release-windows-x86_64\TomCatInut" "TomCatInut.exe"
-            Copy-Item -LiteralPath $cliOutput -Destination "dist\TomCatCLI.exe" -Force
-            Copy-Item -LiteralPath $cliShaderOutput -Destination "dist\shaderc_shared.dll" -Force
-            Publish-TomCatManagedRelease -RepositoryRoot $env:GITHUB_WORKSPACE -Destination "dist\Managed"
-            $archiveInputs = @("dist\TomCat.exe", "dist\TomCatCLI.exe", "dist\shaderc_shared.dll", "dist\Packages", "dist\Managed")
-            foreach ($name in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
-              Copy-Item -LiteralPath (Join-Path $editorOutput "Packages\PlayerTemplates\win-x64\$name") -Destination (Join-Path "dist" $name) -Force
-              $archiveInputs += Join-Path "dist" $name
+            & "$env:GITHUB_WORKSPACE\Scripts\Package-Editor.ps1" `
+              -SourceDir $editorOutput `
+              -Version $env:RELEASE_VERSION `
+              -PremakePath $env:PREMAKE `
+              -EnigmaProject (Join-Path $env:GITHUB_WORKSPACE "Scripts\editor.evb") `
+              -EnigmaConsole $env:EVB_CONSOLE
+
+            $editorExe = Join-Path $env:GITHUB_WORKSPACE "dist\TomCat.exe"
+            function Assert-NoExternalEditorRuntime {
+              foreach ($relativePath in @(
+                  "dist\.tomcat-editor-staging",
+                  "dist\TomCat",
+                  "dist\TomCatInut.exe",
+                  "dist\TomCatCLI.exe",
+                  "dist\shaderc_shared.dll",
+                  "dist\msvcp140.dll",
+                  "dist\vcruntime140.dll",
+                  "dist\vcruntime140_1.dll",
+                  "dist\Managed",
+                  "dist\Packages")) {
+                $candidate = Join-Path $env:GITHUB_WORKSPACE $relativePath
+                if (Test-Path -LiteralPath $candidate) {
+                  throw "Editor runtime leaked outside the single executable: $candidate"
+                }
+              }
             }
-            Compress-Archive -LiteralPath $archiveInputs -DestinationPath "dist\TomCat.zip" -CompressionLevel Optimal -Force
+            function Invoke-PackagedEditorCliSmoke([string]$workingDirectory, [string]$phase) {
+              Push-Location $workingDirectory
+              try {
+                & $editorExe --cli help
+                $exitCode = $LASTEXITCODE
+              } finally {
+                Pop-Location
+              }
+              if ($exitCode -ne 0) {
+                throw "Packaged Editor $phase CLI smoke failed (exit $exitCode)."
+              }
+            }
+
+            Assert-NoExternalEditorRuntime
+            $runtimeCache = Join-Path $env:LOCALAPPDATA "TomCat\Editor\Runtime"
+            if (Test-Path -LiteralPath $runtimeCache) {
+              Remove-Item -LiteralPath $runtimeCache -Recurse -Force
+            }
+            $probeWorkingDirectory = Join-Path $env:RUNNER_TEMP "tomcat-editor-probe-cwd"
+            $coldWorkingDirectory = Join-Path $env:RUNNER_TEMP "tomcat-editor-cold-cwd"
+            $warmWorkingDirectory = Join-Path $env:RUNNER_TEMP "tomcat-editor-warm-cwd"
+            New-Item -ItemType Directory -Path $probeWorkingDirectory, $coldWorkingDirectory, $warmWorkingDirectory -Force | Out-Null
+
+            Push-Location $probeWorkingDirectory
+            try {
+              $productJson = & $editorExe --product-info-json
+              $productExitCode = $LASTEXITCODE
+            } finally {
+              Pop-Location
+            }
+            if ($productExitCode -ne 0) {
+              throw "Packaged Editor product probe failed (exit $productExitCode)."
+            }
+            $productInfo = $productJson | ConvertFrom-Json
+            if ($productInfo.product -ne "Editor" -or
+                $productInfo.version -ne $versionInfo.ProductVersion -or
+                $productInfo.buildId -ne $versionInfo.EngineBuildID) {
+              throw "Packaged Editor product probe returned inconsistent identity."
+            }
+            if (Test-Path -LiteralPath $runtimeCache) {
+              throw "--product-info-json must not extract the packaged Editor runtime."
+            }
+
+            Invoke-PackagedEditorCliSmoke $coldWorkingDirectory "cold"
+            $coldManifests = @(Get-ChildItem -LiteralPath $runtimeCache `
+              -Filter "runtime-manifest.json" -File -Recurse -Force)
+            if ($coldManifests.Count -ne 1) {
+              throw "Cold packaged Editor smoke did not publish exactly one runtime cache."
+            }
+            $cachedRuntime = $coldManifests[0].Directory.FullName
+            foreach ($requiredRuntimePath in @(
+                "TomCatCLI.exe",
+                "Managed\TomCat.Managed.dll",
+                "Packages\PlayerTemplates\win-x64\TomCatPlayer.exe")) {
+              if (-not (Test-Path -LiteralPath (Join-Path $cachedRuntime $requiredRuntimePath) -PathType Leaf)) {
+                throw "Cold packaged Editor smoke did not extract $requiredRuntimePath."
+              }
+            }
+            $coldManifestHash = (Get-FileHash -LiteralPath $coldManifests[0].FullName -Algorithm SHA256).Hash
+            $coldManifestWriteTime = $coldManifests[0].LastWriteTimeUtc
+            $completionMarker = "$cachedRuntime.complete-v1"
+            if (-not (Test-Path -LiteralPath $completionMarker -PathType Leaf)) {
+              throw "Cold packaged Editor smoke did not publish its completion marker."
+            }
+            $coldCompletionHash = (Get-FileHash -LiteralPath $completionMarker -Algorithm SHA256).Hash
+            $coldCompletionWriteTime = (Get-Item -LiteralPath $completionMarker).LastWriteTimeUtc
+
+            Invoke-PackagedEditorCliSmoke $warmWorkingDirectory "warm"
+            $warmManifests = @(Get-ChildItem -LiteralPath $runtimeCache `
+              -Filter "runtime-manifest.json" -File -Recurse -Force)
+            if ($warmManifests.Count -ne 1 -or
+                $warmManifests[0].FullName -ne $coldManifests[0].FullName -or
+                (Get-FileHash -LiteralPath $warmManifests[0].FullName -Algorithm SHA256).Hash -ne $coldManifestHash -or
+                $warmManifests[0].LastWriteTimeUtc -ne $coldManifestWriteTime -or
+                (Get-FileHash -LiteralPath $completionMarker -Algorithm SHA256).Hash -ne $coldCompletionHash -or
+                (Get-Item -LiteralPath $completionMarker).LastWriteTimeUtc -ne $coldCompletionWriteTime) {
+              throw "Warm packaged Editor smoke did not reuse the validated runtime cache."
+            }
+
+            $buildSmokeRoot = Join-Path $env:RUNNER_TEMP "tomcat-editor-build-cwd"
+            $buildSmokeProject = Join-Path $buildSmokeRoot "PhysicsPlayground"
+            if (Test-Path -LiteralPath $buildSmokeRoot) {
+              Remove-Item -LiteralPath $buildSmokeRoot -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $buildSmokeRoot | Out-Null
+            Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "Samples\PhysicsPlayground") `
+              -Destination $buildSmokeProject -Recurse -Force
+            Push-Location $buildSmokeRoot
+            try {
+              & $editorExe --cli build --project "PhysicsPlayground\Project.tcproj"
+              $buildSmokeExitCode = $LASTEXITCODE
+            } finally {
+              Pop-Location
+            }
+            if ($buildSmokeExitCode -ne 0) {
+              throw "Packaged Editor relative-path Player build smoke failed (exit $buildSmokeExitCode)."
+            }
+            $builtPlayer = Join-Path $buildSmokeProject "Build\PhysicsPlayground\PhysicsPlayground.exe"
+            if (-not (Test-Path -LiteralPath $builtPlayer -PathType Leaf)) {
+              throw "Packaged Editor Player build smoke did not publish $builtPlayer."
+            }
+            $buildManifests = @(Get-ChildItem -LiteralPath $runtimeCache `
+              -Filter "runtime-manifest.json" -File -Recurse -Force)
+            if ($buildManifests.Count -ne 1 -or
+                $buildManifests[0].FullName -ne $coldManifests[0].FullName -or
+                (Get-FileHash -LiteralPath $buildManifests[0].FullName -Algorithm SHA256).Hash -ne $coldManifestHash -or
+                $buildManifests[0].LastWriteTimeUtc -ne $coldManifestWriteTime -or
+                (Get-FileHash -LiteralPath $completionMarker -Algorithm SHA256).Hash -ne $coldCompletionHash -or
+                (Get-Item -LiteralPath $completionMarker).LastWriteTimeUtc -ne $coldCompletionWriteTime) {
+              throw "Packaged Editor Player build rewrote the validated runtime cache."
+            }
+            Assert-NoExternalEditorRuntime
           }
           if ($t -eq "hub" -or $t -eq "both") {
             Write-Host "== Building Hub =="
@@ -284,7 +393,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: TomCat
-          path: dist/TomCat.zip
+          path: dist/TomCat.exe
 
       - name: Upload Hub artifact
         uses: actions/upload-artifact@v4
@@ -340,7 +449,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = "v$env:RELEASE_VERSION"
           $assets = @(
-            "dist\TomCat.zip",
+            "dist\TomCat.exe",
             "dist\TomCatHub.exe",
             "dist\SHA256SUMS",
             "dist\THIRD_PARTY_NOTICES.txt",
