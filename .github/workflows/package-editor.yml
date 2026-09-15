@@ -12,6 +12,7 @@ permissions:
 jobs:
   release-policy:
     runs-on: windows-latest
+    timeout-minutes: 65
     permissions:
       contents: read
       actions: read
@@ -58,9 +59,45 @@ jobs:
           }
 
           $comparison = & gh api "repos/$env:GITHUB_REPOSITORY/compare/$tagTargetSha...$encodedBranch" | ConvertFrom-Json
-          $runs = & gh api -X GET "repos/$env:GITHUB_REPOSITORY/actions/workflows/regressions.yml/runs" `
-            -f "head_sha=$env:RELEASE_SHA" -f "branch=$env:DEFAULT_BRANCH" `
-            -f "status=completed" -f "per_page=100" | ConvertFrom-Json
+
+          # A tag push and its default-branch regression can be scheduled at the
+          # same time. Wait for that exact SHA instead of treating the API's
+          # initially empty result as a provenance failure.
+          $regressionDeadline = [DateTimeOffset]::UtcNow.AddMinutes(60)
+          $regressionRuns = @()
+          while ($true) {
+            $runs = & gh api -X GET "repos/$env:GITHUB_REPOSITORY/actions/workflows/regressions.yml/runs" `
+              -f "head_sha=$env:RELEASE_SHA" -f "branch=$env:DEFAULT_BRANCH" `
+              -f "event=push" -f "per_page=100" | ConvertFrom-Json
+            $regressionRuns = @($runs.workflow_runs)
+            $matchingRuns = @($regressionRuns | Where-Object {
+              ([string]$_.head_sha).Equals($env:RELEASE_SHA, [System.StringComparison]::OrdinalIgnoreCase) -and
+              ([string]$_.head_branch).Equals($env:DEFAULT_BRANCH, [System.StringComparison]::Ordinal) -and
+              ([string]$_.event).Equals('push', [System.StringComparison]::Ordinal)
+            })
+            $successfulRuns = @($matchingRuns | Where-Object {
+              ([string]$_.status).Equals('completed', [System.StringComparison]::Ordinal) -and
+              ([string]$_.conclusion).Equals('success', [System.StringComparison]::Ordinal)
+            })
+            if ($successfulRuns.Count -gt 0) {
+              break
+            }
+
+            $activeRuns = @($matchingRuns | Where-Object {
+              -not ([string]$_.status).Equals('completed', [System.StringComparison]::Ordinal)
+            })
+            $completedRuns = @($matchingRuns | Where-Object {
+              ([string]$_.status).Equals('completed', [System.StringComparison]::Ordinal)
+            })
+            if ($completedRuns.Count -gt 0 -and $activeRuns.Count -eq 0) {
+              break
+            }
+            if ([DateTimeOffset]::UtcNow -ge $regressionDeadline) {
+              throw "Timed out waiting for the full Regressions workflow on default-branch SHA $env:RELEASE_SHA."
+            }
+            Write-Host "Waiting for the full Regressions workflow on $env:DEFAULT_BRANCH at $env:RELEASE_SHA..."
+            Start-Sleep -Seconds 30
+          }
           $regression = Assert-TomCatReleaseProvenance `
             -Tag $env:RELEASE_TAG `
             -Version $versionInfo.ProductVersion `
@@ -70,7 +107,7 @@ jobs:
             -TagRefProtected ([System.Convert]::ToBoolean($env:TAG_REF_PROTECTED)) `
             -DefaultBranchProtected ([bool]$branch.protected) `
             -DefaultBranchComparisonStatus ([string]$comparison.status) `
-            -RegressionRuns @($runs.workflow_runs)
+            -RegressionRuns $regressionRuns
 
           "version=$($versionInfo.ProductVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "regression-run-id=$($regression.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
