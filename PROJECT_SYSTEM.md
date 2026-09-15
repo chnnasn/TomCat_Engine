@@ -131,11 +131,12 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 ## 布局与用户设置
 
 - Editor 程序根目录的 `imgui.ini` 是只读默认布局，并随 Editor 一起封装进 Enigma Virtual Box。
-- Editor 的 `Packages/` 不进入 Enigma 虚拟文件系统，而是与 `TomCat.exe` 一同放在发布目录；Project 面板将它与项目 `Assets/` 作为两个同级根节点展示，并在 UI 与所有资产变更入口中强制只读。
+- Editor 发布物是单个 `TomCat.exe`。只读 Editor 资源封装在 Enigma 的虚拟 `Packages/` 中，Project 面板仍将它与项目 `Assets/` 作为两个同级根节点展示，并在 UI 与所有资产变更入口中强制只读。
+- Managed 工具链、`TomCatCLI.exe` 与 `Packages/PlayerTemplates/win-x64/` 位于隐藏的 `.tomcat-runtime` 载荷中。正常 Editor 启动或 `TomCat.exe --cli ...` 会严格校验清单，将整代运行时原子释放到 `%LOCALAPPDATA%\TomCat\Editor\Runtime/<EngineBuildID>/<ManifestSHA256>/`；后续启动通过完成标记和文件身份复用，发现损坏时整代隔离并重新释放。`--product-info-json` 在释放前返回，供 Hub 快速探测版本。
 - Editor 启动或切换项目时先加载封装的默认布局，再加载当前可写布局。有活动项目时写入该 `Project.tcproj` 同目录下的 `UserSettings/imgui.ini`；无活动项目时写入真实外部目录 `%LOCALAPPDATA%\TomCat\Editor\editor-layout.ini`。窗口、Docking、Scene 工具栏和 Content Browser 布局均遵循这一选择。
 - Editor 的非布局项目状态写入同一项目下的 `UserSettings/editor.json`，不会混入 `imgui.ini` 或 `Project.tcproj`。
 - Hub 没有用户可调整布局；它仍封装只读的默认 `imgui.ini`，但最近打开时间、已知项目列表、本机项目目录和 Editor 目录只写入 `%LOCALAPPDATA%\TomCat\Hub\hub.json`。
-- `%LOCALAPPDATA%\TomCat\Editor`、`Hub`、`Player` 是 EVB 虚拟树之外的真实文件系统目录；三个产品的 `TomCat.log` 和无项目 Editor 布局分别写入对应目录，不参与 EVB 打包。
+- `%LOCALAPPDATA%\TomCat\Editor`、`Hub`、`Player` 是 EVB 虚拟树之外的真实文件系统目录；三个产品的 `TomCat.log`、无项目 Editor 布局及上述 Editor 运行时缓存分别写入对应目录，不参与 EVB 打包。
 - 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成包含 `/UserSettings/`、`/Library/` 和 `/Cache/` 的 `.gitignore`；加载现有项目时会保留原内容并原子补齐缺失规则。
 - 项目根目录不再读取或生成旧式 `imgui.ini`；它只允许作为 Editor 可执行文件的封装默认布局存在。
 - Hub 只读取当前 `hub.json`；文件不存在时使用默认状态，不扫描或迁移旧 INI/YAML 配置。

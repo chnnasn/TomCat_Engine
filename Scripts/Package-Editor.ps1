@@ -1,6 +1,7 @@
 # Package-Editor.ps1
-# Builds the Editor, boxes the executable with Enigma Virtual Box, and keeps
-# Packages as an external, inspectable directory beside TomCat.exe.
+# Builds the Editor and boxes its complete authoring/runtime payload into one
+# self-contained TomCat.exe. Child-process inputs stay virtual until the Editor
+# extracts the verified .tomcat-runtime payload into its per-build cache.
 #
 # Usage:
 #   .\Scripts\Package-Editor.ps1 -Build -EnigmaProject editor.evb
@@ -21,8 +22,8 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $SourceDir) { $SourceDir = Join-Path $RepoRoot "Editor\bin\Release-windows-x86_64\TomCatInut" }
 $FinalName = "TomCat"
 
-# EVB projects have a legacy, non-standard root element. Shared helpers still
-# handle template properties and validation; Editor Packages stay external.
+# EVB projects have a legacy, non-standard root element. Shared helpers update
+# the generated virtual Packages and .tomcat-runtime trees as text.
 . (Join-Path $PSScriptRoot "EvbTools.ps1")
 . (Join-Path $PSScriptRoot "ManagedReleaseTools.ps1")
 . (Join-Path $PSScriptRoot "VersionTools.ps1")
@@ -82,11 +83,13 @@ Write-Host "Scanning $packageFileCount package candidate file(s) from $packageSo
 $dist = Join-Path $RepoRoot "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $outExe = Join-Path $dist "$FinalName.exe"
-$outCli = Join-Path $dist "TomCatCLI.exe"
-$outCliShader = Join-Path $dist "shaderc_shared.dll"
-$outPackages = Join-Path $dist "Packages"
-$outManaged = Join-Path $dist "Managed"
 $outArchive = Join-Path $dist "$FinalName.zip"
+$stagingRoot = Join-Path $dist ".tomcat-editor-staging"
+$payloadRoot = Join-Path $stagingRoot "payload"
+$payloadManaged = Join-Path $payloadRoot "Managed"
+$payloadTemplateParent = Join-Path $payloadRoot "Packages\PlayerTemplates"
+$stagedInputExe = Join-Path $stagingRoot "input\TomCatInut.exe"
+$stagedBoxedExe = Join-Path $stagingRoot "boxed\$FinalName.exe"
 $cliSource = Join-Path $RepoRoot "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
 $cliShaderSource = Join-Path (Split-Path -Parent $cliSource) "shaderc_shared.dll"
 if (-not (Test-Path -LiteralPath $cliSource -PathType Leaf)) {
@@ -95,21 +98,60 @@ if (-not (Test-Path -LiteralPath $cliSource -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $cliShaderSource -PathType Leaf)) {
     throw "Headless CLI shader runtime was not found: $cliShaderSource. Run with -Build or rebuild Tools\Tools.sln first."
 }
-Copy-Item -LiteralPath $cliSource -Destination $outCli -Force
-Copy-Item -LiteralPath $cliShaderSource -Destination $outCliShader -Force
 $nativeRuntimeFiles = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
-foreach ($name in $nativeRuntimeFiles) {
-    Copy-Item -LiteralPath (Join-Path $playerTemplate $name) -Destination (Join-Path $dist $name) -Force
-}
-
-# Managed is a real, external directory. It must never be embedded into EVB;
-# the Editor needs these exact Release artifacts to compile project scripts.
-Publish-TomCatManagedRelease -RepositoryRoot $RepoRoot -Destination $outManaged
-
-# 2) Locate .evb and parse its input/output paths
 $evbInput = ""
 $evbOutput = ""
 $generatedEnigmaProject = ""
+$packageSucceeded = $false
+$releaseMetadataFiles = @(
+    (Join-Path $dist "SHA256SUMS"),
+    (Join-Path $dist "THIRD_PARTY_NOTICES.txt"),
+    (Join-Path $dist "TomCat.spdx.json"),
+    (Join-Path $dist "RELEASE_PROVENANCE.json")
+)
+
+# Remove outputs from the former ZIP layout before constructing the private EVB
+# staging tree. These fixed paths are all direct children of the repository's
+# dist directory.
+$staleOutputs = @(
+        $outExe,
+        $outArchive,
+        (Join-Path $dist "TomCat"),
+        (Join-Path $dist "TomCatInut.exe"),
+        (Join-Path $dist "$FinalName.generated.evb"),
+        (Join-Path $dist "TomCatCLI.exe"),
+        (Join-Path $dist "shaderc_shared.dll"),
+        (Join-Path $dist "msvcp140.dll"),
+        (Join-Path $dist "vcruntime140.dll"),
+        (Join-Path $dist "vcruntime140_1.dll"),
+        (Join-Path $dist "Packages"),
+        (Join-Path $dist "Managed")) + $releaseMetadataFiles + @($stagingRoot)
+foreach ($stalePath in $staleOutputs) {
+    if (Test-Path -LiteralPath $stalePath) {
+        Remove-Item -LiteralPath $stalePath -Recurse -Force
+    }
+}
+
+try {
+New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
+New-Item -ItemType Directory -Path (Split-Path -Parent $stagedBoxedExe) -Force | Out-Null
+Copy-Item -LiteralPath $cliSource -Destination (Join-Path $payloadRoot "TomCatCLI.exe") -Force
+Copy-Item -LiteralPath $cliShaderSource -Destination (Join-Path $payloadRoot "shaderc_shared.dll") -Force
+foreach ($name in $nativeRuntimeFiles) {
+    $runtimeSource = Join-Path $playerTemplate $name
+    if (-not (Test-Path -LiteralPath $runtimeSource -PathType Leaf)) {
+        throw "Player template native runtime was not found: $runtimeSource"
+    }
+    Copy-Item -LiteralPath $runtimeSource -Destination (Join-Path $payloadRoot $name) -Force
+}
+
+Publish-TomCatManagedRelease -RepositoryRoot $RepoRoot -Destination $payloadManaged
+New-Item -ItemType Directory -Path $payloadTemplateParent -Force | Out-Null
+Copy-Item -LiteralPath $playerTemplate -Destination $payloadTemplateParent -Recurse -Force
+[void](New-TomCatRuntimeManifest -PayloadRoot $payloadRoot `
+    -EngineBuildId $versionInfo.EngineBuildID)
+
+# 2) Locate .evb and parse its input/output paths
 if ($EnigmaProject) {
     if (-not (Test-Path $EnigmaProject)) {
         $candidates = @(
@@ -130,27 +172,24 @@ if ($EnigmaProject) {
     $defaultSourceDir = Join-Path $RepoRoot "Editor\bin\Release-windows-x86_64\TomCatInut"
     $evbText = $evbText.Replace('E:\Github\TomCat_Engine', $RepoRoot)
     $evbText = $evbText.Replace($defaultSourceDir, $SourceDir)
-    $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "InputFile" -Value (Join-Path $dist "TomCatInut.exe")
-    $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "OutputFile" -Value $outExe
-    if ($evbText -match '(?is)<Name>\s*Packages\s*</Name>') {
-        throw "Editor EVB template must not embed Packages; distribute it beside TomCat.exe"
-    }
-    if ($evbText -match '(?is)<Name>\s*Managed\s*</Name>') {
-        throw "Editor EVB template must not embed Managed; distribute it beside TomCat.exe"
-    }
+    $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "InputFile" -Value $stagedInputExe
+    $evbText = Set-EvbProperty -TemplateText $evbText -ElementName "OutputFile" -Value $stagedBoxedExe
+    $evbText = Set-EvbPackageTree -TemplateText $evbText `
+        -PackageSource $packageSource -ExcludeRelativePaths @("PlayerTemplates")
+    $evbText = Set-EvbDirectoryTree -TemplateText $evbText `
+        -NodeName ".tomcat-runtime" -SourceDirectory $payloadRoot `
+        -FileAction 0 -DirectoryAction 3
 
-    $generatedEnigmaProject = Join-Path $dist "$FinalName.generated.evb"
+    $generatedEnigmaProject = Join-Path $stagingRoot "$FinalName.generated.evb"
     Write-EvbProject -Path $generatedEnigmaProject -Text $evbText
     $EnigmaProject = $generatedEnigmaProject
-
-    if ($evbText -match '<InputFile>(.*?)</InputFile>') { $evbInput = $Matches[1] }
-    if ($evbText -match '<OutputFile>(.*?)</OutputFile>') { $evbOutput = $Matches[1] }
+    # Keep physical staging paths separately from their XML-escaped text so a
+    # repository path containing '&' or another XML metacharacter remains valid.
+    $evbInput = $stagedInputExe
+    $evbOutput = $stagedBoxedExe
 }
 
-# 3) Output exe name is intentionally stable; Version is release metadata only.
-if (Test-Path $outExe) { Remove-Item $outExe -Force }
-
-# 4) Stage the built exe where .evb expects its input (e.g. dist\TomCatInut.exe)
+# 3) Stage the built exe inside the private tree referenced by the generated EVB.
 if ($evbInput) {
     $srcExe = Join-Path $SourceDir "TomCatInut.exe"
     if (-not (Test-Path $srcExe)) { throw "Built exe not found: $srcExe" }
@@ -159,7 +198,7 @@ if ($evbInput) {
     Write-Host "[EVB] Staged input exe -> $evbInput"
 }
 
-# 5) Enigma boxing
+# 4) Enigma boxing
 if ($EnigmaProject) {
     if (-not $EnigmaConsole) {
         $candidates = @(
@@ -185,36 +224,41 @@ if ($EnigmaProject) {
     Write-Host "[EVB] Skipping Enigma boxing (pass -EnigmaProject <file.evb> to enable)"
 }
 
-# 6) Keep the boxed executable and publish the real Packages directory beside it.
-if ($evbOutput -and (Test-Path $evbOutput)) {
+# 5) Validate the boxed file while it is still private, then publish it with a
+# same-volume rename. No partial TomCat.exe is ever visible in dist.
+if ($evbOutput -and (Test-Path -LiteralPath $evbOutput -PathType Leaf)) {
     $evbOutputFull = [System.IO.Path]::GetFullPath($evbOutput)
     $outExeFull = [System.IO.Path]::GetFullPath($outExe)
-    if ($evbOutputFull -ne $outExeFull) {
-        Copy-Item $evbOutput $outExe -Force
+    $boxedLength = (Get-Item -LiteralPath $evbOutputFull).Length
+    if ($boxedLength -le 0) {
+        throw "Enigma Virtual Box produced an empty Editor executable: $evbOutputFull"
     }
-    if (Test-Path -LiteralPath $outPackages) {
-        Remove-Item -LiteralPath $outPackages -Recurse -Force
+    if ([System.IO.Path]::GetPathRoot($evbOutputFull) -ne
+        [System.IO.Path]::GetPathRoot($outExeFull)) {
+        throw "Editor staging and final output must stay on the same volume for atomic publication."
     }
-    Copy-Item -LiteralPath $packageSource -Destination $outPackages -Recurse -Force
-    if (Test-Path -LiteralPath $outArchive) {
-        Remove-Item -LiteralPath $outArchive -Force
-    }
-    $archiveInputs = @($outExe, $outCli, $outCliShader, $outPackages, $outManaged)
-    $archiveInputs += @($nativeRuntimeFiles | ForEach-Object { Join-Path $dist $_ })
-    Compress-Archive -LiteralPath $archiveInputs -DestinationPath $outArchive -CompressionLevel Optimal
+    [System.IO.File]::Move($evbOutputFull, $outExeFull)
     New-TomCatReleaseMetadata -RepositoryRoot $RepoRoot -DistPath $dist -Target editor -Version $Version | Out-Null
-    Write-Host "[Package] Final package -> $outArchive"
+    $packageSucceeded = $true
+    Write-Host "[Package] Single-file Editor -> $outExe"
     $sizeMb = [math]::Round((Get-Item $outExe).Length / 1MB, 1)
-    Write-Host "Done: $outExe ($sizeMb MB) + $outCli + $outPackages + $outManaged"
+    Write-Host "Done: $outExe ($sizeMb MB)"
 } else {
     throw "Boxed Editor executable not found at '$evbOutput'"
 }
 
-# Cleanup intermediate files inside dist/ (input copy + .evb-named boxed exe); keep the final exe
-$distPrefix = $dist.TrimEnd('\') + '\'
-if ($evbInput -and (Test-Path $evbInput) -and $evbInput.StartsWith($distPrefix)) { Remove-Item $evbInput -Force }
-if ($evbOutput -and (Test-Path $evbOutput) -and $evbOutput.StartsWith($distPrefix) -and
-    ([System.IO.Path]::GetFullPath($evbOutput) -ne [System.IO.Path]::GetFullPath($outExe))) {
-    Remove-Item $evbOutput -Force
 }
-if ($generatedEnigmaProject -and (Test-Path $generatedEnigmaProject)) { Remove-Item $generatedEnigmaProject -Force }
+finally {
+    # A failed run owns no publishable output. Remove the just-published file and
+    # any metadata that may have been partially written before cleaning staging.
+    if (-not $packageSucceeded) {
+        foreach ($failedOutput in @($outExe) + $releaseMetadataFiles) {
+            if (Test-Path -LiteralPath $failedOutput) {
+                Remove-Item -LiteralPath $failedOutput -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    if (Test-Path -LiteralPath $stagingRoot) {
+        Remove-Item -LiteralPath $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}

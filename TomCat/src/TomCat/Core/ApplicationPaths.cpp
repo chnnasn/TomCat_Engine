@@ -20,6 +20,8 @@ namespace TomCat {
 
 		std::mutex s_RuntimeGameDataMutex;
 		std::optional<GameDataPaths> s_RuntimeGameDataPaths;
+		std::mutex s_RuntimeEditorRootMutex;
+		std::optional<std::filesystem::path> s_RuntimeEditorRoot;
 
 		bool IsSafeIdentitySegment(std::string_view value)
 		{
@@ -164,6 +166,48 @@ namespace TomCat {
 		const auto productRoot = GetProductDataRoot(product);
 		return productRoot ? std::optional<std::filesystem::path>(*productRoot / "TomCat.log")
 			: std::nullopt;
+	}
+
+	std::optional<std::filesystem::path>
+		ApplicationPaths::ResolveEditorRuntimeCacheRoot(
+			const std::filesystem::path& localAppData)
+	{
+		const auto editorRoot = ResolveProductDataRoot(
+			localAppData, ApplicationProduct::Editor);
+		return editorRoot
+			? std::optional<std::filesystem::path>(*editorRoot / "Runtime")
+			: std::nullopt;
+	}
+
+	std::optional<std::filesystem::path>
+		ApplicationPaths::GetEditorRuntimeCacheRoot()
+	{
+		const auto localAppData = GetLocalAppDataRoot();
+		return localAppData ? ResolveEditorRuntimeCacheRoot(*localAppData)
+			: std::nullopt;
+	}
+
+	void ApplicationPaths::SetRuntimeEditorRoot(
+		const std::filesystem::path& root)
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimeEditorRootMutex);
+		if (root.empty())
+			s_RuntimeEditorRoot.reset();
+		else
+			s_RuntimeEditorRoot = root.lexically_normal();
+	}
+
+	void ApplicationPaths::ClearRuntimeEditorRoot()
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimeEditorRootMutex);
+		s_RuntimeEditorRoot.reset();
+	}
+
+	std::optional<std::filesystem::path>
+		ApplicationPaths::GetRuntimeEditorRoot()
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimeEditorRootMutex);
+		return s_RuntimeEditorRoot;
 	}
 
 	std::optional<GameDataPaths> ApplicationPaths::ResolveGameDataPaths(

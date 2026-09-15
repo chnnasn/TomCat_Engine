@@ -168,6 +168,7 @@
     <ClInclude Include="src\TomCat\Core\ApplicationPaths.h" />
     <ClInclude Include="src\TomCat\Core\Base.h" />
     <ClInclude Include="src\TomCat\Core\CrashReporter.h" />
+    <ClInclude Include="src\TomCat\Core\EditorRuntimeBundle.h" />
     <ClInclude Include="src\TomCat\Core\EntryPoint.h" />
     <ClInclude Include="src\TomCat\Core\Input.h" />
     <ClInclude Include="src\TomCat\Core\InputEventQueue.h" />
@@ -701,6 +702,7 @@
     <ClCompile Include="src\TomCat\Core\Application.cpp" />
     <ClCompile Include="src\TomCat\Core\ApplicationPaths.cpp" />
     <ClCompile Include="src\TomCat\Core\CrashReporter.cpp" />
+    <ClCompile Include="src\TomCat\Core\EditorRuntimeBundle.cpp" />
     <ClCompile Include="src\TomCat\Core\Layer.cpp" />
     <ClCompile Include="src\TomCat\Core\LayerStack.cpp" />
     <ClCompile Include="src\TomCat\Core\Log.cpp" />

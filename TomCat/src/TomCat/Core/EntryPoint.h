@@ -9,6 +9,7 @@
 	#include <cstdio>
 	#include <cwchar>
 	#include <iterator>
+	#include <optional>
 	#include <stdexcept>
 	#include <string>
 	#include <string_view>
@@ -158,6 +159,9 @@ int wmain(int argc, wchar_t** argv) {
 	bool profilingEnabled = false;
 	try
 	{
+		std::error_code launchDirectoryError;
+		const std::filesystem::path launchWorkingDirectory =
+			std::filesystem::current_path(launchDirectoryError);
 		TomCat::SetPackagedWorkingDirectory();
 #ifdef TC_APPLICATION_PRODUCT
 	// Product identity is compiled into each executable. This remains correct
@@ -170,6 +174,18 @@ int wmain(int argc, wchar_t** argv) {
 			return 0;
 		TomCat::Log::Init(applicationProduct);
 		TomCat::CrashReporter::Install(applicationProduct);
+#ifdef TC_APPLICATION_BOOTSTRAP
+		if (const std::optional<int> bootstrapExitCode =
+			TC_APPLICATION_BOOTSTRAP(argc, argv,
+				launchDirectoryError ? std::filesystem::path{} : launchWorkingDirectory))
+		{
+			TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
+			TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+			TomCat::Log::Shutdown();
+			TomCat::CrashReporter::Uninstall();
+			return *bootstrapExitCode;
+		}
+#endif
 		profilingEnabled = TomCat::IsProfilingRequested(argc, argv);
 		std::vector<std::string> utf8Arguments;
 		std::vector<char*> argumentPointers;
@@ -214,6 +230,7 @@ int wmain(int argc, wchar_t** argv) {
 		if (profilingEnabled)
 			TC_PROFILE_END_SESSION();
 		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
 		TomCat::Log::Shutdown();
 		TomCat::CrashReporter::Uninstall();
 		return exitCode;
@@ -234,6 +251,7 @@ int wmain(int argc, wchar_t** argv) {
 		}
 		(void)TomCat::CrashReporter::WriteReport(exception.what());
 		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
 		TomCat::Log::Shutdown();
 		TomCat::CrashReporter::Uninstall();
 		return 70;
@@ -255,6 +273,7 @@ int wmain(int argc, wchar_t** argv) {
 		(void)TomCat::CrashReporter::WriteReport(
 			"unhandled non-standard application exception");
 		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
+		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
 		TomCat::Log::Shutdown();
 		TomCat::CrashReporter::Uninstall();
 		return 70;

@@ -134,7 +134,9 @@ vendor/            premake and third-party dependencies
 
 - Local: `Scripts\Package-Editor.ps1` / `Scripts\Package-Hub.ps1`
 - CI: push and pull requests run the unified Release regressions; the packaging workflow can publish Editor / Hub / both
-- The Editor package keeps `Managed/` and `Packages/PlayerTemplates/win-x64/` external. User settings, project source, and authoring JSON are never embedded in the executable.
+- The official Editor download is one EVB-compressed `TomCat.exe`. Editor resources stay in its virtual `Packages` tree; the embedded manifest, Managed toolchain, headless CLI, and win-x64 Player Template are extracted only when the Editor runtime is needed, then verified and atomically cached below `%LOCALAPPDATA%\TomCat\Editor\Runtime` for reuse.
+- Run packaged headless builds through `TomCat.exe --cli cook ...` or `TomCat.exe --cli build ...`. The wrapper verifies the same embedded runtime and forwards the command to its cached `TomCatCLI.exe`.
+- User settings, layouts, logs, project source, and authoring JSON remain outside the executable and its immutable runtime cache.
 - Editor **Build** / **Build And Run** cooks enabled Build Settings scenes into `Game.tcpak`, copies the strict Player Template through staging, verifies every SHA-256 and compatibility version, then atomically publishes the build.
 
 ## Status and Roadmap

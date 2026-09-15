@@ -124,7 +124,9 @@ vendor/            premake 与第三方依赖
 
 - 本地打包：Scripts\Package-Editor.ps1 / Scripts\Package-Hub.ps1
 - Push 与 Pull Request 会自动运行统一 Release 回归；打包 Workflow 仍可选择发布 Editor / Hub / 两者
-- Editor 包将 `Managed/` 和 `Packages/PlayerTemplates/win-x64/` 保持为外部目录；UserSettings、项目源码与作者态 JSON 不进入可执行文件
+- 官方 Editor 下载物是经 EVB 压缩的单个 `TomCat.exe`。Editor 资源保留在虚拟 `Packages` 树中；内嵌清单、Managed 工具链、无界面 CLI 和 win-x64 Player Template 只在 Editor 运行时需要时释放，并在校验后原子缓存到 `%LOCALAPPDATA%\TomCat\Editor\Runtime` 供后续复用
+- 打包后的无界面构建通过 `TomCat.exe --cli cook ...` 或 `TomCat.exe --cli build ...` 调用；包装器校验同一份内嵌运行时，并返回缓存中 `TomCatCLI.exe` 的退出码
+- UserSettings、布局、日志、项目源码与作者态 JSON 均位于可执行文件及不可变运行时缓存之外
 - Editor 的 **Build** / **Build And Run** 会把已启用 Build Settings 场景 Cook 为 `Game.tcpak`，在 staging 中复制严格 Player Template，校验全部 SHA-256 与兼容版本后原子发布
 
 ## 当前状态与 Roadmap
