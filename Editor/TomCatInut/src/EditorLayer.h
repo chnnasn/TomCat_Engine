@@ -118,6 +118,10 @@ namespace TomCat {
 		// Persist the Scene toolbar arrangement alongside ImGui's window layout.
 		void LoadSceneToolbarLayout();
 		void SaveSceneToolbarLayout();
+		void LoadEditorPanelLayout();
+		bool SaveEditorPanelLayout();
+		void SaveEditorLayoutIfNeeded();
+		uint32_t GetEditorPanelVisibilityMask() const;
 		// Shared drag helper: submits the invisible handle and owns the only
 		// drag/dock state transitions used by both Scene toolbars.
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -279,6 +283,8 @@ namespace TomCat {
 		bool m_ShowConsolePanel = false;
 		bool m_ShowBuildSettingsPanel = false;
 		bool m_FocusBuildSettingsPanel = false;
+		uint32_t m_LastSavedPanelVisibilityMask = 0;
+		bool m_PanelVisibilitySnapshotInitialized = false;
 		std::string m_BuildSettingsStatus;
 		bool m_BuildSettingsSucceeded = false;
 		std::string m_PlayerBuildStatus;
