@@ -95,6 +95,9 @@
       <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_sharedd.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-cored.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsld.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\TomCat\vendor\Box2D\bin\Debug-windows-x86_64\Box2D;..\..\TomCat\vendor\GLFW\bin\Debug-windows-x86_64\GLFW;..\..\TomCat\vendor\Glad\bin\Debug-windows-x86_64\Glad;..\..\TomCat\vendor\ImGui\bin\Debug-windows-x86_64\ImGui;..\..\TomCat\vendor\yaml-cpp\bin\Debug-windows-x86_64\yaml-cpp;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_sharedd.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_sharedd.dll" "../bin/Debug-windows-x86_64/ImporterRegression\" &gt; nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -120,6 +123,9 @@
       <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\TomCat\vendor\Box2D\bin\Release-windows-x86_64\Box2D;..\..\TomCat\vendor\GLFW\bin\Release-windows-x86_64\GLFW;..\..\TomCat\vendor\Glad\bin\Release-windows-x86_64\Glad;..\..\TomCat\vendor\ImGui\bin\Release-windows-x86_64\ImGui;..\..\TomCat\vendor\yaml-cpp\bin\Release-windows-x86_64\yaml-cpp;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Release-windows-x86_64/ImporterRegression\" &gt; nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
     <ClCompile>
@@ -145,6 +151,9 @@
       <AdditionalDependencies>Box2D.lib;GLFW.lib;Glad.lib;ImGui.lib;yaml-cpp.lib;opengl32.lib;..\..\vendor\VulkanSDK\Lib\shaderc_shared.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-core.lib;..\..\vendor\VulkanSDK\Lib\spirv-cross-glsl.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\TomCat\vendor\Box2D\bin\Dist-windows-x86_64\Box2D;..\..\TomCat\vendor\GLFW\bin\Dist-windows-x86_64\GLFW;..\..\TomCat\vendor\Glad\bin\Dist-windows-x86_64\Glad;..\..\TomCat\vendor\ImGui\bin\Dist-windows-x86_64\ImGui;..\..\TomCat\vendor\yaml-cpp\bin\Dist-windows-x86_64\yaml-cpp;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Dist-windows-x86_64/ImporterRegression\" &gt; nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\ImporterRegression.cpp" />
