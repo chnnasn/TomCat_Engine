@@ -241,7 +241,10 @@ if ($Check) {
     if (-not (Test-Path -LiteralPath $OutputPath)) {
         throw "Generated proxy file is missing: $OutputPath"
     }
-    $existing = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $OutputPath))
+	# Git may materialize the generated source with CRLF on Windows while this
+	# generator deliberately builds canonical LF content. Compare normalized text
+	# so the stale check detects schema/code changes instead of checkout policy.
+    $existing = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $OutputPath)).Replace("`r`n", "`n").Replace("`r", "`n")
     if ($existing -cne $content) {
         throw 'ComponentProxy.Generated.cs is stale. Run Scripts/Generate-Component-Proxies.ps1.'
     }
