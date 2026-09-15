@@ -12,6 +12,7 @@
 #include <string_view>
 #include <array>
 #include <cstdint>
+#include <cwctype>
 #include <iterator>
 
 namespace TomCat {
@@ -517,6 +518,111 @@ namespace TomCat {
 			return result;
 		}
 
+		std::optional<std::string> QueryProductInfo(
+			const std::filesystem::path& executablePath)
+		{
+			SECURITY_ATTRIBUTES security{};
+			security.nLength = sizeof(security);
+			security.bInheritHandle = TRUE;
+			HANDLE readPipe = nullptr;
+			HANDLE writePipe = nullptr;
+			if (!CreatePipe(&readPipe, &writePipe, &security, 0))
+				return std::nullopt;
+			if (!SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0))
+			{
+				CloseHandle(readPipe);
+				CloseHandle(writePipe);
+				return std::nullopt;
+			}
+
+			STARTUPINFOW startup{};
+			startup.cb = sizeof(startup);
+			startup.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+			startup.wShowWindow = SW_HIDE;
+			startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+			startup.hStdOutput = writePipe;
+			startup.hStdError = writePipe;
+			PROCESS_INFORMATION process{};
+			const std::wstring applicationPath = ExtendedLengthPath(executablePath);
+			std::wstring command = QuoteWindowsArgument(applicationPath)
+				+ L" --product-info-json";
+			const std::wstring workingDirectory =
+				ExtendedLengthPath(executablePath.parent_path());
+			const BOOL launched = CreateProcessW(applicationPath.c_str(), command.data(),
+				nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+				workingDirectory.c_str(), &startup, &process);
+			CloseHandle(writePipe);
+			if (!launched)
+			{
+				CloseHandle(readPipe);
+				return std::nullopt;
+			}
+
+			const DWORD waitResult = WaitForSingleObject(process.hProcess, 3000);
+			if (waitResult != WAIT_OBJECT_0)
+			{
+				TerminateProcess(process.hProcess, 124);
+				WaitForSingleObject(process.hProcess, 1000);
+			}
+
+			std::string output;
+			std::array<char, 4096> buffer{};
+			while (output.size() < 64 * 1024)
+			{
+				DWORD available = 0;
+				if (!PeekNamedPipe(readPipe, nullptr, 0, nullptr, &available, nullptr)
+					|| available == 0)
+					break;
+				DWORD bytesRead = 0;
+				const DWORD requested = (std::min)(available,
+					static_cast<DWORD>(buffer.size()));
+				if (!ReadFile(readPipe, buffer.data(), requested, &bytesRead, nullptr)
+					|| bytesRead == 0)
+					break;
+				output.append(buffer.data(), bytesRead);
+			}
+			CloseHandle(readPipe);
+
+			DWORD exitCode = 1;
+			GetExitCodeProcess(process.hProcess, &exitCode);
+			CloseHandle(process.hThread);
+			CloseHandle(process.hProcess);
+			if (waitResult != WAIT_OBJECT_0 || exitCode != 0 || output.empty()
+				|| output.size() >= 64 * 1024)
+				return std::nullopt;
+			return output;
+		}
+
+		std::optional<EditorInstallation> InspectEditorExecutable(
+			const std::filesystem::path& executablePath)
+		{
+			const auto productInfo = QueryProductInfo(executablePath);
+			if (!productInfo)
+				return std::nullopt;
+			try
+			{
+				const JsonValue root = JsonParser{ *productInfo }.Parse();
+				if (root.Type != JsonValueType::Object)
+					return std::nullopt;
+				const JsonValue* product = root.Find("product");
+				const JsonValue* version = root.Find("version");
+				const JsonValue* buildID = root.Find("buildId");
+				if (!product || product->Type != JsonValueType::String
+					|| product->Text != "Editor"
+					|| !version || version->Type != JsonValueType::String
+					|| version->Text.empty()
+					|| !buildID || buildID->Type != JsonValueType::String
+					|| buildID->Text.empty())
+					return std::nullopt;
+				return EditorInstallation{
+					version->Text, buildID->Text, executablePath.lexically_normal() };
+			}
+			catch (const std::exception&)
+			{
+				return std::nullopt;
+			}
+		}
+
 #endif
 
 	}
@@ -558,54 +664,81 @@ namespace TomCat {
 		if (!PrepareManagedDirectory(directory, preparedDirectory, "Editor"))
 			return false;
 		const std::filesystem::path previousDirectory = m_EditorDirectory;
+		const std::vector<EditorInstallation> previousInstallations = m_EditorInstallations;
 		m_EditorDirectory = std::move(preparedDirectory);
-		if (!SaveHubSettings())
+		if (!ScanEditorInstallations() || !SaveHubSettings())
 		{
 			m_EditorDirectory = previousDirectory;
+			m_EditorInstallations = previousInstallations;
 			return false;
 		}
 		return true;
 	}
 
-	std::optional<std::vector<std::string>> ProjectManager::GetEditorDirectoryFiles() const
+	bool ProjectManager::ScanEditorInstallations()
 	{
-		std::vector<std::string> fileNames;
+		std::vector<EditorInstallation> installations;
 		std::error_code error;
 		if (!std::filesystem::is_directory(m_EditorDirectory, error) || error)
 		{
 			TC_Core_Error("Editor directory is not accessible: {0}{1}", PathToUTF8(m_EditorDirectory),
 				error ? " (" + error.message() + ")" : std::string{});
-			return std::nullopt;
+			return false;
 		}
 
-		std::filesystem::directory_iterator iterator(m_EditorDirectory, error), end;
+		std::filesystem::recursive_directory_iterator iterator(m_EditorDirectory,
+			std::filesystem::directory_options::skip_permission_denied, error), end;
 		if (error)
 		{
 			TC_Core_Error("Could not enumerate Editor directory '{0}': {1}",
 				PathToUTF8(m_EditorDirectory), error.message());
-			return std::nullopt;
+			return false;
 		}
 		for (; iterator != end; iterator.increment(error))
 		{
 			std::error_code entryError;
-			if (iterator->is_directory(entryError) && !entryError)
-				fileNames.push_back(PathToUTF8(iterator->path().filename()));
-			else if (entryError)
+			if (!iterator->is_regular_file(entryError))
 			{
-				TC_Core_Error("Could not inspect Editor directory entry '{0}': {1}",
-					PathToUTF8(iterator->path()), entryError.message());
-				return std::nullopt;
+				if (entryError)
+					TC_Core_Warn("Could not inspect Editor directory entry '{0}': {1}",
+						PathToUTF8(iterator->path()), entryError.message());
+				continue;
 			}
+			std::wstring extension = iterator->path().extension().wstring();
+			std::transform(extension.begin(), extension.end(), extension.begin(),
+				[](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
+			if (extension != L".exe")
+				continue;
+			if (auto installation = InspectEditorExecutable(iterator->path()))
+				installations.push_back(std::move(*installation));
 		}
 		if (error)
 		{
 			TC_Core_Error("Failed while enumerating Editor directory '{0}': {1}",
 				PathToUTF8(m_EditorDirectory), error.message());
-			return std::nullopt;
+			return false;
 		}
 
-		std::sort(fileNames.begin(), fileNames.end());
-		return fileNames;
+		std::sort(installations.begin(), installations.end(),
+			[](const EditorInstallation& left, const EditorInstallation& right)
+			{
+				if (left.Version != right.Version)
+					return left.Version < right.Version;
+				return PathToUTF8(left.ExecutablePath) < PathToUTF8(right.ExecutablePath);
+			});
+		m_EditorInstallations = std::move(installations);
+		return true;
+	}
+
+	std::optional<std::vector<std::string>> ProjectManager::GetEditorVersions()
+	{
+		std::vector<std::string> versions;
+		for (const EditorInstallation& installation : m_EditorInstallations)
+		{
+			if (versions.empty() || versions.back() != installation.Version)
+				versions.push_back(installation.Version);
+		}
+		return versions;
 	}
 
 	bool ProjectManager::ScanProjects()
@@ -951,23 +1084,18 @@ namespace TomCat {
 	}
 
 	std::optional<std::filesystem::path> ProjectManager::ResolveEditorExecutable(
-		const std::filesystem::path& editorDirectory, std::string_view editorVersion)
+		const std::vector<EditorInstallation>& installations, std::string_view editorVersion)
 	{
-		if (editorDirectory.empty() || editorVersion.empty())
+		if (editorVersion.empty())
 			return std::nullopt;
-		const std::filesystem::path versionDirectory =
-			UTF8ToPath(std::string(editorVersion));
-		if (versionDirectory.is_absolute() || versionDirectory.has_root_name()
-			|| versionDirectory.has_root_directory()
-			|| versionDirectory.filename() != versionDirectory
-			|| versionDirectory == "." || versionDirectory == "..")
-			return std::nullopt;
-		const std::filesystem::path candidate =
-			editorDirectory / versionDirectory / "TomCat.exe";
-		std::error_code error;
-		if (!std::filesystem::is_regular_file(candidate, error) || error)
-			return std::nullopt;
-		return candidate.lexically_normal();
+		const auto found = std::find_if(installations.begin(), installations.end(),
+			[editorVersion](const EditorInstallation& installation)
+			{
+				return installation.Version == editorVersion;
+			});
+		return found == installations.end()
+			? std::nullopt
+			: std::optional<std::filesystem::path>(found->ExecutablePath);
 	}
 
 	void ProjectManager::OpenProjectInEditor(Ref<Project> project)
@@ -975,18 +1103,20 @@ namespace TomCat {
 		if (!project)
 			return;
 
-		const std::filesystem::path requestedPath =
-			m_EditorDirectory / UTF8ToPath(project->GetEditorVersion()) / "TomCat.exe";
-		TC_Core_Info("Looking for editor at: {0}", PathToUTF8(requestedPath));
+		if (!ScanEditorInstallations())
+			return;
+		TC_Core_Info("Looking for Editor version {0} in: {1}",
+			project->GetEditorVersion(), PathToUTF8(m_EditorDirectory));
 		const auto resolvedEditor = ResolveEditorExecutable(
-			m_EditorDirectory, project->GetEditorVersion());
+			m_EditorInstallations, project->GetEditorVersion());
 		if (!resolvedEditor)
 		{
 			TC_Core_Error("The requested Editor version is not installed: {0}",
-				PathToUTF8(requestedPath));
+				project->GetEditorVersion());
 			return;
 		}
 		const std::filesystem::path& editorPath = *resolvedEditor;
+		TC_Core_Info("Using Editor executable: {0}", PathToUTF8(editorPath));
 
 		const std::wstring applicationPath = ExtendedLengthPath(editorPath);
 		const std::wstring projectPath = ExtendedLengthPath(project->GetProjectPath());
@@ -1030,6 +1160,7 @@ namespace TomCat {
 	{
 		m_ProjectDirectory.clear();
 		m_EditorDirectory.clear();
+		m_EditorInstallations.clear();
 		m_KnownProjectPaths.clear();
 		m_ProjectLastOpenedTimes.clear();
 		m_IgnoredProjectPaths.clear();

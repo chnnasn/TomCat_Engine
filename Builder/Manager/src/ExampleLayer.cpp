@@ -154,7 +154,7 @@ namespace TomCat {
 			TC_Core_Warn("The configured Editor directory could not be opened");
 		m_Projects = projectManager.GetProjects();
 		
-		if (auto editors = projectManager.GetEditorDirectoryFiles())
+		if (auto editors = projectManager.GetEditorVersions())
 			m_Editors = std::move(*editors);
 		else
 			m_Editors.clear();
@@ -651,7 +651,7 @@ void ExampleLayer::OnEvent(Event& e)
 		static bool needsRefresh = true;
 		if (needsRefresh)
 		{
-			if (auto editors = ProjectManager::Get().GetEditorDirectoryFiles())
+			if (auto editors = ProjectManager::Get().GetEditorVersions())
 				m_Editors = std::move(*editors);
 			else
 				m_Editors.clear();
@@ -948,7 +948,7 @@ void ExampleLayer::RenderSettingsDialog()
 						{
 							if (ProjectManager::Get().SetEditorDirectory(selectedPath))
 							{
-								if (auto editors = ProjectManager::Get().GetEditorDirectoryFiles())
+								if (auto editors = ProjectManager::Get().GetEditorVersions())
 									m_Editors = std::move(*editors);
 								else
 									m_Editors.clear();

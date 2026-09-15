@@ -28,9 +28,11 @@ through visual authoring tools, while the Player runs packaged games independent
 
 ### Projects and workspace
 
-The Hub organizes projects and their Editor versions. The Editor brings Scene,
-Game, Hierarchy, Inspector, Project, and Console panels together in a responsive
-dockable workspace whose panel visibility and layout are saved as they change.
+The Hub organizes projects and discovers installed Editors from their compiled
+product identity, so version selection and launching do not depend on folder or
+executable names. The Editor brings Scene, Game, Hierarchy, Inspector, Project,
+and Console panels together in a responsive dockable workspace whose panel
+visibility and layout are saved as they change.
 
 ![Full-screen Hub project creation and Editor project opening](docs/portfolio/01-hub-project.gif)
 
@@ -76,7 +78,7 @@ with a dynamic rectangle and a static floor, or view the
 - **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
 - **Editor**: ImGui Scene, Game, Hierarchy, Inspector, Project, and Console panels with responsive docking, actively persisted panel visibility/layout, Hierarchy Scene visibility controls, collapsed and filtered diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
 - **Standalone Player**: path-free `.tcpak` v6 packages with v5/v6 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
-- **Hub**: project creation and discovery, Editor version selection, and per-user recent-project state
+- **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
 - **Localization**: dynamically generated Chinese glyph ranges, with Chinese/English UI switching in the Hub
 - **Regression coverage**: one Release entry point for managed ABI/lifecycle, physics, Sprite assets, script compilation, SceneManager, Prefab, Cook, and isolated Player startup
 

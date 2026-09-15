@@ -2,9 +2,11 @@
 #include "TomCat/Core/Base.h"
 #include "TomCat/Core/Application.h"
 #include "TomCat/Core/CrashReporter.h"
+#include "TomCat/Core/Version.h"
 
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
+	#include <cstdio>
 	#include <cwchar>
 	#include <iterator>
 	#include <stdexcept>
@@ -48,12 +50,17 @@
 		if (!separator)
 			return;
 
+		// Product identity is compiled into current executables, so a packaged
+		// product remains relocatable when a launcher or user renames the file.
+		// Keep filename detection only for older consumers without an identity.
+#ifndef TC_APPLICATION_PRODUCT
 		const wchar_t* fileName = separator + 1;
 		if (_wcsicmp(fileName, L"TomCat.exe") != 0 &&
 			_wcsicmp(fileName, L"Manager.exe") != 0 &&
 			_wcsicmp(fileName, L"TomCatHub.exe") != 0 &&
 			_wcsicmp(fileName, L"TomCatPlayer.exe") != 0)
 			return;
+#endif
 
 		// Preserve the root slash for an executable placed directly on a drive
 		// root (`C:\\TomCat.exe`); `SetCurrentDirectoryW(L"C:")` is drive-relative.
@@ -115,6 +122,33 @@
 			_wcsicmp(value, L"yes") == 0;
 	}
 
+	inline bool WriteProductInfoIfRequested(ApplicationProduct product,
+		int argc, wchar_t** argv) noexcept
+	{
+		bool requested = false;
+		for (int index = 1; index < argc; ++index)
+		{
+			if (argv[index] && _wcsicmp(argv[index], L"--product-info-json") == 0)
+			{
+				requested = true;
+				break;
+			}
+		}
+		if (!requested)
+			return false;
+
+		const std::string_view productName = ApplicationPaths::GetProductDirectoryName(product);
+		std::fprintf(stdout,
+			"{\"product\":\"%.*s\",\"version\":\"%.*s\",\"buildId\":\"%.*s\","
+			"\"projectFormatOldest\":%u,\"projectFormatCurrent\":%u}\n",
+			static_cast<int>(productName.size()), productName.data(),
+			static_cast<int>(Version::ProductVersion.size()), Version::ProductVersion.data(),
+			static_cast<int>(Version::EngineBuildID.size()), Version::EngineBuildID.data(),
+			Version::ProjectFormatOldest, Version::ProjectFormatCurrent);
+		std::fflush(stdout);
+		return true;
+	}
+
 	}
 
 extern TomCat::Application* TomCat::CreateApplication(ApplicationCommandLineArgs args);
@@ -132,6 +166,8 @@ int wmain(int argc, wchar_t** argv) {
 #else
 		applicationProduct = TomCat::ApplicationPaths::IdentifyCurrentExecutable();
 #endif
+		if (TomCat::WriteProductInfoIfRequested(applicationProduct, argc, argv))
+			return 0;
 		TomCat::Log::Init(applicationProduct);
 		TomCat::CrashReporter::Install(applicationProduct);
 		profilingEnabled = TomCat::IsProfilingRequested(argc, argv);
