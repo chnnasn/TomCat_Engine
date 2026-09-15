@@ -1,0 +1,10 @@
+SchemaVersion: 2
+Asset:
+  Handle: 515390559920818869
+  Type: Texture2D
+  ImportSettings:
+    PixelsPerUnit: 100
+    Primitive: Square
+    Usage: Sprite
+  SubAssets:
+    []
