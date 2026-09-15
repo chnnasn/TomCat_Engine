@@ -29,15 +29,16 @@ through visual authoring tools, while the Player runs packaged games independent
 ### Projects and workspace
 
 The Hub organizes projects and their Editor versions. The Editor brings Scene,
-Game, Hierarchy, Inspector, and Project panels together in a dockable workspace.
+Game, Hierarchy, Inspector, Project, and Console panels together in a responsive
+dockable workspace whose panel visibility and layout are saved as they change.
 
 ![Full-screen Hub project creation and Editor project opening](docs/portfolio/01-hub-project.gif)
 
 ### Visual 2D authoring
 
 Entities are assembled from components. Built-in Sprite primitives, hierarchy
-organization, and editable transforms make it easy to compose a scene and adjust
-each object's position, rotation, and scale.
+organization, Scene-only visibility controls, and editable transforms make it easy
+to compose a scene and adjust each object's position, rotation, and scale.
 
 ![Full-screen Sprite creation and Transform editing](docs/portfolio/02-sprite-transform.gif)
 
@@ -51,8 +52,9 @@ bounds alongside the artwork.
 
 ### Live simulation
 
-Play Mode runs the scene with fixed-step physics. Pause and single-frame stepping
-support inspection of runtime behavior; Stop returns to the authored scene.
+Play Mode runs the scene with fixed-step physics. The combined Play/Stop control,
+Pause, and single-frame Step support runtime inspection and return to the authored
+scene when playback stops.
 
 ![Full-screen live Box2D simulation and playback controls](docs/portfolio/04-play-pause-step-stop.gif)
 
@@ -66,13 +68,13 @@ with a dynamic rectangle and a static floor, or view the
 - **Scene system**: ECS entities, parent/child hierarchy, stable UUIDs, strict YAML scene serialization, ordered Build Settings, and frame-end single-scene replacement
 - **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` schema-v2 sidecars, ImporterRegistry, SHA-256 artifact keys, a derived-data cache, dependency tracking, and a background ImportCoordinator with debounced content monitoring, reverse-dependent reimport, and main-thread publication
 - **2D physics**: fixed 60 Hz Box2D runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
-- **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, Play/Pause/Step/Stop, and deferred C# Collision/Trigger callbacks
+- **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, combined Play/Stop plus Pause/Step controls, and deferred C# Collision/Trigger callbacks
 - **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, diagnostics, last-good assemblies, and cooked managed payloads
 - **Snapshot Prefabs**: `.tcprefab` entity-subtree snapshots with stable LocalIDs, reference remapping, runtime C# `Instantiate`, and ordinary unlinked instances
 - **Input**: action maps, keyboard/mouse/gamepad bindings, contexts, and runtime rebinding
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
 - **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
-- **Editor**: ImGui Scene, Game, Hierarchy, Inspector, and Project panels with Undo/Redo, autosave/recovery, project locking, per-project layouts, and user settings
+- **Editor**: ImGui Scene, Game, Hierarchy, Inspector, Project, and Console panels with responsive docking, actively persisted panel visibility/layout, Hierarchy Scene visibility controls, collapsed and filtered diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
 - **Standalone Player**: path-free `.tcpak` v6 packages with v5/v6 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, Editor version selection, and per-user recent-project state
 - **Localization**: dynamically generated Chinese glyph ranges, with Chinese/English UI switching in the Hub
@@ -137,7 +139,7 @@ vendor/            premake and third-party dependencies
 
 ### Completed 2D Physics Milestone
 
-- [x] Fixed-step Play / Pause / Step / Stop scene state model (no separate Simulate state)
+- [x] Fixed-step Play / Pause / Step / Stop scene state model with a combined Play/Stop toolbar control (no separate Simulate state)
 - [x] Scene-only Box/Circle collider visualization and Edit Collider handles
 - [x] CircleCollider2D, implicit static bodies, triggers, per-fixture and project-layer collision filtering, queries, motion API, and DistanceJoint2D
 - [x] Deferred engine/native-script Collision and Trigger callbacks
@@ -174,7 +176,8 @@ vendor/            premake and third-party dependencies
 PCM WAV streaming reads a registry-resolved source range in authoring mode because the P0 audio importer is byte-for-byte passthrough, and reads a validated TCPAK range in cooked Players. If the authoring importer later transcodes audio, it must expose and use a validated DDC payload range instead of the source range.
 
 - [x] Undo/Redo, autosave/recovery, and project locking
-- [ ] Editor Console and Profiler
+- [x] Editor Console with severity counts/filtering, duplicate collapsing, Clear-on-Play, and structured script/runtime diagnostics
+- [ ] Editor Profiler
 - [x] Run managed/native/Player Release regressions on push/PR CI
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
 - [ ] Scene/project schema migration tools and a plugin/module SDK
