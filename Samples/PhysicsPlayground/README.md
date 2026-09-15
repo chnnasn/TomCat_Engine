@@ -9,7 +9,8 @@
 1. 编译并运行当前 TomCat Editor（Windows x64 / Release）。
 2. 使用 **File → Open Project** 选择本目录的 `Project.tcproj`。
 3. 在 Project 面板打开 `Assets/sample.tomcat`。
-4. 点击 **Play**：矩形下落并落在地板上。使用 **Pause / Step / Stop** 检查运行状态。
+4. 点击 **Play**：矩形下落并落在地板上。使用 **Pause / Step** 检查运行状态，
+   再点击同一个 **Stop** 按钮返回编辑场景。
 
 | Entity | Authored configuration |
 | --- | --- |

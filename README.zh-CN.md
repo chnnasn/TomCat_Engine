@@ -26,15 +26,15 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 ### 项目管理与编辑工作区
 
-Hub 集中管理项目与 Editor 版本。Editor 将 Scene、Game、Hierarchy、Inspector 和
-Project 面板组织在可停靠的工作区中，连接场景编辑、资源浏览与运行预览。
+Hub 集中管理项目与 Editor 版本。Editor 将 Scene、Game、Hierarchy、Inspector、
+Project 和 Console 面板组织在响应式停靠工作区中，并在面板开关或布局变化时主动保存。
 
 ![全屏 Hub 创建项目与 Editor 打开项目](docs/portfolio/01-hub-project.gif)
 
 ### 可视化 2D 场景编辑
 
-场景对象通过组件组合功能。内置 Sprite 图元、层级管理与 Transform 编辑支持快速搭建场景，
-并直接调整对象的位置、旋转和缩放。
+场景对象通过组件组合功能。内置 Sprite 图元、层级管理、仅影响 Scene 视图的可见性控制与
+Transform 编辑支持快速搭建场景，并直接调整对象的位置、旋转和缩放。
 
 ![全屏右键创建 Sprite 与修改 Transform](docs/portfolio/02-sprite-transform.gif)
 
@@ -47,8 +47,8 @@ Scene 视图显示碰撞轮廓，让物理边界与画面内容一起参与场�
 
 ### 实时运行与调试
 
-Play Mode 以固定时间步运行物理场景，支持暂停和单帧推进，便于观察运行状态。
-停止后恢复编辑场景，可以继续调整对象与组件。
+Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮配合 Pause 和单帧 Step，
+可用于观察运行状态，并在停止后恢复编辑场景。
 
 ![全屏 Box2D 实际运行与播放控制](docs/portfolio/04-play-pause-step-stop.gif)
 
@@ -61,13 +61,13 @@ Play Mode 以固定时间步运行物理场景，支持暂停和单帧推进，�
 - **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化、有序 Build Settings 与帧末单场景替换
 - **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` schema-v2 Sidecar、ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、依赖跟踪，以及支持去抖内容监控、反向依赖重导和主线程发布的后台 ImportCoordinator
 - **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
-- **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、Play/Pause/Step/Stop，以及延迟派发的 C# Collision/Trigger 回调
+- **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、合并的 Play/Stop 按钮与 Pause/Step 控制，以及延迟派发的 C# Collision/Trigger 回调
 - **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、诊断、last-good 程序集与 Cooked 托管负载
 - **快照 Prefab**：使用稳定 LocalID 的 `.tcprefab` 实体子树、引用重映射、运行时 C# `Instantiate`，实例化后为普通非关联实体
 - **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
 - **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
-- **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector 和 Project 面板，支持 Undo/Redo、自动保存/恢复、项目锁、项目级布局与用户设置持久化
+- **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector、Project 和 Console 面板，支持响应式停靠、面板开关/布局主动持久化、Hierarchy 场景可见性、诊断计数/过滤/折叠、Undo/Redo、自动保存/恢复、项目锁与用户设置
 - **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v6（Player 兼容读取 v5/v6）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、Editor 版本选择和用户级最近项目状态
 - **本地化**：动态生成 ImGui 中文字符集，Hub 支持中英文切换
@@ -131,7 +131,7 @@ vendor/            premake 与第三方依赖
 
 ### 已完成的 2D 物理里程碑
 
-- [x] 固定步长 Play / Pause / Step / Stop 状态模型（不设置独立 Simulate 状态）
+- [x] 固定步长 Play / Pause / Step / Stop 状态模型与合并的 Play/Stop 工具栏按钮（不设置独立 Simulate 状态）
 - [x] 仅 Scene 视图显示 Box/Circle 碰撞轮廓，并支持 Edit Collider 句柄
 - [x] CircleCollider2D、隐式静态刚体、Trigger、每 Fixture/项目 Layer 两级碰撞过滤、查询、运动 API 和 DistanceJoint2D
 - [x] 延迟派发的引擎监听器/C# Collision 与 Trigger 回调
@@ -168,7 +168,8 @@ vendor/            premake 与第三方依赖
 PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区间，因为 P0 Audio Importer 是逐字节透传；Cooked Player 则读取验证后的 TCPAK 区间。若未来 Authoring Importer 增加音频转码，必须改为暴露并读取验证后的 DDC Payload 区间，而不是源文件区间。
 
 - [x] Undo/Redo、自动保存/恢复与项目锁
-- [ ] Editor Console 与 Profiler
+- [x] Editor Console：严重级别计数/过滤、重复日志折叠、Play 时清空与结构化脚本/运行时诊断
+- [ ] Editor Profiler
 - [x] 在 Push/PR CI 中运行托管、原生与 Player Release 回归
 - [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
 - [ ] Scene/Project Schema 迁移工具与插件/模块 SDK
