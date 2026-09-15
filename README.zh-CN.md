@@ -1,12 +1,59 @@
 # TomCat Engine
 
-一款基于 **C++20** 开发的 **2D 游戏引擎、编辑器与项目中心（Hub）**，构建于 OpenGL、ImGui 和 Box2D 之上。
+一款面向 **2D 游戏开发的 C++20 开源引擎**，包含可视化编辑器、项目中心与独立游戏运行时。
 
-TomCat 当前优先完成可实际使用的 2D 开发流程。现有 3D 项目模板仍属于实验功能：它只配置透视相机，尚未实现生产级 3D 渲染器。
+TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Box2D 物理集成在同一个开发环境中。
+引擎库提供渲染、ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
+Player 则负责脱离编辑器运行打包后的游戏。
+
+**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **语言**：[English](README.md) | 简体中文
 
 ---
+
+## 项目组成
+
+| 模块 | 职责 |
+| --- | --- |
+| **Engine 引擎库** | 提供渲染、ECS 场景、资源、物理、输入、音频与 UI 系统的 C++ 库 |
+| **Editor 编辑器** | 可视化搭建场景、编辑组件、浏览资源与运行预览 |
+| **Hub 项目中心** | 管理项目模板、项目列表与 Editor 版本 |
+| **Managed 脚本层** | 提供 C# 游戏开发 API、脚本编译与运行时托管 |
+| **Player 游戏运行时** | 加载打包资源，使用随包附带的 .NET Runtime 独立运行游戏 |
+
+## 功能展示
+
+### 项目管理与编辑工作区
+
+Hub 集中管理项目与 Editor 版本。Editor 将 Scene、Game、Hierarchy、Inspector 和
+Project 面板组织在可停靠的工作区中，连接场景编辑、资源浏览与运行预览。
+
+![全屏 Hub 创建项目与 Editor 打开项目](docs/portfolio/01-hub-project.gif)
+
+### 可视化 2D 场景编辑
+
+场景对象通过组件组合功能。内置 Sprite 图元、层级管理与 Transform 编辑支持快速搭建场景，
+并直接调整对象的位置、旋转和缩放。
+
+![全屏右键创建 Sprite 与修改 Transform](docs/portfolio/02-sprite-transform.gif)
+
+### 组件化物理系统
+
+Rigidbody2D 与碰撞体组件将场景对象接入 Box2D。Inspector 提供刚体类型和碰撞属性编辑，
+Scene 视图显示碰撞轮廓，让物理边界与画面内容一起参与场景设计。
+
+![全屏添加刚体、创建地板与配置碰撞体](docs/portfolio/03-physics-authoring.gif)
+
+### 实时运行与调试
+
+Play Mode 以固定时间步运行物理场景，支持暂停和单帧推进，便于观察运行状态。
+停止后恢复编辑场景，可以继续调整对象与组件。
+
+![全屏 Box2D 实际运行与播放控制](docs/portfolio/04-play-pause-step-stop.gif)
+
+示例项目 [PhysicsPlayground](Samples/PhysicsPlayground/README.md) 包含一个动态矩形与静态地板，
+可用于体验基础 2D 物理交互。另见 [Editor 全屏截图](docs/portfolio/editor-fullscreen.png)。
 
 ## 特性
 
@@ -31,9 +78,13 @@ TomCat 当前优先完成可实际使用的 2D 开发流程。现有 3D 项目�
 - 支持的开发平台：**Windows x64**
 - 渲染后端：**OpenGL 4.6**
 - 当前引擎主范围：**2D**
+- 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
 - V1 明确不支持 NuGet/第三方托管 DLL、Play Mode 热重载、脚本调试、叠加/异步场景、Prefab 关联更新、Override、Nested Prefab 和 Variant
+
+已知问题：Hub 使用 Windows 扩展路径加载项目时，可能触发迁移检查错误。
+可在 Editor 中通过 **File → Open Project** 使用普通 Windows 路径打开项目。
 
 ## 构建
 

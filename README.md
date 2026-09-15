@@ -1,14 +1,64 @@
 # TomCat Engine
 
-A **C++20 2D game engine, editor, and project hub**, built on OpenGL, ImGui, and Box2D.
+A **C++20 game engine for 2D development**, with a visual editor, a project hub,
+and a standalone game runtime.
 
-TomCat is currently focused on completing a practical 2D development workflow. The
-existing 3D project template is experimental: it configures a perspective camera,
-but a production 3D renderer is not implemented yet.
+TomCat brings scene composition, asset management, C# gameplay scripting, and
+Box2D physics into one development environment. Its engine library provides the
+rendering, ECS scene model, and runtime systems; the Editor exposes those systems
+through visual authoring tools, while the Player runs packaged games independently.
+
+**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
 ---
+
+## Project Overview
+
+| Component | Role |
+| --- | --- |
+| **Engine** | C++ library for rendering, ECS scenes, assets, physics, input, audio, and UI |
+| **Editor** | Visual scene composition, component editing, resource browsing, and Play Mode |
+| **Hub** | Project templates, project discovery, and Editor version selection |
+| **Managed** | C# gameplay API, script compilation, and runtime hosting |
+| **Player** | Independent game executable with packaged assets and a private .NET runtime |
+
+## Showcase
+
+### Projects and workspace
+
+The Hub organizes projects and their Editor versions. The Editor brings Scene,
+Game, Hierarchy, Inspector, and Project panels together in a dockable workspace.
+
+![Full-screen Hub project creation and Editor project opening](docs/portfolio/01-hub-project.gif)
+
+### Visual 2D authoring
+
+Entities are assembled from components. Built-in Sprite primitives, hierarchy
+organization, and editable transforms make it easy to compose a scene and adjust
+each object's position, rotation, and scale.
+
+![Full-screen Sprite creation and Transform editing](docs/portfolio/02-sprite-transform.gif)
+
+### Component-based physics
+
+Rigidbody2D and collider components connect scene objects to Box2D. The Inspector
+exposes body types and collision properties, while Scene overlays show collider
+bounds alongside the artwork.
+
+![Full-screen rigidbody and floor collider authoring](docs/portfolio/03-physics-authoring.gif)
+
+### Live simulation
+
+Play Mode runs the scene with fixed-step physics. Pause and single-frame stepping
+support inspection of runtime behavior; Stop returns to the authored scene.
+
+![Full-screen live Box2D simulation and playback controls](docs/portfolio/04-play-pause-step-stop.gif)
+
+Explore [PhysicsPlayground](Samples/PhysicsPlayground/README.md), a small 2D sample
+with a dynamic rectangle and a static floor, or view the
+[Editor screenshot](docs/portfolio/editor-fullscreen.png).
 
 ## Features
 
@@ -33,9 +83,14 @@ but a production 3D renderer is not implemented yet.
 - Supported development platform: **Windows x64**
 - Rendering backend: **OpenGL 4.6**
 - Primary engine scope: **2D**
+- The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Editor-side C# compilation requires the **.NET 10 SDK**
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
 - V1 deliberately excludes NuGet/third-party managed DLLs, Play Mode hot reload, script debugging, additive/asynchronous scenes, linked Prefab updates, overrides, nested Prefabs, and variants
+
+Known issue: Hub project loading can fail during migration checks on Windows
+extended paths. Open the project through the Editor's **File → Open Project**
+using a normal Windows path as a workaround.
 
 ## Building
 

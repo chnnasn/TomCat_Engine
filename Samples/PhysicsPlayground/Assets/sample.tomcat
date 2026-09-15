@@ -1,0 +1,427 @@
+SchemaVersion: 11
+SceneName: sample
+Entities:
+  - Entity: 1000000000000000001
+    Tag:
+      Tag: MainCamera
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Camera:
+      Camera:
+        ProjectionType: 1
+        PerspectiveFOV: 0.785398185
+        PerspectiveNear: 0.00999999978
+        PerspectiveFar: 1000
+        OrthographicSize: 10
+        OrthographicNear: -1
+        OrthographicFar: 1
+      Primary: true
+      FixedAspectRatio: false
+      BackgroundColor: [0.529999971, 0.810000002, 0.920000017, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 1000000000000000001
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: MainCamera
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541829
+        StableName: TomCat.Camera
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 300
+            StableName: Primary
+            Value: true
+          - PropertyId: 301
+            StableName: FixedAspectRatio
+            Value: false
+          - PropertyId: 302
+            StableName: BackgroundColor
+            Value: [0.529999971, 0.810000002, 0.920000017, 1]
+          - PropertyId: 303
+            StableName: ProjectionType
+            Value: 1
+          - PropertyId: 304
+            StableName: OrthographicSize
+            Value: 10
+          - PropertyId: 305
+            StableName: OrthographicNearClip
+            Value: -1
+          - PropertyId: 306
+            StableName: OrthographicFarClip
+            Value: 1
+          - PropertyId: 307
+            StableName: PerspectiveVerticalFov
+            Value: 0.785398185
+          - PropertyId: 308
+            StableName: PerspectiveNearClip
+            Value: 0.00999999978
+          - PropertyId: 309
+            StableName: PerspectiveFarClip
+            Value: 1000
+          - PropertyId: 310
+            StableName: Enabled
+            Value: true
+    Parent: 0
+  - Entity: 2539330170089681506
+    Tag:
+      Tag: Square
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 1.5, 0]
+      Rotation: [0, -0, 0.436332166]
+      Scale: [1.39999998, 0.999999762, 1]
+    LocalTransform:
+      Translation: [0, 1.5, 0]
+      Rotation: [0, -0, 0.436332166]
+      Scale: [1.39999998, 0.999999821, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [1, 1, 1, 1]
+      SpriteHandle: 515390559920818869
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Dynamic
+      FixedRotation: false
+    BoxCollider2D:
+      Enabled: true
+      IsTrigger: false
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Size: [0.5, 0.5]
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+      RestitutionThreshold: 0.5
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 2539330170089681506
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Square
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 1.5, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0.436332166]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1.39999998, 0.999999762, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 1.5, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, -0, 0.436332166]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1.39999998, 0.999999821, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [1, 1, 1, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 515390559920818869
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 1
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541837
+        StableName: TomCat.BoxCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 400
+            StableName: Enabled
+            Value: true
+          - PropertyId: 401
+            StableName: IsTrigger
+            Value: false
+          - PropertyId: 402
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 403
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 404
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 405
+            StableName: Size
+            Value: [0.5, 0.5]
+          - PropertyId: 406
+            StableName: Density
+            Value: 1
+          - PropertyId: 407
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 408
+            StableName: Restitution
+            Value: 0
+          - PropertyId: 409
+            StableName: RestitutionThreshold
+            Value: 0.5
+    Parent: 0
+  - Entity: 7798988758550065588
+    Tag:
+      Tag: Ground
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, -1, 0]
+      Rotation: [0, -0, 0]
+      Scale: [3, 0.300000012, 1]
+    LocalTransform:
+      Translation: [0, -1, 0]
+      Rotation: [0, -0, 0]
+      Scale: [3, 0.300000012, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [1, 1, 1, 1]
+      SpriteHandle: 515390559920818869
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    BoxCollider2D:
+      Enabled: true
+      IsTrigger: false
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Size: [0.5, 0.5]
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+      RestitutionThreshold: 0.5
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 7798988758550065588
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Ground
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, -1, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [3, 0.300000012, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, -1, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, -0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [3, 0.300000012, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [1, 1, 1, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 515390559920818869
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541837
+        StableName: TomCat.BoxCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 400
+            StableName: Enabled
+            Value: true
+          - PropertyId: 401
+            StableName: IsTrigger
+            Value: false
+          - PropertyId: 402
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 403
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 404
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 405
+            StableName: Size
+            Value: [0.5, 0.5]
+          - PropertyId: 406
+            StableName: Density
+            Value: 1
+          - PropertyId: 407
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 408
+            StableName: Restitution
+            Value: 0
+          - PropertyId: 409
+            StableName: RestitutionThreshold
+            Value: 0.5
+    Parent: 0

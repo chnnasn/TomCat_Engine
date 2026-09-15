@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "entrySceneHandle": 12007672766582721512,
+  "scenes": [
+    {
+      "handle": 12007672766582721512,
+      "enabled": true,
+      "pathHint": "sample.tomcat"
+    }
+  ]
+}
