@@ -37,6 +37,11 @@ if ($toolManifest.premake.url -notmatch [regex]::Escape($toolManifest.premake.ve
 
 $workflowPath = Join-Path $repositoryRoot '.github\workflows\package-editor.yml'
 $workflow = Get-Content -LiteralPath $workflowPath -Raw
+$regressionWorkflowPath = Join-Path $repositoryRoot '.github\workflows\regressions.yml'
+$regressionWorkflow = Get-Content -LiteralPath $regressionWorkflowPath -Raw
+if ($regressionWorkflow -notmatch "(?ms)^  push:\s*\r?\n    branches:\s*\r?\n      - '\*\*'\s*$") {
+    throw 'Regressions must run for branch pushes and must not duplicate the full suite for tag pushes.'
+}
 if ($workflow -match '(?i)--clobber') { throw 'Release workflow must never overwrite existing assets with --clobber.' }
 if ($workflow -match '(?m)^  workflow_dispatch:\s*$') {
     throw 'Publishing must be triggered by an existing version tag, not an arbitrary manual ref.'
@@ -55,7 +60,11 @@ foreach ($requiredPolicy in @(
     'github.event.repository.default_branch',
     'ReleaseProvenanceTools.ps1',
     'actions/workflows/regressions.yml/runs',
-    'head_sha=$env:RELEASE_SHA'
+    'head_sha=$env:RELEASE_SHA',
+    'event=push',
+    '$regressionDeadline = [DateTimeOffset]::UtcNow.AddMinutes(60)',
+    'Start-Sleep -Seconds 30',
+    '-RegressionRuns $regressionRuns'
 )) {
     if ($policyJob -notmatch [regex]::Escape($requiredPolicy)) {
         throw "Release policy job is missing the provenance gate '$requiredPolicy'."
@@ -178,6 +187,19 @@ function Assert-ProvenanceRejected {
     $rejected = $false
     try { & $Action | Out-Null } catch { $rejected = $true }
     if (-not $rejected) { throw 'Release provenance policy accepted an unsafe fixture.' }
+}
+
+$emptyRunError = ''
+try {
+    Assert-TomCatReleaseProvenance -Tag 'v1.2.3' -Version '1.2.3' `
+        -CommitSha $commitSha -TagTargetSha $commitSha -DefaultBranch 'main' `
+        -TagRefProtected $true -DefaultBranchProtected $true `
+        -DefaultBranchComparisonStatus 'identical' -RegressionRuns @() | Out-Null
+} catch {
+    $emptyRunError = $_.Exception.Message
+}
+if ($emptyRunError -notmatch 'No successful full Regressions workflow run exists') {
+    throw "An empty regression result did not reach the explicit provenance rejection: $emptyRunError"
 }
 
 Assert-ProvenanceRejected {

@@ -29,6 +29,7 @@ function Assert-TomCatReleaseProvenance {
         [string]$DefaultBranchComparisonStatus,
 
         [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
         [object[]]$RegressionRuns
     )
 
