@@ -152,8 +152,10 @@ namespace TomCat {
 		return CreateMountedManagedRuntime(runtime, errorMessage);
 	}
 
-	PlayerRuntimeLayer::PlayerRuntimeLayer(std::filesystem::path packagePath)
-		: Layer("PlayerRuntimeLayer"), m_PackagePath(std::move(packagePath))
+	PlayerRuntimeLayer::PlayerRuntimeLayer(std::filesystem::path packagePath,
+		uint32_t viewportWidth, uint32_t viewportHeight)
+		: Layer("PlayerRuntimeLayer"), m_PackagePath(std::move(packagePath)),
+		m_ViewportWidth(viewportWidth), m_ViewportHeight(viewportHeight)
 	{
 	}
 
@@ -165,13 +167,15 @@ namespace TomCat {
 			Fail("could not mount cooked package '" + PathToUTF8(m_PackagePath) + "'", 4);
 			return;
 		}
+		const bool hasWindow = Application::Get().HasWindow();
 		std::string shaderError;
-		if (!assets.PreloadCookedShaders(shaderError))
+		if (hasWindow && !assets.PreloadCookedShaders(shaderError))
 		{
 			Fail("could not publish packaged shaders: " + shaderError);
 			return;
 		}
-		const size_t texturePreloadCount = assets.BeginCookedTexturePreload();
+		const size_t texturePreloadCount = hasWindow
+			? assets.BeginCookedTexturePreload() : 0;
 		if (texturePreloadCount != 0)
 			TC_Core_Info("Queued {0} packaged textures for bounded preload",
 				texturePreloadCount);
@@ -188,12 +192,20 @@ namespace TomCat {
 			Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
 
 		m_SceneManager = CreateScope<SceneManager>();
-		Window& window = Application::Get().GetWindow();
-		m_SceneManager->SetViewportSize(window.GetFramebufferWidth(),
-			window.GetFramebufferHeight());
-		m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
-			window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
-				window.GetScreenToFramebufferScaleY() });
+		if (hasWindow)
+		{
+			Window& window = Application::Get().GetWindow();
+			m_SceneManager->SetViewportSize(window.GetFramebufferWidth(),
+				window.GetFramebufferHeight());
+			m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
+				window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
+					window.GetScreenToFramebufferScaleY() });
+		}
+		else
+		{
+			m_SceneManager->SetViewportSize(m_ViewportWidth, m_ViewportHeight);
+			m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f), 1.0f);
+		}
 		if (!m_SceneManager->ConfigureCookedPackage()
 			|| !m_SceneManager->ActivateRuntime()
 			|| !m_SceneManager->LoadEntryScene())
@@ -221,12 +233,16 @@ namespace TomCat {
 	{
 		if (!m_SceneManager)
 			return;
-		Window& window = Application::Get().GetWindow();
-		m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
-			window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
-				window.GetScreenToFramebufferScaleY() });
+		const bool hasWindow = Application::Get().HasWindow();
+		if (hasWindow)
+		{
+			Window& window = Application::Get().GetWindow();
+			m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
+				window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
+					window.GetScreenToFramebufferScaleY() });
+		}
 		if (const Ref<Scene> scene = m_SceneManager->GetActiveScene())
-			scene->OnUpdateRuntime(timestep);
+			scene->OnUpdateRuntime(timestep, hasWindow);
 		if (!m_SceneManager->CommitPendingTransition()
 			&& !m_SceneManager->GetActiveScene())
 			Fail("Scene transition failed without a recoverable active Scene: "

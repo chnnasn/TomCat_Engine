@@ -159,10 +159,22 @@ namespace TomCat {
 	void Application::Run()
 	{
 		TC_PROFILE_FUNCTION();
-		// Command-only applications deliberately avoid GLFW and renderer
-		// initialization. Their constructor completes the operation before Run.
+		// A headless Player smoke still owns a runtime layer and advances it with a
+		// deterministic display delta. Command-only applications close themselves
+		// in their constructor and therefore skip this loop.
 		if (!m_Window)
+		{
+			const Timestep headlessTimestep(1.0f / 60.0f);
+			while (m_Running)
+			{
+				Input::BeginFrame();
+				Scripting::ScriptEngine::Get().CaptureInputState();
+				(void)AssetManager::Get().PumpImportCoordinator();
+				for (Layer* layer : m_LayerStack)
+					layer->OnUpdate(headlessTimestep);
+			}
 			return;
+		}
 		m_LastFrameTime = static_cast<float>(m_Window->GetTimeSeconds());
 
 		while (m_Running) 

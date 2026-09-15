@@ -151,8 +151,9 @@ namespace TomCat {
 
 		void OnUpdateEditor(Timestep ts,EditorCamera& camera);
 		// Accumulates display-frame time and advances scripts and physics in fixed
-		// increments. Rendering still occurs once per display frame.
-		void OnUpdateRuntime(Timestep ts);
+		// increments. Rendering occurs once per display frame unless a headless
+		// runtime explicitly disables it.
+		void OnUpdateRuntime(Timestep ts, bool render = true);
 		void OnRenderRuntime();
 		// Physics simulation keeps authoritative current transforms in the ECS.
 		// Rendering reads this matrix to interpolate between the two most recent
