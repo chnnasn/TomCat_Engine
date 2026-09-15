@@ -1107,8 +1107,18 @@ namespace TomCat {
 				ImGui::SetNextItemOpen(true);
 				m_ForceOpenSceneRoot = false;
 			}
-			ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding;
+			ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen |
+				ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow |
+				ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding |
+				ImGuiTreeNodeFlags_Selected;
+			ImGui::PushStyleColor(ImGuiCol_Header,
+				ImVec4(0.145f, 0.145f, 0.145f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered,
+				ImVec4(0.20f, 0.20f, 0.20f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive,
+				ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
 			bool rootOpen = ImGui::TreeNodeEx((void*)m_Context.get(), rootFlags, "");
+			ImGui::PopStyleColor(3);
 			const ImVec2 rootItemMin = ImGui::GetItemRectMin();
 			const ImVec2 rootItemMax = ImGui::GetItemRectMax();
 			const float rootIconSize = DrawTreeRowIcon(m_Icons, EditorIcon::SceneOpen,
@@ -1523,7 +1533,9 @@ namespace TomCat {
 		auto& tagComponent = entity.GetComponent<Tag>();
 		auto& tag = tagComponent._Tag;
 		const bool activeInHierarchy = m_Context->IsActiveInHierarchy(entity);
+		const bool hiddenSelf = m_Context->IsEditorHidden(entity);
 		const bool visibleInEditor = m_Context->IsVisibleInEditorHierarchy(entity);
+		const bool hiddenByParent = !hiddenSelf && !visibleInEditor;
 		const bool dimmed = !activeInHierarchy || !visibleInEditor;
 		if (dimmed)
 		{
@@ -1563,31 +1575,49 @@ namespace TomCat {
 		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "");
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
-		const float iconSize = DrawTreeRowIcon(m_Icons, ResolveEntityEditorIcon(entity), itemMin, itemMax,
+		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.78f),
+			std::max(1.0f, itemMax.y - itemMin.y - 4.0f));
+		const float iconY = std::round(itemMin.y +
+			(itemMax.y - itemMin.y - iconSize) * 0.5f);
+		const float visibilityIconX = std::round(itemMin.x +
+			ImGui::GetTreeNodeToLabelSpacing());
+		const ImVec2 visibilityMinimum(visibilityIconX, iconY);
+		const ImVec2 visibilityMaximum(visibilityIconX + iconSize, iconY + iconSize);
+		DrawIcon(m_Icons, visibleInEditor ? EditorIcon::EyeOn : EditorIcon::EyeOff,
+			visibilityMinimum, visibilityMaximum,
+			hiddenByParent ? IM_COL32(120, 120, 120, 115)
+				: hiddenSelf ? IM_COL32(155, 155, 155, 190)
+				: IM_COL32(175, 175, 175, 210));
+		const float entityIconX = visibilityMaximum.x + GetHierarchyIconTextGap();
+		DrawIcon(m_Icons, ResolveEntityEditorIcon(entity),
+			ImVec2(entityIconX, iconY), ImVec2(entityIconX + iconSize, iconY + iconSize),
 			!dimmed ? IM_COL32_WHITE
 				: visibleInEditor ? IM_COL32(150, 150, 150, 210)
 				: IM_COL32(125, 125, 125, 150));
-		const float textOffsetX = itemMin.x + ImGui::GetTreeNodeToLabelSpacing() +
-			iconSize + GetHierarchyIconTextGap();
+		const float textOffsetX = entityIconX + iconSize + GetHierarchyIconTextGap();
 		const float textOffsetY = std::round(itemMin.y +
 			(itemMax.y - itemMin.y - ImGui::GetTextLineHeight()) * 0.5f);
 		if (!renameActive)
-		{
 			ImGui::GetWindowDrawList()->AddText(ImVec2(textOffsetX, textOffsetY),
 				ImGui::GetColorU32(ImGuiCol_Text), tag.c_str());
-			if (!visibleInEditor)
-			{
-				const float labelWidth = ImGui::CalcTextSize(tag.c_str()).x;
-				ImGui::GetWindowDrawList()->AddText(
-					ImVec2(textOffsetX + labelWidth + 5.0f, textOffsetY),
-					IM_COL32(135, 135, 135, 175), "[Hidden]");
-			}
+
+		const bool visibilityHovered = ImRect(visibilityMinimum,
+			visibilityMaximum).Contains(ImGui::GetMousePos());
+		bool visibilityClicked = false;
+		if (visibilityHovered)
+		{
+			ImGui::SetMouseCursor(hiddenByParent ? ImGuiMouseCursor_Arrow
+				: ImGuiMouseCursor_Hand);
+			visibilityClicked = !hiddenByParent &&
+				ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+			if (visibilityClicked && m_Context->SetEditorHidden(entity, !hiddenSelf))
+				MarkModified();
 		}
 
 		if (isSelected)
 			ImGui::PopStyleColor(3);
 
-		if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+		if (!visibilityClicked && ImGui::IsItemClicked(ImGuiMouseButton_Left))
 			m_SelectionContext = entity;
 		if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
 			m_SelectionContext = entity;
@@ -1641,6 +1671,13 @@ namespace TomCat {
 				}
 			}
 			ImGui::EndDragDropTarget();
+		}
+		if (visibilityHovered)
+		{
+			if (hiddenByParent)
+				ImGui::SetTooltip("Hidden in Scene by parent");
+			else
+				ImGui::SetTooltip(hiddenSelf ? "Show in Scene" : "Hide in Scene");
 		}
 
 		if (renameActive)
@@ -3045,21 +3082,6 @@ static void DrawComponent(const std::string& name, Entity entity,
 			strncpy_s(m_NameEditBuffer, sizeof(m_NameEditBuffer), tag.c_str(), _TRUNCATE);
 		}
 
-		bool hiddenInScene = m_Context->IsEditorHidden(entity);
-		const bool hiddenByParent = !hiddenInScene
-			&& !m_Context->IsVisibleInEditorHierarchy(entity);
-		if (ImGui::Checkbox("Hidden Self in Scene", &hiddenInScene))
-		{
-			if (m_Context->SetEditorHidden(entity, hiddenInScene))
-				MarkModified();
-		}
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Stores Scene-view hidden state on this Entity. Its descendants inherit the effective hidden state; Game view and runtime behavior are unchanged.");
-		if (hiddenByParent)
-		{
-			ImGui::SameLine();
-			ImGui::TextDisabled("(inherited from parent)");
-		}
 	}
 
 	if (entity.HasComponent<EntityMetadata>())
@@ -3231,17 +3253,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 		richInspectors.emplace(ComponentIds::Camera, [&]()
 		{
 		DrawComponent<C_Camera>("Camera", entity, m_Icons, EditorIcon::Camera,
-			[this, entity](auto& component)
+			[this](auto& component)
 		{
 			auto& camera = component._Camera;
 			const float columnWidth = 100.0f;
-
-			DrawProperty("Primary", columnWidth);
-			bool primary = component.Primary;
-			if (ImGui::Checkbox("##Primary", &primary) && m_Context
-				&& m_Context->SetCameraPrimary(entity, primary))
-				MarkModified();
-			ImGui::Columns(1);
 
 			DrawProperty("Projection", columnWidth);
 			const char* projectionTypes[] = { "Perspective", "Orthographic" };

@@ -39,6 +39,7 @@ namespace TomCat {
 		void Push(ConsoleMessageSeverity severity, std::string text,
 			std::string source = {});
 		void Clear();
+		void OnPlayStarted();
 		std::vector<ConsoleMessage> Snapshot() const;
 
 		void OnImGuiRender(bool* open = nullptr);
@@ -56,6 +57,8 @@ namespace TomCat {
 		bool m_ShowInfo = true;
 		bool m_ShowWarnings = true;
 		bool m_ShowErrors = true;
+		bool m_Collapse = false;
+		bool m_ClearOnPlay = true;
 		bool m_AutoScroll = true;
 		bool m_ScrollToBottom = false;
 		bool m_Focused = false;

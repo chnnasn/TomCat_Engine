@@ -49,7 +49,7 @@ namespace TomCat {
 		constexpr float kSceneToolbarHandleWidth = 24.0f;
 		constexpr float kSceneToolbarItemGap = 4.0f;
 		constexpr float kSceneToolbarDockGap = 4.0f;
-		constexpr float kSceneModeButtonWidth = 62.0f;
+		constexpr float kSceneModeButtonWidth = 92.0f;
 		constexpr float kSceneTransformButtonWidth = 34.0f;
 		constexpr float kSceneModeToolbarWidth = kSceneToolbarPadding * 2.0f +
 			kSceneToolbarHandleWidth + kSceneToolbarItemGap +
@@ -4124,35 +4124,67 @@ namespace TomCat {
 
 		auto DrawPivotIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
-			draw->AddCircleFilled(ImVec2(c.x - 5.0f, c.y + 5.0f), 3.0f, accent);
+			const ImVec2 c(min.x + 14.0f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f),
+				ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.5f);
+			draw->AddLine(ImVec2(c.x - 6.0f, c.y + 6.0f),
+				ImVec2(c.x + 6.0f, c.y - 6.0f), line, 1.5f);
+			draw->AddCircleFilled(ImVec2(c.x - 6.0f, c.y + 6.0f), 3.0f, accent);
 		};
 
 		auto DrawCenterIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
+			const ImVec2 c(min.x + 14.0f, (min.y + max.y) * 0.5f);
+			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 9.0f),
+				ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.5f);
+			draw->AddLine(ImVec2(c.x - 6.0f, c.y + 6.0f),
+				ImVec2(c.x + 6.0f, c.y - 6.0f), line, 1.5f);
 			draw->AddCircleFilled(c, 3.0f, accent);
 		};
 
 		auto DrawLocalIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddRect(ImVec2(c.x - 9.0f, c.y - 8.0f), ImVec2(c.x + 9.0f, c.y + 9.0f), line, 0.0f, 0, 1.8f);
-			draw->AddLine(ImVec2(c.x - 8.0f, c.y - 3.0f), ImVec2(c.x + 1.5f, c.y - 9.0f), line, 2.0f);
-			draw->AddLine(ImVec2(c.x + 1.5f, c.y - 9.0f), ImVec2(c.x + 8.0f, c.y - 1.5f), line, 2.0f);
-			draw->AddLine(ImVec2(c.x + 8.0f, c.y - 1.5f), ImVec2(c.x + 8.0f, c.y + 8.0f), line, 2.0f);
-			draw->AddCircleFilled(ImVec2(c.x - 3.5f, c.y + 4.0f), 2.8f, accent);
+			const ImVec2 c(min.x + 14.0f, (min.y + max.y) * 0.5f);
+			const ImVec2 top(c.x, c.y - 9.0f);
+			const ImVec2 upperLeft(c.x - 8.0f, c.y - 4.0f);
+			const ImVec2 upperRight(c.x + 8.0f, c.y - 4.0f);
+			const ImVec2 middle(c.x, c.y + 1.0f);
+			const ImVec2 lowerLeft(c.x - 8.0f, c.y + 5.0f);
+			const ImVec2 lowerRight(c.x + 8.0f, c.y + 5.0f);
+			const ImVec2 bottom(c.x, c.y + 10.0f);
+			draw->AddLine(top, upperLeft, line, 1.5f);
+			draw->AddLine(top, upperRight, line, 1.5f);
+			draw->AddLine(upperLeft, middle, line, 1.5f);
+			draw->AddLine(upperRight, middle, line, 1.5f);
+			draw->AddLine(upperLeft, lowerLeft, line, 1.5f);
+			draw->AddLine(upperRight, lowerRight, line, 1.5f);
+			draw->AddLine(middle, bottom, line, 1.5f);
+			draw->AddLine(lowerLeft, bottom, line, 1.5f);
+			draw->AddLine(lowerRight, bottom, line, 1.5f);
+			draw->AddCircleFilled(lowerLeft, 2.8f, accent);
 		};
 
 		auto DrawWorldIcon = [&](const ImVec2& min, const ImVec2& max)
 		{
-			const ImVec2 c((min.x + max.x) * 0.5f - 3.5f, (min.y + max.y) * 0.5f);
-			draw->AddCircle(c, 9.0f, line, 24, 1.8f);
-			draw->AddLine(ImVec2(c.x - 9.0f, c.y), ImVec2(c.x + 9.0f, c.y), line, 1.8f);
-			draw->AddLine(ImVec2(c.x, c.y - 9.0f), ImVec2(c.x, c.y + 9.0f), line, 1.8f);
-			draw->AddCircleFilled(ImVec2(c.x + 3.0f, c.y - 3.0f), 2.8f, accent);
+			const ImVec2 c(min.x + 14.0f, (min.y + max.y) * 0.5f);
+			draw->AddCircle(c, 9.0f, line, 24, 1.5f);
+			draw->AddLine(ImVec2(c.x - 9.0f, c.y),
+				ImVec2(c.x + 9.0f, c.y), line, 1.3f);
+			draw->AddBezierCubic(ImVec2(c.x, c.y - 9.0f),
+				ImVec2(c.x - 6.0f, c.y - 4.5f), ImVec2(c.x - 6.0f, c.y + 4.5f),
+				ImVec2(c.x, c.y + 9.0f), line, 1.3f);
+			draw->AddBezierCubic(ImVec2(c.x, c.y - 9.0f),
+				ImVec2(c.x + 6.0f, c.y - 4.5f), ImVec2(c.x + 6.0f, c.y + 4.5f),
+				ImVec2(c.x, c.y + 9.0f), line, 1.3f);
+			draw->AddCircleFilled(ImVec2(c.x + 6.0f, c.y + 5.0f), 2.8f, accent);
+		};
+
+		auto DrawModeLabel = [&](const ImVec2& min, const ImVec2& max,
+			const char* label)
+		{
+			const ImVec2 textSize = ImGui::CalcTextSize(label);
+			draw->AddText(ImVec2(min.x + 28.0f,
+				std::round((min.y + max.y - textSize.y) * 0.5f)), line, label);
 		};
 
 		const float buttonMinY = topLeft.y + padding;
@@ -4171,6 +4203,8 @@ namespace TomCat {
 			DrawPivotIcon(pivotMin, pivotMax);
 		else
 			DrawCenterIcon(pivotMin, pivotMax);
+		DrawModeLabel(pivotMin, pivotMax,
+			m_GizmoPivotMode == GizmoPivotMode::Pivot ? "Pivot" : "Center");
 		DrawDropArrow(pivotMin, pivotMax);
 		if (ImGui::BeginPopup("##scene_gizmo_pivot_popup"))
 		{
@@ -4191,12 +4225,14 @@ namespace TomCat {
 			DrawLocalIcon(spaceMin, spaceMax);
 		else
 			DrawWorldIcon(spaceMin, spaceMax);
+		DrawModeLabel(spaceMin, spaceMax,
+			m_GizmoSpaceMode == GizmoSpaceMode::Local ? "Local" : "Global");
 		DrawDropArrow(spaceMin, spaceMax);
 		if (ImGui::BeginPopup("##scene_gizmo_space_popup"))
 		{
 			if (ImGui::MenuItem("Local", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::Local))
 				m_GizmoSpaceMode = GizmoSpaceMode::Local;
-			if (ImGui::MenuItem("World", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::World))
+			if (ImGui::MenuItem("Global", nullptr, m_GizmoSpaceMode == GizmoSpaceMode::World))
 				m_GizmoSpaceMode = GizmoSpaceMode::World;
 			ImGui::EndPopup();
 		}
@@ -4398,6 +4434,7 @@ namespace TomCat {
 	{
 		if (m_SceneState != SceneState::Edit || !m_EditorScene)
 			return;
+		m_ConsolePanel.OnPlayStarted();
 		if (m_SceneHistory.HasActiveTransaction())
 			CommitSceneTransaction();
 		auto blockPlay = [this](std::string message)
