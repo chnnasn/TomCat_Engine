@@ -13,6 +13,7 @@ namespace TomCat {
 	namespace {
 
 		constexpr size_t kMaximumConsoleMessages = 4096;
+		constexpr float kMinimumInlineMessageWidth = 160.0f;
 
 		const char* SeverityLabel(ConsoleMessageSeverity severity)
 		{
@@ -121,17 +122,32 @@ namespace TomCat {
 			return;
 		}
 
+		const ImGuiStyle& style = ImGui::GetStyle();
+		const auto checkboxWidth = [&style](const char* label)
+		{
+			return ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
+				ImGui::CalcTextSize(label).x;
+		};
+		const auto continueToolbarRowIfFits = [&style](float nextItemWidth)
+		{
+			const float contentRight = ImGui::GetWindowPos().x +
+				ImGui::GetWindowContentRegionMax().x;
+			if (ImGui::GetItemRectMax().x + style.ItemSpacing.x + nextItemWidth
+				<= contentRight)
+				ImGui::SameLine();
+		};
+
 		if (ImGui::Button("Clear"))
 			Clear();
-		ImGui::SameLine();
+		continueToolbarRowIfFits(checkboxWidth("Trace"));
 		ImGui::Checkbox("Trace", &m_ShowTrace);
-		ImGui::SameLine();
+		continueToolbarRowIfFits(checkboxWidth("Info"));
 		ImGui::Checkbox("Info", &m_ShowInfo);
-		ImGui::SameLine();
+		continueToolbarRowIfFits(checkboxWidth("Warnings"));
 		ImGui::Checkbox("Warnings", &m_ShowWarnings);
-		ImGui::SameLine();
+		continueToolbarRowIfFits(checkboxWidth("Errors"));
 		ImGui::Checkbox("Errors", &m_ShowErrors);
-		ImGui::SameLine();
+		continueToolbarRowIfFits(checkboxWidth("Auto-scroll"));
 		ImGui::Checkbox("Auto-scroll", &m_AutoScroll);
 		ImGui::Separator();
 
@@ -155,8 +171,11 @@ namespace TomCat {
 			if (!location.empty())
 				prefix += " " + location;
 
+			const float inlineMessageWidth = ImGui::GetContentRegionAvail().x -
+				ImGui::CalcTextSize(prefix.c_str()).x - style.ItemSpacing.x;
 			ImGui::TextColored(SeverityColor(message.Severity), "%s", prefix.c_str());
-			ImGui::SameLine();
+			if (inlineMessageWidth >= kMinimumInlineMessageWidth)
+				ImGui::SameLine();
 			ImGui::TextWrapped("%s", message.Text.c_str());
 			if (!message.StackTrace.empty() && ImGui::TreeNode("Stack trace"))
 			{
