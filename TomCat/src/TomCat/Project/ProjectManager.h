@@ -10,6 +10,13 @@
 
 namespace TomCat {
 
+	struct EditorInstallation
+	{
+		std::string Version;
+		std::string BuildID;
+		std::filesystem::path ExecutablePath;
+	};
+
 	class ProjectManager
 	{
 	public:
@@ -20,7 +27,11 @@ namespace TomCat {
 		const std::filesystem::path& GetProjectDirectory() const { return m_ProjectDirectory; }
 		const std::filesystem::path& GetEditorDirectory() const { return m_EditorDirectory; }
 
-		[[nodiscard]] std::optional<std::vector<std::string>> GetEditorDirectoryFiles() const;
+		[[nodiscard]] std::optional<std::vector<std::string>> GetEditorVersions();
+		const std::vector<EditorInstallation>& GetEditorInstallations() const
+		{
+			return m_EditorInstallations;
+		}
 
 		[[nodiscard]] bool ScanProjects();
 		const std::vector<Ref<Project>>& GetProjects() const { return m_Projects; }
@@ -37,7 +48,7 @@ namespace TomCat {
 
 		Ref<Project> GetActiveProject() const { return m_ActiveProject; }
 		[[nodiscard]] static std::optional<std::filesystem::path> ResolveEditorExecutable(
-			const std::filesystem::path& editorDirectory, std::string_view editorVersion);
+			const std::vector<EditorInstallation>& installations, std::string_view editorVersion);
 		void OpenProjectInEditor(Ref<Project> project);
 
 		// Non-layout Hub state lives in
@@ -54,6 +65,7 @@ namespace TomCat {
 		Ref<Project> ActivateLoadedProject(Ref<Project> project);
 		std::optional<std::filesystem::path> GetHubSettingsPath() const;
 		bool ScanProjectsInternal();
+		bool ScanEditorInstallations();
 		[[nodiscard]] bool RecordProjectOpened(const Ref<Project>& project);
 		void ApplyStoredLastOpenedTime(const Ref<Project>& project,
 			std::unordered_map<std::string, std::string>& lastOpenedTimes) const;
@@ -61,6 +73,7 @@ namespace TomCat {
 	private:
 		std::filesystem::path m_ProjectDirectory;
 		std::filesystem::path m_EditorDirectory;
+		std::vector<EditorInstallation> m_EditorInstallations;
 		std::vector<std::filesystem::path> m_KnownProjectPaths;
 		std::unordered_map<std::string, std::string> m_ProjectLastOpenedTimes;
 		std::unordered_set<std::string> m_IgnoredProjectPaths;

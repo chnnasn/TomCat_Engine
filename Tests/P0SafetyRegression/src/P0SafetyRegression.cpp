@@ -952,21 +952,17 @@ namespace {
 	void TestEditorVersionResolutionHasNoFallback()
 	{
 		TemporaryDirectory temporary;
-		const std::filesystem::path editorRoot = temporary.Path / "Editors";
-		WriteText(temporary.Path / "TomCat.exe", "adjacent wrong-version editor");
-		Require(!TomCat::ProjectManager::ResolveEditorExecutable(editorRoot, "2026.1"),
+		const std::filesystem::path renamedEditor =
+			temporary.Path / "Editors" / "Custom Build" / "Studio Editor.exe";
+		const std::vector<TomCat::EditorInstallation> installations = {
+			{ "2026.2", "TomCat-2026.2", renamedEditor }
+		};
+		Require(!TomCat::ProjectManager::ResolveEditorExecutable(installations, "2026.1"),
 			"missing requested Editor unexpectedly resolved through an adjacent fallback");
-		Require(!TomCat::ProjectManager::ResolveEditorExecutable(
-			editorRoot, "../TomCat.exe"),
-			"Editor version path traversal escaped the configured install root");
-
-		const std::filesystem::path exactEditor =
-			editorRoot / "2026.1" / "TomCat.exe";
-		WriteText(exactEditor, "requested editor");
 		const auto resolved = TomCat::ProjectManager::ResolveEditorExecutable(
-			editorRoot, "2026.1");
-		Require(resolved && *resolved == exactEditor.lexically_normal(),
-			"installed requested Editor version did not resolve exactly");
+			installations, "2026.2");
+		Require(resolved && *resolved == renamedEditor,
+			"installed Editor did not resolve to its discovered executable path");
 	}
 
 	void TestApplicationPaths()
