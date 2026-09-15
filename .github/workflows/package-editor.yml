@@ -233,15 +233,20 @@ jobs:
             Invoke-Build "Tools\Tools.sln"
             $editorOutput = Join-Path $env:GITHUB_WORKSPACE "Editor\bin\Release-windows-x86_64\TomCatInut"
             $cliOutput = Join-Path $env:GITHUB_WORKSPACE "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
+            $cliShaderOutput = Join-Path (Split-Path -Parent $cliOutput) "shaderc_shared.dll"
             if (-not (Test-Path -LiteralPath $cliOutput -PathType Leaf)) {
               throw "Headless CLI build did not produce $cliOutput"
+            }
+            if (-not (Test-Path -LiteralPath $cliShaderOutput -PathType Leaf)) {
+              throw "Headless CLI build did not produce $cliShaderOutput"
             }
             & "$env:GITHUB_WORKSPACE\Scripts\Build-PlayerTemplate.ps1" -Configuration Release -Destination (Join-Path $editorOutput "Packages\PlayerTemplates\win-x64")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Invoke-Box "editor.evb" "Editor\bin\Release-windows-x86_64\TomCatInut" "TomCatInut.exe"
             Copy-Item -LiteralPath $cliOutput -Destination "dist\TomCatCLI.exe" -Force
+            Copy-Item -LiteralPath $cliShaderOutput -Destination "dist\shaderc_shared.dll" -Force
             Publish-TomCatManagedRelease -RepositoryRoot $env:GITHUB_WORKSPACE -Destination "dist\Managed"
-            $archiveInputs = @("dist\TomCat.exe", "dist\TomCatCLI.exe", "dist\Packages", "dist\Managed")
+            $archiveInputs = @("dist\TomCat.exe", "dist\TomCatCLI.exe", "dist\shaderc_shared.dll", "dist\Packages", "dist\Managed")
             foreach ($name in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
               Copy-Item -LiteralPath (Join-Path $editorOutput "Packages\PlayerTemplates\win-x64\$name") -Destination (Join-Path "dist" $name) -Force
               $archiveInputs += Join-Path "dist" $name

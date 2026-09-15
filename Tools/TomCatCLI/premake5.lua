@@ -45,6 +45,9 @@ project "TomCatCLI"
 	filter "system:windows"
 		systemversion "latest"
 		defines { "TC_PLATFORM_WINDOWS", "YAML_CPP_STATIC_DEFINE" }
+		postbuildcommands {
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul"
+		}
 
 	filter "configurations:Debug"
 		defines "TC_DEBUG"
