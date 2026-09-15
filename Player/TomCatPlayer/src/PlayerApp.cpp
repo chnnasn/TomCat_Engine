@@ -13,17 +13,35 @@
 #include "PlayerRuntimeLayer.h"
 
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <string_view>
 
 namespace TomCat {
 	namespace {
+		bool IsHeadlessPlayerSmokeRequested()
+		{
+			char* value = nullptr;
+			size_t valueLength = 0;
+			if (_dupenv_s(&value, &valueLength, "TOMCAT_E2E_PLAYER_HEADLESS") != 0
+				|| !value)
+				return false;
+			const std::string_view setting(value);
+			const bool requested = setting == "1" || setting == "true" || setting == "on"
+				|| setting == "yes";
+			std::free(value);
+			return requested;
+		}
+
 		struct PlayerLaunchPlan
 		{
 			PlayerCommandLine Command;
 			std::filesystem::path PackagePath;
 			WindowProps Window;
+			uint32_t ViewportWidth = 1280;
+			uint32_t ViewportHeight = 720;
 			bool CreateWindow = false;
 			int ErrorCode = 0;
 			std::string Error;
@@ -233,13 +251,17 @@ namespace TomCat {
 
 			plan.Window = WindowProps(settings.ProductName,
 				settings.Width, settings.Height, iconPath);
+			plan.ViewportWidth = settings.Width;
+			plan.ViewportHeight = settings.Height;
 			plan.Window.DisplayMode = ToWindowDisplayMode(settings.WindowMode);
 			plan.Window.Resizable = settings.Resizable;
 			plan.Window.VSync = settings.VSync;
 			TC_Core_Info("Launching {0} {1} by {2}; data root: {3}",
 				settings.ProductName, settings.Version, settings.CompanyName,
 				PathToUTF8(dataPaths->Root));
-			plan.CreateWindow = true;
+			plan.CreateWindow = !IsHeadlessPlayerSmokeRequested();
+			if (!plan.CreateWindow)
+				TC_Core_Info("Running the Player end-to-end smoke without a graphics window");
 			return plan;
 		}
 
@@ -266,7 +288,8 @@ namespace TomCat {
 				{
 					case PlayerCommandMode::Run:
 					{
-						PushLayer(new PlayerRuntimeLayer(plan.PackagePath));
+						PushLayer(new PlayerRuntimeLayer(plan.PackagePath,
+							plan.ViewportWidth, plan.ViewportHeight));
 						break;
 					}
 					case PlayerCommandMode::ValidatePackage:

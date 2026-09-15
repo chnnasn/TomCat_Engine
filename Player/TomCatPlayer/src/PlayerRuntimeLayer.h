@@ -16,7 +16,8 @@ namespace TomCat {
 	class PlayerRuntimeLayer final : public Layer
 	{
 	public:
-		explicit PlayerRuntimeLayer(std::filesystem::path packagePath);
+		explicit PlayerRuntimeLayer(std::filesystem::path packagePath,
+			uint32_t viewportWidth = 1280, uint32_t viewportHeight = 720);
 
 		void OnAttach() override;
 		void OnDetach() override;
@@ -29,6 +30,8 @@ namespace TomCat {
 
 	private:
 		std::filesystem::path m_PackagePath;
+		uint32_t m_ViewportWidth = 1280;
+		uint32_t m_ViewportHeight = 720;
 		Scope<SceneManager> m_SceneManager;
 	};
 

@@ -3576,7 +3576,7 @@ namespace TomCat {
 		return m_RuntimeRunning && m_PhysicsWorld;
 	}
 
-	void Scene::OnUpdateRuntime(Timestep ts)
+	void Scene::OnUpdateRuntime(Timestep ts, bool render)
 	{
 		if (!m_RuntimeRunning || !m_PhysicsWorld)
 		{
@@ -3641,7 +3641,8 @@ namespace TomCat {
 			AudioSceneRuntime::Update(*this, frameDelta);
 		}
 
-		RenderRuntimeScene();
+		if (render)
+			RenderRuntimeScene();
 	}
 
 	void Scene::OnRuntimeStep()

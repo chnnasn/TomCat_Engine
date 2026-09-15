@@ -105,6 +105,7 @@ $savedEnvironment = @{
     TOMCAT_E2E_ISOLATE_DOTNET = $env:TOMCAT_E2E_ISOLATE_DOTNET
     TOMCAT_E2E_REQUIRE_DETACHED = $env:TOMCAT_E2E_REQUIRE_DETACHED
     TOMCAT_E2E_PLAYER_EXE = $env:TOMCAT_E2E_PLAYER_EXE
+	TOMCAT_E2E_PLAYER_HEADLESS = $env:TOMCAT_E2E_PLAYER_HEADLESS
 	TOMCAT_E2E_PLAYER_TEMPLATE = $env:TOMCAT_E2E_PLAYER_TEMPLATE
     TOMCAT_E2E_REQUIRE_PLAYER = $env:TOMCAT_E2E_REQUIRE_PLAYER
     TOMCAT_E2E_CLI_EXE = $env:TOMCAT_E2E_CLI_EXE
@@ -190,11 +191,13 @@ try {
 	$env:DOTNET_ROOT_X64 = $privateDotNetRoot
     if ($playerExecutable) {
         $env:TOMCAT_E2E_PLAYER_EXE = $playerExecutable
+		$env:TOMCAT_E2E_PLAYER_HEADLESS = "1"
 		$env:TOMCAT_E2E_PLAYER_TEMPLATE = $playerTemplateRoot
         $env:TOMCAT_E2E_REQUIRE_PLAYER = "1"
     }
     else {
         Remove-Item Env:TOMCAT_E2E_PLAYER_EXE -ErrorAction SilentlyContinue
+		Remove-Item Env:TOMCAT_E2E_PLAYER_HEADLESS -ErrorAction SilentlyContinue
 		Remove-Item Env:TOMCAT_E2E_PLAYER_TEMPLATE -ErrorAction SilentlyContinue
         Remove-Item Env:TOMCAT_E2E_REQUIRE_PLAYER -ErrorAction SilentlyContinue
     }
