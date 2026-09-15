@@ -4067,7 +4067,7 @@ namespace TomCat {
 		constexpr int framePadding = 4;
 		const float buttonSize = iconSize + framePadding * 2.0f;
 		const float spacing = ImGui::GetStyle().ItemSpacing.x;
-		const float groupWidth = buttonSize * 4.0f + spacing * 3.0f;
+		const float groupWidth = buttonSize * 3.0f + spacing * 2.0f;
 		ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - groupWidth) * 0.5f));
 		ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(),
 			(ImGui::GetWindowHeight() - buttonSize) * 0.5f));
@@ -4104,7 +4104,8 @@ namespace TomCat {
 		};
 
 		const bool running = IsSceneRunning();
-		if (drawButton("Play", EditorIcon::Play, m_EditorScene != nullptr,
+		if (drawButton("PlayStop", running ? EditorIcon::Stop : EditorIcon::Play,
+			m_EditorScene != nullptr,
 			running, running ? "Stop" : "Play"))
 		{
 			if (running)
@@ -4120,9 +4121,6 @@ namespace TomCat {
 		if (drawButton("Step", EditorIcon::Step, m_SceneState == SceneState::Pause,
 			false, "Step one fixed physics frame (1/60 s)"))
 			OnSceneStep();
-		ImGui::SameLine();
-		if (drawButton("Stop", EditorIcon::Stop, running, false, "Stop"))
-			OnSceneStop();
 	}
 
 	bool EditorLayer::IsSceneRunning() const
