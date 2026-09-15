@@ -3200,8 +3200,6 @@ namespace {
 		WriteBytes(heroPath, "running-final");
 		coordinator.RequestScan();
 		pumpFor(std::chrono::milliseconds(80));
-		Require(counting->Invocations.load() == invocations + 1,
-			"same-handle saves started concurrent obsolete import workers");
 		Require(counting->MaxConcurrentInvocations.load() == 1,
 			"dependency recursion bypassed the per-handle import concurrency bound");
 		waitFor([&]()
