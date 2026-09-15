@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <fstream>
 #include <iomanip>
 #include <initializer_list>
 #include <limits>
@@ -75,10 +74,26 @@ namespace TomCat {
 			return true;
 		}
 
+#ifdef TC_PLATFORM_WINDOWS
+		std::wstring ExtendedLengthPath(const std::filesystem::path& path)
+		{
+			std::error_code error;
+			const std::filesystem::path absolute =
+				std::filesystem::absolute(path, error);
+			std::wstring value = (error ? path : absolute).lexically_normal().wstring();
+			if (value.rfind(L"\\\\?\\", 0) == 0)
+				return value;
+			if (value.rfind(L"\\\\", 0) == 0)
+				return L"\\\\?\\UNC\\" + value.substr(2);
+			return L"\\\\?\\" + value;
+		}
+#endif
+
 		bool IsReparsePoint(const std::filesystem::path& path)
 		{
 #ifdef TC_PLATFORM_WINDOWS
-			const DWORD attributes = GetFileAttributesW(path.c_str());
+			const DWORD attributes =
+				GetFileAttributesW(ExtendedLengthPath(path).c_str());
 			return attributes != INVALID_FILE_ATTRIBUTES &&
 				(attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 #else
@@ -185,34 +200,42 @@ namespace TomCat {
 				return false;
 			}
 
-			std::ifstream input(path, std::ios::binary);
-			if (!input)
+			const HANDLE input = CreateFileW(ExtendedLengthPath(path).c_str(),
+				GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+				nullptr, OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN |
+				FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+			if (input == INVALID_HANDLE_VALUE)
 			{
 				closeHandles();
 				errorMessage = "Could not open template file '" + PathToUTF8(path) + "'.";
 				return false;
 			}
 			std::array<uint8_t, 64 * 1024> buffer{};
-			while (input)
+			for (;;)
 			{
-				input.read(reinterpret_cast<char*>(buffer.data()),
-					static_cast<std::streamsize>(buffer.size()));
-				const std::streamsize count = input.gcount();
-				if (count > 0 && BCryptHashData(hash, buffer.data(),
-					static_cast<ULONG>(count), 0) < 0)
+				DWORD count = 0;
+				if (!ReadFile(input, buffer.data(),
+					static_cast<DWORD>(buffer.size()), &count, nullptr))
 				{
+					CloseHandle(input);
+					closeHandles();
+					errorMessage = "Could not read template file '" +
+						PathToUTF8(path) + "'.";
+					return false;
+				}
+				if (count == 0)
+					break;
+				if (BCryptHashData(hash, buffer.data(), count, 0) < 0)
+				{
+					CloseHandle(input);
 					closeHandles();
 					errorMessage = "Windows could not hash template file '" +
 						PathToUTF8(path) + "'.";
 					return false;
 				}
 			}
-			if (!input.eof())
-			{
-				closeHandles();
-				errorMessage = "Could not read template file '" + PathToUTF8(path) + "'.";
-				return false;
-			}
+			CloseHandle(input);
 			if (BCryptFinishHash(hash, bytes.data(),
 				static_cast<ULONG>(bytes.size()), 0) < 0)
 			{
@@ -460,14 +483,23 @@ namespace TomCat {
 			return true;
 		}
 
-		bool CopyFile(const std::filesystem::path& source,
+		bool CopyTemplateFile(const std::filesystem::path& source,
 			const std::filesystem::path& destination, std::string& errorMessage)
 		{
 			std::error_code error;
 			std::filesystem::create_directories(destination.parent_path(), error);
 			if (!error)
+#ifdef TC_PLATFORM_WINDOWS
+			{
+				if (!::CopyFileW(ExtendedLengthPath(source).c_str(),
+					ExtendedLengthPath(destination).c_str(), TRUE))
+					error = std::error_code(static_cast<int>(GetLastError()),
+						std::system_category());
+			}
+#else
 				std::filesystem::copy_file(source, destination,
 					std::filesystem::copy_options::none, error);
+#endif
 			if (!error)
 				return true;
 			errorMessage = "Could not copy '" + PathToUTF8(source) + "' to '" +
@@ -681,7 +713,7 @@ namespace TomCat {
 
 		for (const TemplateFile& file : manifest.Files)
 		{
-			if (!CopyFile(request.TemplateDirectory / file.RelativePath,
+			if (!CopyTemplateFile(request.TemplateDirectory / file.RelativePath,
 				staging / file.RelativePath, errorMessage))
 				return failStaged(std::move(errorMessage));
 			std::string stagedHash;
