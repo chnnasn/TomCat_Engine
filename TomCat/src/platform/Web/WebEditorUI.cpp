@@ -26,7 +26,8 @@ void WebEditorUI::OnAttach() {
   m_Hierarchy.SetIcons(m_Icons); m_Content.SetIcons(m_Icons);
   m_Content.SetAssetMutationsEnabled(false);
   m_Hierarchy.SetPrefabCreationAllowed(false);
-  m_Hierarchy.SetColliderEditingAllowed(false);
+  m_Hierarchy.SetColliderGizmosEnabled(false);
+  m_Hierarchy.SetScriptEditingEnabled(false);
   m_Hierarchy.SetSceneModifiedCallback([this](SceneHierarchyPanel::SceneModificationPhase phase) {
     using Phase = SceneHierarchyPanel::SceneModificationPhase;
     const auto selected = m_Hierarchy.GetSelectedEntity();

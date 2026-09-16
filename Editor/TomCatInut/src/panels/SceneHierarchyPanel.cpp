@@ -771,7 +771,7 @@ namespace TomCat {
 
 	SceneHierarchyPanel::ColliderEditMode SceneHierarchyPanel::GetColliderEditMode() const
 	{
-		if (!m_ColliderEditingAllowed || m_ColliderEditMode == ColliderEditMode::None || !m_SelectionContext
+		if (!m_ColliderEditingAllowed || !m_ColliderGizmosEnabled || m_ColliderEditMode == ColliderEditMode::None || !m_SelectionContext
 			|| m_SelectionContext.GetUUID() != m_ColliderEditEntity)
 			return ColliderEditMode::None;
 
@@ -885,7 +885,7 @@ namespace TomCat {
 
 	bool SceneHierarchyPanel::AttachCSharpScript(Entity entity, AssetHandle handle)
 	{
-		if (!entity || !m_Context || !m_ColliderEditingAllowed ||
+		if (!entity || !m_Context || !m_ColliderEditingAllowed || !m_ScriptEditingEnabled ||
 			static_cast<uint64_t>(handle) == 0)
 			return false;
 		const AssetMetadata* assetMetadata =
@@ -977,7 +977,7 @@ namespace TomCat {
 
 	bool SceneHierarchyPanel::AcceptCSharpScriptDrop(Entity entity)
 	{
-		if (!entity || !m_ColliderEditingAllowed)
+		if (!entity || !m_ColliderEditingAllowed || !m_ScriptEditingEnabled)
 			return false;
 		const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
 			AssetDragDropPayloadID, ImGuiDragDropFlags_AcceptBeforeDelivery);
@@ -3800,7 +3800,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 			[this, entity](auto& component)
 		{
 			const bool editingCollider = GetColliderEditMode() == ColliderEditMode::Box;
-			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
+			ImGui::BeginDisabled(!m_ColliderEditingAllowed || !m_ColliderGizmosEnabled);
 			if (editingCollider)
 				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
 			if (ImGui::Button("Edit Collider", ImVec2(-1.0f, 0.0f)))
@@ -3867,7 +3867,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 			[this, entity](auto& component)
 		{
 			const bool editingCollider = GetColliderEditMode() == ColliderEditMode::Circle;
-			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
+			ImGui::BeginDisabled(!m_ColliderEditingAllowed || !m_ColliderGizmosEnabled);
 			if (editingCollider)
 				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
 			if (ImGui::Button("Edit Collider", ImVec2(-1.0f, 0.0f)))
@@ -4043,7 +4043,9 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 		richInspectors.emplace(ComponentIds::CSharpScripts, [&]()
 		{
+			ImGui::BeginDisabled(!m_ScriptEditingEnabled);
 			DrawCSharpScripts(entity);
+			ImGui::EndDisabled();
 		});
 		for (const ComponentDescriptor& descriptor :
 			ComponentRegistry::Get().GetDescriptors())
