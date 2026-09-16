@@ -1,8 +1,10 @@
 #include "tcpch.h"
 #include "ShaderArtifact.h"
 
+#ifndef TC_PLATFORM_WEB
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_cross.hpp>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -114,11 +116,13 @@ namespace TomCat {
 			return true;
 		}
 
+#ifndef TC_PLATFORM_WEB
 		shaderc_shader_kind ShaderKind(ShaderArtifactStage stage)
 		{
 			return stage == ShaderArtifactStage::Vertex
 				? shaderc_glsl_vertex_shader : shaderc_glsl_fragment_shader;
 		}
+#endif
 
 		bool ParseSourceStages(std::span<const uint8_t> bytes,
 			const std::filesystem::path& sourcePath, std::vector<SourceStage>& stages,
@@ -206,6 +210,7 @@ namespace TomCat {
 			return true;
 		}
 
+#ifndef TC_PLATFORM_WEB
 		uint32_t ArraySize(const spirv_cross::SPIRType& type)
 		{
 			if (type.array.empty())
@@ -283,6 +288,7 @@ namespace TomCat {
 				value.ArraySize, value.ByteSize, value.Name);
 		}
 
+#endif
 		bool ReadName(std::span<const uint8_t> bytes, uint32_t stringOffset,
 			uint32_t stringEnd, uint32_t offset, std::string_view& name)
 		{
@@ -439,6 +445,11 @@ namespace TomCat {
 		const AssetImportSettings& settings, std::string_view backend,
 		std::vector<uint8_t>& artifact, std::string& error)
 	{
+#ifdef TC_PLATFORM_WEB
+		artifact.clear();
+		error = "Offline shader compilation requires the desktop cooker";
+		return false;
+#else
 		artifact.clear();
 		error.clear();
 		std::vector<SourceStage> sourceStages;
@@ -648,6 +659,7 @@ namespace TomCat {
 			return false;
 		}
 		return true;
+#endif
 	}
 
 }

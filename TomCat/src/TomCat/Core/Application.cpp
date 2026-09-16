@@ -11,6 +11,7 @@
 #include "Input.h"
 
 #include <stdexcept>
+#include <cmath>
 
 namespace TomCat {
 
@@ -50,11 +51,16 @@ namespace TomCat {
 					m_Window->GetFramebufferHeight());
 			}
 
+#ifndef TC_PLATFORM_WEB
 			if (enableImGui)
 			{
 				m_ImGuiLayer = new ImGuiLayer();
 				PushOverlay(m_ImGuiLayer);
 			}
+#else
+			if (enableImGui)
+				throw std::invalid_argument("The Web Player target does not include the desktop editor UI");
+#endif
 		}
 		catch (...)
 		{
@@ -179,6 +185,20 @@ namespace TomCat {
 
 		while (m_Running) 
 		{
+			const float time = static_cast<float>(m_Window->GetTimeSeconds());
+			const float delta = time - m_LastFrameTime;
+			m_LastFrameTime = time;
+			Tick(delta);
+		}
+	}
+
+	bool Application::Tick(float deltaSeconds)
+	{
+		if (!m_Window || !m_Running)
+			return false;
+		if (!std::isfinite(deltaSeconds) || deltaSeconds < 0.0f)
+			throw std::invalid_argument("Frame delta must be finite and nonnegative");
+		{
 			TC_PROFILE_SCOPE("RunLoop");
 			// Poll first, then freeze one immutable input snapshot. Both native
 			// gameplay and managed scripts therefore observe transitions delivered
@@ -187,11 +207,9 @@ namespace TomCat {
 			Input::BeginFrame();
 			Scripting::ScriptEngine::Get().CaptureInputState();
 			if (!m_Running)
-				break;
+				return false;
 
-			float time = static_cast<float>(m_Window->GetTimeSeconds());
-			Timestep timestep = time - m_LastFrameTime;
-			m_LastFrameTime = time;
+			Timestep timestep = deltaSeconds;
 
 			// Files are hashed and imported on worker threads, but registry updates
 			// and runtime cache invalidation must be published from the application
@@ -216,6 +234,7 @@ namespace TomCat {
 						layer->OnUpdate(timestep);
 				}
 
+#ifndef TC_PLATFORM_WEB
 				if (m_ImGuiLayer)
 				{
 					m_ImGuiLayer->Begin();
@@ -226,11 +245,13 @@ namespace TomCat {
 					}
 					m_ImGuiLayer->End();
 				}
+#endif
 
 			}
 
 			m_Window->Present();
 		}
+		return m_Running;
 	}
 
 

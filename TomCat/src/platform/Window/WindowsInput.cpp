@@ -4,7 +4,10 @@
 #include "TomCat/Core/Application.h"
 
 #include <algorithm>
-#include <glfw/glfw3.h>
+#include <GLFW/glfw3.h>
+#ifdef TC_PLATFORM_WEB
+#include <emscripten/html5.h>
+#endif
 
 namespace TomCat {
 	namespace {
@@ -30,6 +33,22 @@ namespace TomCat {
 				|| index >= Input::MaximumGamepads)
 				return snapshot;
 
+#ifdef TC_PLATFORM_WEB
+			EmscriptenGamepadEvent state{};
+			if (emscripten_get_gamepad_status(index, &state) != EMSCRIPTEN_RESULT_SUCCESS
+				|| !state.connected || std::string_view(state.mapping) != "standard")
+				return snapshot;
+			snapshot.Connected = true;
+			// Browser standard mapping has triggers at 6/7; GLFW exposes them as axes.
+			constexpr int buttons[] = {0, 1, 2, 3, 4, 5, 8, 9, 16, 10, 11, 12, 13, 14, 15};
+			for (uint32_t button = 0; button < Input::GamepadButtonCount; ++button)
+				snapshot.Buttons[button] = buttons[button] < state.numButtons && state.digitalButton[buttons[button]];
+			for (int axis = 0; axis < 4 && axis < state.numAxes; ++axis)
+				snapshot.Axes[axis] = std::clamp(float(state.axis[axis]), -1.0f, 1.0f);
+			snapshot.Axes[4] = state.numButtons > 6 ? float(state.analogButton[6] * 2 - 1) : -1.0f;
+			snapshot.Axes[5] = state.numButtons > 7 ? float(state.analogButton[7] * 2 - 1) : -1.0f;
+			snapshot.Name = state.id;
+#else
 			const int joystick = GLFW_JOYSTICK_1 + static_cast<int>(index);
 			if (glfwJoystickIsGamepad(joystick) != GLFW_TRUE)
 				return snapshot;
@@ -43,6 +62,7 @@ namespace TomCat {
 				snapshot.Axes[axis] = std::clamp(state.axes[axis], -1.0f, 1.0f);
 			if (const char* name = glfwGetGamepadName(joystick))
 				snapshot.Name = name;
+#endif
 			return snapshot;
 		}
 	}
@@ -86,6 +106,9 @@ namespace TomCat {
 
 	void Input::BeginFrame()
 	{
+#ifdef TC_PLATFORM_WEB
+		emscripten_sample_gamepad_data();
+#endif
 		std::array<GamepadSnapshot, MaximumGamepads> nextGamepads{};
 		Application* application = Application::TryGet();
 		const double timestamp = application && application->HasWindow()
