@@ -49,17 +49,26 @@ target_link_libraries(tc_player_core PUBLIC box2d tc_yaml)
 
 add_executable(tomcat_player "${TC_SRC}/platform/Web/WebPlayer.cpp")
 target_link_libraries(tomcat_player PRIVATE tc_player_core)
-target_link_options(tomcat_player PRIVATE
+set(TC_WEB_LINK_OPTIONS
   --no-entry -pthread -fexceptions
   "-sUSE_GLFW=3" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
-  "-sMODULARIZE=1" "-sEXPORT_NAME=TomCatPlayerModule"
+  "-sMODULARIZE=1"
   "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=134217728"
-  "-sSTACK_SIZE=4194304" "-sDEFAULT_PTHREAD_STACK_SIZE=2097152"
-  "-sASSERTIONS=1" "-sSTACK_OVERFLOW_CHECK=2"
   "-sSTACK_SIZE=4194304" "-sDEFAULT_PTHREAD_STACK_SIZE=2097152"
   "-sASSERTIONS=1" "-sSTACK_OVERFLOW_CHECK=2"
   "-sPTHREAD_POOL_SIZE=12" "-sPTHREAD_POOL_SIZE_STRICT=2"
   "-sFORCE_FILESYSTEM=1"
-  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_player_boot','_tc_web_player_frame','_tc_web_player_resize','_tc_web_player_shutdown','_tc_web_player_error','_tc_web_player_cook_sample','_tc_web_player_stats']"
   "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','FS','HEAPU8','PThread']"
   "--preload-file=${TC_ROOT}/Samples/PhysicsPlayground@/Samples/PhysicsPlayground")
+target_link_options(tomcat_player PRIVATE ${TC_WEB_LINK_OPTIONS}
+  "-sEXPORT_NAME=TomCatPlayerModule"
+  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_player_boot','_tc_web_player_frame','_tc_web_player_resize','_tc_web_player_shutdown','_tc_web_player_error','_tc_web_player_cook_sample','_tc_web_player_stats']")
+
+add_executable(tomcat_editor
+  "${TC_SRC}/platform/Web/WebEditor.cpp"
+  "${TC_SRC}/TomCat/Editor/WebEditorSession.cpp"
+  "${TC_SRC}/TomCat/Editor/SceneHistory.cpp")
+target_link_libraries(tomcat_editor PRIVATE tc_player_core)
+target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
+  "-sEXPORT_NAME=TomCatEditorModule"
+  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_editor_boot','_tc_web_editor_frame','_tc_web_editor_resize','_tc_web_editor_shutdown','_tc_web_editor_error','_tc_web_editor_rpc']")

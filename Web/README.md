@@ -42,7 +42,51 @@ those bytes. On disposal call shutdown and `module.PThread.terminateAllThreads()
 Create a new module and canvas for each subsequent play session. Source assets
 and the development cooker are currently bundled in this experimental target.
 
-## Port boundaries
+## Native authoring API
+
+The build also emits `tomcat_editor.js/.wasm/.data`, factory `TomCatEditorModule`.
+This module renders an authoring Scene through `Scene::OnUpdateEditor`; call
+`tc_web_editor_boot`, `tc_web_editor_frame`, `tc_web_editor_resize`,
+`tc_web_editor_error` and `tc_web_editor_shutdown` like the Player equivalents.
+Terminate its pthread pool on disposal and use a fresh module for another session.
+
+`tc_web_editor_rpc(requestJson)` synchronously returns JSON, valid until the next
+call. Requests and replies use `protocol: "tomcat.web.v1"` and `requestId`.
+Commands: `system.capabilities`, `project.open`, `project.new`, `scene.snapshot`,
+`scene.select`, `scene.transact`, `scene.loadArchive`, `scene.markSaved`,
+`history.undo`, `history.redo`, `asset.list`, `asset.import`.
+Open currently accepts `/Samples/PhysicsPlayground/Project.tcproj`; new creates a
+scene using that mounted asset root. Import other scenes as canonical archives.
+
+Scene mutations carry `sceneHandle` (uint64 decimal string) and `baseRevision`
+(non-negative safe integer). Transactions additionally carry `label` and
+`operations`: `entity.create/delete/rename/set-parent`,
+`component.add/remove/patch`. Component patches map property IDs to typed values.
+All entity/component/property/asset IDs and int64 values cross JS as strings.
+Snapshots include canonical archive, entities, property schemas and history flags.
+Mutations apply to a decoded scratch Scene and commit through SceneHistory only
+after validation. Revisions increase on edits and undo/redo, never move backwards.
+Asset type constraints, entity references, hierarchy validity and read-only
+properties are checked in C++. Third-party component providers remain excluded.
+
+For image import, write a new basename under
+`/Samples/PhysicsPlayground/Assets/WebImports/`, then call `asset.import` with
+`{name:"example.png"}`. The engine imports it and returns its stable handle;
+persist the image and generated `.tcmeta` together. PNG/JPEG/TGA up to 2 MiB are
+accepted. Imported files are separate from scene undo/redo. MEMFS metadata
+publication uses create-only copies because MEMFS does not implement hard links.
+
+Run the real WASM protocol regression without a graphics context:
+
+```powershell
+node Web/tests/editor-rpc.cjs build/web
+```
+
+The test covers transactions, rollback, uint64 boundaries, selection, components,
+hierarchy, images, invalid references, history divergence and revision conflicts.
+Browser rendering and persistence still need host-level acceptance checks.
+
+## Shared port boundaries
 
 - GLES3 replacements for desktop DSA buffer/texture operations and single-sample
   framebuffers; embedded engine shaders use GLSL ES 300 and 16 texture slots.
