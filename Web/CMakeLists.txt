@@ -66,9 +66,25 @@ target_link_options(tomcat_player PRIVATE ${TC_WEB_LINK_OPTIONS}
 
 add_executable(tomcat_editor
   "${TC_SRC}/platform/Web/WebEditor.cpp"
+  "${TC_SRC}/platform/Web/WebEditorUI.cpp"
+  "${TC_SRC}/TomCat/ImGui/ImGuiLayer.cpp"
+  "${TC_SRC}/TomCat/ImGui/ImGuiCallback.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneHierarchyPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/ContentBrowserPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/ConsolePanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
+  "${TC_VENDOR}/ImGui/imgui.cpp" "${TC_VENDOR}/ImGui/imgui_draw.cpp"
+  "${TC_VENDOR}/ImGui/imgui_tables.cpp" "${TC_VENDOR}/ImGui/imgui_widgets.cpp"
+  "${TC_VENDOR}/ImGui/backends/imgui_impl_glfw.cpp"
+  "${TC_VENDOR}/ImGui/backends/imgui_impl_opengl3.cpp"
+  "${TC_VENDOR}/ImGuizmo/ImGuizmo.cpp"
   "${TC_SRC}/TomCat/Editor/WebEditorSession.cpp"
   "${TC_SRC}/TomCat/Editor/SceneHistory.cpp")
 target_link_libraries(tomcat_editor PRIVATE tc_player_core)
+target_include_directories(tomcat_editor PRIVATE "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src")
+target_compile_definitions(tomcat_editor PRIVATE IMGUI_IMPL_OPENGL_ES3)
 target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatEditorModule"
-  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_editor_boot','_tc_web_editor_frame','_tc_web_editor_resize','_tc_web_editor_shutdown','_tc_web_editor_error','_tc_web_editor_rpc']")
+  "--preload-file=${TC_ROOT}/Editor/TomCatInut/Packages@/Packages"
+  "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/fonts@/WebFonts"
+  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_editor_boot','_tc_web_editor_frame','_tc_web_editor_resize','_tc_web_editor_shutdown','_tc_web_editor_error','_tc_web_editor_rpc','_tc_web_editor_state','_tc_web_editor_take_actions']")

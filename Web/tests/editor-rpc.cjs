@@ -18,9 +18,16 @@ for (const extension of ['js', 'wasm', 'data']) fs.copyFileSync(path.join(source
       assert.equal(reply.requestId, requestId);
       assert.equal(reply.protocol, 'tomcat.web.v1');
       if (expectedError) { assert.equal(reply.ok, false); assert.equal(reply.error.code, expectedError, JSON.stringify(reply)); return reply; }
-      assert.equal(reply.ok, true, JSON.stringify(reply)); return reply.result;
+      assert.equal(reply.ok, true, JSON.stringify(reply));
+      if (reply.result.sceneHandle) {
+        const state = JSON.parse(module.ccall('tc_web_editor_state', 'string', [], []));
+        for (const key of ['sceneHandle','revision','selectedEntityId','dirty','canUndo','canRedo'])
+          assert.deepEqual(state[key], reply.result[key], `host status differs for ${key}`);
+      }
+      return reply.result;
     }
     assert.ok(rpc('system.capabilities', {}).capabilities.includes('scene.transact'));
+    assert.equal(module.ccall('tc_web_editor_take_actions', 'number', [], []), 0);
     let snapshot = rpc('project.open', {projectPath:'/Samples/PhysicsPlayground/Project.tcproj'});
     const square = snapshot.entities.find(entity => entity.name === 'Square');
     const ground = snapshot.entities.find(entity => entity.name === 'Ground');

@@ -11,6 +11,14 @@ class WebEditorSession final {
 public:
   std::string Invoke(const std::string& request);
   Ref<Scene> GetScene() const { return m_Scene; }
+  Ref<Project> GetProject() const { return m_Project; }
+  uint64_t GetSelection() const { return m_Selected; }
+  std::string Status() const;
+  void SelectFromUI(uint64_t entity);
+  void BeginUIEdit();
+  void EndUIEdit(uint64_t selection, bool cancel = false);
+  std::string HistoryFromUI(bool redo);
+  std::string OpenSceneAsset(uint64_t handle);
 private:
   std::string Snapshot() const;
   Ref<Scene> m_Scene;

@@ -201,6 +201,42 @@ void Apply(const Ref<Scene>& scene, const YAML::Node& operation, uint64_t& selec
 }
 }
 
+std::string WebEditorSession::Status() const {
+  return Object({{"sceneHandle", Id(m_SceneHandle)}, {"revision", std::to_string(m_Revision)}, {"selectedEntityId", m_Selected ? Id(m_Selected) : "null"}, {"dirty", Bool(m_History.IsDirty() || m_History.HasActiveTransaction())}, {"canUndo", Bool(m_History.CanUndo())}, {"canRedo", Bool(m_History.CanRedo())}});
+}
+void WebEditorSession::SelectFromUI(uint64_t entity) {
+  if (!m_Scene || (entity && !m_Scene->FindEntityByUUID(UUID(entity)))) return;
+  m_Selected = entity; m_History.SetCurrentSelection(entity);
+}
+void WebEditorSession::BeginUIEdit() {
+  if (m_Scene && !m_History.HasActiveTransaction()) m_History.BeginTransaction("ImGui edit");
+}
+void WebEditorSession::EndUIEdit(uint64_t selection, bool cancel) {
+  if (!m_Scene || !m_History.HasActiveTransaction()) return;
+  if (cancel) {
+    const auto* previous = m_History.GetCurrentSnapshot();
+    if (previous && previous->Archive) { m_Scene = Decode(*previous->Archive); m_Selected = previous->SelectedEntity; ++m_Revision; }
+    m_History.CancelTransaction(); return;
+  }
+  Require(m_Scene->SyncTransformHierarchy(), "Invalid transform hierarchy");
+  if (!m_Scene->FindEntityByUUID(UUID(selection))) selection = 0;
+  if (m_History.CommitTransaction(Encode(m_Scene), selection)) ++m_Revision;
+  m_Selected = selection;
+}
+std::string WebEditorSession::HistoryFromUI(bool redo) {
+  EndUIEdit(m_Selected);
+  return Invoke(Object({{"protocol",Quote("tomcat.web.v1")},{"requestId",Quote("imgui-history")},{"type",Quote(redo ? "history.redo" : "history.undo")},{"payload",Object({{"sceneHandle",Id(m_SceneHandle)},{"baseRevision",std::to_string(m_Revision)}})}}));
+}
+std::string WebEditorSession::OpenSceneAsset(uint64_t handle) {
+  const auto* metadata = AssetManager::Get().GetRegistry().GetMetadata(UUID(handle));
+  Require(metadata && metadata->Type == AssetType::Scene, "Expected Scene asset");
+  std::ifstream file(AssetManager::Get().GetRegistry().GetFileSystemPath(UUID(handle)),std::ios::binary);
+  Require(bool(file), "Scene asset missing");
+  std::string archive((std::istreambuf_iterator<char>(file)),{});
+  EndUIEdit(m_Selected);
+  return Invoke(Object({{"protocol",Quote("tomcat.web.v1")},{"requestId",Quote("imgui-open")},{"type",Quote("scene.loadArchive")},{"payload",Object({{"sceneHandle",Id(m_SceneHandle)},{"baseRevision",std::to_string(m_Revision)},{"archive",Quote(archive)}})}}));
+}
+
 std::string WebEditorSession::Snapshot() const {
   std::vector<std::string> entities, schemas;
   for (const auto& descriptor : ComponentRegistry::Get().GetDescriptors()) {
@@ -232,6 +268,7 @@ std::string WebEditorSession::Snapshot() const {
 
 std::string WebEditorSession::Invoke(const std::string& request) {
   std::string requestId;
+  const bool existingTransaction = m_History.HasActiveTransaction();
   try {
     Require(request.size() <= 8 * 1024 * 1024, "Request exceeds 8 MiB");
     auto root = YAML::Load(request); size_t count = 0; ValidateTree(root, 0, count);
@@ -289,13 +326,17 @@ std::string WebEditorSession::Invoke(const std::string& request) {
         std::sort(assets.begin(), assets.end()); result = Object({{"assets", Array(assets)}});
       } else {
         Require(ReadId(payload["sceneHandle"]) == m_SceneHandle, "Scene handle does not match", "SCENE_NOT_FOUND");
-        if (type == "scene.snapshot") result = Snapshot();
+        if (type == "scene.snapshot") {
+          Require(!m_History.HasActiveTransaction(), "Finish the active ImGui edit first", "EDIT_IN_PROGRESS");
+          result = Snapshot();
+        }
         else if (type == "scene.select") {
           const auto selected = payload["entityId"].IsNull() ? 0 : ReadId(payload["entityId"]);
           Require(selected == 0 || bool(m_Scene->FindEntityByUUID(UUID(selected))), "Selected entity missing");
           m_Selected = selected; m_History.SetCurrentSelection(selected); result = Snapshot();
         }
         else {
+          Require(!m_History.HasActiveTransaction(), "Finish the active ImGui edit first", "EDIT_IN_PROGRESS");
           const double base = Number(payload["baseRevision"]);
           Require(base >= 0 && std::trunc(base) == base && base <= 9007199254740991.0, "Invalid revision");
           Require(uint64_t(base) == m_Revision, "Scene changed; reload the latest snapshot", "REVISION_CONFLICT");
@@ -327,7 +368,7 @@ std::string WebEditorSession::Invoke(const std::string& request) {
     }
     return Object({{"protocol", Quote("tomcat.web.v1")}, {"requestId", Quote(requestId)}, {"ok", "true"}, {"result", result}});
   } catch (const std::exception& error) {
-    m_History.CancelTransaction();
+    if (!existingTransaction) m_History.CancelTransaction();
     const auto* rpc = dynamic_cast<const RpcError*>(&error);
     return Object({{"protocol", Quote("tomcat.web.v1")}, {"requestId", Quote(requestId)}, {"ok", "false"}, {"error", Object({{"code", Quote(rpc ? rpc->Code : "INVALID_REQUEST")}, {"message", Quote(error.what())}})}});
   }

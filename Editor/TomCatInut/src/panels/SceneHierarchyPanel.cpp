@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <cmath>
 #include <cstddef>
 #include <functional>
@@ -1314,7 +1315,7 @@ namespace TomCat {
 			}
 		}
 		m_RenameEntity = entity;
-		strncpy_s(m_RenameBuffer, sizeof(m_RenameBuffer), entity.GetName().c_str(), _TRUNCATE);
+		std::snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", entity.GetName().c_str());
 		m_RenameFocus = true;
 	}
 
@@ -2168,8 +2169,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 			m_AnimatorRenameTarget = target;
 			m_AnimatorRenameEntity = entity.GetUUID();
 			m_AnimatorRenameIndex = index;
-			strncpy_s(m_AnimatorRenameBuffer.data(), m_AnimatorRenameBuffer.size(),
-				currentName.c_str(), _TRUNCATE);
+			std::snprintf(m_AnimatorRenameBuffer.data(), m_AnimatorRenameBuffer.size(), "%s", currentName.c_str());
 			m_AnimatorRenameError.clear();
 			requestRenamePopup = true;
 		};
@@ -3058,7 +3058,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 		if (m_NameEditingEntity != entity)
 		{
 			m_NameEditingEntity = entity;
-			strncpy_s(m_NameEditBuffer, sizeof(m_NameEditBuffer), tag.c_str(), _TRUNCATE);
+			std::snprintf(m_NameEditBuffer, sizeof(m_NameEditBuffer), "%s", tag.c_str());
 		}
 
 		if (entity.HasComponent<EntityMetadata>())
@@ -3079,7 +3079,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 		{
 			if (m_Context->RenameEntity(entity, m_NameEditBuffer))
 				MarkModified();
-			strncpy_s(m_NameEditBuffer, sizeof(m_NameEditBuffer), tag.c_str(), _TRUNCATE);
+			std::snprintf(m_NameEditBuffer, sizeof(m_NameEditBuffer), "%s", tag.c_str());
 		}
 
 	}

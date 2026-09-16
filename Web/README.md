@@ -1,4 +1,4 @@
-# Experimental Web Player
+# Experimental Web Player and ImGui editor
 
 This Emscripten target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader,
 scene runtime, Renderer2D and Box2D in a browser. It is a native-only milestone,
@@ -45,10 +45,36 @@ and the development cooker are currently bundled in this experimental target.
 ## Native authoring API
 
 The build also emits `tomcat_editor.js/.wasm/.data`, factory `TomCatEditorModule`.
-This module renders an authoring Scene through `Scene::OnUpdateEditor`; call
+This module compiles the existing `SceneHierarchyPanel` (including Inspector),
+`ContentBrowserPanel`, `ConsolePanel`, `ImGuiLayer` theme/icons and ImGuizmo.
+The browser host supplies navigation, file selection and persistence; it does not
+reimplement the panels in HTML. A Web-only layer supplies docking, the scene
+framebuffer, picking and transform gizmos around these shared desktop panels.
+It renders an authoring Scene through `Scene::OnUpdateEditor`; call
 `tc_web_editor_boot`, `tc_web_editor_frame`, `tc_web_editor_resize`,
 `tc_web_editor_error` and `tc_web_editor_shutdown` like the Player equivalents.
 Terminate its pthread pool on disposal and use a fresh module for another session.
+
+Poll `tc_web_editor_state()` for lightweight JSON containing scene handle,
+revision, selection, dirty and undo/redo flags. Its response shares storage with
+the RPC reply. Consume `tc_web_editor_take_actions()` after each frame: bit 1
+requests host save, bit 2 image import and bit 4 project export. File Save and
+Ctrl+S commit the current native gesture before requesting host persistence.
+Panel edits and gizmo drags use the same SceneHistory as RPC; a continuous edit
+is one undo entry. RPC snapshots and mutations reject active native gestures
+with `EDIT_IN_PROGRESS`, so a host cannot persist a partially committed edit.
+
+Web fonts use the existing OpenSans files plus the licensed Noto Sans SC in
+`Web/fonts`. The WebGL framebuffer uses typed clears for float/integer color
+attachments. The Emscripten GLFW backend disables unavailable Vulkan/gamepad
+entry points; engine gamepad input remains on its separate browser adapter.
+
+This reuses the core desktop panels, not every tool in the desktop EditorLayer.
+Project asset browsing, thumbnails and references work. File mutations in that
+panel are disabled until the host can persist every asset type; import images
+through the host instead. Prefab creation, specialized collider editing,
+external C# editors, project/layout persistence and editor Play are not exposed.
+The C++ file dialog fallback returns cancellation in the browser.
 
 `tc_web_editor_rpc(requestJson)` synchronously returns JSON, valid until the next
 call. Requests and replies use `protocol: "tomcat.web.v1"` and `requestId`.
@@ -85,6 +111,12 @@ node Web/tests/editor-rpc.cjs build/web
 The test covers transactions, rollback, uint64 boundaries, selection, components,
 hierarchy, images, invalid references, history divergence and revision conflicts.
 Browser rendering and persistence still need host-level acceptance checks.
+
+Browser acceptance on 2026-09-17 verified Chinese glyphs, Hierarchy selection,
+Inspector translation edits, Sprite picker assignment, scene pixel picking,
+ImGuizmo dragging, undo/redo, docking resize and native File Save followed by
+host reload with the same transform and Sprite reference. This does not cover
+Chinese IME composition or all desktop panel widgets.
 
 ## Shared port boundaries
 
