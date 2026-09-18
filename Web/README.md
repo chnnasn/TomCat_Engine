@@ -1,5 +1,7 @@
 # Experimental Web Player and ImGui editor
 
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-18 · [All documentation](../docs/README.md)
+
 This Emscripten target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader,
 scene runtime, Renderer2D and Box2D in a browser. It is a native-only milestone,
 not a full replacement for the desktop Player.
@@ -7,6 +9,9 @@ not a full replacement for the desktop Player.
 ## Build
 
 Validated on Windows with Emscripten 4.0.15, CMake and Ninja. Activate the SDK first.
+Run these commands from the repository root. CMake 3.20+ is required; Node.js is
+also needed for the protocol regression. The build produces modules, not a complete
+browser host page or a persistence service. Earlier validation dates below are historical.
 
 ```powershell
 git submodule update --init TomCat/vendor/Box2D TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/ImGuizmo
@@ -55,6 +60,10 @@ It renders an authoring Scene through `Scene::OnUpdateEditor`; call
 `tc_web_editor_error` and `tc_web_editor_shutdown` like the Player equivalents.
 Terminate its pthread pool on disposal and use a fresh module for another session.
 
+The editor boot signature is `tc_web_editor_boot(width, height)`; unlike Player
+boot, it takes no TCPAK byte buffer. After boot, open the sample or create a scene
+through RPC. Copy/parse returned strings before calling another state/RPC export.
+
 Poll `tc_web_editor_state()` for lightweight JSON containing scene handle,
 revision, selection, dirty and undo/redo flags. Its response shares storage with
 the RPC reply. Consume `tc_web_editor_take_actions()` after each frame: bit 1
@@ -78,6 +87,7 @@ The C++ file dialog fallback returns cancellation in the browser.
 
 `tc_web_editor_rpc(requestJson)` synchronously returns JSON, valid until the next
 call. Requests and replies use `protocol: "tomcat.web.v1"` and `requestId`.
+Requests use `type` for the command and `payload` for its arguments.
 Commands: `system.capabilities`, `project.open`, `project.new`, `scene.snapshot`,
 `scene.select`, `scene.transact`, `scene.loadArchive`, `scene.markSaved`,
 `history.undo`, `history.redo`, `asset.list`, `asset.import`.
@@ -135,6 +145,10 @@ Chinese IME composition or all desktop panel widgets.
 - SharedArrayBuffer/Workers and WebGL2 are required; no single-thread fallback.
 - Existing desktop builds retain their implementation. Full Windows regression
   coverage is supplied by the existing CI workflow; Web validation does not replace it.
+
+The shared current TCPAK writer is v7 (per-entry SHA-256); the reader accepts
+v5/v6/v7. Format compatibility does not remove the Web feature restrictions above.
+The repository's Windows regression workflow does not run the Web build or WASM test.
 
 ## Acceptance observed (2026-09-16)
 

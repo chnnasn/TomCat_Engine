@@ -1,4 +1,9 @@
-# 实机录制说明 / Capture notes
+# 实机录制说明
+
+中文文档 · 整理日期：2026-09-18 · [文档索引](../README.md)
+
+以下构建 Hash、操作结果和问题均来自 **2026-09-15** 的桌面录制，保留为历史证据。
+它们不表示当前提交重新通过了验收；2026-09-16/17 的浏览器验收另见 [Web 记录](../../Web/README.zh-CN.md)。
 
 这些素材来自运行中的 TomCat Hub、TomCat Editor 和 OBS，不含 SVG、重绘界面、
 合成鼠标或模拟物理动画。画面裁去底部 40 像素的 Windows 任务栏，保留软件界面与真实鼠标；
@@ -16,7 +21,7 @@
 - Play 中实际观察到方块下落、接触地板并停稳；Stop 后恢复原始悬空姿态。
 - 可复现项目：[Samples/PhysicsPlayground](../../Samples/PhysicsPlayground/README.md)。
 
-## 已知限制
+## 本次录制遇到的问题与覆盖范围
 
 Hub 启动的是本次编译的 Editor，但项目自动加载触发了：
 

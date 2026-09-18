@@ -12,6 +12,9 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
+Documentation reviewed against the repository on **2026-09-18**. Product version: **0.2.0**.
+See the [documentation index](docs/README.md) for all guides and Chinese editions.
+
 ---
 
 ## Project Overview
@@ -23,6 +26,7 @@ through visual authoring tools, while the Player runs packaged games independent
 | **Hub** | Project templates, project discovery, and Editor version selection |
 | **Managed** | C# gameplay API, script compilation, and runtime hosting |
 | **Player** | Independent game executable with packaged assets and a private .NET runtime |
+| **Web (experimental)** | Emscripten/WebGL2 Player and shared native ImGui editor panels, with a browser host responsible for persistence |
 
 ## Showcase
 
@@ -77,24 +81,26 @@ with a dynamic rectangle and a static floor, or view the
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
 - **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
 - **Editor**: ImGui Scene, Game, Hierarchy, Inspector, Project, and Console panels with responsive docking, actively persisted panel visibility/layout, Hierarchy Scene visibility controls, collapsed and filtered diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
-- **Standalone Player**: path-free `.tcpak` v6 packages with v5/v6 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
+- **Standalone Player**: path-free `.tcpak` v7 packages with per-entry SHA-256 and v5/v6/v7 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
 - **Localization**: dynamically generated Chinese glyph ranges, with Chinese/English UI switching in the Hub
-- **Regression coverage**: one Release entry point for managed ABI/lifecycle, physics, Sprite assets, script compilation, SceneManager, Prefab, Cook, and isolated Player startup
+- **Regression coverage**: one Release entry point for managed ABI/lifecycle, physics, Sprite assets, scripts, safety, Editor recovery, audio, importers, input, SceneManager, Prefab, Cook, and isolated Player startup; a separate WASM editor protocol regression
 
 ## Current Scope
 
 - Supported development platform: **Windows x64**
 - Rendering backend: **OpenGL 4.6**
+- Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). C# payloads, audible audio, custom cooked SPIR-V shaders, and multisample framebuffers are unsupported there.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Editor-side C# compilation requires the **.NET 10 SDK**
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
 - V1 deliberately excludes NuGet/third-party managed DLLs, Play Mode hot reload, script debugging, additive/asynchronous scenes, linked Prefab updates, overrides, nested Prefabs, and variants
 
-Known issue: Hub project loading can fail during migration checks on Windows
-extended paths. Open the project through the Editor's **File → Open Project**
-using a normal Windows path as a workaround.
+The [2026-09-15 capture](docs/portfolio/README.md) recorded a Hub project-loading
+failure during Windows extended-path migration checks. Its workaround was
+**File → Open Project** with a normal Windows path. That historical observation
+does not establish the status of the current build.
 
 ## Building
 
@@ -113,7 +119,10 @@ using a normal Windows path as a workaround.
 1. Clone the repo with submodules: `git clone --recurse-submodules ...`
 2. Run `Scripts\Setup.bat` once to prepare Premake and the setup dependencies
 3. Run `Scripts\Win_GenProjects.bat` to generate the VS projects
-4. Open `Editor\Editor.sln`, `Builder\Builder.sln`, or `Tests\Tests.sln` and build the required target (Release x64)
+4. Open `Editor\Editor.sln`, `Builder\Builder.sln`, `Player\Player.sln`, or `Tests\Tests.sln` and build the required target (Release x64)
+
+The CLI solution is generated separately; follow [TomCatCLI](Tools/TomCatCLI/README.md).
+Web uses its own [CMake/Emscripten build](Web/README.md).
 
 After `Scripts\Setup.bat` has prepared Premake, run the complete Release suite with `powershell -ExecutionPolicy Bypass -File Scripts\Run-Regressions.ps1`.
 
@@ -127,6 +136,10 @@ Managed/           .NET 10 runtime API, source generator, host, and regressions
 Builder/Manager/   Hub (project center)
 Tests/             Engine regression test projects
 Scripts/           Build & packaging scripts
+Tools/TomCatCLI/    Headless cook and Windows Player build commands
+Web/               Experimental browser targets, fonts, and WASM protocol regression
+Samples/           Reproducible sample projects
+docs/              Documentation index and recorded demonstrations
 vendor/            premake and third-party dependencies
 ```
 
@@ -148,16 +161,16 @@ vendor/            premake and third-party dependencies
 - [x] CircleCollider2D, implicit static bodies, triggers, per-fixture and project-layer collision filtering, queries, motion API, and DistanceJoint2D
 - [x] Deferred engine/native-script Collision and Trigger callbacks
 - [x] Project Settings for Tags, 16 stable Layers, and the symmetric Physics 2D collision matrix
-- [x] Scene schema v11 writing with v9-v11 reading, registry-backed components, and cooked-package v6 physics round trips
+- [x] Scene schema v11 writing with v9-v11 reading, registry-backed components, and cooked-package v7 physics round trips
 - [x] Physics regression suite (`Scripts\Run-PhysicsRegression.ps1`)
 
 ### Completed V1 C#, Player, Scene, and Prefab Milestones
 
 - [x] Managed runtime, source generator, Inspector fields, last-good compilation, deterministic lifecycle/physics callbacks, exception isolation, and collectible Play domains
 - [x] Independent win-x64 Player, private .NET runtime, strict versioned/hash-checked template, Build / Build And Run, and Player process smoke coverage
-- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v6 ordered scenes with v5/v6 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
+- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v7 ordered scenes with v5/v6/v7 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
 - [x] Snapshot Prefab V1 with stable LocalIDs, hierarchy/Joint/C# Entity remapping, fresh AttachmentIDs, deferred C# creation, Editor creation/drop workflows, and Cook dependency traversal
-- [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the v6 BootManifest
+- [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the BootManifest introduced with TCPAK v6 and retained in v7
 - [ ] Additive/asynchronous scenes, linked/nested Prefabs, overrides/variants, and save data
 
 ### Asset Pipeline and 2D Production
@@ -184,7 +197,8 @@ PCM WAV streaming reads a registry-resolved source range in authoring mode becau
 - [ ] Editor Profiler
 - [x] Run managed/native/Player Release regressions on push/PR CI
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
-- [ ] Scene/project schema migration tools and a plugin/module SDK
+- [x] Project migration preview, explicit approval, transactional upgrades, and interrupted-migration recovery in the Editor; CLI upgrades require `--migrate`
+- [ ] General scene schema migration tooling and a plugin/module SDK
 - [ ] Additional platforms and rendering backends after the Windows/OpenGL 2D workflow is mature
 
 ### Future 3D Scope

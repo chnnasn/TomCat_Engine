@@ -10,6 +10,9 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
+文档于 **2026-09-18** 按仓库源码核对，当前产品版本为 **0.2.0**。
+全部指南及中文入口见[文档索引](docs/README.md)。
+
 ---
 
 ## 项目组成
@@ -21,12 +24,13 @@ Player 则负责脱离编辑器运行打包后的游戏。
 | **Hub 项目中心** | 管理项目模板、项目列表与 Editor 版本 |
 | **Managed 脚本层** | 提供 C# 游戏开发 API、脚本编译与运行时托管 |
 | **Player 游戏运行时** | 加载打包资源，使用随包附带的 .NET Runtime 独立运行游戏 |
+| **Web 实验目标** | 基于 Emscripten/WebGL2 的 Player 与复用原生 ImGui 面板的编辑器，由浏览器宿主负责持久化 |
 
 ## 功能展示
 
 ### 项目管理与编辑工作区
 
-Hub 集中管理项目与 Editor 版本。Editor 将 Scene、Game、Hierarchy、Inspector、
+Hub 根据编译进程序的产品身份发现 Editor，按实际可执行文件路径启动所选版本，不依赖目录名或程序文件名。Editor 将 Scene、Game、Hierarchy、Inspector、
 Project 和 Console 面板组织在响应式停靠工作区中，并在面板开关或布局变化时主动保存。
 
 ![全屏 Hub 创建项目与 Editor 打开项目](docs/portfolio/01-hub-project.gif)
@@ -68,23 +72,25 @@ Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮�
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
 - **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
 - **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector、Project 和 Console 面板，支持响应式停靠、面板开关/布局主动持久化、Hierarchy 场景可见性、诊断计数/过滤/折叠、Undo/Redo、自动保存/恢复、项目锁与用户设置
-- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v6（Player 兼容读取 v5/v6）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
-- **Hub 项目管理器**：项目创建与发现、Editor 版本选择和用户级最近项目状态
+- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v7，包含逐条目 SHA-256（Player 兼容读取 v5/v6/v7）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
+- **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
 - **本地化**：动态生成 ImGui 中文字符集，Hub 支持中英文切换
-- **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、物理、Sprite 资产、脚本编译、SceneManager、Prefab、Cook 与隔离 Player 启动
+- **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、物理、Sprite 资产、脚本编译、安全边界、Editor 恢复、音频、导入器、输入、SceneManager、Prefab、Cook 与隔离 Player 启动；另有独立 WASM 编辑器协议回归
 
 ## 当前范围
 
 - 支持的开发平台：**Windows x64**
 - 渲染后端：**OpenGL 4.6**
+- 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。该目标不支持 C# 负载、可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
 - V1 明确不支持 NuGet/第三方托管 DLL、Play Mode 热重载、脚本调试、叠加/异步场景、Prefab 关联更新、Override、Nested Prefab 和 Variant
 
-已知问题：Hub 使用 Windows 扩展路径加载项目时，可能触发迁移检查错误。
-可在 Editor 中通过 **File → Open Project** 使用普通 Windows 路径打开项目。
+[2026-09-15 实机录制](docs/portfolio/README.md)曾遇到 Hub 使用 Windows 扩展路径加载项目时触发迁移检查错误，
+当时通过 Editor 的 **File → Open Project** 和普通 Windows 路径打开。
+这是历史录制观察，不代表已验证当前构建仍存在该问题。
 
 ## 构建
 
@@ -103,7 +109,10 @@ Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮�
 1. 克隆仓库（含子模块：git clone --recurse-submodules ...）
 2. 首次运行前执行 `Scripts\Setup.bat`，准备 Premake 与 Setup 依赖
 3. 运行 Scripts\Win_GenProjects.bat 生成 VS 工程
-4. 根据需要打开 `Editor\Editor.sln`、`Builder\Builder.sln` 或 `Tests\Tests.sln`，并以 Release x64 编译目标
+4. 根据需要打开 `Editor\Editor.sln`、`Builder\Builder.sln`、`Player\Player.sln` 或 `Tests\Tests.sln`，并以 Release x64 编译目标
+
+CLI 工程需要单独生成，见 [TomCatCLI 中文指南](Tools/TomCatCLI/README.zh-CN.md)。
+Web 使用独立的 [CMake/Emscripten 构建流程](Web/README.zh-CN.md)。
 
 由 `Scripts\Setup.bat` 准备 Premake 后，运行 `powershell -ExecutionPolicy Bypass -File Scripts\Run-Regressions.ps1` 可执行完整 Release 回归套件。
 
@@ -117,6 +126,10 @@ Managed/           .NET 10 运行时 API、源码生成器、Host 与回归
 Builder/Manager/   Hub（项目中心）
 Tests/             引擎回归测试工程
 Scripts/           构建与打包脚本
+Tools/TomCatCLI/    无界面 Cook 与 Windows Player 构建命令
+Web/               实验性浏览器目标、字体与 WASM 协议回归
+Samples/           可复现示例项目
+docs/              文档索引与实机演示素材
 vendor/            premake 与第三方依赖
 ```
 
@@ -138,16 +151,16 @@ vendor/            premake 与第三方依赖
 - [x] CircleCollider2D、隐式静态刚体、Trigger、每 Fixture/项目 Layer 两级碰撞过滤、查询、运动 API 和 DistanceJoint2D
 - [x] 延迟派发的引擎监听器/C# Collision 与 Trigger 回调
 - [x] 项目级 Tag、16 个稳定 Layer 和对称 Physics 2D 碰撞矩阵设置
-- [x] Scene writer v11、reader v9-v11、注册表组件持久化与 Cooked Package v6 物理往返
+- [x] Scene writer v11、reader v9-v11、注册表组件持久化与 Cooked Package v7 物理往返
 - [x] 物理回归测试套件（`Scripts\Run-PhysicsRegression.ps1`）
 
 ### 已完成的 C#、Player、Scene 与 Prefab V1
 
 - [x] 托管运行时、源码生成器、Inspector 字段、last-good 编译、确定性生命周期/物理回调、异常隔离与可回收 Play Domain
 - [x] 独立 win-x64 Player、私有 .NET Runtime、严格版本/Hash Player Template、Build / Build And Run 与 Player 子进程冒烟测试
-- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v6 有序场景与 Player v5/v6 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
+- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v7 有序场景与 Player v5/v6/v7 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
 - [x] 使用稳定 LocalID 的快照 Prefab V1、Hierarchy/Joint/C# Entity 重映射、新 AttachmentID、延迟 C# 创建、Editor 创建/拖入操作与 Cook 依赖遍历
-- [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，并嵌入 v6 BootManifest
+- [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，嵌入 TCPAK v6 引入、v7 延续的 BootManifest
 - [ ] 叠加/异步场景、关联/Nested Prefab、Override/Variant 与存档
 
 ### 资产管线与 2D 内容生产
@@ -174,7 +187,8 @@ PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区�
 - [ ] Editor Profiler
 - [x] 在 Push/PR CI 中运行托管、原生与 Player Release 回归
 - [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
-- [ ] Scene/Project Schema 迁移工具与插件/模块 SDK
+- [x] 项目迁移预览、明确确认、事务升级和 Editor 中的中断迁移恢复；CLI 升级要求传入 `--migrate`
+- [ ] 通用 Scene Schema 迁移工具与插件/模块 SDK
 - [ ] Windows/OpenGL 的 2D 流程成熟后，再增加其他平台与渲染后端
 
 ### 未来 3D 范围
@@ -187,6 +201,6 @@ PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区�
 - [Ekit](https://github.com/chnnasn/ekit)：自研、面向调用者友好的 header-only ECS 库
 - [VulkanSDK-Windows](https://github.com/chnnasn/VulkanSDK-Windows)：预编译 Vulkan SDK 子集（子模块集成，免环境变量）
 
-## License
+## 许可证
 
 [MIT](LICENSE) © 2026 chnnasn
