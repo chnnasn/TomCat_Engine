@@ -79,6 +79,7 @@ Tools/TomCatCLI/*.vcxproj.filters
 # Directories
 TomCatInut/assets/cache
 __pycache__/
+.venv/
 *.pyc
 
 # Local third-party and WebAssembly build trees

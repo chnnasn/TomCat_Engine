@@ -37,6 +37,7 @@ project "TomCatInut"
 	links
 	{
 		"TomCat",
+		"Ws2_32",
 		table.unpack(TomCatConsumerLinks)
 	}
 

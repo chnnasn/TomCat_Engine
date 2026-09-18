@@ -23,6 +23,7 @@ through visual authoring tools, while the Player runs packaged games independent
 | **Hub** | Project templates, project discovery, and Editor version selection |
 | **Managed** | C# gameplay API, script compilation, and runtime hosting |
 | **Player** | Independent game executable with packaged assets and a private .NET runtime |
+| **[MCP + Skills](Tools/TomCatMCP/README.md)** | Optional local Agent interface for scene/component editing, runtime control, diagnostics and undo |
 
 ## Showcase
 

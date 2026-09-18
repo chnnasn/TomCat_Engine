@@ -1057,6 +1057,9 @@ namespace TomCat {
 
 	void EditorLayer::OnAttach()
 	{
+		std::string automationError;
+		if (!m_AutomationServer.StartFromEnvironment(automationError))
+			TC_Core_Error("{0}", automationError);
 		TC_PROFILE_FUNCTION();
 		// ImGui's manual persistence signal is consumed by SaveEditorLayoutIfNeeded.
 		// A short debounce keeps layout changes safe without writing every frame.
@@ -1337,6 +1340,7 @@ namespace TomCat {
 
 	void EditorLayer::OnDetach()
 	{
+		m_AutomationServer.Stop();
 		TC_PROFILE_FUNCTION();
 		if (IsSceneRunning())
 			OnSceneStop();
@@ -1425,6 +1429,13 @@ namespace TomCat {
 				m_ScriptCompiler.StartCompile();
 			}
 		}
+	}
+
+	void EditorLayer::OnFrameBegin()
+	{
+		m_AutomationServer.Pump([this](const std::string& request) {
+			return ExecuteAutomation(request);
+		});
 	}
 
 	void EditorLayer::OnUpdate(Timestep ts)

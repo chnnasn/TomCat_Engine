@@ -171,6 +171,8 @@ namespace TomCat {
 				Scripting::ScriptEngine::Get().CaptureInputState();
 				(void)AssetManager::Get().PumpImportCoordinator();
 				for (Layer* layer : m_LayerStack)
+					layer->OnFrameBegin();
+				for (Layer* layer : m_LayerStack)
 					layer->OnUpdate(headlessTimestep);
 			}
 			return;
@@ -206,6 +208,11 @@ namespace TomCat {
 			// atlas texture creation on the context-owning application thread and
 			// publish a bounded amount before layers render this frame.
 			(void)FontManager::Get().PumpPublishes();
+
+			// Rendering remains conditional below; queued main-thread work must
+			// not depend on window visibility.
+			for (Layer* layer : m_LayerStack)
+				layer->OnFrameBegin();
 
 			if (!m_Minimized)
 			{

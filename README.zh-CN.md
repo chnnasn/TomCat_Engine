@@ -21,6 +21,7 @@ Player 则负责脱离编辑器运行打包后的游戏。
 | **Hub 项目中心** | 管理项目模板、项目列表与 Editor 版本 |
 | **Managed 脚本层** | 提供 C# 游戏开发 API、脚本编译与运行时托管 |
 | **Player 游戏运行时** | 加载打包资源，使用随包附带的 .NET Runtime 独立运行游戏 |
+| **[MCP + Skills](Tools/TomCatMCP/README.md)** | 可选的本地 AI Agent 接口，支持场景与组件编辑、运行控制、诊断和撤销 |
 
 ## 功能展示
 

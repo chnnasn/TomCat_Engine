@@ -4,6 +4,9 @@
     <Filter Include="src">
       <UniqueIdentifier>{2DAB880B-99B4-887C-2230-9F7C8E38947C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Automation">
+      <UniqueIdentifier>{3DC7F623-2995-EA29-1229-5B50FE95C68E}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\Player">
       <UniqueIdentifier>{A927B427-95DF-F574-FEE6-CED0EABD9065}</UniqueIdentifier>
     </Filter>
@@ -15,6 +18,12 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\Automation\AutomationJson.h">
+      <Filter>src\Automation</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Automation\AutomationServer.h">
+      <Filter>src\Automation</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorDragDrop.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -47,6 +56,12 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\Automation\AutomationServer.cpp">
+      <Filter>src\Automation</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Automation\EditorAutomation.cpp">
+      <Filter>src\Automation</Filter>
+    </ClCompile>
     <ClCompile Include="src\EditorLayer.cpp">
       <Filter>src</Filter>
     </ClCompile>

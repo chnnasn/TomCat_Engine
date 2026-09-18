@@ -11,6 +11,9 @@
 #include "Panels/ConsolePanel.h"
 #include "Scripting/ScriptProjectCompiler.h"
 #include "Scripting/ScriptMetadataCache.h"
+#include "Automation/AutomationServer.h"
+#include <map>
+#include <unordered_set>
 #include <functional>
 #include "TomCat/Project/Project.h"
 #include "TomCat/Project/ProjectManager.h"
@@ -36,9 +39,18 @@ namespace TomCat {
 		virtual void OnDetach() override;
 
 		void OnUpdate(Timestep ts) override;
+		void OnFrameBegin() override;
 		virtual void OnImGuiRender() override;
 		void OnEvent(Event& e) override;
 	private:
+		std::string ExecuteAutomation(const std::string& request);
+		AutomationServer m_AutomationServer;
+		std::string m_AutomationSession = std::to_string(static_cast<uint64_t>(UUID()));
+		std::map<std::string, std::pair<std::string, std::string>> m_AutomationResponses;
+		std::deque<std::string> m_AutomationResponseOrder;
+		std::unordered_set<std::string> m_AutomationSeenRequests;
+		const Scene* m_AutomationObservedScene = nullptr;
+		uint64_t m_AutomationSceneEpoch = 0;
 		enum class GizmoPivotMode
 		{
 			Pivot = 0,

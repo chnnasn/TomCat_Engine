@@ -16,6 +16,9 @@ namespace TomCat{
 
 		virtual void OnAttach() {}
 		virtual void OnDetach() {}
+		// Main-thread work that must also run while the window is minimized.
+		// No rendering or ImGui frame is active at this point.
+		virtual void OnFrameBegin() {}
 		virtual void OnUpdate(Timestep ts) {}
 		virtual void OnImGuiRender() {}
 		virtual void OnEvent(Event& event){}
