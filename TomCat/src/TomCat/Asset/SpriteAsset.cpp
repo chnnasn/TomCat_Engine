@@ -24,6 +24,12 @@ namespace TomCat {
 
 		constexpr std::array<uint8_t, 8> kCookedSpriteMagic = {
 			'T', 'C', 'S', 'P', 'R', '0', '0', '2' };
+		const std::array<BuiltInSpriteAsset, 2> kBuiltInSpriteAssets = {{
+			{ AssetHandle(BuiltInCircleSpriteHandleValue), "Circle",
+				"Resources/Sprites/TomCat/Circle.tga" },
+			{ AssetHandle(BuiltInSquareSpriteHandleValue), "Square",
+				"Resources/Sprites/TomCat/Square.tga" }
+		}};
 
 		void AppendU32(std::vector<uint8_t>& bytes, uint32_t value)
 		{
@@ -438,6 +444,39 @@ namespace TomCat {
 			return handle;
 		}
 
+	}
+
+	std::span<const BuiltInSpriteAsset> GetBuiltInSpriteAssets()
+	{
+		return kBuiltInSpriteAssets;
+	}
+
+	const BuiltInSpriteAsset* FindBuiltInSpriteAsset(AssetHandle handle)
+	{
+		const auto found = std::find_if(kBuiltInSpriteAssets.begin(),
+			kBuiltInSpriteAssets.end(), [handle](const BuiltInSpriteAsset& asset)
+			{
+				return asset.Handle == handle;
+			});
+		return found == kBuiltInSpriteAssets.end() ? nullptr : &*found;
+	}
+
+	const BuiltInSpriteAsset* FindBuiltInSpriteAsset(std::string_view name)
+	{
+		const auto found = std::find_if(kBuiltInSpriteAssets.begin(),
+			kBuiltInSpriteAssets.end(), [name](const BuiltInSpriteAsset& asset)
+			{
+				return asset.Name == name;
+			});
+		return found == kBuiltInSpriteAssets.end() ? nullptr : &*found;
+	}
+
+	std::filesystem::path GetBuiltInSpriteAssetPath(AssetHandle handle)
+	{
+		const BuiltInSpriteAsset* asset = FindBuiltInSpriteAsset(handle);
+		return asset ? (std::filesystem::path("Packages") /
+			UTF8ToPath(asset->PackageRelativePath)).lexically_normal()
+			: std::filesystem::path{};
 	}
 
 	bool IsSpriteAsset(const AssetMetadata& metadata)

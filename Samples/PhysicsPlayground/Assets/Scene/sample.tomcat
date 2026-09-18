@@ -139,7 +139,7 @@ Entities:
     SpriteRenderer:
       Enabled: true
       Color: [1, 1, 1, 1]
-      SpriteHandle: 515390559920818869
+      SpriteHandle: 6071781742850736130
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
@@ -223,7 +223,7 @@ Entities:
             Value: [1, 1, 1, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 515390559920818869
+            Value: 6071781742850736130
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1
@@ -300,7 +300,7 @@ Entities:
     SpriteRenderer:
       Enabled: true
       Color: [1, 1, 1, 1]
-      SpriteHandle: 515390559920818869
+      SpriteHandle: 6071781742850736130
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
@@ -380,7 +380,7 @@ Entities:
             Value: [1, 1, 1, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 515390559920818869
+            Value: 6071781742850736130
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1

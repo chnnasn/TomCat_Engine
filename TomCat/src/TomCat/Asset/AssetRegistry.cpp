@@ -597,8 +597,8 @@ namespace TomCat {
 			if (!asset || !asset.IsMap() || !asset["Handle"] || !asset["Type"])
 				throw std::runtime_error("Asset.Handle and Asset.Type are required");
 			const uint64_t handle = asset["Handle"].as<uint64_t>();
-			if (handle == 0)
-				throw std::runtime_error("Handle 0 is reserved");
+			if (handle == 0 || IsBuiltInAssetHandleValue(handle))
+				throw std::runtime_error("Handle is reserved by the engine");
 			const AssetType type = AssetTypeFromString(asset["Type"].as<std::string>());
 			if (type == AssetType::None)
 				throw std::runtime_error("unknown or invalid asset type");
@@ -634,7 +634,8 @@ namespace TomCat {
 					subAsset.Name = serialized["Name"].as<std::string>();
 					subAsset.Type = AssetTypeFromString(serialized["Type"].as<std::string>());
 					ReadSpriteSubAssetData(serialized, subAsset.Sprite);
-					if (childHandle == 0 || childHandle == handle ||
+					if (childHandle == 0 || IsBuiltInAssetHandleValue(childHandle)
+						|| childHandle == handle ||
 						subAsset.PersistentID.empty() || subAsset.Type == AssetType::None ||
 						!handles.emplace(childHandle).second ||
 						!persistentIDs.emplace(subAsset.PersistentID).second)
@@ -701,14 +702,16 @@ namespace TomCat {
 		const AssetMetadata& metadata, bool replaceExisting,
 		const MetadataTransaction* transaction) const
 	{
-		if (static_cast<uint64_t>(metadata.Handle) == 0 || metadata.Type == AssetType::None)
+		if (static_cast<uint64_t>(metadata.Handle) == 0
+			|| IsBuiltInAssetHandle(metadata.Handle) || metadata.Type == AssetType::None)
 			return false;
 		std::unordered_set<uint64_t> childHandles;
 		std::unordered_set<std::string> childPersistentIDs;
 		for (const AssetSubAsset& child : metadata.SubAssets)
 		{
 			const uint64_t childHandle = static_cast<uint64_t>(child.Handle);
-			if (childHandle == 0 || childHandle == static_cast<uint64_t>(metadata.Handle) ||
+			if (childHandle == 0 || IsBuiltInAssetHandleValue(childHandle)
+				|| childHandle == static_cast<uint64_t>(metadata.Handle) ||
 				child.PersistentID.empty() || child.Type == AssetType::None ||
 				!childHandles.emplace(childHandle).second ||
 				!childPersistentIDs.emplace(child.PersistentID).second)
@@ -1079,7 +1082,7 @@ namespace TomCat {
 		const std::unordered_map<AssetHandle, std::filesystem::path>& claimed) const
 	{
 		AssetHandle handle;
-		while (static_cast<uint64_t>(handle) == 0 ||
+		while (static_cast<uint64_t>(handle) == 0 || IsBuiltInAssetHandle(handle) ||
 			m_Assets.find(handle) != m_Assets.end() || claimed.find(handle) != claimed.end())
 			handle = AssetHandle();
 		return handle;
@@ -2217,7 +2220,8 @@ namespace TomCat {
 			{
 				do
 					child.Handle = AssetHandle();
-				while (static_cast<uint64_t>(child.Handle) == 0 ||
+				while (static_cast<uint64_t>(child.Handle) == 0
+					|| IsBuiltInAssetHandle(child.Handle) ||
 					claimed.find(child.Handle) != claimed.end());
 				claimed.emplace(child.Handle);
 			}
@@ -2291,7 +2295,8 @@ namespace TomCat {
 					throw std::runtime_error("cache entry is incomplete");
 				const uint64_t rawHandle = entry["Handle"].as<uint64_t>();
 				const AssetType type = AssetTypeFromString(entry["Type"].as<std::string>());
-				if (rawHandle == 0 || type == AssetType::None)
+				if (rawHandle == 0 || IsBuiltInAssetHandleValue(rawHandle)
+					|| type == AssetType::None)
 					throw std::runtime_error("cache entry has an invalid handle or type");
 
 				const std::filesystem::path cachedPath =
@@ -2335,7 +2340,8 @@ namespace TomCat {
 					parsed.Name = child["Name"].as<std::string>();
 					parsed.Type = AssetTypeFromString(child["Type"].as<std::string>());
 					ReadSpriteSubAssetData(child, parsed.Sprite);
-					if (childHandle == 0 || childHandle == rawHandle ||
+					if (childHandle == 0 || IsBuiltInAssetHandleValue(childHandle)
+						|| childHandle == rawHandle ||
 						parsed.PersistentID.empty() || parsed.Type == AssetType::None ||
 						!childHandles.emplace(childHandle).second ||
 						!persistentIDs.emplace(parsed.PersistentID).second)

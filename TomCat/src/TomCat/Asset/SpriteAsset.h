@@ -43,6 +43,20 @@ namespace TomCat {
 		float BorderTop = 0.0f;
 	};
 
+	struct BuiltInSpriteAsset
+	{
+		AssetHandle Handle = AssetHandle(0);
+		std::string_view Name;
+		std::string_view PackageRelativePath;
+	};
+
+	// Built-in Sprites are immutable engine package resources. Their handles are
+	// stable across projects and their paths are relative to the Packages root.
+	[[nodiscard]] std::span<const BuiltInSpriteAsset> GetBuiltInSpriteAssets();
+	[[nodiscard]] const BuiltInSpriteAsset* FindBuiltInSpriteAsset(AssetHandle handle);
+	[[nodiscard]] const BuiltInSpriteAsset* FindBuiltInSpriteAsset(std::string_view name);
+	[[nodiscard]] std::filesystem::path GetBuiltInSpriteAssetPath(AssetHandle handle);
+
 	// Atlas Rect uses a top-left source-image origin. Pivot uses the conventional
 	// normalized bottom-left sprite origin. The returned UVs account for the
 	// vertically flipped OpenGL upload performed by Texture2D.
@@ -67,8 +81,8 @@ namespace TomCat {
 	[[nodiscard]] AssetHandle FindPrimitiveSpriteAsset(const AssetRegistry& registry,
 		std::string_view primitiveName);
 
-	// Creates a normal TGA source asset under Assets when the requested primitive
-	// is not present, imports it, and records Usage/Primitive in its .tcmeta.
+	// Legacy authoring/test seam for creating an editable project-local primitive.
+	// Editor creation menus use the immutable package assets above.
 	[[nodiscard]] AssetHandle EnsurePrimitiveSpriteAsset(AssetManager& manager,
 		std::string_view primitiveName);
 	[[nodiscard]] AssetHandle EnsurePrimitiveSpriteAsset(AssetRegistry& registry,

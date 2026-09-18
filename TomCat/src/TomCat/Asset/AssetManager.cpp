@@ -1467,6 +1467,20 @@ namespace TomCat {
 					+ reference.PropertyPath + " uses the reserved managed-payload handle";
 				return false;
 			}
+			if (FindBuiltInSpriteAsset(reference.Handle))
+			{
+				if ((reference.ExpectedType != AssetType::None
+						&& reference.ExpectedType != AssetType::Texture2D)
+					|| reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+				{
+					errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+						+ reference.PropertyPath + " uses an engine Sprite where a different "
+							"asset type is required";
+					return false;
+				}
+				runtimeDependencies.emplace(rawHandle);
+				return true;
+			}
 
 			AssetMetadata metadata;
 			AssetSubAsset subAsset;
@@ -2498,6 +2512,24 @@ namespace TomCat {
 	{
 		if (static_cast<uint64_t>(handle) == 0)
 			return GetMissingTexture();
+		if (!IsCookedPackageMounted())
+		{
+			if (FindBuiltInSpriteAsset(handle))
+			{
+				const auto cached = m_TextureCache.find(handle);
+				if (cached != m_TextureCache.end() && cached->second
+					&& cached->second != m_MissingTexture)
+					return cached->second;
+				const std::filesystem::path source = GetBuiltInSpriteAssetPath(handle);
+				Ref<Texture2D> texture = source.empty() ? Ref<Texture2D>{}
+					: Texture2D::Create(source);
+				if (!texture || !texture->IsLoaded())
+					return CacheMissingTexture(handle,
+						"engine Sprite source is missing or invalid");
+				m_TextureCache.insert_or_assign(handle, texture);
+				return texture;
+			}
+		}
 
 		AssetType registeredType = AssetType::None;
 		AssetHandle sourceHandle = handle;
@@ -2685,6 +2717,11 @@ namespace TomCat {
 			// synchronous read from Renderer2D.
 			(void)const_cast<AssetManager*>(this)->RequestCookedTexture(handle, true);
 			return false;
+		}
+		if (FindBuiltInSpriteAsset(handle))
+		{
+			sprite.TextureHandle = handle;
+			return true;
 		}
 		if (!m_RegistryInitialized)
 			return false;
@@ -2939,8 +2976,12 @@ namespace TomCat {
 	std::filesystem::path AssetManager::ResolvePath(AssetHandle handle) const
 	{
 		// A mounted package intentionally has no source-path fallback.
-		if (!m_RegistryInitialized || IsCookedPackageMounted() ||
+		if (IsCookedPackageMounted() ||
 			static_cast<uint64_t>(handle) == 0)
+			return {};
+		if (FindBuiltInSpriteAsset(handle))
+			return GetBuiltInSpriteAssetPath(handle);
+		if (!m_RegistryInitialized)
 			return {};
 		const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
 		if (!metadata || metadata->IsMissing)
@@ -3212,7 +3253,8 @@ namespace TomCat {
 			{
 				const std::optional<AssetMetadata> icon =
 					m_Database.GetMetadataSnapshot(packagePlayerSettings.Icon);
-				if (!icon || !IsCurrentAsset(m_Database, *icon, AssetType::Texture2D))
+				if (!FindBuiltInSpriteAsset(packagePlayerSettings.Icon)
+					&& (!icon || !IsCurrentAsset(m_Database, *icon, AssetType::Texture2D)))
 				{
 					TC_Core_Error("PlayerSettings.Icon must identify a live Texture2D asset: {0}",
 						static_cast<uint64_t>(packagePlayerSettings.Icon));
@@ -3300,6 +3342,13 @@ namespace TomCat {
 		};
 		std::vector<CookObservation> observations;
 		observations.reserve(queuedAssets.size());
+		struct BuiltInCookObservation
+		{
+			AssetHandle Handle = AssetHandle(0);
+			std::filesystem::path SourcePath;
+			std::string SourceSHA256;
+		};
+		std::vector<BuiltInCookObservation> builtInObservations;
 
 		const auto sameSubAsset = [](const AssetSubAsset& left,
 			const AssetSubAsset& right)
@@ -3344,6 +3393,47 @@ namespace TomCat {
 			{
 				TC_Core_Error("AssetHandle UINT64_MAX is reserved by tcpak v5");
 				return false;
+			}
+			if (FindBuiltInSpriteAsset(handle))
+			{
+				const std::filesystem::path source = GetBuiltInSpriteAssetPath(handle);
+				std::vector<uint8_t> sourceBytes;
+				if (source.empty() || !ReadWholeFile(source, sourceBytes))
+				{
+					TC_Core_Error("Cannot cook missing engine Sprite {0} ('{1}')",
+						rawHandle, PathToUTF8(source));
+					return false;
+				}
+				const std::string sourceSHA256 = ComputeSHA256(sourceBytes);
+				SourceEntry entry;
+				entry.RawHandle = rawHandle;
+				entry.RawType = static_cast<uint16_t>(AssetType::Texture2D);
+				AssetImportSettings settings = {
+					{ "compression", "RGBA8" },
+					{ "generateMipmaps", "false" },
+					{ "sRGB", "true" }
+				};
+				std::string textureError;
+				if (!BuildTextureArtifact(sourceBytes, settings, "windows-x64",
+					entry.CookedBytes, textureError))
+				{
+					TC_Core_Error("Cannot cook engine Sprite {0}: {1}",
+						rawHandle, textureError);
+					return false;
+				}
+				std::string currentSHA256;
+				if (!ComputeFileSHA256String(source, currentSHA256)
+					|| currentSHA256 != sourceSHA256)
+				{
+					TC_Core_Error("Engine Sprite {0} changed while cooking; retry Cook",
+						rawHandle);
+					return false;
+				}
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
+				entries.push_back(std::move(entry));
+				builtInObservations.push_back({ handle, source, sourceSHA256 });
+				continue;
 			}
 
 			// Every logical asset, including a Sprite slice, owns a graph node.
@@ -3948,6 +4038,18 @@ namespace TomCat {
 			RemoveTemporaryFile(temporary);
 			TC_Core_Error("Asset dependency graph changed before Cook publication; retry Cook");
 			return false;
+		}
+		for (const BuiltInCookObservation& observation : builtInObservations)
+		{
+			std::string currentSHA256;
+			if (!ComputeFileSHA256String(observation.SourcePath, currentSHA256)
+				|| currentSHA256 != observation.SourceSHA256)
+			{
+				RemoveTemporaryFile(temporary);
+				TC_Core_Error("Engine Sprite {0} changed before Cook publication",
+					static_cast<uint64_t>(observation.Handle));
+				return false;
+			}
 		}
 		for (const CookObservation& observation : observations)
 		{
