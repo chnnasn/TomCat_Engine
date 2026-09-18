@@ -620,7 +620,8 @@ namespace TomCat {
 	{
 		if (entity.HasComponent<C_Camera>())
 			return EditorIcon::Camera;
-		if (entity.HasComponent<SpriteRenderer>())
+		if (entity.HasComponent<SpriteRenderer>() || entity.HasComponent<Tilemap2D>()
+			|| entity.HasComponent<ParticleSystem2D>())
 			return EditorIcon::Sprite;
 		if (entity.HasComponent<Rigidbody2D>())
 			return EditorIcon::Rigidbody2D;
@@ -828,6 +829,7 @@ namespace TomCat {
 		m_AnimatorRenameEntity = UUID(0);
 		m_AnimatorRenameBuffer.fill('\0');
 		m_AnimatorRenameError.clear();
+		m_AnimatorRenamePopupRequested = false;
 		if (contextChanged)
 		{
 			m_AnimatorGraphStates.clear();
@@ -1295,8 +1297,60 @@ namespace TomCat {
 					ImGui::EndDragDropTarget();
 				}
 			}
+			if (inspectorVisible && !m_AnimatorRenamePopupGraphOwner
+				&& (m_AnimatorRenameTarget == AnimatorRenameTarget::None
+					|| !m_SelectionContext
+					|| !m_SelectionContext.HasComponent<SpriteAnimator>()
+					|| m_AnimatorRenameEntity != m_SelectionContext.GetUUID()))
+				DismissAnimatorRenamePopup(false);
 			ImGui::End();
 		}
+		FinishModificationGesture();
+	}
+
+	void SceneHierarchyPanel::OnAnimatorGraphImGuiRender(bool* open)
+	{
+		m_AnimatorGraphFocused = false;
+		if (open && !*open)
+			return;
+
+		const bool visible = ImGui::Begin("Animator", open);
+		m_AnimatorGraphDocked = ImGui::IsWindowDocked();
+		m_AnimatorGraphFocused = visible
+			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+		bool drewAnimator = false;
+		if (visible)
+		{
+			if (!m_SelectionContext)
+			{
+				ImGui::TextDisabled("Select an entity with a Sprite Animator component.");
+			}
+			else if (!m_SelectionContext.HasComponent<SpriteAnimator>())
+			{
+				ImGui::Text("%s", m_SelectionContext.GetName().c_str());
+				ImGui::Separator();
+				ImGui::TextDisabled("The selected entity does not have a Sprite Animator component.");
+			}
+			else
+			{
+				Entity entity = m_SelectionContext;
+				SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
+				ImGui::Text("Selected: %s", entity.GetName().c_str());
+				ImGui::Separator();
+				std::function<void()> pendingMutation;
+				DrawSpriteAnimatorGraph(animator, entity, pendingMutation, true);
+				if (m_AnimatorRenameTarget != AnimatorRenameTarget::None
+					&& m_AnimatorRenameEntity != entity.GetUUID())
+					DismissAnimatorRenamePopup(true);
+				else
+					DrawAnimatorRenamePopup(animator, entity, true);
+				ApplyAnimatorPendingMutation(entity, pendingMutation);
+				drewAnimator = true;
+			}
+		}
+		if (!drewAnimator && m_AnimatorRenamePopupGraphOwner)
+			DismissAnimatorRenamePopup(true);
+		ImGui::End();
 		FinishModificationGesture();
 	}
 
@@ -1308,6 +1362,7 @@ namespace TomCat {
 			m_AnimatorRenameTarget = AnimatorRenameTarget::None;
 			m_AnimatorRenameEntity = UUID(0);
 			m_AnimatorRenameError.clear();
+			m_AnimatorRenamePopupRequested = false;
 		}
 		if (m_SpritePickerOpen && m_SelectionContext != entity)
 		{
@@ -1540,6 +1595,30 @@ namespace TomCat {
 					ImGui::SetTooltip("Open a project to create Sprites.");
 				ImGui::EndMenu();
 			}
+			if (ImGui::MenuItem("Tilemap 2D"))
+			{
+				Entity tilemap = m_Context->CreateEntity("Tilemap 2D");
+				tilemap.AddComponent<Tilemap2D>();
+				CreateAsSelectedChild(tilemap);
+			}
+			if (ImGui::BeginMenu("Light 2D"))
+			{
+				if (ImGui::MenuItem("Global Light 2D"))
+				{
+					Entity light = m_Context->CreateEntity("Global Light 2D");
+					auto& component = light.AddComponent<Light2D>();
+					component.Type = Light2DType::Global;
+					CreateAsSelectedChild(light);
+				}
+				if (ImGui::MenuItem("Point Light 2D"))
+				{
+					Entity light = m_Context->CreateEntity("Point Light 2D");
+					auto& component = light.AddComponent<Light2D>();
+					component.Type = Light2DType::Point;
+					CreateAsSelectedChild(light);
+				}
+				ImGui::EndMenu();
+			}
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu("Effects"))
@@ -1549,6 +1628,12 @@ namespace TomCat {
 				Entity line = m_Context->CreateEntity("Line");
 				line.AddComponent<LineRenderer>();
 				CreateAsSelectedChild(line);
+			}
+			if (ImGui::MenuItem("Particle System 2D"))
+			{
+				Entity particles = m_Context->CreateEntity("Particle System 2D");
+				particles.AddComponent<ParticleSystem2D>();
+				CreateAsSelectedChild(particles);
 			}
 			ImGui::EndMenu();
 		}
@@ -2181,9 +2266,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 	void SceneHierarchyPanel::DrawSpriteAnimatorGraph(SpriteAnimator& animator,
 		Entity entity,
-		const std::function<void(AnimatorRenameTarget, size_t,
-			const std::string&)>& requestRename,
-		std::function<void()>& pendingMutation)
+		std::function<void()>& pendingMutation, bool standaloneWindow)
 	{
 		using namespace SpriteAnimatorAuthoring;
 		constexpr size_t noTransition = static_cast<size_t>(-1);
@@ -2192,6 +2275,12 @@ static void DrawComponent(const std::string& name, Entity entity,
 		const uint64_t entityID = static_cast<uint64_t>(entity.GetUUID());
 		AnimatorGraphEditorState& graph = m_AnimatorGraphStates[entityID];
 		SynchronizeGraphLayout(animator, graph.Layout);
+		auto requestRename = [this, entity, standaloneWindow](AnimatorRenameTarget target,
+			size_t index, const std::string& currentName)
+		{
+			RequestAnimatorRename(target, entity, index, currentName,
+				standaloneWindow);
+		};
 
 		if (!graph.SelectedState.empty()
 			&& !FindStateIndex(animator, graph.SelectedState))
@@ -2711,6 +2800,175 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}
 	}
 
+	void SceneHierarchyPanel::RequestAnimatorRename(AnimatorRenameTarget target,
+		Entity entity, size_t index, const std::string& currentName,
+		bool graphWindow)
+	{
+		m_AnimatorRenameTarget = target;
+		m_AnimatorRenameEntity = entity.GetUUID();
+		m_AnimatorRenameIndex = index;
+		std::snprintf(m_AnimatorRenameBuffer.data(),
+			m_AnimatorRenameBuffer.size(), "%s", currentName.c_str());
+		m_AnimatorRenameError.clear();
+		m_AnimatorRenamePopupGraphOwner = graphWindow;
+		m_AnimatorRenamePopupRequested = true;
+	}
+
+	void SceneHierarchyPanel::DrawAnimatorRenamePopup(SpriteAnimator& animator,
+		Entity entity, bool graphWindow)
+	{
+		using namespace SpriteAnimatorAuthoring;
+		if (m_AnimatorRenameTarget != AnimatorRenameTarget::None
+			&& m_AnimatorRenamePopupGraphOwner != graphWindow)
+			return;
+		const bool requestPopup = m_AnimatorRenamePopupRequested;
+		if (requestPopup)
+		{
+			ImGui::OpenPopup("Rename Animator Item");
+			m_AnimatorRenamePopupRequested = false;
+		}
+		bool renamePopupOpen = true;
+		if (ImGui::BeginPopupModal("Rename Animator Item", &renamePopupOpen,
+			ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			if (ImGui::IsWindowAppearing())
+				ImGui::SetKeyboardFocusHere();
+			const bool submitted = ImGui::InputText("Name",
+				m_AnimatorRenameBuffer.data(), m_AnimatorRenameBuffer.size(),
+				ImGuiInputTextFlags_EnterReturnsTrue);
+
+			const std::string candidate(m_AnimatorRenameBuffer.data());
+			SpriteAnimator probe = animator;
+			std::string validationError;
+			bool validChange = false;
+			switch (m_AnimatorRenameTarget)
+			{
+				case AnimatorRenameTarget::Clip:
+					validChange = RenameClip(probe, m_AnimatorRenameIndex,
+						candidate, validationError);
+					break;
+				case AnimatorRenameTarget::Parameter:
+					validChange = RenameParameter(probe, m_AnimatorRenameIndex,
+						candidate, validationError);
+					break;
+				case AnimatorRenameTarget::State:
+					validChange = RenameState(probe, m_AnimatorRenameIndex,
+						candidate, validationError);
+					break;
+				case AnimatorRenameTarget::None:
+					validationError = "Nothing is selected for rename";
+					break;
+			}
+			if (!validChange && validationError.empty())
+				validationError = "Name is unchanged";
+			m_AnimatorRenameError = validationError;
+			if (!m_AnimatorRenameError.empty())
+				ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.32f, 1.0f), "%s",
+					m_AnimatorRenameError.c_str());
+
+			ImGui::BeginDisabled(!validChange);
+			const bool apply = ImGui::Button("Apply") || submitted;
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			const bool cancel = ImGui::Button("Cancel");
+			if (apply && validChange)
+			{
+				std::string error;
+				bool renamed = false;
+				switch (m_AnimatorRenameTarget)
+				{
+					case AnimatorRenameTarget::Clip:
+						renamed = RenameClip(animator, m_AnimatorRenameIndex,
+							candidate, error);
+						break;
+					case AnimatorRenameTarget::Parameter:
+						renamed = RenameParameter(animator, m_AnimatorRenameIndex,
+							candidate, error);
+						break;
+					case AnimatorRenameTarget::State:
+					{
+						const std::string oldName = m_AnimatorRenameIndex
+							< animator.States.size()
+							? animator.States[m_AnimatorRenameIndex].Name : std::string{};
+						renamed = RenameState(animator, m_AnimatorRenameIndex,
+							candidate, error);
+						if (renamed)
+						{
+							auto graph = m_AnimatorGraphStates.find(
+								static_cast<uint64_t>(entity.GetUUID()));
+							if (graph != m_AnimatorGraphStates.end())
+							{
+								RenameGraphState(graph->second.Layout, oldName, candidate);
+								if (graph->second.SelectedState == oldName)
+									graph->second.SelectedState = candidate;
+								if (graph->second.TransitionSource == oldName)
+									graph->second.TransitionSource = candidate;
+							}
+						}
+						break;
+					}
+					case AnimatorRenameTarget::None:
+						break;
+				}
+				if (renamed)
+					MarkModified(true);
+				else if (!error.empty())
+					TC_Core_Warn("Could not rename Animator item: {0}", error);
+				m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+				m_AnimatorRenameEntity = UUID(0);
+				m_AnimatorRenameError.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			else if (cancel || !renamePopupOpen)
+			{
+				m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+				m_AnimatorRenameEntity = UUID(0);
+				m_AnimatorRenameError.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+		else if (m_AnimatorRenameTarget != AnimatorRenameTarget::None
+			&& !requestPopup && !ImGui::IsPopupOpen("Rename Animator Item"))
+		{
+			m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+			m_AnimatorRenameEntity = UUID(0);
+			m_AnimatorRenameError.clear();
+			m_AnimatorRenamePopupRequested = false;
+		}
+	}
+
+	void SceneHierarchyPanel::DismissAnimatorRenamePopup(bool graphWindow)
+	{
+		if (m_AnimatorRenamePopupGraphOwner != graphWindow)
+			return;
+		m_AnimatorRenamePopupRequested = false;
+		if (ImGui::BeginPopupModal("Rename Animator Item", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+		}
+		m_AnimatorRenameTarget = AnimatorRenameTarget::None;
+		m_AnimatorRenameEntity = UUID(0);
+		m_AnimatorRenameError.clear();
+	}
+
+	void SceneHierarchyPanel::ApplyAnimatorPendingMutation(Entity entity,
+		std::function<void()>& pendingMutation)
+	{
+		if (!pendingMutation)
+			return;
+		pendingMutation();
+		// Deferred list edits may reorder or erase transitions. Clear the graph's
+		// index-based edge selection so the next click cannot edit a different
+		// transition that moved into the old slot.
+		auto graph = m_AnimatorGraphStates.find(
+			static_cast<uint64_t>(entity.GetUUID()));
+		if (graph != m_AnimatorGraphStates.end())
+			graph->second.SelectedTransition = static_cast<size_t>(-1);
+	}
+
 	void SceneHierarchyPanel::DrawSpriteAnimatorInspector(SpriteAnimator& animator,
 		Entity entity)
 	{
@@ -2725,16 +2983,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}
 
 		std::function<void()> pendingMutation;
-		bool requestRenamePopup = false;
-		auto requestRename = [&](AnimatorRenameTarget target, size_t index,
+		auto requestRename = [this, entity](AnimatorRenameTarget target, size_t index,
 			const std::string& currentName)
 		{
-			m_AnimatorRenameTarget = target;
-			m_AnimatorRenameEntity = entity.GetUUID();
-			m_AnimatorRenameIndex = index;
-			std::snprintf(m_AnimatorRenameBuffer.data(), m_AnimatorRenameBuffer.size(), "%s", currentName.c_str());
-			m_AnimatorRenameError.clear();
-			requestRenamePopup = true;
+			RequestAnimatorRename(target, entity, index, currentName, false);
 		};
 
 		if (ImGui::Checkbox("Play On Start", &animator.PlayOnStart))
@@ -2798,10 +3050,12 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ImGui::TextDisabled("%zu clips, %zu parameters, %zu states, %zu transitions",
 			animator.Clips.size(), animator.Parameters.size(), animator.States.size(),
 			animator.Transitions.size());
+		if (ImGui::Button("Open Animator Graph"))
+			m_AnimatorGraphOpenRequested = true;
 
 		if (ImGui::TreeNodeEx("Animator Graph", ImGuiTreeNodeFlags_DefaultOpen))
 		{
-			DrawSpriteAnimatorGraph(animator, entity, requestRename, pendingMutation);
+			DrawSpriteAnimatorGraph(animator, entity, pendingMutation);
 			ImGui::TreePop();
 		}
 
@@ -3347,127 +3601,9 @@ static void DrawComponent(const std::string& name, Entity entity,
 			ImGui::TreePop();
 		}
 
-		if (requestRenamePopup)
-			ImGui::OpenPopup("Rename Animator Item");
-		bool renamePopupOpen = true;
-		if (ImGui::BeginPopupModal("Rename Animator Item", &renamePopupOpen,
-			ImGuiWindowFlags_AlwaysAutoResize))
-		{
-			if (ImGui::IsWindowAppearing())
-				ImGui::SetKeyboardFocusHere();
-			const bool submitted = ImGui::InputText("Name",
-				m_AnimatorRenameBuffer.data(), m_AnimatorRenameBuffer.size(),
-				ImGuiInputTextFlags_EnterReturnsTrue);
+		DrawAnimatorRenamePopup(animator, entity, false);
 
-			const std::string candidate(m_AnimatorRenameBuffer.data());
-			SpriteAnimator probe = animator;
-			std::string validationError;
-			bool validChange = false;
-			switch (m_AnimatorRenameTarget)
-			{
-				case AnimatorRenameTarget::Clip:
-					validChange = RenameClip(probe, m_AnimatorRenameIndex,
-						candidate, validationError);
-					break;
-				case AnimatorRenameTarget::Parameter:
-					validChange = RenameParameter(probe, m_AnimatorRenameIndex,
-						candidate, validationError);
-					break;
-				case AnimatorRenameTarget::State:
-					validChange = RenameState(probe, m_AnimatorRenameIndex,
-						candidate, validationError);
-					break;
-				case AnimatorRenameTarget::None:
-					validationError = "Nothing is selected for rename";
-					break;
-			}
-			if (!validChange && validationError.empty())
-				validationError = "Name is unchanged";
-			m_AnimatorRenameError = validationError;
-			if (!m_AnimatorRenameError.empty())
-				ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.32f, 1.0f), "%s",
-					m_AnimatorRenameError.c_str());
-
-			ImGui::BeginDisabled(!validChange);
-			const bool apply = ImGui::Button("Apply") || submitted;
-			ImGui::EndDisabled();
-			ImGui::SameLine();
-			const bool cancel = ImGui::Button("Cancel");
-			if (apply && validChange)
-			{
-				std::string error;
-				bool renamed = false;
-				switch (m_AnimatorRenameTarget)
-				{
-					case AnimatorRenameTarget::Clip:
-						renamed = RenameClip(animator, m_AnimatorRenameIndex,
-							candidate, error);
-						break;
-					case AnimatorRenameTarget::Parameter:
-						renamed = RenameParameter(animator, m_AnimatorRenameIndex,
-							candidate, error);
-						break;
-					case AnimatorRenameTarget::State:
-					{
-						const std::string oldName = m_AnimatorRenameIndex < animator.States.size()
-							? animator.States[m_AnimatorRenameIndex].Name : std::string{};
-						renamed = RenameState(animator, m_AnimatorRenameIndex,
-							candidate, error);
-						if (renamed)
-						{
-							auto graph = m_AnimatorGraphStates.find(
-								static_cast<uint64_t>(entity.GetUUID()));
-							if (graph != m_AnimatorGraphStates.end())
-							{
-								RenameGraphState(graph->second.Layout, oldName, candidate);
-								if (graph->second.SelectedState == oldName)
-									graph->second.SelectedState = candidate;
-								if (graph->second.TransitionSource == oldName)
-									graph->second.TransitionSource = candidate;
-							}
-						}
-						break;
-					}
-					case AnimatorRenameTarget::None:
-						break;
-				}
-				if (renamed)
-					MarkModified(true);
-				else if (!error.empty())
-					TC_Core_Warn("Could not rename Animator item: {0}", error);
-				m_AnimatorRenameTarget = AnimatorRenameTarget::None;
-				m_AnimatorRenameEntity = UUID(0);
-				m_AnimatorRenameError.clear();
-				ImGui::CloseCurrentPopup();
-			}
-			else if (cancel || !renamePopupOpen)
-			{
-				m_AnimatorRenameTarget = AnimatorRenameTarget::None;
-				m_AnimatorRenameEntity = UUID(0);
-				m_AnimatorRenameError.clear();
-				ImGui::CloseCurrentPopup();
-			}
-			ImGui::EndPopup();
-		}
-		else if (m_AnimatorRenameTarget != AnimatorRenameTarget::None
-			&& !requestRenamePopup && !ImGui::IsPopupOpen("Rename Animator Item"))
-		{
-			m_AnimatorRenameTarget = AnimatorRenameTarget::None;
-			m_AnimatorRenameEntity = UUID(0);
-			m_AnimatorRenameError.clear();
-		}
-
-		if (pendingMutation)
-		{
-			pendingMutation();
-			// Deferred list edits may reorder or erase transitions. Clear the graph's
-			// index-based edge selection so the next click cannot edit a different
-			// transition that moved into the old slot.
-			auto graph = m_AnimatorGraphStates.find(
-				static_cast<uint64_t>(entity.GetUUID()));
-			if (graph != m_AnimatorGraphStates.end())
-				graph->second.SelectedTransition = static_cast<size_t>(-1);
-		}
+		ApplyAnimatorPendingMutation(entity, pendingMutation);
 	}
 
 	void SceneHierarchyPanel::DrawTilemap2DInspector(Tilemap2D& tilemap,

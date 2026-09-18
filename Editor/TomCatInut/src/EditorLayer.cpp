@@ -50,8 +50,9 @@ namespace TomCat {
 		constexpr float kDockedPanelMinimumWidthRatio = 0.08f;
 		constexpr float kDockedPanelCompactMinimumWidth = 96.0f;
 		constexpr float kDockedPanelExpandedMinimumWidth = 220.0f;
-		constexpr std::array<const char*, 6> kMaximizableDockPanels = {
-			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console"
+		constexpr std::array<const char*, 7> kMaximizableDockPanels = {
+			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console",
+			"Animator"
 		};
 
 		struct GameViewResolutionPreset
@@ -977,6 +978,7 @@ namespace TomCat {
 		add(m_ShowConsolePanel, 5);
 		add(m_ShowBuildSettingsPanel, 6);
 		add(m_ShowProjectSettingsPanel, 7);
+		add(m_ShowAnimatorPanel, 8);
 		return mask;
 	}
 
@@ -984,6 +986,7 @@ namespace TomCat {
 	{
 		m_ShowScenePanel = true;
 		m_ShowGamePanel = true;
+		m_ShowAnimatorPanel = false;
 		m_ShowHierarchyPanel = true;
 		m_ShowInspectorPanel = true;
 		m_ShowProjectPanel = true;
@@ -1038,6 +1041,7 @@ namespace TomCat {
 				else if (key == "Console") m_ShowConsolePanel = visible;
 				else if (key == "BuildSettings") m_ShowBuildSettingsPanel = visible;
 				else if (key == "ProjectSettings") m_ShowProjectSettingsPanel = visible;
+				else if (key == "Animator") m_ShowAnimatorPanel = visible;
 			}
 		};
 
@@ -1091,7 +1095,8 @@ namespace TomCat {
 			<< "Project=" << (m_ShowProjectPanel ? 1 : 0) << "\n"
 			<< "Console=" << (m_ShowConsolePanel ? 1 : 0) << "\n"
 			<< "BuildSettings=" << (m_ShowBuildSettingsPanel ? 1 : 0) << "\n"
-			<< "ProjectSettings=" << (m_ShowProjectSettingsPanel ? 1 : 0) << "\n";
+			<< "ProjectSettings=" << (m_ShowProjectSettingsPanel ? 1 : 0) << "\n"
+			<< "Animator=" << (m_ShowAnimatorPanel ? 1 : 0) << "\n";
 
 		const std::string sectionName = "[EditorPanels]";
 		const std::string::size_type sectionPos = FindIniSectionHeader(ini, sectionName);
@@ -1885,11 +1890,12 @@ namespace TomCat {
 		else if (name == "Project") m_EditorPanelCycleIndex = 4;
 		else if (name == "Scene") m_EditorPanelCycleIndex = 5;
 		else if (name == "Console") m_EditorPanelCycleIndex = 6;
+		else if (name == "Animator") m_EditorPanelCycleIndex = 7;
 	}
 
 	void EditorLayer::CycleEditorPanel(int direction)
 	{
-		constexpr int panelCount = 7;
+		constexpr int panelCount = 8;
 		if (direction == 0)
 			return;
 
@@ -1904,6 +1910,7 @@ namespace TomCat {
 				case 4: return m_ShowProjectPanel;
 				case 5: return m_ShowScenePanel;
 				case 6: return m_ShowConsolePanel;
+				case 7: return m_ShowAnimatorPanel;
 				default: return false;
 			}
 		};
@@ -1926,6 +1933,7 @@ namespace TomCat {
 				case 4: FocusEditorPanel("Project", m_ShowProjectPanel); break;
 				case 5: FocusEditorPanel("Scene", m_ShowScenePanel); break;
 				case 6: FocusEditorPanel("Console", m_ShowConsolePanel); break;
+				case 7: FocusEditorPanel("Animator", m_ShowAnimatorPanel); break;
 			}
 			return;
 		}
@@ -2041,6 +2049,7 @@ namespace TomCat {
 				if (ImGui::BeginMenu("Panels"))
 				{
 					const bool hasFloatingPanel = m_ShowBuildSettingsPanel || m_ShowProjectSettingsPanel ||
+						(m_ShowAnimatorPanel && !m_SceneHierarchyPanel.IsAnimatorGraphDocked()) ||
 						(m_ShowScenePanel && !m_ScenePanelDocked) ||
 						(m_ShowGamePanel && !m_GamePanelDocked) ||
 						(m_ShowHierarchyPanel && !m_SceneHierarchyPanel.IsHierarchyDocked()) ||
@@ -2052,6 +2061,7 @@ namespace TomCat {
 					{
 						m_ShowBuildSettingsPanel = false;
 						m_ShowProjectSettingsPanel = false;
+						if (!m_SceneHierarchyPanel.IsAnimatorGraphDocked()) m_ShowAnimatorPanel = false;
 						if (!m_ScenePanelDocked) m_ShowScenePanel = false;
 						if (!m_GamePanelDocked) m_ShowGamePanel = false;
 						if (!m_SceneHierarchyPanel.IsHierarchyDocked()) m_ShowHierarchyPanel = false;
@@ -2060,7 +2070,8 @@ namespace TomCat {
 						if (!m_ConsolePanel.IsDocked()) m_ShowConsolePanel = false;
 					}
 					ImGui::Separator();
-					ImGui::MenuItem("1 Animator", nullptr, false, false);
+					if (ImGui::MenuItem("1 Animator"))
+						FocusEditorPanel("Animator", m_ShowAnimatorPanel);
 					if (ImGui::MenuItem("2 Build Settings"))
 					{
 						m_ShowBuildSettingsPanel = true;
@@ -2215,6 +2226,14 @@ namespace TomCat {
 				m_EditorPanelCycleIndex = 2;
 			else if (m_SceneHierarchyPanel.IsInspectorFocused())
 				m_EditorPanelCycleIndex = 3;
+		}
+		if (m_SceneHierarchyPanel.ConsumeAnimatorGraphOpenRequest())
+			FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+		if (m_ShowAnimatorPanel && ShouldRenderDockPanel("Animator"))
+		{
+			m_SceneHierarchyPanel.OnAnimatorGraphImGuiRender(&m_ShowAnimatorPanel);
+			if (m_SceneHierarchyPanel.IsAnimatorGraphFocused())
+				m_EditorPanelCycleIndex = 7;
 		}
 		if (ShouldRenderDockPanel("Project"))
 		{

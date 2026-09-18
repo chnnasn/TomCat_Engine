@@ -1269,7 +1269,7 @@ namespace TomCat {
 			m_Project && m_ProjectStateWritable))
 			ChooseExternalScriptEditor(target);
 		if (!isDirectory && AssetTypeFromPath(target) == AssetType::Texture2D
-			&& ImGui::MenuItem("Sprite Atlas..."))
+			&& ImGui::MenuItem("Sprite Atlas Tools..."))
 			BeginAtlasEditor(target);
 		if (ImGui::MenuItem("Delete", nullptr, false, !isRoot))
 			RequestDeleteAsset(target, isDirectory);
@@ -1913,11 +1913,11 @@ namespace TomCat {
 	{
 		if (m_OpenAtlasEditorPopup)
 		{
-			ImGui::OpenPopup("Sprite Atlas");
+			ImGui::OpenPopup("Sprite Atlas Tools");
 			m_OpenAtlasEditorPopup = false;
 		}
 		ImGui::SetNextWindowSize(ImVec2(880.0f, 720.0f), ImGuiCond_FirstUseEver);
-		if (!ImGui::BeginPopupModal("Sprite Atlas", nullptr))
+		if (!ImGui::BeginPopupModal("Sprite Atlas Tools", nullptr))
 			return;
 
 		ImGui::TextUnformatted(PathToUTF8(m_AtlasEditorPath.filename()).c_str());
@@ -1926,7 +1926,7 @@ namespace TomCat {
 			m_AtlasWidth, m_AtlasHeight);
 		if (!m_AtlasEditorError.empty())
 			ImGui::TextWrapped("%s", m_AtlasEditorError.c_str());
-		if (ImGui::CollapsingHeader("Automatic Tools",
+		if (ImGui::CollapsingHeader("Auto Slice / Grid Slice / Pack",
 			ImGuiTreeNodeFlags_DefaultOpen))
 		{
 			ImGui::TextDisabled("Alpha islands keep IDs and metadata when they match existing slices.");

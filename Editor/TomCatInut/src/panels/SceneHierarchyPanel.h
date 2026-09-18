@@ -58,6 +58,13 @@ namespace TomCat {
 
 		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr,
 			bool sceneDirty = false);
+		void OnAnimatorGraphImGuiRender(bool* open = nullptr);
+		bool ConsumeAnimatorGraphOpenRequest()
+		{
+			const bool requested = m_AnimatorGraphOpenRequested;
+			m_AnimatorGraphOpenRequested = false;
+			return requested;
+		}
 		// Draws the same command surface used by the Hierarchy context menus so the
 		// editor's top-level GameObject menu cannot drift from them.
 		// Returns true when an inline operation (create/rename) needs the Hierarchy
@@ -87,9 +94,11 @@ namespace TomCat {
 		bool HandleShortcut(int keyCode, bool control);
 		bool IsHierarchyFocused() const { return m_HierarchyFocused; }
 		bool IsInspectorFocused() const { return m_InspectorFocused; }
+		bool IsAnimatorGraphFocused() const { return m_AnimatorGraphFocused; }
 		bool HasPendingRenameFocus() const { return m_RenameFocus; }
 		bool IsHierarchyDocked() const { return m_HierarchyDocked; }
 		bool IsInspectorDocked() const { return m_InspectorDocked; }
+		bool IsAnimatorGraphDocked() const { return m_AnimatorGraphDocked; }
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
 		void SetAssetRevealCallback(const AssetRevealCallback& callback) { m_AssetRevealCallback = callback; }
@@ -145,8 +154,13 @@ namespace TomCat {
 		void DrawParticleSystem2DInspector(ParticleSystem2D& system);
 		void DrawLight2DInspector(Light2D& light);
 		void DrawSpriteAnimatorGraph(SpriteAnimator& animator, Entity entity,
-			const std::function<void(AnimatorRenameTarget, size_t,
-				const std::string&)>& requestRename,
+			std::function<void()>& pendingMutation, bool standaloneWindow = false);
+		void RequestAnimatorRename(AnimatorRenameTarget target, Entity entity,
+			size_t index, const std::string& currentName, bool graphWindow);
+		void DrawAnimatorRenamePopup(SpriteAnimator& animator, Entity entity,
+			bool graphWindow);
+		void DismissAnimatorRenamePopup(bool graphWindow);
+		void ApplyAnimatorPendingMutation(Entity entity,
 			std::function<void()>& pendingMutation);
 		void DrawCSharpScripts(Entity entity);
 		bool AttachCSharpScript(Entity entity, AssetHandle handle);
@@ -185,8 +199,11 @@ namespace TomCat {
 		char m_NameEditBuffer[256] = {};
 		bool m_HierarchyFocused = false;
 		bool m_InspectorFocused = false;
+		bool m_AnimatorGraphFocused = false;
 		bool m_HierarchyDocked = true;
 		bool m_InspectorDocked = true;
+		bool m_AnimatorGraphDocked = true;
+		bool m_AnimatorGraphOpenRequested = false;
 		bool m_ColliderEditingAllowed = true;
 		ColliderEditMode m_ColliderEditMode = ColliderEditMode::None;
 		UUID m_ColliderEditEntity = UUID(0);
@@ -199,6 +216,8 @@ namespace TomCat {
 		size_t m_AnimatorRenameIndex = 0;
 		std::array<char, 128> m_AnimatorRenameBuffer{};
 		std::string m_AnimatorRenameError;
+		bool m_AnimatorRenamePopupRequested = false;
+		bool m_AnimatorRenamePopupGraphOwner = false;
 		std::unordered_map<uint64_t, AnimatorGraphEditorState> m_AnimatorGraphStates;
 		std::unordered_map<uint64_t, TilemapBrushState> m_TilemapBrushStates;
 		SceneLoadCallback m_SceneLoadCallback;

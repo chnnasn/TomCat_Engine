@@ -283,6 +283,7 @@ namespace TomCat {
 
 		bool m_ShowScenePanel = true;
 		bool m_ShowGamePanel = true;
+		bool m_ShowAnimatorPanel = false;
 		bool m_ScenePanelDocked = true;
 		bool m_GamePanelDocked = true;
 		bool m_ShowHierarchyPanel = true;
@@ -310,8 +311,8 @@ namespace TomCat {
 		std::string m_PendingMaximizedPanelWindow;
 		std::string m_MaximizedPanelWindow;
 		std::string m_DockLayoutBeforeMaximize;
-		std::array<int, 6> m_DockTabOrdersBeforeMaximize = {
-			-1, -1, -1, -1, -1, -1
+		std::array<int, 7> m_DockTabOrdersBeforeMaximize = {
+			-1, -1, -1, -1, -1, -1, -1
 		};
 		bool m_PanelMaximized = false;
 		uint32_t m_EditorDockspaceId = 0;
