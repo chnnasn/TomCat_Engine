@@ -187,6 +187,23 @@ public sealed class ScriptDomain : IDisposable
 
         var byId = new Dictionary<string, FieldDescriptor>(StringComparer.Ordinal);
         var byName = new Dictionary<string, FieldDescriptor>(StringComparer.Ordinal);
+		var eventMethods = new Dictionary<string, MethodInfo>(StringComparer.Ordinal);
+		foreach (string methodName in manifest.Methods)
+		{
+			if (string.IsNullOrWhiteSpace(methodName)
+				|| !eventMethods.TryAdd(methodName,
+					type.GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public,
+						binder: null, Type.EmptyTypes, modifiers: null)
+						?? throw new InvalidDataException(
+							$"Manifest event method '{manifest.TypeName}.{methodName}' does not exist.")))
+				throw new InvalidDataException(
+					$"Script '{manifest.TypeName}' has invalid or duplicate event method metadata.");
+			MethodInfo method = eventMethods[methodName];
+			if (method.IsStatic || method.IsGenericMethod || method.ReturnType != typeof(void)
+				|| method.GetParameters().Length != 0)
+				throw new InvalidDataException(
+					$"Event method '{manifest.TypeName}.{methodName}' must be public instance void with no parameters.");
+		}
         foreach (ScriptFieldManifest fieldManifest in manifest.Fields)
         {
             if (fieldManifest.Id.Length != 32 || !fieldManifest.Id.All(Uri.IsHexDigit))
@@ -209,6 +226,7 @@ public sealed class ScriptDomain : IDisposable
             Manifest = manifest,
             Type = type,
             ConstructorFactory = constructorFactory,
+			EventMethods = eventMethods,
             FieldsById = byId,
             FieldsByName = byName
 		};

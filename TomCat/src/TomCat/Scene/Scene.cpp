@@ -4241,6 +4241,23 @@ namespace TomCat {
 		Entity duplicate = DuplicateEntityRecursive(this, entity, parent, duplicateUUIDs);
 		if (!duplicate)
 			return {};
+		std::unordered_map<UUID, UUID> attachmentRemap;
+		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
+		{
+			(void)sourceUUID;
+			Entity duplicatedEntity = FindEntityByUUID(duplicateUUID);
+			if (!duplicatedEntity || !duplicatedEntity.HasComponent<CSharpScripts>())
+				continue;
+			for (const CSharpScriptEntry& script :
+				duplicatedEntity.GetComponent<CSharpScripts>().Scripts)
+			{
+				UUID generated;
+				do { generated = UUID(); }
+				while (static_cast<uint64_t>(generated) == 0
+					|| !attachmentIDs.emplace(static_cast<uint64_t>(generated)).second);
+				attachmentRemap.emplace(script.AttachmentID, generated);
+			}
+		}
 
 		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
 		{
@@ -4250,7 +4267,7 @@ namespace TomCat {
 			if (!ComponentCodecs::RemapInstanceReferences(duplicatedEntity,
 				duplicateUUIDs,
 				ComponentCodecs::MissingEntityReferencePolicy::Preserve,
-				attachmentIDs, true, remapError))
+				attachmentIDs, true, remapError, &attachmentRemap))
 			{
 				TC_Core_Error("Could not remap duplicated entity references: {0}",
 					remapError);

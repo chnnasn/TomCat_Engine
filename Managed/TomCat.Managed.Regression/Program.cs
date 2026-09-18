@@ -282,7 +282,8 @@ internal static unsafe class Program
             managed.UpdateAll != null && managed.FixedUpdateAll != null &&
 			managed.DispatchPhysicsEvents != null && managed.DestroyAll != null &&
 			managed.BeginUnloadDomain != null && managed.PollUnload != null &&
-			managed.DestroyAttachments != null && managed.InstantiateAttachments != null,
+			managed.DestroyAttachments != null && managed.InstantiateAttachments != null &&
+			managed.ResolveDeferredCommandBatch != null && managed.InvokeMethod != null,
 			"GetManagedApi must populate every V1 export");
 		VerifyOptionalInputCapability(native, bootstrap);
 		VerifyNaturalProxySyntax();
@@ -994,6 +995,8 @@ internal static unsafe class Program
 			ScriptLifecycle.Disable | ScriptLifecycle.Destroy | ScriptLifecycle.LateUpdate,
 			good.Lifecycle, "lifecycle metadata");
         Check((faulty.Lifecycle & ScriptLifecycle.Update) != 0, "faulty lifecycle metadata");
+		Check(good.Methods.SequenceEqual(["HandleButtonClick", "ThrowButtonClick"]),
+			"public parameterless void event-method metadata");
 
         ScriptFieldManifest speed = good.Fields.Single(field => field.Name == "_speed");
         Equal(ScriptFieldType.Float, speed.Type, "speed field type");
@@ -1063,6 +1066,22 @@ internal static unsafe class Program
         AssertPrefix(scene.CallbackTrace,
             "100:OnCreate", "200:OnCreate", "300:OnCreate",
             "100:OnEnable", "200:OnEnable", "300:OnEnable");
+		scene.InvokeMethod(100, "HandleButtonClick");
+		Equal(1, scene.ReadFieldValue(100, "ButtonClicks"),
+			"persistent event method invocation");
+		Equal(0, scene.ReadFieldValue(200, "ButtonClicks"),
+			"event invocation did not select the exact attachment");
+		AssertSuffix(scene.CallbackTrace, "100:Event:HandleButtonClick");
+		scene.SetEnabled(100, false);
+		scene.InvokeMethod(100, "HandleButtonClick");
+		Equal(2, scene.ReadFieldValue(100, "ButtonClicks"),
+			"disabled behaviour did not receive a UnityEvent-style callback");
+		scene.SetEnabled(100, true);
+		scene.InvokeMethod(100, "HandleButtonClick");
+		Equal(3, scene.ReadFieldValue(100, "ButtonClicks"),
+			"reenabled event target did not remain callable");
+		Throws<KeyNotFoundException>(() => scene.InvokeMethod(100, "MissingMethod"),
+			"event invocation must reject methods outside generated metadata");
 
 		Entity spawned = new(SceneSession, 5, RuntimeGeneration);
 		scene.InstantiateAttachments([
@@ -1077,6 +1096,19 @@ internal static unsafe class Program
 		Equal(3, scene.ReadFieldValue(250, "ObservedStaticCreateSequence"),
 			"dynamic attachment OnCreate sequence");
 		AssertSuffix(scene.CallbackTrace, "250:OnCreate", "250:OnEnable");
+		Entity throwingEventEntity = new(SceneSession, 6, RuntimeGeneration);
+		scene.InstantiateAttachments([
+			new ScriptAttachment(throwingEventEntity, 275, 1001, true)
+		], "{\"attachments\":[{\"attachmentId\":275,\"fields\":[]}]}");
+		int eventDiagnostics = s_diagnostics;
+		scene.InvokeMethod(275, "ThrowButtonClick");
+		Equal(ScriptInstanceState.Faulted, scene.GetInstanceState(275),
+			"throwing event callback did not fault only its target attachment");
+		Equal(eventDiagnostics + 1, s_diagnostics,
+			"throwing event callback did not emit one diagnostic");
+		scene.InvokeMethod(100, "HandleButtonClick");
+		Equal(4, scene.ReadFieldValue(100, "ButtonClicks"),
+			"one throwing listener prevented another attachment callback");
 		Throws<InvalidDataException>(() => scene.InstantiateAttachments([
 			new ScriptAttachment(spawned, 250, 1001, true)
 		], "{\"attachments\":[]}"),
@@ -1119,13 +1151,19 @@ internal static unsafe class Program
         Equal(1, scene.ReadFieldValue(200, "TriggerExits"), "trigger dispatch");
 		VerifyFixedInputActionEvaluation(domain);
 
+        int disablesBeforeDisable = Convert.ToInt32(
+            scene.ReadFieldValue(100, "Disables"));
         scene.SetEnabled(100, false);
-        Equal(1, scene.ReadFieldValue(100, "Disables"), "disable callback");
+        Equal(disablesBeforeDisable + 1, scene.ReadFieldValue(100, "Disables"),
+            "disable callback");
         scene.UpdateAll(0.01f);
         Equal(2, scene.ReadFieldValue(100, "Updates"), "disabled instance is skipped");
         Equal(3, scene.ReadFieldValue(200, "Updates"), "enabled instance still updates");
+		int enablesBeforeEnable = Convert.ToInt32(
+			scene.ReadFieldValue(100, "Enables"));
 		scene.SetEnabled(100, true);
-		Equal(2, scene.ReadFieldValue(100, "Enables"), "re-enable callback");
+		Equal(enablesBeforeEnable + 1, scene.ReadFieldValue(100, "Enables"),
+			"re-enable callback");
 
 		scene.DestroyAttachments([200]);
 		AssertSuffix(scene.CallbackTrace, "200:OnDisable", "200:OnDestroy");
@@ -1181,7 +1219,7 @@ internal static unsafe class Program
 		scene.DestroyAll();
 		AssertSuffix(scene.CallbackTrace,
 			"250:OnDisable", "100:OnDisable", "300:OnDestroy",
-			"250:OnDestroy", "100:OnDestroy");
+			"275:OnDestroy", "250:OnDestroy", "100:OnDestroy");
 
 		domain.BeginUnload();
 		Check(domainCancellation.IsCancellationRequested,

@@ -644,6 +644,23 @@ namespace TomCat {
 		staged->SetSceneName(PrefabDiagnosticName);
 		std::unordered_set<uint64_t> usedAttachmentIDs;
 		CollectAttachmentIDs(destination, usedAttachmentIDs);
+		std::unordered_map<UUID, UUID> attachmentRemap;
+		for (const EntityArchive& record : archive.Entities)
+		{
+			Entity source = archive.TemplateScene->FindEntityByUUID(UUID(record.LocalID));
+			if (!source || !source.HasComponent<CSharpScripts>())
+				continue;
+			for (const CSharpScriptEntry& script :
+				source.GetComponent<CSharpScripts>().Scripts)
+			{
+				UUID generated;
+				do { generated = UUID(); }
+				while (static_cast<uint64_t>(generated) == 0
+					|| !usedAttachmentIDs.emplace(
+						static_cast<uint64_t>(generated)).second);
+				attachmentRemap.emplace(script.AttachmentID, generated);
+			}
+		}
 		for (const EntityArchive& record : archive.Entities)
 		{
 			Entity source = archive.TemplateScene->FindEntityByUUID(UUID(record.LocalID));
@@ -654,7 +671,7 @@ namespace TomCat {
 				return false;
 			if (!ComponentCodecs::RemapInstanceReferences(target, localToGenerated,
 				ComponentCodecs::MissingEntityReferencePolicy::Reject,
-				usedAttachmentIDs, true, error))
+				usedAttachmentIDs, true, error, &attachmentRemap))
 				return false;
 		}
 		for (const EntityArchive& record : archive.Entities)

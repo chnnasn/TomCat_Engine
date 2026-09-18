@@ -150,6 +150,8 @@ namespace TomCat {
 			uint32_t viewportHeight, float dpi, const RuntimeUIInputFrame& input);
 		static void RenderWorldText(Scene& scene, entt::registry& registry,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
+		static void RenderWorldText(Scene& scene,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static void RenderScreen(Scene& scene, entt::registry& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);

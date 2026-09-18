@@ -554,6 +554,19 @@ namespace TomCat {
 		bool RaycastTarget = false;
 	};
 
+	// Persistent, authoring-time listener for UIButton.OnClick. TargetAttachmentID
+	// is the exact C# component identity; ScriptAsset is retained for authoring
+	// metadata and for validating that a stale listener never calls another script.
+	// An all-zero/empty target is retained as an unassigned UnityEvent-style slot.
+	struct UIButtonOnClickListener
+	{
+		bool Enabled = true;
+		UUID TargetEntity{ 0 };
+		UUID TargetAttachmentID{ 0 };
+		AssetHandle ScriptAsset{ 0 };
+		std::string MethodName;
+	};
+
 	struct UIButton
 	{
 		bool Enabled = true;
@@ -562,6 +575,7 @@ namespace TomCat {
 		glm::vec4 HoverColor{ 0.9f, 0.9f, 0.9f, 1.0f };
 		glm::vec4 PressedColor{ 0.72f, 0.72f, 0.72f, 1.0f };
 		glm::vec4 SelectedColor{ 0.82f, 0.9f, 1.0f, 1.0f };
+		std::vector<UIButtonOnClickListener> OnClick;
 
 		bool RuntimeHovered = false;
 		bool RuntimePressed = false;

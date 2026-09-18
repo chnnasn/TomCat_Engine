@@ -3,10 +3,12 @@
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Renderer/Camera.h"
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Framebuffer.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/Renderer.h"
+#include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Runtime/RuntimeUI.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
@@ -14,6 +16,8 @@
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scripting/IScriptRuntime.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -25,14 +29,18 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace {
 	constexpr const char* MixedUTF8 =
@@ -326,6 +334,98 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(readError == GL_NO_ERROR,
 			"OpenGL failed to read the Runtime UI RGBA screenshot");
 		return pixels;
+	}
+
+	std::vector<uint8_t> CaptureWorldText(TomCat::Scene& scene, uint32_t width,
+		uint32_t height, const TomCat::Camera& camera,
+		const glm::mat4& cameraTransform)
+	{
+		TomCat::FramebufferSpecification specification;
+		specification.Width = width;
+		specification.Height = height;
+		specification.Attachments = { TomCat::FramebufferTextureFormat::RGBA8 };
+		TomCat::Ref<TomCat::Framebuffer> framebuffer =
+			TomCat::Framebuffer::Create(specification);
+		RequireUI(framebuffer != nullptr,
+			"could not create the World Text screenshot framebuffer");
+		framebuffer->Bind();
+		TomCat::RenderCommand::SetClearColor({ 8.0f / 255.0f, 12.0f / 255.0f,
+			18.0f / 255.0f, 1.0f });
+		TomCat::RenderCommand::Clear();
+		TomCat::Renderer2D::BeginScene(camera, cameraTransform);
+		TomCat::RuntimeUISystem::RenderWorldText(scene);
+		TomCat::Renderer2D::EndScene();
+		glFinish();
+		std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4u);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, static_cast<GLsizei>(width),
+			static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		const GLenum readError = glGetError();
+		framebuffer->Unbind();
+		RequireUI(readError == GL_NO_ERROR,
+			"OpenGL failed to read the World Text RGBA screenshot");
+		return pixels;
+	}
+
+	struct PixelBounds
+	{
+		uint32_t MinimumX = 0;
+		uint32_t MaximumX = 0;
+		uint32_t Count = 0;
+	};
+
+	class UICallbackRuntime final : public TomCat::Scripting::IScriptRuntime
+	{
+	public:
+		using ScriptStatus = TomCat::Scripting::ScriptStatus;
+		bool IsReady() const override { return true; }
+		ScriptStatus CreateSceneRuntime(uint64_t, uint64_t) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus InstantiateAll(std::span<const TomCat::Scripting::NativeScriptAttachmentV1>) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus ApplySerializedFields(std::string_view) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus InvokeCreateAll() override { return ScriptStatus::Success; }
+		ScriptStatus InvokeMethod(uint64_t attachmentId,
+			std::string_view methodName) override
+		{
+			Invocations.emplace_back(attachmentId, methodName);
+			Calls.emplace_back("InvokeMethod");
+			return ScriptStatus::Success;
+		}
+		ScriptStatus SetEnabled(uint64_t, bool) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus UpdateAll(float) override
+		{ Calls.emplace_back("UpdateAll"); return ScriptStatus::Success; }
+		ScriptStatus FixedUpdateAll(float) override { return ScriptStatus::Success; }
+		ScriptStatus DispatchPhysicsEvents(
+			std::span<const TomCat::Scripting::NativePhysicsEventV1>) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus DestroyAll() override { return ScriptStatus::Success; }
+
+		std::vector<std::pair<uint64_t, std::string>> Invocations;
+		std::vector<std::string> Calls;
+	};
+
+	PixelBounds FindContentBounds(const std::vector<uint8_t>& pixels,
+		uint32_t width, uint32_t height)
+	{
+		PixelBounds bounds{ width, 0, 0 };
+		for (uint32_t y = 0; y < height; ++y)
+		{
+			for (uint32_t x = 0; x < width; ++x)
+			{
+				const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+				if (pixels[offset] == 8 && pixels[offset + 1] == 12
+					&& pixels[offset + 2] == 18)
+					continue;
+				bounds.MinimumX = std::min(bounds.MinimumX, x);
+				bounds.MaximumX = std::max(bounds.MaximumX, x);
+				++bounds.Count;
+			}
+		}
+		return bounds;
 	}
 
 	uint8_t ScreenshotClass(const uint8_t* pixel)
@@ -1026,6 +1126,21 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		UIFixture fixture = BuildUIFixture(TomCat::AssetHandle(4242),
 			TomCat::AssetHandle(4343), TomCat::AssetHandle(4244),
 			TomCat::AssetHandle(4245));
+		const TomCat::UUID sourceAttachment(0x12345678u);
+		TomCat::CSharpScriptEntry script;
+		script.AttachmentID = sourceAttachment;
+		script.ScriptAsset = TomCat::AssetHandle(0x87654321u);
+		script.LastKnownClassName = "Game.MenuController";
+		fixture.Second.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(script);
+		TomCat::UIButtonOnClickListener assignedListener;
+		assignedListener.TargetEntity = fixture.Second.GetUUID();
+		assignedListener.TargetAttachmentID = sourceAttachment;
+		assignedListener.ScriptAsset = script.ScriptAsset;
+		assignedListener.MethodName = "Play";
+		TomCat::UIButtonOnClickListener targetOnlyListener;
+		targetOnlyListener.TargetEntity = fixture.Second.GetUUID();
+		fixture.First.GetComponent<TomCat::UIButton>().OnClick = {
+			assignedListener, targetOnlyListener };
 		fixture.First.GetComponent<TomCat::UIButton>().RuntimeClickSerial = 99;
 		std::string document, error;
 		RequireUI(TomCat::SceneSerializer(fixture.Scene).SerializeDocument(document,
@@ -1039,6 +1154,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"RuntimeUIRegression.tomcat", false),
 			"Runtime UI Scene 11 deserialization failed");
 		TomCat::Entity loaded = decoded->FindEntityByUUID(TomCat::UUID(10003));
+		const auto& loadedListeners =
+			loaded.GetComponent<TomCat::UIButton>().OnClick;
 		RequireUI(loaded && loaded.HasComponent<TomCat::RectTransform>()
 			&& loaded.HasComponent<TomCat::UIImage>()
 			&& loaded.HasComponent<TomCat::UIText>()
@@ -1050,10 +1167,45 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 				== TomCat::AssetHandle(4244)
 			&& loaded.GetComponent<TomCat::UIText>().EmojiFont
 				== TomCat::AssetHandle(4245)
+			&& loadedListeners.size() == 2
+			&& loadedListeners[0].TargetEntity == fixture.Second.GetUUID()
+			&& loadedListeners[0].TargetAttachmentID == sourceAttachment
+			&& loadedListeners[0].ScriptAsset == script.ScriptAsset
+			&& loadedListeners[0].MethodName == "Play"
+			&& loadedListeners[1].TargetEntity == fixture.Second.GetUUID()
+			&& static_cast<uint64_t>(loadedListeners[1].TargetAttachmentID) == 0
+			&& static_cast<uint64_t>(loadedListeners[1].ScriptAsset) == 0
+			&& loadedListeners[1].MethodName.empty()
 			&& loaded.GetComponent<TomCat::UIButton>().RuntimeClickSerial == 0,
 			"Runtime UI authoring fields or transient reset did not round-trip");
 
 		const YAML::Node root = YAML::Load(document);
+		YAML::Node v1Document = YAML::Clone(root);
+		bool downgradedButton = false;
+		for (YAML::Node entityNode : v1Document["Entities"])
+		{
+			if (entityNode["Entity"].as<uint64_t>() != 10003)
+				continue;
+			for (YAML::Node component : entityNode["Components"])
+			{
+				if (component["StableName"].as<std::string>() != "TomCat.UIButton")
+					continue;
+				component["SchemaVersion"] = 1;
+				component["Properties"] = component["Properties"]["Fields"];
+				downgradedButton = true;
+			}
+		}
+		YAML::Emitter v1Output;
+		v1Output << v1Document;
+		auto migratedV1 = TomCat::CreateRef<TomCat::Scene>();
+		RequireUI(downgradedButton && v1Output.good()
+			&& TomCat::SceneSerializer(migratedV1).DeserializeDocument(
+				std::vector<uint8_t>(v1Output.c_str(),
+					v1Output.c_str() + std::strlen(v1Output.c_str())),
+				"RuntimeUIRegression-v1.tomcat", false)
+			&& migratedV1->FindEntityByUUID(TomCat::UUID(10003))
+				.GetComponent<TomCat::UIButton>().OnClick.empty(),
+			"UIButton v1 descriptor payload did not migrate to an empty OnClick list");
 		bool sawFont = false, sawFallbackFont = false, sawEmojiFont = false;
 		bool sawImage = false;
 		RequireUI(TomCat::AssetReferenceVisitor::VisitScene(root,
@@ -1079,6 +1231,38 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			}, error) && sawFont && sawFallbackFont && sawEmojiFont && sawImage,
 			"Scene/Cook traversal missed a UIText font-chain or UIImage asset");
 
+		TomCat::Entity duplicateRoot = fixture.Scene->DuplicateEntity(fixture.Canvas);
+		RequireUI(duplicateRoot, "Runtime UI duplicate hierarchy root was not created");
+		TomCat::Entity duplicateFirst;
+		TomCat::Entity duplicateSecond;
+		std::vector<TomCat::Entity> pending{ duplicateRoot };
+		while (!pending.empty())
+		{
+			TomCat::Entity current = pending.back();
+			pending.pop_back();
+			if (current.HasComponent<TomCat::UIButton>()
+				&& !current.GetComponent<TomCat::UIButton>().OnClick.empty())
+				duplicateFirst = current;
+			if (current.HasComponent<TomCat::CSharpScripts>())
+				duplicateSecond = current;
+			for (TomCat::UUID child : fixture.Scene->GetChildrenUUIDs(current))
+				pending.push_back(fixture.Scene->FindEntityByUUID(child));
+		}
+		RequireUI(duplicateFirst && duplicateSecond,
+			"Runtime UI duplicate hierarchy lost callback button descendants");
+		RequireUI(duplicateSecond.HasComponent<TomCat::CSharpScripts>(),
+			"Runtime UI duplicate callback target lost CSharpScripts");
+		const TomCat::UUID duplicateAttachment = duplicateSecond
+			.GetComponent<TomCat::CSharpScripts>().Scripts.front().AttachmentID;
+		const auto& duplicateListeners =
+			duplicateFirst.GetComponent<TomCat::UIButton>().OnClick;
+		RequireUI(duplicateListeners.size() == 2
+			&& duplicateListeners[0].TargetEntity == duplicateSecond.GetUUID()
+			&& duplicateListeners[0].TargetAttachmentID == duplicateAttachment
+			&& duplicateAttachment != sourceAttachment
+			&& duplicateListeners[1].TargetEntity == duplicateSecond.GetUUID(),
+			"DuplicateEntity did not remap UIButton entity and attachment targets");
+
 		TomCat::PrefabArchive archive;
 		RequireUI(TomCat::PrefabArchiveCodec::CaptureSubtree(fixture.Scene,
 			fixture.Canvas, archive, error), "Runtime UI Prefab capture failed");
@@ -1099,6 +1283,85 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& instance.Root.HasComponent<TomCat::Canvas>()
 			&& instance.Root.HasComponent<TomCat::UIEventSystem>(),
 			"Runtime UI Prefab did not instantiate its complete hierarchy");
+		TomCat::Entity prefabFirst;
+		TomCat::Entity prefabSecond;
+		for (TomCat::Entity created : instance.Entities)
+		{
+			if (created.GetName() == "First button") prefabFirst = created;
+			if (created.GetName() == "Second button") prefabSecond = created;
+		}
+		RequireUI(prefabFirst && prefabSecond
+			&& prefabSecond.HasComponent<TomCat::CSharpScripts>()
+			&& !prefabSecond.GetComponent<TomCat::CSharpScripts>().Scripts.empty(),
+			"Prefab instance lost UIButton callback target script");
+		const TomCat::UUID prefabAttachment = prefabSecond
+			.GetComponent<TomCat::CSharpScripts>().Scripts.front().AttachmentID;
+		const auto& prefabListeners =
+			prefabFirst.GetComponent<TomCat::UIButton>().OnClick;
+		RequireUI(prefabListeners.size() == 2
+			&& prefabListeners[0].TargetEntity == prefabSecond.GetUUID()
+			&& prefabListeners[0].TargetAttachmentID == prefabAttachment
+			&& prefabAttachment != sourceAttachment
+			&& prefabListeners[1].TargetEntity == prefabSecond.GetUUID(),
+			"Prefab instantiate did not remap UIButton entity and attachment targets");
+	}
+
+	void TestPersistentButtonCallbacks()
+	{
+		UIFixture fixture = BuildUIFixture();
+		constexpr uint64_t ScriptAsset = 70001;
+		const TomCat::UUID attachment(70002);
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = attachment;
+		entry.ScriptAsset = TomCat::AssetHandle(ScriptAsset);
+		entry.LastKnownClassName = "Game.MenuController";
+		fixture.Second.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+		TomCat::UIButtonOnClickListener listener;
+		listener.TargetEntity = fixture.Second.GetUUID();
+		listener.TargetAttachmentID = attachment;
+		listener.ScriptAsset = TomCat::AssetHandle(ScriptAsset);
+		listener.MethodName = "Play";
+		fixture.First.GetComponent<TomCat::UIButton>().OnClick.push_back(listener);
+
+		auto runtime = std::make_shared<UICallbackRuntime>();
+		TomCat::Scripting::ScriptEngine::Get().SetRuntime(runtime);
+		const uint64_t session = TomCat::Scripting::ScriptEngine::Get().StartScene(
+			*fixture.Scene, 17);
+		RequireUI(session != 0, "could not start Runtime UI callback script session");
+		runtime->Calls.clear();
+
+		const TomCat::RuntimeUILayoutSnapshot layout =
+			TomCat::RuntimeUISystem::BuildLayout(*fixture.Scene, 1920, 1080, 96.0f);
+		const TomCat::UIRect rectangle = layout.Rectangles.at(fixture.First.GetUUID());
+		TomCat::RuntimeUIInputFrame input;
+		input.PointerPosition = { rectangle.X + 5.0f,
+			1080.0f - (rectangle.Y + 5.0f) };
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, input);
+		RequireUI(runtime->Invocations.empty(),
+			"UIButton invoked OnClick on pointer press instead of release");
+		input.MousePressed = false;
+		input.MouseReleased = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, input);
+		TomCat::Scripting::ScriptEngine::Get().UpdateAll(session, 1.0f / 60.0f);
+		RequireUI(runtime->Invocations.size() == 1
+			&& runtime->Invocations[0].first == static_cast<uint64_t>(attachment)
+			&& runtime->Invocations[0].second == "Play"
+			&& runtime->Calls.size() == 2
+			&& runtime->Calls[0] == "InvokeMethod"
+			&& runtime->Calls[1] == "UpdateAll",
+			"mouse release did not invoke the exact listener once before OnUpdate");
+
+		input = {};
+		input.KeyboardSubmit = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, input);
+		RequireUI(runtime->Invocations.size() == 2,
+			"keyboard Submit did not invoke UIButton.OnClick exactly once");
+		TomCat::Scripting::ScriptEngine::Get().StopScene(session);
+		TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
 	}
 
 	class TemporaryUIProject final
@@ -1392,6 +1655,56 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& originalFont->GetTexture()
 			&& !originalFont->GetAtlas().Glyphs.contains(0x1f600u),
 			"glyph growth did not atomically replace and preserve the old atlas");
+
+		TomCat::Scene worldTextScene;
+		TomCat::Entity worldTextParent = worldTextScene.CreateEntity("World Text Parent");
+		TomCat::Entity worldText = worldTextScene.CreateEntity("World Text");
+		RequireUI(worldTextScene.SetParent(worldText, worldTextParent),
+			"could not parent the World Text transform probe");
+		auto& parentTransform = worldTextParent.GetComponent<TomCat::Transform>();
+		parentTransform._Translation = { -1.0f, 0.0f, 0.0f };
+		parentTransform._LocalTranslation = parentTransform._Translation;
+		auto& worldTextTransform = worldText.GetComponent<TomCat::Transform>();
+		worldTextTransform._Translation = { 3.0f, 0.0f, 0.0f };
+		worldTextTransform._LocalTranslation = { 0.0f, 0.0f, 0.0f };
+		auto& worldTextRenderer = worldText.AddComponent<TomCat::TextRenderer>();
+		worldTextRenderer.Font = fontHandle;
+		worldTextRenderer.FallbackFont = fallbackFontHandle;
+		worldTextRenderer.EmojiFont = emojiFontHandle;
+		worldTextRenderer.Text = "UI";
+		worldTextRenderer.FontSize = 1.0f;
+		const TomCat::Camera worldCamera(glm::ortho(-4.0f, 4.0f,
+			-4.0f, 4.0f, -1.0f, 1.0f));
+		constexpr uint32_t WorldCaptureSize = 128;
+		const PixelBounds initialWorldBounds = FindContentBounds(
+			CaptureWorldText(worldTextScene, WorldCaptureSize, WorldCaptureSize,
+				worldCamera, glm::mat4(1.0f)),
+			WorldCaptureSize, WorldCaptureSize);
+		parentTransform._Translation.x = 1.0f;
+		parentTransform._LocalTranslation.x = 1.0f;
+		const PixelBounds movedParentBounds = FindContentBounds(
+			CaptureWorldText(worldTextScene, WorldCaptureSize, WorldCaptureSize,
+				worldCamera, glm::mat4(1.0f)),
+			WorldCaptureSize, WorldCaptureSize);
+		const glm::mat4 movedCamera = glm::translate(glm::mat4(1.0f),
+			glm::vec3(1.0f, 0.0f, 0.0f));
+		const PixelBounds movedCameraBounds = FindContentBounds(
+			CaptureWorldText(worldTextScene, WorldCaptureSize, WorldCaptureSize,
+				worldCamera, movedCamera),
+			WorldCaptureSize, WorldCaptureSize);
+		RequireUI(initialWorldBounds.Count > 0 && movedParentBounds.Count > 0
+			&& movedCameraBounds.Count > 0
+			&& Near(static_cast<float>(movedParentBounds.MinimumX)
+				- static_cast<float>(initialWorldBounds.MinimumX), 32.0f, 2.0f)
+			&& Near(static_cast<float>(movedCameraBounds.MinimumX)
+				- static_cast<float>(movedParentBounds.MinimumX), -16.0f, 2.0f),
+			"World Text did not follow its parent transform and camera projection");
+		const PixelBounds screenOnlyBounds = FindContentBounds(
+			CaptureRuntimeUI(worldTextScene, WorldCaptureSize, WorldCaptureSize, 96.0f),
+			WorldCaptureSize, WorldCaptureSize);
+		RequireUI(screenOnlyBounds.Count == 0,
+			"World Text leaked into the Canvas screen-space render pass");
+
 		for (const ScreenshotCase& screenshot : screenshotCases)
 		{
 			const std::vector<uint8_t> pixels = CaptureRuntimeUI(*loaded,
@@ -1420,6 +1733,7 @@ namespace TomCat::Tests {
 		TestLayoutClippingAspectAndInput();
 		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();
+		TestPersistentButtonCallbacks();
 		TestCookedRuntimeUIRoundTrip();
 	}
 

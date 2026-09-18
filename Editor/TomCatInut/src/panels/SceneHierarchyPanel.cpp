@@ -3201,19 +3201,46 @@ namespace TomCat {
 			}
 			return Entity{};
 		};
+		auto FindReusableRootCanvas = [&]()
+		{
+			// Root order is the authored Hierarchy order, so multiple eligible Canvases
+			// resolve predictably. Disabled, inactive, or editor-hidden roots are skipped
+			// because placing a new control there would make it appear to be missing.
+			for (UUID rootID : m_Context->GetRootEntityUUIDs())
+			{
+				Entity root = m_Context->FindEntityByUUID(rootID);
+				if (root && root.HasComponent<Canvas>()
+					&& root.GetComponent<Canvas>().Enabled
+					&& m_Context->IsActiveInHierarchy(root)
+					&& m_Context->IsVisibleInEditorHierarchy(root))
+					return root;
+			}
+			return Entity{};
+		};
 
 		auto CreateUIElement = [&](const char* name, bool addImage,
 			bool addText, bool addButton)
 		{
 			Entity uiParent = parentForNewObject;
-			if (!FindCanvasAncestor(uiParent))
+			Entity canvasOwner = FindCanvasAncestor(uiParent);
+			if (!canvasOwner)
 			{
-				Entity canvas = m_Context->CreateEntity("Canvas");
-				canvas.AddComponent<Canvas>();
-				canvas.AddComponent<UIEventSystem>();
-				uiParent = canvas;
-				m_ForceOpenSceneRoot = true;
+				uiParent = FindReusableRootCanvas();
+				if (!uiParent)
+				{
+					Entity canvas = m_Context->CreateEntity("Canvas");
+					canvas.AddComponent<Canvas>();
+					canvas.AddComponent<UIEventSystem>();
+					uiParent = canvas;
+					m_ForceOpenSceneRoot = true;
+				}
+				canvasOwner = uiParent;
 			}
+			// Older scenes may contain a Canvas authored before the event-system
+			// dependency was automatic. Repair it while creating a control so a new
+			// Button is immediately interactive.
+			if (!canvasOwner.HasComponent<UIEventSystem>())
+				canvasOwner.AddComponent<UIEventSystem>();
 
 			Entity element = m_Context->CreateEntity(name);
 			auto& rect = element.AddComponent<RectTransform>();
@@ -3233,12 +3260,28 @@ namespace TomCat {
 			if (addText)
 			{
 				auto& text = element.AddComponent<UIText>();
-				text.Text = addButton ? "Button" : "Text";
-				if (addButton)
-					text.Alignment = TextAlignment::Center;
+				text.Text = "Text";
 			}
 
 			m_Context->SetParent(element, uiParent);
+			// Match Unity's Button hierarchy: the selectable graphic lives on the
+			// Button entity and the label is a separate, stretched child. This keeps
+			// the label independently editable without making it intercept clicks.
+			if (addButton)
+			{
+				Entity label = m_Context->CreateEntity("Text");
+				auto& labelRect = label.AddComponent<RectTransform>();
+				labelRect.AnchorMin = { 0.0f, 0.0f };
+				labelRect.AnchorMax = { 1.0f, 1.0f };
+				labelRect.SizeDelta = { 0.0f, 0.0f };
+				auto& labelText = label.AddComponent<UIText>();
+				labelText.Text = "Button";
+				labelText.Alignment = TextAlignment::Center;
+				labelText.Color = { 0.1f, 0.1f, 0.1f, 1.0f };
+				m_Context->SetParent(label, element);
+				m_ForceOpenEntityNodes.emplace(
+					static_cast<uint64_t>(element.GetUUID()));
+			}
 			m_ForceExpandParent = uiParent;
 			m_SelectionContext = element;
 			BeginRename(element);
@@ -3247,6 +3290,22 @@ namespace TomCat {
 
 		if (ImGui::BeginMenu("2D Object"))
 		{
+			if (ImGui::MenuItem("World Text"))
+			{
+				Entity text = m_Context->CreateEntity("World Text");
+				text.AddComponent<TextRenderer>();
+				// World Text participates in the camera/world transform pass. Keep it
+				// outside a Canvas hierarchy even when a UI element is selected.
+				if (FindCanvasAncestor(parentForNewObject))
+				{
+					m_ForceOpenSceneRoot = true;
+					m_SelectionContext = text;
+					BeginRename(text);
+					MarkModified(true);
+				}
+				else
+					CreateAsSelectedChild(text);
+			}
 			if (ImGui::BeginMenu("Sprites"))
 			{
 				AssetManager& assets = AssetManager::Get();
@@ -3341,7 +3400,7 @@ namespace TomCat {
 			}
 			ImGui::EndMenu();
 		}
-		if (ImGui::BeginMenu("UI"))
+		if (ImGui::BeginMenu("UI (Canvas)"))
 		{
 			if (ImGui::MenuItem("Canvas"))
 			{
@@ -3355,7 +3414,7 @@ namespace TomCat {
 			if (ImGui::MenuItem("Text"))
 				CreateUIElement("Text", false, true, false);
 			if (ImGui::MenuItem("Button"))
-				CreateUIElement("Button", true, true, true);
+				CreateUIElement("Button", true, false, true);
 			ImGui::EndMenu();
 		}
 	}
@@ -3666,6 +3725,7 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	template<> static bool* GetComponentEnabledFlag<DistanceJoint2D>(DistanceJoint2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<AudioSource>(AudioSource& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<AudioListener>(AudioListener& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<UIButton>(UIButton& component) { return &component.Enabled; }
 
 	static bool DrawColliderMaterialProperties(float& density, float& friction, float& restitution)
 	{
@@ -3858,6 +3918,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 		if (open)
 		{
 			ImGui::BeginDisabled(!editable);
+			const uint64_t componentType = static_cast<uint64_t>(descriptor.TypeId);
+			if (componentType == ComponentIds::Canvas)
+				ImGui::TextDisabled("Screen Space - Overlay");
+			else if (componentType == ComponentIds::TextRenderer)
+				ImGui::TextDisabled("World-space text rendered by the active camera");
 			for (const PropertyDescriptor& property : descriptor.Properties)
 			{
 				ImGui::PushID(property.StableName.c_str());
@@ -3875,7 +3940,38 @@ static void DrawComponent(const std::string& name, Entity entity,
 					case PropertyKind::Int32:
 					{
 						int32_t item = std::get<int32_t>(value);
-						changed = ImGui::DragInt(property.DisplayName.c_str(), &item, 1.0f);
+						const char* const* labels = nullptr;
+						int labelCount = 0;
+						static const char* textAlignmentLabels[] = {
+							"Left", "Center", "Right" };
+						static const char* canvasScaleLabels[] = {
+							"Constant Pixel Size", "Scale With Screen Size" };
+						static const char* layoutDirectionLabels[] = {
+							"Horizontal", "Vertical" };
+						if ((componentType == ComponentIds::TextRenderer
+							|| componentType == ComponentIds::UIText)
+							&& property.StableName == "Alignment")
+						{
+							labels = textAlignmentLabels;
+							labelCount = static_cast<int>(std::size(textAlignmentLabels));
+						}
+						else if (componentType == ComponentIds::Canvas
+							&& property.StableName == "ScaleMode")
+						{
+							labels = canvasScaleLabels;
+							labelCount = static_cast<int>(std::size(canvasScaleLabels));
+						}
+						else if (componentType == ComponentIds::UILayoutGroup
+							&& property.StableName == "Direction")
+						{
+							labels = layoutDirectionLabels;
+							labelCount = static_cast<int>(std::size(layoutDirectionLabels));
+						}
+						if (labels && item >= 0 && item < labelCount)
+							changed = ImGui::Combo(property.DisplayName.c_str(), &item,
+								labels, labelCount);
+						else
+							changed = ImGui::DragInt(property.DisplayName.c_str(), &item, 1.0f);
 						value = item;
 						break;
 					}
@@ -3913,7 +4009,12 @@ static void DrawComponent(const std::string& name, Entity entity,
 					case PropertyKind::Float:
 					{
 						float item = std::get<float>(value);
-						changed = ImGui::DragFloat(property.DisplayName.c_str(), &item, 0.1f);
+						if (componentType == ComponentIds::Canvas
+							&& property.StableName == "MatchWidthOrHeight")
+							changed = ImGui::SliderFloat(property.DisplayName.c_str(),
+								&item, 0.0f, 1.0f, "%.2f");
+						else
+							changed = ImGui::DragFloat(property.DisplayName.c_str(), &item, 0.1f);
 						value = item;
 						break;
 					}
@@ -3926,12 +4027,19 @@ static void DrawComponent(const std::string& name, Entity entity,
 					}
 					case PropertyKind::String:
 					{
-						std::array<char, 1024> buffer{};
+						std::array<char, 4096> buffer{};
 						const std::string& item = std::get<std::string>(value);
 						const size_t count = std::min(item.size(), buffer.size() - 1);
 						std::copy_n(item.data(), count, buffer.data());
-						changed = ImGui::InputText(property.DisplayName.c_str(),
-							buffer.data(), buffer.size());
+						if ((componentType == ComponentIds::TextRenderer
+							|| componentType == ComponentIds::UIText)
+							&& property.StableName == "Text")
+							changed = ImGui::InputTextMultiline(property.DisplayName.c_str(),
+								buffer.data(), buffer.size(), ImVec2(-1.0f,
+									ImGui::GetTextLineHeight() * 3.5f));
+						else
+							changed = ImGui::InputText(property.DisplayName.c_str(),
+								buffer.data(), buffer.size());
 						value = std::string(buffer.data());
 						break;
 					}
@@ -3954,8 +4062,14 @@ static void DrawComponent(const std::string& name, Entity entity,
 					case PropertyKind::Vector4:
 					{
 						auto item = std::get<glm::vec4>(value);
-						changed = ImGui::DragFloat4(property.DisplayName.c_str(),
-							glm::value_ptr(item), 0.1f);
+						const bool isColor = property.StableName.find("Color")
+							!= std::string::npos;
+						if (isColor)
+							changed = ImGui::ColorEdit4(property.DisplayName.c_str(),
+								glm::value_ptr(item));
+						else
+							changed = ImGui::DragFloat4(property.DisplayName.c_str(),
+								glm::value_ptr(item), 0.1f);
 						value = item;
 						break;
 					}
@@ -5825,6 +5939,165 @@ static void DrawComponent(const std::string& name, Entity entity,
 			MarkModified();
 	}
 
+	void SceneHierarchyPanel::DrawUIButtonInspector(UIButton& button, Entity entity)
+	{
+		bool changed = ImGui::Checkbox("Interactable", &button.Interactable);
+		changed |= ImGui::ColorEdit4("Normal Color", glm::value_ptr(button.NormalColor));
+		changed |= ImGui::ColorEdit4("Highlighted Color", glm::value_ptr(button.HoverColor));
+		changed |= ImGui::ColorEdit4("Pressed Color", glm::value_ptr(button.PressedColor));
+		changed |= ImGui::ColorEdit4("Selected Color", glm::value_ptr(button.SelectedColor));
+		if (changed)
+			MarkModified();
+
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::TextUnformatted("On Click ()");
+		std::optional<size_t> removeIndex;
+		for (size_t index = 0; index < button.OnClick.size(); ++index)
+		{
+			auto& listener = button.OnClick[index];
+			ImGui::PushID(static_cast<int>(index));
+			ImGui::BeginGroup();
+			if (ImGui::Checkbox("##Enabled", &listener.Enabled))
+				MarkModified();
+			ImGui::SameLine();
+
+			Entity target;
+			if (static_cast<uint64_t>(listener.TargetEntity) != 0 && m_Context)
+				target = m_Context->FindEntityByUUID(listener.TargetEntity);
+			const std::string targetLabel = target
+				? target.GetName() + " (Entity)"
+				: (static_cast<uint64_t>(listener.TargetEntity) == 0
+					? "None (Entity)" : "Missing Entity");
+			ImGui::SetNextItemWidth(-32.0f);
+			if (ImGui::Button(targetLabel.c_str(), ImVec2(-32.0f, 0.0f)))
+				ImGui::OpenPopup("OnClickTargetPicker");
+			if (ImGui::BeginDragDropTarget())
+			{
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+					SceneEntityDragDropPayloadID))
+				{
+					Entity dropped = GetDraggedSceneEntity(payload, m_Context);
+					if (dropped)
+					{
+						listener.TargetEntity = dropped.GetUUID();
+						listener.TargetAttachmentID = UUID(0);
+						listener.ScriptAsset = AssetHandle(0);
+						listener.MethodName.clear();
+						MarkModified();
+					}
+				}
+				ImGui::EndDragDropTarget();
+			}
+			if (ImGui::BeginPopup("OnClickTargetPicker"))
+			{
+				if (ImGui::MenuItem("This Entity"))
+				{
+					listener.TargetEntity = entity.GetUUID();
+					listener.TargetAttachmentID = UUID(0);
+					listener.ScriptAsset = AssetHandle(0);
+					listener.MethodName.clear();
+					MarkModified();
+				}
+				ImGui::TextDisabled("Or drag an entity from Hierarchy");
+				ImGui::EndPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::SmallButton("x"))
+			{
+				listener.TargetEntity = UUID(0);
+				listener.TargetAttachmentID = UUID(0);
+				listener.ScriptAsset = AssetHandle(0);
+				listener.MethodName.clear();
+				MarkModified();
+				target = {};
+			}
+
+			std::string selectedMethod = "No Function";
+			if (!listener.MethodName.empty())
+			{
+				selectedMethod = "Missing: " + listener.MethodName;
+				if (target && target.HasComponent<CSharpScripts>())
+				{
+					for (const CSharpScriptEntry& script :
+						target.GetComponent<CSharpScripts>().Scripts)
+					{
+						if (script.AttachmentID != listener.TargetAttachmentID)
+							continue;
+						std::string className = script.LastKnownClassName;
+						if (m_ScriptMetadataProvider)
+						{
+							const auto metadata = m_ScriptMetadataProvider(script.ScriptAsset);
+							if (metadata && !metadata->TypeName.empty())
+								className = metadata->TypeName;
+						}
+						selectedMethod = (className.empty() ? "Script" : className)
+							+ "." + listener.MethodName;
+						break;
+					}
+				}
+			}
+
+			ImGui::BeginDisabled(!target);
+			if (ImGui::BeginCombo("##OnClickMethod", selectedMethod.c_str()))
+			{
+				if (ImGui::Selectable("No Function", listener.MethodName.empty()))
+				{
+					listener.TargetAttachmentID = UUID(0);
+					listener.ScriptAsset = AssetHandle(0);
+					listener.MethodName.clear();
+					MarkModified();
+				}
+				if (target && target.HasComponent<CSharpScripts>())
+				{
+					for (const CSharpScriptEntry& script :
+						target.GetComponent<CSharpScripts>().Scripts)
+					{
+						const auto metadata = m_ScriptMetadataProvider
+							? m_ScriptMetadataProvider(script.ScriptAsset)
+							: std::optional<EditorScriptMetadata>{};
+						if (!metadata || metadata->EventMethods.empty())
+							continue;
+						const std::string className = metadata->TypeName.empty()
+							? script.LastKnownClassName : metadata->TypeName;
+						for (const std::string& method : metadata->EventMethods)
+						{
+							const std::string label = (className.empty() ? "Script" : className)
+								+ "/" + method;
+							const bool selected = listener.TargetAttachmentID
+								== script.AttachmentID && listener.MethodName == method;
+							if (ImGui::Selectable(label.c_str(), selected))
+							{
+								listener.TargetAttachmentID = script.AttachmentID;
+								listener.ScriptAsset = script.ScriptAsset;
+								listener.MethodName = method;
+								MarkModified();
+							}
+						}
+					}
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			if (ImGui::SmallButton("-"))
+				removeIndex = index;
+			ImGui::EndGroup();
+			ImGui::PopID();
+		}
+		if (removeIndex)
+		{
+			button.OnClick.erase(button.OnClick.begin()
+				+ static_cast<std::ptrdiff_t>(*removeIndex));
+			MarkModified();
+		}
+		if (ImGui::Button("+", ImVec2(-1.0f, 0.0f)))
+		{
+			button.OnClick.emplace_back();
+			MarkModified();
+		}
+	}
+
 	void SceneHierarchyPanel::DrawCSharpScripts(Entity entity)
 	{
 		if (!entity || !entity.HasComponent<CSharpScripts>())
@@ -6815,7 +7088,15 @@ static void DrawComponent(const std::string& name, Entity entity,
 				ImGui::EndCombo();
 			}
 			if (ImGui::Checkbox("Fixed Rotation", &component.FixedRotation)) MarkModified();
-		}, onModified, m_ColliderEditingAllowed);
+			}, onModified, m_ColliderEditingAllowed);
+		});
+		richInspectors.emplace(ComponentIds::UIButton, [&]()
+		{
+			DrawComponent<UIButton>("Button", entity, m_Icons,
+				EditorIcon::Count, [&](UIButton& button)
+				{
+					DrawUIButtonInspector(button, entity);
+				}, onModified, m_ColliderEditingAllowed);
 		});
 
 		richInspectors.emplace(ComponentIds::BoxCollider2D, [&]()
@@ -7146,14 +7427,25 @@ static void DrawComponent(const std::string& name, Entity entity,
 				if (selected)
 				{
 					std::string error;
-					if (static_cast<uint64_t>(descriptor.TypeId)
-						== ComponentIds::SpriteAnimator
+					const uint64_t componentType =
+						static_cast<uint64_t>(descriptor.TypeId);
+					if (componentType == ComponentIds::SpriteAnimator
 						&& !entity.HasComponent<SpriteRenderer>())
 						entity.AddComponent<SpriteRenderer>();
-					if (static_cast<uint64_t>(descriptor.TypeId)
-						== ComponentIds::Tilemap2D
+					if (componentType == ComponentIds::Tilemap2D
 						&& !entity.HasComponent<TilemapRenderer2D>())
 						entity.AddComponent<TilemapRenderer2D>();
+					if ((componentType == ComponentIds::UIImage
+						|| componentType == ComponentIds::UIText
+						|| componentType == ComponentIds::UIButton)
+						&& !entity.HasComponent<RectTransform>())
+						entity.AddComponent<RectTransform>();
+					if (componentType == ComponentIds::UIButton
+						&& !entity.HasComponent<UIImage>())
+						entity.AddComponent<UIImage>();
+					if (componentType == ComponentIds::Canvas
+						&& !entity.HasComponent<UIEventSystem>())
+						entity.AddComponent<UIEventSystem>();
 					if (descriptor.Add(entity, error))
 						MarkModified();
 					else

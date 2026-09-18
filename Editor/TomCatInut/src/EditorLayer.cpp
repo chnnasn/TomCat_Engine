@@ -37,6 +37,7 @@
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Scripting/ScriptDiagnosticSink.h"
 #include "TomCat/Scripting/ScriptEngine.h"
+#include "TomCat/Runtime/RuntimeUI.h"
 
 #include "Player/PlayerBuilder.h"
 #include "ImGuizmo.h"
@@ -2464,10 +2465,16 @@ namespace TomCat {
 
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		bool usesRectTransformHandles = false;
+		if (sceneVisible)
+			usesRectTransformHandles = UI_RectTransformHandles();
+		else
+			ResetRectTransformEditState();
 
 		if (selectedEntity && m_ActiveScene
 			&& m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
-			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
+			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider()
+			&& !usesRectTransformHandles)
 		{
 			ImGuizmo::AllowAxisFlip(false);
 			ImGuizmo::SetOrthographic(false);
@@ -2529,6 +2536,7 @@ namespace TomCat {
 		}
 		else
 		{
+			ResetRectTransformEditState();
 			m_ViewportFocused = false;
 			m_ViewportCanvasHovered = false;
 			m_ViewportCameraDragOwned = false;
@@ -3688,6 +3696,157 @@ namespace TomCat {
 		return true;
 	}
 
+	void EditorLayer::ResetRectTransformEditState()
+	{
+		if (m_UIRectTransactionActive)
+		{
+			m_UIRectTransactionActive = false;
+			CommitSceneTransaction();
+		}
+		m_UIRectDragActive = false;
+		m_UIRectHandleHovered = false;
+		m_UIRectEditEntity = UUID(0);
+		m_UIRectDragStartMouse = { 0.0f, 0.0f };
+		m_UIRectDragStartPosition = { 0.0f, 0.0f };
+	}
+
+	bool EditorLayer::UI_RectTransformHandles()
+	{
+		Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (!m_ActiveScene || !selected
+			|| !m_ActiveScene->IsVisibleInEditorHierarchy(selected))
+		{
+			ResetRectTransformEditState();
+			return false;
+		}
+
+		// A Canvas is the full Scene framebuffer. Its ordinary Transform has no
+		// bearing on screen-space layout, so suppress the unrelated world gizmo.
+		if (selected.HasComponent<Canvas>())
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
+		if (!selected.HasComponent<RectTransform>())
+		{
+			ResetRectTransformEditState();
+			return false;
+		}
+
+		// Scene renders screen-space UI with the active Game viewport metrics and
+		// then scales that image into the Scene panel. Use the same logical extent
+		// here so named Game resolutions and HiDPI Scene panels map identically.
+		const FramebufferSpecification specification =
+			m_GameFramebuffer->GetSpecification();
+		const float framebufferWidth = static_cast<float>(specification.Width);
+		const float framebufferHeight = static_cast<float>(specification.Height);
+		const glm::vec2 viewportDisplaySize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (framebufferWidth <= 0.0f || framebufferHeight <= 0.0f
+			|| viewportDisplaySize.x <= 0.0f || viewportDisplaySize.y <= 0.0f)
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
+
+		const float dpi = 96.0f * Application::Get().GetWindow().GetDPIScale();
+		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildLayout(
+			*m_ActiveScene, specification.Width, specification.Height, dpi,
+			RuntimeUIVisibilityMode::Editor);
+		const UUID selectedID = selected.GetUUID();
+		const auto rectangleIt = layout.Rectangles.find(selectedID);
+		const auto scaleIt = layout.Scales.find(selectedID);
+		if (rectangleIt == layout.Rectangles.end() || scaleIt == layout.Scales.end()
+			|| !std::isfinite(scaleIt->second) || scaleIt->second <= 0.0f)
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
+
+		const UIRect& rectangle = rectangleIt->second;
+		const float displayScaleX = viewportDisplaySize.x / framebufferWidth;
+		const float displayScaleY = viewportDisplaySize.y / framebufferHeight;
+		const ImVec2 minimum(
+			m_ViewportBounds[0].x + rectangle.X * displayScaleX,
+			m_ViewportBounds[0].y
+				+ (framebufferHeight - rectangle.Y - rectangle.Height) * displayScaleY);
+		const ImVec2 maximum(minimum.x + rectangle.Width * displayScaleX,
+			minimum.y + rectangle.Height * displayScaleY);
+		const ImRect screenRect(minimum, maximum);
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
+			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), true);
+		const ImU32 outline = IM_COL32(72, 166, 255, 255);
+		draw->AddRect(minimum, maximum, outline, 0.0f, 0, 1.5f);
+		const ImVec2 center((minimum.x + maximum.x) * 0.5f,
+			(minimum.y + maximum.y) * 0.5f);
+		draw->AddCircleFilled(center, 4.0f, outline);
+		draw->AddLine(ImVec2(center.x - 9.0f, center.y),
+			ImVec2(center.x + 9.0f, center.y), outline, 1.5f);
+		draw->AddLine(ImVec2(center.x, center.y - 9.0f),
+			ImVec2(center.x, center.y + 9.0f), outline, 1.5f);
+		ImGui::PopClipRect();
+
+		Entity parent = m_ActiveScene->GetParent(selected);
+		const bool layoutControlled = parent && parent.HasComponent<UILayoutGroup>()
+			&& parent.GetComponent<UILayoutGroup>().Enabled;
+		const bool moveToolActive = m_GizmoType == ImGuizmo::OPERATION::TRANSLATE;
+		const ImVec2 mouse = ImGui::GetMousePos();
+		const bool hovered = m_ViewportCanvasHovered && screenRect.Contains(mouse);
+		const bool canMove = m_SceneState == SceneState::Edit && !layoutControlled
+			&& moveToolActive;
+		// The native mouse event is dispatched before this ImGui pass. Preserve the
+		// result for the next event so a UIText's blank rectangle (or the transparent
+		// part of a preserve-aspect Image) cannot select world geometry underneath
+		// before the RectTransform drag begins.
+		m_UIRectHandleHovered = hovered && canMove;
+		if (hovered && canMove)
+			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+		if (hovered && layoutControlled
+			&& ImGui::IsMouseHoveringRect(minimum, maximum))
+			ImGui::SetTooltip("Position is controlled by the parent UI Layout Group");
+
+		if (!m_UIRectDragActive && hovered && canMove
+			&& ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+			&& !ImGui::GetIO().KeyAlt)
+		{
+			BeginSceneTransaction("Move UI Element");
+			m_UIRectTransactionActive = m_SceneHistory.HasActiveTransaction();
+			m_UIRectDragActive = true;
+			m_UIRectEditEntity = selectedID;
+			m_UIRectDragStartMouse = { mouse.x, mouse.y };
+			m_UIRectDragStartPosition =
+				selected.GetComponent<RectTransform>().AnchoredPosition;
+		}
+
+		if (m_UIRectDragActive)
+		{
+			if (m_UIRectEditEntity != selectedID || !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+			{
+				ResetRectTransformEditState();
+			}
+			else
+			{
+				const glm::vec2 displayDelta = glm::vec2(mouse.x, mouse.y)
+					- m_UIRectDragStartMouse;
+				glm::vec2 canvasDelta{
+					displayDelta.x / displayScaleX / scaleIt->second,
+					-displayDelta.y / displayScaleY / scaleIt->second };
+				glm::vec2 position = m_UIRectDragStartPosition + canvasDelta;
+				if (ImGui::GetIO().KeyCtrl)
+					position = glm::round(position);
+				auto& transform = selected.GetComponent<RectTransform>();
+				if (transform.AnchoredPosition != position)
+				{
+					transform.AnchoredPosition = position;
+					if (m_UIRectTransactionActive)
+						UpdateSceneTransaction();
+				}
+			}
+		}
+		return true;
+	}
+
 	void EditorLayer::ResetColliderEditState()
 	{
 		if (m_ColliderTransactionActive)
@@ -4469,6 +4628,8 @@ namespace TomCat {
 
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
+			if (m_UIRectHandleHovered || m_UIRectDragActive)
+				return true;
 			if (m_ColliderHandleHovered || m_ActiveColliderHandle != ColliderEditHandle::None)
 				return true;
 			if (m_ViewportCanvasHovered && !ImGuizmo::IsOver() && !altDown)
@@ -4914,6 +5075,7 @@ namespace TomCat {
 	{
 		m_HoveredEntity = {};
 		m_ViewportCameraDragOwned = false;
+		ResetRectTransformEditState();
 		ResetColliderEditState();
 	}
 

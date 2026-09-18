@@ -1019,6 +1019,48 @@ namespace TomCat {
 				s_ControlOwnership &= ~control.Ownership;
 		}
 		NormalizeControlOwnership();
+
+		// Persistent callbacks are dispatched after all focus/click state for this
+		// UI frame is committed and before Scene invokes the normal OnUpdate phase.
+		// Copy listeners first because a callback may destroy its own Button or any
+		// later target through the managed deferred-command transaction.
+		struct PendingButtonClick
+		{
+			UUID Button;
+			std::vector<UIButtonOnClickListener> Listeners;
+		};
+		std::vector<PendingButtonClick> pendingClicks;
+		for (const Candidate& item : buttons)
+		{
+			if (!item.Value || !item.Value.HasComponent<UIButton>())
+				continue;
+			const UIButton& button = item.Value.GetComponent<UIButton>();
+			if (button.RuntimeClickedThisFrame && !button.OnClick.empty())
+				pendingClicks.push_back({ item.Value.GetUUID(), button.OnClick });
+		}
+		for (const PendingButtonClick& click : pendingClicks)
+		{
+			for (const UIButtonOnClickListener& listener : click.Listeners)
+			{
+				const bool assigned = static_cast<uint64_t>(listener.TargetEntity) != 0
+					&& static_cast<uint64_t>(listener.TargetAttachmentID) != 0
+					&& static_cast<uint64_t>(listener.ScriptAsset) != 0
+					&& !listener.MethodName.empty();
+				if (!listener.Enabled || !assigned)
+					continue;
+				const Scripting::ScriptStatus status =
+					Scripting::ScriptEngine::Get().InvokeMethod(scene,
+						listener.TargetEntity, listener.TargetAttachmentID,
+						static_cast<uint64_t>(listener.ScriptAsset),
+						listener.MethodName);
+				if (status != Scripting::ScriptStatus::Success)
+				{
+					TC_Core_Warn("UIButton {0} OnClick listener {1} failed with status {2}",
+						static_cast<uint64_t>(click.Button), listener.MethodName,
+						static_cast<int32_t>(status));
+				}
+			}
+		}
 	}
 
 	void RuntimeUISystem::UpdateWithInput(Scene& scene, uint32_t viewportWidth,
@@ -1034,7 +1076,7 @@ namespace TomCat {
 		for (const entt::entity value : registry.view<Transform, TextRenderer>())
 		{
 			Entity entity(value, &scene);
-			auto [transform, text] = registry.get<Transform, TextRenderer>(value);
+			auto& text = registry.get<TextRenderer>(value);
 			if (!text.Enabled || text.Text.empty()
 				|| !IsVisible(scene, entity, visibility)
 				|| !Finite(text.FontSize) || text.FontSize <= 0.0f)
@@ -1046,7 +1088,7 @@ namespace TomCat {
 			const TextLayoutResult layout = TextLayoutEngine::Build(font->GetAtlas(),
 				text.Text, text.FontSize, std::max(0.0f, text.MaxWidth),
 				text.Alignment, text.LineSpacing);
-			const glm::mat4 world = transform.GetTransform();
+			const glm::mat4 world = scene.GetRuntimeRenderTransform(entity.GetUUID());
 			for (const TextGlyphQuad& glyph : layout.Glyphs)
 			{
 				const glm::mat4 local = glm::translate(glm::mat4(1.0f), {
@@ -1059,6 +1101,12 @@ namespace TomCat {
 					static_cast<int>(value));
 			}
 		}
+	}
+
+	void RuntimeUISystem::RenderWorldText(Scene& scene,
+		RuntimeUIVisibilityMode visibility)
+	{
+		RenderWorldText(scene, scene.m_Registry, visibility);
 	}
 
 	void RuntimeUISystem::RenderScreen(Scene& scene, entt::registry& registry,

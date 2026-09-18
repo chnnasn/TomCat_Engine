@@ -254,6 +254,7 @@ namespace TomCat {
 		void DrawTilemapRenderer2DInspector(TilemapRenderer2D& renderer);
 		void DrawParticleSystem2DInspector(ParticleSystem2D& system);
 		void DrawLight2DInspector(Light2D& light);
+		void DrawUIButtonInspector(UIButton& button, Entity entity);
 		void DrawAnimationClipAssetEditor();
 		void DrawAnimatorControllerAssetEditor();
 		void DrawTilePaletteAssetEditor();

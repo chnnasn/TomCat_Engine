@@ -5,7 +5,7 @@ namespace TomCat.Interop;
 public static class ManagedAbi
 {
     public const uint NativeApiVersion = 1;
-    public const uint ManagedApiVersion = 2;
+    public const uint ManagedApiVersion = 3;
     public const uint ScriptManifestVersion = 1;
 }
 
