@@ -1,5 +1,11 @@
 # TomCat managed scripting V1
 
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-18 · [All documentation](../docs/README.md)
+
+V1 names the scripting feature scope, not every wire-format version: Native ABI
+is v1, Managed ABI is v2, and ScriptManifest is v1. Desktop hosting uses .NET 10;
+the experimental Web target rejects C# payloads.
+
 This directory contains the independently buildable .NET 10 portion of the TomCat C# scripting
 system:
 
@@ -157,6 +163,14 @@ PrefabInstantiateDeferred
 ```
 
 ### Deferred callback transactions
+
+`NativeApiV2` is a size-detected envelope: its stable `NativeApiV1` prefix still
+uses version 1, followed by `QueryCapability`. It discovers optional Input,
+InputEvents, ApplicationPaths, Gameplay, Audio, AudioSpatial, RuntimeUI, Component,
+ComponentString, ComponentSchema, DeferredCommands and DeferredCallbackTransactions
+V1 tables. The exact capability names and validation are in
+[`NativeBridge.cs`](TomCat.Managed/NativeBridge.cs); do not infer support merely
+from the envelope's historical type name.
 
 The current native host queries and supplies both
 `TomCat.DeferredCommandsApiV1` and

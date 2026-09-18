@@ -1,5 +1,7 @@
 # TomCat Engine 项目系统
 
+中文文档 · 核对日期：2026-09-18 · [文档索引](docs/README.md)
+
 ## 文件与职责
 
 每个项目使用根目录下的 `Project.tcproj`。该文件是可纳入版本控制的 YAML 项目配置；Hub 的最近打开时间、已知项目列表和本机目录等用户状态不写入项目文件或 `imgui.ini`，而是保存在真实外部目录 `%LOCALAPPDATA%\TomCat\Hub\hub.json`。
@@ -18,9 +20,9 @@ SchemaVersion: 4
 Project:
   Name: MyGame
   Version: 1.0.0
-  Description: A sample game project
-  EditorVersion: 1.0.0
-  Template: 3D
+  Description: 示例游戏项目
+  EditorVersion: 0.2.0
+  Template: 2D
   AssetDirectory: Assets
 ```
 
@@ -32,7 +34,13 @@ Project:
 - Content Browser 的当前目录和展开节点属于 Editor 本机状态，保存在项目的 `UserSettings/editor.json`；加载时会限制在项目资源目录内，越界或不存在的路径会被忽略。
 - `Project` map 只允许上面列出的六个字段；入口场景和场景构建顺序不再保存在 `Project.tcproj`。
 
-当前 writer 只写 schema v4，并严格校验顶层和 `Project` map。遗留 schema v3 项目仍可加载；其 `StartSceneHandle`/`StartScene` 会迁移到 `ProjectSettings/BuildSettings.json`，随后将项目文件原子升级为 v4。
+当前 writer 只写 schema v4，并严格校验顶层和 `Project` map。遗留 schema v3 项目可先检查并预览；迁移将其 `StartSceneHandle`/`StartScene` 转入 `ProjectSettings/BuildSettings.json`，再将项目文件升级为 v4。`Project::Load` 拒绝需要迁移的项目；调用方必须先取得 `PreviewMigration`，明确确认后通过 `LoadWithMigration` 执行，过期或不完整的预览会被拒绝。
+
+## 项目迁移与中断恢复
+
+迁移预览列出待创建或替换文件，涵盖旧项目格式及需要补齐的项目设置。Editor 提供迁移确认和中断恢复界面；CLI 默认仅报告迁移需求，传入 `--migrate` 才执行升级。迁移通过备份和日志管理多文件变更，相关状态位于 `ProjectSettings/MigrationBackups/` 和 `ProjectSettings/.migration-journal.json`，均不应提交。
+
+若存在未完成的迁移，普通加载不会绕过它。CLI 返回退出码 `14`，应在 Editor 中检查并选择恢复、导出备份或放弃中断事务；重新构建不能替代恢复处理。资产移动/删除的 sidecar 事务与项目格式迁移是不同流程。
 
 ## ProjectSettings/BuildSettings.json schema v1
 
@@ -77,7 +85,7 @@ Loader 只接受有效 JSON、schema v1/v2 及精确的 lowerCamel 字段集，w
 
 ## ProjectSettings/PlayerSettings.json schema v1
 
-`PlayerSettings.json` 是产品名称、公司/版本、图标、窗口尺寸与模式、Resizable/VSync 以及 Save/Log/Crash 目录的版本化项目真源。新项目创建默认文件，加载时严格校验 schema 和字段；Cook 将其写入 TCPAK v6 的 BootManifest，Player 在创建窗口前应用。兼容读取的 v5 包不含 BootManifest，使用受控默认值。
+`PlayerSettings.json` 是产品名称、公司/版本、图标、窗口尺寸与模式、Resizable/VSync 以及 Save/Log/Crash 目录的版本化项目真源。新项目创建默认文件，已有文件在加载时严格校验 schema 和字段，缺失时先使用默认值构造迁移预览，须确认迁移后补齐；Cook 将其写入 TCPAK v7 的 BootManifest，Player 在创建窗口前应用。兼容读取的 v5 包不含 BootManifest，使用受控默认值。
 
 ## 项目结构
 
@@ -120,7 +128,7 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 
 ## 启动流程
 
-1. Builder 加载并严格校验 `Project.tcproj`、`ProjectSettings/BuildSettings.json` 与 `ProjectSettings/PlayerSettings.json`；若存在 `ProjectSettings/ProjectSettings.json`，也同时严格校验；只有后者缺失时才兼容读取旧 `.tcsettings`。
+1. Builder 检查项目配置与项目设置并处理需要确认的迁移；普通加载不自动批准升级。schema v4 要求有效的 `BuildSettings.json`；缺失 Player 设置会进入迁移计划。`ProjectSettings.json` 存在时严格校验，仅在缺失时兼容读取旧 `.tcsettings`。
 2. Builder 使用 Unicode 版 `CreateProcessW` 启动 Editor，仅传递项目文件路径；带空格、非 ASCII 字符和 Windows 长路径的参数会被正确引用。
 3. Editor 重新加载项目，从 `Project.Template` 决定 2D/3D 模式。
 4. Editor 从 `BuildSettings.json` 读取有序 Scenes In Build，并按 `entrySceneHandle` 从 Registry 解析入口场景。Handle 为 0、未启用、缺失或类型无效时保留空白编辑场景并报告错误，绝不使用 `pathHint` 回退或绑定同路径下的新资源。
@@ -137,7 +145,7 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 - Editor 的非布局项目状态写入同一项目下的 `UserSettings/editor.json`，不会混入 `imgui.ini` 或 `Project.tcproj`。
 - Hub 没有用户可调整布局；它仍封装只读的默认 `imgui.ini`，但最近打开时间、已知项目列表、本机项目目录和 Editor 目录只写入 `%LOCALAPPDATA%\TomCat\Hub\hub.json`。
 - `%LOCALAPPDATA%\TomCat\Editor`、`Hub`、`Player` 是 EVB 虚拟树之外的真实文件系统目录；三个产品的 `TomCat.log`、无项目 Editor 布局及上述 Editor 运行时缓存分别写入对应目录，不参与 EVB 打包。
-- 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成包含 `/UserSettings/`、`/Library/` 和 `/Cache/` 的 `.gitignore`；加载现有项目时会保留原内容并原子补齐缺失规则。
+- 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成忽略 `/UserSettings/`、`/Library/`、`/Cache/`、`/ProjectSettings/MigrationBackups/` 和 `/ProjectSettings/.migration-journal.json` 的 `.gitignore`；加载现有项目时会保留原内容并原子补齐缺失规则。
 - 项目根目录不再读取或生成旧式 `imgui.ini`；它只允许作为 Editor 可执行文件的封装默认布局存在。
 - Hub 只读取当前 `hub.json`；文件不存在时使用默认状态，不扫描或迁移旧 INI/YAML 配置。
 - Content Browser 的 `editor.json` 使用明确的 `@assets` / `@packages` 根前缀保存导航状态；旧版 Assets 相对路径仍可读取，任何越出这两个根目录的值都会回退到 `Assets/`。
@@ -184,11 +192,28 @@ Scene 提供带 Layer Mask 和 Trigger 选项的最近命中 `Raycast2D`、按 E
 
 Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮廓，Play/Pause 从实际 Box2D Fixture 画轮廓。覆盖层使用现有 `DrawRect`、`DrawCircle`、`DrawLine`，默认只进入 Scene framebuffer，不写 Game framebuffer，也不参与实体 ID 拾取。
 
-仓库中的 `Tests/PhysicsRegression` 覆盖固定步进、SceneManager、Prefab LocalID/重映射、动态脚本安全点、Cook 依赖闭包和 Player 包读回；其中 Runtime UI 回归还覆盖 Cooked Font/Fallback/Emoji 的真实字形选择、16:9/4:3/超宽与 100%/150%/200% DPI 共九组离屏 OpenGL RGBA Golden 截图、裁剪、射线遮挡、鼠标/键盘/手柄输入所有权，以及 logical window/framebuffer/DPI 坐标契约和 Scene/Prefab/Cook 往返。`Tests/SpriteAssetRegression` 覆盖 Atlas 子资源、Animator、Scene/Prefab 与 Cook/Player；`Tests/AudioRegression` 覆盖 WAV 解码、有界流式读取、空间计算、生命周期和设备恢复；`Tests/ImporterRegression` 覆盖内容监控、去抖、正反向依赖重导、跨 Handle 去重、增删改名、中断与停止语义；`Tests/ScriptCompilerRegression` 覆盖 C# 编译、last-good 与私有运行时端到端链路。首次运行前先用 `Scripts\Setup.bat` 准备 Premake；统一入口 `Scripts/Run-Regressions.ps1` 会构建 Managed Release、全部原生回归与独立 Player，并执行模板校验及 Player 冒烟测试。
+仓库中的 `Tests/PhysicsRegression` 覆盖固定步进、SceneManager、Prefab LocalID/重映射、动态脚本安全点、Cook 依赖闭包和 Player 包读回；其中 Runtime UI 回归还覆盖 Cooked Font/Fallback/Emoji 的真实字形选择、16:9/4:3/超宽与 100%/150%/200% DPI 共九组离屏 OpenGL RGBA Golden 截图、裁剪、射线遮挡、鼠标/键盘/手柄输入所有权，以及 logical window/framebuffer/DPI 坐标契约和 Scene/Prefab/Cook 往返。`Tests/SpriteAssetRegression` 覆盖 Atlas 子资源、Animator、Scene/Prefab 与 Cook/Player；`Tests/AudioRegression` 覆盖 WAV 解码、有界流式读取、空间计算、生命周期和设备恢复；`Tests/ImporterRegression` 覆盖内容监控、去抖、正反向依赖重导、跨 Handle 去重、增删改名、中断与停止语义；`Tests/ScriptCompilerRegression` 覆盖 C# 编译、last-good 与私有运行时端到端链路。首次运行前先用 `Scripts\Setup.bat` 准备 Premake；`Tests/P0SafetyRegression`、`Tests/EditorRecoveryRegression` 和 `Tests/InputRegression` 还覆盖安全边界、编辑器恢复及输入。统一入口 `Scripts/Run-Regressions.ps1` 会检查生成组件代理，构建 Managed Release、全部原生回归、独立 Player、Editor、Hub 和 CLI，并执行 CLI 帮助检查、模板校验及 Player 冒烟测试；Web 协议回归需单独运行。
+
+## 浏览器项目与编辑事务
+
+实验性 Web 目标复用场景、资产、Renderer2D、Box2D 和原生 ImGui 编辑面板。
+浏览器宿主负责导航、文件选择、保存和重新加载；MEMFS 内的修改不会自动持久化到用户磁盘。
+`project.open` 当前只接受预加载的 `/Samples/PhysicsPlayground/Project.tcproj`，
+`project.new` 使用同一挂载资源根；其他场景通过规范化归档导入。
+
+`tomcat.web.v1` RPC 的场景变更携带 `sceneHandle` 和 `baseRevision`，
+在临时场景中完成校验后通过 `SceneHistory` 提交；编辑、撤销和重做都会使修订号递增。
+64 位 ID 在 JavaScript 边界使用十进制字符串，不能先转为 `Number`。
+原生面板连续编辑与 RPC 共用历史；存在未提交的原生手势时，快照和变更返回 `EDIT_IN_PROGRESS`。
+宿主每帧读取 `tc_web_editor_take_actions()`，按保存、图片导入或导出请求执行持久化。
+图片及其生成的 `.tcmeta` 应成对保存；导入文件不属于场景撤销历史。
+
+Web 不托管桌面 hostfxr/C#，没有可听音频输出，不支持自定义 Cooked SPIR-V 或多重采样 Framebuffer。
+完整接口、构建与验收边界见 [Web 中文指南](Web/README.zh-CN.md)。
 
 ## 当前格式边界
 
-- `Project.tcproj` 当前写 schema v4，并自动迁移严格合法的 v3；`BuildSettings.json` 与 `PlayerSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v11 并读取 v9/v10/v11；`.tcpak` 当前写 v6，Player/loader 读取 v5/v6。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
+- `Project.tcproj` 当前写 schema v4，合法 v3 需预览并明确批准后迁移；`BuildSettings.json` 与 `PlayerSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v11 并读取 v9/v10/v11；`.tcpak` 当前写 v7，Player/loader 读取 v5/v6/v7。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
 - 项目资源加载只接受 `AssetHandle`；`BuildSettings.json` 中的 `pathHint` 仅是作者定位信息，不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。
@@ -196,7 +221,9 @@ Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮
 
 ## Cook 与 Player
 
-Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件，用于导入和预览。
-发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v6 `.tcpak`，并保存入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v6 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵、可选托管发布载荷，以及携带版本化 PlayerSettings 的 BootManifest。场景输入通过 v9-v11 reader 严格解析，并由当前 v11 writer 规范化后写入；缺失、类型错误或未知字段会使 Cook 失败。
+TCPAK v6 引入 BootManifest；当前 v7 在每个索引条目中增加 SHA-256 摘要，并在挂载和相关载荷读取时校验。兼容读取旧包不意味着旧包具有 v7 的完整性字段。版本常量与兼容判断分别见 [Version.h](TomCat/src/TomCat/Core/Version.h) 和 [RuntimeCompatibility.h](TomCat/src/TomCat/Runtime/RuntimeCompatibility.h)。
 
-独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 验证 v5/v6 包、兼容版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes；v6 还会在创建窗口前应用 BootManifest 中的 PlayerSettings，v5 使用兼容默认值。Player 按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。
+Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件，用于导入和预览。
+发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v7 `.tcpak`，并保存入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v7 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵、可选托管发布载荷，以及携带版本化 PlayerSettings 的 BootManifest。场景输入通过 v9-v11 reader 严格解析，并由当前 v11 writer 规范化后写入；缺失、类型错误或未知字段会使 Cook 失败。
+
+独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 验证 v5/v6/v7 包、兼容版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes；v6/v7 还会在创建窗口前应用 BootManifest 中的 PlayerSettings，v5 使用兼容默认值。Player 按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。

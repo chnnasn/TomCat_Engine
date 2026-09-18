@@ -1,5 +1,7 @@
 # Browser CJK font
 
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-18 · [Web guide](../README.md)
+
 `NotoSansSC-Regular.otf` is Noto Sans CJK's Simplified Chinese subset, distributed
 under the SIL Open Font License 1.1 in `LICENSE`.
 
@@ -9,3 +11,10 @@ under the SIL Open Font License 1.1 in `LICENSE`.
 
 The Web editor merges its CJK glyphs into the existing OpenSans fonts. Desktop
 font selection is unchanged. This avoids redistributing Windows system fonts.
+
+`Web/CMakeLists.txt` preloads this directory at `/WebFonts` in the editor module.
+Keep [LICENSE](LICENSE) with redistributed font files. Verify the checked-in bytes with:
+
+```powershell
+Get-FileHash Web/fonts/NotoSansSC-Regular.otf -Algorithm SHA256
+```
