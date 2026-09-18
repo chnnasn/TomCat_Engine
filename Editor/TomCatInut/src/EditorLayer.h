@@ -19,6 +19,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <string_view>
 
 struct ImVec2;
 
@@ -108,7 +109,6 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		void UI_SceneToolbarDockPreview();
-		void UI_SceneColliderVisibilityToggle();
 		void UI_ColliderEditHandles();
 		void RenderSceneColliderOverlays();
 		bool ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
@@ -122,6 +122,11 @@ namespace TomCat {
 		bool SaveEditorPanelLayout();
 		void SaveEditorLayoutIfNeeded();
 		uint32_t GetEditorPanelVisibilityMask() const;
+		void ApplyPendingPanelMaximizeTransition(uint32_t dockspaceId,
+			const ImVec2& dockspaceSize);
+		void DetectPanelTabDoubleClick();
+		void RestorePanelLayoutBeforePersistence();
+		bool ShouldRenderDockPanel(std::string_view windowName) const;
 		// Shared drag helper: submits the invisible handle and owns the only
 		// drag/dock state transitions used by both Scene toolbars.
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -210,7 +215,6 @@ namespace TomCat {
 		SceneState m_SceneState = SceneState::Edit;
 		bool m_StepRequested = false;
 		bool m_Is2DMode = false;
-		bool m_ShowColliders = true;
 
 		enum class ColliderEditHandle
 		{
@@ -291,6 +295,22 @@ namespace TomCat {
 		bool m_PlayerBuildSucceeded = false;
 		bool m_ShowProjectSettingsPanel = false;
 		bool m_FocusProjectSettingsPanel = false;
+		enum class PanelMaximizeAction
+		{
+			None = 0,
+			Maximize,
+			Restore
+		};
+		PanelMaximizeAction m_PendingPanelMaximizeAction =
+			PanelMaximizeAction::None;
+		std::string m_PendingMaximizedPanelWindow;
+		std::string m_MaximizedPanelWindow;
+		std::string m_DockLayoutBeforeMaximize;
+		std::array<int, 6> m_DockTabOrdersBeforeMaximize = {
+			-1, -1, -1, -1, -1, -1
+		};
+		bool m_PanelMaximized = false;
+		uint32_t m_EditorDockspaceId = 0;
 		std::string m_LastWindowTitle;
 		std::string m_PendingPanelFocus;
 		int m_EditorPanelCycleIndex = 5;

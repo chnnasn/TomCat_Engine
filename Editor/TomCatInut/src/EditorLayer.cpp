@@ -2,6 +2,7 @@
 #include "EditorPlayToolbar.h"
 #include "SceneToolbarDrawing.h"
 #include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
 
 #include <algorithm>
 #include <cctype>
@@ -48,7 +49,9 @@ namespace TomCat {
 		constexpr float kDockedPanelMinimumWidthRatio = 0.08f;
 		constexpr float kDockedPanelCompactMinimumWidth = 96.0f;
 		constexpr float kDockedPanelExpandedMinimumWidth = 220.0f;
-
+		constexpr std::array<const char*, 6> kMaximizableDockPanels = {
+			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console"
+		};
 
 		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
 		{
@@ -1030,6 +1033,14 @@ namespace TomCat {
 	void EditorLayer::SaveEditorLayoutIfNeeded()
 	{
 		ImGuiIO& io = ImGui::GetIO();
+		// Maximizing a dock tab is a temporary view transaction. Never let its
+		// one-node dock tree replace the user's persisted workspace.
+		if (m_PanelMaximized
+			|| m_PendingPanelMaximizeAction != PanelMaximizeAction::None)
+		{
+			io.WantSaveIniSettings = false;
+			return;
+		}
 		const uint32_t visibilityMask = GetEditorPanelVisibilityMask();
 		const bool panelVisibilityChanged = !m_PanelVisibilitySnapshotInitialized
 			|| visibilityMask != m_LastSavedPanelVisibilityMask;
@@ -1045,6 +1056,152 @@ namespace TomCat {
 		io.WantSaveIniSettings = false;
 		m_LastSavedPanelVisibilityMask = visibilityMask;
 		m_PanelVisibilitySnapshotInitialized = true;
+	}
+
+	bool EditorLayer::ShouldRenderDockPanel(std::string_view windowName) const
+	{
+		return !m_PanelMaximized || m_MaximizedPanelWindow == windowName;
+	}
+
+	void EditorLayer::RestorePanelLayoutBeforePersistence()
+	{
+		// A requested maximize has not changed the dock tree yet, so cancelling it
+		// is enough. An active maximize must restore the in-memory snapshot before
+		// any explicit save, project switch, or shutdown path runs.
+		m_PendingPanelMaximizeAction = PanelMaximizeAction::None;
+		m_PendingMaximizedPanelWindow.clear();
+		if (!m_PanelMaximized)
+			return;
+
+		if (!m_DockLayoutBeforeMaximize.empty())
+		{
+			ImGui::LoadIniSettingsFromMemory(m_DockLayoutBeforeMaximize.data(),
+				m_DockLayoutBeforeMaximize.size());
+			// ImGui's serialized DockOrder can lag one frame behind the live tab
+			// vector. Reapply the order captured from the actual visible tab bars so
+			// a maximize round-trip cannot swap neighboring tabs.
+			for (size_t index = 0; index < kMaximizableDockPanels.size(); ++index)
+			{
+				const int order = m_DockTabOrdersBeforeMaximize[index];
+				if (order < 0)
+					continue;
+				ImGuiWindow* window = ImGui::FindWindowByName(
+					kMaximizableDockPanels[index]);
+				if (!window)
+					continue;
+				window->DockOrder = static_cast<short>(order);
+				if (ImGuiWindowSettings* windowSettings =
+					ImGui::FindWindowSettings(window->ID))
+				{
+					windowSettings->DockOrder = static_cast<short>(order);
+				}
+			}
+		}
+		m_DockTabOrdersBeforeMaximize.fill(-1);
+		m_DockLayoutBeforeMaximize.clear();
+		m_MaximizedPanelWindow.clear();
+		m_PanelMaximized = false;
+		ImGui::GetIO().WantSaveIniSettings = false;
+	}
+
+	void EditorLayer::ApplyPendingPanelMaximizeTransition(uint32_t dockspaceId,
+		const ImVec2& dockspaceSize)
+	{
+		if (m_PendingPanelMaximizeAction == PanelMaximizeAction::None)
+			return;
+
+		if (m_PendingPanelMaximizeAction == PanelMaximizeAction::Restore)
+		{
+			RestorePanelLayoutBeforePersistence();
+			return;
+		}
+
+		const std::string target = m_PendingMaximizedPanelWindow;
+		m_PendingPanelMaximizeAction = PanelMaximizeAction::None;
+		m_PendingMaximizedPanelWindow.clear();
+		if (target.empty() || m_PanelMaximized)
+			return;
+
+		m_DockTabOrdersBeforeMaximize.fill(-1);
+		for (size_t index = 0; index < kMaximizableDockPanels.size(); ++index)
+		{
+			ImGuiWindow* window = ImGui::FindWindowByName(
+				kMaximizableDockPanels[index]);
+			if (!window || !window->DockNode || !window->DockNode->TabBar)
+				continue;
+			if (ImGuiTabItem* tab = ImGui::TabBarFindTabByID(
+				window->DockNode->TabBar, window->TabId))
+			{
+				m_DockTabOrdersBeforeMaximize[index] =
+					ImGui::TabBarGetTabOrder(window->DockNode->TabBar, tab);
+			}
+		}
+
+		// Commit the ordinary layout first. If the process exits unexpectedly while
+		// maximized, the next launch still opens the exact pre-maximize workspace.
+		const bool imguiSaved = SaveImGuiSettingsPreservingCustomSections(
+			GetEditorLayoutPath(m_CurrentProject));
+		const bool panelsSaved = SaveEditorPanelLayout();
+		if (imguiSaved && panelsSaved)
+		{
+			m_LastSavedPanelVisibilityMask = GetEditorPanelVisibilityMask();
+			m_PanelVisibilitySnapshotInitialized = true;
+		}
+
+		size_t settingsSize = 0;
+		const char* settings = ImGui::SaveIniSettingsToMemory(&settingsSize);
+		if (!settings || settingsSize == 0)
+			return;
+
+		m_DockLayoutBeforeMaximize.assign(settings, settingsSize);
+		m_MaximizedPanelWindow = target;
+		m_PanelMaximized = true;
+
+		const ImGuiDockNodeFlags maximizeFlags = ImGuiDockNodeFlags_DockSpace
+			| ImGuiDockNodeFlags_NoSplit | ImGuiDockNodeFlags_NoResize;
+		ImGui::DockBuilderRemoveNode(static_cast<ImGuiID>(dockspaceId));
+		ImGui::DockBuilderAddNode(static_cast<ImGuiID>(dockspaceId), maximizeFlags);
+		ImGui::DockBuilderSetNodeSize(static_cast<ImGuiID>(dockspaceId), dockspaceSize);
+		ImGui::DockBuilderDockWindow(m_MaximizedPanelWindow.c_str(),
+			static_cast<ImGuiID>(dockspaceId));
+		ImGui::DockBuilderFinish(static_cast<ImGuiID>(dockspaceId));
+		ImGui::GetIO().WantSaveIniSettings = false;
+	}
+
+	void EditorLayer::DetectPanelTabDoubleClick()
+	{
+		if (m_PendingPanelMaximizeAction != PanelMaximizeAction::None
+			|| !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+			return;
+
+		for (const char* panelName : kMaximizableDockPanels)
+		{
+			ImGuiWindow* window = ImGui::FindWindowByName(panelName);
+			if (!window || !window->Active || !window->DockNode
+				|| !window->DockNode->TabBar)
+				continue;
+
+			ImGuiDockNode* root = ImGui::DockNodeGetRootNode(window->DockNode);
+			if (!root || root->ID != static_cast<ImGuiID>(m_EditorDockspaceId))
+				continue;
+
+			ImGuiTabItem* tab = ImGui::TabBarFindTabByID(
+				window->DockNode->TabBar, window->TabId);
+			if (!tab || !window->DockTabItemRect.Contains(ImGui::GetIO().MousePos))
+				continue;
+
+			if (m_PanelMaximized)
+			{
+				if (m_MaximizedPanelWindow == panelName)
+					m_PendingPanelMaximizeAction = PanelMaximizeAction::Restore;
+			}
+			else
+			{
+				m_PendingMaximizedPanelWindow = panelName;
+				m_PendingPanelMaximizeAction = PanelMaximizeAction::Maximize;
+			}
+			return;
+		}
 	}
 
 	void EditorLayer::OnAttach()
@@ -1352,6 +1509,7 @@ namespace TomCat {
 	void EditorLayer::OnDetach()
 	{
 		TC_PROFILE_FUNCTION();
+		RestorePanelLayoutBeforePersistence();
 		if (IsSceneRunning())
 			OnSceneStop();
 		CommitSceneTransaction();
@@ -1893,7 +2051,8 @@ namespace TomCat {
 		ImGuiIO& io = ImGui::GetIO();
 		ImGuiStyle& style = ImGui::GetStyle();
 		const float previousMinimumWidth = style.WindowMinSize.x;
-		const float dockspaceWidth = ImGui::GetContentRegionAvail().x;
+		const ImVec2 dockspaceSize = ImGui::GetContentRegionAvail();
+		const float dockspaceWidth = dockspaceSize.x;
 		// Docked panels share ImGui's splitter minimum. Keep it compact in a
 		// small editor window and let it grow to a comfortable desktop width.
 		style.WindowMinSize.x = std::clamp(
@@ -1904,7 +2063,14 @@ namespace TomCat {
 		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
 		{
 			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+			m_EditorDockspaceId = dockspace_id;
+			ApplyPendingPanelMaximizeTransition(dockspace_id, dockspaceSize);
+			ImGuiDockNodeFlags activeDockspaceFlags = dockspace_flags;
+			if (m_PanelMaximized)
+				activeDockspaceFlags |= ImGuiDockNodeFlags_NoSplit
+					| ImGuiDockNodeFlags_NoResize;
+			ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f),
+				activeDockspaceFlags);
 		}
 
 		style.WindowMinSize.x = previousMinimumWidth;
@@ -1913,20 +2079,40 @@ namespace TomCat {
 
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.SetPrefabCreationAllowed(m_SceneState == SceneState::Edit);
-		m_SceneHierarchyPanel.OnImGuiRender(&m_ShowHierarchyPanel, &m_ShowInspectorPanel,
-			IsSceneDirty());
-		if (m_SceneHierarchyPanel.IsHierarchyFocused())
-			m_EditorPanelCycleIndex = 2;
-		else if (m_SceneHierarchyPanel.IsInspectorFocused())
-			m_EditorPanelCycleIndex = 3;
-		m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
-		if (m_ContentBrowserPanel.IsFocused())
-			m_EditorPanelCycleIndex = 4;
-		m_ConsolePanel.OnImGuiRender(&m_ShowConsolePanel);
-		if (m_ConsolePanel.IsFocused())
-			m_EditorPanelCycleIndex = 6;
+		if (!m_PanelMaximized
+			|| ShouldRenderDockPanel("Hierarchy")
+			|| ShouldRenderDockPanel("Inspector"))
+		{
+			bool hierarchyOpen = m_ShowHierarchyPanel
+				&& ShouldRenderDockPanel("Hierarchy");
+			bool inspectorOpen = m_ShowInspectorPanel
+				&& ShouldRenderDockPanel("Inspector");
+			m_SceneHierarchyPanel.OnImGuiRender(&hierarchyOpen, &inspectorOpen,
+				IsSceneDirty());
+			if (!m_PanelMaximized)
+			{
+				m_ShowHierarchyPanel = hierarchyOpen;
+				m_ShowInspectorPanel = inspectorOpen;
+			}
+			if (m_SceneHierarchyPanel.IsHierarchyFocused())
+				m_EditorPanelCycleIndex = 2;
+			else if (m_SceneHierarchyPanel.IsInspectorFocused())
+				m_EditorPanelCycleIndex = 3;
+		}
+		if (ShouldRenderDockPanel("Project"))
+		{
+			m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
+			if (m_ContentBrowserPanel.IsFocused())
+				m_EditorPanelCycleIndex = 4;
+		}
+		if (ShouldRenderDockPanel("Console"))
+		{
+			m_ConsolePanel.OnImGuiRender(&m_ShowConsolePanel);
+			if (m_ConsolePanel.IsFocused())
+				m_EditorPanelCycleIndex = 6;
+		}
 
-		if (m_ShowScenePanel)
+		if (m_ShowScenePanel && ShouldRenderDockPanel("Scene###Scene"))
 		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
@@ -2040,7 +2226,6 @@ namespace TomCat {
 				UI_SceneGizmoModeToolbarOverlay();
 				UI_SceneGizmoToolbar();
 				UI_SceneToolbarDockPreview();
-				UI_SceneColliderVisibilityToggle();
 				ImGui::EndMenuBar();
 			}
 			else
@@ -2126,7 +2311,7 @@ namespace TomCat {
 			m_HoveredEntity = {};
 		}
 
-		if (m_ShowGamePanel)
+		if (m_ShowGamePanel && ShouldRenderDockPanel("Game"))
 		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
@@ -2201,8 +2386,12 @@ namespace TomCat {
 		ImGui::PopStyleVar();
 		}
 
-		UI_BuildSettings();
-		UI_ProjectSettings();
+		DetectPanelTabDoubleClick();
+		if (!m_PanelMaximized)
+		{
+			UI_BuildSettings();
+			UI_ProjectSettings();
+		}
 		UI_UnsavedChangesModal();
 		UI_ProjectMigrationRecoveryModal();
 		UI_ProjectMigrationModal();
@@ -3050,17 +3239,20 @@ namespace TomCat {
 		if (!m_ActiveScene)
 			return;
 
+		const Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (!selectedEntity || !selectedEntity.HasComponent<ID>()
+			|| !m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
+			|| (!selectedEntity.HasComponent<BoxCollider2D>()
+				&& !selectedEntity.HasComponent<CircleCollider2D>()))
+		{
+			return;
+		}
+		const UUID selectedUUID = selectedEntity.GetUUID();
+
 		const SceneHierarchyPanel::ColliderEditMode editMode =
 			m_SceneState == SceneState::Edit
 			? m_SceneHierarchyPanel.GetColliderEditMode()
 			: SceneHierarchyPanel::ColliderEditMode::None;
-		if (!m_ShowColliders && editMode == SceneHierarchyPanel::ColliderEditMode::None)
-			return;
-
-		UUID selectedUUID(0);
-		const Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-		if (selectedEntity && selectedEntity.HasComponent<ID>())
-			selectedUUID = selectedEntity.GetUUID();
 
 		const std::vector<ColliderDebugShape> shapes =
 			m_ActiveScene->GetColliderDebugShapes(m_SceneState != SceneState::Edit);
@@ -3074,26 +3266,19 @@ namespace TomCat {
 
 		for (const ColliderDebugShape& shape : shapes)
 		{
-			const Entity shapeEntity = m_ActiveScene->FindEntityByUUID(shape.EntityID);
-			if (!shapeEntity
-				|| !m_ActiveScene->IsVisibleInEditorHierarchy(shapeEntity))
+			if (shape.EntityID != selectedUUID)
 				continue;
-			const bool selected = selectedUUID != UUID(0) && shape.EntityID == selectedUUID;
-			const bool edited = selected &&
+			const bool edited =
 				((editMode == SceneHierarchyPanel::ColliderEditMode::Box &&
 					shape.Type == ColliderDebugShapeType::Box) ||
 				 (editMode == SceneHierarchyPanel::ColliderEditMode::Circle &&
 					shape.Type == ColliderDebugShapeType::Circle));
-			if (!m_ShowColliders && !edited)
-				continue;
 
 			const glm::vec4 color = !shape.Enabled
-				? glm::vec4(0.55f, 0.58f, 0.55f, selected ? 0.9f : 0.62f)
+				? glm::vec4(0.55f, 0.58f, 0.55f, 0.9f)
 				: edited
 				? glm::vec4(0.45f, 1.0f, 0.35f, 1.0f)
-				: selected
-					? glm::vec4(0.32f, 0.95f, 0.48f, 1.0f)
-					: glm::vec4(0.25f, 0.82f, 0.42f, 0.82f);
+				: glm::vec4(0.32f, 0.95f, 0.48f, 1.0f);
 
 			if (shape.Type == ColliderDebugShapeType::Box)
 				Renderer2D::DrawRect(shape.Transform, color, -1);
@@ -3151,42 +3336,6 @@ namespace TomCat {
 
 		worldPosition = { intersection.x, intersection.y };
 		return true;
-	}
-
-	void EditorLayer::UI_SceneColliderVisibilityToggle()
-	{
-		constexpr float buttonHeight = 24.0f;
-		const ImVec2 labelSize = ImGui::CalcTextSize("Colliders");
-		const float buttonWidth = labelSize.x + 30.0f;
-		const float availableWidth = m_ViewportBounds[1].x - m_ViewportBounds[0].x;
-		if (availableWidth < buttonWidth + 16.0f)
-			return;
-
-		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
-		const ImVec2 minimum(m_ViewportBounds[1].x - buttonWidth - 8.0f,
-			m_GizmoModeDockY + (m_GizmoModeDockHeight - buttonHeight) * 0.5f);
-		const ImVec2 maximum(minimum.x + buttonWidth, minimum.y + buttonHeight);
-		ImGui::SetCursorScreenPos(minimum);
-		ImGui::InvisibleButton("##scene_show_colliders", ImVec2(buttonWidth, buttonHeight));
-		const bool hovered = ImGui::IsItemHovered();
-		if (ImGui::IsItemClicked())
-			m_ShowColliders = !m_ShowColliders;
-		if (hovered)
-			ImGui::SetTooltip("Show collider outlines in the Scene view");
-
-		ImDrawList* draw = ImGui::GetWindowDrawList();
-		const ImU32 fill = m_ShowColliders
-			? IM_COL32(44, 93, 135, 255)
-			: hovered ? IM_COL32(98, 98, 98, 245) : IM_COL32(71, 71, 71, 245);
-		draw->AddRectFilled(minimum, maximum, fill, 2.0f);
-		draw->AddRect(minimum, maximum, IM_COL32(25, 25, 25, 255), 2.0f, 0, 1.0f);
-		const ImVec2 indicator(minimum.x + 11.0f, (minimum.y + maximum.y) * 0.5f);
-		draw->AddCircle(indicator, 5.0f,
-			m_ShowColliders ? IM_COL32(120, 238, 116, 255) : IM_COL32(145, 145, 145, 255),
-			20, 1.7f);
-		draw->AddText(ImVec2(minimum.x + 21.0f,
-			minimum.y + (buttonHeight - labelSize.y) * 0.5f), IM_COL32(235, 235, 235, 255), "Colliders");
-		ImGui::SetCursorScreenPos(savedCursor);
 	}
 
 	void EditorLayer::ResetColliderEditState()
@@ -4996,6 +5145,7 @@ namespace TomCat {
 
 		// Persist the current layout before ProjectManager changes the active
 		// project. No-project mode writes to the global LocalAppData layout.
+		RestorePanelLayoutBeforePersistence();
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
 		SaveEditorPanelLayout();
 		m_ContentBrowserPanel.SaveLayoutSetting();
@@ -5051,6 +5201,7 @@ namespace TomCat {
 
 	void EditorLayer::SaveProject()
 	{
+		RestorePanelLayoutBeforePersistence();
 		if (m_CurrentProject)
 			m_ContentBrowserPanel.Serialize();
 		SaveImGuiSettingsPreservingCustomSections(GetEditorLayoutPath(m_CurrentProject));
