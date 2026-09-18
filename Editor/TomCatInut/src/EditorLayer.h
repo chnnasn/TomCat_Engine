@@ -177,6 +177,10 @@ namespace TomCat {
 		// Game Viewport
 		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
 		glm::vec2 m_GameViewportBounds[2]{};
+		int m_GameViewResolutionIndex = 2;
+		float m_GameViewScale = 1.0f;
+		float m_GameViewEffectiveScale = 1.0f;
+		bool m_GameViewStatsVisible = false;
 
 		int m_GizmoType = -1;
 		GizmoPivotMode m_GizmoPivotMode = GizmoPivotMode::Pivot;
@@ -313,6 +317,8 @@ namespace TomCat {
 		uint32_t m_EditorDockspaceId = 0;
 		std::string m_LastWindowTitle;
 		std::string m_PendingPanelFocus;
+		std::string m_PendingRestoredTabWindow;
+		int m_PendingRestoredTabOrder = -1;
 		int m_EditorPanelCycleIndex = 5;
 		int m_ProjectSettingsPage = 0;
 		Ref<Project> m_ProjectSettingsDraftProject;

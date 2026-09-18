@@ -3784,8 +3784,8 @@ namespace TomCat {
 			&& std::isfinite(screenToFramebufferScale.y)
 			&& screenToFramebufferScale.x > 0.0f
 			&& screenToFramebufferScale.y > 0.0f
-			? glm::clamp(screenToFramebufferScale, glm::vec2(0.25f),
-				glm::vec2(8.0f)) : glm::vec2(1.0f);
+			? glm::clamp(screenToFramebufferScale, glm::vec2(0.1f),
+				glm::vec2(32.0f)) : glm::vec2(1.0f);
 	}
 
 	std::vector<ColliderDebugShape> Scene::GetColliderDebugShapes(bool useRuntimeFixtures) const

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -52,6 +53,88 @@ namespace TomCat {
 		constexpr std::array<const char*, 6> kMaximizableDockPanels = {
 			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console"
 		};
+
+		struct GameViewResolutionPreset
+		{
+			const char* Label;
+			uint32_t Width;
+			uint32_t Height;
+		};
+
+		constexpr std::array<GameViewResolutionPreset, 5> kGameViewResolutions = { {
+			{ "Free Aspect", 0, 0 },
+			{ "HD (1280x720)", 1280, 720 },
+			{ "Full HD (1920x1080)", 1920, 1080 },
+			{ "QHD (2560x1440)", 2560, 1440 },
+			{ "4K UHD (3840x2160)", 3840, 2160 }
+		} };
+
+		bool DrawGameViewScaleSlider(float& value, float controlWidth)
+		{
+			constexpr float minimum = 0.8f;
+			constexpr float maximum = 8.8f;
+			const float controlHeight = ImGui::GetFrameHeight();
+			const ImVec2 origin = ImGui::GetCursorScreenPos();
+			const ImVec2 labelSize = ImGui::CalcTextSize("Scale");
+			const float trackStartOffset = 8.0f + labelSize.x + 14.0f;
+			const float trackEndOffset = std::min(trackStartOffset + 141.0f,
+				controlWidth - 55.0f);
+
+			ImGui::InvisibleButton("##GameViewScale", ImVec2(controlWidth, controlHeight));
+			bool changed = false;
+			if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left))
+			{
+				const float mouse = ImGui::GetIO().MousePos.x;
+				const float normalized = std::clamp((mouse - origin.x - trackStartOffset)
+					/ (trackEndOffset - trackStartOffset), 0.0f, 1.0f);
+				const float next = minimum + normalized * (maximum - minimum);
+				if (std::abs(next - value) > 0.0001f)
+				{
+					value = next;
+					changed = true;
+				}
+			}
+
+			value = std::clamp(value, minimum, maximum);
+			const float normalized = (value - minimum) / (maximum - minimum);
+			const float centerY = origin.y + controlHeight * 0.5f;
+			const float trackStart = origin.x + trackStartOffset;
+			const float trackEnd = origin.x + trackEndOffset;
+			const float grabX = trackStart + (trackEnd - trackStart) * normalized;
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			const ImGuiCol backgroundColor = ImGui::IsItemActive()
+				? ImGuiCol_ButtonActive
+				: (ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Tab);
+			drawList->AddRectFilled(origin,
+				ImVec2(origin.x + controlWidth, origin.y + controlHeight),
+				ImGui::GetColorU32(backgroundColor));
+			drawList->AddLine(ImVec2(origin.x, origin.y + controlHeight),
+				ImVec2(origin.x + controlWidth, origin.y + controlHeight),
+				ImGui::GetColorU32(ImGuiCol_BorderShadow));
+			drawList->AddText(ImVec2(origin.x + 8.0f,
+				centerY - labelSize.y * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), "Scale");
+			drawList->AddRectFilled(ImVec2(trackStart, centerY - 2.0f),
+				ImVec2(trackEnd, centerY + 2.0f),
+				IM_COL32(92, 92, 92, 255), 2.0f);
+			const ImU32 grabColor = ImGui::IsItemActive()
+				? IM_COL32(215, 215, 215, 255)
+				: (ImGui::IsItemHovered()
+					? IM_COL32(180, 180, 180, 255)
+					: IM_COL32(155, 155, 155, 255));
+			drawList->AddCircleFilled(ImVec2(grabX, centerY), 7.0f, grabColor);
+			drawList->AddCircle(ImVec2(grabX, centerY), 7.0f,
+				IM_COL32(70, 70, 70, 255), 0, 1.0f);
+
+			char valueText[16]{};
+			if (std::abs(value - std::round(value)) < 0.01f)
+				std::snprintf(valueText, sizeof(valueText), "%.0fx", value);
+			else
+				std::snprintf(valueText, sizeof(valueText), "%.1fx", value);
+			const ImVec2 valueSize = ImGui::CalcTextSize(valueText);
+			drawList->AddText(ImVec2(origin.x + trackEndOffset + 13.0f,
+				centerY - valueSize.y * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), valueText);
+			return changed;
+		}
 
 		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
 		{
@@ -1036,7 +1119,8 @@ namespace TomCat {
 		// Maximizing a dock tab is a temporary view transaction. Never let its
 		// one-node dock tree replace the user's persisted workspace.
 		if (m_PanelMaximized
-			|| m_PendingPanelMaximizeAction != PanelMaximizeAction::None)
+			|| m_PendingPanelMaximizeAction != PanelMaximizeAction::None
+			|| m_PendingRestoredTabOrder >= 0)
 		{
 			io.WantSaveIniSettings = false;
 			return;
@@ -1112,7 +1196,27 @@ namespace TomCat {
 
 		if (m_PendingPanelMaximizeAction == PanelMaximizeAction::Restore)
 		{
+			// Loading the saved dock layout restores the tab group, but ImGui does
+			// not preserve which tab was selected while that group was replaced by
+			// the maximized node. Focus the panel that is leaving maximized mode so
+			// its restored dock tab remains active (for example, Game stays on Game).
+			const std::string restoredPanel = m_MaximizedPanelWindow;
+			int restoredTabOrder = -1;
+			for (size_t index = 0; index < kMaximizableDockPanels.size(); ++index)
+			{
+				if (restoredPanel == kMaximizableDockPanels[index])
+				{
+					restoredTabOrder = m_DockTabOrdersBeforeMaximize[index];
+					break;
+				}
+			}
 			RestorePanelLayoutBeforePersistence();
+			if (!restoredPanel.empty())
+			{
+				m_PendingPanelFocus = restoredPanel;
+				m_PendingRestoredTabWindow = restoredPanel;
+				m_PendingRestoredTabOrder = restoredTabOrder;
+			}
 			return;
 		}
 
@@ -1607,14 +1711,16 @@ namespace TomCat {
 		const glm::vec2 screenToFramebufferScale{
 			applicationWindow.GetScreenToFramebufferScaleX(),
 			applicationWindow.GetScreenToFramebufferScaleY() };
+		const float safeGameViewScale = std::max(m_GameViewEffectiveScale, 0.01f);
+		const glm::vec2 gameScreenToFramebufferScale{ 1.0f / safeGameViewScale };
 		const glm::vec2 runtimeUIOrigin = m_ShowGamePanel
 			? m_GameViewportBounds[0] : glm::vec2(-1000000.0f);
 		if (IsSceneRunning())
 			m_RuntimeSceneManager.SetRuntimeUIViewportMetrics(runtimeUIOrigin,
-				runtimeUIDPIScale, screenToFramebufferScale);
+				runtimeUIDPIScale, gameScreenToFramebufferScale);
 		else if (m_ActiveScene)
 			m_ActiveScene->SetRuntimeUIViewportMetrics(runtimeUIOrigin,
-				runtimeUIDPIScale, screenToFramebufferScale);
+				runtimeUIDPIScale, gameScreenToFramebufferScale);
 		UpdateScriptCompilation(ts);
 
 		// Resize Scene Framebuffer
@@ -1630,11 +1736,20 @@ namespace TomCat {
 				m_EditorCamera.SetViewportSize(static_cast<float>(sceneWidth), static_cast<float>(sceneHeight));
 		}
 
-		// Resize Game Framebuffer
-		const uint32_t gameWidth = ToFramebufferExtent(m_GameViewportSize.x,
-			screenToFramebufferScale.x);
-		const uint32_t gameHeight = ToFramebufferExtent(m_GameViewportSize.y,
-			screenToFramebufferScale.y);
+		// Named Game resolutions stay pixel exact. Scale changes only how the
+		// framebuffer is presented inside the editor.
+		const GameViewResolutionPreset& gameResolution =
+			kGameViewResolutions[static_cast<size_t>(std::clamp(
+				m_GameViewResolutionIndex, 0,
+				static_cast<int>(kGameViewResolutions.size()) - 1))];
+		const uint32_t gameWidth = gameResolution.Width > 0
+			? gameResolution.Width
+			: ToFramebufferExtent(m_GameViewportSize.x,
+				screenToFramebufferScale.x);
+		const uint32_t gameHeight = gameResolution.Height > 0
+			? gameResolution.Height
+			: ToFramebufferExtent(m_GameViewportSize.y,
+				screenToFramebufferScale.y);
 		if (FramebufferSpecification gameSpec = m_GameFramebuffer->GetSpecification();
 			gameWidth > 0 && gameHeight > 0 &&
 			(gameSpec.Width != gameWidth || gameSpec.Height != gameHeight))
@@ -1695,7 +1810,9 @@ namespace TomCat {
 
 		m_Framebuffer->Unbind();
 
-		// Render Game View (Runtime Camera) - Always render runtime camera
+		// Render Game View (Runtime Camera) - Always render runtime camera. Reset
+		// here so Game Stats contains no Scene-view draw calls.
+		Renderer2D::ResetStats();
 		m_GameFramebuffer->Bind();
 
 		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
@@ -2320,67 +2437,169 @@ namespace TomCat {
 		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
 			m_EditorPanelCycleIndex = 1;
 
+		ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.075f, 0.075f, 0.075f, 1.0f));
 		if (ImGui::BeginMenuBar())
 		{
-			// Stats is a toolbar control in the Game view, not a text-only menu
-			// entry.  Give it the same full frame height as the neighboring Unity
-			// controls while keeping enough width for the current font/DPI scale.
 			const ImGuiStyle& gameStyle = ImGui::GetStyle();
+			const float toolbarHeight = ImGui::GetFrameHeight();
+			const float toolbarWidth = ImGui::GetContentRegionAvail().x;
 			const ImVec2 statsLabelSize = ImGui::CalcTextSize("Stats");
-			const float statsButtonHeight = ImGui::GetFrameHeight();
 			const float statsButtonWidth = std::max(69.0f,
 				statsLabelSize.x + gameStyle.FramePadding.x * 2.0f);
-			// MenuBarBg is the dark foundation now; toolbar controls keep the
-			// lighter neutral surface used by the existing editor chrome.
-			const ImVec4 statsSurface = gameStyle.Colors[ImGuiCol_Tab];
+			const float gameButtonWidth = std::max(116.0f,
+				ImGui::CalcTextSize("Game").x + toolbarHeight
+				+ gameStyle.FramePadding.x * 2.0f);
+			const int resolutionIndex = std::clamp(m_GameViewResolutionIndex, 0,
+				static_cast<int>(kGameViewResolutions.size()) - 1);
+			const char* resolutionLabel =
+				kGameViewResolutions[static_cast<size_t>(resolutionIndex)].Label;
+			float resolutionButtonWidth = std::max(260.0f,
+				ImGui::CalcTextSize(resolutionLabel).x + toolbarHeight
+				+ gameStyle.FramePadding.x * 2.0f);
+			constexpr float minimumScaleWidth = 180.0f;
+			constexpr float toolbarSpacing = 3.0f;
+			if (gameButtonWidth + resolutionButtonWidth + minimumScaleWidth
+				+ statsButtonWidth + toolbarSpacing > toolbarWidth)
+			{
+				resolutionButtonWidth = std::max(150.0f, toolbarWidth
+					- gameButtonWidth - minimumScaleWidth - statsButtonWidth
+					- toolbarSpacing);
+			}
+			const float scaleButtonWidth = std::max(minimumScaleWidth, toolbarWidth
+				- gameButtonWidth - resolutionButtonWidth - statsButtonWidth
+				- toolbarSpacing);
+			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1.0f, 0.0f));
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+			ImGui::PushStyleColor(ImGuiCol_FrameBg, gameStyle.Colors[ImGuiCol_Tab]);
+			ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, gameStyle.Colors[ImGuiCol_ButtonHovered]);
+			ImGui::PushStyleColor(ImGuiCol_FrameBgActive, gameStyle.Colors[ImGuiCol_ButtonActive]);
+
+			ImGui::SetNextItemWidth(gameButtonWidth);
+			if (ImGui::BeginCombo("##GameViewMode", "Game"))
+			{
+				ImGui::Selectable("Game", true, ImGuiSelectableFlags_Disabled);
+				ImGui::Separator();
+				if (ImGui::MenuItem("Reset Scale", "1x"))
+					m_GameViewScale = 1.0f;
+				ImGui::EndCombo();
+			}
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Game view display options");
+
+			ImGui::SetNextItemWidth(resolutionButtonWidth);
+			if (ImGui::BeginCombo("##GameViewResolution",
+				resolutionLabel))
+			{
+				for (int index = 0;
+					index < static_cast<int>(kGameViewResolutions.size()); ++index)
+				{
+					const bool selected = index == m_GameViewResolutionIndex;
+					if (ImGui::Selectable(kGameViewResolutions[static_cast<size_t>(index)].Label,
+						selected))
+					{
+						m_GameViewResolutionIndex = index;
+					}
+					if (selected)
+						ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+
+			DrawGameViewScaleSlider(m_GameViewScale, scaleButtonWidth);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Game preview scale: 0.8x to 8.8x");
+
+			const ImVec4 statsSurface = m_GameViewStatsVisible
+				? gameStyle.Colors[ImGuiCol_ButtonActive]
+				: gameStyle.Colors[ImGuiCol_Tab];
 			const ImVec4 statsHovered = gameStyle.Colors[ImGuiCol_ButtonHovered];
 			const ImVec4 statsActive = gameStyle.Colors[ImGuiCol_ButtonActive];
 			ImGui::PushStyleColor(ImGuiCol_Button, statsSurface);
 			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, statsHovered);
 			ImGui::PushStyleColor(ImGuiCol_ButtonActive, statsActive);
-			const bool statsPressed = ImGui::Button("Stats##GameStatsButton",
-				ImVec2(statsButtonWidth, statsButtonHeight));
+			if (ImGui::Button("Stats##GameStatsButton",
+				ImVec2(statsButtonWidth, toolbarHeight)))
+				m_GameViewStatsVisible = !m_GameViewStatsVisible;
 			ImGui::PopStyleColor(3);
-			const ImVec2 statsPopupPos(ImGui::GetItemRectMin().x,
-				ImGui::GetItemRectMax().y);
-
-			if (statsPressed)
-				ImGui::OpenPopup("##GameStatsPopup");
-
-			ImGui::SetNextWindowPos(statsPopupPos, ImGuiCond_Appearing);
-			if (ImGui::BeginPopup("##GameStatsPopup"))
-			{
-				std::string name = "None";
-				if (m_HoveredEntity)
-					name = m_HoveredEntity.GetComponent<Tag>()._Tag;
-				ImGui::Text("Hovered Entity : %s", name.c_str());
-
-				auto stats = Renderer2D::GetStats();
-				ImGui::Text("Stats:");
-				ImGui::Text("Draw Calls: %d", stats.DrawCalls);
-				ImGui::Text("Quads: %d", stats.QuadCount);
-				ImGui::Text("Circles: %d", stats.CircleCount);
-				ImGui::Text("Lines: %d", stats.LineCount);
-				ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
-				ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
-
-				ImGui::EndPopup();
-			}
+			ImGui::PopStyleColor(3);
+			ImGui::PopStyleVar(2);
 			ImGui::EndMenuBar();
 		}
+		ImGui::PopStyleColor();
 
 		ImVec2 gameViewportPanelSize = ImGui::GetContentRegionAvail();
 		m_GameViewportSize = { gameViewportPanelSize.x, gameViewportPanelSize.y };
 
+		const FramebufferSpecification& gameSpec = m_GameFramebuffer->GetSpecification();
+		const ImVec2 renderSize(static_cast<float>(gameSpec.Width),
+			static_cast<float>(gameSpec.Height));
+		// A docked Game panel uses its complete fitted image as the 1x baseline.
+		// Maximizing the Game panel switches 1x to physical pixel scale so changing
+		// resolution visibly changes preview size, with scrollbars for overflow.
+		const float screenToFramebufferScale = std::max(0.01f,
+			Application::Get().GetWindow().GetScreenToFramebufferScaleX());
+		const float requestedScale = std::clamp(m_GameViewScale, 0.8f, 8.8f);
+		const bool gamePanelMaximized = m_PanelMaximized
+			&& m_MaximizedPanelWindow == "Game";
+		const float fitScale = renderSize.x > 0.0f && renderSize.y > 0.0f
+			? std::min(gameViewportPanelSize.x / renderSize.x,
+				gameViewportPanelSize.y / renderSize.y)
+			: 1.0f;
+		const float imageScale = gamePanelMaximized
+			? requestedScale / screenToFramebufferScale
+			: std::max(fitScale, 0.0001f) * requestedScale;
+		m_GameViewEffectiveScale = imageScale;
+		const ImVec2 imageSize(renderSize.x * imageScale, renderSize.y * imageScale);
+		const ImVec2 contentOrigin = ImGui::GetCursorScreenPos();
+		const ImVec2 imageOrigin(contentOrigin.x
+			+ std::max(0.0f, (gameViewportPanelSize.x - imageSize.x) * 0.5f),
+			contentOrigin.y + std::max(0.0f,
+				(gameViewportPanelSize.y - imageSize.y) * 0.5f));
+		ImGui::SetCursorScreenPos(imageOrigin);
+
 		// 始终显示GameFramebuffer（Runtime摄像机渲染内容）
 		uint64_t gameTextureID = m_GameFramebuffer->GetColorAttachmentRendererID();
-		ImGui::Image(reinterpret_cast<void*>(gameTextureID), ImVec2{ m_GameViewportSize.x, m_GameViewportSize.y },
+		ImGui::Image(reinterpret_cast<void*>(gameTextureID), imageSize,
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 		const ImVec2 gameImageMinimum = ImGui::GetItemRectMin();
 		const ImVec2 gameImageMaximum = ImGui::GetItemRectMax();
 		m_GameViewportBounds[0] = { gameImageMinimum.x, gameImageMinimum.y };
 		m_GameViewportBounds[1] = { gameImageMaximum.x, gameImageMaximum.y };
 		UI_GameNoCameraOverlay();
+
+		if (m_GameViewStatsVisible)
+		{
+			const Renderer2D::Statistics stats = Renderer2D::GetStats();
+			constexpr float statsWidth = 220.0f;
+			constexpr float statsHeight = 164.0f;
+			const ImVec2 visibleMinimum(
+				std::max(gameImageMinimum.x, contentOrigin.x),
+				std::max(gameImageMinimum.y, contentOrigin.y));
+			const ImVec2 visibleMaximum(
+				std::min(gameImageMaximum.x, contentOrigin.x + gameViewportPanelSize.x),
+				std::min(gameImageMaximum.y, contentOrigin.y + gameViewportPanelSize.y));
+			ImGui::SetCursorScreenPos(ImVec2(
+				std::max(visibleMinimum.x, visibleMaximum.x - statsWidth - 8.0f),
+				visibleMinimum.y + 8.0f));
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.08f, 0.90f));
+			ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+			ImGui::BeginChild("##GameStatsOverlay", ImVec2(statsWidth, statsHeight),
+				true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+			ImGui::TextUnformatted("Rendering Statistics");
+			ImGui::Separator();
+			const float frameRate = ImGui::GetIO().Framerate;
+			ImGui::Text("FPS: %.1f (%.2f ms)", frameRate,
+				frameRate > 0.0f ? 1000.0f / frameRate : 0.0f);
+			ImGui::Text("Draw Calls: %u", stats.DrawCalls);
+			ImGui::Text("Quads: %u", stats.QuadCount);
+			ImGui::Text("Circles: %u", stats.CircleCount);
+			ImGui::Text("Lines: %u", stats.LineCount);
+			ImGui::Text("Vertices: %u", stats.GetTotalVertexCount());
+			ImGui::Text("Indices: %u", stats.GetTotalIndexCount());
+			ImGui::EndChild();
+			ImGui::PopStyleVar();
+			ImGui::PopStyleColor();
+		}
 
 		ImGui::End();
 		ImGui::PopStyleVar();
@@ -2400,6 +2619,30 @@ namespace TomCat {
 		{
 			ImGui::SetWindowFocus(m_PendingPanelFocus.c_str());
 			m_PendingPanelFocus.clear();
+		}
+		if (m_PendingRestoredTabOrder >= 0
+			&& !m_PendingRestoredTabWindow.empty())
+		{
+			ImGuiWindow* restoredWindow = ImGui::FindWindowByName(
+				m_PendingRestoredTabWindow.c_str());
+			if (restoredWindow && restoredWindow->DockNode
+				&& restoredWindow->DockNode->TabBar)
+			{
+				ImGuiTabBar* tabBar = restoredWindow->DockNode->TabBar;
+				if (ImGuiTabItem* tab = ImGui::TabBarFindTabByID(
+					tabBar, restoredWindow->TabId))
+				{
+					const int currentOrder = ImGui::TabBarGetTabOrder(tabBar, tab);
+					const int orderOffset = m_PendingRestoredTabOrder - currentOrder;
+					if (orderOffset != 0 && tabBar->ReorderRequestTabId == 0)
+						ImGui::TabBarQueueReorder(tabBar, tab, orderOffset);
+					else if (orderOffset == 0)
+					{
+						m_PendingRestoredTabWindow.clear();
+						m_PendingRestoredTabOrder = -1;
+					}
+				}
+			}
 		}
 		ImGui::End();
 		SaveEditorLayoutIfNeeded();
@@ -4507,10 +4750,18 @@ namespace TomCat {
 	void EditorLayer::ResizeSceneForGameView(const Ref<Scene>& scene)
 	{
 		Window& applicationWindow = Application::Get().GetWindow();
-		const uint32_t width = ToFramebufferExtent(m_GameViewportSize.x,
-			applicationWindow.GetScreenToFramebufferScaleX());
-		const uint32_t height = ToFramebufferExtent(m_GameViewportSize.y,
-			applicationWindow.GetScreenToFramebufferScaleY());
+		const GameViewResolutionPreset& resolution =
+			kGameViewResolutions[static_cast<size_t>(std::clamp(
+				m_GameViewResolutionIndex, 0,
+				static_cast<int>(kGameViewResolutions.size()) - 1))];
+		const uint32_t width = resolution.Width > 0
+			? resolution.Width
+			: ToFramebufferExtent(m_GameViewportSize.x,
+				applicationWindow.GetScreenToFramebufferScaleX());
+		const uint32_t height = resolution.Height > 0
+			? resolution.Height
+			: ToFramebufferExtent(m_GameViewportSize.y,
+				applicationWindow.GetScreenToFramebufferScaleY());
 		if (scene && width > 0 && height > 0)
 			scene->OnViewportResize(width, height);
 	}
