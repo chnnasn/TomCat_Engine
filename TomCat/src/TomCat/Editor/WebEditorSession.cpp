@@ -3,6 +3,7 @@
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Utils/PathUtils.h"
 #include <yaml-cpp/yaml.h>
@@ -187,7 +188,7 @@ void Apply(const Ref<Scene>& scene, const YAML::Node& operation, uint64_t& selec
         const auto& assets = AssetManager::Get().GetRegistry();
         const auto* sub = assets.GetSubAsset(UUID(handle));
         const auto* asset = sub ? assets.GetSubAssetOwner(UUID(handle)) : assets.GetMetadata(UUID(handle));
-        Require(asset && !asset->IsMissing && it->AssetReference->Accepts(sub ? sub->Type : asset->Type, sub != nullptr), "Asset reference has the wrong type or is missing", "INVALID_ASSET");
+        Require(FindBuiltInSpriteAsset(UUID(handle)) ? it->AssetReference->Accepts(AssetType::Texture2D,false) : (asset && !asset->IsMissing && it->AssetReference->Accepts(sub ? sub->Type : asset->Type, sub != nullptr)), "Asset reference has the wrong type or is missing", "INVALID_ASSET");
       }
     }
     if (it->EntityReference) { auto target = std::get<uint64_t>(value); Require(!target || bool(scene->FindEntityByUUID(UUID(target))), "Referenced entity not found"); }
@@ -369,6 +370,8 @@ std::string WebEditorSession::Invoke(const std::string& request) {
           assets.push_back(Object({{"handle", Id(handle)}, {"type", Quote(AssetTypeToString(metadata.Type))}, {"pathHint", Quote(PathToUTF8(metadata.FilePath))}}));
           for (const auto& sub : metadata.SubAssets) assets.push_back(Object({{"handle", Id(sub.Handle)}, {"type", Quote(AssetTypeToString(sub.Type))}, {"pathHint", Quote(PathToUTF8(metadata.FilePath) + "#" + sub.Name)}}));
         }
+        for (const auto& asset : GetBuiltInSpriteAssets())
+          assets.push_back(Object({{"handle",Id(asset.Handle)},{"type",Quote("Texture2D")},{"pathHint",Quote(PathToUTF8(GetBuiltInSpriteAssetPath(asset.Handle)))}}));
         std::sort(assets.begin(), assets.end()); result = Object({{"assets", Array(assets)}});
       } else {
         Require(ReadId(payload["sceneHandle"]) == m_SceneHandle, "Scene handle does not match", "SCENE_NOT_FOUND");

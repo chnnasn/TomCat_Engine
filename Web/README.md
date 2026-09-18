@@ -172,3 +172,17 @@ sample. A malformed TCPAK was rejected with a diagnostic.
 
 This validates the checked-in PhysicsPlayground sample only; it is not evidence
 that all desktop games, shaders, scripts or input devices are compatible.
+
+## Scene toolbar and idle Game parity (2026-09-18)
+
+Desktop and Web compile the same Scene toolbar drawing bodies: the draggable
+Q/W/E/R palette and Pivot/Center, Local/Global menu strip, including docking,
+reordering and drop previews. Web stays in 2D and has no 2D/3D switch. Toolbar
+placement is saved as a browser UI preference when localStorage is available.
+Pivot/Center follows the upstream single-selection behavior (the selected
+entity origin); this does not add multi-selection or custom sprite pivot editing.
+
+Game renders the active scene's primary camera even before Play and after Stop.
+In edit mode this only renders: it does not start physics or scripts. A missing
+camera displays `No cameras rendering` instead of requiring Play.
+The Web asset RPC also exposes the upstream's bundled Circle/Square textures.
