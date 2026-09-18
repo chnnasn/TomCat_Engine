@@ -67,6 +67,7 @@ target_link_options(tomcat_player PRIVATE ${TC_WEB_LINK_OPTIONS}
 add_executable(tomcat_editor
   "${TC_SRC}/platform/Web/WebEditor.cpp"
   "${TC_SRC}/platform/Web/WebEditorUI.cpp"
+  "${TC_SRC}/platform/Web/WebProjectSettingsPanel.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiLayer.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiCallback.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneHierarchyPanel.cpp"

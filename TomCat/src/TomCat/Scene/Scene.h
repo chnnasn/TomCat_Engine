@@ -147,7 +147,7 @@ namespace TomCat {
 		void OnRuntimeStop();
 		// Advances scripts and physics by exactly one fixed 1/60 second step,
 		// independent of the most recent display-frame delta.
-		void OnRuntimeStep();
+		void OnRuntimeStep(bool render = true);
 
 		void OnUpdateEditor(Timestep ts,EditorCamera& camera);
 		// Accumulates display-frame time and advances scripts and physics in fixed

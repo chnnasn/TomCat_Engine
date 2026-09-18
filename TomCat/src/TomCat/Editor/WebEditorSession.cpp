@@ -201,8 +201,47 @@ void Apply(const Ref<Scene>& scene, const YAML::Node& operation, uint64_t& selec
 }
 }
 
+void WebEditorSession::StopPreview() {
+  m_Preview.Stop(); m_Preview.DeactivateRuntime(); m_PreviewMode = PreviewMode::Edit;
+}
+void WebEditorSession::ControlPreview(const std::string& command) {
+  Require(bool(m_Scene), "Open a project first", "NO_PROJECT");
+  if (command == "stop") { StopPreview(); return; }
+  if (command == "play") {
+    Require(m_PreviewMode == PreviewMode::Edit, "Preview already running", "PREVIEW_STATE");
+    EndUIEdit(m_Selected);
+    for (const auto entity : Entities(m_Scene))
+      Require(!entity.HasComponent<CSharpScripts>() || entity.GetComponent<CSharpScripts>().Scripts.empty(),
+        "C# browser execution is not available. Stop preview and use a native-only scene.", "SCRIPT_UNSUPPORTED");
+    Require(m_Scene->HasAuthoredPrimaryCamera(), "Add a Primary Camera before Play", "CAMERA_REQUIRED");
+    BuildSettings settings; settings.EntrySceneHandle = UUID(m_SceneHandle);
+    settings.Scenes.push_back({UUID(m_SceneHandle),true,{}});
+    try {
+      Require(m_Preview.ConfigureBuildSettings(settings), m_Preview.GetLastError());
+      Require(m_Preview.ActivateRuntime(), m_Preview.GetLastError());
+      auto copy = Scene::Copy(m_Scene);
+      Require(copy && m_Preview.StartPreparedScene(copy,UUID(m_SceneHandle)), "Preview startup failed: " + m_Preview.GetLastError());
+      m_PreviewMode = PreviewMode::Play; m_PreviewFrames = 0;
+    } catch (...) { StopPreview(); throw; }
+    return;
+  }
+  Require(m_PreviewMode != PreviewMode::Edit, "Start Play first", "PREVIEW_STATE");
+  if (command == "pause") m_PreviewMode = PreviewMode::Pause;
+  else if (command == "resume") m_PreviewMode = PreviewMode::Play;
+  else if (command == "step") {
+    Require(m_PreviewMode == PreviewMode::Pause, "Pause before stepping", "PREVIEW_STATE");
+    m_Preview.GetActiveScene()->OnRuntimeStep(false); ++m_PreviewFrames;
+  } else throw RpcError("INVALID_REQUEST", "Unknown preview command");
+}
+void WebEditorSession::AdvancePreview(float delta) {
+  if (m_PreviewMode != PreviewMode::Play) return;
+  m_Preview.GetActiveScene()->OnUpdateRuntime(std::clamp(delta,0.0f,0.1f),false); ++m_PreviewFrames;
+}
+bool WebEditorSession::SettingsDirty() const {
+  return m_Project && (m_Project->GetSettings()!=m_SavedSettings || m_Project->GetPlayerSettings()!=m_SavedPlayerSettings);
+}
 std::string WebEditorSession::Status() const {
-  return Object({{"sceneHandle", Id(m_SceneHandle)}, {"revision", std::to_string(m_Revision)}, {"selectedEntityId", m_Selected ? Id(m_Selected) : "null"}, {"dirty", Bool(m_History.IsDirty() || m_History.HasActiveTransaction())}, {"canUndo", Bool(m_History.CanUndo())}, {"canRedo", Bool(m_History.CanRedo())}});
+  return Object({{"mode",Quote(m_PreviewMode == PreviewMode::Edit ? "edit" : m_PreviewMode == PreviewMode::Play ? "play" : "pause")}, {"previewFrames",std::to_string(m_PreviewFrames)}, {"sceneHandle", Id(m_SceneHandle)}, {"revision", std::to_string(m_Revision)}, {"selectedEntityId", m_Selected ? Id(m_Selected) : "null"}, {"dirty", Bool(m_History.IsDirty() || m_History.HasActiveTransaction() || SettingsDirty())}, {"canUndo", Bool(m_History.CanUndo())}, {"canRedo", Bool(m_History.CanRedo())}});
 }
 void WebEditorSession::SelectFromUI(uint64_t entity) {
   if (!m_Scene || (entity && !m_Scene->FindEntityByUUID(UUID(entity)))) return;
@@ -263,7 +302,7 @@ std::string WebEditorSession::Snapshot() const {
     auto parent = m_Scene->GetParent(entity);
     entities.push_back(Object({{"id", Id(entity.GetUUID())}, {"name", Quote(entity.GetName())}, {"parentId", parent ? Id(parent.GetUUID()) : "null"}, {"components", Array(components)}}));
   }
-  return Object({{"sceneHandle", Id(m_SceneHandle)}, {"name", Quote(m_Scene->GetSceneName())}, {"revision", std::to_string(m_Revision)}, {"selectedEntityId", m_Selected ? Id(m_Selected) : "null"}, {"archive", Quote(Encode(m_Scene))}, {"dirty", Bool(m_History.IsDirty())}, {"canUndo", Bool(m_History.CanUndo())}, {"canRedo", Bool(m_History.CanRedo())}, {"entities", Array(entities)}, {"schemas", Array(schemas)}});
+  return Object({{"sceneHandle", Id(m_SceneHandle)}, {"name", Quote(m_Scene->GetSceneName())}, {"revision", std::to_string(m_Revision)}, {"selectedEntityId", m_Selected ? Id(m_Selected) : "null"}, {"archive", Quote(Encode(m_Scene))}, {"dirty", Bool(m_History.IsDirty() || SettingsDirty())}, {"canUndo", Bool(m_History.CanUndo())}, {"canRedo", Bool(m_History.CanRedo())}, {"entities", Array(entities)}, {"schemas", Array(schemas)}});
 }
 
 std::string WebEditorSession::Invoke(const std::string& request) {
@@ -277,8 +316,14 @@ std::string WebEditorSession::Invoke(const std::string& request) {
     auto type = String(root["type"]); auto payload = root["payload"]; Require(payload.IsMap(), "Expected payload object");
     std::string result;
     if (type == "system.capabilities") {
-      result = Object({{"engineBuildId", Quote("tomcat-web-editor-v1")}, {"protocolVersion", "1"}, {"capabilities", Array({Quote("scene.transact"), Quote("history.undo"), Quote("history.redo"), Quote("component.schema"), Quote("asset.list"), Quote("scene.archive")})}});
+      result = Object({{"engineBuildId", Quote("tomcat-web-editor-v1")}, {"protocolVersion", "1"}, {"capabilities", Array({Quote("scene.transact"), Quote("history.undo"), Quote("history.redo"), Quote("component.schema"), Quote("asset.list"), Quote("scene.archive"), Quote("preview.control"), Quote("preview.snapshot")})}});
+    } else if (type == "preview.control") {
+      ControlPreview(String(payload["command"])); result = Status();
+    } else if (type == "preview.snapshot") {
+      Require(bool(GetPreviewScene()), "Start Play first", "PREVIEW_STATE");
+      result = Object({{"archive",Quote(Encode(GetPreviewScene()))},{"frames",std::to_string(m_PreviewFrames)}});
     } else if (type == "project.open" || type == "project.new") {
+      Require(m_PreviewMode == PreviewMode::Edit, "Stop Play before opening a project", "PREVIEW_ACTIVE");
       const std::string path = type == "project.open" ? String(payload["projectPath"]) : "/Samples/PhysicsPlayground/Project.tcproj";
       Require(path == "/Samples/PhysicsPlayground/Project.tcproj", "This host mounts only the bundled project; import a scene archive for other scenes", "PROJECT_UNAVAILABLE");
       auto project = Project::Load(path); Require(bool(project), "Project could not be loaded");
@@ -295,11 +340,12 @@ std::string WebEditorSession::Invoke(const std::string& request) {
         scene->CreateEntity("Main Camera").AddComponent<C_Camera>();
         if (payload["template"] && String(payload["template"]) == "2D") scene->CreateEntity("Player").AddComponent<SpriteRenderer>();
       }
-      m_Project = project; m_Scene = scene; m_SceneHandle = handle; m_Selected = 0;
+      m_Project = project; m_SavedSettings=project->GetSettings(); m_SavedPlayerSettings=project->GetPlayerSettings(); m_Scene = scene; m_SceneHandle = handle; m_Selected = 0;
       m_History.Reset(Encode(scene), 0, true); ++m_Revision; result = Snapshot();
     } else {
       Require(bool(m_Scene), "Open a project first", "NO_PROJECT");
       if (type == "asset.import") {
+        Require(m_PreviewMode == PreviewMode::Edit, "Stop Play before importing assets", "PREVIEW_ACTIVE");
         auto name = String(payload["name"]);
         Require(!name.empty() && name.size() <= 160 && std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_' || c == '.'; }), "Invalid asset file name");
         auto relative = std::filesystem::path("WebImports") / name;
@@ -337,6 +383,7 @@ std::string WebEditorSession::Invoke(const std::string& request) {
         }
         else {
           Require(!m_History.HasActiveTransaction(), "Finish the active ImGui edit first", "EDIT_IN_PROGRESS");
+          Require(m_PreviewMode == PreviewMode::Edit || type == "scene.markSaved", "Stop Play before editing the scene", "PREVIEW_ACTIVE");
           const double base = Number(payload["baseRevision"]);
           Require(base >= 0 && std::trunc(base) == base && base <= 9007199254740991.0, "Invalid revision");
           Require(uint64_t(base) == m_Revision, "Scene changed; reload the latest snapshot", "REVISION_CONFLICT");
@@ -360,7 +407,7 @@ std::string WebEditorSession::Invoke(const std::string& request) {
             auto restore = [&](const SceneHistory::Snapshot& snapshot) { auto scene = Decode(*snapshot.Archive); m_Scene = scene; m_Selected = snapshot.SelectedEntity; return true; };
             bool changed = type == "history.undo" ? m_History.Undo(restore) : m_History.Redo(restore);
             Require(changed, "No history available", "HISTORY_EMPTY"); ++m_Revision;
-          } else if (type == "scene.markSaved") m_History.MarkSaved();
+          } else if (type == "scene.markSaved") { m_History.MarkSaved(); m_SavedSettings=m_Project->GetSettings(); m_SavedPlayerSettings=m_Project->GetPlayerSettings(); }
           else throw RpcError("UNKNOWN_COMMAND", "Unknown editor command");
           result = Snapshot();
         }

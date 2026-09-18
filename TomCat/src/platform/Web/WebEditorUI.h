@@ -6,6 +6,7 @@
 #include "panels/SceneHierarchyPanel.h"
 #include "panels/ContentBrowserPanel.h"
 #include "panels/ConsolePanel.h"
+#include "WebProjectSettingsPanel.h"
 
 namespace TomCat {
 class WebEditorSession;
@@ -14,6 +15,7 @@ class WebEditorUI final : public Layer {
 public:
   explicit WebEditorUI(WebEditorSession& session);
   void OnAttach() override;
+  void OnDetach() override;
   void OnUpdate(Timestep delta) override;
   void OnImGuiRender() override;
   unsigned TakeActions() { unsigned result = m_Actions; m_Actions = 0; return result; }
@@ -21,6 +23,9 @@ private:
   void SyncContext();
   void History(bool redo);
   void DrawViewport();
+  void DrawGame();
+  void DrawToolbar();
+  void Preview(const char* command);
   WebEditorSession& m_Session;
   SceneHierarchyPanel m_Hierarchy;
   ContentBrowserPanel m_Content;
@@ -28,9 +33,15 @@ private:
   Ref<Scene> m_Context;
   Ref<Project> m_Project;
   Ref<Framebuffer> m_Framebuffer;
+  Ref<Framebuffer> m_GameFramebuffer;
+  WebProjectSettingsPanel m_Settings;
   Ref<EditorIconSet> m_Icons;
   EditorCamera m_Camera{45.0f,16.0f/9.0f,0.1f,1000.0f};
   glm::vec2 m_ViewportSize{960,540};
+  glm::vec2 m_GameSize{960,540}, m_GameOrigin{0,0};
+  bool m_ShowScene = true, m_ShowGame = true, m_GameVisible = false;
+  bool m_LocalSpace = true;
+  std::string m_PreviewError;
   bool m_ViewportHovered = false, m_GizmoActive = false;
   bool m_ShowHierarchy = true, m_ShowInspector = true, m_ShowProject = true, m_ShowConsole = true;
   int m_GizmoOperation = 0;

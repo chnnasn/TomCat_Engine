@@ -3646,7 +3646,7 @@ namespace TomCat {
 			RenderRuntimeScene();
 	}
 
-	void Scene::OnRuntimeStep()
+	void Scene::OnRuntimeStep(bool render)
 	{
 		if (!m_RuntimeRunning || !m_PhysicsWorld)
 		{
@@ -3669,7 +3669,7 @@ namespace TomCat {
 			m_RuntimeUIViewportOrigin,
 			m_RuntimeUIScreenToFramebufferScale);
 		AudioSceneRuntime::Update(*this, FixedRuntimeTimestep);
-		RenderRuntimeScene();
+		if (render) RenderRuntimeScene();
 	}
 
 	glm::mat4 Scene::GetRuntimeRenderTransform(UUID entityID) const

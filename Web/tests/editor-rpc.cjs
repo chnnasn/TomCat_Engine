@@ -91,7 +91,34 @@ for (const extension of ['js', 'wasm', 'data']) fs.copyFileSync(path.join(source
     assert.equal(snapshot.dirty, false);
     rpc('scene.loadArchive', {sceneHandle:snapshot.sceneHandle,baseRevision:snapshot.revision,archive:'invalid'}, 'INVALID_SCENE');
     assert.equal(rpc('scene.snapshot', {sceneHandle:snapshot.sceneHandle}).archive, snapshot.archive);
-    console.log('PASS: real WASM editor transactions, rollback, UUIDs, components, asset references, hierarchy, undo/redo and conflicts');
+    const authoring = rpc('scene.snapshot', {sceneHandle:snapshot.sceneHandle});
+    rpc('preview.control',{command:'step'},'PREVIEW_STATE');
+    for (let cycle = 0; cycle < 50; cycle++) {
+      assert.equal(rpc('preview.control',{command:'play'}).mode,'play');
+      rpc('preview.control',{command:'step'},'PREVIEW_STATE');
+      rpc('scene.transact',tx([move]),'PREVIEW_ACTIVE');
+      rpc('history.undo',{sceneHandle:snapshot.sceneHandle,baseRevision:snapshot.revision},'PREVIEW_ACTIVE');
+      rpc('project.open',{projectPath:'/Samples/PhysicsPlayground/Project.tcproj'},'PREVIEW_ACTIVE');
+      assert.equal(rpc('preview.control',{command:'pause'}).mode,'pause');
+      const before = rpc('preview.snapshot',{});
+      for (let step=0;step<10;step++) rpc('preview.control',{command:'step'});
+      const after = rpc('preview.snapshot',{});
+      assert.equal(after.frames,10);
+      assert.notEqual(after.archive,before.archive,'physics must advance in the preview copy');
+      assert.equal(rpc('preview.control',{command:'resume'}).mode,'play');
+      assert.equal(rpc('preview.control',{command:'stop'}).mode,'edit');
+      rpc('preview.snapshot',{},'PREVIEW_STATE');
+      assert.deepEqual(rpc('scene.snapshot',{sceneHandle:snapshot.sceneHandle}),authoring,'stop must preserve authoring and history');
+    }
+    snapshot = rpc('project.new',{name:'Camera validation',template:'2D'});
+    const camera = snapshot.entities.find(entity => entity.name === 'Main Camera');
+    snapshot = rpc('scene.transact',tx([{op:'entity.delete',entityId:camera.id}]));
+    rpc('preview.control',{command:'play'},'CAMERA_REQUIRED');
+    assert.equal(JSON.parse(module.ccall('tc_web_editor_state','string',[],[])).mode,'edit');
+    snapshot = rpc('history.undo',{sceneHandle:snapshot.sceneHandle,baseRevision:snapshot.revision});
+    assert.equal(rpc('preview.control',{command:'play'}).mode,'play');
+    rpc('preview.control',{command:'stop'});
+    console.log('PASS: real WASM editor transactions, assets, undo/redo, isolated physics preview and 50 restarts');
   } finally {
     if (module) { try { module.ccall('tc_web_editor_shutdown', null, [], []); } finally { module.PThread.terminateAllThreads(); } }
     if (path.dirname(directory) === os.tmpdir() && path.basename(directory).startsWith('tomcat-editor-rpc-')) fs.rmSync(directory, {recursive:true,force:true});

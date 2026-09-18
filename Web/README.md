@@ -82,7 +82,16 @@ This reuses the core desktop panels, not every tool in the desktop EditorLayer.
 Project asset browsing, thumbnails and references work. File mutations in that
 panel are disabled until the host can persist every asset type; import images
 through the host instead. Prefab creation, specialized collider editing,
-external C# editors, project/layout persistence and editor Play are not exposed.
+external C# editors, layout persistence and desktop Build Settings remain unavailable.
+The browser now shares the desktop Play toolbar and Project Settings view source.
+Scene uses the upstream tool icons; Game renders the primary camera. Play starts
+a SceneManager-owned copy, Pause/Step advance only that copy, and Stop preserves
+the authoring scene and its history. C# scenes and missing primary cameras are
+rejected explicitly. Mutating RPCs are blocked during Play.
+Project settings changes apply in MEMFS and mark the session dirty. Hosts must
+persist ProjectSettings/ProjectSettings.json and PlayerSettings.json with the
+scene, restore them before project.open/new, then acknowledge scene.markSaved.
+Desktop display/directory controls remain visible but disabled in Web.
 The C++ file dialog fallback returns cancellation in the browser.
 
 `tc_web_editor_rpc(requestJson)` synchronously returns JSON, valid until the next
@@ -90,7 +99,8 @@ call. Requests and replies use `protocol: "tomcat.web.v1"` and `requestId`.
 Requests use `type` for the command and `payload` for its arguments.
 Commands: `system.capabilities`, `project.open`, `project.new`, `scene.snapshot`,
 `scene.select`, `scene.transact`, `scene.loadArchive`, `scene.markSaved`,
-`history.undo`, `history.redo`, `asset.list`, `asset.import`.
+`history.undo`, `history.redo`, `asset.list`, `asset.import`,
+`preview.control` ({command: play/pause/resume/step/stop}), `preview.snapshot`.
 Open currently accepts `/Samples/PhysicsPlayground/Project.tcproj`; new creates a
 scene using that mounted asset root. Import other scenes as canonical archives.
 
@@ -119,7 +129,9 @@ node Web/tests/editor-rpc.cjs build/web
 ```
 
 The test covers transactions, rollback, uint64 boundaries, selection, components,
-hierarchy, images, invalid references, history divergence and revision conflicts.
+hierarchy, images, invalid references, history divergence, revision conflicts,
+50 preview restarts with physics stepping and authoring-state preservation,
+and recovery after a missing-primary-camera startup failure.
 Browser rendering and persistence still need host-level acceptance checks.
 
 Browser acceptance on 2026-09-17 verified Chinese glyphs, Hierarchy selection,
