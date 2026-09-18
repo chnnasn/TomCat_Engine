@@ -1,7 +1,7 @@
 #pragma once
 
 #include "TomCat/Renderer/Texture.h"
-#include <glad/glad.h>
+#include "OpenGLApi.h"
 
 #include <cstddef>
 #include <span>

@@ -116,6 +116,14 @@
 #define GLFW_HAS_GAMEPAD_API            (GLFW_VERSION_COMBINED >= 3300) // 3.3+ glfwGetGamepadState() new api
 #define GLFW_HAS_GETKEYNAME             (GLFW_VERSION_COMBINED >= 3200) // 3.2+ glfwGetKeyName()
 
+// The legacy -sUSE_GLFW=3 implementation has no Vulkan or GLFW 3.3 gamepad API.
+#ifdef __EMSCRIPTEN__
+#undef GLFW_HAS_VULKAN
+#define GLFW_HAS_VULKAN 0
+#undef GLFW_HAS_GAMEPAD_API
+#define GLFW_HAS_GAMEPAD_API 0
+#endif
+
 // GLFW data
 enum GlfwClientApi
 {
@@ -586,7 +594,7 @@ static bool ImGui_ImplGlfw_Init(GLFWwindow* window, bool install_callbacks, Glfw
     bd->MouseCursors[ImGuiMouseCursor_NotAllowed] = glfwCreateStandardCursor(GLFW_ARROW_CURSOR);
 #endif
     glfwSetErrorCallback(prev_error_callback);
-#if (GLFW_VERSION_COMBINED >= 3300) // Eat errors (see #5785)
+#if (GLFW_VERSION_COMBINED >= 3300) && !defined(__EMSCRIPTEN__) // Eat errors (see #5785)
     (void)glfwGetError(NULL);
 #endif
 

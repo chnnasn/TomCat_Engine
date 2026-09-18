@@ -876,6 +876,11 @@ namespace TomCat {
 			MOVEFILE_WRITE_THROUGH) == FALSE)
 			publishError = std::error_code(static_cast<int>(GetLastError()),
 				std::system_category());
+#elif defined(__EMSCRIPTEN__)
+		// MEMFS has no hard links. Authoring RPC runs synchronously on its owning
+		// browser thread; copy_options::none preserves create-only publication.
+		std::filesystem::copy_file(temporary, metadataPath,
+			std::filesystem::copy_options::none, publishError);
 #else
 		std::filesystem::create_hard_link(temporary, metadataPath, publishError);
 #endif

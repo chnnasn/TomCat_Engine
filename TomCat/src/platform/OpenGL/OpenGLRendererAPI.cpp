@@ -2,7 +2,7 @@
 
 #include"OpenGLRendererAPI.h"
 
-#include<glad/glad.h>
+#include "OpenGLApi.h"
 
 #include <cmath>
 

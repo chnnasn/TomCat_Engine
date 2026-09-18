@@ -25,6 +25,8 @@ namespace TomCat {
 		ContentBrowserPanel();
 		~ContentBrowserPanel();
 		void SetProject(Ref<Project> project);
+		// Embedded hosts may own persistence/import and expose browsing only.
+		void SetAssetMutationsEnabled(bool enabled) { m_AssetMutationsEnabled = enabled; }
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 		void SetActiveScenePath(const std::filesystem::path& path);
 		// Saves non-layout navigation state to project-local UserSettings/editor.json.
@@ -68,6 +70,7 @@ namespace TomCat {
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
 		bool m_ProjectStateWritable = true;
+		bool m_AssetMutationsEnabled = true;
 		std::filesystem::path m_ExternalScriptEditor;
 		bool m_Focused = false;
 		bool m_Docked = true;

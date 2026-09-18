@@ -447,7 +447,9 @@ namespace TomCat {
 			m_LayoutOptionsY = popupAnchor.y;
 			m_OpenLayoutOptions = true;
 		});
+#ifndef __EMSCRIPTEN__
 		SetProject(ProjectManager::Get().GetActiveProject());
+#endif
 	}
 
 	ContentBrowserPanel::~ContentBrowserPanel()
@@ -480,6 +482,7 @@ namespace TomCat {
 
 	bool ContentBrowserPanel::IsWritablePath(const std::filesystem::path& path) const
 	{
+		if (!m_AssetMutationsEnabled) return false;
 		const std::filesystem::path root = GetRootForPath(path);
 		return !root.empty() && LexicalPath(root) == LexicalPath(GetAssetRoot());
 	}

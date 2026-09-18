@@ -58,6 +58,9 @@ namespace TomCat {
 		void Close(int exitCode = 0);
 		int GetExitCode() const { return m_ExitCode; }
 
+		// Host-driven frame entry for browser requestAnimationFrame and embedded players.
+		bool Tick(float deltaSeconds);
+
 		ImGuiLayer* GetImGuiLayer() { return m_ImGuiLayer; };
 
 		static Application& Get() { return *s_Instance; }
