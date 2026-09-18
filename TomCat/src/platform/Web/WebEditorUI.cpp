@@ -8,6 +8,7 @@
 #include "TomCat/Events/MouseEvent.h"
 #include <GLES3/gl3.h>
 #include "EditorPlayToolbar.h"
+#include "SceneToolbarDrawing.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
@@ -109,7 +110,11 @@ void WebEditorUI::History(bool redo) {
 }
 void WebEditorUI::DrawViewport() {
   if (!m_ShowScene) { m_ViewportHovered=false; return; }
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(4,11));
+  // Reserve the shared toolbar's 28px controls and padding in the menu row only.
+  // Inflating FramePadding also enlarges the Scene title/tab and popup items.
+  const float toolbarHeight=28.0f+2.0f*kSceneToolbarPadding;
+  GImGui->NextWindowData.MenuBarOffsetMinVal.y=std::max(0.0f,toolbarHeight-ImGui::GetFrameHeight());
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
   const bool visible=ImGui::Begin("Scene", &m_ShowScene,ImGuiWindowFlags_MenuBar);
   if (!visible && !m_GizmoModeToolbarDragging && !m_GizmoTransformToolbarDragging) {
     m_ViewportHovered=false; ImGui::End(); ImGui::PopStyleVar(); return;
@@ -122,10 +127,12 @@ void WebEditorUI::DrawViewport() {
   ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_Framebuffer->GetColorAttachmentRendererID())),size,{0,1},{1,0});
   m_ViewportHovered=visible && ImGui::IsItemHovered();
   m_ViewportBounds[0]={origin.x,origin.y}; m_ViewportBounds[1]={origin.x+size.x,origin.y+size.y};
-  m_GizmoModeDockHeight=ImGui::GetFrameHeight(); m_GizmoModeDockY=origin.y-m_GizmoModeDockHeight;
+  // Use ImGui's actual menu rectangle, not an image origin shifted by padding.
+  const ImRect dockRow=ImGui::GetCurrentWindow()->MenuBarRect();
+  m_GizmoModeDockHeight=dockRow.GetHeight(); m_GizmoModeDockY=dockRow.Min.y;
   const bool wasDragging=m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging;
   const bool menu=visible && ImGui::BeginMenuBar();
-  if(menu) ImGui::GetWindowDrawList()->AddRectFilled({origin.x,m_GizmoModeDockY},{origin.x+size.x,origin.y},ImGui::GetColorU32(ImGuiCol_Tab));
+  if(menu) ImGui::GetWindowDrawList()->AddRectFilled(dockRow.Min,dockRow.Max,ImGui::GetColorU32(ImGuiCol_Tab));
   ImGui::BeginDisabled(!editing);
   UI_SceneGizmoModeToolbarOverlay(); UI_SceneGizmoToolbar(); UI_SceneToolbarDockPreview();
   const bool toolbarBlocked=ImGui::IsAnyItemHovered() || ImGui::IsAnyItemActive() ||
