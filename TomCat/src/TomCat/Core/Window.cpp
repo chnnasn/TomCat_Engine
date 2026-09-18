@@ -4,6 +4,9 @@
 #ifdef TC_PLATFORM_WINDOWS
 #include "platform/Window/WindowsWindow.h"
 #endif
+#ifdef TC_PLATFORM_WEB
+#include "platform/Web/WebWindow.h"
+#endif
 
 namespace TomCat
 {
@@ -12,6 +15,8 @@ namespace TomCat
 	{
 #ifdef TC_PLATFORM_WINDOWS
 		return CreateScope<WindowsWindow>(props);
+#elif defined(TC_PLATFORM_WEB)
+		return CreateScope<WebWindow>(props);
 #else
 		TC_Core_Assert(false, "Unknown platform!");
 		return nullptr;

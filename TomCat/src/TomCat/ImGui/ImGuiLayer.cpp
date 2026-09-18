@@ -8,7 +8,9 @@
 #include "TomCat/Core/Application.h"
 
 #include <GLFW/glfw3.h>
+#ifndef __EMSCRIPTEN__
 #include <Glad/glad.h>
+#endif
 #include <filesystem>
 
 #include"ImGuizmo.h"
@@ -41,8 +43,13 @@ namespace TomCat {
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoMerge;
 
-						io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Bold.ttf", 32.0f);
-		io.FontDefault = io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Regular.ttf", 32.0f);
+#ifdef __EMSCRIPTEN__
+		constexpr float fontSize = 16.0f;
+#else
+		constexpr float fontSize = 32.0f;
+#endif
+		io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Bold.ttf", fontSize);
+		io.FontDefault = io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Regular.ttf", fontSize);
 
 		// Make the UI support Chinese and common symbols.
 		// The character set is built dynamically with ImFontGlyphRangesBuilder: it collects
@@ -84,8 +91,13 @@ namespace TomCat {
 				0
 			};
 
+#ifdef __EMSCRIPTEN__
+			const char* cnFontPath = "WebFonts/NotoSansSC-Regular.otf";
+			const char* symFontPath = cnFontPath;
+#else
 			const char* cnFontPath = "C:/Windows/Fonts/simhei.ttf";
 			const char* symFontPath = "C:/Windows/Fonts/seguisym.ttf";
+#endif
 
 			ImFontConfig mergeCfg;
 			mergeCfg.MergeMode = true;
@@ -93,16 +105,16 @@ namespace TomCat {
 			if (std::filesystem::exists(cnFontPath))
 			{
 				mergeCfg.DstFont = io.Fonts->Fonts[0]; // OpenSans-Bold + Chinese
-				io.Fonts->AddFontFromFileTTF(cnFontPath, 32.0f, &mergeCfg, sUIRanges.Data);
+				io.Fonts->AddFontFromFileTTF(cnFontPath, fontSize, &mergeCfg, sUIRanges.Data);
 				mergeCfg.DstFont = io.Fonts->Fonts[1]; // OpenSans-Regular + Chinese (default)
-				io.Fonts->AddFontFromFileTTF(cnFontPath, 32.0f, &mergeCfg, sUIRanges.Data);
+				io.Fonts->AddFontFromFileTTF(cnFontPath, fontSize, &mergeCfg, sUIRanges.Data);
 			}
 			if (std::filesystem::exists(symFontPath))
 			{
 				mergeCfg.DstFont = io.Fonts->Fonts[0];
-				io.Fonts->AddFontFromFileTTF(symFontPath, 32.0f, &mergeCfg, symRanges);
+				io.Fonts->AddFontFromFileTTF(symFontPath, fontSize, &mergeCfg, symRanges);
 				mergeCfg.DstFont = io.Fonts->Fonts[1];
-				io.Fonts->AddFontFromFileTTF(symFontPath, 32.0f, &mergeCfg, symRanges);
+				io.Fonts->AddFontFromFileTTF(symFontPath, fontSize, &mergeCfg, symRanges);
 			}
 		}
 
@@ -125,7 +137,12 @@ namespace TomCat {
 
 		// Setup Platform/Renderer bindings
 		ImGui_ImplGlfw_InitForOpenGL(window, true);
+#ifdef __EMSCRIPTEN__
+		// Fonts use CSS pixel sizes so native panel metrics stay consistent.
+		ImGui_ImplOpenGL3_Init("#version 300 es");
+#else
 		ImGui_ImplOpenGL3_Init("#version 410");
+#endif
 	}
 
 	void ImGuiLayer::OnDetach()

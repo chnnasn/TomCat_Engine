@@ -1,7 +1,7 @@
 #pragma once
 
 #include "TomCat/Renderer/Shader.h"
-#include <glad/glad.h>
+#include "OpenGLApi.h"
 #include <glm/glm.hpp>
 #include <span>
 

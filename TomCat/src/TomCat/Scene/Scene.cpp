@@ -38,8 +38,9 @@
 #include "box2d/b2_world_callbacks.h"
 
 namespace TomCat {
-	static_assert(sizeof(uintptr_t) >= sizeof(uint64_t),
+	static_assert(sizeof(b2BodyUserData::pointer) >= sizeof(uint64_t),
 		"Box2D body user data must be able to store a complete entity UUID value");
+	static_assert(sizeof(b2JointUserData::pointer) >= sizeof(uint64_t));
 
 	namespace {
 
@@ -2597,7 +2598,7 @@ namespace TomCat {
 				}
 				bodyDef.awake = stateIt->second.Awake;
 			}
-			bodyDef.userData.pointer = static_cast<uintptr_t>(static_cast<uint64_t>(uuid));
+			bodyDef.userData.pointer = static_cast<uint64_t>(uuid);
 
 			b2Body* body = m_PhysicsWorld->CreateBody(&bodyDef);
 			++m_RuntimePhysicsSyncStatistics.BodiesCreated;
@@ -2743,7 +2744,7 @@ namespace TomCat {
 			const float box2DDistance = std::max(joint.Distance, b2_linearSlop);
 			jointDef.length = box2DDistance;
 			jointDef.collideConnected = joint.CollideConnected;
-			jointDef.userData.pointer = static_cast<uintptr_t>(static_cast<uint64_t>(uuid));
+			jointDef.userData.pointer = static_cast<uint64_t>(uuid);
 			if (joint.Frequency > 0.0f)
 				b2LinearStiffness(jointDef.stiffness, jointDef.damping, joint.Frequency,
 					joint.Damping, bodyA, bodyB);
@@ -2990,7 +2991,7 @@ namespace TomCat {
 					bodyDef.awake = suspendedIt->second.Awake;
 				}
 				bodyDef.userData.pointer =
-					static_cast<uintptr_t>(static_cast<uint64_t>(uuid));
+					static_cast<uint64_t>(uuid);
 				body = m_PhysicsWorld->CreateBody(&bodyDef);
 				++m_RuntimePhysicsSyncStatistics.BodiesCreated;
 				m_RuntimeBodies.emplace(uuid, body);
@@ -3143,7 +3144,7 @@ namespace TomCat {
 				jointDef.length = distance;
 				jointDef.collideConnected = joint.CollideConnected;
 				jointDef.userData.pointer =
-					static_cast<uintptr_t>(static_cast<uint64_t>(uuid));
+					static_cast<uint64_t>(uuid);
 				if (joint.Frequency > 0.0f)
 					b2LinearStiffness(jointDef.stiffness, jointDef.damping,
 						joint.Frequency, joint.Damping, bodyA, bodyB);

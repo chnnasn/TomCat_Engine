@@ -752,17 +752,17 @@ namespace TomCat::Scripting {
 	static_assert(offsetof(NativeComponentStringApiV1, Version) == 0);
 	static_assert(offsetof(NativeComponentStringApiV1, Size) == 4);
 	static_assert(offsetof(NativeComponentStringApiV1, GetProperty) == 8);
-	static_assert(offsetof(NativeComponentStringApiV1, SetProperty) == 16);
-	static_assert(sizeof(NativeComponentStringApiV1) == 24);
+	static_assert(offsetof(NativeComponentStringApiV1, SetProperty) == 8 + sizeof(void*));
+	static_assert(sizeof(NativeComponentStringApiV1) == 8 + 2 * sizeof(void*));
 	static_assert(offsetof(NativeDeferredCommandsApiV1, Version) == 0);
 	static_assert(offsetof(NativeDeferredCommandsApiV1, Size) == 4);
 	static_assert(offsetof(NativeDeferredCommandsApiV1, AbortBatch) == 8);
-	static_assert(sizeof(NativeDeferredCommandsApiV1) == 16);
+	static_assert(sizeof(NativeDeferredCommandsApiV1) == 8 + sizeof(void*));
 	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, Version) == 0);
 	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, Size) == 4);
 	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, BeginCallback) == 8);
-	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, CompleteCallback) == 16);
-	static_assert(sizeof(NativeDeferredCallbackTransactionsApiV1) == 24);
+	static_assert(offsetof(NativeDeferredCallbackTransactionsApiV1, CompleteCallback) == 8 + sizeof(void*));
+	static_assert(sizeof(NativeDeferredCallbackTransactionsApiV1) == 8 + 2 * sizeof(void*));
 
 }
 

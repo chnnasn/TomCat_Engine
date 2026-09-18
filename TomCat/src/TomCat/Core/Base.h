@@ -11,7 +11,11 @@
 #endif
 
 // Platform detection using predefined macros
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+	#ifndef TC_PLATFORM_WEB
+		#define TC_PLATFORM_WEB 1
+	#endif
+#elif defined(_WIN32)
 	/* Windows x64/x86 */
 	#ifdef _WIN64
 		/* Windows x64  */

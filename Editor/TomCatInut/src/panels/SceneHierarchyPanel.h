@@ -69,6 +69,9 @@ namespace TomCat {
 			if (!allowed)
 				ClearColliderEditMode();
 		}
+		// Embedded hosts can omit specialized tools without disabling component editing.
+		void SetColliderGizmosEnabled(bool enabled) { m_ColliderGizmosEnabled = enabled; if (!enabled) ClearColliderEditMode(); }
+		void SetScriptEditingEnabled(bool enabled) { m_ScriptEditingEnabled = enabled; }
 		void ClearColliderEditMode()
 		{
 			m_ColliderEditMode = ColliderEditMode::None;
@@ -127,6 +130,8 @@ namespace TomCat {
 		void MarkModified(bool instant = false);
 		void FinishModificationGesture();
 	private:
+		bool m_ColliderGizmosEnabled = true;
+		bool m_ScriptEditingEnabled = true;
 		Ref<Scene> m_Context;
 		Ref<Project> m_Project;
 		Entity m_SelectionContext;

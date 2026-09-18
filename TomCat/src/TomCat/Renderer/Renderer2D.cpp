@@ -82,7 +82,11 @@ namespace TomCat {
 		static const uint32_t MaxQuads = 20000;
 		static const uint32_t MaxVertices = MaxQuads * 4;
 		static const uint32_t MaxIndices = MaxQuads * 6;
+#ifdef TC_PLATFORM_WEB
+		static const uint32_t MaxTextureSlots = 16; // WebGL2 minimum fragment texture units.
+#else
 		static const uint32_t MaxTextureSlots = 32; // TODO: RenderCaps
+#endif
 
 		Ref<VertexArray> QuadVertexArray;
 		Ref<VertexBuffer> QuadVertexBuffer;

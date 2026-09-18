@@ -1,7 +1,7 @@
 #include "tcpch.h"
 #include"OpenGLBuffer.h"
 
-#include<glad/glad.h>
+#include "OpenGLApi.h"
 
 namespace TomCat {
 
