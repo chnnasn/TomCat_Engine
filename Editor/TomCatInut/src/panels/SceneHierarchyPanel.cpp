@@ -19,6 +19,7 @@
 
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/ComponentRegistry.h"
+#include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Scene/SpriteAnimatorAuthoring.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
@@ -827,6 +828,11 @@ namespace TomCat {
 		m_AnimatorRenameEntity = UUID(0);
 		m_AnimatorRenameBuffer.fill('\0');
 		m_AnimatorRenameError.clear();
+		if (contextChanged)
+		{
+			m_AnimatorGraphStates.clear();
+			m_TilemapBrushStates.clear();
+		}
 		ClearColliderEditMode();
 		if (contextChanged)
 			ClearClipboard();
@@ -1844,6 +1850,9 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	template<> static bool* GetComponentEnabledFlag<SpriteRenderer>(SpriteRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<SpriteAnimator>(SpriteAnimator& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<LineRenderer>(LineRenderer& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<Tilemap2D>(Tilemap2D& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<ParticleSystem2D>(ParticleSystem2D& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<Light2D>(Light2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<BoxCollider2D>(BoxCollider2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<CircleCollider2D>(CircleCollider2D& component) { return &component.Enabled; }
@@ -2170,6 +2179,538 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ImGui::PopID();
 	}
 
+	void SceneHierarchyPanel::DrawSpriteAnimatorGraph(SpriteAnimator& animator,
+		Entity entity,
+		const std::function<void(AnimatorRenameTarget, size_t,
+			const std::string&)>& requestRename,
+		std::function<void()>& pendingMutation)
+	{
+		using namespace SpriteAnimatorAuthoring;
+		constexpr size_t noTransition = static_cast<size_t>(-1);
+		constexpr float nodeWidth = 160.0f;
+		constexpr float nodeHeight = 62.0f;
+		const uint64_t entityID = static_cast<uint64_t>(entity.GetUUID());
+		AnimatorGraphEditorState& graph = m_AnimatorGraphStates[entityID];
+		SynchronizeGraphLayout(animator, graph.Layout);
+
+		if (!graph.SelectedState.empty()
+			&& !FindStateIndex(animator, graph.SelectedState))
+			graph.SelectedState.clear();
+		if (!graph.TransitionSource.empty()
+			&& !FindStateIndex(animator, graph.TransitionSource))
+			graph.TransitionSource.clear();
+		if (graph.SelectedTransition >= animator.Transitions.size())
+			graph.SelectedTransition = noTransition;
+
+		ImGui::BeginDisabled(animator.Clips.empty());
+		if (ImGui::Button("Add State##Graph") && !pendingMutation)
+		{
+			AnimatorState state;
+			state.Name = MakeUniqueName(animator.States, std::string("State"),
+				[](const AnimatorState& item) { return item.Name; });
+			state.Clip = animator.Clips.front().Name;
+			animator.States.push_back(std::move(state));
+			graph.SelectedState = animator.States.back().Name;
+			graph.SelectedAnyState = false;
+			graph.SelectedTransition = noTransition;
+			SynchronizeGraphLayout(animator, graph.Layout);
+			MarkModified(true);
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Reset Layout"))
+		{
+			ResetGraphLayout(animator, graph.Layout);
+			graph.PanX = 0.0f;
+			graph.PanY = 0.0f;
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("Drag nodes | middle-drag pans | right-click connects");
+
+		if (ImGui::BeginChild("AnimatorGraphCanvas", ImVec2(0.0f, 360.0f), true,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+		{
+			ImDrawList* drawList = ImGui::GetWindowDrawList();
+			const ImVec2 origin = ImGui::GetCursorScreenPos();
+			ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+			canvasSize.x = std::max(canvasSize.x, 260.0f);
+			canvasSize.y = std::max(canvasSize.y, 120.0f);
+			ImGui::InvisibleButton("##AnimatorGraphBackground", canvasSize,
+				ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+			const bool canvasHovered = ImGui::IsItemHovered();
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+			{
+				graph.SelectedState.clear();
+				graph.SelectedAnyState = false;
+				graph.SelectedTransition = noTransition;
+			}
+			ImGui::SetItemAllowOverlap();
+			if (ImGui::IsWindowHovered()
+				&& ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f))
+			{
+				graph.PanX += ImGui::GetIO().MouseDelta.x;
+				graph.PanY += ImGui::GetIO().MouseDelta.y;
+			}
+
+			const auto screenPosition = [&](const AnimatorGraphPosition& position)
+			{
+				return ImVec2(origin.x + graph.PanX + position.X,
+					origin.y + graph.PanY + position.Y);
+			};
+			const auto add = [](const ImVec2& left, const ImVec2& right)
+			{
+				return ImVec2(left.x + right.x, left.y + right.y);
+			};
+			const auto subtract = [](const ImVec2& left, const ImVec2& right)
+			{
+				return ImVec2(left.x - right.x, left.y - right.y);
+			};
+			const auto multiply = [](const ImVec2& value, float scalar)
+			{
+				return ImVec2(value.x * scalar, value.y * scalar);
+			};
+			const auto bezierPoint = [&](const ImVec2& p0, const ImVec2& p1,
+				const ImVec2& p2, const ImVec2& p3, float t)
+			{
+				const float inverse = 1.0f - t;
+				return add(add(multiply(p0, inverse * inverse * inverse),
+					multiply(p1, 3.0f * inverse * inverse * t)),
+					add(multiply(p2, 3.0f * inverse * t * t),
+						multiply(p3, t * t * t)));
+			};
+
+			drawList->PushClipRect(origin,
+				ImVec2(origin.x + canvasSize.x, origin.y + canvasSize.y), true);
+			const ImU32 gridColor = ImGui::GetColorU32(ImVec4(0.38f, 0.40f, 0.44f, 0.22f));
+			constexpr float gridSize = 32.0f;
+			float gridX = std::fmod(graph.PanX, gridSize);
+			float gridY = std::fmod(graph.PanY, gridSize);
+			if (gridX < 0.0f) gridX += gridSize;
+			if (gridY < 0.0f) gridY += gridSize;
+			for (float x = gridX; x < canvasSize.x; x += gridSize)
+				drawList->AddLine(ImVec2(origin.x + x, origin.y),
+					ImVec2(origin.x + x, origin.y + canvasSize.y), gridColor);
+			for (float y = gridY; y < canvasSize.y; y += gridSize)
+				drawList->AddLine(ImVec2(origin.x, origin.y + y),
+					ImVec2(origin.x + canvasSize.x, origin.y + y), gridColor);
+
+			const AnimatorGraphPosition anyStatePosition{ 24.0f, 32.0f };
+			const auto nodeTopLeft = [&](std::string_view name)
+			{
+				const auto found = graph.Layout.StatePositions.find(std::string(name));
+				return found == graph.Layout.StatePositions.end()
+					? screenPosition(AnimatorGraphPosition{})
+					: screenPosition(found->second);
+			};
+			const auto nodeCenter = [&](std::string_view name)
+			{
+				const ImVec2 topLeft = nodeTopLeft(name);
+				return ImVec2(topLeft.x + nodeWidth * 0.5f,
+					topLeft.y + nodeHeight * 0.5f);
+			};
+			const ImVec2 anyCenter = add(screenPosition(anyStatePosition),
+				ImVec2(nodeWidth * 0.5f, nodeHeight * 0.5f));
+
+			// Edges are drawn before nodes. Their center handles provide a large,
+			// unambiguous selection target even where multiple curves overlap.
+			for (size_t transitionIndex = 0;
+				transitionIndex < animator.Transitions.size(); ++transitionIndex)
+			{
+				const AnimatorTransition& transition = animator.Transitions[transitionIndex];
+				if (!FindStateIndex(animator, transition.ToState)
+					|| (!transition.AnyState
+						&& !FindStateIndex(animator, transition.FromState)))
+					continue;
+				const ImVec2 sourceCenter = transition.AnyState ? anyCenter
+					: nodeCenter(transition.FromState);
+				const ImVec2 targetCenter = nodeCenter(transition.ToState);
+				ImVec2 p0;
+				ImVec2 p1;
+				ImVec2 p2;
+				ImVec2 p3;
+				if (!transition.AnyState && transition.FromState == transition.ToState)
+				{
+					p0 = ImVec2(sourceCenter.x - 34.0f,
+						sourceCenter.y - nodeHeight * 0.5f);
+					p1 = ImVec2(sourceCenter.x - 70.0f, p0.y - 58.0f);
+					p2 = ImVec2(sourceCenter.x + 70.0f, p0.y - 58.0f);
+					p3 = ImVec2(sourceCenter.x + 34.0f, p0.y);
+				}
+				else
+				{
+					const bool forward = sourceCenter.x <= targetCenter.x;
+					p0 = ImVec2(sourceCenter.x + (forward ? nodeWidth : -nodeWidth) * 0.5f,
+						sourceCenter.y);
+					p3 = ImVec2(targetCenter.x + (forward ? -nodeWidth : nodeWidth) * 0.5f,
+						targetCenter.y);
+					const float control = std::max(55.0f,
+						std::abs(p3.x - p0.x) * 0.45f);
+					p1 = ImVec2(p0.x + (forward ? control : -control), p0.y);
+					p2 = ImVec2(p3.x + (forward ? -control : control), p3.y);
+				}
+				const bool selected = graph.SelectedTransition == transitionIndex;
+				const ImU32 edgeColor = selected
+					? ImGui::GetColorU32(ImVec4(1.0f, 0.72f, 0.18f, 1.0f))
+					: ImGui::GetColorU32(ImVec4(0.63f, 0.68f, 0.78f, 0.92f));
+				drawList->AddBezierCubic(p0, p1, p2, p3, edgeColor,
+					selected ? 3.0f : 2.0f);
+				const ImVec2 marker = bezierPoint(p0, p1, p2, p3, 0.5f);
+				const ImVec2 arrow = bezierPoint(p0, p1, p2, p3, 0.92f);
+				const ImVec2 beforeArrow = bezierPoint(p0, p1, p2, p3, 0.87f);
+				const ImVec2 direction = subtract(arrow, beforeArrow);
+				const float length = std::sqrt(direction.x * direction.x
+					+ direction.y * direction.y);
+				if (length > 0.001f)
+				{
+					const ImVec2 unit(direction.x / length, direction.y / length);
+					const ImVec2 side(-unit.y, unit.x);
+					drawList->AddTriangleFilled(arrow,
+						add(subtract(arrow, multiply(unit, 10.0f)), multiply(side, 5.0f)),
+						subtract(subtract(arrow, multiply(unit, 10.0f)), multiply(side, 5.0f)),
+						edgeColor);
+				}
+				drawList->AddCircleFilled(marker, selected ? 6.0f : 5.0f, edgeColor);
+
+				ImGui::PushID(static_cast<int>(transitionIndex));
+				ImGui::SetCursorScreenPos(ImVec2(marker.x - 10.0f, marker.y - 10.0f));
+				ImGui::InvisibleButton("##TransitionEdge", ImVec2(20.0f, 20.0f),
+					ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+				ImGui::SetItemAllowOverlap();
+				if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+				{
+					graph.SelectedTransition = transitionIndex;
+					graph.SelectedState.clear();
+					graph.SelectedAnyState = false;
+				}
+				if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+					ImGui::OpenPopup("Transition Edge Menu");
+				if (ImGui::BeginPopup("Transition Edge Menu"))
+				{
+					ImGui::TextUnformatted(transition.AnyState ? "Any State" : transition.FromState.c_str());
+					ImGui::SameLine();
+					ImGui::Text("-> %s", transition.ToState.c_str());
+					if (ImGui::MenuItem("Remove") && !pendingMutation)
+					{
+						pendingMutation = [this, &animator, entityID, transitionIndex]()
+						{
+							std::string error;
+							if (SpriteAnimatorAuthoring::RemoveTransition(animator,
+								transitionIndex, error))
+							{
+								auto found = m_AnimatorGraphStates.find(entityID);
+								if (found != m_AnimatorGraphStates.end())
+									found->second.SelectedTransition = noTransition;
+								MarkModified(true);
+							}
+						};
+					}
+					ImGui::EndPopup();
+				}
+				ImGui::PopID();
+			}
+
+			if (canvasHovered && (!graph.TransitionSource.empty()
+				|| graph.TransitionSourceAnyState))
+			{
+				const ImVec2 source = graph.TransitionSourceAnyState ? anyCenter
+					: nodeCenter(graph.TransitionSource);
+				drawList->AddLine(source, ImGui::GetMousePos(),
+					ImGui::GetColorU32(ImVec4(1.0f, 0.72f, 0.18f, 0.95f)), 2.0f);
+			}
+
+			// Any State participates as a transition source but is not runtime data.
+			const ImVec2 anyTopLeft = screenPosition(anyStatePosition);
+			ImGui::SetCursorScreenPos(anyTopLeft);
+			ImGui::InvisibleButton("##AnyStateNode", ImVec2(nodeWidth, nodeHeight),
+				ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+			ImGui::SetItemAllowOverlap();
+			const bool anyHovered = ImGui::IsItemHovered();
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+			{
+				graph.SelectedAnyState = true;
+				graph.SelectedState.clear();
+				graph.SelectedTransition = noTransition;
+			}
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+				ImGui::OpenPopup("Any State Menu");
+			if (ImGui::BeginPopup("Any State Menu"))
+			{
+				if (ImGui::MenuItem("Make Transition"))
+				{
+					graph.TransitionSourceAnyState = true;
+					graph.TransitionSource.clear();
+				}
+				ImGui::EndPopup();
+			}
+			const ImU32 anyFill = graph.SelectedAnyState
+				? ImGui::GetColorU32(ImVec4(0.48f, 0.27f, 0.60f, 1.0f))
+				: ImGui::GetColorU32(ImVec4(0.30f, 0.19f, 0.38f, 1.0f));
+			drawList->AddRectFilled(anyTopLeft,
+				ImVec2(anyTopLeft.x + nodeWidth, anyTopLeft.y + nodeHeight),
+				anyFill, 7.0f);
+			drawList->AddRect(anyTopLeft,
+				ImVec2(anyTopLeft.x + nodeWidth, anyTopLeft.y + nodeHeight),
+				anyHovered ? ImGui::GetColorU32(ImGuiCol_ButtonHovered)
+					: ImGui::GetColorU32(ImGuiCol_Border), 7.0f, 0, anyHovered ? 2.0f : 1.0f);
+			drawList->AddText(ImVec2(anyTopLeft.x + 12.0f, anyTopLeft.y + 12.0f),
+				ImGui::GetColorU32(ImGuiCol_Text), "Any State");
+			drawList->AddText(ImVec2(anyTopLeft.x + 12.0f, anyTopLeft.y + 34.0f),
+				ImGui::GetColorU32(ImGuiCol_TextDisabled), "global source");
+
+			for (size_t stateIndex = 0; stateIndex < animator.States.size(); ++stateIndex)
+			{
+				const AnimatorState& state = animator.States[stateIndex];
+				auto position = graph.Layout.StatePositions.find(state.Name);
+				if (position == graph.Layout.StatePositions.end())
+					continue;
+				ImVec2 topLeft = screenPosition(position->second);
+				ImGui::PushID(static_cast<int>(stateIndex));
+				ImGui::SetCursorScreenPos(topLeft);
+				ImGui::InvisibleButton("##StateNode", ImVec2(nodeWidth, nodeHeight),
+					ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+				ImGui::SetItemAllowOverlap();
+				const bool hovered = ImGui::IsItemHovered();
+				if (ImGui::IsItemActive()
+					&& ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f))
+				{
+					position->second.X += ImGui::GetIO().MouseDelta.x;
+					position->second.Y += ImGui::GetIO().MouseDelta.y;
+					topLeft = screenPosition(position->second);
+					graph.SelectedState = state.Name;
+					graph.SelectedAnyState = false;
+					graph.SelectedTransition = noTransition;
+				}
+				if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+				{
+					if (!graph.TransitionSource.empty()
+						|| graph.TransitionSourceAnyState)
+					{
+						std::optional<size_t> sourceIndex;
+						if (!graph.TransitionSourceAnyState)
+							sourceIndex = FindStateIndex(animator,
+								graph.TransitionSource);
+						std::string error;
+						size_t addedIndex = noTransition;
+						if ((graph.TransitionSourceAnyState || sourceIndex)
+							&& AddTransition(animator, sourceIndex, stateIndex,
+								&addedIndex, error))
+						{
+							graph.SelectedTransition = addedIndex;
+							MarkModified(true);
+						}
+						else if (!error.empty())
+							TC_Core_Warn("Could not create Animator transition: {0}", error);
+						graph.TransitionSource.clear();
+						graph.TransitionSourceAnyState = false;
+					}
+					else
+					{
+						graph.SelectedState = state.Name;
+						graph.SelectedAnyState = false;
+						graph.SelectedTransition = noTransition;
+					}
+				}
+				if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+					requestRename(AnimatorRenameTarget::State, stateIndex, state.Name);
+				if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+					ImGui::OpenPopup("State Node Menu");
+				if (ImGui::BeginPopup("State Node Menu"))
+				{
+					if (ImGui::MenuItem("Make Transition"))
+					{
+						graph.TransitionSource = state.Name;
+						graph.TransitionSourceAnyState = false;
+					}
+					if (ImGui::MenuItem("Set as Initial State", nullptr,
+						animator.InitialState == state.Name))
+					{
+						animator.InitialState = state.Name;
+						MarkModified(true);
+					}
+					if (ImGui::MenuItem("Rename"))
+						requestRename(AnimatorRenameTarget::State, stateIndex, state.Name);
+					if (ImGui::MenuItem("Remove") && !pendingMutation)
+					{
+						const std::string stateName = state.Name;
+						pendingMutation = [this, &animator, entityID, stateName]()
+						{
+							const auto stateIndex = SpriteAnimatorAuthoring::FindStateIndex(
+								animator, stateName);
+							std::string error;
+							if (stateIndex && SpriteAnimatorAuthoring::RemoveState(animator,
+								*stateIndex, error))
+							{
+								auto found = m_AnimatorGraphStates.find(entityID);
+								if (found != m_AnimatorGraphStates.end())
+								{
+									found->second.SelectedState.clear();
+									found->second.SelectedTransition = noTransition;
+								}
+								MarkModified(true);
+							}
+						};
+					}
+					ImGui::EndPopup();
+				}
+
+				const bool selected = graph.SelectedState == state.Name;
+				const bool initial = animator.InitialState == state.Name
+					|| (animator.InitialState.empty() && stateIndex == 0);
+				const ImU32 fill = initial
+					? ImGui::GetColorU32(ImVec4(0.16f, 0.42f, 0.25f, 1.0f))
+					: ImGui::GetColorU32(ImVec4(0.16f, 0.25f, 0.36f, 1.0f));
+				const ImU32 outline = selected
+					? ImGui::GetColorU32(ImVec4(1.0f, 0.72f, 0.18f, 1.0f))
+					: hovered ? ImGui::GetColorU32(ImGuiCol_ButtonHovered)
+						: ImGui::GetColorU32(ImGuiCol_Border);
+				drawList->AddRectFilled(topLeft,
+					ImVec2(topLeft.x + nodeWidth, topLeft.y + nodeHeight), fill, 7.0f);
+				drawList->AddRect(topLeft,
+					ImVec2(topLeft.x + nodeWidth, topLeft.y + nodeHeight), outline,
+					7.0f, 0, selected || hovered ? 2.0f : 1.0f);
+				drawList->AddText(ImVec2(topLeft.x + 12.0f, topLeft.y + 10.0f),
+					ImGui::GetColorU32(ImGuiCol_Text), state.Name.c_str());
+				const std::string clipLabel = std::string("Clip: ") + state.Clip;
+				drawList->AddText(ImVec2(topLeft.x + 12.0f, topLeft.y + 34.0f),
+					ImGui::GetColorU32(ImGuiCol_TextDisabled), clipLabel.c_str());
+				if (initial)
+					drawList->AddCircleFilled(ImVec2(topLeft.x + nodeWidth - 12.0f,
+						topLeft.y + 12.0f), 4.0f,
+						ImGui::GetColorU32(ImVec4(0.48f, 1.0f, 0.58f, 1.0f)));
+				ImGui::PopID();
+			}
+			drawList->PopClipRect();
+		}
+		ImGui::EndChild();
+
+		if (!graph.TransitionSource.empty() || graph.TransitionSourceAnyState)
+		{
+			ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.18f, 1.0f),
+				"Select a target state for %s",
+				graph.TransitionSourceAnyState ? "Any State"
+					: graph.TransitionSource.c_str());
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Cancel Link"))
+			{
+				graph.TransitionSource.clear();
+				graph.TransitionSourceAnyState = false;
+			}
+		}
+
+		if (!graph.SelectedState.empty())
+		{
+			const std::optional<size_t> selectedIndex = FindStateIndex(animator,
+				graph.SelectedState);
+			if (selectedIndex)
+			{
+				AnimatorState& selected = animator.States[*selectedIndex];
+				DrawAnimatorSectionLabel(selected.Name.c_str());
+				if (ImGui::SmallButton("Rename Selected"))
+					requestRename(AnimatorRenameTarget::State, *selectedIndex, selected.Name);
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Make Transition"))
+				{
+					graph.TransitionSource = selected.Name;
+					graph.TransitionSourceAnyState = false;
+				}
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Set Initial"))
+				{
+					animator.InitialState = selected.Name;
+					MarkModified(true);
+				}
+				if (ImGui::BeginCombo("Selected Clip", selected.Clip.c_str()))
+				{
+					for (const SpriteAnimationClip& clip : animator.Clips)
+						if (ImGui::Selectable(clip.Name.c_str(),
+							selected.Clip == clip.Name))
+						{
+							selected.Clip = clip.Name;
+							MarkModified(true);
+						}
+					ImGui::EndCombo();
+				}
+			}
+		}
+		else if (graph.SelectedTransition < animator.Transitions.size())
+		{
+			const size_t transitionIndex = graph.SelectedTransition;
+			AnimatorTransition& transition = animator.Transitions[transitionIndex];
+			DrawAnimatorSectionLabel("Selected Transition");
+			const char* sourcePreview = transition.AnyState
+				? "Any State" : transition.FromState.c_str();
+			if (ImGui::BeginCombo("Graph Source", sourcePreview))
+			{
+				const auto target = FindStateIndex(animator, transition.ToState);
+				if (target && ImGui::Selectable("Any State", transition.AnyState))
+				{
+					std::string error;
+					if (SetTransitionEndpoints(animator, transitionIndex, std::nullopt,
+						*target, error))
+						MarkModified(true);
+				}
+				for (size_t stateIndex = 0; stateIndex < animator.States.size(); ++stateIndex)
+				{
+					const AnimatorState& state = animator.States[stateIndex];
+					if (target && ImGui::Selectable(state.Name.c_str(),
+						!transition.AnyState && transition.FromState == state.Name))
+					{
+						std::string error;
+						if (SetTransitionEndpoints(animator, transitionIndex, stateIndex,
+							*target, error))
+							MarkModified(true);
+					}
+				}
+				ImGui::EndCombo();
+			}
+			if (ImGui::BeginCombo("Graph Target", transition.ToState.c_str()))
+			{
+				std::optional<size_t> source;
+				if (!transition.AnyState)
+					source = FindStateIndex(animator, transition.FromState);
+				for (size_t stateIndex = 0; stateIndex < animator.States.size(); ++stateIndex)
+				{
+					const AnimatorState& state = animator.States[stateIndex];
+					if ((transition.AnyState || source)
+						&& ImGui::Selectable(state.Name.c_str(),
+							transition.ToState == state.Name))
+					{
+						std::string error;
+						if (SetTransitionEndpoints(animator, transitionIndex, source,
+							stateIndex, error))
+							MarkModified(true);
+					}
+				}
+				ImGui::EndCombo();
+			}
+			bool hasExitTime = transition.ExitTime >= 0.0f;
+			ImGui::BeginDisabled(hasExitTime && transition.Conditions.empty());
+			if (ImGui::Checkbox("Graph Has Exit Time", &hasExitTime))
+			{
+				transition.ExitTime = hasExitTime ? 1.0f : -1.0f;
+				MarkModified(true);
+			}
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Remove Selected Transition") && !pendingMutation)
+			{
+				pendingMutation = [this, &animator, entityID, transitionIndex]()
+				{
+					std::string error;
+					if (SpriteAnimatorAuthoring::RemoveTransition(animator,
+						transitionIndex, error))
+					{
+						auto found = m_AnimatorGraphStates.find(entityID);
+						if (found != m_AnimatorGraphStates.end())
+							found->second.SelectedTransition = noTransition;
+						MarkModified(true);
+					}
+				};
+			}
+			ImGui::TextDisabled("Conditions and priority remain editable in Transitions below.");
+		}
+	}
+
 	void SceneHierarchyPanel::DrawSpriteAnimatorInspector(SpriteAnimator& animator,
 		Entity entity)
 	{
@@ -2257,6 +2798,12 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ImGui::TextDisabled("%zu clips, %zu parameters, %zu states, %zu transitions",
 			animator.Clips.size(), animator.Parameters.size(), animator.States.size(),
 			animator.Transitions.size());
+
+		if (ImGui::TreeNodeEx("Animator Graph", ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			DrawSpriteAnimatorGraph(animator, entity, requestRename, pendingMutation);
+			ImGui::TreePop();
+		}
 
 		if (ImGui::TreeNodeEx("Clips", ImGuiTreeNodeFlags_DefaultOpen))
 		{
@@ -2861,9 +3408,26 @@ static void DrawComponent(const std::string& name, Entity entity,
 							candidate, error);
 						break;
 					case AnimatorRenameTarget::State:
+					{
+						const std::string oldName = m_AnimatorRenameIndex < animator.States.size()
+							? animator.States[m_AnimatorRenameIndex].Name : std::string{};
 						renamed = RenameState(animator, m_AnimatorRenameIndex,
 							candidate, error);
+						if (renamed)
+						{
+							auto graph = m_AnimatorGraphStates.find(
+								static_cast<uint64_t>(entity.GetUUID()));
+							if (graph != m_AnimatorGraphStates.end())
+							{
+								RenameGraphState(graph->second.Layout, oldName, candidate);
+								if (graph->second.SelectedState == oldName)
+									graph->second.SelectedState = candidate;
+								if (graph->second.TransitionSource == oldName)
+									graph->second.TransitionSource = candidate;
+							}
+						}
 						break;
+					}
 					case AnimatorRenameTarget::None:
 						break;
 				}
@@ -2894,7 +3458,345 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}
 
 		if (pendingMutation)
+		{
 			pendingMutation();
+			// Deferred list edits may reorder or erase transitions. Clear the graph's
+			// index-based edge selection so the next click cannot edit a different
+			// transition that moved into the old slot.
+			auto graph = m_AnimatorGraphStates.find(
+				static_cast<uint64_t>(entity.GetUUID()));
+			if (graph != m_AnimatorGraphStates.end())
+				graph->second.SelectedTransition = static_cast<size_t>(-1);
+		}
+	}
+
+	void SceneHierarchyPanel::DrawTilemap2DInspector(Tilemap2D& tilemap,
+		Entity entity)
+	{
+		bool gridChanged = false;
+		glm::vec2 cellSize = tilemap.CellSize;
+		if (ImGui::DragFloat2("Cell Size", glm::value_ptr(cellSize), 0.05f,
+			0.0001f, 0.0f, "%.3f"))
+		{
+			if (!std::isfinite(cellSize.x) || !std::isfinite(cellSize.y))
+				cellSize = tilemap.CellSize;
+			cellSize.x = std::max(cellSize.x, 0.0001f);
+			cellSize.y = std::max(cellSize.y, 0.0001f);
+			if (cellSize != tilemap.CellSize)
+			{
+				tilemap.CellSize = cellSize;
+				gridChanged = true;
+			}
+		}
+		glm::vec2 cellGap = tilemap.CellGap;
+		if (ImGui::DragFloat2("Cell Gap", glm::value_ptr(cellGap), 0.01f))
+		{
+			if (std::isfinite(cellGap.x) && std::isfinite(cellGap.y)
+				&& cellGap != tilemap.CellGap)
+			{
+				tilemap.CellGap = cellGap;
+				gridChanged = true;
+			}
+		}
+		gridChanged |= ImGui::InputInt("Sorting Layer", &tilemap.SortingLayer);
+		gridChanged |= ImGui::InputInt("Order In Layer", &tilemap.OrderInLayer);
+		if (gridChanged)
+			MarkModified();
+
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::TextDisabled("PAINT BRUSH");
+		TilemapBrushState& brush = m_TilemapBrushStates[
+			static_cast<uint64_t>(entity.GetUUID())];
+		ImGui::InputInt2("Coordinate", &brush.Coordinate.x);
+		ImGui::TextUnformatted("Palette Sprite");
+		ImGui::SetNextItemWidth(-1.0f);
+		DrawAnimatorSpriteField("TilemapBrushSprite", brush.SpriteHandle);
+		ImGui::ColorEdit4("Tint", glm::value_ptr(brush.Tint));
+		ImGui::Checkbox("Flip X", &brush.FlipX);
+		ImGui::SameLine();
+		ImGui::Checkbox("Flip Y", &brush.FlipY);
+		const char* rotations[] = { "0 deg", "90 deg", "180 deg", "270 deg" };
+		int brushRotation = std::clamp(brush.RotationQuarterTurns, 0, 3);
+		if (ImGui::Combo("Rotation", &brushRotation, rotations, 4))
+			brush.RotationQuarterTurns = brushRotation;
+
+		const TilemapCell* occupied = Tilemap2DRuntime::FindCell(tilemap,
+			brush.Coordinate);
+		ImGui::BeginDisabled(static_cast<uint64_t>(brush.SpriteHandle) == 0);
+		if (ImGui::Button(occupied ? "Update Cell" : "Paint Cell"))
+		{
+			TilemapCell cell;
+			cell.Coordinate = brush.Coordinate;
+			cell.SpriteHandle = brush.SpriteHandle;
+			cell.Tint = brush.Tint;
+			cell.FlipX = brush.FlipX;
+			cell.FlipY = brush.FlipY;
+			cell.RotationQuarterTurns = brush.RotationQuarterTurns;
+			if (Tilemap2DRuntime::SetCell(tilemap, std::move(cell)))
+				MarkModified(true);
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!occupied);
+		if (ImGui::Button("Erase"))
+		{
+			if (Tilemap2DRuntime::EraseCell(tilemap, brush.Coordinate))
+				MarkModified(true);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Pick Cell") && occupied)
+		{
+			brush.SpriteHandle = occupied->SpriteHandle;
+			brush.Tint = occupied->Tint;
+			brush.FlipX = occupied->FlipX;
+			brush.FlipY = occupied->FlipY;
+			brush.RotationQuarterTurns = occupied->RotationQuarterTurns;
+		}
+		ImGui::EndDisabled();
+
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::TextDisabled("CELLS (%zu)", tilemap.Cells.size());
+		std::optional<TilemapCell> editedCell;
+		std::optional<glm::ivec2> removedCoordinate;
+		const ImGuiTableFlags tableFlags = ImGuiTableFlags_BordersInnerH
+			| ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg
+			| ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollX;
+		if (ImGui::BeginTable("##TilemapCells", 7, tableFlags,
+			ImVec2(0.0f, std::min(260.0f,
+				74.0f + static_cast<float>(tilemap.Cells.size()) * 27.0f))))
+		{
+			ImGui::TableSetupColumn("Cell", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+			ImGui::TableSetupColumn("Sprite", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+			ImGui::TableSetupColumn("Tint", ImGuiTableColumnFlags_WidthFixed, 54.0f);
+			ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthFixed, 28.0f);
+			ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthFixed, 28.0f);
+			ImGui::TableSetupColumn("Rot", ImGuiTableColumnFlags_WidthFixed, 66.0f);
+			ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 26.0f);
+			ImGui::TableSetupScrollFreeze(1, 1);
+			ImGui::TableHeadersRow();
+			for (size_t cellIndex = 0; cellIndex < tilemap.Cells.size(); ++cellIndex)
+			{
+				const TilemapCell& source = tilemap.Cells[cellIndex];
+				TilemapCell candidate = source;
+				bool changed = false;
+				ImGui::PushID(static_cast<int>(cellIndex));
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::Text("%d, %d", source.Coordinate.x, source.Coordinate.y);
+				ImGui::TableSetColumnIndex(1);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= DrawAnimatorSpriteField("CellSprite", candidate.SpriteHandle);
+				ImGui::TableSetColumnIndex(2);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::ColorEdit4("##CellTint", glm::value_ptr(candidate.Tint),
+					ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
+				ImGui::TableSetColumnIndex(3);
+				changed |= ImGui::Checkbox("##FlipX", &candidate.FlipX);
+				ImGui::TableSetColumnIndex(4);
+				changed |= ImGui::Checkbox("##FlipY", &candidate.FlipY);
+				ImGui::TableSetColumnIndex(5);
+				int rotation = std::clamp(candidate.RotationQuarterTurns, 0, 3);
+				ImGui::SetNextItemWidth(-1.0f);
+				if (ImGui::Combo("##Rotation", &rotation, rotations, 4))
+				{
+					candidate.RotationQuarterTurns = rotation;
+					changed = true;
+				}
+				ImGui::TableSetColumnIndex(6);
+				if (ImGui::SmallButton("x"))
+					removedCoordinate = source.Coordinate;
+				if (changed)
+					editedCell = std::move(candidate);
+				ImGui::PopID();
+			}
+			ImGui::EndTable();
+		}
+		if (editedCell && Tilemap2DRuntime::SetCell(tilemap, std::move(*editedCell)))
+			MarkModified(true);
+		if (removedCoordinate
+			&& Tilemap2DRuntime::EraseCell(tilemap, *removedCoordinate))
+			MarkModified(true);
+		ImGui::BeginDisabled(tilemap.Cells.empty());
+		if (ImGui::Button("Clear All Cells", ImVec2(-1.0f, 0.0f)))
+		{
+			tilemap.Cells.clear();
+			MarkModified(true);
+		}
+		ImGui::EndDisabled();
+	}
+
+	void SceneHierarchyPanel::DrawParticleSystem2DInspector(
+		ParticleSystem2D& system)
+	{
+		ImGui::TextDisabled("PREVIEW");
+		if (ImGui::Button(system.RuntimePlaying ? "Restart" : "Play"))
+			ParticleSystem2DRuntime::Play(system, true);
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!system.RuntimePlaying);
+		if (ImGui::Button("Stop"))
+			ParticleSystem2DRuntime::Stop(system, false);
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::BeginDisabled(system.RuntimeParticles.empty());
+		if (ImGui::Button("Clear"))
+			ParticleSystem2DRuntime::Stop(system, true);
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::TextDisabled("%zu / %d", system.RuntimeParticles.size(),
+			std::max(system.MaxParticles, 0));
+
+		bool changed = false;
+		changed |= ImGui::Checkbox("Play On Start", &system.PlayOnStart);
+		ImGui::SameLine();
+		changed |= ImGui::Checkbox("Loop", &system.Loop);
+		float duration = system.Duration;
+		if (ImGui::DragFloat("Duration", &duration, 0.05f, 0.0f, 0.0f, "%.2f s"))
+		{
+			if (std::isfinite(duration))
+			{
+				system.Duration = std::max(duration, 0.0f);
+				changed = true;
+			}
+		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("EMISSION");
+		float emissionRate = system.EmissionRate;
+		if (ImGui::DragFloat("Rate", &emissionRate, 0.1f, 0.0f, 0.0f, "%.1f / s"))
+		{
+			if (std::isfinite(emissionRate))
+			{
+				system.EmissionRate = std::max(emissionRate, 0.0f);
+				changed = true;
+			}
+		}
+		int maxParticles = system.MaxParticles;
+		if (ImGui::DragInt("Max Particles", &maxParticles, 1.0f, 0, 100000))
+		{
+			system.MaxParticles = std::clamp(maxParticles, 0, 100000);
+			if (system.RuntimeParticles.size()
+				> static_cast<size_t>(system.MaxParticles))
+				system.RuntimeParticles.resize(static_cast<size_t>(system.MaxParticles));
+			changed = true;
+		}
+		float lifetime = system.StartLifetime;
+		if (ImGui::DragFloat("Lifetime", &lifetime, 0.02f, 0.0001f, 0.0f, "%.2f s"))
+		{
+			if (std::isfinite(lifetime))
+			{
+				system.StartLifetime = std::max(lifetime, 0.0001f);
+				changed = true;
+			}
+		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("SHAPE AND MOTION");
+		float speed = system.StartSpeed;
+		if (ImGui::DragFloat("Speed", &speed, 0.02f, 0.0f, 0.0f))
+		{
+			if (std::isfinite(speed))
+			{
+				system.StartSpeed = std::max(speed, 0.0f);
+				changed = true;
+			}
+		}
+		glm::vec2 direction = system.Direction;
+		if (ImGui::DragFloat2("Direction", glm::value_ptr(direction), 0.02f)
+			&& std::isfinite(direction.x) && std::isfinite(direction.y))
+		{
+			system.Direction = direction;
+			changed = true;
+		}
+		float spread = system.SpreadDegrees;
+		if (ImGui::SliderFloat("Spread", &spread, 0.0f, 360.0f, "%.0f deg"))
+		{
+			system.SpreadDegrees = spread;
+			changed = true;
+		}
+		float gravity = system.GravityScale;
+		if (ImGui::DragFloat("Gravity Scale", &gravity, 0.02f)
+			&& std::isfinite(gravity))
+		{
+			system.GravityScale = gravity;
+			changed = true;
+		}
+
+		ImGui::Separator();
+		ImGui::TextDisabled("APPEARANCE");
+		float startSize = system.StartSize;
+		if (ImGui::DragFloat("Start Size", &startSize, 0.01f, 0.0f, 0.0f)
+			&& std::isfinite(startSize))
+		{
+			system.StartSize = std::max(startSize, 0.0f);
+			changed = true;
+		}
+		float endSize = system.EndSize;
+		if (ImGui::DragFloat("End Size", &endSize, 0.01f, 0.0f, 0.0f)
+			&& std::isfinite(endSize))
+		{
+			system.EndSize = std::max(endSize, 0.0f);
+			changed = true;
+		}
+		changed |= ImGui::ColorEdit4("Start Color", glm::value_ptr(system.StartColor));
+		changed |= ImGui::ColorEdit4("End Color", glm::value_ptr(system.EndColor));
+		ImGui::TextUnformatted("Sprite");
+		ImGui::SetNextItemWidth(-1.0f);
+		changed |= DrawAnimatorSpriteField("ParticleSprite", system.SpriteHandle);
+		changed |= ImGui::InputInt("Sorting Layer", &system.SortingLayer);
+		changed |= ImGui::InputInt("Order In Layer", &system.OrderInLayer);
+		uint32_t seed = system.Seed;
+		if (ImGui::InputScalar("Seed", ImGuiDataType_U32, &seed))
+		{
+			system.Seed = seed;
+			changed = true;
+		}
+		if (changed)
+		{
+			ParticleSystem2DRuntime::Reset(system);
+			MarkModified();
+		}
+	}
+
+	void SceneHierarchyPanel::DrawLight2DInspector(Light2D& light)
+	{
+		bool changed = false;
+		const char* lightTypes[] = { "Global", "Point" };
+		int lightType = static_cast<int>(light.Type);
+		if (ImGui::Combo("Type", &lightType, lightTypes, 2))
+		{
+			light.Type = static_cast<Light2DType>(lightType);
+			changed = true;
+		}
+		changed |= ImGui::ColorEdit4("Color", glm::value_ptr(light.Color));
+		float intensity = light.Intensity;
+		if (ImGui::DragFloat("Intensity", &intensity, 0.02f, 0.0f, 0.0f)
+			&& std::isfinite(intensity))
+		{
+			light.Intensity = std::max(intensity, 0.0f);
+			changed = true;
+		}
+		ImGui::BeginDisabled(light.Type == Light2DType::Global);
+		float radius = light.Radius;
+		if (ImGui::DragFloat("Radius", &radius, 0.05f, 0.0001f, 0.0f)
+			&& std::isfinite(radius))
+		{
+			light.Radius = std::max(radius, 0.0001f);
+			changed = true;
+		}
+		float falloff = light.Falloff;
+		if (ImGui::DragFloat("Falloff", &falloff, 0.02f, 0.0001f, 0.0f)
+			&& std::isfinite(falloff))
+		{
+			light.Falloff = std::max(falloff, 0.0001f);
+			changed = true;
+		}
+		ImGui::EndDisabled();
+		if (light.Type == Light2DType::Global)
+			ImGui::TextDisabled("Radius and falloff apply to Point lights.");
+		if (changed)
+			MarkModified();
 	}
 
 	void SceneHierarchyPanel::DrawCSharpScripts(Entity entity)
@@ -3671,6 +4573,33 @@ static void DrawComponent(const std::string& name, Entity entity,
 			EditorIcon::Sprite, [this, entity](auto& component)
 		{
 			DrawSpriteAnimatorInspector(component, entity);
+		}, onModified);
+		});
+
+		richInspectors.emplace(ComponentIds::Tilemap2D, [&]()
+		{
+		DrawComponent<Tilemap2D>("Tilemap 2D", entity, m_Icons,
+			EditorIcon::Sprite, [this, entity](auto& component)
+		{
+			DrawTilemap2DInspector(component, entity);
+		}, onModified);
+		});
+
+		richInspectors.emplace(ComponentIds::ParticleSystem2D, [&]()
+		{
+		DrawComponent<ParticleSystem2D>("Particle System 2D", entity, m_Icons,
+			EditorIcon::Sprite, [this](auto& component)
+		{
+			DrawParticleSystem2DInspector(component);
+		}, onModified);
+		});
+
+		richInspectors.emplace(ComponentIds::Light2D, [&]()
+		{
+		DrawComponent<Light2D>("Light 2D", entity, m_Icons,
+			EditorIcon::Count, [this](auto& component)
+		{
+			DrawLight2DInspector(component);
 		}, onModified);
 		});
 

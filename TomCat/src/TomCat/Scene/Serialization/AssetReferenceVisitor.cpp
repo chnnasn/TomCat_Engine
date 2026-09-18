@@ -154,6 +154,50 @@ namespace TomCat {
 			return true;
 		}
 
+		bool VisitTilemapCells(const YAML::Node& components,
+			const std::string& entityPath,
+			const AssetReferenceVisitor::Visitor& visitor,
+			std::string& errorMessage)
+		{
+			if (!components)
+				return true;
+			if (!components.IsSequence())
+			{
+				errorMessage = entityPath + ".Components must be an array";
+				return false;
+			}
+			for (size_t componentIndex = 0; componentIndex < components.size();
+				++componentIndex)
+			{
+				const YAML::Node component = components[componentIndex];
+				if (!component.IsMap() || !component["StableName"]
+					|| component["StableName"].as<std::string>() != "TomCat.Tilemap2D")
+					continue;
+				const std::string componentPath = entityPath + ".Components["
+					+ std::to_string(componentIndex) + "].Properties";
+				const YAML::Node properties = component["Properties"];
+				const YAML::Node cells = properties && properties.IsMap()
+					? properties["Cells"] : YAML::Node{};
+				if (!cells || !cells.IsSequence())
+				{
+					errorMessage = componentPath + ".Cells must be an array";
+					return false;
+				}
+				for (size_t cellIndex = 0; cellIndex < cells.size(); ++cellIndex)
+				{
+					const YAML::Node cell = cells[cellIndex];
+					const std::string cellPath = componentPath + ".Cells["
+						+ std::to_string(cellIndex) + "]";
+					if (!cell.IsMap() || !VisitHandle(cell, "SpriteHandle", cellPath,
+						AssetType::Texture2D, SerializedAssetReferenceKind::TilemapCell,
+						false, visitor, errorMessage))
+						return false;
+				}
+				return true;
+			}
+			return true;
+		}
+
 	}
 
 	bool AssetReferenceVisitor::VisitScene(const YAML::Node& sceneDocument,
@@ -329,7 +373,13 @@ namespace TomCat {
 						SerializedAssetReferenceKind::Font, visitor, errorMessage)
 					|| !VisitRegisteredAssetProperty(registeredComponents,
 						"TomCat.UIImage", "Image", entityPath, AssetType::Texture2D,
-						SerializedAssetReferenceKind::UIImage, visitor, errorMessage))
+						SerializedAssetReferenceKind::UIImage, visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.ParticleSystem2D", "Sprite", entityPath,
+						AssetType::Texture2D, SerializedAssetReferenceKind::Particle,
+						visitor, errorMessage)
+					|| !VisitTilemapCells(registeredComponents, entityPath, visitor,
+						errorMessage))
 					return false;
 
 				const YAML::Node csharpScripts = entity["CSharpScripts"];

@@ -43,6 +43,9 @@ namespace TomCat {
 		inline constexpr uint64_t CircleCollider2D = 0x9f0000000000000eULL;
 		inline constexpr uint64_t DistanceJoint2D = 0x9f0000000000000fULL;
 		inline constexpr uint64_t EditorVisibility = 0x9f00000000000010ULL;
+		inline constexpr uint64_t Tilemap2D = 0x9f00000000000011ULL;
+		inline constexpr uint64_t ParticleSystem2D = 0x9f00000000000012ULL;
+		inline constexpr uint64_t Light2D = 0x9f00000000000013ULL;
 
 		// Property IDs below preserve the numeric IDs exposed by the original
 		// gameplay ABI. They are now persisted 64-bit identities owned by the
@@ -159,6 +162,42 @@ namespace TomCat {
 		namespace AudioListenerProperties {
 			inline constexpr uint64_t Enabled = 920;
 			inline constexpr uint64_t Primary = 921;
+		}
+		namespace Tilemap2DProperties {
+			inline constexpr uint64_t Enabled = 1000;
+			inline constexpr uint64_t CellSize = 1001;
+			inline constexpr uint64_t CellGap = 1002;
+			inline constexpr uint64_t SortingLayer = 1003;
+			inline constexpr uint64_t OrderInLayer = 1004;
+		}
+		namespace ParticleSystem2DProperties {
+			inline constexpr uint64_t Enabled = 1100;
+			inline constexpr uint64_t PlayOnStart = 1101;
+			inline constexpr uint64_t Loop = 1102;
+			inline constexpr uint64_t Duration = 1103;
+			inline constexpr uint64_t EmissionRate = 1104;
+			inline constexpr uint64_t MaxParticles = 1105;
+			inline constexpr uint64_t StartLifetime = 1106;
+			inline constexpr uint64_t StartSpeed = 1107;
+			inline constexpr uint64_t StartSize = 1108;
+			inline constexpr uint64_t EndSize = 1109;
+			inline constexpr uint64_t GravityScale = 1110;
+			inline constexpr uint64_t Direction = 1111;
+			inline constexpr uint64_t SpreadDegrees = 1112;
+			inline constexpr uint64_t StartColor = 1113;
+			inline constexpr uint64_t EndColor = 1114;
+			inline constexpr uint64_t Sprite = 1115;
+			inline constexpr uint64_t SortingLayer = 1116;
+			inline constexpr uint64_t OrderInLayer = 1117;
+			inline constexpr uint64_t Seed = 1118;
+		}
+		namespace Light2DProperties {
+			inline constexpr uint64_t Enabled = 1200;
+			inline constexpr uint64_t Type = 1201;
+			inline constexpr uint64_t Color = 1202;
+			inline constexpr uint64_t Intensity = 1203;
+			inline constexpr uint64_t Radius = 1204;
+			inline constexpr uint64_t Falloff = 1205;
 		}
 		inline constexpr uint64_t Health = 0x8d0df196efd946a1ULL;
 		namespace HealthProperties {

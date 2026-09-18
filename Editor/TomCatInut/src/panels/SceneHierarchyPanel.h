@@ -5,12 +5,15 @@
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Entity.h"
+#include "TomCat/Scene/SpriteAnimatorAuthoring.h"
 #include "../EditorIcons.h"
 #include "../Scripting/ScriptEditorMetadata.h"
 
 #include <array>
 #include <functional>
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -113,9 +116,38 @@ namespace TomCat {
 			State
 		};
 
+		struct AnimatorGraphEditorState
+		{
+			SpriteAnimatorAuthoring::AnimatorGraphLayout Layout;
+			float PanX = 0.0f;
+			float PanY = 0.0f;
+			std::string SelectedState;
+			std::string TransitionSource;
+			size_t SelectedTransition = static_cast<size_t>(-1);
+			bool SelectedAnyState = false;
+			bool TransitionSourceAnyState = false;
+		};
+
+		struct TilemapBrushState
+		{
+			glm::ivec2 Coordinate{ 0, 0 };
+			AssetHandle SpriteHandle = AssetHandle(0);
+			glm::vec4 Tint{ 1.0f };
+			bool FlipX = false;
+			bool FlipY = false;
+			int32_t RotationQuarterTurns = 0;
+		};
+
 		void DrawEntityNode(Entity entity);
 		void DrawComponents(Entity entity);
 		void DrawSpriteAnimatorInspector(SpriteAnimator& animator, Entity entity);
+		void DrawTilemap2DInspector(Tilemap2D& tilemap, Entity entity);
+		void DrawParticleSystem2DInspector(ParticleSystem2D& system);
+		void DrawLight2DInspector(Light2D& light);
+		void DrawSpriteAnimatorGraph(SpriteAnimator& animator, Entity entity,
+			const std::function<void(AnimatorRenameTarget, size_t,
+				const std::string&)>& requestRename,
+			std::function<void()>& pendingMutation);
 		void DrawCSharpScripts(Entity entity);
 		bool AttachCSharpScript(Entity entity, AssetHandle handle);
 		bool AcceptCSharpScriptDrop(Entity entity);
@@ -167,6 +199,8 @@ namespace TomCat {
 		size_t m_AnimatorRenameIndex = 0;
 		std::array<char, 128> m_AnimatorRenameBuffer{};
 		std::string m_AnimatorRenameError;
+		std::unordered_map<uint64_t, AnimatorGraphEditorState> m_AnimatorGraphStates;
+		std::unordered_map<uint64_t, TilemapBrushState> m_TilemapBrushStates;
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
 		AssetRevealCallback m_AssetRevealCallback;

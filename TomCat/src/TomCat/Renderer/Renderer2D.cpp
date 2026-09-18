@@ -116,6 +116,8 @@ namespace TomCat {
 		float LineWidth = 2.0f;
 
 		glm::vec4 QuadVertexPositions[4];
+		glm::vec3 AmbientLight{ 1.0f };
+		std::vector<Renderer2D::PointLightData> PointLights;
 
 		Renderer2D::Statistics Stats;
 
@@ -129,6 +131,26 @@ namespace TomCat {
 	};
 
 	static Renderer2DData s_Data;
+
+	static glm::vec4 Apply2DLighting(const glm::vec4& color,
+		const glm::vec3& worldPosition, bool lit)
+	{
+		if (!lit)
+			return color;
+		glm::vec3 lighting = glm::max(s_Data.AmbientLight, glm::vec3(0.0f));
+		for (const Renderer2D::PointLightData& light : s_Data.PointLights)
+		{
+			if (light.Intensity <= 0.0f || light.Radius <= 0.0f)
+				continue;
+			const float distance = glm::length(glm::vec2(worldPosition - light.Position));
+			const float linear = glm::clamp(1.0f - distance / light.Radius, 0.0f, 1.0f);
+			const float attenuation = std::pow(linear,
+				std::max(light.Falloff, 0.0001f));
+			lighting += glm::max(light.Color, glm::vec3(0.0f))
+				* std::max(light.Intensity, 0.0f) * attenuation;
+		}
+		return { glm::vec3(color) * lighting, color.a };
+	}
 
 	// Engine infrastructure shaders are code, not project assets. Embedding them
 	// keeps the shipping player independent from an uncooked Packages/Shaders
@@ -471,6 +493,8 @@ void main()
 		s_Data.SceneActive = false;
 		s_Data.TextureSlotIndex = 1;
 		s_Data.TextureSlots.fill(nullptr);
+		s_Data.AmbientLight = glm::vec3(1.0f);
+		s_Data.PointLights.clear();
 		s_Data.CameraUniformBuffer.reset();
 		s_Data.LineShader.reset();
 		s_Data.CircleShader.reset();
@@ -482,6 +506,13 @@ void main()
 		s_Data.CircleVertexArray.reset();
 		s_Data.QuadVertexBuffer.reset();
 		s_Data.QuadVertexArray.reset();
+	}
+
+	void Renderer2D::Set2DLighting(const glm::vec3& ambient,
+		std::span<const PointLightData> pointLights)
+	{
+		s_Data.AmbientLight = glm::max(ambient, glm::vec3(0.0f));
+		s_Data.PointLights.assign(pointLights.begin(), pointLights.end());
 	}
 
 	void Renderer2D::BeginScene(const Camera& camera, const glm::mat4& transform)
@@ -616,7 +647,8 @@ void main()
 		DrawQuad(transform, texture, tilingFactor, tintColor);
 	}
 
-	void Renderer2D::DrawQuad(const glm::mat4& transform, const glm::vec4& color, int entityID)
+	void Renderer2D::DrawQuad(const glm::mat4& transform, const glm::vec4& color,
+		int entityID, bool lit)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -630,8 +662,11 @@ void main()
 
 		for (size_t i = 0; i < quadVertexCount; i++)
 		{
-			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[i];
-			s_Data.QuadVertexBufferPtr->Color = color;
+			const glm::vec3 worldPosition = glm::vec3(
+				transform * s_Data.QuadVertexPositions[i]);
+			s_Data.QuadVertexBufferPtr->Position = worldPosition;
+			s_Data.QuadVertexBufferPtr->Color = Apply2DLighting(color,
+				worldPosition, lit);
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
@@ -644,12 +679,20 @@ void main()
 		s_Data.Stats.QuadCount++;
 	}
 
-	void Renderer2D::DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor, const glm::vec4& tintColor, int entityID)
+	void Renderer2D::DrawLitQuad(const glm::mat4& transform,
+		const glm::vec4& color, int entityID)
+	{
+		DrawQuad(transform, color, entityID, true);
+	}
+
+	void Renderer2D::DrawQuad(const glm::mat4& transform,
+		const Ref<Texture2D>& texture, float tilingFactor,
+		const glm::vec4& tintColor, int entityID, bool lit)
 	{
 		if (tilingFactor == 1.0f)
 		{
 			DrawTexturedQuadRegion(transform, texture, { 0.0f, 0.0f },
-				{ 1.0f, 1.0f }, tintColor, entityID);
+				{ 1.0f, 1.0f }, tintColor, entityID, lit);
 			return;
 		}
 		TC_PROFILE_FUNCTION();
@@ -684,8 +727,11 @@ void main()
 
 		for (size_t i = 0; i < quadVertexCount; i++)
 		{
-			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[i];
-			s_Data.QuadVertexBufferPtr->Color = tintColor;
+			const glm::vec3 worldPosition = glm::vec3(
+				transform * s_Data.QuadVertexPositions[i]);
+			s_Data.QuadVertexBufferPtr->Position = worldPosition;
+			s_Data.QuadVertexBufferPtr->Color = Apply2DLighting(tintColor,
+				worldPosition, lit);
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
@@ -700,7 +746,8 @@ void main()
 
 	void Renderer2D::DrawTexturedQuadRegion(const glm::mat4& transform,
 		const Ref<Texture2D>& texture, const glm::vec2& uvMin,
-		const glm::vec2& uvMax, const glm::vec4& tintColor, int entityID)
+		const glm::vec2& uvMax, const glm::vec4& tintColor, int entityID,
+		bool lit)
 	{
 		TC_PROFILE_FUNCTION();
 		const glm::vec2 textureCoords[] = {
@@ -733,8 +780,11 @@ void main()
 
 		for (size_t index = 0; index < 4; ++index)
 		{
-			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPositions[index];
-			s_Data.QuadVertexBufferPtr->Color = tintColor;
+			const glm::vec3 worldPosition = glm::vec3(
+				transform * s_Data.QuadVertexPositions[index]);
+			s_Data.QuadVertexBufferPtr->Position = worldPosition;
+			s_Data.QuadVertexBufferPtr->Color = Apply2DLighting(tintColor,
+				worldPosition, lit);
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[index];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = 1.0f;
@@ -898,7 +948,8 @@ void main()
 		if (!assets.ResolveSpriteAsset(src.SpriteHandle, resolved)
 			|| !resolved.IsSubAsset)
 		{
-			DrawQuad(transform, src.Sprite, src.TilingFactor, src._Color, entityID);
+			DrawQuad(transform, src.Sprite, src.TilingFactor, src._Color, entityID,
+				true);
 			return;
 		}
 		SpriteRenderGeometry geometry;
@@ -912,7 +963,7 @@ void main()
 				{ geometry.Width, geometry.Height, 1.0f });
 		DrawTexturedQuadRegion(spriteTransform, src.Sprite,
 			{ geometry.UMin, geometry.VMin }, { geometry.UMax, geometry.VMax },
-			src._Color, entityID);
+			src._Color, entityID, true);
 	}
 
 	void Renderer2D::ResetStats()

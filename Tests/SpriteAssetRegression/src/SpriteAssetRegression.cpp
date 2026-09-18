@@ -380,6 +380,54 @@ namespace {
 		AddStateMachine(animator);
 		std::string error;
 
+		AnimatorGraphLayout graphLayout;
+		SynchronizeGraphLayout(animator, graphLayout);
+		Require(graphLayout.StatePositions.size() == animator.States.size()
+			&& graphLayout.StatePositions.at("Idle").X
+				== DefaultGraphPosition(0).X
+			&& graphLayout.StatePositions.at("Moving").X
+				== DefaultGraphPosition(1).X,
+			"Animator graph did not create a deterministic state layout");
+		graphLayout.StatePositions.at("Idle") = { 431.0f, 217.0f };
+		SynchronizeGraphLayout(animator, graphLayout);
+		Require(graphLayout.StatePositions.at("Idle").X == 431.0f
+			&& graphLayout.StatePositions.at("Idle").Y == 217.0f,
+			"Animator graph synchronization discarded a dragged node position");
+		RenameGraphState(graphLayout, "Idle", "Standing");
+		Require(graphLayout.StatePositions.find("Idle")
+				== graphLayout.StatePositions.end()
+			&& graphLayout.StatePositions.at("Standing").X == 431.0f,
+			"Animator graph rename did not preserve the state position");
+
+		TomCat::SpriteAnimator graphAnimator = animator;
+		const size_t transitionCount = graphAnimator.Transitions.size();
+		size_t addedTransition = static_cast<size_t>(-1);
+		Require(AddTransition(graphAnimator, std::nullopt, 1, &addedTransition,
+			error)
+			&& addedTransition == transitionCount
+			&& graphAnimator.Transitions.back().AnyState
+			&& graphAnimator.Transitions.back().ToState == "Moving"
+			&& graphAnimator.Transitions.back().ExitTime == 1.0f,
+			"Animator graph did not create a valid Any State transition");
+		Require(SetTransitionEndpoints(graphAnimator, addedTransition, 0, 2, error)
+			&& !graphAnimator.Transitions.back().AnyState
+			&& graphAnimator.Transitions.back().FromState == "Idle"
+			&& graphAnimator.Transitions.back().ToState == "Jumping",
+			"Animator graph endpoint editing left invalid state references");
+		const TomCat::AnimatorTransition validTransition =
+			graphAnimator.Transitions.back();
+		Require(!SetTransitionEndpoints(graphAnimator, addedTransition, 99, 0, error)
+			&& !error.empty()
+			&& graphAnimator.Transitions.back().FromState == validTransition.FromState
+			&& graphAnimator.Transitions.back().ToState == validTransition.ToState,
+			"Animator graph partially changed an invalid transition edit");
+		Require(RemoveTransition(graphAnimator, addedTransition, error)
+			&& graphAnimator.Transitions.size() == transitionCount,
+			"Animator graph could not safely remove a selected transition");
+		Require(!RemoveTransition(graphAnimator, addedTransition, error)
+			&& !error.empty(),
+			"Animator graph accepted a stale transition selection");
+
 		Require(RenameClip(animator, 0, "Locomotion", error)
 			&& animator.InitialClip == "Locomotion"
 			&& animator.States[0].Clip == "Locomotion"
@@ -1357,6 +1405,113 @@ namespace {
 			"Cooked Sprite envelope lost its atlas slice metadata or payload");
 	}
 
+	void TestAutomaticAtlasSlicingAndPacking()
+	{
+		constexpr uint32_t width = 8;
+		constexpr uint32_t height = 6;
+		std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4, 0);
+		const auto setPixel = [&](uint32_t x, uint32_t y,
+			std::array<uint8_t, 4> color)
+		{
+			const size_t offset = (static_cast<size_t>(y) * width + x) * 4;
+			std::copy(color.begin(), color.end(), pixels.begin() + offset);
+		};
+		for (uint32_t y = 1; y <= 2; ++y)
+			for (uint32_t x = 1; x <= 2; ++x)
+				setPixel(x, y, { 220, 10, 20, 255 });
+		for (uint32_t y = 2; y <= 4; ++y)
+			for (uint32_t x = 5; x <= 6; ++x)
+				setPixel(x, y, { 10, 180, 40, 255 });
+		setPixel(0, 5, { 255, 255, 255, 255 });
+		setPixel(3, 0, { 255, 255, 255, 64 });
+
+		TomCat::SpriteAtlasSliceOptions sliceOptions;
+		sliceOptions.AlphaThreshold = 128;
+		sliceOptions.MinimumOpaquePixels = 2;
+		std::vector<TomCat::SpriteAtlasRect> regions;
+		std::string error;
+		Require(TomCat::SliceSpriteAtlasByAlpha(pixels, width, height,
+			sliceOptions, regions, error) && regions == std::vector<TomCat::SpriteAtlasRect>{
+				{ 1, 1, 2, 2 }, { 5, 2, 2, 3 } },
+			"alpha Auto Slice did not find deterministic opaque island bounds");
+
+		TomCat::AssetSubAsset exact;
+		exact.Handle = TomCat::AssetHandle(101);
+		exact.PersistentID = "sprite:hero";
+		exact.Name = "Hero";
+		exact.Type = TomCat::AssetType::Texture2D;
+		exact.Sprite = { 1, 1, 2, 2, 0.25f, 0.75f, 32.0f,
+			1.0f, 0.0f, 1.0f, 0.0f };
+		TomCat::AssetSubAsset moved;
+		moved.Handle = TomCat::AssetHandle(202);
+		moved.PersistentID = "sprite:enemy";
+		moved.Name = "Enemy";
+		moved.Type = TomCat::AssetType::Texture2D;
+		moved.Sprite = { 4, 2, 2, 3, 0.5f, 0.5f, 16.0f,
+			0.0f, 0.0f, 0.0f, 0.0f };
+		const std::array<TomCat::AssetSubAsset, 2> existing = { exact, moved };
+		const std::vector<TomCat::AssetSubAsset> reconciled =
+			TomCat::ReconcileSpriteAtlasSlices(regions, existing);
+		Require(reconciled.size() == 2
+			&& reconciled[0].Handle == exact.Handle
+			&& reconciled[0].PersistentID == "sprite:hero"
+			&& reconciled[0].Name == "Hero"
+			&& reconciled[0].Sprite.PivotX == 0.25f
+			&& reconciled[0].Sprite.PixelsPerUnit == 32.0f
+			&& reconciled[1].Handle == moved.Handle
+			&& reconciled[1].PersistentID == "sprite:enemy"
+			&& reconciled[1].Sprite.X == 5,
+			"Auto Slice reconciliation did not preserve stable IDs and metadata");
+		const std::vector<TomCat::AssetSubAsset> generatedA =
+			TomCat::ReconcileSpriteAtlasSlices(regions, {});
+		const std::vector<TomCat::AssetSubAsset> generatedB =
+			TomCat::ReconcileSpriteAtlasSlices(regions, {});
+		Require(generatedA.size() == 2 && generatedB.size() == 2
+			&& generatedA[0].PersistentID == generatedB[0].PersistentID
+			&& generatedA[1].PersistentID == generatedB[1].PersistentID
+			&& generatedA[0].PersistentID != generatedA[1].PersistentID,
+			"new Auto Slice IDs are not deterministic and unique");
+
+		TomCat::SpriteAtlasGridOptions gridOptions;
+		gridOptions.CellWidth = 3;
+		gridOptions.CellHeight = 2;
+		gridOptions.IncludePartialCells = true;
+		std::vector<TomCat::SpriteAtlasRect> grid;
+		Require(TomCat::SliceSpriteAtlasGrid(7, 5, gridOptions, grid, error)
+			&& grid.size() == 9 && grid.back() == TomCat::SpriteAtlasRect{ 6, 4, 1, 1 },
+			"Grid Slice did not clip partial edge cells");
+
+		TomCat::SpriteAtlasPackOptions packOptions;
+		packOptions.MaximumWidth = 8;
+		packOptions.MaximumHeight = 8;
+		packOptions.Padding = 1;
+		packOptions.PowerOfTwo = true;
+		TomCat::SpriteAtlasPackedLayout layout;
+		std::vector<uint8_t> packed;
+		Require(TomCat::BuildPackedSpriteAtlasRGBA(pixels, width, height, regions,
+			packOptions, layout, packed, error)
+			&& layout.Width == 8 && layout.Height == 8
+			&& layout.Placements.size() == regions.size()
+			&& packed.size() == static_cast<size_t>(8 * 8 * 4),
+			"deterministic Sprite Atlas packing failed");
+		for (size_t index = 0; index < regions.size(); ++index)
+		{
+			const TomCat::SpriteAtlasRect& source = regions[index];
+			const TomCat::SpriteAtlasRect& destination = layout.Placements[index];
+			const size_t sourcePixel = (static_cast<size_t>(source.Y) * width
+				+ source.X) * 4;
+			const size_t contentPixel = (static_cast<size_t>(destination.Y)
+				* layout.Width + destination.X) * 4;
+			const size_t extrudedPixel = (static_cast<size_t>(destination.Y)
+				* layout.Width + destination.X - 1) * 4;
+			Require(std::equal(pixels.begin() + sourcePixel,
+				pixels.begin() + sourcePixel + 4, packed.begin() + contentPixel)
+				&& std::equal(pixels.begin() + sourcePixel,
+					pixels.begin() + sourcePixel + 4, packed.begin() + extrudedPixel),
+				"packed Sprite pixels or padding extrusion changed source colors");
+		}
+	}
+
 	void WritePackageMarker(const std::filesystem::path& path,
 		std::span<const uint8_t> bytes)
 	{
@@ -1491,6 +1646,7 @@ int main()
 		TestBuiltInSpriteHandlesStayReserved();
 		TestPrimitiveSpriteAuthoringAndCookedPackage();
 		TestColdDirectAtlasCookIsReadOnly();
+		TestAutomaticAtlasSlicingAndPacking();
 		TestAtlasImportAndCookedSubSprite();
 		TestCookRejectsReservedSubAssetDependency();
 		TestCookRejectsConcurrentSubAssetMutation(

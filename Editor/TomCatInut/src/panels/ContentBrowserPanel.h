@@ -112,6 +112,16 @@ namespace TomCat {
 		std::string m_AtlasEditorError;
 		uint32_t m_AtlasWidth = 1;
 		uint32_t m_AtlasHeight = 1;
+		int m_AtlasAlphaThreshold = 1;
+		int m_AtlasMinimumOpaquePixels = 1;
+		int m_AtlasSlicePadding = 0;
+		int m_AtlasGridCell[2] = { 32, 32 };
+		int m_AtlasGridOffset[2] = { 0, 0 };
+		int m_AtlasGridSpacing[2] = { 0, 0 };
+		bool m_AtlasGridIncludePartial = false;
+		int m_AtlasPackMaximumSize = 2048;
+		int m_AtlasPackPadding = 1;
+		bool m_AtlasPackPowerOfTwo = true;
 		bool m_OpenAtlasEditorPopup = false;
 		float m_LeftPanelWidth = 250.0f;
 		float m_ThumbnailSize = 128.0f;
@@ -155,6 +165,8 @@ namespace TomCat {
 		void BeginAtlasEditor(const std::filesystem::path& path);
 		void DrawAtlasEditorPopup();
 		bool SaveAtlasEditor();
+		bool AutoSliceAtlas(bool grid);
+		bool ExportPackedAtlas();
 
 		void OpenAsset(const std::filesystem::path& path, bool isDirectory);
 		bool OpenCSharpScript(const std::filesystem::path& path);

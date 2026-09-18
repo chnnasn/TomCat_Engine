@@ -3,6 +3,7 @@
 #include "ContentBrowserPanel.h"
 
 #include <imgui/imgui.h>
+#include <stb_image/stb_image.h>
 
 #include <algorithm>
 #include <charconv>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -25,6 +27,7 @@
 
 #include "TomCat/Project/ProjectManager.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/ImGui/ImGuiCallback.h"
@@ -285,6 +288,99 @@ namespace TomCat {
 				std::chars_format::general, std::numeric_limits<float>::max_digits10);
 			return converted.ec == std::errc{}
 				? std::string(buffer, converted.ptr) : std::to_string(value);
+		}
+
+		bool DecodeAtlasRGBA(const std::filesystem::path& path,
+			std::vector<uint8_t>& pixels, uint32_t& width, uint32_t& height,
+			std::string& error)
+		{
+			pixels.clear();
+			width = 0;
+			height = 0;
+			std::vector<uint8_t> encoded;
+			if (!ReadFileForImport(path, encoded, error))
+				return false;
+			if (encoded.empty() || encoded.size() > static_cast<size_t>(
+				(std::numeric_limits<int>::max)()))
+			{
+				error = "Source image is empty or too large to decode.";
+				return false;
+			}
+			int decodedWidth = 0;
+			int decodedHeight = 0;
+			int channels = 0;
+			stbi_uc* decoded = stbi_load_from_memory(encoded.data(),
+				static_cast<int>(encoded.size()), &decodedWidth, &decodedHeight,
+				&channels, 4);
+			if (!decoded || decodedWidth <= 0 || decodedHeight <= 0)
+			{
+				error = "Source image could not be decoded as RGBA.";
+				if (decoded) stbi_image_free(decoded);
+				return false;
+			}
+			const uint64_t byteCount = static_cast<uint64_t>(decodedWidth)
+				* static_cast<uint64_t>(decodedHeight) * 4;
+			if (byteCount > (std::numeric_limits<size_t>::max)())
+			{
+				stbi_image_free(decoded);
+				error = "Decoded source image is too large.";
+				return false;
+			}
+			try
+			{
+				pixels.assign(decoded, decoded + static_cast<size_t>(byteCount));
+			}
+			catch (const std::exception&)
+			{
+				stbi_image_free(decoded);
+				error = "Decoded source image pixel allocation failed.";
+				return false;
+			}
+			stbi_image_free(decoded);
+			width = static_cast<uint32_t>(decodedWidth);
+			height = static_cast<uint32_t>(decodedHeight);
+			return true;
+		}
+
+		std::vector<uint8_t> EncodeAtlasTGA(std::span<const uint8_t> rgba,
+			uint32_t width, uint32_t height)
+		{
+			if (width == 0 || height == 0 || width > 65535 || height > 65535
+				|| rgba.size() != static_cast<size_t>(width) * height * 4)
+				return {};
+			std::vector<uint8_t> output(18 + rgba.size(), 0);
+			output[2] = 2;
+			output[12] = static_cast<uint8_t>(width & 0xff);
+			output[13] = static_cast<uint8_t>(width >> 8);
+			output[14] = static_cast<uint8_t>(height & 0xff);
+			output[15] = static_cast<uint8_t>(height >> 8);
+			output[16] = 32;
+			output[17] = 0x28;
+			for (size_t source = 0, destination = 18; source < rgba.size();
+				source += 4, destination += 4)
+			{
+				output[destination + 0] = rgba[source + 2];
+				output[destination + 1] = rgba[source + 1];
+				output[destination + 2] = rgba[source + 0];
+				output[destination + 3] = rgba[source + 3];
+			}
+			return output;
+		}
+
+		std::filesystem::path UniquePackedAtlasPath(
+			const std::filesystem::path& source)
+		{
+			for (uint32_t index = 0; index < 10000; ++index)
+			{
+				std::string name = PathToUTF8(source.stem()) + "_packed";
+				if (index != 0) name += "_" + std::to_string(index + 1);
+				const std::filesystem::path candidate = source.parent_path()
+					/ UTF8ToPath(name + ".tga");
+				std::error_code statusError;
+				if (!std::filesystem::exists(candidate, statusError) && !statusError)
+					return candidate;
+			}
+			return {};
 		}
 
 		std::pair<std::filesystem::path, std::string> MakeUniqueCSharpScriptPath(
@@ -1579,6 +1675,240 @@ namespace TomCat {
 		return true;
 	}
 
+	bool ContentBrowserPanel::AutoSliceAtlas(bool grid)
+	{
+		m_AtlasEditorError.clear();
+		std::vector<SpriteAtlasRect> regions;
+		std::string error;
+		if (grid)
+		{
+			SpriteAtlasGridOptions options;
+			options.CellWidth = static_cast<uint32_t>((std::max)(1, m_AtlasGridCell[0]));
+			options.CellHeight = static_cast<uint32_t>((std::max)(1, m_AtlasGridCell[1]));
+			options.OffsetX = static_cast<uint32_t>((std::max)(0, m_AtlasGridOffset[0]));
+			options.OffsetY = static_cast<uint32_t>((std::max)(0, m_AtlasGridOffset[1]));
+			options.SpacingX = static_cast<uint32_t>((std::max)(0, m_AtlasGridSpacing[0]));
+			options.SpacingY = static_cast<uint32_t>((std::max)(0, m_AtlasGridSpacing[1]));
+			options.IncludePartialCells = m_AtlasGridIncludePartial;
+			if (!SliceSpriteAtlasGrid(m_AtlasWidth, m_AtlasHeight, options,
+				regions, error))
+			{
+				m_AtlasEditorError = error;
+				return false;
+			}
+		}
+		else
+		{
+			std::vector<uint8_t> pixels;
+			uint32_t width = 0;
+			uint32_t height = 0;
+			if (!DecodeAtlasRGBA(m_AtlasEditorPath, pixels, width, height, error))
+			{
+				m_AtlasEditorError = error;
+				return false;
+			}
+			SpriteAtlasSliceOptions options;
+			options.AlphaThreshold = static_cast<uint8_t>(std::clamp(
+				m_AtlasAlphaThreshold, 1, 255));
+			options.MinimumOpaquePixels = static_cast<uint32_t>((std::max)(
+				1, m_AtlasMinimumOpaquePixels));
+			options.Padding = static_cast<uint32_t>((std::max)(0,
+				m_AtlasSlicePadding));
+			if (!SliceSpriteAtlasByAlpha(pixels, width, height, options,
+				regions, error))
+			{
+				m_AtlasEditorError = error;
+				return false;
+			}
+			m_AtlasWidth = width;
+			m_AtlasHeight = height;
+			if (regions.empty())
+			{
+				m_AtlasEditorError = "Auto Slice found no opaque regions; existing slices were kept.";
+				return false;
+			}
+		}
+
+		std::vector<AssetSubAsset> existing;
+		existing.reserve(m_AtlasSlices.size());
+		for (const AtlasSliceDraft& draft : m_AtlasSlices)
+		{
+			if (draft.StableID.empty() || draft.Rect[0] < 0 || draft.Rect[1] < 0
+				|| draft.Rect[2] <= 0 || draft.Rect[3] <= 0)
+				continue;
+			AssetSubAsset slice;
+			slice.PersistentID = draft.StableID.starts_with("sprite:")
+				? draft.StableID : "sprite:" + draft.StableID;
+			slice.Name = draft.Name;
+			slice.Type = AssetType::Texture2D;
+			slice.Sprite = { static_cast<uint32_t>(draft.Rect[0]),
+				static_cast<uint32_t>(draft.Rect[1]),
+				static_cast<uint32_t>(draft.Rect[2]),
+				static_cast<uint32_t>(draft.Rect[3]), draft.Pivot[0], draft.Pivot[1],
+				draft.PixelsPerUnit, draft.Border[0], draft.Border[1],
+				draft.Border[2], draft.Border[3] };
+			existing.push_back(std::move(slice));
+		}
+		const float defaultPPU = existing.empty() ? 100.0f
+			: existing.front().Sprite.PixelsPerUnit;
+		const std::vector<AssetSubAsset> reconciled = ReconcileSpriteAtlasSlices(
+			regions, existing, defaultPPU);
+		m_AtlasSlices.clear();
+		m_AtlasSlices.reserve(reconciled.size());
+		for (const AssetSubAsset& source : reconciled)
+		{
+			AtlasSliceDraft draft;
+			draft.StableID = source.PersistentID.starts_with("sprite:")
+				? source.PersistentID.substr(7) : source.PersistentID;
+			draft.Name = source.Name;
+			draft.Rect[0] = static_cast<int>(source.Sprite.X);
+			draft.Rect[1] = static_cast<int>(source.Sprite.Y);
+			draft.Rect[2] = static_cast<int>(source.Sprite.Width);
+			draft.Rect[3] = static_cast<int>(source.Sprite.Height);
+			draft.Pivot[0] = source.Sprite.PivotX;
+			draft.Pivot[1] = source.Sprite.PivotY;
+			draft.PixelsPerUnit = source.Sprite.PixelsPerUnit;
+			draft.Border[0] = source.Sprite.BorderLeft;
+			draft.Border[1] = source.Sprite.BorderBottom;
+			draft.Border[2] = source.Sprite.BorderRight;
+			draft.Border[3] = source.Sprite.BorderTop;
+			m_AtlasSlices.push_back(std::move(draft));
+		}
+		return true;
+	}
+
+	bool ContentBrowserPanel::ExportPackedAtlas()
+	{
+		m_AtlasEditorError.clear();
+		if (m_AtlasSlices.empty())
+		{
+			m_AtlasEditorError = "Add or generate at least one slice before packing.";
+			return false;
+		}
+		std::vector<SpriteAtlasRect> regions;
+		regions.reserve(m_AtlasSlices.size());
+		std::unordered_set<std::string> stableIDs;
+		for (const AtlasSliceDraft& slice : m_AtlasSlices)
+		{
+			const bool finite = std::isfinite(slice.Pivot[0])
+				&& std::isfinite(slice.Pivot[1])
+				&& std::isfinite(slice.PixelsPerUnit)
+				&& std::all_of(std::begin(slice.Border), std::end(slice.Border),
+					[](float value) { return std::isfinite(value); });
+			if (slice.StableID.empty() || slice.Name.empty()
+				|| !stableIDs.emplace(slice.StableID).second || slice.Rect[0] < 0
+				|| slice.Rect[1] < 0 || slice.Rect[2] <= 0 || slice.Rect[3] <= 0
+				|| !finite || slice.Pivot[0] < 0.0f || slice.Pivot[0] > 1.0f
+				|| slice.Pivot[1] < 0.0f || slice.Pivot[1] > 1.0f
+				|| slice.PixelsPerUnit <= 0.0f
+				|| std::any_of(std::begin(slice.Border), std::end(slice.Border),
+					[](float value) { return value < 0.0f; })
+				|| slice.Border[0] + slice.Border[2] > slice.Rect[2]
+				|| slice.Border[1] + slice.Border[3] > slice.Rect[3])
+			{
+				m_AtlasEditorError = "Packed export requires valid, uniquely identified slices.";
+				return false;
+			}
+			regions.push_back({ static_cast<uint32_t>(slice.Rect[0]),
+				static_cast<uint32_t>(slice.Rect[1]),
+				static_cast<uint32_t>(slice.Rect[2]),
+				static_cast<uint32_t>(slice.Rect[3]) });
+		}
+
+		std::vector<uint8_t> sourcePixels;
+		uint32_t sourceWidth = 0;
+		uint32_t sourceHeight = 0;
+		std::string error;
+		if (!DecodeAtlasRGBA(m_AtlasEditorPath, sourcePixels, sourceWidth,
+			sourceHeight, error))
+		{
+			m_AtlasEditorError = error;
+			return false;
+		}
+		SpriteAtlasPackOptions options;
+		options.MaximumWidth = static_cast<uint32_t>(std::clamp(
+			m_AtlasPackMaximumSize, 1, 16384));
+		options.MaximumHeight = options.MaximumWidth;
+		options.Padding = static_cast<uint32_t>(std::clamp(
+			m_AtlasPackPadding, 0, 1024));
+		options.PowerOfTwo = m_AtlasPackPowerOfTwo;
+		SpriteAtlasPackedLayout layout;
+		std::vector<uint8_t> packedPixels;
+		if (!BuildPackedSpriteAtlasRGBA(sourcePixels, sourceWidth, sourceHeight,
+			regions, options, layout, packedPixels, error))
+		{
+			m_AtlasEditorError = error;
+			return false;
+		}
+		const std::vector<uint8_t> encoded = EncodeAtlasTGA(packedPixels,
+			layout.Width, layout.Height);
+		if (encoded.empty())
+		{
+			m_AtlasEditorError = "Packed Atlas could not be encoded as TGA.";
+			return false;
+		}
+		const std::filesystem::path outputPath = UniquePackedAtlasPath(
+			m_AtlasEditorPath);
+		if (outputPath.empty())
+		{
+			m_AtlasEditorError = "Could not choose a unique packed Atlas path.";
+			return false;
+		}
+		const std::string_view bytes(reinterpret_cast<const char*>(encoded.data()),
+			encoded.size());
+		if (!FileSystem::WriteFileAtomically(outputPath, bytes, error))
+		{
+			m_AtlasEditorError = "Could not write packed Atlas: " + error;
+			return false;
+		}
+
+		AssetImportSettings settings = m_AtlasBaseSettings;
+		settings.erase("Primitive");
+		for (auto iterator = settings.begin(); iterator != settings.end();)
+		{
+			if (iterator->first.starts_with("Sprite."))
+				iterator = settings.erase(iterator);
+			else ++iterator;
+		}
+		settings["SpriteMode"] = "Multiple";
+		settings["SpriteAtlasSchema"] = "2";
+		for (size_t index = 0; index < m_AtlasSlices.size(); ++index)
+		{
+			const AtlasSliceDraft& slice = m_AtlasSlices[index];
+			const SpriteAtlasRect& placement = layout.Placements[index];
+			const std::string prefix = "Sprite." + slice.StableID + ".";
+			settings[prefix + "Name"] = slice.Name;
+			settings[prefix + "Rect"] = std::to_string(placement.X) + ","
+				+ std::to_string(placement.Y) + "," + std::to_string(placement.Width)
+				+ "," + std::to_string(placement.Height);
+			settings[prefix + "Pivot"] = AtlasFloat(slice.Pivot[0]) + ","
+				+ AtlasFloat(slice.Pivot[1]);
+			settings[prefix + "PixelsPerUnit"] = AtlasFloat(slice.PixelsPerUnit);
+			settings[prefix + "Border"] = AtlasFloat(slice.Border[0]) + ","
+				+ AtlasFloat(slice.Border[1]) + "," + AtlasFloat(slice.Border[2])
+				+ "," + AtlasFloat(slice.Border[3]);
+		}
+		std::vector<AssetSubAsset> verified;
+		if (!ParseSpriteAtlasSettings(settings, verified, error))
+		{
+			m_AtlasEditorError = "Packed Atlas settings are invalid: " + error;
+			return false;
+		}
+		AssetManager& assets = AssetManager::Get();
+		const AssetHandle packedHandle = assets.ImportAsset(outputPath);
+		if (static_cast<uint64_t>(packedHandle) == 0
+			|| !assets.SetImportSettings(packedHandle, settings))
+		{
+			m_AtlasEditorError = "Packed image was written, but its Sprite metadata could not be saved.";
+			return false;
+		}
+		m_PendingRevealPath = outputPath;
+		m_AtlasEditorError = "Created " + PathToUTF8(outputPath.filename()) + " ("
+			+ std::to_string(layout.Width) + " x " + std::to_string(layout.Height)
+			+ ") with stable slice IDs and metadata.";
+		return true;
+	}
+
 	void ContentBrowserPanel::DrawAtlasEditorPopup()
 	{
 		if (m_OpenAtlasEditorPopup)
@@ -1586,7 +1916,7 @@ namespace TomCat {
 			ImGui::OpenPopup("Sprite Atlas");
 			m_OpenAtlasEditorPopup = false;
 		}
-		ImGui::SetNextWindowSize(ImVec2(760.0f, 620.0f), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(880.0f, 720.0f), ImGuiCond_FirstUseEver);
 		if (!ImGui::BeginPopupModal("Sprite Atlas", nullptr))
 			return;
 
@@ -1596,6 +1926,47 @@ namespace TomCat {
 			m_AtlasWidth, m_AtlasHeight);
 		if (!m_AtlasEditorError.empty())
 			ImGui::TextWrapped("%s", m_AtlasEditorError.c_str());
+		if (ImGui::CollapsingHeader("Automatic Tools",
+			ImGuiTreeNodeFlags_DefaultOpen))
+		{
+			ImGui::TextDisabled("Alpha islands keep IDs and metadata when they match existing slices.");
+			ImGui::SetNextItemWidth(90.0f);
+			ImGui::InputInt("Alpha threshold", &m_AtlasAlphaThreshold);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(90.0f);
+			ImGui::InputInt("Minimum pixels", &m_AtlasMinimumOpaquePixels);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(90.0f);
+			ImGui::InputInt("Slice padding", &m_AtlasSlicePadding);
+			if (ImGui::Button("Auto Slice Alpha"))
+				AutoSliceAtlas(false);
+
+			ImGui::SetNextItemWidth(150.0f);
+			ImGui::InputInt2("Grid cell", m_AtlasGridCell);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(150.0f);
+			ImGui::InputInt2("Grid offset", m_AtlasGridOffset);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(150.0f);
+			ImGui::InputInt2("Grid spacing", m_AtlasGridSpacing);
+			ImGui::Checkbox("Include partial edge cells", &m_AtlasGridIncludePartial);
+			ImGui::SameLine();
+			if (ImGui::Button("Slice Grid"))
+				AutoSliceAtlas(true);
+
+			ImGui::SetNextItemWidth(100.0f);
+			ImGui::InputInt("Pack max size", &m_AtlasPackMaximumSize);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(90.0f);
+			ImGui::InputInt("Pack padding", &m_AtlasPackPadding);
+			ImGui::SameLine();
+			ImGui::Checkbox("Power of two", &m_AtlasPackPowerOfTwo);
+			ImGui::SameLine();
+			if (ImGui::Button("Create Packed TGA Copy"))
+				ExportPackedAtlas();
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Packs the current slice pixels into a new TGA beside the source. The source stays unchanged.");
+		}
 		const float footer = ImGui::GetFrameHeightWithSpacing() * 2.2f;
 		ImGui::BeginChild("AtlasSliceList", ImVec2(0.0f, -footer), true);
 		std::optional<size_t> remove;

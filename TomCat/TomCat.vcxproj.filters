@@ -312,6 +312,9 @@
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h">
       <Filter>src\TomCat\Runtime</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Advanced2D.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
@@ -1855,6 +1858,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp">
       <Filter>src\TomCat\Runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp">
+      <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp">
       <Filter>src\TomCat\Scene</Filter>

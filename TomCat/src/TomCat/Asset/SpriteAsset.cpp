@@ -14,8 +14,11 @@
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <numeric>
+#include <set>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 namespace TomCat {
@@ -122,6 +125,497 @@ namespace TomCat {
 				&& value.BorderBottom + value.BorderTop <= static_cast<float>(value.Height);
 		}
 
+		bool ValidateRGBA(std::span<const uint8_t> pixels, uint32_t width,
+			uint32_t height, std::string& error)
+		{
+			if (width == 0 || height == 0)
+			{
+				error = "Sprite Atlas image dimensions must be non-zero";
+				return false;
+			}
+			const uint64_t pixelCount = static_cast<uint64_t>(width) * height;
+			if (pixelCount > (std::numeric_limits<size_t>::max)() / 4
+				|| pixels.size() != static_cast<size_t>(pixelCount * 4))
+			{
+				error = "Sprite Atlas RGBA byte count does not match its dimensions";
+				return false;
+			}
+			return true;
+		}
+
+		uint32_t NextPowerOfTwo(uint32_t value)
+		{
+			if (value <= 1)
+				return 1;
+			--value;
+			value |= value >> 1;
+			value |= value >> 2;
+			value |= value >> 4;
+			value |= value >> 8;
+			value |= value >> 16;
+			return value == (std::numeric_limits<uint32_t>::max)()
+				? 0 : value + 1;
+		}
+
+		uint64_t RectangleArea(const SpriteAtlasRect& rect)
+		{
+			return static_cast<uint64_t>(rect.Width) * rect.Height;
+		}
+
+	}
+
+	bool SliceSpriteAtlasByAlpha(std::span<const uint8_t> rgbaPixels,
+		uint32_t width, uint32_t height, const SpriteAtlasSliceOptions& options,
+		std::vector<SpriteAtlasRect>& regions, std::string& error)
+	{
+		regions.clear();
+		error.clear();
+		if (!ValidateRGBA(rgbaPixels, width, height, error))
+			return false;
+		if (options.AlphaThreshold == 0 || options.MinimumOpaquePixels == 0)
+		{
+			error = "Auto Slice alpha threshold and minimum area must be non-zero";
+			return false;
+		}
+
+		const size_t pixelCount = static_cast<size_t>(width) * height;
+		std::vector<uint8_t> visited;
+		std::vector<size_t> pending;
+		try
+		{
+			visited.assign(pixelCount, 0);
+			pending.reserve((std::min)(pixelCount, static_cast<size_t>(4096)));
+		}
+		catch (const std::exception&)
+		{
+			error = "Auto Slice could not allocate its working buffers";
+			return false;
+		}
+
+		const auto opaque = [&](size_t index)
+		{
+			return rgbaPixels[index * 4 + 3] >= options.AlphaThreshold;
+		};
+		for (size_t seed = 0; seed < pixelCount; ++seed)
+		{
+			if (visited[seed])
+				continue;
+			visited[seed] = 1;
+			if (!opaque(seed))
+				continue;
+
+			pending.clear();
+			pending.push_back(seed);
+			uint32_t minX = static_cast<uint32_t>(seed % width);
+			uint32_t maxX = minX;
+			uint32_t minY = static_cast<uint32_t>(seed / width);
+			uint32_t maxY = minY;
+			uint64_t opaqueCount = 0;
+			while (!pending.empty())
+			{
+				const size_t index = pending.back();
+				pending.pop_back();
+				const uint32_t x = static_cast<uint32_t>(index % width);
+				const uint32_t y = static_cast<uint32_t>(index / width);
+				minX = (std::min)(minX, x); maxX = (std::max)(maxX, x);
+				minY = (std::min)(minY, y); maxY = (std::max)(maxY, y);
+				++opaqueCount;
+
+				const auto enqueue = [&](size_t neighbor)
+				{
+					if (!visited[neighbor])
+					{
+						visited[neighbor] = 1;
+						if (opaque(neighbor))
+							pending.push_back(neighbor);
+					}
+				};
+				if (x > 0) enqueue(index - 1);
+				if (x + 1 < width) enqueue(index + 1);
+				if (y > 0) enqueue(index - width);
+				if (y + 1 < height) enqueue(index + width);
+			}
+			if (opaqueCount < options.MinimumOpaquePixels)
+				continue;
+
+			const uint32_t left = options.Padding > minX ? 0 : minX - options.Padding;
+			const uint32_t top = options.Padding > minY ? 0 : minY - options.Padding;
+			const uint64_t right64 = static_cast<uint64_t>(maxX) + 1 + options.Padding;
+			const uint64_t bottom64 = static_cast<uint64_t>(maxY) + 1 + options.Padding;
+			const uint32_t right = static_cast<uint32_t>((std::min)(right64,
+				static_cast<uint64_t>(width)));
+			const uint32_t bottom = static_cast<uint32_t>((std::min)(bottom64,
+				static_cast<uint64_t>(height)));
+			regions.push_back({ left, top, right - left, bottom - top });
+		}
+		std::sort(regions.begin(), regions.end(), [](const SpriteAtlasRect& left,
+			const SpriteAtlasRect& right)
+			{
+				return std::tie(left.Y, left.X, left.Height, left.Width)
+					< std::tie(right.Y, right.X, right.Height, right.Width);
+			});
+		regions.erase(std::unique(regions.begin(), regions.end()), regions.end());
+		return true;
+	}
+
+	bool SliceSpriteAtlasGrid(uint32_t width, uint32_t height,
+		const SpriteAtlasGridOptions& options, std::vector<SpriteAtlasRect>& regions,
+		std::string& error)
+	{
+		regions.clear();
+		error.clear();
+		if (width == 0 || height == 0 || options.CellWidth == 0
+			|| options.CellHeight == 0)
+		{
+			error = "Grid Slice image and cell dimensions must be non-zero";
+			return false;
+		}
+		if (options.OffsetX >= width || options.OffsetY >= height)
+		{
+			error = "Grid Slice offset is outside the source image";
+			return false;
+		}
+		const uint64_t stepX = static_cast<uint64_t>(options.CellWidth)
+			+ options.SpacingX;
+		const uint64_t stepY = static_cast<uint64_t>(options.CellHeight)
+			+ options.SpacingY;
+		for (uint64_t y = options.OffsetY; y < height; y += stepY)
+		{
+			const uint32_t cellHeight = static_cast<uint32_t>((std::min)(
+				static_cast<uint64_t>(options.CellHeight), height - y));
+			if (cellHeight != options.CellHeight && !options.IncludePartialCells)
+				break;
+			for (uint64_t x = options.OffsetX; x < width; x += stepX)
+			{
+				const uint32_t cellWidth = static_cast<uint32_t>((std::min)(
+					static_cast<uint64_t>(options.CellWidth), width - x));
+				if (cellWidth != options.CellWidth && !options.IncludePartialCells)
+					break;
+				regions.push_back({ static_cast<uint32_t>(x), static_cast<uint32_t>(y),
+					cellWidth, cellHeight });
+			}
+		}
+		if (regions.empty())
+		{
+			error = "Grid Slice settings do not produce any cells";
+			return false;
+		}
+		return true;
+	}
+
+	std::vector<AssetSubAsset> ReconcileSpriteAtlasSlices(
+		std::span<const SpriteAtlasRect> regions,
+		std::span<const AssetSubAsset> existingSlices, float defaultPixelsPerUnit)
+	{
+		struct Match
+		{
+			size_t Region = 0;
+			size_t Existing = 0;
+			double Score = 0.0;
+			bool Exact = false;
+		};
+		std::vector<Match> matches;
+		for (size_t regionIndex = 0; regionIndex < regions.size(); ++regionIndex)
+		{
+			const SpriteAtlasRect& region = regions[regionIndex];
+			for (size_t existingIndex = 0; existingIndex < existingSlices.size();
+				++existingIndex)
+			{
+				const SpriteSubAssetData& sprite = existingSlices[existingIndex].Sprite;
+				const SpriteAtlasRect old{ sprite.X, sprite.Y, sprite.Width, sprite.Height };
+				if (old.Width == 0 || old.Height == 0
+					|| existingSlices[existingIndex].PersistentID.empty())
+					continue;
+				const bool exact = old == region;
+				const uint64_t left = (std::max)(old.X, region.X);
+				const uint64_t top = (std::max)(old.Y, region.Y);
+				const uint64_t right = (std::min)(static_cast<uint64_t>(old.X) + old.Width,
+					static_cast<uint64_t>(region.X) + region.Width);
+				const uint64_t bottom = (std::min)(static_cast<uint64_t>(old.Y) + old.Height,
+					static_cast<uint64_t>(region.Y) + region.Height);
+				const uint64_t intersection = right > left && bottom > top
+					? (right - left) * (bottom - top) : 0;
+				const uint64_t unionArea = RectangleArea(old) + RectangleArea(region)
+					- intersection;
+				const double score = unionArea == 0 ? 0.0
+					: static_cast<double>(intersection) / static_cast<double>(unionArea);
+				if (exact || score >= 0.25)
+					matches.push_back({ regionIndex, existingIndex, score, exact });
+			}
+		}
+		std::sort(matches.begin(), matches.end(), [](const Match& left,
+			const Match& right)
+			{
+				if (left.Exact != right.Exact) return left.Exact > right.Exact;
+				if (left.Score != right.Score) return left.Score > right.Score;
+				if (left.Region != right.Region) return left.Region < right.Region;
+				return left.Existing < right.Existing;
+			});
+		std::vector<size_t> matchedExisting(regions.size(), (std::numeric_limits<size_t>::max)());
+		std::vector<uint8_t> existingUsed(existingSlices.size(), 0);
+		for (const Match& match : matches)
+		{
+			if (matchedExisting[match.Region] != (std::numeric_limits<size_t>::max)()
+				|| existingUsed[match.Existing])
+				continue;
+			matchedExisting[match.Region] = match.Existing;
+			existingUsed[match.Existing] = 1;
+		}
+
+		std::unordered_set<std::string> usedIDs;
+		for (const AssetSubAsset& existing : existingSlices)
+			if (!existing.PersistentID.empty()) usedIDs.insert(existing.PersistentID);
+		std::vector<AssetSubAsset> result;
+		result.reserve(regions.size());
+		for (size_t index = 0; index < regions.size(); ++index)
+		{
+			const SpriteAtlasRect& region = regions[index];
+			AssetSubAsset slice;
+			if (matchedExisting[index] != (std::numeric_limits<size_t>::max)())
+				slice = existingSlices[matchedExisting[index]];
+			else
+			{
+				const std::string base = "sprite:auto-" + std::to_string(region.X) + "-"
+					+ std::to_string(region.Y) + "-" + std::to_string(region.Width) + "-"
+					+ std::to_string(region.Height);
+				slice.PersistentID = base;
+				for (uint32_t suffix = 2; usedIDs.contains(slice.PersistentID); ++suffix)
+					slice.PersistentID = base + "-" + std::to_string(suffix);
+				usedIDs.insert(slice.PersistentID);
+				slice.Name = "Sprite " + std::to_string(index + 1);
+				slice.Type = AssetType::Texture2D;
+				slice.Sprite.PixelsPerUnit = std::isfinite(defaultPixelsPerUnit)
+					&& defaultPixelsPerUnit > 0.0f ? defaultPixelsPerUnit : 100.0f;
+			}
+			slice.Sprite.X = region.X;
+			slice.Sprite.Y = region.Y;
+			slice.Sprite.Width = region.Width;
+			slice.Sprite.Height = region.Height;
+			slice.Sprite.BorderLeft = (std::min)(slice.Sprite.BorderLeft,
+				static_cast<float>(region.Width));
+			slice.Sprite.BorderRight = (std::min)(slice.Sprite.BorderRight,
+				static_cast<float>(region.Width) - slice.Sprite.BorderLeft);
+			slice.Sprite.BorderBottom = (std::min)(slice.Sprite.BorderBottom,
+				static_cast<float>(region.Height));
+			slice.Sprite.BorderTop = (std::min)(slice.Sprite.BorderTop,
+				static_cast<float>(region.Height) - slice.Sprite.BorderBottom);
+			result.push_back(std::move(slice));
+		}
+		return result;
+	}
+
+	bool PackSpriteAtlasRects(std::span<const SpriteAtlasRect> rects,
+		const SpriteAtlasPackOptions& options, SpriteAtlasPackedLayout& layout,
+		std::string& error)
+	{
+		layout = {};
+		error.clear();
+		constexpr uint32_t maximumSupportedDimension = 16384;
+		if (rects.empty())
+		{
+			error = "Atlas packing requires at least one rectangle";
+			return false;
+		}
+		if (options.MaximumWidth == 0 || options.MaximumHeight == 0
+			|| options.MaximumWidth > maximumSupportedDimension
+			|| options.MaximumHeight > maximumSupportedDimension)
+		{
+			error = "Atlas packing dimensions must be between 1 and 16384";
+			return false;
+		}
+
+		struct Item { size_t Index; uint32_t Width; uint32_t Height; };
+		std::vector<Item> items;
+		items.reserve(rects.size());
+		uint64_t paddedArea = 0;
+		uint32_t widest = 0;
+		for (size_t index = 0; index < rects.size(); ++index)
+		{
+			const SpriteAtlasRect& rect = rects[index];
+			const uint64_t paddedWidth = static_cast<uint64_t>(rect.Width)
+				+ static_cast<uint64_t>(options.Padding) * 2;
+			const uint64_t paddedHeight = static_cast<uint64_t>(rect.Height)
+				+ static_cast<uint64_t>(options.Padding) * 2;
+			if (rect.Width == 0 || rect.Height == 0
+				|| paddedWidth > options.MaximumWidth
+				|| paddedHeight > options.MaximumHeight)
+			{
+				error = "A Sprite rectangle plus padding exceeds the packing limits";
+				return false;
+			}
+			items.push_back({ index, static_cast<uint32_t>(paddedWidth),
+				static_cast<uint32_t>(paddedHeight) });
+			widest = (std::max)(widest, static_cast<uint32_t>(paddedWidth));
+			paddedArea += paddedWidth * paddedHeight;
+		}
+		std::sort(items.begin(), items.end(), [](const Item& left, const Item& right)
+			{
+				if (left.Height != right.Height) return left.Height > right.Height;
+				if (left.Width != right.Width) return left.Width > right.Width;
+				return left.Index < right.Index;
+			});
+
+		std::set<uint32_t> candidateWidths;
+		if (options.PowerOfTwo)
+		{
+			for (uint32_t width = NextPowerOfTwo(widest); width != 0
+				&& width <= options.MaximumWidth; width *= 2)
+			{
+				candidateWidths.insert(width);
+				if (width > options.MaximumWidth / 2) break;
+			}
+		}
+		else
+		{
+			candidateWidths.insert(widest);
+			candidateWidths.insert(options.MaximumWidth);
+			const uint32_t square = static_cast<uint32_t>(std::ceil(std::sqrt(
+				static_cast<double>(paddedArea))));
+			candidateWidths.insert((std::min)(options.MaximumWidth,
+				(std::max)(widest, square)));
+			uint64_t row = 0;
+			for (const Item& item : items)
+			{
+				row += item.Width;
+				candidateWidths.insert(static_cast<uint32_t>((std::min)(
+					static_cast<uint64_t>(options.MaximumWidth),
+					(std::max)(static_cast<uint64_t>(widest), row))));
+			}
+		}
+		if (candidateWidths.empty())
+		{
+			error = "No power-of-two atlas width fits the requested limit";
+			return false;
+		}
+
+		uint64_t bestArea = (std::numeric_limits<uint64_t>::max)();
+		for (uint32_t candidateWidth : candidateWidths)
+		{
+			std::vector<uint32_t> skyline(candidateWidth, 0);
+			std::vector<SpriteAtlasRect> placements(rects.size());
+			uint32_t usedWidth = 0;
+			uint32_t usedHeight = 0;
+			bool fits = true;
+			for (const Item& item : items)
+			{
+				uint32_t bestX = 0;
+				uint32_t bestY = (std::numeric_limits<uint32_t>::max)();
+				for (uint32_t x = 0; x <= candidateWidth - item.Width; ++x)
+				{
+					uint32_t y = 0;
+					for (uint32_t column = x; column < x + item.Width; ++column)
+						y = (std::max)(y, skyline[column]);
+					if (static_cast<uint64_t>(y) + item.Height <= options.MaximumHeight
+						&& (y < bestY || (y == bestY && x < bestX)))
+					{
+						bestX = x;
+						bestY = y;
+					}
+				}
+				if (bestY == (std::numeric_limits<uint32_t>::max)())
+				{
+					fits = false;
+					break;
+				}
+				const uint32_t top = bestY + item.Height;
+				for (uint32_t column = bestX; column < bestX + item.Width; ++column)
+					skyline[column] = top;
+				const SpriteAtlasRect& source = rects[item.Index];
+				placements[item.Index] = { bestX + options.Padding,
+					bestY + options.Padding, source.Width, source.Height };
+				usedWidth = (std::max)(usedWidth, bestX + item.Width);
+				usedHeight = (std::max)(usedHeight, top);
+			}
+			if (!fits) continue;
+			const uint32_t outputWidth = options.PowerOfTwo ? candidateWidth : usedWidth;
+			const uint32_t outputHeight = options.PowerOfTwo
+				? NextPowerOfTwo(usedHeight) : usedHeight;
+			if (outputHeight == 0 || outputHeight > options.MaximumHeight)
+				continue;
+			const uint64_t area = static_cast<uint64_t>(outputWidth) * outputHeight;
+			if (area < bestArea || (area == bestArea
+				&& (outputHeight < layout.Height || (outputHeight == layout.Height
+					&& outputWidth < layout.Width))))
+			{
+				bestArea = area;
+				layout.Width = outputWidth;
+				layout.Height = outputHeight;
+				layout.Placements = std::move(placements);
+			}
+		}
+		if (layout.Placements.empty())
+		{
+			error = "Sprite rectangles do not fit within the requested atlas size";
+			return false;
+		}
+		return true;
+	}
+
+	bool BuildPackedSpriteAtlasRGBA(std::span<const uint8_t> sourceRGBA,
+		uint32_t sourceWidth, uint32_t sourceHeight,
+		std::span<const SpriteAtlasRect> sourceRegions,
+		const SpriteAtlasPackOptions& options, SpriteAtlasPackedLayout& layout,
+		std::vector<uint8_t>& packedRGBA, std::string& error)
+	{
+		packedRGBA.clear();
+		layout = {};
+		error.clear();
+		if (!ValidateRGBA(sourceRGBA, sourceWidth, sourceHeight, error))
+			return false;
+		for (const SpriteAtlasRect& region : sourceRegions)
+		{
+			if (region.Width == 0 || region.Height == 0
+				|| static_cast<uint64_t>(region.X) + region.Width > sourceWidth
+				|| static_cast<uint64_t>(region.Y) + region.Height > sourceHeight)
+			{
+				error = "A source Sprite region exceeds the source image";
+				return false;
+			}
+		}
+		if (!PackSpriteAtlasRects(sourceRegions, options, layout, error))
+			return false;
+		const uint64_t outputBytes = static_cast<uint64_t>(layout.Width)
+			* layout.Height * 4;
+		if (outputBytes > (std::numeric_limits<size_t>::max)())
+		{
+			error = "Packed Sprite Atlas is too large";
+			layout = {};
+			return false;
+		}
+		try { packedRGBA.assign(static_cast<size_t>(outputBytes), 0); }
+		catch (const std::exception&)
+		{
+			error = "Packed Sprite Atlas pixel allocation failed";
+			layout = {};
+			return false;
+		}
+
+		for (size_t index = 0; index < sourceRegions.size(); ++index)
+		{
+			const SpriteAtlasRect& source = sourceRegions[index];
+			const SpriteAtlasRect& destination = layout.Placements[index];
+			const uint32_t outerX = destination.X - options.Padding;
+			const uint32_t outerY = destination.Y - options.Padding;
+			const uint32_t outerWidth = source.Width + options.Padding * 2;
+			const uint32_t outerHeight = source.Height + options.Padding * 2;
+			for (uint32_t y = 0; y < outerHeight; ++y)
+			{
+				const uint32_t localY = y < options.Padding ? 0
+					: (std::min)(source.Height - 1, y - options.Padding);
+				for (uint32_t x = 0; x < outerWidth; ++x)
+				{
+					const uint32_t localX = x < options.Padding ? 0
+						: (std::min)(source.Width - 1, x - options.Padding);
+					const size_t sourceOffset = (static_cast<size_t>(source.Y + localY)
+						* sourceWidth + source.X + localX) * 4;
+					const size_t destinationOffset = (static_cast<size_t>(outerY + y)
+						* layout.Width + outerX + x) * 4;
+					std::copy_n(sourceRGBA.data() + sourceOffset, 4,
+						packedRGBA.data() + destinationOffset);
+				}
+			}
+		}
+		return true;
 	}
 
 	bool ParseSpriteAtlasSettings(const AssetImportSettings& settings,

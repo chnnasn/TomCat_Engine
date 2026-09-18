@@ -8,11 +8,27 @@
 
 #include "TomCat/Scene/Components.h"
 
+#include <span>
+
 namespace TomCat {
 
 	class Renderer2D
 	{
 	public:
+		struct PointLightData
+		{
+			glm::vec3 Position{ 0.0f };
+			glm::vec3 Color{ 1.0f };
+			float Intensity = 1.0f;
+			float Radius = 5.0f;
+			float Falloff = 1.0f;
+		};
+
+		// Lighting is evaluated per submitted vertex. This keeps the existing
+		// batched material path intact while producing a smooth light gradient
+		// across sprites, tiles and particles.
+		static void Set2DLighting(const glm::vec3& ambient,
+			std::span<const PointLightData> pointLights);
 		struct SpriteSortKey
 		{
 			int32_t SortingLayer = 0;
@@ -56,15 +72,21 @@ namespace TomCat {
 		static void DrawQuad(const glm::vec2& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 		static void DrawQuad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 
-		static void DrawQuad(const glm::mat4& transform, const glm::vec4& color, int entityID = -1);
-		static void DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1);
+		static void DrawQuad(const glm::mat4& transform, const glm::vec4& color,
+			int entityID = -1, bool lit = false);
+		static void DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture,
+			float tilingFactor = 1.0f,
+			const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1,
+			bool lit = false);
+		static void DrawLitQuad(const glm::mat4& transform, const glm::vec4& color,
+			int entityID = -1);
 		// Sub-region submission used by glyph and sprite atlases. UVs use the
 		// renderer's conventional bottom-left origin and are validated/clamped by
 		// the caller that owns the atlas metadata.
 		static void DrawTexturedQuadRegion(const glm::mat4& transform,
 			const Ref<Texture2D>& texture, const glm::vec2& uvMin,
 			const glm::vec2& uvMax, const glm::vec4& tintColor = glm::vec4(1.0f),
-			int entityID = -1);
+			int entityID = -1, bool lit = false);
 		// Procedural circle primitive for colliders, masks, gizmos, and other
 		// utility rendering. Ordinary visible objects use a SpriteRenderer asset.
 		static void DrawCircle(const glm::mat4& transform, const glm::vec4& color,

@@ -251,6 +251,88 @@ namespace TomCat {
 		}
 	};
 
+	// A sparse authoring grid. Each occupied coordinate owns one stable Sprite
+	// reference, so atlased sub-sprites work without introducing a second asset
+	// identity system. Cells are kept in deterministic row-major order by the
+	// Tilemap2D authoring helpers.
+	struct TilemapCell
+	{
+		glm::ivec2 Coordinate{ 0, 0 };
+		AssetHandle SpriteHandle = AssetHandle(0);
+		glm::vec4 Tint{ 1.0f };
+		bool FlipX = false;
+		bool FlipY = false;
+		int32_t RotationQuarterTurns = 0;
+	};
+
+	struct Tilemap2D
+	{
+		bool Enabled = true;
+		glm::vec2 CellSize{ 1.0f, 1.0f };
+		glm::vec2 CellGap{ 0.0f, 0.0f };
+		int32_t SortingLayer = 0;
+		int32_t OrderInLayer = 0;
+		std::vector<TilemapCell> Cells;
+	};
+
+	struct Particle2D
+	{
+		glm::vec2 Position{ 0.0f };
+		glm::vec2 Velocity{ 0.0f };
+		float Age = 0.0f;
+		float Lifetime = 1.0f;
+		float StartSize = 1.0f;
+		float EndSize = 0.0f;
+	};
+
+	// CPU simulated and deterministically seeded. Runtime particles are omitted
+	// from Scene/Prefab persistence by the component descriptor.
+	struct ParticleSystem2D
+	{
+		bool Enabled = true;
+		bool PlayOnStart = true;
+		bool Loop = true;
+		float Duration = 5.0f;
+		float EmissionRate = 10.0f;
+		int32_t MaxParticles = 256;
+		float StartLifetime = 1.0f;
+		float StartSpeed = 1.0f;
+		float StartSize = 0.2f;
+		float EndSize = 0.0f;
+		float GravityScale = 0.0f;
+		glm::vec2 Direction{ 0.0f, 1.0f };
+		float SpreadDegrees = 25.0f;
+		glm::vec4 StartColor{ 1.0f };
+		glm::vec4 EndColor{ 1.0f, 1.0f, 1.0f, 0.0f };
+		AssetHandle SpriteHandle = AssetHandle(0);
+		int32_t SortingLayer = 0;
+		int32_t OrderInLayer = 0;
+		uint32_t Seed = 1;
+
+		bool RuntimePlaying = false;
+		bool RuntimeInitialized = false;
+		float RuntimeTime = 0.0f;
+		float RuntimeEmissionAccumulator = 0.0f;
+		uint32_t RuntimeRandomState = 1;
+		std::vector<Particle2D> RuntimeParticles;
+	};
+
+	enum class Light2DType : int32_t
+	{
+		Global = 0,
+		Point = 1
+	};
+
+	struct Light2D
+	{
+		bool Enabled = true;
+		Light2DType Type = Light2DType::Point;
+		glm::vec4 Color{ 1.0f };
+		float Intensity = 1.0f;
+		float Radius = 5.0f;
+		float Falloff = 1.0f;
+	};
+
 	struct C_Camera
 	{
 		SceneCamera _Camera;

@@ -4,6 +4,7 @@
 #include "TomCat/Audio/AudioSceneRuntime.h"
 
 #include "Components.h"
+#include "Advanced2D.h"
 #include "SpriteAnimation.h"
 #include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Renderer/Renderer2D.h"
@@ -655,12 +656,46 @@ namespace TomCat {
 					? scene.IsVisibleInEditorHierarchy(entity)
 					: scene.IsActiveInHierarchy(entity);
 			};
+			glm::vec3 ambientLight(1.0f);
+			std::vector<Renderer2D::PointLightData> pointLights;
+			bool hasLighting = false;
+			auto lightView = registry.view<Transform, Light2D>();
+			for (const entt::entity entity : lightView)
+			{
+				const Light2D& light = lightView.get<Light2D>(entity);
+				if (!isVisible(entity) || !light.Enabled || light.Intensity <= 0.0f)
+					continue;
+				if (!hasLighting)
+				{
+					hasLighting = true;
+					ambientLight = glm::vec3(0.05f);
+				}
+				if (light.Type == Light2DType::Global)
+				{
+					ambientLight += glm::vec3(light.Color) * light.Intensity;
+					continue;
+				}
+				const glm::mat4 lightTransform = scene.GetRuntimeRenderTransform(
+					registry.get<ID>(entity).id);
+				Renderer2D::PointLightData point;
+				point.Position = glm::vec3(lightTransform * glm::vec4(0, 0, 0, 1));
+				point.Color = glm::vec3(light.Color);
+				point.Intensity = light.Intensity;
+				point.Radius = light.Radius;
+				point.Falloff = light.Falloff;
+				pointLights.push_back(point);
+			}
+			Renderer2D::Set2DLighting(ambientLight, pointLights);
+
 			auto spriteView = registry.view<Transform, SpriteRenderer>();
 			struct SpriteRenderItem
 			{
-				entt::entity Entity = entt::null;
 				Renderer2D::SpriteSortKey SortKey;
 				glm::mat4 WorldTransform{ 1.0f };
+				SpriteRenderer Renderer;
+				glm::vec4 Color{ 1.0f };
+				int EntityID = -1;
+				bool ColoredQuad = false;
 			};
 			std::vector<SpriteRenderItem> sprites;
 			sprites.reserve(spriteView.size_hint());
@@ -676,8 +711,88 @@ namespace TomCat {
 				if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
 					continue;
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityID);
-				sprites.push_back({ entity,
-					Renderer2D::MakeSpriteSortKey(sprite, sortableEntityID), worldTransform });
+				sprites.push_back({ Renderer2D::MakeSpriteSortKey(sprite,
+					sortableEntityID), worldTransform, sprite, sprite._Color,
+					static_cast<int>(entity), false });
+			}
+
+			auto stableChildID = [](uint64_t entityID, int32_t x, int32_t y,
+				uint64_t salt)
+			{
+				uint64_t hash = entityID ^ salt;
+				hash ^= static_cast<uint32_t>(x) + 0x9e3779b9ULL + (hash << 6)
+					+ (hash >> 2);
+				hash ^= static_cast<uint32_t>(y) + 0x9e3779b9ULL + (hash << 6)
+					+ (hash >> 2);
+				return hash;
+			};
+			auto tilemapView = registry.view<Transform, Tilemap2D>();
+			for (const entt::entity entity : tilemapView)
+			{
+				const Tilemap2D& tilemap = tilemapView.get<Tilemap2D>(entity);
+				if (!isVisible(entity) || !tilemap.Enabled)
+					continue;
+				const UUID entityUUID = registry.get<ID>(entity).id;
+				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
+				const glm::mat4 rootTransform =
+					scene.GetRuntimeRenderTransform(entityUUID);
+				for (const TilemapCell& cell : tilemap.Cells)
+				{
+					if (static_cast<uint64_t>(cell.SpriteHandle) == 0)
+						continue;
+					const glm::mat4 worldTransform = rootTransform
+						* Tilemap2DRuntime::GetCellTransform(tilemap, cell);
+					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+						continue;
+					SpriteRenderer renderer;
+					renderer.SpriteHandle = cell.SpriteHandle;
+					renderer._Color = cell.Tint;
+					renderer.SortingLayer = tilemap.SortingLayer;
+					renderer.OrderInLayer = tilemap.OrderInLayer;
+					sprites.push_back({
+						Renderer2D::MakeSpriteSortKey(renderer,
+							stableChildID(sortableEntityID, cell.Coordinate.x,
+								cell.Coordinate.y, 0x54494c45ULL)),
+						worldTransform, std::move(renderer), cell.Tint,
+						static_cast<int>(entity), false });
+				}
+			}
+
+			auto particleView = registry.view<Transform, ParticleSystem2D>();
+			for (const entt::entity entity : particleView)
+			{
+				const ParticleSystem2D& system = particleView.get<ParticleSystem2D>(entity);
+				if (!isVisible(entity) || !system.Enabled)
+					continue;
+				const UUID entityUUID = registry.get<ID>(entity).id;
+				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
+				const glm::mat4 rootTransform =
+					scene.GetRuntimeRenderTransform(entityUUID);
+				for (size_t index = 0; index < system.RuntimeParticles.size(); ++index)
+				{
+					const Particle2D& particle = system.RuntimeParticles[index];
+					const float size = ParticleSystem2DRuntime::EvaluateSize(particle);
+					if (size <= 0.0f)
+						continue;
+					const glm::mat4 worldTransform = rootTransform
+						* glm::translate(glm::mat4(1.0f), glm::vec3(particle.Position, 0.0f))
+						* glm::scale(glm::mat4(1.0f), glm::vec3(size, size, 1.0f));
+					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+						continue;
+					SpriteRenderer renderer;
+					renderer.SpriteHandle = system.SpriteHandle;
+					renderer._Color = ParticleSystem2DRuntime::EvaluateColor(system,
+						particle);
+					renderer.SortingLayer = system.SortingLayer;
+					renderer.OrderInLayer = system.OrderInLayer;
+					sprites.push_back({
+						Renderer2D::MakeSpriteSortKey(renderer,
+							stableChildID(sortableEntityID, static_cast<int32_t>(index),
+								0, 0x50415254ULL)),
+						worldTransform, renderer, renderer._Color,
+						static_cast<int>(entity),
+						static_cast<uint64_t>(system.SpriteHandle) == 0 });
+				}
 			}
 			std::sort(sprites.begin(), sprites.end(),
 				[](const SpriteRenderItem& left, const SpriteRenderItem& right)
@@ -686,9 +801,15 @@ namespace TomCat {
 				});
 			for (const SpriteRenderItem& item : sprites)
 			{
-				auto& sprite = spriteView.get<SpriteRenderer>(item.Entity);
-				Renderer2D::DrawSprite(item.WorldTransform, sprite,
-					static_cast<int>(item.Entity));
+				if (item.ColoredQuad)
+					Renderer2D::DrawLitQuad(item.WorldTransform, item.Color,
+						item.EntityID);
+				else
+				{
+					SpriteRenderer renderer = item.Renderer;
+					Renderer2D::DrawSprite(item.WorldTransform, renderer,
+						item.EntityID);
+				}
 			}
 
 			const float previousLineWidth = Renderer2D::GetLineWidth();
@@ -748,6 +869,51 @@ namespace TomCat {
 		{
 			for (const entt::entity entity : registry.view<SpriteAnimator>())
 				SpriteAnimatorRuntime::Reset(registry.get<SpriteAnimator>(entity));
+		}
+
+		void InitializeParticleSystems(Scene& scene, entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				auto& system = registry.get<ParticleSystem2D>(entity);
+				ParticleSystem2DRuntime::Reset(system);
+				if (system.PlayOnStart
+					&& scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					ParticleSystem2DRuntime::Play(system);
+			}
+		}
+
+		void UpdateParticleSystems(Scene& scene, entt::registry& registry,
+			float deltaSeconds)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
+				ParticleSystem2DRuntime::Update(
+					registry.get<ParticleSystem2D>(entity), deltaSeconds);
+			}
+		}
+
+		void ResetParticleSystems(entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+				ParticleSystem2DRuntime::Reset(
+					registry.get<ParticleSystem2D>(entity));
+		}
+
+		void UpdateParticlePreviews(Scene& scene, entt::registry& registry,
+			float deltaSeconds)
+		{
+			const float previewDelta = std::clamp(deltaSeconds, 0.0f, 0.1f);
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				auto& system = registry.get<ParticleSystem2D>(entity);
+				if (!system.RuntimeInitialized
+					|| !scene.IsVisibleInEditorHierarchy(Entity(entity, &scene)))
+					continue;
+				ParticleSystem2DRuntime::Update(system, previewDelta);
+			}
 		}
 
 	}
@@ -3349,6 +3515,7 @@ namespace TomCat {
 		}
 		AudioSceneRuntime::Start(*this);
 		InitializeSpriteAnimations(*this, m_Registry);
+		InitializeParticleSystems(*this, m_Registry);
 		RuntimeUISystem::Reset(m_Registry);
 
 		bool hasManagedScripts = false;
@@ -3402,6 +3569,7 @@ namespace TomCat {
 		// scene-wide sweep guarantees that no callback can leave a voice playing.
 		AudioSceneRuntime::Stop(*this);
 		ResetSpriteAnimations(m_Registry);
+		ResetParticleSystems(m_Registry);
 		RuntimeUISystem::Reset(m_Registry);
 		SetRuntimeEntityBatchCreatedCallback({});
 		++m_RuntimeSessionGeneration;
@@ -3574,6 +3742,7 @@ namespace TomCat {
 			return false;
 		UpdateSpriteAnimations(*this, m_Registry,
 			static_cast<double>(FixedRuntimeTimestep));
+		UpdateParticleSystems(*this, m_Registry, FixedRuntimeTimestep);
 		return m_RuntimeRunning && m_PhysicsWorld;
 	}
 
@@ -3739,6 +3908,8 @@ namespace TomCat {
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		if (!m_RuntimeRunning)
+			UpdateParticlePreviews(*this, m_Registry, ts.GetSeconds());
 		Renderer2D::BeginScene(camera);
 
 		Render2DComponents(*this, m_Registry, camera.GetViewProjection(),
