@@ -246,6 +246,8 @@ namespace {
 			{ "Managed/TomCat.ScriptGenerator.dll", "generator-" + marker },
 			{ "Packages/PlayerTemplates/win-x64/template.json", "{template:" + marker + "}" },
 			{ "Packages/PlayerTemplates/win-x64/TomCatPlayer.exe", "player-" + marker },
+			{ "Packages/Resources/Sprites/TomCat/Circle.tga", "circle-sprite-" + marker },
+			{ "Packages/Resources/Sprites/TomCat/Square.tga", "square-sprite-" + marker },
 			{ "TomCatCLI.exe", "cli-runtime-" + marker },
 			{ "shaderc_shared.dll", "shader-runtime-" + marker },
 			{ "msvcp140.dll", "msvcp-runtime-" + marker },
@@ -470,6 +472,30 @@ namespace {
 		Require(error.find("does not match this Editor") != std::string::npos &&
 			result.Root.empty() && !std::filesystem::exists(cache),
 			"wrong-build rejection created a cache or reported the wrong error");
+	}
+
+	void TestEditorRuntimeBundleRequiresBuiltInSprites()
+	{
+		TemporaryDirectory temporary;
+		const std::filesystem::path payload = temporary.Path / "Payload";
+		const std::filesystem::path cache = temporary.Path / "Cache";
+		auto files = RuntimeFixtureFiles("sprites");
+		std::erase_if(files, [](const RuntimeFixtureFile& file)
+		{
+			return file.Path == "Packages/Resources/Sprites/TomCat/Square.tga";
+		});
+		for (const RuntimeFixtureFile& file : files)
+			WriteText(payload / TomCat::UTF8ToPath(file.Path), file.Contents);
+		WriteText(payload / "runtime-manifest.json",
+			RuntimeManifestDocument(TomCat::Version::EngineBuildID, files));
+
+		TomCat::EditorRuntimeBundleResult result;
+		std::string error;
+		Require(!TomCat::EnsureEditorRuntimeBundle(payload, cache, result, error),
+			"runtime manifest without the built-in Square sprite was accepted");
+		Require(error.find("packages/resources/sprites/tomcat/square.tga") !=
+			std::string::npos && result.Root.empty(),
+			"missing built-in sprite rejection reported the wrong error or root");
 	}
 
 	std::string PreparedMigrationJournal(std::string_view transactionID,
@@ -1459,6 +1485,7 @@ int main(int argc, char** argv)
 		TestEditorRuntimeBundleRejectsPathEscape();
 		TestEditorRuntimeBundleSeparatesManifestVersions();
 		TestEditorRuntimeBundleRejectsWrongEngineBuild();
+		TestEditorRuntimeBundleRequiresBuiltInSprites();
 		TestUnifiedVersionSource();
 		TestEditorVersionResolutionHasNoFallback();
 		TestInspectProjectNeverWrites();

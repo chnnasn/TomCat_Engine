@@ -45,6 +45,21 @@ namespace TomCat {
 		constexpr const char* kAssetDirectoryPayloadID = "TOMCAT_ASSET_DIRECTORY";
 		constexpr const char* kStoredAssetsRoot = "@assets";
 		constexpr const char* kStoredPackagesRoot = "@packages";
+		std::filesystem::path LexicalPath(const std::filesystem::path& path);
+
+		const BuiltInSpriteAsset* FindBuiltInSpriteAtPath(
+			const std::filesystem::path& path,
+			const std::filesystem::path& packagesRoot)
+		{
+			for (const BuiltInSpriteAsset& asset : GetBuiltInSpriteAssets())
+			{
+				const std::filesystem::path assetPath = packagesRoot /
+					UTF8ToPath(asset.PackageRelativePath);
+				if (LexicalPath(path) == LexicalPath(assetPath))
+					return &asset;
+			}
+			return nullptr;
+		}
 
 		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
 		{
@@ -436,6 +451,12 @@ namespace TomCat {
 			return false;
 		}
 
+		std::string AssetDisplayName(const std::filesystem::path& path, bool isDirectory)
+		{
+			const std::filesystem::path name = isDirectory ? path.filename() : path.stem();
+			return PathToUTF8(name.empty() ? path.filename() : name);
+		}
+
 	}
 
 	ContentBrowserPanel::ContentBrowserPanel()
@@ -505,15 +526,25 @@ namespace TomCat {
 	void ContentBrowserPanel::RevealAsset(const std::filesystem::path& path)
 	{
 		const std::filesystem::path asset = CanonicalPath(path);
+		const std::filesystem::path root = GetRootForPath(asset);
 		std::error_code error;
-		if (!m_Project || !IsWritablePath(asset)
+		if (!m_Project || root.empty()
 			|| !std::filesystem::is_regular_file(asset, error) || error)
 			return;
 		m_CurrentDirectory = asset.parent_path();
 		m_SelectedPath = asset;
+		m_PendingRevealPath = asset;
 		m_UserSelectedDirectory = true;
-		m_ExpandedNodes.insert(PathToUTF8(m_CurrentDirectory));
-		m_PendingOpenDirectories.insert(PathToUTF8(m_CurrentDirectory));
+		for (std::filesystem::path directory = m_CurrentDirectory;
+			directory.empty() == false && IsWithinRoot(root, directory);
+			directory = directory.parent_path())
+		{
+			const std::string key = PathToUTF8(CanonicalPath(directory));
+			m_ExpandedNodes.insert(key);
+			m_PendingOpenDirectories.insert(key);
+			if (LexicalPath(directory) == LexicalPath(root))
+				break;
+		}
 	}
 
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
@@ -531,6 +562,7 @@ namespace TomCat {
 		m_ExternalScriptEditor.clear();
 		m_CurrentDirectory.clear();
 		m_SelectedPath.clear();
+		m_PendingRevealPath.clear();
 		m_UserSelectedDirectory = false;
 		m_ExpandedNodes.clear();
 		m_PendingOpenDirectories.clear();
@@ -1353,8 +1385,10 @@ namespace TomCat {
 
 		AssetManager& assetManager = AssetManager::Get();
 		const bool projectAsset = IsWithinRoot(GetAssetRoot(), path);
+		const BuiltInSpriteAsset* builtInSprite = projectAsset ? nullptr
+			: FindBuiltInSpriteAtPath(path, GetPackagesRoot());
 		const AssetMetadata* metadata = nullptr;
-		AssetHandle handle = AssetHandle(0);
+		AssetHandle handle = builtInSprite ? builtInSprite->Handle : AssetHandle(0);
 		if (projectAsset)
 		{
 			metadata = assetManager.GetRegistry().GetMetadata(path);
@@ -1374,7 +1408,8 @@ namespace TomCat {
 			extension == ".unitypackage")
 			return icon(EditorIcon::Package);
 
-		const AssetType type = metadata ? metadata->Type : AssetTypeFromPath(path);
+		const AssetType type = builtInSprite ? AssetType::Texture2D
+			: metadata ? metadata->Type : AssetTypeFromPath(path);
 		switch (type)
 		{
 			case AssetType::Scene:
@@ -1624,10 +1659,15 @@ namespace TomCat {
 	void ContentBrowserPanel::SubmitDragPayload(const std::filesystem::path& path,
 		const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon)
 	{
-		if (!IsWritablePath(path) || LexicalPath(assetRoot) != LexicalPath(GetAssetRoot()) ||
-			!IsWithinRoot(assetRoot, path, false))
+		const BuiltInSpriteAsset* builtInSprite =
+			FindBuiltInSpriteAtPath(path, GetPackagesRoot());
+		const bool projectAsset = IsWritablePath(path)
+			&& LexicalPath(assetRoot) == LexicalPath(GetAssetRoot())
+			&& IsWithinRoot(assetRoot, path, false);
+		if (!builtInSprite && !projectAsset)
 			return;
-		const AssetHandle handle = AssetManager::Get().ImportAsset(path);
+		const AssetHandle handle = builtInSprite ? builtInSprite->Handle
+			: AssetManager::Get().ImportAsset(path);
 		const uint64_t rawHandle = static_cast<uint64_t>(handle);
 		if (rawHandle == 0 || !ImGui::BeginDragDropSource())
 			return;
@@ -1635,7 +1675,7 @@ namespace TomCat {
 		if (icon)
 			ImGui::Image(ToImGuiTextureID(icon), ImVec2(64.0f, 64.0f),
 				ImVec2(0, 1), ImVec2(1, 0));
-		ImGui::TextUnformatted(PathToUTF8(path.filename()).c_str());
+		ImGui::TextUnformatted(AssetDisplayName(path, false).c_str());
 		ImGui::EndDragDropSource();
 	}
 
@@ -1791,7 +1831,7 @@ namespace TomCat {
 		const bool selected = m_UserSelectedDirectory && LexicalPath(m_SelectedPath) == LexicalPath(path);
 		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
 			ImGuiTreeNodeFlags_SpanAvailWidth | (selected ? ImGuiTreeNodeFlags_Selected : 0);
-		ImGui::TreeNodeEx("##File", flags, "     %s", PathToUTF8(path.filename()).c_str());
+		ImGui::TreeNodeEx("##File", flags, "     %s", AssetDisplayName(path, false).c_str());
 		DrawTreeIcon(GetAssetIcon(path, false), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 		if (ImGui::IsItemClicked())
 		{
@@ -1806,6 +1846,12 @@ namespace TomCat {
 		{
 			DrawContextMenuBody(path, false, false);
 			ImGui::EndPopup();
+		}
+		if (!m_PendingRevealPath.empty()
+			&& LexicalPath(m_PendingRevealPath) == LexicalPath(path))
+		{
+			ImGui::SetScrollHereY(0.5f);
+			m_PendingRevealPath.clear();
 		}
 		ImGui::PopID();
 	}
@@ -1948,8 +1994,14 @@ namespace TomCat {
 			DrawContextMenuBody(path, isDirectory, false);
 			ImGui::EndPopup();
 		}
-		ImGui::TextWrapped("%s", PathToUTF8(path.filename()).c_str());
-		if (!isDirectory && IsWritablePath(path) &&
+		ImGui::TextWrapped("%s", AssetDisplayName(path, isDirectory).c_str());
+		if (!m_PendingRevealPath.empty()
+			&& LexicalPath(m_PendingRevealPath) == LexicalPath(path))
+		{
+			ImGui::SetScrollHereY(0.5f);
+			m_PendingRevealPath.clear();
+		}
+		if (!isDirectory &&
 			s_ImageExtensions.find(ToLower(PathToUTF8(path.extension()))) != s_ImageExtensions.end() &&
 			ImGui::IsItemHovered())
 		{

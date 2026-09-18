@@ -101,6 +101,8 @@
     </Link>
     <PostBuildEvent>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Debug-windows-x86_64/TomCatInut\" &gt; nul
+if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Circle.tga &amp; exit /b 1)
+if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
@@ -135,6 +137,8 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </Link>
     <PostBuildEvent>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Release-windows-x86_64/TomCatInut\" &gt; nul
+if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Circle.tga &amp; exit /b 1)
+if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
@@ -169,6 +173,8 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </Link>
     <PostBuildEvent>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Dist-windows-x86_64/TomCatInut\" &gt; nul
+if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Circle.tga &amp; exit /b 1)
+if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>

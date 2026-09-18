@@ -3,6 +3,7 @@ project "SpriteAssetRegression"
 	language "C++"
 	cppdialect "C++20"
 	staticruntime "off"
+	debugdir "%{cfg.targetdir}"
 
 	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("%{wks.location}/bin-int/" .. outputdir .. "/%{prj.name}")
@@ -55,7 +56,8 @@ project "SpriteAssetRegression"
 		symbols "on"
 		links { table.unpack(TomCatConsumerLinksDebug) }
 		postbuildcommands {
-			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul"
 		}
 
 	filter "configurations:Release"
@@ -64,7 +66,8 @@ project "SpriteAssetRegression"
 		optimize "on"
 		links { table.unpack(TomCatConsumerLinksRelease) }
 		postbuildcommands {
-			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul"
 		}
 
 	filter "configurations:Dist"
@@ -73,5 +76,6 @@ project "SpriteAssetRegression"
 		optimize "on"
 		links { table.unpack(TomCatConsumerLinksRelease) }
 		postbuildcommands {
-			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul"
 		}

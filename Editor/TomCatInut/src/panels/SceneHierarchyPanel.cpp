@@ -312,6 +312,8 @@ namespace TomCat {
 		subAsset = nullptr;
 		if (static_cast<uint64_t>(handle) == 0)
 			return true;
+		if (FindBuiltInSpriteAsset(handle))
+			return true;
 		AssetRegistry& registry = AssetManager::Get().GetRegistry();
 		metadata = registry.GetMetadata(handle);
 		if (!metadata)
@@ -324,6 +326,8 @@ namespace TomCat {
 	{
 		if (static_cast<uint64_t>(handle) == 0)
 			return "None";
+		if (const BuiltInSpriteAsset* builtIn = FindBuiltInSpriteAsset(handle))
+			return std::string(builtIn->Name);
 		const AssetMetadata* metadata = nullptr;
 		const AssetSubAsset* subAsset = nullptr;
 		if (!ResolveSelectableSprite(handle, metadata, subAsset))
@@ -380,6 +384,17 @@ namespace TomCat {
 				handle = AssetHandle(0);
 				changed = true;
 				ImGui::CloseCurrentPopup();
+			}
+			for (const BuiltInSpriteAsset& builtIn : GetBuiltInSpriteAssets())
+			{
+				const std::string item = std::string(builtIn.Name) + "###Sprite_"
+					+ std::to_string(static_cast<uint64_t>(builtIn.Handle));
+				if (ImGui::Selectable(item.c_str(), handle == builtIn.Handle))
+				{
+					handle = builtIn.Handle;
+					changed = true;
+					ImGui::CloseCurrentPopup();
+				}
 			}
 			std::vector<const AssetMetadata*> sprites;
 			for (const auto& [assetHandle, metadata] :
@@ -1082,7 +1097,8 @@ namespace TomCat {
 		return m_RenameFocus;
 	}
 
-	void SceneHierarchyPanel::OnImGuiRender(bool* hierarchyOpen, bool* inspectorOpen)
+	void SceneHierarchyPanel::OnImGuiRender(bool* hierarchyOpen, bool* inspectorOpen,
+		bool sceneDirty)
 	{
 		if (m_ColliderEditMode != ColliderEditMode::None
 			&& GetColliderEditMode() == ColliderEditMode::None)
@@ -1102,7 +1118,9 @@ namespace TomCat {
 		if (hierarchyVisible && m_Context)
 		{
 			FlushPendingDeletion();
-			const std::string& sceneName = m_Context->GetSceneName();
+			std::string sceneName = m_Context->GetSceneName();
+			if (sceneDirty)
+				sceneName += "*";
 			if (m_ForceOpenSceneRoot)
 			{
 				ImGui::SetNextItemOpen(true);
@@ -1208,8 +1226,11 @@ namespace TomCat {
 				if (payload->DataSize == sizeof(uint64_t))
 				{
 					const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+					const BuiltInSpriteAsset* builtIn = FindBuiltInSpriteAsset(handle);
 					const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
-					if (metadata && metadata->Type == AssetType::Scene && m_SceneLoadCallback)
+					if (builtIn && m_SpriteCreateCallback)
+						m_SpriteCreateCallback(handle);
+					else if (metadata && metadata->Type == AssetType::Scene && m_SceneLoadCallback)
 						m_SceneLoadCallback(handle);
 					else if (metadata && metadata->Type == AssetType::Texture2D && m_SpriteCreateCallback)
 						m_SpriteCreateCallback(handle);
@@ -1470,16 +1491,17 @@ namespace TomCat {
 			if (!m_Project || !assets.GetRegistry().IsInitialized() ||
 				assets.IsCookedPackageMounted())
 			{
-				TC_Core_Warn("Open a writable project before creating a '{0}' Sprite", primitiveName);
+				TC_Core_Warn("Open a project before creating a '{0}' Sprite", primitiveName);
 				return;
 			}
 
-			const AssetHandle handle = EnsurePrimitiveSpriteAsset(assets, primitiveName);
-			if (static_cast<uint64_t>(handle) == 0)
+			const BuiltInSpriteAsset* builtIn = FindBuiltInSpriteAsset(primitiveName);
+			if (!builtIn)
 			{
-				TC_Core_Error("Could not create or import the '{0}' Sprite asset", primitiveName);
+				TC_Core_Error("Unknown built-in Sprite '{0}'", primitiveName);
 				return;
 			}
+			const AssetHandle handle = builtIn->Handle;
 			const Ref<Texture2D> texture = assets.LoadTexture(handle);
 			if (!texture || texture == assets.GetMissingTexture())
 			{
@@ -1509,7 +1531,7 @@ namespace TomCat {
 				ImGui::EndDisabled();
 				if (!canCreatePrimitiveSprite &&
 					ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-					ImGui::SetTooltip("Open a writable project to create asset-backed Sprites.");
+					ImGui::SetTooltip("Open a project to create Sprites.");
 				ImGui::EndMenu();
 			}
 			ImGui::EndMenu();
@@ -3335,35 +3357,45 @@ static void DrawComponent(const std::string& name, Entity entity,
 			const uint64_t rawSpriteHandle = static_cast<uint64_t>(component.SpriteHandle);
 			if (rawSpriteHandle != 0)
 			{
-				AssetRegistry& registry = AssetManager::Get().GetRegistry();
-				const AssetMetadata* metadata = registry.GetMetadata(component.SpriteHandle);
-				const AssetSubAsset* subSprite = nullptr;
-				if (!metadata)
-					metadata = registry.GetSubAssetOwner(component.SpriteHandle, &subSprite);
-				if (metadata && IsSpriteAsset(*metadata))
+				if (const BuiltInSpriteAsset* builtIn =
+					FindBuiltInSpriteAsset(component.SpriteHandle))
 				{
-					spriteName = subSprite ? subSprite->Name
-						: PathToUTF8(metadata->FilePath.stem());
-					if (metadata->IsMissing)
+					spriteName = std::string(builtIn->Name);
+					component.Sprite = AssetManager::Get().LoadTexture(component.SpriteHandle);
+					spritePreview = component.Sprite;
+				}
+				else
+				{
+					AssetRegistry& registry = AssetManager::Get().GetRegistry();
+					const AssetMetadata* metadata = registry.GetMetadata(component.SpriteHandle);
+					const AssetSubAsset* subSprite = nullptr;
+					if (!metadata)
+						metadata = registry.GetSubAssetOwner(component.SpriteHandle, &subSprite);
+					if (metadata && IsSpriteAsset(*metadata))
 					{
-						spriteName += " (Missing)";
+						spriteName = subSprite ? subSprite->Name
+							: PathToUTF8(metadata->FilePath.stem());
+						if (metadata->IsMissing)
+						{
+							spriteName += " (Missing)";
+							spriteFieldIcon = EditorIcon::Missing;
+						}
+						else
+						{
+							component.Sprite = AssetManager::Get().LoadTexture(component.SpriteHandle);
+							spritePreview = component.Sprite;
+						}
+					}
+					else if (metadata)
+					{
+						spriteName = PathToUTF8(metadata->FilePath.stem()) + " (Not a Sprite)";
 						spriteFieldIcon = EditorIcon::Missing;
 					}
 					else
 					{
-						component.Sprite = AssetManager::Get().LoadTexture(component.SpriteHandle);
-						spritePreview = component.Sprite;
+						spriteName = "Missing #" + std::to_string(rawSpriteHandle);
+						spriteFieldIcon = EditorIcon::Missing;
 					}
-				}
-				else if (metadata)
-				{
-					spriteName = PathToUTF8(metadata->FilePath.stem()) + " (Not a Sprite)";
-					spriteFieldIcon = EditorIcon::Missing;
-				}
-				else
-				{
-					spriteName = "Missing #" + std::to_string(rawSpriteHandle);
-					spriteFieldIcon = EditorIcon::Missing;
 				}
 			}
 
@@ -3371,6 +3403,9 @@ static void DrawComponent(const std::string& name, Entity entity,
 			const float fieldWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x -
 				pickerButtonWidth - ImGui::GetStyle().ItemInnerSpacing.x);
 			ImGui::Button("##SpriteAssetField", ImVec2(fieldWidth, 0.0f));
+			const bool revealSprite = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+			if (ImGui::IsItemHovered() && rawSpriteHandle != 0)
+				ImGui::SetTooltip("Show in Project");
 			const ImVec2 spriteButtonMin = ImGui::GetItemRectMin();
 			const ImVec2 spriteButtonMax = ImGui::GetItemRectMax();
 			const float spriteIconSize = std::min(16.0f,
@@ -3388,6 +3423,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 				ImVec2(spriteButtonMax.x - 4.0f, spriteButtonMax.y));
 			ImGui::RenderTextClipped(spriteTextClip.Min, spriteTextClip.Max,
 				spriteName.c_str(), nullptr, nullptr, ImVec2(0.0f, 0.5f), &spriteTextClip);
+			if (revealSprite && rawSpriteHandle != 0 && m_AssetRevealCallback)
+				m_AssetRevealCallback(component.SpriteHandle);
 
 			if (ImGui::BeginDragDropTarget())
 			{
@@ -3396,13 +3433,9 @@ static void DrawComponent(const std::string& name, Entity entity,
 					if (payload->DataSize == sizeof(uint64_t))
 					{
 						const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
-						AssetRegistry& registry = AssetManager::Get().GetRegistry();
-						const AssetMetadata* metadata = registry.GetMetadata(handle);
+						const AssetMetadata* metadata = nullptr;
 						const AssetSubAsset* subSprite = nullptr;
-						if (!metadata)
-							metadata = registry.GetSubAssetOwner(handle, &subSprite);
-						if (metadata && IsSpriteAsset(*metadata) && !metadata->IsMissing
-							&& (!subSprite || subSprite->Type == AssetType::Texture2D))
+						if (ResolveSelectableSprite(handle, metadata, subSprite))
 						{
 							component.SpriteHandle = handle;
 							component.Sprite = AssetManager::Get().LoadTexture(handle);
@@ -3474,6 +3507,13 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 				size_t spriteCount = 0;
 				const std::string spriteQuery = LowerASCII(m_SpriteSearch.data());
+				for (const BuiltInSpriteAsset& builtIn : GetBuiltInSpriteAssets())
+				{
+					if (spriteQuery.empty()
+						|| LowerASCII(std::string(builtIn.Name)).find(spriteQuery)
+							!= std::string::npos)
+						++spriteCount;
+				}
 				for (const AssetMetadata* metadata : sprites)
 				{
 					if (MatchesSpriteSearch(*metadata, m_SpriteSearch.data()))
@@ -3572,6 +3612,17 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 				if (m_SpriteSearch[0] == '\0')
 					drawSpriteTile(AssetHandle(0), "None", nullptr);
+				for (const BuiltInSpriteAsset& builtIn : GetBuiltInSpriteAssets())
+				{
+					if (!spriteQuery.empty()
+						&& LowerASCII(std::string(builtIn.Name)).find(spriteQuery)
+							== std::string::npos)
+						continue;
+					const std::filesystem::path packagePath =
+						GetBuiltInSpriteAssetPath(builtIn.Handle);
+					const std::string label(builtIn.Name);
+					drawSpriteTile(builtIn.Handle, label.c_str(), &packagePath);
+				}
 				for (const AssetMetadata* metadata : sprites)
 				{
 					if (MatchesSpriteSearch(*metadata, m_SpriteSearch.data()))

@@ -3,7 +3,6 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/Version.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
@@ -95,15 +94,9 @@ namespace {
 			TomCat::AssetRegistry registry;
 			if (!registry.Initialize(project->GetAssetPath(), project->GetLibraryPath()))
 				return false;
-			const TomCat::AssetHandle circle = TomCat::EnsurePrimitiveSpriteAsset(
-				registry, "Circle");
-			const TomCat::AssetHandle square = TomCat::EnsurePrimitiveSpriteAsset(
-				registry, "Square");
 			const TomCat::AssetHandle handle = registry.ImportAsset(destination);
 			registry.Shutdown();
-			if (static_cast<uint64_t>(circle) == 0 ||
-				static_cast<uint64_t>(square) == 0 ||
-				static_cast<uint64_t>(handle) == 0)
+			if (static_cast<uint64_t>(handle) == 0)
 				return false;
 			project->SetStartSceneHandle(handle);
 			return project->SetStartScene("sample.tomcat") && project->Save();

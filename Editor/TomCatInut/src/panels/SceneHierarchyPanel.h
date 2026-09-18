@@ -38,6 +38,7 @@ namespace TomCat {
 
 		using SceneLoadCallback = std::function<void(AssetHandle)>;
 		using SpriteCreateCallback = std::function<void(AssetHandle)>;
+		using AssetRevealCallback = std::function<void(AssetHandle)>;
 		using SceneModifiedCallback =
 			std::function<void(SceneModificationPhase)>;
 		using PrefabCreateCallback = std::function<bool(Entity)>;
@@ -52,7 +53,8 @@ namespace TomCat {
 		void SetProject(const Ref<Project>& project);
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 
-		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr);
+		void OnImGuiRender(bool* hierarchyOpen = nullptr, bool* inspectorOpen = nullptr,
+			bool sceneDirty = false);
 		// Draws the same command surface used by the Hierarchy context menus so the
 		// editor's top-level GameObject menu cannot drift from them.
 		// Returns true when an inline operation (create/rename) needs the Hierarchy
@@ -87,6 +89,7 @@ namespace TomCat {
 		bool IsInspectorDocked() const { return m_InspectorDocked; }
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_SceneLoadCallback = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_SpriteCreateCallback = callback; }
+		void SetAssetRevealCallback(const AssetRevealCallback& callback) { m_AssetRevealCallback = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_SceneModifiedCallback = callback; }
 		void SetPrefabCreateCallback(PrefabCreateCallback callback)
 		{
@@ -166,6 +169,7 @@ namespace TomCat {
 		std::string m_AnimatorRenameError;
 		SceneLoadCallback m_SceneLoadCallback;
 		SpriteCreateCallback m_SpriteCreateCallback;
+		AssetRevealCallback m_AssetRevealCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
 		PrefabCreateCallback m_PrefabCreateCallback;
 		PrefabInstantiateCallback m_PrefabInstantiateCallback;

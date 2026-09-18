@@ -60,6 +60,7 @@ namespace TomCat {
 	private:
 		std::filesystem::path m_CurrentDirectory;
 		std::filesystem::path m_SelectedPath;
+		std::filesystem::path m_PendingRevealPath;
 		// 只有用户真正点击/右键选中的目录才显示蓝色选中态，
 		// 避免项目刚打开时 Assets 只是作为默认当前目录而被高亮。
 		bool m_UserSelectedDirectory = false;

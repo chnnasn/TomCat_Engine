@@ -14,6 +14,22 @@ namespace TomCat {
 	// must never be used as serialized references by scenes or runtime code.
 	using AssetHandle = UUID;
 
+	// Engine package assets use a reserved, stable namespace so scenes can reference
+	// read-only resources without copying them into every project's Assets folder.
+	inline constexpr uint64_t BuiltInCircleSpriteHandleValue = 0x54434D5350520001ULL;
+	inline constexpr uint64_t BuiltInSquareSpriteHandleValue = 0x54434D5350520002ULL;
+
+	[[nodiscard]] inline constexpr bool IsBuiltInAssetHandleValue(uint64_t value)
+	{
+		return value == BuiltInCircleSpriteHandleValue
+			|| value == BuiltInSquareSpriteHandleValue;
+	}
+
+	[[nodiscard]] inline bool IsBuiltInAssetHandle(AssetHandle handle)
+	{
+		return IsBuiltInAssetHandleValue(static_cast<uint64_t>(handle));
+	}
+
 	enum class AssetType : uint16_t
 	{
 		None = 0,

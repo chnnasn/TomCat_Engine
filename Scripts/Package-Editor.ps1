@@ -72,11 +72,21 @@ if ($Build) {
 
 if (-not (Test-Path $SourceDir -PathType Container)) { throw "Source directory not found: $SourceDir" }
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
+$packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
+$requiredPackageAssets = @(
+    "Resources\Sprites\TomCat\Circle.tga",
+    "Resources\Sprites\TomCat\Square.tga"
+)
+foreach ($requiredPackageAsset in $requiredPackageAssets) {
+    $requiredPackageAssetPath = Join-Path $packageSource $requiredPackageAsset
+    if (-not (Test-Path -LiteralPath $requiredPackageAssetPath -PathType Leaf)) {
+        throw "Required Editor package asset was not found: $requiredPackageAssetPath"
+    }
+}
 $playerTemplate = Join-Path $SourceDir "Packages\PlayerTemplates\win-x64"
 Write-Host "[Template] Generating and validating win-x64 Player Template ..."
 & (Join-Path $PSScriptRoot "Build-PlayerTemplate.ps1") -Configuration Release -Destination $playerTemplate
 if ($LASTEXITCODE -ne 0) { throw "Player Template generation failed (exit $LASTEXITCODE)" }
-$packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
 $packageFileCount = @(Get-ChildItem -LiteralPath $packageSource -Recurse -File -Force).Count
 Write-Host "Scanning $packageFileCount package candidate file(s) from $packageSource"
 
@@ -88,6 +98,7 @@ $stagingRoot = Join-Path $dist ".tomcat-editor-staging"
 $payloadRoot = Join-Path $stagingRoot "payload"
 $payloadManaged = Join-Path $payloadRoot "Managed"
 $payloadTemplateParent = Join-Path $payloadRoot "Packages\PlayerTemplates"
+$payloadBuiltInSpriteRoot = Join-Path $payloadRoot "Packages\Resources\Sprites\TomCat"
 $stagedInputExe = Join-Path $stagingRoot "input\TomCatInut.exe"
 $stagedBoxedExe = Join-Path $stagingRoot "boxed\$FinalName.exe"
 $cliSource = Join-Path $RepoRoot "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
@@ -148,6 +159,13 @@ foreach ($name in $nativeRuntimeFiles) {
 Publish-TomCatManagedRelease -RepositoryRoot $RepoRoot -Destination $payloadManaged
 New-Item -ItemType Directory -Path $payloadTemplateParent -Force | Out-Null
 Copy-Item -LiteralPath $playerTemplate -Destination $payloadTemplateParent -Recurse -Force
+New-Item -ItemType Directory -Path $payloadBuiltInSpriteRoot -Force | Out-Null
+foreach ($requiredPackageAsset in $requiredPackageAssets) {
+    $requiredPackageAssetPath = Join-Path $packageSource $requiredPackageAsset
+    Copy-Item -LiteralPath $requiredPackageAssetPath `
+        -Destination (Join-Path $payloadBuiltInSpriteRoot (Split-Path -Leaf $requiredPackageAsset)) `
+        -Force
+}
 [void](New-TomCatRuntimeManifest -PayloadRoot $payloadRoot `
     -EngineBuildId $versionInfo.EngineBuildID)
 

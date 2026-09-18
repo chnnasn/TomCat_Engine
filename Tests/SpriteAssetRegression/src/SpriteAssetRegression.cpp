@@ -13,6 +13,7 @@
 #include "stb_image.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -30,12 +31,59 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#ifdef TC_PLATFORM_WINDOWS
+	#ifndef NOMINMAX
+		#define NOMINMAX
+	#endif
+	#ifndef WIN32_LEAN_AND_MEAN
+		#define WIN32_LEAN_AND_MEAN
+	#endif
+	#include <Windows.h>
+#endif
+
 namespace {
 
 	void Require(bool condition, const char* message)
 	{
 		if (!condition)
 			throw std::runtime_error(message);
+	}
+
+	class ScopedCurrentPath final
+	{
+	public:
+		explicit ScopedCurrentPath(const std::filesystem::path& path)
+			: m_Previous(std::filesystem::current_path())
+		{
+			std::filesystem::current_path(path);
+		}
+
+		~ScopedCurrentPath()
+		{
+			std::error_code error;
+			std::filesystem::current_path(m_Previous, error);
+		}
+
+		ScopedCurrentPath(const ScopedCurrentPath&) = delete;
+		ScopedCurrentPath& operator=(const ScopedCurrentPath&) = delete;
+
+	private:
+		std::filesystem::path m_Previous;
+	};
+
+	std::filesystem::path GetExecutableDirectory()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		std::array<wchar_t, 32768> buffer{};
+		const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+			static_cast<DWORD>(buffer.size()));
+		Require(length != 0 && length < buffer.size(),
+			"Sprite regression executable path is unavailable");
+		return std::filesystem::path(
+			std::wstring(buffer.data(), length)).parent_path();
+#else
+		return std::filesystem::current_path();
+#endif
 	}
 
 	class TemporaryAssetProject final
@@ -757,6 +805,198 @@ namespace {
 			Require(cornerAlpha == 255, "Square primitive corner is not opaque");
 	}
 
+	void TestBuiltInSpriteManifestPathsAndCook()
+	{
+		constexpr uint64_t expectedCircleHandle = 0x54434D5350520001ULL;
+		constexpr uint64_t expectedSquareHandle = 0x54434D5350520002ULL;
+		Require(TomCat::BuiltInCircleSpriteHandleValue == expectedCircleHandle
+			&& TomCat::BuiltInSquareSpriteHandleValue == expectedSquareHandle,
+			"built-in Sprite handle constants changed");
+
+		const TomCat::AssetHandle circle(expectedCircleHandle);
+		const TomCat::AssetHandle square(expectedSquareHandle);
+		const auto manifest = TomCat::GetBuiltInSpriteAssets();
+		Require(manifest.size() == 2,
+			"built-in Sprite manifest must contain exactly Circle and Square");
+		const TomCat::BuiltInSpriteAsset* circleAsset =
+			TomCat::FindBuiltInSpriteAsset("Circle");
+		const TomCat::BuiltInSpriteAsset* squareAsset =
+			TomCat::FindBuiltInSpriteAsset("Square");
+		Require(circleAsset && circleAsset->Handle == circle
+			&& circleAsset->PackageRelativePath
+				== "Resources/Sprites/TomCat/Circle.tga"
+			&& squareAsset && squareAsset->Handle == square
+			&& squareAsset->PackageRelativePath
+				== "Resources/Sprites/TomCat/Square.tga",
+			"built-in Sprite manifest name, path, or fixed handle changed");
+		Require(TomCat::FindBuiltInSpriteAsset(circle) == circleAsset
+			&& TomCat::FindBuiltInSpriteAsset(square) == squareAsset,
+			"built-in Sprite manifest lookups disagree by name and handle");
+		Require(TomCat::FindBuiltInSpriteAsset("circle") == nullptr
+			&& TomCat::FindBuiltInSpriteAsset(TomCat::AssetHandle(1234)) == nullptr,
+			"built-in Sprite manifest accepted an unknown identity");
+		Require(TomCat::IsBuiltInAssetHandle(circle)
+			&& TomCat::IsBuiltInAssetHandle(square)
+			&& !TomCat::IsBuiltInAssetHandle(TomCat::AssetHandle(0))
+			&& !TomCat::IsBuiltInAssetHandle(TomCat::AssetHandle(
+				(std::numeric_limits<uint64_t>::max)())),
+			"built-in Sprite reserved-handle predicate changed");
+
+		const std::filesystem::path circlePath =
+			std::filesystem::path("Packages/Resources/Sprites/TomCat/Circle.tga");
+		const std::filesystem::path squarePath =
+			std::filesystem::path("Packages/Resources/Sprites/TomCat/Square.tga");
+		Require(TomCat::GetBuiltInSpriteAssetPath(circle) == circlePath
+			&& TomCat::GetBuiltInSpriteAssetPath(square) == squarePath
+			&& TomCat::GetBuiltInSpriteAssetPath(TomCat::AssetHandle(1234)).empty(),
+			"built-in Sprite package path resolution changed");
+
+		const std::filesystem::path executableDirectory = GetExecutableDirectory();
+		std::error_code error;
+		Require(std::filesystem::is_regular_file(
+			executableDirectory / circlePath, error) && !error,
+			"Circle package resource was not copied beside the regression executable");
+		error.clear();
+		Require(std::filesystem::is_regular_file(
+			executableDirectory / squarePath, error) && !error,
+			"Square package resource was not copied beside the regression executable");
+		const ScopedCurrentPath packagedRuntime(executableDirectory);
+		const std::vector<uint8_t> circleSource = ReadFileBytes(circlePath);
+		const std::vector<uint8_t> squareSource = ReadFileBytes(squarePath);
+		RequireDecodablePrimitive(circleSource, true);
+		RequireDecodablePrimitive(squareSource, false);
+
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		assets.Shutdown();
+		TomCat::ResolvedSpriteAsset resolved;
+		Require(assets.ResolvePath(circle) == circlePath
+			&& assets.ResolvePath(square) == squarePath
+			&& assets.ResolveSpriteAsset(circle, resolved)
+			&& resolved.TextureHandle == circle && !resolved.IsSubAsset,
+			"authoring did not resolve a built-in Sprite outside the project registry");
+
+		TemporaryAssetProject environment;
+		Require(assets.Initialize(environment.Assets, environment.Library),
+			"built-in Sprite Cook AssetManager initialization failed");
+		Require(assets.Registry().GetMetadata(circle) == nullptr
+			&& assets.Registry().GetMetadata(square) == nullptr,
+			"project registry claimed an immutable built-in Sprite handle");
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName("Built-in Sprite Cook");
+		TomCat::Entity entity = scene->CreateEntity("Built-ins");
+		entity.AddComponent<TomCat::SpriteRenderer>().SpriteHandle = square;
+		entity.AddComponent<TomCat::SpriteAnimator>(
+			MakeAnimator(square, circle, square));
+		const std::filesystem::path scenePath =
+			environment.Assets / "BuiltInSprites.tomcat";
+		Require(TomCat::SceneSerializer(scene).Serialize(scenePath),
+			"built-in Sprite Cook Scene could not be serialized");
+		const TomCat::AssetMetadata* sceneMetadata =
+			assets.Registry().GetMetadata(scenePath);
+		Require(sceneMetadata && sceneMetadata->Type == TomCat::AssetType::Scene,
+			"built-in Sprite Cook Scene was not imported");
+		const std::filesystem::path package =
+			environment.Root / "Build" / "BuiltInSprites.tcpak";
+		Require(assets.CookToPackage(package, sceneMetadata->Handle),
+			"Cook rejected Scene references to built-in Sprites");
+		assets.Shutdown();
+
+		Require(assets.MountCookedPackage(package),
+			"built-in Sprite Cook package could not be mounted");
+		auto requireCookedBuiltIn = [&](TomCat::AssetHandle handle,
+			const std::vector<uint8_t>& source, bool expectCircle)
+		{
+			TomCat::CookedAssetRange range;
+			std::vector<uint8_t> cooked;
+			TomCat::AssetType type = TomCat::AssetType::None;
+			Require(assets.TryGetCookedAssetRange(handle, range)
+				&& range.Type == TomCat::AssetType::Texture2D
+				&& assets.ReadAssetBytes(handle, cooked, &type)
+				&& type == TomCat::AssetType::Texture2D,
+				"Cook omitted a built-in Sprite package entry");
+			Require(cooked != source && TomCat::IsTextureArtifact(cooked),
+				"Cook did not import a built-in Sprite into a texture artifact");
+			RequireDecodablePrimitive(cooked, expectCircle);
+		};
+		requireCookedBuiltIn(circle, circleSource, true);
+		requireCookedBuiltIn(square, squareSource, false);
+		Require(assets.BeginCookedTexturePreload() == 2,
+			"cooked package did not expose both built-in Sprites to texture preload");
+		assets.UnmountCookedPackage();
+	}
+
+	void TestBuiltInSpriteHandlesStayReserved()
+	{
+		TemporaryAssetProject environment;
+		const std::filesystem::path rootCollision =
+			environment.Assets / "ReservedCircle.tga";
+		const std::filesystem::path childCollision =
+			environment.Assets / "ReservedSquareChild.tga";
+		const auto writeText = [](const std::filesystem::path& path,
+			const std::string& text)
+		{
+			std::ofstream output(path, std::ios::binary | std::ios::trunc);
+			output.write(text.data(), static_cast<std::streamsize>(text.size()));
+			Require(static_cast<bool>(output),
+				"reserved built-in handle fixture could not be written");
+		};
+		writeText(rootCollision, "root collision source");
+		writeText(childCollision, "child collision source");
+
+		const std::filesystem::path rootMetadata =
+			TomCat::AssetRegistry::GetMetadataPath(rootCollision);
+		const std::filesystem::path childMetadata =
+			TomCat::AssetRegistry::GetMetadataPath(childCollision);
+		const uint64_t ordinaryOwner = 0x1020304050607080ULL;
+		const std::string rootDocument =
+			"SchemaVersion: 2\nAsset:\n  Handle: "
+			+ std::to_string(TomCat::BuiltInCircleSpriteHandleValue)
+			+ "\n  Type: Texture2D\n  ImportSettings: {}\n  SubAssets: []\n";
+		const std::string childDocument =
+			"SchemaVersion: 2\nAsset:\n  Handle: "
+			+ std::to_string(ordinaryOwner)
+			+ "\n  Type: Texture2D\n  ImportSettings: {}\n  SubAssets:\n"
+				"    - Handle: "
+			+ std::to_string(TomCat::BuiltInSquareSpriteHandleValue)
+			+ "\n      PersistentID: reserved-square\n"
+				"      Name: Reserved Square\n      Type: Texture2D\n";
+		writeText(rootMetadata, rootDocument);
+		writeText(childMetadata, childDocument);
+		const std::string cacheDocument =
+			"SchemaVersion: 2\nAssets:\n"
+			"  - Handle: " + std::to_string(ordinaryOwner)
+			+ "\n    Type: Texture2D\n"
+				"    FilePath: ReservedSquareChild.tga\n"
+				"    ImportSettings: {}\n"
+				"    SubAssets:\n"
+				"      - Handle: "
+			+ std::to_string(TomCat::BuiltInSquareSpriteHandleValue)
+			+ "\n        PersistentID: reserved-square\n"
+				"        Name: Reserved Square\n"
+				"        Type: Texture2D\n";
+		std::filesystem::create_directories(environment.Library);
+		writeText(environment.Library / "AssetRegistry.yaml", cacheDocument);
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(environment.Assets, environment.Library),
+			"reserved built-in handle registry initialization failed");
+		Require(!registry.Refresh(),
+			"registry accepted a project .tcmeta claim on built-in Sprite handles");
+		Require(registry.GetMetadata(TomCat::AssetHandle(
+				TomCat::BuiltInCircleSpriteHandleValue)) == nullptr
+			&& registry.GetMetadata(TomCat::AssetHandle(ordinaryOwner)) == nullptr
+			&& registry.GetSubAssetOwner(TomCat::AssetHandle(
+				TomCat::BuiltInSquareSpriteHandleValue)) == nullptr,
+			"reserved built-in Sprite handle leaked into the project registry");
+		Require(ReadFileBytes(rootMetadata) == std::vector<uint8_t>(
+				rootDocument.begin(), rootDocument.end())
+			&& ReadFileBytes(childMetadata) == std::vector<uint8_t>(
+				childDocument.begin(), childDocument.end()),
+			"registry rewrote a .tcmeta file that claimed a built-in Sprite handle");
+		registry.Shutdown();
+	}
+
 	std::vector<uint8_t> RequirePrimitive(TomCat::AssetRegistry& registry,
 		TomCat::AssetHandle handle, const char* primitiveName)
 	{
@@ -1247,6 +1487,8 @@ int main()
 		TestAnimatorStateMachine();
 		TestSpriteAnimatorAuthoringReferences();
 		TestSpriteAnimationSceneAndPrefabRoundtrip();
+		TestBuiltInSpriteManifestPathsAndCook();
+		TestBuiltInSpriteHandlesStayReserved();
 		TestPrimitiveSpriteAuthoringAndCookedPackage();
 		TestColdDirectAtlasCookIsReadOnly();
 		TestAtlasImportAndCookedSubSprite();
@@ -1257,7 +1499,7 @@ int main()
 			ConcurrentCookMutation::Slice, "ConcurrentSlice");
 		TestCookRejectsConcurrentSubAssetMutation(
 			ConcurrentCookMutation::Source, "ConcurrentSource");
-		std::cout << "PASS Sprite Atlas, Animator state machine, Scene/Prefab, and hardened Cook closure\n";
+		std::cout << "PASS built-in Sprites, Sprite Atlas, Animator state machine, Scene/Prefab, and hardened Cook closure\n";
 		return 0;
 	}
 	catch (const std::exception& exception)
