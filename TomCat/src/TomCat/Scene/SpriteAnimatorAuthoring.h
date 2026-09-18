@@ -249,6 +249,144 @@ namespace TomCat::SpriteAnimatorAuthoring {
 			|| type == AnimatorParameterType::Trigger;
 	}
 
+	inline std::optional<size_t> FindClipIndex(const SpriteAnimator& animator,
+		std::string_view name)
+	{
+		for (size_t index = 0; index < animator.Clips.size(); ++index)
+			if (animator.Clips[index].Name == name)
+				return index;
+		return std::nullopt;
+	}
+
+	inline double ClipDuration(const SpriteAnimationClip& clip)
+	{
+		double duration = 0.0;
+		for (const SpriteAnimationFrame& frame : clip.Frames)
+			if (std::isfinite(frame.DurationSeconds) && frame.DurationSeconds > 0.0f)
+				duration += static_cast<double>(frame.DurationSeconds);
+		return duration;
+	}
+
+	inline size_t FrameAtTime(const SpriteAnimationClip& clip, double seconds)
+	{
+		if (clip.Frames.empty())
+			return 0;
+		const double duration = ClipDuration(clip);
+		if (duration <= 0.0)
+			return 0;
+		if (!std::isfinite(seconds))
+			seconds = 0.0;
+		if (clip.Loop)
+		{
+			seconds = std::fmod(seconds, duration);
+			if (seconds < 0.0)
+				seconds += duration;
+		}
+		else
+			seconds = std::clamp(seconds, 0.0,
+				std::nextafter(duration, 0.0));
+
+		double cursor = 0.0;
+		for (size_t index = 0; index < clip.Frames.size(); ++index)
+		{
+			const float frameDuration = clip.Frames[index].DurationSeconds;
+			if (std::isfinite(frameDuration) && frameDuration > 0.0f)
+				cursor += static_cast<double>(frameDuration);
+			if (seconds < cursor)
+				return index;
+		}
+		return clip.Frames.size() - 1;
+	}
+
+	inline bool InsertFrame(SpriteAnimationClip& clip, size_t index,
+		SpriteAnimationFrame frame, std::string& error)
+	{
+		if (index > clip.Frames.size())
+		{
+			error = "Frame insertion index is out of range";
+			return false;
+		}
+		if (static_cast<uint64_t>(frame.SpriteHandle) == 0)
+		{
+			error = "Animation frames require a Sprite asset";
+			return false;
+		}
+		if (!std::isfinite(frame.DurationSeconds)
+			|| frame.DurationSeconds <= 0.0f || frame.DurationSeconds > 3600.0f)
+		{
+			error = "Frame duration must be in the range (0, 3600] seconds";
+			return false;
+		}
+		clip.Frames.insert(clip.Frames.begin()
+			+ static_cast<std::ptrdiff_t>(index), frame);
+		error.clear();
+		return true;
+	}
+
+	inline bool RemoveFrame(SpriteAnimationClip& clip, size_t index,
+		std::string& error)
+	{
+		if (index >= clip.Frames.size())
+		{
+			error = "Animation frame no longer exists";
+			return false;
+		}
+		if (clip.Frames.size() == 1)
+		{
+			error = "A component animation clip must keep at least one frame";
+			return false;
+		}
+		clip.Frames.erase(clip.Frames.begin()
+			+ static_cast<std::ptrdiff_t>(index));
+		error.clear();
+		return true;
+	}
+
+	inline bool MoveFrame(SpriteAnimationClip& clip, size_t from, size_t to,
+		std::string& error)
+	{
+		if (from >= clip.Frames.size() || to >= clip.Frames.size())
+		{
+			error = "Animation frame no longer exists";
+			return false;
+		}
+		if (from == to)
+		{
+			error.clear();
+			return false;
+		}
+		SpriteAnimationFrame frame = clip.Frames[from];
+		clip.Frames.erase(clip.Frames.begin()
+			+ static_cast<std::ptrdiff_t>(from));
+		clip.Frames.insert(clip.Frames.begin()
+			+ static_cast<std::ptrdiff_t>(to), frame);
+		error.clear();
+		return true;
+	}
+
+	inline bool SetFrameDuration(SpriteAnimationClip& clip, size_t index,
+		float seconds, std::string& error)
+	{
+		if (index >= clip.Frames.size())
+		{
+			error = "Animation frame no longer exists";
+			return false;
+		}
+		if (!std::isfinite(seconds) || seconds <= 0.0f || seconds > 3600.0f)
+		{
+			error = "Frame duration must be in the range (0, 3600] seconds";
+			return false;
+		}
+		if (clip.Frames[index].DurationSeconds == seconds)
+		{
+			error.clear();
+			return false;
+		}
+		clip.Frames[index].DurationSeconds = seconds;
+		error.clear();
+		return true;
+	}
+
 	inline AnimatorConditionMode DefaultConditionMode(AnimatorParameterType type)
 	{
 		return IsBooleanParameter(type)

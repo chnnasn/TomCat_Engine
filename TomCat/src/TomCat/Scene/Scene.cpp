@@ -2,6 +2,8 @@
 #include "Scene.h"
 
 #include "TomCat/Audio/AudioSceneRuntime.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
+#include "TomCat/Asset/AssetManager.h"
 
 #include "Components.h"
 #include "Advanced2D.h"
@@ -22,6 +24,7 @@
 #include <iterator>
 #include <limits>
 #include <utility>
+#include <unordered_map>
 #include <unordered_set>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -730,10 +733,17 @@ namespace TomCat {
 			for (const entt::entity entity : tilemapView)
 			{
 				const Tilemap2D& tilemap = tilemapView.get<Tilemap2D>(entity);
-				if (!isVisible(entity) || !tilemap.Enabled)
+				const TilemapRenderer2D* tileRenderer =
+					registry.try_get<TilemapRenderer2D>(entity);
+				if (!isVisible(entity) || !tilemap.Enabled
+					|| (tileRenderer && !tileRenderer->Enabled))
 					continue;
 				const UUID entityUUID = registry.get<ID>(entity).id;
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
+				const Entity tilemapEntity(entity, &scene);
+				const Entity gridEntity = scene.GetParent(tilemapEntity);
+				const Grid2D* grid = gridEntity && gridEntity.HasComponent<Grid2D>()
+					? &gridEntity.GetComponent<Grid2D>() : nullptr;
 				const glm::mat4 rootTransform =
 					scene.GetRuntimeRenderTransform(entityUUID);
 				for (const TilemapCell& cell : tilemap.Cells)
@@ -741,18 +751,21 @@ namespace TomCat {
 					if (static_cast<uint64_t>(cell.SpriteHandle) == 0)
 						continue;
 					const glm::mat4 worldTransform = rootTransform
-						* Tilemap2DRuntime::GetCellTransform(tilemap, cell);
+						* Tilemap2DRuntime::GetCellTransform(tilemap, cell, grid);
 					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
 						continue;
 					SpriteRenderer renderer;
 					renderer.SpriteHandle = cell.SpriteHandle;
 					renderer._Color = cell.Tint;
-					renderer.SortingLayer = tilemap.SortingLayer;
-					renderer.OrderInLayer = tilemap.OrderInLayer;
+					renderer.SortingLayer = tileRenderer
+						? tileRenderer->SortingLayer : tilemap.SortingLayer;
+					renderer.OrderInLayer = tileRenderer
+						? tileRenderer->OrderInLayer : tilemap.OrderInLayer;
 					sprites.push_back({
 						Renderer2D::MakeSpriteSortKey(renderer,
-							stableChildID(sortableEntityID, cell.Coordinate.x,
-								cell.Coordinate.y, 0x54494c45ULL)),
+							sortableEntityID,
+							tileRenderer ? Tilemap2DRuntime::GetCellRenderOrder(
+								cell.Coordinate, tileRenderer->SortOrder) : 0),
 						worldTransform, std::move(renderer), cell.Tint,
 						static_cast<int>(entity), false });
 				}
@@ -838,15 +851,99 @@ namespace TomCat {
 			RuntimeUISystem::RenderWorldText(scene, registry, visibility);
 		}
 
+		void HydrateSpriteAnimatorController(SpriteAnimator& animator)
+		{
+			if (static_cast<uint64_t>(animator.ControllerHandle) != 0)
+			{
+				std::string controllerError;
+				auto& assets = AssetManager::Get();
+				std::vector<uint8_t> controllerBytes;
+				AssetType controllerType = AssetType::None;
+				AnimatorControllerAsset controller;
+				if (!assets.ReadAssetBytes(animator.ControllerHandle,
+					controllerBytes, &controllerType)
+					|| controllerType != AssetType::AnimatorController)
+					controllerError = "controller asset is missing or has the wrong type";
+				else if (!AnimatorControllerAssetCodec::Decode(controllerBytes,
+					controller, controllerError))
+				{
+				}
+				else
+				{
+					std::vector<SpriteAnimationClip> clips;
+					std::vector<AnimatorState> states;
+					std::unordered_map<uint64_t, std::string> clipNamesByHandle;
+					std::unordered_map<std::string, uint64_t> handlesByClipName;
+					states.reserve(controller.States.size());
+					for (const AnimatorControllerAsset::State& sourceState
+						: controller.States)
+					{
+						const uint64_t rawClip = static_cast<uint64_t>(
+							sourceState.ClipHandle);
+						std::string clipName;
+						if (const auto cached = clipNamesByHandle.find(rawClip);
+							cached != clipNamesByHandle.end())
+							clipName = cached->second;
+						else
+						{
+							std::vector<uint8_t> clipBytes;
+							AssetType clipType = AssetType::None;
+							AnimationClipAsset clipAsset;
+							if (!assets.ReadAssetBytes(sourceState.ClipHandle,
+								clipBytes, &clipType)
+								|| clipType != AssetType::AnimationClip)
+							{
+								controllerError = "state '" + sourceState.Name
+									+ "' references a missing Animation Clip";
+								break;
+							}
+							if (!AnimationClipAssetCodec::Decode(clipBytes,
+								clipAsset, controllerError))
+								break;
+							clipName = clipAsset.Clip.Name;
+							if (const auto duplicate = handlesByClipName.find(clipName);
+								duplicate != handlesByClipName.end()
+								&& duplicate->second != rawClip)
+							{
+								controllerError = "controller references different clips named '"
+									+ clipName + "'";
+								break;
+							}
+							clipNamesByHandle.emplace(rawClip, clipName);
+							handlesByClipName.emplace(clipName, rawClip);
+							clips.push_back(std::move(clipAsset.Clip));
+						}
+						states.push_back({ sourceState.Name, clipName,
+							sourceState.Speed });
+					}
+					if (controllerError.empty())
+					{
+						animator.Clips = std::move(clips);
+						animator.Parameters = controller.Parameters;
+						animator.States = std::move(states);
+						animator.Transitions = controller.Transitions;
+						animator.InitialState = controller.InitialState;
+						animator.InitialClip = animator.Clips.empty()
+							? std::string{} : animator.Clips.front().Name;
+					}
+				}
+				if (!controllerError.empty())
+					TC_Core_Warn("Could not load Animator Controller {0}: {1}",
+						static_cast<uint64_t>(animator.ControllerHandle),
+						controllerError);
+			}
+		}
+
 		void InitializeSpriteAnimations(Scene& scene, entt::registry& registry)
 		{
 			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
 			for (const entt::entity entity : view)
 			{
-				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
-					continue;
 				auto [animator, renderer] =
 					view.get<SpriteAnimator, SpriteRenderer>(entity);
+				HydrateSpriteAnimatorController(animator);
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
 				SpriteAnimatorRuntime::Initialize(animator, renderer);
 			}
 		}
@@ -4304,20 +4401,26 @@ namespace TomCat {
 	template<>
 	void Scene::OnComponentAdded<SpriteRenderer>(Entity entity, SpriteRenderer& component)
 	{
-		if (m_RuntimeRunning && entity && IsActiveInHierarchy(entity)
-			&& entity.HasComponent<SpriteAnimator>())
-			SpriteAnimatorRuntime::Initialize(
-				entity.GetComponent<SpriteAnimator>(), component);
+		if (m_RuntimeRunning && entity && entity.HasComponent<SpriteAnimator>())
+		{
+			SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
+			HydrateSpriteAnimatorController(animator);
+			if (IsActiveInHierarchy(entity))
+				SpriteAnimatorRuntime::Initialize(animator, component);
+		}
 	}
 
 	template<>
 	void Scene::OnComponentAdded<SpriteAnimator>(Entity entity, SpriteAnimator& component)
 	{
 		SpriteAnimatorRuntime::Reset(component);
-		if (m_RuntimeRunning && entity && IsActiveInHierarchy(entity)
-			&& entity.HasComponent<SpriteRenderer>())
-			SpriteAnimatorRuntime::Initialize(
-				component, entity.GetComponent<SpriteRenderer>());
+		if (m_RuntimeRunning && entity && entity.HasComponent<SpriteRenderer>())
+		{
+			HydrateSpriteAnimatorController(component);
+			if (IsActiveInHierarchy(entity))
+				SpriteAnimatorRuntime::Initialize(component,
+					entity.GetComponent<SpriteRenderer>());
+		}
 	}
 
 	template<>

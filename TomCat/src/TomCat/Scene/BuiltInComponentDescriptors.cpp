@@ -70,7 +70,12 @@ namespace TomCat {
 
 		template<typename Component>
 		void ResetRuntime(Component&) {}
-		void ResetRuntime(SpriteRenderer& component) { component.Sprite.reset(); }
+		void ResetRuntime(SpriteRenderer& component)
+		{
+			component.Sprite.reset();
+			component.RuntimeSpriteOverrideActive = false;
+			component.RuntimeSpriteOverrideHandle = AssetHandle(0);
+		}
 		void ResetRuntime(SpriteAnimator& component) { SpriteAnimatorRuntime::Reset(component); }
 		void ResetRuntime(AudioSource& component)
 		{
@@ -869,7 +874,7 @@ namespace TomCat {
 		{
 			auto structured = LegacyStructuredDecode("SpriteAnimator",
 				{ "Enabled", "PlayOnStart", "InitialClip", "Speed", "Clips" },
-				{ "InitialState", "Parameters", "States", "Transitions" });
+				{ "ControllerHandle", "InitialState", "Parameters", "States", "Transitions" });
 			return [structured = std::move(structured)](
 				const ComponentDescriptor& descriptor, Entity entity,
 				const YAML::Node& entityNode, std::string& error)
@@ -878,6 +883,7 @@ namespace TomCat {
 					return true;
 				YAML::Node normalized = YAML::Load(YAML::Dump(entityNode));
 				YAML::Node animator = normalized["SpriteAnimator"];
+				if (!animator["ControllerHandle"]) animator["ControllerHandle"] = uint64_t(0);
 				if (!animator["InitialState"]) animator["InitialState"] = "";
 				if (!animator["Parameters"])
 					animator["Parameters"] = YAML::Node(YAML::NodeType::Sequence);
@@ -1248,6 +1254,8 @@ namespace TomCat {
 				const SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
 				output << YAML::BeginMap;
 				output << YAML::Key << "Enabled" << YAML::Value << animator.Enabled;
+				output << YAML::Key << "ControllerHandle" << YAML::Value
+					<< static_cast<uint64_t>(animator.ControllerHandle);
 				output << YAML::Key << "PlayOnStart" << YAML::Value << animator.PlayOnStart;
 				output << YAML::Key << "InitialClip" << YAML::Value << animator.InitialClip;
 				output << YAML::Key << "Speed" << YAML::Value << animator.Speed;
@@ -1316,10 +1324,13 @@ namespace TomCat {
 				if (!ValidateLegacyMap(node, "SpriteAnimator.Properties",
 					{ "Enabled", "PlayOnStart", "InitialClip", "Speed", "Clips",
 						"InitialState", "Parameters", "States", "Transitions" },
-					{}, error))
+					{ "ControllerHandle" }, error))
 					return false;
 				SpriteAnimator animator;
 				animator.Enabled = node["Enabled"].as<bool>();
+				animator.ControllerHandle = node["ControllerHandle"]
+					? AssetHandle(node["ControllerHandle"].as<uint64_t>())
+					: AssetHandle(0);
 				animator.PlayOnStart = node["PlayOnStart"].as<bool>();
 				animator.InitialClip = node["InitialClip"].as<std::string>();
 				animator.Speed = node["Speed"].as<float>();
@@ -1473,9 +1484,12 @@ namespace TomCat {
 				}
 				return true;
 			};
-			descriptor.Properties = {
+				descriptor.Properties = {
 				BoolProperty<SpriteAnimator>(ComponentIds::SpriteAnimatorProperties::Enabled,
 					"Enabled", &SpriteAnimator::Enabled),
+				AssetProperty(ComponentIds::SpriteAnimatorProperties::Controller,
+					"Controller", AssetType::AnimatorController, [](Entity entity)
+						-> AssetHandle& { return entity.GetComponent<SpriteAnimator>().ControllerHandle; }),
 				FloatProperty<SpriteAnimator>(ComponentIds::SpriteAnimatorProperties::Speed,
 					"Speed", &SpriteAnimator::Speed, 0.0f),
 				BoolProperty<SpriteAnimator>(ComponentIds::SpriteAnimatorProperties::PlayOnStart,
@@ -2047,6 +2061,108 @@ namespace TomCat {
 			return descriptor;
 		}
 
+		ComponentDescriptor MakeGrid2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<Grid2D>(ComponentIds::Grid2D,
+				"TomCat.Grid2D", "Grid 2D");
+			descriptor.UseGenericInspector = true;
+			descriptor.Properties = {
+				Vector2Property<Grid2D>(ComponentIds::Grid2DProperties::CellSize,
+					"CellSize", &Grid2D::CellSize, true),
+				Vector2Property<Grid2D>(ComponentIds::Grid2DProperties::CellGap,
+					"CellGap", &Grid2D::CellGap),
+				Property(ComponentIds::Grid2DProperties::Layout, "Layout",
+					PropertyKind::Int32,
+					[](Entity entity) -> PropertyValue
+					{ return static_cast<int32_t>(entity.GetComponent<Grid2D>().Layout); },
+					[](Entity entity, const PropertyValue& value, std::string& error)
+					{
+						const int32_t layout = std::get<int32_t>(value);
+						if (layout < 0 || layout > 3)
+						{
+							error = "Grid2D.Layout is invalid";
+							return false;
+						}
+						entity.GetComponent<Grid2D>().Layout =
+							static_cast<GridCellLayout2D>(layout);
+						return true;
+					}, false, int32_t(0)),
+				Property(ComponentIds::Grid2DProperties::Swizzle, "Swizzle",
+					PropertyKind::Int32,
+					[](Entity entity) -> PropertyValue
+					{ return static_cast<int32_t>(entity.GetComponent<Grid2D>().Swizzle); },
+					[](Entity entity, const PropertyValue& value, std::string& error)
+					{
+						const int32_t swizzle = std::get<int32_t>(value);
+						if (swizzle < 0 || swizzle > 5)
+						{
+							error = "Grid2D.Swizzle is invalid";
+							return false;
+						}
+						entity.GetComponent<Grid2D>().Swizzle =
+							static_cast<GridCellSwizzle2D>(swizzle);
+						return true;
+					}, false, int32_t(0))
+			};
+			return descriptor;
+		}
+
+		ComponentDescriptor MakeTilemapRenderer2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<TilemapRenderer2D>(
+				ComponentIds::TilemapRenderer2D, "TomCat.TilemapRenderer2D",
+				"Tilemap Renderer 2D");
+			descriptor.UseGenericInspector = true;
+			auto enumProperty = [](uint64_t id, const char* name, int32_t maximum,
+				auto get, auto set)
+			{
+				return Property(id, name, PropertyKind::Int32,
+					[get](Entity entity) -> PropertyValue
+					{ return static_cast<int32_t>(get(entity)); },
+					[name, maximum, set](Entity entity, const PropertyValue& value,
+						std::string& error)
+					{
+						const int32_t item = std::get<int32_t>(value);
+						if (item < 0 || item > maximum)
+						{
+							error = std::string("TilemapRenderer2D.") + name
+								+ " is invalid";
+							return false;
+						}
+						set(entity, item);
+						return true;
+					}, false, int32_t(0));
+			};
+			auto material = AssetProperty(ComponentIds::TilemapRenderer2DProperties::Material,
+				"Material", AssetType::Material, [](Entity entity) -> AssetHandle&
+				{ return entity.GetComponent<TilemapRenderer2D>().MaterialHandle; });
+			descriptor.Properties = {
+				BoolProperty<TilemapRenderer2D>(
+					ComponentIds::TilemapRenderer2DProperties::Enabled,
+					"Enabled", &TilemapRenderer2D::Enabled),
+				enumProperty(ComponentIds::TilemapRenderer2DProperties::SortOrder,
+					"SortOrder", 3,
+					[](Entity entity) { return entity.GetComponent<TilemapRenderer2D>().SortOrder; },
+					[](Entity entity, int32_t value) { entity.GetComponent<TilemapRenderer2D>().SortOrder = static_cast<TilemapSortOrder2D>(value); }),
+				enumProperty(ComponentIds::TilemapRenderer2DProperties::Mode,
+					"Mode", 1,
+					[](Entity entity) { return entity.GetComponent<TilemapRenderer2D>().Mode; },
+					[](Entity entity, int32_t value) { entity.GetComponent<TilemapRenderer2D>().Mode = static_cast<TilemapRendererMode2D>(value); }),
+				enumProperty(ComponentIds::TilemapRenderer2DProperties::DetectChunkCulling,
+					"DetectChunkCulling", 1,
+					[](Entity entity) { return entity.GetComponent<TilemapRenderer2D>().DetectChunkCulling; },
+					[](Entity entity, int32_t value) { entity.GetComponent<TilemapRenderer2D>().DetectChunkCulling = static_cast<TilemapChunkCulling2D>(value); }),
+				IntProperty<TilemapRenderer2D>(
+					ComponentIds::TilemapRenderer2DProperties::SortingLayer,
+					"SortingLayer", &TilemapRenderer2D::SortingLayer),
+				IntProperty<TilemapRenderer2D>(
+					ComponentIds::TilemapRenderer2DProperties::OrderInLayer,
+					"OrderInLayer", &TilemapRenderer2D::OrderInLayer),
+				std::move(material)
+			};
+			return descriptor;
+		}
+
 		ComponentDescriptor MakeParticleSystem2DDescriptor()
 		{
 			auto descriptor = BaseDescriptor<ParticleSystem2D>(
@@ -2160,7 +2276,7 @@ namespace TomCat {
 	std::vector<ComponentDescriptor> MakeBuiltInComponentDescriptors()
 	{
 		std::vector<ComponentDescriptor> result;
-		result.reserve(19);
+		result.reserve(21);
 		result.emplace_back(MakeIDDescriptor());
 		result.emplace_back(MakeTagDescriptor());
 		result.emplace_back(MakeEntityMetadataDescriptor());
@@ -2180,6 +2296,8 @@ namespace TomCat {
 		result.emplace_back(MakeTilemap2DDescriptor());
 		result.emplace_back(MakeParticleSystem2DDescriptor());
 		result.emplace_back(MakeLight2DDescriptor());
+		result.emplace_back(MakeGrid2DDescriptor());
+		result.emplace_back(MakeTilemapRenderer2DDescriptor());
 		return result;
 	}
 

@@ -19,6 +19,7 @@
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Asset/AssetImportCoordinator.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
 #include "TomCat/Asset/MaterialArtifact.h"
 #include "TomCat/Asset/MeshArtifact.h"
 #include "TomCat/Asset/ShaderArtifact.h"

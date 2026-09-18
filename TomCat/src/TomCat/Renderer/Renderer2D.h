@@ -33,13 +33,14 @@ namespace TomCat {
 		{
 			int32_t SortingLayer = 0;
 			int32_t OrderInLayer = 0;
+			uint64_t SubOrder = 0;
 			uint64_t EntityID = 0;
 		};
 
 		static SpriteSortKey MakeSpriteSortKey(const SpriteRenderer& sprite,
-			uint64_t entityID)
+			uint64_t entityID, uint64_t subOrder = 0)
 		{
-			return { sprite.SortingLayer, sprite.OrderInLayer, entityID };
+			return { sprite.SortingLayer, sprite.OrderInLayer, subOrder, entityID };
 		}
 
 		static bool SpriteSortLess(const SpriteSortKey& left,
@@ -49,7 +50,9 @@ namespace TomCat {
 				return left.SortingLayer < right.SortingLayer;
 			if (left.OrderInLayer != right.OrderInLayer)
 				return left.OrderInLayer < right.OrderInLayer;
-			return left.EntityID < right.EntityID;
+			if (left.EntityID != right.EntityID)
+				return left.EntityID < right.EntityID;
+			return left.SubOrder < right.SubOrder;
 		}
 
 		// Conservative homogeneous clip test for the renderer's unit quad. It

@@ -1,4 +1,5 @@
 #include "TomCat/Asset/AssetDatabase.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
 #include "TomCat/Asset/AssetImportCoordinator.h"
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/ArtifactKey.h"
@@ -925,6 +926,12 @@ namespace {
 		Require(TomCat::AssetTypeFromPath("unsupported.comp") == TomCat::AssetType::Other
 			&& TomCat::AssetTypeFromPath("unsupported.hlsl") == TomCat::AssetType::Other,
 			"unsupported shader languages are still advertised as production assets");
+		Require(TomCat::AssetTypeFromPath("Walk.tcanim") == TomCat::AssetType::AnimationClip
+			&& TomCat::AssetTypeFromPath("Player.tccontroller")
+				== TomCat::AssetType::AnimatorController
+			&& TomCat::AssetTypeFromPath("Ground.tctilepalette")
+				== TomCat::AssetType::TilePalette,
+			"2D authoring asset extensions were not assigned stable asset types");
 	}
 
 	void TestCookedShaderRuntimeConsumption()
@@ -3398,6 +3405,84 @@ namespace {
 		registry.Shutdown();
 	}
 
+	void TestAuthoringDependencyValidationRejectsInvalidEdges()
+	{
+		TemporaryProject project;
+		const auto builtIns = TomCat::GetBuiltInSpriteAssets();
+		Require(!builtIns.empty(),
+			"authoring dependency validation needs one built-in Sprite");
+
+		TomCat::AnimationClipAsset clip;
+		clip.Clip.Name = "Dependency Clip";
+		clip.Clip.Frames.push_back({ builtIns.front().Handle, 1.0f / 12.0f });
+		std::string document;
+		std::string error;
+		Require(TomCat::AnimationClipAssetCodec::Encode(clip, document, error),
+			"authoring dependency clip could not be encoded");
+		const std::filesystem::path clipPath = project.Assets / "Dependency.tcanim";
+		const std::filesystem::path shaderPath = project.Assets / "WrongType.glsl";
+		WriteBytes(clipPath, document);
+		WriteBytes(shaderPath, MakeDependencyShader("authoring-wrong-type"));
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"authoring dependency registry did not initialize");
+		const TomCat::AssetHandle clipHandle = RequireHandle(registry, clipPath,
+			TomCat::AssetType::AnimationClip);
+		const TomCat::AssetHandle shaderHandle = RequireHandle(registry, shaderPath,
+			TomCat::AssetType::Shader);
+
+		TomCat::AnimatorControllerAsset controller;
+		controller.InitialState = "State";
+		controller.States.push_back({ "State", clipHandle, 1.0f });
+		Require(TomCat::AnimatorControllerAssetCodec::Encode(
+			controller, document, error),
+			"authoring dependency controller could not be encoded");
+		const std::filesystem::path controllerPath =
+			project.Assets / "Dependency.tccontroller";
+		WriteBytes(controllerPath, document);
+		Require(registry.Refresh(),
+			"authoring dependency controller was not discovered");
+		const TomCat::AssetHandle controllerHandle = RequireHandle(registry,
+			controllerPath, TomCat::AssetType::AnimatorController);
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"authoring dependency database did not initialize");
+		const auto valid = database.GetDependencySnapshot(controllerHandle);
+		Require(valid.Dependencies.size() == 1
+			&& valid.Dependencies[0] == clipHandle,
+			"valid Controller-to-AnimationClip edge was not discovered");
+
+		auto writeControllerReference = [&](TomCat::AssetHandle handle)
+		{
+			controller.States[0].ClipHandle = handle;
+			Require(TomCat::AnimatorControllerAssetCodec::Encode(
+				controller, document, error),
+				"invalid-edge controller fixture could not be encoded");
+			WriteBytes(controllerPath, document);
+		};
+		writeControllerReference(TomCat::AssetHandle(0x0badf00dULL));
+		Require(!database.RefreshRegistry(),
+			"authoring dependency discovery accepted a missing handle");
+		writeControllerReference(shaderHandle);
+		Require(!database.RefreshRegistry(),
+			"authoring dependency discovery accepted the wrong asset type");
+		writeControllerReference(controllerHandle);
+		Require(!database.RefreshRegistry(),
+			"authoring dependency discovery accepted a self reference");
+
+		writeControllerReference(clipHandle);
+		Require(database.RefreshRegistry(),
+			"authoring dependency discovery did not recover after valid source restore");
+		const auto restored = database.GetDependencySnapshot(controllerHandle);
+		Require(restored.Dependencies.size() == 1
+			&& restored.Dependencies[0] == clipHandle,
+			"restored authoring dependency graph is incorrect");
+		database.Shutdown();
+		registry.Shutdown();
+	}
+
 }
 
 int main()
@@ -3425,6 +3510,7 @@ int main()
 		TestCoordinatorRetriesStaleDeferredFinalization();
 		TestCoordinatorRefreshesDiscoverableClosureBeforeStaleRetry();
 		TestFileMonitorImportCoordinator();
+		TestAuthoringDependencyValidationRejectsInvalidEdges();
 		TestBoundedAssetJobSystem();
 		std::cout << "PASS production artifacts, bounded jobs, DDC, tcmeta v2, and monitored reimport\n";
 		return 0;

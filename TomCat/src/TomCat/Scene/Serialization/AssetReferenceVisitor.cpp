@@ -308,6 +308,15 @@ namespace TomCat {
 						errorMessage = entityPath + ".SpriteAnimator must be a map";
 						return false;
 					}
+					// ControllerHandle was added after the original SpriteAnimator
+					// archive shape. Its absence must remain valid for old scenes and
+					// prefabs, while a present value still receives strict validation.
+					if (animator["ControllerHandle"]
+						&& !VisitHandle(animator, "ControllerHandle",
+							entityPath + ".SpriteAnimator", AssetType::AnimatorController,
+							SerializedAssetReferenceKind::AnimatorController, false,
+							visitor, errorMessage))
+						return false;
 					const YAML::Node clips = animator["Clips"];
 					if (!clips || !clips.IsSequence())
 					{
@@ -377,6 +386,10 @@ namespace TomCat {
 					|| !VisitRegisteredAssetProperty(registeredComponents,
 						"TomCat.ParticleSystem2D", "Sprite", entityPath,
 						AssetType::Texture2D, SerializedAssetReferenceKind::Particle,
+						visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.TilemapRenderer2D", "Material", entityPath,
+						AssetType::Material, SerializedAssetReferenceKind::Material,
 						visitor, errorMessage)
 					|| !VisitTilemapCells(registeredComponents, entityPath, visitor,
 						errorMessage))

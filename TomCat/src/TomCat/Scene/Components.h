@@ -95,6 +95,10 @@ namespace TomCat {
 		AssetHandle SpriteHandle = AssetHandle(0);
 		// Runtime-only resolved sprite. SpriteHandle is the serialized source of truth.
 		Ref<Texture2D> Sprite;
+		// Editor animation preview uses a runtime-only handle so scrubbing never
+		// mutates the serialized SpriteHandle (and therefore cannot leak into Save).
+		bool RuntimeSpriteOverrideActive = false;
+		AssetHandle RuntimeSpriteOverrideHandle = AssetHandle(0);
 		float TilingFactor = 1.0f;
 		// Lower layers/orders are submitted first. Numeric layer identities stay
 		// stable if an editor-facing display name is renamed later.
@@ -188,6 +192,9 @@ namespace TomCat {
 		static constexpr uint32_t InvalidClipIndex = 0xffffffffu;
 
 		bool Enabled = true;
+		// Optional external graph. At runtime the controller and its referenced
+		// Animation Clip assets replace the embedded authoring snapshot below.
+		AssetHandle ControllerHandle = AssetHandle(0);
 		bool PlayOnStart = true;
 		// Empty selects the first clip. Names are unique inside one Animator.
 		std::string InitialClip;
@@ -263,6 +270,68 @@ namespace TomCat {
 		bool FlipX = false;
 		bool FlipY = false;
 		int32_t RotationQuarterTurns = 0;
+	};
+
+	enum class GridCellLayout2D : int32_t
+	{
+		Rectangle = 0,
+		Isometric,
+		IsometricZAsY,
+		Hexagon
+	};
+
+	enum class GridCellSwizzle2D : int32_t
+	{
+		XYZ = 0,
+		XZY,
+		YXZ,
+		YZX,
+		ZXY,
+		ZYX
+	};
+
+	// Unity-style layout owner. Tilemaps normally live below an Entity carrying
+	// this component. Tilemap2D keeps its original CellSize/CellGap fields so old
+	// scenes continue to load and render when no Grid2D is present.
+	struct Grid2D
+	{
+		glm::vec2 CellSize{ 1.0f, 1.0f };
+		glm::vec2 CellGap{ 0.0f, 0.0f };
+		GridCellLayout2D Layout = GridCellLayout2D::Rectangle;
+		GridCellSwizzle2D Swizzle = GridCellSwizzle2D::XYZ;
+	};
+
+	enum class TilemapSortOrder2D : int32_t
+	{
+		BottomLeft = 0,
+		BottomRight,
+		TopLeft,
+		TopRight
+	};
+
+	enum class TilemapRendererMode2D : int32_t
+	{
+		Chunk = 0,
+		Individual
+	};
+
+	enum class TilemapChunkCulling2D : int32_t
+	{
+		Auto = 0,
+		Manual
+	};
+
+	// Rendering policy is deliberately separate from sparse tile data. The
+	// legacy fields on Tilemap2D remain the fallback when this component is absent.
+	struct TilemapRenderer2D
+	{
+		bool Enabled = true;
+		TilemapSortOrder2D SortOrder = TilemapSortOrder2D::BottomLeft;
+		TilemapRendererMode2D Mode = TilemapRendererMode2D::Chunk;
+		TilemapChunkCulling2D DetectChunkCulling = TilemapChunkCulling2D::Auto;
+		int32_t SortingLayer = 0;
+		int32_t OrderInLayer = 0;
+		AssetHandle MaterialHandle = AssetHandle(0);
 	};
 
 	struct Tilemap2D

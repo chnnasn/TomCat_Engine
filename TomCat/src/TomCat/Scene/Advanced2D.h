@@ -15,6 +15,13 @@ namespace TomCat {
 		bool EraseCell(Tilemap2D& tilemap, glm::ivec2 coordinate);
 		glm::mat4 GetCellTransform(const Tilemap2D& tilemap,
 			const TilemapCell& cell);
+		glm::mat4 GetCellTransform(const Tilemap2D& tilemap,
+			const TilemapCell& cell, const Grid2D* grid);
+		// Produces a lexicographically sortable key for the four Unity-style
+		// tile traversal orders. It is used as the final per-cell renderer tie
+		// breaker after sorting layer and order in layer.
+		uint64_t GetCellRenderOrder(glm::ivec2 coordinate,
+			TilemapSortOrder2D sortOrder);
 	}
 
 	namespace ParticleSystem2DRuntime {

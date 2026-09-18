@@ -44,7 +44,10 @@ namespace TomCat {
 		// giving C# source a precise, single-language identity.
 		CSharpScript = 8,
 		Other = 9,
-		Prefab = 10
+		Prefab = 10,
+		AnimationClip = 11,
+		AnimatorController = 12,
+		TilePalette = 13
 	};
 
 	const char* AssetTypeToString(AssetType type);

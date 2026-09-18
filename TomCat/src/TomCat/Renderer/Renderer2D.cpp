@@ -934,18 +934,20 @@ void main()
 
 	void Renderer2D::DrawSprite(const glm::mat4& transform, SpriteRenderer& src, int entityID)
 	{
-		if (static_cast<uint64_t>(src.SpriteHandle) == 0)
+		const AssetHandle spriteHandle = src.RuntimeSpriteOverrideActive
+			? src.RuntimeSpriteOverrideHandle : src.SpriteHandle;
+		if (static_cast<uint64_t>(spriteHandle) == 0)
 		{
 			src.Sprite.reset();
 			return;
 		}
 
 		AssetManager& assets = AssetManager::Get();
-		src.Sprite = assets.LoadTexture(src.SpriteHandle);
+		src.Sprite = assets.LoadTexture(spriteHandle);
 		if (!src.Sprite)
 			return;
 		ResolvedSpriteAsset resolved;
-		if (!assets.ResolveSpriteAsset(src.SpriteHandle, resolved)
+		if (!assets.ResolveSpriteAsset(spriteHandle, resolved)
 			|| !resolved.IsSubAsset)
 		{
 			DrawQuad(transform, src.Sprite, src.TilingFactor, src._Color, entityID,

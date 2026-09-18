@@ -39,6 +39,21 @@ namespace TomCat {
 	}
 
 	namespace Tilemap2DRuntime {
+		namespace {
+			glm::vec3 SwizzlePosition(glm::vec3 value, GridCellSwizzle2D swizzle)
+			{
+				switch (swizzle)
+				{
+					case GridCellSwizzle2D::XZY: return { value.x, value.z, value.y };
+					case GridCellSwizzle2D::YXZ: return { value.y, value.x, value.z };
+					case GridCellSwizzle2D::YZX: return { value.y, value.z, value.x };
+					case GridCellSwizzle2D::ZXY: return { value.z, value.x, value.y };
+					case GridCellSwizzle2D::ZYX: return { value.z, value.y, value.x };
+					case GridCellSwizzle2D::XYZ:
+					default: return value;
+				}
+			}
+		}
 		void Normalize(Tilemap2D& tilemap)
 		{
 			std::unordered_map<uint64_t, size_t> lastIndex;
@@ -101,17 +116,60 @@ namespace TomCat {
 		glm::mat4 GetCellTransform(const Tilemap2D& tilemap,
 			const TilemapCell& cell)
 		{
-			const glm::vec2 stride = tilemap.CellSize + tilemap.CellGap;
-			glm::mat4 result = glm::translate(glm::mat4(1.0f), glm::vec3(
-				static_cast<float>(cell.Coordinate.x) * stride.x,
-				static_cast<float>(cell.Coordinate.y) * stride.y, 0.0f));
+			return GetCellTransform(tilemap, cell, nullptr);
+		}
+
+		glm::mat4 GetCellTransform(const Tilemap2D& tilemap,
+			const TilemapCell& cell, const Grid2D* grid)
+		{
+			const glm::vec2 cellSize = grid ? grid->CellSize : tilemap.CellSize;
+			const glm::vec2 cellGap = grid ? grid->CellGap : tilemap.CellGap;
+			const glm::vec2 stride = cellSize + cellGap;
+			const float x = static_cast<float>(cell.Coordinate.x);
+			const float y = static_cast<float>(cell.Coordinate.y);
+			glm::vec3 position(x * stride.x, y * stride.y, 0.0f);
+			const GridCellLayout2D layout = grid
+				? grid->Layout : GridCellLayout2D::Rectangle;
+			switch (layout)
+			{
+				case GridCellLayout2D::Isometric:
+				case GridCellLayout2D::IsometricZAsY:
+					position = { (x - y) * stride.x * 0.5f,
+						(x + y) * stride.y * 0.5f, 0.0f };
+					break;
+				case GridCellLayout2D::Hexagon:
+					position = { (x + ((cell.Coordinate.y & 1) ? 0.5f : 0.0f))
+						* stride.x, y * stride.y * 0.75f, 0.0f };
+					break;
+				case GridCellLayout2D::Rectangle:
+				default:
+					break;
+			}
+			if (grid)
+				position = SwizzlePosition(position, grid->Swizzle);
+			glm::mat4 result = glm::translate(glm::mat4(1.0f), position);
 			result = glm::rotate(result,
 				glm::radians(90.0f * static_cast<float>(cell.RotationQuarterTurns)),
 				glm::vec3(0.0f, 0.0f, 1.0f));
 			const glm::vec2 signedSize(
-				cell.FlipX ? -tilemap.CellSize.x : tilemap.CellSize.x,
-				cell.FlipY ? -tilemap.CellSize.y : tilemap.CellSize.y);
+				cell.FlipX ? -cellSize.x : cellSize.x,
+				cell.FlipY ? -cellSize.y : cellSize.y);
 			return glm::scale(result, glm::vec3(signedSize, 1.0f));
+		}
+
+		uint64_t GetCellRenderOrder(glm::ivec2 coordinate,
+			TilemapSortOrder2D sortOrder)
+		{
+			// Flipping the sign bit maps signed integer order to unsigned order.
+			uint32_t x = static_cast<uint32_t>(coordinate.x) ^ 0x80000000u;
+			uint32_t y = static_cast<uint32_t>(coordinate.y) ^ 0x80000000u;
+			if (sortOrder == TilemapSortOrder2D::BottomRight
+				|| sortOrder == TilemapSortOrder2D::TopRight)
+				x = ~x;
+			if (sortOrder == TilemapSortOrder2D::TopLeft
+				|| sortOrder == TilemapSortOrder2D::TopRight)
+				y = ~y;
+			return (static_cast<uint64_t>(y) << 32) | x;
 		}
 	}
 

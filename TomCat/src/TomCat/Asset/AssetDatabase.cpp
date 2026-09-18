@@ -5,6 +5,8 @@
 #include "AssetRegistry.h"
 #include "ContentHash.h"
 #include "MaterialArtifact.h"
+#include "Advanced2DAuthoringAssets.h"
+#include "SpriteAsset.h"
 #include "TextureArtifact.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Utils/FileSystemUtils.h"
@@ -268,7 +270,10 @@ namespace TomCat {
 		bool HasDiscoverableDependencies(AssetType type)
 		{
 			return type == AssetType::Scene || type == AssetType::Prefab
-				|| type == AssetType::Material;
+				|| type == AssetType::Material
+				|| type == AssetType::AnimationClip
+				|| type == AssetType::AnimatorController
+				|| type == AssetType::TilePalette;
 		}
 
 		bool IsLiveDependencyGraphOwner(const AssetRegistry* registry,
@@ -399,7 +404,7 @@ namespace TomCat {
 		{
 			std::scoped_lock lock(m_MetadataCommitMutex);
 			if (!RebuildDiscoveredDependenciesLocked())
-				TC_Core_Warn("Some Scene/Prefab/Material dependencies could not be discovered during initialization");
+				TC_Core_Warn("Some source asset dependencies could not be discovered during initialization");
 		}
 		EnableAsyncTasks();
 		return true;
@@ -996,7 +1001,7 @@ namespace TomCat {
 			!SameSubAssets(previousSubAssets, result.Artifact.SubAssets);
 		if ((refreshDependencies || subAssetsChanged)
 			&& !RebuildDiscoveredDependenciesLocked())
-			TC_Core_Warn("Some Scene/Prefab/Material dependencies could not be refreshed after import publication");
+			TC_Core_Warn("Some source asset dependencies could not be refreshed after import publication");
 
 		std::shared_lock graphLock(m_GraphMutex);
 		std::vector<AssetLoadInputSnapshot> refreshed;
@@ -1558,6 +1563,71 @@ namespace TomCat {
 							// resolve this handle to its source atlas separately.
 							found.push_back(dependency);
 						}
+					}
+				}
+				else if (metadata.Type == AssetType::AnimationClip
+					|| metadata.Type == AssetType::AnimatorController
+					|| metadata.Type == AssetType::TilePalette)
+				{
+					const auto collectAuthoring = [&](
+						const AuthoringAssetReference& reference)
+					{
+						const AssetHandle dependency = reference.Handle;
+						const bool builtInSprite = FindBuiltInSpriteAsset(dependency) != nullptr;
+						const AssetSubAsset* child = nullptr;
+						const AssetMetadata* dependencyMetadata = builtInSprite
+							? nullptr : m_Registry->GetMetadata(dependency);
+						if (!builtInSprite && !dependencyMetadata)
+							dependencyMetadata = m_Registry->GetSubAssetOwner(dependency,
+								&child);
+						const AssetType effectiveType = builtInSprite
+							? AssetType::Texture2D
+							: (child ? child->Type : (dependencyMetadata
+								? dependencyMetadata->Type : AssetType::None));
+						if (static_cast<uint64_t>(dependency) == 0
+							|| (!builtInSprite && (!dependencyMetadata
+								|| dependencyMetadata->IsMissing))
+							|| effectiveType != reference.ExpectedType)
+						{
+							visitorError = "authoring asset reference '"
+								+ reference.PropertyPath
+								+ "' is missing or has the wrong asset type";
+							return false;
+						}
+						if (dependency == metadata.Handle
+							|| (dependencyMetadata
+								&& dependencyMetadata->Handle == metadata.Handle))
+						{
+							visitorError = "authoring asset reference '"
+								+ reference.PropertyPath + "' depends on itself";
+							return false;
+						}
+						found.push_back(dependency);
+						return true;
+					};
+					if (metadata.Type == AssetType::AnimationClip)
+					{
+						AnimationClipAsset asset;
+						visited = AnimationClipAssetCodec::Decode(bytes, asset,
+							visitorError)
+							&& AnimationClipAssetCodec::VisitAssetReferences(asset,
+								collectAuthoring, visitorError);
+					}
+					else if (metadata.Type == AssetType::AnimatorController)
+					{
+						AnimatorControllerAsset asset;
+						visited = AnimatorControllerAssetCodec::Decode(bytes, asset,
+							visitorError)
+							&& AnimatorControllerAssetCodec::VisitAssetReferences(asset,
+								collectAuthoring, visitorError);
+					}
+					else
+					{
+						TilePaletteAsset asset;
+						visited = TilePaletteAssetCodec::Decode(bytes, asset,
+							visitorError)
+							&& TilePaletteAssetCodec::VisitAssetReferences(asset,
+								collectAuthoring, visitorError);
 					}
 				}
 				else

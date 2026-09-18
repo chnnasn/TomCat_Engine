@@ -93,6 +93,9 @@
     <ClInclude Include="src\TomCat.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\Advanced2DAuthoringAssets.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Asset\ArtifactKey.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
@@ -1697,6 +1700,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\TomCat\Asset\Advanced2DAuthoringAssets.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Asset\ArtifactKey.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>

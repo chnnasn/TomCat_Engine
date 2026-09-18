@@ -4356,7 +4356,7 @@ namespace TomCat {
 			{
 				if (rawHandle == 0
 					|| rawType == static_cast<uint16_t>(AssetType::None)
-					|| rawType > static_cast<uint16_t>(AssetType::Prefab)
+					|| rawType > static_cast<uint16_t>(AssetType::TilePalette)
 					|| flags != 0 || reserved != 0)
 					return false;
 				const AssetHandle handle(rawHandle);

@@ -59,6 +59,8 @@ CTestTestfile.cmake
 
 # Generated regression-test solution/project files (premake is the source of truth)
 Tests/Tests.sln
+Tests/Advanced2DRegression/*.vcxproj
+Tests/Advanced2DRegression/*.vcxproj.filters
 Tests/PhysicsRegression/*.vcxproj
 Tests/PhysicsRegression/*.vcxproj.filters
 Tests/SpriteAssetRegression/*.vcxproj

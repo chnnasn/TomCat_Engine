@@ -46,6 +46,8 @@ namespace TomCat {
 		inline constexpr uint64_t Tilemap2D = 0x9f00000000000011ULL;
 		inline constexpr uint64_t ParticleSystem2D = 0x9f00000000000012ULL;
 		inline constexpr uint64_t Light2D = 0x9f00000000000013ULL;
+		inline constexpr uint64_t Grid2D = 0x9f00000000000014ULL;
+		inline constexpr uint64_t TilemapRenderer2D = 0x9f00000000000015ULL;
 
 		// Property IDs below preserve the numeric IDs exposed by the original
 		// gameplay ABI. They are now persisted 64-bit identities owned by the
@@ -138,6 +140,7 @@ namespace TomCat {
 			inline constexpr uint64_t Speed = 701;
 			inline constexpr uint64_t PlayOnStart = 704;
 			inline constexpr uint64_t InitialClip = 705;
+			inline constexpr uint64_t Controller = 706;
 		}
 		namespace LineRendererProperties {
 			inline constexpr uint64_t Enabled = 800;
@@ -169,6 +172,21 @@ namespace TomCat {
 			inline constexpr uint64_t CellGap = 1002;
 			inline constexpr uint64_t SortingLayer = 1003;
 			inline constexpr uint64_t OrderInLayer = 1004;
+		}
+		namespace Grid2DProperties {
+			inline constexpr uint64_t CellSize = 1300;
+			inline constexpr uint64_t CellGap = 1301;
+			inline constexpr uint64_t Layout = 1302;
+			inline constexpr uint64_t Swizzle = 1303;
+		}
+		namespace TilemapRenderer2DProperties {
+			inline constexpr uint64_t Enabled = 1400;
+			inline constexpr uint64_t SortOrder = 1401;
+			inline constexpr uint64_t Mode = 1402;
+			inline constexpr uint64_t DetectChunkCulling = 1403;
+			inline constexpr uint64_t SortingLayer = 1404;
+			inline constexpr uint64_t OrderInLayer = 1405;
+			inline constexpr uint64_t Material = 1406;
 		}
 		namespace ParticleSystem2DProperties {
 			inline constexpr uint64_t Enabled = 1100;

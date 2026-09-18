@@ -108,6 +108,39 @@ namespace {
 		Require(Near(origin, glm::vec4(5.0f, -3.25f, 0.0f, 1.0f))
 			&& Near(xAxis, glm::vec4(5.0f, -5.25f, 0.0f, 1.0f)),
 			"Tilemap cell transform did not apply stride, rotation and flip");
+
+		TomCat::Grid2D grid;
+		grid.CellSize = { 4.0f, 5.0f };
+		grid.CellGap = { 1.0f, 2.0f };
+		const glm::mat4 gridMatrix = TomCat::Tilemap2DRuntime::GetCellTransform(
+			transformTilemap, transformed, &grid);
+		const glm::vec4 gridOrigin = gridMatrix
+			* glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+		Require(Near(gridOrigin, glm::vec4(10.0f, -7.0f, 0.0f, 1.0f)),
+			"Parent Grid2D did not override legacy Tilemap2D cell layout");
+		grid.Layout = TomCat::GridCellLayout2D::Isometric;
+		const glm::vec4 isometricOrigin =
+			TomCat::Tilemap2DRuntime::GetCellTransform(
+				transformTilemap, transformed, &grid)
+			* glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+		Require(Near(isometricOrigin, glm::vec4(7.5f, 3.5f, 0.0f, 1.0f)),
+			"Grid2D isometric layout transform is incorrect");
+
+		using TomCat::Tilemap2DRuntime::GetCellRenderOrder;
+		const glm::ivec2 lowerLeft{ -2, -1 };
+		const glm::ivec2 lowerRight{ 3, -1 };
+		const glm::ivec2 upperLeft{ -2, 4 };
+		Require(GetCellRenderOrder(lowerLeft, TomCat::TilemapSortOrder2D::BottomLeft)
+			< GetCellRenderOrder(lowerRight, TomCat::TilemapSortOrder2D::BottomLeft)
+			&& GetCellRenderOrder(lowerRight, TomCat::TilemapSortOrder2D::BottomLeft)
+			< GetCellRenderOrder(upperLeft, TomCat::TilemapSortOrder2D::BottomLeft),
+			"Bottom-left tile render order is not row-major ascending");
+		Require(GetCellRenderOrder(lowerRight, TomCat::TilemapSortOrder2D::BottomRight)
+			< GetCellRenderOrder(lowerLeft, TomCat::TilemapSortOrder2D::BottomRight),
+			"Bottom-right tile render order did not reverse X");
+		Require(GetCellRenderOrder(upperLeft, TomCat::TilemapSortOrder2D::TopLeft)
+			< GetCellRenderOrder(lowerLeft, TomCat::TilemapSortOrder2D::TopLeft),
+			"Top-left tile render order did not reverse Y");
 	}
 
 	TomCat::ParticleSystem2D MakeParticleFixture()
@@ -256,6 +289,10 @@ namespace {
 			"TomCat.ParticleSystem2D", 19);
 		RequireDescriptor(TomCat::ComponentIds::Light2D,
 			"TomCat.Light2D", 6);
+		RequireDescriptor(TomCat::ComponentIds::Grid2D,
+			"TomCat.Grid2D", 4);
+		RequireDescriptor(TomCat::ComponentIds::TilemapRenderer2D,
+			"TomCat.TilemapRenderer2D", 7);
 
 		auto scene = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity entity = scene->CreateEntityWithUUID(
@@ -266,12 +303,33 @@ namespace {
 			error) && registry.Add(entity,
 				TomCat::UUID(TomCat::ComponentIds::ParticleSystem2D), error)
 			&& registry.Add(entity, TomCat::UUID(TomCat::ComponentIds::Light2D),
-				error), "Advanced 2D descriptors could not add their components");
+				error)
+			&& registry.Add(entity, TomCat::UUID(TomCat::ComponentIds::Grid2D), error)
+			&& registry.Add(entity,
+				TomCat::UUID(TomCat::ComponentIds::TilemapRenderer2D), error),
+			"Advanced 2D descriptors could not add their components");
 		Require(registry.Has(entity, TomCat::UUID(TomCat::ComponentIds::Tilemap2D))
 			&& registry.Has(entity,
 				TomCat::UUID(TomCat::ComponentIds::ParticleSystem2D))
-			&& registry.Has(entity, TomCat::UUID(TomCat::ComponentIds::Light2D)),
+			&& registry.Has(entity, TomCat::UUID(TomCat::ComponentIds::Light2D))
+			&& registry.Has(entity, TomCat::UUID(TomCat::ComponentIds::Grid2D))
+			&& registry.Has(entity,
+				TomCat::UUID(TomCat::ComponentIds::TilemapRenderer2D)),
 			"Advanced 2D registry membership is incorrect");
+
+		auto& grid = entity.GetComponent<TomCat::Grid2D>();
+		grid.CellSize = { 3.0f, 1.5f };
+		grid.CellGap = { 0.25f, 0.5f };
+		grid.Layout = TomCat::GridCellLayout2D::Hexagon;
+		grid.Swizzle = TomCat::GridCellSwizzle2D::YXZ;
+		auto& tileRenderer = entity.GetComponent<TomCat::TilemapRenderer2D>();
+		tileRenderer.Enabled = false;
+		tileRenderer.SortOrder = TomCat::TilemapSortOrder2D::TopRight;
+		tileRenderer.Mode = TomCat::TilemapRendererMode2D::Individual;
+		tileRenderer.DetectChunkCulling = TomCat::TilemapChunkCulling2D::Manual;
+		tileRenderer.SortingLayer = 8;
+		tileRenderer.OrderInLayer = -4;
+		tileRenderer.MaterialHandle = TomCat::AssetHandle(6001);
 
 		auto& tilemap = entity.GetComponent<TomCat::Tilemap2D>();
 		tilemap.Enabled = false;
@@ -331,13 +389,16 @@ namespace {
 			"Advanced 2D Scene 11 serialization failed");
 		Require(document.find("TomCat.Tilemap2D") != std::string::npos
 			&& document.find("TomCat.ParticleSystem2D") != std::string::npos
-			&& document.find("TomCat.Light2D") != std::string::npos,
+			&& document.find("TomCat.Light2D") != std::string::npos
+			&& document.find("TomCat.Grid2D") != std::string::npos
+			&& document.find("TomCat.TilemapRenderer2D") != std::string::npos,
 			"Advanced 2D Scene 11 component records are missing");
 
 		const YAML::Node root = YAML::Load(document);
 		bool sawTileA = false;
 		bool sawTileB = false;
 		bool sawParticle = false;
+		bool sawMaterial = false;
 		Require(TomCat::AssetReferenceVisitor::VisitScene(root,
 			[&](const TomCat::SerializedAssetReference& reference)
 			{
@@ -354,8 +415,12 @@ namespace {
 					== TomCat::SerializedAssetReferenceKind::Particle
 					&& handle == 5001
 					&& reference.ExpectedType == TomCat::AssetType::Texture2D);
+				sawMaterial = sawMaterial || (reference.Kind
+					== TomCat::SerializedAssetReferenceKind::Material
+					&& handle == 6001
+					&& reference.ExpectedType == TomCat::AssetType::Material);
 				return true;
-			}, error) && sawTileA && sawTileB && sawParticle,
+			}, error) && sawTileA && sawTileB && sawParticle && sawMaterial,
 			"Cook traversal missed a Tilemap or Particle Sprite reference");
 
 		auto decoded = TomCat::CreateRef<TomCat::Scene>();
@@ -366,7 +431,9 @@ namespace {
 		TomCat::Entity loaded = decoded->FindEntityByUUID(entity.GetUUID());
 		Require(loaded && loaded.HasComponent<TomCat::Tilemap2D>()
 			&& loaded.HasComponent<TomCat::ParticleSystem2D>()
-			&& loaded.HasComponent<TomCat::Light2D>(),
+			&& loaded.HasComponent<TomCat::Light2D>()
+			&& loaded.HasComponent<TomCat::Grid2D>()
+			&& loaded.HasComponent<TomCat::TilemapRenderer2D>(),
 			"Advanced 2D components did not round-trip");
 
 		const auto& loadedTilemap = loaded.GetComponent<TomCat::Tilemap2D>();
@@ -424,6 +491,41 @@ namespace {
 			&& Near(loadedLight.Radius, light.Radius)
 			&& Near(loadedLight.Falloff, light.Falloff),
 			"Light authoring values did not round-trip");
+
+		const auto& loadedGrid = loaded.GetComponent<TomCat::Grid2D>();
+		const auto& loadedRenderer =
+			loaded.GetComponent<TomCat::TilemapRenderer2D>();
+		Require(Near(loadedGrid.CellSize, grid.CellSize)
+			&& Near(loadedGrid.CellGap, grid.CellGap)
+			&& loadedGrid.Layout == grid.Layout
+			&& loadedGrid.Swizzle == grid.Swizzle,
+			"Grid2D authoring values did not round-trip");
+		Require(!loadedRenderer.Enabled
+			&& loadedRenderer.SortOrder == tileRenderer.SortOrder
+			&& loadedRenderer.Mode == tileRenderer.Mode
+			&& loadedRenderer.DetectChunkCulling
+				== tileRenderer.DetectChunkCulling
+			&& loadedRenderer.SortingLayer == tileRenderer.SortingLayer
+			&& loadedRenderer.OrderInLayer == tileRenderer.OrderInLayer
+			&& loadedRenderer.MaterialHandle == tileRenderer.MaterialHandle,
+			"TilemapRenderer2D authoring values did not round-trip");
+
+		const TomCat::Ref<TomCat::Scene> cloned = TomCat::Scene::Copy(decoded);
+		const TomCat::Entity clonedEntity = cloned
+			? cloned->FindEntityByUUID(entity.GetUUID()) : TomCat::Entity{};
+		Require(clonedEntity
+			&& clonedEntity.HasComponent<TomCat::Grid2D>()
+			&& clonedEntity.HasComponent<TomCat::TilemapRenderer2D>()
+			&& clonedEntity.GetComponent<TomCat::TilemapRenderer2D>().MaterialHandle
+				== tileRenderer.MaterialHandle,
+			"Scene clone omitted the Unity-style Tilemap components");
+		Require(registry.Remove(entity,
+			TomCat::UUID(TomCat::ComponentIds::TilemapRenderer2D), error)
+			&& registry.Remove(entity, TomCat::UUID(TomCat::ComponentIds::Grid2D),
+				error)
+			&& !entity.HasComponent<TomCat::TilemapRenderer2D>()
+			&& !entity.HasComponent<TomCat::Grid2D>(),
+			"Component registry could not clear Tilemap renderer/grid data");
 	}
 
 }

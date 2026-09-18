@@ -50,9 +50,9 @@ namespace TomCat {
 		constexpr float kDockedPanelMinimumWidthRatio = 0.08f;
 		constexpr float kDockedPanelCompactMinimumWidth = 96.0f;
 		constexpr float kDockedPanelExpandedMinimumWidth = 220.0f;
-		constexpr std::array<const char*, 7> kMaximizableDockPanels = {
+		constexpr std::array<const char*, 9> kMaximizableDockPanels = {
 			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console",
-			"Animator"
+			"Animation", "Animator", "Tile Palette"
 		};
 
 		struct GameViewResolutionPreset
@@ -979,6 +979,8 @@ namespace TomCat {
 		add(m_ShowBuildSettingsPanel, 6);
 		add(m_ShowProjectSettingsPanel, 7);
 		add(m_ShowAnimatorPanel, 8);
+		add(m_ShowAnimationPanel, 9);
+		add(m_ShowTilePalettePanel, 10);
 		return mask;
 	}
 
@@ -987,6 +989,8 @@ namespace TomCat {
 		m_ShowScenePanel = true;
 		m_ShowGamePanel = true;
 		m_ShowAnimatorPanel = false;
+		m_ShowAnimationPanel = false;
+		m_ShowTilePalettePanel = false;
 		m_ShowHierarchyPanel = true;
 		m_ShowInspectorPanel = true;
 		m_ShowProjectPanel = true;
@@ -1042,6 +1046,8 @@ namespace TomCat {
 				else if (key == "BuildSettings") m_ShowBuildSettingsPanel = visible;
 				else if (key == "ProjectSettings") m_ShowProjectSettingsPanel = visible;
 				else if (key == "Animator") m_ShowAnimatorPanel = visible;
+				else if (key == "Animation") m_ShowAnimationPanel = visible;
+				else if (key == "TilePalette") m_ShowTilePalettePanel = visible;
 			}
 		};
 
@@ -1096,7 +1102,9 @@ namespace TomCat {
 			<< "Console=" << (m_ShowConsolePanel ? 1 : 0) << "\n"
 			<< "BuildSettings=" << (m_ShowBuildSettingsPanel ? 1 : 0) << "\n"
 			<< "ProjectSettings=" << (m_ShowProjectSettingsPanel ? 1 : 0) << "\n"
-			<< "Animator=" << (m_ShowAnimatorPanel ? 1 : 0) << "\n";
+			<< "Animator=" << (m_ShowAnimatorPanel ? 1 : 0) << "\n"
+			<< "Animation=" << (m_ShowAnimationPanel ? 1 : 0) << "\n"
+			<< "TilePalette=" << (m_ShowTilePalettePanel ? 1 : 0) << "\n";
 
 		const std::string sectionName = "[EditorPanels]";
 		const std::string::size_type sectionPos = FindIniSectionHeader(ini, sectionName);
@@ -1421,6 +1429,26 @@ namespace TomCat {
 			if (!path.empty())
 				OpenScene(path);
 		});
+		m_ContentBrowserPanel.SetAuthoringAssetOpenCallback(
+			[this](AssetHandle handle, AssetType type)
+			{
+				if (!m_SceneHierarchyPanel.OpenAuthoringAsset(handle, type))
+					return;
+				switch (type)
+				{
+					case AssetType::AnimationClip:
+						FocusEditorPanel("Animation", m_ShowAnimationPanel);
+						break;
+					case AssetType::AnimatorController:
+						FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+						break;
+					case AssetType::TilePalette:
+						FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+						break;
+					default:
+						break;
+				}
+			});
 		m_SceneHierarchyPanel.SetPrefabCreateCallback([this](Entity entity) {
 			return CreatePrefabFromEntity(entity,
 				m_ContentBrowserPanel.GetWritableCreationDirectory());
@@ -1891,11 +1919,13 @@ namespace TomCat {
 		else if (name == "Scene") m_EditorPanelCycleIndex = 5;
 		else if (name == "Console") m_EditorPanelCycleIndex = 6;
 		else if (name == "Animator") m_EditorPanelCycleIndex = 7;
+		else if (name == "Animation") m_EditorPanelCycleIndex = 8;
+		else if (name == "Tile Palette") m_EditorPanelCycleIndex = 9;
 	}
 
 	void EditorLayer::CycleEditorPanel(int direction)
 	{
-		constexpr int panelCount = 8;
+		constexpr int panelCount = 10;
 		if (direction == 0)
 			return;
 
@@ -1911,6 +1941,8 @@ namespace TomCat {
 				case 5: return m_ShowScenePanel;
 				case 6: return m_ShowConsolePanel;
 				case 7: return m_ShowAnimatorPanel;
+				case 8: return m_ShowAnimationPanel;
+				case 9: return m_ShowTilePalettePanel;
 				default: return false;
 			}
 		};
@@ -1934,6 +1966,8 @@ namespace TomCat {
 				case 5: FocusEditorPanel("Scene", m_ShowScenePanel); break;
 				case 6: FocusEditorPanel("Console", m_ShowConsolePanel); break;
 				case 7: FocusEditorPanel("Animator", m_ShowAnimatorPanel); break;
+				case 8: FocusEditorPanel("Animation", m_ShowAnimationPanel); break;
+				case 9: FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel); break;
 			}
 			return;
 		}
@@ -2028,8 +2062,14 @@ namespace TomCat {
 
 			if (ImGui::BeginMenu("Component"))
 			{
-				ImGui::MenuItem("Add Component...", nullptr, false, false);
-				ImGui::TextDisabled("Use Add Component in the Inspector.");
+				const bool canAddComponent = m_SceneState == SceneState::Edit
+					&& m_SceneHierarchyPanel.CanAddComponentToSelection();
+				if (ImGui::MenuItem("Add Component...", nullptr, false,
+					canAddComponent))
+				{
+					m_SceneHierarchyPanel.RequestAddComponentPopup();
+					FocusEditorPanel("Inspector", m_ShowInspectorPanel);
+				}
 				ImGui::EndMenu();
 			}
 
@@ -2046,10 +2086,36 @@ namespace TomCat {
 
 			if (ImGui::BeginMenu("Window"))
 			{
+				if (ImGui::BeginMenu("Animation"))
+				{
+					if (ImGui::MenuItem("Animation"))
+						FocusEditorPanel("Animation", m_ShowAnimationPanel);
+					if (ImGui::MenuItem("Animator"))
+						FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("2D"))
+				{
+					const bool canOpenAtlas = m_ContentBrowserPanel.CanOpenSpriteAtlasTools();
+					if (ImGui::MenuItem("Sprite Atlas Tools", nullptr, false, canOpenAtlas))
+					{
+						m_ContentBrowserPanel.OpenSpriteAtlasToolsForSelection();
+						FocusEditorPanel("Project", m_ShowProjectPanel);
+					}
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+						&& !canOpenAtlas)
+						ImGui::SetTooltip("Select a texture in Project first.");
+					if (ImGui::MenuItem("Tile Palette"))
+						FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+					ImGui::EndMenu();
+				}
+				ImGui::Separator();
 				if (ImGui::BeginMenu("Panels"))
 				{
 					const bool hasFloatingPanel = m_ShowBuildSettingsPanel || m_ShowProjectSettingsPanel ||
+						(m_ShowAnimationPanel && !m_SceneHierarchyPanel.IsAnimationDocked()) ||
 						(m_ShowAnimatorPanel && !m_SceneHierarchyPanel.IsAnimatorGraphDocked()) ||
+						(m_ShowTilePalettePanel && !m_SceneHierarchyPanel.IsTilePaletteDocked()) ||
 						(m_ShowScenePanel && !m_ScenePanelDocked) ||
 						(m_ShowGamePanel && !m_GamePanelDocked) ||
 						(m_ShowHierarchyPanel && !m_SceneHierarchyPanel.IsHierarchyDocked()) ||
@@ -2061,7 +2127,9 @@ namespace TomCat {
 					{
 						m_ShowBuildSettingsPanel = false;
 						m_ShowProjectSettingsPanel = false;
+						if (!m_SceneHierarchyPanel.IsAnimationDocked()) m_ShowAnimationPanel = false;
 						if (!m_SceneHierarchyPanel.IsAnimatorGraphDocked()) m_ShowAnimatorPanel = false;
+						if (!m_SceneHierarchyPanel.IsTilePaletteDocked()) m_ShowTilePalettePanel = false;
 						if (!m_ScenePanelDocked) m_ShowScenePanel = false;
 						if (!m_GamePanelDocked) m_ShowGamePanel = false;
 						if (!m_SceneHierarchyPanel.IsHierarchyDocked()) m_ShowHierarchyPanel = false;
@@ -2070,25 +2138,29 @@ namespace TomCat {
 						if (!m_ConsolePanel.IsDocked()) m_ShowConsolePanel = false;
 					}
 					ImGui::Separator();
-					if (ImGui::MenuItem("1 Animator"))
+					if (ImGui::MenuItem("1 Animation"))
+						FocusEditorPanel("Animation", m_ShowAnimationPanel);
+					if (ImGui::MenuItem("2 Animator"))
 						FocusEditorPanel("Animator", m_ShowAnimatorPanel);
-					if (ImGui::MenuItem("2 Build Settings"))
+					if (ImGui::MenuItem("3 Tile Palette"))
+						FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+					if (ImGui::MenuItem("4 Build Settings"))
 					{
 						m_ShowBuildSettingsPanel = true;
 						m_FocusBuildSettingsPanel = true;
 						m_EditorPanelCycleIndex = 0;
 					}
-					if (ImGui::MenuItem("3 Console"))
+					if (ImGui::MenuItem("5 Console"))
 						FocusEditorPanel("Console", m_ShowConsolePanel);
-					if (ImGui::MenuItem("4 Game"))
+					if (ImGui::MenuItem("6 Game"))
 						FocusEditorPanel("Game", m_ShowGamePanel);
-					if (ImGui::MenuItem("5 Hierarchy"))
+					if (ImGui::MenuItem("7 Hierarchy"))
 						FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
-					if (ImGui::MenuItem("6 Inspector"))
+					if (ImGui::MenuItem("8 Inspector"))
 						FocusEditorPanel("Inspector", m_ShowInspectorPanel);
-					if (ImGui::MenuItem("7 Project"))
+					if (ImGui::MenuItem("9 Project"))
 						FocusEditorPanel("Project", m_ShowProjectPanel);
-					if (ImGui::MenuItem("8 Scene"))
+					if (ImGui::MenuItem("10 Scene"))
 						FocusEditorPanel("Scene", m_ShowScenePanel);
 					ImGui::EndMenu();
 				}
@@ -2229,11 +2301,27 @@ namespace TomCat {
 		}
 		if (m_SceneHierarchyPanel.ConsumeAnimatorGraphOpenRequest())
 			FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+		if (m_SceneHierarchyPanel.ConsumeAnimationOpenRequest())
+			FocusEditorPanel("Animation", m_ShowAnimationPanel);
+		if (m_SceneHierarchyPanel.ConsumeTilePaletteOpenRequest())
+			FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+		if (m_ShowAnimationPanel && ShouldRenderDockPanel("Animation"))
+		{
+			m_SceneHierarchyPanel.OnAnimationImGuiRender(&m_ShowAnimationPanel);
+			if (m_SceneHierarchyPanel.IsAnimationFocused())
+				m_EditorPanelCycleIndex = 8;
+		}
 		if (m_ShowAnimatorPanel && ShouldRenderDockPanel("Animator"))
 		{
 			m_SceneHierarchyPanel.OnAnimatorGraphImGuiRender(&m_ShowAnimatorPanel);
 			if (m_SceneHierarchyPanel.IsAnimatorGraphFocused())
 				m_EditorPanelCycleIndex = 7;
+		}
+		if (m_ShowTilePalettePanel && ShouldRenderDockPanel("Tile Palette"))
+		{
+			m_SceneHierarchyPanel.OnTilePaletteImGuiRender(&m_ShowTilePalettePanel);
+			if (m_SceneHierarchyPanel.IsTilePaletteFocused())
+				m_EditorPanelCycleIndex = 9;
 		}
 		if (ShouldRenderDockPanel("Project"))
 		{

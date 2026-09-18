@@ -16,8 +16,10 @@ namespace TomCat {
 	{
 		Sprite,
 		SpriteAnimationFrame,
+		AnimatorController,
 		TilemapCell,
 		Particle,
+		Material,
 		AudioSource,
 		Font,
 		UIImage,

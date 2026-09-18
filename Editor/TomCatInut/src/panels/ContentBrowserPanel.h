@@ -33,11 +33,16 @@ namespace TomCat {
 		bool Serialize();
 
 		using SceneOpenCallback = std::function<void(AssetHandle)>;
+		using AuthoringAssetOpenCallback = std::function<void(AssetHandle, AssetType)>;
 		using AssetRenamedCallback = std::function<bool(const std::filesystem::path&, const std::filesystem::path&)>;
 		using AssetDeletedCallback = std::function<void(const std::filesystem::path&)>;
 		using EntityPrefabCreateCallback =
 			std::function<bool(UUID, const std::filesystem::path&)>;
 		void SetSceneOpenCallback(SceneOpenCallback callback) { m_SceneOpenCallback = std::move(callback); }
+		void SetAuthoringAssetOpenCallback(AuthoringAssetOpenCallback callback)
+		{
+			m_AuthoringAssetOpenCallback = std::move(callback);
+		}
 		void SetAssetRenamedCallback(AssetRenamedCallback callback) { m_AssetRenamedCallback = std::move(callback); }
 		void SetAssetDeletedCallback(AssetDeletedCallback callback) { m_AssetDeletedCallback = std::move(callback); }
 		void SetEntityPrefabCreateCallback(EntityPrefabCreateCallback callback)
@@ -54,6 +59,8 @@ namespace TomCat {
 		// Draws the top-level Assets menu using the same commands and target
 		// semantics as the Project panel context menus. The caller owns BeginMenu.
 		void DrawAssetsMenu();
+		bool CanOpenSpriteAtlasTools() const;
+		bool OpenSpriteAtlasToolsForSelection();
 		bool IsFocused() const { return m_Focused; }
 		bool IsDocked() const { return m_Docked; }
 		void OnImGuiRender(bool* open = nullptr);
@@ -83,6 +90,15 @@ namespace TomCat {
 		// 等待下一帧创建的文件夹（从右键菜单里创建后立即进入重命名）
 		std::filesystem::path m_PendingCreateFolderParent;
 		std::filesystem::path m_PendingCreateScriptParent;
+		enum class AuthoringAssetKind : uint8_t
+		{
+			None = 0,
+			AnimationClip,
+			AnimatorController,
+			TilePalette
+		};
+		std::filesystem::path m_PendingCreateAuthoringAssetParent;
+		AuthoringAssetKind m_PendingCreateAuthoringAsset = AuthoringAssetKind::None;
 
 		// 行内重命名状态
 		std::filesystem::path m_RenamePath;
@@ -130,6 +146,7 @@ namespace TomCat {
 		float m_LayoutOptionsY = 0.0f;
 
 		SceneOpenCallback m_SceneOpenCallback;
+		AuthoringAssetOpenCallback m_AuthoringAssetOpenCallback;
 		AssetRenamedCallback m_AssetRenamedCallback;
 		AssetDeletedCallback m_AssetDeletedCallback;
 		EntityPrefabCreateCallback m_EntityPrefabCreateCallback;
@@ -155,6 +172,7 @@ namespace TomCat {
 
 		void FlushPendingCreateFolder();
 		void FlushPendingCreateScript();
+		void FlushPendingCreateAuthoringAsset();
 		void DrawNodeContextMenu();
 		void DrawContextMenuBody(const std::filesystem::path& target,
 			bool isDirectory, bool isRoot);

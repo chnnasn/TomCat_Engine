@@ -142,6 +142,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\TomCat.h" />
+    <ClInclude Include="src\TomCat\Asset\Advanced2DAuthoringAssets.h" />
     <ClInclude Include="src\TomCat\Asset\ArtifactKey.h" />
     <ClInclude Include="src\TomCat\Asset\Asset.h" />
     <ClInclude Include="src\TomCat\Asset\AssetDatabase.h" />
@@ -678,6 +679,7 @@
     <ClInclude Include="vendor\stb_image\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\TomCat\Asset\Advanced2DAuthoringAssets.cpp" />
     <ClCompile Include="src\TomCat\Asset\ArtifactKey.cpp" />
     <ClCompile Include="src\TomCat\Asset\Asset.cpp" />
     <ClCompile Include="src\TomCat\Asset\AssetDatabase.cpp" />

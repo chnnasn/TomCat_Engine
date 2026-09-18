@@ -22,7 +22,8 @@ project "SpriteAssetRegression"
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
-		"%{IncludeDir.stb_image}"
+		"%{IncludeDir.stb_image}",
+		"%{IncludeDir.yaml_cpp}"
 	}
 
 	libdirs

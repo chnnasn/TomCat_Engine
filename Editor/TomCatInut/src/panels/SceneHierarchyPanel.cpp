@@ -12,8 +12,10 @@
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <fstream>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -22,11 +24,13 @@
 #include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Scene/SpriteAnimatorAuthoring.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Utils/PathUtils.h"
+#include "TomCat/Utils/FileSystemUtils.h"
 #include "../EditorDragDrop.h"
 
 namespace TomCat {
@@ -103,6 +107,57 @@ namespace TomCat {
 			return static_cast<char>(std::tolower(character));
 		});
 		return value;
+	}
+
+	static const char* GetAddComponentCategory(const ComponentDescriptor& descriptor)
+	{
+		switch (static_cast<uint64_t>(descriptor.TypeId))
+		{
+		case ComponentIds::Camera:
+		case ComponentIds::SpriteRenderer:
+		case ComponentIds::LineRenderer:
+		case ComponentIds::ParticleSystem2D:
+		case ComponentIds::Light2D:
+		case ComponentIds::TextRenderer:
+			return "Rendering";
+		case ComponentIds::SpriteAnimator:
+			return "Animation";
+		case ComponentIds::Grid2D:
+		case ComponentIds::Tilemap2D:
+		case ComponentIds::TilemapRenderer2D:
+			return "Tilemap";
+		case ComponentIds::Rigidbody2D:
+		case ComponentIds::BoxCollider2D:
+		case ComponentIds::CircleCollider2D:
+		case ComponentIds::DistanceJoint2D:
+			return "Physics 2D";
+		case ComponentIds::AudioSource:
+		case ComponentIds::AudioListener:
+			return "Audio";
+		case ComponentIds::Canvas:
+		case ComponentIds::RectTransform:
+		case ComponentIds::UIImage:
+		case ComponentIds::UIText:
+		case ComponentIds::UIButton:
+		case ComponentIds::UIEventSystem:
+		case ComponentIds::UILayoutGroup:
+			return "UI";
+		case ComponentIds::CSharpScripts:
+			return "Scripting";
+		default:
+			return "Gameplay";
+		}
+	}
+
+	static bool MatchesAddComponentSearch(const ComponentDescriptor& descriptor,
+		std::string_view lowercaseQuery)
+	{
+		if (lowercaseQuery.empty())
+			return true;
+		std::string searchable = descriptor.DisplayName + " "
+			+ descriptor.StableName + " " + GetAddComponentCategory(descriptor);
+		searchable = LowerASCII(std::move(searchable));
+		return searchable.find(lowercaseQuery) != std::string::npos;
 	}
 
 	template<typename T>
@@ -443,6 +498,169 @@ namespace TomCat {
 		return changed;
 	}
 
+	static bool ReadAuthoringAssetDocument(const std::filesystem::path& path,
+		std::string& document, std::string& error)
+	{
+		document.clear();
+		error.clear();
+		std::error_code fileError;
+		const uintmax_t size = std::filesystem::file_size(path, fileError);
+		constexpr uintmax_t maximumBytes = 16u * 1024u * 1024u;
+		if (fileError || size == 0 || size > maximumBytes)
+		{
+			error = fileError ? fileError.message()
+				: "authoring asset is empty or exceeds 16 MiB";
+			return false;
+		}
+		std::ifstream input(path, std::ios::binary);
+		if (!input)
+		{
+			error = "could not open the source file";
+			return false;
+		}
+		document.resize(static_cast<size_t>(size));
+		if (!input.read(document.data(), static_cast<std::streamsize>(size)))
+		{
+			document.clear();
+			error = "could not read the complete source file";
+			return false;
+		}
+		return true;
+	}
+
+	static bool DrawTypedAuthoringAssetField(const char* id, AssetType expectedType,
+		AssetHandle& handle)
+	{
+		bool changed = false;
+		const AssetMetadata* current = static_cast<uint64_t>(handle) == 0 ? nullptr
+			: AssetManager::Get().GetRegistry().GetMetadata(handle);
+		std::string label = current && !current->IsMissing
+			? PathToUTF8(current->FilePath.filename()) : "None";
+		if (static_cast<uint64_t>(handle) != 0 && !current)
+			label = "Missing #" + std::to_string(static_cast<uint64_t>(handle));
+		label += "###";
+		label += id;
+		if (ImGui::Button(label.c_str(), ImVec2(-1.0f, 0.0f)))
+			ImGui::OpenPopup("Select Authoring Asset");
+		if (ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+				AssetDragDropPayloadID, ImGuiDragDropFlags_AcceptBeforeDelivery))
+			{
+				if (payload->DataSize == sizeof(uint64_t))
+				{
+					const AssetHandle candidate(
+						*static_cast<const uint64_t*>(payload->Data));
+					const AssetMetadata* metadata =
+						AssetManager::Get().GetRegistry().GetMetadata(candidate);
+					if (metadata && !metadata->IsMissing && metadata->Type == expectedType
+						&& payload->IsDelivery() && candidate != handle)
+					{
+						handle = candidate;
+						changed = true;
+					}
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+		if (ImGui::BeginPopupContextItem("Authoring Asset Context"))
+		{
+			if (ImGui::MenuItem("Clear", nullptr, false,
+				static_cast<uint64_t>(handle) != 0))
+			{
+				handle = AssetHandle(0);
+				changed = true;
+			}
+			ImGui::EndPopup();
+		}
+		if (ImGui::BeginPopup("Select Authoring Asset"))
+		{
+			if (ImGui::Selectable("None", static_cast<uint64_t>(handle) == 0))
+			{
+				handle = AssetHandle(0);
+				changed = true;
+				ImGui::CloseCurrentPopup();
+			}
+			std::vector<const AssetMetadata*> candidates;
+			for (const auto& [assetHandle, metadata] :
+				AssetManager::Get().GetRegistry().GetAssets())
+			{
+				(void)assetHandle;
+				if (!metadata.IsMissing && metadata.Type == expectedType)
+					candidates.push_back(&metadata);
+			}
+			std::sort(candidates.begin(), candidates.end(),
+				[](const AssetMetadata* left, const AssetMetadata* right)
+				{
+					return LowerASCII(PathToUTF8(left->FilePath))
+						< LowerASCII(PathToUTF8(right->FilePath));
+				});
+			for (const AssetMetadata* metadata : candidates)
+			{
+				const std::string item = PathToUTF8(metadata->FilePath.filename())
+					+ "###Asset_" + std::to_string(
+						static_cast<uint64_t>(metadata->Handle));
+				if (ImGui::Selectable(item.c_str(), handle == metadata->Handle))
+				{
+					handle = metadata->Handle;
+					changed = true;
+					ImGui::CloseCurrentPopup();
+				}
+			}
+			ImGui::EndPopup();
+		}
+		return changed;
+	}
+
+	static bool DrawSpritePaletteTile(AssetHandle handle, const char* label,
+		bool selected, float extent = 72.0f)
+	{
+		const ImVec2 origin = ImGui::GetCursorScreenPos();
+		const ImVec2 size(extent, extent + ImGui::GetTextLineHeight() + 8.0f);
+		const std::string id = std::string("##PaletteSprite_")
+			+ std::to_string(static_cast<uint64_t>(handle));
+		ImGui::InvisibleButton(id.c_str(), size);
+		const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+		const bool hovered = ImGui::IsItemHovered();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImVec2 maximum(origin.x + size.x, origin.y + size.y);
+		draw->AddRectFilled(origin, maximum, ImGui::GetColorU32(selected
+			? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg),
+			3.0f);
+		const ImVec2 imageMin(origin.x + 5.0f, origin.y + 5.0f);
+		const ImVec2 imageMax(origin.x + extent - 5.0f, origin.y + extent - 5.0f);
+		if (static_cast<uint64_t>(handle) != 0)
+		{
+			ResolvedSpriteAsset resolved;
+			const bool resolvedSprite = AssetManager::Get().ResolveSpriteAsset(handle,
+				resolved);
+			const AssetHandle textureHandle = resolvedSprite
+				? resolved.TextureHandle : handle;
+			const Ref<Texture2D> texture = AssetManager::Get().LoadTexture(textureHandle);
+			if (texture)
+			{
+				ImVec2 uvMin(0.0f, 1.0f);
+				ImVec2 uvMax(1.0f, 0.0f);
+				SpriteRenderGeometry geometry;
+				if (resolvedSprite && resolved.IsSubAsset
+					&& BuildSpriteRenderGeometry(resolved.Data, texture->GetWidth(),
+						texture->GetHeight(), geometry))
+				{
+					uvMin = ImVec2(geometry.UMin, geometry.VMax);
+					uvMax = ImVec2(geometry.UMax, geometry.VMin);
+				}
+				draw->AddImage(ToImGuiTextureID(texture), imageMin, imageMax, uvMin, uvMax);
+			}
+		}
+		const ImRect labelRect(ImVec2(origin.x + 3.0f, origin.y + extent),
+			ImVec2(maximum.x - 3.0f, maximum.y - 2.0f));
+		ImGui::RenderTextClipped(labelRect.Min, labelRect.Max, label, nullptr,
+			nullptr, ImVec2(0.5f, 0.5f), &labelRect);
+		if (hovered)
+			ImGui::SetTooltip("%s", label);
+		return clicked;
+	}
+
 	static void DrawAnimatorSectionLabel(const char* label)
 	{
 		ImGui::Spacing();
@@ -490,7 +708,8 @@ namespace TomCat {
 	}
 
 	static bool DrawRegisteredAssetReference(const PropertyDescriptor& property,
-		AssetHandle& handle)
+		AssetHandle& handle,
+		const std::function<void(AssetHandle)>* revealAsset = nullptr)
 	{
 		const AssetPropertyMetadata& semantics = *property.AssetReference;
 		ImGui::TextUnformatted(property.DisplayName.c_str());
@@ -501,7 +720,13 @@ namespace TomCat {
 		bool changed = false;
 		const std::string label = RegisteredAssetReferenceLabel(semantics, handle)
 			+ "###RegisteredAssetReference";
-		ImGui::Button(label.c_str(), ImVec2(-1.0f, 0.0f));
+		const float pickerWidth = ImGui::GetFrameHeight();
+		const float fieldWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x
+			- pickerWidth - ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::Button(label.c_str(), ImVec2(fieldWidth, 0.0f));
+		if (ImGui::IsItemClicked(ImGuiMouseButton_Left)
+			&& static_cast<uint64_t>(handle) != 0 && revealAsset && *revealAsset)
+			(*revealAsset)(handle);
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
 		{
 			std::string accepted;
@@ -544,6 +769,42 @@ namespace TomCat {
 				handle = AssetHandle(0);
 				changed = true;
 			}
+			ImGui::EndPopup();
+		}
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		if (ImGui::Button("o##RegisteredAssetPicker", ImVec2(pickerWidth, 0.0f)))
+			ImGui::OpenPopup("RegisteredAssetPicker");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Select %s", property.DisplayName.c_str());
+		if (ImGui::BeginPopup("RegisteredAssetPicker"))
+		{
+			if (ImGui::Selectable("None", static_cast<uint64_t>(handle) == 0))
+			{
+				handle = AssetHandle(0);
+				changed = true;
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::Separator();
+			bool foundCompatibleAsset = false;
+			for (const auto& [candidate, metadata] :
+				AssetManager::Get().GetRegistry().GetAssets())
+			{
+				if (metadata.IsMissing
+					|| !semantics.Accepts(metadata.Type, false))
+					continue;
+				foundCompatibleAsset = true;
+				const std::string path = PathToUTF8(metadata.FilePath);
+				ImGui::PushID(path.c_str());
+				if (ImGui::Selectable(path.c_str(), candidate == handle))
+				{
+					handle = candidate;
+					changed = true;
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::PopID();
+			}
+			if (!foundCompatibleAsset)
+				ImGui::TextDisabled("No compatible assets");
 			ImGui::EndPopup();
 		}
 		return changed;
@@ -812,6 +1073,19 @@ namespace TomCat {
 		if (hadSelection)
 			selectedUUID = m_SelectionContext.GetUUID();
 		const bool contextChanged = m_Context != context;
+		if (contextChanged && m_Context)
+		{
+			for (const auto& [entityID, timeline] : m_AnimationTimelineStates)
+			{
+				(void)timeline;
+				Entity previewed = m_Context->FindEntityByUUID(UUID(entityID));
+				if (!previewed || !previewed.HasComponent<SpriteRenderer>())
+					continue;
+				auto& renderer = previewed.GetComponent<SpriteRenderer>();
+				renderer.RuntimeSpriteOverrideActive = false;
+				renderer.RuntimeSpriteOverrideHandle = AssetHandle(0);
+			}
+		}
 		m_Context = context;
 		if (m_Context && m_Project)
 			m_Context->SetPhysics2DSettings(m_Project->GetSettings().Physics2D);
@@ -834,6 +1108,8 @@ namespace TomCat {
 		{
 			m_AnimatorGraphStates.clear();
 			m_TilemapBrushStates.clear();
+			m_AnimationTimelineStates.clear();
+			m_TilePaletteStates.clear();
 		}
 		ClearColliderEditMode();
 		if (contextChanged)
@@ -1308,6 +1584,685 @@ namespace TomCat {
 		FinishModificationGesture();
 	}
 
+	bool SceneHierarchyPanel::OpenAuthoringAsset(AssetHandle handle, AssetType type)
+	{
+		if (static_cast<uint64_t>(handle) == 0)
+			return false;
+		const std::filesystem::path path = AssetManager::Get().ResolvePath(handle);
+		if (path.empty())
+			return false;
+
+		auto rejectDirtyReplacement = [](AssetHandle current, bool loaded,
+			bool dirty, std::string& message)
+		{
+			(void)current;
+			if (loaded && dirty)
+			{
+				message = "Save or revert the current asset before opening another one.";
+				return true;
+			}
+			return false;
+		};
+		std::string document;
+		std::string error;
+		if (type == AssetType::AnimationClip)
+		{
+			auto& editor = m_AnimationClipAssetEditor;
+			if (rejectDirtyReplacement(editor.Handle, editor.Loaded, editor.Dirty,
+				editor.Message)) return false;
+			editor.Handle = handle;
+			editor.Path = path;
+			editor.Message.clear();
+			AnimationClipAsset decoded;
+			editor.Loaded = ReadAuthoringAssetDocument(path, document, error)
+				&& AnimationClipAssetCodec::Decode(document, decoded, error);
+			if (editor.Loaded)
+			{
+				editor.Asset = std::move(decoded);
+				editor.Dirty = false;
+				editor.DraftSprite = AssetHandle(0);
+			}
+			else editor.Message = error;
+			m_AnimationOpenRequested = true;
+			return true;
+		}
+		if (type == AssetType::AnimatorController)
+		{
+			auto& editor = m_AnimatorControllerAssetEditor;
+			if (rejectDirtyReplacement(editor.Handle, editor.Loaded, editor.Dirty,
+				editor.Message)) return false;
+			editor.Handle = handle;
+			editor.Path = path;
+			editor.Message.clear();
+			AnimatorControllerAsset decoded;
+			editor.Loaded = ReadAuthoringAssetDocument(path, document, error)
+				&& AnimatorControllerAssetCodec::Decode(document, decoded, error);
+			if (editor.Loaded)
+			{
+				editor.Asset = std::move(decoded);
+				editor.Dirty = false;
+				editor.DraftClip = AssetHandle(0);
+			}
+			else editor.Message = error;
+			m_AnimatorGraphOpenRequested = true;
+			return true;
+		}
+		if (type == AssetType::TilePalette)
+		{
+			auto& editor = m_TilePaletteAssetEditor;
+			if (rejectDirtyReplacement(editor.Handle, editor.Loaded, editor.Dirty,
+				editor.Message)) return false;
+			editor.Handle = handle;
+			editor.Path = path;
+			editor.Message.clear();
+			TilePaletteAsset decoded;
+			editor.Loaded = ReadAuthoringAssetDocument(path, document, error)
+				&& TilePaletteAssetCodec::Decode(document, decoded, error);
+			if (editor.Loaded)
+			{
+				editor.Asset = std::move(decoded);
+				editor.Dirty = false;
+				editor.DraftSprite = AssetHandle(0);
+			}
+			else editor.Message = error;
+			m_TilePaletteOpenRequested = true;
+			return true;
+		}
+		return false;
+	}
+
+	bool SceneHierarchyPanel::SaveAnimationClipAsset()
+	{
+		auto& editor = m_AnimationClipAssetEditor;
+		std::string document;
+		std::string error;
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry()
+			.GetMetadata(editor.Handle);
+		const std::filesystem::path currentPath =
+			AssetManager::Get().ResolvePath(editor.Handle);
+		if (!metadata || metadata->IsMissing
+			|| metadata->Type != AssetType::AnimationClip || currentPath.empty())
+		{
+			editor.Message = "The Animation Clip no longer resolves to its source asset.";
+			return false;
+		}
+		editor.Path = currentPath;
+		if (!editor.Loaded || !AnimationClipAssetCodec::Encode(editor.Asset,
+			document, error) || !FileSystem::WriteFileAtomically(editor.Path,
+			document, error))
+		{
+			editor.Message = error.empty() ? "Animation Clip is not loaded." : error;
+			return false;
+		}
+		const AssetHandle imported = AssetManager::Get().ImportAsset(editor.Path);
+		if (static_cast<uint64_t>(imported) == 0)
+		{
+			editor.Message = "The file was saved but could not be imported.";
+			return false;
+		}
+		editor.Handle = imported;
+		editor.Dirty = false;
+		editor.Message = AssetManager::Get().Refresh()
+			? "Saved and refreshed." : "Saved; the registry refresh reported errors.";
+		return true;
+	}
+
+	bool SceneHierarchyPanel::SaveAnimatorControllerAsset()
+	{
+		auto& editor = m_AnimatorControllerAssetEditor;
+		std::string document;
+		std::string error;
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry()
+			.GetMetadata(editor.Handle);
+		const std::filesystem::path currentPath =
+			AssetManager::Get().ResolvePath(editor.Handle);
+		if (!metadata || metadata->IsMissing
+			|| metadata->Type != AssetType::AnimatorController || currentPath.empty())
+		{
+			editor.Message = "The Animator Controller no longer resolves to its source asset.";
+			return false;
+		}
+		editor.Path = currentPath;
+		if (!editor.Loaded || !AnimatorControllerAssetCodec::Encode(editor.Asset,
+			document, error) || !FileSystem::WriteFileAtomically(editor.Path,
+			document, error))
+		{
+			editor.Message = error.empty() ? "Animator Controller is not loaded." : error;
+			return false;
+		}
+		const AssetHandle imported = AssetManager::Get().ImportAsset(editor.Path);
+		if (static_cast<uint64_t>(imported) == 0)
+		{
+			editor.Message = "The file was saved but could not be imported.";
+			return false;
+		}
+		editor.Handle = imported;
+		editor.Dirty = false;
+		editor.Message = AssetManager::Get().Refresh()
+			? "Saved and refreshed." : "Saved; the registry refresh reported errors.";
+		return true;
+	}
+
+	bool SceneHierarchyPanel::SaveTilePaletteAsset()
+	{
+		auto& editor = m_TilePaletteAssetEditor;
+		std::string document;
+		std::string error;
+		const AssetMetadata* metadata = AssetManager::Get().GetRegistry()
+			.GetMetadata(editor.Handle);
+		const std::filesystem::path currentPath =
+			AssetManager::Get().ResolvePath(editor.Handle);
+		if (!metadata || metadata->IsMissing
+			|| metadata->Type != AssetType::TilePalette || currentPath.empty())
+		{
+			editor.Message = "The Tile Palette no longer resolves to its source asset.";
+			return false;
+		}
+		editor.Path = currentPath;
+		if (!editor.Loaded || !TilePaletteAssetCodec::Encode(editor.Asset,
+			document, error) || !FileSystem::WriteFileAtomically(editor.Path,
+			document, error))
+		{
+			editor.Message = error.empty() ? "Tile Palette is not loaded." : error;
+			return false;
+		}
+		const AssetHandle imported = AssetManager::Get().ImportAsset(editor.Path);
+		if (static_cast<uint64_t>(imported) == 0)
+		{
+			editor.Message = "The file was saved but could not be imported.";
+			return false;
+		}
+		editor.Handle = imported;
+		editor.Dirty = false;
+		if (m_ActiveTilePaletteHandle == imported)
+			m_ActiveTilePalette = editor.Asset;
+		editor.Message = AssetManager::Get().Refresh()
+			? "Saved and refreshed." : "Saved; the registry refresh reported errors.";
+		return true;
+	}
+
+	void SceneHierarchyPanel::DrawAnimationClipAssetEditor()
+	{
+		auto& editor = m_AnimationClipAssetEditor;
+		ImGui::Text("Animation Clip: %s%s", PathToUTF8(editor.Path.filename()).c_str(),
+			editor.Dirty ? " *" : "");
+		if (!editor.Loaded)
+		{
+			ImGui::TextWrapped("Could not load asset: %s", editor.Message.c_str());
+			if (ImGui::Button("Close Asset")) editor = {};
+			return;
+		}
+		if (ImGui::Button("Save")) SaveAnimationClipAsset();
+		ImGui::SameLine();
+		if (ImGui::Button("Revert"))
+		{
+			editor.Dirty = false;
+			OpenAuthoringAsset(editor.Handle, AssetType::AnimationClip);
+		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(editor.Dirty);
+		const bool closeAsset = ImGui::Button("Close Asset") && !editor.Dirty;
+		ImGui::EndDisabled();
+		if (closeAsset)
+		{
+			editor = {};
+			return;
+		}
+		if (!editor.Message.empty())
+		{
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", editor.Message.c_str());
+		}
+		ImGui::Separator();
+		char name[128]{};
+		std::snprintf(name, sizeof(name), "%s", editor.Asset.Clip.Name.c_str());
+		if (ImGui::InputText("Name", name, sizeof(name)))
+		{
+			editor.Asset.Clip.Name = name;
+			editor.Dirty = true;
+		}
+		if (ImGui::Checkbox("Loop", &editor.Asset.Clip.Loop)) editor.Dirty = true;
+		if (ImGui::DragFloat("Sample Rate", &editor.Asset.SampleRate, 0.25f,
+			0.01f, 10000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) editor.Dirty = true;
+		DrawAnimatorSectionLabel("Frames");
+		std::optional<size_t> remove;
+		for (size_t index = 0; index < editor.Asset.Clip.Frames.size(); ++index)
+		{
+			ImGui::PushID(static_cast<int>(index));
+			ImGui::Text("Frame %zu", index);
+			AssetHandle sprite = editor.Asset.Clip.Frames[index].SpriteHandle;
+			if (DrawAnimatorSpriteField("ExternalClipFrame", sprite))
+			{
+				editor.Asset.Clip.Frames[index].SpriteHandle = sprite;
+				editor.Dirty = true;
+			}
+			if (ImGui::DragFloat("Duration", &editor.Asset.Clip.Frames[index].DurationSeconds,
+				0.005f, 0.001f, 3600.0f, "%.3f s", ImGuiSliderFlags_AlwaysClamp))
+				editor.Dirty = true;
+			if (ImGui::SmallButton("Remove")) remove = index;
+			ImGui::Separator();
+			ImGui::PopID();
+		}
+		if (remove)
+		{
+			editor.Asset.Clip.Frames.erase(editor.Asset.Clip.Frames.begin()
+				+ static_cast<std::ptrdiff_t>(*remove));
+			editor.Dirty = true;
+		}
+		ImGui::TextUnformatted("New Frame Sprite");
+		DrawAnimatorSpriteField("ExternalClipNewFrame", editor.DraftSprite);
+		ImGui::BeginDisabled(static_cast<uint64_t>(editor.DraftSprite) == 0);
+		if (ImGui::Button("Add Frame"))
+		{
+			editor.Asset.Clip.Frames.push_back({ editor.DraftSprite,
+				1.0f / std::max(editor.Asset.SampleRate, 0.01f) });
+			editor.DraftSprite = AssetHandle(0);
+			editor.Dirty = true;
+		}
+		ImGui::EndDisabled();
+	}
+
+	void SceneHierarchyPanel::DrawAnimatorControllerAssetEditor()
+	{
+		auto& editor = m_AnimatorControllerAssetEditor;
+		auto& asset = editor.Asset;
+		ImGui::Text("Animator Controller: %s%s",
+			PathToUTF8(editor.Path.filename()).c_str(), editor.Dirty ? " *" : "");
+		if (!editor.Loaded)
+		{
+			ImGui::TextWrapped("Could not load asset: %s", editor.Message.c_str());
+			if (ImGui::Button("Close Asset")) editor = {};
+			return;
+		}
+		if (ImGui::Button("Save")) SaveAnimatorControllerAsset();
+		ImGui::SameLine();
+		if (ImGui::Button("Revert"))
+		{
+			editor.Dirty = false;
+			OpenAuthoringAsset(editor.Handle, AssetType::AnimatorController);
+		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(editor.Dirty);
+		const bool closeAsset = ImGui::Button("Close Asset") && !editor.Dirty;
+		ImGui::EndDisabled();
+		if (closeAsset)
+		{
+			editor = {};
+			return;
+		}
+		if (!editor.Message.empty())
+		{
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", editor.Message.c_str());
+		}
+		DrawAnimatorSectionLabel("Parameters");
+		std::optional<size_t> removeParameter;
+		for (size_t index = 0; index < asset.Parameters.size(); ++index)
+		{
+			AnimatorParameter& parameter = asset.Parameters[index];
+			ImGui::PushID(static_cast<int>(index));
+			ImGui::TextUnformatted(parameter.Name.c_str());
+			ImGui::SameLine();
+			const char* types[] = { "Bool", "Int", "Float", "Trigger" };
+			int type = static_cast<int>(parameter.Type);
+			const bool used = std::any_of(asset.Transitions.begin(), asset.Transitions.end(),
+				[&](const AnimatorTransition& transition)
+				{
+					return std::any_of(transition.Conditions.begin(),
+						transition.Conditions.end(), [&](const AnimatorCondition& condition)
+						{ return condition.Parameter == parameter.Name; });
+				});
+			ImGui::BeginDisabled(used);
+			if (ImGui::Combo("Type", &type, types, 4))
+			{
+				parameter.Type = static_cast<AnimatorParameterType>(type);
+				editor.Dirty = true;
+			}
+			ImGui::EndDisabled();
+			switch (parameter.Type)
+			{
+				case AnimatorParameterType::Bool:
+				case AnimatorParameterType::Trigger:
+					if (ImGui::Checkbox("Default", &parameter.BoolValue)) editor.Dirty = true;
+					break;
+				case AnimatorParameterType::Int:
+					if (ImGui::InputInt("Default", &parameter.IntValue)) editor.Dirty = true;
+					break;
+				case AnimatorParameterType::Float:
+					if (ImGui::DragFloat("Default", &parameter.FloatValue, 0.05f)) editor.Dirty = true;
+					break;
+			}
+			if (ImGui::SmallButton("Remove Parameter")) removeParameter = index;
+			ImGui::PopID();
+		}
+		if (removeParameter)
+		{
+			const std::string removed = asset.Parameters[*removeParameter].Name;
+			asset.Parameters.erase(asset.Parameters.begin()
+				+ static_cast<std::ptrdiff_t>(*removeParameter));
+			for (AnimatorTransition& transition : asset.Transitions)
+				std::erase_if(transition.Conditions,
+					[&](const AnimatorCondition& condition)
+					{ return condition.Parameter == removed; });
+			editor.Dirty = true;
+		}
+		if (ImGui::Button("Add Parameter"))
+		{
+			AnimatorParameter parameter;
+			parameter.Name = SpriteAnimatorAuthoring::MakeUniqueName(asset.Parameters,
+				std::string("Parameter"), [](const AnimatorParameter& value)
+				{ return value.Name; });
+			asset.Parameters.push_back(std::move(parameter));
+			editor.Dirty = true;
+		}
+
+		DrawAnimatorSectionLabel("States");
+		if (!asset.States.empty())
+		{
+			const char* initial = asset.InitialState.c_str();
+			if (ImGui::BeginCombo("Initial State", initial))
+			{
+				for (const auto& state : asset.States)
+					if (ImGui::Selectable(state.Name.c_str(), state.Name == asset.InitialState))
+					{
+						asset.InitialState = state.Name;
+						editor.Dirty = true;
+					}
+				ImGui::EndCombo();
+			}
+		}
+		std::optional<size_t> removeState;
+		for (size_t index = 0; index < asset.States.size(); ++index)
+		{
+			auto& state = asset.States[index];
+			ImGui::PushID(static_cast<int>(index));
+			ImGui::Text("%s", state.Name.c_str());
+			if (DrawTypedAuthoringAssetField("StateClip", AssetType::AnimationClip,
+				state.ClipHandle)) editor.Dirty = true;
+			if (ImGui::DragFloat("Speed", &state.Speed, 0.05f, 0.001f, 100.0f,
+				"%.2f", ImGuiSliderFlags_AlwaysClamp)) editor.Dirty = true;
+			if (ImGui::SmallButton("Open Clip"))
+				OpenAuthoringAsset(state.ClipHandle, AssetType::AnimationClip);
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Remove State")) removeState = index;
+			ImGui::PopID();
+		}
+		if (removeState)
+		{
+			const std::string removed = asset.States[*removeState].Name;
+			asset.States.erase(asset.States.begin()
+				+ static_cast<std::ptrdiff_t>(*removeState));
+			std::erase_if(asset.Transitions, [&](const AnimatorTransition& transition)
+			{
+				return transition.ToState == removed
+					|| (!transition.AnyState && transition.FromState == removed);
+			});
+			asset.InitialState = asset.States.empty() ? std::string{}
+				: asset.States.front().Name;
+			editor.Dirty = true;
+		}
+		ImGui::TextUnformatted("New State Animation Clip");
+		DrawTypedAuthoringAssetField("NewStateClip", AssetType::AnimationClip,
+			editor.DraftClip);
+		ImGui::BeginDisabled(static_cast<uint64_t>(editor.DraftClip) == 0);
+		if (ImGui::Button("Add State"))
+		{
+			AnimatorControllerAsset::State state;
+			state.Name = SpriteAnimatorAuthoring::MakeUniqueName(asset.States,
+				std::string("State"), [](const AnimatorControllerAsset::State& value)
+				{ return value.Name; });
+			state.ClipHandle = editor.DraftClip;
+			asset.States.push_back(std::move(state));
+			if (asset.InitialState.empty()) asset.InitialState = asset.States.back().Name;
+			editor.DraftClip = AssetHandle(0);
+			editor.Dirty = true;
+		}
+		ImGui::EndDisabled();
+
+		DrawAnimatorSectionLabel("Transitions");
+		std::optional<size_t> removeTransition;
+		for (size_t index = 0; index < asset.Transitions.size(); ++index)
+		{
+			AnimatorTransition& transition = asset.Transitions[index];
+			ImGui::PushID(static_cast<int>(index));
+			if (ImGui::Checkbox("Any State", &transition.AnyState))
+			{
+				if (!transition.AnyState && transition.FromState.empty()
+					&& !asset.States.empty()) transition.FromState = asset.States.front().Name;
+				editor.Dirty = true;
+			}
+			if (!transition.AnyState && ImGui::BeginCombo("From", transition.FromState.c_str()))
+			{
+				for (const auto& state : asset.States)
+					if (ImGui::Selectable(state.Name.c_str(), state.Name == transition.FromState))
+					{
+						transition.FromState = state.Name;
+						editor.Dirty = true;
+					}
+				ImGui::EndCombo();
+			}
+			if (ImGui::BeginCombo("To", transition.ToState.c_str()))
+			{
+				for (const auto& state : asset.States)
+					if (ImGui::Selectable(state.Name.c_str(), state.Name == transition.ToState))
+					{
+						transition.ToState = state.Name;
+						editor.Dirty = true;
+					}
+				ImGui::EndCombo();
+			}
+			if (ImGui::DragFloat("Exit Time", &transition.ExitTime, 0.01f, -1.0f,
+				1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) editor.Dirty = true;
+			ImGui::TextDisabled("Conditions: %zu", transition.Conditions.size());
+			std::optional<size_t> removeCondition;
+			for (size_t conditionIndex = 0;
+				conditionIndex < transition.Conditions.size(); ++conditionIndex)
+			{
+				AnimatorCondition& condition = transition.Conditions[conditionIndex];
+				ImGui::PushID(static_cast<int>(conditionIndex));
+				if (ImGui::BeginCombo("Parameter", condition.Parameter.c_str()))
+				{
+					for (const AnimatorParameter& parameter : asset.Parameters)
+					{
+						if (ImGui::Selectable(parameter.Name.c_str(),
+							condition.Parameter == parameter.Name))
+						{
+							condition.Parameter = parameter.Name;
+							condition.Mode = (parameter.Type == AnimatorParameterType::Bool
+								|| parameter.Type == AnimatorParameterType::Trigger)
+								? AnimatorConditionMode::If
+								: parameter.Type == AnimatorParameterType::Float
+									? AnimatorConditionMode::Greater
+									: AnimatorConditionMode::Equals;
+							editor.Dirty = true;
+						}
+					}
+					ImGui::EndCombo();
+				}
+				const auto parameter = std::find_if(asset.Parameters.begin(),
+					asset.Parameters.end(), [&](const AnimatorParameter& value)
+					{ return value.Name == condition.Parameter; });
+				if (parameter != asset.Parameters.end())
+				{
+					struct ModeOption { AnimatorConditionMode Mode; const char* Label; };
+					std::vector<ModeOption> modes;
+					if (parameter->Type == AnimatorParameterType::Bool
+						|| parameter->Type == AnimatorParameterType::Trigger)
+						modes = { { AnimatorConditionMode::If, "If" },
+							{ AnimatorConditionMode::IfNot, "If Not" } };
+					else if (parameter->Type == AnimatorParameterType::Float)
+						modes = { { AnimatorConditionMode::Greater, "Greater" },
+							{ AnimatorConditionMode::Less, "Less" } };
+					else
+						modes = { { AnimatorConditionMode::Greater, "Greater" },
+							{ AnimatorConditionMode::Less, "Less" },
+							{ AnimatorConditionMode::Equals, "Equals" },
+							{ AnimatorConditionMode::NotEqual, "Not Equal" } };
+					const auto currentMode = std::find_if(modes.begin(), modes.end(),
+						[&](const ModeOption& option)
+						{ return option.Mode == condition.Mode; });
+					const char* modeLabel = currentMode == modes.end()
+						? "Choose" : currentMode->Label;
+					if (ImGui::BeginCombo("Mode", modeLabel))
+					{
+						for (const ModeOption& option : modes)
+							if (ImGui::Selectable(option.Label,
+								condition.Mode == option.Mode))
+							{
+								condition.Mode = option.Mode;
+								editor.Dirty = true;
+							}
+						ImGui::EndCombo();
+					}
+					if (parameter->Type == AnimatorParameterType::Float)
+					{
+						if (ImGui::DragFloat("Threshold", &condition.Threshold, 0.05f))
+							editor.Dirty = true;
+					}
+					else if (parameter->Type == AnimatorParameterType::Int)
+					{
+						int threshold = static_cast<int>(condition.Threshold);
+						if (ImGui::InputInt("Threshold", &threshold))
+						{
+							condition.Threshold = static_cast<float>(threshold);
+							editor.Dirty = true;
+						}
+					}
+				}
+				if (ImGui::SmallButton("Delete Condition"))
+					removeCondition = conditionIndex;
+				ImGui::PopID();
+			}
+			if (removeCondition)
+			{
+				transition.Conditions.erase(transition.Conditions.begin()
+					+ static_cast<std::ptrdiff_t>(*removeCondition));
+				editor.Dirty = true;
+			}
+			ImGui::BeginDisabled(asset.Parameters.empty());
+			if (ImGui::SmallButton("Add Condition"))
+			{
+				AnimatorCondition condition;
+				condition.Parameter = asset.Parameters.front().Name;
+				condition.Mode = (asset.Parameters.front().Type == AnimatorParameterType::Bool
+					|| asset.Parameters.front().Type == AnimatorParameterType::Trigger)
+					? AnimatorConditionMode::If
+					: asset.Parameters.front().Type == AnimatorParameterType::Float
+						? AnimatorConditionMode::Greater
+						: AnimatorConditionMode::Equals;
+				transition.Conditions.push_back(std::move(condition));
+				editor.Dirty = true;
+			}
+			ImGui::EndDisabled();
+			if (ImGui::SmallButton("Remove Transition")) removeTransition = index;
+			ImGui::Separator();
+			ImGui::PopID();
+		}
+		if (removeTransition)
+		{
+			asset.Transitions.erase(asset.Transitions.begin()
+				+ static_cast<std::ptrdiff_t>(*removeTransition));
+			editor.Dirty = true;
+		}
+		ImGui::BeginDisabled(asset.States.empty());
+		if (ImGui::Button("Add Transition"))
+		{
+			AnimatorTransition transition;
+			transition.FromState = asset.States.front().Name;
+			transition.ToState = asset.States.front().Name;
+			transition.ExitTime = 1.0f;
+			asset.Transitions.push_back(std::move(transition));
+			editor.Dirty = true;
+		}
+		ImGui::EndDisabled();
+	}
+
+	void SceneHierarchyPanel::DrawTilePaletteAssetEditor()
+	{
+		auto& editor = m_TilePaletteAssetEditor;
+		auto& asset = editor.Asset;
+		ImGui::Text("Tile Palette: %s%s", PathToUTF8(editor.Path.filename()).c_str(),
+			editor.Dirty ? " *" : "");
+		if (!editor.Loaded)
+		{
+			ImGui::TextWrapped("Could not load asset: %s", editor.Message.c_str());
+			if (ImGui::Button("Close Asset")) editor = {};
+			return;
+		}
+		if (ImGui::Button("Save")) SaveTilePaletteAsset();
+		ImGui::SameLine();
+		if (ImGui::Button("Revert"))
+		{
+			editor.Dirty = false;
+			OpenAuthoringAsset(editor.Handle, AssetType::TilePalette);
+		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(editor.Dirty);
+		const bool closeAsset = ImGui::Button("Close Asset") && !editor.Dirty;
+		ImGui::EndDisabled();
+		if (closeAsset)
+		{
+			editor = {};
+			return;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Use for Painting"))
+		{
+			m_ActiveTilePaletteHandle = editor.Handle;
+			m_ActiveTilePalette = editor.Asset;
+			if (m_SelectionContext && m_SelectionContext.HasComponent<Tilemap2D>()
+				&& !editor.Asset.Tiles.empty())
+			{
+				m_TilePaletteStates[static_cast<uint64_t>(m_SelectionContext.GetUUID())]
+					.SpriteHandle = editor.Asset.Tiles.front().SpriteHandle;
+			}
+			editor.Message = "Active painting palette selected.";
+		}
+		if (!editor.Message.empty())
+		{
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", editor.Message.c_str());
+		}
+		if (ImGui::DragFloat2("Cell Size", glm::value_ptr(asset.CellSize), 0.05f,
+			0.001f, 1000000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) editor.Dirty = true;
+		if (ImGui::DragFloat2("Cell Gap", glm::value_ptr(asset.CellGap), 0.05f,
+			-1000000.0f, 1000000.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp)) editor.Dirty = true;
+		DrawAnimatorSectionLabel("Palette Tiles");
+		std::optional<size_t> remove;
+		for (size_t index = 0; index < asset.Tiles.size(); ++index)
+		{
+			TilePaletteEntry& tile = asset.Tiles[index];
+			ImGui::PushID(static_cast<int>(index));
+			if (ImGui::InputInt2("Coordinate", &tile.Coordinate.x)) editor.Dirty = true;
+			if (DrawAnimatorSpriteField("PaletteEntrySprite", tile.SpriteHandle))
+				editor.Dirty = true;
+			if (ImGui::SmallButton("Remove Tile")) remove = index;
+			ImGui::Separator();
+			ImGui::PopID();
+		}
+		if (remove)
+		{
+			asset.Tiles.erase(asset.Tiles.begin() + static_cast<std::ptrdiff_t>(*remove));
+			editor.Dirty = true;
+		}
+		ImGui::InputInt2("New Coordinate", &editor.DraftCoordinate.x);
+		ImGui::TextUnformatted("New Tile Sprite");
+		DrawAnimatorSpriteField("PaletteNewSprite", editor.DraftSprite);
+		const bool duplicate = std::any_of(asset.Tiles.begin(), asset.Tiles.end(),
+			[&](const TilePaletteEntry& tile)
+			{ return tile.Coordinate == editor.DraftCoordinate; });
+		ImGui::BeginDisabled(static_cast<uint64_t>(editor.DraftSprite) == 0 || duplicate);
+		if (ImGui::Button("Add Tile"))
+		{
+			asset.Tiles.push_back({ editor.DraftCoordinate, editor.DraftSprite });
+			editor.DraftSprite = AssetHandle(0);
+			editor.DraftCoordinate.x++;
+			editor.Dirty = true;
+		}
+		ImGui::EndDisabled();
+		if (duplicate) ImGui::TextDisabled("That palette coordinate is already occupied.");
+	}
+
 	void SceneHierarchyPanel::OnAnimatorGraphImGuiRender(bool* open)
 	{
 		m_AnimatorGraphFocused = false;
@@ -1321,7 +2276,12 @@ namespace TomCat {
 		bool drewAnimator = false;
 		if (visible)
 		{
-			if (!m_SelectionContext)
+			if (static_cast<uint64_t>(m_AnimatorControllerAssetEditor.Handle) != 0)
+			{
+				DrawAnimatorControllerAssetEditor();
+				drewAnimator = true;
+			}
+			else if (!m_SelectionContext)
 			{
 				ImGui::TextDisabled("Select an entity with a Sprite Animator component.");
 			}
@@ -1335,10 +2295,78 @@ namespace TomCat {
 			{
 				Entity entity = m_SelectionContext;
 				SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
+				if (static_cast<uint64_t>(animator.ControllerHandle) != 0)
+				{
+					ImGui::Text("Selected: %s", entity.GetName().c_str());
+					ImGui::Separator();
+					ImGui::TextWrapped("This component uses an external Animator Controller. "
+						"Its embedded snapshot is ignored at Play start and is read-only here.");
+					if (ImGui::Button("Open Controller"))
+						OpenAuthoringAsset(animator.ControllerHandle,
+							AssetType::AnimatorController);
+					drewAnimator = true;
+				}
+				else
+				{
 				ImGui::Text("Selected: %s", entity.GetName().c_str());
 				ImGui::Separator();
 				std::function<void()> pendingMutation;
-				DrawSpriteAnimatorGraph(animator, entity, pendingMutation, true);
+				const float sidebarWidth = std::clamp(ImGui::GetContentRegionAvail().x * 0.24f,
+					190.0f, 300.0f);
+				if (ImGui::BeginChild("AnimatorSidebar", ImVec2(sidebarWidth, 0.0f), true))
+				{
+					if (ImGui::BeginTabBar("AnimatorSidebarTabs"))
+					{
+						if (ImGui::BeginTabItem("Layers"))
+						{
+							ImGui::Selectable("Base Layer", true);
+							ImGui::TextDisabled("States: %zu", animator.States.size());
+							ImGui::EndTabItem();
+						}
+						if (ImGui::BeginTabItem("Parameters"))
+						{
+							if (ImGui::SmallButton("+##AnimatorParameter"))
+							{
+								AnimatorParameter parameter;
+								parameter.Name = SpriteAnimatorAuthoring::MakeUniqueName(
+									animator.Parameters, std::string("Parameter"),
+									[](const AnimatorParameter& value) { return value.Name; });
+								animator.Parameters.push_back(std::move(parameter));
+								MarkModified(true);
+							}
+							ImGui::Separator();
+							for (AnimatorParameter& parameter : animator.Parameters)
+							{
+								ImGui::PushID(&parameter);
+								ImGui::TextUnformatted(parameter.Name.c_str());
+								ImGui::SameLine(ImGui::GetContentRegionAvail().x - 36.0f);
+								switch (parameter.Type)
+								{
+									case AnimatorParameterType::Bool:
+									case AnimatorParameterType::Trigger:
+										if (ImGui::Checkbox("##Value", &parameter.BoolValue)) MarkModified();
+										break;
+									case AnimatorParameterType::Int:
+										if (ImGui::InputInt("##Value", &parameter.IntValue)) MarkModified();
+										break;
+									case AnimatorParameterType::Float:
+										if (ImGui::DragFloat("##Value", &parameter.FloatValue, 0.05f)) MarkModified();
+										break;
+								}
+								ImGui::PopID();
+							}
+							if (animator.Parameters.empty())
+								ImGui::TextDisabled("List is Empty");
+							ImGui::EndTabItem();
+						}
+						ImGui::EndTabBar();
+					}
+				}
+				ImGui::EndChild();
+				ImGui::SameLine();
+				if (ImGui::BeginChild("AnimatorStateMachine", ImVec2(0.0f, 0.0f), false))
+					DrawSpriteAnimatorGraph(animator, entity, pendingMutation, true);
+				ImGui::EndChild();
 				if (m_AnimatorRenameTarget != AnimatorRenameTarget::None
 					&& m_AnimatorRenameEntity != entity.GetUUID())
 					DismissAnimatorRenamePopup(true);
@@ -1346,6 +2374,7 @@ namespace TomCat {
 					DrawAnimatorRenamePopup(animator, entity, true);
 				ApplyAnimatorPendingMutation(entity, pendingMutation);
 				drewAnimator = true;
+				}
 			}
 		}
 		if (!drewAnimator && m_AnimatorRenamePopupGraphOwner)
@@ -1354,15 +2383,600 @@ namespace TomCat {
 		FinishModificationGesture();
 	}
 
+	void SceneHierarchyPanel::OnAnimationImGuiRender(bool* open)
+	{
+		using namespace SpriteAnimatorAuthoring;
+		m_AnimationFocused = false;
+		if (open && !*open)
+			return;
+
+		auto restorePreview = [this](uint64_t entityID, AnimationTimelineState& state)
+		{
+			if (!m_Context)
+				return;
+			Entity entity = m_Context->FindEntityByUUID(UUID(entityID));
+			if (entity && entity.HasComponent<SpriteRenderer>())
+			{
+				auto& renderer = entity.GetComponent<SpriteRenderer>();
+				renderer.RuntimeSpriteOverrideActive = false;
+				renderer.RuntimeSpriteOverrideHandle = AssetHandle(0);
+				renderer.Sprite = static_cast<uint64_t>(renderer.SpriteHandle) != 0
+					? AssetManager::Get().LoadTexture(renderer.SpriteHandle) : Ref<Texture2D>{};
+			}
+			state.Playing = false;
+		};
+
+		const bool visible = ImGui::Begin("Animation", open);
+		m_AnimationDocked = ImGui::IsWindowDocked();
+		m_AnimationFocused = visible
+			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+		if (!visible)
+		{
+			ImGui::End();
+			if (open && !*open)
+				for (auto& [entityID, state] : m_AnimationTimelineStates)
+					restorePreview(entityID, state);
+			return;
+		}
+		if (static_cast<uint64_t>(m_AnimationClipAssetEditor.Handle) != 0)
+		{
+			DrawAnimationClipAssetEditor();
+			ImGui::End();
+			return;
+		}
+
+		if (!m_SelectionContext || !m_SelectionContext.HasComponent<SpriteAnimator>())
+		{
+			for (auto& [entityID, state] : m_AnimationTimelineStates)
+				restorePreview(entityID, state);
+			ImGui::TextDisabled("Select an entity with a Sprite Animator component.");
+			ImGui::End();
+			return;
+		}
+
+		Entity entity = m_SelectionContext;
+		SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
+		if (static_cast<uint64_t>(animator.ControllerHandle) != 0)
+		{
+			for (auto& [entityID, state] : m_AnimationTimelineStates)
+				restorePreview(entityID, state);
+			ImGui::TextWrapped("This component uses an external Animator Controller. "
+				"Open an Animation Clip asset from the Project panel, or open the "
+				"Controller and choose a state's clip.");
+			if (ImGui::Button("Open Controller"))
+				OpenAuthoringAsset(animator.ControllerHandle,
+					AssetType::AnimatorController);
+			ImGui::End();
+			return;
+		}
+		const uint64_t entityID = static_cast<uint64_t>(entity.GetUUID());
+		for (auto& [otherID, otherState] : m_AnimationTimelineStates)
+			if (otherID != entityID)
+				restorePreview(otherID, otherState);
+		AnimationTimelineState& timeline = m_AnimationTimelineStates[entityID];
+
+		ImGui::Text("%s", entity.GetName().c_str());
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(210.0f);
+		const char* clipPreview = timeline.SelectedClip.empty()
+			? "Select Clip" : timeline.SelectedClip.c_str();
+		if (ImGui::BeginCombo("##AnimationClip", clipPreview))
+		{
+			for (const SpriteAnimationClip& clip : animator.Clips)
+			{
+				if (ImGui::Selectable(clip.Name.c_str(), timeline.SelectedClip == clip.Name))
+				{
+					timeline.SelectedClip = clip.Name;
+					timeline.SelectedFrame = 0;
+					timeline.Time = 0.0;
+					timeline.Playing = false;
+				}
+			}
+			ImGui::EndCombo();
+		}
+		if (animator.Clips.empty())
+		{
+			ImGui::SameLine();
+			if (ImGui::Button("Create Clip"))
+			{
+				SpriteAnimationClip clip;
+				clip.Name = "Default";
+				clip.Frames.push_back({ entity.HasComponent<SpriteRenderer>()
+					? entity.GetComponent<SpriteRenderer>().SpriteHandle
+					: AssetHandle(0), 1.0f / 12.0f });
+				animator.Clips.push_back(std::move(clip));
+				timeline.SelectedClip = animator.Clips.front().Name;
+				MarkModified(true);
+			}
+		}
+		if (timeline.SelectedClip.empty() && !animator.Clips.empty())
+			timeline.SelectedClip = animator.Clips.front().Name;
+		const std::optional<size_t> clipIndex = FindClipIndex(animator,
+			timeline.SelectedClip);
+
+		ImGui::Separator();
+		if (ImGui::Checkbox("Preview", &timeline.Preview))
+		{
+			if (!timeline.Preview)
+				restorePreview(entityID, timeline);
+		}
+		ImGui::SameLine();
+		ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 0.2f, 0.18f, 1.0f));
+		timeline.Recording = false;
+		ImGui::BeginDisabled();
+		ImGui::Checkbox("Record", &timeline.Recording);
+		ImGui::EndDisabled();
+		ImGui::PopStyleColor();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("Property recording support pending");
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!clipIndex || animator.Clips[*clipIndex].Frames.empty());
+		if (ImGui::Button("|<"))
+		{
+			timeline.SelectedFrame = 0;
+			timeline.Time = 0.0;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("<"))
+		{
+			timeline.SelectedFrame = timeline.SelectedFrame > 0
+				? timeline.SelectedFrame - 1 : 0;
+			timeline.Time = 0.0;
+			for (size_t i = 0; clipIndex && i < timeline.SelectedFrame; ++i)
+				timeline.Time += animator.Clips[*clipIndex].Frames[i].DurationSeconds;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(timeline.Playing ? "||" : ">"))
+		{
+			timeline.Playing = !timeline.Playing;
+			if (timeline.Playing)
+				timeline.Preview = true;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(">##NextFrame"))
+		{
+			const size_t count = animator.Clips[*clipIndex].Frames.size();
+			timeline.SelectedFrame = std::min(timeline.SelectedFrame + 1, count - 1);
+			timeline.Time = 0.0;
+			for (size_t i = 0; i < timeline.SelectedFrame; ++i)
+				timeline.Time += animator.Clips[*clipIndex].Frames[i].DurationSeconds;
+		}
+		ImGui::SameLine();
+		if (ImGui::Button(">|"))
+		{
+			timeline.SelectedFrame = animator.Clips[*clipIndex].Frames.size() - 1;
+			timeline.Time = std::nextafter(ClipDuration(animator.Clips[*clipIndex]), 0.0);
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(86.0f);
+		if (ImGui::DragFloat("FPS", &timeline.FrameRate, 0.25f, 1.0f, 240.0f, "%.1f"))
+			timeline.FrameRate = std::clamp(timeline.FrameRate, 1.0f, 240.0f);
+
+		if (clipIndex)
+		{
+			SpriteAnimationClip& clip = animator.Clips[*clipIndex];
+			const double duration = ClipDuration(clip);
+			if (timeline.Playing && duration > 0.0)
+			{
+				timeline.Time += static_cast<double>(ImGui::GetIO().DeltaTime);
+				if (clip.Loop)
+					timeline.Time = std::fmod(timeline.Time, duration);
+				else if (timeline.Time >= duration)
+				{
+					timeline.Time = std::nextafter(duration, 0.0);
+					timeline.Playing = false;
+				}
+				timeline.SelectedFrame = FrameAtTime(clip, timeline.Time);
+			}
+			double scrubTime = timeline.Time;
+			const double minimumTime = 0.0;
+			ImGui::SetNextItemWidth(-1.0f);
+			if (duration > 0.0 && ImGui::SliderScalar("##AnimationTime",
+				ImGuiDataType_Double, &scrubTime, &minimumTime,
+				&duration, "%.3f s"))
+			{
+				timeline.Time = std::clamp(scrubTime, 0.0,
+					std::nextafter(duration, 0.0));
+				timeline.SelectedFrame = FrameAtTime(clip, timeline.Time);
+				timeline.Playing = false;
+			}
+
+			if (timeline.Preview && entity.HasComponent<SpriteRenderer>())
+			{
+				auto& renderer = entity.GetComponent<SpriteRenderer>();
+				if (clip.Frames.empty())
+				{
+					renderer.RuntimeSpriteOverrideActive = false;
+					renderer.RuntimeSpriteOverrideHandle = AssetHandle(0);
+				}
+				else
+				{
+					timeline.SelectedFrame = std::min(timeline.SelectedFrame,
+						clip.Frames.size() - 1);
+					const AssetHandle frameSprite =
+						clip.Frames[timeline.SelectedFrame].SpriteHandle;
+					renderer.RuntimeSpriteOverrideActive = true;
+					renderer.RuntimeSpriteOverrideHandle = frameSprite;
+					renderer.Sprite = AssetManager::Get().LoadTexture(frameSprite);
+				}
+			}
+
+			ImGui::Separator();
+			ImGui::TextDisabled("DOPESHEET  •  Drop Sprite assets to append frames");
+			std::optional<size_t> removeFrame;
+			std::optional<std::pair<size_t, size_t>> moveFrame;
+			if (ImGui::BeginChild("AnimationDopesheet", ImVec2(0.0f, 210.0f), true,
+				ImGuiWindowFlags_HorizontalScrollbar))
+			{
+				for (size_t frameIndex = 0; frameIndex < clip.Frames.size(); ++frameIndex)
+				{
+					ImGui::PushID(static_cast<int>(frameIndex));
+					const float width = std::clamp(clip.Frames[frameIndex].DurationSeconds
+						* timeline.FrameRate * 34.0f, 54.0f, 220.0f);
+					const std::string label = std::to_string(frameIndex) + "\n"
+						+ AnimatorSpriteLabel(clip.Frames[frameIndex].SpriteHandle);
+					if (ImGui::Selectable(label.c_str(), timeline.SelectedFrame == frameIndex,
+						0, ImVec2(width, 92.0f)))
+					{
+						timeline.SelectedFrame = frameIndex;
+						timeline.Time = 0.0;
+						for (size_t i = 0; i < frameIndex; ++i)
+							timeline.Time += clip.Frames[i].DurationSeconds;
+						timeline.Playing = false;
+					}
+					if (ImGui::BeginDragDropSource())
+					{
+						ImGui::SetDragDropPayload("TC_ANIMATION_FRAME", &frameIndex,
+							sizeof(frameIndex));
+						ImGui::Text("Move Frame %zu", frameIndex);
+						ImGui::EndDragDropSource();
+					}
+					if (ImGui::BeginDragDropTarget())
+					{
+						if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+							"TC_ANIMATION_FRAME"))
+							if (payload->DataSize == sizeof(size_t))
+								moveFrame = { *static_cast<const size_t*>(payload->Data), frameIndex };
+						ImGui::EndDragDropTarget();
+					}
+					if (frameIndex + 1 < clip.Frames.size()) ImGui::SameLine();
+					ImGui::PopID();
+				}
+				const ImVec2 dropMin = ImGui::GetWindowPos();
+				const ImVec2 dropMax(dropMin.x + ImGui::GetWindowSize().x,
+					dropMin.y + ImGui::GetWindowSize().y);
+				if (ImGui::BeginDragDropTargetCustom(ImRect(dropMin, dropMax),
+					ImGui::GetID("##AnimationDropTarget")))
+				{
+					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
+						AssetDragDropPayloadID))
+					{
+						if (payload->DataSize == sizeof(uint64_t))
+						{
+							const AssetHandle sprite(*static_cast<const uint64_t*>(payload->Data));
+							const AssetMetadata* metadata = nullptr;
+							const AssetSubAsset* subAsset = nullptr;
+							if (ResolveSelectableSprite(sprite, metadata, subAsset))
+							{
+								std::string error;
+								if (InsertFrame(clip, clip.Frames.size(),
+									{ sprite, 1.0f / timeline.FrameRate }, error))
+								{
+									timeline.SelectedFrame = clip.Frames.size() - 1;
+									MarkModified(true);
+								}
+							}
+						}
+					}
+					ImGui::EndDragDropTarget();
+				}
+			}
+			ImGui::EndChild();
+			if (moveFrame)
+			{
+				std::string error;
+				if (MoveFrame(clip, moveFrame->first, moveFrame->second, error))
+				{
+					timeline.SelectedFrame = moveFrame->second;
+					MarkModified(true);
+				}
+			}
+
+			if (!clip.Frames.empty())
+			{
+				timeline.SelectedFrame = std::min(timeline.SelectedFrame,
+					clip.Frames.size() - 1);
+				SpriteAnimationFrame& frame = clip.Frames[timeline.SelectedFrame];
+				AssetHandle editedSprite = frame.SpriteHandle;
+				if (DrawAnimatorSpriteField("AnimationFrameSprite", editedSprite)
+					&& editedSprite != frame.SpriteHandle)
+				{
+					frame.SpriteHandle = editedSprite;
+					MarkModified(true);
+				}
+				float durationSeconds = frame.DurationSeconds;
+				if (ImGui::DragFloat("Frame Duration", &durationSeconds, 0.005f,
+					0.001f, 3600.0f, "%.3f s"))
+				{
+					std::string error;
+					if (SetFrameDuration(clip, timeline.SelectedFrame,
+						durationSeconds, error)) MarkModified();
+				}
+				if (ImGui::Button("Delete Frame"))
+					removeFrame = timeline.SelectedFrame;
+			}
+			AssetHandle newFrameSprite = AssetHandle(0);
+			ImGui::SetNextItemWidth(240.0f);
+			if (DrawAnimatorSpriteField("AnimationNewFrameSprite", newFrameSprite)
+				&& static_cast<uint64_t>(newFrameSprite) != 0)
+			{
+				std::string error;
+				if (InsertFrame(clip, clip.Frames.size(),
+					{ newFrameSprite, 1.0f / timeline.FrameRate }, error))
+				{
+					timeline.SelectedFrame = clip.Frames.size() - 1;
+					MarkModified(true);
+				}
+			}
+			if (removeFrame)
+			{
+				std::string error;
+				if (RemoveFrame(clip, *removeFrame, error))
+				{
+					timeline.SelectedFrame = clip.Frames.empty() ? 0
+						: std::min(timeline.SelectedFrame, clip.Frames.size() - 1);
+					MarkModified(true);
+				}
+			}
+		}
+		ImGui::End();
+		if (open && !*open)
+			for (auto& [previewEntityID, previewState] : m_AnimationTimelineStates)
+				restorePreview(previewEntityID, previewState);
+		FinishModificationGesture();
+	}
+
+	void SceneHierarchyPanel::OnTilePaletteImGuiRender(bool* open)
+	{
+		m_TilePaletteFocused = false;
+		if (open && !*open)
+			return;
+		const bool visible = ImGui::Begin("Tile Palette", open);
+		m_TilePaletteDocked = ImGui::IsWindowDocked();
+		m_TilePaletteFocused = visible
+			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+		if (!visible)
+		{
+			ImGui::End();
+			return;
+		}
+		if (static_cast<uint64_t>(m_TilePaletteAssetEditor.Handle) != 0)
+		{
+			DrawTilePaletteAssetEditor();
+			ImGui::End();
+			return;
+		}
+		if (!m_SelectionContext || !m_SelectionContext.HasComponent<Tilemap2D>())
+		{
+			ImGui::TextDisabled("Select a Tilemap 2D entity to paint.");
+			ImGui::End();
+			return;
+		}
+
+		Entity entity = m_SelectionContext;
+		Tilemap2D& tilemap = entity.GetComponent<Tilemap2D>();
+		TilePaletteState& palette = m_TilePaletteStates[
+			static_cast<uint64_t>(entity.GetUUID())];
+		static constexpr const char* toolLabels[] = {
+			"Select", "Move", "Paint", "Box", "Eyedropper", "Erase", "Fill"
+		};
+		for (int tool = 0; tool < 7; ++tool)
+		{
+			if (tool > 0) ImGui::SameLine();
+			if (ImGui::Selectable(toolLabels[tool],
+				static_cast<int>(palette.Tool) == tool, 0, ImVec2(82.0f, 0.0f)))
+				palette.Tool = static_cast<TilePaletteTool>(tool);
+		}
+		ImGui::Separator();
+		ImGui::Text("Active Tilemap: %s", entity.GetName().c_str());
+		ImGui::InputInt2("Cell", &palette.Coordinate.x);
+		if (palette.Tool == TilePaletteTool::Box)
+			ImGui::InputInt2("Box End", &palette.BoxEnd.x);
+		if (palette.Tool == TilePaletteTool::Move)
+			ImGui::InputInt2("Move To", &palette.MoveDestination.x);
+		ImGui::ColorEdit4("Tint", glm::value_ptr(palette.Tint));
+
+		std::vector<std::pair<AssetHandle, std::string>> sprites;
+		if (static_cast<uint64_t>(m_ActiveTilePaletteHandle) != 0)
+		{
+			const AssetMetadata* paletteMetadata = AssetManager::Get().GetRegistry()
+				.GetMetadata(m_ActiveTilePaletteHandle);
+			ImGui::TextDisabled("Palette: %s", paletteMetadata
+				? PathToUTF8(paletteMetadata->FilePath.filename()).c_str() : "Missing");
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Clear Palette"))
+			{
+				m_ActiveTilePaletteHandle = AssetHandle(0);
+				m_ActiveTilePalette = {};
+			}
+			for (const TilePaletteEntry& tile : m_ActiveTilePalette.Tiles)
+			{
+				const std::string label = AnimatorSpriteLabel(tile.SpriteHandle)
+					+ " [" + std::to_string(tile.Coordinate.x) + ", "
+					+ std::to_string(tile.Coordinate.y) + "]";
+				if (std::none_of(sprites.begin(), sprites.end(),
+					[&](const auto& item) { return item.first == tile.SpriteHandle; }))
+					sprites.emplace_back(tile.SpriteHandle, label);
+			}
+		}
+		else
+		{
+			for (const BuiltInSpriteAsset& builtIn : GetBuiltInSpriteAssets())
+				sprites.emplace_back(builtIn.Handle, std::string(builtIn.Name));
+			for (const auto& [handle, metadata] :
+				AssetManager::Get().GetRegistry().GetAssets())
+			{
+				if (!IsSpriteAsset(metadata) || metadata.IsMissing)
+					continue;
+				sprites.emplace_back(handle, PathToUTF8(metadata.FilePath.filename()));
+				for (const AssetSubAsset& child : metadata.SubAssets)
+					if (child.Type == AssetType::Texture2D)
+						sprites.emplace_back(child.Handle, child.Name);
+			}
+		}
+		std::sort(sprites.begin(), sprites.end(), [](const auto& left, const auto& right)
+		{
+			return LowerASCII(left.second) < LowerASCII(right.second);
+		});
+		ImGui::TextDisabled("PALETTE SPRITES");
+		if (ImGui::BeginChild("TilePaletteSprites", ImVec2(0.0f, 260.0f), true))
+		{
+			const float tileWidth = 72.0f;
+			const int columns = std::max(1, static_cast<int>(
+				ImGui::GetContentRegionAvail().x / (tileWidth + ImGui::GetStyle().ItemSpacing.x)));
+			int column = 0;
+			for (const auto& [handle, label] : sprites)
+			{
+				const std::string spriteID = "TilePaletteSprite##"
+					+ std::to_string(static_cast<uint64_t>(handle));
+				ImGui::PushID(spriteID.c_str());
+				if (DrawSpritePaletteTile(handle, label.c_str(),
+					palette.SpriteHandle == handle, tileWidth))
+					palette.SpriteHandle = handle;
+				ImGui::PopID();
+				if (++column % columns != 0) ImGui::SameLine();
+			}
+		}
+		ImGui::EndChild();
+
+		const TilemapCell* selectedCell = Tilemap2DRuntime::FindCell(tilemap,
+			palette.Coordinate);
+		const int64_t boxMinX = std::min<int64_t>(palette.Coordinate.x,
+			palette.BoxEnd.x);
+		const int64_t boxMaxX = std::max<int64_t>(palette.Coordinate.x,
+			palette.BoxEnd.x);
+		const int64_t boxMinY = std::min<int64_t>(palette.Coordinate.y,
+			palette.BoxEnd.y);
+		const int64_t boxMaxY = std::max<int64_t>(palette.Coordinate.y,
+			palette.BoxEnd.y);
+		const uint64_t boxWidth = static_cast<uint64_t>(boxMaxX - boxMinX + 1);
+		const uint64_t boxHeight = static_cast<uint64_t>(boxMaxY - boxMinY + 1);
+		const bool boxAreaValid = boxWidth <= 65536 && boxHeight <= 65536
+			&& boxWidth * boxHeight <= 65536;
+		const bool missingPaintSprite = (palette.Tool == TilePaletteTool::Paint
+			|| palette.Tool == TilePaletteTool::Box
+			|| palette.Tool == TilePaletteTool::Fill)
+			&& static_cast<uint64_t>(palette.SpriteHandle) == 0;
+		ImGui::BeginDisabled(missingPaintSprite
+			|| (palette.Tool == TilePaletteTool::Box && !boxAreaValid));
+		if (ImGui::Button("Apply Tool", ImVec2(-1.0f, 0.0f)))
+		{
+			bool changed = false;
+			auto paintCell = [&](glm::ivec2 coordinate)
+			{
+				TilemapCell cell;
+				cell.Coordinate = coordinate;
+				cell.SpriteHandle = palette.SpriteHandle;
+				cell.Tint = palette.Tint;
+				changed |= Tilemap2DRuntime::SetCell(tilemap, std::move(cell));
+			};
+			switch (palette.Tool)
+			{
+				case TilePaletteTool::Select:
+				case TilePaletteTool::Eyedropper:
+					if (selectedCell)
+					{
+						palette.SpriteHandle = selectedCell->SpriteHandle;
+						palette.Tint = selectedCell->Tint;
+					}
+					break;
+				case TilePaletteTool::Move:
+					if (selectedCell)
+					{
+						TilemapCell moved = *selectedCell;
+						changed = Tilemap2DRuntime::EraseCell(tilemap,
+							palette.Coordinate);
+						moved.Coordinate = palette.MoveDestination;
+						changed |= Tilemap2DRuntime::SetCell(tilemap, std::move(moved));
+					}
+					break;
+				case TilePaletteTool::Paint:
+					paintCell(palette.Coordinate);
+					break;
+				case TilePaletteTool::Box:
+				{
+					for (int64_t y = boxMinY; y <= boxMaxY; ++y)
+						for (int64_t x = boxMinX; x <= boxMaxX; ++x)
+							paintCell({ static_cast<int>(x), static_cast<int>(y) });
+					break;
+				}
+				case TilePaletteTool::Erase:
+					changed = Tilemap2DRuntime::EraseCell(tilemap, palette.Coordinate);
+					break;
+				case TilePaletteTool::Fill:
+				{
+					const AssetHandle replaced = selectedCell
+						? selectedCell->SpriteHandle : AssetHandle(0);
+					if (static_cast<uint64_t>(replaced) == 0)
+					{
+						paintCell(palette.Coordinate);
+						break;
+					}
+					std::vector<glm::ivec2> queue{ palette.Coordinate };
+					std::unordered_set<int64_t> visited;
+					auto key = [](glm::ivec2 value)
+					{
+						return static_cast<int64_t>((static_cast<uint64_t>(
+							static_cast<uint32_t>(value.x)) << 32)
+							^ static_cast<uint32_t>(value.y));
+					};
+					for (size_t cursor = 0; cursor < queue.size() && queue.size() < 65536; ++cursor)
+					{
+						const glm::ivec2 coordinate = queue[cursor];
+						if (!visited.insert(key(coordinate)).second) continue;
+						const TilemapCell* cell = Tilemap2DRuntime::FindCell(tilemap, coordinate);
+						if (!cell || cell->SpriteHandle != replaced) continue;
+						paintCell(coordinate);
+						queue.push_back(coordinate + glm::ivec2(1, 0));
+						queue.push_back(coordinate + glm::ivec2(-1, 0));
+						queue.push_back(coordinate + glm::ivec2(0, 1));
+						queue.push_back(coordinate + glm::ivec2(0, -1));
+					}
+					break;
+				}
+			}
+			if (changed) MarkModified(true);
+		}
+		ImGui::EndDisabled();
+		if (palette.Tool == TilePaletteTool::Box && !boxAreaValid)
+			ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f),
+				"Box is limited to 65,536 cells.");
+		ImGui::TextDisabled("%zu occupied cells", tilemap.Cells.size());
+		ImGui::End();
+		FinishModificationGesture();
+	}
+
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
 	{
 		if (m_SelectionContext != entity)
 		{
+			if (m_SelectionContext && m_SelectionContext.HasComponent<SpriteRenderer>())
+			{
+				auto& renderer = m_SelectionContext.GetComponent<SpriteRenderer>();
+				renderer.RuntimeSpriteOverrideActive = false;
+				renderer.RuntimeSpriteOverrideHandle = AssetHandle(0);
+				const auto timeline = m_AnimationTimelineStates.find(
+					static_cast<uint64_t>(m_SelectionContext.GetUUID()));
+				if (timeline != m_AnimationTimelineStates.end())
+					timeline->second.Playing = false;
+			}
 			ClearColliderEditMode();
 			m_AnimatorRenameTarget = AnimatorRenameTarget::None;
 			m_AnimatorRenameEntity = UUID(0);
 			m_AnimatorRenameError.clear();
 			m_AnimatorRenamePopupRequested = false;
+			m_AddComponentPopupRequested = false;
 		}
 		if (m_SpritePickerOpen && m_SelectionContext != entity)
 		{
@@ -1577,6 +3191,60 @@ namespace TomCat {
 			CreateAsSelectedChild(entity);
 		};
 
+		auto FindCanvasAncestor = [&](Entity entity)
+		{
+			while (entity)
+			{
+				if (entity.HasComponent<Canvas>())
+					return entity;
+				entity = m_Context->GetParent(entity);
+			}
+			return Entity{};
+		};
+
+		auto CreateUIElement = [&](const char* name, bool addImage,
+			bool addText, bool addButton)
+		{
+			Entity uiParent = parentForNewObject;
+			if (!FindCanvasAncestor(uiParent))
+			{
+				Entity canvas = m_Context->CreateEntity("Canvas");
+				canvas.AddComponent<Canvas>();
+				canvas.AddComponent<UIEventSystem>();
+				uiParent = canvas;
+				m_ForceOpenSceneRoot = true;
+			}
+
+			Entity element = m_Context->CreateEntity(name);
+			auto& rect = element.AddComponent<RectTransform>();
+			if (addButton)
+				rect.SizeDelta = { 160.0f, 36.0f };
+			else if (addText)
+				rect.SizeDelta = { 160.0f, 30.0f };
+
+			if (addImage)
+			{
+				auto& image = element.AddComponent<UIImage>();
+				if (addButton)
+					image.Color = { 0.82f, 0.82f, 0.82f, 1.0f };
+			}
+			if (addButton)
+				element.AddComponent<UIButton>();
+			if (addText)
+			{
+				auto& text = element.AddComponent<UIText>();
+				text.Text = addButton ? "Button" : "Text";
+				if (addButton)
+					text.Alignment = TextAlignment::Center;
+			}
+
+			m_Context->SetParent(element, uiParent);
+			m_ForceExpandParent = uiParent;
+			m_SelectionContext = element;
+			BeginRename(element);
+			MarkModified(true);
+		};
+
 		if (ImGui::BeginMenu("2D Object"))
 		{
 			if (ImGui::BeginMenu("Sprites"))
@@ -1595,27 +3263,25 @@ namespace TomCat {
 					ImGui::SetTooltip("Open a project to create Sprites.");
 				ImGui::EndMenu();
 			}
-			if (ImGui::MenuItem("Tilemap 2D"))
+			if (ImGui::BeginMenu("Tilemap"))
 			{
-				Entity tilemap = m_Context->CreateEntity("Tilemap 2D");
-				tilemap.AddComponent<Tilemap2D>();
-				CreateAsSelectedChild(tilemap);
-			}
-			if (ImGui::BeginMenu("Light 2D"))
-			{
-				if (ImGui::MenuItem("Global Light 2D"))
+				if (ImGui::MenuItem("Rectangular"))
 				{
-					Entity light = m_Context->CreateEntity("Global Light 2D");
-					auto& component = light.AddComponent<Light2D>();
-					component.Type = Light2DType::Global;
-					CreateAsSelectedChild(light);
-				}
-				if (ImGui::MenuItem("Point Light 2D"))
-				{
-					Entity light = m_Context->CreateEntity("Point Light 2D");
-					auto& component = light.AddComponent<Light2D>();
-					component.Type = Light2DType::Point;
-					CreateAsSelectedChild(light);
+					Entity grid = m_Context->CreateEntity("Grid");
+					grid.AddComponent<Grid2D>();
+					if (parentForNewObject)
+						m_Context->SetParent(grid, parentForNewObject);
+					else
+						m_ForceOpenSceneRoot = true;
+					Entity tilemap = m_Context->CreateEntity("Tilemap");
+					tilemap.AddComponent<Tilemap2D>();
+					tilemap.AddComponent<TilemapRenderer2D>();
+					m_Context->SetParent(tilemap, grid);
+					m_ForceExpandParent = grid;
+					m_SelectionContext = tilemap;
+					BeginRename(tilemap);
+					MarkModified(true);
+					m_TilePaletteOpenRequested = true;
 				}
 				ImGui::EndMenu();
 			}
@@ -1635,6 +3301,61 @@ namespace TomCat {
 				particles.AddComponent<ParticleSystem2D>();
 				CreateAsSelectedChild(particles);
 			}
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu("Light"))
+		{
+			if (ImGui::BeginMenu("2D"))
+			{
+				if (ImGui::MenuItem("Global Light 2D"))
+				{
+					Entity light = m_Context->CreateEntity("Global Light 2D");
+					auto& component = light.AddComponent<Light2D>();
+					component.Type = Light2DType::Global;
+					CreateAsSelectedChild(light);
+				}
+				if (ImGui::MenuItem("Point Light 2D"))
+				{
+					Entity light = m_Context->CreateEntity("Point Light 2D");
+					auto& component = light.AddComponent<Light2D>();
+					component.Type = Light2DType::Point;
+					CreateAsSelectedChild(light);
+				}
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu("Audio"))
+		{
+			if (ImGui::MenuItem("Audio Source"))
+			{
+				Entity source = m_Context->CreateEntity("Audio Source");
+				source.AddComponent<AudioSource>();
+				CreateAsSelectedChild(source);
+			}
+			if (ImGui::MenuItem("Audio Listener"))
+			{
+				Entity listener = m_Context->CreateEntity("Audio Listener");
+				listener.AddComponent<AudioListener>();
+				CreateAsSelectedChild(listener);
+			}
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu("UI"))
+		{
+			if (ImGui::MenuItem("Canvas"))
+			{
+				Entity canvas = m_Context->CreateEntity("Canvas");
+				canvas.AddComponent<Canvas>();
+				canvas.AddComponent<UIEventSystem>();
+				CreateAsSelectedChild(canvas);
+			}
+			if (ImGui::MenuItem("Image"))
+				CreateUIElement("Image", true, false, false);
+			if (ImGui::MenuItem("Text"))
+				CreateUIElement("Text", false, true, false);
+			if (ImGui::MenuItem("Button"))
+				CreateUIElement("Button", true, true, true);
 			ImGui::EndMenu();
 		}
 	}
@@ -1936,6 +3657,7 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	template<> static bool* GetComponentEnabledFlag<SpriteAnimator>(SpriteAnimator& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<LineRenderer>(LineRenderer& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Tilemap2D>(Tilemap2D& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<TilemapRenderer2D>(TilemapRenderer2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<ParticleSystem2D>(ParticleSystem2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Light2D>(Light2D& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<Rigidbody2D>(Rigidbody2D& component) { return &component.Enabled; }
@@ -2327,6 +4049,37 @@ static void DrawComponent(const std::string& name, Entity entity,
 			ImGui::InvisibleButton("##AnimatorGraphBackground", canvasSize,
 				ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
 			const bool canvasHovered = ImGui::IsItemHovered();
+			if (ImGui::BeginPopupContextItem("Animator Canvas Menu"))
+			{
+				ImGui::BeginDisabled(animator.Clips.empty());
+				if (ImGui::MenuItem("Create State"))
+				{
+					AnimatorState state;
+					state.Name = MakeUniqueName(animator.States, std::string("State"),
+						[](const AnimatorState& item) { return item.Name; });
+					state.Clip = animator.Clips.front().Name;
+					animator.States.push_back(std::move(state));
+					graph.SelectedState = animator.States.back().Name;
+					SynchronizeGraphLayout(animator, graph.Layout);
+					MarkModified(true);
+				}
+				ImGui::EndDisabled();
+				ImGui::BeginDisabled(animator.States.empty());
+				if (ImGui::MenuItem("Create Any State Transition"))
+				{
+					graph.TransitionSource.clear();
+					graph.TransitionSourceAnyState = true;
+				}
+				ImGui::EndDisabled();
+				ImGui::Separator();
+				if (ImGui::MenuItem("Reset Layout"))
+				{
+					ResetGraphLayout(animator, graph.Layout);
+					graph.PanX = 0.0f;
+					graph.PanY = 0.0f;
+				}
+				ImGui::EndPopup();
+			}
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
 			{
 				graph.SelectedState.clear();
@@ -2610,7 +4363,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 						graph.TransitionSource = state.Name;
 						graph.TransitionSourceAnyState = false;
 					}
-					if (ImGui::MenuItem("Set as Initial State", nullptr,
+					if (ImGui::MenuItem("Set as Layer Default State", nullptr,
 						animator.InitialState == state.Name))
 					{
 						animator.InitialState = state.Name;
@@ -2618,7 +4371,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 					}
 					if (ImGui::MenuItem("Rename"))
 						requestRename(AnimatorRenameTarget::State, stateIndex, state.Name);
-					if (ImGui::MenuItem("Remove") && !pendingMutation)
+					if (ImGui::MenuItem("Delete") && !pendingMutation)
 					{
 						const std::string stateName = state.Name;
 						pendingMutation = [this, &animator, entityID, stateName]()
@@ -2989,6 +4742,53 @@ static void DrawComponent(const std::string& name, Entity entity,
 			RequestAnimatorRename(target, entity, index, currentName, false);
 		};
 
+		const ComponentDescriptor* animatorDescriptor =
+			ComponentRegistry::Get().Find(UUID(ComponentIds::SpriteAnimator));
+		const PropertyDescriptor* controllerProperty = nullptr;
+		if (animatorDescriptor)
+		{
+			const auto found = std::find_if(animatorDescriptor->Properties.begin(),
+				animatorDescriptor->Properties.end(), [](const PropertyDescriptor& property)
+				{
+					return property.PropertyId
+						== UUID(ComponentIds::SpriteAnimatorProperties::Controller);
+				});
+			if (found != animatorDescriptor->Properties.end())
+				controllerProperty = &*found;
+		}
+		if (controllerProperty && controllerProperty->AssetReference)
+		{
+			AssetHandle controller = animator.ControllerHandle;
+			if (DrawRegisteredAssetReference(*controllerProperty, controller,
+				&m_AssetRevealCallback)
+				&& controller != animator.ControllerHandle)
+			{
+				std::string error;
+				if (controllerProperty->Set(entity,
+					static_cast<uint64_t>(controller), error))
+					MarkModified(true);
+				else
+					TC_Core_Warn("Could not assign Animator Controller: {0}", error);
+			}
+		}
+		const bool usesExternalController =
+			static_cast<uint64_t>(animator.ControllerHandle) != 0;
+		if (!usesExternalController)
+			ImGui::TextDisabled("Embedded controller: graph and clips are stored with this entity.");
+		else
+			ImGui::TextDisabled("External controller and Animation Clips are loaded when Play starts.");
+		if (usesExternalController)
+		{
+			if (ImGui::Button("Open Controller"))
+				OpenAuthoringAsset(animator.ControllerHandle,
+					AssetType::AnimatorController);
+		}
+		else
+		{
+			if (ImGui::Button("Open Animation")) m_AnimationOpenRequested = true;
+			ImGui::SameLine();
+			if (ImGui::Button("Open Animator")) m_AnimatorGraphOpenRequested = true;
+		}
 		if (ImGui::Checkbox("Play On Start", &animator.PlayOnStart))
 			MarkModified();
 		float animatorSpeed = animator.Speed;
@@ -3001,6 +4801,12 @@ static void DrawComponent(const std::string& name, Entity entity,
 				animator.Speed = animatorSpeed;
 				MarkModified();
 			}
+		}
+		if (usesExternalController)
+		{
+			ImGui::TextWrapped("Controller parameters, states, transitions, and clips "
+				"are edited in the external asset. The embedded snapshot is read-only.");
+			return;
 		}
 
 		const char* initialClip = animator.InitialClip.empty()
@@ -3050,9 +4856,6 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ImGui::TextDisabled("%zu clips, %zu parameters, %zu states, %zu transitions",
 			animator.Clips.size(), animator.Parameters.size(), animator.States.size(),
 			animator.Transitions.size());
-		if (ImGui::Button("Open Animator Graph"))
-			m_AnimatorGraphOpenRequested = true;
-
 		if (ImGui::TreeNodeEx("Animator Graph", ImGuiTreeNodeFlags_DefaultOpen))
 		{
 			DrawSpriteAnimatorGraph(animator, entity, pendingMutation);
@@ -3606,9 +5409,54 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ApplyAnimatorPendingMutation(entity, pendingMutation);
 	}
 
+	void SceneHierarchyPanel::DrawGrid2DInspector(Grid2D& grid)
+	{
+		bool changed = false;
+		glm::vec2 cellSize = grid.CellSize;
+		if (ImGui::DragFloat2("Cell Size", glm::value_ptr(cellSize), 0.05f,
+			0.0001f, 0.0f, "%.3f"))
+		{
+			cellSize.x = std::max(0.0001f, std::isfinite(cellSize.x)
+				? cellSize.x : grid.CellSize.x);
+			cellSize.y = std::max(0.0001f, std::isfinite(cellSize.y)
+				? cellSize.y : grid.CellSize.y);
+			grid.CellSize = cellSize;
+			changed = true;
+		}
+		glm::vec2 cellGap = grid.CellGap;
+		if (ImGui::DragFloat2("Cell Gap", glm::value_ptr(cellGap), 0.01f)
+			&& std::isfinite(cellGap.x) && std::isfinite(cellGap.y))
+		{
+			grid.CellGap = cellGap;
+			changed = true;
+		}
+		const char* layouts[] = {
+			"Rectangle", "Isometric", "Isometric Z As Y", "Hexagon"
+		};
+		int layoutIndex = std::clamp(static_cast<int>(grid.Layout), 0, 3);
+		if (ImGui::Combo("Cell Layout", &layoutIndex, layouts,
+			static_cast<int>(std::size(layouts))))
+		{
+			grid.Layout = static_cast<GridCellLayout2D>(layoutIndex);
+			changed = true;
+		}
+		const char* swizzles[] = { "XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX" };
+		int swizzle = std::clamp(static_cast<int>(grid.Swizzle), 0, 5);
+		if (ImGui::Combo("Cell Swizzle", &swizzle, swizzles,
+			static_cast<int>(std::size(swizzles))))
+		{
+			grid.Swizzle = static_cast<GridCellSwizzle2D>(swizzle);
+			changed = true;
+		}
+		if (changed)
+			MarkModified();
+	}
+
 	void SceneHierarchyPanel::DrawTilemap2DInspector(Tilemap2D& tilemap,
 		Entity entity)
 	{
+		if (ImGui::Button("Open Tile Palette", ImVec2(-1.0f, 0.0f)))
+			m_TilePaletteOpenRequested = true;
 		bool gridChanged = false;
 		glm::vec2 cellSize = tilemap.CellSize;
 		if (ImGui::DragFloat2("Cell Size", glm::value_ptr(cellSize), 0.05f,
@@ -3634,8 +5482,13 @@ static void DrawComponent(const std::string& name, Entity entity,
 				gridChanged = true;
 			}
 		}
-		gridChanged |= ImGui::InputInt("Sorting Layer", &tilemap.SortingLayer);
-		gridChanged |= ImGui::InputInt("Order In Layer", &tilemap.OrderInLayer);
+		if (entity.HasComponent<TilemapRenderer2D>())
+			ImGui::TextDisabled("Sorting is configured by Tilemap Renderer 2D.");
+		else
+		{
+			gridChanged |= ImGui::InputInt("Sorting Layer", &tilemap.SortingLayer);
+			gridChanged |= ImGui::InputInt("Order In Layer", &tilemap.OrderInLayer);
+		}
 		if (gridChanged)
 			MarkModified();
 
@@ -3761,6 +5614,43 @@ static void DrawComponent(const std::string& name, Entity entity,
 			MarkModified(true);
 		}
 		ImGui::EndDisabled();
+	}
+
+	void SceneHierarchyPanel::DrawTilemapRenderer2DInspector(
+		TilemapRenderer2D& renderer)
+	{
+		bool changed = false;
+		const char* sortOrders[] = {
+			"Bottom Left", "Bottom Right", "Top Left", "Top Right"
+		};
+		int sortOrder = std::clamp(static_cast<int>(renderer.SortOrder), 0, 3);
+		if (ImGui::Combo("Sort Order", &sortOrder, sortOrders,
+			static_cast<int>(std::size(sortOrders))))
+		{
+			renderer.SortOrder = static_cast<TilemapSortOrder2D>(sortOrder);
+			changed = true;
+		}
+		changed |= ImGui::InputInt("Sorting Layer", &renderer.SortingLayer);
+		changed |= ImGui::InputInt("Order In Layer", &renderer.OrderInLayer);
+
+		ImGui::BeginDisabled();
+		int mode = static_cast<int>(renderer.Mode);
+		const char* modes[] = { "Chunk", "Individual" };
+		ImGui::Combo("Mode", &mode, modes, static_cast<int>(std::size(modes)));
+		int culling = static_cast<int>(renderer.DetectChunkCulling);
+		const char* cullingModes[] = { "Auto", "Manual" };
+		ImGui::Combo("Detect Chunk Culling", &culling, cullingModes,
+			static_cast<int>(std::size(cullingModes)));
+		const std::string material = static_cast<uint64_t>(renderer.MaterialHandle) == 0
+			? "None" : "Material #" + std::to_string(
+				static_cast<uint64_t>(renderer.MaterialHandle));
+		ImGui::Button((material + "###TilemapMaterial").c_str(), ImVec2(-1.0f, 0.0f));
+		ImGui::EndDisabled();
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+			ImGui::SetTooltip("renderer backend support pending");
+		ImGui::TextDisabled("Mode, chunk culling, and Material: renderer backend support pending");
+		if (changed)
+			MarkModified();
 	}
 
 	void SceneHierarchyPanel::DrawParticleSystem2DInspector(
@@ -4712,12 +6602,30 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}, onModified);
 		});
 
+		richInspectors.emplace(ComponentIds::Grid2D, [&]()
+		{
+		DrawComponent<Grid2D>("Grid 2D", entity, m_Icons,
+			EditorIcon::Sprite, [this](auto& component)
+		{
+			DrawGrid2DInspector(component);
+		}, onModified);
+		});
+
 		richInspectors.emplace(ComponentIds::Tilemap2D, [&]()
 		{
 		DrawComponent<Tilemap2D>("Tilemap 2D", entity, m_Icons,
 			EditorIcon::Sprite, [this, entity](auto& component)
 		{
 			DrawTilemap2DInspector(component, entity);
+		}, onModified);
+		});
+
+		richInspectors.emplace(ComponentIds::TilemapRenderer2D, [&]()
+		{
+		DrawComponent<TilemapRenderer2D>("Tilemap Renderer 2D", entity, m_Icons,
+			EditorIcon::Sprite, [this](auto& component)
+		{
+			DrawTilemapRenderer2DInspector(component);
 		}, onModified);
 		});
 
@@ -5201,30 +7109,129 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ImGui::BeginDisabled(!m_ColliderEditingAllowed);
 		const bool addComponentPressed = ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f));
 		ImGui::EndDisabled();
-		if (addComponentPressed)
+		if (addComponentPressed || m_AddComponentPopupRequested)
+		{
+			m_AddComponentSearch.fill('\0');
+			m_AddComponentSearchFocusRequested = true;
+			m_AddComponentPopupRequested = false;
 			ImGui::OpenPopup("AddComponent");
+		}
 
 		if (ImGui::BeginPopup("AddComponent"))
 		{
 			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
-			ImGui::MenuItem("C# Script (drag asset into Inspector)", nullptr, false, false);
-			ImGui::Separator();
-			for (const ComponentDescriptor& descriptor :
-				ComponentRegistry::Get().GetDescriptors())
+			if (m_AddComponentSearchFocusRequested)
 			{
-				if (!descriptor.InspectorVisible || !descriptor.AddableInInspector
-					|| descriptor.Has(entity))
-					continue;
-				if (ImGui::MenuItem(descriptor.DisplayName.c_str()))
+				ImGui::SetKeyboardFocusHere();
+				m_AddComponentSearchFocusRequested = false;
+			}
+			ImGui::SetNextItemWidth(330.0f);
+			ImGui::InputTextWithHint("##AddComponentSearch", "Search components...",
+				m_AddComponentSearch.data(), m_AddComponentSearch.size());
+			ImGui::Separator();
+
+			const std::string query = LowerASCII(m_AddComponentSearch.data());
+			constexpr std::array<const char*, 8> categoryOrder = {
+				"Rendering", "Animation", "Tilemap", "Physics 2D",
+				"Audio", "UI", "Scripting", "Gameplay"
+			};
+			bool drewResult = false;
+			auto drawDescriptor = [&](const ComponentDescriptor& descriptor)
+			{
+				ImGui::PushID(descriptor.StableName.c_str());
+				const bool selected = ImGui::MenuItem(descriptor.DisplayName.c_str());
+				if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+					ImGui::SetTooltip("%s", descriptor.StableName.c_str());
+				ImGui::PopID();
+				if (selected)
 				{
 					std::string error;
+					if (static_cast<uint64_t>(descriptor.TypeId)
+						== ComponentIds::SpriteAnimator
+						&& !entity.HasComponent<SpriteRenderer>())
+						entity.AddComponent<SpriteRenderer>();
+					if (static_cast<uint64_t>(descriptor.TypeId)
+						== ComponentIds::Tilemap2D
+						&& !entity.HasComponent<TilemapRenderer2D>())
+						entity.AddComponent<TilemapRenderer2D>();
 					if (descriptor.Add(entity, error))
 						MarkModified();
 					else
 						TC_Core_Warn("Could not add {0}: {1}", descriptor.StableName, error);
 					ImGui::CloseCurrentPopup();
 				}
+			};
+
+			auto descriptorAvailable = [&](const ComponentDescriptor& descriptor,
+				const char* category)
+			{
+				return descriptor.InspectorVisible && descriptor.AddableInInspector
+					&& !descriptor.Has(entity)
+					&& std::string_view(GetAddComponentCategory(descriptor)) == category
+					&& MatchesAddComponentSearch(descriptor, query);
+			};
+
+			if (query.empty())
+			{
+				for (const char* category : categoryOrder)
+				{
+					bool hasItems = std::string_view(category) == "Scripting";
+					for (const ComponentDescriptor& descriptor :
+						ComponentRegistry::Get().GetDescriptors())
+						hasItems = hasItems || descriptorAvailable(descriptor, category);
+					if (!hasItems)
+						continue;
+					drewResult = true;
+					if (!ImGui::BeginMenu(category))
+						continue;
+					if (std::string_view(category) == "Scripting")
+						ImGui::MenuItem("C# Script (drag asset into Inspector)",
+							nullptr, false, false);
+					for (const ComponentDescriptor& descriptor :
+						ComponentRegistry::Get().GetDescriptors())
+					{
+						if (descriptorAvailable(descriptor, category))
+							drawDescriptor(descriptor);
+					}
+					ImGui::EndMenu();
+				}
 			}
+			else
+			{
+				for (const char* category : categoryOrder)
+				{
+					bool categoryDrawn = false;
+					const std::string scriptSearch = LowerASCII(
+						std::string("C# Script Scripting"));
+					if (std::string_view(category) == "Scripting"
+						&& scriptSearch.find(query) != std::string::npos)
+					{
+						ImGui::TextDisabled("Scripting");
+						ImGui::MenuItem("C# Script (drag asset into Inspector)",
+							nullptr, false, false);
+						categoryDrawn = true;
+					}
+					for (const ComponentDescriptor& descriptor :
+						ComponentRegistry::Get().GetDescriptors())
+					{
+						if (!descriptorAvailable(descriptor, category))
+							continue;
+						if (!categoryDrawn)
+						{
+							ImGui::TextDisabled("%s", category);
+							categoryDrawn = true;
+						}
+						drawDescriptor(descriptor);
+					}
+					if (categoryDrawn)
+					{
+						drewResult = true;
+						ImGui::Spacing();
+					}
+				}
+			}
+			if (!drewResult)
+				ImGui::TextDisabled("No matching components");
 			ImGui::EndDisabled();
 			ImGui::EndPopup();
 		}

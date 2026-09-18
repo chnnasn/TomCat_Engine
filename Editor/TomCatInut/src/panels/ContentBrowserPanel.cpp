@@ -403,6 +403,28 @@ namespace TomCat {
 			return {};
 		}
 
+		std::filesystem::path MakeUniqueAuthoringAssetPath(
+			const std::filesystem::path& parent, std::string_view baseName,
+			std::string_view extension)
+		{
+			for (uint32_t index = 0; index < 10000; ++index)
+			{
+				std::string name(baseName);
+				if (index > 0)
+					name += " " + std::to_string(index + 1);
+				const std::filesystem::path candidate = parent
+					/ UTF8ToPath(name + std::string(extension));
+				std::error_code fileError;
+				const bool fileExists = std::filesystem::exists(candidate, fileError);
+				fileError.clear();
+				const bool metadataExists = std::filesystem::exists(
+					AssetRegistry::GetMetadataPath(candidate), fileError);
+				if (!fileExists && !metadataExists)
+					return candidate;
+			}
+			return {};
+		}
+
 		bool OpenInAssociatedApplication(const std::filesystem::path& path)
 		{
 #ifdef TC_PLATFORM_WINDOWS
@@ -665,6 +687,8 @@ namespace TomCat {
 		m_ActiveScenePath.clear();
 		m_PendingCreateFolderParent.clear();
 		m_PendingCreateScriptParent.clear();
+		m_PendingCreateAuthoringAssetParent.clear();
+		m_PendingCreateAuthoringAsset = AuthoringAssetKind::None;
 		m_RenamePath.clear();
 		m_DeletePath.clear();
 		m_AtlasEditorPath.clear();
@@ -893,6 +917,11 @@ namespace TomCat {
 		const AssetMetadata* metadata = AssetManager::Get().GetRegistry().GetMetadata(handle);
 		if (metadata && metadata->Type == AssetType::Scene && m_SceneOpenCallback)
 			m_SceneOpenCallback(handle);
+		else if (metadata && (metadata->Type == AssetType::AnimationClip
+			|| metadata->Type == AssetType::AnimatorController
+			|| metadata->Type == AssetType::TilePalette)
+			&& m_AuthoringAssetOpenCallback)
+			m_AuthoringAssetOpenCallback(handle, metadata->Type);
 		else if (metadata && metadata->Type == AssetType::CSharpScript)
 			OpenCSharpScript(managedPath);
 		else
@@ -1239,6 +1268,79 @@ namespace TomCat {
 		m_PendingOpenDirectories.insert(PathToUTF8(parent));
 	}
 
+	void ContentBrowserPanel::FlushPendingCreateAuthoringAsset()
+	{
+		if (m_PendingCreateAuthoringAsset == AuthoringAssetKind::None
+			|| m_PendingCreateAuthoringAssetParent.empty())
+			return;
+
+		const AuthoringAssetKind kind = m_PendingCreateAuthoringAsset;
+		const std::filesystem::path parent = CanonicalPath(
+			m_PendingCreateAuthoringAssetParent);
+		m_PendingCreateAuthoringAsset = AuthoringAssetKind::None;
+		m_PendingCreateAuthoringAssetParent.clear();
+		std::error_code statusError;
+		if (!IsWithinRoot(GetAssetRoot(), parent)
+			|| !std::filesystem::is_directory(parent, statusError) || statusError)
+		{
+			TC_Core_Warn("Refusing to create an authoring asset outside Assets: {0}",
+				PathToUTF8(parent));
+			return;
+		}
+
+		std::string_view baseName;
+		std::string_view extension;
+		std::string contents;
+		switch (kind)
+		{
+			case AuthoringAssetKind::AnimationClip:
+				baseName = "New Animation";
+				extension = ".tcanim";
+				contents = "TomCatAnimationClip:\n  Version: 1\n  Name: New Animation\n  Loop: true\n  SampleRate: 12\n  Frames: []\n";
+				break;
+			case AuthoringAssetKind::AnimatorController:
+				baseName = "New Animator Controller";
+				extension = ".tccontroller";
+				contents = "TomCatAnimatorController:\n  Version: 1\n  InitialState: \"\"\n  Parameters: []\n  States: []\n  Transitions: []\n";
+				break;
+			case AuthoringAssetKind::TilePalette:
+				baseName = "New Tile Palette";
+				extension = ".tctilepalette";
+				contents = "TomCatTilePalette:\n  Version: 1\n  CellSize: [1, 1]\n  CellGap: [0, 0]\n  Tiles: []\n";
+				break;
+			case AuthoringAssetKind::None:
+				return;
+		}
+
+		const std::filesystem::path assetPath = MakeUniqueAuthoringAssetPath(
+			parent, baseName, extension);
+		if (assetPath.empty())
+		{
+			TC_Core_Error("Could not find a unique authoring asset name in {0}",
+				PathToUTF8(parent));
+			return;
+		}
+		std::string writeError;
+		if (!FileSystem::WriteFileAtomically(assetPath, contents, writeError))
+		{
+			TC_Core_Error("Failed to create authoring asset '{0}': {1}",
+				PathToUTF8(assetPath), writeError);
+			return;
+		}
+		if (static_cast<uint64_t>(AssetManager::Get().ImportAsset(assetPath)) == 0)
+		{
+			TC_Core_Error("Authoring asset was created but could not be imported: {0}",
+				PathToUTF8(assetPath));
+			return;
+		}
+		m_CurrentDirectory = parent;
+		m_SelectedPath = assetPath;
+		m_UserSelectedDirectory = true;
+		m_ExpandedNodes.insert(PathToUTF8(parent));
+		m_PendingOpenDirectories.insert(PathToUTF8(parent));
+		BeginRename(assetPath);
+	}
+
 	void ContentBrowserPanel::DrawContextMenuBody(const std::filesystem::path& target,
 		bool isDirectory, bool isRoot)
 	{
@@ -1259,6 +1361,28 @@ namespace TomCat {
 				m_PendingCreateFolderParent = isDirectory ? target : target.parent_path();
 			if (ImGui::MenuItem("C# Script"))
 				m_PendingCreateScriptParent = isDirectory ? target : target.parent_path();
+			ImGui::Separator();
+			const std::filesystem::path createParent = isDirectory
+				? target : target.parent_path();
+			if (ImGui::MenuItem("Animation Clip"))
+			{
+				m_PendingCreateAuthoringAssetParent = createParent;
+				m_PendingCreateAuthoringAsset = AuthoringAssetKind::AnimationClip;
+			}
+			if (ImGui::MenuItem("Animator Controller"))
+			{
+				m_PendingCreateAuthoringAssetParent = createParent;
+				m_PendingCreateAuthoringAsset = AuthoringAssetKind::AnimatorController;
+			}
+			if (ImGui::BeginMenu("2D"))
+			{
+				if (ImGui::MenuItem("Tile Palette"))
+				{
+					m_PendingCreateAuthoringAssetParent = createParent;
+					m_PendingCreateAuthoringAsset = AuthoringAssetKind::TilePalette;
+				}
+				ImGui::EndMenu();
+			}
 			ImGui::EndMenu();
 		}
 		if (ImGui::MenuItem("Open"))
@@ -1672,6 +1796,23 @@ namespace TomCat {
 			return false;
 		}
 		m_AtlasBaseSettings = std::move(settings);
+		return true;
+	}
+
+	bool ContentBrowserPanel::CanOpenSpriteAtlasTools() const
+	{
+		if (!m_Project || !m_UserSelectedDirectory || m_SelectedPath.empty())
+			return false;
+		std::error_code error;
+		return !std::filesystem::is_directory(m_SelectedPath, error) && !error
+			&& AssetTypeFromPath(m_SelectedPath) == AssetType::Texture2D;
+	}
+
+	bool ContentBrowserPanel::OpenSpriteAtlasToolsForSelection()
+	{
+		if (!CanOpenSpriteAtlasTools())
+			return false;
+		BeginAtlasEditor(m_SelectedPath);
 		return true;
 	}
 
@@ -2424,6 +2565,7 @@ namespace TomCat {
 		// they always live in the same parent ImGui scope.
 		FlushPendingCreateFolder();
 		FlushPendingCreateScript();
+		FlushPendingCreateAuthoringAsset();
 		if (open && !*open)
 		{
 			DrawRenamePopup();
