@@ -59,6 +59,11 @@ for (const extension of ['js', 'wasm', 'data']) fs.copyFileSync(path.join(source
     assert.equal(rpc('scene.snapshot', {sceneHandle:snapshot.sceneHandle}).archive, moved.archive);
     const assets = rpc('asset.list', {}).assets;
     assert.ok(assets.some(a => a.type === 'Texture2D'));
+    const builtIn = assets.find(a => a.pathHint.endsWith('/Circle.tga'));
+    assert.ok(builtIn,'bundled sprites must be exposed without a project-local metadata sidecar');
+    snapshot = rpc('scene.transact',tx([{op:'component.patch',entityId:square.id,componentId:sprite.id,properties:{'202':builtIn.handle}}]));
+    assert.equal(snapshot.entities.find(e=>e.id===square.id).components.find(c=>c.id===sprite.id).values['202'],builtIn.handle);
+
     module.FS.mkdirTree('/Samples/PhysicsPlayground/Assets/WebImports');
     const tga = new Uint8Array(21); tga[2]=2; tga[12]=1; tga[14]=1; tga[16]=24; tga[18]=20; tga[19]=200; tga[20]=240;
     module.FS.writeFile('/Samples/PhysicsPlayground/Assets/WebImports/test.tga',tga);

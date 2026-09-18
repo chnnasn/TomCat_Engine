@@ -23,8 +23,9 @@ std::filesystem::path FileDialogs::OpenFolder() { return {}; }
 WebEditorUI::WebEditorUI(WebEditorSession& session) : m_Session(session) {}
 void WebEditorUI::OnAttach() {
   m_Camera.Set2DMode(true);
-  m_Icons = CreateRef<EditorIconSet>(); m_Icons->Load();
-  m_Hierarchy.SetIcons(m_Icons); m_Content.SetIcons(m_Icons);
+  LoadSceneToolbarLayout();
+  m_EditorIcons = CreateRef<EditorIconSet>(); m_EditorIcons->Load();
+  m_Hierarchy.SetIcons(m_EditorIcons); m_Content.SetIcons(m_EditorIcons);
   m_Content.SetAssetMutationsEnabled(false);
   m_Hierarchy.SetPrefabCreationAllowed(false);
   m_Hierarchy.SetColliderGizmosEnabled(false);
@@ -89,7 +90,7 @@ void WebEditorUI::OnUpdate(Timestep delta) {
   m_Context->OnViewportResize(width,height); m_Camera.SetViewportSize(float(width),float(height));
   m_Camera.OnUpdate(delta,m_ViewportHovered && !m_GizmoActive);
   m_Context->OnUpdateEditor(delta,m_Camera); m_Framebuffer->Unbind();
-  const auto game = m_Session.GetPreviewScene();
+  const auto game = m_Context;
   if (game) {
     const uint32_t gameWidth=uint32_t(std::clamp(m_GameSize.x,1.0f,4096.0f));
     const uint32_t gameHeight=uint32_t(std::clamp(m_GameSize.y,1.0f,4096.0f));
@@ -97,7 +98,7 @@ void WebEditorUI::OnUpdate(Timestep delta) {
     glClearBufferfv(GL_COLOR,0,background); glClear(GL_DEPTH_BUFFER_BIT);
     m_GameFramebuffer->ClearAttachment(1,-1);
     game->OnViewportResize(gameWidth,gameHeight);
-    game->SetRuntimeUIViewportMetrics(m_GameVisible ? m_GameOrigin : glm::vec2(-1000000.0f),1.0f);
+    game->SetRuntimeUIViewportMetrics(m_GameVisible && m_Session.GetPreviewMode()!=WebEditorSession::PreviewMode::Edit ? m_GameOrigin : glm::vec2(-1000000.0f),1.0f);
     game->OnRenderRuntime(); m_GameFramebuffer->Unbind();
   }
 }
@@ -108,39 +109,42 @@ void WebEditorUI::History(bool redo) {
 }
 void WebEditorUI::DrawViewport() {
   if (!m_ShowScene) { m_ViewportHovered=false; return; }
-  if (!ImGui::Begin("Scene", &m_ShowScene)) { m_ViewportHovered=false; ImGui::End(); return; }
-  const bool editing=m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Edit;
-  const EditorIcon tools[]={EditorIcon::Hand,EditorIcon::Move,EditorIcon::Rotate,EditorIcon::Scale};
-  const char* names[]={"Hand (Q)","Move (W)","Rotate (E)","Scale (R)"};
-  for (int i=0;i<4;++i) {
-    if(i) ImGui::SameLine();
-    ImGui::PushID(i); ImGui::BeginDisabled(!editing);
-    ImGui::PushStyleColor(ImGuiCol_Button,ImGui::GetStyleColorVec4(m_GizmoOperation==i-1 ? ImGuiCol_HeaderActive : ImGuiCol_Button));
-    if(ImGui::ImageButton(EditorTextureID(m_Icons->Get(tools[i])),{22,22},{0,1},{1,0},3)) m_GizmoOperation=i-1;
-    ImGui::PopStyleColor();
-    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",names[i]);
-    ImGui::EndDisabled(); ImGui::PopID();
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(4,11));
+  const bool visible=ImGui::Begin("Scene", &m_ShowScene,ImGuiWindowFlags_MenuBar);
+  if (!visible && !m_GizmoModeToolbarDragging && !m_GizmoTransformToolbarDragging) {
+    m_ViewportHovered=false; ImGui::End(); ImGui::PopStyleVar(); return;
   }
-  ImGui::SameLine();
-  if(ImGui::Button(m_Camera.Is2DMode() ? "2D" : "3D",{38,28})) m_Camera.Set2DMode(!m_Camera.Is2DMode());
-  ImGui::SameLine();
-  if(ImGui::Button(m_LocalSpace ? "Local" : "World",{60,28})) m_LocalSpace=!m_LocalSpace;
+  const bool editing=m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Edit;
   const auto available=ImGui::GetContentRegionAvail();
   const ImVec2 size(std::max(available.x,1.0f),std::max(available.y,1.0f));
   const auto origin=ImGui::GetCursorScreenPos();
   m_ViewportSize={std::max(size.x,1.0f),std::max(size.y,1.0f)};
   ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_Framebuffer->GetColorAttachmentRendererID())),size,{0,1},{1,0});
-  m_ViewportHovered=ImGui::IsItemHovered();
+  m_ViewportHovered=visible && ImGui::IsItemHovered();
+  m_ViewportBounds[0]={origin.x,origin.y}; m_ViewportBounds[1]={origin.x+size.x,origin.y+size.y};
+  m_GizmoModeDockHeight=ImGui::GetFrameHeight(); m_GizmoModeDockY=origin.y-m_GizmoModeDockHeight;
+  const bool wasDragging=m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging;
+  const bool menu=visible && ImGui::BeginMenuBar();
+  if(menu) ImGui::GetWindowDrawList()->AddRectFilled({origin.x,m_GizmoModeDockY},{origin.x+size.x,origin.y},ImGui::GetColorU32(ImGuiCol_Tab));
+  ImGui::BeginDisabled(!editing);
+  UI_SceneGizmoModeToolbarOverlay(); UI_SceneGizmoToolbar(); UI_SceneToolbarDockPreview();
+  const bool toolbarBlocked=ImGui::IsAnyItemHovered() || ImGui::IsAnyItemActive() ||
+    m_GizmoModeToolbarDragging || m_GizmoTransformToolbarDragging || ImGui::IsPopupOpen("",ImGuiPopupFlags_AnyPopupId);
+  ImGui::EndDisabled();
+  if(menu) ImGui::EndMenuBar();
+  if(wasDragging && !m_GizmoModeToolbarDragging && !m_GizmoTransformToolbarDragging) SaveSceneToolbarLayout();
+  m_ViewportHovered=m_ViewportHovered && !toolbarBlocked;
   if (m_ViewportHovered && ImGui::GetIO().MouseWheel != 0) {
     MouseScrolledEvent event(0,ImGui::GetIO().MouseWheel); m_Camera.OnEvent(event);
   }
   const auto selected=m_Hierarchy.GetSelectedEntity();
-  if (editing && m_GizmoOperation>=0 && selected && m_Context) {
+  if (editing && visible && m_GizmoType>=0 && selected && m_Context) {
     auto transform=selected.GetComponent<Transform>().GetTransform();
-    ImGuizmo::SetOrthographic(m_Camera.Is2DMode()); ImGuizmo::SetDrawlist();
+    ImGuizmo::Enable(!toolbarBlocked || m_GizmoActive);
+    ImGuizmo::SetOrthographic(true); ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(origin.x,origin.y,size.x,size.y);
-    const auto operation=m_GizmoOperation==0 ? ImGuizmo::TRANSLATE : m_GizmoOperation==1 ? ImGuizmo::ROTATE : ImGuizmo::SCALE;
-    ImGuizmo::Manipulate(glm::value_ptr(m_Camera.GetViewMatrix()),glm::value_ptr(m_Camera.GetProjection()),operation,m_LocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD,glm::value_ptr(transform));
+    const auto operation=static_cast<ImGuizmo::OPERATION>(m_GizmoType);
+    ImGuizmo::Manipulate(glm::value_ptr(m_Camera.GetViewMatrix()),glm::value_ptr(m_Camera.GetProjection()),operation,m_GizmoSpaceMode==GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,glm::value_ptr(transform));
     const bool active=ImGuizmo::IsUsing();
     if (active) {
       if (!m_GizmoActive) m_Session.BeginUIEdit();
@@ -149,7 +153,7 @@ void WebEditorUI::DrawViewport() {
     if (!active && m_GizmoActive) m_Session.EndUIEdit(selected.GetUUID());
     m_GizmoActive=active;
   }
-  if (editing && m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver() && !m_GizmoActive && m_Context) {
+  if (editing && m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && (m_GizmoType<0 || !ImGuizmo::IsOver()) && !m_GizmoActive && m_Context) {
     const auto mouse=ImGui::GetMousePos(); const auto spec=m_Framebuffer->GetSpecification();
     const int x=int((mouse.x-origin.x)/size.x*spec.Width);
     const int y=int((1-(mouse.y-origin.y)/size.y)*spec.Height);
@@ -157,7 +161,7 @@ void WebEditorUI::DrawViewport() {
     Entity entity = pixel < 0 ? Entity{} : Entity(entt::entity(pixel),m_Context.get());
     m_Hierarchy.SetSelectedEntity(entity); m_Session.SelectFromUI(entity ? uint64_t(entity.GetUUID()) : 0);
   }
-  ImGui::End();
+  ImGui::End(); ImGui::PopStyleVar();
 }
 void WebEditorUI::Preview(const char* command) {
   try {
@@ -171,7 +175,7 @@ void WebEditorUI::Preview(const char* command) {
 void WebEditorUI::DrawToolbar() {
   const bool running=m_Session.GetPreviewMode()!=WebEditorSession::PreviewMode::Edit;
   const bool paused=m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Pause;
-  DrawEditorPlayToolbar(m_Icons,bool(m_Session.GetScene()),running,paused,
+  DrawEditorPlayToolbar(m_EditorIcons,bool(m_Session.GetScene()),running,paused,
     [this]{Preview("play");},[this]{Preview("stop");},
     [this,paused]{Preview(paused ? "resume" : "pause");},[this]{Preview("step");});
 }
@@ -180,13 +184,19 @@ void WebEditorUI::DrawGame() {
   if(!m_ShowGame) return;
   if(ImGui::Begin("Game",&m_ShowGame)) {
     const bool running=m_Session.GetPreviewMode()!=WebEditorSession::PreviewMode::Edit;
-    ImGui::TextDisabled(running ? (m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Pause ? "Paused" : "Playing") : "Press Play to preview the current scene");
+    if(running) ImGui::TextDisabled(m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Pause ? "Paused" : "Playing");
     if(!m_PreviewError.empty()) ImGui::TextWrapped("%s",m_PreviewError.c_str());
     const auto available=ImGui::GetContentRegionAvail();
     m_GameSize={std::max(1.0f,available.x),std::max(1.0f,available.y)};
     const auto origin=ImGui::GetCursorScreenPos(); m_GameOrigin={origin.x,origin.y};
-    if(running) { ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_GameFramebuffer->GetColorAttachmentRendererID())),{m_GameSize.x,m_GameSize.y},{0,1},{1,0}); }
-    m_GameVisible=running;
+    if(m_Context) { ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_GameFramebuffer->GetColorAttachmentRendererID())),{m_GameSize.x,m_GameSize.y},{0,1},{1,0}); }
+    if(m_Context && !m_Context->GetPrimaryCameraEntity()) {
+      const char* text="No cameras rendering";
+      const auto label=ImGui::CalcTextSize(text);
+      const ImVec2 pos(origin.x+(m_GameSize.x-label.x)*0.5f,origin.y+(m_GameSize.y-label.y)*0.5f);
+      ImGui::GetWindowDrawList()->AddText(pos,IM_COL32(243,243,243,255),text);
+    }
+    m_GameVisible=bool(m_Context);
   }
   ImGui::End();
 }
@@ -256,10 +266,10 @@ void WebEditorUI::OnImGuiRender() {
   }
   if (editingPanels && !io.WantTextInput && (m_Hierarchy.IsHierarchyFocused() || m_ViewportHovered)) {
     if(!io.KeyCtrl && !io.KeyAlt) {
-      if(ImGui::IsKeyPressed(ImGuiKey_Q,false)) m_GizmoOperation=-1;
-      if(ImGui::IsKeyPressed(ImGuiKey_W,false)) m_GizmoOperation=0;
-      if(ImGui::IsKeyPressed(ImGuiKey_E,false)) m_GizmoOperation=1;
-      if(ImGui::IsKeyPressed(ImGuiKey_R,false)) m_GizmoOperation=2;
+      if(ImGui::IsKeyPressed(ImGuiKey_Q,false)) m_GizmoType=-1;
+      if(ImGui::IsKeyPressed(ImGuiKey_W,false)) m_GizmoType=ImGuizmo::TRANSLATE;
+      if(ImGui::IsKeyPressed(ImGuiKey_E,false)) m_GizmoType=ImGuizmo::ROTATE;
+      if(ImGui::IsKeyPressed(ImGuiKey_R,false)) m_GizmoType=ImGuizmo::SCALE;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete,false)) m_Hierarchy.HandleShortcut(261,false);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D,false)) m_Hierarchy.HandleShortcut(68,true);
