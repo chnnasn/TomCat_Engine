@@ -110,7 +110,7 @@ namespace TomCat {
 			if (!IsFinite(orthographicSize) || orthographicSize <= 0.0f)
 				throw std::runtime_error(context + ".OrthographicSize must be greater than zero");
 			if (!IsFinite(orthographicNear) || !IsFinite(orthographicFar)
-				|| orthographicFar <= orthographicNear)
+				|| orthographicNear < 0.0f || orthographicFar <= orthographicNear)
 				throw std::runtime_error(context + " has an invalid orthographic clip range");
 			RequireUnitColor(backgroundColor, context + ".BackgroundColor");
 		}

@@ -18,11 +18,14 @@ namespace TomCat {
 	// read-only resources without copying them into every project's Assets folder.
 	inline constexpr uint64_t BuiltInCircleSpriteHandleValue = 0x54434D5350520001ULL;
 	inline constexpr uint64_t BuiltInSquareSpriteHandleValue = 0x54434D5350520002ULL;
+	inline constexpr uint64_t BuiltInLegacyRuntimeFontHandleValue =
+		0x54434D464E540001ULL;
 
 	[[nodiscard]] inline constexpr bool IsBuiltInAssetHandleValue(uint64_t value)
 	{
 		return value == BuiltInCircleSpriteHandleValue
-			|| value == BuiltInSquareSpriteHandleValue;
+			|| value == BuiltInSquareSpriteHandleValue
+			|| value == BuiltInLegacyRuntimeFontHandleValue;
 	}
 
 	[[nodiscard]] inline bool IsBuiltInAssetHandle(AssetHandle handle)
@@ -44,7 +47,10 @@ namespace TomCat {
 		// giving C# source a precise, single-language identity.
 		CSharpScript = 8,
 		Other = 9,
-		Prefab = 10
+		Prefab = 10,
+		AnimationClip = 11,
+		AnimatorController = 12,
+		TilePalette = 13
 	};
 
 	const char* AssetTypeToString(AssetType type);

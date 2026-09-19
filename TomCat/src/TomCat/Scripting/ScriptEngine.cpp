@@ -770,6 +770,60 @@ namespace TomCat::Scripting {
 		FlushDeferredCommands(sceneSessionId);
 	}
 
+	ScriptStatus ScriptEngine::InvokeMethod(Scene& scene, UUID targetEntity,
+		UUID targetAttachmentId, uint64_t expectedScriptAsset,
+		std::string_view methodName)
+	{
+		if (!IsMainThread() || static_cast<uint64_t>(targetEntity) == 0
+			|| static_cast<uint64_t>(targetAttachmentId) == 0
+			|| expectedScriptAsset == 0 || methodName.empty()
+			|| methodName.size() > 512
+			|| methodName.find('\0') != std::string_view::npos)
+			return ScriptStatus::InvalidArgument;
+
+		uint64_t sceneSessionId = 0;
+		{
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			for (const auto& [session, binding] : m_Scenes)
+			{
+				if (binding.ScenePointer == &scene)
+				{
+					sceneSessionId = session;
+					break;
+				}
+			}
+		}
+		if (sceneSessionId == 0)
+			return ScriptStatus::Unavailable;
+
+		Entity target = scene.FindEntityByUUID(targetEntity);
+		if (!target || !target.HasComponent<CSharpScripts>())
+			return ScriptStatus::NotFound;
+		const auto& scripts = target.GetComponent<CSharpScripts>().Scripts;
+		const auto script = std::find_if(scripts.begin(), scripts.end(),
+			[targetAttachmentId](const CSharpScriptEntry& candidate)
+			{ return candidate.AttachmentID == targetAttachmentId; });
+		if (script == scripts.end())
+			return ScriptStatus::NotFound;
+		if (static_cast<uint64_t>(script->ScriptAsset) != expectedScriptAsset)
+			return ScriptStatus::InvalidState;
+
+		auto runtime = GetRuntime();
+		if (!runtime || !runtime->IsReady())
+			return ScriptStatus::Unavailable;
+		InvalidateProjectionSnapshots();
+		const ScriptStatus status = runtime->InvokeMethod(
+			static_cast<uint64_t>(targetAttachmentId), methodName);
+		if (!IsSuccess(status))
+		{
+			ReportFailure("InvokeMethod", status);
+			return status;
+		}
+		if (!FlushDeferredCommands(sceneSessionId))
+			return ScriptStatus::InvalidState;
+		return ScriptStatus::Success;
+	}
+
 	bool ScriptEngine::BeginFixedStep(uint64_t sceneSessionId)
 	{
 		if (sceneSessionId == 0)

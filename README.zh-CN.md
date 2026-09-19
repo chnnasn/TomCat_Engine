@@ -171,8 +171,8 @@ vendor/            premake 与第三方依赖
 - [x] 带列表式切片编辑器、Rect/Pivot/Pixels Per Unit/Border 元数据的稳定 Sprite Atlas 子资源，以及自包含的 Cook/Player 载荷
 - [x] 确定性 Sprite 排序、动画 Clip，以及支持 Bool/Int/Float/Trigger 参数、AnyState 和 Exit Time 的 Animator 状态/过渡
 - [x] TTF/OTF/TTC Font 导入、主字体/Fallback/Emoji 运行时字形链与世界空间 Text，以及支持 Anchor、Pivot、布局、裁剪、射线目标、DPI 缩放、鼠标/键盘/手柄控制和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI
-- [ ] 自动 Atlas Packing/Slicing 工具与可视化 Animator Graph 编辑器（不属于 P0）
-- [ ] Tilemap、粒子与 2D 光照
+- [x] 自动透明区域/网格 Atlas Slicing、确定性 Atlas Packing、打包 TGA 导出与可视化 Animator Graph 编辑器
+- [x] 稀疏 Tilemap2D 编辑、确定性固定步 ParticleSystem2D 模拟，以及作用于 Sprite、Tile 和粒子的全局/点状 2D 光照
 
 ### 引擎系统与工具链
 

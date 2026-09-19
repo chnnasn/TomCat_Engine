@@ -75,7 +75,8 @@ $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
 $packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
 $requiredPackageAssets = @(
     "Resources\Sprites\TomCat\Circle.tga",
-    "Resources\Sprites\TomCat\Square.tga"
+    "Resources\Sprites\TomCat\Square.tga",
+    "fonts\opensans\OpenSans-Regular.ttf"
 )
 foreach ($requiredPackageAsset in $requiredPackageAssets) {
     $requiredPackageAssetPath = Join-Path $packageSource $requiredPackageAsset
@@ -98,7 +99,7 @@ $stagingRoot = Join-Path $dist ".tomcat-editor-staging"
 $payloadRoot = Join-Path $stagingRoot "payload"
 $payloadManaged = Join-Path $payloadRoot "Managed"
 $payloadTemplateParent = Join-Path $payloadRoot "Packages\PlayerTemplates"
-$payloadBuiltInSpriteRoot = Join-Path $payloadRoot "Packages\Resources\Sprites\TomCat"
+$payloadPackageRoot = Join-Path $payloadRoot "Packages"
 $stagedInputExe = Join-Path $stagingRoot "input\TomCatInut.exe"
 $stagedBoxedExe = Join-Path $stagingRoot "boxed\$FinalName.exe"
 $cliSource = Join-Path $RepoRoot "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
@@ -159,12 +160,13 @@ foreach ($name in $nativeRuntimeFiles) {
 Publish-TomCatManagedRelease -RepositoryRoot $RepoRoot -Destination $payloadManaged
 New-Item -ItemType Directory -Path $payloadTemplateParent -Force | Out-Null
 Copy-Item -LiteralPath $playerTemplate -Destination $payloadTemplateParent -Recurse -Force
-New-Item -ItemType Directory -Path $payloadBuiltInSpriteRoot -Force | Out-Null
 foreach ($requiredPackageAsset in $requiredPackageAssets) {
     $requiredPackageAssetPath = Join-Path $packageSource $requiredPackageAsset
+    $packageAssetDestination = Join-Path $payloadPackageRoot $requiredPackageAsset
+    New-Item -ItemType Directory -Path (Split-Path -Parent $packageAssetDestination) `
+        -Force | Out-Null
     Copy-Item -LiteralPath $requiredPackageAssetPath `
-        -Destination (Join-Path $payloadBuiltInSpriteRoot (Split-Path -Leaf $requiredPackageAsset)) `
-        -Force
+        -Destination $packageAssetDestination -Force
 }
 [void](New-TomCatRuntimeManifest -PayloadRoot $payloadRoot `
     -EngineBuildId $versionInfo.EngineBuildID)

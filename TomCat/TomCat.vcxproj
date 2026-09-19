@@ -83,7 +83,7 @@
       <MinimalRebuild>false</MinimalRebuild>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
@@ -106,7 +106,7 @@
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
@@ -130,7 +130,7 @@
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
@@ -142,6 +142,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\TomCat.h" />
+    <ClInclude Include="src\TomCat\Asset\Advanced2DAuthoringAssets.h" />
     <ClInclude Include="src\TomCat\Asset\ArtifactKey.h" />
     <ClInclude Include="src\TomCat\Asset\Asset.h" />
     <ClInclude Include="src\TomCat\Asset\AssetDatabase.h" />
@@ -215,6 +216,7 @@
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
     <ClInclude Include="src\TomCat\Runtime\RuntimeCompatibility.h" />
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h" />
+    <ClInclude Include="src\TomCat\Scene\Advanced2D.h" />
     <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h" />
     <ClInclude Include="src\TomCat\Scene\ComponentRegistry.h" />
     <ClInclude Include="src\TomCat\Scene\Components.h" />
@@ -677,6 +679,7 @@
     <ClInclude Include="vendor\stb_image\stb_image.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\TomCat\Asset\Advanced2DAuthoringAssets.cpp" />
     <ClCompile Include="src\TomCat\Asset\ArtifactKey.cpp" />
     <ClCompile Include="src\TomCat\Asset\Asset.cpp" />
     <ClCompile Include="src\TomCat\Asset\AssetDatabase.cpp" />
@@ -731,6 +734,7 @@
     <ClCompile Include="src\TomCat\Renderer\UniformBuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp" />
+    <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp" />
     <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp" />
     <ClCompile Include="src\TomCat\Scene\ComponentRegistry.cpp" />
     <ClCompile Include="src\TomCat\Scene\Entity.cpp" />

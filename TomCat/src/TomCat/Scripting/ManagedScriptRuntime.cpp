@@ -163,7 +163,8 @@ namespace TomCat::Scripting {
 			|| !m_ManagedApi.DestroyAll || !m_ManagedApi.BeginUnloadDomain
 			|| !m_ManagedApi.PollUnload || !m_ManagedApi.DestroyAttachments
 			|| !m_ManagedApi.InstantiateAttachments
-			|| !m_ManagedApi.ResolveDeferredCommandBatch)
+			|| !m_ManagedApi.ResolveDeferredCommandBatch
+			|| !m_ManagedApi.InvokeMethod)
 		{
 			m_LastError = "TomCat.ScriptHost returned an incompatible ManagedApiV1 table";
 			return false;
@@ -323,6 +324,20 @@ namespace TomCat::Scripting {
 		if (EnsureScene("invoke OnCreate") != ScriptStatus::Success)
 			return ScriptStatus::InvalidState;
 		return ConvertStatus(m_ManagedApi.InvokeCreateAll(m_SceneRuntimeId), "Invoke OnCreate");
+	}
+
+	ScriptStatus ManagedScriptRuntime::InvokeMethod(uint64_t attachmentId,
+		std::string_view methodName)
+	{
+		if (EnsureScene("invoke a script event method") != ScriptStatus::Success
+			|| !m_ManagedApi.InvokeMethod || attachmentId == 0 || methodName.empty()
+			|| methodName.size() > 512
+			|| methodName.find('\0') != std::string_view::npos)
+			return ScriptStatus::InvalidArgument;
+		const NativeUtf8View name{
+			reinterpret_cast<const uint8_t*>(methodName.data()), methodName.size() };
+		return ConvertStatus(m_ManagedApi.InvokeMethod(m_SceneRuntimeId,
+			attachmentId, name), "Invoke script event method");
 	}
 
 	ScriptStatus ManagedScriptRuntime::SetEnabled(uint64_t attachmentId, bool enabled)

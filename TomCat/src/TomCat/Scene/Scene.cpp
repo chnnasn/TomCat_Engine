@@ -2,8 +2,11 @@
 #include "Scene.h"
 
 #include "TomCat/Audio/AudioSceneRuntime.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
+#include "TomCat/Asset/AssetManager.h"
 
 #include "Components.h"
+#include "Advanced2D.h"
 #include "SpriteAnimation.h"
 #include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Renderer/Renderer2D.h"
@@ -21,6 +24,7 @@
 #include <iterator>
 #include <limits>
 #include <utility>
+#include <unordered_map>
 #include <unordered_set>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -454,6 +458,89 @@ namespace TomCat {
 			return std::isfinite(value.x) && std::isfinite(value.y);
 		}
 
+		bool TryNormalizeDirection(const glm::vec3& value, glm::vec3& direction)
+		{
+			if (!IsFinite(value))
+				return false;
+			const float lengthSquared = glm::dot(value, value);
+			constexpr float minimumLengthSquared = 1.0e-12f;
+			if (!std::isfinite(lengthSquared)
+				|| lengthSquared <= minimumLengthSquared)
+				return false;
+			direction = value / std::sqrt(lengthSquared);
+			return IsFinite(direction);
+		}
+
+		glm::vec3 RemoveScaleReflection(const glm::vec3& axis, float scale)
+		{
+			// Camera scale never changes its pose. The sign is still useful metadata:
+			// remove the reflection before orthogonalizing the render-matrix axes.
+			return axis * (std::isfinite(scale) && std::signbit(scale)
+				? -1.0f : 1.0f);
+		}
+
+		glm::mat4 MakeScaleFreeCameraTransform(const glm::mat4& renderTransform,
+			const Transform& authoredTransform)
+		{
+			const glm::mat4 referenceRotation = Math::ComposeTransform(glm::vec3(0.0f),
+				authoredTransform._Rotation, glm::vec3(1.0f));
+			const glm::vec3 referenceRight(referenceRotation[0]);
+			const glm::vec3 referenceUp(referenceRotation[1]);
+			const glm::vec3 referenceForward(referenceRotation[2]);
+
+			const glm::vec3 sourceRight = RemoveScaleReflection(
+				glm::vec3(renderTransform[0]), authoredTransform._Scale.x);
+			const glm::vec3 sourceUp = RemoveScaleReflection(
+				glm::vec3(renderTransform[1]), authoredTransform._Scale.y);
+			const glm::vec3 sourceForward = RemoveScaleReflection(
+				glm::vec3(renderTransform[2]), authoredTransform._Scale.z);
+
+			// A camera looks along local +Z. Preserve that direction first, then make
+			// +Y orthogonal to it and derive +X = +Y x +Z. This keeps the camera basis
+			// right-handed even when the hierarchy introduces non-uniform scale/shear.
+			glm::vec3 forward;
+			if (!TryNormalizeDirection(sourceForward, forward)
+				&& !TryNormalizeDirection(glm::cross(sourceRight, sourceUp), forward)
+				&& !TryNormalizeDirection(referenceForward, forward))
+				forward = glm::vec3(0.0f, 0.0f, 1.0f);
+
+			glm::vec3 up;
+			const glm::vec3 projectedUp = sourceUp
+				- forward * glm::dot(sourceUp, forward);
+			if (!TryNormalizeDirection(projectedUp, up)
+				&& !TryNormalizeDirection(glm::cross(forward, sourceRight), up))
+			{
+				const glm::vec3 projectedReferenceUp = referenceUp
+					- forward * glm::dot(referenceUp, forward);
+				if (!TryNormalizeDirection(projectedReferenceUp, up))
+				{
+					const glm::vec3 fallbackUp = std::abs(forward.y) < 0.999f
+						? glm::vec3(0.0f, 1.0f, 0.0f)
+						: glm::vec3(1.0f, 0.0f, 0.0f);
+					TryNormalizeDirection(fallbackUp
+						- forward * glm::dot(fallbackUp, forward), up);
+				}
+			}
+
+			glm::vec3 right;
+			if (!TryNormalizeDirection(glm::cross(up, forward), right))
+			{
+				// The branches above guarantee a finite, non-parallel up direction. Keep
+				// a deterministic final fallback for malformed authoring data.
+				right = referenceRight;
+				if (!TryNormalizeDirection(right, right))
+					right = glm::vec3(1.0f, 0.0f, 0.0f);
+			}
+			TryNormalizeDirection(glm::cross(forward, right), up);
+
+			glm::mat4 cameraTransform(1.0f);
+			cameraTransform[0] = glm::vec4(right, 0.0f);
+			cameraTransform[1] = glm::vec4(up, 0.0f);
+			cameraTransform[2] = glm::vec4(forward, 0.0f);
+			cameraTransform[3] = glm::vec4(glm::vec3(renderTransform[3]), 1.0f);
+			return cameraTransform;
+		}
+
 		bool TryResolveEntityLayerBit(Scene* scene, b2Fixture* fixture,
 			UUID& entityID, uint16_t& layerBit)
 		{
@@ -655,12 +742,46 @@ namespace TomCat {
 					? scene.IsVisibleInEditorHierarchy(entity)
 					: scene.IsActiveInHierarchy(entity);
 			};
+			glm::vec3 ambientLight(1.0f);
+			std::vector<Renderer2D::PointLightData> pointLights;
+			bool hasLighting = false;
+			auto lightView = registry.view<Transform, Light2D>();
+			for (const entt::entity entity : lightView)
+			{
+				const Light2D& light = lightView.get<Light2D>(entity);
+				if (!isVisible(entity) || !light.Enabled || light.Intensity <= 0.0f)
+					continue;
+				if (!hasLighting)
+				{
+					hasLighting = true;
+					ambientLight = glm::vec3(0.05f);
+				}
+				if (light.Type == Light2DType::Global)
+				{
+					ambientLight += glm::vec3(light.Color) * light.Intensity;
+					continue;
+				}
+				const glm::mat4 lightTransform = scene.GetRuntimeRenderTransform(
+					registry.get<ID>(entity).id);
+				Renderer2D::PointLightData point;
+				point.Position = glm::vec3(lightTransform * glm::vec4(0, 0, 0, 1));
+				point.Color = glm::vec3(light.Color);
+				point.Intensity = light.Intensity;
+				point.Radius = light.Radius;
+				point.Falloff = light.Falloff;
+				pointLights.push_back(point);
+			}
+			Renderer2D::Set2DLighting(ambientLight, pointLights);
+
 			auto spriteView = registry.view<Transform, SpriteRenderer>();
 			struct SpriteRenderItem
 			{
-				entt::entity Entity = entt::null;
 				Renderer2D::SpriteSortKey SortKey;
 				glm::mat4 WorldTransform{ 1.0f };
+				SpriteRenderer Renderer;
+				glm::vec4 Color{ 1.0f };
+				int EntityID = -1;
+				bool ColoredQuad = false;
 			};
 			std::vector<SpriteRenderItem> sprites;
 			sprites.reserve(spriteView.size_hint());
@@ -676,8 +797,98 @@ namespace TomCat {
 				if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
 					continue;
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityID);
-				sprites.push_back({ entity,
-					Renderer2D::MakeSpriteSortKey(sprite, sortableEntityID), worldTransform });
+				sprites.push_back({ Renderer2D::MakeSpriteSortKey(sprite,
+					sortableEntityID), worldTransform, sprite, sprite._Color,
+					static_cast<int>(entity), false });
+			}
+
+			auto stableChildID = [](uint64_t entityID, int32_t x, int32_t y,
+				uint64_t salt)
+			{
+				uint64_t hash = entityID ^ salt;
+				hash ^= static_cast<uint32_t>(x) + 0x9e3779b9ULL + (hash << 6)
+					+ (hash >> 2);
+				hash ^= static_cast<uint32_t>(y) + 0x9e3779b9ULL + (hash << 6)
+					+ (hash >> 2);
+				return hash;
+			};
+			auto tilemapView = registry.view<Transform, Tilemap2D>();
+			for (const entt::entity entity : tilemapView)
+			{
+				const Tilemap2D& tilemap = tilemapView.get<Tilemap2D>(entity);
+				const TilemapRenderer2D* tileRenderer =
+					registry.try_get<TilemapRenderer2D>(entity);
+				if (!isVisible(entity) || !tilemap.Enabled
+					|| (tileRenderer && !tileRenderer->Enabled))
+					continue;
+				const UUID entityUUID = registry.get<ID>(entity).id;
+				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
+				const Entity tilemapEntity(entity, &scene);
+				const Entity gridEntity = scene.GetParent(tilemapEntity);
+				const Grid2D* grid = gridEntity && gridEntity.HasComponent<Grid2D>()
+					? &gridEntity.GetComponent<Grid2D>() : nullptr;
+				const glm::mat4 rootTransform =
+					scene.GetRuntimeRenderTransform(entityUUID);
+				for (const TilemapCell& cell : tilemap.Cells)
+				{
+					if (static_cast<uint64_t>(cell.SpriteHandle) == 0)
+						continue;
+					const glm::mat4 worldTransform = rootTransform
+						* Tilemap2DRuntime::GetCellTransform(tilemap, cell, grid);
+					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+						continue;
+					SpriteRenderer renderer;
+					renderer.SpriteHandle = cell.SpriteHandle;
+					renderer._Color = cell.Tint;
+					renderer.SortingLayer = tileRenderer
+						? tileRenderer->SortingLayer : tilemap.SortingLayer;
+					renderer.OrderInLayer = tileRenderer
+						? tileRenderer->OrderInLayer : tilemap.OrderInLayer;
+					sprites.push_back({
+						Renderer2D::MakeSpriteSortKey(renderer,
+							sortableEntityID,
+							tileRenderer ? Tilemap2DRuntime::GetCellRenderOrder(
+								cell.Coordinate, tileRenderer->SortOrder) : 0),
+						worldTransform, std::move(renderer), cell.Tint,
+						static_cast<int>(entity), false });
+				}
+			}
+
+			auto particleView = registry.view<Transform, ParticleSystem2D>();
+			for (const entt::entity entity : particleView)
+			{
+				const ParticleSystem2D& system = particleView.get<ParticleSystem2D>(entity);
+				if (!isVisible(entity) || !system.Enabled)
+					continue;
+				const UUID entityUUID = registry.get<ID>(entity).id;
+				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
+				const glm::mat4 rootTransform =
+					scene.GetRuntimeRenderTransform(entityUUID);
+				for (size_t index = 0; index < system.RuntimeParticles.size(); ++index)
+				{
+					const Particle2D& particle = system.RuntimeParticles[index];
+					const float size = ParticleSystem2DRuntime::EvaluateSize(particle);
+					if (size <= 0.0f)
+						continue;
+					const glm::mat4 worldTransform = rootTransform
+						* glm::translate(glm::mat4(1.0f), glm::vec3(particle.Position, 0.0f))
+						* glm::scale(glm::mat4(1.0f), glm::vec3(size, size, 1.0f));
+					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+						continue;
+					SpriteRenderer renderer;
+					renderer.SpriteHandle = system.SpriteHandle;
+					renderer._Color = ParticleSystem2DRuntime::EvaluateColor(system,
+						particle);
+					renderer.SortingLayer = system.SortingLayer;
+					renderer.OrderInLayer = system.OrderInLayer;
+					sprites.push_back({
+						Renderer2D::MakeSpriteSortKey(renderer,
+							stableChildID(sortableEntityID, static_cast<int32_t>(index),
+								0, 0x50415254ULL)),
+						worldTransform, renderer, renderer._Color,
+						static_cast<int>(entity),
+						static_cast<uint64_t>(system.SpriteHandle) == 0 });
+				}
 			}
 			std::sort(sprites.begin(), sprites.end(),
 				[](const SpriteRenderItem& left, const SpriteRenderItem& right)
@@ -686,9 +897,15 @@ namespace TomCat {
 				});
 			for (const SpriteRenderItem& item : sprites)
 			{
-				auto& sprite = spriteView.get<SpriteRenderer>(item.Entity);
-				Renderer2D::DrawSprite(item.WorldTransform, sprite,
-					static_cast<int>(item.Entity));
+				if (item.ColoredQuad)
+					Renderer2D::DrawLitQuad(item.WorldTransform, item.Color,
+						item.EntityID);
+				else
+				{
+					SpriteRenderer renderer = item.Renderer;
+					Renderer2D::DrawSprite(item.WorldTransform, renderer,
+						item.EntityID);
+				}
 			}
 
 			const float previousLineWidth = Renderer2D::GetLineWidth();
@@ -717,15 +934,99 @@ namespace TomCat {
 			RuntimeUISystem::RenderWorldText(scene, registry, visibility);
 		}
 
+		void HydrateSpriteAnimatorController(SpriteAnimator& animator)
+		{
+			if (static_cast<uint64_t>(animator.ControllerHandle) != 0)
+			{
+				std::string controllerError;
+				auto& assets = AssetManager::Get();
+				std::vector<uint8_t> controllerBytes;
+				AssetType controllerType = AssetType::None;
+				AnimatorControllerAsset controller;
+				if (!assets.ReadAssetBytes(animator.ControllerHandle,
+					controllerBytes, &controllerType)
+					|| controllerType != AssetType::AnimatorController)
+					controllerError = "controller asset is missing or has the wrong type";
+				else if (!AnimatorControllerAssetCodec::Decode(controllerBytes,
+					controller, controllerError))
+				{
+				}
+				else
+				{
+					std::vector<SpriteAnimationClip> clips;
+					std::vector<AnimatorState> states;
+					std::unordered_map<uint64_t, std::string> clipNamesByHandle;
+					std::unordered_map<std::string, uint64_t> handlesByClipName;
+					states.reserve(controller.States.size());
+					for (const AnimatorControllerAsset::State& sourceState
+						: controller.States)
+					{
+						const uint64_t rawClip = static_cast<uint64_t>(
+							sourceState.ClipHandle);
+						std::string clipName;
+						if (const auto cached = clipNamesByHandle.find(rawClip);
+							cached != clipNamesByHandle.end())
+							clipName = cached->second;
+						else
+						{
+							std::vector<uint8_t> clipBytes;
+							AssetType clipType = AssetType::None;
+							AnimationClipAsset clipAsset;
+							if (!assets.ReadAssetBytes(sourceState.ClipHandle,
+								clipBytes, &clipType)
+								|| clipType != AssetType::AnimationClip)
+							{
+								controllerError = "state '" + sourceState.Name
+									+ "' references a missing Animation Clip";
+								break;
+							}
+							if (!AnimationClipAssetCodec::Decode(clipBytes,
+								clipAsset, controllerError))
+								break;
+							clipName = clipAsset.Clip.Name;
+							if (const auto duplicate = handlesByClipName.find(clipName);
+								duplicate != handlesByClipName.end()
+								&& duplicate->second != rawClip)
+							{
+								controllerError = "controller references different clips named '"
+									+ clipName + "'";
+								break;
+							}
+							clipNamesByHandle.emplace(rawClip, clipName);
+							handlesByClipName.emplace(clipName, rawClip);
+							clips.push_back(std::move(clipAsset.Clip));
+						}
+						states.push_back({ sourceState.Name, clipName,
+							sourceState.Speed });
+					}
+					if (controllerError.empty())
+					{
+						animator.Clips = std::move(clips);
+						animator.Parameters = controller.Parameters;
+						animator.States = std::move(states);
+						animator.Transitions = controller.Transitions;
+						animator.InitialState = controller.InitialState;
+						animator.InitialClip = animator.Clips.empty()
+							? std::string{} : animator.Clips.front().Name;
+					}
+				}
+				if (!controllerError.empty())
+					TC_Core_Warn("Could not load Animator Controller {0}: {1}",
+						static_cast<uint64_t>(animator.ControllerHandle),
+						controllerError);
+			}
+		}
+
 		void InitializeSpriteAnimations(Scene& scene, entt::registry& registry)
 		{
 			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
 			for (const entt::entity entity : view)
 			{
-				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
-					continue;
 				auto [animator, renderer] =
 					view.get<SpriteAnimator, SpriteRenderer>(entity);
+				HydrateSpriteAnimatorController(animator);
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
 				SpriteAnimatorRuntime::Initialize(animator, renderer);
 			}
 		}
@@ -748,6 +1049,51 @@ namespace TomCat {
 		{
 			for (const entt::entity entity : registry.view<SpriteAnimator>())
 				SpriteAnimatorRuntime::Reset(registry.get<SpriteAnimator>(entity));
+		}
+
+		void InitializeParticleSystems(Scene& scene, entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				auto& system = registry.get<ParticleSystem2D>(entity);
+				ParticleSystem2DRuntime::Reset(system);
+				if (system.PlayOnStart
+					&& scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					ParticleSystem2DRuntime::Play(system);
+			}
+		}
+
+		void UpdateParticleSystems(Scene& scene, entt::registry& registry,
+			float deltaSeconds)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
+				ParticleSystem2DRuntime::Update(
+					registry.get<ParticleSystem2D>(entity), deltaSeconds);
+			}
+		}
+
+		void ResetParticleSystems(entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+				ParticleSystem2DRuntime::Reset(
+					registry.get<ParticleSystem2D>(entity));
+		}
+
+		void UpdateParticlePreviews(Scene& scene, entt::registry& registry,
+			float deltaSeconds)
+		{
+			const float previewDelta = std::clamp(deltaSeconds, 0.0f, 0.1f);
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				auto& system = registry.get<ParticleSystem2D>(entity);
+				if (!system.RuntimeInitialized
+					|| !scene.IsVisibleInEditorHierarchy(Entity(entity, &scene)))
+					continue;
+				ParticleSystem2DRuntime::Update(system, previewDelta);
+			}
 		}
 
 	}
@@ -1756,6 +2102,23 @@ namespace TomCat {
 				return true;
 		}
 		return false;
+	}
+
+	bool Scene::HasActiveCanvas()
+	{
+		auto view = m_Registry.view<Canvas>();
+		for (const entt::entity handle : view)
+		{
+			Entity entity(handle, this);
+			if (view.get<Canvas>(handle).Enabled && IsActiveInHierarchy(entity))
+				return true;
+		}
+		return false;
+	}
+
+	bool Scene::HasGameViewRenderSource()
+	{
+		return static_cast<bool>(GetPrimaryCameraEntity()) || HasActiveCanvas();
 	}
 
 	bool Scene::SetCameraPrimary(Entity entity, bool primary)
@@ -3349,6 +3712,7 @@ namespace TomCat {
 		}
 		AudioSceneRuntime::Start(*this);
 		InitializeSpriteAnimations(*this, m_Registry);
+		InitializeParticleSystems(*this, m_Registry);
 		RuntimeUISystem::Reset(m_Registry);
 
 		bool hasManagedScripts = false;
@@ -3402,6 +3766,7 @@ namespace TomCat {
 		// scene-wide sweep guarantees that no callback can leave a voice playing.
 		AudioSceneRuntime::Stop(*this);
 		ResetSpriteAnimations(m_Registry);
+		ResetParticleSystems(m_Registry);
 		RuntimeUISystem::Reset(m_Registry);
 		SetRuntimeEntityBatchCreatedCallback({});
 		++m_RuntimeSessionGeneration;
@@ -3574,6 +3939,7 @@ namespace TomCat {
 			return false;
 		UpdateSpriteAnimations(*this, m_Registry,
 			static_cast<double>(FixedRuntimeTimestep));
+		UpdateParticleSystems(*this, m_Registry, FixedRuntimeTimestep);
 		return m_RuntimeRunning && m_PhysicsWorld;
 	}
 
@@ -3716,6 +4082,18 @@ namespace TomCat {
 		return resolve(resolve, entityID);
 	}
 
+	glm::mat4 Scene::GetRuntimeCameraTransform(UUID entityID) const
+	{
+		auto entityIt = m_EntityMap.find(entityID);
+		if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
+			|| !m_Registry.all_of<Transform>(entityIt->second))
+			return glm::mat4(1.0f);
+
+		const glm::mat4 renderTransform = GetRuntimeRenderTransform(entityID);
+		return MakeScaleFreeCameraTransform(renderTransform,
+			m_Registry.get<Transform>(entityIt->second));
+	}
+
 	void Scene::RenderRuntimeScene()
 	{
 		Entity mainCameraEntity = GetPrimaryCameraEntity();
@@ -3724,7 +4102,7 @@ namespace TomCat {
 			auto& camera = mainCameraEntity.GetComponent<C_Camera>();
 			RenderCommand::SetClearColor(camera.BackgroundColor);
 			RenderCommand::Clear();
-			const glm::mat4 cameraTransform = GetRuntimeRenderTransform(
+			const glm::mat4 cameraTransform = GetRuntimeCameraTransform(
 				mainCameraEntity.GetUUID());
 			Renderer2D::BeginScene(camera._Camera, cameraTransform);
 			Render2DComponents(*this, m_Registry,
@@ -3739,14 +4117,16 @@ namespace TomCat {
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		if (!m_RuntimeRunning)
+			UpdateParticlePreviews(*this, m_Registry, ts.GetSeconds());
 		Renderer2D::BeginScene(camera);
 
 		Render2DComponents(*this, m_Registry, camera.GetViewProjection(),
 			RuntimeUIVisibilityMode::Editor);
 
 		Renderer2D::EndScene();
-		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
-			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+		RuntimeUISystem::RenderEditorCanvas(*this, m_Registry,
+			camera.GetViewProjection(),
 			RuntimeUIVisibilityMode::Editor);
 	}
 
@@ -3973,6 +4353,23 @@ namespace TomCat {
 		Entity duplicate = DuplicateEntityRecursive(this, entity, parent, duplicateUUIDs);
 		if (!duplicate)
 			return {};
+		std::unordered_map<UUID, UUID> attachmentRemap;
+		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
+		{
+			(void)sourceUUID;
+			Entity duplicatedEntity = FindEntityByUUID(duplicateUUID);
+			if (!duplicatedEntity || !duplicatedEntity.HasComponent<CSharpScripts>())
+				continue;
+			for (const CSharpScriptEntry& script :
+				duplicatedEntity.GetComponent<CSharpScripts>().Scripts)
+			{
+				UUID generated;
+				do { generated = UUID(); }
+				while (static_cast<uint64_t>(generated) == 0
+					|| !attachmentIDs.emplace(static_cast<uint64_t>(generated)).second);
+				attachmentRemap.emplace(script.AttachmentID, generated);
+			}
+		}
 
 		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
 		{
@@ -3982,7 +4379,7 @@ namespace TomCat {
 			if (!ComponentCodecs::RemapInstanceReferences(duplicatedEntity,
 				duplicateUUIDs,
 				ComponentCodecs::MissingEntityReferencePolicy::Preserve,
-				attachmentIDs, true, remapError))
+				attachmentIDs, true, remapError, &attachmentRemap))
 			{
 				TC_Core_Error("Could not remap duplicated entity references: {0}",
 					remapError);
@@ -4133,20 +4530,26 @@ namespace TomCat {
 	template<>
 	void Scene::OnComponentAdded<SpriteRenderer>(Entity entity, SpriteRenderer& component)
 	{
-		if (m_RuntimeRunning && entity && IsActiveInHierarchy(entity)
-			&& entity.HasComponent<SpriteAnimator>())
-			SpriteAnimatorRuntime::Initialize(
-				entity.GetComponent<SpriteAnimator>(), component);
+		if (m_RuntimeRunning && entity && entity.HasComponent<SpriteAnimator>())
+		{
+			SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
+			HydrateSpriteAnimatorController(animator);
+			if (IsActiveInHierarchy(entity))
+				SpriteAnimatorRuntime::Initialize(animator, component);
+		}
 	}
 
 	template<>
 	void Scene::OnComponentAdded<SpriteAnimator>(Entity entity, SpriteAnimator& component)
 	{
 		SpriteAnimatorRuntime::Reset(component);
-		if (m_RuntimeRunning && entity && IsActiveInHierarchy(entity)
-			&& entity.HasComponent<SpriteRenderer>())
-			SpriteAnimatorRuntime::Initialize(
-				component, entity.GetComponent<SpriteRenderer>());
+		if (m_RuntimeRunning && entity && entity.HasComponent<SpriteRenderer>())
+		{
+			HydrateSpriteAnimatorController(component);
+			if (IsActiveInHierarchy(entity))
+				SpriteAnimatorRuntime::Initialize(component,
+					entity.GetComponent<SpriteRenderer>());
+		}
 	}
 
 	template<>

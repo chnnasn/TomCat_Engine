@@ -1,16 +1,21 @@
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Asset/TextureArtifact.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/SpriteAnimation.h"
 #include "TomCat/Scene/SpriteAnimatorAuthoring.h"
+#include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 
 #include "stb_image.h"
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <array>
@@ -23,6 +28,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -69,6 +75,30 @@ namespace {
 
 	private:
 		std::filesystem::path m_Previous;
+	};
+
+	class ScopedRuntimePackageRoot final
+	{
+	public:
+		explicit ScopedRuntimePackageRoot(const std::filesystem::path& root)
+			: m_Previous(TomCat::ApplicationPaths::GetRuntimePackageRoot())
+		{
+			TomCat::ApplicationPaths::SetRuntimePackageRoot(root);
+		}
+
+		~ScopedRuntimePackageRoot()
+		{
+			if (m_Previous)
+				TomCat::ApplicationPaths::SetRuntimePackageRoot(*m_Previous);
+			else
+				TomCat::ApplicationPaths::ClearRuntimePackageRoot();
+		}
+
+		ScopedRuntimePackageRoot(const ScopedRuntimePackageRoot&) = delete;
+		ScopedRuntimePackageRoot& operator=(const ScopedRuntimePackageRoot&) = delete;
+
+	private:
+		std::optional<std::filesystem::path> m_Previous;
 	};
 
 	std::filesystem::path GetExecutableDirectory()
@@ -380,6 +410,54 @@ namespace {
 		AddStateMachine(animator);
 		std::string error;
 
+		AnimatorGraphLayout graphLayout;
+		SynchronizeGraphLayout(animator, graphLayout);
+		Require(graphLayout.StatePositions.size() == animator.States.size()
+			&& graphLayout.StatePositions.at("Idle").X
+				== DefaultGraphPosition(0).X
+			&& graphLayout.StatePositions.at("Moving").X
+				== DefaultGraphPosition(1).X,
+			"Animator graph did not create a deterministic state layout");
+		graphLayout.StatePositions.at("Idle") = { 431.0f, 217.0f };
+		SynchronizeGraphLayout(animator, graphLayout);
+		Require(graphLayout.StatePositions.at("Idle").X == 431.0f
+			&& graphLayout.StatePositions.at("Idle").Y == 217.0f,
+			"Animator graph synchronization discarded a dragged node position");
+		RenameGraphState(graphLayout, "Idle", "Standing");
+		Require(graphLayout.StatePositions.find("Idle")
+				== graphLayout.StatePositions.end()
+			&& graphLayout.StatePositions.at("Standing").X == 431.0f,
+			"Animator graph rename did not preserve the state position");
+
+		TomCat::SpriteAnimator graphAnimator = animator;
+		const size_t transitionCount = graphAnimator.Transitions.size();
+		size_t addedTransition = static_cast<size_t>(-1);
+		Require(AddTransition(graphAnimator, std::nullopt, 1, &addedTransition,
+			error)
+			&& addedTransition == transitionCount
+			&& graphAnimator.Transitions.back().AnyState
+			&& graphAnimator.Transitions.back().ToState == "Moving"
+			&& graphAnimator.Transitions.back().ExitTime == 1.0f,
+			"Animator graph did not create a valid Any State transition");
+		Require(SetTransitionEndpoints(graphAnimator, addedTransition, 0, 2, error)
+			&& !graphAnimator.Transitions.back().AnyState
+			&& graphAnimator.Transitions.back().FromState == "Idle"
+			&& graphAnimator.Transitions.back().ToState == "Jumping",
+			"Animator graph endpoint editing left invalid state references");
+		const TomCat::AnimatorTransition validTransition =
+			graphAnimator.Transitions.back();
+		Require(!SetTransitionEndpoints(graphAnimator, addedTransition, 99, 0, error)
+			&& !error.empty()
+			&& graphAnimator.Transitions.back().FromState == validTransition.FromState
+			&& graphAnimator.Transitions.back().ToState == validTransition.ToState,
+			"Animator graph partially changed an invalid transition edit");
+		Require(RemoveTransition(graphAnimator, addedTransition, error)
+			&& graphAnimator.Transitions.size() == transitionCount,
+			"Animator graph could not safely remove a selected transition");
+		Require(!RemoveTransition(graphAnimator, addedTransition, error)
+			&& !error.empty(),
+			"Animator graph accepted a stale transition selection");
+
 		Require(RenameClip(animator, 0, "Locomotion", error)
 			&& animator.InitialClip == "Locomotion"
 			&& animator.States[0].Clip == "Locomotion"
@@ -390,6 +468,32 @@ namespace {
 			"Animator editor accepted a duplicate clip name");
 		Require(!RenameClip(animator, 0, " Locomotion", error) && !error.empty(),
 			"Animator editor accepted an ambiguous whitespace-padded name");
+
+		TomCat::SpriteAnimationClip& timeline = animator.Clips[0];
+		const size_t originalFrameCount = timeline.Frames.size();
+		Require(InsertFrame(timeline, 1,
+			{ TomCat::AssetHandle(104), 0.25f }, error)
+			&& timeline.Frames.size() == originalFrameCount + 1
+			&& timeline.Frames[1].SpriteHandle == TomCat::AssetHandle(104),
+			"Animation timeline could not insert a Sprite frame");
+		Require(MoveFrame(timeline, 1, 0, error)
+			&& timeline.Frames.front().SpriteHandle == TomCat::AssetHandle(104),
+			"Animation timeline could not reorder a Sprite frame");
+		Require(SetFrameDuration(timeline, 0, 0.5f, error)
+			&& std::abs(ClipDuration(timeline) - 1.1) < 0.0001
+			&& FrameAtTime(timeline, 0.49) == 0
+			&& FrameAtTime(timeline, 0.51) == 1,
+			"Animation timeline sampling or frame duration editing is inconsistent");
+		Require(!SetFrameDuration(timeline, 0, 0.0f, error) && !error.empty(),
+			"Animation timeline accepted a zero-duration frame");
+		Require(RemoveFrame(timeline, 0, error)
+			&& timeline.Frames.size() == originalFrameCount,
+			"Animation timeline could not remove a Sprite frame");
+		TomCat::SpriteAnimationClip singleFrameClip;
+		singleFrameClip.Frames.push_back({ TomCat::AssetHandle(104), 0.1f });
+		Require(!RemoveFrame(singleFrameClip, 0, error) && !error.empty()
+			&& singleFrameClip.Frames.size() == 1,
+			"Animation timeline allowed removal of the final serializable frame");
 
 		Require(RenameParameter(animator, 2, "Velocity", error)
 			&& animator.Transitions[0].Conditions[0].Parameter == "Velocity",
@@ -468,6 +572,16 @@ namespace {
 			"Sprite transparent order is not layer/order/stable-UUID deterministic");
 		Require(!TomCat::Renderer2D::SpriteSortLess(entries[2].Key, entries[2].Key),
 			"Sprite ordering comparator is not strict");
+		TomCat::SpriteRenderer sameOrder;
+		const auto laterCell = TomCat::Renderer2D::MakeSpriteSortKey(
+			sameOrder, 20, 100);
+		const auto earlierCell = TomCat::Renderer2D::MakeSpriteSortKey(
+			sameOrder, 20, 50);
+		const auto laterRenderer = TomCat::Renderer2D::MakeSpriteSortKey(
+			sameOrder, 30, 0);
+		Require(TomCat::Renderer2D::SpriteSortLess(earlierCell, laterCell)
+			&& TomCat::Renderer2D::SpriteSortLess(laterCell, laterRenderer),
+			"per-cell Tilemap order escaped its renderer UUID group");
 	}
 
 	void TestConservativeSpriteCulling()
@@ -684,6 +798,7 @@ namespace {
 		sprite.OrderInLayer = 42;
 		auto& animator = entity.AddComponent<TomCat::SpriteAnimator>(
 			MakeAnimator(first, second, third));
+		animator.ControllerHandle = TomCat::AssetHandle(2201);
 		AddStateMachine(animator);
 		animator.RuntimeClipIndex = 1;
 		animator.RuntimeFrameIndex = 1;
@@ -700,6 +815,7 @@ namespace {
 		const auto& copiedSprite = copiedEntity.GetComponent<TomCat::SpriteRenderer>();
 		const auto& copiedAnimator = copiedEntity.GetComponent<TomCat::SpriteAnimator>();
 		Require(copiedSprite.SortingLayer == -7 && copiedSprite.OrderInLayer == 42
+			&& copiedAnimator.ControllerHandle == TomCat::AssetHandle(2201)
 			&& copiedAnimator.Clips.size() == 2
 			&& copiedAnimator.States.size() == 3
 			&& copiedAnimator.Transitions.size() == 3
@@ -725,11 +841,38 @@ namespace {
 		Require(decodedEntity && decodedEntity.HasComponent<TomCat::SpriteAnimator>()
 			&& decodedEntity.GetComponent<TomCat::SpriteRenderer>().SortingLayer == -7
 			&& decodedEntity.GetComponent<TomCat::SpriteRenderer>().OrderInLayer == 42
+			&& decodedEntity.GetComponent<TomCat::SpriteAnimator>().ControllerHandle
+				== TomCat::AssetHandle(2201)
 			&& decodedEntity.GetComponent<TomCat::SpriteAnimator>()
 				.Clips[0].Frames[1].SpriteHandle == second
 			&& decodedEntity.GetComponent<TomCat::SpriteAnimator>()
 				.Parameters[2].Name == "MoveSpeed",
 			"Scene v11 roundtrip changed Sprite animation or sorting data");
+		bool visitedController = false;
+		std::string visitorError;
+		const bool visitedSceneReferences = TomCat::AssetReferenceVisitor::VisitScene(YAML::Load(sceneDocument),
+			[&](const TomCat::SerializedAssetReference& reference)
+			{
+				if (reference.Kind
+					== TomCat::SerializedAssetReferenceKind::AnimatorController)
+					visitedController = reference.Handle == TomCat::AssetHandle(2201)
+						&& reference.ExpectedType == TomCat::AssetType::AnimatorController;
+				return true;
+			}, visitorError);
+		Require(visitedSceneReferences && visitedController,
+			"Scene dependency traversal omitted Animator Controller");
+		YAML::Node legacyScene = YAML::Load(sceneDocument);
+		legacyScene["Entities"][0]["SpriteAnimator"].remove("ControllerHandle");
+		bool legacyVisitedController = false;
+		Require(TomCat::AssetReferenceVisitor::VisitScene(legacyScene,
+			[&](const TomCat::SerializedAssetReference& reference)
+			{
+				legacyVisitedController = legacyVisitedController
+					|| reference.Kind
+						== TomCat::SerializedAssetReferenceKind::AnimatorController;
+				return true;
+			}, visitorError) && !legacyVisitedController,
+			"legacy SpriteAnimator without ControllerHandle broke dependency traversal");
 
 		TomCat::PrefabArchive captured;
 		Require(TomCat::PrefabArchiveCodec::CaptureSubtree(
@@ -748,6 +891,8 @@ namespace {
 		TomCat::Entity prefabRoot = decodedPrefab.TemplateScene->FindEntityByUUID(
 			TomCat::UUID(decodedPrefab.RootLocalID));
 		Require(prefabRoot && prefabRoot.HasComponent<TomCat::SpriteAnimator>()
+			&& prefabRoot.GetComponent<TomCat::SpriteAnimator>().ControllerHandle
+				== TomCat::AssetHandle(2201)
 			&& prefabRoot.GetComponent<TomCat::SpriteAnimator>()
 				.Clips[1].Frames[1].SpriteHandle == third
 			&& prefabRoot.GetComponent<TomCat::SpriteAnimator>()
@@ -852,30 +997,45 @@ namespace {
 			"built-in Sprite package path resolution changed");
 
 		const std::filesystem::path executableDirectory = GetExecutableDirectory();
+		const ScopedRuntimePackageRoot packageRoot(executableDirectory);
+		const std::filesystem::path rootedCirclePath = executableDirectory / circlePath;
+		const std::filesystem::path rootedSquarePath = executableDirectory / squarePath;
+		const std::filesystem::path fontPath = executableDirectory /
+			"Packages/fonts/opensans/OpenSans-Regular.ttf";
 		std::error_code error;
-		Require(std::filesystem::is_regular_file(
-			executableDirectory / circlePath, error) && !error,
+		Require(std::filesystem::is_regular_file(rootedCirclePath, error) && !error,
 			"Circle package resource was not copied beside the regression executable");
 		error.clear();
-		Require(std::filesystem::is_regular_file(
-			executableDirectory / squarePath, error) && !error,
+		Require(std::filesystem::is_regular_file(rootedSquarePath, error) && !error,
 			"Square package resource was not copied beside the regression executable");
-		const ScopedCurrentPath packagedRuntime(executableDirectory);
-		const std::vector<uint8_t> circleSource = ReadFileBytes(circlePath);
-		const std::vector<uint8_t> squareSource = ReadFileBytes(squarePath);
+		error.clear();
+		Require(std::filesystem::is_regular_file(fontPath, error) && !error,
+			"default Font package resource was not copied beside the regression executable");
+
+		TemporaryAssetProject environment;
+		const ScopedCurrentPath foreignWorkingDirectory(environment.Root);
+		Require(TomCat::GetBuiltInSpriteAssetPath(circle) == rootedCirclePath
+			&& TomCat::GetBuiltInSpriteAssetPath(square) == rootedSquarePath
+			&& TomCat::GetBuiltInFontAssetPath(
+				TomCat::GetDefaultRuntimeFontHandle()) == fontPath,
+			"built-in assets did not resolve from the executable package root");
+		const std::vector<uint8_t> circleSource = ReadFileBytes(rootedCirclePath);
+		const std::vector<uint8_t> squareSource = ReadFileBytes(rootedSquarePath);
 		RequireDecodablePrimitive(circleSource, true);
 		RequireDecodablePrimitive(squareSource, false);
 
 		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
 		assets.Shutdown();
 		TomCat::ResolvedSpriteAsset resolved;
-		Require(assets.ResolvePath(circle) == circlePath
-			&& assets.ResolvePath(square) == squarePath
+		const TomCat::AssetLoadResult loadedFont = assets.LoadImportedArtifact(
+			TomCat::GetDefaultRuntimeFontHandle());
+		Require(assets.ResolvePath(circle) == rootedCirclePath
+			&& assets.ResolvePath(square) == rootedSquarePath
+			&& loadedFont.Succeeded() && !loadedFont.Artifact.Bytes.empty()
 			&& assets.ResolveSpriteAsset(circle, resolved)
 			&& resolved.TextureHandle == circle && !resolved.IsSubAsset,
-			"authoring did not resolve a built-in Sprite outside the project registry");
+			"authoring did not load built-in Font/Sprites outside the project registry");
 
-		TemporaryAssetProject environment;
 		Require(assets.Initialize(environment.Assets, environment.Library),
 			"built-in Sprite Cook AssetManager initialization failed");
 		Require(assets.Registry().GetMetadata(circle) == nullptr
@@ -1357,6 +1517,113 @@ namespace {
 			"Cooked Sprite envelope lost its atlas slice metadata or payload");
 	}
 
+	void TestAutomaticAtlasSlicingAndPacking()
+	{
+		constexpr uint32_t width = 8;
+		constexpr uint32_t height = 6;
+		std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4, 0);
+		const auto setPixel = [&](uint32_t x, uint32_t y,
+			std::array<uint8_t, 4> color)
+		{
+			const size_t offset = (static_cast<size_t>(y) * width + x) * 4;
+			std::copy(color.begin(), color.end(), pixels.begin() + offset);
+		};
+		for (uint32_t y = 1; y <= 2; ++y)
+			for (uint32_t x = 1; x <= 2; ++x)
+				setPixel(x, y, { 220, 10, 20, 255 });
+		for (uint32_t y = 2; y <= 4; ++y)
+			for (uint32_t x = 5; x <= 6; ++x)
+				setPixel(x, y, { 10, 180, 40, 255 });
+		setPixel(0, 5, { 255, 255, 255, 255 });
+		setPixel(3, 0, { 255, 255, 255, 64 });
+
+		TomCat::SpriteAtlasSliceOptions sliceOptions;
+		sliceOptions.AlphaThreshold = 128;
+		sliceOptions.MinimumOpaquePixels = 2;
+		std::vector<TomCat::SpriteAtlasRect> regions;
+		std::string error;
+		Require(TomCat::SliceSpriteAtlasByAlpha(pixels, width, height,
+			sliceOptions, regions, error) && regions == std::vector<TomCat::SpriteAtlasRect>{
+				{ 1, 1, 2, 2 }, { 5, 2, 2, 3 } },
+			"alpha Auto Slice did not find deterministic opaque island bounds");
+
+		TomCat::AssetSubAsset exact;
+		exact.Handle = TomCat::AssetHandle(101);
+		exact.PersistentID = "sprite:hero";
+		exact.Name = "Hero";
+		exact.Type = TomCat::AssetType::Texture2D;
+		exact.Sprite = { 1, 1, 2, 2, 0.25f, 0.75f, 32.0f,
+			1.0f, 0.0f, 1.0f, 0.0f };
+		TomCat::AssetSubAsset moved;
+		moved.Handle = TomCat::AssetHandle(202);
+		moved.PersistentID = "sprite:enemy";
+		moved.Name = "Enemy";
+		moved.Type = TomCat::AssetType::Texture2D;
+		moved.Sprite = { 4, 2, 2, 3, 0.5f, 0.5f, 16.0f,
+			0.0f, 0.0f, 0.0f, 0.0f };
+		const std::array<TomCat::AssetSubAsset, 2> existing = { exact, moved };
+		const std::vector<TomCat::AssetSubAsset> reconciled =
+			TomCat::ReconcileSpriteAtlasSlices(regions, existing);
+		Require(reconciled.size() == 2
+			&& reconciled[0].Handle == exact.Handle
+			&& reconciled[0].PersistentID == "sprite:hero"
+			&& reconciled[0].Name == "Hero"
+			&& reconciled[0].Sprite.PivotX == 0.25f
+			&& reconciled[0].Sprite.PixelsPerUnit == 32.0f
+			&& reconciled[1].Handle == moved.Handle
+			&& reconciled[1].PersistentID == "sprite:enemy"
+			&& reconciled[1].Sprite.X == 5,
+			"Auto Slice reconciliation did not preserve stable IDs and metadata");
+		const std::vector<TomCat::AssetSubAsset> generatedA =
+			TomCat::ReconcileSpriteAtlasSlices(regions, {});
+		const std::vector<TomCat::AssetSubAsset> generatedB =
+			TomCat::ReconcileSpriteAtlasSlices(regions, {});
+		Require(generatedA.size() == 2 && generatedB.size() == 2
+			&& generatedA[0].PersistentID == generatedB[0].PersistentID
+			&& generatedA[1].PersistentID == generatedB[1].PersistentID
+			&& generatedA[0].PersistentID != generatedA[1].PersistentID,
+			"new Auto Slice IDs are not deterministic and unique");
+
+		TomCat::SpriteAtlasGridOptions gridOptions;
+		gridOptions.CellWidth = 3;
+		gridOptions.CellHeight = 2;
+		gridOptions.IncludePartialCells = true;
+		std::vector<TomCat::SpriteAtlasRect> grid;
+		Require(TomCat::SliceSpriteAtlasGrid(7, 5, gridOptions, grid, error)
+			&& grid.size() == 9 && grid.back() == TomCat::SpriteAtlasRect{ 6, 4, 1, 1 },
+			"Grid Slice did not clip partial edge cells");
+
+		TomCat::SpriteAtlasPackOptions packOptions;
+		packOptions.MaximumWidth = 8;
+		packOptions.MaximumHeight = 8;
+		packOptions.Padding = 1;
+		packOptions.PowerOfTwo = true;
+		TomCat::SpriteAtlasPackedLayout layout;
+		std::vector<uint8_t> packed;
+		Require(TomCat::BuildPackedSpriteAtlasRGBA(pixels, width, height, regions,
+			packOptions, layout, packed, error)
+			&& layout.Width == 8 && layout.Height == 8
+			&& layout.Placements.size() == regions.size()
+			&& packed.size() == static_cast<size_t>(8 * 8 * 4),
+			"deterministic Sprite Atlas packing failed");
+		for (size_t index = 0; index < regions.size(); ++index)
+		{
+			const TomCat::SpriteAtlasRect& source = regions[index];
+			const TomCat::SpriteAtlasRect& destination = layout.Placements[index];
+			const size_t sourcePixel = (static_cast<size_t>(source.Y) * width
+				+ source.X) * 4;
+			const size_t contentPixel = (static_cast<size_t>(destination.Y)
+				* layout.Width + destination.X) * 4;
+			const size_t extrudedPixel = (static_cast<size_t>(destination.Y)
+				* layout.Width + destination.X - 1) * 4;
+			Require(std::equal(pixels.begin() + sourcePixel,
+				pixels.begin() + sourcePixel + 4, packed.begin() + contentPixel)
+				&& std::equal(pixels.begin() + sourcePixel,
+					pixels.begin() + sourcePixel + 4, packed.begin() + extrudedPixel),
+				"packed Sprite pixels or padding extrusion changed source colors");
+		}
+	}
+
 	void WritePackageMarker(const std::filesystem::path& path,
 		std::span<const uint8_t> bytes)
 	{
@@ -1387,6 +1654,247 @@ namespace {
 			"Cook accepted UINT64_MAX through a Sprite sub-asset dependency");
 		Require(ReadFileBytes(package) == marker,
 			"failed reserved-handle Cook replaced the last good package");
+	}
+
+	void TestAdvanced2DAuthoringAssetCodecs()
+	{
+		std::string document;
+		std::string error;
+
+		TomCat::AnimationClipAsset clip;
+		clip.SampleRate = 24.0f;
+		clip.Clip.Name = "Walk";
+		clip.Clip.Loop = true;
+		clip.Clip.Frames = {
+			{ TomCat::AssetHandle(2101), 1.0f / 24.0f },
+			{ TomCat::AssetHandle(2102), 2.0f / 24.0f }
+		};
+		Require(TomCat::AnimationClipAssetCodec::Encode(clip, document, error),
+			"Animation Clip asset codec could not encode valid data");
+		TomCat::AnimationClipAsset decodedClip;
+		const std::vector<uint8_t> clipBytes(document.begin(), document.end());
+		Require(TomCat::AnimationClipAssetCodec::Decode(
+			std::span<const uint8_t>(clipBytes), decodedClip, error)
+			&& decodedClip.Clip.Name == "Walk" && decodedClip.Clip.Loop
+			&& decodedClip.SampleRate == 24.0f
+			&& decodedClip.Clip.Frames.size() == 2
+			&& decodedClip.Clip.Frames[1].SpriteHandle == TomCat::AssetHandle(2102),
+			"Animation Clip asset roundtrip changed authored data");
+		std::vector<TomCat::AuthoringAssetReference> references;
+		Require(TomCat::AnimationClipAssetCodec::VisitAssetReferences(decodedClip,
+			[&](const TomCat::AuthoringAssetReference& reference)
+			{
+				references.push_back(reference);
+				return true;
+			}, error) && references.size() == 2
+			&& references[0].Handle == TomCat::AssetHandle(2101)
+			&& references[0].ExpectedType == TomCat::AssetType::Texture2D
+			&& references[0].Kind
+				== TomCat::AuthoringAssetReferenceKind::AnimationFrame
+			&& references[1].PropertyPath
+				== "$.TomCatAnimationClip.Frames[1].SpriteHandle",
+			"Animation Clip asset references were not enumerated precisely");
+
+		TomCat::AnimationClipAsset emptyClip;
+		emptyClip.Clip.Name = "New Animation";
+		Require(TomCat::AnimationClipAssetCodec::Encode(emptyClip, document, error),
+			"editable empty Animation Clip asset was rejected");
+		const std::string invalidClip =
+			"TomCatAnimationClip:\n"
+			"  Version: 1\n"
+			"  Name: Walk\n"
+			"  Loop: true\n"
+			"  SampleRate: 12\n"
+			"  Frames: []\n"
+			"  Unknown: true\n";
+		Require(!TomCat::AnimationClipAssetCodec::Decode(
+			invalidClip, decodedClip, error) && !error.empty(),
+			"Animation Clip asset codec accepted an unknown key");
+		clip.Clip.Frames[0].SpriteHandle = TomCat::AssetHandle(0);
+		Require(!TomCat::AnimationClipAssetCodec::Encode(clip, document, error),
+			"Animation Clip asset codec accepted a zero Sprite handle");
+
+		TomCat::AnimatorControllerAsset controller;
+		controller.InitialState = "Idle";
+		TomCat::AnimatorParameter speed;
+		speed.Name = "Speed";
+		speed.Type = TomCat::AnimatorParameterType::Float;
+		controller.Parameters.push_back(speed);
+		controller.States = {
+			{ "Idle", TomCat::AssetHandle(2201), 1.0f },
+			{ "Walk", TomCat::AssetHandle(2202), 1.25f }
+		};
+		TomCat::AnimatorTransition transition;
+		transition.FromState = "Idle";
+		transition.ToState = "Walk";
+		transition.ExitTime = -1.0f;
+		transition.Conditions.push_back({ "Speed",
+			TomCat::AnimatorConditionMode::Greater, 0.1f });
+		controller.Transitions.push_back(transition);
+		Require(TomCat::AnimatorControllerAssetCodec::Encode(
+			controller, document, error),
+			"Animator Controller asset codec could not encode valid data");
+		TomCat::AnimatorControllerAsset decodedController;
+		Require(TomCat::AnimatorControllerAssetCodec::Decode(
+			document, decodedController, error)
+			&& decodedController.InitialState == "Idle"
+			&& decodedController.Parameters.size() == 1
+			&& decodedController.States.size() == 2
+			&& decodedController.Transitions.size() == 1
+			&& decodedController.Transitions[0].Conditions[0].Parameter == "Speed",
+			"Animator Controller asset roundtrip changed authored data");
+		references.clear();
+		Require(TomCat::AnimatorControllerAssetCodec::VisitAssetReferences(
+			decodedController,
+			[&](const TomCat::AuthoringAssetReference& reference)
+			{
+				references.push_back(reference);
+				return true;
+			}, error) && references.size() == 2
+			&& references[0].Handle == TomCat::AssetHandle(2201)
+			&& references[0].ExpectedType == TomCat::AssetType::AnimationClip
+			&& references[0].Kind
+				== TomCat::AuthoringAssetReferenceKind::AnimatorStateMotion
+			&& references[1].PropertyPath
+				== "$.TomCatAnimatorController.States[1].ClipHandle",
+			"Animator Controller Animation Clip references were not enumerated precisely");
+		TomCat::AnimatorControllerAsset emptyController;
+		Require(TomCat::AnimatorControllerAssetCodec::Encode(
+			emptyController, document, error),
+			"editable empty Animator Controller asset was rejected");
+		controller.Transitions[0].ToState = "Missing";
+		Require(!TomCat::AnimatorControllerAssetCodec::Encode(
+			controller, document, error),
+			"Animator Controller asset codec accepted an unknown target state");
+
+		TomCat::TilePaletteAsset palette;
+		palette.CellSize = { 1.0f, 2.0f };
+		palette.CellGap = { 0.125f, -0.25f };
+		palette.Tiles = {
+			{ { -2, 3 }, TomCat::AssetHandle(3101) },
+			{ { 4, 5 }, TomCat::AssetHandle(3102) }
+		};
+		Require(TomCat::TilePaletteAssetCodec::Encode(palette, document, error),
+			"Tile Palette asset codec could not encode valid data");
+		TomCat::TilePaletteAsset decodedPalette;
+		Require(TomCat::TilePaletteAssetCodec::Decode(
+			document, decodedPalette, error)
+			&& decodedPalette.CellSize == glm::vec2(1.0f, 2.0f)
+			&& decodedPalette.CellGap == glm::vec2(0.125f, -0.25f)
+			&& decodedPalette.Tiles.size() == 2
+			&& decodedPalette.Tiles[0].Coordinate == glm::ivec2(-2, 3)
+			&& decodedPalette.Tiles[1].SpriteHandle == TomCat::AssetHandle(3102),
+			"Tile Palette asset roundtrip changed authored data");
+		references.clear();
+		Require(TomCat::TilePaletteAssetCodec::VisitAssetReferences(decodedPalette,
+			[&](const TomCat::AuthoringAssetReference& reference)
+			{
+				references.push_back(reference);
+				return true;
+			}, error) && references.size() == 2
+			&& references[0].Kind
+				== TomCat::AuthoringAssetReferenceKind::TilePaletteEntry
+			&& references[1].PropertyPath
+				== "$.TomCatTilePalette.Tiles[1].SpriteHandle",
+			"Tile Palette asset references were not enumerated precisely");
+		palette.Tiles.push_back({ { -2, 3 }, TomCat::AssetHandle(9999) });
+		Require(!TomCat::TilePaletteAssetCodec::Encode(palette, document, error),
+			"Tile Palette asset codec accepted a duplicate coordinate");
+		const std::string invalidPalette =
+			"TomCatTilePalette:\n"
+			"  Version: 1\n"
+			"  CellSize: [1, 1]\n"
+			"  CellGap: [0, 0]\n"
+			"  Tiles:\n"
+			"    - Coordinate: [0, 0]\n"
+			"      SpriteHandle: 0\n";
+		Require(!TomCat::TilePaletteAssetCodec::Decode(
+			invalidPalette, decodedPalette, error),
+			"Tile Palette asset codec accepted a zero Sprite handle");
+	}
+
+	void TestAnimatorControllerHydratesInactiveAndDynamicEntities()
+	{
+		TemporaryAssetProject environment;
+		const auto builtIns = TomCat::GetBuiltInSpriteAssets();
+		Require(!builtIns.empty(), "Animator hydration needs one built-in Sprite");
+
+		TomCat::AnimationClipAsset clip;
+		clip.Clip.Name = "External";
+		clip.Clip.Frames.push_back({ builtIns.front().Handle, 1.0f / 12.0f });
+		std::string document;
+		std::string error;
+		Require(TomCat::AnimationClipAssetCodec::Encode(clip, document, error),
+			"Animator hydration clip could not be encoded");
+		const std::filesystem::path clipPath = environment.Assets / "External.tcanim";
+		{
+			std::ofstream output(clipPath, std::ios::binary | std::ios::trunc);
+			output.write(document.data(), static_cast<std::streamsize>(document.size()));
+			Require(static_cast<bool>(output), "Animator hydration clip could not be written");
+		}
+
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.Initialize(environment.Assets, environment.Library),
+			"Animator hydration AssetManager did not initialize");
+		const TomCat::AssetMetadata* clipMetadata =
+			assets.Registry().GetMetadata(clipPath);
+		Require(clipMetadata && clipMetadata->Type == TomCat::AssetType::AnimationClip,
+			"Animator hydration clip metadata is missing");
+
+		TomCat::AnimatorControllerAsset controller;
+		controller.InitialState = "External State";
+		controller.States.push_back({ "External State", clipMetadata->Handle, 1.0f });
+		Require(TomCat::AnimatorControllerAssetCodec::Encode(controller, document, error),
+			"Animator hydration controller could not be encoded");
+		const std::filesystem::path controllerPath =
+			environment.Assets / "External.tccontroller";
+		{
+			std::ofstream output(controllerPath, std::ios::binary | std::ios::trunc);
+			output.write(document.data(), static_cast<std::streamsize>(document.size()));
+			Require(static_cast<bool>(output),
+				"Animator hydration controller could not be written");
+		}
+		const TomCat::AssetHandle controllerHandle = assets.ImportAsset(controllerPath);
+		Require(static_cast<uint64_t>(controllerHandle) != 0,
+			"Animator hydration controller could not be imported");
+
+		auto makeEmbedded = [&]()
+		{
+			TomCat::SpriteAnimator animator;
+			animator.ControllerHandle = controllerHandle;
+			TomCat::SpriteAnimationClip embedded;
+			embedded.Name = "Embedded";
+			embedded.Frames.push_back({ builtIns.front().Handle, 0.25f });
+			animator.Clips.push_back(std::move(embedded));
+			return animator;
+		};
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity inactive = scene->CreateEntity("Inactive Animator");
+		inactive.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		inactive.AddComponent<TomCat::SpriteRenderer>();
+		inactive.AddComponent<TomCat::SpriteAnimator>(makeEmbedded());
+		Require(scene->OnRuntimeStart(), "Animator hydration runtime did not start");
+		const TomCat::SpriteAnimator& hydratedInactive =
+			inactive.GetComponent<TomCat::SpriteAnimator>();
+		Require(hydratedInactive.Clips.size() == 1
+			&& hydratedInactive.Clips[0].Name == "External"
+			&& hydratedInactive.States.size() == 1
+			&& hydratedInactive.InitialState == "External State"
+			&& !hydratedInactive.RuntimeInitialized,
+			"inactive Animator did not hydrate its external Controller at runtime start");
+
+		TomCat::Entity dynamic = scene->CreateEntity("Dynamic Animator");
+		dynamic.AddComponent<TomCat::SpriteRenderer>();
+		dynamic.AddComponent<TomCat::SpriteAnimator>(makeEmbedded());
+		const TomCat::SpriteAnimator& hydratedDynamic =
+			dynamic.GetComponent<TomCat::SpriteAnimator>();
+		Require(hydratedDynamic.Clips.size() == 1
+			&& hydratedDynamic.Clips[0].Name == "External"
+			&& hydratedDynamic.States.size() == 1
+			&& hydratedDynamic.RuntimeInitialized,
+			"dynamically added Animator bypassed external Controller hydration");
+		scene->OnRuntimeStop();
 	}
 
 	enum class ConcurrentCookMutation : uint8_t
@@ -1486,11 +1994,14 @@ int main()
 		TestSpriteAnimatorRuntime();
 		TestAnimatorStateMachine();
 		TestSpriteAnimatorAuthoringReferences();
+		TestAdvanced2DAuthoringAssetCodecs();
+		TestAnimatorControllerHydratesInactiveAndDynamicEntities();
 		TestSpriteAnimationSceneAndPrefabRoundtrip();
 		TestBuiltInSpriteManifestPathsAndCook();
 		TestBuiltInSpriteHandlesStayReserved();
 		TestPrimitiveSpriteAuthoringAndCookedPackage();
 		TestColdDirectAtlasCookIsReadOnly();
+		TestAutomaticAtlasSlicingAndPacking();
 		TestAtlasImportAndCookedSubSprite();
 		TestCookRejectsReservedSubAssetDependency();
 		TestCookRejectsConcurrentSubAssetMutation(

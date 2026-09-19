@@ -282,6 +282,33 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         FlushDeferredChanges();
     }
 
+	public void InvokeMethod(ulong attachmentId, string methodName)
+	{
+		ObjectDisposedException.ThrowIf(_destroyed, this);
+		if (!_createInvoked)
+			throw new InvalidOperationException(
+				"Create callbacks must run before event methods.");
+		if (string.IsNullOrWhiteSpace(methodName) || methodName.Length > 512
+			|| methodName.IndexOf('\0') >= 0)
+			throw new ArgumentException("Event method name is invalid.", nameof(methodName));
+		if (!_instancesByAttachment.TryGetValue(attachmentId,
+			out ScriptInstance? instance))
+			throw new KeyNotFoundException(
+				$"Attachment {attachmentId} does not exist.");
+		if (!CanInvokeEvent(instance))
+			throw new InvalidOperationException(
+				$"Attachment {attachmentId} is not callable.");
+		if (!instance.Descriptor.EventMethods.TryGetValue(methodName,
+			out System.Reflection.MethodInfo? method))
+			throw new KeyNotFoundException(
+				$"Public parameterless void method '{methodName}' is not exposed by "
+				+ $"'{instance.Descriptor.Manifest.TypeName}'.");
+
+		Invoke(instance, $"Event:{methodName}", behaviour =>
+			method.Invoke(behaviour, parameters: null));
+		FlushDeferredChanges();
+	}
+
 	private void InvokeCreateBatch(IEnumerable<ScriptInstance> instances)
 	{
 		ScriptInstance[] batch = instances.ToArray();
@@ -881,6 +908,13 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		instance.Created && instance.Enabled && GetProjectedEnabled(instance)
 		&& IsProjectedInstanceAvailable(instance)
 		&& instance.LifecycleActive && IsProjectedActiveInHierarchy(instance)
+		&& instance.State == ScriptInstanceState.Ready && !instance.Destroying
+		&& instance.Behaviour is not null;
+
+	// UnityEvent calls remain valid when a MonoBehaviour is disabled or its entity
+	// is inactive. Only a missing, destroyed, removed, or faulted target is rejected.
+	private bool CanInvokeEvent(ScriptInstance instance) =>
+		instance.Created && IsProjectedInstanceAvailable(instance)
 		&& instance.State == ScriptInstanceState.Ready && !instance.Destroying
 		&& instance.Behaviour is not null;
 

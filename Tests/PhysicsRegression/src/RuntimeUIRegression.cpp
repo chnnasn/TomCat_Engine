@@ -2,18 +2,28 @@
 
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Core/Input.h"
+#include "TomCat/Core/MouseCodes.h"
+#include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Renderer/Camera.h"
+#include "TomCat/Renderer/EditorCamera.h"
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Framebuffer.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/Renderer.h"
+#include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Runtime/RuntimeUI.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SceneCamera.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scripting/IScriptRuntime.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -25,14 +35,29 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <glm/gtc/matrix_transform.hpp>
+
+#ifdef TC_PLATFORM_WINDOWS
+	#ifndef NOMINMAX
+		#define NOMINMAX
+	#endif
+	#ifndef WIN32_LEAN_AND_MEAN
+		#define WIN32_LEAN_AND_MEAN
+	#endif
+	#include <Windows.h>
+#endif
 
 namespace {
 	constexpr const char* MixedUTF8 =
@@ -59,6 +84,45 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 	bool Near(float first, float second, float epsilon = 1.0e-3f)
 	{
 		return std::abs(first - second) <= epsilon;
+	}
+
+	class ScopedRuntimePackageRoot final
+	{
+	public:
+		explicit ScopedRuntimePackageRoot(const std::filesystem::path& root)
+			: m_Previous(TomCat::ApplicationPaths::GetRuntimePackageRoot())
+		{
+			TomCat::ApplicationPaths::SetRuntimePackageRoot(root);
+		}
+
+		~ScopedRuntimePackageRoot()
+		{
+			if (m_Previous)
+				TomCat::ApplicationPaths::SetRuntimePackageRoot(*m_Previous);
+			else
+				TomCat::ApplicationPaths::ClearRuntimePackageRoot();
+		}
+
+		ScopedRuntimePackageRoot(const ScopedRuntimePackageRoot&) = delete;
+		ScopedRuntimePackageRoot& operator=(const ScopedRuntimePackageRoot&) = delete;
+
+	private:
+		std::optional<std::filesystem::path> m_Previous;
+	};
+
+	std::filesystem::path GetExecutableDirectory()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		std::array<wchar_t, 32768> buffer{};
+		const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+			static_cast<DWORD>(buffer.size()));
+		RequireUI(length != 0 && length < buffer.size(),
+			"Physics regression executable path is unavailable");
+		return std::filesystem::path(
+			std::wstring(buffer.data(), length)).parent_path();
+#else
+		return std::filesystem::current_path();
+#endif
 	}
 
 	std::vector<uint8_t> DecodeBase64(std::string_view encoded)
@@ -112,32 +176,6 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			output.write(reinterpret_cast<const char*>(bytes.data()),
 				static_cast<std::streamsize>(bytes.size()));
 		RequireUI(output.good(), "could not write Runtime UI fixture");
-	}
-
-	std::filesystem::path FindRepositoryFile(const std::filesystem::path& relative)
-	{
-		auto search = [&](std::filesystem::path cursor)
-		{
-			std::error_code error;
-			for (uint32_t depth = 0; depth < 10 && !cursor.empty(); ++depth)
-			{
-				const std::filesystem::path candidate = cursor / relative;
-				if (std::filesystem::is_regular_file(candidate, error) && !error)
-					return candidate;
-				error.clear();
-				const std::filesystem::path parent = cursor.parent_path();
-				if (parent == cursor)
-					break;
-				cursor = parent;
-			}
-			return std::filesystem::path{};
-		};
-		if (std::filesystem::path found = search(std::filesystem::current_path());
-			!found.empty())
-			return found;
-		const std::filesystem::path source(__FILE__);
-		return search(source.is_absolute() ? source.parent_path()
-			: std::filesystem::absolute(source).parent_path());
 	}
 
 	struct UIFixture
@@ -328,6 +366,162 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		return pixels;
 	}
 
+	std::vector<uint8_t> CaptureEditModeGamePreview(TomCat::Scene& scene,
+		uint32_t width, uint32_t height)
+	{
+		TomCat::FramebufferSpecification specification;
+		specification.Width = width;
+		specification.Height = height;
+		specification.Attachments = { TomCat::FramebufferTextureFormat::RGBA8 };
+		TomCat::Ref<TomCat::Framebuffer> framebuffer =
+			TomCat::Framebuffer::Create(specification);
+		RequireUI(framebuffer != nullptr,
+			"could not create the edit-mode Game preview framebuffer");
+		framebuffer->Bind();
+		TomCat::RenderCommand::SetClearColor({ 8.0f / 255.0f, 12.0f / 255.0f,
+			18.0f / 255.0f, 1.0f });
+		TomCat::RenderCommand::Clear();
+		scene.OnViewportResize(width, height);
+		scene.OnRenderRuntime();
+		glFinish();
+		std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4u);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, static_cast<GLsizei>(width),
+			static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		const GLenum readError = glGetError();
+		framebuffer->Unbind();
+		RequireUI(readError == GL_NO_ERROR,
+			"OpenGL failed to read the edit-mode Game preview screenshot");
+		return pixels;
+	}
+
+	std::vector<uint8_t> CaptureEditorUI(TomCat::Scene& scene,
+		uint32_t targetWidth, uint32_t targetHeight,
+		TomCat::EditorCamera& camera)
+	{
+		TomCat::FramebufferSpecification specification;
+		specification.Width = targetWidth;
+		specification.Height = targetHeight;
+		specification.Attachments = { TomCat::FramebufferTextureFormat::RGBA8 };
+		TomCat::Ref<TomCat::Framebuffer> framebuffer =
+			TomCat::Framebuffer::Create(specification);
+		RequireUI(framebuffer != nullptr,
+			"could not create the Editor UI screenshot framebuffer");
+		framebuffer->Bind();
+		TomCat::RenderCommand::SetClearColor({ 8.0f / 255.0f, 12.0f / 255.0f,
+			18.0f / 255.0f, 1.0f });
+		TomCat::RenderCommand::Clear();
+		camera.SetViewportSize(static_cast<float>(targetWidth),
+			static_cast<float>(targetHeight));
+		scene.OnUpdateEditor(TomCat::Timestep(0.0f), camera);
+		glFinish();
+		std::vector<uint8_t> pixels(
+			static_cast<size_t>(targetWidth) * targetHeight * 4u);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, static_cast<GLsizei>(targetWidth),
+			static_cast<GLsizei>(targetHeight), GL_RGBA, GL_UNSIGNED_BYTE,
+			pixels.data());
+		const GLenum readError = glGetError();
+		framebuffer->Unbind();
+		RequireUI(readError == GL_NO_ERROR,
+			"OpenGL failed to read the Editor UI RGBA screenshot");
+		return pixels;
+	}
+
+	std::vector<uint8_t> CaptureWorldText(TomCat::Scene& scene, uint32_t width,
+		uint32_t height, const TomCat::Camera& camera,
+		const glm::mat4& cameraTransform)
+	{
+		TomCat::FramebufferSpecification specification;
+		specification.Width = width;
+		specification.Height = height;
+		specification.Attachments = { TomCat::FramebufferTextureFormat::RGBA8 };
+		TomCat::Ref<TomCat::Framebuffer> framebuffer =
+			TomCat::Framebuffer::Create(specification);
+		RequireUI(framebuffer != nullptr,
+			"could not create the World Text screenshot framebuffer");
+		framebuffer->Bind();
+		TomCat::RenderCommand::SetClearColor({ 8.0f / 255.0f, 12.0f / 255.0f,
+			18.0f / 255.0f, 1.0f });
+		TomCat::RenderCommand::Clear();
+		TomCat::Renderer2D::BeginScene(camera, cameraTransform);
+		TomCat::RuntimeUISystem::RenderWorldText(scene);
+		TomCat::Renderer2D::EndScene();
+		glFinish();
+		std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4u);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, static_cast<GLsizei>(width),
+			static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		const GLenum readError = glGetError();
+		framebuffer->Unbind();
+		RequireUI(readError == GL_NO_ERROR,
+			"OpenGL failed to read the World Text RGBA screenshot");
+		return pixels;
+	}
+
+	struct PixelBounds
+	{
+		uint32_t MinimumX = 0;
+		uint32_t MaximumX = 0;
+		uint32_t Count = 0;
+	};
+
+	class UICallbackRuntime final : public TomCat::Scripting::IScriptRuntime
+	{
+	public:
+		using ScriptStatus = TomCat::Scripting::ScriptStatus;
+		bool IsReady() const override { return true; }
+		ScriptStatus CreateSceneRuntime(uint64_t, uint64_t) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus InstantiateAll(std::span<const TomCat::Scripting::NativeScriptAttachmentV1>) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus ApplySerializedFields(std::string_view) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus InvokeCreateAll() override { return ScriptStatus::Success; }
+		ScriptStatus InvokeMethod(uint64_t attachmentId,
+			std::string_view methodName) override
+		{
+			Invocations.emplace_back(attachmentId, methodName);
+			Calls.emplace_back("InvokeMethod");
+			return ScriptStatus::Success;
+		}
+		ScriptStatus SetEnabled(uint64_t, bool) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus UpdateAll(float) override
+		{ Calls.emplace_back("UpdateAll"); return ScriptStatus::Success; }
+		ScriptStatus FixedUpdateAll(float) override { return ScriptStatus::Success; }
+		ScriptStatus DispatchPhysicsEvents(
+			std::span<const TomCat::Scripting::NativePhysicsEventV1>) override
+		{ return ScriptStatus::Success; }
+		ScriptStatus DestroyAll() override { return ScriptStatus::Success; }
+
+		std::vector<std::pair<uint64_t, std::string>> Invocations;
+		std::vector<std::string> Calls;
+	};
+
+	PixelBounds FindContentBounds(const std::vector<uint8_t>& pixels,
+		uint32_t width, uint32_t height)
+	{
+		PixelBounds bounds{ width, 0, 0 };
+		for (uint32_t y = 0; y < height; ++y)
+		{
+			for (uint32_t x = 0; x < width; ++x)
+			{
+				const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+				if (pixels[offset] == 8 && pixels[offset + 1] == 12
+					&& pixels[offset + 2] == 18)
+					continue;
+				bounds.MinimumX = std::min(bounds.MinimumX, x);
+				bounds.MaximumX = std::max(bounds.MaximumX, x);
+				++bounds.Count;
+			}
+		}
+		return bounds;
+	}
+
 	uint8_t ScreenshotClass(const uint8_t* pixel)
 	{
 		if (pixel[0] < 20 && pixel[1] < 24 && pixel[2] < 30)
@@ -365,6 +559,16 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 	void TestUTF8AndDeterministicFontAtlas()
 	{
+		const TomCat::AssetHandle defaultFont =
+			TomCat::GetDefaultRuntimeFontHandle();
+		const TomCat::BuiltInFontAsset* builtInFont =
+			TomCat::FindBuiltInFontAsset(defaultFont);
+		RequireUI(static_cast<uint64_t>(defaultFont)
+				== TomCat::BuiltInLegacyRuntimeFontHandleValue
+			&& builtInFont && builtInFont->Name == "Legacy Runtime"
+			&& TomCat::TextRenderer{}.Font == defaultFont
+			&& TomCat::UIText{}.Font == defaultFont,
+			"runtime text components do not default to the stable built-in font");
 		bool valid = false;
 		const std::vector<uint32_t> decoded = TomCat::FontAtlasBuilder::DecodeUTF8(
 			MixedUTF8, &valid);
@@ -378,8 +582,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(!valid && !repaired.empty()
 			&& repaired.front() == TomCat::FontAtlasBuilder::ReplacementCodepoint,
 			"malformed UTF-8 did not produce a replacement glyph");
-		const std::filesystem::path fontPath = FindRepositoryFile(
-			"Editor/TomCatInut/Packages/fonts/opensans/OpenSans-Regular.ttf");
+		const std::filesystem::path fontPath = TomCat::GetBuiltInFontAssetPath(
+			TomCat::GetDefaultRuntimeFontHandle());
 		RequireUI(!fontPath.empty(), "could not locate OpenSans font fixture");
 		const std::vector<uint8_t> bytes = ReadBinary(fontPath);
 		const std::vector<uint32_t> requested(decoded.begin(), decoded.end());
@@ -397,6 +601,35 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(latin && !latin->UsesFallback && chinese && chinese->UsesFallback
 			&& emoji && emoji->UsesFallback,
 			"source, missing CJK, or emoji fallback glyph selection is wrong");
+		for (const auto& [codepoint, glyph] : first.Glyphs)
+		{
+			if (glyph.AlphaCoverage == 0)
+				continue;
+			const uint32_t left = static_cast<uint32_t>(std::lround(
+				glyph.UVMin.x * static_cast<float>(first.Width)));
+			const uint32_t right = static_cast<uint32_t>(std::lround(
+				glyph.UVMax.x * static_cast<float>(first.Width)));
+			const uint32_t bottom = static_cast<uint32_t>(std::lround(
+				glyph.UVMin.y * static_cast<float>(first.Height)));
+			const uint32_t top = static_cast<uint32_t>(std::lround(
+				glyph.UVMax.y * static_cast<float>(first.Height)));
+			RequireUI(left < right && bottom < top && right <= first.Width
+				&& top <= first.Height,
+				"font glyph UV rectangle escaped its atlas");
+			uint32_t sampledCoverage = 0;
+			for (uint32_t y = bottom; y < top; ++y)
+			{
+				for (uint32_t x = left; x < right; ++x)
+				{
+					const size_t alpha = (static_cast<size_t>(y) * first.Width
+						+ x) * 4u + 3u;
+					if (first.PixelsRGBA[alpha] != 0)
+						++sampledCoverage;
+				}
+			}
+			RequireUI(sampledCoverage == glyph.AlphaCoverage,
+				"font glyph UVs did not address their rasterized atlas pixels");
+		}
 
 		const std::vector<uint8_t> cjkBytes =
 			DecodeBase64(SyntheticCJKFontBase64);
@@ -448,6 +681,29 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(normal.Width > 0.0f && Near(dpi150.Width, normal.Width * 1.5f)
 			&& Near(dpi150.Height, normal.Height * 1.5f),
 			"UIText font metrics did not scale with Canvas DPI");
+		auto glyphsFitLine = [](const TomCat::TextLayoutResult& layout)
+		{
+			return !layout.Glyphs.empty() && std::all_of(layout.Glyphs.begin(),
+				layout.Glyphs.end(), [&layout](const TomCat::TextGlyphQuad& glyph)
+				{
+					return glyph.Rect.Y >= -0.01f
+						&& glyph.Rect.Y + glyph.Rect.Height
+							<= layout.Height + 0.01f;
+				});
+		};
+		RequireUI(glyphsFitLine(normal),
+			"OpenSans glyph baseline escaped the first line and would be clipped");
+
+		const std::array<uint32_t, 1> missingGlyph = { 0x4e2du };
+		TomCat::FontAtlasData proceduralAtlas;
+		RequireUI(TomCat::FontAtlasBuilder::Build(
+			std::span<const uint8_t>{}, missingGlyph, proceduralAtlas),
+			"procedural fallback atlas could not be built");
+		const TomCat::TextLayoutResult proceduralLayout =
+			TomCat::TextLayoutEngine::Build(proceduralAtlas, "\xe4\xb8\xad",
+				24.0f, 0.0f, TomCat::TextAlignment::Left);
+		RequireUI(glyphsFitLine(proceduralLayout),
+			"procedural replacement glyph escaped the first line and was clipped");
 	}
 
 	void TestLayoutClippingAspectAndInput()
@@ -920,6 +1176,712 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"UIEventSystem ConsumeGameplayInput=false still captured Gameplay");
 	}
 
+	void TestRectTransformTransformAndHitTesting()
+	{
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity canvas = scene->CreateEntityWithUUID(
+			TomCat::UUID(10101), "Transform Canvas");
+		auto& canvasComponent = canvas.AddComponent<TomCat::Canvas>();
+		canvasComponent.ReferenceResolution = { 1920.0f, 1080.0f };
+		canvas.AddComponent<TomCat::UIEventSystem>();
+
+		TomCat::Entity button = scene->CreateEntityWithUUID(
+			TomCat::UUID(10102), "Transformed Button");
+		auto& rectTransform = button.AddComponent<TomCat::RectTransform>();
+		rectTransform.AnchorMin = rectTransform.AnchorMax = { 0.5f, 0.5f };
+		rectTransform.Pivot = { 0.25f, 0.75f };
+		rectTransform.AnchoredPosition = { 60.0f, -30.0f };
+		rectTransform.SizeDelta = { 160.0f, 40.0f };
+		button.AddComponent<TomCat::UIImage>();
+		button.AddComponent<TomCat::UIButton>();
+		RequireUI(scene->SetParent(button, canvas),
+			"could not parent transformed Runtime UI button");
+		auto& authoredTransform = button.GetComponent<TomCat::Transform>();
+		authoredTransform._LocalRotation.z = glm::radians(90.0f);
+		authoredTransform._LocalScale = { 1.5f, 0.5f, 1.0f };
+
+		const TomCat::RuntimeUILayoutSnapshot layout =
+			TomCat::RuntimeUISystem::BuildLayout(*scene, 1920, 1080, 96.0f);
+		const TomCat::UIRect rectangle = layout.Rectangles.at(button.GetUUID());
+		const glm::mat4 transform = layout.Transforms.at(button.GetUUID());
+		const glm::vec2 pivot(rectangle.X + rectangle.Width * rectTransform.Pivot.x,
+			rectangle.Y + rectangle.Height * rectTransform.Pivot.y);
+		const glm::vec4 transformedPivot = transform * glm::vec4(pivot, 0.0f, 1.0f);
+		RequireUI(Near(transformedPivot.x, pivot.x)
+			&& Near(transformedPivot.y, pivot.y),
+			"RectTransform rotation/scale did not preserve its Pivot");
+
+		const glm::vec2 sample = pivot + glm::vec2(20.0f, 8.0f);
+		const glm::vec4 transformedSample = transform
+			* glm::vec4(sample, 0.0f, 1.0f);
+		// Scale (20, 8) to (30, 4), then rotate it 90 degrees around Pivot.
+		RequireUI(Near(transformedSample.x, pivot.x - 4.0f)
+			&& Near(transformedSample.y, pivot.y + 30.0f),
+			"RectTransform rotation/scale matrix was not composed around Pivot");
+
+		auto toPointer = [](const glm::vec2& bottomLeftPoint)
+		{
+			return glm::vec2(bottomLeftPoint.x, 1080.0f - bottomLeftPoint.y);
+		};
+		// This point is inside the authored axis-aligned rectangle, but its inverse
+		// transformed point lies above the button. It must not use the stale AABB.
+		const glm::vec2 localOutside = pivot + glm::vec2(0.0f, 20.0f);
+		const glm::vec4 visuallyOutside = transform
+			* glm::vec4(localOutside, 0.0f, 1.0f);
+		RequireUI(rectangle.Contains(glm::vec2(visuallyOutside)),
+			"transformed hit-test negative probe no longer overlaps the source AABB");
+		TomCat::RuntimeUIInputFrame input;
+		input.PointerPosition = toPointer(glm::vec2(visuallyOutside));
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, input);
+		RequireUI(!button.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& !TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"UIButton hit testing used its untransformed source rectangle");
+
+		// This point starts inside the local rectangle and rotates well outside the
+		// source AABB. It must still hit the visible transformed button.
+		const glm::vec2 localInside = pivot + glm::vec2(80.0f, 0.0f);
+		const glm::vec4 visuallyInside = transform
+			* glm::vec4(localInside, 0.0f, 1.0f);
+		RequireUI(!rectangle.Contains(glm::vec2(visuallyInside)),
+			"transformed hit-test positive probe did not leave the source AABB");
+		input = {};
+		input.PointerPosition = toPointer(glm::vec2(visuallyInside));
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, input);
+		RequireUI(button.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"UIButton did not hit its rotated/scaled visible region");
+		input.MousePressed = false;
+		input.MouseReleased = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, input);
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, {});
+
+		// Ancestor clipping remains in the ancestor's transformed coordinate space.
+		// A rotated child must neither rotate the parent's mask nor receive pointer
+		// input outside that mask.
+		auto clippedScene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity clippedCanvas = clippedScene->CreateEntityWithUUID(
+			TomCat::UUID(10103), "Clipped Canvas");
+		clippedCanvas.AddComponent<TomCat::Canvas>();
+		clippedCanvas.AddComponent<TomCat::UIEventSystem>();
+		TomCat::Entity clipParent = clippedScene->CreateEntityWithUUID(
+			TomCat::UUID(10104), "Clip Parent");
+		auto& parentRect = clipParent.AddComponent<TomCat::RectTransform>();
+		parentRect.AnchorMin = parentRect.AnchorMax = { 0.0f, 0.0f };
+		parentRect.Pivot = { 0.0f, 0.0f };
+		parentRect.AnchoredPosition = { 50.0f, 50.0f };
+		parentRect.SizeDelta = { 100.0f, 100.0f };
+		parentRect.ClipChildren = true;
+		RequireUI(clippedScene->SetParent(clipParent, clippedCanvas),
+			"could not parent Runtime UI clipping mask");
+
+		TomCat::Entity clippedButton = clippedScene->CreateEntityWithUUID(
+			TomCat::UUID(10105), "Rotated Clipped Button");
+		auto& clippedRect = clippedButton.AddComponent<TomCat::RectTransform>();
+		clippedRect.AnchorMin = clippedRect.AnchorMax = { 0.0f, 0.0f };
+		clippedRect.Pivot = { 0.5f, 0.5f };
+		clippedRect.AnchoredPosition = { 100.0f, 50.0f };
+		clippedRect.SizeDelta = { 100.0f, 50.0f };
+		clippedButton.AddComponent<TomCat::UIImage>();
+		clippedButton.AddComponent<TomCat::UIButton>();
+		RequireUI(clippedScene->SetParent(clippedButton, clipParent),
+			"could not parent rotated Runtime UI clipping probe");
+		clippedButton.GetComponent<TomCat::Transform>()._LocalRotation.z =
+			glm::radians(90.0f);
+
+		const TomCat::RuntimeUILayoutSnapshot clippedLayout =
+			TomCat::RuntimeUISystem::BuildLayout(*clippedScene, 1920, 1080, 96.0f);
+		RequireUI(clippedLayout.ClipRegions.at(clippedButton.GetUUID()).size() == 2,
+			"rotated child did not inherit viewport and parent clip regions");
+		auto clippedPointer = [](const glm::vec2& bottomLeftPoint)
+		{
+			return glm::vec2(bottomLeftPoint.x, 1080.0f - bottomLeftPoint.y);
+		};
+		input = {};
+		input.PointerPosition = clippedPointer({ 160.0f, 75.0f });
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, input);
+		RequireUI(!clippedButton.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& !TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"rotated child accepted input outside its unrotated parent clip");
+
+		input = {};
+		input.PointerPosition = clippedPointer({ 140.0f, 125.0f });
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, input);
+		RequireUI(clippedButton.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"rotated child rejected input inside its parent clip");
+		input.MousePressed = false;
+		input.MouseReleased = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, input);
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, {});
+	}
+
+	void TestEditorCanvasLayout()
+	{
+		TomCat::Scene scene;
+		RequireUI(!scene.HasGameViewRenderSource(),
+			"empty Scene unexpectedly reported a Game view render source");
+		TomCat::Entity wideCanvas = scene.CreateEntityWithUUID(
+			TomCat::UUID(12001), "Wide Canvas");
+		auto& wide = wideCanvas.AddComponent<TomCat::Canvas>();
+		wide.ReferenceResolution = { 1920.0f, 1080.0f };
+		wide.ScaleFactor = 1.5f;
+		TomCat::Entity squareCanvas = scene.CreateEntityWithUUID(
+			TomCat::UUID(12002), "Square Canvas");
+		squareCanvas.AddComponent<TomCat::Canvas>().ReferenceResolution =
+			{ 800.0f, 800.0f };
+		RequireUI(scene.HasActiveCanvas() && scene.HasGameViewRenderSource(),
+			"Scene did not report its enabled Canvas as a Game view render source");
+		wide.Enabled = false;
+		squareCanvas.GetComponent<TomCat::Canvas>().Enabled = false;
+		RequireUI(!scene.HasActiveCanvas() && !scene.HasGameViewRenderSource(),
+			"Scene reported a disabled Canvas as a Game view render source");
+		wide.Enabled = true;
+		squareCanvas.GetComponent<TomCat::Canvas>().Enabled = true;
+
+		TomCat::Entity child = scene.CreateEntityWithUUID(
+			TomCat::UUID(12003), "Editor Canvas Child");
+		auto& childRect = child.AddComponent<TomCat::RectTransform>();
+		childRect.AnchoredPosition = { 10.0f, -20.0f };
+		childRect.SizeDelta = { 100.0f, 50.0f };
+		childRect.RuntimeRect = { 7.0f, 8.0f, 9.0f, 10.0f };
+		childRect.RuntimeClipRect = { 11.0f, 12.0f, 13.0f, 14.0f };
+		RequireUI(scene.SetParent(child, wideCanvas),
+			"could not parent Editor Canvas layout probe");
+
+		const TomCat::RuntimeUILayoutSnapshot editor =
+			TomCat::RuntimeUISystem::BuildEditorLayout(scene);
+		const TomCat::UIRect& wideRoot = editor.Rectangles.at(wideCanvas.GetUUID());
+		const TomCat::UIRect& squareRoot = editor.Rectangles.at(squareCanvas.GetUUID());
+		RequireUI(Near(wideRoot.Width, 1920.0f)
+			&& Near(wideRoot.Height, 1080.0f)
+			&& Near(squareRoot.Width, 800.0f)
+			&& Near(squareRoot.Height, 800.0f),
+			"Editor Canvas roots did not use their own reference resolutions");
+
+		auto transformedPoint = [&](TomCat::Entity entity, const glm::vec2& point)
+		{
+			return editor.Transforms.at(entity.GetUUID())
+				* glm::vec4(point, 0.0f, 1.0f);
+		};
+		const glm::vec4 wideCenter = transformedPoint(wideCanvas,
+			{ wideRoot.Width * 0.5f, wideRoot.Height * 0.5f });
+		const glm::vec4 wideMinimum = transformedPoint(wideCanvas, { 0.0f, 0.0f });
+		const glm::vec4 wideMaximum = transformedPoint(wideCanvas,
+			{ wideRoot.Width, wideRoot.Height });
+		const glm::vec4 squareCenter = transformedPoint(squareCanvas,
+			{ squareRoot.Width * 0.5f, squareRoot.Height * 0.5f });
+		RequireUI(Near(wideMinimum.x, 0.0f) && Near(wideMinimum.y, 0.0f)
+			&& Near(wideMaximum.x, 19.2f) && Near(wideMaximum.y, 10.8f)
+			&& Near(wideCenter.x, 9.6f) && Near(wideCenter.y, 5.4f)
+			&& Near(squareCenter.x, 4.0f) && Near(squareCenter.y, 4.0f),
+			"Editor Canvas did not start at the lower-left origin and grow along +X/+Y");
+
+		const TomCat::UIRect& childValue = editor.Rectangles.at(child.GetUUID());
+		RequireUI(Near(editor.Scales.at(child.GetUUID()), 1.5f)
+			&& Near(childValue.X, 900.0f) && Near(childValue.Y, 472.5f)
+			&& Near(childValue.Width, 150.0f) && Near(childValue.Height, 75.0f),
+			"Editor Canvas child lost pixel-based RectTransform semantics");
+		RequireUI(childRect.RuntimeRect == glm::vec4(7.0f, 8.0f, 9.0f, 10.0f)
+			&& childRect.RuntimeClipRect == glm::vec4(11.0f, 12.0f, 13.0f, 14.0f),
+			"Editor Canvas layout polluted runtime RectTransform diagnostics");
+
+		const TomCat::RuntimeUILayoutSnapshot runtime =
+			TomCat::RuntimeUISystem::BuildLayout(scene, 320, 240, 96.0f);
+		const TomCat::UIRect& runtimeRoot = runtime.Rectangles.at(wideCanvas.GetUUID());
+		RequireUI(Near(runtimeRoot.Width, 320.0f)
+			&& Near(runtimeRoot.Height, 240.0f)
+			&& childRect.RuntimeRect != glm::vec4(7.0f, 8.0f, 9.0f, 10.0f),
+			"Runtime Canvas stopped mapping layout to the real viewport");
+	}
+
+	void TestEditorCameraFrameBounds()
+	{
+		TomCat::EditorCamera camera(30.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+		camera.SetViewportSize(1600.0f, 900.0f);
+		const glm::vec3 minimum(-400.0f, -120.0f, -80.0f);
+		const glm::vec3 maximum(400.0f, 120.0f, 80.0f);
+		camera.FrameBounds(minimum, maximum);
+		RequireUI(glm::length(camera.GetFocalPoint()
+			- (minimum + maximum) * 0.5f) <= 1.0e-3f,
+			"EditorCamera::FrameBounds did not center the requested bounds");
+
+		const glm::mat4 viewProjection = camera.GetViewProjection();
+		for (int x = 0; x < 2; ++x)
+		{
+			for (int y = 0; y < 2; ++y)
+			{
+				for (int z = 0; z < 2; ++z)
+				{
+					const glm::vec3 corner(
+						x == 0 ? minimum.x : maximum.x,
+						y == 0 ? minimum.y : maximum.y,
+						z == 0 ? minimum.z : maximum.z);
+					const glm::vec4 clip = viewProjection * glm::vec4(corner, 1.0f);
+					RequireUI(std::isfinite(clip.w) && clip.w > 0.0f,
+						"EditorCamera::FrameBounds placed a corner behind the camera");
+					const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+					RequireUI(std::isfinite(ndc.x) && std::isfinite(ndc.y)
+						&& std::isfinite(ndc.z)
+						&& std::abs(ndc.x) <= 1.0f + 1.0e-3f
+						&& std::abs(ndc.y) <= 1.0f + 1.0e-3f
+						&& ndc.z >= -1.0f - 1.0e-3f
+						&& ndc.z <= 1.0f + 1.0e-3f,
+						"EditorCamera::FrameBounds clipped a large bounds corner");
+				}
+			}
+		}
+	}
+
+	void TestEditorCameraScrollZoom()
+	{
+		TomCat::EditorCamera camera(30.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
+		camera.SetViewportSize(1600.0f, 900.0f);
+		// Reproduce a fresh Scene view: no framing, rotation or prior pan, and
+		// no edits to a scene camera. The very first wheel must move the view.
+		const glm::vec3 initialPosition = camera.GetPosition();
+		const glm::vec3 initialFocus = camera.GetFocalPoint();
+		auto projectedWidth = [&camera]()
+		{
+			const glm::vec4 left = camera.GetViewProjection() * glm::vec4(-0.25f, 0.0f, 0.0f, 1.0f);
+			const glm::vec4 right = camera.GetViewProjection() * glm::vec4(0.25f, 0.0f, 0.0f, 1.0f);
+			return right.x / right.w - left.x / left.w;
+		};
+		const float initialWidth = projectedWidth();
+		TomCat::MouseScrolledEvent firstScroll(0.0f, 1.0f);
+		camera.OnEvent(firstScroll);
+		RequireUI(glm::dot(camera.GetPosition() - initialPosition,
+			camera.GetForwardDirection()) > 0.0f
+			&& projectedWidth() > initialWidth * 1.04f
+			&& camera.GetFocalPoint() == initialFocus,
+			"first wheel in an untouched Scene must dolly and enlarge world geometry");
+
+		camera.SetDistance(1000.0f);
+		const float farDistanceBefore = camera.GetDistance();
+		TomCat::MouseScrolledEvent farScroll(0.0f, 1.0f);
+		camera.OnEvent(farScroll);
+		const float farDistanceAfter = camera.GetDistance();
+		RequireUI(std::isfinite(farDistanceAfter) && farDistanceAfter > 0.0f,
+			"EditorCamera scroll produced an invalid distance from far away");
+		RequireUI(farDistanceAfter < farDistanceBefore * 0.975f,
+			"EditorCamera scroll did not noticeably approach from far away");
+
+		camera.SetDistance(0.12f);
+		const float nearDistanceBefore = camera.GetDistance();
+		const glm::vec3 focalPointBefore = camera.GetFocalPoint();
+		const glm::vec3 forward = camera.GetForwardDirection();
+		TomCat::MouseScrolledEvent crossingScroll(0.0f, 10.0f);
+		camera.OnEvent(crossingScroll);
+		const float nearDistanceAfter = camera.GetDistance();
+		const glm::vec3 focalDelta = camera.GetFocalPoint() - focalPointBefore;
+		RequireUI(std::isfinite(nearDistanceAfter) && nearDistanceAfter > 0.0f
+			&& nearDistanceAfter <= nearDistanceBefore,
+			"EditorCamera scroll jumped away or produced an invalid minimum distance");
+		RequireUI(glm::dot(focalDelta, forward) > 0.1f,
+			"EditorCamera scroll stopped instead of advancing through its orbit floor");
+	}
+
+	void TestEditorCameraAxisViews()
+	{
+		using AxisView = TomCat::EditorCamera::AxisView;
+		struct AxisExpectation
+		{
+			AxisView View;
+			glm::vec3 CameraSide;
+		};
+		const std::array<AxisExpectation, 6> expectations = { {
+			{ AxisView::PositiveX, { 1.0f, 0.0f, 0.0f } },
+			{ AxisView::NegativeX, { -1.0f, 0.0f, 0.0f } },
+			{ AxisView::PositiveY, { 0.0f, 1.0f, 0.0f } },
+			{ AxisView::NegativeY, { 0.0f, -1.0f, 0.0f } },
+			{ AxisView::PositiveZ, { 0.0f, 0.0f, 1.0f } },
+			{ AxisView::NegativeZ, { 0.0f, 0.0f, -1.0f } }
+		} };
+
+		TomCat::EditorCamera camera(45.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
+		camera.SetViewportSize(1600.0f, 900.0f);
+		camera.SetDistance(27.0f);
+		RequireUI(glm::length(camera.GetForwardDirection()
+			- glm::vec3(0.0f, 0.0f, 1.0f)) <= 1.0e-5f
+			&& glm::length(glm::cross(camera.GetRightDirection(),
+				camera.GetUpDirection()) - camera.GetForwardDirection()) <= 1.0e-5f,
+			"EditorCamera did not use the Unity +X/+Y/+Z authoring basis");
+
+		// Drive a representative elevated, rear-left orbit through the same mouse
+		// path used by the Scene window. In Unity's +Z-forward basis, +X must
+		// project to the upper-left and +Z to the lower-left at this view.
+		TomCat::Input::ClearState();
+		TomCat::Input::NotifyMousePosition(0.0f, 0.0f);
+		TomCat::Input::BeginFrame();
+		camera.OnUpdate(TomCat::Timestep(0.0f), false);
+		TomCat::Input::NotifyMouseButton(
+			static_cast<uint32_t>(TomCat::Mouse::ButtonRight),
+			TomCat::InputEventQueue::Action::Pressed, 0.0);
+		TomCat::Input::NotifyMousePosition(600.0f, 150.0f);
+		TomCat::Input::BeginFrame();
+		camera.OnUpdate(TomCat::Timestep(0.0f), true);
+		const glm::mat4 referenceView = camera.GetViewMatrix();
+		const glm::vec3 viewX = glm::vec3(referenceView
+			* glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+		const glm::vec3 viewY = glm::vec3(referenceView
+			* glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+		const glm::vec3 viewZ = glm::vec3(referenceView
+			* glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+		RequireUI(camera.GetForwardDirection().x > 0.1f
+			&& camera.GetForwardDirection().y < -0.1f
+			&& viewX.x < -0.1f && viewX.y > 0.1f
+			&& viewY.y > 0.1f
+			&& viewZ.x < -0.1f && viewZ.y < -0.1f,
+			"EditorCamera mirrored the Unity reference X/Z screen directions");
+		glm::mat4 toolView(1.0f);
+		glm::mat4 toolProjection(1.0f);
+		camera.GetRightHandedToolMatrices(toolView, toolProjection);
+		const glm::mat4 sceneViewProjection = camera.GetViewProjection();
+		const glm::mat4 toolViewProjection = toolProjection * toolView;
+		float maximumMatrixError = 0.0f;
+		for (int column = 0; column < 4; ++column)
+			for (int row = 0; row < 4; ++row)
+				maximumMatrixError = std::max(maximumMatrixError,
+					std::abs(sceneViewProjection[column][row]
+						- toolViewProjection[column][row]));
+		const glm::vec3 toolCameraBack = glm::normalize(glm::vec3(
+			glm::inverse(toolView)[2]));
+		RequireUI(maximumMatrixError <= 1.0e-5f
+			&& glm::length(toolCameraBack + camera.GetForwardDirection())
+				<= 1.0e-5f,
+			"right-handed editor-tool adapter changed Scene projection or camera axes");
+		TomCat::Input::ClearState();
+
+		const glm::vec3 focalPoint = camera.GetFocalPoint();
+		const float distance = camera.GetDistance();
+		for (const AxisExpectation& expectation : expectations)
+		{
+			RequireUI(glm::length(TomCat::EditorCamera::GetWorldAxis(expectation.View)
+				- expectation.CameraSide) <= 1.0e-5f,
+				"EditorCamera axis mapping no longer follows +X right, +Y up, +Z forward");
+			camera.SnapToAxis(expectation.View);
+			const glm::vec3 actualSide = glm::normalize(camera.GetPosition()
+				- camera.GetFocalPoint());
+			const glm::vec3 actualForward = glm::normalize(
+				camera.GetForwardDirection());
+			RequireUI(camera.IsOrthographic(),
+				"EditorCamera axis snap did not enter orthographic projection");
+			RequireUI(glm::length(actualSide - expectation.CameraSide) <= 1.0e-4f
+				&& glm::length(actualForward + expectation.CameraSide) <= 1.0e-4f,
+				"EditorCamera axis snap selected the wrong side or look direction");
+			RequireUI(glm::length(camera.GetFocalPoint() - focalPoint) <= 1.0e-5f
+				&& Near(camera.GetDistance(), distance, 1.0e-5f),
+				"EditorCamera axis snap changed its focus or orbit distance");
+		}
+
+		camera.SnapToAxis(AxisView::PositiveZ);
+		const glm::vec3 focalPlanePoint = camera.GetFocalPoint()
+			+ camera.GetRightDirection() * 3.0f + camera.GetUpDirection() * 2.0f;
+		auto toNDC = [&camera](const glm::vec3& point)
+		{
+			const glm::vec4 clip = camera.GetViewProjection() * glm::vec4(point, 1.0f);
+			return glm::vec3(clip) / clip.w;
+		};
+		const glm::vec3 orthographicNDC = toNDC(focalPlanePoint);
+		camera.SetOrthographic(false);
+		const glm::vec3 perspectiveNDC = toNDC(focalPlanePoint);
+		RequireUI(glm::length(glm::vec2(orthographicNDC)
+			- glm::vec2(perspectiveNDC)) <= 1.0e-4f,
+			"EditorCamera projection toggle changed focal-plane screen scale");
+		RequireUI(glm::length(camera.GetFocalPoint() - focalPoint) <= 1.0e-5f
+			&& Near(camera.GetDistance(), distance, 1.0e-5f),
+			"EditorCamera projection toggle changed its focus or orbit distance");
+
+		camera.SetDistance(1000000.0f);
+		const glm::vec3 distantFocusNDC = toNDC(camera.GetFocalPoint());
+		RequireUI(std::isfinite(distantFocusNDC.z)
+			&& distantFocusNDC.z >= -1.0f - 1.0e-3f
+			&& distantFocusNDC.z <= 1.0f + 1.0e-3f,
+			"EditorCamera finite projection clipped its focus at a large distance");
+	}
+
+	void TestEditorCamera2DProjection()
+	{
+		TomCat::EditorCamera editor(45.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
+		TomCat::SceneCamera sceneCamera;
+		RequireUI(sceneCamera.GetOrthographicNearClip() >= 0.0f
+			&& sceneCamera.GetOrthographicFarClip() > sceneCamera.GetOrthographicNearClip(),
+			"new orthographic cameras must use forward, nonnegative clip distances");
+		const glm::mat4 originalProjection = sceneCamera.GetProjection();
+		RequireUI(!sceneCamera.SetOrthographic(10.0f, -1.0f, 1.0f)
+			&& !sceneCamera.SetOrthographicNearClip(-0.01f)
+			&& !sceneCamera.SetOrthographicFarClip(-1.0f)
+			&& !sceneCamera.SetOrthographicFarClip(0.0f)
+			&& sceneCamera.GetProjection() == originalProjection,
+			"invalid signed clip distances must be rejected without changing projection");
+		RequireUI(sceneCamera.SetViewportSize(1600, 900)
+			&& sceneCamera.SetOrthographic(10.0f, 0.0f, 2.0f),
+			"could not configure the 2D camera outline fixture");
+		std::array<glm::vec3, 8> corners{};
+		RequireUI(sceneCamera.TryGetLocalFrustumCorners(corners),
+			"could not get the 2D camera outline corners");
+		auto projectedSeparation = [&](const glm::mat4& viewProjection)
+		{
+			float separation = 0.0f;
+			for (size_t i = 0; i < 4; ++i)
+			{
+				const glm::vec4 nearClip = viewProjection * glm::vec4(corners[i], 1.0f);
+				const glm::vec4 farClip = viewProjection * glm::vec4(corners[i + 4], 1.0f);
+				separation = std::max(separation, glm::length(
+					glm::vec2(nearClip) / nearClip.w - glm::vec2(farClip) / farClip.w));
+			}
+			return separation;
+		};
+		RequireUI(projectedSeparation(editor.GetViewProjection()) > 0.01f,
+			"perspective fixture must reproduce the separated near/far outlines");
+		editor.SnapToAxis(TomCat::EditorCamera::AxisView::PositiveX);
+		editor.SetOrthographic(false);
+		const glm::vec3 original3DForward = editor.GetForwardDirection();
+		editor.Set2DMode(true);
+		editor.Set2DMode(true); // Repeated per-frame synchronization must be harmless.
+		editor.SetOrthographic(false);
+		editor.SnapToAxis(TomCat::EditorCamera::AxisView::PositiveX);
+		editor.SetViewportSize(900.0f, 600.0f);
+		editor.SetDistance(20.0f);
+		RequireUI(editor.IsOrthographic()
+			&& glm::length(editor.GetForwardDirection() - glm::vec3(0, 0, 1)) < 1.0e-5f
+			&& projectedSeparation(editor.GetViewProjection()) < 1.0e-5f
+			&& projectedSeparation(editor.GetInfiniteFarViewProjection()) < 1.0e-5f,
+			"2D Scene view must overlap camera near/far outlines without perspective");
+		editor.Set2DMode(false);
+		RequireUI(!editor.IsOrthographic()
+			&& glm::length(editor.GetForwardDirection() - original3DForward) < 1.0e-5f
+			&& projectedSeparation(editor.GetViewProjection()) > 0.01f,
+			"leaving 2D did not restore the 3D orientation and perspective projection");
+		editor.SetOrthographic(true);
+		editor.Set2DMode(true);
+		editor.Set2DMode(false);
+		RequireUI(editor.IsOrthographic(),
+			"leaving 2D did not preserve a previously orthographic 3D view");
+	}
+
+	void TestSceneCameraFrustumCorners()
+	{
+		TomCat::SceneCamera camera;
+		RequireUI(camera.SetViewportSize(1600, 900),
+			"SceneCamera rejected a valid frustum test viewport");
+
+		const std::array<glm::vec3, 8> expectedNDC = {
+			glm::vec3(-1.0f, -1.0f, -1.0f),
+			glm::vec3( 1.0f, -1.0f, -1.0f),
+			glm::vec3( 1.0f,  1.0f, -1.0f),
+			glm::vec3(-1.0f,  1.0f, -1.0f),
+			glm::vec3(-1.0f, -1.0f,  1.0f),
+			glm::vec3( 1.0f, -1.0f,  1.0f),
+			glm::vec3( 1.0f,  1.0f,  1.0f),
+			glm::vec3(-1.0f,  1.0f,  1.0f)
+		};
+		auto getVerifiedCorners = [&expectedNDC](const TomCat::SceneCamera& source)
+		{
+			std::array<glm::vec3, 8> corners{};
+			RequireUI(source.TryGetLocalFrustumCorners(corners),
+				"SceneCamera could not calculate valid local frustum corners");
+			for (size_t index = 0; index < corners.size(); ++index)
+			{
+				const glm::vec4 clip = source.GetProjection()
+					* glm::vec4(corners[index], 1.0f);
+				RequireUI(std::isfinite(clip.w)
+					&& std::abs(clip.w) > 1.0e-6f,
+					"SceneCamera frustum corner produced an invalid clip w");
+				const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+				RequireUI(glm::length(ndc - expectedNDC[index]) <= 1.0e-3f,
+					"SceneCamera local frustum corner did not project back to NDC");
+			}
+			return corners;
+		};
+
+		RequireUI(camera.SetPerspective(glm::radians(60.0f), 0.5f, 16.0f),
+			"SceneCamera rejected the perspective frustum test values");
+		const glm::vec4 perspectiveNearClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 0.5f, 1.0f);
+		const glm::vec4 perspectiveFarClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 16.0f, 1.0f);
+		const glm::vec4 perspectiveBehindClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, -0.5f, 1.0f);
+		RequireUI(perspectiveNearClip.w > 0.0f
+			&& perspectiveFarClip.w > 0.0f
+			&& Near(perspectiveNearClip.z / perspectiveNearClip.w, -1.0f)
+			&& Near(perspectiveFarClip.z / perspectiveFarClip.w, 1.0f)
+			&& perspectiveBehindClip.w < 0.0f,
+			"SceneCamera perspective projection did not use local +Z as forward");
+
+		const glm::mat4 cameraWorld = glm::rotate(glm::mat4(1.0f),
+			glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		const glm::vec3 worldForward = glm::vec3(cameraWorld
+			* glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+		const glm::vec4 rotatedForwardClip = camera.GetProjection()
+			* glm::inverse(cameraWorld)
+			* glm::vec4(worldForward, 1.0f);
+		const glm::vec3 rotatedForwardNDC = glm::vec3(rotatedForwardClip)
+			/ rotatedForwardClip.w;
+		RequireUI(worldForward.x > 0.0f
+			&& rotatedForwardClip.w > 0.0f
+			&& Near(rotatedForwardNDC.x, 0.0f)
+			&& Near(rotatedForwardNDC.y, 0.0f),
+			"SceneCamera rotated +90 degrees around Y did not face world +X");
+
+		TomCat::Scene cameraPoseScene;
+		TomCat::Entity cameraEntity = cameraPoseScene.CreateEntityWithUUID(
+			TomCat::UUID(12020), "Scaled Camera");
+		auto& authoredCameraTransform =
+			cameraEntity.GetComponent<TomCat::Transform>();
+		authoredCameraTransform._Translation = { 3.0f, 4.0f, 5.0f };
+		authoredCameraTransform._Rotation =
+			{ 0.0f, glm::radians(90.0f), 0.0f };
+		authoredCameraTransform._Scale = { 2.0f, 3.0f, -4.0f };
+		const glm::mat4 scaleFreeCameraPose =
+			cameraPoseScene.GetRuntimeCameraTransform(cameraEntity.GetUUID());
+		const glm::vec3 scaleFreeForward = glm::normalize(glm::vec3(
+			scaleFreeCameraPose * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)));
+		RequireUI(Near(glm::length(glm::vec3(scaleFreeCameraPose[0])), 1.0f)
+			&& Near(glm::length(glm::vec3(scaleFreeCameraPose[1])), 1.0f)
+			&& Near(glm::length(glm::vec3(scaleFreeCameraPose[2])), 1.0f)
+			&& glm::length(glm::vec3(scaleFreeCameraPose[3])
+				- authoredCameraTransform._Translation) <= 1.0e-4f
+			&& glm::length(scaleFreeForward - glm::vec3(1.0f, 0.0f, 0.0f))
+				<= 1.0e-4f,
+			"Camera Transform scale changed its pose or reversed +Z forward");
+
+		const auto perspectiveFar16 = getVerifiedCorners(camera);
+		RequireUI(camera.SetPerspectiveFarClip(64.0f),
+			"SceneCamera rejected the enlarged perspective far plane");
+		const auto perspectiveFar64 = getVerifiedCorners(camera);
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(Near(perspectiveFar16[index].z,
+				perspectiveFar64[index].z),
+				"Perspective far clip change moved the near-plane corners");
+			RequireUI(perspectiveFar64[index + 4].z
+				> perspectiveFar16[index + 4].z,
+				"Perspective far clip change did not extend the far-plane corners");
+		}
+		constexpr float HugeFar = 1.0e30f;
+		RequireUI(camera.SetPerspective(glm::radians(60.0f), 0.01f, HugeFar),
+			"SceneCamera imposed an artificial perspective Far limit");
+		std::array<glm::vec3, 8> hugePerspective{};
+		RequireUI(camera.TryGetLocalFrustumCorners(hugePerspective),
+			"SceneCamera could not construct a very large perspective frustum");
+		auto nearRelative = [](float value, float expected)
+		{
+			return std::abs(value - expected)
+				<= std::max(1.0f, std::abs(expected)) * 1.0e-5f;
+		};
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(nearRelative(hugePerspective[index].z, 0.01f)
+				&& nearRelative(hugePerspective[index + 4].z, HugeFar)
+				&& std::isfinite(hugePerspective[index + 4].x)
+				&& std::isfinite(hugePerspective[index + 4].y),
+				"very large perspective Far did not produce finite direct geometry");
+		}
+
+		auto requireOrthographicDepthInvariant = [](const auto& corners)
+		{
+			for (size_t index = 0; index < 4; ++index)
+			{
+				RequireUI(Near(corners[index].x, corners[index + 4].x)
+					&& Near(corners[index].y, corners[index + 4].y),
+					"Orthographic frustum x/y changed with depth");
+			}
+		};
+
+		RequireUI(camera.SetOrthographic(12.0f, 1.0f, 9.0f),
+			"SceneCamera rejected the orthographic frustum test values");
+		const glm::vec4 orthographicNearClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+		const glm::vec4 orthographicFarClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 9.0f, 1.0f);
+		RequireUI(Near(orthographicNearClip.z / orthographicNearClip.w, -1.0f)
+			&& Near(orthographicFarClip.z / orthographicFarClip.w, 1.0f)
+			&& orthographicNearClip.z < orthographicFarClip.z,
+			"SceneCamera orthographic near/far planes did not advance along local +Z");
+		const auto orthographicOriginal = getVerifiedCorners(camera);
+		requireOrthographicDepthInvariant(orthographicOriginal);
+		RequireUI(camera.SetOrthographicNearClip(2.5f),
+			"SceneCamera rejected the changed orthographic near plane");
+		const auto orthographicNearChanged = getVerifiedCorners(camera);
+		requireOrthographicDepthInvariant(orthographicNearChanged);
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(!Near(orthographicOriginal[index].z,
+				orthographicNearChanged[index].z)
+				&& Near(orthographicOriginal[index + 4].z,
+					orthographicNearChanged[index + 4].z),
+				"Orthographic near clip did not exclusively move the near-plane z");
+		}
+
+		RequireUI(camera.SetOrthographicFarClip(18.0f),
+			"SceneCamera rejected the changed orthographic far plane");
+		const auto orthographicFarChanged = getVerifiedCorners(camera);
+		requireOrthographicDepthInvariant(orthographicFarChanged);
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(Near(orthographicNearChanged[index].z,
+				orthographicFarChanged[index].z)
+				&& !Near(orthographicNearChanged[index + 4].z,
+					orthographicFarChanged[index + 4].z),
+				"Orthographic far clip did not exclusively move the far-plane z");
+		}
+		RequireUI(camera.SetOrthographic(12.0f, 1.0f, HugeFar),
+			"SceneCamera imposed an artificial orthographic Far limit");
+		std::array<glm::vec3, 8> hugeOrthographic{};
+		RequireUI(camera.TryGetLocalFrustumCorners(hugeOrthographic),
+			"SceneCamera could not construct a very large orthographic volume");
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(nearRelative(hugeOrthographic[index].z, 1.0f)
+				&& nearRelative(hugeOrthographic[index + 4].z, HugeFar)
+				&& Near(hugeOrthographic[index].x,
+					hugeOrthographic[index + 4].x)
+				&& Near(hugeOrthographic[index].y,
+					hugeOrthographic[index + 4].y),
+				"very large orthographic Far did not extend only its depth plane");
+		}
+
+		TomCat::EditorCamera overlayCamera(30.0f, 16.0f / 9.0f,
+			0.1f, 1000.0f);
+		const glm::mat4 infiniteViewProjection =
+			overlayCamera.GetInfiniteFarViewProjection();
+		for (float distance : { 2000.0f, 1.0e12f, HugeFar })
+		{
+			const glm::vec3 point = overlayCamera.GetPosition()
+				+ overlayCamera.GetForwardDirection() * distance;
+			const glm::vec4 clip = infiniteViewProjection
+				* glm::vec4(point, 1.0f);
+			const float ndcZ = clip.z / clip.w;
+			RequireUI(std::isfinite(ndcZ) && ndcZ >= -1.0f
+				&& ndcZ <= 1.0f,
+				"Scene Camera overlay projection retained a finite Far ceiling");
+		}
+
+		overlayCamera.SnapToAxis(TomCat::EditorCamera::AxisView::PositiveZ);
+		const glm::mat4 orthographicOverlayProjection =
+			overlayCamera.GetInfiniteFarViewProjection();
+		for (float distance : { 2000.0f, 1.0e12f, HugeFar })
+		{
+			const glm::vec3 point = overlayCamera.GetPosition()
+				+ overlayCamera.GetForwardDirection() * distance;
+			const glm::vec4 clip = orthographicOverlayProjection
+				* glm::vec4(point, 1.0f);
+			const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+			RequireUI(std::isfinite(ndc.x) && std::isfinite(ndc.y)
+				&& std::isfinite(ndc.z) && ndc.z >= -1.0f && ndc.z <= 1.0f,
+				"Orthographic Scene Camera overlay projection retained a finite Far ceiling");
+		}
+	}
+
 	void TestFixedInputCaptureSnapshot()
 	{
 		UIFixture fixture = BuildUIFixture();
@@ -1026,7 +1988,24 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		UIFixture fixture = BuildUIFixture(TomCat::AssetHandle(4242),
 			TomCat::AssetHandle(4343), TomCat::AssetHandle(4244),
 			TomCat::AssetHandle(4245));
-		fixture.First.GetComponent<TomCat::UIButton>().RuntimeClickSerial = 99;
+		const TomCat::UUID sourceAttachment(0x12345678u);
+		TomCat::CSharpScriptEntry script;
+		script.AttachmentID = sourceAttachment;
+		script.ScriptAsset = TomCat::AssetHandle(0x87654321u);
+		script.LastKnownClassName = "Game.MenuController";
+		fixture.Second.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(script);
+		TomCat::UIButtonOnClickListener assignedListener;
+		assignedListener.TargetEntity = fixture.Second.GetUUID();
+		assignedListener.TargetAttachmentID = sourceAttachment;
+		assignedListener.ScriptAsset = script.ScriptAsset;
+		assignedListener.MethodName = "Play";
+		TomCat::UIButtonOnClickListener targetOnlyListener;
+		targetOnlyListener.TargetEntity = fixture.Second.GetUUID();
+		auto& serializedButton = fixture.First.GetComponent<TomCat::UIButton>();
+		serializedButton.DisabledColor = { 0.13f, 0.27f, 0.41f, 0.55f };
+		serializedButton.ColorMultiplier = 1.75f;
+		serializedButton.OnClick = { assignedListener, targetOnlyListener };
+		serializedButton.RuntimeClickSerial = 99;
 		std::string document, error;
 		RequireUI(TomCat::SceneSerializer(fixture.Scene).SerializeDocument(document,
 			error), "Runtime UI Scene 11 serialization failed");
@@ -1039,6 +2018,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"RuntimeUIRegression.tomcat", false),
 			"Runtime UI Scene 11 deserialization failed");
 		TomCat::Entity loaded = decoded->FindEntityByUUID(TomCat::UUID(10003));
+		const auto& loadedButton = loaded.GetComponent<TomCat::UIButton>();
+		const auto& loadedListeners = loadedButton.OnClick;
 		RequireUI(loaded && loaded.HasComponent<TomCat::RectTransform>()
 			&& loaded.HasComponent<TomCat::UIImage>()
 			&& loaded.HasComponent<TomCat::UIText>()
@@ -1050,10 +2031,92 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 				== TomCat::AssetHandle(4244)
 			&& loaded.GetComponent<TomCat::UIText>().EmojiFont
 				== TomCat::AssetHandle(4245)
-			&& loaded.GetComponent<TomCat::UIButton>().RuntimeClickSerial == 0,
+			&& loadedListeners.size() == 2
+			&& loadedListeners[0].TargetEntity == fixture.Second.GetUUID()
+			&& loadedListeners[0].TargetAttachmentID == sourceAttachment
+			&& loadedListeners[0].ScriptAsset == script.ScriptAsset
+			&& loadedListeners[0].MethodName == "Play"
+			&& loadedListeners[1].TargetEntity == fixture.Second.GetUUID()
+			&& static_cast<uint64_t>(loadedListeners[1].TargetAttachmentID) == 0
+			&& static_cast<uint64_t>(loadedListeners[1].ScriptAsset) == 0
+			&& loadedListeners[1].MethodName.empty()
+			&& Near(loadedButton.DisabledColor.r, 0.13f)
+			&& Near(loadedButton.DisabledColor.g, 0.27f)
+			&& Near(loadedButton.DisabledColor.b, 0.41f)
+			&& Near(loadedButton.DisabledColor.a, 0.55f)
+			&& Near(loadedButton.ColorMultiplier, 1.75f)
+			&& loadedButton.RuntimeClickSerial == 0,
 			"Runtime UI authoring fields or transient reset did not round-trip");
 
 		const YAML::Node root = YAML::Load(document);
+		YAML::Node v2Document = YAML::Clone(root);
+		bool downgradedV2Button = false;
+		for (YAML::Node entityNode : v2Document["Entities"])
+		{
+			if (entityNode["Entity"].as<uint64_t>() != 10003)
+				continue;
+			for (YAML::Node component : entityNode["Components"])
+			{
+				if (component["StableName"].as<std::string>() != "TomCat.UIButton")
+					continue;
+				YAML::Node v2Fields(YAML::NodeType::Sequence);
+				for (const YAML::Node& field : component["Properties"]["Fields"])
+				{
+					const std::string stableName = field["StableName"].as<std::string>();
+					if (stableName != "DisabledColor"
+						&& stableName != "ColorMultiplier")
+						v2Fields.push_back(YAML::Clone(field));
+				}
+				component["SchemaVersion"] = 2;
+				component["Properties"]["Fields"] = v2Fields;
+				downgradedV2Button = true;
+			}
+		}
+		YAML::Emitter v2Output;
+		v2Output << v2Document;
+		auto migratedV2 = TomCat::CreateRef<TomCat::Scene>();
+		RequireUI(downgradedV2Button && v2Output.good()
+			&& TomCat::SceneSerializer(migratedV2).DeserializeDocument(
+				std::vector<uint8_t>(v2Output.c_str(),
+					v2Output.c_str() + std::strlen(v2Output.c_str())),
+				"RuntimeUIRegression-v2.tomcat", false),
+			"UIButton v2 descriptor payload did not migrate to v3");
+		const auto& migratedV2Button = migratedV2
+			->FindEntityByUUID(TomCat::UUID(10003)).GetComponent<TomCat::UIButton>();
+		RequireUI(migratedV2Button.OnClick.size() == 2
+			&& Near(migratedV2Button.DisabledColor.r, 0.52f)
+			&& Near(migratedV2Button.DisabledColor.g, 0.52f)
+			&& Near(migratedV2Button.DisabledColor.b, 0.52f)
+			&& Near(migratedV2Button.DisabledColor.a, 0.5f)
+			&& Near(migratedV2Button.ColorMultiplier, 1.0f),
+			"UIButton v2-to-v3 migration did not append Color Tint defaults");
+
+		YAML::Node v1Document = YAML::Clone(v2Document);
+		bool downgradedButton = false;
+		for (YAML::Node entityNode : v1Document["Entities"])
+		{
+			if (entityNode["Entity"].as<uint64_t>() != 10003)
+				continue;
+			for (YAML::Node component : entityNode["Components"])
+			{
+				if (component["StableName"].as<std::string>() != "TomCat.UIButton")
+					continue;
+				component["SchemaVersion"] = 1;
+				component["Properties"] = component["Properties"]["Fields"];
+				downgradedButton = true;
+			}
+		}
+		YAML::Emitter v1Output;
+		v1Output << v1Document;
+		auto migratedV1 = TomCat::CreateRef<TomCat::Scene>();
+		RequireUI(downgradedButton && v1Output.good()
+			&& TomCat::SceneSerializer(migratedV1).DeserializeDocument(
+				std::vector<uint8_t>(v1Output.c_str(),
+					v1Output.c_str() + std::strlen(v1Output.c_str())),
+				"RuntimeUIRegression-v1.tomcat", false)
+			&& migratedV1->FindEntityByUUID(TomCat::UUID(10003))
+				.GetComponent<TomCat::UIButton>().OnClick.empty(),
+			"UIButton v1 descriptor payload did not migrate to an empty OnClick list");
 		bool sawFont = false, sawFallbackFont = false, sawEmojiFont = false;
 		bool sawImage = false;
 		RequireUI(TomCat::AssetReferenceVisitor::VisitScene(root,
@@ -1079,6 +2142,38 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			}, error) && sawFont && sawFallbackFont && sawEmojiFont && sawImage,
 			"Scene/Cook traversal missed a UIText font-chain or UIImage asset");
 
+		TomCat::Entity duplicateRoot = fixture.Scene->DuplicateEntity(fixture.Canvas);
+		RequireUI(duplicateRoot, "Runtime UI duplicate hierarchy root was not created");
+		TomCat::Entity duplicateFirst;
+		TomCat::Entity duplicateSecond;
+		std::vector<TomCat::Entity> pending{ duplicateRoot };
+		while (!pending.empty())
+		{
+			TomCat::Entity current = pending.back();
+			pending.pop_back();
+			if (current.HasComponent<TomCat::UIButton>()
+				&& !current.GetComponent<TomCat::UIButton>().OnClick.empty())
+				duplicateFirst = current;
+			if (current.HasComponent<TomCat::CSharpScripts>())
+				duplicateSecond = current;
+			for (TomCat::UUID child : fixture.Scene->GetChildrenUUIDs(current))
+				pending.push_back(fixture.Scene->FindEntityByUUID(child));
+		}
+		RequireUI(duplicateFirst && duplicateSecond,
+			"Runtime UI duplicate hierarchy lost callback button descendants");
+		RequireUI(duplicateSecond.HasComponent<TomCat::CSharpScripts>(),
+			"Runtime UI duplicate callback target lost CSharpScripts");
+		const TomCat::UUID duplicateAttachment = duplicateSecond
+			.GetComponent<TomCat::CSharpScripts>().Scripts.front().AttachmentID;
+		const auto& duplicateListeners =
+			duplicateFirst.GetComponent<TomCat::UIButton>().OnClick;
+		RequireUI(duplicateListeners.size() == 2
+			&& duplicateListeners[0].TargetEntity == duplicateSecond.GetUUID()
+			&& duplicateListeners[0].TargetAttachmentID == duplicateAttachment
+			&& duplicateAttachment != sourceAttachment
+			&& duplicateListeners[1].TargetEntity == duplicateSecond.GetUUID(),
+			"DuplicateEntity did not remap UIButton entity and attachment targets");
+
 		TomCat::PrefabArchive archive;
 		RequireUI(TomCat::PrefabArchiveCodec::CaptureSubtree(fixture.Scene,
 			fixture.Canvas, archive, error), "Runtime UI Prefab capture failed");
@@ -1099,6 +2194,85 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& instance.Root.HasComponent<TomCat::Canvas>()
 			&& instance.Root.HasComponent<TomCat::UIEventSystem>(),
 			"Runtime UI Prefab did not instantiate its complete hierarchy");
+		TomCat::Entity prefabFirst;
+		TomCat::Entity prefabSecond;
+		for (TomCat::Entity created : instance.Entities)
+		{
+			if (created.GetName() == "First button") prefabFirst = created;
+			if (created.GetName() == "Second button") prefabSecond = created;
+		}
+		RequireUI(prefabFirst && prefabSecond
+			&& prefabSecond.HasComponent<TomCat::CSharpScripts>()
+			&& !prefabSecond.GetComponent<TomCat::CSharpScripts>().Scripts.empty(),
+			"Prefab instance lost UIButton callback target script");
+		const TomCat::UUID prefabAttachment = prefabSecond
+			.GetComponent<TomCat::CSharpScripts>().Scripts.front().AttachmentID;
+		const auto& prefabListeners =
+			prefabFirst.GetComponent<TomCat::UIButton>().OnClick;
+		RequireUI(prefabListeners.size() == 2
+			&& prefabListeners[0].TargetEntity == prefabSecond.GetUUID()
+			&& prefabListeners[0].TargetAttachmentID == prefabAttachment
+			&& prefabAttachment != sourceAttachment
+			&& prefabListeners[1].TargetEntity == prefabSecond.GetUUID(),
+			"Prefab instantiate did not remap UIButton entity and attachment targets");
+	}
+
+	void TestPersistentButtonCallbacks()
+	{
+		UIFixture fixture = BuildUIFixture();
+		constexpr uint64_t ScriptAsset = 70001;
+		const TomCat::UUID attachment(70002);
+		TomCat::CSharpScriptEntry entry;
+		entry.AttachmentID = attachment;
+		entry.ScriptAsset = TomCat::AssetHandle(ScriptAsset);
+		entry.LastKnownClassName = "Game.MenuController";
+		fixture.Second.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(entry);
+		TomCat::UIButtonOnClickListener listener;
+		listener.TargetEntity = fixture.Second.GetUUID();
+		listener.TargetAttachmentID = attachment;
+		listener.ScriptAsset = TomCat::AssetHandle(ScriptAsset);
+		listener.MethodName = "Play";
+		fixture.First.GetComponent<TomCat::UIButton>().OnClick.push_back(listener);
+
+		auto runtime = std::make_shared<UICallbackRuntime>();
+		TomCat::Scripting::ScriptEngine::Get().SetRuntime(runtime);
+		const uint64_t session = TomCat::Scripting::ScriptEngine::Get().StartScene(
+			*fixture.Scene, 17);
+		RequireUI(session != 0, "could not start Runtime UI callback script session");
+		runtime->Calls.clear();
+
+		const TomCat::RuntimeUILayoutSnapshot layout =
+			TomCat::RuntimeUISystem::BuildLayout(*fixture.Scene, 1920, 1080, 96.0f);
+		const TomCat::UIRect rectangle = layout.Rectangles.at(fixture.First.GetUUID());
+		TomCat::RuntimeUIInputFrame input;
+		input.PointerPosition = { rectangle.X + 5.0f,
+			1080.0f - (rectangle.Y + 5.0f) };
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, input);
+		RequireUI(runtime->Invocations.empty(),
+			"UIButton invoked OnClick on pointer press instead of release");
+		input.MousePressed = false;
+		input.MouseReleased = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, input);
+		TomCat::Scripting::ScriptEngine::Get().UpdateAll(session, 1.0f / 60.0f);
+		RequireUI(runtime->Invocations.size() == 1
+			&& runtime->Invocations[0].first == static_cast<uint64_t>(attachment)
+			&& runtime->Invocations[0].second == "Play"
+			&& runtime->Calls.size() == 2
+			&& runtime->Calls[0] == "InvokeMethod"
+			&& runtime->Calls[1] == "UpdateAll",
+			"mouse release did not invoke the exact listener once before OnUpdate");
+
+		input = {};
+		input.KeyboardSubmit = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*fixture.Scene, 1920, 1080,
+			96.0f, input);
+		RequireUI(runtime->Invocations.size() == 2,
+			"keyboard Submit did not invoke UIButton.OnClick exactly once");
+		TomCat::Scripting::ScriptEngine::Get().StopScene(session);
+		TomCat::Scripting::ScriptEngine::Get().SetRuntime({});
 	}
 
 	class TemporaryUIProject final
@@ -1164,8 +2338,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		auto project = TomCat::Project::CreateNew(
 			environment.Root / "Project.tcproj", config);
 		RequireUI(project != nullptr, "could not create Runtime UI Cook project");
-		const std::filesystem::path sourceFont = FindRepositoryFile(
-			"Editor/TomCatInut/Packages/fonts/opensans/OpenSans-Regular.ttf");
+		const std::filesystem::path sourceFont = TomCat::GetBuiltInFontAssetPath(
+			TomCat::GetDefaultRuntimeFontHandle());
 		RequireUI(!sourceFont.empty(), "could not locate Cook font source");
 		const std::filesystem::path fontPath = project->GetAssetPath() / "UIFont.ttf";
 		const std::filesystem::path fallbackFontPath =
@@ -1207,6 +2381,17 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 		UIFixture fixture = BuildUIFixture(fontHandle, imageHandle,
 			fallbackFontHandle, emojiFontHandle);
+		TomCat::Entity legacyDefaultText = fixture.Scene->CreateEntityWithUUID(
+			TomCat::UUID(10008), "Legacy default font probe");
+		auto& legacyText = legacyDefaultText.AddComponent<TomCat::TextRenderer>();
+		legacyText.Font = TomCat::AssetHandle(0);
+		legacyText.Text = "Legacy Runtime";
+		const TomCat::AssetLoadResult builtInFont = assets.LoadImportedArtifact(
+			TomCat::GetDefaultRuntimeFontHandle());
+		RequireUI(builtInFont.Succeeded()
+			&& builtInFont.Artifact.Type == TomCat::AssetType::Font
+			&& !builtInFont.Artifact.Bytes.empty(),
+			"authoring could not load the built-in default font");
 		const std::filesystem::path scenePath = project->GetAssetPath() / "Main.tomcat";
 		RequireUI(TomCat::SceneSerializer(fixture.Scene).Serialize(scenePath),
 			"could not serialize Runtime UI Cook scene");
@@ -1245,6 +2430,7 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		std::vector<uint8_t> cookedFallback;
 		std::vector<uint8_t> cookedEmoji;
 		std::vector<uint8_t> cookedImage;
+		std::vector<uint8_t> cookedBuiltInFont;
 		TomCat::AssetType type = TomCat::AssetType::None;
 		RequireUI(assets.ReadAssetBytes(fontHandle, cookedPrimary, &type)
 			&& type == TomCat::AssetType::Font && !cookedPrimary.empty()
@@ -1253,7 +2439,10 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& assets.ReadAssetBytes(emojiFontHandle, cookedEmoji, &type)
 			&& type == TomCat::AssetType::Font && !cookedEmoji.empty()
 			&& assets.ReadAssetBytes(imageHandle, cookedImage, &type)
-			&& type == TomCat::AssetType::Texture2D && !cookedImage.empty(),
+			&& type == TomCat::AssetType::Texture2D && !cookedImage.empty()
+			&& assets.ReadAssetBytes(TomCat::GetDefaultRuntimeFontHandle(),
+				cookedBuiltInFont, &type)
+			&& type == TomCat::AssetType::Font && !cookedBuiltInFont.empty(),
 			"Cook omitted a Runtime UI font-chain or image dependency");
 		const std::array<std::span<const uint8_t>, 3> cookedFontChain = {
 			std::span<const uint8_t>(cookedPrimary),
@@ -1343,14 +2532,14 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		};
 		const ScreenshotCase screenshotCases[] = {
 			{ 1920, 1080, 96.0f, 4695793982536209286ull },
-			{ 1920, 1080, 144.0f, 11026995505587184344ull },
-			{ 1920, 1080, 192.0f, 5128307722957280469ull },
-			{ 1440, 1080, 96.0f, 575169338650063814ull },
+			{ 1920, 1080, 144.0f, 9333402107257602237ull },
+			{ 1920, 1080, 192.0f, 5341880840297431473ull },
+			{ 1440, 1080, 96.0f, 7007483290274739818ull },
 			{ 1440, 1080, 144.0f, 14558682433443321873ull },
-			{ 1440, 1080, 192.0f, 7519808789850018399ull },
+			{ 1440, 1080, 192.0f, 1809843449510516968ull },
 			{ 2560, 1080, 96.0f, 5765257838663896052ull },
-			{ 2560, 1080, 144.0f, 9642452743191543441ull },
-			{ 2560, 1080, 192.0f, 7229357654729139054ull }
+			{ 2560, 1080, 144.0f, 14767166016224927295ull },
+			{ 2560, 1080, 192.0f, 17044906059224153490ull }
 		};
 		HiddenOpenGLContext context;
 		if (!context.IsAvailable())
@@ -1359,6 +2548,196 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 				<< context.GetUnavailableReason() << std::endl;
 			return;
 		}
+
+		// Scene view renders Canvas content on a stable reference-resolution plane.
+		// The same content remains a full-screen overlay in Runtime/Game view.
+		TomCat::Scene editorPlaneScene;
+		TomCat::Entity editorCanvas = editorPlaneScene.CreateEntityWithUUID(
+			TomCat::UUID(10901), "Editor Plane Canvas");
+		auto& editorCanvasComponent = editorCanvas.AddComponent<TomCat::Canvas>();
+		editorCanvasComponent.ReferenceResolution = { 400.0f, 200.0f };
+		TomCat::Entity editorBackground = editorPlaneScene.CreateEntityWithUUID(
+			TomCat::UUID(10902), "Editor Plane Background");
+		auto& backgroundRect = editorBackground.AddComponent<TomCat::RectTransform>();
+		backgroundRect.AnchorMin = { 0.0f, 0.0f };
+		backgroundRect.AnchorMax = { 1.0f, 1.0f };
+		backgroundRect.SizeDelta = { 0.0f, 0.0f };
+		editorBackground.AddComponent<TomCat::UIImage>().Color =
+			{ 1.0f, 0.0f, 1.0f, 1.0f };
+		RequireUI(editorPlaneScene.SetParent(editorBackground, editorCanvas),
+			"could not parent Editor Canvas background");
+		TomCat::Entity editorMarker = editorPlaneScene.CreateEntityWithUUID(
+			TomCat::UUID(10903), "Editor Plane Marker");
+		auto& markerRect = editorMarker.AddComponent<TomCat::RectTransform>();
+		markerRect.AnchorMin = markerRect.AnchorMax = { 0.5f, 0.5f };
+		markerRect.SizeDelta = { 40.0f, 20.0f };
+		editorMarker.AddComponent<TomCat::UIImage>().Color =
+			{ 1.0f, 1.0f, 0.0f, 1.0f };
+		RequireUI(editorPlaneScene.SetParent(editorMarker, editorCanvas),
+			"could not parent Editor Canvas marker");
+
+		constexpr uint32_t EditorCaptureSize = 512;
+		constexpr uint32_t RuntimeWidth = 320;
+		constexpr uint32_t RuntimeHeight = 240;
+		RequireUI(!editorPlaneScene.GetPrimaryCameraEntity()
+			&& editorPlaneScene.HasActiveCanvas(),
+			"edit-mode Game preview fixture must use Canvas without a Camera");
+		const std::vector<uint8_t> runtimeBefore = CaptureEditModeGamePreview(
+			editorPlaneScene, RuntimeWidth, RuntimeHeight);
+		TomCat::EditorCamera editorCamera(30.0f, 1.0f, 0.1f, 100.0f);
+		editorCamera.Set2DMode(true);
+		editorCamera.SetViewportSize(static_cast<float>(EditorCaptureSize),
+			static_cast<float>(EditorCaptureSize));
+		const glm::mat4 canvasToWorld =
+			TomCat::RuntimeUISystem::GetEditorCanvasTransform({ 400.0f, 200.0f });
+		const glm::vec3 canvasMinimum = glm::vec3(canvasToWorld
+			* glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+		const glm::vec3 canvasMaximum = glm::vec3(canvasToWorld
+			* glm::vec4(400.0f, 200.0f, 0.0f, 1.0f));
+		editorCamera.FrameBounds(canvasMinimum, canvasMaximum);
+		const std::vector<uint8_t> editorBaseline = CaptureEditorUI(
+			editorPlaneScene, EditorCaptureSize, EditorCaptureSize, editorCamera);
+
+		struct ColorExtent
+		{
+			uint32_t MinimumX = 0;
+			uint32_t MinimumY = 0;
+			uint32_t MaximumX = 0;
+			uint32_t MaximumY = 0;
+			uint32_t Count = 0;
+			double SumX = 0.0;
+			double SumY = 0.0;
+			float Width() const { return Count ? static_cast<float>(MaximumX - MinimumX + 1) : 0.0f; }
+			float Height() const { return Count ? static_cast<float>(MaximumY - MinimumY + 1) : 0.0f; }
+			glm::vec2 Center() const
+			{
+				return Count ? glm::vec2(static_cast<float>(SumX / Count),
+					static_cast<float>(SumY / Count)) : glm::vec2(0.0f);
+			}
+		};
+		auto findColor = [](const std::vector<uint8_t>& pixels, uint32_t width,
+			uint32_t height, bool yellow)
+		{
+			ColorExtent extent;
+			extent.MinimumX = width;
+			extent.MinimumY = height;
+			for (uint32_t y = 0; y < height; ++y)
+			{
+				for (uint32_t x = 0; x < width; ++x)
+				{
+					const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+					const bool matches = yellow
+						? pixels[offset] > 220 && pixels[offset + 1] > 220
+							&& pixels[offset + 2] < 40
+						: pixels[offset] > 220 && pixels[offset + 1] < 40
+							&& pixels[offset + 2] > 220;
+					if (!matches)
+						continue;
+					extent.MinimumX = std::min(extent.MinimumX, x);
+					extent.MinimumY = std::min(extent.MinimumY, y);
+					extent.MaximumX = std::max(extent.MaximumX, x);
+					extent.MaximumY = std::max(extent.MaximumY, y);
+					extent.SumX += x;
+					extent.SumY += y;
+					++extent.Count;
+				}
+			}
+			return extent;
+		};
+
+		const ColorExtent baselinePlane = findColor(editorBaseline,
+			EditorCaptureSize, EditorCaptureSize, false);
+		const ColorExtent baselineMarker = findColor(editorBaseline,
+			EditorCaptureSize, EditorCaptureSize, true);
+		RequireUI(baselinePlane.Count > 50000 && baselineMarker.Count > 500
+			&& Near(baselinePlane.Width() / baselinePlane.Height(), 2.0f, 0.04f),
+			"Editor Canvas did not preserve its 2:1 reference-resolution plane");
+
+		const glm::vec3 panOffset(0.2f, 0.0f, 0.0f);
+		editorCamera.FrameBounds(canvasMinimum + panOffset,
+			canvasMaximum + panOffset);
+		const std::vector<uint8_t> editorPanned = CaptureEditorUI(
+			editorPlaneScene, EditorCaptureSize, EditorCaptureSize, editorCamera);
+		const ColorExtent pannedPlane = findColor(editorPanned,
+			EditorCaptureSize, EditorCaptureSize, false);
+		const ColorExtent pannedMarker = findColor(editorPanned,
+			EditorCaptureSize, EditorCaptureSize, true);
+		RequireUI(std::abs(pannedPlane.Width() - baselinePlane.Width()) <= 3.0f
+			&& std::abs(pannedPlane.Height() - baselinePlane.Height()) <= 3.0f
+			&& baselineMarker.Center().x - pannedMarker.Center().x > 15.0f
+			&& std::abs(baselineMarker.Center().y - pannedMarker.Center().y) <= 2.0f,
+			"Editor Canvas did not move with the Scene camera");
+
+		editorCamera.FrameBounds(canvasMinimum, canvasMaximum);
+		TomCat::MouseScrolledEvent zoomOut(0.0f, -4.0f);
+		editorCamera.OnEvent(zoomOut);
+		const std::vector<uint8_t> editorZoomed = CaptureEditorUI(
+			editorPlaneScene, EditorCaptureSize, EditorCaptureSize, editorCamera);
+		const ColorExtent zoomedPlane = findColor(editorZoomed,
+			EditorCaptureSize, EditorCaptureSize, false);
+		const ColorExtent zoomedMarker = findColor(editorZoomed,
+			EditorCaptureSize, EditorCaptureSize, true);
+		RequireUI(zoomedPlane.Width() < baselinePlane.Width() * 0.92f
+			&& zoomedPlane.Height() < baselinePlane.Height() * 0.92f
+			&& Near(zoomedPlane.Width() / zoomedPlane.Height(), 2.0f, 0.04f)
+			&& glm::length(zoomedMarker.Center() - baselineMarker.Center()) <= 2.0f,
+			"Editor Canvas did not zoom around the Scene camera focal point");
+
+		const std::vector<uint8_t> runtimeAfter = CaptureEditModeGamePreview(
+			editorPlaneScene, RuntimeWidth, RuntimeHeight);
+		const ColorExtent runtimePlane = findColor(runtimeAfter,
+			RuntimeWidth, RuntimeHeight, false);
+		RequireUI(runtimeAfter == runtimeBefore && runtimePlane.Width() >= 318.0f
+			&& runtimePlane.Height() >= 238.0f
+			&& Near(runtimePlane.Width() / runtimePlane.Height(), 4.0f / 3.0f,
+				0.03f),
+			"Canvas without a Camera was missing or changed in edit-mode Game preview");
+
+		TomCat::Scene clippedRenderScene;
+		TomCat::Entity clippedCanvas = clippedRenderScene.CreateEntityWithUUID(
+			TomCat::UUID(11001), "Clipped Render Canvas");
+		clippedCanvas.AddComponent<TomCat::Canvas>().ScaleMode =
+			TomCat::CanvasScaleMode::ConstantPixelSize;
+		TomCat::Entity clipParent = clippedRenderScene.CreateEntityWithUUID(
+			TomCat::UUID(11002), "Clipped Render Parent");
+		auto& parentRect = clipParent.AddComponent<TomCat::RectTransform>();
+		parentRect.AnchorMin = parentRect.AnchorMax = { 0.0f, 0.0f };
+		parentRect.Pivot = { 0.0f, 0.0f };
+		parentRect.AnchoredPosition = { 50.0f, 50.0f };
+		parentRect.SizeDelta = { 100.0f, 100.0f };
+		parentRect.ClipChildren = true;
+		RequireUI(clippedRenderScene.SetParent(clipParent, clippedCanvas),
+			"could not parent render clipping mask");
+		TomCat::Entity clippedImage = clippedRenderScene.CreateEntityWithUUID(
+			TomCat::UUID(11003), "Rotated Clipped Image");
+		auto& clippedRect = clippedImage.AddComponent<TomCat::RectTransform>();
+		clippedRect.AnchorMin = clippedRect.AnchorMax = { 0.0f, 0.0f };
+		clippedRect.Pivot = { 0.5f, 0.5f };
+		clippedRect.AnchoredPosition = { 100.0f, 50.0f };
+		clippedRect.SizeDelta = { 100.0f, 50.0f };
+		clippedImage.AddComponent<TomCat::UIImage>().Color =
+			{ 1.0f, 0.0f, 0.0f, 1.0f };
+		RequireUI(clippedRenderScene.SetParent(clippedImage, clipParent),
+			"could not parent rotated render clipping probe");
+		clippedImage.GetComponent<TomCat::Transform>()._LocalRotation.z =
+			glm::radians(90.0f);
+		constexpr uint32_t ClipCaptureSize = 200;
+		const std::vector<uint8_t> clippedPixels = CaptureRuntimeUI(
+			clippedRenderScene, ClipCaptureSize, ClipCaptureSize, 96.0f);
+		auto pixel = [&clippedPixels](uint32_t x, uint32_t y)
+		{
+			const size_t offset = (static_cast<size_t>(y) * ClipCaptureSize + x) * 4u;
+			return std::array<uint8_t, 4>{ clippedPixels[offset],
+				clippedPixels[offset + 1], clippedPixels[offset + 2],
+				clippedPixels[offset + 3] };
+		};
+		const std::array<uint8_t, 4> outsideClip = pixel(160, 75);
+		const std::array<uint8_t, 4> insideClip = pixel(140, 125);
+		RequireUI(outsideClip[0] == 8 && outsideClip[1] == 12
+			&& outsideClip[2] == 18 && insideClip[0] > 240
+			&& insideClip[1] < 8 && insideClip[2] < 8,
+			"rotated UIImage rendering did not respect its ancestor clip space");
+
 		const std::string screenshotText =
 			button.GetComponent<TomCat::UIText>().Text + " "
 			+ second.GetComponent<TomCat::UIText>().Text;
@@ -1392,6 +2771,56 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& originalFont->GetTexture()
 			&& !originalFont->GetAtlas().Glyphs.contains(0x1f600u),
 			"glyph growth did not atomically replace and preserve the old atlas");
+
+		TomCat::Scene worldTextScene;
+		TomCat::Entity worldTextParent = worldTextScene.CreateEntity("World Text Parent");
+		TomCat::Entity worldText = worldTextScene.CreateEntity("World Text");
+		RequireUI(worldTextScene.SetParent(worldText, worldTextParent),
+			"could not parent the World Text transform probe");
+		auto& parentTransform = worldTextParent.GetComponent<TomCat::Transform>();
+		parentTransform._Translation = { -1.0f, 0.0f, 0.0f };
+		parentTransform._LocalTranslation = parentTransform._Translation;
+		auto& worldTextTransform = worldText.GetComponent<TomCat::Transform>();
+		worldTextTransform._Translation = { 3.0f, 0.0f, 0.0f };
+		worldTextTransform._LocalTranslation = { 0.0f, 0.0f, 0.0f };
+		auto& worldTextRenderer = worldText.AddComponent<TomCat::TextRenderer>();
+		worldTextRenderer.Font = fontHandle;
+		worldTextRenderer.FallbackFont = fallbackFontHandle;
+		worldTextRenderer.EmojiFont = emojiFontHandle;
+		worldTextRenderer.Text = "UI";
+		worldTextRenderer.FontSize = 1.0f;
+		const TomCat::Camera worldCamera(glm::ortho(-4.0f, 4.0f,
+			-4.0f, 4.0f, -1.0f, 1.0f));
+		constexpr uint32_t WorldCaptureSize = 128;
+		const PixelBounds initialWorldBounds = FindContentBounds(
+			CaptureWorldText(worldTextScene, WorldCaptureSize, WorldCaptureSize,
+				worldCamera, glm::mat4(1.0f)),
+			WorldCaptureSize, WorldCaptureSize);
+		parentTransform._Translation.x = 1.0f;
+		parentTransform._LocalTranslation.x = 1.0f;
+		const PixelBounds movedParentBounds = FindContentBounds(
+			CaptureWorldText(worldTextScene, WorldCaptureSize, WorldCaptureSize,
+				worldCamera, glm::mat4(1.0f)),
+			WorldCaptureSize, WorldCaptureSize);
+		const glm::mat4 movedCamera = glm::translate(glm::mat4(1.0f),
+			glm::vec3(1.0f, 0.0f, 0.0f));
+		const PixelBounds movedCameraBounds = FindContentBounds(
+			CaptureWorldText(worldTextScene, WorldCaptureSize, WorldCaptureSize,
+				worldCamera, movedCamera),
+			WorldCaptureSize, WorldCaptureSize);
+		RequireUI(initialWorldBounds.Count > 0 && movedParentBounds.Count > 0
+			&& movedCameraBounds.Count > 0
+			&& Near(static_cast<float>(movedParentBounds.MinimumX)
+				- static_cast<float>(initialWorldBounds.MinimumX), 32.0f, 2.0f)
+			&& Near(static_cast<float>(movedCameraBounds.MinimumX)
+				- static_cast<float>(movedParentBounds.MinimumX), -16.0f, 2.0f),
+			"World Text did not follow its parent transform and camera projection");
+		const PixelBounds screenOnlyBounds = FindContentBounds(
+			CaptureRuntimeUI(worldTextScene, WorldCaptureSize, WorldCaptureSize, 96.0f),
+			WorldCaptureSize, WorldCaptureSize);
+		RequireUI(screenOnlyBounds.Count == 0,
+			"World Text leaked into the Canvas screen-space render pass");
+
 		for (const ScreenshotCase& screenshot : screenshotCases)
 		{
 			const std::vector<uint8_t> pixels = CaptureRuntimeUI(*loaded,
@@ -1416,10 +2845,28 @@ namespace TomCat::Tests {
 
 	void RunRuntimeUIRegression()
 	{
+		const std::filesystem::path executableDirectory = GetExecutableDirectory();
+		const ScopedRuntimePackageRoot packageRoot(executableDirectory);
+		const std::filesystem::path expectedFont = executableDirectory /
+			"Packages/fonts/opensans/OpenSans-Regular.ttf";
+		std::error_code error;
+		RequireUI(std::filesystem::is_regular_file(expectedFont, error) && !error,
+			"built-in default font was not copied beside PhysicsRegression");
+		RequireUI(TomCat::GetBuiltInFontAssetPath(
+			TomCat::GetDefaultRuntimeFontHandle()) == expectedFont,
+			"built-in default font did not resolve from the executable package root");
 		TestUTF8AndDeterministicFontAtlas();
 		TestLayoutClippingAspectAndInput();
+		TestRectTransformTransformAndHitTesting();
+		TestEditorCanvasLayout();
+		TestEditorCameraFrameBounds();
+		TestEditorCameraScrollZoom();
+		TestEditorCameraAxisViews();
+		TestEditorCamera2DProjection();
+		TestSceneCameraFrustumCorners();
 		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();
+		TestPersistentButtonCallbacks();
 		TestCookedRuntimeUIRoundTrip();
 	}
 

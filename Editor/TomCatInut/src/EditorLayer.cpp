@@ -5,6 +5,7 @@
 #include <imgui/imgui_internal.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -15,6 +16,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -25,11 +27,14 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Scene/Advanced2D.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Editor/EditorShortcutRouter.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -37,6 +42,7 @@
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Scripting/ScriptDiagnosticSink.h"
 #include "TomCat/Scripting/ScriptEngine.h"
+#include "TomCat/Runtime/RuntimeUI.h"
 
 #include "Player/PlayerBuilder.h"
 #include "ImGuizmo.h"
@@ -50,8 +56,9 @@ namespace TomCat {
 		constexpr float kDockedPanelMinimumWidthRatio = 0.08f;
 		constexpr float kDockedPanelCompactMinimumWidth = 96.0f;
 		constexpr float kDockedPanelExpandedMinimumWidth = 220.0f;
-		constexpr std::array<const char*, 6> kMaximizableDockPanels = {
-			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console"
+		constexpr std::array<const char*, 9> kMaximizableDockPanels = {
+			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console",
+			"Animation", "Animator", "Tile Palette"
 		};
 
 		struct GameViewResolutionPreset
@@ -68,11 +75,12 @@ namespace TomCat {
 			{ "QHD (2560x1440)", 2560, 1440 },
 			{ "4K UHD (3840x2160)", 3840, 2160 }
 		} };
+		constexpr float kGameViewScaleMinimum = 0.8f;
+		constexpr float kGameViewScaleMaximum = 8.8f;
+		constexpr float kGameViewScaleWheelStep = 0.1f;
 
 		bool DrawGameViewScaleSlider(float& value, float controlWidth)
 		{
-			constexpr float minimum = 0.8f;
-			constexpr float maximum = 8.8f;
 			const float controlHeight = ImGui::GetFrameHeight();
 			const ImVec2 origin = ImGui::GetCursorScreenPos();
 			const ImVec2 labelSize = ImGui::CalcTextSize("Scale");
@@ -87,7 +95,8 @@ namespace TomCat {
 				const float mouse = ImGui::GetIO().MousePos.x;
 				const float normalized = std::clamp((mouse - origin.x - trackStartOffset)
 					/ (trackEndOffset - trackStartOffset), 0.0f, 1.0f);
-				const float next = minimum + normalized * (maximum - minimum);
+				const float next = kGameViewScaleMinimum
+					+ normalized * (kGameViewScaleMaximum - kGameViewScaleMinimum);
 				if (std::abs(next - value) > 0.0001f)
 				{
 					value = next;
@@ -95,8 +104,10 @@ namespace TomCat {
 				}
 			}
 
-			value = std::clamp(value, minimum, maximum);
-			const float normalized = (value - minimum) / (maximum - minimum);
+			value = std::clamp(value, kGameViewScaleMinimum,
+				kGameViewScaleMaximum);
+			const float normalized = (value - kGameViewScaleMinimum)
+				/ (kGameViewScaleMaximum - kGameViewScaleMinimum);
 			const float centerY = origin.y + controlHeight * 0.5f;
 			const float trackStart = origin.x + trackStartOffset;
 			const float trackEnd = origin.x + trackEndOffset;
@@ -977,6 +988,9 @@ namespace TomCat {
 		add(m_ShowConsolePanel, 5);
 		add(m_ShowBuildSettingsPanel, 6);
 		add(m_ShowProjectSettingsPanel, 7);
+		add(m_ShowAnimatorPanel, 8);
+		add(m_ShowAnimationPanel, 9);
+		add(m_ShowTilePalettePanel, 10);
 		return mask;
 	}
 
@@ -984,6 +998,9 @@ namespace TomCat {
 	{
 		m_ShowScenePanel = true;
 		m_ShowGamePanel = true;
+		m_ShowAnimatorPanel = false;
+		m_ShowAnimationPanel = false;
+		m_ShowTilePalettePanel = false;
 		m_ShowHierarchyPanel = true;
 		m_ShowInspectorPanel = true;
 		m_ShowProjectPanel = true;
@@ -1038,6 +1055,9 @@ namespace TomCat {
 				else if (key == "Console") m_ShowConsolePanel = visible;
 				else if (key == "BuildSettings") m_ShowBuildSettingsPanel = visible;
 				else if (key == "ProjectSettings") m_ShowProjectSettingsPanel = visible;
+				else if (key == "Animator") m_ShowAnimatorPanel = visible;
+				else if (key == "Animation") m_ShowAnimationPanel = visible;
+				else if (key == "TilePalette") m_ShowTilePalettePanel = visible;
 			}
 		};
 
@@ -1091,7 +1111,10 @@ namespace TomCat {
 			<< "Project=" << (m_ShowProjectPanel ? 1 : 0) << "\n"
 			<< "Console=" << (m_ShowConsolePanel ? 1 : 0) << "\n"
 			<< "BuildSettings=" << (m_ShowBuildSettingsPanel ? 1 : 0) << "\n"
-			<< "ProjectSettings=" << (m_ShowProjectSettingsPanel ? 1 : 0) << "\n";
+			<< "ProjectSettings=" << (m_ShowProjectSettingsPanel ? 1 : 0) << "\n"
+			<< "Animator=" << (m_ShowAnimatorPanel ? 1 : 0) << "\n"
+			<< "Animation=" << (m_ShowAnimationPanel ? 1 : 0) << "\n"
+			<< "TilePalette=" << (m_ShowTilePalettePanel ? 1 : 0) << "\n";
 
 		const std::string sectionName = "[EditorPanels]";
 		const std::string::size_type sectionPos = FindIniSectionHeader(ini, sectionName);
@@ -1154,6 +1177,7 @@ namespace TomCat {
 		// any explicit save, project switch, or shutdown path runs.
 		m_PendingPanelMaximizeAction = PanelMaximizeAction::None;
 		m_PendingMaximizedPanelWindow.clear();
+		m_PendingPanelFocusAfterRestore.clear();
 		if (!m_PanelMaximized)
 			return;
 
@@ -1201,6 +1225,8 @@ namespace TomCat {
 			// the maximized node. Focus the panel that is leaving maximized mode so
 			// its restored dock tab remains active (for example, Game stays on Game).
 			const std::string restoredPanel = m_MaximizedPanelWindow;
+			const std::string requestedPanel =
+				std::exchange(m_PendingPanelFocusAfterRestore, {});
 			int restoredTabOrder = -1;
 			for (size_t index = 0; index < kMaximizableDockPanels.size(); ++index)
 			{
@@ -1213,7 +1239,8 @@ namespace TomCat {
 			RestorePanelLayoutBeforePersistence();
 			if (!restoredPanel.empty())
 			{
-				m_PendingPanelFocus = restoredPanel;
+				m_PendingPanelFocus = requestedPanel.empty()
+					? restoredPanel : requestedPanel;
 				m_PendingRestoredTabWindow = restoredPanel;
 				m_PendingRestoredTabOrder = restoredTabOrder;
 			}
@@ -1416,6 +1443,26 @@ namespace TomCat {
 			if (!path.empty())
 				OpenScene(path);
 		});
+		m_ContentBrowserPanel.SetAuthoringAssetOpenCallback(
+			[this](AssetHandle handle, AssetType type)
+			{
+				if (!m_SceneHierarchyPanel.OpenAuthoringAsset(handle, type))
+					return;
+				switch (type)
+				{
+					case AssetType::AnimationClip:
+						FocusEditorPanel("Animation", m_ShowAnimationPanel);
+						break;
+					case AssetType::AnimatorController:
+						FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+						break;
+					case AssetType::TilePalette:
+						FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+						break;
+					default:
+						break;
+				}
+			});
 		m_SceneHierarchyPanel.SetPrefabCreateCallback([this](Entity entity) {
 			return CreatePrefabFromEntity(entity,
 				m_ContentBrowserPanel.GetWritableCreationDirectory());
@@ -1762,6 +1809,25 @@ namespace TomCat {
 					m_ActiveScene->OnViewportResize(gameWidth, gameHeight);
 			}
 		}
+		const FramebufferSpecification actualGameSpec =
+			m_GameFramebuffer->GetSpecification();
+		if (m_ActiveScene && gameWidth > 0 && gameHeight > 0
+			&& actualGameSpec.Width > 0 && actualGameSpec.Height > 0
+			&& (m_ActiveScene->GetViewportWidth() != actualGameSpec.Width
+				|| m_ActiveScene->GetViewportHeight() != actualGameSpec.Height))
+		{
+			// A restored, replaced, or newly started Scene can inherit an already
+			// correctly-sized framebuffer. Keep Camera aspect and Canvas layout in
+			// sync even when no framebuffer resize event occurs this frame. Read the
+			// actual size after Resize so an allocation failure cannot publish a
+			// viewport that the Game framebuffer did not reach.
+			if (IsSceneRunning())
+				m_RuntimeSceneManager.SetViewportSize(actualGameSpec.Width,
+					actualGameSpec.Height);
+			else
+				m_ActiveScene->OnViewportResize(actualGameSpec.Width,
+					actualGameSpec.Height);
+		}
 
 		// Render Scene View (Editor Camera).  Unity's Scene canvas is one step
 		// lighter than the surrounding #383838 panels (#474747); the grid and
@@ -1778,6 +1844,12 @@ namespace TomCat {
 
 		// Scene窗口始终使用EditorCamera渲染
 		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
+
+		// Editor overlays participate in the same ID attachment as ordinary scene
+		// geometry. Submit them before sampling so thin Camera/Canvas outlines and
+		// the Camera icon can select their owning Entity.
+		RenderSceneCameraOverlay();
+		RenderSceneCanvasOverlay();
 
 		// Mouse picking for Scene viewport
 		auto [mx, my] = ImGui::GetMousePos();
@@ -1802,10 +1874,8 @@ namespace TomCat {
 		{
 			m_HoveredEntity = {};
 		}
-
-		// Collider overlays are submitted only after entity picking has sampled the
-		// ID attachment. Renderer2D utility primitives intentionally use entity ID
-		// -1, so drawing them any earlier would punch holes in sprite picking.
+		// Collider editing remains a visual overlay. It intentionally renders after
+		// picking so its non-pickable handles cannot erase an Entity ID underneath.
 		RenderSceneColliderOverlays();
 
 		m_Framebuffer->Unbind();
@@ -1877,19 +1947,33 @@ namespace TomCat {
 	void EditorLayer::FocusEditorPanel(const char* panelName, bool& panelVisible)
 	{
 		panelVisible = true;
-		m_PendingPanelFocus = panelName ? panelName : "";
 		const std::string_view name = panelName ? panelName : "";
-		if (name == "Game") m_EditorPanelCycleIndex = 1;
+		const bool targetsMaximizedPanel = name == m_MaximizedPanelWindow
+			|| (name == "Scene" && m_MaximizedPanelWindow == "Scene###Scene");
+		if (m_PanelMaximized && !targetsMaximizedPanel)
+		{
+			m_PendingPanelFocusAfterRestore = std::string(name);
+			m_PendingPanelMaximizeAction = PanelMaximizeAction::Restore;
+		}
+		else
+		{
+			m_PendingPanelFocus = std::string(name);
+		}
+		if (name == "Build Settings") m_EditorPanelCycleIndex = 0;
+		else if (name == "Game") m_EditorPanelCycleIndex = 1;
 		else if (name == "Hierarchy") m_EditorPanelCycleIndex = 2;
 		else if (name == "Inspector") m_EditorPanelCycleIndex = 3;
 		else if (name == "Project") m_EditorPanelCycleIndex = 4;
 		else if (name == "Scene") m_EditorPanelCycleIndex = 5;
 		else if (name == "Console") m_EditorPanelCycleIndex = 6;
+		else if (name == "Animator") m_EditorPanelCycleIndex = 7;
+		else if (name == "Animation") m_EditorPanelCycleIndex = 8;
+		else if (name == "Tile Palette") m_EditorPanelCycleIndex = 9;
 	}
 
 	void EditorLayer::CycleEditorPanel(int direction)
 	{
-		constexpr int panelCount = 7;
+		constexpr int panelCount = 10;
 		if (direction == 0)
 			return;
 
@@ -1904,6 +1988,9 @@ namespace TomCat {
 				case 4: return m_ShowProjectPanel;
 				case 5: return m_ShowScenePanel;
 				case 6: return m_ShowConsolePanel;
+				case 7: return m_ShowAnimatorPanel;
+				case 8: return m_ShowAnimationPanel;
+				case 9: return m_ShowTilePalettePanel;
 				default: return false;
 			}
 		};
@@ -1919,13 +2006,19 @@ namespace TomCat {
 			m_EditorPanelCycleIndex = candidate;
 			switch (candidate)
 			{
-				case 0: m_FocusBuildSettingsPanel = true; break;
+				case 0:
+					FocusEditorPanel("Build Settings", m_ShowBuildSettingsPanel);
+					m_FocusBuildSettingsPanel = true;
+					break;
 				case 1: FocusEditorPanel("Game", m_ShowGamePanel); break;
 				case 2: FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel); break;
 				case 3: FocusEditorPanel("Inspector", m_ShowInspectorPanel); break;
 				case 4: FocusEditorPanel("Project", m_ShowProjectPanel); break;
 				case 5: FocusEditorPanel("Scene", m_ShowScenePanel); break;
 				case 6: FocusEditorPanel("Console", m_ShowConsolePanel); break;
+				case 7: FocusEditorPanel("Animator", m_ShowAnimatorPanel); break;
+				case 8: FocusEditorPanel("Animation", m_ShowAnimationPanel); break;
+				case 9: FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel); break;
 			}
 			return;
 		}
@@ -2020,8 +2113,14 @@ namespace TomCat {
 
 			if (ImGui::BeginMenu("Component"))
 			{
-				ImGui::MenuItem("Add Component...", nullptr, false, false);
-				ImGui::TextDisabled("Use Add Component in the Inspector.");
+				const bool canAddComponent = m_SceneState == SceneState::Edit
+					&& m_SceneHierarchyPanel.CanAddComponentToSelection();
+				if (ImGui::MenuItem("Add Component...", nullptr, false,
+					canAddComponent))
+				{
+					m_SceneHierarchyPanel.RequestAddComponentPopup();
+					FocusEditorPanel("Inspector", m_ShowInspectorPanel);
+				}
 				ImGui::EndMenu();
 			}
 
@@ -2038,9 +2137,36 @@ namespace TomCat {
 
 			if (ImGui::BeginMenu("Window"))
 			{
+				if (ImGui::BeginMenu("Animation"))
+				{
+					if (ImGui::MenuItem("Animation"))
+						FocusEditorPanel("Animation", m_ShowAnimationPanel);
+					if (ImGui::MenuItem("Animator"))
+						FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("2D"))
+				{
+					const bool canOpenAtlas = m_ContentBrowserPanel.CanOpenSpriteAtlasTools();
+					if (ImGui::MenuItem("Sprite Atlas Tools", nullptr, false, canOpenAtlas))
+					{
+						m_ContentBrowserPanel.OpenSpriteAtlasToolsForSelection();
+						FocusEditorPanel("Project", m_ShowProjectPanel);
+					}
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+						&& !canOpenAtlas)
+						ImGui::SetTooltip("Select a texture in Project first.");
+					if (ImGui::MenuItem("Tile Palette"))
+						FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+					ImGui::EndMenu();
+				}
+				ImGui::Separator();
 				if (ImGui::BeginMenu("Panels"))
 				{
 					const bool hasFloatingPanel = m_ShowBuildSettingsPanel || m_ShowProjectSettingsPanel ||
+						(m_ShowAnimationPanel && !m_SceneHierarchyPanel.IsAnimationDocked()) ||
+						(m_ShowAnimatorPanel && !m_SceneHierarchyPanel.IsAnimatorGraphDocked()) ||
+						(m_ShowTilePalettePanel && !m_SceneHierarchyPanel.IsTilePaletteDocked()) ||
 						(m_ShowScenePanel && !m_ScenePanelDocked) ||
 						(m_ShowGamePanel && !m_GamePanelDocked) ||
 						(m_ShowHierarchyPanel && !m_SceneHierarchyPanel.IsHierarchyDocked()) ||
@@ -2052,6 +2178,9 @@ namespace TomCat {
 					{
 						m_ShowBuildSettingsPanel = false;
 						m_ShowProjectSettingsPanel = false;
+						if (!m_SceneHierarchyPanel.IsAnimationDocked()) m_ShowAnimationPanel = false;
+						if (!m_SceneHierarchyPanel.IsAnimatorGraphDocked()) m_ShowAnimatorPanel = false;
+						if (!m_SceneHierarchyPanel.IsTilePaletteDocked()) m_ShowTilePalettePanel = false;
 						if (!m_ScenePanelDocked) m_ShowScenePanel = false;
 						if (!m_GamePanelDocked) m_ShowGamePanel = false;
 						if (!m_SceneHierarchyPanel.IsHierarchyDocked()) m_ShowHierarchyPanel = false;
@@ -2060,24 +2189,29 @@ namespace TomCat {
 						if (!m_ConsolePanel.IsDocked()) m_ShowConsolePanel = false;
 					}
 					ImGui::Separator();
-					ImGui::MenuItem("1 Animator", nullptr, false, false);
-					if (ImGui::MenuItem("2 Build Settings"))
+					if (ImGui::MenuItem("1 Animation"))
+						FocusEditorPanel("Animation", m_ShowAnimationPanel);
+					if (ImGui::MenuItem("2 Animator"))
+						FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+					if (ImGui::MenuItem("3 Tile Palette"))
+						FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+					if (ImGui::MenuItem("4 Build Settings"))
 					{
 						m_ShowBuildSettingsPanel = true;
 						m_FocusBuildSettingsPanel = true;
 						m_EditorPanelCycleIndex = 0;
 					}
-					if (ImGui::MenuItem("3 Console"))
+					if (ImGui::MenuItem("5 Console"))
 						FocusEditorPanel("Console", m_ShowConsolePanel);
-					if (ImGui::MenuItem("4 Game"))
+					if (ImGui::MenuItem("6 Game"))
 						FocusEditorPanel("Game", m_ShowGamePanel);
-					if (ImGui::MenuItem("5 Hierarchy"))
+					if (ImGui::MenuItem("7 Hierarchy"))
 						FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
-					if (ImGui::MenuItem("6 Inspector"))
+					if (ImGui::MenuItem("8 Inspector"))
 						FocusEditorPanel("Inspector", m_ShowInspectorPanel);
-					if (ImGui::MenuItem("7 Project"))
+					if (ImGui::MenuItem("9 Project"))
 						FocusEditorPanel("Project", m_ShowProjectPanel);
-					if (ImGui::MenuItem("8 Scene"))
+					if (ImGui::MenuItem("10 Scene"))
 						FocusEditorPanel("Scene", m_ShowScenePanel);
 					ImGui::EndMenu();
 				}
@@ -2196,6 +2330,7 @@ namespace TomCat {
 
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.SetPrefabCreationAllowed(m_SceneState == SceneState::Edit);
+		m_SceneHierarchyPanel.FlushPendingCommands();
 		if (!m_PanelMaximized
 			|| ShouldRenderDockPanel("Hierarchy")
 			|| ShouldRenderDockPanel("Inspector"))
@@ -2206,6 +2341,11 @@ namespace TomCat {
 				&& ShouldRenderDockPanel("Inspector");
 			m_SceneHierarchyPanel.OnImGuiRender(&hierarchyOpen, &inspectorOpen,
 				IsSceneDirty());
+			if (const UUID requested = m_SceneHierarchyPanel.ConsumeFrameEntityRequest();
+				static_cast<uint64_t>(requested) != 0 && m_ActiveScene)
+			{
+				FrameSceneEntity(m_ActiveScene->FindEntityByUUID(requested));
+			}
 			if (!m_PanelMaximized)
 			{
 				m_ShowHierarchyPanel = hierarchyOpen;
@@ -2215,6 +2355,30 @@ namespace TomCat {
 				m_EditorPanelCycleIndex = 2;
 			else if (m_SceneHierarchyPanel.IsInspectorFocused())
 				m_EditorPanelCycleIndex = 3;
+		}
+		if (m_SceneHierarchyPanel.ConsumeAnimatorGraphOpenRequest())
+			FocusEditorPanel("Animator", m_ShowAnimatorPanel);
+		if (m_SceneHierarchyPanel.ConsumeAnimationOpenRequest())
+			FocusEditorPanel("Animation", m_ShowAnimationPanel);
+		if (m_SceneHierarchyPanel.ConsumeTilePaletteOpenRequest())
+			FocusEditorPanel("Tile Palette", m_ShowTilePalettePanel);
+		if (m_ShowAnimationPanel && ShouldRenderDockPanel("Animation"))
+		{
+			m_SceneHierarchyPanel.OnAnimationImGuiRender(&m_ShowAnimationPanel);
+			if (m_SceneHierarchyPanel.IsAnimationFocused())
+				m_EditorPanelCycleIndex = 8;
+		}
+		if (m_ShowAnimatorPanel && ShouldRenderDockPanel("Animator"))
+		{
+			m_SceneHierarchyPanel.OnAnimatorGraphImGuiRender(&m_ShowAnimatorPanel);
+			if (m_SceneHierarchyPanel.IsAnimatorGraphFocused())
+				m_EditorPanelCycleIndex = 7;
+		}
+		if (m_ShowTilePalettePanel && ShouldRenderDockPanel("Tile Palette"))
+		{
+			m_SceneHierarchyPanel.OnTilePaletteImGuiRender(&m_ShowTilePalettePanel);
+			if (m_SceneHierarchyPanel.IsTilePaletteFocused())
+				m_EditorPanelCycleIndex = 9;
 		}
 		if (ShouldRenderDockPanel("Project"))
 		{
@@ -2236,8 +2400,12 @@ namespace TomCat {
 		// Use the same native menu-bar slot as Hierarchy.  ImGui's dock tab and
 		// menu-bar layout then share one geometry source, eliminating the hand-
 		// positioned gap that appeared with the custom Scene strip.
+		// Scene is a fixed viewport. Overlay items may extend ImGui's content
+		// bounds, but must never scroll or shrink the rendered camera area.
+		ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
 		const bool sceneVisible = ImGui::Begin("Scene###Scene", &m_ShowScenePanel,
-			ImGuiWindowFlags_MenuBar);
+			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar
+				| ImGuiWindowFlags_NoScrollWithMouse);
 		m_ScenePanelDocked = ImGui::IsWindowDocked();
 		if (!sceneVisible)
 		{
@@ -2267,7 +2435,6 @@ namespace TomCat {
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 		m_ViewportCanvasHovered = sceneVisible && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportCanvasHovered && !m_ViewportCameraDragOwned);
 
 		// The framebuffer image must remain the current ImGui item while registering
 		// its drop target. Toolbar items submitted later must never steal the target.
@@ -2354,24 +2521,33 @@ namespace TomCat {
 				UI_SceneToolbarDockPreview();
 			}
 		}
-
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+		bool usesRectTransformHandles = false;
+		if (sceneVisible)
+			usesRectTransformHandles = UI_RectTransformHandles();
+		else
+			ResetRectTransformEditState();
 
-		if (selectedEntity && m_ActiveScene
+		bool submittedWorldGizmo = false;
+		if (sceneVisible && selectedEntity && m_ActiveScene
 			&& m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
-			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider())
+			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider()
+			&& !usesRectTransformHandles
+			&& (!IsSceneOrientationGizmoPointerInside() || m_GizmoDragActive))
 		{
 			ImGuizmo::AllowAxisFlip(false);
-			ImGuizmo::SetOrthographic(false);
+			ImGuizmo::SetOrthographic(m_EditorCamera.IsOrthographic());
 			ImGuizmo::SetDrawlist();
 
 			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
 				m_ViewportBounds[1].x - m_ViewportBounds[0].x,
 				m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 
-			const glm::mat4& cameraProjection = m_EditorCamera.GetProjection();
-			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
+			glm::mat4 cameraProjection(1.0f);
+			glm::mat4 cameraView(1.0f);
+			m_EditorCamera.GetRightHandedToolMatrices(cameraView,
+				cameraProjection);
 
 			if (selectedEntity.HasComponent<Transform>())
 			{
@@ -2390,8 +2566,12 @@ namespace TomCat {
 					m_GizmoSpaceMode == GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
 					glm::value_ptr(transform),
 					nullptr, snap ? snapValues : nullptr);
+				submittedWorldGizmo = true;
+				m_GizmoDragActive = ImGuizmo::IsUsing();
+				m_GizmoHandleHovered = ImGuizmo::IsOver(
+					static_cast<ImGuizmo::OPERATION>(m_GizmoType));
 
-				if (ImGuizmo::IsUsing())
+				if (m_GizmoDragActive)
 				{
 					if (m_SceneState == SceneState::Edit
 						&& !m_GizmoTransactionActive)
@@ -2406,7 +2586,12 @@ namespace TomCat {
 				}
 			}
 		}
-		if (m_GizmoTransactionActive && !ImGuizmo::IsUsing())
+		if (!submittedWorldGizmo)
+		{
+			m_GizmoDragActive = false;
+			m_GizmoHandleHovered = false;
+		}
+		if (m_GizmoTransactionActive && !m_GizmoDragActive)
 		{
 			m_GizmoTransactionActive = false;
 			CommitSceneTransaction();
@@ -2417,14 +2602,48 @@ namespace TomCat {
 		else
 			ResetColliderEditState();
 
+		// Draw the orientation control last so entity and collider gizmos cannot
+		// cover it or receive a click intended for one of its axis cones.
+		if (sceneVisible)
+			UI_SceneOrientationGizmo();
+		else
+		{
+			m_SceneOrientationGizmoHovered = false;
+			m_SceneOrientationGizmoBounds[0] = {};
+			m_SceneOrientationGizmoBounds[1] = {};
+			m_SceneOrientationPressedTarget = -2;
+		}
+
+		// ImGui receives wheel input for both the main window and detached Scene
+		// windows. Route it after this frame's hover/overlay state is established.
+		const float sceneWheel = ImGui::GetIO().MouseWheel;
+		if (m_ViewportCanvasHovered && !m_SceneOrientationGizmoHovered
+			&& std::isfinite(sceneWheel) && sceneWheel != 0.0f)
+		{
+			MouseScrolledEvent scroll(0.0f, sceneWheel);
+			m_EditorCamera.OnEvent(scroll);
+		}
+
 		ImGui::End();
 		ImGui::PopStyleVar();
 		}
 		else
 		{
+			if (m_GizmoTransactionActive)
+			{
+				m_GizmoTransactionActive = false;
+				CommitSceneTransaction();
+			}
+			m_GizmoDragActive = false;
+			m_GizmoHandleHovered = false;
+			ResetRectTransformEditState();
 			m_ViewportFocused = false;
 			m_ViewportCanvasHovered = false;
 			m_ViewportCameraDragOwned = false;
+			m_SceneOrientationGizmoHovered = false;
+			m_SceneOrientationGizmoBounds[0] = {};
+			m_SceneOrientationGizmoBounds[1] = {};
+			m_SceneOrientationPressedTarget = -2;
 			m_HoveredEntity = {};
 		}
 
@@ -2432,10 +2651,24 @@ namespace TomCat {
 		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
-		ImGui::Begin("Game", &m_ShowGamePanel, ImGuiWindowFlags_MenuBar);
+		ImGui::Begin("Game", &m_ShowGamePanel,
+			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollWithMouse);
 		m_GamePanelDocked = ImGui::IsWindowDocked();
-		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+		const bool gameViewportFocused = ImGui::IsWindowFocused(
+			ImGuiFocusedFlags_RootAndChildWindows);
+		const bool gameViewportHovered = ImGui::IsWindowHovered(
+			ImGuiHoveredFlags_RootAndChildWindows
+				| ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+		if (gameViewportFocused)
 			m_EditorPanelCycleIndex = 1;
+		if (gameViewportFocused && gameViewportHovered)
+		{
+			const float wheel = ImGui::GetIO().MouseWheel;
+			if (std::isfinite(wheel) && std::abs(wheel) > 0.0001f)
+				m_GameViewScale = std::clamp(m_GameViewScale
+					+ wheel * kGameViewScaleWheelStep,
+					kGameViewScaleMinimum, kGameViewScaleMaximum);
+		}
 
 		ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.075f, 0.075f, 0.075f, 1.0f));
 		if (ImGui::BeginMenuBar())
@@ -2538,7 +2771,8 @@ namespace TomCat {
 		// resolution visibly changes preview size, with scrollbars for overflow.
 		const float screenToFramebufferScale = std::max(0.01f,
 			Application::Get().GetWindow().GetScreenToFramebufferScaleX());
-		const float requestedScale = std::clamp(m_GameViewScale, 0.8f, 8.8f);
+		const float requestedScale = std::clamp(m_GameViewScale,
+			kGameViewScaleMinimum, kGameViewScaleMaximum);
 		const bool gamePanelMaximized = m_PanelMaximized
 			&& m_MaximizedPanelWindow == "Game";
 		const float fitScale = renderSize.x > 0.0f && renderSize.y > 0.0f
@@ -2615,6 +2849,12 @@ namespace TomCat {
 		UI_ProjectMigrationRecoveryModal();
 		UI_ProjectMigrationModal();
 		UI_RecoveryModal();
+		ImGuiLayer* imguiLayer = Application::Get().GetImGuiLayer();
+		imguiLayer->BlockMouseEvents(
+			!m_ViewportCanvasHovered && !m_ViewportCameraDragOwned);
+		// EditorLayer resolves keyboard shortcuts after ImGui has established the
+		// focused widget and popup state for this frame.
+		imguiLayer->BlockKeyboardEvents(false);
 		if (!m_PendingPanelFocus.empty())
 		{
 			ImGui::SetWindowFocus(m_PendingPanelFocus.c_str());
@@ -2650,7 +2890,9 @@ namespace TomCat {
 
 	void EditorLayer::UI_GameNoCameraOverlay()
 	{
-		if (!m_ActiveScene || m_ActiveScene->GetPrimaryCameraEntity())
+		// Screen Space Canvas renders directly into Game view and does not require
+		// a Camera. Do not cover that preview with the no-camera message.
+		if (!m_ActiveScene || m_ActiveScene->HasGameViewRenderSource())
 			return;
 
 		ImVec2 imageMin = ImGui::GetItemRectMin();
@@ -3477,6 +3719,244 @@ namespace TomCat {
 #include "panels/ProjectSettingsView.inl"
 	}
 
+	void EditorLayer::FrameSceneEntity(Entity root)
+	{
+		if (!m_ActiveScene || !root || !root.HasComponent<ID>())
+			return;
+		Entity activeRoot = m_ActiveScene->FindEntityByUUID(root.GetUUID());
+		if (!activeRoot)
+			return;
+
+		struct FocusBounds
+		{
+			glm::vec3 Minimum{ (std::numeric_limits<float>::max)() };
+			glm::vec3 Maximum{ (std::numeric_limits<float>::lowest)() };
+			bool HasGeometry = false;
+			std::vector<glm::vec3> Pivots;
+
+			void Add(const glm::vec3& point)
+			{
+				if (!std::isfinite(point.x) || !std::isfinite(point.y)
+					|| !std::isfinite(point.z))
+					return;
+				Minimum = glm::min(Minimum, point);
+				Maximum = glm::max(Maximum, point);
+				HasGeometry = true;
+			}
+
+			void AddUnitQuad(const glm::mat4& transform)
+			{
+				constexpr glm::vec4 corners[] = {
+					{ -0.5f, -0.5f, 0.0f, 1.0f },
+					{  0.5f, -0.5f, 0.0f, 1.0f },
+					{  0.5f,  0.5f, 0.0f, 1.0f },
+					{ -0.5f,  0.5f, 0.0f, 1.0f }
+				};
+				for (const glm::vec4& corner : corners)
+					Add(glm::vec3(transform * corner));
+			}
+		};
+
+		FocusBounds bounds;
+		Entity canvasOwner;
+		for (Entity current = activeRoot; current;
+			current = m_ActiveScene->GetParent(current))
+		{
+			if (current.HasComponent<Canvas>())
+			{
+				canvasOwner = current;
+				break;
+			}
+		}
+		if (canvasOwner)
+		{
+			const RuntimeUILayoutSnapshot layout =
+				RuntimeUISystem::BuildEditorLayout(*m_ActiveScene,
+					RuntimeUIVisibilityMode::Editor);
+			std::unordered_set<uint64_t> visitedUI;
+			std::function<void(Entity, bool)> collectUI =
+				[&](Entity entity, bool isRoot)
+			{
+				if (!entity || !entity.HasComponent<ID>()
+					|| (!isRoot
+						&& !m_ActiveScene->IsVisibleInEditorHierarchy(entity)))
+					return;
+				const UUID id = entity.GetUUID();
+				if (!visitedUI.emplace(static_cast<uint64_t>(id)).second)
+					return;
+				const auto rectangleIt = layout.Rectangles.find(id);
+				const auto transformIt = layout.Transforms.find(id);
+				if (rectangleIt != layout.Rectangles.end()
+					&& transformIt != layout.Transforms.end())
+				{
+					const UIRect& rectangle = rectangleIt->second;
+					const glm::vec2 corners[4] = {
+						{ rectangle.X, rectangle.Y },
+						{ rectangle.X + rectangle.Width, rectangle.Y },
+						{ rectangle.X + rectangle.Width,
+							rectangle.Y + rectangle.Height },
+						{ rectangle.X, rectangle.Y + rectangle.Height }
+					};
+					for (const glm::vec2& corner : corners)
+						bounds.Add(glm::vec3(transformIt->second
+							* glm::vec4(corner, 0.0f, 1.0f)));
+				}
+				for (UUID childID : m_ActiveScene->GetChildrenUUIDs(entity))
+				{
+					Entity child = m_ActiveScene->FindEntityByUUID(childID);
+					if (child && m_ActiveScene->GetParent(child) == entity)
+						collectUI(child, false);
+				}
+			};
+			collectUI(activeRoot, true);
+			if (bounds.HasGeometry)
+			{
+				m_EditorCamera.FrameBounds(bounds.Minimum, bounds.Maximum);
+				FocusEditorPanel("Scene", m_ShowScenePanel);
+			}
+			return;
+		}
+
+		std::unordered_set<uint64_t> visited;
+		std::unordered_set<uint64_t> framedIDs;
+		std::function<void(Entity, bool)> collect = [&](Entity entity, bool isRoot)
+		{
+			if (!entity || !entity.HasComponent<ID>()
+				|| (!isRoot && !m_ActiveScene->IsVisibleInEditorHierarchy(entity)))
+				return;
+			const UUID id = entity.GetUUID();
+			const uint64_t rawID = static_cast<uint64_t>(id);
+			if (!visited.emplace(rawID).second)
+				return;
+			framedIDs.emplace(rawID);
+
+			glm::mat4 world(1.0f);
+			if (entity.HasComponent<Transform>())
+			{
+				world = m_ActiveScene->GetRuntimeRenderTransform(id);
+				bounds.Pivots.push_back(glm::vec3(world * glm::vec4(0, 0, 0, 1)));
+			}
+
+			if (entity.HasComponent<SpriteRenderer>()
+				&& entity.GetComponent<SpriteRenderer>().Enabled)
+				bounds.AddUnitQuad(world);
+
+			if (entity.HasComponent<Tilemap2D>())
+			{
+				const Tilemap2D& tilemap = entity.GetComponent<Tilemap2D>();
+				const Entity parent = m_ActiveScene->GetParent(entity);
+				const Grid2D* grid = parent && parent.HasComponent<Grid2D>()
+					? &parent.GetComponent<Grid2D>() : nullptr;
+				if (tilemap.Enabled)
+				{
+					for (const TilemapCell& cell : tilemap.Cells)
+					{
+						if (static_cast<uint64_t>(cell.SpriteHandle) != 0)
+							bounds.AddUnitQuad(world
+								* Tilemap2DRuntime::GetCellTransform(tilemap, cell, grid));
+					}
+				}
+			}
+
+			if (entity.HasComponent<LineRenderer>())
+			{
+				const LineRenderer& line = entity.GetComponent<LineRenderer>();
+				if (line.Enabled)
+				{
+					bounds.Add(glm::vec3(world * glm::vec4(line.Start, 1.0f)));
+					bounds.Add(glm::vec3(world * glm::vec4(line.End, 1.0f)));
+				}
+			}
+
+			if (entity.HasComponent<TextRenderer>())
+			{
+				const TextRenderer& text = entity.GetComponent<TextRenderer>();
+				if (text.Enabled && !text.Text.empty() && std::isfinite(text.FontSize)
+					&& text.FontSize > 0.0f)
+				{
+					const Ref<RuntimeFont> font = FontManager::Get().Load(text.Font,
+						text.Text, text.FallbackFont, text.EmojiFont);
+					if (font)
+					{
+						const TextLayoutResult layout = TextLayoutEngine::Build(
+							font->GetAtlas(), text.Text, text.FontSize,
+							std::max(0.0f, text.MaxWidth), text.Alignment,
+							text.LineSpacing);
+						for (const TextGlyphQuad& glyph : layout.Glyphs)
+						{
+							bounds.AddUnitQuad(world
+								* glm::translate(glm::mat4(1.0f), {
+									glyph.Rect.X + glyph.Rect.Width * 0.5f,
+									glyph.Rect.Y + glyph.Rect.Height * 0.5f, 0.0f })
+								* glm::scale(glm::mat4(1.0f), {
+									glyph.Rect.Width, glyph.Rect.Height, 1.0f }));
+						}
+					}
+				}
+			}
+
+			if (entity.HasComponent<ParticleSystem2D>())
+			{
+				const ParticleSystem2D& system = entity.GetComponent<ParticleSystem2D>();
+				if (system.Enabled)
+				{
+					for (const Particle2D& particle : system.RuntimeParticles)
+					{
+						const float size = ParticleSystem2DRuntime::EvaluateSize(particle);
+						if (std::isfinite(size) && size > 0.0f)
+							bounds.AddUnitQuad(world
+								* glm::translate(glm::mat4(1.0f),
+									glm::vec3(particle.Position, 0.0f))
+								* glm::scale(glm::mat4(1.0f),
+									glm::vec3(size, size, 1.0f)));
+					}
+				}
+			}
+
+			if (entity.HasComponent<Light2D>())
+			{
+				const Light2D& light = entity.GetComponent<Light2D>();
+				if (light.Enabled && light.Type == Light2DType::Point
+					&& std::isfinite(light.Radius) && light.Radius > 0.0f)
+					bounds.AddUnitQuad(world * glm::scale(glm::mat4(1.0f),
+						glm::vec3(light.Radius * 2.0f, light.Radius * 2.0f, 1.0f)));
+			}
+
+			for (UUID childID : m_ActiveScene->GetChildrenUUIDs(entity))
+			{
+				Entity child = m_ActiveScene->FindEntityByUUID(childID);
+				if (child && m_ActiveScene->GetParent(child) == entity)
+					collect(child, false);
+			}
+		};
+		collect(activeRoot, true);
+
+		for (const ColliderDebugShape& shape : m_ActiveScene->GetColliderDebugShapes(
+			m_SceneState != SceneState::Edit))
+		{
+			if (framedIDs.contains(static_cast<uint64_t>(shape.EntityID)))
+				bounds.AddUnitQuad(shape.Transform);
+		}
+
+		if (!bounds.HasGeometry)
+		{
+			for (const glm::vec3& pivot : bounds.Pivots)
+				bounds.Add(pivot);
+		}
+		if (!bounds.HasGeometry)
+			return;
+
+		const glm::vec3 center = (bounds.Minimum + bounds.Maximum) * 0.5f;
+		const glm::vec3 extent = bounds.Maximum - bounds.Minimum;
+		if (glm::dot(extent, extent) < 0.000001f)
+		{
+			bounds.Minimum = center - glm::vec3(0.5f);
+			bounds.Maximum = center + glm::vec3(0.5f);
+		}
+		m_EditorCamera.FrameBounds(bounds.Minimum, bounds.Maximum);
+		FocusEditorPanel("Scene", m_ShowScenePanel);
+	}
+
 	void EditorLayer::RenderSceneColliderOverlays()
 	{
 		if (!m_ActiveScene)
@@ -3534,6 +4014,284 @@ namespace TomCat {
 		Renderer2D::SetLineWidth(previousLineWidth);
 	}
 
+	void EditorLayer::RenderSceneCameraOverlay()
+	{
+		if (!m_ActiveScene)
+			return;
+
+		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		std::vector<Entity> cameraEntities;
+		Entity selectedCamera;
+		for (const entt::entity value
+			: m_ActiveScene->m_Registry.view<Transform, C_Camera, ID>())
+		{
+			Entity entity(value, m_ActiveScene.get());
+			if (selected && selected == entity)
+				selectedCamera = entity;
+			else
+				cameraEntities.push_back(entity);
+		}
+		// Keep the selected outline legible when multiple cameras overlap.
+		if (selectedCamera)
+			cameraEntities.push_back(selectedCamera);
+
+		struct CameraOverlayGeometry
+		{
+			int EntityID = -1;
+			bool Selected = false;
+			bool HasFrustum = false;
+			SceneCamera::ProjectionType Projection =
+				SceneCamera::ProjectionType::Perspective;
+			float OrthographicSize = 1.0f;
+			glm::mat4 CameraWorld{ 1.0f };
+			std::array<glm::vec3, 8> LocalCorners{};
+			std::array<glm::vec3, 8> WorldCorners{};
+		};
+		std::vector<CameraOverlayGeometry> geometries;
+		geometries.reserve(cameraEntities.size());
+		for (Entity entity : cameraEntities)
+		{
+			const bool isSelected = selectedCamera && selectedCamera == entity;
+			if (!m_ActiveScene->IsVisibleInEditorHierarchy(entity))
+				continue;
+			const SceneCamera& camera = entity.GetComponent<C_Camera>()._Camera;
+			CameraOverlayGeometry geometry;
+			geometry.EntityID = static_cast<int>(
+				static_cast<entt::entity>(entity));
+			geometry.Selected = isSelected;
+			geometry.Projection = camera.GetProjectionType();
+			geometry.OrthographicSize = camera.GetOrthographicSize();
+			geometry.CameraWorld =
+				m_ActiveScene->GetRuntimeCameraTransform(entity.GetUUID());
+
+			// The icon is the Camera entity's stable selection target. Keep the
+			// entry even when an extreme Far/FOV cannot be represented as finite
+			// frustum vertices; only the optional line geometry depends on corners.
+			const glm::vec3 iconPosition = glm::vec3(geometry.CameraWorld[3]);
+			if (!std::isfinite(iconPosition.x) || !std::isfinite(iconPosition.y)
+				|| !std::isfinite(iconPosition.z))
+				continue;
+
+			if (camera.TryGetLocalFrustumCorners(geometry.LocalCorners))
+			{
+				bool valid = true;
+				for (size_t index = 0; index < geometry.LocalCorners.size(); ++index)
+				{
+					const glm::vec4 world = geometry.CameraWorld
+						* glm::vec4(geometry.LocalCorners[index], 1.0f);
+					if (!std::isfinite(world.x) || !std::isfinite(world.y)
+						|| !std::isfinite(world.z) || !std::isfinite(world.w))
+					{
+						valid = false;
+						break;
+					}
+					geometry.WorldCorners[index] = glm::vec3(world);
+				}
+				geometry.HasFrustum = valid;
+			}
+			geometries.push_back(std::move(geometry));
+		}
+		if (geometries.empty())
+			return;
+
+		// The overlay gets an infinite far plane. The normal Scene render keeps
+		// its finite projection and depth precision, while authored Camera Far has
+		// no editor-only visualization ceiling.
+		Camera overlayCamera(m_EditorCamera.GetInfiniteFarViewProjection());
+		const float previousLineWidth = Renderer2D::GetLineWidth();
+		Renderer2D::SetLineWidth(1.5f);
+		RenderCommand::SetDepthTest(false);
+		Renderer2D::BeginScene(overlayCamera, glm::mat4(1.0f));
+		for (const CameraOverlayGeometry& geometry : geometries)
+		{
+			if (!geometry.HasFrustum)
+				continue;
+			const auto& corners = geometry.WorldCorners;
+
+			const glm::vec4 color = geometry.Selected
+				? glm::vec4(0.28f, 0.68f, 1.0f, 1.0f)
+				: glm::vec4(0.78f, 0.78f, 0.78f, 0.72f);
+			auto drawLoop = [&](size_t first)
+			{
+				for (size_t index = 0; index < 4; ++index)
+					Renderer2D::DrawLine(corners[first + index],
+						corners[first + ((index + 1) % 4)], color,
+						geometry.EntityID);
+			};
+			drawLoop(0);
+			drawLoop(4);
+			for (size_t index = 0; index < 4; ++index)
+				Renderer2D::DrawLine(corners[index], corners[index + 4],
+					color, geometry.EntityID);
+			if (geometry.Selected && geometry.Projection
+				== SceneCamera::ProjectionType::Orthographic)
+			{
+				const float markerSize = geometry.OrthographicSize * 0.035f;
+				for (size_t index = 0; index < 4; ++index)
+				{
+					const glm::vec3 center = (geometry.LocalCorners[index]
+						+ geometry.LocalCorners[(index + 1) % 4]) * 0.5f;
+					const glm::mat4 markerTransform = geometry.CameraWorld
+						* glm::translate(glm::mat4(1.0f), center)
+						* glm::scale(glm::mat4(1.0f), glm::vec3(
+							markerSize, markerSize, 1.0f));
+					Renderer2D::DrawQuad(markerTransform, color,
+						geometry.EntityID);
+				}
+			}
+		}
+		Renderer2D::EndScene();
+
+		// Renderer2D flushes lines after quads. Draw icons in a second pass so the
+		// frustum cannot slice through the camera silhouette.
+		const Ref<Texture2D> cameraIcon = m_EditorIcons
+			? m_EditorIcons->Get(EditorIcon::Camera) : Ref<Texture2D>{};
+		if (cameraIcon)
+		{
+			Renderer2D::BeginScene(overlayCamera, glm::mat4(1.0f));
+			for (const CameraOverlayGeometry& geometry : geometries)
+			{
+				// Give the billboard a world-space size so dollying toward a camera
+				// visibly enlarges it. A constant pixel size hid all zoom feedback in
+				// the initial empty scene, whose distant frustum is viewed end-on.
+				// Retain a minimum pixel size for picking distant cameras.
+				const glm::vec3 iconPosition = glm::vec3(geometry.CameraWorld[3]);
+				const float viewDepth = glm::dot(iconPosition
+					- m_EditorCamera.GetPosition(),
+					m_EditorCamera.GetForwardDirection());
+				if (!std::isfinite(viewDepth) || viewDepth <= 0.0001f)
+					continue;
+				const float projectionY = std::abs(
+					m_EditorCamera.GetProjection()[1][1]);
+				const float viewportHeight = std::max(1.0f,
+					m_ViewportBounds[1].y - m_ViewportBounds[0].y);
+				const float depthScale = m_EditorCamera.IsOrthographic()
+					? 1.0f : viewDepth;
+				const float minimumPickSize = 24.0f * 2.0f * depthScale
+					/ (projectionY * viewportHeight);
+				const float iconWorldSize = std::max(0.5f, minimumPickSize);
+				if (!std::isfinite(iconWorldSize) || iconWorldSize <= 0.0f)
+					continue;
+
+				glm::mat4 iconTransform(1.0f);
+				iconTransform[0] = glm::vec4(
+					m_EditorCamera.GetRightDirection() * iconWorldSize, 0.0f);
+				iconTransform[1] = glm::vec4(
+					m_EditorCamera.GetUpDirection() * iconWorldSize, 0.0f);
+				iconTransform[2] = glm::vec4(
+					m_EditorCamera.GetForwardDirection(), 0.0f);
+				iconTransform[3] = glm::vec4(iconPosition, 1.0f);
+				Renderer2D::DrawQuad(iconTransform, cameraIcon, 1.0f,
+					geometry.Selected
+						? glm::vec4(0.56f, 0.82f, 1.0f, 1.0f)
+						: glm::vec4(1.0f),
+					geometry.EntityID, false);
+			}
+			Renderer2D::EndScene();
+		}
+		RenderCommand::SetDepthTest(true);
+		Renderer2D::SetLineWidth(previousLineWidth);
+	}
+
+	void EditorLayer::RenderSceneCanvasOverlay()
+	{
+		if (!m_ActiveScene)
+			return;
+		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildEditorLayout(
+			*m_ActiveScene, RuntimeUIVisibilityMode::Editor);
+		if (layout.RenderOrder.empty())
+			return;
+
+		Entity selectedCanvas;
+		for (Entity current = m_SceneHierarchyPanel.GetSelectedEntity(); current;
+			current = m_ActiveScene->GetParent(current))
+		{
+			if (current.HasComponent<Canvas>())
+			{
+				selectedCanvas = current;
+				break;
+			}
+		}
+
+		const float previousLineWidth = Renderer2D::GetLineWidth();
+		Renderer2D::SetLineWidth(1.5f);
+		RenderCommand::SetDepthTest(false);
+		Renderer2D::BeginScene(m_EditorCamera);
+		std::vector<Entity> canvasEntities;
+		for (const entt::entity value : m_ActiveScene->m_Registry.view<Canvas, ID>())
+		{
+			Entity canvas(value, m_ActiveScene.get());
+			if (!selectedCanvas || selectedCanvas != canvas)
+				canvasEntities.push_back(canvas);
+		}
+		// Multiple screen-space Canvases share an authoring origin by default, so
+		// render the selected owner last to preserve its blue outline.
+		if (selectedCanvas)
+			canvasEntities.push_back(selectedCanvas);
+		for (Entity canvas : canvasEntities)
+		{
+			const int entityID = static_cast<int>(
+				static_cast<entt::entity>(canvas));
+			const bool isSelected = selectedCanvas && selectedCanvas == canvas;
+			if (!canvas.GetComponent<Canvas>().Enabled
+				|| !m_ActiveScene->IsVisibleInEditorHierarchy(canvas))
+				continue;
+			const auto rectangleIt = layout.Rectangles.find(canvas.GetUUID());
+			const auto transformIt = layout.Transforms.find(canvas.GetUUID());
+			if (rectangleIt == layout.Rectangles.end()
+				|| transformIt == layout.Transforms.end())
+				continue;
+
+			const UIRect& rectangle = rectangleIt->second;
+			const glm::vec2 localCorners[4] = {
+				{ rectangle.X, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y + rectangle.Height },
+				{ rectangle.X, rectangle.Y + rectangle.Height }
+			};
+			glm::vec3 worldCorners[4]{};
+			bool valid = true;
+			for (size_t index = 0; index < std::size(localCorners); ++index)
+			{
+				const glm::vec4 world = transformIt->second
+					* glm::vec4(localCorners[index], 0.0f, 1.0f);
+				valid &= std::isfinite(world.x) && std::isfinite(world.y)
+					&& std::isfinite(world.z) && std::isfinite(world.w);
+				worldCorners[index] = glm::vec3(world);
+			}
+			if (!valid)
+				continue;
+
+			const glm::vec4 color = isSelected
+				? glm::vec4(0.24f, 0.64f, 1.0f, 1.0f)
+				: glm::vec4(0.78f, 0.78f, 0.78f, 0.5f);
+			for (size_t index = 0; index < std::size(worldCorners); ++index)
+				Renderer2D::DrawLine(worldCorners[index],
+					worldCorners[(index + 1) % std::size(worldCorners)], color,
+					entityID);
+
+			if (isSelected)
+			{
+				const float width = glm::length(worldCorners[1] - worldCorners[0]);
+				const float height = glm::length(worldCorners[3] - worldCorners[0]);
+				const float markerSize = std::clamp(
+					std::min(width, height) * 0.018f, 0.08f, 0.24f);
+				for (const glm::vec3& corner : worldCorners)
+				{
+					const glm::mat4 markerTransform = glm::translate(
+						glm::mat4(1.0f), corner)
+						* glm::scale(glm::mat4(1.0f), glm::vec3(
+							markerSize, markerSize, 1.0f));
+					Renderer2D::DrawCircle(markerTransform, color, 1.0f,
+						0.01f, entityID);
+				}
+			}
+		}
+		Renderer2D::EndScene();
+		RenderCommand::SetDepthTest(true);
+		Renderer2D::SetLineWidth(previousLineWidth);
+	}
+
 	bool EditorLayer::WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const
 	{
 		const glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
@@ -3578,6 +4336,282 @@ namespace TomCat {
 			return false;
 
 		worldPosition = { intersection.x, intersection.y };
+		return true;
+	}
+
+	void EditorLayer::ResetRectTransformEditState()
+	{
+		if (m_UIRectTransactionActive)
+		{
+			m_UIRectTransactionActive = false;
+			CommitSceneTransaction();
+		}
+		m_UIRectDragActive = false;
+		m_UIRectHandleHovered = false;
+		m_UIRectEditEntity = UUID(0);
+	}
+
+	bool EditorLayer::UI_RectTransformHandles()
+	{
+		Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (!m_ActiveScene || !selected
+			|| !m_ActiveScene->IsVisibleInEditorHierarchy(selected))
+		{
+			ResetRectTransformEditState();
+			return false;
+		}
+
+		// A screen-space Canvas owns the reference-resolution plane drawn by
+		// RenderSceneCanvasOverlay. Its ordinary Transform does not move runtime UI.
+		if (selected.HasComponent<Canvas>())
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
+		if (!selected.HasComponent<RectTransform>())
+		{
+			ResetRectTransformEditState();
+			return false;
+		}
+
+		const glm::vec2 viewportDisplaySize = m_ViewportBounds[1] - m_ViewportBounds[0];
+		if (viewportDisplaySize.x <= 0.0f || viewportDisplaySize.y <= 0.0f)
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
+
+		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildEditorLayout(
+			*m_ActiveScene, RuntimeUIVisibilityMode::Editor);
+		const UUID selectedID = selected.GetUUID();
+		const auto rectangleIt = layout.Rectangles.find(selectedID);
+		const auto scaleIt = layout.Scales.find(selectedID);
+		const auto uiTransformIt = layout.Transforms.find(selectedID);
+		if (rectangleIt == layout.Rectangles.end() || scaleIt == layout.Scales.end()
+			|| uiTransformIt == layout.Transforms.end()
+			|| !std::isfinite(scaleIt->second) || scaleIt->second <= 0.0f)
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
+
+		const UIRect& rectangle = rectangleIt->second;
+		auto toSceneScreen = [&](const glm::vec2& point, ImVec2& output)
+		{
+			const glm::vec4 transformed = uiTransformIt->second
+				* glm::vec4(point, 0.0f, 1.0f);
+			glm::vec2 screen;
+			if (!std::isfinite(transformed.x) || !std::isfinite(transformed.y)
+				|| !std::isfinite(transformed.z)
+				|| !WorldToScreen(glm::vec3(transformed), screen))
+				return false;
+			output = ImVec2(screen.x, screen.y);
+			return true;
+		};
+		const glm::vec2 localCorners[4] = {
+			{ rectangle.X, rectangle.Y },
+			{ rectangle.X + rectangle.Width, rectangle.Y },
+			{ rectangle.X + rectangle.Width, rectangle.Y + rectangle.Height },
+			{ rectangle.X, rectangle.Y + rectangle.Height }
+		};
+		ImVec2 rectCorners[4]{};
+		bool visible = true;
+		for (size_t index = 0; index < std::size(localCorners); ++index)
+			visible &= toSceneScreen(localCorners[index], rectCorners[index]);
+		const glm::vec2 pivotPosition{
+			rectangle.X + rectangle.Width * selected.GetComponent<RectTransform>().Pivot.x,
+			rectangle.Y + rectangle.Height * selected.GetComponent<RectTransform>().Pivot.y };
+		ImVec2 pivotScreen{};
+		visible &= toSceneScreen(pivotPosition, pivotScreen);
+		if (!visible)
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
+
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
+			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), true);
+		const ImU32 outline = IM_COL32(72, 166, 255, 255);
+		draw->AddPolyline(rectCorners, 4, outline, ImDrawFlags_Closed, 1.5f);
+		draw->AddCircleFilled(pivotScreen, 4.0f, outline);
+		draw->AddLine(ImVec2(pivotScreen.x - 9.0f, pivotScreen.y),
+			ImVec2(pivotScreen.x + 9.0f, pivotScreen.y), outline, 1.5f);
+		draw->AddLine(ImVec2(pivotScreen.x, pivotScreen.y - 9.0f),
+			ImVec2(pivotScreen.x, pivotScreen.y + 9.0f), outline, 1.5f);
+		ImGui::PopClipRect();
+
+		Entity parent = m_ActiveScene->GetParent(selected);
+		const bool layoutControlled = parent && parent.HasComponent<UILayoutGroup>()
+			&& parent.GetComponent<UILayoutGroup>().Enabled;
+		glm::mat4 parentCanvasTransform(1.0f);
+		if (parent && parent.HasComponent<ID>())
+		{
+			const auto parentTransformIt = layout.Transforms.find(parent.GetUUID());
+			if (parentTransformIt != layout.Transforms.end())
+				parentCanvasTransform = parentTransformIt->second;
+		}
+		const float parentDeterminant = glm::determinant(parentCanvasTransform);
+		const bool parentTransformInvertible = std::isfinite(parentDeterminant)
+			&& std::abs(parentDeterminant) > 0.000001f;
+		const glm::mat4 inverseParentCanvasTransform = parentTransformInvertible
+			? glm::inverse(parentCanvasTransform) : glm::mat4(1.0f);
+		const bool translateTool = m_GizmoType == ImGuizmo::OPERATION::TRANSLATE;
+		const bool rotateTool = m_GizmoType == ImGuizmo::OPERATION::ROTATE;
+		const bool scaleTool = m_GizmoType == ImGuizmo::OPERATION::SCALE;
+		const bool supportedTool = translateTool || rotateTool || scaleTool;
+		const bool transformToolAvailable = translateTool
+			|| selected.HasComponent<Transform>();
+		// A layout group authors its children's positions. Rotation and scale remain
+		// independent, matching Unity's driven RectTransform behaviour.
+		const bool canManipulate = m_SceneState == SceneState::Edit
+			&& supportedTool && transformToolAvailable
+			&& parentTransformInvertible && (!translateTool || !layoutControlled)
+			&& (!IsSceneOrientationGizmoPointerInside() || m_UIRectDragActive);
+
+		if (m_UIRectTransactionActive && m_UIRectEditEntity != selectedID)
+			ResetRectTransformEditState();
+
+		const ImVec2 mouse = ImGui::GetMousePos();
+		const bool rectangleHovered = m_ViewportCanvasHovered
+			&& (ImTriangleContainsPoint(rectCorners[0], rectCorners[1],
+				rectCorners[2], mouse)
+				|| ImTriangleContainsPoint(rectCorners[0], rectCorners[2],
+					rectCorners[3], mouse));
+		bool gizmoHovered = false;
+		bool gizmoUsing = false;
+		bool manipulated = false;
+		glm::mat4 gizmoTransform(1.0f);
+		if (canManipulate)
+		{
+			glm::vec3 gizmoRotation(0.0f);
+			glm::vec3 gizmoScale(1.0f);
+			if (selected.HasComponent<Transform>())
+			{
+				const auto& authoredTransform = selected.GetComponent<Transform>();
+				gizmoRotation.z = authoredTransform._LocalRotation.z;
+				gizmoScale.x = std::abs(authoredTransform._LocalScale.x) > 0.0001f
+					? authoredTransform._LocalScale.x : 0.0001f;
+				gizmoScale.y = std::abs(authoredTransform._LocalScale.y) > 0.0001f
+					? authoredTransform._LocalScale.y : 0.0001f;
+			}
+			// Runtime UI composes each RectTransform in canvas space. Include the
+			// accumulated parent frame so nested rotated/scaled controls receive a
+			// gizmo at the same visible pivot and with the same visible axes.
+			gizmoTransform = parentCanvasTransform * Math::ComposeTransform(
+				{ pivotPosition.x, pivotPosition.y, 0.0f },
+				gizmoRotation, gizmoScale);
+
+			// Use the real Scene camera for both Canvas content and its gizmo. In 2D
+			// mode the depth axis is edge-on, leaving the planar X/Y controls visible
+			// without changing ImGuizmo itself.
+			glm::mat4 gizmoView(1.0f);
+			glm::mat4 gizmoProjection(1.0f);
+			m_EditorCamera.GetRightHandedToolMatrices(gizmoView,
+				gizmoProjection);
+			ImGuizmo::AllowAxisFlip(false);
+			ImGuizmo::SetOrthographic(m_EditorCamera.IsOrthographic());
+			ImGuizmo::SetDrawlist();
+			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
+				viewportDisplaySize.x, viewportDisplaySize.y);
+			ImGuizmo::SetID(static_cast<int>(static_cast<uint64_t>(selectedID)
+				& 0x7fffffffULL));
+
+			float snapValues[3] = { 0.0f, 0.0f, 0.0f };
+			float* snap = nullptr;
+			if (ImGui::GetIO().KeyCtrl)
+			{
+				if (translateTool)
+				{
+					const float canvasPixel = scaleIt->second
+						/ RuntimeUISystem::EditorCanvasPixelsPerUnit;
+					snapValues[0] = canvasPixel;
+					snapValues[1] = canvasPixel;
+					snapValues[2] = canvasPixel;
+				}
+				else if (rotateTool)
+					snapValues[0] = snapValues[1] = snapValues[2] = 15.0f;
+				else
+					snapValues[0] = snapValues[1] = snapValues[2] = 0.1f;
+				snap = snapValues;
+			}
+
+			manipulated = ImGuizmo::Manipulate(glm::value_ptr(gizmoView),
+				glm::value_ptr(gizmoProjection),
+				static_cast<ImGuizmo::OPERATION>(m_GizmoType),
+				m_GizmoSpaceMode == GizmoSpaceMode::Local
+					? ImGuizmo::LOCAL : ImGuizmo::WORLD,
+				glm::value_ptr(gizmoTransform), nullptr, snap);
+			gizmoUsing = ImGuizmo::IsUsing();
+			gizmoHovered = ImGuizmo::IsOver(
+				static_cast<ImGuizmo::OPERATION>(m_GizmoType));
+		}
+
+		// The native mouse event is dispatched before this ImGui pass. Preserve the
+		// result for the next event so transparent text/image pixels cannot select
+		// world geometry underneath the RectTransform or its ImGuizmo handles.
+		m_UIRectHandleHovered = rectangleHovered
+			|| (canManipulate && (gizmoHovered || gizmoUsing));
+		if (rectangleHovered && translateTool && layoutControlled)
+			ImGui::SetTooltip("Position is controlled by the parent UI Layout Group");
+
+		if (gizmoUsing && !m_UIRectTransactionActive)
+		{
+			const char* label = translateTool ? "Move UI Element"
+				: (rotateTool ? "Rotate UI Element" : "Scale UI Element");
+			BeginSceneTransaction(label);
+			m_UIRectTransactionActive = m_SceneHistory.HasActiveTransaction();
+			m_UIRectEditEntity = selectedID;
+		}
+		m_UIRectDragActive = gizmoUsing;
+
+		if (manipulated && m_UIRectTransactionActive
+			&& m_UIRectEditEntity == selectedID)
+		{
+			glm::vec3 translation{}, rotation{}, scale{};
+			const glm::mat4 localGizmoTransform = inverseParentCanvasTransform
+				* gizmoTransform;
+			if (Math::DecomposeTransform(localGizmoTransform,
+				translation, rotation, scale))
+			{
+				bool changed = false;
+				if (translateTool)
+				{
+					glm::vec2 position = selected.GetComponent<RectTransform>()
+						.AnchoredPosition
+						+ (glm::vec2(translation) - pivotPosition) / scaleIt->second;
+					if (ImGui::GetIO().KeyCtrl)
+						position = glm::round(position);
+					auto& rectTransform = selected.GetComponent<RectTransform>();
+					if (rectTransform.AnchoredPosition != position)
+					{
+						rectTransform.AnchoredPosition = position;
+						changed = true;
+					}
+				}
+				else
+				{
+					auto& authoredTransform = selected.GetComponent<Transform>();
+					glm::vec3 localRotation = authoredTransform._LocalRotation;
+					glm::vec3 localScale = authoredTransform._LocalScale;
+					if (rotateTool)
+						localRotation.z = rotation.z;
+					else
+					{
+						localScale.x = scale.x;
+						localScale.y = scale.y;
+					}
+					const glm::mat4 localTransform = Math::ComposeTransform(
+						authoredTransform._LocalTranslation, localRotation, localScale);
+					changed = m_ActiveScene->SetLocalTransform(selected, localTransform);
+				}
+				if (changed)
+					UpdateSceneTransaction();
+			}
+		}
+
+		if (m_UIRectTransactionActive && !gizmoUsing)
+			ResetRectTransformEditState();
 		return true;
 	}
 
@@ -3652,6 +4686,9 @@ namespace TomCat {
 		const glm::vec2 up(-sine, cosine);
 		const glm::vec2 center = shape.Center;
 		const float handleRadius = 6.0f;
+		const bool orientationBlocksActivation =
+			IsSceneOrientationGizmoPointerInside()
+			&& m_ActiveColliderHandle == ColliderEditHandle::None;
 		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
@@ -3673,16 +4710,22 @@ namespace TomCat {
 
 			const ImVec2 minimum(screenPosition.x - handleRadius, screenPosition.y - handleRadius);
 			const ImVec2 maximum(screenPosition.x + handleRadius, screenPosition.y + handleRadius);
-			ImGui::SetCursorScreenPos(minimum);
 			ImGui::PushID(id);
-			ImGui::InvisibleButton("##handle", ImVec2(handleRadius * 2.0f, handleRadius * 2.0f));
-			const bool hovered = ImGui::IsItemHovered();
-			const bool active = m_ActiveColliderHandle == handle && ImGui::IsItemActive();
+			bool hovered = false;
+			bool active = false;
+			if (!orientationBlocksActivation)
+			{
+				ImGui::SetCursorScreenPos(minimum);
+				ImGui::InvisibleButton("##handle",
+					ImVec2(handleRadius * 2.0f, handleRadius * 2.0f));
+				hovered = ImGui::IsItemHovered();
+				active = m_ActiveColliderHandle == handle && ImGui::IsItemActive();
+			}
 			m_ColliderHandleHovered = m_ColliderHandleHovered || hovered || active;
 			if (hovered || active)
 				ImGui::SetMouseCursor(cursor);
 
-			if (ImGui::IsItemActivated())
+			if (!orientationBlocksActivation && ImGui::IsItemActivated())
 			{
 				glm::vec2 mouseWorld;
 				const ImVec2 mouse = ImGui::GetMousePos();
@@ -3918,6 +4961,27 @@ namespace TomCat {
 	{
 #include "panels/UI_SceneToolbarDockPreview.inl"
 	}
+
+	void EditorLayer::UI_SceneOrientationGizmo()
+	{
+#include "panels/UI_SceneOrientationGizmo.inl"
+	}
+
+	bool EditorLayer::IsSceneOrientationGizmoPointerInside() const
+	{
+		if (m_Is2DMode)
+			return false;
+		if (m_SceneOrientationGizmoBounds[1].x
+				<= m_SceneOrientationGizmoBounds[0].x
+			|| m_SceneOrientationGizmoBounds[1].y
+				<= m_SceneOrientationGizmoBounds[0].y)
+			return false;
+		const glm::vec2 mouse{ Input::GetMouseX(), Input::GetMouseY() };
+		return mouse.x >= m_SceneOrientationGizmoBounds[0].x
+			&& mouse.y >= m_SceneOrientationGizmoBounds[0].y
+			&& mouse.x <= m_SceneOrientationGizmoBounds[1].x
+			&& mouse.y <= m_SceneOrientationGizmoBounds[1].y;
+	}
 	void EditorLayer::UI_Toolbar()
 	{
 		DrawEditorPlayToolbar(m_EditorIcons, m_EditorScene != nullptr, IsSceneRunning(),
@@ -4108,11 +5172,10 @@ namespace TomCat {
 		const glm::vec2 screenToFramebufferScale{
 			applicationWindow.GetScreenToFramebufferScaleX(),
 			applicationWindow.GetScreenToFramebufferScaleY() };
-		m_RuntimeSceneManager.SetViewportSize(
-			ToFramebufferExtent(m_GameViewportSize.x,
-				screenToFramebufferScale.x),
-			ToFramebufferExtent(m_GameViewportSize.y,
-				screenToFramebufferScale.y));
+		const FramebufferSpecification& gameFramebufferSpec =
+			m_GameFramebuffer->GetSpecification();
+		m_RuntimeSceneManager.SetViewportSize(gameFramebufferSpec.Width,
+			gameFramebufferSpec.Height);
 		m_RuntimeSceneManager.SetRuntimeUIViewportMetrics(
 			m_ShowGamePanel ? m_GameViewportBounds[0] : glm::vec2(-1000000.0f),
 			applicationWindow.GetDPIScale(), screenToFramebufferScale);
@@ -4179,173 +5242,135 @@ namespace TomCat {
 
 	void EditorLayer::OnEvent(Event& e)
 	{
-		if (m_ViewportCanvasHovered)
-			m_EditorCamera.OnEvent(e);
-
+		// Scene wheel zoom is consumed once in OnImGuiRender, including input
+		// from detached windows that never reaches the native editor event path.
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(EditorLayer::OnWindowClose));
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
 		dispatcher.Dispatch<MouseButtonPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonPressed));
 		dispatcher.Dispatch<MouseButtonReleasedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonReleased));
+		// ImGui lets keyboard events reach this layer so editor shortcuts can be
+		// resolved first. Preserve its capture contract for any lower layer after
+		// that routing decision, including key releases and typed characters.
+		if (!e.m_Handled && e.IsInCategory(EventCategoryKeyboard)
+			&& ImGui::GetIO().WantCaptureKeyboard)
+			e.m_Handled = true;
 	}
 
 	bool EditorLayer::OnKeyPressed(KeyPressedEvent& e)
 	{
-		// Shortcuts
-		if (e.GetRepeatCount() > 0)
-			return false;
+		const bool popupOpen = ImGui::IsPopupOpen(nullptr,
+			ImGuiPopupFlags_AnyPopupId);
+		if (e.GetKeyCode() == Key::Escape && e.GetRepeatCount() == 0
+			&& !ImGui::GetIO().WantTextInput && !popupOpen
+			&& !e.IsControlDown() && !e.IsShiftDown()
+			&& !e.IsAltDown() && !e.IsSuperDown()
+			&& m_SceneHierarchyPanel.IsEditingCollider())
+		{
+			m_SceneHierarchyPanel.ClearColliderEditMode();
+			ResetColliderEditState();
+			return true;
+		}
 
-		const bool control = e.IsControlDown();
-		const bool shift = e.IsShiftDown();
-		const bool alt = e.IsAltDown();
-		const bool super = e.IsSuperDown();
-		bool handled = false;
-		switch (e.GetKeyCode())
+		const Entity selectedEntity =
+			m_SceneHierarchyPanel.GetSelectedEntity();
+		EditorShortcutContext context;
+		context.KeyCode = e.GetKeyCode();
+		context.RepeatCount = e.GetRepeatCount();
+		context.Modifiers = e.GetModifiers();
+		context.WantsTextInput = ImGui::GetIO().WantTextInput;
+		context.PopupOpen = popupOpen;
+		context.SceneFocused = m_ViewportFocused && m_ShowScenePanel
+			&& ShouldRenderDockPanel("Scene###Scene");
+		context.EntityContextFocused = m_ViewportFocused
+			|| m_SceneHierarchyPanel.IsHierarchyFocused()
+			|| m_SceneHierarchyPanel.IsInspectorFocused();
+		context.HasSelection = static_cast<bool>(selectedEntity);
+		context.EditingScene = m_SceneState == SceneState::Edit;
+		context.TransformDragActive = m_GizmoDragActive
+			|| m_UIRectDragActive
+			|| m_ActiveColliderHandle != ColliderEditHandle::None;
+
+		const EditorShortcutAction action = ResolveEditorShortcut(context);
+		switch (action)
 		{
-		case Key::N:
-		{
-			if (control && !shift && !alt && !super)
-			{
+			case EditorShortcutAction::ToggleScene2D:
+				m_Is2DMode = !m_Is2DMode;
+				m_EditorCamera.Set2DMode(m_Is2DMode);
+				return true;
+			case EditorShortcutAction::NewScene:
 				NewScene();
-				handled = true;
-			}
-
-			break;
-		}
-		case Key::O:
-		{
-			if (control && !shift && !alt && !super)
-			{
+				return true;
+			case EditorShortcutAction::OpenScene:
 				OpenScene();
-				handled = true;
-			}
-
-			break;
-		}
-		case Key::S:
-		{
-			if (control && !alt && !super)
+				return true;
+			case EditorShortcutAction::SaveScene:
+				SaveScene();
+				return true;
+			case EditorShortcutAction::SaveSceneAs:
+				SaveSceneAs();
+				return true;
+			case EditorShortcutAction::Undo:
+				return UndoScene();
+			case EditorShortcutAction::Redo:
+				return RedoScene();
+			case EditorShortcutAction::NextWindow:
+				CycleEditorPanel(1);
+				return true;
+			case EditorShortcutAction::PreviousWindow:
+				CycleEditorPanel(-1);
+				return true;
+			case EditorShortcutAction::CutSelection:
+			case EditorShortcutAction::CopySelection:
+			case EditorShortcutAction::PasteSelection:
+			case EditorShortcutAction::DuplicateSelection:
+			case EditorShortcutAction::RenameSelection:
+			case EditorShortcutAction::DeleteSelection:
 			{
-				if (shift)
-					SaveSceneAs();
-				else
-					SaveScene();
-				handled = true;
-			}
-
-			break;
-		}
-		case Key::Escape:
-		{
-			if (!ImGui::GetIO().WantTextInput && !control && !shift && !alt && !super &&
-				m_SceneHierarchyPanel.IsEditingCollider())
-			{
-				m_SceneHierarchyPanel.ClearColliderEditMode();
-				ResetColliderEditState();
-				handled = true;
-			}
-			break;
-		}
-		case Key::Z:
-		{
-			if (!ImGui::GetIO().WantTextInput
-				&& control && !shift && !alt && !super
-				&& m_SceneState == SceneState::Edit)
-				handled = UndoScene();
-			break;
-		}
-		case Key::Y:
-		{
-			if (!ImGui::GetIO().WantTextInput
-				&& control && !shift && !alt && !super
-				&& m_SceneState == SceneState::Edit)
-				handled = RedoScene();
-			break;
-		}
-
-		// Scene commands only belong to the Scene canvas or Hierarchy. This keeps
-		// Delete/Cut/Copy/Paste from leaking out of text fields and Project assets.
-		case Key::D:
-		{
-			if (!ImGui::GetIO().WantTextInput &&
-				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
-				control && !shift && !alt && !super)
-			{
-				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+				int keyCode = 0;
+				bool control = false;
+				switch (action)
+				{
+					case EditorShortcutAction::CutSelection:
+						keyCode = Key::X; control = true; break;
+					case EditorShortcutAction::CopySelection:
+						keyCode = Key::C; control = true; break;
+					case EditorShortcutAction::PasteSelection:
+						keyCode = Key::V; control = true; break;
+					case EditorShortcutAction::DuplicateSelection:
+						keyCode = Key::D; control = true; break;
+					case EditorShortcutAction::RenameSelection:
+						keyCode = Key::F2; break;
+					case EditorShortcutAction::DeleteSelection:
+						keyCode = Key::Delete; break;
+					default:
+						break;
+				}
+				const bool handled =
+					m_SceneHierarchyPanel.HandleShortcut(keyCode, control);
 				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
 					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
+				return handled;
 			}
-
-			break;
-		}
-		case Key::X:
-		case Key::C:
-		case Key::V:
-		{
-			if (!ImGui::GetIO().WantTextInput &&
-				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
-				control && !shift && !alt && !super)
-			{
-				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
-				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
-					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
-			}
-			break;
-		}
-		case Key::F2:
-		case Key::Delete:
-		{
-			if (!ImGui::GetIO().WantTextInput &&
-				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
-				!control && !shift && !alt && !super)
-			{
-				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
-				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
-					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
-			}
-			break;
-		}
-
-		// Gizmos
-		case Key::Q:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+			case EditorShortcutAction::ToolNone:
 				m_GizmoType = -1;
-				handled = true;
-			}
-			break;
-		}
-		case Key::W:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+				return true;
+			case EditorShortcutAction::ToolTranslate:
 				m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
-				handled = true;
-			}
-			break;
-		}
-		case Key::E:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+				return true;
+			case EditorShortcutAction::ToolRotate:
 				m_GizmoType = ImGuizmo::OPERATION::ROTATE;
-				handled = true;
-			}
-			break;
-		}
-		case Key::R:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+				return true;
+			case EditorShortcutAction::ToolScale:
 				m_GizmoType = ImGuizmo::OPERATION::SCALE;
-				handled = true;
-			}
-			break;
+				return true;
+			case EditorShortcutAction::FrameSelection:
+				FrameSceneEntity(selectedEntity);
+				return true;
+			case EditorShortcutAction::None:
+			default:
+				return false;
 		}
-		}
-
-		return handled;
 	}
 
 	bool EditorLayer::OnMouseButtonPressed(MouseButtonPressedEvent& e)
@@ -4354,7 +5379,15 @@ namespace TomCat {
 		const bool altDown = e.IsAltDown();
 		const bool cameraButton = button == Mouse::ButtonMiddle || button == Mouse::ButtonRight ||
 			(button == Mouse::ButtonLeft && altDown);
-		if (cameraButton && m_ViewportFocused && m_ViewportCanvasHovered)
+		// Native mouse events arrive before this frame's ImGui pass. The cached
+		// screen bounds stop all Scene navigation/selection from clicking through
+		// the orientation control while its ImGui button handles the same input.
+		if (IsSceneOrientationGizmoPointerInside())
+			return true;
+		// A camera drag starts from the Scene canvas itself.  Requiring the Scene
+		// window to already own keyboard focus makes the first middle/right drag a
+		// no-op after selecting an entity from Hierarchy or Inspector.
+		if (cameraButton && m_ViewportCanvasHovered)
 		{
 			m_ViewportCameraDragOwned = true;
 			return true;
@@ -4362,9 +5395,12 @@ namespace TomCat {
 
 		if (e.GetMouseButton() == Mouse::ButtonLeft)
 		{
+			if (m_UIRectHandleHovered || m_UIRectDragActive)
+				return true;
 			if (m_ColliderHandleHovered || m_ActiveColliderHandle != ColliderEditHandle::None)
 				return true;
-			if (m_ViewportCanvasHovered && !ImGuizmo::IsOver() && !altDown)
+			if (m_ViewportCanvasHovered && !m_GizmoHandleHovered
+				&& !m_GizmoDragActive && !altDown)
 			{
 				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
 				return true;
@@ -4437,8 +5473,8 @@ namespace TomCat {
 
 		Entity mainCamera = m_ActiveScene->CreateEntity("MainCamera");
 		auto& camera = mainCamera.AddComponent<C_Camera>();
-		if (m_Is2DMode)
-			camera._Camera.SetOrthographic(10.0f, -1.0f, 1.0f);
+		if (m_CurrentProject && m_CurrentProject->GetConfig().Template == "2D")
+			camera._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
 		else
 			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
 	}
@@ -4805,8 +5841,16 @@ namespace TomCat {
 
 	void EditorLayer::ResetSceneInteractionState()
 	{
+		if (m_GizmoTransactionActive)
+		{
+			m_GizmoTransactionActive = false;
+			CommitSceneTransaction();
+		}
 		m_HoveredEntity = {};
 		m_ViewportCameraDragOwned = false;
+		m_GizmoDragActive = false;
+		m_GizmoHandleHovered = false;
+		ResetRectTransformEditState();
 		ResetColliderEditState();
 	}
 

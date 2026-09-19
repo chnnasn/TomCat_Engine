@@ -1,8 +1,16 @@
 #include "TomCat/Core/Input.h"
 #include "TomCat/Core/InputEventQueue.h"
+#include "TomCat/Core/KeyCodes.h"
+#include "TomCat/Core/MouseCodes.h"
+#include "TomCat/Editor/EditorShortcutRouter.h"
+#include "TomCat/Events/KeyEvent.h"
+#include "TomCat/Events/MouseEvent.h"
+#include "TomCat/ImGui/ImGuiLayer.h"
 #include "TomCat/Scripting/IScriptRuntime.h"
 #include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Scripting/ScriptGlue.h"
+
+#include <imgui/imgui.h>
 
 #include <cmath>
 #include <functional>
@@ -557,6 +565,160 @@ namespace {
 		TomCat::Input::ClearState();
 	}
 
+	void TestEditorShortcutRouting()
+	{
+		using Action = TomCat::EditorShortcutAction;
+		TomCat::EditorShortcutContext context;
+		context.EntityContextFocused = true;
+		context.HasSelection = true;
+		context.EditingScene = true;
+
+		auto resolve = [&](int keyCode, TomCat::InputModifiers modifiers = {})
+		{
+			context.KeyCode = keyCode;
+			context.Modifiers = modifiers;
+			return TomCat::ResolveEditorShortcut(context);
+		};
+		const TomCat::InputModifiers control{ true, false, false, false };
+		const TomCat::InputModifiers controlShift{ true, true, false, false };
+
+		Require(resolve(TomCat::Key::N, control) == Action::NewScene
+			&& resolve(TomCat::Key::O, control) == Action::OpenScene
+			&& resolve(TomCat::Key::S, control) == Action::SaveScene
+			&& resolve(TomCat::Key::S, controlShift) == Action::SaveSceneAs,
+			"global scene file shortcuts were not routed");
+		Require(resolve(TomCat::Key::Q) == Action::ToolNone
+			&& resolve(TomCat::Key::W) == Action::ToolTranslate
+			&& resolve(TomCat::Key::E) == Action::ToolRotate
+			&& resolve(TomCat::Key::R) == Action::ToolScale
+			&& resolve(TomCat::Key::F) == Action::FrameSelection,
+			"selected-entity scene tool shortcuts were not routed");
+		Require(resolve(TomCat::Key::F2) == Action::RenameSelection
+			&& resolve(TomCat::Key::Delete) == Action::DeleteSelection,
+			"selected-entity rename/delete shortcuts were not routed");
+		Require(resolve(TomCat::Key::X, control) == Action::CutSelection
+			&& resolve(TomCat::Key::C, control) == Action::CopySelection
+			&& resolve(TomCat::Key::V, control) == Action::PasteSelection
+			&& resolve(TomCat::Key::D, control) == Action::DuplicateSelection,
+			"selected-entity clipboard shortcuts were not routed");
+		Require(resolve(TomCat::Key::Tab, control) == Action::NextWindow
+			&& resolve(TomCat::Key::Tab, controlShift) == Action::PreviousWindow,
+			"editor panel cycling shortcuts were not routed");
+		Require(resolve(TomCat::Key::Z, control) == Action::Undo
+			&& resolve(TomCat::Key::Y, control) == Action::Redo,
+			"editor history shortcuts were not routed");
+		context.EditingScene = false;
+		Require(resolve(TomCat::Key::Z, control) == Action::None
+			&& resolve(TomCat::Key::Y, control) == Action::None,
+			"editor history shortcuts ran outside edit mode");
+		context.EditingScene = true;
+
+		context.WantsTextInput = true;
+		Require(resolve(TomCat::Key::C, control) == Action::None
+			&& resolve(TomCat::Key::Delete) == Action::None
+			&& resolve(TomCat::Key::W) == Action::None,
+			"text input did not retain entity shortcut ownership");
+		Require(resolve(TomCat::Key::S, control) == Action::SaveScene,
+			"global save shortcut was lost while editing text");
+		context.WantsTextInput = false;
+
+		context.PopupOpen = true;
+		Require(resolve(TomCat::Key::S, control) == Action::None
+			&& resolve(TomCat::Key::Delete) == Action::None,
+			"open popup did not suspend editor shortcuts");
+		context.PopupOpen = false;
+
+		context.RepeatCount = 1;
+		Require(resolve(TomCat::Key::Delete) == Action::None,
+			"repeated key press retriggered an entity command");
+		context.RepeatCount = 0;
+
+		const TomCat::InputModifiers controlAlt{ true, false, true, false };
+		Require(resolve(TomCat::Key::D, controlAlt) == Action::None,
+			"extra modifiers triggered an entity command");
+
+		context.HasSelection = false;
+		Require(resolve(TomCat::Key::F) == Action::None
+			&& resolve(TomCat::Key::F2) == Action::None
+			&& resolve(TomCat::Key::Delete) == Action::None
+			&& resolve(TomCat::Key::D, control) == Action::None,
+			"selection-only shortcuts ran without a selected entity");
+		context.HasSelection = true;
+
+		context.TransformDragActive = true;
+		Require(resolve(TomCat::Key::W) == Action::None
+			&& resolve(TomCat::Key::F) == Action::None,
+			"transform drag allowed a conflicting tool shortcut");
+		context.TransformDragActive = false;
+
+		context.EntityContextFocused = false;
+		Require(resolve(TomCat::Key::Delete) == Action::None
+			&& resolve(TomCat::Key::W) == Action::None,
+			"entity shortcuts leaked into an unrelated editor panel");
+	}
+
+	void TestScene2DShortcut()
+	{
+		using Action = TomCat::EditorShortcutAction;
+		TomCat::EditorShortcutContext context;
+		context.KeyCode = TomCat::Key::Key2;
+		context.SceneFocused = true;
+		Require(TomCat::ResolveEditorShortcut(context) == Action::ToggleScene2D,
+			"Scene 2D shortcut must work without a selection, including during Play");
+		context.SceneFocused = false;
+		context.EntityContextFocused = true;
+		Require(TomCat::ResolveEditorShortcut(context) == Action::None,
+			"Scene 2D shortcut leaked into Hierarchy or Inspector");
+		context.SceneFocused = true;
+		for (bool* blocked : { &context.WantsTextInput, &context.PopupOpen,
+			&context.TransformDragActive, &context.Modifiers.Control,
+			&context.Modifiers.Shift, &context.Modifiers.Alt, &context.Modifiers.Super })
+		{
+			*blocked = true;
+			Require(TomCat::ResolveEditorShortcut(context) == Action::None,
+				"Scene 2D shortcut ignored input ownership or modifiers");
+			*blocked = false;
+		}
+		context.RepeatCount = 1;
+		Require(TomCat::ResolveEditorShortcut(context) == Action::None,
+			"holding 2 repeatedly toggled the Scene camera");
+	}
+
+	void TestImGuiEventCaptureChannels()
+	{
+		ImGuiContext* previousContext = ImGui::GetCurrentContext();
+		ImGuiContext* testContext = ImGui::CreateContext();
+		ImGuiIO& io = ImGui::GetIO();
+		io.WantCaptureKeyboard = true;
+		io.WantCaptureMouse = true;
+
+		TomCat::ImGuiLayer layer;
+		layer.BlockMouseEvents(true);
+		layer.BlockKeyboardEvents(false);
+		TomCat::KeyPressedEvent key(TomCat::Key::W, 0, {});
+		TomCat::MouseButtonPressedEvent mouse(TomCat::Mouse::ButtonLeft, {});
+		layer.OnEvent(key);
+		layer.OnEvent(mouse);
+		Require(!key.m_Handled && mouse.m_Handled,
+			"keyboard shortcut channel was captured with the mouse channel");
+
+		layer.BlockKeyboardEvents(true);
+		TomCat::KeyPressedEvent capturedKey(TomCat::Key::W, 0, {});
+		layer.OnEvent(capturedKey);
+		Require(capturedKey.m_Handled,
+			"enabled keyboard capture did not consume keyboard input");
+
+		layer.BlockMouseEvents(false);
+		TomCat::MouseButtonPressedEvent releasedMouse(
+			TomCat::Mouse::ButtonLeft, {});
+		layer.OnEvent(releasedMouse);
+		Require(!releasedMouse.m_Handled,
+			"disabled mouse capture still consumed mouse input");
+
+		ImGui::DestroyContext(testContext);
+		ImGui::SetCurrentContext(previousContext);
+	}
+
 }
 
 int main()
@@ -571,6 +733,9 @@ int main()
 		TestFixedStepScopeIncludesPhysicsCallbacks();
 		TestFixedStepRetainsHeldStateWithoutReplayingEdges();
 		TestInputEventsCapability();
+		TestEditorShortcutRouting();
+		TestScene2DShortcut();
+		TestImGuiEventCaptureChannels();
 		std::cout << "Input regression suite passed." << std::endl;
 		return 0;
 	}
