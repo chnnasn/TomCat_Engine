@@ -201,9 +201,27 @@ namespace TomCat {
 			glfwGetMonitorPos(primaryMonitor, &windowX, &windowY);
 		}
 
-		{
-			TC_PROFILE_SCOPE("glfwCreateWindow");
-			m_Window = glfwCreateWindow(windowWidth, windowHeight,
+        const bool fitWorkspace=props.FitToWorkArea && props.DisplayMode==WindowDisplayMode::Windowed;
+        if(fitWorkspace)
+        {
+            if(GLFWmonitor* display=glfwGetPrimaryMonitor())
+            {
+                int workX=0,workY=0,workWidth=0,workHeight=0;
+                float scaleX=1,scaleY=1;
+                glfwGetMonitorWorkarea(display,&workX,&workY,&workWidth,&workHeight);
+                glfwGetMonitorContentScale(display,&scaleX,&scaleY);
+                if(workWidth>0 && workHeight>0)
+                {
+                    windowWidth=std::max(1,std::min(static_cast<int>(props.Width*scaleX),static_cast<int>(workWidth*0.92f)));
+                    windowHeight=std::max(1,std::min(static_cast<int>(props.Height*scaleY),static_cast<int>(workHeight*0.88f)));
+                    windowX=workX+(workWidth-windowWidth)/2;
+                    windowY=workY+(workHeight-windowHeight)/2;
+                }
+            }
+        }
+        {
+            TC_PROFILE_SCOPE("glfwCreateWindow");
+            m_Window = glfwCreateWindow(windowWidth, windowHeight,
 				m_Data.Title.c_str(), monitor, nullptr);
 			if (!m_Window)
 			{
@@ -214,7 +232,7 @@ namespace TomCat {
 			++s_GLFWWindowCount;
 		}
 		GLFWWindowInitializationGuard initializationGuard(m_Window, m_Context);
-		if (props.DisplayMode == WindowDisplayMode::Borderless)
+		if (props.DisplayMode == WindowDisplayMode::Borderless || fitWorkspace)
 			glfwSetWindowPos(m_Window, windowX, windowY);
 
 		m_Context = CreateScope<OpenGLContext>(m_Window);

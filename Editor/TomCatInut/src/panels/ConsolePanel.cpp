@@ -1,3 +1,4 @@
+#include "../EditorVisuals.h"
 #include "ConsolePanel.h"
 
 #include <imgui/imgui.h>
@@ -5,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <chrono>
+#include <ctime>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -16,8 +19,6 @@ namespace TomCat {
 	namespace {
 
 		constexpr size_t kMaximumConsoleMessages = 4096;
-		constexpr float kMinimumInlineMessageWidth = 160.0f;
-		constexpr float kConsoleCounterMinimumWidth = 48.0f;
 
 		void AppendCollapseKeyField(std::string& key, std::string_view value)
 		{
@@ -39,29 +40,31 @@ namespace TomCat {
 			return key;
 		}
 
-		const char* SeverityLabel(ConsoleMessageSeverity severity)
-		{
-			switch (severity)
-			{
-				case ConsoleMessageSeverity::Trace: return "Trace";
-				case ConsoleMessageSeverity::Info: return "Info";
-				case ConsoleMessageSeverity::Warning: return "Warning";
-				case ConsoleMessageSeverity::Error: return "Error";
-			}
-			return "Info";
-		}
-
-		ImVec4 SeverityColor(ConsoleMessageSeverity severity)
-		{
-			switch (severity)
-			{
-				case ConsoleMessageSeverity::Trace: return ImVec4(0.58f, 0.62f, 0.68f, 1.0f);
-				case ConsoleMessageSeverity::Info: return ImVec4(0.78f, 0.84f, 0.92f, 1.0f);
-				case ConsoleMessageSeverity::Warning: return ImVec4(1.0f, 0.72f, 0.25f, 1.0f);
-				case ConsoleMessageSeverity::Error: return ImVec4(1.0f, 0.34f, 0.34f, 1.0f);
-			}
-			return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-		}
+        void DrawSeverityIcon(ConsoleMessageSeverity severity, ImVec2 center, float radius, bool enabled=true)
+        {
+            auto* draw=ImGui::GetWindowDrawList();
+            const int alpha=enabled?255:100;
+            ImU32 color=IM_COL32(215,215,215,alpha);
+            if(severity==ConsoleMessageSeverity::Warning) color=IM_COL32(244,190,48,alpha);
+            if(severity==ConsoleMessageSeverity::Error) color=IM_COL32(220,88,80,alpha);
+            if(severity==ConsoleMessageSeverity::Warning)
+                draw->AddTriangleFilled({center.x,center.y-radius},{center.x-radius,center.y+radius},{center.x+radius,center.y+radius},color);
+            else if(severity==ConsoleMessageSeverity::Error)
+            {
+                ImVec2 points[8];
+                for(int i=0;i<8;++i) { const float angle=3.14159265f*(0.125f+i*0.25f); points[i]={center.x+std::cos(angle)*radius,center.y+std::sin(angle)*radius}; }
+                draw->AddConvexPolyFilled(points,8,color);
+            }
+            else
+            {
+                draw->AddCircleFilled(center,radius,color,24);
+                draw->AddTriangleFilled({center.x+radius*0.25f,center.y+radius*0.65f},
+                    {center.x+radius,center.y+radius*1.2f},{center.x+radius*0.8f,center.y+radius*0.2f},color);
+            }
+            const ImU32 mark=IM_COL32(48,48,48,alpha);
+            draw->AddLine({center.x,center.y-radius*0.5f},{center.x,center.y+radius*0.15f},mark,std::max(1.5f,radius*0.16f));
+            draw->AddCircleFilled({center.x,center.y+radius*0.5f},radius*0.11f,mark,12);
+        }
 
 		std::string FormatLocation(const ConsoleMessage& message)
 		{
@@ -83,7 +86,17 @@ namespace TomCat {
 	void ConsolePanel::Push(ConsoleMessage message)
 	{
 		std::lock_guard<std::mutex> lock(m_Mutex);
-		message.Sequence = m_NextSequence++;
+        message.Sequence = m_NextSequence++;
+        const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        std::tm time{};
+#ifdef _WIN32
+        localtime_s(&time,&now);
+#else
+        localtime_r(&now,&time);
+#endif
+        char timestamp[16]{};
+        std::strftime(timestamp,sizeof(timestamp),"%H:%M:%S",&time);
+        message.Timestamp=timestamp;
 		m_Messages.push_back(std::move(message));
 		if (m_Messages.size() > kMaximumConsoleMessages)
 		{
@@ -143,7 +156,8 @@ namespace TomCat {
 			return;
 		}
 
-		const bool visible = ImGui::Begin("Console", open);
+		PrepareEditorToolWindow(ImVec2(960,560),ImVec2(420,280));
+        const bool visible = ImGui::Begin("Console", open);
 		m_Docked = ImGui::IsWindowDocked();
 		m_Focused = visible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		if (!visible)
@@ -152,154 +166,83 @@ namespace TomCat {
 			return;
 		}
 
-		const ImGuiStyle& style = ImGui::GetStyle();
-		std::vector<ConsoleMessage> messages = Snapshot();
-		size_t informationCount = 0;
-		size_t warningCount = 0;
-		size_t errorCount = 0;
-		for (const ConsoleMessage& message : messages)
-		{
-			if (message.Severity == ConsoleMessageSeverity::Warning)
-				++warningCount;
-			else if (message.Severity == ConsoleMessageSeverity::Error)
-				++errorCount;
-			else
-				++informationCount;
-		}
-
-		const auto clearConsole = [&]()
-		{
-			Clear();
-			messages.clear();
-			informationCount = warningCount = errorCount = 0;
-		};
-		const float toolbarStartY = ImGui::GetCursorScreenPos().y;
-		if (ImGui::Button("Clear"))
-			clearConsole();
-		ImGui::SameLine(0.0f, 1.0f);
-		if (ImGui::ArrowButton("##ConsoleClearMenuButton", ImGuiDir_Down))
-			ImGui::OpenPopup("##ConsoleClearMenu");
-		if (ImGui::BeginPopup("##ConsoleClearMenu"))
-		{
-			if (ImGui::MenuItem("Clear All"))
-				clearConsole();
-			ImGui::Separator();
-			ImGui::MenuItem("Clear on Play", nullptr, &m_ClearOnPlay);
-			ImGui::MenuItem("Auto-scroll", nullptr, &m_AutoScroll);
-			ImGui::EndPopup();
-		}
-		ImGui::SameLine();
-		const bool collapseWasActive = m_Collapse;
-		if (collapseWasActive)
-		{
-			ImGui::PushStyleColor(ImGuiCol_Button,
-				ImGui::GetStyleColorVec4(ImGuiCol_Header));
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-				ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-				ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
-		}
-		if (ImGui::Button("Collapse"))
-			m_Collapse = !m_Collapse;
-		if (collapseWasActive)
-			ImGui::PopStyleColor(3);
-
-		const auto counterWidth = [](size_t count)
-		{
-			return std::max(kConsoleCounterMinimumWidth,
-				ImGui::CalcTextSize(std::to_string(count).c_str()).x + 31.0f);
-		};
-		const float informationWidth = counterWidth(informationCount);
-		const float warningWidth = counterWidth(warningCount);
-		const float errorWidth = counterWidth(errorCount);
-		const float countersWidth = informationWidth + warningWidth + errorWidth;
-		const float contentLeft = ImGui::GetWindowPos().x +
-			ImGui::GetWindowContentRegionMin().x;
-		const float contentRight = ImGui::GetWindowPos().x +
-			ImGui::GetWindowContentRegionMax().x;
-		const float countersX = std::max(contentLeft,
-			contentRight - countersWidth);
-		if (ImGui::GetItemRectMax().x + style.ItemSpacing.x <= countersX)
-		{
-			ImGui::SameLine();
-			ImGui::SetCursorScreenPos(ImVec2(countersX, toolbarStartY));
-		}
-		else
-			ImGui::SetCursorScreenPos(ImVec2(countersX,
-				ImGui::GetItemRectMax().y + style.ItemSpacing.y));
-
-		enum class CounterGlyph { Information, Warning, Error };
-		const auto drawCounter = [&](const char* id, CounterGlyph glyph, size_t count,
-			float width, bool enabled)
-		{
-			const ImVec2 size(width, ImGui::GetFrameHeight());
-			ImGui::InvisibleButton(id, size);
-			const bool pressed = ImGui::IsItemClicked();
-			const bool hovered = ImGui::IsItemHovered();
-			const ImVec2 minimum = ImGui::GetItemRectMin();
-			const ImVec2 maximum = ImGui::GetItemRectMax();
-			ImDrawList* drawList = ImGui::GetWindowDrawList();
-			drawList->AddRectFilled(minimum, maximum,
-				ImGui::GetColorU32(hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button));
-			drawList->AddRect(minimum, maximum, ImGui::GetColorU32(ImGuiCol_Border));
-			ImU32 glyphColor = IM_COL32(145, 145, 145, enabled ? 255 : 105);
-			if (enabled && count > 0)
-			{
-				if (glyph == CounterGlyph::Information) glyphColor = IM_COL32(110, 170, 220, 255);
-				else if (glyph == CounterGlyph::Warning) glyphColor = IM_COL32(235, 175, 65, 255);
-				else glyphColor = IM_COL32(225, 90, 90, 255);
-			}
-			const ImVec2 center(minimum.x + 14.0f,
-				(minimum.y + maximum.y) * 0.5f);
-			if (glyph == CounterGlyph::Information)
-				drawList->AddCircleFilled(center, 8.0f, glyphColor, 18);
-			else if (glyph == CounterGlyph::Warning)
-				drawList->AddTriangleFilled(ImVec2(center.x, center.y - 9.0f),
-					ImVec2(center.x - 9.0f, center.y + 8.0f),
-					ImVec2(center.x + 9.0f, center.y + 8.0f), glyphColor);
-			else
-			{
-				ImVec2 points[8];
-				for (int index = 0; index < 8; ++index)
-				{
-					const float angle = 3.14159265f * (0.125f + index * 0.25f);
-					points[index] = ImVec2(center.x + std::cos(angle) * 8.5f,
-						center.y + std::sin(angle) * 8.5f);
-				}
-				drawList->AddConvexPolyFilled(points, 8, glyphColor);
-			}
-			const ImU32 markColor = IM_COL32(55, 55, 55, enabled ? 235 : 90);
-			drawList->AddLine(ImVec2(center.x, center.y - 4.0f),
-				ImVec2(center.x, center.y + 2.0f), markColor, 1.7f);
-			drawList->AddCircleFilled(ImVec2(center.x, center.y + 5.0f), 1.1f,
-				markColor, 8);
-			const std::string countText = std::to_string(count);
-			drawList->AddText(ImVec2(minimum.x + 27.0f,
-				std::round(center.y - ImGui::GetTextLineHeight() * 0.5f)),
-				ImGui::GetColorU32(enabled ? ImGuiCol_Text : ImGuiCol_TextDisabled),
-				countText.c_str());
-			return pressed;
-		};
-
-		const bool informationVisible = m_ShowTrace || m_ShowInfo;
-		if (drawCounter("##ConsoleInformationCount", CounterGlyph::Information,
-			informationCount, informationWidth, informationVisible))
-		{
-			m_ShowTrace = !informationVisible;
-			m_ShowInfo = !informationVisible;
-		}
-		ImGui::SameLine(0.0f, 0.0f);
-		if (drawCounter("##ConsoleWarningCount", CounterGlyph::Warning,
-			warningCount, warningWidth, m_ShowWarnings))
-			m_ShowWarnings = !m_ShowWarnings;
-		ImGui::SameLine(0.0f, 0.0f);
-		if (drawCounter("##ConsoleErrorCount", CounterGlyph::Error,
-			errorCount, errorWidth, m_ShowErrors))
-			m_ShowErrors = !m_ShowErrors;
-		ImGui::Separator();
-
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##ConsoleSearch", "Search messages, source or code...", m_Search, sizeof(m_Search));
+        const auto messages = Snapshot();
+        size_t informationCount=0,warningCount=0,errorCount=0;
+        for(const auto& message:messages)
+        {
+            if(message.Severity==ConsoleMessageSeverity::Error)
+            {
+                ++errorCount;
+                if(m_ErrorPause && message.Sequence>m_LastObservedSequence && m_ErrorPauseCallback) m_ErrorPauseCallback();
+            }
+            else if(message.Severity==ConsoleMessageSeverity::Warning) ++warningCount;
+            else ++informationCount;
+        }
+        if(!messages.empty()) m_LastObservedSequence=messages.back().Sequence;
+        const float font=ImGui::GetFontSize();
+        const float frame=ImGui::GetFrameHeight();
+        const bool wide=ImGui::GetContentRegionAvail().x>font*38;
+        bool cleared=false;
+        // One clipped toolbar, like Unity: narrow docks keep Clear / Collapse first.
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
+        ImGui::BeginChild("ConsoleToolbar",ImVec2(0,frame+2),false,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(1,0));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,0);
+        if(ImGui::Button("Clear")) { Clear(); cleared=true; informationCount=warningCount=errorCount=0; }
+        ImGui::SameLine();
+        if(ImGui::ArrowButton("ClearOptions",ImGuiDir_Down)) ImGui::OpenPopup("ConsoleOptions");
+        if(ImGui::BeginPopup("ConsoleOptions"))
+        {
+            ImGui::MenuItem("Clear on Play",nullptr,&m_ClearOnPlay);
+            ImGui::MenuItem("Auto-scroll",nullptr,&m_AutoScroll);
+            ImGui::MenuItem("Error Pause",nullptr,&m_ErrorPause);
+            ImGui::Separator();
+            ImGui::MenuItem("Log",nullptr,&m_ShowInfo);
+            ImGui::MenuItem("Trace",nullptr,&m_ShowTrace);
+            ImGui::MenuItem("Warning",nullptr,&m_ShowWarnings);
+            ImGui::MenuItem("Error",nullptr,&m_ShowErrors);
+            ImGui::SetNextItemWidth(font*18);
+            EditorSearchField("Search","Search messages...",m_Search,sizeof(m_Search));
+            ImGui::EndPopup();
+        }
+        auto toggle=[&](const char* label,bool& value) {
+            ImGui::SameLine();
+            if(value) ImGui::PushStyleColor(ImGuiCol_Button,ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+            bool pressed=ImGui::Button(label);
+            if(value) ImGui::PopStyleColor();
+            if(pressed) value=!value;
+        };
+        toggle("Collapse",m_Collapse);
+        if(wide)
+        {
+            toggle("Error Pause",m_ErrorPause);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(font*5.5f);
+            if(ImGui::BeginCombo("##LogTarget","Editor")) { ImGui::Selectable("Editor",true); ImGui::EndCombo(); }
+        }
+        const auto counterWidth=[&](size_t count) { return frame+ImGui::CalcTextSize(std::to_string(count).c_str()).x+font*0.5f; };
+        const float countersWidth=counterWidth(informationCount)+counterWidth(warningCount)+counterWidth(errorCount)+3;
+        if(wide)
+        {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(std::max(font*3,ImGui::GetContentRegionAvail().x-countersWidth-2));
+            EditorSearchField("##ConsoleSearch","",m_Search,sizeof(m_Search));
+        }
+        auto counter=[&](const char* id,ConsoleMessageSeverity severity,size_t count,bool enabled) {
+            ImGui::SameLine();
+            const bool pressed=ImGui::Button(id,ImVec2(counterWidth(count),frame));
+            const auto a=ImGui::GetItemRectMin();
+            DrawSeverityIcon(severity,{a.x+frame*0.5f,a.y+frame*0.5f},font*0.42f,enabled);
+            ImGui::GetWindowDrawList()->AddText({a.x+frame,a.y+(frame-font)*0.5f},
+                ImGui::GetColorU32(enabled?ImGuiCol_Text:ImGuiCol_TextDisabled),std::to_string(count).c_str());
+            return pressed;
+        };
+        if(counter("##Info",ConsoleMessageSeverity::Info,informationCount,m_ShowInfo||m_ShowTrace)) { const bool show=!(m_ShowInfo||m_ShowTrace); m_ShowInfo=m_ShowTrace=show; }
+        if(counter("##Warn",ConsoleMessageSeverity::Warning,warningCount,m_ShowWarnings)) m_ShowWarnings=!m_ShowWarnings;
+        if(counter("##Error",ConsoleMessageSeverity::Error,errorCount,m_ShowErrors)) m_ShowErrors=!m_ShowErrors;
+        ImGui::PopStyleVar(2);
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
         struct DisplayMessage
 		{
 			const ConsoleMessage* Message = nullptr;
@@ -310,7 +253,7 @@ namespace TomCat {
 		std::unordered_map<std::string, size_t> collapsedIndices;
 		for (const ConsoleMessage& message : messages)
 		{
-			if (!IsVisible(message.Severity) || (m_Search[0] && (message.Text + message.Source + message.Code).find(m_Search) == std::string::npos))
+			if (cleared || !IsVisible(message.Severity) || (m_Search[0] && (message.Text + message.Source + message.Code).find(m_Search) == std::string::npos))
 				continue;
 			if (!m_Collapse)
 			{
@@ -326,34 +269,51 @@ namespace TomCat {
 				++displayMessages[iterator->second].Count;
 		}
 
-		ImGui::BeginChild("##ConsoleMessages", ImVec2(0.0f, -std::min(160.0f, ImGui::GetContentRegionAvail().y * 0.4f)), false);
-		for (const DisplayMessage& displayMessage : displayMessages)
-		{
-			const ConsoleMessage& message = *displayMessage.Message;
-
-			ImGui::PushID(static_cast<int>(message.Sequence & 0x7fffffff));
-			const std::string location = FormatLocation(message);
-			std::string prefix = "[";
-			prefix += SeverityLabel(message.Severity);
-			prefix += "]";
-			if (!message.Source.empty())
-				prefix += " [" + message.Source + "]";
-			if (!message.Code.empty())
-				prefix += " " + message.Code;
-			if (!location.empty())
-				prefix += " " + location;
-			if (displayMessage.Count > 1)
-				prefix += " (x" + std::to_string(displayMessage.Count) + ")";
-
-            std::string summary = prefix + "  " + message.Text.substr(0, message.Text.find('\n'));
-            ImGui::PushStyleColor(ImGuiCol_Text, SeverityColor(message.Severity));
-            if (ImGui::Selectable(summary.c_str(), m_SelectedSequence == message.Sequence))
-                m_SelectedSequence = message.Sequence;
-            ImGui::PopStyleColor();
+        const float available=ImGui::GetContentRegionAvail().y;
+        const float details=std::min(font*7,available*0.3f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,0));
+        ImGui::BeginChild("##ConsoleMessages",ImVec2(0,std::max(frame,available-details)),false);
+        const float rowHeight=font*2+ImGui::GetStyle().FramePadding.y*2+font*0.35f;
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(displayMessages.size()),rowHeight);
+        while(clipper.Step()) for(int index=clipper.DisplayStart;index<clipper.DisplayEnd;++index)
+        {
+            const auto& displayMessage=displayMessages[index];
+            const auto& message=*displayMessage.Message;
+            ImGui::PushID(static_cast<int>(message.Sequence&0x7fffffff));
+            const ImVec2 a=ImGui::GetCursorScreenPos();
+            const float width=ImGui::GetContentRegionAvail().x;
+            if(index%2==0) ImGui::GetWindowDrawList()->AddRectFilled(a,{a.x+width,a.y+rowHeight},IM_COL32(255,255,255,8));
+            if(ImGui::Selectable("##Message",m_SelectedSequence==message.Sequence,ImGuiSelectableFlags_AllowDoubleClick,ImVec2(width,rowHeight))) m_SelectedSequence=message.Sequence;
             if(ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !message.File.empty() && m_OpenSource) m_OpenSource(message.File);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", message.Text.c_str());
-			ImGui::PopID();
-		}
+            if(ImGui::BeginPopupContextItem("MessageMenu"))
+            {
+                if(ImGui::MenuItem("Copy")) ImGui::SetClipboardText((message.Text+"\n"+message.StackTrace).c_str());
+                if(ImGui::MenuItem("Open source",nullptr,false,!message.File.empty() && bool(m_OpenSource))) m_OpenSource(message.File);
+                ImGui::EndPopup();
+            }
+            DrawSeverityIcon(message.Severity,{a.x+rowHeight*0.48f,a.y+rowHeight*0.47f},rowHeight*0.31f);
+            std::string summary="["+message.Timestamp+"] ";
+            if(!message.Source.empty()) summary+="["+message.Source+"] ";
+            if(!message.Code.empty()) summary+=message.Code+" ";
+            summary+=message.Text.substr(0,message.Text.find('\n'));
+            std::string second=FormatLocation(message);
+            if(second.empty()) second=message.StackTrace.substr(0,message.StackTrace.find('\n'));
+            if(second.empty()) second=message.Source;
+            auto* draw=ImGui::GetWindowDrawList();
+            const float badge=displayMessage.Count>1?ImGui::CalcTextSize(std::to_string(displayMessage.Count).c_str()).x+font:0;
+            const ImVec2 textStart(a.x+rowHeight,a.y+font*0.12f);
+            draw->PushClipRect(textStart,{std::max(textStart.x,a.x+width-badge),a.y+rowHeight},true);
+            draw->AddText(textStart,ImGui::GetColorU32(ImGuiCol_Text),summary.c_str());
+            draw->AddText({textStart.x,textStart.y+font},ImGui::GetColorU32(ImGuiCol_Text),second.c_str());
+            draw->PopClipRect();
+            if(badge>0)
+            {
+                draw->AddRectFilled({a.x+width-badge,a.y+font*0.4f},{a.x+width,a.y+font*1.6f},ImGui::GetColorU32(ImGuiCol_Button),font*0.5f);
+                draw->AddText({a.x+width-badge+font*0.5f,a.y+font*0.5f},ImGui::GetColorU32(ImGuiCol_Text),std::to_string(displayMessage.Count).c_str());
+            }
+            ImGui::PopID();
+        }
 
 		bool shouldScroll = false;
 		{
@@ -364,10 +324,11 @@ namespace TomCat {
 		if (m_AutoScroll && shouldScroll)
 			ImGui::SetScrollHereY(1.0f);
         ImGui::EndChild();
+        ImGui::PopStyleVar();
         ImGui::Separator();
         ImGui::BeginChild("ConsoleDetails");
         auto selected = std::find_if(messages.begin(), messages.end(), [&](const auto& message) { return message.Sequence == m_SelectedSequence; });
-        if (selected != messages.end())
+        if (!cleared && selected != messages.end())
         {
             if (ImGui::SmallButton("Copy details")) ImGui::SetClipboardText((selected->Text + "\n" + selected->StackTrace).c_str());
             if(!selected->File.empty() && m_OpenSource) {ImGui::SameLine();if(ImGui::SmallButton("Open source")) m_OpenSource(selected->File);}

@@ -195,8 +195,12 @@ namespace TomCat {
 	{
 	public:
 		TomCatInput(ApplicationCommandLineArgs args)
-			: Application("TomCatEditor",
-				std::filesystem::path("Packages/Resources/Icons/Logo.ico"))
+			: Application([] {
+                    WindowProps props("TomCatEditor",1440,900,"Packages/Resources/Icons/Logo.ico");
+                    props.FitToWorkArea=true;
+                    props.EditorStyling=true;
+                    return props;
+                }(),true)
 		{
 			std::filesystem::path startupProjectPath;
 			if (args.Count > 1)

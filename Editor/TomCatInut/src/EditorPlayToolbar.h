@@ -1,5 +1,6 @@
 #pragma once
 #include "EditorIcons.h"
+#include "EditorVisuals.h"
 #ifdef __EMSCRIPTEN__
 #include <imgui.h>
 #else
@@ -15,9 +16,7 @@ template<class Play, class Stop, class Pause, class Step>
 void DrawEditorPlayToolbar(const Ref<EditorIconSet>& icons, bool canPlay, bool running, bool paused,
   Play onPlay, Stop onStop, Pause onPause, Step onStep) {
 
-		constexpr float iconSize = 24.0f;
-		constexpr int framePadding = 4;
-		const float buttonSize = iconSize + framePadding * 2.0f;
+		const float buttonSize = std::round(ImGui::GetFontSize()*1.35f);
 		const float spacing = ImGui::GetStyle().ItemSpacing.x;
 		const float groupWidth = buttonSize * 3.0f + spacing * 2.0f;
 		ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - groupWidth) * 0.5f));
@@ -35,19 +34,8 @@ void DrawEditorPlayToolbar(const Ref<EditorIconSet>& icons, bool canPlay, bool r
 			if (!enabled)
 				ImGui::BeginDisabled();
 
-			bool pressed = false;
-			const Ref<Texture2D>& texture = icons->Get(icon);
-			if (texture)
-			{
-				pressed = ImGui::ImageButton(EditorTextureID(texture), ImVec2(iconSize, iconSize),
-					ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), framePadding,
-					ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-			}
-			else
-				pressed = ImGui::Button("?", ImVec2(buttonSize, buttonSize));
+            const bool pressed=EditorGlyphButton("##Control",icons,icon,tooltip,selected,ImVec2(buttonSize,buttonSize));
 
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", tooltip);
 			if (!enabled)
 				ImGui::EndDisabled();
 			ImGui::PopStyleColor();

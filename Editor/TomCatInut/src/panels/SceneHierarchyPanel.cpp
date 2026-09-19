@@ -37,6 +37,7 @@
 #include "TomCat/Scene/Serialization/PrefabLink.h"
 #include "../EditorDragDrop.h"
 #include "../EditorPropertyTransaction.h"
+#include "../EditorVisuals.h"
 
 namespace TomCat {
 
@@ -127,13 +128,7 @@ namespace TomCat {
 	static void DrawIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
 		const ImVec2& minimum, const ImVec2& maximum, ImU32 tint = IM_COL32_WHITE)
 	{
-		if (!icons)
-			return;
-		const Ref<Texture2D>& texture = icons->Get(icon);
-		if (!texture)
-			return;
-		ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(texture), minimum, maximum,
-			ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
+        DrawEditorGlyph(ImGui::GetWindowDrawList(),icons,icon,minimum,maximum,tint);
 	}
 
 	static std::string LowerASCII(std::string value)
@@ -477,7 +472,8 @@ namespace TomCat {
 			ImGui::EndPopup();
 		}
 
-		if (ImGui::BeginPopup("Select Sprite"))
+		PrepareEditorPopup("Select Sprite",440);
+        if (ImGui::BeginPopup("Select Sprite"))
 		{
 			if (ImGui::Selectable("None", static_cast<uint64_t>(handle) == 0))
 			{
@@ -617,7 +613,8 @@ namespace TomCat {
 			}
 			ImGui::EndPopup();
 		}
-		if (ImGui::BeginPopup("Select Authoring Asset"))
+		PrepareEditorPopup("Select Authoring Asset",480);
+        if (ImGui::BeginPopup("Select Authoring Asset"))
 		{
 			if (ImGui::Selectable("None", static_cast<uint64_t>(handle) == 0))
 			{
@@ -836,7 +833,8 @@ namespace TomCat {
 			ImGui::OpenPopup("RegisteredAssetPicker");
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("Select %s", property.DisplayName.c_str());
-		if (ImGui::BeginPopup("RegisteredAssetPicker"))
+		PrepareEditorPopup("RegisteredAssetPicker",480);
+        if (ImGui::BeginPopup("RegisteredAssetPicker"))
 		{
 			if (ImGui::Selectable("None", static_cast<uint64_t>(handle) == 0))
 			{
@@ -903,7 +901,7 @@ namespace TomCat {
 	static float DrawTreeRowIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
 		const ImVec2& itemMin, const ImVec2& itemMax, ImU32 tint = IM_COL32_WHITE)
 	{
-		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.78f),
+		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.95f),
 			std::max(1.0f, itemMax.y - itemMin.y - 4.0f));
 		const float x = std::round(itemMin.x + ImGui::GetTreeNodeToLabelSpacing());
 		const float y = std::round(itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f);
@@ -1068,7 +1066,8 @@ namespace TomCat {
 			ImGui::OpenPopup("EntityIconPicker");
 
 		bool changed = false;
-		if (ImGui::BeginPopup("EntityIconPicker"))
+		PrepareEditorPopup("EntityIconPicker",380);
+        if (ImGui::BeginPopup("EntityIconPicker"))
 		{
 			ImGui::TextUnformatted("Entity Icon");
 			ImGui::Separator();
@@ -1545,7 +1544,7 @@ namespace TomCat {
             m_PreviousHierarchyOrder.swap(m_HierarchyVisibleOrder);
             m_HierarchyVisibleOrder.clear();
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputTextWithHint("##HierarchySearch", "Search objects...", m_HierarchySearch.data(), m_HierarchySearch.size());
+            EditorSearchField("##HierarchySearch", "Search objects...", m_HierarchySearch.data(), m_HierarchySearch.size());
             FlushPendingDeletion();
             std::string sceneName = m_Context->GetSceneName();
 			if (sceneDirty)
@@ -1700,10 +1699,52 @@ namespace TomCat {
 			m_InspectorDocked = ImGui::IsWindowDocked();
 			m_InspectorFocused = inspectorVisible &&
 				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+            if (inspectorVisible)
+            {
+                auto* inspectorWindow = ImGui::GetCurrentWindow();
+                auto* node = inspectorWindow->DockNode;
+                bool clicked = false;
+                const auto drawLock = [&]() {
+                    const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+                    const float size = ImGui::GetFontSize() * 0.8f;
+                    const ImVec2 start((a.x+b.x-size)*0.5f,(a.y+b.y-size)*0.5f);
+                    DrawEditorGlyph(ImGui::GetWindowDrawList(),m_Icons,EditorIcon::Lock,start,
+                        ImVec2(start.x+size,start.y+size),ImGui::GetColorU32(m_InspectorLocked ? ImGuiCol_CheckMark : ImGuiCol_Text));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",m_InspectorLocked ? "Unlock Inspector" : "Lock Inspector");
+                };
+                if (node && ImGui::DockNodeBeginAmendTabBar(node))
+                {
+                    // This ImGui fork packs trailing tabs after labels; explicitly align this title action.
+                    if (auto* lockTab=ImGui::TabBarFindTabByID(node->TabBar,ImGui::GetID("   ##InspectorLockTab")))
+                        lockTab->Offset=std::max(0.0f,node->Pos.x+node->Size.x-node->TabBar->BarRect.Min.x-lockTab->Width);
+                    clicked = ImGui::TabItemButton("   ##InspectorLockTab",ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip);
+                    drawLock();
+                    ImGui::DockNodeEndAmendTabBar();
+                }
+                else if (!node)
+                {
+                    // A floating Inspector uses the same title-bar alignment.
+                    const float size = inspectorWindow->TitleBarHeight();
+                    const ImRect rect(ImVec2(inspectorWindow->Pos.x+inspectorWindow->Size.x-size*2,inspectorWindow->Pos.y),
+                        ImVec2(inspectorWindow->Pos.x+inspectorWindow->Size.x-size,inspectorWindow->Pos.y+size));
+                    const ImRect clip = inspectorWindow->ClipRect;
+                    ImGui::PushClipRect(rect.Min,rect.Max,false);
+                    bool hovered=false, held=false;
+                    const ImGuiID id = inspectorWindow->GetID("InspectorTitleLock");
+                    ImGui::ItemAdd(rect,id);
+                    clicked = ImGui::ButtonBehavior(rect,id,&hovered,&held);
+                    drawLock();
+                    ImGui::PopClipRect();
+                    inspectorWindow->ClipRect=clip;
+                }
+                if (clicked)
+                {
+                    m_InspectorLocked = !m_InspectorLocked;
+                    m_InspectedEntity = m_InspectorLocked && m_SelectionContext ? m_SelectionContext.GetUUID() : UUID(0);
+                }
+            }
 			if (inspectorVisible && m_Context && (m_SelectionContext || (m_InspectorLocked && m_Context->FindEntityByUUID(m_InspectedEntity))))
 			{
-                if (ImGui::Checkbox("Lock Inspector", &m_InspectorLocked))
-                    m_InspectedEntity = m_InspectorLocked && m_SelectionContext ? m_SelectionContext.GetUUID() : UUID(0);
                 Entity inspected = m_InspectorLocked ? m_Context->FindEntityByUUID(m_InspectedEntity) : m_SelectionContext;
                 if (!inspected) { m_InspectorLocked = false; inspected = m_SelectionContext; }
                 if (!m_InspectorLocked && m_MultiSelection.size()>1) DrawMultiSelectionInspector();
@@ -2456,7 +2497,8 @@ namespace TomCat {
 		if (open && !*open)
 			return;
 
-		const bool visible = ImGui::Begin("Animator", open);
+		PrepareEditorToolWindow(ImVec2(1040,620),ImVec2(420,300));
+        const bool visible = ImGui::Begin("Animator", open);
 		m_AnimatorGraphDocked = ImGui::IsWindowDocked();
 		m_AnimatorGraphFocused = visible
 			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -2593,7 +2635,8 @@ namespace TomCat {
 			state.Playing = false;
 		};
 
-		const bool visible = ImGui::Begin("Animation", open);
+		PrepareEditorToolWindow(ImVec2(1040,620),ImVec2(420,300));
+        const bool visible = ImGui::Begin("Animation", open);
 		m_AnimationDocked = ImGui::IsWindowDocked();
 		m_AnimationFocused = visible
 			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -2929,7 +2972,8 @@ namespace TomCat {
 		m_TilePaletteFocused = false;
 		if (open && !*open)
 			return;
-		const bool visible = ImGui::Begin("Tile Palette", open);
+		PrepareEditorToolWindow(ImVec2(860,620),ImVec2(420,300));
+        const bool visible = ImGui::Begin("Tile Palette", open);
 		m_TilePaletteDocked = ImGui::IsWindowDocked();
 		m_TilePaletteFocused = visible
 			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -3697,7 +3741,7 @@ namespace TomCat {
 		const bool rowHovered = ImGui::IsItemHovered();
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
-		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.78f),
+		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.95f),
 			std::max(1.0f, itemMax.y - itemMin.y - 4.0f));
 		const float iconY = std::round(itemMin.y +
 			(itemMax.y - itemMin.y - iconSize) * 0.5f);
@@ -3900,7 +3944,7 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		ImGui::Columns(2);
 		ImGui::SetColumnWidth(0, columnWidth + 40.0f);
 
-        const float width = std::clamp(ImGui::GetWindowWidth() * 0.43f, 92.0f, columnWidth + 55.0f);
+        const float width = std::clamp(ImGui::GetWindowWidth() * 0.43f, 92.0f, columnWidth + 100.0f);
         ImGui::SetColumnWidth(0, width);
         ImGui::AlignTextToFramePadding();
         const ImVec2 min = ImGui::GetCursorScreenPos();
@@ -4954,7 +4998,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 			m_AnimatorRenamePopupRequested = false;
 		}
 		bool renamePopupOpen = true;
-		if (ImGui::BeginPopupModal("Rename Animator Item", &renamePopupOpen,
+		PrepareEditorPopup("Rename Animator Item",520,true);
+        if (ImGui::BeginPopupModal("Rename Animator Item", &renamePopupOpen,
 			ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			if (ImGui::IsWindowAppearing())
@@ -5069,7 +5114,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 		if (m_AnimatorRenamePopupGraphOwner != graphWindow)
 			return;
 		m_AnimatorRenamePopupRequested = false;
-		if (ImGui::BeginPopupModal("Rename Animator Item", nullptr,
+		PrepareEditorPopup("Rename Animator Item",520,true);
+        if (ImGui::BeginPopupModal("Rename Animator Item", nullptr,
 			ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			ImGui::CloseCurrentPopup();
@@ -6274,7 +6320,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 				}
 				ImGui::EndDragDropTarget();
 			}
-			if (ImGui::BeginPopup("OnClickTargetPicker"))
+			PrepareEditorPopup("OnClickTargetPicker",440);
+        if (ImGui::BeginPopup("OnClickTargetPicker"))
 			{
 				if (ImGui::MenuItem("This Entity"))
 				{
@@ -6641,13 +6688,15 @@ static void DrawComponent(const std::string& name, Entity entity,
             if (ImGui::Button("Apply All")) ImGui::OpenPopup("ApplyPrefabOverrides");
             ImGui::SameLine();
             if (ImGui::Button("Revert All")) ImGui::OpenPopup("RevertPrefabOverrides");
-            if (ImGui::BeginPopup("ApplyPrefabOverrides"))
+            PrepareEditorPopup("ApplyPrefabOverrides",480);
+        if (ImGui::BeginPopup("ApplyPrefabOverrides"))
             {
                 ImGui::TextWrapped("Write all overrides to the source prefab. Other linked instances can receive these changes.");
                 if (ImGui::Button("Apply to source")) { m_PendingPrefabRoot = entity.GetUUID(); m_PendingPrefabAction = 2; ImGui::CloseCurrentPopup(); }
                 ImGui::EndPopup();
             }
-            if (ImGui::BeginPopup("RevertPrefabOverrides"))
+            PrepareEditorPopup("RevertPrefabOverrides",480);
+        if (ImGui::BeginPopup("RevertPrefabOverrides"))
             {
                 ImGui::TextWrapped("Replace this instance's overrides with its source values.");
                 if (ImGui::Button("Revert instance")) { m_PendingPrefabRoot = entity.GetUUID(); m_PendingPrefabAction = 1; ImGui::CloseCurrentPopup(); }
@@ -7063,14 +7112,14 @@ static void DrawComponent(const std::string& name, Entity entity,
 			if (m_SpritePickerOpen && m_SpritePickerEntity != entity.GetUUID())
 				m_SpritePickerOpen = false;
 
-			ImGui::SetNextWindowSize(ImVec2(680.0f, 460.0f), ImGuiCond_Appearing);
+			PrepareEditorToolWindow(ImVec2(760,520),ImVec2(420,300));
 			if (ImGui::BeginPopupModal("Select Sprite##SpritePicker", &m_SpritePickerOpen,
 				ImGuiWindowFlags_NoCollapse))
 			{
 				if (ImGui::IsWindowAppearing())
 					ImGui::SetKeyboardFocusHere();
 				ImGui::SetNextItemWidth(-1.0f);
-				ImGui::InputTextWithHint("##SpriteSearch", "Search Sprites",
+				EditorSearchField("##SpriteSearch", "Search Sprites",
 					m_SpriteSearch.data(), m_SpriteSearch.size());
 
 				std::vector<const AssetMetadata*> sprites;
@@ -7270,10 +7319,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 
             bool presetEdited = false;
             if (ImGui::Button("Anchor presets")) ImGui::OpenPopup("AnchorPresets");
-            if (ImGui::BeginPopup("AnchorPresets"))
+            PrepareEditorPopup("AnchorPresets",450);
+        if (ImGui::BeginPopup("AnchorPresets"))
             {
                 ImGui::TextDisabled("Anchor alignment / stretch");
-                ImGui::TextDisabled("Shift: also set pivot. Alt: also reset position and size.");
+                ImGui::PushTextWrapPos(0.0f); ImGui::TextDisabled("Shift: also set pivot. Alt: also reset position and size."); ImGui::PopTextWrapPos();
                 const char* names[] = { "Left", "Center", "Right", "Stretch" };
                 for (int y = 0; y < 4; ++y)
                     for (int x = 0; x < 4; ++x)
@@ -7485,7 +7535,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 		richInspectors.emplace(ComponentIds::AudioSource, [&]()
 		{
-		DrawComponent<AudioSource>("Audio Source", entity, m_Icons, EditorIcon::Count,
+		DrawComponent<AudioSource>("Audio Source", entity, m_Icons, EditorIcon::Audio,
 			[this](auto& component)
 		{
             const auto* clipMetadata = AssetManager::Get().GetRegistry().GetMetadata(component.Clip);
@@ -7611,7 +7661,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 		richInspectors.emplace(ComponentIds::UIText, [&]()
 		{
-			DrawComponent<UIText>("Text", entity, m_Icons, EditorIcon::Count,
+			DrawComponent<UIText>("Text", entity, m_Icons, EditorIcon::Font,
 				[this](UIText& component)
 				{
 					if (DrawBoundedMultilineText("Text", component.Text,
@@ -7955,7 +8005,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 
         richInspectors.emplace(ComponentIds::UILocalization, [&]()
         {
-            DrawComponent<UILocalization>("UI Localization", entity, m_Icons, EditorIcon::Count,
+            DrawComponent<UILocalization>("UI Localization", entity, m_Icons, EditorIcon::Font,
                 [&](UILocalization& component)
                 {
                     auto editString = [&](const char* label, std::string& value) {
@@ -8026,7 +8076,7 @@ static void DrawComponent(const std::string& name, Entity entity,
         });
         richInspectors.emplace(ComponentIds::UITheme, [&]()
         {
-            DrawComponent<UITheme>("UI Theme", entity, m_Icons, EditorIcon::Count, [&](UITheme& theme) {
+            DrawComponent<UITheme>("UI Theme", entity, m_Icons, EditorIcon::Material, [&](UITheme& theme) {
                 bool changed=DrawColorField("Text",glm::value_ptr(theme.TextColor));
                 changed|=DrawColorField("Image",glm::value_ptr(theme.ImageColor));
                 changed|=DrawColorField("Accent",glm::value_ptr(theme.AccentColor));
@@ -8046,12 +8096,9 @@ static void DrawComponent(const std::string& name, Entity entity,
 			DrawCSharpScripts(entity);
 			ImGui::EndDisabled();
 		});
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##InspectorFilter","Search components...",m_InspectorSearch.data(),m_InspectorSearch.size());
         for (const ComponentDescriptor& descriptor :
             ComponentRegistry::Get().GetDescriptors())
         {
-            if(m_InspectorSearch[0] && LowerASCII(descriptor.DisplayName).find(LowerASCII(m_InspectorSearch.data()))==std::string::npos) continue;
             if (!descriptor.InspectorVisible || !descriptor.Has(entity))
 				continue;
 			const uint64_t componentType = static_cast<uint64_t>(descriptor.TypeId);
@@ -8092,6 +8139,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ImGui::SetNextItemWidth(-1.0f);
 		ImGui::BeginDisabled(!m_ColliderEditingAllowed);
 		const bool addComponentPressed = ImGui::Button("Add Component", ImVec2(-1.0f, 0.0f));
+        const auto addMin=ImGui::GetItemRectMin(),addMax=ImGui::GetItemRectMax();
+        const float addSize=ImGui::GetFontSize()*0.85f;
+        const ImVec2 addStart(addMin.x+ImGui::GetStyle().FramePadding.x,addMin.y+(addMax.y-addMin.y-addSize)*0.5f);
+        DrawEditorGlyph(ImGui::GetWindowDrawList(),m_Icons,EditorIcon::Add,addStart,
+            ImVec2(addStart.x+addSize,addStart.y+addSize),ImGui::GetColorU32(ImVec4(1,1,1,1)));
 		ImGui::EndDisabled();
 		if (addComponentPressed || m_AddComponentPopupRequested)
 		{
@@ -8101,7 +8153,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 			ImGui::OpenPopup("AddComponent");
 		}
 
-		if (ImGui::BeginPopup("AddComponent"))
+		PrepareEditorPopup("AddComponent",420);
+        if (ImGui::BeginPopup("AddComponent"))
 		{
 			ImGui::BeginDisabled(!m_ColliderEditingAllowed);
 			if (m_AddComponentSearchFocusRequested)
@@ -8109,8 +8162,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 				ImGui::SetKeyboardFocusHere();
 				m_AddComponentSearchFocusRequested = false;
 			}
-			ImGui::SetNextItemWidth(330.0f);
-			ImGui::InputTextWithHint("##AddComponentSearch", "Search components...",
+			ImGui::SetNextItemWidth(-1.0f);
+			EditorSearchField("##AddComponentSearch", "Search components...",
 				m_AddComponentSearch.data(), m_AddComponentSearch.size());
 			ImGui::Separator();
 

@@ -188,6 +188,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClInclude Include="src\EditorLayer.h" />
     <ClInclude Include="src\EditorPlayToolbar.h" />
     <ClInclude Include="src\EditorPropertyTransaction.h" />
+    <ClInclude Include="src\EditorVisuals.h" />
     <ClInclude Include="src\Player\PlayerBuilder.h" />
     <ClInclude Include="src\SceneToolbarDrawing.h" />
     <ClInclude Include="src\Scripting\ScriptEditorMetadata.h" />

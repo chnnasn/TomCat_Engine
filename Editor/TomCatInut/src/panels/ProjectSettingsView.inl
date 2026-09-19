@@ -10,8 +10,7 @@
 			ImGui::SetNextWindowFocus();
 			m_FocusProjectSettingsPanel = false;
 		}
-		ImGui::SetNextWindowSize(ImVec2(820.0f, 580.0f), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSizeConstraints(ImVec2(680, 420), ImVec2(1600, 1200));
+		PrepareEditorToolWindow(ImVec2(900,680),ImVec2(640,420));
 		if (!ImGui::Begin("Project Settings", &m_ShowProjectSettingsPanel,
 			ImGuiWindowFlags_NoDocking))
 		{
@@ -30,14 +29,14 @@
 
         static char settingsSearch[128]{};
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##SettingsSearch", "Search settings pages...", settingsSearch, sizeof(settingsSearch));
+        EditorSearchField("##SettingsSearch", "Search settings pages...", settingsSearch, sizeof(settingsSearch));
         auto matchesSettings = [&](const char* terms) {
             std::string query(settingsSearch), text(terms);
             for (char& c : query) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             return text.find(query) != std::string::npos;
         };
-        ImGui::BeginChild("##ProjectSettingsNavigation", ImVec2(165, 0), true);
+        ImGui::BeginChild("##ProjectSettingsNavigation", ImVec2(std::max(180.0f,ImGui::GetFontSize()*7.8f), 0), true);
         const char* pages[] = { "Tags and Layers", "Physics 2D", "Player" };
         const char* terms[] = { "tags layers names", "physics 2d collision matrix", "player product company version icon display width height window vsync directories" };
         for (int page = 0; page < 3; ++page)
@@ -49,7 +48,7 @@
         auto settingRow = [](const char* label) {
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(label);
-            ImGui::SameLine(165);
+            ImGui::SameLine(std::max(165.0f,ImGui::GetFontSize()*6.5f));
             ImGui::SetNextItemWidth(-1);
             return (std::string("##") + label);
         };
@@ -291,7 +290,7 @@
 				}
 				ImGui::EndDragDropTarget();
 			}
-			ImGui::TextDisabled("Select an icon, or drag a Texture2D asset onto the field.");
+			ImGui::PushTextWrapPos(0.0f); ImGui::TextDisabled("Select an icon, or drag a Texture2D asset onto the field."); ImGui::PopTextWrapPos();
 
 			ImGui::Spacing();
 			ImGui::TextUnformatted("Display");

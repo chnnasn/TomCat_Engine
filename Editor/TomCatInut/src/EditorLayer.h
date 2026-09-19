@@ -137,6 +137,9 @@ namespace TomCat {
 		void ApplyPendingPanelMaximizeTransition(uint32_t dockspaceId,
 			const ImVec2& dockspaceSize);
 		void DetectPanelTabDoubleClick();
+        void UI_PanelTabContextMenu();
+        void ApplyPendingTabActions();
+        bool* PanelVisibility(const std::string& name);
 		void RestorePanelLayoutBeforePersistence();
 		bool ShouldRenderDockPanel(std::string_view windowName) const;
 		// Shared drag helper: submits the invisible handle and owns the only
@@ -348,10 +351,12 @@ namespace TomCat {
 		std::string m_PendingMaximizedPanelWindow;
 		std::string m_MaximizedPanelWindow;
 		std::string m_DockLayoutBeforeMaximize;
-		std::array<int, 9> m_DockTabOrdersBeforeMaximize = {
-			-1, -1, -1, -1, -1, -1, -1, -1, -1
+		std::array<int, 10> m_DockTabOrdersBeforeMaximize = {
+			-1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 		};
 		bool m_PanelMaximized = false;
+        std::string m_TabContextPanel, m_PendingTabClose, m_PendingTabAdd;
+        uint32_t m_TabContextDockID = 0;
         bool m_ShowAssetInspector = false;
         bool m_ShowRuntimeScenes = false;
         bool m_ShowEditorPreferences = false;
