@@ -1468,6 +1468,74 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"EditorCamera scroll stopped instead of advancing through its orbit floor");
 	}
 
+	void TestEditorCameraAxisViews()
+	{
+		using AxisView = TomCat::EditorCamera::AxisView;
+		struct AxisExpectation
+		{
+			AxisView View;
+			glm::vec3 CameraSide;
+		};
+		const std::array<AxisExpectation, 6> expectations = { {
+			{ AxisView::PositiveX, { 1.0f, 0.0f, 0.0f } },
+			{ AxisView::NegativeX, { -1.0f, 0.0f, 0.0f } },
+			{ AxisView::PositiveY, { 0.0f, 1.0f, 0.0f } },
+			{ AxisView::NegativeY, { 0.0f, -1.0f, 0.0f } },
+			{ AxisView::PositiveZ, { 0.0f, 0.0f, 1.0f } },
+			{ AxisView::NegativeZ, { 0.0f, 0.0f, -1.0f } }
+		} };
+
+		TomCat::EditorCamera camera(45.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
+		camera.SetViewportSize(1600.0f, 900.0f);
+		camera.SetDistance(27.0f);
+		const glm::vec3 focalPoint = camera.GetFocalPoint();
+		const float distance = camera.GetDistance();
+		for (const AxisExpectation& expectation : expectations)
+		{
+			RequireUI(glm::length(TomCat::EditorCamera::GetWorldAxis(expectation.View)
+				- expectation.CameraSide) <= 1.0e-5f,
+				"EditorCamera axis mapping no longer follows +X right, +Y up, +Z forward");
+			camera.SnapToAxis(expectation.View);
+			const glm::vec3 actualSide = glm::normalize(camera.GetPosition()
+				- camera.GetFocalPoint());
+			const glm::vec3 actualForward = glm::normalize(
+				camera.GetForwardDirection());
+			RequireUI(camera.IsOrthographic(),
+				"EditorCamera axis snap did not enter orthographic projection");
+			RequireUI(glm::length(actualSide - expectation.CameraSide) <= 1.0e-4f
+				&& glm::length(actualForward + expectation.CameraSide) <= 1.0e-4f,
+				"EditorCamera axis snap selected the wrong side or look direction");
+			RequireUI(glm::length(camera.GetFocalPoint() - focalPoint) <= 1.0e-5f
+				&& Near(camera.GetDistance(), distance, 1.0e-5f),
+				"EditorCamera axis snap changed its focus or orbit distance");
+		}
+
+		camera.SnapToAxis(AxisView::PositiveZ);
+		const glm::vec3 focalPlanePoint = camera.GetFocalPoint()
+			+ camera.GetRightDirection() * 3.0f + camera.GetUpDirection() * 2.0f;
+		auto toNDC = [&camera](const glm::vec3& point)
+		{
+			const glm::vec4 clip = camera.GetViewProjection() * glm::vec4(point, 1.0f);
+			return glm::vec3(clip) / clip.w;
+		};
+		const glm::vec3 orthographicNDC = toNDC(focalPlanePoint);
+		camera.SetOrthographic(false);
+		const glm::vec3 perspectiveNDC = toNDC(focalPlanePoint);
+		RequireUI(glm::length(glm::vec2(orthographicNDC)
+			- glm::vec2(perspectiveNDC)) <= 1.0e-4f,
+			"EditorCamera projection toggle changed focal-plane screen scale");
+		RequireUI(glm::length(camera.GetFocalPoint() - focalPoint) <= 1.0e-5f
+			&& Near(camera.GetDistance(), distance, 1.0e-5f),
+			"EditorCamera projection toggle changed its focus or orbit distance");
+
+		camera.SetDistance(1000000.0f);
+		const glm::vec3 distantFocusNDC = toNDC(camera.GetFocalPoint());
+		RequireUI(std::isfinite(distantFocusNDC.z)
+			&& distantFocusNDC.z >= -1.0f - 1.0e-3f
+			&& distantFocusNDC.z <= 1.0f + 1.0e-3f,
+			"EditorCamera finite projection clipped its focus at a large distance");
+	}
+
 	void TestSceneCameraFrustumCorners()
 	{
 		TomCat::SceneCamera camera;
@@ -1607,6 +1675,21 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			RequireUI(std::isfinite(ndcZ) && ndcZ >= -1.0f
 				&& ndcZ <= 1.0f,
 				"Scene Camera overlay projection retained a finite Far ceiling");
+		}
+
+		overlayCamera.SnapToAxis(TomCat::EditorCamera::AxisView::PositiveZ);
+		const glm::mat4 orthographicOverlayProjection =
+			overlayCamera.GetInfiniteFarViewProjection();
+		for (float distance : { 2000.0f, 1.0e12f, HugeFar })
+		{
+			const glm::vec3 point = overlayCamera.GetPosition()
+				+ overlayCamera.GetForwardDirection() * distance;
+			const glm::vec4 clip = orthographicOverlayProjection
+				* glm::vec4(point, 1.0f);
+			const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+			RequireUI(std::isfinite(ndc.x) && std::isfinite(ndc.y)
+				&& std::isfinite(ndc.z) && ndc.z >= -1.0f && ndc.z <= 1.0f,
+				"Orthographic Scene Camera overlay projection retained a finite Far ceiling");
 		}
 	}
 
@@ -2589,6 +2672,7 @@ namespace TomCat::Tests {
 		TestEditorCanvasLayout();
 		TestEditorCameraFrameBounds();
 		TestEditorCameraScrollZoom();
+		TestEditorCameraAxisViews();
 		TestSceneCameraFrustumCorners();
 		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();

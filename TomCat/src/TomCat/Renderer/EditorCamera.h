@@ -5,6 +5,7 @@
 #include "TomCat/Events/Event.h"
 #include "TomCat/Events/MouseEvent.h"
 
+#include <cstdint>
 #include <glm/glm.hpp>
 
 namespace TomCat {
@@ -12,6 +13,16 @@ namespace TomCat {
 	class EditorCamera : public Camera
 	{
 	public:
+		enum class AxisView : uint8_t
+		{
+			PositiveX = 0,
+			NegativeX,
+			PositiveY,
+			NegativeY,
+			PositiveZ,
+			NegativeZ
+		};
+
 		EditorCamera() = default;
 		EditorCamera(float fov, float aspectRatio, float nearClip, float farClip);
 
@@ -23,9 +34,16 @@ namespace TomCat {
 		void FrameBounds(const glm::vec3& minimum, const glm::vec3& maximum);
 		void Set2DMode(bool enabled);
 		bool Is2DMode() const { return m_Is2DMode; }
+		// TomCat's world basis follows the authoring convention used by scene
+		// objects: +X right, +Y up, +Z forward. Axis views place the editor camera
+		// on the selected side of the focal point and look back toward it.
+		static glm::vec3 GetWorldAxis(AxisView view);
+		void SnapToAxis(AxisView view);
+		void SetOrthographic(bool enabled);
+		bool IsOrthographic() const { return m_IsOrthographic; }
 
 		inline float GetDistance() const { return m_Distance; }
-		inline void SetDistance(float distance) { m_Distance = distance; }
+		void SetDistance(float distance);
 		// Overlays use an infinite far plane so authored camera bounds are never
 		// clipped by the Scene camera's finite working range.
 		glm::mat4 GetInfiniteFarViewProjection() const;
@@ -73,6 +91,7 @@ namespace TomCat {
 
 		float m_ViewportWidth = 1280, m_ViewportHeight = 720;
 		bool m_Is2DMode = false;
+		bool m_IsOrthographic = false;
 	};
 
 }

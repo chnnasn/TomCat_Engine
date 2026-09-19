@@ -7,6 +7,7 @@
 
 #include <glfw/glfw3.h>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/gtc/constants.hpp>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
@@ -16,13 +17,34 @@ namespace TomCat {
 	EditorCamera::EditorCamera(float fov, float aspectRatio, float nearClip, float farClip)
 		: m_FOV(fov), m_AspectRatio(aspectRatio), m_NearClip(nearClip), m_FarClip(farClip), Camera(glm::perspective(glm::radians(fov), aspectRatio, nearClip, farClip))
 	{
+		// Preserve the requested aspect until the Scene panel publishes its real
+		// viewport size. UpdateProjection derives aspect from these dimensions.
+		m_ViewportHeight = 720.0f;
+		m_ViewportWidth = std::max(aspectRatio, 0.01f) * m_ViewportHeight;
 		UpdateView();
 	}
 
 	void EditorCamera::UpdateProjection()
 	{
-		m_AspectRatio = m_ViewportWidth / m_ViewportHeight;
-		m_Projection = glm::perspective(glm::radians(m_FOV), m_AspectRatio, m_NearClip, m_FarClip);
+		m_AspectRatio = std::max(m_ViewportWidth, 1.0f)
+			/ std::max(m_ViewportHeight, 1.0f);
+		const float effectiveFarClip = std::max(m_FarClip,
+			m_Distance * 2.0f + m_NearClip);
+		if (m_IsOrthographic)
+		{
+			// Match the perspective scale at the focal plane. Toggling projection
+			// therefore preserves the apparent size and the orbit focus.
+			const float halfHeight = std::max(m_Distance
+				* std::tan(glm::radians(m_FOV) * 0.5f), 0.001f);
+			const float halfWidth = halfHeight * m_AspectRatio;
+			m_Projection = glm::orthoRH_NO(-halfWidth, halfWidth,
+				-halfHeight, halfHeight, m_NearClip, effectiveFarClip);
+		}
+		else
+		{
+			m_Projection = glm::perspectiveRH_NO(glm::radians(m_FOV),
+				m_AspectRatio, m_NearClip, effectiveFarClip);
+		}
 	}
 
 	void EditorCamera::UpdateView()
@@ -33,6 +55,10 @@ namespace TomCat {
 		glm::quat orientation = GetOrientation();
 		m_ViewMatrix = glm::translate(glm::mat4(1.0f), m_Position) * glm::toMat4(orientation);
 		m_ViewMatrix = glm::inverse(m_ViewMatrix);
+		// Projection depth and orthographic scale both depend on orbit distance.
+		// Refresh them after panning/zooming so a distant Scene view cannot be
+		// clipped by a projection that was built for an earlier camera position.
+		UpdateProjection();
 	}
 
 	std::pair<float, float> EditorCamera::PanSpeed() const
@@ -109,8 +135,74 @@ namespace TomCat {
 		}
 	}
 
+	glm::vec3 EditorCamera::GetWorldAxis(AxisView view)
+	{
+		switch (view)
+		{
+			case AxisView::PositiveX: return { 1.0f, 0.0f, 0.0f };
+			case AxisView::NegativeX: return { -1.0f, 0.0f, 0.0f };
+			case AxisView::PositiveY: return { 0.0f, 1.0f, 0.0f };
+			case AxisView::NegativeY: return { 0.0f, -1.0f, 0.0f };
+			case AxisView::PositiveZ: return { 0.0f, 0.0f, 1.0f };
+			case AxisView::NegativeZ: return { 0.0f, 0.0f, -1.0f };
+			default: return { 0.0f, 0.0f, 1.0f };
+		}
+	}
+
+	void EditorCamera::SnapToAxis(AxisView view)
+	{
+		constexpr float halfPi = glm::pi<float>() * 0.5f;
+		switch (view)
+		{
+			case AxisView::PositiveX:
+				m_Pitch = 0.0f; m_Yaw = -halfPi; break;
+			case AxisView::NegativeX:
+				m_Pitch = 0.0f; m_Yaw = halfPi; break;
+			case AxisView::PositiveY:
+				m_Pitch = halfPi; m_Yaw = 0.0f; break;
+			case AxisView::NegativeY:
+				m_Pitch = -halfPi; m_Yaw = 0.0f; break;
+			case AxisView::PositiveZ:
+				m_Pitch = 0.0f; m_Yaw = 0.0f; break;
+			case AxisView::NegativeZ:
+				m_Pitch = 0.0f; m_Yaw = glm::pi<float>(); break;
+		}
+		m_IsOrthographic = true;
+		UpdateProjection();
+		UpdateView();
+	}
+
+	void EditorCamera::SetOrthographic(bool enabled)
+	{
+		if (m_IsOrthographic == enabled)
+			return;
+		m_IsOrthographic = enabled;
+		UpdateProjection();
+	}
+
+	void EditorCamera::SetDistance(float distance)
+	{
+		if (!std::isfinite(distance))
+			return;
+		m_Distance = std::max(distance, std::max(m_NearClip * 1.1f, 0.01f));
+		UpdateView();
+	}
+
 	glm::mat4 EditorCamera::GetInfiniteFarViewProjection() const
 	{
+		if (m_IsOrthographic)
+		{
+			// Orthographic projection has no infinite-far form. Camera outlines are
+			// rendered with depth testing disabled, so keep the authored X/Y screen
+			// mapping and force clip-space depth to the center of the visible range.
+			// This lets very large authored Far values remain visible in Scene view.
+			glm::mat4 viewProjection = m_Projection * m_ViewMatrix;
+			viewProjection[0][2] = 0.0f;
+			viewProjection[1][2] = 0.0f;
+			viewProjection[2][2] = 0.0f;
+			viewProjection[3][2] = 0.0f;
+			return viewProjection;
+		}
 		return glm::infinitePerspectiveRH_NO(glm::radians(m_FOV),
 			m_AspectRatio, m_NearClip) * m_ViewMatrix;
 	}

@@ -2511,7 +2511,6 @@ namespace TomCat {
 				UI_SceneToolbarDockPreview();
 			}
 		}
-
 		// Gizmos
 		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
 		bool usesRectTransformHandles = false;
@@ -2524,10 +2523,11 @@ namespace TomCat {
 		if (sceneVisible && selectedEntity && m_ActiveScene
 			&& m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
 			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider()
-			&& !usesRectTransformHandles)
+			&& !usesRectTransformHandles
+			&& (!IsSceneOrientationGizmoPointerInside() || m_GizmoDragActive))
 		{
 			ImGuizmo::AllowAxisFlip(false);
-			ImGuizmo::SetOrthographic(false);
+			ImGuizmo::SetOrthographic(m_EditorCamera.IsOrthographic());
 			ImGuizmo::SetDrawlist();
 
 			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
@@ -2590,6 +2590,18 @@ namespace TomCat {
 		else
 			ResetColliderEditState();
 
+		// Draw the orientation control last so entity and collider gizmos cannot
+		// cover it or receive a click intended for one of its axis cones.
+		if (sceneVisible)
+			UI_SceneOrientationGizmo();
+		else
+		{
+			m_SceneOrientationGizmoHovered = false;
+			m_SceneOrientationGizmoBounds[0] = {};
+			m_SceneOrientationGizmoBounds[1] = {};
+			m_SceneOrientationPressedTarget = -2;
+		}
+
 		ImGui::End();
 		ImGui::PopStyleVar();
 		}
@@ -2606,6 +2618,10 @@ namespace TomCat {
 			m_ViewportFocused = false;
 			m_ViewportCanvasHovered = false;
 			m_ViewportCameraDragOwned = false;
+			m_SceneOrientationGizmoHovered = false;
+			m_SceneOrientationGizmoBounds[0] = {};
+			m_SceneOrientationGizmoBounds[1] = {};
+			m_SceneOrientationPressedTarget = -2;
 			m_HoveredEntity = {};
 		}
 
@@ -4346,7 +4362,8 @@ namespace TomCat {
 		// independent, matching Unity's driven RectTransform behaviour.
 		const bool canManipulate = m_SceneState == SceneState::Edit
 			&& supportedTool && transformToolAvailable
-			&& parentTransformInvertible && (!translateTool || !layoutControlled);
+			&& parentTransformInvertible && (!translateTool || !layoutControlled)
+			&& (!IsSceneOrientationGizmoPointerInside() || m_UIRectDragActive);
 
 		if (m_UIRectTransactionActive && m_UIRectEditEntity != selectedID)
 			ResetRectTransformEditState();
@@ -4387,7 +4404,7 @@ namespace TomCat {
 			const glm::mat4 gizmoView = m_EditorCamera.GetViewMatrix();
 			const glm::mat4& gizmoProjection = m_EditorCamera.GetProjection();
 			ImGuizmo::AllowAxisFlip(false);
-			ImGuizmo::SetOrthographic(false);
+			ImGuizmo::SetOrthographic(m_EditorCamera.IsOrthographic());
 			ImGuizmo::SetDrawlist();
 			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
 				viewportDisplaySize.x, viewportDisplaySize.y);
@@ -4563,6 +4580,9 @@ namespace TomCat {
 		const glm::vec2 up(-sine, cosine);
 		const glm::vec2 center = shape.Center;
 		const float handleRadius = 6.0f;
+		const bool orientationBlocksActivation =
+			IsSceneOrientationGizmoPointerInside()
+			&& m_ActiveColliderHandle == ColliderEditHandle::None;
 		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
@@ -4584,16 +4604,22 @@ namespace TomCat {
 
 			const ImVec2 minimum(screenPosition.x - handleRadius, screenPosition.y - handleRadius);
 			const ImVec2 maximum(screenPosition.x + handleRadius, screenPosition.y + handleRadius);
-			ImGui::SetCursorScreenPos(minimum);
 			ImGui::PushID(id);
-			ImGui::InvisibleButton("##handle", ImVec2(handleRadius * 2.0f, handleRadius * 2.0f));
-			const bool hovered = ImGui::IsItemHovered();
-			const bool active = m_ActiveColliderHandle == handle && ImGui::IsItemActive();
+			bool hovered = false;
+			bool active = false;
+			if (!orientationBlocksActivation)
+			{
+				ImGui::SetCursorScreenPos(minimum);
+				ImGui::InvisibleButton("##handle",
+					ImVec2(handleRadius * 2.0f, handleRadius * 2.0f));
+				hovered = ImGui::IsItemHovered();
+				active = m_ActiveColliderHandle == handle && ImGui::IsItemActive();
+			}
 			m_ColliderHandleHovered = m_ColliderHandleHovered || hovered || active;
 			if (hovered || active)
 				ImGui::SetMouseCursor(cursor);
 
-			if (ImGui::IsItemActivated())
+			if (!orientationBlocksActivation && ImGui::IsItemActivated())
 			{
 				glm::vec2 mouseWorld;
 				const ImVec2 mouse = ImGui::GetMousePos();
@@ -4828,6 +4854,27 @@ namespace TomCat {
 	void EditorLayer::UI_SceneToolbarDockPreview()
 	{
 #include "panels/UI_SceneToolbarDockPreview.inl"
+	}
+
+	void EditorLayer::UI_SceneOrientationGizmo()
+	{
+#include "panels/UI_SceneOrientationGizmo.inl"
+	}
+
+	bool EditorLayer::IsSceneOrientationGizmoPointerInside() const
+	{
+		if (m_Is2DMode)
+			return false;
+		if (m_SceneOrientationGizmoBounds[1].x
+				<= m_SceneOrientationGizmoBounds[0].x
+			|| m_SceneOrientationGizmoBounds[1].y
+				<= m_SceneOrientationGizmoBounds[0].y)
+			return false;
+		const glm::vec2 mouse{ Input::GetMouseX(), Input::GetMouseY() };
+		return mouse.x >= m_SceneOrientationGizmoBounds[0].x
+			&& mouse.y >= m_SceneOrientationGizmoBounds[0].y
+			&& mouse.x <= m_SceneOrientationGizmoBounds[1].x
+			&& mouse.y <= m_SceneOrientationGizmoBounds[1].y;
 	}
 	void EditorLayer::UI_Toolbar()
 	{
@@ -5089,7 +5136,8 @@ namespace TomCat {
 
 	void EditorLayer::OnEvent(Event& e)
 	{
-		if (m_ViewportCanvasHovered)
+		if (m_ViewportCanvasHovered
+			&& !IsSceneOrientationGizmoPointerInside())
 			m_EditorCamera.OnEvent(e);
 
 		EventDispatcher dispatcher(e);
@@ -5221,6 +5269,11 @@ namespace TomCat {
 		const bool altDown = e.IsAltDown();
 		const bool cameraButton = button == Mouse::ButtonMiddle || button == Mouse::ButtonRight ||
 			(button == Mouse::ButtonLeft && altDown);
+		// Native mouse events arrive before this frame's ImGui pass. The cached
+		// screen bounds stop all Scene navigation/selection from clicking through
+		// the orientation control while its ImGui button handles the same input.
+		if (IsSceneOrientationGizmoPointerInside())
+			return true;
 		// A camera drag starts from the Scene canvas itself.  Requiring the Scene
 		// window to already own keyboard focus makes the first middle/right drag a
 		// no-op after selecting an entity from Hierarchy or Inspector.

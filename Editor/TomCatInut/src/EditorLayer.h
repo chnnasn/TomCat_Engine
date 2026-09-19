@@ -109,6 +109,8 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		void UI_SceneToolbarDockPreview();
+		void UI_SceneOrientationGizmo();
+		bool IsSceneOrientationGizmoPointerInside() const;
 		// Screen-space UI uses RectTransform pixel coordinates, so it needs a
 		// dedicated orthographic ImGuizmo projection. Translation is mapped back to
 		// AnchoredPosition while rotation/scale reuse the entity Transform fields.
@@ -181,6 +183,10 @@ namespace TomCat {
 		glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
 
 		glm::vec2 m_ViewportBounds[2];
+		glm::vec2 m_SceneOrientationGizmoBounds[2]{};
+		bool m_SceneOrientationGizmoHovered = false;
+		// -2 = no pending click, -1 = projection toggle, 0..5 = axis handle.
+		int m_SceneOrientationPressedTarget = -2;
 
 		// Game Viewport
 		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
