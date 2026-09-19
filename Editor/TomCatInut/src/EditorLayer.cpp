@@ -2614,6 +2614,16 @@ namespace TomCat {
 			m_SceneOrientationPressedTarget = -2;
 		}
 
+		// ImGui receives wheel input for both the main window and detached Scene
+		// windows. Route it after this frame's hover/overlay state is established.
+		const float sceneWheel = ImGui::GetIO().MouseWheel;
+		if (m_ViewportCanvasHovered && !m_SceneOrientationGizmoHovered
+			&& std::isfinite(sceneWheel) && sceneWheel != 0.0f)
+		{
+			MouseScrolledEvent scroll(0.0f, sceneWheel);
+			m_EditorCamera.OnEvent(scroll);
+		}
+
 		ImGui::End();
 		ImGui::PopStyleVar();
 		}
@@ -5229,10 +5239,8 @@ namespace TomCat {
 
 	void EditorLayer::OnEvent(Event& e)
 	{
-		if (m_ViewportCanvasHovered
-			&& !IsSceneOrientationGizmoPointerInside())
-			m_EditorCamera.OnEvent(e);
-
+		// Scene wheel zoom is consumed once in OnImGuiRender, including input
+		// from detached windows that never reaches the native editor event path.
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(EditorLayer::OnWindowClose));
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
