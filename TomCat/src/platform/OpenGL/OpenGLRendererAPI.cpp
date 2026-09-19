@@ -55,6 +55,7 @@ namespace TomCat {
 
 		vertexArray->Bind();
 		glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
+		FrameProfiler::Get().RecordDraw(count);
 	}
 
 	void OpenGLRendererAPI::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)
@@ -70,6 +71,7 @@ namespace TomCat {
 
 		vertexArray->Bind();
 		glDrawArrays(GL_LINES, 0, vertexCount);
+		FrameProfiler::Get().RecordDraw(vertexCount);
 	}
 
 	void OpenGLRendererAPI::SetLineWidth(float width)

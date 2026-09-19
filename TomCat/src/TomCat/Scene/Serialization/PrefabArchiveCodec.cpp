@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "PrefabArchiveCodec.h"
+#include "PrefabLink.h"
 
 #include "ComponentCodecs.h"
 #include "SceneArchiveCodec.h"
@@ -11,11 +12,15 @@
 #include "TomCat/Utils/PathUtils.h"
 
 #include <fstream>
+#include <map>
+#include <set>
 #include <limits>
 #include <stdexcept>
 #include <unordered_set>
 
 #include <yaml-cpp/yaml.h>
+
+#include "PrefabLink.inl"
 
 namespace TomCat {
 
@@ -323,7 +328,8 @@ namespace TomCat {
 	}
 
 	bool PrefabArchiveCodec::CaptureSubtree(const Ref<Scene>& source, Entity root,
-		PrefabArchive& archive, std::string& error)
+		PrefabArchive& archive, std::string& error,
+		const std::unordered_map<UUID, UUID>* stableIdentities, bool preserveRootLink)
 	{
 		error.clear();
 		if (!source || !root || source->FindEntityByUUID(root.GetUUID()) != root)
@@ -338,8 +344,25 @@ namespace TomCat {
 			std::unordered_set<UUID> visited;
 			CollectSubtree(*source, root, sourceOrder, visited);
 			std::unordered_map<UUID, UUID> sourceToLocal;
-			for (size_t index = 0; index < sourceOrder.size(); ++index)
-				sourceToLocal.emplace(sourceOrder[index], UUID(index + 1));
+			std::unordered_set<UUID> usedLocalIDs;
+			if (stableIdentities)
+				for (const auto& [sourceID, localID] : *stableIdentities)
+				{
+					if (static_cast<uint64_t>(localID) == 0 || !usedLocalIDs.insert(localID).second)
+						throw std::runtime_error("Prefab stable identities must be nonzero and unique");
+				}
+			uint64_t nextID = 1;
+			for (UUID sourceID : sourceOrder)
+			{
+				if (stableIdentities && stableIdentities->contains(sourceID))
+					sourceToLocal.emplace(sourceID, stableIdentities->at(sourceID));
+				else
+				{
+					while (usedLocalIDs.contains(UUID(nextID))) ++nextID;
+					sourceToLocal.emplace(sourceID, UUID(nextID));
+					usedLocalIDs.insert(UUID(nextID++));
+				}
+			}
 
 			Ref<Scene> templateScene = CreateRef<Scene>();
 			templateScene->SetSceneName(PrefabDiagnosticName);
@@ -355,6 +378,8 @@ namespace TomCat {
 				if (!ComponentCodecs::CopyAuthoringComponents(sourceEntity, destination,
 					false, copyError))
 					throw std::runtime_error(copyError);
+				if (sourceID == root.GetUUID() && !preserveRootLink && destination.HasComponent<PrefabLink>())
+					destination.RemoveComponent<PrefabLink>();
 
 				EntityArchive record;
 				record.LocalID = static_cast<uint64_t>(localID);
@@ -379,7 +404,7 @@ namespace TomCat {
 					throw std::runtime_error("Could not reproduce Prefab hierarchy");
 			}
 
-			Entity templateRoot = templateScene->FindEntityByUUID(UUID(1));
+			Entity templateRoot = templateScene->FindEntityByUUID(sourceToLocal.at(root.GetUUID()));
 			auto& rootTransform = templateRoot.GetComponent<Transform>();
 			rootTransform._LocalTranslation = rootTransform._Translation;
 			rootTransform._LocalRotation = rootTransform._Rotation;
@@ -399,7 +424,7 @@ namespace TomCat {
 				throw std::runtime_error("Prefab transform hierarchy is invalid");
 
 			PrefabArchive captured;
-			captured.RootLocalID = 1;
+			captured.RootLocalID = static_cast<uint64_t>(sourceToLocal.at(root.GetUUID()));
 			captured.Entities = std::move(records);
 			captured.TemplateScene = std::move(templateScene);
 			if (!ValidateArchiveGraph(captured, error))
@@ -542,7 +567,7 @@ namespace TomCat {
 		PrefabArchive archive;
 		std::string error;
 		std::string document;
-		if (!CaptureSubtree(source, root, archive, error)
+		if (!CaptureSubtree(source, root, archive, error, nullptr, root.HasComponent<PrefabLink>())
 			|| !Encode(archive, document, error))
 		{
 			TC_Core_Error("Could not encode Prefab '{0}': {1}",
@@ -583,7 +608,7 @@ namespace TomCat {
 		std::vector<uint8_t> bytes;
 		if (!ReadAllBytes(filepath, bytes, error))
 			return false;
-		return Decode(bytes, filepath, archive, error);
+		return LoadLinkedArchive(bytes, filepath, PathToUTF8(filepath), archive, error);
 	}
 
 	bool PrefabArchiveCodec::Load(AssetHandle handle, PrefabArchive& archive,
@@ -598,8 +623,8 @@ namespace TomCat {
 			error = "Cooked asset is unavailable or is not a Prefab";
 			return false;
 		}
-		return Decode(bytes, UTF8ToPath("CookedPrefab-" + std::to_string(
-			static_cast<uint64_t>(handle))), archive, error);
+		const std::string key = "Prefab-" + std::to_string(static_cast<uint64_t>(handle));
+		return LoadLinkedArchive(bytes, UTF8ToPath(key), key, archive, error);
 	}
 
 	bool PrefabArchiveCodec::ValidateCurrentFormat(const std::vector<uint8_t>& bytes,
@@ -634,6 +659,19 @@ namespace TomCat {
 		for (const EntityArchive& record : archive.Entities)
 		{
 			UUID sceneID;
+			if (const auto found = options.EntityIdentities.find(record.LocalID);
+				found != options.EntityIdentities.end())
+			{
+				sceneID = found->second;
+				if (static_cast<uint64_t>(sceneID) == 0 || destination.FindEntityByUUID(sceneID)
+					|| !generated.emplace(sceneID).second)
+				{
+					error = "Prefab requested entity identity is zero or already used";
+					return false;
+				}
+				localToGenerated.emplace(UUID(record.LocalID), sceneID);
+				continue;
+			}
 			while (static_cast<uint64_t>(sceneID) == 0
 				|| destination.FindEntityByUUID(sceneID) || !generated.emplace(sceneID).second)
 				sceneID = UUID();
@@ -654,6 +692,19 @@ namespace TomCat {
 				source.GetComponent<CSharpScripts>().Scripts)
 			{
 				UUID generated;
+				if (const auto found = options.AttachmentIdentities.find(script.AttachmentID);
+					found != options.AttachmentIdentities.end())
+				{
+					generated = found->second;
+					if (static_cast<uint64_t>(generated) == 0
+						|| !usedAttachmentIDs.emplace(static_cast<uint64_t>(generated)).second)
+					{
+						error = "Prefab requested attachment identity is zero or already used";
+						return false;
+					}
+					attachmentRemap.emplace(script.AttachmentID, generated);
+					continue;
+				}
 				do { generated = UUID(); }
 				while (static_cast<uint64_t>(generated) == 0
 					|| !usedAttachmentIDs.emplace(

@@ -497,6 +497,7 @@ namespace TomCat {
 
 		glfwSetCharCallback(m_Window, [](GLFWwindow* Window, unsigned int KeyCode)
 		{
+				Input::NotifyCharacter(KeyCode);
 				WindowData& Data = *(WindowData*)glfwGetWindowUserPointer(Window);
 
 				KeyTypedEvent event(KeyCode);

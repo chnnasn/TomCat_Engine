@@ -32,6 +32,7 @@
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Utils/FileSystemUtils.h"
+#include "TomCat/Scene/Serialization/PrefabLink.h"
 #include "../EditorDragDrop.h"
 
 namespace TomCat {
@@ -173,6 +174,12 @@ namespace TomCat {
 		case ComponentIds::UIButton:
 		case ComponentIds::UIEventSystem:
 		case ComponentIds::UILayoutGroup:
+		case ComponentIds::UISlider:
+		case ComponentIds::UIScrollView:
+		case ComponentIds::UIInputField:
+		case ComponentIds::UITheme:
+		case ComponentIds::UILocalization:
+		case ComponentIds::UILocalizedText:
 			return "UI";
 		case ComponentIds::CSharpScripts:
 			return "Scripting";
@@ -1173,6 +1180,8 @@ namespace TomCat {
 		m_ForceOpenEntityNodes.clear();
 		m_ForceOpenSceneRoot = false;
 		m_EntityToDelete = {};
+		m_PendingPrefabRoot = UUID(0);
+		m_PendingPrefabAction = 0;
 		m_RenameEntity = {};
 		m_RenameFocus = false;
 		m_NameEditingEntity = {};
@@ -1204,6 +1213,26 @@ namespace TomCat {
 			else
 				m_SelectionContext = {};
 		}
+	}
+
+	void SceneHierarchyPanel::ResetForSceneReplacement(const Ref<Scene>& scene, UUID selectedEntity)
+	{
+		// Clear stale handles before SetContext, which can otherwise attempt to
+		// derive the selected UUID from an entity index reused by the new registry.
+		m_SelectionContext = {};
+		// The caller owns the replacement/history transaction. Any Inspector
+		// gesture belongs to the discarded registry and must not cancel that new
+		// transaction through SetContext's usual context-switch notification.
+		m_ModificationGestureActive = false;
+		m_FrameEntityRequest = UUID(0);
+		ClearClipboard();
+		m_AnimatorGraphStates.clear();
+		m_TilemapBrushStates.clear();
+		m_AnimationTimelineStates.clear();
+		m_TilePaletteStates.clear();
+		SetContext(scene, true, false);
+		if (scene && static_cast<uint64_t>(selectedEntity) != 0)
+			SetSelectedEntity(scene->FindEntityByUUID(selectedEntity));
 	}
 
 	void SceneHierarchyPanel::ClearClipboard()
@@ -1442,6 +1471,13 @@ namespace TomCat {
 
 	bool SceneHierarchyPanel::FlushPendingCommands()
 	{
+		if (static_cast<uint64_t>(m_PendingPrefabRoot) != 0)
+		{
+			const UUID root = m_PendingPrefabRoot;
+			m_PendingPrefabRoot = UUID(0);
+			if (m_Context && m_PrefabActionCallback && m_PrefabCreationAllowed)
+				m_PrefabActionCallback(m_Context->FindEntityByUUID(root), m_PendingPrefabAction);
+		}
 		return FlushPendingDeletion();
 	}
 
@@ -3187,9 +3223,22 @@ namespace TomCat {
 		if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection)) DuplicateSelectedEntity();
 		const bool canCreatePrefab = hasSelection && m_PrefabCreationAllowed
 			&& static_cast<bool>(m_PrefabCreateCallback);
-		if (ImGui::MenuItem("Create Prefab From Selection", nullptr, false,
+		if (ImGui::MenuItem(hasSelection && m_SelectionContext.HasComponent<PrefabLink>()
+			? "Create Prefab Variant From Selection" : "Create Prefab From Selection", nullptr, false,
 			canCreatePrefab))
 			m_PrefabCreateCallback(m_SelectionContext);
+		if (hasSelection && m_PrefabCreationAllowed && m_PrefabActionCallback
+			&& m_SelectionContext.HasComponent<PrefabLink>())
+		{
+			const char* labels[] = { "Update Prefab (Keep Overrides)", "Revert All Prefab Overrides",
+				"Apply All Overrides to Prefab", "Unpack Prefab", "Show Prefab Overrides in Console" };
+			for (int action = 0; action < 5; ++action)
+				if (ImGui::MenuItem(labels[action]))
+				{
+					m_PendingPrefabRoot = m_SelectionContext.GetUUID();
+					m_PendingPrefabAction = action;
+				}
+		}
 		if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) DeleteSelectedEntity();
 		if (hasSelection && m_Context)
 		{
@@ -4123,9 +4172,10 @@ static void DrawComponent(const std::string& name, Entity entity,
 					case PropertyKind::String:
 					{
 						std::string item = std::get<std::string>(value);
-						if ((componentType == ComponentIds::TextRenderer
+						if (((componentType == ComponentIds::TextRenderer
 							|| componentType == ComponentIds::UIText)
 							&& property.StableName == "Text")
+							|| (componentType == ComponentIds::UILocalization && property.StableName == "Table"))
 							changed = DrawBoundedMultilineText(property.DisplayName.c_str(),
 								item, ImVec2(-1.0f,
 									ImGui::GetTextLineHeight() * 3.5f));
@@ -7743,9 +7793,15 @@ static void DrawComponent(const std::string& name, Entity entity,
 						entity.AddComponent<TilemapRenderer2D>();
 					if ((componentType == ComponentIds::UIImage
 						|| componentType == ComponentIds::UIText
-						|| componentType == ComponentIds::UIButton)
+						|| componentType == ComponentIds::UIButton
+						|| componentType == ComponentIds::UISlider
+						|| componentType == ComponentIds::UIScrollView
+						|| componentType == ComponentIds::UIInputField
+						|| componentType == ComponentIds::UILocalizedText)
 						&& !entity.HasComponent<RectTransform>())
 						entity.AddComponent<RectTransform>();
+					if ((componentType == ComponentIds::UIInputField || componentType == ComponentIds::UILocalizedText)
+						&& !entity.HasComponent<UIText>()) entity.AddComponent<UIText>();
 					if (componentType == ComponentIds::UIButton
 						&& !entity.HasComponent<UIImage>())
 						entity.AddComponent<UIImage>();

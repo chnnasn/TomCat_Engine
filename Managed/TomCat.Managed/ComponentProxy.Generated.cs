@@ -50,6 +50,18 @@ internal static class GeneratedRegisteredComponentProxies
                 static entity => new UIEventSystem(entity)),
             [typeof(UILayoutGroup)] = new(0x9f01000000000008UL,
                 static entity => new UILayoutGroup(entity)),
+            [typeof(UISlider)] = new(0x9f01000000000009UL,
+                static entity => new UISlider(entity)),
+            [typeof(UIScrollView)] = new(0x9f0100000000000aUL,
+                static entity => new UIScrollView(entity)),
+            [typeof(UIInputField)] = new(0x9f0100000000000bUL,
+                static entity => new UIInputField(entity)),
+            [typeof(UITheme)] = new(0x9f0100000000000cUL,
+                static entity => new UITheme(entity)),
+            [typeof(UILocalization)] = new(0x9f0100000000000dUL,
+                static entity => new UILocalization(entity)),
+            [typeof(UILocalizedText)] = new(0x9f0100000000000eUL,
+                static entity => new UILocalizedText(entity)),
         };
 
     internal static bool TryCreate<T>(Entity entity, out T component)
@@ -668,5 +680,304 @@ public sealed partial class TextRenderer : IEntityComponent
         get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x9f0110000000000aUL));
         set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
             0x9f0110000000000aUL, value.Handle);
+    }
+}
+
+[RegisteredComponent(0x9f01000000000009UL)]
+public sealed partial class UISlider : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f01000000000009UL;
+
+    internal UISlider(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01900000000001UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01900000000001UL, value);
+    }
+
+    public bool Interactable
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01900000000002UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01900000000002UL, value);
+    }
+
+    public float Minimum
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01900000000003UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01900000000003UL, value);
+    }
+
+    public float Maximum
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01900000000004UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01900000000004UL, value);
+    }
+
+    public float Value
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01900000000005UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01900000000005UL, value);
+    }
+
+    public float Step
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01900000000006UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01900000000006UL, value);
+    }
+
+    public bool WholeNumbers
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01900000000007UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01900000000007UL, value);
+    }
+
+    public bool Vertical
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01900000000008UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01900000000008UL, value);
+    }
+
+    public Color TrackColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x9f01900000000009UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x9f01900000000009UL, value);
+    }
+
+    public Color FillColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x9f0190000000000aUL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x9f0190000000000aUL, value);
+    }
+}
+
+[RegisteredComponent(0x9f0100000000000aUL)]
+public sealed partial class UIScrollView : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f0100000000000aUL;
+
+    internal UIScrollView(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01a00000000001UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01a00000000001UL, value);
+    }
+
+    public bool Horizontal
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01a00000000002UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01a00000000002UL, value);
+    }
+
+    public bool Vertical
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01a00000000003UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01a00000000003UL, value);
+    }
+
+    public Vector2 ContentSize
+    {
+        get => RegisteredComponentProperties.GetVector2(Entity, RegisteredTypeId, 0x9f01a00000000004UL);
+        set => RegisteredComponentProperties.SetVector2(Entity, RegisteredTypeId,
+            0x9f01a00000000004UL, value);
+    }
+
+    public Vector2 Offset
+    {
+        get => RegisteredComponentProperties.GetVector2(Entity, RegisteredTypeId, 0x9f01a00000000005UL);
+        set => RegisteredComponentProperties.SetVector2(Entity, RegisteredTypeId,
+            0x9f01a00000000005UL, value);
+    }
+
+    public float ScrollSpeed
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01a00000000006UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01a00000000006UL, value);
+    }
+}
+
+[RegisteredComponent(0x9f0100000000000bUL)]
+public sealed partial class UIInputField : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f0100000000000bUL;
+
+    internal UIInputField(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01b00000000001UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01b00000000001UL, value);
+    }
+
+    public bool Interactable
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01b00000000002UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01b00000000002UL, value);
+    }
+
+    public string Text
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01b00000000003UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01b00000000003UL, value);
+    }
+
+    public string Placeholder
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01b00000000004UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01b00000000004UL, value);
+    }
+
+    public uint CharacterLimit
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x9f01b00000000005UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x9f01b00000000005UL, value);
+    }
+
+    public bool Password
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01b00000000006UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01b00000000006UL, value);
+    }
+
+    public bool ReadOnly
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01b00000000007UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01b00000000007UL, value);
+    }
+}
+
+[RegisteredComponent(0x9f0100000000000cUL)]
+public sealed partial class UITheme : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f0100000000000cUL;
+
+    internal UITheme(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01c00000000001UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01c00000000001UL, value);
+    }
+
+    public Color TextColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x9f01c00000000002UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x9f01c00000000002UL, value);
+    }
+
+    public Color ImageColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x9f01c00000000003UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x9f01c00000000003UL, value);
+    }
+
+    public Color AccentColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x9f01c00000000004UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x9f01c00000000004UL, value);
+    }
+
+    public AssetRef<FontAsset> Font
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x9f01c00000000005UL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x9f01c00000000005UL, value.Handle);
+    }
+
+    public float FontScale
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01c00000000006UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01c00000000006UL, value);
+    }
+}
+
+[RegisteredComponent(0x9f0100000000000dUL)]
+public sealed partial class UILocalization : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f0100000000000dUL;
+
+    internal UILocalization(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01d00000000001UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01d00000000001UL, value);
+    }
+
+    public string Locale
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01d00000000002UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01d00000000002UL, value);
+    }
+
+    public string FallbackLocale
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01d00000000003UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01d00000000003UL, value);
+    }
+
+    public string Table
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01d00000000004UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01d00000000004UL, value);
+    }
+}
+
+[RegisteredComponent(0x9f0100000000000eUL)]
+public sealed partial class UILocalizedText : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f0100000000000eUL;
+
+    internal UILocalizedText(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01e00000000001UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01e00000000001UL, value);
+    }
+
+    public string Key
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01e00000000002UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01e00000000002UL, value);
     }
 }

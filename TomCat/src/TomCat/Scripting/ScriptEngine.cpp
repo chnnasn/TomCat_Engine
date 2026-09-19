@@ -459,6 +459,7 @@ namespace TomCat::Scripting {
 	void ScriptEngine::RollbackRuntimeEntityBatch(Scene& scene,
 		std::span<const UUID> entityIDs, bool destroyManagedAttachments)
 	{
+		++scene.m_RuntimeEntityBatchFailureSerial;
 		if (destroyManagedAttachments)
 		{
 			std::vector<uint64_t> attachmentIDs;

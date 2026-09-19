@@ -29,6 +29,9 @@ namespace TomCat {
 		std::optional<glm::vec3> RootWorldPosition;
 		std::optional<UUID> Parent;
 		bool ResolveAssets = true;
+		// Optional identities for staging linked authoring updates in an empty Scene.
+		std::unordered_map<EntityLocalID, UUID> EntityIdentities;
+		std::unordered_map<UUID, UUID> AttachmentIdentities;
 	};
 
 	struct PrefabInstantiationResult
@@ -44,7 +47,9 @@ namespace TomCat {
 		static constexpr uint32_t CurrentSchemaVersion = Version::PrefabFormatCurrent;
 
 		static bool CaptureSubtree(const Ref<Scene>& source, Entity root,
-			PrefabArchive& archive, std::string& error);
+			PrefabArchive& archive, std::string& error,
+			const std::unordered_map<UUID, UUID>* stableIdentities = nullptr,
+			bool preserveRootLink = false);
 		static bool Encode(const PrefabArchive& archive, std::string& document,
 			std::string& error);
 		static bool Decode(const std::vector<uint8_t>& bytes,

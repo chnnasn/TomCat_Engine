@@ -31,6 +31,7 @@
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scene/Serialization/PrefabLink.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/ApplicationPaths.h"
@@ -541,6 +542,7 @@ namespace TomCat {
 
 	void EditorLayer::InitializeSceneHistory(bool isSaved)
 	{
+		m_PrefabFileEdits.clear();
 		CancelSceneTransaction();
 		std::string archive;
 		if (!CaptureSceneArchive(archive))
@@ -659,15 +661,51 @@ namespace TomCat {
 			return false;
 		}
 
+		// Apply edits span the Scene and a template file. Restore both only if the
+		// asset still matches our transaction; concurrent disk edits remain intact.
+		const auto currentState = m_SceneHistory.GetCurrentStateId();
+		for (const auto& edit : m_PrefabFileEdits)
+		{
+			const bool undo = currentState == edit.AfterState && snapshot.Id == edit.BeforeState;
+			const bool redo = currentState == edit.BeforeState && snapshot.Id == edit.AfterState;
+			if (!undo && !redo) continue;
+			const auto path = AssetManager::Get().GetRegistry().GetFileSystemPath(edit.Asset);
+			std::ifstream input(path, std::ios::binary);
+			const std::string actual((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+			input.close();
+			const auto& expected = undo ? edit.After : edit.Before;
+			const auto& replacement = undo ? edit.Before : edit.After;
+			if (actual != expected)
+			{
+				ReportPrefabOperation(false, "Cannot restore Apply history: the template was changed outside this transaction.");
+				return false;
+			}
+			std::string error;
+			if (!FileSystem::WriteFileAtomically(path, replacement, error))
+			{
+				ReportPrefabOperation(false, error);
+				return false;
+			}
+			if (AssetManager::Get().ImportAsset(path) != edit.Asset)
+			{
+				std::string message = "Could not refresh the template while restoring Apply history.";
+				std::string rollbackError;
+				if (!FileSystem::WriteFileAtomically(path, expected, rollbackError))
+					message += " Template rollback failed: " + rollbackError
+						+ ". The template file may no longer match the unchanged Scene.";
+				else if (AssetManager::Get().ImportAsset(path) != edit.Asset)
+					message += " Original template bytes were restored, but their asset registration could not be refreshed.";
+				else
+					message += " The original template and asset registration were restored; Scene history was not changed.";
+				ReportPrefabOperation(false, message);
+				return false;
+			}
+			break;
+		}
 		m_EditorScene = restored;
 		m_ActiveScene = restored;
 		ResizeSceneForGameView(restored);
-		m_SceneHierarchyPanel.SetContext(restored);
-		if (snapshot.SelectedEntity != 0)
-			m_SceneHierarchyPanel.SetSelectedEntity(
-				restored->FindEntityByUUID(UUID(snapshot.SelectedEntity)));
-		else
-			m_SceneHierarchyPanel.SetSelectedEntity({});
+		m_SceneHierarchyPanel.ResetForSceneReplacement(restored, UUID(snapshot.SelectedEntity));
 		ResetSceneInteractionState();
 		return true;
 	}
@@ -991,6 +1029,7 @@ namespace TomCat {
 		add(m_ShowAnimatorPanel, 8);
 		add(m_ShowAnimationPanel, 9);
 		add(m_ShowTilePalettePanel, 10);
+		add(m_ShowProfilerPanel, 11);
 		return mask;
 	}
 
@@ -1005,6 +1044,7 @@ namespace TomCat {
 		m_ShowInspectorPanel = true;
 		m_ShowProjectPanel = true;
 		m_ShowConsolePanel = false;
+		m_ShowProfilerPanel = false;
 		m_ShowBuildSettingsPanel = false;
 		m_ShowProjectSettingsPanel = false;
 
@@ -1053,6 +1093,7 @@ namespace TomCat {
 				else if (key == "Inspector") m_ShowInspectorPanel = visible;
 				else if (key == "Project") m_ShowProjectPanel = visible;
 				else if (key == "Console") m_ShowConsolePanel = visible;
+				else if (key == "Profiler") m_ShowProfilerPanel = visible;
 				else if (key == "BuildSettings") m_ShowBuildSettingsPanel = visible;
 				else if (key == "ProjectSettings") m_ShowProjectSettingsPanel = visible;
 				else if (key == "Animator") m_ShowAnimatorPanel = visible;
@@ -1110,6 +1151,7 @@ namespace TomCat {
 			<< "Inspector=" << (m_ShowInspectorPanel ? 1 : 0) << "\n"
 			<< "Project=" << (m_ShowProjectPanel ? 1 : 0) << "\n"
 			<< "Console=" << (m_ShowConsolePanel ? 1 : 0) << "\n"
+			<< "Profiler=" << (m_ShowProfilerPanel ? 1 : 0) << "\n"
 			<< "BuildSettings=" << (m_ShowBuildSettingsPanel ? 1 : 0) << "\n"
 			<< "ProjectSettings=" << (m_ShowProjectSettingsPanel ? 1 : 0) << "\n"
 			<< "Animator=" << (m_ShowAnimatorPanel ? 1 : 0) << "\n"
@@ -1474,6 +1516,71 @@ namespace TomCat {
 					parentID = parent.GetUUID();
 				return InstantiatePrefab(handle, parentID, std::nullopt);
 			});
+		m_SceneHierarchyPanel.SetPrefabActionCallback([this](Entity root, int action) {
+			if (m_SceneState != SceneState::Edit || !root || !root.HasComponent<PrefabLink>()) return;
+			if (m_SceneHistory.HasActiveTransaction()) CommitSceneTransaction();
+			const UUID rootID = root.GetUUID();
+			const AssetHandle source = root.GetComponent<PrefabLink>().Source;
+			PrefabFileEdit fileEdit;
+			fileEdit.BeforeState = m_SceneHistory.GetCurrentStateId();
+			fileEdit.Asset = source;
+			const auto sourcePath = AssetManager::Get().GetRegistry().GetFileSystemPath(source);
+			if (action == 2)
+			{
+				std::ifstream input(sourcePath, std::ios::binary);
+				fileEdit.Before.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+			}
+			std::string error;
+			bool succeeded = false;
+			if (action == 4)
+			{
+				std::vector<std::string> paths;
+				if (!PrefabLinkedInstance::GetOverridePaths(m_EditorScene, rootID, paths, error))
+					ReportPrefabOperation(false, error);
+				else
+				{
+					ReportPrefabOperation(true, std::to_string(paths.size()) + " Prefab override(s).");
+					for (const auto& path : paths) m_ConsolePanel.Push(ConsoleMessageSeverity::Info, path, "Prefab");
+					m_ShowConsolePanel = true;
+				}
+				return;
+			}
+			if (action == 3)
+			{
+				root.RemoveComponent<PrefabLink>();
+				succeeded = true;
+			}
+			else
+			{
+				PrefabArchive latest;
+				if (PrefabArchiveCodec::Load(source, latest, error))
+				{
+					if (action == 2)
+					{
+						succeeded = PrefabLinkedInstance::Apply(m_EditorScene, rootID, error);
+					}
+					else succeeded = PrefabLinkedInstance::Update(m_EditorScene, rootID, latest, action == 1, error);
+				}
+			}
+			if (succeeded)
+			{
+				// UUID was captured before the operation. Never ask an old Entity
+				// wrapper for its identity after Update/Apply replaces the registry.
+				m_SceneHierarchyPanel.ResetForSceneReplacement(m_EditorScene, rootID);
+				ResetSceneInteractionState();
+				CommitImmediateSceneTransaction("Prefab Instance");
+				if (action == 2)
+				{
+					fileEdit.AfterState = m_SceneHistory.GetCurrentStateId();
+					std::ifstream input(sourcePath, std::ios::binary);
+					fileEdit.After.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+					if (fileEdit.BeforeState != fileEdit.AfterState)
+						m_PrefabFileEdits.push_back(std::move(fileEdit));
+					if (m_PrefabFileEdits.size() > 128) m_PrefabFileEdits.erase(m_PrefabFileEdits.begin());
+				}
+			}
+			ReportPrefabOperation(succeeded, succeeded ? "Prefab operation completed." : error);
+		});
 		m_ContentBrowserPanel.SetEntityPrefabCreateCallback(
 			[this](UUID entityID, const std::filesystem::path& directory) {
 				Entity entity = m_ActiveScene
@@ -1753,6 +1860,12 @@ namespace TomCat {
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
+		if (m_SceneState == SceneState::Edit && !m_SceneHistory.HasActiveTransaction()
+			&& m_PrefabImportRevision != AssetManager::Get().GetImportRevision())
+		{
+			m_PrefabImportRevision = AssetManager::Get().GetImportRevision();
+			RefreshLinkedPrefabs();
+		}
 		Window& applicationWindow = Application::Get().GetWindow();
 		const float runtimeUIDPIScale = applicationWindow.GetDPIScale();
 		const glm::vec2 screenToFramebufferScale{
@@ -2203,6 +2316,8 @@ namespace TomCat {
 					}
 					if (ImGui::MenuItem("5 Console"))
 						FocusEditorPanel("Console", m_ShowConsolePanel);
+					if (ImGui::MenuItem("Profiler"))
+						FocusEditorPanel("Profiler", m_ShowProfilerPanel);
 					if (ImGui::MenuItem("6 Game"))
 						FocusEditorPanel("Game", m_ShowGamePanel);
 					if (ImGui::MenuItem("7 Hierarchy"))
@@ -2392,6 +2507,8 @@ namespace TomCat {
 			if (m_ConsolePanel.IsFocused())
 				m_EditorPanelCycleIndex = 6;
 		}
+
+		m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel);
 
 		if (m_ShowScenePanel && ShouldRenderDockPanel("Scene###Scene"))
 		{
@@ -5572,6 +5689,7 @@ namespace TomCat {
 		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 		ResetSceneInteractionState();
 		InitializeSceneHistory(true);
+		RefreshLinkedPrefabs();
 		return true;
 	}
 
@@ -5652,6 +5770,34 @@ namespace TomCat {
 		return current && !current->IsMissing && current->Type == AssetType::Scene
 			&& current->FilePath == metadata->FilePath
 			? metadata->Handle : AssetHandle(0);
+	}
+
+	void EditorLayer::RefreshLinkedPrefabs()
+	{
+		if (!m_EditorScene || m_SceneState != SceneState::Edit) return;
+		if (m_SceneHistory.HasActiveTransaction()) CommitSceneTransaction();
+		const Entity selection = m_SceneHierarchyPanel.GetSelectedEntity();
+		const UUID selectedID = selection ? selection.GetUUID() : UUID(0);
+		// Save the pre-refresh selection in the old snapshot, before a template
+		// removal can delete it. Undo then restores both the entity and selection.
+		BeginSceneTransaction("Update linked Prefabs");
+		bool changed = false;
+		std::string error;
+		if (!PrefabLinkedInstance::RefreshAll(m_EditorScene, changed, error))
+		{
+			CancelSceneTransaction();
+			ReportPrefabOperation(false, "Prefab refresh retained the original Scene: " + error);
+			return;
+		}
+		if (!changed)
+		{
+			CancelSceneTransaction();
+			return;
+		}
+		m_SceneHierarchyPanel.ResetForSceneReplacement(m_EditorScene, selectedID);
+		UpdateSceneTransaction();
+		ResetSceneInteractionState();
+		CommitSceneTransaction();
 	}
 
 	void EditorLayer::ReportPrefabOperation(bool succeeded, std::string message)
@@ -5773,6 +5919,13 @@ namespace TomCat {
 			return {};
 		}
 
+		if (m_SceneState == SceneState::Edit
+			&& !PrefabLinkedInstance::Attach(m_ActiveScene, handle, archive, result, error))
+		{
+			m_ActiveScene->DestroyEntity(result.Root);
+			ReportPrefabOperation(false, "Could not link Prefab instance: " + error);
+			return {};
+		}
 		m_SceneHierarchyPanel.SetSelectedEntity(result.Root);
 		if (m_SceneState == SceneState::Edit)
 			CommitImmediateSceneTransaction("Instantiate Prefab");
@@ -5806,6 +5959,9 @@ namespace TomCat {
 	{
 		if (!IsSceneRunning())
 			return;
+		const AssetHandle previousSceneHandle = m_RuntimeSceneManager.GetActiveSceneHandle();
+		const size_t previousSceneCount = m_RuntimeSceneManager.GetLoadedSceneHandles().size();
+		const bool hadPendingOperation = m_RuntimeSceneManager.HasPendingTransition();
 		const bool committed = m_RuntimeSceneManager.CommitPendingTransition();
 		Ref<Scene> runtimeScene = m_RuntimeSceneManager.GetActiveScene();
 		if (!runtimeScene)
@@ -5818,7 +5974,10 @@ namespace TomCat {
 			OnSceneStop();
 			return;
 		}
-		if (runtimeScene != m_ActiveScene)
+		if (runtimeScene != m_ActiveScene
+			|| previousSceneHandle != m_RuntimeSceneManager.GetActiveSceneHandle()
+			|| previousSceneCount != m_RuntimeSceneManager.GetLoadedSceneHandles().size()
+			|| (committed && hadPendingOperation && !m_RuntimeSceneManager.HasPendingTransition()))
 		{
 			m_ActiveScene = std::move(runtimeScene);
 			ResizeSceneForGameView(m_ActiveScene);

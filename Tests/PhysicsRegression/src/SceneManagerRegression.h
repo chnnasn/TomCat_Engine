@@ -10,6 +10,8 @@
 #include "TomCat/Scripting/ScriptEngine.h"
 
 #include <algorithm>
+#include <chrono>
+#include <fstream>
 #include <filesystem>
 #include <functional>
 #include <initializer_list>
@@ -123,12 +125,43 @@ namespace SceneManagerRegression {
 			return TomCat::Scripting::ScriptStatus::Success;
 		}
 
+		TomCat::Scripting::ScriptStatus InstantiateAttachments(
+			std::span<const TomCat::Scripting::NativeScriptAttachmentV1> attachments,
+			std::string_view) override
+		{
+			Calls.emplace_back("InstantiateAttachments");
+			if (OnNextBatch)
+			{
+				auto callback = std::move(OnNextBatch);
+				callback();
+			}
+			if (FailNextBatch)
+			{
+				FailNextBatch = false;
+				return TomCat::Scripting::ScriptStatus::ManagedException;
+			}
+			Attachments.insert(Attachments.end(), attachments.begin(), attachments.end());
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+
+		TomCat::Scripting::ScriptStatus DestroyAttachments(std::span<const uint64_t> ids) override
+		{
+			Calls.emplace_back("DestroyAttachments");
+			std::erase_if(Attachments, [&](const auto& attachment)
+			{
+				return std::find(ids.begin(), ids.end(), attachment.AttachmentId) != ids.end();
+			});
+			return TomCat::Scripting::ScriptStatus::Success;
+		}
+
 		bool PollUnload() override { return true; }
 
 		bool FailNextCreate = false;
+		bool FailNextBatch = false;
 		uint64_t LastSceneSession = 0;
 		uint64_t LastRuntimeGeneration = 0;
 		std::function<void()> OnNextUpdate;
+		std::function<void()> OnNextBatch;
 		std::vector<TomCat::Scripting::NativeScriptAttachmentV1> Attachments;
 		std::vector<std::string> Calls;
 	};
@@ -157,6 +190,8 @@ namespace SceneManagerRegression {
 		script.AttachmentID = TomCat::UUID();
 		script.ScriptAsset = TomCat::AssetHandle(scriptAsset);
 		script.LastKnownClassName = std::string(sceneName) + "Behaviour";
+		script.Fields.emplace_back("ee000000000000000000000000000001", "Self",
+			TomCat::ScriptFieldType::Entity, static_cast<uint64_t>(entity.GetUUID()));
 		entity.AddComponent<TomCat::CSharpScripts>().Scripts.emplace_back(std::move(script));
 
 		const std::filesystem::path path = project->GetAssetPath() / filename;
@@ -335,6 +370,202 @@ namespace SceneManagerRegression {
 				&& prepared->IsRuntimeRunning(),
 				"Editor prepared-Scene startup bypassed build-list identity or runtime setup");
 			manager.Stop();
+
+			Require(manager.ActivateRuntime() && manager.LoadEntryScene(), "could not restart SceneManager for streaming tests");
+			const auto world = manager.GetActiveScene();
+			const auto persistentHandle = runtime->Attachments.front().Entity;
+			TomCat::Entity persistent = TomCat::Scripting::ScriptEngine::Get().ResolveEntity(persistentHandle);
+			const size_t teardownCount = std::count(runtime->Calls.begin(), runtime->Calls.end(), "DestroyAll");
+			Require(manager.SetEntityPersistent(persistent), "could not mark the manager root persistent");
+			TomCat::Entity child = world->CreateEntity("Persistent child");
+			Require(world->SetParent(child, persistent), "could not parent a persistent child");
+			const auto childID = child.GetUUID();
+			Require(manager.RequestLoadScene(second, TomCat::SceneLoadMode::Additive)
+				&& manager.CommitPendingTransition(), "additive Scene did not commit");
+			Require(manager.GetActiveScene() == world && manager.GetActiveSceneHandle() == first
+				&& manager.GetLoadedSceneHandles().size() == 2 && runtime->Attachments.size() == 2
+				&& TomCat::Scripting::ScriptEngine::Get().ResolveEntity(persistentHandle),
+				"additive Scene replaced the shared runtime or lost an existing script");
+			Require(!manager.RequestLoadScene(second, TomCat::SceneLoadMode::Additive), "duplicate additive Scene was accepted");
+			Require(manager.SetActiveScene(second) && manager.RequestUnloadScene(first)
+				&& manager.GetLoadedSceneHandles().size() == 2 && manager.CommitPendingTransition(),
+				"explicit Scene unload was not deferred to frame end");
+			Require(manager.GetLoadedSceneHandles().size() == 1 && runtime->Attachments.size() == 2
+				&& world->FindEntityByUUID(childID)
+				&& TomCat::Scripting::ScriptEngine::Get().ResolveEntity(persistentHandle),
+				"unload destroyed persistent script state or its child");
+			Require(!manager.RequestUnloadScene(second), "last loaded Scene was allowed to unload");
+
+			runtime->FailNextBatch = true;
+			Require(manager.RequestLoadScene(first, TomCat::SceneLoadMode::Additive)
+				&& !manager.CommitPendingTransition() && manager.GetLoadedSceneHandles().size() == 1
+				&& runtime->Attachments.size() == 2 && world->IsRuntimeRunning(),
+				"failed additive bootstrap damaged the previously loaded world");
+
+			// Startup code can create objects outside the imported hierarchy, enqueue
+			// another lifecycle batch, and reparent old content before throwing.
+			TomCat::UUID failedOrphanID(0), failedChildID(0);
+			const glm::vec3 persistentPosition = persistent.GetComponent<TomCat::Transform>()._Translation;
+			runtime->OnNextBatch = [&]()
+			{
+				TomCat::Entity orphan = world->CreateEntity("Failed startup orphan");
+				failedOrphanID = orphan.GetUUID();
+				TomCat::CSharpScriptEntry orphanScript = persistent.GetComponent<TomCat::CSharpScripts>().Scripts.front();
+				orphanScript.AttachmentID = TomCat::UUID();
+				orphan.AddComponent<TomCat::CSharpScripts>().Scripts.push_back(orphanScript);
+				TomCat::Entity spawnedChild = world->CreateEntity("Failed startup child of old root");
+				failedChildID = spawnedChild.GetUUID();
+				Require(world->SetParent(spawnedChild, persistent), "could not set up failed startup child");
+				Require(manager.SetEntityPersistent(persistent, false)
+					&& manager.SetEntityPersistent(orphan)
+					&& world->SetParent(persistent, orphan), "could not set up failed startup ownership");
+				world->QueueRuntimeEntityBatchCreated({failedOrphanID, failedChildID});
+				throw std::runtime_error("intentional startup exception after creating external objects");
+			};
+			Require(manager.RequestLoadScene(first)
+				&& !manager.CommitPendingTransition()
+				&& manager.GetActiveScene() == world && world->IsRuntimeRunning()
+				&& manager.GetActiveSceneHandle() == second && manager.GetActiveBuildIndex() == 1
+				&& manager.GetLoadedSceneHandles() == std::vector<TomCat::AssetHandle>{second}
+				&& static_cast<uint64_t>(failedOrphanID) != 0 && static_cast<uint64_t>(failedChildID) != 0
+				&& !world->FindEntityByUUID(failedOrphanID) && !world->FindEntityByUUID(failedChildID)
+				&& world->GetPendingRuntimeEntityCreateCount() == 0
+				&& TomCat::Scripting::ScriptEngine::Get().ResolveEntity(persistentHandle)
+				&& !world->GetParent(persistent) && manager.IsEntityPersistent(persistent)
+				&& world->FindEntityByUUID(childID)
+				&& glm::distance(persistent.GetComponent<TomCat::Transform>()._Translation, persistentPosition) < 0.0001f
+				&& runtime->Attachments.size() == 2,
+				"failed composed startup left callback-created objects or damaged existing ownership and handles");
+			const auto batchCallsAfterRollback = std::count(runtime->Calls.begin(), runtime->Calls.end(), "InstantiateAttachments");
+			world->OnUpdateRuntime(TomCat::Timestep(0.0f), false);
+			Require(runtime->Attachments.size() == 2
+				&& std::count(runtime->Calls.begin(), runtime->Calls.end(), "InstantiateAttachments") == batchCallsAfterRollback,
+				"failed composed startup left a queued lifecycle batch for the next frame");
+
+			manager.SetAllowSceneActivation(false);
+			Require(manager.RequestLoadSceneAsync(first), "async Scene read was rejected");
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (manager.GetLoadState() == TomCat::SceneLoadState::Reading
+				&& std::chrono::steady_clock::now() < deadline)
+			{
+				world->OnUpdateRuntime(TomCat::Timestep(0.0f), false);
+				Require(manager.CommitPendingTransition(), "async Scene preparation failed");
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+			Require(manager.GetLoadState() == TomCat::SceneLoadState::Ready
+				&& manager.GetLoadProgress() == 0.9f && manager.GetActiveSceneHandle() == second,
+				"async activation barrier did not retain the running Scene at 90 percent");
+			manager.SetAllowSceneActivation(true);
+			Require(manager.CommitPendingTransition() && manager.GetLoadState() == TomCat::SceneLoadState::Completed
+				&& manager.GetLoadProgress() == 1.0f && manager.GetActiveSceneHandle() == first
+				&& manager.GetLoadedSceneHandles().size() == 1 && runtime->Attachments.size() == 2
+				&& world->FindEntityByUUID(childID)
+				&& TomCat::Scripting::ScriptEngine::Get().ResolveEntity(persistentHandle)
+				&& std::count(runtime->Calls.begin(), runtime->Calls.end(), "DestroyAll") == teardownCount,
+				"async replacement restarted a persistent script or left unloaded content alive");
+			Require(manager.RequestReload() && manager.CommitPendingTransition()
+				&& runtime->Attachments.size() == 2
+				&& TomCat::Scripting::ScriptEngine::Get().ResolveEntity(persistentHandle),
+				"same-asset reload destroyed incoming or persistent objects");
+			Require(manager.RequestLoadSceneAsync(second) && manager.CancelPendingLoad()
+				&& manager.CommitPendingTransition() && manager.GetLoadState() == TomCat::SceneLoadState::Cancelled
+				&& manager.GetActiveSceneHandle() == first, "cancelled Scene load activated later");
+			Require(manager.SetEntityPersistent(persistent, false), "could not return persistent objects to the active Scene");
+			Require(manager.RequestLoadScene(second) && manager.CommitPendingTransition()
+				&& !TomCat::Scripting::ScriptEngine::Get().ResolveEntity(persistentHandle),
+				"unmarked persistent objects survived a single Scene replacement");
+
+			// A surviving scene's child may be parented under an unloading scene.
+			// Ownership must not change with hierarchy, and detachment preserves its
+			// world pose, managed handle, and serialized entity references.
+			const auto crossWorld = manager.GetActiveScene();
+			const auto survivorHandle = runtime->Attachments.front().Entity;
+			TomCat::Entity survivor = TomCat::Scripting::ScriptEngine::Get().ResolveEntity(survivorHandle);
+			survivor.GetComponent<TomCat::Transform>()._Translation = {5.0f, 7.0f, 0.0f};
+			Require(manager.RequestLoadScene(first, TomCat::SceneLoadMode::Additive)
+				&& manager.CommitPendingTransition(), "could not load cross-scene parent fixture");
+			const auto parentHandle = runtime->Attachments.back().Entity;
+			TomCat::Entity unloadingParent = TomCat::Scripting::ScriptEngine::Get().ResolveEntity(parentHandle);
+			const auto& copiedSelf = unloadingParent.GetComponent<TomCat::CSharpScripts>().Scripts.front().Fields.front();
+			Require(std::get<uint64_t>(copiedSelf.Value) == static_cast<uint64_t>(unloadingParent.GetUUID()),
+				"additive Scene did not remap serialized entity references");
+			Require(crossWorld->SetParent(survivor, unloadingParent), "cross-scene reparent failed");
+			const glm::vec3 survivorPosition = survivor.GetComponent<TomCat::Transform>()._Translation;
+			Require(manager.RequestUnloadScene(first) && manager.CommitPendingTransition()
+				&& !TomCat::Scripting::ScriptEngine::Get().ResolveEntity(parentHandle)
+				&& TomCat::Scripting::ScriptEngine::Get().ResolveEntity(survivorHandle)
+				&& !crossWorld->GetParent(survivor)
+				&& glm::distance(survivor.GetComponent<TomCat::Transform>()._Translation, survivorPosition) < 0.0001f
+				&& std::get<uint64_t>(survivor.GetComponent<TomCat::CSharpScripts>().Scripts.front().Fields.front().Value)
+					== static_cast<uint64_t>(survivor.GetUUID())
+				&& runtime->Attachments.size() == 1,
+				"unloading a cross-scene parent invalidated its surviving child, world pose or references");
+
+			// The asynchronous I/O may succeed while schema validation fails on the
+			// owner thread. That terminal error must not tear down the current world.
+			{
+				std::ofstream invalidScene(project->GetAssetPath() / "First.tomcat", std::ios::binary | std::ios::trunc);
+				invalidScene << "Scene: Invalid asynchronous fixture\nSchemaVersion: 0\nEntities: []\n";
+				Require(static_cast<bool>(invalidScene), "could not write malformed async Scene fixture");
+			}
+			Require(manager.RequestLoadSceneAsync(first), "malformed Scene fixture was not queued for asynchronous reading");
+			bool asyncFailureReported = false;
+			const auto failureDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (manager.GetLoadState() == TomCat::SceneLoadState::Reading
+				&& std::chrono::steady_clock::now() < failureDeadline)
+			{
+				asyncFailureReported |= !manager.CommitPendingTransition();
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+			crossWorld->OnUpdateRuntime(TomCat::Timestep(0.0f), false);
+			Require(asyncFailureReported && manager.GetLoadState() == TomCat::SceneLoadState::Failed
+				&& !manager.HasPendingTransition() && !manager.GetLastError().empty()
+				&& manager.GetActiveScene() == crossWorld && manager.GetActiveSceneHandle() == second
+				&& crossWorld->IsRuntimeRunning() && runtime->Attachments.size() == 1
+				&& TomCat::Scripting::ScriptEngine::Get().ResolveEntity(survivorHandle),
+				"malformed asynchronous Scene did not fail terminally while retaining the running world");
+			manager.Stop();
+
+			// A callback may stop just the world, or relinquish manager ownership.
+			// Retain a local reference so rollback can clean the unpublished objects
+			// without dereferencing a cleared manager or resurrecting stopped state.
+			for (bool stopManager : {false, true})
+			{
+				Require(manager.ActivateRuntime() && manager.RequestLoadScene(second)
+					&& manager.CommitPendingTransition(), "could not restart stopped-bootstrap fixture");
+				const auto stoppedWorld = manager.GetActiveScene();
+				const auto existingID = stoppedWorld->GetRootEntityUUIDs().front();
+				TomCat::Entity existing = stoppedWorld->FindEntityByUUID(existingID);
+				Require(manager.SetEntityPersistent(existing), "could not set up stopped-bootstrap persistence");
+				TomCat::UUID stoppedOrphanID(0);
+				runtime->OnNextBatch = [&]()
+				{
+					TomCat::Entity orphan = stoppedWorld->CreateEntity("Stopped startup orphan");
+					stoppedOrphanID = orphan.GetUUID();
+					stoppedWorld->QueueRuntimeEntityBatchCreated({stoppedOrphanID});
+					Require(manager.SetEntityPersistent(orphan), "could not mark stopped startup orphan persistent");
+					if (stopManager) manager.Stop();
+					else stoppedWorld->OnRuntimeStop();
+					throw std::runtime_error("intentional stop during composed startup");
+				};
+				Require(manager.RequestReload() && !manager.CommitPendingTransition()
+					&& !stoppedWorld->IsRuntimeRunning() && static_cast<uint64_t>(stoppedOrphanID) != 0
+					&& !stoppedWorld->FindEntityByUUID(stoppedOrphanID)
+					&& stoppedWorld->FindEntityByUUID(existingID)
+					&& stoppedWorld->GetRootEntityUUIDs() == std::vector<TomCat::UUID>{existingID}
+					&& stoppedWorld->GetPendingRuntimeEntityCreateCount() == 0
+					&& runtime->Attachments.empty() && !manager.HasPendingTransition(),
+					"stopping during composed bootstrap crashed or leaked newly created objects");
+				Require(stopManager
+					? (!manager.GetActiveScene() && manager.GetLoadedSceneHandles().empty()
+						&& manager.GetLoadState() == TomCat::SceneLoadState::Idle
+						&& TomCat::SceneManager::GetRuntime() == nullptr)
+					: (manager.GetActiveScene() == stoppedWorld && manager.GetActiveSceneHandle() == second
+						&& manager.GetLoadedSceneHandles() == std::vector<TomCat::AssetHandle>{second}
+						&& manager.IsEntityPersistent(existing)),
+					"stopped bootstrap restored manager ownership after Stop or lost previous metadata");
+				manager.Stop();
+			}
 		}
 	}
 

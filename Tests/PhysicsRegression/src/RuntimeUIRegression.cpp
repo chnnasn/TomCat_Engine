@@ -15,6 +15,7 @@
 #include "TomCat/Renderer/Renderer.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Runtime/RuntimeUI.h"
+#include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
@@ -1983,6 +1984,130 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			96.0f, {});
 	}
 
+	void TestProductUIControls()
+	{
+		using namespace TomCat;
+		auto scene = CreateRef<Scene>();
+		Entity canvas = scene->CreateEntity("Product UI");
+		canvas.AddComponent<Canvas>().ScaleMode = CanvasScaleMode::ConstantPixelSize;
+		canvas.AddComponent<UIEventSystem>();
+		canvas.AddComponent<UITheme>().FontScale = 1.25f;
+		auto createControl = [&](const char* name, float y, glm::vec2 size)
+		{
+			Entity entity = scene->CreateEntity(name);
+			auto& transform = entity.AddComponent<RectTransform>();
+			transform.AnchorMin = transform.AnchorMax = transform.Pivot = { 0.0f, 1.0f };
+			transform.AnchoredPosition = { 10.0f, -y };
+			transform.SizeDelta = size;
+			RequireUI(scene->SetParent(entity, canvas), "could not parent product UI control");
+			return entity;
+		};
+		Entity sliderEntity = createControl("Volume", 10.0f, { 200.0f, 30.0f });
+		auto& slider = sliderEntity.AddComponent<UISlider>();
+		slider.Minimum = -10.0f; slider.Maximum = 10.0f; slider.Step = 1.0f;
+		Entity inputEntity = createControl("Name", 60.0f, { 200.0f, 30.0f });
+		auto& field = inputEntity.AddComponent<UIInputField>();
+		field.CharacterLimit = 3;
+		Entity scrollEntity = createControl("List", 110.0f, { 200.0f, 80.0f });
+		auto& scroll = scrollEntity.AddComponent<UIScrollView>();
+		scroll.ContentSize = { 200.0f, 400.0f };
+		scrollEntity.AddComponent<UILayoutGroup>().ControlChildSize = true;
+		Entity item = scene->CreateEntity("List item");
+		item.AddComponent<RectTransform>();
+		item.AddComponent<UIText>().Text = "Fallback";
+		item.AddComponent<UILocalizedText>().Key = "play";
+		RequireUI(scene->SetParent(item, scrollEntity), "could not parent scroll item");
+		auto& localization = canvas.AddComponent<UILocalization>();
+		localization.Table = "{en: {play: Play}, zh: {play: '\xE6\xB8\xB8\xE6\x88\x8F'}}";
+		const auto* localizationDescriptor = ComponentRegistry::Get().Find(UUID(ComponentIds::UILocalization));
+		RequireUI(localizationDescriptor != nullptr, "localization descriptor is missing");
+		const auto tableProperty = std::find_if(localizationDescriptor->Properties.begin(), localizationDescriptor->Properties.end(),
+			[](const PropertyDescriptor& property) { return property.StableName == "Table"; });
+		std::string validationError;
+		RequireUI(tableProperty != localizationDescriptor->Properties.end()
+			&& !tableProperty->Set(canvas, PropertyValue(std::string("{en: {play: one, play: two}}")), validationError)
+			&& !validationError.empty(), "duplicate localization keys were accepted");
+		RequireUI(RuntimeUISystem::ResolveText(*scene, item) == "Play", "default locale failed");
+		localization.Locale = "zh";
+		RequireUI(RuntimeUISystem::ResolveText(*scene, item) == "\xE6\xB8\xB8\xE6\x88\x8F", "language switch failed");
+		localization.Locale = "missing";
+		RequireUI(RuntimeUISystem::ResolveText(*scene, item) == "Play", "fallback locale failed");
+		item.GetComponent<UILocalizedText>().Key = "missing";
+		RequireUI(RuntimeUISystem::ResolveText(*scene, item) == "Fallback", "missing key lost authored text");
+		item.GetComponent<UILocalizedText>().Key = "play";
+		RuntimeUIInputFrame input;
+		auto update = [&]() { RuntimeUISystem::UpdateWithInput(*scene, 400, 300, 96.0f, input); };
+		input.PointerPosition = { 160.0f, 20.0f }; input.MousePressed = input.MouseHeld = true;
+		update();
+		RequireUI(Near(slider.Value, 5.0f) && slider.RuntimeDragging && RuntimeUISystem::IsGameplayInputCaptured(), "slider press failed");
+		input.MousePressed = false; input.PointerPosition.x = 800.0f; update();
+		RequireUI(Near(slider.Value, 10.0f), "slider drag did not clamp outside rectangle");
+		input.MouseHeld = false; input.MouseReleased = true; update();
+		RequireUI(!slider.RuntimeDragging, "slider retained released drag");
+		input = {}; input.KeyboardMovePrevious = true; update();
+		RequireUI(Near(slider.Value, 9.0f), "slider keyboard decrement failed");
+		input = {}; input.FocusNext = true; update();
+		RequireUI(field.RuntimeFocused && !slider.RuntimeFocused, "tab navigation did not reach input");
+		input = {}; input.TextInput = "\xE4\xB8\xAD\xF0\x9F\x98\x80" "AB"; update();
+		RequireUI(field.Text == "\xE4\xB8\xAD\xF0\x9F\x98\x80" "A" && field.RuntimeChangeSerial == 1, "Unicode character limit split a codepoint");
+		input = {}; input.Backspace = true; update(); update();
+		RequireUI(field.Text == "\xE4\xB8\xAD", "backspace split a supplementary codepoint");
+		input = {}; input.SelectAll = true; input.TextInput = "OK"; update();
+		RequireUI(field.Text == "OK", "select-all replacement failed");
+		field.ReadOnly = true; input.TextInput = "X"; update();
+		RequireUI(field.Text == "OK", "read-only field accepted text");
+		field.ReadOnly = false;
+		std::string clipboard;
+		auto bindClipboard = [&]() { input.WriteClipboard = [&clipboard](const std::string& value) { clipboard = value; return true; }; };
+		input = {}; input.SelectAll = input.Copy = true; bindClipboard(); update();
+		RequireUI(clipboard == "OK" && field.Text == "OK", "copy changed input text or lost selection");
+		input.Copy = false; input.Cut = true;
+		input.WriteClipboard = [](const std::string&) { return false; }; update();
+		RequireUI(field.Text == "OK", "failed clipboard write still removed cut selection");
+		bindClipboard();
+		input.Copy = false; input.Cut = true; update();
+		RequireUI(field.Text.empty() && clipboard == "OK", "cut did not copy and remove selection");
+		input = {}; input.Paste = true; input.ClipboardText = "\xE4\xB8\xAD\xF0\x9F\x98\x80" "AB\n"; update();
+		RequireUI(field.Text == "\xE4\xB8\xAD\xF0\x9F\x98\x80" "A", "clipboard paste bypassed Unicode limit");
+		field.Password = true;
+		clipboard = "unchanged";
+		input = {}; input.SelectAll = input.Cut = true; bindClipboard(); update();
+		RequireUI(clipboard == "unchanged" && !field.Text.empty(), "password cut leaked or removed text");
+		field.Password = false; field.ReadOnly = true;
+		input = {}; input.Paste = true; input.ClipboardText = "replaced"; update();
+		RequireUI(field.Text == "\xE4\xB8\xAD\xF0\x9F\x98\x80" "A", "read-only field accepted paste");
+		field.ReadOnly = false;
+		input = {}; input.SelectAll = true; input.TextInput = "OK"; update();
+		field.CharacterLimit = 8;
+		input = {}; input.DisplayFrame = 700; input.TextInput = "!"; update(); update();
+		RequireUI(field.Text == "OK!", "same display-frame text was committed twice");
+		field.CharacterLimit = 3;
+		input = {}; input.SelectAll = true; input.TextInput = "OK"; update();
+		input = {}; input.WindowFocused = false; update();
+		RequireUI(!field.RuntimeFocused && !RuntimeUISystem::IsGameplayInputCaptured(), "focus loss retained text capture");
+		const auto before = RuntimeUISystem::BuildLayout(*scene, 400, 300, 96.0f);
+		input = {}; input.PointerPosition = { 20.0f, 150.0f }; input.ScrollDelta.y = -2.0f; update();
+		const auto after = RuntimeUISystem::BuildLayout(*scene, 400, 300, 96.0f);
+		RequireUI(Near(scroll.Offset.y, 80.0f) && Near(after.Rectangles.at(item.GetUUID()).Y - before.Rectangles.at(item.GetUUID()).Y, 80.0f)
+			&& !after.ClipRegions.at(item.GetUUID()).empty(), "scroll did not move content within its viewport clip");
+		input.ScrollDelta.y = -100.0f; update();
+		RequireUI(Near(scroll.Offset.y, 320.0f), "scroll exceeded content extent");
+		std::string document, error;
+		RequireUI(SceneSerializer(scene).SerializeDocument(document, error), "product UI serialization failed");
+		auto loaded = CreateRef<Scene>();
+		RequireUI(SceneSerializer(loaded).DeserializeDocument(std::vector<uint8_t>(document.begin(), document.end()), "ProductUI.tomcat", false), "product UI deserialization failed");
+		auto loadedField = loaded->FindEntityByUUID(inputEntity.GetUUID());
+		RequireUI(loadedField.HasComponent<UIInputField>() && loadedField.GetComponent<UIInputField>().Text == "OK"
+			&& !loadedField.GetComponent<UIInputField>().RuntimeFocused && loadedField.GetComponent<UIInputField>().RuntimeChangeSerial == 0
+			&& loaded->FindEntityByUUID(canvas.GetUUID()).HasComponent<UITheme>()
+			&& RuntimeUISystem::ResolveText(*loaded, loaded->FindEntityByUUID(item.GetUUID())) == "Play", "UI authoring/transient round-trip failed");
+		Input::ClearState(); Input::NotifyCharacter(0x4e2d); Input::NotifyCharacter(0x1f600); Input::NotifyCharacter(0xd800); Input::BeginFrame();
+		RequireUI(Input::GetTextInput() == "\xE4\xB8\xAD\xF0\x9F\x98\x80", "text snapshot lost IME commit or accepted invalid Unicode");
+		Input::BeginFrame();
+		RequireUI(Input::GetTextInput().empty(), "text input repeated across frames");
+		Input::ClearState();
+	}
+
 	void TestSceneAndPrefabRoundTrip()
 	{
 		UIFixture fixture = BuildUIFixture(TomCat::AssetHandle(4242),
@@ -2837,6 +2962,92 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 					+ std::to_string(actual));
 			}
 		}
+
+		// Use the actual font advances and RGBA output to verify selection geometry,
+		// including UTF-8 byte indices mapped to password glyphs. The existing
+		// published font already contains ASCII, these CJK characters and emoji.
+		TomCat::Scene selectionScene;
+		auto selectionCanvas = selectionScene.CreateEntity("Selection Canvas");
+		selectionCanvas.AddComponent<TomCat::Canvas>().ScaleMode = TomCat::CanvasScaleMode::ConstantPixelSize;
+		selectionCanvas.AddComponent<TomCat::UITheme>().AccentColor = { 0.0f, 0.0f, 1.0f, 1.0f };
+		auto selectionParent = selectionScene.CreateEntity("Selection Mask");
+		auto& selectionMask = selectionParent.AddComponent<TomCat::RectTransform>();
+		selectionMask.AnchorMin = selectionMask.AnchorMax = selectionMask.Pivot = { 0.0f, 0.0f };
+		selectionMask.AnchoredPosition = { 20.0f, 20.0f };
+		selectionMask.SizeDelta = { 100.0f, 50.0f };
+		selectionMask.ClipChildren = true;
+		RequireUI(selectionScene.SetParent(selectionParent, selectionCanvas), "could not parent selection mask");
+		auto selectionEntity = selectionScene.CreateEntity("Selected Input");
+		auto& selectionRect = selectionEntity.AddComponent<TomCat::RectTransform>();
+		selectionRect.AnchorMin = selectionRect.AnchorMax = selectionRect.Pivot = { 0.0f, 0.0f };
+		selectionRect.AnchoredPosition = { 10.0f, 0.0f };
+		selectionRect.SizeDelta = { 140.0f, 50.0f };
+		RequireUI(selectionScene.SetParent(selectionEntity, selectionParent), "could not parent selected input");
+		auto& selectionText = selectionEntity.AddComponent<TomCat::UIText>();
+		selectionText.Font = fontHandle;
+		selectionText.FallbackFont = fallbackFontHandle;
+		selectionText.EmojiFont = emojiFontHandle;
+		selectionText.FontSize = 24.0f;
+		auto& selectedField = selectionEntity.AddComponent<TomCat::UIInputField>();
+		selectedField.Text = "Wi\xE6\xB8\xB8\xE6\x88\x8F\xF0\x9F\x98\x80iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii";
+		selectedField.RuntimeFocused = true;
+		selectedField.RuntimeSelectionAnchor = 1;
+		selectedField.RuntimeCaret = 8; // i + two three-byte CJK characters selected.
+		const auto& selectionAtlas = grownFont->GetAtlas();
+		auto glyphAdvance = [&selectionAtlas](uint32_t codepoint)
+		{
+			const auto* glyph = selectionAtlas.Find(codepoint);
+			RequireUI(glyph != nullptr, "selection fixture glyph is missing");
+			return glyph->Advance * 24.0f / selectionAtlas.PixelHeight;
+		};
+		auto selectionBounds = [&selectionScene](float dpi)
+		{
+			const auto pixels = CaptureRuntimeUI(selectionScene, 400, 200, dpi);
+			ColorExtent extent;
+			extent.MinimumX = 400; extent.MinimumY = 200;
+			for (uint32_t y = 0; y < 200; ++y)
+				for (uint32_t x = 0; x < 400; ++x)
+				{
+					const size_t offset = (static_cast<size_t>(y) * 400 + x) * 4;
+					if (pixels[offset] >= 50 || pixels[offset + 1] >= 50 || pixels[offset + 2] <= 80) continue;
+					extent.MinimumX = std::min(extent.MinimumX, x); extent.MaximumX = std::max(extent.MaximumX, x);
+					extent.MinimumY = std::min(extent.MinimumY, y); extent.MaximumY = std::max(extent.MaximumY, y);
+					++extent.Count;
+				}
+			return extent;
+		};
+		for (float dpi : { 96.0f, 192.0f })
+		{
+			const float scale = dpi / 96.0f;
+			selectedField.Password = false;
+			const auto normalSelection = selectionBounds(dpi);
+			const float selectedAdvance = glyphAdvance('i') + glyphAdvance(0x6e38) + glyphAdvance(0x620f);
+			RequireUI(normalSelection.Count > 0 && Near(static_cast<float>(normalSelection.MinimumX), (30.0f + glyphAdvance('W')) * scale, 1.0f)
+				&& Near(normalSelection.Width(), selectedAdvance * scale, 1.0f)
+				&& Near(normalSelection.Height(), selectionAtlas.LineHeight * 24.0f / selectionAtlas.PixelHeight * scale, 1.0f),
+				"normal input selection did not follow font advances and DPI");
+			selectedField.Password = true;
+			const auto passwordSelection = selectionBounds(dpi);
+			RequireUI(passwordSelection.Count > 0 && Near(static_cast<float>(passwordSelection.MinimumX), (30.0f + glyphAdvance('*')) * scale, 1.0f)
+				&& Near(passwordSelection.Width(), glyphAdvance('*') * 3.0f * scale, 1.0f),
+				"password selection used UTF-8 byte lengths instead of masked glyph metrics");
+		}
+		selectedField.Password = false;
+		selectedField.RuntimeSelectionAnchor = 0;
+		selectedField.RuntimeCaret = static_cast<uint32_t>(selectedField.Text.size());
+		for (float dpi : { 96.0f, 192.0f })
+		{
+			const float scale = dpi / 96.0f;
+			const auto clippedSelection = selectionBounds(dpi);
+			RequireUI(clippedSelection.Count > 0 && Near(static_cast<float>(clippedSelection.MinimumX), 30.0f * scale, 1.0f)
+				&& Near(clippedSelection.Width(), 90.0f * scale, 1.0f),
+				"scrolled selection escaped its field or ancestor clip");
+		}
+		selectionMask.SizeDelta.x = 300.0f;
+		const auto fieldClippedSelection = selectionBounds(96.0f);
+		RequireUI(fieldClippedSelection.Count > 0 && Near(static_cast<float>(fieldClippedSelection.MinimumX), 30.0f, 1.0f)
+			&& Near(fieldClippedSelection.Width(), 132.0f, 1.0f),
+			"input selection did not scroll with the visible caret or clip at the field boundary");
 	}
 
 }
@@ -2865,6 +3076,7 @@ namespace TomCat::Tests {
 		TestEditorCamera2DProjection();
 		TestSceneCameraFrustumCorners();
 		TestFixedInputCaptureSnapshot();
+		TestProductUIControls();
 		TestSceneAndPrefabRoundTrip();
 		TestPersistentButtonCallbacks();
 		TestCookedRuntimeUIRoundTrip();

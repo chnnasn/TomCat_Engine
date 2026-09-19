@@ -3662,6 +3662,35 @@ namespace {
 				"\"name\":\"Speed\",\"type\":\"Float\","
 				"\"isPublic\":true,\"hidden\":false,\"formerNames\":[]}]}]}";
 		const std::string embeddedManifest = embeddedManifestBuilder.str();
+		auto withEventMethods = [](std::string manifest, const std::string& methods,
+			uint32_t lifecycle = 1024)
+		{
+			const std::string token = "\"lifecycle\":0";
+			const size_t position = manifest.find(token);
+			Require(position != std::string::npos, "could not locate manifest lifecycle fixture");
+			manifest.replace(position, token.size(), "\"lifecycle\":"
+				+ std::to_string(lifecycle) + ",\"methods\":" + methods);
+			return manifest;
+		};
+		const std::string eventEmbeddedManifest = withEventMethods(embeddedManifest, "[\"OnPressed\",\"OnReleased\"]");
+		const std::string eventEditorManifest = withEventMethods(managedManifest, "[\"OnReleased\",\"OnPressed\"]");
+		Require(assets.SetManagedCookPayload(MakeManagedAssemblyFixture(eventEmbeddedManifest),
+			eventEditorManifest, "event-methods-late-update"),
+			"managed payload rejected public event methods or OnLateUpdate lifecycle metadata");
+		for (const std::string& malformedMethods : std::vector<std::string>{
+			"null", "{}", "[\"\"]", "[\" \"]", "[17]", "[\"OnPressed\",\"OnPressed\"]",
+			"[\"" + std::string(513, 'x') + "\"]" })
+		{
+			const std::string invalid = withEventMethods(embeddedManifest, malformedMethods);
+			Require(!assets.SetManagedCookPayload(MakeManagedAssemblyFixture(invalid), invalid,
+				"invalid-event-methods"), "managed payload accepted malformed event-method metadata");
+		}
+		const std::string invalidLifecycle = withEventMethods(embeddedManifest, "[]", 2048);
+		Require(!assets.SetManagedCookPayload(MakeManagedAssemblyFixture(invalidLifecycle),
+			invalidLifecycle, "invalid-lifecycle-bit"), "managed payload accepted an undefined lifecycle bit");
+		Require(!assets.SetManagedCookPayload(MakeManagedAssemblyFixture(eventEmbeddedManifest),
+			withEventMethods(managedManifest, "[\"MissingMethod\"]"), "stale-event-methods"),
+			"managed payload accepted event methods different from its assembly manifest");
 		std::string staleEditorManifest = managedManifest;
 		const std::size_t fieldNamePosition = staleEditorManifest.find("\"name\":\"Speed\"");
 		Require(fieldNamePosition != std::string::npos,

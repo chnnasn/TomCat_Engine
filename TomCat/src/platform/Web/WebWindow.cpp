@@ -28,6 +28,7 @@ WebWindow::WebWindow(const WindowProps& props) : m_Width(props.Width), m_Height(
   });
   glfwSetCursorPosCallback(m_Window, [](GLFWwindow*, double x, double y) { Input::NotifyMousePosition(x, y); });
   glfwSetScrollCallback(m_Window, [](GLFWwindow*, double x, double y) { Input::NotifyScroll(x, y); });
+  glfwSetCharCallback(m_Window, [](GLFWwindow*, unsigned int codepoint) { Input::NotifyCharacter(codepoint); });
   glfwSetWindowFocusCallback(m_Window, [](GLFWwindow*, int focused) { Input::NotifyWindowFocus(focused != 0, glfwGetTime()); });
   glfwSetWindowSizeCallback(m_Window, [](GLFWwindow* window, int width, int height) {
     auto& self = *static_cast<WebWindow*>(glfwGetWindowUserPointer(window));

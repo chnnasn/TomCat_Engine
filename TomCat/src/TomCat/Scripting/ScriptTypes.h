@@ -218,6 +218,21 @@ namespace TomCat::Scripting {
 	};
 
 	inline constexpr std::string_view InputCapabilityName = "TomCat.InputApiV1";
+	inline constexpr std::string_view SceneCapabilityName = "TomCat.SceneApiV1";
+	struct NativeSceneApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeSceneApiV1);
+		int32_t(TC_SCRIPT_CALL* RequestLoad)(uint64_t handle, int32_t buildIndex, uint32_t mode, int32_t asynchronous) = nullptr;
+		int32_t(TC_SCRIPT_CALL* RequestUnload)(uint64_t handle) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetActive)(uint64_t handle) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetPersistent)(EntityHandleV1 entity, int32_t persistent) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetLoadStatus)(uint32_t* state, float* progress, int32_t* allowActivation) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetAllowActivation)(int32_t allow) = nullptr;
+		int32_t(TC_SCRIPT_CALL* CancelLoad)() = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetLoadedScenes)(uint64_t* handles, uint32_t capacity, uint32_t* required) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetLastError)(uint8_t* buffer, uint32_t capacity, uint32_t* required) = nullptr;
+	};
 	inline constexpr std::string_view InputEventsCapabilityName =
 		"TomCat.InputEventsApiV1";
 	inline constexpr std::string_view ApplicationPathsCapabilityName =

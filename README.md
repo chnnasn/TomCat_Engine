@@ -71,19 +71,20 @@ with a dynamic rectangle and a static floor, or view the
 ## Features
 
 - **2D rendering**: OpenGL batched sprites, lines, circles, cameras, framebuffer-based Scene/Game views, entity picking, stable Sprite Atlas subassets with Rect/Pivot/PPU/Border semantics, deterministic sprite sorting, animation clips, and a parameter-driven Animator state machine
-- **Scene system**: ECS entities, parent/child hierarchy, stable UUIDs, strict YAML scene serialization, ordered Build Settings, and frame-end single-scene replacement
+- **Scene system**: ECS entities, hierarchy, stable UUIDs, strict YAML serialization, ordered Build Settings, asynchronous reads with activation control, additive ownership in a shared runtime world, persistent roots, and explicit unloading
 - **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` schema-v2 sidecars, ImporterRegistry, SHA-256 artifact keys, a derived-data cache, dependency tracking, and a background ImportCoordinator with debounced content monitoring, reverse-dependent reimport, and main-thread publication
 - **2D physics**: fixed 60 Hz Box2D runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
 - **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, combined Play/Stop plus Pause/Step controls, and deferred C# Collision/Trigger callbacks
 - **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, diagnostics, last-good assemblies, and cooked managed payloads
-- **Snapshot Prefabs**: `.tcprefab` entity-subtree snapshots with stable LocalIDs, reference remapping, runtime C# `Instantiate`, and ordinary unlinked instances
+- **Prefabs**: LocalID subtrees and reference remapping, linked editor updates, overrides, Apply/Revert, nested Prefabs and variants; runtime C# `Instantiate` retains snapshot semantics. See the [Prefab workflow](docs/PREFAB_WORKFLOW.zh-CN.md).
 - **Input**: action maps, keyboard/mouse/gamepad bindings, contexts, and runtime rebinding
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
 - **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
 - **Editor**: ImGui Scene, Game, Hierarchy, Inspector, Project, and Console panels with responsive docking, actively persisted panel visibility/layout, Hierarchy Scene visibility controls, collapsed and filtered diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
 - **Standalone Player**: path-free `.tcpak` v7 packages with per-entry SHA-256 and v5/v6/v7 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
-- **Localization**: dynamically generated Chinese glyph ranges, with Chinese/English UI switching in the Hub
+- **Product UI and localization**: sliders, scroll views, single-line Unicode input, inherited themes, and game-language tables with fallback; OS IME commits are supported, with composition limits described in [Runtime UI](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
+- **Performance tools**: visual CPU timeline, asynchronous GPU frame timing, draw statistics, process memory and tracked resource estimates; see [profiling and C# debugger setup](docs/DEBUGGING_AND_PROFILING.md)
 - **Regression coverage**: one Release entry point for managed ABI/lifecycle, physics, Sprite assets, scripts, safety, Editor recovery, audio, importers, input, SceneManager, Prefab, Cook, and isolated Player startup; a separate WASM editor protocol regression
 
 ## Current Scope
@@ -95,7 +96,7 @@ with a dynamic rectangle and a static floor, or view the
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Editor-side C# compilation requires the **.NET 10 SDK**
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
-- V1 deliberately excludes NuGet/third-party managed DLLs, Play Mode hot reload, script debugging, additive/asynchronous scenes, linked Prefab updates, overrides, nested Prefabs, and variants
+- NuGet/third-party managed DLLs, Play Mode hot reload, and a built-in C# debugger are unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
 
 The [2026-09-15 capture](docs/portfolio/README.md) recorded a Hub project-loading
 failure during Windows extended-path migration checks. Its workaround was
@@ -171,7 +172,8 @@ vendor/            premake and third-party dependencies
 - [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v7 ordered scenes with v5/v6/v7 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
 - [x] Snapshot Prefab V1 with stable LocalIDs, hierarchy/Joint/C# Entity remapping, fresh AttachmentIDs, deferred C# creation, Editor creation/drop workflows, and Cook dependency traversal
 - [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the BootManifest introduced with TCPAK v6 and retained in v7
-- [ ] Additive/asynchronous scenes, linked/nested Prefabs, overrides/variants, and save data
+- [x] Linked/nested Prefabs, overrides/variants, asynchronous reads, additive scenes, persistent roots and unloading (see the feature guides for scope)
+- [ ] General game save-data system
 
 ### Asset Pipeline and 2D Production
 

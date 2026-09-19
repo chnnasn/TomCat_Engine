@@ -3,6 +3,7 @@
 
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
+#include "TomCat/Core/Input.h"
 #include "TomCat/Renderer/Camera.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/Renderer2D.h"
@@ -17,6 +18,7 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <yaml-cpp/yaml.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -78,6 +80,26 @@ namespace TomCat {
 		bool Finite(const glm::vec4& value)
 		{
 			return Finite(value.x) && Finite(value.y) && Finite(value.z) && Finite(value.w);
+		}
+
+		template<typename Component>
+		Component* FindScope(Scene& scene, Entity entity)
+		{
+			for (Entity current = entity; current; current = scene.GetParent(current))
+				if (current.HasComponent<Component>() && current.GetComponent<Component>().Enabled)
+					return &current.GetComponent<Component>();
+			return nullptr;
+		}
+
+		bool IsRaycastTarget(Entity entity)
+		{
+			return (entity.HasComponent<UIImage>() && entity.GetComponent<UIImage>().Enabled
+				&& entity.GetComponent<UIImage>().RaycastTarget)
+				|| (entity.HasComponent<UIText>() && entity.GetComponent<UIText>().Enabled
+					&& entity.GetComponent<UIText>().RaycastTarget)
+				|| (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().Enabled)
+				|| (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().Enabled)
+				|| (entity.HasComponent<UIScrollView>() && entity.GetComponent<UIScrollView>().Enabled);
 		}
 
 		float CalculateCanvasScale(const Canvas& canvas, uint32_t width,
@@ -318,7 +340,7 @@ namespace TomCat {
 		void DrawScreenText(const UIText& text, const UIRect& rectangle,
 			const std::vector<RuntimeUIClipRegion>& inheritedClipRegions,
 			float canvasScale,
-			const glm::mat4& elementTransform, int entityID)
+			const glm::mat4& elementTransform, int entityID, float horizontalOffset = 0.0f)
 		{
 			if (!text.Enabled || text.Text.empty() || !Finite(text.FontSize)
 				|| text.FontSize <= 0.0f || !Finite(canvasScale)
@@ -332,7 +354,7 @@ namespace TomCat {
 				text.Text, text.FontSize * canvasScale,
 				text.Wrap ? rectangle.Width : 0.0f,
 				text.Alignment, text.LineSpacing);
-			const glm::vec2 origin(rectangle.X,
+			const glm::vec2 origin(rectangle.X - horizontalOffset,
 				rectangle.Y + std::max(0.0f, rectangle.Height - layout.Height));
 			std::vector<RuntimeUIClipRegion> clipRegions = inheritedClipRegions;
 			clipRegions.push_back({ rectangle, elementTransform });
@@ -409,6 +431,8 @@ namespace TomCat {
 							image.PreserveAspect, geometry))
 						{
 							glm::vec4 color = image.Color;
+							if (const auto* theme = FindScope<UITheme>(scene, entity))
+								color *= theme->ImageColor;
 							if (entity.HasComponent<UIButton>()
 								&& entity.GetComponent<UIButton>().Enabled)
 							{
@@ -434,11 +458,96 @@ namespace TomCat {
 					}
 				}
 
-				if (entity.HasComponent<UIText>())
-					DrawScreenText(entity.GetComponent<UIText>(), rectangle->second,
+				if (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().Enabled)
+				{
+					const auto& slider = entity.GetComponent<UISlider>();
+					UIRect fill = rectangle->second;
+					const float amount = slider.Maximum > slider.Minimum
+						? std::clamp((slider.Value - slider.Minimum) / (slider.Maximum - slider.Minimum), 0.0f, 1.0f) : 0.0f;
+					if (slider.Vertical) fill.Height *= amount; else fill.Width *= amount;
+					glm::vec4 accent = slider.FillColor;
+					if (const auto* theme = FindScope<UITheme>(scene, entity)) accent = theme->AccentColor;
+					if (!slider.Interactable) accent.a *= 0.5f;
+					DrawClippedUIQuad(rectangle->second, elementTransform->second, clipRegions->second,
+						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, slider.TrackColor, static_cast<int>(static_cast<entt::entity>(entity)));
+					DrawClippedUIQuad(fill, elementTransform->second, clipRegions->second,
+						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, accent, static_cast<int>(static_cast<entt::entity>(entity)));
+				}
+				if (entity.HasComponent<UIText>() || entity.HasComponent<UIInputField>())
+				{
+					UIText text = entity.HasComponent<UIText>() ? entity.GetComponent<UIText>() : UIText{};
+					float horizontalOffset = 0.0f;
+					std::optional<UIRect> caretRectangle;
+					std::vector<RuntimeUIClipRegion> inputClipRegions = clipRegions->second;
+					inputClipRegions.push_back({ rectangle->second, elementTransform->second });
+					text.Text = RuntimeUISystem::ResolveText(scene, entity);
+					if (const auto* theme = FindScope<UITheme>(scene, entity))
+					{
+						text.Color *= theme->TextColor;
+						text.FontSize *= theme->FontScale;
+						if (static_cast<uint64_t>(theme->Font) != 0) text.Font = theme->Font;
+					}
+					if (entity.HasComponent<UIInputField>())
+					{
+						const auto& field = entity.GetComponent<UIInputField>();
+						text.Enabled = text.Enabled && field.Enabled;
+						text.Wrap = false;
+						text.Text = field.Password ? std::string(FontAtlasBuilder::DecodeUTF8(field.Text).size(), '*') : field.Text;
+						if (field.RuntimeFocused && text.Enabled)
+						{
+							size_t caret = std::min<size_t>(field.RuntimeCaret, field.Text.size());
+							size_t anchor = std::min<size_t>(field.RuntimeSelectionAnchor, field.Text.size());
+							auto repairBoundary = [&field](size_t value)
+							{
+								while (value > 0 && value < field.Text.size()
+									&& (static_cast<unsigned char>(field.Text[value]) & 0xc0) == 0x80) --value;
+								return value;
+							};
+							caret = repairBoundary(caret);
+							anchor = repairBoundary(anchor);
+							if (field.Password)
+							{
+								caret = FontAtlasBuilder::DecodeUTF8(std::string_view(field.Text).substr(0, caret)).size();
+								anchor = FontAtlasBuilder::DecodeUTF8(std::string_view(field.Text).substr(0, anchor)).size();
+							}
+							if (const auto font = FontManager::Get().Load(text.Font, text.Text, text.FallbackFont, text.EmojiFont))
+							{
+								const float scale = layout.Scales.at(id);
+								auto measurePrefix = [&](size_t length)
+								{
+									return TextLayoutEngine::Build(font->GetAtlas(),
+										std::string_view(text.Text).substr(0, length), text.FontSize * scale,
+										0.0f, TextAlignment::Left, text.LineSpacing);
+								};
+								const TextLayoutResult caretLayout = measurePrefix(caret);
+								const float caretX = caretLayout.Width;
+								const float anchorX = measurePrefix(anchor).Width;
+								horizontalOffset = std::max(0.0f, caretX - rectangle->second.Width + 8.0f * scale);
+								const float bottom = rectangle->second.Y + std::max(0.0f, rectangle->second.Height - caretLayout.Height);
+								if (caret != anchor)
+								{
+									glm::vec4 selectionColor{ 0.3f, 0.6f, 1.0f, 1.0f };
+									if (const auto* theme = FindScope<UITheme>(scene, entity)) selectionColor = theme->AccentColor;
+									selectionColor.a *= 0.45f;
+									const UIRect selection{ rectangle->second.X + std::min(caretX, anchorX) - horizontalOffset,
+										bottom, std::abs(caretX - anchorX), caretLayout.Height };
+									DrawClippedUIQuad(selection, elementTransform->second, inputClipRegions,
+										{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, selectionColor, static_cast<int>(static_cast<entt::entity>(entity)));
+								}
+								caretRectangle = UIRect{ rectangle->second.X + caretX - horizontalOffset,
+									bottom, std::max(1.0f, scale), caretLayout.Height };
+							}
+						}
+						else if (field.Text.empty()) { text.Text = field.Placeholder; text.Color.a *= 0.5f; }
+					}
+					DrawScreenText(text, rectangle->second,
 						clipRegions->second, layout.Scales.at(id),
 						elementTransform->second,
-						static_cast<int>(static_cast<entt::entity>(entity)));
+						static_cast<int>(static_cast<entt::entity>(entity)), horizontalOffset);
+					if (caretRectangle)
+						DrawClippedUIQuad(*caretRectangle, elementTransform->second, inputClipRegions,
+							{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, text.Color, static_cast<int>(static_cast<entt::entity>(entity)));
+				}
 			}
 			Renderer2D::EndScene();
 			RenderCommand::SetDepthTest(true);
@@ -458,11 +567,21 @@ namespace TomCat {
 				const glm::mat4& parentTransform,
 				const std::vector<RuntimeUIClipRegion>& inheritedClipRegions)
 			{
+				UIRect contentRect = parentRect;
+				if (parent.HasComponent<UIScrollView>() && parent.GetComponent<UIScrollView>().Enabled)
+				{
+					auto& scroll = parent.GetComponent<UIScrollView>();
+					const glm::vec2 content = glm::max(glm::vec2(parentRect.Width, parentRect.Height), scroll.ContentSize * scale);
+					const glm::vec2 maximum = glm::max(glm::vec2(0.0f), content / scale - glm::vec2(parentRect.Width, parentRect.Height) / scale);
+					const glm::vec2 offset = glm::clamp(scroll.Offset, glm::vec2(0.0f), maximum);
+					contentRect = { parentRect.X - (scroll.Horizontal ? offset.x * scale : 0.0f),
+						parentRect.Y + parentRect.Height - content.y + (scroll.Vertical ? offset.y * scale : 0.0f), content.x, content.y };
+				}
 				UILayoutGroup* group = parent.HasComponent<UILayoutGroup>()
 					? &parent.GetComponent<UILayoutGroup>() : nullptr;
-				float horizontalCursor = parentRect.X
+				float horizontalCursor = contentRect.X
 					+ (group ? group->Padding.x * scale : 0.0f);
-				float verticalCursor = parentRect.Y + parentRect.Height
+				float verticalCursor = contentRect.Y + contentRect.Height
 					- (group ? group->Padding.w * scale : 0.0f);
 				for (UUID childID : SceneValue.GetChildrenUUIDs(parent))
 				{
@@ -473,7 +592,7 @@ namespace TomCat {
 						|| !Visited.emplace(static_cast<uint64_t>(childID)).second)
 						continue;
 					auto& rectTransform = child.GetComponent<RectTransform>();
-					UIRect rectangle = ResolveAnchors(rectTransform, parentRect, scale);
+					UIRect rectangle = ResolveAnchors(rectTransform, contentRect, scale);
 					if (group && group->Enabled)
 					{
 						glm::vec2 controlled(rectangle.Width, rectangle.Height);
@@ -482,14 +601,14 @@ namespace TomCat {
 						if (group->Direction == UILayoutDirection::Horizontal)
 						{
 							rectangle = { horizontalCursor,
-								parentRect.Y + group->Padding.y * scale,
+								contentRect.Y + group->Padding.y * scale,
 								controlled.x, controlled.y };
 							horizontalCursor += controlled.x + group->Spacing * scale;
 						}
 						else
 						{
 							verticalCursor -= controlled.y;
-							rectangle = { parentRect.X + group->Padding.x * scale,
+							rectangle = { contentRect.X + group->Padding.x * scale,
 								verticalCursor, controlled.x, controlled.y };
 							verticalCursor -= group->Spacing * scale;
 						}
@@ -530,11 +649,13 @@ namespace TomCat {
 					Snapshot.Transforms[childID] = accumulatedTransform;
 					Snapshot.ClipRegions[childID] = inheritedClipRegions;
 					Snapshot.RenderOrder.push_back(childID);
-					const UIRect childClip = rectTransform.ClipChildren
+					const bool clipsChildren = rectTransform.ClipChildren
+						|| (child.HasComponent<UIScrollView>() && child.GetComponent<UIScrollView>().Enabled);
+					const UIRect childClip = clipsChildren
 						? clip : inheritedClip;
 					std::vector<RuntimeUIClipRegion> childClipRegions =
 						inheritedClipRegions;
-					if (rectTransform.ClipChildren)
+					if (clipsChildren)
 						childClipRegions.push_back({ rectangle,
 							accumulatedTransform });
 					LayoutChildren(child, rectangle, childClip, scale,
@@ -570,6 +691,230 @@ namespace TomCat {
 			return true;
 		}
 
+
+		bool CanFocus(Entity entity)
+		{
+			return (entity.HasComponent<UIButton>() && entity.GetComponent<UIButton>().Enabled && entity.GetComponent<UIButton>().Interactable)
+				|| (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().Enabled && entity.GetComponent<UISlider>().Interactable)
+				|| (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().Enabled && entity.GetComponent<UIInputField>().Interactable);
+		}
+
+		bool HasFocus(Entity entity)
+		{
+			return (entity.HasComponent<UIButton>() && entity.GetComponent<UIButton>().RuntimeFocused)
+				|| (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().RuntimeFocused)
+				|| (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().RuntimeFocused);
+		}
+
+		void SetFocus(Entity entity, bool focused)
+		{
+			if (entity.HasComponent<UIButton>()) entity.GetComponent<UIButton>().RuntimeFocused = focused;
+			if (entity.HasComponent<UISlider>()) entity.GetComponent<UISlider>().RuntimeFocused = focused;
+			if (entity.HasComponent<UIInputField>())
+			{
+				auto& field = entity.GetComponent<UIInputField>();
+				if (focused && !field.RuntimeFocused)
+					field.RuntimeCaret = field.RuntimeSelectionAnchor = static_cast<uint32_t>(field.Text.size());
+				field.RuntimeFocused = focused;
+			}
+		}
+
+		size_t PreviousCharacter(const std::string& text, size_t position)
+		{
+			position = std::min(position, text.size());
+			if (position > 0) --position;
+			while (position > 0 && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) --position;
+			return position;
+		}
+
+		size_t NextCharacter(const std::string& text, size_t position)
+		{
+			if (position < text.size()) ++position;
+			while (position < text.size() && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) ++position;
+			return position;
+		}
+
+		void EditInputField(UIInputField& field, const RuntimeUIInputFrame& input)
+		{
+			if (input.DisplayFrame != 0 && field.RuntimeLastInputFrame == input.DisplayFrame) return;
+			field.RuntimeLastInputFrame = input.DisplayFrame;
+			field.RuntimeCaret = static_cast<uint32_t>(std::min<size_t>(field.RuntimeCaret, field.Text.size()));
+			field.RuntimeSelectionAnchor = static_cast<uint32_t>(std::min<size_t>(field.RuntimeSelectionAnchor, field.Text.size()));
+			// C# may replace Text while focused. Repair indices to UTF-8 boundaries.
+			while (field.RuntimeCaret < field.Text.size() && (static_cast<unsigned char>(field.Text[field.RuntimeCaret]) & 0xc0) == 0x80) --field.RuntimeCaret;
+			while (field.RuntimeSelectionAnchor < field.Text.size() && (static_cast<unsigned char>(field.Text[field.RuntimeSelectionAnchor]) & 0xc0) == 0x80) --field.RuntimeSelectionAnchor;
+			if (input.SelectAll) { field.RuntimeSelectionAnchor = 0; field.RuntimeCaret = static_cast<uint32_t>(field.Text.size()); }
+			if (input.CaretHome) field.RuntimeCaret = 0;
+			if (input.CaretEnd) field.RuntimeCaret = static_cast<uint32_t>(field.Text.size());
+			if (input.CaretLeft) field.RuntimeCaret = static_cast<uint32_t>(PreviousCharacter(field.Text, field.RuntimeCaret));
+			if (input.CaretRight) field.RuntimeCaret = static_cast<uint32_t>(NextCharacter(field.Text, field.RuntimeCaret));
+			if (!input.ExtendSelection && (input.CaretHome || input.CaretEnd || input.CaretLeft || input.CaretRight))
+				field.RuntimeSelectionAnchor = field.RuntimeCaret;
+			bool cutSelection = false;
+			if ((input.Copy || input.Cut) && !field.Password && input.WriteClipboard
+				&& field.RuntimeCaret != field.RuntimeSelectionAnchor)
+			{
+				const size_t first = std::min(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				const size_t last = std::max(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				const bool copied = input.WriteClipboard(field.Text.substr(first, last - first));
+				cutSelection = copied && input.Cut && !field.ReadOnly;
+			}
+			if (field.ReadOnly) return;
+			const std::string before = field.Text;
+			const std::string& insertedText = input.Paste ? input.ClipboardText : input.TextInput;
+			bool valid = false;
+			FontAtlasBuilder::DecodeUTF8(insertedText, &valid);
+			if (input.Backspace || input.Delete || cutSelection || (valid && !insertedText.empty()))
+			{
+				size_t first = std::min(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				size_t last = std::max(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				if (first == last && input.Backspace) first = PreviousCharacter(field.Text, first);
+				else if (first == last && input.Delete) last = NextCharacter(field.Text, last);
+				field.Text.erase(first, last - first);
+				field.RuntimeCaret = field.RuntimeSelectionAnchor = static_cast<uint32_t>(first);
+				if (valid)
+				{
+					size_t count = FontAtlasBuilder::DecodeUTF8(field.Text).size();
+					std::string insertion;
+					for (size_t pos = 0; pos < insertedText.size();)
+					{
+						const size_t next = NextCharacter(insertedText, pos);
+						const unsigned char firstByte = static_cast<unsigned char>(insertedText[pos]);
+						if (firstByte >= 32 && firstByte != 127 && count < field.CharacterLimit
+							&& field.Text.size() + insertion.size() + next - pos <= 65536)
+						{ insertion.append(insertedText, pos, next - pos); ++count; }
+						pos = next;
+					}
+					field.Text.insert(field.RuntimeCaret, insertion);
+					field.RuntimeCaret += static_cast<uint32_t>(insertion.size());
+					field.RuntimeSelectionAnchor = field.RuntimeCaret;
+				}
+			}
+			if (before != field.Text) ++field.RuntimeChangeSerial;
+		}
+
+		struct ExtendedInteraction { bool Handled = false; bool OwnsKeyboard = false; };
+
+		ExtendedInteraction UpdateExtendedControls(Scene& scene, entt::registry& registry,
+			const RuntimeUILayoutSnapshot& layout, RuntimeUIInputFrame& input,
+			bool enabled, bool wrapNavigation)
+		{
+			ExtendedInteraction result;
+			std::vector<Entity> focusable;
+			for (UUID id : layout.RenderOrder)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (entity && CanFocus(entity)) focusable.push_back(entity);
+			}
+			for (auto value : registry.view<UIInputField>())
+			{
+				Entity entity(value, &scene);
+				if (!enabled || !layout.Rectangles.contains(entity.GetUUID()) || !CanFocus(entity))
+					entity.GetComponent<UIInputField>().RuntimeFocused = false;
+			}
+			for (auto value : registry.view<UISlider>())
+			{
+				Entity entity(value, &scene);
+				auto& slider = entity.GetComponent<UISlider>();
+				if (!enabled || !layout.Rectangles.contains(entity.GetUUID()) || !CanFocus(entity))
+					slider.RuntimeFocused = slider.RuntimeDragging = false;
+			}
+			if (!enabled) return result;
+			const glm::vec2 point(input.PointerPosition.x, static_cast<float>(layout.ViewportHeight) - input.PointerPosition.y);
+			Entity hit;
+			for (auto item = layout.RenderOrder.rbegin(); item != layout.RenderOrder.rend(); ++item)
+			{
+				Entity entity = scene.FindEntityByUUID(*item);
+				if (entity && IsRaycastTarget(entity) && ContainsTransformedPoint(layout, *item, point)) { hit = entity; break; }
+			}
+			if (input.MousePressed)
+			{
+				Entity target;
+				for (Entity current = hit; current; current = scene.GetParent(current))
+					if (CanFocus(current)) { target = current; break; }
+				for (Entity entity : focusable) SetFocus(entity, entity == target);
+				if (target && target.HasComponent<UISlider>()) target.GetComponent<UISlider>().RuntimeDragging = true;
+			}
+			if ((input.FocusNext || input.FocusPrevious) && !focusable.empty())
+			{
+				auto found = std::find_if(focusable.begin(), focusable.end(), HasFocus);
+				size_t index = found == focusable.end() ? (input.FocusPrevious ? focusable.size() - 1 : 0)
+					: static_cast<size_t>(std::distance(focusable.begin(), found));
+				if (found != focusable.end())
+				{
+					if (input.FocusPrevious) index = index > 0 ? index - 1 : wrapNavigation ? focusable.size() - 1 : index;
+					else index = index + 1 < focusable.size() ? index + 1 : wrapNavigation ? 0 : index;
+				}
+				for (size_t i = 0; i < focusable.size(); ++i) SetFocus(focusable[i], i == index);
+				input.KeyboardMoveNext = input.KeyboardMovePrevious = false;
+				result.Handled = true;
+			}
+			if (Finite(input.ScrollDelta) && input.ScrollDelta != glm::vec2(0.0f))
+			{
+				for (Entity current = hit; current; current = scene.GetParent(current))
+				{
+					if (!current.HasComponent<UIScrollView>() || !layout.Rectangles.contains(current.GetUUID())) continue;
+					auto& scroll = current.GetComponent<UIScrollView>();
+					if (!scroll.Enabled) continue;
+					result.Handled = true;
+					const auto& rect = layout.Rectangles.at(current.GetUUID());
+					const float scale = layout.Scales.at(current.GetUUID());
+					const glm::vec2 maximum = glm::max(glm::vec2(0.0f), scroll.ContentSize - glm::vec2(rect.Width, rect.Height) / scale);
+					glm::vec2 delta(scroll.Horizontal ? -input.ScrollDelta.x : 0.0f, scroll.Vertical ? -input.ScrollDelta.y : 0.0f);
+					if (scroll.Horizontal && !scroll.Vertical && delta.x == 0.0f) delta.x = -input.ScrollDelta.y;
+					const glm::vec2 next = glm::clamp(scroll.Offset + delta * scroll.ScrollSpeed, glm::vec2(0.0f), maximum);
+					if (next != scroll.Offset) { scroll.Offset = next; result.Handled = true; break; }
+				}
+			}
+			for (Entity entity : focusable)
+			{
+				if (entity.HasComponent<UISlider>())
+				{
+					auto& slider = entity.GetComponent<UISlider>();
+					if (slider.RuntimeDragging)
+					{
+						if (input.MousePressed || input.MouseHeld || input.MouseReleased)
+						{
+							glm::mat4 inverse;
+							glm::vec2 local;
+							const auto& rect = layout.Rectangles.at(entity.GetUUID());
+							if (InvertUITransform(layout.Transforms.at(entity.GetUUID()), inverse) && TransformUIPosition(inverse, point, local))
+							{
+								const float amount = slider.Vertical ? (local.y - rect.Y) / std::max(rect.Height, 0.001f) : (local.x - rect.X) / std::max(rect.Width, 0.001f);
+								RuntimeUISystem::SetSliderValue(entity, slider.Minimum + std::clamp(amount, 0.0f, 1.0f) * (slider.Maximum - slider.Minimum));
+							}
+							result.Handled = true;
+						}
+						if (input.MouseReleased || (!input.MouseHeld && !input.MousePressed)) slider.RuntimeDragging = false;
+					}
+					if (slider.RuntimeFocused)
+					{
+						result.OwnsKeyboard = true;
+						result.Handled = result.Handled || input.KeyboardMoveNextHeld || input.KeyboardMovePreviousHeld
+							|| input.GamepadMoveNextHeld || input.GamepadMovePreviousHeld;
+						const float step = slider.WholeNumbers ? std::max(1.0f, slider.Step) : slider.Step > 0.0f ? slider.Step : (slider.Maximum - slider.Minimum) * 0.01f;
+						if (input.KeyboardMoveNext || input.GamepadMoveNext) { RuntimeUISystem::SetSliderValue(entity, slider.Value + step); result.Handled = true; }
+						if (input.KeyboardMovePrevious || input.GamepadMovePrevious) { RuntimeUISystem::SetSliderValue(entity, slider.Value - step); result.Handled = true; }
+					}
+				}
+				if (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().RuntimeFocused)
+				{
+					auto& field = entity.GetComponent<UIInputField>();
+					EditInputField(field, input);
+					result.OwnsKeyboard = true;
+					// All gameplay input is suppressed while typing, including held movement keys.
+					result.Handled = true;
+					if (input.Cancel) field.RuntimeFocused = false;
+				}
+			}
+			if (result.OwnsKeyboard)
+			{
+				input.KeyboardMoveNext = input.KeyboardMovePrevious = input.KeyboardSubmit = false;
+				input.GamepadMoveNext = input.GamepadMovePrevious = input.GamepadSubmit = false;
+			}
+			return result;
+		}
+
 		bool WouldCaptureGameplayInput(Scene& scene, entt::registry& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 			const RuntimeUIInputFrame& input)
@@ -594,6 +939,23 @@ namespace TomCat {
 
 			const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildLayout(
 				scene, registry, viewportWidth, viewportHeight, dpi);
+
+			for (UUID id : layout.RenderOrder)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (!entity || !CanFocus(entity)) continue;
+				if (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().RuntimeFocused)
+					return true;
+				if (entity.HasComponent<UISlider>())
+				{
+					const auto& slider = entity.GetComponent<UISlider>();
+					if ((slider.RuntimeDragging && (input.MouseHeld || input.MouseReleased))
+						|| (slider.RuntimeFocused && (input.KeyboardMoveNext || input.KeyboardMovePrevious
+							|| input.GamepadMoveNext || input.GamepadMovePrevious || input.KeyboardMoveNextHeld
+							|| input.KeyboardMovePreviousHeld || input.GamepadMoveNextHeld || input.GamepadMovePreviousHeld))) return true;
+				}
+				if (input.FocusNext || input.FocusPrevious) return true;
+			}
 			std::vector<Entity> buttons;
 			for (UUID id : layout.RenderOrder)
 			{
@@ -616,14 +978,10 @@ namespace TomCat {
 				Entity target = scene.FindEntityByUUID(*item);
 				if (!target || !ContainsTransformedPoint(layout, *item, mousePoint))
 					continue;
-				const bool imageTarget = target.HasComponent<UIImage>()
-					&& target.GetComponent<UIImage>().Enabled
-					&& target.GetComponent<UIImage>().RaycastTarget;
-				const bool textTarget = target.HasComponent<UIText>()
-					&& target.GetComponent<UIText>().Enabled
-					&& target.GetComponent<UIText>().RaycastTarget;
-				if (!imageTarget && !textTarget)
+				if (!IsRaycastTarget(target))
 					continue;
+				if (input.ScrollDelta != glm::vec2(0.0f) && FindScope<UIScrollView>(scene, target))
+					return true;
 				pointerHandled = true;
 				break;
 			}
@@ -636,12 +994,7 @@ namespace TomCat {
 			{
 				Entity captured = scene.FindEntityByUUID(*s_PointerCaptureTarget);
 				validPointerCapture = captured && scene.IsActiveInHierarchy(captured)
-					&& ((captured.HasComponent<UIImage>()
-							&& captured.GetComponent<UIImage>().Enabled
-							&& captured.GetComponent<UIImage>().RaycastTarget)
-						|| (captured.HasComponent<UIText>()
-							&& captured.GetComponent<UIText>().Enabled
-							&& captured.GetComponent<UIText>().RaycastTarget));
+					&& IsRaycastTarget(captured);
 			}
 			// Mirror UpdateWithInput's capture transition without mutating it:
 			// a new press replaces the old target, while an idle frame releases it.
@@ -977,6 +1330,21 @@ namespace TomCat {
 
 	void RuntimeUISystem::Reset(entt::registry& registry)
 	{
+		for (const auto entity : registry.view<UISlider>())
+		{
+			auto& slider = registry.get<UISlider>(entity);
+			slider.RuntimeDragging = slider.RuntimeFocused = false;
+			slider.RuntimeChangeSerial = 0;
+		}
+		for (const auto entity : registry.view<UIInputField>())
+		{
+			auto& field = registry.get<UIInputField>(entity);
+			field.RuntimeFocused = false;
+			field.RuntimeCaret = field.RuntimeSelectionAnchor = 0;
+			field.RuntimeChangeSerial = 0;
+			field.RuntimeLastInputFrame = 0;
+		}
+
 		for (const entt::entity entity : registry.view<UIButton>())
 		{
 			auto& button = registry.get<UIButton>(entity);
@@ -1011,6 +1379,35 @@ namespace TomCat {
 		input.MousePressed = source.WasMouseButtonPressed(0);
 		input.MouseHeld = source.IsMouseButtonHeld(0);
 		input.MouseReleased = source.WasMouseButtonReleased(0);
+		const auto scroll = source.GetScrollDelta();
+		input.ScrollDelta = { scroll.X, scroll.Y };
+		input.TextInput = Input::GetTextInput();
+		input.DisplayFrame = Input::GetFrameSnapshot().FrameNumber;
+		const bool control = source.IsKeyHeld(341) || source.IsKeyHeld(345);
+		input.Copy = control && source.WasKeyPressed(67);
+		input.Cut = control && source.WasKeyPressed(88);
+		input.Paste = control && source.WasKeyPressed(86);
+		if (input.Paste) input.ClipboardText = Input::GetClipboardText();
+		input.WriteClipboard = [](const std::string& value) { return Input::SetClipboardText(value); };
+		const auto pressedOrRepeated = [&source](uint32_t key)
+		{
+			if (source.WasKeyPressed(key)) return true;
+			const auto& events = Input::GetFrameSnapshot().Events;
+			return std::any_of(events.begin(), events.end(), [key](const InputEventQueue::Event& event)
+			{ return event.Source == InputEventQueue::Device::Keyboard && event.Code == key
+				&& event.Transition == InputEventQueue::Action::Repeated; });
+		};
+		input.Backspace = pressedOrRepeated(259);
+		input.Delete = pressedOrRepeated(261);
+		input.CaretLeft = pressedOrRepeated(263);
+		input.CaretRight = pressedOrRepeated(262);
+		input.CaretHome = pressedOrRepeated(268);
+		input.CaretEnd = pressedOrRepeated(269);
+		input.ExtendSelection = source.IsKeyHeld(340) || source.IsKeyHeld(344);
+		input.SelectAll = source.WasKeyPressed(65) && (source.IsKeyHeld(341) || source.IsKeyHeld(345));
+		input.Cancel = source.WasKeyPressed(256);
+		input.FocusNext = source.WasKeyPressed(258) && !input.ExtendSelection;
+		input.FocusPrevious = source.WasKeyPressed(258) && input.ExtendSelection;
 		input.KeyboardMoveNext = source.WasKeyPressed(258)
 			|| source.WasKeyPressed(264) || source.WasKeyPressed(262);
 		input.KeyboardMoveNextHeld = source.IsKeyHeld(258)
@@ -1082,6 +1479,35 @@ namespace TomCat {
 		input.MousePressed = source.WasMouseButtonPressed(0);
 		input.MouseHeld = source.IsMouseButtonHeld(0);
 		input.MouseReleased = source.WasMouseButtonReleased(0);
+		const auto scroll = source.GetScrollDelta();
+		input.ScrollDelta = { scroll.X, scroll.Y };
+		input.TextInput = Input::GetTextInput();
+		input.DisplayFrame = Input::GetFrameSnapshot().FrameNumber;
+		const bool control = source.IsKeyHeld(341) || source.IsKeyHeld(345);
+		input.Copy = control && source.WasKeyPressed(67);
+		input.Cut = control && source.WasKeyPressed(88);
+		input.Paste = control && source.WasKeyPressed(86);
+		if (input.Paste) input.ClipboardText = Input::GetClipboardText();
+		input.WriteClipboard = [](const std::string& value) { return Input::SetClipboardText(value); };
+		const auto pressedOrRepeated = [&source](uint32_t key)
+		{
+			if (source.WasKeyPressed(key)) return true;
+			const auto& events = Input::GetFrameSnapshot().Events;
+			return std::any_of(events.begin(), events.end(), [key](const InputEventQueue::Event& event)
+			{ return event.Source == InputEventQueue::Device::Keyboard && event.Code == key
+				&& event.Transition == InputEventQueue::Action::Repeated; });
+		};
+		input.Backspace = pressedOrRepeated(259);
+		input.Delete = pressedOrRepeated(261);
+		input.CaretLeft = pressedOrRepeated(263);
+		input.CaretRight = pressedOrRepeated(262);
+		input.CaretHome = pressedOrRepeated(268);
+		input.CaretEnd = pressedOrRepeated(269);
+		input.ExtendSelection = source.IsKeyHeld(340) || source.IsKeyHeld(344);
+		input.SelectAll = source.WasKeyPressed(65) && (source.IsKeyHeld(341) || source.IsKeyHeld(345));
+		input.Cancel = source.WasKeyPressed(256);
+		input.FocusNext = source.WasKeyPressed(258) && !input.ExtendSelection;
+		input.FocusPrevious = source.WasKeyPressed(258) && input.ExtendSelection;
 		input.KeyboardMoveNext = source.WasKeyPressed(258)
 			|| source.WasKeyPressed(264) || source.WasKeyPressed(262);
 		input.KeyboardMoveNextHeld = source.IsKeyHeld(258)
@@ -1120,8 +1546,9 @@ namespace TomCat {
 
 	void RuntimeUISystem::UpdateWithInput(Scene& scene, entt::registry& registry,
 		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
-		const RuntimeUIInputFrame& input)
+		const RuntimeUIInputFrame& sourceInput)
 	{
+		RuntimeUIInputFrame input = sourceInput;
 		if (s_PointerCaptureScene != &scene)
 			ClearPointerCapture();
 		if (s_ControlOwnershipScene != &scene)
@@ -1148,6 +1575,9 @@ namespace TomCat {
 			button.RuntimeHovered = false;
 			button.RuntimeClickedThisFrame = false;
 		}
+		const ExtendedInteraction extended = UpdateExtendedControls(scene, registry,
+			layout, input, eventSystem && input.WindowFocused,
+			eventSystem && eventSystem->WrapNavigation);
 		if (!eventSystem)
 		{
 			for (const entt::entity value : registry.view<UIButton>())
@@ -1214,7 +1644,7 @@ namespace TomCat {
 			else if (button.RuntimePressed)
 				retainedPressed = true;
 		}
-		if (!buttons.empty() && focused == buttons.end())
+		if (!extended.OwnsKeyboard && !buttons.empty() && focused == buttons.end())
 		{
 			buttons.front().Value.GetComponent<UIButton>().RuntimeFocused = true;
 			focused = buttons.begin();
@@ -1231,13 +1661,7 @@ namespace TomCat {
 			Entity target = scene.FindEntityByUUID(*item);
 			if (!target || !ContainsTransformedPoint(layout, *item, mousePoint))
 				continue;
-			const bool imageTarget = target.HasComponent<UIImage>()
-				&& target.GetComponent<UIImage>().Enabled
-				&& target.GetComponent<UIImage>().RaycastTarget;
-			const bool textTarget = target.HasComponent<UIText>()
-				&& target.GetComponent<UIText>().Enabled
-				&& target.GetComponent<UIText>().RaycastTarget;
-			if (!imageTarget && !textTarget)
+			if (!IsRaycastTarget(target))
 				continue;
 
 			// The first graphic in reverse render order owns the pointer. Bubble the
@@ -1286,16 +1710,11 @@ namespace TomCat {
 		{
 			Entity captured = scene.FindEntityByUUID(*s_PointerCaptureTarget);
 			validPointerCapture = captured && scene.IsActiveInHierarchy(captured)
-				&& ((captured.HasComponent<UIImage>()
-						&& captured.GetComponent<UIImage>().Enabled
-						&& captured.GetComponent<UIImage>().RaycastTarget)
-					|| (captured.HasComponent<UIText>()
-						&& captured.GetComponent<UIText>().Enabled
-						&& captured.GetComponent<UIText>().RaycastTarget));
+				&& IsRaycastTarget(captured);
 			if (!validPointerCapture)
 				ClearPointerCapture();
 		}
-		bool handledInteraction = (input.MousePressed && pointerHandled)
+		bool handledInteraction = extended.Handled || (input.MousePressed && pointerHandled)
 			|| (input.MouseHeld && (validPointerCapture || hadPressed));
 
 		if (input.MousePressed && hovered)
@@ -1537,6 +1956,58 @@ namespace TomCat {
 	{
 		RenderEditorCanvas(scene, scene.m_Registry, editorViewProjection,
 			visibility);
+	}
+
+
+	std::string RuntimeUISystem::ResolveText(Scene& scene, Entity entity)
+	{
+		if (!entity) return {};
+		const std::string fallback = entity.HasComponent<UIText>() ? entity.GetComponent<UIText>().Text : std::string{};
+		if (!entity.HasComponent<UILocalizedText>() || !entity.GetComponent<UILocalizedText>().Enabled) return fallback;
+		const auto& key = entity.GetComponent<UILocalizedText>().Key;
+		auto* localization = FindScope<UILocalization>(scene, entity);
+		if (!localization || key.empty()) return fallback;
+		if (localization->RuntimeTableSource != localization->Table)
+		{
+			localization->RuntimeTranslations.clear();
+			localization->RuntimeTableSource = localization->Table;
+			try
+			{
+				if (localization->Table.size() <= 65536)
+				{
+					const auto table = YAML::Load(localization->Table);
+					if (table.IsMap())
+						for (const auto& locale : table)
+							if (locale.first.IsScalar() && locale.second.IsMap())
+								for (const auto& entry : locale.second)
+									if (entry.first.IsScalar() && entry.second.IsScalar())
+										localization->RuntimeTranslations[locale.first.as<std::string>()][entry.first.as<std::string>()] = entry.second.as<std::string>();
+				}
+			}
+			catch (const std::exception&) { localization->RuntimeTranslations.clear(); }
+		}
+		for (const auto& locale : { localization->Locale, localization->FallbackLocale })
+		{
+			const auto language = localization->RuntimeTranslations.find(locale);
+			if (language == localization->RuntimeTranslations.end()) continue;
+			const auto translated = language->second.find(key);
+			if (translated != language->second.end()) return translated->second;
+		}
+		return fallback;
+	}
+
+	bool RuntimeUISystem::SetSliderValue(Entity entity, float value)
+	{
+		if (!entity || !entity.HasComponent<UISlider>() || !Finite(value)) return false;
+		auto& slider = entity.GetComponent<UISlider>();
+		if (!Finite(slider.Minimum) || !Finite(slider.Maximum) || slider.Maximum < slider.Minimum) return false;
+		value = std::clamp(value, slider.Minimum, slider.Maximum);
+		if (slider.WholeNumbers) value = std::round(value);
+		else if (Finite(slider.Step) && slider.Step > 0.0f)
+			value = slider.Minimum + std::round((value - slider.Minimum) / slider.Step) * slider.Step;
+		value = std::clamp(value, slider.Minimum, slider.Maximum);
+		if (slider.Value != value) { slider.Value = value; ++slider.RuntimeChangeSerial; }
+		return true;
 	}
 
 	bool RuntimeUISystem::IsGameplayInputCaptured()

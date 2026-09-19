@@ -1658,6 +1658,7 @@ namespace TomCat {
 			// installs either a lazy or active callback). Never leave scripted
 			// entities alive without their managed lifecycle.
 			TC_Core_Error("Discarding a scripted runtime entity batch because no managed batch callback is installed");
+			++m_RuntimeEntityBatchFailureSerial;
 			for (UUID entityID : batch)
 			{
 				Entity entity = FindEntityByUUID(entityID);
@@ -1683,10 +1684,12 @@ namespace TomCat {
 		catch (const std::exception& exception)
 		{
 			TC_Core_Error("Runtime entity-created callback failed: {0}", exception.what());
+			++m_RuntimeEntityBatchFailureSerial;
 		}
 		catch (...)
 		{
 			TC_Core_Error("Runtime entity-created callback failed with an unknown exception");
+			++m_RuntimeEntityBatchFailureSerial;
 		}
 		m_FlushingRuntimeEntityCreates = false;
 		// OnCreate/OnEnable may mutate authoring physics or queue another Prefab.
@@ -3682,6 +3685,7 @@ namespace TomCat {
 
 	bool Scene::OnRuntimeStart()
 	{
+		TC_PROFILE_SCOPE("Scene Runtime Start");
 		if (m_RuntimeRunning)
 			return true;
 
@@ -3750,6 +3754,7 @@ namespace TomCat {
 
 	void Scene::OnRuntimeStop()
 	{
+		TC_PROFILE_SCOPE("Scene Runtime Stop");
 		// Disable collection before any script/body teardown. Stop never emits
 		// synthetic Exit events for a world that is being discarded.
 		m_RuntimeRunning = false;
@@ -3823,6 +3828,7 @@ namespace TomCat {
 
 	bool Scene::RunFixedRuntimeStep()
 	{
+		TC_PROFILE_SCOPE("Scene Fixed Step");
 		if (!m_RuntimeRunning || !m_PhysicsWorld)
 			return false;
 		if (!SynchronizeRuntimePhysicsDefinitions())
@@ -3841,6 +3847,7 @@ namespace TomCat {
 			m_RuntimeUIViewportOrigin, m_RuntimeUIScreenToFramebufferScale);
 		if (m_ScriptSceneSessionID != 0)
 		{
+			TC_PROFILE_SCOPE("Managed FixedUpdate");
 			scriptEngine.FixedUpdateAll(m_ScriptSceneSessionID, FixedRuntimeTimestep);
 			// Component structs are writable through managed proxies. Closing the
 			// callback phase always requires one fallback snapshot scan.
@@ -3877,7 +3884,10 @@ namespace TomCat {
 			poseIt->second.PreviousAngle = poseIt->second.CurrentAngle;
 		}
 		m_ContactListener->BeginStep();
-		m_PhysicsWorld->Step(FixedRuntimeTimestep, velocityIterations, positionIterations);
+		{
+			TC_PROFILE_SCOPE("Physics Box2D Step");
+			m_PhysicsWorld->Step(FixedRuntimeTimestep, velocityIterations, positionIterations);
+		}
 		m_ContactListener->EndStep();
 		for (const auto& [uuid, body] : m_RuntimeBodies)
 		{
@@ -3945,6 +3955,7 @@ namespace TomCat {
 
 	void Scene::OnUpdateRuntime(Timestep ts, bool render)
 	{
+		TC_PROFILE_SCOPE("Scene Runtime Update");
 		if (!m_RuntimeRunning || !m_PhysicsWorld)
 		{
 			TC_Core_Warn("Ignoring runtime update for a scene that has not been started");
@@ -3991,12 +4002,16 @@ namespace TomCat {
 
 		if (m_RuntimeRunning)
 		{
-			RuntimeUISystem::Update(*this, m_Registry, m_ViewportWidth,
-				m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
-				m_RuntimeUIViewportOrigin,
-				m_RuntimeUIScreenToFramebufferScale);
+			{
+				TC_PROFILE_SCOPE("Runtime UI Update");
+				RuntimeUISystem::Update(*this, m_Registry, m_ViewportWidth,
+					m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+					m_RuntimeUIViewportOrigin,
+					m_RuntimeUIScreenToFramebufferScale);
+			}
 			if (m_ScriptSceneSessionID != 0)
 			{
+				TC_PROFILE_SCOPE("Managed Update");
 				Scripting::ScriptEngine::Get().UpdateAll(m_ScriptSceneSessionID, frameDelta);
 				InvalidateRuntimePhysicsDefinitionScan();
 			}
@@ -4005,7 +4020,10 @@ namespace TomCat {
 			FlushPendingRuntimeEntityCreatesAtSafePoint();
 			if (!SynchronizeRuntimePhysicsDefinitions())
 				return;
-			AudioSceneRuntime::Update(*this, frameDelta);
+			{
+				TC_PROFILE_SCOPE("Audio Update");
+				AudioSceneRuntime::Update(*this, frameDelta);
+			}
 		}
 
 		if (render)
@@ -4096,6 +4114,7 @@ namespace TomCat {
 
 	void Scene::RenderRuntimeScene()
 	{
+		TC_PROFILE_SCOPE("Scene Runtime Render");
 		Entity mainCameraEntity = GetPrimaryCameraEntity();
 		if (mainCameraEntity)
 		{
@@ -4117,6 +4136,7 @@ namespace TomCat {
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		TC_PROFILE_SCOPE("Scene Editor Render");
 		if (!m_RuntimeRunning)
 			UpdateParticlePreviews(*this, m_Registry, ts.GetSeconds());
 		Renderer2D::BeginScene(camera);

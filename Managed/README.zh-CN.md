@@ -1,8 +1,8 @@
 # TomCat 托管脚本 V1
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-18 · [文档索引](../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-09-19 · [文档索引](../docs/README.md)
 
-V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v2，
+V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v3，
 ScriptManifest 为 v1。桌面托管使用 .NET 10；实验性 Web 目标会拒绝 C# 负载。
 
 ## 模块与构建
@@ -94,9 +94,10 @@ public static int GetManagedApi(NativeApiV1* nativeApi, ManagedApiV1* managedApi
 开头。原生输入表必须传入版本 1、不小于 V1 的表大小和全部 V1 回调。
 启动时先完整校验，再发布绑定；缺少回调返回 unavailable（-8），不会覆盖先前有效绑定。
 
-### ManagedApiV1 布局（Managed ABI v2）
+### ManagedApiV1 布局（Managed ABI v3）
 
-类型沿用历史名称，因为 v2 在稳定的 v1 前缀后追加回调。`Version` 和 `Size` 后严格依次为：
+类型沿用历史名称。v2 在稳定的 v1 前缀后追加 `ResolveDeferredCommandBatch`，
+v3 再追加供持久 UI/事件回调使用的 `InvokeMethod`。`Version` 和 `Size` 后严格依次为：
 
 ```text
 int CreateDomain(int32 domainKind, uint64* domainId)
@@ -118,6 +119,7 @@ int DestroyAttachments(uint64 sceneRuntimeId, uint64* attachmentIds, uint32 coun
 int InstantiateAttachments(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items,
                            uint32 count, NativeByteView fieldsJson)
 int ResolveDeferredCommandBatch(uint64 sceneRuntimeId, int32 committed)
+int InvokeMethod(uint64 sceneRuntimeId, uint64 attachmentId, NativeUtf8View methodName)
 ```
 
 `ResolveDeferredCommandBatch` 在原生命令批次完成暂存校验和实际重放后确认结果。
@@ -165,9 +167,10 @@ PrefabInstantiateDeferred
 
 `NativeApiV2` 是根据大小检测的扩展封装，稳定的 `NativeApiV1` 前缀仍用版本 1，
 后接 `QueryCapability`。可选 V1 能力表覆盖 Input、InputEvents、ApplicationPaths、Gameplay、
-Audio、AudioSpatial、RuntimeUI、Component、ComponentString、ComponentSchema、DeferredCommands
+Audio、AudioSpatial、RuntimeUI、Component、ComponentString、ComponentSchema、Scene、DeferredCommands
 和 DeferredCallbackTransactions。确切名称与校验规则见
-[NativeBridge.cs](TomCat.Managed/NativeBridge.cs)，不能仅从历史结构体名称推断能力。
+[NativeBridge.cs](TomCat.Managed/NativeBridge.cs) 与
+[NativeBridge.Scenes.cs](TomCat.Managed/NativeBridge.Scenes.cs)，不能仅从历史结构体名称推断能力。
 
 ### 延迟回调事务
 
@@ -216,15 +219,35 @@ Attachment ID 必须随机生成、非零，并在场景运行时中唯一；ABI
 Prefab 创建的脚本附件只在当前托管回调返回后通过 `InstantiateAttachments` 接入。
 新批次先恢复序列化字段，再调用 `OnCreate` 与 `OnEnable`；已有实例不会重复接收这些回调。
 
-## 场景与快照 Prefab API
+## 场景与 Prefab API
 
-`SceneManager` 提供活动 `SceneAsset` 和构建索引，可按场景 Handle/索引请求同步替换或重新加载。
-生命周期或物理回调中的请求由原生运行时在帧末安全点提交。
+`SceneManager.LoadScene` 和 `LoadSceneAsync` 接受已启用构建场景的资产或索引，
+模式可选 `SceneLoadMode.Single` 或 `Additive`。`ReloadActiveScene` 按 Single 语义重新加载。
+返回 `true` 表示请求已接受，实际提交在帧末安全点进行。异步加载在工作线程读取字节和验证包摘要，
+当前世界继续更新；模式校验、资源准备及激活仍在主线程，大场景的这一阶段仍可能产生长帧。
+
+在生命周期回调中读取 `LoadState`、`LoadProgress` 与 `LastError`。请求前设置
+`AllowSceneActivation = false`，可把已准备场景停留在 `Ready` / 0.9；恢复为 `true` 后允许激活。
+成功提交后状态为 `Completed`、进度为 1。`CancelPendingLoad` 取消尚未激活的加载，
+同一时间只允许一个异步加载请求处于待完成状态。
+
+`LoadedScenes` 返回已提交的场景资产列表；`SetActiveScene` 选择新建根实体的默认归属。
+`UnloadScene` 排队清理一个已加载资产的内容，不能单独卸载最后一个场景。
+叠加场景共享 ECS、物理世界和脚本会话，同一资产不能重复叠加。
+相机、输入焦点和音频监听器仍由共享世界中的游戏逻辑选择。
+
+`DontDestroyOnLoad(root)` 让根对象和子树跨 Single 加载及卸载保留原实体、托管实例与运行时状态。
+`SetPersistent(root, false)` 将子树重新归属活动场景。
+卸载父对象所属场景时，属于其他场景的存活子对象会先脱离父级，并保留世界变换。
+场景卸载不会强制清空全局资产缓存。新接口通过可选的 `TomCat.SceneApiV1` 能力表提供，
+保持原 Native V1 ABI。完整用法与失败语义见[场景流式加载工作流](../docs/SCENE_STREAMING.zh-CN.md)。
 
 脚本可序列化强类型 `SceneAsset` 与 `PrefabAsset` 字段。
-行为通过 `Instantiate(prefab, worldPosition, optionalParent)` 排队实例化快照 Prefab。
-实例获得新的 Scene UUID 与 AttachmentID；在托管生命周期派发可见前，完成层级、
+行为通过 `Instantiate(prefab, worldPosition, optionalParent)` 排队实例化 Prefab。
+运行时实例获得新的 Scene UUID 与 AttachmentID；在托管生命周期派发可见前，完成层级、
 `DistanceJoint2D` 和 C# `Entity` 字段的引用重映射。
+编辑器创作还支持关联实例更新、覆盖、Apply/Revert、嵌套与变体，见
+[Prefab 工作流](../docs/PREFAB_WORKFLOW.zh-CN.md)。
 
 ## 加载与卸载所有权
 

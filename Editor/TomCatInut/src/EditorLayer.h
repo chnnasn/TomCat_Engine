@@ -9,6 +9,7 @@
 #include "TomCat/Editor/SceneHistory.h"
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/ConsolePanel.h"
+#include "Panels/ProfilerPanel.h"
 #include "Scripting/ScriptProjectCompiler.h"
 #include "Scripting/ScriptMetadataCache.h"
 #include <functional>
@@ -72,6 +73,7 @@ namespace TomCat {
 		Entity InstantiatePrefab(AssetHandle handle, std::optional<UUID> parent,
 			std::optional<glm::vec3> rootWorldPosition);
 		void ReportPrefabOperation(bool succeeded, std::string message);
+		void RefreshLinkedPrefabs();
 		void ResizeSceneForGameView(const Ref<Scene>& scene);
 		void CommitRuntimeSceneTransition();
 		void ResetSceneInteractionState();
@@ -214,6 +216,7 @@ namespace TomCat {
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
 		ConsolePanel m_ConsolePanel;
+		ProfilerPanel m_ProfilerPanel;
 		ScriptProjectCompiler m_ScriptCompiler;
 		ScriptMetadataCache m_ScriptMetadata;
 		float m_ScriptSourcePollCountdown = 0.0f;
@@ -264,6 +267,14 @@ namespace TomCat {
 		Ref<Project> m_CurrentProject;
 		std::filesystem::path m_StartupProjectPath;
 		SceneHistory m_SceneHistory;
+		uint64_t m_PrefabImportRevision = 0;
+		struct PrefabFileEdit
+		{
+			SceneHistory::StateId BeforeState = 0, AfterState = 0;
+			AssetHandle Asset{ 0 };
+			std::string Before, After;
+		};
+		std::vector<PrefabFileEdit> m_PrefabFileEdits;
 		EditorRecoveryService m_RecoveryService;
 		EditorProjectLock m_ProjectLock;
 		std::optional<EditorRecoveryService::RecoveryCandidate> m_PendingRecovery;
@@ -315,6 +326,7 @@ namespace TomCat {
 		bool m_ShowInspectorPanel = true;
 		bool m_ShowProjectPanel = true;
 		bool m_ShowConsolePanel = false;
+		bool m_ShowProfilerPanel = false;
 		bool m_ShowBuildSettingsPanel = false;
 		bool m_FocusBuildSettingsPanel = false;
 		uint32_t m_LastSavedPanelVisibilityMask = 0;

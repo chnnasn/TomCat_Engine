@@ -312,6 +312,7 @@ namespace TomCat {
 		RuntimeEntityBatchCreatedCallback m_RuntimeEntityBatchCreatedCallback;
 		std::vector<UUID> m_PendingRuntimeEntityCreates;
 		bool m_FlushingRuntimeEntityCreates = false;
+		uint64_t m_RuntimeEntityBatchFailureSerial = 0;
 		Physics2DSettings m_Physics2DSettings;
 		std::unordered_map<UUID, entt::entity> m_EntityMap;
 		std::unordered_map<UUID, UUID> m_ParentMap;
@@ -322,6 +323,7 @@ namespace TomCat {
 		friend class RuntimeUISystem;
 		friend class SceneContactFilter2D;
 		friend class SceneSerializer;
+		friend class SceneManager;
 		friend class SceneHierarchyPanel;
 		friend class EditorLayer;
 		friend class Scripting::ScriptEngine;

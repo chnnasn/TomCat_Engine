@@ -5,17 +5,23 @@
 #include "TomCat/Project/ProjectSettings.h"
 
 #include <cstdint>
+#include <atomic>
+#include <future>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace TomCat {
 
-	// Owns the single runtime Scene and performs synchronous, replacement-only
-	// transitions. Requests stage and validate a fresh Scene while the current
-	// Scene remains alive; CommitPendingTransition is intentionally separate so
-	// callers can invoke it only at a frame-end safe point.
+	enum class SceneLoadMode : uint32_t { Single, Additive };
+	enum class SceneLoadState : uint32_t { Idle, Reading, Ready, Completed, Failed, Cancelled };
+
+	// Loaded scene assets compose into one ECS/physics/script world. Asset ownership
+	// is tracked separately so unloading a scene leaves other scenes and persistent
+	// roots alive, including their managed instances. All mutation commits at frame end.
 	class SceneManager final
 	{
 	public:
@@ -36,8 +42,20 @@ namespace TomCat {
 		// re-reading the on-disk asset. The identity must still be an enabled build
 		// Scene so C# transitions use exactly the same list as the Player.
 		bool StartPreparedScene(const Ref<Scene>& scene, AssetHandle sceneHandle);
-		bool RequestLoadScene(AssetHandle scene);
-		bool RequestLoadScene(uint32_t buildIndex);
+		bool RequestLoadScene(AssetHandle scene, SceneLoadMode mode = SceneLoadMode::Single);
+		bool RequestLoadScene(uint32_t buildIndex, SceneLoadMode mode = SceneLoadMode::Single);
+		bool RequestLoadSceneAsync(AssetHandle scene, SceneLoadMode mode = SceneLoadMode::Single);
+		bool RequestLoadSceneAsync(uint32_t buildIndex, SceneLoadMode mode = SceneLoadMode::Single);
+		bool CancelPendingLoad();
+		void SetAllowSceneActivation(bool allow) { m_AllowSceneActivation = allow; }
+		bool GetAllowSceneActivation() const { return m_AllowSceneActivation; }
+		SceneLoadState GetLoadState() const { return m_LoadState; }
+		float GetLoadProgress() const;
+		bool RequestUnloadScene(AssetHandle scene);
+		bool SetActiveScene(AssetHandle scene);
+		bool SetEntityPersistent(Entity entity, bool persistent = true);
+		bool IsEntityPersistent(Entity entity) const;
+		const std::vector<AssetHandle>& GetLoadedSceneHandles() const { return m_LoadedScenes; }
 		bool RequestReload();
 		bool CommitPendingTransition();
 		void Stop();
@@ -59,7 +77,7 @@ namespace TomCat {
 		{
 			return m_BuildSceneHandles;
 		}
-		bool HasPendingTransition() const { return static_cast<bool>(m_PendingScene); }
+		bool HasPendingTransition() const { return m_PendingScene || m_AsyncRead.valid() || !m_PendingUnloads.empty(); }
 		const std::string& GetLastError() const { return m_LastError; }
 
 		// The Player/Editor runtime owner binds one non-owning instance for native
@@ -75,7 +93,13 @@ namespace TomCat {
 	private:
 		bool Configure(AssetHandle entryScene,
 			std::vector<AssetHandle> buildScenes);
-		bool StageScene(AssetHandle scene, uint32_t buildIndex);
+		bool StageScene(AssetHandle scene, uint32_t buildIndex, SceneLoadMode mode);
+		bool StageBytes(std::vector<uint8_t> bytes, AssetHandle scene, uint32_t buildIndex, SceneLoadMode mode);
+		bool CommitComposedScene(const Ref<Scene>& source, AssetHandle handle, uint32_t buildIndex, SceneLoadMode mode);
+		bool MergeScene(const Ref<Scene>& source, std::vector<UUID>& created, std::string& error);
+		void ReconcileEntityOwnership();
+		bool UnloadSceneNow(AssetHandle handle);
+		void ResetSceneOwnership();
 		std::optional<uint32_t> FindBuildIndex(AssetHandle scene) const;
 		bool CheckOwnerThread(const char* operation);
 		bool Fail(std::string message);
@@ -102,6 +126,19 @@ namespace TomCat {
 		Ref<Scene> m_PendingScene;
 		AssetHandle m_PendingSceneHandle = AssetHandle(0);
 		int32_t m_PendingBuildIndex = -1;
+		SceneLoadMode m_PendingLoadMode = SceneLoadMode::Single;
+		SceneLoadState m_LoadState = SceneLoadState::Idle;
+		bool m_AllowSceneActivation = true;
+		bool m_Committing = false;
+		bool m_Stopping = false;
+		struct AsyncReadState { std::atomic<bool> Cancelled{false}; std::atomic<float> Progress{0.0f}; };
+		struct AsyncReadResult { std::vector<uint8_t> Bytes; std::string Error; };
+		std::shared_ptr<AsyncReadState> m_AsyncState;
+		std::future<AsyncReadResult> m_AsyncRead;
+		std::vector<AssetHandle> m_LoadedScenes;
+		std::vector<AssetHandle> m_PendingUnloads;
+		std::unordered_map<UUID, AssetHandle> m_EntityOwners;
+		std::unordered_set<UUID> m_PersistentRoots;
 		std::string m_LastError;
 	};
 

@@ -1504,6 +1504,8 @@ public sealed class LifecycleProbe : TomCatBehaviour
         GetComponent<Rigidbody2D>().LinearVelocity = new Vector2(0.0f, 5.0f);
     }
     protected override void OnUpdate(float dt) => Entity.Tag = Entity.Tag == "fixed" ? "updated" : "bad-update";
+    protected override void OnLateUpdate(float dt) { }
+    public void OnButtonClick() { }
     protected override void OnCollisionEnter2D(Collision2D collision) => Entity.Name = "collision-received";
 }
 )CS" + std::string("// ") + std::string(sourceMarker) + "\n");

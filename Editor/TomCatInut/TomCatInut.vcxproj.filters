@@ -24,8 +24,14 @@
     <ClInclude Include="src\EditorLayer.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\EditorPlayToolbar.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\Player\PlayerBuilder.h">
       <Filter>src\Player</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SceneToolbarDrawing.h">
+      <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\Scripting\ScriptEditorMetadata.h">
       <Filter>src\Scripting</Filter>
@@ -40,6 +46,9 @@
       <Filter>src\panels</Filter>
     </ClInclude>
     <ClInclude Include="src\panels\ContentBrowserPanel.h">
+      <Filter>src\panels</Filter>
+    </ClInclude>
+    <ClInclude Include="src\panels\ProfilerPanel.h">
       <Filter>src\panels</Filter>
     </ClInclude>
     <ClInclude Include="src\panels\SceneHierarchyPanel.h">
@@ -66,6 +75,9 @@
       <Filter>src\panels</Filter>
     </ClCompile>
     <ClCompile Include="src\panels\ContentBrowserPanel.cpp">
+      <Filter>src\panels</Filter>
+    </ClCompile>
+    <ClCompile Include="src\panels\ProfilerPanel.cpp">
       <Filter>src\panels</Filter>
     </ClCompile>
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp">
