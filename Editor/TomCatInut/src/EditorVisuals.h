@@ -10,6 +10,12 @@
 
 namespace TomCat {
 inline std::weak_ptr<EditorIconSet> g_EditorVisualIcons;
+// All editor panels share the same non-collapsible window contract. NoCollapse
+// also expands windows restored from an older layout's collapsed state.
+inline bool BeginEditorWindow(const char* name, bool* open = nullptr, ImGuiWindowFlags flags = 0)
+{
+    return ImGui::Begin(name, open, flags | ImGuiWindowFlags_NoCollapse);
+}
 // Use the project's packaged editor artwork. Only search fields without an icon
 // set use the small procedural magnifier below.
 inline void DrawEditorGlyph(ImDrawList* draw, const Ref<EditorIconSet>& icons,

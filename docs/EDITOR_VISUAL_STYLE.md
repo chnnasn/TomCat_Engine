@@ -53,3 +53,11 @@
 本次截图修正验证：Release 编译通过；ProfilerRegression、InputRegression 通过。原生界面已核对 Stats 定位和完整内容、Console 宽窄布局和搜索过滤、Profiler 录制/暂停/选帧/模块弹层、标签 Add Tab 和最大化还原，以及 Inspector 标题锁定在切换实体后保持原对象。
 
 最终素材复核：EditorIconSet 沿用 HEAD 原始映射；组件、场景、播放、可见性、搜索与资源树均从 Packages 图标集取图。Add Tab 子菜单复用 Scene/Game/Hierarchy/Inspector/Project 图标，Add Component 复用 add.png。再次 Release 编译通过；原生检查确认锁定位于标签栏最右端、Packages 固定显示、Two Column 下 Circle/Square 显示真实图片缩略图。
+
+## 缩略图与窗口折叠修正
+
+- Project 单列和网格都使用编辑器独立的图片预览缓存，Packages 内未注册的图片也能显示实际内容；只读图片不再被通用只读图标替代。
+- 原有 Packages 图标素材和映射保持不变，预览及整套编辑器图标通过现有纹理产物管线生成无压缩 mipmap，减少细线缩小时的跳点；不改运行时纹理或资源导入设置。
+- 树行图标按字体/DPI 缩放，图片按比例适配并对齐像素。不可见文件行不加载预览；缓存定时检测源文件变动，并在绘制前按闲置时间、数量和估算显存清理。
+- 所有桌面编辑器面板共用 BeginEditorWindow，强制 NoCollapse；次级窗口同样适用，旧布局的折叠状态会自动展开。编辑器主题隐藏标题栏菜单三角，Hub 保持原样；目录树与组件分组仍可展开收起。
+- 验证：Release 编译成功（独立输出目录，保留当前有未保存修改的编辑器）；ImporterRegression 通过。使用隔离示例副本原生检查 Asset 图片单列、Shader 图标、Profiler 停靠页签及 Editor Preferences 浮动窗口；双击浮动窗口标题不会折叠。

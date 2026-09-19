@@ -115,7 +115,7 @@ namespace TomCat {
         auto& profiler=FrameProfiler::Get();
         if(open && !*open) { profiler.SetRecording(false); return; }
         PrepareEditorToolWindow(ImVec2(1120,760),ImVec2(640,440));
-        if(!ImGui::Begin("Profiler",open)) { ImGui::End(); return; }
+        if(!BeginEditorWindow("Profiler",open)) { ImGui::End(); return; }
         const float font=ImGui::GetFontSize(), frameHeight=ImGui::GetFrameHeight();
         auto summaries=profiler.Summaries();
         int selected=-1;

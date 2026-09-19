@@ -157,7 +157,7 @@ namespace TomCat {
 		}
 
 		PrepareEditorToolWindow(ImVec2(960,560),ImVec2(420,280));
-        const bool visible = ImGui::Begin("Console", open);
+        const bool visible = BeginEditorWindow("Console", open);
 		m_Docked = ImGui::IsWindowDocked();
 		m_Focused = visible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		if (!visible)

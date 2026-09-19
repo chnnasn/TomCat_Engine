@@ -2503,7 +2503,7 @@ namespace TomCat {
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 		ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImGui::GetStyleColorVec4(ImGuiCol_TitleBg));
-		ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
+		BeginEditorWindow("DockSpace Demo", &dockspaceOpen, window_flags);
 		ImGui::PopStyleColor();
 		ImGui::PopStyleVar();
 
@@ -2655,7 +2655,7 @@ namespace TomCat {
         if (m_ShowRuntimeScenes)
         {
             PrepareEditorToolWindow(ImVec2(720,520));
-            if(ImGui::Begin("Runtime Scenes",&m_ShowRuntimeScenes))
+            if(BeginEditorWindow("Runtime Scenes",&m_ShowRuntimeScenes))
             {
                 if(!IsSceneRunning()) ImGui::TextWrapped("Enter Play mode to inspect loaded scenes, control asynchronous loading and mark persistent roots.");
                 else
@@ -2708,7 +2708,7 @@ namespace TomCat {
         if(m_ShowEditorPreferences)
         {
             PrepareEditorToolWindow(ImVec2(620,420));
-            if(ImGui::Begin("Editor Preferences",&m_ShowEditorPreferences))
+            if(BeginEditorWindow("Editor Preferences",&m_ShowEditorPreferences))
             {
                 ImGui::TextUnformatted("Interface"); ImGui::Separator();
                 float scale=m_EditorUIScale;
@@ -2733,7 +2733,7 @@ namespace TomCat {
 		// Scene is a fixed viewport. Overlay items may extend ImGui's content
 		// bounds, but must never scroll or shrink the rendered camera area.
 		ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
-		const bool sceneVisible = ImGui::Begin("Scene###Scene", &m_ShowScenePanel,
+		const bool sceneVisible = BeginEditorWindow("Scene###Scene", &m_ShowScenePanel,
 			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar
 				| ImGuiWindowFlags_NoScrollWithMouse);
 		m_ScenePanelDocked = ImGui::IsWindowDocked();
@@ -2981,7 +2981,7 @@ namespace TomCat {
 		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
-		ImGui::Begin("Game", &m_ShowGamePanel,
+		BeginEditorWindow("Game", &m_ShowGamePanel,
 			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollWithMouse);
 		m_GamePanelDocked = ImGui::IsWindowDocked();
 		const bool gameViewportFocused = ImGui::IsWindowFocused(
@@ -3259,7 +3259,7 @@ namespace TomCat {
 			m_FocusBuildSettingsPanel = false;
 		}
 		PrepareEditorToolWindow(ImVec2(920,740),ImVec2(680,500));
-		const bool buildSettingsVisible = ImGui::Begin("Build Settings",
+		const bool buildSettingsVisible = BeginEditorWindow("Build Settings",
 			&m_ShowBuildSettingsPanel, ImGuiWindowFlags_NoDocking);
 		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
 			m_EditorPanelCycleIndex = 0;
