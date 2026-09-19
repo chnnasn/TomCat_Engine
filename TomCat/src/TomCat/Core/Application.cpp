@@ -198,6 +198,7 @@ namespace TomCat {
 			return false;
 		if (!std::isfinite(deltaSeconds) || deltaSeconds < 0.0f)
 			throw std::invalid_argument("Frame delta must be finite and nonnegative");
+		ScopedProfileFrame profileFrame(deltaSeconds);
 		{
 			TC_PROFILE_SCOPE("RunLoop");
 			// Poll first, then freeze one immutable input snapshot. Both native
@@ -210,6 +211,7 @@ namespace TomCat {
 				return false;
 
 			Timestep timestep = deltaSeconds;
+			Renderer::BeginProfileFrame(profileFrame.ID);
 
 			// Files are hashed and imported on worker threads, but registry updates
 			// and runtime cache invalidation must be published from the application
@@ -249,7 +251,11 @@ namespace TomCat {
 
 			}
 
-			m_Window->Present();
+			Renderer::EndProfileFrame();
+			{
+				TC_PROFILE_SCOPE("Present / VSync wait");
+				m_Window->Present();
+			}
 		}
 		return m_Running;
 	}

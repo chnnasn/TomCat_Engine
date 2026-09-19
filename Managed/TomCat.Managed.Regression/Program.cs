@@ -9,7 +9,7 @@ using TomCat.ScriptHost;
 
 namespace TomCat.Managed.Regression;
 
-internal static unsafe class Program
+internal static unsafe partial class Program
 {
     private const ulong SceneSession = 11;
     private const ulong RuntimeGeneration = 7;
@@ -160,6 +160,7 @@ internal static unsafe class Program
 			byte[] pdbB = File.Exists(pdbBPath) ? File.ReadAllBytes(pdbBPath) : [];
 
 			VerifyBootstrapAbi(assembly, pdb);
+			VerifySceneStreamingCapability();
 			ScriptDomain primary = BeginRuntimeUnload(assembly, pdb);
 			Check(PollUntilUnloaded(primary), "primary collectible ALC leaked");
 			ScriptDomain projectB = BeginProjectBSwitchUnload(assemblyB, pdbB);
@@ -3370,6 +3371,14 @@ internal static unsafe class Program
 			return -1;
 		string capability = Encoding.UTF8.GetString(
 			new ReadOnlySpan<byte>(name.Data, (int)name.Length));
+		if (capability == "TomCat.SceneApiV1")
+		{
+			*required = (uint)sizeof(NativeSceneApiV1);
+			if (minimumVersion > 1) return -4;
+			if (output is null || capacity < sizeof(NativeSceneApiV1)) return -6;
+			*(NativeSceneApiV1*)output = CreateSceneStreamingTestApi();
+			return 0;
+		}
 		if (capability == "TomCat.InputApiV1")
 		{
 			*required = (uint)sizeof(NativeInputApiV1);

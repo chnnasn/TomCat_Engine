@@ -103,6 +103,7 @@
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Debug-windows-x86_64/TomCatInut\" &gt; nul
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Circle.tga &amp; exit /b 1)
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
+if not exist "$(ProjectDir)Packages\fonts\opensans\OpenSans-Regular.ttf" (echo ERROR: Required package asset is missing: fonts\opensans\OpenSans-Regular.ttf &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
@@ -139,6 +140,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Release-windows-x86_64/TomCatInut\" &gt; nul
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Circle.tga &amp; exit /b 1)
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
+if not exist "$(ProjectDir)Packages\fonts\opensans\OpenSans-Regular.ttf" (echo ERROR: Required package asset is missing: fonts\opensans\OpenSans-Regular.ttf &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
@@ -175,6 +177,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <Command>if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Dist-windows-x86_64/TomCatInut\" &gt; nul
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Circle.tga &amp; exit /b 1)
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
+if not exist "$(ProjectDir)Packages\fonts\opensans\OpenSans-Regular.ttf" (echo ERROR: Required package asset is missing: fonts\opensans\OpenSans-Regular.ttf &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
@@ -183,12 +186,15 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClInclude Include="src\EditorDragDrop.h" />
     <ClInclude Include="src\EditorIcons.h" />
     <ClInclude Include="src\EditorLayer.h" />
+    <ClInclude Include="src\EditorPlayToolbar.h" />
     <ClInclude Include="src\Player\PlayerBuilder.h" />
+    <ClInclude Include="src\SceneToolbarDrawing.h" />
     <ClInclude Include="src\Scripting\ScriptEditorMetadata.h" />
     <ClInclude Include="src\Scripting\ScriptMetadataCache.h" />
     <ClInclude Include="src\Scripting\ScriptProjectCompiler.h" />
     <ClInclude Include="src\panels\ConsolePanel.h" />
     <ClInclude Include="src\panels\ContentBrowserPanel.h" />
+    <ClInclude Include="src\panels\ProfilerPanel.h" />
     <ClInclude Include="src\panels\SceneHierarchyPanel.h" />
   </ItemGroup>
   <ItemGroup>
@@ -199,6 +205,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClCompile Include="src\TomCatInputApp.cpp" />
     <ClCompile Include="src\panels\ConsolePanel.cpp" />
     <ClCompile Include="src\panels\ContentBrowserPanel.cpp" />
+    <ClCompile Include="src\panels\ProfilerPanel.cpp" />
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp" />
   </ItemGroup>
   <ItemGroup>

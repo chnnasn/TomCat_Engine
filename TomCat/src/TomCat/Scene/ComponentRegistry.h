@@ -231,6 +231,60 @@ namespace TomCat {
 		inline constexpr uint64_t UIButton = 0x9f01000000000006ULL;
 		inline constexpr uint64_t UIEventSystem = 0x9f01000000000007ULL;
 		inline constexpr uint64_t UILayoutGroup = 0x9f01000000000008ULL;
+		inline constexpr uint64_t UISlider = 0x9f01000000000009ULL;
+		namespace UISliderProperties {
+			inline constexpr uint64_t Enabled = 0x9f01900000000001ULL;
+			inline constexpr uint64_t Interactable = 0x9f01900000000002ULL;
+			inline constexpr uint64_t Minimum = 0x9f01900000000003ULL;
+			inline constexpr uint64_t Maximum = 0x9f01900000000004ULL;
+			inline constexpr uint64_t Value = 0x9f01900000000005ULL;
+			inline constexpr uint64_t Step = 0x9f01900000000006ULL;
+			inline constexpr uint64_t WholeNumbers = 0x9f01900000000007ULL;
+			inline constexpr uint64_t Vertical = 0x9f01900000000008ULL;
+			inline constexpr uint64_t TrackColor = 0x9f01900000000009ULL;
+			inline constexpr uint64_t FillColor = 0x9f0190000000000aULL;
+		}
+		inline constexpr uint64_t UIScrollView = 0x9f0100000000000aULL;
+		namespace UIScrollViewProperties {
+			inline constexpr uint64_t Enabled = 0x9f01a00000000001ULL;
+			inline constexpr uint64_t Horizontal = 0x9f01a00000000002ULL;
+			inline constexpr uint64_t Vertical = 0x9f01a00000000003ULL;
+			inline constexpr uint64_t ContentSize = 0x9f01a00000000004ULL;
+			inline constexpr uint64_t Offset = 0x9f01a00000000005ULL;
+			inline constexpr uint64_t ScrollSpeed = 0x9f01a00000000006ULL;
+		}
+		inline constexpr uint64_t UIInputField = 0x9f0100000000000bULL;
+		namespace UIInputFieldProperties {
+			inline constexpr uint64_t Enabled = 0x9f01b00000000001ULL;
+			inline constexpr uint64_t Interactable = 0x9f01b00000000002ULL;
+			inline constexpr uint64_t Text = 0x9f01b00000000003ULL;
+			inline constexpr uint64_t Placeholder = 0x9f01b00000000004ULL;
+			inline constexpr uint64_t CharacterLimit = 0x9f01b00000000005ULL;
+			inline constexpr uint64_t Password = 0x9f01b00000000006ULL;
+			inline constexpr uint64_t ReadOnly = 0x9f01b00000000007ULL;
+		}
+		inline constexpr uint64_t UITheme = 0x9f0100000000000cULL;
+		namespace UIThemeProperties {
+			inline constexpr uint64_t Enabled = 0x9f01c00000000001ULL;
+			inline constexpr uint64_t TextColor = 0x9f01c00000000002ULL;
+			inline constexpr uint64_t ImageColor = 0x9f01c00000000003ULL;
+			inline constexpr uint64_t AccentColor = 0x9f01c00000000004ULL;
+			inline constexpr uint64_t Font = 0x9f01c00000000005ULL;
+			inline constexpr uint64_t FontScale = 0x9f01c00000000006ULL;
+		}
+		inline constexpr uint64_t UILocalization = 0x9f0100000000000dULL;
+		namespace UILocalizationProperties {
+			inline constexpr uint64_t Enabled = 0x9f01d00000000001ULL;
+			inline constexpr uint64_t Locale = 0x9f01d00000000002ULL;
+			inline constexpr uint64_t FallbackLocale = 0x9f01d00000000003ULL;
+			inline constexpr uint64_t Table = 0x9f01d00000000004ULL;
+		}
+		inline constexpr uint64_t UILocalizedText = 0x9f0100000000000eULL;
+		namespace UILocalizedTextProperties {
+			inline constexpr uint64_t Enabled = 0x9f01e00000000001ULL;
+			inline constexpr uint64_t Key = 0x9f01e00000000002ULL;
+		}
+
 
 			namespace TextRendererProperties {
 			inline constexpr uint64_t Enabled = 0x9f01100000000001ULL;

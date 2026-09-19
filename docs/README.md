@@ -1,6 +1,6 @@
 # TomCat 中文文档索引
 
-核对日期：2026-09-18。本文覆盖仓库自有文档；`vendor/`、`TomCat/vendor/` 内的上游资料及许可证按原项目维护。
+核对日期：2026-09-19。本文覆盖仓库自有文档；`vendor/`、`TomCat/vendor/` 内的上游资料及许可证按原项目维护。
 
 | 文档 | 中文版本 | 英文版本 |
 | --- | --- | --- |
@@ -12,12 +12,17 @@
 | 浏览器中文字形与字体来源 | [字体说明](../Web/fonts/README.zh-CN.md) | [Font notes](../Web/fonts/README.md) |
 | 2D 物理示例 | [PhysicsPlayground](../Samples/PhysicsPlayground/README.md) | — |
 | 桌面实机录制、历史问题与复现 | [录制说明](portfolio/README.md) | — |
+| Prefab、场景、调试与 UI 目标及交付边界 | [能力开发方案](PRODUCT_CAPABILITIES_PLAN.zh-CN.md) | — |
+| 关联 Prefab、覆盖、嵌套和变体 | [Prefab 工作流](PREFAB_WORKFLOW.zh-CN.md) | — |
+| 异步加载、叠加、持久对象与显式卸载 | [场景流式加载](SCENE_STREAMING.zh-CN.md) | — |
+| 性能采集、资源统计与 C# 断点流程 | [调试与性能分析](DEBUGGING_AND_PROFILING.md) | — |
+| 滑条、滚动、输入、主题与游戏本地化 | [运行时 UI 控件](RUNTIME_UI_PRODUCT.zh-CN.md) | — |
 
 ## 版本依据
 
 产品和格式版本以 [Version.h](../TomCat/src/TomCat/Core/Version.h) 为准。
 当前产品版本为 `0.2.0`，项目写入 v4、场景写入 v11、Prefab 写入 v1、TCPAK 写入 v7；
-TCPAK 读取兼容 v5/v6/v7，Native ABI 为 v1、Managed ABI 为 v2、脚本清单为 v1。
+TCPAK 读取兼容 v5/v6/v7，Native ABI 为 v1、Managed ABI 为 v3、脚本清单为 v1。
 TCPAK v6 引入 BootManifest，v7 在索引中增加逐条目 SHA-256 摘要。
 
 ## 验证入口

@@ -5,6 +5,7 @@
 #include "TomCat/Scene/Components.h"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string_view>
 #include <vector>
@@ -103,6 +104,28 @@ namespace TomCat {
 		bool MousePressed = false;
 		bool MouseHeld = false;
 		bool MouseReleased = false;
+		glm::vec2 ScrollDelta{ 0.0f };
+		std::string TextInput;
+		bool Backspace = false;
+		bool Delete = false;
+		bool CaretLeft = false;
+		bool CaretRight = false;
+		bool CaretHome = false;
+		bool CaretEnd = false;
+		bool SelectAll = false;
+		bool ExtendSelection = false;
+		bool Cancel = false;
+		bool FocusNext = false;
+		bool FocusPrevious = false;
+		bool Copy = false;
+		bool Cut = false;
+		bool Paste = false;
+		std::string ClipboardText;
+		// Live input binds the platform clipboard; tests can supply an isolated sink.
+		std::function<bool(const std::string&)> WriteClipboard;
+		// Zero treats each injected frame as a distinct transaction. Live updates
+		// carry Input's display frame ID to avoid replaying text on repeated Update.
+		uint64_t DisplayFrame = 0;
 		bool KeyboardMoveNext = false;
 		bool KeyboardMoveNextHeld = false;
 		bool KeyboardMoveNextReleased = false;
@@ -192,6 +215,10 @@ namespace TomCat {
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
 
 		static bool IsGameplayInputCaptured();
+		// Resolves the nearest enabled localization scope, then its fallback locale.
+		// Missing keys retain the authored UIText.Text value.
+		static std::string ResolveText(Scene& scene, Entity entity);
+		static bool SetSliderValue(Entity entity, float value);
 		static bool WasButtonClicked(Entity entity);
 		static uint64_t GetButtonClickSerial(Entity entity);
 		static bool FocusButton(Scene& scene, entt::registry& registry, Entity entity);

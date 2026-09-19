@@ -55,6 +55,9 @@ namespace TomCat {
 		SceneHierarchyPanel(const Ref<Scene>& scene);
 
 		void SetContext(const Ref<Scene>& scene, bool clearSelection = true, bool remapSelection = false);
+		// Use after replacing a Scene registry in place. Entity wrappers from the
+		// old registry cannot be queried; selection must be captured beforehand.
+		void ResetForSceneReplacement(const Ref<Scene>& scene, UUID selectedEntity);
 		void SetProject(const Ref<Project>& project);
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 
@@ -152,6 +155,8 @@ namespace TomCat {
 			m_PrefabInstantiateCallback = std::move(callback);
 		}
 		void SetPrefabCreationAllowed(bool allowed) { m_PrefabCreationAllowed = allowed; }
+		void SetPrefabActionCallback(std::function<void(Entity, int)> callback)
+		{ m_PrefabActionCallback = std::move(callback); }
 		void SetScriptMetadataProvider(ScriptMetadataProvider provider)
 		{
 			m_ScriptMetadataProvider = std::move(provider);
@@ -357,6 +362,9 @@ namespace TomCat {
 		AssetRevealCallback m_AssetRevealCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
 		PrefabCreateCallback m_PrefabCreateCallback;
+		std::function<void(Entity, int)> m_PrefabActionCallback;
+		UUID m_PendingPrefabRoot{ 0 };
+		int m_PendingPrefabAction = 0;
 		PrefabInstantiateCallback m_PrefabInstantiateCallback;
 		ScriptMetadataProvider m_ScriptMetadataProvider;
 		bool m_PrefabCreationAllowed = true;

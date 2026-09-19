@@ -16,7 +16,7 @@ internal sealed class DeferredCallbackProtocolException : InvalidOperationExcept
 		: base(message, innerException) { }
 }
 
-internal static unsafe class NativeBridge
+internal static unsafe partial class NativeBridge
 {
 	private const int NativeInvalidArgument = -1;
 	private const int NativeVersionMismatch = -4;
@@ -72,6 +72,8 @@ internal static unsafe class NativeBridge
 		NativeApiV1 candidate = *api;
 		if (!HasRequiredCallbacks(candidate))
 			return NativeUnavailable;
+		NativeSceneApiV1 sceneCandidate = default;
+		bool hasSceneCandidate = TryReadSceneCapability(api, out sceneCandidate);
 		NativeInputApiV1 inputCandidate = default;
 		bool hasInputCandidate = TryReadInputCapability(api, out inputCandidate);
 		NativeInputEventsApiV1 inputEventsCandidate = default;
@@ -113,6 +115,11 @@ internal static unsafe class NativeBridge
 		// complete process-lifetime table and its bound state untouched.
 		lock (s_bindGate)
 		{
+			if (hasSceneCandidate && !s_sceneBound)
+			{
+				s_sceneApi = sceneCandidate;
+				Volatile.Write(ref s_sceneBound, true);
+			}
 			if (!s_bound)
 			{
 				s_api = candidate;

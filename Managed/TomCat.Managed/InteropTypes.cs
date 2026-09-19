@@ -195,6 +195,22 @@ public unsafe struct NativeApiV2
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeSceneApiV1
+{
+    public uint Version;
+    public uint Size;
+    public delegate* unmanaged[Cdecl]<ulong, int, uint, int, int> RequestLoad;
+    public delegate* unmanaged[Cdecl]<ulong, int> RequestUnload;
+    public delegate* unmanaged[Cdecl]<ulong, int> SetActive;
+    public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetPersistent;
+    public delegate* unmanaged[Cdecl]<uint*, float*, int*, int> GetLoadStatus;
+    public delegate* unmanaged[Cdecl]<int, int> SetAllowActivation;
+    public delegate* unmanaged[Cdecl]<int> CancelLoad;
+    public delegate* unmanaged[Cdecl]<ulong*, uint, uint*, int> GetLoadedScenes;
+    public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetLastError;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public unsafe struct NativeInputApiV1
 {
 	public uint Version;

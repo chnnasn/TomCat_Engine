@@ -136,6 +136,26 @@ namespace TomCat {
 			value.RuntimeClickSerial = 0;
 		}
 
+		void ResetTransient(::TomCat::UISlider& value)
+		{
+			value.RuntimeDragging = value.RuntimeFocused = false;
+			value.RuntimeChangeSerial = 0;
+		}
+
+		void ResetTransient(::TomCat::UIInputField& value)
+		{
+			value.RuntimeFocused = false;
+			value.RuntimeCaret = value.RuntimeSelectionAnchor = 0;
+			value.RuntimeChangeSerial = 0;
+			value.RuntimeLastInputFrame = 0;
+		}
+
+		void ResetTransient(::TomCat::UILocalization& value)
+		{
+			value.RuntimeTableSource.clear();
+			value.RuntimeTranslations.clear();
+		}
+
 		template<typename Field>
 		PropertyKind PropertyKindFor()
 		{
@@ -349,6 +369,47 @@ namespace TomCat {
 			{
 				if (!Finite(value)) { error = "Vector2 must be finite"; return false; }
 				return true;
+			};
+		}
+
+		auto NonnegativeVector2()
+		{
+			return [](const glm::vec2& value, std::string& error)
+			{
+				if (!Finite(value) || glm::any(glm::lessThan(value, glm::vec2(0.0f))))
+				{ error = "Vector2 must be finite and nonnegative"; return false; }
+				return true;
+			};
+		}
+
+		auto ValidLocalizationTable()
+		{
+			return [](const std::string& value, std::string& error)
+			{
+				try
+				{
+					bool valid = false;
+					FontAtlasBuilder::DecodeUTF8(value, &valid);
+					if (!valid || value.size() > 65536)
+						throw std::runtime_error("localization table must be valid UTF-8, at most 65536 bytes");
+					const auto table = YAML::Load(value);
+					if (!table.IsMap()) throw std::runtime_error("localization table must map locales to translation maps");
+					std::unordered_set<std::string> locales;
+					for (const auto& locale : table)
+					{
+						if (!locale.first.IsScalar() || !locale.second.IsMap()
+							|| !locales.emplace(locale.first.as<std::string>()).second)
+							throw std::runtime_error("locales must be unique scalar names with translation maps");
+						std::unordered_set<std::string> keys;
+						for (const auto& translation : locale.second)
+							if (!translation.first.IsScalar() || !translation.second.IsScalar()
+								|| !keys.emplace(translation.first.as<std::string>()).second)
+								throw std::runtime_error("translation keys must be unique and values must be text");
+					}
+					return true;
+				}
+				catch (const std::exception& exception)
+				{ error = exception.what(); return false; }
 			};
 		}
 
@@ -694,6 +755,53 @@ namespace TomCat {
 			MemberProperty(UILayoutGroupProperties::ControlChildSize, "ControlChildSize", "Control Child Size", &::TomCat::UILayoutGroup::ControlChildSize),
 			MemberProperty(UILayoutGroupProperties::ChildSize, "ChildSize", "Child Size", &::TomCat::UILayoutGroup::ChildSize,
 				[](const glm::vec2& value, std::string& error) { if (!Finite(value) || glm::any(glm::lessThan(value, glm::vec2(0.0f)))) { error = "child size must be finite and nonnegative"; return false; } return true; })
+		}));
+		result.push_back(MakeDescriptor<::TomCat::UISlider>(ComponentIds::UISlider, "TomCat.UISlider", "UISlider", {
+			MemberProperty(UISliderProperties::Enabled, "Enabled", "Enabled", &::TomCat::UISlider::Enabled),
+			MemberProperty(UISliderProperties::Interactable, "Interactable", "Interactable", &::TomCat::UISlider::Interactable),
+			MemberProperty(UISliderProperties::Minimum, "Minimum", "Minimum", &::TomCat::UISlider::Minimum, FiniteFloat(-1000000.0f, 1000000.0f)),
+			MemberProperty(UISliderProperties::Maximum, "Maximum", "Maximum", &::TomCat::UISlider::Maximum, FiniteFloat(-1000000.0f, 1000000.0f)),
+			MemberProperty(UISliderProperties::Value, "Value", "Value", &::TomCat::UISlider::Value, FiniteFloat(-1000000.0f, 1000000.0f)),
+			MemberProperty(UISliderProperties::Step, "Step", "Step", &::TomCat::UISlider::Step, FiniteFloat(0.0f, 1000000.0f)),
+			MemberProperty(UISliderProperties::WholeNumbers, "WholeNumbers", "WholeNumbers", &::TomCat::UISlider::WholeNumbers),
+			MemberProperty(UISliderProperties::Vertical, "Vertical", "Vertical", &::TomCat::UISlider::Vertical),
+			MemberProperty(UISliderProperties::TrackColor, "TrackColor", "TrackColor", &::TomCat::UISlider::TrackColor, FiniteColor()),
+			MemberProperty(UISliderProperties::FillColor, "FillColor", "FillColor", &::TomCat::UISlider::FillColor, FiniteColor())
+		}));
+		result.push_back(MakeDescriptor<::TomCat::UIScrollView>(ComponentIds::UIScrollView, "TomCat.UIScrollView", "UIScrollView", {
+			MemberProperty(UIScrollViewProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIScrollView::Enabled),
+			MemberProperty(UIScrollViewProperties::Horizontal, "Horizontal", "Horizontal", &::TomCat::UIScrollView::Horizontal),
+			MemberProperty(UIScrollViewProperties::Vertical, "Vertical", "Vertical", &::TomCat::UIScrollView::Vertical),
+			MemberProperty(UIScrollViewProperties::ContentSize, "ContentSize", "ContentSize", &::TomCat::UIScrollView::ContentSize, NonnegativeVector2()),
+			MemberProperty(UIScrollViewProperties::Offset, "Offset", "Offset", &::TomCat::UIScrollView::Offset, NonnegativeVector2()),
+			MemberProperty(UIScrollViewProperties::ScrollSpeed, "ScrollSpeed", "ScrollSpeed", &::TomCat::UIScrollView::ScrollSpeed, FiniteFloat(0.0f, 1000000.0f))
+		}));
+		result.push_back(MakeDescriptor<::TomCat::UIInputField>(ComponentIds::UIInputField, "TomCat.UIInputField", "UIInputField", {
+			MemberProperty(UIInputFieldProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIInputField::Enabled),
+			MemberProperty(UIInputFieldProperties::Interactable, "Interactable", "Interactable", &::TomCat::UIInputField::Interactable),
+			MemberProperty(UIInputFieldProperties::Text, "Text", "Text", &::TomCat::UIInputField::Text, ValidText()),
+			MemberProperty(UIInputFieldProperties::Placeholder, "Placeholder", "Placeholder", &::TomCat::UIInputField::Placeholder, ValidText()),
+			MemberProperty(UIInputFieldProperties::CharacterLimit, "CharacterLimit", "CharacterLimit", &::TomCat::UIInputField::CharacterLimit, [](const uint32_t& value, std::string& error) { if (value > 65536) { error = "character limit must not exceed 65536"; return false; } return true; }),
+			MemberProperty(UIInputFieldProperties::Password, "Password", "Password", &::TomCat::UIInputField::Password),
+			MemberProperty(UIInputFieldProperties::ReadOnly, "ReadOnly", "ReadOnly", &::TomCat::UIInputField::ReadOnly)
+		}));
+		result.push_back(MakeDescriptor<::TomCat::UITheme>(ComponentIds::UITheme, "TomCat.UITheme", "UITheme", {
+			MemberProperty(UIThemeProperties::Enabled, "Enabled", "Enabled", &::TomCat::UITheme::Enabled),
+			MemberProperty(UIThemeProperties::TextColor, "TextColor", "TextColor", &::TomCat::UITheme::TextColor, FiniteColor()),
+			MemberProperty(UIThemeProperties::ImageColor, "ImageColor", "ImageColor", &::TomCat::UITheme::ImageColor, FiniteColor()),
+			MemberProperty(UIThemeProperties::AccentColor, "AccentColor", "AccentColor", &::TomCat::UITheme::AccentColor, FiniteColor()),
+			AssetMemberProperty(UIThemeProperties::Font, "Font", "Font", &::TomCat::UITheme::Font, AssetType::Font),
+			MemberProperty(UIThemeProperties::FontScale, "FontScale", "FontScale", &::TomCat::UITheme::FontScale, FiniteFloat(0.01f, 100.0f))
+		}));
+		result.push_back(MakeDescriptor<::TomCat::UILocalization>(ComponentIds::UILocalization, "TomCat.UILocalization", "UILocalization", {
+			MemberProperty(UILocalizationProperties::Enabled, "Enabled", "Enabled", &::TomCat::UILocalization::Enabled),
+			MemberProperty(UILocalizationProperties::Locale, "Locale", "Locale", &::TomCat::UILocalization::Locale, ValidText()),
+			MemberProperty(UILocalizationProperties::FallbackLocale, "FallbackLocale", "FallbackLocale", &::TomCat::UILocalization::FallbackLocale, ValidText()),
+			MemberProperty(UILocalizationProperties::Table, "Table", "Table", &::TomCat::UILocalization::Table, ValidLocalizationTable())
+		}));
+		result.push_back(MakeDescriptor<::TomCat::UILocalizedText>(ComponentIds::UILocalizedText, "TomCat.UILocalizedText", "UILocalizedText", {
+			MemberProperty(UILocalizedTextProperties::Enabled, "Enabled", "Enabled", &::TomCat::UILocalizedText::Enabled),
+			MemberProperty(UILocalizedTextProperties::Key, "Key", "Key", &::TomCat::UILocalizedText::Key, ValidText())
 		}));
 		return result;
 	}

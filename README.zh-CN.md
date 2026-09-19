@@ -62,19 +62,20 @@ Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮�
 ## 特性
 
 - **2D 渲染**：OpenGL 批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图、实体拾取、带 Rect/Pivot/PPU/Border 语义的稳定 Sprite Atlas 子资源、确定性 Sprite 排序、动画 Clip 与参数驱动的 Animator 状态机
-- **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化、有序 Build Settings 与帧末单场景替换
+- **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化、有序 Build Settings、异步读取/激活控制、共享运行世界的叠加场景、持久根对象与显式卸载
 - **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` schema-v2 Sidecar、ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、依赖跟踪，以及支持去抖内容监控、反向依赖重导和主线程发布的后台 ImportCoordinator
 - **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
 - **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、合并的 Play/Stop 按钮与 Pause/Step 控制，以及延迟派发的 C# Collision/Trigger 回调
 - **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、诊断、last-good 程序集与 Cooked 托管负载
-- **快照 Prefab**：使用稳定 LocalID 的 `.tcprefab` 实体子树、引用重映射、运行时 C# `Instantiate`，实例化后为普通非关联实体
+- **Prefab**：LocalID 实体子树和引用重映射、编辑器关联更新、Override、Apply/Revert、嵌套和变体；运行时 C# `Instantiate` 保持快照语义，详见 [Prefab 工作流](docs/PREFAB_WORKFLOW.zh-CN.md)
 - **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
 - **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
 - **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector、Project 和 Console 面板，支持响应式停靠、面板开关/布局主动持久化、Hierarchy 场景可见性、诊断计数/过滤/折叠、Undo/Redo、自动保存/恢复、项目锁与用户设置
 - **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v7，包含逐条目 SHA-256（Player 兼容读取 v5/v6/v7）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
-- **本地化**：动态生成 ImGui 中文字符集，Hub 支持中英文切换
+- **UI 控件与本地化**：新增滑条、滚动视图、单行 Unicode 输入框、层级主题和游戏语言表回退；支持 OS 输入法提交文字，完整组合态仍有边界，详见 [UI 控件](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
+- **性能分析**：可视化 CPU 时间线、异步 GPU 帧计时、绘制统计、进程内存和资源分配估算；提供 [Profiler 与 C# 断点流程](docs/DEBUGGING_AND_PROFILING.md)
 - **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、物理、Sprite 资产、脚本编译、安全边界、Editor 恢复、音频、导入器、输入、SceneManager、Prefab、Cook 与隔离 Player 启动；另有独立 WASM 编辑器协议回归
 
 ## 当前范围
@@ -86,7 +87,7 @@ Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮�
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
-- V1 明确不支持 NuGet/第三方托管 DLL、Play Mode 热重载、脚本调试、叠加/异步场景、Prefab 关联更新、Override、Nested Prefab 和 Variant
+- 不支持 NuGet/第三方托管 DLL、Play Mode 热重载或内置 C# 调试器；异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
 
 [2026-09-15 实机录制](docs/portfolio/README.md)曾遇到 Hub 使用 Windows 扩展路径加载项目时触发迁移检查错误，
 当时通过 Editor 的 **File → Open Project** 和普通 Windows 路径打开。
@@ -161,7 +162,8 @@ vendor/            premake 与第三方依赖
 - [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v7 有序场景与 Player v5/v6/v7 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
 - [x] 使用稳定 LocalID 的快照 Prefab V1、Hierarchy/Joint/C# Entity 重映射、新 AttachmentID、延迟 C# 创建、Editor 创建/拖入操作与 Cook 依赖遍历
 - [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，嵌入 TCPAK v6 引入、v7 延续的 BootManifest
-- [ ] 叠加/异步场景、关联/Nested Prefab、Override/Variant 与存档
+- [x] 关联/嵌套 Prefab、Override/Variant，异步读取、叠加场景、持久根对象和卸载（范围见各功能文档）
+- [ ] 通用游戏存档系统
 
 ### 资产管线与 2D 内容生产
 

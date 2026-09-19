@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "ComponentCodecs.h"
+#include "PrefabLink.h"
 
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Scene/ComponentRegistry.h"
@@ -179,6 +180,9 @@ namespace TomCat {
 				}
 			}
 		}
+		if (entity.HasComponent<PrefabLink>()
+			&& !PrefabLinkedInstance::Remap(entity, entityMap, attachmentMap, regenerateAttachmentIDs, error))
+			return false;
 		return true;
 	}
 

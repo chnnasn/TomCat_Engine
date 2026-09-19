@@ -58,6 +58,9 @@
     <Filter Include="src\platform\OpenGL">
       <UniqueIdentifier>{555C82A0-C1BD-5FAE-4A2B-A660B68B966D}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\platform\Web">
+      <UniqueIdentifier>{0EE433FE-FADC-5250-230F-38D50F67325C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\platform\Window">
       <UniqueIdentifier>{08C0B1B2-7421-8FC0-FD8E-D57269EFC57F}</UniqueIdentifier>
     </Filter>
@@ -219,13 +222,22 @@
     <ClInclude Include="src\TomCat\Core\WindowMetrics.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Debug\FrameProfiler.h">
+      <Filter>src\TomCat\Debug</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Debug\Instrumentor.h">
       <Filter>src\TomCat\Debug</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Editor\EditorRecoveryService.h">
       <Filter>src\TomCat\Editor</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Editor\EditorShortcutRouter.h">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Editor\SceneHistory.h">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Editor\WebEditorSession.h">
       <Filter>src\TomCat\Editor</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Events\ApplicationEvent.h">
@@ -363,6 +375,9 @@
     <ClInclude Include="src\TomCat\Scene\Serialization\PrefabArchiveCodec.h">
       <Filter>src\TomCat\Scene\Serialization</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\PrefabLink.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Serialization\SceneArchiveCodec.h">
       <Filter>src\TomCat\Scene\Serialization</Filter>
     </ClInclude>
@@ -408,6 +423,9 @@
     <ClInclude Include="src\TomCat\Utils\PlatformUtils.h">
       <Filter>src\TomCat\Utils</Filter>
     </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLApi.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h">
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
@@ -415,6 +433,9 @@
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLFramebuffer.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLProfiler.h">
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLRendererAPI.h">
@@ -431,6 +452,15 @@
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h">
       <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Web\WebEditorUI.h">
+      <Filter>src\platform\Web</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Web\WebProjectSettingsPanel.h">
+      <Filter>src\platform\Web</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Web\WebWindow.h">
+      <Filter>src\platform\Web</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\Window\WindowsWindow.h">
       <Filter>src\platform\Window</Filter>
@@ -1802,6 +1832,9 @@
     <ClCompile Include="src\TomCat\Editor\SceneHistory.cpp">
       <Filter>src\TomCat\Editor</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Editor\WebEditorSession.cpp">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
@@ -1937,6 +1970,9 @@
     <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp">
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLProfiler.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLRendererAPI.cpp">
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
@@ -1951,6 +1987,30 @@
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp">
       <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebEditor.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebEditorUI.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebFramebuffer.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebPlayer.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebProjectSettingsPanel.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebSceneToolbars.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebShader.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebWindow.cpp">
+      <Filter>src\platform\Web</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Window\WindowsInput.cpp">
       <Filter>src\platform\Window</Filter>

@@ -12,6 +12,8 @@
 #include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scene/Serialization/PrefabLink.h"
+#include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scripting/ScriptField.h"
 #include "TomCat/Scripting/ScriptTypes.h"
@@ -493,7 +495,7 @@ namespace TomCat {
 						+ std::to_string(scriptIndex) + "]";
 					if (!HasExactFields(script,
 						{ "assetHandle", "typeName", "executionOrder",
-							"disallowMultiple", "lifecycle", "fields" }, {},
+							"disallowMultiple", "lifecycle", "fields" }, { "methods" },
 						context, errorMessage))
 						return false;
 					const uint64_t handle = script["assetHandle"].as<uint64_t>();
@@ -508,10 +510,38 @@ namespace TomCat {
 					(void)script["executionOrder"].as<int32_t>();
 					(void)script["disallowMultiple"].as<bool>();
 					const uint32_t lifecycle = script["lifecycle"].as<uint32_t>();
-					if ((lifecycle & ~0x3ffU) != 0)
+					if ((lifecycle & ~0x7ffU) != 0)
 					{
 						errorMessage = context + " contains unknown lifecycle bits";
 						return false;
+					}
+					// Manifest V1 gained optional public parameterless event methods.
+					// Old manifests omit the array; generator/host metadata includes it.
+					const YAML::Node methods = script["methods"];
+					if (methods)
+					{
+						if (!methods.IsSequence())
+						{
+							errorMessage = context + ".methods must be an array";
+							return false;
+						}
+						std::unordered_set<std::string> methodNames;
+						for (const YAML::Node& method : methods)
+						{
+							if (!IsNonemptyMetadataString(method) || method.Tag() != "!")
+							{
+								errorMessage = context + ".methods must contain nonempty JSON strings";
+								return false;
+							}
+							const std::string name = method.as<std::string>();
+							if (name.size() > 512 || std::all_of(name.begin(), name.end(),
+								[](unsigned char character) { return std::isspace(character) != 0; })
+								|| !methodNames.emplace(name).second)
+							{
+								errorMessage = context + ".methods contains an invalid or duplicate method name";
+								return false;
+							}
+						}
 					}
 					const YAML::Node fields = script["fields"];
 					if (!fields.IsSequence())
@@ -641,6 +671,7 @@ namespace TomCat {
 		{
 			uint64_t AssetHandle = 0;
 			std::string TypeName;
+			std::vector<std::string> Methods;
 			std::vector<ScriptFieldRuntimeSignature> Fields;
 			bool operator==(const ScriptRuntimeSignature&) const = default;
 		};
@@ -659,6 +690,12 @@ namespace TomCat {
 					ScriptRuntimeSignature scriptSignature;
 					scriptSignature.AssetHandle = script["assetHandle"].as<uint64_t>();
 					scriptSignature.TypeName = script["typeName"].as<std::string>();
+					if (const YAML::Node methods = script["methods"])
+					{
+						for (const YAML::Node& method : methods)
+							scriptSignature.Methods.push_back(method.as<std::string>());
+						std::sort(scriptSignature.Methods.begin(), scriptSignature.Methods.end());
+					}
 					const YAML::Node fields = script["fields"];
 					scriptSignature.Fields.reserve(fields.size());
 					for (const YAML::Node& field : fields)
@@ -1589,7 +1626,12 @@ namespace TomCat {
 			}
 			try
 			{
-				std::string serialized(sourceBytes.begin(), sourceBytes.end());
+				auto resolvedScene = CreateRef<Scene>();
+				bool prefabsChanged = false;
+				std::string serialized;
+				if (!SceneArchiveCodec::Decode(sourceBytes, resolvedScene, scenePath, false)
+					|| !PrefabLinkedInstance::RefreshAll(resolvedScene, prefabsChanged, errorMessage, false)
+					|| !SceneArchiveCodec::Encode(resolvedScene, serialized, errorMessage)) return false;
 				std::istringstream input(std::move(serialized));
 				YAML::Node root = YAML::Load(input);
 				// Schema 9 is read-only migration input. Every newly emitted scene,
@@ -1648,7 +1690,11 @@ namespace TomCat {
 			}
 			try
 			{
-				const std::string serialized(bytes.begin(), bytes.end());
+				PrefabArchive resolved;
+				std::string serialized;
+				if (!PrefabArchiveCodec::Load(prefabPath, resolved, errorMessage)
+					|| !PrefabArchiveCodec::Encode(resolved, serialized, errorMessage)) return false;
+				bytes.assign(serialized.begin(), serialized.end());
 				const YAML::Node root = YAML::Load(serialized);
 				if (!AssetReferenceVisitor::VisitPrefab(root,
 					[&](const SerializedAssetReference& reference)
@@ -1936,6 +1982,7 @@ namespace TomCat {
 		return m_ImportCoordinator.PumpMainThread(
 			[this, &callback](const AssetImportEvent& event)
 			{
+				++m_ImportRevision;
 				if (static_cast<uint64_t>(event.Handle) != 0)
 					Release(event.Handle);
 				if (callback)

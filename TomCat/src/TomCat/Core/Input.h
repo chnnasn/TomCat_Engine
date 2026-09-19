@@ -46,6 +46,12 @@ namespace TomCat {
 			InputEventQueue::Action action, double timestamp);
 		static void NotifyMousePosition(float x, float y);
 		static void NotifyScroll(float xOffset, float yOffset);
+		// Committed Unicode from the platform text/IME callback, frozen per display
+		// frame. Key codes must never be used to synthesize user text.
+		static void NotifyCharacter(uint32_t codepoint);
+		static const std::string& GetTextInput();
+		static std::string GetClipboardText();
+		static bool SetClipboardText(const std::string& text);
 		// GLFW reports joystick hot-plug as ordered callbacks during PollEvents.
 		// Keep those edges in the same frame queue as keyboard and mouse input so
 		// a connect+disconnect pair between frames is still observable.

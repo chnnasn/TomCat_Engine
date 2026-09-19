@@ -8,6 +8,7 @@
 #include "TomCat/Scripting/ScriptField.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
@@ -594,6 +595,81 @@ namespace TomCat {
 		bool Enabled = true;
 		bool ConsumeGameplayInput = true;
 		bool WrapNavigation = true;
+	};
+
+	struct UISlider
+	{
+		bool Enabled = true;
+		bool Interactable = true;
+		float Minimum = 0.0f;
+		float Maximum = 1.0f;
+		float Value = 0.5f;
+		float Step = 0.01f;
+		bool WholeNumbers = false;
+		bool Vertical = false;
+		glm::vec4 TrackColor{ 0.2f, 0.2f, 0.2f, 1.0f };
+		glm::vec4 FillColor{ 0.3f, 0.6f, 1.0f, 1.0f };
+		bool RuntimeDragging = false;
+		bool RuntimeFocused = false;
+		uint64_t RuntimeChangeSerial = 0;
+	};
+
+	// The viewport owns its children's clipping and scroll offset. Combine with
+	// UILayoutGroup for lists; ContentSize is authored in Canvas reference pixels.
+	struct UIScrollView
+	{
+		bool Enabled = true;
+		bool Horizontal = false;
+		bool Vertical = true;
+		glm::vec2 ContentSize{ 300.0f, 600.0f };
+		glm::vec2 Offset{ 0.0f };
+		float ScrollSpeed = 40.0f;
+	};
+
+	struct UIInputField
+	{
+		bool Enabled = true;
+		bool Interactable = true;
+		std::string Text;
+		std::string Placeholder = "Enter text";
+		uint32_t CharacterLimit = 1024;
+		bool Password = false;
+		bool ReadOnly = false;
+		bool RuntimeFocused = false;
+		// UTF-8 byte boundaries. Kept transient so duplication never retains focus.
+		uint32_t RuntimeCaret = 0;
+		uint32_t RuntimeSelectionAnchor = 0;
+		uint64_t RuntimeChangeSerial = 0;
+		uint64_t RuntimeLastInputFrame = 0;
+	};
+
+	// Inherited by descendants. Authored image/text colors remain multiplicative
+	// tints, allowing a theme change without rewriting component authoring data.
+	struct UITheme
+	{
+		bool Enabled = true;
+		glm::vec4 TextColor{ 1.0f };
+		glm::vec4 ImageColor{ 1.0f };
+		glm::vec4 AccentColor{ 0.3f, 0.6f, 1.0f, 1.0f };
+		AssetHandle Font{ 0 };
+		float FontScale = 1.0f;
+	};
+
+	struct UILocalization
+	{
+		bool Enabled = true;
+		std::string Locale = "en";
+		std::string FallbackLocale = "en";
+		// YAML/JSON map: { en: { play: Play }, zh: { play: ... } }.
+		std::string Table = "{}";
+		std::string RuntimeTableSource;
+		std::map<std::string, std::map<std::string, std::string>> RuntimeTranslations;
+	};
+
+	struct UILocalizedText
+	{
+		bool Enabled = true;
+		std::string Key;
 	};
 
 	enum class UILayoutDirection : int32_t
