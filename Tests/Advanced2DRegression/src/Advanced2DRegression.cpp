@@ -1,4 +1,5 @@
 #include "TomCat/Core/Log.h"
+#include "../../../Editor/TomCatInut/src/EditorPropertyTransaction.h"
 #include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Entity.h"
@@ -46,6 +47,26 @@ namespace {
 			&& Near(left.z, right.z, epsilon)
 			&& Near(left.w, right.w, epsilon);
 	}
+
+    void TestMultiSelectionPropertyTransaction()
+    {
+        auto scene=TomCat::CreateRef<TomCat::Scene>();
+        auto first=scene->CreateEntity("First"), second=scene->CreateEntity("Second");
+        first.AddComponent<TomCat::HealthComponent>().Current=20;
+        second.AddComponent<TomCat::HealthComponent>().Current=90;
+        const auto* descriptor=TomCat::ComponentRegistry::Get().Find(TomCat::UUID(TomCat::ComponentIds::Health));
+        Require(descriptor!=nullptr,"Missing Health descriptor");
+        const TomCat::PropertyDescriptor* maximum=nullptr;
+        for(const auto& property:descriptor->Properties) if(property.StableName=="Maximum") maximum=&property;
+        Require(maximum!=nullptr,"Missing Maximum property");
+        std::string error;
+        Require(!TomCat::EditorProperties::SetAll(*maximum,{first,second},int32_t(50),error),"Batch must reject invalid second target");
+        Require(first.GetComponent<TomCat::HealthComponent>().Maximum==100 && second.GetComponent<TomCat::HealthComponent>().Maximum==100,"Rejected batch left a partial edit");
+        Require(!error.empty(),"Rejected edit must retain validation reason");
+        Require(TomCat::EditorProperties::SetAll(*maximum,{first,second},int32_t(150),error),"Valid batch was rejected");
+        Require(first.GetComponent<TomCat::HealthComponent>().Maximum==150 && second.GetComponent<TomCat::HealthComponent>().Maximum==150,"Valid batch did not edit both targets");
+        Require(error.empty(),"Successful batch retained stale error");
+    }
 
 	void TestTilemapEditingAndTransform()
 	{
@@ -552,6 +573,7 @@ int main()
 	try
 	{
 		TomCat::Log::Init();
+		TestMultiSelectionPropertyTransaction();
 		TestTilemapEditingAndTransform();
 		TestDeterministicParticleRuntime();
 		TestLightAttenuation();

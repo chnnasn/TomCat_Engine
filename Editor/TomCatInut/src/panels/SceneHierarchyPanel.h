@@ -155,7 +155,7 @@ namespace TomCat {
 			m_PrefabInstantiateCallback = std::move(callback);
 		}
 		void SetPrefabCreationAllowed(bool allowed) { m_PrefabCreationAllowed = allowed; }
-		void SetPrefabActionCallback(std::function<void(Entity, int)> callback)
+		void SetPrefabActionCallback(std::function<void(Entity, int, UUID, UUID, UUID)> callback)
 		{ m_PrefabActionCallback = std::move(callback); }
 		void SetScriptMetadataProvider(ScriptMetadataProvider provider)
 		{
@@ -228,7 +228,10 @@ namespace TomCat {
 		{
 			AssetHandle Handle = AssetHandle(0);
 			std::filesystem::path Path;
-			AnimationClipAsset Asset;
+            AnimationClipAsset Asset;
+            size_t SelectedFrame = 0;
+            bool PreviewPlaying = false;
+            float PreviewTime = 0;
 			AssetHandle DraftSprite = AssetHandle(0);
 			bool Loaded = false;
 			bool Dirty = false;
@@ -259,6 +262,7 @@ namespace TomCat {
 		};
 
 		void DrawEntityNode(Entity entity);
+        void DrawMultiSelectionInspector();
 		void DrawComponents(Entity entity);
 		void DrawSpriteAnimatorInspector(SpriteAnimator& animator, Entity entity);
 		void DrawGrid2DInspector(Grid2D& grid);
@@ -303,7 +307,14 @@ namespace TomCat {
 		bool m_ScriptEditingEnabled = true;
 		Ref<Scene> m_Context;
 		Ref<Project> m_Project;
-		Entity m_SelectionContext;
+        std::vector<UUID> m_MultiSelection;
+        std::vector<UUID> m_HierarchyVisibleOrder, m_PreviousHierarchyOrder;
+        UUID m_SelectionAnchor{0};
+        std::array<char, 128> m_HierarchySearch{};
+        std::array<char,128> m_InspectorSearch{};
+        bool m_InspectorLocked = false;
+        UUID m_InspectedEntity{0};
+        Entity m_SelectionContext;
 		// 创建子对象后用于强制展开父节点的一次性标记。
 		Entity m_ForceExpandParent;
 		std::unordered_set<uint64_t> m_ForceOpenEntityNodes;
@@ -362,9 +373,11 @@ namespace TomCat {
 		AssetRevealCallback m_AssetRevealCallback;
 		SceneModifiedCallback m_SceneModifiedCallback;
 		PrefabCreateCallback m_PrefabCreateCallback;
-		std::function<void(Entity, int)> m_PrefabActionCallback;
+		std::function<void(Entity, int, UUID, UUID, UUID)> m_PrefabActionCallback;
 		UUID m_PendingPrefabRoot{ 0 };
-		int m_PendingPrefabAction = 0;
+        int m_PendingPrefabAction = 0;
+        UUID m_PendingPrefabEntity{0}, m_PendingPrefabComponent{0}, m_PendingPrefabProperty{0};
+        bool m_PrefabOverridesDirty = true;
 		PrefabInstantiateCallback m_PrefabInstantiateCallback;
 		ScriptMetadataProvider m_ScriptMetadataProvider;
 		bool m_PrefabCreationAllowed = true;

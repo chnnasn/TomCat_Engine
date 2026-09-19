@@ -63,9 +63,23 @@ namespace TomCat {
 		bool OpenSpriteAtlasToolsForSelection();
 		bool IsFocused() const { return m_Focused; }
 		bool IsDocked() const { return m_Docked; }
-		void OnImGuiRender(bool* open = nullptr);
+        void OnAssetInspectorRender(bool* open);
+        bool OpenDiagnosticSource(const std::filesystem::path& path) { return path.extension()==".cs" && OpenCSharpScript(path); }
+        void OnImGuiRender(bool* open = nullptr);
 	private:
-		std::filesystem::path m_CurrentDirectory;
+        AssetHandle m_InspectedAsset{0};
+        AssetImportSettings m_AssetSettingsDraft;
+        bool m_AssetSettingsDirty=false;
+        std::string m_AssetInspectorMessage;
+        std::array<char, 256> m_Search{};
+        int m_TypeFilter = 0;
+        bool m_ShowPackages = false;
+        size_t m_AtlasSelectedSlice = 0;
+        float m_AtlasZoom=1.0f;
+        bool m_AtlasDragging=false, m_AtlasDragResize=false, m_AtlasDragPivot=false;
+        std::array<float,2> m_AtlasDragStart{};
+        std::array<int,4> m_AtlasDragRect{};
+        std::filesystem::path m_CurrentDirectory;
 		std::filesystem::path m_SelectedPath;
 		std::filesystem::path m_PendingRevealPath;
 		// 只有用户真正点击/右键选中的目录才显示蓝色选中态，

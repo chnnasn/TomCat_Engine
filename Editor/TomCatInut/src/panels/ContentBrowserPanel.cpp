@@ -667,6 +667,7 @@ namespace TomCat {
 
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
+        m_InspectedAsset=AssetHandle(0); m_AssetSettingsDirty=false; m_AssetSettingsDraft.clear();
 		m_Project = std::move(project);
 		if (m_Project)
 		{
@@ -695,6 +696,9 @@ namespace TomCat {
 		m_AtlasEditorHandle = AssetHandle(0);
 		m_AtlasBaseSettings.clear();
 		m_AtlasSlices.clear();
+        m_AtlasSelectedSlice=0;
+        m_AtlasDragging=false;
+        m_AtlasZoom=1.0f;
 		m_AtlasEditorError.clear();
 		m_OpenAtlasEditorPopup = false;
 		LoadLayoutSetting();
@@ -2108,17 +2112,71 @@ namespace TomCat {
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("Packs the current slice pixels into a new TGA beside the source. The source stays unchanged.");
 		}
+        if (Ref<Texture2D> texture = AssetManager::Get().LoadTexture(m_AtlasEditorHandle))
+        {
+            ImGui::SetNextItemWidth(180);
+            ImGui::SliderFloat("Zoom",&m_AtlasZoom,0.25f,4.0f,"%.2fx");
+            ImGui::BeginChild("AtlasCanvas",ImVec2(0,250),true,ImGuiWindowFlags_HorizontalScrollbar);
+            const float scale = std::max(0.0001f,std::min((ImGui::GetContentRegionAvail().x - 12.0f) / m_AtlasWidth, 220.0f / m_AtlasHeight)*m_AtlasZoom);
+            const ImVec2 size(m_AtlasWidth * scale, m_AtlasHeight * scale);
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            ImGui::Image(ToImGuiTextureID(texture), size, ImVec2(0,1), ImVec2(1,0));
+            const bool clicked = ImGui::IsItemClicked();
+            if(clicked) m_AtlasDragging=false;
+            for (size_t index = 0; index < m_AtlasSlices.size(); ++index)
+            {
+                const auto& slice = m_AtlasSlices[index];
+                const ImVec2 min(origin.x + slice.Rect[0]*scale, origin.y + (m_AtlasHeight-slice.Rect[1]-slice.Rect[3])*scale);
+                const ImVec2 max(min.x + slice.Rect[2]*scale, min.y + slice.Rect[3]*scale);
+                ImGui::GetWindowDrawList()->AddRect(min, max, index == m_AtlasSelectedSlice ? IM_COL32(70,170,255,255) : IM_COL32(220,220,220,180), 0, 0, 2);
+                if (clicked && ImGui::IsMouseHoveringRect(min,max))
+                {
+                    m_AtlasSelectedSlice=index; m_AtlasDragging=true;
+                    m_AtlasDragResize=ImGui::GetIO().KeyShift;
+                    m_AtlasDragPivot=ImGui::GetIO().KeyAlt;
+                    m_AtlasDragStart={ImGui::GetMousePos().x,ImGui::GetMousePos().y};
+                    std::copy_n(slice.Rect,4,m_AtlasDragRect.data());
+                }
+                if (index == m_AtlasSelectedSlice)
+                    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(min.x + slice.Pivot[0]*(max.x-min.x), max.y-slice.Pivot[1]*(max.y-min.y)),4,IM_COL32(255,190,60,255));
+            }
+            if(m_AtlasDragging && m_AtlasSelectedSlice<m_AtlasSlices.size() && ImGui::IsMouseDown(0))
+            {
+                auto& selected=m_AtlasSlices[m_AtlasSelectedSlice];
+                const int dx=static_cast<int>(std::round((ImGui::GetMousePos().x-m_AtlasDragStart[0])/scale));
+                const int dy=static_cast<int>(std::round((ImGui::GetMousePos().y-m_AtlasDragStart[1])/scale));
+                if(m_AtlasDragPivot)
+                {
+                    selected.Pivot[0]=std::clamp(((ImGui::GetMousePos().x-origin.x)/scale-selected.Rect[0])/std::max(1,selected.Rect[2]),0.0f,1.0f);
+                    selected.Pivot[1]=std::clamp((m_AtlasHeight-(ImGui::GetMousePos().y-origin.y)/scale-selected.Rect[1])/std::max(1,selected.Rect[3]),0.0f,1.0f);
+                }
+                else if(m_AtlasDragResize)
+                {
+                    selected.Rect[2]=std::clamp(m_AtlasDragRect[2]+dx,1,std::max(1,static_cast<int>(m_AtlasWidth)-selected.Rect[0]));
+                    selected.Rect[3]=std::clamp(m_AtlasDragRect[3]-dy,1,std::max(1,static_cast<int>(m_AtlasHeight)-selected.Rect[1]));
+                }
+                else
+                {
+                    selected.Rect[0]=std::clamp(m_AtlasDragRect[0]+dx,0,std::max(0,static_cast<int>(m_AtlasWidth)-selected.Rect[2]));
+                    selected.Rect[1]=std::clamp(m_AtlasDragRect[1]-dy,0,std::max(0,static_cast<int>(m_AtlasHeight)-selected.Rect[3]));
+                }
+            }
+            if(!ImGui::IsMouseDown(0)) m_AtlasDragging=false;
+            ImGui::EndChild();
+            ImGui::TextWrapped("Drag: move slice. Shift-drag: resize. Alt-drag: pivot. Save commits changes; Cancel discards this draft.");
+        }
 		const float footer = ImGui::GetFrameHeightWithSpacing() * 2.2f;
 		ImGui::BeginChild("AtlasSliceList", ImVec2(0.0f, -footer), true);
 		std::optional<size_t> remove;
 		for (size_t index = 0; index < m_AtlasSlices.size(); ++index)
 		{
-			AtlasSliceDraft& slice = m_AtlasSlices[index];
+            AtlasSliceDraft& slice = m_AtlasSlices[index];
+
 			ImGui::PushID(static_cast<int>(index));
 			const std::string title = slice.Name.empty()
 				? "Unnamed Slice" : slice.Name;
-			if (ImGui::CollapsingHeader((title + "###Slice").c_str(),
-				ImGuiTreeNodeFlags_DefaultOpen))
+			if (ImGui::Selectable((title + "###Slice").c_str(),index==m_AtlasSelectedSlice)) m_AtlasSelectedSlice=index;
+            if(index==m_AtlasSelectedSlice)
 			{
 				AtlasInputText("Stable ID", slice.StableID,
 					ImGuiInputTextFlags_ReadOnly);
@@ -2557,6 +2615,70 @@ namespace TomCat {
 		DrawEmptyContextMenu(root);
 	}
 
+    void ContentBrowserPanel::OnAssetInspectorRender(bool* open)
+    {
+        if(!*open) return;
+        ImGui::SetNextWindowSize(ImVec2(460,600),ImGuiCond_FirstUseEver);
+        if(!ImGui::Begin("Asset Inspector",open)) { ImGui::End(); return; }
+        auto& assets=AssetManager::Get();
+        const auto* selectedMetadata=assets.GetRegistry().GetMetadata(m_SelectedPath);
+        AssetHandle selected=selectedMetadata?selectedMetadata->Handle:AssetHandle(0);
+        if(selected!=m_InspectedAsset && !m_AssetSettingsDirty)
+        {
+            m_InspectedAsset=selected;
+            const auto* metadata=assets.GetRegistry().GetMetadata(selected);
+            m_AssetSettingsDraft=metadata?metadata->ImportSettings:AssetImportSettings{};
+            m_AssetInspectorMessage.clear();
+        }
+        const auto* liveMetadata=assets.GetRegistry().GetMetadata(m_InspectedAsset);
+        const AssetMetadata snapshot=liveMetadata?*liveMetadata:AssetMetadata{};
+        const auto* metadata=liveMetadata?&snapshot:nullptr;
+        if(!metadata) { ImGui::TextWrapped("Select an asset in Project to inspect its preview and import settings."); ImGui::End(); return; }
+        ImGui::TextWrapped("%s",PathToUTF8(metadata->FilePath).c_str());
+        if(metadata->IsMissing) ImGui::TextColored(ImVec4(1,.5f,.3f,1),"Source file is missing");
+        if(selected!=m_InspectedAsset) ImGui::TextWrapped("This asset has unsaved import settings. Apply or Revert before inspecting another selection.");
+        ImGui::Separator();
+        if(metadata->Type==AssetType::Texture2D)
+        {
+            if(auto texture=assets.LoadTexture(m_InspectedAsset))
+            {
+                const float scale=std::min(ImGui::GetContentRegionAvail().x/texture->GetWidth(),220.0f/texture->GetHeight());
+                ImGui::Image(ToImGuiTextureID(texture),ImVec2(texture->GetWidth()*scale,texture->GetHeight()*scale),ImVec2(0,1),ImVec2(1,0));
+                ImGui::Text("%u x %u pixels",texture->GetWidth(),texture->GetHeight());
+            }
+            if(ImGui::Button("Open Sprite Atlas Tools")) BeginAtlasEditor(assets.GetRegistry().GetFileSystemPath(m_InspectedAsset));
+        }
+        const auto path=assets.GetRegistry().GetFileSystemPath(m_InspectedAsset);
+        std::error_code sizeError; const auto size=std::filesystem::file_size(path,sizeError);
+        if(!sizeError) ImGui::Text("Source size: %.1f KiB",static_cast<double>(size)/1024.0);
+        if(ImGui::Button("Open asset")) OpenAsset(path,false);
+        ImGui::SameLine(); if(ImGui::Button("Reveal in Project")) RevealAsset(path);
+        if(ImGui::CollapsingHeader("Import settings",ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::BeginDisabled(!m_AssetMutationsEnabled || !IsWritablePath(path));
+            if(m_AssetSettingsDraft.empty()) ImGui::TextWrapped("Importer defaults are in use. Sprite slicing settings can be authored in Sprite Atlas Tools.");
+            for(auto& [key,value]:m_AssetSettingsDraft)
+            {
+                ImGui::PushID(key.c_str());
+                if(AtlasInputText(key.c_str(),value)) m_AssetSettingsDirty=true;
+                ImGui::PopID();
+            }
+            ImGui::BeginDisabled(!m_AssetSettingsDirty);
+            if(ImGui::Button("Apply"))
+            {
+                if(assets.SetImportSettings(m_InspectedAsset,m_AssetSettingsDraft)) {m_AssetSettingsDirty=false;m_AssetInspectorMessage="Import settings saved.";}
+                else m_AssetInspectorMessage="Import failed. Check Console; the draft has been retained.";
+            }
+            ImGui::SameLine(); if(ImGui::Button("Revert")) {m_AssetSettingsDraft=metadata->ImportSettings;m_AssetSettingsDirty=false;m_AssetInspectorMessage.clear();}
+            ImGui::EndDisabled(); ImGui::EndDisabled();
+            ImGui::TextWrapped("%s",m_AssetInspectorMessage.c_str());
+        }
+        if(!metadata->SubAssets.empty() && ImGui::TreeNode("Sub-assets"))
+        { for(const auto& child:metadata->SubAssets) ImGui::BulletText("%s",child.Name.c_str()); ImGui::TreePop(); }
+        if(ImGui::TreeNode("Debug identity")) {ImGui::Text("Handle: %llu",static_cast<unsigned long long>(m_InspectedAsset));ImGui::TreePop();}
+        ImGui::End();
+    }
+
 	void ContentBrowserPanel::OnImGuiRender(bool* open)
 	{
 		m_Focused = false;
@@ -2620,7 +2742,7 @@ namespace TomCat {
 		std::error_code error;
 		if (!m_Project || !std::filesystem::is_directory(assetRoot, error))
 		{
-			ImGui::TextDisabled("No accessible project asset directory");
+			ImGui::TextWrapped("Open a project with File > Open Project to browse and create assets.");
 			ImGui::End();
 			DrawRenamePopup();
 			DrawDeleteConfirmation();
@@ -2635,10 +2757,39 @@ namespace TomCat {
 		const std::filesystem::path activeRoot = browsingPackages ? packagesRoot : assetRoot;
 		const char* activeRootLabel = browsingPackages ? "Packages" : "Assets";
 
-		if (m_LayoutMode == OneColumn)
-		{
-			DrawDirectoryTree(assetRoot, assetRoot, "Assets", true, true);
-			if (packagesAvailable)
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##AssetSearch", "Search project assets...", m_Search.data(), m_Search.size());
+        const char* typeLabels[] = { "All assets", "Textures", "Scenes", "Prefabs", "Scripts", "Audio", "Fonts", "Animation clips", "Animator controllers", "Tile palettes" };
+        const AssetType types[] = { AssetType::None, AssetType::Texture2D, AssetType::Scene, AssetType::Prefab, AssetType::CSharpScript, AssetType::Audio, AssetType::Font, AssetType::AnimationClip, AssetType::AnimatorController, AssetType::TilePalette };
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##AssetType", &m_TypeFilter, typeLabels, static_cast<int>(std::size(typeLabels)));
+        ImGui::Checkbox("Show engine packages", &m_ShowPackages);
+        ImGui::Separator();
+        if (m_Search[0] || m_TypeFilter)
+        {
+            std::string query(m_Search.data());
+            for (char& c : query) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            std::vector<std::filesystem::path> matches;
+            for (const auto& [handle, metadata] : AssetManager::Get().GetRegistry().GetAssets())
+            {
+                const auto path=AssetManager::Get().GetRegistry().GetFileSystemPath(handle);
+                if (metadata.IsMissing || !IsWithinRoot(assetRoot, path)) continue;
+                if (m_TypeFilter && metadata.Type != types[m_TypeFilter]) continue;
+                std::string name = PathToUTF8(metadata.FilePath);
+                for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (name.find(query) != std::string::npos) matches.push_back(path);
+            }
+            std::sort(matches.begin(), matches.end());
+            ImGui::TextDisabled("%zu results in Assets", matches.size());
+            ImGui::BeginChild("SearchResults");
+            for (const auto& path : matches) DrawFileTreeNode(path, assetRoot);
+            if (matches.empty()) ImGui::TextWrapped("No matching assets. Try another name or asset type.");
+            ImGui::EndChild();
+        }
+        else if (m_LayoutMode == OneColumn)
+        {
+            DrawDirectoryTree(assetRoot, assetRoot, "Assets", true, true);
+			if (packagesAvailable && m_ShowPackages)
 				DrawDirectoryTree(packagesRoot, packagesRoot, "Packages", true, true);
 			DrawEmptyContextMenu(activeRoot);
 		}
@@ -2647,7 +2798,7 @@ namespace TomCat {
 			const float splitterWidth = 8.0f;
 			ImGui::BeginChild("DirectoryTree", ImVec2(m_LeftPanelWidth, 0.0f), false);
 			DrawDirectoryTree(assetRoot, assetRoot, "Assets", true, false);
-			if (packagesAvailable)
+			if (packagesAvailable && m_ShowPackages)
 				DrawDirectoryTree(packagesRoot, packagesRoot, "Packages", true, false);
 			DrawEmptyContextMenu(activeRoot);
 			ImGui::EndChild();

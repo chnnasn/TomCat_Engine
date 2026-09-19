@@ -21,7 +21,9 @@
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scene/Serialization/PrefabLink.h"
 
+#include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -686,6 +688,50 @@ namespace {
 
 	TomCat::AssetHandle RequireHandle(TomCat::AssetRegistry& registry,
 		const std::filesystem::path& path, TomCat::AssetType expected);
+
+    void TestScopedPrefabProperties()
+    {
+        using namespace TomCat;
+        TemporaryProject project;
+        auto& assets=AssetManager::Get(); assets.Shutdown();
+        Require(assets.Initialize(project.Assets,project.Library),"Cannot initialize scoped prefab test");
+        struct Shutdown { ~Shutdown(){AssetManager::Get().Shutdown();} } shutdown;
+        auto source=CreateRef<Scene>(); Entity templateRoot=source->CreateEntity("Enemy");
+        templateRoot.AddComponent<HealthComponent>();
+        PrefabArchive archive; std::string error,document;
+        auto checked=[&](bool success){if(!success) throw std::runtime_error(error);};
+        checked(PrefabArchiveCodec::CaptureSubtree(source,templateRoot,archive,error));
+        checked(PrefabArchiveCodec::Encode(archive,document,error));
+        const auto path=project.Assets/"Enemy.tcprefab"; WriteBytes(path,document);
+        AssetHandle asset=assets.ImportAsset(path); Require(static_cast<uint64_t>(asset)!=0,"Cannot import scoped prefab");
+        auto scene=CreateRef<Scene>(); PrefabInstantiateOptions options; options.ResolveAssets=false;
+        PrefabInstantiationResult first,second;
+        checked(PrefabArchiveCodec::Instantiate(archive,*scene,options,first,error));
+        checked(PrefabLinkedInstance::Attach(scene,asset,archive,first,error));
+        checked(PrefabArchiveCodec::Instantiate(archive,*scene,options,second,error));
+        checked(PrefabLinkedInstance::Attach(scene,asset,archive,second,error));
+        const UUID one=first.Root.GetUUID(),two=second.Root.GetUUID();
+        first.Root.GetComponent<HealthComponent>().Maximum=150;
+        first.Root.GetComponent<HealthComponent>().Invulnerable=true;
+        std::vector<PrefabPropertyOverride> overrides;
+        checked(PrefabLinkedInstance::GetPropertyOverrides(scene,one,overrides,error));
+        Require(overrides.size()==2,"Expected two property overrides");
+        checked(PrefabLinkedInstance::ApplyProperty(scene,one,one,UUID(ComponentIds::Health),UUID(ComponentIds::HealthProperties::Maximum),error));
+        Require(scene->FindEntityByUUID(two).GetComponent<HealthComponent>().Maximum==150,"Property Apply did not update sibling instance");
+        Require(!scene->FindEntityByUUID(two).GetComponent<HealthComponent>().Invulnerable,"Property Apply leaked another override to sibling");
+        Require(scene->FindEntityByUUID(one).GetComponent<HealthComponent>().Invulnerable,"Property Apply lost another local override");
+        checked(PrefabLinkedInstance::GetPropertyOverrides(scene,one,overrides,error));
+        Require(overrides.size()==1 && overrides.front().PropertyID==UUID(ComponentIds::HealthProperties::Invulnerable),"Applied property still appears overridden");
+        PrefabArchive saved; checked(PrefabArchiveCodec::Load(path,saved,error));
+        auto savedRoot=saved.TemplateScene->FindEntityByUUID(UUID(saved.RootLocalID));
+        Require(savedRoot.GetComponent<HealthComponent>().Maximum==150 && !savedRoot.GetComponent<HealthComponent>().Invulnerable,"Source asset contains unrelated edits");
+        checked(PrefabLinkedInstance::RevertProperty(scene,one,one,UUID(ComponentIds::Health),UUID(ComponentIds::HealthProperties::Invulnerable),error));
+        Require(!scene->FindEntityByUUID(one).GetComponent<HealthComponent>().Invulnerable,"Scoped Revert did not restore baseline");
+        const std::string before=YAML::Dump(YAML::LoadFile(path.string()));
+        Require(!PrefabLinkedInstance::ApplyProperty(scene,one,one,UUID(ComponentIds::Health),UUID(999),error),"Unknown property was accepted");
+        Require(YAML::Dump(YAML::LoadFile(path.string()))==before,"Rejected Apply modified source file");
+        std::cout<<"PASS scoped Prefab Apply/Revert preserves unrelated overrides and propagates only selected property\n";
+    }
 
 	void TestAsyncAssetOwnerLifecycle()
 	{
@@ -3490,6 +3536,7 @@ int main()
 	TomCat::Log::Init();
 	try
 	{
+		TestScopedPrefabProperties();
 		TestOfflineTextureArtifacts();
 		TestOfflineShaderArtifacts();
 		TestCookedShaderRuntimeConsumption();

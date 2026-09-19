@@ -3,7 +3,7 @@
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "PrefabArchiveCodec.h"
 
-namespace TomCat {
+	namespace TomCat {
 
 	// Editor authoring data. The baseline is in instance UUID space, so updates
 	// can preserve external references to existing entities.
@@ -15,7 +15,14 @@ namespace TomCat {
 
 	ComponentDescriptor MakePrefabLinkDescriptor();
 
-	class PrefabLinkedInstance final
+    struct PrefabPropertyOverride
+    {
+        UUID EntityID{0}, ComponentID{0}, PropertyID{0};
+        std::string Path;
+        PropertyValue Before, After;
+    };
+
+    class PrefabLinkedInstance final
 	{
 	public:
 		static bool Attach(const Ref<Scene>& scene, AssetHandle source,
@@ -34,7 +41,13 @@ namespace TomCat {
 			const std::unordered_map<UUID, UUID>* attachments, bool regenerate,
 			std::string& error);
 		static bool ResolveComposition(PrefabArchive& archive, std::string& error);
-		static bool GetOverridePaths(const Ref<Scene>& scene, UUID root,
+        static bool GetPropertyOverrides(const Ref<Scene>& scene, UUID root,
+            std::vector<PrefabPropertyOverride>& values, std::string& error);
+        static bool RevertProperty(const Ref<Scene>& scene, UUID root, UUID entity,
+            UUID component, UUID property, std::string& error);
+        static bool ApplyProperty(const Ref<Scene>& scene, UUID root, UUID entity,
+            UUID component, UUID property, std::string& error);
+        static bool GetOverridePaths(const Ref<Scene>& scene, UUID root,
 			std::vector<std::string>& paths, std::string& error);
 	};
 }
