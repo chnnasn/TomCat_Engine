@@ -4003,7 +4003,8 @@ namespace TomCat {
 			RuntimeUIVisibilityMode::Gameplay);
 	}
 
-	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
+	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera,
+		uint32_t uiViewportWidth, uint32_t uiViewportHeight)
 	{
 		if (!m_RuntimeRunning)
 			UpdateParticlePreviews(*this, m_Registry, ts.GetSeconds());
@@ -4013,8 +4014,12 @@ namespace TomCat {
 			RuntimeUIVisibilityMode::Editor);
 
 		Renderer2D::EndScene();
-		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
-			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+		const uint32_t editorUIWidth = uiViewportWidth > 0
+			? uiViewportWidth : m_ViewportWidth;
+		const uint32_t editorUIHeight = uiViewportHeight > 0
+			? uiViewportHeight : m_ViewportHeight;
+		RuntimeUISystem::RenderScreen(*this, m_Registry, editorUIWidth,
+			editorUIHeight, 96.0f * m_RuntimeUIDPIScale,
 			RuntimeUIVisibilityMode::Editor);
 	}
 

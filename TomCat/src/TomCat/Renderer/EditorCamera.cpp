@@ -54,11 +54,11 @@ namespace TomCat {
 
 	float EditorCamera::ZoomSpeed() const
 	{
-		float distance = m_Distance * 0.2f;
-		distance = std::max(distance, 0.0f);
-		float speed = distance * distance;
-		speed = std::min(speed, 100.0f); // max speed = 100
-		return speed;
+		// Keep each wheel step proportional to the current distance.  The old
+		// quadratic curve was capped at 100, which made a camera framed around a
+		// large object take hundreds of wheel steps to approach, while its speed
+		// collapsed almost to zero near small objects.
+		return std::max(m_Distance * 0.5f, 0.5f);
 	}
 
 	void EditorCamera::OnUpdate(Timestep ts, bool inputEnabled)
@@ -193,11 +193,19 @@ namespace TomCat {
 
 	void EditorCamera::MouseZoom(float delta)
 	{
+		if (!std::isfinite(delta) || delta == 0.0f)
+			return;
+
 		m_Distance -= delta * ZoomSpeed();
-		if (m_Distance < 1.0f)
+		const float minimumDistance = std::max(m_NearClip * 1.1f, 0.01f);
+		if (m_Distance < minimumDistance)
 		{
-			m_FocalPoint += GetForwardDirection();
-			m_Distance = 1.0f;
+			// Preserve the remaining dolly movement instead of getting stuck at the
+			// orbit distance floor.  This also lets the user move through a focus
+			// point without a discontinuous one-unit jump.
+			m_FocalPoint += GetForwardDirection()
+				* (minimumDistance - m_Distance);
+			m_Distance = minimumDistance;
 		}
 	}
 

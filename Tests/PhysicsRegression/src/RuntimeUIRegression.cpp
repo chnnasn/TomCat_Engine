@@ -3,6 +3,7 @@
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Camera.h"
 #include "TomCat/Renderer/EditorCamera.h"
@@ -362,6 +363,44 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		return pixels;
 	}
 
+	std::vector<uint8_t> CaptureEditorUI(TomCat::Scene& scene,
+		uint32_t targetWidth, uint32_t targetHeight,
+		uint32_t gameWidth, uint32_t gameHeight)
+	{
+		TomCat::FramebufferSpecification specification;
+		specification.Width = targetWidth;
+		specification.Height = targetHeight;
+		specification.Attachments = { TomCat::FramebufferTextureFormat::RGBA8 };
+		TomCat::Ref<TomCat::Framebuffer> framebuffer =
+			TomCat::Framebuffer::Create(specification);
+		RequireUI(framebuffer != nullptr,
+			"could not create the Editor UI screenshot framebuffer");
+		framebuffer->Bind();
+		TomCat::RenderCommand::SetClearColor({ 8.0f / 255.0f, 12.0f / 255.0f,
+			18.0f / 255.0f, 1.0f });
+		TomCat::RenderCommand::Clear();
+		scene.OnViewportResize(gameWidth, gameHeight);
+		TomCat::EditorCamera camera(30.0f,
+			static_cast<float>(targetWidth) / targetHeight, 0.1f, 100.0f);
+		camera.SetViewportSize(static_cast<float>(targetWidth),
+			static_cast<float>(targetHeight));
+		scene.OnUpdateEditor(TomCat::Timestep(0.0f), camera,
+			targetWidth, targetHeight);
+		glFinish();
+		std::vector<uint8_t> pixels(
+			static_cast<size_t>(targetWidth) * targetHeight * 4u);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, static_cast<GLsizei>(targetWidth),
+			static_cast<GLsizei>(targetHeight), GL_RGBA, GL_UNSIGNED_BYTE,
+			pixels.data());
+		const GLenum readError = glGetError();
+		framebuffer->Unbind();
+		RequireUI(readError == GL_NO_ERROR,
+			"OpenGL failed to read the Editor UI RGBA screenshot");
+		return pixels;
+	}
+
 	std::vector<uint8_t> CaptureWorldText(TomCat::Scene& scene, uint32_t width,
 		uint32_t height, const TomCat::Camera& camera,
 		const glm::mat4& cameraTransform)
@@ -533,6 +572,35 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(latin && !latin->UsesFallback && chinese && chinese->UsesFallback
 			&& emoji && emoji->UsesFallback,
 			"source, missing CJK, or emoji fallback glyph selection is wrong");
+		for (const auto& [codepoint, glyph] : first.Glyphs)
+		{
+			if (glyph.AlphaCoverage == 0)
+				continue;
+			const uint32_t left = static_cast<uint32_t>(std::lround(
+				glyph.UVMin.x * static_cast<float>(first.Width)));
+			const uint32_t right = static_cast<uint32_t>(std::lround(
+				glyph.UVMax.x * static_cast<float>(first.Width)));
+			const uint32_t bottom = static_cast<uint32_t>(std::lround(
+				glyph.UVMin.y * static_cast<float>(first.Height)));
+			const uint32_t top = static_cast<uint32_t>(std::lround(
+				glyph.UVMax.y * static_cast<float>(first.Height)));
+			RequireUI(left < right && bottom < top && right <= first.Width
+				&& top <= first.Height,
+				"font glyph UV rectangle escaped its atlas");
+			uint32_t sampledCoverage = 0;
+			for (uint32_t y = bottom; y < top; ++y)
+			{
+				for (uint32_t x = left; x < right; ++x)
+				{
+					const size_t alpha = (static_cast<size_t>(y) * first.Width
+						+ x) * 4u + 3u;
+					if (first.PixelsRGBA[alpha] != 0)
+						++sampledCoverage;
+				}
+			}
+			RequireUI(sampledCoverage == glyph.AlphaCoverage,
+				"font glyph UVs did not address their rasterized atlas pixels");
+		}
 
 		const std::vector<uint8_t> cjkBytes =
 			DecodeBase64(SyntheticCJKFontBase64);
@@ -1264,6 +1332,36 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		}
 	}
 
+	void TestEditorCameraScrollZoom()
+	{
+		TomCat::EditorCamera camera(30.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
+		camera.SetViewportSize(1600.0f, 900.0f);
+
+		camera.SetDistance(1000.0f);
+		const float farDistanceBefore = camera.GetDistance();
+		TomCat::MouseScrolledEvent farScroll(0.0f, 1.0f);
+		camera.OnEvent(farScroll);
+		const float farDistanceAfter = camera.GetDistance();
+		RequireUI(std::isfinite(farDistanceAfter) && farDistanceAfter > 0.0f,
+			"EditorCamera scroll produced an invalid distance from far away");
+		RequireUI(farDistanceAfter < farDistanceBefore * 0.975f,
+			"EditorCamera scroll did not noticeably approach from far away");
+
+		camera.SetDistance(0.12f);
+		const float nearDistanceBefore = camera.GetDistance();
+		const glm::vec3 focalPointBefore = camera.GetFocalPoint();
+		const glm::vec3 forward = camera.GetForwardDirection();
+		TomCat::MouseScrolledEvent crossingScroll(0.0f, 10.0f);
+		camera.OnEvent(crossingScroll);
+		const float nearDistanceAfter = camera.GetDistance();
+		const glm::vec3 focalDelta = camera.GetFocalPoint() - focalPointBefore;
+		RequireUI(std::isfinite(nearDistanceAfter) && nearDistanceAfter > 0.0f
+			&& nearDistanceAfter <= nearDistanceBefore,
+			"EditorCamera scroll jumped away or produced an invalid minimum distance");
+		RequireUI(glm::dot(focalDelta, forward) > 0.1f,
+			"EditorCamera scroll stopped instead of advancing through its orbit floor");
+	}
+
 	void TestFixedInputCaptureSnapshot()
 	{
 		UIFixture fixture = BuildUIFixture();
@@ -1914,14 +2012,14 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		};
 		const ScreenshotCase screenshotCases[] = {
 			{ 1920, 1080, 96.0f, 4695793982536209286ull },
-			{ 1920, 1080, 144.0f, 11026995505587184344ull },
-			{ 1920, 1080, 192.0f, 5128307722957280469ull },
-			{ 1440, 1080, 96.0f, 575169338650063814ull },
+			{ 1920, 1080, 144.0f, 9333402107257602237ull },
+			{ 1920, 1080, 192.0f, 5341880840297431473ull },
+			{ 1440, 1080, 96.0f, 7007483290274739818ull },
 			{ 1440, 1080, 144.0f, 14558682433443321873ull },
-			{ 1440, 1080, 192.0f, 7519808789850018399ull },
+			{ 1440, 1080, 192.0f, 1809843449510516968ull },
 			{ 2560, 1080, 96.0f, 5765257838663896052ull },
-			{ 2560, 1080, 144.0f, 9642452743191543441ull },
-			{ 2560, 1080, 192.0f, 7229357654729139054ull }
+			{ 2560, 1080, 144.0f, 14767166016224927295ull },
+			{ 2560, 1080, 192.0f, 17044906059224153490ull }
 		};
 		HiddenOpenGLContext context;
 		if (!context.IsAvailable())
@@ -1930,6 +2028,59 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 				<< context.GetUnavailableReason() << std::endl;
 			return;
 		}
+
+		// The desktop Scene framebuffer and selected Game resolution commonly have
+		// different aspect ratios.  Editor UI must use the former for both layout and
+		// projection; otherwise the GPU viewport stretches a rotated square into a
+		// visibly sheared parallelogram and distorts text glyphs by the same factor.
+		TomCat::Scene editorExtentScene;
+		TomCat::Entity extentCanvas = editorExtentScene.CreateEntityWithUUID(
+			TomCat::UUID(10901), "Editor Extent Canvas");
+		extentCanvas.AddComponent<TomCat::Canvas>().ScaleMode =
+			TomCat::CanvasScaleMode::ConstantPixelSize;
+		TomCat::Entity extentSquare = editorExtentScene.CreateEntityWithUUID(
+			TomCat::UUID(10902), "Rotated Editor Square");
+		auto& extentRect = extentSquare.AddComponent<TomCat::RectTransform>();
+		extentRect.AnchorMin = extentRect.AnchorMax = { 0.5f, 0.5f };
+		extentRect.Pivot = { 0.5f, 0.5f };
+		extentRect.SizeDelta = { 80.0f, 80.0f };
+		extentSquare.AddComponent<TomCat::UIImage>().Color =
+			{ 1.0f, 1.0f, 1.0f, 1.0f };
+		RequireUI(editorExtentScene.SetParent(extentSquare, extentCanvas),
+			"could not parent Editor extent square");
+		extentSquare.GetComponent<TomCat::Transform>()._LocalRotation.z =
+			glm::radians(45.0f);
+		constexpr uint32_t EditorExtentWidth = 300;
+		constexpr uint32_t EditorExtentHeight = 200;
+		const std::vector<uint8_t> editorExtentPixels = CaptureEditorUI(
+			editorExtentScene, EditorExtentWidth, EditorExtentHeight, 1000, 1000);
+		uint32_t minimumX = EditorExtentWidth, maximumX = 0;
+		uint32_t minimumY = EditorExtentHeight, maximumY = 0;
+		uint32_t extentPixelCount = 0;
+		for (uint32_t y = 0; y < EditorExtentHeight; ++y)
+		{
+			for (uint32_t x = 0; x < EditorExtentWidth; ++x)
+			{
+				const size_t offset = (static_cast<size_t>(y)
+					* EditorExtentWidth + x) * 4u;
+				if (editorExtentPixels[offset] < 240
+					|| editorExtentPixels[offset + 1] < 240
+					|| editorExtentPixels[offset + 2] < 240)
+					continue;
+				minimumX = std::min(minimumX, x);
+				maximumX = std::max(maximumX, x);
+				minimumY = std::min(minimumY, y);
+				maximumY = std::max(maximumY, y);
+				++extentPixelCount;
+			}
+		}
+		const uint32_t extentWidth = maximumX - minimumX + 1;
+		const uint32_t extentHeight = maximumY - minimumY + 1;
+		RequireUI(extentPixelCount > 5000 && extentWidth > 100
+			&& extentHeight > 100
+			&& std::abs(static_cast<int>(extentWidth)
+				- static_cast<int>(extentHeight)) <= 2,
+			"Editor UI used Game resolution instead of Scene framebuffer extent");
 
 		TomCat::Scene clippedRenderScene;
 		TomCat::Entity clippedCanvas = clippedRenderScene.CreateEntityWithUUID(
@@ -2097,6 +2248,7 @@ namespace TomCat::Tests {
 		TestLayoutClippingAspectAndInput();
 		TestRectTransformTransformAndHitTesting();
 		TestEditorCameraFrameBounds();
+		TestEditorCameraScrollZoom();
 		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();
 		TestPersistentButtonCallbacks();

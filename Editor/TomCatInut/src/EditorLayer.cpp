@@ -1814,7 +1814,7 @@ namespace TomCat {
 		m_EditorCamera.OnUpdate(ts, m_ViewportCameraDragOwned);
 
 		// Scene窗口始终使用EditorCamera渲染
-		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
+		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera, sceneWidth, sceneHeight);
 
 		// Mouse picking for Scene viewport
 		auto [mx, my] = ImGui::GetMousePos();
@@ -3848,43 +3848,93 @@ namespace TomCat {
 			|| !m_ActiveScene->IsVisibleInEditorHierarchy(selected))
 			return;
 
-		const glm::mat4 projection = selected.GetComponent<C_Camera>()._Camera
-			.GetProjection();
-		const glm::mat4 inverseProjection = glm::inverse(projection);
-		for (glm::length_t column = 0; column < 4; ++column)
+		const SceneCamera& camera = selected.GetComponent<C_Camera>()._Camera;
+		const glm::mat4& projection = camera.GetProjection();
+		const float projectionX = std::abs(projection[0][0]);
+		const float projectionY = std::abs(projection[1][1]);
+		if (!std::isfinite(projectionX) || !std::isfinite(projectionY)
+			|| projectionX <= std::numeric_limits<float>::epsilon()
+			|| projectionY <= std::numeric_limits<float>::epsilon())
+			return;
+		const float aspectRatio = projectionY / projectionX;
+		if (!std::isfinite(aspectRatio)
+			|| aspectRatio <= std::numeric_limits<float>::epsilon())
+			return;
+
+		const glm::mat4 cameraWorld = m_ActiveScene->GetRuntimeRenderTransform(
+			selected.GetUUID());
+		glm::vec3 corners[8]{};
+		auto toWorld = [&](const glm::vec3& local, glm::vec3& worldPoint)
 		{
-			for (glm::length_t row = 0; row < 4; ++row)
+			const glm::vec4 world = cameraWorld * glm::vec4(local, 1.0f);
+			if (!std::isfinite(world.x) || !std::isfinite(world.y)
+				|| !std::isfinite(world.z) || !std::isfinite(world.w))
+				return false;
+			worldPoint = glm::vec3(world);
+			return true;
+		};
+
+		const bool perspective = camera.GetProjectionType()
+			== SceneCamera::ProjectionType::Perspective;
+		float orthographicHalfWidth = 0.0f;
+		float orthographicHalfHeight = 0.0f;
+		if (perspective)
+		{
+			const float nearClip = camera.GetPerspectiveNearClip();
+			const float farClip = camera.GetPerspectiveFarClip();
+			const float tanHalfFov = std::tan(camera.GetPerspectiveVerticalFOV()
+				* 0.5f);
+			if (!std::isfinite(nearClip) || !std::isfinite(farClip)
+				|| !std::isfinite(tanHalfFov) || tanHalfFov <= 0.0f
+				|| farClip <= nearClip)
+				return;
+
+			// The runtime far clip can be hundreds or thousands of units. Keep the
+			// Scene gizmo readable while preserving the camera's actual FOV, aspect,
+			// near plane, world position, and world rotation.
+			constexpr float preferredPreviewDepth = 10.0f;
+			const float previewFar = nearClip
+				+ std::min(farClip - nearClip, preferredPreviewDepth);
+			const float nearHalfHeight = tanHalfFov * nearClip;
+			const float nearHalfWidth = nearHalfHeight * aspectRatio;
+			const float farHalfHeight = tanHalfFov * previewFar;
+			const float farHalfWidth = farHalfHeight * aspectRatio;
+			const glm::vec3 localCorners[8] = {
+				{ -nearHalfWidth, -nearHalfHeight, -nearClip },
+				{  nearHalfWidth, -nearHalfHeight, -nearClip },
+				{  nearHalfWidth,  nearHalfHeight, -nearClip },
+				{ -nearHalfWidth,  nearHalfHeight, -nearClip },
+				{ -farHalfWidth, -farHalfHeight, -previewFar },
+				{  farHalfWidth, -farHalfHeight, -previewFar },
+				{  farHalfWidth,  farHalfHeight, -previewFar },
+				{ -farHalfWidth,  farHalfHeight, -previewFar }
+			};
+			for (size_t index = 0; index < std::size(localCorners); ++index)
 			{
-				if (!std::isfinite(inverseProjection[column][row]))
+				if (!toWorld(localCorners[index], corners[index]))
 					return;
 			}
 		}
-		const glm::mat4 cameraWorld = m_ActiveScene->GetRuntimeRenderTransform(
-			selected.GetUUID());
-
-		const glm::vec4 ndcCorners[8] = {
-			{ -1.0f, -1.0f, -1.0f, 1.0f },
-			{  1.0f, -1.0f, -1.0f, 1.0f },
-			{  1.0f,  1.0f, -1.0f, 1.0f },
-			{ -1.0f,  1.0f, -1.0f, 1.0f },
-			{ -1.0f, -1.0f,  1.0f, 1.0f },
-			{  1.0f, -1.0f,  1.0f, 1.0f },
-			{  1.0f,  1.0f,  1.0f, 1.0f },
-			{ -1.0f,  1.0f,  1.0f, 1.0f }
-		};
-		glm::vec3 corners[8]{};
-		for (size_t index = 0; index < std::size(ndcCorners); ++index)
+		else
 		{
-			glm::vec4 view = inverseProjection * ndcCorners[index];
-			if (!std::isfinite(view.w)
-				|| std::abs(view.w) <= (std::numeric_limits<float>::min)())
+			orthographicHalfHeight = camera.GetOrthographicSize() * 0.5f;
+			orthographicHalfWidth = orthographicHalfHeight * aspectRatio;
+			if (!std::isfinite(orthographicHalfWidth)
+				|| !std::isfinite(orthographicHalfHeight)
+				|| orthographicHalfWidth <= 0.0f
+				|| orthographicHalfHeight <= 0.0f)
 				return;
-			view /= view.w;
-			const glm::vec4 world = cameraWorld * view;
-			if (!std::isfinite(world.x) || !std::isfinite(world.y)
-				|| !std::isfinite(world.z))
-				return;
-			corners[index] = glm::vec3(world);
+			const glm::vec3 localCorners[4] = {
+				{ -orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
+				{  orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
+				{  orthographicHalfWidth,  orthographicHalfHeight, 0.0f },
+				{ -orthographicHalfWidth,  orthographicHalfHeight, 0.0f }
+			};
+			for (size_t index = 0; index < std::size(localCorners); ++index)
+			{
+				if (!toWorld(localCorners[index], corners[index]))
+					return;
+			}
 		}
 
 		const float previousLineWidth = Renderer2D::GetLineWidth();
@@ -3899,20 +3949,32 @@ namespace TomCat {
 					corners[first + ((index + 1) % 4)], color, -1);
 		};
 		drawLoop(0);
-		drawLoop(4);
-		if (selected.GetComponent<C_Camera>()._Camera.GetProjectionType()
-			== SceneCamera::ProjectionType::Perspective)
+		if (perspective)
 		{
-			// Perspective rays originate at the camera. Drawing near-to-far as well
-			// would overlap these lines and make half of each edge look heavier.
-			const glm::vec3 origin = glm::vec3(cameraWorld * glm::vec4(0, 0, 0, 1));
-			for (size_t index = 4; index < 8; ++index)
-				Renderer2D::DrawLine(origin, corners[index], color, -1);
+			drawLoop(4);
+			for (size_t index = 0; index < 4; ++index)
+				Renderer2D::DrawLine(corners[index], corners[index + 4], color, -1);
 		}
 		else
 		{
-			for (size_t index = 0; index < 4; ++index)
-				Renderer2D::DrawLine(corners[index], corners[index + 4], color, -1);
+			// Orthographic cameras are authored from their capture plane. Four
+			// midpoint markers make the size/aspect frame legible in the 2D view.
+			Renderer2D::Flush();
+			const float markerSize = camera.GetOrthographicSize() * 0.035f;
+			const glm::vec3 markerCenters[4] = {
+				{ 0.0f, -orthographicHalfHeight, 0.0f },
+				{ orthographicHalfWidth, 0.0f, 0.0f },
+				{ 0.0f, orthographicHalfHeight, 0.0f },
+				{ -orthographicHalfWidth, 0.0f, 0.0f }
+			};
+			for (const glm::vec3& center : markerCenters)
+			{
+				const glm::mat4 markerTransform = cameraWorld
+					* glm::translate(glm::mat4(1.0f), center)
+					* glm::scale(glm::mat4(1.0f), glm::vec3(markerSize,
+						markerSize, 1.0f));
+				Renderer2D::DrawQuad(markerTransform, color, -1);
+			}
 		}
 		Renderer2D::EndScene();
 		RenderCommand::SetDepthTest(true);
@@ -4001,11 +4063,11 @@ namespace TomCat {
 			return false;
 		}
 
-		// Scene renders screen-space UI with the active Game viewport metrics and
-		// then scales that image into the Scene panel. Use the same logical extent
-		// here so named Game resolutions and HiDPI Scene panels map identically.
+		// Scene screen-space UI is laid out directly in the Scene framebuffer.  The
+		// Game framebuffer can have a different aspect ratio, so using its extent
+		// here would turn squares into rectangles and shear rotated controls.
 		const FramebufferSpecification specification =
-			m_GameFramebuffer->GetSpecification();
+			m_Framebuffer->GetSpecification();
 		const float framebufferWidth = static_cast<float>(specification.Width);
 		const float framebufferHeight = static_cast<float>(specification.Height);
 		const glm::vec2 viewportDisplaySize = m_ViewportBounds[1] - m_ViewportBounds[0];
@@ -5018,7 +5080,10 @@ namespace TomCat {
 		const bool altDown = e.IsAltDown();
 		const bool cameraButton = button == Mouse::ButtonMiddle || button == Mouse::ButtonRight ||
 			(button == Mouse::ButtonLeft && altDown);
-		if (cameraButton && m_ViewportFocused && m_ViewportCanvasHovered)
+		// A camera drag starts from the Scene canvas itself.  Requiring the Scene
+		// window to already own keyboard focus makes the first middle/right drag a
+		// no-op after selecting an entity from Hierarchy or Inspector.
+		if (cameraButton && m_ViewportCanvasHovered)
 		{
 			m_ViewportCameraDragOwned = true;
 			return true;

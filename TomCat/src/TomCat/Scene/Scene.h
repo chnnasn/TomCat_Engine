@@ -149,7 +149,12 @@ namespace TomCat {
 		// independent of the most recent display-frame delta.
 		void OnRuntimeStep(bool render = true);
 
-		void OnUpdateEditor(Timestep ts,EditorCamera& camera);
+		// Editor rendering can target a framebuffer whose extent differs from the
+		// selected Game resolution.  Screen-space UI must use the actual editor
+		// target extent or a square/rotated RectTransform is stretched and sheared
+		// when the Scene and Game panels have different aspect ratios.
+		void OnUpdateEditor(Timestep ts, EditorCamera& camera,
+			uint32_t uiViewportWidth = 0, uint32_t uiViewportHeight = 0);
 		// Accumulates display-frame time and advances scripts and physics in fixed
 		// increments. Rendering occurs once per display frame unless a headless
 		// runtime explicitly disables it.

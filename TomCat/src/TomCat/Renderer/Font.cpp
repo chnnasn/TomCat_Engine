@@ -449,7 +449,14 @@ namespace TomCat {
 				for (int column = 0; column < raster.Width; ++column)
 				{
 					const uint32_t px = placement.X + 1 + static_cast<uint32_t>(column);
-					const uint32_t py = placement.Y + 1 + static_cast<uint32_t>(row);
+					// stb_truetype emits bitmap rows from top to bottom, while a raw
+					// OpenGL upload maps the first row to v=0.  Runtime textures loaded
+					// through stb_image are flipped before upload, so keep the generated
+					// atlas in that same bottom-up convention.  The glyph UVs below are
+					// expressed in the normal bottom-left OpenGL coordinate system.
+					const uint32_t sourceY = placement.Y + 1
+						+ static_cast<uint32_t>(row);
+					const uint32_t py = candidate.Height - 1 - sourceY;
 					const size_t destination = (static_cast<size_t>(py) * candidate.Width + px) * 4;
 					const size_t source = static_cast<size_t>(row)
 						* raster.Width + column;
