@@ -1589,6 +1589,52 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"EditorCamera finite projection clipped its focus at a large distance");
 	}
 
+	void TestEditorCamera2DProjection()
+	{
+		TomCat::EditorCamera editor(45.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
+		TomCat::SceneCamera sceneCamera;
+		RequireUI(sceneCamera.SetViewportSize(1600, 900)
+			&& sceneCamera.SetOrthographic(10.0f, -1.0f, 1.0f),
+			"could not configure the 2D camera outline fixture");
+		std::array<glm::vec3, 8> corners{};
+		RequireUI(sceneCamera.TryGetLocalFrustumCorners(corners),
+			"could not get the 2D camera outline corners");
+		auto projectedSeparation = [&](const glm::mat4& viewProjection)
+		{
+			float separation = 0.0f;
+			for (size_t i = 0; i < 4; ++i)
+			{
+				const glm::vec4 nearClip = viewProjection * glm::vec4(corners[i], 1.0f);
+				const glm::vec4 farClip = viewProjection * glm::vec4(corners[i + 4], 1.0f);
+				separation = std::max(separation, glm::length(
+					glm::vec2(nearClip) / nearClip.w - glm::vec2(farClip) / farClip.w));
+			}
+			return separation;
+		};
+		RequireUI(projectedSeparation(editor.GetViewProjection()) > 0.01f,
+			"perspective fixture must reproduce the separated near/far outlines");
+		editor.Set2DMode(true);
+		editor.Set2DMode(true); // Repeated per-frame synchronization must be harmless.
+		editor.SetOrthographic(false);
+		editor.SnapToAxis(TomCat::EditorCamera::AxisView::PositiveX);
+		editor.SetViewportSize(900.0f, 600.0f);
+		editor.SetDistance(20.0f);
+		RequireUI(editor.IsOrthographic()
+			&& glm::length(editor.GetForwardDirection() - glm::vec3(0, 0, 1)) < 1.0e-5f
+			&& projectedSeparation(editor.GetViewProjection()) < 1.0e-5f
+			&& projectedSeparation(editor.GetInfiniteFarViewProjection()) < 1.0e-5f,
+			"2D Scene view must overlap camera near/far outlines without perspective");
+		editor.Set2DMode(false);
+		RequireUI(!editor.IsOrthographic()
+			&& projectedSeparation(editor.GetViewProjection()) > 0.01f,
+			"leaving 2D did not restore the 3D perspective projection");
+		editor.SetOrthographic(true);
+		editor.Set2DMode(true);
+		editor.Set2DMode(false);
+		RequireUI(editor.IsOrthographic(),
+			"leaving 2D did not preserve a previously orthographic 3D view");
+	}
+
 	void TestSceneCameraFrustumCorners()
 	{
 		TomCat::SceneCamera camera;
@@ -2784,6 +2830,7 @@ namespace TomCat::Tests {
 		TestEditorCameraFrameBounds();
 		TestEditorCameraScrollZoom();
 		TestEditorCameraAxisViews();
+		TestEditorCamera2DProjection();
 		TestSceneCameraFrustumCorners();
 		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();

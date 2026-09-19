@@ -98,6 +98,7 @@ namespace TomCat {
 		float m_ViewportWidth = 1280, m_ViewportHeight = 720;
 		bool m_Is2DMode = false;
 		bool m_IsOrthographic = false;
+		bool m_3DOrthographic = false;
 	};
 
 }

@@ -2400,8 +2400,12 @@ namespace TomCat {
 		// Use the same native menu-bar slot as Hierarchy.  ImGui's dock tab and
 		// menu-bar layout then share one geometry source, eliminating the hand-
 		// positioned gap that appeared with the custom Scene strip.
+		// Scene is a fixed viewport. Overlay items may extend ImGui's content
+		// bounds, but must never scroll or shrink the rendered camera area.
+		ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
 		const bool sceneVisible = ImGui::Begin("Scene###Scene", &m_ShowScenePanel,
-			ImGuiWindowFlags_MenuBar);
+			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar
+				| ImGuiWindowFlags_NoScrollWithMouse);
 		m_ScenePanelDocked = ImGui::IsWindowDocked();
 		if (!sceneVisible)
 		{

@@ -129,12 +129,16 @@ namespace TomCat {
 		m_Is2DMode = enabled;
 		if (enabled)
 		{
-			// A 2D Scene view always faces the XY plane. Reset an angle inherited
-			// from a 3D project once when entering 2D; panning and zooming remain.
+			// A 2D Scene view faces XY with parallel projection, so identical XY
+			// positions overlap regardless of depth (including near/far outlines).
+			m_3DOrthographic = m_IsOrthographic;
+			m_IsOrthographic = true;
 			m_Pitch = 0.0f;
 			m_Yaw = 0.0f;
-			UpdateView();
 		}
+		else
+			m_IsOrthographic = m_3DOrthographic;
+		UpdateView();
 	}
 
 	glm::vec3 EditorCamera::GetWorldAxis(AxisView view)
@@ -153,6 +157,8 @@ namespace TomCat {
 
 	void EditorCamera::SnapToAxis(AxisView view)
 	{
+		if (m_Is2DMode)
+			return;
 		constexpr float halfPi = glm::pi<float>() * 0.5f;
 		switch (view)
 		{
@@ -176,6 +182,8 @@ namespace TomCat {
 
 	void EditorCamera::SetOrthographic(bool enabled)
 	{
+		if (m_Is2DMode)
+			enabled = true;
 		if (m_IsOrthographic == enabled)
 			return;
 		m_IsOrthographic = enabled;
