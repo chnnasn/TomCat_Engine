@@ -365,7 +365,7 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 	std::vector<uint8_t> CaptureEditorUI(TomCat::Scene& scene,
 		uint32_t targetWidth, uint32_t targetHeight,
-		uint32_t gameWidth, uint32_t gameHeight)
+		TomCat::EditorCamera& camera)
 	{
 		TomCat::FramebufferSpecification specification;
 		specification.Width = targetWidth;
@@ -379,13 +379,9 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		TomCat::RenderCommand::SetClearColor({ 8.0f / 255.0f, 12.0f / 255.0f,
 			18.0f / 255.0f, 1.0f });
 		TomCat::RenderCommand::Clear();
-		scene.OnViewportResize(gameWidth, gameHeight);
-		TomCat::EditorCamera camera(30.0f,
-			static_cast<float>(targetWidth) / targetHeight, 0.1f, 100.0f);
 		camera.SetViewportSize(static_cast<float>(targetWidth),
 			static_cast<float>(targetHeight));
-		scene.OnUpdateEditor(TomCat::Timestep(0.0f), camera,
-			targetWidth, targetHeight);
+		scene.OnUpdateEditor(TomCat::Timestep(0.0f), camera);
 		glFinish();
 		std::vector<uint8_t> pixels(
 			static_cast<size_t>(targetWidth) * targetHeight * 4u);
@@ -1294,6 +1290,75 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			96.0f, {});
 	}
 
+	void TestEditorCanvasLayout()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity wideCanvas = scene.CreateEntityWithUUID(
+			TomCat::UUID(12001), "Wide Canvas");
+		auto& wide = wideCanvas.AddComponent<TomCat::Canvas>();
+		wide.ReferenceResolution = { 1920.0f, 1080.0f };
+		wide.ScaleFactor = 1.5f;
+		TomCat::Entity squareCanvas = scene.CreateEntityWithUUID(
+			TomCat::UUID(12002), "Square Canvas");
+		squareCanvas.AddComponent<TomCat::Canvas>().ReferenceResolution =
+			{ 800.0f, 800.0f };
+
+		TomCat::Entity child = scene.CreateEntityWithUUID(
+			TomCat::UUID(12003), "Editor Canvas Child");
+		auto& childRect = child.AddComponent<TomCat::RectTransform>();
+		childRect.AnchoredPosition = { 10.0f, -20.0f };
+		childRect.SizeDelta = { 100.0f, 50.0f };
+		childRect.RuntimeRect = { 7.0f, 8.0f, 9.0f, 10.0f };
+		childRect.RuntimeClipRect = { 11.0f, 12.0f, 13.0f, 14.0f };
+		RequireUI(scene.SetParent(child, wideCanvas),
+			"could not parent Editor Canvas layout probe");
+
+		const TomCat::RuntimeUILayoutSnapshot editor =
+			TomCat::RuntimeUISystem::BuildEditorLayout(scene);
+		const TomCat::UIRect& wideRoot = editor.Rectangles.at(wideCanvas.GetUUID());
+		const TomCat::UIRect& squareRoot = editor.Rectangles.at(squareCanvas.GetUUID());
+		RequireUI(Near(wideRoot.Width, 1920.0f)
+			&& Near(wideRoot.Height, 1080.0f)
+			&& Near(squareRoot.Width, 800.0f)
+			&& Near(squareRoot.Height, 800.0f),
+			"Editor Canvas roots did not use their own reference resolutions");
+
+		auto transformedPoint = [&](TomCat::Entity entity, const glm::vec2& point)
+		{
+			return editor.Transforms.at(entity.GetUUID())
+				* glm::vec4(point, 0.0f, 1.0f);
+		};
+		const glm::vec4 wideCenter = transformedPoint(wideCanvas,
+			{ wideRoot.Width * 0.5f, wideRoot.Height * 0.5f });
+		const glm::vec4 wideMinimum = transformedPoint(wideCanvas, { 0.0f, 0.0f });
+		const glm::vec4 wideMaximum = transformedPoint(wideCanvas,
+			{ wideRoot.Width, wideRoot.Height });
+		const glm::vec4 squareCenter = transformedPoint(squareCanvas,
+			{ squareRoot.Width * 0.5f, squareRoot.Height * 0.5f });
+		RequireUI(Near(wideCenter.x, 0.0f) && Near(wideCenter.y, 0.0f)
+			&& Near(squareCenter.x, 0.0f) && Near(squareCenter.y, 0.0f)
+			&& Near(wideMinimum.x, -9.6f) && Near(wideMinimum.y, -5.4f)
+			&& Near(wideMaximum.x, 9.6f) && Near(wideMaximum.y, 5.4f),
+			"Editor Canvas pixel-to-world plane contract changed");
+
+		const TomCat::UIRect& childValue = editor.Rectangles.at(child.GetUUID());
+		RequireUI(Near(editor.Scales.at(child.GetUUID()), 1.5f)
+			&& Near(childValue.X, 900.0f) && Near(childValue.Y, 472.5f)
+			&& Near(childValue.Width, 150.0f) && Near(childValue.Height, 75.0f),
+			"Editor Canvas child lost pixel-based RectTransform semantics");
+		RequireUI(childRect.RuntimeRect == glm::vec4(7.0f, 8.0f, 9.0f, 10.0f)
+			&& childRect.RuntimeClipRect == glm::vec4(11.0f, 12.0f, 13.0f, 14.0f),
+			"Editor Canvas layout polluted runtime RectTransform diagnostics");
+
+		const TomCat::RuntimeUILayoutSnapshot runtime =
+			TomCat::RuntimeUISystem::BuildLayout(scene, 320, 240, 96.0f);
+		const TomCat::UIRect& runtimeRoot = runtime.Rectangles.at(wideCanvas.GetUUID());
+		RequireUI(Near(runtimeRoot.Width, 320.0f)
+			&& Near(runtimeRoot.Height, 240.0f)
+			&& childRect.RuntimeRect != glm::vec4(7.0f, 8.0f, 9.0f, 10.0f),
+			"Runtime Canvas stopped mapping layout to the real viewport");
+	}
+
 	void TestEditorCameraFrameBounds()
 	{
 		TomCat::EditorCamera camera(30.0f, 16.0f / 9.0f, 0.1f, 100.0f);
@@ -2029,58 +2094,146 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			return;
 		}
 
-		// The desktop Scene framebuffer and selected Game resolution commonly have
-		// different aspect ratios.  Editor UI must use the former for both layout and
-		// projection; otherwise the GPU viewport stretches a rotated square into a
-		// visibly sheared parallelogram and distorts text glyphs by the same factor.
-		TomCat::Scene editorExtentScene;
-		TomCat::Entity extentCanvas = editorExtentScene.CreateEntityWithUUID(
-			TomCat::UUID(10901), "Editor Extent Canvas");
-		extentCanvas.AddComponent<TomCat::Canvas>().ScaleMode =
-			TomCat::CanvasScaleMode::ConstantPixelSize;
-		TomCat::Entity extentSquare = editorExtentScene.CreateEntityWithUUID(
-			TomCat::UUID(10902), "Rotated Editor Square");
-		auto& extentRect = extentSquare.AddComponent<TomCat::RectTransform>();
-		extentRect.AnchorMin = extentRect.AnchorMax = { 0.5f, 0.5f };
-		extentRect.Pivot = { 0.5f, 0.5f };
-		extentRect.SizeDelta = { 80.0f, 80.0f };
-		extentSquare.AddComponent<TomCat::UIImage>().Color =
-			{ 1.0f, 1.0f, 1.0f, 1.0f };
-		RequireUI(editorExtentScene.SetParent(extentSquare, extentCanvas),
-			"could not parent Editor extent square");
-		extentSquare.GetComponent<TomCat::Transform>()._LocalRotation.z =
-			glm::radians(45.0f);
-		constexpr uint32_t EditorExtentWidth = 300;
-		constexpr uint32_t EditorExtentHeight = 200;
-		const std::vector<uint8_t> editorExtentPixels = CaptureEditorUI(
-			editorExtentScene, EditorExtentWidth, EditorExtentHeight, 1000, 1000);
-		uint32_t minimumX = EditorExtentWidth, maximumX = 0;
-		uint32_t minimumY = EditorExtentHeight, maximumY = 0;
-		uint32_t extentPixelCount = 0;
-		for (uint32_t y = 0; y < EditorExtentHeight; ++y)
+		// Scene view renders Canvas content on a stable reference-resolution plane.
+		// The same content remains a full-screen overlay in Runtime/Game view.
+		TomCat::Scene editorPlaneScene;
+		TomCat::Entity editorCanvas = editorPlaneScene.CreateEntityWithUUID(
+			TomCat::UUID(10901), "Editor Plane Canvas");
+		auto& editorCanvasComponent = editorCanvas.AddComponent<TomCat::Canvas>();
+		editorCanvasComponent.ReferenceResolution = { 400.0f, 200.0f };
+		TomCat::Entity editorBackground = editorPlaneScene.CreateEntityWithUUID(
+			TomCat::UUID(10902), "Editor Plane Background");
+		auto& backgroundRect = editorBackground.AddComponent<TomCat::RectTransform>();
+		backgroundRect.AnchorMin = { 0.0f, 0.0f };
+		backgroundRect.AnchorMax = { 1.0f, 1.0f };
+		backgroundRect.SizeDelta = { 0.0f, 0.0f };
+		editorBackground.AddComponent<TomCat::UIImage>().Color =
+			{ 1.0f, 0.0f, 1.0f, 1.0f };
+		RequireUI(editorPlaneScene.SetParent(editorBackground, editorCanvas),
+			"could not parent Editor Canvas background");
+		TomCat::Entity editorMarker = editorPlaneScene.CreateEntityWithUUID(
+			TomCat::UUID(10903), "Editor Plane Marker");
+		auto& markerRect = editorMarker.AddComponent<TomCat::RectTransform>();
+		markerRect.AnchorMin = markerRect.AnchorMax = { 0.5f, 0.5f };
+		markerRect.SizeDelta = { 40.0f, 20.0f };
+		editorMarker.AddComponent<TomCat::UIImage>().Color =
+			{ 1.0f, 1.0f, 0.0f, 1.0f };
+		RequireUI(editorPlaneScene.SetParent(editorMarker, editorCanvas),
+			"could not parent Editor Canvas marker");
+
+		constexpr uint32_t EditorCaptureSize = 512;
+		constexpr uint32_t RuntimeWidth = 320;
+		constexpr uint32_t RuntimeHeight = 240;
+		const std::vector<uint8_t> runtimeBefore = CaptureRuntimeUI(
+			editorPlaneScene, RuntimeWidth, RuntimeHeight, 96.0f);
+		TomCat::EditorCamera editorCamera(30.0f, 1.0f, 0.1f, 100.0f);
+		editorCamera.Set2DMode(true);
+		editorCamera.SetViewportSize(static_cast<float>(EditorCaptureSize),
+			static_cast<float>(EditorCaptureSize));
+		const glm::mat4 canvasToWorld =
+			TomCat::RuntimeUISystem::GetEditorCanvasTransform({ 400.0f, 200.0f });
+		const glm::vec3 canvasMinimum = glm::vec3(canvasToWorld
+			* glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+		const glm::vec3 canvasMaximum = glm::vec3(canvasToWorld
+			* glm::vec4(400.0f, 200.0f, 0.0f, 1.0f));
+		editorCamera.FrameBounds(canvasMinimum, canvasMaximum);
+		const std::vector<uint8_t> editorBaseline = CaptureEditorUI(
+			editorPlaneScene, EditorCaptureSize, EditorCaptureSize, editorCamera);
+
+		struct ColorExtent
 		{
-			for (uint32_t x = 0; x < EditorExtentWidth; ++x)
+			uint32_t MinimumX = 0;
+			uint32_t MinimumY = 0;
+			uint32_t MaximumX = 0;
+			uint32_t MaximumY = 0;
+			uint32_t Count = 0;
+			double SumX = 0.0;
+			double SumY = 0.0;
+			float Width() const { return Count ? static_cast<float>(MaximumX - MinimumX + 1) : 0.0f; }
+			float Height() const { return Count ? static_cast<float>(MaximumY - MinimumY + 1) : 0.0f; }
+			glm::vec2 Center() const
 			{
-				const size_t offset = (static_cast<size_t>(y)
-					* EditorExtentWidth + x) * 4u;
-				if (editorExtentPixels[offset] < 240
-					|| editorExtentPixels[offset + 1] < 240
-					|| editorExtentPixels[offset + 2] < 240)
-					continue;
-				minimumX = std::min(minimumX, x);
-				maximumX = std::max(maximumX, x);
-				minimumY = std::min(minimumY, y);
-				maximumY = std::max(maximumY, y);
-				++extentPixelCount;
+				return Count ? glm::vec2(static_cast<float>(SumX / Count),
+					static_cast<float>(SumY / Count)) : glm::vec2(0.0f);
 			}
-		}
-		const uint32_t extentWidth = maximumX - minimumX + 1;
-		const uint32_t extentHeight = maximumY - minimumY + 1;
-		RequireUI(extentPixelCount > 5000 && extentWidth > 100
-			&& extentHeight > 100
-			&& std::abs(static_cast<int>(extentWidth)
-				- static_cast<int>(extentHeight)) <= 2,
-			"Editor UI used Game resolution instead of Scene framebuffer extent");
+		};
+		auto findColor = [](const std::vector<uint8_t>& pixels, uint32_t width,
+			uint32_t height, bool yellow)
+		{
+			ColorExtent extent;
+			extent.MinimumX = width;
+			extent.MinimumY = height;
+			for (uint32_t y = 0; y < height; ++y)
+			{
+				for (uint32_t x = 0; x < width; ++x)
+				{
+					const size_t offset = (static_cast<size_t>(y) * width + x) * 4u;
+					const bool matches = yellow
+						? pixels[offset] > 220 && pixels[offset + 1] > 220
+							&& pixels[offset + 2] < 40
+						: pixels[offset] > 220 && pixels[offset + 1] < 40
+							&& pixels[offset + 2] > 220;
+					if (!matches)
+						continue;
+					extent.MinimumX = std::min(extent.MinimumX, x);
+					extent.MinimumY = std::min(extent.MinimumY, y);
+					extent.MaximumX = std::max(extent.MaximumX, x);
+					extent.MaximumY = std::max(extent.MaximumY, y);
+					extent.SumX += x;
+					extent.SumY += y;
+					++extent.Count;
+				}
+			}
+			return extent;
+		};
+
+		const ColorExtent baselinePlane = findColor(editorBaseline,
+			EditorCaptureSize, EditorCaptureSize, false);
+		const ColorExtent baselineMarker = findColor(editorBaseline,
+			EditorCaptureSize, EditorCaptureSize, true);
+		RequireUI(baselinePlane.Count > 50000 && baselineMarker.Count > 500
+			&& Near(baselinePlane.Width() / baselinePlane.Height(), 2.0f, 0.04f),
+			"Editor Canvas did not preserve its 2:1 reference-resolution plane");
+
+		const glm::vec3 panOffset(0.2f, 0.0f, 0.0f);
+		editorCamera.FrameBounds(canvasMinimum + panOffset,
+			canvasMaximum + panOffset);
+		const std::vector<uint8_t> editorPanned = CaptureEditorUI(
+			editorPlaneScene, EditorCaptureSize, EditorCaptureSize, editorCamera);
+		const ColorExtent pannedPlane = findColor(editorPanned,
+			EditorCaptureSize, EditorCaptureSize, false);
+		const ColorExtent pannedMarker = findColor(editorPanned,
+			EditorCaptureSize, EditorCaptureSize, true);
+		RequireUI(std::abs(pannedPlane.Width() - baselinePlane.Width()) <= 3.0f
+			&& std::abs(pannedPlane.Height() - baselinePlane.Height()) <= 3.0f
+			&& baselineMarker.Center().x - pannedMarker.Center().x > 15.0f
+			&& std::abs(baselineMarker.Center().y - pannedMarker.Center().y) <= 2.0f,
+			"Editor Canvas did not move with the Scene camera");
+
+		editorCamera.FrameBounds(canvasMinimum, canvasMaximum);
+		TomCat::MouseScrolledEvent zoomOut(0.0f, -4.0f);
+		editorCamera.OnEvent(zoomOut);
+		const std::vector<uint8_t> editorZoomed = CaptureEditorUI(
+			editorPlaneScene, EditorCaptureSize, EditorCaptureSize, editorCamera);
+		const ColorExtent zoomedPlane = findColor(editorZoomed,
+			EditorCaptureSize, EditorCaptureSize, false);
+		const ColorExtent zoomedMarker = findColor(editorZoomed,
+			EditorCaptureSize, EditorCaptureSize, true);
+		RequireUI(zoomedPlane.Width() < baselinePlane.Width() * 0.92f
+			&& zoomedPlane.Height() < baselinePlane.Height() * 0.92f
+			&& Near(zoomedPlane.Width() / zoomedPlane.Height(), 2.0f, 0.04f)
+			&& glm::length(zoomedMarker.Center() - baselineMarker.Center()) <= 2.0f,
+			"Editor Canvas did not zoom around the Scene camera focal point");
+
+		const std::vector<uint8_t> runtimeAfter = CaptureRuntimeUI(
+			editorPlaneScene, RuntimeWidth, RuntimeHeight, 96.0f);
+		const ColorExtent runtimePlane = findColor(runtimeAfter,
+			RuntimeWidth, RuntimeHeight, false);
+		RequireUI(runtimeAfter == runtimeBefore && runtimePlane.Width() >= 318.0f
+			&& runtimePlane.Height() >= 238.0f
+			&& Near(runtimePlane.Width() / runtimePlane.Height(), 4.0f / 3.0f,
+				0.03f),
+			"Editor Canvas camera state leaked into Runtime screen rendering");
 
 		TomCat::Scene clippedRenderScene;
 		TomCat::Entity clippedCanvas = clippedRenderScene.CreateEntityWithUUID(
@@ -2247,6 +2400,7 @@ namespace TomCat::Tests {
 		TestUTF8AndDeterministicFontAtlas();
 		TestLayoutClippingAspectAndInput();
 		TestRectTransformTransformAndHitTesting();
+		TestEditorCanvasLayout();
 		TestEditorCameraFrameBounds();
 		TestEditorCameraScrollZoom();
 		TestFixedInputCaptureSnapshot();

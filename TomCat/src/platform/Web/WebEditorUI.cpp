@@ -90,7 +90,7 @@ void WebEditorUI::OnUpdate(Timestep delta) {
   m_Framebuffer->ClearAttachment(1,-1);
   m_Context->OnViewportResize(width,height); m_Camera.SetViewportSize(float(width),float(height));
   m_Camera.OnUpdate(delta,m_ViewportHovered && !m_GizmoActive);
-  m_Context->OnUpdateEditor(delta,m_Camera,width,height); m_Framebuffer->Unbind();
+  m_Context->OnUpdateEditor(delta,m_Camera); m_Framebuffer->Unbind();
   const auto game = m_Context;
   if (game) {
     const uint32_t gameWidth=uint32_t(std::clamp(m_GameSize.x,1.0f,4096.0f));

@@ -346,12 +346,111 @@ namespace TomCat {
 			}
 		}
 
+		void RenderUILayout(Scene& scene, const RuntimeUILayoutSnapshot& layout,
+			RuntimeUIVisibilityMode visibility, const glm::mat4& viewProjection)
+		{
+			// Script-only and otherwise UI-free scenes must not touch the graphics
+			// backend. This also keeps server/headless updates valid before a
+			// Renderer2D context exists.
+			if (layout.RenderOrder.empty())
+				return;
+
+			Camera renderCamera(viewProjection);
+			RenderCommand::SetDepthTest(false);
+			Renderer2D::BeginScene(renderCamera, glm::mat4(1.0f));
+			for (UUID id : layout.RenderOrder)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (!entity || !IsVisible(scene, entity, visibility))
+					continue;
+				const auto rectangle = layout.Rectangles.find(id);
+				const auto clip = layout.Clips.find(id);
+				const auto elementTransform = layout.Transforms.find(id);
+				const auto clipRegions = layout.ClipRegions.find(id);
+				if (rectangle == layout.Rectangles.end()
+					|| clip == layout.Clips.end()
+					|| elementTransform == layout.Transforms.end()
+					|| clipRegions == layout.ClipRegions.end())
+					continue;
+
+				if (entity.HasComponent<UIImage>())
+				{
+					auto& image = entity.GetComponent<UIImage>();
+					if (image.Enabled && Finite(image.Color))
+					{
+						Ref<Texture2D> texture;
+						glm::vec2 sourceUVMin(0.0f), sourceUVMax(1.0f);
+						float sourceAspect = rectangle->second.Width
+							/ std::max(rectangle->second.Height, 1.0e-6f);
+						if (static_cast<uint64_t>(image.Image) != 0)
+						{
+							AssetManager& assets = AssetManager::Get();
+							texture = assets.LoadTexture(image.Image);
+							if (texture && texture->GetHeight() > 0)
+								sourceAspect = static_cast<float>(texture->GetWidth())
+									/ texture->GetHeight();
+							ResolvedSpriteAsset resolved;
+							SpriteRenderGeometry spriteGeometry;
+							if (texture && assets.ResolveSpriteAsset(image.Image, resolved)
+								&& resolved.IsSubAsset
+								&& BuildSpriteRenderGeometry(resolved.Data,
+									texture->GetWidth(), texture->GetHeight(), spriteGeometry))
+							{
+								sourceUVMin = { spriteGeometry.UMin, spriteGeometry.VMin };
+								sourceUVMax = { spriteGeometry.UMax, spriteGeometry.VMax };
+								sourceAspect = spriteGeometry.Width
+									/ std::max(spriteGeometry.Height, 1.0e-6f);
+							}
+						}
+
+						UIImageGeometry geometry;
+						if (RuntimeUISystem::BuildImageGeometry(rectangle->second,
+							rectangle->second, sourceAspect, sourceUVMin, sourceUVMax,
+							image.PreserveAspect, geometry))
+						{
+							glm::vec4 color = image.Color;
+							if (entity.HasComponent<UIButton>()
+								&& entity.GetComponent<UIButton>().Enabled)
+							{
+								const auto& button = entity.GetComponent<UIButton>();
+								glm::vec4 state = !button.Interactable
+									? button.DisabledColor
+									: button.RuntimePressed ? button.PressedColor
+									: button.RuntimeHovered ? button.HoverColor
+									: button.RuntimeFocused ? button.SelectedColor
+									: button.NormalColor;
+								const float multiplier = std::isfinite(
+									button.ColorMultiplier)
+									? std::clamp(button.ColorMultiplier, 0.0f, 5.0f)
+									: 1.0f;
+								color = MultiplyColor(color, state * multiplier);
+							}
+							if (static_cast<uint64_t>(image.Image) == 0 || texture)
+								DrawClippedUIQuad(geometry.Rect,
+									elementTransform->second, clipRegions->second,
+									texture, geometry.UVMin, geometry.UVMax, color,
+									static_cast<int>(static_cast<entt::entity>(entity)));
+						}
+					}
+				}
+
+				if (entity.HasComponent<UIText>())
+					DrawScreenText(entity.GetComponent<UIText>(), rectangle->second,
+						clipRegions->second, layout.Scales.at(id),
+						elementTransform->second,
+						static_cast<int>(static_cast<entt::entity>(entity)));
+			}
+			Renderer2D::EndScene();
+			RenderCommand::SetDepthTest(true);
+		}
+
 		struct LayoutBuilder
 		{
 			Scene& SceneValue;
 			entt::registry& Registry;
 			RuntimeUILayoutSnapshot& Snapshot;
 			RuntimeUIVisibilityMode Visibility;
+			bool WriteRuntimeRectangles = true;
 			std::set<uint64_t> Visited;
 
 			void LayoutChildren(Entity parent, const UIRect& parentRect,
@@ -396,8 +495,11 @@ namespace TomCat {
 						}
 					}
 					const UIRect clip = UIRect::Intersect(rectangle, inheritedClip);
-					rectTransform.RuntimeRect = rectangle.ToVector();
-					rectTransform.RuntimeClipRect = clip.ToVector();
+					if (WriteRuntimeRectangles)
+					{
+						rectTransform.RuntimeRect = rectangle.ToVector();
+						rectTransform.RuntimeClipRect = clip.ToVector();
+					}
 					Snapshot.Rectangles[childID] = rectangle;
 					Snapshot.Clips[childID] = clip;
 					Snapshot.Scales[childID] = scale;
@@ -757,6 +859,83 @@ namespace TomCat {
 	{
 		return BuildLayout(scene, scene.m_Registry, viewportWidth, viewportHeight,
 			dpi, visibility);
+	}
+
+	glm::mat4 RuntimeUISystem::GetEditorCanvasTransform(
+		const glm::vec2& referenceResolution)
+	{
+		const glm::vec2 safeResolution = Finite(referenceResolution)
+			&& glm::all(glm::greaterThan(referenceResolution, glm::vec2(0.0f)))
+			? referenceResolution : glm::vec2(1920.0f, 1080.0f);
+		const float worldUnitsPerPixel = 1.0f / EditorCanvasPixelsPerUnit;
+		return glm::translate(glm::mat4(1.0f), glm::vec3(
+			-safeResolution.x * worldUnitsPerPixel * 0.5f,
+			-safeResolution.y * worldUnitsPerPixel * 0.5f, 0.0f))
+			* glm::scale(glm::mat4(1.0f), glm::vec3(
+				worldUnitsPerPixel, worldUnitsPerPixel, 1.0f));
+	}
+
+	RuntimeUILayoutSnapshot RuntimeUISystem::BuildEditorLayout(Scene& scene,
+		entt::registry& registry, RuntimeUIVisibilityMode visibility)
+	{
+		RuntimeUILayoutSnapshot snapshot;
+		snapshot.DPI = 96.0f;
+		struct CanvasItem { Entity Value; int32_t Order = 0; uint64_t ID = 0; };
+		std::vector<CanvasItem> canvases;
+		for (const entt::entity value : registry.view<Canvas, ID>())
+		{
+			Entity entity(value, &scene);
+			const Canvas& canvas = registry.get<Canvas>(value);
+			if (canvas.Enabled && IsVisible(scene, entity, visibility))
+				canvases.push_back({ entity, canvas.SortingOrder,
+					static_cast<uint64_t>(entity.GetUUID()) });
+		}
+		std::sort(canvases.begin(), canvases.end(), [](const CanvasItem& left,
+			const CanvasItem& right)
+		{
+			return left.Order != right.Order ? left.Order < right.Order
+				: left.ID < right.ID;
+		});
+
+		LayoutBuilder builder{ scene, registry, snapshot, visibility, false };
+		for (const CanvasItem& item : canvases)
+		{
+			const Canvas& canvas = item.Value.GetComponent<Canvas>();
+			const glm::vec2 referenceResolution = Finite(canvas.ReferenceResolution)
+				&& glm::all(glm::greaterThan(canvas.ReferenceResolution,
+					glm::vec2(0.0f)))
+				? canvas.ReferenceResolution : glm::vec2(1920.0f, 1080.0f);
+			const UIRect canvasRectangle{ 0.0f, 0.0f,
+				referenceResolution.x, referenceResolution.y };
+			const float scale = std::clamp(Finite(canvas.ScaleFactor)
+				? canvas.ScaleFactor : 1.0f, 0.01f, 100.0f);
+			const glm::mat4 canvasTransform = GetEditorCanvasTransform(
+				referenceResolution);
+
+			snapshot.ViewportWidth = std::max(snapshot.ViewportWidth,
+				static_cast<uint32_t>(std::ceil(referenceResolution.x)));
+			snapshot.ViewportHeight = std::max(snapshot.ViewportHeight,
+				static_cast<uint32_t>(std::ceil(referenceResolution.y)));
+			builder.Visited.emplace(item.ID);
+			snapshot.Rectangles[item.Value.GetUUID()] = canvasRectangle;
+			snapshot.Clips[item.Value.GetUUID()] = canvasRectangle;
+			snapshot.Scales[item.Value.GetUUID()] = scale;
+			snapshot.Transforms[item.Value.GetUUID()] = canvasTransform;
+			const std::vector<RuntimeUIClipRegion> canvasClipRegions = {
+				{ canvasRectangle, canvasTransform }
+			};
+			snapshot.ClipRegions[item.Value.GetUUID()] = canvasClipRegions;
+			snapshot.RenderOrder.push_back(item.Value.GetUUID());
+			builder.LayoutChildren(item.Value, canvasRectangle, canvasRectangle,
+				scale, canvasTransform, canvasClipRegions);
+		}
+		return snapshot;
+	}
+
+	RuntimeUILayoutSnapshot RuntimeUISystem::BuildEditorLayout(Scene& scene,
+		RuntimeUIVisibilityMode visibility)
+	{
+		return BuildEditorLayout(scene, scene.m_Registry, visibility);
 	}
 
 	glm::vec2 RuntimeUISystem::MapPointerToViewport(
@@ -1335,99 +1514,32 @@ namespace TomCat {
 			return;
 		const RuntimeUILayoutSnapshot layout = BuildLayout(scene, registry,
 			viewportWidth, viewportHeight, dpi, visibility);
-		// Script-only and otherwise UI-free scenes must not touch the graphics
-		// backend. This also keeps server/headless runtime updates valid before a
-		// Renderer2D context exists.
-		if (layout.RenderOrder.empty())
-			return;
-		Camera screenCamera(glm::ortho(0.0f, static_cast<float>(viewportWidth),
-			0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f));
-		RenderCommand::SetDepthTest(false);
-		Renderer2D::BeginScene(screenCamera, glm::mat4(1.0f));
-		for (UUID id : layout.RenderOrder)
-		{
-			Entity entity = scene.FindEntityByUUID(id);
-			if (!entity || !IsVisible(scene, entity, visibility))
-				continue;
-			const auto rectangle = layout.Rectangles.find(id);
-			const auto clip = layout.Clips.find(id);
-			const auto elementTransform = layout.Transforms.find(id);
-			const auto clipRegions = layout.ClipRegions.find(id);
-			if (rectangle == layout.Rectangles.end() || clip == layout.Clips.end()
-				|| elementTransform == layout.Transforms.end()
-				|| clipRegions == layout.ClipRegions.end())
-				continue;
-			if (entity.HasComponent<UIImage>())
-			{
-				auto& image = entity.GetComponent<UIImage>();
-				if (image.Enabled && Finite(image.Color))
-				{
-					Ref<Texture2D> texture;
-					glm::vec2 sourceUVMin(0.0f), sourceUVMax(1.0f);
-					float sourceAspect = rectangle->second.Width
-						/ std::max(rectangle->second.Height, 1.0e-6f);
-					if (static_cast<uint64_t>(image.Image) != 0)
-					{
-						AssetManager& assets = AssetManager::Get();
-						texture = assets.LoadTexture(image.Image);
-						if (texture && texture->GetHeight() > 0)
-							sourceAspect = static_cast<float>(texture->GetWidth())
-								/ texture->GetHeight();
-						ResolvedSpriteAsset resolved;
-						SpriteRenderGeometry spriteGeometry;
-						if (texture && assets.ResolveSpriteAsset(image.Image, resolved)
-							&& resolved.IsSubAsset
-							&& BuildSpriteRenderGeometry(resolved.Data,
-								texture->GetWidth(), texture->GetHeight(), spriteGeometry))
-						{
-							sourceUVMin = { spriteGeometry.UMin, spriteGeometry.VMin };
-							sourceUVMax = { spriteGeometry.UMax, spriteGeometry.VMax };
-							sourceAspect = spriteGeometry.Width
-								/ std::max(spriteGeometry.Height, 1.0e-6f);
-						}
-					}
-					UIImageGeometry geometry;
-					if (BuildImageGeometry(rectangle->second, rectangle->second,
-						sourceAspect, sourceUVMin, sourceUVMax,
-						image.PreserveAspect, geometry))
-					{
-						glm::vec4 color = image.Color;
-						if (entity.HasComponent<UIButton>()
-							&& entity.GetComponent<UIButton>().Enabled)
-						{
-							const auto& button = entity.GetComponent<UIButton>();
-							glm::vec4 state = !button.Interactable ? button.DisabledColor
-								: button.RuntimePressed ? button.PressedColor
-								: button.RuntimeHovered ? button.HoverColor
-								: button.RuntimeFocused ? button.SelectedColor
-								: button.NormalColor;
-							const float multiplier = std::isfinite(button.ColorMultiplier)
-								? std::clamp(button.ColorMultiplier, 0.0f, 5.0f) : 1.0f;
-							state *= multiplier;
-							color = MultiplyColor(color, state);
-						}
-						if (static_cast<uint64_t>(image.Image) == 0 || texture)
-							DrawClippedUIQuad(geometry.Rect,
-								elementTransform->second, clipRegions->second,
-								texture, geometry.UVMin, geometry.UVMax, color,
-								static_cast<int>(static_cast<entt::entity>(entity)));
-					}
-				}
-			}
-			if (entity.HasComponent<UIText>())
-				DrawScreenText(entity.GetComponent<UIText>(), rectangle->second,
-					clipRegions->second, layout.Scales.at(id),
-					elementTransform->second,
-					static_cast<int>(static_cast<entt::entity>(entity)));
-		}
-		Renderer2D::EndScene();
-		RenderCommand::SetDepthTest(true);
+		RenderUILayout(scene, layout, visibility,
+			glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f,
+				static_cast<float>(viewportHeight), -1.0f, 1.0f));
 	}
 
 	void RuntimeUISystem::RenderScreen(Scene& scene, uint32_t viewportWidth,
 		uint32_t viewportHeight, float dpi, RuntimeUIVisibilityMode visibility)
 	{
 		RenderScreen(scene, scene.m_Registry, viewportWidth, viewportHeight, dpi,
+			visibility);
+	}
+
+	void RuntimeUISystem::RenderEditorCanvas(Scene& scene,
+		entt::registry& registry, const glm::mat4& editorViewProjection,
+		RuntimeUIVisibilityMode visibility)
+	{
+		const RuntimeUILayoutSnapshot layout = BuildEditorLayout(scene, registry,
+			visibility);
+		RenderUILayout(scene, layout, visibility, editorViewProjection);
+	}
+
+	void RuntimeUISystem::RenderEditorCanvas(Scene& scene,
+		const glm::mat4& editorViewProjection,
+		RuntimeUIVisibilityMode visibility)
+	{
+		RenderEditorCanvas(scene, scene.m_Registry, editorViewProjection,
 			visibility);
 	}
 

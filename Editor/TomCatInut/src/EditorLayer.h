@@ -117,6 +117,7 @@ namespace TomCat {
 		void UI_ColliderEditHandles();
 		void RenderSceneColliderOverlays();
 		void RenderSceneCameraOverlay();
+		void RenderSceneCanvasOverlay();
 		void FrameSceneEntity(Entity entity);
 		bool ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
 			glm::vec2& worldPosition) const;

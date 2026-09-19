@@ -6619,11 +6619,15 @@ static void DrawComponent(const std::string& name, Entity entity,
 				ImGui::Columns(1);
 				DrawProperty("Near", columnWidth);
 				value = camera.GetPerspectiveNearClip();
-				if (ImGui::DragFloat("##PerspectiveNear", &value) && camera.SetPerspectiveNearClip(value)) MarkModified();
+				if (ImGui::DragFloat("##PerspectiveNear", &value, 0.01f,
+					0.0f, 0.0f, "%.3f")
+					&& camera.SetPerspectiveNearClip(value)) MarkModified();
 				ImGui::Columns(1);
 				DrawProperty("Far", columnWidth);
 				value = camera.GetPerspectiveFarClip();
-				if (ImGui::DragFloat("##PerspectiveFar", &value) && camera.SetPerspectiveFarClip(value)) MarkModified();
+				if (ImGui::DragFloat("##PerspectiveFar", &value, 0.1f,
+					0.0f, 0.0f, "%.3f")
+					&& camera.SetPerspectiveFarClip(value)) MarkModified();
 				ImGui::Columns(1);
 			}
 			else
@@ -6634,11 +6638,15 @@ static void DrawComponent(const std::string& name, Entity entity,
 				ImGui::Columns(1);
 				DrawProperty("Near", columnWidth);
 				value = camera.GetOrthographicNearClip();
-				if (ImGui::DragFloat("##OrthoNear", &value) && camera.SetOrthographicNearClip(value)) MarkModified();
+				if (ImGui::DragFloat("##OrthoNear", &value, 0.01f,
+					0.0f, 0.0f, "%.3f")
+					&& camera.SetOrthographicNearClip(value)) MarkModified();
 				ImGui::Columns(1);
 				DrawProperty("Far", columnWidth);
 				value = camera.GetOrthographicFarClip();
-				if (ImGui::DragFloat("##OrthoFar", &value) && camera.SetOrthographicFarClip(value)) MarkModified();
+				if (ImGui::DragFloat("##OrthoFar", &value, 0.01f,
+					0.0f, 0.0f, "%.3f")
+					&& camera.SetOrthographicFarClip(value)) MarkModified();
 				ImGui::Columns(1);
 			}
 

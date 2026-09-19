@@ -1814,7 +1814,7 @@ namespace TomCat {
 		m_EditorCamera.OnUpdate(ts, m_ViewportCameraDragOwned);
 
 		// Scene窗口始终使用EditorCamera渲染
-		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera, sceneWidth, sceneHeight);
+		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 
 		// Mouse picking for Scene viewport
 		auto [mx, my] = ImGui::GetMousePos();
@@ -1845,6 +1845,7 @@ namespace TomCat {
 		// -1, so drawing them any earlier would punch holes in sprite picking.
 		RenderSceneColliderOverlays();
 		RenderSceneCameraOverlay();
+		RenderSceneCanvasOverlay();
 
 		m_Framebuffer->Unbind();
 
@@ -3640,6 +3641,65 @@ namespace TomCat {
 		};
 
 		FocusBounds bounds;
+		Entity canvasOwner;
+		for (Entity current = activeRoot; current;
+			current = m_ActiveScene->GetParent(current))
+		{
+			if (current.HasComponent<Canvas>())
+			{
+				canvasOwner = current;
+				break;
+			}
+		}
+		if (canvasOwner)
+		{
+			const RuntimeUILayoutSnapshot layout =
+				RuntimeUISystem::BuildEditorLayout(*m_ActiveScene,
+					RuntimeUIVisibilityMode::Editor);
+			std::unordered_set<uint64_t> visitedUI;
+			std::function<void(Entity, bool)> collectUI =
+				[&](Entity entity, bool isRoot)
+			{
+				if (!entity || !entity.HasComponent<ID>()
+					|| (!isRoot
+						&& !m_ActiveScene->IsVisibleInEditorHierarchy(entity)))
+					return;
+				const UUID id = entity.GetUUID();
+				if (!visitedUI.emplace(static_cast<uint64_t>(id)).second)
+					return;
+				const auto rectangleIt = layout.Rectangles.find(id);
+				const auto transformIt = layout.Transforms.find(id);
+				if (rectangleIt != layout.Rectangles.end()
+					&& transformIt != layout.Transforms.end())
+				{
+					const UIRect& rectangle = rectangleIt->second;
+					const glm::vec2 corners[4] = {
+						{ rectangle.X, rectangle.Y },
+						{ rectangle.X + rectangle.Width, rectangle.Y },
+						{ rectangle.X + rectangle.Width,
+							rectangle.Y + rectangle.Height },
+						{ rectangle.X, rectangle.Y + rectangle.Height }
+					};
+					for (const glm::vec2& corner : corners)
+						bounds.Add(glm::vec3(transformIt->second
+							* glm::vec4(corner, 0.0f, 1.0f)));
+				}
+				for (UUID childID : m_ActiveScene->GetChildrenUUIDs(entity))
+				{
+					Entity child = m_ActiveScene->FindEntityByUUID(childID);
+					if (child && m_ActiveScene->GetParent(child) == entity)
+						collectUI(child, false);
+				}
+			};
+			collectUI(activeRoot, true);
+			if (bounds.HasGeometry)
+			{
+				m_EditorCamera.FrameBounds(bounds.Minimum, bounds.Maximum);
+				FocusEditorPanel("Scene", m_ShowScenePanel);
+			}
+			return;
+		}
+
 		std::unordered_set<uint64_t> visited;
 		std::unordered_set<uint64_t> framedIDs;
 		std::function<void(Entity, bool)> collect = [&](Entity entity, bool isRoot)
@@ -3841,99 +3901,171 @@ namespace TomCat {
 	{
 		if (!m_ActiveScene)
 			return;
+		const float previousLineWidth = Renderer2D::GetLineWidth();
+		Renderer2D::SetLineWidth(1.5f);
+		RenderCommand::SetDepthTest(false);
+		Renderer2D::BeginScene(m_EditorCamera);
+
 		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
-		if (!selected || !selected.HasComponent<ID>()
-			|| !selected.HasComponent<Transform>()
-			|| !selected.HasComponent<C_Camera>()
-			|| !m_ActiveScene->IsVisibleInEditorHierarchy(selected))
-			return;
-
-		const SceneCamera& camera = selected.GetComponent<C_Camera>()._Camera;
-		const glm::mat4& projection = camera.GetProjection();
-		const float projectionX = std::abs(projection[0][0]);
-		const float projectionY = std::abs(projection[1][1]);
-		if (!std::isfinite(projectionX) || !std::isfinite(projectionY)
-			|| projectionX <= std::numeric_limits<float>::epsilon()
-			|| projectionY <= std::numeric_limits<float>::epsilon())
-			return;
-		const float aspectRatio = projectionY / projectionX;
-		if (!std::isfinite(aspectRatio)
-			|| aspectRatio <= std::numeric_limits<float>::epsilon())
-			return;
-
-		const glm::mat4 cameraWorld = m_ActiveScene->GetRuntimeRenderTransform(
-			selected.GetUUID());
-		glm::vec3 corners[8]{};
-		auto toWorld = [&](const glm::vec3& local, glm::vec3& worldPoint)
+		std::vector<Entity> cameraEntities;
+		Entity selectedCamera;
+		for (const entt::entity value
+			: m_ActiveScene->m_Registry.view<Transform, C_Camera, ID>())
 		{
-			const glm::vec4 world = cameraWorld * glm::vec4(local, 1.0f);
-			if (!std::isfinite(world.x) || !std::isfinite(world.y)
-				|| !std::isfinite(world.z) || !std::isfinite(world.w))
-				return false;
-			worldPoint = glm::vec3(world);
-			return true;
-		};
-
-		const bool perspective = camera.GetProjectionType()
-			== SceneCamera::ProjectionType::Perspective;
-		float orthographicHalfWidth = 0.0f;
-		float orthographicHalfHeight = 0.0f;
-		if (perspective)
+			Entity entity(value, m_ActiveScene.get());
+			if (selected && selected == entity)
+				selectedCamera = entity;
+			else
+				cameraEntities.push_back(entity);
+		}
+		// Keep the selected outline legible when multiple cameras overlap.
+		if (selectedCamera)
+			cameraEntities.push_back(selectedCamera);
+		for (Entity entity : cameraEntities)
 		{
-			const float nearClip = camera.GetPerspectiveNearClip();
-			const float farClip = camera.GetPerspectiveFarClip();
-			const float tanHalfFov = std::tan(camera.GetPerspectiveVerticalFOV()
-				* 0.5f);
-			if (!std::isfinite(nearClip) || !std::isfinite(farClip)
-				|| !std::isfinite(tanHalfFov) || tanHalfFov <= 0.0f
-				|| farClip <= nearClip)
-				return;
+			const bool isSelected = selectedCamera && selectedCamera == entity;
+			if (!m_ActiveScene->IsVisibleInEditorHierarchy(entity))
+				continue;
+			const SceneCamera& camera = entity.GetComponent<C_Camera>()._Camera;
+			const glm::mat4& projection = camera.GetProjection();
+			const float projectionX = std::abs(projection[0][0]);
+			const float projectionY = std::abs(projection[1][1]);
+			if (!std::isfinite(projectionX) || !std::isfinite(projectionY)
+				|| projectionX <= std::numeric_limits<float>::epsilon()
+				|| projectionY <= std::numeric_limits<float>::epsilon())
+				continue;
+			const float aspectRatio = projectionY / projectionX;
+			if (!std::isfinite(aspectRatio)
+				|| aspectRatio <= std::numeric_limits<float>::epsilon())
+				continue;
 
-			// The runtime far clip can be hundreds or thousands of units. Keep the
-			// Scene gizmo readable while preserving the camera's actual FOV, aspect,
-			// near plane, world position, and world rotation.
-			constexpr float preferredPreviewDepth = 10.0f;
-			const float previewFar = nearClip
-				+ std::min(farClip - nearClip, preferredPreviewDepth);
-			const float nearHalfHeight = tanHalfFov * nearClip;
-			const float nearHalfWidth = nearHalfHeight * aspectRatio;
-			const float farHalfHeight = tanHalfFov * previewFar;
-			const float farHalfWidth = farHalfHeight * aspectRatio;
-			const glm::vec3 localCorners[8] = {
-				{ -nearHalfWidth, -nearHalfHeight, -nearClip },
-				{  nearHalfWidth, -nearHalfHeight, -nearClip },
-				{  nearHalfWidth,  nearHalfHeight, -nearClip },
-				{ -nearHalfWidth,  nearHalfHeight, -nearClip },
-				{ -farHalfWidth, -farHalfHeight, -previewFar },
-				{  farHalfWidth, -farHalfHeight, -previewFar },
-				{  farHalfWidth,  farHalfHeight, -previewFar },
-				{ -farHalfWidth,  farHalfHeight, -previewFar }
-			};
-			for (size_t index = 0; index < std::size(localCorners); ++index)
+			const glm::mat4 cameraWorld =
+				m_ActiveScene->GetRuntimeRenderTransform(entity.GetUUID());
+			glm::vec3 corners[8]{};
+			auto toWorld = [&](const glm::vec3& local, glm::vec3& worldPoint)
 			{
-				if (!toWorld(localCorners[index], corners[index]))
-					return;
+				const glm::vec4 world = cameraWorld * glm::vec4(local, 1.0f);
+				if (!std::isfinite(world.x) || !std::isfinite(world.y)
+					|| !std::isfinite(world.z) || !std::isfinite(world.w))
+					return false;
+				worldPoint = glm::vec3(world);
+				return true;
+			};
+
+			const bool perspective = camera.GetProjectionType()
+				== SceneCamera::ProjectionType::Perspective;
+			float orthographicHalfWidth = 0.0f;
+			float orthographicHalfHeight = 0.0f;
+			bool valid = true;
+			if (perspective)
+			{
+				const float nearClip = camera.GetPerspectiveNearClip();
+				const float farClip = camera.GetPerspectiveFarClip();
+				const float tanHalfFov = std::tan(
+					camera.GetPerspectiveVerticalFOV() * 0.5f);
+				if (!std::isfinite(nearClip) || !std::isfinite(farClip)
+					|| !std::isfinite(tanHalfFov) || tanHalfFov <= 0.0f
+					|| farClip <= nearClip)
+					continue;
+				constexpr float preferredPreviewDepth = 10.0f;
+				const float previewFar = nearClip
+					+ std::min(farClip - nearClip, preferredPreviewDepth);
+				const float nearHalfHeight = tanHalfFov * nearClip;
+				const float nearHalfWidth = nearHalfHeight * aspectRatio;
+				const float farHalfHeight = tanHalfFov * previewFar;
+				const float farHalfWidth = farHalfHeight * aspectRatio;
+				const glm::vec3 localCorners[8] = {
+					{ -nearHalfWidth, -nearHalfHeight, -nearClip },
+					{  nearHalfWidth, -nearHalfHeight, -nearClip },
+					{  nearHalfWidth,  nearHalfHeight, -nearClip },
+					{ -nearHalfWidth,  nearHalfHeight, -nearClip },
+					{ -farHalfWidth, -farHalfHeight, -previewFar },
+					{  farHalfWidth, -farHalfHeight, -previewFar },
+					{  farHalfWidth,  farHalfHeight, -previewFar },
+					{ -farHalfWidth,  farHalfHeight, -previewFar }
+				};
+				for (size_t index = 0; index < std::size(localCorners); ++index)
+					valid &= toWorld(localCorners[index], corners[index]);
+			}
+			else
+			{
+				orthographicHalfHeight = camera.GetOrthographicSize() * 0.5f;
+				orthographicHalfWidth = orthographicHalfHeight * aspectRatio;
+				if (!std::isfinite(orthographicHalfWidth)
+					|| !std::isfinite(orthographicHalfHeight)
+					|| orthographicHalfWidth <= 0.0f
+					|| orthographicHalfHeight <= 0.0f)
+					continue;
+				const glm::vec3 localCorners[4] = {
+					{ -orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
+					{  orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
+					{  orthographicHalfWidth,  orthographicHalfHeight, 0.0f },
+					{ -orthographicHalfWidth,  orthographicHalfHeight, 0.0f }
+				};
+				for (size_t index = 0; index < std::size(localCorners); ++index)
+					valid &= toWorld(localCorners[index], corners[index]);
+			}
+			if (!valid)
+				continue;
+
+			const glm::vec4 color = isSelected
+				? glm::vec4(0.28f, 0.68f, 1.0f, 1.0f)
+				: glm::vec4(0.78f, 0.78f, 0.78f, 0.72f);
+			auto drawLoop = [&](size_t first)
+			{
+				for (size_t index = 0; index < 4; ++index)
+					Renderer2D::DrawLine(corners[first + index],
+						corners[first + ((index + 1) % 4)], color, -1);
+			};
+			drawLoop(0);
+			if (perspective)
+			{
+				drawLoop(4);
+				for (size_t index = 0; index < 4; ++index)
+					Renderer2D::DrawLine(corners[index], corners[index + 4],
+						color, -1);
+			}
+			else if (isSelected)
+			{
+				const float markerSize = camera.GetOrthographicSize() * 0.035f;
+				const glm::vec3 markerCenters[4] = {
+					{ 0.0f, -orthographicHalfHeight, 0.0f },
+					{ orthographicHalfWidth, 0.0f, 0.0f },
+					{ 0.0f, orthographicHalfHeight, 0.0f },
+					{ -orthographicHalfWidth, 0.0f, 0.0f }
+				};
+				for (const glm::vec3& center : markerCenters)
+				{
+					const glm::mat4 markerTransform = cameraWorld
+						* glm::translate(glm::mat4(1.0f), center)
+						* glm::scale(glm::mat4(1.0f), glm::vec3(
+							markerSize, markerSize, 1.0f));
+					Renderer2D::DrawQuad(markerTransform, color, -1);
+				}
 			}
 		}
-		else
+		Renderer2D::EndScene();
+		RenderCommand::SetDepthTest(true);
+		Renderer2D::SetLineWidth(previousLineWidth);
+	}
+
+	void EditorLayer::RenderSceneCanvasOverlay()
+	{
+		if (!m_ActiveScene)
+			return;
+		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildEditorLayout(
+			*m_ActiveScene, RuntimeUIVisibilityMode::Editor);
+		if (layout.RenderOrder.empty())
+			return;
+
+		Entity selectedCanvas;
+		for (Entity current = m_SceneHierarchyPanel.GetSelectedEntity(); current;
+			current = m_ActiveScene->GetParent(current))
 		{
-			orthographicHalfHeight = camera.GetOrthographicSize() * 0.5f;
-			orthographicHalfWidth = orthographicHalfHeight * aspectRatio;
-			if (!std::isfinite(orthographicHalfWidth)
-				|| !std::isfinite(orthographicHalfHeight)
-				|| orthographicHalfWidth <= 0.0f
-				|| orthographicHalfHeight <= 0.0f)
-				return;
-			const glm::vec3 localCorners[4] = {
-				{ -orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
-				{  orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
-				{  orthographicHalfWidth,  orthographicHalfHeight, 0.0f },
-				{ -orthographicHalfWidth,  orthographicHalfHeight, 0.0f }
-			};
-			for (size_t index = 0; index < std::size(localCorners); ++index)
+			if (current.HasComponent<Canvas>())
 			{
-				if (!toWorld(localCorners[index], corners[index]))
-					return;
+				selectedCanvas = current;
+				break;
 			}
 		}
 
@@ -3941,39 +4073,71 @@ namespace TomCat {
 		Renderer2D::SetLineWidth(1.5f);
 		RenderCommand::SetDepthTest(false);
 		Renderer2D::BeginScene(m_EditorCamera);
-		const glm::vec4 color{ 0.82f, 0.82f, 0.82f, 0.9f };
-		auto drawLoop = [&](size_t first)
+		std::vector<Entity> canvasEntities;
+		for (const entt::entity value : m_ActiveScene->m_Registry.view<Canvas, ID>())
 		{
-			for (size_t index = 0; index < 4; ++index)
-				Renderer2D::DrawLine(corners[first + index],
-					corners[first + ((index + 1) % 4)], color, -1);
-		};
-		drawLoop(0);
-		if (perspective)
-		{
-			drawLoop(4);
-			for (size_t index = 0; index < 4; ++index)
-				Renderer2D::DrawLine(corners[index], corners[index + 4], color, -1);
+			Entity canvas(value, m_ActiveScene.get());
+			if (!selectedCanvas || selectedCanvas != canvas)
+				canvasEntities.push_back(canvas);
 		}
-		else
+		// Multiple screen-space Canvases share an authoring origin by default, so
+		// render the selected owner last to preserve its blue outline.
+		if (selectedCanvas)
+			canvasEntities.push_back(selectedCanvas);
+		for (Entity canvas : canvasEntities)
 		{
-			// Orthographic cameras are authored from their capture plane. Four
-			// midpoint markers make the size/aspect frame legible in the 2D view.
-			Renderer2D::Flush();
-			const float markerSize = camera.GetOrthographicSize() * 0.035f;
-			const glm::vec3 markerCenters[4] = {
-				{ 0.0f, -orthographicHalfHeight, 0.0f },
-				{ orthographicHalfWidth, 0.0f, 0.0f },
-				{ 0.0f, orthographicHalfHeight, 0.0f },
-				{ -orthographicHalfWidth, 0.0f, 0.0f }
+			const bool isSelected = selectedCanvas && selectedCanvas == canvas;
+			if (!canvas.GetComponent<Canvas>().Enabled
+				|| !m_ActiveScene->IsVisibleInEditorHierarchy(canvas))
+				continue;
+			const auto rectangleIt = layout.Rectangles.find(canvas.GetUUID());
+			const auto transformIt = layout.Transforms.find(canvas.GetUUID());
+			if (rectangleIt == layout.Rectangles.end()
+				|| transformIt == layout.Transforms.end())
+				continue;
+
+			const UIRect& rectangle = rectangleIt->second;
+			const glm::vec2 localCorners[4] = {
+				{ rectangle.X, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y + rectangle.Height },
+				{ rectangle.X, rectangle.Y + rectangle.Height }
 			};
-			for (const glm::vec3& center : markerCenters)
+			glm::vec3 worldCorners[4]{};
+			bool valid = true;
+			for (size_t index = 0; index < std::size(localCorners); ++index)
 			{
-				const glm::mat4 markerTransform = cameraWorld
-					* glm::translate(glm::mat4(1.0f), center)
-					* glm::scale(glm::mat4(1.0f), glm::vec3(markerSize,
-						markerSize, 1.0f));
-				Renderer2D::DrawQuad(markerTransform, color, -1);
+				const glm::vec4 world = transformIt->second
+					* glm::vec4(localCorners[index], 0.0f, 1.0f);
+				valid &= std::isfinite(world.x) && std::isfinite(world.y)
+					&& std::isfinite(world.z) && std::isfinite(world.w);
+				worldCorners[index] = glm::vec3(world);
+			}
+			if (!valid)
+				continue;
+
+			const glm::vec4 color = isSelected
+				? glm::vec4(0.24f, 0.64f, 1.0f, 1.0f)
+				: glm::vec4(0.78f, 0.78f, 0.78f, 0.5f);
+			for (size_t index = 0; index < std::size(worldCorners); ++index)
+				Renderer2D::DrawLine(worldCorners[index],
+					worldCorners[(index + 1) % std::size(worldCorners)], color, -1);
+
+			if (isSelected)
+			{
+				const float width = glm::length(worldCorners[1] - worldCorners[0]);
+				const float height = glm::length(worldCorners[3] - worldCorners[0]);
+				const float markerSize = std::clamp(
+					std::min(width, height) * 0.018f, 0.08f, 0.24f);
+				for (const glm::vec3& corner : worldCorners)
+				{
+					const glm::mat4 markerTransform = glm::translate(
+						glm::mat4(1.0f), corner)
+						* glm::scale(glm::mat4(1.0f), glm::vec3(
+							markerSize, markerSize, 1.0f));
+					Renderer2D::DrawCircle(markerTransform, color, 1.0f,
+						0.01f, -1);
+				}
 			}
 		}
 		Renderer2D::EndScene();
@@ -4050,8 +4214,8 @@ namespace TomCat {
 			return false;
 		}
 
-		// A Canvas is the full Scene framebuffer. Its ordinary Transform has no
-		// bearing on screen-space layout, so suppress the unrelated world gizmo.
+		// A screen-space Canvas owns the reference-resolution plane drawn by
+		// RenderSceneCanvasOverlay. Its ordinary Transform does not move runtime UI.
 		if (selected.HasComponent<Canvas>())
 		{
 			ResetRectTransformEditState();
@@ -4063,25 +4227,15 @@ namespace TomCat {
 			return false;
 		}
 
-		// Scene screen-space UI is laid out directly in the Scene framebuffer.  The
-		// Game framebuffer can have a different aspect ratio, so using its extent
-		// here would turn squares into rectangles and shear rotated controls.
-		const FramebufferSpecification specification =
-			m_Framebuffer->GetSpecification();
-		const float framebufferWidth = static_cast<float>(specification.Width);
-		const float framebufferHeight = static_cast<float>(specification.Height);
 		const glm::vec2 viewportDisplaySize = m_ViewportBounds[1] - m_ViewportBounds[0];
-		if (framebufferWidth <= 0.0f || framebufferHeight <= 0.0f
-			|| viewportDisplaySize.x <= 0.0f || viewportDisplaySize.y <= 0.0f)
+		if (viewportDisplaySize.x <= 0.0f || viewportDisplaySize.y <= 0.0f)
 		{
 			ResetRectTransformEditState();
 			return true;
 		}
 
-		const float dpi = 96.0f * Application::Get().GetWindow().GetDPIScale();
-		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildLayout(
-			*m_ActiveScene, specification.Width, specification.Height, dpi,
-			RuntimeUIVisibilityMode::Editor);
+		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildEditorLayout(
+			*m_ActiveScene, RuntimeUIVisibilityMode::Editor);
 		const UUID selectedID = selected.GetUUID();
 		const auto rectangleIt = layout.Rectangles.find(selectedID);
 		const auto scaleIt = layout.Scales.find(selectedID);
@@ -4095,28 +4249,38 @@ namespace TomCat {
 		}
 
 		const UIRect& rectangle = rectangleIt->second;
-		const float displayScaleX = viewportDisplaySize.x / framebufferWidth;
-		const float displayScaleY = viewportDisplaySize.y / framebufferHeight;
-		auto toSceneScreen = [&](const glm::vec2& point)
+		auto toSceneScreen = [&](const glm::vec2& point, ImVec2& output)
 		{
 			const glm::vec4 transformed = uiTransformIt->second
 				* glm::vec4(point, 0.0f, 1.0f);
-			return ImVec2(
-				m_ViewportBounds[0].x + transformed.x * displayScaleX,
-				m_ViewportBounds[0].y
-					+ (framebufferHeight - transformed.y) * displayScaleY);
+			glm::vec2 screen;
+			if (!std::isfinite(transformed.x) || !std::isfinite(transformed.y)
+				|| !std::isfinite(transformed.z)
+				|| !WorldToScreen(glm::vec3(transformed), screen))
+				return false;
+			output = ImVec2(screen.x, screen.y);
+			return true;
 		};
-		const ImVec2 rectCorners[4] = {
-			toSceneScreen({ rectangle.X, rectangle.Y }),
-			toSceneScreen({ rectangle.X + rectangle.Width, rectangle.Y }),
-			toSceneScreen({ rectangle.X + rectangle.Width,
-				rectangle.Y + rectangle.Height }),
-			toSceneScreen({ rectangle.X, rectangle.Y + rectangle.Height })
+		const glm::vec2 localCorners[4] = {
+			{ rectangle.X, rectangle.Y },
+			{ rectangle.X + rectangle.Width, rectangle.Y },
+			{ rectangle.X + rectangle.Width, rectangle.Y + rectangle.Height },
+			{ rectangle.X, rectangle.Y + rectangle.Height }
 		};
+		ImVec2 rectCorners[4]{};
+		bool visible = true;
+		for (size_t index = 0; index < std::size(localCorners); ++index)
+			visible &= toSceneScreen(localCorners[index], rectCorners[index]);
 		const glm::vec2 pivotPosition{
 			rectangle.X + rectangle.Width * selected.GetComponent<RectTransform>().Pivot.x,
 			rectangle.Y + rectangle.Height * selected.GetComponent<RectTransform>().Pivot.y };
-		const ImVec2 pivotScreen = toSceneScreen(pivotPosition);
+		ImVec2 pivotScreen{};
+		visible &= toSceneScreen(pivotPosition, pivotScreen);
+		if (!visible)
+		{
+			ResetRectTransformEditState();
+			return true;
+		}
 
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
@@ -4190,20 +4354,13 @@ namespace TomCat {
 				{ pivotPosition.x, pivotPosition.y, 0.0f },
 				gizmoRotation, gizmoScale);
 
-			// ImGuizmo operates in a virtual framebuffer-sized orthographic world.
-			// Its viewport is the displayed Scene image, so this projection preserves
-			// named Game resolutions, non-uniform panel fitting, and HiDPI scaling.
-			const glm::mat4 gizmoView = glm::lookAt(
-				glm::vec3(0.0f, 0.0f, 10.0f),
-				glm::vec3(0.0f, 0.0f, 0.0f),
-				glm::vec3(0.0f, 1.0f, 0.0f));
-			const glm::mat4 gizmoProjection = glm::ortho(0.0f, framebufferWidth,
-				0.0f, framebufferHeight, 0.1f, 100.0f);
+			// Use the real Scene camera for both Canvas content and its gizmo. In 2D
+			// mode the depth axis is edge-on, leaving the planar X/Y controls visible
+			// without changing ImGuizmo itself.
+			const glm::mat4 gizmoView = m_EditorCamera.GetViewMatrix();
+			const glm::mat4& gizmoProjection = m_EditorCamera.GetProjection();
 			ImGuizmo::AllowAxisFlip(false);
-			// RectTransform authoring is planar. This framebuffer-aligned front view
-			// leaves the depth axis edge-on, so stock ImGuizmo naturally suppresses
-			// it while preserving its normal interaction and drawing behavior.
-			ImGuizmo::SetOrthographic(true);
+			ImGuizmo::SetOrthographic(false);
 			ImGuizmo::SetDrawlist();
 			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
 				viewportDisplaySize.x, viewportDisplaySize.y);
@@ -4216,7 +4373,8 @@ namespace TomCat {
 			{
 				if (translateTool)
 				{
-					const float canvasPixel = scaleIt->second;
+					const float canvasPixel = scaleIt->second
+						/ RuntimeUISystem::EditorCanvasPixelsPerUnit;
 					snapValues[0] = canvasPixel;
 					snapValues[1] = canvasPixel;
 					snapValues[2] = canvasPixel;
@@ -4242,8 +4400,8 @@ namespace TomCat {
 		// The native mouse event is dispatched before this ImGui pass. Preserve the
 		// result for the next event so transparent text/image pixels cannot select
 		// world geometry underneath the RectTransform or its ImGuizmo handles.
-		m_UIRectHandleHovered = canManipulate
-			&& (rectangleHovered || gizmoHovered || gizmoUsing);
+		m_UIRectHandleHovered = rectangleHovered
+			|| (canManipulate && (gizmoHovered || gizmoUsing));
 		if (rectangleHovered && translateTool && layoutControlled)
 			ImGui::SetTooltip("Position is controlled by the parent UI Layout Group");
 
