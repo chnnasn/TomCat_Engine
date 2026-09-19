@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <type_traits>
+#include <unordered_set>
 
 #include <yaml-cpp/yaml.h>
 
@@ -126,7 +127,7 @@ namespace TomCat {
 			value.RuntimeClipRect = glm::vec4(0.0f);
 		}
 
-		void ResetTransient(UIButton& value)
+		void ResetTransient(::TomCat::UIButton& value)
 		{
 			value.RuntimeHovered = false;
 			value.RuntimePressed = false;
@@ -388,11 +389,11 @@ namespace TomCat {
 				MemberProperty(::TomCat::ComponentIds::TextRendererProperties::Enabled,
 					"Enabled", "Enabled", &::TomCat::TextRenderer::Enabled),
 				AssetMemberProperty(::TomCat::ComponentIds::TextRendererProperties::Font,
-					"Font", "Font Asset", &::TomCat::TextRenderer::Font, AssetType::Font),
+					"Font", "Font", &::TomCat::TextRenderer::Font, AssetType::Font),
 				AssetMemberProperty(::TomCat::ComponentIds::TextRendererProperties::FallbackFont,
-					"FallbackFont", "Fallback Font Asset", &::TomCat::TextRenderer::FallbackFont, AssetType::Font),
+					"FallbackFont", "Fallback Font", &::TomCat::TextRenderer::FallbackFont, AssetType::Font),
 				AssetMemberProperty(::TomCat::ComponentIds::TextRendererProperties::EmojiFont,
-					"EmojiFont", "Emoji Font Asset", &::TomCat::TextRenderer::EmojiFont, AssetType::Font),
+					"EmojiFont", "Emoji Font", &::TomCat::TextRenderer::EmojiFont, AssetType::Font),
 				MemberProperty(::TomCat::ComponentIds::TextRendererProperties::Text,
 					"Text", "Text", &::TomCat::TextRenderer::Text, ValidText()),
 				MemberProperty(::TomCat::ComponentIds::TextRendererProperties::FontSize,
@@ -440,7 +441,7 @@ namespace TomCat {
 		result.push_back(MakeDescriptor<::TomCat::UIImage>(
 			::TomCat::ComponentIds::UIImage, "TomCat.UIImage", "UI Image", {
 			MemberProperty(UIImageProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIImage::Enabled),
-			AssetMemberProperty(UIImageProperties::Image, "Image", "Image Asset",
+			AssetMemberProperty(UIImageProperties::Image, "Image", "Source Image",
 				&::TomCat::UIImage::Image, AssetType::Texture2D, true),
 			MemberProperty(UIImageProperties::Color, "Color", "Color", &::TomCat::UIImage::Color, FiniteColor()),
 			MemberProperty(UIImageProperties::RaycastTarget, "RaycastTarget", "Raycast Target", &::TomCat::UIImage::RaycastTarget),
@@ -450,12 +451,12 @@ namespace TomCat {
 		result.push_back(MakeDescriptor<::TomCat::UIText>(
 			::TomCat::ComponentIds::UIText, "TomCat.UIText", "UI Text", {
 			MemberProperty(UITextProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIText::Enabled),
-			AssetMemberProperty(UITextProperties::Font, "Font", "Font Asset",
+			AssetMemberProperty(UITextProperties::Font, "Font", "Font",
 				&::TomCat::UIText::Font, AssetType::Font),
 			AssetMemberProperty(UITextProperties::FallbackFont, "FallbackFont",
-				"Fallback Font Asset", &::TomCat::UIText::FallbackFont, AssetType::Font),
+				"Fallback Font", &::TomCat::UIText::FallbackFont, AssetType::Font),
 			AssetMemberProperty(UITextProperties::EmojiFont, "EmojiFont",
-				"Emoji Font Asset", &::TomCat::UIText::EmojiFont, AssetType::Font),
+				"Emoji Font", &::TomCat::UIText::EmojiFont, AssetType::Font),
 			MemberProperty(UITextProperties::Text, "Text", "Text", &::TomCat::UIText::Text, ValidText()),
 			MemberProperty(UITextProperties::FontSize, "FontSize", "Font Size", &::TomCat::UIText::FontSize, FiniteFloat(1.0f, 10000.0f)),
 			MemberProperty(UITextProperties::Color, "Color", "Color", &::TomCat::UIText::Color, FiniteColor()),
@@ -466,15 +467,212 @@ namespace TomCat {
 			MemberProperty(UITextProperties::RaycastTarget, "RaycastTarget", "Raycast Target", &::TomCat::UIText::RaycastTarget)
 		}));
 
-		result.push_back(MakeDescriptor<::TomCat::UIButton>(
+		auto buttonDescriptor = MakeDescriptor<::TomCat::UIButton>(
 			::TomCat::ComponentIds::UIButton, "TomCat.UIButton", "UI Button", {
 			MemberProperty(UIButtonProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIButton::Enabled),
 			MemberProperty(UIButtonProperties::Interactable, "Interactable", "Interactable", &::TomCat::UIButton::Interactable),
 			MemberProperty(UIButtonProperties::NormalColor, "NormalColor", "Normal Color", &::TomCat::UIButton::NormalColor, FiniteColor()),
 			MemberProperty(UIButtonProperties::HoverColor, "HoverColor", "Hover Color", &::TomCat::UIButton::HoverColor, FiniteColor()),
 			MemberProperty(UIButtonProperties::PressedColor, "PressedColor", "Pressed Color", &::TomCat::UIButton::PressedColor, FiniteColor()),
-			MemberProperty(UIButtonProperties::SelectedColor, "SelectedColor", "Selected Color", &::TomCat::UIButton::SelectedColor, FiniteColor())
-		}));
+			MemberProperty(UIButtonProperties::SelectedColor, "SelectedColor", "Selected Color", &::TomCat::UIButton::SelectedColor, FiniteColor()),
+			MemberProperty(UIButtonProperties::DisabledColor, "DisabledColor", "Disabled Color", &::TomCat::UIButton::DisabledColor, FiniteColor()),
+			MemberProperty(UIButtonProperties::ColorMultiplier, "ColorMultiplier", "Color Multiplier", &::TomCat::UIButton::ColorMultiplier, FiniteFloat(0.0f, 5.0f))
+		});
+		const ComponentDescriptor::EncodeFn encodeButtonProperties =
+			buttonDescriptor.Encode;
+		const ComponentDescriptor::DecodeFn decodeButtonProperties =
+			buttonDescriptor.Decode;
+		buttonDescriptor.SchemaVersion = 3;
+		buttonDescriptor.Migrations.push_back({ 1, 2,
+			[](YAML::Node& record, std::string& error)
+			{
+				const YAML::Node oldProperties = record["Properties"];
+				if (!oldProperties || !oldProperties.IsSequence())
+				{
+					error = "TomCat.UIButton v1 Properties must be a sequence";
+					return false;
+				}
+				YAML::Node payload(YAML::NodeType::Map);
+				payload["Fields"] = oldProperties;
+				payload["OnClick"] = YAML::Node(YAML::NodeType::Sequence);
+				record["Properties"] = payload;
+				return true;
+			} });
+		buttonDescriptor.Migrations.push_back({ 2, 3,
+			[](YAML::Node& record, std::string& error)
+			{
+				YAML::Node fields = record["Properties"]["Fields"];
+				if (!fields || !fields.IsSequence())
+				{
+					error = "TomCat.UIButton v2 Fields must be a sequence";
+					return false;
+				}
+				auto appendIfMissing = [&fields, &error](uint64_t id,
+					const char* stableName, const YAML::Node& value)
+				{
+					for (const YAML::Node& existing : fields)
+					{
+						if (!existing.IsMap() || !existing["PropertyId"]
+							|| !existing["StableName"])
+							continue;
+						const uint64_t existingID = existing["PropertyId"].as<uint64_t>();
+						const std::string existingName =
+							existing["StableName"].as<std::string>();
+						if (existingID == id || existingName == stableName)
+						{
+							if (existingID == id && existingName == stableName)
+								return true;
+							error = "TomCat.UIButton v2 property identity conflicts with "
+								+ std::string(stableName);
+							return false;
+						}
+					}
+					YAML::Node property(YAML::NodeType::Map);
+					property["PropertyId"] = id;
+					property["StableName"] = stableName;
+					property["Value"] = value;
+					fields.push_back(property);
+					return true;
+				};
+				YAML::Node disabled(YAML::NodeType::Sequence);
+				disabled.push_back(0.52f);
+				disabled.push_back(0.52f);
+				disabled.push_back(0.52f);
+				disabled.push_back(0.5f);
+				if (!appendIfMissing(UIButtonProperties::DisabledColor,
+					"DisabledColor", disabled)
+					|| !appendIfMissing(UIButtonProperties::ColorMultiplier,
+						"ColorMultiplier", YAML::Node(1.0f)))
+					return false;
+				record["Properties"]["Fields"] = fields;
+				return true;
+			} });
+		buttonDescriptor.Encode = [encodeButtonProperties](
+			const ComponentDescriptor& descriptor, Entity entity,
+			YAML::Emitter& output, std::string& error)
+		{
+			output << YAML::BeginMap;
+			output << YAML::Key << "Fields" << YAML::Value;
+			if (!encodeButtonProperties(descriptor, entity, output, error))
+				return false;
+			output << YAML::Key << "OnClick" << YAML::Value << YAML::BeginSeq;
+			for (const UIButtonOnClickListener& listener :
+				entity.GetComponent<::TomCat::UIButton>().OnClick)
+			{
+				output << YAML::BeginMap
+					<< YAML::Key << "Enabled" << YAML::Value << listener.Enabled
+					<< YAML::Key << "TargetEntity" << YAML::Value
+					<< static_cast<uint64_t>(listener.TargetEntity)
+					<< YAML::Key << "TargetAttachmentID" << YAML::Value
+					<< static_cast<uint64_t>(listener.TargetAttachmentID)
+					<< YAML::Key << "ScriptAsset" << YAML::Value
+					<< static_cast<uint64_t>(listener.ScriptAsset)
+					<< YAML::Key << "MethodName" << YAML::Value << listener.MethodName
+					<< YAML::EndMap;
+			}
+			output << YAML::EndSeq << YAML::EndMap;
+			return output.good();
+		};
+		buttonDescriptor.Decode = [decodeButtonProperties](
+			const ComponentDescriptor& descriptor, Entity entity,
+			const YAML::Node& payload, std::string& error)
+		{
+			const ::TomCat::UIButton original =
+				entity.GetComponent<::TomCat::UIButton>();
+			try
+			{
+				if (!payload.IsMap() || payload.size() != 2 || !payload["Fields"]
+					|| !payload["OnClick"] || !payload["OnClick"].IsSequence())
+					throw std::runtime_error(
+						"Properties must contain exactly Fields and OnClick");
+				std::unordered_set<std::string> keys;
+				for (const auto& pair : payload)
+				{
+					const std::string key = pair.first.as<std::string>();
+					if ((key != "Fields" && key != "OnClick")
+						|| !keys.emplace(key).second)
+						throw std::runtime_error("Properties contains an unknown or duplicate key");
+				}
+				if (!decodeButtonProperties(descriptor, entity, payload["Fields"], error))
+					throw std::runtime_error(error.empty()
+						? "button field validation failed" : error);
+				const YAML::Node calls = payload["OnClick"];
+				if (calls.size() > 1024)
+					throw std::runtime_error("OnClick exceeds 1024 persistent listeners");
+				std::vector<UIButtonOnClickListener> listeners;
+				listeners.reserve(calls.size());
+				for (size_t index = 0; index < calls.size(); ++index)
+				{
+					const YAML::Node call = calls[index];
+					if (!call.IsMap() || call.size() != 5 || !call["Enabled"]
+						|| !call["TargetEntity"] || !call["TargetAttachmentID"]
+						|| !call["ScriptAsset"]
+						|| !call["MethodName"])
+						throw std::runtime_error("OnClick listener has an incompatible shape");
+					std::unordered_set<std::string> callKeys;
+					for (const auto& pair : call)
+					{
+						const std::string key = pair.first.as<std::string>();
+						if ((key != "Enabled" && key != "TargetEntity"
+							&& key != "TargetAttachmentID"
+							&& key != "ScriptAsset" && key != "MethodName")
+							|| !callKeys.emplace(key).second)
+							throw std::runtime_error(
+								"OnClick listener contains an unknown or duplicate key");
+					}
+					UIButtonOnClickListener listener;
+					listener.Enabled = call["Enabled"].as<bool>();
+					listener.TargetEntity = UUID(call["TargetEntity"].as<uint64_t>());
+					listener.TargetAttachmentID = UUID(
+						call["TargetAttachmentID"].as<uint64_t>());
+					listener.ScriptAsset = AssetHandle(call["ScriptAsset"].as<uint64_t>());
+					listener.MethodName = call["MethodName"].as<std::string>();
+					const bool unassigned = static_cast<uint64_t>(listener.TargetEntity) == 0
+						&& static_cast<uint64_t>(listener.TargetAttachmentID) == 0
+						&& static_cast<uint64_t>(listener.ScriptAsset) == 0
+						&& listener.MethodName.empty();
+					const bool assigned = static_cast<uint64_t>(listener.TargetEntity) != 0
+						&& static_cast<uint64_t>(listener.TargetAttachmentID) != 0
+						&& static_cast<uint64_t>(listener.ScriptAsset) != 0
+						&& !listener.MethodName.empty();
+					const bool targetOnly =
+						static_cast<uint64_t>(listener.TargetEntity) != 0
+						&& static_cast<uint64_t>(listener.TargetAttachmentID) == 0
+						&& static_cast<uint64_t>(listener.ScriptAsset) == 0
+						&& listener.MethodName.empty();
+					if ((!unassigned && !targetOnly && !assigned)
+						|| listener.MethodName.size() > 512
+						|| listener.MethodName.find('\0') != std::string::npos)
+						throw std::runtime_error(
+							"OnClick listener must be empty, target-only, or fully assigned");
+					listeners.push_back(std::move(listener));
+				}
+				entity.GetComponent<::TomCat::UIButton>().OnClick = std::move(listeners);
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				entity.GetComponent<::TomCat::UIButton>() = original;
+				if (error.empty())
+					error = descriptor.StableName + ": " + exception.what();
+				return false;
+			}
+		};
+		buttonDescriptor.RemapEntityReferences = [](Entity entity,
+			const EntityReferenceMapper& mapper, std::string& error)
+		{
+			auto& listeners = entity.GetComponent<::TomCat::UIButton>().OnClick;
+			for (size_t index = 0; index < listeners.size(); ++index)
+			{
+				uint64_t target = static_cast<uint64_t>(listeners[index].TargetEntity);
+				if (!mapper(target, "TomCat.UIButton.OnClick["
+					+ std::to_string(index) + "].TargetEntity", error))
+					return false;
+				listeners[index].TargetEntity = UUID(target);
+			}
+			return true;
+		};
+		result.push_back(std::move(buttonDescriptor));
 
 		result.push_back(MakeDescriptor<::TomCat::UIEventSystem>(
 			::TomCat::ComponentIds::UIEventSystem,

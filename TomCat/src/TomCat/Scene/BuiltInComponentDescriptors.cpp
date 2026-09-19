@@ -2,6 +2,7 @@
 #include "BuiltInComponentDescriptors.h"
 
 #include "TomCat/Audio/AudioSceneRuntime.h"
+#include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/SpriteAnimation.h"
 
@@ -69,7 +70,12 @@ namespace TomCat {
 
 		template<typename Component>
 		void ResetRuntime(Component&) {}
-		void ResetRuntime(SpriteRenderer& component) { component.Sprite.reset(); }
+		void ResetRuntime(SpriteRenderer& component)
+		{
+			component.Sprite.reset();
+			component.RuntimeSpriteOverrideActive = false;
+			component.RuntimeSpriteOverrideHandle = AssetHandle(0);
+		}
 		void ResetRuntime(SpriteAnimator& component) { SpriteAnimatorRuntime::Reset(component); }
 		void ResetRuntime(AudioSource& component)
 		{
@@ -82,6 +88,10 @@ namespace TomCat {
 		void ResetRuntime(BoxCollider2D& component) { component.RuntimeFixture = nullptr; }
 		void ResetRuntime(CircleCollider2D& component) { component.RuntimeFixture = nullptr; }
 		void ResetRuntime(DistanceJoint2D& component) { component.RuntimeJoint = nullptr; }
+		void ResetRuntime(ParticleSystem2D& component)
+		{
+			ParticleSystem2DRuntime::Reset(component);
+		}
 
 		template<typename Component>
 		ComponentDescriptor BaseDescriptor(uint64_t typeId, const char* stableName,
@@ -793,6 +803,22 @@ namespace TomCat {
 			};
 		}
 
+		// Old records allowed signed depths. Migrate valid ranges on load while
+		// current authoring setters enforce distances in front of the camera.
+		bool MigrateOrthographicClipRange(float& nearClip, float& farClip,
+			std::string& error)
+		{
+			if (!std::isfinite(nearClip) || !std::isfinite(farClip) || farClip <= nearClip)
+			{
+				error = "Invalid legacy orthographic clip range";
+				return false;
+			}
+			nearClip = std::max(nearClip, 0.0f);
+			if (farClip <= nearClip)
+				farClip = 1000.0f;
+			return true;
+		}
+
 		ComponentDescriptor::LegacyDecodeFn LegacyCameraDecode()
 		{
 			return [](const ComponentDescriptor& descriptor, Entity entity,
@@ -822,8 +848,12 @@ namespace TomCat {
 				canonical["PerspectiveNearClip"] = projection["PerspectiveNear"];
 				canonical["PerspectiveFarClip"] = projection["PerspectiveFar"];
 				canonical["OrthographicSize"] = projection["OrthographicSize"];
-				canonical["OrthographicNearClip"] = projection["OrthographicNear"];
-				canonical["OrthographicFarClip"] = projection["OrthographicFar"];
+				float nearClip = projection["OrthographicNear"].as<float>();
+				float farClip = projection["OrthographicFar"].as<float>();
+				if (!MigrateOrthographicClipRange(nearClip, farClip, error))
+					return false;
+				canonical["OrthographicNearClip"] = nearClip;
+				canonical["OrthographicFarClip"] = farClip;
 				return ApplyLegacyPropertyMap(descriptor, entity, canonical, error);
 			};
 		}
@@ -864,7 +894,7 @@ namespace TomCat {
 		{
 			auto structured = LegacyStructuredDecode("SpriteAnimator",
 				{ "Enabled", "PlayOnStart", "InitialClip", "Speed", "Clips" },
-				{ "InitialState", "Parameters", "States", "Transitions" });
+				{ "ControllerHandle", "InitialState", "Parameters", "States", "Transitions" });
 			return [structured = std::move(structured)](
 				const ComponentDescriptor& descriptor, Entity entity,
 				const YAML::Node& entityNode, std::string& error)
@@ -873,6 +903,7 @@ namespace TomCat {
 					return true;
 				YAML::Node normalized = YAML::Load(YAML::Dump(entityNode));
 				YAML::Node animator = normalized["SpriteAnimator"];
+				if (!animator["ControllerHandle"]) animator["ControllerHandle"] = uint64_t(0);
 				if (!animator["InitialState"]) animator["InitialState"] = "";
 				if (!animator["Parameters"])
 					animator["Parameters"] = YAML::Node(YAML::NodeType::Sequence);
@@ -1074,7 +1105,7 @@ namespace TomCat {
 			auto descriptor = BaseDescriptor<C_Camera>(ComponentIds::Camera,
 				"TomCat.Camera", "Camera");
 			descriptor.ScriptAccessible = true;
-			descriptor.SchemaVersion = 2;
+			descriptor.SchemaVersion = 3;
 			descriptor.Migrations.push_back({ 1, 2,
 				[](YAML::Node& record, std::string& error)
 				{
@@ -1104,6 +1135,30 @@ namespace TomCat {
 					enabled["StableName"] = "Enabled";
 					enabled["Value"] = true;
 					properties.push_back(enabled);
+					return true;
+				} });
+			descriptor.Migrations.push_back({ 2, 3,
+				[](YAML::Node& record, std::string& error)
+				{
+					YAML::Node nearProperty, farProperty;
+					for (YAML::Node property : record["Properties"])
+					{
+						if (property["PropertyId"].as<uint64_t>() == ComponentIds::CameraProperties::OrthographicNear)
+							nearProperty = property;
+						if (property["PropertyId"].as<uint64_t>() == ComponentIds::CameraProperties::OrthographicFar)
+							farProperty = property;
+					}
+					if (!nearProperty.IsMap() || !farProperty.IsMap())
+					{
+						error = "TomCat.Camera v2 clip properties are missing";
+						return false;
+					}
+					float nearClip = nearProperty["Value"].as<float>();
+					float farClip = farProperty["Value"].as<float>();
+					if (!MigrateOrthographicClipRange(nearClip, farClip, error))
+						return false;
+					nearProperty["Value"] = nearClip;
+					farProperty["Value"] = farClip;
 					return true;
 				} });
 			descriptor.EncodeLegacyFields = LegacyCamera();
@@ -1243,6 +1298,8 @@ namespace TomCat {
 				const SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
 				output << YAML::BeginMap;
 				output << YAML::Key << "Enabled" << YAML::Value << animator.Enabled;
+				output << YAML::Key << "ControllerHandle" << YAML::Value
+					<< static_cast<uint64_t>(animator.ControllerHandle);
 				output << YAML::Key << "PlayOnStart" << YAML::Value << animator.PlayOnStart;
 				output << YAML::Key << "InitialClip" << YAML::Value << animator.InitialClip;
 				output << YAML::Key << "Speed" << YAML::Value << animator.Speed;
@@ -1311,10 +1368,13 @@ namespace TomCat {
 				if (!ValidateLegacyMap(node, "SpriteAnimator.Properties",
 					{ "Enabled", "PlayOnStart", "InitialClip", "Speed", "Clips",
 						"InitialState", "Parameters", "States", "Transitions" },
-					{}, error))
+					{ "ControllerHandle" }, error))
 					return false;
 				SpriteAnimator animator;
 				animator.Enabled = node["Enabled"].as<bool>();
+				animator.ControllerHandle = node["ControllerHandle"]
+					? AssetHandle(node["ControllerHandle"].as<uint64_t>())
+					: AssetHandle(0);
 				animator.PlayOnStart = node["PlayOnStart"].as<bool>();
 				animator.InitialClip = node["InitialClip"].as<std::string>();
 				animator.Speed = node["Speed"].as<float>();
@@ -1468,9 +1528,12 @@ namespace TomCat {
 				}
 				return true;
 			};
-			descriptor.Properties = {
+				descriptor.Properties = {
 				BoolProperty<SpriteAnimator>(ComponentIds::SpriteAnimatorProperties::Enabled,
 					"Enabled", &SpriteAnimator::Enabled),
+				AssetProperty(ComponentIds::SpriteAnimatorProperties::Controller,
+					"Controller", AssetType::AnimatorController, [](Entity entity)
+						-> AssetHandle& { return entity.GetComponent<SpriteAnimator>().ControllerHandle; }),
 				FloatProperty<SpriteAnimator>(ComponentIds::SpriteAnimatorProperties::Speed,
 					"Speed", &SpriteAnimator::Speed, 0.0f),
 				BoolProperty<SpriteAnimator>(ComponentIds::SpriteAnimatorProperties::PlayOnStart,
@@ -1924,12 +1987,340 @@ namespace TomCat {
 			return descriptor;
 		}
 
+		bool EncodeTilemap2D(const ComponentDescriptor&, Entity entity,
+			YAML::Emitter& output, std::string& error)
+		{
+			try
+			{
+				Tilemap2D tilemap = entity.GetComponent<Tilemap2D>();
+				Tilemap2DRuntime::Normalize(tilemap);
+				output << YAML::BeginMap
+					<< YAML::Key << "Enabled" << YAML::Value << tilemap.Enabled
+					<< YAML::Key << "CellSize" << YAML::Value;
+				EmitVector(output, tilemap.CellSize);
+				output << YAML::Key << "CellGap" << YAML::Value;
+				EmitVector(output, tilemap.CellGap);
+				output << YAML::Key << "SortingLayer" << YAML::Value << tilemap.SortingLayer
+					<< YAML::Key << "OrderInLayer" << YAML::Value << tilemap.OrderInLayer
+					<< YAML::Key << "Cells" << YAML::Value << YAML::BeginSeq;
+				for (const TilemapCell& cell : tilemap.Cells)
+				{
+					output << YAML::BeginMap
+						<< YAML::Key << "Coordinate" << YAML::Value << YAML::Flow
+						<< YAML::BeginSeq << cell.Coordinate.x << cell.Coordinate.y
+						<< YAML::EndSeq
+						<< YAML::Key << "SpriteHandle" << YAML::Value
+						<< static_cast<uint64_t>(cell.SpriteHandle)
+						<< YAML::Key << "Tint" << YAML::Value;
+					EmitVector(output, cell.Tint);
+					output << YAML::Key << "FlipX" << YAML::Value << cell.FlipX
+						<< YAML::Key << "FlipY" << YAML::Value << cell.FlipY
+						<< YAML::Key << "RotationQuarterTurns" << YAML::Value
+						<< cell.RotationQuarterTurns << YAML::EndMap;
+				}
+				output << YAML::EndSeq << YAML::EndMap;
+				return output.good();
+			}
+			catch (const std::exception& exception)
+			{
+				error = exception.what();
+				return false;
+			}
+		}
+
+		bool DecodeTilemap2D(const ComponentDescriptor&, Entity entity,
+			const YAML::Node& node, std::string& error)
+		{
+			try
+			{
+				if (!ValidateLegacyMap(node, "Tilemap2D.Properties",
+					{ "Enabled", "CellSize", "CellGap", "SortingLayer",
+						"OrderInLayer", "Cells" }, {}, error))
+					return false;
+				Tilemap2D tilemap;
+				tilemap.Enabled = node["Enabled"].as<bool>();
+				tilemap.CellSize = ReadVector2(node["CellSize"]);
+				tilemap.CellGap = ReadVector2(node["CellGap"]);
+				tilemap.SortingLayer = node["SortingLayer"].as<int32_t>();
+				tilemap.OrderInLayer = node["OrderInLayer"].as<int32_t>();
+				if (!IsFinite(tilemap.CellSize) || tilemap.CellSize.x <= 0.0f
+					|| tilemap.CellSize.y <= 0.0f || !IsFinite(tilemap.CellGap)
+					|| tilemap.CellSize.x + tilemap.CellGap.x <= 0.0f
+					|| tilemap.CellSize.y + tilemap.CellGap.y <= 0.0f)
+					throw std::runtime_error("Tilemap2D cell size/gap is invalid");
+				const YAML::Node cells = node["Cells"];
+				if (!cells.IsSequence() || cells.size() > 1000000)
+					throw std::runtime_error("Tilemap2D.Cells must be a bounded sequence");
+				for (const YAML::Node& cellNode : cells)
+				{
+					if (!ValidateLegacyMap(cellNode, "Tilemap2D cell",
+						{ "Coordinate", "SpriteHandle", "Tint", "FlipX", "FlipY",
+							"RotationQuarterTurns" }, {}, error))
+						return false;
+					const YAML::Node coordinate = cellNode["Coordinate"];
+					if (!coordinate.IsSequence() || coordinate.size() != 2)
+						throw std::runtime_error("Tilemap2D cell coordinate is invalid");
+					TilemapCell cell;
+					cell.Coordinate = { coordinate[0].as<int32_t>(),
+						coordinate[1].as<int32_t>() };
+					cell.SpriteHandle = AssetHandle(cellNode["SpriteHandle"].as<uint64_t>());
+					cell.Tint = ReadVector4(cellNode["Tint"]);
+					cell.FlipX = cellNode["FlipX"].as<bool>();
+					cell.FlipY = cellNode["FlipY"].as<bool>();
+					cell.RotationQuarterTurns = cellNode["RotationQuarterTurns"].as<int32_t>();
+					if (!IsUnitColor(cell.Tint))
+						throw std::runtime_error("Tilemap2D cell tint is invalid");
+					tilemap.Cells.push_back(std::move(cell));
+				}
+				Tilemap2DRuntime::Normalize(tilemap);
+				entity.AddOrReplaceComponent<Tilemap2D>(std::move(tilemap));
+				return true;
+			}
+			catch (const std::exception& exception)
+			{
+				error = exception.what();
+				return false;
+			}
+		}
+
+		ComponentDescriptor MakeTilemap2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<Tilemap2D>(ComponentIds::Tilemap2D,
+				"TomCat.Tilemap2D", "Tilemap 2D");
+			descriptor.Encode = &EncodeTilemap2D;
+			descriptor.Decode = &DecodeTilemap2D;
+			descriptor.UseGenericInspector = true;
+			descriptor.Properties = {
+				BoolProperty<Tilemap2D>(ComponentIds::Tilemap2DProperties::Enabled,
+					"Enabled", &Tilemap2D::Enabled),
+				Vector2Property<Tilemap2D>(ComponentIds::Tilemap2DProperties::CellSize,
+					"CellSize", &Tilemap2D::CellSize, true),
+				Vector2Property<Tilemap2D>(ComponentIds::Tilemap2DProperties::CellGap,
+					"CellGap", &Tilemap2D::CellGap),
+				IntProperty<Tilemap2D>(ComponentIds::Tilemap2DProperties::SortingLayer,
+					"SortingLayer", &Tilemap2D::SortingLayer),
+				IntProperty<Tilemap2D>(ComponentIds::Tilemap2DProperties::OrderInLayer,
+					"OrderInLayer", &Tilemap2D::OrderInLayer)
+			};
+			return descriptor;
+		}
+
+		ComponentDescriptor MakeGrid2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<Grid2D>(ComponentIds::Grid2D,
+				"TomCat.Grid2D", "Grid 2D");
+			descriptor.UseGenericInspector = true;
+			descriptor.Properties = {
+				Vector2Property<Grid2D>(ComponentIds::Grid2DProperties::CellSize,
+					"CellSize", &Grid2D::CellSize, true),
+				Vector2Property<Grid2D>(ComponentIds::Grid2DProperties::CellGap,
+					"CellGap", &Grid2D::CellGap),
+				Property(ComponentIds::Grid2DProperties::Layout, "Layout",
+					PropertyKind::Int32,
+					[](Entity entity) -> PropertyValue
+					{ return static_cast<int32_t>(entity.GetComponent<Grid2D>().Layout); },
+					[](Entity entity, const PropertyValue& value, std::string& error)
+					{
+						const int32_t layout = std::get<int32_t>(value);
+						if (layout < 0 || layout > 3)
+						{
+							error = "Grid2D.Layout is invalid";
+							return false;
+						}
+						entity.GetComponent<Grid2D>().Layout =
+							static_cast<GridCellLayout2D>(layout);
+						return true;
+					}, false, int32_t(0)),
+				Property(ComponentIds::Grid2DProperties::Swizzle, "Swizzle",
+					PropertyKind::Int32,
+					[](Entity entity) -> PropertyValue
+					{ return static_cast<int32_t>(entity.GetComponent<Grid2D>().Swizzle); },
+					[](Entity entity, const PropertyValue& value, std::string& error)
+					{
+						const int32_t swizzle = std::get<int32_t>(value);
+						if (swizzle < 0 || swizzle > 5)
+						{
+							error = "Grid2D.Swizzle is invalid";
+							return false;
+						}
+						entity.GetComponent<Grid2D>().Swizzle =
+							static_cast<GridCellSwizzle2D>(swizzle);
+						return true;
+					}, false, int32_t(0))
+			};
+			return descriptor;
+		}
+
+		ComponentDescriptor MakeTilemapRenderer2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<TilemapRenderer2D>(
+				ComponentIds::TilemapRenderer2D, "TomCat.TilemapRenderer2D",
+				"Tilemap Renderer 2D");
+			descriptor.UseGenericInspector = true;
+			auto enumProperty = [](uint64_t id, const char* name, int32_t maximum,
+				auto get, auto set)
+			{
+				return Property(id, name, PropertyKind::Int32,
+					[get](Entity entity) -> PropertyValue
+					{ return static_cast<int32_t>(get(entity)); },
+					[name, maximum, set](Entity entity, const PropertyValue& value,
+						std::string& error)
+					{
+						const int32_t item = std::get<int32_t>(value);
+						if (item < 0 || item > maximum)
+						{
+							error = std::string("TilemapRenderer2D.") + name
+								+ " is invalid";
+							return false;
+						}
+						set(entity, item);
+						return true;
+					}, false, int32_t(0));
+			};
+			auto material = AssetProperty(ComponentIds::TilemapRenderer2DProperties::Material,
+				"Material", AssetType::Material, [](Entity entity) -> AssetHandle&
+				{ return entity.GetComponent<TilemapRenderer2D>().MaterialHandle; });
+			descriptor.Properties = {
+				BoolProperty<TilemapRenderer2D>(
+					ComponentIds::TilemapRenderer2DProperties::Enabled,
+					"Enabled", &TilemapRenderer2D::Enabled),
+				enumProperty(ComponentIds::TilemapRenderer2DProperties::SortOrder,
+					"SortOrder", 3,
+					[](Entity entity) { return entity.GetComponent<TilemapRenderer2D>().SortOrder; },
+					[](Entity entity, int32_t value) { entity.GetComponent<TilemapRenderer2D>().SortOrder = static_cast<TilemapSortOrder2D>(value); }),
+				enumProperty(ComponentIds::TilemapRenderer2DProperties::Mode,
+					"Mode", 1,
+					[](Entity entity) { return entity.GetComponent<TilemapRenderer2D>().Mode; },
+					[](Entity entity, int32_t value) { entity.GetComponent<TilemapRenderer2D>().Mode = static_cast<TilemapRendererMode2D>(value); }),
+				enumProperty(ComponentIds::TilemapRenderer2DProperties::DetectChunkCulling,
+					"DetectChunkCulling", 1,
+					[](Entity entity) { return entity.GetComponent<TilemapRenderer2D>().DetectChunkCulling; },
+					[](Entity entity, int32_t value) { entity.GetComponent<TilemapRenderer2D>().DetectChunkCulling = static_cast<TilemapChunkCulling2D>(value); }),
+				IntProperty<TilemapRenderer2D>(
+					ComponentIds::TilemapRenderer2DProperties::SortingLayer,
+					"SortingLayer", &TilemapRenderer2D::SortingLayer),
+				IntProperty<TilemapRenderer2D>(
+					ComponentIds::TilemapRenderer2DProperties::OrderInLayer,
+					"OrderInLayer", &TilemapRenderer2D::OrderInLayer),
+				std::move(material)
+			};
+			return descriptor;
+		}
+
+		ComponentDescriptor MakeParticleSystem2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<ParticleSystem2D>(
+				ComponentIds::ParticleSystem2D, "TomCat.ParticleSystem2D",
+				"Particle System 2D");
+			descriptor.UseGenericInspector = true;
+			auto sprite = AssetProperty(ComponentIds::ParticleSystem2DProperties::Sprite,
+				"Sprite", AssetType::Texture2D, [](Entity entity) -> AssetHandle&
+				{ return entity.GetComponent<ParticleSystem2D>().SpriteHandle; });
+			descriptor.Properties = {
+				BoolProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::Enabled,
+					"Enabled", &ParticleSystem2D::Enabled),
+				BoolProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::PlayOnStart,
+					"PlayOnStart", &ParticleSystem2D::PlayOnStart),
+				BoolProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::Loop,
+					"Loop", &ParticleSystem2D::Loop),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::Duration,
+					"Duration", &ParticleSystem2D::Duration, 0.0f),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::EmissionRate,
+					"EmissionRate", &ParticleSystem2D::EmissionRate, 0.0f),
+				Property(ComponentIds::ParticleSystem2DProperties::MaxParticles,
+					"MaxParticles", PropertyKind::Int32,
+					[](Entity entity) -> PropertyValue
+					{ return entity.GetComponent<ParticleSystem2D>().MaxParticles; },
+					[](Entity entity, const PropertyValue& value, std::string& error)
+					{
+						const int32_t count = std::get<int32_t>(value);
+						if (count < 0 || count > 100000)
+						{
+							error = "MaxParticles must be between 0 and 100000";
+							return false;
+						}
+						entity.GetComponent<ParticleSystem2D>().MaxParticles = count;
+						return true;
+					}, false, int32_t(256)),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::StartLifetime,
+					"StartLifetime", &ParticleSystem2D::StartLifetime, 0.0f,
+					std::numeric_limits<float>::max(), false),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::StartSpeed,
+					"StartSpeed", &ParticleSystem2D::StartSpeed, 0.0f),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::StartSize,
+					"StartSize", &ParticleSystem2D::StartSize, 0.0f),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::EndSize,
+					"EndSize", &ParticleSystem2D::EndSize, 0.0f),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::GravityScale,
+					"GravityScale", &ParticleSystem2D::GravityScale),
+				Vector2Property<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::Direction,
+					"Direction", &ParticleSystem2D::Direction),
+				FloatProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::SpreadDegrees,
+					"SpreadDegrees", &ParticleSystem2D::SpreadDegrees, 0.0f, 360.0f),
+				ColorProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::StartColor,
+					"StartColor", &ParticleSystem2D::StartColor),
+				ColorProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::EndColor,
+					"EndColor", &ParticleSystem2D::EndColor),
+				std::move(sprite),
+				IntProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::SortingLayer,
+					"SortingLayer", &ParticleSystem2D::SortingLayer),
+				IntProperty<ParticleSystem2D>(ComponentIds::ParticleSystem2DProperties::OrderInLayer,
+					"OrderInLayer", &ParticleSystem2D::OrderInLayer),
+				Property(ComponentIds::ParticleSystem2DProperties::Seed, "Seed",
+					PropertyKind::UInt32,
+					[](Entity entity) -> PropertyValue
+					{ return entity.GetComponent<ParticleSystem2D>().Seed; },
+					[](Entity entity, const PropertyValue& value, std::string&)
+					{
+						entity.GetComponent<ParticleSystem2D>().Seed = std::get<uint32_t>(value);
+						return true;
+					}, false, uint32_t(1))
+			};
+			return descriptor;
+		}
+
+		ComponentDescriptor MakeLight2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<Light2D>(ComponentIds::Light2D,
+				"TomCat.Light2D", "Light 2D");
+			descriptor.UseGenericInspector = true;
+			descriptor.Properties = {
+				BoolProperty<Light2D>(ComponentIds::Light2DProperties::Enabled,
+					"Enabled", &Light2D::Enabled),
+				Property(ComponentIds::Light2DProperties::Type, "Type", PropertyKind::Int32,
+					[](Entity entity) -> PropertyValue
+					{ return static_cast<int32_t>(entity.GetComponent<Light2D>().Type); },
+					[](Entity entity, const PropertyValue& value, std::string& error)
+					{
+						const int32_t type = std::get<int32_t>(value);
+						if (type < 0 || type > 1)
+						{
+							error = "Light2D.Type must be Global (0) or Point (1)";
+							return false;
+						}
+						entity.GetComponent<Light2D>().Type = static_cast<Light2DType>(type);
+						return true;
+					}, false, int32_t(1)),
+				ColorProperty<Light2D>(ComponentIds::Light2DProperties::Color,
+					"Color", &Light2D::Color),
+				FloatProperty<Light2D>(ComponentIds::Light2DProperties::Intensity,
+					"Intensity", &Light2D::Intensity, 0.0f),
+				FloatProperty<Light2D>(ComponentIds::Light2DProperties::Radius,
+					"Radius", &Light2D::Radius, 0.0f,
+					std::numeric_limits<float>::max(), false),
+				FloatProperty<Light2D>(ComponentIds::Light2DProperties::Falloff,
+					"Falloff", &Light2D::Falloff, 0.0f,
+					std::numeric_limits<float>::max(), false)
+			};
+			return descriptor;
+		}
+
 	}
 
 	std::vector<ComponentDescriptor> MakeBuiltInComponentDescriptors()
 	{
 		std::vector<ComponentDescriptor> result;
-		result.reserve(16);
+		result.reserve(21);
 		result.emplace_back(MakeIDDescriptor());
 		result.emplace_back(MakeTagDescriptor());
 		result.emplace_back(MakeEntityMetadataDescriptor());
@@ -1946,6 +2337,11 @@ namespace TomCat {
 		result.emplace_back(MakeCircleColliderDescriptor());
 		result.emplace_back(MakeDistanceJointDescriptor());
 		result.emplace_back(MakeEditorVisibilityDescriptor());
+		result.emplace_back(MakeTilemap2DDescriptor());
+		result.emplace_back(MakeParticleSystem2DDescriptor());
+		result.emplace_back(MakeLight2DDescriptor());
+		result.emplace_back(MakeGrid2DDescriptor());
+		result.emplace_back(MakeTilemapRenderer2DDescriptor());
 		return result;
 	}
 

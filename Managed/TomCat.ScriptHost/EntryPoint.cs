@@ -49,7 +49,8 @@ public static unsafe class EntryPoint
 				PollUnload = &Exports.PollUnload,
 				DestroyAttachments = &Exports.DestroyAttachments,
 				InstantiateAttachments = &Exports.InstantiateAttachments,
-				ResolveDeferredCommandBatch = &Exports.ResolveDeferredCommandBatch
+				ResolveDeferredCommandBatch = &Exports.ResolveDeferredCommandBatch,
+				InvokeMethod = &Exports.InvokeMethod
             };
             return HostStatus.Success;
         }
@@ -191,6 +192,18 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     internal static int InvokeCreateAll(ulong sceneRuntimeId) =>
         HostErrors.Guard(nameof(InvokeCreateAll), () => HostRegistry.GetScene(sceneRuntimeId).InvokeCreateAll());
+
+	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+	internal static int InvokeMethod(ulong sceneRuntimeId, ulong attachmentId,
+		NativeByteView methodName)
+	{
+		if (attachmentId == 0 || !TryCopy(methodName, allowEmpty: false,
+			out byte[]? methodBytes) || methodBytes!.Length > 512)
+			return HostStatus.InvalidArgument;
+		return HostErrors.Guard(nameof(InvokeMethod), () =>
+			HostRegistry.GetScene(sceneRuntimeId).InvokeMethod(attachmentId,
+				new UTF8Encoding(false, true).GetString(methodBytes)));
+	}
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     internal static int SetEnabled(ulong sceneRuntimeId, ulong attachmentId, int enabled)

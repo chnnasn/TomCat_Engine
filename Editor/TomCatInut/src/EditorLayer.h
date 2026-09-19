@@ -109,8 +109,18 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		void UI_SceneToolbarDockPreview();
+		void UI_SceneOrientationGizmo();
+		bool IsSceneOrientationGizmoPointerInside() const;
+		// Screen-space UI uses RectTransform pixel coordinates, so it needs a
+		// dedicated orthographic ImGuizmo projection. Translation is mapped back to
+		// AnchoredPosition while rotation/scale reuse the entity Transform fields.
+		bool UI_RectTransformHandles();
+		void ResetRectTransformEditState();
 		void UI_ColliderEditHandles();
 		void RenderSceneColliderOverlays();
+		void RenderSceneCameraOverlay();
+		void RenderSceneCanvasOverlay();
+		void FrameSceneEntity(Entity entity);
 		bool ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
 			glm::vec2& worldPosition) const;
 		bool WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const;
@@ -173,6 +183,10 @@ namespace TomCat {
 		glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
 
 		glm::vec2 m_ViewportBounds[2];
+		glm::vec2 m_SceneOrientationGizmoBounds[2]{};
+		bool m_SceneOrientationGizmoHovered = false;
+		// -2 = no pending click, -1 = projection toggle, 0..5 = axis handle.
+		int m_SceneOrientationPressedTarget = -2;
 
 		// Game Viewport
 		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
@@ -256,6 +270,15 @@ namespace TomCat {
 		bool m_OpenRecoveryModal = false;
 		bool m_SceneTransactionChanged = false;
 		bool m_GizmoTransactionActive = false;
+		bool m_GizmoDragActive = false;
+		bool m_GizmoHandleHovered = false;
+		bool m_UIRectTransactionActive = false;
+		bool m_UIRectDragActive = false;
+		// Cached across the native-event/ImGui frame boundary. Mouse button events
+		// arrive before the Scene overlay is rebuilt, so the previous frame's hit
+		// result must protect transparent UI rectangles from world picking.
+		bool m_UIRectHandleHovered = false;
+		UUID m_UIRectEditEntity = UUID(0);
 		bool m_ColliderTransactionActive = false;
 		bool m_BypassUnsavedCheck = false;
 		struct PendingProjectMigration
@@ -283,6 +306,9 @@ namespace TomCat {
 
 		bool m_ShowScenePanel = true;
 		bool m_ShowGamePanel = true;
+		bool m_ShowAnimationPanel = false;
+		bool m_ShowAnimatorPanel = false;
+		bool m_ShowTilePalettePanel = false;
 		bool m_ScenePanelDocked = true;
 		bool m_GamePanelDocked = true;
 		bool m_ShowHierarchyPanel = true;
@@ -310,13 +336,14 @@ namespace TomCat {
 		std::string m_PendingMaximizedPanelWindow;
 		std::string m_MaximizedPanelWindow;
 		std::string m_DockLayoutBeforeMaximize;
-		std::array<int, 6> m_DockTabOrdersBeforeMaximize = {
-			-1, -1, -1, -1, -1, -1
+		std::array<int, 9> m_DockTabOrdersBeforeMaximize = {
+			-1, -1, -1, -1, -1, -1, -1, -1, -1
 		};
 		bool m_PanelMaximized = false;
 		uint32_t m_EditorDockspaceId = 0;
 		std::string m_LastWindowTitle;
 		std::string m_PendingPanelFocus;
+		std::string m_PendingPanelFocusAfterRestore;
 		std::string m_PendingRestoredTabWindow;
 		int m_PendingRestoredTabOrder = -1;
 		int m_EditorPanelCycleIndex = 5;

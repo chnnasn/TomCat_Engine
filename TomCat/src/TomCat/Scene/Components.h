@@ -95,6 +95,10 @@ namespace TomCat {
 		AssetHandle SpriteHandle = AssetHandle(0);
 		// Runtime-only resolved sprite. SpriteHandle is the serialized source of truth.
 		Ref<Texture2D> Sprite;
+		// Editor animation preview uses a runtime-only handle so scrubbing never
+		// mutates the serialized SpriteHandle (and therefore cannot leak into Save).
+		bool RuntimeSpriteOverrideActive = false;
+		AssetHandle RuntimeSpriteOverrideHandle = AssetHandle(0);
 		float TilingFactor = 1.0f;
 		// Lower layers/orders are submitted first. Numeric layer identities stay
 		// stable if an editor-facing display name is renamed later.
@@ -188,6 +192,9 @@ namespace TomCat {
 		static constexpr uint32_t InvalidClipIndex = 0xffffffffu;
 
 		bool Enabled = true;
+		// Optional external graph. At runtime the controller and its referenced
+		// Animation Clip assets replace the embedded authoring snapshot below.
+		AssetHandle ControllerHandle = AssetHandle(0);
 		bool PlayOnStart = true;
 		// Empty selects the first clip. Names are unique inside one Animator.
 		std::string InitialClip;
@@ -249,6 +256,151 @@ namespace TomCat {
 		LineRenderer(const glm::vec4& color)
 			: _Color(color) {
 		}
+	};
+
+	// A sparse authoring grid. Each occupied coordinate owns one stable Sprite
+	// reference, so atlased sub-sprites work without introducing a second asset
+	// identity system. Cells are kept in deterministic row-major order by the
+	// Tilemap2D authoring helpers.
+	struct TilemapCell
+	{
+		glm::ivec2 Coordinate{ 0, 0 };
+		AssetHandle SpriteHandle = AssetHandle(0);
+		glm::vec4 Tint{ 1.0f };
+		bool FlipX = false;
+		bool FlipY = false;
+		int32_t RotationQuarterTurns = 0;
+	};
+
+	enum class GridCellLayout2D : int32_t
+	{
+		Rectangle = 0,
+		Isometric,
+		IsometricZAsY,
+		Hexagon
+	};
+
+	enum class GridCellSwizzle2D : int32_t
+	{
+		XYZ = 0,
+		XZY,
+		YXZ,
+		YZX,
+		ZXY,
+		ZYX
+	};
+
+	// Unity-style layout owner. Tilemaps normally live below an Entity carrying
+	// this component. Tilemap2D keeps its original CellSize/CellGap fields so old
+	// scenes continue to load and render when no Grid2D is present.
+	struct Grid2D
+	{
+		glm::vec2 CellSize{ 1.0f, 1.0f };
+		glm::vec2 CellGap{ 0.0f, 0.0f };
+		GridCellLayout2D Layout = GridCellLayout2D::Rectangle;
+		GridCellSwizzle2D Swizzle = GridCellSwizzle2D::XYZ;
+	};
+
+	enum class TilemapSortOrder2D : int32_t
+	{
+		BottomLeft = 0,
+		BottomRight,
+		TopLeft,
+		TopRight
+	};
+
+	enum class TilemapRendererMode2D : int32_t
+	{
+		Chunk = 0,
+		Individual
+	};
+
+	enum class TilemapChunkCulling2D : int32_t
+	{
+		Auto = 0,
+		Manual
+	};
+
+	// Rendering policy is deliberately separate from sparse tile data. The
+	// legacy fields on Tilemap2D remain the fallback when this component is absent.
+	struct TilemapRenderer2D
+	{
+		bool Enabled = true;
+		TilemapSortOrder2D SortOrder = TilemapSortOrder2D::BottomLeft;
+		TilemapRendererMode2D Mode = TilemapRendererMode2D::Chunk;
+		TilemapChunkCulling2D DetectChunkCulling = TilemapChunkCulling2D::Auto;
+		int32_t SortingLayer = 0;
+		int32_t OrderInLayer = 0;
+		AssetHandle MaterialHandle = AssetHandle(0);
+	};
+
+	struct Tilemap2D
+	{
+		bool Enabled = true;
+		glm::vec2 CellSize{ 1.0f, 1.0f };
+		glm::vec2 CellGap{ 0.0f, 0.0f };
+		int32_t SortingLayer = 0;
+		int32_t OrderInLayer = 0;
+		std::vector<TilemapCell> Cells;
+	};
+
+	struct Particle2D
+	{
+		glm::vec2 Position{ 0.0f };
+		glm::vec2 Velocity{ 0.0f };
+		float Age = 0.0f;
+		float Lifetime = 1.0f;
+		float StartSize = 1.0f;
+		float EndSize = 0.0f;
+	};
+
+	// CPU simulated and deterministically seeded. Runtime particles are omitted
+	// from Scene/Prefab persistence by the component descriptor.
+	struct ParticleSystem2D
+	{
+		bool Enabled = true;
+		bool PlayOnStart = true;
+		bool Loop = true;
+		float Duration = 5.0f;
+		float EmissionRate = 10.0f;
+		int32_t MaxParticles = 256;
+		float StartLifetime = 1.0f;
+		float StartSpeed = 1.0f;
+		float StartSize = 0.2f;
+		float EndSize = 0.0f;
+		float GravityScale = 0.0f;
+		// 2D authored forward is local +X.
+		glm::vec2 Direction{ 1.0f, 0.0f };
+		float SpreadDegrees = 25.0f;
+		glm::vec4 StartColor{ 1.0f };
+		glm::vec4 EndColor{ 1.0f, 1.0f, 1.0f, 0.0f };
+		AssetHandle SpriteHandle = AssetHandle(0);
+		int32_t SortingLayer = 0;
+		int32_t OrderInLayer = 0;
+		uint32_t Seed = 1;
+
+		bool RuntimePlaying = false;
+		bool RuntimeInitialized = false;
+		float RuntimeTime = 0.0f;
+		float RuntimeEmissionAccumulator = 0.0f;
+		uint32_t RuntimeRandomState = 1;
+		std::vector<Particle2D> RuntimeParticles;
+	};
+
+	enum class Light2DType : int32_t
+	{
+		Global = 0,
+		Point = 1
+	};
+
+	struct Light2D
+	{
+		bool Enabled = true;
+		Light2DType Type = Light2DType::Point;
+		glm::vec4 Color{ 1.0f };
+		float Intensity = 1.0f;
+		float Radius = 5.0f;
+		float Falloff = 1.0f;
 	};
 
 	struct C_Camera
@@ -336,7 +488,7 @@ namespace TomCat {
 	struct TextRenderer
 	{
 		bool Enabled = true;
-		AssetHandle Font = AssetHandle(0);
+		AssetHandle Font = AssetHandle(BuiltInLegacyRuntimeFontHandleValue);
 		AssetHandle FallbackFont = AssetHandle(0);
 		AssetHandle EmojiFont = AssetHandle(0);
 		std::string Text = "Text";
@@ -373,8 +525,10 @@ namespace TomCat {
 		glm::vec2 SizeDelta{ 100.0f, 100.0f };
 		bool ClipChildren = false;
 
-		// Screen-pixel rectangles written by RuntimeUISystem. They are transient
-		// and deliberately omitted from ComponentRegistry persistence.
+		// Layout-space rectangles written by RuntimeUISystem. RuntimeClipRect is a
+		// compatibility/diagnostic AABB; exact transformed clipping is retained in
+		// RuntimeUILayoutSnapshot. They are transient and deliberately omitted from
+		// ComponentRegistry persistence.
 		glm::vec4 RuntimeRect{ 0.0f };
 		glm::vec4 RuntimeClipRect{ 0.0f };
 	};
@@ -391,7 +545,7 @@ namespace TomCat {
 	struct UIText
 	{
 		bool Enabled = true;
-		AssetHandle Font = AssetHandle(0);
+		AssetHandle Font = AssetHandle(BuiltInLegacyRuntimeFontHandleValue);
 		AssetHandle FallbackFont = AssetHandle(0);
 		AssetHandle EmojiFont = AssetHandle(0);
 		std::string Text = "Text";
@@ -403,6 +557,19 @@ namespace TomCat {
 		bool RaycastTarget = false;
 	};
 
+	// Persistent, authoring-time listener for UIButton.OnClick. TargetAttachmentID
+	// is the exact C# component identity; ScriptAsset is retained for authoring
+	// metadata and for validating that a stale listener never calls another script.
+	// An all-zero/empty target is retained as an unassigned UnityEvent-style slot.
+	struct UIButtonOnClickListener
+	{
+		bool Enabled = true;
+		UUID TargetEntity{ 0 };
+		UUID TargetAttachmentID{ 0 };
+		AssetHandle ScriptAsset{ 0 };
+		std::string MethodName;
+	};
+
 	struct UIButton
 	{
 		bool Enabled = true;
@@ -411,6 +578,9 @@ namespace TomCat {
 		glm::vec4 HoverColor{ 0.9f, 0.9f, 0.9f, 1.0f };
 		glm::vec4 PressedColor{ 0.72f, 0.72f, 0.72f, 1.0f };
 		glm::vec4 SelectedColor{ 0.82f, 0.9f, 1.0f, 1.0f };
+		glm::vec4 DisabledColor{ 0.52f, 0.52f, 0.52f, 0.5f };
+		float ColorMultiplier = 1.0f;
+		std::vector<UIButtonOnClickListener> OnClick;
 
 		bool RuntimeHovered = false;
 		bool RuntimePressed = false;

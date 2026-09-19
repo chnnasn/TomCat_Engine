@@ -531,7 +531,8 @@ namespace TomCat {
 			return rootFiles.contains(key) || managedFiles.contains(key) ||
 				key.starts_with("packages/playertemplates/win-x64/") ||
 				key == "packages/resources/sprites/tomcat/circle.tga" ||
-				key == "packages/resources/sprites/tomcat/square.tga";
+				key == "packages/resources/sprites/tomcat/square.tga" ||
+				key == "packages/fonts/opensans/opensans-regular.ttf";
 		}
 
 		bool HasRequiredRuntimeFiles(const RuntimeManifest& manifest,
@@ -550,7 +551,8 @@ namespace TomCat {
 				"managed/tomcat.scriptgenerator.dll",
 				"packages/playertemplates/win-x64/template.json",
 				"packages/resources/sprites/tomcat/circle.tga",
-				"packages/resources/sprites/tomcat/square.tga"
+				"packages/resources/sprites/tomcat/square.tga",
+				"packages/fonts/opensans/opensans-regular.ttf"
 			};
 			for (std::string_view requiredPath : required)
 			{

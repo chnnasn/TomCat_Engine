@@ -5,6 +5,7 @@
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
+#include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SpriteAnimation.h"
 
 #include <exception>
@@ -72,7 +73,8 @@ namespace TomCat {
 		MissingEntityReferencePolicy missingPolicy,
 		std::unordered_set<uint64_t>& usedAttachmentIDs,
 		bool regenerateAttachmentIDs,
-		std::string& error)
+		std::string& error,
+		const std::unordered_map<UUID, UUID>* attachmentMap)
 	{
 		error.clear();
 		if (!entity)
@@ -85,26 +87,94 @@ namespace TomCat {
 			missingPolicy, error))
 			return false;
 
-		if (!entity.HasComponent<CSharpScripts>())
-			return true;
-		for (CSharpScriptEntry& script : entity.GetComponent<CSharpScripts>().Scripts)
+		if (entity.HasComponent<CSharpScripts>())
 		{
-			if (regenerateAttachmentIDs)
+			for (CSharpScriptEntry& script : entity.GetComponent<CSharpScripts>().Scripts)
 			{
-				uint64_t attachment = 0;
-				do
+				if (regenerateAttachmentIDs)
 				{
-					script.AttachmentID = UUID();
-					attachment = static_cast<uint64_t>(script.AttachmentID);
+					if (attachmentMap)
+					{
+						const auto found = attachmentMap->find(script.AttachmentID);
+						if (found == attachmentMap->end())
+						{
+							error = "C# AttachmentID is missing from the instance remap";
+							return false;
+						}
+						script.AttachmentID = found->second;
+						usedAttachmentIDs.emplace(
+							static_cast<uint64_t>(script.AttachmentID));
+					}
+					else
+					{
+						uint64_t attachment = 0;
+						do
+						{
+							script.AttachmentID = UUID();
+							attachment = static_cast<uint64_t>(script.AttachmentID);
+						}
+						while (attachment == 0
+							|| !usedAttachmentIDs.emplace(attachment).second);
+					}
 				}
-				while (attachment == 0 || !usedAttachmentIDs.emplace(attachment).second);
-			}
-			else
-			{
-				const uint64_t attachment = static_cast<uint64_t>(script.AttachmentID);
-				if (attachment == 0 || !usedAttachmentIDs.emplace(attachment).second)
+				else
 				{
-					error = "C# AttachmentID must be nonzero and unique";
+					const uint64_t attachment = static_cast<uint64_t>(script.AttachmentID);
+					if (attachment == 0 || !usedAttachmentIDs.emplace(attachment).second)
+					{
+						error = "C# AttachmentID must be nonzero and unique";
+						return false;
+					}
+				}
+			}
+		}
+
+		if (entity.HasComponent<UIButton>() && attachmentMap)
+		{
+			for (UIButtonOnClickListener& listener :
+				entity.GetComponent<UIButton>().OnClick)
+			{
+				if (static_cast<uint64_t>(listener.TargetAttachmentID) == 0)
+					continue;
+				const auto found = attachmentMap->find(listener.TargetAttachmentID);
+				if (found == attachmentMap->end())
+				{
+					if (missingPolicy == MissingEntityReferencePolicy::Reject)
+					{
+						error = "UIButton.OnClick targets a C# attachment outside the instance";
+						return false;
+					}
+					continue;
+				}
+				listener.TargetAttachmentID = found->second;
+			}
+		}
+		else if (entity.HasComponent<UIButton>())
+		{
+			for (const UIButtonOnClickListener& listener :
+				entity.GetComponent<UIButton>().OnClick)
+			{
+				if (static_cast<uint64_t>(listener.TargetAttachmentID) == 0)
+					continue;
+				Entity target = entity.GetScene()
+					? entity.GetScene()->FindEntityByUUID(listener.TargetEntity) : Entity{};
+				bool matched = false;
+				if (target && target.HasComponent<CSharpScripts>())
+				{
+					for (const CSharpScriptEntry& script :
+						target.GetComponent<CSharpScripts>().Scripts)
+					{
+						if (script.AttachmentID == listener.TargetAttachmentID
+							&& script.ScriptAsset == listener.ScriptAsset)
+						{
+							matched = true;
+							break;
+						}
+					}
+				}
+				if (!matched && missingPolicy == MissingEntityReferencePolicy::Reject)
+				{
+					error = "UIButton.OnClick targets a missing C# attachment";
 					return false;
 				}
 			}

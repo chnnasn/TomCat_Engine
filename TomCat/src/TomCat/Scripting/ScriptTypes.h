@@ -718,6 +718,9 @@ namespace TomCat::Scripting {
 		// resolved explicitly so a version-1 host is rejected during bootstrap.
 		int32_t(TC_SCRIPT_CALL* ResolveDeferredCommandBatch)(
 			uint64_t sceneRuntimeId, int32_t committed) = nullptr;
+		// Added in ManagedApi version 3 for persistent UI/event callbacks.
+		int32_t(TC_SCRIPT_CALL* InvokeMethod)(uint64_t sceneRuntimeId,
+			uint64_t attachmentId, NativeUtf8View methodName) = nullptr;
 	};
 
 	using GetManagedApiFn = int32_t(TC_SCRIPT_CALL*)(

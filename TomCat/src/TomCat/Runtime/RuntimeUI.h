@@ -62,14 +62,29 @@ namespace TomCat {
 			TextAlignment alignment, float lineSpacing = 1.0f);
 	};
 
+	struct RuntimeUIClipRegion
+	{
+		UIRect Rectangle;
+		glm::mat4 Transform{ 1.0f };
+	};
+
 	struct RuntimeUILayoutSnapshot
 	{
 		uint32_t ViewportWidth = 0;
 		uint32_t ViewportHeight = 0;
 		float DPI = 96.0f;
 		std::map<UUID, UIRect> Rectangles;
+		// Layout-space compatibility/diagnostic rectangles. Transformed rendering
+		// and hit testing use ClipRegions, where every mask keeps its own transform.
 		std::map<UUID, UIRect> Clips;
 		std::map<UUID, float> Scales;
+		// Maps the authored, unrotated screen rectangle into its accumulated
+		// RectTransform rotation/scale space. Translation remains anchor driven.
+		std::map<UUID, glm::mat4> Transforms;
+		// Ordered ancestor masks in the coordinate space where each mask was
+		// authored. Rendering and hit testing apply every region after transforms,
+		// so a rotated child remains clipped by its parent's visible rectangle.
+		std::map<UUID, std::vector<RuntimeUIClipRegion>> ClipRegions;
 		std::vector<UUID> RenderOrder;
 	};
 
@@ -111,6 +126,12 @@ namespace TomCat {
 	class RuntimeUISystem final
 	{
 	public:
+		// Screen-space Canvas content is authored on a stable plane in Scene view.
+		// Keeping the conversion public gives editor gizmos, framing, rendering and
+		// regression tests one shared coordinate contract.
+		static constexpr float EditorCanvasPixelsPerUnit = 100.0f;
+		static glm::mat4 GetEditorCanvasTransform(
+			const glm::vec2& referenceResolution);
 		static RuntimeUILayoutSnapshot BuildLayout(Scene& scene,
 			entt::registry& registry, uint32_t viewportWidth,
 			uint32_t viewportHeight, float dpi = 96.0f,
@@ -118,6 +139,11 @@ namespace TomCat {
 		static RuntimeUILayoutSnapshot BuildLayout(Scene& scene,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
+		static RuntimeUILayoutSnapshot BuildEditorLayout(Scene& scene,
+			entt::registry& registry,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
+		static RuntimeUILayoutSnapshot BuildEditorLayout(Scene& scene,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
 		static glm::vec2 MapPointerToViewport(const glm::vec2& screenPosition,
 			const glm::vec2& viewportOrigin,
 			const glm::vec2& screenToFramebufferScale = glm::vec2(1.0f));
@@ -150,12 +176,20 @@ namespace TomCat {
 			uint32_t viewportHeight, float dpi, const RuntimeUIInputFrame& input);
 		static void RenderWorldText(Scene& scene, entt::registry& registry,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
+		static void RenderWorldText(Scene& scene,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static void RenderScreen(Scene& scene, entt::registry& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static void RenderScreen(Scene& scene, uint32_t viewportWidth,
 			uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
+		static void RenderEditorCanvas(Scene& scene, entt::registry& registry,
+			const glm::mat4& editorViewProjection,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
+		static void RenderEditorCanvas(Scene& scene,
+			const glm::mat4& editorViewProjection,
+			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
 
 		static bool IsGameplayInputCaptured();
 		static bool WasButtonClicked(Entity entity);

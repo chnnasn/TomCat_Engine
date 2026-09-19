@@ -112,9 +112,12 @@ foreach ($requiredCliPackaging in @(
 }
 $editorPremake = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Editor\TomCatInut\premake5.lua') -Raw
 $cliPremake = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Tools\TomCatCLI\premake5.lua') -Raw
-foreach ($requiredPackageAsset in @(
-        'Resources\Sprites\TomCat\Circle.tga',
-        'Resources\Sprites\TomCat\Square.tga')) {
+$requiredPackageAssets = @(
+    'Resources\Sprites\TomCat\Circle.tga',
+    'Resources\Sprites\TomCat\Square.tga',
+    'fonts\opensans\OpenSans-Regular.ttf'
+)
+foreach ($requiredPackageAsset in $requiredPackageAssets) {
     if ($localPackageScript -notmatch [regex]::Escape($requiredPackageAsset)) {
         throw "Local Editor packaging does not require built-in package asset '$requiredPackageAsset'."
     }
@@ -132,22 +135,23 @@ if ($localPackageScript -notmatch [regex]::Escape(
         'Test-Path -LiteralPath $requiredPackageAssetPath -PathType Leaf')) {
     throw 'Local Editor packaging must reject missing built-in package assets.'
 }
-foreach ($runtimeSpriteCopyRequirement in @(
-        '$payloadBuiltInSpriteRoot',
-        'Join-Path $payloadRoot "Packages\Resources\Sprites\TomCat"',
-        'Copy-Item -LiteralPath $requiredPackageAssetPath')) {
-    if ($localPackageScript -notmatch [regex]::Escape($runtimeSpriteCopyRequirement)) {
-        throw "Local Editor packaging does not copy built-in sprites into .tomcat-runtime ('$runtimeSpriteCopyRequirement')."
+foreach ($runtimePackageCopyRequirement in @(
+        '$payloadPackageRoot',
+        'Join-Path $payloadRoot "Packages"',
+        '$packageAssetDestination = Join-Path $payloadPackageRoot $requiredPackageAsset',
+        '-Destination $packageAssetDestination -Force')) {
+    if ($localPackageScript -notmatch [regex]::Escape($runtimePackageCopyRequirement)) {
+        throw "Local Editor packaging does not preserve built-in package asset paths in .tomcat-runtime ('$runtimePackageCopyRequirement')."
     }
 }
 $runtimeBundleSource = Get-Content -LiteralPath `
     (Join-Path $repositoryRoot 'TomCat\src\TomCat\Core\EditorRuntimeBundle.cpp') -Raw
-foreach ($runtimeSpritePath in @(
-        'packages/resources/sprites/tomcat/circle.tga',
-        'packages/resources/sprites/tomcat/square.tga')) {
+foreach ($requiredPackageAsset in $requiredPackageAssets) {
+    $runtimePackageAssetPath = ('packages/' +
+        $requiredPackageAsset.Replace('\', '/')).ToLowerInvariant()
     if ([regex]::Matches($runtimeBundleSource,
-            [regex]::Escape($runtimeSpritePath)).Count -lt 2) {
-        throw "Editor runtime extraction must both allow and require '$runtimeSpritePath'."
+            [regex]::Escape($runtimePackageAssetPath)).Count -lt 2) {
+        throw "Editor runtime extraction must both allow and require '$runtimePackageAssetPath'."
     }
 }
 if ($localPackageScript -match 'Compress-Archive' -or
@@ -302,11 +306,11 @@ try {
     $payloadRoot = Join-Path $tempRoot 'RuntimePayload'
     $managedRoot = Join-Path $payloadRoot 'Managed'
     $templateRoot = Join-Path $payloadRoot 'Packages\PlayerTemplates\win-x64'
-    $runtimeSpriteRoot = Join-Path $payloadRoot 'Packages\Resources\Sprites\TomCat'
+    $runtimePackageRoot = Join-Path $payloadRoot 'Packages'
     New-Item -ItemType Directory -Path $managedRoot, `
         (Join-Path $templateRoot 'Managed'), `
         (Join-Path $templateRoot 'dotnet\host\fxr\10.0.0'), `
-        $runtimeSpriteRoot -Force | Out-Null
+        $runtimePackageRoot -Force | Out-Null
     foreach ($name in @(
             'TomCat.Managed.dll',
             'TomCat.ScriptGenerator.dll',
@@ -327,8 +331,11 @@ try {
             'dotnet\host\fxr\10.0.0\hostfxr.dll')) {
         Copy-Item -LiteralPath $fixture -Destination (Join-Path $templateRoot $relativePath)
     }
-    foreach ($name in @('Circle.tga', 'Square.tga')) {
-        Copy-Item -LiteralPath $fixture -Destination (Join-Path $runtimeSpriteRoot $name)
+    foreach ($relativePath in $requiredPackageAssets) {
+        $runtimePackageAsset = Join-Path $runtimePackageRoot $relativePath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $runtimePackageAsset) `
+            -Force | Out-Null
+        Copy-Item -LiteralPath $fixture -Destination $runtimePackageAsset
     }
 
     $runtimeManifestPath = New-TomCatRuntimeManifest `
@@ -409,9 +416,10 @@ try {
     $completeEditorProject = Set-EvbDirectoryTree -TemplateText $packagesOnlyProject `
         -NodeName '.tomcat-runtime' -SourceDirectory $payloadRoot `
         -FileAction 0 -DirectoryAction 3
-    foreach ($requiredRuntimeEntry in @(
-            'runtime-manifest.json', 'TomCatCLI.exe', 'PlayerTemplates',
-            'Circle.tga', 'Square.tga')) {
+    $requiredRuntimeEntries = @(
+        'runtime-manifest.json', 'TomCatCLI.exe', 'PlayerTemplates'
+    ) + @($requiredPackageAssets | ForEach-Object { Split-Path -Leaf $_ })
+    foreach ($requiredRuntimeEntry in $requiredRuntimeEntries) {
         if ($completeEditorProject -notmatch "(?is)<Name>\s*$([regex]::Escape($requiredRuntimeEntry))\s*</Name>") {
             throw "EVB runtime tree is missing $requiredRuntimeEntry."
         }

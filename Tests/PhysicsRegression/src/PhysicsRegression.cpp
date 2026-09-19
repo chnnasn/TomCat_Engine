@@ -1426,6 +1426,14 @@ namespace {
 		Require(Near(childRender[3].x, 0.05f + 2.0f * std::cos(0.05f), 3.0e-4f)
 			&& Near(childRender[3].y, 2.0f * std::sin(0.05f), 3.0e-4f),
 			"non-physics child did not inherit its parent's interpolated pose");
+		const glm::mat4 childCameraRender =
+			scene.GetRuntimeCameraTransform(child.GetUUID());
+		Require(Near(childCameraRender[3].x, childRender[3].x, 3.0e-4f)
+			&& Near(childCameraRender[3].y, childRender[3].y, 3.0e-4f)
+			&& Near(childCameraRender[0].x, std::cos(0.05f), 3.0e-4f)
+			&& Near(childCameraRender[0].y, std::sin(0.05f), 3.0e-4f)
+			&& Near(childCameraRender[2].z, 1.0f, 3.0e-4f),
+			"child camera position and +Z-forward orientation used different interpolation poses");
 		Require(Near(bodyEntity.GetComponent<TomCat::Transform>()._Translation.x,
 			0.1f, 2.0e-4f),
 			"reading an interpolated render transform mutated ECS authoring state");
@@ -3119,7 +3127,7 @@ namespace {
 			assets.GetCookedManagedPayload();
 		Require(mountedPayload
 			&& mountedPayload->NativeApiVersion == 1
-			&& mountedPayload->ManagedApiVersion == 2
+			&& mountedPayload->ManagedApiVersion == 3
 			&& mountedPayload->ScriptManifestVersion == 1
 			&& mountedPayload->TargetFramework == "net10.0"
 			&& mountedPayload->RuntimeIdentifier == "win-x64"

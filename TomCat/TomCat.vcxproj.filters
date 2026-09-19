@@ -93,6 +93,9 @@
     <ClInclude Include="src\TomCat.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\Advanced2DAuthoringAssets.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Asset\ArtifactKey.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
@@ -311,6 +314,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h">
       <Filter>src\TomCat\Runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Advanced2D.h">
+      <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h">
       <Filter>src\TomCat\Scene</Filter>
@@ -1694,6 +1700,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\TomCat\Asset\Advanced2DAuthoringAssets.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Asset\ArtifactKey.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
@@ -1855,6 +1864,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp">
       <Filter>src\TomCat\Runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp">
+      <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp">
       <Filter>src\TomCat\Scene</Filter>

@@ -74,6 +74,9 @@ public sealed class ScriptTypeManifest
     [JsonPropertyName("lifecycle")]
     public ScriptLifecycle Lifecycle { get; init; }
 
+	[JsonPropertyName("methods")]
+	public List<string> Methods { get; init; } = [];
+
     [JsonPropertyName("fields")]
     public List<ScriptFieldManifest> Fields { get; init; } = [];
 }
@@ -135,6 +138,7 @@ internal sealed class ScriptDescriptor
     internal required ScriptTypeManifest Manifest { get; init; }
     internal required Type Type { get; init; }
     internal required Func<TomCatBehaviour> ConstructorFactory { get; init; }
+	internal required Dictionary<string, MethodInfo> EventMethods { get; init; }
     internal required Dictionary<string, FieldDescriptor> FieldsById { get; init; }
     internal required Dictionary<string, FieldDescriptor> FieldsByName { get; init; }
 }

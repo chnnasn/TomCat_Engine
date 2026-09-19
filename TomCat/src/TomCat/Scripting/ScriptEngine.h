@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -40,6 +41,12 @@ namespace TomCat {
 				std::span<const UUID> entityIDs);
 			void StopScene(uint64_t sceneSessionId);
 			void UpdateAll(uint64_t sceneSessionId, float deltaTime);
+			// Invokes one persistent UI/event callback before the regular OnUpdate
+			// phase. The exact attachment identity prevents duplicate components from
+			// receiving another instance's callback.
+			ScriptStatus InvokeMethod(Scene& scene, UUID targetEntity,
+				UUID targetAttachmentId, uint64_t expectedScriptAsset,
+				std::string_view methodName);
 			// A fixed-step scope owns the scene's pending input batch until Box2D
 			// and its resulting script callbacks have both completed.
 			bool BeginFixedStep(uint64_t sceneSessionId);

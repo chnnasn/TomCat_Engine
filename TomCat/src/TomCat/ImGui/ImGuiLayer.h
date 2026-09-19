@@ -20,11 +20,18 @@ namespace TomCat {
 		 void Begin() ;
 		 void End();
 
-		 void BlockEvents(bool block) { m_BlockEvents = block; };
+		void BlockEvents(bool block)
+		{
+			m_BlockMouseEvents = block;
+			m_BlockKeyboardEvents = block;
+		}
+		void BlockMouseEvents(bool block) { m_BlockMouseEvents = block; }
+		void BlockKeyboardEvents(bool block) { m_BlockKeyboardEvents = block; }
 
 		 void SetDarkThemeColors();
 	private:
-		bool m_BlockEvents = true;
+		bool m_BlockMouseEvents = true;
+		bool m_BlockKeyboardEvents = true;
 	};
 
 

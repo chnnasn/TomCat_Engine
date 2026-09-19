@@ -630,6 +630,20 @@ namespace TomCat {
 					Required(scriptValue, "executionOrder", JsonType::Number),
 					"executionOrder");
 				script.DisallowMultiple = OptionalBoolean(scriptValue, "disallowMultiple");
+				if (const JsonValue* methods = scriptValue.Find("methods"))
+				{
+					if (methods->Type != JsonType::Array)
+						throw std::runtime_error("methods must be an array");
+					std::unordered_set<std::string> methodNames;
+					for (const JsonValue& method : methods->Array)
+					{
+						if (method.Type != JsonType::String || method.Text.empty()
+							|| !methodNames.emplace(method.Text).second)
+							throw std::runtime_error(
+								"methods must contain unique nonempty strings");
+						script.EventMethods.push_back(method.Text);
+					}
+				}
 
 				std::unordered_set<std::string> fieldIDs;
 				for (const JsonValue& fieldValue :
