@@ -12,13 +12,15 @@
 #include <Glad/glad.h>
 #endif
 #include <filesystem>
+#include <algorithm>
+#include <cmath>
 
 #include"ImGuizmo.h"
 
 namespace TomCat {
 
-	ImGuiLayer::ImGuiLayer()
-		: Layer("ImGuiLayer")
+	ImGuiLayer::ImGuiLayer(bool editorStyling)
+        : Layer("ImGuiLayer"), m_EditorStyling(editorStyling)
 	{
 	}
 
@@ -46,10 +48,16 @@ namespace TomCat {
 #ifdef __EMSCRIPTEN__
 		constexpr float fontSize = 16.0f;
 #else
-		constexpr float fontSize = 32.0f;
+		const float fontSize = m_EditorStyling ? std::round(18.0f * std::clamp(Application::Get().GetWindow().GetDPIScale(),1.0f,2.5f)) : 32.0f;
 #endif
-		io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Bold.ttf", fontSize);
-		io.FontDefault = io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Regular.ttf", fontSize);
+        const char* regular="Packages/fonts/opensans/OpenSans-Regular.ttf";
+        const char* bold="Packages/fonts/opensans/OpenSans-Bold.ttf";
+#ifndef __EMSCRIPTEN__
+        if(m_EditorStyling && std::filesystem::exists("C:/Windows/Fonts/segoeui.ttf")) regular="C:/Windows/Fonts/segoeui.ttf";
+        if(m_EditorStyling && std::filesystem::exists("C:/Windows/Fonts/segoeuib.ttf")) bold="C:/Windows/Fonts/segoeuib.ttf";
+#endif
+        io.Fonts->AddFontFromFileTTF(bold,fontSize);
+        io.FontDefault=io.Fonts->AddFontFromFileTTF(regular,fontSize);
 
 		// Make the UI support Chinese and common symbols.
 		// The character set is built dynamically with ImFontGlyphRangesBuilder: it collects
@@ -95,7 +103,7 @@ namespace TomCat {
 			const char* cnFontPath = "WebFonts/NotoSansSC-Regular.otf";
 			const char* symFontPath = cnFontPath;
 #else
-			const char* cnFontPath = "C:/Windows/Fonts/simhei.ttf";
+			const char* cnFontPath = m_EditorStyling && std::filesystem::exists("C:/Windows/Fonts/msyh.ttc") ? "C:/Windows/Fonts/msyh.ttc" : "C:/Windows/Fonts/simhei.ttf";
 			const char* symFontPath = "C:/Windows/Fonts/seguisym.ttf";
 #endif
 
@@ -339,6 +347,32 @@ namespace TomCat {
 		style.GrabRounding = 2.0f;
 		style.TabRounding = 2.0f;
 		style.TabBorderSize = 1.0f;
+        if(m_EditorStyling)
+        {
+            colors[ImGuiCol_FrameBg]=Rgb(43,43,43);
+            colors[ImGuiCol_FrameBgHovered]=Rgb(68,68,68);
+            colors[ImGuiCol_FrameBgActive]=Rgb(77,77,77);
+            colors[ImGuiCol_Button]=Rgb(80,80,80);
+            colors[ImGuiCol_ButtonHovered]=Rgb(95,95,95);
+            colors[ImGuiCol_ButtonActive]=selection;
+            colors[ImGuiCol_ScrollbarBg]=panel;
+            colors[ImGuiCol_ScrollbarGrab]=Rgb(91,91,91);
+            colors[ImGuiCol_Tab]=toolbar;
+            style.WindowPadding=ImVec2(8,6);
+            style.WindowRounding=3;
+            style.PopupRounding=4;
+            style.FramePadding=ImVec2(6,2);
+            style.FrameRounding=2;
+            style.FrameBorderSize=1;
+            style.ItemSpacing=ImVec2(6,4);
+            style.ScrollbarSize=12;
+            style.ScrollbarRounding=5;
+            style.TabBorderSize=0;
+#ifndef __EMSCRIPTEN__
+            style.ScaleAllSizes(std::clamp(Application::Get().GetWindow().GetDPIScale(),1.0f,2.5f));
+#endif
+        }
+
 	}
 
 }

@@ -57,9 +57,9 @@ namespace TomCat {
 		constexpr float kDockedPanelMinimumWidthRatio = 0.08f;
 		constexpr float kDockedPanelCompactMinimumWidth = 96.0f;
 		constexpr float kDockedPanelExpandedMinimumWidth = 220.0f;
-		constexpr std::array<const char*, 9> kMaximizableDockPanels = {
+		constexpr std::array<const char*, 10> kMaximizableDockPanels = {
 			"Scene###Scene", "Game", "Hierarchy", "Inspector", "Project", "Console",
-			"Animation", "Animator", "Tile Palette"
+			"Animation", "Animator", "Tile Palette", "Profiler"
 		};
 
 		struct GameViewResolutionPreset
@@ -1377,6 +1377,125 @@ namespace TomCat {
 		}
 	}
 
+    bool* EditorLayer::PanelVisibility(const std::string& name)
+    {
+        if (name == "Scene###Scene") return &m_ShowScenePanel;
+        if (name == "Game") return &m_ShowGamePanel;
+        if (name == "Hierarchy") return &m_ShowHierarchyPanel;
+        if (name == "Inspector") return &m_ShowInspectorPanel;
+        if (name == "Project") return &m_ShowProjectPanel;
+        if (name == "Console") return &m_ShowConsolePanel;
+        if (name == "Profiler") return &m_ShowProfilerPanel;
+        if (name == "Animation") return &m_ShowAnimationPanel;
+        if (name == "Animator") return &m_ShowAnimatorPanel;
+        if (name == "Tile Palette") return &m_ShowTilePalettePanel;
+        return nullptr;
+    }
+
+    void EditorLayer::ApplyPendingTabActions()
+    {
+        if (!m_PendingTabClose.empty())
+        {
+            if (bool* visible = PanelVisibility(m_PendingTabClose)) *visible = false;
+            if (m_PendingTabClose == "Profiler") FrameProfiler::Get().SetRecording(false);
+            m_PendingPanelFocus.clear();
+            m_PendingRestoredTabWindow.clear();
+            m_PendingRestoredTabOrder=-1;
+            m_PendingTabClose.clear();
+        }
+        if (!m_PendingTabAdd.empty())
+        {
+            // Add to the clicked group, including when restoring from maximized view.
+            ImGuiID dockID = m_TabContextDockID;
+            auto* targetNode=ImGui::DockBuilderGetNode(dockID);
+            if (!targetNode || !targetNode->IsLeafNode())
+                if (auto* settings = ImGui::FindWindowSettings(ImHashStr(m_TabContextPanel.c_str())))
+                    if (settings->DockId) dockID = settings->DockId;
+            if (auto* node = ImGui::DockBuilderGetNode(dockID))
+            {
+                if (node->IsLeafNode())
+                {
+                    ImGui::DockBuilderDockWindow(m_PendingTabAdd.c_str(), dockID);
+                    ImGui::DockBuilderFinish(m_EditorDockspaceId);
+                }
+            }
+            if (bool* visible = PanelVisibility(m_PendingTabAdd)) *visible = true;
+            m_PendingPanelFocus = std::exchange(m_PendingTabAdd, {});
+        }
+    }
+
+    void EditorLayer::UI_PanelTabContextMenu()
+    {
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)
+            && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
+        {
+            ImGuiWindow* hovered = ImGui::GetCurrentContext()->HoveredWindow;
+            for (const char* name : kMaximizableDockPanels)
+            {
+                ImGuiWindow* window = ImGui::FindWindowByName(name);
+                if (!window || !window->Active || !window->DockNode || !window->DockNode->TabBar) continue;
+                ImGuiDockNode* node = window->DockNode;
+                if (hovered != node->HostWindow && hovered != window) continue;
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                const bool tab = window->DockTabItemRect.Contains(mouse);
+                const bool emptyBar = node->SelectedTabId == window->TabId && node->TabBar->BarRect.Contains(mouse);
+                if (!tab && !emptyBar) continue;
+                // Resolve a tab first when the pointer is over a neighboring inactive tab.
+                const char* target = name;
+                for (const char* candidate : kMaximizableDockPanels)
+                    if (auto* other = ImGui::FindWindowByName(candidate))
+                        if (other->Active && other->DockNode == node && other->DockTabItemRect.Contains(mouse)) target = candidate;
+                m_TabContextPanel = target;
+                m_TabContextDockID = node->ID;
+                ImGui::OpenPopup("Panel Tab Menu");
+                break;
+            }
+        }
+        PrepareEditorPopup("Panel Tab Menu", 260);
+        if (ImGui::BeginPopup("Panel Tab Menu"))
+        {
+            if (m_TabContextPanel == "Scene###Scene" || m_TabContextPanel == "Game")
+            {
+                if (ImGui::BeginMenu("Overlay Menu"))
+                {
+                    if (m_TabContextPanel == "Game") ImGui::MenuItem("Rendering Statistics", nullptr, &m_GameViewStatsVisible);
+                    else ImGui::TextDisabled("Use the Scene toolbar to select tools.");
+                    ImGui::EndMenu();
+                }
+            }
+            if (ImGui::MenuItem(m_PanelMaximized ? "Restore" : "Maximize"))
+            {
+                m_PendingMaximizedPanelWindow = m_TabContextPanel;
+                m_PendingPanelMaximizeAction = m_PanelMaximized ? PanelMaximizeAction::Restore : PanelMaximizeAction::Maximize;
+            }
+            if (ImGui::MenuItem("Close Tab"))
+            {
+                m_PendingTabClose = m_TabContextPanel;
+                if (m_PanelMaximized) m_PendingPanelMaximizeAction = PanelMaximizeAction::Restore;
+            }
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Add Tab"))
+            {
+                for (const char* name : kMaximizableDockPanels)
+                {
+                    const char* label = std::string_view(name) == "Scene###Scene" ? "Scene" : name;
+                    const EditorIcon icon=std::string_view(name)=="Scene###Scene" ? EditorIcon::SceneView
+                        : std::string_view(name)=="Game" ? EditorIcon::GameView
+                        : std::string_view(name)=="Hierarchy" ? EditorIcon::Hierarchy
+                        : std::string_view(name)=="Inspector" ? EditorIcon::Inspector
+                        : std::string_view(name)=="Project" ? EditorIcon::ProjectBrowser : EditorIcon::Count;
+                    if (EditorIconMenuItem(label,icon))
+                    {
+                        m_PendingTabAdd = name;
+                        if (m_PanelMaximized) m_PendingPanelMaximizeAction = PanelMaximizeAction::Restore;
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
 	void EditorLayer::OnAttach()
 	{
 		TC_PROFILE_FUNCTION();
@@ -1385,6 +1504,7 @@ namespace TomCat {
 		ImGui::GetIO().IniSavingRate = 1.0f;
 
 		m_EditorIcons = CreateRef<EditorIconSet>();
+        g_EditorVisualIcons=m_EditorIcons;
 		if (!m_EditorIcons->Load())
 			TC_Core_Warn("One or more editor icons could not be loaded");
 		m_SceneHierarchyPanel.SetIcons(m_EditorIcons);
@@ -1467,7 +1587,7 @@ namespace TomCat {
 		// The packaged root file is a read-only baseline. The selected writable
 		// layout is global in no-project mode and project-local otherwise.
 		LoadImGuiSettings(GetDefaultEditorLayoutPath());
-		LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject));
+        if(!LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject))) m_LayoutRequest=1;
 
 		LoadSceneToolbarLayout();
 		LoadEditorPanelLayout();
@@ -2157,7 +2277,7 @@ namespace TomCat {
 		ImGui::PushStyleColor(ImGuiCol_Separator, menuLine);
 		ImGui::PushStyleColor(ImGuiCol_Border, menuLine);
 		ImGui::PushStyleColor(ImGuiCol_CheckMark, menuText);
-		ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 1.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, ImGui::GetStyle().PopupRounding);
 		ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
 
 		if (ImGui::BeginMenuBar())
@@ -2392,7 +2512,7 @@ namespace TomCat {
 
 		UI_MainMenuBar();
 
-		float toolbarHeight = 48.0f;
+		const float toolbarHeight = std::round(ImGui::GetFontSize()*1.75f);
 		// Unity keeps the global playbar one step darker than docked panels.
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_TitleBg]);
 		ImGui::BeginChild("ToolbarRegion", ImVec2(0, toolbarHeight), false,
@@ -2430,9 +2550,11 @@ namespace TomCat {
                 ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
                 ImGui::DockBuilderSetNodeSize(dockspace_id, dockspaceSize);
                 ImGuiID center = dockspace_id, left, right, bottom;
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.19f, &left, &center);
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.29f, &right, &center);
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, layout == 3 ? 0.48f : 0.30f, &bottom, &center);
+                const float inspectorWidth=std::clamp(dockspaceSize.x*0.27f,340.0f,480.0f);
+                const float hierarchyWidth=std::clamp(dockspaceSize.x*0.18f,240.0f,340.0f);
+                ImGui::DockBuilderSplitNode(center,ImGuiDir_Right,std::min(0.36f,inspectorWidth/dockspaceSize.x),&right,&center);
+                ImGui::DockBuilderSplitNode(center,ImGuiDir_Down,layout==3?0.46f:0.28f,&bottom,&center);
+                ImGui::DockBuilderSplitNode(center,ImGuiDir_Left,std::min(0.34f,hierarchyWidth/std::max(1.0f,dockspaceSize.x-inspectorWidth)),&left,&center);
                 ImGui::DockBuilderDockWindow("Hierarchy", left);
                 ImGui::DockBuilderDockWindow("Inspector", right);
                 ImGui::DockBuilderDockWindow("Scene###Scene", center);
@@ -2445,8 +2567,10 @@ namespace TomCat {
                 m_ShowAnimationPanel = m_ShowAnimatorPanel = layout == 2;
                 m_ShowConsolePanel = m_ShowProfilerPanel = layout == 3;
                 m_LayoutRequest = 0;
+                m_PendingPanelFocus = layout==2 ? "Animator" : "Scene###Scene";
             }
 			ApplyPendingPanelMaximizeTransition(dockspace_id, dockspaceSize);
+            ApplyPendingTabActions();
 			ImGuiDockNodeFlags activeDockspaceFlags = dockspace_flags;
 			if (m_PanelMaximized)
 				activeDockspaceFlags |= ImGuiDockNodeFlags_NoSplit
@@ -2525,11 +2649,12 @@ namespace TomCat {
 		}
 
         m_ContentBrowserPanel.OnAssetInspectorRender(&m_ShowAssetInspector);
+        m_ConsolePanel.SetErrorPauseCallback([this] { if (m_SceneState == SceneState::Play) OnScenePause(); });
         m_ConsolePanel.SetOpenSourceCallback([this](const std::filesystem::path& path) { m_ContentBrowserPanel.OpenDiagnosticSource(path); });
-        m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel);
+        if (ShouldRenderDockPanel("Profiler")) m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel);
         if (m_ShowRuntimeScenes)
         {
-            ImGui::SetNextWindowSize(ImVec2(600,420),ImGuiCond_FirstUseEver);
+            PrepareEditorToolWindow(ImVec2(720,520));
             if(ImGui::Begin("Runtime Scenes",&m_ShowRuntimeScenes))
             {
                 if(!IsSceneRunning()) ImGui::TextWrapped("Enter Play mode to inspect loaded scenes, control asynchronous loading and mark persistent roots.");
@@ -2582,7 +2707,7 @@ namespace TomCat {
         }
         if(m_ShowEditorPreferences)
         {
-            ImGui::SetNextWindowSize(ImVec2(520,300),ImGuiCond_FirstUseEver);
+            PrepareEditorToolWindow(ImVec2(620,420));
             if(ImGui::Begin("Editor Preferences",&m_ShowEditorPreferences))
             {
                 ImGui::TextUnformatted("Interface"); ImGui::Separator();
@@ -3009,21 +3134,22 @@ namespace TomCat {
 		if (m_GameViewStatsVisible)
 		{
 			const Renderer2D::Statistics stats = Renderer2D::GetStats();
-			constexpr float statsWidth = 220.0f;
-			constexpr float statsHeight = 164.0f;
-			const ImVec2 visibleMinimum(
-				std::max(gameImageMinimum.x, contentOrigin.x),
-				std::max(gameImageMinimum.y, contentOrigin.y));
-			const ImVec2 visibleMaximum(
-				std::min(gameImageMaximum.x, contentOrigin.x + gameViewportPanelSize.x),
-				std::min(gameImageMaximum.y, contentOrigin.y + gameViewportPanelSize.y));
-			ImGui::SetCursorScreenPos(ImVec2(
-				std::max(visibleMinimum.x, visibleMaximum.x - statsWidth - 8.0f),
-				visibleMinimum.y + 8.0f));
+            // Anchor to the panel's visible work rectangle, not its letterboxed image.
+            // Window scrolling affects contentOrigin, but must not move this overlay.
+            const ImGuiWindow* gameWindow = ImGui::GetCurrentWindow();
+            const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+            const float margin = ImGui::GetFontSize() * 0.4f;
+            const ImRect bounds = gameWindow->InnerRect;
+            const float statsWidth = std::min(ImGui::CalcTextSize("FPS: 9999.9 (999.99 ms)").x + padding.x * 2,
+                std::max(1.0f, bounds.GetWidth() - margin * 2));
+            const float statsHeight = std::min(ImGui::GetTextLineHeightWithSpacing() * 8 + padding.y * 2 + 8,
+                std::max(1.0f, bounds.GetHeight() - margin * 2));
+            const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ImVec2(bounds.Max.x - statsWidth - margin, bounds.Min.y + margin));
 			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.08f, 0.90f));
 			ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
 			ImGui::BeginChild("##GameStatsOverlay", ImVec2(statsWidth, statsHeight),
-				true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+				true, ImGuiWindowFlags_NoScrollWithMouse);
 			ImGui::TextUnformatted("Rendering Statistics");
 			ImGui::Separator();
 			const float frameRate = ImGui::GetIO().Framerate;
@@ -3036,6 +3162,7 @@ namespace TomCat {
 			ImGui::Text("Vertices: %u", stats.GetTotalVertexCount());
 			ImGui::Text("Indices: %u", stats.GetTotalIndexCount());
 			ImGui::EndChild();
+            ImGui::SetCursorScreenPos(savedCursor);
 			ImGui::PopStyleVar();
 			ImGui::PopStyleColor();
 		}
@@ -3045,6 +3172,7 @@ namespace TomCat {
 		}
 
 		DetectPanelTabDoubleClick();
+        UI_PanelTabContextMenu();
 		if (!m_PanelMaximized)
 		{
 			UI_BuildSettings();
@@ -3130,8 +3258,7 @@ namespace TomCat {
 			ImGui::SetNextWindowFocus();
 			m_FocusBuildSettingsPanel = false;
 		}
-		ImGui::SetNextWindowSize(ImVec2(900.0f, 720.0f), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSizeConstraints(ImVec2(720.0f, 560.0f), ImVec2(1600.0f, 1200.0f));
+		PrepareEditorToolWindow(ImVec2(920,740),ImVec2(680,500));
 		const bool buildSettingsVisible = ImGui::Begin("Build Settings",
 			&m_ShowBuildSettingsPanel, ImGuiWindowFlags_NoDocking);
 		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
@@ -5246,6 +5373,7 @@ namespace TomCat {
 		if (m_SceneState != SceneState::Edit || !m_EditorScene)
 			return;
 		m_ConsolePanel.OnPlayStarted();
+        m_ProfilerPanel.OnPlayStarted();
 		if (m_SceneHistory.HasActiveTransaction())
 			CommitSceneTransaction();
 		auto blockPlay = [this](std::string message)
@@ -6086,7 +6214,8 @@ namespace TomCat {
 		}
 
 		std::function<bool()> actionToRun;
-		if (ImGui::BeginPopupModal("Unsaved Scene Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		PrepareEditorPopup("Unsaved Scene Changes",560,true);
+        if (ImGui::BeginPopupModal("Unsaved Scene Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			ImGui::TextUnformatted("The current scene has unsaved changes.");
 			ImGui::TextUnformatted("Save before continuing?");
@@ -6131,7 +6260,8 @@ namespace TomCat {
 		}
 
 		std::optional<PendingProjectMigration> migrationToRun;
-		if (ImGui::BeginPopupModal("Project Upgrade Preview", nullptr,
+		PrepareEditorPopup("Project Upgrade Preview",740,true);
+        if (ImGui::BeginPopupModal("Project Upgrade Preview", nullptr,
 			ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			if (!m_PendingProjectMigration)
@@ -6155,7 +6285,7 @@ namespace TomCat {
 				preview.BackupRoot.generic_string().c_str());
 			ImGui::Separator();
 			ImGui::BeginChild("##ProjectMigrationChanges",
-				ImVec2(620.0f, 220.0f), true);
+				ImVec2(0.0f, 220.0f), true);
 			for (const ProjectMigrationChange& change : preview.Changes)
 			{
 				const char* operation = change.Kind
@@ -6204,7 +6334,8 @@ namespace TomCat {
 
 		std::optional<PendingProjectMigrationRecovery> recoveryToRun;
 		std::optional<PendingProjectMigrationRecovery> abandonedRecoveryToOpen;
-		if (!ImGui::BeginPopupModal("Interrupted Project Migration", nullptr,
+		PrepareEditorPopup("Interrupted Project Migration",740,true);
+        if (!ImGui::BeginPopupModal("Interrupted Project Migration", nullptr,
 			ImGuiWindowFlags_AlwaysAutoResize))
 			return;
 		if (!m_PendingProjectMigrationRecovery)
@@ -6431,7 +6562,8 @@ namespace TomCat {
 			ImGui::OpenPopup("Recover Scene");
 			m_OpenRecoveryModal = false;
 		}
-		if (!ImGui::BeginPopupModal("Recover Scene", nullptr,
+		PrepareEditorPopup("Recover Scene",640,true);
+        if (!ImGui::BeginPopupModal("Recover Scene", nullptr,
 			ImGuiWindowFlags_AlwaysAutoResize))
 			return;
 
@@ -6682,7 +6814,7 @@ namespace TomCat {
 		// Reapply the packaged baseline before the new project's override so UI
 		// state never carries over from the project that was just closed.
 		LoadImGuiSettings(GetDefaultEditorLayoutPath());
-		LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject));
+        if(!LoadImGuiSettings(GetEditorLayoutPath(m_CurrentProject))) m_LayoutRequest=1;
 		LoadSceneToolbarLayout();
 		LoadEditorPanelLayout();
 

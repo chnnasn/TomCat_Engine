@@ -311,7 +311,6 @@ namespace TomCat {
         std::vector<UUID> m_HierarchyVisibleOrder, m_PreviousHierarchyOrder;
         UUID m_SelectionAnchor{0};
         std::array<char, 128> m_HierarchySearch{};
-        std::array<char,128> m_InspectorSearch{};
         bool m_InspectorLocked = false;
         UUID m_InspectedEntity{0};
         Entity m_SelectionContext;

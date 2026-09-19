@@ -10,7 +10,7 @@ namespace TomCat {
 	class ImGuiLayer : public Layer
 	{
 	public:
-		ImGuiLayer();
+		explicit ImGuiLayer(bool editorStyling = false);
 		~ImGuiLayer();
 
 		virtual void OnAttach() override;
@@ -30,7 +30,8 @@ namespace TomCat {
 
 		 void SetDarkThemeColors();
 	private:
-		bool m_BlockMouseEvents = true;
+		bool m_EditorStyling = false;
+        bool m_BlockMouseEvents = true;
 		bool m_BlockKeyboardEvents = true;
 	};
 

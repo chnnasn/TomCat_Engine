@@ -31,6 +31,7 @@ namespace TomCat {
 		uint32_t Line = 0;
 		uint32_t Column = 0;
 		std::string StackTrace;
+        std::string Timestamp;
 	};
 
 	class ConsolePanel
@@ -40,6 +41,7 @@ namespace TomCat {
 		void Push(ConsoleMessageSeverity severity, std::string text,
 			std::string source = {});
         void SetOpenSourceCallback(std::function<void(const std::filesystem::path&)> callback) { m_OpenSource=std::move(callback); }
+        void SetErrorPauseCallback(std::function<void()> callback) { m_ErrorPauseCallback=std::move(callback); }
         void Clear();
 		void OnPlayStarted();
 		std::vector<ConsoleMessage> Snapshot() const;
@@ -63,6 +65,9 @@ namespace TomCat {
         char m_Search[256]{};
         uint64_t m_SelectedSequence = 0;
 		bool m_Collapse = false;
+        bool m_ErrorPause = false;
+        uint64_t m_LastObservedSequence = 0;
+        std::function<void()> m_ErrorPauseCallback;
 		bool m_ClearOnPlay = true;
 		bool m_AutoScroll = true;
 		bool m_ScrollToBottom = false;

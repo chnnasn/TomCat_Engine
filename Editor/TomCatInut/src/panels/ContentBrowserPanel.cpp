@@ -1,3 +1,4 @@
+#include "../EditorVisuals.h"
 #include "tcpch.h"
 
 #include "ContentBrowserPanel.h"
@@ -1518,14 +1519,17 @@ namespace TomCat {
 			ImGui::OpenPopup("Rename Asset");
 			m_OpenRenamePopup = false;
 		}
-		if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		PrepareEditorPopup("Rename Asset",520,true);
+        if (ImGui::BeginPopupModal("Rename Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			if (m_RenameFocus)
 			{
 				ImGui::SetKeyboardFocusHere();
 				m_RenameFocus = false;
 			}
-			const bool enter = ImGui::InputText("Name", m_RenameBuffer, sizeof(m_RenameBuffer),
+			ImGui::TextUnformatted("Name");
+            ImGui::SetNextItemWidth(-1);
+            const bool enter = ImGui::InputText("##Name", m_RenameBuffer, sizeof(m_RenameBuffer),
 				ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
 			if (enter || ImGui::Button("Rename"))
 			{
@@ -1549,7 +1553,8 @@ namespace TomCat {
 			ImGui::OpenPopup("Delete Asset?");
 			m_OpenDeletePopup = false;
 		}
-		if (ImGui::BeginPopupModal("Delete Asset?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		PrepareEditorPopup("Delete Asset?",580,true);
+        if (ImGui::BeginPopupModal("Delete Asset?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			ImGui::TextWrapped("This cannot be undone. Delete '%s'?", PathToUTF8(m_DeletePath.filename()).c_str());
 			if (!m_DeleteReferences.empty())
@@ -2061,7 +2066,7 @@ namespace TomCat {
 			ImGui::OpenPopup("Sprite Atlas Tools");
 			m_OpenAtlasEditorPopup = false;
 		}
-		ImGui::SetNextWindowSize(ImVec2(880.0f, 720.0f), ImGuiCond_FirstUseEver);
+		PrepareEditorToolWindow(ImVec2(960,720),ImVec2(620,420));
 		if (!ImGui::BeginPopupModal("Sprite Atlas Tools", nullptr))
 			return;
 
@@ -2618,7 +2623,7 @@ namespace TomCat {
     void ContentBrowserPanel::OnAssetInspectorRender(bool* open)
     {
         if(!*open) return;
-        ImGui::SetNextWindowSize(ImVec2(460,600),ImGuiCond_FirstUseEver);
+        PrepareEditorToolWindow(ImVec2(520,660));
         if(!ImGui::Begin("Asset Inspector",open)) { ImGui::End(); return; }
         auto& assets=AssetManager::Get();
         const auto* selectedMetadata=assets.GetRegistry().GetMetadata(m_SelectedPath);
@@ -2757,13 +2762,14 @@ namespace TomCat {
 		const std::filesystem::path activeRoot = browsingPackages ? packagesRoot : assetRoot;
 		const char* activeRootLabel = browsingPackages ? "Packages" : "Assets";
 
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##AssetSearch", "Search project assets...", m_Search.data(), m_Search.size());
+        const bool wideToolbar=ImGui::GetContentRegionAvail().x>620;
+        ImGui::SetNextItemWidth(wideToolbar ? ImGui::GetContentRegionAvail().x-210 : -1);
+        EditorSearchField("##AssetSearch", "Search project assets...", m_Search.data(), m_Search.size());
         const char* typeLabels[] = { "All assets", "Textures", "Scenes", "Prefabs", "Scripts", "Audio", "Fonts", "Animation clips", "Animator controllers", "Tile palettes" };
         const AssetType types[] = { AssetType::None, AssetType::Texture2D, AssetType::Scene, AssetType::Prefab, AssetType::CSharpScript, AssetType::Audio, AssetType::Font, AssetType::AnimationClip, AssetType::AnimatorController, AssetType::TilePalette };
+        if(wideToolbar) ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
         ImGui::Combo("##AssetType", &m_TypeFilter, typeLabels, static_cast<int>(std::size(typeLabels)));
-        ImGui::Checkbox("Show engine packages", &m_ShowPackages);
         ImGui::Separator();
         if (m_Search[0] || m_TypeFilter)
         {
@@ -2789,7 +2795,7 @@ namespace TomCat {
         else if (m_LayoutMode == OneColumn)
         {
             DrawDirectoryTree(assetRoot, assetRoot, "Assets", true, true);
-			if (packagesAvailable && m_ShowPackages)
+			if (packagesAvailable)
 				DrawDirectoryTree(packagesRoot, packagesRoot, "Packages", true, true);
 			DrawEmptyContextMenu(activeRoot);
 		}
@@ -2798,7 +2804,7 @@ namespace TomCat {
 			const float splitterWidth = 8.0f;
 			ImGui::BeginChild("DirectoryTree", ImVec2(m_LeftPanelWidth, 0.0f), false);
 			DrawDirectoryTree(assetRoot, assetRoot, "Assets", true, false);
-			if (packagesAvailable && m_ShowPackages)
+			if (packagesAvailable)
 				DrawDirectoryTree(packagesRoot, packagesRoot, "Packages", true, false);
 			DrawEmptyContextMenu(activeRoot);
 			ImGui::EndChild();

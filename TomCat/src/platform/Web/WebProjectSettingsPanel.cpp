@@ -1,6 +1,7 @@
 #include "tcpch.h"
 #ifdef __EMSCRIPTEN__
 #include "WebProjectSettingsPanel.h"
+#include "EditorVisuals.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Utils/PathUtils.h"
 #include <imgui.h>

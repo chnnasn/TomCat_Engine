@@ -73,7 +73,6 @@ namespace TomCat {
         std::string m_AssetInspectorMessage;
         std::array<char, 256> m_Search{};
         int m_TypeFilter = 0;
-        bool m_ShowPackages = false;
         size_t m_AtlasSelectedSlice = 0;
         float m_AtlasZoom=1.0f;
         bool m_AtlasDragging=false, m_AtlasDragResize=false, m_AtlasDragPivot=false;

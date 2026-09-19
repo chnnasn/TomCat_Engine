@@ -54,7 +54,7 @@ namespace TomCat {
 #ifndef TC_PLATFORM_WEB
 			if (enableImGui)
 			{
-				m_ImGuiLayer = new ImGuiLayer();
+				m_ImGuiLayer = new ImGuiLayer(windowProps.EditorStyling);
 				PushOverlay(m_ImGuiLayer);
 			}
 #else
