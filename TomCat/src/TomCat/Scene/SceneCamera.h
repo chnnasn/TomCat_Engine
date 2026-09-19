@@ -2,6 +2,8 @@
 
 #include "TomCat/Renderer/Camera.h"
 
+#include <array>
+
 namespace TomCat {
 
 	class SceneCamera : public Camera
@@ -35,6 +37,12 @@ namespace TomCat {
 
 		ProjectionType GetProjectionType() const { return m_ProjectionType; }
 		bool SetProjectionType(ProjectionType type);
+
+		// Returns near-plane corners first, then far-plane corners, in local camera
+		// space. The order within each plane is bottom-left, bottom-right,
+		// top-right, top-left.
+		bool TryGetLocalFrustumCorners(
+			std::array<glm::vec3, 8>& corners) const;
 
 	private:
 		bool TryCalculateProjection(ProjectionType type, glm::mat4& projection) const;

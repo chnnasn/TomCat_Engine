@@ -198,6 +198,60 @@ namespace TomCat {
 		return true;
 	}
 
+	bool SceneCamera::TryGetLocalFrustumCorners(
+		std::array<glm::vec3, 8>& corners) const
+	{
+		auto assignPlane = [&corners](size_t first, double halfWidth,
+			double halfHeight, double depth)
+		{
+			const double maximum = static_cast<double>(
+				std::numeric_limits<float>::max());
+			if (!std::isfinite(halfWidth) || !std::isfinite(halfHeight)
+				|| !std::isfinite(depth) || halfWidth < 0.0 || halfHeight < 0.0
+				|| std::abs(halfWidth) > maximum || std::abs(halfHeight) > maximum
+				|| std::abs(depth) > maximum)
+				return false;
+			const float width = static_cast<float>(halfWidth);
+			const float height = static_cast<float>(halfHeight);
+			const float z = static_cast<float>(depth);
+			corners[first + 0] = { -width, -height, z };
+			corners[first + 1] = {  width, -height, z };
+			corners[first + 2] = {  width,  height, z };
+			corners[first + 3] = { -width,  height, z };
+			return true;
+		};
+
+		if (m_ProjectionType == ProjectionType::Perspective)
+		{
+			const double tangent = std::tan(
+				static_cast<double>(m_PerspectiveFOV) * 0.5);
+			const double aspect = static_cast<double>(m_AspectRatio);
+			const double nearClip = static_cast<double>(m_PerspectiveNear);
+			const double farClip = static_cast<double>(m_PerspectiveFar);
+			if (!std::isfinite(tangent) || tangent <= 0.0
+				|| !std::isfinite(aspect) || aspect <= 0.0
+				|| !std::isfinite(nearClip) || nearClip <= 0.0
+				|| !std::isfinite(farClip) || farClip <= nearClip)
+				return false;
+			const double nearHalfHeight = tangent * nearClip;
+			const double farHalfHeight = tangent * farClip;
+			return assignPlane(0, nearHalfHeight * aspect, nearHalfHeight,
+				-nearClip)
+				&& assignPlane(4, farHalfHeight * aspect, farHalfHeight,
+					-farClip);
+		}
+		if (m_ProjectionType == ProjectionType::Orthographic)
+		{
+			const double halfHeight = static_cast<double>(m_OrthographicSize) * 0.5;
+			const double halfWidth = halfHeight * static_cast<double>(m_AspectRatio);
+			return assignPlane(0, halfWidth, halfHeight,
+				-static_cast<double>(m_OrthographicNear))
+				&& assignPlane(4, halfWidth, halfHeight,
+					-static_cast<double>(m_OrthographicFar));
+		}
+		return false;
+	}
+
 	bool SceneCamera::TryCalculateProjection(ProjectionType type, glm::mat4& projection) const
 	{
 		if (type == ProjectionType::Perspective)

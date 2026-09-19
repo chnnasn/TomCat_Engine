@@ -16,6 +16,7 @@
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SceneCamera.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
@@ -360,6 +361,36 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		framebuffer->Unbind();
 		RequireUI(readError == GL_NO_ERROR,
 			"OpenGL failed to read the Runtime UI RGBA screenshot");
+		return pixels;
+	}
+
+	std::vector<uint8_t> CaptureEditModeGamePreview(TomCat::Scene& scene,
+		uint32_t width, uint32_t height)
+	{
+		TomCat::FramebufferSpecification specification;
+		specification.Width = width;
+		specification.Height = height;
+		specification.Attachments = { TomCat::FramebufferTextureFormat::RGBA8 };
+		TomCat::Ref<TomCat::Framebuffer> framebuffer =
+			TomCat::Framebuffer::Create(specification);
+		RequireUI(framebuffer != nullptr,
+			"could not create the edit-mode Game preview framebuffer");
+		framebuffer->Bind();
+		TomCat::RenderCommand::SetClearColor({ 8.0f / 255.0f, 12.0f / 255.0f,
+			18.0f / 255.0f, 1.0f });
+		TomCat::RenderCommand::Clear();
+		scene.OnViewportResize(width, height);
+		scene.OnRenderRuntime();
+		glFinish();
+		std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4u);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glReadPixels(0, 0, static_cast<GLsizei>(width),
+			static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		const GLenum readError = glGetError();
+		framebuffer->Unbind();
+		RequireUI(readError == GL_NO_ERROR,
+			"OpenGL failed to read the edit-mode Game preview screenshot");
 		return pixels;
 	}
 
@@ -1293,6 +1324,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 	void TestEditorCanvasLayout()
 	{
 		TomCat::Scene scene;
+		RequireUI(!scene.HasGameViewRenderSource(),
+			"empty Scene unexpectedly reported a Game view render source");
 		TomCat::Entity wideCanvas = scene.CreateEntityWithUUID(
 			TomCat::UUID(12001), "Wide Canvas");
 		auto& wide = wideCanvas.AddComponent<TomCat::Canvas>();
@@ -1302,6 +1335,14 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			TomCat::UUID(12002), "Square Canvas");
 		squareCanvas.AddComponent<TomCat::Canvas>().ReferenceResolution =
 			{ 800.0f, 800.0f };
+		RequireUI(scene.HasActiveCanvas() && scene.HasGameViewRenderSource(),
+			"Scene did not report its enabled Canvas as a Game view render source");
+		wide.Enabled = false;
+		squareCanvas.GetComponent<TomCat::Canvas>().Enabled = false;
+		RequireUI(!scene.HasActiveCanvas() && !scene.HasGameViewRenderSource(),
+			"Scene reported a disabled Canvas as a Game view render source");
+		wide.Enabled = true;
+		squareCanvas.GetComponent<TomCat::Canvas>().Enabled = true;
 
 		TomCat::Entity child = scene.CreateEntityWithUUID(
 			TomCat::UUID(12003), "Editor Canvas Child");
@@ -1425,6 +1466,148 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"EditorCamera scroll jumped away or produced an invalid minimum distance");
 		RequireUI(glm::dot(focalDelta, forward) > 0.1f,
 			"EditorCamera scroll stopped instead of advancing through its orbit floor");
+	}
+
+	void TestSceneCameraFrustumCorners()
+	{
+		TomCat::SceneCamera camera;
+		RequireUI(camera.SetViewportSize(1600, 900),
+			"SceneCamera rejected a valid frustum test viewport");
+
+		const std::array<glm::vec3, 8> expectedNDC = {
+			glm::vec3(-1.0f, -1.0f, -1.0f),
+			glm::vec3( 1.0f, -1.0f, -1.0f),
+			glm::vec3( 1.0f,  1.0f, -1.0f),
+			glm::vec3(-1.0f,  1.0f, -1.0f),
+			glm::vec3(-1.0f, -1.0f,  1.0f),
+			glm::vec3( 1.0f, -1.0f,  1.0f),
+			glm::vec3( 1.0f,  1.0f,  1.0f),
+			glm::vec3(-1.0f,  1.0f,  1.0f)
+		};
+		auto getVerifiedCorners = [&expectedNDC](const TomCat::SceneCamera& source)
+		{
+			std::array<glm::vec3, 8> corners{};
+			RequireUI(source.TryGetLocalFrustumCorners(corners),
+				"SceneCamera could not calculate valid local frustum corners");
+			for (size_t index = 0; index < corners.size(); ++index)
+			{
+				const glm::vec4 clip = source.GetProjection()
+					* glm::vec4(corners[index], 1.0f);
+				RequireUI(std::isfinite(clip.w)
+					&& std::abs(clip.w) > 1.0e-6f,
+					"SceneCamera frustum corner produced an invalid clip w");
+				const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+				RequireUI(glm::length(ndc - expectedNDC[index]) <= 1.0e-3f,
+					"SceneCamera local frustum corner did not project back to NDC");
+			}
+			return corners;
+		};
+
+		RequireUI(camera.SetPerspective(glm::radians(60.0f), 0.5f, 16.0f),
+			"SceneCamera rejected the perspective frustum test values");
+		const auto perspectiveFar16 = getVerifiedCorners(camera);
+		RequireUI(camera.SetPerspectiveFarClip(64.0f),
+			"SceneCamera rejected the enlarged perspective far plane");
+		const auto perspectiveFar64 = getVerifiedCorners(camera);
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(Near(perspectiveFar16[index].z,
+				perspectiveFar64[index].z),
+				"Perspective far clip change moved the near-plane corners");
+			RequireUI(perspectiveFar64[index + 4].z
+				< perspectiveFar16[index + 4].z,
+				"Perspective far clip change did not extend the far-plane corners");
+		}
+		constexpr float HugeFar = 1.0e30f;
+		RequireUI(camera.SetPerspective(glm::radians(60.0f), 0.01f, HugeFar),
+			"SceneCamera imposed an artificial perspective Far limit");
+		std::array<glm::vec3, 8> hugePerspective{};
+		RequireUI(camera.TryGetLocalFrustumCorners(hugePerspective),
+			"SceneCamera could not construct a very large perspective frustum");
+		auto nearRelative = [](float value, float expected)
+		{
+			return std::abs(value - expected)
+				<= std::max(1.0f, std::abs(expected)) * 1.0e-5f;
+		};
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(nearRelative(hugePerspective[index].z, -0.01f)
+				&& nearRelative(hugePerspective[index + 4].z, -HugeFar)
+				&& std::isfinite(hugePerspective[index + 4].x)
+				&& std::isfinite(hugePerspective[index + 4].y),
+				"very large perspective Far did not produce finite direct geometry");
+		}
+
+		auto requireOrthographicDepthInvariant = [](const auto& corners)
+		{
+			for (size_t index = 0; index < 4; ++index)
+			{
+				RequireUI(Near(corners[index].x, corners[index + 4].x)
+					&& Near(corners[index].y, corners[index + 4].y),
+					"Orthographic frustum x/y changed with depth");
+			}
+		};
+
+		RequireUI(camera.SetOrthographic(12.0f, 1.0f, 9.0f),
+			"SceneCamera rejected the orthographic frustum test values");
+		const auto orthographicOriginal = getVerifiedCorners(camera);
+		requireOrthographicDepthInvariant(orthographicOriginal);
+		RequireUI(camera.SetOrthographicNearClip(2.5f),
+			"SceneCamera rejected the changed orthographic near plane");
+		const auto orthographicNearChanged = getVerifiedCorners(camera);
+		requireOrthographicDepthInvariant(orthographicNearChanged);
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(!Near(orthographicOriginal[index].z,
+				orthographicNearChanged[index].z)
+				&& Near(orthographicOriginal[index + 4].z,
+					orthographicNearChanged[index + 4].z),
+				"Orthographic near clip did not exclusively move the near-plane z");
+		}
+
+		RequireUI(camera.SetOrthographicFarClip(18.0f),
+			"SceneCamera rejected the changed orthographic far plane");
+		const auto orthographicFarChanged = getVerifiedCorners(camera);
+		requireOrthographicDepthInvariant(orthographicFarChanged);
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(Near(orthographicNearChanged[index].z,
+				orthographicFarChanged[index].z)
+				&& !Near(orthographicNearChanged[index + 4].z,
+					orthographicFarChanged[index + 4].z),
+				"Orthographic far clip did not exclusively move the far-plane z");
+		}
+		RequireUI(camera.SetOrthographic(12.0f, 1.0f, HugeFar),
+			"SceneCamera imposed an artificial orthographic Far limit");
+		std::array<glm::vec3, 8> hugeOrthographic{};
+		RequireUI(camera.TryGetLocalFrustumCorners(hugeOrthographic),
+			"SceneCamera could not construct a very large orthographic volume");
+		for (size_t index = 0; index < 4; ++index)
+		{
+			RequireUI(nearRelative(hugeOrthographic[index].z, -1.0f)
+				&& nearRelative(hugeOrthographic[index + 4].z, -HugeFar)
+				&& Near(hugeOrthographic[index].x,
+					hugeOrthographic[index + 4].x)
+				&& Near(hugeOrthographic[index].y,
+					hugeOrthographic[index + 4].y),
+				"very large orthographic Far did not extend only its depth plane");
+		}
+
+		TomCat::EditorCamera overlayCamera(30.0f, 16.0f / 9.0f,
+			0.1f, 1000.0f);
+		const glm::mat4 infiniteViewProjection =
+			overlayCamera.GetInfiniteFarViewProjection();
+		for (float distance : { 2000.0f, 1.0e12f, HugeFar })
+		{
+			const glm::vec3 point = overlayCamera.GetPosition()
+				+ overlayCamera.GetForwardDirection() * distance;
+			const glm::vec4 clip = infiniteViewProjection
+				* glm::vec4(point, 1.0f);
+			const float ndcZ = clip.z / clip.w;
+			RequireUI(std::isfinite(ndcZ) && ndcZ >= -1.0f
+				&& ndcZ <= 1.0f,
+				"Scene Camera overlay projection retained a finite Far ceiling");
+		}
 	}
 
 	void TestFixedInputCaptureSnapshot()
@@ -2124,8 +2307,11 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		constexpr uint32_t EditorCaptureSize = 512;
 		constexpr uint32_t RuntimeWidth = 320;
 		constexpr uint32_t RuntimeHeight = 240;
-		const std::vector<uint8_t> runtimeBefore = CaptureRuntimeUI(
-			editorPlaneScene, RuntimeWidth, RuntimeHeight, 96.0f);
+		RequireUI(!editorPlaneScene.GetPrimaryCameraEntity()
+			&& editorPlaneScene.HasActiveCanvas(),
+			"edit-mode Game preview fixture must use Canvas without a Camera");
+		const std::vector<uint8_t> runtimeBefore = CaptureEditModeGamePreview(
+			editorPlaneScene, RuntimeWidth, RuntimeHeight);
 		TomCat::EditorCamera editorCamera(30.0f, 1.0f, 0.1f, 100.0f);
 		editorCamera.Set2DMode(true);
 		editorCamera.SetViewportSize(static_cast<float>(EditorCaptureSize),
@@ -2225,15 +2411,15 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& glm::length(zoomedMarker.Center() - baselineMarker.Center()) <= 2.0f,
 			"Editor Canvas did not zoom around the Scene camera focal point");
 
-		const std::vector<uint8_t> runtimeAfter = CaptureRuntimeUI(
-			editorPlaneScene, RuntimeWidth, RuntimeHeight, 96.0f);
+		const std::vector<uint8_t> runtimeAfter = CaptureEditModeGamePreview(
+			editorPlaneScene, RuntimeWidth, RuntimeHeight);
 		const ColorExtent runtimePlane = findColor(runtimeAfter,
 			RuntimeWidth, RuntimeHeight, false);
 		RequireUI(runtimeAfter == runtimeBefore && runtimePlane.Width() >= 318.0f
 			&& runtimePlane.Height() >= 238.0f
 			&& Near(runtimePlane.Width() / runtimePlane.Height(), 4.0f / 3.0f,
 				0.03f),
-			"Editor Canvas camera state leaked into Runtime screen rendering");
+			"Canvas without a Camera was missing or changed in edit-mode Game preview");
 
 		TomCat::Scene clippedRenderScene;
 		TomCat::Entity clippedCanvas = clippedRenderScene.CreateEntityWithUUID(
@@ -2403,6 +2589,7 @@ namespace TomCat::Tests {
 		TestEditorCanvasLayout();
 		TestEditorCameraFrameBounds();
 		TestEditorCameraScrollZoom();
+		TestSceneCameraFrustumCorners();
 		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();
 		TestPersistentButtonCallbacks();

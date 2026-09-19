@@ -6,6 +6,7 @@
 #include "TomCat/Core/MouseCodes.h"
 
 #include <glfw/glfw3.h>
+#include <glm/ext/matrix_clip_space.hpp>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
@@ -106,6 +107,12 @@ namespace TomCat {
 			m_Yaw = 0.0f;
 			UpdateView();
 		}
+	}
+
+	glm::mat4 EditorCamera::GetInfiniteFarViewProjection() const
+	{
+		return glm::infinitePerspectiveRH_NO(glm::radians(m_FOV),
+			m_AspectRatio, m_NearClip) * m_ViewMatrix;
 	}
 
 	void EditorCamera::FrameBounds(const glm::vec3& center, float radius)

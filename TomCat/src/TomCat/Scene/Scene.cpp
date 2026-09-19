@@ -2021,6 +2021,23 @@ namespace TomCat {
 		return false;
 	}
 
+	bool Scene::HasActiveCanvas()
+	{
+		auto view = m_Registry.view<Canvas>();
+		for (const entt::entity handle : view)
+		{
+			Entity entity(handle, this);
+			if (view.get<Canvas>(handle).Enabled && IsActiveInHierarchy(entity))
+				return true;
+		}
+		return false;
+	}
+
+	bool Scene::HasGameViewRenderSource()
+	{
+		return static_cast<bool>(GetPrimaryCameraEntity()) || HasActiveCanvas();
+	}
+
 	bool Scene::SetCameraPrimary(Entity entity, bool primary)
 	{
 		if (!entity || entity.m_Scene != this

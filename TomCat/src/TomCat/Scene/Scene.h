@@ -138,6 +138,8 @@ namespace TomCat {
 		bool IsVisibleInEditorHierarchy(Entity entity) const;
 		bool SetEditorHidden(Entity entity, bool hidden);
 		bool HasAuthoredPrimaryCamera() const;
+		bool HasActiveCanvas();
+		bool HasGameViewRenderSource();
 		bool SetCameraPrimary(Entity entity, bool primary);
 
 		// Starts physics and the managed scripting scene transactionally. A false
@@ -164,6 +166,8 @@ namespace TomCat {
 		glm::mat4 GetRuntimeRenderTransform(UUID entityID) const;
 		float GetRuntimeInterpolationAlpha() const { return m_RuntimeInterpolationAlpha; }
 		void OnViewportResize(uint32_t width, uint32_t height);
+		uint32_t GetViewportWidth() const { return m_ViewportWidth; }
+		uint32_t GetViewportHeight() const { return m_ViewportHeight; }
 		void SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
 			float dpiScale,
 			const glm::vec2& screenToFramebufferScale = glm::vec2(1.0f));

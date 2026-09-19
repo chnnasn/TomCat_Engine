@@ -5,6 +5,7 @@
 #include <imgui/imgui_internal.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -1799,6 +1800,25 @@ namespace TomCat {
 					m_ActiveScene->OnViewportResize(gameWidth, gameHeight);
 			}
 		}
+		const FramebufferSpecification actualGameSpec =
+			m_GameFramebuffer->GetSpecification();
+		if (m_ActiveScene && gameWidth > 0 && gameHeight > 0
+			&& actualGameSpec.Width > 0 && actualGameSpec.Height > 0
+			&& (m_ActiveScene->GetViewportWidth() != actualGameSpec.Width
+				|| m_ActiveScene->GetViewportHeight() != actualGameSpec.Height))
+		{
+			// A restored, replaced, or newly started Scene can inherit an already
+			// correctly-sized framebuffer. Keep Camera aspect and Canvas layout in
+			// sync even when no framebuffer resize event occurs this frame. Read the
+			// actual size after Resize so an allocation failure cannot publish a
+			// viewport that the Game framebuffer did not reach.
+			if (IsSceneRunning())
+				m_RuntimeSceneManager.SetViewportSize(actualGameSpec.Width,
+					actualGameSpec.Height);
+			else
+				m_ActiveScene->OnViewportResize(actualGameSpec.Width,
+					actualGameSpec.Height);
+		}
 
 		// Render Scene View (Editor Camera).  Unity's Scene canvas is one step
 		// lighter than the surrounding #383838 panels (#474747); the grid and
@@ -2775,7 +2795,9 @@ namespace TomCat {
 
 	void EditorLayer::UI_GameNoCameraOverlay()
 	{
-		if (!m_ActiveScene || m_ActiveScene->GetPrimaryCameraEntity())
+		// Screen Space Canvas renders directly into Game view and does not require
+		// a Camera. Do not cover that preview with the no-camera message.
+		if (!m_ActiveScene || m_ActiveScene->HasGameViewRenderSource())
 			return;
 
 		ImVec2 imageMin = ImGui::GetItemRectMin();
@@ -3901,10 +3923,6 @@ namespace TomCat {
 	{
 		if (!m_ActiveScene)
 			return;
-		const float previousLineWidth = Renderer2D::GetLineWidth();
-		Renderer2D::SetLineWidth(1.5f);
-		RenderCommand::SetDepthTest(false);
-		Renderer2D::BeginScene(m_EditorCamera);
 
 		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
 		std::vector<Entity> cameraEntities;
@@ -3921,94 +3939,67 @@ namespace TomCat {
 		// Keep the selected outline legible when multiple cameras overlap.
 		if (selectedCamera)
 			cameraEntities.push_back(selectedCamera);
+
+		struct CameraOverlayGeometry
+		{
+			bool Selected = false;
+			SceneCamera::ProjectionType Projection =
+				SceneCamera::ProjectionType::Perspective;
+			float OrthographicSize = 1.0f;
+			glm::mat4 CameraWorld{ 1.0f };
+			std::array<glm::vec3, 8> LocalCorners{};
+			std::array<glm::vec3, 8> WorldCorners{};
+		};
+		std::vector<CameraOverlayGeometry> geometries;
+		geometries.reserve(cameraEntities.size());
 		for (Entity entity : cameraEntities)
 		{
 			const bool isSelected = selectedCamera && selectedCamera == entity;
 			if (!m_ActiveScene->IsVisibleInEditorHierarchy(entity))
 				continue;
 			const SceneCamera& camera = entity.GetComponent<C_Camera>()._Camera;
-			const glm::mat4& projection = camera.GetProjection();
-			const float projectionX = std::abs(projection[0][0]);
-			const float projectionY = std::abs(projection[1][1]);
-			if (!std::isfinite(projectionX) || !std::isfinite(projectionY)
-				|| projectionX <= std::numeric_limits<float>::epsilon()
-				|| projectionY <= std::numeric_limits<float>::epsilon())
-				continue;
-			const float aspectRatio = projectionY / projectionX;
-			if (!std::isfinite(aspectRatio)
-				|| aspectRatio <= std::numeric_limits<float>::epsilon())
+			CameraOverlayGeometry geometry;
+			geometry.Selected = isSelected;
+			geometry.Projection = camera.GetProjectionType();
+			geometry.OrthographicSize = camera.GetOrthographicSize();
+			if (!camera.TryGetLocalFrustumCorners(geometry.LocalCorners))
 				continue;
 
-			const glm::mat4 cameraWorld =
+			geometry.CameraWorld =
 				m_ActiveScene->GetRuntimeRenderTransform(entity.GetUUID());
-			glm::vec3 corners[8]{};
-			auto toWorld = [&](const glm::vec3& local, glm::vec3& worldPoint)
+			bool valid = true;
+			for (size_t index = 0; index < geometry.LocalCorners.size(); ++index)
 			{
-				const glm::vec4 world = cameraWorld * glm::vec4(local, 1.0f);
+				const glm::vec4 world = geometry.CameraWorld
+					* glm::vec4(geometry.LocalCorners[index], 1.0f);
 				if (!std::isfinite(world.x) || !std::isfinite(world.y)
 					|| !std::isfinite(world.z) || !std::isfinite(world.w))
-					return false;
-				worldPoint = glm::vec3(world);
-				return true;
-			};
-
-			const bool perspective = camera.GetProjectionType()
-				== SceneCamera::ProjectionType::Perspective;
-			float orthographicHalfWidth = 0.0f;
-			float orthographicHalfHeight = 0.0f;
-			bool valid = true;
-			if (perspective)
-			{
-				const float nearClip = camera.GetPerspectiveNearClip();
-				const float farClip = camera.GetPerspectiveFarClip();
-				const float tanHalfFov = std::tan(
-					camera.GetPerspectiveVerticalFOV() * 0.5f);
-				if (!std::isfinite(nearClip) || !std::isfinite(farClip)
-					|| !std::isfinite(tanHalfFov) || tanHalfFov <= 0.0f
-					|| farClip <= nearClip)
-					continue;
-				constexpr float preferredPreviewDepth = 10.0f;
-				const float previewFar = nearClip
-					+ std::min(farClip - nearClip, preferredPreviewDepth);
-				const float nearHalfHeight = tanHalfFov * nearClip;
-				const float nearHalfWidth = nearHalfHeight * aspectRatio;
-				const float farHalfHeight = tanHalfFov * previewFar;
-				const float farHalfWidth = farHalfHeight * aspectRatio;
-				const glm::vec3 localCorners[8] = {
-					{ -nearHalfWidth, -nearHalfHeight, -nearClip },
-					{  nearHalfWidth, -nearHalfHeight, -nearClip },
-					{  nearHalfWidth,  nearHalfHeight, -nearClip },
-					{ -nearHalfWidth,  nearHalfHeight, -nearClip },
-					{ -farHalfWidth, -farHalfHeight, -previewFar },
-					{  farHalfWidth, -farHalfHeight, -previewFar },
-					{  farHalfWidth,  farHalfHeight, -previewFar },
-					{ -farHalfWidth,  farHalfHeight, -previewFar }
-				};
-				for (size_t index = 0; index < std::size(localCorners); ++index)
-					valid &= toWorld(localCorners[index], corners[index]);
-			}
-			else
-			{
-				orthographicHalfHeight = camera.GetOrthographicSize() * 0.5f;
-				orthographicHalfWidth = orthographicHalfHeight * aspectRatio;
-				if (!std::isfinite(orthographicHalfWidth)
-					|| !std::isfinite(orthographicHalfHeight)
-					|| orthographicHalfWidth <= 0.0f
-					|| orthographicHalfHeight <= 0.0f)
-					continue;
-				const glm::vec3 localCorners[4] = {
-					{ -orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
-					{  orthographicHalfWidth, -orthographicHalfHeight, 0.0f },
-					{  orthographicHalfWidth,  orthographicHalfHeight, 0.0f },
-					{ -orthographicHalfWidth,  orthographicHalfHeight, 0.0f }
-				};
-				for (size_t index = 0; index < std::size(localCorners); ++index)
-					valid &= toWorld(localCorners[index], corners[index]);
+				{
+					valid = false;
+					break;
+				}
+				geometry.WorldCorners[index] = glm::vec3(world);
 			}
 			if (!valid)
 				continue;
+			geometries.push_back(std::move(geometry));
+		}
+		if (geometries.empty())
+			return;
 
-			const glm::vec4 color = isSelected
+		// The overlay gets an infinite far plane. The normal Scene render keeps
+		// its finite projection and depth precision, while authored Camera Far has
+		// no editor-only visualization ceiling.
+		Camera overlayCamera(m_EditorCamera.GetInfiniteFarViewProjection());
+		const float previousLineWidth = Renderer2D::GetLineWidth();
+		Renderer2D::SetLineWidth(1.5f);
+		RenderCommand::SetDepthTest(false);
+		Renderer2D::BeginScene(overlayCamera, glm::mat4(1.0f));
+		for (const CameraOverlayGeometry& geometry : geometries)
+		{
+			const auto& corners = geometry.WorldCorners;
+
+			const glm::vec4 color = geometry.Selected
 				? glm::vec4(0.28f, 0.68f, 1.0f, 1.0f)
 				: glm::vec4(0.78f, 0.78f, 0.78f, 0.72f);
 			auto drawLoop = [&](size_t first)
@@ -4018,25 +4009,19 @@ namespace TomCat {
 						corners[first + ((index + 1) % 4)], color, -1);
 			};
 			drawLoop(0);
-			if (perspective)
+			drawLoop(4);
+			for (size_t index = 0; index < 4; ++index)
+				Renderer2D::DrawLine(corners[index], corners[index + 4],
+					color, -1);
+			if (geometry.Selected && geometry.Projection
+				== SceneCamera::ProjectionType::Orthographic)
 			{
-				drawLoop(4);
+				const float markerSize = geometry.OrthographicSize * 0.035f;
 				for (size_t index = 0; index < 4; ++index)
-					Renderer2D::DrawLine(corners[index], corners[index + 4],
-						color, -1);
-			}
-			else if (isSelected)
-			{
-				const float markerSize = camera.GetOrthographicSize() * 0.035f;
-				const glm::vec3 markerCenters[4] = {
-					{ 0.0f, -orthographicHalfHeight, 0.0f },
-					{ orthographicHalfWidth, 0.0f, 0.0f },
-					{ 0.0f, orthographicHalfHeight, 0.0f },
-					{ -orthographicHalfWidth, 0.0f, 0.0f }
-				};
-				for (const glm::vec3& center : markerCenters)
 				{
-					const glm::mat4 markerTransform = cameraWorld
+					const glm::vec3 center = (geometry.LocalCorners[index]
+						+ geometry.LocalCorners[(index + 1) % 4]) * 0.5f;
+					const glm::mat4 markerTransform = geometry.CameraWorld
 						* glm::translate(glm::mat4(1.0f), center)
 						* glm::scale(glm::mat4(1.0f), glm::vec3(
 							markerSize, markerSize, 1.0f));
@@ -4992,11 +4977,10 @@ namespace TomCat {
 		const glm::vec2 screenToFramebufferScale{
 			applicationWindow.GetScreenToFramebufferScaleX(),
 			applicationWindow.GetScreenToFramebufferScaleY() };
-		m_RuntimeSceneManager.SetViewportSize(
-			ToFramebufferExtent(m_GameViewportSize.x,
-				screenToFramebufferScale.x),
-			ToFramebufferExtent(m_GameViewportSize.y,
-				screenToFramebufferScale.y));
+		const FramebufferSpecification& gameFramebufferSpec =
+			m_GameFramebuffer->GetSpecification();
+		m_RuntimeSceneManager.SetViewportSize(gameFramebufferSpec.Width,
+			gameFramebufferSpec.Height);
 		m_RuntimeSceneManager.SetRuntimeUIViewportMetrics(
 			m_ShowGamePanel ? m_GameViewportBounds[0] : glm::vec2(-1000000.0f),
 			applicationWindow.GetDPIScale(), screenToFramebufferScale);
