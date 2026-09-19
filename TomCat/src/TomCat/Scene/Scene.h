@@ -164,6 +164,9 @@ namespace TomCat {
 		// Rendering reads this matrix to interpolate between the two most recent
 		// fixed poses without feeding a presentation-only pose back into physics.
 		glm::mat4 GetRuntimeRenderTransform(UUID entityID) const;
+		// Camera projection follows the Transform rotation and translation while
+		// deliberately ignoring scale, matching the authored +Z forward contract.
+		glm::mat4 GetRuntimeCameraTransform(UUID entityID) const;
 		float GetRuntimeInterpolationAlpha() const { return m_RuntimeInterpolationAlpha; }
 		void OnViewportResize(uint32_t width, uint32_t height);
 		uint32_t GetViewportWidth() const { return m_ViewportWidth; }

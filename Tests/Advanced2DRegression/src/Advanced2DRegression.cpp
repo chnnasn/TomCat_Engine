@@ -188,6 +188,23 @@ namespace {
 
 	void TestDeterministicParticleRuntime()
 	{
+		TomCat::ParticleSystem2D forwardProbe;
+		Require(Near(forwardProbe.Direction, glm::vec2(1.0f, 0.0f)),
+			"ParticleSystem2D default forward stopped using local +X");
+		forwardProbe.PlayOnStart = false;
+		forwardProbe.EmissionRate = 1.0f;
+		forwardProbe.MaxParticles = 1;
+		forwardProbe.StartSpeed = 3.0f;
+		forwardProbe.SpreadDegrees = 0.0f;
+		forwardProbe.GravityScale = 0.0f;
+		forwardProbe.Direction = glm::vec2(0.0f);
+		TomCat::ParticleSystem2DRuntime::Play(forwardProbe);
+		TomCat::ParticleSystem2DRuntime::Update(forwardProbe, 1.0f);
+		Require(forwardProbe.RuntimeParticles.size() == 1
+			&& Near(forwardProbe.RuntimeParticles.front().Velocity,
+				glm::vec2(3.0f, 0.0f)),
+			"ParticleSystem2D zero direction did not fall back to local +X");
+
 		TomCat::ParticleSystem2D system = MakeParticleFixture();
 		system.RuntimePlaying = true;
 		system.RuntimeInitialized = true;

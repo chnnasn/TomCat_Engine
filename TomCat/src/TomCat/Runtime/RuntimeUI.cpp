@@ -862,16 +862,12 @@ namespace TomCat {
 	}
 
 	glm::mat4 RuntimeUISystem::GetEditorCanvasTransform(
-		const glm::vec2& referenceResolution)
+		const glm::vec2&)
 	{
-		const glm::vec2 safeResolution = Finite(referenceResolution)
-			&& glm::all(glm::greaterThan(referenceResolution, glm::vec2(0.0f)))
-			? referenceResolution : glm::vec2(1920.0f, 1080.0f);
 		const float worldUnitsPerPixel = 1.0f / EditorCanvasPixelsPerUnit;
-		return glm::translate(glm::mat4(1.0f), glm::vec3(
-			-safeResolution.x * worldUnitsPerPixel * 0.5f,
-			-safeResolution.y * worldUnitsPerPixel * 0.5f, 0.0f))
-			* glm::scale(glm::mat4(1.0f), glm::vec3(
+		// Canvas authoring coordinates match runtime layout coordinates: local
+		// (0, 0, 0) is the lower-left corner and the plane grows toward +X/+Y.
+		return glm::scale(glm::mat4(1.0f), glm::vec3(
 				worldUnitsPerPixel, worldUnitsPerPixel, 1.0f));
 	}
 

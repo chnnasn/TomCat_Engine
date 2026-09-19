@@ -52,9 +52,15 @@ namespace TomCat {
 
 		const glm::mat4& GetViewMatrix() const { return m_ViewMatrix; }
 		glm::mat4 GetViewProjection() const { return m_Projection * m_ViewMatrix; }
+		// Produces an equivalent P/V pair for editor tools that assume a
+		// right-handed camera. The product remains identical to GetViewProjection.
+		void GetRightHandedToolMatrices(glm::mat4& view,
+			glm::mat4& projection) const;
 
 		glm::vec3 GetUpDirection() const;
 		glm::vec3 GetRightDirection() const;
+		// The Scene camera shares the Unity-style authoring basis: local +Z is
+		// forward. Its projection is explicitly left-handed.
 		glm::vec3 GetForwardDirection() const;
 		const glm::vec3& GetPosition() const { return m_Position; }
 		const glm::vec3& GetFocalPoint() const { return m_FocalPoint; }

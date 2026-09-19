@@ -458,6 +458,89 @@ namespace TomCat {
 			return std::isfinite(value.x) && std::isfinite(value.y);
 		}
 
+		bool TryNormalizeDirection(const glm::vec3& value, glm::vec3& direction)
+		{
+			if (!IsFinite(value))
+				return false;
+			const float lengthSquared = glm::dot(value, value);
+			constexpr float minimumLengthSquared = 1.0e-12f;
+			if (!std::isfinite(lengthSquared)
+				|| lengthSquared <= minimumLengthSquared)
+				return false;
+			direction = value / std::sqrt(lengthSquared);
+			return IsFinite(direction);
+		}
+
+		glm::vec3 RemoveScaleReflection(const glm::vec3& axis, float scale)
+		{
+			// Camera scale never changes its pose. The sign is still useful metadata:
+			// remove the reflection before orthogonalizing the render-matrix axes.
+			return axis * (std::isfinite(scale) && std::signbit(scale)
+				? -1.0f : 1.0f);
+		}
+
+		glm::mat4 MakeScaleFreeCameraTransform(const glm::mat4& renderTransform,
+			const Transform& authoredTransform)
+		{
+			const glm::mat4 referenceRotation = Math::ComposeTransform(glm::vec3(0.0f),
+				authoredTransform._Rotation, glm::vec3(1.0f));
+			const glm::vec3 referenceRight(referenceRotation[0]);
+			const glm::vec3 referenceUp(referenceRotation[1]);
+			const glm::vec3 referenceForward(referenceRotation[2]);
+
+			const glm::vec3 sourceRight = RemoveScaleReflection(
+				glm::vec3(renderTransform[0]), authoredTransform._Scale.x);
+			const glm::vec3 sourceUp = RemoveScaleReflection(
+				glm::vec3(renderTransform[1]), authoredTransform._Scale.y);
+			const glm::vec3 sourceForward = RemoveScaleReflection(
+				glm::vec3(renderTransform[2]), authoredTransform._Scale.z);
+
+			// A camera looks along local +Z. Preserve that direction first, then make
+			// +Y orthogonal to it and derive +X = +Y x +Z. This keeps the camera basis
+			// right-handed even when the hierarchy introduces non-uniform scale/shear.
+			glm::vec3 forward;
+			if (!TryNormalizeDirection(sourceForward, forward)
+				&& !TryNormalizeDirection(glm::cross(sourceRight, sourceUp), forward)
+				&& !TryNormalizeDirection(referenceForward, forward))
+				forward = glm::vec3(0.0f, 0.0f, 1.0f);
+
+			glm::vec3 up;
+			const glm::vec3 projectedUp = sourceUp
+				- forward * glm::dot(sourceUp, forward);
+			if (!TryNormalizeDirection(projectedUp, up)
+				&& !TryNormalizeDirection(glm::cross(forward, sourceRight), up))
+			{
+				const glm::vec3 projectedReferenceUp = referenceUp
+					- forward * glm::dot(referenceUp, forward);
+				if (!TryNormalizeDirection(projectedReferenceUp, up))
+				{
+					const glm::vec3 fallbackUp = std::abs(forward.y) < 0.999f
+						? glm::vec3(0.0f, 1.0f, 0.0f)
+						: glm::vec3(1.0f, 0.0f, 0.0f);
+					TryNormalizeDirection(fallbackUp
+						- forward * glm::dot(fallbackUp, forward), up);
+				}
+			}
+
+			glm::vec3 right;
+			if (!TryNormalizeDirection(glm::cross(up, forward), right))
+			{
+				// The branches above guarantee a finite, non-parallel up direction. Keep
+				// a deterministic final fallback for malformed authoring data.
+				right = referenceRight;
+				if (!TryNormalizeDirection(right, right))
+					right = glm::vec3(1.0f, 0.0f, 0.0f);
+			}
+			TryNormalizeDirection(glm::cross(forward, right), up);
+
+			glm::mat4 cameraTransform(1.0f);
+			cameraTransform[0] = glm::vec4(right, 0.0f);
+			cameraTransform[1] = glm::vec4(up, 0.0f);
+			cameraTransform[2] = glm::vec4(forward, 0.0f);
+			cameraTransform[3] = glm::vec4(glm::vec3(renderTransform[3]), 1.0f);
+			return cameraTransform;
+		}
+
 		bool TryResolveEntityLayerBit(Scene* scene, b2Fixture* fixture,
 			UUID& entityID, uint16_t& layerBit)
 		{
@@ -3999,6 +4082,18 @@ namespace TomCat {
 		return resolve(resolve, entityID);
 	}
 
+	glm::mat4 Scene::GetRuntimeCameraTransform(UUID entityID) const
+	{
+		auto entityIt = m_EntityMap.find(entityID);
+		if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
+			|| !m_Registry.all_of<Transform>(entityIt->second))
+			return glm::mat4(1.0f);
+
+		const glm::mat4 renderTransform = GetRuntimeRenderTransform(entityID);
+		return MakeScaleFreeCameraTransform(renderTransform,
+			m_Registry.get<Transform>(entityIt->second));
+	}
+
 	void Scene::RenderRuntimeScene()
 	{
 		Entity mainCameraEntity = GetPrimaryCameraEntity();
@@ -4007,7 +4102,7 @@ namespace TomCat {
 			auto& camera = mainCameraEntity.GetComponent<C_Camera>();
 			RenderCommand::SetClearColor(camera.BackgroundColor);
 			RenderCommand::Clear();
-			const glm::mat4 cameraTransform = GetRuntimeRenderTransform(
+			const glm::mat4 cameraTransform = GetRuntimeCameraTransform(
 				mainCameraEntity.GetUUID());
 			Renderer2D::BeginScene(camera._Camera, cameraTransform);
 			Render2DComponents(*this, m_Registry,

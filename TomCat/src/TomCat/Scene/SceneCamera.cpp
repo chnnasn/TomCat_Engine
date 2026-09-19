@@ -3,6 +3,7 @@
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
 
 #include <cmath>
 #include <limits>
@@ -236,18 +237,18 @@ namespace TomCat {
 			const double nearHalfHeight = tangent * nearClip;
 			const double farHalfHeight = tangent * farClip;
 			return assignPlane(0, nearHalfHeight * aspect, nearHalfHeight,
-				-nearClip)
+				nearClip)
 				&& assignPlane(4, farHalfHeight * aspect, farHalfHeight,
-					-farClip);
+					farClip);
 		}
 		if (m_ProjectionType == ProjectionType::Orthographic)
 		{
 			const double halfHeight = static_cast<double>(m_OrthographicSize) * 0.5;
 			const double halfWidth = halfHeight * static_cast<double>(m_AspectRatio);
 			return assignPlane(0, halfWidth, halfHeight,
-				-static_cast<double>(m_OrthographicNear))
+				static_cast<double>(m_OrthographicNear))
 				&& assignPlane(4, halfWidth, halfHeight,
-					-static_cast<double>(m_OrthographicFar));
+					static_cast<double>(m_OrthographicFar));
 		}
 		return false;
 	}
@@ -268,7 +269,11 @@ namespace TomCat {
 				|| !std::isfinite(depthRange) || depthRange <= 0.0f)
 				return false;
 
-			projection = glm::perspective(m_PerspectiveFOV, m_AspectRatio, m_PerspectiveNear, m_PerspectiveFar);
+			// Runtime/authoring Transform forward is local +Z. Use an explicit
+			// left-handed clip projection so the Transform matrix can be consumed
+			// directly without a hidden 180-degree camera rotation.
+			projection = glm::perspectiveLH_NO(m_PerspectiveFOV, m_AspectRatio,
+				m_PerspectiveNear, m_PerspectiveFar);
 		}
 		else if (type == ProjectionType::Orthographic)
 		{
@@ -286,7 +291,7 @@ namespace TomCat {
 				|| !std::isfinite(depthRange) || depthRange <= 0.0f)
 				return false;
 
-			projection = glm::ortho(orthoLeft, orthoRight,
+			projection = glm::orthoLH_NO(orthoLeft, orthoRight,
 				orthoBottom, orthoTop, m_OrthographicNear, m_OrthographicFar);
 		}
 		else

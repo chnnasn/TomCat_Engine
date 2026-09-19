@@ -256,7 +256,7 @@ namespace TomCat {
 
 			glm::vec2 direction = system.Direction;
 			const float length = glm::length(direction);
-			direction = length > 0.00001f ? direction / length : glm::vec2(0.0f, 1.0f);
+			direction = length > 0.00001f ? direction / length : glm::vec2(1.0f, 0.0f);
 			const float baseAngle = std::atan2(direction.y, direction.x);
 			const float spread = glm::radians(std::max(system.SpreadDegrees, 0.0f));
 			for (int32_t i = 0; i < emitCount; ++i)

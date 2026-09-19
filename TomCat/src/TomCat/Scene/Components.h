@@ -369,7 +369,8 @@ namespace TomCat {
 		float StartSize = 0.2f;
 		float EndSize = 0.0f;
 		float GravityScale = 0.0f;
-		glm::vec2 Direction{ 0.0f, 1.0f };
+		// 2D authored forward is local +X.
+		glm::vec2 Direction{ 1.0f, 0.0f };
 		float SpreadDegrees = 25.0f;
 		glm::vec4 StartColor{ 1.0f };
 		glm::vec4 EndColor{ 1.0f, 1.0f, 1.0f, 0.0f };

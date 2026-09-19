@@ -38,9 +38,9 @@ namespace TomCat {
 		ProjectionType GetProjectionType() const { return m_ProjectionType; }
 		bool SetProjectionType(ProjectionType type);
 
-		// Returns near-plane corners first, then far-plane corners, in local camera
-		// space. The order within each plane is bottom-left, bottom-right,
-		// top-right, top-left.
+		// TomCat authoring uses local +Z as 3D forward. Returns near-plane corners
+		// first, then far-plane corners, in that +Z local camera space. The order
+		// within each plane is bottom-left, bottom-right, top-right, top-left.
 		bool TryGetLocalFrustumCorners(
 			std::array<glm::vec3, 8>& corners) const;
 

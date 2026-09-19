@@ -15,7 +15,9 @@
 namespace TomCat {
 
 	EditorCamera::EditorCamera(float fov, float aspectRatio, float nearClip, float farClip)
-		: m_FOV(fov), m_AspectRatio(aspectRatio), m_NearClip(nearClip), m_FarClip(farClip), Camera(glm::perspective(glm::radians(fov), aspectRatio, nearClip, farClip))
+		: m_FOV(fov), m_AspectRatio(aspectRatio), m_NearClip(nearClip),
+		  m_FarClip(farClip), Camera(glm::perspectiveLH_NO(glm::radians(fov),
+			  aspectRatio, nearClip, farClip))
 	{
 		// Preserve the requested aspect until the Scene panel publishes its real
 		// viewport size. UpdateProjection derives aspect from these dimensions.
@@ -37,12 +39,12 @@ namespace TomCat {
 			const float halfHeight = std::max(m_Distance
 				* std::tan(glm::radians(m_FOV) * 0.5f), 0.001f);
 			const float halfWidth = halfHeight * m_AspectRatio;
-			m_Projection = glm::orthoRH_NO(-halfWidth, halfWidth,
+			m_Projection = glm::orthoLH_NO(-halfWidth, halfWidth,
 				-halfHeight, halfHeight, m_NearClip, effectiveFarClip);
 		}
 		else
 		{
-			m_Projection = glm::perspectiveRH_NO(glm::radians(m_FOV),
+			m_Projection = glm::perspectiveLH_NO(glm::radians(m_FOV),
 				m_AspectRatio, m_NearClip, effectiveFarClip);
 		}
 	}
@@ -163,9 +165,9 @@ namespace TomCat {
 			case AxisView::NegativeY:
 				m_Pitch = -halfPi; m_Yaw = 0.0f; break;
 			case AxisView::PositiveZ:
-				m_Pitch = 0.0f; m_Yaw = 0.0f; break;
-			case AxisView::NegativeZ:
 				m_Pitch = 0.0f; m_Yaw = glm::pi<float>(); break;
+			case AxisView::NegativeZ:
+				m_Pitch = 0.0f; m_Yaw = 0.0f; break;
 		}
 		m_IsOrthographic = true;
 		UpdateProjection();
@@ -203,8 +205,20 @@ namespace TomCat {
 			viewProjection[3][2] = 0.0f;
 			return viewProjection;
 		}
-		return glm::infinitePerspectiveRH_NO(glm::radians(m_FOV),
+		return glm::infinitePerspectiveLH_NO(glm::radians(m_FOV),
 			m_AspectRatio, m_NearClip) * m_ViewMatrix;
+	}
+
+	void EditorCamera::GetRightHandedToolMatrices(glm::mat4& view,
+		glm::mat4& projection) const
+	{
+		// ImGuizmo and similar tools interpret inverse(view)[2] as the camera's
+		// backward vector. Reflect view-space Z on both sides of P*V so
+		// (P*S)*(S*V) == P*V while presenting the convention those tools expect.
+		glm::mat4 reflectViewZ(1.0f);
+		reflectViewZ[2][2] = -1.0f;
+		view = reflectViewZ * m_ViewMatrix;
+		projection = m_Projection * reflectViewZ;
 	}
 
 	void EditorCamera::FrameBounds(const glm::vec3& center, float radius)
@@ -320,7 +334,7 @@ namespace TomCat {
 
 	glm::vec3 EditorCamera::GetForwardDirection() const
 	{
-		return glm::rotate(GetOrientation(), glm::vec3(0.0f, 0.0f, -1.0f));
+		return glm::rotate(GetOrientation(), glm::vec3(0.0f, 0.0f, 1.0f));
 	}
 
 	glm::vec3 EditorCamera::CalculatePosition() const
@@ -330,7 +344,10 @@ namespace TomCat {
 
 	glm::quat EditorCamera::GetOrientation() const
 	{
-		return glm::quat(glm::vec3(-m_Pitch, -m_Yaw, 0.0f));
+		// The authoring basis is +X right, +Y up, +Z forward. Applying editor
+		// angles directly makes positive yaw turn +Z toward +X and positive pitch
+		// tilt +Z toward -Y, matching Unity-style Scene look/orbit controls.
+		return glm::quat(glm::vec3(m_Pitch, m_Yaw, 0.0f));
 	}
 
 }

@@ -3,6 +3,8 @@
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Core/Input.h"
+#include "TomCat/Core/MouseCodes.h"
 #include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Camera.h"
@@ -1376,11 +1378,11 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			{ wideRoot.Width, wideRoot.Height });
 		const glm::vec4 squareCenter = transformedPoint(squareCanvas,
 			{ squareRoot.Width * 0.5f, squareRoot.Height * 0.5f });
-		RequireUI(Near(wideCenter.x, 0.0f) && Near(wideCenter.y, 0.0f)
-			&& Near(squareCenter.x, 0.0f) && Near(squareCenter.y, 0.0f)
-			&& Near(wideMinimum.x, -9.6f) && Near(wideMinimum.y, -5.4f)
-			&& Near(wideMaximum.x, 9.6f) && Near(wideMaximum.y, 5.4f),
-			"Editor Canvas pixel-to-world plane contract changed");
+		RequireUI(Near(wideMinimum.x, 0.0f) && Near(wideMinimum.y, 0.0f)
+			&& Near(wideMaximum.x, 19.2f) && Near(wideMaximum.y, 10.8f)
+			&& Near(wideCenter.x, 9.6f) && Near(wideCenter.y, 5.4f)
+			&& Near(squareCenter.x, 4.0f) && Near(squareCenter.y, 4.0f),
+			"Editor Canvas did not start at the lower-left origin and grow along +X/+Y");
 
 		const TomCat::UIRect& childValue = editor.Rectangles.at(child.GetUUID());
 		RequireUI(Near(editor.Scales.at(child.GetUUID()), 1.5f)
@@ -1488,6 +1490,57 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		TomCat::EditorCamera camera(45.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
 		camera.SetViewportSize(1600.0f, 900.0f);
 		camera.SetDistance(27.0f);
+		RequireUI(glm::length(camera.GetForwardDirection()
+			- glm::vec3(0.0f, 0.0f, 1.0f)) <= 1.0e-5f
+			&& glm::length(glm::cross(camera.GetRightDirection(),
+				camera.GetUpDirection()) - camera.GetForwardDirection()) <= 1.0e-5f,
+			"EditorCamera did not use the Unity +X/+Y/+Z authoring basis");
+
+		// Drive a representative elevated, rear-left orbit through the same mouse
+		// path used by the Scene window. In Unity's +Z-forward basis, +X must
+		// project to the upper-left and +Z to the lower-left at this view.
+		TomCat::Input::ClearState();
+		TomCat::Input::NotifyMousePosition(0.0f, 0.0f);
+		TomCat::Input::BeginFrame();
+		camera.OnUpdate(TomCat::Timestep(0.0f), false);
+		TomCat::Input::NotifyMouseButton(
+			static_cast<uint32_t>(TomCat::Mouse::ButtonRight),
+			TomCat::InputEventQueue::Action::Pressed, 0.0);
+		TomCat::Input::NotifyMousePosition(600.0f, 150.0f);
+		TomCat::Input::BeginFrame();
+		camera.OnUpdate(TomCat::Timestep(0.0f), true);
+		const glm::mat4 referenceView = camera.GetViewMatrix();
+		const glm::vec3 viewX = glm::vec3(referenceView
+			* glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+		const glm::vec3 viewY = glm::vec3(referenceView
+			* glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+		const glm::vec3 viewZ = glm::vec3(referenceView
+			* glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+		RequireUI(camera.GetForwardDirection().x > 0.1f
+			&& camera.GetForwardDirection().y < -0.1f
+			&& viewX.x < -0.1f && viewX.y > 0.1f
+			&& viewY.y > 0.1f
+			&& viewZ.x < -0.1f && viewZ.y < -0.1f,
+			"EditorCamera mirrored the Unity reference X/Z screen directions");
+		glm::mat4 toolView(1.0f);
+		glm::mat4 toolProjection(1.0f);
+		camera.GetRightHandedToolMatrices(toolView, toolProjection);
+		const glm::mat4 sceneViewProjection = camera.GetViewProjection();
+		const glm::mat4 toolViewProjection = toolProjection * toolView;
+		float maximumMatrixError = 0.0f;
+		for (int column = 0; column < 4; ++column)
+			for (int row = 0; row < 4; ++row)
+				maximumMatrixError = std::max(maximumMatrixError,
+					std::abs(sceneViewProjection[column][row]
+						- toolViewProjection[column][row]));
+		const glm::vec3 toolCameraBack = glm::normalize(glm::vec3(
+			glm::inverse(toolView)[2]));
+		RequireUI(maximumMatrixError <= 1.0e-5f
+			&& glm::length(toolCameraBack + camera.GetForwardDirection())
+				<= 1.0e-5f,
+			"right-handed editor-tool adapter changed Scene projection or camera axes");
+		TomCat::Input::ClearState();
+
 		const glm::vec3 focalPoint = camera.GetFocalPoint();
 		const float distance = camera.GetDistance();
 		for (const AxisExpectation& expectation : expectations)
@@ -1573,6 +1626,56 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 		RequireUI(camera.SetPerspective(glm::radians(60.0f), 0.5f, 16.0f),
 			"SceneCamera rejected the perspective frustum test values");
+		const glm::vec4 perspectiveNearClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 0.5f, 1.0f);
+		const glm::vec4 perspectiveFarClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 16.0f, 1.0f);
+		const glm::vec4 perspectiveBehindClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, -0.5f, 1.0f);
+		RequireUI(perspectiveNearClip.w > 0.0f
+			&& perspectiveFarClip.w > 0.0f
+			&& Near(perspectiveNearClip.z / perspectiveNearClip.w, -1.0f)
+			&& Near(perspectiveFarClip.z / perspectiveFarClip.w, 1.0f)
+			&& perspectiveBehindClip.w < 0.0f,
+			"SceneCamera perspective projection did not use local +Z as forward");
+
+		const glm::mat4 cameraWorld = glm::rotate(glm::mat4(1.0f),
+			glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		const glm::vec3 worldForward = glm::vec3(cameraWorld
+			* glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+		const glm::vec4 rotatedForwardClip = camera.GetProjection()
+			* glm::inverse(cameraWorld)
+			* glm::vec4(worldForward, 1.0f);
+		const glm::vec3 rotatedForwardNDC = glm::vec3(rotatedForwardClip)
+			/ rotatedForwardClip.w;
+		RequireUI(worldForward.x > 0.0f
+			&& rotatedForwardClip.w > 0.0f
+			&& Near(rotatedForwardNDC.x, 0.0f)
+			&& Near(rotatedForwardNDC.y, 0.0f),
+			"SceneCamera rotated +90 degrees around Y did not face world +X");
+
+		TomCat::Scene cameraPoseScene;
+		TomCat::Entity cameraEntity = cameraPoseScene.CreateEntityWithUUID(
+			TomCat::UUID(12020), "Scaled Camera");
+		auto& authoredCameraTransform =
+			cameraEntity.GetComponent<TomCat::Transform>();
+		authoredCameraTransform._Translation = { 3.0f, 4.0f, 5.0f };
+		authoredCameraTransform._Rotation =
+			{ 0.0f, glm::radians(90.0f), 0.0f };
+		authoredCameraTransform._Scale = { 2.0f, 3.0f, -4.0f };
+		const glm::mat4 scaleFreeCameraPose =
+			cameraPoseScene.GetRuntimeCameraTransform(cameraEntity.GetUUID());
+		const glm::vec3 scaleFreeForward = glm::normalize(glm::vec3(
+			scaleFreeCameraPose * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)));
+		RequireUI(Near(glm::length(glm::vec3(scaleFreeCameraPose[0])), 1.0f)
+			&& Near(glm::length(glm::vec3(scaleFreeCameraPose[1])), 1.0f)
+			&& Near(glm::length(glm::vec3(scaleFreeCameraPose[2])), 1.0f)
+			&& glm::length(glm::vec3(scaleFreeCameraPose[3])
+				- authoredCameraTransform._Translation) <= 1.0e-4f
+			&& glm::length(scaleFreeForward - glm::vec3(1.0f, 0.0f, 0.0f))
+				<= 1.0e-4f,
+			"Camera Transform scale changed its pose or reversed +Z forward");
+
 		const auto perspectiveFar16 = getVerifiedCorners(camera);
 		RequireUI(camera.SetPerspectiveFarClip(64.0f),
 			"SceneCamera rejected the enlarged perspective far plane");
@@ -1583,7 +1686,7 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 				perspectiveFar64[index].z),
 				"Perspective far clip change moved the near-plane corners");
 			RequireUI(perspectiveFar64[index + 4].z
-				< perspectiveFar16[index + 4].z,
+				> perspectiveFar16[index + 4].z,
 				"Perspective far clip change did not extend the far-plane corners");
 		}
 		constexpr float HugeFar = 1.0e30f;
@@ -1599,8 +1702,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		};
 		for (size_t index = 0; index < 4; ++index)
 		{
-			RequireUI(nearRelative(hugePerspective[index].z, -0.01f)
-				&& nearRelative(hugePerspective[index + 4].z, -HugeFar)
+			RequireUI(nearRelative(hugePerspective[index].z, 0.01f)
+				&& nearRelative(hugePerspective[index + 4].z, HugeFar)
 				&& std::isfinite(hugePerspective[index + 4].x)
 				&& std::isfinite(hugePerspective[index + 4].y),
 				"very large perspective Far did not produce finite direct geometry");
@@ -1618,6 +1721,14 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 		RequireUI(camera.SetOrthographic(12.0f, 1.0f, 9.0f),
 			"SceneCamera rejected the orthographic frustum test values");
+		const glm::vec4 orthographicNearClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+		const glm::vec4 orthographicFarClip = camera.GetProjection()
+			* glm::vec4(0.0f, 0.0f, 9.0f, 1.0f);
+		RequireUI(Near(orthographicNearClip.z / orthographicNearClip.w, -1.0f)
+			&& Near(orthographicFarClip.z / orthographicFarClip.w, 1.0f)
+			&& orthographicNearClip.z < orthographicFarClip.z,
+			"SceneCamera orthographic near/far planes did not advance along local +Z");
 		const auto orthographicOriginal = getVerifiedCorners(camera);
 		requireOrthographicDepthInvariant(orthographicOriginal);
 		RequireUI(camera.SetOrthographicNearClip(2.5f),
@@ -1652,8 +1763,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"SceneCamera could not construct a very large orthographic volume");
 		for (size_t index = 0; index < 4; ++index)
 		{
-			RequireUI(nearRelative(hugeOrthographic[index].z, -1.0f)
-				&& nearRelative(hugeOrthographic[index + 4].z, -HugeFar)
+			RequireUI(nearRelative(hugeOrthographic[index].z, 1.0f)
+				&& nearRelative(hugeOrthographic[index + 4].z, HugeFar)
 				&& Near(hugeOrthographic[index].x,
 					hugeOrthographic[index + 4].x)
 				&& Near(hugeOrthographic[index].y,

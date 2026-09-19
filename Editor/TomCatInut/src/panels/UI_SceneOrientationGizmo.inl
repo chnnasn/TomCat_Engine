@@ -51,10 +51,10 @@
 		const float coneLength = 9.0f * uiScale;
 		const float coneHalfWidth = 5.0f * uiScale;
 		const float hitRadius = 10.0f * uiScale;
-		const glm::vec3 cameraRight = glm::normalize(m_EditorCamera.GetRightDirection());
-		const glm::vec3 cameraUp = glm::normalize(m_EditorCamera.GetUpDirection());
-		const glm::vec3 cameraSide = glm::normalize(
-			m_EditorCamera.GetPosition() - m_EditorCamera.GetFocalPoint());
+		// Project the real world axes through the same view matrix used by the
+		// Scene and ImGuizmo. This keeps drawing, hit targets and axis snapping on
+		// one +X right / +Y up / +Z forward basis without a display-only remap.
+		const glm::mat4& sceneView = m_EditorCamera.GetViewMatrix();
 
 		struct AxisHandle
 		{
@@ -80,12 +80,15 @@
 
 		for (AxisHandle& handle : handles)
 		{
-			const float screenX = glm::dot(handle.Axis, cameraRight);
-			const float screenY = -glm::dot(handle.Axis, cameraUp);
+			const glm::vec3 viewAxis = glm::vec3(sceneView
+				* glm::vec4(handle.Axis, 0.0f));
+			const float screenX = viewAxis.x;
+			const float screenY = -viewAxis.y;
 			handle.ProjectedLength = std::sqrt(screenX * screenX + screenY * screenY);
 			handle.End = ImVec2(center.x + screenX * axisLength,
 				center.y + screenY * axisLength);
-			handle.Depth = glm::dot(handle.Axis, cameraSide);
+			// In the LH Scene view, +view Z points away from the editor camera.
+			handle.Depth = -viewAxis.z;
 		}
 
 		std::array<size_t, 6> drawOrder = { 0, 1, 2, 3, 4, 5 };

@@ -75,11 +75,12 @@ namespace TomCat {
 			{ "QHD (2560x1440)", 2560, 1440 },
 			{ "4K UHD (3840x2160)", 3840, 2160 }
 		} };
+		constexpr float kGameViewScaleMinimum = 0.8f;
+		constexpr float kGameViewScaleMaximum = 8.8f;
+		constexpr float kGameViewScaleWheelStep = 0.1f;
 
 		bool DrawGameViewScaleSlider(float& value, float controlWidth)
 		{
-			constexpr float minimum = 0.8f;
-			constexpr float maximum = 8.8f;
 			const float controlHeight = ImGui::GetFrameHeight();
 			const ImVec2 origin = ImGui::GetCursorScreenPos();
 			const ImVec2 labelSize = ImGui::CalcTextSize("Scale");
@@ -94,7 +95,8 @@ namespace TomCat {
 				const float mouse = ImGui::GetIO().MousePos.x;
 				const float normalized = std::clamp((mouse - origin.x - trackStartOffset)
 					/ (trackEndOffset - trackStartOffset), 0.0f, 1.0f);
-				const float next = minimum + normalized * (maximum - minimum);
+				const float next = kGameViewScaleMinimum
+					+ normalized * (kGameViewScaleMaximum - kGameViewScaleMinimum);
 				if (std::abs(next - value) > 0.0001f)
 				{
 					value = next;
@@ -102,8 +104,10 @@ namespace TomCat {
 				}
 			}
 
-			value = std::clamp(value, minimum, maximum);
-			const float normalized = (value - minimum) / (maximum - minimum);
+			value = std::clamp(value, kGameViewScaleMinimum,
+				kGameViewScaleMaximum);
+			const float normalized = (value - kGameViewScaleMinimum)
+				/ (kGameViewScaleMaximum - kGameViewScaleMinimum);
 			const float centerY = origin.y + controlHeight * 0.5f;
 			const float trackStart = origin.x + trackStartOffset;
 			const float trackEnd = origin.x + trackEndOffset;
@@ -1841,6 +1845,12 @@ namespace TomCat {
 		// Scene窗口始终使用EditorCamera渲染
 		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 
+		// Editor overlays participate in the same ID attachment as ordinary scene
+		// geometry. Submit them before sampling so thin Camera/Canvas outlines and
+		// the Camera icon can select their owning Entity.
+		RenderSceneCameraOverlay();
+		RenderSceneCanvasOverlay();
+
 		// Mouse picking for Scene viewport
 		auto [mx, my] = ImGui::GetMousePos();
 		mx -= m_ViewportBounds[0].x;
@@ -1864,13 +1874,9 @@ namespace TomCat {
 		{
 			m_HoveredEntity = {};
 		}
-
-		// Collider overlays are submitted only after entity picking has sampled the
-		// ID attachment. Renderer2D utility primitives intentionally use entity ID
-		// -1, so drawing them any earlier would punch holes in sprite picking.
+		// Collider editing remains a visual overlay. It intentionally renders after
+		// picking so its non-pickable handles cannot erase an Entity ID underneath.
 		RenderSceneColliderOverlays();
-		RenderSceneCameraOverlay();
-		RenderSceneCanvasOverlay();
 
 		m_Framebuffer->Unbind();
 
@@ -2534,8 +2540,10 @@ namespace TomCat {
 				m_ViewportBounds[1].x - m_ViewportBounds[0].x,
 				m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 
-			const glm::mat4& cameraProjection = m_EditorCamera.GetProjection();
-			glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
+			glm::mat4 cameraProjection(1.0f);
+			glm::mat4 cameraView(1.0f);
+			m_EditorCamera.GetRightHandedToolMatrices(cameraView,
+				cameraProjection);
 
 			if (selectedEntity.HasComponent<Transform>())
 			{
@@ -2629,10 +2637,24 @@ namespace TomCat {
 		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
-		ImGui::Begin("Game", &m_ShowGamePanel, ImGuiWindowFlags_MenuBar);
+		ImGui::Begin("Game", &m_ShowGamePanel,
+			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollWithMouse);
 		m_GamePanelDocked = ImGui::IsWindowDocked();
-		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+		const bool gameViewportFocused = ImGui::IsWindowFocused(
+			ImGuiFocusedFlags_RootAndChildWindows);
+		const bool gameViewportHovered = ImGui::IsWindowHovered(
+			ImGuiHoveredFlags_RootAndChildWindows
+				| ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+		if (gameViewportFocused)
 			m_EditorPanelCycleIndex = 1;
+		if (gameViewportFocused && gameViewportHovered)
+		{
+			const float wheel = ImGui::GetIO().MouseWheel;
+			if (std::isfinite(wheel) && std::abs(wheel) > 0.0001f)
+				m_GameViewScale = std::clamp(m_GameViewScale
+					+ wheel * kGameViewScaleWheelStep,
+					kGameViewScaleMinimum, kGameViewScaleMaximum);
+		}
 
 		ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.075f, 0.075f, 0.075f, 1.0f));
 		if (ImGui::BeginMenuBar())
@@ -2735,7 +2757,8 @@ namespace TomCat {
 		// resolution visibly changes preview size, with scrollbars for overflow.
 		const float screenToFramebufferScale = std::max(0.01f,
 			Application::Get().GetWindow().GetScreenToFramebufferScaleX());
-		const float requestedScale = std::clamp(m_GameViewScale, 0.8f, 8.8f);
+		const float requestedScale = std::clamp(m_GameViewScale,
+			kGameViewScaleMinimum, kGameViewScaleMaximum);
 		const bool gamePanelMaximized = m_PanelMaximized
 			&& m_MaximizedPanelWindow == "Game";
 		const float fitScale = renderSize.x > 0.0f && renderSize.y > 0.0f
@@ -4000,7 +4023,9 @@ namespace TomCat {
 
 		struct CameraOverlayGeometry
 		{
+			int EntityID = -1;
 			bool Selected = false;
+			bool HasFrustum = false;
 			SceneCamera::ProjectionType Projection =
 				SceneCamera::ProjectionType::Perspective;
 			float OrthographicSize = 1.0f;
@@ -4017,29 +4042,39 @@ namespace TomCat {
 				continue;
 			const SceneCamera& camera = entity.GetComponent<C_Camera>()._Camera;
 			CameraOverlayGeometry geometry;
+			geometry.EntityID = static_cast<int>(
+				static_cast<entt::entity>(entity));
 			geometry.Selected = isSelected;
 			geometry.Projection = camera.GetProjectionType();
 			geometry.OrthographicSize = camera.GetOrthographicSize();
-			if (!camera.TryGetLocalFrustumCorners(geometry.LocalCorners))
+			geometry.CameraWorld =
+				m_ActiveScene->GetRuntimeCameraTransform(entity.GetUUID());
+
+			// The icon is the Camera entity's stable selection target. Keep the
+			// entry even when an extreme Far/FOV cannot be represented as finite
+			// frustum vertices; only the optional line geometry depends on corners.
+			const glm::vec3 iconPosition = glm::vec3(geometry.CameraWorld[3]);
+			if (!std::isfinite(iconPosition.x) || !std::isfinite(iconPosition.y)
+				|| !std::isfinite(iconPosition.z))
 				continue;
 
-			geometry.CameraWorld =
-				m_ActiveScene->GetRuntimeRenderTransform(entity.GetUUID());
-			bool valid = true;
-			for (size_t index = 0; index < geometry.LocalCorners.size(); ++index)
+			if (camera.TryGetLocalFrustumCorners(geometry.LocalCorners))
 			{
-				const glm::vec4 world = geometry.CameraWorld
-					* glm::vec4(geometry.LocalCorners[index], 1.0f);
-				if (!std::isfinite(world.x) || !std::isfinite(world.y)
-					|| !std::isfinite(world.z) || !std::isfinite(world.w))
+				bool valid = true;
+				for (size_t index = 0; index < geometry.LocalCorners.size(); ++index)
 				{
-					valid = false;
-					break;
+					const glm::vec4 world = geometry.CameraWorld
+						* glm::vec4(geometry.LocalCorners[index], 1.0f);
+					if (!std::isfinite(world.x) || !std::isfinite(world.y)
+						|| !std::isfinite(world.z) || !std::isfinite(world.w))
+					{
+						valid = false;
+						break;
+					}
+					geometry.WorldCorners[index] = glm::vec3(world);
 				}
-				geometry.WorldCorners[index] = glm::vec3(world);
+				geometry.HasFrustum = valid;
 			}
-			if (!valid)
-				continue;
 			geometries.push_back(std::move(geometry));
 		}
 		if (geometries.empty())
@@ -4055,6 +4090,8 @@ namespace TomCat {
 		Renderer2D::BeginScene(overlayCamera, glm::mat4(1.0f));
 		for (const CameraOverlayGeometry& geometry : geometries)
 		{
+			if (!geometry.HasFrustum)
+				continue;
 			const auto& corners = geometry.WorldCorners;
 
 			const glm::vec4 color = geometry.Selected
@@ -4064,13 +4101,14 @@ namespace TomCat {
 			{
 				for (size_t index = 0; index < 4; ++index)
 					Renderer2D::DrawLine(corners[first + index],
-						corners[first + ((index + 1) % 4)], color, -1);
+						corners[first + ((index + 1) % 4)], color,
+						geometry.EntityID);
 			};
 			drawLoop(0);
 			drawLoop(4);
 			for (size_t index = 0; index < 4; ++index)
 				Renderer2D::DrawLine(corners[index], corners[index + 4],
-					color, -1);
+					color, geometry.EntityID);
 			if (geometry.Selected && geometry.Projection
 				== SceneCamera::ProjectionType::Orthographic)
 			{
@@ -4083,11 +4121,57 @@ namespace TomCat {
 						* glm::translate(glm::mat4(1.0f), center)
 						* glm::scale(glm::mat4(1.0f), glm::vec3(
 							markerSize, markerSize, 1.0f));
-					Renderer2D::DrawQuad(markerTransform, color, -1);
+					Renderer2D::DrawQuad(markerTransform, color,
+						geometry.EntityID);
 				}
 			}
 		}
 		Renderer2D::EndScene();
+
+		// Renderer2D flushes lines after quads. Draw icons in a second pass so the
+		// frustum cannot slice through the camera silhouette.
+		const Ref<Texture2D> cameraIcon = m_EditorIcons
+			? m_EditorIcons->Get(EditorIcon::Camera) : Ref<Texture2D>{};
+		if (cameraIcon)
+		{
+			Renderer2D::BeginScene(overlayCamera, glm::mat4(1.0f));
+			for (const CameraOverlayGeometry& geometry : geometries)
+			{
+				// A view-facing, screen-size-stable icon remains distinguishable and
+				// provides a practical pick target at every Scene zoom level.
+				const glm::vec3 iconPosition = glm::vec3(geometry.CameraWorld[3]);
+				const float viewDepth = glm::dot(iconPosition
+					- m_EditorCamera.GetPosition(),
+					m_EditorCamera.GetForwardDirection());
+				if (!std::isfinite(viewDepth) || viewDepth <= 0.0001f)
+					continue;
+				const float projectionY = std::abs(
+					m_EditorCamera.GetProjection()[1][1]);
+				const float viewportHeight = std::max(1.0f,
+					m_ViewportBounds[1].y - m_ViewportBounds[0].y);
+				const float depthScale = m_EditorCamera.IsOrthographic()
+					? 1.0f : viewDepth;
+				const float iconWorldSize = 36.0f * 2.0f * depthScale
+					/ (projectionY * viewportHeight);
+				if (!std::isfinite(iconWorldSize) || iconWorldSize <= 0.0f)
+					continue;
+
+				glm::mat4 iconTransform(1.0f);
+				iconTransform[0] = glm::vec4(
+					m_EditorCamera.GetRightDirection() * iconWorldSize, 0.0f);
+				iconTransform[1] = glm::vec4(
+					m_EditorCamera.GetUpDirection() * iconWorldSize, 0.0f);
+				iconTransform[2] = glm::vec4(
+					m_EditorCamera.GetForwardDirection(), 0.0f);
+				iconTransform[3] = glm::vec4(iconPosition, 1.0f);
+				Renderer2D::DrawQuad(iconTransform, cameraIcon, 1.0f,
+					geometry.Selected
+						? glm::vec4(0.56f, 0.82f, 1.0f, 1.0f)
+						: glm::vec4(1.0f),
+					geometry.EntityID, false);
+			}
+			Renderer2D::EndScene();
+		}
 		RenderCommand::SetDepthTest(true);
 		Renderer2D::SetLineWidth(previousLineWidth);
 	}
@@ -4129,6 +4213,8 @@ namespace TomCat {
 			canvasEntities.push_back(selectedCanvas);
 		for (Entity canvas : canvasEntities)
 		{
+			const int entityID = static_cast<int>(
+				static_cast<entt::entity>(canvas));
 			const bool isSelected = selectedCanvas && selectedCanvas == canvas;
 			if (!canvas.GetComponent<Canvas>().Enabled
 				|| !m_ActiveScene->IsVisibleInEditorHierarchy(canvas))
@@ -4164,7 +4250,8 @@ namespace TomCat {
 				: glm::vec4(0.78f, 0.78f, 0.78f, 0.5f);
 			for (size_t index = 0; index < std::size(worldCorners); ++index)
 				Renderer2D::DrawLine(worldCorners[index],
-					worldCorners[(index + 1) % std::size(worldCorners)], color, -1);
+					worldCorners[(index + 1) % std::size(worldCorners)], color,
+					entityID);
 
 			if (isSelected)
 			{
@@ -4179,7 +4266,7 @@ namespace TomCat {
 						* glm::scale(glm::mat4(1.0f), glm::vec3(
 							markerSize, markerSize, 1.0f));
 					Renderer2D::DrawCircle(markerTransform, color, 1.0f,
-						0.01f, -1);
+						0.01f, entityID);
 				}
 			}
 		}
@@ -4401,8 +4488,10 @@ namespace TomCat {
 			// Use the real Scene camera for both Canvas content and its gizmo. In 2D
 			// mode the depth axis is edge-on, leaving the planar X/Y controls visible
 			// without changing ImGuizmo itself.
-			const glm::mat4 gizmoView = m_EditorCamera.GetViewMatrix();
-			const glm::mat4& gizmoProjection = m_EditorCamera.GetProjection();
+			glm::mat4 gizmoView(1.0f);
+			glm::mat4 gizmoProjection(1.0f);
+			m_EditorCamera.GetRightHandedToolMatrices(gizmoView,
+				gizmoProjection);
 			ImGuizmo::AllowAxisFlip(false);
 			ImGuizmo::SetOrthographic(m_EditorCamera.IsOrthographic());
 			ImGuizmo::SetDrawlist();
