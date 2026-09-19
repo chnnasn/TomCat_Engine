@@ -264,6 +264,8 @@ namespace TomCat {
 		bool m_OpenRecoveryModal = false;
 		bool m_SceneTransactionChanged = false;
 		bool m_GizmoTransactionActive = false;
+		bool m_GizmoDragActive = false;
+		bool m_GizmoHandleHovered = false;
 		bool m_UIRectTransactionActive = false;
 		bool m_UIRectDragActive = false;
 		// Cached across the native-event/ImGui frame boundary. Mouse button events
@@ -335,6 +337,7 @@ namespace TomCat {
 		uint32_t m_EditorDockspaceId = 0;
 		std::string m_LastWindowTitle;
 		std::string m_PendingPanelFocus;
+		std::string m_PendingPanelFocusAfterRestore;
 		std::string m_PendingRestoredTabWindow;
 		int m_PendingRestoredTabOrder = -1;
 		int m_EditorPanelCycleIndex = 5;

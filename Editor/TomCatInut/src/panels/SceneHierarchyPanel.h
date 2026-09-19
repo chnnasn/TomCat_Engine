@@ -127,6 +127,7 @@ namespace TomCat {
 
 		void SetSelectedEntity(Entity entity);
 		bool HandleShortcut(int keyCode, bool control);
+		bool FlushPendingCommands();
 		bool IsHierarchyFocused() const { return m_HierarchyFocused; }
 		bool IsInspectorFocused() const { return m_InspectorFocused; }
 		bool IsAnimatorGraphFocused() const { return m_AnimatorGraphFocused; }

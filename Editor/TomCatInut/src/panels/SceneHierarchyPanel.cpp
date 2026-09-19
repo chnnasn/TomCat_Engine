@@ -1440,6 +1440,11 @@ namespace TomCat {
 		return true;
 	}
 
+	bool SceneHierarchyPanel::FlushPendingCommands()
+	{
+		return FlushPendingDeletion();
+	}
+
 	bool SceneHierarchyPanel::DrawGameObjectMenu()
 	{
 		if (!m_Context)

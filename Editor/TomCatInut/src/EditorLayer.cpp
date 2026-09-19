@@ -34,6 +34,7 @@
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Editor/EditorShortcutRouter.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -1172,6 +1173,7 @@ namespace TomCat {
 		// any explicit save, project switch, or shutdown path runs.
 		m_PendingPanelMaximizeAction = PanelMaximizeAction::None;
 		m_PendingMaximizedPanelWindow.clear();
+		m_PendingPanelFocusAfterRestore.clear();
 		if (!m_PanelMaximized)
 			return;
 
@@ -1219,6 +1221,8 @@ namespace TomCat {
 			// the maximized node. Focus the panel that is leaving maximized mode so
 			// its restored dock tab remains active (for example, Game stays on Game).
 			const std::string restoredPanel = m_MaximizedPanelWindow;
+			const std::string requestedPanel =
+				std::exchange(m_PendingPanelFocusAfterRestore, {});
 			int restoredTabOrder = -1;
 			for (size_t index = 0; index < kMaximizableDockPanels.size(); ++index)
 			{
@@ -1231,7 +1235,8 @@ namespace TomCat {
 			RestorePanelLayoutBeforePersistence();
 			if (!restoredPanel.empty())
 			{
-				m_PendingPanelFocus = restoredPanel;
+				m_PendingPanelFocus = requestedPanel.empty()
+					? restoredPanel : requestedPanel;
 				m_PendingRestoredTabWindow = restoredPanel;
 				m_PendingRestoredTabOrder = restoredTabOrder;
 			}
@@ -1936,9 +1941,20 @@ namespace TomCat {
 	void EditorLayer::FocusEditorPanel(const char* panelName, bool& panelVisible)
 	{
 		panelVisible = true;
-		m_PendingPanelFocus = panelName ? panelName : "";
 		const std::string_view name = panelName ? panelName : "";
-		if (name == "Game") m_EditorPanelCycleIndex = 1;
+		const bool targetsMaximizedPanel = name == m_MaximizedPanelWindow
+			|| (name == "Scene" && m_MaximizedPanelWindow == "Scene###Scene");
+		if (m_PanelMaximized && !targetsMaximizedPanel)
+		{
+			m_PendingPanelFocusAfterRestore = std::string(name);
+			m_PendingPanelMaximizeAction = PanelMaximizeAction::Restore;
+		}
+		else
+		{
+			m_PendingPanelFocus = std::string(name);
+		}
+		if (name == "Build Settings") m_EditorPanelCycleIndex = 0;
+		else if (name == "Game") m_EditorPanelCycleIndex = 1;
 		else if (name == "Hierarchy") m_EditorPanelCycleIndex = 2;
 		else if (name == "Inspector") m_EditorPanelCycleIndex = 3;
 		else if (name == "Project") m_EditorPanelCycleIndex = 4;
@@ -1984,7 +2000,10 @@ namespace TomCat {
 			m_EditorPanelCycleIndex = candidate;
 			switch (candidate)
 			{
-				case 0: m_FocusBuildSettingsPanel = true; break;
+				case 0:
+					FocusEditorPanel("Build Settings", m_ShowBuildSettingsPanel);
+					m_FocusBuildSettingsPanel = true;
+					break;
 				case 1: FocusEditorPanel("Game", m_ShowGamePanel); break;
 				case 2: FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel); break;
 				case 3: FocusEditorPanel("Inspector", m_ShowInspectorPanel); break;
@@ -2305,6 +2324,7 @@ namespace TomCat {
 
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.SetPrefabCreationAllowed(m_SceneState == SceneState::Edit);
+		m_SceneHierarchyPanel.FlushPendingCommands();
 		if (!m_PanelMaximized
 			|| ShouldRenderDockPanel("Hierarchy")
 			|| ShouldRenderDockPanel("Inspector"))
@@ -2405,7 +2425,6 @@ namespace TomCat {
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 		m_ViewportCanvasHovered = sceneVisible && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportCanvasHovered && !m_ViewportCameraDragOwned);
 
 		// The framebuffer image must remain the current ImGui item while registering
 		// its drop target. Toolbar items submitted later must never steal the target.
@@ -2501,7 +2520,8 @@ namespace TomCat {
 		else
 			ResetRectTransformEditState();
 
-		if (selectedEntity && m_ActiveScene
+		bool submittedWorldGizmo = false;
+		if (sceneVisible && selectedEntity && m_ActiveScene
 			&& m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
 			&& m_GizmoType != -1 && !m_SceneHierarchyPanel.IsEditingCollider()
 			&& !usesRectTransformHandles)
@@ -2534,8 +2554,12 @@ namespace TomCat {
 					m_GizmoSpaceMode == GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
 					glm::value_ptr(transform),
 					nullptr, snap ? snapValues : nullptr);
+				submittedWorldGizmo = true;
+				m_GizmoDragActive = ImGuizmo::IsUsing();
+				m_GizmoHandleHovered = ImGuizmo::IsOver(
+					static_cast<ImGuizmo::OPERATION>(m_GizmoType));
 
-				if (ImGuizmo::IsUsing())
+				if (m_GizmoDragActive)
 				{
 					if (m_SceneState == SceneState::Edit
 						&& !m_GizmoTransactionActive)
@@ -2550,7 +2574,12 @@ namespace TomCat {
 				}
 			}
 		}
-		if (m_GizmoTransactionActive && !ImGuizmo::IsUsing())
+		if (!submittedWorldGizmo)
+		{
+			m_GizmoDragActive = false;
+			m_GizmoHandleHovered = false;
+		}
+		if (m_GizmoTransactionActive && !m_GizmoDragActive)
 		{
 			m_GizmoTransactionActive = false;
 			CommitSceneTransaction();
@@ -2566,6 +2595,13 @@ namespace TomCat {
 		}
 		else
 		{
+			if (m_GizmoTransactionActive)
+			{
+				m_GizmoTransactionActive = false;
+				CommitSceneTransaction();
+			}
+			m_GizmoDragActive = false;
+			m_GizmoHandleHovered = false;
 			ResetRectTransformEditState();
 			m_ViewportFocused = false;
 			m_ViewportCanvasHovered = false;
@@ -2760,6 +2796,12 @@ namespace TomCat {
 		UI_ProjectMigrationRecoveryModal();
 		UI_ProjectMigrationModal();
 		UI_RecoveryModal();
+		ImGuiLayer* imguiLayer = Application::Get().GetImGuiLayer();
+		imguiLayer->BlockMouseEvents(
+			!m_ViewportCanvasHovered && !m_ViewportCameraDragOwned);
+		// EditorLayer resolves keyboard shortcuts after ImGui has established the
+		// focused widget and popup state for this frame.
+		imguiLayer->BlockKeyboardEvents(false);
 		if (!m_PendingPanelFocus.empty())
 		{
 			ImGui::SetWindowFocus(m_PendingPanelFocus.c_str());
@@ -5055,165 +5097,122 @@ namespace TomCat {
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
 		dispatcher.Dispatch<MouseButtonPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonPressed));
 		dispatcher.Dispatch<MouseButtonReleasedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonReleased));
+		// ImGui lets keyboard events reach this layer so editor shortcuts can be
+		// resolved first. Preserve its capture contract for any lower layer after
+		// that routing decision, including key releases and typed characters.
+		if (!e.m_Handled && e.IsInCategory(EventCategoryKeyboard)
+			&& ImGui::GetIO().WantCaptureKeyboard)
+			e.m_Handled = true;
 	}
 
 	bool EditorLayer::OnKeyPressed(KeyPressedEvent& e)
 	{
-		// Shortcuts
-		if (e.GetRepeatCount() > 0)
-			return false;
+		const bool popupOpen = ImGui::IsPopupOpen(nullptr,
+			ImGuiPopupFlags_AnyPopupId);
+		if (e.GetKeyCode() == Key::Escape && e.GetRepeatCount() == 0
+			&& !ImGui::GetIO().WantTextInput && !popupOpen
+			&& !e.IsControlDown() && !e.IsShiftDown()
+			&& !e.IsAltDown() && !e.IsSuperDown()
+			&& m_SceneHierarchyPanel.IsEditingCollider())
+		{
+			m_SceneHierarchyPanel.ClearColliderEditMode();
+			ResetColliderEditState();
+			return true;
+		}
 
-		const bool control = e.IsControlDown();
-		const bool shift = e.IsShiftDown();
-		const bool alt = e.IsAltDown();
-		const bool super = e.IsSuperDown();
-		bool handled = false;
-		switch (e.GetKeyCode())
+		const Entity selectedEntity =
+			m_SceneHierarchyPanel.GetSelectedEntity();
+		EditorShortcutContext context;
+		context.KeyCode = e.GetKeyCode();
+		context.RepeatCount = e.GetRepeatCount();
+		context.Modifiers = e.GetModifiers();
+		context.WantsTextInput = ImGui::GetIO().WantTextInput;
+		context.PopupOpen = popupOpen;
+		context.EntityContextFocused = m_ViewportFocused
+			|| m_SceneHierarchyPanel.IsHierarchyFocused()
+			|| m_SceneHierarchyPanel.IsInspectorFocused();
+		context.HasSelection = static_cast<bool>(selectedEntity);
+		context.EditingScene = m_SceneState == SceneState::Edit;
+		context.TransformDragActive = m_GizmoDragActive
+			|| m_UIRectDragActive
+			|| m_ActiveColliderHandle != ColliderEditHandle::None;
+
+		const EditorShortcutAction action = ResolveEditorShortcut(context);
+		switch (action)
 		{
-		case Key::N:
-		{
-			if (control && !shift && !alt && !super)
-			{
+			case EditorShortcutAction::NewScene:
 				NewScene();
-				handled = true;
-			}
-
-			break;
-		}
-		case Key::O:
-		{
-			if (control && !shift && !alt && !super)
-			{
+				return true;
+			case EditorShortcutAction::OpenScene:
 				OpenScene();
-				handled = true;
-			}
-
-			break;
-		}
-		case Key::S:
-		{
-			if (control && !alt && !super)
+				return true;
+			case EditorShortcutAction::SaveScene:
+				SaveScene();
+				return true;
+			case EditorShortcutAction::SaveSceneAs:
+				SaveSceneAs();
+				return true;
+			case EditorShortcutAction::Undo:
+				return UndoScene();
+			case EditorShortcutAction::Redo:
+				return RedoScene();
+			case EditorShortcutAction::NextWindow:
+				CycleEditorPanel(1);
+				return true;
+			case EditorShortcutAction::PreviousWindow:
+				CycleEditorPanel(-1);
+				return true;
+			case EditorShortcutAction::CutSelection:
+			case EditorShortcutAction::CopySelection:
+			case EditorShortcutAction::PasteSelection:
+			case EditorShortcutAction::DuplicateSelection:
+			case EditorShortcutAction::RenameSelection:
+			case EditorShortcutAction::DeleteSelection:
 			{
-				if (shift)
-					SaveSceneAs();
-				else
-					SaveScene();
-				handled = true;
-			}
-
-			break;
-		}
-		case Key::Escape:
-		{
-			if (!ImGui::GetIO().WantTextInput && !control && !shift && !alt && !super &&
-				m_SceneHierarchyPanel.IsEditingCollider())
-			{
-				m_SceneHierarchyPanel.ClearColliderEditMode();
-				ResetColliderEditState();
-				handled = true;
-			}
-			break;
-		}
-		case Key::Z:
-		{
-			if (!ImGui::GetIO().WantTextInput
-				&& control && !shift && !alt && !super
-				&& m_SceneState == SceneState::Edit)
-				handled = UndoScene();
-			break;
-		}
-		case Key::Y:
-		{
-			if (!ImGui::GetIO().WantTextInput
-				&& control && !shift && !alt && !super
-				&& m_SceneState == SceneState::Edit)
-				handled = RedoScene();
-			break;
-		}
-
-		// Scene commands only belong to the Scene canvas or Hierarchy. This keeps
-		// Delete/Cut/Copy/Paste from leaking out of text fields and Project assets.
-		case Key::D:
-		{
-			if (!ImGui::GetIO().WantTextInput &&
-				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
-				control && !shift && !alt && !super)
-			{
-				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
+				int keyCode = 0;
+				bool control = false;
+				switch (action)
+				{
+					case EditorShortcutAction::CutSelection:
+						keyCode = Key::X; control = true; break;
+					case EditorShortcutAction::CopySelection:
+						keyCode = Key::C; control = true; break;
+					case EditorShortcutAction::PasteSelection:
+						keyCode = Key::V; control = true; break;
+					case EditorShortcutAction::DuplicateSelection:
+						keyCode = Key::D; control = true; break;
+					case EditorShortcutAction::RenameSelection:
+						keyCode = Key::F2; break;
+					case EditorShortcutAction::DeleteSelection:
+						keyCode = Key::Delete; break;
+					default:
+						break;
+				}
+				const bool handled =
+					m_SceneHierarchyPanel.HandleShortcut(keyCode, control);
 				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
 					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
+				return handled;
 			}
-
-			break;
-		}
-		case Key::X:
-		case Key::C:
-		case Key::V:
-		{
-			if (!ImGui::GetIO().WantTextInput &&
-				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
-				control && !shift && !alt && !super)
-			{
-				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
-				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
-					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
-			}
-			break;
-		}
-		case Key::F2:
-		case Key::Delete:
-		{
-			if (!ImGui::GetIO().WantTextInput &&
-				(m_ViewportFocused || m_SceneHierarchyPanel.IsHierarchyFocused()) &&
-				!control && !shift && !alt && !super)
-			{
-				handled = m_SceneHierarchyPanel.HandleShortcut(e.GetKeyCode(), control);
-				if (handled && m_SceneHierarchyPanel.HasPendingRenameFocus())
-					FocusEditorPanel("Hierarchy", m_ShowHierarchyPanel);
-			}
-			break;
-		}
-
-		// Gizmos
-		case Key::Q:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+			case EditorShortcutAction::ToolNone:
 				m_GizmoType = -1;
-				handled = true;
-			}
-			break;
-		}
-		case Key::W:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+				return true;
+			case EditorShortcutAction::ToolTranslate:
 				m_GizmoType = ImGuizmo::OPERATION::TRANSLATE;
-				handled = true;
-			}
-			break;
-		}
-		case Key::E:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+				return true;
+			case EditorShortcutAction::ToolRotate:
 				m_GizmoType = ImGuizmo::OPERATION::ROTATE;
-				handled = true;
-			}
-			break;
-		}
-		case Key::R:
-		{
-			if (m_ViewportFocused && !control && !shift && !alt && !super && !ImGuizmo::IsUsing())
-			{
+				return true;
+			case EditorShortcutAction::ToolScale:
 				m_GizmoType = ImGuizmo::OPERATION::SCALE;
-				handled = true;
-			}
-			break;
+				return true;
+			case EditorShortcutAction::FrameSelection:
+				FrameSceneEntity(selectedEntity);
+				return true;
+			case EditorShortcutAction::None:
+			default:
+				return false;
 		}
-		}
-
-		return handled;
 	}
 
 	bool EditorLayer::OnMouseButtonPressed(MouseButtonPressedEvent& e)
@@ -5237,7 +5236,8 @@ namespace TomCat {
 				return true;
 			if (m_ColliderHandleHovered || m_ActiveColliderHandle != ColliderEditHandle::None)
 				return true;
-			if (m_ViewportCanvasHovered && !ImGuizmo::IsOver() && !altDown)
+			if (m_ViewportCanvasHovered && !m_GizmoHandleHovered
+				&& !m_GizmoDragActive && !altDown)
 			{
 				m_SceneHierarchyPanel.SetSelectedEntity(m_HoveredEntity);
 				return true;
@@ -5678,8 +5678,15 @@ namespace TomCat {
 
 	void EditorLayer::ResetSceneInteractionState()
 	{
+		if (m_GizmoTransactionActive)
+		{
+			m_GizmoTransactionActive = false;
+			CommitSceneTransaction();
+		}
 		m_HoveredEntity = {};
 		m_ViewportCameraDragOwned = false;
+		m_GizmoDragActive = false;
+		m_GizmoHandleHovered = false;
 		ResetRectTransformEditState();
 		ResetColliderEditState();
 	}
