@@ -137,6 +137,19 @@ namespace TomCat {
 
 		// Setup Platform/Renderer bindings
 		ImGui_ImplGlfw_InitForOpenGL(window, true);
+#ifndef __EMSCRIPTEN__
+		// Windows can deliver WM_MOUSEWHEEL before a pending WM_MOUSEMOVE.
+		// Queue the current cursor position before the wheel so ImGui routes the
+		// first scroll to the panel under the pointer, not the previously hovered tab.
+		// Both backend callbacks retain their original engine callback chains.
+		glfwSetScrollCallback(window, [](GLFWwindow* source, double x, double y)
+		{
+			double cursorX = 0.0, cursorY = 0.0;
+			glfwGetCursorPos(source, &cursorX, &cursorY);
+			ImGui_ImplGlfw_CursorPosCallback(source, cursorX, cursorY);
+			ImGui_ImplGlfw_ScrollCallback(source, x, y);
+		});
+#endif
 #ifdef __EMSCRIPTEN__
 		// Fonts use CSS pixel sizes so native panel metrics stay consistent.
 		ImGui_ImplOpenGL3_Init("#version 300 es");
