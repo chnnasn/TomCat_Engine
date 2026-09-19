@@ -410,11 +410,11 @@ void ExampleLayer::OnEvent(Event& e)
 		const float searchW = 300.0f, addW = 110.0f, newW = 180.0f;
 		float newX = size.x - pad - newW;
 		float addX = newX - 10.0f - addW;
-		float searchX = addX - 12.0f - searchW;
-		float topY = pad;
+		float searchX = std::max(pad,addX - 12.0f - searchW);
+		float topY = size.x < 1150.0f ? pad+70.0f : pad;
 
 		ImGui::SetCursorPos(ImVec2(searchX, topY));
-		ImGui::SetNextItemWidth(searchW);
+		ImGui::SetNextItemWidth(std::max(80.0f,addX-12.0f-searchX));
 		ImGui::InputTextWithHint("##HubSearch", T("搜索项目", "Search projects"), m_SearchBuffer, sizeof(m_SearchBuffer),
 			ImGuiInputTextFlags_AutoSelectAll);
 
@@ -441,7 +441,7 @@ void ExampleLayer::OnEvent(Event& e)
 
 		// Column header (Name | Modified | Editor version)
 		const float headerH = 44.0f;
-		const float modifiedW = 180.0f, versionW = 160.0f, actionsW = 200.0f;
+		const float modifiedW = std::clamp(contentW*0.19f,90.0f,180.0f), versionW = std::clamp(contentW*0.17f,90.0f,160.0f), actionsW = 64.0f;
 		float listTop = pad + 46.0f + 20.0f + btnH + 6.0f;
 		float versionX = size.x - pad - actionsW - versionW;
 		float modifiedX = versionX - modifiedW;
@@ -485,7 +485,7 @@ void ExampleLayer::OnEvent(Event& e)
 			ImGui::PopStyleColor();
 		};
 
-		headerCell(T("名称", "Name"), HubSortColumn::Name, headerMin, contentW * 0.45f, headerH);
+		headerCell(T("名称", "Name"), HubSortColumn::Name, headerMin, contentW-modifiedW-versionW-actionsW, headerH);
 		headerCell(T("修改时间", "Modified"), HubSortColumn::Modified, ImVec2(wmin.x + modifiedX, wmin.y + listTop), modifiedW, headerH);
 		headerCell(T("编辑器版本", "Editor version"), HubSortColumn::EditorVersion, ImVec2(wmin.x + versionX, wmin.y + listTop), versionW, headerH);
 
@@ -493,7 +493,8 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::SetCursorPos(ImVec2(pad, listTop + headerH));
 		ImGui::BeginChild("ProjectListScroll", ImVec2(contentW, size.y - (listTop + headerH)), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 		{
-			ImVec2 cmin = ImGui::GetWindowPos();
+			ImVec2 cmin = ImGui::GetCursorScreenPos();
+            const float rowWidth = ImGui::GetContentRegionAvail().x;
 			float y = cmin.y;
 
 			if (m_VisibleProjects.empty())
@@ -508,7 +509,7 @@ void ExampleLayer::OnEvent(Event& e)
 			for (int i = 0; i < (int)m_VisibleProjects.size(); i++)
 			{
 				ImVec2 rowMin(cmin.x, y);
-				ImVec2 rowMax(rowMin.x + contentW, y + 96.0f);
+				ImVec2 rowMax(rowMin.x + rowWidth, y + 96.0f);
 				ImGui::SetCursorScreenPos(rowMin);
 				RenderProjectRow(m_VisibleProjects[i], i, rowMin, rowMax);
 				y += 96.0f;
@@ -521,7 +522,7 @@ void ExampleLayer::OnEvent(Event& e)
 	{
 		auto* dl = ImGui::GetWindowDrawList();
 		const float rowW = rowMax.x - rowMin.x;
-		const float modifiedW = 180.0f, versionW = 160.0f, actionsW = 200.0f;
+		const float modifiedW = std::clamp(rowW*0.19f,90.0f,180.0f), versionW = std::clamp(rowW*0.17f,90.0f,160.0f), actionsW = 64.0f;
 		const float menuZoneW = 64.0f; // keep the right zone free for the U+22EE button
 
 		// Row click area excludes the menu-button zone so the button is never overlapped
@@ -552,7 +553,10 @@ void ExampleLayer::OnEvent(Event& e)
 		ImVec2 iconMin(rowMin.x + 20.0f, rowMin.y + 24.0f);
 		ImVec2 iconMax(iconMin.x + 48.0f, iconMin.y + 48.0f);
 		dl->AddRectFilled(iconMin, iconMax, ImGui::GetColorU32(ImGuiCol_FrameBgActive), 2.0f);
-		std::string initial = project->GetName().empty() ? "P" : project->GetName().substr(0, 1);
+		const std::string& projectName=project->GetName();
+        size_t initialLength=projectName.empty()?0:1;
+        while(initialLength<projectName.size() && (static_cast<unsigned char>(projectName[initialLength])&0xc0)==0x80) ++initialLength;
+        std::string initial=projectName.empty()?"P":projectName.substr(0,initialLength);
 		ImGui::SetCursorScreenPos(ImVec2(iconMin.x + 6.0f, iconMin.y + 4.0f));
 		ImGui::Text("%s", initial.c_str());
 
@@ -568,7 +572,9 @@ void ExampleLayer::OnEvent(Event& e)
 			std::string out = path;
 			while (!out.empty())
 			{
-				out.pop_back();
+				size_t end=out.size()-1;
+                    while(end>0 && (static_cast<unsigned char>(out[end])&0xc0)==0x80) --end;
+                    out.resize(end);
 				if (ImGui::CalcTextSize((out + "...").c_str()).x <= nameMaxW)
 					break;
 			}
@@ -637,247 +643,107 @@ void ExampleLayer::OnEvent(Event& e)
 		}
 	}
 
-		void ExampleLayer::RenderNewProjectDialog()
-	{
-		// ??????
-		static int selectedVersion = 0;
-		static bool needsRefresh = true;
-		if (needsRefresh)
-		{
-			if (auto editors = ProjectManager::Get().GetEditorVersions())
-				m_Editors = std::move(*editors);
-			else
-				m_Editors.clear();
-			needsRefresh = false;
-			selectedVersion = 0;
-		}
-
-		auto* dl = ImGui::GetWindowDrawList();
-		ImVec2 wmin = ImGui::GetWindowPos();
-		ImVec2 size = ImGui::GetContentRegionAvail();
-		const float pad = 24.0f;
-
-		// Top bar: back button + title
-		ImGui::SetCursorPos(ImVec2(pad, pad));
-		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(112, 112, 112, 255));
-		if (ImGui::Button(T("\u2190 \u8fd4\u56de", "\u2190 Back"), ImVec2(120.0f, 44.0f))) // ? ??
-		{
-			m_ShowNewProjectDialog = false;
-			needsRefresh = true;
-		}
-		ImGui::PopStyleColor(3);
-
-		ImGui::SetCursorPos(ImVec2(pad + 132.0f, pad + 6.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_Text]);
-		ImGui::Text("%s", T("\u65b0\u5efa\u9879\u76ee", "New Project")); // ????
-		ImGui::PopStyleColor();
-
-		// Unity-Hub style two-column layout: left = version + template, right = settings
-		const float gap = 28.0f;
-		float midW = (size.x - pad * 2.0f - gap) * 0.52f;
-		float rightW = (size.x - pad * 2.0f - gap) * 0.48f;
-		float midX = wmin.x + pad;
-		float rightX = midX + midW + gap;
-		float topY = wmin.y + 100.0f;
-
-		// ============ Middle column: editor version + template ============
-		ImGui::SetCursorScreenPos(ImVec2(midX, topY));
-		ImGui::Text("%s", T("\u7f16\u8f91\u5668\u7248\u672c *", "Editor Version *")); // ????? *
-		ImGui::SetCursorScreenPos(ImVec2(midX, topY + 42.0f));
-		ImGui::SetNextItemWidth(midW);
-		if (m_Editors.empty())
-		{
-			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
-				T("\u672a\u627e\u5230\u7f16\u8f91\u5668\u7248\u672c\uff0c\u8bf7\u5728\u8bbe\u7f6e\u4e2d\u68c0\u67e5\u7f16\u8f91\u5668\u76ee\u5f55\u3002", "No editor versions found. Check Editor Directory in Settings."));
-		}
-		else
-		{
-			if (selectedVersion >= (int)m_Editors.size())
-				selectedVersion = 0;
-			if (ImGui::BeginCombo("##EditorVersion", m_Editors[selectedVersion].c_str()))
-			{
-				for (int i = 0; i < (int)m_Editors.size(); i++)
-				{
-					bool is_sel = (selectedVersion == i);
-					if (ImGui::Selectable(m_Editors[i].c_str(), is_sel))
-						selectedVersion = i;
-					if (is_sel)
-						ImGui::SetItemDefaultFocus();
-				}
-				ImGui::EndCombo();
-			}
-		}
-
-		// Template (2D / 3D cards)
-		float ty = topY + 42.0f + 62.0f;
-		ImGui::SetCursorScreenPos(ImVec2(midX, ty));
-		ImGui::Text("%s", T("\u6a21\u677f", "Template")); // ??
-		float cardY = ty + 40.0f;
-		float cardW = (midW - 12.0f) * 0.5f;
-		float cardH = 110.0f;
-
-		auto tmplCard = [&](int id, const char* label, const char* sub, float x, float y)
-		{
-			bool sel = (m_NewProjectTemplate == id);
-			ImVec2 c0(x, y);
-			ImVec2 c1(x + cardW, y + cardH);
-			ImGui::SetCursorScreenPos(c0);
-			ImGui::InvisibleButton(("##tmpl_" + std::to_string(id)).c_str(), ImVec2(cardW, cardH));
-			bool hovered = ImGui::IsItemHovered();
-			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
-				m_NewProjectTemplate = id;
-			ImU32 bg = hovered ? IM_COL32(98, 98, 98, 255) : IM_COL32(56, 56, 56, 255);
-			dl->AddRectFilled(c0, c1, bg, 2.0f);
-			dl->AddRect(c0, c1, sel ? IM_COL32(44, 93, 135, 255) : IM_COL32(85, 85, 85, 255), 2.0f, 0, sel ? 2.0f : 1.0f);
-			// colored icon square
-			dl->AddRectFilled(ImVec2(c0.x + 18.0f, c0.y + 18.0f), ImVec2(c0.x + 66.0f, c0.y + 66.0f),
-				id == 0 ? IM_COL32(40, 120, 170, 255) : IM_COL32(60, 90, 200, 255), 2.0f);
-			ImVec2 ls = ImGui::CalcTextSize(label);
-			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(243, 243, 243, 255));
-			ImGui::SetCursorScreenPos(ImVec2(c0.x + 82.0f, c0.y + 24.0f));
-			ImGui::Text("%s", label);
-			ImGui::PopStyleColor();
-			ImVec2 ss = ImGui::CalcTextSize(sub);
-			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(137, 137, 137, 255));
-			ImGui::SetCursorScreenPos(ImVec2(c0.x + 82.0f, c0.y + 62.0f));
-			ImGui::Text("%s", sub);
-			ImGui::PopStyleColor();
-		};
-		tmplCard(0, "2D", T("2D \u5de5\u7a0b", "2D project"), midX, cardY); // 2D ??
-		tmplCard(1, "3D", T("3D \u5de5\u7a0b", "3D project"), midX + cardW + 12.0f, cardY); // 3D ??
-
-		// ============ Right column: name / location / create ============
-		ImGui::SetCursorScreenPos(ImVec2(rightX, topY));
-		ImGui::Text("%s", T("\u9879\u76ee\u540d\u79f0 *", "Project Name *")); // ???? *
-		ImGui::SetCursorScreenPos(ImVec2(rightX, topY + 42.0f));
-		ImGui::SetNextItemWidth(rightW);
-		ImGui::InputText("##Name", m_NewProjectName, sizeof(m_NewProjectName));
-
-		float y2 = topY + 42.0f + 64.0f;
-		ImGui::SetCursorScreenPos(ImVec2(rightX, y2));
-		ImGui::Text("%s", T("\u4f4d\u7f6e *", "Location *")); // ?? *
-		y2 += 42.0f;
-		float browseW = 100.0f;
-		std::string loc = PathToUTF8(m_NewProjectPath);
-		float locMax = rightW - browseW - 10.0f;
-		if (ImGui::CalcTextSize(loc.c_str()).x > locMax)
-		{
-			std::string o = loc;
-			while (!o.empty())
-			{
-				o.pop_back();
-				if (ImGui::CalcTextSize((o + "...").c_str()).x <= locMax)
-					break;
-			}
-			loc = o + "...";
-		}
-		ImGui::SetCursorScreenPos(ImVec2(rightX, y2 + 6.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-		ImGui::Text("%s", loc.c_str());
-		ImGui::PopStyleColor();
-		ImGui::SetCursorScreenPos(ImVec2(rightX + rightW - browseW, y2));
-		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(71, 71, 71, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
-		if (ImGui::Button(T("\u6d4f\u89c8", "Browse"), ImVec2(browseW, 44.0f))) // ??
-		{
-			const std::filesystem::path path = FileDialogs::OpenFolder();
-			if (!path.empty())
-				m_NewProjectPath = path;
-		}
-		ImGui::PopStyleColor(2);
-
-		// Description
-		y2 += 64.0f;
-		ImGui::SetCursorScreenPos(ImVec2(rightX, y2));
-		ImGui::Text("%s", T("\u63cf\u8ff0", "Description")); // ??
-		y2 += 42.0f;
-		ImGui::SetCursorScreenPos(ImVec2(rightX, y2));
-		ImGui::SetNextItemWidth(rightW);
-		ImGui::InputTextMultiline("##Description", m_NewProjectDescription, sizeof(m_NewProjectDescription), ImVec2(rightW, 90.0f));
-
-		// Create / Cancel buttons (bottom right)
-		const float btnW = 150.0f, btnH = 48.0f;
-		float btnY = wmin.y + size.y - pad - btnH;
-		float createX = wmin.x + size.x - pad - btnW;
-		float cancelX = createX - 12.0f - btnW;
-
-		ImGui::SetCursorScreenPos(ImVec2(cancelX, btnY));
-		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(71, 71, 71, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
-		if (ImGui::Button(T("\u53d6\u6d88", "Cancel"), ImVec2(btnW, btnH))) // ??
-		{
-			m_ShowNewProjectDialog = false;
-			needsRefresh = true;
-		}
-		ImGui::PopStyleColor(2);
-
-		const std::string requestedName = m_NewProjectName;
-		const bool validName = IsValidProjectDirectoryName(requestedName);
-		std::error_code targetError;
-		const std::filesystem::path requestedDirectory = m_NewProjectPath / UTF8ToPath(requestedName);
-		const bool targetExists = validName && std::filesystem::exists(requestedDirectory, targetError);
-		const bool canCreate = validName && !targetExists && !targetError && !m_Editors.empty();
-		ImGui::SetCursorScreenPos(ImVec2(createX, btnY));
-		ImGui::PushStyleColor(ImGuiCol_Button, canCreate ? IM_COL32(44, 93, 135, 255) : IM_COL32(60, 60, 60, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, canCreate ? IM_COL32(58, 112, 157, 255) : IM_COL32(60, 60, 60, 255));
-		if (ImGui::Button(T("\u521b\u5efa\u9879\u76ee", "Create Project"), ImVec2(btnW, btnH)) && canCreate) // ????
-		{
-			ProjectConfig config;
-			config.Name = m_NewProjectName;
-			config.Description = m_NewProjectDescription;
-			config.Version = std::string(Version::ProductVersion);
-			config.EditorVersion = m_Editors[selectedVersion];
-			config.Template = (m_NewProjectTemplate == 0) ? "2D" : "3D";
-			std::filesystem::path projectPath = requestedDirectory / "Project.tcproj";
-			auto project = ProjectManager::Get().CreateProject(projectPath, config);
-			if (project && EnsureSampleSceneAsset(project, config.Template))
-			{
-				m_Projects = ProjectManager::Get().GetProjects();
-				m_ShowNewProjectDialog = false;
-				needsRefresh = true;
-			}
-			else if (project)
-			{
-				TC_Core_Error("Project '{0}' was created, but its sample scene could not be installed",
-					PathToUTF8(project->GetProjectPath().parent_path()));
-			}
-		}
-		ImGui::PopStyleColor(2);
-
-		if (m_Editors.empty())
-		{
-			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
-			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
-				T("\u65e0\u6cd5\u521b\u5efa\u9879\u76ee\uff1a\u6ca1\u6709\u53ef\u7528\u7684\u7f16\u8f91\u5668\u7248\u672c", "Cannot create project: no editor version available"));
-		}
-		else if (!validName)
-		{
-			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
-			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
-				T("\u9879\u76ee\u540d\u4e0d\u80fd\u4e3a\u7a7a\uff0c\u4e5f\u4e0d\u80fd\u5305\u542b Windows \u4fdd\u7559\u5b57\u7b26\u6216\u8bbe\u5907\u540d\u3002",
-					"Project name is empty or contains a reserved Windows character or device name."));
-		}
-		else if (targetExists)
-		{
-			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
-			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
-				T("\u76ee\u6807\u9879\u76ee\u76ee\u5f55\u5df2\u5b58\u5728\u3002", "The target project directory already exists."));
-		}
-	}
+    void ExampleLayer::RenderNewProjectDialog()
+    {
+        static int selectedVersion = 0;
+        static bool needsRefresh = true;
+        static std::string creationError;
+        if (needsRefresh)
+        {
+            if (auto editors = ProjectManager::Get().GetEditorVersions()) m_Editors = std::move(*editors);
+            else m_Editors.clear();
+            selectedVersion = 0;
+            creationError.clear();
+            needsRefresh = false;
+        }
+        ImGui::SetCursorPos(ImVec2(24,24));
+        if (ImGui::Button(T("返回", "Back"))) { m_ShowNewProjectDialog=false; needsRefresh=true; }
+        ImGui::SameLine(); ImGui::TextUnformatted(T("新建项目", "New Project"));
+        ImGui::Separator();
+        ImGui::BeginChild("NewProjectForm", ImVec2(0,-150), false);
+        const int columns = ImGui::GetContentRegionAvail().x > 800 ? 2 : 1;
+        if (ImGui::BeginTable("ProjectForm", columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX))
+        {
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(T("编辑器版本 *", "Editor version *"));
+            if (m_Editors.empty())
+                ImGui::TextWrapped("%s", T("未找到编辑器版本，请在设置中检查编辑器目录。", "No editor versions found. Check Editor Directory in Settings."));
+            else
+            {
+                selectedVersion=std::clamp(selectedVersion,0,static_cast<int>(m_Editors.size())-1);
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::BeginCombo("##EditorVersion",m_Editors[selectedVersion].c_str()))
+                {
+                    for (int i=0;i<static_cast<int>(m_Editors.size());++i)
+                        if (ImGui::Selectable(m_Editors[i].c_str(),selectedVersion==i)) selectedVersion=i;
+                    ImGui::EndCombo();
+                }
+            }
+            ImGui::Spacing(); ImGui::TextUnformatted(T("模板", "Template"));
+            if (ImGui::Selectable(T("2D 项目##Template2D", "2D project##Template2D"),m_NewProjectTemplate==0,0,ImVec2(0,48))) m_NewProjectTemplate=0;
+            if (ImGui::Selectable(T("3D 项目##Template3D", "3D project##Template3D"),m_NewProjectTemplate==1,0,ImVec2(0,48))) m_NewProjectTemplate=1;
+            ImGui::Spacing();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(T("项目名称 *", "Project name *"));
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##Name",m_NewProjectName,sizeof(m_NewProjectName));
+            ImGui::Spacing(); ImGui::TextUnformatted(T("位置 *", "Location *"));
+            ImGui::TextWrapped("%s",PathToUTF8(m_NewProjectPath).c_str());
+            if (ImGui::Button(T("浏览文件夹", "Browse folder")))
+            {
+                const auto path=FileDialogs::OpenFolder();
+                if(!path.empty()) m_NewProjectPath=path;
+            }
+            ImGui::Spacing(); ImGui::TextUnformatted(T("描述", "Description"));
+            ImGui::InputTextMultiline("##Description",m_NewProjectDescription,sizeof(m_NewProjectDescription),ImVec2(-1,100));
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
+        ImGui::Separator();
+        const std::string name=m_NewProjectName;
+        const bool validName=IsValidProjectDirectoryName(name);
+        std::error_code targetError;
+        const auto target=m_NewProjectPath/UTF8ToPath(name);
+        const bool exists=validName && std::filesystem::exists(target,targetError);
+        const bool canCreate=validName && !exists && !targetError && !m_Editors.empty();
+        ImGui::BeginChild("ProjectValidation",ImVec2(0,76),false);
+        if (!creationError.empty()) ImGui::TextWrapped("%s",creationError.c_str());
+        else if(m_Editors.empty()) ImGui::TextWrapped("%s",T("无法创建：没有可用的编辑器版本。", "Cannot create: no editor version available."));
+        else if(!validName) ImGui::TextWrapped("%s",T("请输入有效项目名，不能包含 Windows 保留字符或设备名。", "Enter a valid project name without reserved Windows characters or device names."));
+        else if(exists) ImGui::TextWrapped("%s",T("目标项目目录已存在。", "The target project directory already exists."));
+        else if(targetError) ImGui::TextWrapped("%s",targetError.message().c_str());
+        else ImGui::TextWrapped("%s",PathToUTF8(target).c_str());
+        ImGui::EndChild();
+        if (ImGui::Button(T("取消", "Cancel"),ImVec2(130,44))) {m_ShowNewProjectDialog=false; needsRefresh=true;}
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!canCreate);
+        if (ImGui::Button(T("创建项目", "Create project"),ImVec2(180,44)))
+        {
+            ProjectConfig config;
+            config.Name=name; config.Description=m_NewProjectDescription;
+            config.Version=std::string(Version::ProductVersion);
+            config.EditorVersion=m_Editors[selectedVersion];
+            config.Template=m_NewProjectTemplate==0?"2D":"3D";
+            auto project=ProjectManager::Get().CreateProject(target/"Project.tcproj",config);
+            if(project && EnsureSampleSceneAsset(project,config.Template))
+            {m_Projects=ProjectManager::Get().GetProjects();m_ShowNewProjectDialog=false;needsRefresh=true;}
+            else creationError=T("项目创建未完成，请检查路径权限和日志。", "Project creation did not complete. Check folder permissions and logs.");
+        }
+        ImGui::EndDisabled();
+    }
 
 void ExampleLayer::RenderSettingsDialog()
 	{
-		const ImVec2 winSize(880.0f, 600.0f);
-		ImGui::SetNextWindowSize(winSize, ImGuiCond_Always);
-		ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+		const ImVec2 winSize(std::min(880.0f,ImGui::GetMainViewport()->WorkSize.x-24),std::min(600.0f,ImGui::GetMainViewport()->WorkSize.y-24));
+		ImGui::SetNextWindowSize(winSize, ImGuiCond_Appearing);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(500,360),ImGui::GetMainViewport()->WorkSize);
+		ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28.0f, 24.0f));
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
 		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyle().Colors[ImGuiCol_WindowBg]);
 
-		ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove;
+		ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 		if (ImGui::Begin(T("\u8bbe\u7f6e", "Settings"), &m_ShowSettingsDialog, flags)) // ??
 		{
 			auto trunc = [](const std::string& text, float maxW) -> std::string
@@ -887,7 +753,9 @@ void ExampleLayer::RenderSettingsDialog()
 				std::string out = text;
 				while (!out.empty())
 				{
-					out.pop_back();
+					size_t end=out.size()-1;
+                    while(end>0 && (static_cast<unsigned char>(out[end])&0xc0)==0x80) --end;
+                    out.resize(end);
 					if (ImGui::CalcTextSize((out + "...").c_str()).x <= maxW)
 						break;
 				}
@@ -1061,8 +929,9 @@ void ExampleLayer::RenderSettingsDialog()
 		ImGui::SetCursorPos(ImVec2(pad, pad + 90.0f));
 		ImGui::BeginChild("InstallsList", ImVec2(size.x - pad * 2.0f, size.y - (pad + 90.0f)), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
 		{
-			ImVec2 cmin = ImGui::GetWindowPos();
-			float rowW = size.x - pad * 2.0f;
+			ImVec2 cmin = ImGui::GetCursorScreenPos();
+			auto* dl = ImGui::GetWindowDrawList();
+            float rowW = ImGui::GetContentRegionAvail().x;
 			float y = cmin.y;
 
 			if (m_Editors.empty())
@@ -1100,7 +969,9 @@ void ExampleLayer::RenderSettingsDialog()
 					std::string o = eps;
 					while (!o.empty())
 					{
-						o.pop_back();
+						size_t end=o.size()-1;
+                        while(end>0 && (static_cast<unsigned char>(o[end])&0xc0)==0x80) --end;
+                        o.resize(end);
 						if (ImGui::CalcTextSize((o + "...").c_str()).x <= epMax)
 							break;
 					}

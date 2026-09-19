@@ -352,6 +352,11 @@ namespace TomCat {
 			-1, -1, -1, -1, -1, -1, -1, -1, -1
 		};
 		bool m_PanelMaximized = false;
+        bool m_ShowAssetInspector = false;
+        bool m_ShowRuntimeScenes = false;
+        bool m_ShowEditorPreferences = false;
+        float m_EditorUIScale = 1.0f;
+        int m_LayoutRequest = 0;
 		uint32_t m_EditorDockspaceId = 0;
 		std::string m_LastWindowTitle;
 		std::string m_PendingPanelFocus;

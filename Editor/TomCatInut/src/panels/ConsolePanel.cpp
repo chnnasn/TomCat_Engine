@@ -298,7 +298,9 @@ namespace TomCat {
 			m_ShowErrors = !m_ShowErrors;
 		ImGui::Separator();
 
-		struct DisplayMessage
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##ConsoleSearch", "Search messages, source or code...", m_Search, sizeof(m_Search));
+        struct DisplayMessage
 		{
 			const ConsoleMessage* Message = nullptr;
 			size_t Count = 1;
@@ -308,7 +310,7 @@ namespace TomCat {
 		std::unordered_map<std::string, size_t> collapsedIndices;
 		for (const ConsoleMessage& message : messages)
 		{
-			if (!IsVisible(message.Severity))
+			if (!IsVisible(message.Severity) || (m_Search[0] && (message.Text + message.Source + message.Code).find(m_Search) == std::string::npos))
 				continue;
 			if (!m_Collapse)
 			{
@@ -324,8 +326,7 @@ namespace TomCat {
 				++displayMessages[iterator->second].Count;
 		}
 
-		ImGui::BeginChild("##ConsoleMessages", ImVec2(0.0f, 0.0f), false,
-			ImGuiWindowFlags_HorizontalScrollbar);
+		ImGui::BeginChild("##ConsoleMessages", ImVec2(0.0f, -std::min(160.0f, ImGui::GetContentRegionAvail().y * 0.4f)), false);
 		for (const DisplayMessage& displayMessage : displayMessages)
 		{
 			const ConsoleMessage& message = *displayMessage.Message;
@@ -344,18 +345,13 @@ namespace TomCat {
 			if (displayMessage.Count > 1)
 				prefix += " (x" + std::to_string(displayMessage.Count) + ")";
 
-			const float inlineMessageWidth = ImGui::GetContentRegionAvail().x -
-				ImGui::CalcTextSize(prefix.c_str()).x - style.ItemSpacing.x;
-			ImGui::TextColored(SeverityColor(message.Severity), "%s", prefix.c_str());
-			if (inlineMessageWidth >= kMinimumInlineMessageWidth)
-				ImGui::SameLine();
-			ImGui::TextWrapped("%s", message.Text.c_str());
-			if (!message.StackTrace.empty() && ImGui::TreeNode("Stack trace"))
-			{
-				ImGui::TextUnformatted(message.StackTrace.c_str());
-				ImGui::TreePop();
-			}
-			ImGui::Separator();
+            std::string summary = prefix + "  " + message.Text.substr(0, message.Text.find('\n'));
+            ImGui::PushStyleColor(ImGuiCol_Text, SeverityColor(message.Severity));
+            if (ImGui::Selectable(summary.c_str(), m_SelectedSequence == message.Sequence))
+                m_SelectedSequence = message.Sequence;
+            ImGui::PopStyleColor();
+            if(ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !message.File.empty() && m_OpenSource) m_OpenSource(message.File);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", message.Text.c_str());
 			ImGui::PopID();
 		}
 
@@ -367,8 +363,21 @@ namespace TomCat {
 		}
 		if (m_AutoScroll && shouldScroll)
 			ImGui::SetScrollHereY(1.0f);
-		ImGui::EndChild();
-		ImGui::End();
-	}
+        ImGui::EndChild();
+        ImGui::Separator();
+        ImGui::BeginChild("ConsoleDetails");
+        auto selected = std::find_if(messages.begin(), messages.end(), [&](const auto& message) { return message.Sequence == m_SelectedSequence; });
+        if (selected != messages.end())
+        {
+            if (ImGui::SmallButton("Copy details")) ImGui::SetClipboardText((selected->Text + "\n" + selected->StackTrace).c_str());
+            if(!selected->File.empty() && m_OpenSource) {ImGui::SameLine();if(ImGui::SmallButton("Open source")) m_OpenSource(selected->File);}
+            ImGui::TextDisabled("%s", FormatLocation(*selected).c_str());
+            ImGui::TextWrapped("%s", selected->Text.c_str());
+            ImGui::TextWrapped("%s", selected->StackTrace.c_str());
+        }
+        else ImGui::TextDisabled("Select a message to inspect its full details.");
+        ImGui::EndChild();
+        ImGui::End();
+    }
 
 }

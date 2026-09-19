@@ -128,7 +128,10 @@ namespace TomCat {
 		}
 		if (!m_ExportMessage.empty()) ImGui::TextUnformatted(m_ExportMessage.c_str());
 		ImGui::TextDisabled("240 frames, 512 scopes/frame. Closing this panel stops capture.");
-		const auto summaries = profiler.Summaries();
+        const bool tabs=ImGui::BeginTabBar("ProfilerModules");
+        if(tabs && ImGui::BeginTabItem("CPU / GPU"))
+        {
+        const auto summaries = profiler.Summaries();
 		if (!summaries.empty())
 		{
 			std::vector<float> cpu, gpu, resources;
@@ -166,9 +169,20 @@ namespace TomCat {
 				if (ImGui::CollapsingHeader("CPU timeline and scopes", ImGuiTreeNodeFlags_DefaultOpen)) { DrawTimeline(frame); DrawScopeTable(frame); }
 			}
 		}
-		else ImGui::TextWrapped("Enable Record, reproduce the slowdown, then turn Record off to inspect frames. Click the CPU graph or use the frame slider.");
+        else
+        {
+            const float empty[] = { 0, 0 };
+            ImGui::PlotLines("CPU frame (ms)", empty, 2, 0, "No capture - enable Record", 0, 16.67f, ImVec2(0, 65));
+            ImGui::PlotLines("GPU (ms)", empty, 2, 0, "No samples", 0, 16.67f, ImVec2(0, 55));
+            ImGui::PlotLines("Resources (MiB)", empty, 2, 0, "No samples", 0, 1, ImVec2(0, 45));
+            ImGui::BeginChild("EmptyTimeline", ImVec2(0, 120), true);
+            ImGui::TextWrapped("Record a workload, pause capture, then select a frame to inspect its CPU timeline and scopes.");
+            ImGui::EndChild();
+        }
 
-		if (ImGui::CollapsingHeader("Memory and resources", ImGuiTreeNodeFlags_DefaultOpen))
+        ImGui::EndTabItem();
+        }
+        if (tabs && ImGui::BeginTabItem("Memory / resources"))
 		{
 			const auto current = ProfileResourceTracker::Get().Snapshot();
 			if (m_LastMemorySample < 0 || ImGui::GetTime() - m_LastMemorySample > 0.5)
@@ -212,14 +226,17 @@ namespace TomCat {
 			ImGui::Text("Texture staging %.2f MiB | pending %llu | workers %llu", textures.PreparedBytes / MiB, static_cast<unsigned long long>(textures.PendingCount), static_cast<unsigned long long>(textures.JobsInFlight));
 			ImGui::Text("Font staging %.2f MiB | atlases %llu | workers %llu", fonts.PreparedBytes / MiB, static_cast<unsigned long long>(fonts.PublishedCount), static_cast<unsigned long long>(fonts.JobsInFlight));
 			ImGui::TextWrapped("Resource sizes are allocation estimates, including texture mips/compression and framebuffer samples. They exclude driver overhead, shader programs, audio and managed heap attribution. Process counters include the editor and managed runtime. Compare equivalent load/unload cycles against a baseline to investigate retained resources.");
+            ImGui::EndTabItem();
 		}
-		if (ImGui::CollapsingHeader("C# debugger"))
+		if (tabs && ImGui::BeginTabItem("C# debugger"))
 		{
 #ifdef TC_PLATFORM_WINDOWS
 			ImGui::Text("Attach managed (.NET) debugger to PID %lu", static_cast<unsigned long>(GetCurrentProcessId()));
 #endif
 			ImGui::TextWrapped("After the first Play initializes .NET, attach Visual Studio to TomCatInut.exe with managed .NET code selected. Open the project's script source, set a breakpoint, and enter Play again for OnCreate. Portable symbols are loaded together with Assembly-CSharp. See docs/DEBUGGING_AND_PROFILING.md for source mapping and symbol troubleshooting.");
+            ImGui::EndTabItem();
 		}
+        if(tabs) ImGui::EndTabBar();
 		ImGui::End();
 		if (open && !*open) profiler.SetRecording(false);
 	}

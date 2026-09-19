@@ -1,6 +1,8 @@
 #include "SceneHierarchyPanel.h"
 
 #include <imgui/imgui.h>
+#include <yaml-cpp/yaml.h>
+#include <set>
 #include <imgui/imgui_internal.h>
 
 #include <glm/gtc/type_ptr.hpp>
@@ -34,6 +36,7 @@
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Scene/Serialization/PrefabLink.h"
 #include "../EditorDragDrop.h"
+#include "../EditorPropertyTransaction.h"
 
 namespace TomCat {
 
@@ -1160,6 +1163,13 @@ namespace TomCat {
 		if (hadSelection)
 			selectedUUID = m_SelectionContext.GetUUID();
 		const bool contextChanged = m_Context != context;
+        if (contextChanged || clearSelection)
+        {
+            m_MultiSelection.clear();
+            m_HierarchyVisibleOrder.clear();
+            m_PreviousHierarchyOrder.clear();
+            m_SelectionAnchor = UUID(0);
+        }
 		if (contextChanged && m_Context)
 		{
 			for (const auto& [entityID, timeline] : m_AnimationTimelineStates)
@@ -1195,6 +1205,8 @@ namespace TomCat {
 		m_AnimatorRenamePopupRequested = false;
 		if (contextChanged)
 		{
+            m_InspectorLocked = false;
+            m_InspectedEntity = UUID(0);
 			m_AnimatorGraphStates.clear();
 			m_TilemapBrushStates.clear();
 			m_AnimationTimelineStates.clear();
@@ -1244,6 +1256,7 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::MarkModified(bool instant)
 	{
+        m_PrefabOverridesDirty = true;
 		if (!m_SceneModifiedCallback)
 			return;
 		if (instant)
@@ -1476,7 +1489,8 @@ namespace TomCat {
 			const UUID root = m_PendingPrefabRoot;
 			m_PendingPrefabRoot = UUID(0);
 			if (m_Context && m_PrefabActionCallback && m_PrefabCreationAllowed)
-				m_PrefabActionCallback(m_Context->FindEntityByUUID(root), m_PendingPrefabAction);
+				m_PrefabActionCallback(m_Context->FindEntityByUUID(root), m_PendingPrefabAction, m_PendingPrefabEntity, m_PendingPrefabComponent, m_PendingPrefabProperty);
+            m_PrefabOverridesDirty = true;
 		}
 		return FlushPendingDeletion();
 	}
@@ -1511,8 +1525,14 @@ namespace TomCat {
 		// Keyboard commands can originate from the Scene viewport while Hierarchy
 		// is hidden or covered by another dock tab. Drain deletion before any tree
 		// traversal so it never remains queued until the panel becomes visible.
-		FlushPendingDeletion();
-		m_HierarchyFocused = false;
+        FlushPendingDeletion();
+        if (!m_Context || !m_SelectionContext) m_MultiSelection.clear();
+        else
+        {
+            std::erase_if(m_MultiSelection, [&](UUID id) { return !m_Context->FindEntityByUUID(id); });
+            if (!m_MultiSelection.empty() && std::find(m_MultiSelection.begin(),m_MultiSelection.end(),m_SelectionContext.GetUUID())==m_MultiSelection.end()) m_MultiSelection.clear();
+        }
+        m_HierarchyFocused = false;
 		m_InspectorFocused = false;
 		if (!hierarchyOpen || *hierarchyOpen)
 		{
@@ -1521,9 +1541,13 @@ namespace TomCat {
 		m_HierarchyFocused = hierarchyVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		if (hierarchyVisible && m_Context)
-		{
-			FlushPendingDeletion();
-			std::string sceneName = m_Context->GetSceneName();
+        {
+            m_PreviousHierarchyOrder.swap(m_HierarchyVisibleOrder);
+            m_HierarchyVisibleOrder.clear();
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##HierarchySearch", "Search objects...", m_HierarchySearch.data(), m_HierarchySearch.size());
+            FlushPendingDeletion();
+            std::string sceneName = m_Context->GetSceneName();
 			if (sceneDirty)
 				sceneName += "*";
 			if (m_ForceOpenSceneRoot)
@@ -1676,9 +1700,14 @@ namespace TomCat {
 			m_InspectorDocked = ImGui::IsWindowDocked();
 			m_InspectorFocused = inspectorVisible &&
 				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-			if (inspectorVisible && m_SelectionContext)
+			if (inspectorVisible && m_Context && (m_SelectionContext || (m_InspectorLocked && m_Context->FindEntityByUUID(m_InspectedEntity))))
 			{
-				DrawComponents(m_SelectionContext);
+                if (ImGui::Checkbox("Lock Inspector", &m_InspectorLocked))
+                    m_InspectedEntity = m_InspectorLocked && m_SelectionContext ? m_SelectionContext.GetUUID() : UUID(0);
+                Entity inspected = m_InspectorLocked ? m_Context->FindEntityByUUID(m_InspectedEntity) : m_SelectionContext;
+                if (!inspected) { m_InspectorLocked = false; inspected = m_SelectionContext; }
+                if (!m_InspectorLocked && m_MultiSelection.size()>1) DrawMultiSelectionInspector();
+                else DrawComponents(inspected);
 				const ImVec2 windowPosition = ImGui::GetWindowPos();
 				const ImVec2 contentMinimum = ImGui::GetWindowContentRegionMin();
 				const ImVec2 contentMaximum = ImGui::GetWindowContentRegionMax();
@@ -1690,7 +1719,7 @@ namespace TomCat {
 				if (ImGui::BeginDragDropTargetCustom(dropRect,
 					ImGui::GetID("##InspectorCSharpScriptDrop")))
 				{
-					AcceptCSharpScriptDrop(m_SelectionContext);
+					AcceptCSharpScriptDrop(inspected);
 					ImGui::EndDragDropTarget();
 				}
 			}
@@ -1913,7 +1942,8 @@ namespace TomCat {
 			if (ImGui::Button("Close Asset")) editor = {};
 			return;
 		}
-		if (ImGui::Button("Save")) SaveAnimationClipAsset();
+		ImGui::TextDisabled(editor.Dirty ? "Unsaved changes - Save to write this asset" : "All changes saved");
+        if (ImGui::Button("Save")) SaveAnimationClipAsset();
 		ImGui::SameLine();
 		if (ImGui::Button("Revert"))
 		{
@@ -1945,10 +1975,44 @@ namespace TomCat {
 		if (ImGui::Checkbox("Loop", &editor.Asset.Clip.Loop)) editor.Dirty = true;
 		if (ImGui::DragFloat("Sample Rate", &editor.Asset.SampleRate, 0.25f,
 			0.01f, 10000.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp)) editor.Dirty = true;
-		DrawAnimatorSectionLabel("Frames");
+        if (!editor.Asset.Clip.Frames.empty())
+        {
+            editor.SelectedFrame = std::min(editor.SelectedFrame, editor.Asset.Clip.Frames.size()-1);
+            if (ImGui::Button(editor.PreviewPlaying ? "Pause preview" : "Play preview")) editor.PreviewPlaying = !editor.PreviewPlaying;
+            ImGui::SameLine();
+            int selected = static_cast<int>(editor.SelectedFrame);
+            ImGui::SetNextItemWidth(220);
+            if (ImGui::SliderInt("Frame", &selected, 0, static_cast<int>(editor.Asset.Clip.Frames.size())-1))
+            { editor.SelectedFrame = selected; editor.PreviewPlaying = false; editor.PreviewTime = 0; }
+            if (editor.PreviewPlaying)
+            {
+                editor.PreviewTime += ImGui::GetIO().DeltaTime;
+                size_t advances = 0;
+                while (editor.PreviewTime >= editor.Asset.Clip.Frames[editor.SelectedFrame].DurationSeconds && advances++ < editor.Asset.Clip.Frames.size())
+                {
+                    editor.PreviewTime -= std::max(0.001f, editor.Asset.Clip.Frames[editor.SelectedFrame].DurationSeconds);
+                    if (editor.SelectedFrame+1 < editor.Asset.Clip.Frames.size()) ++editor.SelectedFrame;
+                    else if(editor.Asset.Clip.Loop) editor.SelectedFrame=0;
+                    else { editor.PreviewPlaying=false; editor.PreviewTime=0; break; }
+                }
+            }
+            DrawSpritePaletteTile(editor.Asset.Clip.Frames[editor.SelectedFrame].SpriteHandle, "Preview", false, 120);
+            ImGui::BeginChild("ClipFrameStrip", ImVec2(0, 105), true, ImGuiWindowFlags_HorizontalScrollbar);
+            for (size_t index=0; index<editor.Asset.Clip.Frames.size(); ++index)
+            {
+                ImGui::PushID(static_cast<int>(index));
+                if(index) ImGui::SameLine();
+                if (DrawSpritePaletteTile(editor.Asset.Clip.Frames[index].SpriteHandle, std::to_string(index).c_str(), index==editor.SelectedFrame, 64))
+                { editor.SelectedFrame=index; editor.PreviewPlaying=false; }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+        }
+        DrawAnimatorSectionLabel("Selected frame");
 		std::optional<size_t> remove;
 		for (size_t index = 0; index < editor.Asset.Clip.Frames.size(); ++index)
 		{
+            if (index != editor.SelectedFrame) continue;
 			ImGui::PushID(static_cast<int>(index));
 			ImGui::Text("Frame %zu", index);
 			AssetHandle sprite = editor.Asset.Clip.Frames[index].SpriteHandle;
@@ -1995,7 +2059,8 @@ namespace TomCat {
 			if (ImGui::Button("Close Asset")) editor = {};
 			return;
 		}
-		if (ImGui::Button("Save")) SaveAnimatorControllerAsset();
+		ImGui::TextDisabled(editor.Dirty ? "Unsaved changes - Save to write this asset" : "All changes saved");
+        if (ImGui::Button("Save")) SaveAnimatorControllerAsset();
 		ImGui::SameLine();
 		if (ImGui::Button("Revert"))
 		{
@@ -2310,7 +2375,8 @@ namespace TomCat {
 			if (ImGui::Button("Close Asset")) editor = {};
 			return;
 		}
-		if (ImGui::Button("Save")) SaveTilePaletteAsset();
+		ImGui::TextDisabled(editor.Dirty ? "Unsaved changes - Save to write this asset" : "All changes saved");
+        if (ImGui::Button("Save")) SaveTilePaletteAsset();
 		ImGui::SameLine();
 		if (ImGui::Button("Revert"))
 		{
@@ -2894,7 +2960,7 @@ namespace TomCat {
 		};
 		for (int tool = 0; tool < 7; ++tool)
 		{
-			if (tool > 0) ImGui::SameLine();
+			if (tool > 0 && ImGui::GetItemRectMax().x + 90.0f < ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
 			if (ImGui::Selectable(toolLabels[tool],
 				static_cast<int>(palette.Tool) == tool, 0, ImVec2(82.0f, 0.0f)))
 				palette.Tool = static_cast<TilePaletteTool>(tool);
@@ -3080,6 +3146,7 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
 	{
+        m_MultiSelection.clear();
 		if (m_SelectionContext != entity)
 		{
 			if (m_SelectionContext && m_SelectionContext.HasComponent<SpriteRenderer>())
@@ -3353,7 +3420,7 @@ namespace TomCat {
 		};
 
 		auto CreateUIElement = [&](const char* name, bool addImage,
-			bool addText, bool addButton)
+			bool addText, bool addButton, int preset = 0)
 		{
 			Entity uiParent = parentForNewObject;
 			Entity canvasOwner = FindCanvasAncestor(uiParent);
@@ -3397,6 +3464,14 @@ namespace TomCat {
 				text.Text = "Text";
 			}
 
+            if(preset==1) { element.AddComponent<UISlider>(); rect.SizeDelta={200,24}; }
+            if(preset==2)
+            {
+                element.AddComponent<UIInputField>(); rect.SizeDelta={240,36};
+                element.GetComponent<UIImage>().Color={0.15f,0.15f,0.15f,1};
+                element.GetComponent<UIText>().Text.clear();
+            }
+            if(preset==3) { element.AddComponent<UIScrollView>(); rect.SizeDelta={300,240}; rect.ClipChildren=true; }
 			m_Context->SetParent(element, uiParent);
 			// Match Unity's Button hierarchy: the selectable graphic lives on the
 			// Button entity and the label is a separate, stretched child. This keeps
@@ -3420,6 +3495,7 @@ namespace TomCat {
 			m_SelectionContext = element;
 			BeginRename(element);
 			MarkModified(true);
+            return element;
 		};
 
 		if (ImGui::BeginMenu("2D Object"))
@@ -3547,8 +3623,11 @@ namespace TomCat {
 				CreateUIElement("Image", true, false, false);
 			if (ImGui::MenuItem("Text"))
 				CreateUIElement("Text", false, true, false);
-			if (ImGui::MenuItem("Button"))
-				CreateUIElement("Button", true, false, true);
+            if (ImGui::MenuItem("Button"))
+                CreateUIElement("Button", true, false, true);
+            if (ImGui::MenuItem("Slider")) CreateUIElement("Slider",false,false,false,1);
+            if (ImGui::MenuItem("Input Field")) CreateUIElement("Input Field",true,true,false,2);
+            if (ImGui::MenuItem("Scroll View")) CreateUIElement("Scroll View",true,false,false,3);
 			ImGui::EndMenu();
 		}
 	}
@@ -3558,7 +3637,20 @@ namespace TomCat {
 		if (!entity)
 			return;
 
-		auto& tagComponent = entity.GetComponent<Tag>();
+        if (m_HierarchySearch[0])
+        {
+            const std::string query = LowerASCII(m_HierarchySearch.data());
+            std::function<bool(Entity)> matches = [&](Entity candidate) {
+                if (LowerASCII(candidate.GetName()).find(query) != std::string::npos) return true;
+                for (UUID child : m_Context->GetChildrenUUIDs(candidate))
+                    if (Entity item = m_Context->FindEntityByUUID(child); item && matches(item)) return true;
+                return false;
+            };
+            if (!matches(entity)) return;
+            ImGui::SetNextItemOpen(true);
+        }
+        m_HierarchyVisibleOrder.push_back(entity.GetUUID());
+        auto& tagComponent = entity.GetComponent<Tag>();
 		auto& tag = tagComponent._Tag;
 		const bool activeInHierarchy = m_Context->IsActiveInHierarchy(entity);
 		const bool hiddenSelf = m_Context->IsEditorHidden(entity);
@@ -3572,7 +3664,7 @@ namespace TomCat {
 				ImVec4(0.45f, 0.45f, 0.45f, alpha));
 		}
 
-		const bool isSelected = (m_SelectionContext == entity);
+		const bool isSelected = (m_SelectionContext == entity) || std::find(m_MultiSelection.begin(),m_MultiSelection.end(),entity.GetUUID()) != m_MultiSelection.end();
 		const auto children = m_Context->GetChildrenUUIDs(entity);
 		const bool hasChildren = !children.empty();
 
@@ -3647,8 +3739,33 @@ namespace TomCat {
 		if (isSelected)
 			ImGui::PopStyleColor(3);
 
-		if (!visibilityClicked && ImGui::IsItemClicked(ImGuiMouseButton_Left))
-			m_SelectionContext = entity;
+        if (!visibilityClicked && ImGui::IsItemClicked(ImGuiMouseButton_Left))
+        {
+            if (ImGui::GetIO().KeyShift && static_cast<uint64_t>(m_SelectionAnchor) != 0)
+            {
+                auto first = std::find(m_PreviousHierarchyOrder.begin(), m_PreviousHierarchyOrder.end(), m_SelectionAnchor);
+                auto last = std::find(m_PreviousHierarchyOrder.begin(), m_PreviousHierarchyOrder.end(), entity.GetUUID());
+                if (first != m_PreviousHierarchyOrder.end() && last != m_PreviousHierarchyOrder.end())
+                {
+                    if (first > last) std::swap(first, last);
+                    if (!ImGui::GetIO().KeyCtrl) m_MultiSelection.clear();
+                    for (auto current = first; current <= last; ++current)
+                        if (std::find(m_MultiSelection.begin(), m_MultiSelection.end(), *current) == m_MultiSelection.end())
+                            m_MultiSelection.push_back(*current);
+                }
+                else { m_MultiSelection.clear(); m_SelectionAnchor = entity.GetUUID(); }
+                m_SelectionContext = entity;
+            }
+            else if (ImGui::GetIO().KeyCtrl)
+            {
+                m_SelectionAnchor = entity.GetUUID();
+                if(m_MultiSelection.empty() && m_SelectionContext) m_MultiSelection.push_back(m_SelectionContext.GetUUID());
+                auto found=std::find(m_MultiSelection.begin(),m_MultiSelection.end(),entity.GetUUID());
+                if(found==m_MultiSelection.end()) { m_MultiSelection.push_back(entity.GetUUID()); m_SelectionContext=entity; }
+                else { m_MultiSelection.erase(found); m_SelectionContext=m_MultiSelection.empty()?Entity{}:m_Context->FindEntityByUUID(m_MultiSelection.back()); }
+            }
+            else { m_MultiSelection.clear(); m_SelectionContext=entity; m_SelectionAnchor=entity.GetUUID(); }
+        }
 		if (!renameActive && !visibilityHovered && rowHovered
 			&& ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 		{
@@ -3753,71 +3870,28 @@ namespace TomCat {
 
 static bool DrawVec3Control(const std::string& label, glm::vec3& values, float resetValue = 0.0f, float columnWidth = 100.0f)
 	{
-		(void)resetValue;
-
-		ImGuiIO& io = ImGui::GetIO();
-		auto boldFont = io.Fonts->Fonts[0];
-
-		ImGui::PushID(label.c_str());
-
-		// 使用DrawProperty函数设置标签在左侧并右对齐
-		DrawProperty(label, columnWidth);
-
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{ 0, 0 });
-
-		float lineHeight = GImGui->Font->FontSize + GImGui->Style.FramePadding.y * 2.0f;
-		ImVec2 buttonSize = { lineHeight + 3.0f, lineHeight };
-		float spacing = ImGui::GetStyle().ItemSpacing.x;
-		float availableWidth = ImGui::GetContentRegionAvail().x;
-		float valueWidth = std::max(20.0f, (availableWidth - buttonSize.x * 3.0f - spacing * 6.0f) / 3.0f);
-
-		// X 按钮（无交互）
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 196.0f / 255.0f, 90.0f / 255.0f, 90.0f / 255.0f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 210.0f / 255.0f, 105.0f / 255.0f, 105.0f / 255.0f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 164.0f / 255.0f, 72.0f / 255.0f, 72.0f / 255.0f, 1.0f });
-		ImGui::PushFont(boldFont);
-		ImGui::Button("X", buttonSize);
-		ImGui::PopFont();
-		ImGui::PopStyleColor(3);
-
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(valueWidth);
-		bool changed = ImGui::DragFloat("##X", &values.x, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::SameLine();
-
-		// Y 按钮（无交互）
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 111.0f / 255.0f, 175.0f / 255.0f, 111.0f / 255.0f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 126.0f / 255.0f, 190.0f / 255.0f, 126.0f / 255.0f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 88.0f / 255.0f, 145.0f / 255.0f, 88.0f / 255.0f, 1.0f });
-		ImGui::PushFont(boldFont);
-		ImGui::Button("Y", buttonSize);
-		ImGui::PopFont();
-		ImGui::PopStyleColor(3);
-
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(valueWidth);
-		changed |= ImGui::DragFloat("##Y", &values.y, 0.1f, 0.0f, 0.0f, "%.2f");
-		ImGui::SameLine();
-
-		// Z 按钮（无交互）
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{ 93.0f / 255.0f, 134.0f / 255.0f, 196.0f / 255.0f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{ 108.0f / 255.0f, 149.0f / 255.0f, 211.0f / 255.0f, 1.0f });
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{ 74.0f / 255.0f, 108.0f / 255.0f, 163.0f / 255.0f, 1.0f });
-		ImGui::PushFont(boldFont);
-		ImGui::Button("Z", buttonSize);
-		ImGui::PopFont();
-		ImGui::PopStyleColor(3);
-
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(valueWidth);
-		changed |= ImGui::DragFloat("##Z", &values.z, 0.1f, 0.0f, 0.0f, "%.2f");
-
-		ImGui::PopStyleVar();
-
-		ImGui::Columns(1);
-
-		ImGui::PopID();
-		return changed;
+        ImGui::PushID(label.c_str());
+        DrawProperty(label, columnWidth);
+        bool changed = false;
+        const float width = std::max(24.0f, (ImGui::GetContentRegionAvail().x - 44.0f) / 3.0f);
+        for (int axis=0; axis<3; ++axis)
+        {
+            ImGui::PushID(axis);
+            if(axis) ImGui::SameLine(0, 3);
+            const char* labels[] = { "X", "Y", "Z" };
+            ImGui::TextDisabled("%s", labels[axis]); ImGui::SameLine(0, 2);
+            ImGui::SetNextItemWidth(width);
+            changed |= ImGui::DragFloat("##Value", &values[axis], 0.1f, 0, 0, "%.2f");
+            if(ImGui::BeginPopupContextItem("AxisValue"))
+            {
+                if(ImGui::MenuItem("Reset axis")) { values[axis]=resetValue; changed=true; }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+        ImGui::Columns(1);
+        ImGui::PopID();
+        return changed;
 	}
 
 	// 通用的两列布局绘制函数（标签在左侧，控件右对齐）
@@ -3826,30 +3900,18 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		ImGui::Columns(2);
 		ImGui::SetColumnWidth(0, columnWidth + 40.0f);
 
-		// 保存当前光标位置
-		ImVec2 initialCursorPos = ImGui::GetCursorPos();
-
-		// 计算文本区域的可用宽度
-		float textWidth = ImGui::GetColumnWidth() - ImGui::GetStyle().FramePadding.x * 2;
-		ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + textWidth);
-		ImGui::TextWrapped("%s", label.c_str());
-		ImGui::PopTextWrapPos();
-
-		// 计算标签的实际高度
-		float labelHeight = ImGui::GetItemRectSize().y;
-		float singleLineHeight = ImGui::GetTextLineHeightWithSpacing();
-
-		ImGui::NextColumn();
-
-		// 如果标签是多行的，计算垂直偏移量使控件居中
-		if (labelHeight > singleLineHeight) {
-			float verticalOffset = (labelHeight - singleLineHeight) * 0.5f;
-			ImGui::SetCursorPosY(initialCursorPos.y + verticalOffset);
-		}
-
-		// 设置右侧控件宽度并右对齐
-		ImGui::SetNextItemWidth(-1);
-		ImGui::SetCursorPosX(ImGui::GetCursorPosX());
+        const float width = std::clamp(ImGui::GetWindowWidth() * 0.43f, 92.0f, columnWidth + 55.0f);
+        ImGui::SetColumnWidth(0, width);
+        ImGui::AlignTextToFramePadding();
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const ImVec2 max(min.x + std::max(1.0f, width - 12.0f), min.y + ImGui::GetTextLineHeight());
+        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), min, max, max.x, max.x,
+            label.c_str(), nullptr, nullptr);
+        ImGui::Dummy(ImVec2(max.x - min.x, ImGui::GetTextLineHeight()));
+        if (ImGui::IsItemHovered() && ImGui::CalcTextSize(label.c_str()).x > max.x-min.x)
+            ImGui::SetTooltip("%s", label.c_str());
+        ImGui::NextColumn();
+        ImGui::SetNextItemWidth(-1.0f);
 	}
 
 	template<typename T> static bool* GetComponentEnabledFlag(T&) { return nullptr; }
@@ -3917,6 +3979,43 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		}
 		return changed;
 	}
+
+    static void DrawPropertyActions(const ComponentDescriptor& descriptor, Entity entity, const std::function<void()>& onModified)
+    {
+        static uint64_t copiedType = 0;
+        static std::map<std::string, PropertyValue> copied;
+        if (descriptor.Properties.empty()) return;
+        if (ImGui::MenuItem("Copy property values"))
+        {
+            copied.clear(); copiedType=static_cast<uint64_t>(descriptor.TypeId);
+            for(const auto& property:descriptor.Properties)
+                if(!property.EntityReference) copied.emplace(property.StableName,property.Get(entity));
+        }
+        const bool paste = ImGui::MenuItem("Paste property values",nullptr,false,copiedType==static_cast<uint64_t>(descriptor.TypeId) && !copied.empty());
+        const bool reset = ImGui::MenuItem("Reset property values");
+        if (paste || reset)
+        {
+            std::vector<std::pair<const PropertyDescriptor*,PropertyValue>> before;
+            std::string error;
+            bool accepted=true;
+            for(const auto& property:descriptor.Properties)
+            {
+                const PropertyValue* value=nullptr;
+                if(reset && property.DefaultValue) value=&*property.DefaultValue;
+                if(paste) { auto found=copied.find(property.StableName); if(found!=copied.end()) value=&found->second; }
+                if(!value) continue;
+                before.emplace_back(&property,property.Get(entity));
+                if(!property.Set(entity,*value,error)) { accepted=false; break; }
+            }
+            if(accepted && !before.empty()) onModified();
+            else if(!accepted)
+            {
+                for(auto it=before.rbegin();it!=before.rend();++it) { std::string rollback; it->first->Set(entity,it->second,rollback); }
+                TC_Core_Warn("Property operation rolled back: {0}",error);
+            }
+        }
+        ImGui::Separator();
+    }
 
 template<typename T, typename UIFunction, typename ModifiedFunction>
 static void DrawComponent(const std::string& name, Entity entity,
@@ -4003,7 +4102,9 @@ static void DrawComponent(const std::string& name, Entity entity,
 		if (ImGui::BeginPopup("ComponentSettings"))
 		{
 			ImGui::BeginDisabled(!editable);
-			if(name != "Transform" && name != "Rect Transform")
+            for(const auto& descriptor:ComponentRegistry::Get().GetDescriptors())
+                if(descriptor.DisplayName==name && descriptor.Has(entity)) { DrawPropertyActions(descriptor,entity,onModified); break; }
+            if(name != "Transform" && name != "Rect Transform")
 				if (ImGui::MenuItem("Remove component"))
 					removeComponent = true;
 			ImGui::EndDisabled();
@@ -4031,7 +4132,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 	template<typename ModifiedFunction>
 	static void DrawRegisteredComponent(const ComponentDescriptor& descriptor,
-		Entity entity, ModifiedFunction onModified, bool editable)
+		Entity entity, ModifiedFunction onModified, bool editable, const std::vector<Entity>* targets = nullptr)
 	{
 		if (!entity || !descriptor.InspectorVisible || !descriptor.Has(entity))
 			return;
@@ -4046,13 +4147,14 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 		bool remove = false;
 		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 8.0f);
-		ImGui::BeginDisabled(!editable);
+		ImGui::BeginDisabled(!editable || targets);
 		if (ImGui::SmallButton("..."))
 			ImGui::OpenPopup("RegisteredComponentSettings");
 		ImGui::EndDisabled();
 		if (ImGui::BeginPopup("RegisteredComponentSettings"))
 		{
 			ImGui::BeginDisabled(!editable);
+            DrawPropertyActions(descriptor,entity,onModified);
 			if (ImGui::MenuItem("Remove component"))
 				remove = true;
 			ImGui::EndDisabled();
@@ -4070,14 +4172,19 @@ static void DrawComponent(const std::string& name, Entity entity,
 			for (const PropertyDescriptor& property : descriptor.Properties)
 			{
 				ImGui::PushID(property.StableName.c_str());
-				PropertyValue value = property.Get(entity);
-				bool changed = false;
+                PropertyValue value = property.Get(entity);
+                bool mixed=false;
+                if(targets) for(Entity target:*targets) if(property.Get(target)!=value) { mixed=true; break; }
+                if(mixed) ImGui::PushItemFlag(ImGuiItemFlags_MixedValue,true);
+                const bool inlineField = !property.AssetReference;
+                if (inlineField) DrawProperty(property.DisplayName);
+                bool changed = false;
 				switch (property.Kind)
 				{
 					case PropertyKind::Bool:
 					{
 						bool item = std::get<bool>(value);
-						changed = ImGui::Checkbox(property.DisplayName.c_str(), &item);
+						changed = ImGui::Checkbox("##Value", &item);
 						value = item;
 						break;
 					}
@@ -4112,17 +4219,17 @@ static void DrawComponent(const std::string& name, Entity entity,
 							labelCount = static_cast<int>(std::size(layoutDirectionLabels));
 						}
 						if (labels && item >= 0 && item < labelCount)
-							changed = ImGui::Combo(property.DisplayName.c_str(), &item,
+							changed = ImGui::Combo("##Value", &item,
 								labels, labelCount);
 						else
-							changed = ImGui::DragInt(property.DisplayName.c_str(), &item, 1.0f);
+							changed = ImGui::DragInt("##Value", &item, 1.0f);
 						value = item;
 						break;
 					}
 					case PropertyKind::Int64:
 					{
 						int64_t item = std::get<int64_t>(value);
-						changed = ImGui::InputScalar(property.DisplayName.c_str(),
+						changed = ImGui::InputScalar("##Value",
 							ImGuiDataType_S64, &item);
 						value = item;
 						break;
@@ -4130,7 +4237,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 					case PropertyKind::UInt32:
 					{
 						uint32_t item = std::get<uint32_t>(value);
-						changed = ImGui::InputScalar(property.DisplayName.c_str(),
+						changed = ImGui::InputScalar("##Value",
 							ImGuiDataType_U32, &item);
 						value = item;
 						break;
@@ -4145,7 +4252,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 							item = static_cast<uint64_t>(handle);
 						}
 						else
-							changed = ImGui::InputScalar(property.DisplayName.c_str(),
+							changed = ImGui::InputScalar("##Value",
 								ImGuiDataType_U64, &item);
 						value = item;
 						break;
@@ -4155,17 +4262,17 @@ static void DrawComponent(const std::string& name, Entity entity,
 						float item = std::get<float>(value);
 						if (componentType == ComponentIds::Canvas
 							&& property.StableName == "MatchWidthOrHeight")
-							changed = ImGui::SliderFloat(property.DisplayName.c_str(),
+							changed = ImGui::SliderFloat("##Value",
 								&item, 0.0f, 1.0f, "%.2f");
 						else
-							changed = ImGui::DragFloat(property.DisplayName.c_str(), &item, 0.1f);
+							changed = ImGui::DragFloat("##Value", &item, 0.1f);
 						value = item;
 						break;
 					}
 					case PropertyKind::Double:
 					{
 						double item = std::get<double>(value);
-						changed = ImGui::InputDouble(property.DisplayName.c_str(), &item);
+						changed = ImGui::InputDouble("##Value", &item);
 						value = item;
 						break;
 					}
@@ -4176,7 +4283,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 							|| componentType == ComponentIds::UIText)
 							&& property.StableName == "Text")
 							|| (componentType == ComponentIds::UILocalization && property.StableName == "Table"))
-							changed = DrawBoundedMultilineText(property.DisplayName.c_str(),
+							changed = DrawBoundedMultilineText("##Value",
 								item, ImVec2(-1.0f,
 									ImGui::GetTextLineHeight() * 3.5f));
 						else
@@ -4184,7 +4291,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 							std::array<char, 4096> buffer{};
 							const size_t count = std::min(item.size(), buffer.size() - 1);
 							std::copy_n(item.data(), count, buffer.data());
-							changed = ImGui::InputText(property.DisplayName.c_str(),
+							changed = ImGui::InputText("##Value",
 								buffer.data(), buffer.size());
 							item = std::string(buffer.data());
 						}
@@ -4194,7 +4301,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 					case PropertyKind::Vector2:
 					{
 						auto item = std::get<glm::vec2>(value);
-						changed = ImGui::DragFloat2(property.DisplayName.c_str(),
+						changed = ImGui::DragFloat2("##Value",
 							glm::value_ptr(item), 0.1f);
 						value = item;
 						break;
@@ -4202,7 +4309,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 					case PropertyKind::Vector3:
 					{
 						auto item = std::get<glm::vec3>(value);
-						changed = ImGui::DragFloat3(property.DisplayName.c_str(),
+						changed = ImGui::DragFloat3("##Value",
 							glm::value_ptr(item), 0.1f);
 						value = item;
 						break;
@@ -4213,21 +4320,25 @@ static void DrawComponent(const std::string& name, Entity entity,
 						const bool isColor = property.StableName.find("Color")
 							!= std::string::npos;
 						if (isColor)
-							changed = DrawColorField(property.DisplayName.c_str(),
+							changed = DrawColorField("##Value",
 								glm::value_ptr(item));
 						else
-							changed = ImGui::DragFloat4(property.DisplayName.c_str(),
+							changed = ImGui::DragFloat4("##Value",
 								glm::value_ptr(item), 0.1f);
 						value = item;
 						break;
 					}
 				}
+                if (inlineField) ImGui::Columns(1);
+                if(mixed) ImGui::PopItemFlag();
 				if (changed)
 				{
 					std::string error;
-					if (property.Set(entity, value, error))
-						onModified();
-					else
+                    const std::vector<Entity> single{entity};
+                    const auto& edits=targets?*targets:single;
+                    const bool accepted=EditorProperties::SetAll(property,edits,value,error);
+                    if(accepted) onModified();
+                    if(!accepted)
 						TC_Core_Warn("Could not set {0}.{1}: {2}", descriptor.StableName,
 							property.StableName, error);
 				}
@@ -6111,12 +6222,21 @@ static void DrawComponent(const std::string& name, Entity entity,
 		changed |= DrawColorField("Disabled Color", glm::value_ptr(button.DisabledColor));
 		changed |= ImGui::SliderFloat("Color Multiplier", &button.ColorMultiplier,
 			0.0f, 5.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (changed)
-			MarkModified();
-
-		ImGui::Spacing();
-		ImGui::Separator();
-		ImGui::TextUnformatted("On Click ()");
+        if (changed) MarkModified();
+        if(ImGui::TreeNode("Preview states"))
+        {
+            const char* names[]={"Normal","Hover","Pressed","Selected","Disabled"};
+            const glm::vec4 colors[]={button.NormalColor,button.HoverColor,button.PressedColor,button.SelectedColor,button.DisabledColor};
+            for(int i=0;i<5;++i)
+            {
+                const auto color=colors[i]*button.ColorMultiplier;
+                ImGui::ColorButton(names[i],ImVec4(color.x,color.y,color.z,colors[i].a),0,ImVec2(48,24));
+                ImGui::SameLine(); ImGui::TextUnformatted(names[i]);
+            }
+            ImGui::TreePop();
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted("On Click ()");
 		std::optional<size_t> removeIndex;
 		for (size_t index = 0; index < button.OnClick.size(); ++index)
 		{
@@ -6431,6 +6551,22 @@ static void DrawComponent(const std::string& name, Entity entity,
 	}
 
 
+    void SceneHierarchyPanel::DrawMultiSelectionInspector()
+    {
+        std::vector<Entity> entities;
+        for(UUID id:m_MultiSelection) if(Entity e=m_Context->FindEntityByUUID(id)) entities.push_back(e);
+        if(entities.empty()) return;
+        ImGui::Text("%zu objects selected",entities.size());
+        ImGui::TextWrapped("Ctrl-click to change selection. Editing a common property replaces that value on every selected object. Mixed values are marked with a dash.");
+        for(const auto& descriptor:ComponentRegistry::Get().GetDescriptors())
+        {
+            if(!descriptor.InspectorVisible || descriptor.Properties.empty()) continue;
+            bool common=true;
+            for(Entity e:entities) if(!descriptor.Has(e)) { common=false; break; }
+            if(common) DrawRegisteredComponent(descriptor,entities.front(),[this](){MarkModified();},m_ColliderEditingAllowed,&entities);
+        }
+    }
+
 	void SceneHierarchyPanel::DrawComponents(Entity entity)
 {
 	// 检查实体是否有效
@@ -6449,7 +6585,79 @@ static void DrawComponent(const std::string& name, Entity entity,
 			std::snprintf(m_NameEditBuffer, sizeof(m_NameEditBuffer), "%s", tag.c_str());
 		}
 
-		if (entity.HasComponent<EntityMetadata>())
+	    if (entity.HasComponent<PrefabLink>())
+    {
+        const auto& link = entity.GetComponent<PrefabLink>();
+        const auto* metadata = AssetManager::Get().GetRegistry().GetMetadata(link.Source);
+        ImGui::Separator();
+        ImGui::TextWrapped("Prefab: %s", metadata ? PathToUTF8(metadata->FilePath).c_str() : "Missing source");
+        if (metadata && ImGui::SmallButton("Select source") && m_AssetRevealCallback) m_AssetRevealCallback(link.Source);
+        if (ImGui::TreeNode("Overrides"))
+        {
+            static UUID cachedRoot{0}; static Scene* cachedScene=nullptr; static double refreshed=0;
+            static std::vector<std::string> paths;
+            static std::vector<PrefabPropertyOverride> properties;
+            static std::string error;
+            if(cachedRoot!=entity.GetUUID() || cachedScene!=m_Context.get() || (m_PrefabOverridesDirty && ImGui::GetTime()-refreshed>0.5))
+            {
+                cachedRoot=entity.GetUUID(); cachedScene=m_Context.get(); refreshed=ImGui::GetTime(); m_PrefabOverridesDirty=false;
+                PrefabLinkedInstance::GetOverridePaths(m_Context,entity.GetUUID(),paths,error);
+                if(error.empty()) PrefabLinkedInstance::GetPropertyOverrides(m_Context,entity.GetUUID(),properties,error);
+            }
+            if(ImGui::SmallButton("Refresh differences")) m_PrefabOverridesDirty=true;
+            if(!error.empty()) ImGui::TextWrapped("%s",error.c_str());
+            if(paths.empty()) ImGui::TextDisabled("No overrides. This instance matches its source.");
+            else
+            {
+                ImGui::Text("%zu changed paths",paths.size());
+                auto text=[](const PropertyValue& value) {
+                    return std::visit([](const auto& item)->std::string {
+                        using T=std::decay_t<decltype(item)>;
+                        if constexpr(std::is_same_v<T,std::string>) return item;
+                        else if constexpr(std::is_same_v<T,bool>) return item?"true":"false";
+                        else if constexpr(std::is_arithmetic_v<T>) return std::to_string(item);
+                        else { std::string result; for(int i=0;i<item.length();++i) { if(i) result+=", "; result+=std::to_string(item[i]); } return result; }
+                    },value);
+                };
+                ImGui::BeginChild("PropertyOverrides",ImVec2(0,230),true);
+                for(size_t i=0;i<properties.size();++i)
+                {
+                    const auto& item=properties[i]; ImGui::PushID(static_cast<int>(i));
+                    ImGui::TextWrapped("%s",item.Path.c_str());
+                    ImGui::TextWrapped("Source: %s",text(item.Before).c_str());
+                    ImGui::TextWrapped("Instance: %s",text(item.After).c_str());
+                    ImGui::BeginDisabled(!m_PrefabCreationAllowed || !m_PrefabActionCallback);
+                    auto queue=[&](int action) { m_PendingPrefabRoot=entity.GetUUID(); m_PendingPrefabAction=action; m_PendingPrefabEntity=item.EntityID; m_PendingPrefabComponent=item.ComponentID; m_PendingPrefabProperty=item.PropertyID; };
+                    if(ImGui::SmallButton("Apply property")) queue(5);
+                    ImGui::SameLine(); if(ImGui::SmallButton("Revert property")) queue(6);
+                    ImGui::EndDisabled(); ImGui::Separator(); ImGui::PopID();
+                }
+                if(ImGui::TreeNode("All changes (including structure)")) { for(const auto& path:paths) ImGui::TextWrapped("%s",path.c_str()); ImGui::TreePop(); }
+                ImGui::EndChild();
+            }
+            ImGui::BeginDisabled(!m_PrefabCreationAllowed || !m_PrefabActionCallback);
+            if (ImGui::Button("Update")) { m_PendingPrefabRoot = entity.GetUUID(); m_PendingPrefabAction = 0; }
+            ImGui::SameLine();
+            if (ImGui::Button("Apply All")) ImGui::OpenPopup("ApplyPrefabOverrides");
+            ImGui::SameLine();
+            if (ImGui::Button("Revert All")) ImGui::OpenPopup("RevertPrefabOverrides");
+            if (ImGui::BeginPopup("ApplyPrefabOverrides"))
+            {
+                ImGui::TextWrapped("Write all overrides to the source prefab. Other linked instances can receive these changes.");
+                if (ImGui::Button("Apply to source")) { m_PendingPrefabRoot = entity.GetUUID(); m_PendingPrefabAction = 2; ImGui::CloseCurrentPopup(); }
+                ImGui::EndPopup();
+            }
+            if (ImGui::BeginPopup("RevertPrefabOverrides"))
+            {
+                ImGui::TextWrapped("Replace this instance's overrides with its source values.");
+                if (ImGui::Button("Revert instance")) { m_PendingPrefabRoot = entity.GetUUID(); m_PendingPrefabAction = 1; ImGui::CloseCurrentPopup(); }
+                ImGui::EndPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::TreePop();
+        }
+    }
+	if (entity.HasComponent<EntityMetadata>())
 		{
 			if (DrawEntityIconSelector(m_Icons, entity, m_ColliderEditingAllowed))
 				MarkModified();
@@ -7060,20 +7268,65 @@ static void DrawComponent(const std::string& name, Entity entity,
 			glm::vec2 pivot = component.Pivot;
 			bool clipChildren = component.ClipChildren;
 
-			bool rectEdited = ImGui::DragFloat2("Anchored Position",
-				glm::value_ptr(anchoredPosition), 0.1f);
-			rectEdited |= ImGui::DragFloat2("Size Delta",
-				glm::value_ptr(sizeDelta), 0.1f);
-			ImGui::Spacing();
-			ImGui::TextDisabled("ANCHORS");
-			rectEdited |= ImGui::DragFloat2("Min", glm::value_ptr(anchorMin),
-				0.005f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-			rectEdited |= ImGui::DragFloat2("Max", glm::value_ptr(anchorMax),
-				0.005f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-			rectEdited |= ImGui::DragFloat2("Pivot", glm::value_ptr(pivot),
-				0.005f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-			rectEdited |= ImGui::Checkbox("Clip Children", &clipChildren);
-			if (rectEdited)
+            bool presetEdited = false;
+            if (ImGui::Button("Anchor presets")) ImGui::OpenPopup("AnchorPresets");
+            if (ImGui::BeginPopup("AnchorPresets"))
+            {
+                ImGui::TextDisabled("Anchor alignment / stretch");
+                ImGui::TextDisabled("Shift: also set pivot. Alt: also reset position and size.");
+                const char* names[] = { "Left", "Center", "Right", "Stretch" };
+                for (int y = 0; y < 4; ++y)
+                    for (int x = 0; x < 4; ++x)
+                    {
+                        ImGui::PushID(y*4+x);
+                        if (x) ImGui::SameLine();
+                        const char* vertical[] = { "Bottom", "Middle", "Top", "Stretch" };
+                        std::string title = std::string(names[x]) + " / " + vertical[y];
+                        const ImVec2 origin=ImGui::GetCursorScreenPos();
+                        const bool clicked=ImGui::InvisibleButton("Preset",ImVec2(70,50));
+                        auto* draw=ImGui::GetWindowDrawList();
+                        draw->AddRectFilled(origin,ImVec2(origin.x+70,origin.y+50),ImGui::GetColorU32(ImGui::IsItemHovered()?ImGuiCol_HeaderHovered:ImGuiCol_FrameBg),2);
+                        const ImVec2 min(origin.x+16,origin.y+8),max(origin.x+54,origin.y+42);
+                        draw->AddRect(min,max,IM_COL32(145,145,145,255));
+                        const float ax=min.x+x*0.5f*(max.x-min.x),ay=max.y-y*0.5f*(max.y-min.y);
+                        if(x==3) draw->AddLine(ImVec2(min.x,origin.y+25),ImVec2(max.x,origin.y+25),IM_COL32(80,170,240,255),2);
+                        if(y==3) draw->AddLine(ImVec2(origin.x+35,min.y),ImVec2(origin.x+35,max.y),IM_COL32(80,170,240,255),2);
+                        if(x!=3 && y!=3) draw->AddCircleFilled(ImVec2(ax,ay),3,IM_COL32(80,170,240,255));
+                        if(ImGui::IsItemHovered()) ImGui::SetTooltip("%s",title.c_str());
+                        if (clicked)
+                        {
+                            anchorMin = { x == 3 ? 0.0f : x*0.5f, y == 3 ? 0.0f : y*0.5f };
+                            anchorMax = { x == 3 ? 1.0f : x*0.5f, y == 3 ? 1.0f : y*0.5f };
+                            if (ImGui::GetIO().KeyShift) pivot = (anchorMin + anchorMax)*0.5f;
+                            if (ImGui::GetIO().KeyAlt) { anchoredPosition = {}; if(x==3) sizeDelta.x=0; if(y==3) sizeDelta.y=0; }
+                            presetEdited = true;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::PopID();
+                    }
+                ImGui::EndPopup();
+            }
+            auto vectorField = [](const char* label, glm::vec2& value, float speed, bool normalized) {
+                ImGui::PushID(label);
+                DrawProperty(label);
+                const bool edited = ImGui::DragFloat2("##Value", glm::value_ptr(value), speed,
+                    0.0f, normalized ? 1.0f : 0.0f, "%.3f",
+                    normalized ? ImGuiSliderFlags_AlwaysClamp : ImGuiSliderFlags_None);
+                ImGui::Columns(1);
+                ImGui::PopID();
+                return edited;
+            };
+            bool rectEdited = vectorField("Position", anchoredPosition, 0.1f, false);
+            rectEdited |= vectorField("Size Delta", sizeDelta, 0.1f, false);
+            ImGui::Spacing();
+            ImGui::TextDisabled("ANCHORS");
+            rectEdited |= vectorField("Min", anchorMin, 0.005f, true);
+            rectEdited |= vectorField("Max", anchorMax, 0.005f, true);
+            rectEdited |= vectorField("Pivot", pivot, 0.005f, true);
+            DrawProperty("Clip Children");
+            rectEdited |= ImGui::Checkbox("##ClipChildren", &clipChildren);
+            ImGui::Columns(1);
+			if (rectEdited || presetEdited)
 			{
 				const bool finite = std::isfinite(anchoredPosition.x)
 					&& std::isfinite(anchoredPosition.y)
@@ -7112,10 +7365,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 				? transformComponent._LocalScale : transformComponent._Scale;
 			float rotationZ = glm::degrees(rotation.z);
 			glm::vec2 scaleXY(scale.x, scale.y);
-			bool transformEdited = ImGui::DragFloat("Rotation Z", &rotationZ, 0.1f,
+			DrawProperty("Rotation Z");
+            bool transformEdited = ImGui::DragFloat("##RotationZ", &rotationZ, 0.1f,
 				0.0f, 0.0f, "%.2f deg");
-			transformEdited |= ImGui::DragFloat2("Scale", glm::value_ptr(scaleXY),
-				0.01f, 0.0f, 0.0f, "%.3f");
+            ImGui::Columns(1);
+            transformEdited |= vectorField("Scale", scaleXY, 0.01f, false);
 			if (transformEdited && std::isfinite(rotationZ)
 				&& std::isfinite(scaleXY.x) && std::isfinite(scaleXY.y))
 			{
@@ -7234,18 +7488,21 @@ static void DrawComponent(const std::string& name, Entity entity,
 		DrawComponent<AudioSource>("Audio Source", entity, m_Icons, EditorIcon::Count,
 			[this](auto& component)
 		{
-			uint64_t clip = static_cast<uint64_t>(component.Clip);
-			if (ImGui::InputScalar("Audio Clip", ImGuiDataType_U64, &clip))
-			{
-				const AssetMetadata* metadata = clip == 0 ? nullptr
-					: AssetManager::Get().GetRegistry().GetMetadata(AssetHandle(clip));
-				if (clip == 0 || (metadata && !metadata->IsMissing
-					&& metadata->Type == AssetType::Audio))
-				{
-					component.Clip = AssetHandle(clip);
-					MarkModified();
-				}
-			}
+            const auto* clipMetadata = AssetManager::Get().GetRegistry().GetMetadata(component.Clip);
+            const std::string clipLabel = clipMetadata ? PathToUTF8(clipMetadata->FilePath.filename()) : "None (Audio)";
+            if (ImGui::BeginCombo("Audio Clip", clipLabel.c_str()))
+            {
+                if (ImGui::Selectable("None")) { component.Clip = AssetHandle(0); MarkModified(); }
+                for (const auto& [handle, metadata] : AssetManager::Get().GetRegistry().GetAssets())
+                    if (!metadata.IsMissing && metadata.Type == AssetType::Audio)
+                    {
+                        ImGui::PushID(std::to_string(static_cast<uint64_t>(handle)).c_str());
+                        if (ImGui::Selectable(PathToUTF8(metadata.FilePath).c_str())) { component.Clip = handle; MarkModified(); }
+                        ImGui::PopID();
+                    }
+                ImGui::EndCombo();
+            }
+            uint64_t clip = static_cast<uint64_t>(component.Clip);
 			if (ImGui::BeginDragDropTarget())
 			{
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
@@ -7696,16 +7953,106 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}, onModified, m_ColliderEditingAllowed);
 		});
 
+        richInspectors.emplace(ComponentIds::UILocalization, [&]()
+        {
+            DrawComponent<UILocalization>("UI Localization", entity, m_Icons, EditorIcon::Count,
+                [&](UILocalization& component)
+                {
+                    auto editString = [&](const char* label, std::string& value) {
+                        std::array<char, 4096> buffer{};
+                        std::snprintf(buffer.data(), buffer.size(), "%s", value.c_str());
+                        ImGui::BeginDisabled(value.size() >= buffer.size());
+                        if (ImGui::InputText(label, buffer.data(), buffer.size())) { value=buffer.data(); MarkModified(); }
+                        ImGui::EndDisabled();
+                    };
+                    editString("Locale", component.Locale);
+                    editString("Fallback locale", component.FallbackLocale);
+                    try
+                    {
+                        YAML::Node table = YAML::Load(component.Table);
+                        if (!table.IsMap()) throw std::runtime_error("Translation table must be a language-to-key map.");
+                        std::vector<std::string> locales; std::set<std::string> keys;
+                        for(const auto& locale : table)
+                        {
+                            if (!locale.second.IsMap()) throw std::runtime_error("Each language must contain a key/value map.");
+                            locales.push_back(locale.first.as<std::string>());
+                            for(const auto& value : locale.second) { keys.insert(value.first.as<std::string>()); if(!value.second.IsScalar()) throw std::runtime_error("Translations must be text values."); }
+                        }
+                        bool changed=false;
+                        if(ImGui::Button("Add current locale") && !component.Locale.empty() && !table[component.Locale])
+                        { table[component.Locale]=YAML::Node(YAML::NodeType::Map); changed=true; }
+                        ImGui::TextWrapped("Missing keys use the fallback locale. An explicitly empty translation displays empty text. Right-click a cell to restore fallback.");
+                        static char newKey[128]{};
+                        ImGui::InputTextWithHint("##TranslationKey", "New translation key", newKey, sizeof(newKey));
+                        ImGui::SameLine();
+                        if(ImGui::Button("Add key") && newKey[0] && !component.Locale.empty() && !keys.contains(newKey))
+                        { table[component.Locale][newKey]=""; changed=true; newKey[0]=0; }
+                        if(!locales.empty() && ImGui::BeginTable("Translations", static_cast<int>(std::min<size_t>(locales.size(), 30))+1,
+                            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit))
+                        {
+                            ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 130);
+                            for(size_t i=0;i<std::min<size_t>(locales.size(),30);++i) ImGui::TableSetupColumn(locales[i].c_str(), ImGuiTableColumnFlags_WidthFixed,180);
+                            ImGui::TableHeadersRow();
+                            for(const auto& key : keys)
+                            {
+                                ImGui::PushID(key.c_str()); ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::TextUnformatted(key.c_str());
+                                for(size_t i=0;i<std::min<size_t>(locales.size(),30);++i)
+                                {
+                                    ImGui::TableNextColumn(); ImGui::PushID(locales[i].c_str());
+                                    const YAML::Node values=table[locales[i]];
+                                    std::string value=values[key] ? values[key].as<std::string>() : "";
+                                    std::array<char,4096> buffer{}; std::snprintf(buffer.data(),buffer.size(),"%s",value.c_str());
+                                    ImGui::SetNextItemWidth(-1); ImGui::BeginDisabled(value.size()>=buffer.size());
+                                    if(ImGui::InputTextWithHint("##Translation", values[key] ? "Empty" : "Missing (fallback)",buffer.data(),buffer.size())) { table[locales[i]][key]=buffer.data(); changed=true; }
+                                    if (ImGui::BeginPopupContextItem("TranslationActions"))
+                                    {
+                                        if (ImGui::MenuItem("Use fallback (remove translation)", nullptr, false, static_cast<bool>(values[key])))
+                                        { table[locales[i]].remove(key); changed=true; }
+                                        ImGui::EndPopup();
+                                    }
+                                    ImGui::EndDisabled(); ImGui::PopID();
+                                }
+                                ImGui::PopID();
+                            }
+                            ImGui::EndTable();
+                        }
+                        if(locales.size()>30) ImGui::TextWrapped("Showing first 30 locales. All locales remain in the source table.");
+                        if(changed) { YAML::Emitter output; output<<table; component.Table=output.c_str(); MarkModified(); }
+                    }
+                    catch(const std::exception& error) { ImGui::TextWrapped("Table error: %s",error.what()); }
+                    if(ImGui::TreeNode("Source table / recovery"))
+                    { if(DrawBoundedMultilineText("##LocalizationSource",component.Table,ImVec2(-1,120))) MarkModified(); ImGui::TreePop(); }
+                }, onModified, m_ColliderEditingAllowed);
+        });
+        richInspectors.emplace(ComponentIds::UITheme, [&]()
+        {
+            DrawComponent<UITheme>("UI Theme", entity, m_Icons, EditorIcon::Count, [&](UITheme& theme) {
+                bool changed=DrawColorField("Text",glm::value_ptr(theme.TextColor));
+                changed|=DrawColorField("Image",glm::value_ptr(theme.ImageColor));
+                changed|=DrawColorField("Accent",glm::value_ptr(theme.AccentColor));
+                changed|=ImGui::DragFloat("Font scale",&theme.FontScale,0.01f,0.1f,10.0f,"%.2f",ImGuiSliderFlags_AlwaysClamp);
+                const auto* descriptor=ComponentRegistry::Get().Find(UUID(ComponentIds::UITheme));
+                if(descriptor) for(const auto& property:descriptor->Properties) if(property.StableName=="Font") changed|=DrawRegisteredAssetReference(property,theme.Font);
+                ImGui::TextDisabled("Theme preview (inherited by descendants)");
+                ImGui::ColorButton("Image tint",ImVec4(theme.ImageColor.x,theme.ImageColor.y,theme.ImageColor.z,theme.ImageColor.w),0,ImVec2(80,24));
+                ImGui::SameLine(); ImGui::ColorButton("Accent tint",ImVec4(theme.AccentColor.x,theme.AccentColor.y,theme.AccentColor.z,theme.AccentColor.w),0,ImVec2(80,24));
+                ImGui::TextColored(ImVec4(theme.TextColor.x,theme.TextColor.y,theme.TextColor.z,theme.TextColor.w),"Sample text");
+                if(changed) MarkModified();
+            },onModified,m_ColliderEditingAllowed);
+        });
 		richInspectors.emplace(ComponentIds::CSharpScripts, [&]()
 		{
 			ImGui::BeginDisabled(!m_ScriptEditingEnabled);
 			DrawCSharpScripts(entity);
 			ImGui::EndDisabled();
 		});
-		for (const ComponentDescriptor& descriptor :
-			ComponentRegistry::Get().GetDescriptors())
-		{
-			if (!descriptor.InspectorVisible || !descriptor.Has(entity))
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##InspectorFilter","Search components...",m_InspectorSearch.data(),m_InspectorSearch.size());
+        for (const ComponentDescriptor& descriptor :
+            ComponentRegistry::Get().GetDescriptors())
+        {
+            if(m_InspectorSearch[0] && LowerASCII(descriptor.DisplayName).find(LowerASCII(m_InspectorSearch.data()))==std::string::npos) continue;
+            if (!descriptor.InspectorVisible || !descriptor.Has(entity))
 				continue;
 			const uint64_t componentType = static_cast<uint64_t>(descriptor.TypeId);
 			// RectTransform is the UI-facing Transform. Its rich inspector below also

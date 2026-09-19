@@ -11,6 +11,7 @@
 			m_FocusProjectSettingsPanel = false;
 		}
 		ImGui::SetNextWindowSize(ImVec2(820.0f, 580.0f), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSizeConstraints(ImVec2(680, 420), ImVec2(1600, 1200));
 		if (!ImGui::Begin("Project Settings", &m_ShowProjectSettingsPanel,
 			ImGuiWindowFlags_NoDocking))
 		{
@@ -27,18 +28,31 @@
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
 				"Project settings are read-only while the scene is running. Stop Play Mode to edit them.");
 
-		const float navigationWidth = 170.0f;
-		ImGui::BeginChild("##ProjectSettingsNavigation", ImVec2(navigationWidth, 0.0f), true);
-		if (ImGui::Selectable("Tags and Layers", m_ProjectSettingsPage == 0))
-			m_ProjectSettingsPage = 0;
-		if (ImGui::Selectable("Physics 2D", m_ProjectSettingsPage == 1))
-			m_ProjectSettingsPage = 1;
-		if (ImGui::Selectable("Player", m_ProjectSettingsPage == 2))
-			m_ProjectSettingsPage = 2;
+        static char settingsSearch[128]{};
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##SettingsSearch", "Search settings pages...", settingsSearch, sizeof(settingsSearch));
+        auto matchesSettings = [&](const char* terms) {
+            std::string query(settingsSearch), text(terms);
+            for (char& c : query) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return text.find(query) != std::string::npos;
+        };
+        ImGui::BeginChild("##ProjectSettingsNavigation", ImVec2(165, 0), true);
+        const char* pages[] = { "Tags and Layers", "Physics 2D", "Player" };
+        const char* terms[] = { "tags layers names", "physics 2d collision matrix", "player product company version icon display width height window vsync directories" };
+        for (int page = 0; page < 3; ++page)
+            if (matchesSettings(terms[page]) && ImGui::Selectable(pages[page], m_ProjectSettingsPage == page)) m_ProjectSettingsPage = page;
 		ImGui::EndChild();
 		ImGui::SameLine();
 
 		ImGui::BeginChild("##ProjectSettingsPage", ImVec2(0.0f, 0.0f), true);
+        auto settingRow = [](const char* label) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
+            ImGui::SameLine(165);
+            ImGui::SetNextItemWidth(-1);
+            return (std::string("##") + label);
+        };
 		ImGui::BeginDisabled(!editable);
 		if (m_ProjectSettingsPage == 0)
 		{
@@ -110,7 +124,7 @@
 			ImGui::Spacing();
 			ImGui::TextUnformatted("Layers");
 			ImGui::Separator();
-			ImGui::TextDisabled("Layer slots are stable. Clear a name to hide that layer from entity menus.");
+			ImGui::TextWrapped("Layer slots are stable. Clear a name to hide that layer from entity menus.");
 			for (std::size_t layer = 0; layer < Physics2DLayerCount; ++layer)
 			{
 				ImGui::PushID(static_cast<int>(layer));
@@ -179,10 +193,9 @@
 					std::array<std::string, Physics2DLayerCount> columnLabels;
 					for (std::size_t column = 0; column < namedLayers.size(); ++column)
 					{
-						columnLabels[column] = std::to_string(
-							static_cast<unsigned int>(namedLayers[column]));
+						columnLabels[column] = m_ProjectSettingsDraft.TagsAndLayers.LayerNames[namedLayers[column]];
 						ImGui::TableSetupColumn(columnLabels[column].c_str(),
-							ImGuiTableColumnFlags_WidthFixed, 38.0f);
+							ImGuiTableColumnFlags_WidthFixed, 88.0f);
 					}
 					ImGui::TableHeadersRow();
 
@@ -228,7 +241,7 @@
 			ImGui::Separator();
 			auto drawString = [&](const char* label, auto& buffer, std::string& value)
 			{
-				if (ImGui::InputText(label, buffer.data(), buffer.size()))
+				if (ImGui::InputText(settingRow(label).c_str(), buffer.data(), buffer.size()))
 					value = buffer.data();
 				if (ImGui::IsItemDeactivatedAfterEdit())
 					PersistPlayerSettingsDraft();
@@ -240,12 +253,20 @@
 			drawString("Version", m_PlayerVersionBuffer,
 				m_PlayerSettingsDraft.Version);
 
-			uint64_t rawIcon = static_cast<uint64_t>(m_PlayerSettingsDraft.Icon);
-			if (ImGui::InputScalar("Icon Handle", ImGuiDataType_U64, &rawIcon))
-			{
-				m_PlayerSettingsDraft.Icon = AssetHandle(rawIcon);
-				PersistPlayerSettingsDraft();
-			}
+            const AssetMetadata* iconMetadata = AssetManager::Get().GetRegistry().GetMetadata(m_PlayerSettingsDraft.Icon);
+            const std::string iconName = iconMetadata ? PathToUTF8(iconMetadata->FilePath.filename()) : "None (Texture2D)";
+            if (ImGui::BeginCombo(settingRow("Icon").c_str(), iconName.c_str()))
+            {
+                if (ImGui::Selectable("None")) { m_PlayerSettingsDraft.Icon = AssetHandle(0); PersistPlayerSettingsDraft(); }
+                for (const auto& [handle, metadata] : AssetManager::Get().GetRegistry().GetAssets())
+                    if (!metadata.IsMissing && metadata.Type == AssetType::Texture2D)
+                    {
+                        ImGui::PushID(std::to_string(static_cast<uint64_t>(handle)).c_str());
+                        if (ImGui::Selectable(PathToUTF8(metadata.FilePath).c_str())) { m_PlayerSettingsDraft.Icon = handle; PersistPlayerSettingsDraft(); }
+                        ImGui::PopID();
+                    }
+                ImGui::EndCombo();
+            }
 			if (ImGui::BeginDragDropTarget())
 			{
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(
@@ -270,7 +291,7 @@
 				}
 				ImGui::EndDragDropTarget();
 			}
-			ImGui::TextDisabled("Use 0 for no icon, or drag a Texture2D asset onto the field.");
+			ImGui::TextDisabled("Select an icon, or drag a Texture2D asset onto the field.");
 
 			ImGui::Spacing();
 			ImGui::TextUnformatted("Display");
@@ -279,26 +300,26 @@
 			ImGui::TextWrapped("Desktop Player options are preserved for export; browser preview follows its Game view.");
 			ImGui::BeginDisabled();
 #endif
-			if (ImGui::InputScalar("Width", ImGuiDataType_U32,
+			if (ImGui::InputScalar(settingRow("Width").c_str(), ImGuiDataType_U32,
 				&m_PlayerSettingsDraft.Width))
 				PersistPlayerSettingsDraft();
-			if (ImGui::InputScalar("Height", ImGuiDataType_U32,
+			if (ImGui::InputScalar(settingRow("Height").c_str(), ImGuiDataType_U32,
 				&m_PlayerSettingsDraft.Height))
 				PersistPlayerSettingsDraft();
 			const char* windowModes[] = {
 				"Windowed", "Borderless", "Exclusive Fullscreen"
 			};
 			int windowMode = static_cast<int>(m_PlayerSettingsDraft.WindowMode);
-			if (ImGui::Combo("Window Mode", &windowMode, windowModes,
+			if (ImGui::Combo(settingRow("Window Mode").c_str(), &windowMode, windowModes,
 				static_cast<int>(std::size(windowModes))))
 			{
 				m_PlayerSettingsDraft.WindowMode =
 					static_cast<PlayerWindowMode>(windowMode);
 				PersistPlayerSettingsDraft();
 			}
-			if (ImGui::Checkbox("Resizable", &m_PlayerSettingsDraft.Resizable))
+			if (ImGui::Checkbox(settingRow("Resizable").c_str(), &m_PlayerSettingsDraft.Resizable))
 				PersistPlayerSettingsDraft();
-			if (ImGui::Checkbox("VSync", &m_PlayerSettingsDraft.VSync))
+			if (ImGui::Checkbox(settingRow("VSync").c_str(), &m_PlayerSettingsDraft.VSync))
 				PersistPlayerSettingsDraft();
 
 			ImGui::Spacing();
@@ -307,7 +328,7 @@
 			auto drawDirectory = [&](const char* label, auto& buffer,
 				std::filesystem::path& value)
 			{
-				if (ImGui::InputText(label, buffer.data(), buffer.size()))
+				if (ImGui::InputText(settingRow(label).c_str(), buffer.data(), buffer.size()))
 					value = UTF8ToPath(buffer.data());
 				if (ImGui::IsItemDeactivatedAfterEdit())
 					PersistPlayerSettingsDraft();
@@ -318,7 +339,7 @@
 				m_PlayerSettingsDraft.LogDirectory);
 			drawDirectory("Crash Directory", m_PlayerCrashDirectoryBuffer,
 				m_PlayerSettingsDraft.CrashDirectory);
-			ImGui::TextDisabled("Directories must be relative and remain under the game's per-user data root.");
+			ImGui::TextWrapped("Directories must be relative and remain under the game's per-user data root.");
 #ifdef __EMSCRIPTEN__
 			ImGui::EndDisabled();
 #endif
@@ -329,7 +350,7 @@
 #ifdef __EMSCRIPTEN__
 		ImGui::TextWrapped("Changes apply immediately. Use File > Save to retain them in this browser, or Export project for a backup.");
 #else
-		ImGui::TextDisabled(m_ProjectSettingsPage == 2
+		ImGui::TextWrapped(m_ProjectSettingsPage == 2
 			? "Valid changes are saved automatically to ProjectSettings/PlayerSettings.json."
 			: "Valid changes are saved automatically to ProjectSettings/ProjectSettings.json.");
 #endif

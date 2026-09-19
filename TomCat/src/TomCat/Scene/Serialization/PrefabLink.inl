@@ -713,4 +713,115 @@ bool PrefabLinkedInstance::Apply(const Ref<Scene>& scene, UUID rootID, std::stri
 		error.clear(); return true;
 	} catch (const std::exception& ex) { error = ex.what(); return false; }
 }
+
+bool PrefabLinkedInstance::GetPropertyOverrides(const Ref<Scene>& scene, UUID rootID,
+    std::vector<PrefabPropertyOverride>& values, std::string& error)
+{
+    values.clear();
+    try {
+        Entity root=scene?scene->FindEntityByUUID(rootID):Entity{};
+        if(!root || !root.HasComponent<PrefabLink>()) throw std::runtime_error("Select a linked root");
+        const YAML::Node state=YAML::Load(root.GetComponent<PrefabLink>().State);
+        const std::string saved=state["Template"].as<std::string>();
+        PrefabArchive archive;
+        if(!PrefabArchiveCodec::Decode(std::vector<uint8_t>(saved.begin(),saved.end()),"Prefab baseline",archive,error)) return false;
+        PrefabInstantiateOptions options; options.ResolveAssets=false;
+        for(const auto& p:state["Mapping"]) options.EntityIdentities.emplace(p.first.as<uint64_t>(),UUID(p.second.as<uint64_t>()));
+        for(const auto& p:state["Attachments"]) options.AttachmentIdentities.emplace(UUID(p.first.as<uint64_t>()),UUID(p.second.as<uint64_t>()));
+        auto baseline=CreateRef<Scene>(); PrefabInstantiationResult instance;
+        if(!PrefabArchiveCodec::Instantiate(archive,*baseline,options,instance,error)) return false;
+        for(const auto& [localID,id]:instance.LocalToSceneUUID)
+        {
+            Entity before=baseline->FindEntityByUUID(id), after=scene->FindEntityByUUID(id);
+            if(!before || !after) continue;
+            for(const auto& component:ComponentRegistry::Get().GetDescriptors())
+            {
+                if(!component.InspectorVisible || !component.Has(before) || !component.Has(after)
+                    || (id==rootID && static_cast<uint64_t>(component.TypeId)==ComponentIds::Transform)) continue;
+                for(const auto& property:component.Properties)
+                {
+                    auto a=property.Get(before), b=property.Get(after);
+                    if(a!=b) values.push_back({id,component.TypeId,property.PropertyId,
+                        after.GetName()+" / "+component.DisplayName+" / "+property.DisplayName,a,b});
+                }
+            }
+        }
+        error.clear(); return true;
+    } catch(const std::exception& ex) { error=ex.what(); return false; }
+}
+
+bool PrefabLinkedInstance::RevertProperty(const Ref<Scene>& scene, UUID root, UUID entityID,
+    UUID componentID, UUID propertyID, std::string& error)
+{
+    if(!scene || scene->IsRuntimeRunning()) {error="Property revert requires Edit mode"; return false;}
+    std::vector<PrefabPropertyOverride> values;
+    if(!GetPropertyOverrides(scene,root,values,error)) return false;
+    for(const auto& value:values)
+        if(value.EntityID==entityID && value.ComponentID==componentID && value.PropertyID==propertyID)
+        {
+            const auto* descriptor=ComponentRegistry::Get().Find(componentID);
+            if(!descriptor) break;
+            for(const auto& property:descriptor->Properties) if(property.PropertyId==propertyID)
+                return property.Set(scene->FindEntityByUUID(entityID),value.Before,error);
+        }
+    error="The selected override no longer exists"; return false;
+}
+
+bool PrefabLinkedInstance::ApplyProperty(const Ref<Scene>& scene, UUID rootID, UUID entityID,
+    UUID componentID, UUID propertyID, std::string& error)
+{
+    try {
+        Entity root=scene?scene->FindEntityByUUID(rootID):Entity{};
+        Entity entity=scene?scene->FindEntityByUUID(entityID):Entity{};
+        if(!root || !entity || !root.HasComponent<PrefabLink>() || scene->IsRuntimeRunning())
+            throw std::runtime_error("Property Apply requires a linked instance in Edit mode");
+        if(rootID==entityID && static_cast<uint64_t>(componentID)==ComponentIds::Transform)
+            throw std::runtime_error("Root placement is instance-owned");
+        const auto source=root.GetComponent<PrefabLink>().Source;
+        const YAML::Node state=YAML::Load(root.GetComponent<PrefabLink>().State);
+        std::unordered_map<uint64_t,uint64_t> reverse;
+        for(const auto& p:state["Mapping"]) reverse.emplace(p.second.as<uint64_t>(),p.first.as<uint64_t>());
+        if(!reverse.contains(static_cast<uint64_t>(entityID))) throw std::runtime_error("Added entities require Apply All");
+        const auto* component=ComponentRegistry::Get().Find(componentID);
+        if(!component || !component->InspectorVisible || !component->Has(entity)) throw std::runtime_error("Invalid component");
+        const PropertyDescriptor* property=nullptr;
+        for(const auto& p:component->Properties) if(p.PropertyId==propertyID) property=&p;
+        if(!property) throw std::runtime_error("Invalid property");
+        auto& assets=AssetManager::Get();
+        const auto path=assets.GetRegistry().GetFileSystemPath(source);
+        if(path.empty() || !assets.GetRegistry().IsManagedPath(path)) throw std::runtime_error("Apply requires a project prefab");
+        auto read=[&](){std::ifstream f(path,std::ios::binary); if(!f) throw std::runtime_error("Cannot read prefab"); return std::string(std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>());};
+        const std::string previous=read();
+        PrefabArchive applied;
+        if(!LoadLinkedArchive(std::vector<uint8_t>(previous.begin(),previous.end()),path,PathToUTF8(path),applied,error)) return false;
+        Entity target=applied.TemplateScene->FindEntityByUUID(UUID(reverse.at(static_cast<uint64_t>(entityID))));
+        if(!target || !component->Has(target)) throw std::runtime_error("The source entity/component changed; refresh this instance first");
+        PropertyValue value=property->Get(entity);
+        if(property->EntityReference)
+        {
+            uint64_t id=std::get<uint64_t>(value);
+            if(id && !reverse.contains(id)) throw std::runtime_error("A prefab cannot reference an external scene entity");
+            value=id?reverse.at(id):uint64_t(0);
+        }
+        if(!property->Set(target,value,error) || !applied.TemplateScene->SyncTransformHierarchy()) return false;
+        auto candidate=Scene::Copy(scene);
+        if(!candidate) throw std::runtime_error("Cannot stage property Apply");
+        for(UUID id:LinkedRoots(candidate))
+            if(candidate->FindEntityByUUID(id).GetComponent<PrefabLink>().Source==source)
+                if(!Update(candidate,id,applied,false,error)) return false;
+        std::string document, sceneDocument;
+        if(!PrefabArchiveCodec::Encode(applied,document,error) || !SceneArchiveCodec::Encode(candidate,sceneDocument,error)) return false;
+        if(read()!=previous) throw std::runtime_error("Source changed during Apply; retry after reviewing changes");
+        if(!FileSystem::WriteFileAtomically(path,document,error)) return false;
+        if(assets.ImportAsset(path)!=source || !CommitLinkScene(candidate,scene,error))
+        {
+            std::string rollback;
+            if(!FileSystem::WriteFileAtomically(path,previous,rollback)) error+="; rollback: "+rollback;
+            else (void)assets.ImportAsset(path);
+            return false;
+        }
+        error.clear(); return true;
+    } catch(const std::exception& ex) {error=ex.what();return false;}
+}
+
 }

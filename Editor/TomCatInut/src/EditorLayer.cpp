@@ -1516,7 +1516,7 @@ namespace TomCat {
 					parentID = parent.GetUUID();
 				return InstantiatePrefab(handle, parentID, std::nullopt);
 			});
-		m_SceneHierarchyPanel.SetPrefabActionCallback([this](Entity root, int action) {
+		m_SceneHierarchyPanel.SetPrefabActionCallback([this](Entity root, int action, UUID target, UUID component, UUID property) {
 			if (m_SceneState != SceneState::Edit || !root || !root.HasComponent<PrefabLink>()) return;
 			if (m_SceneHistory.HasActiveTransaction()) CommitSceneTransaction();
 			const UUID rootID = root.GetUUID();
@@ -1525,7 +1525,7 @@ namespace TomCat {
 			fileEdit.BeforeState = m_SceneHistory.GetCurrentStateId();
 			fileEdit.Asset = source;
 			const auto sourcePath = AssetManager::Get().GetRegistry().GetFileSystemPath(source);
-			if (action == 2)
+			if (action == 2 || action == 5)
 			{
 				std::ifstream input(sourcePath, std::ios::binary);
 				fileEdit.Before.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
@@ -1555,10 +1555,11 @@ namespace TomCat {
 				PrefabArchive latest;
 				if (PrefabArchiveCodec::Load(source, latest, error))
 				{
-					if (action == 2)
+					if (action == 2 || action == 5)
 					{
-						succeeded = PrefabLinkedInstance::Apply(m_EditorScene, rootID, error);
+						succeeded = action == 5 ? PrefabLinkedInstance::ApplyProperty(m_EditorScene, rootID, target, component, property, error) : PrefabLinkedInstance::Apply(m_EditorScene, rootID, error);
 					}
+					else if (action == 6) succeeded = PrefabLinkedInstance::RevertProperty(m_EditorScene, rootID, target, component, property, error);
 					else succeeded = PrefabLinkedInstance::Update(m_EditorScene, rootID, latest, action == 1, error);
 				}
 			}
@@ -1569,7 +1570,7 @@ namespace TomCat {
 				m_SceneHierarchyPanel.ResetForSceneReplacement(m_EditorScene, rootID);
 				ResetSceneInteractionState();
 				CommitImmediateSceneTransaction("Prefab Instance");
-				if (action == 2)
+				if (action == 2 || action == 5)
 				{
 					fileEdit.AfterState = m_SceneHistory.GetCurrentStateId();
 					std::ifstream input(sourcePath, std::ios::binary);
@@ -2041,7 +2042,7 @@ namespace TomCat {
 		std::string title = projectName + " - " + sceneName;
 		if (IsSceneDirty())
 			title += '*';
-		title += " - Windows, Mac, Linux - TomCat Editor";
+		title += " - Windows (64-bit) - TomCat Editor";
 		if (m_CurrentProject && !m_CurrentProject->GetEditorVersion().empty())
 		{
 			title += ' ';
@@ -2139,13 +2140,14 @@ namespace TomCat {
 
 	void EditorLayer::UI_MainMenuBar()
 	{
-		const ImVec4 menuText(0.055f, 0.065f, 0.080f, 1.0f);
-		const ImVec4 menuTextDisabled(0.48f, 0.50f, 0.54f, 1.0f);
-		const ImVec4 menuSurface(0.985f, 0.988f, 0.992f, 1.0f);
-		const ImVec4 menuSelected(0.925f, 0.935f, 0.948f, 1.0f);
-		const ImVec4 menuHover(0.855f, 0.918f, 0.980f, 1.0f);
-		const ImVec4 menuActive(0.785f, 0.875f, 0.965f, 1.0f);
-		const ImVec4 menuLine(0.78f, 0.80f, 0.83f, 1.0f);
+        const auto& colors = ImGui::GetStyle().Colors;
+        const ImVec4 menuText = colors[ImGuiCol_Text];
+        const ImVec4 menuTextDisabled = colors[ImGuiCol_TextDisabled];
+        const ImVec4 menuSurface = colors[ImGuiCol_PopupBg];
+        const ImVec4 menuSelected = colors[ImGuiCol_Header];
+        const ImVec4 menuHover = colors[ImGuiCol_HeaderHovered];
+        const ImVec4 menuActive = colors[ImGuiCol_HeaderActive];
+        const ImVec4 menuLine = colors[ImGuiCol_Border];
 		ImGui::PushStyleColor(ImGuiCol_Text, menuText);
 		ImGui::PushStyleColor(ImGuiCol_TextDisabled, menuTextDisabled);
 		ImGui::PushStyleColor(ImGuiCol_PopupBg, menuSurface);
@@ -2237,17 +2239,6 @@ namespace TomCat {
 				ImGui::EndMenu();
 			}
 
-			auto drawUnavailableMenu = [](const char* label, const char* message)
-			{
-				if (!ImGui::BeginMenu(label))
-					return;
-				ImGui::MenuItem(message, nullptr, false, false);
-				ImGui::EndMenu();
-			};
-			drawUnavailableMenu("Services", "No services configured");
-			drawUnavailableMenu("Jobs", "No jobs available");
-			drawUnavailableMenu("Tools", "No additional tools installed");
-
 			if (ImGui::BeginMenu("Window"))
 			{
 				if (ImGui::BeginMenu("Animation"))
@@ -2336,17 +2327,18 @@ namespace TomCat {
 				if (ImGui::MenuItem("Previous Window", "Ctrl+Shift+Tab"))
 					CycleEditorPanel(-1);
 				ImGui::Separator();
-				if (ImGui::BeginMenu("Layouts"))
+                ImGui::MenuItem("Asset Inspector",nullptr,&m_ShowAssetInspector);
+                ImGui::MenuItem("Runtime Scenes", nullptr, &m_ShowRuntimeScenes);
+                ImGui::MenuItem("Editor Preferences", nullptr, &m_ShowEditorPreferences);
+                if (ImGui::BeginMenu("Layouts"))
 				{
-					ImGui::MenuItem("Current Layout", nullptr, true, false);
+					if (ImGui::MenuItem("Default / Reset Layout")) m_LayoutRequest = 1;
+                    if (ImGui::MenuItem("Animation")) m_LayoutRequest = 2;
+                    if (ImGui::MenuItem("Debugging")) m_LayoutRequest = 3;
 					ImGui::EndMenu();
 				}
 				ImGui::Separator();
-				ImGui::MenuItem("Version Control", nullptr, false, false);
-				ImGui::BeginMenu("Search", false);
-				ImGui::Separator();
-				ImGui::MenuItem("Asset Store", nullptr, false, false);
-				ImGui::MenuItem("Package Manager", nullptr, false, false);
+
 				ImGui::EndMenu();
 			}
 
@@ -2390,7 +2382,7 @@ namespace TomCat {
 			window_flags |= ImGuiWindowFlags_NoBackground;
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-		ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(0.965f, 0.972f, 0.980f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImGui::GetStyleColorVec4(ImGuiCol_TitleBg));
 		ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
 		ImGui::PopStyleColor();
 		ImGui::PopStyleVar();
@@ -2429,7 +2421,31 @@ namespace TomCat {
 		if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
 		{
 			ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-			m_EditorDockspaceId = dockspace_id;
+            m_EditorDockspaceId = dockspace_id;
+            if (m_LayoutRequest || !ImGui::DockBuilderGetNode(dockspace_id))
+            {
+                const int layout = m_LayoutRequest;
+                m_PanelMaximized = false;
+                ImGui::DockBuilderRemoveNode(dockspace_id);
+                ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+                ImGui::DockBuilderSetNodeSize(dockspace_id, dockspaceSize);
+                ImGuiID center = dockspace_id, left, right, bottom;
+                ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.19f, &left, &center);
+                ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.29f, &right, &center);
+                ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, layout == 3 ? 0.48f : 0.30f, &bottom, &center);
+                ImGui::DockBuilderDockWindow("Hierarchy", left);
+                ImGui::DockBuilderDockWindow("Inspector", right);
+                ImGui::DockBuilderDockWindow("Scene###Scene", center);
+                ImGui::DockBuilderDockWindow("Game", center);
+                ImGui::DockBuilderDockWindow("Animator", center);
+                for (const char* name : { "Project", "Console", "Animation", "Tile Palette", "Profiler" })
+                    ImGui::DockBuilderDockWindow(name, bottom);
+                ImGui::DockBuilderFinish(dockspace_id);
+                m_ShowScenePanel = m_ShowGamePanel = m_ShowHierarchyPanel = m_ShowInspectorPanel = m_ShowProjectPanel = true;
+                m_ShowAnimationPanel = m_ShowAnimatorPanel = layout == 2;
+                m_ShowConsolePanel = m_ShowProfilerPanel = layout == 3;
+                m_LayoutRequest = 0;
+            }
 			ApplyPendingPanelMaximizeTransition(dockspace_id, dockspaceSize);
 			ImGuiDockNodeFlags activeDockspaceFlags = dockspace_flags;
 			if (m_PanelMaximized)
@@ -2508,7 +2524,79 @@ namespace TomCat {
 				m_EditorPanelCycleIndex = 6;
 		}
 
-		m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel);
+        m_ContentBrowserPanel.OnAssetInspectorRender(&m_ShowAssetInspector);
+        m_ConsolePanel.SetOpenSourceCallback([this](const std::filesystem::path& path) { m_ContentBrowserPanel.OpenDiagnosticSource(path); });
+        m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel);
+        if (m_ShowRuntimeScenes)
+        {
+            ImGui::SetNextWindowSize(ImVec2(600,420),ImGuiCond_FirstUseEver);
+            if(ImGui::Begin("Runtime Scenes",&m_ShowRuntimeScenes))
+            {
+                if(!IsSceneRunning()) ImGui::TextWrapped("Enter Play mode to inspect loaded scenes, control asynchronous loading and mark persistent roots.");
+                else
+                {
+                    const char* states[]={"Idle","Reading","Ready","Completed","Failed","Cancelled"};
+                    const auto state=m_RuntimeSceneManager.GetLoadState();
+                    ImGui::Text("Load state: %s",states[static_cast<unsigned>(state)]);
+                    ImGui::ProgressBar(m_RuntimeSceneManager.GetLoadProgress(),ImVec2(-1,0));
+                    bool allow=m_RuntimeSceneManager.GetAllowSceneActivation();
+                    if(ImGui::Checkbox("Allow scene activation",&allow)) m_RuntimeSceneManager.SetAllowSceneActivation(allow);
+                    if(m_RuntimeSceneManager.HasPendingTransition() && ImGui::Button("Cancel pending load")) m_RuntimeSceneManager.CancelPendingLoad();
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("Loaded scenes");
+                    for(AssetHandle handle:m_RuntimeSceneManager.GetLoadedSceneHandles())
+                    {
+                        ImGui::PushID(std::to_string(static_cast<uint64_t>(handle)).c_str());
+                        const auto* metadata=AssetManager::Get().GetRegistry().GetMetadata(handle);
+                        ImGui::TextWrapped("%s%s",metadata?PathToUTF8(metadata->FilePath).c_str():"Unknown scene",handle==m_RuntimeSceneManager.GetActiveSceneHandle()?" (Active)":"");
+                        if(ImGui::SmallButton("Set active")) m_RuntimeSceneManager.SetActiveScene(handle);
+                        ImGui::SameLine();
+                        if(ImGui::SmallButton("Unload")) m_RuntimeSceneManager.RequestUnloadScene(handle);
+                        ImGui::PopID();
+                    }
+                    if(ImGui::TreeNode("Load a build scene"))
+                    {
+                        for(AssetHandle handle:m_RuntimeSceneManager.GetBuildSceneHandles())
+                        {
+                            ImGui::PushID(std::to_string(static_cast<uint64_t>(handle)).c_str());
+                            const auto* metadata=AssetManager::Get().GetRegistry().GetMetadata(handle);
+                            ImGui::TextWrapped("%s",metadata?PathToUTF8(metadata->FilePath).c_str():"Unknown scene");
+                            ImGui::BeginDisabled(m_RuntimeSceneManager.HasPendingTransition());
+                            if(ImGui::SmallButton("Load single")) m_RuntimeSceneManager.RequestLoadSceneAsync(handle,SceneLoadMode::Single);
+                            ImGui::SameLine();
+                            if(ImGui::SmallButton("Load additive")) m_RuntimeSceneManager.RequestLoadSceneAsync(handle,SceneLoadMode::Additive);
+                            ImGui::EndDisabled(); ImGui::PopID();
+                        }
+                        ImGui::TreePop();
+                    }
+                    Entity selected=m_SceneHierarchyPanel.GetSelectedEntity();
+                    if(selected)
+                    {
+                        bool persistent=m_RuntimeSceneManager.IsEntityPersistent(selected);
+                        if(ImGui::Checkbox("Selected root persists across scenes",&persistent)) m_RuntimeSceneManager.SetEntityPersistent(selected,persistent);
+                    }
+                    if(!m_RuntimeSceneManager.GetLastError().empty()) ImGui::TextWrapped("%s",m_RuntimeSceneManager.GetLastError().c_str());
+                }
+            }
+            ImGui::End();
+        }
+        if(m_ShowEditorPreferences)
+        {
+            ImGui::SetNextWindowSize(ImVec2(520,300),ImGuiCond_FirstUseEver);
+            if(ImGui::Begin("Editor Preferences",&m_ShowEditorPreferences))
+            {
+                ImGui::TextUnformatted("Interface"); ImGui::Separator();
+                float scale=m_EditorUIScale;
+                if(ImGui::SliderFloat("UI scale",&scale,0.8f,1.6f,"%.2fx"))
+                { ImGui::GetStyle().ScaleAllSizes(scale/m_EditorUIScale); ImGui::GetIO().FontGlobalScale=scale; m_EditorUIScale=scale; }
+                ImGui::TextWrapped("Interface scale applies to this editor session. Layout presets are available under Window > Layouts.");
+                if(ImGui::Button("Reset layout")) m_LayoutRequest=1;
+                ImGui::TextUnformatted("Navigation"); ImGui::Separator();
+                ImGui::TextWrapped("Ctrl+Tab / Ctrl+Shift+Tab: cycle panels. Ctrl-click: toggle selection. Shift-click: select a range. Right-click an axis value: reset that axis. Drag assets onto compatible reference fields.");
+            }
+            ImGui::End();
+        }
+
 
 		if (m_ShowScenePanel && ShouldRenderDockPanel("Scene###Scene"))
 		{
@@ -3058,6 +3146,7 @@ namespace TomCat {
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
 				"Open a project to inspect its scenes and Player settings.");
 
+		ImGui::BeginChild("BuildContent", ImVec2(0, -100.0f));
 		ImGui::TextUnformatted("Scenes In Build");
 		BuildSettings edited = m_CurrentProject
 			? m_CurrentProject->GetBuildSettings() : BuildSettings{};
@@ -3399,14 +3488,8 @@ namespace TomCat {
 				ImGui::PopID();
 			};
 
-			drawPlatformRow("Windows, Mac, Linux", true, false, 0);
-			drawPlatformRow("Dedicated Server", false, true, 1);
-			drawPlatformRow("Android", false, true, 2);
-			drawPlatformRow("iOS", false, true, 2);
-			drawPlatformRow("PS4", false, true, 4);
-			drawPlatformRow("PS5", false, true, 4);
-			drawPlatformRow("WebGL", false, true, 3);
-			drawPlatformRow("Universal Windows Platform", false, true, 0);
+            drawPlatformRow("Windows (64-bit)", true, false, 0);
+            ImGui::TextWrapped("This build pipeline exports Windows players. Other targets are not available here.");
 			ImGui::EndChild();
 
 			ImGui::TableSetColumnIndex(1);
@@ -3417,7 +3500,7 @@ namespace TomCat {
 				ImGui::GetColorU32(ImGuiCol_Text));
 			ImGui::SameLine();
 			ImGui::AlignTextToFramePadding();
-			ImGui::TextUnformatted("Windows, Mac, Linux");
+			ImGui::TextUnformatted("Windows (64-bit)");
 			ImGui::Separator();
 
 			const ImGuiTableFlags optionFlags = ImGuiTableFlags_SizingStretchProp;
@@ -3455,49 +3538,17 @@ namespace TomCat {
 
 				drawDisabledCombo("Target Platform", "##TargetPlatform", "Windows");
 				drawDisabledCombo("Architecture", "##Architecture", "Intel 64-bit");
-				drawDisabledCheckbox("Copy PDB files", "##CopyPDB", false);
-				drawDisabledCheckbox("Create Visual Studio Solution", "##CreateSolution", false);
-				drawDisabledCheckbox("Development Build", "##DevelopmentBuild", false);
-				drawDisabledCheckbox("Autoconnect Profiler", "##AutoconnectProfiler", true);
-				drawDisabledCheckbox("Deep Profiling Support", "##DeepProfiling", true);
-				drawDisabledCheckbox("Script Debugging", "##ScriptDebugging", true);
-				drawDisabledCombo("Compression Method", "##CompressionMethod", "Default");
+                ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+                ImGui::TextWrapped("Release player with managed symbols");
 				ImGui::EndTable();
 			}
 			ImGui::EndChild();
 			ImGui::EndTable();
 		}
 
-		if (ImGui::CollapsingHeader("Asset Import Overrides",
-			ImGuiTreeNodeFlags_DefaultOpen))
-		{
-			if (ImGui::BeginTable("##AssetImportOverrides", 2,
-				ImGuiTableFlags_SizingFixedFit))
-			{
-				ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 185.0f);
-				ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 210.0f);
-				const std::array<std::pair<const char*, const char*>, 2> overrides = {
-					std::pair{ "Max Texture Size", "##MaxTextureSize" },
-					std::pair{ "Texture Compression", "##TextureCompression" }
-				};
-				for (const auto& [label, id] : overrides)
-				{
-					ImGui::TableNextRow();
-					ImGui::TableSetColumnIndex(0);
-					ImGui::AlignTextToFramePadding();
-					ImGui::TextUnformatted(label);
-					ImGui::TableSetColumnIndex(1);
-					ImGui::SetNextItemWidth(-1.0f);
-					ImGui::BeginDisabled();
-					if (ImGui::BeginCombo(id, "No Override"))
-						ImGui::EndCombo();
-					ImGui::EndDisabled();
-				}
-				ImGui::EndTable();
-			}
-		}
 
 		ImGui::Separator();
+		ImGui::EndChild();
 		if (ImGui::Button("Player Settings..."))
 			OpenProjectSettingsPanel();
 

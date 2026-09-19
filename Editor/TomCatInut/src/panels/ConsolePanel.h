@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -38,7 +39,8 @@ namespace TomCat {
 		void Push(ConsoleMessage message);
 		void Push(ConsoleMessageSeverity severity, std::string text,
 			std::string source = {});
-		void Clear();
+        void SetOpenSourceCallback(std::function<void(const std::filesystem::path&)> callback) { m_OpenSource=std::move(callback); }
+        void Clear();
 		void OnPlayStarted();
 		std::vector<ConsoleMessage> Snapshot() const;
 
@@ -50,6 +52,7 @@ namespace TomCat {
 		bool IsVisible(ConsoleMessageSeverity severity) const;
 
 	private:
+        std::function<void(const std::filesystem::path&)> m_OpenSource;
 		mutable std::mutex m_Mutex;
 		std::vector<ConsoleMessage> m_Messages;
 		uint64_t m_NextSequence = 1;
@@ -57,6 +60,8 @@ namespace TomCat {
 		bool m_ShowInfo = true;
 		bool m_ShowWarnings = true;
 		bool m_ShowErrors = true;
+        char m_Search[256]{};
+        uint64_t m_SelectedSequence = 0;
 		bool m_Collapse = false;
 		bool m_ClearOnPlay = true;
 		bool m_AutoScroll = true;
