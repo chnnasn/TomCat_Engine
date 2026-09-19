@@ -389,11 +389,11 @@ namespace TomCat {
 				MemberProperty(::TomCat::ComponentIds::TextRendererProperties::Enabled,
 					"Enabled", "Enabled", &::TomCat::TextRenderer::Enabled),
 				AssetMemberProperty(::TomCat::ComponentIds::TextRendererProperties::Font,
-					"Font", "Font Asset", &::TomCat::TextRenderer::Font, AssetType::Font),
+					"Font", "Font", &::TomCat::TextRenderer::Font, AssetType::Font),
 				AssetMemberProperty(::TomCat::ComponentIds::TextRendererProperties::FallbackFont,
-					"FallbackFont", "Fallback Font Asset", &::TomCat::TextRenderer::FallbackFont, AssetType::Font),
+					"FallbackFont", "Fallback Font", &::TomCat::TextRenderer::FallbackFont, AssetType::Font),
 				AssetMemberProperty(::TomCat::ComponentIds::TextRendererProperties::EmojiFont,
-					"EmojiFont", "Emoji Font Asset", &::TomCat::TextRenderer::EmojiFont, AssetType::Font),
+					"EmojiFont", "Emoji Font", &::TomCat::TextRenderer::EmojiFont, AssetType::Font),
 				MemberProperty(::TomCat::ComponentIds::TextRendererProperties::Text,
 					"Text", "Text", &::TomCat::TextRenderer::Text, ValidText()),
 				MemberProperty(::TomCat::ComponentIds::TextRendererProperties::FontSize,
@@ -441,7 +441,7 @@ namespace TomCat {
 		result.push_back(MakeDescriptor<::TomCat::UIImage>(
 			::TomCat::ComponentIds::UIImage, "TomCat.UIImage", "UI Image", {
 			MemberProperty(UIImageProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIImage::Enabled),
-			AssetMemberProperty(UIImageProperties::Image, "Image", "Image Asset",
+			AssetMemberProperty(UIImageProperties::Image, "Image", "Source Image",
 				&::TomCat::UIImage::Image, AssetType::Texture2D, true),
 			MemberProperty(UIImageProperties::Color, "Color", "Color", &::TomCat::UIImage::Color, FiniteColor()),
 			MemberProperty(UIImageProperties::RaycastTarget, "RaycastTarget", "Raycast Target", &::TomCat::UIImage::RaycastTarget),
@@ -451,12 +451,12 @@ namespace TomCat {
 		result.push_back(MakeDescriptor<::TomCat::UIText>(
 			::TomCat::ComponentIds::UIText, "TomCat.UIText", "UI Text", {
 			MemberProperty(UITextProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIText::Enabled),
-			AssetMemberProperty(UITextProperties::Font, "Font", "Font Asset",
+			AssetMemberProperty(UITextProperties::Font, "Font", "Font",
 				&::TomCat::UIText::Font, AssetType::Font),
 			AssetMemberProperty(UITextProperties::FallbackFont, "FallbackFont",
-				"Fallback Font Asset", &::TomCat::UIText::FallbackFont, AssetType::Font),
+				"Fallback Font", &::TomCat::UIText::FallbackFont, AssetType::Font),
 			AssetMemberProperty(UITextProperties::EmojiFont, "EmojiFont",
-				"Emoji Font Asset", &::TomCat::UIText::EmojiFont, AssetType::Font),
+				"Emoji Font", &::TomCat::UIText::EmojiFont, AssetType::Font),
 			MemberProperty(UITextProperties::Text, "Text", "Text", &::TomCat::UIText::Text, ValidText()),
 			MemberProperty(UITextProperties::FontSize, "FontSize", "Font Size", &::TomCat::UIText::FontSize, FiniteFloat(1.0f, 10000.0f)),
 			MemberProperty(UITextProperties::Color, "Color", "Color", &::TomCat::UIText::Color, FiniteColor()),
@@ -474,13 +474,15 @@ namespace TomCat {
 			MemberProperty(UIButtonProperties::NormalColor, "NormalColor", "Normal Color", &::TomCat::UIButton::NormalColor, FiniteColor()),
 			MemberProperty(UIButtonProperties::HoverColor, "HoverColor", "Hover Color", &::TomCat::UIButton::HoverColor, FiniteColor()),
 			MemberProperty(UIButtonProperties::PressedColor, "PressedColor", "Pressed Color", &::TomCat::UIButton::PressedColor, FiniteColor()),
-			MemberProperty(UIButtonProperties::SelectedColor, "SelectedColor", "Selected Color", &::TomCat::UIButton::SelectedColor, FiniteColor())
+			MemberProperty(UIButtonProperties::SelectedColor, "SelectedColor", "Selected Color", &::TomCat::UIButton::SelectedColor, FiniteColor()),
+			MemberProperty(UIButtonProperties::DisabledColor, "DisabledColor", "Disabled Color", &::TomCat::UIButton::DisabledColor, FiniteColor()),
+			MemberProperty(UIButtonProperties::ColorMultiplier, "ColorMultiplier", "Color Multiplier", &::TomCat::UIButton::ColorMultiplier, FiniteFloat(0.0f, 5.0f))
 		});
 		const ComponentDescriptor::EncodeFn encodeButtonProperties =
 			buttonDescriptor.Encode;
 		const ComponentDescriptor::DecodeFn decodeButtonProperties =
 			buttonDescriptor.Decode;
-		buttonDescriptor.SchemaVersion = 2;
+		buttonDescriptor.SchemaVersion = 3;
 		buttonDescriptor.Migrations.push_back({ 1, 2,
 			[](YAML::Node& record, std::string& error)
 			{
@@ -494,6 +496,55 @@ namespace TomCat {
 				payload["Fields"] = oldProperties;
 				payload["OnClick"] = YAML::Node(YAML::NodeType::Sequence);
 				record["Properties"] = payload;
+				return true;
+			} });
+		buttonDescriptor.Migrations.push_back({ 2, 3,
+			[](YAML::Node& record, std::string& error)
+			{
+				YAML::Node fields = record["Properties"]["Fields"];
+				if (!fields || !fields.IsSequence())
+				{
+					error = "TomCat.UIButton v2 Fields must be a sequence";
+					return false;
+				}
+				auto appendIfMissing = [&fields, &error](uint64_t id,
+					const char* stableName, const YAML::Node& value)
+				{
+					for (const YAML::Node& existing : fields)
+					{
+						if (!existing.IsMap() || !existing["PropertyId"]
+							|| !existing["StableName"])
+							continue;
+						const uint64_t existingID = existing["PropertyId"].as<uint64_t>();
+						const std::string existingName =
+							existing["StableName"].as<std::string>();
+						if (existingID == id || existingName == stableName)
+						{
+							if (existingID == id && existingName == stableName)
+								return true;
+							error = "TomCat.UIButton v2 property identity conflicts with "
+								+ std::string(stableName);
+							return false;
+						}
+					}
+					YAML::Node property(YAML::NodeType::Map);
+					property["PropertyId"] = id;
+					property["StableName"] = stableName;
+					property["Value"] = value;
+					fields.push_back(property);
+					return true;
+				};
+				YAML::Node disabled(YAML::NodeType::Sequence);
+				disabled.push_back(0.52f);
+				disabled.push_back(0.52f);
+				disabled.push_back(0.52f);
+				disabled.push_back(0.5f);
+				if (!appendIfMissing(UIButtonProperties::DisabledColor,
+					"DisabledColor", disabled)
+					|| !appendIfMissing(UIButtonProperties::ColorMultiplier,
+						"ColorMultiplier", YAML::Node(1.0f)))
+					return false;
+				record["Properties"]["Fields"] = fields;
 				return true;
 			} });
 		buttonDescriptor.Encode = [encodeButtonProperties](

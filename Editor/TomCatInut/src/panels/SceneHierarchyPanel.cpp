@@ -29,6 +29,7 @@
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "../EditorDragDrop.h"
@@ -81,6 +82,37 @@ namespace TomCat {
 
 	// 前向声明DrawProperty函数
 	static void DrawProperty(const std::string& label, float columnWidth = 100.0f);
+	static bool DrawColorField(const char* label, float* color,
+		ImGuiColorEditFlags extraFlags = ImGuiColorEditFlags_None)
+	{
+		// Keep the first inspector level compact. Clicking the swatch opens the
+		// full hue-wheel picker with RGB/HSV/hex and alpha controls in its popup.
+		return ImGui::ColorEdit4(label, color, extraFlags
+			| ImGuiColorEditFlags_NoInputs
+			| ImGuiColorEditFlags_AlphaBar
+			| ImGuiColorEditFlags_AlphaPreviewHalf
+			| ImGuiColorEditFlags_PickerHueWheel);
+	}
+
+	static constexpr size_t MaximumInspectorTextBytes = 65536;
+
+	static bool DrawBoundedMultilineText(const char* label, std::string& value,
+		const ImVec2& size)
+	{
+		std::vector<char> buffer(MaximumInspectorTextBytes + 1, '\0');
+		const size_t count = std::min(value.size(), MaximumInspectorTextBytes);
+		std::copy_n(value.data(), count, buffer.data());
+		if (!ImGui::InputTextMultiline(label, buffer.data(), buffer.size(), size))
+			return false;
+
+		std::string edited(buffer.data());
+		bool validUTF8 = false;
+		(void)FontAtlasBuilder::DecodeUTF8(edited, &validUTF8);
+		if (!validUTF8)
+			return false;
+		value = std::move(edited);
+		return true;
+	}
 	static ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
 	{
 		return texture
@@ -323,7 +355,7 @@ namespace TomCat {
 				break;
 			}
 			case ScriptFieldType::Color:
-				changed = ImGui::ColorEdit4("##Value",
+				changed = DrawColorField("##Value",
 					glm::value_ptr(std::get<glm::vec4>(field.Value)));
 				break;
 			case ScriptFieldType::Entity:
@@ -382,6 +414,8 @@ namespace TomCat {
 	{
 		if (static_cast<uint64_t>(handle) == 0)
 			return "None";
+		if (const BuiltInFontAsset* builtIn = FindBuiltInFontAsset(handle))
+			return std::string(builtIn->Name);
 		if (const BuiltInSpriteAsset* builtIn = FindBuiltInSpriteAsset(handle))
 			return std::string(builtIn->Name);
 		const AssetMetadata* metadata = nullptr;
@@ -676,6 +710,8 @@ namespace TomCat {
 		subAsset = nullptr;
 		if (static_cast<uint64_t>(handle) == 0)
 			return true;
+		if (FindBuiltInFontAsset(handle))
+			return semantics.Accepts(AssetType::Font, false);
 		AssetRegistry& registry = AssetManager::Get().GetRegistry();
 		metadata = registry.GetMetadata(handle);
 		if (!metadata)
@@ -691,6 +727,15 @@ namespace TomCat {
 	{
 		if (static_cast<uint64_t>(handle) == 0)
 			return "None";
+		if (const BuiltInFontAsset* builtIn = FindBuiltInFontAsset(handle))
+		{
+			std::string label(builtIn->Name);
+			if (!semantics.Accepts(AssetType::Font, false))
+				label += " (Incompatible)";
+			else
+				label += " (Built-in)";
+			return label;
+		}
 		const AssetMetadata* metadata = nullptr;
 		const AssetSubAsset* subAsset = nullptr;
 		const bool compatible = ResolveRegisteredAssetReference(semantics,
@@ -718,7 +763,12 @@ namespace TomCat {
 			return DrawAnimatorSpriteField("RegisteredSpriteReference", handle);
 
 		bool changed = false;
-		const std::string label = RegisteredAssetReferenceLabel(semantics, handle)
+		const bool legacyDefaultFont = static_cast<uint64_t>(handle) == 0
+			&& property.StableName == "Font"
+			&& semantics.Accepts(AssetType::Font, false);
+		const std::string label = (legacyDefaultFont
+			? std::string("Legacy Runtime (Built-in default)")
+			: RegisteredAssetReferenceLabel(semantics, handle))
 			+ "###RegisteredAssetReference";
 		const float pickerWidth = ImGui::GetFrameHeight();
 		const float fieldWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x
@@ -786,6 +836,21 @@ namespace TomCat {
 			}
 			ImGui::Separator();
 			bool foundCompatibleAsset = false;
+			if (semantics.Accepts(AssetType::Font, false))
+			{
+				for (const BuiltInFontAsset& builtIn : GetBuiltInFontAssets())
+				{
+					foundCompatibleAsset = true;
+					const std::string label = std::string(builtIn.Name) + " (Built-in)";
+					if (ImGui::Selectable(label.c_str(), builtIn.Handle == handle))
+					{
+						handle = builtIn.Handle;
+						changed = true;
+						ImGui::CloseCurrentPopup();
+					}
+				}
+				ImGui::Separator();
+			}
 			for (const auto& [candidate, metadata] :
 				AssetManager::Get().GetRegistry().GetAssets())
 			{
@@ -808,6 +873,21 @@ namespace TomCat {
 			ImGui::EndPopup();
 		}
 		return changed;
+	}
+
+	static const PropertyDescriptor* FindRegisteredProperty(uint64_t componentType,
+		std::string_view stableName)
+	{
+		const ComponentDescriptor* descriptor = ComponentRegistry::Get().Find(
+			UUID(componentType));
+		if (!descriptor)
+			return nullptr;
+		const auto found = std::find_if(descriptor->Properties.begin(),
+			descriptor->Properties.end(), [stableName](const PropertyDescriptor& property)
+			{
+				return property.StableName == stableName;
+			});
+		return found == descriptor->Properties.end() ? nullptr : &*found;
 	}
 
 	static float DrawTreeRowIcon(const Ref<EditorIconSet>& icons, EditorIcon icon,
@@ -2785,7 +2865,7 @@ namespace TomCat {
 			ImGui::InputInt2("Box End", &palette.BoxEnd.x);
 		if (palette.Tool == TilePaletteTool::Move)
 			ImGui::InputInt2("Move To", &palette.MoveDestination.x);
-		ImGui::ColorEdit4("Tint", glm::value_ptr(palette.Tint));
+		DrawColorField("Tint", glm::value_ptr(palette.Tint));
 
 		std::vector<std::pair<AssetHandle, std::string>> sprites;
 		if (static_cast<uint64_t>(m_ActiveTilePaletteHandle) != 0)
@@ -3442,7 +3522,8 @@ namespace TomCat {
 		const auto children = m_Context->GetChildrenUUIDs(entity);
 		const bool hasChildren = !children.empty();
 
-		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_FramePadding;
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth
+			| ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_FramePadding;
 		if (isSelected)
 			flags |= ImGuiTreeNodeFlags_Selected;
 		if (!hasChildren)
@@ -3467,6 +3548,7 @@ namespace TomCat {
 
 		const bool renameActive = (m_RenameEntity == entity);
 		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "");
+		const bool rowHovered = ImGui::IsItemHovered();
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
 		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.78f),
@@ -3513,6 +3595,12 @@ namespace TomCat {
 
 		if (!visibilityClicked && ImGui::IsItemClicked(ImGuiMouseButton_Left))
 			m_SelectionContext = entity;
+		if (!renameActive && !visibilityHovered && rowHovered
+			&& ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+		{
+			m_SelectionContext = entity;
+			m_FrameEntityRequest = entity.GetUUID();
+		}
 		if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
 			m_SelectionContext = entity;
 
@@ -3726,6 +3814,8 @@ static bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 	template<> static bool* GetComponentEnabledFlag<AudioSource>(AudioSource& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<AudioListener>(AudioListener& component) { return &component.Enabled; }
 	template<> static bool* GetComponentEnabledFlag<UIButton>(UIButton& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<UIImage>(UIImage& component) { return &component.Enabled; }
+	template<> static bool* GetComponentEnabledFlag<UIText>(UIText& component) { return &component.Enabled; }
 
 	static bool DrawColliderMaterialProperties(float& density, float& friction, float& restitution)
 	{
@@ -3859,7 +3949,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 		if (ImGui::BeginPopup("ComponentSettings"))
 		{
 			ImGui::BeginDisabled(!editable);
-			if(name != "Transform")
+			if(name != "Transform" && name != "Rect Transform")
 				if (ImGui::MenuItem("Remove component"))
 					removeComponent = true;
 			ImGui::EndDisabled();
@@ -4027,20 +4117,23 @@ static void DrawComponent(const std::string& name, Entity entity,
 					}
 					case PropertyKind::String:
 					{
-						std::array<char, 4096> buffer{};
-						const std::string& item = std::get<std::string>(value);
-						const size_t count = std::min(item.size(), buffer.size() - 1);
-						std::copy_n(item.data(), count, buffer.data());
+						std::string item = std::get<std::string>(value);
 						if ((componentType == ComponentIds::TextRenderer
 							|| componentType == ComponentIds::UIText)
 							&& property.StableName == "Text")
-							changed = ImGui::InputTextMultiline(property.DisplayName.c_str(),
-								buffer.data(), buffer.size(), ImVec2(-1.0f,
+							changed = DrawBoundedMultilineText(property.DisplayName.c_str(),
+								item, ImVec2(-1.0f,
 									ImGui::GetTextLineHeight() * 3.5f));
 						else
+						{
+							std::array<char, 4096> buffer{};
+							const size_t count = std::min(item.size(), buffer.size() - 1);
+							std::copy_n(item.data(), count, buffer.data());
 							changed = ImGui::InputText(property.DisplayName.c_str(),
 								buffer.data(), buffer.size());
-						value = std::string(buffer.data());
+							item = std::string(buffer.data());
+						}
+						value = std::move(item);
 						break;
 					}
 					case PropertyKind::Vector2:
@@ -4065,7 +4158,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 						const bool isColor = property.StableName.find("Color")
 							!= std::string::npos;
 						if (isColor)
-							changed = ImGui::ColorEdit4(property.DisplayName.c_str(),
+							changed = DrawColorField(property.DisplayName.c_str(),
 								glm::value_ptr(item));
 						else
 							changed = ImGui::DragFloat4(property.DisplayName.c_str(),
@@ -5615,7 +5708,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 		ImGui::TextUnformatted("Palette Sprite");
 		ImGui::SetNextItemWidth(-1.0f);
 		DrawAnimatorSpriteField("TilemapBrushSprite", brush.SpriteHandle);
-		ImGui::ColorEdit4("Tint", glm::value_ptr(brush.Tint));
+		DrawColorField("Tint", glm::value_ptr(brush.Tint));
 		ImGui::Checkbox("Flip X", &brush.FlipX);
 		ImGui::SameLine();
 		ImGui::Checkbox("Flip Y", &brush.FlipY);
@@ -5693,7 +5786,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 				changed |= DrawAnimatorSpriteField("CellSprite", candidate.SpriteHandle);
 				ImGui::TableSetColumnIndex(2);
 				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::ColorEdit4("##CellTint", glm::value_ptr(candidate.Tint),
+				changed |= DrawColorField("##CellTint", glm::value_ptr(candidate.Tint),
 					ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
 				ImGui::TableSetColumnIndex(3);
 				changed |= ImGui::Checkbox("##FlipX", &candidate.FlipX);
@@ -5879,8 +5972,8 @@ static void DrawComponent(const std::string& name, Entity entity,
 			system.EndSize = std::max(endSize, 0.0f);
 			changed = true;
 		}
-		changed |= ImGui::ColorEdit4("Start Color", glm::value_ptr(system.StartColor));
-		changed |= ImGui::ColorEdit4("End Color", glm::value_ptr(system.EndColor));
+		changed |= DrawColorField("Start Color", glm::value_ptr(system.StartColor));
+		changed |= DrawColorField("End Color", glm::value_ptr(system.EndColor));
 		ImGui::TextUnformatted("Sprite");
 		ImGui::SetNextItemWidth(-1.0f);
 		changed |= DrawAnimatorSpriteField("ParticleSprite", system.SpriteHandle);
@@ -5909,7 +6002,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 			light.Type = static_cast<Light2DType>(lightType);
 			changed = true;
 		}
-		changed |= ImGui::ColorEdit4("Color", glm::value_ptr(light.Color));
+		changed |= DrawColorField("Color", glm::value_ptr(light.Color));
 		float intensity = light.Intensity;
 		if (ImGui::DragFloat("Intensity", &intensity, 0.02f, 0.0f, 0.0f)
 			&& std::isfinite(intensity))
@@ -5942,10 +6035,27 @@ static void DrawComponent(const std::string& name, Entity entity,
 	void SceneHierarchyPanel::DrawUIButtonInspector(UIButton& button, Entity entity)
 	{
 		bool changed = ImGui::Checkbox("Interactable", &button.Interactable);
-		changed |= ImGui::ColorEdit4("Normal Color", glm::value_ptr(button.NormalColor));
-		changed |= ImGui::ColorEdit4("Highlighted Color", glm::value_ptr(button.HoverColor));
-		changed |= ImGui::ColorEdit4("Pressed Color", glm::value_ptr(button.PressedColor));
-		changed |= ImGui::ColorEdit4("Selected Color", glm::value_ptr(button.SelectedColor));
+		int transition = 0;
+		const char* transitions[] = { "Color Tint" };
+		ImGui::BeginDisabled();
+		ImGui::Combo("Transition", &transition, transitions,
+			static_cast<int>(std::size(transitions)));
+		const std::string targetGraphic = entity.HasComponent<UIImage>()
+			? entity.GetName() + " (Image)" : "None (Image)";
+		std::array<char, 256> targetGraphicBuffer{};
+		std::copy_n(targetGraphic.data(),
+			std::min(targetGraphic.size(), targetGraphicBuffer.size() - 1),
+			targetGraphicBuffer.data());
+		ImGui::InputText("Target Graphic", targetGraphicBuffer.data(),
+			targetGraphicBuffer.size(), ImGuiInputTextFlags_ReadOnly);
+		ImGui::EndDisabled();
+		changed |= DrawColorField("Normal Color", glm::value_ptr(button.NormalColor));
+		changed |= DrawColorField("Highlighted Color", glm::value_ptr(button.HoverColor));
+		changed |= DrawColorField("Pressed Color", glm::value_ptr(button.PressedColor));
+		changed |= DrawColorField("Selected Color", glm::value_ptr(button.SelectedColor));
+		changed |= DrawColorField("Disabled Color", glm::value_ptr(button.DisabledColor));
+		changed |= ImGui::SliderFloat("Color Multiplier", &button.ColorMultiplier,
+			0.0f, 5.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (changed)
 			MarkModified();
 
@@ -6536,7 +6646,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 			if (ImGui::Checkbox("##FixedAspectRatio", &component.FixedAspectRatio)) MarkModified();
 			ImGui::Columns(1);
 			DrawProperty("Background Color", columnWidth);
-			if (ImGui::ColorEdit4("##BackgroundColor", glm::value_ptr(component.BackgroundColor))) MarkModified();
+			if (DrawColorField("##BackgroundColor", glm::value_ptr(component.BackgroundColor))) MarkModified();
 			ImGui::Columns(1);
 		}, onModified);
 		});
@@ -6548,7 +6658,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 		{
 			const float columnWidth = 100.0f;
 			DrawProperty("Color", columnWidth);
-			if (ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color))) MarkModified();
+			if (DrawColorField("##Color", glm::value_ptr(component._Color))) MarkModified();
 			ImGui::Columns(1);
 
 			DrawProperty("Sprite", columnWidth);
@@ -6875,6 +6985,91 @@ static void DrawComponent(const std::string& name, Entity entity,
 		}, onModified);
 		});
 
+		richInspectors.emplace(ComponentIds::RectTransform, [&]()
+		{
+		DrawComponent<RectTransform>("Rect Transform", entity, m_Icons,
+			EditorIcon::Move, [this, entity](RectTransform& component)
+		{
+			glm::vec2 anchoredPosition = component.AnchoredPosition;
+			glm::vec2 sizeDelta = component.SizeDelta;
+			glm::vec2 anchorMin = component.AnchorMin;
+			glm::vec2 anchorMax = component.AnchorMax;
+			glm::vec2 pivot = component.Pivot;
+			bool clipChildren = component.ClipChildren;
+
+			bool rectEdited = ImGui::DragFloat2("Anchored Position",
+				glm::value_ptr(anchoredPosition), 0.1f);
+			rectEdited |= ImGui::DragFloat2("Size Delta",
+				glm::value_ptr(sizeDelta), 0.1f);
+			ImGui::Spacing();
+			ImGui::TextDisabled("ANCHORS");
+			rectEdited |= ImGui::DragFloat2("Min", glm::value_ptr(anchorMin),
+				0.005f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+			rectEdited |= ImGui::DragFloat2("Max", glm::value_ptr(anchorMax),
+				0.005f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+			rectEdited |= ImGui::DragFloat2("Pivot", glm::value_ptr(pivot),
+				0.005f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+			rectEdited |= ImGui::Checkbox("Clip Children", &clipChildren);
+			if (rectEdited)
+			{
+				const bool finite = std::isfinite(anchoredPosition.x)
+					&& std::isfinite(anchoredPosition.y)
+					&& std::isfinite(sizeDelta.x) && std::isfinite(sizeDelta.y)
+					&& std::isfinite(anchorMin.x) && std::isfinite(anchorMin.y)
+					&& std::isfinite(anchorMax.x) && std::isfinite(anchorMax.y)
+					&& std::isfinite(pivot.x) && std::isfinite(pivot.y);
+				if (finite)
+				{
+					anchorMin = glm::clamp(anchorMin, glm::vec2(0.0f),
+						glm::vec2(1.0f));
+					anchorMax = glm::clamp(anchorMax, anchorMin,
+						glm::vec2(1.0f));
+					pivot = glm::clamp(pivot, glm::vec2(0.0f), glm::vec2(1.0f));
+					component.AnchoredPosition = anchoredPosition;
+					component.SizeDelta = sizeDelta;
+					component.AnchorMin = anchorMin;
+					component.AnchorMax = anchorMax;
+					component.Pivot = pivot;
+					component.ClipChildren = clipChildren;
+					MarkModified();
+				}
+			}
+
+			// RectTransform replaces the ordinary Transform header in the Inspector,
+			// while rotation and scale keep using the entity's real Transform data.
+			if (!entity.HasComponent<Transform>() || !m_Context)
+				return;
+			auto& transformComponent = entity.GetComponent<Transform>();
+			const bool hasParent = static_cast<bool>(m_Context->GetParent(entity));
+			const glm::vec3 translation = hasParent
+				? transformComponent._LocalTranslation : transformComponent._Translation;
+			glm::vec3 rotation = hasParent
+				? transformComponent._LocalRotation : transformComponent._Rotation;
+			glm::vec3 scale = hasParent
+				? transformComponent._LocalScale : transformComponent._Scale;
+			float rotationZ = glm::degrees(rotation.z);
+			glm::vec2 scaleXY(scale.x, scale.y);
+			bool transformEdited = ImGui::DragFloat("Rotation Z", &rotationZ, 0.1f,
+				0.0f, 0.0f, "%.2f deg");
+			transformEdited |= ImGui::DragFloat2("Scale", glm::value_ptr(scaleXY),
+				0.01f, 0.0f, 0.0f, "%.3f");
+			if (transformEdited && std::isfinite(rotationZ)
+				&& std::isfinite(scaleXY.x) && std::isfinite(scaleXY.y))
+			{
+				rotation.z = glm::radians(rotationZ);
+				scale.x = scaleXY.x;
+				scale.y = scaleXY.y;
+				const glm::mat4 matrix = Math::ComposeTransform(translation,
+					rotation, scale);
+				const bool committed = hasParent
+					? m_Context->SetLocalTransform(entity, matrix)
+					: m_Context->SetWorldTransform(entity, matrix);
+				if (committed)
+					MarkModified();
+			}
+		}, onModified);
+		});
+
 		richInspectors.emplace(ComponentIds::Grid2D, [&]()
 		{
 		DrawComponent<Grid2D>("Grid 2D", entity, m_Icons,
@@ -6928,7 +7123,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 			const float columnWidth = 100.0f;
 
 			DrawProperty("Color", columnWidth);
-			if (ImGui::ColorEdit4("##Color", glm::value_ptr(component._Color)))
+			if (DrawColorField("##Color", glm::value_ptr(component._Color)))
 				MarkModified();
 			ImGui::Columns(1);
 
@@ -7068,6 +7263,98 @@ static void DrawComponent(const std::string& name, Entity entity,
 			if (ImGui::Checkbox("Primary", &component.Primary))
 				MarkModified();
 		}, onModified);
+		});
+
+		richInspectors.emplace(ComponentIds::UIImage, [&]()
+		{
+			DrawComponent<UIImage>("Image", entity, m_Icons, EditorIcon::Sprite,
+				[this](UIImage& component)
+				{
+					if (const PropertyDescriptor* imageProperty = FindRegisteredProperty(
+						ComponentIds::UIImage, "Image"))
+					{
+						AssetHandle image = component.Image;
+						if (DrawRegisteredAssetReference(*imageProperty, image))
+						{
+							component.Image = image;
+							MarkModified();
+						}
+					}
+					if (DrawColorField("Color", glm::value_ptr(component.Color)))
+						MarkModified();
+					if (ImGui::Checkbox("Raycast Target", &component.RaycastTarget))
+						MarkModified();
+					if (ImGui::Checkbox("Preserve Aspect", &component.PreserveAspect))
+						MarkModified();
+				}, onModified, m_ColliderEditingAllowed);
+		});
+
+		richInspectors.emplace(ComponentIds::UIText, [&]()
+		{
+			DrawComponent<UIText>("Text", entity, m_Icons, EditorIcon::Count,
+				[this](UIText& component)
+				{
+					if (DrawBoundedMultilineText("Text", component.Text,
+						ImVec2(-1.0f, ImGui::GetTextLineHeight() * 3.5f)))
+					{
+						MarkModified();
+					}
+
+					ImGui::Spacing();
+					ImGui::TextDisabled("CHARACTER");
+					auto drawFont = [this](const char* stableName,
+						AssetHandle& handle)
+					{
+						const PropertyDescriptor* property = FindRegisteredProperty(
+							ComponentIds::UIText, stableName);
+						if (!property)
+							return;
+						ImGui::PushID(stableName);
+						AssetHandle candidate = handle;
+						if (DrawRegisteredAssetReference(*property, candidate))
+						{
+							handle = candidate;
+							MarkModified();
+						}
+						ImGui::PopID();
+					};
+					drawFont("Font", component.Font);
+					drawFont("FallbackFont", component.FallbackFont);
+					drawFont("EmojiFont", component.EmojiFont);
+					float fontSize = component.FontSize;
+					if (ImGui::DragFloat("Font Size", &fontSize, 0.25f, 1.0f,
+						10000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp)
+						&& std::isfinite(fontSize))
+					{
+						component.FontSize = std::clamp(fontSize, 1.0f, 10000.0f);
+						MarkModified();
+					}
+					float lineSpacing = component.LineSpacing;
+					if (ImGui::DragFloat("Line Spacing", &lineSpacing, 0.01f,
+						0.1f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp)
+						&& std::isfinite(lineSpacing))
+					{
+						component.LineSpacing = std::clamp(lineSpacing, 0.1f, 10.0f);
+						MarkModified();
+					}
+
+					ImGui::Spacing();
+					ImGui::TextDisabled("PARAGRAPH");
+					const char* alignments[] = { "Left", "Center", "Right" };
+					int alignment = static_cast<int>(component.Alignment);
+					if (ImGui::Combo("Alignment", &alignment, alignments,
+						static_cast<int>(std::size(alignments))))
+					{
+						component.Alignment = static_cast<TextAlignment>(alignment);
+						MarkModified();
+					}
+					if (ImGui::Checkbox("Wrap", &component.Wrap))
+						MarkModified();
+					if (DrawColorField("Color", glm::value_ptr(component.Color)))
+						MarkModified();
+					if (ImGui::Checkbox("Raycast Target", &component.RaycastTarget))
+						MarkModified();
+				}, onModified, m_ColliderEditingAllowed);
 		});
 
 		richInspectors.emplace(ComponentIds::Rigidbody2D, [&]()
@@ -7357,8 +7644,14 @@ static void DrawComponent(const std::string& name, Entity entity,
 		{
 			if (!descriptor.InspectorVisible || !descriptor.Has(entity))
 				continue;
-			const auto rich = richInspectors.find(
-				static_cast<uint64_t>(descriptor.TypeId));
+			const uint64_t componentType = static_cast<uint64_t>(descriptor.TypeId);
+			// RectTransform is the UI-facing Transform. Its rich inspector below also
+			// edits the shared Transform rotation/scale, so drawing both headers would
+			// expose two conflicting transform surfaces.
+			if (componentType == ComponentIds::Transform
+				&& entity.HasComponent<RectTransform>())
+				continue;
+			const auto rich = richInspectors.find(componentType);
 			if (rich != richInspectors.end())
 				rich->second();
 			else if (descriptor.UseGenericInspector)

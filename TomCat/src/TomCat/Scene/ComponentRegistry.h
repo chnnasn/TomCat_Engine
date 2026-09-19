@@ -288,6 +288,8 @@ namespace TomCat {
 			inline constexpr uint64_t HoverColor = 0x9f01600000000004ULL;
 			inline constexpr uint64_t PressedColor = 0x9f01600000000005ULL;
 			inline constexpr uint64_t SelectedColor = 0x9f01600000000006ULL;
+			inline constexpr uint64_t DisabledColor = 0x9f01600000000007ULL;
+			inline constexpr uint64_t ColorMultiplier = 0x9f01600000000008ULL;
 		}
 		namespace UIEventSystemProperties {
 			inline constexpr uint64_t Enabled = 0x9f01700000000001ULL;

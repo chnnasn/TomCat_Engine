@@ -750,10 +750,25 @@ void main()
 		bool lit)
 	{
 		TC_PROFILE_FUNCTION();
-		const glm::vec2 textureCoords[] = {
+		std::array<glm::vec3, 4> positions{};
+		for (size_t index = 0; index < positions.size(); ++index)
+			positions[index] = glm::vec3(
+				transform * s_Data.QuadVertexPositions[index]);
+		const std::array<glm::vec2, 4> textureCoordinates = {{
 			{ uvMin.x, uvMin.y }, { uvMax.x, uvMin.y },
 			{ uvMax.x, uvMax.y }, { uvMin.x, uvMax.y }
-		};
+		}};
+		DrawTexturedQuadVertices(positions, texture, textureCoordinates,
+			tintColor, entityID, lit);
+	}
+
+	void Renderer2D::DrawTexturedQuadVertices(
+		const std::array<glm::vec3, 4>& positions,
+		const Ref<Texture2D>& texture,
+		const std::array<glm::vec2, 4>& textureCoordinates,
+		const glm::vec4& tintColor, int entityID, bool lit)
+	{
+		TC_PROFILE_FUNCTION();
 		const Ref<Texture2D>& resolvedTexture = texture && texture->IsLoaded()
 			? texture : s_Data.WhiteTexture;
 		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices)
@@ -780,12 +795,11 @@ void main()
 
 		for (size_t index = 0; index < 4; ++index)
 		{
-			const glm::vec3 worldPosition = glm::vec3(
-				transform * s_Data.QuadVertexPositions[index]);
+			const glm::vec3 worldPosition = positions[index];
 			s_Data.QuadVertexBufferPtr->Position = worldPosition;
 			s_Data.QuadVertexBufferPtr->Color = Apply2DLighting(tintColor,
 				worldPosition, lit);
-			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[index];
+			s_Data.QuadVertexBufferPtr->TexCoord = textureCoordinates[index];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = 1.0f;
 			s_Data.QuadVertexBufferPtr->EntityID = entityID;

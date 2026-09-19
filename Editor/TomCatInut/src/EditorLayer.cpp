@@ -15,6 +15,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Scene/Advanced2D.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
@@ -1841,6 +1844,7 @@ namespace TomCat {
 		// ID attachment. Renderer2D utility primitives intentionally use entity ID
 		// -1, so drawing them any earlier would punch holes in sprite picking.
 		RenderSceneColliderOverlays();
+		RenderSceneCameraOverlay();
 
 		m_Framebuffer->Unbind();
 
@@ -2290,6 +2294,11 @@ namespace TomCat {
 				&& ShouldRenderDockPanel("Inspector");
 			m_SceneHierarchyPanel.OnImGuiRender(&hierarchyOpen, &inspectorOpen,
 				IsSceneDirty());
+			if (const UUID requested = m_SceneHierarchyPanel.ConsumeFrameEntityRequest();
+				static_cast<uint64_t>(requested) != 0 && m_ActiveScene)
+			{
+				FrameSceneEntity(m_ActiveScene->FindEntityByUUID(requested));
+			}
 			if (!m_PanelMaximized)
 			{
 				m_ShowHierarchyPanel = hierarchyOpen;
@@ -3592,6 +3601,185 @@ namespace TomCat {
 #include "panels/ProjectSettingsView.inl"
 	}
 
+	void EditorLayer::FrameSceneEntity(Entity root)
+	{
+		if (!m_ActiveScene || !root || !root.HasComponent<ID>())
+			return;
+		Entity activeRoot = m_ActiveScene->FindEntityByUUID(root.GetUUID());
+		if (!activeRoot)
+			return;
+
+		struct FocusBounds
+		{
+			glm::vec3 Minimum{ (std::numeric_limits<float>::max)() };
+			glm::vec3 Maximum{ (std::numeric_limits<float>::lowest)() };
+			bool HasGeometry = false;
+			std::vector<glm::vec3> Pivots;
+
+			void Add(const glm::vec3& point)
+			{
+				if (!std::isfinite(point.x) || !std::isfinite(point.y)
+					|| !std::isfinite(point.z))
+					return;
+				Minimum = glm::min(Minimum, point);
+				Maximum = glm::max(Maximum, point);
+				HasGeometry = true;
+			}
+
+			void AddUnitQuad(const glm::mat4& transform)
+			{
+				constexpr glm::vec4 corners[] = {
+					{ -0.5f, -0.5f, 0.0f, 1.0f },
+					{  0.5f, -0.5f, 0.0f, 1.0f },
+					{  0.5f,  0.5f, 0.0f, 1.0f },
+					{ -0.5f,  0.5f, 0.0f, 1.0f }
+				};
+				for (const glm::vec4& corner : corners)
+					Add(glm::vec3(transform * corner));
+			}
+		};
+
+		FocusBounds bounds;
+		std::unordered_set<uint64_t> visited;
+		std::unordered_set<uint64_t> framedIDs;
+		std::function<void(Entity, bool)> collect = [&](Entity entity, bool isRoot)
+		{
+			if (!entity || !entity.HasComponent<ID>()
+				|| (!isRoot && !m_ActiveScene->IsVisibleInEditorHierarchy(entity)))
+				return;
+			const UUID id = entity.GetUUID();
+			const uint64_t rawID = static_cast<uint64_t>(id);
+			if (!visited.emplace(rawID).second)
+				return;
+			framedIDs.emplace(rawID);
+
+			glm::mat4 world(1.0f);
+			if (entity.HasComponent<Transform>())
+			{
+				world = m_ActiveScene->GetRuntimeRenderTransform(id);
+				bounds.Pivots.push_back(glm::vec3(world * glm::vec4(0, 0, 0, 1)));
+			}
+
+			if (entity.HasComponent<SpriteRenderer>()
+				&& entity.GetComponent<SpriteRenderer>().Enabled)
+				bounds.AddUnitQuad(world);
+
+			if (entity.HasComponent<Tilemap2D>())
+			{
+				const Tilemap2D& tilemap = entity.GetComponent<Tilemap2D>();
+				const Entity parent = m_ActiveScene->GetParent(entity);
+				const Grid2D* grid = parent && parent.HasComponent<Grid2D>()
+					? &parent.GetComponent<Grid2D>() : nullptr;
+				if (tilemap.Enabled)
+				{
+					for (const TilemapCell& cell : tilemap.Cells)
+					{
+						if (static_cast<uint64_t>(cell.SpriteHandle) != 0)
+							bounds.AddUnitQuad(world
+								* Tilemap2DRuntime::GetCellTransform(tilemap, cell, grid));
+					}
+				}
+			}
+
+			if (entity.HasComponent<LineRenderer>())
+			{
+				const LineRenderer& line = entity.GetComponent<LineRenderer>();
+				if (line.Enabled)
+				{
+					bounds.Add(glm::vec3(world * glm::vec4(line.Start, 1.0f)));
+					bounds.Add(glm::vec3(world * glm::vec4(line.End, 1.0f)));
+				}
+			}
+
+			if (entity.HasComponent<TextRenderer>())
+			{
+				const TextRenderer& text = entity.GetComponent<TextRenderer>();
+				if (text.Enabled && !text.Text.empty() && std::isfinite(text.FontSize)
+					&& text.FontSize > 0.0f)
+				{
+					const Ref<RuntimeFont> font = FontManager::Get().Load(text.Font,
+						text.Text, text.FallbackFont, text.EmojiFont);
+					if (font)
+					{
+						const TextLayoutResult layout = TextLayoutEngine::Build(
+							font->GetAtlas(), text.Text, text.FontSize,
+							std::max(0.0f, text.MaxWidth), text.Alignment,
+							text.LineSpacing);
+						for (const TextGlyphQuad& glyph : layout.Glyphs)
+						{
+							bounds.AddUnitQuad(world
+								* glm::translate(glm::mat4(1.0f), {
+									glyph.Rect.X + glyph.Rect.Width * 0.5f,
+									glyph.Rect.Y + glyph.Rect.Height * 0.5f, 0.0f })
+								* glm::scale(glm::mat4(1.0f), {
+									glyph.Rect.Width, glyph.Rect.Height, 1.0f }));
+						}
+					}
+				}
+			}
+
+			if (entity.HasComponent<ParticleSystem2D>())
+			{
+				const ParticleSystem2D& system = entity.GetComponent<ParticleSystem2D>();
+				if (system.Enabled)
+				{
+					for (const Particle2D& particle : system.RuntimeParticles)
+					{
+						const float size = ParticleSystem2DRuntime::EvaluateSize(particle);
+						if (std::isfinite(size) && size > 0.0f)
+							bounds.AddUnitQuad(world
+								* glm::translate(glm::mat4(1.0f),
+									glm::vec3(particle.Position, 0.0f))
+								* glm::scale(glm::mat4(1.0f),
+									glm::vec3(size, size, 1.0f)));
+					}
+				}
+			}
+
+			if (entity.HasComponent<Light2D>())
+			{
+				const Light2D& light = entity.GetComponent<Light2D>();
+				if (light.Enabled && light.Type == Light2DType::Point
+					&& std::isfinite(light.Radius) && light.Radius > 0.0f)
+					bounds.AddUnitQuad(world * glm::scale(glm::mat4(1.0f),
+						glm::vec3(light.Radius * 2.0f, light.Radius * 2.0f, 1.0f)));
+			}
+
+			for (UUID childID : m_ActiveScene->GetChildrenUUIDs(entity))
+			{
+				Entity child = m_ActiveScene->FindEntityByUUID(childID);
+				if (child && m_ActiveScene->GetParent(child) == entity)
+					collect(child, false);
+			}
+		};
+		collect(activeRoot, true);
+
+		for (const ColliderDebugShape& shape : m_ActiveScene->GetColliderDebugShapes(
+			m_SceneState != SceneState::Edit))
+		{
+			if (framedIDs.contains(static_cast<uint64_t>(shape.EntityID)))
+				bounds.AddUnitQuad(shape.Transform);
+		}
+
+		if (!bounds.HasGeometry)
+		{
+			for (const glm::vec3& pivot : bounds.Pivots)
+				bounds.Add(pivot);
+		}
+		if (!bounds.HasGeometry)
+			return;
+
+		const glm::vec3 center = (bounds.Minimum + bounds.Maximum) * 0.5f;
+		const glm::vec3 extent = bounds.Maximum - bounds.Minimum;
+		if (glm::dot(extent, extent) < 0.000001f)
+		{
+			bounds.Minimum = center - glm::vec3(0.5f);
+			bounds.Maximum = center + glm::vec3(0.5f);
+		}
+		m_EditorCamera.FrameBounds(bounds.Minimum, bounds.Maximum);
+		FocusEditorPanel("Scene", m_ShowScenePanel);
+	}
+
 	void EditorLayer::RenderSceneColliderOverlays()
 	{
 		if (!m_ActiveScene)
@@ -3644,6 +3832,88 @@ namespace TomCat {
 				Renderer2D::DrawCircle(shape.Transform, color, 0.045f, 0.005f, -1);
 		}
 
+		Renderer2D::EndScene();
+		RenderCommand::SetDepthTest(true);
+		Renderer2D::SetLineWidth(previousLineWidth);
+	}
+
+	void EditorLayer::RenderSceneCameraOverlay()
+	{
+		if (!m_ActiveScene)
+			return;
+		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+		if (!selected || !selected.HasComponent<ID>()
+			|| !selected.HasComponent<Transform>()
+			|| !selected.HasComponent<C_Camera>()
+			|| !m_ActiveScene->IsVisibleInEditorHierarchy(selected))
+			return;
+
+		const glm::mat4 projection = selected.GetComponent<C_Camera>()._Camera
+			.GetProjection();
+		const glm::mat4 inverseProjection = glm::inverse(projection);
+		for (glm::length_t column = 0; column < 4; ++column)
+		{
+			for (glm::length_t row = 0; row < 4; ++row)
+			{
+				if (!std::isfinite(inverseProjection[column][row]))
+					return;
+			}
+		}
+		const glm::mat4 cameraWorld = m_ActiveScene->GetRuntimeRenderTransform(
+			selected.GetUUID());
+
+		const glm::vec4 ndcCorners[8] = {
+			{ -1.0f, -1.0f, -1.0f, 1.0f },
+			{  1.0f, -1.0f, -1.0f, 1.0f },
+			{  1.0f,  1.0f, -1.0f, 1.0f },
+			{ -1.0f,  1.0f, -1.0f, 1.0f },
+			{ -1.0f, -1.0f,  1.0f, 1.0f },
+			{  1.0f, -1.0f,  1.0f, 1.0f },
+			{  1.0f,  1.0f,  1.0f, 1.0f },
+			{ -1.0f,  1.0f,  1.0f, 1.0f }
+		};
+		glm::vec3 corners[8]{};
+		for (size_t index = 0; index < std::size(ndcCorners); ++index)
+		{
+			glm::vec4 view = inverseProjection * ndcCorners[index];
+			if (!std::isfinite(view.w)
+				|| std::abs(view.w) <= (std::numeric_limits<float>::min)())
+				return;
+			view /= view.w;
+			const glm::vec4 world = cameraWorld * view;
+			if (!std::isfinite(world.x) || !std::isfinite(world.y)
+				|| !std::isfinite(world.z))
+				return;
+			corners[index] = glm::vec3(world);
+		}
+
+		const float previousLineWidth = Renderer2D::GetLineWidth();
+		Renderer2D::SetLineWidth(1.5f);
+		RenderCommand::SetDepthTest(false);
+		Renderer2D::BeginScene(m_EditorCamera);
+		const glm::vec4 color{ 0.82f, 0.82f, 0.82f, 0.9f };
+		auto drawLoop = [&](size_t first)
+		{
+			for (size_t index = 0; index < 4; ++index)
+				Renderer2D::DrawLine(corners[first + index],
+					corners[first + ((index + 1) % 4)], color, -1);
+		};
+		drawLoop(0);
+		drawLoop(4);
+		if (selected.GetComponent<C_Camera>()._Camera.GetProjectionType()
+			== SceneCamera::ProjectionType::Perspective)
+		{
+			// Perspective rays originate at the camera. Drawing near-to-far as well
+			// would overlap these lines and make half of each edge look heavier.
+			const glm::vec3 origin = glm::vec3(cameraWorld * glm::vec4(0, 0, 0, 1));
+			for (size_t index = 4; index < 8; ++index)
+				Renderer2D::DrawLine(origin, corners[index], color, -1);
+		}
+		else
+		{
+			for (size_t index = 0; index < 4; ++index)
+				Renderer2D::DrawLine(corners[index], corners[index + 4], color, -1);
+		}
 		Renderer2D::EndScene();
 		RenderCommand::SetDepthTest(true);
 		Renderer2D::SetLineWidth(previousLineWidth);
@@ -3706,8 +3976,6 @@ namespace TomCat {
 		m_UIRectDragActive = false;
 		m_UIRectHandleHovered = false;
 		m_UIRectEditEntity = UUID(0);
-		m_UIRectDragStartMouse = { 0.0f, 0.0f };
-		m_UIRectDragStartPosition = { 0.0f, 0.0f };
 	}
 
 	bool EditorLayer::UI_RectTransformHandles()
@@ -3755,7 +4023,9 @@ namespace TomCat {
 		const UUID selectedID = selected.GetUUID();
 		const auto rectangleIt = layout.Rectangles.find(selectedID);
 		const auto scaleIt = layout.Scales.find(selectedID);
+		const auto uiTransformIt = layout.Transforms.find(selectedID);
 		if (rectangleIt == layout.Rectangles.end() || scaleIt == layout.Scales.end()
+			|| uiTransformIt == layout.Transforms.end()
 			|| !std::isfinite(scaleIt->second) || scaleIt->second <= 0.0f)
 		{
 			ResetRectTransformEditState();
@@ -3765,85 +4035,213 @@ namespace TomCat {
 		const UIRect& rectangle = rectangleIt->second;
 		const float displayScaleX = viewportDisplaySize.x / framebufferWidth;
 		const float displayScaleY = viewportDisplaySize.y / framebufferHeight;
-		const ImVec2 minimum(
-			m_ViewportBounds[0].x + rectangle.X * displayScaleX,
-			m_ViewportBounds[0].y
-				+ (framebufferHeight - rectangle.Y - rectangle.Height) * displayScaleY);
-		const ImVec2 maximum(minimum.x + rectangle.Width * displayScaleX,
-			minimum.y + rectangle.Height * displayScaleY);
-		const ImRect screenRect(minimum, maximum);
+		auto toSceneScreen = [&](const glm::vec2& point)
+		{
+			const glm::vec4 transformed = uiTransformIt->second
+				* glm::vec4(point, 0.0f, 1.0f);
+			return ImVec2(
+				m_ViewportBounds[0].x + transformed.x * displayScaleX,
+				m_ViewportBounds[0].y
+					+ (framebufferHeight - transformed.y) * displayScaleY);
+		};
+		const ImVec2 rectCorners[4] = {
+			toSceneScreen({ rectangle.X, rectangle.Y }),
+			toSceneScreen({ rectangle.X + rectangle.Width, rectangle.Y }),
+			toSceneScreen({ rectangle.X + rectangle.Width,
+				rectangle.Y + rectangle.Height }),
+			toSceneScreen({ rectangle.X, rectangle.Y + rectangle.Height })
+		};
+		const glm::vec2 pivotPosition{
+			rectangle.X + rectangle.Width * selected.GetComponent<RectTransform>().Pivot.x,
+			rectangle.Y + rectangle.Height * selected.GetComponent<RectTransform>().Pivot.y };
+		const ImVec2 pivotScreen = toSceneScreen(pivotPosition);
 
 		ImDrawList* draw = ImGui::GetWindowDrawList();
 		ImGui::PushClipRect(ImVec2(m_ViewportBounds[0].x, m_ViewportBounds[0].y),
 			ImVec2(m_ViewportBounds[1].x, m_ViewportBounds[1].y), true);
 		const ImU32 outline = IM_COL32(72, 166, 255, 255);
-		draw->AddRect(minimum, maximum, outline, 0.0f, 0, 1.5f);
-		const ImVec2 center((minimum.x + maximum.x) * 0.5f,
-			(minimum.y + maximum.y) * 0.5f);
-		draw->AddCircleFilled(center, 4.0f, outline);
-		draw->AddLine(ImVec2(center.x - 9.0f, center.y),
-			ImVec2(center.x + 9.0f, center.y), outline, 1.5f);
-		draw->AddLine(ImVec2(center.x, center.y - 9.0f),
-			ImVec2(center.x, center.y + 9.0f), outline, 1.5f);
+		draw->AddPolyline(rectCorners, 4, outline, ImDrawFlags_Closed, 1.5f);
+		draw->AddCircleFilled(pivotScreen, 4.0f, outline);
+		draw->AddLine(ImVec2(pivotScreen.x - 9.0f, pivotScreen.y),
+			ImVec2(pivotScreen.x + 9.0f, pivotScreen.y), outline, 1.5f);
+		draw->AddLine(ImVec2(pivotScreen.x, pivotScreen.y - 9.0f),
+			ImVec2(pivotScreen.x, pivotScreen.y + 9.0f), outline, 1.5f);
 		ImGui::PopClipRect();
 
 		Entity parent = m_ActiveScene->GetParent(selected);
 		const bool layoutControlled = parent && parent.HasComponent<UILayoutGroup>()
 			&& parent.GetComponent<UILayoutGroup>().Enabled;
-		const bool moveToolActive = m_GizmoType == ImGuizmo::OPERATION::TRANSLATE;
+		glm::mat4 parentCanvasTransform(1.0f);
+		if (parent && parent.HasComponent<ID>())
+		{
+			const auto parentTransformIt = layout.Transforms.find(parent.GetUUID());
+			if (parentTransformIt != layout.Transforms.end())
+				parentCanvasTransform = parentTransformIt->second;
+		}
+		const float parentDeterminant = glm::determinant(parentCanvasTransform);
+		const bool parentTransformInvertible = std::isfinite(parentDeterminant)
+			&& std::abs(parentDeterminant) > 0.000001f;
+		const glm::mat4 inverseParentCanvasTransform = parentTransformInvertible
+			? glm::inverse(parentCanvasTransform) : glm::mat4(1.0f);
+		const bool translateTool = m_GizmoType == ImGuizmo::OPERATION::TRANSLATE;
+		const bool rotateTool = m_GizmoType == ImGuizmo::OPERATION::ROTATE;
+		const bool scaleTool = m_GizmoType == ImGuizmo::OPERATION::SCALE;
+		const bool supportedTool = translateTool || rotateTool || scaleTool;
+		const bool transformToolAvailable = translateTool
+			|| selected.HasComponent<Transform>();
+		// A layout group authors its children's positions. Rotation and scale remain
+		// independent, matching Unity's driven RectTransform behaviour.
+		const bool canManipulate = m_SceneState == SceneState::Edit
+			&& supportedTool && transformToolAvailable
+			&& parentTransformInvertible && (!translateTool || !layoutControlled);
+
+		if (m_UIRectTransactionActive && m_UIRectEditEntity != selectedID)
+			ResetRectTransformEditState();
+
 		const ImVec2 mouse = ImGui::GetMousePos();
-		const bool hovered = m_ViewportCanvasHovered && screenRect.Contains(mouse);
-		const bool canMove = m_SceneState == SceneState::Edit && !layoutControlled
-			&& moveToolActive;
+		const bool rectangleHovered = m_ViewportCanvasHovered
+			&& (ImTriangleContainsPoint(rectCorners[0], rectCorners[1],
+				rectCorners[2], mouse)
+				|| ImTriangleContainsPoint(rectCorners[0], rectCorners[2],
+					rectCorners[3], mouse));
+		bool gizmoHovered = false;
+		bool gizmoUsing = false;
+		bool manipulated = false;
+		glm::mat4 gizmoTransform(1.0f);
+		if (canManipulate)
+		{
+			glm::vec3 gizmoRotation(0.0f);
+			glm::vec3 gizmoScale(1.0f);
+			if (selected.HasComponent<Transform>())
+			{
+				const auto& authoredTransform = selected.GetComponent<Transform>();
+				gizmoRotation.z = authoredTransform._LocalRotation.z;
+				gizmoScale.x = std::abs(authoredTransform._LocalScale.x) > 0.0001f
+					? authoredTransform._LocalScale.x : 0.0001f;
+				gizmoScale.y = std::abs(authoredTransform._LocalScale.y) > 0.0001f
+					? authoredTransform._LocalScale.y : 0.0001f;
+			}
+			// Runtime UI composes each RectTransform in canvas space. Include the
+			// accumulated parent frame so nested rotated/scaled controls receive a
+			// gizmo at the same visible pivot and with the same visible axes.
+			gizmoTransform = parentCanvasTransform * Math::ComposeTransform(
+				{ pivotPosition.x, pivotPosition.y, 0.0f },
+				gizmoRotation, gizmoScale);
+
+			// ImGuizmo operates in a virtual framebuffer-sized orthographic world.
+			// Its viewport is the displayed Scene image, so this projection preserves
+			// named Game resolutions, non-uniform panel fitting, and HiDPI scaling.
+			const glm::mat4 gizmoView = glm::lookAt(
+				glm::vec3(0.0f, 0.0f, 10.0f),
+				glm::vec3(0.0f, 0.0f, 0.0f),
+				glm::vec3(0.0f, 1.0f, 0.0f));
+			const glm::mat4 gizmoProjection = glm::ortho(0.0f, framebufferWidth,
+				0.0f, framebufferHeight, 0.1f, 100.0f);
+			ImGuizmo::AllowAxisFlip(false);
+			// RectTransform authoring is planar. This framebuffer-aligned front view
+			// leaves the depth axis edge-on, so stock ImGuizmo naturally suppresses
+			// it while preserving its normal interaction and drawing behavior.
+			ImGuizmo::SetOrthographic(true);
+			ImGuizmo::SetDrawlist();
+			ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
+				viewportDisplaySize.x, viewportDisplaySize.y);
+			ImGuizmo::SetID(static_cast<int>(static_cast<uint64_t>(selectedID)
+				& 0x7fffffffULL));
+
+			float snapValues[3] = { 0.0f, 0.0f, 0.0f };
+			float* snap = nullptr;
+			if (ImGui::GetIO().KeyCtrl)
+			{
+				if (translateTool)
+				{
+					const float canvasPixel = scaleIt->second;
+					snapValues[0] = canvasPixel;
+					snapValues[1] = canvasPixel;
+					snapValues[2] = canvasPixel;
+				}
+				else if (rotateTool)
+					snapValues[0] = snapValues[1] = snapValues[2] = 15.0f;
+				else
+					snapValues[0] = snapValues[1] = snapValues[2] = 0.1f;
+				snap = snapValues;
+			}
+
+			manipulated = ImGuizmo::Manipulate(glm::value_ptr(gizmoView),
+				glm::value_ptr(gizmoProjection),
+				static_cast<ImGuizmo::OPERATION>(m_GizmoType),
+				m_GizmoSpaceMode == GizmoSpaceMode::Local
+					? ImGuizmo::LOCAL : ImGuizmo::WORLD,
+				glm::value_ptr(gizmoTransform), nullptr, snap);
+			gizmoUsing = ImGuizmo::IsUsing();
+			gizmoHovered = ImGuizmo::IsOver(
+				static_cast<ImGuizmo::OPERATION>(m_GizmoType));
+		}
+
 		// The native mouse event is dispatched before this ImGui pass. Preserve the
-		// result for the next event so a UIText's blank rectangle (or the transparent
-		// part of a preserve-aspect Image) cannot select world geometry underneath
-		// before the RectTransform drag begins.
-		m_UIRectHandleHovered = hovered && canMove;
-		if (hovered && canMove)
-			ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-		if (hovered && layoutControlled
-			&& ImGui::IsMouseHoveringRect(minimum, maximum))
+		// result for the next event so transparent text/image pixels cannot select
+		// world geometry underneath the RectTransform or its ImGuizmo handles.
+		m_UIRectHandleHovered = canManipulate
+			&& (rectangleHovered || gizmoHovered || gizmoUsing);
+		if (rectangleHovered && translateTool && layoutControlled)
 			ImGui::SetTooltip("Position is controlled by the parent UI Layout Group");
 
-		if (!m_UIRectDragActive && hovered && canMove
-			&& ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-			&& !ImGui::GetIO().KeyAlt)
+		if (gizmoUsing && !m_UIRectTransactionActive)
 		{
-			BeginSceneTransaction("Move UI Element");
+			const char* label = translateTool ? "Move UI Element"
+				: (rotateTool ? "Rotate UI Element" : "Scale UI Element");
+			BeginSceneTransaction(label);
 			m_UIRectTransactionActive = m_SceneHistory.HasActiveTransaction();
-			m_UIRectDragActive = true;
 			m_UIRectEditEntity = selectedID;
-			m_UIRectDragStartMouse = { mouse.x, mouse.y };
-			m_UIRectDragStartPosition =
-				selected.GetComponent<RectTransform>().AnchoredPosition;
+		}
+		m_UIRectDragActive = gizmoUsing;
+
+		if (manipulated && m_UIRectTransactionActive
+			&& m_UIRectEditEntity == selectedID)
+		{
+			glm::vec3 translation{}, rotation{}, scale{};
+			const glm::mat4 localGizmoTransform = inverseParentCanvasTransform
+				* gizmoTransform;
+			if (Math::DecomposeTransform(localGizmoTransform,
+				translation, rotation, scale))
+			{
+				bool changed = false;
+				if (translateTool)
+				{
+					glm::vec2 position = selected.GetComponent<RectTransform>()
+						.AnchoredPosition
+						+ (glm::vec2(translation) - pivotPosition) / scaleIt->second;
+					if (ImGui::GetIO().KeyCtrl)
+						position = glm::round(position);
+					auto& rectTransform = selected.GetComponent<RectTransform>();
+					if (rectTransform.AnchoredPosition != position)
+					{
+						rectTransform.AnchoredPosition = position;
+						changed = true;
+					}
+				}
+				else
+				{
+					auto& authoredTransform = selected.GetComponent<Transform>();
+					glm::vec3 localRotation = authoredTransform._LocalRotation;
+					glm::vec3 localScale = authoredTransform._LocalScale;
+					if (rotateTool)
+						localRotation.z = rotation.z;
+					else
+					{
+						localScale.x = scale.x;
+						localScale.y = scale.y;
+					}
+					const glm::mat4 localTransform = Math::ComposeTransform(
+						authoredTransform._LocalTranslation, localRotation, localScale);
+					changed = m_ActiveScene->SetLocalTransform(selected, localTransform);
+				}
+				if (changed)
+					UpdateSceneTransaction();
+			}
 		}
 
-		if (m_UIRectDragActive)
-		{
-			if (m_UIRectEditEntity != selectedID || !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-			{
-				ResetRectTransformEditState();
-			}
-			else
-			{
-				const glm::vec2 displayDelta = glm::vec2(mouse.x, mouse.y)
-					- m_UIRectDragStartMouse;
-				glm::vec2 canvasDelta{
-					displayDelta.x / displayScaleX / scaleIt->second,
-					-displayDelta.y / displayScaleY / scaleIt->second };
-				glm::vec2 position = m_UIRectDragStartPosition + canvasDelta;
-				if (ImGui::GetIO().KeyCtrl)
-					position = glm::round(position);
-				auto& transform = selected.GetComponent<RectTransform>();
-				if (transform.AnchoredPosition != position)
-				{
-					transform.AnchoredPosition = position;
-					if (m_UIRectTransactionActive)
-						UpdateSceneTransaction();
-				}
-			}
-		}
+		if (m_UIRectTransactionActive && !gizmoUsing)
+			ResetRectTransformEditState();
 		return true;
 	}
 

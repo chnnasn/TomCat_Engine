@@ -109,13 +109,15 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		void UI_SceneToolbarDockPreview();
-		// Screen-space UI uses RectTransform pixel coordinates, so the ordinary
-		// world Transform gizmo cannot move it. This overlay draws the authored
-		// rectangle and maps Scene-view drag deltas back to AnchoredPosition.
+		// Screen-space UI uses RectTransform pixel coordinates, so it needs a
+		// dedicated orthographic ImGuizmo projection. Translation is mapped back to
+		// AnchoredPosition while rotation/scale reuse the entity Transform fields.
 		bool UI_RectTransformHandles();
 		void ResetRectTransformEditState();
 		void UI_ColliderEditHandles();
 		void RenderSceneColliderOverlays();
+		void RenderSceneCameraOverlay();
+		void FrameSceneEntity(Entity entity);
 		bool ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
 			glm::vec2& worldPosition) const;
 		bool WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const;
@@ -268,8 +270,6 @@ namespace TomCat {
 		// result must protect transparent UI rectangles from world picking.
 		bool m_UIRectHandleHovered = false;
 		UUID m_UIRectEditEntity = UUID(0);
-		glm::vec2 m_UIRectDragStartMouse{ 0.0f };
-		glm::vec2 m_UIRectDragStartPosition{ 0.0f };
 		bool m_ColliderTransactionActive = false;
 		bool m_BypassUnsavedCheck = false;
 		struct PendingProjectMigration

@@ -85,6 +85,12 @@ namespace TomCat {
 			m_TilePaletteOpenRequested = false;
 			return requested;
 		}
+		UUID ConsumeFrameEntityRequest()
+		{
+			const UUID requested = m_FrameEntityRequest;
+			m_FrameEntityRequest = UUID(0);
+			return requested;
+		}
 		bool CanAddComponentToSelection() const
 		{
 			return m_SelectionContext && m_ColliderEditingAllowed;
@@ -318,6 +324,7 @@ namespace TomCat {
 		bool m_AnimatorGraphOpenRequested = false;
 		bool m_AnimationOpenRequested = false;
 		bool m_TilePaletteOpenRequested = false;
+		UUID m_FrameEntityRequest = UUID(0);
 		bool m_ColliderEditingAllowed = true;
 		ColliderEditMode m_ColliderEditMode = ColliderEditMode::None;
 		UUID m_ColliderEditEntity = UUID(0);

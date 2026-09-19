@@ -487,7 +487,7 @@ namespace TomCat {
 	struct TextRenderer
 	{
 		bool Enabled = true;
-		AssetHandle Font = AssetHandle(0);
+		AssetHandle Font = AssetHandle(BuiltInLegacyRuntimeFontHandleValue);
 		AssetHandle FallbackFont = AssetHandle(0);
 		AssetHandle EmojiFont = AssetHandle(0);
 		std::string Text = "Text";
@@ -524,8 +524,10 @@ namespace TomCat {
 		glm::vec2 SizeDelta{ 100.0f, 100.0f };
 		bool ClipChildren = false;
 
-		// Screen-pixel rectangles written by RuntimeUISystem. They are transient
-		// and deliberately omitted from ComponentRegistry persistence.
+		// Layout-space rectangles written by RuntimeUISystem. RuntimeClipRect is a
+		// compatibility/diagnostic AABB; exact transformed clipping is retained in
+		// RuntimeUILayoutSnapshot. They are transient and deliberately omitted from
+		// ComponentRegistry persistence.
 		glm::vec4 RuntimeRect{ 0.0f };
 		glm::vec4 RuntimeClipRect{ 0.0f };
 	};
@@ -542,7 +544,7 @@ namespace TomCat {
 	struct UIText
 	{
 		bool Enabled = true;
-		AssetHandle Font = AssetHandle(0);
+		AssetHandle Font = AssetHandle(BuiltInLegacyRuntimeFontHandleValue);
 		AssetHandle FallbackFont = AssetHandle(0);
 		AssetHandle EmojiFont = AssetHandle(0);
 		std::string Text = "Text";
@@ -575,6 +577,8 @@ namespace TomCat {
 		glm::vec4 HoverColor{ 0.9f, 0.9f, 0.9f, 1.0f };
 		glm::vec4 PressedColor{ 0.72f, 0.72f, 0.72f, 1.0f };
 		glm::vec4 SelectedColor{ 0.82f, 0.9f, 1.0f, 1.0f };
+		glm::vec4 DisabledColor{ 0.52f, 0.52f, 0.52f, 0.5f };
+		float ColorMultiplier = 1.0f;
 		std::vector<UIButtonOnClickListener> OnClick;
 
 		bool RuntimeHovered = false;

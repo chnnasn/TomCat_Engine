@@ -93,6 +93,82 @@ namespace TomCat {
 		dispatcher.Dispatch<MouseScrolledEvent>(TC_Bind_Event_Fn(EditorCamera::OnMouseScroll));
 	}
 
+	void EditorCamera::Set2DMode(bool enabled)
+	{
+		if (m_Is2DMode == enabled)
+			return;
+		m_Is2DMode = enabled;
+		if (enabled)
+		{
+			// A 2D Scene view always faces the XY plane. Reset an angle inherited
+			// from a 3D project once when entering 2D; panning and zooming remain.
+			m_Pitch = 0.0f;
+			m_Yaw = 0.0f;
+			UpdateView();
+		}
+	}
+
+	void EditorCamera::FrameBounds(const glm::vec3& center, float radius)
+	{
+		if (!std::isfinite(center.x) || !std::isfinite(center.y)
+			|| !std::isfinite(center.z) || !std::isfinite(radius))
+			return;
+		const float safeRadius = std::max(std::abs(radius), 0.25f);
+		FrameBounds(center - glm::vec3(safeRadius),
+			center + glm::vec3(safeRadius));
+	}
+
+	void EditorCamera::FrameBounds(const glm::vec3& minimum,
+		const glm::vec3& maximum)
+	{
+		if (!std::isfinite(minimum.x) || !std::isfinite(minimum.y)
+			|| !std::isfinite(minimum.z) || !std::isfinite(maximum.x)
+			|| !std::isfinite(maximum.y) || !std::isfinite(maximum.z))
+			return;
+		const glm::vec3 lower = glm::min(minimum, maximum);
+		const glm::vec3 upper = glm::max(minimum, maximum);
+		m_FocalPoint = (lower + upper) * 0.5f;
+		const glm::vec3 halfExtents = glm::max((upper - lower) * 0.5f,
+			glm::vec3(0.25f));
+		float halfWidth = 0.0f;
+		float halfHeight = 0.0f;
+		float halfDepth = 0.0f;
+		const glm::vec3 right = GetRightDirection();
+		const glm::vec3 up = GetUpDirection();
+		const glm::vec3 forward = GetForwardDirection();
+		for (int x = -1; x <= 1; x += 2)
+		{
+			for (int y = -1; y <= 1; y += 2)
+			{
+				for (int z = -1; z <= 1; z += 2)
+				{
+					const glm::vec3 offset = halfExtents * glm::vec3(
+						static_cast<float>(x), static_cast<float>(y),
+						static_cast<float>(z));
+					halfWidth = std::max(halfWidth, std::abs(glm::dot(offset, right)));
+					halfHeight = std::max(halfHeight, std::abs(glm::dot(offset, up)));
+					halfDepth = std::max(halfDepth, std::abs(glm::dot(offset, forward)));
+				}
+			}
+		}
+
+		const float verticalHalfFov = glm::radians(m_FOV) * 0.5f;
+		const float tangent = std::max(std::tan(verticalHalfFov), 0.01f);
+		const float fitDistance = std::max(halfHeight / tangent,
+			halfWidth / (tangent * std::max(m_AspectRatio, 0.01f)));
+		// A small margin matches the Scene view's framing behavior and leaves the
+		// selection outline visible instead of touching the viewport edges.
+		m_Distance = std::max({ 1.0f, halfDepth + fitDistance * 1.15f,
+			halfDepth + m_NearClip + 0.01f });
+		const float requiredFarClip = m_Distance + halfDepth + 1.0f;
+		if (requiredFarClip > m_FarClip)
+		{
+			m_FarClip = requiredFarClip * 1.1f;
+			UpdateProjection();
+		}
+		UpdateView();
+	}
+
 	bool EditorCamera::OnMouseScroll(MouseScrolledEvent& e)
 	{
 		float delta = e.GetYOffset() * 0.1f;

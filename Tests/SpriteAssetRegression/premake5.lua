@@ -58,7 +58,8 @@ project "SpriteAssetRegression"
 		links { table.unpack(TomCatConsumerLinksDebug) }
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul",
-			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul"
 		}
 
 	filter "configurations:Release"
@@ -68,7 +69,8 @@ project "SpriteAssetRegression"
 		links { table.unpack(TomCatConsumerLinksRelease) }
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
-			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul"
 		}
 
 	filter "configurations:Dist"
@@ -78,5 +80,6 @@ project "SpriteAssetRegression"
 		links { table.unpack(TomCatConsumerLinksRelease) }
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
-			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\" \"$(OutDir)Packages\\Resources\\Sprites\\TomCat\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul"
 		}

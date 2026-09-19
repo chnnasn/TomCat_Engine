@@ -2,8 +2,10 @@
 #include "TomCat/Asset/Advanced2DAuthoringAssets.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Asset/TextureArtifact.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/SceneSerializer.h"
@@ -26,6 +28,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -72,6 +75,30 @@ namespace {
 
 	private:
 		std::filesystem::path m_Previous;
+	};
+
+	class ScopedRuntimePackageRoot final
+	{
+	public:
+		explicit ScopedRuntimePackageRoot(const std::filesystem::path& root)
+			: m_Previous(TomCat::ApplicationPaths::GetRuntimePackageRoot())
+		{
+			TomCat::ApplicationPaths::SetRuntimePackageRoot(root);
+		}
+
+		~ScopedRuntimePackageRoot()
+		{
+			if (m_Previous)
+				TomCat::ApplicationPaths::SetRuntimePackageRoot(*m_Previous);
+			else
+				TomCat::ApplicationPaths::ClearRuntimePackageRoot();
+		}
+
+		ScopedRuntimePackageRoot(const ScopedRuntimePackageRoot&) = delete;
+		ScopedRuntimePackageRoot& operator=(const ScopedRuntimePackageRoot&) = delete;
+
+	private:
+		std::optional<std::filesystem::path> m_Previous;
 	};
 
 	std::filesystem::path GetExecutableDirectory()
@@ -970,30 +997,45 @@ namespace {
 			"built-in Sprite package path resolution changed");
 
 		const std::filesystem::path executableDirectory = GetExecutableDirectory();
+		const ScopedRuntimePackageRoot packageRoot(executableDirectory);
+		const std::filesystem::path rootedCirclePath = executableDirectory / circlePath;
+		const std::filesystem::path rootedSquarePath = executableDirectory / squarePath;
+		const std::filesystem::path fontPath = executableDirectory /
+			"Packages/fonts/opensans/OpenSans-Regular.ttf";
 		std::error_code error;
-		Require(std::filesystem::is_regular_file(
-			executableDirectory / circlePath, error) && !error,
+		Require(std::filesystem::is_regular_file(rootedCirclePath, error) && !error,
 			"Circle package resource was not copied beside the regression executable");
 		error.clear();
-		Require(std::filesystem::is_regular_file(
-			executableDirectory / squarePath, error) && !error,
+		Require(std::filesystem::is_regular_file(rootedSquarePath, error) && !error,
 			"Square package resource was not copied beside the regression executable");
-		const ScopedCurrentPath packagedRuntime(executableDirectory);
-		const std::vector<uint8_t> circleSource = ReadFileBytes(circlePath);
-		const std::vector<uint8_t> squareSource = ReadFileBytes(squarePath);
+		error.clear();
+		Require(std::filesystem::is_regular_file(fontPath, error) && !error,
+			"default Font package resource was not copied beside the regression executable");
+
+		TemporaryAssetProject environment;
+		const ScopedCurrentPath foreignWorkingDirectory(environment.Root);
+		Require(TomCat::GetBuiltInSpriteAssetPath(circle) == rootedCirclePath
+			&& TomCat::GetBuiltInSpriteAssetPath(square) == rootedSquarePath
+			&& TomCat::GetBuiltInFontAssetPath(
+				TomCat::GetDefaultRuntimeFontHandle()) == fontPath,
+			"built-in assets did not resolve from the executable package root");
+		const std::vector<uint8_t> circleSource = ReadFileBytes(rootedCirclePath);
+		const std::vector<uint8_t> squareSource = ReadFileBytes(rootedSquarePath);
 		RequireDecodablePrimitive(circleSource, true);
 		RequireDecodablePrimitive(squareSource, false);
 
 		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
 		assets.Shutdown();
 		TomCat::ResolvedSpriteAsset resolved;
-		Require(assets.ResolvePath(circle) == circlePath
-			&& assets.ResolvePath(square) == squarePath
+		const TomCat::AssetLoadResult loadedFont = assets.LoadImportedArtifact(
+			TomCat::GetDefaultRuntimeFontHandle());
+		Require(assets.ResolvePath(circle) == rootedCirclePath
+			&& assets.ResolvePath(square) == rootedSquarePath
+			&& loadedFont.Succeeded() && !loadedFont.Artifact.Bytes.empty()
 			&& assets.ResolveSpriteAsset(circle, resolved)
 			&& resolved.TextureHandle == circle && !resolved.IsSubAsset,
-			"authoring did not resolve a built-in Sprite outside the project registry");
+			"authoring did not load built-in Font/Sprites outside the project registry");
 
-		TemporaryAssetProject environment;
 		Require(assets.Initialize(environment.Assets, environment.Library),
 			"built-in Sprite Cook AssetManager initialization failed");
 		Require(assets.Registry().GetMetadata(circle) == nullptr

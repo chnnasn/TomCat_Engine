@@ -8,6 +8,7 @@
 
 #include "TomCat/Scene/Components.h"
 
+#include <array>
 #include <span>
 
 namespace TomCat {
@@ -89,6 +90,15 @@ namespace TomCat {
 		static void DrawTexturedQuadRegion(const glm::mat4& transform,
 			const Ref<Texture2D>& texture, const glm::vec2& uvMin,
 			const glm::vec2& uvMax, const glm::vec4& tintColor = glm::vec4(1.0f),
+			int entityID = -1, bool lit = false);
+		// Submits explicit quad vertices. Supplying the first vertex again as the
+		// fourth produces one textured triangle plus one degenerate triangle, which
+		// lets CPU-clipped UI polygons share the existing quad batch safely.
+		static void DrawTexturedQuadVertices(
+			const std::array<glm::vec3, 4>& positions,
+			const Ref<Texture2D>& texture,
+			const std::array<glm::vec2, 4>& textureCoordinates,
+			const glm::vec4& tintColor = glm::vec4(1.0f),
 			int entityID = -1, bool lit = false);
 		// Procedural circle primitive for colliders, masks, gizmos, and other
 		// utility rendering. Ordinary visible objects use a SpriteRenderer asset.

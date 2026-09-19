@@ -62,14 +62,29 @@ namespace TomCat {
 			TextAlignment alignment, float lineSpacing = 1.0f);
 	};
 
+	struct RuntimeUIClipRegion
+	{
+		UIRect Rectangle;
+		glm::mat4 Transform{ 1.0f };
+	};
+
 	struct RuntimeUILayoutSnapshot
 	{
 		uint32_t ViewportWidth = 0;
 		uint32_t ViewportHeight = 0;
 		float DPI = 96.0f;
 		std::map<UUID, UIRect> Rectangles;
+		// Layout-space compatibility/diagnostic rectangles. Transformed rendering
+		// and hit testing use ClipRegions, where every mask keeps its own transform.
 		std::map<UUID, UIRect> Clips;
 		std::map<UUID, float> Scales;
+		// Maps the authored, unrotated screen rectangle into its accumulated
+		// RectTransform rotation/scale space. Translation remains anchor driven.
+		std::map<UUID, glm::mat4> Transforms;
+		// Ordered ancestor masks in the coordinate space where each mask was
+		// authored. Rendering and hit testing apply every region after transforms,
+		// so a rotated child remains clipped by its parent's visible rectangle.
+		std::map<UUID, std::vector<RuntimeUIClipRegion>> ClipRegions;
 		std::vector<UUID> RenderOrder;
 	};
 

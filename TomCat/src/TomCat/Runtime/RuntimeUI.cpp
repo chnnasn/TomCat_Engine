@@ -142,13 +142,172 @@ namespace TomCat {
 			return true;
 		}
 
-		glm::mat4 QuadTransform(const UIRect& rectangle, float z = 0.0f)
+		struct UIClipVertex
 		{
-			return glm::translate(glm::mat4(1.0f), {
-				rectangle.X + rectangle.Width * 0.5f,
-				rectangle.Y + rectangle.Height * 0.5f, z })
-				* glm::scale(glm::mat4(1.0f), {
-					rectangle.Width, rectangle.Height, 1.0f });
+			glm::vec2 Position{ 0.0f };
+			glm::vec2 UV{ 0.0f };
+		};
+
+		bool TransformUIPosition(const glm::mat4& transform,
+			const glm::vec2& position, glm::vec2& output)
+		{
+			const glm::vec4 transformed = transform
+				* glm::vec4(position, 0.0f, 1.0f);
+			if (!std::isfinite(transformed.x) || !std::isfinite(transformed.y)
+				|| !std::isfinite(transformed.w)
+				|| std::abs(transformed.w) <= 0.000001f)
+				return false;
+			output = glm::vec2(transformed) / transformed.w;
+			return Finite(output);
+		}
+
+		bool InvertUITransform(const glm::mat4& transform, glm::mat4& inverse)
+		{
+			const float determinant = glm::determinant(transform);
+			if (!std::isfinite(determinant) || std::abs(determinant) <= 0.000001f)
+				return false;
+			inverse = glm::inverse(transform);
+			for (glm::length_t column = 0; column < 4; ++column)
+				for (glm::length_t row = 0; row < 4; ++row)
+					if (!std::isfinite(inverse[column][row]))
+						return false;
+			return true;
+		}
+
+		std::vector<UIClipVertex> ClipPolygonToRectangle(
+			std::vector<UIClipVertex> polygon, const UIRect& rectangle)
+		{
+			if (polygon.size() < 3 || rectangle.IsEmpty())
+				return {};
+			for (int edge = 0; edge < 4 && polygon.size() >= 3; ++edge)
+			{
+				const bool xAxis = edge < 2;
+				const bool lowerEdge = (edge % 2) == 0;
+				const float boundary = xAxis
+					? (lowerEdge ? rectangle.X : rectangle.X + rectangle.Width)
+					: (lowerEdge ? rectangle.Y : rectangle.Y + rectangle.Height);
+				auto coordinate = [xAxis](const UIClipVertex& vertex)
+				{
+					return xAxis ? vertex.Position.x : vertex.Position.y;
+				};
+				auto inside = [lowerEdge, boundary, &coordinate](
+					const UIClipVertex& vertex)
+				{
+					return lowerEdge ? coordinate(vertex) >= boundary
+						: coordinate(vertex) <= boundary;
+				};
+
+				std::vector<UIClipVertex> output;
+				output.reserve(polygon.size() + 1);
+				UIClipVertex previous = polygon.back();
+				bool previousInside = inside(previous);
+				for (const UIClipVertex& current : polygon)
+				{
+					const bool currentInside = inside(current);
+					if (currentInside != previousInside)
+					{
+						const float denominator = coordinate(current)
+							- coordinate(previous);
+						if (std::isfinite(denominator)
+							&& std::abs(denominator) > 0.000001f)
+						{
+							const float amount = std::clamp((boundary
+								- coordinate(previous)) / denominator,
+								0.0f, 1.0f);
+							output.push_back({ glm::mix(previous.Position,
+								current.Position, amount),
+								glm::mix(previous.UV, current.UV, amount) });
+						}
+					}
+					if (currentInside)
+						output.push_back(current);
+					previous = current;
+					previousInside = currentInside;
+				}
+				polygon = std::move(output);
+			}
+			return polygon.size() >= 3 ? polygon : std::vector<UIClipVertex>{};
+		}
+
+		std::vector<UIClipVertex> BuildClippedUIPolygon(
+			const UIRect& rectangle, const glm::mat4& elementTransform,
+			const std::vector<RuntimeUIClipRegion>& clipRegions,
+			const glm::vec2& uvMin, const glm::vec2& uvMax)
+		{
+			if (rectangle.IsEmpty() || !Finite(uvMin) || !Finite(uvMax))
+				return {};
+			const glm::vec2 localPositions[4] = {
+				{ rectangle.X, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y + rectangle.Height },
+				{ rectangle.X, rectangle.Y + rectangle.Height }
+			};
+			const glm::vec2 textureCoordinates[4] = {
+				{ uvMin.x, uvMin.y }, { uvMax.x, uvMin.y },
+				{ uvMax.x, uvMax.y }, { uvMin.x, uvMax.y }
+			};
+			std::vector<UIClipVertex> polygon;
+			polygon.reserve(8);
+			for (size_t index = 0; index < 4; ++index)
+			{
+				glm::vec2 transformed;
+				if (!TransformUIPosition(elementTransform, localPositions[index],
+					transformed))
+					return {};
+				polygon.push_back({ transformed, textureCoordinates[index] });
+			}
+
+			for (const RuntimeUIClipRegion& region : clipRegions)
+			{
+				glm::mat4 inverse(1.0f);
+				if (!InvertUITransform(region.Transform, inverse))
+					return {};
+				for (UIClipVertex& vertex : polygon)
+				{
+					glm::vec2 local;
+					if (!TransformUIPosition(inverse, vertex.Position, local))
+						return {};
+					vertex.Position = local;
+				}
+				polygon = ClipPolygonToRectangle(std::move(polygon),
+					region.Rectangle);
+				if (polygon.empty())
+					return {};
+				for (UIClipVertex& vertex : polygon)
+				{
+					glm::vec2 transformed;
+					if (!TransformUIPosition(region.Transform, vertex.Position,
+						transformed))
+						return {};
+					vertex.Position = transformed;
+				}
+			}
+			return polygon;
+		}
+
+		void DrawClippedUIQuad(const UIRect& rectangle,
+			const glm::mat4& elementTransform,
+			const std::vector<RuntimeUIClipRegion>& clipRegions,
+			const Ref<Texture2D>& texture, const glm::vec2& uvMin,
+			const glm::vec2& uvMax, const glm::vec4& color, int entityID)
+		{
+			const std::vector<UIClipVertex> polygon = BuildClippedUIPolygon(
+				rectangle, elementTransform, clipRegions, uvMin, uvMax);
+			for (size_t index = 1; index + 1 < polygon.size(); ++index)
+			{
+				const std::array<glm::vec3, 4> positions = {{
+					{ polygon[0].Position, 0.0f },
+					{ polygon[index].Position, 0.0f },
+					{ polygon[index + 1].Position, 0.0f },
+					{ polygon[0].Position, 0.0f }
+				}};
+				const std::array<glm::vec2, 4> textureCoordinates = {{
+					polygon[0].UV, polygon[index].UV,
+					polygon[index + 1].UV, polygon[0].UV
+				}};
+				Renderer2D::DrawTexturedQuadVertices(positions, texture,
+					textureCoordinates, color, entityID);
+			}
 		}
 
 		glm::vec4 MultiplyColor(const glm::vec4& first, const glm::vec4& second)
@@ -157,7 +316,9 @@ namespace TomCat {
 		}
 
 		void DrawScreenText(const UIText& text, const UIRect& rectangle,
-			const UIRect& clip, float canvasScale, int entityID)
+			const std::vector<RuntimeUIClipRegion>& inheritedClipRegions,
+			float canvasScale,
+			const glm::mat4& elementTransform, int entityID)
 		{
 			if (!text.Enabled || text.Text.empty() || !Finite(text.FontSize)
 				|| text.FontSize <= 0.0f || !Finite(canvasScale)
@@ -173,17 +334,15 @@ namespace TomCat {
 				text.Alignment, text.LineSpacing);
 			const glm::vec2 origin(rectangle.X,
 				rectangle.Y + std::max(0.0f, rectangle.Height - layout.Height));
+			std::vector<RuntimeUIClipRegion> clipRegions = inheritedClipRegions;
+			clipRegions.push_back({ rectangle, elementTransform });
 			for (const TextGlyphQuad& glyph : layout.Glyphs)
 			{
 				const UIRect original{ origin.x + glyph.Rect.X,
 					origin.y + glyph.Rect.Y, glyph.Rect.Width, glyph.Rect.Height };
-				UIRect visible;
-				glm::vec2 uvMin, uvMax;
-				if (!ClipQuad(original, clip, glyph.UVMin, glyph.UVMax,
-					visible, uvMin, uvMax))
-					continue;
-				Renderer2D::DrawTexturedQuadRegion(QuadTransform(visible),
-					font->GetTexture(), uvMin, uvMax, text.Color, entityID);
+				DrawClippedUIQuad(original, elementTransform, clipRegions,
+					font->GetTexture(), glyph.UVMin, glyph.UVMax,
+					text.Color, entityID);
 			}
 		}
 
@@ -196,7 +355,9 @@ namespace TomCat {
 			std::set<uint64_t> Visited;
 
 			void LayoutChildren(Entity parent, const UIRect& parentRect,
-				const UIRect& inheritedClip, float scale)
+				const UIRect& inheritedClip, float scale,
+				const glm::mat4& parentTransform,
+				const std::vector<RuntimeUIClipRegion>& inheritedClipRegions)
 			{
 				UILayoutGroup* group = parent.HasComponent<UILayoutGroup>()
 					? &parent.GetComponent<UILayoutGroup>() : nullptr;
@@ -212,8 +373,8 @@ namespace TomCat {
 						|| !IsVisible(SceneValue, child, Visibility)
 						|| !Visited.emplace(static_cast<uint64_t>(childID)).second)
 						continue;
-					auto& transform = child.GetComponent<RectTransform>();
-					UIRect rectangle = ResolveAnchors(transform, parentRect, scale);
+					auto& rectTransform = child.GetComponent<RectTransform>();
+					UIRect rectangle = ResolveAnchors(rectTransform, parentRect, scale);
 					if (group && group->Enabled)
 					{
 						glm::vec2 controlled(rectangle.Width, rectangle.Height);
@@ -235,17 +396,77 @@ namespace TomCat {
 						}
 					}
 					const UIRect clip = UIRect::Intersect(rectangle, inheritedClip);
-					transform.RuntimeRect = rectangle.ToVector();
-					transform.RuntimeClipRect = clip.ToVector();
+					rectTransform.RuntimeRect = rectangle.ToVector();
+					rectTransform.RuntimeClipRect = clip.ToVector();
 					Snapshot.Rectangles[childID] = rectangle;
 					Snapshot.Clips[childID] = clip;
 					Snapshot.Scales[childID] = scale;
+					glm::mat4 localTransform(1.0f);
+					if (child.HasComponent<Transform>())
+					{
+						const Transform& authored = child.GetComponent<Transform>();
+						const float rotation = std::isfinite(authored._LocalRotation.z)
+							? authored._LocalRotation.z : 0.0f;
+						const float scaleX = std::isfinite(authored._LocalScale.x)
+							? authored._LocalScale.x : 1.0f;
+						const float scaleY = std::isfinite(authored._LocalScale.y)
+							? authored._LocalScale.y : 1.0f;
+						const glm::vec2 pivot{
+							rectangle.X + rectangle.Width * rectTransform.Pivot.x,
+							rectangle.Y + rectangle.Height * rectTransform.Pivot.y };
+						localTransform = glm::translate(glm::mat4(1.0f),
+							glm::vec3(pivot, 0.0f))
+							* glm::rotate(glm::mat4(1.0f), rotation,
+								glm::vec3(0.0f, 0.0f, 1.0f))
+							* glm::scale(glm::mat4(1.0f),
+								glm::vec3(scaleX, scaleY, 1.0f))
+							* glm::translate(glm::mat4(1.0f),
+								glm::vec3(-pivot, 0.0f));
+					}
+					const glm::mat4 accumulatedTransform = parentTransform
+						* localTransform;
+					Snapshot.Transforms[childID] = accumulatedTransform;
+					Snapshot.ClipRegions[childID] = inheritedClipRegions;
 					Snapshot.RenderOrder.push_back(childID);
-					const UIRect childClip = transform.ClipChildren ? clip : inheritedClip;
-					LayoutChildren(child, rectangle, childClip, scale);
+					const UIRect childClip = rectTransform.ClipChildren
+						? clip : inheritedClip;
+					std::vector<RuntimeUIClipRegion> childClipRegions =
+						inheritedClipRegions;
+					if (rectTransform.ClipChildren)
+						childClipRegions.push_back({ rectangle,
+							accumulatedTransform });
+					LayoutChildren(child, rectangle, childClip, scale,
+						accumulatedTransform, childClipRegions);
 				}
 			}
 		};
+
+		bool ContainsTransformedPoint(const RuntimeUILayoutSnapshot& layout,
+			UUID id, const glm::vec2& point)
+		{
+			const auto rectangle = layout.Rectangles.find(id);
+			const auto transform = layout.Transforms.find(id);
+			const auto clipRegions = layout.ClipRegions.find(id);
+			if (rectangle == layout.Rectangles.end()
+				|| transform == layout.Transforms.end()
+				|| clipRegions == layout.ClipRegions.end())
+				return false;
+			glm::mat4 inverse(1.0f);
+			if (!InvertUITransform(transform->second, inverse))
+				return false;
+			glm::vec2 local;
+			if (!TransformUIPosition(inverse, point, local)
+				|| !rectangle->second.Contains(local))
+				return false;
+			for (const RuntimeUIClipRegion& region : clipRegions->second)
+			{
+				if (!InvertUITransform(region.Transform, inverse)
+					|| !TransformUIPosition(inverse, point, local)
+					|| !region.Rectangle.Contains(local))
+					return false;
+			}
+			return true;
+		}
 
 		bool WouldCaptureGameplayInput(Scene& scene, entt::registry& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
@@ -291,12 +512,7 @@ namespace TomCat {
 				item != layout.RenderOrder.rend(); ++item)
 			{
 				Entity target = scene.FindEntityByUUID(*item);
-				const auto rectangle = layout.Rectangles.find(*item);
-				const auto clip = layout.Clips.find(*item);
-				if (!target || rectangle == layout.Rectangles.end()
-					|| clip == layout.Clips.end()
-					|| !UIRect::Intersect(rectangle->second, clip->second)
-						.Contains(mousePoint))
+				if (!target || !ContainsTransformedPoint(layout, *item, mousePoint))
 					continue;
 				const bool imageTarget = target.HasComponent<UIImage>()
 					&& target.GetComponent<UIImage>().Enabled
@@ -523,8 +739,14 @@ namespace TomCat {
 			snapshot.Rectangles[item.Value.GetUUID()] = viewport;
 			snapshot.Clips[item.Value.GetUUID()] = viewport;
 			snapshot.Scales[item.Value.GetUUID()] = scale;
+			snapshot.Transforms[item.Value.GetUUID()] = glm::mat4(1.0f);
+			const std::vector<RuntimeUIClipRegion> viewportClipRegions = {
+				{ viewport, glm::mat4(1.0f) }
+			};
+			snapshot.ClipRegions[item.Value.GetUUID()] = viewportClipRegions;
 			snapshot.RenderOrder.push_back(item.Value.GetUUID());
-			builder.LayoutChildren(item.Value, viewport, viewport, scale);
+			builder.LayoutChildren(item.Value, viewport, viewport, scale,
+				glm::mat4(1.0f), viewportClipRegions);
 		}
 		return snapshot;
 	}
@@ -832,11 +1054,7 @@ namespace TomCat {
 			item != layout.RenderOrder.rend(); ++item)
 		{
 			Entity target = scene.FindEntityByUUID(*item);
-			const auto rectangle = layout.Rectangles.find(*item);
-			const auto clip = layout.Clips.find(*item);
-			if (!target || rectangle == layout.Rectangles.end()
-				|| clip == layout.Clips.end()
-				|| !UIRect::Intersect(rectangle->second, clip->second).Contains(mousePoint))
+			if (!target || !ContainsTransformedPoint(layout, *item, mousePoint))
 				continue;
 			const bool imageTarget = target.HasComponent<UIImage>()
 				&& target.GetComponent<UIImage>().Enabled
@@ -1133,7 +1351,11 @@ namespace TomCat {
 				continue;
 			const auto rectangle = layout.Rectangles.find(id);
 			const auto clip = layout.Clips.find(id);
-			if (rectangle == layout.Rectangles.end() || clip == layout.Clips.end())
+			const auto elementTransform = layout.Transforms.find(id);
+			const auto clipRegions = layout.ClipRegions.find(id);
+			if (rectangle == layout.Rectangles.end() || clip == layout.Clips.end()
+				|| elementTransform == layout.Transforms.end()
+				|| clipRegions == layout.ClipRegions.end())
 				continue;
 			if (entity.HasComponent<UIImage>())
 			{
@@ -1165,7 +1387,7 @@ namespace TomCat {
 						}
 					}
 					UIImageGeometry geometry;
-					if (BuildImageGeometry(rectangle->second, clip->second,
+					if (BuildImageGeometry(rectangle->second, rectangle->second,
 						sourceAspect, sourceUVMin, sourceUVMax,
 						image.PreserveAspect, geometry))
 					{
@@ -1174,25 +1396,28 @@ namespace TomCat {
 							&& entity.GetComponent<UIButton>().Enabled)
 						{
 							const auto& button = entity.GetComponent<UIButton>();
-							const glm::vec4 state = button.RuntimePressed ? button.PressedColor
+							glm::vec4 state = !button.Interactable ? button.DisabledColor
+								: button.RuntimePressed ? button.PressedColor
 								: button.RuntimeHovered ? button.HoverColor
 								: button.RuntimeFocused ? button.SelectedColor
 								: button.NormalColor;
+							const float multiplier = std::isfinite(button.ColorMultiplier)
+								? std::clamp(button.ColorMultiplier, 0.0f, 5.0f) : 1.0f;
+							state *= multiplier;
 							color = MultiplyColor(color, state);
 						}
-						if (static_cast<uint64_t>(image.Image) == 0)
-							Renderer2D::DrawQuad(QuadTransform(geometry.Rect), color,
+						if (static_cast<uint64_t>(image.Image) == 0 || texture)
+							DrawClippedUIQuad(geometry.Rect,
+								elementTransform->second, clipRegions->second,
+								texture, geometry.UVMin, geometry.UVMax, color,
 								static_cast<int>(static_cast<entt::entity>(entity)));
-						else if (texture)
-							Renderer2D::DrawTexturedQuadRegion(QuadTransform(geometry.Rect),
-								texture, geometry.UVMin, geometry.UVMax,
-								color, static_cast<int>(static_cast<entt::entity>(entity)));
 					}
 				}
 			}
 			if (entity.HasComponent<UIText>())
 				DrawScreenText(entity.GetComponent<UIText>(), rectangle->second,
-					clip->second, layout.Scales.at(id),
+					clipRegions->second, layout.Scales.at(id),
+					elementTransform->second,
 					static_cast<int>(static_cast<entt::entity>(entity)));
 		}
 		Renderer2D::EndScene();

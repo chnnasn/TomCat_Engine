@@ -2,8 +2,10 @@
 
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Camera.h"
+#include "TomCat/Renderer/EditorCamera.h"
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Framebuffer.h"
 #include "TomCat/Renderer/RenderCommand.h"
@@ -35,12 +37,23 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
+
+#ifdef TC_PLATFORM_WINDOWS
+	#ifndef NOMINMAX
+		#define NOMINMAX
+	#endif
+	#ifndef WIN32_LEAN_AND_MEAN
+		#define WIN32_LEAN_AND_MEAN
+	#endif
+	#include <Windows.h>
+#endif
 
 namespace {
 	constexpr const char* MixedUTF8 =
@@ -67,6 +80,45 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 	bool Near(float first, float second, float epsilon = 1.0e-3f)
 	{
 		return std::abs(first - second) <= epsilon;
+	}
+
+	class ScopedRuntimePackageRoot final
+	{
+	public:
+		explicit ScopedRuntimePackageRoot(const std::filesystem::path& root)
+			: m_Previous(TomCat::ApplicationPaths::GetRuntimePackageRoot())
+		{
+			TomCat::ApplicationPaths::SetRuntimePackageRoot(root);
+		}
+
+		~ScopedRuntimePackageRoot()
+		{
+			if (m_Previous)
+				TomCat::ApplicationPaths::SetRuntimePackageRoot(*m_Previous);
+			else
+				TomCat::ApplicationPaths::ClearRuntimePackageRoot();
+		}
+
+		ScopedRuntimePackageRoot(const ScopedRuntimePackageRoot&) = delete;
+		ScopedRuntimePackageRoot& operator=(const ScopedRuntimePackageRoot&) = delete;
+
+	private:
+		std::optional<std::filesystem::path> m_Previous;
+	};
+
+	std::filesystem::path GetExecutableDirectory()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		std::array<wchar_t, 32768> buffer{};
+		const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+			static_cast<DWORD>(buffer.size()));
+		RequireUI(length != 0 && length < buffer.size(),
+			"Physics regression executable path is unavailable");
+		return std::filesystem::path(
+			std::wstring(buffer.data(), length)).parent_path();
+#else
+		return std::filesystem::current_path();
+#endif
 	}
 
 	std::vector<uint8_t> DecodeBase64(std::string_view encoded)
@@ -120,32 +172,6 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			output.write(reinterpret_cast<const char*>(bytes.data()),
 				static_cast<std::streamsize>(bytes.size()));
 		RequireUI(output.good(), "could not write Runtime UI fixture");
-	}
-
-	std::filesystem::path FindRepositoryFile(const std::filesystem::path& relative)
-	{
-		auto search = [&](std::filesystem::path cursor)
-		{
-			std::error_code error;
-			for (uint32_t depth = 0; depth < 10 && !cursor.empty(); ++depth)
-			{
-				const std::filesystem::path candidate = cursor / relative;
-				if (std::filesystem::is_regular_file(candidate, error) && !error)
-					return candidate;
-				error.clear();
-				const std::filesystem::path parent = cursor.parent_path();
-				if (parent == cursor)
-					break;
-				cursor = parent;
-			}
-			return std::filesystem::path{};
-		};
-		if (std::filesystem::path found = search(std::filesystem::current_path());
-			!found.empty())
-			return found;
-		const std::filesystem::path source(__FILE__);
-		return search(source.is_absolute() ? source.parent_path()
-			: std::filesystem::absolute(source).parent_path());
 	}
 
 	struct UIFixture
@@ -465,6 +491,16 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 	void TestUTF8AndDeterministicFontAtlas()
 	{
+		const TomCat::AssetHandle defaultFont =
+			TomCat::GetDefaultRuntimeFontHandle();
+		const TomCat::BuiltInFontAsset* builtInFont =
+			TomCat::FindBuiltInFontAsset(defaultFont);
+		RequireUI(static_cast<uint64_t>(defaultFont)
+				== TomCat::BuiltInLegacyRuntimeFontHandleValue
+			&& builtInFont && builtInFont->Name == "Legacy Runtime"
+			&& TomCat::TextRenderer{}.Font == defaultFont
+			&& TomCat::UIText{}.Font == defaultFont,
+			"runtime text components do not default to the stable built-in font");
 		bool valid = false;
 		const std::vector<uint32_t> decoded = TomCat::FontAtlasBuilder::DecodeUTF8(
 			MixedUTF8, &valid);
@@ -478,8 +514,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(!valid && !repaired.empty()
 			&& repaired.front() == TomCat::FontAtlasBuilder::ReplacementCodepoint,
 			"malformed UTF-8 did not produce a replacement glyph");
-		const std::filesystem::path fontPath = FindRepositoryFile(
-			"Editor/TomCatInut/Packages/fonts/opensans/OpenSans-Regular.ttf");
+		const std::filesystem::path fontPath = TomCat::GetBuiltInFontAssetPath(
+			TomCat::GetDefaultRuntimeFontHandle());
 		RequireUI(!fontPath.empty(), "could not locate OpenSans font fixture");
 		const std::vector<uint8_t> bytes = ReadBinary(fontPath);
 		const std::vector<uint32_t> requested(decoded.begin(), decoded.end());
@@ -548,6 +584,29 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(normal.Width > 0.0f && Near(dpi150.Width, normal.Width * 1.5f)
 			&& Near(dpi150.Height, normal.Height * 1.5f),
 			"UIText font metrics did not scale with Canvas DPI");
+		auto glyphsFitLine = [](const TomCat::TextLayoutResult& layout)
+		{
+			return !layout.Glyphs.empty() && std::all_of(layout.Glyphs.begin(),
+				layout.Glyphs.end(), [&layout](const TomCat::TextGlyphQuad& glyph)
+				{
+					return glyph.Rect.Y >= -0.01f
+						&& glyph.Rect.Y + glyph.Rect.Height
+							<= layout.Height + 0.01f;
+				});
+		};
+		RequireUI(glyphsFitLine(normal),
+			"OpenSans glyph baseline escaped the first line and would be clipped");
+
+		const std::array<uint32_t, 1> missingGlyph = { 0x4e2du };
+		TomCat::FontAtlasData proceduralAtlas;
+		RequireUI(TomCat::FontAtlasBuilder::Build(
+			std::span<const uint8_t>{}, missingGlyph, proceduralAtlas),
+			"procedural fallback atlas could not be built");
+		const TomCat::TextLayoutResult proceduralLayout =
+			TomCat::TextLayoutEngine::Build(proceduralAtlas, "\xe4\xb8\xad",
+				24.0f, 0.0f, TomCat::TextAlignment::Left);
+		RequireUI(glyphsFitLine(proceduralLayout),
+			"procedural replacement glyph escaped the first line and was clipped");
 	}
 
 	void TestLayoutClippingAspectAndInput()
@@ -1020,6 +1079,191 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"UIEventSystem ConsumeGameplayInput=false still captured Gameplay");
 	}
 
+	void TestRectTransformTransformAndHitTesting()
+	{
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity canvas = scene->CreateEntityWithUUID(
+			TomCat::UUID(10101), "Transform Canvas");
+		auto& canvasComponent = canvas.AddComponent<TomCat::Canvas>();
+		canvasComponent.ReferenceResolution = { 1920.0f, 1080.0f };
+		canvas.AddComponent<TomCat::UIEventSystem>();
+
+		TomCat::Entity button = scene->CreateEntityWithUUID(
+			TomCat::UUID(10102), "Transformed Button");
+		auto& rectTransform = button.AddComponent<TomCat::RectTransform>();
+		rectTransform.AnchorMin = rectTransform.AnchorMax = { 0.5f, 0.5f };
+		rectTransform.Pivot = { 0.25f, 0.75f };
+		rectTransform.AnchoredPosition = { 60.0f, -30.0f };
+		rectTransform.SizeDelta = { 160.0f, 40.0f };
+		button.AddComponent<TomCat::UIImage>();
+		button.AddComponent<TomCat::UIButton>();
+		RequireUI(scene->SetParent(button, canvas),
+			"could not parent transformed Runtime UI button");
+		auto& authoredTransform = button.GetComponent<TomCat::Transform>();
+		authoredTransform._LocalRotation.z = glm::radians(90.0f);
+		authoredTransform._LocalScale = { 1.5f, 0.5f, 1.0f };
+
+		const TomCat::RuntimeUILayoutSnapshot layout =
+			TomCat::RuntimeUISystem::BuildLayout(*scene, 1920, 1080, 96.0f);
+		const TomCat::UIRect rectangle = layout.Rectangles.at(button.GetUUID());
+		const glm::mat4 transform = layout.Transforms.at(button.GetUUID());
+		const glm::vec2 pivot(rectangle.X + rectangle.Width * rectTransform.Pivot.x,
+			rectangle.Y + rectangle.Height * rectTransform.Pivot.y);
+		const glm::vec4 transformedPivot = transform * glm::vec4(pivot, 0.0f, 1.0f);
+		RequireUI(Near(transformedPivot.x, pivot.x)
+			&& Near(transformedPivot.y, pivot.y),
+			"RectTransform rotation/scale did not preserve its Pivot");
+
+		const glm::vec2 sample = pivot + glm::vec2(20.0f, 8.0f);
+		const glm::vec4 transformedSample = transform
+			* glm::vec4(sample, 0.0f, 1.0f);
+		// Scale (20, 8) to (30, 4), then rotate it 90 degrees around Pivot.
+		RequireUI(Near(transformedSample.x, pivot.x - 4.0f)
+			&& Near(transformedSample.y, pivot.y + 30.0f),
+			"RectTransform rotation/scale matrix was not composed around Pivot");
+
+		auto toPointer = [](const glm::vec2& bottomLeftPoint)
+		{
+			return glm::vec2(bottomLeftPoint.x, 1080.0f - bottomLeftPoint.y);
+		};
+		// This point is inside the authored axis-aligned rectangle, but its inverse
+		// transformed point lies above the button. It must not use the stale AABB.
+		const glm::vec2 localOutside = pivot + glm::vec2(0.0f, 20.0f);
+		const glm::vec4 visuallyOutside = transform
+			* glm::vec4(localOutside, 0.0f, 1.0f);
+		RequireUI(rectangle.Contains(glm::vec2(visuallyOutside)),
+			"transformed hit-test negative probe no longer overlaps the source AABB");
+		TomCat::RuntimeUIInputFrame input;
+		input.PointerPosition = toPointer(glm::vec2(visuallyOutside));
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, input);
+		RequireUI(!button.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& !TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"UIButton hit testing used its untransformed source rectangle");
+
+		// This point starts inside the local rectangle and rotates well outside the
+		// source AABB. It must still hit the visible transformed button.
+		const glm::vec2 localInside = pivot + glm::vec2(80.0f, 0.0f);
+		const glm::vec4 visuallyInside = transform
+			* glm::vec4(localInside, 0.0f, 1.0f);
+		RequireUI(!rectangle.Contains(glm::vec2(visuallyInside)),
+			"transformed hit-test positive probe did not leave the source AABB");
+		input = {};
+		input.PointerPosition = toPointer(glm::vec2(visuallyInside));
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, input);
+		RequireUI(button.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"UIButton did not hit its rotated/scaled visible region");
+		input.MousePressed = false;
+		input.MouseReleased = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, input);
+		TomCat::RuntimeUISystem::UpdateWithInput(*scene, 1920, 1080, 96.0f, {});
+
+		// Ancestor clipping remains in the ancestor's transformed coordinate space.
+		// A rotated child must neither rotate the parent's mask nor receive pointer
+		// input outside that mask.
+		auto clippedScene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity clippedCanvas = clippedScene->CreateEntityWithUUID(
+			TomCat::UUID(10103), "Clipped Canvas");
+		clippedCanvas.AddComponent<TomCat::Canvas>();
+		clippedCanvas.AddComponent<TomCat::UIEventSystem>();
+		TomCat::Entity clipParent = clippedScene->CreateEntityWithUUID(
+			TomCat::UUID(10104), "Clip Parent");
+		auto& parentRect = clipParent.AddComponent<TomCat::RectTransform>();
+		parentRect.AnchorMin = parentRect.AnchorMax = { 0.0f, 0.0f };
+		parentRect.Pivot = { 0.0f, 0.0f };
+		parentRect.AnchoredPosition = { 50.0f, 50.0f };
+		parentRect.SizeDelta = { 100.0f, 100.0f };
+		parentRect.ClipChildren = true;
+		RequireUI(clippedScene->SetParent(clipParent, clippedCanvas),
+			"could not parent Runtime UI clipping mask");
+
+		TomCat::Entity clippedButton = clippedScene->CreateEntityWithUUID(
+			TomCat::UUID(10105), "Rotated Clipped Button");
+		auto& clippedRect = clippedButton.AddComponent<TomCat::RectTransform>();
+		clippedRect.AnchorMin = clippedRect.AnchorMax = { 0.0f, 0.0f };
+		clippedRect.Pivot = { 0.5f, 0.5f };
+		clippedRect.AnchoredPosition = { 100.0f, 50.0f };
+		clippedRect.SizeDelta = { 100.0f, 50.0f };
+		clippedButton.AddComponent<TomCat::UIImage>();
+		clippedButton.AddComponent<TomCat::UIButton>();
+		RequireUI(clippedScene->SetParent(clippedButton, clipParent),
+			"could not parent rotated Runtime UI clipping probe");
+		clippedButton.GetComponent<TomCat::Transform>()._LocalRotation.z =
+			glm::radians(90.0f);
+
+		const TomCat::RuntimeUILayoutSnapshot clippedLayout =
+			TomCat::RuntimeUISystem::BuildLayout(*clippedScene, 1920, 1080, 96.0f);
+		RequireUI(clippedLayout.ClipRegions.at(clippedButton.GetUUID()).size() == 2,
+			"rotated child did not inherit viewport and parent clip regions");
+		auto clippedPointer = [](const glm::vec2& bottomLeftPoint)
+		{
+			return glm::vec2(bottomLeftPoint.x, 1080.0f - bottomLeftPoint.y);
+		};
+		input = {};
+		input.PointerPosition = clippedPointer({ 160.0f, 75.0f });
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, input);
+		RequireUI(!clippedButton.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& !TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"rotated child accepted input outside its unrotated parent clip");
+
+		input = {};
+		input.PointerPosition = clippedPointer({ 140.0f, 125.0f });
+		input.MousePressed = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, input);
+		RequireUI(clippedButton.GetComponent<TomCat::UIButton>().RuntimePressed
+			&& TomCat::RuntimeUISystem::IsGameplayInputCaptured(),
+			"rotated child rejected input inside its parent clip");
+		input.MousePressed = false;
+		input.MouseReleased = true;
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, input);
+		TomCat::RuntimeUISystem::UpdateWithInput(*clippedScene, 1920, 1080,
+			96.0f, {});
+	}
+
+	void TestEditorCameraFrameBounds()
+	{
+		TomCat::EditorCamera camera(30.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+		camera.SetViewportSize(1600.0f, 900.0f);
+		const glm::vec3 minimum(-400.0f, -120.0f, -80.0f);
+		const glm::vec3 maximum(400.0f, 120.0f, 80.0f);
+		camera.FrameBounds(minimum, maximum);
+		RequireUI(glm::length(camera.GetFocalPoint()
+			- (minimum + maximum) * 0.5f) <= 1.0e-3f,
+			"EditorCamera::FrameBounds did not center the requested bounds");
+
+		const glm::mat4 viewProjection = camera.GetViewProjection();
+		for (int x = 0; x < 2; ++x)
+		{
+			for (int y = 0; y < 2; ++y)
+			{
+				for (int z = 0; z < 2; ++z)
+				{
+					const glm::vec3 corner(
+						x == 0 ? minimum.x : maximum.x,
+						y == 0 ? minimum.y : maximum.y,
+						z == 0 ? minimum.z : maximum.z);
+					const glm::vec4 clip = viewProjection * glm::vec4(corner, 1.0f);
+					RequireUI(std::isfinite(clip.w) && clip.w > 0.0f,
+						"EditorCamera::FrameBounds placed a corner behind the camera");
+					const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+					RequireUI(std::isfinite(ndc.x) && std::isfinite(ndc.y)
+						&& std::isfinite(ndc.z)
+						&& std::abs(ndc.x) <= 1.0f + 1.0e-3f
+						&& std::abs(ndc.y) <= 1.0f + 1.0e-3f
+						&& ndc.z >= -1.0f - 1.0e-3f
+						&& ndc.z <= 1.0f + 1.0e-3f,
+						"EditorCamera::FrameBounds clipped a large bounds corner");
+				}
+			}
+		}
+	}
+
 	void TestFixedInputCaptureSnapshot()
 	{
 		UIFixture fixture = BuildUIFixture();
@@ -1139,9 +1383,11 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		assignedListener.MethodName = "Play";
 		TomCat::UIButtonOnClickListener targetOnlyListener;
 		targetOnlyListener.TargetEntity = fixture.Second.GetUUID();
-		fixture.First.GetComponent<TomCat::UIButton>().OnClick = {
-			assignedListener, targetOnlyListener };
-		fixture.First.GetComponent<TomCat::UIButton>().RuntimeClickSerial = 99;
+		auto& serializedButton = fixture.First.GetComponent<TomCat::UIButton>();
+		serializedButton.DisabledColor = { 0.13f, 0.27f, 0.41f, 0.55f };
+		serializedButton.ColorMultiplier = 1.75f;
+		serializedButton.OnClick = { assignedListener, targetOnlyListener };
+		serializedButton.RuntimeClickSerial = 99;
 		std::string document, error;
 		RequireUI(TomCat::SceneSerializer(fixture.Scene).SerializeDocument(document,
 			error), "Runtime UI Scene 11 serialization failed");
@@ -1154,8 +1400,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"RuntimeUIRegression.tomcat", false),
 			"Runtime UI Scene 11 deserialization failed");
 		TomCat::Entity loaded = decoded->FindEntityByUUID(TomCat::UUID(10003));
-		const auto& loadedListeners =
-			loaded.GetComponent<TomCat::UIButton>().OnClick;
+		const auto& loadedButton = loaded.GetComponent<TomCat::UIButton>();
+		const auto& loadedListeners = loadedButton.OnClick;
 		RequireUI(loaded && loaded.HasComponent<TomCat::RectTransform>()
 			&& loaded.HasComponent<TomCat::UIImage>()
 			&& loaded.HasComponent<TomCat::UIText>()
@@ -1176,11 +1422,58 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& static_cast<uint64_t>(loadedListeners[1].TargetAttachmentID) == 0
 			&& static_cast<uint64_t>(loadedListeners[1].ScriptAsset) == 0
 			&& loadedListeners[1].MethodName.empty()
-			&& loaded.GetComponent<TomCat::UIButton>().RuntimeClickSerial == 0,
+			&& Near(loadedButton.DisabledColor.r, 0.13f)
+			&& Near(loadedButton.DisabledColor.g, 0.27f)
+			&& Near(loadedButton.DisabledColor.b, 0.41f)
+			&& Near(loadedButton.DisabledColor.a, 0.55f)
+			&& Near(loadedButton.ColorMultiplier, 1.75f)
+			&& loadedButton.RuntimeClickSerial == 0,
 			"Runtime UI authoring fields or transient reset did not round-trip");
 
 		const YAML::Node root = YAML::Load(document);
-		YAML::Node v1Document = YAML::Clone(root);
+		YAML::Node v2Document = YAML::Clone(root);
+		bool downgradedV2Button = false;
+		for (YAML::Node entityNode : v2Document["Entities"])
+		{
+			if (entityNode["Entity"].as<uint64_t>() != 10003)
+				continue;
+			for (YAML::Node component : entityNode["Components"])
+			{
+				if (component["StableName"].as<std::string>() != "TomCat.UIButton")
+					continue;
+				YAML::Node v2Fields(YAML::NodeType::Sequence);
+				for (const YAML::Node& field : component["Properties"]["Fields"])
+				{
+					const std::string stableName = field["StableName"].as<std::string>();
+					if (stableName != "DisabledColor"
+						&& stableName != "ColorMultiplier")
+						v2Fields.push_back(YAML::Clone(field));
+				}
+				component["SchemaVersion"] = 2;
+				component["Properties"]["Fields"] = v2Fields;
+				downgradedV2Button = true;
+			}
+		}
+		YAML::Emitter v2Output;
+		v2Output << v2Document;
+		auto migratedV2 = TomCat::CreateRef<TomCat::Scene>();
+		RequireUI(downgradedV2Button && v2Output.good()
+			&& TomCat::SceneSerializer(migratedV2).DeserializeDocument(
+				std::vector<uint8_t>(v2Output.c_str(),
+					v2Output.c_str() + std::strlen(v2Output.c_str())),
+				"RuntimeUIRegression-v2.tomcat", false),
+			"UIButton v2 descriptor payload did not migrate to v3");
+		const auto& migratedV2Button = migratedV2
+			->FindEntityByUUID(TomCat::UUID(10003)).GetComponent<TomCat::UIButton>();
+		RequireUI(migratedV2Button.OnClick.size() == 2
+			&& Near(migratedV2Button.DisabledColor.r, 0.52f)
+			&& Near(migratedV2Button.DisabledColor.g, 0.52f)
+			&& Near(migratedV2Button.DisabledColor.b, 0.52f)
+			&& Near(migratedV2Button.DisabledColor.a, 0.5f)
+			&& Near(migratedV2Button.ColorMultiplier, 1.0f),
+			"UIButton v2-to-v3 migration did not append Color Tint defaults");
+
+		YAML::Node v1Document = YAML::Clone(v2Document);
 		bool downgradedButton = false;
 		for (YAML::Node entityNode : v1Document["Entities"])
 		{
@@ -1427,8 +1720,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		auto project = TomCat::Project::CreateNew(
 			environment.Root / "Project.tcproj", config);
 		RequireUI(project != nullptr, "could not create Runtime UI Cook project");
-		const std::filesystem::path sourceFont = FindRepositoryFile(
-			"Editor/TomCatInut/Packages/fonts/opensans/OpenSans-Regular.ttf");
+		const std::filesystem::path sourceFont = TomCat::GetBuiltInFontAssetPath(
+			TomCat::GetDefaultRuntimeFontHandle());
 		RequireUI(!sourceFont.empty(), "could not locate Cook font source");
 		const std::filesystem::path fontPath = project->GetAssetPath() / "UIFont.ttf";
 		const std::filesystem::path fallbackFontPath =
@@ -1470,6 +1763,17 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 		UIFixture fixture = BuildUIFixture(fontHandle, imageHandle,
 			fallbackFontHandle, emojiFontHandle);
+		TomCat::Entity legacyDefaultText = fixture.Scene->CreateEntityWithUUID(
+			TomCat::UUID(10008), "Legacy default font probe");
+		auto& legacyText = legacyDefaultText.AddComponent<TomCat::TextRenderer>();
+		legacyText.Font = TomCat::AssetHandle(0);
+		legacyText.Text = "Legacy Runtime";
+		const TomCat::AssetLoadResult builtInFont = assets.LoadImportedArtifact(
+			TomCat::GetDefaultRuntimeFontHandle());
+		RequireUI(builtInFont.Succeeded()
+			&& builtInFont.Artifact.Type == TomCat::AssetType::Font
+			&& !builtInFont.Artifact.Bytes.empty(),
+			"authoring could not load the built-in default font");
 		const std::filesystem::path scenePath = project->GetAssetPath() / "Main.tomcat";
 		RequireUI(TomCat::SceneSerializer(fixture.Scene).Serialize(scenePath),
 			"could not serialize Runtime UI Cook scene");
@@ -1508,6 +1812,7 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		std::vector<uint8_t> cookedFallback;
 		std::vector<uint8_t> cookedEmoji;
 		std::vector<uint8_t> cookedImage;
+		std::vector<uint8_t> cookedBuiltInFont;
 		TomCat::AssetType type = TomCat::AssetType::None;
 		RequireUI(assets.ReadAssetBytes(fontHandle, cookedPrimary, &type)
 			&& type == TomCat::AssetType::Font && !cookedPrimary.empty()
@@ -1516,7 +1821,10 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& assets.ReadAssetBytes(emojiFontHandle, cookedEmoji, &type)
 			&& type == TomCat::AssetType::Font && !cookedEmoji.empty()
 			&& assets.ReadAssetBytes(imageHandle, cookedImage, &type)
-			&& type == TomCat::AssetType::Texture2D && !cookedImage.empty(),
+			&& type == TomCat::AssetType::Texture2D && !cookedImage.empty()
+			&& assets.ReadAssetBytes(TomCat::GetDefaultRuntimeFontHandle(),
+				cookedBuiltInFont, &type)
+			&& type == TomCat::AssetType::Font && !cookedBuiltInFont.empty(),
 			"Cook omitted a Runtime UI font-chain or image dependency");
 		const std::array<std::span<const uint8_t>, 3> cookedFontChain = {
 			std::span<const uint8_t>(cookedPrimary),
@@ -1622,6 +1930,52 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 				<< context.GetUnavailableReason() << std::endl;
 			return;
 		}
+
+		TomCat::Scene clippedRenderScene;
+		TomCat::Entity clippedCanvas = clippedRenderScene.CreateEntityWithUUID(
+			TomCat::UUID(11001), "Clipped Render Canvas");
+		clippedCanvas.AddComponent<TomCat::Canvas>().ScaleMode =
+			TomCat::CanvasScaleMode::ConstantPixelSize;
+		TomCat::Entity clipParent = clippedRenderScene.CreateEntityWithUUID(
+			TomCat::UUID(11002), "Clipped Render Parent");
+		auto& parentRect = clipParent.AddComponent<TomCat::RectTransform>();
+		parentRect.AnchorMin = parentRect.AnchorMax = { 0.0f, 0.0f };
+		parentRect.Pivot = { 0.0f, 0.0f };
+		parentRect.AnchoredPosition = { 50.0f, 50.0f };
+		parentRect.SizeDelta = { 100.0f, 100.0f };
+		parentRect.ClipChildren = true;
+		RequireUI(clippedRenderScene.SetParent(clipParent, clippedCanvas),
+			"could not parent render clipping mask");
+		TomCat::Entity clippedImage = clippedRenderScene.CreateEntityWithUUID(
+			TomCat::UUID(11003), "Rotated Clipped Image");
+		auto& clippedRect = clippedImage.AddComponent<TomCat::RectTransform>();
+		clippedRect.AnchorMin = clippedRect.AnchorMax = { 0.0f, 0.0f };
+		clippedRect.Pivot = { 0.5f, 0.5f };
+		clippedRect.AnchoredPosition = { 100.0f, 50.0f };
+		clippedRect.SizeDelta = { 100.0f, 50.0f };
+		clippedImage.AddComponent<TomCat::UIImage>().Color =
+			{ 1.0f, 0.0f, 0.0f, 1.0f };
+		RequireUI(clippedRenderScene.SetParent(clippedImage, clipParent),
+			"could not parent rotated render clipping probe");
+		clippedImage.GetComponent<TomCat::Transform>()._LocalRotation.z =
+			glm::radians(90.0f);
+		constexpr uint32_t ClipCaptureSize = 200;
+		const std::vector<uint8_t> clippedPixels = CaptureRuntimeUI(
+			clippedRenderScene, ClipCaptureSize, ClipCaptureSize, 96.0f);
+		auto pixel = [&clippedPixels](uint32_t x, uint32_t y)
+		{
+			const size_t offset = (static_cast<size_t>(y) * ClipCaptureSize + x) * 4u;
+			return std::array<uint8_t, 4>{ clippedPixels[offset],
+				clippedPixels[offset + 1], clippedPixels[offset + 2],
+				clippedPixels[offset + 3] };
+		};
+		const std::array<uint8_t, 4> outsideClip = pixel(160, 75);
+		const std::array<uint8_t, 4> insideClip = pixel(140, 125);
+		RequireUI(outsideClip[0] == 8 && outsideClip[1] == 12
+			&& outsideClip[2] == 18 && insideClip[0] > 240
+			&& insideClip[1] < 8 && insideClip[2] < 8,
+			"rotated UIImage rendering did not respect its ancestor clip space");
+
 		const std::string screenshotText =
 			button.GetComponent<TomCat::UIText>().Text + " "
 			+ second.GetComponent<TomCat::UIText>().Text;
@@ -1729,8 +2083,20 @@ namespace TomCat::Tests {
 
 	void RunRuntimeUIRegression()
 	{
+		const std::filesystem::path executableDirectory = GetExecutableDirectory();
+		const ScopedRuntimePackageRoot packageRoot(executableDirectory);
+		const std::filesystem::path expectedFont = executableDirectory /
+			"Packages/fonts/opensans/OpenSans-Regular.ttf";
+		std::error_code error;
+		RequireUI(std::filesystem::is_regular_file(expectedFont, error) && !error,
+			"built-in default font was not copied beside PhysicsRegression");
+		RequireUI(TomCat::GetBuiltInFontAssetPath(
+			TomCat::GetDefaultRuntimeFontHandle()) == expectedFont,
+			"built-in default font did not resolve from the executable package root");
 		TestUTF8AndDeterministicFontAtlas();
 		TestLayoutClippingAspectAndInput();
+		TestRectTransformTransformAndHitTesting();
+		TestEditorCameraFrameBounds();
 		TestFixedInputCaptureSnapshot();
 		TestSceneAndPrefabRoundTrip();
 		TestPersistentButtonCallbacks();

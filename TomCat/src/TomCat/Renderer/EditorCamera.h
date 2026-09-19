@@ -17,7 +17,11 @@ namespace TomCat {
 
 		void OnUpdate(Timestep ts, bool inputEnabled = true);
 		void OnEvent(Event& e);
-		void Set2DMode(bool enabled) { m_Is2DMode = enabled; }
+		// Centers the Scene camera on a world-space bounding sphere and chooses a
+		// distance that keeps the whole sphere inside the current viewport.
+		void FrameBounds(const glm::vec3& center, float radius);
+		void FrameBounds(const glm::vec3& minimum, const glm::vec3& maximum);
+		void Set2DMode(bool enabled);
 		bool Is2DMode() const { return m_Is2DMode; }
 
 		inline float GetDistance() const { return m_Distance; }
@@ -32,6 +36,7 @@ namespace TomCat {
 		glm::vec3 GetRightDirection() const;
 		glm::vec3 GetForwardDirection() const;
 		const glm::vec3& GetPosition() const { return m_Position; }
+		const glm::vec3& GetFocalPoint() const { return m_FocalPoint; }
 		glm::quat GetOrientation() const;
 
 		float GetPitch() const { return m_Pitch; }

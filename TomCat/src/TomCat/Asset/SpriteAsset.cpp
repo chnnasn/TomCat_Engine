@@ -3,6 +3,7 @@
 
 #include "AssetManager.h"
 #include "AssetRegistry.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 
@@ -968,8 +969,8 @@ namespace TomCat {
 	std::filesystem::path GetBuiltInSpriteAssetPath(AssetHandle handle)
 	{
 		const BuiltInSpriteAsset* asset = FindBuiltInSpriteAsset(handle);
-		return asset ? (std::filesystem::path("Packages") /
-			UTF8ToPath(asset->PackageRelativePath)).lexically_normal()
+		return asset ? ApplicationPaths::ResolveRuntimePackageAsset(
+			UTF8ToPath(asset->PackageRelativePath))
 			: std::filesystem::path{};
 	}
 

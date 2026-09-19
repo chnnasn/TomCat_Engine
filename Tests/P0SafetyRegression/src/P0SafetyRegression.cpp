@@ -4,7 +4,9 @@
 #include <TomCat/Core/Log.h>
 #include <TomCat/Core/Version.h>
 #include <TomCat/Asset/ContentHash.h>
+#include <TomCat/Asset/SpriteAsset.h>
 #include <TomCat/Project/ProjectManager.h>
+#include <TomCat/Renderer/Font.h>
 #include <TomCat/Runtime/RuntimeCompatibility.h>
 #include <TomCat/Scene/SceneSerializer.h>
 #include <TomCat/Scene/Serialization/PrefabArchiveCodec.h>
@@ -248,6 +250,7 @@ namespace {
 			{ "Packages/PlayerTemplates/win-x64/TomCatPlayer.exe", "player-" + marker },
 			{ "Packages/Resources/Sprites/TomCat/Circle.tga", "circle-sprite-" + marker },
 			{ "Packages/Resources/Sprites/TomCat/Square.tga", "square-sprite-" + marker },
+			{ "Packages/fonts/opensans/OpenSans-Regular.ttf", "default-font-" + marker },
 			{ "TomCatCLI.exe", "cli-runtime-" + marker },
 			{ "shaderc_shared.dll", "shader-runtime-" + marker },
 			{ "msvcp140.dll", "msvcp-runtime-" + marker },
@@ -1263,8 +1266,16 @@ namespace {
 			"an empty LocalAppData root produced an Editor runtime cache");
 
 		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
+		TomCat::ApplicationPaths::ClearRuntimePackageRoot();
 		Require(!TomCat::ApplicationPaths::GetRuntimeEditorRoot(),
 			"Editor runtime root was populated before bundle publication");
+		Require(!TomCat::ApplicationPaths::GetRuntimePackageRoot(),
+			"package asset root was populated before tool startup");
+		const std::filesystem::path packageRelative =
+			"fonts/opensans/OpenSans-Regular.ttf";
+		Require(TomCat::ApplicationPaths::ResolveRuntimePackageAsset(packageRelative)
+			== (std::filesystem::path("Packages") / packageRelative).lexically_normal(),
+			"development package asset path lost its working-directory behavior");
 		const std::filesystem::path publishedRuntime =
 			localRoot / "TomCat" / "Editor" / "Runtime" / "0.2.0" / "bundle";
 		const std::filesystem::path unnormalizedRuntime =
@@ -1274,9 +1285,40 @@ namespace {
 		Require(TomCat::ApplicationPaths::GetRuntimeEditorRoot() ==
 			std::optional<std::filesystem::path>(unnormalizedRuntime.lexically_normal()),
 			"Editor runtime root was not normalized and published to consumers");
+		Require(TomCat::ApplicationPaths::ResolveRuntimePackageAsset(packageRelative)
+			== (publishedRuntime / "Packages" / packageRelative).lexically_normal(),
+			"runtime package asset did not bind to the executable/runtime root");
+		const std::filesystem::path toolRoot = localRoot / "TomCat" / "Tools" / "CLI";
 		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
+		TomCat::ApplicationPaths::SetRuntimePackageRoot(toolRoot);
+		Require(!TomCat::ApplicationPaths::GetRuntimeEditorRoot()
+			&& TomCat::ApplicationPaths::GetRuntimePackageRoot()
+				== std::optional<std::filesystem::path>(toolRoot.lexically_normal())
+			&& TomCat::ApplicationPaths::ResolveRuntimePackageAsset(packageRelative)
+				== (toolRoot / "Packages" / packageRelative).lexically_normal(),
+			"tool package root polluted the verified Editor runtime contract");
+		Require(TomCat::GetBuiltInFontAssetPath(
+				TomCat::GetDefaultRuntimeFontHandle())
+				== (toolRoot / "Packages" / packageRelative).lexically_normal()
+			&& TomCat::GetBuiltInSpriteAssetPath(TomCat::AssetHandle(
+				TomCat::BuiltInCircleSpriteHandleValue))
+				== (toolRoot / "Packages/Resources/Sprites/TomCat/Circle.tga")
+					.lexically_normal()
+			&& TomCat::GetBuiltInSpriteAssetPath(TomCat::AssetHandle(
+				TomCat::BuiltInSquareSpriteHandleValue))
+				== (toolRoot / "Packages/Resources/Sprites/TomCat/Square.tga")
+					.lexically_normal(),
+			"built-in font or Sprite ignored the executable package root");
+		Require(TomCat::ApplicationPaths::ResolveRuntimePackageAsset("../escape").empty()
+			&& TomCat::ApplicationPaths::ResolveRuntimePackageAsset(
+				"C:/outside/font.ttf").empty(),
+			"runtime package asset resolver accepted a path outside Packages");
+		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
+		TomCat::ApplicationPaths::ClearRuntimePackageRoot();
 		Require(!TomCat::ApplicationPaths::GetRuntimeEditorRoot(),
 			"Editor runtime root survived explicit shutdown");
+		Require(!TomCat::ApplicationPaths::GetRuntimePackageRoot(),
+			"package asset root survived explicit shutdown");
 
 		Require(TomCat::ApplicationPaths::IdentifyExecutable("TomCat.exe")
 			== TomCat::ApplicationProduct::Editor, "packaged Editor identity mismatch");

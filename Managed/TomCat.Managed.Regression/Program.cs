@@ -110,6 +110,8 @@ internal static unsafe class Program
 	private static bool s_runtimeUIButtonFocused;
 	private static bool s_runtimeUICaptured;
 	private const ulong RuntimeUIButtonClickSerial = 41;
+	private const ulong UIButtonDisabledColorPropertyId = 0x9f01600000000007UL;
+	private const ulong UIButtonColorMultiplierPropertyId = 0x9f01600000000008UL;
 	private const ulong SchemaProviderId = 0x7a11000000000001UL;
 	private const ulong SchemaAssetPropertyId = 0x7a11000000000002UL;
 	private const string SchemaComponentStableName = "TomCat.HealthComponent";
@@ -4322,7 +4324,8 @@ internal static unsafe class Program
 			*value = property;
 			return 0;
 		}
-		if (typeId == UIText.TypeId || typeId == TextRenderer.TypeId)
+		if (typeId == UIText.TypeId || typeId == TextRenderer.TypeId
+			|| typeId == UIButton.TypeId)
 		{
 			if (!s_registeredRuntimeUIProperties.TryGetValue(
 				(typeId, propertyId), out NativePropertyValueV1 property))
@@ -4380,6 +4383,17 @@ internal static unsafe class Program
 		if (typeId == UIText.TypeId || typeId == TextRenderer.TypeId)
 		{
 			if (value.Kind != NativePropertyKindV1.UInt64)
+				return -1;
+			s_registeredRuntimeUIProperties[(typeId, propertyId)] = value;
+			return 0;
+		}
+		if (typeId == UIButton.TypeId)
+		{
+			bool valid = propertyId == UIButtonDisabledColorPropertyId
+				? value.Kind == NativePropertyKindV1.Vector4
+				: propertyId == UIButtonColorMultiplierPropertyId
+					&& value.Kind == NativePropertyKindV1.Float;
+			if (!valid)
 				return -1;
 			s_registeredRuntimeUIProperties[(typeId, propertyId)] = value;
 			return 0;
@@ -5071,6 +5085,8 @@ internal static unsafe class Program
 			worldText.FallbackFont = new AssetRef<FontAsset>(9202);
 			worldText.EmojiFont = new AssetRef<FontAsset>(9203);
 			var button = new UIButton(Entity);
+			button.DisabledColor = new Color(0.2f, 0.3f, 0.4f, 0.5f);
+			button.ColorMultiplier = 1.75f;
 			button.Focus();
 			UIRect rect = new RectTransform(Entity).RuntimeRect;
 			Passed = text.Text == "开始 TomCat 😀"
@@ -5079,6 +5095,8 @@ internal static unsafe class Program
 				&& worldText.FallbackFont.Handle == 9202
 				&& worldText.EmojiFont.Handle == 9203
 				&& worldText.Text == "World 文本 😀"
+				&& button.DisabledColor.Equals(new Color(0.2f, 0.3f, 0.4f, 0.5f))
+				&& MathF.Abs(button.ColorMultiplier - 1.75f) <= 0.0001f
 				&& button.WasClickedThisFrame
 				&& button.ClickSerial == RuntimeUIButtonClickSerial
 				&& rect.Equals(new UIRect(10.0f, 20.0f, 300.0f, 80.0f))

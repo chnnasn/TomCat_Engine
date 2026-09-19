@@ -1455,6 +1455,12 @@ namespace TomCat {
 				hasCSharpScripts = true;
 			if (rawHandle == 0)
 			{
+				// Font=0 was the historical default for TextRenderer/UIText. Runtime
+				// treats it as Legacy Runtime, so Cook must include that same built-in
+				// dependency for old scenes instead of producing an editor-only result.
+				if (reference.Kind == SerializedAssetReferenceKind::Font)
+					runtimeDependencies.emplace(static_cast<uint64_t>(
+						GetDefaultRuntimeFontHandle()));
 				if (!reference.Required)
 					return true;
 				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
@@ -1475,6 +1481,20 @@ namespace TomCat {
 				{
 					errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
 						+ reference.PropertyPath + " uses an engine Sprite where a different "
+							"asset type is required";
+					return false;
+				}
+				runtimeDependencies.emplace(rawHandle);
+				return true;
+			}
+			if (FindBuiltInFontAsset(reference.Handle))
+			{
+				if ((reference.ExpectedType != AssetType::None
+						&& reference.ExpectedType != AssetType::Font)
+					|| reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+				{
+					errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+						+ reference.PropertyPath + " uses an engine Font where a different "
 							"asset type is required";
 					return false;
 				}
@@ -1942,6 +1962,38 @@ namespace TomCat {
 			result.Artifact.Format = "cooked/tcpak";
 			return result;
 		}
+		if (FindBuiltInFontAsset(handle))
+		{
+			AssetLoadResult result;
+			if (options.Cancellation
+				&& options.Cancellation->IsCancellationRequested())
+			{
+				result.Status = AssetLoadStatus::Cancelled;
+				result.Error = "asset load was cancelled";
+				return result;
+			}
+			const std::filesystem::path source = GetBuiltInFontAssetPath(handle);
+			if (source.empty() || !ReadWholeFile(source, result.Artifact.Bytes))
+			{
+				result.Status = AssetLoadStatus::SourceReadFailed;
+				result.Error = "engine Font source is missing or unreadable";
+				return result;
+			}
+			if (options.Cancellation
+				&& options.Cancellation->IsCancellationRequested())
+			{
+				result.Artifact.Bytes.clear();
+				result.Status = AssetLoadStatus::Cancelled;
+				result.Error = "asset load was cancelled";
+				return result;
+			}
+			result.Status = AssetLoadStatus::Success;
+			result.Artifact.Handle = handle;
+			result.Artifact.Type = AssetType::Font;
+			result.Artifact.SourceSHA256 = ComputeSHA256(result.Artifact.Bytes);
+			result.Artifact.Format = "font/ttf";
+			return result;
+		}
 		if (!m_RegistryInitialized)
 		{
 			AssetLoadResult result;
@@ -1970,7 +2022,7 @@ namespace TomCat {
 		{
 			try
 			{
-				if (m_RegistryInitialized)
+				if (m_RegistryInitialized && !FindBuiltInFontAsset(handle))
 				{
 					std::future<AssetLoadResult> future =
 						m_Database.LoadArtifactAsync(handle, std::move(options));
@@ -2981,6 +3033,8 @@ namespace TomCat {
 			return {};
 		if (FindBuiltInSpriteAsset(handle))
 			return GetBuiltInSpriteAssetPath(handle);
+		if (FindBuiltInFontAsset(handle))
+			return GetBuiltInFontAssetPath(handle);
 		if (!m_RegistryInitialized)
 			return {};
 		const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
@@ -3429,6 +3483,35 @@ namespace TomCat {
 						rawHandle);
 					return false;
 				}
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
+				entries.push_back(std::move(entry));
+				builtInObservations.push_back({ handle, source, sourceSHA256 });
+				continue;
+			}
+			if (FindBuiltInFontAsset(handle))
+			{
+				const std::filesystem::path source = GetBuiltInFontAssetPath(handle);
+				std::vector<uint8_t> sourceBytes;
+				if (source.empty() || !ReadWholeFile(source, sourceBytes))
+				{
+					TC_Core_Error("Cannot cook missing engine Font {0} ('{1}')",
+						rawHandle, PathToUTF8(source));
+					return false;
+				}
+				const std::string sourceSHA256 = ComputeSHA256(sourceBytes);
+				std::string currentSHA256;
+				if (!ComputeFileSHA256String(source, currentSHA256)
+					|| currentSHA256 != sourceSHA256)
+				{
+					TC_Core_Error("Engine Font {0} changed while cooking; retry Cook",
+						rawHandle);
+					return false;
+				}
+				SourceEntry entry;
+				entry.RawHandle = rawHandle;
+				entry.RawType = static_cast<uint16_t>(AssetType::Font);
+				entry.CookedBytes = std::move(sourceBytes);
 				entry.HasCookedBytes = true;
 				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 				entries.push_back(std::move(entry));
@@ -4046,7 +4129,7 @@ namespace TomCat {
 				|| currentSHA256 != observation.SourceSHA256)
 			{
 				RemoveTemporaryFile(temporary);
-				TC_Core_Error("Engine Sprite {0} changed before Cook publication",
+				TC_Core_Error("Engine package asset {0} changed before Cook publication",
 					static_cast<uint64_t>(observation.Handle));
 				return false;
 			}
