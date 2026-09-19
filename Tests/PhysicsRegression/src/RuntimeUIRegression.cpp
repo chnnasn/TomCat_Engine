@@ -1444,6 +1444,24 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 	{
 		TomCat::EditorCamera camera(30.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
 		camera.SetViewportSize(1600.0f, 900.0f);
+		// Reproduce a fresh Scene view: no framing, rotation or prior pan, and
+		// no edits to a scene camera. The very first wheel must move the view.
+		const glm::vec3 initialPosition = camera.GetPosition();
+		const glm::vec3 initialFocus = camera.GetFocalPoint();
+		auto projectedWidth = [&camera]()
+		{
+			const glm::vec4 left = camera.GetViewProjection() * glm::vec4(-0.25f, 0.0f, 0.0f, 1.0f);
+			const glm::vec4 right = camera.GetViewProjection() * glm::vec4(0.25f, 0.0f, 0.0f, 1.0f);
+			return right.x / right.w - left.x / left.w;
+		};
+		const float initialWidth = projectedWidth();
+		TomCat::MouseScrolledEvent firstScroll(0.0f, 1.0f);
+		camera.OnEvent(firstScroll);
+		RequireUI(glm::dot(camera.GetPosition() - initialPosition,
+			camera.GetForwardDirection()) > 0.0f
+			&& projectedWidth() > initialWidth * 1.04f
+			&& camera.GetFocalPoint() == initialFocus,
+			"first wheel in an untouched Scene must dolly and enlarge world geometry");
 
 		camera.SetDistance(1000.0f);
 		const float farDistanceBefore = camera.GetDistance();

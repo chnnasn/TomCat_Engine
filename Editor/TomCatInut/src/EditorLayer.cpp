@@ -4151,8 +4151,10 @@ namespace TomCat {
 			Renderer2D::BeginScene(overlayCamera, glm::mat4(1.0f));
 			for (const CameraOverlayGeometry& geometry : geometries)
 			{
-				// A view-facing, screen-size-stable icon remains distinguishable and
-				// provides a practical pick target at every Scene zoom level.
+				// Give the billboard a world-space size so dollying toward a camera
+				// visibly enlarges it. A constant pixel size hid all zoom feedback in
+				// the initial empty scene, whose distant frustum is viewed end-on.
+				// Retain a minimum pixel size for picking distant cameras.
 				const glm::vec3 iconPosition = glm::vec3(geometry.CameraWorld[3]);
 				const float viewDepth = glm::dot(iconPosition
 					- m_EditorCamera.GetPosition(),
@@ -4165,8 +4167,9 @@ namespace TomCat {
 					m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 				const float depthScale = m_EditorCamera.IsOrthographic()
 					? 1.0f : viewDepth;
-				const float iconWorldSize = 36.0f * 2.0f * depthScale
+				const float minimumPickSize = 24.0f * 2.0f * depthScale
 					/ (projectionY * viewportHeight);
+				const float iconWorldSize = std::max(0.5f, minimumPickSize);
 				if (!std::isfinite(iconWorldSize) || iconWorldSize <= 0.0f)
 					continue;
 
