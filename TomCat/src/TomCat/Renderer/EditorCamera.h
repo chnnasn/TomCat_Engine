@@ -99,6 +99,7 @@ namespace TomCat {
 		bool m_Is2DMode = false;
 		bool m_IsOrthographic = false;
 		bool m_3DOrthographic = false;
+		glm::vec2 m_3DViewAngles = { 0.0f, 0.0f };
 	};
 
 }

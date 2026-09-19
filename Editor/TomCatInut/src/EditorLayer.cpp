@@ -5277,6 +5277,8 @@ namespace TomCat {
 		context.Modifiers = e.GetModifiers();
 		context.WantsTextInput = ImGui::GetIO().WantTextInput;
 		context.PopupOpen = popupOpen;
+		context.SceneFocused = m_ViewportFocused && m_ShowScenePanel
+			&& ShouldRenderDockPanel("Scene###Scene");
 		context.EntityContextFocused = m_ViewportFocused
 			|| m_SceneHierarchyPanel.IsHierarchyFocused()
 			|| m_SceneHierarchyPanel.IsInspectorFocused();
@@ -5289,6 +5291,10 @@ namespace TomCat {
 		const EditorShortcutAction action = ResolveEditorShortcut(context);
 		switch (action)
 		{
+			case EditorShortcutAction::ToggleScene2D:
+				m_Is2DMode = !m_Is2DMode;
+				m_EditorCamera.Set2DMode(m_Is2DMode);
+				return true;
 			case EditorShortcutAction::NewScene:
 				NewScene();
 				return true;
@@ -5464,8 +5470,8 @@ namespace TomCat {
 
 		Entity mainCamera = m_ActiveScene->CreateEntity("MainCamera");
 		auto& camera = mainCamera.AddComponent<C_Camera>();
-		if (m_Is2DMode)
-			camera._Camera.SetOrthographic(10.0f, -1.0f, 1.0f);
+		if (m_CurrentProject && m_CurrentProject->GetConfig().Template == "2D")
+			camera._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
 		else
 			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
 	}

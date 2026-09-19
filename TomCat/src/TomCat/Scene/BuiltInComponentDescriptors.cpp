@@ -803,6 +803,22 @@ namespace TomCat {
 			};
 		}
 
+		// Old records allowed signed depths. Migrate valid ranges on load while
+		// current authoring setters enforce distances in front of the camera.
+		bool MigrateOrthographicClipRange(float& nearClip, float& farClip,
+			std::string& error)
+		{
+			if (!std::isfinite(nearClip) || !std::isfinite(farClip) || farClip <= nearClip)
+			{
+				error = "Invalid legacy orthographic clip range";
+				return false;
+			}
+			nearClip = std::max(nearClip, 0.0f);
+			if (farClip <= nearClip)
+				farClip = 1000.0f;
+			return true;
+		}
+
 		ComponentDescriptor::LegacyDecodeFn LegacyCameraDecode()
 		{
 			return [](const ComponentDescriptor& descriptor, Entity entity,
@@ -832,8 +848,12 @@ namespace TomCat {
 				canonical["PerspectiveNearClip"] = projection["PerspectiveNear"];
 				canonical["PerspectiveFarClip"] = projection["PerspectiveFar"];
 				canonical["OrthographicSize"] = projection["OrthographicSize"];
-				canonical["OrthographicNearClip"] = projection["OrthographicNear"];
-				canonical["OrthographicFarClip"] = projection["OrthographicFar"];
+				float nearClip = projection["OrthographicNear"].as<float>();
+				float farClip = projection["OrthographicFar"].as<float>();
+				if (!MigrateOrthographicClipRange(nearClip, farClip, error))
+					return false;
+				canonical["OrthographicNearClip"] = nearClip;
+				canonical["OrthographicFarClip"] = farClip;
 				return ApplyLegacyPropertyMap(descriptor, entity, canonical, error);
 			};
 		}
@@ -1085,7 +1105,7 @@ namespace TomCat {
 			auto descriptor = BaseDescriptor<C_Camera>(ComponentIds::Camera,
 				"TomCat.Camera", "Camera");
 			descriptor.ScriptAccessible = true;
-			descriptor.SchemaVersion = 2;
+			descriptor.SchemaVersion = 3;
 			descriptor.Migrations.push_back({ 1, 2,
 				[](YAML::Node& record, std::string& error)
 				{
@@ -1115,6 +1135,30 @@ namespace TomCat {
 					enabled["StableName"] = "Enabled";
 					enabled["Value"] = true;
 					properties.push_back(enabled);
+					return true;
+				} });
+			descriptor.Migrations.push_back({ 2, 3,
+				[](YAML::Node& record, std::string& error)
+				{
+					YAML::Node nearProperty, farProperty;
+					for (YAML::Node property : record["Properties"])
+					{
+						if (property["PropertyId"].as<uint64_t>() == ComponentIds::CameraProperties::OrthographicNear)
+							nearProperty = property;
+						if (property["PropertyId"].as<uint64_t>() == ComponentIds::CameraProperties::OrthographicFar)
+							farProperty = property;
+					}
+					if (!nearProperty.IsMap() || !farProperty.IsMap())
+					{
+						error = "TomCat.Camera v2 clip properties are missing";
+						return false;
+					}
+					float nearClip = nearProperty["Value"].as<float>();
+					float farClip = farProperty["Value"].as<float>();
+					if (!MigrateOrthographicClipRange(nearClip, farClip, error))
+						return false;
+					nearProperty["Value"] = nearClip;
+					farProperty["Value"] = farClip;
 					return true;
 				} });
 			descriptor.EncodeLegacyFields = LegacyCamera();

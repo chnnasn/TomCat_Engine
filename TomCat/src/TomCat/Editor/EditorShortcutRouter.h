@@ -28,7 +28,8 @@ namespace TomCat {
 		ToolTranslate,
 		ToolRotate,
 		ToolScale,
-		FrameSelection
+		FrameSelection,
+		ToggleScene2D
 	};
 
 	struct EditorShortcutContext
@@ -39,6 +40,7 @@ namespace TomCat {
 		bool WantsTextInput = false;
 		bool PopupOpen = false;
 		bool EntityContextFocused = false;
+		bool SceneFocused = false;
 		bool HasSelection = false;
 		bool EditingScene = false;
 		bool TransformDragActive = false;
@@ -75,6 +77,10 @@ namespace TomCat {
 
 		if (context.WantsTextInput)
 			return EditorShortcutAction::None;
+
+		if (context.KeyCode == Key::Key2 && unmodified && context.SceneFocused
+			&& !context.TransformDragActive)
+			return EditorShortcutAction::ToggleScene2D;
 
 		if (context.EditingScene && controlOnly)
 		{

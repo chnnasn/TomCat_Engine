@@ -132,12 +132,17 @@ namespace TomCat {
 			// A 2D Scene view faces XY with parallel projection, so identical XY
 			// positions overlap regardless of depth (including near/far outlines).
 			m_3DOrthographic = m_IsOrthographic;
+			m_3DViewAngles = { m_Pitch, m_Yaw };
 			m_IsOrthographic = true;
 			m_Pitch = 0.0f;
 			m_Yaw = 0.0f;
 		}
 		else
+		{
 			m_IsOrthographic = m_3DOrthographic;
+			m_Pitch = m_3DViewAngles.x;
+			m_Yaw = m_3DViewAngles.y;
+		}
 		UpdateView();
 	}
 

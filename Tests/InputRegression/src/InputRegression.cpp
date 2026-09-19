@@ -657,6 +657,33 @@ namespace {
 			"entity shortcuts leaked into an unrelated editor panel");
 	}
 
+	void TestScene2DShortcut()
+	{
+		using Action = TomCat::EditorShortcutAction;
+		TomCat::EditorShortcutContext context;
+		context.KeyCode = TomCat::Key::Key2;
+		context.SceneFocused = true;
+		Require(TomCat::ResolveEditorShortcut(context) == Action::ToggleScene2D,
+			"Scene 2D shortcut must work without a selection, including during Play");
+		context.SceneFocused = false;
+		context.EntityContextFocused = true;
+		Require(TomCat::ResolveEditorShortcut(context) == Action::None,
+			"Scene 2D shortcut leaked into Hierarchy or Inspector");
+		context.SceneFocused = true;
+		for (bool* blocked : { &context.WantsTextInput, &context.PopupOpen,
+			&context.TransformDragActive, &context.Modifiers.Control,
+			&context.Modifiers.Shift, &context.Modifiers.Alt, &context.Modifiers.Super })
+		{
+			*blocked = true;
+			Require(TomCat::ResolveEditorShortcut(context) == Action::None,
+				"Scene 2D shortcut ignored input ownership or modifiers");
+			*blocked = false;
+		}
+		context.RepeatCount = 1;
+		Require(TomCat::ResolveEditorShortcut(context) == Action::None,
+			"holding 2 repeatedly toggled the Scene camera");
+	}
+
 	void TestImGuiEventCaptureChannels()
 	{
 		ImGuiContext* previousContext = ImGui::GetCurrentContext();
@@ -707,6 +734,7 @@ int main()
 		TestFixedStepRetainsHeldStateWithoutReplayingEdges();
 		TestInputEventsCapability();
 		TestEditorShortcutRouting();
+		TestScene2DShortcut();
 		TestImGuiEventCaptureChannels();
 		std::cout << "Input regression suite passed." << std::endl;
 		return 0;

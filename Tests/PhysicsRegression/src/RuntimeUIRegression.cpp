@@ -1593,8 +1593,18 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 	{
 		TomCat::EditorCamera editor(45.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
 		TomCat::SceneCamera sceneCamera;
+		RequireUI(sceneCamera.GetOrthographicNearClip() >= 0.0f
+			&& sceneCamera.GetOrthographicFarClip() > sceneCamera.GetOrthographicNearClip(),
+			"new orthographic cameras must use forward, nonnegative clip distances");
+		const glm::mat4 originalProjection = sceneCamera.GetProjection();
+		RequireUI(!sceneCamera.SetOrthographic(10.0f, -1.0f, 1.0f)
+			&& !sceneCamera.SetOrthographicNearClip(-0.01f)
+			&& !sceneCamera.SetOrthographicFarClip(-1.0f)
+			&& !sceneCamera.SetOrthographicFarClip(0.0f)
+			&& sceneCamera.GetProjection() == originalProjection,
+			"invalid signed clip distances must be rejected without changing projection");
 		RequireUI(sceneCamera.SetViewportSize(1600, 900)
-			&& sceneCamera.SetOrthographic(10.0f, -1.0f, 1.0f),
+			&& sceneCamera.SetOrthographic(10.0f, 0.0f, 2.0f),
 			"could not configure the 2D camera outline fixture");
 		std::array<glm::vec3, 8> corners{};
 		RequireUI(sceneCamera.TryGetLocalFrustumCorners(corners),
@@ -1613,6 +1623,9 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		};
 		RequireUI(projectedSeparation(editor.GetViewProjection()) > 0.01f,
 			"perspective fixture must reproduce the separated near/far outlines");
+		editor.SnapToAxis(TomCat::EditorCamera::AxisView::PositiveX);
+		editor.SetOrthographic(false);
+		const glm::vec3 original3DForward = editor.GetForwardDirection();
 		editor.Set2DMode(true);
 		editor.Set2DMode(true); // Repeated per-frame synchronization must be harmless.
 		editor.SetOrthographic(false);
@@ -1626,8 +1639,9 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			"2D Scene view must overlap camera near/far outlines without perspective");
 		editor.Set2DMode(false);
 		RequireUI(!editor.IsOrthographic()
+			&& glm::length(editor.GetForwardDirection() - original3DForward) < 1.0e-5f
 			&& projectedSeparation(editor.GetViewProjection()) > 0.01f,
-			"leaving 2D did not restore the 3D perspective projection");
+			"leaving 2D did not restore the 3D orientation and perspective projection");
 		editor.SetOrthographic(true);
 		editor.Set2DMode(true);
 		editor.Set2DMode(false);

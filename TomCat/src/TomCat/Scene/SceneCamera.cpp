@@ -18,7 +18,7 @@ namespace TomCat {
 	bool SceneCamera::SetOrthographic(float size, float nearClip, float farClip)
 	{
 		if (!std::isfinite(size) || !std::isfinite(nearClip) || !std::isfinite(farClip)
-			|| size <= 0.0f || farClip <= nearClip)
+			|| size <= 0.0f || nearClip < 0.0f || farClip <= nearClip)
 			return false;
 		const ProjectionType previousType = m_ProjectionType;
 		const float previousSize = m_OrthographicSize;
@@ -153,7 +153,7 @@ namespace TomCat {
 
 	bool SceneCamera::SetOrthographicNearClip(float nearClip)
 	{
-		if (!std::isfinite(nearClip) || nearClip >= m_OrthographicFar)
+		if (!std::isfinite(nearClip) || nearClip < 0.0f || nearClip >= m_OrthographicFar)
 			return false;
 		const float previousValue = m_OrthographicNear;
 		m_OrthographicNear = nearClip;

@@ -75,7 +75,7 @@ namespace {
 			TomCat::UUID(1000000000000000001ULL), "MainCamera");
 		auto& camera = mainCamera.AddComponent<TomCat::C_Camera>();
 		if (templateName == "2D")
-			camera._Camera.SetOrthographic(10.0f, -1.0f, 1.0f);
+			camera._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
 		else
 			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
 
