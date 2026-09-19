@@ -11,7 +11,7 @@
 			m_FocusProjectSettingsPanel = false;
 		}
 		PrepareEditorToolWindow(ImVec2(900,680),ImVec2(640,420));
-		if (!ImGui::Begin("Project Settings", &m_ShowProjectSettingsPanel,
+		if (!BeginEditorWindow("Project Settings", &m_ShowProjectSettingsPanel,
 			ImGuiWindowFlags_NoDocking))
 		{
 			ImGui::End();

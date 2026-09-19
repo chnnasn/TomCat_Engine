@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TomCat/Renderer/Texture.h"
+#include "EditorPreview.h"
 
 #include <array>
 #include <cstddef>
@@ -69,7 +69,7 @@ namespace TomCat {
 			for (size_t index = 0; index < m_Icons.size(); ++index)
 			{
 				const EditorIcon icon = static_cast<EditorIcon>(index);
-				Ref<Texture2D> texture = Texture2D::Create(GetPath(icon));
+				Ref<Texture2D> texture = LoadEditorPreview(GetPath(icon));
 				if (!texture || !texture->IsLoaded())
 				{
 					texture.reset();

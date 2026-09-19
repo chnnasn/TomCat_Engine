@@ -358,6 +358,7 @@ namespace TomCat {
             colors[ImGuiCol_ScrollbarBg]=panel;
             colors[ImGuiCol_ScrollbarGrab]=Rgb(91,91,91);
             colors[ImGuiCol_Tab]=toolbar;
+            style.WindowMenuButtonPosition=ImGuiDir_None;
             style.WindowPadding=ImVec2(8,6);
             style.WindowRounding=3;
             style.PopupRounding=4;

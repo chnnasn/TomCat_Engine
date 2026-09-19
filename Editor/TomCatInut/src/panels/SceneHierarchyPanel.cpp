@@ -1535,7 +1535,7 @@ namespace TomCat {
 		m_InspectorFocused = false;
 		if (!hierarchyOpen || *hierarchyOpen)
 		{
-		const bool hierarchyVisible = ImGui::Begin("Hierarchy", hierarchyOpen);
+		const bool hierarchyVisible = BeginEditorWindow("Hierarchy", hierarchyOpen);
 		m_HierarchyDocked = ImGui::IsWindowDocked();
 		m_HierarchyFocused = hierarchyVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
@@ -1695,7 +1695,7 @@ namespace TomCat {
 
 		if (!inspectorOpen || *inspectorOpen)
 		{
-			const bool inspectorVisible = ImGui::Begin("Inspector", inspectorOpen);
+			const bool inspectorVisible = BeginEditorWindow("Inspector", inspectorOpen);
 			m_InspectorDocked = ImGui::IsWindowDocked();
 			m_InspectorFocused = inspectorVisible &&
 				ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -2498,7 +2498,7 @@ namespace TomCat {
 			return;
 
 		PrepareEditorToolWindow(ImVec2(1040,620),ImVec2(420,300));
-        const bool visible = ImGui::Begin("Animator", open);
+        const bool visible = BeginEditorWindow("Animator", open);
 		m_AnimatorGraphDocked = ImGui::IsWindowDocked();
 		m_AnimatorGraphFocused = visible
 			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -2636,7 +2636,7 @@ namespace TomCat {
 		};
 
 		PrepareEditorToolWindow(ImVec2(1040,620),ImVec2(420,300));
-        const bool visible = ImGui::Begin("Animation", open);
+        const bool visible = BeginEditorWindow("Animation", open);
 		m_AnimationDocked = ImGui::IsWindowDocked();
 		m_AnimationFocused = visible
 			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -2973,7 +2973,7 @@ namespace TomCat {
 		if (open && !*open)
 			return;
 		PrepareEditorToolWindow(ImVec2(860,620),ImVec2(420,300));
-        const bool visible = ImGui::Begin("Tile Palette", open);
+        const bool visible = BeginEditorWindow("Tile Palette", open);
 		m_TilePaletteDocked = ImGui::IsWindowDocked();
 		m_TilePaletteFocused = visible
 			&& ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);

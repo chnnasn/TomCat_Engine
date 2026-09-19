@@ -77,11 +77,14 @@ namespace TomCat {
 		{
 			if (!texture)
 				return;
-			const float iconSize = std::min(18.0f, std::max(1.0f, itemMax.y - itemMin.y - 2.0f));
-			const float x = itemMin.x + ImGui::GetTreeNodeToLabelSpacing();
-			const float y = itemMin.y + (itemMax.y - itemMin.y - iconSize) * 0.5f;
+			const float iconSize = std::min(ImGui::GetFontSize(), std::max(1.0f, itemMax.y - itemMin.y - 2.0f));
+			const float scale = iconSize / static_cast<float>(std::max({ 1u, texture->GetWidth(), texture->GetHeight() }));
+			const float width = std::max(1.0f, std::round(texture->GetWidth() * scale));
+			const float height = std::max(1.0f, std::round(texture->GetHeight() * scale));
+			const float x = std::round(itemMin.x + ImGui::GetTreeNodeToLabelSpacing() + (iconSize - width) * 0.5f);
+			const float y = std::round(itemMin.y + (itemMax.y - itemMin.y - height) * 0.5f);
 			ImGui::GetWindowDrawList()->AddImage(ToImGuiTextureID(texture), ImVec2(x, y),
-				ImVec2(x + iconSize, y + iconSize), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
+				ImVec2(x + width, y + height), ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f), tint);
 		}
 
 		bool IsReadOnlyPath(const std::filesystem::path& path)
@@ -668,6 +671,7 @@ namespace TomCat {
 
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
+		m_Previews.clear();
         m_InspectedAsset=AssetHandle(0); m_AssetSettingsDirty=false; m_AssetSettingsDraft.clear();
 		m_Project = std::move(project);
 		if (m_Project)
@@ -1593,6 +1597,55 @@ namespace TomCat {
 		}
 	}
 
+	Ref<Texture2D> ContentBrowserPanel::GetImagePreview(const std::filesystem::path& path)
+	{
+		const auto key = LexicalPath(path);
+		auto [it, inserted] = m_Previews.try_emplace(key);
+		auto& preview = it->second;
+		if (inserted)
+		{
+			std::error_code error;
+			preview.Modified = std::filesystem::last_write_time(key, error);
+			if (!error)
+				preview.Texture = LoadEditorPreview(key);
+		}
+		preview.LastUsedFrame = ImGui::GetFrameCount();
+		return preview.Texture;
+	}
+
+	void ContentBrowserPanel::RefreshImagePreviews()
+	{
+		// Release only before drawing: ImGui draw lists retain raw texture IDs.
+		const int frame = ImGui::GetFrameCount();
+		const bool checkChanges = ImGui::GetTime() >= m_NextPreviewRefresh;
+		if (checkChanges)
+			m_NextPreviewRefresh = ImGui::GetTime() + 1.0;
+		uint64_t bytes = 0;
+		for (auto it = m_Previews.begin(); it != m_Previews.end(); )
+		{
+			std::error_code error;
+			const bool changed = checkChanges &&
+				(std::filesystem::last_write_time(it->first, error) != it->second.Modified || error);
+			if (changed || frame - it->second.LastUsedFrame > 300)
+				it = m_Previews.erase(it);
+			else
+			{
+				if (const auto& texture = it->second.Texture)
+					bytes += static_cast<uint64_t>(texture->GetWidth()) * texture->GetHeight() * 6;
+				++it;
+			}
+		}
+		while (m_Previews.size() > 128 || bytes > 64ull * 1024 * 1024)
+		{
+			auto oldest = std::min_element(m_Previews.begin(), m_Previews.end(),
+				[](const auto& a, const auto& b) { return a.second.LastUsedFrame < b.second.LastUsedFrame; });
+			if (oldest == m_Previews.end()) break;
+			if (const auto& texture = oldest->second.Texture)
+				bytes -= static_cast<uint64_t>(texture->GetWidth()) * texture->GetHeight() * 6;
+			m_Previews.erase(oldest);
+		}
+	}
+
 	Ref<Texture2D> ContentBrowserPanel::GetAssetIcon(const std::filesystem::path& path,
 		bool isDirectory, bool isOpen)
 	{
@@ -1627,7 +1680,7 @@ namespace TomCat {
 		}
 		if (metadata && metadata->IsMissing)
 			return icon(EditorIcon::Missing);
-		if (projectAsset && IsReadOnlyPath(path))
+		if (projectAsset && IsReadOnlyPath(path) && AssetTypeFromPath(path) != AssetType::Texture2D)
 			return icon(EditorIcon::ReadOnly);
 
 		const std::string extension = ToLower(PathToUTF8(path.extension()));
@@ -1646,8 +1699,7 @@ namespace TomCat {
 					LexicalPath(path) == m_ActiveScenePath ? EditorIcon::SceneOpen : EditorIcon::SceneClosed);
 			case AssetType::Texture2D:
 			{
-				Ref<Texture2D> texture = static_cast<uint64_t>(handle) != 0
-					? assetManager.LoadTexture(handle) : Ref<Texture2D>{};
+				Ref<Texture2D> texture = GetImagePreview(path);
 				return texture ? texture : icon(EditorIcon::Texture);
 			}
 			case AssetType::Material: return icon(EditorIcon::Material);
@@ -2407,7 +2459,8 @@ namespace TomCat {
 		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
 			ImGuiTreeNodeFlags_SpanAvailWidth | (selected ? ImGuiTreeNodeFlags_Selected : 0);
 		ImGui::TreeNodeEx("##File", flags, "     %s", AssetDisplayName(path, false).c_str());
-		DrawTreeIcon(GetAssetIcon(path, false), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+		Ref<Texture2D> icon = ImGui::IsItemVisible() ? GetAssetIcon(path, false) : Ref<Texture2D>{};
+		DrawTreeIcon(icon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 		if (ImGui::IsItemClicked())
 		{
 			m_SelectedPath = path;
@@ -2415,7 +2468,6 @@ namespace TomCat {
 		}
 		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 			OpenAsset(path, false);
-		Ref<Texture2D> icon = GetAssetIcon(path, false);
 		SubmitDragPayload(path, root, icon);
 		if (ImGui::BeginPopupContextItem("Context"))
 		{
@@ -2624,7 +2676,7 @@ namespace TomCat {
     {
         if(!*open) return;
         PrepareEditorToolWindow(ImVec2(520,660));
-        if(!ImGui::Begin("Asset Inspector",open)) { ImGui::End(); return; }
+        if(!BeginEditorWindow("Asset Inspector",open)) { ImGui::End(); return; }
         auto& assets=AssetManager::Get();
         const auto* selectedMetadata=assets.GetRegistry().GetMetadata(m_SelectedPath);
         AssetHandle selected=selectedMetadata?selectedMetadata->Handle:AssetHandle(0);
@@ -2686,6 +2738,7 @@ namespace TomCat {
 
 	void ContentBrowserPanel::OnImGuiRender(bool* open)
 	{
+		RefreshImagePreviews();
 		m_Focused = false;
 		// Assets-menu commands must keep advancing even when the docked Project
 		// panel is hidden. Modal popups are also drawn after the panel window so
@@ -2700,7 +2753,7 @@ namespace TomCat {
 			DrawAtlasEditorPopup();
 			return;
 		}
-		const bool visible = ImGui::Begin("Project", open);
+		const bool visible = BeginEditorWindow("Project", open);
 		m_Docked = ImGui::IsWindowDocked();
 		m_Focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 		if (!visible)

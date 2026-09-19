@@ -27,6 +27,9 @@
     <ClInclude Include="src\EditorPlayToolbar.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\EditorPreview.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorPropertyTransaction.h">
       <Filter>src</Filter>
     </ClInclude>

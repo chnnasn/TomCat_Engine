@@ -5,6 +5,7 @@
 #include <functional>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Renderer/Texture.h"
@@ -85,6 +86,16 @@ namespace TomCat {
 		// 避免项目刚打开时 Assets 只是作为默认当前目录而被高亮。
 		bool m_UserSelectedDirectory = false;
 
+		struct PreviewEntry
+		{
+			Ref<Texture2D> Texture;
+			std::filesystem::file_time_type Modified{};
+			int LastUsedFrame = 0;
+		};
+		std::unordered_map<std::filesystem::path, PreviewEntry> m_Previews;
+		double m_NextPreviewRefresh = 0.0;
+		Ref<Texture2D> GetImagePreview(const std::filesystem::path& path);
+		void RefreshImagePreviews();
 		Ref<EditorIconSet> m_Icons;
 		std::filesystem::path m_ActiveScenePath;
 
