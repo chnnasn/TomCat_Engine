@@ -980,6 +980,36 @@ namespace {
 			"2D authoring asset extensions were not assigned stable asset types");
 	}
 
+	void TestMixedPrefixAssetImport()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		TemporaryProject project;
+		const auto scene = project.Assets / "sample.tomcat";
+		const auto outside = project.Root / "AssetsOutside" / "sample.tomcat";
+		WriteBytes(scene, "Scene: PrefixTest\nEntities: []\n");
+		std::filesystem::create_directories(outside.parent_path());
+		WriteBytes(outside, "Scene: Outside\nEntities: []\n");
+		auto extended = [](const std::filesystem::path& path) {
+			return std::filesystem::path(L"\\\\?\\" + path.wstring());
+		};
+		for (bool extendedRoot : { false, true })
+		{
+			TomCat::AssetRegistry registry;
+			Require(registry.Initialize(extendedRoot ? extended(project.Assets) : project.Assets,
+				extendedRoot ? extended(project.Library) : project.Library), "mixed-prefix registry initialization failed");
+			const auto normalHandle = RequireHandle(registry, scene, TomCat::AssetType::Scene);
+			const auto extendedHandle = RequireHandle(registry, extended(scene), TomCat::AssetType::Scene);
+			Require(normalHandle == extendedHandle, "path prefixes created different identities for the same asset");
+			Require(static_cast<uint64_t>(registry.ImportAsset(outside)) == 0 &&
+				static_cast<uint64_t>(registry.ImportAsset(extended(outside))) == 0,
+				"mixed-prefix containment accepted an asset outside Assets");
+			Require(static_cast<uint64_t>(registry.ImportAsset(scene.string() + ".tcmeta")) == 0,
+				"mixed-prefix containment imported metadata as an asset");
+			registry.Shutdown();
+		}
+#endif
+	}
+
 	void TestCookedShaderRuntimeConsumption()
 	{
 		TemporaryProject project;
@@ -3537,6 +3567,7 @@ int main()
 	try
 	{
 		TestScopedPrefabProperties();
+		TestMixedPrefixAssetImport();
 		TestOfflineTextureArtifacts();
 		TestOfflineShaderArtifacts();
 		TestCookedShaderRuntimeConsumption();

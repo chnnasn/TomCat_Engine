@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Core/Version.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -156,10 +157,11 @@ namespace TomCat {
 		: Layer("FileManager"), m_SelectedMenu(0)
 	{
 		auto& projectManager = ProjectManager::Get();
-		std::error_code currentPathError;
-		const std::filesystem::path workingDirectory = std::filesystem::current_path(currentPathError);
-		if (currentPathError)
-			TC_Core_Warn("The current working directory could not be resolved: {0}", currentPathError.message());
+		const auto executable = ApplicationPaths::GetExecutablePath();
+		if (!executable)
+			throw std::runtime_error("Could not resolve the Hub executable directory");
+		const std::filesystem::path workingDirectory = executable->parent_path();
+		projectManager.ApplyHubDirectoryDefaults(workingDirectory);
 		const std::filesystem::path projectDirectory = projectManager.GetProjectDirectory().empty()
 			? workingDirectory / "Projects" : projectManager.GetProjectDirectory();
 		if (!projectManager.SetProjectDirectory(projectDirectory))

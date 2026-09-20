@@ -128,7 +128,7 @@ shown above; it did not rerun the complete native, managed, Player or Web regres
 - Python 3 with `pip` (used by the setup helper)
 - premake5 (auto-downloaded by the setup script)
 
-> The Vulkan SDK is provided automatically via a git submodule (`vendor/VulkanSDK`, based on VulkanSDK-Windows) - no manual install or environment variables needed.
+> The OpenGL shader pipeline uses ShaderC and SPIRV-Cross supplied by the `vendor/VulkanSDK` submodule (VulkanSDK-Windows). These tools compile and reflect SPIR-V shaders; TomCat does not link the Vulkan renderer/loader. No manual SDK install or environment variables are needed.
 
 ### Steps
 

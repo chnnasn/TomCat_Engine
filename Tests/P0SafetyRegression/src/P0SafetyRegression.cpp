@@ -321,7 +321,7 @@ namespace {
 			"runtime extraction returned inconsistent consumer paths");
 		for (const RuntimeFixtureFile& file : files)
 		{
-			Require(ReadRuntimeFixture(result.Root / TomCat::UTF8ToPath(file.Path))
+			Require(ReadRuntimeFixture((result.Root / TomCat::UTF8ToPath(file.Path)).make_preferred())
 				== file.Contents,
 				"runtime extraction changed " + file.Path);
 		}
@@ -362,6 +362,31 @@ namespace {
 		Require(std::filesystem::last_write_time(warm.CliExecutable) == cliWriteTime,
 			"warm runtime cache rewrote a validated file");
 		RequireExtractedRuntimeMatches(warm, files);
+	}
+
+	void TestEditorRuntimeBundleExtendedPaths()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		Require(TomCat::DirectoryChainRoot(L"\\\\?\\C:\\Folder") == std::filesystem::path(L"\\\\?\\C:\\"),
+			"extended drive root was parsed as the namespace prefix");
+		Require(TomCat::DirectoryChainRoot(L"\\\\?\\UNC\\server\\share\\Folder") ==
+			std::filesystem::path(L"\\\\?\\UNC\\server\\share"), "extended UNC root lost its share");
+		Require(TomCat::DirectoryChainRoot(L"\\\\server\\share\\Folder") ==
+			std::filesystem::path(L"\\\\server\\share"), "UNC root lost its share");
+		TemporaryDirectory temporary;
+		const auto payload = temporary.Path / "Payload";
+		const auto cache = temporary.Path / "Cache";
+		const auto files = WriteRuntimePayload(payload, std::string(TomCat::Version::EngineBuildID), "extended");
+		const auto extendedPayload = std::filesystem::path(L"\\\\?\\" + payload.wstring());
+		const auto extendedCache = std::filesystem::path(L"\\\\?\\" + cache.wstring());
+		TomCat::EditorRuntimeBundleResult result;
+		std::string error;
+		const bool extracted = TomCat::EnsureEditorRuntimeBundle(extendedPayload, extendedCache, result, error);
+		Require(extracted, "extended-path runtime extraction failed: " + error);
+		RequireExtractedRuntimeMatches(result, files);
+		const bool reused = TomCat::EnsureEditorRuntimeBundle(extendedPayload, extendedCache, result, error);
+		Require(reused && result.ReusedExisting, "extended-path warm cache failed: " + error);
+#endif
 	}
 
 	void TestEditorRuntimeBundleRepairsSameSizeTamper()
@@ -619,6 +644,27 @@ namespace {
 		Require(!std::filesystem::exists(
 			projectDirectory / "ProjectSettings" / "BuildSettings.json"),
 			"InspectProject migrated BuildSettings.json");
+	}
+
+	void TestExtendedPathProjectMigration()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		TemporaryDirectory temporary;
+		const auto projectPath = temporary.Path / "LegacyGame" / "Project.tcproj";
+		WriteText(projectPath, LegacyProjectDocument());
+		const auto extendedPath = std::filesystem::path(L"\\\\?\\" + projectPath.wstring());
+		std::string error;
+		TomCat::ProjectMigrationRecoveryPreview recovery;
+		const bool inspected = TomCat::Project::PreviewInterruptedMigration(extendedPath, recovery, error);
+		Require(inspected, "extended-path recovery inspection failed: " + error);
+		TomCat::ProjectMigrationPreview migration;
+		const bool previewed = TomCat::Project::PreviewMigration(extendedPath, migration, error);
+		Require(previewed, "extended-path migration preview failed: " + error);
+		Require(TomCat::Project::LoadWithMigration(extendedPath, migration) != nullptr,
+			"extended-path approved migration failed");
+		const bool inspectedAfter = TomCat::Project::PreviewInterruptedMigration(extendedPath, recovery, error);
+		Require(inspectedAfter, "extended-path post-migration recovery inspection failed: " + error);
+#endif
 	}
 
 	void TestTransactionalProjectMigration()
@@ -1239,8 +1285,62 @@ namespace {
 			"installed Editor did not resolve to its discovered executable path");
 	}
 
+#ifdef TC_PLATFORM_WINDOWS
+	std::filesystem::path CurrentExecutablePath();
+#endif
+
+	void TestHubDirectoryDefaults()
+	{
+		TemporaryDirectory temporary;
+		const auto settings = temporary.Path / "hub.json";
+		const auto externalProject = temporary.Path / "External" / "Project.tcproj";
+		WriteText(externalProject, LegacyProjectDocument("External"));
+		// A pre-isolation Hub left an imported project in its global settings.
+		WriteText(settings, "{\"schemaVersion\":1,\"knownProjects\":[\"" +
+			externalProject.generic_string() + "\"]}");
+		TomCat::ProjectManager manager(settings);
+		const auto firstHub = temporary.Path / "FirstHub";
+		const auto movedHub = temporary.Path / "MovedHub";
+		manager.ApplyHubDirectoryDefaults(firstHub);
+		Require(manager.GetProjectDirectory() == firstHub / "Projects" &&
+			manager.GetEditorDirectory() == firstHub / "Editors",
+			"new Hub reused global directory settings from another installation");
+		Require(manager.SetProjectDirectory(firstHub / "Projects") && manager.GetProjects().empty(),
+			"empty Projects folder inherited the old global project list");
+		Require(static_cast<bool>(manager.AddProject(externalProject)),
+			"explicit import of an external project failed");
+		const auto customEditors = temporary.Path / "CustomEditors";
+		Require(manager.SetEditorDirectory(customEditors), "could not select a custom Editor directory");
+		manager.LoadHubSettings();
+		manager.ApplyHubDirectoryDefaults(firstHub);
+		Require(manager.ScanProjects() && manager.GetProjects().size() == 1 &&
+			manager.GetEditorDirectory() == customEditors,
+			"same-location restart lost explicit project imports or directory choices");
+		Require(manager.GetProjectDirectory() == firstHub / "Projects",
+			"reapplying Hub defaults changed the configured directory");
+		manager.ApplyHubDirectoryDefaults(movedHub);
+		Require(manager.GetProjectDirectory() == movedHub / "Projects" &&
+			manager.GetEditorDirectory() == movedHub / "Editors",
+			"relocated Hub kept directories beside its old executable");
+		Require(manager.SetProjectDirectory(movedHub / "Projects") && manager.GetProjects().empty(),
+			"relocated Hub inherited projects registered at its previous location");
+		Require(std::filesystem::is_regular_file(externalProject),
+			"isolating a project list deleted a project from disk");
+	}
+
 	void TestApplicationPaths()
 	{
+#ifdef TC_PLATFORM_WINDOWS
+		const auto executable = TomCat::ApplicationPaths::GetExecutablePath();
+		Require(executable && executable->is_absolute() && *executable == CurrentExecutablePath(),
+			"Hub default directory source did not resolve the actual executable");
+		{
+			TemporaryDirectory alternateLaunchDirectory;
+			ScopedCurrentDirectory alternateWorkingDirectory(alternateLaunchDirectory.Path);
+			Require(TomCat::ApplicationPaths::GetExecutablePath() == executable,
+				"Hub default directory changed with the launch working directory");
+		}
+#endif
 		const std::filesystem::path localRoot = "C:/Users/Test/AppData/Local";
 		const auto editor = TomCat::ApplicationPaths::ResolveProductDataRoot(
 			localRoot, TomCat::ApplicationProduct::Editor);
@@ -1277,7 +1377,8 @@ namespace {
 			== (std::filesystem::path("Packages") / packageRelative).lexically_normal(),
 			"development package asset path lost its working-directory behavior");
 		const std::filesystem::path publishedRuntime =
-			localRoot / "TomCat" / "Editor" / "Runtime" / "0.2.0" / "bundle";
+			localRoot / "TomCat" / "Editor" / "Runtime" /
+			std::string(TomCat::Version::ProductVersion) / "bundle";
 		const std::filesystem::path unnormalizedRuntime =
 			publishedRuntime.parent_path() / "discarded" / ".." /
 			publishedRuntime.filename();
@@ -1521,8 +1622,10 @@ int main(int argc, char** argv)
 #endif
 
 		TestApplicationPaths();
+		TestHubDirectoryDefaults();
 		TestGameDataPaths();
 		TestEditorRuntimeBundleHappyAndWarmCache();
+		TestEditorRuntimeBundleExtendedPaths();
 		TestEditorRuntimeBundleRepairsSameSizeTamper();
 		TestEditorRuntimeBundleRejectsPathEscape();
 		TestEditorRuntimeBundleSeparatesManifestVersions();
@@ -1532,6 +1635,7 @@ int main(int argc, char** argv)
 		TestEditorVersionResolutionHasNoFallback();
 		TestInspectProjectNeverWrites();
 		TestTransactionalProjectMigration();
+		TestExtendedPathProjectMigration();
 		TestMigrationPreviewDetectsSameSizeReplacement();
 #ifdef TC_PLATFORM_WINDOWS
 		TestMigrationFailureRollsBackEveryFile();

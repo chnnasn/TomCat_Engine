@@ -116,7 +116,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - Python 3 与 `pip`（供 Setup 辅助脚本使用）
 - premake5（Setup 脚本自动下载）
 
-> Vulkan SDK 通过 git 子模块自动提供（vendor/VulkanSDK，基于 VulkanSDK-Windows），无需手动安装或设置环境变量。
+> OpenGL 着色器管线使用 `vendor/VulkanSDK` 子模块（VulkanSDK-Windows）提供的 ShaderC 和 SPIRV-Cross，负责 SPIR-V 编译与反射；TomCat 不链接 Vulkan 渲染器或加载器。无需手动安装 SDK 或设置环境变量。
 
 ### 步骤
 

@@ -33,6 +33,7 @@ namespace TomCat {
 		[[nodiscard]] static ApplicationProduct IdentifyExecutable(
 			const std::filesystem::path& executablePath);
 		[[nodiscard]] static ApplicationProduct IdentifyCurrentExecutable();
+		[[nodiscard]] static std::optional<std::filesystem::path> GetExecutablePath();
 
 		// Pure path construction kept separate from OS discovery so startup and
 		// regression tests can prove that user data never resolves beside an exe.

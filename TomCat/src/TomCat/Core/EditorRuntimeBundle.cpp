@@ -1143,11 +1143,13 @@ namespace TomCat {
 		{
 			guard.Reset();
 			const std::filesystem::path absolute = directory.lexically_normal();
-			std::filesystem::path current = absolute.root_path();
+			std::filesystem::path current = DirectoryChainRoot(absolute);
 			if (current.empty() || !guard.Acquire(current, errorMessage))
 				return false;
-			for (const auto& component : absolute.relative_path())
+			const auto relative = std::filesystem::path(absolute.native().substr(current.native().size())).relative_path();
+			for (const auto& component : relative)
 			{
+				if (component == ".") continue;
 				current /= component;
 				FileSystem::PinnedDirectoryChain next;
 				bool created = false;
