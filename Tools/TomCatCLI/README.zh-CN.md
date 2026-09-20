@@ -1,6 +1,6 @@
 # TomCatCLI 无界面构建工具
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-18 · [文档索引](../../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../../docs/README.md)
 
 `TomCatCLI` 是 CI 资源 Cook 和 Windows 独立 Player 构建的无窗口入口。
 以下源码构建命令从仓库根目录、Visual Studio 开发者终端执行；先运行
@@ -64,3 +64,19 @@ TomCat.exe --cli build --project C:/Game/Game.tcproj
 | 14 | 中断迁移需要在 Editor 中处理 |
 
 进一步阅读：[项目配置与迁移](../../PROJECT_SYSTEM.md)、[托管脚本](../../Managed/README.zh-CN.md)。
+
+## 从编辑器创作交接到构建
+
+Project 资源检查器中的 Apply 先保存导入设置；场景编辑也需保存到磁盘，CLI 不读取尚未保存的界面草稿。
+在 `ProjectSettings/BuildSettings.json` 中设置已启用的入口和其他构建场景；
+运行时 Single / Additive 加载仍受该列表约束，见[场景加载指南](../../docs/SCENE_STREAMING.zh-CN.md)。
+
+[PhysicsPlayground](../../Samples/PhysicsPlayground/README.md) 的场景位于
+`Assets/Scene/sample.tomcat`。关闭占用它的 Editor 后，可从仓库根执行：
+
+```powershell
+Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe cook --project Samples/PhysicsPlayground/Project.tcproj
+```
+
+本页命令按当前源码核对；[2026-09-20 桌面录屏](../../docs/portfolio/README.md)只演示 Hub/Editor，
+未重新执行 CLI Cook 或独立 Player 构建验收。完整构建回归入口见[主文档](../../README.zh-CN.md#构建)。

@@ -1,6 +1,6 @@
 # TomCat 中文文档索引
 
-核对日期：2026-09-19。本文覆盖仓库自有文档；`vendor/`、`TomCat/vendor/` 内的上游资料及许可证按原项目维护。
+核对日期：2026-09-20。本文覆盖仓库自有文档；`vendor/`、`TomCat/vendor/` 内的上游资料及许可证按原项目维护。
 
 | 文档 | 中文版本 | 英文版本 |
 | --- | --- | --- |
@@ -17,6 +17,14 @@
 | 异步加载、叠加、持久对象与显式卸载 | [场景流式加载](SCENE_STREAMING.zh-CN.md) | — |
 | 性能采集、资源统计与 C# 断点流程 | [调试与性能分析](DEBUGGING_AND_PROFILING.md) | — |
 | 滑条、滚动、输入、主题与游戏本地化 | [运行时 UI 控件](RUNTIME_UI_PRODUCT.zh-CN.md) | — |
+| 编辑器面板、资源检查器与界面约定 | [UI 与交互记录](EDITOR_UX_REWORK.md) | — |
+
+## 最新桌面演示（2026-09-20）
+
+[录制说明](portfolio/README.md)收录 5 段新 GIF：Hub 模板、资源 Inspector、Console 搜索、
+Profiler 与物理播放控制，另有 3 张截图。[capture.json](portfolio/2026-09-20/capture.json)
+记录源码提交、运行程序与原片 SHA-256、裁剪和剪辑区间；重导脚本支持按日期清单导出。
+旧的 2026-09-15 素材仍保留作历史记录。本次更新覆盖 13 份自有 README，未改动上游依赖文档。
 
 ## 版本依据
 

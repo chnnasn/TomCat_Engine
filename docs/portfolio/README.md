@@ -1,6 +1,60 @@
 # 实机录制说明
 
-中文文档 · 整理日期：2026-09-18 · [文档索引](../README.md)
+中文文档 · 整理日期：2026-09-20 · [文档索引](../README.md)
+
+主 README 使用最新的 2026-09-20 桌面录屏。2026-09-15 的创作流程、原片信息与素材保留在
+本页后半部分，便于对照；它们不代表当前提交重新通过同样的验收。
+
+## 2026-09-20：Hub 图标与编辑器界面更新
+
+本次运行源码提交 `8393eeb` 对应的 Windows Release Hub / Editor，使用 OBS 32.0.2 实际录屏。
+没有重绘界面、合成鼠标、模拟物理或 AI 插帧。程序最大化显示，仅裁掉底部 40 像素任务栏，
+保留完整应用视图与真实鼠标。GIF 无音频、字幕、标题卡或其他覆盖物。
+
+| 文件 | 实际展示 | 时长 / 速度 |
+| --- | --- | --- |
+| [01-hub-templates.gif](2026-09-20/01-hub-templates.gif) | Hub 原有布局、猫耳立方体图标、2D / 3D 场景模板选择 | 约 12 秒，1.5× |
+| [02-asset-inspector.gif](2026-09-20/02-asset-inspector.gif) | 实体组件、Scene 资源摘要、包内图片导入设置与预览、单列缩略图 | 约 17.3 秒，1.5× |
+| [03-console-search.gif](2026-09-20/03-console-search.gif) | 真实编译日志、搜索 TCSP1000、选择消息并查看详情 | 约 13.3 秒，1.5× |
+| [04-profiler.gif](2026-09-20/04-profiler.gif) | 标签右键最大化、录制与停止、选帧、Hierarchy / Timeline、模块菜单 | 约 27.3 秒，采样段 1×，界面操作 1.5× |
+| [05-play-controls.gif](2026-09-20/05-play-controls.gif) | 方块下落、接地停稳、Pause / Step / Stop，恢复编辑状态 | 26 秒，全程 1× |
+
+截图：[Hub 模板](2026-09-20/hub-templates.png)、[资源 Inspector](2026-09-20/editor-assets.png)、
+[Profiler 时间线](2026-09-20/profiler-timeline.png)。GIF 与截图尺寸为 **1280×680**，GIF 为 **25 fps**。
+精确片段、速度、截图时间及二进制 Hash 见 [capture.json](2026-09-20/capture.json)。
+
+### 运行程序与原片
+
+| 程序 | 源码构建入口 |
+| --- | --- |
+| Hub | `Builder/bin/Release-windows-x86_64/Manager/Manager.exe` |
+| Editor | `Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe` |
+
+原片 `2026-09-20 11-39-52.mp4` 为 1280×720、30 fps、8 分 22.83 秒，
+留在本机 Videos 目录，没有加入 Git。SHA-256：
+`3ff5805a3bf33478c5c4cfbaa8819ef01e330ca209315404b51f33e260a60010`。
+
+### 本次观察与覆盖边界
+
+- Hub 未识别到可用 Editor 安装，录屏保留了真实提示；仅演示模板选择，没有声称成功创建项目或从 Hub 启动。
+- Editor 通过 **File → Open Project** 打开仓库中的 [PhysicsPlayground](../../Samples/PhysicsPlayground/README.md)，场景为 `Assets/Scene/sample.tomcat`。
+- Inspector 选择的 `material.png` 是 Packages 中的图片图标，显示 Texture2D 信息，不是 Material 资产编辑演示。包资源只读，Apply / Revert 禁用。
+- Profiler 在 **Edit 模式**采样，OBS 同时运行；曲线不能作为引擎帧率或物理性能基准。CPU Usage / GPU Usage / Rendering / Memory 可选，其余未接入模块禁用。
+- Play 中矩形实际下落并停稳，Stop 恢复 Y=1.5 和 Z 轴旋转 25°；Step 点击时物体已停稳，不用于证明单步位移量。
+- 本次没有演示 C# 断点附加、Prefab 编辑、异步场景切换、UI 控件创作、Player 打包或浏览器端，也未重跑完整回归套件。
+
+### 重新导出
+
+需要 Python 3.11+ 和包含 libx264、palettegen、paletteuse 的 FFmpeg。从仓库根目录执行：
+
+```powershell
+python docs/portfolio/export.py "PATH/2026-09-20 11-39-52.mp4" --ffmpeg "PATH/ffmpeg.exe" --manifest docs/portfolio/2026-09-20/capture.json
+```
+
+脚本先校验原片 SHA-256，再按清单输出到同日期目录。未传 `--manifest` 时仍使用旧的
+2026-09-15 剪辑配置；不同日期的输出不会相互覆盖。只导出已有原片画面，删除空等，按清单改变播放速度。
+
+## 2026-09-15：历史 2D 创作流程
 
 以下构建 Hash、操作结果和问题均来自 **2026-09-15** 的桌面录制，保留为历史证据。
 它们不表示当前提交重新通过了验收；2026-09-16/17 的浏览器验收另见 [Web 记录](../../Web/README.zh-CN.md)。
@@ -9,7 +63,7 @@
 合成鼠标或模拟物理动画。画面裁去底部 40 像素的 Windows 任务栏，保留软件界面与真实鼠标；
 展示操作时 Hub / Editor 最大化。GIF 没有放大或单独裁取局部面板。
 
-## 构建与操作
+### 构建与操作
 
 - 录制日期：2026-09-15，Windows x64。
 - `Editor/Editor.sln` 与 `Builder/Builder.sln` 均经 MSBuild Release x64 编译成功。
@@ -21,7 +75,7 @@
 - Play 中实际观察到方块下落、接触地板并停稳；Stop 后恢复原始悬空姿态。
 - 可复现项目：[Samples/PhysicsPlayground](../../Samples/PhysicsPlayground/README.md)。
 
-## 本次录制遇到的问题与覆盖范围
+### 历史录制遇到的问题与覆盖范围
 
 Hub 启动的是本次编译的 Editor，但项目自动加载触发了：
 
@@ -38,7 +92,7 @@ The filename, directory name, or volume label syntax is incorrect.
 这些片段覆盖基础 2D 创作与物理流程；没有在本次录制中演示 C#、动画、音频、Prefab、
 资源导入或独立 Player 导出。工程其他功能的列表见主 README。
 
-## 素材与剪辑
+### 素材与剪辑
 
 原片为本机 OBS 32.0.2 录制的 `2026-09-15 12-05-05.mp4`：
 1280×720、30 fps、13 分 13.63 秒。原片留在本机 Videos 目录，没有加入 Git 仓库。

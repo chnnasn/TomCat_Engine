@@ -1,12 +1,14 @@
 """Export application-view GIF excerpts from the original OBS recording.
 
 Usage: python docs/portfolio/export.py SOURCE.mp4 --ffmpeg PATH_TO_FFMPEG
-Requires an FFmpeg build with libx264, palettegen and paletteuse.
+Add --manifest docs/portfolio/2026-09-20/capture.json for the current capture.
+Requires Python 3.11+ and an FFmpeg build with libx264, palettegen and paletteuse.
 Removes the bottom 40-pixel Windows taskbar; preserves application content.
 No screen reconstruction, cursor synthesis, or image overlays.
 """
 import argparse
 import json
+import hashlib
 import subprocess
 import tempfile
 from pathlib import Path
@@ -46,18 +48,37 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('--ffmpeg', default='ffmpeg')
+    parser.add_argument('--manifest', type=Path, help='Dated capture manifest; output beside it')
     args = parser.parse_args()
     out = Path(__file__).resolve().parent
+    config = {'clips': CUTS, 'screenshots': {'editor-fullscreen': 686}}
+    if args.manifest:
+        config = json.loads(args.manifest.read_text(encoding='utf-8'))
+        out = args.manifest.resolve().parent
+        with args.source.open('rb') as source:
+            actual = hashlib.file_digest(source, 'sha256').hexdigest()
+        if actual.lower() != config['source_sha256'].lower():
+            parser.error('Source SHA-256 does not match the capture manifest')
+    crop = config.get('crop', '1280:680:0:0')
+    fps = config.get('fps', 25)
+    for name in [*config['clips'], *config.get('screenshots', {})]:
+        if not name or Path(name).name != name or any(c in name for c in '/\\:'):
+            parser.error('Output names must be plain filenames')
+    for cuts in config['clips'].values():
+        for start, end, speed in cuts:
+            if not 0 <= start < end or speed <= 0:
+                parser.error('Cuts require 0 <= start < end and speed > 0')
+    out.mkdir(parents=True, exist_ok=True)
     def run(*options):
         subprocess.run([args.ffmpeg, '-hide_banner', '-loglevel', 'error', '-y', *map(str, options)], check=True)
     with tempfile.TemporaryDirectory(prefix='tomcat-capture-') as folder:
         temp = Path(folder)
-        for name, cuts in CUTS.items():
+        for name, cuts in config['clips'].items():
             parts = []
             for index, (start, end, speed) in enumerate(cuts):
                 part = temp / f'{name}-{index}.mp4'
                 run('-ss', start, '-t', end-start, '-i', args.source, '-an',
-                    '-vf', f'crop=1280:680:0:0,setpts=(PTS-STARTPTS)/{speed},fps=25',
+                    '-vf', f'crop={crop},setpts=(PTS-STARTPTS)/{speed},fps={fps}',
                     '-c:v', 'libx264', '-preset', 'fast', '-crf', 16, part)
                 parts.append(part)
             listing = temp / 'concat.txt'
@@ -66,9 +87,9 @@ def main():
                 '-filter_complex', '[0:v]split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3',
                 '-loop', 0, out / f'{name}.gif')
             print(f'Exported {name}.gif', flush=True)
-        run('-ss', 686, '-i', args.source, '-vf', 'crop=1280:680:0:0',
-            '-frames:v', 1, out / 'editor-fullscreen.png')
-    (out / 'cuts.json').write_text(json.dumps(CUTS, indent=2)+'\n', encoding='utf-8')
+        for name, time in config.get('screenshots', {}).items():
+            run('-ss', time, '-i', args.source, '-vf', f'crop={crop}',
+                '-frames:v', 1, out / f'{name}.png')
 
 if __name__ == '__main__':
     main()

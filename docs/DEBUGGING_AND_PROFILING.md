@@ -1,8 +1,22 @@
 # 调试与性能分析
 
+界面入口核对：2026-09-20 · [文档索引](README.md) · [本次实机录屏](portfolio/README.md)
+
 ## 编辑器 Profiler
 
-通过 **Window → Profiler** 打开面板，开启 **Record**，重现卡顿后关闭 Record。点击 CPU 曲线或拖动帧滑条选择一帧；**Follow latest** 恢复跟随最新帧。关闭面板会停止采样，已采集的数据保留，Clear 清空。Profiler 默认关闭，不会在后台无限累积数据。
+通过 **Window → Panels → Profiler** 打开，或切换 **Window → Layouts → Debugging**。
+点击顶部圆形录制按钮开始采样，重现问题后再次点击停止。点击图表选择一帧，使用 `<` / `>`
+逐帧查看，**Live** 恢复跟随最新帧。关闭面板会停止采样，已采集数据保留；Clear 清空。
+Profiler 默认关闭，不会在后台无限累积数据。
+
+**Profiler Modules** 控制 CPU Usage、GPU Usage、Rendering、Memory 图表的显示，
+未接入的 Audio、Video、Physics、UI 等专用模块为禁用项。下方视图可选 **Hierarchy**、
+**Timeline** 或 **C# Debugger**；CPU scope 搜索用于表格和时间线过滤。选择 Memory 模块查看内存与资源明细。
+标签栏右键菜单可最大化、关闭或添加面板，窗口标题不提供折叠三角。
+顶部更多菜单提供 **Clear on Play**、跟随最新帧和 **Export CPU trace...**。
+
+2026-09-20 的[录屏](portfolio/2026-09-20/04-profiler.gif)展示编辑模式采样与选帧，
+没有进行外部调试器附加、泄漏诊断或性能基准测试。
 
 - 最多保留 240 帧，每帧最多 512 条 CPU scope，scope 名称最多 160 字节。超出预算的事件数显示在所选帧中。
 - CPU 时间线按线程和嵌套深度绘制，悬停显示完整名称、起始时间和耗时；表格按 inclusive 耗时降序排列。嵌套 scope 相互重叠，不能将 inclusive 列直接相加作为整帧时间。
@@ -18,7 +32,7 @@ CPU scope 在开始时绑定帧编号，线程安全地提交到这一帧。跨�
 
 ## 内存与资源占用
 
-Memory and resources 提供当前进程 working set、private committed、peak working set（Windows，每 0.5 秒刷新），以及引擎资源数量、估算字节和流式加载暂存字节。资源历史曲线保存的是每帧资源快照。Set memory baseline 记录当前值，后续显示差额。
+选择 **Memory** 模块后，下方详情提供当前进程 working set、private committed、peak working set（Windows，每 0.5 秒刷新），以及引擎资源数量、估算字节和流式加载暂存字节。资源历史曲线保存的是每帧资源快照。Set memory baseline 记录当前值，后续显示差额。
 
 资源统计直接在创建、销毁和成功调整大小时维护，捕获开始前已经加载的资源也会计入：
 

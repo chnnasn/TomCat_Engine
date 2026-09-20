@@ -1,6 +1,6 @@
 # TomCat managed scripting V1
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-19 · [All documentation](../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
 
 V1 names the scripting feature scope, not every wire-format version: Native ABI
 is v1, Managed ABI is v3, and ScriptManifest is v1. Desktop hosting uses .NET 10;
@@ -25,6 +25,27 @@ dotnet run --project Managed/TomCat.Managed.Regression/TomCat.Managed.Regression
 
 `TomCat.ScriptHost.runtimeconfig.json`, `TomCat.ScriptHost.dll`, and `TomCat.Managed.dll` are emitted
 under `Managed/TomCat.ScriptHost/bin/<Configuration>/net10.0/`.
+
+## Editor inspection, diagnostics and runtime UI
+
+Select a `.cs` resource in Project to inspect its source, assembly/script type and
+compiled serializable-field metadata in the main Inspector. Edit per-entity field
+values on the attached C# component. The resource Inspector does not implement
+Unity-style default-reference assignment on script assets.
+
+Console supports text search, severity filters, duplicate collapsing and selected
+message details; `TCSP1000` identifies a successful compilation. See the
+[debugging guide](../docs/DEBUGGING_AND_PROFILING.md) for external IDE attachment,
+Release portable PDBs and symbol troubleshooting. Profiler's **C# Debugger** view
+provides process information and instructions, not a built-in managed debugger.
+The [2026-09-20 recording](../docs/portfolio/README.md) demonstrates diagnostic
+search; debugger attachment was not acceptance-tested in that session.
+
+Runtime UI uses [RuntimeUI.cs](TomCat.Managed/RuntimeUI.cs) and the
+[generated component proxies](TomCat.Managed/ComponentProxy.Generated.cs), including
+`UISlider`, `UIScrollView`, `UIInputField`, `UITheme`, `UILocalization` and
+`UILocalizedText`. See the [runtime UI guide](../docs/RUNTIME_UI_PRODUCT.zh-CN.md)
+for controls, inherited themes, language fallback and IME commit limitations.
 
 ## Project input and generated manifest
 
