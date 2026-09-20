@@ -9,7 +9,7 @@
 #include <algorithm>
 namespace TomCat {
 inline ImTextureID EditorTextureID(const Ref<Texture2D>& texture) {
-  return texture ? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetRendererID())) : nullptr;
+  return texture ? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetUITextureID())) : nullptr;
 }
 // Shared desktop/Web Play controls. Keep dimensions, icons and behavior identical.
 template<class Play, class Stop, class Pause, class Step>

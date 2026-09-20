@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 namespace TomCat {
+	void OpenGLContext::SetVSync(bool enabled) { glfwSwapInterval(enabled ? 1 : 0); }
 
 	OpenGLContext::OpenGLContext(GLFWwindow* WindowHandle) : m_WindowHandle(WindowHandle)
 	{

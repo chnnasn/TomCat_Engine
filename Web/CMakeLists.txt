@@ -22,7 +22,7 @@ add_library(tc_yaml STATIC ${TC_YAML})
 target_include_directories(tc_yaml PUBLIC "${TC_VENDOR}/yaml-cpp/include")
 
 set(TC_SOURCES)
-foreach(component Core Asset Audio Math Project Renderer Runtime Scene Scripting Utils)
+foreach(component Core Asset Audio Math Project Renderer RHI Runtime Scene Scripting Utils)
   file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${TC_SRC}/TomCat/${component}/*.cpp")
   list(APPEND TC_SOURCES ${sources})
 endforeach()

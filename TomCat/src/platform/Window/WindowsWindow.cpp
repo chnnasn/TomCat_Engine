@@ -8,7 +8,8 @@
 #include "TomCat/Core/Input.h"
 #include "TomCat/Utils/PathUtils.h"
 
-#include "Platform/OpenGL/OpenGLContext.h"
+#include "TomCat/Renderer/GraphicsContext.h"
+#include "TomCat/Renderer/RendererAPI.h"
 
 #include <stb_image.h>
 #include <algorithm>
@@ -162,9 +163,15 @@ namespace TomCat {
 				throw std::runtime_error("Failed to initialize GLFW");
 		}
 
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwDefaultWindowHints();
+        glfwWindowHint(GLFW_VISIBLE, props.Visible ? GLFW_TRUE : GLFW_FALSE);
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan)
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        else {
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        }
 		glfwWindowHint(GLFW_RESIZABLE,
 			props.DisplayMode == WindowDisplayMode::Borderless
 				? GLFW_FALSE : (props.Resizable ? GLFW_TRUE : GLFW_FALSE));
@@ -235,7 +242,7 @@ namespace TomCat {
 		if (props.DisplayMode == WindowDisplayMode::Borderless || fitWorkspace)
 			glfwSetWindowPos(m_Window, windowX, windowY);
 
-		m_Context = CreateScope<OpenGLContext>(m_Window);
+		m_Context = GraphicsContext::Create(m_Window);
 		m_Context->Init();
 
 		glfwSetWindowUserPointer(m_Window, &m_Data);
@@ -578,10 +585,7 @@ namespace TomCat {
 		{
 			TC_PROFILE_FUNCTION();
 
-			if (enabled)
-				glfwSwapInterval(1);
-			else
-				glfwSwapInterval(0);
+			m_Context->SetVSync(enabled);
 
 			m_Data.VSync = enabled;
 		}

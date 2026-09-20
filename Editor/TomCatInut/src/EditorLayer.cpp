@@ -151,7 +151,7 @@ namespace TomCat {
 		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
 		{
 			return texture
-				? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetRendererID()))
+				? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetUITextureID()))
 				: nullptr;
 		}
 
@@ -2166,7 +2166,7 @@ namespace TomCat {
 			sceneName = "Untitled";
 
 		const char* rendererName = Renderer::GetAPI() == RendererAPI::API::OpenGL
-			? "OpenGL" : "No Renderer";
+			? "OpenGL" : (Renderer::GetAPI() == RendererAPI::API::Vulkan ? "Vulkan" : "No Renderer");
 		std::string title = projectName + " - " + sceneName;
 		if (IsSceneDirty())
 			title += '*';
@@ -2771,7 +2771,7 @@ namespace TomCat {
 		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
 
-		uint64_t sceneTextureID = m_Framebuffer->GetColorAttachmentRendererID();
+		uint64_t sceneTextureID = m_Framebuffer->GetColorAttachmentUITextureID();
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 		m_ViewportCanvasHovered = sceneVisible && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
@@ -3132,7 +3132,7 @@ namespace TomCat {
 		ImGui::SetCursorScreenPos(imageOrigin);
 
 		// 始终显示GameFramebuffer（Runtime摄像机渲染内容）
-		uint64_t gameTextureID = m_GameFramebuffer->GetColorAttachmentRendererID();
+		uint64_t gameTextureID = m_GameFramebuffer->GetColorAttachmentUITextureID();
 		ImGui::Image(reinterpret_cast<void*>(gameTextureID), imageSize,
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 		const ImVec2 gameImageMinimum = ImGui::GetItemRectMin();

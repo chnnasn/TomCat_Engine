@@ -2,6 +2,7 @@ project "ImporterRegression"
 	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++20"
+	linkoptions (TomCatConsumerLinkOptions)
 	staticruntime "off"
 
 	targetdir ("%{wks.location}/bin/" .. outputdir .. "/%{prj.name}")

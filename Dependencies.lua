@@ -10,8 +10,8 @@ IncludeDir["entt"] = "%{wks.location}/../TomCat/vendor/entt/include"
 IncludeDir["yaml_cpp"] = "%{wks.location}/../TomCat/vendor/yaml-cpp/include"
 IncludeDir["ImGuizmo"] = "%{wks.location}/../TomCat/vendor/ImGuizmo"
 IncludeDir["Box2D"] = "%{wks.location}/../TomCat/vendor/Box2D/include"
--- The OpenGL shader pipeline uses ShaderC and SPIRV-Cross from this submodule.
--- These are shader compilation tools; no Vulkan renderer/loader is linked.
+-- Both renderer backends share ShaderC and SPIRV-Cross. The Vulkan loader is
+-- delay-loaded so OpenGL/headless tools also work without a Vulkan installation.
 IncludeDir["VulkanSDK"] = "%{wks.location}/../vendor/VulkanSDK/Include"
 
 LibraryDir = {}
@@ -36,8 +36,12 @@ TomCatConsumerLinks = {
 	"Glad.lib",
 	"ImGui.lib",
 	"yaml-cpp.lib",
-	"opengl32.lib"
+	"opengl32.lib",
+	"delayimp.lib",
+	"%{LibraryDir.VulkanSDK}/vulkan-1.lib"
 }
+
+TomCatConsumerLinkOptions = { "/DELAYLOAD:vulkan-1.dll" }
 
 TomCatConsumerLinksRelease = {
 	"%{Library.ShaderC_Release}",

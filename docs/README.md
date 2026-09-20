@@ -18,6 +18,7 @@
 | 性能采集、资源统计与 C# 断点流程 | [调试与性能分析](DEBUGGING_AND_PROFILING.md) | — |
 | 滑条、滚动、输入、主题与游戏本地化 | [运行时 UI 控件](RUNTIME_UI_PRODUCT.zh-CN.md) | — |
 | 编辑器面板、资源检查器与界面约定 | [UI 与交互记录](EDITOR_UX_REWORK.md) | — |
+| RHI 分层、Vulkan 后端、运行与 GPU 回归 | [RHI 与 Vulkan](RHI_VULKAN.zh-CN.md) | — |
 
 ## 最新桌面演示（2026-09-20）
 

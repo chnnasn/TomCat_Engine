@@ -8,7 +8,7 @@ Box2D physics into one development environment. Its engine library provides the
 rendering, ECS scene model, and runtime systems; the Editor exposes those systems
 through visual authoring tools, while the Player runs packaged games independently.
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
@@ -106,7 +106,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 ## Current Scope
 
 - Supported development platform: **Windows x64**
-- Rendering backend: **OpenGL 4.6**
+- Rendering backends: **OpenGL 4.6 / Vulkan 1.2** through a shared RHI. See [Vulkan setup and validation](docs/RHI_VULKAN.zh-CN.md).
 - Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). C# payloads, audible audio, custom cooked SPIR-V shaders, and multisample framebuffers are unsupported there.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
@@ -128,7 +128,7 @@ shown above; it did not rerun the complete native, managed, Player or Web regres
 - Python 3 with `pip` (used by the setup helper)
 - premake5 (auto-downloaded by the setup script)
 
-> The OpenGL shader pipeline uses ShaderC and SPIRV-Cross supplied by the `vendor/VulkanSDK` submodule (VulkanSDK-Windows). These tools compile and reflect SPIR-V shaders; TomCat does not link the Vulkan renderer/loader. No manual SDK install or environment variables are needed.
+> ShaderC, SPIRV-Cross and Vulkan build dependencies come from `vendor/VulkanSDK`. OpenGL remains the default; set `TC_RENDERER=vulkan` before launching to select Vulkan. The Vulkan loader is delay-loaded and supplied by your graphics driver. Install validation layers only when running Vulkan validation tests.
 
 ### Steps
 
