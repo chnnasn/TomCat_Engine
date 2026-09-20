@@ -1,6 +1,6 @@
 # TomCat 托管脚本 V1
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-19 · [文档索引](../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
 
 V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v3，
 ScriptManifest 为 v1。桌面托管使用 .NET 10；实验性 Web 目标会拒绝 C# 负载。
@@ -23,6 +23,22 @@ dotnet run --project Managed/TomCat.Managed.Regression/TomCat.Managed.Regression
 
 `TomCat.ScriptHost.runtimeconfig.json`、`TomCat.ScriptHost.dll` 与 `TomCat.Managed.dll`
 输出到 `Managed/TomCat.ScriptHost/bin/<Configuration>/net10.0/`。
+
+## 编辑器检查、诊断与运行时 UI
+
+在 Project 中选中 `.cs` 资源，主 Inspector 可查看源文件、程序集/脚本类型及已编译的
+可序列化字段元数据；修改实体上的字段值仍通过挂载的 C# 组件进行。
+资源检查器尚未提供 Unity 式脚本资产默认引用赋值界面。
+
+Console 支持消息搜索、严重级别过滤、重复折叠和选中详情；编译成功诊断码为 `TCSP1000`。
+外部 IDE 断点附加、Release portable PDB 与符号排查见[调试指南](../docs/DEBUGGING_AND_PROFILING.md)。
+Profiler 的 **C# Debugger** 视图给出进程信息与流程，编辑器没有内置托管单步调试器。
+[2026-09-20 录屏](../docs/portfolio/README.md)展示了编译日志搜索，没有进行断点附加验收。
+
+运行时 UI API 包括 [RuntimeUI.cs](TomCat.Managed/RuntimeUI.cs) 和
+[生成的组件代理](TomCat.Managed/ComponentProxy.Generated.cs)中的 `UISlider`、`UIScrollView`、
+`UIInputField`、`UITheme`、`UILocalization`、`UILocalizedText`。
+控件行为、主题继承、语言回退及 IME 提交边界见[运行时 UI 指南](../docs/RUNTIME_UI_PRODUCT.zh-CN.md)。
 
 ## 项目输入与生成清单
 

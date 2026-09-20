@@ -1,6 +1,6 @@
 # TomCatCLI
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-18 · [All documentation](../../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../../docs/README.md)
 
 `TomCatCLI` is the window-free entry point for CI cooks and Player builds.
 
@@ -65,3 +65,24 @@ Current TCPAK output is v7 with per-entry SHA-256 digests; readers accept v5/v6/
 
 See [project configuration and migration](../../PROJECT_SYSTEM.md) and
 [managed scripting](../../Managed/README.md) for the underlying contracts.
+
+## From editor authoring to a build
+
+Apply pending import settings in the Project resource Inspector and save scene
+edits before closing the Editor. CLI reads disk state, not unsaved UI drafts.
+Configure the enabled entry and additional scenes in
+`ProjectSettings/BuildSettings.json`; runtime Single/Additive loading is still
+constrained by that list. See the [scene guide](../../docs/SCENE_STREAMING.zh-CN.md).
+
+The [PhysicsPlayground sample](../../Samples/PhysicsPlayground/README.md) uses
+`Assets/Scene/sample.tomcat`. After closing the Editor that owns its lock, run
+from the repository root:
+
+```powershell
+Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe cook --project Samples/PhysicsPlayground/Project.tcproj
+```
+
+These commands were checked against source. The
+[2026-09-20 desktop recording](../../docs/portfolio/README.md) covers Hub/Editor;
+it did not rerun CLI Cook or standalone Player build acceptance. See the
+[root build guide](../../README.md#building) for the full regression entry point.

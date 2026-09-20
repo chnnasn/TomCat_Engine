@@ -1,9 +1,12 @@
 # 实验性 Web Player 与 ImGui 编辑器
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-18 · [文档索引](../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
 
 此 Emscripten 目标在浏览器中运行已有的 `PlayerRuntimeLayer`、Cooked TCPAK 读取器、
 场景运行时、Renderer2D 和 Box2D。目前覆盖原生引擎功能，尚不能完整替代桌面 Player。
+
+[2026-09-20 功能录屏](../docs/portfolio/README.md)来自 Windows 桌面程序。
+共享源码不代表这些片段验证了浏览器端；下文保留浏览器验收的原始日期，本次文档更新未重跑 Web 构建或协议回归。
 
 ## 构建
 
@@ -71,7 +74,16 @@ Emscripten GLFW 后端禁用不可用的 Vulkan/手柄入口；引擎手柄输�
 
 当前复用桌面核心面板，尚未覆盖全部 `EditorLayer` 工具。资源浏览、缩略图和引用可用；
 Project 面板文件修改暂时禁用，图片由宿主导入。Prefab 创建、专用碰撞体编辑、外部 C# 编辑器、
-项目/布局持久化及编辑器内 Play 尚未开放。C++ 文件对话框在浏览器中返回取消。
+布局持久化及桌面 Build Settings 尚未开放。C++ 文件对话框在浏览器中返回取消。
+
+浏览器端复用桌面的 Play 工具栏与 Project Settings 界面源码。Scene 使用原有工具图标，
+Game 绘制主相机；Play 运行由 SceneManager 管理的场景副本，Pause / Step 只推进副本，
+Stop 保留创作场景与编辑历史。包含 C# 或缺少主相机的场景会明确拒绝启动；Play 时禁止变更型 RPC。
+
+Project Settings 修改在 MEMFS 中生效并标记会话未保存。宿主须将
+`ProjectSettings/ProjectSettings.json` 和 `PlayerSettings.json` 与场景一起持久化，
+在 `project.open/new` 前恢复这些文件，保存成功后确认 `scene.markSaved`。
+桌面显示模式/目录控件在 Web 中仍显示，但处于禁用状态。
 
 ## RPC 协议与场景事务
 
@@ -85,7 +97,10 @@ project.open, project.new
 scene.snapshot, scene.select, scene.transact, scene.loadArchive, scene.markSaved
 history.undo, history.redo
 asset.list, asset.import
+preview.control, preview.snapshot
 ```
+
+`preview.control` 的 payload 为 `{command: "play"}`；command 可取 `play`、`pause`、`resume`、`step` 或 `stop`。
 
 `project.open` 当前只接受 `/Samples/PhysicsPlayground/Project.tcproj`；
 `project.new` 使用同一挂载资源根创建场景。其他场景应通过规范化归档导入。
@@ -112,7 +127,8 @@ asset.list, asset.import
 node Web/tests/editor-rpc.cjs build/web
 ```
 
-测试覆盖事务、回滚、uint64 边界、选择、组件、层级、图片、无效引用、历史分叉和修订冲突。
+测试覆盖事务、回滚、uint64 边界、选择、组件、层级、图片、无效引用、历史分叉和修订冲突，
+还包含 50 次预览重启、物理单步与创作状态保留，以及缺少主相机导致启动失败后的恢复。
 浏览器绘制与持久化仍需宿主层验收。
 
 2026-09-17 的浏览器验收记录覆盖：中文字形、Hierarchy 选择、Inspector 位移编辑、
@@ -140,3 +156,13 @@ Sprite 选择赋值、场景像素拾取、ImGuizmo 拖拽、撤销/重做、停
 画面显示方块和地面，每帧一次绘制调用。停止/重启恢复示例初始状态，损坏 TCPAK 被拒绝并显示诊断。
 
 这项记录只验证仓库中的 PhysicsPlayground，不能推断全部桌面游戏、Shader、脚本或输入设备兼容。
+
+## Scene 工具栏与非运行状态 Game（2026-09-18 功能记录）
+
+桌面与 Web 编译同一份 Scene 工具栏绘制代码：可拖动的 Q/W/E/R 工具组，以及
+Pivot/Center、Local/Global 菜单条，包括停靠、重排和放置预览。
+Web 保持 2D，没有 2D/3D 切换；localStorage 可用时，工具栏位置保存为浏览器 UI 偏好。
+Pivot/Center 沿用单选实体原点行为，不表示新增多选或自定义 Sprite 枢轴编辑。
+
+Game 在 Play 前和 Stop 后也绘制活动场景主相机。编辑模式仅渲染，不启动物理或脚本；
+缺少相机时显示 `No cameras rendering`。Web 资产 RPC 同时提供引擎内置 Circle / Square 纹理。

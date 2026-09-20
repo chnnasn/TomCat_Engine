@@ -10,7 +10,7 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
-文档于 **2026-09-18** 按仓库源码核对，当前产品版本为 **0.2.0**。
+文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.2.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
 ---
@@ -28,36 +28,50 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 ## 功能展示
 
-### 项目管理与编辑工作区
+以下为 **2026-09-20** 在源码提交 `8393eeb` 对应 Windows Release Hub / Editor 中的实机录屏。
+[录制说明、Hash 与剪辑清单](docs/portfolio/README.md)保留完整来源，并将本次画面与
+2026-09-15 的历史创作演示分开记录。
 
-Hub 根据编译进程序的产品身份发现 Editor，按实际可执行文件路径启动所选版本，不依赖目录名或程序文件名。Editor 将 Scene、Game、Hierarchy、Inspector、
-Project 和 Console 面板组织在响应式停靠工作区中，并在面板开关或布局变化时主动保存。
+### Hub 与场景模板
 
-![全屏 Hub 创建项目与 Editor 打开项目](docs/portfolio/01-hub-project.gif)
+Hub 保留独立的原有布局，使用猫耳立方体应用图标和区分 2D / 3D 的场景模板图标。
+本段展示模板选择；录制环境未识别到 Editor 安装，因此没有演示成功创建项目或从 Hub 启动 Editor。
 
-### 可视化 2D 场景编辑
+![Hub 选择 2D 与 3D 场景模板](docs/portfolio/2026-09-20/01-hub-templates.gif)
 
-场景对象通过组件组合功能。内置 Sprite 图元、层级管理、仅影响 Scene 视图的可见性控制与
-Transform 编辑支持快速搭建场景，并直接调整对象的位置、旋转和缩放。
+### Project 资源与 Inspector
 
-![全屏右键创建 Sprite 与修改 Transform](docs/portfolio/02-sprite-transform.gif)
+选择 Project 资源后，主 Inspector 显示对应类型的信息。录屏依次查看实体组件、Scene 资源、
+包内图片的导入设置与预览。图片在单列列表中也显示真实缩略图，Packages 资源只读；
+Inspector 锁定位于标签栏最右侧，编辑器继续使用 Packages 内原有的整套图标。
 
-### 组件化物理系统
+![实体、场景资源与图片导入检查器](docs/portfolio/2026-09-20/02-asset-inspector.gif)
 
-Rigidbody2D 与碰撞体组件将场景对象接入 Box2D。Inspector 提供刚体类型和碰撞属性编辑，
-Scene 视图显示碰撞轮廓，让物理边界与画面内容一起参与场景设计。
+### Console 搜索与详情
 
-![全屏添加刚体、创建地板与配置碰撞体](docs/portfolio/03-physics-authoring.gif)
+Console 将严重级别计数、重复折叠和文本搜索放在工具栏中，日志使用双行列表与独立详情区。
+录屏搜索 `TCSP1000`，从真实脚本编译日志中筛出编译成功消息并查看详情。
 
-### 实时运行与调试
+![Console 搜索与选中日志详情](docs/portfolio/2026-09-20/03-console-search.gif)
 
-Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮配合 Pause 和单帧 Step，
-可用于观察运行状态，并在停止后恢复编辑场景。
+### 可视化性能分析
 
-![全屏 Box2D 实际运行与播放控制](docs/portfolio/04-play-pause-step-stop.gif)
+Profiler 提供 CPU Usage、GPU Usage、Rendering、Memory 模块，以及选帧和 Hierarchy / Timeline 详情。
+录屏展示编辑模式采样、停止采样、选帧、时间线和模块菜单。录制时 OBS 同时运行，画面数值不作为性能基准。
 
-示例项目 [PhysicsPlayground](Samples/PhysicsPlayground/README.md) 包含一个动态矩形与静态地板，
-可用于体验基础 2D 物理交互。另见 [Editor 全屏截图](docs/portfolio/editor-fullscreen.png)。
+![Profiler 采集、选帧与时间线](docs/portfolio/2026-09-20/04-profiler.gif)
+
+### 实时物理与播放控制
+
+Play 在编辑场景的副本中运行固定步 Box2D 物理。矩形下落并停在地板上，Pause / Step 用于检查运行状态，
+Stop 恢复原有位置和旋转。物理片段保持原速。
+
+![Box2D 下落与 Play、Pause、Step、Stop](docs/portfolio/2026-09-20/05-play-controls.gif)
+
+可打开 [PhysicsPlayground](Samples/PhysicsPlayground/README.md) 复现。
+静态截图：[Hub](docs/portfolio/2026-09-20/hub-templates.png)、
+[资源 Inspector](docs/portfolio/2026-09-20/editor-assets.png)、
+[Profiler 时间线](docs/portfolio/2026-09-20/profiler-timeline.png)。
 
 ## 特性
 
@@ -71,7 +85,7 @@ Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮�
 - **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
 - **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
-- **编辑器**：ImGui 驱动的 Scene、Game、Hierarchy、Inspector、Project 和 Console 面板，支持响应式停靠、面板开关/布局主动持久化、Hierarchy 场景可见性、诊断计数/过滤/折叠、Undo/Redo、自动保存/恢复、项目锁与用户设置
+- **编辑器**：可停靠的 Scene / Game / Hierarchy / Inspector / Project / Console / Profiler 面板、布局持久化、标签栏右键 Maximize / Close Tab / Add Tab、不可折叠的窗口标题、Hierarchy 场景可见性、带导入 Apply/Revert 的资源 Inspector、真实图片缩略图、原有 Packages 图标、可搜索诊断、Undo/Redo、自动保存/恢复、项目锁与用户设置
 - **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v7，包含逐条目 SHA-256（Player 兼容读取 v5/v6/v7）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
 - **UI 控件与本地化**：新增滑条、滚动视图、单行 Unicode 输入框、层级主题和游戏语言表回退；支持 OS 输入法提交文字，完整组合态仍有边界，详见 [UI 控件](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
@@ -89,9 +103,8 @@ Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮�
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
 - 不支持 NuGet/第三方托管 DLL、Play Mode 热重载或内置 C# 调试器；异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
 
-[2026-09-15 实机录制](docs/portfolio/README.md)曾遇到 Hub 使用 Windows 扩展路径加载项目时触发迁移检查错误，
-当时通过 Editor 的 **File → Open Project** 和普通 Windows 路径打开。
-这是历史录制观察，不代表已验证当前构建仍存在该问题。
+[录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
+2026-09-20 核对了上面展示的界面流程，没有重新运行完整原生、托管、Player 或 Web 回归套件。
 
 ## 构建
 
@@ -114,6 +127,17 @@ Play Mode 以固定时间步运行物理场景。合并后的 Play/Stop 按钮�
 
 CLI 工程需要单独生成，见 [TomCatCLI 中文指南](Tools/TomCatCLI/README.zh-CN.md)。
 Web 使用独立的 [CMake/Emscripten 构建流程](Web/README.zh-CN.md)。
+
+Release x64 源码构建的实际入口：
+
+| 程序 | 相对仓库根目录的路径 |
+| --- | --- |
+| Editor | `Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe` |
+| Hub | `Builder/bin/Release-windows-x86_64/Manager/Manager.exe` |
+| 无界面 CLI | `Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe` |
+
+打包后的 Editor 名为 `TomCat.exe`；重新编译源码不会自动替换已经打包或另行安装的程序。
+创建或启动项目前，在 Hub 设置中将 Editor 搜索目录指向需要使用的安装位置。
 
 由 `Scripts\Setup.bat` 准备 Premake 后，运行 `powershell -ExecutionPolicy Bypass -File Scripts\Run-Regressions.ps1` 可执行完整 Release 回归套件。
 
@@ -169,7 +193,8 @@ vendor/            premake 与第三方依赖
 
 - [x] ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、`.tcmeta` schema v2 与依赖图
 - [x] 后台 ImportCoordinator：内容 Hash 校验、去抖/合并、变更资产与传递反向依赖重导，以及主线程 Registry/资源发布
-- [ ] 生产级真实格式转码、平台纹理压缩与 Mipmap 生成
+- [x] 纹理导入 sRGB 设置、Mipmap 生成与 RGBA8 / BC3 产物
+- [ ] 更多生产级纹理格式与平台压缩后端
 - [x] 带列表式切片编辑器、Rect/Pivot/Pixels Per Unit/Border 元数据的稳定 Sprite Atlas 子资源，以及自包含的 Cook/Player 载荷
 - [x] 确定性 Sprite 排序、动画 Clip，以及支持 Bool/Int/Float/Trigger 参数、AnyState 和 Exit Time 的 Animator 状态/过渡
 - [x] TTF/OTF/TTC Font 导入、主字体/Fallback/Emoji 运行时字形链与世界空间 Text，以及支持 Anchor、Pivot、布局、裁剪、射线目标、DPI 缩放、鼠标/键盘/手柄控制和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI
@@ -186,7 +211,8 @@ PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区�
 
 - [x] Undo/Redo、自动保存/恢复与项目锁
 - [x] Editor Console：严重级别计数/过滤、重复日志折叠、Play 时清空与结构化脚本/运行时诊断
-- [ ] Editor Profiler
+- [x] Editor Profiler：CPU 层级/时间线、异步 GPU 计时、绘制计数、内存/资源基线与 CPU Trace 导出
+- [ ] GPU 逐次绘制分解与托管堆对象/引用分析
 - [x] 在 Push/PR CI 中运行托管、原生与 Player Release 回归
 - [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
 - [x] 项目迁移预览、明确确认、事务升级和 Editor 中的中断迁移恢复；CLI 升级要求传入 `--migrate`
