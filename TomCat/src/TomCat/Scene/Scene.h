@@ -16,11 +16,7 @@
 #include <unordered_set>
 #include <vector>
 
-
-class b2World;
-class b2Body;
-class b2Fixture;
-class b2Joint;
+namespace TomCat::Physics2D { class World; class Body; class Fixture; class Joint; }
 
 namespace TomCat {
 	namespace Scripting { class ScriptEngine; }
@@ -58,7 +54,7 @@ namespace TomCat {
 		float Fraction = 0.0f;
 		bool IsTrigger = false;
 		// Bit corresponding to EntityMetadata::Layer, not the fixture's raw
-		// Box2D categoryBits value.
+		// Butter categoryBits value.
 		uint16_t CollisionLayer = 0;
 	};
 
@@ -67,12 +63,12 @@ namespace TomCat {
 		UUID EntityID{ 0 };
 		bool IsTrigger = false;
 		// Bit corresponding to EntityMetadata::Layer, not the fixture's raw
-		// Box2D categoryBits value.
+		// Butter categoryBits value.
 		uint16_t CollisionLayer = 0;
 	};
 
 	// Cumulative counters for runtime physics definition synchronization. These
-	// count definition snapshot scans and Box2D mutations, rather than simulation
+	// count definition snapshot scans and Butter mutations, rather than simulation
 	// steps, so regressions can distinguish safe-point coalescing from object work.
 	struct RuntimePhysicsSyncStatistics
 	{
@@ -176,7 +172,7 @@ namespace TomCat {
 			const glm::vec2& screenToFramebufferScale = glm::vec2(1.0f));
 		bool IsRuntimeRunning() const { return m_RuntimeRunning; }
 		// Prefab commits enqueue a complete UUID batch. Delivery occurs only after
-		// managed callbacks / Box2D locked regions have returned to a Scene safe
+		// managed callbacks / Butter locked regions have returned to a Scene safe
 		// point, allowing ScriptEngine to attach dynamic managed instances safely.
 		void SetRuntimeEntityBatchCreatedCallback(
 			RuntimeEntityBatchCreatedCallback callback);
@@ -206,7 +202,7 @@ namespace TomCat {
 		// layerMask addresses EntityMetadata::Layer slots (bit N selects layer N).
 		std::optional<RaycastHit2D> Raycast2D(const glm::vec2& start, const glm::vec2& end,
 			uint16_t layerMask = 0xFFFF, bool includeTriggers = true);
-		// Returns at most one result per entity from Box2D's broad-phase AABB query;
+		// Returns at most one result per entity from Butter's broad-phase AABB query;
 		// a solid fixture is preferred when an entity also has a sensor. Rotated
 		// fixture bounds can be conservative. layerMask addresses
 		// EntityMetadata::Layer slots (bit N selects layer N).
@@ -224,7 +220,7 @@ namespace TomCat {
 		std::optional<glm::vec2> GetLinearVelocity2D(UUID entityID);
 
 		// Edit mode derives outlines from authoring components. Runtime mode reads
-		// the actual Box2D fixtures, making this suitable for exact debug overlays.
+		// the actual Butter fixtures, making this suitable for exact debug overlays.
 		std::vector<ColliderDebugShape> GetColliderDebugShapes(bool useRuntimeFixtures) const;
 
 		Entity DuplicateEntity(Entity entity);
@@ -255,7 +251,7 @@ namespace TomCat {
 		bool RebuildRuntimePhysicsWorld(bool preserveState);
 		void ResetRuntimePhysicsPointers();
 		void ArmRuntimeScriptBatchCallback();
-		b2Body* FindRuntimeBody(UUID entityID) const;
+		Physics2D::Body* FindRuntimeBody(UUID entityID) const;
 		void SynchronizeRuntimeTransforms();
 		bool DispatchPendingCollisionEvents();
 		void RenderRuntimeScene();
@@ -269,7 +265,7 @@ namespace TomCat {
 		float m_RuntimeUIDPIScale = 1.0f;
 		glm::vec2 m_RuntimeUIScreenToFramebufferScale{ 1.0f };
 
-		b2World* m_PhysicsWorld = nullptr;
+		Physics2D::World* m_PhysicsWorld = nullptr;
 		SceneContactFilter2D* m_ContactFilter = nullptr;
 		SceneContactListener* m_ContactListener = nullptr;
 		bool m_RuntimeRunning = false;
@@ -283,10 +279,10 @@ namespace TomCat {
 		std::unordered_map<CollisionListenerHandle, CollisionExit2DCallback> m_CollisionExitListeners;
 		std::unordered_map<CollisionListenerHandle, TriggerEnter2DCallback> m_TriggerEnterListeners;
 		std::unordered_map<CollisionListenerHandle, TriggerExit2DCallback> m_TriggerExitListeners;
-		std::unordered_map<UUID, b2Body*> m_RuntimeBodies;
-		std::unordered_map<UUID, b2Fixture*> m_RuntimeBoxFixtures;
-		std::unordered_map<UUID, b2Fixture*> m_RuntimeCircleFixtures;
-		std::unordered_map<UUID, b2Joint*> m_RuntimeDistanceJoints;
+		std::unordered_map<UUID, Physics2D::Body*> m_RuntimeBodies;
+		std::unordered_map<UUID, Physics2D::Fixture*> m_RuntimeBoxFixtures;
+		std::unordered_map<UUID, Physics2D::Fixture*> m_RuntimeCircleFixtures;
+		std::unordered_map<UUID, Physics2D::Joint*> m_RuntimeDistanceJoints;
 		RuntimePhysicsDefinitions m_RuntimePhysicsDefinitions;
 		struct RuntimePhysicsPose
 		{

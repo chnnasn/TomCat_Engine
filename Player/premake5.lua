@@ -11,7 +11,6 @@ workspace "Player"
 
 group "Dependencies"
 	include "../vendor/premake"
-	include "../TomCat/vendor/Box2D"
 	include "../TomCat/vendor/GLFW"
 	include "../TomCat/vendor/Glad"
 	include "../TomCat/vendor/ImGui"

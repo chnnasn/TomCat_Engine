@@ -13,7 +13,7 @@ project "InputRegression"
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
 		"%{wks.location}/../TomCat/vendor",
-		"%{IncludeDir.Box2D}",
+		"%{IncludeDir.Butter}",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
 		"%{IncludeDir.yaml_cpp}"
@@ -21,7 +21,6 @@ project "InputRegression"
 
 	libdirs
 	{
-		"../../TomCat/vendor/Box2D/bin/" .. outputdir .. "/Box2D",
 		"../../TomCat/vendor/GLFW/bin/" .. outputdir .. "/GLFW",
 		"../../TomCat/vendor/Glad/bin/" .. outputdir .. "/Glad",
 		"../../TomCat/vendor/ImGui/bin/" .. outputdir .. "/ImGui",

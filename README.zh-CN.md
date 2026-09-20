@@ -2,11 +2,11 @@
 
 一款面向 **2D 游戏开发的 C++20 开源引擎**，包含可视化编辑器、项目中心与独立游戏运行时。
 
-TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Box2D 物理集成在同一个开发环境中。
+TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Butter 物理集成在同一个开发环境中。
 引擎库提供渲染、ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
 Player 则负责脱离编辑器运行打包后的游戏。
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL · ImGui · Butter · .NET 10 · Windows x64 · MIT**
 
 **语言**：[English](README.md) | 简体中文
 
@@ -63,10 +63,10 @@ Profiler 提供 CPU Usage、GPU Usage、Rendering、Memory 模块，以及选帧
 
 ### 实时物理与播放控制
 
-Play 在编辑场景的副本中运行固定步 Box2D 物理。矩形下落并停在地板上，Pause / Step 用于检查运行状态，
+Play 在编辑场景的副本中运行固定步 Butter 物理。矩形下落并停在地板上，Pause / Step 用于检查运行状态，
 Stop 恢复原有位置和旋转。物理片段保持原速。
 
-![Box2D 下落与 Play、Pause、Step、Stop](docs/portfolio/2026-09-20/05-play-controls.gif)
+![下落与 Play、Pause、Step、Stop](docs/portfolio/2026-09-20/05-play-controls.gif)
 
 可打开 [PhysicsPlayground](Samples/PhysicsPlayground/README.md) 复现。
 静态截图：[Hub](docs/portfolio/2026-09-20/hub-templates.png)、
@@ -78,7 +78,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - **2D 渲染**：OpenGL 批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图、实体拾取、带 Rect/Pivot/PPU/Border 语义的稳定 Sprite Atlas 子资源、确定性 Sprite 排序、动画 Clip 与参数驱动的 Animator 状态机
 - **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化、有序 Build Settings、异步读取/激活控制、共享运行世界的叠加场景、持久根对象与显式卸载
 - **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` schema-v2 Sidecar、ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、依赖跟踪，以及支持去抖内容监控、反向依赖重导和主线程发布的后台 ImportCoordinator
-- **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
+- **2D 物理**：固定 60 Hz Butter 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
 - **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、合并的 Play/Stop 按钮与 Pause/Step 控制，以及延迟派发的 C# Collision/Trigger 回调
 - **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、诊断、last-good 程序集与 Cooked 托管负载
 - **Prefab**：LocalID 实体子树和引用重映射、编辑器关联更新、Override、Apply/Revert、嵌套和变体；运行时 C# `Instantiate` 保持快照语义，详见 [Prefab 工作流](docs/PREFAB_WORKFLOW.zh-CN.md)

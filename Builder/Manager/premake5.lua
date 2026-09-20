@@ -26,7 +26,6 @@ project "Manager"
 
 	libdirs
 	{
-		"../../TomCat/vendor/Box2D/bin/" .. outputdir .. "/Box2D",
 		"../../TomCat/vendor/GLFW/bin/" .. outputdir .. "/GLFW",
 		"../../TomCat/vendor/Glad/bin/" .. outputdir .. "/Glad",
 		"../../TomCat/vendor/ImGui/bin/" .. outputdir .. "/ImGui",

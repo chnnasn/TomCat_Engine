@@ -8,7 +8,7 @@
 
 namespace TomCat {
 
-	// Box2D exposes 16-bit category and mask fields, so project physics layers
+	// TomCat preserves 16-bit category and mask fields, so project physics layers
 	// intentionally use 16 stable slots rather than Unity's 32-slot limit.
 	inline constexpr std::size_t Physics2DLayerCount = 16;
 

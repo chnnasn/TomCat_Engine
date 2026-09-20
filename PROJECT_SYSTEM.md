@@ -81,7 +81,7 @@ Project:
 }
 ```
 
-Loader 只接受有效 JSON、schema v1/v2 及精确的 lowerCamel 字段集，writer 固定写 schema v2。`tags` 必须非空且唯一，第一项固定为 `Untagged`；`layerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。层数选择 16 是因为 Box2D 的 Category/Mask 均为 16 位。`collisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
+Loader 只接受有效 JSON、schema v1/v2 及精确的 lowerCamel 字段集，writer 固定写 schema v2。`tags` 必须非空且唯一，第一项固定为 `Untagged`；`layerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。为兼容现有项目，TomCat 的 Category/Mask 和项目 Layer 槽位保持 16 位。`collisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
 
 新项目会原子写入默认设置，默认所有 Layer 两两允许碰撞。为兼容已有项目，仅当 JSON 不存在时才读取旧的 `ProjectSettings/ProjectSettings.tcsettings` schema v1；加载旧文件本身不会改写磁盘，下一次 `SetSettings` 或 `SaveSettings` 会生成权威 JSON。JSON 一旦存在但内容损坏、版本错误或违反约束，整个项目加载失败，不会回退到旧文件掩盖错误。JSON 与旧文件都不存在时使用内存默认值。Editor 的 Project Settings 中的 `Tags and Layers` 页管理 Tag 和 Layer 名称，`Physics 2D` 页管理对称碰撞矩阵；所有有效修改都会立即通过原子替换写入 JSON，不需要额外点击 Apply，保存失败时 UI 会恢复为最后一次成功保存的值并显示错误。
 
@@ -172,7 +172,7 @@ Hierarchy 中实体可以拖到目标节点的上部、中部或下部，分别�
 
 资源移动或重命名只改变 Registry 中的项目相对路径，场景 Handle 不变，也不需要重写场景。删除前资产系统扫描场景中的 Handle 引用；用户强制删除后引用仍被保留，加载时由 `AssetManager` 返回共享的洋红棋盘占位，以便定位并恢复缺失资源。
 
-场景保存使用与项目文件相同的原子替换并返回 `bool`。反序列化先构造临时场景，只有全部字段和关系校验成功后才替换当前场景，因此损坏或不受支持的文件不会留下半加载状态。变换、相机、颜色、线宽和碰撞体数值会检查有限值及有效范围，非法数据不会进入渲染器或 Box2D。
+场景保存使用与项目文件相同的原子替换并返回 `bool`。反序列化先构造临时场景，只有全部字段和关系校验成功后才替换当前场景，因此损坏或不受支持的文件不会留下半加载状态。变换、相机、颜色、线宽和碰撞体数值会检查有限值及有效范围，非法数据不会进入渲染器或 Butter。
 
 实体变换只存储平移、旋转和缩放（TRS），不保存剪切矩阵。层级重挂、世界/局部变换更新和层级同步会先验证整棵受影响子树；若矩阵无法无损分解为有限 TRS（例如非均匀缩放叠加错位旋转产生剪切），操作整体失败并保留原状态，避免静默近似造成累计漂移。
 
@@ -184,23 +184,23 @@ Hierarchy 中实体可以拖到目标节点的上部、中部或下部，分别�
 
 ## 2D 物理运行时
 
-运行时将脚本和 Box2D 统一推进为固定 `1/60s` 步长。显示帧差先钳制到 `0.25s`，再进入 accumulator；单个显示帧最多执行 8 个物理子步，超过预算的完整欠步会被丢弃，只保留不足一个固定步的余量。Editor 状态语义固定为：Edit 不运行脚本或物理；Play 同时运行两者；Pause 只渲染当前运行副本；Step 清空显示帧余量并精确推进一次脚本和物理；Stop 销毁运行副本并恢复编辑场景。不提供独立 Simulate 状态。
+运行时将脚本和 Butter 统一推进为固定 `1/60s` 步长。显示帧差先钳制到 `0.25s`，再进入 accumulator；单个显示帧最多执行 8 个物理子步，超过预算的完整欠步会被丢弃，只保留不足一个固定步的余量。Editor 状态语义固定为：Edit 不运行脚本或物理；Play 同时运行两者；Pause 只渲染当前运行副本；Step 清空显示帧余量并精确推进一次脚本和物理；Stop 销毁运行副本并恢复编辑场景。不提供独立 Simulate 状态。
 
-`BoxCollider2D` 和 `CircleCollider2D` 都保存 `Enabled`、`IsTrigger`、`CollisionLayer`、`CollisionMask`、`Offset` 与共享的 Density/Friction/Restitution 材质字段；Box 另存 `Size`、`RestitutionThreshold`，Circle 另存 `Radius`。这里的 `CollisionLayer` 是每个 Fixture 的 16 位 Box2D Category 位集，至少包含一个位；`CollisionMask` 是 Fixture Mask，可以为零。它们与实体 `EntityMetadata.Layer`/项目碰撞矩阵是相互独立的两道门：首先必须满足 `(A.Category & B.Mask) != 0` 且 `(B.Category & A.Mask) != 0`，然后项目矩阵也必须允许 A/B 的实体 Layer 组合，才会建立接触；项目矩阵不会覆盖或改写 Fixture 过滤。Trigger 作为 Box2D sensor 参与查询和 Enter/Exit 判定，但不产生碰撞响应。Inspector 的 Edit Collider 句柄直接编辑 Size/Radius/Offset，并使用与 Fixture 创建相同的变换规则。
+`BoxCollider2D` 和 `CircleCollider2D` 都保存 `Enabled`、`IsTrigger`、`CollisionLayer`、`CollisionMask`、`Offset` 与共享的 Density/Friction/Restitution 材质字段；Box 另存 `Size`、`RestitutionThreshold`，Circle 另存 `Radius`。这里的 `CollisionLayer` 是每个 Fixture 的 16 位 Butter Category 位集，至少包含一个位；`CollisionMask` 是 Fixture Mask，可以为零。它们与实体 `EntityMetadata.Layer`/项目碰撞矩阵是相互独立的两道门：首先必须满足 `(A.Category & B.Mask) != 0` 且 `(B.Category & A.Mask) != 0`，然后项目矩阵也必须允许 A/B 的实体 Layer 组合，才会建立接触；项目矩阵不会覆盖或改写 Fixture 过滤。Trigger 作为 Butter sensor 参与查询和 Enter/Exit 判定，但不产生碰撞响应。Inspector 的 Edit Collider 句柄直接编辑 Size/Radius/Offset，并使用与 Fixture 创建相同的变换规则。
 
 碰撞体不依赖 `Rigidbody2D` 才能进入物理世界：只挂 Collider 的实体在 Play 中会创建隐式静态 `b2Body`。Circle 在非均匀缩放下不能退化为椭圆，因此 Offset 按带符号 XY 缩放和 Z 旋转变换，Radius 统一乘世界 XY 绝对缩放的最大值；编辑轮廓、运行时 Fixture 和调试轮廓都遵守这一规则。
 
-运行中的 Rigidbody、Collider、Transform 物理相关字段或 `DistanceJoint2D` 被添加、移除或修改后，会在下一次固定步开始前安全重建 Box2D 定义；动态刚体的速度会尽量保留。重建、实体删除和 Stop 都会清除旧 runtime 指针与待派发接触，Box2D world 锁定期间不修改 world。`b2Body` user data 只保存实体 UUID；ContactListener 只收集并按“实体对 + Collision/Trigger 类型”去重，`Step()` 返回后才向 Scene 监听器和托管脚本的 `OnCollisionEnter2D/Exit2D`、`OnTriggerEnter2D/Exit2D` 派发，所以回调内删除实体不会留下悬空指针或陈旧 Exit。
+运行中的 Rigidbody、Collider、Transform 物理相关字段或 `DistanceJoint2D` 被添加、移除或修改后，会在下一次固定步开始前安全重建 Butter 定义；动态刚体的速度会尽量保留。重建、实体删除和 Stop 都会清除旧 runtime 指针与待派发接触，Butter world 锁定期间不修改 world。`Physics2D::Body` user data 只保存实体 UUID；ContactListener 只收集并按“实体对 + Collision/Trigger 类型”去重，`Step()` 返回后才向 Scene 监听器和托管脚本的 `OnCollisionEnter2D/Exit2D`、`OnTriggerEnter2D/Exit2D` 派发，所以回调内删除实体不会留下悬空指针或陈旧 Exit。
 
-Scene 提供带 Layer Mask 和 Trigger 选项的最近命中 `Raycast2D`、按 Entity UUID 去重并稳定排序的 broad-phase `QueryAABB2D`，以及动态刚体的 Force、指定点 Force、Impulse、指定点 Impulse、设置/读取线速度 API。查询的 Layer Mask 按 `EntityMetadata.Layer` 的槽位位图解释，不复用 Collider 的底层 Fixture Category Bits。首个 Joint 类型为 `DistanceJoint2D`，保存 Connected Entity UUID、本体/连接端局部 Anchor、Distance、Frequency、Damping 与 Collide Connected；连接始终通过 UUID 解析，不持久化 Box2D 指针。所有这些组件字段与 `EntityMetadata` 都属于当前 scene schema v11，会随 Scene Copy、实体复制、Cook 和 Player 完整保留，runtime 指针永不序列化。
+Scene 提供带 Layer Mask 和 Trigger 选项的最近命中 `Raycast2D`、按 Entity UUID 去重并稳定排序的 broad-phase `QueryAABB2D`，以及动态刚体的 Force、指定点 Force、Impulse、指定点 Impulse、设置/读取线速度 API。查询的 Layer Mask 按 `EntityMetadata.Layer` 的槽位位图解释，不复用 Collider 的底层 Fixture Category Bits。首个 Joint 类型为 `DistanceJoint2D`，保存 Connected Entity UUID、本体/连接端局部 Anchor、Distance、Frequency、Damping 与 Collide Connected；连接始终通过 UUID 解析，不持久化 Butter 指针。所有这些组件字段与 `EntityMetadata` 都属于当前 scene schema v11，会随 Scene Copy、实体复制、Cook 和 Player 完整保留，runtime 指针永不序列化。
 
-Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮廓，Play/Pause 从实际 Box2D Fixture 画轮廓。覆盖层使用现有 `DrawRect`、`DrawCircle`、`DrawLine`，默认只进入 Scene framebuffer，不写 Game framebuffer，也不参与实体 ID 拾取。
+Scene 视图有独立的“显示碰撞体”开关：Edit 从组件数据画轮廓，Play/Pause 从实际 Butter Fixture 画轮廓。覆盖层使用现有 `DrawRect`、`DrawCircle`、`DrawLine`，默认只进入 Scene framebuffer，不写 Game framebuffer，也不参与实体 ID 拾取。
 
 仓库中的 `Tests/PhysicsRegression` 覆盖固定步进、SceneManager、Prefab LocalID/重映射、动态脚本安全点、Cook 依赖闭包和 Player 包读回；其中 Runtime UI 回归还覆盖 Cooked Font/Fallback/Emoji 的真实字形选择、16:9/4:3/超宽与 100%/150%/200% DPI 共九组离屏 OpenGL RGBA Golden 截图、裁剪、射线遮挡、鼠标/键盘/手柄输入所有权，以及 logical window/framebuffer/DPI 坐标契约和 Scene/Prefab/Cook 往返。`Tests/SpriteAssetRegression` 覆盖 Atlas 子资源、Animator、Scene/Prefab 与 Cook/Player；`Tests/AudioRegression` 覆盖 WAV 解码、有界流式读取、空间计算、生命周期和设备恢复；`Tests/ImporterRegression` 覆盖内容监控、去抖、正反向依赖重导、跨 Handle 去重、增删改名、中断与停止语义；`Tests/ScriptCompilerRegression` 覆盖 C# 编译、last-good 与私有运行时端到端链路。首次运行前先用 `Scripts\Setup.bat` 准备 Premake；`Tests/P0SafetyRegression`、`Tests/EditorRecoveryRegression` 和 `Tests/InputRegression` 还覆盖安全边界、编辑器恢复及输入。统一入口 `Scripts/Run-Regressions.ps1` 会检查生成组件代理，构建 Managed Release、全部原生回归、独立 Player、Editor、Hub 和 CLI，并执行 CLI 帮助检查、模板校验及 Player 冒烟测试；Web 协议回归需单独运行。
 
 ## 浏览器项目与编辑事务
 
-实验性 Web 目标复用场景、资产、Renderer2D、Box2D 和原生 ImGui 编辑面板。
+实验性 Web 目标复用场景、资产、Renderer2D、Butter 和原生 ImGui 编辑面板。
 浏览器宿主负责导航、文件选择、保存和重新加载；MEMFS 内的修改不会自动持久化到用户磁盘。
 `project.open` 当前只接受预加载的 `/Samples/PhysicsPlayground/Project.tcproj`，
 `project.new` 使用同一挂载资源根；其他场景通过规范化归档导入。

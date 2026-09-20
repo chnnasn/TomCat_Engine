@@ -1,3 +1,4 @@
+#include "TomCat/Physics/Physics2D.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Core/Input.h"
 #include "TomCat/Asset/AssetManager.h"
@@ -20,8 +21,6 @@
 #include "RuntimeUIRegression.h"
 #include "WindowMetricsRegression.h"
 
-#include "box2d/b2_body.h"
-#include "box2d/b2_fixture.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1156,9 +1155,33 @@ namespace {
 
 	void MoveRuntimeBody(TomCat::Entity entity, const glm::vec2& position)
 	{
-		auto* body = static_cast<b2Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		auto* body = static_cast<TomCat::Physics2D::Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(body != nullptr, "entity has no runtime body");
 		body->SetTransform({ position.x, position.y }, body->GetAngle());
+	}
+
+	void TestButterContinuousCollisionDetection()
+	{
+		TomCat::Scene scene;
+		auto wall = scene.CreateEntity("CCD thin wall");
+		wall.AddComponent<TomCat::BoxCollider2D>().Size = { 0.01f, 5.0f };
+		auto projectile = AddCircleBody(scene, "CCD projectile",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { -5.0f, 0.0f }, 0.05f);
+		int enters = 0, exits = 0;
+		scene.AddCollisionEnter2DListener([&](const TomCat::CollisionEnter2D&) { ++enters; });
+		scene.AddCollisionExit2DListener([&](const TomCat::CollisionExit2D&) { ++exits; });
+		Require(scene.OnRuntimeStart(), "CCD scene did not start");
+		Require(scene.SetLinearVelocity2D(projectile.GetUUID(), { 600.0f, 0.0f }),
+			"CCD projectile velocity was rejected");
+		scene.OnRuntimeStep();
+		auto* body = static_cast<TomCat::Physics2D::Body*>(
+			projectile.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		Require(body && body->GetPosition().x < -0.059f && body->GetPosition().x > -0.07f,
+			"Butter CCD projectile crossed the thin collider in one fixed step");
+		Require(enters == 1 && exits == 0, "CCD impact did not publish one Scene collision enter");
+		scene.OnRuntimeStep();
+		Require(enters == 1 && exits == 0, "resting CCD contact emitted duplicate Scene events");
+		scene.OnRuntimeStop();
 	}
 
 	void TestFixedAccumulatorAndStep()
@@ -1208,7 +1231,7 @@ namespace {
 		for (int frame = 0; frame < displayHz * seconds; ++frame)
 			scene.OnUpdateRuntime(TomCat::Timestep(1.0f / static_cast<float>(displayHz)));
 
-		auto* body = static_cast<b2Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		auto* body = static_cast<TomCat::Physics2D::Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(body != nullptr, "falling body did not receive a runtime body");
 		const FallingBodyResult result{ body->GetPosition().y, body->GetLinearVelocity().y };
 		scene.OnRuntimeStop();
@@ -1251,7 +1274,7 @@ namespace {
 		changed.GetComponent<TomCat::CircleCollider2D>().Radius = 0.75f;
 		scene.OnRuntimeStep();
 		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody,
-			"collider edit replaced its owning Box2D body");
+			"collider edit replaced its owning Butter body");
 		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
 			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
 				== untouchedFixture,
@@ -1264,20 +1287,20 @@ namespace {
 			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
 			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
 				== untouchedFixture,
-			"targeted fixture addition rebuilt existing Box2D objects");
+			"targeted fixture addition rebuilt existing Butter objects");
 
 		auto& changedRigidbody = changed.GetComponent<TomCat::Rigidbody2D>();
 		changedRigidbody.Type = TomCat::Rigidbody2D::BodyType::Kinematic;
 		changedRigidbody.FixedRotation = true;
 		scene.OnRuntimeStep();
 		Require(changedRigidbody.RuntimeBody == changedBody
-			&& static_cast<b2Body*>(changedBody)->GetType() == b2_kinematicBody
-			&& static_cast<b2Body*>(changedBody)->IsFixedRotation(),
+			&& static_cast<TomCat::Physics2D::Body*>(changedBody)->GetType() == TomCat::Physics2D::kinematicBody
+			&& static_cast<TomCat::Physics2D::Body*>(changedBody)->IsFixedRotation(),
 			"Rigidbody2D definition edit did not mutate the existing body in place");
 		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
 			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
 				== untouchedFixture,
-			"body definition edit rebuilt unrelated Box2D objects");
+			"body definition edit rebuilt unrelated Butter objects");
 
 		auto& joint = changed.AddComponent<TomCat::DistanceJoint2D>();
 		joint.ConnectedEntity = untouched.GetUUID();
@@ -1301,7 +1324,7 @@ namespace {
 		Require(untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
 			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
 				== untouchedFixture,
-			"entity removal rebuilt an unrelated Box2D body or fixture");
+			"entity removal rebuilt an unrelated Butter body or fixture");
 		scene.OnRuntimeStop();
 	}
 
@@ -1357,12 +1380,12 @@ namespace {
 			&& colliderEdit.CircleFixturesDestroyed == 1
 			&& colliderEdit.DistanceJointsCreated == 0
 			&& colliderEdit.DistanceJointsDestroyed == 0,
-			"one collider edit changed Box2D objects outside its target fixture");
+			"one collider edit changed Butter objects outside its target fixture");
 		Require(changed.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == changedBody
 			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
 			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
 				== untouchedFixture,
-			"one collider edit replaced an owning or unrelated Box2D object");
+			"one collider edit replaced an owning or unrelated Butter object");
 
 		scene.ResetRuntimePhysicsSyncStatistics();
 		changed.GetComponent<TomCat::Rigidbody2D>().Type =
@@ -1384,7 +1407,7 @@ namespace {
 			&& untouched.GetComponent<TomCat::Rigidbody2D>().RuntimeBody == untouchedBody
 			&& untouched.GetComponent<TomCat::CircleCollider2D>().RuntimeFixture
 				== untouchedFixture,
-			"one body edit replaced the target or an unrelated Box2D object");
+			"one body edit replaced the target or an unrelated Butter object");
 		scene.OnRuntimeStop();
 	}
 
@@ -1401,7 +1424,7 @@ namespace {
 			"could not create interpolation hierarchy fixture");
 		Require(scene.OnRuntimeStart(), "interpolation scene did not start");
 
-		auto* body = static_cast<b2Body*>(
+		auto* body = static_cast<TomCat::Physics2D::Body*>(
 			bodyEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(body != nullptr, "interpolation body was not materialized");
 		body->SetLinearVelocity({ 6.0f, 0.0f });
@@ -1494,7 +1517,7 @@ namespace {
 		AttachManagedProbe(entity, 8102);
 		Require(scene.OnRuntimeStart(), "managed pause probe did not start");
 		scene.OnRuntimeStep();
-		auto* body = static_cast<b2Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		auto* body = static_cast<TomCat::Physics2D::Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(body != nullptr, "paused test body did not receive a runtime body");
 		const float pausedPosition = body->GetPosition().y;
 		const uint32_t pausedUpdates = runtime->FixedUpdateCount;
@@ -1534,7 +1557,7 @@ namespace {
 		for (int step = 0; step < 120; ++step)
 			scene.OnRuntimeStep();
 		Require(enters == 1, "dynamic body did not collide exactly once with collider-only static body");
-		auto* body = static_cast<b2Body*>(ball.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		auto* body = static_cast<TomCat::Physics2D::Body*>(ball.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(body && body->GetPosition().y > -0.1f,
 			"dynamic body passed through collider-only static body");
 		scene.OnRuntimeStop();
@@ -1562,7 +1585,7 @@ namespace {
 		Require(Near(shapes[0].Radius, 1.5f),
 			"circle radius did not use max(abs(scale.x), abs(scale.y))");
 		Require(Near(shapes[0].Center.x, 10.0f) && Near(shapes[0].Center.y, 7.0f),
-			"scaled/rotated circle offset did not match the Box2D fixture");
+			"scaled/rotated circle offset did not match the Butter fixture");
 		scene.OnRuntimeStop();
 	}
 
@@ -1612,7 +1635,7 @@ namespace {
 				&& Near(runtimeIt->Radius, authoring.Radius)
 				&& Near(runtimeIt->Rotation, authoring.Rotation)
 				&& Near(runtimeIt->Transform, authoring.Transform),
-				"authoring collider outline does not exactly match its Box2D fixture outline");
+				"authoring collider outline does not exactly match its Butter fixture outline");
 		}
 		scene.OnRuntimeStop();
 	}
@@ -1764,7 +1787,7 @@ namespace {
 				&& shape.Type == TomCat::ColliderDebugShapeType::Circle;
 		});
 		Require(resizedIt != resized.end() && Near(resizedIt->Radius, 3.0f),
-			"runtime collider data edit did not rebuild the Box2D fixture");
+			"runtime collider data edit did not rebuild the Butter fixture");
 
 		dynamicEntity.RemoveComponent<TomCat::CircleCollider2D>();
 		scene.OnRuntimeStep();
@@ -1772,34 +1795,34 @@ namespace {
 		Require(std::none_of(removed.begin(), removed.end(), [&](const auto& shape)
 		{
 			return shape.EntityID == dynamicEntity.GetUUID();
-		}), "runtime collider removal left a stale Box2D fixture");
+		}), "runtime collider removal left a stale Butter fixture");
 
 		auto& box = dynamicEntity.AddComponent<TomCat::BoxCollider2D>();
 		box.Size = { 0.75f, 1.25f };
 		scene.OnRuntimeStep();
 		Require(box.RuntimeFixture != nullptr,
-			"runtime collider addition did not create a Box2D fixture");
+			"runtime collider addition did not create a Butter fixture");
 		box.Friction = 1.25f;
 		scene.OnRuntimeStep();
 		Require(box.RuntimeFixture != nullptr
-			&& Near(static_cast<b2Fixture*>(box.RuntimeFixture)->GetFriction(), 1.25f),
-			"runtime collider material edit did not rebuild the Box2D fixture");
+			&& Near(static_cast<TomCat::Physics2D::Fixture*>(box.RuntimeFixture)->GetFriction(), 1.25f),
+			"runtime collider material edit did not rebuild the Butter fixture");
 		box.Enabled = false;
 		scene.OnRuntimeStep();
 		Require(box.RuntimeFixture == nullptr,
-			"disabling a collider at runtime left its Box2D fixture enabled");
+			"disabling a collider at runtime left its Butter fixture enabled");
 		box.Enabled = true;
 		scene.OnRuntimeStep();
 		Require(box.RuntimeFixture != nullptr,
-			"re-enabling a collider at runtime did not recreate its Box2D fixture");
+			"re-enabling a collider at runtime did not recreate its Butter fixture");
 
 		auto& runtimeRigidbody = dynamicEntity.GetComponent<TomCat::Rigidbody2D>();
 		runtimeRigidbody.Type = TomCat::Rigidbody2D::BodyType::Kinematic;
 		runtimeRigidbody.FixedRotation = true;
 		scene.OnRuntimeStep();
 		Require(runtimeRigidbody.RuntimeBody != nullptr
-			&& static_cast<b2Body*>(runtimeRigidbody.RuntimeBody)->GetType() == b2_kinematicBody
-			&& static_cast<b2Body*>(runtimeRigidbody.RuntimeBody)->IsFixedRotation(),
+			&& static_cast<TomCat::Physics2D::Body*>(runtimeRigidbody.RuntimeBody)->GetType() == TomCat::Physics2D::kinematicBody
+			&& static_cast<TomCat::Physics2D::Body*>(runtimeRigidbody.RuntimeBody)->IsFixedRotation(),
 			"runtime Rigidbody2D type/fixed-rotation edit was not rebuilt");
 		runtimeRigidbody.Enabled = false;
 		scene.OnRuntimeStep();
@@ -1821,7 +1844,7 @@ namespace {
 		addedRigidbody.Type = TomCat::Rigidbody2D::BodyType::Dynamic;
 		scene.OnRuntimeStep();
 		Require(addedRigidbody.RuntimeBody != nullptr
-			&& static_cast<b2Body*>(addedRigidbody.RuntimeBody)->GetType() == b2_dynamicBody,
+			&& static_cast<TomCat::Physics2D::Body*>(addedRigidbody.RuntimeBody)->GetType() == TomCat::Physics2D::dynamicBody,
 			"runtime Rigidbody2D addition did not replace the implicit static body");
 		scene.OnRuntimeStop();
 	}
@@ -1837,7 +1860,7 @@ namespace {
 		Require(scene.OnRuntimeStart(), "suspended-body Scene did not start");
 
 		auto& rigidbody = child.GetComponent<TomCat::Rigidbody2D>();
-		auto* body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		auto* body = static_cast<TomCat::Physics2D::Body*>(rigidbody.RuntimeBody);
 		Require(body != nullptr, "dynamic hierarchy body was not created");
 		body->SetLinearVelocity({ 3.25f, -1.5f });
 		body->SetAngularVelocity(2.75f);
@@ -1849,7 +1872,7 @@ namespace {
 			"inactive hierarchy retained a live dynamic body");
 		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		const auto restoredVelocity = scene.GetLinearVelocity2D(child.GetUUID());
-		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		body = static_cast<TomCat::Physics2D::Body*>(rigidbody.RuntimeBody);
 		Require(restoredVelocity.has_value()
 			&& Near(*restoredVelocity, { 3.25f, -1.5f })
 			&& body && Near(body->GetAngularVelocity(), 2.75f)
@@ -1865,7 +1888,7 @@ namespace {
 		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		Require(scene.GetLinearVelocity2D(child.GetUUID()).has_value(),
 			"sleeping hierarchy body was not restored");
-		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		body = static_cast<TomCat::Physics2D::Body*>(rigidbody.RuntimeBody);
 		Require(body && !body->IsAwake(),
 			"re-enabled hierarchy woke a previously sleeping body");
 
@@ -1879,7 +1902,7 @@ namespace {
 		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		Require(scene.OnRuntimeStart(), "Scene did not restart after suspended body Stop");
 		const auto restartVelocity = scene.GetLinearVelocity2D(child.GetUUID());
-		body = static_cast<b2Body*>(rigidbody.RuntimeBody);
+		body = static_cast<TomCat::Physics2D::Body*>(rigidbody.RuntimeBody);
 		Require(restartVelocity.has_value()
 			&& Near(*restartVelocity, { 0.0f, 0.0f })
 			&& body && Near(body->GetAngularVelocity(), 0.0f),
@@ -1901,7 +1924,7 @@ namespace {
 			"could not parent replacement body");
 		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
 		const auto replacementVelocity = scene.GetLinearVelocity2D(childID);
-		body = static_cast<b2Body*>(replacementBody.RuntimeBody);
+		body = static_cast<TomCat::Physics2D::Body*>(replacementBody.RuntimeBody);
 		Require(replacementVelocity.has_value()
 			&& Near(*replacementVelocity, { 0.0f, 0.0f })
 			&& body && Near(body->GetAngularVelocity(), 0.0f),
@@ -2038,16 +2061,16 @@ namespace {
 		scene.AddTriggerEnter2DListener(
 			[&](const TomCat::TriggerEnter2D&) { ++result.TriggerEnters; });
 		scene.OnRuntimeStart();
-		auto* staticFixture = static_cast<b2Fixture*>(staticCollider.RuntimeFixture);
-		auto* dynamicFixture = static_cast<b2Fixture*>(dynamicCollider.RuntimeFixture);
+		auto* staticFixture = static_cast<TomCat::Physics2D::Fixture*>(staticCollider.RuntimeFixture);
+		auto* dynamicFixture = static_cast<TomCat::Physics2D::Fixture*>(dynamicCollider.RuntimeFixture);
 		Require(staticFixture && dynamicFixture,
 			"independent filter fixture pair was not created");
-		const b2Filter staticFilter = staticFixture->GetFilterData();
-		const b2Filter dynamicFilter = dynamicFixture->GetFilterData();
+		const TomCat::Physics2D::Filter staticFilter = staticFixture->GetFilterData();
+		const TomCat::Physics2D::Filter dynamicFilter = dynamicFixture->GetFilterData();
 		Require(staticFilter.categoryBits == 0x0040 && staticFilter.maskBits == 0x0200
 			&& dynamicFilter.categoryBits == 0x0200
 			&& dynamicFilter.maskBits == (fixtureAllows ? 0x0040 : 0x0000),
-			"entity project layers overwrote per-fixture Box2D filter bits");
+			"entity project layers overwrote per-fixture Butter filter bits");
 		scene.OnRuntimeStep();
 		scene.OnRuntimeStop();
 		return result;
@@ -2232,7 +2255,7 @@ namespace {
 			{ 21.0f, 0.0f }), "ApplyForceAtPoint2D rejected a dynamic body");
 		Require(scene.ApplyLinearImpulseAtPoint2D(dynamicEntity.GetUUID(), { 0.0f, 2.0f },
 			{ 21.0f, 0.0f }), "ApplyLinearImpulseAtPoint2D rejected a dynamic body");
-		auto* motionBody = static_cast<b2Body*>(
+		auto* motionBody = static_cast<TomCat::Physics2D::Body*>(
 			dynamicEntity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(motionBody && std::abs(motionBody->GetAngularVelocity()) > 0.0f,
 			"at-point impulse did not produce angular velocity");
@@ -2260,24 +2283,24 @@ namespace {
 		joint.Damping = 0.0f;
 
 		scene.OnRuntimeStart();
-		Require(joint.RuntimeJoint != nullptr, "DistanceJoint2D did not create a Box2D joint");
+		Require(joint.RuntimeJoint != nullptr, "DistanceJoint2D did not create a Butter joint");
 		for (int step = 0; step < 120; ++step)
 			scene.OnRuntimeStep();
-		auto* runtimeA = static_cast<b2Body*>(bodyA.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
-		auto* runtimeB = static_cast<b2Body*>(bodyB.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		auto* runtimeA = static_cast<TomCat::Physics2D::Body*>(bodyA.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		auto* runtimeB = static_cast<TomCat::Physics2D::Body*>(bodyB.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(runtimeA && runtimeB, "joint bodies were not created");
-		const float distance = (runtimeB->GetPosition() - runtimeA->GetPosition()).Length();
+		const float distance = (runtimeB->GetPosition() - runtimeA->GetPosition()).length();
 		Require(Near(distance, 2.0f, 2.0e-2f), "DistanceJoint2D did not maintain its configured length");
 
 		joint.Distance = 1.0f;
 		scene.OnRuntimeStep();
-		Require(joint.RuntimeJoint != nullptr, "runtime joint edit did not recreate the Box2D joint");
+		Require(joint.RuntimeJoint != nullptr, "runtime joint edit did not recreate the Butter joint");
 		for (int step = 0; step < 120; ++step)
 			scene.OnRuntimeStep();
-		runtimeA = static_cast<b2Body*>(bodyA.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
-		runtimeB = static_cast<b2Body*>(bodyB.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
-		Require(Near((runtimeB->GetPosition() - runtimeA->GetPosition()).Length(), 1.0f, 2.0e-2f),
-			"runtime Distance edit was not reflected in the Box2D joint");
+		runtimeA = static_cast<TomCat::Physics2D::Body*>(bodyA.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		runtimeB = static_cast<TomCat::Physics2D::Body*>(bodyB.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
+		Require(Near((runtimeB->GetPosition() - runtimeA->GetPosition()).length(), 1.0f, 2.0e-2f),
+			"runtime Distance edit was not reflected in the Butter joint");
 
 		bodyA.RemoveComponent<TomCat::DistanceJoint2D>();
 		scene.OnRuntimeStep();
@@ -7082,6 +7105,7 @@ int main(int argc, char** argv)
 	run("legacy project BuildSettings migration", TestLegacyProjectBuildSettingsMigration);
 	run("explicit Player dotnet root is exclusive", TestExplicitDotNetRootIsExclusive);
 	run("fixed accumulator and exact Step", TestFixedAccumulatorAndStep);
+	run("Butter CCD thin-wall impact and Scene events", TestButterContinuousCollisionDetection);
 	run("managed Transform world setters preserve hierarchy",
 		TestManagedTransformSettersRespectHierarchy);
 	run("30/60/144Hz one- and ten-second consistency", TestFrameRateIndependentPhysics);

@@ -9,7 +9,7 @@ IncludeDir["stb_image"] = "%{wks.location}/../TomCat/vendor/stb_image"
 IncludeDir["entt"] = "%{wks.location}/../TomCat/vendor/entt/include"
 IncludeDir["yaml_cpp"] = "%{wks.location}/../TomCat/vendor/yaml-cpp/include"
 IncludeDir["ImGuizmo"] = "%{wks.location}/../TomCat/vendor/ImGuizmo"
-IncludeDir["Box2D"] = "%{wks.location}/../TomCat/vendor/Box2D/include"
+IncludeDir["Butter"] = "%{wks.location}/../TomCat/vendor/Butter/include"
 -- The OpenGL shader pipeline uses ShaderC and SPIRV-Cross from this submodule.
 -- These are shader compilation tools; no Vulkan renderer/loader is linked.
 IncludeDir["VulkanSDK"] = "%{wks.location}/../vendor/VulkanSDK/Include"
@@ -31,7 +31,6 @@ Library["SPIRV_Cross_GLSL_Release"] = "%{LibraryDir.VulkanSDK}/spirv-cross-glsl.
 -- Libraries that consumers of the TomCat static library must also link.
 -- Kept here so Editor / Hub only reference one shared list.
 TomCatConsumerLinks = {
-	"Box2D.lib",
 	"GLFW.lib",
 	"Glad.lib",
 	"ImGui.lib",

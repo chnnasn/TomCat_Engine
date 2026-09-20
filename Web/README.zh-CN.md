@@ -3,7 +3,7 @@
 [English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
 
 此 Emscripten 目标在浏览器中运行已有的 `PlayerRuntimeLayer`、Cooked TCPAK 读取器、
-场景运行时、Renderer2D 和 Box2D。目前覆盖原生引擎功能，尚不能完整替代桌面 Player。
+场景运行时、Renderer2D 和 Butter。目前覆盖原生引擎功能，尚不能完整替代桌面 Player。
 
 [2026-09-20 功能录屏](../docs/portfolio/README.md)来自 Windows 桌面程序。
 共享源码不代表这些片段验证了浏览器端；下文保留浏览器验收的原始日期，本次文档更新未重跑 Web 构建或协议回归。
@@ -15,7 +15,7 @@
 协议回归还需要 Node.js。下文的历史验收日期不代表本次文档更新重新执行了验收。
 
 ```powershell
-git submodule update --init TomCat/vendor/Box2D TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/ImGuizmo
+git submodule update --init TomCat/vendor/Butter TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/ImGuizmo
 emcmake cmake -S Web -B build/web -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/web -j 6
 ```
@@ -138,7 +138,7 @@ Sprite 选择赋值、场景像素拾取、ImGuizmo 拖拽、撤销/重做、停
 ## 移植边界
 
 - GLES3 替代桌面 DSA Buffer/Texture 操作，Framebuffer 为单采样；内置 Shader 使用 GLSL ES 300 和 16 个纹理槽。
-- Box2D 用户设置在 wasm32 中保留完整 64 位实体 UUID；Box2D 及其调用方必须使用相同的 `B2_USER_SETTINGS` 定义。
+- Butter 运行时句柄使用显式 64 位字段，在 wasm32 中保留完整实体 UUID。
 - 键盘、指针、焦点、滚轮和标准浏览器手柄映射接入现有输入快照队列；尚未验收真实手柄硬件。
 - 含 C# 的包明确失败：此目标不能使用桌面 hostfxr，浏览器 .NET 运行时与原生 ABI 集成仍待实现。
 - 自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 明确失败；GLSL 转换仅覆盖内置基础 Shader。
