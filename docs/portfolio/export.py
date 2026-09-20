@@ -61,6 +61,12 @@ def main():
             parser.error('Source SHA-256 does not match the capture manifest')
     crop = config.get('crop', '1280:680:0:0')
     fps = config.get('fps', 25)
+    colors = config.get('gif_max_colors', 256)
+    dither = config.get('gif_dither', 'bayer')
+    if not isinstance(colors, int) or not 4 <= colors <= 256:
+        parser.error('GIF palette size must be between 4 and 256')
+    if dither not in ('bayer', 'none'):
+        parser.error('GIF dither must be bayer or none')
     for name in [*config['clips'], *config.get('screenshots', {})]:
         if not name or Path(name).name != name or any(c in name for c in '/\\:'):
             parser.error('Output names must be plain filenames')
@@ -84,7 +90,7 @@ def main():
             listing = temp / 'concat.txt'
             listing.write_text(''.join(f"file '{p.as_posix()}'\n" for p in parts), encoding='utf-8')
             run('-f', 'concat', '-safe', 0, '-i', listing,
-                '-filter_complex', '[0:v]split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3',
+                '-filter_complex', f'[0:v]split[a][b];[a]palettegen=stats_mode=diff:max_colors={colors}[p];[b][p]paletteuse=dither={dither}:bayer_scale=3:diff_mode=rectangle',
                 '-loop', 0, out / f'{name}.gif')
             print(f'Exported {name}.gif', flush=True)
         for name, time in config.get('screenshots', {}).items():
