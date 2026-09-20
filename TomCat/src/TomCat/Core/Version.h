@@ -7,8 +7,8 @@ namespace TomCat::Version {
 
 	// This is the single checked-in source for product, persistent format, and
 	// runtime compatibility versions. Native code and release scripts consume it.
-	inline constexpr std::string_view ProductVersion = "0.2.0";
-	inline constexpr std::string_view EngineBuildID = "TomCat-0.2.0";
+	inline constexpr std::string_view ProductVersion = "0.3.0";
+	inline constexpr std::string_view EngineBuildID = "TomCat-0.3.0";
 
 	inline constexpr uint32_t ProjectFormatOldest = 3;
 	inline constexpr uint32_t ProjectFormatCurrent = 4;

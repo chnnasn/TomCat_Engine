@@ -12,7 +12,7 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
-Documentation reviewed against the repository on **2026-09-20**. Product version: **0.2.0**.
+Documentation reviewed against the repository on **2026-09-20**. Product version: **0.3.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
 
 ---
