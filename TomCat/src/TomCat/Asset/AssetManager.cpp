@@ -807,7 +807,7 @@ namespace TomCat {
 				return {};
 			std::error_code error;
 			const std::filesystem::path canonical = std::filesystem::weakly_canonical(absolute, error);
-			return (error ? absolute : canonical).lexically_normal();
+			return PathForComparison(error ? absolute : canonical);
 		}
 
 		bool IsWithinOrEqual(const std::filesystem::path& root,

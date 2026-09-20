@@ -106,6 +106,12 @@ namespace TomCat {
 
 	ApplicationProduct ApplicationPaths::IdentifyCurrentExecutable()
 	{
+		const auto executable = GetExecutablePath();
+		return executable ? IdentifyExecutable(*executable) : ApplicationProduct::Unknown;
+	}
+
+	std::optional<std::filesystem::path> ApplicationPaths::GetExecutablePath()
+	{
 #ifdef TC_PLATFORM_WINDOWS
 		std::vector<wchar_t> buffer(MAX_PATH);
 		for (;;)
@@ -113,16 +119,15 @@ namespace TomCat {
 			const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
 				static_cast<DWORD>(buffer.size()));
 			if (length == 0)
-				return ApplicationProduct::Unknown;
+				return std::nullopt;
 			if (length < buffer.size() - 1)
-				return IdentifyExecutable(std::filesystem::path(
-					std::wstring(buffer.data(), length)));
+				return std::filesystem::path(std::wstring(buffer.data(), length));
 			if (buffer.size() >= 32768)
-				return ApplicationProduct::Unknown;
+				return std::nullopt;
 			buffer.resize(buffer.size() * 2);
 		}
 #else
-		return ApplicationProduct::Unknown;
+		return std::nullopt;
 #endif
 	}
 

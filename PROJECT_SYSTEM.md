@@ -6,6 +6,8 @@
 
 每个项目使用根目录下的 `Project.tcproj`。该文件是可纳入版本控制的 YAML 项目配置；Hub 的最近打开时间、已知项目列表和本机目录等用户状态不写入项目文件或 `imgui.ini`，而是保存在真实外部目录 `%LOCALAPPDATA%\TomCat\Hub\hub.json`。
 
+Hub 默认在自身 exe 同级创建 `Projects` 和 `Editors`，不依赖启动工作目录。用户可在设置中切换目录，同一位置的 Hub 重启后保留选择。旧配置没有目录归属信息、或 Hub 被复制到新位置时，目录恢复为新 exe 同级的默认值；已有项目文件不会移动或删除。`Editors` 只作为安装扫描目录，创建空目录不会自动安装 Editor。
+
 产品发布版本、Engine Build ID、Project/Scene/Prefab/TCPAK 格式版本、Player Template 和脚本 ABI 版本统一定义在 `TomCat/src/TomCat/Core/Version.h`；C++ 兼容层直接引用这些常量，PowerShell 发布流程通过 `Scripts/VersionTools.ps1` 读取同一文件并拒绝不一致的 Release 版本。
 
 - `Project`：创建、加载、校验、保存及重新加载项目配置。
@@ -21,7 +23,7 @@ Project:
   Name: MyGame
   Version: 1.0.0
   Description: 示例游戏项目
-  EditorVersion: 0.2.0
+  EditorVersion: 0.3.0
   Template: 2D
   AssetDirectory: Assets
 ```

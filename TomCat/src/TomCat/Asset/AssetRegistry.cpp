@@ -106,7 +106,7 @@ namespace TomCat {
 
 		std::string PathKey(const std::filesystem::path& path)
 		{
-			const std::filesystem::path normalized = path.lexically_normal();
+			const std::filesystem::path normalized = PathForComparison(path);
 			std::string key = normalized == "." ? std::string{} : PathToUTF8(normalized);
 #ifdef TC_PLATFORM_WINDOWS
 			key = LowerASCII(std::move(key));
@@ -133,9 +133,11 @@ namespace TomCat {
 #endif
 		}
 
-		bool MakeRelativeWithin(const std::filesystem::path& root,
-			const std::filesystem::path& candidate, std::filesystem::path& relative)
+		bool MakeRelativeWithin(const std::filesystem::path& rootPath,
+			const std::filesystem::path& candidatePath, std::filesystem::path& relative)
 		{
+			const auto root = PathForComparison(rootPath);
+			const auto candidate = PathForComparison(candidatePath);
 			auto rootPart = root.begin();
 			auto candidatePart = candidate.begin();
 			for (; rootPart != root.end(); ++rootPart, ++candidatePart)

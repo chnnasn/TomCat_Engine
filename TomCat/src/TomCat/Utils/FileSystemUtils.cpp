@@ -376,10 +376,10 @@ namespace TomCat::FileSystem {
 
 		auto state = std::make_unique<State>();
 #ifdef TC_PLATFORM_WINDOWS
-		std::filesystem::path current = absolute.root_path();
+		std::filesystem::path current = DirectoryChainRoot(absolute);
 		if (current.empty())
 		{
-			errorMessage = "directory path has no filesystem root";
+			errorMessage = "directory path has no filesystem root: " + PathToUTF8(absolute);
 			return false;
 		}
 		auto appendPinned = [&](const std::filesystem::path& componentPath)
@@ -408,8 +408,12 @@ namespace TomCat::FileSystem {
 
 		if (!appendPinned(current))
 			return false;
-		for (const auto& component : absolute.relative_path())
+		const auto relative = absolute.native().size() <= current.native().size()
+			? std::filesystem::path{}
+			: std::filesystem::path(absolute.native().substr(current.native().size())).relative_path();
+		for (const auto& component : relative)
 		{
+			if (component == ".") continue;
 			current /= component;
 			if (!appendPinned(current))
 				return false;

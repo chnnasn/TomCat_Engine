@@ -20,6 +20,9 @@ namespace TomCat {
 	class ProjectManager
 	{
 	public:
+		// Isolated settings store for tools and regression tests.
+		explicit ProjectManager(const std::filesystem::path& hubSettingsPath);
+		~ProjectManager() = default;
 		static ProjectManager& Get();
 
 		[[nodiscard]] bool SetProjectDirectory(const std::filesystem::path& directory);
@@ -54,10 +57,10 @@ namespace TomCat {
 		// Non-layout Hub state lives in
 		// %LOCALAPPDATA%/TomCat/Hub/hub.json.
 		void LoadHubSettings();
+		void ApplyHubDirectoryDefaults(const std::filesystem::path& executableDirectory);
 		[[nodiscard]] bool SaveHubSettings();
 	private:
 		ProjectManager();
-		~ProjectManager() = default;
 		ProjectManager(const ProjectManager&) = delete;
 		ProjectManager& operator=(const ProjectManager&) = delete;
 
@@ -66,6 +69,9 @@ namespace TomCat {
 		std::optional<std::filesystem::path> GetHubSettingsPath() const;
 		bool ScanProjectsInternal();
 		bool ScanEditorInstallations();
+		std::filesystem::path m_HubDirectoryOwner;
+		std::filesystem::path m_ProjectListOwner;
+		std::optional<std::filesystem::path> m_HubSettingsPathOverride;
 		[[nodiscard]] bool RecordProjectOpened(const Ref<Project>& project);
 		void ApplyStoredLastOpenedTime(const Ref<Project>& project,
 			std::unordered_map<std::string, std::string>& lastOpenedTimes) const;
