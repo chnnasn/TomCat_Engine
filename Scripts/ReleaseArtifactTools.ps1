@@ -23,7 +23,7 @@ function Assert-TomCatFileSha256 {
 
 function Get-TomCatReleaseDependencies {
     return @(
-        [ordered]@{ Name = 'Box2D'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\Box2D\LICENSE'; Mode = 'Full' },
+        [ordered]@{ Name = 'Butter'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\Butter\LICENSE'; Mode = 'Full' },
         [ordered]@{ Name = 'EnTT'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\entt\LICENSE.txt'; Mode = 'Full' },
         [ordered]@{ Name = 'GLFW'; Version = ''; License = 'Zlib'; Notice = 'TomCat\vendor\GLFW\LICENSE.md'; Mode = 'Full' },
         [ordered]@{ Name = 'GLM'; Version = ''; License = 'NOASSERTION'; Notice = 'TomCat\vendor\glm\copying.txt'; Mode = 'Full' },

@@ -16,9 +16,9 @@
 [submodule "TomCat/vendor/ImGuizmo"]
 	path = TomCat/vendor/ImGuizmo
 	url = https://github.com/chnnasn/ImGuizmo
-[submodule "TomCat/vendor/Box2D"]
-	path = TomCat/vendor/Box2D
-	url = https://github.com/chnnasn/box2d
+[submodule "TomCat/vendor/Butter"]
+	path = TomCat/vendor/Butter
+	url = https://github.com/chnnasn/Butter
 [submodule "vendor/VulkanSDK"]
 	path = vendor/VulkanSDK
 	url = https://github.com/chnnasn/VulkanSDK-Windows.git

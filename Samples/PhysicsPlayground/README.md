@@ -47,7 +47,7 @@ Web CMake 目标将本目录预加载到 `/Samples/PhysicsPlayground`。
 按 [Web 中文指南](../../Web/README.zh-CN.md)构建后，可调用
 `tc_web_player_cook_sample()` 在 MEMFS 生成 `/PhysicsPlayground.tcpak`，
 用 `FS.readFile` 读取，再传给 `tc_web_player_boot`。
-该流程使用真实 Cook、TCPAK 读取、Renderer2D 与 Box2D；浏览器宿主仍需提供画布、帧循环与隔离响应头。
+该流程使用真实 Cook、TCPAK 读取、Renderer2D 与 Butter；浏览器宿主仍需提供画布、帧循环与隔离响应头。
 
 编辑器协议回归入口为 `node Web/tests/editor-rpc.cjs build/web`，需先生成 Web 编辑器模块。
 此命令不检验画面；浏览器中应另行观察下落、接地、停止和重新启动。

@@ -11,12 +11,9 @@ set(TC_VENDOR "${TC_ROOT}/TomCat/vendor")
 
 add_compile_options(-pthread -fexceptions)
 add_compile_definitions(TC_PLATFORM_WEB=1 GLFW_INCLUDE_NONE YAML_CPP_STATIC_DEFINE)
-set(BOX2D_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
-set(BOX2D_BUILD_TESTBED OFF CACHE BOOL "" FORCE)
-set(BOX2D_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-add_subdirectory("${TC_VENDOR}/Box2D" box2d EXCLUDE_FROM_ALL)
-target_compile_definitions(box2d PUBLIC B2_USER_SETTINGS)
-target_include_directories(box2d PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+set(BUTTER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(BUTTER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory("${TC_VENDOR}/Butter" butter EXCLUDE_FROM_ALL)
 file(GLOB TC_YAML "${TC_VENDOR}/yaml-cpp/src/*.cpp")
 add_library(tc_yaml STATIC ${TC_YAML})
 target_include_directories(tc_yaml PUBLIC "${TC_VENDOR}/yaml-cpp/include")
@@ -45,7 +42,7 @@ target_include_directories(tc_player_core PUBLIC
   "${TC_SRC}" "${TC_ROOT}/Player/TomCatPlayer/src"
   "${TC_VENDOR}/spdlog/include" "${TC_VENDOR}/glm" "${TC_VENDOR}/entt/include"
   "${TC_VENDOR}/stb_image" "${TC_VENDOR}/ImGui" "${TC_VENDOR}/ImGuizmo")
-target_link_libraries(tc_player_core PUBLIC box2d tc_yaml)
+target_link_libraries(tc_player_core PUBLIC butter tc_yaml)
 
 add_executable(tomcat_player "${TC_SRC}/platform/Web/WebPlayer.cpp")
 target_link_libraries(tomcat_player PRIVATE tc_player_core)

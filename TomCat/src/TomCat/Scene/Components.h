@@ -709,7 +709,7 @@ namespace TomCat {
 	{
 		bool Enabled = true;
 		bool IsTrigger = false;
-		// Box2D category/mask bits. CollisionLayer must contain at least one bit.
+		// Butter category/mask bits. CollisionLayer must contain at least one bit.
 		uint16_t CollisionLayer = 0x0001;
 		uint16_t CollisionMask = 0xFFFF;
 		glm::vec2 Offset = { 0.0f, 0.0f };
@@ -732,16 +732,16 @@ namespace TomCat {
 	{
 		bool Enabled = true;
 		bool IsTrigger = false;
-		// Box2D category/mask bits. CollisionLayer must contain at least one bit.
+		// Butter category/mask bits. CollisionLayer must contain at least one bit.
 		uint16_t CollisionLayer = 0x0001;
 		uint16_t CollisionMask = 0xFFFF;
 		glm::vec2 Offset = { 0.0f, 0.0f };
 		float Radius = 0.5f;
 
-		// Keep these rules in sync with BoxCollider2D. A Box2D circle cannot become
+		// Keep these rules in sync with BoxCollider2D. A Butter circle cannot become
 		// an ellipse, so runtime/editor geometry uses Radius multiplied by the
 		// largest absolute world X/Y scale component. Offset uses the same 2D
-		// transform as Box2D: translation XY, rotation Z, and signed scale XY.
+		// transform as Butter: translation XY, rotation Z, and signed scale XY.
 		float Density = 1.0f;
 		float Friction = 0.5f;
 		float Restitution = 0.0f;
@@ -762,7 +762,7 @@ namespace TomCat {
 		glm::vec2 ConnectedAnchor{ 0.0f, 0.0f };
 		float Distance = 1.0f;
 		float Frequency = 0.0f;
-		// Box2D damping ratio in the inclusive [0, 1] range.
+		// Butter damping ratio in the inclusive [0, 1] range.
 		float Damping = 0.0f;
 		bool CollideConnected = false;
 

@@ -30,21 +30,13 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-// Box2D
-#include "box2d/b2_world.h"
-#include "box2d/b2_body.h"
-#include "box2d/b2_circle_shape.h"
-#include "box2d/b2_contact.h"
-#include "box2d/b2_fixture.h"
-#include "box2d/b2_distance_joint.h"
-#include "box2d/b2_joint.h"
-#include "box2d/b2_polygon_shape.h"
-#include "box2d/b2_world_callbacks.h"
+// Butter
+#include "TomCat/Physics/Physics2D.h"
 
 namespace TomCat {
-	static_assert(sizeof(b2BodyUserData::pointer) >= sizeof(uint64_t),
-		"Box2D body user data must be able to store a complete entity UUID value");
-	static_assert(sizeof(b2JointUserData::pointer) >= sizeof(uint64_t));
+	static_assert(sizeof(Physics2D::BodyUserData::pointer) >= sizeof(uint64_t),
+		"Butter body user data must be able to store a complete entity UUID value");
+	static_assert(sizeof(Physics2D::JointUserData::pointer) >= sizeof(uint64_t));
 
 	namespace {
 
@@ -76,7 +68,7 @@ namespace TomCat {
 
 	}
 
-	class SceneContactListener final : public b2ContactListener
+	class SceneContactListener final : public Physics2D::ContactListener
 	{
 	public:
 		enum class PendingType
@@ -115,13 +107,13 @@ namespace TomCat {
 			EntityPair Pair;
 		};
 
-		void BeginContact(b2Contact* contact) override
+		void BeginContact(Physics2D::Contact* contact) override
 		{
 			const std::optional<EntityPair> pair = GetEntityPair(contact);
 			if (!pair)
 				return;
 
-			// Box2D may report the same contact more than once during continuous
+			// Butter may report the same contact more than once during continuous
 			// collision processing. Count each concrete contact only once.
 			if (!m_ContactPairs.emplace(contact, *pair).second)
 				return;
@@ -135,7 +127,7 @@ namespace TomCat {
 			}
 		}
 
-		void EndContact(b2Contact* contact) override
+		void EndContact(Physics2D::Contact* contact) override
 		{
 			auto contactIt = m_ContactPairs.find(contact);
 			if (contactIt == m_ContactPairs.end())
@@ -236,11 +228,11 @@ namespace TomCat {
 			m_StepSawEnd.clear();
 		}
 
-		void SeedExistingContacts(b2World* world)
+		void SeedExistingContacts(Physics2D::World* world)
 		{
 			if (!world)
 				return;
-			for (b2Contact* contact = world->GetContactList(); contact;
+			for (Physics2D::Contact* contact = world->GetContactList(); contact;
 				contact = contact->GetNext())
 			{
 				if (!contact->IsTouching())
@@ -317,13 +309,13 @@ namespace TomCat {
 				m_StepTouched.push_back(pair);
 		}
 
-		static std::optional<EntityPair> GetEntityPair(b2Contact* contact)
+		static std::optional<EntityPair> GetEntityPair(Physics2D::Contact* contact)
 		{
 			if (!contact || !contact->GetFixtureA() || !contact->GetFixtureB())
 				return std::nullopt;
 
-			b2Body* bodyA = contact->GetFixtureA()->GetBody();
-			b2Body* bodyB = contact->GetFixtureB()->GetBody();
+			Physics2D::Body* bodyA = contact->GetFixtureA()->GetBody();
+			Physics2D::Body* bodyB = contact->GetFixtureB()->GetBody();
 			if (!bodyA || !bodyB)
 				return std::nullopt;
 
@@ -336,7 +328,7 @@ namespace TomCat {
 				contact->GetFixtureA()->IsSensor() || contact->GetFixtureB()->IsSensor() };
 		}
 
-		std::unordered_map<const b2Contact*, EntityPair> m_ContactPairs;
+		std::unordered_map<const Physics2D::Contact*, EntityPair> m_ContactPairs;
 		std::unordered_map<EntityPair, size_t, EntityPairHash> m_ActivePairCounts;
 		std::vector<PendingEvent> m_PendingEvents;
 		bool m_InStep = false;
@@ -348,7 +340,7 @@ namespace TomCat {
 		std::unordered_set<EntityPair, EntityPairHash> m_RebuildCarryActive;
 	};
 
-	class SceneContactFilter2D final : public b2ContactFilter
+	class SceneContactFilter2D final : public Physics2D::ContactFilter
 	{
 	public:
 		explicit SceneContactFilter2D(Scene* scene)
@@ -356,10 +348,10 @@ namespace TomCat {
 		{
 		}
 
-		bool ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB) override
+		bool ShouldCollide(Physics2D::Fixture* fixtureA, Physics2D::Fixture* fixtureB) override
 		{
 			// Fixture category/mask filtering remains an independent first gate.
-			if (!b2ContactFilter::ShouldCollide(fixtureA, fixtureB))
+			if (!Physics2D::ContactFilter::ShouldCollide(fixtureA, fixtureB))
 				return false;
 			if (!m_Scene || !fixtureA || !fixtureB
 				|| !fixtureA->GetBody() || !fixtureB->GetBody())
@@ -413,9 +405,9 @@ namespace TomCat {
 
 		struct RuntimeBodyState
 		{
-			b2Vec2 Position{ 0.0f, 0.0f };
+			Physics2D::Vec2 Position{ 0.0f, 0.0f };
 			float Angle = 0.0f;
-			b2Vec2 LinearVelocity{ 0.0f, 0.0f };
+			Physics2D::Vec2 LinearVelocity{ 0.0f, 0.0f };
 			float AngularVelocity = 0.0f;
 			bool Awake = true;
 		};
@@ -541,12 +533,12 @@ namespace TomCat {
 			return cameraTransform;
 		}
 
-		bool TryResolveEntityLayerBit(Scene* scene, b2Fixture* fixture,
+		bool TryResolveEntityLayerBit(Scene* scene, Physics2D::Fixture* fixture,
 			UUID& entityID, uint16_t& layerBit)
 		{
 			if (!scene || !fixture)
 				return false;
-			b2Body* body = fixture->GetBody();
+			Physics2D::Body* body = fixture->GetBody();
 			const uint64_t rawUUID = body
 				? static_cast<uint64_t>(body->GetUserData().pointer)
 				: 0;
@@ -565,7 +557,7 @@ namespace TomCat {
 			return true;
 		}
 
-		class ClosestRaycastCallback2D final : public b2RayCastCallback
+		class ClosestRaycastCallback2D final : public Physics2D::RayCastCallback
 		{
 		public:
 			ClosestRaycastCallback2D(Scene* scene, uint16_t layerMask, bool includeTriggers)
@@ -573,8 +565,8 @@ namespace TomCat {
 			{
 			}
 
-			float ReportFixture(b2Fixture* fixture, const b2Vec2& point,
-				const b2Vec2& normal, float fraction) override
+			float ReportFixture(Physics2D::Fixture* fixture, const Physics2D::Vec2& point,
+				const Physics2D::Vec2& normal, float fraction) override
 			{
 				if (!fixture || (!m_IncludeTriggers && fixture->IsSensor()))
 					return -1.0f;
@@ -597,7 +589,7 @@ namespace TomCat {
 			bool m_IncludeTriggers = true;
 		};
 
-		class AABBQueryCallback2D final : public b2QueryCallback
+		class AABBQueryCallback2D final : public Physics2D::QueryCallback
 		{
 		public:
 			AABBQueryCallback2D(Scene* scene, uint16_t layerMask, bool includeTriggers)
@@ -605,7 +597,7 @@ namespace TomCat {
 			{
 			}
 
-			bool ReportFixture(b2Fixture* fixture) override
+			bool ReportFixture(Physics2D::Fixture* fixture) override
 			{
 				if (!fixture || (!m_IncludeTriggers && fixture->IsSensor()))
 					return true;
@@ -1098,17 +1090,17 @@ namespace TomCat {
 
 	}
 
-	static b2BodyType Rigidbody2DTypeToBox2DBody(Rigidbody2D::BodyType bodyType)
+	static Physics2D::BodyType Rigidbody2DTypeToButterBody(Rigidbody2D::BodyType bodyType)
 	{
 		switch (bodyType)
 		{
-		case Rigidbody2D::BodyType::Static:    return b2_staticBody;
-		case Rigidbody2D::BodyType::Dynamic:   return b2_dynamicBody;
-		case Rigidbody2D::BodyType::Kinematic: return b2_kinematicBody;
+		case Rigidbody2D::BodyType::Static:    return Physics2D::staticBody;
+		case Rigidbody2D::BodyType::Dynamic:   return Physics2D::dynamicBody;
+		case Rigidbody2D::BodyType::Kinematic: return Physics2D::kinematicBody;
 		}
 
 		TC_Core_Assert(false, "Unknown body type");
-		return b2_staticBody;
+		return Physics2D::staticBody;
 	}
 
 
@@ -1123,7 +1115,7 @@ namespace TomCat {
 		if (m_Physics2DSettings == settings)
 			return;
 		m_Physics2DSettings = settings;
-		// Existing Box2D contacts must be re-evaluated after a matrix change.
+		// Existing Butter contacts must be re-evaluated after a matrix change.
 		// Reuse the normal safe definition boundary instead of mutating a locked world.
 		if (m_RuntimeRunning)
 			m_HasRuntimePhysicsDefinition = false;
@@ -1520,12 +1512,12 @@ namespace TomCat {
 			}
 		}
 
-		// Defer Box2D destruction to the next safe synchronization point. This
+		// Defer Butter destruction to the next safe synchronization point. This
 		// avoids invalidating joints implicitly (DestroyBody destroys every attached
 		// joint) and also keeps all world mutation outside a locked Step callback.
 		// Keep the owned body in m_RuntimeBodies until the next synchronization.
 		// The ECS identity may disappear now, but the map is the authoritative
-		// handle needed to destroy that Box2D object (and its fixtures) safely.
+		// handle needed to destroy that Butter object (and its fixtures) safely.
 		m_SuspendedRuntimeBodyStates.erase(entityUUID);
 		if (affectsRuntimePhysics)
 			m_HasRuntimePhysicsDefinition = false;
@@ -2399,7 +2391,7 @@ namespace TomCat {
 			m_Registry.get<DistanceJoint2D>(entity).RuntimeJoint = nullptr;
 	}
 
-	b2Body* Scene::FindRuntimeBody(UUID entityID) const
+	Physics2D::Body* Scene::FindRuntimeBody(UUID entityID) const
 	{
 		auto bodyIt = m_RuntimeBodies.find(entityID);
 		return bodyIt == m_RuntimeBodies.end() ? nullptr : bodyIt->second;
@@ -2656,7 +2648,7 @@ namespace TomCat {
 					&& collider.CollisionLayer != 0
 					&& std::isfinite(halfWidth) && std::isfinite(halfHeight)
 					&& std::isfinite(centerX) && std::isfinite(centerY)
-					&& halfWidth > b2_epsilon && halfHeight > b2_epsilon;
+					&& halfWidth > Physics2D::epsilon && halfHeight > Physics2D::epsilon;
 				if (valid)
 				{
 					uint64_t hash = 1469598103934665603ull;
@@ -2694,7 +2686,7 @@ namespace TomCat {
 						collider.Restitution)
 					&& collider.CollisionLayer != 0
 					&& std::isfinite(radius) && std::isfinite(centerX)
-					&& std::isfinite(centerY) && radius > b2_epsilon;
+					&& std::isfinite(centerY) && radius > Physics2D::epsilon;
 				if (valid)
 				{
 					uint64_t hash = 1469598103934665603ull;
@@ -2825,7 +2817,7 @@ namespace TomCat {
 					if (rigidbody.Enabled
 						&& rigidbody.Type != Rigidbody2D::BodyType::Static)
 					{
-						const b2Vec2 velocity = body->GetLinearVelocity();
+						const Physics2D::Vec2 velocity = body->GetLinearVelocity();
 						m_SuspendedRuntimeBodyStates.insert_or_assign(uuid,
 							SuspendedRuntimeBodyState{ velocity.x, velocity.y,
 								body->GetAngularVelocity(), body->IsAwake() });
@@ -2869,7 +2861,7 @@ namespace TomCat {
 		m_RuntimeCircleFixtures.clear();
 		m_RuntimeDistanceJoints.clear();
 		m_RuntimePhysicsPoses.clear();
-		m_PhysicsWorld = new b2World({ 0.0f, -9.8f });
+		m_PhysicsWorld = new Physics2D::World({ 0.0f, -9.8f });
 		m_PhysicsWorld->SetContactFilter(m_ContactFilter);
 		m_PhysicsWorld->SetContactListener(m_ContactListener);
 
@@ -2927,15 +2919,15 @@ namespace TomCat {
 				continue;
 			}
 
-			b2BodyDef bodyDef;
+			Physics2D::BodyDef bodyDef;
 			if (entity.HasComponent<Rigidbody2D>() && entity.GetComponent<Rigidbody2D>().Enabled)
 			{
 				const auto& rigidbody = entity.GetComponent<Rigidbody2D>();
-				bodyDef.type = Rigidbody2DTypeToBox2DBody(rigidbody.Type);
+				bodyDef.type = Rigidbody2DTypeToButterBody(rigidbody.Type);
 				bodyDef.fixedRotation = rigidbody.FixedRotation;
 			}
 			else
-				bodyDef.type = b2_staticBody;
+				bodyDef.type = Physics2D::staticBody;
 			bodyDef.position.Set(transform._Translation.x, transform._Translation.y);
 			bodyDef.angle = transform._Rotation.z;
 			if (auto stateIt = previousStates.find(uuid); stateIt != previousStates.end())
@@ -2943,7 +2935,7 @@ namespace TomCat {
 				// ECS is the authoritative pose at a definition boundary. It already
 				// contains the last physics pose unless a script intentionally moved the
 				// entity. Preserve motion state only for bodies that can move.
-				if (bodyDef.type != b2_staticBody)
+				if (bodyDef.type != Physics2D::staticBody)
 				{
 					bodyDef.linearVelocity = stateIt->second.LinearVelocity;
 					bodyDef.angularVelocity = bodyDef.fixedRotation
@@ -2955,7 +2947,7 @@ namespace TomCat {
 			else if (auto stateIt = m_SuspendedRuntimeBodyStates.find(uuid);
 				stateIt != m_SuspendedRuntimeBodyStates.end())
 			{
-				if (bodyDef.type != b2_staticBody)
+				if (bodyDef.type != Physics2D::staticBody)
 				{
 					bodyDef.linearVelocity.Set(stateIt->second.LinearVelocityX,
 						stateIt->second.LinearVelocityY);
@@ -2966,7 +2958,7 @@ namespace TomCat {
 			}
 			bodyDef.userData.pointer = static_cast<uint64_t>(uuid);
 
-			b2Body* body = m_PhysicsWorld->CreateBody(&bodyDef);
+			Physics2D::Body* body = m_PhysicsWorld->CreateBody(&bodyDef);
 			++m_RuntimePhysicsSyncStatistics.BodiesCreated;
 			m_RuntimeBodies.emplace(uuid, body);
 			m_RuntimePhysicsPoses.emplace(uuid, RuntimePhysicsPose{
@@ -2980,7 +2972,7 @@ namespace TomCat {
 
 		for (UUID uuid : m_EntityOrder)
 		{
-			b2Body* body = FindRuntimeBody(uuid);
+			Physics2D::Body* body = FindRuntimeBody(uuid);
 			Entity entity = FindEntityByUUID(uuid);
 			if (!body || !entity || !entity.HasComponent<Transform>())
 				continue;
@@ -3004,12 +2996,12 @@ namespace TomCat {
 					&& collider.CollisionLayer != 0
 					&& std::isfinite(halfWidth) && std::isfinite(halfHeight)
 					&& std::isfinite(centerX) && std::isfinite(centerY)
-					&& halfWidth > b2_epsilon && halfHeight > b2_epsilon;
+					&& halfWidth > Physics2D::epsilon && halfHeight > Physics2D::epsilon;
 				if (valid)
 				{
-					b2PolygonShape shape;
+					Physics2D::PolygonShape shape;
 					shape.SetAsBox(halfWidth, halfHeight, { centerX, centerY }, 0.0f);
-					b2FixtureDef fixtureDef;
+					Physics2D::FixtureDef fixtureDef;
 					fixtureDef.shape = &shape;
 					fixtureDef.density = collider.Density;
 					fixtureDef.friction = collider.Friction;
@@ -3021,7 +3013,7 @@ namespace TomCat {
 					collider.RuntimeFixture = body->CreateFixture(&fixtureDef);
 					++m_RuntimePhysicsSyncStatistics.BoxFixturesCreated;
 					m_RuntimeBoxFixtures.insert_or_assign(uuid,
-						static_cast<b2Fixture*>(collider.RuntimeFixture));
+						static_cast<Physics2D::Fixture*>(collider.RuntimeFixture));
 				}
 				else if (collider.Enabled)
 					TC_Core_Warn("Skipping invalid BoxCollider2D on entity '{0}'", entity.GetName());
@@ -3042,13 +3034,13 @@ namespace TomCat {
 					&& IsValidPhysicsMaterial(collider.Density, collider.Friction, collider.Restitution)
 					&& collider.CollisionLayer != 0
 					&& std::isfinite(radius) && std::isfinite(centerX) && std::isfinite(centerY)
-					&& radius > b2_epsilon;
+					&& radius > Physics2D::epsilon;
 				if (valid)
 				{
-					b2CircleShape shape;
+					Physics2D::CircleShape shape;
 					shape.m_p.Set(centerX, centerY);
 					shape.m_radius = radius;
-					b2FixtureDef fixtureDef;
+					Physics2D::FixtureDef fixtureDef;
 					fixtureDef.shape = &shape;
 					fixtureDef.density = collider.Density;
 					fixtureDef.friction = collider.Friction;
@@ -3059,7 +3051,7 @@ namespace TomCat {
 					collider.RuntimeFixture = body->CreateFixture(&fixtureDef);
 					++m_RuntimePhysicsSyncStatistics.CircleFixturesCreated;
 					m_RuntimeCircleFixtures.insert_or_assign(uuid,
-						static_cast<b2Fixture*>(collider.RuntimeFixture));
+						static_cast<Physics2D::Fixture*>(collider.RuntimeFixture));
 				}
 				else if (collider.Enabled)
 					TC_Core_Warn("Skipping invalid CircleCollider2D on entity '{0}'", entity.GetName());
@@ -3075,8 +3067,8 @@ namespace TomCat {
 			if (!joint.Enabled || static_cast<uint64_t>(joint.ConnectedEntity) == 0)
 				continue;
 			Entity connected = FindEntityByUUID(joint.ConnectedEntity);
-			b2Body* bodyA = FindRuntimeBody(uuid);
-			b2Body* bodyB = FindRuntimeBody(joint.ConnectedEntity);
+			Physics2D::Body* bodyA = FindRuntimeBody(uuid);
+			Physics2D::Body* bodyB = FindRuntimeBody(joint.ConnectedEntity);
 			const bool hasTransforms = entity.HasComponent<Transform>()
 				&& connected && connected.HasComponent<Transform>();
 			const glm::vec2 scaleA = hasTransforms
@@ -3102,29 +3094,29 @@ namespace TomCat {
 				continue;
 			}
 
-			b2DistanceJointDef jointDef;
+			Physics2D::DistanceJointDef jointDef;
 			jointDef.bodyA = bodyA;
 			jointDef.bodyB = bodyB;
 			jointDef.localAnchorA.Set(scaledAnchorA.x, scaledAnchorA.y);
 			jointDef.localAnchorB.Set(scaledAnchorB.x, scaledAnchorB.y);
-			const float box2DDistance = std::max(joint.Distance, b2_linearSlop);
-			jointDef.length = box2DDistance;
+			const float butterDistance = std::max(joint.Distance, Physics2D::linearSlop);
+			jointDef.length = butterDistance;
 			jointDef.collideConnected = joint.CollideConnected;
 			jointDef.userData.pointer = static_cast<uint64_t>(uuid);
 			if (joint.Frequency > 0.0f)
-				b2LinearStiffness(jointDef.stiffness, jointDef.damping, joint.Frequency,
+				Physics2D::LinearStiffness(jointDef.stiffness, jointDef.damping, joint.Frequency,
 					joint.Damping, bodyA, bodyB);
 			else
 			{
 				// Zero frequency means a rigid distance constraint. A positive
-				// frequency uses Damping as Box2D's damping ratio for a soft spring.
-				jointDef.minLength = box2DDistance;
-				jointDef.maxLength = box2DDistance;
+				// frequency uses Damping as Butter's damping ratio for a soft spring.
+				jointDef.minLength = butterDistance;
+				jointDef.maxLength = butterDistance;
 			}
 			joint.RuntimeJoint = m_PhysicsWorld->CreateJoint(&jointDef);
 			++m_RuntimePhysicsSyncStatistics.DistanceJointsCreated;
 			m_RuntimeDistanceJoints.insert_or_assign(uuid,
-				static_cast<b2Joint*>(joint.RuntimeJoint));
+				static_cast<Physics2D::Joint*>(joint.RuntimeJoint));
 		}
 
 		++m_RuntimePhysicsSyncStatistics.DefinitionScans;
@@ -3193,7 +3185,7 @@ namespace TomCat {
 			return true;
 		}
 
-		// Destroying/recreating a fixture can make Box2D emit End/Begin callbacks
+		// Destroying/recreating a fixture can make Butter emit End/Begin callbacks
 		// outside Step. Carry active entity pairs into the next fixed step so the
 		// listener produces one semantic transition from the final topology.
 		m_ContactListener->PrepareForWorldRebuild();
@@ -3219,7 +3211,7 @@ namespace TomCat {
 				++iterator;
 				continue;
 			}
-			b2Joint* joint = iterator->second;
+			Physics2D::Joint* joint = iterator->second;
 			Entity entity = FindEntityByUUID(uuid);
 			if (entity && entity.HasComponent<DistanceJoint2D>())
 				entity.GetComponent<DistanceJoint2D>().RuntimeJoint = nullptr;
@@ -3240,11 +3232,11 @@ namespace TomCat {
 					++iterator;
 					continue;
 				}
-				b2Fixture* fixture = iterator->second;
+				Physics2D::Fixture* fixture = iterator->second;
 				Entity entity = FindEntityByUUID(uuid);
 				if (entity)
 					clearComponentPointer(entity);
-				b2Body* body = fixture->GetBody();
+				Physics2D::Body* body = fixture->GetBody();
 				if (body)
 					body->DestroyFixture(fixture);
 				++destroyedCount;
@@ -3274,7 +3266,7 @@ namespace TomCat {
 				++iterator;
 				continue;
 			}
-			b2Body* body = iterator->second;
+			Physics2D::Body* body = iterator->second;
 			Entity entity = FindEntityByUUID(uuid);
 			if (entity && !IsActiveInHierarchy(entity)
 				&& entity.HasComponent<Rigidbody2D>())
@@ -3283,7 +3275,7 @@ namespace TomCat {
 				if (rigidbody.Enabled
 					&& rigidbody.Type != Rigidbody2D::BodyType::Static)
 				{
-					const b2Vec2 velocity = body->GetLinearVelocity();
+					const Physics2D::Vec2 velocity = body->GetLinearVelocity();
 					m_SuspendedRuntimeBodyStates.insert_or_assign(uuid,
 						SuspendedRuntimeBodyState{ velocity.x, velocity.y,
 							body->GetAngularVelocity(), body->IsAwake() });
@@ -3315,7 +3307,7 @@ namespace TomCat {
 		}
 
 		// Body type, fixed rotation, and authored teleports are all safe in-place
-		// Box2D mutations. This preserves contacts, sleep state, velocities, and the
+		// Butter mutations. This preserves contacts, sleep state, velocities, and the
 		// address exposed through Rigidbody2D.RuntimeBody.
 		for (UUID uuid : m_EntityOrder)
 		{
@@ -3328,17 +3320,17 @@ namespace TomCat {
 			const auto& transform = entity.GetComponent<Transform>();
 			const bool explicitRigidbody = entity.HasComponent<Rigidbody2D>()
 				&& entity.GetComponent<Rigidbody2D>().Enabled;
-			const b2BodyType desiredType = explicitRigidbody
-				? Rigidbody2DTypeToBox2DBody(entity.GetComponent<Rigidbody2D>().Type)
-				: b2_staticBody;
+			const Physics2D::BodyType desiredType = explicitRigidbody
+				? Rigidbody2DTypeToButterBody(entity.GetComponent<Rigidbody2D>().Type)
+				: Physics2D::staticBody;
 			const bool fixedRotation = explicitRigidbody
 				&& entity.GetComponent<Rigidbody2D>().FixedRotation;
 
-			b2Body* body = FindRuntimeBody(uuid);
+			Physics2D::Body* body = FindRuntimeBody(uuid);
 			bool resetPoseHistory = false;
 			if (!body)
 			{
-				b2BodyDef bodyDef;
+				Physics2D::BodyDef bodyDef;
 				bodyDef.type = desiredType;
 				bodyDef.fixedRotation = fixedRotation;
 				bodyDef.position.Set(transform._Translation.x, transform._Translation.y);
@@ -3346,7 +3338,7 @@ namespace TomCat {
 				if (auto suspendedIt = m_SuspendedRuntimeBodyStates.find(uuid);
 					suspendedIt != m_SuspendedRuntimeBodyStates.end())
 				{
-					if (bodyDef.type != b2_staticBody)
+					if (bodyDef.type != Physics2D::staticBody)
 					{
 						bodyDef.linearVelocity.Set(
 							suspendedIt->second.LinearVelocityX,
@@ -3367,7 +3359,7 @@ namespace TomCat {
 			else if (signatureChanged(m_RuntimePhysicsDefinitions.Bodies,
 				desired.Bodies, uuid))
 			{
-				const b2Vec2 linearVelocity = body->GetLinearVelocity();
+				const Physics2D::Vec2 linearVelocity = body->GetLinearVelocity();
 				const float angularVelocity = body->GetAngularVelocity();
 				const bool awake = body->IsAwake();
 				body->SetType(desiredType);
@@ -3375,7 +3367,7 @@ namespace TomCat {
 				body->SetTransform(
 					{ transform._Translation.x, transform._Translation.y },
 					transform._Rotation.z);
-				if (desiredType != b2_staticBody)
+				if (desiredType != Physics2D::staticBody)
 				{
 					body->SetLinearVelocity(linearVelocity);
 					body->SetAngularVelocity(fixedRotation ? 0.0f : angularVelocity);
@@ -3390,7 +3382,7 @@ namespace TomCat {
 			if (resetPoseHistory
 				|| m_RuntimePhysicsPoses.find(uuid) == m_RuntimePhysicsPoses.end())
 			{
-				const b2Vec2 position = body->GetPosition();
+				const Physics2D::Vec2 position = body->GetPosition();
 				m_RuntimePhysicsPoses.insert_or_assign(uuid, RuntimePhysicsPose{
 					{ position.x, position.y }, { position.x, position.y },
 					body->GetAngle(), body->GetAngle() });
@@ -3399,7 +3391,7 @@ namespace TomCat {
 
 		for (UUID uuid : m_EntityOrder)
 		{
-			b2Body* body = FindRuntimeBody(uuid);
+			Physics2D::Body* body = FindRuntimeBody(uuid);
 			Entity entity = FindEntityByUUID(uuid);
 			if (!body || !entity || !entity.HasComponent<Transform>())
 				continue;
@@ -3411,12 +3403,12 @@ namespace TomCat {
 				if (runtimeIt == m_RuntimeBoxFixtures.end())
 				{
 					auto& collider = entity.GetComponent<BoxCollider2D>();
-					b2PolygonShape shape;
+					Physics2D::PolygonShape shape;
 					shape.SetAsBox(std::abs(collider.Size.x * transform._Scale.x),
 						std::abs(collider.Size.y * transform._Scale.y),
 						{ collider.Offset.x * transform._Scale.x,
 							collider.Offset.y * transform._Scale.y }, 0.0f);
-					b2FixtureDef fixtureDef;
+					Physics2D::FixtureDef fixtureDef;
 					fixtureDef.shape = &shape;
 					fixtureDef.density = collider.Density;
 					fixtureDef.friction = collider.Friction;
@@ -3425,7 +3417,7 @@ namespace TomCat {
 					fixtureDef.isSensor = collider.IsTrigger;
 					fixtureDef.filter.categoryBits = collider.CollisionLayer;
 					fixtureDef.filter.maskBits = collider.CollisionMask;
-					b2Fixture* fixture = body->CreateFixture(&fixtureDef);
+					Physics2D::Fixture* fixture = body->CreateFixture(&fixtureDef);
 					++m_RuntimePhysicsSyncStatistics.BoxFixturesCreated;
 					collider.RuntimeFixture = fixture;
 					m_RuntimeBoxFixtures.emplace(uuid, fixture);
@@ -3447,13 +3439,13 @@ namespace TomCat {
 				if (runtimeIt == m_RuntimeCircleFixtures.end())
 				{
 					auto& collider = entity.GetComponent<CircleCollider2D>();
-					b2CircleShape shape;
+					Physics2D::CircleShape shape;
 					shape.m_p.Set(collider.Offset.x * transform._Scale.x,
 						collider.Offset.y * transform._Scale.y);
 					shape.m_radius = collider.Radius
 						* std::max(std::abs(transform._Scale.x),
 							std::abs(transform._Scale.y));
-					b2FixtureDef fixtureDef;
+					Physics2D::FixtureDef fixtureDef;
 					fixtureDef.shape = &shape;
 					fixtureDef.density = collider.Density;
 					fixtureDef.friction = collider.Friction;
@@ -3461,7 +3453,7 @@ namespace TomCat {
 					fixtureDef.isSensor = collider.IsTrigger;
 					fixtureDef.filter.categoryBits = collider.CollisionLayer;
 					fixtureDef.filter.maskBits = collider.CollisionMask;
-					b2Fixture* fixture = body->CreateFixture(&fixtureDef);
+					Physics2D::Fixture* fixture = body->CreateFixture(&fixtureDef);
 					++m_RuntimePhysicsSyncStatistics.CircleFixturesCreated;
 					collider.RuntimeFixture = fixture;
 					m_RuntimeCircleFixtures.emplace(uuid, fixture);
@@ -3488,8 +3480,8 @@ namespace TomCat {
 				return RebuildRuntimePhysicsWorld(true);
 			auto& joint = entity.GetComponent<DistanceJoint2D>();
 			Entity connected = FindEntityByUUID(joint.ConnectedEntity);
-			b2Body* bodyA = FindRuntimeBody(uuid);
-			b2Body* bodyB = FindRuntimeBody(joint.ConnectedEntity);
+			Physics2D::Body* bodyA = FindRuntimeBody(uuid);
+			Physics2D::Body* bodyB = FindRuntimeBody(joint.ConnectedEntity);
 			if (!connected || !bodyA || !bodyB || !connected.HasComponent<Transform>())
 				return RebuildRuntimePhysicsWorld(true);
 			auto runtimeIt = m_RuntimeDistanceJoints.find(uuid);
@@ -3501,25 +3493,25 @@ namespace TomCat {
 					glm::vec2(connected.GetComponent<Transform>()._Scale);
 				const glm::vec2 scaledAnchorA = joint.Anchor * scaleA;
 				const glm::vec2 scaledAnchorB = joint.ConnectedAnchor * scaleB;
-				b2DistanceJointDef jointDef;
+				Physics2D::DistanceJointDef jointDef;
 				jointDef.bodyA = bodyA;
 				jointDef.bodyB = bodyB;
 				jointDef.localAnchorA.Set(scaledAnchorA.x, scaledAnchorA.y);
 				jointDef.localAnchorB.Set(scaledAnchorB.x, scaledAnchorB.y);
-				const float distance = std::max(joint.Distance, b2_linearSlop);
+				const float distance = std::max(joint.Distance, Physics2D::linearSlop);
 				jointDef.length = distance;
 				jointDef.collideConnected = joint.CollideConnected;
 				jointDef.userData.pointer =
 					static_cast<uint64_t>(uuid);
 				if (joint.Frequency > 0.0f)
-					b2LinearStiffness(jointDef.stiffness, jointDef.damping,
+					Physics2D::LinearStiffness(jointDef.stiffness, jointDef.damping,
 						joint.Frequency, joint.Damping, bodyA, bodyB);
 				else
 				{
 					jointDef.minLength = distance;
 					jointDef.maxLength = distance;
 				}
-				b2Joint* runtimeJoint = m_PhysicsWorld->CreateJoint(&jointDef);
+				Physics2D::Joint* runtimeJoint = m_PhysicsWorld->CreateJoint(&jointDef);
 				++m_RuntimePhysicsSyncStatistics.DistanceJointsCreated;
 				joint.RuntimeJoint = runtimeJoint;
 				m_RuntimeDistanceJoints.emplace(uuid, runtimeJoint);
@@ -3577,7 +3569,7 @@ namespace TomCat {
 			|| m_PhysicsWorld->IsLocked())
 			return result;
 
-		b2AABB bounds;
+		Physics2D::AABB bounds;
 		bounds.lowerBound.Set(std::min(lowerBound.x, upperBound.x),
 			std::min(lowerBound.y, upperBound.y));
 		bounds.upperBound.Set(std::max(lowerBound.x, upperBound.x),
@@ -3611,8 +3603,8 @@ namespace TomCat {
 		if (!IsFinite(force) || !SynchronizeRuntimePhysicsDefinitions(true)
 			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
 			return false;
-		b2Body* body = FindRuntimeBody(entityID);
-		if (!body || body->GetType() != b2_dynamicBody)
+		Physics2D::Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != Physics2D::dynamicBody)
 			return false;
 		body->ApplyForceToCenter({ force.x, force.y }, wake);
 		return true;
@@ -3625,8 +3617,8 @@ namespace TomCat {
 			|| !SynchronizeRuntimePhysicsDefinitions(true)
 			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
 			return false;
-		b2Body* body = FindRuntimeBody(entityID);
-		if (!body || body->GetType() != b2_dynamicBody)
+		Physics2D::Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != Physics2D::dynamicBody)
 			return false;
 		body->ApplyForce({ force.x, force.y }, { worldPoint.x, worldPoint.y }, wake);
 		return true;
@@ -3637,8 +3629,8 @@ namespace TomCat {
 		if (!IsFinite(impulse) || !SynchronizeRuntimePhysicsDefinitions(true)
 			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
 			return false;
-		b2Body* body = FindRuntimeBody(entityID);
-		if (!body || body->GetType() != b2_dynamicBody)
+		Physics2D::Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != Physics2D::dynamicBody)
 			return false;
 		body->ApplyLinearImpulseToCenter({ impulse.x, impulse.y }, wake);
 		return true;
@@ -3651,8 +3643,8 @@ namespace TomCat {
 			|| !SynchronizeRuntimePhysicsDefinitions(true)
 			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
 			return false;
-		b2Body* body = FindRuntimeBody(entityID);
-		if (!body || body->GetType() != b2_dynamicBody)
+		Physics2D::Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != Physics2D::dynamicBody)
 			return false;
 		body->ApplyLinearImpulse({ impulse.x, impulse.y },
 			{ worldPoint.x, worldPoint.y }, wake);
@@ -3664,8 +3656,8 @@ namespace TomCat {
 		if (!IsFinite(velocity) || !SynchronizeRuntimePhysicsDefinitions(true)
 			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
 			return false;
-		b2Body* body = FindRuntimeBody(entityID);
-		if (!body || body->GetType() == b2_staticBody)
+		Physics2D::Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() == Physics2D::staticBody)
 			return false;
 		body->SetLinearVelocity({ velocity.x, velocity.y });
 		return true;
@@ -3676,10 +3668,10 @@ namespace TomCat {
 		if (!SynchronizeRuntimePhysicsDefinitions(true) || !m_PhysicsWorld
 			|| m_PhysicsWorld->IsLocked())
 			return std::nullopt;
-		b2Body* body = FindRuntimeBody(entityID);
+		Physics2D::Body* body = FindRuntimeBody(entityID);
 		if (!body)
 			return std::nullopt;
-		const b2Vec2 velocity = body->GetLinearVelocity();
+		const Physics2D::Vec2 velocity = body->GetLinearVelocity();
 		return glm::vec2(velocity.x, velocity.y);
 	}
 
@@ -3813,8 +3805,8 @@ namespace TomCat {
 			if (!rb2d.Enabled || !rb2d.RuntimeBody)
 				continue;
 
-			b2Body* body = static_cast<b2Body*>(rb2d.RuntimeBody);
-			const b2Vec2& position = body->GetPosition();
+			Physics2D::Body* body = static_cast<Physics2D::Body*>(rb2d.RuntimeBody);
+			const Physics2D::Vec2& position = body->GetPosition();
 			glm::vec3 translation = transform._Translation;
 			glm::vec3 rotation = transform._Rotation;
 			const glm::vec3 scale = transform._Scale;
@@ -3856,7 +3848,7 @@ namespace TomCat {
 		if (!m_RuntimeRunning || !m_PhysicsWorld)
 			return false;
 		// Managed callbacks may add, remove, replace, or directly edit physics
-		// components. Reconcile again before entering Box2D's locked Step region.
+		// components. Reconcile again before entering Butter's locked Step region.
 		if (!SynchronizeRuntimePhysicsDefinitions())
 			return false;
 		// Materialize bodies/joints before dynamic managed OnCreate. Scripts may
@@ -3875,7 +3867,7 @@ namespace TomCat {
 			auto poseIt = m_RuntimePhysicsPoses.find(uuid);
 			if (poseIt == m_RuntimePhysicsPoses.end())
 			{
-				const b2Vec2 position = body->GetPosition();
+				const Physics2D::Vec2 position = body->GetPosition();
 				poseIt = m_RuntimePhysicsPoses.emplace(uuid, RuntimePhysicsPose{
 					{ position.x, position.y }, { position.x, position.y },
 					body->GetAngle(), body->GetAngle() }).first;
@@ -3885,7 +3877,7 @@ namespace TomCat {
 		}
 		m_ContactListener->BeginStep();
 		{
-			TC_PROFILE_SCOPE("Physics Box2D Step");
+			TC_PROFILE_SCOPE("Physics Butter Step");
 			m_PhysicsWorld->Step(FixedRuntimeTimestep, velocityIterations, positionIterations);
 		}
 		m_ContactListener->EndStep();
@@ -3893,7 +3885,7 @@ namespace TomCat {
 		{
 			if (!body)
 				continue;
-			const b2Vec2 position = body->GetPosition();
+			const Physics2D::Vec2 position = body->GetPosition();
 			auto& pose = m_RuntimePhysicsPoses[uuid];
 			pose.CurrentPosition = { position.x, position.y };
 			pose.CurrentAngle = body->GetAngle();
@@ -3906,7 +3898,7 @@ namespace TomCat {
 		// Accept the pose written by physics before invoking user callbacks. A
 		// callback-side teleport then differs from this snapshot on the next step.
 		// If hierarchy propagation moved an implicit/static physics entity whose
-		// Box2D body was not written back, leave the old hash in place so the next
+		// Butter body was not written back, leave the old hash in place so the next
 		// boundary rebuilds that body at its new ECS pose.
 		bool runtimePosesMatchScene = true;
 		for (const auto& [uuid, body] : m_RuntimeBodies)
@@ -3918,9 +3910,9 @@ namespace TomCat {
 				break;
 			}
 			const auto& transform = entity.GetComponent<Transform>();
-			const b2Vec2 position = body->GetPosition();
+			const Physics2D::Vec2 position = body->GetPosition();
 			const float angleDelta = std::remainder(transform._Rotation.z - body->GetAngle(),
-				2.0f * b2_pi);
+				2.0f * Physics2D::pi);
 			if (std::abs(transform._Translation.x - position.x) > 1.0e-5f
 				|| std::abs(transform._Translation.y - position.y) > 1.0e-5f
 				|| std::abs(angleDelta) > 1.0e-5f)
@@ -4080,7 +4072,7 @@ namespace TomCat {
 					const glm::vec2 position = glm::mix(pose.PreviousPosition,
 						pose.CurrentPosition, alpha);
 					const float angleDelta = std::remainder(
-						pose.CurrentAngle - pose.PreviousAngle, 2.0f * b2_pi);
+						pose.CurrentAngle - pose.PreviousAngle, 2.0f * Physics2D::pi);
 					glm::vec3 translation = transform._Translation;
 					glm::vec3 rotation = transform._Rotation;
 					translation.x = position.x;
@@ -4197,7 +4189,7 @@ namespace TomCat {
 			if (!m_PhysicsWorld)
 				return result;
 
-			for (b2Body* body = m_PhysicsWorld->GetBodyList(); body; body = body->GetNext())
+			for (Physics2D::Body* body = m_PhysicsWorld->GetBodyList(); body; body = body->GetNext())
 			{
 				const uint64_t rawUUID = static_cast<uint64_t>(body->GetUserData().pointer);
 				if (rawUUID == 0)
@@ -4213,30 +4205,30 @@ namespace TomCat {
 				if (m_Registry.all_of<Transform>(entityIt->second))
 					z = m_Registry.get<Transform>(entityIt->second)._Translation.z;
 
-				for (b2Fixture* fixture = body->GetFixtureList(); fixture; fixture = fixture->GetNext())
+				for (Physics2D::Fixture* fixture = body->GetFixtureList(); fixture; fixture = fixture->GetNext())
 				{
-					const b2Shape* shape = fixture->GetShape();
+					const Physics2D::Shape* shape = fixture->GetShape();
 					if (!shape)
 						continue;
 
-					if (shape->GetType() == b2Shape::e_polygon)
+					if (shape->GetType() == Physics2D::Shape::e_polygon)
 					{
-						const auto* polygon = static_cast<const b2PolygonShape*>(shape);
+						const auto* polygon = static_cast<const Physics2D::PolygonShape*>(shape);
 						if (polygon->m_count != 4)
 							continue;
 
-						b2Vec2 vertices[4];
+						Physics2D::Vec2 vertices[4];
 						for (int32_t index = 0; index < 4; ++index)
-							vertices[index] = b2Mul(body->GetTransform(), polygon->m_vertices[index]);
-						const b2Vec2 edgeX = vertices[1] - vertices[0];
-						const b2Vec2 edgeY = vertices[2] - vertices[1];
+							vertices[index] = Physics2D::Mul(body->GetTransform(), polygon->m_vertices[index]);
+						const Physics2D::Vec2 edgeX = vertices[1] - vertices[0];
+						const Physics2D::Vec2 edgeY = vertices[2] - vertices[1];
 						const float width = edgeX.Length();
 						const float height = edgeY.Length();
 						if (!std::isfinite(width) || !std::isfinite(height)
-							|| width <= b2_epsilon || height <= b2_epsilon)
+							|| width <= Physics2D::epsilon || height <= Physics2D::epsilon)
 							continue;
 
-						const b2Vec2 center = 0.25f * (vertices[0] + vertices[1] + vertices[2] + vertices[3]);
+						const Physics2D::Vec2 center = 0.25f * (vertices[0] + vertices[1] + vertices[2] + vertices[3]);
 						const float rotation = std::atan2(edgeX.y, edgeX.x);
 						ColliderDebugShape debugShape;
 						debugShape.Type = ColliderDebugShapeType::Box;
@@ -4251,13 +4243,13 @@ namespace TomCat {
 							rotation, { width, height });
 						result.push_back(debugShape);
 					}
-					else if (shape->GetType() == b2Shape::e_circle)
+					else if (shape->GetType() == Physics2D::Shape::e_circle)
 					{
-						const auto* circle = static_cast<const b2CircleShape*>(shape);
-						const b2Vec2 center = b2Mul(body->GetTransform(), circle->m_p);
+						const auto* circle = static_cast<const Physics2D::CircleShape*>(shape);
+						const Physics2D::Vec2 center = Physics2D::Mul(body->GetTransform(), circle->m_p);
 						const float radius = circle->m_radius;
 						if (!std::isfinite(center.x) || !std::isfinite(center.y)
-							|| !std::isfinite(radius) || radius <= b2_epsilon)
+							|| !std::isfinite(radius) || radius <= Physics2D::epsilon)
 							continue;
 
 						ColliderDebugShape debugShape;
@@ -4294,7 +4286,7 @@ namespace TomCat {
 			const glm::vec2 center = TransformColliderOffset2D(transform, collider.Offset);
 			if (!std::isfinite(center.x) || !std::isfinite(center.y)
 				|| !std::isfinite(halfSize.x) || !std::isfinite(halfSize.y)
-				|| halfSize.x <= b2_epsilon || halfSize.y <= b2_epsilon)
+				|| halfSize.x <= Physics2D::epsilon || halfSize.y <= Physics2D::epsilon)
 				continue;
 
 			ColliderDebugShape debugShape;
@@ -4327,7 +4319,7 @@ namespace TomCat {
 			const float radius = collider.Radius * radiusScale;
 			const glm::vec2 center = TransformColliderOffset2D(transform, collider.Offset);
 			if (!std::isfinite(center.x) || !std::isfinite(center.y)
-				|| !std::isfinite(radius) || radius <= b2_epsilon)
+				|| !std::isfinite(radius) || radius <= Physics2D::epsilon)
 				continue;
 
 			ColliderDebugShape debugShape;

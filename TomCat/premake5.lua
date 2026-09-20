@@ -35,7 +35,7 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 	{
 		"src",
 		"vendor/spdlog/include",
-		"%{IncludeDir.Box2D}",
+		"%{IncludeDir.Butter}",
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.Glad}",
@@ -51,7 +51,6 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 
 	dependson
 	{
-		"Box2D",
 		"GLFW",
 		"Glad",
 		"ImGui",

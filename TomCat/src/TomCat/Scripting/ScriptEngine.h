@@ -47,7 +47,7 @@ namespace TomCat {
 			ScriptStatus InvokeMethod(Scene& scene, UUID targetEntity,
 				UUID targetAttachmentId, uint64_t expectedScriptAsset,
 				std::string_view methodName);
-			// A fixed-step scope owns the scene's pending input batch until Box2D
+			// A fixed-step scope owns the scene's pending input batch until Butter
 			// and its resulting script callbacks have both completed.
 			bool BeginFixedStep(uint64_t sceneSessionId);
 			void EndFixedStep(uint64_t sceneSessionId);

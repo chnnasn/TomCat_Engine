@@ -3,7 +3,7 @@
 English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
 
 This Emscripten target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader,
-scene runtime, Renderer2D and Box2D in a browser. It is a native-only milestone,
+scene runtime, Renderer2D and Butter in a browser. It is a native-only milestone,
 not a full replacement for the desktop Player.
 
 The [2026-09-20 showcase](../docs/portfolio/README.md) records the Windows desktop
@@ -19,7 +19,7 @@ also needed for the protocol regression. The build produces modules, not a compl
 browser host page or a persistence service. Earlier validation dates below are historical.
 
 ```powershell
-git submodule update --init TomCat/vendor/Box2D TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/ImGuizmo
+git submodule update --init TomCat/vendor/Butter TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/ImGuizmo
 emcmake cmake -S Web -B build/web -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/web -j 6
 ```
@@ -149,8 +149,7 @@ Chinese IME composition or all desktop panel widgets.
 
 - GLES3 replacements for desktop DSA buffer/texture operations and single-sample
   framebuffers; embedded engine shaders use GLSL ES 300 and 16 texture slots.
-- Box2D user settings preserve full 64-bit entity UUIDs on wasm32. Both Box2D and
-  consumers must use the same `B2_USER_SETTINGS` definition.
+- Butter runtime handles use explicit 64-bit entity UUID fields on wasm32.
 - Keyboard, pointer, focus, scroll and standard browser gamepad mapping feed the
   existing input snapshot queue. Gamepad hardware has not been acceptance-tested.
 - C# packages explicitly fail: desktop hostfxr cannot be used in this target.

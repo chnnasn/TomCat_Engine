@@ -4,11 +4,11 @@ A **C++20 game engine for 2D development**, with a visual editor, a project hub,
 and a standalone game runtime.
 
 TomCat brings scene composition, asset management, C# gameplay scripting, and
-Box2D physics into one development environment. Its engine library provides the
+Butter physics into one development environment. Its engine library provides the
 rendering, ECS scene model, and runtime systems; the Editor exposes those systems
 through visual authoring tools, while the Player runs packaged games independently.
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL · ImGui · Butter · .NET 10 · Windows x64 · MIT**
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
@@ -73,11 +73,11 @@ running throughout; the displayed timings are not performance benchmarks.
 
 ### Live simulation
 
-Play runs a copy of the authored scene with fixed-step Box2D physics. The sample
+Play runs a copy of the authored scene with fixed-step Butter physics. The sample
 rectangle falls onto the floor; Pause and Step inspect runtime state, and Stop
 restores its initial position and rotation. Physics footage stays at real-time speed.
 
-![Box2D Play, Pause, Step and Stop](docs/portfolio/2026-09-20/05-play-controls.gif)
+![Play, Pause, Step and Stop](docs/portfolio/2026-09-20/05-play-controls.gif)
 
 Open [PhysicsPlayground](Samples/PhysicsPlayground/README.md) to reproduce it.
 Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
@@ -89,7 +89,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - **2D rendering**: OpenGL batched sprites, lines, circles, cameras, framebuffer-based Scene/Game views, entity picking, stable Sprite Atlas subassets with Rect/Pivot/PPU/Border semantics, deterministic sprite sorting, animation clips, and a parameter-driven Animator state machine
 - **Scene system**: ECS entities, hierarchy, stable UUIDs, strict YAML serialization, ordered Build Settings, asynchronous reads with activation control, additive ownership in a shared runtime world, persistent roots, and explicit unloading
 - **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` schema-v2 sidecars, ImporterRegistry, SHA-256 artifact keys, a derived-data cache, dependency tracking, and a background ImportCoordinator with debounced content monitoring, reverse-dependent reimport, and main-thread publication
-- **2D physics**: fixed 60 Hz Box2D runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
+- **2D physics**: fixed 60 Hz Butter runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
 - **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, combined Play/Stop plus Pause/Step controls, and deferred C# Collision/Trigger callbacks
 - **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, diagnostics, last-good assemblies, and cooked managed payloads
 - **Prefabs**: LocalID subtrees and reference remapping, linked editor updates, overrides, Apply/Revert, nested Prefabs and variants; runtime C# `Instantiate` retains snapshot semantics. See the [Prefab workflow](docs/PREFAB_WORKFLOW.zh-CN.md).

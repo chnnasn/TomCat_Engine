@@ -31,6 +31,9 @@
     <Filter Include="src\TomCat\Math">
       <UniqueIdentifier>{5D096131-C994-CEF5-D2A5-51EA3EB02AF6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Physics">
+      <UniqueIdentifier>{768988BE-626D-4914-CBCD-4367B7D03396}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Project">
       <UniqueIdentifier>{4A2A22D5-360E-E32A-9F6E-DD7D8B71CDAC}</UniqueIdentifier>
     </Filter>
@@ -263,6 +266,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Physics\Physics2D.h">
+      <Filter>src\TomCat\Physics</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Project\BuildSettings.h">
       <Filter>src\TomCat\Project</Filter>

@@ -7880,7 +7880,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 
 			ImGui::TextDisabled("Non-uniform scale uses max(abs(X), abs(Y)).");
 			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-				ImGui::SetTooltip("Box2D circles cannot become ellipses. The largest absolute world X/Y scale keeps the fixture circular.");
+				ImGui::SetTooltip("Butter circles cannot become ellipses. The largest absolute world X/Y scale keeps the fixture circular.");
 			changed |= DrawColliderMaterialProperties(component.Density,
 				component.Friction, component.Restitution);
 			if (changed)
@@ -8003,7 +8003,7 @@ static void DrawComponent(const std::string& name, Entity entity,
 				}
 			}
 			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-				ImGui::SetTooltip("Box2D damping ratio in the range 0 to 1.");
+				ImGui::SetTooltip("Butter damping ratio in the range 0 to 1.");
 
 			if (ImGui::Checkbox("Collide Connected", &component.CollideConnected))
 				changed = true;
