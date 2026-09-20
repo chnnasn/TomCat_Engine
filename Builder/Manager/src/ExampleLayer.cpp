@@ -772,7 +772,7 @@ void ExampleLayer::OnEvent(Event& e)
 				const ImVec2 iconSize(width * scale, height * scale);
 				const ImVec2 iconMin(c0.x + 18.0f + (iconSlot - iconSize.x) * 0.5f,
 					c0.y + (cardH - iconSize.y) * 0.5f);
-				dl->AddImage((ImTextureID)(uintptr_t)icon->GetRendererID(), iconMin,
+				dl->AddImage((ImTextureID)(uintptr_t)icon->GetUITextureID(), iconMin,
 					ImVec2(iconMin.x + iconSize.x, iconMin.y + iconSize.y),
 					ImVec2(bounds.x / icon->GetWidth(), 1.0f - bounds.y / icon->GetHeight()),
 					ImVec2(bounds.z / icon->GetWidth(), 1.0f - bounds.w / icon->GetHeight()));

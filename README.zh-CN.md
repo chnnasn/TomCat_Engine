@@ -6,7 +6,7 @@ TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Box2D 物理集成在
 引擎库提供渲染、ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
 Player 则负责脱离编辑器运行打包后的游戏。
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **语言**：[English](README.md) | 简体中文
 
@@ -95,7 +95,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 ## 当前范围
 
 - 支持的开发平台：**Windows x64**
-- 渲染后端：**OpenGL 4.6**
+- 渲染后端：通过统一 RHI 支持 **OpenGL 4.6 / Vulkan 1.2**，参见 [Vulkan 启动与验证说明](docs/RHI_VULKAN.zh-CN.md)。
 - 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。该目标不支持 C# 负载、可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
@@ -116,7 +116,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - Python 3 与 `pip`（供 Setup 辅助脚本使用）
 - premake5（Setup 脚本自动下载）
 
-> OpenGL 着色器管线使用 `vendor/VulkanSDK` 子模块（VulkanSDK-Windows）提供的 ShaderC 和 SPIRV-Cross，负责 SPIR-V 编译与反射；TomCat 不链接 Vulkan 渲染器或加载器。无需手动安装 SDK 或设置环境变量。
+> ShaderC、SPIRV-Cross 和 Vulkan 编译依赖由 `vendor/VulkanSDK` 提供。默认使用 OpenGL；启动前设置 `TC_RENDERER=vulkan` 选择 Vulkan。Vulkan loader 采用延迟加载，由显卡驱动提供；仅验证测试需要额外安装 validation layer。
 
 ### 步骤
 

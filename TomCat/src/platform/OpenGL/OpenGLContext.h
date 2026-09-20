@@ -14,6 +14,7 @@ namespace TomCat {
 
 		virtual void Init() override;
 		virtual void SwapBuffers() override;
+		void SetVSync(bool enabled) override;
 
 
 	private:

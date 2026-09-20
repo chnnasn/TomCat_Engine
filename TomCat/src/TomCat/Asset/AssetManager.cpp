@@ -1,4 +1,5 @@
 #include "tcpch.h"
+#include "TomCat/Renderer/RendererAPI.h"
 #include "AssetManager.h"
 #include "AssetJobSystem.h"
 #include "SpriteAsset.h"
@@ -1777,6 +1778,8 @@ namespace TomCat {
 			return false;
 		}
 
+		AssetImportCoordinatorOptions importOptions;
+		importOptions.Backend = RendererAPI::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl";
 		m_RegistryInitialized = m_Registry.Initialize(assetRoot, libraryRoot);
 		if (!m_RegistryInitialized)
 		{
@@ -1790,7 +1793,7 @@ namespace TomCat {
 			TC_Core_Error("Failed to initialize the asset database for '{0}'",
 				PathToUTF8(assetRoot));
 		}
-		else if (!m_ImportCoordinator.Initialize(m_Registry, m_Database, assetRoot) ||
+		else if (!m_ImportCoordinator.Initialize(m_Registry, m_Database, assetRoot, importOptions) ||
 			!m_ImportCoordinator.Start())
 		{
 			// Import remains usable through explicit calls if the authoring-only
@@ -2719,7 +2722,9 @@ namespace TomCat {
 			cached != m_ShaderCache.end())
 			return cached->second;
 
-		ShaderLoadResult loaded = LoadTypedArtifact<AssetType::Shader>(handle);
+		AssetLoadOptions shaderOptions;
+		shaderOptions.Backend = RendererAPI::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl";
+		ShaderLoadResult loaded = LoadTypedArtifact<AssetType::Shader>(handle, std::move(shaderOptions));
 		if (!loaded.Succeeded())
 		{
 			TC_Core_Error("Could not load Shader asset {0}: {1}",
@@ -3633,7 +3638,7 @@ namespace TomCat {
 
 				AssetLoadOptions importOptions;
 				importOptions.Platform = "windows-x64";
-				importOptions.Backend = "opengl";
+				importOptions.Backend = RendererAPI::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl";
 				// Cook observes authoring metadata; it must never publish importer
 				// side effects halfway through a package transaction.
 				importOptions.DeferMetadataCommit = true;
@@ -3823,7 +3828,7 @@ namespace TomCat {
 			{
 				AssetLoadOptions importOptions;
 				importOptions.Platform = "windows-x64";
-				importOptions.Backend = "opengl";
+				importOptions.Backend = RendererAPI::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl";
 				// Cook is a read-only transaction over the pinned authoring snapshot.
 				importOptions.DeferMetadataCommit = true;
 				AssetLoadResult imported = m_Database.LoadArtifact(handle,

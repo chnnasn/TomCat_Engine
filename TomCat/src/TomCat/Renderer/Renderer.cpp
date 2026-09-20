@@ -1,7 +1,7 @@
 #include "tcpch.h"
 #include "Renderer.h"
 #include "Renderer2D.h"
-#include "platform/OpenGL/OpenGLProfiler.h"
+#include "TomCat/RHI/RenderDevice.h"
 
 namespace TomCat {
 
@@ -9,19 +9,31 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		RenderCommand::Init();
-		Renderer2D::Init();
+		try
+		{
+			RenderCommand::Init();
+			Renderer2D::Init();
+		}
+		catch (...)
+		{
+			Renderer2D::Shutdown();
+			RenderCommand::Shutdown();
+			RHI::RenderDevice::Shutdown();
+			throw;
+		}
 	}
 
 	void Renderer::Shutdown()
 	{
-		OpenGLProfiler::Shutdown();
+		RHI::RenderDevice::Get().ShutdownProfiling();
 		Renderer2D::Shutdown();
+		RenderCommand::Shutdown();
+		RHI::RenderDevice::Shutdown();
 	}
 
-	void Renderer::BeginProfileFrame(uint64_t frame) { OpenGLProfiler::BeginFrame(frame); }
-	void Renderer::EndProfileFrame() { OpenGLProfiler::EndFrame(); }
-	bool Renderer::SupportsGpuProfiling() { return OpenGLProfiler::IsSupported(); }
+	void Renderer::BeginProfileFrame(uint64_t frame) { RHI::RenderDevice::Get().BeginProfileFrame(frame); }
+	void Renderer::EndProfileFrame() { RHI::RenderDevice::Get().EndProfileFrame(); }
+	bool Renderer::SupportsGpuProfiling() { return RHI::RenderDevice::Get().Capabilities().GpuTimestamps; }
 
 
 	void Renderer::OnWindowResize(uint32_t width, uint32_t height)

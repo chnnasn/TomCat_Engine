@@ -124,7 +124,7 @@ void WebEditorUI::DrawViewport() {
   const ImVec2 size(std::max(available.x,1.0f),std::max(available.y,1.0f));
   const auto origin=ImGui::GetCursorScreenPos();
   m_ViewportSize={std::max(size.x,1.0f),std::max(size.y,1.0f)};
-  ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_Framebuffer->GetColorAttachmentRendererID())),size,{0,1},{1,0});
+  ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_Framebuffer->GetColorAttachmentUITextureID())),size,{0,1},{1,0});
   m_ViewportHovered=visible && ImGui::IsItemHovered();
   m_ViewportBounds[0]={origin.x,origin.y}; m_ViewportBounds[1]={origin.x+size.x,origin.y+size.y};
   // Use ImGui's actual menu rectangle, not an image origin shifted by padding.
@@ -198,7 +198,7 @@ void WebEditorUI::DrawGame() {
     const auto available=ImGui::GetContentRegionAvail();
     m_GameSize={std::max(1.0f,available.x),std::max(1.0f,available.y)};
     const auto origin=ImGui::GetCursorScreenPos(); m_GameOrigin={origin.x,origin.y};
-    if(m_Context) { ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_GameFramebuffer->GetColorAttachmentRendererID())),{m_GameSize.x,m_GameSize.y},{0,1},{1,0}); }
+    if(m_Context) { ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_GameFramebuffer->GetColorAttachmentUITextureID())),{m_GameSize.x,m_GameSize.y},{0,1},{1,0}); }
     if(m_Context && !m_Context->GetPrimaryCameraEntity()) {
       const char* text="No cameras rendering";
       const auto label=ImGui::CalcTextSize(text);

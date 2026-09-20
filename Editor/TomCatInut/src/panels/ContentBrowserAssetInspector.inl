@@ -359,7 +359,7 @@ void ContentBrowserPanel::DrawAssetInspector(const std::filesystem::path& reques
                 BuildShaderArtifact(source, path, m_AssetSettingsDraft, "opengl", artifact, m_InspectorCompileMessage) &&
                 ParseShaderArtifact(artifact, shader, m_InspectorCompileMessage))
             {
-                m_InspectorCompileMessage = "OpenGL compilation succeeded.";
+                m_InspectorCompileMessage = "Shader compilation succeeded for the active renderer.";
                 for (const auto& stage : shader.Stages)
                     m_InspectorShaderResources.emplace_back(stage.Stage == ShaderArtifactStage::Vertex ? "Vertex" : "Fragment", std::string(stage.EntryPoint));
                 for (const auto& resource : shader.Resources)

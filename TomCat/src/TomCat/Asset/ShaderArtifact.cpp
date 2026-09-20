@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <tuple>
+#include <regex>
 
 namespace TomCat {
 
@@ -467,6 +468,53 @@ namespace TomCat {
 			error = "shader backend is unsupported; expected opengl or vulkan";
 			return false;
 		}
+		if (target == ShaderArtifactTarget::Vulkan)
+		{
+			// TomCat shader sources use GL clip space and separate GL namespaces
+			// for UBOs and samplers. Make that source-language ABI explicit here,
+			// identically for runtime compilation and offline cooking.
+			for (auto& stage : sourceStages)
+			{
+				auto& code = stage.Source;
+				code = std::regex_replace(code, std::regex(R"(/\*[\s\S]*?\*/|//[^\n]*)"), " ");
+				code = std::regex_replace(code, std::regex(R"(#version\s+\d+[^\n]*)"), "#version 450 core");
+				const std::regex sampler(R"((layout\s*\(([^)]*)\)\s*)?uniform\s+sampler2D\s+(\w+)\s*(\[\s*\d+\s*\])?\s*;)");
+				std::string remapped; size_t cursor = 0;
+				uint32_t nextSampler = 0;
+				for (std::sregex_iterator it(code.begin(), code.end(), sampler), end; it != end; ++it)
+				{
+					const auto& match = *it;
+					remapped.append(code, cursor, static_cast<size_t>(match.position()) - cursor);
+					std::string layout = match[2].str();
+					if (layout.find("set") == std::string::npos)
+					{
+						if (layout.find("binding") == std::string::npos) layout = "binding = " + std::to_string(nextSampler++);
+						layout += ", set = 1";
+					}
+					remapped += "layout(" + layout + ") uniform sampler2D " + match[3].str() + match[4].str() + ";";
+					cursor = static_cast<size_t>(match.position() + match.length());
+				}
+				remapped.append(code, cursor, std::string::npos); code = std::move(remapped);
+				// Legacy scalar/vector/matrix uniforms become a named std140 block.
+				// Explicit Vulkan blocks retain their declared set/binding.
+				const std::regex plain(R"(uniform\s+((?:float|int|uint|bool|[biu]?vec[234]|mat[234])\s+\w+\s*(?:\[\s*\d+\s*\])?)\s*;)");
+				std::string members;
+				for (std::sregex_iterator it(code.begin(), code.end(), plain), end; it != end; ++it) members += (*it)[1].str() + ";\n";
+				code = std::regex_replace(code, plain, "");
+				if (!members.empty())
+				{
+					const auto line = code.find('\n', code.find("#version"));
+					code.insert(line + 1, "layout(std140, set = 2, binding = "
+						+ std::to_string(stage.Stage == ShaderArtifactStage::Vertex ? 0 : 1)
+						+ ") uniform TomCatNamedUniforms {\n" + members + "};\n");
+				}
+				if (stage.Stage == ShaderArtifactStage::Vertex)
+				{
+					code = std::regex_replace(code, std::regex(R"(void\s+main\s*\()"), "void TomCatSourceMain(");
+					code += "\nvoid main() { TomCatSourceMain(); gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5; }\n";
+				}
+			}
+		}
 		bool optimize = true;
 		bool warningsAsErrors = false;
 		for (const auto& [key, value] : settings)
@@ -494,8 +542,11 @@ namespace TomCat {
 				configured.SetTargetEnvironment(shaderc_target_env_opengl,
 					shaderc_env_version_opengl_4_5);
 			else
+			{
 				configured.SetTargetEnvironment(shaderc_target_env_vulkan,
 					shaderc_env_version_vulkan_1_2);
+				configured.SetGenerateDebugInfo(); // retain member names for named-uniform compatibility
+			}
 			configured.SetAutoBindUniforms(true);
 			configured.SetAutoMapLocations(true);
 			if (optimizeCode)

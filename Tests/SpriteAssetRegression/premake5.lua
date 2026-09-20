@@ -2,6 +2,7 @@ project "SpriteAssetRegression"
 	kind "ConsoleApp"
 	language "C++"
 	cppdialect "C++20"
+	linkoptions (TomCatConsumerLinkOptions)
 	staticruntime "off"
 	debugdir "%{cfg.targetdir}"
 

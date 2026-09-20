@@ -4,6 +4,11 @@
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
+#include "TomCat/Renderer/RendererAPI.h"
+#ifndef TC_PLATFORM_WEB
+#include "platform/Vulkan/VulkanContext.h"
+#include "backends/imgui_impl_vulkan.h"
+#endif
 
 #include "TomCat/Core/Application.h"
 
@@ -38,6 +43,12 @@ namespace TomCat {
 		//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
 		// Multi-viewport stays disabled until engine input is routed for every GLFW platform window.
+#ifndef TC_PLATFORM_WEB
+        // Opt-in renderer/platform integration testing. Engine scene input still
+        // belongs to the main window, so this is not an editor default.
+        if (const char* value = std::getenv("TC_IMGUI_VIEWPORTS"); value && std::string_view(value) == "1")
+            io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+#endif
 		// Disable ImGui's narrow-path automatic persistence. The Editor explicitly
 		// stores its selected global/project layout; the Hub keeps its packaged default
 		// layout read-only and stores non-layout state separately in LocalAppData JSON.
@@ -144,7 +155,12 @@ namespace TomCat {
 		GLFWwindow* window = static_cast<GLFWwindow*>(app.GetWindow().GetNativeWindow());
 
 		// Setup Platform/Renderer bindings
-		ImGui_ImplGlfw_InitForOpenGL(window, true);
+#ifndef TC_PLATFORM_WEB
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan)
+            ImGui_ImplGlfw_InitForVulkan(window, true);
+        else
+#endif
+            ImGui_ImplGlfw_InitForOpenGL(window, true);
 #ifndef __EMSCRIPTEN__
 		// Windows can deliver WM_MOUSEWHEEL before a pending WM_MOUSEMOVE.
 		// Queue the current cursor position before the wheel so ImGui routes the
@@ -162,7 +178,10 @@ namespace TomCat {
 		// Fonts use CSS pixel sizes so native panel metrics stay consistent.
 		ImGui_ImplOpenGL3_Init("#version 300 es");
 #else
-		ImGui_ImplOpenGL3_Init("#version 410");
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan)
+            VulkanContext::Current().InitImGui();
+        else
+            ImGui_ImplOpenGL3_Init("#version 410");
 #endif
 	}
 
@@ -170,7 +189,12 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		ImGui_ImplOpenGL3_Shutdown();
+#ifndef TC_PLATFORM_WEB
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan)
+            VulkanContext::Current().ShutdownImGui();
+        else
+#endif
+            ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
 		ImGui::DestroyContext();
 	}
@@ -190,7 +214,12 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		ImGui_ImplOpenGL3_NewFrame();
+#ifndef TC_PLATFORM_WEB
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan)
+            ImGui_ImplVulkan_NewFrame();
+        else
+#endif
+            ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 		ImGuizmo::BeginFrame();
@@ -207,14 +236,20 @@ namespace TomCat {
 
 		// Rendering
 		ImGui::Render();
-		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#ifndef TC_PLATFORM_WEB
+        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan)
+            VulkanContext::Current().RenderImGui(ImGui::GetDrawData());
+        else
+#endif
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
 		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
 		{
 			GLFWwindow* backup_current_context = glfwGetCurrentContext();
 			ImGui::UpdatePlatformWindows();
 			ImGui::RenderPlatformWindowsDefault();
-			glfwMakeContextCurrent(backup_current_context);
+			if (RendererAPI::GetAPI() == RendererAPI::API::OpenGL)
+				glfwMakeContextCurrent(backup_current_context);
 		}
 	}
 

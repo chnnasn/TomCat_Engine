@@ -203,6 +203,7 @@
     <ClInclude Include="src\TomCat\Project\Project.h" />
     <ClInclude Include="src\TomCat\Project\ProjectManager.h" />
     <ClInclude Include="src\TomCat\Project\ProjectSettings.h" />
+    <ClInclude Include="src\TomCat\RHI\RenderDevice.h" />
     <ClInclude Include="src\TomCat\Renderer\Buffer.h" />
     <ClInclude Include="src\TomCat\Renderer\Camera.h" />
     <ClInclude Include="src\TomCat\Renderer\EditorCamera.h" />
@@ -261,6 +262,11 @@
     <ClInclude Include="src\platform\OpenGL\OpenGLTexture.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLUniformBuffer.h" />
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h" />
+    <ClInclude Include="src\platform\Vulkan\VulkanContext.h" />
+    <ClInclude Include="src\platform\Vulkan\VulkanDevice.h" />
+    <ClInclude Include="src\platform\Vulkan\VulkanRendererAPI.h" />
+    <ClInclude Include="src\platform\Vulkan\VulkanResources.h" />
+    <ClInclude Include="src\platform\Vulkan\VulkanShader.h" />
     <ClInclude Include="src\platform\Web\WebEditorUI.h" />
     <ClInclude Include="src\platform\Web\WebProjectSettingsPanel.h" />
     <ClInclude Include="src\platform\Web\WebWindow.h" />
@@ -730,6 +736,7 @@
     <ClCompile Include="src\TomCat\Project\PlayerSettings.cpp" />
     <ClCompile Include="src\TomCat\Project\Project.cpp" />
     <ClCompile Include="src\TomCat\Project\ProjectManager.cpp" />
+    <ClCompile Include="src\TomCat\RHI\RenderDevice.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Buffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp" />
     <ClCompile Include="src\TomCat\Renderer\Font.cpp" />
@@ -774,6 +781,10 @@
     <ClCompile Include="src\platform\OpenGL\OpenGLTexture.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLUniformBuffer.cpp" />
     <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp" />
+    <ClCompile Include="src\platform\Vulkan\VulkanContext.cpp" />
+    <ClCompile Include="src\platform\Vulkan\VulkanDevice.cpp" />
+    <ClCompile Include="src\platform\Vulkan\VulkanResources.cpp" />
+    <ClCompile Include="src\platform\Vulkan\VulkanShader.cpp" />
     <ClCompile Include="src\platform\Web\WebEditor.cpp" />
     <ClCompile Include="src\platform\Web\WebEditorUI.cpp" />
     <ClCompile Include="src\platform\Web\WebFramebuffer.cpp" />

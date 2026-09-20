@@ -1,4 +1,8 @@
 #pragma once
+#include "TomCat/Core/Base.h"
+#include <cstdint>
+#include <string>
+#include <vector>
 
 namespace TomCat {
 
