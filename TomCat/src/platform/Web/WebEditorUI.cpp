@@ -167,7 +167,7 @@ void WebEditorUI::DrawViewport() {
     const int x=int((mouse.x-origin.x)/size.x*spec.Width);
     const int y=int((1-(mouse.y-origin.y)/size.y)*spec.Height);
     const int pixel=m_Framebuffer->ReadPixel(1,x,y);
-    Entity entity = pixel < 0 ? Entity{} : Entity(entt::entity(pixel),m_Context.get());
+    Entity entity = pixel < 0 ? Entity{} : m_Context->FindEntityByPickingID(pixel);
     m_Hierarchy.SetSelectedEntity(entity); m_Session.SelectFromUI(entity ? uint64_t(entity.GetUUID()) : 0);
   }
   ImGui::End(); ImGui::PopStyleVar();

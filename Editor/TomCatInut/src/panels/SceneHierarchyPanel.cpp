@@ -1342,11 +1342,11 @@ namespace TomCat {
 		{
 			if (candidate == 0)
 				return false;
-			const auto view = m_Context->m_Registry.view<CSharpScripts>();
-			for (const entt::entity entityHandle : view)
+			const auto view = m_Context->m_Registry.View<CSharpScripts>();
+			for (const ekit::Entity entityHandle : view)
 			{
 				const auto& existingScripts =
-					view.get<CSharpScripts>(entityHandle).Scripts;
+					view.Get<CSharpScripts>(entityHandle).Scripts;
 				if (std::any_of(existingScripts.begin(), existingScripts.end(),
 					[candidate](const CSharpScriptEntry& existing)
 					{

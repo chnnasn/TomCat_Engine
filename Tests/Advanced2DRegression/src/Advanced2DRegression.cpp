@@ -48,6 +48,52 @@ namespace {
 			&& Near(left.w, right.w, epsilon);
 	}
 
+    void TestEkitSceneLifetime()
+    {
+        auto scene = TomCat::CreateRef<TomCat::Scene>();
+        auto first = scene->CreateEntity("First");
+        const int pick = static_cast<int>(first);
+        const auto oldHandle = static_cast<ekit::Entity>(first);
+        auto* tag = &first.GetComponent<TomCat::Tag>();
+        auto* transform = &first.GetComponent<TomCat::Transform>();
+        for (int i = 0; i < 1024; ++i)
+            scene->CreateEntity("Growth");
+        Require(&first.GetComponent<TomCat::Tag>() == tag,
+            "Sparse storage growth invalidated an owning component reference");
+        Require(&first.GetComponent<TomCat::Transform>() == transform,
+            "Sparse storage growth invalidated a transform reference");
+        Require(scene->FindEntityByPickingID(pick) == first,
+            "Picking did not preserve the complete entity handle");
+        scene->DestroyEntity(first);
+        auto replacement = scene->CreateEntity("Replacement");
+        Require(static_cast<ekit::Entity>(replacement).GetIndex() == oldHandle.GetIndex(),
+            "Test did not exercise entity slot reuse");
+        Require(!first && !scene->FindEntityByPickingID(pick),
+            "Destroyed handle or stale picking ID aliased a recycled entity");
+        Require(static_cast<int>(replacement) != pick,
+            "Picking IDs must not be recycled within a scene");
+        Require(!scene->FindEntityByPickingID(-1) && !scene->FindEntityByPickingID(INT_MAX),
+            "Invalid picking ID resolved to an entity");
+
+        TomCat::SceneWorld world;
+        world.RegisterSparseComponent<TomCat::Tag>();
+        world.RegisterSparseComponent<TomCat::Transform>();
+        auto a = world.Create(), b = world.Create();
+        world.Add<TomCat::Tag>(a, "A");
+        world.Add<TomCat::Tag>(b, "B");
+        world.Add<TomCat::Transform>(b);
+        size_t count = 0;
+        const auto& readOnly = world;
+        for (auto entity : readOnly.View<TomCat::Tag, TomCat::Transform>()) {
+            Require(entity == b, "Multi-component range included a nonmatching entity");
+            ++count;
+        }
+        Require(count == 1, "Sparse intersection range skipped a matching entity");
+        TomCat::SceneWorld adopted = std::move(world);
+        Require(adopted.IsAlive(b) && adopted.Get<TomCat::Tag>(b)._Tag == "B",
+            "Adopting a validated world lost components");
+    }
+
     void TestMultiSelectionPropertyTransaction()
     {
         auto scene=TomCat::CreateRef<TomCat::Scene>();
@@ -573,6 +619,7 @@ int main()
 	try
 	{
 		TomCat::Log::Init();
+		TestEkitSceneLifetime();
 		TestMultiSelectionPropertyTransaction();
 		TestTilemapEditingAndTransform();
 		TestDeterministicParticleRuntime();

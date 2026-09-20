@@ -674,6 +674,22 @@ namespace TomCat {
 			}
 			previousFromVersion = migration.FromVersion;
 		}
+		// Providers can be registered after scenes exist. Apply their explicit
+		// storage declaration at every descriptor entry point that creates data.
+		if (descriptor.RegisterStorage)
+		{
+			const auto registerStorage = descriptor.RegisterStorage;
+			descriptor.Add = [registerStorage, add = std::move(descriptor.Add)]
+				(Entity entity, std::string& error) {
+				if (entity) registerStorage(*entity.GetScene());
+				return add(entity, error);
+			};
+			descriptor.Copy = [registerStorage, copy = std::move(descriptor.Copy)]
+				(Entity source, Entity destination, std::string& error) {
+				if (destination) registerStorage(*destination.GetScene());
+				return copy(source, destination, error);
+			};
+		}
 		m_Descriptors.emplace_back(std::move(descriptor));
 		std::sort(m_Descriptors.begin(), m_Descriptors.end(),
 			[](const ComponentDescriptor& left, const ComponentDescriptor& right)

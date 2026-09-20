@@ -7,6 +7,7 @@
 #include "TomCat/Renderer/Texture.h"
 #include "TomCat/Scripting/ScriptField.h"
 
+#include <ekit/component.hpp>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -25,6 +26,7 @@ namespace TomCat {
 
 	struct ID
 	{
+		EKIT_COMPONENT(ID);
 		UUID id;
 
 		ID() = default;
@@ -35,6 +37,7 @@ namespace TomCat {
 
 	struct Tag
 	{
+		EKIT_COMPONENT(Tag);
 		std::string _Tag;
 		// Gameplay activation. The persisted property is still named "Visible" for
 		// Scene 9-11 compatibility, but its runtime meaning has always matched
@@ -51,6 +54,7 @@ namespace TomCat {
 
 	struct Transform
 	{
+		EKIT_COMPONENT(Transform);
 		// World-space transform.
 		glm::vec3 _Translation{ 0.0f, 0.0f, 0.0f };
 		glm::vec3 _Rotation{ 0.0f, 0.0f, 0.0f };
@@ -91,6 +95,7 @@ namespace TomCat {
 
 	struct SpriteRenderer
 	{
+		EKIT_COMPONENT(SpriteRenderer);
 		bool Enabled = true;
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
 		AssetHandle SpriteHandle = AssetHandle(0);
@@ -119,11 +124,13 @@ namespace TomCat {
 	// without disabling scripts, rendering in Game view, audio, or physics.
 	struct EditorVisibility
 	{
+		EKIT_COMPONENT(EditorVisibility);
 		bool Hidden = true;
 	};
 
 	struct SpriteAnimationFrame
 	{
+		EKIT_COMPONENT(SpriteAnimationFrame);
 		// Stable source/sub-asset identity. Paths never enter animation data.
 		AssetHandle SpriteHandle = AssetHandle(0);
 		float DurationSeconds = 1.0f / 12.0f;
@@ -131,6 +138,7 @@ namespace TomCat {
 
 	struct SpriteAnimationClip
 	{
+		EKIT_COMPONENT(SpriteAnimationClip);
 		std::string Name = "Default";
 		bool Loop = true;
 		std::vector<SpriteAnimationFrame> Frames;
@@ -146,6 +154,7 @@ namespace TomCat {
 
 	struct AnimatorParameter
 	{
+		EKIT_COMPONENT(AnimatorParameter);
 		std::string Name;
 		AnimatorParameterType Type = AnimatorParameterType::Bool;
 		bool BoolValue = false;
@@ -165,6 +174,7 @@ namespace TomCat {
 
 	struct AnimatorCondition
 	{
+		EKIT_COMPONENT(AnimatorCondition);
 		std::string Parameter;
 		AnimatorConditionMode Mode = AnimatorConditionMode::If;
 		float Threshold = 0.0f;
@@ -172,6 +182,7 @@ namespace TomCat {
 
 	struct AnimatorState
 	{
+		EKIT_COMPONENT(AnimatorState);
 		std::string Name;
 		std::string Clip;
 		float Speed = 1.0f;
@@ -179,6 +190,7 @@ namespace TomCat {
 
 	struct AnimatorTransition
 	{
+		EKIT_COMPONENT(AnimatorTransition);
 		// AnyState ignores FromState. Otherwise FromState must name one state.
 		std::string FromState;
 		std::string ToState;
@@ -190,6 +202,7 @@ namespace TomCat {
 
 	struct SpriteAnimator
 	{
+		EKIT_COMPONENT(SpriteAnimator);
 		static constexpr uint32_t InvalidClipIndex = 0xffffffffu;
 
 		bool Enabled = true;
@@ -236,6 +249,7 @@ namespace TomCat {
 	// the project's Physics2DSettings decides which entity layers may interact.
 	struct EntityMetadata
 	{
+		EKIT_COMPONENT(EntityMetadata);
 		std::string GameplayTag = "Untagged";
 		uint8_t Layer = 0;
 		EntityIconMode HierarchyIcon = EntityIconMode::Entity;
@@ -246,6 +260,7 @@ namespace TomCat {
 
 	struct LineRenderer
 	{
+		EKIT_COMPONENT(LineRenderer);
 		bool Enabled = true;
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
 		glm::vec3 Start{ -0.5f, 0.0f, 0.0f };
@@ -265,6 +280,7 @@ namespace TomCat {
 	// Tilemap2D authoring helpers.
 	struct TilemapCell
 	{
+		EKIT_COMPONENT(TilemapCell);
 		glm::ivec2 Coordinate{ 0, 0 };
 		AssetHandle SpriteHandle = AssetHandle(0);
 		glm::vec4 Tint{ 1.0f };
@@ -296,6 +312,7 @@ namespace TomCat {
 	// scenes continue to load and render when no Grid2D is present.
 	struct Grid2D
 	{
+		EKIT_COMPONENT(Grid2D);
 		glm::vec2 CellSize{ 1.0f, 1.0f };
 		glm::vec2 CellGap{ 0.0f, 0.0f };
 		GridCellLayout2D Layout = GridCellLayout2D::Rectangle;
@@ -326,6 +343,7 @@ namespace TomCat {
 	// legacy fields on Tilemap2D remain the fallback when this component is absent.
 	struct TilemapRenderer2D
 	{
+		EKIT_COMPONENT(TilemapRenderer2D);
 		bool Enabled = true;
 		TilemapSortOrder2D SortOrder = TilemapSortOrder2D::BottomLeft;
 		TilemapRendererMode2D Mode = TilemapRendererMode2D::Chunk;
@@ -337,6 +355,7 @@ namespace TomCat {
 
 	struct Tilemap2D
 	{
+		EKIT_COMPONENT(Tilemap2D);
 		bool Enabled = true;
 		glm::vec2 CellSize{ 1.0f, 1.0f };
 		glm::vec2 CellGap{ 0.0f, 0.0f };
@@ -347,6 +366,7 @@ namespace TomCat {
 
 	struct Particle2D
 	{
+		EKIT_COMPONENT(Particle2D);
 		glm::vec2 Position{ 0.0f };
 		glm::vec2 Velocity{ 0.0f };
 		float Age = 0.0f;
@@ -359,6 +379,7 @@ namespace TomCat {
 	// from Scene/Prefab persistence by the component descriptor.
 	struct ParticleSystem2D
 	{
+		EKIT_COMPONENT(ParticleSystem2D);
 		bool Enabled = true;
 		bool PlayOnStart = true;
 		bool Loop = true;
@@ -396,6 +417,7 @@ namespace TomCat {
 
 	struct Light2D
 	{
+		EKIT_COMPONENT(Light2D);
 		bool Enabled = true;
 		Light2DType Type = Light2DType::Point;
 		glm::vec4 Color{ 1.0f };
@@ -406,6 +428,7 @@ namespace TomCat {
 
 	struct C_Camera
 	{
+		EKIT_COMPONENT(C_Camera);
 		SceneCamera _Camera;
 		bool Enabled = true;
 		bool Primary = true; // TODO: think about moving to Scene
@@ -420,6 +443,7 @@ namespace TomCat {
 	// ScriptEngine and must never enter the ECS registry.
 	struct CSharpScriptEntry
 	{
+		EKIT_COMPONENT(CSharpScriptEntry);
 		// UUID's default constructor produces a nonzero stable attachment identity.
 		// Scene::Copy preserves it; DuplicateEntity regenerates it for the copy.
 		UUID AttachmentID;
@@ -431,6 +455,7 @@ namespace TomCat {
 
 	struct CSharpScripts
 	{
+		EKIT_COMPONENT(CSharpScripts);
 		std::vector<CSharpScriptEntry> Scripts;
 	};
 
@@ -439,6 +464,7 @@ namespace TomCat {
 	// persistence paths have an executable vertical-slice fixture.
 	struct HealthComponent
 	{
+		EKIT_COMPONENT(HealthComponent);
 		int32_t Maximum = 100;
 		int32_t Current = 100;
 		bool Invulnerable = false;
@@ -449,6 +475,7 @@ namespace TomCat {
 	// deserializing scene/prefab authoring data.
 	struct AudioSource
 	{
+		EKIT_COMPONENT(AudioSource);
 		bool Enabled = true;
 		AssetHandle Clip = AssetHandle(0);
 		bool PlayOnStart = true;
@@ -473,6 +500,7 @@ namespace TomCat {
 
 	struct AudioListener
 	{
+		EKIT_COMPONENT(AudioListener);
 		bool Enabled = true;
 		bool Primary = true;
 	};
@@ -488,6 +516,7 @@ namespace TomCat {
 
 	struct TextRenderer
 	{
+		EKIT_COMPONENT(TextRenderer);
 		bool Enabled = true;
 		AssetHandle Font = AssetHandle(BuiltInLegacyRuntimeFontHandleValue);
 		AssetHandle FallbackFont = AssetHandle(0);
@@ -508,6 +537,7 @@ namespace TomCat {
 
 	struct Canvas
 	{
+		EKIT_COMPONENT(Canvas);
 		bool Enabled = true;
 		CanvasScaleMode ScaleMode = CanvasScaleMode::ScaleWithScreenSize;
 		glm::vec2 ReferenceResolution{ 1920.0f, 1080.0f };
@@ -519,6 +549,7 @@ namespace TomCat {
 
 	struct RectTransform
 	{
+		EKIT_COMPONENT(RectTransform);
 		glm::vec2 AnchorMin{ 0.5f, 0.5f };
 		glm::vec2 AnchorMax{ 0.5f, 0.5f };
 		glm::vec2 Pivot{ 0.5f, 0.5f };
@@ -536,6 +567,7 @@ namespace TomCat {
 
 	struct UIImage
 	{
+		EKIT_COMPONENT(UIImage);
 		bool Enabled = true;
 		AssetHandle Image = AssetHandle(0);
 		glm::vec4 Color{ 1.0f };
@@ -545,6 +577,7 @@ namespace TomCat {
 
 	struct UIText
 	{
+		EKIT_COMPONENT(UIText);
 		bool Enabled = true;
 		AssetHandle Font = AssetHandle(BuiltInLegacyRuntimeFontHandleValue);
 		AssetHandle FallbackFont = AssetHandle(0);
@@ -564,6 +597,7 @@ namespace TomCat {
 	// An all-zero/empty target is retained as an unassigned UnityEvent-style slot.
 	struct UIButtonOnClickListener
 	{
+		EKIT_COMPONENT(UIButtonOnClickListener);
 		bool Enabled = true;
 		UUID TargetEntity{ 0 };
 		UUID TargetAttachmentID{ 0 };
@@ -573,6 +607,7 @@ namespace TomCat {
 
 	struct UIButton
 	{
+		EKIT_COMPONENT(UIButton);
 		bool Enabled = true;
 		bool Interactable = true;
 		glm::vec4 NormalColor{ 1.0f };
@@ -592,6 +627,7 @@ namespace TomCat {
 
 	struct UIEventSystem
 	{
+		EKIT_COMPONENT(UIEventSystem);
 		bool Enabled = true;
 		bool ConsumeGameplayInput = true;
 		bool WrapNavigation = true;
@@ -599,6 +635,7 @@ namespace TomCat {
 
 	struct UISlider
 	{
+		EKIT_COMPONENT(UISlider);
 		bool Enabled = true;
 		bool Interactable = true;
 		float Minimum = 0.0f;
@@ -618,6 +655,7 @@ namespace TomCat {
 	// UILayoutGroup for lists; ContentSize is authored in Canvas reference pixels.
 	struct UIScrollView
 	{
+		EKIT_COMPONENT(UIScrollView);
 		bool Enabled = true;
 		bool Horizontal = false;
 		bool Vertical = true;
@@ -628,6 +666,7 @@ namespace TomCat {
 
 	struct UIInputField
 	{
+		EKIT_COMPONENT(UIInputField);
 		bool Enabled = true;
 		bool Interactable = true;
 		std::string Text;
@@ -647,6 +686,7 @@ namespace TomCat {
 	// tints, allowing a theme change without rewriting component authoring data.
 	struct UITheme
 	{
+		EKIT_COMPONENT(UITheme);
 		bool Enabled = true;
 		glm::vec4 TextColor{ 1.0f };
 		glm::vec4 ImageColor{ 1.0f };
@@ -657,6 +697,7 @@ namespace TomCat {
 
 	struct UILocalization
 	{
+		EKIT_COMPONENT(UILocalization);
 		bool Enabled = true;
 		std::string Locale = "en";
 		std::string FallbackLocale = "en";
@@ -668,6 +709,7 @@ namespace TomCat {
 
 	struct UILocalizedText
 	{
+		EKIT_COMPONENT(UILocalizedText);
 		bool Enabled = true;
 		std::string Key;
 	};
@@ -680,6 +722,7 @@ namespace TomCat {
 
 	struct UILayoutGroup
 	{
+		EKIT_COMPONENT(UILayoutGroup);
 		bool Enabled = true;
 		UILayoutDirection Direction = UILayoutDirection::Vertical;
 		float Spacing = 8.0f;
@@ -693,6 +736,7 @@ namespace TomCat {
 	// Physics
 	struct Rigidbody2D
 	{
+		EKIT_COMPONENT(Rigidbody2D);
 		bool Enabled = true;
 		enum class BodyType { Static = 0, Dynamic, Kinematic };
 		BodyType Type = BodyType::Static;
@@ -707,6 +751,7 @@ namespace TomCat {
 
 	struct BoxCollider2D
 	{
+		EKIT_COMPONENT(BoxCollider2D);
 		bool Enabled = true;
 		bool IsTrigger = false;
 		// Box2D category/mask bits. CollisionLayer must contain at least one bit.
@@ -730,6 +775,7 @@ namespace TomCat {
 
 	struct CircleCollider2D
 	{
+		EKIT_COMPONENT(CircleCollider2D);
 		bool Enabled = true;
 		bool IsTrigger = false;
 		// Box2D category/mask bits. CollisionLayer must contain at least one bit.
@@ -755,6 +801,7 @@ namespace TomCat {
 
 	struct DistanceJoint2D
 	{
+		EKIT_COMPONENT(DistanceJoint2D);
 		bool Enabled = true;
 		UUID ConnectedEntity{ 0 };
 		// Local anchors, in each body's unscaled local coordinate system.

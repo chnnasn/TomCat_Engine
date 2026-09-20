@@ -453,7 +453,7 @@ namespace TomCat {
 								DrawClippedUIQuad(geometry.Rect,
 									elementTransform->second, clipRegions->second,
 									texture, geometry.UVMin, geometry.UVMax, color,
-									static_cast<int>(static_cast<entt::entity>(entity)));
+									static_cast<int>(entity));
 						}
 					}
 				}
@@ -469,9 +469,9 @@ namespace TomCat {
 					if (const auto* theme = FindScope<UITheme>(scene, entity)) accent = theme->AccentColor;
 					if (!slider.Interactable) accent.a *= 0.5f;
 					DrawClippedUIQuad(rectangle->second, elementTransform->second, clipRegions->second,
-						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, slider.TrackColor, static_cast<int>(static_cast<entt::entity>(entity)));
+						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, slider.TrackColor, static_cast<int>(entity));
 					DrawClippedUIQuad(fill, elementTransform->second, clipRegions->second,
-						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, accent, static_cast<int>(static_cast<entt::entity>(entity)));
+						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, accent, static_cast<int>(entity));
 				}
 				if (entity.HasComponent<UIText>() || entity.HasComponent<UIInputField>())
 				{
@@ -532,7 +532,7 @@ namespace TomCat {
 									const UIRect selection{ rectangle->second.X + std::min(caretX, anchorX) - horizontalOffset,
 										bottom, std::abs(caretX - anchorX), caretLayout.Height };
 									DrawClippedUIQuad(selection, elementTransform->second, inputClipRegions,
-										{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, selectionColor, static_cast<int>(static_cast<entt::entity>(entity)));
+										{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, selectionColor, static_cast<int>(entity));
 								}
 								caretRectangle = UIRect{ rectangle->second.X + caretX - horizontalOffset,
 									bottom, std::max(1.0f, scale), caretLayout.Height };
@@ -543,10 +543,10 @@ namespace TomCat {
 					DrawScreenText(text, rectangle->second,
 						clipRegions->second, layout.Scales.at(id),
 						elementTransform->second,
-						static_cast<int>(static_cast<entt::entity>(entity)), horizontalOffset);
+						static_cast<int>(entity), horizontalOffset);
 					if (caretRectangle)
 						DrawClippedUIQuad(*caretRectangle, elementTransform->second, inputClipRegions,
-							{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, text.Color, static_cast<int>(static_cast<entt::entity>(entity)));
+							{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, text.Color, static_cast<int>(entity));
 				}
 			}
 			Renderer2D::EndScene();
@@ -556,7 +556,7 @@ namespace TomCat {
 		struct LayoutBuilder
 		{
 			Scene& SceneValue;
-			entt::registry& Registry;
+			SceneWorld& Registry;
 			RuntimeUILayoutSnapshot& Snapshot;
 			RuntimeUIVisibilityMode Visibility;
 			bool WriteRuntimeRectangles = true;
@@ -795,7 +795,7 @@ namespace TomCat {
 
 		struct ExtendedInteraction { bool Handled = false; bool OwnsKeyboard = false; };
 
-		ExtendedInteraction UpdateExtendedControls(Scene& scene, entt::registry& registry,
+		ExtendedInteraction UpdateExtendedControls(Scene& scene, SceneWorld& registry,
 			const RuntimeUILayoutSnapshot& layout, RuntimeUIInputFrame& input,
 			bool enabled, bool wrapNavigation)
 		{
@@ -806,13 +806,13 @@ namespace TomCat {
 				Entity entity = scene.FindEntityByUUID(id);
 				if (entity && CanFocus(entity)) focusable.push_back(entity);
 			}
-			for (auto value : registry.view<UIInputField>())
+			for (auto value : registry.View<UIInputField>())
 			{
 				Entity entity(value, &scene);
 				if (!enabled || !layout.Rectangles.contains(entity.GetUUID()) || !CanFocus(entity))
 					entity.GetComponent<UIInputField>().RuntimeFocused = false;
 			}
-			for (auto value : registry.view<UISlider>())
+			for (auto value : registry.View<UISlider>())
 			{
 				Entity entity(value, &scene);
 				auto& slider = entity.GetComponent<UISlider>();
@@ -915,16 +915,16 @@ namespace TomCat {
 			return result;
 		}
 
-		bool WouldCaptureGameplayInput(Scene& scene, entt::registry& registry,
+		bool WouldCaptureGameplayInput(Scene& scene, SceneWorld& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 			const RuntimeUIInputFrame& input)
 		{
 			UIEventSystem* eventSystem = nullptr;
 			uint64_t eventSystemID = (std::numeric_limits<uint64_t>::max)();
-			for (const entt::entity value : registry.view<UIEventSystem, ID>())
+			for (const ekit::Entity value : registry.View<UIEventSystem, ID>())
 			{
 				Entity entity(value, &scene);
-				auto& candidate = registry.get<UIEventSystem>(value);
+				auto& candidate = registry.Get<UIEventSystem>(value);
 				const uint64_t id = static_cast<uint64_t>(entity.GetUUID());
 				if (candidate.Enabled && scene.IsActiveInHierarchy(entity)
 					&& id < eventSystemID)
@@ -1158,7 +1158,7 @@ namespace TomCat {
 	}
 
 	RuntimeUILayoutSnapshot RuntimeUISystem::BuildLayout(Scene& scene,
-		entt::registry& registry, uint32_t viewportWidth, uint32_t viewportHeight,
+		SceneWorld& registry, uint32_t viewportWidth, uint32_t viewportHeight,
 		float dpi, RuntimeUIVisibilityMode visibility)
 	{
 		RuntimeUILayoutSnapshot snapshot;
@@ -1169,10 +1169,10 @@ namespace TomCat {
 			return snapshot;
 		struct CanvasItem { Entity Value; int32_t Order = 0; uint64_t ID = 0; };
 		std::vector<CanvasItem> canvases;
-		for (const entt::entity value : registry.view<Canvas, ID>())
+		for (const ekit::Entity value : registry.View<Canvas, ID>())
 		{
 			Entity entity(value, &scene);
-			const Canvas& canvas = registry.get<Canvas>(value);
+			const Canvas& canvas = registry.Get<Canvas>(value);
 			if (canvas.Enabled && IsVisible(scene, entity, visibility))
 				canvases.push_back({ entity, canvas.SortingOrder,
 					static_cast<uint64_t>(entity.GetUUID()) });
@@ -1225,16 +1225,16 @@ namespace TomCat {
 	}
 
 	RuntimeUILayoutSnapshot RuntimeUISystem::BuildEditorLayout(Scene& scene,
-		entt::registry& registry, RuntimeUIVisibilityMode visibility)
+		SceneWorld& registry, RuntimeUIVisibilityMode visibility)
 	{
 		RuntimeUILayoutSnapshot snapshot;
 		snapshot.DPI = 96.0f;
 		struct CanvasItem { Entity Value; int32_t Order = 0; uint64_t ID = 0; };
 		std::vector<CanvasItem> canvases;
-		for (const entt::entity value : registry.view<Canvas, ID>())
+		for (const ekit::Entity value : registry.View<Canvas, ID>())
 		{
 			Entity entity(value, &scene);
-			const Canvas& canvas = registry.get<Canvas>(value);
+			const Canvas& canvas = registry.Get<Canvas>(value);
 			if (canvas.Enabled && IsVisible(scene, entity, visibility))
 				canvases.push_back({ entity, canvas.SortingOrder,
 					static_cast<uint64_t>(entity.GetUUID()) });
@@ -1328,35 +1328,35 @@ namespace TomCat {
 			output.UVMin, output.UVMax);
 	}
 
-	void RuntimeUISystem::Reset(entt::registry& registry)
+	void RuntimeUISystem::Reset(SceneWorld& registry)
 	{
-		for (const auto entity : registry.view<UISlider>())
+		for (const auto entity : registry.View<UISlider>())
 		{
-			auto& slider = registry.get<UISlider>(entity);
+			auto& slider = registry.Get<UISlider>(entity);
 			slider.RuntimeDragging = slider.RuntimeFocused = false;
 			slider.RuntimeChangeSerial = 0;
 		}
-		for (const auto entity : registry.view<UIInputField>())
+		for (const auto entity : registry.View<UIInputField>())
 		{
-			auto& field = registry.get<UIInputField>(entity);
+			auto& field = registry.Get<UIInputField>(entity);
 			field.RuntimeFocused = false;
 			field.RuntimeCaret = field.RuntimeSelectionAnchor = 0;
 			field.RuntimeChangeSerial = 0;
 			field.RuntimeLastInputFrame = 0;
 		}
 
-		for (const entt::entity entity : registry.view<UIButton>())
+		for (const ekit::Entity entity : registry.View<UIButton>())
 		{
-			auto& button = registry.get<UIButton>(entity);
+			auto& button = registry.Get<UIButton>(entity);
 			button.RuntimeHovered = false;
 			button.RuntimePressed = false;
 			button.RuntimeFocused = false;
 			button.RuntimeClickedThisFrame = false;
 			button.RuntimeClickSerial = 0;
 		}
-		for (const entt::entity entity : registry.view<RectTransform>())
+		for (const ekit::Entity entity : registry.View<RectTransform>())
 		{
-			auto& rectangle = registry.get<RectTransform>(entity);
+			auto& rectangle = registry.Get<RectTransform>(entity);
 			rectangle.RuntimeRect = glm::vec4(0.0f);
 			rectangle.RuntimeClipRect = glm::vec4(0.0f);
 		}
@@ -1466,7 +1466,7 @@ namespace TomCat {
 		s_GameplayInputCaptured.store(captured, std::memory_order_release);
 	}
 
-	void RuntimeUISystem::Update(Scene& scene, entt::registry& registry,
+	void RuntimeUISystem::Update(Scene& scene, SceneWorld& registry,
 		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 		glm::vec2 viewportOrigin, glm::vec2 screenToFramebufferScale)
 	{
@@ -1544,7 +1544,7 @@ namespace TomCat {
 		UpdateWithInput(scene, registry, viewportWidth, viewportHeight, dpi, input);
 	}
 
-	void RuntimeUISystem::UpdateWithInput(Scene& scene, entt::registry& registry,
+	void RuntimeUISystem::UpdateWithInput(Scene& scene, SceneWorld& registry,
 		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 		const RuntimeUIInputFrame& sourceInput)
 	{
@@ -1557,10 +1557,10 @@ namespace TomCat {
 			viewportWidth, viewportHeight, dpi);
 		UIEventSystem* eventSystem = nullptr;
 		uint64_t eventSystemID = (std::numeric_limits<uint64_t>::max)();
-		for (const entt::entity value : registry.view<UIEventSystem, ID>())
+		for (const ekit::Entity value : registry.View<UIEventSystem, ID>())
 		{
 			Entity entity(value, &scene);
-			auto& candidate = registry.get<UIEventSystem>(value);
+			auto& candidate = registry.Get<UIEventSystem>(value);
 			const uint64_t id = static_cast<uint64_t>(entity.GetUUID());
 			if (candidate.Enabled && scene.IsActiveInHierarchy(entity)
 				&& id < eventSystemID)
@@ -1569,9 +1569,9 @@ namespace TomCat {
 				eventSystemID = id;
 			}
 		}
-		for (const entt::entity value : registry.view<UIButton>())
+		for (const ekit::Entity value : registry.View<UIButton>())
 		{
-			auto& button = registry.get<UIButton>(value);
+			auto& button = registry.Get<UIButton>(value);
 			button.RuntimeHovered = false;
 			button.RuntimeClickedThisFrame = false;
 		}
@@ -1580,9 +1580,9 @@ namespace TomCat {
 			eventSystem && eventSystem->WrapNavigation);
 		if (!eventSystem)
 		{
-			for (const entt::entity value : registry.view<UIButton>())
+			for (const ekit::Entity value : registry.View<UIButton>())
 			{
-				auto& button = registry.get<UIButton>(value);
+				auto& button = registry.Get<UIButton>(value);
 				button.RuntimePressed = false;
 				button.RuntimeFocused = false;
 			}
@@ -1593,8 +1593,8 @@ namespace TomCat {
 		}
 		if (!input.WindowFocused)
 		{
-			for (const entt::entity value : registry.view<UIButton>())
-				registry.get<UIButton>(value).RuntimePressed = false;
+			for (const ekit::Entity value : registry.View<UIButton>())
+				registry.Get<UIButton>(value).RuntimePressed = false;
 			PublishDisplayGameplayInputCapture(scene, false);
 			ClearPointerCapture();
 			ClearControlOwnership();
@@ -1615,16 +1615,16 @@ namespace TomCat {
 				continue;
 			buttons.push_back({ entity, layout.Rectangles.at(id) });
 		}
-		for (const entt::entity value : registry.view<UIButton>())
+		for (const ekit::Entity value : registry.View<UIButton>())
 		{
 			const auto found = std::find_if(buttons.begin(), buttons.end(),
 				[value](const Candidate& item)
 				{
-					return static_cast<entt::entity>(item.Value) == value;
+					return static_cast<ekit::Entity>(item.Value) == value;
 				});
 			if (found == buttons.end())
 			{
-				auto& button = registry.get<UIButton>(value);
+				auto& button = registry.Get<UIButton>(value);
 				button.RuntimePressed = false;
 				button.RuntimeFocused = false;
 			}
@@ -1882,13 +1882,13 @@ namespace TomCat {
 			dpi, input);
 	}
 
-	void RuntimeUISystem::RenderWorldText(Scene& scene, entt::registry& registry,
+	void RuntimeUISystem::RenderWorldText(Scene& scene, SceneWorld& registry,
 		RuntimeUIVisibilityMode visibility)
 	{
-		for (const entt::entity value : registry.view<Transform, TextRenderer>())
+		for (const ekit::Entity value : registry.View<Transform, TextRenderer>())
 		{
 			Entity entity(value, &scene);
-			auto& text = registry.get<TextRenderer>(value);
+			auto& text = registry.Get<TextRenderer>(value);
 			if (!text.Enabled || text.Text.empty()
 				|| !IsVisible(scene, entity, visibility)
 				|| !Finite(text.FontSize) || text.FontSize <= 0.0f)
@@ -1910,7 +1910,7 @@ namespace TomCat {
 						glyph.Rect.Width, glyph.Rect.Height, 1.0f });
 				Renderer2D::DrawTexturedQuadRegion(world * local,
 					font->GetTexture(), glyph.UVMin, glyph.UVMax, text.Color,
-					static_cast<int>(value));
+					registry.GetPickingID(value));
 			}
 		}
 	}
@@ -1921,7 +1921,7 @@ namespace TomCat {
 		RenderWorldText(scene, scene.m_Registry, visibility);
 	}
 
-	void RuntimeUISystem::RenderScreen(Scene& scene, entt::registry& registry,
+	void RuntimeUISystem::RenderScreen(Scene& scene, SceneWorld& registry,
 		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 		RuntimeUIVisibilityMode visibility)
 	{
@@ -1942,7 +1942,7 @@ namespace TomCat {
 	}
 
 	void RuntimeUISystem::RenderEditorCanvas(Scene& scene,
-		entt::registry& registry, const glm::mat4& editorViewProjection,
+		SceneWorld& registry, const glm::mat4& editorViewProjection,
 		RuntimeUIVisibilityMode visibility)
 	{
 		const RuntimeUILayoutSnapshot layout = BuildEditorLayout(scene, registry,
@@ -2027,7 +2027,7 @@ namespace TomCat {
 			? entity.GetComponent<UIButton>().RuntimeClickSerial : 0;
 	}
 
-	bool RuntimeUISystem::FocusButton(Scene& scene, entt::registry& registry,
+	bool RuntimeUISystem::FocusButton(Scene& scene, SceneWorld& registry,
 		Entity entity)
 	{
 		if (!entity || !entity.HasComponent<UIButton>())
@@ -2035,8 +2035,8 @@ namespace TomCat {
 		auto& target = entity.GetComponent<UIButton>();
 		if (!target.Enabled || !target.Interactable || !scene.IsActiveInHierarchy(entity))
 			return false;
-		for (const entt::entity value : registry.view<UIButton>())
-			registry.get<UIButton>(value).RuntimeFocused = value == static_cast<entt::entity>(entity);
+		for (const ekit::Entity value : registry.View<UIButton>())
+			registry.Get<UIButton>(value).RuntimeFocused = value == static_cast<ekit::Entity>(entity);
 		return true;
 	}
 

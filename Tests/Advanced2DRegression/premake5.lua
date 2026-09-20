@@ -15,7 +15,7 @@ project "Advanced2DRegression"
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}",
+		"%{IncludeDir.ekit}",
 		"%{IncludeDir.yaml_cpp}"
 	}
 

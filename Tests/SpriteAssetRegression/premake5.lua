@@ -21,7 +21,7 @@ project "SpriteAssetRegression"
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}",
+		"%{IncludeDir.ekit}",
 		"%{IncludeDir.stb_image}",
 		"%{IncludeDir.yaml_cpp}"
 	}

@@ -43,7 +43,7 @@ add_library(tc_player_core STATIC ${TC_SOURCES} ${gl_sources}
   "${TC_ROOT}/Player/TomCatPlayer/src/PlayerCommandLine.cpp")
 target_include_directories(tc_player_core PUBLIC
   "${TC_SRC}" "${TC_ROOT}/Player/TomCatPlayer/src"
-  "${TC_VENDOR}/spdlog/include" "${TC_VENDOR}/glm" "${TC_VENDOR}/entt/include"
+  "${TC_VENDOR}/spdlog/include" "${TC_VENDOR}/glm" "${TC_VENDOR}/ekit/include"
   "${TC_VENDOR}/stb_image" "${TC_VENDOR}/ImGui" "${TC_VENDOR}/ImGuizmo")
 target_link_libraries(tc_player_core PUBLIC box2d tc_yaml)
 

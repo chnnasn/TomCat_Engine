@@ -9,6 +9,7 @@
 	// can preserve external references to existing entities.
 	struct PrefabLink
 	{
+		EKIT_COMPONENT(PrefabLink);
 		AssetHandle Source{ 0 };
 		std::string State;
 	};

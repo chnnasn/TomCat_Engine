@@ -79,7 +79,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLATFORM_WINDOWS;YAML_CPP_STATIC_DEFINE;TC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\Box2D\include;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\Box2D\include;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\ekit\include;..\..\TomCat\vendor\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <MinimalRebuild>false</MinimalRebuild>
@@ -101,7 +101,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLATFORM_WINDOWS;YAML_CPP_STATIC_DEFINE;TC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\Box2D\include;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\Box2D\include;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\ekit\include;..\..\TomCat\vendor\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -126,7 +126,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>TC_PLATFORM_WINDOWS;YAML_CPP_STATIC_DEFINE;TC_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\Box2D\include;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\entt\include;..\..\TomCat\vendor\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\TomCat\vendor\spdlog\include;..\..\TomCat\src;..\..\TomCat\vendor;..\..\TomCat\vendor\Box2D\include;..\..\TomCat\vendor\glm;..\..\TomCat\vendor\ekit\include;..\..\TomCat\vendor\yaml-cpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>

@@ -1,5 +1,5 @@
 #pragma once
-#include "entt.hpp"
+#include "TomCat/Scene/SceneWorld.h"
 #include "TomCat/Core/Timestep.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Asset/Asset.h"
@@ -93,6 +93,11 @@ namespace TomCat {
 	class Scene
 	{
 	public:
+		Entity FindEntityByPickingID(int id);
+		template<typename T> void RegisterComponent()
+		{
+			m_Registry.RegisterSparseComponent<T>();
+		}
 		using CollisionListenerHandle = uint64_t;
 		using CollisionEnter2DCallback = std::function<void(const CollisionEnter2D&)>;
 		using CollisionExit2DCallback = std::function<void(const CollisionExit2D&)>;
@@ -262,7 +267,7 @@ namespace TomCat {
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
 	private:
-		entt::registry m_Registry;
+		SceneWorld m_Registry;
 		std::string m_SceneName = "Untitled";
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;
 		glm::vec2 m_RuntimeUIViewportOrigin{ 0.0f };
@@ -314,7 +319,7 @@ namespace TomCat {
 		bool m_FlushingRuntimeEntityCreates = false;
 		uint64_t m_RuntimeEntityBatchFailureSerial = 0;
 		Physics2DSettings m_Physics2DSettings;
-		std::unordered_map<UUID, entt::entity> m_EntityMap;
+		std::unordered_map<UUID, ekit::Entity> m_EntityMap;
 		std::unordered_map<UUID, UUID> m_ParentMap;
 		std::unordered_map<UUID, std::vector<UUID>> m_ChildrenMap;
 		std::vector<UUID> m_EntityOrder;

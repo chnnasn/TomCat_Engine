@@ -38,11 +38,13 @@ namespace ComponentRegistryRegression {
 
 	struct PluginCounter
 	{
+		EKIT_COMPONENT(PluginCounter);
 		int32_t Value = 0;
 	};
 
 	struct PluginEntityLinks
 	{
+		EKIT_COMPONENT(PluginEntityLinks);
 		uint64_t Target = 0;
 		std::vector<uint64_t> RelatedTargets;
 	};
@@ -56,6 +58,9 @@ namespace ComponentRegistryRegression {
 		descriptor.ProviderId = TomCat::UUID(providerId);
 		descriptor.TypeId = TomCat::UUID(typeId);
 		descriptor.StableName = "Regression.PluginEntityLinks";
+		descriptor.RegisterStorage = [](TomCat::Scene& scene) {
+			scene.RegisterComponent<PluginEntityLinks>();
+		};
 		descriptor.DisplayName = "Plugin Entity Links";
 		descriptor.Has = [](TomCat::Entity entity)
 		{
@@ -205,6 +210,9 @@ namespace ComponentRegistryRegression {
 		descriptor.ProviderId = TomCat::UUID(providerId);
 		descriptor.TypeId = TomCat::UUID(typeId);
 		descriptor.StableName = "Regression.PluginCounter";
+		descriptor.RegisterStorage = [](TomCat::Scene& scene) {
+			scene.RegisterComponent<PluginCounter>();
+		};
 		descriptor.DisplayName = "Plugin Counter";
 		descriptor.SchemaVersion = 2;
 		descriptor.Has = [](TomCat::Entity entity)

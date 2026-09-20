@@ -14,7 +14,7 @@ project "TomCatPlayer"
 		"%{wks.location}/../TomCat/src",
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}"
+		"%{IncludeDir.ekit}"
 	}
 
 	libdirs

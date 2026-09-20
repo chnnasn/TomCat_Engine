@@ -461,6 +461,9 @@ namespace TomCat {
 
 	struct ComponentDescriptor
 	{
+		// Plugins declare their ECS storage at descriptor registration time.
+		// Every new scene (including copy/deserialize staging scenes) invokes it.
+		std::function<void(Scene&)> RegisterStorage;
 		using HasFn = std::function<bool(Entity)>;
 		using AddFn = std::function<bool(Entity, std::string&)>;
 		using RemoveFn = std::function<bool(Entity, std::string&)>;
@@ -538,6 +541,7 @@ namespace TomCat {
 
 	struct OpaqueComponents
 	{
+		EKIT_COMPONENT(OpaqueComponents);
 		std::vector<OpaqueComponentRecord> Records;
 	};
 

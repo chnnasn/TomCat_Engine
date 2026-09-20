@@ -5,10 +5,10 @@ and a standalone game runtime.
 
 TomCat brings scene composition, asset management, C# gameplay scripting, and
 Box2D physics into one development environment. Its engine library provides the
-rendering, ECS scene model, and runtime systems; the Editor exposes those systems
+rendering, ekit ECS scene model, and runtime systems; the Editor exposes those systems
 through visual authoring tools, while the Player runs packaged games independently.
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL · ImGui · ekit · Box2D · .NET 10 · Windows x64 · MIT**
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
@@ -27,6 +27,27 @@ See the [documentation index](docs/README.md) for all guides and Chinese edition
 | **Managed** | C# gameplay API, script compilation, and runtime hosting |
 | **Player** | Independent game executable with packaged assets and a private .NET runtime |
 | **Web (experimental)** | Emscripten/WebGL2 Player and shared native ImGui editor panels, with a browser host responsible for persistence |
+
+## ECS backend: ekit
+
+TomCat now uses [ekit](https://github.com/chnnasn/ekit) in place of EnTT. Scene
+components use explicitly registered sparse storage, including components that
+own strings, containers, and resource references. Entity handles retain their
+64-bit index/generation; editor picking uses separate integer IDs to prevent
+stale selections from resolving to recycled entities. Scene UUIDs and existing
+scene/prefab serialization formats are unchanged.
+
+The vendored dependency is pinned to `82d4de67f37d5d146bb7287e07116dc7567af996`.
+The integration fixes were submitted upstream as [ekit PR #2](https://github.com/chnnasn/ekit/pull/2):
+owning sparse components, stable references during storage growth, conflicting
+storage registration checks, and multi-translation-unit header linkage.
+See the [migration and plugin registration guide](docs/EKIT_MIGRATION.md) and
+[dependency provenance](TomCat/vendor/ekit/README.tomcat.md).
+
+Validation on Windows x64 (MSVC Release): all ten native regression executables,
+Editor/Player/Hub/CLI builds, CLI smoke, and release script tests passed. The ekit
+suite passed 4,417 checks. Web code and include paths are migrated, but the
+WebAssembly build was not verified because Emscripten was unavailable.
 
 ## Showcase
 

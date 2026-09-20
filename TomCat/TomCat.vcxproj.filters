@@ -363,6 +363,9 @@
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SceneWorld.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.h">
       <Filter>src\TomCat\Scene\Serialization</Filter>
     </ClInclude>

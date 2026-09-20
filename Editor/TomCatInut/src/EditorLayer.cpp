@@ -2110,7 +2110,7 @@ namespace TomCat {
 			&& mouseY < static_cast<int>(sceneHeight))
 		{
 			int pixelData = m_Framebuffer->ReadPixel(1, mouseX, mouseY);
-			m_HoveredEntity = pixelData == -1 ? Entity() : Entity((entt::entity)pixelData, m_ActiveScene.get());
+			m_HoveredEntity = pixelData == -1 ? Entity() : m_ActiveScene->FindEntityByPickingID(pixelData);
 		}
 		else
 		{
@@ -4327,8 +4327,8 @@ namespace TomCat {
 		const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
 		std::vector<Entity> cameraEntities;
 		Entity selectedCamera;
-		for (const entt::entity value
-			: m_ActiveScene->m_Registry.view<Transform, C_Camera, ID>())
+		for (const ekit::Entity value
+			: m_ActiveScene->m_Registry.View<Transform, C_Camera, ID>())
 		{
 			Entity entity(value, m_ActiveScene.get());
 			if (selected && selected == entity)
@@ -4361,8 +4361,7 @@ namespace TomCat {
 				continue;
 			const SceneCamera& camera = entity.GetComponent<C_Camera>()._Camera;
 			CameraOverlayGeometry geometry;
-			geometry.EntityID = static_cast<int>(
-				static_cast<entt::entity>(entity));
+			geometry.EntityID = entity.GetPickingID();
 			geometry.Selected = isSelected;
 			geometry.Projection = camera.GetProjectionType();
 			geometry.OrthographicSize = camera.GetOrthographicSize();
@@ -4523,7 +4522,7 @@ namespace TomCat {
 		RenderCommand::SetDepthTest(false);
 		Renderer2D::BeginScene(m_EditorCamera);
 		std::vector<Entity> canvasEntities;
-		for (const entt::entity value : m_ActiveScene->m_Registry.view<Canvas, ID>())
+		for (const ekit::Entity value : m_ActiveScene->m_Registry.View<Canvas, ID>())
 		{
 			Entity canvas(value, m_ActiveScene.get());
 			if (!selectedCanvas || selectedCanvas != canvas)
@@ -4535,8 +4534,7 @@ namespace TomCat {
 			canvasEntities.push_back(selectedCanvas);
 		for (Entity canvas : canvasEntities)
 		{
-			const int entityID = static_cast<int>(
-				static_cast<entt::entity>(canvas));
+			const int entityID = canvas.GetPickingID();
 			const bool isSelected = selectedCanvas && selectedCanvas == canvas;
 			if (!canvas.GetComponent<Canvas>().Enabled
 				|| !m_ActiveScene->IsVisibleInEditorHierarchy(canvas))

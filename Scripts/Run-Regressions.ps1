@@ -145,6 +145,7 @@ try {
         & $templateBuilder -Configuration $Configuration -Destination $templateOutput
     }
 
+    Invoke-NativeRegression -Name "Advanced2DRegression"
     Invoke-NativeRegression -Name "PhysicsRegression"
     Invoke-NativeRegression -Name "SpriteAssetRegression"
     Invoke-NativeRegression -Name "ScriptCompilerRegression"
