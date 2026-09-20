@@ -6,6 +6,7 @@
 #include <string>
 #include <filesystem>
 #include <vector>
+#include <array>
 #include <imgui/imgui.h>
 
 
@@ -58,6 +59,7 @@ namespace TomCat {
 		std::vector<Ref<Project>> m_VisibleProjects;
 		std::vector<std::string> m_Editors;
 		Ref<Project> m_SelectedProject;
+		std::array<Ref<Texture2D>, 2> m_TemplateIcons;
 
 		HubSortColumn m_SortColumn = HubSortColumn::Modified;
 		bool m_SortAscending = false;
