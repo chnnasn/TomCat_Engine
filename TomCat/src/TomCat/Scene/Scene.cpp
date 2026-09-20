@@ -1020,81 +1020,70 @@ namespace TomCat {
 
 		void InitializeSpriteAnimations(Scene& scene, SceneWorld& registry)
 		{
-			auto view = registry.View<SpriteAnimator, SpriteRenderer>();
-			for (const ekit::Entity entity : view)
-			{
-				auto [animator, renderer] =
-					view.Get<SpriteAnimator, SpriteRenderer>(entity);
-				HydrateSpriteAnimatorController(animator);
-				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
-					continue;
-				SpriteAnimatorRuntime::Initialize(animator, renderer);
-			}
+			registry.ForEach<SpriteAnimator, SpriteRenderer>(
+				[&](ekit::Entity entity, SpriteAnimator& animator, SpriteRenderer& renderer) {
+					HydrateSpriteAnimatorController(animator);
+					if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+						return;
+					SpriteAnimatorRuntime::Initialize(animator, renderer);
+				});
 		}
 
 		void UpdateSpriteAnimations(Scene& scene, SceneWorld& registry,
 			double deltaSeconds)
 		{
-			auto view = registry.View<SpriteAnimator, SpriteRenderer>();
-			for (const ekit::Entity entity : view)
-			{
-				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
-					continue;
-				auto [animator, renderer] =
-					view.Get<SpriteAnimator, SpriteRenderer>(entity);
-				SpriteAnimatorRuntime::Update(animator, renderer, deltaSeconds);
-			}
+			registry.ForEach<SpriteAnimator, SpriteRenderer>(
+				[&](ekit::Entity entity, SpriteAnimator& animator, SpriteRenderer& renderer) {
+					if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+						return;
+					SpriteAnimatorRuntime::Update(animator, renderer, deltaSeconds);
+				});
 		}
 
 		void ResetSpriteAnimations(SceneWorld& registry)
 		{
-			for (const ekit::Entity entity : registry.View<SpriteAnimator>())
-				SpriteAnimatorRuntime::Reset(registry.Get<SpriteAnimator>(entity));
+			registry.ForEach<SpriteAnimator>([](SpriteAnimator& animator) {
+				SpriteAnimatorRuntime::Reset(animator);
+			});
 		}
 
 		void InitializeParticleSystems(Scene& scene, SceneWorld& registry)
 		{
-			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
-			{
-				auto& system = registry.Get<ParticleSystem2D>(entity);
+			registry.ForEach<ParticleSystem2D>([&](ekit::Entity entity, ParticleSystem2D& system) {
 				ParticleSystem2DRuntime::Reset(system);
 				if (system.PlayOnStart
 					&& scene.IsActiveInHierarchy(Entity(entity, &scene)))
 					ParticleSystem2DRuntime::Play(system);
-			}
+			});
 		}
 
 		void UpdateParticleSystems(Scene& scene, SceneWorld& registry,
 			float deltaSeconds)
 		{
-			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
-			{
+			registry.ForEach<ParticleSystem2D>([&](ekit::Entity entity, ParticleSystem2D& system) {
 				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
-					continue;
-				ParticleSystem2DRuntime::Update(
-					registry.Get<ParticleSystem2D>(entity), deltaSeconds);
-			}
+					return;
+				ParticleSystem2DRuntime::Update(system, deltaSeconds);
+			});
 		}
 
 		void ResetParticleSystems(SceneWorld& registry)
 		{
-			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
-				ParticleSystem2DRuntime::Reset(
-					registry.Get<ParticleSystem2D>(entity));
+			registry.ForEach<ParticleSystem2D>([](ParticleSystem2D& system) {
+				ParticleSystem2DRuntime::Reset(system);
+			});
 		}
 
 		void UpdateParticlePreviews(Scene& scene, SceneWorld& registry,
 			float deltaSeconds)
 		{
 			const float previewDelta = std::clamp(deltaSeconds, 0.0f, 0.1f);
-			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
-			{
-				auto& system = registry.Get<ParticleSystem2D>(entity);
+			registry.ForEach<ParticleSystem2D>([&](ekit::Entity entity, ParticleSystem2D& system) {
 				if (!system.RuntimeInitialized
 					|| !scene.IsVisibleInEditorHierarchy(Entity(entity, &scene)))
-					continue;
+					return;
 				ParticleSystem2DRuntime::Update(system, previewDelta);
-			}
+			});
 		}
 
 	}
