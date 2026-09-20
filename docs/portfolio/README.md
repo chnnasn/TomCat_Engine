@@ -13,15 +13,19 @@
 
 | 文件 | 实际展示 | 时长 / 速度 |
 | --- | --- | --- |
-| [01-hub-templates.gif](2026-09-20/01-hub-templates.gif) | Hub 原有布局、猫耳立方体图标、2D / 3D 场景模板选择 | 约 12 秒，1.5× |
-| [02-asset-inspector.gif](2026-09-20/02-asset-inspector.gif) | 实体组件、Scene 资源摘要、包内图片导入设置与预览、单列缩略图 | 约 17.3 秒，1.5× |
-| [03-console-search.gif](2026-09-20/03-console-search.gif) | 真实编译日志、搜索 TCSP1000、选择消息并查看详情 | 约 13.3 秒，1.5× |
-| [04-profiler.gif](2026-09-20/04-profiler.gif) | 标签右键最大化、录制与停止、选帧、Hierarchy / Timeline、模块菜单 | 约 27.3 秒，采样段 1×，界面操作 1.5× |
-| [05-play-controls.gif](2026-09-20/05-play-controls.gif) | 方块下落、接地停稳、Pause / Step / Stop，恢复编辑状态 | 26 秒，全程 1× |
+| [01-hub-templates.gif](2026-09-20/01-hub-templates.gif) | Hub 原有布局、猫耳立方体图标、2D / 3D 场景模板选择 | 6.00 秒 / 150 帧，1.25× |
+| [02-asset-inspector.gif](2026-09-20/02-asset-inspector.gif) | 实体组件、Scene 资源摘要、包内图片导入设置与预览、单列缩略图 | 8.04 秒 / 201 帧，1.5× |
+| [03-console-search.gif](2026-09-20/03-console-search.gif) | 真实编译日志、搜索 TCSP1000、选择消息并查看详情 | 6.52 秒 / 163 帧，1.5× |
+| [04-profiler.gif](2026-09-20/04-profiler.gif) | 标签右键最大化、录制与停止、选帧、Hierarchy / Timeline、模块菜单 | 9.56 秒 / 239 帧，采样段 1×，界面操作 1.5× |
+| [05-play-controls.gif](2026-09-20/05-play-controls.gif) | 方块下落、接地停稳、Pause / Step / Stop，恢复编辑状态 | 9.04 秒 / 226 帧，全程 1× |
 
 截图：[Hub 模板](2026-09-20/hub-templates.png)、[资源 Inspector](2026-09-20/editor-assets.png)、
 [Profiler 时间线](2026-09-20/profiler-timeline.png)。GIF 与截图尺寸为 **1280×680**，GIF 为 **25 fps**。
 精确片段、速度、截图时间及二进制 Hash 见 [capture.json](2026-09-20/capture.json)。
+
+当前为精简剪辑：删去点击前后的空等，每段约 6–10 秒；物理下落保持原速。
+GIF 使用 128 色调色板、关闭抖色并优化变化区域，保持原有分辨率和帧率。
+Profiler GIF 由约 11.6 MiB 降至 2.1 MiB，减少首次加载等待。
 
 ### 运行程序与原片
 
