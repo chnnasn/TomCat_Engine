@@ -105,6 +105,7 @@ if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo E
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
 if not exist "$(ProjectDir)Packages\fonts\opensans\OpenSans-Regular.ttf" (echo ERROR: Required package asset is missing: fonts\opensans\OpenSans-Regular.ttf &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
+if exist "$(OutDir)Packages\Resources\Icons\TomCat\Asset\assets-root.png" del /Q "$(OutDir)Packages\Resources\Icons\TomCat\Asset\assets-root.png"
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -142,6 +143,7 @@ if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo E
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
 if not exist "$(ProjectDir)Packages\fonts\opensans\OpenSans-Regular.ttf" (echo ERROR: Required package asset is missing: fonts\opensans\OpenSans-Regular.ttf &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
+if exist "$(OutDir)Packages\Resources\Icons\TomCat\Asset\assets-root.png" del /Q "$(OutDir)Packages\Resources\Icons\TomCat\Asset\assets-root.png"
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -179,6 +181,7 @@ if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Circle.tga" (echo E
 if not exist "$(ProjectDir)Packages\Resources\Sprites\TomCat\Square.tga" (echo ERROR: Required package asset is missing: Resources\Sprites\TomCat\Square.tga &amp; exit /b 1)
 if not exist "$(ProjectDir)Packages\fonts\opensans\OpenSans-Regular.ttf" (echo ERROR: Required package asset is missing: fonts\opensans\OpenSans-Regular.ttf &amp; exit /b 1)
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
+if exist "$(OutDir)Packages\Resources\Icons\TomCat\Asset\assets-root.png" del /Q "$(OutDir)Packages\Resources\Icons\TomCat\Asset\assets-root.png"
 copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>

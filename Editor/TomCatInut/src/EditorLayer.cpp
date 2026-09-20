@@ -1514,6 +1514,14 @@ namespace TomCat {
 			return m_ScriptMetadata.Find(handle);
 		});
 		m_ContentBrowserPanel.SetIcons(m_EditorIcons);
+        m_ContentBrowserPanel.SetScriptMetadataProvider([this](AssetHandle handle) { return m_ScriptMetadata.Find(handle); });
+        m_ContentBrowserPanel.SetAssetSelectionCallback([this](const std::filesystem::path& path) {
+            m_SceneHierarchyPanel.SetAssetSelection(path);
+            if (!path.empty()) m_ShowInspectorPanel = true;
+        });
+        m_SceneHierarchyPanel.SetAssetInspectorRenderer([this](const std::filesystem::path& path) {
+            m_ContentBrowserPanel.DrawAssetInspector(path);
+        });
 		m_ContentBrowserPanel.SetActiveScenePath(m_EditorScenePath);
 		Scripting::SetScriptDiagnosticSink([this](const Scripting::ScriptDiagnostic& diagnostic)
 		{
@@ -2583,6 +2591,14 @@ namespace TomCat {
 
 		ImGui::EndChild(); 
 
+		// Process asset selection and retire preview textures before the Inspector draws.
+		if (ShouldRenderDockPanel("Project"))
+		{
+			m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
+			if (m_ContentBrowserPanel.IsFocused())
+				m_EditorPanelCycleIndex = 4;
+		}
+
 		m_SceneHierarchyPanel.SetColliderEditingAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.SetPrefabCreationAllowed(m_SceneState == SceneState::Edit);
 		m_SceneHierarchyPanel.FlushPendingCommands();
@@ -2634,12 +2650,6 @@ namespace TomCat {
 			m_SceneHierarchyPanel.OnTilePaletteImGuiRender(&m_ShowTilePalettePanel);
 			if (m_SceneHierarchyPanel.IsTilePaletteFocused())
 				m_EditorPanelCycleIndex = 9;
-		}
-		if (ShouldRenderDockPanel("Project"))
-		{
-			m_ContentBrowserPanel.OnImGuiRender(&m_ShowProjectPanel);
-			if (m_ContentBrowserPanel.IsFocused())
-				m_EditorPanelCycleIndex = 4;
 		}
 		if (ShouldRenderDockPanel("Console"))
 		{

@@ -4,6 +4,10 @@
 #include "ContentBrowserPanel.h"
 
 #include <imgui/imgui.h>
+#include <yaml-cpp/yaml.h>
+#include "TomCat/Asset/ShaderArtifact.h"
+#include "TomCat/Audio/AudioClip.h"
+#include "TomCat/Renderer/Font.h"
 #include <stb_image/stb_image.h>
 
 #include <algorithm>
@@ -645,6 +649,12 @@ namespace TomCat {
 			? directory : std::filesystem::path{};
 	}
 
+	void ContentBrowserPanel::SelectAssetPath(const std::filesystem::path& path)
+	{
+		m_SelectedPath = path;
+		if (m_AssetSelectionCallback) m_AssetSelectionCallback(path);
+	}
+
 	void ContentBrowserPanel::RevealAsset(const std::filesystem::path& path)
 	{
 		const std::filesystem::path asset = CanonicalPath(path);
@@ -654,7 +664,7 @@ namespace TomCat {
 			|| !std::filesystem::is_regular_file(asset, error) || error)
 			return;
 		m_CurrentDirectory = asset.parent_path();
-		m_SelectedPath = asset;
+		SelectAssetPath(asset);
 		m_PendingRevealPath = asset;
 		m_UserSelectedDirectory = true;
 		for (std::filesystem::path directory = m_CurrentDirectory;
@@ -672,6 +682,8 @@ namespace TomCat {
 	void ContentBrowserPanel::SetProject(Ref<Project> project)
 	{
 		m_Previews.clear();
+        m_InspectedPath.clear(); m_ImportDrafts.clear(); m_InspectorPreview.reset();
+        if (m_AssetSelectionCallback) m_AssetSelectionCallback({});
         m_InspectedAsset=AssetHandle(0); m_AssetSettingsDirty=false; m_AssetSettingsDraft.clear();
 		m_Project = std::move(project);
 		if (m_Project)
@@ -910,7 +922,7 @@ namespace TomCat {
 			if (!std::filesystem::is_directory(managedPath, error))
 				return;
 			m_CurrentDirectory = managedPath;
-			m_SelectedPath = managedPath;
+			SelectAssetPath(managedPath);
 			m_UserSelectedDirectory = true;
 			m_ExpandedNodes.insert(PathToUTF8(managedPath));
 			return;
@@ -1104,7 +1116,7 @@ namespace TomCat {
 			return false;
 		}
 		m_CurrentDirectory = RemapPath(m_CurrentDirectory, oldPath, newPath);
-		m_SelectedPath = RemapPath(m_SelectedPath, oldPath, newPath);
+		SelectAssetPath(RemapPath(m_SelectedPath, oldPath, newPath));
 		m_DeletePath = RemapPath(m_DeletePath, oldPath, newPath);
 		std::unordered_set<std::string> remappedNodes;
 		for (const std::string& node : m_ExpandedNodes)
@@ -1212,7 +1224,7 @@ namespace TomCat {
 			return;
 		}
 		m_CurrentDirectory = parent;
-		m_SelectedPath = newFolder;
+		SelectAssetPath(newFolder);
 		m_UserSelectedDirectory = true;
 		m_ExpandedNodes.insert(PathToUTF8(parent));
 		m_PendingOpenDirectories.insert(PathToUTF8(parent));
@@ -1271,7 +1283,7 @@ namespace TomCat {
 		}
 
 		m_CurrentDirectory = parent;
-		m_SelectedPath = scriptPath;
+		SelectAssetPath(scriptPath);
 		m_UserSelectedDirectory = true;
 		m_ExpandedNodes.insert(PathToUTF8(parent));
 		m_PendingOpenDirectories.insert(PathToUTF8(parent));
@@ -1343,7 +1355,7 @@ namespace TomCat {
 			return;
 		}
 		m_CurrentDirectory = parent;
-		m_SelectedPath = assetPath;
+		SelectAssetPath(assetPath);
 		m_UserSelectedDirectory = true;
 		m_ExpandedNodes.insert(PathToUTF8(parent));
 		m_PendingOpenDirectories.insert(PathToUTF8(parent));
@@ -1660,8 +1672,6 @@ namespace TomCat {
 
 		if (isDirectory)
 		{
-			if (LexicalPath(path) == LexicalPath(GetAssetRoot()))
-				return icon(EditorIcon::AssetsRoot);
 			return icon(isOpen ? EditorIcon::FolderOpen : EditorIcon::FolderClosed);
 		}
 
@@ -2463,7 +2473,7 @@ namespace TomCat {
 		DrawTreeIcon(icon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 		if (ImGui::IsItemClicked())
 		{
-			m_SelectedPath = path;
+			SelectAssetPath(path);
 			m_UserSelectedDirectory = true;
 		}
 		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -2518,7 +2528,7 @@ namespace TomCat {
 		}
 		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
 		{
-			m_SelectedPath = directoryPath;
+			SelectAssetPath(directoryPath);
 			m_UserSelectedDirectory = true;
 			m_CurrentDirectory = directoryPath;
 		}
@@ -2604,7 +2614,7 @@ namespace TomCat {
 			ImGui::PopStyleColor();
 		if (ImGui::IsItemClicked())
 		{
-			m_SelectedPath = path;
+			SelectAssetPath(path);
 			m_UserSelectedDirectory = true;
 		}
 		if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -2672,69 +2682,7 @@ namespace TomCat {
 		DrawEmptyContextMenu(root);
 	}
 
-    void ContentBrowserPanel::OnAssetInspectorRender(bool* open)
-    {
-        if(!*open) return;
-        PrepareEditorToolWindow(ImVec2(520,660));
-        if(!BeginEditorWindow("Asset Inspector",open)) { ImGui::End(); return; }
-        auto& assets=AssetManager::Get();
-        const auto* selectedMetadata=assets.GetRegistry().GetMetadata(m_SelectedPath);
-        AssetHandle selected=selectedMetadata?selectedMetadata->Handle:AssetHandle(0);
-        if(selected!=m_InspectedAsset && !m_AssetSettingsDirty)
-        {
-            m_InspectedAsset=selected;
-            const auto* metadata=assets.GetRegistry().GetMetadata(selected);
-            m_AssetSettingsDraft=metadata?metadata->ImportSettings:AssetImportSettings{};
-            m_AssetInspectorMessage.clear();
-        }
-        const auto* liveMetadata=assets.GetRegistry().GetMetadata(m_InspectedAsset);
-        const AssetMetadata snapshot=liveMetadata?*liveMetadata:AssetMetadata{};
-        const auto* metadata=liveMetadata?&snapshot:nullptr;
-        if(!metadata) { ImGui::TextWrapped("Select an asset in Project to inspect its preview and import settings."); ImGui::End(); return; }
-        ImGui::TextWrapped("%s",PathToUTF8(metadata->FilePath).c_str());
-        if(metadata->IsMissing) ImGui::TextColored(ImVec4(1,.5f,.3f,1),"Source file is missing");
-        if(selected!=m_InspectedAsset) ImGui::TextWrapped("This asset has unsaved import settings. Apply or Revert before inspecting another selection.");
-        ImGui::Separator();
-        if(metadata->Type==AssetType::Texture2D)
-        {
-            if(auto texture=assets.LoadTexture(m_InspectedAsset))
-            {
-                const float scale=std::min(ImGui::GetContentRegionAvail().x/texture->GetWidth(),220.0f/texture->GetHeight());
-                ImGui::Image(ToImGuiTextureID(texture),ImVec2(texture->GetWidth()*scale,texture->GetHeight()*scale),ImVec2(0,1),ImVec2(1,0));
-                ImGui::Text("%u x %u pixels",texture->GetWidth(),texture->GetHeight());
-            }
-            if(ImGui::Button("Open Sprite Atlas Tools")) BeginAtlasEditor(assets.GetRegistry().GetFileSystemPath(m_InspectedAsset));
-        }
-        const auto path=assets.GetRegistry().GetFileSystemPath(m_InspectedAsset);
-        std::error_code sizeError; const auto size=std::filesystem::file_size(path,sizeError);
-        if(!sizeError) ImGui::Text("Source size: %.1f KiB",static_cast<double>(size)/1024.0);
-        if(ImGui::Button("Open asset")) OpenAsset(path,false);
-        ImGui::SameLine(); if(ImGui::Button("Reveal in Project")) RevealAsset(path);
-        if(ImGui::CollapsingHeader("Import settings",ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::BeginDisabled(!m_AssetMutationsEnabled || !IsWritablePath(path));
-            if(m_AssetSettingsDraft.empty()) ImGui::TextWrapped("Importer defaults are in use. Sprite slicing settings can be authored in Sprite Atlas Tools.");
-            for(auto& [key,value]:m_AssetSettingsDraft)
-            {
-                ImGui::PushID(key.c_str());
-                if(AtlasInputText(key.c_str(),value)) m_AssetSettingsDirty=true;
-                ImGui::PopID();
-            }
-            ImGui::BeginDisabled(!m_AssetSettingsDirty);
-            if(ImGui::Button("Apply"))
-            {
-                if(assets.SetImportSettings(m_InspectedAsset,m_AssetSettingsDraft)) {m_AssetSettingsDirty=false;m_AssetInspectorMessage="Import settings saved.";}
-                else m_AssetInspectorMessage="Import failed. Check Console; the draft has been retained.";
-            }
-            ImGui::SameLine(); if(ImGui::Button("Revert")) {m_AssetSettingsDraft=metadata->ImportSettings;m_AssetSettingsDirty=false;m_AssetInspectorMessage.clear();}
-            ImGui::EndDisabled(); ImGui::EndDisabled();
-            ImGui::TextWrapped("%s",m_AssetInspectorMessage.c_str());
-        }
-        if(!metadata->SubAssets.empty() && ImGui::TreeNode("Sub-assets"))
-        { for(const auto& child:metadata->SubAssets) ImGui::BulletText("%s",child.Name.c_str()); ImGui::TreePop(); }
-        if(ImGui::TreeNode("Debug identity")) {ImGui::Text("Handle: %llu",static_cast<unsigned long long>(m_InspectedAsset));ImGui::TreePop();}
-        ImGui::End();
-    }
+#include "ContentBrowserAssetInspector.inl"
 
 	void ContentBrowserPanel::OnImGuiRender(bool* open)
 	{

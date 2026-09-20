@@ -11,8 +11,7 @@ namespace TomCat {
 
 	enum class EditorIcon : size_t
 	{
-		AssetsRoot = 0,
-		FolderClosed,
+		FolderClosed = 0,
 		FolderOpen,
 		GenericFile,
 		SceneClosed,
@@ -99,7 +98,6 @@ namespace TomCat {
 			constexpr const char* editorRoot = "Packages/Resources/Icons/TomCat/Editor/";
 			switch (icon)
 			{
-				case EditorIcon::AssetsRoot: return std::filesystem::path(assetRoot) / "assets-root.png";
 				case EditorIcon::FolderClosed: return std::filesystem::path(assetRoot) / "folder-closed.png";
 				case EditorIcon::FolderOpen: return std::filesystem::path(assetRoot) / "folder-open.png";
 				case EditorIcon::GenericFile: return std::filesystem::path(assetRoot) / "generic-file.png";
