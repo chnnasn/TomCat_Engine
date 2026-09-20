@@ -22,7 +22,7 @@ project "PhysicsRegression"
 		"%{IncludeDir.Glad}",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}",
+		"%{IncludeDir.ekit}",
 		"%{IncludeDir.yaml_cpp}"
 	}
 

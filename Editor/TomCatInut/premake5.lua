@@ -20,7 +20,7 @@ project "TomCatInut"
 		"%{wks.location}/../TomCat/src",
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.glm}",
-		"%{IncludeDir.entt}",
+		"%{IncludeDir.ekit}",
 		"%{IncludeDir.ImGuizmo}",
 		"%{IncludeDir.yaml_cpp}"
 	}

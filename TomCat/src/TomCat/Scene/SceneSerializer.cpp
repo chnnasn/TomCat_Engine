@@ -1011,7 +1011,7 @@ namespace TomCat {
 				throw std::runtime_error("Scene hierarchy contains a transform that cannot be synchronized losslessly as TRS");
 
 			m_Scene->OnRuntimeStop();
-			m_Scene->m_Registry = std::move(parsedScene->m_Registry);
+			m_Scene->m_Registry.Swap(parsedScene->m_Registry);
 			m_Scene->m_SceneName = std::move(parsedScene->m_SceneName);
 			m_Scene->m_EntityMap = std::move(parsedScene->m_EntityMap);
 			m_Scene->m_ParentMap = std::move(parsedScene->m_ParentMap);

@@ -41,7 +41,7 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"%{IncludeDir.Glad}",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.stb_image}",
-		"%{IncludeDir.entt}",
+		"%{IncludeDir.ekit}",
 		"%{IncludeDir.yaml_cpp}",
 
 

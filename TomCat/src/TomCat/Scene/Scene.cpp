@@ -15,6 +15,7 @@
 #include "TomCat/Math/Math.h"
 #include "Entity.h"
 #include "Serialization/ComponentCodecs.h"
+#include "Serialization/PrefabLink.h"
 
 #include <algorithm>
 #include <bit>
@@ -731,11 +732,11 @@ namespace TomCat {
 			return visited.size() == entityOrder.size();
 		}
 
-		void Render2DComponents(Scene& scene, entt::registry& registry,
+		void Render2DComponents(Scene& scene, SceneWorld& registry,
 			const glm::mat4& viewProjection,
 			RuntimeUIVisibilityMode visibility)
 		{
-			auto isVisible = [&scene, visibility](entt::entity value)
+			auto isVisible = [&scene, visibility](ekit::Entity value)
 			{
 				Entity entity(value, &scene);
 				return visibility == RuntimeUIVisibilityMode::Editor
@@ -745,10 +746,10 @@ namespace TomCat {
 			glm::vec3 ambientLight(1.0f);
 			std::vector<Renderer2D::PointLightData> pointLights;
 			bool hasLighting = false;
-			auto lightView = registry.view<Transform, Light2D>();
-			for (const entt::entity entity : lightView)
+			auto lightView = registry.View<Transform, Light2D>();
+			for (const ekit::Entity entity : lightView)
 			{
-				const Light2D& light = lightView.get<Light2D>(entity);
+				const Light2D& light = lightView.Get<Light2D>(entity);
 				if (!isVisible(entity) || !light.Enabled || light.Intensity <= 0.0f)
 					continue;
 				if (!hasLighting)
@@ -762,7 +763,7 @@ namespace TomCat {
 					continue;
 				}
 				const glm::mat4 lightTransform = scene.GetRuntimeRenderTransform(
-					registry.get<ID>(entity).id);
+					registry.Get<ID>(entity).id);
 				Renderer2D::PointLightData point;
 				point.Position = glm::vec3(lightTransform * glm::vec4(0, 0, 0, 1));
 				point.Color = glm::vec3(light.Color);
@@ -773,7 +774,7 @@ namespace TomCat {
 			}
 			Renderer2D::Set2DLighting(ambientLight, pointLights);
 
-			auto spriteView = registry.view<Transform, SpriteRenderer>();
+			auto spriteView = registry.View<Transform, SpriteRenderer>();
 			struct SpriteRenderItem
 			{
 				Renderer2D::SpriteSortKey SortKey;
@@ -784,14 +785,14 @@ namespace TomCat {
 				bool ColoredQuad = false;
 			};
 			std::vector<SpriteRenderItem> sprites;
-			sprites.reserve(spriteView.size_hint());
-			for (const entt::entity entity : spriteView)
+			sprites.reserve(spriteView.SizeHint());
+			for (const ekit::Entity entity : spriteView)
 			{
-				const auto& sprite = spriteView.get<SpriteRenderer>(entity);
+				const auto& sprite = spriteView.Get<SpriteRenderer>(entity);
 				if (!isVisible(entity)
 					|| !sprite.Enabled)
 					continue;
-				const UUID entityID = registry.get<ID>(entity).id;
+				const UUID entityID = registry.Get<ID>(entity).id;
 				const glm::mat4 worldTransform =
 					scene.GetRuntimeRenderTransform(entityID);
 				if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
@@ -799,7 +800,7 @@ namespace TomCat {
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityID);
 				sprites.push_back({ Renderer2D::MakeSpriteSortKey(sprite,
 					sortableEntityID), worldTransform, sprite, sprite._Color,
-					static_cast<int>(entity), false });
+					registry.GetPickingID(entity), false });
 			}
 
 			auto stableChildID = [](uint64_t entityID, int32_t x, int32_t y,
@@ -812,16 +813,16 @@ namespace TomCat {
 					+ (hash >> 2);
 				return hash;
 			};
-			auto tilemapView = registry.view<Transform, Tilemap2D>();
-			for (const entt::entity entity : tilemapView)
+			auto tilemapView = registry.View<Transform, Tilemap2D>();
+			for (const ekit::Entity entity : tilemapView)
 			{
-				const Tilemap2D& tilemap = tilemapView.get<Tilemap2D>(entity);
+				const Tilemap2D& tilemap = tilemapView.Get<Tilemap2D>(entity);
 				const TilemapRenderer2D* tileRenderer =
-					registry.try_get<TilemapRenderer2D>(entity);
+					registry.TryGet<TilemapRenderer2D>(entity);
 				if (!isVisible(entity) || !tilemap.Enabled
 					|| (tileRenderer && !tileRenderer->Enabled))
 					continue;
-				const UUID entityUUID = registry.get<ID>(entity).id;
+				const UUID entityUUID = registry.Get<ID>(entity).id;
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
 				const Entity tilemapEntity(entity, &scene);
 				const Entity gridEntity = scene.GetParent(tilemapEntity);
@@ -850,17 +851,17 @@ namespace TomCat {
 							tileRenderer ? Tilemap2DRuntime::GetCellRenderOrder(
 								cell.Coordinate, tileRenderer->SortOrder) : 0),
 						worldTransform, std::move(renderer), cell.Tint,
-						static_cast<int>(entity), false });
+						registry.GetPickingID(entity), false });
 				}
 			}
 
-			auto particleView = registry.view<Transform, ParticleSystem2D>();
-			for (const entt::entity entity : particleView)
+			auto particleView = registry.View<Transform, ParticleSystem2D>();
+			for (const ekit::Entity entity : particleView)
 			{
-				const ParticleSystem2D& system = particleView.get<ParticleSystem2D>(entity);
+				const ParticleSystem2D& system = particleView.Get<ParticleSystem2D>(entity);
 				if (!isVisible(entity) || !system.Enabled)
 					continue;
-				const UUID entityUUID = registry.get<ID>(entity).id;
+				const UUID entityUUID = registry.Get<ID>(entity).id;
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
 				const glm::mat4 rootTransform =
 					scene.GetRuntimeRenderTransform(entityUUID);
@@ -886,7 +887,7 @@ namespace TomCat {
 							stableChildID(sortableEntityID, static_cast<int32_t>(index),
 								0, 0x50415254ULL)),
 						worldTransform, renderer, renderer._Color,
-						static_cast<int>(entity),
+						registry.GetPickingID(entity),
 						static_cast<uint64_t>(system.SpriteHandle) == 0 });
 				}
 			}
@@ -910,21 +911,21 @@ namespace TomCat {
 
 			const float previousLineWidth = Renderer2D::GetLineWidth();
 			bool renderedLine = false;
-			auto lineView = registry.view<Transform, LineRenderer>();
-			for (const entt::entity entity : lineView)
+			auto lineView = registry.View<Transform, LineRenderer>();
+			for (const ekit::Entity entity : lineView)
 			{
-				auto [transform, line] = lineView.get<Transform, LineRenderer>(entity);
+				auto [transform, line] = lineView.Get<Transform, LineRenderer>(entity);
 				if (!isVisible(entity)
 					|| !line.Enabled
 					|| !std::isfinite(line.Width) || line.Width <= 0.0f)
 					continue;
 
 				const glm::mat4 worldTransform = scene.GetRuntimeRenderTransform(
-					registry.get<ID>(entity).id);
+					registry.Get<ID>(entity).id);
 				const glm::vec3 worldStart = glm::vec3(worldTransform * glm::vec4(line.Start, 1.0f));
 				const glm::vec3 worldEnd = glm::vec3(worldTransform * glm::vec4(line.End, 1.0f));
 				Renderer2D::SetLineWidth(line.Width);
-				Renderer2D::DrawLine(worldStart, worldEnd, line._Color, static_cast<int>(entity));
+				Renderer2D::DrawLine(worldStart, worldEnd, line._Color, registry.GetPickingID(entity));
 				renderedLine = true;
 			}
 
@@ -1017,13 +1018,13 @@ namespace TomCat {
 			}
 		}
 
-		void InitializeSpriteAnimations(Scene& scene, entt::registry& registry)
+		void InitializeSpriteAnimations(Scene& scene, SceneWorld& registry)
 		{
-			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
-			for (const entt::entity entity : view)
+			auto view = registry.View<SpriteAnimator, SpriteRenderer>();
+			for (const ekit::Entity entity : view)
 			{
 				auto [animator, renderer] =
-					view.get<SpriteAnimator, SpriteRenderer>(entity);
+					view.Get<SpriteAnimator, SpriteRenderer>(entity);
 				HydrateSpriteAnimatorController(animator);
 				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
 					continue;
@@ -1031,31 +1032,31 @@ namespace TomCat {
 			}
 		}
 
-		void UpdateSpriteAnimations(Scene& scene, entt::registry& registry,
+		void UpdateSpriteAnimations(Scene& scene, SceneWorld& registry,
 			double deltaSeconds)
 		{
-			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
-			for (const entt::entity entity : view)
+			auto view = registry.View<SpriteAnimator, SpriteRenderer>();
+			for (const ekit::Entity entity : view)
 			{
 				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
 					continue;
 				auto [animator, renderer] =
-					view.get<SpriteAnimator, SpriteRenderer>(entity);
+					view.Get<SpriteAnimator, SpriteRenderer>(entity);
 				SpriteAnimatorRuntime::Update(animator, renderer, deltaSeconds);
 			}
 		}
 
-		void ResetSpriteAnimations(entt::registry& registry)
+		void ResetSpriteAnimations(SceneWorld& registry)
 		{
-			for (const entt::entity entity : registry.view<SpriteAnimator>())
-				SpriteAnimatorRuntime::Reset(registry.get<SpriteAnimator>(entity));
+			for (const ekit::Entity entity : registry.View<SpriteAnimator>())
+				SpriteAnimatorRuntime::Reset(registry.Get<SpriteAnimator>(entity));
 		}
 
-		void InitializeParticleSystems(Scene& scene, entt::registry& registry)
+		void InitializeParticleSystems(Scene& scene, SceneWorld& registry)
 		{
-			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
 			{
-				auto& system = registry.get<ParticleSystem2D>(entity);
+				auto& system = registry.Get<ParticleSystem2D>(entity);
 				ParticleSystem2DRuntime::Reset(system);
 				if (system.PlayOnStart
 					&& scene.IsActiveInHierarchy(Entity(entity, &scene)))
@@ -1063,32 +1064,32 @@ namespace TomCat {
 			}
 		}
 
-		void UpdateParticleSystems(Scene& scene, entt::registry& registry,
+		void UpdateParticleSystems(Scene& scene, SceneWorld& registry,
 			float deltaSeconds)
 		{
-			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
 			{
 				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
 					continue;
 				ParticleSystem2DRuntime::Update(
-					registry.get<ParticleSystem2D>(entity), deltaSeconds);
+					registry.Get<ParticleSystem2D>(entity), deltaSeconds);
 			}
 		}
 
-		void ResetParticleSystems(entt::registry& registry)
+		void ResetParticleSystems(SceneWorld& registry)
 		{
-			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
 				ParticleSystem2DRuntime::Reset(
-					registry.get<ParticleSystem2D>(entity));
+					registry.Get<ParticleSystem2D>(entity));
 		}
 
-		void UpdateParticlePreviews(Scene& scene, entt::registry& registry,
+		void UpdateParticlePreviews(Scene& scene, SceneWorld& registry,
 			float deltaSeconds)
 		{
 			const float previewDelta = std::clamp(deltaSeconds, 0.0f, 0.1f);
-			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			for (const ekit::Entity entity : registry.View<ParticleSystem2D>())
 			{
-				auto& system = registry.get<ParticleSystem2D>(entity);
+				auto& system = registry.Get<ParticleSystem2D>(entity);
 				if (!system.RuntimeInitialized
 					|| !scene.IsVisibleInEditorHierarchy(Entity(entity, &scene)))
 					continue;
@@ -1115,7 +1116,47 @@ namespace TomCat {
 
 	Scene::Scene()
 	{
-
+		m_Registry.RegisterSparseComponent<OpaqueComponents>();
+		m_Registry.RegisterSparseComponent<PrefabLink>();
+		m_Registry.RegisterSparseComponent<ID>();
+		m_Registry.RegisterSparseComponent<Tag>();
+		m_Registry.RegisterSparseComponent<Transform>();
+		m_Registry.RegisterSparseComponent<SpriteRenderer>();
+		m_Registry.RegisterSparseComponent<EditorVisibility>();
+		m_Registry.RegisterSparseComponent<SpriteAnimator>();
+		m_Registry.RegisterSparseComponent<EntityMetadata>();
+		m_Registry.RegisterSparseComponent<LineRenderer>();
+		m_Registry.RegisterSparseComponent<Grid2D>();
+		m_Registry.RegisterSparseComponent<TilemapRenderer2D>();
+		m_Registry.RegisterSparseComponent<Tilemap2D>();
+		m_Registry.RegisterSparseComponent<ParticleSystem2D>();
+		m_Registry.RegisterSparseComponent<Light2D>();
+		m_Registry.RegisterSparseComponent<C_Camera>();
+		m_Registry.RegisterSparseComponent<CSharpScripts>();
+		m_Registry.RegisterSparseComponent<HealthComponent>();
+		m_Registry.RegisterSparseComponent<AudioSource>();
+		m_Registry.RegisterSparseComponent<AudioListener>();
+		m_Registry.RegisterSparseComponent<TextRenderer>();
+		m_Registry.RegisterSparseComponent<Canvas>();
+		m_Registry.RegisterSparseComponent<RectTransform>();
+		m_Registry.RegisterSparseComponent<UIImage>();
+		m_Registry.RegisterSparseComponent<UIText>();
+		m_Registry.RegisterSparseComponent<UIButton>();
+		m_Registry.RegisterSparseComponent<UIEventSystem>();
+		m_Registry.RegisterSparseComponent<UISlider>();
+		m_Registry.RegisterSparseComponent<UIScrollView>();
+		m_Registry.RegisterSparseComponent<UIInputField>();
+		m_Registry.RegisterSparseComponent<UITheme>();
+		m_Registry.RegisterSparseComponent<UILocalization>();
+		m_Registry.RegisterSparseComponent<UILocalizedText>();
+		m_Registry.RegisterSparseComponent<UILayoutGroup>();
+		m_Registry.RegisterSparseComponent<Rigidbody2D>();
+		m_Registry.RegisterSparseComponent<BoxCollider2D>();
+		m_Registry.RegisterSparseComponent<CircleCollider2D>();
+		m_Registry.RegisterSparseComponent<DistanceJoint2D>();
+		for (const auto& descriptor : ComponentRegistry::Get().GetDescriptors())
+			if (descriptor.RegisterStorage)
+				descriptor.RegisterStorage(*this);
 	}
 
 	void Scene::SetPhysics2DSettings(const Physics2DSettings& settings)
@@ -1129,23 +1170,28 @@ namespace TomCat {
 			m_HasRuntimePhysicsDefinition = false;
 	}
 
+	Entity Scene::FindEntityByPickingID(int id)
+	{
+		return Entity(m_Registry.FindPickingEntity(id), this);
+	}
+
 	Scene::~Scene()
 	{
 		OnRuntimeStop();
 	}
 
 	template<typename Component>
-	static void CopyComponent(entt::registry& dst, entt::registry& src, const std::unordered_map<UUID, entt::entity>& enttMap)
+	static void CopyComponent(SceneWorld& dst, SceneWorld& src, const std::unordered_map<UUID, ekit::Entity>& entityMap)
 	{
-		auto view = src.view<Component>();
+		auto view = src.View<Component>();
 		for (auto e : view)
 		{
-			UUID uuid = src.get<ID>(e).id;
-			TC_Core_Assert(enttMap.find(uuid) != enttMap.end());
-			entt::entity dstEnttID = enttMap.at(uuid);
+			UUID uuid = src.Get<ID>(e).id;
+			TC_Core_Assert(entityMap.find(uuid) != entityMap.end());
+			ekit::Entity destinationID = entityMap.at(uuid);
 
-			auto& component = src.get<Component>(e);
-			dst.emplace_or_replace<Component>(dstEnttID, component);
+			auto& component = src.Get<Component>(e);
+			dst.Set<Component>(destinationID, component);
 		}
 	}
 
@@ -1228,7 +1274,7 @@ namespace TomCat {
 			other->m_RuntimeUIScreenToFramebufferScale;
 		newScene->m_Physics2DSettings = other->m_Physics2DSettings;
 
-		std::unordered_map<UUID, entt::entity> enttMap;
+		std::unordered_map<UUID, ekit::Entity> entityMap;
 
 		// Create entities in their original creation order so the hierarchy keeps
 		// newly created items at the bottom after a scene copy.
@@ -1239,13 +1285,13 @@ namespace TomCat {
 				continue;
 			const std::string name = newScene->MakeUniqueEntityName(sourceEntity.GetName());
 			Entity newEntity = newScene->CreateEntityWithUUID(uuid, name);
-			enttMap[uuid] = (entt::entity)newEntity;
+			entityMap[uuid] = (ekit::Entity)newEntity;
 		}
 
 		// ComponentCodecs is the single copy policy consumed by Scene, Duplicate and
 		// Prefab. Registered components therefore join every copy path without a
 		// new Scene.cpp type list.
-		for (const auto& [uuid, destinationHandle] : enttMap)
+		for (const auto& [uuid, destinationHandle] : entityMap)
 		{
 			Entity sourceEntity = other->FindEntityByUUID(uuid);
 			Entity destinationEntity(destinationHandle, newScene.get());
@@ -1265,9 +1311,9 @@ namespace TomCat {
 			if (sourceParentIt == other->m_ParentMap.end())
 				continue;
 			const UUID parentUUID = sourceParentIt->second;
-			auto childIt = enttMap.find(childUUID);
-			auto parentIt = enttMap.find(parentUUID);
-			if (childIt == enttMap.end() || parentIt == enttMap.end())
+			auto childIt = entityMap.find(childUUID);
+			auto parentIt = entityMap.find(parentUUID);
+			if (childIt == entityMap.end() || parentIt == entityMap.end())
 				continue;
 
 			newScene->m_ParentMap[childUUID] = parentUUID;
@@ -1305,20 +1351,20 @@ namespace TomCat {
 			return {};
 		}
 
-		Entity entity = { m_Registry.create(), this };
+		Entity entity = { m_Registry.Create(), this };
 		entity.AddComponent<ID>(uuid);
 		entity.AddComponent<EntityMetadata>();
 		entity.AddComponent<Transform>();
 		auto& tag = entity.AddComponent<Tag>();
 		tag._Tag = MakeUniqueEntityName(name.empty() ? "Entity" : name);
-		m_EntityMap.emplace(uuid, (entt::entity)entity);
+		m_EntityMap.emplace(uuid, (ekit::Entity)entity);
 		m_EntityOrder.push_back(uuid);
 		return entity;
 	}
 
 	bool Scene::RenameEntity(Entity entity, const std::string& requestedName)
 	{
-		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+		if (!entity || entity.m_Scene != this || !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<Tag>())
 			return false;
 
@@ -1335,10 +1381,10 @@ namespace TomCat {
 		const std::string baseName = requestedName.empty() ? "Entity" : requestedName;
 		auto nameExists = [this](const std::string& candidate)
 		{
-			auto view = m_Registry.view<Tag>();
+			auto view = m_Registry.View<Tag>();
 			for (auto entityID : view)
 			{
-				if (view.get<Tag>(entityID)._Tag == candidate)
+				if (view.Get<Tag>(entityID)._Tag == candidate)
 					return true;
 			}
 			return false;
@@ -1357,7 +1403,7 @@ namespace TomCat {
 
 	bool Scene::SetWorldTransform(Entity entity, const glm::mat4& worldTransform)
 	{
-		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+		if (!entity || entity.m_Scene != this || !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>() || !IsFinite(worldTransform))
 			return false;
 
@@ -1396,7 +1442,7 @@ namespace TomCat {
 
 	bool Scene::SetLocalTransform(Entity entity, const glm::mat4& localTransform)
 	{
-		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+		if (!entity || entity.m_Scene != this || !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>() || !IsFinite(localTransform))
 			return false;
 
@@ -1440,7 +1486,7 @@ namespace TomCat {
 
 	void Scene::DestroyEntity(Entity entity)
 	{
-		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle))
+		if (!entity || entity.m_Scene != this || !m_Registry.IsAlive(entity.m_EntityHandle))
 			return;
 
 		const auto entityMapIt = std::find_if(m_EntityMap.begin(), m_EntityMap.end(),
@@ -1462,7 +1508,7 @@ namespace TomCat {
 		{
 			Entity child;
 			if (auto childIt = m_EntityMap.find(childUUID);
-				childIt != m_EntityMap.end() && m_Registry.valid(childIt->second))
+				childIt != m_EntityMap.end() && m_Registry.IsAlive(childIt->second))
 				child = Entity(childIt->second, this);
 			if (child)
 				DestroyEntity(child);
@@ -1507,9 +1553,9 @@ namespace TomCat {
 		bool affectsRuntimePhysics = m_RuntimeBodies.find(entityUUID) != m_RuntimeBodies.end()
 			|| entity.HasComponent<Rigidbody2D>() || entity.HasComponent<BoxCollider2D>()
 			|| entity.HasComponent<CircleCollider2D>() || entity.HasComponent<DistanceJoint2D>();
-		for (entt::entity jointEntity : m_Registry.view<DistanceJoint2D>())
+		for (ekit::Entity jointEntity : m_Registry.View<DistanceJoint2D>())
 		{
-			auto& joint = m_Registry.get<DistanceJoint2D>(jointEntity);
+			auto& joint = m_Registry.Get<DistanceJoint2D>(jointEntity);
 			if (joint.ConnectedEntity == entityUUID)
 			{
 				// Match Unity's Connected Body=None behavior and keep the authoring
@@ -1535,7 +1581,7 @@ namespace TomCat {
 			m_ContactListener->DiscardEntity(entityUUID);
 
 		m_EntityMap.erase(entityUUID);
-		m_Registry.destroy(entity);
+		m_Registry.Destroy(entity);
 		m_EntitiesBeingDestroyed.erase(std::remove(m_EntitiesBeingDestroyed.begin(),
 			m_EntitiesBeingDestroyed.end(), entityUUID), m_EntitiesBeingDestroyed.end());
 	}
@@ -1702,13 +1748,13 @@ namespace TomCat {
 
 	bool Scene::SetParent(Entity child, Entity parent)
 	{
-		if (!child || child.m_Scene != this || !m_Registry.valid(child.m_EntityHandle)
+		if (!child || child.m_Scene != this || !m_Registry.IsAlive(child.m_EntityHandle)
 			|| !child.HasComponent<ID>() || !child.HasComponent<Transform>())
 			return false;
 
 		const UUID childUUID = child.GetUUID();
 		const bool hasNewParent = static_cast<bool>(parent);
-		if (hasNewParent && (parent.m_Scene != this || !m_Registry.valid(parent.m_EntityHandle)
+		if (hasNewParent && (parent.m_Scene != this || !m_Registry.IsAlive(parent.m_EntityHandle)
 			|| !parent.HasComponent<ID>() || !parent.HasComponent<Transform>()))
 			return false;
 
@@ -1807,7 +1853,7 @@ namespace TomCat {
 		auto isValidSceneEntity = [this](Entity candidate)
 		{
 			return candidate && candidate.m_Scene == this
-				&& m_Registry.valid(candidate.m_EntityHandle)
+				&& m_Registry.IsAlive(candidate.m_EntityHandle)
 				&& candidate.HasComponent<ID>() && candidate.HasComponent<Transform>()
 				&& static_cast<uint64_t>(candidate.GetUUID()) != 0
 				&& FindEntityByUUID(candidate.GetUUID()) == candidate;
@@ -1989,7 +2035,7 @@ namespace TomCat {
 
 	Entity Scene::GetParent(Entity entity)
 	{
-		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+		if (!entity || entity.m_Scene != this || !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>())
 			return {};
 
@@ -2003,7 +2049,7 @@ namespace TomCat {
 	bool Scene::IsActiveInHierarchy(Entity entity) const
 	{
 		if (!entity || entity.m_Scene != this
-			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>())
 			return false;
 
@@ -2015,9 +2061,9 @@ namespace TomCat {
 				return false;
 			auto entityIt = m_EntityMap.find(cursor);
 			if (entityIt == m_EntityMap.end()
-				|| !m_Registry.valid(entityIt->second)
-				|| !m_Registry.all_of<Tag>(entityIt->second)
-				|| !m_Registry.get<Tag>(entityIt->second).ActiveSelf)
+				|| !m_Registry.IsAlive(entityIt->second)
+				|| !m_Registry.HasAll<Tag>(entityIt->second)
+				|| !m_Registry.Get<Tag>(entityIt->second).ActiveSelf)
 				return false;
 			auto parentIt = m_ParentMap.find(cursor);
 			if (parentIt == m_ParentMap.end())
@@ -2030,17 +2076,17 @@ namespace TomCat {
 	bool Scene::IsEditorHidden(Entity entity) const
 	{
 		if (!entity || entity.m_Scene != this
-			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>())
 			return false;
-		return m_Registry.all_of<EditorVisibility>(entity.m_EntityHandle)
-			&& m_Registry.get<EditorVisibility>(entity.m_EntityHandle).Hidden;
+		return m_Registry.HasAll<EditorVisibility>(entity.m_EntityHandle)
+			&& m_Registry.Get<EditorVisibility>(entity.m_EntityHandle).Hidden;
 	}
 
 	bool Scene::IsVisibleInEditorHierarchy(Entity entity) const
 	{
 		if (!entity || entity.m_Scene != this
-			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>())
 			return false;
 
@@ -2052,10 +2098,10 @@ namespace TomCat {
 				return false;
 			auto entityIt = m_EntityMap.find(cursor);
 			if (entityIt == m_EntityMap.end()
-				|| !m_Registry.valid(entityIt->second))
+				|| !m_Registry.IsAlive(entityIt->second))
 				return false;
-			if (m_Registry.all_of<EditorVisibility>(entityIt->second)
-				&& m_Registry.get<EditorVisibility>(entityIt->second).Hidden)
+			if (m_Registry.HasAll<EditorVisibility>(entityIt->second)
+				&& m_Registry.Get<EditorVisibility>(entityIt->second).Hidden)
 				return false;
 			auto parentIt = m_ParentMap.find(cursor);
 			if (parentIt == m_ParentMap.end())
@@ -2068,17 +2114,17 @@ namespace TomCat {
 	bool Scene::SetEditorHidden(Entity entity, bool hidden)
 	{
 		if (!entity || entity.m_Scene != this
-			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>())
 			return false;
 
-		const bool hasState = m_Registry.all_of<EditorVisibility>(
+		const bool hasState = m_Registry.HasAll<EditorVisibility>(
 			entity.m_EntityHandle);
 		if (hidden)
 		{
 			if (hasState)
 			{
-				auto& state = m_Registry.get<EditorVisibility>(
+				auto& state = m_Registry.Get<EditorVisibility>(
 					entity.m_EntityHandle);
 				if (state.Hidden)
 					return false;
@@ -2086,22 +2132,22 @@ namespace TomCat {
 			}
 			else
 			{
-				m_Registry.emplace<EditorVisibility>(entity.m_EntityHandle);
+				m_Registry.Add<EditorVisibility>(entity.m_EntityHandle);
 			}
 			return true;
 		}
 
 		if (!hasState)
 			return false;
-		m_Registry.remove<EditorVisibility>(entity.m_EntityHandle);
+		m_Registry.Remove<EditorVisibility>(entity.m_EntityHandle);
 		return true;
 	}
 
 	bool Scene::HasAuthoredPrimaryCamera() const
 	{
-		for (const entt::entity handle : m_Registry.view<C_Camera>())
+		for (const ekit::Entity handle : m_Registry.View<C_Camera>())
 		{
-			if (m_Registry.get<C_Camera>(handle).Primary)
+			if (m_Registry.Get<C_Camera>(handle).Primary)
 				return true;
 		}
 		return false;
@@ -2109,11 +2155,11 @@ namespace TomCat {
 
 	bool Scene::HasActiveCanvas()
 	{
-		auto view = m_Registry.view<Canvas>();
-		for (const entt::entity handle : view)
+		auto view = m_Registry.View<Canvas>();
+		for (const ekit::Entity handle : view)
 		{
 			Entity entity(handle, this);
-			if (view.get<Canvas>(handle).Enabled && IsActiveInHierarchy(entity))
+			if (view.Get<Canvas>(handle).Enabled && IsActiveInHierarchy(entity))
 				return true;
 		}
 		return false;
@@ -2127,14 +2173,14 @@ namespace TomCat {
 	bool Scene::SetCameraPrimary(Entity entity, bool primary)
 	{
 		if (!entity || entity.m_Scene != this
-			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<C_Camera>())
 			return false;
 
 		if (primary)
 		{
-			for (const entt::entity handle : m_Registry.view<C_Camera>())
-				m_Registry.get<C_Camera>(handle).Primary = false;
+			for (const ekit::Entity handle : m_Registry.View<C_Camera>())
+				m_Registry.Get<C_Camera>(handle).Primary = false;
 		}
 		entity.GetComponent<C_Camera>().Primary = primary;
 		return true;
@@ -2142,7 +2188,7 @@ namespace TomCat {
 
 	std::vector<UUID> Scene::GetChildrenUUIDs(Entity entity)
 	{
-		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+		if (!entity || entity.m_Scene != this || !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>())
 			return {};
 
@@ -2389,14 +2435,14 @@ namespace TomCat {
 
 	void Scene::ResetRuntimePhysicsPointers()
 	{
-		for (entt::entity entity : m_Registry.view<Rigidbody2D>())
-			m_Registry.get<Rigidbody2D>(entity).RuntimeBody = nullptr;
-		for (entt::entity entity : m_Registry.view<BoxCollider2D>())
-			m_Registry.get<BoxCollider2D>(entity).RuntimeFixture = nullptr;
-		for (entt::entity entity : m_Registry.view<CircleCollider2D>())
-			m_Registry.get<CircleCollider2D>(entity).RuntimeFixture = nullptr;
-		for (entt::entity entity : m_Registry.view<DistanceJoint2D>())
-			m_Registry.get<DistanceJoint2D>(entity).RuntimeJoint = nullptr;
+		for (ekit::Entity entity : m_Registry.View<Rigidbody2D>())
+			m_Registry.Get<Rigidbody2D>(entity).RuntimeBody = nullptr;
+		for (ekit::Entity entity : m_Registry.View<BoxCollider2D>())
+			m_Registry.Get<BoxCollider2D>(entity).RuntimeFixture = nullptr;
+		for (ekit::Entity entity : m_Registry.View<CircleCollider2D>())
+			m_Registry.Get<CircleCollider2D>(entity).RuntimeFixture = nullptr;
+		for (ekit::Entity entity : m_Registry.View<DistanceJoint2D>())
+			m_Registry.Get<DistanceJoint2D>(entity).RuntimeJoint = nullptr;
 	}
 
 	b2Body* Scene::FindRuntimeBody(UUID entityID) const
@@ -2414,16 +2460,16 @@ namespace TomCat {
 		for (UUID uuid : m_EntityOrder)
 		{
 			auto mapIt = m_EntityMap.find(uuid);
-			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second))
+			if (mapIt == m_EntityMap.end() || !m_Registry.IsAlive(mapIt->second))
 				continue;
-			const entt::entity entity = mapIt->second;
+			const ekit::Entity entity = mapIt->second;
 			if (!IsActiveInHierarchy(Entity(entity, const_cast<Scene*>(this))))
 				continue;
-			if (m_Registry.any_of<Rigidbody2D, BoxCollider2D, CircleCollider2D, DistanceJoint2D>(entity))
+			if (m_Registry.HasAny<Rigidbody2D, BoxCollider2D, CircleCollider2D, DistanceJoint2D>(entity))
 				physicsEntities.insert(uuid);
-			if (m_Registry.all_of<DistanceJoint2D>(entity))
+			if (m_Registry.HasAll<DistanceJoint2D>(entity))
 			{
-				const UUID connected = m_Registry.get<DistanceJoint2D>(entity).ConnectedEntity;
+				const UUID connected = m_Registry.Get<DistanceJoint2D>(entity).ConnectedEntity;
 				auto connectedIt = m_EntityMap.find(connected);
 				if (static_cast<uint64_t>(connected) != 0
 					&& connectedIt != m_EntityMap.end()
@@ -2439,20 +2485,20 @@ namespace TomCat {
 			if (physicsEntities.find(uuid) == physicsEntities.end())
 				continue;
 			auto mapIt = m_EntityMap.find(uuid);
-			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second))
+			if (mapIt == m_EntityMap.end() || !m_Registry.IsAlive(mapIt->second))
 				continue;
-			const entt::entity entity = mapIt->second;
+			const ekit::Entity entity = mapIt->second;
 			HashPhysicsValue(hash, static_cast<uint64_t>(uuid));
-			const bool hasMetadata = m_Registry.all_of<EntityMetadata>(entity);
+			const bool hasMetadata = m_Registry.HasAll<EntityMetadata>(entity);
 			HashPhysicsValue(hash, hasMetadata);
 			if (hasMetadata)
-				HashPhysicsValue(hash, m_Registry.get<EntityMetadata>(entity).Layer);
+				HashPhysicsValue(hash, m_Registry.Get<EntityMetadata>(entity).Layer);
 
-			const bool hasTransform = m_Registry.all_of<Transform>(entity);
+			const bool hasTransform = m_Registry.HasAll<Transform>(entity);
 			HashPhysicsValue(hash, hasTransform);
 			if (hasTransform)
 			{
-				const auto& transform = m_Registry.get<Transform>(entity);
+				const auto& transform = m_Registry.Get<Transform>(entity);
 				// The accepted hash is refreshed immediately after physics writes its
 				// pose back. Any subsequent change therefore represents an authored or
 				// scripted teleport and is applied at the next safe step boundary.
@@ -2463,21 +2509,21 @@ namespace TomCat {
 				HashPhysicsFloat(hash, transform._Scale.y);
 			}
 
-			const bool hasRigidbody = m_Registry.all_of<Rigidbody2D>(entity);
+			const bool hasRigidbody = m_Registry.HasAll<Rigidbody2D>(entity);
 			HashPhysicsValue(hash, hasRigidbody);
 			if (hasRigidbody)
 			{
-				const auto& rigidbody = m_Registry.get<Rigidbody2D>(entity);
+				const auto& rigidbody = m_Registry.Get<Rigidbody2D>(entity);
 				HashPhysicsValue(hash, rigidbody.Enabled);
 				HashPhysicsValue(hash, static_cast<uint64_t>(rigidbody.Type));
 				HashPhysicsValue(hash, rigidbody.FixedRotation);
 			}
 
-			const bool hasBox = m_Registry.all_of<BoxCollider2D>(entity);
+			const bool hasBox = m_Registry.HasAll<BoxCollider2D>(entity);
 			HashPhysicsValue(hash, hasBox);
 			if (hasBox)
 			{
-				const auto& collider = m_Registry.get<BoxCollider2D>(entity);
+				const auto& collider = m_Registry.Get<BoxCollider2D>(entity);
 				HashPhysicsValue(hash, collider.Enabled);
 				HashPhysicsValue(hash, collider.IsTrigger);
 				HashPhysicsValue(hash, collider.CollisionLayer);
@@ -2492,11 +2538,11 @@ namespace TomCat {
 				HashPhysicsFloat(hash, collider.RestitutionThreshold);
 			}
 
-			const bool hasCircle = m_Registry.all_of<CircleCollider2D>(entity);
+			const bool hasCircle = m_Registry.HasAll<CircleCollider2D>(entity);
 			HashPhysicsValue(hash, hasCircle);
 			if (hasCircle)
 			{
-				const auto& collider = m_Registry.get<CircleCollider2D>(entity);
+				const auto& collider = m_Registry.Get<CircleCollider2D>(entity);
 				HashPhysicsValue(hash, collider.Enabled);
 				HashPhysicsValue(hash, collider.IsTrigger);
 				HashPhysicsValue(hash, collider.CollisionLayer);
@@ -2509,11 +2555,11 @@ namespace TomCat {
 				HashPhysicsFloat(hash, collider.Restitution);
 			}
 
-			const bool hasJoint = m_Registry.all_of<DistanceJoint2D>(entity);
+			const bool hasJoint = m_Registry.HasAll<DistanceJoint2D>(entity);
 			HashPhysicsValue(hash, hasJoint);
 			if (hasJoint)
 			{
-				const auto& joint = m_Registry.get<DistanceJoint2D>(entity);
+				const auto& joint = m_Registry.Get<DistanceJoint2D>(entity);
 				HashPhysicsValue(hash, joint.Enabled);
 				HashPhysicsValue(hash, static_cast<uint64_t>(joint.ConnectedEntity));
 				HashPhysicsFloat(hash, joint.Anchor.x);
@@ -2540,22 +2586,22 @@ namespace TomCat {
 	uint64_t Scene::ComputeRuntimeBodyDefinitionHash(UUID entityID) const
 	{
 		auto mapIt = m_EntityMap.find(entityID);
-		if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
-			|| !m_Registry.all_of<Transform>(mapIt->second))
+		if (mapIt == m_EntityMap.end() || !m_Registry.IsAlive(mapIt->second)
+			|| !m_Registry.HasAll<Transform>(mapIt->second))
 			return 0;
-		const entt::entity handle = mapIt->second;
-		const auto& transform = m_Registry.get<Transform>(handle);
+		const ekit::Entity handle = mapIt->second;
+		const auto& transform = m_Registry.Get<Transform>(handle);
 		uint64_t hash = 1469598103934665603ull;
 		HashPhysicsValue(hash, static_cast<uint64_t>(entityID));
 		HashPhysicsFloat(hash, transform._Translation.x);
 		HashPhysicsFloat(hash, transform._Translation.y);
 		HashPhysicsFloat(hash, transform._Rotation.z);
-		const bool explicitRigidbody = m_Registry.all_of<Rigidbody2D>(handle)
-			&& m_Registry.get<Rigidbody2D>(handle).Enabled;
+		const bool explicitRigidbody = m_Registry.HasAll<Rigidbody2D>(handle)
+			&& m_Registry.Get<Rigidbody2D>(handle).Enabled;
 		HashPhysicsValue(hash, explicitRigidbody);
 		if (explicitRigidbody)
 		{
-			const auto& rigidbody = m_Registry.get<Rigidbody2D>(handle);
+			const auto& rigidbody = m_Registry.Get<Rigidbody2D>(handle);
 			HashPhysicsValue(hash, static_cast<uint64_t>(rigidbody.Type));
 			HashPhysicsValue(hash, rigidbody.FixedRotation);
 		}
@@ -2571,21 +2617,21 @@ namespace TomCat {
 		for (UUID uuid : m_EntityOrder)
 		{
 			auto mapIt = m_EntityMap.find(uuid);
-			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second))
+			if (mapIt == m_EntityMap.end() || !m_Registry.IsAlive(mapIt->second))
 				continue;
-			const entt::entity handle = mapIt->second;
+			const ekit::Entity handle = mapIt->second;
 			Entity entity(handle, const_cast<Scene*>(this));
 			if (!IsActiveInHierarchy(entity))
 				continue;
 
-			const bool hasRigidbody = m_Registry.all_of<Rigidbody2D>(handle);
+			const bool hasRigidbody = m_Registry.HasAll<Rigidbody2D>(handle);
 			const bool rigidbodyEnabled = hasRigidbody
-				&& m_Registry.get<Rigidbody2D>(handle).Enabled;
+				&& m_Registry.Get<Rigidbody2D>(handle).Enabled;
 			const bool colliderEnabled =
-				(m_Registry.all_of<BoxCollider2D>(handle)
-					&& m_Registry.get<BoxCollider2D>(handle).Enabled)
-				|| (m_Registry.all_of<CircleCollider2D>(handle)
-					&& m_Registry.get<CircleCollider2D>(handle).Enabled);
+				(m_Registry.HasAll<BoxCollider2D>(handle)
+					&& m_Registry.Get<BoxCollider2D>(handle).Enabled)
+				|| (m_Registry.HasAll<CircleCollider2D>(handle)
+					&& m_Registry.Get<CircleCollider2D>(handle).Enabled);
 			if (rigidbodyEnabled || (!hasRigidbody && colliderEnabled))
 				requiredBodies.insert(uuid);
 		}
@@ -2594,14 +2640,14 @@ namespace TomCat {
 		for (UUID uuid : m_EntityOrder)
 		{
 			auto mapIt = m_EntityMap.find(uuid);
-			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
-				|| !m_Registry.all_of<DistanceJoint2D>(mapIt->second))
+			if (mapIt == m_EntityMap.end() || !m_Registry.IsAlive(mapIt->second)
+				|| !m_Registry.HasAll<DistanceJoint2D>(mapIt->second))
 				continue;
 			Entity entity(mapIt->second, const_cast<Scene*>(this));
-			const auto& joint = m_Registry.get<DistanceJoint2D>(mapIt->second);
+			const auto& joint = m_Registry.Get<DistanceJoint2D>(mapIt->second);
 			Entity connected;
 			auto connectedIt = m_EntityMap.find(joint.ConnectedEntity);
-			if (connectedIt != m_EntityMap.end() && m_Registry.valid(connectedIt->second))
+			if (connectedIt != m_EntityMap.end() && m_Registry.IsAlive(connectedIt->second))
 				connected = Entity(connectedIt->second, const_cast<Scene*>(this));
 			if (!joint.Enabled || !connected || joint.ConnectedEntity == uuid
 				|| !IsActiveInHierarchy(entity) || !IsActiveInHierarchy(connected))
@@ -2622,11 +2668,11 @@ namespace TomCat {
 			if (requiredBodies.find(uuid) == requiredBodies.end())
 				continue;
 			auto mapIt = m_EntityMap.find(uuid);
-			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
-				|| !m_Registry.all_of<Transform>(mapIt->second))
+			if (mapIt == m_EntityMap.end() || !m_Registry.IsAlive(mapIt->second)
+				|| !m_Registry.HasAll<Transform>(mapIt->second))
 				continue;
-			const entt::entity handle = mapIt->second;
-			const auto& transform = m_Registry.get<Transform>(handle);
+			const ekit::Entity handle = mapIt->second;
+			const auto& transform = m_Registry.Get<Transform>(handle);
 			if (!std::isfinite(transform._Translation.x)
 				|| !std::isfinite(transform._Translation.y)
 				|| !std::isfinite(transform._Rotation.z))
@@ -2635,11 +2681,11 @@ namespace TomCat {
 			definitions.Bodies.emplace(uuid,
 				ComputeRuntimeBodyDefinitionHash(uuid));
 
-			const uint8_t entityLayer = m_Registry.all_of<EntityMetadata>(handle)
-				? m_Registry.get<EntityMetadata>(handle).Layer : 0;
-			if (m_Registry.all_of<BoxCollider2D>(handle))
+			const uint8_t entityLayer = m_Registry.HasAll<EntityMetadata>(handle)
+				? m_Registry.Get<EntityMetadata>(handle).Layer : 0;
+			if (m_Registry.HasAll<BoxCollider2D>(handle))
 			{
-				const auto& collider = m_Registry.get<BoxCollider2D>(handle);
+				const auto& collider = m_Registry.Get<BoxCollider2D>(handle);
 				const float halfWidth = std::abs(collider.Size.x * transform._Scale.x);
 				const float halfHeight = std::abs(collider.Size.y * transform._Scale.y);
 				const float centerX = collider.Offset.x * transform._Scale.x;
@@ -2678,9 +2724,9 @@ namespace TomCat {
 				}
 			}
 
-			if (m_Registry.all_of<CircleCollider2D>(handle))
+			if (m_Registry.HasAll<CircleCollider2D>(handle))
 			{
-				const auto& collider = m_Registry.get<CircleCollider2D>(handle);
+				const auto& collider = m_Registry.Get<CircleCollider2D>(handle);
 				const float radiusScale = std::max(std::abs(transform._Scale.x),
 					std::abs(transform._Scale.y));
 				const float radius = collider.Radius * radiusScale;
@@ -2718,14 +2764,14 @@ namespace TomCat {
 		for (UUID uuid : m_EntityOrder)
 		{
 			auto mapIt = m_EntityMap.find(uuid);
-			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
-				|| !m_Registry.all_of<DistanceJoint2D, Transform>(mapIt->second))
+			if (mapIt == m_EntityMap.end() || !m_Registry.IsAlive(mapIt->second)
+				|| !m_Registry.HasAll<DistanceJoint2D, Transform>(mapIt->second))
 				continue;
-			const auto& joint = m_Registry.get<DistanceJoint2D>(mapIt->second);
+			const auto& joint = m_Registry.Get<DistanceJoint2D>(mapIt->second);
 			auto connectedIt = m_EntityMap.find(joint.ConnectedEntity);
 			if (!joint.Enabled || connectedIt == m_EntityMap.end()
-				|| !m_Registry.valid(connectedIt->second)
-				|| !m_Registry.all_of<Transform>(connectedIt->second)
+				|| !m_Registry.IsAlive(connectedIt->second)
+				|| !m_Registry.HasAll<Transform>(connectedIt->second)
 				|| definitions.Bodies.find(uuid) == definitions.Bodies.end()
 				|| definitions.Bodies.find(joint.ConnectedEntity)
 					== definitions.Bodies.end()
@@ -2733,9 +2779,9 @@ namespace TomCat {
 				continue;
 
 			const glm::vec2 scaleA =
-				glm::vec2(m_Registry.get<Transform>(mapIt->second)._Scale);
+				glm::vec2(m_Registry.Get<Transform>(mapIt->second)._Scale);
 			const glm::vec2 scaleB =
-				glm::vec2(m_Registry.get<Transform>(connectedIt->second)._Scale);
+				glm::vec2(m_Registry.Get<Transform>(connectedIt->second)._Scale);
 			const glm::vec2 scaledAnchorA = joint.Anchor * scaleA;
 			const glm::vec2 scaledAnchorB = joint.ConnectedAnchor * scaleB;
 			const bool valid = std::isfinite(joint.Anchor.x)
@@ -2765,15 +2811,15 @@ namespace TomCat {
 			HashPhysicsFloat(hash, scaleA.y);
 			HashPhysicsFloat(hash, scaleB.x);
 			HashPhysicsFloat(hash, scaleB.y);
-			auto hashEndpointBodyType = [&](entt::entity endpoint)
+			auto hashEndpointBodyType = [&](ekit::Entity endpoint)
 			{
 				const bool explicitRigidbody =
-					m_Registry.all_of<Rigidbody2D>(endpoint)
-					&& m_Registry.get<Rigidbody2D>(endpoint).Enabled;
+					m_Registry.HasAll<Rigidbody2D>(endpoint)
+					&& m_Registry.Get<Rigidbody2D>(endpoint).Enabled;
 				HashPhysicsValue(hash, explicitRigidbody);
 				if (explicitRigidbody)
 				{
-					const auto& rigidbody = m_Registry.get<Rigidbody2D>(endpoint);
+					const auto& rigidbody = m_Registry.Get<Rigidbody2D>(endpoint);
 					HashPhysicsValue(hash,
 						static_cast<uint64_t>(rigidbody.Type));
 					HashPhysicsValue(hash, rigidbody.FixedRotation);
@@ -3720,9 +3766,9 @@ namespace TomCat {
 		RuntimeUISystem::Reset(m_Registry);
 
 		bool hasManagedScripts = false;
-		for (const entt::entity entity : m_Registry.view<CSharpScripts>())
+		for (const ekit::Entity entity : m_Registry.View<CSharpScripts>())
 		{
-			if (!m_Registry.get<CSharpScripts>(entity).Scripts.empty())
+			if (!m_Registry.Get<CSharpScripts>(entity).Scripts.empty())
 			{
 				hasManagedScripts = true;
 				break;
@@ -3804,12 +3850,12 @@ namespace TomCat {
 
 	void Scene::SynchronizeRuntimeTransforms()
 	{
-		auto view = m_Registry.view<Transform, Rigidbody2D>();
+		auto view = m_Registry.View<Transform, Rigidbody2D>();
 		for (auto e : view)
 		{
 			Entity entity = { e, this };
-			auto& transform = view.get<Transform>(e);
-			auto& rb2d = view.get<Rigidbody2D>(e);
+			auto& transform = view.Get<Transform>(e);
+			auto& rb2d = view.Get<Rigidbody2D>(e);
 			if (!rb2d.Enabled || !rb2d.RuntimeBody)
 				continue;
 
@@ -4062,10 +4108,10 @@ namespace TomCat {
 		auto resolve = [this, &visited](auto&& self, UUID uuid) -> glm::mat4
 		{
 			auto entityIt = m_EntityMap.find(uuid);
-			if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
-				|| !m_Registry.all_of<Transform>(entityIt->second))
+			if (entityIt == m_EntityMap.end() || !m_Registry.IsAlive(entityIt->second)
+				|| !m_Registry.HasAll<Transform>(entityIt->second))
 				return glm::mat4(1.0f);
-			const auto& transform = m_Registry.get<Transform>(entityIt->second);
+			const auto& transform = m_Registry.Get<Transform>(entityIt->second);
 			if (!visited.emplace(uuid).second)
 				return transform.GetTransform();
 
@@ -4103,13 +4149,13 @@ namespace TomCat {
 	glm::mat4 Scene::GetRuntimeCameraTransform(UUID entityID) const
 	{
 		auto entityIt = m_EntityMap.find(entityID);
-		if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
-			|| !m_Registry.all_of<Transform>(entityIt->second))
+		if (entityIt == m_EntityMap.end() || !m_Registry.IsAlive(entityIt->second)
+			|| !m_Registry.HasAll<Transform>(entityIt->second))
 			return glm::mat4(1.0f);
 
 		const glm::mat4 renderTransform = GetRuntimeRenderTransform(entityID);
 		return MakeScaleFreeCameraTransform(renderTransform,
-			m_Registry.get<Transform>(entityIt->second));
+			m_Registry.Get<Transform>(entityIt->second));
 	}
 
 	void Scene::RenderRuntimeScene()
@@ -4161,10 +4207,10 @@ namespace TomCat {
 		m_ViewportHeight = height;
 
 		// Resize our non-FixedAspectRatio cameras
-		auto view = m_Registry.view<C_Camera>();
+		auto view = m_Registry.View<C_Camera>();
 		for (auto entity : view)
 		{
-			auto& camera = view.get<C_Camera>(entity);
+			auto& camera = view.Get<C_Camera>(entity);
 			if (!camera.FixedAspectRatio)
 				camera._Camera.SetViewportSize(width, height);
 		}
@@ -4204,14 +4250,14 @@ namespace TomCat {
 					continue;
 				const UUID uuid(rawUUID);
 				auto entityIt = m_EntityMap.find(uuid);
-				if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
-					|| !m_Registry.all_of<ID>(entityIt->second)
-					|| m_Registry.get<ID>(entityIt->second).id != uuid)
+				if (entityIt == m_EntityMap.end() || !m_Registry.IsAlive(entityIt->second)
+					|| !m_Registry.HasAll<ID>(entityIt->second)
+					|| m_Registry.Get<ID>(entityIt->second).id != uuid)
 					continue;
 
 				float z = 0.0f;
-				if (m_Registry.all_of<Transform>(entityIt->second))
-					z = m_Registry.get<Transform>(entityIt->second)._Translation.z;
+				if (m_Registry.HasAll<Transform>(entityIt->second))
+					z = m_Registry.Get<Transform>(entityIt->second)._Translation.z;
 
 				for (b2Fixture* fixture = body->GetFixtureList(); fixture; fixture = fixture->GetNext())
 				{
@@ -4278,12 +4324,12 @@ namespace TomCat {
 			return result;
 		}
 
-		const auto boxView = m_Registry.view<ID, Transform, BoxCollider2D>();
-		result.reserve(boxView.size_hint());
-		for (entt::entity entity : boxView)
+		const auto boxView = m_Registry.View<ID, Transform, BoxCollider2D>();
+		result.reserve(boxView.SizeHint());
+		for (ekit::Entity entity : boxView)
 		{
-			const auto& transform = boxView.get<Transform>(entity);
-			const auto& collider = boxView.get<BoxCollider2D>(entity);
+			const auto& transform = boxView.Get<Transform>(entity);
+			const auto& collider = boxView.Get<BoxCollider2D>(entity);
 			if (!std::isfinite(collider.Offset.x) || !std::isfinite(collider.Offset.y)
 				|| !std::isfinite(collider.Size.x) || !std::isfinite(collider.Size.y)
 				|| collider.Size.x <= 0.0f || collider.Size.y <= 0.0f
@@ -4299,7 +4345,7 @@ namespace TomCat {
 
 			ColliderDebugShape debugShape;
 			debugShape.Type = ColliderDebugShapeType::Box;
-			debugShape.EntityID = boxView.get<ID>(entity).id;
+			debugShape.EntityID = boxView.Get<ID>(entity).id;
 			debugShape.Enabled = collider.Enabled;
 			debugShape.IsTrigger = collider.IsTrigger;
 			debugShape.CollisionLayer = collider.CollisionLayer;
@@ -4311,12 +4357,12 @@ namespace TomCat {
 			result.push_back(debugShape);
 		}
 
-		const auto circleView = m_Registry.view<ID, Transform, CircleCollider2D>();
-		result.reserve(result.size() + circleView.size_hint());
-		for (entt::entity entity : circleView)
+		const auto circleView = m_Registry.View<ID, Transform, CircleCollider2D>();
+		result.reserve(result.size() + circleView.SizeHint());
+		for (ekit::Entity entity : circleView)
 		{
-			const auto& transform = circleView.get<Transform>(entity);
-			const auto& collider = circleView.get<CircleCollider2D>(entity);
+			const auto& transform = circleView.Get<Transform>(entity);
+			const auto& collider = circleView.Get<CircleCollider2D>(entity);
 			if (!std::isfinite(collider.Offset.x) || !std::isfinite(collider.Offset.y)
 				|| !std::isfinite(collider.Radius) || collider.Radius <= 0.0f
 				|| !IsValidColliderTransform2D(transform))
@@ -4332,7 +4378,7 @@ namespace TomCat {
 
 			ColliderDebugShape debugShape;
 			debugShape.Type = ColliderDebugShapeType::Circle;
-			debugShape.EntityID = circleView.get<ID>(entity).id;
+			debugShape.EntityID = circleView.Get<ID>(entity).id;
 			debugShape.Enabled = collider.Enabled;
 			debugShape.IsTrigger = collider.IsTrigger;
 			debugShape.CollisionLayer = collider.CollisionLayer;
@@ -4349,7 +4395,7 @@ namespace TomCat {
 
 	Entity Scene::DuplicateEntity(Entity entity)
 	{
-		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+		if (!entity || entity.m_Scene != this || !m_Registry.IsAlive(entity.m_EntityHandle)
 			|| !entity.HasComponent<ID>() || !entity.HasComponent<Tag>()
 			|| !entity.HasComponent<EntityMetadata>() || !entity.HasComponent<Transform>())
 			return {};
@@ -4413,10 +4459,10 @@ namespace TomCat {
 
 	Entity Scene::GetPrimaryCameraEntity()
 	{
-		auto view = m_Registry.view<C_Camera>();
-		for (const entt::entity handle : view)
+		auto view = m_Registry.View<C_Camera>();
+		for (const ekit::Entity handle : view)
 		{
-			const auto& camera = view.get<C_Camera>(handle);
+			const auto& camera = view.Get<C_Camera>(handle);
 			Entity entity(handle, this);
 			if (camera.Enabled && camera.Primary && IsActiveInHierarchy(entity))
 				return entity;
@@ -4427,9 +4473,9 @@ namespace TomCat {
 	Entity Scene::FindEntityByUUID(UUID uuid)
 	{
 		auto entityIt = m_EntityMap.find(uuid);
-		if (entityIt != m_EntityMap.end() && m_Registry.valid(entityIt->second)
-			&& m_Registry.all_of<ID>(entityIt->second)
-			&& m_Registry.get<ID>(entityIt->second).id == uuid)
+		if (entityIt != m_EntityMap.end() && m_Registry.IsAlive(entityIt->second)
+			&& m_Registry.HasAll<ID>(entityIt->second)
+			&& m_Registry.Get<ID>(entityIt->second).id == uuid)
 			return Entity(entityIt->second, this);
 		return {};
 	}
@@ -4440,13 +4486,13 @@ namespace TomCat {
 		if (static_cast<uint64_t>(handle) == 0)
 			return references;
 
-		auto view = m_Registry.view<ID, SpriteRenderer>();
-		for (const entt::entity entity : view)
+		auto view = m_Registry.View<ID, SpriteRenderer>();
+		for (const ekit::Entity entity : view)
 		{
-			const auto& sprite = view.get<SpriteRenderer>(entity);
+			const auto& sprite = view.Get<SpriteRenderer>(entity);
 			if (sprite.SpriteHandle != handle)
 				continue;
-			const uint64_t entityID = static_cast<uint64_t>(view.get<ID>(entity).id);
+			const uint64_t entityID = static_cast<uint64_t>(view.Get<ID>(entity).id);
 			AssetReference reference;
 			reference.ReferencedAsset = handle;
 			reference.PropertyPath = "Entity " + std::to_string(entityID) +
@@ -4454,13 +4500,13 @@ namespace TomCat {
 			references.push_back(std::move(reference));
 		}
 
-		auto scriptsView = m_Registry.view<ID, CSharpScripts>();
-		auto animatorView = m_Registry.view<ID, SpriteAnimator>();
-		for (const entt::entity entity : animatorView)
+		auto scriptsView = m_Registry.View<ID, CSharpScripts>();
+		auto animatorView = m_Registry.View<ID, SpriteAnimator>();
+		for (const ekit::Entity entity : animatorView)
 		{
 			const uint64_t entityID = static_cast<uint64_t>(
-				animatorView.get<ID>(entity).id);
-			const auto& clips = animatorView.get<SpriteAnimator>(entity).Clips;
+				animatorView.Get<ID>(entity).id);
+			const auto& clips = animatorView.Get<SpriteAnimator>(entity).Clips;
 			for (size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
 			{
 				for (size_t frameIndex = 0;
@@ -4478,24 +4524,24 @@ namespace TomCat {
 				}
 			}
 		}
-		auto audioView = m_Registry.view<ID, AudioSource>();
-		for (const entt::entity entity : audioView)
+		auto audioView = m_Registry.View<ID, AudioSource>();
+		for (const ekit::Entity entity : audioView)
 		{
-			const auto& source = audioView.get<AudioSource>(entity);
+			const auto& source = audioView.Get<AudioSource>(entity);
 			if (source.Clip != handle)
 				continue;
 			AssetReference reference;
 			reference.ReferencedAsset = handle;
 			reference.PropertyPath = "Entity "
-				+ std::to_string(static_cast<uint64_t>(audioView.get<ID>(entity).id))
+				+ std::to_string(static_cast<uint64_t>(audioView.Get<ID>(entity).id))
 				+ ".AudioSource.Clip";
 			references.push_back(std::move(reference));
 		}
 
-		for (const entt::entity entity : scriptsView)
+		for (const ekit::Entity entity : scriptsView)
 		{
-			const uint64_t entityID = static_cast<uint64_t>(scriptsView.get<ID>(entity).id);
-			const auto& scripts = scriptsView.get<CSharpScripts>(entity).Scripts;
+			const uint64_t entityID = static_cast<uint64_t>(scriptsView.Get<ID>(entity).id);
+			const auto& scripts = scriptsView.Get<CSharpScripts>(entity).Scripts;
 			for (size_t scriptIndex = 0; scriptIndex < scripts.size(); ++scriptIndex)
 			{
 				const CSharpScriptEntry& script = scripts[scriptIndex];

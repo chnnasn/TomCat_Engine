@@ -3,10 +3,10 @@
 一款面向 **2D 游戏开发的 C++20 开源引擎**，包含可视化编辑器、项目中心与独立游戏运行时。
 
 TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Box2D 物理集成在同一个开发环境中。
-引擎库提供渲染、ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
+引擎库提供渲染、ekit ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
 Player 则负责脱离编辑器运行打包后的游戏。
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL · ImGui · ekit · Box2D · .NET 10 · Windows x64 · MIT**
 
 **语言**：[English](README.md) | 简体中文
 
@@ -25,6 +25,24 @@ Player 则负责脱离编辑器运行打包后的游戏。
 | **Managed 脚本层** | 提供 C# 游戏开发 API、脚本编译与运行时托管 |
 | **Player 游戏运行时** | 加载打包资源，使用随包附带的 .NET Runtime 独立运行游戏 |
 | **Web 实验目标** | 基于 Emscripten/WebGL2 的 Player 与复用原生 ImGui 面板的编辑器，由浏览器宿主负责持久化 |
+
+## ECS 后端：ekit
+
+TomCat 已使用 [ekit](https://github.com/chnnasn/ekit) 替换 EnTT。场景组件采用显式注册的
+稀疏存储，支持包含字符串、容器和资源引用的组件。实体保留完整的 64 位索引与代际信息，
+编辑器拾取使用独立整数 ID，避免旧拾取结果误选复用槽位的新实体。场景 UUID 及现有
+Scene/Prefab 序列化格式保持兼容。
+
+仓库内的依赖固定到提交 `82d4de67f37d5d146bb7287e07116dc7567af996`。
+迁移所需修复已通过 [ekit PR #2](https://github.com/chnnasn/ekit/pull/2) 提交上游，
+包括支持拥有资源的稀疏组件、扩容时保持组件引用有效、拒绝冲突的存储注册，以及修复
+头文件在多个翻译单元中的链接问题。插件组件注册方式见
+[迁移说明](docs/EKIT_MIGRATION.md)，版本来源见
+[依赖记录](TomCat/vendor/ekit/README.tomcat.md)。
+
+已在 Windows x64 / MSVC Release 下通过全部 10 个原生回归程序、Editor/Player/Hub/CLI
+构建、CLI 冒烟测试及发布脚本测试；ekit 测试通过 4,417 项检查。Web 代码和包含路径已迁移，
+但环境缺少 Emscripten，尚未验证 WebAssembly 构建。
 
 ## 功能展示
 

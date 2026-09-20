@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-#include <entt.hpp>
+#include "TomCat/Scene/SceneWorld.h"
 #include <glm/glm.hpp>
 
 namespace TomCat {
@@ -156,14 +156,14 @@ namespace TomCat {
 		static glm::mat4 GetEditorCanvasTransform(
 			const glm::vec2& referenceResolution);
 		static RuntimeUILayoutSnapshot BuildLayout(Scene& scene,
-			entt::registry& registry, uint32_t viewportWidth,
+			SceneWorld& registry, uint32_t viewportWidth,
 			uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static RuntimeUILayoutSnapshot BuildLayout(Scene& scene,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static RuntimeUILayoutSnapshot BuildEditorLayout(Scene& scene,
-			entt::registry& registry,
+			SceneWorld& registry,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
 		static RuntimeUILayoutSnapshot BuildEditorLayout(Scene& scene,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
@@ -173,7 +173,7 @@ namespace TomCat {
 		static bool BuildImageGeometry(const UIRect& rectangle,
 			const UIRect& clip, float sourceAspect, const glm::vec2& uvMin,
 			const glm::vec2& uvMax, bool preserveAspect, UIImageGeometry& output);
-		static void Reset(entt::registry& registry);
+		static void Reset(SceneWorld& registry);
 		// Freeze whether Runtime UI owns the fixed input batch that is active on
 		// ScriptEngine. Call this after BeginFixedStep and before managed actions.
 		// Repeated calls before the next display Update are intentionally idempotent
@@ -188,26 +188,26 @@ namespace TomCat {
 		static void PrepareFixedInputCaptureWithInput(Scene& scene,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 			const RuntimeUIInputFrame& input);
-		static void Update(Scene& scene, entt::registry& registry,
+		static void Update(Scene& scene, SceneWorld& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
 			glm::vec2 viewportOrigin = glm::vec2(0.0f),
 			glm::vec2 screenToFramebufferScale = glm::vec2(1.0f));
-		static void UpdateWithInput(Scene& scene, entt::registry& registry,
+		static void UpdateWithInput(Scene& scene, SceneWorld& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 			const RuntimeUIInputFrame& input);
 		static void UpdateWithInput(Scene& scene, uint32_t viewportWidth,
 			uint32_t viewportHeight, float dpi, const RuntimeUIInputFrame& input);
-		static void RenderWorldText(Scene& scene, entt::registry& registry,
+		static void RenderWorldText(Scene& scene, SceneWorld& registry,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static void RenderWorldText(Scene& scene,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
-		static void RenderScreen(Scene& scene, entt::registry& registry,
+		static void RenderScreen(Scene& scene, SceneWorld& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
 		static void RenderScreen(Scene& scene, uint32_t viewportWidth,
 			uint32_t viewportHeight, float dpi = 96.0f,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Gameplay);
-		static void RenderEditorCanvas(Scene& scene, entt::registry& registry,
+		static void RenderEditorCanvas(Scene& scene, SceneWorld& registry,
 			const glm::mat4& editorViewProjection,
 			RuntimeUIVisibilityMode visibility = RuntimeUIVisibilityMode::Editor);
 		static void RenderEditorCanvas(Scene& scene,
@@ -221,7 +221,7 @@ namespace TomCat {
 		static bool SetSliderValue(Entity entity, float value);
 		static bool WasButtonClicked(Entity entity);
 		static uint64_t GetButtonClickSerial(Entity entity);
-		static bool FocusButton(Scene& scene, entt::registry& registry, Entity entity);
+		static bool FocusButton(Scene& scene, SceneWorld& registry, Entity entity);
 		static bool FocusButton(Scene& scene, Entity entity);
 	};
 

@@ -13,7 +13,7 @@ project "AudioRegression"
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
 		"%{wks.location}/../TomCat/vendor",
-		"%{IncludeDir.Box2D}", "%{IncludeDir.glm}", "%{IncludeDir.entt}",
+		"%{IncludeDir.Box2D}", "%{IncludeDir.glm}", "%{IncludeDir.ekit}",
 		"%{IncludeDir.yaml_cpp}"
 	}
 

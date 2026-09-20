@@ -4336,6 +4336,7 @@ namespace {
 
 	struct PluginManagedProperties
 	{
+		EKIT_COMPONENT(PluginManagedProperties);
 		int32_t Count = 0;
 		std::string Label;
 	};
@@ -4351,6 +4352,9 @@ namespace {
 		descriptor.ProviderId = TomCat::UUID(PluginManagedProviderId);
 		descriptor.TypeId = TomCat::UUID(PluginManagedTypeId);
 		descriptor.StableName = "Regression.PluginManagedProperties";
+		descriptor.RegisterStorage = [](TomCat::Scene& scene) {
+			scene.RegisterComponent<PluginManagedProperties>();
+		};
 		descriptor.DisplayName = "Plugin Managed Properties";
 		descriptor.ScriptAccessible = true;
 		descriptor.SupportsTransactionalValidation = true;
@@ -4434,6 +4438,7 @@ namespace {
 
 	struct ProviderTransactionComponent
 	{
+		EKIT_COMPONENT(ProviderTransactionComponent);
 		int32_t Value = 0;
 	};
 
@@ -4467,6 +4472,9 @@ namespace {
 		descriptor.ProviderId = TomCat::UUID(ProviderTransactionProviderId);
 		descriptor.TypeId = TomCat::UUID(ProviderTransactionTypeId);
 		descriptor.StableName = "Regression.ProviderTransactionComponent";
+		descriptor.RegisterStorage = [](TomCat::Scene& scene) {
+			scene.RegisterComponent<ProviderTransactionComponent>();
+		};
 		descriptor.DisplayName = "Provider Transaction Component";
 		descriptor.ScriptAccessible = true;
 		descriptor.SupportsTransactionalValidation = true;

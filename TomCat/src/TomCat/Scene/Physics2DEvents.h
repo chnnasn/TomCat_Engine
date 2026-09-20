@@ -6,7 +6,7 @@ namespace TomCat {
 
 	// Physics callbacks deliberately carry stable scene identities instead of
 	// Entity handles or pointers. Consumers can resolve them against the scene at
-	// dispatch time, and no object owned by entt or Box2D escapes its lifetime.
+	// dispatch time, and no object owned by ekit or Box2D escapes its lifetime.
 	struct CollisionEnter2D
 	{
 		// Canonical order (the smaller UUID is always EntityA). A single event is

@@ -3,7 +3,7 @@
 
 namespace TomCat {
 
-	Entity::Entity(entt::entity handle, Scene* scene)
+	Entity::Entity(ekit::Entity handle, Scene* scene)
 		:m_EntityHandle(handle),m_Scene(scene)
 	{
 	

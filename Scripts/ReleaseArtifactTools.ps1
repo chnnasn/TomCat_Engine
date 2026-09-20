@@ -24,7 +24,7 @@ function Assert-TomCatFileSha256 {
 function Get-TomCatReleaseDependencies {
     return @(
         [ordered]@{ Name = 'Box2D'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\Box2D\LICENSE'; Mode = 'Full' },
-        [ordered]@{ Name = 'EnTT'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\entt\LICENSE.txt'; Mode = 'Full' },
+        [ordered]@{ Name = 'ekit'; Version = '82d4de67f37d5d146bb7287e07116dc7567af996'; License = 'MIT'; Notice = 'TomCat\vendor\ekit\LICENSE'; Mode = 'Full' },
         [ordered]@{ Name = 'GLFW'; Version = ''; License = 'Zlib'; Notice = 'TomCat\vendor\GLFW\LICENSE.md'; Mode = 'Full' },
         [ordered]@{ Name = 'GLM'; Version = ''; License = 'NOASSERTION'; Notice = 'TomCat\vendor\glm\copying.txt'; Mode = 'Full' },
         [ordered]@{ Name = 'Dear ImGui'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\ImGui\LICENSE.txt'; Mode = 'Full' },
