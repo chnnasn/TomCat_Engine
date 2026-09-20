@@ -11,6 +11,7 @@
 #include "TomCat/Renderer/Texture.h"
 #include "TomCat/Project/Project.h"
 #include "../EditorIcons.h"
+#include "../Scripting/ScriptEditorMetadata.h"
 
 namespace TomCat {
 
@@ -65,9 +66,27 @@ namespace TomCat {
 		bool IsFocused() const { return m_Focused; }
 		bool IsDocked() const { return m_Docked; }
         void OnAssetInspectorRender(bool* open);
+        void DrawAssetInspector(const std::filesystem::path& path);
+        using AssetSelectionCallback = std::function<void(const std::filesystem::path&)>;
+        void SetAssetSelectionCallback(AssetSelectionCallback callback) { m_AssetSelectionCallback = std::move(callback); }
+        void SetScriptMetadataProvider(std::function<std::optional<EditorScriptMetadata>(AssetHandle)> provider) { m_ScriptMetadataProvider = std::move(provider); }
         bool OpenDiagnosticSource(const std::filesystem::path& path) { return path.extension()==".cs" && OpenCSharpScript(path); }
         void OnImGuiRender(bool* open = nullptr);
 	private:
+        void SelectAssetPath(const std::filesystem::path& path);
+        void RefreshInspectorDetails(const std::filesystem::path& path, AssetType type, bool directory);
+        AssetSelectionCallback m_AssetSelectionCallback;
+        std::function<std::optional<EditorScriptMetadata>(AssetHandle)> m_ScriptMetadataProvider;
+        std::filesystem::path m_InspectedPath;
+        std::filesystem::file_time_type m_InspectorSourceTime{};
+        double m_NextInspectorRefresh = 0.0;
+        std::vector<std::pair<std::string, std::string>> m_InspectorDetails;
+        std::vector<std::pair<std::string, std::string>> m_InspectorShaderResources;
+        std::string m_InspectorSource, m_InspectorReadError, m_InspectorCompileMessage;
+        Ref<Texture2D> m_InspectorPreview;
+        struct ImportDraft { AssetImportSettings Settings; AssetImportSettings Base; };
+        std::unordered_map<std::filesystem::path, ImportDraft> m_ImportDrafts;
+        AssetImportSettings m_AssetSettingsBase;
         AssetHandle m_InspectedAsset{0};
         AssetImportSettings m_AssetSettingsDraft;
         bool m_AssetSettingsDirty=false;

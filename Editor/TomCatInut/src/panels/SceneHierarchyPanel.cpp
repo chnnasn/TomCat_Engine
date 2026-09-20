@@ -1204,6 +1204,7 @@ namespace TomCat {
 		m_AnimatorRenamePopupRequested = false;
 		if (contextChanged)
 		{
+            m_InspectorAssetPath.clear(); m_LockedInspectorAssetPath.clear();
             m_InspectorLocked = false;
             m_InspectedEntity = UUID(0);
 			m_AnimatorGraphStates.clear();
@@ -1537,6 +1538,9 @@ namespace TomCat {
 		{
 		const bool hierarchyVisible = BeginEditorWindow("Hierarchy", hierarchyOpen);
 		m_HierarchyDocked = ImGui::IsWindowDocked();
+        if (hierarchyVisible && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+            (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
+            m_InspectorAssetPath.clear();
 		m_HierarchyFocused = hierarchyVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
 		if (hierarchyVisible && m_Context)
@@ -1740,10 +1744,14 @@ namespace TomCat {
                 if (clicked)
                 {
                     m_InspectorLocked = !m_InspectorLocked;
+                    m_LockedInspectorAssetPath = m_InspectorLocked ? m_InspectorAssetPath : std::filesystem::path{};
                     m_InspectedEntity = m_InspectorLocked && m_SelectionContext ? m_SelectionContext.GetUUID() : UUID(0);
                 }
             }
-			if (inspectorVisible && m_Context && (m_SelectionContext || (m_InspectorLocked && m_Context->FindEntityByUUID(m_InspectedEntity))))
+            const auto& inspectedAsset = m_InspectorLocked ? m_LockedInspectorAssetPath : m_InspectorAssetPath;
+            if (inspectorVisible && !inspectedAsset.empty() && m_AssetInspectorRenderer)
+                m_AssetInspectorRenderer(inspectedAsset);
+            else if (inspectorVisible && m_Context && (m_SelectionContext || (m_InspectorLocked && m_Context->FindEntityByUUID(m_InspectedEntity))))
 			{
                 Entity inspected = m_InspectorLocked ? m_Context->FindEntityByUUID(m_InspectedEntity) : m_SelectionContext;
                 if (!inspected) { m_InspectorLocked = false; inspected = m_SelectionContext; }
@@ -3190,6 +3198,7 @@ namespace TomCat {
 
 	void SceneHierarchyPanel::SetSelectedEntity(Entity entity)
 	{
+        m_InspectorAssetPath.clear();
         m_MultiSelection.clear();
 		if (m_SelectionContext != entity)
 		{

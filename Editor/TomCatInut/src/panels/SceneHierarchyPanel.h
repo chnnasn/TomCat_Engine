@@ -128,6 +128,8 @@ namespace TomCat {
 			m_ColliderEditEntity = UUID(0);
 		}
 
+        void SetAssetSelection(const std::filesystem::path& path) { m_InspectorAssetPath = path; }
+        void SetAssetInspectorRenderer(std::function<void(const std::filesystem::path&)> renderer) { m_AssetInspectorRenderer = std::move(renderer); }
 		void SetSelectedEntity(Entity entity);
 		bool HandleShortcut(int keyCode, bool control);
 		bool FlushPendingCommands();
@@ -311,6 +313,8 @@ namespace TomCat {
         std::vector<UUID> m_HierarchyVisibleOrder, m_PreviousHierarchyOrder;
         UUID m_SelectionAnchor{0};
         std::array<char, 128> m_HierarchySearch{};
+        std::filesystem::path m_InspectorAssetPath, m_LockedInspectorAssetPath;
+        std::function<void(const std::filesystem::path&)> m_AssetInspectorRenderer;
         bool m_InspectorLocked = false;
         UUID m_InspectedEntity{0};
         Entity m_SelectionContext;
