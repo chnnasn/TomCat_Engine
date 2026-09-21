@@ -2,6 +2,119 @@
   "schemaVersion": 1,
   "components": [
     {
+  "managedType": "Light3D",
+  "stableName": "TomCat.Light3D",
+  "typeId": "0x9f00000000000017",
+  "generateProxy": true,
+  "properties": [
+    {
+      "name": "Enabled",
+      "propertyId": "1700",
+      "kind": "Bool"
+    },
+    {
+      "name": "Type",
+      "propertyId": "1701",
+      "kind": "Int32"
+    },
+    {
+      "name": "Color",
+      "propertyId": "1702",
+      "kind": "Color"
+    },
+    {
+      "name": "Intensity",
+      "propertyId": "1703",
+      "kind": "Float"
+    },
+    {
+      "name": "Range",
+      "propertyId": "1704",
+      "kind": "Float"
+    },
+    {
+      "name": "InnerAngle",
+      "propertyId": "1705",
+      "kind": "Float"
+    },
+    {
+      "name": "OuterAngle",
+      "propertyId": "1706",
+      "kind": "Float"
+    },
+    {
+      "name": "CastShadows",
+      "propertyId": "1707",
+      "kind": "Bool"
+    },
+    {
+      "name": "ShadowBias",
+      "propertyId": "1708",
+      "kind": "Float"
+    },
+    {
+      "name": "ShadowExtent",
+      "propertyId": "1709",
+      "kind": "Float"
+    }
+  ]
+},
+    {
+  "managedType": "Environment3D",
+  "stableName": "TomCat.Environment3D",
+  "typeId": "0x9f00000000000018",
+  "generateProxy": true,
+  "properties": [
+    {
+      "name": "Enabled",
+      "propertyId": "1800",
+      "kind": "Bool"
+    },
+    {
+      "name": "ShowSky",
+      "propertyId": "1801",
+      "kind": "Bool"
+    },
+    {
+      "name": "Panorama",
+      "propertyId": "1802",
+      "kind": "UInt64",
+      "conversion": "AssetRef",
+      "managedType": "AssetRef<Texture2DAsset>"
+    },
+    {
+      "name": "SkyColor",
+      "propertyId": "1803",
+      "kind": "Color"
+    },
+    {
+      "name": "GroundColor",
+      "propertyId": "1804",
+      "kind": "Color"
+    },
+    {
+      "name": "Intensity",
+      "propertyId": "1805",
+      "kind": "Float"
+    },
+    {
+      "name": "AmbientIntensity",
+      "propertyId": "1806",
+      "kind": "Float"
+    },
+    {
+      "name": "Rotation",
+      "propertyId": "1807",
+      "kind": "Float"
+    },
+    {
+      "name": "Exposure",
+      "propertyId": "1808",
+      "kind": "Float"
+    }
+  ]
+},
+    {
       "managedType": "MeshRenderer", "stableName": "TomCat.MeshRenderer",
       "typeId": "0x9f00000000000016", "generateProxy": true,
       "properties": [
@@ -10,7 +123,14 @@
         { "name": "Mesh", "propertyId": "1602", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<MeshAsset>" },
         { "name": "Primitive", "propertyId": "1603", "kind": "Int32" },
         { "name": "Albedo", "propertyId": "1604", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<Texture2DAsset>" },
-        { "name": "UseTexture", "propertyId": "1605", "kind": "Bool" }
+        { "name": "UseTexture", "propertyId": "1605", "kind": "Bool" },
+        { "name": "Metallic", "propertyId": "1606", "kind": "Float" },
+        { "name": "Roughness", "propertyId": "1607", "kind": "Float" },
+        { "name": "AmbientOcclusion", "propertyId": "1608", "kind": "Float" },
+        { "name": "Emission", "propertyId": "1609", "kind": "Color" },
+        { "name": "EmissionIntensity", "propertyId": "1610", "kind": "Float" },
+        { "name": "CastShadows", "propertyId": "1611", "kind": "Bool" },
+        { "name": "ReceiveShadows", "propertyId": "1612", "kind": "Bool" }
       ]
     },
     {

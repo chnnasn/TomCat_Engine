@@ -160,7 +160,7 @@ namespace TomCat {
 		m_InternalFormat = m_Compressed
 			? (artifact.SRGB ? GLCompressedSRGBAlpha_S3TCDXT5
 				: GLCompressedRGBA_S3TCDXT5)
-			: (artifact.SRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8);
+			: artifact.Format == TextureArtifactFormat::RGBA32F ? GL_RGBA16F : (artifact.SRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8);
 
 		glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
 		if (!m_RendererID)
@@ -199,7 +199,7 @@ namespace TomCat {
 			}
 			glTextureSubImage2D(m_RendererID, static_cast<GLint>(level), 0, 0,
 				static_cast<GLsizei>(mip.Width), static_cast<GLsizei>(mip.Height),
-				m_DataFormat, GL_UNSIGNED_BYTE, pixels);
+				m_DataFormat, artifact.Format == TextureArtifactFormat::RGBA32F ? GL_FLOAT : GL_UNSIGNED_BYTE, pixels);
 		}
 
 		glTextureParameteri(m_RendererID, GL_TEXTURE_MIN_FILTER,
@@ -211,7 +211,7 @@ namespace TomCat {
 			static_cast<GLint>(artifact.Mips.size() - 1));
 		m_IsLoaded = true;
 		for (const auto& mip : artifact.Mips)
-			m_ProfileBytes += m_Compressed ? mip.Bytes.size() : static_cast<uint64_t>(mip.Width) * mip.Height * 4;
+			m_ProfileBytes += m_Compressed ? mip.Bytes.size() : static_cast<uint64_t>(mip.Width) * mip.Height * (artifact.Format == TextureArtifactFormat::RGBA32F ? 8 : 4);
 		ProfileResourceTracker::Get().Texture(1, static_cast<int64_t>(m_ProfileBytes));
 		return true;
 	}

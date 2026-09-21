@@ -32,7 +32,7 @@ namespace TomCat {
 		}
 
 		bool ComputeTextureReservation(uint32_t width, uint32_t height,
-			uint64_t encodedBytes, uint64_t& reservationBytes, std::string& error)
+			uint64_t encodedBytes, uint64_t& reservationBytes, std::string& error, bool hdr)
 		{
 			reservationBytes = 0;
 			if (width == 0 || height == 0 || width > MaximumTextureDimension
@@ -61,11 +61,10 @@ namespace TomCat {
 				mipHeight = std::max(1u, mipHeight / 2);
 			}
 			uint64_t workingBytes = 0;
-			// Six full RGBA mip chains cover the persistent mip/artifact buffers,
-			// vector growth and stb's format-specific decode workspace (including
-			// the wider temporary representation used by HDR inputs).
-			if (rgbaMipBytes > (std::numeric_limits<uint64_t>::max)() / 6
-				|| !CheckedAdd(encodedBytes, rgbaMipBytes * 6, workingBytes)
+			// Reserve float storage only for HDR; ordinary texture imports keep their existing budget.
+            const uint64_t chainCount = hdr ? 16 : 6;
+			if (rgbaMipBytes > (std::numeric_limits<uint64_t>::max)() / chainCount
+				|| !CheckedAdd(encodedBytes, rgbaMipBytes * chainCount, workingBytes)
 				|| !CheckedAdd(workingBytes,
 					HeaderSize + static_cast<uint64_t>(mipCount) * MipEntrySize,
 					workingBytes)
@@ -372,7 +371,7 @@ namespace TomCat {
 		}
 		if (!ComputeTextureReservation(static_cast<uint32_t>(decodedWidth),
 			static_cast<uint32_t>(decodedHeight), encodedSource.size(),
-			reservationBytes, error))
+			reservationBytes, error, stbi_is_hdr_from_memory(encodedSource.data(), static_cast<int>(encodedSource.size())) != 0))
 			return false;
 		if (width) *width = static_cast<uint32_t>(decodedWidth);
 		if (height) *height = static_cast<uint32_t>(decodedHeight);
@@ -411,9 +410,11 @@ namespace TomCat {
 				+ (stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
 			return false;
 		}
+        input.clear(); input.seekg(0);
+        const bool hdr = stbi_is_hdr_from_callbacks(&callbacks, &input) != 0;
 		if (!ComputeTextureReservation(static_cast<uint32_t>(decodedWidth),
 			static_cast<uint32_t>(decodedHeight), static_cast<uint64_t>(fileBytes),
-			reservationBytes, error))
+			reservationBytes, error, hdr))
 			return false;
 		if (width) *width = static_cast<uint32_t>(decodedWidth);
 		if (height) *height = static_cast<uint32_t>(decodedHeight);
@@ -447,7 +448,8 @@ namespace TomCat {
 			|| width == 0 || height == 0 || mipCount == 0 || mipCount > 32
 			|| width > MaximumTextureDimension || height > MaximumTextureDimension
 			|| static_cast<uint64_t>(width) * height > MaximumTexturePixels
-			|| flags & ~SRGBFlag || (rawFormat != 1 && rawFormat != 2)
+			|| flags & ~SRGBFlag || (rawFormat != 1 && rawFormat != 2 && rawFormat != 3)
+            || (rawFormat == 3 && flags != 0)
 			|| static_cast<uint64_t>(tableOffset) + static_cast<uint64_t>(mipCount)
 				* MipEntrySize > bytes.size())
 		{
@@ -477,7 +479,8 @@ namespace TomCat {
 			}
 			const uint64_t expectedSize = artifact.Format == TextureArtifactFormat::RGBA8
 				? static_cast<uint64_t>(mipWidth) * mipHeight * 4
-				: static_cast<uint64_t>((mipWidth + 3) / 4)
+				: artifact.Format == TextureArtifactFormat::RGBA32F ? static_cast<uint64_t>(mipWidth) * mipHeight * 16
+                : static_cast<uint64_t>((mipWidth + 3) / 4)
 					* ((mipHeight + 3) / 4) * 16;
 			if (size != expectedSize)
 			{
@@ -547,6 +550,34 @@ namespace TomCat {
 
 		int width = 0, height = 0, channels = 0;
 		stbi_set_flip_vertically_on_load_thread(1);
+        std::vector<std::vector<uint8_t>> payloads;
+        uint32_t mipWidth = 0, mipHeight = 0;
+        if (stbi_is_hdr_from_memory(encodedSource.data(), static_cast<int>(encodedSource.size()))) {
+            format = TextureArtifactFormat::RGBA32F; srgb = false;
+            float* data = stbi_loadf_from_memory(encodedSource.data(), static_cast<int>(encodedSource.size()), &width, &height, &channels, 4);
+            if (!data || width != static_cast<int>(inspectedWidth) || height != static_cast<int>(inspectedHeight)) {
+                if (data) stbi_image_free(data); error = "HDR image decode failed"; return false;
+            }
+            std::vector<float> pixels(data, data + static_cast<size_t>(width) * height * 4);
+            stbi_image_free(data);
+            for (float& value : pixels) value = std::isfinite(value) ? std::clamp(value, 0.0f, 65504.0f) : 0.0f;
+            mipWidth = width; mipHeight = height;
+            for (;;) {
+                std::vector<uint8_t> bytes; bytes.reserve(pixels.size() * 4);
+                for (float value : pixels) { uint32_t bits; std::memcpy(&bits, &value, 4); AppendU32(bytes, bits); }
+                payloads.push_back(std::move(bytes));
+                if (!mipmaps || (mipWidth == 1 && mipHeight == 1)) break;
+                uint32_t nextW = std::max(1u, mipWidth / 2), nextH = std::max(1u, mipHeight / 2);
+                std::vector<float> next(static_cast<size_t>(nextW) * nextH * 4);
+                for (uint32_t y = 0; y < nextH; ++y) for (uint32_t x = 0; x < nextW; ++x) for (int c = 0; c < 4; ++c) {
+                    float sum = 0;
+                    for (uint32_t dy = 0; dy < 2; ++dy) for (uint32_t dx = 0; dx < 2; ++dx)
+                        sum += pixels[(static_cast<size_t>(std::min(y*2+dy,mipHeight-1))*mipWidth + std::min(x*2+dx,mipWidth-1))*4+c];
+                    next[(static_cast<size_t>(y)*nextW+x)*4+c] = sum * 0.25f;
+                }
+                pixels = std::move(next); mipWidth = nextW; mipHeight = nextH;
+            }
+        } else {
 		stbi_uc* decoded = stbi_load_from_memory(encodedSource.data(),
 			static_cast<int>(encodedSource.size()), &width, &height, &channels,
 			STBI_rgb_alpha);
@@ -567,15 +598,15 @@ namespace TomCat {
 		std::vector<std::vector<uint8_t>> rgbaMips;
 		rgbaMips.emplace_back(decoded, decoded + static_cast<size_t>(baseBytes));
 		stbi_image_free(decoded);
-		uint32_t mipWidth = static_cast<uint32_t>(width);
-		uint32_t mipHeight = static_cast<uint32_t>(height);
+		mipWidth = static_cast<uint32_t>(width);
+		mipHeight = static_cast<uint32_t>(height);
 		while (mipmaps && (mipWidth > 1 || mipHeight > 1))
 		{
 			rgbaMips.push_back(BuildNextMip(rgbaMips.back(), mipWidth, mipHeight, srgb));
 			mipWidth = std::max(1u, mipWidth / 2);
 			mipHeight = std::max(1u, mipHeight / 2);
 		}
-		std::vector<std::vector<uint8_t>> payloads;
+
 		payloads.reserve(rgbaMips.size());
 		mipWidth = static_cast<uint32_t>(width); mipHeight = static_cast<uint32_t>(height);
 		for (auto& mip : rgbaMips)
@@ -585,6 +616,7 @@ namespace TomCat {
 			mipWidth = std::max(1u, mipWidth / 2);
 			mipHeight = std::max(1u, mipHeight / 2);
 		}
+        }
 		uint64_t artifactBytes = HeaderSize
 			+ static_cast<uint64_t>(payloads.size()) * MipEntrySize;
 		for (const auto& payload : payloads)
@@ -630,6 +662,18 @@ namespace TomCat {
 		std::string& error)
 	{
 		error.clear(); rgba.clear();
+        if (format == TextureArtifactFormat::RGBA32F) {
+            const size_t count = static_cast<size_t>(mip.Width) * mip.Height * 4;
+            if (mip.Bytes.size() != count * 4) { error = "HDR mip byte count is invalid"; return false; }
+            rgba.resize(count);
+            for (size_t i = 0; i < count; ++i) {
+                uint32_t bits; (void)ReadU32(mip.Bytes, i*4, bits); float value; std::memcpy(&value, &bits, 4);
+                value = std::isfinite(value) ? std::max(value, 0.0f) : 0.0f;
+                if (i % 4 != 3) value = std::pow(value / (1.0f + value), 1.0f / 2.2f);
+                rgba[i] = static_cast<uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+            }
+            return true;
+        }
 		if (format == TextureArtifactFormat::RGBA8)
 		{
 			rgba.assign(mip.Bytes.begin(), mip.Bytes.end());

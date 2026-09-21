@@ -36,6 +36,10 @@ internal static class GeneratedRegisteredComponentProxies
                 static entity => new DistanceJoint2D(entity)),
             [typeof(MeshRenderer)] = new(0x9f00000000000016UL,
                 static entity => new MeshRenderer(entity)),
+            [typeof(Light3D)] = new(0x9f00000000000017UL,
+                static entity => new Light3D(entity)),
+            [typeof(Environment3D)] = new(0x9f00000000000018UL,
+                static entity => new Environment3D(entity)),
             [typeof(TextRenderer)] = new(0x9f01000000000001UL,
                 static entity => new TextRenderer(entity)),
             [typeof(Canvas)] = new(0x9f01000000000002UL,
@@ -654,6 +658,206 @@ public sealed partial class MeshRenderer : IEntityComponent
         get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000645UL);
         set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
             0x0000000000000645UL, value);
+    }
+
+    public float Metallic
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000646UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000646UL, value);
+    }
+
+    public float Roughness
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000647UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000647UL, value);
+    }
+
+    public float AmbientOcclusion
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000648UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000648UL, value);
+    }
+
+    public Color Emission
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000649UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000649UL, value);
+    }
+
+    public float EmissionIntensity
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000064aUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000064aUL, value);
+    }
+
+    public bool CastShadows
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x000000000000064bUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x000000000000064bUL, value);
+    }
+
+    public bool ReceiveShadows
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x000000000000064cUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x000000000000064cUL, value);
+    }
+}
+
+[RegisteredComponent(0x9f00000000000017UL)]
+public sealed partial class Light3D : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f00000000000017UL;
+
+    internal Light3D(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000006a4UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000006a4UL, value);
+    }
+
+    public int Type
+    {
+        get => RegisteredComponentProperties.GetInt32(Entity, RegisteredTypeId, 0x00000000000006a5UL);
+        set => RegisteredComponentProperties.SetInt32(Entity, RegisteredTypeId,
+            0x00000000000006a5UL, value);
+    }
+
+    public Color Color
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x00000000000006a6UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x00000000000006a6UL, value);
+    }
+
+    public float Intensity
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000006a7UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000006a7UL, value);
+    }
+
+    public float Range
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000006a8UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000006a8UL, value);
+    }
+
+    public float InnerAngle
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000006a9UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000006a9UL, value);
+    }
+
+    public float OuterAngle
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000006aaUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000006aaUL, value);
+    }
+
+    public bool CastShadows
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000006abUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000006abUL, value);
+    }
+
+    public float ShadowBias
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000006acUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000006acUL, value);
+    }
+
+    public float ShadowExtent
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000006adUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000006adUL, value);
+    }
+}
+
+[RegisteredComponent(0x9f00000000000018UL)]
+public sealed partial class Environment3D : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f00000000000018UL;
+
+    internal Environment3D(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000708UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000708UL, value);
+    }
+
+    public bool ShowSky
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000709UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000709UL, value);
+    }
+
+    public AssetRef<Texture2DAsset> Panorama
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x000000000000070aUL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x000000000000070aUL, value.Handle);
+    }
+
+    public Color SkyColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x000000000000070bUL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x000000000000070bUL, value);
+    }
+
+    public Color GroundColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x000000000000070cUL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x000000000000070cUL, value);
+    }
+
+    public float Intensity
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000070dUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000070dUL, value);
+    }
+
+    public float AmbientIntensity
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000070eUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000070eUL, value);
+    }
+
+    public float Rotation
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000070fUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000070fUL, value);
+    }
+
+    public float Exposure
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000710UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000710UL, value);
     }
 }
 

@@ -28,7 +28,7 @@ namespace TomCat {
 		static constexpr uint64_t FNVOffsetBasis = 14695981039346656037ull;
 		static constexpr uint64_t FNVPrime = 1099511628211ull;
 		static constexpr uint32_t ShaderCacheMagic = 0x43534354u; // "TCSC" in little-endian files
-		static constexpr uint32_t ShaderCacheFormatVersion = 1;
+		static constexpr uint32_t ShaderCacheFormatVersion = 2;
 		static constexpr uint64_t ShaderCacheHeaderSize = sizeof(uint32_t) * 4 + sizeof(uint64_t);
 		static constexpr uint64_t MaxShaderCacheSize = 64ull * 1024ull * 1024ull;
 
@@ -538,6 +538,12 @@ namespace TomCat {
 			else
 			{
 				spirv_cross::CompilerGLSL glslCompiler(spirv);
+                // Vulkan opaque resources carry bindings but cannot carry Locations.
+                // Assign distinct OpenGL uniform locations after cross-compilation;
+                // otherwise multiple samplers may alias location zero in GL SPIR-V.
+                for (const auto& image : glslCompiler.get_shader_resources().sampled_images)
+                    glslCompiler.set_decoration(image.id, spv::DecorationLocation,
+                        glslCompiler.get_decoration(image.id, spv::DecorationBinding));
 				m_OpenGLSourceCode[stage] = glslCompiler.compile();
 				auto& source = m_OpenGLSourceCode[stage];
 

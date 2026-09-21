@@ -433,7 +433,7 @@ namespace TomCat {
 			{
 				return "tomcat.sprite-atlas";
 			}
-			uint32_t GetVersion() const noexcept override { return 3; }
+			uint32_t GetVersion() const noexcept override { return 4; }
 			AssetType GetAssetType() const noexcept override { return AssetType::Texture2D; }
 
 			AssetImportResult Import(const AssetImportRequest& request) const override

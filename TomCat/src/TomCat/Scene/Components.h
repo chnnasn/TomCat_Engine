@@ -32,12 +32,46 @@ namespace TomCat {
 		glm::vec4 Color{ 1.0f };
 		bool UseTexture = false;
 		int32_t PrimitiveType = 0; // None, Cube, Plane
+		float Metallic = 0.0f;
+		float Roughness = 0.5f;
+		float AmbientOcclusion = 1.0f;
+		glm::vec4 Emission{ 0.0f, 0.0f, 0.0f, 1.0f };
+		float EmissionIntensity = 0.0f;
+		bool CastShadows = true;
+		bool ReceiveShadows = true;
 		Ref<Mesh> MeshAsset;
 		Ref<Texture2D> AlbedoTexture;
 		Ref<TomCat::Model> Model;
 		AssetHandle ResolvedHandle = AssetHandle(0);
 		int32_t ResolvedPrimitive = -1;
 		uint64_t ImportRevision = ~uint64_t(0);
+	};
+
+	struct Light3D
+	{
+		bool Enabled = true;
+		int32_t Type = 0; // Directional, Point, Spot; local +Z is the light direction.
+		glm::vec4 Color{ 1.0f };
+		float Intensity = 3.0f;
+		float Range = 10.0f;
+		float InnerAngle = 20.0f;
+		float OuterAngle = 30.0f;
+		bool CastShadows = true;
+		float ShadowBias = 0.002f;
+		float ShadowExtent = 30.0f;
+	};
+
+	struct Environment3D
+	{
+		bool Enabled = true;
+		bool ShowSky = true;
+		AssetHandle Panorama = AssetHandle(0);
+		glm::vec4 SkyColor{ 0.3f, 0.5f, 0.8f, 1.0f };
+		glm::vec4 GroundColor{ 0.08f, 0.07f, 0.06f, 1.0f };
+		float Intensity = 1.0f;
+		float AmbientIntensity = 0.3f;
+		float Rotation = 0.0f; // Degrees about world Y.
+		float Exposure = 1.0f;
 	};
 	
 

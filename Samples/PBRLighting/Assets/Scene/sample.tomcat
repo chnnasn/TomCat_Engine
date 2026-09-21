@@ -1,0 +1,1570 @@
+SchemaVersion: 11
+SceneName: PBR Lighting
+Entities:
+  - Entity: 9001
+    Tag:
+      Tag: Camera
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 3, -8]
+      Rotation: [0.261799395, 0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Camera:
+      Camera:
+        ProjectionType: 0
+        PerspectiveFOV: 0.959931076
+        PerspectiveNear: 0.100000001
+        PerspectiveFar: 100
+        OrthographicSize: 10
+        OrthographicNear: 0
+        OrthographicFar: 1000
+      Primary: true
+      FixedAspectRatio: false
+      BackgroundColor: [0.529999971, 0.810000002, 0.920000017, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9001
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Camera
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 3, -8]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0.261799395, 0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541829
+        StableName: TomCat.Camera
+        SchemaVersion: 3
+        Properties:
+          - PropertyId: 300
+            StableName: Primary
+            Value: true
+          - PropertyId: 301
+            StableName: FixedAspectRatio
+            Value: false
+          - PropertyId: 302
+            StableName: BackgroundColor
+            Value: [0.529999971, 0.810000002, 0.920000017, 1]
+          - PropertyId: 303
+            StableName: ProjectionType
+            Value: 0
+          - PropertyId: 304
+            StableName: OrthographicSize
+            Value: 10
+          - PropertyId: 305
+            StableName: OrthographicNearClip
+            Value: 0
+          - PropertyId: 306
+            StableName: OrthographicFarClip
+            Value: 1000
+          - PropertyId: 307
+            StableName: PerspectiveVerticalFov
+            Value: 0.959931076
+          - PropertyId: 308
+            StableName: PerspectiveNearClip
+            Value: 0.100000001
+          - PropertyId: 309
+            StableName: PerspectiveFarClip
+            Value: 100
+          - PropertyId: 310
+            StableName: Enabled
+            Value: true
+    Parent: 0
+  - Entity: 9002
+    Tag:
+      Tag: Sky and environment
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9002
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Sky and environment
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541848
+        StableName: TomCat.Environment3D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1800
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1801
+            StableName: ShowSky
+            Value: true
+          - PropertyId: 1802
+            StableName: Panorama
+            Value: 0
+          - PropertyId: 1803
+            StableName: SkyColor
+            Value: [0.300000012, 0.5, 0.800000012, 1]
+          - PropertyId: 1804
+            StableName: GroundColor
+            Value: [0.0799999982, 0.0700000003, 0.0599999987, 1]
+          - PropertyId: 1805
+            StableName: Intensity
+            Value: 1
+          - PropertyId: 1806
+            StableName: AmbientIntensity
+            Value: 0.699999988
+          - PropertyId: 1807
+            StableName: Rotation
+            Value: 0
+          - PropertyId: 1808
+            StableName: Exposure
+            Value: 1
+    Parent: 0
+  - Entity: 9003
+    Tag:
+      Tag: Sun - directional shadows
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0.87266463, -0.610865235, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9003
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Sun - directional shadows
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0.87266463, -0.610865235, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541847
+        StableName: TomCat.Light3D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1700
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1701
+            StableName: Type
+            Value: 0
+          - PropertyId: 1702
+            StableName: Color
+            Value: [1, 1, 1, 1]
+          - PropertyId: 1703
+            StableName: Intensity
+            Value: 3
+          - PropertyId: 1704
+            StableName: Range
+            Value: 10
+          - PropertyId: 1705
+            StableName: InnerAngle
+            Value: 20
+          - PropertyId: 1706
+            StableName: OuterAngle
+            Value: 30
+          - PropertyId: 1707
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1708
+            StableName: ShadowBias
+            Value: 0.00200000009
+          - PropertyId: 1709
+            StableName: ShadowExtent
+            Value: 14
+    Parent: 0
+  - Entity: 9004
+    Tag:
+      Tag: Ground
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, -0.649999976, 3]
+      Rotation: [-1.57079637, 0, 0]
+      Scale: [18, 18, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9004
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Ground
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, -0.649999976, 3]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [-1.57079637, 0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [18, 18, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.349999994, 0.379999995, 0.419999987, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 2
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 0
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.850000024
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9010
+    Tag:
+      Tag: Dielectric 1
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [-3.29999995, 0, 1]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9010
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Dielectric 1
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [-3.29999995, 0, 1]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.129999995, 0.379999995, 0.649999976, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 0
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.0799999982
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9011
+    Tag:
+      Tag: Dielectric 2
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [-1.64999998, 0, 1]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9011
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Dielectric 2
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [-1.64999998, 0, 1]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.129999995, 0.379999995, 0.649999976, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 0
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.300000012
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9012
+    Tag:
+      Tag: Dielectric 3
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 1]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9012
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Dielectric 3
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 1]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.129999995, 0.379999995, 0.649999976, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 0
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.519999981
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9013
+    Tag:
+      Tag: Dielectric 4
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [1.64999998, 0, 1]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9013
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Dielectric 4
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [1.64999998, 0, 1]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.129999995, 0.379999995, 0.649999976, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 0
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.73999995
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9014
+    Tag:
+      Tag: Dielectric 5
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [3.29999995, 0, 1]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9014
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Dielectric 5
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [3.29999995, 0, 1]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.129999995, 0.379999995, 0.649999976, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 0
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.959999979
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9015
+    Tag:
+      Tag: Metal 1
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [-3.29999995, 0, 3.5]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9015
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Metal 1
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [-3.29999995, 0, 3.5]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.850000024, 0.560000002, 0.219999999, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 1
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.0799999982
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9016
+    Tag:
+      Tag: Metal 2
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [-1.64999998, 0, 3.5]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9016
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Metal 2
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [-1.64999998, 0, 3.5]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.850000024, 0.560000002, 0.219999999, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 1
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.300000012
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9017
+    Tag:
+      Tag: Metal 3
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 3.5]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9017
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Metal 3
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 3.5]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.850000024, 0.560000002, 0.219999999, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 1
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.519999981
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9018
+    Tag:
+      Tag: Metal 4
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [1.64999998, 0, 3.5]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9018
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Metal 4
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [1.64999998, 0, 3.5]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.850000024, 0.560000002, 0.219999999, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 1
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.73999995
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0
+  - Entity: 9019
+    Tag:
+      Tag: Metal 5
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [3.29999995, 0, 3.5]
+      Rotation: [0, 0.34906584, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 9019
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Metal 5
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [3.29999995, 0, 3.5]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, 0.34906584, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541846
+        StableName: TomCat.MeshRenderer
+        SchemaVersion: 2
+        Properties:
+          - PropertyId: 1600
+            StableName: Enabled
+            Value: true
+          - PropertyId: 1601
+            StableName: Color
+            Value: [0.850000024, 0.560000002, 0.219999999, 1]
+          - PropertyId: 1602
+            StableName: Mesh
+            Value: 0
+          - PropertyId: 1603
+            StableName: Primitive
+            Value: 1
+          - PropertyId: 1604
+            StableName: Albedo
+            Value: 0
+          - PropertyId: 1605
+            StableName: UseTexture
+            Value: false
+          - PropertyId: 1606
+            StableName: Metallic
+            Value: 1
+          - PropertyId: 1607
+            StableName: Roughness
+            Value: 0.959999979
+          - PropertyId: 1608
+            StableName: AmbientOcclusion
+            Value: 1
+          - PropertyId: 1609
+            StableName: Emission
+            Value: [0, 0, 0, 1]
+          - PropertyId: 1610
+            StableName: EmissionIntensity
+            Value: 0
+          - PropertyId: 1611
+            StableName: CastShadows
+            Value: true
+          - PropertyId: 1612
+            StableName: ReceiveShadows
+            Value: true
+    Parent: 0

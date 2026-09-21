@@ -1,0 +1,8 @@
+Project:
+  Name: PBRLighting
+  Version: 1.0.0
+  Description: "Sky, editable lights, directional shadows and PBR"
+  EditorVersion: 0.3.0
+  Template: 2D
+  AssetDirectory: Assets
+SchemaVersion: 4

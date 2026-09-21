@@ -14,7 +14,8 @@ namespace TomCat {
 	enum class TextureArtifactFormat : uint32_t
 	{
 		RGBA8 = 1,
-		BC3 = 2
+		BC3 = 2,
+        RGBA32F = 3 // Linear HDR radiance, little-endian IEEE 754 floats.
 	};
 
 	struct TextureArtifactMip
