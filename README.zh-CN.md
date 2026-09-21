@@ -10,6 +10,24 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
+## 当前分支的作用
+
+**Build_System — 构建、打包与 C# 工具链开发**
+
+用于桌面构建与分发流程、脚本诊断、重载反馈和外部 IDE 调试支持的开发。本分支通过 `TomCat.Dependencies.csproj` 支持纯托管 NuGet 包、项目引用和本地托管 DLL，并将运行时依赖封装供 Editor 与 Cooked Player 使用。详见 [C# 依赖指南](docs/CSHARP_DEPENDENCIES.md)。原生包资产和 Play Mode 热替换不在支持范围内。
+
+分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
+
+| 分支 | 作用 |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | 构建、打包与 C# 工具链开发 |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
+
 文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.3.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
@@ -101,7 +119,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
-- 不支持 NuGet/第三方托管 DLL、Play Mode 热重载或内置 C# 调试器；异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
+- 支持纯托管 NuGet 包、项目引用及本地托管 DLL（见 [C# 依赖指南](docs/CSHARP_DEPENDENCIES.md)）；不支持原生包资产、Play Mode 热替换或内置 C# 调试器；异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
 2026-09-20 核对了上面展示的界面流程，没有重新运行完整原生、托管、Player 或 Web 回归套件。
