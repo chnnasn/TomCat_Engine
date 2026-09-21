@@ -31,7 +31,7 @@ namespace TomCat {
 		AssetHandle AlbedoHandle = AssetHandle(0);
 		glm::vec4 Color{ 1.0f };
 		bool UseTexture = false;
-		int32_t PrimitiveType = 0; // None, Cube, Plane
+		int32_t PrimitiveType = 0; // None=0, Cube=1, Quad (legacy Plane)=2, Sphere=3, Capsule=4, Cylinder=5, Plane=6
 		float Metallic = 0.0f;
 		float Roughness = 0.5f;
 		float AmbientOcclusion = 1.0f;

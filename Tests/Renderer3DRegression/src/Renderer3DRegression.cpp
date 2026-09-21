@@ -27,6 +27,52 @@
 using namespace TomCat;
 static void Check(bool value, const std::string& message) { if (!value) throw std::runtime_error(message); }
 
+static void TestPrimitives()
+{
+    auto scene = CreateRef<Scene>();
+    for (int type = 1; type <= 6; ++type) {
+        std::vector<Vertex> vertices; std::vector<uint32_t> indices;
+        Check(Mesh::GeneratePrimitive(static_cast<MeshPrimitive>(type), vertices, indices), "Primitive generation failed");
+        Check(!vertices.empty() && !indices.empty() && indices.size()%3 == 0, "Empty or incomplete primitive");
+        glm::vec3 minimum(1e6f), maximum(-1e6f);
+        for (const auto& vertex : vertices) {
+            minimum = glm::min(minimum,vertex.Position); maximum = glm::max(maximum,vertex.Position);
+            Check(std::isfinite(vertex.Position.x) && std::isfinite(vertex.Position.y) && std::isfinite(vertex.Position.z), "Nonfinite vertex");
+            Check(std::abs(glm::length(vertex.Normal)-1.0f)<.0001f, "Non-unit primitive normal");
+            Check(vertex.TexCoord.x>=0 && vertex.TexCoord.x<=1 && vertex.TexCoord.y>=0 && vertex.TexCoord.y<=1, "UV outside unit range");
+        }
+        for(size_t i=0;i<indices.size();i+=3) {
+            Check(indices[i]<vertices.size() && indices[i+1]<vertices.size() && indices[i+2]<vertices.size(), "Invalid primitive index");
+            const auto& a=vertices[indices[i]]; const auto& b=vertices[indices[i+1]]; const auto& c=vertices[indices[i+2]];
+            glm::vec3 cross=glm::cross(b.Position-a.Position,c.Position-a.Position);
+            Check(glm::length(cross)>1e-7f && glm::dot(cross,a.Normal+b.Normal+c.Normal)>0, "Degenerate or inward triangle");
+        }
+        glm::vec3 expected(.5f);
+        if(type==2) expected.z=0;
+        if(type==4 || type==5) expected.y=1;
+        if(type==6) expected={5,0,5};
+        Check(glm::length(maximum-expected)<.0001f && glm::length(minimum+expected)<.0001f, "Primitive bounds incorrect");
+        auto entity=scene->CreateEntityWithUUID(UUID(8100+type), "Primitive "+std::to_string(type));
+        entity.AddComponent<MeshComponent>();
+        auto* descriptor=ComponentRegistry::Get().Find(UUID(ComponentIds::MeshRenderer)); std::string error;
+        Check(descriptor->Properties[3].Set(entity,int32_t(type),error),error);
+    }
+    std::string document,error;Check(SceneArchiveCodec::Encode(scene,document,error),error);
+    auto restored=CreateRef<Scene>();Check(SceneArchiveCodec::Decode({document.begin(),document.end()},restored,"primitives.scene",false),"Primitive roundtrip failed");
+    auto copy=Scene::Copy(restored);
+    for(int type=1;type<=6;++type) {
+        auto entity=copy->FindEntityByUUID(UUID(8100+type));
+        Check(entity.GetComponent<MeshComponent>().PrimitiveType==type,"Primitive type changed on save/play copy");
+        PrefabArchive prefab;Check(PrefabArchiveCodec::CaptureSubtree(copy,entity,prefab,error),error);
+        Scene destination;PrefabInstantiateOptions options;options.ResolveAssets=false;PrefabInstantiationResult result;
+        Check(PrefabArchiveCodec::Instantiate(prefab,destination,options,result,error),error);
+        Check(result.Root.GetComponent<MeshComponent>().PrimitiveType==type,"Prefab lost primitive type");
+    }
+    std::vector<Vertex> vertices;std::vector<uint32_t> indices;
+    Check(!Mesh::GeneratePrimitive(MeshPrimitive::None,vertices,indices),"None generated geometry");
+    Check(!Mesh::GeneratePrimitive(static_cast<MeshPrimitive>(99),vertices,indices),"Unknown primitive accepted");
+}
+
 static void TestPersistence()
 {
     auto scene = CreateRef<Scene>();
@@ -211,7 +257,7 @@ static void TestLightingPixels(const Ref<Framebuffer>& buffer)
     std::cout<<"Sky, HDR, directional/point/spot lights, shadow ("<<shadowPixels<<" pixels), PBR and state tests passed\n";
 }
 
-static void WriteDemo(const std::filesystem::path& path)
+static void WriteDemo(const std::filesystem::path& path, bool primitives = false)
 {
     auto scene = CreateRef<Scene>(); scene->SetSceneName("PBR Lighting");
     auto camera = scene->CreateEntityWithUUID(UUID(9001), "Camera");
@@ -234,6 +280,22 @@ static void WriteDemo(const std::filesystem::path& path)
         cube.GetComponent<Transform>()._Translation={float(i-2)*1.65f,0,float(row)*2.5f+1.0f};
         cube.GetComponent<Transform>()._Rotation.y=glm::radians(20.0f);
     }
+    if (primitives) {
+        scene->SetSceneName("Six Primitives");
+        for(int row=0;row<2;++row) for(int i=0;i<5;++i) scene->DestroyEntity(scene->FindEntityByUUID(UUID(9010+row*5+i)));
+        const char* names[]={"Cube","Sphere","Capsule","Cylinder","Plane","Quad"};
+        const int types[]={1,3,4,5,6,2};
+        for(int i=0;i<6;++i) {
+            auto entity=scene->CreateEntityWithUUID(UUID(9050+i),names[i]);auto& mesh=entity.AddComponent<MeshComponent>();
+            mesh.PrimitiveType=types[i];mesh.Roughness=.25f;mesh.Metallic=.25f;
+            mesh.Color=glm::vec4(.15f+float(i)*.1f,.4f,.7f-float(i)*.06f,1);
+            auto& t=entity.GetComponent<Transform>();t._Translation={float(i)*1.8f-4.5f,.4f,2};
+            if(types[i]==6)t._Scale={.13f,1,.13f};
+            if(types[i]==2)t._Rotation.y=glm::pi<float>();
+        }
+        camera.GetComponent<Transform>()._Translation={0,4,-10};
+        camera.GetComponent<Transform>()._Rotation.x=glm::radians(18.0f);
+    }
     std::string document,error; Check(SceneArchiveCodec::Encode(scene,document,error),error);
     std::filesystem::create_directories(path.parent_path()); {std::ofstream file(path);file<<document;}
     FramebufferSpecification spec;spec.Width=960;spec.Height=540;
@@ -245,7 +307,7 @@ static void WriteDemo(const std::filesystem::path& path)
     buffer->Unbind();Check(glGetError()==GL_NO_ERROR,"Demo rendering error");
 }
 
-static void TestRendering(const std::filesystem::path& demoPath = {})
+static void TestRendering(const std::filesystem::path& demoPath = {}, bool primitives = false)
 {
     Check(glfwInit() == GLFW_TRUE, "GLFW initialization failed");
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -289,10 +351,16 @@ static void TestRendering(const std::filesystem::path& demoPath = {})
         scene->OnRenderRuntime();
         Check(buffer->ReadPixel(1, 64, 64) == static_cast<int>(static_cast<uint32_t>(cube)), "3D camera binding broken after 2D");
         Check(glGetError() == GL_NO_ERROR, "OpenGL error in mixed rendering");
+        for(int type=1;type<=6;++type) {
+            cube.GetComponent<MeshComponent>().PrimitiveType=type;
+            cube.GetComponent<Transform>()._Rotation.x=type==6?glm::half_pi<float>():0;
+            scene->OnRenderRuntime();
+            Check(buffer->ReadPixel(1,64,64)==static_cast<int>(static_cast<uint32_t>(cube)),"Primitive "+std::to_string(type)+" GPU rendering/picking failed");
+        }
         TestLightingPixels(buffer);
         buffer->Unbind();
     }
-    if (!demoPath.empty()) WriteDemo(demoPath);
+    if (!demoPath.empty()) WriteDemo(demoPath, primitives);
     Renderer::Shutdown();
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -302,11 +370,13 @@ int main(int argc, char** argv)
 {
     Log::Init();
     try {
+        TestPrimitives();
         TestPersistence();
         TestModelArtifact();
         TestHDR();
         if (argc > 1 && std::string(argv[1]) == "--gpu") TestRendering();
         if (argc > 2 && std::string(argv[1]) == "--demo") TestRendering(argv[2]);
+        if (argc > 2 && std::string(argv[1]) == "--primitives-demo") TestRendering(argv[2], true);
         std::cout << "Renderer3D regressions passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -1,0 +1,8 @@
+Project:
+  Name: Primitives3D
+  Version: 1.0.0
+  Description: "Six built-in 3D primitives with PBR and shadows"
+  EditorVersion: 0.3.0
+  Template: 2D
+  AssetDirectory: Assets
+SchemaVersion: 4

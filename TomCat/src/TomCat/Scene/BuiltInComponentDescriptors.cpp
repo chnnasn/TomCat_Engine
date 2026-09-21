@@ -1261,7 +1261,7 @@ namespace TomCat {
 			auto primitive = IntProperty<MeshComponent>(1603, "Primitive", &MeshComponent::PrimitiveType);
 			primitive.Set = [](Entity entity, const PropertyValue& value, std::string& error) {
 				const int32_t type = std::get<int32_t>(value);
-				if (type < 0 || type > 2) { error = "Primitive must be 0 (None), 1 (Cube), or 2 (Plane)"; return false; }
+				if (type < 0 || type > 6) { error = "Primitive must be None (0), Cube (1), Quad (2), Sphere (3), Capsule (4), Cylinder (5), or Plane (6)"; return false; }
 				entity.GetComponent<MeshComponent>().PrimitiveType = type;
 				return true;
 			};
