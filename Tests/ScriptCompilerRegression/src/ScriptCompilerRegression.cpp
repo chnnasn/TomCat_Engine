@@ -1436,6 +1436,123 @@ namespace {
 #endif
 	}
 
+	void TestManagedDependencies()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		TemporaryScriptProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "Managed dependency regression";
+		config.AssetDirectory = "Assets";
+		const auto project = TomCat::Project::CreateNew(environment.Root / "Project.tcproj", config);
+		Require(project != nullptr, "could not create dependency project");
+		const auto feed = environment.Root / "Feed";
+		std::filesystem::create_directories(feed);
+		WriteTextFile(environment.Root / "NuGet.Config",
+			"<configuration><packageSources><clear/><add key=\"local\" value=\"Feed\"/>"
+			"</packageSources><config><add key=\"globalPackagesFolder\" value=\"Library/packages\"/>"
+			"</config></configuration>");
+		const auto leaf = environment.Root / "Dependencies" / "Leaf";
+		const auto parent = environment.Root / "Dependencies" / "Parent";
+		WriteTextFile(leaf / "Leaf.csproj", R"XML(<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>TomCat.Regression.Leaf</PackageId><Version>1.0.0</Version></PropertyGroup>
+</Project>)XML");
+		WriteTextFile(leaf / "Value.cs", "namespace DependencyLeaf; public static class Value { public static int Read() => 17; }");
+		WriteTextFile(parent / "Parent.csproj", R"XML(<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>TomCat.Regression.Parent</PackageId><Version>1.0.0</Version></PropertyGroup>
+  <ItemGroup><PackageReference Include="TomCat.Regression.Leaf" Version="1.0.0" /></ItemGroup>
+</Project>)XML");
+		WriteTextFile(parent / "Value.cs", "namespace DependencyParent; public static class Value { public static int Read() => DependencyLeaf.Value.Read() + 6; }");
+		wchar_t dotnetPath[32768]{};
+		Require(SearchPathW(nullptr, L"dotnet.exe", nullptr, 32768, dotnetPath, nullptr) != 0,
+			"could not find dotnet for local package fixtures");
+		for (const auto& source : { leaf / "Leaf.csproj", parent / "Parent.csproj" })
+			RunWindowsProcessAndRequireSuccess(dotnetPath,
+				{ L"pack", source.wstring(), L"-c", L"Release", L"-o", feed.wstring(), L"--nologo" },
+				environment.Root, "pack offline dependency fixture");
+		const auto helper = environment.Root / "Dependencies" / "Helper";
+		WriteTextFile(helper / "Helper.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+		WriteTextFile(helper / "Helper.cs", "public static class Helper { public static int Read() => 4; }");
+		const auto raw = environment.Root / "Library" / "RawFixture";
+		WriteTextFile(raw / "Raw.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+		WriteTextFile(raw / "Raw.cs", "public static class RawValue { public static int Read() => 8; }");
+		RunWindowsProcessAndRequireSuccess(dotnetPath,
+			{ L"build", (raw / "Raw.csproj").wstring(), L"-c", L"Release", L"--nologo" },
+			environment.Root, "build local DLL fixture");
+		WriteBytes(environment.Root / "Dependencies" / "Raw.dll", ReadBytes(raw / "bin/Release/net10.0/Raw.dll"));
+		const auto dependencies = environment.Root / "TomCat.Dependencies.csproj";
+		const std::string dependencyProject = R"XML(<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TomCat.Regression.Parent" Version="1.0.0" />
+    <ProjectReference Include="Dependencies/Helper/Helper.csproj" />
+    <Reference Include="Raw"><HintPath>Dependencies/Raw.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+</Project>)XML";
+		WriteTextFile(dependencies, dependencyProject);
+		const auto scriptPath = project->GetAssetPath() / "DependencyProbe.cs";
+		WriteTextFile(scriptPath, "using TomCat; public sealed class DependencyProbe : TomCatBehaviour { public int Count = DependencyParent.Value.Read() + Helper.Read() + RawValue.Read(); }");
+		auto& assets = TomCat::AssetManager::Get();
+		Require(assets.SetProject(project), "could not initialize dependency assets");
+		TomCat::ScriptProjectCompiler compiler;
+		Require(compiler.Configure(project), "could not configure dependency compiler");
+		const auto build = compiler.CompileNow();
+		Require(build.Succeeded, "dependency build failed:\n" + FormatDiagnostics(build));
+		const auto* asset = assets.Registry().GetMetadata(scriptPath);
+		Require(asset != nullptr, "dependency script has no asset handle");
+		const auto handle = asset->Handle;
+		auto checkValue = [&](const std::filesystem::path& assembly, int expected)
+		{
+			std::string error;
+			auto runtime = TomCat::Scripting::CreateManagedScriptRuntime(
+				compiler.GetManagedRuntimeDirectory(), assembly, {}, {}, &error);
+			std::string json;
+			Require(runtime && runtime->ReadProjectMetadata(json), "bundled dependency load failed: " + error);
+			TomCat::ScriptMetadataCache cache;
+			Require(cache.ParseAndReplace(json, error), error);
+			const auto metadata = cache.Find(handle);
+			Require(metadata && std::any_of(metadata->Fields.begin(), metadata->Fields.end(),
+				[expected](const TomCat::EditorScriptFieldMetadata& field)
+				{
+					return field.Name == "Count" && field.DefaultValue
+						&& std::holds_alternative<int32_t>(*field.DefaultValue)
+						&& std::get<int32_t>(*field.DefaultValue) == expected;
+				}), "bundled transitive dependency returned the wrong value");
+		};
+		// A cooked package carries the main assembly only. Reproduce that deployment.
+		const auto isolated = environment.Root / "Library" / "isolated" / "Assembly-CSharp.dll";
+		WriteBytes(isolated, ReadBytes(build.AssemblyPath));
+		checkValue(isolated, 35);
+		WriteTextFile(helper / "Helper.cs", "public static class Helper { public static int Read() => 9; }");
+		Require(compiler.RefreshSourceState() && !compiler.IsCurrentSourceBuilt(),
+			"project dependency edit did not invalidate script compilation");
+		const auto updated = compiler.CompileNow();
+		Require(updated.Succeeded, "dependency update failed:\n" + FormatDiagnostics(updated));
+		checkValue(updated.AssemblyPath, 40);
+		checkValue(isolated, 35); // old and new domains must not share dependency versions
+		WriteTextFile(dependencies, std::string(dependencyProject).replace(
+			dependencyProject.find("Version=\"1.0.0\""), 15, "Version=\"99.0.0\""));
+		const auto failed = compiler.CompileNow();
+		Require(!failed.Succeeded && compiler.GetLastGoodBuildID() == updated.BuildID,
+			"failed package restore replaced last-good");
+		WriteTextFile(parent / "Parent.csproj", R"XML(<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>TomCat.Regression.Parent</PackageId><Version>2.0.0</Version></PropertyGroup>
+  <ItemGroup><PackageReference Include="TomCat.Regression.Leaf" Version="1.0.0" />
+    <None Include="native.dll" Pack="true" PackagePath="runtimes/win-x64/native/native.dll" />
+  </ItemGroup>
+</Project>)XML");
+		WriteTextFile(parent / "native.dll", "unsupported native fixture");
+		RunWindowsProcessAndRequireSuccess(dotnetPath,
+			{ L"pack", (parent / "Parent.csproj").wstring(), L"-c", L"Release", L"-o", feed.wstring(), L"--nologo" },
+			environment.Root, "pack native dependency fixture");
+		WriteTextFile(dependencies, std::string(dependencyProject).replace(
+			dependencyProject.find("Version=\"1.0.0\""), 15, "Version=\"2.0.0\""));
+		const auto native = compiler.CompileNow();
+		Require(!native.Succeeded && compiler.GetLastGoodBuildID() == updated.BuildID
+			&& FormatDiagnostics(native).find("TCSP0023") != std::string::npos,
+			"native package was not rejected with an actionable diagnostic:\n" + FormatDiagnostics(native));
+#endif
+	}
+
 	void TestCookedRuntimeOnly(const std::filesystem::path& packagePath,
 		TomCat::UUID lifecycleEntityID, TomCat::UUID triggerEntityID)
 	{
@@ -1513,6 +1630,12 @@ namespace {
 		const TomCat::Ref<TomCat::Project> project = TomCat::Project::CreateNew(
 			environment.Root / "Project.tcproj", config);
 		Require(project != nullptr, "could not create the e2e temporary project");
+		WriteTextFile(environment.Root / "TomCat.Dependencies.csproj", R"XML(<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+  <ItemGroup><Compile Include="Dependencies/Runtime.cs" /></ItemGroup>
+</Project>)XML");
+		WriteTextFile(environment.Root / "Dependencies" / "Runtime.cs",
+			"public static class BundledRuntime { public static string Message() => \" from bundled dependency\"; }");
 
 		const std::filesystem::path scripts = project->GetAssetPath() / "Scripts";
 		const std::filesystem::path lifecycleSource = scripts / "LifecycleProbe.cs";
@@ -1567,7 +1690,7 @@ public sealed class FaultyProbe : TomCatBehaviour
     protected override void OnUpdate(float dt)
     {
         _lifecycle.Tag = "faulty-write-must-roll-back";
-        throw new InvalidOperationException("intentional e2e failure");
+        throw new InvalidOperationException("intentional e2e failure" + BundledRuntime.Message());
     }
 }
 )CS");
@@ -2237,6 +2360,8 @@ int main(int argc, char** argv)
 		std::cout << "PASS AssetRef<T> accepts only built-in asset markers\n";
 		TestFailedBuildPreservesLastGood();
 		std::cout << "PASS failed C# build preserves last-good\n";
+		TestManagedDependencies();
+		std::cout << "PASS offline package restore, transitive dependencies and isolated reload\n";
 		return 0;
 	}
 	catch (const std::exception& exception)

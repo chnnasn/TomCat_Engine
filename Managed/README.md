@@ -49,6 +49,12 @@ for controls, inherited themes, language fallback and IME commit limitations.
 
 ## Project input and generated manifest
 
+Projects can maintain a standard `TomCat.Dependencies.csproj` beside their `.tcproj`
+to restore managed NuGet packages and reference C# libraries. Runtime dependencies
+are embedded in `Assembly-CSharp.dll` and loaded within each collectible domain,
+including cooked Players. See the [dependency guide](../docs/CSHARP_DEPENDENCIES.md)
+and [project template](Templates/TomCat.Dependencies.csproj) for setup and limitations.
+
 The generated `Assembly-CSharp.csproj` references `TomCat.Managed` normally and
 `TomCat.ScriptGenerator` as an analyzer, then supplies exactly one `ScriptAssets.json` as an
 `AdditionalFiles` item:

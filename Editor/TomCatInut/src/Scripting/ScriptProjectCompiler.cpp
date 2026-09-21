@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <regex>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -330,12 +331,12 @@ namespace TomCat {
 		}
 
 		bool RunRestrictedDotNetBuild(const std::filesystem::path& projectPath,
-			std::string& processOutput, int& exitCode, std::string& launchError)
+			std::string& processOutput, int& exitCode, std::string& launchError, bool dependenciesEnabled)
 		{
 			// These are command-line global properties, so neither an environment
 			// property nor an imported project can turn the extension points back on.
-			// The script project is engine-generated and deliberately has no NuGet or
-			// third-party managed dependency surface.
+			// Explicit dependency projects may import their restored package targets.
+			// Ambient directory and per-user MSBuild hooks stay disabled.
 			static constexpr std::array<const wchar_t*, 19> lockedProperties = {
 				L"ImportDirectoryBuildProps=false",
 				L"ImportDirectoryBuildTargets=false",
@@ -361,7 +362,12 @@ namespace TomCat {
 			std::wstring arguments = L"build -noAutoResponse \"" + projectPath.wstring() +
 				L"\" --configuration Release --nologo --verbosity minimal";
 			for (const wchar_t* property : lockedProperties)
+			{
+				if (dependenciesEnabled && (std::wstring_view(property) == L"ImportProjectExtensionProps=false"
+					|| std::wstring_view(property) == L"ImportProjectExtensionTargets=false"))
+					continue;
 				arguments += L" -p:" + std::wstring(property);
+			}
 			return RunDotNetCommand(arguments, projectPath.parent_path(), processOutput,
 				exitCode, launchError);
 		}
@@ -375,7 +381,7 @@ namespace TomCat {
 		}
 
 		bool RunRestrictedDotNetBuild(const std::filesystem::path&, std::string&,
-			int& exitCode, std::string& launchError)
+			int& exitCode, std::string& launchError, bool)
 		{
 			exitCode = -1;
 			launchError = "Script compilation is not implemented on this platform";
@@ -831,7 +837,7 @@ namespace TomCat {
 		const std::vector<ScriptSource>& sources) const
 	{
 		uint64_t hash = kFNVOffset;
-		HashText(hash, "TomCat.ScriptProject.v2-debuggable");
+		HashText(hash, "TomCat.ScriptProject.v3-dependencies");
 		for (const ScriptSource& source : sources)
 		{
 			HashText(hash, PathToUTF8(source.ProjectRelativePath));
@@ -860,6 +866,44 @@ namespace TomCat {
 			{
 				const auto ticks = modified.time_since_epoch().count();
 				HashBytes(hash, &ticks, sizeof(ticks));
+			}
+		}
+		const auto dependencyProject = m_Project->GetProjectDirectory() / "TomCat.Dependencies.csproj";
+		HashText(hash, IsRegularFile(dependencyProject) ? "dependencies:on" : "dependencies:off");
+		if (IsRegularFile(dependencyProject))
+		{
+			// Track project-local dependency inputs as well as Assets scripts. Build
+			// outputs and caches must not trigger an endless recompile after restore.
+			std::vector<std::filesystem::path> inputs;
+			std::error_code error;
+			std::filesystem::recursive_directory_iterator iterator(m_Project->GetProjectDirectory(), error), end;
+			for (; !error && iterator != end; iterator.increment(error))
+			{
+				const auto path = iterator->path();
+				std::string name = PathToUTF8(path.filename());
+				std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				if (iterator->is_directory(error))
+				{
+					if (name == "library" || name == "bin" || name == "obj" || name == "builds"
+						|| (!name.empty() && name.front() == '.') || iterator->is_symlink(error))
+						iterator.disable_recursion_pending();
+					continue;
+				}
+				const auto extension = path.extension();
+				if (extension == ".csproj" || extension == ".props" || extension == ".targets"
+					|| extension == ".dll" || extension == ".nupkg" || extension == ".cs"
+					|| name == "nuget.config" || name == "packages.lock.json")
+					inputs.push_back(path);
+			}
+			std::sort(inputs.begin(), inputs.end());
+			for (const auto& input : inputs)
+			{
+				HashText(hash, PathToUTF8(input.lexically_relative(m_Project->GetProjectDirectory())));
+				std::string contents;
+				if (ReadTextFile(input, contents))
+					HashText(hash, contents);
+				else
+					HashText(hash, "unreadable");
 			}
 		}
 		return HexHash(hash);
@@ -934,6 +978,8 @@ namespace TomCat {
 			m_ScriptProjectDirectory / "obj" / buildID;
 		const std::filesystem::path disabledImportPath =
 			m_ScriptProjectDirectory / ("TomCat.Imports.Disabled." + buildID);
+		const auto dependenciesProject = m_Project->GetProjectDirectory() / "TomCat.Dependencies.csproj";
+		const bool dependenciesEnabled = IsRegularFile(dependenciesProject);
 		std::ostringstream project;
 		project << "<Project>\n"
 			<< "  <!-- Dependency policy: set these before Sdk.props can discover any "
@@ -942,8 +988,8 @@ namespace TomCat {
 			<< "    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>\n"
 			<< "    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>\n"
 			<< "    <ImportDirectoryPackagesProps>false</ImportDirectoryPackagesProps>\n"
-			<< "    <ImportProjectExtensionProps>false</ImportProjectExtensionProps>\n"
-			<< "    <ImportProjectExtensionTargets>false</ImportProjectExtensionTargets>\n"
+			<< "    <ImportProjectExtensionProps>" << (dependenciesEnabled ? "true" : "false") << "</ImportProjectExtensionProps>\n"
+			<< "    <ImportProjectExtensionTargets>" << (dependenciesEnabled ? "true" : "false") << "</ImportProjectExtensionTargets>\n"
 			<< "    <RestoreEnableGlobalPackageReference>false</RestoreEnableGlobalPackageReference>\n"
 			<< "    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>\n"
 			<< "    <ImportUserLocationsByWildcardBeforeMicrosoftCommonProps>false</ImportUserLocationsByWildcardBeforeMicrosoftCommonProps>\n"
@@ -990,6 +1036,8 @@ namespace TomCat {
 			<< "  <Import Project=\"Sdk.props\" Sdk=\"Microsoft.NET.Sdk\" />\n"
 			<< "  <PropertyGroup>\n"
 			<< "    <TargetFramework>net10.0</TargetFramework>\n"
+			<< "    <RuntimeIdentifier>win-x64</RuntimeIdentifier>\n"
+			<< "    <SelfContained>false</SelfContained>\n"
 			<< "    <AssemblyName>Assembly-CSharp</AssemblyName>\n"
 			<< "    <RootNamespace>Game</RootNamespace>\n"
 			<< "    <OutputType>Library</OutputType>\n"
@@ -998,6 +1046,7 @@ namespace TomCat {
 			<< "    <ImplicitUsings>disable</ImplicitUsings>\n"
 			<< "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n"
 			<< "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
+			<< "    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>\n"
 			<< "    <Deterministic>true</Deterministic>\n"
 			<< "    <DebugType>portable</DebugType>\n"
 			<< "    <DebugSymbols>true</DebugSymbols>\n"
@@ -1011,6 +1060,9 @@ namespace TomCat {
 			<< "=.</PathMap>\n"
 			<< "  </PropertyGroup>\n"
 			<< "  <ItemGroup>\n";
+		if (dependenciesEnabled)
+			project << "    <ProjectReference Include=\"" << EscapeXml(PathToUTF8(dependenciesProject))
+				<< "\"><TomCatTrustedReference>true</TomCatTrustedReference></ProjectReference>\n";
 
 		if (m_ManagedApiIsProject)
 		{
@@ -1051,7 +1103,20 @@ namespace TomCat {
 				<< EscapeXml(PathToUTF8(source.AbsolutePath)) << "\" Link=\""
 				<< EscapeXml(PathToUTF8(source.ProjectRelativePath)) << "\" />\n";
 		}
-		project << "  </ItemGroup>\n"
+		project << "  </ItemGroup>\n";
+		if (dependenciesEnabled)
+			project
+				<< "  <Target Name=\"TomCatResolveLocalReferences\" BeforeTargets=\"ResolveAssemblyReferences\" DependsOnTargets=\"ResolveProjectReferences\">\n"
+				<< "    <MSBuild Projects=\"" << EscapeXml(PathToUTF8(dependenciesProject))
+				<< "\" Targets=\"ResolveReferences\" Properties=\"Configuration=$(Configuration)\">\n"
+				<< "      <Output TaskParameter=\"TargetOutputs\" ItemName=\"_TomCatDependencyReference\" />\n"
+				<< "    </MSBuild>\n"
+				<< "    <ItemGroup>\n"
+				<< "      <Reference Include=\"@(_TomCatDependencyReference)\" Condition=\"'%(_TomCatDependencyReference.HintPath)' != '' And '%(_TomCatDependencyReference.NuGetPackageId)' == ''\"><HintPath>%(_TomCatDependencyReference.Identity)</HintPath><Private>true</Private></Reference>\n"
+				<< "    </ItemGroup>\n"
+				<< "  </Target>\n";
+		if (!dependenciesEnabled)
+			project
 			// Snapshot only items declared before the trusted SDK target import. This
 			// avoids treating framework references resolved later by the SDK as local
 			// DLL injection while still catching props/central-package additions.
@@ -1071,6 +1136,17 @@ namespace TomCat {
 				"Condition=\"'@(_TomCatBlockedReference)' != '' Or "
 				"'@(_TomCatBlockedProjectReference)' != ''\" "
 				"Text=\"Local or third-party managed references are disabled for TomCat scripts.\" />\n"
+			<< "  </Target>\n";
+		project
+			<< "  <Target Name=\"TomCatEmbedDependencies\" BeforeTargets=\"AssignTargetPaths\" DependsOnTargets=\"ResolveReferences\">\n"
+			<< "    <Error Code=\"TCSP0023\" Condition=\"'@(NativeCopyLocalItems)' != ''\" Text=\"TomCat currently supports managed dependencies only; native package assets cannot be loaded.\" />\n"
+			<< "    <Error Code=\"TCSP0024\" Condition=\"'@(_ContentCopyLocalItems)' != ''\" Text=\"TomCat cannot bundle package content files; use managed DLL resources instead.\" />\n"
+			<< "    <ItemGroup>\n"
+			<< "      <EmbeddedResource Include=\"@(ReferenceCopyLocalPaths)\" Condition=\"'%(Extension)' == '.dll' And '%(Filename)' != 'TomCat.Managed' And '%(Filename)' != 'TomCat.ScriptGenerator'\">\n"
+			<< "        <LogicalName>TomCat.Dependency/%(ReferenceCopyLocalPaths.DestinationSubDirectory)%(ReferenceCopyLocalPaths.Filename)%(ReferenceCopyLocalPaths.Extension)</LogicalName>\n"
+			<< "        <WithCulture>false</WithCulture>\n"
+			<< "      </EmbeddedResource>\n"
+			<< "    </ItemGroup>\n"
 			<< "  </Target>\n"
 			<< "  <Import Project=\"Sdk.targets\" Sdk=\"Microsoft.NET.Sdk\" />\n"
 			<< "</Project>\n";
@@ -1217,7 +1293,8 @@ namespace TomCat {
 		std::string output;
 		std::string launchError;
 		if (!RunRestrictedDotNetBuild(m_ScriptProjectDirectory / "Assembly-CSharp.csproj",
-			output, result.ExitCode, launchError))
+			output, result.ExitCode, launchError,
+			IsRegularFile(m_Project->GetProjectDirectory() / "TomCat.Dependencies.csproj")))
 		{
 			ScriptCompilerDiagnostic diagnostic;
 			diagnostic.Level = ScriptCompilerDiagnostic::Severity::Error;

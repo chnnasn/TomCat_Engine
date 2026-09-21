@@ -55,6 +55,7 @@ public sealed class ScriptDomain : IDisposable
         Assembly assembly = pdbStream is null
             ? context.LoadFromStream(assemblyStream)
             : context.LoadFromStream(assemblyStream, pdbStream);
+        context.RegisterDependencies(assembly);
 
         Type manifestType = assembly.GetType("TomCat.Generated.ScriptManifest", throwOnError: true,
             ignoreCase: false)!;

@@ -1,5 +1,9 @@
 # TomCat 托管脚本 V1
 
+项目可通过根目录的标准 `TomCat.Dependencies.csproj` 还原纯托管 NuGet 包并引用 C# 库。
+依赖随脚本程序集封装并在各自脚本域中加载，Cook / Player 使用同一份依赖。
+用法与限制见[依赖指南](../docs/CSHARP_DEPENDENCIES.md)和[项目模板](Templates/TomCat.Dependencies.csproj)。
+
 [English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
 
 V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v3，
