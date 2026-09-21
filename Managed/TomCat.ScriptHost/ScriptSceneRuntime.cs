@@ -1130,7 +1130,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             $"{instance.Attachment.Entity.Id}, attachment {instance.Attachment.AttachmentId}, " +
             $"callback {callback} threw {exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}";
 		NativeBridge.AbortDeferredCommandBatch(instance.Attachment.Entity, message);
-        NativeBridge.ReportManagedException(message);
+        NativeBridge.ReportManagedException(message, exception);
     }
 
     private sealed class ScriptInstance(ScriptAttachment attachment, ScriptDescriptor descriptor,

@@ -831,7 +831,7 @@ namespace TomCat {
 		const std::vector<ScriptSource>& sources) const
 	{
 		uint64_t hash = kFNVOffset;
-		HashText(hash, "TomCat.ScriptProject.v1");
+		HashText(hash, "TomCat.ScriptProject.v2-debuggable");
 		for (const ScriptSource& source : sources)
 		{
 			HashText(hash, PathToUTF8(source.ProjectRelativePath));
@@ -1000,6 +1000,8 @@ namespace TomCat {
 			<< "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
 			<< "    <Deterministic>true</Deterministic>\n"
 			<< "    <DebugType>portable</DebugType>\n"
+			<< "    <DebugSymbols>true</DebugSymbols>\n"
+			<< "    <Optimize>false</Optimize>\n"
 			<< "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n"
 			<< "    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>\n"
 			<< "    <OutputPath>" << EscapeXml(PathToUTF8(buildDirectory)) << "\\</OutputPath>\n"
@@ -1073,8 +1075,19 @@ namespace TomCat {
 			<< "  <Import Project=\"Sdk.targets\" Sdk=\"Microsoft.NET.Sdk\" />\n"
 			<< "</Project>\n";
 
+		if (!FileSystem::WriteFileAtomically(
+			m_ScriptProjectDirectory / "Assembly-CSharp.csproj", project.str(), errorMessage))
+			return false;
+		// Keep generated IDE settings in Library; never overwrite user .vscode settings.
+		const std::string root = EscapeJson(PathToUTF8(m_Project->GetProjectDirectory()));
+		const std::string workspace = "{\n  \"folders\": [{\"path\": \"" + root + "\"}],\n"
+			"  \"launch\": {\"version\": \"0.2.0\", \"configurations\": [{\n"
+			"    \"name\": \"Attach to TomCat Editor\", \"type\": \"coreclr\", \"request\": \"attach\",\n"
+			"    \"processId\": \"${command:pickProcess}\", \"justMyCode\": false,\n"
+			"    \"sourceFileMap\": {\".\": \"" + root + "\"}\n"
+			"  }]}\n}\n";
 		return FileSystem::WriteFileAtomically(
-			m_ScriptProjectDirectory / "Assembly-CSharp.csproj", project.str(), errorMessage);
+			m_ScriptProjectDirectory / "TomCat.code-workspace", workspace, errorMessage);
 	}
 
 	bool ScriptProjectCompiler::LoadLastGood()

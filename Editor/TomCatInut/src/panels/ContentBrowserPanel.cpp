@@ -471,7 +471,7 @@ namespace TomCat {
 		}
 
 		bool OpenInExternalScriptEditor(const std::filesystem::path& editor,
-			const std::filesystem::path& script, std::string& errorMessage)
+			const std::filesystem::path& script, uint32_t line, uint32_t column, std::string& errorMessage)
 		{
 #ifdef TC_PLATFORM_WINDOWS
 			std::error_code error;
@@ -486,7 +486,18 @@ namespace TomCat {
 				errorMessage = "The C# source path cannot be represented as a safe command-line argument";
 				return false;
 			}
-			const std::wstring parameters = L"\"" + scriptArgument + L"\"";
+			std::wstring parameters = L"\"" + scriptArgument + L"\"";
+			const std::string name = ToLower(PathToUTF8(editor.stem()));
+			if (line != 0)
+			{
+				if (name == "code" || name == "code - insiders")
+					parameters = L"--reuse-window --goto \"" + scriptArgument + L":"
+						+ std::to_wstring(line) + L":" + std::to_wstring(std::max(1u, column)) + L"\"";
+				else if (name == "devenv")
+					parameters = L"/Edit " + parameters + L" /Command \"Edit.Goto " + std::to_wstring(line) + L"\"";
+				else if (name == "rider" || name == "rider64")
+					parameters = L"--line " + std::to_wstring(line) + L" " + parameters;
+			}
 			const HINSTANCE result = ShellExecuteW(nullptr, L"open", editor.c_str(),
 				parameters.c_str(), script.parent_path().c_str(), SW_SHOWNORMAL);
 			const INT_PTR code = reinterpret_cast<INT_PTR>(result);
@@ -949,7 +960,17 @@ namespace TomCat {
 			TC_Warn("Opening this file type is not supported yet: {0}", PathToUTF8(managedPath.filename()));
 	}
 
-	bool ContentBrowserPanel::OpenCSharpScript(const std::filesystem::path& path)
+	bool ContentBrowserPanel::OpenDiagnosticSource(const std::filesystem::path& path, uint32_t line, uint32_t column)
+	{
+		if (ToLower(PathToUTF8(path.extension())) != ".cs")
+			return false;
+		// Portable PDBs map the project root to '.', not the editor working directory.
+		const auto source = path.is_relative() && m_Project
+			? m_Project->GetProjectDirectory() / path : path;
+		return OpenCSharpScript(source, line, column);
+	}
+
+	bool ContentBrowserPanel::OpenCSharpScript(const std::filesystem::path& path, uint32_t line, uint32_t column)
 	{
 		const std::filesystem::path scriptPath = CanonicalPath(path);
 		if (!m_ExternalScriptEditor.empty())
@@ -957,7 +978,7 @@ namespace TomCat {
 			std::filesystem::path editor;
 			std::string errorMessage;
 			if (!ResolveExternalScriptEditor(m_ExternalScriptEditor, editor, errorMessage)
-				|| !OpenInExternalScriptEditor(editor, scriptPath, errorMessage))
+				|| !OpenInExternalScriptEditor(editor, scriptPath, line, column, errorMessage))
 			{
 				TC_Core_Error("Could not open C# script '{0}' with the configured editor: {1}. "
 					"Use Open With... to select another editor.", PathToUTF8(scriptPath),

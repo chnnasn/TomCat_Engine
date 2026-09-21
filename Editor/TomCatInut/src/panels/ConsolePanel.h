@@ -40,7 +40,7 @@ namespace TomCat {
 		void Push(ConsoleMessage message);
 		void Push(ConsoleMessageSeverity severity, std::string text,
 			std::string source = {});
-        void SetOpenSourceCallback(std::function<void(const std::filesystem::path&)> callback) { m_OpenSource=std::move(callback); }
+        void SetOpenSourceCallback(std::function<void(const std::filesystem::path&, uint32_t, uint32_t)> callback) { m_OpenSource=std::move(callback); }
         void SetErrorPauseCallback(std::function<void()> callback) { m_ErrorPauseCallback=std::move(callback); }
         void Clear();
 		void OnPlayStarted();
@@ -54,7 +54,7 @@ namespace TomCat {
 		bool IsVisible(ConsoleMessageSeverity severity) const;
 
 	private:
-        std::function<void(const std::filesystem::path&)> m_OpenSource;
+        std::function<void(const std::filesystem::path&, uint32_t, uint32_t)> m_OpenSource;
 		mutable std::mutex m_Mutex;
 		std::vector<ConsoleMessage> m_Messages;
 		uint64_t m_NextSequence = 1;

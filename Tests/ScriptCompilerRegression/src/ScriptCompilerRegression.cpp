@@ -673,6 +673,47 @@ namespace {
 			"failed build modified last-good.json");
 		Require(ReadBytes(lastGoodAssembly) == assemblyBefore,
 			"failed build modified the last-good assembly bytes");
+		Require(std::any_of(broken.Diagnostics.begin(), broken.Diagnostics.end(),
+			[&](const TomCat::ScriptCompilerDiagnostic& diagnostic)
+			{
+				return diagnostic.File.filename() == scriptPath.filename()
+					&& diagnostic.Line == 5 && diagnostic.Column > 0;
+			}), "compiler error did not preserve the source line and column");
+
+		WriteTextFile(scriptPath,
+			"using TomCat;\nnamespace Regression;\n"
+			"public sealed class LastGoodProbe : TomCatBehaviour { public int Count = 19; }\n");
+		Require(compiler.RefreshSourceState() && compiler.StartCompile(),
+			"corrected source did not start a background rebuild");
+		TomCat::ScriptBuildResult reloaded;
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+		while (!compiler.PollCompile(reloaded))
+		{
+			Require(std::chrono::steady_clock::now() < deadline, "background rebuild timed out");
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+		Require(reloaded.Succeeded && compiler.IsCurrentSourceBuilt()
+			&& compiler.GetLastGoodBuildID() != lastGoodBuildID,
+			"corrected source was not promoted after the failed build");
+		Require(std::filesystem::is_regular_file(reloaded.PdbPath), "reload has no portable PDB");
+		std::string runtimeError;
+		auto runtime = TomCat::Scripting::CreateManagedScriptRuntime(
+			compiler.GetManagedRuntimeDirectory(), reloaded.AssemblyPath, reloaded.PdbPath, {}, &runtimeError);
+		std::string metadata;
+		Require(runtime && runtime->ReadProjectMetadata(metadata),
+			"new runtime did not load corrected metadata: " + runtimeError);
+		TomCat::ScriptMetadataCache cache;
+		Require(cache.ParseAndReplace(metadata, runtimeError), runtimeError);
+		const auto* asset = assets.Registry().GetMetadata(scriptPath);
+		Require(asset != nullptr, "reloaded script lost its asset identity");
+		const auto script = cache.Find(asset->Handle);
+		Require(script && std::any_of(script->Fields.begin(), script->Fields.end(),
+			[](const TomCat::EditorScriptFieldMetadata& field)
+			{
+				return field.Name == "Count" && field.DefaultValue
+					&& std::holds_alternative<int32_t>(*field.DefaultValue)
+					&& std::get<int32_t>(*field.DefaultValue) == 19;
+			}), "new runtime did not load the corrected field default");
 	}
 
 	bool EnvironmentFlag(const char* name)
@@ -747,7 +788,7 @@ namespace {
 
 	void VerifyRuntimeBehaviour(const TomCat::Ref<TomCat::Scene>& scene,
 		TomCat::UUID lifecycleEntityID, TomCat::UUID triggerEntityID,
-		const std::shared_ptr<TomCat::Scripting::IScriptRuntime>& runtime)
+		const std::shared_ptr<TomCat::Scripting::IScriptRuntime>& runtime, bool expectSourceLocation = false)
 	{
 		std::vector<TomCat::Scripting::ScriptDiagnostic> diagnostics;
 		ScopedDiagnosticCapture diagnosticCapture(diagnostics);
@@ -776,12 +817,14 @@ namespace {
 			Require(velocity && velocity->y > 1.0f,
 				"compiled C# script did not apply a 2D impulse during FixedUpdate");
 			Require(std::any_of(diagnostics.begin(), diagnostics.end(),
-				[](const TomCat::Scripting::ScriptDiagnostic& diagnostic)
+				[expectSourceLocation](const TomCat::Scripting::ScriptDiagnostic& diagnostic)
 				{
 					return diagnostic.Severity ==
 						TomCat::Scripting::ScriptDiagnosticSeverity::Error
 						&& diagnostic.Message.find("intentional e2e failure")
-							!= std::string::npos;
+							!= std::string::npos
+						&& (!expectSourceLocation || (diagnostic.File.filename() == "FaultyProbe.cs"
+							&& diagnostic.Line > 0));
 				}), "faulting script did not emit its managed exception diagnostic");
 		}
 		catch (...)
@@ -1876,7 +1919,7 @@ public sealed class BulletProbe : TomCatBehaviour
 					&& std::get<int32_t>(field.Value) == 17;
 			}), "serialized C# field did not survive an Editor-style scene reload");
 		VerifyRuntimeBehaviour(reloadedScene, lifecycleEntityID, triggerEntityID,
-			runtime);
+			runtime, true);
 		runtime.reset();
 
 		const std::vector<uint8_t> assembly = ReadBytes(build.AssemblyPath);

@@ -2339,6 +2339,15 @@ internal static unsafe partial class NativeBridge
 		}
 	}
 
+    internal static void ReportManagedException(string message, Exception exception)
+    {
+        var frames = new System.Diagnostics.StackTrace(exception, true).GetFrames();
+        var frame = frames?.FirstOrDefault(frame => frame.GetFileLineNumber() > 0
+            && !string.IsNullOrEmpty(frame.GetFileName()));
+        ReportManagedException(message, frame?.GetFileName(),
+            frame?.GetFileLineNumber() ?? 0, frame?.GetFileColumnNumber() ?? 0);
+    }
+
     internal static void ReportManagedException(string message, string? file = null, int line = 0, int column = 0)
     {
 		// Host failures can originate in the background metadata compiler. This
