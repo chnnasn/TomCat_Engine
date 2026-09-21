@@ -1,8 +1,11 @@
 #pragma once
 
-#include<string>
-#include<unordered_map>
-#include<glm/glm.hpp>
+#include <filesystem>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <cstdint>
+#include <glm/glm.hpp>
 
 namespace TomCat {
 
@@ -24,8 +27,13 @@ namespace TomCat {
 
 		virtual const std::string& GetName() const = 0;
 
-		static Ref<Shader> Create(const std::string& filepath);
+		static Ref<Shader> Create(const std::filesystem::path& filepath);
 		static Ref<Shader> Create(const std::string& name,const std::string& vertexSrc, const std::string& fragmentSrc);
+		// Creates a GPU program directly from an offline shader artifact. The
+		// artifact target must match the active renderer API; no source compiler or
+		// shader cache is touched by this path.
+		static Ref<Shader> CreateFromArtifact(const std::string& name,
+			std::span<const uint8_t> artifact, std::string* error = nullptr);
 	};
 
 	class ShaderLibrary
@@ -33,8 +41,8 @@ namespace TomCat {
 	public:
 		void Add(const std::string& name, const Ref<Shader>& shader);
 		void Add(const Ref<Shader>& shader);
-		Ref<Shader> Load(const std::string& filepath);
-		Ref<Shader> Load(const std::string& name,const std::string& filepath);
+		Ref<Shader> Load(const std::filesystem::path& filepath);
+		Ref<Shader> Load(const std::string& name, const std::filesystem::path& filepath);
 		
 		Ref<Shader> Get(const std::string& name);
 

@@ -14,13 +14,13 @@ namespace TomCat {
 
 			case RendererAPI::API::OpenGL: return CreateRef<OpenGLTexture2D>(width,height);
 		}
-		TC_Core_Assert(false, "unknown rendererapi")
+		TC_Core_Assert(false, "unknown rendererapi");
 			return nullptr;
 	}
 
 
 
-	Ref<Texture2D> Texture2D:: Create(const std::string& path)
+	Ref<Texture2D> Texture2D::Create(const std::filesystem::path& path)
 	{
 		switch (Renderer::GetAPI())
 		{
@@ -28,9 +28,21 @@ namespace TomCat {
 
 			case RendererAPI::API::OpenGL: return CreateRef<OpenGLTexture2D>(path);
 		}
-		TC_Core_Assert(false, "unknown rendererapi")
+		TC_Core_Assert(false, "unknown rendererapi");
 			return nullptr;
 	}
 
+	Ref<Texture2D> Texture2D::Create(const void* encodedData, size_t encodedSize,
+		const std::filesystem::path& sourcePath)
+	{
+		switch (Renderer::GetAPI())
+		{
+			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
 
+			case RendererAPI::API::OpenGL:
+				return CreateRef<OpenGLTexture2D>(encodedData, encodedSize, sourcePath);
+		}
+		TC_Core_Assert(false, "unknown rendererapi");
+		return nullptr;
+	}
 }

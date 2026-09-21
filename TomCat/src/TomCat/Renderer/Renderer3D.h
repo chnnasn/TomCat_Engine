@@ -26,7 +26,7 @@ namespace TomCat {
 		static void DrawMesh(const Ref<Mesh>& mesh, const glm::mat4& transform,
 			const Ref<Texture2D>& albedoTexture, const glm::vec4& color, bool useTexture, int entityID = -1);
 
-		static void DrawModel(const Ref<Model>& model, const glm::mat4& transform, int entityID = -1);
+		static void DrawModel(const Ref<Model>& model, const glm::mat4& transform, int entityID = -1, const glm::vec4& tint = glm::vec4(1.0f), const Ref<Texture2D>& texture = nullptr);
 
 		struct Statistics
 		{

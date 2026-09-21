@@ -2,7 +2,9 @@
 
 #include"OpenGLRendererAPI.h"
 
-#include<glad/glad.h>
+#include "OpenGLApi.h"
+
+#include <cmath>
 
 namespace TomCat {
 
@@ -31,11 +33,56 @@ namespace TomCat {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
 
+	void OpenGLRendererAPI::SetDepthTest(bool enabled)
+	{
+		if (enabled)
+			glEnable(GL_DEPTH_TEST);
+		else
+			glDisable(GL_DEPTH_TEST);
+	}
+
 	void OpenGLRendererAPI::DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount)
 	{
-		uint32_t count = indexCount ? indexCount : vertexArray->GetIndexBuffer()->GetCount();
+		if (!vertexArray || !vertexArray->GetIndexBuffer())
+		{
+			TC_Core_Error("DrawIndexed requires a vertex array with an index buffer");
+			return;
+		}
+
+		const uint32_t count = indexCount ? indexCount : vertexArray->GetIndexBuffer()->GetCount();
+		if (count == 0)
+			return;
+
+		vertexArray->Bind();
 		glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		FrameProfiler::Get().RecordDraw(count);
+	}
+
+	void OpenGLRendererAPI::DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount)
+	{
+		if (!vertexArray)
+		{
+			TC_Core_Error("DrawLines requires a vertex array");
+			return;
+		}
+
+		if (vertexCount == 0)
+			return;
+
+		vertexArray->Bind();
+		glDrawArrays(GL_LINES, 0, vertexCount);
+		FrameProfiler::Get().RecordDraw(vertexCount);
+	}
+
+	void OpenGLRendererAPI::SetLineWidth(float width)
+	{
+		if (!std::isfinite(width) || width <= 0.0f)
+		{
+			TC_Core_Error("SetLineWidth requires a finite width greater than zero");
+			return;
+		}
+
+		glLineWidth(width);
 	}
 
 }

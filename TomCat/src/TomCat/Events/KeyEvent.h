@@ -1,6 +1,7 @@
 #pragma once
 #include "tcpch.h"
 #include "Event.h"
+#include "InputModifiers.h"
 
 
 namespace TomCat {
@@ -9,22 +10,28 @@ namespace TomCat {
 	public:
 
 		inline int GetKeyCode()const { return m_KeyCode; }
+		inline const InputModifiers& GetModifiers() const { return m_Modifiers; }
+		inline bool IsControlDown() const { return m_Modifiers.Control; }
+		inline bool IsShiftDown() const { return m_Modifiers.Shift; }
+		inline bool IsAltDown() const { return m_Modifiers.Alt; }
+		inline bool IsSuperDown() const { return m_Modifiers.Super; }
 		
 		Event_Class_Category(EventCategoryKeyboard | EventCategoryInput)
 
 	protected:
-		KeyEvent(int KeyCode)
-			: m_KeyCode(KeyCode) {}
+		KeyEvent(int keyCode, InputModifiers modifiers)
+			: m_KeyCode(keyCode), m_Modifiers(modifiers) {}
 
 		int m_KeyCode;
+		InputModifiers m_Modifiers;
 
 	};
 
 	class KeyPressedEvent : public KeyEvent
 	{
 	public:
-		KeyPressedEvent(int keycode,int repeatCount)
-			: KeyEvent(keycode),m_RepeatCount(repeatCount){}
+		KeyPressedEvent(int keycode, int repeatCount, InputModifiers modifiers)
+			: KeyEvent(keycode, modifiers), m_RepeatCount(repeatCount) {}
 
 		inline int GetRepeatCount()const { return m_RepeatCount; }
 
@@ -44,8 +51,8 @@ namespace TomCat {
 	class KeyReleasedEvent : public KeyEvent
 	{
 	public:
-		KeyReleasedEvent(int keycode)
-			: KeyEvent(keycode) {
+		KeyReleasedEvent(int keycode, InputModifiers modifiers)
+			: KeyEvent(keycode, modifiers) {
 		}
 
 		std::string ToString() const override
@@ -62,7 +69,7 @@ namespace TomCat {
 	{
 	public:
 		KeyTypedEvent(int keycode)
-			: KeyEvent(keycode) {
+			: KeyEvent(keycode, {}) {
 		}
 
 		std::string ToString() const override

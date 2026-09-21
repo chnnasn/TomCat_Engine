@@ -1,14 +1,634 @@
 #include "tcpch.h"
 #include "ProjectManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Utils/FileSystemUtils.h"
+#include "TomCat/Utils/PathUtils.h"
+#include "TomCat/Utils/PlatformUtils.h"
 
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
 #include <unordered_set>
-#include <sstream>
-#include <yaml-cpp/yaml.h>
+#include <string_view>
+#include <array>
+#include <cstdint>
+#include <cwctype>
+#include <iterator>
 
 namespace TomCat {
+
+	namespace {
+		constexpr int s_HubSettingsSchemaVersion = 1;
+
+		std::string EscapeJsonString(std::string_view value)
+		{
+			static constexpr char hex[] = "0123456789ABCDEF";
+			std::string escaped;
+			escaped.reserve(value.size() + 2);
+			escaped.push_back('"');
+			for (const unsigned char character : value)
+			{
+				switch (character)
+				{
+					case '"': escaped += "\\\""; break;
+					case '\\': escaped += "\\\\"; break;
+					case '\b': escaped += "\\b"; break;
+					case '\f': escaped += "\\f"; break;
+					case '\n': escaped += "\\n"; break;
+					case '\r': escaped += "\\r"; break;
+					case '\t': escaped += "\\t"; break;
+					default:
+						if (character < 0x20)
+						{
+							escaped += "\\u00";
+							escaped.push_back(hex[(character >> 4) & 0x0F]);
+							escaped.push_back(hex[character & 0x0F]);
+						}
+						else
+						{
+							escaped.push_back(static_cast<char>(character));
+						}
+						break;
+				}
+			}
+			escaped.push_back('"');
+			return escaped;
+		}
+
+		enum class JsonValueType
+		{
+			Null,
+			Boolean,
+			Number,
+			String,
+			Array,
+			Object
+		};
+
+		struct JsonValue
+		{
+			JsonValueType Type = JsonValueType::Null;
+			std::string Text;
+			std::vector<JsonValue> Array;
+			std::unordered_map<std::string, JsonValue> Object;
+
+			const JsonValue* Find(std::string_view key) const
+			{
+				const auto found = Object.find(std::string(key));
+				return found == Object.end() ? nullptr : &found->second;
+			}
+		};
+
+		class JsonParser
+		{
+		public:
+			explicit JsonParser(std::string_view input)
+				: m_Input(input)
+			{
+			}
+
+			JsonValue Parse()
+			{
+				SkipWhitespace();
+				JsonValue value = ParseValue(0);
+				SkipWhitespace();
+				if (m_Position != m_Input.size())
+					Fail("unexpected trailing data");
+				return value;
+			}
+
+		private:
+			[[noreturn]] void Fail(const char* message) const
+			{
+				throw std::runtime_error(std::string(message) + " at byte " +
+					std::to_string(m_Position));
+			}
+
+			void SkipWhitespace()
+			{
+				while (m_Position < m_Input.size())
+				{
+					const char character = m_Input[m_Position];
+					if (character != ' ' && character != '\t' && character != '\r' && character != '\n')
+						break;
+					++m_Position;
+				}
+			}
+
+			bool Consume(char expected)
+			{
+				if (m_Position >= m_Input.size() || m_Input[m_Position] != expected)
+					return false;
+				++m_Position;
+				return true;
+			}
+
+			void ConsumeLiteral(std::string_view literal)
+			{
+				if (m_Input.substr(m_Position, literal.size()) != literal)
+					Fail("invalid literal");
+				m_Position += literal.size();
+			}
+
+			JsonValue ParseValue(size_t depth)
+			{
+				if (depth > 64)
+					Fail("JSON nesting is too deep");
+				if (m_Position >= m_Input.size())
+					Fail("expected a JSON value");
+
+				switch (m_Input[m_Position])
+				{
+					case 'n':
+						ConsumeLiteral("null");
+						return {};
+					case 't':
+						ConsumeLiteral("true");
+						return { JsonValueType::Boolean, "true" };
+					case 'f':
+						ConsumeLiteral("false");
+						return { JsonValueType::Boolean, "false" };
+					case '"':
+						return { JsonValueType::String, ParseString() };
+					case '[':
+						return ParseArray(depth);
+					case '{':
+						return ParseObject(depth);
+					default:
+						if (m_Input[m_Position] == '-' ||
+							(m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9'))
+						{
+							return { JsonValueType::Number, ParseNumber() };
+						}
+						Fail("invalid JSON value");
+				}
+			}
+
+			JsonValue ParseArray(size_t depth)
+			{
+				JsonValue value;
+				value.Type = JsonValueType::Array;
+				++m_Position;
+				SkipWhitespace();
+				if (Consume(']'))
+					return value;
+
+				while (true)
+				{
+					SkipWhitespace();
+					value.Array.emplace_back(ParseValue(depth + 1));
+					SkipWhitespace();
+					if (Consume(']'))
+						return value;
+					if (!Consume(','))
+						Fail("expected ',' or ']' in array");
+				}
+			}
+
+			JsonValue ParseObject(size_t depth)
+			{
+				JsonValue value;
+				value.Type = JsonValueType::Object;
+				++m_Position;
+				SkipWhitespace();
+				if (Consume('}'))
+					return value;
+
+				while (true)
+				{
+					SkipWhitespace();
+					if (m_Position >= m_Input.size() || m_Input[m_Position] != '"')
+						Fail("expected a string key in object");
+					std::string key = ParseString();
+					SkipWhitespace();
+					if (!Consume(':'))
+						Fail("expected ':' after object key");
+					SkipWhitespace();
+					JsonValue member = ParseValue(depth + 1);
+					if (!value.Object.emplace(std::move(key), std::move(member)).second)
+						Fail("duplicate object key");
+					SkipWhitespace();
+					if (Consume('}'))
+						return value;
+					if (!Consume(','))
+						Fail("expected ',' or '}' in object");
+				}
+			}
+
+			static int HexDigit(char character)
+			{
+				if (character >= '0' && character <= '9')
+					return character - '0';
+				if (character >= 'a' && character <= 'f')
+					return character - 'a' + 10;
+				if (character >= 'A' && character <= 'F')
+					return character - 'A' + 10;
+				return -1;
+			}
+
+			uint32_t ParseHexCodeUnit()
+			{
+				if (m_Position + 4 > m_Input.size())
+					Fail("incomplete Unicode escape");
+				uint32_t value = 0;
+				for (int index = 0; index < 4; ++index)
+				{
+					const int digit = HexDigit(m_Input[m_Position++]);
+					if (digit < 0)
+						Fail("invalid Unicode escape");
+					value = (value << 4) | static_cast<uint32_t>(digit);
+				}
+				return value;
+			}
+
+			static void AppendUTF8(std::string& output, uint32_t codePoint)
+			{
+				if (codePoint <= 0x7F)
+					output.push_back(static_cast<char>(codePoint));
+				else if (codePoint <= 0x7FF)
+				{
+					output.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+					output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+				}
+				else if (codePoint <= 0xFFFF)
+				{
+					output.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+					output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+					output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+				}
+				else
+				{
+					output.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+					output.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+					output.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+					output.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+				}
+			}
+
+			std::string ParseString()
+			{
+				if (!Consume('"'))
+					Fail("expected string");
+				std::string value;
+				while (m_Position < m_Input.size())
+				{
+					const unsigned char character =
+						static_cast<unsigned char>(m_Input[m_Position++]);
+					if (character == '"')
+						return value;
+					if (character < 0x20)
+						Fail("unescaped control character in string");
+					if (character != '\\')
+					{
+						value.push_back(static_cast<char>(character));
+						continue;
+					}
+
+					if (m_Position >= m_Input.size())
+						Fail("incomplete string escape");
+					const char escape = m_Input[m_Position++];
+					switch (escape)
+					{
+						case '"': value.push_back('"'); break;
+						case '\\': value.push_back('\\'); break;
+						case '/': value.push_back('/'); break;
+						case 'b': value.push_back('\b'); break;
+						case 'f': value.push_back('\f'); break;
+						case 'n': value.push_back('\n'); break;
+						case 'r': value.push_back('\r'); break;
+						case 't': value.push_back('\t'); break;
+						case 'u':
+						{
+							uint32_t codePoint = ParseHexCodeUnit();
+							if (codePoint >= 0xD800 && codePoint <= 0xDBFF)
+							{
+								if (m_Position + 2 > m_Input.size() ||
+									m_Input[m_Position] != '\\' || m_Input[m_Position + 1] != 'u')
+								{
+									Fail("high surrogate is not followed by a low surrogate");
+								}
+								m_Position += 2;
+								const uint32_t lowSurrogate = ParseHexCodeUnit();
+								if (lowSurrogate < 0xDC00 || lowSurrogate > 0xDFFF)
+									Fail("invalid low surrogate");
+								codePoint = 0x10000 +
+									((codePoint - 0xD800) << 10) + (lowSurrogate - 0xDC00);
+							}
+							else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF)
+							{
+								Fail("unexpected low surrogate");
+							}
+							AppendUTF8(value, codePoint);
+							break;
+						}
+						default: Fail("invalid string escape");
+					}
+				}
+				Fail("unterminated string");
+			}
+
+			std::string ParseNumber()
+			{
+				const size_t start = m_Position;
+				Consume('-');
+				if (m_Position >= m_Input.size())
+					Fail("incomplete number");
+				if (m_Input[m_Position] == '0')
+				{
+					++m_Position;
+					if (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						Fail("leading zero in number");
+					}
+				}
+				else
+				{
+					if (m_Input[m_Position] < '1' || m_Input[m_Position] > '9')
+						Fail("invalid number");
+					while (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						++m_Position;
+					}
+				}
+
+				if (m_Position < m_Input.size() && m_Input[m_Position] == '.')
+				{
+					++m_Position;
+					const size_t fractionStart = m_Position;
+					while (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						++m_Position;
+					}
+					if (fractionStart == m_Position)
+						Fail("fraction requires at least one digit");
+				}
+
+				if (m_Position < m_Input.size() &&
+					(m_Input[m_Position] == 'e' || m_Input[m_Position] == 'E'))
+				{
+					++m_Position;
+					if (m_Position < m_Input.size() &&
+						(m_Input[m_Position] == '+' || m_Input[m_Position] == '-'))
+					{
+						++m_Position;
+					}
+					const size_t exponentStart = m_Position;
+					while (m_Position < m_Input.size() &&
+						m_Input[m_Position] >= '0' && m_Input[m_Position] <= '9')
+					{
+						++m_Position;
+					}
+					if (exponentStart == m_Position)
+						Fail("exponent requires at least one digit");
+				}
+				return std::string(m_Input.substr(start, m_Position - start));
+			}
+
+		private:
+			std::string_view m_Input;
+			size_t m_Position = 0;
+		};
+
+		bool PrepareManagedDirectory(const std::filesystem::path& requestedDirectory,
+			std::filesystem::path& preparedDirectory, const char* description)
+		{
+			if (requestedDirectory.empty())
+			{
+				TC_Core_Error("{0} directory cannot be empty", description);
+				return false;
+			}
+
+			std::error_code error;
+			preparedDirectory = std::filesystem::absolute(requestedDirectory, error);
+			if (error)
+			{
+				TC_Core_Error("Could not resolve {0} directory '{1}': {2}", description,
+					PathToUTF8(requestedDirectory), error.message());
+				return false;
+			}
+			preparedDirectory = preparedDirectory.lexically_normal();
+
+			const bool exists = std::filesystem::exists(preparedDirectory, error);
+			if (error)
+			{
+				TC_Core_Error("Could not inspect {0} directory '{1}': {2}", description,
+					PathToUTF8(preparedDirectory), error.message());
+				return false;
+			}
+			if (!exists)
+			{
+				std::filesystem::create_directories(preparedDirectory, error);
+				if (error)
+				{
+					TC_Core_Error("Could not create {0} directory '{1}': {2}", description,
+						PathToUTF8(preparedDirectory), error.message());
+					return false;
+				}
+			}
+
+			error.clear();
+			if (!std::filesystem::is_directory(preparedDirectory, error) || error)
+			{
+				TC_Core_Error("{0} path is not an accessible directory: {1}{2}", description,
+					PathToUTF8(preparedDirectory), error ? " (" + error.message() + ")" : std::string{});
+				return false;
+			}
+
+			// Constructing an iterator is the first operation that exposes directory
+			// ACL/share failures. Probe it before publishing the new setting.
+			std::filesystem::directory_iterator probe(preparedDirectory, error);
+			if (error)
+			{
+				TC_Core_Error("Could not enumerate {0} directory '{1}': {2}", description,
+					PathToUTF8(preparedDirectory), error.message());
+				return false;
+			}
+			(void)probe;
+			return true;
+		}
+
+		std::string ProjectPathKey(const std::filesystem::path& path)
+		{
+			std::error_code error;
+			std::filesystem::path absolutePath = std::filesystem::absolute(path, error);
+			if (error)
+				absolutePath = path;
+			absolutePath = absolutePath.lexically_normal();
+#ifdef TC_PLATFORM_WINDOWS
+			std::wstring folded = absolutePath.wstring();
+			if (!folded.empty())
+			{
+				const int required = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE,
+					folded.data(), static_cast<int>(folded.size()), nullptr, 0, nullptr, nullptr, 0);
+				if (required > 0)
+				{
+					std::wstring output(static_cast<size_t>(required), L'\0');
+					if (LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE,
+						folded.data(), static_cast<int>(folded.size()), output.data(), required,
+						nullptr, nullptr, 0) > 0)
+						folded = std::move(output);
+				}
+			}
+			return PathToUTF8(std::filesystem::path(folded).lexically_normal());
+#else
+			return PathToUTF8(absolutePath);
+#endif
+		}
+
+#ifdef _WIN32
+		std::wstring ExtendedLengthPath(const std::filesystem::path& path)
+		{
+			std::error_code error;
+			std::filesystem::path absolutePath = std::filesystem::absolute(path, error);
+			std::wstring value = (error ? path : absolutePath).lexically_normal().wstring();
+			if (value.rfind(L"\\\\?\\", 0) == 0)
+				return value;
+			if (value.rfind(L"\\\\", 0) == 0)
+				return L"\\\\?\\UNC\\" + value.substr(2);
+			return L"\\\\?\\" + value;
+		}
+
+		std::wstring QuoteWindowsArgument(const std::wstring& value)
+		{
+			std::wstring result = L"\"";
+			size_t backslashes = 0;
+			for (wchar_t character : value)
+			{
+				if (character == L'\\')
+				{
+					++backslashes;
+					continue;
+				}
+				if (character == L'\"')
+				{
+					result.append(backslashes * 2 + 1, L'\\');
+					result.push_back(character);
+					backslashes = 0;
+					continue;
+				}
+				result.append(backslashes, L'\\');
+				backslashes = 0;
+				result.push_back(character);
+			}
+			result.append(backslashes * 2, L'\\');
+			result.push_back(L'\"');
+			return result;
+		}
+
+		std::optional<std::string> QueryProductInfo(
+			const std::filesystem::path& executablePath)
+		{
+			SECURITY_ATTRIBUTES security{};
+			security.nLength = sizeof(security);
+			security.bInheritHandle = TRUE;
+			HANDLE readPipe = nullptr;
+			HANDLE writePipe = nullptr;
+			if (!CreatePipe(&readPipe, &writePipe, &security, 0))
+				return std::nullopt;
+			if (!SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0))
+			{
+				CloseHandle(readPipe);
+				CloseHandle(writePipe);
+				return std::nullopt;
+			}
+
+			STARTUPINFOW startup{};
+			startup.cb = sizeof(startup);
+			startup.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+			startup.wShowWindow = SW_HIDE;
+			startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+			startup.hStdOutput = writePipe;
+			startup.hStdError = writePipe;
+			PROCESS_INFORMATION process{};
+			const std::wstring applicationPath = ExtendedLengthPath(executablePath);
+			std::wstring command = QuoteWindowsArgument(applicationPath)
+				+ L" --product-info-json";
+			const std::wstring workingDirectory =
+				ExtendedLengthPath(executablePath.parent_path());
+			const BOOL launched = CreateProcessW(applicationPath.c_str(), command.data(),
+				nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+				workingDirectory.c_str(), &startup, &process);
+			CloseHandle(writePipe);
+			if (!launched)
+			{
+				CloseHandle(readPipe);
+				return std::nullopt;
+			}
+
+			// A large EVB single-file Editor spends a few seconds initializing its
+			// virtual filesystem even though --product-info-json skips extraction.
+			// Keep the probe bounded, but leave enough margin for cold disks and CI.
+			const DWORD waitResult = WaitForSingleObject(process.hProcess, 10000);
+			if (waitResult != WAIT_OBJECT_0)
+			{
+				TerminateProcess(process.hProcess, 124);
+				WaitForSingleObject(process.hProcess, 1000);
+			}
+
+			std::string output;
+			std::array<char, 4096> buffer{};
+			while (output.size() < 64 * 1024)
+			{
+				DWORD available = 0;
+				if (!PeekNamedPipe(readPipe, nullptr, 0, nullptr, &available, nullptr)
+					|| available == 0)
+					break;
+				DWORD bytesRead = 0;
+				const DWORD requested = (std::min)(available,
+					static_cast<DWORD>(buffer.size()));
+				if (!ReadFile(readPipe, buffer.data(), requested, &bytesRead, nullptr)
+					|| bytesRead == 0)
+					break;
+				output.append(buffer.data(), bytesRead);
+			}
+			CloseHandle(readPipe);
+
+			DWORD exitCode = 1;
+			GetExitCodeProcess(process.hProcess, &exitCode);
+			CloseHandle(process.hThread);
+			CloseHandle(process.hProcess);
+			if (waitResult != WAIT_OBJECT_0 || exitCode != 0 || output.empty()
+				|| output.size() >= 64 * 1024)
+				return std::nullopt;
+			return output;
+		}
+
+		std::optional<EditorInstallation> InspectEditorExecutable(
+			const std::filesystem::path& executablePath)
+		{
+			const auto productInfo = QueryProductInfo(executablePath);
+			if (!productInfo)
+				return std::nullopt;
+			try
+			{
+				const JsonValue root = JsonParser{ *productInfo }.Parse();
+				if (root.Type != JsonValueType::Object)
+					return std::nullopt;
+				const JsonValue* product = root.Find("product");
+				const JsonValue* version = root.Find("version");
+				const JsonValue* buildID = root.Find("buildId");
+				if (!product || product->Type != JsonValueType::String
+					|| product->Text != "Editor"
+					|| !version || version->Type != JsonValueType::String
+					|| version->Text.empty()
+					|| !buildID || buildID->Type != JsonValueType::String
+					|| buildID->Text.empty())
+					return std::nullopt;
+				return EditorInstallation{
+					version->Text, buildID->Text, executablePath.lexically_normal() };
+			}
+			catch (const std::exception&)
+			{
+				return std::nullopt;
+			}
+		}
+
+#endif
+
+	}
 
 	ProjectManager& ProjectManager::Get()
 	{
@@ -21,87 +641,247 @@ namespace TomCat {
 		LoadHubSettings();
 	}
 
-	void ProjectManager::SetProjectDirectory(const std::filesystem::path& directory)
+	ProjectManager::ProjectManager(const std::filesystem::path& hubSettingsPath)
+		: m_HubSettingsPathOverride(hubSettingsPath)
 	{
-		m_ProjectDirectory = directory;
-		if (!std::filesystem::exists(directory))
-		{
-			std::filesystem::create_directories(directory);
-		}
-
-		SaveHubSettings();
-		ScanProjects();
+		if (!hubSettingsPath.is_absolute())
+			throw std::invalid_argument("Hub settings path must be absolute");
+		LoadHubSettings();
 	}
 
-	void ProjectManager::SetEditorDirectory(const std::filesystem::path& directory)
+	bool ProjectManager::SetProjectDirectory(const std::filesystem::path& directory)
 	{
-		m_EditorDirectory = directory;
-		if (!std::filesystem::exists(directory))
+		std::filesystem::path preparedDirectory;
+		if (!PrepareManagedDirectory(directory, preparedDirectory, "Project"))
+			return false;
+
+		const std::filesystem::path previousDirectory = m_ProjectDirectory;
+		const std::vector<Ref<Project>> previousProjects = m_Projects;
+		const std::unordered_map<std::string, std::string> previousLastOpenedTimes = m_ProjectLastOpenedTimes;
+		m_ProjectDirectory = std::move(preparedDirectory);
+		if (!ScanProjectsInternal() || !SaveHubSettings())
 		{
-			std::filesystem::create_directories(directory);
+			m_ProjectDirectory = previousDirectory;
+			m_Projects = previousProjects;
+			m_ProjectLastOpenedTimes = previousLastOpenedTimes;
+			return false;
 		}
-		SaveHubSettings();
+		return true;
 	}
 
-	std::vector<std::string> ProjectManager::GetEditorDirectoryFiles() const
+	bool ProjectManager::SetEditorDirectory(const std::filesystem::path& directory)
 	{
-		std::vector<std::string> fileNames;
-
-		if (!std::filesystem::exists(m_EditorDirectory))
+		std::filesystem::path preparedDirectory;
+		if (!PrepareManagedDirectory(directory, preparedDirectory, "Editor"))
+			return false;
+		const std::filesystem::path previousDirectory = m_EditorDirectory;
+		const std::vector<EditorInstallation> previousInstallations = m_EditorInstallations;
+		m_EditorDirectory = std::move(preparedDirectory);
+		if (!ScanEditorInstallations() || !SaveHubSettings())
 		{
-			TC_Core_Error("Editor directory does not exist: {0}", m_EditorDirectory.string());
-			return fileNames;
+			m_EditorDirectory = previousDirectory;
+			m_EditorInstallations = previousInstallations;
+			return false;
+		}
+		return true;
+	}
+
+	bool ProjectManager::ScanEditorInstallations()
+	{
+		std::vector<EditorInstallation> installations;
+		std::error_code error;
+		if (!std::filesystem::is_directory(m_EditorDirectory, error) || error)
+		{
+			TC_Core_Error("Editor directory is not accessible: {0}{1}", PathToUTF8(m_EditorDirectory),
+				error ? " (" + error.message() + ")" : std::string{});
+			return false;
 		}
 
-		for (const auto& entry : std::filesystem::directory_iterator(m_EditorDirectory))
+		// Enumerate each directory independently: an EVB virtual folder or a
+		// disappearing child must not discard Editors found in sibling folders.
+		std::vector<std::filesystem::path> pending{ m_EditorDirectory };
+		std::vector<std::filesystem::path> candidates;
+		while (!pending.empty())
 		{
-			if (entry.is_directory())
+			const auto directory = pending.back();
+			pending.pop_back();
+			std::filesystem::directory_iterator iterator(directory, error), end;
+			if (error)
 			{
-				fileNames.push_back(entry.path().filename().string());
+				TC_Core_Warn("Could not enumerate Editor search folder '{0}': {1}",
+					PathToUTF8(directory), error.message());
+				if (directory == m_EditorDirectory)
+					return false;
+				error.clear();
+				continue;
+			}
+			while (iterator != end)
+			{
+				const auto entry = *iterator;
+				std::error_code entryError;
+				const auto status = entry.symlink_status(entryError);
+				if (entryError)
+					TC_Core_Warn("Could not inspect Editor search entry '{0}': {1}",
+						PathToUTF8(entry.path()), entryError.message());
+				else if (std::filesystem::is_directory(status))
+					pending.push_back(entry.path());
+				else if (entry.is_regular_file(entryError) && !entryError)
+				{
+					std::wstring extension = entry.path().extension().wstring();
+					std::transform(extension.begin(), extension.end(), extension.begin(),
+						[](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
+					if (extension == L".exe")
+						candidates.push_back(entry.path());
+				}
+				iterator.increment(error);
+				if (error)
+				{
+					TC_Core_Warn("Editor search folder '{0}' changed during enumeration: {1}",
+						PathToUTF8(directory), error.message());
+					error.clear();
+					break;
+				}
 			}
 		}
-
-		return fileNames;
+		// Probing starts only after directory handles are closed. A packaged
+		// executable may initialize its virtual filesystem during the probe.
+		for (const auto& candidate : candidates)
+			if (auto installation = InspectEditorExecutable(candidate))
+				installations.push_back(std::move(*installation));
+		std::sort(installations.begin(), installations.end(),
+			[](const EditorInstallation& left, const EditorInstallation& right)
+			{
+				if (left.Version != right.Version)
+					return left.Version < right.Version;
+				return PathToUTF8(left.ExecutablePath) < PathToUTF8(right.ExecutablePath);
+			});
+		m_EditorInstallations = std::move(installations);
+		return true;
 	}
 
-	void ProjectManager::ScanProjects()
+	std::optional<std::vector<std::string>> ProjectManager::GetEditorVersions()
 	{
-		m_Projects.clear();
+		std::vector<std::string> versions;
+		for (const EditorInstallation& installation : m_EditorInstallations)
+		{
+			if (versions.empty() || versions.back() != installation.Version)
+				versions.push_back(installation.Version);
+		}
+		return versions;
+	}
 
+	bool ProjectManager::ScanProjects()
+	{
+		return ScanProjectsInternal();
+	}
+
+	bool ProjectManager::ScanProjectsInternal()
+	{
+		std::vector<Ref<Project>> scannedProjects;
 		std::unordered_set<std::string> seen;
 
-		auto addProjectFile = [&](const std::filesystem::path& file)
+		auto addProjectFile = [&](const std::filesystem::path& file) -> bool
 		{
-			if (!std::filesystem::exists(file))
-				return;
+			std::error_code error;
+			const bool regularFile = std::filesystem::is_regular_file(file, error);
+			if (error)
+			{
+				if (error == std::errc::no_such_file_or_directory)
+					return true;
+				TC_Core_Error("Could not inspect project file '{0}': {1}",
+					PathToUTF8(file), error.message());
+				return false;
+			}
+			if (!regularFile)
+				return true;
 
-			std::string key = std::filesystem::absolute(file).lexically_normal().string();
-			if (seen.find(key) != seen.end())
-				return;
+			const std::string key = ProjectPathKey(file);
+			if (m_IgnoredProjectPaths.find(key) != m_IgnoredProjectPaths.end()
+				|| seen.find(key) != seen.end())
+				return true;
 
-			auto project = Project::Load(file);
+			Ref<Project> project;
+			try
+			{
+				project = InspectProject(file);
+			}
+			catch (const std::exception& exception)
+			{
+				TC_Core_Error("Could not load project '{0}': {1}", PathToUTF8(file), exception.what());
+				return true;
+			}
 			if (project)
 			{
+				ApplyStoredLastOpenedTime(project, m_ProjectLastOpenedTimes);
 				seen.insert(key);
-				m_Projects.push_back(project);
+				scannedProjects.push_back(project);
 			}
+			return true;
 		};
 
-		// 1. Scan the default project directory (one level deep).
-		if (std::filesystem::exists(m_ProjectDirectory))
+		// 1. Scan the default project directory (one level deep). Build a new
+		// result off to the side so a transient I/O error cannot wipe the Hub list.
+		if (!m_ProjectDirectory.empty())
 		{
-			for (const auto& entry : std::filesystem::directory_iterator(m_ProjectDirectory))
+			std::error_code error;
+			const bool directoryExists = std::filesystem::is_directory(m_ProjectDirectory, error);
+			if (error)
 			{
-				if (!entry.is_directory())
-					continue;
-
-				for (const auto& file : std::filesystem::directory_iterator(entry.path()))
+				TC_Core_Error("Could not inspect Project directory '{0}': {1}",
+					PathToUTF8(m_ProjectDirectory), error.message());
+				return false;
+			}
+			if (directoryExists)
+			{
+				std::filesystem::directory_iterator projects(m_ProjectDirectory, error), end;
+				if (error)
 				{
-					if (IsProjectFile(file.path()))
+					TC_Core_Error("Could not enumerate Project directory '{0}': {1}",
+						PathToUTF8(m_ProjectDirectory), error.message());
+					return false;
+				}
+				for (; projects != end; projects.increment(error))
+				{
+					std::error_code entryError;
+					if (!projects->is_directory(entryError))
 					{
-						addProjectFile(file.path());
-						break;
+						if (entryError)
+						{
+							TC_Core_Error("Could not inspect Project directory entry '{0}': {1}",
+								PathToUTF8(projects->path()), entryError.message());
+							return false;
+						}
+						continue;
 					}
+
+					std::filesystem::directory_iterator files(projects->path(), entryError), fileEnd;
+					if (entryError)
+					{
+						TC_Core_Error("Could not enumerate project folder '{0}': {1}",
+							PathToUTF8(projects->path()), entryError.message());
+						return false;
+					}
+					for (; files != fileEnd; files.increment(entryError))
+					{
+						if (IsProjectFile(files->path()))
+						{
+							if (!addProjectFile(files->path()))
+								return false;
+							break;
+						}
+					}
+					if (entryError)
+					{
+						TC_Core_Error("Failed while enumerating project folder '{0}': {1}",
+							PathToUTF8(projects->path()), entryError.message());
+						return false;
+					}
+				}
+				if (error)
+				{
+					TC_Core_Error("Failed while enumerating Project directory '{0}': {1}",
+						PathToUTF8(m_ProjectDirectory), error.message());
+					return false;
 				}
 			}
 		}
@@ -109,14 +889,16 @@ namespace TomCat {
 		// 2. Add projects serialized locally (added from any other path).
 		for (const auto& path : m_KnownProjectPaths)
 		{
-			addProjectFile(path);
+			if (!addProjectFile(path))
+				return false;
 		}
 
-		// 3. Sort by last opened time (descending).
-		std::sort(m_Projects.begin(), m_Projects.end(),
+		std::sort(scannedProjects.begin(), scannedProjects.end(),
 			[](const Ref<Project>& a, const Ref<Project>& b) {
 				return a->GetLastOperationTime() > b->GetLastOperationTime();
 			});
+		m_Projects = std::move(scannedProjects);
+		return true;
 	}
 
 	Ref<Project> ProjectManager::CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config)
@@ -124,107 +906,225 @@ namespace TomCat {
 		auto project = Project::CreateNew(projectPath, config);
 		if (project)
 		{
-			m_Projects.push_back(project);
+			const std::vector<std::filesystem::path> previousKnownProjectPaths = m_KnownProjectPaths;
+			const std::unordered_set<std::string> previousIgnoredProjectPaths = m_IgnoredProjectPaths;
+			m_IgnoredProjectPaths.erase(ProjectPathKey(project->GetProjectPath()));
 
 			// Remember the project even when it lives outside any mount, so it
 			// stays in the list after a restart.
-			auto normalized = std::filesystem::absolute(projectPath).lexically_normal();
+			const std::string projectKey = ProjectPathKey(project->GetProjectPath());
 			bool found = false;
 			for (const auto& known : m_KnownProjectPaths)
 			{
-				if (std::filesystem::absolute(known).lexically_normal() == normalized)
+				if (ProjectPathKey(known) == projectKey)
 				{
 					found = true;
 					break;
 				}
 			}
 			if (!found)
-			{
 				m_KnownProjectPaths.push_back(projectPath);
-				SaveHubSettings();
+
+			if (!RecordProjectOpened(project))
+			{
+				m_KnownProjectPaths = previousKnownProjectPaths;
+				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
+				TC_Core_Error("Project '{0}' was created on disk, but could not be added to the Hub",
+					PathToUTF8(project->GetProjectPath()));
+				return nullptr;
 			}
 
-			if (m_OnProjectCreated)
-				m_OnProjectCreated(project);
+			m_Projects.push_back(project);
 		}
 		return project;
 	}
 
+	Ref<Project> ProjectManager::InspectProject(
+		const std::filesystem::path& projectPath) const
+	{
+		return Project::Inspect(projectPath);
+	}
+
+	bool ProjectManager::PreviewProjectMigration(
+		const std::filesystem::path& projectPath,
+		ProjectMigrationPreview& preview, std::string& errorMessage) const
+	{
+		return Project::PreviewMigration(projectPath, preview, errorMessage);
+	}
+
 	Ref<Project> ProjectManager::LoadProject(const std::filesystem::path& projectPath)
 	{
-		auto project = Project::Load(projectPath);
+		return ActivateLoadedProject(Project::Load(projectPath));
+	}
+
+	Ref<Project> ProjectManager::LoadProjectWithMigration(
+		const std::filesystem::path& projectPath,
+		const ProjectMigrationPreview& approvedMigration)
+	{
+		return ActivateLoadedProject(
+			Project::LoadWithMigration(projectPath, approvedMigration));
+	}
+
+	Ref<Project> ProjectManager::ActivateLoadedProject(Ref<Project> project)
+	{
 		if (project)
 		{
-			// Opening a project records the last opened time.
-			project->Touch();
+			const std::unordered_set<std::string> previousIgnoredProjectPaths = m_IgnoredProjectPaths;
+			m_IgnoredProjectPaths.erase(ProjectPathKey(project->GetProjectPath()));
+			if (!RecordProjectOpened(project))
+			{
+				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
+				TC_Core_Warn("Project loaded, but its Hub recency metadata could not be saved");
+			}
 			m_ActiveProject = project;
-			if (m_OnProjectLoaded)
-				m_OnProjectLoaded(project);
 		}
 		return project;
 	}
 
 	Ref<Project> ProjectManager::AddProject(const std::filesystem::path& projectPath)
 	{
-		auto project = Project::Load(projectPath);
+		// The Hub only needs metadata and must never upgrade a project merely
+		// because the user added it to the list. The Editor owns the preview,
+		// confirmation, write lock and transactional migration flow.
+		auto project = Project::Inspect(projectPath);
 		if (project)
 		{
-			auto normalized = std::filesystem::absolute(projectPath).lexically_normal();
+			const std::vector<std::filesystem::path> previousKnownProjectPaths = m_KnownProjectPaths;
+			const std::unordered_set<std::string> previousIgnoredProjectPaths = m_IgnoredProjectPaths;
+			const std::unordered_map<std::string, std::string> previousLastOpenedTimes = m_ProjectLastOpenedTimes;
+			const std::vector<Ref<Project>> previousProjects = m_Projects;
+			const bool removedFromIgnored = m_IgnoredProjectPaths.erase(
+				ProjectPathKey(project->GetProjectPath())) != 0;
+			const std::string projectKey = ProjectPathKey(project->GetProjectPath());
 			bool found = false;
 			for (const auto& known : m_KnownProjectPaths)
 			{
-				if (std::filesystem::absolute(known).lexically_normal() == normalized)
+				if (ProjectPathKey(known) == projectKey)
 				{
 					found = true;
 					break;
 				}
 			}
 			if (!found)
-			{
 				m_KnownProjectPaths.push_back(projectPath);
-				SaveHubSettings();
+
+			if (!ScanProjectsInternal())
+			{
+				m_KnownProjectPaths = previousKnownProjectPaths;
+				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
+				m_ProjectLastOpenedTimes = previousLastOpenedTimes;
+				m_Projects = previousProjects;
+				return nullptr;
 			}
-			ScanProjects();
+
+			if ((!found || removedFromIgnored) && !SaveHubSettings())
+			{
+				m_KnownProjectPaths = previousKnownProjectPaths;
+				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
+				m_ProjectLastOpenedTimes = previousLastOpenedTimes;
+				m_Projects = previousProjects;
+				return nullptr;
+			}
+			ApplyStoredLastOpenedTime(project, m_ProjectLastOpenedTimes);
 		}
 		return project;
 	}
 
 	bool ProjectManager::RemoveProject(const std::filesystem::path& projectPath)
 	{
+		const std::string projectKey = ProjectPathKey(projectPath);
 		auto it = std::find_if(m_Projects.begin(), m_Projects.end(),
-			[&projectPath](const Ref<Project>& p) {
-				return p->GetProjectPath() == projectPath;
+			[&projectKey](const Ref<Project>& p) {
+				return ProjectPathKey(p->GetProjectPath()) == projectKey;
 			});
 
 		if (it != m_Projects.end())
 		{
-			if (m_OnProjectRemoved)
-				m_OnProjectRemoved(*it);
+			const std::vector<Ref<Project>> previousProjects = m_Projects;
+			const Ref<Project> previousActiveProject = m_ActiveProject;
+			const std::vector<std::filesystem::path> previousKnownProjectPaths = m_KnownProjectPaths;
+			const std::unordered_map<std::string, std::string> previousLastOpenedTimes = m_ProjectLastOpenedTimes;
+			const std::unordered_set<std::string> previousIgnoredProjectPaths = m_IgnoredProjectPaths;
 
-			if (m_ActiveProject && m_ActiveProject->GetProjectPath() == projectPath)
+			if (m_ActiveProject && ProjectPathKey(m_ActiveProject->GetProjectPath()) == projectKey)
 				m_ActiveProject = nullptr;
 
 			m_Projects.erase(it);
 
 			// Also forget the project in the persisted known list.
-			auto normalized = std::filesystem::absolute(projectPath).lexically_normal();
 			m_KnownProjectPaths.erase(
 				std::remove_if(m_KnownProjectPaths.begin(), m_KnownProjectPaths.end(),
-					[&normalized](const std::filesystem::path& known)
+					[&projectKey](const std::filesystem::path& known)
 					{
-						return std::filesystem::absolute(known).lexically_normal() == normalized;
+						return ProjectPathKey(known) == projectKey;
 					}),
 				m_KnownProjectPaths.end());
-			SaveHubSettings();
-
+			m_ProjectLastOpenedTimes.erase(projectKey);
+			m_IgnoredProjectPaths.insert(projectKey);
+			if (!SaveHubSettings())
+			{
+				m_Projects = previousProjects;
+				m_ActiveProject = previousActiveProject;
+				m_KnownProjectPaths = previousKnownProjectPaths;
+				m_ProjectLastOpenedTimes = previousLastOpenedTimes;
+				m_IgnoredProjectPaths = previousIgnoredProjectPaths;
+				return false;
+			}
 			return true;
 		}
 		return false;
 	}
 
-	void ProjectManager::SetActiveProject(Ref<Project> project)
+	void ProjectManager::ApplyStoredLastOpenedTime(const Ref<Project>& project,
+		std::unordered_map<std::string, std::string>& lastOpenedTimes) const
 	{
-		m_ActiveProject = project;
+		if (!project)
+			return;
+
+		const std::string key = ProjectPathKey(project->GetProjectPath());
+		auto stored = lastOpenedTimes.find(key);
+		if (stored != lastOpenedTimes.end())
+		{
+			project->m_Config.LastOperationTime = stored->second;
+		}
+	}
+
+	bool ProjectManager::RecordProjectOpened(const Ref<Project>& project)
+	{
+		if (!project)
+			return false;
+
+		const std::string key = ProjectPathKey(project->GetProjectPath());
+		const std::string previousProjectTimestamp = project->m_Config.LastOperationTime;
+		const auto previousStoredTimestamp = m_ProjectLastOpenedTimes.find(key);
+		const bool hadStoredTimestamp = previousStoredTimestamp != m_ProjectLastOpenedTimes.end();
+		const std::string storedTimestamp = hadStoredTimestamp ? previousStoredTimestamp->second : std::string{};
+		project->Touch();
+		m_ProjectLastOpenedTimes[key] = project->GetLastOperationTime();
+		if (SaveHubSettings())
+			return true;
+
+		project->m_Config.LastOperationTime = previousProjectTimestamp;
+		if (hadStoredTimestamp)
+			m_ProjectLastOpenedTimes[key] = storedTimestamp;
+		else
+			m_ProjectLastOpenedTimes.erase(key);
+		return false;
+	}
+
+	std::optional<std::filesystem::path> ProjectManager::ResolveEditorExecutable(
+		const std::vector<EditorInstallation>& installations, std::string_view editorVersion)
+	{
+		if (editorVersion.empty())
+			return std::nullopt;
+		const auto found = std::find_if(installations.begin(), installations.end(),
+			[editorVersion](const EditorInstallation& installation)
+			{
+				return installation.Version == editorVersion;
+			});
+		return found == installations.end()
+			? std::nullopt
+			: std::optional<std::filesystem::path>(found->ExecutablePath);
 	}
 
 	void ProjectManager::OpenProjectInEditor(Ref<Project> project)
@@ -232,38 +1132,37 @@ namespace TomCat {
 		if (!project)
 			return;
 
-		// Record the last opened time before launching the editor.
-		project->Touch();
-
-		std::filesystem::path editorPath = ProjectManager::Get().GetEditorDirectory() / project->GetEditorVersion() / "TomCat.exe";
-
-		TC_Core_Info("Looking for editor at: {0}", editorPath.string());
-
-		if (!std::filesystem::exists(editorPath))
+		if (!ScanEditorInstallations())
+			return;
+		TC_Core_Info("Looking for Editor version {0} in: {1}",
+			project->GetEditorVersion(), PathToUTF8(m_EditorDirectory));
+		const auto resolvedEditor = ResolveEditorExecutable(
+			m_EditorInstallations, project->GetEditorVersion());
+		if (!resolvedEditor)
 		{
-			char buffer[MAX_PATH];
-			GetModuleFileNameA(NULL, buffer, MAX_PATH);
-			std::filesystem::path exeDir = std::filesystem::path(buffer).parent_path();
-			editorPath = exeDir / "TomCat.exe";
-			TC_Core_Info("Fallback to: {0}", editorPath.string());
+			TC_Core_Error("The requested Editor version is not installed: {0}",
+				project->GetEditorVersion());
+			return;
 		}
+		const std::filesystem::path& editorPath = *resolvedEditor;
+		TC_Core_Info("Using Editor executable: {0}", PathToUTF8(editorPath));
 
-		TC_Core_Info("Editor exists: {0}", std::filesystem::exists(editorPath));
-
-		std::string command = "\"" + editorPath.string() + "\" \"" + project->GetProjectPath().string() + "\"";
-		TC_Core_Info("Command: {0}", command);
-
-		STARTUPINFOA si = { sizeof(si) };
+		const std::wstring applicationPath = ExtendedLengthPath(editorPath);
+		const std::wstring projectPath = ExtendedLengthPath(project->GetProjectPath());
+		std::wstring command = QuoteWindowsArgument(applicationPath) + L" " + QuoteWindowsArgument(projectPath);
+		STARTUPINFOW si{};
+		si.cb = sizeof(si);
 		PROCESS_INFORMATION pi = {};
+		const std::wstring workingDirectory = ExtendedLengthPath(editorPath.parent_path());
 
-		std::string workingDir = editorPath.parent_path().string();
-
-		if (CreateProcessA(NULL, const_cast<LPSTR>(command.c_str()), NULL, NULL,
-			FALSE, 0, NULL, workingDir.c_str(), &si, &pi))
+		if (CreateProcessW(applicationPath.c_str(), command.data(), nullptr, nullptr,
+			FALSE, 0, nullptr, workingDirectory.c_str(), &si, &pi))
 		{
 			TC_Core_Info("Editor launched successfully");
 			CloseHandle(pi.hProcess);
 			CloseHandle(pi.hThread);
+			if (!RecordProjectOpened(project))
+				TC_Core_Warn("Editor launched, but the project's Hub recency metadata could not be saved");
 		}
 		else
 		{
@@ -277,114 +1176,268 @@ namespace TomCat {
 	}
 
 
-	std::filesystem::path ProjectManager::GetHubSettingsPath() const
+	std::optional<std::filesystem::path> ProjectManager::GetHubSettingsPath() const
 	{
-		// Hub settings live in <cwd>/imgui.ini under a custom [HubConfig] section,
-		// kept alongside ImGui's window layout settings (no separate .tomcat file).
-		return std::filesystem::current_path() / "imgui.ini";
+		if (m_HubSettingsPathOverride)
+			return m_HubSettingsPathOverride;
+		const std::optional<std::filesystem::path> settingsRoot =
+			ApplicationPaths::GetProductDataRoot(ApplicationProduct::Hub);
+		if (!settingsRoot)
+			return std::nullopt;
+		return *settingsRoot / "hub.json";
+	}
+
+	void ProjectManager::ApplyHubDirectoryDefaults(const std::filesystem::path& executableDirectory)
+	{
+		if (!executableDirectory.is_absolute())
+			throw std::invalid_argument("Hub executable directory must be absolute");
+		// Apply only at Hub startup. Editor saves of recent projects preserve the
+		// owning Hub location and its explicit directory choices.
+		if (m_HubDirectoryOwner.empty() ||
+			ProjectPathKey(m_HubDirectoryOwner) != ProjectPathKey(executableDirectory))
+		{
+			m_ProjectDirectory.clear();
+			m_EditorDirectory.clear();
+			m_EditorInstallations.clear();
+		}
+		m_HubDirectoryOwner = executableDirectory.lexically_normal();
+		if (m_ProjectListOwner.empty() ||
+			ProjectPathKey(m_ProjectListOwner) != ProjectPathKey(executableDirectory))
+		{
+			m_KnownProjectPaths.clear();
+			m_IgnoredProjectPaths.clear();
+			m_ProjectLastOpenedTimes.clear();
+			m_Projects.clear();
+		}
+		m_ProjectListOwner = m_HubDirectoryOwner;
+		if (m_ProjectDirectory.empty())
+			m_ProjectDirectory = m_HubDirectoryOwner / "Projects";
+		if (m_EditorDirectory.empty())
+			m_EditorDirectory = m_HubDirectoryOwner / "Editors";
 	}
 
 	void ProjectManager::LoadHubSettings()
 	{
+		m_HubDirectoryOwner.clear();
+		m_ProjectListOwner.clear();
 		m_ProjectDirectory.clear();
 		m_EditorDirectory.clear();
+		m_EditorInstallations.clear();
 		m_KnownProjectPaths.clear();
+		m_ProjectLastOpenedTimes.clear();
+		m_IgnoredProjectPaths.clear();
+		m_HubSettingsWriteBlocked = false;
 
-		std::filesystem::path iniPath = GetHubSettingsPath();
-		bool sawSection = false;
-		if (std::filesystem::exists(iniPath))
+		const std::optional<std::filesystem::path> settingsPathResult = GetHubSettingsPath();
+		if (!settingsPathResult)
+			return;
+		const std::filesystem::path& settingsPath = *settingsPathResult;
+
+		std::error_code settingsError;
+		const bool settingsExist = std::filesystem::exists(settingsPath, settingsError);
+		if (settingsError)
 		{
-			std::ifstream fin(iniPath);
-			std::string line;
-			bool inSection = false;
-			while (std::getline(fin, line))
-			{
-				if (line == "[HubConfig]") { inSection = true; sawSection = true; continue; }
-				if (inSection)
-				{
-					if (line.empty() || line[0] == '[') break;
-					if (line.rfind("ProjectDirectory=", 0) == 0) m_ProjectDirectory = line.substr(17);
-					else if (line.rfind("EditorDirectory=", 0) == 0) m_EditorDirectory = line.substr(16);
-					else if (line.rfind("KnownProjects=", 0) == 0) m_KnownProjectPaths.emplace_back(line.substr(14));
-				}
-			}
+			m_HubSettingsWriteBlocked = true;
+			TC_Core_Error("Could not inspect Hub settings '{0}': {1}",
+				PathToUTF8(settingsPath), settingsError.message());
+			return;
 		}
 
-		// Legacy migration: if there is no [HubConfig] in imgui.ini yet, import the
-		// old HubConfig.tomcat once and persist it to the new location.
-		if (!sawSection)
+		if (settingsExist)
 		{
-			std::filesystem::path legacyPath = std::filesystem::current_path() / "HubConfig.tomcat";
-			if (std::filesystem::exists(legacyPath))
+			try
 			{
-				try
+				std::error_code sizeError;
+				const std::uintmax_t settingsSize = std::filesystem::file_size(settingsPath, sizeError);
+				if (sizeError)
+					throw std::runtime_error("could not inspect the file size: " + sizeError.message());
+				if (settingsSize > 16 * 1024 * 1024)
+					throw std::runtime_error("the file exceeds the 16 MiB safety limit");
+
+				std::ifstream input(settingsPath, std::ios::binary);
+				if (!input)
+					throw std::runtime_error("could not open the file");
+
+				const std::string contents{
+					std::istreambuf_iterator<char>{ input }, std::istreambuf_iterator<char>{} };
+				if (input.bad())
+					throw std::runtime_error("failed while reading the file");
+				const JsonValue root = JsonParser{ contents }.Parse();
+				if (root.Type != JsonValueType::Object)
+					throw std::runtime_error("the JSON root must be an object");
+
+				const JsonValue* schemaVersion = root.Find("schemaVersion");
+				if (!schemaVersion || schemaVersion->Type != JsonValueType::Number)
+					throw std::runtime_error("schemaVersion is missing or invalid");
+				if (schemaVersion->Text != std::to_string(s_HubSettingsSchemaVersion))
+					throw std::runtime_error("unsupported schemaVersion " + schemaVersion->Text);
+
+				std::filesystem::path projectDirectory;
+				std::filesystem::path editorDirectory;
+				std::vector<std::filesystem::path> knownProjectPaths;
+				std::unordered_set<std::string> ignoredProjectPaths;
+				std::unordered_map<std::string, std::string> projectLastOpenedTimes;
+
+				auto readOptionalPath = [&root](const char* name) -> std::filesystem::path
 				{
-					YAML::Node data = YAML::LoadFile(legacyPath.string());
-					auto config = data["HubConfig"];
-					if (config)
+					const JsonValue* value = root.Find(name);
+					if (!value)
+						return {};
+					if (value->Type != JsonValueType::String)
+						throw std::runtime_error(std::string(name) + " must be a string");
+					return UTF8ToPath(value->Text);
+				};
+				projectDirectory = readOptionalPath("projectDirectory");
+				editorDirectory = readOptionalPath("editorDirectory");
+				const auto directoryOwner = readOptionalPath("directoryOwner");
+				const auto projectListOwner = readOptionalPath("projectListOwner");
+
+				const JsonValue* knownProjects = root.Find("knownProjects");
+				if (knownProjects)
+				{
+					if (knownProjects->Type != JsonValueType::Array)
+						throw std::runtime_error("knownProjects must be an array");
+					for (const JsonValue& project : knownProjects->Array)
 					{
-						m_ProjectDirectory = config["ProjectDirectory"] ? config["ProjectDirectory"].as<std::string>() : "";
-						m_EditorDirectory = config["EditorDirectory"] ? config["EditorDirectory"].as<std::string>() : "";
-						if (config["KnownProjects"])
-						{
-							for (const auto& node : config["KnownProjects"])
-							{
-								m_KnownProjectPaths.emplace_back(node.as<std::string>());
-							}
-						}
-						SaveHubSettings();
+						if (project.Type != JsonValueType::String)
+							throw std::runtime_error("knownProjects entries must be strings");
+						knownProjectPaths.emplace_back(UTF8ToPath(project.Text));
 					}
 				}
-				catch (const std::exception& e)
+
+				const JsonValue* ignoredProjects = root.Find("ignoredProjects");
+				if (ignoredProjects)
 				{
-					TC_Core_Error("Failed to load legacy Hub settings: {0}", e.what());
+					if (ignoredProjects->Type != JsonValueType::Array)
+						throw std::runtime_error("ignoredProjects must be an array");
+					for (const JsonValue& project : ignoredProjects->Array)
+					{
+						if (project.Type != JsonValueType::String)
+							throw std::runtime_error("ignoredProjects entries must be strings");
+						const std::string& path = project.Text;
+						if (!path.empty())
+							ignoredProjectPaths.insert(ProjectPathKey(UTF8ToPath(path)));
+					}
 				}
+
+				const JsonValue* lastOpened = root.Find("projectLastOpened");
+				if (lastOpened)
+				{
+					if (lastOpened->Type != JsonValueType::Array)
+						throw std::runtime_error("projectLastOpened must be an array");
+					for (const JsonValue& entry : lastOpened->Array)
+					{
+						if (entry.Type != JsonValueType::Object)
+							throw std::runtime_error("projectLastOpened entries must be objects");
+						const JsonValue* projectPath = entry.Find("projectPath");
+						const JsonValue* timestamp = entry.Find("lastOpened");
+						if (!projectPath || projectPath->Type != JsonValueType::String ||
+							!timestamp || timestamp->Type != JsonValueType::String)
+						{
+							throw std::runtime_error(
+								"projectLastOpened entries require string projectPath and lastOpened fields");
+						}
+						const std::string& encodedPath = projectPath->Text;
+						const std::string& encodedTimestamp = timestamp->Text;
+						if (!encodedPath.empty() && !encodedTimestamp.empty())
+						{
+							projectLastOpenedTimes[ProjectPathKey(UTF8ToPath(encodedPath))] =
+								encodedTimestamp;
+						}
+					}
+				}
+
+				m_ProjectDirectory = std::move(projectDirectory);
+				m_HubDirectoryOwner = directoryOwner;
+				m_ProjectListOwner = projectListOwner;
+				m_EditorDirectory = std::move(editorDirectory);
+				m_KnownProjectPaths = std::move(knownProjectPaths);
+				m_IgnoredProjectPaths = std::move(ignoredProjectPaths);
+				m_ProjectLastOpenedTimes = std::move(projectLastOpenedTimes);
 			}
+			catch (const std::exception& error)
+			{
+				// Never silently replace a malformed or unreadable settings file. The
+				// user can repair/delete it, while this process continues with defaults.
+				m_HubSettingsWriteBlocked = true;
+				TC_Core_Error("Failed to load Hub settings '{0}': {1}. Writes are disabled to preserve the file",
+					PathToUTF8(settingsPath), error.what());
+			}
+			return;
 		}
 	}
 
-	void ProjectManager::SaveHubSettings()
+	bool ProjectManager::SaveHubSettings()
 	{
 		try
 		{
-			std::filesystem::path iniPath = GetHubSettingsPath();
+			if (m_HubSettingsWriteBlocked)
+				throw std::runtime_error(
+					"writes are disabled because the existing hub.json could not be loaded");
 
-			// Build the [HubConfig] section text.
-			std::string section = "\n[HubConfig]\n";
-			section += "ProjectDirectory=" + m_ProjectDirectory.string() + "\n";
-			section += "EditorDirectory=" + m_EditorDirectory.string() + "\n";
-			for (const auto& path : m_KnownProjectPaths)
+			const std::optional<std::filesystem::path> settingsPathResult = GetHubSettingsPath();
+			if (!settingsPathResult)
+				return false;
+			const std::filesystem::path& settingsPath = *settingsPathResult;
+
+			std::error_code directoryError;
+			std::filesystem::create_directories(settingsPath.parent_path(), directoryError);
+			if (directoryError)
+				throw std::runtime_error("Could not create Hub settings directory '"
+					+ PathToUTF8(settingsPath.parent_path()) + "': " + directoryError.message());
+			directoryError.clear();
+			if (!std::filesystem::is_directory(settingsPath.parent_path(), directoryError) || directoryError)
+				throw std::runtime_error("Hub settings parent path is not an accessible directory: "
+					+ PathToUTF8(settingsPath.parent_path()));
+
+			std::vector<std::string> ignoredProjects(
+				m_IgnoredProjectPaths.begin(), m_IgnoredProjectPaths.end());
+			std::sort(ignoredProjects.begin(), ignoredProjects.end());
+			std::vector<std::pair<std::string, std::string>> lastOpened(
+				m_ProjectLastOpenedTimes.begin(), m_ProjectLastOpenedTimes.end());
+			std::sort(lastOpened.begin(), lastOpened.end(),
+				[](const auto& left, const auto& right) { return left.first < right.first; });
+
+			std::string json;
+			json += "{\n";
+			json += "  \"schemaVersion\": " + std::to_string(s_HubSettingsSchemaVersion) + ",\n";
+			json += "  \"directoryOwner\": " + EscapeJsonString(PathToUTF8(m_HubDirectoryOwner)) + ",\n";
+			json += "  \"projectListOwner\": " + EscapeJsonString(PathToUTF8(m_ProjectListOwner)) + ",\n";
+			json += "  \"projectDirectory\": " + EscapeJsonString(PathToUTF8(m_ProjectDirectory)) + ",\n";
+			json += "  \"editorDirectory\": " + EscapeJsonString(PathToUTF8(m_EditorDirectory)) + ",\n";
+			json += "  \"knownProjects\": [\n";
+			for (size_t index = 0; index < m_KnownProjectPaths.size(); ++index)
 			{
-				section += "KnownProjects=" + path.string() + "\n";
+				json += "    " + EscapeJsonString(PathToUTF8(m_KnownProjectPaths[index]));
+				json += index + 1 < m_KnownProjectPaths.size() ? ",\n" : "\n";
 			}
-
-			// Read the current imgui.ini so other sections (window layout etc.)
-			// are preserved, then replace only the [HubConfig] block.
-			std::string ini;
+			json += "  ],\n";
+			json += "  \"ignoredProjects\": [\n";
+			for (size_t index = 0; index < ignoredProjects.size(); ++index)
 			{
-				std::ifstream fin(iniPath);
-				if (fin)
-				{
-					std::stringstream ss;
-					ss << fin.rdbuf();
-					ini = ss.str();
-				}
+				json += "    " + EscapeJsonString(ignoredProjects[index]);
+				json += index + 1 < ignoredProjects.size() ? ",\n" : "\n";
 			}
-
-			std::string::size_type pos = ini.find("[HubConfig]");
-			if (pos != std::string::npos)
+			json += "  ],\n";
+			json += "  \"projectLastOpened\": [\n";
+			for (size_t index = 0; index < lastOpened.size(); ++index)
 			{
-				std::string::size_type next = ini.find("\n[", pos + 1);
-				ini.erase(pos, (next == std::string::npos) ? std::string::npos : next - pos);
+				json += "    { \"projectPath\": " + EscapeJsonString(lastOpened[index].first)
+					+ ", \"lastOpened\": " + EscapeJsonString(lastOpened[index].second) + " }";
+				json += index + 1 < lastOpened.size() ? ",\n" : "\n";
 			}
-			ini += section;
+			json += "  ]\n";
+			json += "}\n";
 
-			std::ofstream fout(iniPath, std::ios::trunc);
-			fout << ini;
+			std::string writeError;
+			if (!FileSystem::WriteFileAtomically(settingsPath, json, writeError))
+				throw std::runtime_error("Could not atomically replace Hub settings: " + writeError);
+			return true;
 		}
 		catch (const std::exception& e)
 		{
 			TC_Core_Error("Failed to save Hub settings: {0}", e.what());
+			return false;
 		}
 	}
 

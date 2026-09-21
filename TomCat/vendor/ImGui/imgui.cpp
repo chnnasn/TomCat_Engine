@@ -876,7 +876,7 @@ CODE
 #endif
 #include "imgui_internal.h"
 
-// TomCat engine includes
+// TomCat dock-title more-options callback bridge.
 #include "../../../TomCat/src/TomCat/ImGui/ImGuiCallback.h"
 
 // System includes
@@ -3553,7 +3553,6 @@ static const ImGuiLocEntry GLocalizationEntriesEnUS[] =
     { ImGuiLocKey_WindowingMainMenuBar, "(Main menu bar)"                       },
     { ImGuiLocKey_WindowingPopup,       "(Popup)"                               },
     { ImGuiLocKey_WindowingUntitled,    "(Untitled)"                            },
-    { ImGuiLocKey_DockingHideTabBar,    "Hide tab bar###HideTabBar"             },
 };
 
 void ImGui::Initialize()
@@ -6241,6 +6240,42 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
     }
 }
 
+static void RenderTomCatMoreOptionsButton(ImGuiWindow* host_window,
+    ImGuiWindow* target_window, const ImRect& button_rect)
+{
+    if (target_window == NULL || target_window->Name == NULL ||
+        !TomCat::IsMoreOptionsEnabled() ||
+        !TomCat::HasWindowMoreOptionsCallback(target_window->Name))
+        return;
+
+    ImGuiContext& g = *GImGui;
+    bool hovered = false;
+    bool held = false;
+    const bool pressed = ImGui::ButtonBehavior(button_rect, host_window->GetID("#SETTING"),
+        &hovered, &held, ImGuiButtonFlags_FlattenChildren |
+        ImGuiButtonFlags_AllowItemOverlap | ImGuiButtonFlags_PressedOnClick);
+
+    if (held && hovered)
+        host_window->DrawList->AddRectFilled(button_rect.Min, button_rect.Max,
+            ImGui::GetColorU32(ImGuiCol_ButtonActive));
+    else if (hovered)
+        host_window->DrawList->AddRectFilled(button_rect.Min, button_rect.Max,
+            ImGui::GetColorU32(ImGuiCol_ButtonHovered));
+
+    const float center_x = button_rect.Min.x + button_rect.GetWidth() * 0.62f;
+    const float center_y = (button_rect.Min.y + button_rect.Max.y) * 0.5f;
+    const float radius = ImMax(1.5f, g.FontSize * 0.06f);
+    const float gap = g.FontSize * 0.18f;
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    host_window->DrawList->AddCircleFilled(ImVec2(center_x, center_y - gap), radius, color, 12);
+    host_window->DrawList->AddCircleFilled(ImVec2(center_x, center_y), radius, color, 12);
+    host_window->DrawList->AddCircleFilled(ImVec2(center_x, center_y + gap), radius, color, 12);
+
+    if (pressed)
+        TomCat::ExecuteWindowMoreOptionsCallback(target_window->Name,
+            ImVec2(button_rect.Min.x, button_rect.Max.y));
+}
+
 // When inside a dock node, this is handled in DockNodeCalcTabBarLayout() instead.
 // Render title text, collapse button, close button
 void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& title_bar_rect, const char* name, bool* p_open)
@@ -6251,11 +6286,8 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
 
     const bool has_close_button = (p_open != NULL);
     const bool has_collapse_button = !(flags & ImGuiWindowFlags_NoCollapse) && (style.WindowMenuButtonPosition != ImGuiDir_None);
-    // Flag-controlled: only show the "more options" (U+22EE) button when the feature is
-    // enabled AND this window registered a callback (e.g. Editor "Project" window).
-    // Windows without a callback (such as the Hub Settings dialog) won't show it.
-    const bool has_more_button = TomCat::IsMoreOptionsEnabled() && TomCat::HasWindowMoreOptionsCallback(window->Name ? window->Name : "");
-
+    const bool has_more_button = TomCat::IsMoreOptionsEnabled() &&
+        TomCat::HasWindowMoreOptionsCallback(window->Name ? window->Name : "");
     // Close & Collapse button are on the Menu NavLayer and don't default focus (unless there's nothing else on that layer)
     // FIXME-NAV: Might want (or not?) to set the equivalent of ImGuiButtonFlags_NoNavFocus so that mouse clicks on standard title bar items don't necessarily set nav/keyboard ref?
     const ImGuiItemFlags item_flags_backup = g.CurrentItemFlags;
@@ -6283,7 +6315,8 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     if (has_more_button)
     {
         pad_r += button_sz;
-        more_button_pos = ImVec2(title_bar_rect.Max.x - pad_r - style.FramePadding.x, title_bar_rect.Min.y);
+        more_button_pos = ImVec2(title_bar_rect.Max.x - pad_r - style.FramePadding.x,
+            title_bar_rect.Min.y);
     }
     if (has_collapse_button && style.WindowMenuButtonPosition == ImGuiDir_Left)
     {
@@ -6301,50 +6334,11 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
         if (CloseButton(window->GetID("#CLOSE"), close_button_pos))
             *p_open = false;
 
-    // "..." button (More options button)
     if (has_more_button)
     {
-        // Create a rectangle for the button
-        ImRect more_button_rect(more_button_pos.x, more_button_pos.y, more_button_pos.x + button_sz, more_button_pos.y + button_sz);
-        // Button behavior
-        bool hovered, held;
-        bool Pressd = ButtonBehavior(more_button_rect, window->GetID("#SETTING"), &hovered, &held, ImGuiButtonFlags_FlattenChildren | ImGuiButtonFlags_AllowItemOverlap | ImGuiButtonFlags_PressedOnClick);
-
-        if (Pressd)
-        {
-            if (g.HoveredWindow || g.NavWindow)
-            {
-                ImGuiWindow* target_window = g.HoveredWindow ? g.HoveredWindow : g.NavWindow;
-
-                if (target_window->DockNodeAsHost && target_window->DockNodeAsHost->VisibleWindow)
-                {
-                    target_window = target_window->DockNodeAsHost->VisibleWindow;
-                }
-
-                if (target_window->Name)
-                {
-                    TomCat::ExecuteWindowMoreOptionsCallback(target_window->Name, more_button_pos);
-                }
-            }
-        }
-
-        // Draw button background
-        if (held && hovered)
-            window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonActive));
-        else if (hovered)
-            window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonHovered));
-        // Draw U+22EE (vertical ellipsis) as three dots, shifted right toward the close button
-        {
-            const float cx = more_button_rect.Min.x + button_sz * 0.62f;
-            const float cy = more_button_rect.Min.y + button_sz * 0.5f;
-            float r = button_sz * 0.06f;
-            if (r < 1.5f) r = 1.5f;
-            const float gap = button_sz * 0.18f;
-            const ImU32 col = GetColorU32(ImGuiCol_Text);
-            window->DrawList->AddCircleFilled(ImVec2(cx, cy - gap), r, col, 12);
-            window->DrawList->AddCircleFilled(ImVec2(cx, cy), r, col, 12);
-            window->DrawList->AddCircleFilled(ImVec2(cx, cy + gap), r, col, 12);
-        }
+        const ImRect more_button_rect(more_button_pos,
+            more_button_pos + ImVec2(button_sz, button_sz));
+        RenderTomCatMoreOptionsButton(window, window, more_button_rect);
     }
 
     window->DC.NavLayerCurrent = ImGuiNavLayer_Main;
@@ -15286,7 +15280,6 @@ void ImGui::DestroyPlatformWindows()
 //    |   - draw node background
 //    |   - DockNodeUpdateTabBar()            - create/update tab bar for a docking node
 //    |     - DockNodeAddTabBar()
-//    |     - DockNodeUpdateWindowMenu()
 //    |     - DockNodeCalcTabBarLayout()
 //    |     - BeginTabBarEx()
 //    |     - TabItemEx() calls
@@ -15415,7 +15408,6 @@ namespace ImGui
     static void             DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_window);
     static void             DockNodeAddTabBar(ImGuiDockNode* node);
     static void             DockNodeRemoveTabBar(ImGuiDockNode* node);
-    static ImGuiID          DockNodeUpdateWindowMenu(ImGuiDockNode* node, ImGuiTabBar* tab_bar);
     static void             DockNodeUpdateVisibleFlag(ImGuiDockNode* node);
     static void             DockNodeStartMouseMovingWindow(ImGuiDockNode* node, ImGuiWindow* window);
     static bool             DockNodeIsDropAllowed(ImGuiWindow* host_window, ImGuiWindow* payload_window);
@@ -15929,7 +15921,7 @@ void ImGui::DockContextProcessDock(ImGuiContext* ctx, ImGuiDockRequest* req)
         {
             DockNodeAddTabBar(node);
             for (int n = 0; n < node->Windows.Size; n++)
-                TabBarAddTab(node->TabBar, ImGuiTabItemFlags_None, node->Windows[n]);
+                TabBarAddTab(node->TabBar, ImGuiTabItemFlags_NoCloseButton, node->Windows[n]);
         }
 
         if (payload_node != NULL)
@@ -16110,7 +16102,6 @@ bool ImGui::DockContextCalcDropPosForDocking(ImGuiWindow* target, ImGuiDockNode*
 // - DockNodeUpdateVisibleFlag()
 // - DockNodeStartMouseMovingWindow()
 // - DockNodeUpdate()
-// - DockNodeUpdateWindowMenu()
 // - DockNodeBeginAmendTabBar()
 // - DockNodeEndAmendTabBar()
 // - DockNodeUpdateTabBar()
@@ -16219,9 +16210,9 @@ static void ImGui::DockNodeAddWindow(ImGuiDockNode* node, ImGuiWindow* window, b
 
             // Add existing windows
             for (int n = 0; n < node->Windows.Size - 1; n++)
-                TabBarAddTab(node->TabBar, ImGuiTabItemFlags_None, node->Windows[n]);
+                TabBarAddTab(node->TabBar, ImGuiTabItemFlags_NoCloseButton, node->Windows[n]);
         }
-        TabBarAddTab(node->TabBar, ImGuiTabItemFlags_Unsorted, window);
+        TabBarAddTab(node->TabBar, ImGuiTabItemFlags_Unsorted | ImGuiTabItemFlags_NoCloseButton, window);
     }
 
     DockNodeUpdateVisibleFlag(node);
@@ -16669,8 +16660,11 @@ static void ImGui::DockNodeUpdate(ImGuiDockNode* node)
 
     const ImGuiDockNodeFlags node_flags = node->MergedFlags;
 
-    // Decide if the node will have a close button and a window menu button
-    node->HasWindowMenuButton = (node->Windows.Size > 0) && (node_flags & ImGuiDockNodeFlags_NoWindowMenuButton) == 0;
+    // Dock tabs are intentionally passive: the title-bar window menu (including
+    // the multi-scene selection popup) is not part of the editor chrome.
+    // Keep the field for docking internals/serialized compatibility, but never
+    // expose the button or its popup in a dock node.
+    node->HasWindowMenuButton = false;
     node->HasCloseButton = false;
     for (int window_n = 0; window_n < node->Windows.Size; window_n++)
     {
@@ -16891,41 +16885,6 @@ static int IMGUI_CDECL TabItemComparerByDockOrder(const void* lhs, const void* r
     return (a->BeginOrderWithinContext - b->BeginOrderWithinContext);
 }
 
-static ImGuiID ImGui::DockNodeUpdateWindowMenu(ImGuiDockNode* node, ImGuiTabBar* tab_bar)
-{
-    // Try to position the menu so it is more likely to stays within the same viewport
-    ImGuiContext& g = *GImGui;
-    ImGuiID ret_tab_id = 0;
-    if (g.Style.WindowMenuButtonPosition == ImGuiDir_Left)
-        SetNextWindowPos(ImVec2(node->Pos.x, node->Pos.y + GetFrameHeight()), ImGuiCond_Always, ImVec2(0.0f, 0.0f));
-    else
-        SetNextWindowPos(ImVec2(node->Pos.x + node->Size.x, node->Pos.y + GetFrameHeight()), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-    if (BeginPopup("#WindowMenu"))
-    {
-        node->IsFocused = true;
-        if (tab_bar->Tabs.Size == 1)
-        {
-            if (MenuItem(LocalizeGetMsg(ImGuiLocKey_DockingHideTabBar), NULL, node->IsHiddenTabBar()))
-                node->WantHiddenTabBarToggle = true;
-        }
-        else
-        {
-            for (int tab_n = 0; tab_n < tab_bar->Tabs.Size; tab_n++)
-            {
-                ImGuiTabItem* tab = &tab_bar->Tabs[tab_n];
-                if (tab->Flags & ImGuiTabItemFlags_Button)
-                    continue;
-                if (Selectable(TabBarGetTabName(tab_bar, tab), tab->ID == tab_bar->SelectedTabId))
-                    ret_tab_id = tab->ID;
-                SameLine();
-                Text("   ");
-            }
-        }
-        EndPopup();
-    }
-    return ret_tab_id;
-}
-
 // User helper to append/amend into a dock node tab bar. Most commonly used to add e.g. a "+" button.
 bool ImGui::DockNodeBeginAmendTabBar(ImGuiDockNode* node)
 {
@@ -16974,7 +16933,6 @@ static bool IsDockNodeTitleBarHighlighted(ImGuiDockNode* node, ImGuiDockNode* ro
 static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_window)
 {
     ImGuiContext& g = *GImGui;
-    ImGuiStyle& style = g.Style;
 
     const bool node_was_active = (node->LastFrameActive + 1 == g.FrameCount);
     const bool closed_all = node->WantCloseAll && node_was_active;
@@ -17015,8 +16973,9 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
     }
 
     // Use PushOverrideID() instead of PushID() to use the node id _without_ the host window ID.
-    // This is to facilitate computing those ID from the outside, and will affect more or less only the ID of the collapse button, popup and tabs,
-    // as docked windows themselves will override the stack with their own root ID.
+    // This is to facilitate computing those ID from the outside, and affects the tab IDs
+    // (the dock title bar no longer has a collapse/window-menu button), while
+    // docked windows themselves override the stack with their own root ID.
     PushOverrideID(node->ID);
     ImGuiTabBar* tab_bar = node->TabBar;
     bool tab_bar_is_recreated = (tab_bar == NULL); // Tab bar are automatically destroyed when a node gets hidden
@@ -17029,23 +16988,9 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
     ImGuiID focus_tab_id = 0;
     node->IsFocused = is_focused;
 
-    const ImGuiDockNodeFlags node_flags = node->MergedFlags;
-    const bool has_window_menu_button = (node_flags & ImGuiDockNodeFlags_NoWindowMenuButton) == 0 && (style.WindowMenuButtonPosition != ImGuiDir_None);
-
-    // In a dock node, the Collapse Button turns into the Window Menu button.
-    // FIXME-DOCK FIXME-OPT: Could we recycle popups id across multiple dock nodes?
-    if (has_window_menu_button && IsPopupOpen("#WindowMenu"))
-    {
-        if (ImGuiID tab_id = DockNodeUpdateWindowMenu(node, tab_bar))
-            focus_tab_id = tab_bar->NextSelectedTabId = tab_id;
-        is_focused |= node->IsFocused;
-    }
-
     // Layout
     ImRect title_bar_rect, tab_bar_rect;
-    ImVec2 window_menu_button_pos;
-    ImVec2 close_button_pos;
-    DockNodeCalcTabBarLayout(node, &title_bar_rect, &tab_bar_rect, &window_menu_button_pos, &close_button_pos);
+    DockNodeCalcTabBarLayout(node, &title_bar_rect, &tab_bar_rect, NULL, NULL);
 
     // Submit new tabs, they will be added as Unsorted and sorted below based on relative DockOrder value.
     const int tabs_count_old = tab_bar->Tabs.Size;
@@ -17053,7 +16998,7 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
     {
         ImGuiWindow* window = node->Windows[window_n];
         if (TabBarFindTabByID(tab_bar, window->TabId) == NULL)
-            TabBarAddTab(tab_bar, ImGuiTabItemFlags_Unsorted, window);
+            TabBarAddTab(tab_bar, ImGuiTabItemFlags_Unsorted | ImGuiTabItemFlags_NoCloseButton, window);
     }
 
     // Title bar
@@ -17062,15 +17007,6 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
     ImU32 title_bar_col = GetColorU32(host_window->Collapsed ? ImGuiCol_TitleBgCollapsed : is_focused ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
     ImDrawFlags rounding_flags = CalcRoundingFlagsForRectInRect(title_bar_rect, host_window->Rect(), DOCKING_SPLITTER_SIZE);
     host_window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, host_window->WindowRounding, rounding_flags);
-
-    // Docking/Collapse button
-    if (has_window_menu_button)
-    {
-        if (CollapseButton(host_window->GetID("#COLLAPSE"), window_menu_button_pos, node)) // == DockNodeGetWindowMenuButtonId(node)
-            OpenPopup("#WindowMenu");
-        if (IsItemActive())
-            focus_tab_id = tab_bar->SelectedTabId;
-    }
 
     // If multiple tabs are appearing on the same frame, sort them based on their persistent DockOrder value
     int tabs_unsorted_start = tab_bar->Tabs.Size;
@@ -17121,7 +17057,7 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
             continue;
         if (window->LastFrameActive + 1 >= g.FrameCount || !node_was_active)
         {
-            ImGuiTabItemFlags tab_item_flags = 0;
+            ImGuiTabItemFlags tab_item_flags = ImGuiTabItemFlags_NoCloseButton;
             tab_item_flags |= window->WindowClass.TabItemFlagsOverrideSet;
             if (window->Flags & ImGuiWindowFlags_UnsavedDocument)
                 tab_item_flags |= ImGuiTabItemFlags_UnsavedDocument;
@@ -17133,10 +17069,9 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
                 g.Style.Colors[GWindowDockStyleColors[color_n]] = ColorConvertU32ToFloat4(window->DockStyle.Colors[color_n]);
 
             // Note that TabItemEx() calls TabBarCalcTabID() so our tab item ID will ignore the current ID stack (rightly so)
-            bool tab_open = true;
-            TabItemEx(tab_bar, window->Name, window->HasCloseButton ? &tab_open : NULL, tab_item_flags, window);
-            if (!tab_open)
-                node->WantCloseTabId = window->TabId;
+            // Dock tabs intentionally don't expose a close button. Standalone windows
+            // still render their close button from RenderWindowTitleBarContents().
+            TabItemEx(tab_bar, window->Name, NULL, tab_item_flags, window);
             if (tab_bar->VisibleTabId == window->TabId)
                 node->VisibleWindow = window;
 
@@ -17159,79 +17094,16 @@ static void ImGui::DockNodeUpdateTabBar(ImGuiDockNode* node, ImGuiWindow* host_w
         if (is_focused || root_node->VisibleWindow == NULL)
             root_node->VisibleWindow = node->VisibleWindow;
 
-    // U+22EE (...) button (More options button) - dock title bar: place at the far right
-    // (the close button sits next to the tab name in dock mode, so the menu button goes to
-    // the right end of the title bar)
-    ImVec2 more_button_pos(title_bar_rect.Max.x - g.FontSize - 4.0f, title_bar_rect.Min.y);
-    ImRect more_button_rect(more_button_pos.x, more_button_pos.y, more_button_pos.x + g.FontSize, more_button_pos.y + g.FontSize);
-    const bool dock_has_callback = node->VisibleWindow && node->VisibleWindow->Name &&
-        TomCat::HasWindowMoreOptionsCallback(node->VisibleWindow->Name);
-    if (more_button_rect.Min.x >= tab_bar_rect.Min.x && TomCat::IsMoreOptionsEnabled() && dock_has_callback)
-    {
-        bool hovered, held;
-
-        bool Pressd = ButtonBehavior(more_button_rect, host_window->GetID("#SETTING"), &hovered, &held, ImGuiButtonFlags_FlattenChildren | ImGuiButtonFlags_AllowItemOverlap | ImGuiButtonFlags_PressedOnClick);
-
-        if (Pressd)
-        {
-            // In dock mode always deliver to the dock node's visible window (e.g. "Project")
-            ImGuiWindow* target_window = node->VisibleWindow ? node->VisibleWindow
-                : (g.HoveredWindow ? g.HoveredWindow : g.NavWindow);
-            if (target_window && target_window->Name)
-            {
-                TomCat::ExecuteWindowMoreOptionsCallback(target_window->Name, more_button_pos);
-            }
-        }
-        else if (held && hovered)
-            host_window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonActive));
-        else if (hovered)
-            host_window->DrawList->AddRectFilled(more_button_rect.Min, more_button_rect.Max, GetColorU32(ImGuiCol_ButtonHovered));
-
-        // Draw U+22EE (vertical ellipsis) as three dots, shifted right toward the close button
-        {
-            const float cx = more_button_rect.Min.x + g.FontSize * 0.62f;
-            const float cy = more_button_rect.Min.y + g.FontSize * 0.5f;
-            float r = g.FontSize * 0.06f;
-            if (r < 1.5f) r = 1.5f;
-            const float gap = g.FontSize * 0.18f;
-            const ImU32 col = GetColorU32(ImGuiCol_Text);
-            host_window->DrawList->AddCircleFilled(ImVec2(cx, cy - gap), r, col, 12);
-            host_window->DrawList->AddCircleFilled(ImVec2(cx, cy), r, col, 12);
-            host_window->DrawList->AddCircleFilled(ImVec2(cx, cy + gap), r, col, 12);
-        }
-    }
-
-    // ========== 删除关闭按钮的代码段 ==========
-    // 注释掉或删除以下关闭按钮的相关代码：
-
-    /*
-    // Close button (after VisibleWindow was updated)
-    // Note that VisibleWindow may have been overrided by CTRL+Tabbing, so VisibleWindow->TabId may be != from tab_bar->SelectedTabId
-    const bool close_button_is_enabled = node->HasCloseButton && node->VisibleWindow && node->VisibleWindow->HasCloseButton;
-    const bool close_button_is_visible = node->HasCloseButton;
-    //const bool close_button_is_visible = close_button_is_enabled; // Most people would expect this behavior of not even showing the button (leaving a hole since we can't claim that space as other windows in the tba bar have one)
-    if (close_button_is_visible)
-    {
-        if (!close_button_is_enabled)
-        {
-            PushItemFlag(ImGuiItemFlags_Disabled, true);
-            PushStyleColor(ImGuiCol_Text, style.Colors[ImGuiCol_Text] * ImVec4(1.0f,1.0f,1.0f,0.4f));
-        }
-        if (CloseButton(host_window->GetID("#CLOSE"), close_button_pos))
-        {
-            node->WantCloseAll = true;
-            for (int n = 0; n < tab_bar->Tabs.Size; n++)
-                TabBarCloseTab(tab_bar, &tab_bar->Tabs[n]);
-        }
-        //if (IsItemActive())
-        //    focus_tab_id = tab_bar->SelectedTabId;
-        if (!close_button_is_enabled)
-        {
-            PopStyleColor();
-            PopItemFlag();
-        }
-    }
-    */
+    // TomCat's per-window more-options action is part of the dock title bar,
+    // not an item appended to the tab sequence. Keep it at the absolute right
+    // edge so Project matches the editor chrome used by the original UI.
+    const float more_button_size = g.FontSize;
+    const ImVec2 more_button_pos(title_bar_rect.Max.x - more_button_size - 4.0f,
+        title_bar_rect.Min.y);
+    const ImRect more_button_rect(more_button_pos,
+        more_button_pos + ImVec2(more_button_size, more_button_size));
+    if (more_button_rect.Min.x >= tab_bar_rect.Min.x)
+        RenderTomCatMoreOptionsButton(host_window, node->VisibleWindow, more_button_rect);
 
     // When clicking on the title bar outside of tabs, we still focus the selected tab for that node
     // FIXME: TabItem use AllowItemOverlap so we manually perform a more specific test for now (hovered || held)
@@ -17512,7 +17384,10 @@ static void ImGui::DockNodePreviewDockSetup(ImGuiWindow* host_window, ImGuiDockN
 
     // Build a tentative future node (reuse same structure because it is practical. Shape will be readjusted when previewing a split)
     data->FutureNode.HasCloseButton = (host_node ? host_node->HasCloseButton : host_window->HasCloseButton) || (payload_window->HasCloseButton);
-    data->FutureNode.HasWindowMenuButton = host_node ? true : ((host_window->Flags & ImGuiWindowFlags_NoCollapse) == 0);
+    // The dock title bar has no collapse/window-menu affordance. Keep preview
+    // geometry in sync with the committed node so dropping a window does not
+    // reserve a phantom menu-button slot for one frame.
+    data->FutureNode.HasWindowMenuButton = false;
     data->FutureNode.Pos = ref_node_for_rect ? ref_node_for_rect->Pos : host_window->Pos;
     data->FutureNode.Size = ref_node_for_rect ? ref_node_for_rect->Size : host_window->Size;
 

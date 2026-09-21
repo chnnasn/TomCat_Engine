@@ -20,7 +20,8 @@ layout(std140, binding = 1) uniform Material
 	vec4 u_AlbedoColor;
 	vec4 u_LightDirection;
 	vec4 u_LightColor;
-	vec4 u_Params; // x = useTexture, y = ambientStrength, z = shininess, w = entityID
+	vec4 u_Params;
+	ivec4 u_Entity;
 };
 
 layout(location = 0) out vec3 v_FragPos;
@@ -34,7 +35,7 @@ void main()
 	v_FragPos = worldPos.xyz;
 	v_Normal = normalize(mat3(u_NormalMatrix) * a_Normal);
 	v_TexCoord = a_TexCoord;
-	v_EntityID = int(u_Params.w);
+	v_EntityID = u_Entity.x;
 
 	gl_Position = u_ViewProjection * worldPos;
 }
@@ -64,6 +65,7 @@ layout(std140, binding = 1) uniform Material
 	vec4 u_LightDirection;
 	vec4 u_LightColor;
 	vec4 u_Params;
+	ivec4 u_Entity;
 };
 
 layout(binding = 2) uniform sampler2D u_AlbedoTexture;

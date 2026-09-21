@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/Runtime/">
+    <Project Path="TomCat.Managed/TomCat.Managed.csproj" />
+    <Project Path="TomCat.ScriptHost/TomCat.ScriptHost.csproj" />
+    <Project Path="TomCat.ScriptGenerator/TomCat.ScriptGenerator.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Fixtures/Assembly-CSharp/Assembly-CSharp.csproj" />
+    <Project Path="Fixtures/Assembly-CSharp-B/Assembly-CSharp-B.csproj" />
+    <Project Path="TomCat.Managed.Regression/TomCat.Managed.Regression.csproj" />
+  </Folder>
+</Solution>

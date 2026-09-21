@@ -1,17 +1,21 @@
 #include "tcpch.h"
 #include "TomCat/Renderer/Model.h"
 
+#ifndef TC_PLATFORM_WEB
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <assimp/material.h>
+#endif
 
 #include <filesystem>
+#include "TomCat/Asset/MeshArtifact.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 
 namespace TomCat {
 
+#ifndef TC_PLATFORM_WEB
 	static glm::mat4 AssimpMatrixToGlm(const aiMatrix4x4& m)
 	{
 		// aiMatrix4x4 是行主序，glm::mat4 构造函数按列主序读取，因此转置
@@ -94,8 +98,38 @@ namespace TomCat {
 			ProcessNode(node->mChildren[i], scene, baseDir, transform, submeshes);
 	}
 
+#endif
+	Ref<Model> Model::FromArtifact(const MeshArtifact& artifact)
+	{
+		std::vector<Vertex> vertices(artifact.GetVertexCount());
+		for (uint32_t i = 0; i < vertices.size(); ++i) {
+			MeshArtifactVertex v;
+			if (!artifact.DecodeVertex(i, v)) return nullptr;
+			vertices[i] = {{v.Position[0],v.Position[1],v.Position[2]},
+				{v.Normal[0],v.Normal[1],v.Normal[2]}, {v.TexCoord[0],v.TexCoord[1]}};
+		}
+		auto model = CreateRef<Model>();
+		for (const auto& part : artifact.GetParts()) {
+			std::vector<uint32_t> indices(part.IndexCount);
+			for (uint32_t i = 0; i < part.IndexCount; ++i)
+				if (!artifact.DecodeIndex(part.FirstIndex + i, indices[i])) return nullptr;
+			ModelSubmesh sub;
+			sub.Mesh = Mesh::Create(vertices, indices);
+			sub.DiffuseColor = {part.Color[0],part.Color[1],part.Color[2],part.Color[3]};
+			if (!part.Texture.empty()) {
+				sub.DiffuseTexture = Texture2D::Create(part.Texture.data(), part.Texture.size());
+				sub.UseTexture = sub.DiffuseTexture && sub.DiffuseTexture->IsLoaded();
+			}
+			model->m_Submeshes.push_back(std::move(sub));
+		}
+		return model;
+	}
+
 	Ref<Model> Model::Load(const std::string& filepath)
 	{
+#ifdef TC_PLATFORM_WEB
+		return nullptr;
+#else
 		Assimp::Importer importer;
 		const aiScene* scene = importer.ReadFile(filepath,
 			aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
@@ -112,6 +146,7 @@ namespace TomCat {
 		std::string baseDir = std::filesystem::path(filepath).parent_path().string();
 		ProcessNode(scene->mRootNode, scene, baseDir, glm::mat4(1.0f), model->m_Submeshes);
 		return model;
+#endif
 	}
 
 }

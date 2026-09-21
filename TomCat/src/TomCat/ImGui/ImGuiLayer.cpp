@@ -8,15 +8,19 @@
 #include "TomCat/Core/Application.h"
 
 #include <GLFW/glfw3.h>
+#ifndef __EMSCRIPTEN__
 #include <Glad/glad.h>
+#endif
 #include <filesystem>
+#include <algorithm>
+#include <cmath>
 
 #include"ImGuizmo.h"
 
 namespace TomCat {
 
-	ImGuiLayer::ImGuiLayer()
-		: Layer("ImGuiLayer")
+	ImGuiLayer::ImGuiLayer(bool editorStyling)
+        : Layer("ImGuiLayer"), m_EditorStyling(editorStyling)
 	{
 	}
 
@@ -33,16 +37,27 @@ namespace TomCat {
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
 		//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
-		// Disable ImGui's automatic .ini save so custom sections we append to imgui.ini
-		// (e.g. [ContentBrowser] layout) are never overwritten. Window layouts are saved
-		// explicitly by the Editor (project folder imgui.ini).
+		// Multi-viewport stays disabled until engine input is routed for every GLFW platform window.
+		// Disable ImGui's narrow-path automatic persistence. The Editor explicitly
+		// stores its selected global/project layout; the Hub keeps its packaged default
+		// layout read-only and stores non-layout state separately in LocalAppData JSON.
 		io.IniFilename = NULL;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
 		//io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoMerge;
 
-						io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Bold.ttf", 32.0f);
-		io.FontDefault = io.Fonts->AddFontFromFileTTF("Packages/fonts/opensans/OpenSans-Regular.ttf", 32.0f);
+#ifdef __EMSCRIPTEN__
+		constexpr float fontSize = 16.0f;
+#else
+		const float fontSize = m_EditorStyling ? std::round(18.0f * std::clamp(Application::Get().GetWindow().GetDPIScale(),1.0f,2.5f)) : 32.0f;
+#endif
+        const char* regular="Packages/fonts/opensans/OpenSans-Regular.ttf";
+        const char* bold="Packages/fonts/opensans/OpenSans-Bold.ttf";
+#ifndef __EMSCRIPTEN__
+        if(m_EditorStyling && std::filesystem::exists("C:/Windows/Fonts/segoeui.ttf")) regular="C:/Windows/Fonts/segoeui.ttf";
+        if(m_EditorStyling && std::filesystem::exists("C:/Windows/Fonts/segoeuib.ttf")) bold="C:/Windows/Fonts/segoeuib.ttf";
+#endif
+        io.Fonts->AddFontFromFileTTF(bold,fontSize);
+        io.FontDefault=io.Fonts->AddFontFromFileTTF(regular,fontSize);
 
 		// Make the UI support Chinese and common symbols.
 		// The character set is built dynamically with ImFontGlyphRangesBuilder: it collects
@@ -84,8 +99,13 @@ namespace TomCat {
 				0
 			};
 
-			const char* cnFontPath = "C:/Windows/Fonts/simhei.ttf";
+#ifdef __EMSCRIPTEN__
+			const char* cnFontPath = "WebFonts/NotoSansSC-Regular.otf";
+			const char* symFontPath = cnFontPath;
+#else
+			const char* cnFontPath = m_EditorStyling && std::filesystem::exists("C:/Windows/Fonts/msyh.ttc") ? "C:/Windows/Fonts/msyh.ttc" : "C:/Windows/Fonts/simhei.ttf";
 			const char* symFontPath = "C:/Windows/Fonts/seguisym.ttf";
+#endif
 
 			ImFontConfig mergeCfg;
 			mergeCfg.MergeMode = true;
@@ -93,16 +113,16 @@ namespace TomCat {
 			if (std::filesystem::exists(cnFontPath))
 			{
 				mergeCfg.DstFont = io.Fonts->Fonts[0]; // OpenSans-Bold + Chinese
-				io.Fonts->AddFontFromFileTTF(cnFontPath, 32.0f, &mergeCfg, sUIRanges.Data);
+				io.Fonts->AddFontFromFileTTF(cnFontPath, fontSize, &mergeCfg, sUIRanges.Data);
 				mergeCfg.DstFont = io.Fonts->Fonts[1]; // OpenSans-Regular + Chinese (default)
-				io.Fonts->AddFontFromFileTTF(cnFontPath, 32.0f, &mergeCfg, sUIRanges.Data);
+				io.Fonts->AddFontFromFileTTF(cnFontPath, fontSize, &mergeCfg, sUIRanges.Data);
 			}
 			if (std::filesystem::exists(symFontPath))
 			{
 				mergeCfg.DstFont = io.Fonts->Fonts[0];
-				io.Fonts->AddFontFromFileTTF(symFontPath, 32.0f, &mergeCfg, symRanges);
+				io.Fonts->AddFontFromFileTTF(symFontPath, fontSize, &mergeCfg, symRanges);
 				mergeCfg.DstFont = io.Fonts->Fonts[1];
-				io.Fonts->AddFontFromFileTTF(symFontPath, 32.0f, &mergeCfg, symRanges);
+				io.Fonts->AddFontFromFileTTF(symFontPath, fontSize, &mergeCfg, symRanges);
 			}
 		}
 
@@ -125,7 +145,25 @@ namespace TomCat {
 
 		// Setup Platform/Renderer bindings
 		ImGui_ImplGlfw_InitForOpenGL(window, true);
+#ifndef __EMSCRIPTEN__
+		// Windows can deliver WM_MOUSEWHEEL before a pending WM_MOUSEMOVE.
+		// Queue the current cursor position before the wheel so ImGui routes the
+		// first scroll to the panel under the pointer, not the previously hovered tab.
+		// Both backend callbacks retain their original engine callback chains.
+		glfwSetScrollCallback(window, [](GLFWwindow* source, double x, double y)
+		{
+			double cursorX = 0.0, cursorY = 0.0;
+			glfwGetCursorPos(source, &cursorX, &cursorY);
+			ImGui_ImplGlfw_CursorPosCallback(source, cursorX, cursorY);
+			ImGui_ImplGlfw_ScrollCallback(source, x, y);
+		});
+#endif
+#ifdef __EMSCRIPTEN__
+		// Fonts use CSS pixel sizes so native panel metrics stay consistent.
+		ImGui_ImplOpenGL3_Init("#version 300 es");
+#else
 		ImGui_ImplOpenGL3_Init("#version 410");
+#endif
 	}
 
 	void ImGuiLayer::OnDetach()
@@ -139,12 +177,11 @@ namespace TomCat {
 
 	void ImGuiLayer::OnEvent(Event& e)
 	{
-		if (m_BlockEvents) 
-		{
-			ImGuiIO& io = ImGui::GetIO();
-			e.m_Handled |= e.IsIncategory(EventCategoryMouse) & io.WantCaptureMouse;
-			e.m_Handled |= e.IsIncategory(EventCategoryKeyboard) & io.WantCaptureKeyboard;
-		}
+		ImGuiIO& io = ImGui::GetIO();
+		e.m_Handled |= m_BlockMouseEvents
+			&& e.IsInCategory(EventCategoryMouse) && io.WantCaptureMouse;
+		e.m_Handled |= m_BlockKeyboardEvents
+			&& e.IsInCategory(EventCategoryKeyboard) && io.WantCaptureKeyboard;
 
 	}
 
@@ -183,35 +220,160 @@ namespace TomCat {
 
 	void ImGuiLayer::SetDarkThemeColors()
 	{
-		auto& colors = ImGui::GetStyle().Colors;
-		colors[ImGuiCol_WindowBg] = ImVec4{ 0.1f, 0.105f, 0.11f, 1.0f };
+		ImGuiStyle& style = ImGui::GetStyle();
+		ImVec4* colors = style.Colors;
 
-		// Headers
-		colors[ImGuiCol_Header] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
-		colors[ImGuiCol_HeaderHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
-		colors[ImGuiCol_HeaderActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		// Unity's dark editor uses a small, neutral grayscale ramp.  Keeping the
+		// ramp in this shared implementation keeps the editor and Hub consistent.
+		// These values are sampled/rounded from the Unity
+		// reference (panel #383838, toolbar #282828, menu #191919, selection
+		// #2C5D87) instead of relying on ImGui's much darker default theme.
+		const auto Rgb = [](int r, int g, int b, int a = 255)
+		{
+			return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+		};
 
-		// Buttons
-		colors[ImGuiCol_Button] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
-		colors[ImGuiCol_ButtonHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
-		colors[ImGuiCol_ButtonActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		const ImVec4 text = Rgb(196, 196, 196);
+		const ImVec4 textBright = Rgb(243, 243, 243);
+		const ImVec4 textDisabled = Rgb(137, 137, 137);
+		const ImVec4 panel = Rgb(56, 56, 56);       // #383838
+		const ImVec4 panelAlt = Rgb(60, 60, 60);    // #3C3C3C
+		const ImVec4 toolbar = Rgb(40, 40, 40);     // #282828
+		const ImVec4 menu = Rgb(25, 25, 25);        // #191919
+		const ImVec4 frame = Rgb(71, 71, 71);       // #474747
+		const ImVec4 frameHover = Rgb(98, 98, 98);  // #626262
+		const ImVec4 frameActive = Rgb(112, 112, 112);
+		const ImVec4 selection = Rgb(44, 93, 135);  // #2C5D87
+		const ImVec4 selectionHover = Rgb(58, 112, 157);
+		const ImVec4 border = Rgb(25, 25, 25);
+		const ImVec4 borderLight = Rgb(85, 85, 85);
 
-		// Frame BG
-		colors[ImGuiCol_FrameBg] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
-		colors[ImGuiCol_FrameBgHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
-		colors[ImGuiCol_FrameBgActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		colors[ImGuiCol_Text] = text;
+		colors[ImGuiCol_TextDisabled] = textDisabled;
+		colors[ImGuiCol_WindowBg] = panel;
+		colors[ImGuiCol_ChildBg] = panel;
+		colors[ImGuiCol_PopupBg] = panelAlt;
+		colors[ImGuiCol_Border] = border;
+		colors[ImGuiCol_BorderShadow] = Rgb(0, 0, 0, 80);
 
-		// Tabs
-		colors[ImGuiCol_Tab] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TabHovered] = ImVec4{ 0.38f, 0.3805f, 0.381f, 1.0f };
-		colors[ImGuiCol_TabActive] = ImVec4{ 0.28f, 0.2805f, 0.281f, 1.0f };
-		colors[ImGuiCol_TabUnfocused] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TabUnfocusedActive] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
+		// Framed controls (fields, combo boxes, checkboxes and sliders).
+		colors[ImGuiCol_FrameBg] = frame;
+		colors[ImGuiCol_FrameBgHovered] = frameHover;
+		colors[ImGuiCol_FrameBgActive] = frameActive;
 
-		// Title
-		colors[ImGuiCol_TitleBg] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TitleBgActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
-		colors[ImGuiCol_TitleBgCollapsed] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+		// Window title bars keep the Unity toolbar tone.  MenuBars use the darker
+		// #282828 foundation from the reference strip; individual editor toolbars
+		// can paint their lighter #3C3C3C surface over this base.
+		colors[ImGuiCol_TitleBg] = toolbar;
+		colors[ImGuiCol_TitleBgActive] = toolbar;
+		colors[ImGuiCol_TitleBgCollapsed] = menu;
+		colors[ImGuiCol_MenuBarBg] = toolbar;
+
+		colors[ImGuiCol_ScrollbarBg] = menu;
+		colors[ImGuiCol_ScrollbarGrab] = frame;
+		colors[ImGuiCol_ScrollbarGrabHovered] = frameHover;
+		colors[ImGuiCol_ScrollbarGrabActive] = frameActive;
+		colors[ImGuiCol_CheckMark] = selectionHover;
+		colors[ImGuiCol_SliderGrab] = borderLight;
+		colors[ImGuiCol_SliderGrabActive] = textBright;
+
+		colors[ImGuiCol_Button] = frame;
+		colors[ImGuiCol_ButtonHovered] = frameHover;
+		colors[ImGuiCol_ButtonActive] = frameActive;
+
+		// Headers drive tree rows, selectable items and menu items.  The blue
+		// active state is the same blue used by Unity's hierarchy selection.
+		colors[ImGuiCol_Header] = toolbar;
+		colors[ImGuiCol_HeaderHovered] = frameHover;
+		colors[ImGuiCol_HeaderActive] = selection;
+
+		colors[ImGuiCol_Separator] = borderLight;
+		colors[ImGuiCol_SeparatorHovered] = selectionHover;
+		colors[ImGuiCol_SeparatorActive] = selection;
+		colors[ImGuiCol_ResizeGrip] = borderLight;
+		colors[ImGuiCol_ResizeGripHovered] = selectionHover;
+		colors[ImGuiCol_ResizeGripActive] = selection;
+
+		// All tab surfaces share the #3C3C3C reference color.  Focus is shown by
+		// the blue indicator rendered in TabItemEx rather than by recoloring the
+		// entire selected tab.
+		colors[ImGuiCol_Tab] = panelAlt;
+		// Hovering a tab keeps the same base surface; focus is communicated by
+		// the blue top indicator, so the tab never flashes to a different grey.
+		colors[ImGuiCol_TabHovered] = panelAlt;
+		colors[ImGuiCol_TabActive] = panelAlt;
+		colors[ImGuiCol_TabUnfocused] = panelAlt;
+		colors[ImGuiCol_TabUnfocusedActive] = panelAlt;
+		colors[ImGuiCol_DockingPreview] = Rgb(44, 93, 135, 150);
+		colors[ImGuiCol_DockingEmptyBg] = Rgb(48, 48, 48);
+
+		colors[ImGuiCol_PlotLines] = selectionHover;
+		colors[ImGuiCol_PlotLinesHovered] = textBright;
+		colors[ImGuiCol_PlotHistogram] = selection;
+		colors[ImGuiCol_PlotHistogramHovered] = selectionHover;
+		colors[ImGuiCol_TableHeaderBg] = toolbar;
+		colors[ImGuiCol_TableBorderStrong] = borderLight;
+		colors[ImGuiCol_TableBorderLight] = border;
+		colors[ImGuiCol_TableRowBg] = panel;
+		colors[ImGuiCol_TableRowBgAlt] = panelAlt;
+		colors[ImGuiCol_TextSelectedBg] = Rgb(44, 93, 135, 115);
+		colors[ImGuiCol_DragDropTarget] = Rgb(80, 165, 235, 220);
+		colors[ImGuiCol_NavHighlight] = selectionHover;
+		colors[ImGuiCol_NavWindowingHighlight] = textBright;
+		colors[ImGuiCol_NavWindowingDimBg] = Rgb(0, 0, 0, 80);
+		colors[ImGuiCol_ModalWindowDimBg] = Rgb(0, 0, 0, 110);
+
+		// Unity controls are compact and nearly rectangular.  In particular,
+		// removing ImGui's default 7px rounding keeps dock tabs, fields and the
+		// Scene toolbar visually aligned with the reference editor.
+		style.DisabledAlpha = 0.55f;
+		style.WindowPadding = ImVec2(6.0f, 6.0f);
+		style.WindowRounding = 0.0f;
+		style.WindowBorderSize = 1.0f;
+		style.ChildRounding = 0.0f;
+		style.ChildBorderSize = 1.0f;
+		style.PopupRounding = 2.0f;
+		style.PopupBorderSize = 1.0f;
+		style.FramePadding = ImVec2(5.0f, 3.0f);
+		style.FrameRounding = 2.0f;
+		style.FrameBorderSize = 0.0f;
+		style.ItemSpacing = ImVec2(4.0f, 3.0f);
+		style.ItemInnerSpacing = ImVec2(4.0f, 3.0f);
+		style.CellPadding = ImVec2(4.0f, 3.0f);
+		style.IndentSpacing = 16.0f;
+		style.ScrollbarSize = 14.0f;
+		style.ScrollbarRounding = 0.0f;
+		style.GrabMinSize = 10.0f;
+		style.GrabRounding = 2.0f;
+		style.TabRounding = 2.0f;
+		style.TabBorderSize = 1.0f;
+        if(m_EditorStyling)
+        {
+            colors[ImGuiCol_FrameBg]=Rgb(43,43,43);
+            colors[ImGuiCol_FrameBgHovered]=Rgb(68,68,68);
+            colors[ImGuiCol_FrameBgActive]=Rgb(77,77,77);
+            colors[ImGuiCol_Button]=Rgb(80,80,80);
+            colors[ImGuiCol_ButtonHovered]=Rgb(95,95,95);
+            colors[ImGuiCol_ButtonActive]=selection;
+            colors[ImGuiCol_ScrollbarBg]=panel;
+            colors[ImGuiCol_ScrollbarGrab]=Rgb(91,91,91);
+            colors[ImGuiCol_Tab]=toolbar;
+            style.WindowMenuButtonPosition=ImGuiDir_None;
+            style.WindowPadding=ImVec2(8,6);
+            style.WindowRounding=3;
+            style.PopupRounding=4;
+            style.FramePadding=ImVec2(6,2);
+            style.FrameRounding=2;
+            style.FrameBorderSize=1;
+            style.ItemSpacing=ImVec2(6,4);
+            style.ScrollbarSize=12;
+            style.ScrollbarRounding=5;
+            style.TabBorderSize=0;
+#ifndef __EMSCRIPTEN__
+            style.ScaleAllSizes(std::clamp(Application::Get().GetWindow().GetDPIScale(),1.0f,2.5f));
+#endif
+        }
+
 	}
 
 }

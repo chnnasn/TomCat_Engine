@@ -1,7 +1,5 @@
 #pragma once
 
-#include "TomCat/Renderer/OrthographicCamera.h"
-
 #include "TomCat/Renderer/Texture.h"
 
 #include "TomCat/Renderer/Camera.h"
@@ -10,60 +8,140 @@
 
 #include "TomCat/Scene/Components.h"
 
+#include <array>
+#include <span>
+
 namespace TomCat {
 
 	class Renderer2D
 	{
 	public:
+		struct PointLightData
+		{
+			glm::vec3 Position{ 0.0f };
+			glm::vec3 Color{ 1.0f };
+			float Intensity = 1.0f;
+			float Radius = 5.0f;
+			float Falloff = 1.0f;
+		};
+
+		// Lighting is evaluated per submitted vertex. This keeps the existing
+		// batched material path intact while producing a smooth light gradient
+		// across sprites, tiles and particles.
+		static void Set2DLighting(const glm::vec3& ambient,
+			std::span<const PointLightData> pointLights);
+		struct SpriteSortKey
+		{
+			int32_t SortingLayer = 0;
+			int32_t OrderInLayer = 0;
+			uint64_t SubOrder = 0;
+			uint64_t EntityID = 0;
+		};
+
+		static SpriteSortKey MakeSpriteSortKey(const SpriteRenderer& sprite,
+			uint64_t entityID, uint64_t subOrder = 0)
+		{
+			return { sprite.SortingLayer, sprite.OrderInLayer, subOrder, entityID };
+		}
+
+		static bool SpriteSortLess(const SpriteSortKey& left,
+			const SpriteSortKey& right)
+		{
+			if (left.SortingLayer != right.SortingLayer)
+				return left.SortingLayer < right.SortingLayer;
+			if (left.OrderInLayer != right.OrderInLayer)
+				return left.OrderInLayer < right.OrderInLayer;
+			if (left.EntityID != right.EntityID)
+				return left.EntityID < right.EntityID;
+			return left.SubOrder < right.SubOrder;
+		}
+
+		// Conservative homogeneous clip test for the renderer's unit quad. It
+		// rejects only quads wholly outside one camera plane, so rotations,
+		// perspective and near-plane intersections remain safe.
+		static bool IsQuadVisible(const glm::mat4& worldTransform,
+			const glm::mat4& viewProjection);
+
 		static void Init();
 		static void Shutdown();
 
 		static void BeginScene(const Camera& camera, const glm::mat4& transform);
 		static void BeginScene(const EditorCamera& camera);
-		static void BeginScene(const OrthographicCamera& camera);//todo remove
 		static void EndScene();
 		static void Flush();
 
-		// Primitives
+		// Filled rectangles (quads)
 		static void DrawQuad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color);
 		static void DrawQuad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color);
 		static void DrawQuad(const glm::vec2& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 		static void DrawQuad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 
-		static void DrawQuad(const glm::mat4& transform, const glm::vec4& color, int entityID = -1);
-		static void DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1);
+		static void DrawQuad(const glm::mat4& transform, const glm::vec4& color,
+			int entityID = -1, bool lit = false);
+		static void DrawQuad(const glm::mat4& transform, const Ref<Texture2D>& texture,
+			float tilingFactor = 1.0f,
+			const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1,
+			bool lit = false);
+		static void DrawLitQuad(const glm::mat4& transform, const glm::vec4& color,
+			int entityID = -1);
+		// Sub-region submission used by glyph and sprite atlases. UVs use the
+		// renderer's conventional bottom-left origin and are validated/clamped by
+		// the caller that owns the atlas metadata.
+		static void DrawTexturedQuadRegion(const glm::mat4& transform,
+			const Ref<Texture2D>& texture, const glm::vec2& uvMin,
+			const glm::vec2& uvMax, const glm::vec4& tintColor = glm::vec4(1.0f),
+			int entityID = -1, bool lit = false);
+		// Submits explicit quad vertices. Supplying the first vertex again as the
+		// fourth produces one textured triangle plus one degenerate triangle, which
+		// lets CPU-clipped UI polygons share the existing quad batch safely.
+		static void DrawTexturedQuadVertices(
+			const std::array<glm::vec3, 4>& positions,
+			const Ref<Texture2D>& texture,
+			const std::array<glm::vec2, 4>& textureCoordinates,
+			const glm::vec4& tintColor = glm::vec4(1.0f),
+			int entityID = -1, bool lit = false);
+		// Procedural circle primitive for colliders, masks, gizmos, and other
+		// utility rendering. Ordinary visible objects use a SpriteRenderer asset.
+		static void DrawCircle(const glm::mat4& transform, const glm::vec4& color,
+			float thickness = 1.0f, float fade = 0.005f, int entityID = -1);
+
+		static void DrawLine(const glm::vec3& start, const glm::vec3& end,
+			const glm::vec4& color, int entityID = -1);
+		// Rectangle outlines rendered as four lines.
+		static void DrawRect(const glm::vec2& position, const glm::vec2& size,
+			const glm::vec4& color, int entityID = -1);
+		static void DrawRect(const glm::vec3& position, const glm::vec2& size,
+			const glm::vec4& color, int entityID = -1);
+		static void DrawRect(const glm::mat4& transform, const glm::vec4& color,
+			int entityID = -1);
+
+		static float GetLineWidth();
+		static void SetLineWidth(float width);
 
 		static void DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const glm::vec4& color);
 		static void DrawRotatedQuad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color);
 		static void DrawRotatedQuad(const glm::vec2& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 		static void DrawRotatedQuad(const glm::vec3& position, const glm::vec2& size, float rotation, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f));
 
+		// Resolves the SpriteRenderer handle and draws its sprite through the textured-quad path.
 		static void DrawSprite(const glm::mat4& transform, SpriteRenderer& src, int entityID);
 		// Stats
 		struct Statistics
 		{
 			uint32_t DrawCalls = 0;
 			uint32_t QuadCount = 0;
+			uint32_t CircleCount = 0;
+			uint32_t LineCount = 0;
 
-			uint32_t GetTotalVertexCount() { return QuadCount * 4; }
-			uint32_t GetTotalIndexCount() { return QuadCount * 6; }
+			uint32_t GetTotalVertexCount() const { return (QuadCount + CircleCount) * 4 + LineCount * 2; }
+			uint32_t GetTotalIndexCount() const { return (QuadCount + CircleCount) * 6; }
 		};
 		static void ResetStats();
 		static Statistics GetStats();
 		
-		// 控制批处理模式
-		static void SetUseBatching(bool useBatching);
-		static bool GetUseBatching();
 	private:
 		static void StartBatch();
 		static void NextBatch();
-		
-		// 控制是否使用批处理模式
-		static bool s_UseBatching;
-
-		// 立即渲染单个四边形的辅助函数（非批处理模式）
-		static void DrawQuadImmediate(const glm::mat4& transform, const glm::vec4& color, int entityID = -1);
-		static void DrawQuadImmediate(const glm::mat4& transform, const Ref<Texture2D>& texture, float tilingFactor = 1.0f, const glm::vec4& tintColor = glm::vec4(1.0f), int entityID = -1);
 	};
 
 }
