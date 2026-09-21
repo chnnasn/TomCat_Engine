@@ -10,6 +10,24 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
+## 当前分支的作用
+
+**dev_butter — Butter 2D 物理后端集成**
+
+将 Box2D 替换为 Butter，并默认启用 2D 连续碰撞检测（CCD）。用于开发和验证物理后端、碰撞/触发回调及已有 2D 物理 API 的兼容性。本分支面向 2D 物理，没有新增 3D 刚体系统。
+
+分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
+
+| 分支 | 作用 |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | 构建、打包与 C# 工具链开发 |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
+
 文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.3.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
@@ -63,7 +81,8 @@ Profiler 提供 CPU Usage、GPU Usage、Rendering、Memory 模块，以及选帧
 
 ### 实时物理与播放控制
 
-Play 在编辑场景的副本中运行固定步 Butter 物理。矩形下落并停在地板上，Pause / Step 用于检查运行状态，
+以下历史录屏来自 Box2D 主线版本；当前分支已改用 Butter，不能据此作为 Butter 的验收证据。
+录屏中的 Play 在编辑场景副本中运行固定步 Box2D 物理。矩形下落并停在地板上，Pause / Step 用于检查运行状态，
 Stop 恢复原有位置和旋转。物理片段保持原速。
 
 ![下落与 Play、Pause、Step、Stop](docs/portfolio/2026-09-20/05-play-controls.gif)

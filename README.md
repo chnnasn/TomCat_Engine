@@ -12,6 +12,24 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
+## Current Branch Purpose
+
+**dev_butter — Butter 2D physics integration**
+
+Replaces Box2D with Butter and enables 2D continuous collision detection (CCD) by default. Use it to develop and validate the physics backend, collision/trigger callbacks and existing 2D physics API compatibility. This is a 2D physics branch, with no new 3D rigid-body system.
+
+Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this map to choose a development track and check that branch for its actual capabilities.
+
+| Branch | Purpose |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | Desktop mainline and integration baseline |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | Build, packaging and C# toolchain development |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend development |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Experimental browser Editor and Player development |
+
 Documentation reviewed against the repository on **2026-09-20**. Product version: **0.3.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
 
@@ -73,7 +91,8 @@ running throughout; the displayed timings are not performance benchmarks.
 
 ### Live simulation
 
-Play runs a copy of the authored scene with fixed-step Butter physics. The sample
+This historical recording comes from the Box2D mainline build; it is not validation evidence for this branch's Butter backend.
+In the recording, Play runs a copy of the authored scene with fixed-step Box2D physics. The sample
 rectangle falls onto the floor; Pause and Step inspect runtime state, and Stop
 restores its initial position and rotation. Physics footage stays at real-time speed.
 
