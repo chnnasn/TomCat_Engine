@@ -12,6 +12,24 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
+## Current Branch Purpose
+
+**main_web — Experimental browser Editor and Player development**
+
+Develops Emscripten/WebGL2 targets, shared native ImGui editor panels and browser-host integration, including Scene toolbar and Game-view behavior. The host handles persistence. Use the [Web build and integration guide](Web/README.md); SharedArrayBuffer/Workers are required and C# payloads are unsupported. This branch has its own history and does not necessarily contain the latest desktop mainline changes.
+
+Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this map to choose a development track and check that branch for its actual capabilities.
+
+| Branch | Purpose |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | Desktop mainline and integration baseline |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | Build, packaging and C# toolchain development |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend development |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Experimental browser Editor and Player development |
+
 Documentation reviewed against the repository on **2026-09-18**. Product version: **0.2.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
 
