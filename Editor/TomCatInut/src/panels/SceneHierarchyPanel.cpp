@@ -3404,9 +3404,12 @@ namespace TomCat {
 
 		if (ImGui::BeginMenu("3D Object"))
 		{
-			for (int type = 1; type <= 2; ++type)
-			{
-				const char* name = type == 1 ? "Cube" : "Plane";
+			const char* primitiveNames[] = {"Cube", "Sphere", "Capsule", "Cylinder", "Plane", "Quad"};
+            const int primitiveTypes[] = {1, 3, 4, 5, 6, 2};
+            for (int index = 0; index < 6; ++index)
+            {
+                const char* name = primitiveNames[index];
+                const int type = primitiveTypes[index];
 				if (ImGui::MenuItem(name))
 				{
 					Entity entity = m_Context->CreateEntity(name);
@@ -4312,7 +4315,7 @@ static void DrawComponent(const std::string& name, Entity entity,
                             static const char* lightTypes[] = {"Directional", "Point", "Spot"}; labels = lightTypes; labelCount = 3;
                         }
                         if (componentType == ComponentIds::MeshRenderer && property.StableName == "Primitive") {
-                            static const char* primitives[] = {"None", "Cube", "Plane"}; labels = primitives; labelCount = 3;
+                            static const char* primitives[] = {"None", "Cube", "Quad", "Sphere", "Capsule", "Cylinder", "Plane"}; labels = primitives; labelCount = 7;
                         }
                         if (labels && item >= 0 && item < labelCount)
 							changed = ImGui::Combo("##Value", &item,

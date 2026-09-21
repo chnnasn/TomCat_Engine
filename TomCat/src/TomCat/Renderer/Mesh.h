@@ -21,12 +21,23 @@ namespace TomCat {
 			: Position(position), Normal(normal), TexCoord(texCoord) {}
 	};
 
+    // Persisted values: 2 retains the original XY "Plane" geometry in old scenes.
+    enum class MeshPrimitive : int32_t { None = 0, Cube = 1, Quad = 2, Sphere = 3, Capsule = 4, Cylinder = 5, Plane = 6 };
+
 	class Mesh
 	{
 	public:
 		static Ref<Mesh> Create(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
 		static Ref<Mesh> LoadOBJ(const std::string& filepath);
+        static bool GeneratePrimitive(MeshPrimitive type, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices);
+        static Ref<Mesh> CreatePrimitive(MeshPrimitive type);
+        static Ref<Mesh> CreateSphere();
+        static Ref<Mesh> CreateCapsule();
+        static Ref<Mesh> CreateCylinder();
+        static Ref<Mesh> CreateQuad(float width = 1.0f, float height = 1.0f);
+        static Ref<Mesh> CreateGroundPlane(float width = 10.0f, float depth = 10.0f);
 		static Ref<Mesh> CreateCube(float size = 1.0f);
+        // Legacy XY plane API. Prefer CreateQuad or CreateGroundPlane in new code.
 		static Ref<Mesh> CreatePlane(float width = 1.0f, float height = 1.0f);
 
 		const std::string& GetName() const { return m_Name; }

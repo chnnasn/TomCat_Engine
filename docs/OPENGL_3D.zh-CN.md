@@ -5,9 +5,11 @@
 ## 使用
 
 1. 在 Scene 工具栏关闭 2D 模式。
-2. Hierarchy 右键 → **3D Object → Cube / Plane**，或把 Project 中的 OBJ、FBX、glTF、GLB 资源拖进 Scene。
-3. Inspector 的 **Mesh Renderer** 支持启用状态、颜色、Mesh、Albedo、UseTexture，以及 Metallic、Roughness、AmbientOcclusion、自发光和投射/接收阴影。Primitive 值为 0=None、1=Cube、2=Plane；指定 Mesh 时优先显示该资产。
+2. Hierarchy 右键 → **3D Object → Cube / Sphere / Capsule / Cylinder / Plane / Quad**，或把 Project 中的 OBJ、FBX、glTF、GLB 资源拖进 Scene。
+3. Inspector 的 **Mesh Renderer** 支持启用状态、颜色、Mesh、Albedo、UseTexture，以及 Metallic、Roughness、AmbientOcclusion、自发光和投射/接收阴影。Primitive 持久化值为 0=None、1=Cube、2=Quad、3=Sphere、4=Capsule、5=Cylinder、6=Plane；指定 Mesh 时优先显示该资产。
 4. Game 使用场景中的主相机。使用 Perspective 投影，相机本地 **+Z** 指向物体，与 main 的相机约定一致。
+
+内置图元示例见 `Samples/Primitives3D/Project.tcproj`。Plane 为水平 XZ 网格（10×10），Quad 为竖直 XY 矩形（1×1）；Sphere 直径 1，Capsule/Cylinder 沿 Y 轴、直径 1、高 2。旧场景的 Primitive=2 仍生成原来的竖直矩形，显示名称改为 Quad，不改变原场景朝向。旧 C++ `CreatePlane` API 保留 XY 语义，新代码使用 `CreateGroundPlane` / `CreateQuad`。
 
 模型的节点变换会烘焙到静态顶点；多子网格、漫反射颜色及编码的漫反射贴图保存在模型 Artifact 中，Player 从打包数据加载，不依赖开发机模型路径。glTF 的外置 buffer、OBJ 的 MTL 与贴图等文件应随模型一起放入 Assets。外部文件内容参与缓存键和导入完成时的变更检查；资源监视会保守地重新检查模型缓存。
 

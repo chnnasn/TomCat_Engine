@@ -811,8 +811,7 @@ namespace TomCat {
 						}
 						else TC_Core_Warn("Mesh load failed: {0}", loaded.Error);
 					}
-					else if (mesh.PrimitiveType == 1) mesh.MeshAsset = Mesh::CreateCube();
-					else if (mesh.PrimitiveType == 2) mesh.MeshAsset = Mesh::CreatePlane();
+					else mesh.MeshAsset = Mesh::CreatePrimitive(static_cast<MeshPrimitive>(mesh.PrimitiveType));
 				}
 				mesh.AlbedoTexture = mesh.UseTexture && static_cast<uint64_t>(mesh.AlbedoHandle)
 					? assets.LoadTexture(mesh.AlbedoHandle) : nullptr;

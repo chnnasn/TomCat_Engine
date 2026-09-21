@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "productName": "Primitives3D",
+  "companyName": "DefaultCompany",
+  "version": "1.0.0",
+  "icon": 0,
+  "display": {
+    "width": 1280,
+    "height": 720,
+    "windowMode": "Windowed",
+    "resizable": true,
+    "vSync": true
+  },
+  "directories": {
+    "save": "Saves",
+    "log": "Logs",
+    "crash": "Crashes"
+  }
+}
