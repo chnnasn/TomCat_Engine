@@ -107,7 +107,7 @@ internal static class HostErrors
 
     internal static void Report(string operation, Exception exception) =>
         NativeBridge.ReportManagedException(
-            $"TomCat.ScriptHost {operation} failed: {exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}");
+            $"TomCat.ScriptHost {operation} failed: {exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}", exception);
 }
 
 internal static unsafe class Exports

@@ -265,8 +265,10 @@ namespace TomCat {
         {
 #ifdef TC_PLATFORM_WINDOWS
             ImGui::Text("Attach managed (.NET) debugger to PID %lu",static_cast<unsigned long>(GetCurrentProcessId()));
+            if (ImGui::Button("Copy PID"))
+                ImGui::SetClipboardText(std::to_string(GetCurrentProcessId()).c_str());
 #endif
-            ImGui::TextWrapped("After Play initializes .NET, attach Visual Studio to TomCatInut.exe with managed .NET code selected. Set a breakpoint in the project's script source and enter Play again for OnCreate. See docs/DEBUGGING_AND_PROFILING.md for symbols and source mapping.");
+            ImGui::TextWrapped("Wait for a successful C# compile, then attach Visual Studio to TomCatInut.exe with managed .NET code selected. For VS Code with the C# extension, open Library/ScriptProject/TomCat.code-workspace and select Attach to TomCat Editor. Set a breakpoint and enter Play to catch OnCreate. Scripts use portable PDBs with optimization disabled. Stop Play before applying source changes.");
         }
         else if(m_SelectedModule==3)
         {

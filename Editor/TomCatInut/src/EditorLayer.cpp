@@ -1938,8 +1938,10 @@ namespace TomCat {
 		{
 			m_ObservedScriptSourceHash = m_ScriptCompiler.GetCurrentSourceHash();
 			m_ScriptCompileDebounceRemaining = 0.65f;
-			if (completed.Succeeded && m_SceneState == SceneState::Edit)
-				PrepareManagedRuntime();
+			if (completed.Succeeded && m_SceneState == SceneState::Edit && PrepareManagedRuntime())
+				m_ConsolePanel.Push(ConsoleMessageSeverity::Info,
+					"C# assembly reloaded. Inspector metadata is current; the next Play uses build "
+					+ completed.BuildID + ".", "Script Runtime");
 		}
 		if (!m_CurrentProject)
 			return;
@@ -2660,7 +2662,7 @@ namespace TomCat {
 
         m_ContentBrowserPanel.OnAssetInspectorRender(&m_ShowAssetInspector);
         m_ConsolePanel.SetErrorPauseCallback([this] { if (m_SceneState == SceneState::Play) OnScenePause(); });
-        m_ConsolePanel.SetOpenSourceCallback([this](const std::filesystem::path& path) { m_ContentBrowserPanel.OpenDiagnosticSource(path); });
+        m_ConsolePanel.SetOpenSourceCallback([this](const std::filesystem::path& path, uint32_t line, uint32_t column) { m_ContentBrowserPanel.OpenDiagnosticSource(path, line, column); });
         if (ShouldRenderDockPanel("Profiler")) m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel);
         if (m_ShowRuntimeScenes)
         {
