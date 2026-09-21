@@ -736,6 +736,44 @@ namespace TomCat {
 		void Render3DComponents(Scene& scene, entt::registry& registry, bool editor)
 		{
 			TC_PROFILE_SCOPE("Scene 3D Meshes");
+            auto visible = [&](entt::entity raw) {
+                Entity e(raw, &scene);
+                return editor ? scene.IsVisibleInEditorHierarchy(e) : scene.IsActiveInHierarchy(e);
+            };
+            std::vector<std::pair<uint64_t, Renderer3D::Light>> orderedLights;
+            auto lights = registry.view<ID, Transform, Light3D>();
+            for (auto raw : lights) {
+                const auto& light = lights.get<Light3D>(raw);
+                if (!light.Enabled || !visible(raw)) continue;
+                const auto transform = scene.GetRuntimeRenderTransform(lights.get<ID>(raw).id);
+                Renderer3D::Light l;
+                l.Position = glm::vec3(transform[3]); l.Direction = glm::vec3(transform * glm::vec4(0, 0, 1, 0));
+                l.Type = light.Type; l.Color = glm::vec3(light.Color); l.Intensity = light.Intensity;
+                l.Range = light.Range; l.InnerAngle = light.InnerAngle; l.OuterAngle = light.OuterAngle;
+                l.CastShadows = light.CastShadows; l.ShadowBias = light.ShadowBias; l.ShadowExtent = light.ShadowExtent;
+                orderedLights.emplace_back(static_cast<uint64_t>(lights.get<ID>(raw).id), l);
+            }
+            std::sort(orderedLights.begin(), orderedLights.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<Renderer3D::Light> renderLights;
+            for (const auto& [id, l] : orderedLights) renderLights.push_back(l);
+            // Legacy scenes without light components retain a default directional light.
+            // Once a component exists, disabling every light deliberately leaves only the environment.
+            if ((lights.begin() == lights.end())) renderLights.emplace_back();
+            Renderer3D::Environment environment;
+            auto environments = registry.view<ID, Environment3D>();
+            uint64_t chosen = UINT64_MAX;
+            for (auto raw : environments) {
+                const auto& e = environments.get<Environment3D>(raw);
+                auto id = static_cast<uint64_t>(environments.get<ID>(raw).id);
+                if (!e.Enabled || !visible(raw) || id >= chosen) continue;
+                chosen = id; environment.ShowSky = e.ShowSky;
+                environment.Panorama = static_cast<uint64_t>(e.Panorama) ? AssetManager::Get().LoadTexture(e.Panorama) : nullptr;
+                environment.SkyColor = glm::vec3(e.SkyColor); environment.GroundColor = glm::vec3(e.GroundColor);
+                environment.Intensity = e.Intensity; environment.AmbientIntensity = e.AmbientIntensity;
+                environment.Rotation = e.Rotation; environment.Exposure = e.Exposure;
+            }
+            if ((environments.begin() != environments.end()) && chosen == UINT64_MAX) environment.AmbientIntensity = 0;
+            Renderer3D::SetLighting(renderLights, environment);
 			auto view = registry.view<ID, Transform, MeshComponent>();
 			for (auto raw : view)
 			{
@@ -778,7 +816,13 @@ namespace TomCat {
 				}
 				mesh.AlbedoTexture = mesh.UseTexture && static_cast<uint64_t>(mesh.AlbedoHandle)
 					? assets.LoadTexture(mesh.AlbedoHandle) : nullptr;
-				if (mesh.Model) Renderer3D::DrawModel(mesh.Model, scene.GetRuntimeRenderTransform(entity.GetUUID()), static_cast<int>(raw), mesh.Color, mesh.AlbedoTexture);
+				Renderer3D::Surface surface;
+                surface.Metallic = mesh.Metallic; surface.Roughness = mesh.Roughness;
+                surface.AmbientOcclusion = mesh.AmbientOcclusion;
+                surface.Emission = glm::vec3(mesh.Emission) * mesh.EmissionIntensity;
+                surface.CastShadows = mesh.CastShadows; surface.ReceiveShadows = mesh.ReceiveShadows;
+                Renderer3D::SetSurface(surface);
+                if (mesh.Model) Renderer3D::DrawModel(mesh.Model, scene.GetRuntimeRenderTransform(entity.GetUUID()), static_cast<int>(raw), mesh.Color, mesh.AlbedoTexture);
 				else Renderer3D::DrawMesh(mesh.MeshAsset, scene.GetRuntimeRenderTransform(entity.GetUUID()),
 					mesh.AlbedoTexture, mesh.Color, mesh.UseTexture, static_cast<int>(raw));
 			}
@@ -4524,7 +4568,13 @@ namespace TomCat {
 			}
 		}
 
-		auto scriptsView = m_Registry.view<ID, CSharpScripts>();
+		for (auto raw : m_Registry.view<ID, Environment3D>()) {
+            if (m_Registry.get<Environment3D>(raw).Panorama != handle) continue;
+            AssetReference reference; reference.ReferencedAsset = handle;
+            reference.PropertyPath = "Entity " + std::to_string(static_cast<uint64_t>(m_Registry.get<ID>(raw).id)) + ".Environment3D.Panorama";
+            references.push_back(std::move(reference));
+        }
+        auto scriptsView = m_Registry.view<ID, CSharpScripts>();
 		auto animatorView = m_Registry.view<ID, SpriteAnimator>();
 		for (const entt::entity entity : animatorView)
 		{

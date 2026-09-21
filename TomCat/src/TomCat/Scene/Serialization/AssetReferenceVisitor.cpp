@@ -362,6 +362,10 @@ namespace TomCat {
 					return false;
 
 				const YAML::Node registeredComponents = entity["Components"];
+                if (!VisitRegisteredAssetProperty(registeredComponents,
+                    "TomCat.Environment3D", "Panorama", entityPath, AssetType::Texture2D,
+                    SerializedAssetReferenceKind::Material, visitor, errorMessage)) return false;
+
 				if (!VisitRegisteredAssetProperty(registeredComponents,
 					"TomCat.MeshRenderer", "Mesh", entityPath, AssetType::Mesh,
 					SerializedAssetReferenceKind::Material, visitor, errorMessage)

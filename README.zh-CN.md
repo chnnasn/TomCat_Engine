@@ -1,6 +1,6 @@
 # TomCat Engine
 
-> `dev_opengl3D` 分支在当前 main 功能上提供静态 3D 网格渲染、模型导入与组件集成，见 [OpenGL 3D 使用说明](docs/OPENGL_3D.zh-CN.md)。
+> `dev_opengl3D` 分支在当前 main 功能上提供静态 3D 网格、天空、可编辑灯光、方向光阴影、PBR 与环境照明，见 [OpenGL 3D 使用说明](docs/OPENGL_3D.zh-CN.md)。
 
 一款面向 **2D 游戏开发的 C++20 开源引擎**，包含可视化编辑器、项目中心与独立游戏运行时。
 
@@ -223,7 +223,8 @@ PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区�
 
 ### 未来 3D 范围
 
-- [ ] Mesh/模型导入、Material、Light、PBR、阴影、环境渲染和骨骼动画
+- [x] 本分支：静态 Mesh/模型导入、组件式 PBR 参数、Light、方向光阴影与环境渲染
+- [ ] 独立材质资产、PBR 贴图、骨骼动画及更多阴影类型
 - [ ] 等 3D Runtime 与编辑流程成立后，再将当前仅有相机的 3D 模板转为正式功能
 
 ## 相关项目

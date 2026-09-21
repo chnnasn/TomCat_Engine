@@ -1271,10 +1271,75 @@ namespace TomCat {
 				AssetProperty(1602, "Mesh", AssetType::Mesh, [](Entity e) -> AssetHandle& { return e.GetComponent<MeshComponent>().MeshHandle; }),
 				std::move(primitive),
 				AssetProperty(1604, "Albedo", AssetType::Texture2D, [](Entity e) -> AssetHandle& { return e.GetComponent<MeshComponent>().AlbedoHandle; }),
-				BoolProperty<MeshComponent>(1605, "UseTexture", &MeshComponent::UseTexture)
+				BoolProperty<MeshComponent>(1605, "UseTexture", &MeshComponent::UseTexture),
+                FloatProperty<MeshComponent>(1606, "Metallic", &MeshComponent::Metallic, 0.0f, 1.0f),
+                FloatProperty<MeshComponent>(1607, "Roughness", &MeshComponent::Roughness, 0.045f, 1.0f),
+                FloatProperty<MeshComponent>(1608, "AmbientOcclusion", &MeshComponent::AmbientOcclusion, 0.0f, 1.0f),
+                ColorProperty<MeshComponent>(1609, "Emission", &MeshComponent::Emission),
+                FloatProperty<MeshComponent>(1610, "EmissionIntensity", &MeshComponent::EmissionIntensity, 0.0f, 10000.0f),
+                BoolProperty<MeshComponent>(1611, "CastShadows", &MeshComponent::CastShadows),
+                BoolProperty<MeshComponent>(1612, "ReceiveShadows", &MeshComponent::ReceiveShadows)
 			};
+            descriptor.SchemaVersion = 2;
+            descriptor.Migrations.push_back({1, 2, [](YAML::Node& record, std::string& error) {
+                auto properties = record["Properties"];
+                if (!properties.IsSequence()) { error = "Mesh v1 properties must be a sequence"; return false; }
+                for (const auto& property : properties) {
+                    if (!property["PropertyId"] || property["PropertyId"].as<uint64_t>() >= 1606) {
+                        error = "Mesh v1 contains an invalid property"; return false;
+                    }
+                }
+                const char* names[] = {"Metallic", "Roughness", "AmbientOcclusion", "Emission", "EmissionIntensity", "CastShadows", "ReceiveShadows"};
+                const char* values[] = {"0.0", "0.5", "1.0", "[0.0, 0.0, 0.0, 1.0]", "0.0", "true", "true"};
+                for (uint64_t i = 0; i < 7; ++i) {
+                    YAML::Node p; p["PropertyId"] = 1606 + i; p["StableName"] = names[i];
+                    p["Value"] = YAML::Load(values[i]); properties.push_back(p);
+                }
+                return true;
+            }});
 			return descriptor;
 		}
+
+        ComponentDescriptor MakeLight3DDescriptor()
+        {
+            auto d = BaseDescriptor<Light3D>(ComponentIds::Light3D, "TomCat.Light3D", "Light 3D");
+            d.UseGenericInspector = d.ScriptAccessible = true;
+            auto type = IntProperty<Light3D>(1701, "Type", &Light3D::Type);
+            type.Set = [](Entity e, const PropertyValue& v, std::string& error) {
+                int value = std::get<int32_t>(v);
+                if(value < 0 || value > 2) { error = "Light type must be Directional (0), Point (1), or Spot (2)"; return false; }
+                e.GetComponent<Light3D>().Type = value; return true;
+            };
+            d.Properties = {
+                BoolProperty<Light3D>(1700, "Enabled", &Light3D::Enabled), std::move(type),
+                ColorProperty<Light3D>(1702, "Color", &Light3D::Color),
+                FloatProperty<Light3D>(1703, "Intensity", &Light3D::Intensity, 0.0f, 10000.0f),
+                FloatProperty<Light3D>(1704, "Range", &Light3D::Range, 0.01f, 100000.0f),
+                FloatProperty<Light3D>(1705, "InnerAngle", &Light3D::InnerAngle, 0.0f, 88.99f),
+                FloatProperty<Light3D>(1706, "OuterAngle", &Light3D::OuterAngle, 0.1f, 89.0f),
+                BoolProperty<Light3D>(1707, "CastShadows", &Light3D::CastShadows),
+                FloatProperty<Light3D>(1708, "ShadowBias", &Light3D::ShadowBias, 0.0f, 0.1f),
+                FloatProperty<Light3D>(1709, "ShadowExtent", &Light3D::ShadowExtent, 1.0f, 10000.0f)
+            };
+            return d;
+        }
+        ComponentDescriptor MakeEnvironment3DDescriptor()
+        {
+            auto d = BaseDescriptor<Environment3D>(ComponentIds::Environment3D, "TomCat.Environment3D", "Environment 3D");
+            d.UseGenericInspector = d.ScriptAccessible = true;
+            d.Properties = {
+                BoolProperty<Environment3D>(1800, "Enabled", &Environment3D::Enabled),
+                BoolProperty<Environment3D>(1801, "ShowSky", &Environment3D::ShowSky),
+                AssetProperty(1802, "Panorama", AssetType::Texture2D, [](Entity e) -> AssetHandle& { return e.GetComponent<Environment3D>().Panorama; }),
+                ColorProperty<Environment3D>(1803, "SkyColor", &Environment3D::SkyColor),
+                ColorProperty<Environment3D>(1804, "GroundColor", &Environment3D::GroundColor),
+                FloatProperty<Environment3D>(1805, "Intensity", &Environment3D::Intensity, 0.0f, 10000.0f),
+                FloatProperty<Environment3D>(1806, "AmbientIntensity", &Environment3D::AmbientIntensity, 0.0f, 10000.0f),
+                FloatProperty<Environment3D>(1807, "Rotation", &Environment3D::Rotation, -360.0f, 360.0f),
+                FloatProperty<Environment3D>(1808, "Exposure", &Environment3D::Exposure, 0.0f, 1000.0f)
+            };
+            return d;
+        }
 
 		ComponentDescriptor MakeSpriteRendererDescriptor()
 		{
@@ -2352,6 +2417,8 @@ namespace TomCat {
 		result.emplace_back(MakeCameraDescriptor());
 		result.emplace_back(MakeSpriteRendererDescriptor());
 		result.emplace_back(MakeMeshDescriptor());
+        result.emplace_back(MakeLight3DDescriptor());
+        result.emplace_back(MakeEnvironment3DDescriptor());
 		result.emplace_back(MakeSpriteAnimatorDescriptor());
 		result.emplace_back(MakeLineRendererDescriptor());
 		result.emplace_back(MakeCSharpScriptsDescriptor());

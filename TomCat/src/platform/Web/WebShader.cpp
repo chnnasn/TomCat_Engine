@@ -13,13 +13,14 @@ namespace {
 std::string ToGLES(std::string source, GLenum stage) {
   source.erase(0, source.find_first_not_of(" \t\r\n"));
   source = std::regex_replace(source, std::regex(R"(#version 450 core)"), "#version 300 es\nprecision highp float;\nprecision highp int;");
-  source = std::regex_replace(source, std::regex(R"(layout\(std140, binding = [0-9]+\))"), "layout(std140)");
-  source = std::regex_replace(source, std::regex(R"(layout\(binding = [0-9]+\) )"), "");
-  source = std::regex_replace(source, std::regex(stage == GL_VERTEX_SHADER ? R"(layout\(location = [0-9]+\) out)" : R"(layout\(location = [0-9]+\) in)"), stage == GL_VERTEX_SHADER ? "out" : "in");
+  source = std::regex_replace(source, std::regex(R"(layout\(std140,\s*binding\s*=\s*[0-9]+\))"), "layout(std140)");
+  source = std::regex_replace(source, std::regex(R"(layout\((location\s*=\s*[0-9]+,\s*)?binding\s*=\s*[0-9]+\)\s*)"), "");
+  source = std::regex_replace(source, std::regex(stage == GL_VERTEX_SHADER ? R"(layout\(location\s*=\s*[0-9]+\) out)" : R"(layout\(location\s*=\s*[0-9]+\) in)"), stage == GL_VERTEX_SHADER ? "out" : "in");
   source = std::regex_replace(source, std::regex(R"(u_Textures\[32\])"), "u_Textures[16]");
   source = std::regex_replace(source, std::regex(R"(\b(out|in) flat\b)"), "flat $1");
   source = std::regex_replace(source, std::regex(R"(\b(Input|Output)\b)"), "v_Data");
   source = std::regex_replace(source, std::regex(R"(case (1[6-9]|2[0-9]|3[01]):[^\n]*)"), "");
+  source = std::regex_replace(source, std::regex("gl_VertexIndex"), "gl_VertexID");
   return source;
 }
 GLuint Compile(GLenum stage, const std::string& source) {
@@ -46,6 +47,8 @@ OpenGLShader::OpenGLShader(const std::string& name, const std::string& vertex, c
     if (camera != GL_INVALID_INDEX) glUniformBlockBinding(m_RendererID, camera, 0);
     const GLuint material = glGetUniformBlockIndex(m_RendererID, "Material");
     if (material != GL_INVALID_INDEX) glUniformBlockBinding(m_RendererID, material, 1);
+      const GLuint lighting = glGetUniformBlockIndex(m_RendererID, "Lighting");
+      if (lighting != GL_INVALID_INDEX) glUniformBlockBinding(m_RendererID, lighting, 2);
   } catch (...) { glDeleteShader(vs); if (fs) glDeleteShader(fs); if (m_RendererID) glDeleteProgram(m_RendererID); throw; }
   glDeleteShader(vs); glDeleteShader(fs);
 }

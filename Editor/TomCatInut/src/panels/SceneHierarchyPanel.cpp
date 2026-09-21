@@ -144,7 +144,10 @@ namespace TomCat {
 	{
 		switch (static_cast<uint64_t>(descriptor.TypeId))
 		{
-		case ComponentIds::Camera:
+		case ComponentIds::MeshRenderer:
+        case ComponentIds::Light3D:
+        case ComponentIds::Environment3D:
+        case ComponentIds::Camera:
 		case ComponentIds::SpriteRenderer:
 		case ComponentIds::LineRenderer:
 		case ComponentIds::ParticleSystem2D:
@@ -3413,6 +3416,18 @@ namespace TomCat {
 					MarkModified();
 				}
 			}
+            ImGui::Separator();
+            const char* lightNames[] = {"Directional Light", "Point Light", "Spot Light"};
+            for (int type = 0; type < 3; ++type) if (ImGui::MenuItem(lightNames[type])) {
+                Entity entity = m_Context->CreateEntity(lightNames[type]);
+                entity.AddComponent<Light3D>().Type = type;
+                if (type == 0) entity.GetComponent<Transform>()._Rotation = glm::radians(glm::vec3(55, -30, 0));
+                CreateAsSelectedChild(entity); SetSelectedEntity(entity); MarkModified();
+            }
+            if (ImGui::MenuItem("Sky / Environment")) {
+                Entity entity = m_Context->CreateEntity("Environment"); entity.AddComponent<Environment3D>();
+                CreateAsSelectedChild(entity); SetSelectedEntity(entity); MarkModified();
+            }
 			ImGui::EndMenu();
 		}
 
@@ -4239,6 +4254,11 @@ static void DrawComponent(const std::string& name, Entity entity,
 				ImGui::TextDisabled("Screen Space - Overlay");
 			else if (componentType == ComponentIds::TextRenderer)
 				ImGui::TextDisabled("World-space text rendered by the active camera");
+            if (componentType == ComponentIds::Light3D) {
+                ImGui::TextDisabled("Direction: local +Z. Shadows: one directional light.");
+            } else if (componentType == ComponentIds::Environment3D) {
+                ImGui::TextDisabled("Panorama: equirectangular image / HDR. Rotation: degrees.");
+            }
 			for (const PropertyDescriptor& property : descriptor.Properties)
 			{
 				ImGui::PushID(property.StableName.c_str());
@@ -4288,7 +4308,13 @@ static void DrawComponent(const std::string& name, Entity entity,
 							labels = layoutDirectionLabels;
 							labelCount = static_cast<int>(std::size(layoutDirectionLabels));
 						}
-						if (labels && item >= 0 && item < labelCount)
+						if (componentType == ComponentIds::Light3D && property.StableName == "Type") {
+                            static const char* lightTypes[] = {"Directional", "Point", "Spot"}; labels = lightTypes; labelCount = 3;
+                        }
+                        if (componentType == ComponentIds::MeshRenderer && property.StableName == "Primitive") {
+                            static const char* primitives[] = {"None", "Cube", "Plane"}; labels = primitives; labelCount = 3;
+                        }
+                        if (labels && item >= 0 && item < labelCount)
 							changed = ImGui::Combo("##Value", &item,
 								labels, labelCount);
 						else

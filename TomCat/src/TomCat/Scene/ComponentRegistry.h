@@ -25,6 +25,8 @@ namespace YAML {
 namespace TomCat {
 
 	namespace ComponentIds {
+		inline constexpr uint64_t Light3D = 0x9f00000000000017ULL;
+		inline constexpr uint64_t Environment3D = 0x9f00000000000018ULL;
 		inline constexpr uint64_t MeshRenderer = 0x9f00000000000016ULL;
 		// Explicit, persisted 64-bit UUID values. These constants are deliberately
 		// assigned and must never be replaced by enum ordinals, hashes or typeid.
