@@ -1,0 +1,49 @@
+name: Regressions
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify release scripts
+        shell: pwsh
+        run: .\Scripts\Test-ReleaseScripts.ps1
+
+      - name: Install pinned Premake
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          $pins = Get-Content "$env:GITHUB_WORKSPACE\Scripts\ReleaseToolVersions.json" -Raw | ConvertFrom-Json
+          $zip = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version).zip"
+          $directory = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version)"
+          Invoke-WebRequest -Uri $pins.premake.url -OutFile $zip -UseBasicParsing
+          [void](Assert-TomCatFileSha256 -Path $zip -ExpectedHash $pins.premake.sha256)
+          Expand-Archive -LiteralPath $zip -DestinationPath $directory -Force
+          $premake = Join-Path $directory 'premake5.exe'
+          if (-not (Test-Path -LiteralPath $premake -PathType Leaf)) { throw 'Premake executable is missing from the verified archive.' }
+          "PREMAKE=$premake" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run Release regressions
+        shell: pwsh
+        run: .\Scripts\Run-Regressions.ps1 -Configuration Release -Platform x64 -PremakePath $env:PREMAKE

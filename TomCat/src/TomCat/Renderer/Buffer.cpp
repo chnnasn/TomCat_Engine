@@ -12,7 +12,7 @@ namespace TomCat {
 
 			case RendererAPI::API::OpenGL: return  CreateRef< OpenGLVertexBuffer>(size);
 		}
-		TC_Core_Assert(false, "unknown rendererapi")
+		TC_Core_Assert(false, "unknown rendererapi");
 			return nullptr;
 	}
 
@@ -24,7 +24,7 @@ namespace TomCat {
 
 			case RendererAPI::API::OpenGL: return  CreateRef< OpenGLVertexBuffer>(vertices,size);
 		}
-		TC_Core_Assert(false,"unknown rendererapi")
+		TC_Core_Assert(false,"unknown rendererapi");
 		return nullptr;
 	}
 
@@ -37,7 +37,7 @@ namespace TomCat {
 
 			case RendererAPI::API::OpenGL: return CreateRef <OpenGLIndexBuffer>(indices, size);
 		}
-		TC_Core_Assert(false, "unknown rendererapi")
+		TC_Core_Assert(false, "unknown rendererapi");
 		return nullptr;
 	}
 

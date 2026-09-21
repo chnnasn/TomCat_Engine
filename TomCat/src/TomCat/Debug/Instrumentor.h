@@ -1,10 +1,18 @@
 #pragma once
 
+#include "TomCat/Debug/FrameProfiler.h"
+
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 
 namespace TomCat {
@@ -31,8 +39,10 @@ namespace TomCat {
 		Instrumentor(const Instrumentor&) = delete;
 		Instrumentor(Instrumentor&&) = delete;
 
-		void BeginSession(const std::string& name, const std::string& filepath = "results.json")
+		void BeginSession(const std::string& name,
+			const std::filesystem::path& filepath = "results.json")
 		{
+			m_SessionActive.store(false, std::memory_order_release);
 			std::lock_guard lock(m_Mutex);
 			if (m_CurrentSession)
 			{
@@ -51,25 +61,41 @@ namespace TomCat {
 			if (m_OutputStream.is_open())
 			{
 				m_CurrentSession = new InstrumentationSession({ name });
+				m_WrittenBytes = 0;
+				m_BytesSinceFlush = 0;
 				WriteHeader();
+				m_SessionActive.store(true, std::memory_order_release);
 			}
 			else
 			{
 				if (Log::GetCoreLogger()) // Edge case: BeginSession() might be before Log::Init()
 				{
-					TC_Core_Error("Instrumentor could not open results file '{0}'.", filepath);
+					TC_Core_Error("Instrumentor could not open results file '{0}'.",
+						filepath.string());
 				}
 			}
 		}
 
 		void EndSession()
 		{
+			m_SessionActive.store(false, std::memory_order_release);
 			std::lock_guard lock(m_Mutex);
 			InternalEndSession();
 		}
 
+		[[nodiscard]] bool IsSessionActive() const noexcept
+		{
+			return m_SessionActive.load(std::memory_order_acquire);
+		}
+
 		void WriteProfile(const ProfileResult& result)
 		{
+			// The macros remain compiled into development and Release builds so a
+			// shipped game can opt in to profiling. The inactive path must stay cheap:
+			// do not format JSON or take the global mutex unless a session is open.
+			if (!IsSessionActive())
+				return;
+
 			std::stringstream json;
 
 			json << std::setprecision(3) << std::fixed;
@@ -83,11 +109,25 @@ namespace TomCat {
 			json << "\"ts\":" << result.Start.count();
 			json << "}";
 
+			const std::string record = json.str();
 			std::lock_guard lock(m_Mutex);
-			if (m_CurrentSession)
+			if (m_CurrentSession && IsSessionActive())
 			{
-				m_OutputStream << json.str();
-				m_OutputStream.flush();
+				// Always leave room for the JSON footer. Reaching the hard limit closes
+				// the trace as a valid document and atomically disables further events.
+				if (m_WrittenBytes + record.size() + FooterSize > MaxSessionBytes)
+				{
+					InternalEndSession();
+					return;
+				}
+				m_OutputStream << record;
+				m_WrittenBytes += record.size();
+				m_BytesSinceFlush += record.size();
+				if (m_BytesSinceFlush >= FlushIntervalBytes)
+				{
+					m_OutputStream.flush();
+					m_BytesSinceFlush = 0;
+				}
 			}
 		}
 
@@ -109,13 +149,16 @@ namespace TomCat {
 
 		void WriteHeader()
 		{
-			m_OutputStream << "{\"otherData\": {},\"traceEvents\":[{}";
+			constexpr std::string_view header = "{\"otherData\": {},\"traceEvents\":[{}";
+			m_OutputStream << header;
+			m_WrittenBytes += header.size();
 			m_OutputStream.flush();
 		}
 
 		void WriteFooter()
 		{
 			m_OutputStream << "]}";
+			m_WrittenBytes += FooterSize;
 			m_OutputStream.flush();
 		}
 
@@ -123,6 +166,7 @@ namespace TomCat {
 		// calling InternalEndSession()
 		void InternalEndSession()
 		{
+			m_SessionActive.store(false, std::memory_order_release);
 			if (m_CurrentSession)
 			{
 				WriteFooter();
@@ -132,18 +176,30 @@ namespace TomCat {
 			}
 		}
 	private:
+		static constexpr size_t MaxSessionBytes = 64ull * 1024ull * 1024ull;
+		static constexpr size_t FlushIntervalBytes = 256ull * 1024ull;
+		static constexpr size_t FooterSize = 2;
 		std::mutex m_Mutex;
+		std::atomic<bool> m_SessionActive{ false };
 		InstrumentationSession* m_CurrentSession;
 		std::ofstream m_OutputStream;
+		size_t m_WrittenBytes = 0;
+		size_t m_BytesSinceFlush = 0;
 	};
 
 	class InstrumentationTimer
 	{
 	public:
 		InstrumentationTimer(const char* name)
-			: m_Name(name), m_Stopped(false)
+			: m_Name(name),
+			  m_Frame(FrameProfiler::Get().ActiveFrame()),
+			  m_Enabled(m_Frame != 0 || Instrumentor::Get().IsSessionActive()),
+			  m_Stopped(!m_Enabled)
 		{
-			m_StartTimepoint = std::chrono::steady_clock::now();
+			if (m_Frame)
+				m_Depth = s_Depth++;
+			if (m_Enabled)
+				m_StartTimepoint = std::chrono::steady_clock::now();
 		}
 
 		~InstrumentationTimer()
@@ -154,17 +210,31 @@ namespace TomCat {
 
 		void Stop()
 		{
+			if (m_Stopped)
+				return;
 			auto endTimepoint = std::chrono::steady_clock::now();
 			auto highResStart = FloatingPointMicroseconds{ m_StartTimepoint.time_since_epoch() };
 			auto elapsedTime = std::chrono::time_point_cast<std::chrono::microseconds>(endTimepoint).time_since_epoch() - std::chrono::time_point_cast<std::chrono::microseconds>(m_StartTimepoint).time_since_epoch();
 
-			Instrumentor::Get().WriteProfile({ m_Name, highResStart, elapsedTime, std::this_thread::get_id() });
+			if (m_Frame)
+			{
+				--s_Depth;
+				FrameProfiler::Get().Record(m_Frame, m_Name, highResStart.count(),
+					std::chrono::duration<double, std::micro>(endTimepoint - m_StartTimepoint).count(),
+					std::hash<std::thread::id>{}(std::this_thread::get_id()), m_Depth);
+			}
+			if (Instrumentor::Get().IsSessionActive())
+				Instrumentor::Get().WriteProfile({ m_Name, highResStart, elapsedTime, std::this_thread::get_id() });
 
 			m_Stopped = true;
 		}
 	private:
 		const char* m_Name;
+		uint64_t m_Frame = 0;
+		uint32_t m_Depth = 0;
+		inline static thread_local uint32_t s_Depth = 0;
 		std::chrono::time_point<std::chrono::steady_clock> m_StartTimepoint;
+		bool m_Enabled;
 		bool m_Stopped;
 	};
 
@@ -198,7 +268,13 @@ namespace TomCat {
 	}
 }
 
-#define TC_PROFILE 0
+#ifndef TC_PROFILE
+	#if defined(TC_DIST)
+		#define TC_PROFILE 0
+	#else
+		#define TC_PROFILE 1
+	#endif
+#endif
 #if TC_PROFILE
 // Resolve which function signature macro will be used. Note that this only
 // is resolved when the (pre)compiler starts, so the syntax highlighting

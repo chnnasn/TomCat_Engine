@@ -1,4 +1,5 @@
 #include <TomCat.h>
+#define TC_APPLICATION_PRODUCT TomCat::ApplicationProduct::Hub
 #include <TomCat/Core/EntryPoint.h>
 #include "ExampleLayer.h"
 
@@ -7,21 +8,17 @@ namespace TomCat {
 	class Manager : public Application
 	{
 	public:
-		Manager(ApplicationCommandLineArgs args)
-			: Application("TomCatHub", "Packages/icon/HubLogo.ico", args)
+		Manager()
+			: Application("TomCatHub", "Packages/Resources/Icons/HubLogo.ico")
 		{
 
 			PushLayer(new ExampleLayer());
 		}
-
-		~Manager()
-		{
-		}
 	};
 
-	Application* CreateApplication(ApplicationCommandLineArgs args)
+	Application* CreateApplication(ApplicationCommandLineArgs)
 	{
-		return new Manager(args);
+		return new Manager();
 	}
 
 }

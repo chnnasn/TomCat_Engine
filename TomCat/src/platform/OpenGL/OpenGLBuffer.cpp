@@ -1,11 +1,12 @@
 #include "tcpch.h"
 #include"OpenGLBuffer.h"
 
-#include<glad/glad.h>
+#include "OpenGLApi.h"
 
 namespace TomCat {
 
 	OpenGLVertexBuffer::OpenGLVertexBuffer(uint32_t size)
+		: m_Size(size)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -14,10 +15,12 @@ namespace TomCat {
 		glBindBuffer(GL_ARRAY_BUFFER, m_RendererID);
 
 		glBufferData(GL_ARRAY_BUFFER, size,nullptr, GL_DYNAMIC_DRAW);
+		ProfileResourceTracker::Get().Buffer(1, m_Size);
 
 	}
 
 	OpenGLVertexBuffer::OpenGLVertexBuffer(float* vertices, uint32_t size)
+		: m_Size(size)
 	{
 		TC_PROFILE_FUNCTION();
 
@@ -26,6 +29,7 @@ namespace TomCat {
 		glBindBuffer(GL_ARRAY_BUFFER, m_RendererID);
 
 		glBufferData(GL_ARRAY_BUFFER, size, vertices, GL_STATIC_DRAW);
+		ProfileResourceTracker::Get().Buffer(1, m_Size);
 
 	}
 
@@ -34,6 +38,7 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		glDeleteBuffers(1,&m_RendererID);
+		ProfileResourceTracker::Get().Buffer(-1, -static_cast<int64_t>(m_Size));
 	}
 
 
@@ -70,6 +75,7 @@ namespace TomCat {
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_RendererID);
 
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, count *sizeof(uint32_t), indices, GL_STATIC_DRAW);
+		ProfileResourceTracker::Get().Buffer(1, static_cast<int64_t>(m_Count) * sizeof(uint32_t));
 
 	}
 
@@ -78,6 +84,7 @@ namespace TomCat {
 		TC_PROFILE_FUNCTION();
 
 		glDeleteBuffers(1,&m_RendererID);
+		ProfileResourceTracker::Get().Buffer(-1, -static_cast<int64_t>(m_Count) * sizeof(uint32_t));
 	}
 
 

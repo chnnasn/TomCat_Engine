@@ -21,7 +21,8 @@ project "TomCatInut"
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
-		"%{IncludeDir.ImGuizmo}"
+		"%{IncludeDir.ImGuizmo}",
+		"%{IncludeDir.yaml_cpp}"
 	}
 
 	libdirs
@@ -57,8 +58,7 @@ project "TomCatInut"
 		
 	defines
 	{
-		"TC_PLAYTFORM_WINDOWS",
-		"IMGUI_API=_declspec(dllimport);",
+		"TC_PLATFORM_WINDOWS",
 		"YAML_CPP_STATIC_DEFINE" 
 	}
 
@@ -68,7 +68,11 @@ project "TomCatInut"
 		symbols "on"
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
+			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Circle.tga & exit /b 1)",
+			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Square.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Square.tga & exit /b 1)",
+			"if not exist \"$(ProjectDir)Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" (echo ERROR: Required package asset is missing: fonts\\opensans\\OpenSans-Regular.ttf & exit /b 1)",
 			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
+			"if exist \"$(OutDir)Packages\\Resources\\Icons\\TomCat\\Asset\\assets-root.png\" del /Q \"$(OutDir)Packages\\Resources\\Icons\\TomCat\\Asset\\assets-root.png\"",
 			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}
 
@@ -78,7 +82,11 @@ project "TomCatInut"
 		optimize "on"
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
+			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Circle.tga & exit /b 1)",
+			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Square.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Square.tga & exit /b 1)",
+			"if not exist \"$(ProjectDir)Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" (echo ERROR: Required package asset is missing: fonts\\opensans\\OpenSans-Regular.ttf & exit /b 1)",
 			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
+			"if exist \"$(OutDir)Packages\\Resources\\Icons\\TomCat\\Asset\\assets-root.png\" del /Q \"$(OutDir)Packages\\Resources\\Icons\\TomCat\\Asset\\assets-root.png\"",
 			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}
 
@@ -88,6 +96,10 @@ project "TomCatInut"
 		optimize "on"
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
+			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Circle.tga & exit /b 1)",
+			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Square.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Square.tga & exit /b 1)",
+			"if not exist \"$(ProjectDir)Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" (echo ERROR: Required package asset is missing: fonts\\opensans\\OpenSans-Regular.ttf & exit /b 1)",
 			"if exist \"$(ProjectDir)Packages\" xcopy /E /Y /I \"$(ProjectDir)Packages\" \"$(OutDir)Packages\\\" > nul",
+			"if exist \"$(OutDir)Packages\\Resources\\Icons\\TomCat\\Asset\\assets-root.png\" del /Q \"$(OutDir)Packages\\Resources\\Icons\\TomCat\\Asset\\assets-root.png\"",
 			"copy /Y \"$(ProjectDir)imgui.ini\" \"$(OutDir)imgui.ini\" > nul",
 		}

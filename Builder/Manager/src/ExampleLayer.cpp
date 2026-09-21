@@ -3,18 +3,45 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "TomCat/Core/Version.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
+#include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Project/ProjectManager.h"
 
 #include "TomCat/Math/Math.h"
+#include "TomCat/Asset/TextureArtifact.h"
 #include <fstream>
 #include <shellapi.h>
 #include <cstdio>
 #include <cctype>
 #include <algorithm>
+#include <array>
+#include <system_error>
 
 namespace {
+	TomCat::Ref<TomCat::Texture2D> LoadTemplateIcon(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary | std::ios::ate);
+		const auto size = input ? static_cast<std::streamoff>(input.tellg()) : -1;
+		if (size <= 0 || size > 16 * 1024 * 1024) return {};
+		std::vector<uint8_t> source(static_cast<size_t>(size)), artifact;
+		input.seekg(0);
+		if (!input.read(reinterpret_cast<char*>(source.data()), size)) return {};
+		std::string error;
+		// Preserve source RGBA; mipmaps keep the scene details clean at card size.
+		const TomCat::AssetImportSettings settings = {
+			{ "sRGB", "false" }, { "generateMipmaps", "true" }, { "compression", "none" }
+		};
+		if (!TomCat::BuildTextureArtifact(source, settings, "hub-icon", artifact, error))
+		{
+			TC_Core_Warn("Could not load Hub template icon: {0}", error);
+			return {};
+		}
+		auto texture = TomCat::Texture2D::Create(artifact.data(), artifact.size(), path);
+		return texture && texture->IsLoaded() ? texture : TomCat::Ref<TomCat::Texture2D>{};
+	}
 
 	std::string ToLowerString(const std::string& s)
 	{
@@ -24,61 +51,167 @@ namespace {
 		return out;
 	}
 
+	bool HasNonEmptyFile(const std::filesystem::path& path)
+	{
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(path, error) || error)
+			return false;
+
+		const auto size = std::filesystem::file_size(path, error);
+		return !error && size > 0;
+	}
+
+	bool IsValidProjectDirectoryName(const std::string& name)
+	{
+		if (name.empty() || name == "." || name == "..")
+			return false;
+
+		static constexpr const char* invalidCharacters = "<>:\"/\\|?*";
+		if (name.find_first_of(invalidCharacters) != std::string::npos ||
+			static_cast<unsigned char>(name.back()) <= ' ' || name.back() == '.')
+			return false;
+
+		for (const unsigned char character : name)
+		{
+			if (character < 32)
+				return false;
+		}
+
+		std::string baseName = name.substr(0, name.find('.'));
+		std::transform(baseName.begin(), baseName.end(), baseName.begin(),
+			[](unsigned char character) { return static_cast<char>(std::toupper(character)); });
+		static constexpr std::array<const char*, 22> reservedNames = {
+			"CON", "PRN", "AUX", "NUL",
+			"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+			"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+		};
+		return std::none_of(reservedNames.begin(), reservedNames.end(),
+			[&baseName](const char* reserved) { return baseName == reserved; });
+	}
+
+	bool WriteSampleScene(const std::filesystem::path& destination, const std::string& templateName)
+	{
+		// SceneSerializer owns the current schema version and field set. Generating
+		// starter scenes through it prevents packaged templates from drifting.
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName("sample");
+		TomCat::Entity mainCamera = scene->CreateEntityWithUUID(
+			TomCat::UUID(1000000000000000001ULL), "MainCamera");
+		auto& camera = mainCamera.AddComponent<TomCat::C_Camera>();
+		if (templateName == "2D")
+			camera._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
+		else
+			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
+
+		TomCat::SceneSerializer serializer(scene);
+		return serializer.Serialize(destination) && HasNonEmptyFile(destination);
+	}
+
+	bool EnsureSampleSceneAsset(const TomCat::Ref<TomCat::Project>& project, const std::string& templateName)
+	{
+		if (!project)
+			return false;
+
+		const std::filesystem::path destination = project->GetAssetPath() / "sample.tomcat";
+		auto registerSample = [&]()
+		{
+			TomCat::AssetRegistry registry;
+			if (!registry.Initialize(project->GetAssetPath(), project->GetLibraryPath()))
+				return false;
+			const TomCat::AssetHandle handle = registry.ImportAsset(destination);
+			registry.Shutdown();
+			if (static_cast<uint64_t>(handle) == 0)
+				return false;
+			project->SetStartSceneHandle(handle);
+			return project->SetStartScene("sample.tomcat") && project->Save();
+		};
+		if (HasNonEmptyFile(destination))
+		{
+			if (!TomCat::SceneSerializer::ValidateCurrentFormat(destination))
+			{
+				TC_Core_Error("Existing starter scene is not in the current format: {0}",
+					TomCat::PathToUTF8(destination));
+				return false;
+			}
+			return registerSample();
+		}
+
+		std::error_code error;
+		std::filesystem::create_directories(destination.parent_path(), error);
+		if (error)
+		{
+			TC_Core_Error("Could not create the project's asset directory '{0}': {1}",
+				TomCat::PathToUTF8(destination.parent_path()), error.message());
+			return false;
+		}
+
+		return WriteSampleScene(destination, templateName) && registerSample();
+	}
+
 
 }
 
 namespace TomCat {
 
-	std::vector<std::string> m_Editers;
-
 	ExampleLayer::ExampleLayer()
 		: Layer("FileManager"), m_SelectedMenu(0)
 	{
-		ProjectManager::Get().SetProjectDirectory(std::filesystem::current_path() / "Projects");
-		ProjectManager::Get().SetEditorDirectory(std::filesystem::current_path() / "Editors");
-		ProjectManager::Get().ScanProjects();
-		m_Projects = ProjectManager::Get().GetProjects();
+		auto& projectManager = ProjectManager::Get();
+		const auto executable = ApplicationPaths::GetExecutablePath();
+		if (!executable)
+			throw std::runtime_error("Could not resolve the Hub executable directory");
+		const std::filesystem::path workingDirectory = executable->parent_path();
+		projectManager.ApplyHubDirectoryDefaults(workingDirectory);
+		const std::filesystem::path projectDirectory = projectManager.GetProjectDirectory().empty()
+			? workingDirectory / "Projects" : projectManager.GetProjectDirectory();
+		if (!projectManager.SetProjectDirectory(projectDirectory))
+			TC_Core_Warn("The configured Project directory could not be opened; keeping the previous Hub list");
+		const std::filesystem::path editorDirectory = projectManager.GetEditorDirectory().empty()
+			? workingDirectory / "Editors" : projectManager.GetEditorDirectory();
+		if (!projectManager.SetEditorDirectory(editorDirectory))
+			TC_Core_Warn("The configured Editor directory could not be opened");
+		m_Projects = projectManager.GetProjects();
 		
-		m_Editers = ProjectManager::Get().GetEditorDirectoryFiles();
+		if (auto editors = projectManager.GetEditorVersions())
+			m_Editors = std::move(*editors);
+		else
+			m_Editors.clear();
 	}
 
 	void ExampleLayer::OnAttach()
 	{
 		TC_PROFILE_FUNCTION();
+		m_TemplateIcons[0] = LoadTemplateIcon("Packages/Resources/Icons/Scene2D.png");
+		m_TemplateIcons[1] = LoadTemplateIcon("Packages/Resources/Icons/Scene3D.png");
 
-		// Set up ImGui style to mimic UnityHub
+		// Use the same Unity editor palette as the editor executable.  The Hub has
+		// a different layout, but sharing the palette keeps the two applications
+		// visually consistent when switching between them.
+		if (Application::Get().GetImGuiLayer())
+			Application::Get().GetImGuiLayer()->SetDarkThemeColors();
+
 		ImGuiStyle& style = ImGui::GetStyle();
-		style.WindowPadding = ImVec2(15, 15);
-		style.FramePadding = ImVec2(5, 5);
-		style.CellPadding = ImVec2(6, 6);
-		style.ItemSpacing = ImVec2(12, 8);
-		style.ItemInnerSpacing = ImVec2(8, 6);
-		style.IndentSpacing = 25;
-		style.ScrollbarSize = 15;
-		style.WindowRounding = 4.0f;
-		style.FrameRounding = 4.0f;
-		style.ScrollbarRounding = 9.0f;
-		style.GrabRounding = 3.0f;
-
-		// Set colors similar to UnityHub
-		ImVec4* colors = style.Colors;
-		colors[ImGuiCol_WindowBg] = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-		colors[ImGuiCol_MenuBarBg] = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-		colors[ImGuiCol_TitleBg] = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-		colors[ImGuiCol_TitleBgActive] = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-		colors[ImGuiCol_FrameBg] = ImVec4(0.24f, 0.24f, 0.24f, 1.00f);
-		colors[ImGuiCol_FrameBgHovered] = ImVec4(0.30f, 0.30f, 0.30f, 1.00f);
-		colors[ImGuiCol_FrameBgActive] = ImVec4(0.40f, 0.40f, 0.40f, 1.00f);
-		colors[ImGuiCol_Button] = ImVec4(0.44f, 0.44f, 0.44f, 1.00f);
-		colors[ImGuiCol_ButtonHovered] = ImVec4(0.54f, 0.54f, 0.54f, 1.00f);
-		colors[ImGuiCol_ButtonActive] = ImVec4(0.60f, 0.60f, 0.60f, 1.00f);
-		colors[ImGuiCol_Text] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
-		colors[ImGuiCol_TextDisabled] = ImVec4(0.60f, 0.60f, 0.60f, 1.00f);
+		// Keep Hub content comfortably spaced while retaining Unity's compact,
+		// square-cornered controls and dock chrome.
+		style.WindowPadding = ImVec2(12.0f, 10.0f);
+		style.FramePadding = ImVec2(5.0f, 4.0f);
+		style.CellPadding = ImVec2(5.0f, 4.0f);
+		style.ItemSpacing = ImVec2(8.0f, 6.0f);
+		style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
+		style.IndentSpacing = 20.0f;
+		style.ScrollbarSize = 14.0f;
+		style.WindowRounding = 0.0f;
+		style.FrameRounding = 2.0f;
+		style.PopupRounding = 2.0f;
+		style.TabRounding = 2.0f;
+		style.ScrollbarRounding = 0.0f;
+		style.GrabRounding = 2.0f;
 	}
 
 	void ExampleLayer::OnDetach()
 	{
 		TC_PROFILE_FUNCTION();
+		for (auto& icon : m_TemplateIcons) icon.reset();
 	}
 
 	void ExampleLayer::OnUpdate(Timestep ts)
@@ -111,8 +244,10 @@ namespace TomCat {
 		ImVec2 work = ImGui::GetContentRegionAvail();
 		const float sidebarW = 240.0f;
 
-		// Unity-Hub style layout: dark narrow sidebar + main area
-		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.11f, 0.11f, 1.0f));
+		// Unity-Hub style layout: dark narrow sidebar + main area.  The sidebar
+		// intentionally uses the reference menu-bar tone rather than a separate
+		// near-black color so the palette remains coherent.
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetStyle().Colors[ImGuiCol_MenuBarBg]);
 		ImGui::BeginChild("Sidebar", ImVec2(sidebarW, work.y), false, ImGuiWindowFlags_NoScrollbar);
 		RenderSidebar(ImVec2(sidebarW, work.y));
 		ImGui::EndChild();
@@ -141,7 +276,7 @@ void ExampleLayer::OnEvent(Event& e)
 
 	void ExampleLayer::AddProject()
 	{
-		std::string projectPath = FileDialogs::OpenFile("TomCat Project (*.tcproj)");
+		const std::filesystem::path projectPath = FileDialogs::OpenFile("TomCat Project (*.tcproj)\0*.tcproj\0");
 		if (!projectPath.empty())
 		{
 			auto project = ProjectManager::Get().AddProject(projectPath);
@@ -156,29 +291,38 @@ void ExampleLayer::OnEvent(Event& e)
 	{
 		m_ShowNewProjectDialog = true;
 		memset(m_NewProjectName, 0, sizeof(m_NewProjectName));
-		memset(m_NewProjectAuthor, 0, sizeof(m_NewProjectAuthor));
 		memset(m_NewProjectDescription, 0, sizeof(m_NewProjectDescription));
 		const auto& defaultDir = ProjectManager::Get().GetProjectDirectory();
-		m_NewProjectPath = defaultDir.empty() ? (std::filesystem::current_path() / "Projects") : defaultDir;
+		if (!defaultDir.empty())
+		{
+			m_NewProjectPath = defaultDir;
+		}
+		else
+		{
+			std::error_code currentPathError;
+			const std::filesystem::path workingDirectory = std::filesystem::current_path(currentPathError);
+			m_NewProjectPath = currentPathError ? std::filesystem::path{} : workingDirectory / "Projects";
+			if (currentPathError)
+				TC_Core_Warn("The default Project location could not be resolved: {0}", currentPathError.message());
+		}
 	}
 
 	void ExampleLayer::OpenProject(Ref<Project> project)
 	{
 		if (project)
 		{
-			ProjectManager::Get().SetActiveProject(project);
 			ProjectManager::Get().OpenProjectInEditor(project);
-			ProjectManager::Get().ScanProjects();
-			m_Projects = ProjectManager::Get().GetProjects();
+			if (ProjectManager::Get().ScanProjects())
+				m_Projects = ProjectManager::Get().GetProjects();
 		}
 	}
 
-	void ExampleLayer::DeleteProject(Ref<Project> project)
+	void ExampleLayer::RemoveProjectFromHub(Ref<Project> project)
 	{
 		if (project)
 		{
-			ProjectManager::Get().RemoveProject(project->GetProjectPath());
-			m_Projects = ProjectManager::Get().GetProjects();
+			if (ProjectManager::Get().RemoveProject(project->GetProjectPath()))
+				m_Projects = ProjectManager::Get().GetProjects();
 		}
 	}
 			void ExampleLayer::RenderSidebar(const ImVec2& size)
@@ -197,12 +341,12 @@ void ExampleLayer::OnEvent(Event& e)
 		{
 			bool selected = (m_SelectedMenu == index);
 			ImGui::SetCursorPos(ImVec2(12.0f, y));
-			ImGui::PushStyleColor(ImGuiCol_Header,
-				selected ? ImVec4(0.24f, 0.24f, 0.24f, 1.0f) : ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.20f, 0.20f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.22f, 0.22f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Button,
+				selected ? ImGui::GetStyle().Colors[ImGuiCol_HeaderActive] : ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyle().Colors[ImGuiCol_HeaderHovered]);
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
 			ImGui::PushStyleColor(ImGuiCol_Text,
-				selected ? ImVec4(0.95f, 0.95f, 0.95f, 1.0f) : ImVec4(0.72f, 0.72f, 0.72f, 1.0f));
+				selected ? ImGui::GetStyle().Colors[ImGuiCol_Text] : ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 10.0f));
 			// Button centers its label automatically
 			if (ImGui::Button(label, ImVec2(size.x - 24.0f, 52.0f)))
@@ -217,9 +361,9 @@ void ExampleLayer::OnEvent(Event& e)
 		// Settings button -> opens a dialog
 		ImGui::SetCursorPos(ImVec2(12.0f, size.y - 130.0f));
 		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.20f, 0.20f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.22f, 0.22f, 0.22f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyle().Colors[ImGuiCol_FrameBgHovered]);
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_Text]);
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 10.0f));
 		if (ImGui::Button(T("设置", "Settings"), ImVec2(size.x - 24.0f, 52.0f)))
 			m_ShowSettingsDialog = true;
@@ -228,13 +372,13 @@ void ExampleLayer::OnEvent(Event& e)
 
 		// Footer (centered to match the Settings button)
 		const char* foot1 = T("TomCat 引擎", "TomCat Engine"); // TomCat ??
-		const char* foot2 = "v1.0.0  |  Release";
+		const std::string foot2 = "v" + std::string(Version::ProductVersion) + "  |  Release";
 		ImVec2 f1 = ImGui::CalcTextSize(foot1);
-		ImVec2 f2 = ImGui::CalcTextSize(foot2);
+		ImVec2 f2 = ImGui::CalcTextSize(foot2.c_str());
 		ImGui::SetCursorPos(ImVec2((size.x - f1.x) * 0.5f, size.y - 72.0f));
 		ImGui::TextDisabled("%s", foot1);
 		ImGui::SetCursorPos(ImVec2((size.x - f2.x) * 0.5f, size.y - 44.0f));
-		ImGui::TextDisabled("%s", foot2);
+		ImGui::TextDisabled("%s", foot2.c_str());
 	}
 
 	bool ExampleLayer::SortProjects(const Ref<Project>& a, const Ref<Project>& b) const
@@ -266,7 +410,7 @@ void ExampleLayer::OnEvent(Event& e)
 		{
 			if (!query.empty())
 			{
-				std::string hay = ToLowerString(project->GetName() + " " + project->GetProjectPath().string());
+				std::string hay = ToLowerString(project->GetName() + " " + PathToUTF8(project->GetProjectPath()));
 				if (hay.find(query) == std::string::npos)
 					continue;
 			}
@@ -276,7 +420,7 @@ void ExampleLayer::OnEvent(Event& e)
 			[this](const Ref<Project>& a, const Ref<Project>& b) { return SortProjects(a, b); });
 
 		// Header: title + count
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_Text]);
 		ImGui::SetCursorPos(ImVec2(pad, pad));
 		ImGui::Text("%s", T("项目", "Projects"));
 		ImGui::PopStyleColor();
@@ -315,10 +459,10 @@ void ExampleLayer::OnEvent(Event& e)
 		}
 
 		ImGui::SetCursorPos(ImVec2(newX, topY));
-		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.27f, 0.55f, 0.92f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.45f, 0.85f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.38f, 0.78f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyle().Colors[ImGuiCol_NavHighlight]);
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_Text]);
 		if (ImGui::Button(T("+ 新建项目", "+ New project"), ImVec2(newW, btnH)))
 			NewProject();
 		ImGui::PopStyleColor(4);
@@ -332,8 +476,8 @@ void ExampleLayer::OnEvent(Event& e)
 
 		ImVec2 headerMin(wmin.x + pad, wmin.y + listTop);
 		ImVec2 headerMax(wmin.x + size.x - pad, wmin.y + listTop + headerH);
-		dl->AddRectFilled(headerMin, headerMax, IM_COL32(61, 61, 61, 255));
-		dl->AddRectFilled(ImVec2(headerMin.x, headerMax.y - 1.0f), headerMax, IM_COL32(82, 82, 82, 255));
+		dl->AddRectFilled(headerMin, headerMax, IM_COL32(40, 40, 40, 255));
+		dl->AddRectFilled(ImVec2(headerMin.x, headerMax.y - 1.0f), headerMax, IM_COL32(85, 85, 85, 255));
 
 		auto headerCell = [this](const char* label, HubSortColumn col, ImVec2 pos, float w, float h)
 		{
@@ -359,7 +503,7 @@ void ExampleLayer::OnEvent(Event& e)
 			float sx = center ? (pos.x + (w - totalW) * 0.5f) : (pos.x + 10.0f);
 			ImGui::SetCursorScreenPos(ImVec2(sx, pos.y + 8.0f));
 			ImGui::PushStyleColor(ImGuiCol_Text,
-				active ? ImVec4(0.95f, 0.95f, 0.95f, 1.0f) : ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
+				active ? ImGui::GetStyle().Colors[ImGuiCol_Text] : ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 			ImGui::Text("%s", label);
 			if (active)
 			{
@@ -419,18 +563,23 @@ void ExampleLayer::OnEvent(Event& e)
 		if (doubleClicked)
 			OpenProject(project);
 
-		// Row background (same gray family as the existing theme)
-		ImU32 bg = selected ? IM_COL32(61, 61, 61, 255)
-			: (hovered ? IM_COL32(52, 52, 52, 255) : IM_COL32(44, 44, 44, 255));
+		// Keep custom-drawn rows on the shared Unity gray ramp.  Using the active
+		// ImGui colors here avoids a second, subtly different palette for Hub rows.
+		const ImU32 panelColor = ImGui::GetColorU32(ImGuiCol_WindowBg);
+		const ImU32 hoverColor = ImGui::GetColorU32(ImGuiCol_FrameBgHovered);
+		const ImU32 selectedColor = ImGui::GetColorU32(ImGuiCol_HeaderActive);
+		const ImU32 borderColor = ImGui::GetColorU32(ImGuiCol_Border);
+		ImU32 bg = selected ? selectedColor : (hovered ? hoverColor : panelColor);
 		dl->AddRectFilled(rowMin, rowMax, bg);
-		dl->AddRectFilled(ImVec2(rowMin.x, rowMax.y - 1.0f), rowMax, IM_COL32(72, 72, 72, 255));
+		dl->AddRectFilled(ImVec2(rowMin.x, rowMax.y - 1.0f), rowMax, borderColor);
 		if (selected)
-			dl->AddRectFilled(ImVec2(rowMin.x, rowMin.y), ImVec2(rowMin.x + 3.0f, rowMax.y), IM_COL32(200, 200, 200, 255));
+			dl->AddRectFilled(ImVec2(rowMin.x, rowMin.y), ImVec2(rowMin.x + 3.0f, rowMax.y),
+				ImGui::GetColorU32(ImGuiCol_HeaderHovered));
 
 		// Project icon (gray square + first letter)
 		ImVec2 iconMin(rowMin.x + 20.0f, rowMin.y + 24.0f);
 		ImVec2 iconMax(iconMin.x + 48.0f, iconMin.y + 48.0f);
-		dl->AddRectFilled(iconMin, iconMax, IM_COL32(112, 112, 112, 255), 6.0f);
+		dl->AddRectFilled(iconMin, iconMax, ImGui::GetColorU32(ImGuiCol_FrameBgActive), 2.0f);
 		std::string initial = project->GetName().empty() ? "P" : project->GetName().substr(0, 1);
 		ImGui::SetCursorScreenPos(ImVec2(iconMin.x + 6.0f, iconMin.y + 4.0f));
 		ImGui::Text("%s", initial.c_str());
@@ -441,7 +590,7 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::Text("%s", project->GetName().c_str());
 
 		float nameMaxW = (rowMax.x - actionsW - versionW - modifiedW) - tx - 8.0f;
-		std::string path = project->GetProjectPath().string();
+		std::string path = PathToUTF8(project->GetProjectPath());
 		if (ImGui::CalcTextSize(path.c_str()).x > nameMaxW)
 		{
 			std::string out = path;
@@ -454,7 +603,7 @@ void ExampleLayer::OnEvent(Event& e)
 			path = out + "...";
 		}
 		ImGui::SetCursorScreenPos(ImVec2(tx, rowMin.y + 54.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 		ImGui::Text("%s", path.c_str());
 		ImGui::PopStyleColor();
 
@@ -482,23 +631,23 @@ void ExampleLayer::OnEvent(Event& e)
 
 		ImGui::SetCursorScreenPos(ImVec2(menuX, btnY));
 		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(70, 70, 70, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(80, 80, 80, 255));
-		ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 200, 255));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(112, 112, 112, 255));
+		ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(196, 196, 196, 255));
 		if (ImGui::Button(("\u22EE##menu_" + std::to_string(index)).c_str(), ImVec2(btnH, btnH)))
 			m_MenuOpenRow = (m_MenuOpenRow == index) ? -1 : index; // toggle
 		ImGui::PopStyleColor(4);
 
-		// Custom context menu window (Open / Show in Explorer / Delete)
+		// Custom context menu window (Open / Show in Explorer / Remove from Hub)
 		if (m_MenuOpenRow == index)
 		{
 			ImGui::SetNextWindowPos(ImVec2(menuX + btnH, btnY + btnH), ImGuiCond_Appearing, ImVec2(1.0f, 0.0f));
 			ImGui::SetNextWindowSize(ImVec2(200.0f, 0.0f), ImGuiCond_Appearing);
-			ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(32, 32, 32, 255));
+			ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(60, 60, 60, 255));
 			ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(85, 85, 85, 255));
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
 			ImGuiWindowFlags mflags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
 				ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar;
 			if (ImGui::Begin(("##project_menu_" + std::to_string(index)).c_str(), nullptr, mflags))
@@ -508,7 +657,7 @@ void ExampleLayer::OnEvent(Event& e)
 				if (ImGui::MenuItem(T("\u6253\u5f00\u9879\u76ee", "Open project"))) { OpenProject(project); m_MenuOpenRow = -1; } // ????
 				if (ImGui::MenuItem(T("\u5728\u8d44\u6e90\u7ba1\u7406\u5668\u4e2d\u6253\u5f00", "Show in Explorer"))) { OpenInExplorer(project); m_MenuOpenRow = -1; } // ?????????
 				ImGui::Separator();
-				if (ImGui::MenuItem(T("\u5220\u9664", "Delete"))) { DeleteProject(project); m_MenuOpenRow = -1; } // ??
+				if (ImGui::MenuItem(T("\u4ece Hub \u4e2d\u79fb\u9664", "Remove from Hub"))) { RemoveProjectFromHub(project); m_MenuOpenRow = -1; }
 			}
 			ImGui::End();
 			ImGui::PopStyleVar(3);
@@ -523,7 +672,10 @@ void ExampleLayer::OnEvent(Event& e)
 		static bool needsRefresh = true;
 		if (needsRefresh)
 		{
-			m_Editers = ProjectManager::Get().GetEditorDirectoryFiles();
+			if (auto editors = ProjectManager::Get().GetEditorVersions())
+				m_Editors = std::move(*editors);
+			else
+				m_Editors.clear();
 			needsRefresh = false;
 			selectedVersion = 0;
 		}
@@ -536,8 +688,8 @@ void ExampleLayer::OnEvent(Event& e)
 		// Top bar: back button + title
 		ImGui::SetCursorPos(ImVec2(pad, pad));
 		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(60, 60, 60, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(70, 70, 70, 255));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(112, 112, 112, 255));
 		if (ImGui::Button(T("\u2190 \u8fd4\u56de", "\u2190 Back"), ImVec2(120.0f, 44.0f))) // ? ??
 		{
 			m_ShowNewProjectDialog = false;
@@ -546,7 +698,7 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::PopStyleColor(3);
 
 		ImGui::SetCursorPos(ImVec2(pad + 132.0f, pad + 6.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_Text]);
 		ImGui::Text("%s", T("\u65b0\u5efa\u9879\u76ee", "New Project")); // ????
 		ImGui::PopStyleColor();
 
@@ -563,21 +715,21 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::Text("%s", T("\u7f16\u8f91\u5668\u7248\u672c *", "Editor Version *")); // ????? *
 		ImGui::SetCursorScreenPos(ImVec2(midX, topY + 42.0f));
 		ImGui::SetNextItemWidth(midW);
-		if (m_Editers.empty())
+		if (m_Editors.empty())
 		{
 			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
 				T("\u672a\u627e\u5230\u7f16\u8f91\u5668\u7248\u672c\uff0c\u8bf7\u5728\u8bbe\u7f6e\u4e2d\u68c0\u67e5\u7f16\u8f91\u5668\u76ee\u5f55\u3002", "No editor versions found. Check Editor Directory in Settings."));
 		}
 		else
 		{
-			if (selectedVersion >= (int)m_Editers.size())
+			if (selectedVersion >= (int)m_Editors.size())
 				selectedVersion = 0;
-			if (ImGui::BeginCombo("##EditorVersion", m_Editers[selectedVersion].c_str()))
+			if (ImGui::BeginCombo("##EditorVersion", m_Editors[selectedVersion].c_str()))
 			{
-				for (int i = 0; i < (int)m_Editers.size(); i++)
+				for (int i = 0; i < (int)m_Editors.size(); i++)
 				{
 					bool is_sel = (selectedVersion == i);
-					if (ImGui::Selectable(m_Editers[i].c_str(), is_sel))
+					if (ImGui::Selectable(m_Editors[i].c_str(), is_sel))
 						selectedVersion = i;
 					if (is_sel)
 						ImGui::SetItemDefaultFocus();
@@ -604,20 +756,35 @@ void ExampleLayer::OnEvent(Event& e)
 			bool hovered = ImGui::IsItemHovered();
 			if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
 				m_NewProjectTemplate = id;
-			ImU32 bg = hovered ? IM_COL32(56, 56, 56, 255) : IM_COL32(44, 44, 44, 255);
-			dl->AddRectFilled(c0, c1, bg, 8.0f);
-			dl->AddRect(c0, c1, sel ? IM_COL32(90, 170, 240, 255) : IM_COL32(72, 72, 72, 255), 8.0f, 0, sel ? 2.0f : 1.0f);
-			// colored icon square
-			dl->AddRectFilled(ImVec2(c0.x + 18.0f, c0.y + 18.0f), ImVec2(c0.x + 66.0f, c0.y + 66.0f),
-				id == 0 ? IM_COL32(40, 120, 170, 255) : IM_COL32(60, 90, 200, 255), 6.0f);
+			ImU32 bg = hovered ? IM_COL32(98, 98, 98, 255) : IM_COL32(56, 56, 56, 255);
+			dl->AddRectFilled(c0, c1, bg, 2.0f);
+			dl->AddRect(c0, c1, sel ? IM_COL32(44, 93, 135, 255) : IM_COL32(85, 85, 85, 255), 2.0f, 0, sel ? 2.0f : 1.0f);
+			const auto& icon = m_TemplateIcons[id];
+			constexpr float iconSlot = 80.0f;
+			if (icon)
+			{
+				// Artwork bounds in the approved 1254px sources, with a four-pixel
+				// safety margin. Crop only the displayed UVs; preserve the PNGs.
+				const ImVec4 artwork[] = { ImVec4(108, 252, 1147, 1002), ImVec4(138, 165, 1115, 1098) };
+				const ImVec4 bounds = artwork[id];
+				const float width = bounds.z - bounds.x, height = bounds.w - bounds.y;
+				const float scale = iconSlot / std::max(width, height);
+				const ImVec2 iconSize(width * scale, height * scale);
+				const ImVec2 iconMin(c0.x + 18.0f + (iconSlot - iconSize.x) * 0.5f,
+					c0.y + (cardH - iconSize.y) * 0.5f);
+				dl->AddImage((ImTextureID)(uintptr_t)icon->GetRendererID(), iconMin,
+					ImVec2(iconMin.x + iconSize.x, iconMin.y + iconSize.y),
+					ImVec2(bounds.x / icon->GetWidth(), 1.0f - bounds.y / icon->GetHeight()),
+					ImVec2(bounds.z / icon->GetWidth(), 1.0f - bounds.w / icon->GetHeight()));
+			}
 			ImVec2 ls = ImGui::CalcTextSize(label);
-			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 240, 240, 255));
-			ImGui::SetCursorScreenPos(ImVec2(c0.x + 82.0f, c0.y + 24.0f));
+			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(243, 243, 243, 255));
+			ImGui::SetCursorScreenPos(ImVec2(c0.x + 18.0f + iconSlot + 16.0f, c0.y + 24.0f));
 			ImGui::Text("%s", label);
 			ImGui::PopStyleColor();
 			ImVec2 ss = ImGui::CalcTextSize(sub);
-			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(150, 150, 150, 255));
-			ImGui::SetCursorScreenPos(ImVec2(c0.x + 82.0f, c0.y + 62.0f));
+			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(137, 137, 137, 255));
+			ImGui::SetCursorScreenPos(ImVec2(c0.x + 18.0f + iconSlot + 16.0f, c0.y + 62.0f));
 			ImGui::Text("%s", sub);
 			ImGui::PopStyleColor();
 		};
@@ -636,7 +803,7 @@ void ExampleLayer::OnEvent(Event& e)
 		ImGui::Text("%s", T("\u4f4d\u7f6e *", "Location *")); // ?? *
 		y2 += 42.0f;
 		float browseW = 100.0f;
-		std::string loc = m_NewProjectPath.string();
+		std::string loc = PathToUTF8(m_NewProjectPath);
 		float locMax = rightW - browseW - 10.0f;
 		if (ImGui::CalcTextSize(loc.c_str()).x > locMax)
 		{
@@ -650,15 +817,15 @@ void ExampleLayer::OnEvent(Event& e)
 			loc = o + "...";
 		}
 		ImGui::SetCursorScreenPos(ImVec2(rightX, y2 + 6.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 		ImGui::Text("%s", loc.c_str());
 		ImGui::PopStyleColor();
 		ImGui::SetCursorScreenPos(ImVec2(rightX + rightW - browseW, y2));
-		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 70, 70, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(85, 85, 85, 255));
+		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(71, 71, 71, 255));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
 		if (ImGui::Button(T("\u6d4f\u89c8", "Browse"), ImVec2(browseW, 44.0f))) // ??
 		{
-			std::string path = FileDialogs::OpenFolder();
+			const std::filesystem::path path = FileDialogs::OpenFolder();
 			if (!path.empty())
 				m_NewProjectPath = path;
 		}
@@ -680,8 +847,8 @@ void ExampleLayer::OnEvent(Event& e)
 		float cancelX = createX - 12.0f - btnW;
 
 		ImGui::SetCursorScreenPos(ImVec2(cancelX, btnY));
-		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 70, 70, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(85, 85, 85, 255));
+		ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(71, 71, 71, 255));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(98, 98, 98, 255));
 		if (ImGui::Button(T("\u53d6\u6d88", "Cancel"), ImVec2(btnW, btnH))) // ??
 		{
 			m_ShowNewProjectDialog = false;
@@ -689,34 +856,57 @@ void ExampleLayer::OnEvent(Event& e)
 		}
 		ImGui::PopStyleColor(2);
 
-		bool canCreate = (strlen(m_NewProjectName) > 0) && !m_Editers.empty();
+		const std::string requestedName = m_NewProjectName;
+		const bool validName = IsValidProjectDirectoryName(requestedName);
+		std::error_code targetError;
+		const std::filesystem::path requestedDirectory = m_NewProjectPath / UTF8ToPath(requestedName);
+		const bool targetExists = validName && std::filesystem::exists(requestedDirectory, targetError);
+		const bool canCreate = validName && !targetExists && !targetError && !m_Editors.empty();
 		ImGui::SetCursorScreenPos(ImVec2(createX, btnY));
-		ImGui::PushStyleColor(ImGuiCol_Button, canCreate ? IM_COL32(70, 130, 220, 255) : IM_COL32(60, 60, 60, 255));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, canCreate ? IM_COL32(60, 115, 200, 255) : IM_COL32(60, 60, 60, 255));
+		ImGui::PushStyleColor(ImGuiCol_Button, canCreate ? IM_COL32(44, 93, 135, 255) : IM_COL32(60, 60, 60, 255));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, canCreate ? IM_COL32(58, 112, 157, 255) : IM_COL32(60, 60, 60, 255));
 		if (ImGui::Button(T("\u521b\u5efa\u9879\u76ee", "Create Project"), ImVec2(btnW, btnH)) && canCreate) // ????
 		{
 			ProjectConfig config;
 			config.Name = m_NewProjectName;
 			config.Description = m_NewProjectDescription;
-			config.Version = "1.0.0";
-			config.EditorVersion = m_Editers[selectedVersion];
+			config.Version = std::string(Version::ProductVersion);
+			config.EditorVersion = m_Editors[selectedVersion];
 			config.Template = (m_NewProjectTemplate == 0) ? "2D" : "3D";
-			std::filesystem::path projectPath = m_NewProjectPath / m_NewProjectName / "Project.tcproj";
+			std::filesystem::path projectPath = requestedDirectory / "Project.tcproj";
 			auto project = ProjectManager::Get().CreateProject(projectPath, config);
-			if (project)
+			if (project && EnsureSampleSceneAsset(project, config.Template))
 			{
 				m_Projects = ProjectManager::Get().GetProjects();
 				m_ShowNewProjectDialog = false;
 				needsRefresh = true;
 			}
+			else if (project)
+			{
+				TC_Core_Error("Project '{0}' was created, but its sample scene could not be installed",
+					PathToUTF8(project->GetProjectPath().parent_path()));
+			}
 		}
 		ImGui::PopStyleColor(2);
 
-		if (m_Editers.empty())
+		if (m_Editors.empty())
 		{
 			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
 			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
 				T("\u65e0\u6cd5\u521b\u5efa\u9879\u76ee\uff1a\u6ca1\u6709\u53ef\u7528\u7684\u7f16\u8f91\u5668\u7248\u672c", "Cannot create project: no editor version available"));
+		}
+		else if (!validName)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
+			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
+				T("\u9879\u76ee\u540d\u4e0d\u80fd\u4e3a\u7a7a\uff0c\u4e5f\u4e0d\u80fd\u5305\u542b Windows \u4fdd\u7559\u5b57\u7b26\u6216\u8bbe\u5907\u540d\u3002",
+					"Project name is empty or contains a reserved Windows character or device name."));
+		}
+		else if (targetExists)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
+			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",
+				T("\u76ee\u6807\u9879\u76ee\u76ee\u5f55\u5df2\u5b58\u5728\u3002", "The target project directory already exists."));
 		}
 	}
 
@@ -725,10 +915,10 @@ void ExampleLayer::RenderSettingsDialog()
 		const ImVec2 winSize(880.0f, 600.0f);
 		ImGui::SetNextWindowSize(winSize, ImGuiCond_Always);
 		ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28.0f, 24.0f));
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.16f, 0.16f, 0.16f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyle().Colors[ImGuiCol_WindowBg]);
 
 		ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove;
 		if (ImGui::Begin(T("\u8bbe\u7f6e", "Settings"), &m_ShowSettingsDialog, flags)) // ??
@@ -750,23 +940,23 @@ void ExampleLayer::RenderSettingsDialog()
 			// Language switch (Chinese / English)
 			ImGui::Text("%s", T("\u8bed\u8a00\uff1a", "Language:")); // ???
 			ImGui::SameLine();
-			ImGui::PushStyleColor(ImGuiCol_Button, m_Chinese ? ImVec4(0.27f, 0.55f, 0.92f, 1.0f) : ImVec4(0.44f, 0.44f, 0.44f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.55f, 0.90f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.50f, 0.85f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Button, m_Chinese ? ImGui::GetStyle().Colors[ImGuiCol_HeaderActive] : ImGui::GetStyle().Colors[ImGuiCol_Button]);
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyle().Colors[ImGuiCol_HeaderHovered]);
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
 			if (ImGui::Button("\u4e2d\u6587", ImVec2(90.0f, 48.0f))) // ??
 				m_Chinese = true;
 			ImGui::PopStyleColor(3);
 			ImGui::SameLine();
-			ImGui::PushStyleColor(ImGuiCol_Button, !m_Chinese ? ImVec4(0.27f, 0.55f, 0.92f, 1.0f) : ImVec4(0.44f, 0.44f, 0.44f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.55f, 0.90f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.50f, 0.85f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Button, !m_Chinese ? ImGui::GetStyle().Colors[ImGuiCol_HeaderActive] : ImGui::GetStyle().Colors[ImGuiCol_Button]);
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyle().Colors[ImGuiCol_HeaderHovered]);
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyle().Colors[ImGuiCol_HeaderActive]);
 			if (ImGui::Button("English", ImVec2(110.0f, 48.0f)))
 				m_Chinese = false;
 			ImGui::PopStyleColor(3);
 
 			ImGui::Spacing();
 			ImGui::Separator();
-			ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f),
+			ImGui::TextColored(ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
 				T("\u914d\u7f6e TomCat \u5f15\u64ce\u504f\u597d\u4e0e\u76ee\u5f55\u3002", "Configure TomCat Engine preferences and directories.")); // ?? TomCat ????????
 			ImGui::Spacing();
 			ImGui::Spacing();
@@ -781,27 +971,34 @@ void ExampleLayer::RenderSettingsDialog()
 				bool hov = ImGui::IsItemHovered();
 				if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
 				{
-					std::string path = FileDialogs::OpenFolder();
+					const std::filesystem::path path = FileDialogs::OpenFolder();
 					if (!path.empty())
 					{
+						const std::filesystem::path selectedPath = path;
 						if (isProjectDir)
 						{
-							ProjectManager::Get().SetProjectDirectory(path);
-							m_Projects = ProjectManager::Get().GetProjects();
+							if (ProjectManager::Get().SetProjectDirectory(selectedPath))
+								m_Projects = ProjectManager::Get().GetProjects();
 						}
 						else
 						{
-							ProjectManager::Get().SetEditorDirectory(path);
+							if (ProjectManager::Get().SetEditorDirectory(selectedPath))
+							{
+								if (auto editors = ProjectManager::Get().GetEditorVersions())
+									m_Editors = std::move(*editors);
+								else
+									m_Editors.clear();
+							}
 						}
 					}
 				}
 				if (hov)
-					ImGui::GetWindowDrawList()->AddRectFilled(rowStart, ImVec2(rowStart.x + rowSize.x, rowStart.y + rowSize.y), IM_COL32(52, 52, 52, 255), 6.0f);
+					ImGui::GetWindowDrawList()->AddRectFilled(rowStart, ImVec2(rowStart.x + rowSize.x, rowStart.y + rowSize.y), IM_COL32(71, 71, 71, 255), 2.0f);
 				ImGui::SetCursorScreenPos(ImVec2(rowStart.x + 12.0f, rowStart.y + 10.0f));
 				ImGui::Text("%s", T(zhLabel, enLabel));
 				ImGui::SetCursorScreenPos(ImVec2(rowStart.x + 12.0f, rowStart.y + 46.0f));
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
-				ImGui::Text("%s", trunc(dir.string(), rowSize.x - 24.0f).c_str());
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+				ImGui::Text("%s", trunc(PathToUTF8(dir), rowSize.x - 24.0f).c_str());
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
 				ImGui::Spacing();
@@ -814,7 +1011,8 @@ void ExampleLayer::RenderSettingsDialog()
 
 			ImGui::Spacing();
 			ImGui::Separator();
-			ImGui::Text("%s", T("\u5f15\u64ce\u7248\u672c\uff1a1.0.0", "Engine Version: 1.0.0")); // ?????1.0.0
+			ImGui::Text("%s %.*s", T("\u5f15\u64ce\u7248\u672c\uff1a", "Engine Version:"),
+				static_cast<int>(Version::ProductVersion.size()), Version::ProductVersion.data());
 			ImGui::Text("%s", T("\u6784\u5efa\uff1aRelease", "Build: Release")); // ???Release
 		}
 		ImGui::End();
@@ -834,9 +1032,15 @@ void ExampleLayer::RenderSettingsDialog()
 		if (!project)
 			return;
 		std::filesystem::path dir = project->GetProjectPath().parent_path();
-		if (std::filesystem::exists(dir))
+		std::error_code error;
+		if (std::filesystem::is_directory(dir, error) && !error)
 		{
-			ShellExecuteA(NULL, "open", dir.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+			ShellExecuteW(NULL, L"open", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+		}
+		else if (error)
+		{
+			TC_Core_Error("Could not inspect project directory '{0}': {1}",
+				PathToUTF8(dir), error.message());
 		}
 	}
 
@@ -885,7 +1089,7 @@ void ExampleLayer::RenderSettingsDialog()
 		ImVec2 wmin = ImGui::GetWindowPos();
 		const float pad = 24.0f;
 
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_Text]);
 		ImGui::SetCursorPos(ImVec2(pad, pad));
 		ImGui::Text("%s", T("\u5b89\u88c5", "Installs")); // ??
 		ImGui::PopStyleColor();
@@ -893,7 +1097,7 @@ void ExampleLayer::RenderSettingsDialog()
 		char sub[96];
 		snprintf(sub, sizeof(sub), "%s", T("\u5df2\u5b89\u88c5\u7684\u5f15\u64ce\u7248\u672c", "Installed engine versions")); // ????????
 		ImGui::SetCursorPos(ImVec2(pad + 4.0f, pad + 46.0f));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.78f, 0.78f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 		ImGui::Text("%s", sub);
 		ImGui::PopStyleColor();
 
@@ -904,32 +1108,35 @@ void ExampleLayer::RenderSettingsDialog()
 			float rowW = size.x - pad * 2.0f;
 			float y = cmin.y;
 
-			if (m_Editers.empty())
+			if (m_Editors.empty())
 			{
 				ImGui::SetCursorScreenPos(ImVec2(cmin.x + 8.0f, cmin.y + 12.0f));
 				ImGui::TextDisabled("%s", T("\u5c1a\u672a\u5b89\u88c5\u4efb\u4f55\u7248\u672c\u3002", "No versions installed yet.")); // ?????????
 			}
 
-			for (const auto& ver : m_Editers)
+			for (const auto& ver : m_Editors)
 			{
 				ImVec2 rowMin(cmin.x, y);
 				ImVec2 rowMax(cmin.x + rowW, y + 72.0f);
 				ImGui::SetCursorScreenPos(rowMin);
 				ImGui::InvisibleButton(("##inst_" + ver).c_str(), ImVec2(rowW, 72.0f));
 				bool hovered = ImGui::IsItemHovered();
-				ImU32 bg = hovered ? IM_COL32(54, 54, 54, 255) : IM_COL32(44, 44, 44, 255);
-				dl->AddRectFilled(rowMin, rowMax, bg, 6.0f);
-				dl->AddRect(rowMin, rowMax, IM_COL32(72, 72, 72, 255), 6.0f);
+				const ImU32 panelColor = ImGui::GetColorU32(ImGuiCol_WindowBg);
+				const ImU32 hoverColor = ImGui::GetColorU32(ImGuiCol_FrameBgHovered);
+				const ImU32 borderColor = ImGui::GetColorU32(ImGuiCol_Border);
+				ImU32 bg = hovered ? hoverColor : panelColor;
+				dl->AddRectFilled(rowMin, rowMax, bg, 2.0f);
+				dl->AddRect(rowMin, rowMax, borderColor, 2.0f);
 
 				// version (bright) + "Installed" tag on the right
 				ImGui::SetCursorScreenPos(ImVec2(rowMin.x + 18.0f, rowMin.y + 12.0f));
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_Text]);
 				ImGui::Text("%s", ver.c_str());
 				ImGui::PopStyleColor();
 
 				// editor path (truncated)
 				std::filesystem::path ep = ProjectManager::Get().GetEditorDirectory() / ver;
-				std::string eps = ep.string();
+				std::string eps = PathToUTF8(ep);
 				float epMax = rowW - 150.0f;
 				if (ImGui::CalcTextSize(eps.c_str()).x > epMax)
 				{
@@ -943,7 +1150,7 @@ void ExampleLayer::RenderSettingsDialog()
 					eps = o + "...";
 				}
 				ImGui::SetCursorScreenPos(ImVec2(rowMin.x + 18.0f, rowMin.y + 40.0f));
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.62f, 0.62f, 1.0f));
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 				ImGui::Text("%s", eps.c_str());
 				ImGui::PopStyleColor();
 
@@ -953,8 +1160,8 @@ void ExampleLayer::RenderSettingsDialog()
 				const float tagH = 44.0f;
 				ImVec2 tagMin(rowMax.x - tagSz.x - 36.0f, rowMin.y + (72.0f - tagH) * 0.5f);
 				ImVec2 tagMax(tagMin.x + tagSz.x + 20.0f, tagMin.y + tagH);
-				dl->AddRectFilled(tagMin, tagMax, IM_COL32(30, 90, 55, 255), 6.0f);
-				dl->AddRect(tagMin, tagMax, IM_COL32(70, 180, 120, 255), 6.0f);
+				dl->AddRectFilled(tagMin, tagMax, IM_COL32(30, 90, 55, 255), 2.0f);
+				dl->AddRect(tagMin, tagMax, IM_COL32(70, 180, 120, 255), 2.0f);
 				ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 220, 160, 255));
 				ImGui::SetCursorScreenPos(ImVec2(tagMin.x + 10.0f, tagMin.y + (tagH - tagSz.y) * 0.5f));
 				ImGui::Text("%s", tag);

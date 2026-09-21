@@ -10,7 +10,11 @@
 
 #include "TomCat/Core/TimeStep.h"
 
+#ifdef TC_PLATFORM_WINDOWS
+int wmain(int argc, wchar_t** argv);
+#else
 int main(int argc, char** argv);
+#endif
 
 namespace TomCat {
 
@@ -29,28 +33,38 @@ namespace TomCat {
 	class Application
 	{ 
 	public :
-		Application(const std::string& name = "TomCat App", 
-					const std::string& iconPath = "",
-					ApplicationCommandLineArgs args = ApplicationCommandLineArgs());
+		Application(const std::string& name = "TomCat App",
+					std::filesystem::path iconPath = {}, bool enableImGui = true,
+					bool createWindow = true);
+		Application(WindowProps windowProps, bool enableImGui,
+			bool createWindow = true);
 
 		virtual ~Application();
 
 
 		void OnEvent(Event& e);
 
-		void PushLayer(Layer* Layer);
-		void PushOverLayer(Layer* Layer);
+		void PushLayer(Layer* layer);
+		void PushOverlay(Layer* layer);
 
 
-		Window& GetWindow() { return *m_Window; }
+		Window& GetWindow()
+		{
+			TC_Core_Assert(m_Window);
+			return *m_Window;
+		}
+		bool HasWindow() const { return m_Window != nullptr; }
 
-		void Close();
+		void Close(int exitCode = 0);
+		int GetExitCode() const { return m_ExitCode; }
+
+		// Host-driven frame entry for browser requestAnimationFrame and embedded players.
+		bool Tick(float deltaSeconds);
 
 		ImGuiLayer* GetImGuiLayer() { return m_ImGuiLayer; };
 
 		static Application& Get() { return *s_Instance; }
-
-		ApplicationCommandLineArgs GetCommandLineArgs() const { return m_CommandLineArgs; }
+		static Application* TryGet() { return s_Instance; }
 
 	private:
 		void Run();
@@ -58,18 +72,22 @@ namespace TomCat {
 		bool OnWindowResize(WindowResizeEvent& e);
 
 	private:
-		ApplicationCommandLineArgs m_CommandLineArgs;
-
 		Scope<Window> m_Window;
-		ImGuiLayer* m_ImGuiLayer;
+		ImGuiLayer* m_ImGuiLayer = nullptr;
 		bool m_Running = true;
-		bool m_Minized = false;
+		bool m_Minimized = false;
+		bool m_RendererInitialized = false;
+		int m_ExitCode = 0;
 		LayerStack m_LayerStack;
 		float m_LastFrameTime = 0.0f;
 
 	private:
 		static Application* s_Instance;
+#ifdef TC_PLATFORM_WINDOWS
+		friend int ::wmain(int argc, wchar_t** argv);
+#else
 		friend int ::main(int argc, char** argv);
+#endif
 	};
 
 

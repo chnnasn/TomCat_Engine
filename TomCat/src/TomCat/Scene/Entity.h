@@ -39,7 +39,19 @@ namespace TomCat {
 		}
 
 		template<typename T>
+		const T& GetComponent() const
+		{
+			return m_Scene->m_Registry.get<T>(m_EntityHandle);
+		}
+
+		template<typename T>
 		bool HasComponent()
+		{
+			return m_Scene->m_Registry.all_of<T>(m_EntityHandle);
+		}
+
+		template<typename T>
+		bool HasComponent() const
 		{
 			return m_Scene->m_Registry.all_of<T>(m_EntityHandle);
 		}
@@ -47,6 +59,9 @@ namespace TomCat {
 		template<typename T>
 		void RemoveComponent()
 		{
+			if (!m_Scene || !m_Scene->m_Registry.valid(m_EntityHandle)
+				|| !m_Scene->m_Registry.all_of<T>(m_EntityHandle))
+				return;
 			m_Scene->m_Registry.remove<T>(m_EntityHandle);
 		}
 
@@ -56,9 +71,39 @@ namespace TomCat {
 
 		operator uint32_t() const { return (uint32_t)m_EntityHandle; }
 
-		UUID GetUUID() { return GetComponent<ID>().id; }
+		UUID GetUUID() const { return GetComponent<ID>().id; }
 
-		const std::string& GetName() { return GetComponent<Tag>()._Tag; }
+		const std::string& GetName() const { return GetComponent<Tag>()._Tag; }
+
+		const std::string& GetGameplayTag() const
+		{
+			return GetComponent<EntityMetadata>().GameplayTag;
+		}
+
+		bool SetGameplayTag(const std::string& gameplayTag)
+		{
+			if (gameplayTag.empty())
+				return false;
+			GetComponent<EntityMetadata>().GameplayTag = gameplayTag;
+			return true;
+		}
+
+		uint8_t GetLayer() const { return GetComponent<EntityMetadata>().Layer; }
+
+		Scene* GetScene() const { return m_Scene; }
+
+		bool IsActiveInHierarchy() const
+		{
+			return m_Scene && m_Scene->IsActiveInHierarchy(*this);
+		}
+
+		bool SetLayer(uint8_t layer)
+		{
+			if (layer >= Physics2DLayerCount)
+				return false;
+			GetComponent<EntityMetadata>().Layer = layer;
+			return true;
+		}
 
 		bool operator==(const Entity& other) const
 		{
@@ -73,6 +118,30 @@ namespace TomCat {
 		entt::entity m_EntityHandle{ entt::null };
 		Scene* m_Scene = nullptr;
 
+		friend class Scene;
+
 	};
+
+	// The default hook is header-defined so a newly registered component can use
+	// Entity::AddComponent without adding a Scene.cpp specialization. Built-in
+	// components with subsystem side effects keep their explicit specializations.
+	template<typename T>
+	void Scene::OnComponentAdded(Entity, T&)
+	{
+	}
+
+	template<> void Scene::OnComponentAdded<ID>(Entity, ID&);
+	template<> void Scene::OnComponentAdded<Transform>(Entity, Transform&);
+	template<> void Scene::OnComponentAdded<C_Camera>(Entity, C_Camera&);
+	template<> void Scene::OnComponentAdded<SpriteRenderer>(Entity, SpriteRenderer&);
+	template<> void Scene::OnComponentAdded<SpriteAnimator>(Entity, SpriteAnimator&);
+	template<> void Scene::OnComponentAdded<LineRenderer>(Entity, LineRenderer&);
+	template<> void Scene::OnComponentAdded<Tag>(Entity, Tag&);
+	template<> void Scene::OnComponentAdded<EntityMetadata>(Entity, EntityMetadata&);
+	template<> void Scene::OnComponentAdded<CSharpScripts>(Entity, CSharpScripts&);
+	template<> void Scene::OnComponentAdded<Rigidbody2D>(Entity, Rigidbody2D&);
+	template<> void Scene::OnComponentAdded<BoxCollider2D>(Entity, BoxCollider2D&);
+	template<> void Scene::OnComponentAdded<CircleCollider2D>(Entity, CircleCollider2D&);
+	template<> void Scene::OnComponentAdded<DistanceJoint2D>(Entity, DistanceJoint2D&);
 
 }

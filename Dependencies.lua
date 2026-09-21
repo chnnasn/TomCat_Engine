@@ -1,7 +1,5 @@
 -- Include directories relative to root folder (solution directory)
 
-VULKAN_SDK = os.getenv("VULKAN_SDK")
-
 IncludeDir = {}
 IncludeDir["GLFW"] = "%{wks.location}/../TomCat/vendor/GLFW/include"
 IncludeDir["Glad"] = "%{wks.location}/../TomCat/vendor/Glad/include"
@@ -12,32 +10,23 @@ IncludeDir["entt"] = "%{wks.location}/../TomCat/vendor/entt/include"
 IncludeDir["yaml_cpp"] = "%{wks.location}/../TomCat/vendor/yaml-cpp/include"
 IncludeDir["ImGuizmo"] = "%{wks.location}/../TomCat/vendor/ImGuizmo"
 IncludeDir["Box2D"] = "%{wks.location}/../TomCat/vendor/Box2D/include"
-IncludeDir["SPIRV_Cross"] = "%{wks.location}/../TomCat/vendor/SPIRV-Cross"
+-- The OpenGL shader pipeline uses ShaderC and SPIRV-Cross from this submodule.
+-- These are shader compilation tools; no Vulkan renderer/loader is linked.
 IncludeDir["VulkanSDK"] = "%{wks.location}/../vendor/VulkanSDK/Include"
-IncludeDir["shaderc"] = "%{wks.location}/../vendor/VulkanSDK/Include"
-IncludeDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp/include"
-IncludeDir["AssimpBuild"] = "%{wks.location}/../TomCat/vendor/Assimp-build/include"
 
 LibraryDir = {}
 
 LibraryDir["VulkanSDK"] = "%{wks.location}/../vendor/VulkanSDK/Lib"
-LibraryDir["VulkanSDK_Debug"] = "%{wks.location}/../vendor/VulkanSDK/Lib"
-LibraryDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp-build/lib/Release"
 
 Library = {}
-Library["Vulkan"] = "%{LibraryDir.VulkanSDK}/vulkan-1.lib"
-Library["VulkanUtils"] = "%{LibraryDir.VulkanSDK}/VkLayer_utils.lib"
 
-Library["ShaderC_Debug"] = "%{LibraryDir.VulkanSDK_Debug}/shaderc_sharedd.lib"
-Library["SPIRV_Cross_Debug"] = "%{LibraryDir.VulkanSDK_Debug}/spirv-cross-cored.lib"
-Library["SPIRV_Cross_GLSL_Debug"] = "%{LibraryDir.VulkanSDK_Debug}/spirv-cross-glsld.lib"
-Library["SPIRV_Tools_Debug"] = "%{LibraryDir.VulkanSDK_Debug}/SPIRV-Toolsd.lib"
+Library["ShaderC_Debug"] = "%{LibraryDir.VulkanSDK}/shaderc_sharedd.lib"
+Library["SPIRV_Cross_Debug"] = "%{LibraryDir.VulkanSDK}/spirv-cross-cored.lib"
+Library["SPIRV_Cross_GLSL_Debug"] = "%{LibraryDir.VulkanSDK}/spirv-cross-glsld.lib"
 
 Library["ShaderC_Release"] = "%{LibraryDir.VulkanSDK}/shaderc_shared.lib"
 Library["SPIRV_Cross_Release"] = "%{LibraryDir.VulkanSDK}/spirv-cross-core.lib"
 Library["SPIRV_Cross_GLSL_Release"] = "%{LibraryDir.VulkanSDK}/spirv-cross-glsl.lib"
-Library["Assimp"] = "%{LibraryDir.Assimp}/assimp-vc143-mt.lib"
-Library["AssimpZlib"] = "%{LibraryDir.Assimp}/zlibstatic.lib"
 
 -- Libraries that consumers of the TomCat static library must also link.
 -- Kept here so Editor / Hub only reference one shared list.
@@ -47,8 +36,7 @@ TomCatConsumerLinks = {
 	"Glad.lib",
 	"ImGui.lib",
 	"yaml-cpp.lib",
-	"opengl32.lib",
-	"%{Library.Assimp}"
+	"opengl32.lib"
 }
 
 TomCatConsumerLinksRelease = {
@@ -62,3 +50,12 @@ TomCatConsumerLinksDebug = {
 	"%{Library.SPIRV_Cross_Debug}",
 	"%{Library.SPIRV_Cross_GLSL_Debug}"
 }
+
+IncludeDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp/include"
+IncludeDir["AssimpBuild"] = "%{wks.location}/../TomCat/vendor/Assimp-build/include"
+table.insert(TomCatConsumerLinks, "%{wks.location}/../TomCat/vendor/Assimp-build/lib/Release/assimp-vc143-mt.lib")
+filter "kind:ConsoleApp or WindowedApp"
+postbuildcommands {
+    '{COPYFILE} "%{wks.location}/../TomCat/vendor/Assimp-build/bin/Release/assimp-vc143-mt.dll" "%{cfg.targetdir}"'
+}
+filter {}

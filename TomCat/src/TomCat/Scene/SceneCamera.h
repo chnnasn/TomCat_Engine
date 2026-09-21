@@ -2,6 +2,8 @@
 
 #include "TomCat/Renderer/Camera.h"
 
+#include <array>
+
 namespace TomCat {
 
 	class SceneCamera : public Camera
@@ -14,33 +16,37 @@ namespace TomCat {
 		SceneCamera();
 		virtual ~SceneCamera() = default;
 
-		void SetOrthographic(float size, float nearClip, float farClip);
-		void SetPerspective(float verticalFOV, float nearClip, float farClip);
+		bool SetOrthographic(float size, float nearClip, float farClip);
+		bool SetPerspective(float verticalFOV, float nearClip, float farClip);
 
-		void SetViewportSize(uint32_t width, uint32_t height);
+		bool SetViewportSize(uint32_t width, uint32_t height);
 
 		float GetPerspectiveVerticalFOV() const { return m_PerspectiveFOV; }
-		void SetPerspectiveVerticalFOV(float verticalFov) { m_PerspectiveFOV = verticalFov; RecalculateProjection(); }
+		bool SetPerspectiveVerticalFOV(float verticalFov);
 		float GetPerspectiveNearClip() const { return m_PerspectiveNear; }
-		void SetPerspectiveNearClip(float nearClip) { m_PerspectiveNear = nearClip; RecalculateProjection(); }
+		bool SetPerspectiveNearClip(float nearClip);
 		float GetPerspectiveFarClip() const { return m_PerspectiveFar; }
-		void SetPerspectiveFarClip(float farClip) { m_PerspectiveFar = farClip; RecalculateProjection(); }
+		bool SetPerspectiveFarClip(float farClip);
 
 		float GetOrthographicSize() const { return m_OrthographicSize; }
-		void SetOrthographicSize(float size) { m_OrthographicSize = size; RecalculateProjection(); }
+		bool SetOrthographicSize(float size);
 		float GetOrthographicNearClip() const { return m_OrthographicNear; }
-		void SetOrthographicNearClip(float nearClip) { m_OrthographicNear = nearClip; RecalculateProjection(); }
+		bool SetOrthographicNearClip(float nearClip);
 		float GetOrthographicFarClip() const { return m_OrthographicFar; }
-		void SetOrthographicFarClip(float farClip) { m_OrthographicFar = farClip; RecalculateProjection(); }
+		bool SetOrthographicFarClip(float farClip);
 
-		ProjectionType GetProjectionType() const { return  m_ProjectionType; };
-		void SetProjectionType(ProjectionType type) { m_ProjectionType = type; RecalculateProjection(); }
+		ProjectionType GetProjectionType() const { return m_ProjectionType; }
+		bool SetProjectionType(ProjectionType type);
 
-		glm::vec4 GetBackgroundColor() const { return m_BackgroundColor; }
-		void SetBackgroundColor(const glm::vec4& color) { m_BackgroundColor = color; }
+		// TomCat authoring uses local +Z as 3D forward. Returns near-plane corners
+		// first, then far-plane corners, in that +Z local camera space. The order
+		// within each plane is bottom-left, bottom-right, top-right, top-left.
+		bool TryGetLocalFrustumCorners(
+			std::array<glm::vec3, 8>& corners) const;
 
 	private:
-		void RecalculateProjection();
+		bool TryCalculateProjection(ProjectionType type, glm::mat4& projection) const;
+		bool RecalculateProjection();
 	private:
 	ProjectionType m_ProjectionType = ProjectionType::Orthographic;
 
@@ -48,10 +54,9 @@ namespace TomCat {
 		float m_PerspectiveNear = 0.01f, m_PerspectiveFar = 1000.0f;
 
 		float m_OrthographicSize = 10.0f;
-		float m_OrthographicNear = -1.0f, m_OrthographicFar = 1.0f;
+		float m_OrthographicNear = 0.0f, m_OrthographicFar = 1000.0f;
 
 		float m_AspectRatio = 1.0f;
-		glm::vec4 m_BackgroundColor = glm::vec4(0.53f, 0.81f, 0.92f, 1.0f);  // 默认天蓝色
 	};
 
 }

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="src">
@@ -7,11 +7,20 @@
     <Filter Include="src\TomCat">
       <UniqueIdentifier>{04C24431-F079-867E-5981-5FDA4558216F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Asset">
+      <UniqueIdentifier>{93E9B25C-7FE2-D1AE-A814-B733946CB1BA}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TomCat\Audio">
+      <UniqueIdentifier>{05C3B35C-F1BB-D2AE-1AEE-B7330646B2BA}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Core">
       <UniqueIdentifier>{DCC85B31-4854-C9F5-5165-4CEABD6F25F6}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\TomCat\Debug">
       <UniqueIdentifier>{7A3FE15C-6638-00AF-8F6A-E5337BC2DFBA}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TomCat\Editor">
+      <UniqueIdentifier>{BA1250FB-2629-4E91-6FA0-D9B2DBF51E19}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\TomCat\Events">
       <UniqueIdentifier>{688193FC-D497-9192-1D0F-1DB48964621A}</UniqueIdentifier>
@@ -28,8 +37,17 @@
     <Filter Include="src\TomCat\Renderer">
       <UniqueIdentifier>{2A8A7466-96EB-5174-1F59-98268BB98833}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Runtime">
+      <UniqueIdentifier>{37930976-2377-CACB-8CD7-C41E78DAB44D}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Scene">
       <UniqueIdentifier>{21A2EF5D-0D9B-0EB0-36CD-F3342225EEBB}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TomCat\Scene\Serialization">
+      <UniqueIdentifier>{6EA05651-5AC6-20B8-430C-A6832FD14584}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TomCat\Scripting">
+      <UniqueIdentifier>{068C5911-F21A-E3DA-9B39-F7D587A7F380}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\TomCat\Utils">
       <UniqueIdentifier>{64361D5E-502F-3CB0-7961-213565B91BBC}</UniqueIdentifier>
@@ -39,6 +57,9 @@
     </Filter>
     <Filter Include="src\platform\OpenGL">
       <UniqueIdentifier>{555C82A0-C1BD-5FAE-4A2B-A660B68B966D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\platform\Web">
+      <UniqueIdentifier>{0EE433FE-FADC-5250-230F-38D50F67325C}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\platform\Window">
       <UniqueIdentifier>{08C0B1B2-7421-8FC0-FD8E-D57269EFC57F}</UniqueIdentifier>
@@ -75,16 +96,97 @@
     <ClInclude Include="src\TomCat.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\Advanced2DAuthoringAssets.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\ArtifactKey.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\Asset.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetDatabase.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetImportCoordinator.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetJobSystem.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetManager.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AssetRegistry.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\AudioArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\ContentHash.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\DerivedDataCache.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\Importer.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\ImporterRegistry.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\MaterialArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\MeshArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\ShaderArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\SpriteAsset.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\TextureArtifact.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Audio\AudioClip.h">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Audio\AudioDevice.h">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Audio\AudioEngine.h">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Audio\AudioSceneRuntime.h">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Audio\AudioStream.h">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\Application.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\ApplicationPaths.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\Base.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Core\CrashReporter.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Core\EditorRuntimeBundle.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\EntryPoint.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\Input.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Core\InputEventQueue.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\KeyCodes.h">
@@ -102,9 +204,6 @@
     <ClInclude Include="src\TomCat\Core\MouseCodes.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Core\Random.h">
-      <Filter>src\TomCat\Core</Filter>
-    </ClInclude>
     <ClInclude Include="src\TomCat\Core\TimeStep.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
@@ -114,16 +213,40 @@
     <ClInclude Include="src\TomCat\Core\UUID.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\Version.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Core\Window.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Core\WindowMetrics.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Debug\FrameProfiler.h">
+      <Filter>src\TomCat\Debug</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Debug\Instrumentor.h">
       <Filter>src\TomCat\Debug</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Editor\EditorRecoveryService.h">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Editor\EditorShortcutRouter.h">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Editor\SceneHistory.h">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Editor\WebEditorSession.h">
+      <Filter>src\TomCat\Editor</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Events\ApplicationEvent.h">
       <Filter>src\TomCat\Events</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Events\Event.h">
+      <Filter>src\TomCat\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Events\InputModifiers.h">
       <Filter>src\TomCat\Events</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Events\KeyEvent.h">
@@ -141,10 +264,19 @@
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Project\BuildSettings.h">
+      <Filter>src\TomCat\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Project\PlayerSettings.h">
+      <Filter>src\TomCat\Project</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Project\Project.h">
       <Filter>src\TomCat\Project</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Project\ProjectManager.h">
+      <Filter>src\TomCat\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Project\ProjectSettings.h">
       <Filter>src\TomCat\Project</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Buffer.h">
@@ -154,6 +286,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\EditorCamera.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Font.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Framebuffer.h">
@@ -166,12 +301,6 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Model.h">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="src\TomCat\Renderer\OrthographicCamera.h">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClInclude>
-    <ClInclude Include="src\TomCat\Renderer\OrthographicCameraController.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\RenderCommand.h">
@@ -201,10 +330,31 @@
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Runtime\RuntimeCompatibility.h">
+      <Filter>src\TomCat\Runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h">
+      <Filter>src\TomCat\Runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Advanced2D.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\ComponentRegistry.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Components.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Entity.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Physics2DEvents.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\RuntimeUIComponentDescriptors.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Scene.h">
@@ -213,14 +363,77 @@
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SceneCommandBuffer.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SceneManager.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Scene\ScriptableEntity.h">
+    <ClInclude Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\ComponentCodecs.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\EntityArchive.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\PrefabArchiveCodec.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\PrefabLink.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\Serialization\SceneArchiveCodec.h">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SpriteAnimation.h">
       <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SpriteAnimatorAuthoring.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\DotNetHost.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\IScriptRuntime.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ManagedRuntimeFactory.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ManagedScriptRuntime.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptDiagnosticSink.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptEngine.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptField.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptGlue.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scripting\ScriptTypes.h">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Utils\FileSystemUtils.h">
+      <Filter>src\TomCat\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Utils\PathUtils.h">
+      <Filter>src\TomCat\Utils</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Utils\PlatformUtils.h">
       <Filter>src\TomCat\Utils</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLApi.h">
+      <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLBuffer.h">
       <Filter>src\platform\OpenGL</Filter>
@@ -229,6 +442,9 @@
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLFramebuffer.h">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\OpenGL\OpenGLProfiler.h">
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLRendererAPI.h">
@@ -245,6 +461,15 @@
     </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLVertexArray.h">
       <Filter>src\platform\OpenGL</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Web\WebEditorUI.h">
+      <Filter>src\platform\Web</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Web\WebProjectSettingsPanel.h">
+      <Filter>src\platform\Web</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Web\WebWindow.h">
+      <Filter>src\platform\Web</Filter>
     </ClInclude>
     <ClInclude Include="src\platform\Window\WindowsWindow.h">
       <Filter>src\platform\Window</Filter>
@@ -1514,7 +1739,85 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\TomCat\Asset\Advanced2DAuthoringAssets.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\ArtifactKey.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\Asset.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetDatabase.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetImportCoordinator.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetJobSystem.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetManager.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AssetRegistry.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\AudioArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\ContentHash.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\DerivedDataCache.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\ImporterRegistry.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\MaterialArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\MeshArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\ShaderArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\SpriteAsset.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\TextureArtifact.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\AudioClip.cpp">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\AudioEngine.cpp">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\AudioSceneRuntime.cpp">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\AudioStream.cpp">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\NullAudioDevice.cpp">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\WindowsAudioDevice.cpp">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Core\Application.cpp">
+      <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Core\ApplicationPaths.cpp">
+      <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Core\CrashReporter.cpp">
+      <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Core\EditorRuntimeBundle.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\Layer.cpp">
@@ -1526,11 +1829,20 @@
     <ClCompile Include="src\TomCat\Core\Log.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\Core\UUID‎.cpp">
+    <ClCompile Include="src\TomCat\Core\UUID.cpp">
       <Filter>src\TomCat\Core</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Core\Window.cpp">
       <Filter>src\TomCat\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Editor\EditorRecoveryService.cpp">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Editor\SceneHistory.cpp">
+      <Filter>src\TomCat\Editor</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Editor\WebEditorSession.cpp">
+      <Filter>src\TomCat\Editor</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiBuild.cpp">
       <Filter>src\TomCat\ImGui</Filter>
@@ -1544,6 +1856,9 @@
     <ClCompile Include="src\TomCat\Math\Math.cpp">
       <Filter>src\TomCat\Math</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Project\PlayerSettings.cpp">
+      <Filter>src\TomCat\Project</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Project\Project.cpp">
       <Filter>src\TomCat\Project</Filter>
     </ClCompile>
@@ -1556,6 +1871,9 @@
     <ClCompile Include="src\TomCat\Renderer\EditorCamera.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Font.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Framebuffer.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
@@ -1566,12 +1884,6 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Model.cpp">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="src\TomCat\Renderer\OrthographicCamera.cpp">
-      <Filter>src\TomCat\Renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="src\TomCat\Renderer\OrthographicCameraController.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp">
@@ -1601,7 +1913,22 @@
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp">
+      <Filter>src\TomCat\Runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\ComponentRegistry.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Scene\Entity.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\RuntimeUIComponentDescriptors.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\Scene.cpp">
@@ -1610,8 +1937,47 @@
     <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\SceneCommandBuffer.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\SceneManager.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp">
       <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\ComponentCodecs.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\PrefabArchiveCodec.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\Serialization\SceneArchiveCodec.cpp">
+      <Filter>src\TomCat\Scene\Serialization</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\DotNetHost.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ManagedRuntimeFactory.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ManagedScriptRuntime.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ScriptDiagnosticSink.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ScriptEngine.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scripting\ScriptGlue.cpp">
+      <Filter>src\TomCat\Scripting</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Utils\FileSystemUtils.cpp">
+      <Filter>src\TomCat\Utils</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp">
       <Filter>src\platform\OpenGL</Filter>
@@ -1620,6 +1986,9 @@
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLFramebuffer.cpp">
+      <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\OpenGL\OpenGLProfiler.cpp">
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLRendererAPI.cpp">
@@ -1636,6 +2005,30 @@
     </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLVertexArray.cpp">
       <Filter>src\platform\OpenGL</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebEditor.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebEditorUI.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebFramebuffer.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebPlayer.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebProjectSettingsPanel.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebSceneToolbars.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebShader.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Web\WebWindow.cpp">
+      <Filter>src\platform\Web</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Window\WindowsInput.cpp">
       <Filter>src\platform\Window</Filter>

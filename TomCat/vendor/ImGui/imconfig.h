@@ -14,6 +14,13 @@
 
 #pragma once
 
+// TomCat links Dear ImGui as a static library. Neutralize stale project-level
+// dllimport/dllexport definitions so every translation unit uses one ABI.
+#ifdef IMGUI_API
+#undef IMGUI_API
+#endif
+#define IMGUI_API
+
 //---- Define assertion handler. Defaults to calling assert().
 // If your macro uses multiple statements, make sure is enclosed in a 'do { .. } while (0)' block so it can be used as a single statement.
 //#define IM_ASSERT(_EXPR)  MyAssert(_EXPR)

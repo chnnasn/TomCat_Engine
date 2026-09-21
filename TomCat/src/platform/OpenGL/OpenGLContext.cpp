@@ -5,13 +5,15 @@
 #include <GLFW/glfw3.h>
 
 #include <Glad/glad.h>
+#include <stdexcept>
 
 namespace TomCat {
 
 	OpenGLContext::OpenGLContext(GLFWwindow* WindowHandle) : m_WindowHandle(WindowHandle)
 	{
 
-		TC_Core_Assert(WindowHandle, "m_WindowHandle为空");
+		if (!WindowHandle)
+			throw std::invalid_argument("OpenGLContext requires a valid window handle");
 	}
 
 	void OpenGLContext::Init()
@@ -20,21 +22,15 @@ namespace TomCat {
 
 		glfwMakeContextCurrent(m_WindowHandle);
 		int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-		TC_Core_Assert(status, "初始化Glad失败");
+		if (!status)
+			throw std::runtime_error("Failed to initialize Glad");
+		if (!GLAD_GL_VERSION_4_6)
+			throw std::runtime_error("TomCat requires OpenGL 4.6 for SPIR-V shader specialization");
 
 		TC_Core_Info("OpenGL Info");
 		TC_Core_Info("Vendor: {0}", reinterpret_cast<const char*>(glGetString(GL_VENDOR)));
 		TC_Core_Info("Renderer: {0}", reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
 		TC_Core_Info("Version: {0}", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
-
-	#ifdef TC_ENABLE_ASSERTS
-			int versionMajor;
-			int versionMinor;
-			glGetIntegerv(GL_MAJOR_VERSION, &versionMajor);
-			glGetIntegerv(GL_MINOR_VERSION, &versionMinor);
-
-			TC_Core_Assert(versionMajor > 4 || (versionMajor == 4 && versionMinor >= 5), "Hazel requires at least OpenGL version 4.5!");
-	#endif
 
 	}
 

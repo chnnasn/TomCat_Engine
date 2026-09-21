@@ -3,31 +3,78 @@
 
 #include "Log.h"
 
+#include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Renderer.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 
 #include "Input.h"
 
-#include <glfw/glfw3.h>
+#include <stdexcept>
+#include <cmath>
 
 namespace TomCat {
 
 	Application* Application::s_Instance = nullptr;
 
-	Application::Application(const std::string& name, const std::string& iconPath, ApplicationCommandLineArgs args)
-		: m_CommandLineArgs(args)
+	Application::Application(const std::string& name, std::filesystem::path iconPath,
+		bool enableImGui, bool createWindow)
+		: Application(WindowProps(name, 1920, 1080, std::move(iconPath)),
+			enableImGui, createWindow)
+	{
+	}
+
+	Application::Application(WindowProps windowProps, bool enableImGui,
+		bool createWindow)
 	{
 		TC_PROFILE_FUNCTION();
 
-		TC_Core_Assert(!s_Instance, "应用程序已经存在！");
+		if (s_Instance)
+			throw std::logic_error("Only one TomCat application can exist at a time");
+
 		s_Instance = this;
-		m_Window = Window::Create(WindowProps(name, 1920, 1080, iconPath));
-		m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
+		if (!createWindow)
+			return;
+		try
+		{
+			m_Window = Window::Create(windowProps);
+			if (!m_Window)
+				throw std::runtime_error("Failed to create the application window");
 
-		Renderer::Init();
+			m_Window->SetEventCallback(TC_Bind_Event_Fn(Application::OnEvent));
+			Renderer::Init();
+			m_RendererInitialized = true;
+			if (m_Window->GetFramebufferWidth() > 0
+				&& m_Window->GetFramebufferHeight() > 0)
+			{
+				Renderer::OnWindowResize(m_Window->GetFramebufferWidth(),
+					m_Window->GetFramebufferHeight());
+			}
 
-		m_ImGuiLayer = new ImGuiLayer();
-
-		PushOverLayer(m_ImGuiLayer);
+#ifndef TC_PLATFORM_WEB
+			if (enableImGui)
+			{
+				m_ImGuiLayer = new ImGuiLayer(windowProps.EditorStyling);
+				PushOverlay(m_ImGuiLayer);
+			}
+#else
+			if (enableImGui)
+				throw std::invalid_argument("The Web Player target does not include the desktop editor UI");
+#endif
+		}
+		catch (...)
+		{
+			m_LayerStack.Clear();
+			m_ImGuiLayer = nullptr;
+			if (m_RendererInitialized)
+			{
+				Renderer::Shutdown();
+				m_RendererInitialized = false;
+			}
+			m_Window.reset();
+			s_Instance = nullptr;
+			throw;
+		}
 
 	}
 
@@ -36,24 +83,33 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		Renderer::Shutdown();
+		m_LayerStack.Clear();
+		m_ImGuiLayer = nullptr;
+		if (m_RendererInitialized)
+		{
+			Renderer::Shutdown();
+			m_RendererInitialized = false;
+		}
+		m_Window.reset();
+		s_Instance = nullptr;
 	}
 
-	void Application::PushLayer(Layer* Layer)
+	void Application::PushLayer(Layer* layer)
 	{
 		TC_PROFILE_FUNCTION();
-		m_LayerStack.PushLayer(Layer);
-		Layer->OnAttach();
+		if (m_LayerStack.PushLayer(layer))
+			layer->OnAttach();
 	}
-	void Application::PushOverLayer(Layer* Layer)
+	void Application::PushOverlay(Layer* layer)
 	{
 		TC_PROFILE_FUNCTION();
-		m_LayerStack.PushOverLayer(Layer);
-		Layer->OnAttach();
+		if (m_LayerStack.PushOverlay(layer))
+			layer->OnAttach();
 	}
 
-	void Application::Close()
+	void Application::Close(int exitCode)
 	{
+		m_ExitCode = exitCode;
 		m_Running = false;
 
 	}
@@ -62,8 +118,36 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
+		// The editor must be allowed to veto the native close request while it
+		// presents Save / Discard / Cancel. Other application events keep their
+		// original core-first routing.
+		if (e.GetEventType() == WindowCloseEvent::GetStaticType())
+		{
+			for (auto it = m_LayerStack.end(); it != m_LayerStack.begin(); )
+			{
+				(*--it)->OnEvent(e);
+				if (e.m_Handled)
+					break;
+			}
+
+			if (!e.m_Handled)
+			{
+				EventDispatcher closeDispatcher(e);
+				closeDispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(Application::OnWindowClose));
+			}
+
+			// A handled close may leave the run loop active while a layer presents a
+			// confirmation. Reject the backend request and ensure a minimized window
+			// becomes visible so that confirmation can actually be answered.
+			if (m_Running && m_Window)
+			{
+				m_Window->CancelCloseRequest();
+				m_Minimized = false;
+			}
+			return;
+		}
+
 		EventDispatcher dispatcher(e);
-		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(Application::OnWindowClose));
 		dispatcher.Dispatch<WindowResizeEvent>(TC_Bind_Event_Fn(Application::OnWindowResize));
 
 		//TC_Core_Trace("{0}",e.ToString());
@@ -81,16 +165,69 @@ namespace TomCat {
 	void Application::Run()
 	{
 		TC_PROFILE_FUNCTION();
+		// A headless Player smoke still owns a runtime layer and advances it with a
+		// deterministic display delta. Command-only applications close themselves
+		// in their constructor and therefore skip this loop.
+		if (!m_Window)
+		{
+			const Timestep headlessTimestep(1.0f / 60.0f);
+			while (m_Running)
+			{
+				Input::BeginFrame();
+				Scripting::ScriptEngine::Get().CaptureInputState();
+				(void)AssetManager::Get().PumpImportCoordinator();
+				for (Layer* layer : m_LayerStack)
+					layer->OnUpdate(headlessTimestep);
+			}
+			return;
+		}
+		m_LastFrameTime = static_cast<float>(m_Window->GetTimeSeconds());
 
 		while (m_Running) 
 		{
-			TC_PROFILE_SCOPE("RunLoop");
-
-			float time = (float)glfwGetTime();
-			Timestep timestep = time - m_LastFrameTime;
+			const float time = static_cast<float>(m_Window->GetTimeSeconds());
+			const float delta = time - m_LastFrameTime;
 			m_LastFrameTime = time;
+			Tick(delta);
+		}
+	}
 
-			if (!m_Minized) 
+	bool Application::Tick(float deltaSeconds)
+	{
+		if (!m_Window || !m_Running)
+			return false;
+		if (!std::isfinite(deltaSeconds) || deltaSeconds < 0.0f)
+			throw std::invalid_argument("Frame delta must be finite and nonnegative");
+		ScopedProfileFrame profileFrame(deltaSeconds);
+		{
+			TC_PROFILE_SCOPE("RunLoop");
+			// Poll first, then freeze one immutable input snapshot. Both native
+			// gameplay and managed scripts therefore observe transitions delivered
+			// by this poll, including press+release pairs between display frames.
+			m_Window->PollEvents();
+			Input::BeginFrame();
+			Scripting::ScriptEngine::Get().CaptureInputState();
+			if (!m_Running)
+				return false;
+
+			Timestep timestep = deltaSeconds;
+			Renderer::BeginProfileFrame(profileFrame.ID);
+
+			// Files are hashed and imported on worker threads, but registry updates
+			// and runtime cache invalidation must be published from the application
+			// thread. Pump even while minimized so authoring changes cannot remain
+			// indefinitely queued behind a hidden window.
+			(void)AssetManager::Get().PumpImportCoordinator();
+			// Texture workers only read and validate immutable artifacts. OpenGL
+			// object creation stays on this context-owning thread and is metered so a
+			// large preload cannot turn one frame into a long upload stall.
+			(void)AssetManager::Get().PumpTexturePublishes();
+			// Font workers perform artifact reads and glyph rasterization only. Keep
+			// atlas texture creation on the context-owning application thread and
+			// publish a bounded amount before layers render this frame.
+			(void)FontManager::Get().PumpPublishes();
+
+			if (!m_Minimized)
 			{
 				{
 					TC_PROFILE_SCOPE("LayerStack Onupdates");
@@ -99,18 +236,28 @@ namespace TomCat {
 						layer->OnUpdate(timestep);
 				}
 
-				m_ImGuiLayer->Begin();
+#ifndef TC_PLATFORM_WEB
+				if (m_ImGuiLayer)
 				{
-					TC_PROFILE_SCOPE("LayerStack OnImGuiRender");
-					for (Layer* layer : m_LayerStack)
-						layer->OnImGuiRender();
+					m_ImGuiLayer->Begin();
+					{
+						TC_PROFILE_SCOPE("LayerStack OnImGuiRender");
+						for (Layer* layer : m_LayerStack)
+							layer->OnImGuiRender();
+					}
+					m_ImGuiLayer->End();
 				}
-				m_ImGuiLayer->End();
+#endif
 
 			}
 
-			m_Window->OnUpdate();
+			Renderer::EndProfileFrame();
+			{
+				TC_PROFILE_SCOPE("Present / VSync wait");
+				m_Window->Present();
+			}
 		}
+		return m_Running;
 	}
 
 
@@ -125,14 +272,15 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		if (e.GetWidth() == 0 || e.GetHeight() == 0)
+		if (e.GetFramebufferWidth() == 0 || e.GetFramebufferHeight() == 0)
 		{
-			m_Minized = true;
+			m_Minimized = true;
 			return false;
 		}
 
-		m_Minized = false;
-		Renderer::OnWindowResize(e.GetWidth(), e.GetHeight());
+		m_Minimized = false;
+		Renderer::OnWindowResize(e.GetFramebufferWidth(),
+			e.GetFramebufferHeight());
 
 		return false;
 	}

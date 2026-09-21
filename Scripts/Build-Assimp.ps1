@@ -9,7 +9,7 @@ if (-not (Test-Path (Join-Path $src "CMakeLists.txt"))) {
     Write-Error "Assimp submodule is not initialized. Run: git submodule update --init"
 }
 
-if (-not (Test-Path (Join-Path $build "CMakeCache.txt"))) {
+if (-not (Test-Path (Join-Path $build "Assimp.sln"))) {
     cmake -S $src -B $build -G "Visual Studio 17 2022" -A x64 `
         -DBUILD_SHARED_LIBS=ON `
         -DASSIMP_BUILD_TESTS=OFF `
@@ -18,7 +18,9 @@ if (-not (Test-Path (Join-Path $build "CMakeCache.txt"))) {
         -DASSIMP_INSTALL=OFF `
         -DASSIMP_BUILD_ZLIB=ON `
         -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+    if ($LASTEXITCODE -ne 0) { throw "Assimp configure failed ($LASTEXITCODE)" }
 }
 
 cmake --build $build --config Release --target assimp -j 8
+if ($LASTEXITCODE -ne 0) { throw "Assimp build failed ($LASTEXITCODE)" }
 Write-Host "Assimp built -> $build"

@@ -1,23 +1,1155 @@
 #include "tcpch.h"
 #include "Scene.h"
 
+#include "TomCat/Audio/AudioSceneRuntime.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
+#include "TomCat/Asset/AssetManager.h"
+
 #include "Components.h"
-#include "ScriptableEntity.h"
+#include "Advanced2D.h"
+#include "SpriteAnimation.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/Renderer3D.h"
 #include "TomCat/Renderer/Model.h"
 #include "TomCat/Renderer/RenderCommand.h"
+#include "TomCat/Runtime/RuntimeUI.h"
+#include "TomCat/Math/Math.h"
 #include "Entity.h"
+#include "Serialization/ComponentCodecs.h"
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <exception>
+#include <iterator>
+#include <limits>
+#include <utility>
+#include <unordered_map>
+#include <unordered_set>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 // Box2D
 #include "box2d/b2_world.h"
 #include "box2d/b2_body.h"
+#include "box2d/b2_circle_shape.h"
+#include "box2d/b2_contact.h"
 #include "box2d/b2_fixture.h"
+#include "box2d/b2_distance_joint.h"
+#include "box2d/b2_joint.h"
 #include "box2d/b2_polygon_shape.h"
+#include "box2d/b2_world_callbacks.h"
 
 namespace TomCat {
+	static_assert(sizeof(b2BodyUserData::pointer) >= sizeof(uint64_t),
+		"Box2D body user data must be able to store a complete entity UUID value");
+	static_assert(sizeof(b2JointUserData::pointer) >= sizeof(uint64_t));
+
+	namespace {
+
+		class ScriptFixedStepScope final
+		{
+		public:
+			ScriptFixedStepScope(Scripting::ScriptEngine& engine, uint64_t sceneSessionId)
+				: m_Engine(engine), m_SceneSessionId(sceneSessionId),
+				m_Active(sceneSessionId == 0 || engine.BeginFixedStep(sceneSessionId))
+			{
+			}
+
+			~ScriptFixedStepScope()
+			{
+				if (m_SceneSessionId != 0 && m_Active)
+					m_Engine.EndFixedStep(m_SceneSessionId);
+			}
+
+			ScriptFixedStepScope(const ScriptFixedStepScope&) = delete;
+			ScriptFixedStepScope& operator=(const ScriptFixedStepScope&) = delete;
+
+			explicit operator bool() const { return m_Active; }
+
+		private:
+			Scripting::ScriptEngine& m_Engine;
+			uint64_t m_SceneSessionId = 0;
+			bool m_Active = false;
+		};
+
+	}
+
+	class SceneContactListener final : public b2ContactListener
+	{
+	public:
+		enum class PendingType
+		{
+			Enter,
+			Exit
+		};
+
+		struct EntityPair
+		{
+			uint64_t A = 0;
+			uint64_t B = 0;
+			bool IsTrigger = false;
+
+			bool operator==(const EntityPair& other) const
+			{
+				return A == other.A && B == other.B && IsTrigger == other.IsTrigger;
+			}
+		};
+
+		struct EntityPairHash
+		{
+			size_t operator()(const EntityPair& pair) const
+			{
+				const size_t first = std::hash<uint64_t>{}(pair.A);
+				const size_t second = std::hash<uint64_t>{}(pair.B);
+				const size_t pairHash = first ^ (second + 0x9e3779b9u + (first << 6) + (first >> 2));
+				return pairHash ^ (std::hash<bool>{}(pair.IsTrigger) + 0x9e3779b9u
+					+ (pairHash << 6) + (pairHash >> 2));
+			}
+		};
+
+		struct PendingEvent
+		{
+			PendingType Type = PendingType::Enter;
+			EntityPair Pair;
+		};
+
+		void BeginContact(b2Contact* contact) override
+		{
+			const std::optional<EntityPair> pair = GetEntityPair(contact);
+			if (!pair)
+				return;
+
+			// Box2D may report the same contact more than once during continuous
+			// collision processing. Count each concrete contact only once.
+			if (!m_ContactPairs.emplace(contact, *pair).second)
+				return;
+
+			size_t& activeCount = m_ActivePairCounts[*pair];
+			++activeCount;
+			if (m_InStep)
+			{
+				MarkStepPair(*pair);
+				m_StepSawBegin.insert(*pair);
+			}
+		}
+
+		void EndContact(b2Contact* contact) override
+		{
+			auto contactIt = m_ContactPairs.find(contact);
+			if (contactIt == m_ContactPairs.end())
+				return;
+
+			const EntityPair pair = contactIt->second;
+			m_ContactPairs.erase(contactIt);
+			auto countIt = m_ActivePairCounts.find(pair);
+			if (countIt == m_ActivePairCounts.end())
+				return;
+
+			if (countIt->second > 1)
+			{
+				--countIt->second;
+			}
+			else
+				m_ActivePairCounts.erase(countIt);
+
+			if (m_InStep)
+			{
+				MarkStepPair(pair);
+				m_StepSawEnd.insert(pair);
+			}
+		}
+
+		void BeginStep()
+		{
+			m_InStep = true;
+			m_StepTouched.clear();
+			m_StepTouchedSet.clear();
+			m_StepSawBegin.clear();
+			m_StepSawEnd.clear();
+			m_StepInitialActive.clear();
+			for (const EntityPair& pair : m_RebuildCarryActive)
+			{
+				m_StepInitialActive.insert(pair);
+				MarkStepPair(pair);
+			}
+			m_RebuildCarryActive.clear();
+			for (const auto& [pair, count] : m_ActivePairCounts)
+				if (count > 0)
+					m_StepInitialActive.insert(pair);
+		}
+
+		void EndStep()
+		{
+			if (!m_InStep)
+				return;
+			m_InStep = false;
+
+			for (const EntityPair& pair : m_StepTouched)
+			{
+				const bool initiallyActive = m_StepInitialActive.find(pair) != m_StepInitialActive.end();
+				const auto finalIt = m_ActivePairCounts.find(pair);
+				const bool finallyActive = finalIt != m_ActivePairCounts.end() && finalIt->second > 0;
+				if (!initiallyActive && finallyActive)
+					m_PendingEvents.push_back({ PendingType::Enter, pair });
+				else if (initiallyActive && !finallyActive)
+					m_PendingEvents.push_back({ PendingType::Exit, pair });
+				else if (!initiallyActive && !finallyActive
+					&& m_StepSawBegin.find(pair) != m_StepSawBegin.end()
+					&& m_StepSawEnd.find(pair) != m_StepSawEnd.end())
+				{
+					// Preserve a complete transient contact, but coalesce any number
+					// of callbacks into one Enter followed by one Exit.
+					m_PendingEvents.push_back({ PendingType::Enter, pair });
+					m_PendingEvents.push_back({ PendingType::Exit, pair });
+				}
+			}
+
+			m_StepInitialActive.clear();
+			m_StepTouched.clear();
+			m_StepTouchedSet.clear();
+			m_StepSawBegin.clear();
+			m_StepSawEnd.clear();
+		}
+
+		std::vector<PendingEvent> TakePendingEvents()
+		{
+			std::vector<PendingEvent> events;
+			events.swap(m_PendingEvents);
+			return events;
+		}
+
+		void PrepareForWorldRebuild()
+		{
+			for (const auto& [pair, count] : m_ActivePairCounts)
+				if (count > 0)
+					m_RebuildCarryActive.insert(pair);
+			m_ContactPairs.clear();
+			m_ActivePairCounts.clear();
+			m_PendingEvents.clear();
+			m_InStep = false;
+			m_StepInitialActive.clear();
+			m_StepTouched.clear();
+			m_StepTouchedSet.clear();
+			m_StepSawBegin.clear();
+			m_StepSawEnd.clear();
+		}
+
+		void SeedExistingContacts(b2World* world)
+		{
+			if (!world)
+				return;
+			for (b2Contact* contact = world->GetContactList(); contact;
+				contact = contact->GetNext())
+			{
+				if (!contact->IsTouching())
+					continue;
+				const std::optional<EntityPair> pair = GetEntityPair(contact);
+				if (!pair || !m_ContactPairs.emplace(contact, *pair).second)
+					continue;
+				++m_ActivePairCounts[*pair];
+			}
+		}
+
+		void DiscardEntity(UUID uuid)
+		{
+			const uint64_t value = static_cast<uint64_t>(uuid);
+			auto containsEntity = [value](const EntityPair& pair)
+			{
+				return pair.A == value || pair.B == value;
+			};
+
+			m_PendingEvents.erase(std::remove_if(m_PendingEvents.begin(), m_PendingEvents.end(),
+				[&](const PendingEvent& event) { return containsEntity(event.Pair); }),
+				m_PendingEvents.end());
+			for (auto it = m_ActivePairCounts.begin(); it != m_ActivePairCounts.end();)
+			{
+				if (containsEntity(it->first))
+					it = m_ActivePairCounts.erase(it);
+				else
+					++it;
+			}
+			for (auto it = m_ContactPairs.begin(); it != m_ContactPairs.end();)
+			{
+				if (containsEntity(it->second))
+					it = m_ContactPairs.erase(it);
+				else
+					++it;
+			}
+			auto eraseStepPairs = [&](auto& pairs)
+			{
+				for (auto it = pairs.begin(); it != pairs.end();)
+				{
+					if (containsEntity(*it))
+						it = pairs.erase(it);
+					else
+						++it;
+				}
+			};
+			eraseStepPairs(m_StepInitialActive);
+			eraseStepPairs(m_StepTouchedSet);
+			eraseStepPairs(m_StepSawBegin);
+			eraseStepPairs(m_StepSawEnd);
+			eraseStepPairs(m_RebuildCarryActive);
+			m_StepTouched.erase(std::remove_if(m_StepTouched.begin(), m_StepTouched.end(),
+				containsEntity), m_StepTouched.end());
+		}
+
+		void Clear()
+		{
+			m_ContactPairs.clear();
+			m_ActivePairCounts.clear();
+			m_PendingEvents.clear();
+			m_InStep = false;
+			m_StepInitialActive.clear();
+			m_StepTouched.clear();
+			m_StepTouchedSet.clear();
+			m_StepSawBegin.clear();
+			m_StepSawEnd.clear();
+			m_RebuildCarryActive.clear();
+		}
+
+	private:
+		void MarkStepPair(const EntityPair& pair)
+		{
+			if (m_StepTouchedSet.insert(pair).second)
+				m_StepTouched.push_back(pair);
+		}
+
+		static std::optional<EntityPair> GetEntityPair(b2Contact* contact)
+		{
+			if (!contact || !contact->GetFixtureA() || !contact->GetFixtureB())
+				return std::nullopt;
+
+			b2Body* bodyA = contact->GetFixtureA()->GetBody();
+			b2Body* bodyB = contact->GetFixtureB()->GetBody();
+			if (!bodyA || !bodyB)
+				return std::nullopt;
+
+			const uint64_t uuidA = static_cast<uint64_t>(bodyA->GetUserData().pointer);
+			const uint64_t uuidB = static_cast<uint64_t>(bodyB->GetUserData().pointer);
+			if (uuidA == 0 || uuidB == 0 || uuidA == uuidB)
+				return std::nullopt;
+
+			return EntityPair{ std::min(uuidA, uuidB), std::max(uuidA, uuidB),
+				contact->GetFixtureA()->IsSensor() || contact->GetFixtureB()->IsSensor() };
+		}
+
+		std::unordered_map<const b2Contact*, EntityPair> m_ContactPairs;
+		std::unordered_map<EntityPair, size_t, EntityPairHash> m_ActivePairCounts;
+		std::vector<PendingEvent> m_PendingEvents;
+		bool m_InStep = false;
+		std::unordered_set<EntityPair, EntityPairHash> m_StepInitialActive;
+		std::vector<EntityPair> m_StepTouched;
+		std::unordered_set<EntityPair, EntityPairHash> m_StepTouchedSet;
+		std::unordered_set<EntityPair, EntityPairHash> m_StepSawBegin;
+		std::unordered_set<EntityPair, EntityPairHash> m_StepSawEnd;
+		std::unordered_set<EntityPair, EntityPairHash> m_RebuildCarryActive;
+	};
+
+	class SceneContactFilter2D final : public b2ContactFilter
+	{
+	public:
+		explicit SceneContactFilter2D(Scene* scene)
+			: m_Scene(scene)
+		{
+		}
+
+		bool ShouldCollide(b2Fixture* fixtureA, b2Fixture* fixtureB) override
+		{
+			// Fixture category/mask filtering remains an independent first gate.
+			if (!b2ContactFilter::ShouldCollide(fixtureA, fixtureB))
+				return false;
+			if (!m_Scene || !fixtureA || !fixtureB
+				|| !fixtureA->GetBody() || !fixtureB->GetBody())
+				return false;
+
+			const UUID uuidA(static_cast<uint64_t>(
+				fixtureA->GetBody()->GetUserData().pointer));
+			const UUID uuidB(static_cast<uint64_t>(
+				fixtureB->GetBody()->GetUserData().pointer));
+			Entity entityA = m_Scene->FindEntityByUUID(uuidA);
+			Entity entityB = m_Scene->FindEntityByUUID(uuidB);
+			if (!entityA || !entityB || !entityA.HasComponent<EntityMetadata>()
+				|| !entityB.HasComponent<EntityMetadata>())
+				return false;
+
+			const uint8_t layerA = entityA.GetComponent<EntityMetadata>().Layer;
+			const uint8_t layerB = entityB.GetComponent<EntityMetadata>().Layer;
+			// Project files and cooked packages reject asymmetric matrices. Requiring
+			// both directed bits here also keeps direct Scene API input deterministic.
+			return m_Scene->m_Physics2DSettings.CanLayersCollide(layerA, layerB)
+				&& m_Scene->m_Physics2DSettings.CanLayersCollide(layerB, layerA);
+		}
+
+	private:
+		Scene* m_Scene = nullptr;
+	};
+
+	namespace {
+
+		bool IsValidPhysicsMaterial(float density, float friction, float restitution)
+		{
+			return std::isfinite(density) && density >= 0.0f
+				&& std::isfinite(friction) && friction >= 0.0f
+				&& std::isfinite(restitution) && restitution >= 0.0f && restitution <= 1.0f;
+		}
+
+		void HashPhysicsValue(uint64_t& hash, uint64_t value)
+		{
+			// 64-bit FNV-1a over a fixed-width value.
+			for (uint32_t byte = 0; byte < 8; ++byte)
+			{
+				hash ^= (value >> (byte * 8)) & 0xffu;
+				hash *= 1099511628211ull;
+			}
+		}
+
+		void HashPhysicsFloat(uint64_t& hash, float value)
+		{
+			HashPhysicsValue(hash, std::bit_cast<uint32_t>(value));
+		}
+
+		struct RuntimeBodyState
+		{
+			b2Vec2 Position{ 0.0f, 0.0f };
+			float Angle = 0.0f;
+			b2Vec2 LinearVelocity{ 0.0f, 0.0f };
+			float AngularVelocity = 0.0f;
+			bool Awake = true;
+		};
+
+		glm::mat4 MakeColliderDebugTransform(const glm::vec2& center, float z,
+			float rotation, const glm::vec2& size)
+		{
+			return glm::translate(glm::mat4(1.0f), glm::vec3(center, z))
+				* glm::rotate(glm::mat4(1.0f), rotation, glm::vec3(0.0f, 0.0f, 1.0f))
+				* glm::scale(glm::mat4(1.0f), glm::vec3(size, 1.0f));
+		}
+
+		bool IsValidColliderTransform2D(const Transform& transform)
+		{
+			return std::isfinite(transform._Translation.x)
+				&& std::isfinite(transform._Translation.y)
+				&& std::isfinite(transform._Translation.z)
+				&& std::isfinite(transform._Rotation.z)
+				&& std::isfinite(transform._Scale.x)
+				&& std::isfinite(transform._Scale.y);
+		}
+
+		glm::vec2 TransformColliderOffset2D(const Transform& transform, const glm::vec2& offset)
+		{
+			const glm::vec2 scaledOffset = offset * glm::vec2(transform._Scale);
+			const float cosine = std::cos(transform._Rotation.z);
+			const float sine = std::sin(transform._Rotation.z);
+			return glm::vec2(transform._Translation)
+				+ glm::vec2(cosine * scaledOffset.x - sine * scaledOffset.y,
+					sine * scaledOffset.x + cosine * scaledOffset.y);
+		}
+
+		bool IsFinite(const glm::vec3& value)
+		{
+			return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+		}
+
+		bool IsFinite(const glm::vec2& value)
+		{
+			return std::isfinite(value.x) && std::isfinite(value.y);
+		}
+
+		bool TryNormalizeDirection(const glm::vec3& value, glm::vec3& direction)
+		{
+			if (!IsFinite(value))
+				return false;
+			const float lengthSquared = glm::dot(value, value);
+			constexpr float minimumLengthSquared = 1.0e-12f;
+			if (!std::isfinite(lengthSquared)
+				|| lengthSquared <= minimumLengthSquared)
+				return false;
+			direction = value / std::sqrt(lengthSquared);
+			return IsFinite(direction);
+		}
+
+		glm::vec3 RemoveScaleReflection(const glm::vec3& axis, float scale)
+		{
+			// Camera scale never changes its pose. The sign is still useful metadata:
+			// remove the reflection before orthogonalizing the render-matrix axes.
+			return axis * (std::isfinite(scale) && std::signbit(scale)
+				? -1.0f : 1.0f);
+		}
+
+		glm::mat4 MakeScaleFreeCameraTransform(const glm::mat4& renderTransform,
+			const Transform& authoredTransform)
+		{
+			const glm::mat4 referenceRotation = Math::ComposeTransform(glm::vec3(0.0f),
+				authoredTransform._Rotation, glm::vec3(1.0f));
+			const glm::vec3 referenceRight(referenceRotation[0]);
+			const glm::vec3 referenceUp(referenceRotation[1]);
+			const glm::vec3 referenceForward(referenceRotation[2]);
+
+			const glm::vec3 sourceRight = RemoveScaleReflection(
+				glm::vec3(renderTransform[0]), authoredTransform._Scale.x);
+			const glm::vec3 sourceUp = RemoveScaleReflection(
+				glm::vec3(renderTransform[1]), authoredTransform._Scale.y);
+			const glm::vec3 sourceForward = RemoveScaleReflection(
+				glm::vec3(renderTransform[2]), authoredTransform._Scale.z);
+
+			// A camera looks along local +Z. Preserve that direction first, then make
+			// +Y orthogonal to it and derive +X = +Y x +Z. This keeps the camera basis
+			// right-handed even when the hierarchy introduces non-uniform scale/shear.
+			glm::vec3 forward;
+			if (!TryNormalizeDirection(sourceForward, forward)
+				&& !TryNormalizeDirection(glm::cross(sourceRight, sourceUp), forward)
+				&& !TryNormalizeDirection(referenceForward, forward))
+				forward = glm::vec3(0.0f, 0.0f, 1.0f);
+
+			glm::vec3 up;
+			const glm::vec3 projectedUp = sourceUp
+				- forward * glm::dot(sourceUp, forward);
+			if (!TryNormalizeDirection(projectedUp, up)
+				&& !TryNormalizeDirection(glm::cross(forward, sourceRight), up))
+			{
+				const glm::vec3 projectedReferenceUp = referenceUp
+					- forward * glm::dot(referenceUp, forward);
+				if (!TryNormalizeDirection(projectedReferenceUp, up))
+				{
+					const glm::vec3 fallbackUp = std::abs(forward.y) < 0.999f
+						? glm::vec3(0.0f, 1.0f, 0.0f)
+						: glm::vec3(1.0f, 0.0f, 0.0f);
+					TryNormalizeDirection(fallbackUp
+						- forward * glm::dot(fallbackUp, forward), up);
+				}
+			}
+
+			glm::vec3 right;
+			if (!TryNormalizeDirection(glm::cross(up, forward), right))
+			{
+				// The branches above guarantee a finite, non-parallel up direction. Keep
+				// a deterministic final fallback for malformed authoring data.
+				right = referenceRight;
+				if (!TryNormalizeDirection(right, right))
+					right = glm::vec3(1.0f, 0.0f, 0.0f);
+			}
+			TryNormalizeDirection(glm::cross(forward, right), up);
+
+			glm::mat4 cameraTransform(1.0f);
+			cameraTransform[0] = glm::vec4(right, 0.0f);
+			cameraTransform[1] = glm::vec4(up, 0.0f);
+			cameraTransform[2] = glm::vec4(forward, 0.0f);
+			cameraTransform[3] = glm::vec4(glm::vec3(renderTransform[3]), 1.0f);
+			return cameraTransform;
+		}
+
+		bool TryResolveEntityLayerBit(Scene* scene, b2Fixture* fixture,
+			UUID& entityID, uint16_t& layerBit)
+		{
+			if (!scene || !fixture)
+				return false;
+			b2Body* body = fixture->GetBody();
+			const uint64_t rawUUID = body
+				? static_cast<uint64_t>(body->GetUserData().pointer)
+				: 0;
+			if (rawUUID == 0)
+				return false;
+
+			Entity entity = scene->FindEntityByUUID(UUID(rawUUID));
+			if (!entity || !entity.HasComponent<EntityMetadata>())
+				return false;
+			const uint8_t layer = entity.GetComponent<EntityMetadata>().Layer;
+			if (layer >= Physics2DLayerCount)
+				return false;
+
+			entityID = UUID(rawUUID);
+			layerBit = static_cast<uint16_t>(uint16_t(1) << layer);
+			return true;
+		}
+
+		class ClosestRaycastCallback2D final : public b2RayCastCallback
+		{
+		public:
+			ClosestRaycastCallback2D(Scene* scene, uint16_t layerMask, bool includeTriggers)
+				: m_Scene(scene), m_LayerMask(layerMask), m_IncludeTriggers(includeTriggers)
+			{
+			}
+
+			float ReportFixture(b2Fixture* fixture, const b2Vec2& point,
+				const b2Vec2& normal, float fraction) override
+			{
+				if (!fixture || (!m_IncludeTriggers && fixture->IsSensor()))
+					return -1.0f;
+				UUID entityID{ 0 };
+				uint16_t layerBit = 0;
+				if (!TryResolveEntityLayerBit(m_Scene, fixture, entityID, layerBit)
+					|| (layerBit & m_LayerMask) == 0)
+					return -1.0f;
+
+				Hit = RaycastHit2D{ entityID, { point.x, point.y },
+					{ normal.x, normal.y }, fraction, fixture->IsSensor(), layerBit };
+				return fraction;
+			}
+
+			std::optional<RaycastHit2D> Hit;
+
+		private:
+			Scene* m_Scene = nullptr;
+			uint16_t m_LayerMask = 0xFFFF;
+			bool m_IncludeTriggers = true;
+		};
+
+		class AABBQueryCallback2D final : public b2QueryCallback
+		{
+		public:
+			AABBQueryCallback2D(Scene* scene, uint16_t layerMask, bool includeTriggers)
+				: m_Scene(scene), m_LayerMask(layerMask), m_IncludeTriggers(includeTriggers)
+			{
+			}
+
+			bool ReportFixture(b2Fixture* fixture) override
+			{
+				if (!fixture || (!m_IncludeTriggers && fixture->IsSensor()))
+					return true;
+				UUID entityID{ 0 };
+				uint16_t layerBit = 0;
+				if (TryResolveEntityLayerBit(m_Scene, fixture, entityID, layerBit)
+					&& (layerBit & m_LayerMask) != 0)
+					Hits.push_back({ entityID, fixture->IsSensor(), layerBit });
+				return true;
+			}
+
+			std::vector<PhysicsQueryHit2D> Hits;
+
+		private:
+			Scene* m_Scene = nullptr;
+			uint16_t m_LayerMask = 0xFFFF;
+			bool m_IncludeTriggers = true;
+		};
+
+		bool IsFinite(const glm::mat4& value)
+		{
+			for (glm::length_t column = 0; column < 4; ++column)
+			{
+				for (glm::length_t row = 0; row < 4; ++row)
+				{
+					if (!std::isfinite(value[column][row]))
+						return false;
+				}
+			}
+			return true;
+		}
+
+		bool TryDecomposeFiniteTransform(const glm::mat4& value,
+			glm::vec3& translation, glm::vec3& rotation, glm::vec3& scale)
+		{
+			return IsFinite(value)
+				&& Math::DecomposeTransform(value, translation, rotation, scale)
+				&& IsFinite(translation) && IsFinite(rotation) && IsFinite(scale);
+		}
+
+		struct PendingWorldTransform
+		{
+			Entity Target;
+			glm::vec3 Translation{};
+			glm::vec3 Rotation{};
+			glm::vec3 Scale{};
+		};
+
+		bool CollectPendingWorldTransforms(Scene* scene, Entity entity,
+			const glm::mat4& parentWorldTransform, const glm::mat4* localTransformOverride,
+			std::vector<PendingWorldTransform>& pendingTransforms,
+			std::unordered_set<UUID>& visited)
+		{
+			if (!scene || !entity || !entity.HasComponent<ID>() || !entity.HasComponent<Transform>())
+				return false;
+
+			const UUID entityUUID = entity.GetUUID();
+			if (!visited.emplace(entityUUID).second)
+				return false;
+
+			const auto& transform = entity.GetComponent<Transform>();
+			const glm::mat4 localTransform = localTransformOverride
+				? *localTransformOverride
+				: transform.GetLocalTransform();
+			const glm::mat4 worldTransform = parentWorldTransform * localTransform;
+
+			PendingWorldTransform pending{ entity };
+			if (!TryDecomposeFiniteTransform(worldTransform,
+				pending.Translation, pending.Rotation, pending.Scale))
+				return false;
+
+			const glm::mat4 normalizedWorldTransform = Math::ComposeTransform(
+				pending.Translation, pending.Rotation, pending.Scale);
+			pendingTransforms.push_back(pending);
+			for (UUID childUUID : scene->GetChildrenUUIDs(entity))
+			{
+				Entity child = scene->FindEntityByUUID(childUUID);
+				if (!child || scene->GetParent(child) != entity
+					|| !CollectPendingWorldTransforms(scene, child, normalizedWorldTransform, nullptr,
+					pendingTransforms, visited))
+					return false;
+			}
+
+			return true;
+		}
+
+		void ApplyPendingWorldTransforms(const std::vector<PendingWorldTransform>& pendingTransforms)
+		{
+			for (const auto& pending : pendingTransforms)
+			{
+				Entity target = pending.Target;
+				auto& transform = target.GetComponent<Transform>();
+				transform._Translation = pending.Translation;
+				transform._Rotation = pending.Rotation;
+				transform._Scale = pending.Scale;
+			}
+		}
+
+		bool CollectScenePendingWorldTransforms(Scene* scene, const std::vector<UUID>& entityOrder,
+			std::vector<PendingWorldTransform>& pendingTransforms)
+		{
+			if (!scene)
+				return false;
+
+			std::unordered_set<UUID> visited;
+			for (UUID rootUUID : scene->GetRootEntityUUIDs())
+			{
+				Entity root = scene->FindEntityByUUID(rootUUID);
+				if (!root || !CollectPendingWorldTransforms(scene, root, glm::mat4(1.0f), nullptr,
+					pendingTransforms, visited))
+					return false;
+			}
+
+			// Missing entities, cycles, orphaned child entries, and duplicate child
+			// references all make a complete root traversal impossible.
+			for (UUID entityUUID : entityOrder)
+			{
+				if (!scene->FindEntityByUUID(entityUUID)
+					|| visited.find(entityUUID) == visited.end())
+					return false;
+			}
+
+			return visited.size() == entityOrder.size();
+		}
+
+		void Render3DComponents(Scene& scene, entt::registry& registry, bool editor)
+		{
+			TC_PROFILE_SCOPE("Scene 3D Meshes");
+			auto view = registry.view<ID, Transform, MeshComponent>();
+			for (auto raw : view)
+			{
+				Entity entity(raw, &scene);
+				auto& mesh = view.get<MeshComponent>(raw);
+				if (!mesh.Enabled || !(editor ? scene.IsVisibleInEditorHierarchy(entity)
+					: scene.IsActiveInHierarchy(entity))) continue;
+				auto& assets = AssetManager::Get();
+				if (mesh.ResolvedHandle != mesh.MeshHandle || mesh.ResolvedPrimitive != mesh.PrimitiveType
+					|| mesh.ImportRevision != assets.GetImportRevision())
+				{
+					mesh.MeshAsset.reset();
+					mesh.Model.reset();
+					mesh.ResolvedHandle = mesh.MeshHandle;
+					mesh.ResolvedPrimitive = mesh.PrimitiveType;
+					mesh.ImportRevision = assets.GetImportRevision();
+					if (static_cast<uint64_t>(mesh.MeshHandle))
+					{
+						auto loaded = assets.LoadMesh(mesh.MeshHandle);
+						if (loaded.Succeeded())
+						{
+							std::vector<Vertex> vertices(loaded.Asset.GetVertexCount());
+							std::vector<uint32_t> indices(loaded.Asset.GetIndexCount());
+							for (uint32_t i = 0; i < vertices.size(); ++i)
+							{
+								MeshArtifactVertex v;
+								if (!loaded.Asset.DecodeVertex(i, v)) break;
+								vertices[i] = { {v.Position[0], v.Position[1], v.Position[2]},
+									{v.Normal[0], v.Normal[1], v.Normal[2]}, {v.TexCoord[0], v.TexCoord[1]} };
+							}
+							for (uint32_t i = 0; i < indices.size(); ++i)
+								(void)loaded.Asset.DecodeIndex(i, indices[i]);
+							if (loaded.Asset.GetParts().empty()) mesh.MeshAsset = Mesh::Create(vertices, indices);
+							else mesh.Model = Model::FromArtifact(loaded.Asset);
+						}
+						else TC_Core_Warn("Mesh load failed: {0}", loaded.Error);
+					}
+					else if (mesh.PrimitiveType == 1) mesh.MeshAsset = Mesh::CreateCube();
+					else if (mesh.PrimitiveType == 2) mesh.MeshAsset = Mesh::CreatePlane();
+				}
+				mesh.AlbedoTexture = mesh.UseTexture && static_cast<uint64_t>(mesh.AlbedoHandle)
+					? assets.LoadTexture(mesh.AlbedoHandle) : nullptr;
+				if (mesh.Model) Renderer3D::DrawModel(mesh.Model, scene.GetRuntimeRenderTransform(entity.GetUUID()), static_cast<int>(raw), mesh.Color, mesh.AlbedoTexture);
+				else Renderer3D::DrawMesh(mesh.MeshAsset, scene.GetRuntimeRenderTransform(entity.GetUUID()),
+					mesh.AlbedoTexture, mesh.Color, mesh.UseTexture, static_cast<int>(raw));
+			}
+		}
+
+		void Render2DComponents(Scene& scene, entt::registry& registry,
+			const glm::mat4& viewProjection,
+			RuntimeUIVisibilityMode visibility)
+		{
+			auto isVisible = [&scene, visibility](entt::entity value)
+			{
+				Entity entity(value, &scene);
+				return visibility == RuntimeUIVisibilityMode::Editor
+					? scene.IsVisibleInEditorHierarchy(entity)
+					: scene.IsActiveInHierarchy(entity);
+			};
+			glm::vec3 ambientLight(1.0f);
+			std::vector<Renderer2D::PointLightData> pointLights;
+			bool hasLighting = false;
+			auto lightView = registry.view<Transform, Light2D>();
+			for (const entt::entity entity : lightView)
+			{
+				const Light2D& light = lightView.get<Light2D>(entity);
+				if (!isVisible(entity) || !light.Enabled || light.Intensity <= 0.0f)
+					continue;
+				if (!hasLighting)
+				{
+					hasLighting = true;
+					ambientLight = glm::vec3(0.05f);
+				}
+				if (light.Type == Light2DType::Global)
+				{
+					ambientLight += glm::vec3(light.Color) * light.Intensity;
+					continue;
+				}
+				const glm::mat4 lightTransform = scene.GetRuntimeRenderTransform(
+					registry.get<ID>(entity).id);
+				Renderer2D::PointLightData point;
+				point.Position = glm::vec3(lightTransform * glm::vec4(0, 0, 0, 1));
+				point.Color = glm::vec3(light.Color);
+				point.Intensity = light.Intensity;
+				point.Radius = light.Radius;
+				point.Falloff = light.Falloff;
+				pointLights.push_back(point);
+			}
+			Renderer2D::Set2DLighting(ambientLight, pointLights);
+
+			auto spriteView = registry.view<Transform, SpriteRenderer>();
+			struct SpriteRenderItem
+			{
+				Renderer2D::SpriteSortKey SortKey;
+				glm::mat4 WorldTransform{ 1.0f };
+				SpriteRenderer Renderer;
+				glm::vec4 Color{ 1.0f };
+				int EntityID = -1;
+				bool ColoredQuad = false;
+			};
+			std::vector<SpriteRenderItem> sprites;
+			sprites.reserve(spriteView.size_hint());
+			for (const entt::entity entity : spriteView)
+			{
+				const auto& sprite = spriteView.get<SpriteRenderer>(entity);
+				if (!isVisible(entity)
+					|| !sprite.Enabled)
+					continue;
+				const UUID entityID = registry.get<ID>(entity).id;
+				const glm::mat4 worldTransform =
+					scene.GetRuntimeRenderTransform(entityID);
+				if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+					continue;
+				const uint64_t sortableEntityID = static_cast<uint64_t>(entityID);
+				sprites.push_back({ Renderer2D::MakeSpriteSortKey(sprite,
+					sortableEntityID), worldTransform, sprite, sprite._Color,
+					static_cast<int>(entity), false });
+			}
+
+			auto stableChildID = [](uint64_t entityID, int32_t x, int32_t y,
+				uint64_t salt)
+			{
+				uint64_t hash = entityID ^ salt;
+				hash ^= static_cast<uint32_t>(x) + 0x9e3779b9ULL + (hash << 6)
+					+ (hash >> 2);
+				hash ^= static_cast<uint32_t>(y) + 0x9e3779b9ULL + (hash << 6)
+					+ (hash >> 2);
+				return hash;
+			};
+			auto tilemapView = registry.view<Transform, Tilemap2D>();
+			for (const entt::entity entity : tilemapView)
+			{
+				const Tilemap2D& tilemap = tilemapView.get<Tilemap2D>(entity);
+				const TilemapRenderer2D* tileRenderer =
+					registry.try_get<TilemapRenderer2D>(entity);
+				if (!isVisible(entity) || !tilemap.Enabled
+					|| (tileRenderer && !tileRenderer->Enabled))
+					continue;
+				const UUID entityUUID = registry.get<ID>(entity).id;
+				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
+				const Entity tilemapEntity(entity, &scene);
+				const Entity gridEntity = scene.GetParent(tilemapEntity);
+				const Grid2D* grid = gridEntity && gridEntity.HasComponent<Grid2D>()
+					? &gridEntity.GetComponent<Grid2D>() : nullptr;
+				const glm::mat4 rootTransform =
+					scene.GetRuntimeRenderTransform(entityUUID);
+				for (const TilemapCell& cell : tilemap.Cells)
+				{
+					if (static_cast<uint64_t>(cell.SpriteHandle) == 0)
+						continue;
+					const glm::mat4 worldTransform = rootTransform
+						* Tilemap2DRuntime::GetCellTransform(tilemap, cell, grid);
+					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+						continue;
+					SpriteRenderer renderer;
+					renderer.SpriteHandle = cell.SpriteHandle;
+					renderer._Color = cell.Tint;
+					renderer.SortingLayer = tileRenderer
+						? tileRenderer->SortingLayer : tilemap.SortingLayer;
+					renderer.OrderInLayer = tileRenderer
+						? tileRenderer->OrderInLayer : tilemap.OrderInLayer;
+					sprites.push_back({
+						Renderer2D::MakeSpriteSortKey(renderer,
+							sortableEntityID,
+							tileRenderer ? Tilemap2DRuntime::GetCellRenderOrder(
+								cell.Coordinate, tileRenderer->SortOrder) : 0),
+						worldTransform, std::move(renderer), cell.Tint,
+						static_cast<int>(entity), false });
+				}
+			}
+
+			auto particleView = registry.view<Transform, ParticleSystem2D>();
+			for (const entt::entity entity : particleView)
+			{
+				const ParticleSystem2D& system = particleView.get<ParticleSystem2D>(entity);
+				if (!isVisible(entity) || !system.Enabled)
+					continue;
+				const UUID entityUUID = registry.get<ID>(entity).id;
+				const uint64_t sortableEntityID = static_cast<uint64_t>(entityUUID);
+				const glm::mat4 rootTransform =
+					scene.GetRuntimeRenderTransform(entityUUID);
+				for (size_t index = 0; index < system.RuntimeParticles.size(); ++index)
+				{
+					const Particle2D& particle = system.RuntimeParticles[index];
+					const float size = ParticleSystem2DRuntime::EvaluateSize(particle);
+					if (size <= 0.0f)
+						continue;
+					const glm::mat4 worldTransform = rootTransform
+						* glm::translate(glm::mat4(1.0f), glm::vec3(particle.Position, 0.0f))
+						* glm::scale(glm::mat4(1.0f), glm::vec3(size, size, 1.0f));
+					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+						continue;
+					SpriteRenderer renderer;
+					renderer.SpriteHandle = system.SpriteHandle;
+					renderer._Color = ParticleSystem2DRuntime::EvaluateColor(system,
+						particle);
+					renderer.SortingLayer = system.SortingLayer;
+					renderer.OrderInLayer = system.OrderInLayer;
+					sprites.push_back({
+						Renderer2D::MakeSpriteSortKey(renderer,
+							stableChildID(sortableEntityID, static_cast<int32_t>(index),
+								0, 0x50415254ULL)),
+						worldTransform, renderer, renderer._Color,
+						static_cast<int>(entity),
+						static_cast<uint64_t>(system.SpriteHandle) == 0 });
+				}
+			}
+			std::sort(sprites.begin(), sprites.end(),
+				[](const SpriteRenderItem& left, const SpriteRenderItem& right)
+				{
+					return Renderer2D::SpriteSortLess(left.SortKey, right.SortKey);
+				});
+			for (const SpriteRenderItem& item : sprites)
+			{
+				if (item.ColoredQuad)
+					Renderer2D::DrawLitQuad(item.WorldTransform, item.Color,
+						item.EntityID);
+				else
+				{
+					SpriteRenderer renderer = item.Renderer;
+					Renderer2D::DrawSprite(item.WorldTransform, renderer,
+						item.EntityID);
+				}
+			}
+
+			const float previousLineWidth = Renderer2D::GetLineWidth();
+			bool renderedLine = false;
+			auto lineView = registry.view<Transform, LineRenderer>();
+			for (const entt::entity entity : lineView)
+			{
+				auto [transform, line] = lineView.get<Transform, LineRenderer>(entity);
+				if (!isVisible(entity)
+					|| !line.Enabled
+					|| !std::isfinite(line.Width) || line.Width <= 0.0f)
+					continue;
+
+				const glm::mat4 worldTransform = scene.GetRuntimeRenderTransform(
+					registry.get<ID>(entity).id);
+				const glm::vec3 worldStart = glm::vec3(worldTransform * glm::vec4(line.Start, 1.0f));
+				const glm::vec3 worldEnd = glm::vec3(worldTransform * glm::vec4(line.End, 1.0f));
+				Renderer2D::SetLineWidth(line.Width);
+				Renderer2D::DrawLine(worldStart, worldEnd, line._Color, static_cast<int>(entity));
+				renderedLine = true;
+			}
+
+			if (renderedLine)
+				Renderer2D::SetLineWidth(previousLineWidth);
+
+			RuntimeUISystem::RenderWorldText(scene, registry, visibility);
+		}
+
+		void HydrateSpriteAnimatorController(SpriteAnimator& animator)
+		{
+			if (static_cast<uint64_t>(animator.ControllerHandle) != 0)
+			{
+				std::string controllerError;
+				auto& assets = AssetManager::Get();
+				std::vector<uint8_t> controllerBytes;
+				AssetType controllerType = AssetType::None;
+				AnimatorControllerAsset controller;
+				if (!assets.ReadAssetBytes(animator.ControllerHandle,
+					controllerBytes, &controllerType)
+					|| controllerType != AssetType::AnimatorController)
+					controllerError = "controller asset is missing or has the wrong type";
+				else if (!AnimatorControllerAssetCodec::Decode(controllerBytes,
+					controller, controllerError))
+				{
+				}
+				else
+				{
+					std::vector<SpriteAnimationClip> clips;
+					std::vector<AnimatorState> states;
+					std::unordered_map<uint64_t, std::string> clipNamesByHandle;
+					std::unordered_map<std::string, uint64_t> handlesByClipName;
+					states.reserve(controller.States.size());
+					for (const AnimatorControllerAsset::State& sourceState
+						: controller.States)
+					{
+						const uint64_t rawClip = static_cast<uint64_t>(
+							sourceState.ClipHandle);
+						std::string clipName;
+						if (const auto cached = clipNamesByHandle.find(rawClip);
+							cached != clipNamesByHandle.end())
+							clipName = cached->second;
+						else
+						{
+							std::vector<uint8_t> clipBytes;
+							AssetType clipType = AssetType::None;
+							AnimationClipAsset clipAsset;
+							if (!assets.ReadAssetBytes(sourceState.ClipHandle,
+								clipBytes, &clipType)
+								|| clipType != AssetType::AnimationClip)
+							{
+								controllerError = "state '" + sourceState.Name
+									+ "' references a missing Animation Clip";
+								break;
+							}
+							if (!AnimationClipAssetCodec::Decode(clipBytes,
+								clipAsset, controllerError))
+								break;
+							clipName = clipAsset.Clip.Name;
+							if (const auto duplicate = handlesByClipName.find(clipName);
+								duplicate != handlesByClipName.end()
+								&& duplicate->second != rawClip)
+							{
+								controllerError = "controller references different clips named '"
+									+ clipName + "'";
+								break;
+							}
+							clipNamesByHandle.emplace(rawClip, clipName);
+							handlesByClipName.emplace(clipName, rawClip);
+							clips.push_back(std::move(clipAsset.Clip));
+						}
+						states.push_back({ sourceState.Name, clipName,
+							sourceState.Speed });
+					}
+					if (controllerError.empty())
+					{
+						animator.Clips = std::move(clips);
+						animator.Parameters = controller.Parameters;
+						animator.States = std::move(states);
+						animator.Transitions = controller.Transitions;
+						animator.InitialState = controller.InitialState;
+						animator.InitialClip = animator.Clips.empty()
+							? std::string{} : animator.Clips.front().Name;
+					}
+				}
+				if (!controllerError.empty())
+					TC_Core_Warn("Could not load Animator Controller {0}: {1}",
+						static_cast<uint64_t>(animator.ControllerHandle),
+						controllerError);
+			}
+		}
+
+		void InitializeSpriteAnimations(Scene& scene, entt::registry& registry)
+		{
+			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
+			for (const entt::entity entity : view)
+			{
+				auto [animator, renderer] =
+					view.get<SpriteAnimator, SpriteRenderer>(entity);
+				HydrateSpriteAnimatorController(animator);
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
+				SpriteAnimatorRuntime::Initialize(animator, renderer);
+			}
+		}
+
+		void UpdateSpriteAnimations(Scene& scene, entt::registry& registry,
+			double deltaSeconds)
+		{
+			auto view = registry.view<SpriteAnimator, SpriteRenderer>();
+			for (const entt::entity entity : view)
+			{
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
+				auto [animator, renderer] =
+					view.get<SpriteAnimator, SpriteRenderer>(entity);
+				SpriteAnimatorRuntime::Update(animator, renderer, deltaSeconds);
+			}
+		}
+
+		void ResetSpriteAnimations(entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<SpriteAnimator>())
+				SpriteAnimatorRuntime::Reset(registry.get<SpriteAnimator>(entity));
+		}
+
+		void InitializeParticleSystems(Scene& scene, entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				auto& system = registry.get<ParticleSystem2D>(entity);
+				ParticleSystem2DRuntime::Reset(system);
+				if (system.PlayOnStart
+					&& scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					ParticleSystem2DRuntime::Play(system);
+			}
+		}
+
+		void UpdateParticleSystems(Scene& scene, entt::registry& registry,
+			float deltaSeconds)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				if (!scene.IsActiveInHierarchy(Entity(entity, &scene)))
+					continue;
+				ParticleSystem2DRuntime::Update(
+					registry.get<ParticleSystem2D>(entity), deltaSeconds);
+			}
+		}
+
+		void ResetParticleSystems(entt::registry& registry)
+		{
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+				ParticleSystem2DRuntime::Reset(
+					registry.get<ParticleSystem2D>(entity));
+		}
+
+		void UpdateParticlePreviews(Scene& scene, entt::registry& registry,
+			float deltaSeconds)
+		{
+			const float previewDelta = std::clamp(deltaSeconds, 0.0f, 0.1f);
+			for (const entt::entity entity : registry.view<ParticleSystem2D>())
+			{
+				auto& system = registry.get<ParticleSystem2D>(entity);
+				if (!system.RuntimeInitialized
+					|| !scene.IsVisibleInEditorHierarchy(Entity(entity, &scene)))
+					continue;
+				ParticleSystem2DRuntime::Update(system, previewDelta);
+			}
+		}
+
+	}
 
 	static b2BodyType Rigidbody2DTypeToBox2DBody(Rigidbody2D::BodyType bodyType)
 	{
@@ -39,8 +1171,20 @@ namespace TomCat {
 
 	}
 
+	void Scene::SetPhysics2DSettings(const Physics2DSettings& settings)
+	{
+		if (m_Physics2DSettings == settings)
+			return;
+		m_Physics2DSettings = settings;
+		// Existing Box2D contacts must be re-evaluated after a matrix change.
+		// Reuse the normal safe definition boundary instead of mutating a locked world.
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
+	}
+
 	Scene::~Scene()
 	{
+		OnRuntimeStop();
 	}
 
 	template<typename Component>
@@ -58,309 +1202,3016 @@ namespace TomCat {
 		}
 	}
 
-	template<typename Component>
-	static void CopyComponentIfExists(Entity dst, Entity src)
+	static Entity DuplicateEntityRecursive(Scene* scene, Entity source, Entity parent,
+		std::unordered_map<UUID, UUID>& duplicateUUIDs)
 	{
-		if (src.HasComponent<Component>())
-			dst.AddOrReplaceComponent<Component>(src.GetComponent<Component>());
+		if (!scene || !source)
+			return {};
+
+		Entity duplicate = scene->CreateEntity(source.GetName());
+		std::string copyError;
+		if (!ComponentCodecs::CopyAuthoringComponents(source, duplicate, false,
+			copyError))
+		{
+			TC_Core_Error("Could not duplicate entity '{0}': {1}",
+				source.GetName(), copyError);
+			scene->DestroyEntity(duplicate);
+			return {};
+		}
+		// The source stays in this Scene, so a copied Primary camera must not
+		// compete with the authored camera it came from.
+		if (duplicate.HasComponent<C_Camera>())
+			duplicate.GetComponent<C_Camera>().Primary = false;
+		duplicateUUIDs[source.GetUUID()] = duplicate.GetUUID();
+
+		if (parent && !scene->SetParent(duplicate, parent))
+		{
+			scene->DestroyEntity(duplicate);
+			return {};
+		}
+
+		for (UUID childUUID : scene->GetChildrenUUIDs(source))
+		{
+			Entity child = scene->FindEntityByUUID(childUUID);
+			if (child && !DuplicateEntityRecursive(scene, child, duplicate, duplicateUUIDs))
+			{
+				scene->DestroyEntity(duplicate);
+				return {};
+			}
+		}
+
+		return duplicate;
 	}
 
 	Ref<Scene> Scene::Copy(Ref<Scene> other)
 	{
 		if (!other)
 		{
-			TC_Core_Assert(false, "Scene::Copy called with nullptr");
-			return CreateRef<Scene>();
+			TC_Core_Error("Scene::Copy requires a valid source scene");
+			return nullptr;
+		}
+		if (other->m_EntityMap.size() != other->m_EntityOrder.size())
+		{
+			TC_Core_Error("Could not copy scene '{0}' because its entity index is inconsistent",
+				other->m_SceneName);
+			return nullptr;
+		}
+		std::unordered_set<UUID> sourceUUIDs;
+		for (UUID uuid : other->m_EntityOrder)
+		{
+			Entity sourceEntity = other->FindEntityByUUID(uuid);
+			if ((uint64_t)uuid == 0 || !sourceEntity || !sourceEntity.HasComponent<Tag>()
+				|| !sourceEntity.HasComponent<EntityMetadata>()
+				|| !sourceEntity.HasComponent<Transform>() || !sourceUUIDs.emplace(uuid).second)
+			{
+				TC_Core_Error("Could not copy scene '{0}' because entity UUID {1} is invalid or duplicated",
+					other->m_SceneName, (uint64_t)uuid);
+				return nullptr;
+			}
 		}
 
 		Ref<Scene> newScene = CreateRef<Scene>();
 
+		newScene->m_SceneName = other->m_SceneName;
 		newScene->m_ViewportWidth = other->m_ViewportWidth;
 		newScene->m_ViewportHeight = other->m_ViewportHeight;
+		newScene->m_RuntimeUIViewportOrigin = other->m_RuntimeUIViewportOrigin;
+		newScene->m_RuntimeUIDPIScale = other->m_RuntimeUIDPIScale;
+		newScene->m_RuntimeUIScreenToFramebufferScale =
+			other->m_RuntimeUIScreenToFramebufferScale;
+		newScene->m_Physics2DSettings = other->m_Physics2DSettings;
 
-		auto& srcSceneRegistry = other->m_Registry;
-		auto& dstSceneRegistry = newScene->m_Registry;
 		std::unordered_map<UUID, entt::entity> enttMap;
 
-		// Create entities in new scene
-		auto idView = srcSceneRegistry.view<ID>();
-		for (auto e : idView)
+		// Create entities in their original creation order so the hierarchy keeps
+		// newly created items at the bottom after a scene copy.
+		for (UUID uuid : other->m_EntityOrder)
 		{
-			UUID uuid = srcSceneRegistry.get<ID>(e).id;
-			const auto& name = srcSceneRegistry.get<Tag>(e)._Tag;
+			Entity sourceEntity = other->FindEntityByUUID(uuid);
+			if (!sourceEntity)
+				continue;
+			const std::string name = newScene->MakeUniqueEntityName(sourceEntity.GetName());
 			Entity newEntity = newScene->CreateEntityWithUUID(uuid, name);
 			enttMap[uuid] = (entt::entity)newEntity;
 		}
 
-		// Copy components (except IDComponent and TagComponent)
-		CopyComponent<Transform>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<SpriteRenderer>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<MeshComponent>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<C_Camera>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<NativeScript>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<Rigidbody2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
-		CopyComponent<BoxCollider2D>(dstSceneRegistry, srcSceneRegistry, enttMap);
+		// ComponentCodecs is the single copy policy consumed by Scene, Duplicate and
+		// Prefab. Registered components therefore join every copy path without a
+		// new Scene.cpp type list.
+		for (const auto& [uuid, destinationHandle] : enttMap)
+		{
+			Entity sourceEntity = other->FindEntityByUUID(uuid);
+			Entity destinationEntity(destinationHandle, newScene.get());
+			std::string copyError;
+			if (!ComponentCodecs::CopyAuthoringComponents(sourceEntity,
+				destinationEntity, false, copyError))
+			{
+				TC_Core_Error("Could not copy entity {0}: {1}",
+					static_cast<uint64_t>(uuid), copyError);
+				return nullptr;
+			}
+		}
+
+		for (UUID childUUID : other->m_EntityOrder)
+		{
+			auto sourceParentIt = other->m_ParentMap.find(childUUID);
+			if (sourceParentIt == other->m_ParentMap.end())
+				continue;
+			const UUID parentUUID = sourceParentIt->second;
+			auto childIt = enttMap.find(childUUID);
+			auto parentIt = enttMap.find(parentUUID);
+			if (childIt == enttMap.end() || parentIt == enttMap.end())
+				continue;
+
+			newScene->m_ParentMap[childUUID] = parentUUID;
+			newScene->m_ChildrenMap[parentUUID].push_back(childUUID);
+		}
+		if (!newScene->SyncTransformHierarchy())
+		{
+			TC_Core_Error("Could not copy scene '{0}' because its transform hierarchy is invalid",
+				other->m_SceneName);
+			return nullptr;
+		}
 
 		return newScene;
 	}
 
 	Entity Scene::CreateEntity(const std::string& name)
 	{
-		return CreateEntityWithUUID(UUID(), name);
+		const std::string baseName = name.empty() ? "Entity" : name;
+		UUID uuid;
+		while ((uint64_t)uuid == 0 || m_EntityMap.find(uuid) != m_EntityMap.end())
+			uuid = UUID();
+		return CreateEntityWithUUID(uuid, MakeUniqueEntityName(baseName));
 	}
 
 	Entity Scene::CreateEntityWithUUID(UUID uuid, const std::string& name)
 	{
+		if ((uint64_t)uuid == 0)
+		{
+			TC_Core_Error("Cannot create an entity with reserved UUID 0");
+			return {};
+		}
+		if (m_EntityMap.find(uuid) != m_EntityMap.end())
+		{
+			TC_Core_Error("Cannot create duplicate entity UUID {0}", (uint64_t)uuid);
+			return {};
+		}
+
 		Entity entity = { m_Registry.create(), this };
 		entity.AddComponent<ID>(uuid);
+		entity.AddComponent<EntityMetadata>();
 		entity.AddComponent<Transform>();
 		auto& tag = entity.AddComponent<Tag>();
-		tag._Tag = name.empty() ? "Entity" : name;
+		tag._Tag = MakeUniqueEntityName(name.empty() ? "Entity" : name);
+		m_EntityMap.emplace(uuid, (entt::entity)entity);
+		m_EntityOrder.push_back(uuid);
 		return entity;
+	}
+
+	bool Scene::RenameEntity(Entity entity, const std::string& requestedName)
+	{
+		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<Tag>())
+			return false;
+
+		auto& tag = entity.GetComponent<Tag>()._Tag;
+		const std::string baseName = requestedName.empty() ? "Entity" : requestedName;
+		if (tag == baseName)
+			return false;
+		tag = MakeUniqueEntityName(baseName);
+		return true;
+	}
+
+	std::string Scene::MakeUniqueEntityName(const std::string& requestedName) const
+	{
+		const std::string baseName = requestedName.empty() ? "Entity" : requestedName;
+		auto nameExists = [this](const std::string& candidate)
+		{
+			auto view = m_Registry.view<Tag>();
+			for (auto entityID : view)
+			{
+				if (view.get<Tag>(entityID)._Tag == candidate)
+					return true;
+			}
+			return false;
+		};
+
+		if (!nameExists(baseName))
+			return baseName;
+
+		for (uint32_t suffix = 1; ; ++suffix)
+		{
+			std::string candidate = baseName + " (" + std::to_string(suffix) + ")";
+			if (!nameExists(candidate))
+				return candidate;
+		}
+	}
+
+	bool Scene::SetWorldTransform(Entity entity, const glm::mat4& worldTransform)
+	{
+		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>() || !IsFinite(worldTransform))
+			return false;
+
+		const Entity parent = GetParent(entity);
+		const glm::mat4 parentWorld = parent ? parent.GetComponent<Transform>().GetTransform() : glm::mat4(1.0f);
+		const float parentDeterminant = glm::determinant(parentWorld);
+		if (!IsFinite(parentWorld) || !std::isfinite(parentDeterminant)
+			|| std::abs(parentDeterminant) <= 1.0e-8f)
+		{
+			TC_Core_Warn("Cannot set world transform under a singular parent");
+			return false;
+		}
+
+		const glm::mat4 localTransform = glm::inverse(parentWorld) * worldTransform;
+		glm::vec3 worldTranslation{}, worldRotation{}, worldScale{};
+		glm::vec3 localTranslation{}, localRotation{}, localScale{};
+		if (!TryDecomposeFiniteTransform(worldTransform, worldTranslation, worldRotation, worldScale)
+			|| !TryDecomposeFiniteTransform(localTransform, localTranslation, localRotation, localScale))
+			return false;
+
+		const glm::mat4 normalizedLocalTransform = Math::ComposeTransform(
+			localTranslation, localRotation, localScale);
+		std::vector<PendingWorldTransform> pendingTransforms;
+		std::unordered_set<UUID> visited;
+		if (!CollectPendingWorldTransforms(this, entity, parentWorld, &normalizedLocalTransform,
+			pendingTransforms, visited))
+			return false;
+
+		auto& transform = entity.GetComponent<Transform>();
+		transform._LocalTranslation = localTranslation;
+		transform._LocalRotation = localRotation;
+		transform._LocalScale = localScale;
+		ApplyPendingWorldTransforms(pendingTransforms);
+		return true;
+	}
+
+	bool Scene::SetLocalTransform(Entity entity, const glm::mat4& localTransform)
+	{
+		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>() || !IsFinite(localTransform))
+			return false;
+
+		const Entity parent = GetParent(entity);
+		const glm::mat4 parentWorld = parent ? parent.GetComponent<Transform>().GetTransform() : glm::mat4(1.0f);
+		glm::vec3 localTranslation{}, localRotation{}, localScale{};
+		if (!TryDecomposeFiniteTransform(localTransform, localTranslation, localRotation, localScale))
+			return false;
+
+		const glm::mat4 normalizedLocalTransform = Math::ComposeTransform(
+			localTranslation, localRotation, localScale);
+		std::vector<PendingWorldTransform> pendingTransforms;
+		std::unordered_set<UUID> visited;
+		if (!CollectPendingWorldTransforms(this, entity, parentWorld, &normalizedLocalTransform,
+			pendingTransforms, visited))
+			return false;
+
+		auto& transform = entity.GetComponent<Transform>();
+		transform._LocalTranslation = localTranslation;
+		transform._LocalRotation = localRotation;
+		transform._LocalScale = localScale;
+		ApplyPendingWorldTransforms(pendingTransforms);
+		return true;
+	}
+
+	bool Scene::SyncTransformHierarchy()
+	{
+		std::vector<PendingWorldTransform> pendingTransforms;
+		if (!CollectScenePendingWorldTransforms(this, m_EntityOrder, pendingTransforms))
+			return false;
+		ApplyPendingWorldTransforms(pendingTransforms);
+		return true;
+	}
+
+	bool Scene::ValidateTransformHierarchy()
+	{
+		std::vector<PendingWorldTransform> pendingTransforms;
+		return CollectScenePendingWorldTransforms(this, m_EntityOrder, pendingTransforms);
 	}
 
 
 	void Scene::DestroyEntity(Entity entity)
 	{
+		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle))
+			return;
+
+		const auto entityMapIt = std::find_if(m_EntityMap.begin(), m_EntityMap.end(),
+			[handle = entity.m_EntityHandle](const auto& entry) { return entry.second == handle; });
+		if (entityMapIt == m_EntityMap.end())
+		{
+			TC_Core_Error("Cannot destroy an entity that is missing from the scene UUID index");
+			return;
+		}
+		const UUID entityUUID = entityMapIt->first;
+		if (std::find(m_EntitiesBeingDestroyed.begin(), m_EntitiesBeingDestroyed.end(), entityUUID)
+			!= m_EntitiesBeingDestroyed.end())
+			return;
+		m_EntitiesBeingDestroyed.push_back(entityUUID);
+		std::vector<UUID> children;
+		if (auto childrenIt = m_ChildrenMap.find(entityUUID); childrenIt != m_ChildrenMap.end())
+			children = childrenIt->second;
+		for (UUID childUUID : children)
+		{
+			Entity child;
+			if (auto childIt = m_EntityMap.find(childUUID);
+				childIt != m_EntityMap.end() && m_Registry.valid(childIt->second))
+				child = Entity(childIt->second, this);
+			if (child)
+				DestroyEntity(child);
+			m_ParentMap.erase(childUUID);
+		}
+
+		// Keep the Entity and its serialized attachment records alive while managed
+		// OnDisable/OnDestroy execute. ScriptEngine is a no-op for edit-time scenes.
+		Scripting::ScriptEngine::Get().NotifyEntityDestroyed(
+			*this, static_cast<uint64_t>(entityUUID));
+		// Managed OnDisable/OnDestroy runs while the component is still usable and
+		// may issue audio commands. Tear down the final voice after those callbacks,
+		// but before the ECS identity disappears.
+		if (entity.HasComponent<AudioSource>())
+			AudioSceneRuntime::DestroySource(entity);
+
+		auto parentIt = m_ParentMap.find(entityUUID);
+		if (parentIt != m_ParentMap.end())
+		{
+			auto childrenIt = m_ChildrenMap.find(parentIt->second);
+			if (childrenIt != m_ChildrenMap.end())
+			{
+				auto& siblings = childrenIt->second;
+				siblings.erase(std::remove(siblings.begin(), siblings.end(), entityUUID), siblings.end());
+				if (siblings.empty())
+					m_ChildrenMap.erase(childrenIt);
+			}
+			m_ParentMap.erase(parentIt);
+		}
+		m_ChildrenMap.erase(entityUUID);
+		m_EntityOrder.erase(std::remove(m_EntityOrder.begin(), m_EntityOrder.end(), entityUUID), m_EntityOrder.end());
+
+		if (entity.HasComponent<BoxCollider2D>())
+			entity.GetComponent<BoxCollider2D>().RuntimeFixture = nullptr;
+		if (entity.HasComponent<CircleCollider2D>())
+			entity.GetComponent<CircleCollider2D>().RuntimeFixture = nullptr;
+		if (entity.HasComponent<DistanceJoint2D>())
+			entity.GetComponent<DistanceJoint2D>().RuntimeJoint = nullptr;
+		if (entity.HasComponent<Rigidbody2D>())
+			entity.GetComponent<Rigidbody2D>().RuntimeBody = nullptr;
+
+		bool affectsRuntimePhysics = m_RuntimeBodies.find(entityUUID) != m_RuntimeBodies.end()
+			|| entity.HasComponent<Rigidbody2D>() || entity.HasComponent<BoxCollider2D>()
+			|| entity.HasComponent<CircleCollider2D>() || entity.HasComponent<DistanceJoint2D>();
+		for (entt::entity jointEntity : m_Registry.view<DistanceJoint2D>())
+		{
+			auto& joint = m_Registry.get<DistanceJoint2D>(jointEntity);
+			if (joint.ConnectedEntity == entityUUID)
+			{
+				// Match Unity's Connected Body=None behavior and keep the authoring
+				// scene serializable after deleting a joint endpoint.
+				joint.ConnectedEntity = UUID(0);
+				joint.RuntimeJoint = nullptr;
+				affectsRuntimePhysics = true;
+			}
+		}
+
+		// Defer Box2D destruction to the next safe synchronization point. This
+		// avoids invalidating joints implicitly (DestroyBody destroys every attached
+		// joint) and also keeps all world mutation outside a locked Step callback.
+		// Keep the owned body in m_RuntimeBodies until the next synchronization.
+		// The ECS identity may disappear now, but the map is the authoritative
+		// handle needed to destroy that Box2D object (and its fixtures) safely.
+		m_SuspendedRuntimeBodyStates.erase(entityUUID);
+		if (affectsRuntimePhysics)
+			m_HasRuntimePhysicsDefinition = false;
+		// The entity is being removed, so discard every queued/active pair that
+		// references it rather than exposing a stale UUID during dispatch.
+		if (m_ContactListener)
+			m_ContactListener->DiscardEntity(entityUUID);
+
+		m_EntityMap.erase(entityUUID);
 		m_Registry.destroy(entity);
+		m_EntitiesBeingDestroyed.erase(std::remove(m_EntitiesBeingDestroyed.begin(),
+			m_EntitiesBeingDestroyed.end(), entityUUID), m_EntitiesBeingDestroyed.end());
 	}
 
-	void Scene::OnRuntimeStart()
+	void Scene::SetRuntimeEntityBatchCreatedCallback(
+		RuntimeEntityBatchCreatedCallback callback)
 	{
-		m_PhysicsWorld = new b2World({ 0.0f, -9.8f });
+		m_RuntimeEntityBatchCreatedCallback = std::move(callback);
+	}
 
-		auto view = m_Registry.view<Rigidbody2D>();
-		for (auto e : view)
+	void Scene::ArmRuntimeScriptBatchCallback()
+	{
+		const uint64_t runtimeGeneration = m_RuntimeSessionGeneration;
+		SetRuntimeEntityBatchCreatedCallback(
+			[this, runtimeGeneration](std::span<const UUID> entityIDs)
+			{
+				if (!m_RuntimeRunning || m_ScriptSceneSessionID != 0
+					|| runtimeGeneration != m_RuntimeSessionGeneration)
+					return;
+
+				const bool hasManagedAttachments = std::any_of(entityIDs.begin(),
+					entityIDs.end(), [this](UUID entityID)
+					{
+						Entity entity = FindEntityByUUID(entityID);
+						return entity && entity.HasComponent<CSharpScripts>()
+							&& !entity.GetComponent<CSharpScripts>().Scripts.empty();
+					});
+				if (!hasManagedAttachments)
+					return;
+
+				m_ScriptSceneSessionID =
+					Scripting::ScriptEngine::Get().StartSceneForRuntimeBatch(
+						*this, runtimeGeneration, entityIDs);
+				if (m_ScriptSceneSessionID != 0)
+					return;
+
+				TC_Core_Error("A scripted runtime entity batch was rolled back because the managed runtime or current project assembly is unavailable");
+				// StartSceneCore replaces the lazy callback while attempting its
+				// transaction and clears it on failure. Re-arm so a later valid batch
+				// can retry without restarting the native Scene.
+				if (m_RuntimeRunning && runtimeGeneration == m_RuntimeSessionGeneration)
+					ArmRuntimeScriptBatchCallback();
+			});
+	}
+
+	void Scene::QueueRuntimeEntityBatchCreated(std::vector<UUID> entityIDs)
+	{
+		if (!m_RuntimeRunning || entityIDs.empty())
+			return;
+		for (UUID entityID : entityIDs)
 		{
-			Entity entity = { e, this };
+			if (static_cast<uint64_t>(entityID) != 0 && FindEntityByUUID(entityID))
+				m_PendingRuntimeEntityCreates.push_back(entityID);
+		}
+		if (!m_PendingRuntimeEntityCreates.empty())
+			m_HasRuntimePhysicsDefinition = false;
+	}
+
+	void Scene::InvalidateRuntimePhysicsDefinitionScan()
+	{
+		if (m_RuntimeRunning)
+			m_RuntimePhysicsDefinitionScanRequired = true;
+	}
+
+	void Scene::FlushPendingRuntimeEntityCreates()
+	{
+		// This public entry point can be reached directly from ScriptEngine after
+		// managed OnCreate. Treat the preceding code as an unobservable component
+		// write phase before entering the shared Scene safe point.
+		InvalidateRuntimePhysicsDefinitionScan();
+		FlushPendingRuntimeEntityCreatesAtSafePoint();
+	}
+
+	void Scene::FlushPendingRuntimeEntityCreatesAtSafePoint()
+	{
+		if (!m_RuntimeRunning)
+		{
+			m_PendingRuntimeEntityCreates.clear();
+			return;
+		}
+		if (m_FlushingRuntimeEntityCreates || m_PendingRuntimeEntityCreates.empty())
+			return;
+		// This function is the authoritative safe-point commit. Never expose a
+		// just-created entity to managed OnCreate until its physics proxies exist.
+		// Keep the pending batch intact when physics cannot be synchronized so the
+		// next safe point can retry instead of silently losing lifecycle delivery.
+		if (!SynchronizeRuntimePhysicsDefinitions())
+		{
+			TC_Core_Error("Could not synchronize runtime physics before delivering a created-entity batch");
+			return;
+		}
+
+		std::vector<UUID> batch;
+		batch.swap(m_PendingRuntimeEntityCreates);
+		batch.erase(std::remove_if(batch.begin(), batch.end(), [this](UUID entityID)
+		{
+			return !FindEntityByUUID(entityID);
+		}), batch.end());
+		if (batch.empty())
+			return;
+
+		// Copy the callback before invoking it. Lazy managed-runtime startup
+		// replaces this callback from inside the call, and the active target must
+		// remain alive until it returns.
+		RuntimeEntityBatchCreatedCallback callback =
+			m_RuntimeEntityBatchCreatedCallback;
+		if (!callback)
+		{
+			const bool hasManagedAttachments = std::any_of(batch.begin(), batch.end(),
+				[this](UUID entityID)
+				{
+					Entity entity = FindEntityByUUID(entityID);
+					return entity && entity.HasComponent<CSharpScripts>()
+						&& !entity.GetComponent<CSharpScripts>().Scripts.empty();
+				});
+			if (!hasManagedAttachments)
+				return;
+
+			// This is a defensive invariant path (normal runtime startup always
+			// installs either a lazy or active callback). Never leave scripted
+			// entities alive without their managed lifecycle.
+			TC_Core_Error("Discarding a scripted runtime entity batch because no managed batch callback is installed");
+			++m_RuntimeEntityBatchFailureSerial;
+			for (UUID entityID : batch)
+			{
+				Entity entity = FindEntityByUUID(entityID);
+				if (entity && entity.HasComponent<CSharpScripts>())
+					entity.RemoveComponent<CSharpScripts>();
+			}
+			for (auto iterator = batch.rbegin(); iterator != batch.rend(); ++iterator)
+			{
+				Entity entity = FindEntityByUUID(*iterator);
+				if (entity)
+					DestroyEntity(entity);
+			}
+			if (!SynchronizeRuntimePhysicsDefinitions())
+				TC_Core_Error("Could not synchronize runtime physics after rolling back an undeliverable entity batch");
+			return;
+		}
+
+		m_FlushingRuntimeEntityCreates = true;
+		try
+		{
+			callback(batch);
+		}
+		catch (const std::exception& exception)
+		{
+			TC_Core_Error("Runtime entity-created callback failed: {0}", exception.what());
+			++m_RuntimeEntityBatchFailureSerial;
+		}
+		catch (...)
+		{
+			TC_Core_Error("Runtime entity-created callback failed with an unknown exception");
+			++m_RuntimeEntityBatchFailureSerial;
+		}
+		m_FlushingRuntimeEntityCreates = false;
+		// OnCreate/OnEnable may mutate authoring physics or queue another Prefab.
+		// Reconcile those changes before returning from the same safe boundary;
+		// any newly queued lifecycle batch remains pending for a later flush.
+		InvalidateRuntimePhysicsDefinitionScan();
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			TC_Core_Error("Could not synchronize runtime physics after delivering a created-entity batch");
+	}
+
+	bool Scene::SetParent(Entity child, Entity parent)
+	{
+		if (!child || child.m_Scene != this || !m_Registry.valid(child.m_EntityHandle)
+			|| !child.HasComponent<ID>() || !child.HasComponent<Transform>())
+			return false;
+
+		const UUID childUUID = child.GetUUID();
+		const bool hasNewParent = static_cast<bool>(parent);
+		if (hasNewParent && (parent.m_Scene != this || !m_Registry.valid(parent.m_EntityHandle)
+			|| !parent.HasComponent<ID>() || !parent.HasComponent<Transform>()))
+			return false;
+
+		const UUID newParentUUID = hasNewParent ? parent.GetUUID() : UUID(0);
+		auto existingParentIt = m_ParentMap.find(childUUID);
+		if ((existingParentIt == m_ParentMap.end() && !hasNewParent)
+			|| (existingParentIt != m_ParentMap.end() && hasNewParent && existingParentIt->second == newParentUUID))
+			return true;
+
+		if (hasNewParent)
+		{
+			if (newParentUUID == childUUID)
+				return false;
+
+			UUID cursor = newParentUUID;
+			std::unordered_set<UUID> visited;
+			while (true)
+			{
+				if (cursor == childUUID || !visited.emplace(cursor).second)
+					return false;
+
+				auto parentIt = m_ParentMap.find(cursor);
+				if (parentIt == m_ParentMap.end())
+					break;
+
+				cursor = parentIt->second;
+			}
+		}
+
+		const auto& childTransform = child.GetComponent<Transform>();
+		const glm::mat4 childWorld = childTransform.GetTransform();
+		glm::vec3 localTranslation = childTransform._Translation;
+		glm::vec3 localRotation = childTransform._Rotation;
+		glm::vec3 localScale = childTransform._Scale;
+		glm::mat4 newParentWorld(1.0f);
+		std::vector<PendingWorldTransform> pendingTransforms;
+		if (!IsFinite(childWorld) || !IsFinite(localTranslation)
+			|| !IsFinite(localRotation) || !IsFinite(localScale))
+			return false;
+
+		if (hasNewParent)
+		{
+			newParentWorld = parent.GetComponent<Transform>().GetTransform();
+			const float determinant = glm::determinant(newParentWorld);
+			if (!IsFinite(newParentWorld) || !std::isfinite(determinant) || std::abs(determinant) <= 1.0e-8f)
+			{
+				TC_Core_Warn("Cannot parent an entity under a singular transform");
+				return false;
+			}
+
+			const glm::mat4 newLocal = glm::inverse(newParentWorld) * childWorld;
+			if (!TryDecomposeFiniteTransform(newLocal, localTranslation, localRotation, localScale))
+				return false;
+
+			const glm::mat4 normalizedLocalTransform = Math::ComposeTransform(
+				localTranslation, localRotation, localScale);
+			std::unordered_set<UUID> visited;
+			if (!CollectPendingWorldTransforms(this, child, newParentWorld, &normalizedLocalTransform,
+				pendingTransforms, visited))
+				return false;
+		}
+
+		if (existingParentIt != m_ParentMap.end())
+		{
+			const UUID oldParentUUID = existingParentIt->second;
+			auto oldChildrenIt = m_ChildrenMap.find(oldParentUUID);
+			if (oldChildrenIt != m_ChildrenMap.end())
+			{
+				auto& oldChildren = oldChildrenIt->second;
+				oldChildren.erase(std::remove(oldChildren.begin(), oldChildren.end(), childUUID), oldChildren.end());
+				if (oldChildren.empty())
+					m_ChildrenMap.erase(oldChildrenIt);
+			}
+			m_ParentMap.erase(existingParentIt);
+		}
+
+		if (hasNewParent)
+		{
+			auto& children = m_ChildrenMap[newParentUUID];
+			children.erase(std::remove(children.begin(), children.end(), childUUID), children.end());
+			children.push_back(childUUID);
+			m_ParentMap[childUUID] = newParentUUID;
+		}
+
+		auto& mutableTransform = child.GetComponent<Transform>();
+		mutableTransform._LocalTranslation = localTranslation;
+		mutableTransform._LocalRotation = localRotation;
+		mutableTransform._LocalScale = localScale;
+		if (hasNewParent)
+			ApplyPendingWorldTransforms(pendingTransforms);
+		return true;
+	}
+
+	bool Scene::MoveEntity(Entity entity, Entity target, EntityPlacement placement)
+	{
+		auto isValidSceneEntity = [this](Entity candidate)
+		{
+			return candidate && candidate.m_Scene == this
+				&& m_Registry.valid(candidate.m_EntityHandle)
+				&& candidate.HasComponent<ID>() && candidate.HasComponent<Transform>()
+				&& static_cast<uint64_t>(candidate.GetUUID()) != 0
+				&& FindEntityByUUID(candidate.GetUUID()) == candidate;
+		};
+
+		if (!isValidSceneEntity(entity))
+			return false;
+		if (placement != EntityPlacement::Root && !isValidSceneEntity(target))
+			return false;
+		if (placement != EntityPlacement::Root && entity == target)
+			return false;
+		if (placement != EntityPlacement::Before && placement != EntityPlacement::Child
+			&& placement != EntityPlacement::After && placement != EntityPlacement::Root)
+			return false;
+
+		if (m_EntityOrder.size() != m_EntityMap.size() || !ValidateTransformHierarchy())
+			return false;
+		std::unordered_set<UUID> orderedEntities;
+		for (UUID uuid : m_EntityOrder)
+		{
+			Entity orderedEntity = FindEntityByUUID(uuid);
+			if (!orderedEntity || !orderedEntity.HasComponent<Transform>()
+				|| !orderedEntities.emplace(uuid).second)
+				return false;
+		}
+
+		auto collectSubtree = [this](UUID root, std::unordered_set<UUID>& subtree)
+		{
+			std::vector<UUID> pending{ root };
+			while (!pending.empty())
+			{
+				const UUID current = pending.back();
+				pending.pop_back();
+				Entity currentEntity = FindEntityByUUID(current);
+				if (!currentEntity || !currentEntity.HasComponent<Transform>()
+					|| !subtree.emplace(current).second)
+					return false;
+
+				auto childrenIt = m_ChildrenMap.find(current);
+				if (childrenIt == m_ChildrenMap.end())
+					continue;
+				for (UUID child : childrenIt->second)
+				{
+					auto parentIt = m_ParentMap.find(child);
+					if (parentIt == m_ParentMap.end() || parentIt->second != current)
+						return false;
+					pending.push_back(child);
+				}
+			}
+			return true;
+		};
+
+		const UUID entityUUID = entity.GetUUID();
+		std::unordered_set<UUID> movingSubtree;
+		if (!collectSubtree(entityUUID, movingSubtree))
+			return false;
+
+		UUID targetUUID(0);
+		if (placement != EntityPlacement::Root)
+		{
+			targetUUID = target.GetUUID();
+			if (movingSubtree.find(targetUUID) != movingSubtree.end())
+				return false;
+		}
+
+		bool hasNewParent = false;
+		UUID newParentUUID(0);
+		if (placement == EntityPlacement::Child)
+		{
+			hasNewParent = true;
+			newParentUUID = targetUUID;
+		}
+		else if (placement == EntityPlacement::Before || placement == EntityPlacement::After)
+		{
+			auto targetParentIt = m_ParentMap.find(targetUUID);
+			if (targetParentIt != m_ParentMap.end())
+			{
+				hasNewParent = true;
+				newParentUUID = targetParentIt->second;
+			}
+		}
+		if (hasNewParent && movingSubtree.find(newParentUUID) != movingSubtree.end())
+			return false;
+
+		auto candidateParentMap = m_ParentMap;
+		auto candidateChildrenMap = m_ChildrenMap;
+		auto oldParentIt = candidateParentMap.find(entityUUID);
+		if (oldParentIt != candidateParentMap.end())
+		{
+			auto oldSiblingsIt = candidateChildrenMap.find(oldParentIt->second);
+			if (oldSiblingsIt == candidateChildrenMap.end())
+				return false;
+			auto& oldSiblings = oldSiblingsIt->second;
+			const size_t oldSiblingCount = oldSiblings.size();
+			oldSiblings.erase(std::remove(oldSiblings.begin(), oldSiblings.end(), entityUUID),
+				oldSiblings.end());
+			if (oldSiblings.size() + 1 != oldSiblingCount)
+				return false;
+			if (oldSiblings.empty())
+				candidateChildrenMap.erase(oldSiblingsIt);
+			candidateParentMap.erase(oldParentIt);
+		}
+
+		if (hasNewParent)
+		{
+			auto& newSiblings = candidateChildrenMap[newParentUUID];
+			newSiblings.erase(std::remove(newSiblings.begin(), newSiblings.end(), entityUUID),
+				newSiblings.end());
+			if (placement == EntityPlacement::Child)
+				newSiblings.push_back(entityUUID);
+			else
+			{
+				auto targetIt = std::find(newSiblings.begin(), newSiblings.end(), targetUUID);
+				if (targetIt == newSiblings.end())
+					return false;
+				newSiblings.insert(placement == EntityPlacement::Before ? targetIt : std::next(targetIt),
+					entityUUID);
+			}
+			candidateParentMap[entityUUID] = newParentUUID;
+		}
+
+		std::vector<UUID> movingBlock;
+		std::vector<UUID> candidateOrder;
+		movingBlock.reserve(movingSubtree.size());
+		candidateOrder.reserve(m_EntityOrder.size());
+		for (UUID uuid : m_EntityOrder)
+		{
+			if (movingSubtree.find(uuid) != movingSubtree.end())
+				movingBlock.push_back(uuid);
+			else
+				candidateOrder.push_back(uuid);
+		}
+		if (movingBlock.size() != movingSubtree.size())
+			return false;
+
+		size_t insertionIndex = candidateOrder.size();
+		if (placement == EntityPlacement::Before)
+		{
+			auto targetIt = std::find(candidateOrder.begin(), candidateOrder.end(), targetUUID);
+			if (targetIt == candidateOrder.end())
+				return false;
+			insertionIndex = static_cast<size_t>(std::distance(candidateOrder.begin(), targetIt));
+		}
+		else if (placement == EntityPlacement::After || placement == EntityPlacement::Child)
+		{
+			std::unordered_set<UUID> targetSubtree;
+			if (!collectSubtree(targetUUID, targetSubtree))
+				return false;
+			bool foundTargetSubtree = false;
+			for (size_t index = 0; index < candidateOrder.size(); ++index)
+			{
+				if (targetSubtree.find(candidateOrder[index]) != targetSubtree.end())
+				{
+					insertionIndex = index + 1;
+					foundTargetSubtree = true;
+				}
+			}
+			if (!foundTargetSubtree)
+				return false;
+		}
+		candidateOrder.insert(candidateOrder.begin() + static_cast<std::ptrdiff_t>(insertionIndex),
+			movingBlock.begin(), movingBlock.end());
+
+		if (candidateOrder == m_EntityOrder && candidateParentMap == m_ParentMap
+			&& candidateChildrenMap == m_ChildrenMap)
+			return false;
+
+		Entity newParent = hasNewParent ? FindEntityByUUID(newParentUUID) : Entity{};
+		if (hasNewParent && !newParent)
+			return false;
+		if (!SetParent(entity, newParent))
+			return false;
+
+		m_ParentMap.swap(candidateParentMap);
+		m_ChildrenMap.swap(candidateChildrenMap);
+		m_EntityOrder.swap(candidateOrder);
+		return true;
+	}
+
+	Entity Scene::GetParent(Entity entity)
+	{
+		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return {};
+
+		auto parentIt = m_ParentMap.find(entity.GetUUID());
+		if (parentIt == m_ParentMap.end())
+			return {};
+
+		return FindEntityByUUID(parentIt->second);
+	}
+
+	bool Scene::IsActiveInHierarchy(Entity entity) const
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+
+		UUID cursor = entity.GetUUID();
+		std::unordered_set<UUID> visited;
+		while (static_cast<uint64_t>(cursor) != 0)
+		{
+			if (!visited.emplace(cursor).second)
+				return false;
+			auto entityIt = m_EntityMap.find(cursor);
+			if (entityIt == m_EntityMap.end()
+				|| !m_Registry.valid(entityIt->second)
+				|| !m_Registry.all_of<Tag>(entityIt->second)
+				|| !m_Registry.get<Tag>(entityIt->second).ActiveSelf)
+				return false;
+			auto parentIt = m_ParentMap.find(cursor);
+			if (parentIt == m_ParentMap.end())
+				return true;
+			cursor = parentIt->second;
+		}
+		return false;
+	}
+
+	bool Scene::IsEditorHidden(Entity entity) const
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+		return m_Registry.all_of<EditorVisibility>(entity.m_EntityHandle)
+			&& m_Registry.get<EditorVisibility>(entity.m_EntityHandle).Hidden;
+	}
+
+	bool Scene::IsVisibleInEditorHierarchy(Entity entity) const
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+
+		UUID cursor = entity.GetUUID();
+		std::unordered_set<UUID> visited;
+		while (static_cast<uint64_t>(cursor) != 0)
+		{
+			if (!visited.emplace(cursor).second)
+				return false;
+			auto entityIt = m_EntityMap.find(cursor);
+			if (entityIt == m_EntityMap.end()
+				|| !m_Registry.valid(entityIt->second))
+				return false;
+			if (m_Registry.all_of<EditorVisibility>(entityIt->second)
+				&& m_Registry.get<EditorVisibility>(entityIt->second).Hidden)
+				return false;
+			auto parentIt = m_ParentMap.find(cursor);
+			if (parentIt == m_ParentMap.end())
+				return true;
+			cursor = parentIt->second;
+		}
+		return false;
+	}
+
+	bool Scene::SetEditorHidden(Entity entity, bool hidden)
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return false;
+
+		const bool hasState = m_Registry.all_of<EditorVisibility>(
+			entity.m_EntityHandle);
+		if (hidden)
+		{
+			if (hasState)
+			{
+				auto& state = m_Registry.get<EditorVisibility>(
+					entity.m_EntityHandle);
+				if (state.Hidden)
+					return false;
+				state.Hidden = true;
+			}
+			else
+			{
+				m_Registry.emplace<EditorVisibility>(entity.m_EntityHandle);
+			}
+			return true;
+		}
+
+		if (!hasState)
+			return false;
+		m_Registry.remove<EditorVisibility>(entity.m_EntityHandle);
+		return true;
+	}
+
+	bool Scene::HasAuthoredPrimaryCamera() const
+	{
+		for (const entt::entity handle : m_Registry.view<C_Camera>())
+		{
+			if (m_Registry.get<C_Camera>(handle).Primary)
+				return true;
+		}
+		return false;
+	}
+
+	bool Scene::HasActiveCanvas()
+	{
+		auto view = m_Registry.view<Canvas>();
+		for (const entt::entity handle : view)
+		{
+			Entity entity(handle, this);
+			if (view.get<Canvas>(handle).Enabled && IsActiveInHierarchy(entity))
+				return true;
+		}
+		return false;
+	}
+
+	bool Scene::HasGameViewRenderSource()
+	{
+		return static_cast<bool>(GetPrimaryCameraEntity()) || HasActiveCanvas();
+	}
+
+	bool Scene::SetCameraPrimary(Entity entity, bool primary)
+	{
+		if (!entity || entity.m_Scene != this
+			|| !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<C_Camera>())
+			return false;
+
+		if (primary)
+		{
+			for (const entt::entity handle : m_Registry.view<C_Camera>())
+				m_Registry.get<C_Camera>(handle).Primary = false;
+		}
+		entity.GetComponent<C_Camera>().Primary = primary;
+		return true;
+	}
+
+	std::vector<UUID> Scene::GetChildrenUUIDs(Entity entity)
+	{
+		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>())
+			return {};
+
+		auto childrenIt = m_ChildrenMap.find(entity.GetUUID());
+		if (childrenIt == m_ChildrenMap.end())
+			return {};
+
+		return childrenIt->second;
+	}
+
+	std::vector<UUID> Scene::GetRootEntityUUIDs()
+	{
+		std::vector<UUID> result;
+		for (UUID uuid : m_EntityOrder)
+		{
+			auto parentIt = m_ParentMap.find(uuid);
+			if (parentIt == m_ParentMap.end() || !FindEntityByUUID(parentIt->second))
+				result.push_back(uuid);
+		}
+		return result;
+	}
+
+	Scene::CollisionListenerHandle Scene::AddCollisionEnter2DListener(
+		CollisionEnter2DCallback callback)
+	{
+		if (!callback)
+			return 0;
+
+		CollisionListenerHandle handle = 0;
+		do
+		{
+			handle = m_NextCollisionListenerHandle++;
+		} while (handle == 0 || m_CollisionEnterListeners.find(handle) != m_CollisionEnterListeners.end()
+			|| m_CollisionExitListeners.find(handle) != m_CollisionExitListeners.end()
+			|| m_TriggerEnterListeners.find(handle) != m_TriggerEnterListeners.end()
+			|| m_TriggerExitListeners.find(handle) != m_TriggerExitListeners.end());
+		m_CollisionEnterListeners.emplace(handle, std::move(callback));
+		return handle;
+	}
+
+	Scene::CollisionListenerHandle Scene::AddCollisionExit2DListener(
+		CollisionExit2DCallback callback)
+	{
+		if (!callback)
+			return 0;
+
+		CollisionListenerHandle handle = 0;
+		do
+		{
+			handle = m_NextCollisionListenerHandle++;
+		} while (handle == 0 || m_CollisionEnterListeners.find(handle) != m_CollisionEnterListeners.end()
+			|| m_CollisionExitListeners.find(handle) != m_CollisionExitListeners.end()
+			|| m_TriggerEnterListeners.find(handle) != m_TriggerEnterListeners.end()
+			|| m_TriggerExitListeners.find(handle) != m_TriggerExitListeners.end());
+		m_CollisionExitListeners.emplace(handle, std::move(callback));
+		return handle;
+	}
+
+	Scene::CollisionListenerHandle Scene::AddTriggerEnter2DListener(
+		TriggerEnter2DCallback callback)
+	{
+		if (!callback)
+			return 0;
+
+		CollisionListenerHandle handle = 0;
+		do
+		{
+			handle = m_NextCollisionListenerHandle++;
+		} while (handle == 0 || m_CollisionEnterListeners.find(handle) != m_CollisionEnterListeners.end()
+			|| m_CollisionExitListeners.find(handle) != m_CollisionExitListeners.end()
+			|| m_TriggerEnterListeners.find(handle) != m_TriggerEnterListeners.end()
+			|| m_TriggerExitListeners.find(handle) != m_TriggerExitListeners.end());
+		m_TriggerEnterListeners.emplace(handle, std::move(callback));
+		return handle;
+	}
+
+	Scene::CollisionListenerHandle Scene::AddTriggerExit2DListener(
+		TriggerExit2DCallback callback)
+	{
+		if (!callback)
+			return 0;
+
+		CollisionListenerHandle handle = 0;
+		do
+		{
+			handle = m_NextCollisionListenerHandle++;
+		} while (handle == 0 || m_CollisionEnterListeners.find(handle) != m_CollisionEnterListeners.end()
+			|| m_CollisionExitListeners.find(handle) != m_CollisionExitListeners.end()
+			|| m_TriggerEnterListeners.find(handle) != m_TriggerEnterListeners.end()
+			|| m_TriggerExitListeners.find(handle) != m_TriggerExitListeners.end());
+		m_TriggerExitListeners.emplace(handle, std::move(callback));
+		return handle;
+	}
+
+	bool Scene::RemoveCollision2DListener(CollisionListenerHandle handle)
+	{
+		if (handle == 0)
+			return false;
+		const size_t enterRemoved = m_CollisionEnterListeners.erase(handle);
+		const size_t exitRemoved = m_CollisionExitListeners.erase(handle);
+		const size_t triggerEnterRemoved = m_TriggerEnterListeners.erase(handle);
+		const size_t triggerExitRemoved = m_TriggerExitListeners.erase(handle);
+		return enterRemoved != 0 || exitRemoved != 0
+			|| triggerEnterRemoved != 0 || triggerExitRemoved != 0;
+	}
+
+	bool Scene::DispatchPendingCollisionEvents()
+	{
+		if (!m_ContactListener)
+			return false;
+
+		const uint64_t runtimeGeneration = m_RuntimeSessionGeneration;
+		const std::vector<SceneContactListener::PendingEvent> events =
+			m_ContactListener->TakePendingEvents();
+		const bool mayHaveInvokedUserCode = !events.empty()
+			&& (m_ScriptSceneSessionID != 0
+				|| !m_CollisionEnterListeners.empty()
+				|| !m_CollisionExitListeners.empty()
+				|| !m_TriggerEnterListeners.empty()
+				|| !m_TriggerExitListeners.empty());
+		if (m_ScriptSceneSessionID != 0 && !events.empty())
+		{
+			std::vector<Scripting::NativePhysicsEventV1> managedEvents;
+			managedEvents.reserve(events.size());
+			for (const SceneContactListener::PendingEvent& pending : events)
+			{
+				Scripting::NativePhysicsEventV1 event;
+				if (pending.Pair.IsTrigger)
+					event.Kind = static_cast<uint32_t>(pending.Type
+						== SceneContactListener::PendingType::Enter
+						? Scripting::NativePhysicsEventKind::TriggerEnter
+						: Scripting::NativePhysicsEventKind::TriggerExit);
+				else
+					event.Kind = static_cast<uint32_t>(pending.Type
+						== SceneContactListener::PendingType::Enter
+						? Scripting::NativePhysicsEventKind::CollisionEnter
+						: Scripting::NativePhysicsEventKind::CollisionExit);
+				event.EntityA = { m_ScriptSceneSessionID, pending.Pair.A,
+					m_RuntimeSessionGeneration };
+				event.EntityB = { m_ScriptSceneSessionID, pending.Pair.B,
+					m_RuntimeSessionGeneration };
+				managedEvents.push_back(event);
+			}
+			Scripting::ScriptEngine::Get().DispatchPhysicsEvents(
+				m_ScriptSceneSessionID, managedEvents);
+		}
+
+		// Snapshot callbacks so listener add/remove operations are iteration-safe.
+		// A removed handle is checked again before invocation; listeners added by a
+		// callback begin receiving events on the next dispatch batch.
+		std::vector<std::pair<CollisionListenerHandle, CollisionEnter2DCallback>> enterListeners;
+		enterListeners.reserve(m_CollisionEnterListeners.size());
+		for (const auto& listener : m_CollisionEnterListeners)
+			enterListeners.push_back(listener);
+		std::vector<std::pair<CollisionListenerHandle, CollisionExit2DCallback>> exitListeners;
+		exitListeners.reserve(m_CollisionExitListeners.size());
+		for (const auto& listener : m_CollisionExitListeners)
+			exitListeners.push_back(listener);
+		std::vector<std::pair<CollisionListenerHandle, TriggerEnter2DCallback>> triggerEnterListeners;
+		triggerEnterListeners.reserve(m_TriggerEnterListeners.size());
+		for (const auto& listener : m_TriggerEnterListeners)
+			triggerEnterListeners.push_back(listener);
+		std::vector<std::pair<CollisionListenerHandle, TriggerExit2DCallback>> triggerExitListeners;
+		triggerExitListeners.reserve(m_TriggerExitListeners.size());
+		for (const auto& listener : m_TriggerExitListeners)
+			triggerExitListeners.push_back(listener);
+		std::sort(enterListeners.begin(), enterListeners.end(),
+			[](const auto& left, const auto& right) { return left.first < right.first; });
+		std::sort(exitListeners.begin(), exitListeners.end(),
+			[](const auto& left, const auto& right) { return left.first < right.first; });
+		std::sort(triggerEnterListeners.begin(), triggerEnterListeners.end(),
+			[](const auto& left, const auto& right) { return left.first < right.first; });
+		std::sort(triggerExitListeners.begin(), triggerExitListeners.end(),
+			[](const auto& left, const auto& right) { return left.first < right.first; });
+
+		for (const SceneContactListener::PendingEvent& pending : events)
+		{
+			if (!m_RuntimeRunning || runtimeGeneration != m_RuntimeSessionGeneration)
+				break;
+
+			const UUID uuidA(pending.Pair.A);
+			const UUID uuidB(pending.Pair.B);
+			const Entity originalA = FindEntityByUUID(uuidA);
+			const Entity originalB = FindEntityByUUID(uuidB);
+			if (!originalA || !originalB)
+				continue;
+
+			auto pairStillExists = [&]()
+			{
+				return m_RuntimeRunning && runtimeGeneration == m_RuntimeSessionGeneration
+					&& FindEntityByUUID(uuidA) == originalA && FindEntityByUUID(uuidB) == originalB;
+			};
+
+			if (pending.Pair.IsTrigger)
+			{
+				if (pending.Type == SceneContactListener::PendingType::Enter)
+				{
+					const TriggerEnter2D event{ uuidA, uuidB };
+					for (const auto& [handle, callback] : triggerEnterListeners)
+					{
+						if (!pairStillExists())
+							break;
+						if (m_TriggerEnterListeners.find(handle) != m_TriggerEnterListeners.end())
+							callback(event);
+					}
+				}
+				else
+				{
+					const TriggerExit2D event{ uuidA, uuidB };
+					for (const auto& [handle, callback] : triggerExitListeners)
+					{
+						if (!pairStillExists())
+							break;
+						if (m_TriggerExitListeners.find(handle) != m_TriggerExitListeners.end())
+							callback(event);
+					}
+				}
+			}
+			else if (pending.Type == SceneContactListener::PendingType::Enter)
+			{
+				const CollisionEnter2D event{ uuidA, uuidB };
+				for (const auto& [handle, callback] : enterListeners)
+				{
+					if (!pairStillExists())
+						break;
+					if (m_CollisionEnterListeners.find(handle) != m_CollisionEnterListeners.end())
+						callback(event);
+				}
+			}
+			else
+			{
+				const CollisionExit2D event{ uuidA, uuidB };
+				for (const auto& [handle, callback] : exitListeners)
+				{
+					if (!pairStillExists())
+						break;
+					if (m_CollisionExitListeners.find(handle) != m_CollisionExitListeners.end())
+						callback(event);
+				}
+			}
+		}
+		return mayHaveInvokedUserCode;
+	}
+
+	void Scene::ResetRuntimePhysicsPointers()
+	{
+		for (entt::entity entity : m_Registry.view<Rigidbody2D>())
+			m_Registry.get<Rigidbody2D>(entity).RuntimeBody = nullptr;
+		for (entt::entity entity : m_Registry.view<BoxCollider2D>())
+			m_Registry.get<BoxCollider2D>(entity).RuntimeFixture = nullptr;
+		for (entt::entity entity : m_Registry.view<CircleCollider2D>())
+			m_Registry.get<CircleCollider2D>(entity).RuntimeFixture = nullptr;
+		for (entt::entity entity : m_Registry.view<DistanceJoint2D>())
+			m_Registry.get<DistanceJoint2D>(entity).RuntimeJoint = nullptr;
+	}
+
+	b2Body* Scene::FindRuntimeBody(UUID entityID) const
+	{
+		auto bodyIt = m_RuntimeBodies.find(entityID);
+		return bodyIt == m_RuntimeBodies.end() ? nullptr : bodyIt->second;
+	}
+
+	uint64_t Scene::ComputeRuntimePhysicsDefinitionHash() const
+	{
+		uint64_t hash = 1469598103934665603ull;
+		for (uint16_t mask : m_Physics2DSettings.CollisionMasks)
+			HashPhysicsValue(hash, mask);
+		std::unordered_set<UUID> physicsEntities;
+		for (UUID uuid : m_EntityOrder)
+		{
+			auto mapIt = m_EntityMap.find(uuid);
+			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second))
+				continue;
+			const entt::entity entity = mapIt->second;
+			if (!IsActiveInHierarchy(Entity(entity, const_cast<Scene*>(this))))
+				continue;
+			if (m_Registry.any_of<Rigidbody2D, BoxCollider2D, CircleCollider2D, DistanceJoint2D>(entity))
+				physicsEntities.insert(uuid);
+			if (m_Registry.all_of<DistanceJoint2D>(entity))
+			{
+				const UUID connected = m_Registry.get<DistanceJoint2D>(entity).ConnectedEntity;
+				auto connectedIt = m_EntityMap.find(connected);
+				if (static_cast<uint64_t>(connected) != 0
+					&& connectedIt != m_EntityMap.end()
+					&& IsActiveInHierarchy(Entity(connectedIt->second,
+						const_cast<Scene*>(this))))
+					physicsEntities.insert(connected);
+			}
+		}
+
+		HashPhysicsValue(hash, physicsEntities.size());
+		for (UUID uuid : m_EntityOrder)
+		{
+			if (physicsEntities.find(uuid) == physicsEntities.end())
+				continue;
+			auto mapIt = m_EntityMap.find(uuid);
+			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second))
+				continue;
+			const entt::entity entity = mapIt->second;
+			HashPhysicsValue(hash, static_cast<uint64_t>(uuid));
+			const bool hasMetadata = m_Registry.all_of<EntityMetadata>(entity);
+			HashPhysicsValue(hash, hasMetadata);
+			if (hasMetadata)
+				HashPhysicsValue(hash, m_Registry.get<EntityMetadata>(entity).Layer);
+
+			const bool hasTransform = m_Registry.all_of<Transform>(entity);
+			HashPhysicsValue(hash, hasTransform);
+			if (hasTransform)
+			{
+				const auto& transform = m_Registry.get<Transform>(entity);
+				// The accepted hash is refreshed immediately after physics writes its
+				// pose back. Any subsequent change therefore represents an authored or
+				// scripted teleport and is applied at the next safe step boundary.
+				HashPhysicsFloat(hash, transform._Translation.x);
+				HashPhysicsFloat(hash, transform._Translation.y);
+				HashPhysicsFloat(hash, transform._Rotation.z);
+				HashPhysicsFloat(hash, transform._Scale.x);
+				HashPhysicsFloat(hash, transform._Scale.y);
+			}
+
+			const bool hasRigidbody = m_Registry.all_of<Rigidbody2D>(entity);
+			HashPhysicsValue(hash, hasRigidbody);
+			if (hasRigidbody)
+			{
+				const auto& rigidbody = m_Registry.get<Rigidbody2D>(entity);
+				HashPhysicsValue(hash, rigidbody.Enabled);
+				HashPhysicsValue(hash, static_cast<uint64_t>(rigidbody.Type));
+				HashPhysicsValue(hash, rigidbody.FixedRotation);
+			}
+
+			const bool hasBox = m_Registry.all_of<BoxCollider2D>(entity);
+			HashPhysicsValue(hash, hasBox);
+			if (hasBox)
+			{
+				const auto& collider = m_Registry.get<BoxCollider2D>(entity);
+				HashPhysicsValue(hash, collider.Enabled);
+				HashPhysicsValue(hash, collider.IsTrigger);
+				HashPhysicsValue(hash, collider.CollisionLayer);
+				HashPhysicsValue(hash, collider.CollisionMask);
+				HashPhysicsFloat(hash, collider.Offset.x);
+				HashPhysicsFloat(hash, collider.Offset.y);
+				HashPhysicsFloat(hash, collider.Size.x);
+				HashPhysicsFloat(hash, collider.Size.y);
+				HashPhysicsFloat(hash, collider.Density);
+				HashPhysicsFloat(hash, collider.Friction);
+				HashPhysicsFloat(hash, collider.Restitution);
+				HashPhysicsFloat(hash, collider.RestitutionThreshold);
+			}
+
+			const bool hasCircle = m_Registry.all_of<CircleCollider2D>(entity);
+			HashPhysicsValue(hash, hasCircle);
+			if (hasCircle)
+			{
+				const auto& collider = m_Registry.get<CircleCollider2D>(entity);
+				HashPhysicsValue(hash, collider.Enabled);
+				HashPhysicsValue(hash, collider.IsTrigger);
+				HashPhysicsValue(hash, collider.CollisionLayer);
+				HashPhysicsValue(hash, collider.CollisionMask);
+				HashPhysicsFloat(hash, collider.Offset.x);
+				HashPhysicsFloat(hash, collider.Offset.y);
+				HashPhysicsFloat(hash, collider.Radius);
+				HashPhysicsFloat(hash, collider.Density);
+				HashPhysicsFloat(hash, collider.Friction);
+				HashPhysicsFloat(hash, collider.Restitution);
+			}
+
+			const bool hasJoint = m_Registry.all_of<DistanceJoint2D>(entity);
+			HashPhysicsValue(hash, hasJoint);
+			if (hasJoint)
+			{
+				const auto& joint = m_Registry.get<DistanceJoint2D>(entity);
+				HashPhysicsValue(hash, joint.Enabled);
+				HashPhysicsValue(hash, static_cast<uint64_t>(joint.ConnectedEntity));
+				HashPhysicsFloat(hash, joint.Anchor.x);
+				HashPhysicsFloat(hash, joint.Anchor.y);
+				HashPhysicsFloat(hash, joint.ConnectedAnchor.x);
+				HashPhysicsFloat(hash, joint.ConnectedAnchor.y);
+				HashPhysicsFloat(hash, joint.Distance);
+				HashPhysicsFloat(hash, joint.Frequency);
+				HashPhysicsFloat(hash, joint.Damping);
+				HashPhysicsValue(hash, joint.CollideConnected);
+			}
+		}
+		return hash;
+	}
+
+	uint64_t Scene::ComputeRuntimePhysicsSettingsHash() const
+	{
+		uint64_t hash = 1469598103934665603ull;
+		for (uint16_t mask : m_Physics2DSettings.CollisionMasks)
+			HashPhysicsValue(hash, mask);
+		return hash;
+	}
+
+	uint64_t Scene::ComputeRuntimeBodyDefinitionHash(UUID entityID) const
+	{
+		auto mapIt = m_EntityMap.find(entityID);
+		if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
+			|| !m_Registry.all_of<Transform>(mapIt->second))
+			return 0;
+		const entt::entity handle = mapIt->second;
+		const auto& transform = m_Registry.get<Transform>(handle);
+		uint64_t hash = 1469598103934665603ull;
+		HashPhysicsValue(hash, static_cast<uint64_t>(entityID));
+		HashPhysicsFloat(hash, transform._Translation.x);
+		HashPhysicsFloat(hash, transform._Translation.y);
+		HashPhysicsFloat(hash, transform._Rotation.z);
+		const bool explicitRigidbody = m_Registry.all_of<Rigidbody2D>(handle)
+			&& m_Registry.get<Rigidbody2D>(handle).Enabled;
+		HashPhysicsValue(hash, explicitRigidbody);
+		if (explicitRigidbody)
+		{
+			const auto& rigidbody = m_Registry.get<Rigidbody2D>(handle);
+			HashPhysicsValue(hash, static_cast<uint64_t>(rigidbody.Type));
+			HashPhysicsValue(hash, rigidbody.FixedRotation);
+		}
+		return hash;
+	}
+
+	Scene::RuntimePhysicsDefinitions Scene::BuildRuntimePhysicsDefinitions() const
+	{
+		RuntimePhysicsDefinitions definitions;
+		definitions.SettingsHash = ComputeRuntimePhysicsSettingsHash();
+
+		std::unordered_set<UUID> requiredBodies;
+		for (UUID uuid : m_EntityOrder)
+		{
+			auto mapIt = m_EntityMap.find(uuid);
+			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second))
+				continue;
+			const entt::entity handle = mapIt->second;
+			Entity entity(handle, const_cast<Scene*>(this));
+			if (!IsActiveInHierarchy(entity))
+				continue;
+
+			const bool hasRigidbody = m_Registry.all_of<Rigidbody2D>(handle);
+			const bool rigidbodyEnabled = hasRigidbody
+				&& m_Registry.get<Rigidbody2D>(handle).Enabled;
+			const bool colliderEnabled =
+				(m_Registry.all_of<BoxCollider2D>(handle)
+					&& m_Registry.get<BoxCollider2D>(handle).Enabled)
+				|| (m_Registry.all_of<CircleCollider2D>(handle)
+					&& m_Registry.get<CircleCollider2D>(handle).Enabled);
+			if (rigidbodyEnabled || (!hasRigidbody && colliderEnabled))
+				requiredBodies.insert(uuid);
+		}
+
+		// A valid distance joint also materializes implicit static endpoint bodies.
+		for (UUID uuid : m_EntityOrder)
+		{
+			auto mapIt = m_EntityMap.find(uuid);
+			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
+				|| !m_Registry.all_of<DistanceJoint2D>(mapIt->second))
+				continue;
+			Entity entity(mapIt->second, const_cast<Scene*>(this));
+			const auto& joint = m_Registry.get<DistanceJoint2D>(mapIt->second);
+			Entity connected;
+			auto connectedIt = m_EntityMap.find(joint.ConnectedEntity);
+			if (connectedIt != m_EntityMap.end() && m_Registry.valid(connectedIt->second))
+				connected = Entity(connectedIt->second, const_cast<Scene*>(this));
+			if (!joint.Enabled || !connected || joint.ConnectedEntity == uuid
+				|| !IsActiveInHierarchy(entity) || !IsActiveInHierarchy(connected))
+				continue;
+			const bool ownerBlocked = entity.HasComponent<Rigidbody2D>()
+				&& !entity.GetComponent<Rigidbody2D>().Enabled;
+			const bool connectedBlocked = connected.HasComponent<Rigidbody2D>()
+				&& !connected.GetComponent<Rigidbody2D>().Enabled;
+			if (!ownerBlocked && !connectedBlocked)
+			{
+				requiredBodies.insert(uuid);
+				requiredBodies.insert(joint.ConnectedEntity);
+			}
+		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			if (requiredBodies.find(uuid) == requiredBodies.end())
+				continue;
+			auto mapIt = m_EntityMap.find(uuid);
+			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
+				|| !m_Registry.all_of<Transform>(mapIt->second))
+				continue;
+			const entt::entity handle = mapIt->second;
+			const auto& transform = m_Registry.get<Transform>(handle);
+			if (!std::isfinite(transform._Translation.x)
+				|| !std::isfinite(transform._Translation.y)
+				|| !std::isfinite(transform._Rotation.z))
+				continue;
+
+			definitions.Bodies.emplace(uuid,
+				ComputeRuntimeBodyDefinitionHash(uuid));
+
+			const uint8_t entityLayer = m_Registry.all_of<EntityMetadata>(handle)
+				? m_Registry.get<EntityMetadata>(handle).Layer : 0;
+			if (m_Registry.all_of<BoxCollider2D>(handle))
+			{
+				const auto& collider = m_Registry.get<BoxCollider2D>(handle);
+				const float halfWidth = std::abs(collider.Size.x * transform._Scale.x);
+				const float halfHeight = std::abs(collider.Size.y * transform._Scale.y);
+				const float centerX = collider.Offset.x * transform._Scale.x;
+				const float centerY = collider.Offset.y * transform._Scale.y;
+				const bool valid = collider.Enabled
+					&& std::isfinite(collider.Offset.x) && std::isfinite(collider.Offset.y)
+					&& std::isfinite(collider.Size.x) && std::isfinite(collider.Size.y)
+					&& collider.Size.x > 0.0f && collider.Size.y > 0.0f
+					&& std::isfinite(transform._Scale.x) && std::isfinite(transform._Scale.y)
+					&& IsValidPhysicsMaterial(collider.Density, collider.Friction,
+						collider.Restitution)
+					&& std::isfinite(collider.RestitutionThreshold)
+					&& collider.RestitutionThreshold >= 0.0f
+					&& collider.CollisionLayer != 0
+					&& std::isfinite(halfWidth) && std::isfinite(halfHeight)
+					&& std::isfinite(centerX) && std::isfinite(centerY)
+					&& halfWidth > b2_epsilon && halfHeight > b2_epsilon;
+				if (valid)
+				{
+					uint64_t hash = 1469598103934665603ull;
+					HashPhysicsValue(hash, entityLayer);
+					HashPhysicsValue(hash, collider.IsTrigger);
+					HashPhysicsValue(hash, collider.CollisionLayer);
+					HashPhysicsValue(hash, collider.CollisionMask);
+					HashPhysicsFloat(hash, collider.Offset.x);
+					HashPhysicsFloat(hash, collider.Offset.y);
+					HashPhysicsFloat(hash, collider.Size.x);
+					HashPhysicsFloat(hash, collider.Size.y);
+					HashPhysicsFloat(hash, transform._Scale.x);
+					HashPhysicsFloat(hash, transform._Scale.y);
+					HashPhysicsFloat(hash, collider.Density);
+					HashPhysicsFloat(hash, collider.Friction);
+					HashPhysicsFloat(hash, collider.Restitution);
+					HashPhysicsFloat(hash, collider.RestitutionThreshold);
+					definitions.BoxFixtures.emplace(uuid, hash);
+				}
+			}
+
+			if (m_Registry.all_of<CircleCollider2D>(handle))
+			{
+				const auto& collider = m_Registry.get<CircleCollider2D>(handle);
+				const float radiusScale = std::max(std::abs(transform._Scale.x),
+					std::abs(transform._Scale.y));
+				const float radius = collider.Radius * radiusScale;
+				const float centerX = collider.Offset.x * transform._Scale.x;
+				const float centerY = collider.Offset.y * transform._Scale.y;
+				const bool valid = collider.Enabled
+					&& std::isfinite(collider.Offset.x) && std::isfinite(collider.Offset.y)
+					&& std::isfinite(collider.Radius) && collider.Radius > 0.0f
+					&& std::isfinite(radiusScale)
+					&& IsValidPhysicsMaterial(collider.Density, collider.Friction,
+						collider.Restitution)
+					&& collider.CollisionLayer != 0
+					&& std::isfinite(radius) && std::isfinite(centerX)
+					&& std::isfinite(centerY) && radius > b2_epsilon;
+				if (valid)
+				{
+					uint64_t hash = 1469598103934665603ull;
+					HashPhysicsValue(hash, entityLayer);
+					HashPhysicsValue(hash, collider.IsTrigger);
+					HashPhysicsValue(hash, collider.CollisionLayer);
+					HashPhysicsValue(hash, collider.CollisionMask);
+					HashPhysicsFloat(hash, collider.Offset.x);
+					HashPhysicsFloat(hash, collider.Offset.y);
+					HashPhysicsFloat(hash, collider.Radius);
+					HashPhysicsFloat(hash, transform._Scale.x);
+					HashPhysicsFloat(hash, transform._Scale.y);
+					HashPhysicsFloat(hash, collider.Density);
+					HashPhysicsFloat(hash, collider.Friction);
+					HashPhysicsFloat(hash, collider.Restitution);
+					definitions.CircleFixtures.emplace(uuid, hash);
+				}
+			}
+		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			auto mapIt = m_EntityMap.find(uuid);
+			if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
+				|| !m_Registry.all_of<DistanceJoint2D, Transform>(mapIt->second))
+				continue;
+			const auto& joint = m_Registry.get<DistanceJoint2D>(mapIt->second);
+			auto connectedIt = m_EntityMap.find(joint.ConnectedEntity);
+			if (!joint.Enabled || connectedIt == m_EntityMap.end()
+				|| !m_Registry.valid(connectedIt->second)
+				|| !m_Registry.all_of<Transform>(connectedIt->second)
+				|| definitions.Bodies.find(uuid) == definitions.Bodies.end()
+				|| definitions.Bodies.find(joint.ConnectedEntity)
+					== definitions.Bodies.end()
+				|| uuid == joint.ConnectedEntity)
+				continue;
+
+			const glm::vec2 scaleA =
+				glm::vec2(m_Registry.get<Transform>(mapIt->second)._Scale);
+			const glm::vec2 scaleB =
+				glm::vec2(m_Registry.get<Transform>(connectedIt->second)._Scale);
+			const glm::vec2 scaledAnchorA = joint.Anchor * scaleA;
+			const glm::vec2 scaledAnchorB = joint.ConnectedAnchor * scaleB;
+			const bool valid = std::isfinite(joint.Anchor.x)
+				&& std::isfinite(joint.Anchor.y)
+				&& std::isfinite(joint.ConnectedAnchor.x)
+				&& std::isfinite(joint.ConnectedAnchor.y)
+				&& IsFinite(scaleA) && IsFinite(scaleB)
+				&& IsFinite(scaledAnchorA) && IsFinite(scaledAnchorB)
+				&& std::isfinite(joint.Distance) && joint.Distance > 0.0f
+				&& std::isfinite(joint.Frequency) && joint.Frequency >= 0.0f
+				&& std::isfinite(joint.Damping)
+				&& joint.Damping >= 0.0f && joint.Damping <= 1.0f;
+			if (!valid)
+				continue;
+
+			uint64_t hash = 1469598103934665603ull;
+			HashPhysicsValue(hash, static_cast<uint64_t>(joint.ConnectedEntity));
+			HashPhysicsFloat(hash, joint.Anchor.x);
+			HashPhysicsFloat(hash, joint.Anchor.y);
+			HashPhysicsFloat(hash, joint.ConnectedAnchor.x);
+			HashPhysicsFloat(hash, joint.ConnectedAnchor.y);
+			HashPhysicsFloat(hash, joint.Distance);
+			HashPhysicsFloat(hash, joint.Frequency);
+			HashPhysicsFloat(hash, joint.Damping);
+			HashPhysicsValue(hash, joint.CollideConnected);
+			HashPhysicsFloat(hash, scaleA.x);
+			HashPhysicsFloat(hash, scaleA.y);
+			HashPhysicsFloat(hash, scaleB.x);
+			HashPhysicsFloat(hash, scaleB.y);
+			auto hashEndpointBodyType = [&](entt::entity endpoint)
+			{
+				const bool explicitRigidbody =
+					m_Registry.all_of<Rigidbody2D>(endpoint)
+					&& m_Registry.get<Rigidbody2D>(endpoint).Enabled;
+				HashPhysicsValue(hash, explicitRigidbody);
+				if (explicitRigidbody)
+				{
+					const auto& rigidbody = m_Registry.get<Rigidbody2D>(endpoint);
+					HashPhysicsValue(hash,
+						static_cast<uint64_t>(rigidbody.Type));
+					HashPhysicsValue(hash, rigidbody.FixedRotation);
+				}
+			};
+			hashEndpointBodyType(mapIt->second);
+			hashEndpointBodyType(connectedIt->second);
+			if (auto it = definitions.BoxFixtures.find(uuid);
+				it != definitions.BoxFixtures.end())
+				HashPhysicsValue(hash, it->second);
+			if (auto it = definitions.CircleFixtures.find(uuid);
+				it != definitions.CircleFixtures.end())
+				HashPhysicsValue(hash, it->second);
+			if (auto it = definitions.BoxFixtures.find(joint.ConnectedEntity);
+				it != definitions.BoxFixtures.end())
+				HashPhysicsValue(hash, it->second);
+			if (auto it = definitions.CircleFixtures.find(joint.ConnectedEntity);
+				it != definitions.CircleFixtures.end())
+				HashPhysicsValue(hash, it->second);
+			definitions.DistanceJoints.emplace(uuid, hash);
+		}
+
+		return definitions;
+	}
+
+	bool Scene::RebuildRuntimePhysicsWorld(bool preserveState)
+	{
+		if (!m_RuntimeRunning || !m_ContactListener || !m_ContactFilter)
+			return false;
+		if (m_PhysicsWorld && m_PhysicsWorld->IsLocked())
+			return false;
+		++m_RuntimePhysicsSyncStatistics.WorldRebuilds;
+
+		std::unordered_map<UUID, RuntimeBodyState> previousStates;
+		if (preserveState)
+		{
+			previousStates.reserve(m_RuntimeBodies.size());
+			for (const auto& [uuid, body] : m_RuntimeBodies)
+			{
+				if (!body)
+					continue;
+				previousStates.emplace(uuid, RuntimeBodyState{ body->GetPosition(), body->GetAngle(),
+					body->GetLinearVelocity(), body->GetAngularVelocity(), body->IsAwake() });
+				Entity entity = FindEntityByUUID(uuid);
+				if (entity && !IsActiveInHierarchy(entity)
+					&& entity.HasComponent<Rigidbody2D>())
+				{
+					const auto& rigidbody = entity.GetComponent<Rigidbody2D>();
+					if (rigidbody.Enabled
+						&& rigidbody.Type != Rigidbody2D::BodyType::Static)
+					{
+						const b2Vec2 velocity = body->GetLinearVelocity();
+						m_SuspendedRuntimeBodyStates.insert_or_assign(uuid,
+							SuspendedRuntimeBodyState{ velocity.x, velocity.y,
+								body->GetAngularVelocity(), body->IsAwake() });
+					}
+				}
+			}
+			for (auto iterator = m_SuspendedRuntimeBodyStates.begin();
+				iterator != m_SuspendedRuntimeBodyStates.end();)
+			{
+				Entity entity = FindEntityByUUID(iterator->first);
+				const bool remainsSuspendable = entity
+					&& entity.HasComponent<Rigidbody2D>()
+					&& entity.GetComponent<Rigidbody2D>().Enabled
+					&& entity.GetComponent<Rigidbody2D>().Type
+						!= Rigidbody2D::BodyType::Static;
+				if (!remainsSuspendable)
+					iterator = m_SuspendedRuntimeBodyStates.erase(iterator);
+				else
+					++iterator;
+			}
+		}
+		else
+			m_SuspendedRuntimeBodyStates.clear();
+
+		if (m_PhysicsWorld)
+		{
+			m_RuntimePhysicsSyncStatistics.BodiesDestroyed += m_RuntimeBodies.size();
+			m_RuntimePhysicsSyncStatistics.BoxFixturesDestroyed
+				+= m_RuntimeBoxFixtures.size();
+			m_RuntimePhysicsSyncStatistics.CircleFixturesDestroyed
+				+= m_RuntimeCircleFixtures.size();
+			m_RuntimePhysicsSyncStatistics.DistanceJointsDestroyed
+				+= m_RuntimeDistanceJoints.size();
+			m_PhysicsWorld->SetContactListener(nullptr);
+			m_ContactListener->PrepareForWorldRebuild();
+			delete m_PhysicsWorld;
+		}
+		ResetRuntimePhysicsPointers();
+		m_RuntimeBodies.clear();
+		m_RuntimeBoxFixtures.clear();
+		m_RuntimeCircleFixtures.clear();
+		m_RuntimeDistanceJoints.clear();
+		m_RuntimePhysicsPoses.clear();
+		m_PhysicsWorld = new b2World({ 0.0f, -9.8f });
+		m_PhysicsWorld->SetContactFilter(m_ContactFilter);
+		m_PhysicsWorld->SetContactListener(m_ContactListener);
+
+		std::unordered_set<UUID> requiredBodies;
+		for (UUID uuid : m_EntityOrder)
+		{
+			Entity entity = FindEntityByUUID(uuid);
+			if (!entity || !IsActiveInHierarchy(entity))
+				continue;
+			const bool hasRigidbody = entity.HasComponent<Rigidbody2D>();
+			const bool rigidbodyEnabled = hasRigidbody && entity.GetComponent<Rigidbody2D>().Enabled;
+			const bool colliderEnabled = (entity.HasComponent<BoxCollider2D>()
+				&& entity.GetComponent<BoxCollider2D>().Enabled)
+				|| (entity.HasComponent<CircleCollider2D>()
+					&& entity.GetComponent<CircleCollider2D>().Enabled);
+			if (rigidbodyEnabled || (!hasRigidbody && colliderEnabled))
+				requiredBodies.insert(uuid);
+		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			Entity entity = FindEntityByUUID(uuid);
+			if (!entity || !entity.HasComponent<DistanceJoint2D>())
+				continue;
+			const auto& joint = entity.GetComponent<DistanceJoint2D>();
+			Entity connected = FindEntityByUUID(joint.ConnectedEntity);
+			if (!joint.Enabled || !connected || joint.ConnectedEntity == uuid
+				|| !IsActiveInHierarchy(entity)
+				|| !IsActiveInHierarchy(connected))
+				continue;
+			const bool ownerBlocked = entity.HasComponent<Rigidbody2D>()
+				&& !entity.GetComponent<Rigidbody2D>().Enabled;
+			const bool connectedBlocked = connected.HasComponent<Rigidbody2D>()
+				&& !connected.GetComponent<Rigidbody2D>().Enabled;
+			if (!ownerBlocked && !connectedBlocked)
+			{
+				requiredBodies.insert(uuid);
+				requiredBodies.insert(joint.ConnectedEntity);
+			}
+		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			if (requiredBodies.find(uuid) == requiredBodies.end())
+				continue;
+			Entity entity = FindEntityByUUID(uuid);
+			if (!entity || !entity.HasComponent<Transform>())
+				continue;
 			auto& transform = entity.GetComponent<Transform>();
-			auto& rb2d = entity.GetComponent<Rigidbody2D>();
+			if (!std::isfinite(transform._Translation.x) || !std::isfinite(transform._Translation.y)
+				|| !std::isfinite(transform._Rotation.z))
+			{
+				TC_Core_Warn("Skipping 2D physics body with a non-finite transform on entity '{0}'",
+					entity.GetName());
+				continue;
+			}
 
 			b2BodyDef bodyDef;
-			bodyDef.type = Rigidbody2DTypeToBox2DBody(rb2d.Type);
+			if (entity.HasComponent<Rigidbody2D>() && entity.GetComponent<Rigidbody2D>().Enabled)
+			{
+				const auto& rigidbody = entity.GetComponent<Rigidbody2D>();
+				bodyDef.type = Rigidbody2DTypeToBox2DBody(rigidbody.Type);
+				bodyDef.fixedRotation = rigidbody.FixedRotation;
+			}
+			else
+				bodyDef.type = b2_staticBody;
 			bodyDef.position.Set(transform._Translation.x, transform._Translation.y);
 			bodyDef.angle = transform._Rotation.z;
+			if (auto stateIt = previousStates.find(uuid); stateIt != previousStates.end())
+			{
+				// ECS is the authoritative pose at a definition boundary. It already
+				// contains the last physics pose unless a script intentionally moved the
+				// entity. Preserve motion state only for bodies that can move.
+				if (bodyDef.type != b2_staticBody)
+				{
+					bodyDef.linearVelocity = stateIt->second.LinearVelocity;
+					bodyDef.angularVelocity = bodyDef.fixedRotation
+						? 0.0f
+						: stateIt->second.AngularVelocity;
+				}
+				bodyDef.awake = stateIt->second.Awake;
+			}
+			else if (auto stateIt = m_SuspendedRuntimeBodyStates.find(uuid);
+				stateIt != m_SuspendedRuntimeBodyStates.end())
+			{
+				if (bodyDef.type != b2_staticBody)
+				{
+					bodyDef.linearVelocity.Set(stateIt->second.LinearVelocityX,
+						stateIt->second.LinearVelocityY);
+					bodyDef.angularVelocity = bodyDef.fixedRotation
+						? 0.0f : stateIt->second.AngularVelocity;
+				}
+				bodyDef.awake = stateIt->second.Awake;
+			}
+			bodyDef.userData.pointer = static_cast<uint64_t>(uuid);
 
 			b2Body* body = m_PhysicsWorld->CreateBody(&bodyDef);
-			body->SetFixedRotation(rb2d.FixedRotation);
-			rb2d.RuntimeBody = body;
+			++m_RuntimePhysicsSyncStatistics.BodiesCreated;
+			m_RuntimeBodies.emplace(uuid, body);
+			m_RuntimePhysicsPoses.emplace(uuid, RuntimePhysicsPose{
+				{ bodyDef.position.x, bodyDef.position.y },
+				{ bodyDef.position.x, bodyDef.position.y },
+				bodyDef.angle, bodyDef.angle });
+			if (entity.HasComponent<Rigidbody2D>() && entity.GetComponent<Rigidbody2D>().Enabled)
+				entity.GetComponent<Rigidbody2D>().RuntimeBody = body;
+			m_SuspendedRuntimeBodyStates.erase(uuid);
+		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			b2Body* body = FindRuntimeBody(uuid);
+			Entity entity = FindEntityByUUID(uuid);
+			if (!body || !entity || !entity.HasComponent<Transform>())
+				continue;
+			const auto& transform = entity.GetComponent<Transform>();
 
 			if (entity.HasComponent<BoxCollider2D>())
 			{
-				auto& bc2d = entity.GetComponent<BoxCollider2D>();
+				auto& collider = entity.GetComponent<BoxCollider2D>();
+				const float halfWidth = std::abs(collider.Size.x * transform._Scale.x);
+				const float halfHeight = std::abs(collider.Size.y * transform._Scale.y);
+				const float centerX = collider.Offset.x * transform._Scale.x;
+				const float centerY = collider.Offset.y * transform._Scale.y;
+				const bool valid = collider.Enabled
+					&& std::isfinite(collider.Offset.x) && std::isfinite(collider.Offset.y)
+					&& std::isfinite(collider.Size.x) && std::isfinite(collider.Size.y)
+					&& collider.Size.x > 0.0f && collider.Size.y > 0.0f
+					&& std::isfinite(transform._Scale.x) && std::isfinite(transform._Scale.y)
+					&& IsValidPhysicsMaterial(collider.Density, collider.Friction, collider.Restitution)
+					&& std::isfinite(collider.RestitutionThreshold)
+					&& collider.RestitutionThreshold >= 0.0f
+					&& collider.CollisionLayer != 0
+					&& std::isfinite(halfWidth) && std::isfinite(halfHeight)
+					&& std::isfinite(centerX) && std::isfinite(centerY)
+					&& halfWidth > b2_epsilon && halfHeight > b2_epsilon;
+				if (valid)
+				{
+					b2PolygonShape shape;
+					shape.SetAsBox(halfWidth, halfHeight, { centerX, centerY }, 0.0f);
+					b2FixtureDef fixtureDef;
+					fixtureDef.shape = &shape;
+					fixtureDef.density = collider.Density;
+					fixtureDef.friction = collider.Friction;
+					fixtureDef.restitution = collider.Restitution;
+					fixtureDef.restitutionThreshold = collider.RestitutionThreshold;
+					fixtureDef.isSensor = collider.IsTrigger;
+					fixtureDef.filter.categoryBits = collider.CollisionLayer;
+					fixtureDef.filter.maskBits = collider.CollisionMask;
+					collider.RuntimeFixture = body->CreateFixture(&fixtureDef);
+					++m_RuntimePhysicsSyncStatistics.BoxFixturesCreated;
+					m_RuntimeBoxFixtures.insert_or_assign(uuid,
+						static_cast<b2Fixture*>(collider.RuntimeFixture));
+				}
+				else if (collider.Enabled)
+					TC_Core_Warn("Skipping invalid BoxCollider2D on entity '{0}'", entity.GetName());
+			}
 
-				b2PolygonShape boxShape;
-				boxShape.SetAsBox(bc2d.Size.x * transform._Scale.x, bc2d.Size.y * transform._Scale.y);
-
-				b2FixtureDef fixtureDef;
-				fixtureDef.shape = &boxShape;
-				fixtureDef.density = bc2d.Density;
-				fixtureDef.friction = bc2d.Friction;
-				fixtureDef.restitution = bc2d.Restitution;
-				fixtureDef.restitutionThreshold = bc2d.RestitutionThreshold;
-				body->CreateFixture(&fixtureDef);
+			if (entity.HasComponent<CircleCollider2D>())
+			{
+				auto& collider = entity.GetComponent<CircleCollider2D>();
+				const float radiusScale = std::max(std::abs(transform._Scale.x),
+					std::abs(transform._Scale.y));
+				const float radius = collider.Radius * radiusScale;
+				const float centerX = collider.Offset.x * transform._Scale.x;
+				const float centerY = collider.Offset.y * transform._Scale.y;
+				const bool valid = collider.Enabled
+					&& std::isfinite(collider.Offset.x) && std::isfinite(collider.Offset.y)
+					&& std::isfinite(collider.Radius) && collider.Radius > 0.0f
+					&& std::isfinite(radiusScale)
+					&& IsValidPhysicsMaterial(collider.Density, collider.Friction, collider.Restitution)
+					&& collider.CollisionLayer != 0
+					&& std::isfinite(radius) && std::isfinite(centerX) && std::isfinite(centerY)
+					&& radius > b2_epsilon;
+				if (valid)
+				{
+					b2CircleShape shape;
+					shape.m_p.Set(centerX, centerY);
+					shape.m_radius = radius;
+					b2FixtureDef fixtureDef;
+					fixtureDef.shape = &shape;
+					fixtureDef.density = collider.Density;
+					fixtureDef.friction = collider.Friction;
+					fixtureDef.restitution = collider.Restitution;
+					fixtureDef.isSensor = collider.IsTrigger;
+					fixtureDef.filter.categoryBits = collider.CollisionLayer;
+					fixtureDef.filter.maskBits = collider.CollisionMask;
+					collider.RuntimeFixture = body->CreateFixture(&fixtureDef);
+					++m_RuntimePhysicsSyncStatistics.CircleFixturesCreated;
+					m_RuntimeCircleFixtures.insert_or_assign(uuid,
+						static_cast<b2Fixture*>(collider.RuntimeFixture));
+				}
+				else if (collider.Enabled)
+					TC_Core_Warn("Skipping invalid CircleCollider2D on entity '{0}'", entity.GetName());
 			}
 		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			Entity entity = FindEntityByUUID(uuid);
+			if (!entity || !entity.HasComponent<DistanceJoint2D>())
+				continue;
+			auto& joint = entity.GetComponent<DistanceJoint2D>();
+			if (!joint.Enabled || static_cast<uint64_t>(joint.ConnectedEntity) == 0)
+				continue;
+			Entity connected = FindEntityByUUID(joint.ConnectedEntity);
+			b2Body* bodyA = FindRuntimeBody(uuid);
+			b2Body* bodyB = FindRuntimeBody(joint.ConnectedEntity);
+			const bool hasTransforms = entity.HasComponent<Transform>()
+				&& connected && connected.HasComponent<Transform>();
+			const glm::vec2 scaleA = hasTransforms
+				? glm::vec2(entity.GetComponent<Transform>()._Scale)
+				: glm::vec2(0.0f);
+			const glm::vec2 scaleB = hasTransforms
+				? glm::vec2(connected.GetComponent<Transform>()._Scale)
+				: glm::vec2(0.0f);
+			const glm::vec2 scaledAnchorA = joint.Anchor * scaleA;
+			const glm::vec2 scaledAnchorB = joint.ConnectedAnchor * scaleB;
+			const bool valid = connected && bodyA && bodyB && uuid != joint.ConnectedEntity
+				&& std::isfinite(joint.Anchor.x) && std::isfinite(joint.Anchor.y)
+				&& std::isfinite(joint.ConnectedAnchor.x) && std::isfinite(joint.ConnectedAnchor.y)
+				&& IsFinite(scaleA) && IsFinite(scaleB)
+				&& IsFinite(scaledAnchorA) && IsFinite(scaledAnchorB)
+				&& std::isfinite(joint.Distance) && joint.Distance > 0.0f
+				&& std::isfinite(joint.Frequency) && joint.Frequency >= 0.0f
+				&& std::isfinite(joint.Damping) && joint.Damping >= 0.0f && joint.Damping <= 1.0f
+				&& hasTransforms;
+			if (!valid)
+			{
+				TC_Core_Warn("Skipping invalid DistanceJoint2D on entity '{0}'", entity.GetName());
+				continue;
+			}
+
+			b2DistanceJointDef jointDef;
+			jointDef.bodyA = bodyA;
+			jointDef.bodyB = bodyB;
+			jointDef.localAnchorA.Set(scaledAnchorA.x, scaledAnchorA.y);
+			jointDef.localAnchorB.Set(scaledAnchorB.x, scaledAnchorB.y);
+			const float box2DDistance = std::max(joint.Distance, b2_linearSlop);
+			jointDef.length = box2DDistance;
+			jointDef.collideConnected = joint.CollideConnected;
+			jointDef.userData.pointer = static_cast<uint64_t>(uuid);
+			if (joint.Frequency > 0.0f)
+				b2LinearStiffness(jointDef.stiffness, jointDef.damping, joint.Frequency,
+					joint.Damping, bodyA, bodyB);
+			else
+			{
+				// Zero frequency means a rigid distance constraint. A positive
+				// frequency uses Damping as Box2D's damping ratio for a soft spring.
+				jointDef.minLength = box2DDistance;
+				jointDef.maxLength = box2DDistance;
+			}
+			joint.RuntimeJoint = m_PhysicsWorld->CreateJoint(&jointDef);
+			++m_RuntimePhysicsSyncStatistics.DistanceJointsCreated;
+			m_RuntimeDistanceJoints.insert_or_assign(uuid,
+				static_cast<b2Joint*>(joint.RuntimeJoint));
+		}
+
+		++m_RuntimePhysicsSyncStatistics.DefinitionScans;
+		m_RuntimePhysicsDefinitions = BuildRuntimePhysicsDefinitions();
+		m_HasRuntimePhysicsDefinition = true;
+		m_RuntimePhysicsDefinitionScanRequired = false;
+		m_RuntimeInterpolationAlpha = 1.0f;
+		return true;
+	}
+
+	bool Scene::SynchronizeRuntimePhysicsDefinitions(bool observeDirectComponentWrites)
+	{
+		if (observeDirectComponentWrites)
+			InvalidateRuntimePhysicsDefinitionScan();
+		if (!m_RuntimeRunning || !m_ContactListener || !m_PhysicsWorld)
+			return false;
+		if (m_HasRuntimePhysicsDefinition
+			&& !m_RuntimePhysicsDefinitionScanRequired)
+		{
+			++m_RuntimePhysicsSyncStatistics.CoalescedRequests;
+			return true;
+		}
+		if (m_PhysicsWorld->IsLocked())
+			return false;
+
+		++m_RuntimePhysicsSyncStatistics.DefinitionScans;
+		RuntimePhysicsDefinitions desired = BuildRuntimePhysicsDefinitions();
+		// Collision-matrix changes affect every existing broad-phase pair. Retain
+		// the full rebuild as a narrow recovery path for this global definition.
+		if (desired.SettingsHash != m_RuntimePhysicsDefinitions.SettingsHash)
+			return RebuildRuntimePhysicsWorld(true);
+
+		auto hasNullPointer = [](const auto& pointers)
+		{
+			return std::any_of(pointers.begin(), pointers.end(),
+				[](const auto& entry) { return entry.second == nullptr; });
+		};
+		const bool ownershipIsConsistent =
+			m_RuntimeBodies.size() == m_RuntimePhysicsDefinitions.Bodies.size()
+			&& m_RuntimeBoxFixtures.size()
+				== m_RuntimePhysicsDefinitions.BoxFixtures.size()
+			&& m_RuntimeCircleFixtures.size()
+				== m_RuntimePhysicsDefinitions.CircleFixtures.size()
+			&& m_RuntimeDistanceJoints.size()
+				== m_RuntimePhysicsDefinitions.DistanceJoints.size()
+			&& !hasNullPointer(m_RuntimeBodies)
+			&& !hasNullPointer(m_RuntimeBoxFixtures)
+			&& !hasNullPointer(m_RuntimeCircleFixtures)
+			&& !hasNullPointer(m_RuntimeDistanceJoints);
+		if (!ownershipIsConsistent)
+		{
+			TC_Core_Warn("Runtime 2D physics ownership became inconsistent; rebuilding the world");
+			return RebuildRuntimePhysicsWorld(true);
+		}
+
+		const bool hasMutation =
+			m_RuntimePhysicsDefinitions.Bodies != desired.Bodies
+			|| m_RuntimePhysicsDefinitions.BoxFixtures != desired.BoxFixtures
+			|| m_RuntimePhysicsDefinitions.CircleFixtures != desired.CircleFixtures
+			|| m_RuntimePhysicsDefinitions.DistanceJoints != desired.DistanceJoints;
+		if (!hasMutation)
+		{
+			m_RuntimePhysicsDefinitions = std::move(desired);
+			m_HasRuntimePhysicsDefinition = true;
+			m_RuntimePhysicsDefinitionScanRequired = false;
+			return true;
+		}
+
+		// Destroying/recreating a fixture can make Box2D emit End/Begin callbacks
+		// outside Step. Carry active entity pairs into the next fixed step so the
+		// listener produces one semantic transition from the final topology.
+		m_ContactListener->PrepareForWorldRebuild();
+
+		auto signatureChanged = [](const auto& previous, const auto& next, UUID uuid)
+		{
+			auto previousIt = previous.find(uuid);
+			auto nextIt = next.find(uuid);
+			return previousIt == previous.end() || nextIt == next.end()
+				|| previousIt->second != nextIt->second;
+		};
+
+		// Joints must be removed first because DestroyBody invalidates every joint
+		// attached to it. Keeping explicit ownership here prevents stale component
+		// pointers when an endpoint disappears.
+		for (auto iterator = m_RuntimeDistanceJoints.begin();
+			iterator != m_RuntimeDistanceJoints.end();)
+		{
+			const UUID uuid = iterator->first;
+			if (!signatureChanged(m_RuntimePhysicsDefinitions.DistanceJoints,
+				desired.DistanceJoints, uuid))
+			{
+				++iterator;
+				continue;
+			}
+			b2Joint* joint = iterator->second;
+			Entity entity = FindEntityByUUID(uuid);
+			if (entity && entity.HasComponent<DistanceJoint2D>())
+				entity.GetComponent<DistanceJoint2D>().RuntimeJoint = nullptr;
+			m_PhysicsWorld->DestroyJoint(joint);
+			++m_RuntimePhysicsSyncStatistics.DistanceJointsDestroyed;
+			iterator = m_RuntimeDistanceJoints.erase(iterator);
+		}
+
+		auto destroyChangedFixtures = [&](auto& runtimeFixtures,
+			const auto& previousDefinitions, const auto& desiredDefinitions,
+			auto clearComponentPointer, uint64_t& destroyedCount)
+		{
+			for (auto iterator = runtimeFixtures.begin(); iterator != runtimeFixtures.end();)
+			{
+				const UUID uuid = iterator->first;
+				if (!signatureChanged(previousDefinitions, desiredDefinitions, uuid))
+				{
+					++iterator;
+					continue;
+				}
+				b2Fixture* fixture = iterator->second;
+				Entity entity = FindEntityByUUID(uuid);
+				if (entity)
+					clearComponentPointer(entity);
+				b2Body* body = fixture->GetBody();
+				if (body)
+					body->DestroyFixture(fixture);
+				++destroyedCount;
+				iterator = runtimeFixtures.erase(iterator);
+			}
+		};
+		destroyChangedFixtures(m_RuntimeBoxFixtures,
+			m_RuntimePhysicsDefinitions.BoxFixtures, desired.BoxFixtures,
+			[](Entity entity)
+			{
+				if (entity.HasComponent<BoxCollider2D>())
+					entity.GetComponent<BoxCollider2D>().RuntimeFixture = nullptr;
+			}, m_RuntimePhysicsSyncStatistics.BoxFixturesDestroyed);
+		destroyChangedFixtures(m_RuntimeCircleFixtures,
+			m_RuntimePhysicsDefinitions.CircleFixtures, desired.CircleFixtures,
+			[](Entity entity)
+			{
+				if (entity.HasComponent<CircleCollider2D>())
+					entity.GetComponent<CircleCollider2D>().RuntimeFixture = nullptr;
+			}, m_RuntimePhysicsSyncStatistics.CircleFixturesDestroyed);
+
+		for (auto iterator = m_RuntimeBodies.begin(); iterator != m_RuntimeBodies.end();)
+		{
+			const UUID uuid = iterator->first;
+			if (desired.Bodies.find(uuid) != desired.Bodies.end())
+			{
+				++iterator;
+				continue;
+			}
+			b2Body* body = iterator->second;
+			Entity entity = FindEntityByUUID(uuid);
+			if (entity && !IsActiveInHierarchy(entity)
+				&& entity.HasComponent<Rigidbody2D>())
+			{
+				const auto& rigidbody = entity.GetComponent<Rigidbody2D>();
+				if (rigidbody.Enabled
+					&& rigidbody.Type != Rigidbody2D::BodyType::Static)
+				{
+					const b2Vec2 velocity = body->GetLinearVelocity();
+					m_SuspendedRuntimeBodyStates.insert_or_assign(uuid,
+						SuspendedRuntimeBodyState{ velocity.x, velocity.y,
+							body->GetAngularVelocity(), body->IsAwake() });
+				}
+			}
+			else
+				m_SuspendedRuntimeBodyStates.erase(uuid);
+			if (entity && entity.HasComponent<Rigidbody2D>())
+				entity.GetComponent<Rigidbody2D>().RuntimeBody = nullptr;
+			m_PhysicsWorld->DestroyBody(body);
+			++m_RuntimePhysicsSyncStatistics.BodiesDestroyed;
+			m_RuntimePhysicsPoses.erase(uuid);
+			iterator = m_RuntimeBodies.erase(iterator);
+		}
+
+		for (auto iterator = m_SuspendedRuntimeBodyStates.begin();
+			iterator != m_SuspendedRuntimeBodyStates.end();)
+		{
+			Entity entity = FindEntityByUUID(iterator->first);
+			const bool remainsSuspendable = entity
+				&& entity.HasComponent<Rigidbody2D>()
+				&& entity.GetComponent<Rigidbody2D>().Enabled
+				&& entity.GetComponent<Rigidbody2D>().Type
+					!= Rigidbody2D::BodyType::Static;
+			if (!remainsSuspendable)
+				iterator = m_SuspendedRuntimeBodyStates.erase(iterator);
+			else
+				++iterator;
+		}
+
+		// Body type, fixed rotation, and authored teleports are all safe in-place
+		// Box2D mutations. This preserves contacts, sleep state, velocities, and the
+		// address exposed through Rigidbody2D.RuntimeBody.
+		for (UUID uuid : m_EntityOrder)
+		{
+			auto desiredIt = desired.Bodies.find(uuid);
+			if (desiredIt == desired.Bodies.end())
+				continue;
+			Entity entity = FindEntityByUUID(uuid);
+			if (!entity || !entity.HasComponent<Transform>())
+				return RebuildRuntimePhysicsWorld(true);
+			const auto& transform = entity.GetComponent<Transform>();
+			const bool explicitRigidbody = entity.HasComponent<Rigidbody2D>()
+				&& entity.GetComponent<Rigidbody2D>().Enabled;
+			const b2BodyType desiredType = explicitRigidbody
+				? Rigidbody2DTypeToBox2DBody(entity.GetComponent<Rigidbody2D>().Type)
+				: b2_staticBody;
+			const bool fixedRotation = explicitRigidbody
+				&& entity.GetComponent<Rigidbody2D>().FixedRotation;
+
+			b2Body* body = FindRuntimeBody(uuid);
+			bool resetPoseHistory = false;
+			if (!body)
+			{
+				b2BodyDef bodyDef;
+				bodyDef.type = desiredType;
+				bodyDef.fixedRotation = fixedRotation;
+				bodyDef.position.Set(transform._Translation.x, transform._Translation.y);
+				bodyDef.angle = transform._Rotation.z;
+				if (auto suspendedIt = m_SuspendedRuntimeBodyStates.find(uuid);
+					suspendedIt != m_SuspendedRuntimeBodyStates.end())
+				{
+					if (bodyDef.type != b2_staticBody)
+					{
+						bodyDef.linearVelocity.Set(
+							suspendedIt->second.LinearVelocityX,
+							suspendedIt->second.LinearVelocityY);
+						bodyDef.angularVelocity = fixedRotation ? 0.0f
+							: suspendedIt->second.AngularVelocity;
+					}
+					bodyDef.awake = suspendedIt->second.Awake;
+				}
+				bodyDef.userData.pointer =
+					static_cast<uint64_t>(uuid);
+				body = m_PhysicsWorld->CreateBody(&bodyDef);
+				++m_RuntimePhysicsSyncStatistics.BodiesCreated;
+				m_RuntimeBodies.emplace(uuid, body);
+				m_SuspendedRuntimeBodyStates.erase(uuid);
+				resetPoseHistory = true;
+			}
+			else if (signatureChanged(m_RuntimePhysicsDefinitions.Bodies,
+				desired.Bodies, uuid))
+			{
+				const b2Vec2 linearVelocity = body->GetLinearVelocity();
+				const float angularVelocity = body->GetAngularVelocity();
+				const bool awake = body->IsAwake();
+				body->SetType(desiredType);
+				body->SetFixedRotation(fixedRotation);
+				body->SetTransform(
+					{ transform._Translation.x, transform._Translation.y },
+					transform._Rotation.z);
+				if (desiredType != b2_staticBody)
+				{
+					body->SetLinearVelocity(linearVelocity);
+					body->SetAngularVelocity(fixedRotation ? 0.0f : angularVelocity);
+				}
+				body->SetAwake(awake);
+				++m_RuntimePhysicsSyncStatistics.BodiesUpdatedInPlace;
+				resetPoseHistory = true;
+			}
+
+			if (explicitRigidbody)
+				entity.GetComponent<Rigidbody2D>().RuntimeBody = body;
+			if (resetPoseHistory
+				|| m_RuntimePhysicsPoses.find(uuid) == m_RuntimePhysicsPoses.end())
+			{
+				const b2Vec2 position = body->GetPosition();
+				m_RuntimePhysicsPoses.insert_or_assign(uuid, RuntimePhysicsPose{
+					{ position.x, position.y }, { position.x, position.y },
+					body->GetAngle(), body->GetAngle() });
+			}
+		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			b2Body* body = FindRuntimeBody(uuid);
+			Entity entity = FindEntityByUUID(uuid);
+			if (!body || !entity || !entity.HasComponent<Transform>())
+				continue;
+			const auto& transform = entity.GetComponent<Transform>();
+
+			if (desired.BoxFixtures.find(uuid) != desired.BoxFixtures.end())
+			{
+				auto runtimeIt = m_RuntimeBoxFixtures.find(uuid);
+				if (runtimeIt == m_RuntimeBoxFixtures.end())
+				{
+					auto& collider = entity.GetComponent<BoxCollider2D>();
+					b2PolygonShape shape;
+					shape.SetAsBox(std::abs(collider.Size.x * transform._Scale.x),
+						std::abs(collider.Size.y * transform._Scale.y),
+						{ collider.Offset.x * transform._Scale.x,
+							collider.Offset.y * transform._Scale.y }, 0.0f);
+					b2FixtureDef fixtureDef;
+					fixtureDef.shape = &shape;
+					fixtureDef.density = collider.Density;
+					fixtureDef.friction = collider.Friction;
+					fixtureDef.restitution = collider.Restitution;
+					fixtureDef.restitutionThreshold = collider.RestitutionThreshold;
+					fixtureDef.isSensor = collider.IsTrigger;
+					fixtureDef.filter.categoryBits = collider.CollisionLayer;
+					fixtureDef.filter.maskBits = collider.CollisionMask;
+					b2Fixture* fixture = body->CreateFixture(&fixtureDef);
+					++m_RuntimePhysicsSyncStatistics.BoxFixturesCreated;
+					collider.RuntimeFixture = fixture;
+					m_RuntimeBoxFixtures.emplace(uuid, fixture);
+				}
+				else
+					entity.GetComponent<BoxCollider2D>().RuntimeFixture = runtimeIt->second;
+			}
+			else if (entity.HasComponent<BoxCollider2D>())
+			{
+				entity.GetComponent<BoxCollider2D>().RuntimeFixture = nullptr;
+				if (entity.GetComponent<BoxCollider2D>().Enabled)
+					TC_Core_Warn("Skipping invalid BoxCollider2D on entity '{0}'",
+						entity.GetName());
+			}
+
+			if (desired.CircleFixtures.find(uuid) != desired.CircleFixtures.end())
+			{
+				auto runtimeIt = m_RuntimeCircleFixtures.find(uuid);
+				if (runtimeIt == m_RuntimeCircleFixtures.end())
+				{
+					auto& collider = entity.GetComponent<CircleCollider2D>();
+					b2CircleShape shape;
+					shape.m_p.Set(collider.Offset.x * transform._Scale.x,
+						collider.Offset.y * transform._Scale.y);
+					shape.m_radius = collider.Radius
+						* std::max(std::abs(transform._Scale.x),
+							std::abs(transform._Scale.y));
+					b2FixtureDef fixtureDef;
+					fixtureDef.shape = &shape;
+					fixtureDef.density = collider.Density;
+					fixtureDef.friction = collider.Friction;
+					fixtureDef.restitution = collider.Restitution;
+					fixtureDef.isSensor = collider.IsTrigger;
+					fixtureDef.filter.categoryBits = collider.CollisionLayer;
+					fixtureDef.filter.maskBits = collider.CollisionMask;
+					b2Fixture* fixture = body->CreateFixture(&fixtureDef);
+					++m_RuntimePhysicsSyncStatistics.CircleFixturesCreated;
+					collider.RuntimeFixture = fixture;
+					m_RuntimeCircleFixtures.emplace(uuid, fixture);
+				}
+				else
+					entity.GetComponent<CircleCollider2D>().RuntimeFixture = runtimeIt->second;
+			}
+			else if (entity.HasComponent<CircleCollider2D>())
+			{
+				entity.GetComponent<CircleCollider2D>().RuntimeFixture = nullptr;
+				if (entity.GetComponent<CircleCollider2D>().Enabled)
+					TC_Core_Warn("Skipping invalid CircleCollider2D on entity '{0}'",
+						entity.GetName());
+			}
+		}
+
+		for (UUID uuid : m_EntityOrder)
+		{
+			if (desired.DistanceJoints.find(uuid) == desired.DistanceJoints.end())
+				continue;
+			Entity entity = FindEntityByUUID(uuid);
+			if (!entity || !entity.HasComponent<DistanceJoint2D>()
+				|| !entity.HasComponent<Transform>())
+				return RebuildRuntimePhysicsWorld(true);
+			auto& joint = entity.GetComponent<DistanceJoint2D>();
+			Entity connected = FindEntityByUUID(joint.ConnectedEntity);
+			b2Body* bodyA = FindRuntimeBody(uuid);
+			b2Body* bodyB = FindRuntimeBody(joint.ConnectedEntity);
+			if (!connected || !bodyA || !bodyB || !connected.HasComponent<Transform>())
+				return RebuildRuntimePhysicsWorld(true);
+			auto runtimeIt = m_RuntimeDistanceJoints.find(uuid);
+			if (runtimeIt == m_RuntimeDistanceJoints.end())
+			{
+				const glm::vec2 scaleA =
+					glm::vec2(entity.GetComponent<Transform>()._Scale);
+				const glm::vec2 scaleB =
+					glm::vec2(connected.GetComponent<Transform>()._Scale);
+				const glm::vec2 scaledAnchorA = joint.Anchor * scaleA;
+				const glm::vec2 scaledAnchorB = joint.ConnectedAnchor * scaleB;
+				b2DistanceJointDef jointDef;
+				jointDef.bodyA = bodyA;
+				jointDef.bodyB = bodyB;
+				jointDef.localAnchorA.Set(scaledAnchorA.x, scaledAnchorA.y);
+				jointDef.localAnchorB.Set(scaledAnchorB.x, scaledAnchorB.y);
+				const float distance = std::max(joint.Distance, b2_linearSlop);
+				jointDef.length = distance;
+				jointDef.collideConnected = joint.CollideConnected;
+				jointDef.userData.pointer =
+					static_cast<uint64_t>(uuid);
+				if (joint.Frequency > 0.0f)
+					b2LinearStiffness(jointDef.stiffness, jointDef.damping,
+						joint.Frequency, joint.Damping, bodyA, bodyB);
+				else
+				{
+					jointDef.minLength = distance;
+					jointDef.maxLength = distance;
+				}
+				b2Joint* runtimeJoint = m_PhysicsWorld->CreateJoint(&jointDef);
+				++m_RuntimePhysicsSyncStatistics.DistanceJointsCreated;
+				joint.RuntimeJoint = runtimeJoint;
+				m_RuntimeDistanceJoints.emplace(uuid, runtimeJoint);
+			}
+			else
+				joint.RuntimeJoint = runtimeIt->second;
+		}
+		for (UUID uuid : m_EntityOrder)
+		{
+			Entity entity = FindEntityByUUID(uuid);
+			if (entity && entity.HasComponent<DistanceJoint2D>()
+				&& desired.DistanceJoints.find(uuid) == desired.DistanceJoints.end())
+			{
+				entity.GetComponent<DistanceJoint2D>().RuntimeJoint = nullptr;
+				if (entity.GetComponent<DistanceJoint2D>().Enabled)
+					TC_Core_Warn("Skipping invalid DistanceJoint2D on entity '{0}'",
+						entity.GetName());
+			}
+		}
+
+		m_ContactListener->SeedExistingContacts(m_PhysicsWorld);
+		m_RuntimePhysicsDefinitions = std::move(desired);
+		m_HasRuntimePhysicsDefinition = true;
+		m_RuntimePhysicsDefinitionScanRequired = false;
+		return true;
+	}
+
+	std::optional<RaycastHit2D> Scene::Raycast2D(const glm::vec2& start,
+		const glm::vec2& end, uint16_t layerMask, bool includeTriggers)
+	{
+		if (!m_RuntimeRunning || layerMask == 0 || !IsFinite(start) || !IsFinite(end))
+			return std::nullopt;
+		const glm::vec2 ray = end - start;
+		if (glm::dot(ray, ray) <= std::numeric_limits<float>::epsilon())
+			return std::nullopt;
+		if (!SynchronizeRuntimePhysicsDefinitions(true) || !m_PhysicsWorld
+			|| m_PhysicsWorld->IsLocked())
+			return std::nullopt;
+
+		ClosestRaycastCallback2D callback(this, layerMask, includeTriggers);
+		m_PhysicsWorld->RayCast(&callback, { start.x, start.y }, { end.x, end.y });
+		if (!callback.Hit || !FindEntityByUUID(callback.Hit->EntityID))
+			return std::nullopt;
+		return callback.Hit;
+	}
+
+	std::vector<PhysicsQueryHit2D> Scene::QueryAABB2D(const glm::vec2& lowerBound,
+		const glm::vec2& upperBound, uint16_t layerMask, bool includeTriggers)
+	{
+		std::vector<PhysicsQueryHit2D> result;
+		if (!m_RuntimeRunning || layerMask == 0
+			|| !IsFinite(lowerBound) || !IsFinite(upperBound))
+			return result;
+		if (!SynchronizeRuntimePhysicsDefinitions(true) || !m_PhysicsWorld
+			|| m_PhysicsWorld->IsLocked())
+			return result;
+
+		b2AABB bounds;
+		bounds.lowerBound.Set(std::min(lowerBound.x, upperBound.x),
+			std::min(lowerBound.y, upperBound.y));
+		bounds.upperBound.Set(std::max(lowerBound.x, upperBound.x),
+			std::max(lowerBound.y, upperBound.y));
+		AABBQueryCallback2D callback(this, layerMask, includeTriggers);
+		m_PhysicsWorld->QueryAABB(&callback, bounds);
+
+		result.reserve(callback.Hits.size());
+		for (const PhysicsQueryHit2D& hit : callback.Hits)
+			if (FindEntityByUUID(hit.EntityID))
+				result.push_back(hit);
+		std::sort(result.begin(), result.end(), [](const auto& left, const auto& right)
+		{
+			const uint64_t leftID = static_cast<uint64_t>(left.EntityID);
+			const uint64_t rightID = static_cast<uint64_t>(right.EntityID);
+			if (leftID != rightID)
+				return leftID < rightID;
+			if (left.IsTrigger != right.IsTrigger)
+				return left.IsTrigger < right.IsTrigger;
+			return left.CollisionLayer < right.CollisionLayer;
+		});
+		result.erase(std::unique(result.begin(), result.end(), [](const auto& left, const auto& right)
+		{
+			return left.EntityID == right.EntityID;
+		}), result.end());
+		return result;
+	}
+
+	bool Scene::ApplyForce2D(UUID entityID, const glm::vec2& force, bool wake)
+	{
+		if (!IsFinite(force) || !SynchronizeRuntimePhysicsDefinitions(true)
+			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
+			return false;
+		b2Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != b2_dynamicBody)
+			return false;
+		body->ApplyForceToCenter({ force.x, force.y }, wake);
+		return true;
+	}
+
+	bool Scene::ApplyForceAtPoint2D(UUID entityID, const glm::vec2& force,
+		const glm::vec2& worldPoint, bool wake)
+	{
+		if (!IsFinite(force) || !IsFinite(worldPoint)
+			|| !SynchronizeRuntimePhysicsDefinitions(true)
+			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
+			return false;
+		b2Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != b2_dynamicBody)
+			return false;
+		body->ApplyForce({ force.x, force.y }, { worldPoint.x, worldPoint.y }, wake);
+		return true;
+	}
+
+	bool Scene::ApplyLinearImpulse2D(UUID entityID, const glm::vec2& impulse, bool wake)
+	{
+		if (!IsFinite(impulse) || !SynchronizeRuntimePhysicsDefinitions(true)
+			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
+			return false;
+		b2Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != b2_dynamicBody)
+			return false;
+		body->ApplyLinearImpulseToCenter({ impulse.x, impulse.y }, wake);
+		return true;
+	}
+
+	bool Scene::ApplyLinearImpulseAtPoint2D(UUID entityID, const glm::vec2& impulse,
+		const glm::vec2& worldPoint, bool wake)
+	{
+		if (!IsFinite(impulse) || !IsFinite(worldPoint)
+			|| !SynchronizeRuntimePhysicsDefinitions(true)
+			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
+			return false;
+		b2Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() != b2_dynamicBody)
+			return false;
+		body->ApplyLinearImpulse({ impulse.x, impulse.y },
+			{ worldPoint.x, worldPoint.y }, wake);
+		return true;
+	}
+
+	bool Scene::SetLinearVelocity2D(UUID entityID, const glm::vec2& velocity)
+	{
+		if (!IsFinite(velocity) || !SynchronizeRuntimePhysicsDefinitions(true)
+			|| !m_PhysicsWorld || m_PhysicsWorld->IsLocked())
+			return false;
+		b2Body* body = FindRuntimeBody(entityID);
+		if (!body || body->GetType() == b2_staticBody)
+			return false;
+		body->SetLinearVelocity({ velocity.x, velocity.y });
+		return true;
+	}
+
+	std::optional<glm::vec2> Scene::GetLinearVelocity2D(UUID entityID)
+	{
+		if (!SynchronizeRuntimePhysicsDefinitions(true) || !m_PhysicsWorld
+			|| m_PhysicsWorld->IsLocked())
+			return std::nullopt;
+		b2Body* body = FindRuntimeBody(entityID);
+		if (!body)
+			return std::nullopt;
+		const b2Vec2 velocity = body->GetLinearVelocity();
+		return glm::vec2(velocity.x, velocity.y);
+	}
+
+	bool Scene::OnRuntimeStart()
+	{
+		TC_PROFILE_SCOPE("Scene Runtime Start");
+		if (m_RuntimeRunning)
+			return true;
+
+		m_RuntimeAccumulator = 0.0;
+		m_RuntimeInterpolationAlpha = 1.0f;
+		m_RuntimeBodies.clear();
+		m_RuntimeBoxFixtures.clear();
+		m_RuntimeCircleFixtures.clear();
+		m_RuntimeDistanceJoints.clear();
+		m_RuntimePhysicsPoses.clear();
+		m_RuntimePhysicsDefinitions = {};
+		m_SuspendedRuntimeBodyStates.clear();
+		m_HasRuntimePhysicsDefinition = false;
+		m_RuntimePhysicsDefinitionScanRequired = true;
+		m_RuntimePhysicsSyncStatistics = {};
+		ResetRuntimePhysicsPointers();
+		m_PendingRuntimeEntityCreates.clear();
+		m_FlushingRuntimeEntityCreates = false;
+		m_ContactFilter = new SceneContactFilter2D(this);
+		m_ContactListener = new SceneContactListener();
+		++m_RuntimeSessionGeneration;
+		m_RuntimeRunning = true;
+		if (!RebuildRuntimePhysicsWorld(false))
+		{
+			TC_Core_Error("Failed to initialize the runtime 2D physics world");
+			OnRuntimeStop();
+			return false;
+		}
+		AudioSceneRuntime::Start(*this);
+		InitializeSpriteAnimations(*this, m_Registry);
+		InitializeParticleSystems(*this, m_Registry);
+		RuntimeUISystem::Reset(m_Registry);
+
+		bool hasManagedScripts = false;
+		for (const entt::entity entity : m_Registry.view<CSharpScripts>())
+		{
+			if (!m_Registry.get<CSharpScripts>(entity).Scripts.empty())
+			{
+				hasManagedScripts = true;
+				break;
+			}
+		}
+		if (hasManagedScripts)
+		{
+			m_ScriptSceneSessionID = Scripting::ScriptEngine::Get().StartScene(
+				*this, m_RuntimeSessionGeneration);
+			if (m_ScriptSceneSessionID == 0)
+			{
+				TC_Core_Error("C# scripts are attached, but the managed runtime or current project assembly is unavailable");
+				OnRuntimeStop();
+				return false;
+			}
+		}
+		else
+		{
+			// Do not create CoreCLR state for an empty Scene. The callback consumes
+			// script-free batches and lazily starts a managed Scene only when a
+			// batch with actual attachments reaches this safe point.
+			ArmRuntimeScriptBatchCallback();
+		}
+		// Audio preparation happened before scripts, but PlayOnStart must observe
+		// the hierarchy and source values after managed OnCreate/OnEnable.
+		AudioSceneRuntime::Update(*this, 0.0);
+		return true;
 	}
 
 	void Scene::OnRuntimeStop()
 	{
+		TC_PROFILE_SCOPE("Scene Runtime Stop");
+		// Disable collection before any script/body teardown. Stop never emits
+		// synthetic Exit events for a world that is being discarded.
+		m_RuntimeRunning = false;
+		m_RuntimeAccumulator = 0.0;
+		m_RuntimeInterpolationAlpha = 1.0f;
+		m_PendingRuntimeEntityCreates.clear();
+		m_FlushingRuntimeEntityCreates = false;
+		if (m_ScriptSceneSessionID != 0)
+		{
+			Scripting::ScriptEngine::Get().StopScene(m_ScriptSceneSessionID);
+			m_ScriptSceneSessionID = 0;
+		}
+		// OnDestroy may legally touch AudioSource while its Entity is alive. A final
+		// scene-wide sweep guarantees that no callback can leave a voice playing.
+		AudioSceneRuntime::Stop(*this);
+		ResetSpriteAnimations(m_Registry);
+		ResetParticleSystems(m_Registry);
+		RuntimeUISystem::Reset(m_Registry);
+		SetRuntimeEntityBatchCreatedCallback({});
+		++m_RuntimeSessionGeneration;
+		if (m_PhysicsWorld)
+			m_PhysicsWorld->SetContactFilter(nullptr);
+		if (m_PhysicsWorld)
+			m_PhysicsWorld->SetContactListener(nullptr);
+		if (m_ContactListener)
+			m_ContactListener->Clear();
+
+		ResetRuntimePhysicsPointers();
+		m_RuntimeBodies.clear();
+		m_RuntimeBoxFixtures.clear();
+		m_RuntimeCircleFixtures.clear();
+		m_RuntimeDistanceJoints.clear();
+		m_RuntimePhysicsPoses.clear();
+		m_RuntimePhysicsDefinitions = {};
+		m_SuspendedRuntimeBodyStates.clear();
+		m_HasRuntimePhysicsDefinition = false;
+		m_RuntimePhysicsDefinitionScanRequired = true;
+		m_RuntimePhysicsDefinitionHash = 0;
+
 		delete m_PhysicsWorld;
 		m_PhysicsWorld = nullptr;
+		delete m_ContactListener;
+		m_ContactListener = nullptr;
+		delete m_ContactFilter;
+		m_ContactFilter = nullptr;
 	}
 
-
-
-	void Scene::OnUpdateRuntime(Timestep ts)
+	void Scene::SynchronizeRuntimeTransforms()
 	{
-		// Set background color from primary camera
+		auto view = m_Registry.view<Transform, Rigidbody2D>();
+		for (auto e : view)
 		{
-			auto view = m_Registry.view<Transform, C_Camera>();
-			view.each([](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
-				{
-					RenderCommand::SetClearColor(camera.BackgroundColor);
-					RenderCommand::Clear();
-				}
-			});
+			Entity entity = { e, this };
+			auto& transform = view.get<Transform>(e);
+			auto& rb2d = view.get<Rigidbody2D>(e);
+			if (!rb2d.Enabled || !rb2d.RuntimeBody)
+				continue;
+
+			b2Body* body = static_cast<b2Body*>(rb2d.RuntimeBody);
+			const b2Vec2& position = body->GetPosition();
+			glm::vec3 translation = transform._Translation;
+			glm::vec3 rotation = transform._Rotation;
+			const glm::vec3 scale = transform._Scale;
+			translation.x = position.x;
+			translation.y = position.y;
+			rotation.z = body->GetAngle();
+			if (!SetWorldTransform(entity, Math::ComposeTransform(translation, rotation, scale)))
+				TC_Core_Warn("Could not apply the physics transform to entity '{0}'", entity.GetName());
 		}
+	}
 
+	bool Scene::RunFixedRuntimeStep()
+	{
+		TC_PROFILE_SCOPE("Scene Fixed Step");
+		if (!m_RuntimeRunning || !m_PhysicsWorld)
+			return false;
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
+
+		auto& scriptEngine = Scripting::ScriptEngine::Get();
+		ScriptFixedStepScope fixedStepScope(scriptEngine, m_ScriptSceneSessionID);
+		if (!fixedStepScope)
+			return false;
+		// BeginFixedStep activates the accumulated fixed input batch. Freeze the
+		// matching UI ownership decision before managed InputActions evaluate.
+		// RuntimeUISystem keeps this idempotent across catch-up substeps until the
+		// display UI update commits focus/click state once.
+		RuntimeUISystem::PrepareFixedInputCapture(*this, m_ViewportWidth,
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+			m_RuntimeUIViewportOrigin, m_RuntimeUIScreenToFramebufferScale);
+		if (m_ScriptSceneSessionID != 0)
 		{
-			m_Registry.view<NativeScript>().each([=](auto entity, auto& nsc)
-				{
-					if (!nsc.Instance)
-					{
-						nsc.Instance = nsc.InstantiateScript();
-						nsc.Instance->m_Entity = Entity{ entity, this };
-						nsc.Instance->OnCreate();
-					}
-
-					nsc.Instance->OnUpdate(ts);
-				});
+			TC_PROFILE_SCOPE("Managed FixedUpdate");
+			scriptEngine.FixedUpdateAll(m_ScriptSceneSessionID, FixedRuntimeTimestep);
+			// Component structs are writable through managed proxies. Closing the
+			// callback phase always requires one fallback snapshot scan.
+			InvalidateRuntimePhysicsDefinitionScan();
 		}
+		if (!m_RuntimeRunning || !m_PhysicsWorld)
+			return false;
+		// Managed callbacks may add, remove, replace, or directly edit physics
+		// components. Reconcile again before entering Box2D's locked Step region.
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
+		// Materialize bodies/joints before dynamic managed OnCreate. Scripts may
+		// then inspect the new physics proxies immediately; reconcile once more in
+		// case OnCreate changes authoring components.
+		FlushPendingRuntimeEntityCreatesAtSafePoint();
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
 
-
-		// Physics
+		constexpr int32_t velocityIterations = 6;
+		constexpr int32_t positionIterations = 2;
+		for (const auto& [uuid, body] : m_RuntimeBodies)
 		{
-			const int32_t velocityIterations = 6;
-			const int32_t positionIterations = 2;
-			m_PhysicsWorld->Step(ts, velocityIterations, positionIterations);
-
-			// Retrieve transform from Box2D
-			auto view = m_Registry.view<Rigidbody2D>();
-			for (auto e : view)
+			if (!body)
+				continue;
+			auto poseIt = m_RuntimePhysicsPoses.find(uuid);
+			if (poseIt == m_RuntimePhysicsPoses.end())
 			{
-				Entity entity = { e, this };
-				auto& transform = entity.GetComponent<Transform>();
-				auto& rb2d = entity.GetComponent<Rigidbody2D>();
+				const b2Vec2 position = body->GetPosition();
+				poseIt = m_RuntimePhysicsPoses.emplace(uuid, RuntimePhysicsPose{
+					{ position.x, position.y }, { position.x, position.y },
+					body->GetAngle(), body->GetAngle() }).first;
+			}
+			poseIt->second.PreviousPosition = poseIt->second.CurrentPosition;
+			poseIt->second.PreviousAngle = poseIt->second.CurrentAngle;
+		}
+		m_ContactListener->BeginStep();
+		{
+			TC_PROFILE_SCOPE("Physics Box2D Step");
+			m_PhysicsWorld->Step(FixedRuntimeTimestep, velocityIterations, positionIterations);
+		}
+		m_ContactListener->EndStep();
+		for (const auto& [uuid, body] : m_RuntimeBodies)
+		{
+			if (!body)
+				continue;
+			const b2Vec2 position = body->GetPosition();
+			auto& pose = m_RuntimePhysicsPoses[uuid];
+			pose.CurrentPosition = { position.x, position.y };
+			pose.CurrentAngle = body->GetAngle();
+		}
+		SynchronizeRuntimeTransforms();
+		// SetWorldTransform writes the simulated pose into public ECS fields. The
+		// per-body hashes below accept those known writes without another full ECS
+		// snapshot; hierarchy side effects keep the scan invalidated.
+		m_RuntimePhysicsDefinitionScanRequired = true;
+		// Accept the pose written by physics before invoking user callbacks. A
+		// callback-side teleport then differs from this snapshot on the next step.
+		// If hierarchy propagation moved an implicit/static physics entity whose
+		// Box2D body was not written back, leave the old hash in place so the next
+		// boundary rebuilds that body at its new ECS pose.
+		bool runtimePosesMatchScene = true;
+		for (const auto& [uuid, body] : m_RuntimeBodies)
+		{
+			Entity entity = FindEntityByUUID(uuid);
+			if (!body || !entity || !entity.HasComponent<Transform>())
+			{
+				runtimePosesMatchScene = false;
+				break;
+			}
+			const auto& transform = entity.GetComponent<Transform>();
+			const b2Vec2 position = body->GetPosition();
+			const float angleDelta = std::remainder(transform._Rotation.z - body->GetAngle(),
+				2.0f * b2_pi);
+			if (std::abs(transform._Translation.x - position.x) > 1.0e-5f
+				|| std::abs(transform._Translation.y - position.y) > 1.0e-5f
+				|| std::abs(angleDelta) > 1.0e-5f)
+			{
+				runtimePosesMatchScene = false;
+				break;
+			}
+		}
+		if (runtimePosesMatchScene)
+		{
+			for (const auto& [uuid, body] : m_RuntimeBodies)
+			{
+				if (body)
+					m_RuntimePhysicsDefinitions.Bodies.insert_or_assign(uuid,
+						ComputeRuntimeBodyDefinitionHash(uuid));
+			}
+			m_HasRuntimePhysicsDefinition = true;
+			m_RuntimePhysicsDefinitionScanRequired = false;
+		}
+		if (DispatchPendingCollisionEvents())
+			InvalidateRuntimePhysicsDefinitionScan();
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
+		FlushPendingRuntimeEntityCreatesAtSafePoint();
+		if (!SynchronizeRuntimePhysicsDefinitions())
+			return false;
+		UpdateSpriteAnimations(*this, m_Registry,
+			static_cast<double>(FixedRuntimeTimestep));
+		UpdateParticleSystems(*this, m_Registry, FixedRuntimeTimestep);
+		return m_RuntimeRunning && m_PhysicsWorld;
+	}
 
-				b2Body* body = (b2Body*)rb2d.RuntimeBody;
-				const auto& position = body->GetPosition();
-				transform._Translation.x = position.x;
-				transform._Translation.y = position.y;
-				transform._Rotation.z = body->GetAngle();
+	void Scene::OnUpdateRuntime(Timestep ts, bool render)
+	{
+		TC_PROFILE_SCOPE("Scene Runtime Update");
+		if (!m_RuntimeRunning || !m_PhysicsWorld)
+		{
+			TC_Core_Warn("Ignoring runtime update for a scene that has not been started");
+			return;
+		}
+		// Capture native/editor writes through public component references once at
+		// the display-frame boundary. Calls inside the frame reuse this snapshot
+		// until a managed/native user-code phase is crossed.
+		InvalidateRuntimePhysicsDefinitionScan();
+
+		const float rawFrameDelta = ts.GetSeconds();
+		const float frameDelta = std::isfinite(rawFrameDelta) && rawFrameDelta > 0.0f
+			? std::min(rawFrameDelta, MaximumRuntimeFrameDelta)
+			: 0.0f;
+		m_RuntimeAccumulator += static_cast<double>(frameDelta);
+
+		uint32_t substeps = 0;
+		const double fixedTimestep = static_cast<double>(FixedRuntimeTimestep);
+		// Display deltas enter through a float Timestep. Allow one float epsilon
+		// when recognizing a fixed-step boundary (for example 144 * float(1/144))
+		// and discard only that sub-microsecond negative remainder after stepping.
+		const double stepBoundaryTolerance =
+			static_cast<double>(std::numeric_limits<float>::epsilon());
+		while (m_RuntimeAccumulator + stepBoundaryTolerance >= fixedTimestep
+			&& substeps < MaximumRuntimeSubsteps)
+		{
+			m_RuntimeAccumulator = std::max(0.0, m_RuntimeAccumulator - fixedTimestep);
+			++substeps;
+			if (!RunFixedRuntimeStep())
+				break;
+		}
+
+		// Drop whole overdue steps once the per-frame budget is exhausted. Keep
+		// only the fractional remainder so a hitch cannot cause a spiral of death.
+		if (substeps == MaximumRuntimeSubsteps
+			&& m_RuntimeAccumulator + stepBoundaryTolerance >= fixedTimestep)
+		{
+			m_RuntimeAccumulator = std::fmod(m_RuntimeAccumulator, fixedTimestep);
+			if (m_RuntimeAccumulator + stepBoundaryTolerance >= fixedTimestep)
+				m_RuntimeAccumulator = 0.0;
+		}
+		m_RuntimeInterpolationAlpha = static_cast<float>(std::clamp(
+			m_RuntimeAccumulator / fixedTimestep, 0.0, 1.0));
+
+		if (m_RuntimeRunning)
+		{
+			{
+				TC_PROFILE_SCOPE("Runtime UI Update");
+				RuntimeUISystem::Update(*this, m_Registry, m_ViewportWidth,
+					m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+					m_RuntimeUIViewportOrigin,
+					m_RuntimeUIScreenToFramebufferScale);
+			}
+			if (m_ScriptSceneSessionID != 0)
+			{
+				TC_PROFILE_SCOPE("Managed Update");
+				Scripting::ScriptEngine::Get().UpdateAll(m_ScriptSceneSessionID, frameDelta);
+				InvalidateRuntimePhysicsDefinitionScan();
+			}
+			if (!SynchronizeRuntimePhysicsDefinitions())
+				return;
+			FlushPendingRuntimeEntityCreatesAtSafePoint();
+			if (!SynchronizeRuntimePhysicsDefinitions())
+				return;
+			{
+				TC_PROFILE_SCOPE("Audio Update");
+				AudioSceneRuntime::Update(*this, frameDelta);
 			}
 		}
 
+		if (render)
+			RenderRuntimeScene();
+	}
 
-		// Sprite
-		Camera* MainCamera = nullptr;
-		glm::mat4 cameraTransform;
-
+	void Scene::OnRuntimeStep(bool render)
+	{
+		if (!m_RuntimeRunning || !m_PhysicsWorld)
 		{
-			auto view = m_Registry.view<Transform, C_Camera>();
-
-			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
-				{
-					MainCamera = &camera._Camera;
-					cameraTransform = transform.GetTransform();
-				}
-			});
+			TC_Core_Warn("Ignoring runtime step for a scene that has not been started");
+			return;
 		}
+		InvalidateRuntimePhysicsDefinitionScan();
 
-		if (MainCamera) 
+		// Single-step has no relationship to the most recent display-frame dt.
+		m_RuntimeAccumulator = 0.0;
+		if (!RunFixedRuntimeStep())
 		{
-			Renderer3D::BeginScene(*MainCamera, cameraTransform);
+			m_RuntimeAccumulator = 0.0;
+			return;
+		}
+		m_RuntimeAccumulator = 0.0;
+		m_RuntimeInterpolationAlpha = 1.0f;
+		RuntimeUISystem::Update(*this, m_Registry, m_ViewportWidth,
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+			m_RuntimeUIViewportOrigin,
+			m_RuntimeUIScreenToFramebufferScale);
+		AudioSceneRuntime::Update(*this, FixedRuntimeTimestep);
+		if (render) RenderRuntimeScene();
+	}
 
-			auto meshView = m_Registry.view<Transform, MeshComponent>();
-			for (auto entity : meshView)
+	glm::mat4 Scene::GetRuntimeRenderTransform(UUID entityID) const
+	{
+		std::unordered_set<UUID> visited;
+		auto resolve = [this, &visited](auto&& self, UUID uuid) -> glm::mat4
+		{
+			auto entityIt = m_EntityMap.find(uuid);
+			if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
+				|| !m_Registry.all_of<Transform>(entityIt->second))
+				return glm::mat4(1.0f);
+			const auto& transform = m_Registry.get<Transform>(entityIt->second);
+			if (!visited.emplace(uuid).second)
+				return transform.GetTransform();
+
+			if (m_RuntimeRunning)
 			{
-				auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
-
-				if (mc.Model)
-					Renderer3D::DrawModel(mc.Model, transform.GetTransform(), (int)entity);
-				else
-					Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
+				auto poseIt = m_RuntimePhysicsPoses.find(uuid);
+				if (poseIt != m_RuntimePhysicsPoses.end())
+				{
+					const RuntimePhysicsPose& pose = poseIt->second;
+					const float alpha = std::clamp(m_RuntimeInterpolationAlpha,
+						0.0f, 1.0f);
+					const glm::vec2 position = glm::mix(pose.PreviousPosition,
+						pose.CurrentPosition, alpha);
+					const float angleDelta = std::remainder(
+						pose.CurrentAngle - pose.PreviousAngle, 2.0f * b2_pi);
+					glm::vec3 translation = transform._Translation;
+					glm::vec3 rotation = transform._Rotation;
+					translation.x = position.x;
+					translation.y = position.y;
+					rotation.z = pose.PreviousAngle + angleDelta * alpha;
+					return Math::ComposeTransform(translation, rotation,
+						transform._Scale);
+				}
 			}
 
+			auto parentIt = m_ParentMap.find(uuid);
+			if (parentIt != m_ParentMap.end()
+				&& m_EntityMap.find(parentIt->second) != m_EntityMap.end())
+				return self(self, parentIt->second) * transform.GetLocalTransform();
+			return transform.GetTransform();
+		};
+		return resolve(resolve, entityID);
+	}
+
+	glm::mat4 Scene::GetRuntimeCameraTransform(UUID entityID) const
+	{
+		auto entityIt = m_EntityMap.find(entityID);
+		if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
+			|| !m_Registry.all_of<Transform>(entityIt->second))
+			return glm::mat4(1.0f);
+
+		const glm::mat4 renderTransform = GetRuntimeRenderTransform(entityID);
+		return MakeScaleFreeCameraTransform(renderTransform,
+			m_Registry.get<Transform>(entityIt->second));
+	}
+
+	void Scene::RenderRuntimeScene()
+	{
+		TC_PROFILE_SCOPE("Scene Runtime Render");
+		Entity mainCameraEntity = GetPrimaryCameraEntity();
+		if (mainCameraEntity)
+		{
+			auto& camera = mainCameraEntity.GetComponent<C_Camera>();
+			RenderCommand::SetClearColor(camera.BackgroundColor);
+			RenderCommand::Clear();
+			const glm::mat4 cameraTransform = GetRuntimeCameraTransform(
+				mainCameraEntity.GetUUID());
+			Renderer3D::BeginScene(camera._Camera, cameraTransform);
+			Render3DComponents(*this, m_Registry, false);
 			Renderer3D::EndScene();
-
-			Renderer2D::BeginScene(*MainCamera, cameraTransform);
-
-			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
-			for (auto entity : group)
-			{
-				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
-
-				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
-			}
-
+			Renderer2D::BeginScene(camera._Camera, cameraTransform);
+			Render2DComponents(*this, m_Registry,
+				camera._Camera.GetProjection() * glm::inverse(cameraTransform),
+				RuntimeUIVisibilityMode::Gameplay);
 			Renderer2D::EndScene();
 		}
-
+		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
+			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
+			RuntimeUIVisibilityMode::Gameplay);
 	}
 
 	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
 	{
+		TC_PROFILE_SCOPE("Scene Editor Render");
+		if (!m_RuntimeRunning)
+			UpdateParticlePreviews(*this, m_Registry, ts.GetSeconds());
 		Renderer3D::BeginScene(camera);
-
-		auto meshView = m_Registry.view<Transform, MeshComponent>();
-		for (auto entity : meshView)
-		{
-			auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
-
-			if (mc.Model)
-				Renderer3D::DrawModel(mc.Model, transform.GetTransform(), (int)entity);
-			else
-				Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
-		}
-
+		Render3DComponents(*this, m_Registry, true);
 		Renderer3D::EndScene();
-
 		Renderer2D::BeginScene(camera);
 
-		// SpriteRenderer
-		auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
-
-		group.each([this](auto entity, Transform& transform, SpriteRenderer& sprite) {
-
-			Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
-
-			});
+		Render2DComponents(*this, m_Registry, camera.GetViewProjection(),
+			RuntimeUIVisibilityMode::Editor);
 
 		Renderer2D::EndScene();
+		RuntimeUISystem::RenderEditorCanvas(*this, m_Registry,
+			camera.GetViewProjection(),
+			RuntimeUIVisibilityMode::Editor);
 	}
 
 	void Scene::OnRenderRuntime()
 	{
-		// Set background color from primary camera
-		{
-			auto view = m_Registry.view<Transform, C_Camera>();
-			view.each([](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
-				{
-					RenderCommand::SetClearColor(camera.BackgroundColor);
-					RenderCommand::Clear();
-				}
-			});
-		}
-
-		// Sprite
-		Camera* MainCamera = nullptr;
-		glm::mat4 cameraTransform;
-
-		{
-			auto view = m_Registry.view<Transform, C_Camera>();
-
-			view.each([this, &MainCamera, &cameraTransform](auto entity, Transform& transform, C_Camera& camera) {
-				if (camera.Primary)
-				{
-					MainCamera = &camera._Camera;
-					cameraTransform = transform.GetTransform();
-				}
-			});
-		}
-
-		if (MainCamera)
-		{
-			Renderer3D::BeginScene(*MainCamera, cameraTransform);
-
-			auto meshView = m_Registry.view<Transform, MeshComponent>();
-			for (auto entity : meshView)
-			{
-				auto [transform, mc] = meshView.get<Transform, MeshComponent>(entity);
-
-				if (mc.Model)
-					Renderer3D::DrawModel(mc.Model, transform.GetTransform(), (int)entity);
-				else
-					Renderer3D::DrawMesh(mc.MeshAsset, transform.GetTransform(), mc.AlbedoTexture, mc.Color, mc.UseTexture, (int)entity);
-			}
-
-			Renderer3D::EndScene();
-
-			Renderer2D::BeginScene(*MainCamera, cameraTransform);
-
-			auto group = m_Registry.group<Transform>(entt::get<SpriteRenderer>);
-			for (auto entity : group)
-			{
-				auto [transform, sprite] = group.get<Transform, SpriteRenderer>(entity);
-
-				Renderer2D::DrawSprite(transform.GetTransform(), sprite, (int)entity);
-			}
-
-			Renderer2D::EndScene();
-		}
+		RenderRuntimeScene();
 	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)
@@ -379,52 +4230,370 @@ namespace TomCat {
 
 	}
 
-	void Scene::DuplicateEntity(Entity entity)
+	void Scene::SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
+		float dpiScale, const glm::vec2& screenToFramebufferScale)
 	{
-		std::string name = entity.GetName();
-		Entity newEntity = CreateEntity(name);
+		m_RuntimeUIViewportOrigin = std::isfinite(screenOrigin.x)
+			&& std::isfinite(screenOrigin.y)
+			? screenOrigin : glm::vec2(0.0f);
+		m_RuntimeUIDPIScale = std::isfinite(dpiScale) && dpiScale > 0.0f
+			? std::clamp(dpiScale, 0.25f, 8.0f) : 1.0f;
+		m_RuntimeUIScreenToFramebufferScale =
+			std::isfinite(screenToFramebufferScale.x)
+			&& std::isfinite(screenToFramebufferScale.y)
+			&& screenToFramebufferScale.x > 0.0f
+			&& screenToFramebufferScale.y > 0.0f
+			? glm::clamp(screenToFramebufferScale, glm::vec2(0.1f),
+				glm::vec2(32.0f)) : glm::vec2(1.0f);
+	}
 
-		CopyComponentIfExists<Transform>(newEntity, entity);
-		CopyComponentIfExists<SpriteRenderer>(newEntity, entity);
-		CopyComponentIfExists<C_Camera>(newEntity, entity);
-		CopyComponentIfExists<NativeScript>(newEntity, entity);
-		CopyComponentIfExists<Rigidbody2D>(newEntity, entity);
-		CopyComponentIfExists<BoxCollider2D>(newEntity, entity);
-		CopyComponentIfExists<MeshComponent>(newEntity, entity);
+	std::vector<ColliderDebugShape> Scene::GetColliderDebugShapes(bool useRuntimeFixtures) const
+	{
+		std::vector<ColliderDebugShape> result;
+
+		if (useRuntimeFixtures)
+		{
+			if (!m_PhysicsWorld)
+				return result;
+
+			for (b2Body* body = m_PhysicsWorld->GetBodyList(); body; body = body->GetNext())
+			{
+				const uint64_t rawUUID = static_cast<uint64_t>(body->GetUserData().pointer);
+				if (rawUUID == 0)
+					continue;
+				const UUID uuid(rawUUID);
+				auto entityIt = m_EntityMap.find(uuid);
+				if (entityIt == m_EntityMap.end() || !m_Registry.valid(entityIt->second)
+					|| !m_Registry.all_of<ID>(entityIt->second)
+					|| m_Registry.get<ID>(entityIt->second).id != uuid)
+					continue;
+
+				float z = 0.0f;
+				if (m_Registry.all_of<Transform>(entityIt->second))
+					z = m_Registry.get<Transform>(entityIt->second)._Translation.z;
+
+				for (b2Fixture* fixture = body->GetFixtureList(); fixture; fixture = fixture->GetNext())
+				{
+					const b2Shape* shape = fixture->GetShape();
+					if (!shape)
+						continue;
+
+					if (shape->GetType() == b2Shape::e_polygon)
+					{
+						const auto* polygon = static_cast<const b2PolygonShape*>(shape);
+						if (polygon->m_count != 4)
+							continue;
+
+						b2Vec2 vertices[4];
+						for (int32_t index = 0; index < 4; ++index)
+							vertices[index] = b2Mul(body->GetTransform(), polygon->m_vertices[index]);
+						const b2Vec2 edgeX = vertices[1] - vertices[0];
+						const b2Vec2 edgeY = vertices[2] - vertices[1];
+						const float width = edgeX.Length();
+						const float height = edgeY.Length();
+						if (!std::isfinite(width) || !std::isfinite(height)
+							|| width <= b2_epsilon || height <= b2_epsilon)
+							continue;
+
+						const b2Vec2 center = 0.25f * (vertices[0] + vertices[1] + vertices[2] + vertices[3]);
+						const float rotation = std::atan2(edgeX.y, edgeX.x);
+						ColliderDebugShape debugShape;
+						debugShape.Type = ColliderDebugShapeType::Box;
+						debugShape.EntityID = uuid;
+						debugShape.Enabled = true;
+						debugShape.IsTrigger = fixture->IsSensor();
+						debugShape.CollisionLayer = fixture->GetFilterData().categoryBits;
+						debugShape.Center = { center.x, center.y };
+						debugShape.HalfSize = { width * 0.5f, height * 0.5f };
+						debugShape.Rotation = rotation;
+						debugShape.Transform = MakeColliderDebugTransform(debugShape.Center, z,
+							rotation, { width, height });
+						result.push_back(debugShape);
+					}
+					else if (shape->GetType() == b2Shape::e_circle)
+					{
+						const auto* circle = static_cast<const b2CircleShape*>(shape);
+						const b2Vec2 center = b2Mul(body->GetTransform(), circle->m_p);
+						const float radius = circle->m_radius;
+						if (!std::isfinite(center.x) || !std::isfinite(center.y)
+							|| !std::isfinite(radius) || radius <= b2_epsilon)
+							continue;
+
+						ColliderDebugShape debugShape;
+						debugShape.Type = ColliderDebugShapeType::Circle;
+						debugShape.EntityID = uuid;
+						debugShape.Enabled = true;
+						debugShape.IsTrigger = fixture->IsSensor();
+						debugShape.CollisionLayer = fixture->GetFilterData().categoryBits;
+						debugShape.Center = { center.x, center.y };
+						debugShape.Radius = radius;
+						debugShape.Rotation = body->GetAngle();
+						debugShape.Transform = MakeColliderDebugTransform(debugShape.Center, z,
+							0.0f, glm::vec2(radius * 2.0f));
+						result.push_back(debugShape);
+					}
+				}
+			}
+			return result;
+		}
+
+		const auto boxView = m_Registry.view<ID, Transform, BoxCollider2D>();
+		result.reserve(boxView.size_hint());
+		for (entt::entity entity : boxView)
+		{
+			const auto& transform = boxView.get<Transform>(entity);
+			const auto& collider = boxView.get<BoxCollider2D>(entity);
+			if (!std::isfinite(collider.Offset.x) || !std::isfinite(collider.Offset.y)
+				|| !std::isfinite(collider.Size.x) || !std::isfinite(collider.Size.y)
+				|| collider.Size.x <= 0.0f || collider.Size.y <= 0.0f
+				|| !IsValidColliderTransform2D(transform))
+				continue;
+
+			const glm::vec2 halfSize = glm::abs(collider.Size * glm::vec2(transform._Scale));
+			const glm::vec2 center = TransformColliderOffset2D(transform, collider.Offset);
+			if (!std::isfinite(center.x) || !std::isfinite(center.y)
+				|| !std::isfinite(halfSize.x) || !std::isfinite(halfSize.y)
+				|| halfSize.x <= b2_epsilon || halfSize.y <= b2_epsilon)
+				continue;
+
+			ColliderDebugShape debugShape;
+			debugShape.Type = ColliderDebugShapeType::Box;
+			debugShape.EntityID = boxView.get<ID>(entity).id;
+			debugShape.Enabled = collider.Enabled;
+			debugShape.IsTrigger = collider.IsTrigger;
+			debugShape.CollisionLayer = collider.CollisionLayer;
+			debugShape.Center = center;
+			debugShape.HalfSize = halfSize;
+			debugShape.Rotation = transform._Rotation.z;
+			debugShape.Transform = MakeColliderDebugTransform(debugShape.Center, transform._Translation.z,
+				debugShape.Rotation, halfSize * 2.0f);
+			result.push_back(debugShape);
+		}
+
+		const auto circleView = m_Registry.view<ID, Transform, CircleCollider2D>();
+		result.reserve(result.size() + circleView.size_hint());
+		for (entt::entity entity : circleView)
+		{
+			const auto& transform = circleView.get<Transform>(entity);
+			const auto& collider = circleView.get<CircleCollider2D>(entity);
+			if (!std::isfinite(collider.Offset.x) || !std::isfinite(collider.Offset.y)
+				|| !std::isfinite(collider.Radius) || collider.Radius <= 0.0f
+				|| !IsValidColliderTransform2D(transform))
+				continue;
+
+			const float radiusScale = std::max(std::abs(transform._Scale.x),
+				std::abs(transform._Scale.y));
+			const float radius = collider.Radius * radiusScale;
+			const glm::vec2 center = TransformColliderOffset2D(transform, collider.Offset);
+			if (!std::isfinite(center.x) || !std::isfinite(center.y)
+				|| !std::isfinite(radius) || radius <= b2_epsilon)
+				continue;
+
+			ColliderDebugShape debugShape;
+			debugShape.Type = ColliderDebugShapeType::Circle;
+			debugShape.EntityID = circleView.get<ID>(entity).id;
+			debugShape.Enabled = collider.Enabled;
+			debugShape.IsTrigger = collider.IsTrigger;
+			debugShape.CollisionLayer = collider.CollisionLayer;
+			debugShape.Center = center;
+			debugShape.Radius = radius;
+			debugShape.Rotation = transform._Rotation.z;
+			debugShape.Transform = MakeColliderDebugTransform(debugShape.Center, transform._Translation.z,
+				0.0f, glm::vec2(radius * 2.0f));
+			result.push_back(debugShape);
+		}
+
+		return result;
+	}
+
+	Entity Scene::DuplicateEntity(Entity entity)
+	{
+		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
+			|| !entity.HasComponent<ID>() || !entity.HasComponent<Tag>()
+			|| !entity.HasComponent<EntityMetadata>() || !entity.HasComponent<Transform>())
+			return {};
+
+		Entity parent = GetParent(entity);
+		std::unordered_set<uint64_t> attachmentIDs;
+		for (UUID existingUUID : m_EntityOrder)
+		{
+			Entity existing = FindEntityByUUID(existingUUID);
+			if (!existing || !existing.HasComponent<CSharpScripts>())
+				continue;
+			for (const CSharpScriptEntry& script :
+				existing.GetComponent<CSharpScripts>().Scripts)
+			{
+				const uint64_t attachment = static_cast<uint64_t>(script.AttachmentID);
+				if (attachment != 0)
+					attachmentIDs.emplace(attachment);
+			}
+		}
+		std::unordered_map<UUID, UUID> duplicateUUIDs;
+		Entity duplicate = DuplicateEntityRecursive(this, entity, parent, duplicateUUIDs);
+		if (!duplicate)
+			return {};
+		std::unordered_map<UUID, UUID> attachmentRemap;
+		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
+		{
+			(void)sourceUUID;
+			Entity duplicatedEntity = FindEntityByUUID(duplicateUUID);
+			if (!duplicatedEntity || !duplicatedEntity.HasComponent<CSharpScripts>())
+				continue;
+			for (const CSharpScriptEntry& script :
+				duplicatedEntity.GetComponent<CSharpScripts>().Scripts)
+			{
+				UUID generated;
+				do { generated = UUID(); }
+				while (static_cast<uint64_t>(generated) == 0
+					|| !attachmentIDs.emplace(static_cast<uint64_t>(generated)).second);
+				attachmentRemap.emplace(script.AttachmentID, generated);
+			}
+		}
+
+		for (const auto& [sourceUUID, duplicateUUID] : duplicateUUIDs)
+		{
+			(void)sourceUUID;
+			Entity duplicatedEntity = FindEntityByUUID(duplicateUUID);
+			std::string remapError;
+			if (!ComponentCodecs::RemapInstanceReferences(duplicatedEntity,
+				duplicateUUIDs,
+				ComponentCodecs::MissingEntityReferencePolicy::Preserve,
+				attachmentIDs, true, remapError, &attachmentRemap))
+			{
+				TC_Core_Error("Could not remap duplicated entity references: {0}",
+					remapError);
+				DestroyEntity(duplicate);
+				return {};
+			}
+		}
+		return duplicate;
 	}
 
 
 	Entity Scene::GetPrimaryCameraEntity()
 	{
 		auto view = m_Registry.view<C_Camera>();
-
-		for (auto entity:view)
+		for (const entt::entity handle : view)
 		{
-			const auto& camera = view.get<C_Camera>(entity);
-
-			if (camera.Primary)
-				return Entity(entity,this);
-
+			const auto& camera = view.get<C_Camera>(handle);
+			Entity entity(handle, this);
+			if (camera.Enabled && camera.Primary && IsActiveInHierarchy(entity))
+				return entity;
 		}
-
 		return {};
 	}
 
 	Entity Scene::FindEntityByUUID(UUID uuid)
 	{
-		auto view = m_Registry.view<ID>();
-		for (auto entity : view)
-		{
-			if (view.get<ID>(entity).id == uuid)
-				return Entity(entity, this);
-		}
+		auto entityIt = m_EntityMap.find(uuid);
+		if (entityIt != m_EntityMap.end() && m_Registry.valid(entityIt->second)
+			&& m_Registry.all_of<ID>(entityIt->second)
+			&& m_Registry.get<ID>(entityIt->second).id == uuid)
+			return Entity(entityIt->second, this);
 		return {};
 	}
 
-	template<typename T>
-	void Scene::OnComponentAdded(Entity entity, T& component)
+	std::vector<AssetReference> Scene::FindAssetReferences(AssetHandle handle)
 	{
-		//static_assert(false);
+		std::vector<AssetReference> references;
+		if (static_cast<uint64_t>(handle) == 0)
+			return references;
+
+		auto view = m_Registry.view<ID, SpriteRenderer>();
+		for (const entt::entity entity : view)
+		{
+			const auto& sprite = view.get<SpriteRenderer>(entity);
+			if (sprite.SpriteHandle != handle)
+				continue;
+			const uint64_t entityID = static_cast<uint64_t>(view.get<ID>(entity).id);
+			AssetReference reference;
+			reference.ReferencedAsset = handle;
+			reference.PropertyPath = "Entity " + std::to_string(entityID) +
+				".SpriteRenderer.SpriteHandle";
+			references.push_back(std::move(reference));
+		}
+
+		for (const auto raw : m_Registry.view<ID, MeshComponent>()) {
+			const auto& mesh = m_Registry.get<MeshComponent>(raw);
+			for (const auto& [value, name] : { std::pair{mesh.MeshHandle, "Mesh"}, std::pair{mesh.AlbedoHandle, "Albedo"} }) {
+				if (value != handle) continue;
+				AssetReference reference;
+				reference.ReferencedAsset = handle;
+				reference.PropertyPath = "Entity " + std::to_string(static_cast<uint64_t>(m_Registry.get<ID>(raw).id)) + ".MeshRenderer." + name;
+				references.push_back(std::move(reference));
+			}
+		}
+
+		auto scriptsView = m_Registry.view<ID, CSharpScripts>();
+		auto animatorView = m_Registry.view<ID, SpriteAnimator>();
+		for (const entt::entity entity : animatorView)
+		{
+			const uint64_t entityID = static_cast<uint64_t>(
+				animatorView.get<ID>(entity).id);
+			const auto& clips = animatorView.get<SpriteAnimator>(entity).Clips;
+			for (size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
+			{
+				for (size_t frameIndex = 0;
+					frameIndex < clips[clipIndex].Frames.size(); ++frameIndex)
+				{
+					if (clips[clipIndex].Frames[frameIndex].SpriteHandle != handle)
+						continue;
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.PropertyPath = "Entity " + std::to_string(entityID)
+						+ ".SpriteAnimator.Clips[" + std::to_string(clipIndex)
+						+ "].Frames[" + std::to_string(frameIndex)
+						+ "].SpriteHandle";
+					references.push_back(std::move(reference));
+				}
+			}
+		}
+		auto audioView = m_Registry.view<ID, AudioSource>();
+		for (const entt::entity entity : audioView)
+		{
+			const auto& source = audioView.get<AudioSource>(entity);
+			if (source.Clip != handle)
+				continue;
+			AssetReference reference;
+			reference.ReferencedAsset = handle;
+			reference.PropertyPath = "Entity "
+				+ std::to_string(static_cast<uint64_t>(audioView.get<ID>(entity).id))
+				+ ".AudioSource.Clip";
+			references.push_back(std::move(reference));
+		}
+
+		for (const entt::entity entity : scriptsView)
+		{
+			const uint64_t entityID = static_cast<uint64_t>(scriptsView.get<ID>(entity).id);
+			const auto& scripts = scriptsView.get<CSharpScripts>(entity).Scripts;
+			for (size_t scriptIndex = 0; scriptIndex < scripts.size(); ++scriptIndex)
+			{
+				const CSharpScriptEntry& script = scripts[scriptIndex];
+				if (script.ScriptAsset == handle)
+				{
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.PropertyPath = "Entity " + std::to_string(entityID)
+						+ ".CSharpScripts.Scripts[" + std::to_string(scriptIndex)
+						+ "].ScriptHandle";
+					references.push_back(std::move(reference));
+				}
+				for (const ScriptField& field : script.Fields)
+				{
+					if (field.Type != ScriptFieldType::AssetRef
+						|| !std::holds_alternative<uint64_t>(field.Value)
+						|| std::get<uint64_t>(field.Value) != static_cast<uint64_t>(handle))
+						continue;
+					AssetReference reference;
+					reference.ReferencedAsset = handle;
+					reference.PropertyPath = "Entity " + std::to_string(entityID)
+						+ ".CSharpScripts.Scripts[" + std::to_string(scriptIndex)
+						+ "].Fields." + field.Name;
+					references.push_back(std::move(reference));
+				}
+			}
+		}
+		return references;
 	}
 
 	template<>
@@ -435,6 +4604,10 @@ namespace TomCat {
 	template<>
 	void Scene::OnComponentAdded<Transform>(Entity entity, Transform& component)
 	{
+		if (m_RuntimeRunning && entity
+			&& (entity.HasComponent<Rigidbody2D>() || entity.HasComponent<BoxCollider2D>()
+				|| entity.HasComponent<CircleCollider2D>() || entity.HasComponent<DistanceJoint2D>()))
+			m_HasRuntimePhysicsDefinition = false;
 	}
 
 	template<>
@@ -447,6 +4620,31 @@ namespace TomCat {
 	template<>
 	void Scene::OnComponentAdded<SpriteRenderer>(Entity entity, SpriteRenderer& component)
 	{
+		if (m_RuntimeRunning && entity && entity.HasComponent<SpriteAnimator>())
+		{
+			SpriteAnimator& animator = entity.GetComponent<SpriteAnimator>();
+			HydrateSpriteAnimatorController(animator);
+			if (IsActiveInHierarchy(entity))
+				SpriteAnimatorRuntime::Initialize(animator, component);
+		}
+	}
+
+	template<>
+	void Scene::OnComponentAdded<SpriteAnimator>(Entity entity, SpriteAnimator& component)
+	{
+		SpriteAnimatorRuntime::Reset(component);
+		if (m_RuntimeRunning && entity && entity.HasComponent<SpriteRenderer>())
+		{
+			HydrateSpriteAnimatorController(component);
+			if (IsActiveInHierarchy(entity))
+				SpriteAnimatorRuntime::Initialize(component,
+					entity.GetComponent<SpriteRenderer>());
+		}
+	}
+
+	template<>
+	void Scene::OnComponentAdded<LineRenderer>(Entity entity, LineRenderer& component)
+	{
 	}
 
 	template<>
@@ -455,22 +4653,50 @@ namespace TomCat {
 	}
 
 	template<>
-	void Scene::OnComponentAdded<NativeScript>(Entity entity, NativeScript& component)
+	void Scene::OnComponentAdded<EntityMetadata>(Entity entity, EntityMetadata& component)
+	{
+		if (component.GameplayTag.empty())
+			component.GameplayTag = "Untagged";
+		if (component.Layer >= Physics2DLayerCount)
+			component.Layer = 0;
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
+	}
+
+	template<>
+	void Scene::OnComponentAdded<CSharpScripts>(Entity entity, CSharpScripts& component)
 	{
 	}
 
 	template<>
 	void Scene::OnComponentAdded<Rigidbody2D>(Entity entity, Rigidbody2D& component)
 	{
+		component.RuntimeBody = nullptr;
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
 	}
 
 	template<>
 	void Scene::OnComponentAdded<BoxCollider2D>(Entity entity, BoxCollider2D& component)
 	{
+		component.RuntimeFixture = nullptr;
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
 	}
 
 	template<>
-	void Scene::OnComponentAdded<MeshComponent>(Entity entity, MeshComponent& component)
+	void Scene::OnComponentAdded<CircleCollider2D>(Entity entity, CircleCollider2D& component)
 	{
+		component.RuntimeFixture = nullptr;
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
+	}
+
+	template<>
+	void Scene::OnComponentAdded<DistanceJoint2D>(Entity entity, DistanceJoint2D& component)
+	{
+		component.RuntimeJoint = nullptr;
+		if (m_RuntimeRunning)
+			m_HasRuntimePhysicsDefinition = false;
 	}
 }

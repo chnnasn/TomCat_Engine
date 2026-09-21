@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="windows-1252"?>
+<?xml version="1.0" encoding="windows-1252"?>
 <>
   <InputFile>E:\Github\TomCat_Engine\dist\Manager.exe</InputFile>
   <OutputFile>E:\Github\TomCat_Engine\dist\TomCatHub.exe</OutputFile>
@@ -18,7 +18,7 @@
           <File>
             <Type>2</Type>
             <Name>imgui.ini</Name>
-            <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\imgui.ini</File>
+            <File>E:\Github\TomCat_Engine\Builder\Manager\imgui.ini</File>
             <ActiveX>False</ActiveX>
             <ActiveXInstall>False</ActiveXInstall>
             <Action>0</Action>
@@ -42,7 +42,7 @@
           <File>
             <Type>3</Type>
             <Name>Packages</Name>
-            <Action>0</Action>
+            <Action>3</Action>
             <OverwriteDateTime>False</OverwriteDateTime>
             <OverwriteAttributes>False</OverwriteAttributes>
             <HideFromDialogs>0</HideFromDialogs>
@@ -51,7 +51,7 @@
               <File>
                 <Type>3</Type>
                 <Name>fonts</Name>
-                <Action>0</Action>
+                <Action>3</Action>
                 <OverwriteDateTime>False</OverwriteDateTime>
                 <OverwriteAttributes>False</OverwriteAttributes>
                 <HideFromDialogs>0</HideFromDialogs>
@@ -59,7 +59,7 @@
                   <File>
                     <Type>3</Type>
                     <Name>opensans</Name>
-                    <Action>0</Action>
+                    <Action>3</Action>
                     <OverwriteDateTime>False</OverwriteDateTime>
                     <OverwriteAttributes>False</OverwriteAttributes>
                     <HideFromDialogs>0</HideFromDialogs>
@@ -95,7 +95,7 @@
               <File>
                 <Type>3</Type>
                 <Name>Resources</Name>
-                <Action>0</Action>
+                <Action>3</Action>
                 <OverwriteDateTime>False</OverwriteDateTime>
                 <OverwriteAttributes>False</OverwriteAttributes>
                 <HideFromDialogs>0</HideFromDialogs>
@@ -103,7 +103,7 @@
                   <File>
                     <Type>3</Type>
                     <Name>Icons</Name>
-                    <Action>0</Action>
+                    <Action>3</Action>
                     <OverwriteDateTime>False</OverwriteDateTime>
                     <OverwriteAttributes>False</OverwriteAttributes>
                     <HideFromDialogs>0</HideFromDialogs>
@@ -111,7 +111,7 @@
                       <File>
                         <Type>3</Type>
                         <Name>ContentBrowser</Name>
-                        <Action>0</Action>
+                        <Action>3</Action>
                         <OverwriteDateTime>False</OverwriteDateTime>
                         <OverwriteAttributes>False</OverwriteAttributes>
                         <HideFromDialogs>0</HideFromDialogs>
@@ -161,7 +161,7 @@
               <File>
                 <Type>3</Type>
                 <Name>Shaders</Name>
-                <Action>0</Action>
+                <Action>3</Action>
                 <OverwriteDateTime>False</OverwriteDateTime>
                 <OverwriteAttributes>False</OverwriteAttributes>
                 <HideFromDialogs>0</HideFromDialogs>
@@ -208,8 +208,8 @@
           </File>
           <File>
             <Type>2</Type>
-            <Name>TomCat.log</Name>
-            <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\TomCat.log</File>
+            <Name>assimp-vc143-mt.dll</Name>
+            <File>E:\Github\TomCat_Engine\Builder\bin\Release-windows-x86_64\Manager\assimp-vc143-mt.dll</File>
             <ActiveX>False</ActiveX>
             <ActiveXInstall>False</ActiveXInstall>
             <Action>0</Action>

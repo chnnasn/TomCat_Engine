@@ -59,8 +59,7 @@ project "Manager"
 
 	defines
 	{
-		"TC_PLAYTFORM_WINDOWS",
-		"IMGUI_API=_declspec(dllimport);",
+		"TC_PLATFORM_WINDOWS",
 		"YAML_CPP_STATIC_DEFINE" 
 	}
 

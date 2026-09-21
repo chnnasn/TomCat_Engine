@@ -23,6 +23,8 @@ namespace TomCat {
 	public:
 		Model() = default;
 
+		static Ref<Model> FromArtifact(const class MeshArtifact& artifact);
+
 		static Ref<Model> Load(const std::string& filepath);
 
 		const std::vector<ModelSubmesh>& GetSubmeshes() const { return m_Submeshes; }

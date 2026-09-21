@@ -1,58 +1,181 @@
-name: Package (Editor / Hub / Both)
+name: Protected Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      target:
-        description: 'Pack target'
-        required: true
-        type: choice
-        options:
-          - both
-          - editor
-          - hub
-      version:
-        description: 'Version (e.g. 0.2.0)'
-        required: true
-        type: string
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
-  package:
+  release-policy:
     runs-on: windows-latest
+    timeout-minutes: 65
     permissions:
-      contents: write
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.provenance.outputs.version }}
+      regression-run-id: ${{ steps.provenance.outputs.regression-run-id }}
+      regression-run-url: ${{ steps.provenance.outputs.regression-run-url }}
+    steps:
+      - name: Checkout protected tag SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify protected tag, default branch, and same-SHA regressions
+        id: provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TAG_REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          . "$env:GITHUB_WORKSPACE/Scripts/VersionTools.ps1"
+          . "$env:GITHUB_WORKSPACE/Scripts/ReleaseProvenanceTools.ps1"
+
+          $versionInfo = Get-TomCatVersionInfo -RepositoryRoot $env:GITHUB_WORKSPACE
+          $encodedBranch = [uri]::EscapeDataString($env:DEFAULT_BRANCH)
+          $branch = & gh api "repos/$env:GITHUB_REPOSITORY/branches/$encodedBranch" | ConvertFrom-Json
+
+          $tagRef = & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          $tagType = [string]$tagRef.object.type
+          $tagTargetSha = [string]$tagRef.object.sha
+          for ($depth = 0; $tagType -eq 'tag' -and $depth -lt 8; ++$depth) {
+            $annotatedTag = & gh api "repos/$env:GITHUB_REPOSITORY/git/tags/$tagTargetSha" | ConvertFrom-Json
+            $tagType = [string]$annotatedTag.object.type
+            $tagTargetSha = [string]$annotatedTag.object.sha
+          }
+          if ($tagType -ne 'commit') {
+            throw "Release tag does not resolve to a commit after eight annotated-tag levels."
+          }
+
+          $comparison = & gh api "repos/$env:GITHUB_REPOSITORY/compare/$tagTargetSha...$encodedBranch" | ConvertFrom-Json
+
+          # A tag push and its default-branch regression can be scheduled at the
+          # same time. Wait for that exact SHA instead of treating the API's
+          # initially empty result as a provenance failure.
+          $regressionDeadline = [DateTimeOffset]::UtcNow.AddMinutes(60)
+          $regressionRuns = @()
+          while ($true) {
+            $runs = & gh api -X GET "repos/$env:GITHUB_REPOSITORY/actions/workflows/regressions.yml/runs" `
+              -f "head_sha=$env:RELEASE_SHA" -f "branch=$env:DEFAULT_BRANCH" `
+              -f "event=push" -f "per_page=100" | ConvertFrom-Json
+            $regressionRuns = @($runs.workflow_runs)
+            $matchingRuns = @($regressionRuns | Where-Object {
+              ([string]$_.head_sha).Equals($env:RELEASE_SHA, [System.StringComparison]::OrdinalIgnoreCase) -and
+              ([string]$_.head_branch).Equals($env:DEFAULT_BRANCH, [System.StringComparison]::Ordinal) -and
+              ([string]$_.event).Equals('push', [System.StringComparison]::Ordinal)
+            })
+            $successfulRuns = @($matchingRuns | Where-Object {
+              ([string]$_.status).Equals('completed', [System.StringComparison]::Ordinal) -and
+              ([string]$_.conclusion).Equals('success', [System.StringComparison]::Ordinal)
+            })
+            if ($successfulRuns.Count -gt 0) {
+              break
+            }
+
+            $activeRuns = @($matchingRuns | Where-Object {
+              -not ([string]$_.status).Equals('completed', [System.StringComparison]::Ordinal)
+            })
+            $completedRuns = @($matchingRuns | Where-Object {
+              ([string]$_.status).Equals('completed', [System.StringComparison]::Ordinal)
+            })
+            if ($completedRuns.Count -gt 0 -and $activeRuns.Count -eq 0) {
+              break
+            }
+            if ([DateTimeOffset]::UtcNow -ge $regressionDeadline) {
+              throw "Timed out waiting for the full Regressions workflow on default-branch SHA $env:RELEASE_SHA."
+            }
+            Write-Host "Waiting for the full Regressions workflow on $env:DEFAULT_BRANCH at $env:RELEASE_SHA..."
+            Start-Sleep -Seconds 30
+          }
+          $regression = Assert-TomCatReleaseProvenance `
+            -Tag $env:RELEASE_TAG `
+            -Version $versionInfo.ProductVersion `
+            -CommitSha $env:RELEASE_SHA `
+            -TagTargetSha $tagTargetSha `
+            -DefaultBranch $env:DEFAULT_BRANCH `
+            -TagRefProtected ([System.Convert]::ToBoolean($env:TAG_REF_PROTECTED)) `
+            -DefaultBranchProtected ([bool]$branch.protected) `
+            -DefaultBranchComparisonStatus ([string]$comparison.status) `
+            -RegressionRuns $regressionRuns
+
+          "version=$($versionInfo.ProductVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "regression-run-id=$($regression.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "regression-run-url=$($regression.html_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+  build-package:
+    needs: release-policy
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           submodules: recursive
 
-      - name: Install Enigma Virtual Box (official installer, Inno silent)
-        shell: pwsh
-        run: |
-          $exe = Join-Path $env:TEMP "enigmavb.exe"
-          $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-          $ok = $false
-          for ($i = 1; $i -le 5; $i++) {
-            curl.exe -s -L -A $ua -o $exe "https://www.enigmaprotector.com/assets/files/enigmavb.exe"
-            $bytes = [System.IO.File]::ReadAllBytes($exe)
-            if ($bytes.Length -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) { $ok = $true; break }
-            Write-Host "retry $($i): got $($bytes.Length) bytes (not a PE), retrying..."
-            Start-Sleep -Seconds 5
-          }
-          if (-not $ok) {
-            Write-Host "::error::Downloaded enigmavb.exe is not a valid PE (got $($bytes.Length) bytes)"
-            exit 1
-          }
-          Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
 
-      - name: Install premake5
+      - name: Verify release scripts
+        shell: pwsh
+        run: .\Scripts\Test-ReleaseScripts.ps1
+
+      - name: Install pinned Enigma Virtual Box
         shell: pwsh
         run: |
-          $zip = Join-Path $env:TEMP "premake.zip"
-          Invoke-WebRequest -Uri "https://github.com/premake/premake-core/releases/download/v5.0.0-beta7/premake-5.0.0-beta7-windows.zip" -OutFile $zip -UseBasicParsing
-          Expand-Archive -Path $zip -DestinationPath "$env:TEMP\premake" -Force
-          "PREMAKE=$env:TEMP\premake\premake5.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          $pins = Get-Content "$env:GITHUB_WORKSPACE\Scripts\ReleaseToolVersions.json" -Raw | ConvertFrom-Json
+          $exe = Join-Path $env:RUNNER_TEMP "enigmavb-$($pins.enigmaVirtualBox.version).exe"
+          Invoke-WebRequest -Uri $pins.enigmaVirtualBox.url -OutFile $exe -UseBasicParsing
+          [void](Assert-TomCatFileSha256 -Path $exe -ExpectedHash $pins.enigmaVirtualBox.sha256)
+          $signature = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+            throw "EVB installer Authenticode signature is not valid: $($signature.Status)"
+          }
+          if (-not $signature.SignerCertificate.Thumbprint.Equals(
+              $pins.enigmaVirtualBox.signerThumbprint,
+              [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "EVB installer signer mismatch: $($signature.SignerCertificate.Thumbprint)"
+          }
+          $process = Start-Process -FilePath $exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "EVB installer failed with exit code $($process.ExitCode)." }
+          $evb = @(
+            "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe",
+            "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $evb) { throw "EVB $($pins.enigmaVirtualBox.version) console was not installed." }
+          "EVB_CONSOLE=$evb" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install pinned Premake
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          $pins = Get-Content "$env:GITHUB_WORKSPACE\Scripts\ReleaseToolVersions.json" -Raw | ConvertFrom-Json
+          $zip = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version).zip"
+          $directory = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version)"
+          Invoke-WebRequest -Uri $pins.premake.url -OutFile $zip -UseBasicParsing
+          [void](Assert-TomCatFileSha256 -Path $zip -ExpectedHash $pins.premake.sha256)
+          Expand-Archive -LiteralPath $zip -DestinationPath $directory -Force
+          $premake = Join-Path $directory 'premake5.exe'
+          if (-not (Test-Path -LiteralPath $premake -PathType Leaf)) { throw 'Premake executable is missing from the verified archive.' }
+          "PREMAKE=$premake" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Locate MSBuild
         shell: pwsh
@@ -65,87 +188,352 @@ jobs:
       - name: Build & Box
         shell: pwsh
         env:
-          TARGET: ${{ inputs.target }}
-          VERSION: ${{ inputs.version }}
+          TARGET: both
+          RELEASE_VERSION: ${{ needs.release-policy.outputs.version }}
+          REGRESSION_RUN_ID: ${{ needs.release-policy.outputs.regression-run-id }}
+          REGRESSION_RUN_URL: ${{ needs.release-policy.outputs.regression-run-url }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           $ErrorActionPreference = "Stop"
+          . "$env:GITHUB_WORKSPACE\Scripts\VersionTools.ps1"
+          $versionInfo = Get-TomCatVersionInfo -RepositoryRoot $env:GITHUB_WORKSPACE
+          if ($env:RELEASE_VERSION -ne $versionInfo.ProductVersion) {
+            throw "Release input '$env:RELEASE_VERSION' does not match Version.h ($($versionInfo.ProductVersion))."
+          }
 
           function Invoke-Gen([string]$wks) {
             & $env:PREMAKE --file="$wks\premake5.lua" vs2022
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-          function Invoke-Build([string]$vcxproj) {
-            & $env:MSBUILD $vcxproj -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
+          function Invoke-Build([string]$solution) {
+            & $env:MSBUILD $solution -p:Configuration=Release -p:Platform=x64 -m -v:m -nologo
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
           function Invoke-Box([string]$evbName, [string]$srcDir, [string]$srcExe) {
-            if (-not (Test-Path "$srcDir\TomCat.log")) { New-Item -ItemType File -Path "$srcDir\TomCat.log" -Force | Out-Null }
+            . "$env:GITHUB_WORKSPACE\Scripts\EvbTools.ps1"
+            $srcDir = (Resolve-Path -LiteralPath $srcDir).Path
+            $packageDir = Resolve-EvbPackageDirectory -SourceDir $srcDir
+            $packageFileCount = @(Get-ChildItem -LiteralPath $packageDir -Recurse -File -Force).Count
+            Write-Host "Scanning $packageFileCount package candidate file(s) from $packageDir"
             New-Item -ItemType Directory -Force -Path "dist" | Out-Null
             Copy-Item "$srcDir\$srcExe" "dist\$srcExe" -Force
+            $outputName = "TomCatHub.exe"
+            if (Test-Path "dist\$outputName") { Remove-Item "dist\$outputName" -Force }
             $content = Get-Content "Scripts\$evbName" -Raw
             $content = $content.Replace('E:\Github\TomCat_Engine', $env:GITHUB_WORKSPACE)
-            Set-Content -Path "Scripts\$evbName-ci.evb" -Value $content -NoNewline
-            $evb = @(
-              "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe",
-              "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
-            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if (-not $evb) { throw "enigmavbconsole.exe not found" }
+            $content = Set-EvbProperty -TemplateText $content -ElementName "InputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$srcExe")
+            $content = Set-EvbProperty -TemplateText $content -ElementName "OutputFile" -Value (Join-Path $env:GITHUB_WORKSPACE "dist\$outputName")
+            $content = Set-EvbPackageTree -TemplateText $content -PackageSource $packageDir
+            Write-EvbProject -Path "Scripts\$evbName-ci.evb" -Text $content
             Push-Location "Scripts"
-            try { & $evb "$evbName-ci.evb" } finally { Pop-Location }
+            try { & $env:EVB_CONSOLE "$evbName-ci.evb" } finally { Pop-Location }
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (-not (Test-Path "dist\$outputName" -PathType Leaf)) {
+              throw "Enigma Virtual Box did not produce dist\$outputName"
+            }
+            Remove-Item "Scripts\$evbName-ci.evb" -Force -ErrorAction SilentlyContinue
+            Remove-Item "dist\$srcExe" -Force -ErrorAction SilentlyContinue
           }
 
-          $ver = $env:VERSION
           $t = $env:TARGET
 
           if ($t -eq "editor" -or $t -eq "both") {
+            . "$env:GITHUB_WORKSPACE\Scripts\ManagedReleaseTools.ps1"
+            Build-TomCatManagedRelease -RepositoryRoot $env:GITHUB_WORKSPACE
+            Write-Host "== Building Player Template =="
+            Invoke-Gen "Player"
+            Invoke-Build "Player\Player.sln"
             Write-Host "== Building Editor =="
             Invoke-Gen "Editor"
-            Invoke-Build "Editor\TomCatInut\TomCatInut.vcxproj"
-            Invoke-Box "editor.evb" "Editor\bin\Release-windows-x86_64\TomCatInut" "TomCatInut.exe"
-            Copy-Item "dist\TomCat.exe" "dist\TomCatEditor-$ver.exe" -Force
+            Invoke-Build "Editor\Editor.sln"
+            Write-Host "== Building Headless CLI =="
+            Invoke-Gen "Tools"
+            Invoke-Build "Tools\Tools.sln"
+            $editorOutput = Join-Path $env:GITHUB_WORKSPACE "Editor\bin\Release-windows-x86_64\TomCatInut"
+            $cliOutput = Join-Path $env:GITHUB_WORKSPACE "Tools\bin\Release-windows-x86_64\TomCatCLI\TomCatCLI.exe"
+            $cliShaderOutput = Join-Path (Split-Path -Parent $cliOutput) "shaderc_shared.dll"
+            if (-not (Test-Path -LiteralPath $cliOutput -PathType Leaf)) {
+              throw "Headless CLI build did not produce $cliOutput"
+            }
+            if (-not (Test-Path -LiteralPath $cliShaderOutput -PathType Leaf)) {
+              throw "Headless CLI build did not produce $cliShaderOutput"
+            }
+            & "$env:GITHUB_WORKSPACE\Scripts\Package-Editor.ps1" `
+              -SourceDir $editorOutput `
+              -Version $env:RELEASE_VERSION `
+              -PremakePath $env:PREMAKE `
+              -EnigmaProject (Join-Path $env:GITHUB_WORKSPACE "Scripts\editor.evb") `
+              -EnigmaConsole $env:EVB_CONSOLE
+
+            $editorExe = Join-Path $env:GITHUB_WORKSPACE "dist\TomCat.exe"
+            function Assert-NoExternalEditorRuntime {
+              foreach ($relativePath in @(
+                  "dist\.tomcat-editor-staging",
+                  "dist\TomCat",
+                  "dist\TomCatInut.exe",
+                  "dist\TomCatCLI.exe",
+                  "dist\shaderc_shared.dll",
+                  "dist\msvcp140.dll",
+                  "dist\vcruntime140.dll",
+                  "dist\vcruntime140_1.dll",
+                  "dist\Managed",
+                  "dist\Packages")) {
+                $candidate = Join-Path $env:GITHUB_WORKSPACE $relativePath
+                if (Test-Path -LiteralPath $candidate) {
+                  throw "Editor runtime leaked outside the single executable: $candidate"
+                }
+              }
+            }
+            function Invoke-PackagedEditorCliSmoke([string]$workingDirectory, [string]$phase) {
+              Push-Location $workingDirectory
+              try {
+                & $editorExe --cli help
+                $exitCode = $LASTEXITCODE
+              } finally {
+                Pop-Location
+              }
+              if ($exitCode -ne 0) {
+                throw "Packaged Editor $phase CLI smoke failed (exit $exitCode)."
+              }
+            }
+
+            Assert-NoExternalEditorRuntime
+            $runtimeCache = Join-Path $env:LOCALAPPDATA "TomCat\Editor\Runtime"
+            if (Test-Path -LiteralPath $runtimeCache) {
+              Remove-Item -LiteralPath $runtimeCache -Recurse -Force
+            }
+            $probeWorkingDirectory = Join-Path $env:RUNNER_TEMP "tomcat-editor-probe-cwd"
+            $coldWorkingDirectory = Join-Path $env:RUNNER_TEMP "tomcat-editor-cold-cwd"
+            $warmWorkingDirectory = Join-Path $env:RUNNER_TEMP "tomcat-editor-warm-cwd"
+            New-Item -ItemType Directory -Path $probeWorkingDirectory, $coldWorkingDirectory, $warmWorkingDirectory -Force | Out-Null
+
+            Push-Location $probeWorkingDirectory
+            try {
+              $productJson = & $editorExe --product-info-json
+              $productExitCode = $LASTEXITCODE
+            } finally {
+              Pop-Location
+            }
+            if ($productExitCode -ne 0) {
+              throw "Packaged Editor product probe failed (exit $productExitCode)."
+            }
+            $productInfo = $productJson | ConvertFrom-Json
+            if ($productInfo.product -ne "Editor" -or
+                $productInfo.version -ne $versionInfo.ProductVersion -or
+                $productInfo.buildId -ne $versionInfo.EngineBuildID) {
+              throw "Packaged Editor product probe returned inconsistent identity."
+            }
+            if (Test-Path -LiteralPath $runtimeCache) {
+              throw "--product-info-json must not extract the packaged Editor runtime."
+            }
+
+            Invoke-PackagedEditorCliSmoke $coldWorkingDirectory "cold"
+            $coldManifests = @(Get-ChildItem -LiteralPath $runtimeCache `
+              -Filter "runtime-manifest.json" -File -Recurse -Force)
+            if ($coldManifests.Count -ne 1) {
+              throw "Cold packaged Editor smoke did not publish exactly one runtime cache."
+            }
+            $cachedRuntime = $coldManifests[0].Directory.FullName
+            foreach ($requiredRuntimePath in @(
+                "TomCatCLI.exe",
+                "Managed\TomCat.Managed.dll",
+                "Packages\PlayerTemplates\win-x64\TomCatPlayer.exe")) {
+              if (-not (Test-Path -LiteralPath (Join-Path $cachedRuntime $requiredRuntimePath) -PathType Leaf)) {
+                throw "Cold packaged Editor smoke did not extract $requiredRuntimePath."
+              }
+            }
+            $coldManifestHash = (Get-FileHash -LiteralPath $coldManifests[0].FullName -Algorithm SHA256).Hash
+            $coldManifestWriteTime = $coldManifests[0].LastWriteTimeUtc
+            $completionMarker = "$cachedRuntime.complete-v1"
+            if (-not (Test-Path -LiteralPath $completionMarker -PathType Leaf)) {
+              throw "Cold packaged Editor smoke did not publish its completion marker."
+            }
+            $coldCompletionHash = (Get-FileHash -LiteralPath $completionMarker -Algorithm SHA256).Hash
+            $coldCompletionWriteTime = (Get-Item -LiteralPath $completionMarker).LastWriteTimeUtc
+
+            Invoke-PackagedEditorCliSmoke $warmWorkingDirectory "warm"
+            $warmManifests = @(Get-ChildItem -LiteralPath $runtimeCache `
+              -Filter "runtime-manifest.json" -File -Recurse -Force)
+            if ($warmManifests.Count -ne 1 -or
+                $warmManifests[0].FullName -ne $coldManifests[0].FullName -or
+                (Get-FileHash -LiteralPath $warmManifests[0].FullName -Algorithm SHA256).Hash -ne $coldManifestHash -or
+                $warmManifests[0].LastWriteTimeUtc -ne $coldManifestWriteTime -or
+                (Get-FileHash -LiteralPath $completionMarker -Algorithm SHA256).Hash -ne $coldCompletionHash -or
+                (Get-Item -LiteralPath $completionMarker).LastWriteTimeUtc -ne $coldCompletionWriteTime) {
+              throw "Warm packaged Editor smoke did not reuse the validated runtime cache."
+            }
+
+            $buildSmokeRoot = Join-Path $env:RUNNER_TEMP "tomcat-editor-build-cwd"
+            $buildSmokeProject = Join-Path $buildSmokeRoot "PhysicsPlayground"
+            if (Test-Path -LiteralPath $buildSmokeRoot) {
+              Remove-Item -LiteralPath $buildSmokeRoot -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $buildSmokeRoot | Out-Null
+            Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "Samples\PhysicsPlayground") `
+              -Destination $buildSmokeProject -Recurse -Force
+            Push-Location $buildSmokeRoot
+            try {
+              & $editorExe --cli build --project "PhysicsPlayground\Project.tcproj"
+              $buildSmokeExitCode = $LASTEXITCODE
+            } finally {
+              Pop-Location
+            }
+            if ($buildSmokeExitCode -ne 0) {
+              throw "Packaged Editor relative-path Player build smoke failed (exit $buildSmokeExitCode)."
+            }
+            $builtPlayer = Join-Path $buildSmokeProject "Build\PhysicsPlayground\PhysicsPlayground.exe"
+            if (-not (Test-Path -LiteralPath $builtPlayer -PathType Leaf)) {
+              throw "Packaged Editor Player build smoke did not publish $builtPlayer."
+            }
+            $buildManifests = @(Get-ChildItem -LiteralPath $runtimeCache `
+              -Filter "runtime-manifest.json" -File -Recurse -Force)
+            if ($buildManifests.Count -ne 1 -or
+                $buildManifests[0].FullName -ne $coldManifests[0].FullName -or
+                (Get-FileHash -LiteralPath $buildManifests[0].FullName -Algorithm SHA256).Hash -ne $coldManifestHash -or
+                $buildManifests[0].LastWriteTimeUtc -ne $coldManifestWriteTime -or
+                (Get-FileHash -LiteralPath $completionMarker -Algorithm SHA256).Hash -ne $coldCompletionHash -or
+                (Get-Item -LiteralPath $completionMarker).LastWriteTimeUtc -ne $coldCompletionWriteTime) {
+              throw "Packaged Editor Player build rewrote the validated runtime cache."
+            }
+            Assert-NoExternalEditorRuntime
           }
           if ($t -eq "hub" -or $t -eq "both") {
             Write-Host "== Building Hub =="
             Invoke-Gen "Builder"
-            Invoke-Build "Builder\Manager\Manager.vcxproj"
+            Invoke-Build "Builder\Builder.sln"
             Invoke-Box "hub.evb" "Builder\bin\Release-windows-x86_64\Manager" "Manager.exe"
-            Copy-Item "dist\TomCatHub.exe" "dist\TomCatHub-$ver.exe" -Force
           }
 
+          . "$env:GITHUB_WORKSPACE\Scripts\ReleaseArtifactTools.ps1"
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          $provenance = [ordered]@{
+            schemaVersion = 1
+            tag = $env:GITHUB_REF_NAME
+            commitSha = $env:GITHUB_SHA
+            defaultBranch = $env:DEFAULT_BRANCH
+            regressionsWorkflow = '.github/workflows/regressions.yml'
+            regressionsRunId = [long]$env:REGRESSION_RUN_ID
+            regressionsRunUrl = $env:REGRESSION_RUN_URL
+          }
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:GITHUB_WORKSPACE 'dist/RELEASE_PROVENANCE.json'),
+            ($provenance | ConvertTo-Json -Depth 4),
+            $utf8)
+          New-TomCatReleaseMetadata -RepositoryRoot $env:GITHUB_WORKSPACE `
+            -DistPath (Join-Path $env:GITHUB_WORKSPACE 'dist') `
+            -Target $t -Version $env:RELEASE_VERSION `
+            -AdditionalChecksumFiles @('RELEASE_PROVENANCE.json') | Out-Null
+
       - name: Upload Editor artifact
-        if: ${{ inputs.target == 'editor' || inputs.target == 'both' }}
         uses: actions/upload-artifact@v4
         with:
-          name: TomCatEditor-${{ inputs.version }}
-          path: dist/TomCatEditor-${{ inputs.version }}.exe
+          name: TomCat
+          path: dist/TomCat.exe
 
       - name: Upload Hub artifact
-        if: ${{ inputs.target == 'hub' || inputs.target == 'both' }}
         uses: actions/upload-artifact@v4
         with:
-          name: TomCatHub-${{ inputs.version }}
-          path: dist/TomCatHub-${{ inputs.version }}.exe
+          name: TomCatHub
+          path: dist/TomCatHub.exe
 
-      - name: Publish to GitHub Release
-        if: ${{ inputs.target == 'both' }}
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: TomCat-release-metadata
+          if-no-files-found: error
+          path: |
+            dist/SHA256SUMS
+            dist/THIRD_PARTY_NOTICES.txt
+            dist/TomCat.spdx.json
+            dist/RELEASE_PROVENANCE.json
+
+  publish-release:
+    needs:
+      - release-policy
+      - build-package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download Editor artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TomCat
+          path: dist
+
+      - name: Download Hub artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: TomCatHub
+          path: dist
+
+      - name: Download release metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: TomCat-release-metadata
+          path: dist
+
+      - name: Publish new GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.release-policy.outputs.version }}
+          RELEASE_SHA: ${{ github.sha }}
         run: |
-          $tag = "v${{ inputs.version }}"
-          $assets = @("dist\TomCatEditor-${{ inputs.version }}.exe", "dist\TomCatHub-${{ inputs.version }}.exe")
-          # Check whether the release already exists (no error swallowing)
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag exists - uploading assets with --clobber"
-            gh release upload $tag $assets --clobber
-          } else {
-            gh release create $tag $assets --title $tag --generate-notes
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:RELEASE_VERSION"
+          $assets = @(
+            "dist\TomCat.exe",
+            "dist\TomCatHub.exe",
+            "dist\SHA256SUMS",
+            "dist\THIRD_PARTY_NOTICES.txt",
+            "dist\TomCat.spdx.json",
+            "dist\RELEASE_PROVENANCE.json"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw "Release asset is missing: $asset" }
           }
+          foreach ($line in Get-Content -LiteralPath 'dist\SHA256SUMS') {
+            if ($line -notmatch '^([a-fA-F0-9]{64})  (.+)$') { throw "Invalid SHA256SUMS line: $line" }
+            $expectedHash = $Matches[1]
+            $hashedAsset = Join-Path 'dist' $Matches[2]
+            if (-not (Test-Path -LiteralPath $hashedAsset -PathType Leaf)) { throw "Checksummed asset is missing: $hashedAsset" }
+            $actualHash = (Get-FileHash -LiteralPath $hashedAsset -Algorithm SHA256).Hash
+            if (-not $actualHash.Equals($expectedHash, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Release artifact checksum mismatch: $hashedAsset"
+            }
+          }
+          $provenance = Get-Content -LiteralPath 'dist\RELEASE_PROVENANCE.json' -Raw |
+            ConvertFrom-Json
+          if ([string]$provenance.tag -ne $tag -or
+              -not ([string]$provenance.commitSha).Equals(
+                $env:RELEASE_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Release provenance does not match tag $tag at $env:RELEASE_SHA."
+          }
+          $tagRef = & gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Protected release tag disappeared before publishing." }
+          $tagType = [string]$tagRef.object.type
+          $tagTargetSha = [string]$tagRef.object.sha
+          for ($depth = 0; $tagType -eq 'tag' -and $depth -lt 8; ++$depth) {
+            $annotatedTag = & gh api "repos/$env:GITHUB_REPOSITORY/git/tags/$tagTargetSha" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw "Could not resolve protected annotated tag." }
+            $tagType = [string]$annotatedTag.object.type
+            $tagTargetSha = [string]$annotatedTag.object.sha
+          }
+          if ($tagType -ne 'commit' -or
+              -not $tagTargetSha.Equals(
+                $env:RELEASE_SHA, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Protected release tag changed before publishing."
+          }
+          $null = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            throw "Release $tag already exists. Existing versions are immutable; choose a new version."
+          }
+          & gh release create $tag @assets --repo $env:GITHUB_REPOSITORY `
+            --verify-tag --target $env:RELEASE_SHA --title $tag --generate-notes
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::Release publish failed"
-            exit 1
+            throw "Release publish failed with exit code $LASTEXITCODE."
           }
