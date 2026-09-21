@@ -10,6 +10,24 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
+## 当前分支的作用
+
+**dev_vulkan — RHI 抽象与 Vulkan 后端开发**
+
+为现有 2D 渲染与编辑器流程引入统一 RHI 和 Vulkan 1.2 后端。默认仍为 OpenGL，启动前设置 `TC_RENDERER=vulkan` 可选择 Vulkan。用于渲染后端集成与跨后端验证，不代表已包含独立的 OpenGL 3D 分支功能。详见 [Vulkan 指南](docs/RHI_VULKAN.zh-CN.md)。
+
+分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
+
+| 分支 | 作用 |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | 构建、打包与 C# 工具链开发 |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
+
 文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.3.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
