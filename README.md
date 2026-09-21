@@ -1,6 +1,6 @@
 # TomCat Engine
 
-A **C++20 game engine for 2D development**, with a visual editor, a project hub,
+A **C++20 game engine for 2D and static 3D development**, with a visual editor, a project hub,
 and a standalone game runtime.
 
 TomCat brings scene composition, asset management, C# gameplay scripting, and
@@ -11,6 +11,24 @@ through visual authoring tools, while the Player runs packaged games independent
 **C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **Languages**: English | [简体中文](README.zh-CN.md)
+
+## Current Branch Purpose
+
+**dev_opengl3D — OpenGL static 3D rendering development**
+
+Extends the 2D baseline with static model import, six built-in primitives, sky/HDR environments, editable lights, directional shadows and PBR. Meshes and components integrate with assets, Prefabs, Cook and Player. Start with the [3D guide](docs/OPENGL_3D.zh-CN.md), [primitive sample](Samples/Primitives3D/README.md) and [lighting sample](Samples/PBRLighting/README.md). The documented validation target is Windows OpenGL 4.6; 3D physics and skeletal animation are not implemented.
+
+Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this map to choose a development track and check that branch for its actual capabilities.
+
+| Branch | Purpose |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | Desktop mainline and integration baseline |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | Build, packaging and C# toolchain development |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend development |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Experimental browser Editor and Player development |
 
 Documentation reviewed against the repository on **2026-09-20**. Product version: **0.3.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
@@ -108,8 +126,8 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - Supported development platform: **Windows x64**
 - Rendering backend: **OpenGL 4.6**
 - Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). C# payloads, audible audio, custom cooked SPIR-V shaders, and multisample framebuffers are unsupported there.
-- Primary engine scope: **2D**
-- The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
+- Branch scope: **2D + static 3D rendering**
+- Static models, six primitives, PBR, sky and directional shadows are implemented; 3D physics, skeletal animation and advanced material features remain incomplete. See the [3D guide](docs/OPENGL_3D.zh-CN.md).
 - Editor-side C# compilation requires the **.NET 10 SDK**
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
 - NuGet/third-party managed DLLs, Play Mode hot reload, and a built-in C# debugger are unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
@@ -124,6 +142,7 @@ shown above; it did not rerun the complete native, managed, Player or Web regres
 
 - Windows x64 with an OpenGL 4.6-capable GPU/driver
 - Visual Studio 2022+
+- CMake (Assimp build)
 - .NET 10 SDK (required to compile project C# scripts in the Editor)
 - Python 3 with `pip` (used by the setup helper)
 - premake5 (auto-downloaded by the setup script)
@@ -234,8 +253,9 @@ PCM WAV streaming reads a registry-resolved source range in authoring mode becau
 
 ### Future 3D Scope
 
-- [ ] Mesh/model import, materials, lights, PBR, shadows, environment rendering, and skeletal animation
-- [ ] Promote the current camera-only 3D template after the 3D runtime and authoring workflow exist
+- [x] Static mesh/model import, component PBR parameters, lights, directional shadows and environment rendering
+- [ ] Standalone material assets, PBR texture maps, skeletal animation and additional shadow types
+- [ ] Continue improving 3D templates and production authoring workflows
 
 ## Related Projects
 

@@ -2,7 +2,7 @@
 
 > `dev_opengl3D` 分支在当前 main 功能上提供静态 3D 网格、天空、可编辑灯光、方向光阴影、PBR 与环境照明，见 [OpenGL 3D 使用说明](docs/OPENGL_3D.zh-CN.md)。
 
-一款面向 **2D 游戏开发的 C++20 开源引擎**，包含可视化编辑器、项目中心与独立游戏运行时。
+一款面向 **2D 与静态 3D 游戏开发的 C++20 开源引擎**，包含可视化编辑器、项目中心与独立游戏运行时。
 
 TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Box2D 物理集成在同一个开发环境中。
 引擎库提供渲染、ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
@@ -11,6 +11,24 @@ Player 则负责脱离编辑器运行打包后的游戏。
 **C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **语言**：[English](README.md) | 简体中文
+
+## 当前分支的作用
+
+**dev_opengl3D — OpenGL 静态 3D 渲染开发**
+
+在 2D 基线上开发静态模型导入、六种内置图元、天空/HDR 环境、可编辑灯光、方向光阴影与 PBR，并接入资产、Prefab、Cook 和 Player。入口见 [3D 指南](docs/OPENGL_3D.zh-CN.md)、[图元示例](Samples/Primitives3D/README.md)和[光照示例](Samples/PBRLighting/README.md)。已记录的验收目标为 Windows OpenGL 4.6，尚未实现 3D 物理与骨骼动画。
+
+分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
+
+| 分支 | 作用 |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | 构建、打包与 C# 工具链开发 |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
 
 文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.3.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
@@ -99,8 +117,8 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - 支持的开发平台：**Windows x64**
 - 渲染后端：**OpenGL 4.6**
 - 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。该目标不支持 C# 负载、可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer。
-- 当前引擎主范围：**2D**
-- 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
+- 本分支范围：**2D + 静态 3D 渲染**
+- 已有静态模型、六种图元、PBR、天空与方向光阴影；3D 物理、骨骼动画及高级材质仍有缺口，见 [3D 指南](docs/OPENGL_3D.zh-CN.md)
 - Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
 - 不支持 NuGet/第三方托管 DLL、Play Mode 热重载或内置 C# 调试器；异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
@@ -114,6 +132,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 
 - Windows x64，并具备支持 OpenGL 4.6 的显卡与驱动
 - Visual Studio 2022+
+- CMake（用于构建 Assimp）
 - .NET 10 SDK（Editor 编译项目 C# 脚本必需）
 - Python 3 与 `pip`（供 Setup 辅助脚本使用）
 - premake5（Setup 脚本自动下载）
@@ -225,7 +244,7 @@ PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区�
 
 - [x] 本分支：静态 Mesh/模型导入、组件式 PBR 参数、Light、方向光阴影与环境渲染
 - [ ] 独立材质资产、PBR 贴图、骨骼动画及更多阴影类型
-- [ ] 等 3D Runtime 与编辑流程成立后，再将当前仅有相机的 3D 模板转为正式功能
+- [ ] 继续完善 3D 模板与面向生产的编辑流程
 
 ## 相关项目
 
