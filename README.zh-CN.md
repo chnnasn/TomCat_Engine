@@ -10,6 +10,24 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
+## 当前分支的作用
+
+**dev_ekit — ekit ECS 迁移与场景遍历优化**
+
+将 EnTT 替换为 ekit，适配组件注册、存储与 SceneWorld 引用遍历，包括热循环中的 const 正确性。用于 ECS 集成和兼容性验证。详见 [迁移指南](docs/EKIT_MIGRATION.md)；Web 代码迁移本身不代表浏览器运行验证已经完成。
+
+分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
+
+| 分支 | 作用 |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | 构建、打包与 C# 工具链开发 |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
+
 文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.3.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
