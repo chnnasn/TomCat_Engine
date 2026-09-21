@@ -10,6 +10,24 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
+## 当前分支的作用
+
+**main_web — 实验性浏览器 Editor 与 Player 开发**
+
+用于 Emscripten/WebGL2 目标、复用原生 ImGui 编辑面板和浏览器宿主集成，包括 Scene 工具栏与 Game 视图行为；持久化由宿主负责。构建和接入见 [Web 指南](Web/README.zh-CN.md)。需要 SharedArrayBuffer/Workers，不支持 C# 负载。本分支独立演进，不保证包含桌面主线的最新改动。
+
+分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
+
+| 分支 | 作用 |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | 构建、打包与 C# 工具链开发 |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
+
 文档于 **2026-09-18** 按仓库源码核对，当前产品版本为 **0.2.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
