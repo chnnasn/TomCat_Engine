@@ -12,6 +12,24 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
+## Current Branch Purpose
+
+**Build_System — Build, packaging and C# toolchain development**
+
+Develops the desktop build and distribution workflow, script diagnostics, reload feedback and external IDE debugging. This branch adds managed NuGet packages, project references and local managed DLLs through `TomCat.Dependencies.csproj`, with runtime dependencies bundled for Editor and cooked Player use. See the [dependency guide](docs/CSHARP_DEPENDENCIES.md). Native package assets and Play Mode hot replacement are outside this support scope.
+
+Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this map to choose a development track and check that branch for its actual capabilities.
+
+| Branch | Purpose |
+| --- | --- |
+| [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | Desktop mainline and integration baseline |
+| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | Build, packaging and C# toolchain development |
+| [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
+| [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend development |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Experimental browser Editor and Player development |
+
 Documentation reviewed against the repository on **2026-09-20**. Product version: **0.3.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
 
@@ -112,7 +130,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Editor-side C# compilation requires the **.NET 10 SDK**
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
-- NuGet/third-party managed DLLs, Play Mode hot reload, and a built-in C# debugger are unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
+- Managed NuGet packages, project references and local managed DLLs are supported (see the [dependency guide](docs/CSHARP_DEPENDENCIES.md)). Native package assets, Play Mode hot replacement and a built-in C# debugger are unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
 
 The [recording archive](docs/portfolio/README.md) records the exact scope and
 limitations of each desktop session. The 2026-09-20 refresh checked the UI flows
