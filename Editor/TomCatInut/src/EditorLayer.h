@@ -9,6 +9,7 @@
 #include "TomCat/Editor/SceneHistory.h"
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/ConsolePanel.h"
+#include "Panels/ProfilerPanel.h"
 #include "Scripting/ScriptProjectCompiler.h"
 #include "Scripting/ScriptMetadataCache.h"
 #include <functional>
@@ -19,6 +20,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <string_view>
 
 struct ImVec2;
 
@@ -71,6 +73,7 @@ namespace TomCat {
 		Entity InstantiatePrefab(AssetHandle handle, std::optional<UUID> parent,
 			std::optional<glm::vec3> rootWorldPosition);
 		void ReportPrefabOperation(bool succeeded, std::string message);
+		void RefreshLinkedPrefabs();
 		void ResizeSceneForGameView(const Ref<Scene>& scene);
 		void CommitRuntimeSceneTransition();
 		void ResetSceneInteractionState();
@@ -108,9 +111,18 @@ namespace TomCat {
 		void UI_SceneGizmoModeToolbarOverlay();
 		void UI_SceneGizmoToolbar();
 		void UI_SceneToolbarDockPreview();
-		void UI_SceneColliderVisibilityToggle();
+		void UI_SceneOrientationGizmo();
+		bool IsSceneOrientationGizmoPointerInside() const;
+		// Screen-space UI uses RectTransform pixel coordinates, so it needs a
+		// dedicated orthographic ImGuizmo projection. Translation is mapped back to
+		// AnchoredPosition while rotation/scale reuse the entity Transform fields.
+		bool UI_RectTransformHandles();
+		void ResetRectTransformEditState();
 		void UI_ColliderEditHandles();
 		void RenderSceneColliderOverlays();
+		void RenderSceneCameraOverlay();
+		void RenderSceneCanvasOverlay();
+		void FrameSceneEntity(Entity entity);
 		bool ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
 			glm::vec2& worldPosition) const;
 		bool WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const;
@@ -122,6 +134,14 @@ namespace TomCat {
 		bool SaveEditorPanelLayout();
 		void SaveEditorLayoutIfNeeded();
 		uint32_t GetEditorPanelVisibilityMask() const;
+		void ApplyPendingPanelMaximizeTransition(uint32_t dockspaceId,
+			const ImVec2& dockspaceSize);
+		void DetectPanelTabDoubleClick();
+        void UI_PanelTabContextMenu();
+        void ApplyPendingTabActions();
+        bool* PanelVisibility(const std::string& name);
+		void RestorePanelLayoutBeforePersistence();
+		bool ShouldRenderDockPanel(std::string_view windowName) const;
 		// Shared drag helper: submits the invisible handle and owns the only
 		// drag/dock state transitions used by both Scene toolbars.
 		void UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
@@ -168,10 +188,18 @@ namespace TomCat {
 		glm::vec2 m_ViewportSize = { 0.0f, 0.0f };
 
 		glm::vec2 m_ViewportBounds[2];
+		glm::vec2 m_SceneOrientationGizmoBounds[2]{};
+		bool m_SceneOrientationGizmoHovered = false;
+		// -2 = no pending click, -1 = projection toggle, 0..5 = axis handle.
+		int m_SceneOrientationPressedTarget = -2;
 
 		// Game Viewport
 		glm::vec2 m_GameViewportSize = { 0.0f, 0.0f };
 		glm::vec2 m_GameViewportBounds[2]{};
+		int m_GameViewResolutionIndex = 2;
+		float m_GameViewScale = 1.0f;
+		float m_GameViewEffectiveScale = 1.0f;
+		bool m_GameViewStatsVisible = false;
 
 		int m_GizmoType = -1;
 		GizmoPivotMode m_GizmoPivotMode = GizmoPivotMode::Pivot;
@@ -191,6 +219,7 @@ namespace TomCat {
 		SceneHierarchyPanel m_SceneHierarchyPanel;
 		ContentBrowserPanel m_ContentBrowserPanel;
 		ConsolePanel m_ConsolePanel;
+		ProfilerPanel m_ProfilerPanel;
 		ScriptProjectCompiler m_ScriptCompiler;
 		ScriptMetadataCache m_ScriptMetadata;
 		float m_ScriptSourcePollCountdown = 0.0f;
@@ -210,7 +239,6 @@ namespace TomCat {
 		SceneState m_SceneState = SceneState::Edit;
 		bool m_StepRequested = false;
 		bool m_Is2DMode = false;
-		bool m_ShowColliders = true;
 
 		enum class ColliderEditHandle
 		{
@@ -242,12 +270,29 @@ namespace TomCat {
 		Ref<Project> m_CurrentProject;
 		std::filesystem::path m_StartupProjectPath;
 		SceneHistory m_SceneHistory;
+		uint64_t m_PrefabImportRevision = 0;
+		struct PrefabFileEdit
+		{
+			SceneHistory::StateId BeforeState = 0, AfterState = 0;
+			AssetHandle Asset{ 0 };
+			std::string Before, After;
+		};
+		std::vector<PrefabFileEdit> m_PrefabFileEdits;
 		EditorRecoveryService m_RecoveryService;
 		EditorProjectLock m_ProjectLock;
 		std::optional<EditorRecoveryService::RecoveryCandidate> m_PendingRecovery;
 		bool m_OpenRecoveryModal = false;
 		bool m_SceneTransactionChanged = false;
 		bool m_GizmoTransactionActive = false;
+		bool m_GizmoDragActive = false;
+		bool m_GizmoHandleHovered = false;
+		bool m_UIRectTransactionActive = false;
+		bool m_UIRectDragActive = false;
+		// Cached across the native-event/ImGui frame boundary. Mouse button events
+		// arrive before the Scene overlay is rebuilt, so the previous frame's hit
+		// result must protect transparent UI rectangles from world picking.
+		bool m_UIRectHandleHovered = false;
+		UUID m_UIRectEditEntity = UUID(0);
 		bool m_ColliderTransactionActive = false;
 		bool m_BypassUnsavedCheck = false;
 		struct PendingProjectMigration
@@ -275,12 +320,16 @@ namespace TomCat {
 
 		bool m_ShowScenePanel = true;
 		bool m_ShowGamePanel = true;
+		bool m_ShowAnimationPanel = false;
+		bool m_ShowAnimatorPanel = false;
+		bool m_ShowTilePalettePanel = false;
 		bool m_ScenePanelDocked = true;
 		bool m_GamePanelDocked = true;
 		bool m_ShowHierarchyPanel = true;
 		bool m_ShowInspectorPanel = true;
 		bool m_ShowProjectPanel = true;
 		bool m_ShowConsolePanel = false;
+		bool m_ShowProfilerPanel = false;
 		bool m_ShowBuildSettingsPanel = false;
 		bool m_FocusBuildSettingsPanel = false;
 		uint32_t m_LastSavedPanelVisibilityMask = 0;
@@ -291,8 +340,34 @@ namespace TomCat {
 		bool m_PlayerBuildSucceeded = false;
 		bool m_ShowProjectSettingsPanel = false;
 		bool m_FocusProjectSettingsPanel = false;
+		enum class PanelMaximizeAction
+		{
+			None = 0,
+			Maximize,
+			Restore
+		};
+		PanelMaximizeAction m_PendingPanelMaximizeAction =
+			PanelMaximizeAction::None;
+		std::string m_PendingMaximizedPanelWindow;
+		std::string m_MaximizedPanelWindow;
+		std::string m_DockLayoutBeforeMaximize;
+		std::array<int, 10> m_DockTabOrdersBeforeMaximize = {
+			-1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+		};
+		bool m_PanelMaximized = false;
+        std::string m_TabContextPanel, m_PendingTabClose, m_PendingTabAdd;
+        uint32_t m_TabContextDockID = 0;
+        bool m_ShowAssetInspector = false;
+        bool m_ShowRuntimeScenes = false;
+        bool m_ShowEditorPreferences = false;
+        float m_EditorUIScale = 1.0f;
+        int m_LayoutRequest = 0;
+		uint32_t m_EditorDockspaceId = 0;
 		std::string m_LastWindowTitle;
 		std::string m_PendingPanelFocus;
+		std::string m_PendingPanelFocusAfterRestore;
+		std::string m_PendingRestoredTabWindow;
+		int m_PendingRestoredTabOrder = -1;
 		int m_EditorPanelCycleIndex = 5;
 		int m_ProjectSettingsPage = 0;
 		Ref<Project> m_ProjectSettingsDraftProject;

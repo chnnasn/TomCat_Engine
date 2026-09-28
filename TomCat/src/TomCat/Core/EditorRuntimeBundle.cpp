@@ -531,7 +531,8 @@ namespace TomCat {
 			return rootFiles.contains(key) || managedFiles.contains(key) ||
 				key.starts_with("packages/playertemplates/win-x64/") ||
 				key == "packages/resources/sprites/tomcat/circle.tga" ||
-				key == "packages/resources/sprites/tomcat/square.tga";
+				key == "packages/resources/sprites/tomcat/square.tga" ||
+				key == "packages/fonts/opensans/opensans-regular.ttf";
 		}
 
 		bool HasRequiredRuntimeFiles(const RuntimeManifest& manifest,
@@ -550,7 +551,8 @@ namespace TomCat {
 				"managed/tomcat.scriptgenerator.dll",
 				"packages/playertemplates/win-x64/template.json",
 				"packages/resources/sprites/tomcat/circle.tga",
-				"packages/resources/sprites/tomcat/square.tga"
+				"packages/resources/sprites/tomcat/square.tga",
+				"packages/fonts/opensans/opensans-regular.ttf"
 			};
 			for (std::string_view requiredPath : required)
 			{
@@ -1141,11 +1143,13 @@ namespace TomCat {
 		{
 			guard.Reset();
 			const std::filesystem::path absolute = directory.lexically_normal();
-			std::filesystem::path current = absolute.root_path();
+			std::filesystem::path current = DirectoryChainRoot(absolute);
 			if (current.empty() || !guard.Acquire(current, errorMessage))
 				return false;
-			for (const auto& component : absolute.relative_path())
+			const auto relative = std::filesystem::path(absolute.native().substr(current.native().size())).relative_path();
+			for (const auto& component : relative)
 			{
+				if (component == ".") continue;
 				current /= component;
 				FileSystem::PinnedDirectoryChain next;
 				bool created = false;

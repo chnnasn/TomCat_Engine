@@ -26,6 +26,9 @@ namespace TomCat {
 		WindowDisplayMode DisplayMode = WindowDisplayMode::Windowed;
 		bool Resizable = true;
 		bool VSync = true;
+        // Authoring windows use logical startup dimensions bounded by the monitor.
+        bool FitToWorkArea = false;
+        bool EditorStyling = false;
 
 
 		WindowProps(const std::string& title = "TomCat Engine",

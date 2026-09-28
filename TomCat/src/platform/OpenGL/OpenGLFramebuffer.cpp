@@ -183,6 +183,8 @@ namespace TomCat {
 	OpenGLFramebuffer::~OpenGLFramebuffer()
 	{
 		if (m_RendererID)
+			ProfileResourceTracker::Get().Framebuffer(-1, -static_cast<int64_t>(m_ProfileBytes));
+		if (m_RendererID)
 			glDeleteFramebuffers(1, &m_RendererID);
 		if (!m_ColorAttachments.empty())
 			glDeleteTextures(static_cast<GLsizei>(m_ColorAttachments.size()), m_ColorAttachments.data());
@@ -291,6 +293,12 @@ namespace TomCat {
 			glDeleteTextures(static_cast<GLsizei>(oldColorAttachments.size()), oldColorAttachments.data());
 		if (oldDepthAttachment)
 			glDeleteTextures(1, &oldDepthAttachment);
+		const uint64_t profileBytes = static_cast<uint64_t>(m_Specification.Width)
+			* m_Specification.Height * m_Specification.Samples * 4
+			* (m_ColorAttachments.size() + (m_DepthAttachment ? 1 : 0));
+		ProfileResourceTracker::Get().Framebuffer(oldRendererID ? 0 : 1,
+			static_cast<int64_t>(profileBytes) - static_cast<int64_t>(m_ProfileBytes));
+		m_ProfileBytes = profileBytes;
 		return true;
 	}
 

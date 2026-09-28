@@ -1231,7 +1231,12 @@ namespace TomCat {
 				return true;
 			};
 
-			std::filesystem::path current = absolute.root_path();
+			std::filesystem::path current = DirectoryChainRoot(absolute);
+			if (current.empty())
+			{
+				errorMessage = "Migration path has no filesystem root: " + PathToUTF8(absolute);
+				return false;
+			}
 			if (!current.empty())
 			{
 				const std::optional<bool> inspected = inspect(
@@ -1241,8 +1246,12 @@ namespace TomCat {
 				if (!*inspected)
 					return false;
 			}
-			for (const auto& component : absolute.relative_path())
+			const auto relative = absolute.native().size() <= current.native().size()
+				? std::filesystem::path{}
+				: std::filesystem::path(absolute.native().substr(current.native().size())).relative_path();
+			for (const auto& component : relative)
 			{
+				if (component == ".") continue;
 				current /= component;
 				const std::optional<bool> inspected = inspect(
 					current, current == absolute);

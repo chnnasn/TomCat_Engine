@@ -22,6 +22,8 @@ namespace TomCat {
 		std::optional<GameDataPaths> s_RuntimeGameDataPaths;
 		std::mutex s_RuntimeEditorRootMutex;
 		std::optional<std::filesystem::path> s_RuntimeEditorRoot;
+		std::mutex s_RuntimePackageRootMutex;
+		std::optional<std::filesystem::path> s_RuntimePackageRoot;
 
 		bool IsSafeIdentitySegment(std::string_view value)
 		{
@@ -104,6 +106,12 @@ namespace TomCat {
 
 	ApplicationProduct ApplicationPaths::IdentifyCurrentExecutable()
 	{
+		const auto executable = GetExecutablePath();
+		return executable ? IdentifyExecutable(*executable) : ApplicationProduct::Unknown;
+	}
+
+	std::optional<std::filesystem::path> ApplicationPaths::GetExecutablePath()
+	{
 #ifdef TC_PLATFORM_WINDOWS
 		std::vector<wchar_t> buffer(MAX_PATH);
 		for (;;)
@@ -111,16 +119,15 @@ namespace TomCat {
 			const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
 				static_cast<DWORD>(buffer.size()));
 			if (length == 0)
-				return ApplicationProduct::Unknown;
+				return std::nullopt;
 			if (length < buffer.size() - 1)
-				return IdentifyExecutable(std::filesystem::path(
-					std::wstring(buffer.data(), length)));
+				return std::filesystem::path(std::wstring(buffer.data(), length));
 			if (buffer.size() >= 32768)
-				return ApplicationProduct::Unknown;
+				return std::nullopt;
 			buffer.resize(buffer.size() * 2);
 		}
 #else
-		return ApplicationProduct::Unknown;
+		return std::nullopt;
 #endif
 	}
 
@@ -208,6 +215,51 @@ namespace TomCat {
 	{
 		std::lock_guard<std::mutex> lock(s_RuntimeEditorRootMutex);
 		return s_RuntimeEditorRoot;
+	}
+
+	void ApplicationPaths::SetRuntimePackageRoot(
+		const std::filesystem::path& root)
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimePackageRootMutex);
+		if (root.empty())
+			s_RuntimePackageRoot.reset();
+		else
+			s_RuntimePackageRoot = root.lexically_normal();
+	}
+
+	void ApplicationPaths::ClearRuntimePackageRoot()
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimePackageRootMutex);
+		s_RuntimePackageRoot.reset();
+	}
+
+	std::optional<std::filesystem::path>
+		ApplicationPaths::GetRuntimePackageRoot()
+	{
+		std::lock_guard<std::mutex> lock(s_RuntimePackageRootMutex);
+		return s_RuntimePackageRoot;
+	}
+
+	std::filesystem::path ApplicationPaths::ResolveRuntimePackageAsset(
+		const std::filesystem::path& packageRelativePath)
+	{
+		if (packageRelativePath.empty() || packageRelativePath.is_absolute()
+			|| packageRelativePath.has_root_name()
+			|| packageRelativePath.has_root_directory())
+			return {};
+		const std::filesystem::path relative = packageRelativePath.lexically_normal();
+		for (const std::filesystem::path& part : relative)
+		{
+			if (part == "..")
+				return {};
+		}
+		const std::filesystem::path packagePath =
+			(std::filesystem::path("Packages") / relative).lexically_normal();
+		if (const auto runtimeRoot = GetRuntimeEditorRoot())
+			return (*runtimeRoot / packagePath).lexically_normal();
+		if (const auto packageRoot = GetRuntimePackageRoot())
+			return (*packageRoot / packagePath).lexically_normal();
+		return packagePath;
 	}
 
 	std::optional<GameDataPaths> ApplicationPaths::ResolveGameDataPaths(

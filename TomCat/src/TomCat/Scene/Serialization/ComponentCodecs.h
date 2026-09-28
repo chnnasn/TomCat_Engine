@@ -30,7 +30,8 @@ namespace TomCat {
 			MissingEntityReferencePolicy missingPolicy,
 			std::unordered_set<uint64_t>& usedAttachmentIDs,
 			bool regenerateAttachmentIDs,
-			std::string& error);
+			std::string& error,
+			const std::unordered_map<UUID, UUID>* attachmentMap = nullptr);
 	};
 
 }

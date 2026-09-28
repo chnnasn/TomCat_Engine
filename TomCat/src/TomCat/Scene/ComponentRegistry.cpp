@@ -4,6 +4,7 @@
 #include "TomCat/Scene/BuiltInComponentDescriptors.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/RuntimeUIComponentDescriptors.h"
+#include "TomCat/Scene/Serialization/PrefabLink.h"
 
 #include <algorithm>
 #include <exception>
@@ -560,6 +561,8 @@ namespace TomCat {
 		}
 		if (!Register(MakeHealthDescriptor(), error))
 			throw std::runtime_error("Could not register built-in HealthComponent: " + error);
+		if (!Register(MakePrefabLinkDescriptor(), error))
+			throw std::runtime_error("Could not register PrefabLink: " + error);
 		for (ComponentDescriptor descriptor : MakeRuntimeUIComponentDescriptors())
 		{
 			const std::string stableName = descriptor.StableName;

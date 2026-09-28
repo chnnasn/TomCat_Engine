@@ -74,6 +74,7 @@ public sealed class GoodBehaviour : TomCatBehaviour
     public int FixedUpdates;
     public int CollisionEnters;
     public int TriggerExits;
+	public int ButtonClicks;
 	[HideInInspector] public long FixedInputFirstSequence;
 	[HideInInspector] public int FixedInputEventCount;
 	[HideInInspector] public long CollisionInputFirstSequence;
@@ -106,6 +107,10 @@ public sealed class GoodBehaviour : TomCatBehaviour
 	private InputAction? _inputAxis;
 
     public float Speed => _speed;
+
+	public void HandleButtonClick() => ButtonClicks++;
+	public void ThrowButtonClick() => throw new InvalidOperationException(
+		"intentional button callback regression failure");
 
 	protected override void OnCreate()
 	{

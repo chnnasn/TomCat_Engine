@@ -1,6 +1,6 @@
 # 浏览器中文字体
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-18 · [Web 中文指南](../README.zh-CN.md)
+[English](README.md) | 简体中文 · 核对日期：2026-09-20 · [Web 中文指南](../README.zh-CN.md)
 
 `NotoSansSC-Regular.otf` 是 Noto Sans CJK 的简体中文子集，按
 [SIL Open Font License 1.1](LICENSE) 分发。
@@ -18,3 +18,7 @@ Web 编辑器将其中文字形合并到已有 OpenSans 字体中；桌面版继
 ```powershell
 Get-FileHash Web/fonts/NotoSansSC-Regular.otf -Algorithm SHA256
 ```
+
+2026-09-20 重新核对了本地字体 SHA-256 与 CMake 的 `/WebFonts` 预加载路径，字体文件未更换。
+这份字体用于编辑器 ImGui 字形显示；游戏里的字体/文字资源与回退链由运行时字体系统管理。
+可显示中文不代表已经验证浏览器输入法组合输入，当前边界见 [Web 指南](../README.zh-CN.md)。

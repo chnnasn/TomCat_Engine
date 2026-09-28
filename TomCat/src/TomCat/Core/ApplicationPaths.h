@@ -33,6 +33,7 @@ namespace TomCat {
 		[[nodiscard]] static ApplicationProduct IdentifyExecutable(
 			const std::filesystem::path& executablePath);
 		[[nodiscard]] static ApplicationProduct IdentifyCurrentExecutable();
+		[[nodiscard]] static std::optional<std::filesystem::path> GetExecutablePath();
 
 		// Pure path construction kept separate from OS discovery so startup and
 		// regression tests can prove that user data never resolves beside an exe.
@@ -56,6 +57,17 @@ namespace TomCat {
 		static void ClearRuntimeEditorRoot();
 		[[nodiscard]] static std::optional<std::filesystem::path>
 			GetRuntimeEditorRoot();
+
+		// Development tools and extracted runtimes may keep engine-owned package
+		// assets beside their executable while retaining the caller's working
+		// directory for project-relative arguments. This root does not imply that a
+		// complete, verified Editor runtime (Managed/PlayerTemplates) is present.
+		static void SetRuntimePackageRoot(const std::filesystem::path& root);
+		static void ClearRuntimePackageRoot();
+		[[nodiscard]] static std::optional<std::filesystem::path>
+			GetRuntimePackageRoot();
+		[[nodiscard]] static std::filesystem::path ResolveRuntimePackageAsset(
+			const std::filesystem::path& packageRelativePath);
 
 		// A game's data is isolated from the generic TomCatPlayer host and from
 		// every other game. Company/product are single path segments; the three

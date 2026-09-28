@@ -3,6 +3,7 @@
 
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/ApplicationPaths.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,8 @@
 #include <limits>
 #include <mutex>
 #include <string>
+
+#include "TomCat/Utils/PathUtils.h"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -27,6 +30,11 @@
 namespace TomCat {
 
 	namespace {
+
+		const std::array<BuiltInFontAsset, 1> kBuiltInFontAssets = {{
+			{ AssetHandle(BuiltInLegacyRuntimeFontHandleValue), "Legacy Runtime",
+				"fonts/opensans/OpenSans-Regular.ttf" }
+		}};
 
 		struct RasterGlyph
 		{
@@ -60,8 +68,11 @@ namespace TomCat {
 			glyph.Width = std::max(8, static_cast<int>(std::round(pixelHeight * 0.55f)));
 			glyph.Height = std::max(10, static_cast<int>(std::round(pixelHeight * 0.76f)));
 			glyph.OffsetX = 1;
-			glyph.OffsetY = -glyph.Height + std::max(1,
-				static_cast<int>(std::round(pixelHeight * 0.12f)));
+			// OffsetY is the glyph bottom relative to the baseline. The previous
+			// value placed almost the whole replacement box below the baseline,
+			// so normal line clipping removed its lower half.
+			glyph.OffsetY = -std::max(1,
+				static_cast<int>(std::round(pixelHeight * 0.18f)));
 			glyph.Advance = static_cast<float>(glyph.Width + 3);
 			glyph.Alpha.assign(static_cast<size_t>(glyph.Width) * glyph.Height, 0);
 			const int stroke = std::max(1, glyph.Width / 12);
@@ -152,6 +163,44 @@ namespace TomCat {
 			return hash;
 		}
 
+	}
+
+	std::span<const BuiltInFontAsset> GetBuiltInFontAssets()
+	{
+		return kBuiltInFontAssets;
+	}
+
+	const BuiltInFontAsset* FindBuiltInFontAsset(AssetHandle handle)
+	{
+		const auto found = std::find_if(kBuiltInFontAssets.begin(),
+			kBuiltInFontAssets.end(), [handle](const BuiltInFontAsset& asset)
+			{
+				return asset.Handle == handle;
+			});
+		return found == kBuiltInFontAssets.end() ? nullptr : &*found;
+	}
+
+	const BuiltInFontAsset* FindBuiltInFontAsset(std::string_view name)
+	{
+		const auto found = std::find_if(kBuiltInFontAssets.begin(),
+			kBuiltInFontAssets.end(), [name](const BuiltInFontAsset& asset)
+			{
+				return asset.Name == name;
+			});
+		return found == kBuiltInFontAssets.end() ? nullptr : &*found;
+	}
+
+	std::filesystem::path GetBuiltInFontAssetPath(AssetHandle handle)
+	{
+		const BuiltInFontAsset* asset = FindBuiltInFontAsset(handle);
+		return asset ? ApplicationPaths::ResolveRuntimePackageAsset(
+			UTF8ToPath(asset->PackageRelativePath))
+			: std::filesystem::path{};
+	}
+
+	AssetHandle GetDefaultRuntimeFontHandle()
+	{
+		return AssetHandle(BuiltInLegacyRuntimeFontHandleValue);
 	}
 
 	const FontGlyph* FontAtlasData::Find(uint32_t codepoint) const
@@ -400,7 +449,14 @@ namespace TomCat {
 				for (int column = 0; column < raster.Width; ++column)
 				{
 					const uint32_t px = placement.X + 1 + static_cast<uint32_t>(column);
-					const uint32_t py = placement.Y + 1 + static_cast<uint32_t>(row);
+					// stb_truetype emits bitmap rows from top to bottom, while a raw
+					// OpenGL upload maps the first row to v=0.  Runtime textures loaded
+					// through stb_image are flipped before upload, so keep the generated
+					// atlas in that same bottom-up convention.  The glyph UVs below are
+					// expressed in the normal bottom-left OpenGL coordinate system.
+					const uint32_t sourceY = placement.Y + 1
+						+ static_cast<uint32_t>(row);
+					const uint32_t py = candidate.Height - 1 - sourceY;
 					const size_t destination = (static_cast<size_t>(py) * candidate.Width + px) * 4;
 					const size_t source = static_cast<size_t>(row)
 						* raster.Width + column;
@@ -777,6 +833,11 @@ namespace TomCat {
 		std::string_view requiredText, AssetHandle fallbackFont,
 		AssetHandle emojiFont)
 	{
+		// Scenes authored before the built-in font handle existed serialized 0.
+		// Keep those scenes readable and give every newly created text component a
+		// real Latin font instead of a repeated procedural replacement box.
+		if (static_cast<uint64_t>(handle) == 0)
+			handle = GetDefaultRuntimeFontHandle();
 		const Impl::FontChainKey key = { static_cast<uint64_t>(handle),
 			static_cast<uint64_t>(fallbackFont), static_cast<uint64_t>(emojiFont) };
 		const std::vector<uint32_t> decoded = FontAtlasBuilder::DecodeUTF8(
@@ -934,7 +995,9 @@ namespace TomCat {
 
 	void FontManager::Release(AssetHandle handle)
 	{
-		const uint64_t raw = static_cast<uint64_t>(handle);
+		const uint64_t raw = static_cast<uint64_t>(handle) == 0
+			? static_cast<uint64_t>(GetDefaultRuntimeFontHandle())
+			: static_cast<uint64_t>(handle);
 		std::unique_lock lock(m_Impl->Mutex);
 		std::vector<std::shared_ptr<Impl::FontChainState>> removed;
 		for (auto iterator = m_Impl->Fonts.begin();

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TomCat/Renderer/Texture.h"
+#include "EditorPreview.h"
 
 #include <array>
 #include <cstddef>
@@ -11,8 +11,7 @@ namespace TomCat {
 
 	enum class EditorIcon : size_t
 	{
-		AssetsRoot = 0,
-		FolderClosed,
+		FolderClosed = 0,
 		FolderOpen,
 		GenericFile,
 		SceneClosed,
@@ -69,7 +68,7 @@ namespace TomCat {
 			for (size_t index = 0; index < m_Icons.size(); ++index)
 			{
 				const EditorIcon icon = static_cast<EditorIcon>(index);
-				Ref<Texture2D> texture = Texture2D::Create(GetPath(icon));
+				Ref<Texture2D> texture = LoadEditorPreview(GetPath(icon));
 				if (!texture || !texture->IsLoaded())
 				{
 					texture.reset();
@@ -99,7 +98,6 @@ namespace TomCat {
 			constexpr const char* editorRoot = "Packages/Resources/Icons/TomCat/Editor/";
 			switch (icon)
 			{
-				case EditorIcon::AssetsRoot: return std::filesystem::path(assetRoot) / "assets-root.png";
 				case EditorIcon::FolderClosed: return std::filesystem::path(assetRoot) / "folder-closed.png";
 				case EditorIcon::FolderOpen: return std::filesystem::path(assetRoot) / "folder-open.png";
 				case EditorIcon::GenericFile: return std::filesystem::path(assetRoot) / "generic-file.png";
