@@ -1,29 +1,29 @@
 // Shared by desktop EditorLayer and the embedded Web host.
 
-		if (!m_ShowProjectSettingsPanel)
+		if (!m_Layer.m_ShowProjectSettingsPanel)
 			return;
-		if (m_ProjectSettingsDraftProject != m_CurrentProject)
+		if (m_ProjectSettingsDraftProject != m_Layer.m_CurrentProject)
 			LoadProjectSettingsDraft();
 
-		if (m_FocusProjectSettingsPanel)
+		if (m_Layer.m_FocusProjectSettingsPanel)
 		{
 			ImGui::SetNextWindowFocus();
-			m_FocusProjectSettingsPanel = false;
+			m_Layer.m_FocusProjectSettingsPanel = false;
 		}
 		PrepareEditorToolWindow(ImVec2(900,680),ImVec2(640,420));
-		if (!BeginEditorWindow("Project Settings", &m_ShowProjectSettingsPanel,
+		if (!BeginEditorWindow("Project Settings", &m_Layer.m_ShowProjectSettingsPanel,
 			ImGuiWindowFlags_NoDocking))
 		{
 			ImGui::End();
 			return;
 		}
 
-		const bool hasProject = m_CurrentProject != nullptr;
-		const bool editable = hasProject && !IsSceneRunning();
+		const bool hasProject = m_Layer.m_CurrentProject != nullptr;
+		const bool editable = hasProject && !m_Layer.IsSceneRunning();
 		if (!hasProject)
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
 				"Open a project to edit Player, Tags, Layers, and Physics 2D settings.");
-		else if (IsSceneRunning())
+		else if (m_Layer.IsSceneRunning())
 			ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f),
 				"Project settings are read-only while the scene is running. Stop Play Mode to edit them.");
 
