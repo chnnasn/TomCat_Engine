@@ -153,6 +153,7 @@ try {
 	Invoke-NativeRegression -Name "AudioRegression"
     Invoke-NativeRegression -Name "ImporterRegression"
     Invoke-NativeRegression -Name "InputRegression"
+    Invoke-NativeRegression -Name "ProfilerRegression"
 
     $playerSmoke = Join-Path $PSScriptRoot "Run-CSharpPlayerSmoke.ps1"
     if (-not (Test-Path -LiteralPath $playerSmoke -PathType Leaf)) {

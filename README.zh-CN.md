@@ -4,16 +4,17 @@
 
 本页仅记录本分支的增量与进度。项目总览、通用功能、展示和桌面基础构建流程见[主分支 README](https://github.com/chnnasn/TomCat_Engine/blob/main/README.zh-CN.md)；本分支特有的依赖与入口见下文。
 
-文档整理：**2026-09-21**。下方验证进度引用已有记录，本次仅修改文档，未重新运行引擎测试。
+文档更新：**2026-09-28**。下方验证进度引用已有记录，本次合并未重新运行完整引擎测试套件。
 
 ## 当前分支的作用
 
-用于 Emscripten/WebGL2 目标、复用原生 ImGui 编辑面板和浏览器宿主集成，包括 Scene 工具栏与 Game 视图行为；持久化由宿主负责。构建和接入见 [Web 指南](Web/README.zh-CN.md)。需要 SharedArrayBuffer/Workers，不支持 C# 负载。本分支独立演进，不保证包含桌面主线的最新改动。
+用于 Emscripten/WebGL2 目标、复用原生 ImGui 编辑面板和浏览器宿主集成，包括 Scene 工具栏与 Game 视图行为；持久化由宿主负责。构建和接入见 [Web 指南](Web/README.zh-CN.md)。需要 SharedArrayBuffer/Workers，不支持 C# 负载。本分支在 **2026-09-28** 与 `main` 同步，同时保留 Web 专属历史。
 
 ## 当前进度
 
 - [x] Emscripten/WebGL2 模块复用原生 Player Runtime、TCPAK 读取、2D 场景和 ImGui 编辑面板，文件选择与持久化由浏览器宿主负责。
 - [x] 共享可拖动 Q/W/E/R Scene 工具与 Pivot/Center、Local/Global 控件；Game 在 Play 前和 Stop 后也显示主相机，localStorage 可用时保存工具栏位置。
+- [x] 已合入最新桌面主线，包括结构化 C# 诊断、portable PDB，以及供原生 Editor/Player 使用的纯托管 NuGet 包、项目引用、传递依赖和本地 DLL 封装；Web 端仍拒绝 C# 负载。
 
 ## 使用与开发入口
 
@@ -27,4 +28,4 @@ Web 指南记录了 2026-09-16 PhysicsPlayground 浏览器 Cook/加载/渲染/�
 ## 已知限制与后续工作
 
 - 不支持 C# 负载、可听 WebAudio、自定义 Cooked SPIR-V 着色器、多重采样 Framebuffer 或单线程回退，Web 编辑仍限定为 2D。
-- 宿主持久化及更广泛的设备/控件/输入法验收仍需接入工作，本分支不会自动包含桌面最新改动。
+- 宿主持久化及更广泛的设备/控件/输入法验收仍需接入工作；后续桌面改动仍需显式合并。

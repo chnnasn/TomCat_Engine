@@ -3,6 +3,7 @@
 
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
+#include "TomCat/Core/Input.h"
 #include "TomCat/Renderer/Camera.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/Renderer2D.h"
@@ -17,6 +18,7 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include <yaml-cpp/yaml.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -78,6 +80,26 @@ namespace TomCat {
 		bool Finite(const glm::vec4& value)
 		{
 			return Finite(value.x) && Finite(value.y) && Finite(value.z) && Finite(value.w);
+		}
+
+		template<typename Component>
+		Component* FindScope(Scene& scene, Entity entity)
+		{
+			for (Entity current = entity; current; current = scene.GetParent(current))
+				if (current.HasComponent<Component>() && current.GetComponent<Component>().Enabled)
+					return &current.GetComponent<Component>();
+			return nullptr;
+		}
+
+		bool IsRaycastTarget(Entity entity)
+		{
+			return (entity.HasComponent<UIImage>() && entity.GetComponent<UIImage>().Enabled
+				&& entity.GetComponent<UIImage>().RaycastTarget)
+				|| (entity.HasComponent<UIText>() && entity.GetComponent<UIText>().Enabled
+					&& entity.GetComponent<UIText>().RaycastTarget)
+				|| (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().Enabled)
+				|| (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().Enabled)
+				|| (entity.HasComponent<UIScrollView>() && entity.GetComponent<UIScrollView>().Enabled);
 		}
 
 		float CalculateCanvasScale(const Canvas& canvas, uint32_t width,
@@ -142,13 +164,172 @@ namespace TomCat {
 			return true;
 		}
 
-		glm::mat4 QuadTransform(const UIRect& rectangle, float z = 0.0f)
+		struct UIClipVertex
 		{
-			return glm::translate(glm::mat4(1.0f), {
-				rectangle.X + rectangle.Width * 0.5f,
-				rectangle.Y + rectangle.Height * 0.5f, z })
-				* glm::scale(glm::mat4(1.0f), {
-					rectangle.Width, rectangle.Height, 1.0f });
+			glm::vec2 Position{ 0.0f };
+			glm::vec2 UV{ 0.0f };
+		};
+
+		bool TransformUIPosition(const glm::mat4& transform,
+			const glm::vec2& position, glm::vec2& output)
+		{
+			const glm::vec4 transformed = transform
+				* glm::vec4(position, 0.0f, 1.0f);
+			if (!std::isfinite(transformed.x) || !std::isfinite(transformed.y)
+				|| !std::isfinite(transformed.w)
+				|| std::abs(transformed.w) <= 0.000001f)
+				return false;
+			output = glm::vec2(transformed) / transformed.w;
+			return Finite(output);
+		}
+
+		bool InvertUITransform(const glm::mat4& transform, glm::mat4& inverse)
+		{
+			const float determinant = glm::determinant(transform);
+			if (!std::isfinite(determinant) || std::abs(determinant) <= 0.000001f)
+				return false;
+			inverse = glm::inverse(transform);
+			for (glm::length_t column = 0; column < 4; ++column)
+				for (glm::length_t row = 0; row < 4; ++row)
+					if (!std::isfinite(inverse[column][row]))
+						return false;
+			return true;
+		}
+
+		std::vector<UIClipVertex> ClipPolygonToRectangle(
+			std::vector<UIClipVertex> polygon, const UIRect& rectangle)
+		{
+			if (polygon.size() < 3 || rectangle.IsEmpty())
+				return {};
+			for (int edge = 0; edge < 4 && polygon.size() >= 3; ++edge)
+			{
+				const bool xAxis = edge < 2;
+				const bool lowerEdge = (edge % 2) == 0;
+				const float boundary = xAxis
+					? (lowerEdge ? rectangle.X : rectangle.X + rectangle.Width)
+					: (lowerEdge ? rectangle.Y : rectangle.Y + rectangle.Height);
+				auto coordinate = [xAxis](const UIClipVertex& vertex)
+				{
+					return xAxis ? vertex.Position.x : vertex.Position.y;
+				};
+				auto inside = [lowerEdge, boundary, &coordinate](
+					const UIClipVertex& vertex)
+				{
+					return lowerEdge ? coordinate(vertex) >= boundary
+						: coordinate(vertex) <= boundary;
+				};
+
+				std::vector<UIClipVertex> output;
+				output.reserve(polygon.size() + 1);
+				UIClipVertex previous = polygon.back();
+				bool previousInside = inside(previous);
+				for (const UIClipVertex& current : polygon)
+				{
+					const bool currentInside = inside(current);
+					if (currentInside != previousInside)
+					{
+						const float denominator = coordinate(current)
+							- coordinate(previous);
+						if (std::isfinite(denominator)
+							&& std::abs(denominator) > 0.000001f)
+						{
+							const float amount = std::clamp((boundary
+								- coordinate(previous)) / denominator,
+								0.0f, 1.0f);
+							output.push_back({ glm::mix(previous.Position,
+								current.Position, amount),
+								glm::mix(previous.UV, current.UV, amount) });
+						}
+					}
+					if (currentInside)
+						output.push_back(current);
+					previous = current;
+					previousInside = currentInside;
+				}
+				polygon = std::move(output);
+			}
+			return polygon.size() >= 3 ? polygon : std::vector<UIClipVertex>{};
+		}
+
+		std::vector<UIClipVertex> BuildClippedUIPolygon(
+			const UIRect& rectangle, const glm::mat4& elementTransform,
+			const std::vector<RuntimeUIClipRegion>& clipRegions,
+			const glm::vec2& uvMin, const glm::vec2& uvMax)
+		{
+			if (rectangle.IsEmpty() || !Finite(uvMin) || !Finite(uvMax))
+				return {};
+			const glm::vec2 localPositions[4] = {
+				{ rectangle.X, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y },
+				{ rectangle.X + rectangle.Width, rectangle.Y + rectangle.Height },
+				{ rectangle.X, rectangle.Y + rectangle.Height }
+			};
+			const glm::vec2 textureCoordinates[4] = {
+				{ uvMin.x, uvMin.y }, { uvMax.x, uvMin.y },
+				{ uvMax.x, uvMax.y }, { uvMin.x, uvMax.y }
+			};
+			std::vector<UIClipVertex> polygon;
+			polygon.reserve(8);
+			for (size_t index = 0; index < 4; ++index)
+			{
+				glm::vec2 transformed;
+				if (!TransformUIPosition(elementTransform, localPositions[index],
+					transformed))
+					return {};
+				polygon.push_back({ transformed, textureCoordinates[index] });
+			}
+
+			for (const RuntimeUIClipRegion& region : clipRegions)
+			{
+				glm::mat4 inverse(1.0f);
+				if (!InvertUITransform(region.Transform, inverse))
+					return {};
+				for (UIClipVertex& vertex : polygon)
+				{
+					glm::vec2 local;
+					if (!TransformUIPosition(inverse, vertex.Position, local))
+						return {};
+					vertex.Position = local;
+				}
+				polygon = ClipPolygonToRectangle(std::move(polygon),
+					region.Rectangle);
+				if (polygon.empty())
+					return {};
+				for (UIClipVertex& vertex : polygon)
+				{
+					glm::vec2 transformed;
+					if (!TransformUIPosition(region.Transform, vertex.Position,
+						transformed))
+						return {};
+					vertex.Position = transformed;
+				}
+			}
+			return polygon;
+		}
+
+		void DrawClippedUIQuad(const UIRect& rectangle,
+			const glm::mat4& elementTransform,
+			const std::vector<RuntimeUIClipRegion>& clipRegions,
+			const Ref<Texture2D>& texture, const glm::vec2& uvMin,
+			const glm::vec2& uvMax, const glm::vec4& color, int entityID)
+		{
+			const std::vector<UIClipVertex> polygon = BuildClippedUIPolygon(
+				rectangle, elementTransform, clipRegions, uvMin, uvMax);
+			for (size_t index = 1; index + 1 < polygon.size(); ++index)
+			{
+				const std::array<glm::vec3, 4> positions = {{
+					{ polygon[0].Position, 0.0f },
+					{ polygon[index].Position, 0.0f },
+					{ polygon[index + 1].Position, 0.0f },
+					{ polygon[0].Position, 0.0f }
+				}};
+				const std::array<glm::vec2, 4> textureCoordinates = {{
+					polygon[0].UV, polygon[index].UV,
+					polygon[index + 1].UV, polygon[0].UV
+				}};
+				Renderer2D::DrawTexturedQuadVertices(positions, texture,
+					textureCoordinates, color, entityID);
+			}
 		}
 
 		glm::vec4 MultiplyColor(const glm::vec4& first, const glm::vec4& second)
@@ -157,7 +338,9 @@ namespace TomCat {
 		}
 
 		void DrawScreenText(const UIText& text, const UIRect& rectangle,
-			const UIRect& clip, float canvasScale, int entityID)
+			const std::vector<RuntimeUIClipRegion>& inheritedClipRegions,
+			float canvasScale,
+			const glm::mat4& elementTransform, int entityID, float horizontalOffset = 0.0f)
 		{
 			if (!text.Enabled || text.Text.empty() || !Finite(text.FontSize)
 				|| text.FontSize <= 0.0f || !Finite(canvasScale)
@@ -171,20 +354,203 @@ namespace TomCat {
 				text.Text, text.FontSize * canvasScale,
 				text.Wrap ? rectangle.Width : 0.0f,
 				text.Alignment, text.LineSpacing);
-			const glm::vec2 origin(rectangle.X,
+			const glm::vec2 origin(rectangle.X - horizontalOffset,
 				rectangle.Y + std::max(0.0f, rectangle.Height - layout.Height));
+			std::vector<RuntimeUIClipRegion> clipRegions = inheritedClipRegions;
+			clipRegions.push_back({ rectangle, elementTransform });
 			for (const TextGlyphQuad& glyph : layout.Glyphs)
 			{
 				const UIRect original{ origin.x + glyph.Rect.X,
 					origin.y + glyph.Rect.Y, glyph.Rect.Width, glyph.Rect.Height };
-				UIRect visible;
-				glm::vec2 uvMin, uvMax;
-				if (!ClipQuad(original, clip, glyph.UVMin, glyph.UVMax,
-					visible, uvMin, uvMax))
-					continue;
-				Renderer2D::DrawTexturedQuadRegion(QuadTransform(visible),
-					font->GetTexture(), uvMin, uvMax, text.Color, entityID);
+				DrawClippedUIQuad(original, elementTransform, clipRegions,
+					font->GetTexture(), glyph.UVMin, glyph.UVMax,
+					text.Color, entityID);
 			}
+		}
+
+		void RenderUILayout(Scene& scene, const RuntimeUILayoutSnapshot& layout,
+			RuntimeUIVisibilityMode visibility, const glm::mat4& viewProjection)
+		{
+			// Script-only and otherwise UI-free scenes must not touch the graphics
+			// backend. This also keeps server/headless updates valid before a
+			// Renderer2D context exists.
+			if (layout.RenderOrder.empty())
+				return;
+
+			Camera renderCamera(viewProjection);
+			RenderCommand::SetDepthTest(false);
+			Renderer2D::BeginScene(renderCamera, glm::mat4(1.0f));
+			for (UUID id : layout.RenderOrder)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (!entity || !IsVisible(scene, entity, visibility))
+					continue;
+				const auto rectangle = layout.Rectangles.find(id);
+				const auto clip = layout.Clips.find(id);
+				const auto elementTransform = layout.Transforms.find(id);
+				const auto clipRegions = layout.ClipRegions.find(id);
+				if (rectangle == layout.Rectangles.end()
+					|| clip == layout.Clips.end()
+					|| elementTransform == layout.Transforms.end()
+					|| clipRegions == layout.ClipRegions.end())
+					continue;
+
+				if (entity.HasComponent<UIImage>())
+				{
+					auto& image = entity.GetComponent<UIImage>();
+					if (image.Enabled && Finite(image.Color))
+					{
+						Ref<Texture2D> texture;
+						glm::vec2 sourceUVMin(0.0f), sourceUVMax(1.0f);
+						float sourceAspect = rectangle->second.Width
+							/ std::max(rectangle->second.Height, 1.0e-6f);
+						if (static_cast<uint64_t>(image.Image) != 0)
+						{
+							AssetManager& assets = AssetManager::Get();
+							texture = assets.LoadTexture(image.Image);
+							if (texture && texture->GetHeight() > 0)
+								sourceAspect = static_cast<float>(texture->GetWidth())
+									/ texture->GetHeight();
+							ResolvedSpriteAsset resolved;
+							SpriteRenderGeometry spriteGeometry;
+							if (texture && assets.ResolveSpriteAsset(image.Image, resolved)
+								&& resolved.IsSubAsset
+								&& BuildSpriteRenderGeometry(resolved.Data,
+									texture->GetWidth(), texture->GetHeight(), spriteGeometry))
+							{
+								sourceUVMin = { spriteGeometry.UMin, spriteGeometry.VMin };
+								sourceUVMax = { spriteGeometry.UMax, spriteGeometry.VMax };
+								sourceAspect = spriteGeometry.Width
+									/ std::max(spriteGeometry.Height, 1.0e-6f);
+							}
+						}
+
+						UIImageGeometry geometry;
+						if (RuntimeUISystem::BuildImageGeometry(rectangle->second,
+							rectangle->second, sourceAspect, sourceUVMin, sourceUVMax,
+							image.PreserveAspect, geometry))
+						{
+							glm::vec4 color = image.Color;
+							if (const auto* theme = FindScope<UITheme>(scene, entity))
+								color *= theme->ImageColor;
+							if (entity.HasComponent<UIButton>()
+								&& entity.GetComponent<UIButton>().Enabled)
+							{
+								const auto& button = entity.GetComponent<UIButton>();
+								glm::vec4 state = !button.Interactable
+									? button.DisabledColor
+									: button.RuntimePressed ? button.PressedColor
+									: button.RuntimeHovered ? button.HoverColor
+									: button.RuntimeFocused ? button.SelectedColor
+									: button.NormalColor;
+								const float multiplier = std::isfinite(
+									button.ColorMultiplier)
+									? std::clamp(button.ColorMultiplier, 0.0f, 5.0f)
+									: 1.0f;
+								color = MultiplyColor(color, state * multiplier);
+							}
+							if (static_cast<uint64_t>(image.Image) == 0 || texture)
+								DrawClippedUIQuad(geometry.Rect,
+									elementTransform->second, clipRegions->second,
+									texture, geometry.UVMin, geometry.UVMax, color,
+									static_cast<int>(static_cast<entt::entity>(entity)));
+						}
+					}
+				}
+
+				if (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().Enabled)
+				{
+					const auto& slider = entity.GetComponent<UISlider>();
+					UIRect fill = rectangle->second;
+					const float amount = slider.Maximum > slider.Minimum
+						? std::clamp((slider.Value - slider.Minimum) / (slider.Maximum - slider.Minimum), 0.0f, 1.0f) : 0.0f;
+					if (slider.Vertical) fill.Height *= amount; else fill.Width *= amount;
+					glm::vec4 accent = slider.FillColor;
+					if (const auto* theme = FindScope<UITheme>(scene, entity)) accent = theme->AccentColor;
+					if (!slider.Interactable) accent.a *= 0.5f;
+					DrawClippedUIQuad(rectangle->second, elementTransform->second, clipRegions->second,
+						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, slider.TrackColor, static_cast<int>(static_cast<entt::entity>(entity)));
+					DrawClippedUIQuad(fill, elementTransform->second, clipRegions->second,
+						{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, accent, static_cast<int>(static_cast<entt::entity>(entity)));
+				}
+				if (entity.HasComponent<UIText>() || entity.HasComponent<UIInputField>())
+				{
+					UIText text = entity.HasComponent<UIText>() ? entity.GetComponent<UIText>() : UIText{};
+					float horizontalOffset = 0.0f;
+					std::optional<UIRect> caretRectangle;
+					std::vector<RuntimeUIClipRegion> inputClipRegions = clipRegions->second;
+					inputClipRegions.push_back({ rectangle->second, elementTransform->second });
+					text.Text = RuntimeUISystem::ResolveText(scene, entity);
+					if (const auto* theme = FindScope<UITheme>(scene, entity))
+					{
+						text.Color *= theme->TextColor;
+						text.FontSize *= theme->FontScale;
+						if (static_cast<uint64_t>(theme->Font) != 0) text.Font = theme->Font;
+					}
+					if (entity.HasComponent<UIInputField>())
+					{
+						const auto& field = entity.GetComponent<UIInputField>();
+						text.Enabled = text.Enabled && field.Enabled;
+						text.Wrap = false;
+						text.Text = field.Password ? std::string(FontAtlasBuilder::DecodeUTF8(field.Text).size(), '*') : field.Text;
+						if (field.RuntimeFocused && text.Enabled)
+						{
+							size_t caret = std::min<size_t>(field.RuntimeCaret, field.Text.size());
+							size_t anchor = std::min<size_t>(field.RuntimeSelectionAnchor, field.Text.size());
+							auto repairBoundary = [&field](size_t value)
+							{
+								while (value > 0 && value < field.Text.size()
+									&& (static_cast<unsigned char>(field.Text[value]) & 0xc0) == 0x80) --value;
+								return value;
+							};
+							caret = repairBoundary(caret);
+							anchor = repairBoundary(anchor);
+							if (field.Password)
+							{
+								caret = FontAtlasBuilder::DecodeUTF8(std::string_view(field.Text).substr(0, caret)).size();
+								anchor = FontAtlasBuilder::DecodeUTF8(std::string_view(field.Text).substr(0, anchor)).size();
+							}
+							if (const auto font = FontManager::Get().Load(text.Font, text.Text, text.FallbackFont, text.EmojiFont))
+							{
+								const float scale = layout.Scales.at(id);
+								auto measurePrefix = [&](size_t length)
+								{
+									return TextLayoutEngine::Build(font->GetAtlas(),
+										std::string_view(text.Text).substr(0, length), text.FontSize * scale,
+										0.0f, TextAlignment::Left, text.LineSpacing);
+								};
+								const TextLayoutResult caretLayout = measurePrefix(caret);
+								const float caretX = caretLayout.Width;
+								const float anchorX = measurePrefix(anchor).Width;
+								horizontalOffset = std::max(0.0f, caretX - rectangle->second.Width + 8.0f * scale);
+								const float bottom = rectangle->second.Y + std::max(0.0f, rectangle->second.Height - caretLayout.Height);
+								if (caret != anchor)
+								{
+									glm::vec4 selectionColor{ 0.3f, 0.6f, 1.0f, 1.0f };
+									if (const auto* theme = FindScope<UITheme>(scene, entity)) selectionColor = theme->AccentColor;
+									selectionColor.a *= 0.45f;
+									const UIRect selection{ rectangle->second.X + std::min(caretX, anchorX) - horizontalOffset,
+										bottom, std::abs(caretX - anchorX), caretLayout.Height };
+									DrawClippedUIQuad(selection, elementTransform->second, inputClipRegions,
+										{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, selectionColor, static_cast<int>(static_cast<entt::entity>(entity)));
+								}
+								caretRectangle = UIRect{ rectangle->second.X + caretX - horizontalOffset,
+									bottom, std::max(1.0f, scale), caretLayout.Height };
+							}
+						}
+						else if (field.Text.empty()) { text.Text = field.Placeholder; text.Color.a *= 0.5f; }
+					}
+					DrawScreenText(text, rectangle->second,
+						clipRegions->second, layout.Scales.at(id),
+						elementTransform->second,
+						static_cast<int>(static_cast<entt::entity>(entity)), horizontalOffset);
+					if (caretRectangle)
+						DrawClippedUIQuad(*caretRectangle, elementTransform->second, inputClipRegions,
+							{}, { 0.0f, 0.0f }, { 1.0f, 1.0f }, text.Color, static_cast<int>(static_cast<entt::entity>(entity)));
+				}
+			}
+			Renderer2D::EndScene();
+			RenderCommand::SetDepthTest(true);
 		}
 
 		struct LayoutBuilder
@@ -193,16 +559,29 @@ namespace TomCat {
 			entt::registry& Registry;
 			RuntimeUILayoutSnapshot& Snapshot;
 			RuntimeUIVisibilityMode Visibility;
+			bool WriteRuntimeRectangles = true;
 			std::set<uint64_t> Visited;
 
 			void LayoutChildren(Entity parent, const UIRect& parentRect,
-				const UIRect& inheritedClip, float scale)
+				const UIRect& inheritedClip, float scale,
+				const glm::mat4& parentTransform,
+				const std::vector<RuntimeUIClipRegion>& inheritedClipRegions)
 			{
+				UIRect contentRect = parentRect;
+				if (parent.HasComponent<UIScrollView>() && parent.GetComponent<UIScrollView>().Enabled)
+				{
+					auto& scroll = parent.GetComponent<UIScrollView>();
+					const glm::vec2 content = glm::max(glm::vec2(parentRect.Width, parentRect.Height), scroll.ContentSize * scale);
+					const glm::vec2 maximum = glm::max(glm::vec2(0.0f), content / scale - glm::vec2(parentRect.Width, parentRect.Height) / scale);
+					const glm::vec2 offset = glm::clamp(scroll.Offset, glm::vec2(0.0f), maximum);
+					contentRect = { parentRect.X - (scroll.Horizontal ? offset.x * scale : 0.0f),
+						parentRect.Y + parentRect.Height - content.y + (scroll.Vertical ? offset.y * scale : 0.0f), content.x, content.y };
+				}
 				UILayoutGroup* group = parent.HasComponent<UILayoutGroup>()
 					? &parent.GetComponent<UILayoutGroup>() : nullptr;
-				float horizontalCursor = parentRect.X
+				float horizontalCursor = contentRect.X
 					+ (group ? group->Padding.x * scale : 0.0f);
-				float verticalCursor = parentRect.Y + parentRect.Height
+				float verticalCursor = contentRect.Y + contentRect.Height
 					- (group ? group->Padding.w * scale : 0.0f);
 				for (UUID childID : SceneValue.GetChildrenUUIDs(parent))
 				{
@@ -212,8 +591,8 @@ namespace TomCat {
 						|| !IsVisible(SceneValue, child, Visibility)
 						|| !Visited.emplace(static_cast<uint64_t>(childID)).second)
 						continue;
-					auto& transform = child.GetComponent<RectTransform>();
-					UIRect rectangle = ResolveAnchors(transform, parentRect, scale);
+					auto& rectTransform = child.GetComponent<RectTransform>();
+					UIRect rectangle = ResolveAnchors(rectTransform, contentRect, scale);
 					if (group && group->Enabled)
 					{
 						glm::vec2 controlled(rectangle.Width, rectangle.Height);
@@ -222,30 +601,319 @@ namespace TomCat {
 						if (group->Direction == UILayoutDirection::Horizontal)
 						{
 							rectangle = { horizontalCursor,
-								parentRect.Y + group->Padding.y * scale,
+								contentRect.Y + group->Padding.y * scale,
 								controlled.x, controlled.y };
 							horizontalCursor += controlled.x + group->Spacing * scale;
 						}
 						else
 						{
 							verticalCursor -= controlled.y;
-							rectangle = { parentRect.X + group->Padding.x * scale,
+							rectangle = { contentRect.X + group->Padding.x * scale,
 								verticalCursor, controlled.x, controlled.y };
 							verticalCursor -= group->Spacing * scale;
 						}
 					}
 					const UIRect clip = UIRect::Intersect(rectangle, inheritedClip);
-					transform.RuntimeRect = rectangle.ToVector();
-					transform.RuntimeClipRect = clip.ToVector();
+					if (WriteRuntimeRectangles)
+					{
+						rectTransform.RuntimeRect = rectangle.ToVector();
+						rectTransform.RuntimeClipRect = clip.ToVector();
+					}
 					Snapshot.Rectangles[childID] = rectangle;
 					Snapshot.Clips[childID] = clip;
 					Snapshot.Scales[childID] = scale;
+					glm::mat4 localTransform(1.0f);
+					if (child.HasComponent<Transform>())
+					{
+						const Transform& authored = child.GetComponent<Transform>();
+						const float rotation = std::isfinite(authored._LocalRotation.z)
+							? authored._LocalRotation.z : 0.0f;
+						const float scaleX = std::isfinite(authored._LocalScale.x)
+							? authored._LocalScale.x : 1.0f;
+						const float scaleY = std::isfinite(authored._LocalScale.y)
+							? authored._LocalScale.y : 1.0f;
+						const glm::vec2 pivot{
+							rectangle.X + rectangle.Width * rectTransform.Pivot.x,
+							rectangle.Y + rectangle.Height * rectTransform.Pivot.y };
+						localTransform = glm::translate(glm::mat4(1.0f),
+							glm::vec3(pivot, 0.0f))
+							* glm::rotate(glm::mat4(1.0f), rotation,
+								glm::vec3(0.0f, 0.0f, 1.0f))
+							* glm::scale(glm::mat4(1.0f),
+								glm::vec3(scaleX, scaleY, 1.0f))
+							* glm::translate(glm::mat4(1.0f),
+								glm::vec3(-pivot, 0.0f));
+					}
+					const glm::mat4 accumulatedTransform = parentTransform
+						* localTransform;
+					Snapshot.Transforms[childID] = accumulatedTransform;
+					Snapshot.ClipRegions[childID] = inheritedClipRegions;
 					Snapshot.RenderOrder.push_back(childID);
-					const UIRect childClip = transform.ClipChildren ? clip : inheritedClip;
-					LayoutChildren(child, rectangle, childClip, scale);
+					const bool clipsChildren = rectTransform.ClipChildren
+						|| (child.HasComponent<UIScrollView>() && child.GetComponent<UIScrollView>().Enabled);
+					const UIRect childClip = clipsChildren
+						? clip : inheritedClip;
+					std::vector<RuntimeUIClipRegion> childClipRegions =
+						inheritedClipRegions;
+					if (clipsChildren)
+						childClipRegions.push_back({ rectangle,
+							accumulatedTransform });
+					LayoutChildren(child, rectangle, childClip, scale,
+						accumulatedTransform, childClipRegions);
 				}
 			}
 		};
+
+		bool ContainsTransformedPoint(const RuntimeUILayoutSnapshot& layout,
+			UUID id, const glm::vec2& point)
+		{
+			const auto rectangle = layout.Rectangles.find(id);
+			const auto transform = layout.Transforms.find(id);
+			const auto clipRegions = layout.ClipRegions.find(id);
+			if (rectangle == layout.Rectangles.end()
+				|| transform == layout.Transforms.end()
+				|| clipRegions == layout.ClipRegions.end())
+				return false;
+			glm::mat4 inverse(1.0f);
+			if (!InvertUITransform(transform->second, inverse))
+				return false;
+			glm::vec2 local;
+			if (!TransformUIPosition(inverse, point, local)
+				|| !rectangle->second.Contains(local))
+				return false;
+			for (const RuntimeUIClipRegion& region : clipRegions->second)
+			{
+				if (!InvertUITransform(region.Transform, inverse)
+					|| !TransformUIPosition(inverse, point, local)
+					|| !region.Rectangle.Contains(local))
+					return false;
+			}
+			return true;
+		}
+
+
+		bool CanFocus(Entity entity)
+		{
+			return (entity.HasComponent<UIButton>() && entity.GetComponent<UIButton>().Enabled && entity.GetComponent<UIButton>().Interactable)
+				|| (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().Enabled && entity.GetComponent<UISlider>().Interactable)
+				|| (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().Enabled && entity.GetComponent<UIInputField>().Interactable);
+		}
+
+		bool HasFocus(Entity entity)
+		{
+			return (entity.HasComponent<UIButton>() && entity.GetComponent<UIButton>().RuntimeFocused)
+				|| (entity.HasComponent<UISlider>() && entity.GetComponent<UISlider>().RuntimeFocused)
+				|| (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().RuntimeFocused);
+		}
+
+		void SetFocus(Entity entity, bool focused)
+		{
+			if (entity.HasComponent<UIButton>()) entity.GetComponent<UIButton>().RuntimeFocused = focused;
+			if (entity.HasComponent<UISlider>()) entity.GetComponent<UISlider>().RuntimeFocused = focused;
+			if (entity.HasComponent<UIInputField>())
+			{
+				auto& field = entity.GetComponent<UIInputField>();
+				if (focused && !field.RuntimeFocused)
+					field.RuntimeCaret = field.RuntimeSelectionAnchor = static_cast<uint32_t>(field.Text.size());
+				field.RuntimeFocused = focused;
+			}
+		}
+
+		size_t PreviousCharacter(const std::string& text, size_t position)
+		{
+			position = std::min(position, text.size());
+			if (position > 0) --position;
+			while (position > 0 && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) --position;
+			return position;
+		}
+
+		size_t NextCharacter(const std::string& text, size_t position)
+		{
+			if (position < text.size()) ++position;
+			while (position < text.size() && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) ++position;
+			return position;
+		}
+
+		void EditInputField(UIInputField& field, const RuntimeUIInputFrame& input)
+		{
+			if (input.DisplayFrame != 0 && field.RuntimeLastInputFrame == input.DisplayFrame) return;
+			field.RuntimeLastInputFrame = input.DisplayFrame;
+			field.RuntimeCaret = static_cast<uint32_t>(std::min<size_t>(field.RuntimeCaret, field.Text.size()));
+			field.RuntimeSelectionAnchor = static_cast<uint32_t>(std::min<size_t>(field.RuntimeSelectionAnchor, field.Text.size()));
+			// C# may replace Text while focused. Repair indices to UTF-8 boundaries.
+			while (field.RuntimeCaret < field.Text.size() && (static_cast<unsigned char>(field.Text[field.RuntimeCaret]) & 0xc0) == 0x80) --field.RuntimeCaret;
+			while (field.RuntimeSelectionAnchor < field.Text.size() && (static_cast<unsigned char>(field.Text[field.RuntimeSelectionAnchor]) & 0xc0) == 0x80) --field.RuntimeSelectionAnchor;
+			if (input.SelectAll) { field.RuntimeSelectionAnchor = 0; field.RuntimeCaret = static_cast<uint32_t>(field.Text.size()); }
+			if (input.CaretHome) field.RuntimeCaret = 0;
+			if (input.CaretEnd) field.RuntimeCaret = static_cast<uint32_t>(field.Text.size());
+			if (input.CaretLeft) field.RuntimeCaret = static_cast<uint32_t>(PreviousCharacter(field.Text, field.RuntimeCaret));
+			if (input.CaretRight) field.RuntimeCaret = static_cast<uint32_t>(NextCharacter(field.Text, field.RuntimeCaret));
+			if (!input.ExtendSelection && (input.CaretHome || input.CaretEnd || input.CaretLeft || input.CaretRight))
+				field.RuntimeSelectionAnchor = field.RuntimeCaret;
+			bool cutSelection = false;
+			if ((input.Copy || input.Cut) && !field.Password && input.WriteClipboard
+				&& field.RuntimeCaret != field.RuntimeSelectionAnchor)
+			{
+				const size_t first = std::min(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				const size_t last = std::max(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				const bool copied = input.WriteClipboard(field.Text.substr(first, last - first));
+				cutSelection = copied && input.Cut && !field.ReadOnly;
+			}
+			if (field.ReadOnly) return;
+			const std::string before = field.Text;
+			const std::string& insertedText = input.Paste ? input.ClipboardText : input.TextInput;
+			bool valid = false;
+			FontAtlasBuilder::DecodeUTF8(insertedText, &valid);
+			if (input.Backspace || input.Delete || cutSelection || (valid && !insertedText.empty()))
+			{
+				size_t first = std::min(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				size_t last = std::max(field.RuntimeCaret, field.RuntimeSelectionAnchor);
+				if (first == last && input.Backspace) first = PreviousCharacter(field.Text, first);
+				else if (first == last && input.Delete) last = NextCharacter(field.Text, last);
+				field.Text.erase(first, last - first);
+				field.RuntimeCaret = field.RuntimeSelectionAnchor = static_cast<uint32_t>(first);
+				if (valid)
+				{
+					size_t count = FontAtlasBuilder::DecodeUTF8(field.Text).size();
+					std::string insertion;
+					for (size_t pos = 0; pos < insertedText.size();)
+					{
+						const size_t next = NextCharacter(insertedText, pos);
+						const unsigned char firstByte = static_cast<unsigned char>(insertedText[pos]);
+						if (firstByte >= 32 && firstByte != 127 && count < field.CharacterLimit
+							&& field.Text.size() + insertion.size() + next - pos <= 65536)
+						{ insertion.append(insertedText, pos, next - pos); ++count; }
+						pos = next;
+					}
+					field.Text.insert(field.RuntimeCaret, insertion);
+					field.RuntimeCaret += static_cast<uint32_t>(insertion.size());
+					field.RuntimeSelectionAnchor = field.RuntimeCaret;
+				}
+			}
+			if (before != field.Text) ++field.RuntimeChangeSerial;
+		}
+
+		struct ExtendedInteraction { bool Handled = false; bool OwnsKeyboard = false; };
+
+		ExtendedInteraction UpdateExtendedControls(Scene& scene, entt::registry& registry,
+			const RuntimeUILayoutSnapshot& layout, RuntimeUIInputFrame& input,
+			bool enabled, bool wrapNavigation)
+		{
+			ExtendedInteraction result;
+			std::vector<Entity> focusable;
+			for (UUID id : layout.RenderOrder)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (entity && CanFocus(entity)) focusable.push_back(entity);
+			}
+			for (auto value : registry.view<UIInputField>())
+			{
+				Entity entity(value, &scene);
+				if (!enabled || !layout.Rectangles.contains(entity.GetUUID()) || !CanFocus(entity))
+					entity.GetComponent<UIInputField>().RuntimeFocused = false;
+			}
+			for (auto value : registry.view<UISlider>())
+			{
+				Entity entity(value, &scene);
+				auto& slider = entity.GetComponent<UISlider>();
+				if (!enabled || !layout.Rectangles.contains(entity.GetUUID()) || !CanFocus(entity))
+					slider.RuntimeFocused = slider.RuntimeDragging = false;
+			}
+			if (!enabled) return result;
+			const glm::vec2 point(input.PointerPosition.x, static_cast<float>(layout.ViewportHeight) - input.PointerPosition.y);
+			Entity hit;
+			for (auto item = layout.RenderOrder.rbegin(); item != layout.RenderOrder.rend(); ++item)
+			{
+				Entity entity = scene.FindEntityByUUID(*item);
+				if (entity && IsRaycastTarget(entity) && ContainsTransformedPoint(layout, *item, point)) { hit = entity; break; }
+			}
+			if (input.MousePressed)
+			{
+				Entity target;
+				for (Entity current = hit; current; current = scene.GetParent(current))
+					if (CanFocus(current)) { target = current; break; }
+				for (Entity entity : focusable) SetFocus(entity, entity == target);
+				if (target && target.HasComponent<UISlider>()) target.GetComponent<UISlider>().RuntimeDragging = true;
+			}
+			if ((input.FocusNext || input.FocusPrevious) && !focusable.empty())
+			{
+				auto found = std::find_if(focusable.begin(), focusable.end(), HasFocus);
+				size_t index = found == focusable.end() ? (input.FocusPrevious ? focusable.size() - 1 : 0)
+					: static_cast<size_t>(std::distance(focusable.begin(), found));
+				if (found != focusable.end())
+				{
+					if (input.FocusPrevious) index = index > 0 ? index - 1 : wrapNavigation ? focusable.size() - 1 : index;
+					else index = index + 1 < focusable.size() ? index + 1 : wrapNavigation ? 0 : index;
+				}
+				for (size_t i = 0; i < focusable.size(); ++i) SetFocus(focusable[i], i == index);
+				input.KeyboardMoveNext = input.KeyboardMovePrevious = false;
+				result.Handled = true;
+			}
+			if (Finite(input.ScrollDelta) && input.ScrollDelta != glm::vec2(0.0f))
+			{
+				for (Entity current = hit; current; current = scene.GetParent(current))
+				{
+					if (!current.HasComponent<UIScrollView>() || !layout.Rectangles.contains(current.GetUUID())) continue;
+					auto& scroll = current.GetComponent<UIScrollView>();
+					if (!scroll.Enabled) continue;
+					result.Handled = true;
+					const auto& rect = layout.Rectangles.at(current.GetUUID());
+					const float scale = layout.Scales.at(current.GetUUID());
+					const glm::vec2 maximum = glm::max(glm::vec2(0.0f), scroll.ContentSize - glm::vec2(rect.Width, rect.Height) / scale);
+					glm::vec2 delta(scroll.Horizontal ? -input.ScrollDelta.x : 0.0f, scroll.Vertical ? -input.ScrollDelta.y : 0.0f);
+					if (scroll.Horizontal && !scroll.Vertical && delta.x == 0.0f) delta.x = -input.ScrollDelta.y;
+					const glm::vec2 next = glm::clamp(scroll.Offset + delta * scroll.ScrollSpeed, glm::vec2(0.0f), maximum);
+					if (next != scroll.Offset) { scroll.Offset = next; result.Handled = true; break; }
+				}
+			}
+			for (Entity entity : focusable)
+			{
+				if (entity.HasComponent<UISlider>())
+				{
+					auto& slider = entity.GetComponent<UISlider>();
+					if (slider.RuntimeDragging)
+					{
+						if (input.MousePressed || input.MouseHeld || input.MouseReleased)
+						{
+							glm::mat4 inverse;
+							glm::vec2 local;
+							const auto& rect = layout.Rectangles.at(entity.GetUUID());
+							if (InvertUITransform(layout.Transforms.at(entity.GetUUID()), inverse) && TransformUIPosition(inverse, point, local))
+							{
+								const float amount = slider.Vertical ? (local.y - rect.Y) / std::max(rect.Height, 0.001f) : (local.x - rect.X) / std::max(rect.Width, 0.001f);
+								RuntimeUISystem::SetSliderValue(entity, slider.Minimum + std::clamp(amount, 0.0f, 1.0f) * (slider.Maximum - slider.Minimum));
+							}
+							result.Handled = true;
+						}
+						if (input.MouseReleased || (!input.MouseHeld && !input.MousePressed)) slider.RuntimeDragging = false;
+					}
+					if (slider.RuntimeFocused)
+					{
+						result.OwnsKeyboard = true;
+						result.Handled = result.Handled || input.KeyboardMoveNextHeld || input.KeyboardMovePreviousHeld
+							|| input.GamepadMoveNextHeld || input.GamepadMovePreviousHeld;
+						const float step = slider.WholeNumbers ? std::max(1.0f, slider.Step) : slider.Step > 0.0f ? slider.Step : (slider.Maximum - slider.Minimum) * 0.01f;
+						if (input.KeyboardMoveNext || input.GamepadMoveNext) { RuntimeUISystem::SetSliderValue(entity, slider.Value + step); result.Handled = true; }
+						if (input.KeyboardMovePrevious || input.GamepadMovePrevious) { RuntimeUISystem::SetSliderValue(entity, slider.Value - step); result.Handled = true; }
+					}
+				}
+				if (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().RuntimeFocused)
+				{
+					auto& field = entity.GetComponent<UIInputField>();
+					EditInputField(field, input);
+					result.OwnsKeyboard = true;
+					// All gameplay input is suppressed while typing, including held movement keys.
+					result.Handled = true;
+					if (input.Cancel) field.RuntimeFocused = false;
+				}
+			}
+			if (result.OwnsKeyboard)
+			{
+				input.KeyboardMoveNext = input.KeyboardMovePrevious = input.KeyboardSubmit = false;
+				input.GamepadMoveNext = input.GamepadMovePrevious = input.GamepadSubmit = false;
+			}
+			return result;
+		}
 
 		bool WouldCaptureGameplayInput(Scene& scene, entt::registry& registry,
 			uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
@@ -271,6 +939,23 @@ namespace TomCat {
 
 			const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildLayout(
 				scene, registry, viewportWidth, viewportHeight, dpi);
+
+			for (UUID id : layout.RenderOrder)
+			{
+				Entity entity = scene.FindEntityByUUID(id);
+				if (!entity || !CanFocus(entity)) continue;
+				if (entity.HasComponent<UIInputField>() && entity.GetComponent<UIInputField>().RuntimeFocused)
+					return true;
+				if (entity.HasComponent<UISlider>())
+				{
+					const auto& slider = entity.GetComponent<UISlider>();
+					if ((slider.RuntimeDragging && (input.MouseHeld || input.MouseReleased))
+						|| (slider.RuntimeFocused && (input.KeyboardMoveNext || input.KeyboardMovePrevious
+							|| input.GamepadMoveNext || input.GamepadMovePrevious || input.KeyboardMoveNextHeld
+							|| input.KeyboardMovePreviousHeld || input.GamepadMoveNextHeld || input.GamepadMovePreviousHeld))) return true;
+				}
+				if (input.FocusNext || input.FocusPrevious) return true;
+			}
 			std::vector<Entity> buttons;
 			for (UUID id : layout.RenderOrder)
 			{
@@ -291,21 +976,12 @@ namespace TomCat {
 				item != layout.RenderOrder.rend(); ++item)
 			{
 				Entity target = scene.FindEntityByUUID(*item);
-				const auto rectangle = layout.Rectangles.find(*item);
-				const auto clip = layout.Clips.find(*item);
-				if (!target || rectangle == layout.Rectangles.end()
-					|| clip == layout.Clips.end()
-					|| !UIRect::Intersect(rectangle->second, clip->second)
-						.Contains(mousePoint))
+				if (!target || !ContainsTransformedPoint(layout, *item, mousePoint))
 					continue;
-				const bool imageTarget = target.HasComponent<UIImage>()
-					&& target.GetComponent<UIImage>().Enabled
-					&& target.GetComponent<UIImage>().RaycastTarget;
-				const bool textTarget = target.HasComponent<UIText>()
-					&& target.GetComponent<UIText>().Enabled
-					&& target.GetComponent<UIText>().RaycastTarget;
-				if (!imageTarget && !textTarget)
+				if (!IsRaycastTarget(target))
 					continue;
+				if (input.ScrollDelta != glm::vec2(0.0f) && FindScope<UIScrollView>(scene, target))
+					return true;
 				pointerHandled = true;
 				break;
 			}
@@ -318,12 +994,7 @@ namespace TomCat {
 			{
 				Entity captured = scene.FindEntityByUUID(*s_PointerCaptureTarget);
 				validPointerCapture = captured && scene.IsActiveInHierarchy(captured)
-					&& ((captured.HasComponent<UIImage>()
-							&& captured.GetComponent<UIImage>().Enabled
-							&& captured.GetComponent<UIImage>().RaycastTarget)
-						|| (captured.HasComponent<UIText>()
-							&& captured.GetComponent<UIText>().Enabled
-							&& captured.GetComponent<UIText>().RaycastTarget));
+					&& IsRaycastTarget(captured);
 			}
 			// Mirror UpdateWithInput's capture transition without mutating it:
 			// a new press replaces the old target, while an idle frame releases it.
@@ -523,8 +1194,14 @@ namespace TomCat {
 			snapshot.Rectangles[item.Value.GetUUID()] = viewport;
 			snapshot.Clips[item.Value.GetUUID()] = viewport;
 			snapshot.Scales[item.Value.GetUUID()] = scale;
+			snapshot.Transforms[item.Value.GetUUID()] = glm::mat4(1.0f);
+			const std::vector<RuntimeUIClipRegion> viewportClipRegions = {
+				{ viewport, glm::mat4(1.0f) }
+			};
+			snapshot.ClipRegions[item.Value.GetUUID()] = viewportClipRegions;
 			snapshot.RenderOrder.push_back(item.Value.GetUUID());
-			builder.LayoutChildren(item.Value, viewport, viewport, scale);
+			builder.LayoutChildren(item.Value, viewport, viewport, scale,
+				glm::mat4(1.0f), viewportClipRegions);
 		}
 		return snapshot;
 	}
@@ -535,6 +1212,79 @@ namespace TomCat {
 	{
 		return BuildLayout(scene, scene.m_Registry, viewportWidth, viewportHeight,
 			dpi, visibility);
+	}
+
+	glm::mat4 RuntimeUISystem::GetEditorCanvasTransform(
+		const glm::vec2&)
+	{
+		const float worldUnitsPerPixel = 1.0f / EditorCanvasPixelsPerUnit;
+		// Canvas authoring coordinates match runtime layout coordinates: local
+		// (0, 0, 0) is the lower-left corner and the plane grows toward +X/+Y.
+		return glm::scale(glm::mat4(1.0f), glm::vec3(
+				worldUnitsPerPixel, worldUnitsPerPixel, 1.0f));
+	}
+
+	RuntimeUILayoutSnapshot RuntimeUISystem::BuildEditorLayout(Scene& scene,
+		entt::registry& registry, RuntimeUIVisibilityMode visibility)
+	{
+		RuntimeUILayoutSnapshot snapshot;
+		snapshot.DPI = 96.0f;
+		struct CanvasItem { Entity Value; int32_t Order = 0; uint64_t ID = 0; };
+		std::vector<CanvasItem> canvases;
+		for (const entt::entity value : registry.view<Canvas, ID>())
+		{
+			Entity entity(value, &scene);
+			const Canvas& canvas = registry.get<Canvas>(value);
+			if (canvas.Enabled && IsVisible(scene, entity, visibility))
+				canvases.push_back({ entity, canvas.SortingOrder,
+					static_cast<uint64_t>(entity.GetUUID()) });
+		}
+		std::sort(canvases.begin(), canvases.end(), [](const CanvasItem& left,
+			const CanvasItem& right)
+		{
+			return left.Order != right.Order ? left.Order < right.Order
+				: left.ID < right.ID;
+		});
+
+		LayoutBuilder builder{ scene, registry, snapshot, visibility, false };
+		for (const CanvasItem& item : canvases)
+		{
+			const Canvas& canvas = item.Value.GetComponent<Canvas>();
+			const glm::vec2 referenceResolution = Finite(canvas.ReferenceResolution)
+				&& glm::all(glm::greaterThan(canvas.ReferenceResolution,
+					glm::vec2(0.0f)))
+				? canvas.ReferenceResolution : glm::vec2(1920.0f, 1080.0f);
+			const UIRect canvasRectangle{ 0.0f, 0.0f,
+				referenceResolution.x, referenceResolution.y };
+			const float scale = std::clamp(Finite(canvas.ScaleFactor)
+				? canvas.ScaleFactor : 1.0f, 0.01f, 100.0f);
+			const glm::mat4 canvasTransform = GetEditorCanvasTransform(
+				referenceResolution);
+
+			snapshot.ViewportWidth = std::max(snapshot.ViewportWidth,
+				static_cast<uint32_t>(std::ceil(referenceResolution.x)));
+			snapshot.ViewportHeight = std::max(snapshot.ViewportHeight,
+				static_cast<uint32_t>(std::ceil(referenceResolution.y)));
+			builder.Visited.emplace(item.ID);
+			snapshot.Rectangles[item.Value.GetUUID()] = canvasRectangle;
+			snapshot.Clips[item.Value.GetUUID()] = canvasRectangle;
+			snapshot.Scales[item.Value.GetUUID()] = scale;
+			snapshot.Transforms[item.Value.GetUUID()] = canvasTransform;
+			const std::vector<RuntimeUIClipRegion> canvasClipRegions = {
+				{ canvasRectangle, canvasTransform }
+			};
+			snapshot.ClipRegions[item.Value.GetUUID()] = canvasClipRegions;
+			snapshot.RenderOrder.push_back(item.Value.GetUUID());
+			builder.LayoutChildren(item.Value, canvasRectangle, canvasRectangle,
+				scale, canvasTransform, canvasClipRegions);
+		}
+		return snapshot;
+	}
+
+	RuntimeUILayoutSnapshot RuntimeUISystem::BuildEditorLayout(Scene& scene,
+		RuntimeUIVisibilityMode visibility)
+	{
+		return BuildEditorLayout(scene, scene.m_Registry, visibility);
 	}
 
 	glm::vec2 RuntimeUISystem::MapPointerToViewport(
@@ -580,6 +1330,21 @@ namespace TomCat {
 
 	void RuntimeUISystem::Reset(entt::registry& registry)
 	{
+		for (const auto entity : registry.view<UISlider>())
+		{
+			auto& slider = registry.get<UISlider>(entity);
+			slider.RuntimeDragging = slider.RuntimeFocused = false;
+			slider.RuntimeChangeSerial = 0;
+		}
+		for (const auto entity : registry.view<UIInputField>())
+		{
+			auto& field = registry.get<UIInputField>(entity);
+			field.RuntimeFocused = false;
+			field.RuntimeCaret = field.RuntimeSelectionAnchor = 0;
+			field.RuntimeChangeSerial = 0;
+			field.RuntimeLastInputFrame = 0;
+		}
+
 		for (const entt::entity entity : registry.view<UIButton>())
 		{
 			auto& button = registry.get<UIButton>(entity);
@@ -614,6 +1379,35 @@ namespace TomCat {
 		input.MousePressed = source.WasMouseButtonPressed(0);
 		input.MouseHeld = source.IsMouseButtonHeld(0);
 		input.MouseReleased = source.WasMouseButtonReleased(0);
+		const auto scroll = source.GetScrollDelta();
+		input.ScrollDelta = { scroll.X, scroll.Y };
+		input.TextInput = Input::GetTextInput();
+		input.DisplayFrame = Input::GetFrameSnapshot().FrameNumber;
+		const bool control = source.IsKeyHeld(341) || source.IsKeyHeld(345);
+		input.Copy = control && source.WasKeyPressed(67);
+		input.Cut = control && source.WasKeyPressed(88);
+		input.Paste = control && source.WasKeyPressed(86);
+		if (input.Paste) input.ClipboardText = Input::GetClipboardText();
+		input.WriteClipboard = [](const std::string& value) { return Input::SetClipboardText(value); };
+		const auto pressedOrRepeated = [&source](uint32_t key)
+		{
+			if (source.WasKeyPressed(key)) return true;
+			const auto& events = Input::GetFrameSnapshot().Events;
+			return std::any_of(events.begin(), events.end(), [key](const InputEventQueue::Event& event)
+			{ return event.Source == InputEventQueue::Device::Keyboard && event.Code == key
+				&& event.Transition == InputEventQueue::Action::Repeated; });
+		};
+		input.Backspace = pressedOrRepeated(259);
+		input.Delete = pressedOrRepeated(261);
+		input.CaretLeft = pressedOrRepeated(263);
+		input.CaretRight = pressedOrRepeated(262);
+		input.CaretHome = pressedOrRepeated(268);
+		input.CaretEnd = pressedOrRepeated(269);
+		input.ExtendSelection = source.IsKeyHeld(340) || source.IsKeyHeld(344);
+		input.SelectAll = source.WasKeyPressed(65) && (source.IsKeyHeld(341) || source.IsKeyHeld(345));
+		input.Cancel = source.WasKeyPressed(256);
+		input.FocusNext = source.WasKeyPressed(258) && !input.ExtendSelection;
+		input.FocusPrevious = source.WasKeyPressed(258) && input.ExtendSelection;
 		input.KeyboardMoveNext = source.WasKeyPressed(258)
 			|| source.WasKeyPressed(264) || source.WasKeyPressed(262);
 		input.KeyboardMoveNextHeld = source.IsKeyHeld(258)
@@ -685,6 +1479,35 @@ namespace TomCat {
 		input.MousePressed = source.WasMouseButtonPressed(0);
 		input.MouseHeld = source.IsMouseButtonHeld(0);
 		input.MouseReleased = source.WasMouseButtonReleased(0);
+		const auto scroll = source.GetScrollDelta();
+		input.ScrollDelta = { scroll.X, scroll.Y };
+		input.TextInput = Input::GetTextInput();
+		input.DisplayFrame = Input::GetFrameSnapshot().FrameNumber;
+		const bool control = source.IsKeyHeld(341) || source.IsKeyHeld(345);
+		input.Copy = control && source.WasKeyPressed(67);
+		input.Cut = control && source.WasKeyPressed(88);
+		input.Paste = control && source.WasKeyPressed(86);
+		if (input.Paste) input.ClipboardText = Input::GetClipboardText();
+		input.WriteClipboard = [](const std::string& value) { return Input::SetClipboardText(value); };
+		const auto pressedOrRepeated = [&source](uint32_t key)
+		{
+			if (source.WasKeyPressed(key)) return true;
+			const auto& events = Input::GetFrameSnapshot().Events;
+			return std::any_of(events.begin(), events.end(), [key](const InputEventQueue::Event& event)
+			{ return event.Source == InputEventQueue::Device::Keyboard && event.Code == key
+				&& event.Transition == InputEventQueue::Action::Repeated; });
+		};
+		input.Backspace = pressedOrRepeated(259);
+		input.Delete = pressedOrRepeated(261);
+		input.CaretLeft = pressedOrRepeated(263);
+		input.CaretRight = pressedOrRepeated(262);
+		input.CaretHome = pressedOrRepeated(268);
+		input.CaretEnd = pressedOrRepeated(269);
+		input.ExtendSelection = source.IsKeyHeld(340) || source.IsKeyHeld(344);
+		input.SelectAll = source.WasKeyPressed(65) && (source.IsKeyHeld(341) || source.IsKeyHeld(345));
+		input.Cancel = source.WasKeyPressed(256);
+		input.FocusNext = source.WasKeyPressed(258) && !input.ExtendSelection;
+		input.FocusPrevious = source.WasKeyPressed(258) && input.ExtendSelection;
 		input.KeyboardMoveNext = source.WasKeyPressed(258)
 			|| source.WasKeyPressed(264) || source.WasKeyPressed(262);
 		input.KeyboardMoveNextHeld = source.IsKeyHeld(258)
@@ -723,8 +1546,9 @@ namespace TomCat {
 
 	void RuntimeUISystem::UpdateWithInput(Scene& scene, entt::registry& registry,
 		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
-		const RuntimeUIInputFrame& input)
+		const RuntimeUIInputFrame& sourceInput)
 	{
+		RuntimeUIInputFrame input = sourceInput;
 		if (s_PointerCaptureScene != &scene)
 			ClearPointerCapture();
 		if (s_ControlOwnershipScene != &scene)
@@ -751,6 +1575,9 @@ namespace TomCat {
 			button.RuntimeHovered = false;
 			button.RuntimeClickedThisFrame = false;
 		}
+		const ExtendedInteraction extended = UpdateExtendedControls(scene, registry,
+			layout, input, eventSystem && input.WindowFocused,
+			eventSystem && eventSystem->WrapNavigation);
 		if (!eventSystem)
 		{
 			for (const entt::entity value : registry.view<UIButton>())
@@ -817,7 +1644,7 @@ namespace TomCat {
 			else if (button.RuntimePressed)
 				retainedPressed = true;
 		}
-		if (!buttons.empty() && focused == buttons.end())
+		if (!extended.OwnsKeyboard && !buttons.empty() && focused == buttons.end())
 		{
 			buttons.front().Value.GetComponent<UIButton>().RuntimeFocused = true;
 			focused = buttons.begin();
@@ -832,19 +1659,9 @@ namespace TomCat {
 			item != layout.RenderOrder.rend(); ++item)
 		{
 			Entity target = scene.FindEntityByUUID(*item);
-			const auto rectangle = layout.Rectangles.find(*item);
-			const auto clip = layout.Clips.find(*item);
-			if (!target || rectangle == layout.Rectangles.end()
-				|| clip == layout.Clips.end()
-				|| !UIRect::Intersect(rectangle->second, clip->second).Contains(mousePoint))
+			if (!target || !ContainsTransformedPoint(layout, *item, mousePoint))
 				continue;
-			const bool imageTarget = target.HasComponent<UIImage>()
-				&& target.GetComponent<UIImage>().Enabled
-				&& target.GetComponent<UIImage>().RaycastTarget;
-			const bool textTarget = target.HasComponent<UIText>()
-				&& target.GetComponent<UIText>().Enabled
-				&& target.GetComponent<UIText>().RaycastTarget;
-			if (!imageTarget && !textTarget)
+			if (!IsRaycastTarget(target))
 				continue;
 
 			// The first graphic in reverse render order owns the pointer. Bubble the
@@ -893,16 +1710,11 @@ namespace TomCat {
 		{
 			Entity captured = scene.FindEntityByUUID(*s_PointerCaptureTarget);
 			validPointerCapture = captured && scene.IsActiveInHierarchy(captured)
-				&& ((captured.HasComponent<UIImage>()
-						&& captured.GetComponent<UIImage>().Enabled
-						&& captured.GetComponent<UIImage>().RaycastTarget)
-					|| (captured.HasComponent<UIText>()
-						&& captured.GetComponent<UIText>().Enabled
-						&& captured.GetComponent<UIText>().RaycastTarget));
+				&& IsRaycastTarget(captured);
 			if (!validPointerCapture)
 				ClearPointerCapture();
 		}
-		bool handledInteraction = (input.MousePressed && pointerHandled)
+		bool handledInteraction = extended.Handled || (input.MousePressed && pointerHandled)
 			|| (input.MouseHeld && (validPointerCapture || hadPressed));
 
 		if (input.MousePressed && hovered)
@@ -1019,6 +1831,48 @@ namespace TomCat {
 				s_ControlOwnership &= ~control.Ownership;
 		}
 		NormalizeControlOwnership();
+
+		// Persistent callbacks are dispatched after all focus/click state for this
+		// UI frame is committed and before Scene invokes the normal OnUpdate phase.
+		// Copy listeners first because a callback may destroy its own Button or any
+		// later target through the managed deferred-command transaction.
+		struct PendingButtonClick
+		{
+			UUID Button;
+			std::vector<UIButtonOnClickListener> Listeners;
+		};
+		std::vector<PendingButtonClick> pendingClicks;
+		for (const Candidate& item : buttons)
+		{
+			if (!item.Value || !item.Value.HasComponent<UIButton>())
+				continue;
+			const UIButton& button = item.Value.GetComponent<UIButton>();
+			if (button.RuntimeClickedThisFrame && !button.OnClick.empty())
+				pendingClicks.push_back({ item.Value.GetUUID(), button.OnClick });
+		}
+		for (const PendingButtonClick& click : pendingClicks)
+		{
+			for (const UIButtonOnClickListener& listener : click.Listeners)
+			{
+				const bool assigned = static_cast<uint64_t>(listener.TargetEntity) != 0
+					&& static_cast<uint64_t>(listener.TargetAttachmentID) != 0
+					&& static_cast<uint64_t>(listener.ScriptAsset) != 0
+					&& !listener.MethodName.empty();
+				if (!listener.Enabled || !assigned)
+					continue;
+				const Scripting::ScriptStatus status =
+					Scripting::ScriptEngine::Get().InvokeMethod(scene,
+						listener.TargetEntity, listener.TargetAttachmentID,
+						static_cast<uint64_t>(listener.ScriptAsset),
+						listener.MethodName);
+				if (status != Scripting::ScriptStatus::Success)
+				{
+					TC_Core_Warn("UIButton {0} OnClick listener {1} failed with status {2}",
+						static_cast<uint64_t>(click.Button), listener.MethodName,
+						static_cast<int32_t>(status));
+				}
+			}
+		}
 	}
 
 	void RuntimeUISystem::UpdateWithInput(Scene& scene, uint32_t viewportWidth,
@@ -1034,7 +1888,7 @@ namespace TomCat {
 		for (const entt::entity value : registry.view<Transform, TextRenderer>())
 		{
 			Entity entity(value, &scene);
-			auto [transform, text] = registry.get<Transform, TextRenderer>(value);
+			auto& text = registry.get<TextRenderer>(value);
 			if (!text.Enabled || text.Text.empty()
 				|| !IsVisible(scene, entity, visibility)
 				|| !Finite(text.FontSize) || text.FontSize <= 0.0f)
@@ -1046,7 +1900,7 @@ namespace TomCat {
 			const TextLayoutResult layout = TextLayoutEngine::Build(font->GetAtlas(),
 				text.Text, text.FontSize, std::max(0.0f, text.MaxWidth),
 				text.Alignment, text.LineSpacing);
-			const glm::mat4 world = transform.GetTransform();
+			const glm::mat4 world = scene.GetRuntimeRenderTransform(entity.GetUUID());
 			for (const TextGlyphQuad& glyph : layout.Glyphs)
 			{
 				const glm::mat4 local = glm::translate(glm::mat4(1.0f), {
@@ -1061,6 +1915,12 @@ namespace TomCat {
 		}
 	}
 
+	void RuntimeUISystem::RenderWorldText(Scene& scene,
+		RuntimeUIVisibilityMode visibility)
+	{
+		RenderWorldText(scene, scene.m_Registry, visibility);
+	}
+
 	void RuntimeUISystem::RenderScreen(Scene& scene, entt::registry& registry,
 		uint32_t viewportWidth, uint32_t viewportHeight, float dpi,
 		RuntimeUIVisibilityMode visibility)
@@ -1069,86 +1929,9 @@ namespace TomCat {
 			return;
 		const RuntimeUILayoutSnapshot layout = BuildLayout(scene, registry,
 			viewportWidth, viewportHeight, dpi, visibility);
-		// Script-only and otherwise UI-free scenes must not touch the graphics
-		// backend. This also keeps server/headless runtime updates valid before a
-		// Renderer2D context exists.
-		if (layout.RenderOrder.empty())
-			return;
-		Camera screenCamera(glm::ortho(0.0f, static_cast<float>(viewportWidth),
-			0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f));
-		RenderCommand::SetDepthTest(false);
-		Renderer2D::BeginScene(screenCamera, glm::mat4(1.0f));
-		for (UUID id : layout.RenderOrder)
-		{
-			Entity entity = scene.FindEntityByUUID(id);
-			if (!entity || !IsVisible(scene, entity, visibility))
-				continue;
-			const auto rectangle = layout.Rectangles.find(id);
-			const auto clip = layout.Clips.find(id);
-			if (rectangle == layout.Rectangles.end() || clip == layout.Clips.end())
-				continue;
-			if (entity.HasComponent<UIImage>())
-			{
-				auto& image = entity.GetComponent<UIImage>();
-				if (image.Enabled && Finite(image.Color))
-				{
-					Ref<Texture2D> texture;
-					glm::vec2 sourceUVMin(0.0f), sourceUVMax(1.0f);
-					float sourceAspect = rectangle->second.Width
-						/ std::max(rectangle->second.Height, 1.0e-6f);
-					if (static_cast<uint64_t>(image.Image) != 0)
-					{
-						AssetManager& assets = AssetManager::Get();
-						texture = assets.LoadTexture(image.Image);
-						if (texture && texture->GetHeight() > 0)
-							sourceAspect = static_cast<float>(texture->GetWidth())
-								/ texture->GetHeight();
-						ResolvedSpriteAsset resolved;
-						SpriteRenderGeometry spriteGeometry;
-						if (texture && assets.ResolveSpriteAsset(image.Image, resolved)
-							&& resolved.IsSubAsset
-							&& BuildSpriteRenderGeometry(resolved.Data,
-								texture->GetWidth(), texture->GetHeight(), spriteGeometry))
-						{
-							sourceUVMin = { spriteGeometry.UMin, spriteGeometry.VMin };
-							sourceUVMax = { spriteGeometry.UMax, spriteGeometry.VMax };
-							sourceAspect = spriteGeometry.Width
-								/ std::max(spriteGeometry.Height, 1.0e-6f);
-						}
-					}
-					UIImageGeometry geometry;
-					if (BuildImageGeometry(rectangle->second, clip->second,
-						sourceAspect, sourceUVMin, sourceUVMax,
-						image.PreserveAspect, geometry))
-					{
-						glm::vec4 color = image.Color;
-						if (entity.HasComponent<UIButton>()
-							&& entity.GetComponent<UIButton>().Enabled)
-						{
-							const auto& button = entity.GetComponent<UIButton>();
-							const glm::vec4 state = button.RuntimePressed ? button.PressedColor
-								: button.RuntimeHovered ? button.HoverColor
-								: button.RuntimeFocused ? button.SelectedColor
-								: button.NormalColor;
-							color = MultiplyColor(color, state);
-						}
-						if (static_cast<uint64_t>(image.Image) == 0)
-							Renderer2D::DrawQuad(QuadTransform(geometry.Rect), color,
-								static_cast<int>(static_cast<entt::entity>(entity)));
-						else if (texture)
-							Renderer2D::DrawTexturedQuadRegion(QuadTransform(geometry.Rect),
-								texture, geometry.UVMin, geometry.UVMax,
-								color, static_cast<int>(static_cast<entt::entity>(entity)));
-					}
-				}
-			}
-			if (entity.HasComponent<UIText>())
-				DrawScreenText(entity.GetComponent<UIText>(), rectangle->second,
-					clip->second, layout.Scales.at(id),
-					static_cast<int>(static_cast<entt::entity>(entity)));
-		}
-		Renderer2D::EndScene();
-		RenderCommand::SetDepthTest(true);
+		RenderUILayout(scene, layout, visibility,
+			glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f,
+				static_cast<float>(viewportHeight), -1.0f, 1.0f));
 	}
 
 	void RuntimeUISystem::RenderScreen(Scene& scene, uint32_t viewportWidth,
@@ -1156,6 +1939,75 @@ namespace TomCat {
 	{
 		RenderScreen(scene, scene.m_Registry, viewportWidth, viewportHeight, dpi,
 			visibility);
+	}
+
+	void RuntimeUISystem::RenderEditorCanvas(Scene& scene,
+		entt::registry& registry, const glm::mat4& editorViewProjection,
+		RuntimeUIVisibilityMode visibility)
+	{
+		const RuntimeUILayoutSnapshot layout = BuildEditorLayout(scene, registry,
+			visibility);
+		RenderUILayout(scene, layout, visibility, editorViewProjection);
+	}
+
+	void RuntimeUISystem::RenderEditorCanvas(Scene& scene,
+		const glm::mat4& editorViewProjection,
+		RuntimeUIVisibilityMode visibility)
+	{
+		RenderEditorCanvas(scene, scene.m_Registry, editorViewProjection,
+			visibility);
+	}
+
+
+	std::string RuntimeUISystem::ResolveText(Scene& scene, Entity entity)
+	{
+		if (!entity) return {};
+		const std::string fallback = entity.HasComponent<UIText>() ? entity.GetComponent<UIText>().Text : std::string{};
+		if (!entity.HasComponent<UILocalizedText>() || !entity.GetComponent<UILocalizedText>().Enabled) return fallback;
+		const auto& key = entity.GetComponent<UILocalizedText>().Key;
+		auto* localization = FindScope<UILocalization>(scene, entity);
+		if (!localization || key.empty()) return fallback;
+		if (localization->RuntimeTableSource != localization->Table)
+		{
+			localization->RuntimeTranslations.clear();
+			localization->RuntimeTableSource = localization->Table;
+			try
+			{
+				if (localization->Table.size() <= 65536)
+				{
+					const auto table = YAML::Load(localization->Table);
+					if (table.IsMap())
+						for (const auto& locale : table)
+							if (locale.first.IsScalar() && locale.second.IsMap())
+								for (const auto& entry : locale.second)
+									if (entry.first.IsScalar() && entry.second.IsScalar())
+										localization->RuntimeTranslations[locale.first.as<std::string>()][entry.first.as<std::string>()] = entry.second.as<std::string>();
+				}
+			}
+			catch (const std::exception&) { localization->RuntimeTranslations.clear(); }
+		}
+		for (const auto& locale : { localization->Locale, localization->FallbackLocale })
+		{
+			const auto language = localization->RuntimeTranslations.find(locale);
+			if (language == localization->RuntimeTranslations.end()) continue;
+			const auto translated = language->second.find(key);
+			if (translated != language->second.end()) return translated->second;
+		}
+		return fallback;
+	}
+
+	bool RuntimeUISystem::SetSliderValue(Entity entity, float value)
+	{
+		if (!entity || !entity.HasComponent<UISlider>() || !Finite(value)) return false;
+		auto& slider = entity.GetComponent<UISlider>();
+		if (!Finite(slider.Minimum) || !Finite(slider.Maximum) || slider.Maximum < slider.Minimum) return false;
+		value = std::clamp(value, slider.Minimum, slider.Maximum);
+		if (slider.WholeNumbers) value = std::round(value);
+		else if (Finite(slider.Step) && slider.Step > 0.0f)
+			value = slider.Minimum + std::round((value - slider.Minimum) / slider.Step) * slider.Step;
+		value = std::clamp(value, slider.Minimum, slider.Maximum);
+		if (slider.Value != value) { slider.Value = value; ++slider.RuntimeChangeSerial; }
+		return true;
 	}
 
 	bool RuntimeUISystem::IsGameplayInputCaptured()

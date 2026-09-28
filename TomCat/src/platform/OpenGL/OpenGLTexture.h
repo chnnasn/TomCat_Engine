@@ -48,6 +48,7 @@ namespace TomCat {
 		uint32_t m_RendererID = 0;
 		GLenum m_InternalFormat = 0, m_DataFormat = 0;
 		bool m_Compressed = false;
+		uint64_t m_ProfileBytes = 0;
 	};
 
 

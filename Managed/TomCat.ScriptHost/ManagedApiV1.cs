@@ -27,4 +27,6 @@ public unsafe struct ManagedApiV1
 	// Tail field introduced by Managed ABI v2. The historical type name is kept
 	// because the prefix layout remains source compatible.
 	public delegate* unmanaged[Cdecl]<ulong, int, int> ResolveDeferredCommandBatch;
+	// Tail field introduced by Managed ABI v3.
+	public delegate* unmanaged[Cdecl]<ulong, ulong, NativeByteView, int> InvokeMethod;
 }

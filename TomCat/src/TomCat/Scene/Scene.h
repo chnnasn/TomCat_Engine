@@ -138,6 +138,8 @@ namespace TomCat {
 		bool IsVisibleInEditorHierarchy(Entity entity) const;
 		bool SetEditorHidden(Entity entity, bool hidden);
 		bool HasAuthoredPrimaryCamera() const;
+		bool HasActiveCanvas();
+		bool HasGameViewRenderSource();
 		bool SetCameraPrimary(Entity entity, bool primary);
 
 		// Starts physics and the managed scripting scene transactionally. A false
@@ -149,7 +151,10 @@ namespace TomCat {
 		// independent of the most recent display-frame delta.
 		void OnRuntimeStep(bool render = true);
 
-		void OnUpdateEditor(Timestep ts,EditorCamera& camera);
+		// Screen-space Canvas content is rendered on its reference-resolution
+		// authoring plane in Scene view, observed by the EditorCamera. Runtime and
+		// Game view rendering continue to map the same content to the real viewport.
+		void OnUpdateEditor(Timestep ts, EditorCamera& camera);
 		// Accumulates display-frame time and advances scripts and physics in fixed
 		// increments. Rendering occurs once per display frame unless a headless
 		// runtime explicitly disables it.
@@ -159,8 +164,13 @@ namespace TomCat {
 		// Rendering reads this matrix to interpolate between the two most recent
 		// fixed poses without feeding a presentation-only pose back into physics.
 		glm::mat4 GetRuntimeRenderTransform(UUID entityID) const;
+		// Camera projection follows the Transform rotation and translation while
+		// deliberately ignoring scale, matching the authored +Z forward contract.
+		glm::mat4 GetRuntimeCameraTransform(UUID entityID) const;
 		float GetRuntimeInterpolationAlpha() const { return m_RuntimeInterpolationAlpha; }
 		void OnViewportResize(uint32_t width, uint32_t height);
+		uint32_t GetViewportWidth() const { return m_ViewportWidth; }
+		uint32_t GetViewportHeight() const { return m_ViewportHeight; }
 		void SetRuntimeUIViewportMetrics(const glm::vec2& screenOrigin,
 			float dpiScale,
 			const glm::vec2& screenToFramebufferScale = glm::vec2(1.0f));
@@ -302,6 +312,7 @@ namespace TomCat {
 		RuntimeEntityBatchCreatedCallback m_RuntimeEntityBatchCreatedCallback;
 		std::vector<UUID> m_PendingRuntimeEntityCreates;
 		bool m_FlushingRuntimeEntityCreates = false;
+		uint64_t m_RuntimeEntityBatchFailureSerial = 0;
 		Physics2DSettings m_Physics2DSettings;
 		std::unordered_map<UUID, entt::entity> m_EntityMap;
 		std::unordered_map<UUID, UUID> m_ParentMap;
@@ -312,6 +323,7 @@ namespace TomCat {
 		friend class RuntimeUISystem;
 		friend class SceneContactFilter2D;
 		friend class SceneSerializer;
+		friend class SceneManager;
 		friend class SceneHierarchyPanel;
 		friend class EditorLayer;
 		friend class Scripting::ScriptEngine;

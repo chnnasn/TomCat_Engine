@@ -641,6 +641,14 @@ namespace TomCat {
 		LoadHubSettings();
 	}
 
+	ProjectManager::ProjectManager(const std::filesystem::path& hubSettingsPath)
+		: m_HubSettingsPathOverride(hubSettingsPath)
+	{
+		if (!hubSettingsPath.is_absolute())
+			throw std::invalid_argument("Hub settings path must be absolute");
+		LoadHubSettings();
+	}
+
 	bool ProjectManager::SetProjectDirectory(const std::filesystem::path& directory)
 	{
 		std::filesystem::path preparedDirectory;
@@ -689,39 +697,57 @@ namespace TomCat {
 			return false;
 		}
 
-		std::filesystem::recursive_directory_iterator iterator(m_EditorDirectory,
-			std::filesystem::directory_options::skip_permission_denied, error), end;
-		if (error)
+		// Enumerate each directory independently: an EVB virtual folder or a
+		// disappearing child must not discard Editors found in sibling folders.
+		std::vector<std::filesystem::path> pending{ m_EditorDirectory };
+		std::vector<std::filesystem::path> candidates;
+		while (!pending.empty())
 		{
-			TC_Core_Error("Could not enumerate Editor directory '{0}': {1}",
-				PathToUTF8(m_EditorDirectory), error.message());
-			return false;
-		}
-		for (; iterator != end; iterator.increment(error))
-		{
-			std::error_code entryError;
-			if (!iterator->is_regular_file(entryError))
+			const auto directory = pending.back();
+			pending.pop_back();
+			std::filesystem::directory_iterator iterator(directory, error), end;
+			if (error)
 			{
-				if (entryError)
-					TC_Core_Warn("Could not inspect Editor directory entry '{0}': {1}",
-						PathToUTF8(iterator->path()), entryError.message());
+				TC_Core_Warn("Could not enumerate Editor search folder '{0}': {1}",
+					PathToUTF8(directory), error.message());
+				if (directory == m_EditorDirectory)
+					return false;
+				error.clear();
 				continue;
 			}
-			std::wstring extension = iterator->path().extension().wstring();
-			std::transform(extension.begin(), extension.end(), extension.begin(),
-				[](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
-			if (extension != L".exe")
-				continue;
-			if (auto installation = InspectEditorExecutable(iterator->path()))
+			while (iterator != end)
+			{
+				const auto entry = *iterator;
+				std::error_code entryError;
+				const auto status = entry.symlink_status(entryError);
+				if (entryError)
+					TC_Core_Warn("Could not inspect Editor search entry '{0}': {1}",
+						PathToUTF8(entry.path()), entryError.message());
+				else if (std::filesystem::is_directory(status))
+					pending.push_back(entry.path());
+				else if (entry.is_regular_file(entryError) && !entryError)
+				{
+					std::wstring extension = entry.path().extension().wstring();
+					std::transform(extension.begin(), extension.end(), extension.begin(),
+						[](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
+					if (extension == L".exe")
+						candidates.push_back(entry.path());
+				}
+				iterator.increment(error);
+				if (error)
+				{
+					TC_Core_Warn("Editor search folder '{0}' changed during enumeration: {1}",
+						PathToUTF8(directory), error.message());
+					error.clear();
+					break;
+				}
+			}
+		}
+		// Probing starts only after directory handles are closed. A packaged
+		// executable may initialize its virtual filesystem during the probe.
+		for (const auto& candidate : candidates)
+			if (auto installation = InspectEditorExecutable(candidate))
 				installations.push_back(std::move(*installation));
-		}
-		if (error)
-		{
-			TC_Core_Error("Failed while enumerating Editor directory '{0}': {1}",
-				PathToUTF8(m_EditorDirectory), error.message());
-			return false;
-		}
-
 		std::sort(installations.begin(), installations.end(),
 			[](const EditorInstallation& left, const EditorInstallation& right)
 			{
@@ -1152,6 +1178,8 @@ namespace TomCat {
 
 	std::optional<std::filesystem::path> ProjectManager::GetHubSettingsPath() const
 	{
+		if (m_HubSettingsPathOverride)
+			return m_HubSettingsPathOverride;
 		const std::optional<std::filesystem::path> settingsRoot =
 			ApplicationPaths::GetProductDataRoot(ApplicationProduct::Hub);
 		if (!settingsRoot)
@@ -1159,8 +1187,39 @@ namespace TomCat {
 		return *settingsRoot / "hub.json";
 	}
 
+	void ProjectManager::ApplyHubDirectoryDefaults(const std::filesystem::path& executableDirectory)
+	{
+		if (!executableDirectory.is_absolute())
+			throw std::invalid_argument("Hub executable directory must be absolute");
+		// Apply only at Hub startup. Editor saves of recent projects preserve the
+		// owning Hub location and its explicit directory choices.
+		if (m_HubDirectoryOwner.empty() ||
+			ProjectPathKey(m_HubDirectoryOwner) != ProjectPathKey(executableDirectory))
+		{
+			m_ProjectDirectory.clear();
+			m_EditorDirectory.clear();
+			m_EditorInstallations.clear();
+		}
+		m_HubDirectoryOwner = executableDirectory.lexically_normal();
+		if (m_ProjectListOwner.empty() ||
+			ProjectPathKey(m_ProjectListOwner) != ProjectPathKey(executableDirectory))
+		{
+			m_KnownProjectPaths.clear();
+			m_IgnoredProjectPaths.clear();
+			m_ProjectLastOpenedTimes.clear();
+			m_Projects.clear();
+		}
+		m_ProjectListOwner = m_HubDirectoryOwner;
+		if (m_ProjectDirectory.empty())
+			m_ProjectDirectory = m_HubDirectoryOwner / "Projects";
+		if (m_EditorDirectory.empty())
+			m_EditorDirectory = m_HubDirectoryOwner / "Editors";
+	}
+
 	void ProjectManager::LoadHubSettings()
 	{
+		m_HubDirectoryOwner.clear();
+		m_ProjectListOwner.clear();
 		m_ProjectDirectory.clear();
 		m_EditorDirectory.clear();
 		m_EditorInstallations.clear();
@@ -1230,6 +1289,8 @@ namespace TomCat {
 				};
 				projectDirectory = readOptionalPath("projectDirectory");
 				editorDirectory = readOptionalPath("editorDirectory");
+				const auto directoryOwner = readOptionalPath("directoryOwner");
+				const auto projectListOwner = readOptionalPath("projectListOwner");
 
 				const JsonValue* knownProjects = root.Find("knownProjects");
 				if (knownProjects)
@@ -1287,6 +1348,8 @@ namespace TomCat {
 				}
 
 				m_ProjectDirectory = std::move(projectDirectory);
+				m_HubDirectoryOwner = directoryOwner;
+				m_ProjectListOwner = projectListOwner;
 				m_EditorDirectory = std::move(editorDirectory);
 				m_KnownProjectPaths = std::move(knownProjectPaths);
 				m_IgnoredProjectPaths = std::move(ignoredProjectPaths);
@@ -1338,6 +1401,8 @@ namespace TomCat {
 			std::string json;
 			json += "{\n";
 			json += "  \"schemaVersion\": " + std::to_string(s_HubSettingsSchemaVersion) + ",\n";
+			json += "  \"directoryOwner\": " + EscapeJsonString(PathToUTF8(m_HubDirectoryOwner)) + ",\n";
+			json += "  \"projectListOwner\": " + EscapeJsonString(PathToUTF8(m_ProjectListOwner)) + ",\n";
 			json += "  \"projectDirectory\": " + EscapeJsonString(PathToUTF8(m_ProjectDirectory)) + ",\n";
 			json += "  \"editorDirectory\": " + EscapeJsonString(PathToUTF8(m_EditorDirectory)) + ",\n";
 			json += "  \"knownProjects\": [\n";

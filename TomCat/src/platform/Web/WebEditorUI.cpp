@@ -148,10 +148,12 @@ void WebEditorUI::DrawViewport() {
   if (editing && visible && m_GizmoType>=0 && selected && m_Context) {
     auto transform=selected.GetComponent<Transform>().GetTransform();
     ImGuizmo::Enable(!toolbarBlocked || m_GizmoActive);
-    ImGuizmo::SetOrthographic(true); ImGuizmo::SetDrawlist();
+    ImGuizmo::SetOrthographic(m_Camera.IsOrthographic()); ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(origin.x,origin.y,size.x,size.y);
     const auto operation=static_cast<ImGuizmo::OPERATION>(m_GizmoType);
-    ImGuizmo::Manipulate(glm::value_ptr(m_Camera.GetViewMatrix()),glm::value_ptr(m_Camera.GetProjection()),operation,m_GizmoSpaceMode==GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,glm::value_ptr(transform));
+    glm::mat4 gizmoView(1.0f),gizmoProjection(1.0f);
+    m_Camera.GetRightHandedToolMatrices(gizmoView,gizmoProjection);
+    ImGuizmo::Manipulate(glm::value_ptr(gizmoView),glm::value_ptr(gizmoProjection),operation,m_GizmoSpaceMode==GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,glm::value_ptr(transform));
     const bool active=ImGuizmo::IsUsing();
     if (active) {
       if (!m_GizmoActive) m_Session.BeginUIEdit();

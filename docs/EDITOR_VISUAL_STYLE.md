@@ -1,0 +1,72 @@
+# Unity 风格视觉规范与覆盖范围
+
+2026-09-20。本轮仅美化编辑器及子页面；Hub 使用此前已提交版本的布局、字体、颜色和启动尺寸，Player 窗口参数不变。
+
+## 视觉系统
+
+- 深灰背景、较深的输入区域、稍亮的可点击按钮、蓝色选中状态；字段保留细描边。
+- 编辑器使用 Segoe UI / Microsoft YaHei（不存在时回退到原字体），字号按启动屏幕 DPI 设置；偏好设置仍可调整界面缩放。
+- 控件圆角 2、浮动窗口 3、弹出层 4 个基础单位；停靠边界保持平直。尺寸随 DPI 缩放。
+- 场景、组件、工具栏、文件夹和资源图标统一使用 Packages 中对应的原有图片，沿用原映射，不因 Unity 参考而替换素材。
+- 实际纹理缩略图继续显示资源图像。
+- Inspector 锁定入口位于标签栏最右端；搜索框预留图标空间。
+
+
+## 默认尺寸
+
+- 编辑器启动参考尺寸 1440 × 900，按显示缩放换算，最大不超过主屏工作区宽 92%、高 88%，居中打开。
+- 默认停靠布局将 Inspector 放在右侧，Project 放在底部，Hierarchy 和 Scene/Game 位于上方；动画与调试布局继续可用。
+- 保存过的用户停靠布局优先，未保存布局时使用新的默认比例。
+- 浮动工具窗口首次打开时居中，宽高受编辑器工作区约束；之后保留用户调整。
+
+## 页面覆盖
+
+| 层级 | 页面和变化 |
+| --- | --- |
+| 主页面 | Scene/Game 工具按钮、Hierarchy 行图标与搜索、Inspector 字段与锁定入口、Project 原有文件树图标和图片缩略图、Console 搜索 |
+| 独立子页面 | Project Settings（含 Tags/Layers、Physics 2D、Player）、Build Settings、Editor Preferences、Runtime Scenes、Asset Inspector、Profiler（CPU、GPU、Rendering、Memory）、Animator、Animation、Tile Palette |
+| 资源子编辑器 | Sprite Atlas Tools、Sprite 选择器、资源选择器、实体图标选择器；统一初始尺寸与弹出层外观 |
+| 二级菜单 | Add Component 分类与搜索、组件菜单、动画状态菜单、对象引用选择；继承相同字体、控件和弹出层样式 |
+| 操作弹窗 | 重命名资源/动画项、删除资源、未保存场景、场景恢复、项目升级预览、迁移恢复、Prefab Apply/Revert、锚点预设 |
+
+新样式通过 EditorStyling 显式启用，不会自动改变 Hub 或其他使用 ImGui 的程序。
+
+## 验证记录
+
+- 已对照本机 Unity 2022.3.48f1 的实际窗口检查图标、控件密度和面板层级。
+- 已原生界面检查默认布局重置、Hierarchy/Inspector、工具图标、锁定入口、添加组件二级菜单。
+- 已原生界面检查 Project Settings 的 Tags/Layers、Physics 2D、Player 子页、Build Settings、Window/Panels 次级菜单，以及 Profiler 的 CPU/GPU、Memory/resources、C# debugger 三个模块。
+- 已检查旧布局下的窄窗口；补充 Player 图标说明和锚点说明换行，工具窗口最小尺寸随字号变化，并复查构建窗口。
+- Release 编辑器编译通过；Scripts/Run-Regressions.ps1 -Configuration Release 完整回归通过（包含 CLI 构建及实际 Player 运行验收）。最后的文字换行、最小尺寸和菜单圆角修正再次通过 Release 编译及原生界面检查。
+- 未逐一手工打开所有资源类型、弹窗状态，也未验证所有显示器 DPI 组合；页面覆盖表表示代码样式覆盖范围。
+- Hub 目录无本轮差异；公共字体和主题的新增设置仅在 EditorStyling 启用时生效。
+
+## 截图反馈修正（2026-09-20）
+
+- Game Stats 锚定面板可见区域右上角，不随游戏图片留白或滚动偏移；尺寸按字体和内容计算。
+- Console 工具栏保持单行，窄面板裁切而不堆叠；日志使用严重程度图标、时间、双行内容和交替底色，Collapse 显示重复次数。窄面板的筛选和搜索仍可从下拉菜单访问。
+- Profiler 改为模块开关列表、可选帧图表、上下可调分隔和详情区；保留真实录制、前后帧、CPU 表格/时间线、资源基线、跟踪导出与 C# 调试入口。尚无独立采集器的模块禁用并说明原因。
+- 标签栏右键提供 Maximize/Restore、Close Tab、Add Tab；Game 的 Overlay Menu 可控制 Stats。
+- Inspector 锁定按钮与标签同一水平线；移除独立锁定行及组件过滤搜索，Add Component 内的搜索仍保留。
+- Project 恢复原有资源图标/图片预览绘制；Packages 固定显示，不再设置显示开关。
+
+本次截图修正验证：Release 编译通过；ProfilerRegression、InputRegression 通过。原生界面已核对 Stats 定位和完整内容、Console 宽窄布局和搜索过滤、Profiler 录制/暂停/选帧/模块弹层、标签 Add Tab 和最大化还原，以及 Inspector 标题锁定在切换实体后保持原对象。
+
+最终素材复核：EditorIconSet 沿用 HEAD 原始映射；组件、场景、播放、可见性、搜索与资源树均从 Packages 图标集取图。Add Tab 子菜单复用 Scene/Game/Hierarchy/Inspector/Project 图标，Add Component 复用 add.png。再次 Release 编译通过；原生检查确认锁定位于标签栏最右端、Packages 固定显示、Two Column 下 Circle/Square 显示真实图片缩略图。
+
+## 缩略图与窗口折叠修正
+
+- Project 单列和网格都使用编辑器独立的图片预览缓存，Packages 内未注册的图片也能显示实际内容；只读图片不再被通用只读图标替代。
+- 原有 Packages 图标素材和映射保持不变，预览及整套编辑器图标通过现有纹理产物管线生成无压缩 mipmap，减少细线缩小时的跳点；不改运行时纹理或资源导入设置。
+- 树行图标按字体/DPI 缩放，图片按比例适配并对齐像素。不可见文件行不加载预览；缓存定时检测源文件变动，并在绘制前按闲置时间、数量和估算显存清理。
+- 所有桌面编辑器面板共用 BeginEditorWindow，强制 NoCollapse；次级窗口同样适用，旧布局的折叠状态会自动展开。编辑器主题隐藏标题栏菜单三角，Hub 保持原样；目录树与组件分组仍可展开收起。
+- 验证：Release 编译成功（独立输出目录，保留当前有未保存修改的编辑器）；ImporterRegression 通过。使用隔离示例副本原生检查 Asset 图片单列、Shader 图标、Profiler 停靠页签及 Editor Preferences 浮动窗口；双击浮动窗口标题不会折叠。
+
+## Project 资源 Inspector（2026-09-20）
+
+- Project 单列、网格、定位及资源创建的选择接入主 Inspector；选择场景对象后返回组件界面，标题栏锁定同时支持实体和资源。
+- 按真实类型展示纹理尺寸/预览、脚本编译后的类/程序集/序列化字段/源码、Shader 编译及资源反射、音频采样信息、字体字形预览、模型顶点/索引数量、材质引用与参数、场景/Prefab 对象概览、动画/控制器/瓦片调色板信息和文件夹统计。其他文件提供名称、路径、大小和打开所在目录。
+- 纹理与 Shader 使用实际导入器支持的设置和 Apply/Revert。切换资源保留未应用草稿；外部修改冲突时需 Revert 重新加载；Packages 禁用写入。纹理 Sprite Editor 继续使用已有切片工具。
+- 当前脚本字段显示名称和类型，字段值仍在组件实例编辑；未加入 Unity 专属的脚本默认引用、平台纹理导入选项或无底层支持的模拟控件。
+- Assets 使用普通文件夹图标；删除专用 assets-root.png，并在各构建配置同步移除输出目录的旧副本。其余 Packages 图标素材保留。
+- 验证：正常 Release 输出重新编译通过，ImporterRegression 通过；隔离示例项目原生检查上述纹理、脚本、Shader、音频、字体、模型、材质、场景、文件夹页面，以及锁定、切换选择、草稿保留、Apply 写入 tcmeta 和 Revert。动画/控制器/调色板/Prefab 使用现有文档格式解析，未逐一进行原生界面验收。

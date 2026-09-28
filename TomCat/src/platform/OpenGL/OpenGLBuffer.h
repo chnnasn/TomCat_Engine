@@ -23,6 +23,7 @@ namespace TomCat {
 
 	private:
 		uint32_t m_RendererID;
+		uint32_t m_Size = 0;
 		BufferLayout m_Layout;
 	};
 	
