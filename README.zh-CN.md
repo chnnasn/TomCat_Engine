@@ -98,7 +98,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` schema-v2 Sidecar、ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、依赖跟踪，以及支持去抖内容监控、反向依赖重导和主线程发布的后台 ImportCoordinator
 - **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
 - **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、合并的 Play/Stop 按钮与 Pause/Step 控制，以及延迟派发的 C# Collision/Trigger 回调
-- **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、诊断、last-good 程序集与 Cooked 托管负载
+- **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、结构化诊断、portable PDB、last-good 程序集、Cooked 托管负载，以及纯托管 NuGet 包、项目引用、传递依赖和本地 DLL 的封装；详见 [C# 依赖指南](docs/CSHARP_DEPENDENCIES.md)
 - **Prefab**：LocalID 实体子树和引用重映射、编辑器关联更新、Override、Apply/Revert、嵌套和变体；运行时 C# `Instantiate` 保持快照语义，详见 [Prefab 工作流](docs/PREFAB_WORKFLOW.zh-CN.md)
 - **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
@@ -119,7 +119,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
-- 不支持 NuGet/第三方托管 DLL、Play Mode 热重载或内置 C# 调试器；异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
+- 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；也不支持 Play Mode 热替换或内置 C# 调试器。异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
 2026-09-20 核对了上面展示的界面流程，没有重新运行完整原生、托管、Player 或 Web 回归套件。

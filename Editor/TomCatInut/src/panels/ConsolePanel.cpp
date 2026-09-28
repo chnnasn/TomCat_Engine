@@ -285,11 +285,11 @@ namespace TomCat {
             const float width=ImGui::GetContentRegionAvail().x;
             if(index%2==0) ImGui::GetWindowDrawList()->AddRectFilled(a,{a.x+width,a.y+rowHeight},IM_COL32(255,255,255,8));
             if(ImGui::Selectable("##Message",m_SelectedSequence==message.Sequence,ImGuiSelectableFlags_AllowDoubleClick,ImVec2(width,rowHeight))) m_SelectedSequence=message.Sequence;
-            if(ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !message.File.empty() && m_OpenSource) m_OpenSource(message.File);
+            if(ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && !message.File.empty() && m_OpenSource) m_OpenSource(message.File, message.Line, message.Column);
             if(ImGui::BeginPopupContextItem("MessageMenu"))
             {
                 if(ImGui::MenuItem("Copy")) ImGui::SetClipboardText((message.Text+"\n"+message.StackTrace).c_str());
-                if(ImGui::MenuItem("Open source",nullptr,false,!message.File.empty() && bool(m_OpenSource))) m_OpenSource(message.File);
+                if(ImGui::MenuItem("Open source",nullptr,false,!message.File.empty() && bool(m_OpenSource))) m_OpenSource(message.File, message.Line, message.Column);
                 ImGui::EndPopup();
             }
             DrawSeverityIcon(message.Severity,{a.x+rowHeight*0.48f,a.y+rowHeight*0.47f},rowHeight*0.31f);
@@ -331,7 +331,7 @@ namespace TomCat {
         if (!cleared && selected != messages.end())
         {
             if (ImGui::SmallButton("Copy details")) ImGui::SetClipboardText((selected->Text + "\n" + selected->StackTrace).c_str());
-            if(!selected->File.empty() && m_OpenSource) {ImGui::SameLine();if(ImGui::SmallButton("Open source")) m_OpenSource(selected->File);}
+            if(!selected->File.empty() && m_OpenSource) {ImGui::SameLine();if(ImGui::SmallButton("Open source")) m_OpenSource(selected->File, selected->Line, selected->Column);}
             ImGui::TextDisabled("%s", FormatLocation(*selected).c_str());
             ImGui::TextWrapped("%s", selected->Text.c_str());
             ImGui::TextWrapped("%s", selected->StackTrace.c_str());

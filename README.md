@@ -109,7 +109,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` schema-v2 sidecars, ImporterRegistry, SHA-256 artifact keys, a derived-data cache, dependency tracking, and a background ImportCoordinator with debounced content monitoring, reverse-dependent reimport, and main-thread publication
 - **2D physics**: fixed 60 Hz Box2D runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
 - **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, combined Play/Stop plus Pause/Step controls, and deferred C# Collision/Trigger callbacks
-- **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, diagnostics, last-good assemblies, and cooked managed payloads
+- **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, structured diagnostics, portable PDBs, last-good assemblies, cooked managed payloads, and bundled pure-managed NuGet, project, transitive, and local DLL dependencies. See the [dependency guide](docs/CSHARP_DEPENDENCIES.md).
 - **Prefabs**: LocalID subtrees and reference remapping, linked editor updates, overrides, Apply/Revert, nested Prefabs and variants; runtime C# `Instantiate` retains snapshot semantics. See the [Prefab workflow](docs/PREFAB_WORKFLOW.zh-CN.md).
 - **Input**: action maps, keyboard/mouse/gamepad bindings, contexts, and runtime rebinding
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
@@ -130,7 +130,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Editor-side C# compilation requires the **.NET 10 SDK**
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
-- NuGet/third-party managed DLLs, Play Mode hot reload, and a built-in C# debugger are unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
+- Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. Play Mode hot replacement and a built-in C# debugger are also unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
 
 The [recording archive](docs/portfolio/README.md) records the exact scope and
 limitations of each desktop session. The 2026-09-20 refresh checked the UI flows

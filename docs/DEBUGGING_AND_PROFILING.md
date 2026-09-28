@@ -49,16 +49,28 @@ CPU scope 在开始时绑定帧编号，线程安全地提交到这一帧。跨�
 
 ## C# 断点流程
 
-引擎在 `TomCatInut.exe` 内通过 hostfxr 托管 .NET 10，没有独立的项目脚本进程。当前项目脚本编译器生成 **Release** 程序集和 portable PDB，并将 DLL / PDB 一起传给可回收 `AssemblyLoadContext.LoadFromStream`。不要只因原生 Editor 编译成 Debug 就假定 C# 没有优化。
+引擎在 `TomCatInut.exe` 内通过 hostfxr 托管 .NET 10，没有独立的项目脚本进程。当前项目脚本编译器使用 **Release** 配置，但显式关闭 C# 优化并生成 portable PDB，并将 DLL / PDB 一起传给可回收 `AssemblyLoadContext.LoadFromStream`。该设置由脚本编译器控制，与原生 Editor 的 Debug / Release 配置无关。目前 Player 打包也使用同一脚本编译器，因而同样关闭脚本优化。
 
-1. 在编辑器中打开含 C# 脚本的项目，等待 Console 的编译错误清空。至少运行一次 Play，让 .NET 初始化，然后停止 Play。
+1. 在编辑器中打开含 C# 脚本的项目，等待 Console 出现编译成功和程序集重载成功消息；旧错误记录不会自动清空。元数据验证阶段已初始化 .NET，无需先运行一次 Play。
 2. 使用支持 .NET 10 的 Visual Studio，打开项目脚本源文件。在 **Debug → Attach to Process** 选择 `TomCatInut.exe`；Profiler 的 C# debugger 区显示当前 PID。将代码类型选为托管 .NET / .NET Core（具体文字随 IDE 版本），需要调试 C++ 时可同时选择 native。微软的[附加进程文档](https://learn.microsoft.com/en-us/visualstudio/debugger/attach-to-running-processes-with-the-visual-studio-debugger?view=visualstudio)说明此流程也支持非 Visual Studio 启动的进程。
 3. 在 `OnUpdate` 或 `OnCreate` 的可执行语句上设断点，再进入 Play。附加后才进入新的 Play 可以捕捉初始化回调。断点命中后使用 Locals、Watch、Call Stack；继续执行前不要认为游戏的实时帧率仍有意义。
-4. 如果断点为空心，在 **Debug → Windows → Modules** 查找当前 `Assembly-CSharp`，检查 symbol 状态。实际产物在项目 `Library/ScriptAssemblies/<build-id>/`；`last-good.json` 标识最后成功构建。DLL 与 PDB 必须来自同一次构建，不要将旧 PDB 与新 DLL 混用。参见[微软符号与源码匹配说明](https://learn.microsoft.com/en-us/visualstudio/debugger/specify-symbol-dot-pdb-and-source-files-in-the-visual-studio-debugger?view=visualstudio)。
+4. 如果断点为空心，在 **Debug → Windows → Modules** 查找当前 `Assembly-CSharp`，检查 symbol 状态。实际产物在项目 `Library/ScriptAssemblies/Build/<build-id>/`；`last-good.json` 标识最后成功构建。DLL 与 PDB 必须来自同一次构建，不要将旧 PDB 与新 DLL 混用。参见[微软符号与源码匹配说明](https://learn.microsoft.com/en-us/visualstudio/debugger/specify-symbol-dot-pdb-and-source-files-in-the-visual-studio-debugger?view=visualstudio)。
 5. 编译器将项目根目录映射为 `.` 写入 PDB。如果 IDE 提示缺少 `./Assets/...cs`，定位到当前项目根目录下对应源码。源码应与构建版本完全一致；保存脚本后先停止 Play，等待新编译成功再开始下一次 Play。
-6. Release 优化可能导致局部变量被优化、步进跳行或被 Just My Code 跳过。需要逐行排查时，按微软的[Just My Code 说明](https://learn.microsoft.com/en-us/visualstudio/debugger/just-my-code?view=visualstudio)调整该选项；在附加后、加载下一次 Play 程序集前启用 [Suppress JIT optimization on module load](https://learn.microsoft.com/en-us/visualstudio/debugger/debugging-options-dialog-box?view=vs-2022)。该设置不能逆转已经完成的 C# 编译优化，也不会修改项目发布配置。
+6. 项目脚本默认关闭编译优化，便于逐行调试和查看局部变量。引擎托管库仍可使用 Release 优化；调试这些库时可调整 IDE 的 Just My Code 和 JIT 优化选项。
 
 本流程基于当前 DLL/PDB 编译与载入路径，编辑器不会代替 IDE 建立调试会话，也没有内置 C# 单步调试器。托管热重载若报告 load context 无法卸载，应先取消断点/Watch 中对旧对象的长期引用，结束调试并重启 Editor，再继续排查；不要将调试器导致的对象保留直接判为运行时泄漏。
+
+
+## 源码定位、停止后重载与 VS Code
+
+- 在 Project 中右键 C# 脚本，使用 **Open With...** 选择 IDE 的 `.exe`。Console 双击诊断或点击 **Open source** 会传递文件位置：VS Code 支持行列，Visual Studio 和 Rider 支持行。未配置 IDE 时使用系统文件关联，只保证打开文件。
+- 编译错误携带编译器行列；运行时回调异常从 portable PDB 提取第一个可定位堆栈帧。没有符号的异常仍保留完整日志。PDB 中的 `./Assets/...` 会相对当前项目根目录解析。
+- 停止状态保存脚本后，编辑器轮询文件变化并延迟合并连续修改，在后台编译。编译成功后刷新 Inspector 元数据并替换下一次 Play 使用的程序集。Play 或暂停期间不替换运行中的程序集；停止后再应用变化。
+- 编译失败保留最后成功产物，源码未修正时不反复重试。修正脚本后会再次自动编译；也可使用 **Assets → Compile C# Scripts** 手动重试。存在未编译修改时不启动旧脚本 Play。
+- 每次生成脚本工程时同时生成 `Library/ScriptProject/TomCat.code-workspace`，不修改用户的 `.vscode` 文件。安装 Microsoft C# 扩展后用 VS Code 打开该工作区，在 Run and Debug 选择 **Attach to TomCat Editor**，按 Profiler 的 PID 选择 `TomCatInut.exe`，附加后进入 Play。
+- 工作区提供项目源码映射；DLL 和 PDB 仍由编辑器编译及载入。配置参考 [VS Code C# 调试文档](https://code.visualstudio.com/docs/csharp/debugging)和[调试器配置文档](https://code.visualstudio.com/docs/csharp/debugger-settings)。
+
+自动回归覆盖编译错误位置、失败后保留旧程序集、修正后后台构建与新字段默认值载入，以及运行时异常源码行号。IDE 跳转和交互式断点命中仍需桌面验收，不能用编译通过替代。
 
 ## 回归验证
 
