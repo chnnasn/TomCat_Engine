@@ -57,10 +57,25 @@
     <ClInclude Include="src\panels\ContentBrowserPanel.h">
       <Filter>src\panels</Filter>
     </ClInclude>
+    <ClInclude Include="src\panels\HierarchyPanelShared.h">
+      <Filter>src\panels</Filter>
+    </ClInclude>
     <ClInclude Include="src\panels\ProfilerPanel.h">
       <Filter>src\panels</Filter>
     </ClInclude>
+    <ClInclude Include="src\panels\SceneAuthoringEditorsPanel.h">
+      <Filter>src\panels</Filter>
+    </ClInclude>
+    <ClInclude Include="src\panels\SceneHierarchyDetail.h">
+      <Filter>src\panels</Filter>
+    </ClInclude>
     <ClInclude Include="src\panels\SceneHierarchyPanel.h">
+      <Filter>src\panels</Filter>
+    </ClInclude>
+    <ClInclude Include="src\panels\SceneHierarchyTreePanel.h">
+      <Filter>src\panels</Filter>
+    </ClInclude>
+    <ClInclude Include="src\panels\SceneInspectorPanel.h">
       <Filter>src\panels</Filter>
     </ClInclude>
   </ItemGroup>
@@ -86,10 +101,22 @@
     <ClCompile Include="src\panels\ContentBrowserPanel.cpp">
       <Filter>src\panels</Filter>
     </ClCompile>
+    <ClCompile Include="src\panels\HierarchyPanelShared.cpp">
+      <Filter>src\panels</Filter>
+    </ClCompile>
     <ClCompile Include="src\panels\ProfilerPanel.cpp">
       <Filter>src\panels</Filter>
     </ClCompile>
+    <ClCompile Include="src\panels\SceneAuthoringEditorsPanel.cpp">
+      <Filter>src\panels</Filter>
+    </ClCompile>
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp">
+      <Filter>src\panels</Filter>
+    </ClCompile>
+    <ClCompile Include="src\panels\SceneHierarchyTreePanel.cpp">
+      <Filter>src\panels</Filter>
+    </ClCompile>
+    <ClCompile Include="src\panels\SceneInspectorPanel.cpp">
       <Filter>src\panels</Filter>
     </ClCompile>
   </ItemGroup>

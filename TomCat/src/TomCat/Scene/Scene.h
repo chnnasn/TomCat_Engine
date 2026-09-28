@@ -325,6 +325,9 @@ namespace TomCat {
 		friend class SceneSerializer;
 		friend class SceneManager;
 		friend class SceneHierarchyPanel;
+		friend class SceneHierarchyTreePanel;
+		friend class SceneInspectorPanel;
+		friend class SceneAuthoringEditorsPanel;
 		friend class EditorLayer;
 		friend class Scripting::ScriptEngine;
 
