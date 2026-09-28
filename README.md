@@ -15,6 +15,7 @@ Develops Emscripten/WebGL2 targets, shared native ImGui editor panels and browse
 - [x] Emscripten/WebGL2 modules reuse the native Player runtime, TCPAK reader, 2D scenes and ImGui authoring panels; the browser host owns file selection and persistence.
 - [x] Shared draggable Q/W/E/R Scene tools and Pivot/Center, Local/Global controls; Game renders the main camera before Play and after Stop. Browser toolbar placement is persisted when localStorage is available.
 - [x] Latest desktop mainline integration, including structured C# diagnostics, portable PDBs, and bundled pure-managed NuGet, project, transitive, and local DLL dependencies for native Editor/Player builds. Web still rejects C# payloads.
+- [x] Packaged desktop Editors carry a pinned private .NET 10 SDK and no longer depend on a machine-wide C# environment. The Web-specific browser runtime is tracked separately below.
 
 ## Getting Started
 

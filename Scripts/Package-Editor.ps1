@@ -13,6 +13,8 @@ param(
     [string]$PremakePath = "",
     [string]$EnigmaProject = "editor.evb",
     [string]$EnigmaConsole = "",
+    [string]$DotNetSdkRoot = "",
+    [string]$DotNetSdkVersion = "",
     [switch]$Build
 )
 
@@ -98,6 +100,7 @@ $outArchive = Join-Path $dist "$FinalName.zip"
 $stagingRoot = Join-Path $dist ".tomcat-editor-staging"
 $payloadRoot = Join-Path $stagingRoot "payload"
 $payloadManaged = Join-Path $payloadRoot "Managed"
+$payloadDotNetSdk = Join-Path $payloadRoot "DotNetSdk"
 $payloadTemplateParent = Join-Path $payloadRoot "Packages\PlayerTemplates"
 $payloadPackageRoot = Join-Path $payloadRoot "Packages"
 $stagedInputExe = Join-Path $stagingRoot "input\TomCatInut.exe"
@@ -158,6 +161,17 @@ foreach ($name in $nativeRuntimeFiles) {
 }
 
 Publish-TomCatManagedRelease -RepositoryRoot $RepoRoot -Destination $payloadManaged
+if (-not $DotNetSdkRoot) {
+    $dotnetCommand = Get-Command dotnet.exe -ErrorAction SilentlyContinue
+    if (-not $dotnetCommand) {
+        throw "A .NET 10 SDK is required on the release machine to stage the self-contained Editor compiler environment."
+    }
+    $DotNetSdkRoot = Split-Path -Parent $dotnetCommand.Source
+}
+& (Join-Path $PSScriptRoot "Stage-EditorDotNetSdk.ps1") `
+    -SourceRoot $DotNetSdkRoot -Destination $payloadDotNetSdk `
+    -SdkVersion $DotNetSdkVersion
+if ($LASTEXITCODE -ne 0) { throw "Editor .NET SDK staging failed (exit $LASTEXITCODE)" }
 New-Item -ItemType Directory -Path $payloadTemplateParent -Force | Out-Null
 Copy-Item -LiteralPath $playerTemplate -Destination $payloadTemplateParent -Recurse -Force
 foreach ($requiredPackageAsset in $requiredPackageAssets) {

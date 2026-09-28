@@ -1,5 +1,7 @@
 # C# 项目依赖
 
+正式发布的 TomCat Editor 自带固定版本的私有 .NET SDK、引用程序集和 Roslyn/MSBuild 工具链。项目脚本构建始终优先使用经运行时清单校验的 `DotNetSdk/dotnet.exe`，不会因玩家或开发者机器上的全局 SDK 更新而改变；只有仓库源码开发构建才允许回退到 PATH 中的 .NET 10 SDK。
+
 将 [TomCat.Dependencies.csproj 模板](../Managed/Templates/TomCat.Dependencies.csproj)复制到游戏项目根目录，与 `.tcproj` 同级。它是可由 `dotnet` 管理的标准 SDK 项目，不会被编辑器覆盖。不要修改 `Library/ScriptProject` 中的生成文件。
 
 在该文件中添加依赖，路径相对这个 `.csproj`：
