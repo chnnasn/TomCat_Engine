@@ -12,6 +12,9 @@
 #include "Panels/ProfilerPanel.h"
 #include "Scripting/ScriptProjectCompiler.h"
 #include "Scripting/ScriptMetadataCache.h"
+#include "EditorViewportHandles.h"
+#include "EditorBuildController.h"
+#include "EditorProjectSettingsController.h"
 #include <functional>
 #include "TomCat/Project/Project.h"
 #include "TomCat/Project/ProjectManager.h"
@@ -240,32 +243,18 @@ namespace TomCat {
 		bool m_StepRequested = false;
 		bool m_Is2DMode = false;
 
-		enum class ColliderEditHandle
-		{
-			None = 0,
-			Offset,
-			BoxLeft,
-			BoxRight,
-			BoxBottom,
-			BoxTop,
-			BoxBottomLeft,
-			BoxBottomRight,
-			BoxTopLeft,
-			BoxTopRight,
-			CircleLeft,
-			CircleRight,
-			CircleBottom,
-			CircleTop
-		};
+		using ColliderEditHandle = EditorViewportState::ColliderEditHandle;
 
-		ColliderEditHandle m_ActiveColliderHandle = ColliderEditHandle::None;
-		UUID m_ColliderEditEntity = UUID(0);
-		glm::vec2 m_ColliderDragStartMouseWorld{ 0.0f };
-		glm::vec2 m_ColliderDragStartCenter{ 0.0f };
-		glm::vec2 m_ColliderDragStartHalfSize{ 0.0f };
-		float m_ColliderDragStartRadius = 0.0f;
-		float m_ColliderDragPlaneZ = 0.0f;
-		bool m_ColliderHandleHovered = false;
+
+		friend class EditorViewportHandles;
+		friend class EditorBuildController;
+		friend class EditorProjectSettingsController;
+
+		EditorViewportState m_ViewportState;
+		EditorBuildState m_BuildState;
+		EditorViewportHandles m_Viewport;
+		EditorBuildController m_Build;
+		EditorProjectSettingsController m_ProjectSettings;
 
 		Ref<Project> m_CurrentProject;
 		std::filesystem::path m_StartupProjectPath;
@@ -286,14 +275,6 @@ namespace TomCat {
 		bool m_GizmoTransactionActive = false;
 		bool m_GizmoDragActive = false;
 		bool m_GizmoHandleHovered = false;
-		bool m_UIRectTransactionActive = false;
-		bool m_UIRectDragActive = false;
-		// Cached across the native-event/ImGui frame boundary. Mouse button events
-		// arrive before the Scene overlay is rebuilt, so the previous frame's hit
-		// result must protect transparent UI rectangles from world picking.
-		bool m_UIRectHandleHovered = false;
-		UUID m_UIRectEditEntity = UUID(0);
-		bool m_ColliderTransactionActive = false;
 		bool m_BypassUnsavedCheck = false;
 		struct PendingProjectMigration
 		{
@@ -334,10 +315,6 @@ namespace TomCat {
 		bool m_FocusBuildSettingsPanel = false;
 		uint32_t m_LastSavedPanelVisibilityMask = 0;
 		bool m_PanelVisibilitySnapshotInitialized = false;
-		std::string m_BuildSettingsStatus;
-		bool m_BuildSettingsSucceeded = false;
-		std::string m_PlayerBuildStatus;
-		bool m_PlayerBuildSucceeded = false;
 		bool m_ShowProjectSettingsPanel = false;
 		bool m_FocusProjectSettingsPanel = false;
 		enum class PanelMaximizeAction
@@ -369,20 +346,6 @@ namespace TomCat {
 		std::string m_PendingRestoredTabWindow;
 		int m_PendingRestoredTabOrder = -1;
 		int m_EditorPanelCycleIndex = 5;
-		int m_ProjectSettingsPage = 0;
-		Ref<Project> m_ProjectSettingsDraftProject;
-		ProjectSettings m_ProjectSettingsDraft;
-		PlayerSettings m_PlayerSettingsDraft;
-		std::array<std::array<char, 128>, Physics2DLayerCount> m_ProjectLayerNameBuffers{};
-		std::array<char, 128> m_NewProjectTagBuffer{};
-		std::array<char, 129> m_PlayerProductNameBuffer{};
-		std::array<char, 129> m_PlayerCompanyNameBuffer{};
-		std::array<char, 65> m_PlayerVersionBuffer{};
-		std::array<char, 513> m_PlayerSaveDirectoryBuffer{};
-		std::array<char, 513> m_PlayerLogDirectoryBuffer{};
-		std::array<char, 513> m_PlayerCrashDirectoryBuffer{};
-		std::string m_ProjectSettingsError;
-		std::string m_ProjectSettingsStatus;
 		bool m_OpenUnsavedChangesModal = false;
 		std::function<bool()> m_PendingUnsavedAction;
 	};
