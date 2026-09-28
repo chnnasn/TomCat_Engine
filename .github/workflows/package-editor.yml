@@ -279,6 +279,7 @@ jobs:
                   "dist\vcruntime140.dll",
                   "dist\vcruntime140_1.dll",
                   "dist\Managed",
+                  "dist\DotNetSdk",
                   "dist\Packages")) {
                 $candidate = Join-Path $env:GITHUB_WORKSPACE $relativePath
                 if (Test-Path -LiteralPath $candidate) {

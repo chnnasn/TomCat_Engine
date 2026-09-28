@@ -398,9 +398,10 @@ namespace {
 			});
 		Require(diagnostic != diagnostics.end(),
 			"missing .NET 10 SDK did not emit TCSP0020");
-		Require(diagnostic->Message.find(".NET 10 SDK") != std::string::npos &&
-			diagnostic->Message.find("dotnet.exe") != std::string::npos,
-			"missing SDK diagnostic did not explain the required SDK and PATH fix");
+		Require(diagnostic->Message.find("TomCat") != std::string::npos &&
+			diagnostic->Message.find("SDK") != std::string::npos &&
+			diagnostic->Message.find("repair") != std::string::npos,
+			"missing SDK diagnostic did not explain the engine-owned compiler environment");
 	}
 #endif
 
