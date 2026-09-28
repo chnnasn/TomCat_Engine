@@ -39,6 +39,7 @@ add_library(tc_player_core STATIC ${TC_SOURCES} ${gl_sources}
   "${TC_SRC}/platform/Web/WebWindow.cpp"
   "${TC_SRC}/platform/Web/WebShader.cpp"
   "${TC_SRC}/platform/Web/WebFramebuffer.cpp"
+  "${TC_SRC}/platform/Web/WebManagedBootstrap.cpp"
   "${TC_ROOT}/Player/TomCatPlayer/src/PlayerRuntimeLayer.cpp"
   "${TC_ROOT}/Player/TomCatPlayer/src/PlayerCommandLine.cpp")
 target_include_directories(tc_player_core PUBLIC
@@ -63,7 +64,7 @@ set(TC_WEB_LINK_OPTIONS
 target_link_options(tomcat_player PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatPlayerModule"
   "--preload-file=${TC_ROOT}/Editor/TomCatInut/Packages/Resources/Sprites@/Packages/Resources/Sprites"
-  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_player_boot','_tc_web_player_frame','_tc_web_player_resize','_tc_web_player_shutdown','_tc_web_player_error','_tc_web_player_cook_sample','_tc_web_player_stats']")
+  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_managed_install','_tc_web_player_boot','_tc_web_player_frame','_tc_web_player_resize','_tc_web_player_shutdown','_tc_web_player_error','_tc_web_player_cook_sample','_tc_web_player_stats']")
 
 add_executable(tomcat_editor
   "${TC_SRC}/platform/Web/WebEditor.cpp"
@@ -90,4 +91,32 @@ target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatEditorModule"
   "--preload-file=${TC_ROOT}/Editor/TomCatInut/Packages@/Packages"
   "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/fonts@/WebFonts"
-  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_editor_boot','_tc_web_editor_frame','_tc_web_editor_resize','_tc_web_editor_shutdown','_tc_web_editor_error','_tc_web_editor_rpc','_tc_web_editor_state','_tc_web_editor_take_actions']")
+  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_managed_install','_tc_web_editor_set_managed_assembly','_tc_web_editor_boot','_tc_web_editor_frame','_tc_web_editor_resize','_tc_web_editor_shutdown','_tc_web_editor_error','_tc_web_editor_rpc','_tc_web_editor_state','_tc_web_editor_take_actions']")
+
+# Static entrypoint archive consumed by Managed/TomCat.WebHost. The .NET
+# browser-wasm linker owns the final module so native and managed function tables
+# share one WebAssembly memory. Pass this archive plus tc_player_core/tc_yaml and
+# Box2D archives through TomCatWebNativeArchives when publishing the host.
+add_library(tomcat_managed_web_entrypoints STATIC
+  "${TC_SRC}/platform/Web/WebPlayer.cpp"
+  "${TC_SRC}/platform/Web/WebEditor.cpp"
+  "${TC_SRC}/platform/Web/WebEditorUI.cpp"
+  "${TC_SRC}/platform/Web/WebSceneToolbars.cpp"
+  "${TC_SRC}/platform/Web/WebProjectSettingsPanel.cpp"
+  "${TC_SRC}/TomCat/ImGui/ImGuiLayer.cpp"
+  "${TC_SRC}/TomCat/ImGui/ImGuiCallback.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneHierarchyPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/ContentBrowserPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/ConsolePanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
+  "${TC_VENDOR}/ImGui/imgui.cpp" "${TC_VENDOR}/ImGui/imgui_draw.cpp"
+  "${TC_VENDOR}/ImGui/imgui_tables.cpp" "${TC_VENDOR}/ImGui/imgui_widgets.cpp"
+  "${TC_VENDOR}/ImGui/backends/imgui_impl_glfw.cpp"
+  "${TC_VENDOR}/ImGui/backends/imgui_impl_opengl3.cpp"
+  "${TC_VENDOR}/ImGuizmo/ImGuizmo.cpp"
+  "${TC_SRC}/TomCat/Editor/WebEditorSession.cpp"
+  "${TC_SRC}/TomCat/Editor/SceneHistory.cpp")
+target_link_libraries(tomcat_managed_web_entrypoints PUBLIC tc_player_core)
+target_include_directories(tomcat_managed_web_entrypoints PRIVATE
+  "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src")
+target_compile_definitions(tomcat_managed_web_entrypoints PRIVATE IMGUI_IMPL_OPENGL_ES3)

@@ -130,8 +130,19 @@ public sealed class ScriptDomain : IDisposable
         _loadContext = null;
         if (context is not null)
         {
-            _unloadReference = new WeakReference(context, trackResurrection: false);
-            context.Unload();
+            if (context.IsCollectible)
+            {
+                _unloadReference = new WeakReference(context, trackResurrection: false);
+                context.Unload();
+            }
+            else
+            {
+                // browser-wasm does not support collectible ALCs. All scene
+                // instances, callbacks, cancellation and descriptors were still
+                // released above; a newly compiled assembly requires recreating
+                // the browser module, matching the Editor host contract.
+                _unloadReference = null;
+            }
         }
     }
 
@@ -177,7 +188,9 @@ public sealed class ScriptDomain : IDisposable
 		{
 			NewExpression create = Expression.New(constructor);
 			UnaryExpression convert = Expression.Convert(create, typeof(TomCatBehaviour));
-			constructorFactory = Expression.Lambda<Func<TomCatBehaviour>>(convert).Compile();
+			constructorFactory = OperatingSystem.IsBrowser()
+				? () => (TomCatBehaviour)constructor.Invoke(null)
+				: Expression.Lambda<Func<TomCatBehaviour>>(convert).Compile();
 		}
 		catch (Exception exception)
 		{
