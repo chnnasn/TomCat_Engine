@@ -93,6 +93,10 @@ namespace TomCat {
 		}
 		const std::string& GetLastGoodBuildID() const { return m_LastGoodBuildID; }
 		std::filesystem::path GetManagedRuntimeDirectory() const;
+		const std::filesystem::path& GetDotNetExecutable() const
+		{
+			return m_DotNetExecutable;
+		}
 
 	private:
 		struct ScriptSource
@@ -136,6 +140,7 @@ namespace TomCat {
 		std::filesystem::path m_GeneratorReference;
 		std::filesystem::path m_ManagedSolution;
 		std::filesystem::path m_ManagedRuntimeDirectory;
+		std::filesystem::path m_DotNetExecutable;
 		bool m_ManagedApiIsProject = false;
 		bool m_GeneratorIsProject = false;
 		ScriptBuildState m_State = ScriptBuildState::Unconfigured;

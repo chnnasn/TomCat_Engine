@@ -128,7 +128,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). C# payloads, audible audio, custom cooked SPIR-V shaders, and multisample framebuffers are unsupported there.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
-- Editor-side C# compilation requires the **.NET 10 SDK**
+- Source development requires the **.NET 10 SDK** to build TomCat itself. Packaged Editors carry a pinned private SDK for game-script compilation and do not use a machine-wide C# environment.
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
 - Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. Play Mode hot replacement and a built-in C# debugger are also unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
 

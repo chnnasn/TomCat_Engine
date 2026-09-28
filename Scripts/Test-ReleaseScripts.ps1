@@ -102,6 +102,8 @@ foreach ($requiredCliPackaging in @(
         'Tools\premake5.lua',
         'Tools\Tools.sln',
         'TomCatCLI.exe',
+        'DotNetSdk',
+        'Stage-EditorDotNetSdk.ps1',
         'New-TomCatRuntimeManifest',
         'Set-EvbPackageTree',
         'PlayerTemplates',
@@ -308,6 +310,7 @@ try {
     $templateRoot = Join-Path $payloadRoot 'Packages\PlayerTemplates\win-x64'
     $runtimePackageRoot = Join-Path $payloadRoot 'Packages'
     New-Item -ItemType Directory -Path $managedRoot, `
+        (Join-Path $payloadRoot 'DotNetSdk'), `
         (Join-Path $templateRoot 'Managed'), `
         (Join-Path $templateRoot 'dotnet\host\fxr\10.0.0'), `
         $runtimePackageRoot -Force | Out-Null
@@ -319,6 +322,7 @@ try {
             'TomCat.ScriptHost.runtimeconfig.json')) {
         Copy-Item -LiteralPath $fixture -Destination (Join-Path $managedRoot $name)
     }
+    Copy-Item -LiteralPath $fixture -Destination (Join-Path $payloadRoot 'DotNetSdk\dotnet.exe')
     foreach ($name in @(
             'TomCatCLI.exe', 'shaderc_shared.dll', 'msvcp140.dll',
             'vcruntime140.dll', 'vcruntime140_1.dll')) {
@@ -417,7 +421,7 @@ try {
         -NodeName '.tomcat-runtime' -SourceDirectory $payloadRoot `
         -FileAction 0 -DirectoryAction 3
     $requiredRuntimeEntries = @(
-        'runtime-manifest.json', 'TomCatCLI.exe', 'PlayerTemplates'
+        'runtime-manifest.json', 'TomCatCLI.exe', 'DotNetSdk', 'PlayerTemplates'
     ) + @($requiredPackageAssets | ForEach-Object { Split-Path -Leaf $_ })
     foreach ($requiredRuntimeEntry in $requiredRuntimeEntries) {
         if ($completeEditorProject -notmatch "(?is)<Name>\s*$([regex]::Escape($requiredRuntimeEntry))\s*</Name>") {

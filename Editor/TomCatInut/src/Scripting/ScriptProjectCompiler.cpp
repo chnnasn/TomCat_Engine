@@ -183,6 +183,37 @@ namespace TomCat {
 				IsRegularFile(path / "TomCat.Managed.dll");
 		}
 
+		std::filesystem::path ResolveDotNetExecutable()
+		{
+#ifdef TC_PLATFORM_WINDOWS
+			// Packaged Editors publish one engine-owned SDK beside the verified
+			// Managed payload. This is the authoritative compiler environment; it
+			// must win over PATH so machine-wide SDK updates cannot change builds.
+			if (const auto runtimeRoot = ApplicationPaths::GetRuntimeEditorRoot())
+			{
+				const std::filesystem::path candidate =
+					*runtimeRoot / "DotNetSdk" / "dotnet.exe";
+				return IsRegularFile(candidate) ? AbsoluteLexical(candidate)
+					: std::filesystem::path{};
+			}
+
+			const std::filesystem::path besideExecutable =
+				ExecutableDirectory() / "DotNetSdk" / "dotnet.exe";
+			if (IsRegularFile(besideExecutable))
+				return AbsoluteLexical(besideExecutable);
+
+			// Repository/source builds retain a developer fallback. Release
+			// packaging is stricter and always stages DotNetSdk into the signed
+			// runtime manifest.
+			wchar_t resolved[32768]{};
+			const DWORD length = SearchPathW(nullptr, L"dotnet.exe", nullptr,
+				static_cast<DWORD>(std::size(resolved)), resolved, nullptr);
+			if (length != 0 && length < std::size(resolved))
+				return AbsoluteLexical(std::filesystem::path(resolved));
+#endif
+			return {};
+		}
+
 		std::string MakeBuildID()
 		{
 			static std::atomic<uint32_t> sequence = 0;
@@ -261,7 +292,8 @@ namespace TomCat {
 		}
 
 #ifdef TC_PLATFORM_WINDOWS
-		bool RunDotNetCommand(const std::wstring& arguments,
+		bool RunDotNetCommand(const std::filesystem::path& dotnetExecutable,
+			const std::wstring& arguments,
 			const std::filesystem::path& workingDirectory,
 			std::string& processOutput, int& exitCode, std::string& launchError)
 		{
@@ -290,17 +322,24 @@ namespace TomCat {
 			startup.hStdError = writePipe;
 			PROCESS_INFORMATION process{};
 
-			std::wstring command = L"dotnet.exe " + arguments;
+			if (!IsRegularFile(dotnetExecutable))
+			{
+				launchError = "The configured TomCat .NET SDK host is missing";
+				CloseHandle(readPipe);
+				CloseHandle(writePipe);
+				return false;
+			}
+			std::wstring command = L"\"" + dotnetExecutable.wstring() + L"\" " + arguments;
 			std::vector<wchar_t> mutableCommand(command.begin(), command.end());
 			mutableCommand.push_back(L'\0');
-			const BOOL created = CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr,
+			const BOOL created = CreateProcessW(dotnetExecutable.c_str(), mutableCommand.data(), nullptr, nullptr,
 				TRUE, CREATE_NO_WINDOW, nullptr,
 				workingDirectory.empty() ? nullptr : workingDirectory.c_str(), &startup, &process);
 			CloseHandle(writePipe);
 			writePipe = nullptr;
 			if (!created)
 			{
-				launchError = "Could not start dotnet.exe (Win32 error " +
+				launchError = "Could not start the TomCat .NET SDK host (Win32 error " +
 					std::to_string(GetLastError()) + ")";
 				CloseHandle(readPipe);
 				return false;
@@ -322,15 +361,18 @@ namespace TomCat {
 			return true;
 		}
 
-		bool RunDotNetBuild(const std::filesystem::path& projectPath,
+		bool RunDotNetBuild(const std::filesystem::path& dotnetExecutable,
+			const std::filesystem::path& projectPath,
 			std::string& processOutput, int& exitCode, std::string& launchError)
 		{
-			return RunDotNetCommand(L"build \"" + projectPath.wstring() +
-				L"\" --configuration Release --nologo --verbosity minimal",
+			return RunDotNetCommand(dotnetExecutable, L"build \"" + projectPath.wstring() +
+				L"\" --configuration Release --nologo --verbosity minimal "
+				L"-nodeReuse:false -p:UseSharedCompilation=false",
 				projectPath.parent_path(), processOutput, exitCode, launchError);
 		}
 
-		bool RunRestrictedDotNetBuild(const std::filesystem::path& projectPath,
+		bool RunRestrictedDotNetBuild(const std::filesystem::path& dotnetExecutable,
+			const std::filesystem::path& projectPath,
 			std::string& processOutput, int& exitCode, std::string& launchError, bool dependenciesEnabled)
 		{
 			// These are command-line global properties, so neither an environment
@@ -360,7 +402,8 @@ namespace TomCat {
 			};
 
 			std::wstring arguments = L"build -noAutoResponse \"" + projectPath.wstring() +
-				L"\" --configuration Release --nologo --verbosity minimal";
+				L"\" --configuration Release --nologo --verbosity minimal "
+				L"-nodeReuse:false -p:UseSharedCompilation=false";
 			for (const wchar_t* property : lockedProperties)
 			{
 				if (dependenciesEnabled && (std::wstring_view(property) == L"ImportProjectExtensionProps=false"
@@ -368,11 +411,12 @@ namespace TomCat {
 					continue;
 				arguments += L" -p:" + std::wstring(property);
 			}
-			return RunDotNetCommand(arguments, projectPath.parent_path(), processOutput,
+			return RunDotNetCommand(dotnetExecutable, arguments, projectPath.parent_path(), processOutput,
 				exitCode, launchError);
 		}
 #else
-		bool RunDotNetBuild(const std::filesystem::path&, std::string&, int& exitCode,
+		bool RunDotNetBuild(const std::filesystem::path&, const std::filesystem::path&,
+			std::string&, int& exitCode,
 			std::string& launchError)
 		{
 			exitCode = -1;
@@ -380,7 +424,8 @@ namespace TomCat {
 			return false;
 		}
 
-		bool RunRestrictedDotNetBuild(const std::filesystem::path&, std::string&,
+		bool RunRestrictedDotNetBuild(const std::filesystem::path&,
+			const std::filesystem::path&, std::string&,
 			int& exitCode, std::string& launchError, bool)
 		{
 			exitCode = -1;
@@ -389,17 +434,18 @@ namespace TomCat {
 		}
 #endif
 
-		bool CheckDotNet10Sdk(std::string& errorMessage)
+		bool CheckDotNet10Sdk(const std::filesystem::path& dotnetExecutable,
+			std::string& errorMessage)
 		{
 #ifdef TC_PLATFORM_WINDOWS
 			std::string output;
 			std::string launchError;
 			int exitCode = -1;
-			if (!RunDotNetCommand(L"--list-sdks", {}, output, exitCode, launchError))
+			if (!RunDotNetCommand(dotnetExecutable, L"--list-sdks", {}, output,
+				exitCode, launchError))
 			{
-				errorMessage = ".NET 10 SDK is required to compile TomCat C# scripts, "
-					"but dotnet.exe could not be started. " + launchError +
-					". Install the .NET 10 SDK and ensure dotnet.exe is on PATH.";
+				errorMessage = "TomCat's .NET 10 SDK could not be started. " +
+					launchError + ". Reinstall or repair the Editor runtime.";
 				return false;
 			}
 			if (exitCode != 0)
@@ -420,9 +466,8 @@ namespace TomCat {
 				if (std::regex_search(line, sdk10Pattern))
 					return true;
 			}
-			errorMessage = ".NET 10 SDK is required to compile TomCat C# scripts, "
-				"but no 10.x SDK was reported by 'dotnet --list-sdks'. "
-				"Install the .NET 10 SDK from https://dotnet.microsoft.com/download/dotnet/10.0.";
+			errorMessage = "The TomCat compiler environment does not contain its "
+				"pinned .NET 10 SDK. Reinstall or repair the Editor runtime.";
 			return false;
 #else
 			errorMessage = ".NET 10 SDK detection is only supported on Windows x64.";
@@ -492,7 +537,8 @@ namespace TomCat {
 		m_GeneratorIsProject = m_GeneratorReference.extension() == ".csproj";
 
 		std::string sdkError;
-		if (!CheckDotNet10Sdk(sdkError))
+		m_DotNetExecutable = ResolveDotNetExecutable();
+		if (!CheckDotNet10Sdk(m_DotNetExecutable, sdkError))
 		{
 			ScriptCompilerDiagnostic diagnostic;
 			diagnostic.Level = ScriptCompilerDiagnostic::Severity::Error;
@@ -525,6 +571,7 @@ namespace TomCat {
 		m_GeneratorReference.clear();
 		m_ManagedSolution.clear();
 		m_ManagedRuntimeDirectory.clear();
+		m_DotNetExecutable.clear();
 		m_ManagedApiIsProject = false;
 		m_GeneratorIsProject = false;
 		m_State = ScriptBuildState::Unconfigured;
@@ -735,13 +782,14 @@ namespace TomCat {
 			std::string output;
 			std::string launchError;
 			int exitCode = -1;
-			if (!RunDotNetBuild(m_ManagedSolution, output, exitCode, launchError))
+			if (!RunDotNetBuild(m_DotNetExecutable, m_ManagedSolution, output,
+				exitCode, launchError))
 			{
 				ScriptCompilerDiagnostic diagnostic;
 				diagnostic.Level = ScriptCompilerDiagnostic::Severity::Error;
 				diagnostic.Code = "TCSP0011";
 				diagnostic.Message = "Could not bootstrap the managed scripting toolchain: " +
-					launchError + ". Install the .NET 10 SDK and ensure dotnet.exe is on PATH.";
+					launchError + ". Repair the TomCat compiler environment.";
 				record(std::move(diagnostic));
 				return false;
 			}
@@ -1292,7 +1340,8 @@ namespace TomCat {
 
 		std::string output;
 		std::string launchError;
-		if (!RunRestrictedDotNetBuild(m_ScriptProjectDirectory / "Assembly-CSharp.csproj",
+		if (!RunRestrictedDotNetBuild(m_DotNetExecutable,
+			m_ScriptProjectDirectory / "Assembly-CSharp.csproj",
 			output, result.ExitCode, launchError,
 			IsRegularFile(m_Project->GetProjectDirectory() / "TomCat.Dependencies.csproj")))
 		{
@@ -1511,6 +1560,7 @@ namespace TomCat {
 		worker.m_GeneratorReference = m_GeneratorReference;
 		worker.m_ManagedSolution = m_ManagedSolution;
 		worker.m_ManagedRuntimeDirectory = m_ManagedRuntimeDirectory;
+		worker.m_DotNetExecutable = m_DotNetExecutable;
 		worker.m_ManagedApiIsProject = m_ManagedApiIsProject;
 		worker.m_GeneratorIsProject = m_GeneratorIsProject;
 		result = worker.CompileCandidate(sources, m_CurrentSourceHash, buildID);
@@ -1546,6 +1596,7 @@ namespace TomCat {
 		const std::filesystem::path managedSolution = m_ManagedSolution;
 		const std::filesystem::path managedRuntimeDirectory =
 			m_ManagedRuntimeDirectory;
+		const std::filesystem::path dotNetExecutable = m_DotNetExecutable;
 		const bool managedApiIsProject = m_ManagedApiIsProject;
 		const bool generatorIsProject = m_GeneratorIsProject;
 		std::vector<ScriptSource> workerSources = sources;
@@ -1556,7 +1607,8 @@ namespace TomCat {
 		{
 			std::thread([job, project, scriptProjectDirectory, assembliesDirectory,
 				managedApiReference, generatorReference, managedSolution,
-				managedRuntimeDirectory, managedApiIsProject, generatorIsProject,
+				managedRuntimeDirectory, dotNetExecutable, managedApiIsProject,
+				generatorIsProject,
 				workerSources = std::move(workerSources), sourceHash, buildID]() mutable
 			{
 				ScriptBuildResult result;
@@ -1570,6 +1622,7 @@ namespace TomCat {
 					worker.m_GeneratorReference = generatorReference;
 					worker.m_ManagedSolution = managedSolution;
 					worker.m_ManagedRuntimeDirectory = managedRuntimeDirectory;
+					worker.m_DotNetExecutable = dotNetExecutable;
 					worker.m_ManagedApiIsProject = managedApiIsProject;
 					worker.m_GeneratorIsProject = generatorIsProject;
 					result = worker.CompileCandidate(std::move(workerSources),

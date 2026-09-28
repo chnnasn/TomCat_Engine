@@ -246,6 +246,7 @@ namespace {
 			{ "Managed/TomCat.ScriptHost.runtimeconfig.json", "{runtime:" + marker + "}" },
 			{ "Managed/TomCat.ScriptHost.deps.json", "{deps:" + marker + "}" },
 			{ "Managed/TomCat.ScriptGenerator.dll", "generator-" + marker },
+			{ "DotNetSdk/dotnet.exe", "sdk-host-" + marker },
 			{ "Packages/PlayerTemplates/win-x64/template.json", "{template:" + marker + "}" },
 			{ "Packages/PlayerTemplates/win-x64/TomCatPlayer.exe", "player-" + marker },
 			{ "Packages/Resources/Sprites/TomCat/Circle.tga", "circle-sprite-" + marker },
