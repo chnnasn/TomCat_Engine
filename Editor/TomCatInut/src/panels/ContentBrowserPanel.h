@@ -70,7 +70,7 @@ namespace TomCat {
         using AssetSelectionCallback = std::function<void(const std::filesystem::path&)>;
         void SetAssetSelectionCallback(AssetSelectionCallback callback) { m_AssetSelectionCallback = std::move(callback); }
         void SetScriptMetadataProvider(std::function<std::optional<EditorScriptMetadata>(AssetHandle)> provider) { m_ScriptMetadataProvider = std::move(provider); }
-        bool OpenDiagnosticSource(const std::filesystem::path& path) { return path.extension()==".cs" && OpenCSharpScript(path); }
+        bool OpenDiagnosticSource(const std::filesystem::path& path, uint32_t line = 0, uint32_t column = 0);
         void OnImGuiRender(bool* open = nullptr);
 	private:
         void SelectAssetPath(const std::filesystem::path& path);
@@ -230,7 +230,7 @@ namespace TomCat {
 		bool ExportPackedAtlas();
 
 		void OpenAsset(const std::filesystem::path& path, bool isDirectory);
-		bool OpenCSharpScript(const std::filesystem::path& path);
+		bool OpenCSharpScript(const std::filesystem::path& path, uint32_t line = 0, uint32_t column = 0);
 		void ChooseExternalScriptEditor(const std::filesystem::path& scriptPath);
 		void RequestDeleteAsset(const std::filesystem::path& path, bool isDirectory);
 		void DeleteAsset(const std::filesystem::path& path, bool force);

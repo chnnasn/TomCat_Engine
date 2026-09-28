@@ -7,6 +7,7 @@
 | 项目介绍、构建与功能范围 | [项目总览](../README.zh-CN.md) | [Overview](../README.md) |
 | 项目配置、资产、场景、迁移与发布 | [项目系统](../PROJECT_SYSTEM.md) | — |
 | C# 脚本、原生 ABI 与生命周期 | [托管脚本](../Managed/README.zh-CN.md) | [Managed scripting](../Managed/README.md) |
+| NuGet 还原、项目引用与托管依赖加载 | [C# 项目依赖](CSHARP_DEPENDENCIES.md) | — |
 | 无界面 Cook 与 Player 构建 | [TomCatCLI](../Tools/TomCatCLI/README.zh-CN.md) | [TomCatCLI](../Tools/TomCatCLI/README.md) |
 | 浏览器构建、编辑接口与限制 | [Web 指南](../Web/README.zh-CN.md) | [Web guide](../Web/README.md) |
 | 浏览器中文字形与字体来源 | [字体说明](../Web/fonts/README.zh-CN.md) | [Font notes](../Web/fonts/README.md) |
