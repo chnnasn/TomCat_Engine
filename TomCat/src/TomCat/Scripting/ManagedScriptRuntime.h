@@ -4,6 +4,7 @@
 #include "IScriptRuntime.h"
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -17,8 +18,12 @@ namespace TomCat::Scripting {
 
 		bool Initialize(const DotNetHost::Configuration& hostConfiguration,
 			const NativeApiV2& nativeApi);
+		bool InitializeWithManagedApi(const NativeApiV2& nativeApi,
+			GetManagedApiFn getManagedApi);
 		bool SetProjectAssembly(const std::filesystem::path& assemblyPath,
 			const std::filesystem::path& pdbPath = {});
+		bool SetProjectAssemblyBytes(std::span<const uint8_t> assembly,
+			std::span<const uint8_t> pdb = {});
 		bool ReadProjectMetadata(std::string& manifestJson) override;
 		bool PollUnload() override;
 		void OnUnloadFailed(std::string_view reason) override;
@@ -66,6 +71,7 @@ namespace TomCat::Scripting {
 		uint64_t m_DomainId = 0;
 		uint64_t m_SceneRuntimeId = 0;
 		bool m_UnloadPending = false;
+		bool m_ExternalManagedApi = false;
 		std::string m_LastError;
 	};
 

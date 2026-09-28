@@ -3130,7 +3130,7 @@ namespace {
 			&& mountedPayload->ManagedApiVersion == 3
 			&& mountedPayload->ScriptManifestVersion == 1
 			&& mountedPayload->TargetFramework == "net10.0"
-			&& mountedPayload->RuntimeIdentifier == "win-x64"
+			&& mountedPayload->RuntimeIdentifier == "portable"
 			&& mountedPayload->BuildID == buildID
 			&& mountedPayload->AssemblySHA256.size() == 64
 			&& mountedPayload->ScriptManifestJson == managedManifest

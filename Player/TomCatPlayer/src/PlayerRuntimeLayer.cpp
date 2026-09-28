@@ -92,6 +92,22 @@ namespace TomCat {
 				return true;
 			}
 
+#ifdef __EMSCRIPTEN__
+			auto candidate = Scripting::CreateWebManagedScriptRuntime(
+				payload->Assembly, payload->Pdb, &errorMessage);
+			if (!candidate)
+				return false;
+			std::string manifest;
+			if (!candidate->ReadProjectMetadata(manifest) || manifest.empty())
+			{
+				errorMessage = "packaged C# metadata could not be loaded by the bundled WebAssembly runtime";
+				return false;
+			}
+			runtime = std::move(candidate);
+			errorMessage.clear();
+			return true;
+#else
+
 			ScopedShadowDirectory shadow;
 			if (!shadow.Create(errorMessage))
 			{
@@ -142,6 +158,7 @@ namespace TomCat {
 			runtime = std::move(candidate);
 			errorMessage.clear();
 			return true;
+#endif
 		}
 
 	}

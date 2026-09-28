@@ -777,6 +777,7 @@
     <ClCompile Include="src\platform\Web\WebEditor.cpp" />
     <ClCompile Include="src\platform\Web\WebEditorUI.cpp" />
     <ClCompile Include="src\platform\Web\WebFramebuffer.cpp" />
+    <ClCompile Include="src\platform\Web\WebManagedBootstrap.cpp" />
     <ClCompile Include="src\platform\Web\WebPlayer.cpp" />
     <ClCompile Include="src\platform\Web\WebProjectSettingsPanel.cpp" />
     <ClCompile Include="src\platform\Web\WebSceneToolbars.cpp" />

@@ -4,6 +4,8 @@
 #include "TomCat/Scene/SceneManager.h"
 #include "TomCat/Project/PlayerSettings.h"
 #include <string>
+#include <span>
+#include <vector>
 
 namespace TomCat {
 class Scene;
@@ -28,6 +30,8 @@ public:
   void ControlPreview(const std::string& command);
   void AdvancePreview(float delta);
   void StopPreview();
+  bool SetManagedAssembly(std::span<const uint8_t> assembly,
+    std::span<const uint8_t> pdb, std::string& error);
 private:
   std::string Snapshot() const;
   bool SettingsDirty() const;
@@ -42,5 +46,7 @@ private:
   SceneManager m_Preview;
   PreviewMode m_PreviewMode = PreviewMode::Edit;
   uint64_t m_PreviewFrames = 0;
+  std::vector<uint8_t> m_ManagedAssembly;
+  std::vector<uint8_t> m_ManagedPdb;
 };
 }

@@ -22,6 +22,15 @@ void EnsureSession() {
 }
 }
 extern "C" {
+int tc_web_editor_set_managed_assembly(const uint8_t* assembly, size_t assemblySize,
+  const uint8_t* pdb, size_t pdbSize) {
+  EnsureSession(); lastError.clear();
+  if (!assembly || assemblySize == 0 || (pdbSize != 0 && !pdb)) {
+    lastError = "Invalid managed assembly buffer"; return 1;
+  }
+  return session->SetManagedAssembly({assembly, assemblySize}, {pdb, pdbSize},
+    lastError) ? 0 : 2;
+}
 const char* tc_web_editor_rpc(const char* request) {
   EnsureSession(); response = session->Invoke(request ? request : ""); return response.c_str();
 }
