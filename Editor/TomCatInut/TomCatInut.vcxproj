@@ -200,8 +200,13 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClInclude Include="src\Scripting\ScriptProjectCompiler.h" />
     <ClInclude Include="src\panels\ConsolePanel.h" />
     <ClInclude Include="src\panels\ContentBrowserPanel.h" />
+    <ClInclude Include="src\panels\HierarchyPanelShared.h" />
     <ClInclude Include="src\panels\ProfilerPanel.h" />
+    <ClInclude Include="src\panels\SceneAuthoringEditorsPanel.h" />
+    <ClInclude Include="src\panels\SceneHierarchyDetail.h" />
     <ClInclude Include="src\panels\SceneHierarchyPanel.h" />
+    <ClInclude Include="src\panels\SceneHierarchyTreePanel.h" />
+    <ClInclude Include="src\panels\SceneInspectorPanel.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\EditorLayer.cpp" />
@@ -211,8 +216,12 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClCompile Include="src\TomCatInputApp.cpp" />
     <ClCompile Include="src\panels\ConsolePanel.cpp" />
     <ClCompile Include="src\panels\ContentBrowserPanel.cpp" />
+    <ClCompile Include="src\panels\HierarchyPanelShared.cpp" />
     <ClCompile Include="src\panels\ProfilerPanel.cpp" />
+    <ClCompile Include="src\panels\SceneAuthoringEditorsPanel.cpp" />
     <ClCompile Include="src\panels\SceneHierarchyPanel.cpp" />
+    <ClCompile Include="src\panels\SceneHierarchyTreePanel.cpp" />
+    <ClCompile Include="src\panels\SceneInspectorPanel.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="TomCatInut.rc" />
