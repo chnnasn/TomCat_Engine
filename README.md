@@ -30,6 +30,8 @@ Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this
 | [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend development |
 | [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Experimental browser Editor and Player development |
 
+**Branch lifecycle policy.** Specialty branches are time-boxed for a single-developer project: each branch must land in `main` (fully or as an integration slice) or be archived — branch deleted, history remaining recoverable via Git — at the quarterly branch review, at latest. A branch that has neither merged nor seen activity for one review cycle is archived first. Next review: **2026-12-21**.
+
 Documentation reviewed against the repository on **2026-09-20**. Product version: **0.3.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
 
