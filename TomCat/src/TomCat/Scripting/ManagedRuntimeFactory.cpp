@@ -12,6 +12,44 @@ namespace TomCat::Scripting {
 		std::atomic_bool s_ReloadBlocked{ false };
 		std::mutex s_ReloadBlockMutex;
 		std::string s_ReloadBlockReason;
+		GetManagedApiFn s_WebManagedApi = nullptr;
+	}
+
+	bool InstallWebManagedApi(GetManagedApiFn getManagedApi, std::string* error)
+	{
+		if (!getManagedApi)
+		{
+			if (error) *error = "Web managed API entry is null";
+			return false;
+		}
+		if (s_WebManagedApi && s_WebManagedApi != getManagedApi)
+		{
+			if (error) *error = "A different Web managed API is already installed";
+			return false;
+		}
+		s_WebManagedApi = getManagedApi;
+		if (error) error->clear();
+		return true;
+	}
+
+	std::shared_ptr<IScriptRuntime> CreateWebManagedScriptRuntime(
+		std::span<const uint8_t> assembly, std::span<const uint8_t> pdb,
+		std::string* error)
+	{
+		if (!s_WebManagedApi)
+		{
+			if (error) *error = "The bundled .NET WebAssembly runtime has not registered its managed API";
+			return {};
+		}
+		auto runtime = std::make_shared<ManagedScriptRuntime>();
+		if (!runtime->InitializeWithManagedApi(BuildNativeApiV2(), s_WebManagedApi)
+			|| !runtime->SetProjectAssemblyBytes(assembly, pdb))
+		{
+			if (error) *error = runtime->GetLastError();
+			return {};
+		}
+		if (error) error->clear();
+		return runtime;
 	}
 
 	bool IsManagedScriptReloadBlocked()

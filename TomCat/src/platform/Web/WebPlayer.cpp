@@ -42,7 +42,6 @@ int tc_web_player_boot(int width, int height, const uint8_t* bytes, size_t size)
     if (!file) throw std::runtime_error("Could not stage Game.tcpak in MEMFS");
     auto& assets = TomCat::AssetManager::Get();
     if (!assets.MountCookedPackage("/Game.tcpak")) throw std::runtime_error("TCPAK validation failed");
-    if (assets.GetCookedManagedPayload()) throw std::runtime_error("C# packages require the browser managed runtime, which is not linked in this native Player target");
     assets.UnmountCookedPackage();
     application = std::make_unique<TomCat::Application>(TomCat::WindowProps("TomCat Web Player", width, height), false);
     application->PushLayer(new TomCat::PlayerRuntimeLayer("/Game.tcpak"));

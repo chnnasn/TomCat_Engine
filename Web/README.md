@@ -2,9 +2,12 @@
 
 English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
 
-This Emscripten target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader,
-scene runtime, Renderer2D and Box2D in a browser. It is a native-only milestone,
-not a full replacement for the desktop Player.
+This target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader, scene
+runtime, Renderer2D, Box2D and TomCat's C# scripting ABI in a browser. The final
+module is owned by .NET `browser-wasm`; the Emscripten C++ engine archives are
+linked into that module so native and managed function tables share one memory.
+The downloaded site contains the .NET runtime and Roslyn compiler. Player and
+Web Editor users do not install a local .NET SDK.
 
 The [2026-09-20 showcase](../docs/portfolio/README.md) records the Windows desktop
 applications. Shared source does not make those clips browser acceptance evidence;
@@ -13,16 +16,20 @@ refresh did not rerun the Web build or protocol regression.
 
 ## Build
 
-Validated on Windows with Emscripten 4.0.15, CMake and Ninja. Activate the SDK first.
-Run these commands from the repository root. CMake 3.20+ is required; Node.js is
-also needed for the protocol regression. The build produces modules, not a complete
-browser host page or a persistence service. Earlier validation dates below are historical.
+The build machine needs .NET 10 with the `wasm-tools` workload, Emscripten,
+CMake 3.20+ and Ninja. Those are producer tools and are not installed on browser
+clients. Activate Emscripten, then run from the repository root:
 
 ```powershell
 git submodule update --init TomCat/vendor/Box2D TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/ImGuizmo
-emcmake cmake -S Web -B build/web -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/web -j 6
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Build-WebManaged.ps1
 ```
+
+The script validates all prerequisites, builds the native archives, publishes
+`Managed/TomCat.WebHost` for `browser-wasm`, and writes the deployable site files
+to `build/web-managed`. `main.js` exposes `globalThis.TomCatWeb` after the
+`tomcat-web-ready` event. The build still expects a hosting page to supply the
+canvas, navigation and persistence.
 
 Serve `tomcat_player.js`, `.wasm` and `.data` from the same directory using HTTP
 localhost or HTTPS. The page requires these response headers for pthread Workers:
@@ -32,10 +39,9 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-Load the JS as a classic script and call `TomCatPlayerModule({ canvas, locateFile })`.
-Await the factory before calling exports. Copy TCPAK bytes with `_malloc` and
-`HEAPU8.set`; always `_free` the temporary buffer after boot. JS must retrieve
-`HEAPU8` again after allocations, since memory can grow.
+Load `main.js` as a module and wait for `tomcat-web-ready`. Use
+`TomCatWeb.engine.PlayerBoot(width, height, tcpakBytes)`; the JS export pins and
+passes the package bytes to the existing native Player layer.
 
 | C export | Contract |
 | --- | --- |
@@ -54,8 +60,8 @@ and the development cooker are currently bundled in this experimental target.
 
 ## Native authoring API
 
-The build also emits `tomcat_editor.js/.wasm/.data`, factory `TomCatEditorModule`.
-This module compiles the existing `SceneHierarchyPanel` (including Inspector),
+The same managed module exports the Web Editor entry points through
+`TomCatWeb.engine`. It compiles the existing `SceneHierarchyPanel` (including Inspector),
 `ContentBrowserPanel`, `ConsolePanel`, `ImGuiLayer` theme/icons and ImGuizmo.
 The browser host supplies navigation, file selection and persistence; it does not
 reimplement the panels in HTML. A Web-only layer supplies docking, the scene
@@ -93,6 +99,18 @@ Scene uses the upstream tool icons; Game renders the primary camera. Play starts
 a SceneManager-owned copy, Pause/Step advance only that copy, and Stop preserves
 the authoring scene and its history. C# scenes and missing primary cameras are
 rejected explicitly. Mutating RPCs are blocked during Play.
+For C# authoring, the host sends source text, reference-assembly bytes and
+`ScriptAssets.json` to `TomCatWeb.compileAndInstall(request)`. Roslyn and the
+TomCat source generator run inside the browser; successful portable DLL/PDB
+bytes are validated by the managed ABI before Play. Play/Pause/Step/Stop then
+use the same script lifecycle and entity/component/input/physics bridge as the
+desktop runtime. Script exceptions are reported through the existing managed
+exception sink and infrastructure faults stop only the active Play session.
+Because browser-wasm has no collectible `AssemblyLoadContext`, Stop performs
+logical cleanup (OnDisable/OnDestroy, scenes, callbacks and cancellation), but a
+new compiled generation requires recreating the browser module. This also bounds
+memory retained by non-collectible browser load contexts.
+
 Project settings changes apply in MEMFS and mark the session dirty. Hosts must
 persist ProjectSettings/ProjectSettings.json and PlayerSettings.json with the
 scene, restore them before project.open/new, then acknowledge scene.markSaved.
@@ -153,8 +171,11 @@ Chinese IME composition or all desktop panel widgets.
   consumers must use the same `B2_USER_SETTINGS` definition.
 - Keyboard, pointer, focus, scroll and standard browser gamepad mapping feed the
   existing input snapshot queue. Gamepad hardware has not been acceptance-tested.
-- C# packages explicitly fail: desktop hostfxr cannot be used in this target.
-  A .NET browser runtime/native ABI integration remains separate work.
+- C# supports TomCat's pure-managed dependency envelope. Native NuGet assets,
+  custom MSBuild tasks and platform-specific native libraries remain rejected.
+- New managed TCPAK payloads are marked `portable`; legacy `win-x64` managed
+  payloads remain readable because the compiler policy already excluded native
+  assets. ABI, manifest, TFM, hash and payload-size checks still apply.
 - Custom cooked SPIR-V shaders and multisample framebuffers explicitly fail.
   GLSL conversion covers embedded infrastructure shaders only.
 - Audio uses the upstream NullAudioDevice fallback; this target has no audible
@@ -165,7 +186,8 @@ Chinese IME composition or all desktop panel widgets.
 
 The shared current TCPAK writer is v7 (per-entry SHA-256); the reader accepts
 v5/v6/v7. Format compatibility does not remove the Web feature restrictions above.
-The repository's Windows regression workflow does not run the Web build or WASM test.
+The repository's Windows regression workflow does not replace an actual
+browser-wasm publish and browser lifecycle test.
 
 ## Acceptance observed (2026-09-16)
 

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <WasmMainJSPath>main.js</WasmMainJSPath>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <WasmEnableThreads>true</WasmEnableThreads>
+    <WasmEnableExceptionHandling>true</WasmEnableExceptionHandling>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TomCat.Managed/TomCat.Managed.csproj" />
+    <ProjectReference Include="../TomCat.ScriptHost/TomCat.ScriptHost.csproj" />
+    <ProjectReference Include="../TomCat.ScriptGenerator/TomCat.ScriptGenerator.csproj" />
+    <Reference Include="Microsoft.CodeAnalysis" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.dll" Private="true" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.CSharp.dll" Private="true" />
+    <NativeFileReference Include="$(TomCatWebNativeArchives)" Condition="'$(TomCatWebNativeArchives)' != ''" />
+    <EmccExtraLDFlags Include="-sUSE_GLFW=3" />
+    <EmccExtraLDFlags Include="-sFORCE_FILESYSTEM=1" />
+    <EmccExtraLDFlags Include="-sALLOW_MEMORY_GROWTH=1" />
+    <EmccExtraLDFlags Include="-sINITIAL_MEMORY=134217728" />
+    <EmccExtraLDFlags Include="-sSTACK_SIZE=4194304" />
+    <EmccExtraLDFlags Include="-sDEFAULT_PTHREAD_STACK_SIZE=2097152" />
+    <EmccExtraLDFlags Include="-sPTHREAD_POOL_SIZE=12" />
+    <EmccExtraLDFlags Include="-sPTHREAD_POOL_SIZE_STRICT=2" />
+    <EmccExtraLDFlags Include="--preload-file=$(TomCatRepositoryRoot)/Samples/PhysicsPlayground@/Samples/PhysicsPlayground" Condition="'$(TomCatRepositoryRoot)' != ''" />
+    <EmccExtraLDFlags Include="--preload-file=$(TomCatRepositoryRoot)/Editor/TomCatInut/Packages@/Packages" Condition="'$(TomCatRepositoryRoot)' != ''" />
+    <EmccExtraLDFlags Include="--preload-file=$(TomCatRepositoryRoot)/Web/fonts@/WebFonts" Condition="'$(TomCatRepositoryRoot)' != ''" />
+  </ItemGroup>
+</Project>

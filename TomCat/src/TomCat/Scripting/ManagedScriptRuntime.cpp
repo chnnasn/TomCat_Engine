@@ -146,11 +146,23 @@ namespace TomCat::Scripting {
 			return false;
 		}
 
+		return InitializeWithManagedApi(nativeApi,
+			reinterpret_cast<GetManagedApiFn>(bootstrap));
+	}
+
+	bool ManagedScriptRuntime::InitializeWithManagedApi(
+		const NativeApiV2& nativeApi, GetManagedApiFn getManagedApi)
+	{
+		if (!getManagedApi || nativeApi.V1.Version != NativeApiVersion
+			|| nativeApi.V1.Size < sizeof(NativeApiV1))
+		{
+			m_LastError = "Native/managed Web bootstrap is unavailable or incompatible";
+			return false;
+		}
 		m_NativeApi = nativeApi;
 		m_ManagedApi = {};
 		m_ManagedApi.Version = ManagedApiVersion;
 		m_ManagedApi.Size = sizeof(ManagedApiV1);
-		const auto getManagedApi = reinterpret_cast<GetManagedApiFn>(bootstrap);
 		const int32_t status = getManagedApi(&m_NativeApi.V1, &m_ManagedApi);
 		if (status != 0 || m_ManagedApi.Version != ManagedApiVersion
 			|| m_ManagedApi.Size < sizeof(ManagedApiV1) || !m_ManagedApi.CreateDomain
@@ -169,6 +181,7 @@ namespace TomCat::Scripting {
 			m_LastError = "TomCat.ScriptHost returned an incompatible ManagedApiV1 table";
 			return false;
 		}
+		m_ExternalManagedApi = !m_Host.IsInitialized();
 		return true;
 	}
 
@@ -219,6 +232,20 @@ namespace TomCat::Scripting {
 		m_ProjectAssembly = std::move(assembly);
 		m_ProjectPdb = std::move(pdb);
 		m_ProjectAssemblyPath = assemblyPath;
+		return true;
+	}
+
+	bool ManagedScriptRuntime::SetProjectAssemblyBytes(
+		std::span<const uint8_t> assembly, std::span<const uint8_t> pdb)
+	{
+		if (m_DomainId != 0 || m_UnloadPending || assembly.empty())
+		{
+			m_LastError = "Cannot install an empty project assembly or replace an active Play Domain";
+			return false;
+		}
+		m_ProjectAssembly.assign(assembly.begin(), assembly.end());
+		m_ProjectPdb.assign(pdb.begin(), pdb.end());
+		m_ProjectAssemblyPath.clear();
 		return true;
 	}
 
@@ -274,7 +301,8 @@ namespace TomCat::Scripting {
 
 	bool ManagedScriptRuntime::IsReady() const
 	{
-		return m_Host.IsInitialized() && m_ManagedApi.CreateDomain
+		return (m_Host.IsInitialized() || m_ExternalManagedApi)
+			&& m_ManagedApi.CreateDomain
 			&& !m_ProjectAssembly.empty() && !m_UnloadPending
 			&& !IsManagedScriptReloadBlocked();
 	}
