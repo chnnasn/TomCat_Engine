@@ -28,6 +28,8 @@ Player 则负责脱离编辑器运行打包后的游戏。
 | [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
 | [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
 
+**分支生命周期约定。** 对单人项目而言专项分支必须有时间盒:每条专项分支都要在季度分支核对时(最迟)完成合并进 `main`(整体或按集成切片),或执行归档——删除分支,历史仍可通过 Git 找回。在一个核对周期内既未合并也无活动的分支先归档。下次核对:**2026-12-21**。
+
 文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.3.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
