@@ -10,6 +10,12 @@ public:
   void Present() override;
   uint32_t GetWidth() const override { return m_Width; }
   uint32_t GetHeight() const override { return m_Height; }
+  // Physical default-framebuffer extent consumed by OpenGL and runtime cameras.
+  // Emscripten's GLFW rewrites the canvas drawing buffer to the canvas CSS box at the end of
+  // glfwCreateWindow (GLFW.adjustCanvasDimensions), so the size requested by the host is not
+  // necessarily the real buffer extent. Read it back from GLFW instead of assuming the default.
+  uint32_t GetFramebufferWidth() const override;
+  uint32_t GetFramebufferHeight() const override;
   void SetTitle(const std::string& title) override;
   void SetEventCallback(const EventCallbackFn& callback) override { m_Callback = callback; }
   void SetVSync(bool) override {} // Browser presentation is controlled by requestAnimationFrame.
