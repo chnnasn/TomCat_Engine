@@ -5,33 +5,35 @@ namespace TomCat.WebHost;
 
 internal static unsafe partial class NativeExports
 {
-    [LibraryImport("__Internal", EntryPoint = "tc_web_player_boot")]
+    private const string NativeLibrary = "libtomcat_managed_web_entrypoints";
+
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_player_boot")]
     internal static partial int PlayerBoot(int width, int height, byte* bytes, nuint size);
-    [LibraryImport("__Internal", EntryPoint = "tc_web_player_frame")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_player_frame")]
     internal static partial void PlayerFrame(double delta);
-    [LibraryImport("__Internal", EntryPoint = "tc_web_player_resize")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_player_resize")]
     internal static partial void PlayerResize(int width, int height);
-    [LibraryImport("__Internal", EntryPoint = "tc_web_player_shutdown")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_player_shutdown")]
     internal static partial void PlayerShutdown();
-    [LibraryImport("__Internal", EntryPoint = "tc_web_player_error")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_player_error")]
     internal static partial nint PlayerError();
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_boot")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_boot")]
     internal static partial int EditorBoot(int width, int height);
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_frame")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_frame")]
     internal static partial void EditorFrame(double delta);
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_resize")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_resize")]
     internal static partial void EditorResize(int width, int height);
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_shutdown")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_shutdown")]
     internal static partial void EditorShutdown();
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_error")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_error")]
     internal static partial nint EditorError();
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_rpc", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_rpc", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial nint EditorRpc(string request);
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_state")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_state")]
     internal static partial nint EditorState();
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_take_actions")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_take_actions")]
     internal static partial uint EditorTakeActions();
-    [LibraryImport("__Internal", EntryPoint = "tc_web_editor_set_managed_assembly")]
+    [LibraryImport(NativeLibrary, EntryPoint = "tc_web_editor_set_managed_assembly")]
     internal static partial int EditorSetManagedAssembly(byte* assembly, nuint assemblySize,
         byte* pdb, nuint pdbSize);
 }

@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <locale>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -416,12 +418,20 @@ namespace TomCat {
 			if (value.Type != JsonType::Number)
 				throw std::runtime_error(std::string(description) + " must be a number");
 			double result{};
+#ifdef __EMSCRIPTEN__
+			std::istringstream stream(value.Text);
+			stream.imbue(std::locale::classic());
+			stream >> std::noskipws >> result;
+			if (!stream || stream.peek() != std::char_traits<char>::eof())
+				throw std::runtime_error(std::string(description) + " is invalid");
+#else
 			const char* begin = value.Text.data();
 			const char* end = begin + value.Text.size();
 			const auto parsed = std::from_chars(begin, end, result,
 				std::chars_format::general);
 			if (parsed.ec != std::errc{} || parsed.ptr != end)
 				throw std::runtime_error(std::string(description) + " is invalid");
+#endif
 			return result;
 		}
 

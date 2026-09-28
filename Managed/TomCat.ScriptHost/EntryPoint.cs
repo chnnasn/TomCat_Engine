@@ -122,10 +122,11 @@ internal static unsafe class Exports
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    internal static int LoadProjectAssembly(ulong domainId, NativeByteView assembly, NativeByteView pdb)
+    internal static int LoadProjectAssembly(ulong domainId, NativeByteView* assembly, NativeByteView* pdb)
     {
-        if (!TryCopy(assembly, allowEmpty: false, out byte[]? assemblyBytes) ||
-            !TryCopy(pdb, allowEmpty: true, out byte[]? pdbBytes))
+        if (assembly is null || pdb is null ||
+            !TryCopy(*assembly, allowEmpty: false, out byte[]? assemblyBytes) ||
+            !TryCopy(*pdb, allowEmpty: true, out byte[]? pdbBytes))
             return HostStatus.InvalidArgument;
         return HostErrors.Guard(nameof(LoadProjectAssembly), () =>
             HostRegistry.GetDomain(domainId).LoadProjectAssembly(assemblyBytes!, pdbBytes!));
@@ -133,7 +134,7 @@ internal static unsafe class Exports
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     internal static int ReadScriptMetadata(ulong domainId,
-        delegate* unmanaged[Cdecl]<NativeByteView, ulong, int> receiver, ulong receiverToken)
+        delegate* unmanaged[Cdecl]<NativeByteView*, ulong, int> receiver, ulong receiverToken)
     {
         if (receiver == null)
             return HostStatus.InvalidArgument;
@@ -142,7 +143,8 @@ internal static unsafe class Exports
             byte[] bytes = Encoding.UTF8.GetBytes(HostRegistry.GetDomain(domainId).ManifestJson);
             fixed (byte* pointer = bytes)
             {
-                int status = receiver(new NativeByteView(pointer, (ulong)bytes.Length), receiverToken);
+                NativeByteView view = new(pointer, (ulong)bytes.Length);
+                int status = receiver(&view, receiverToken);
                 if (status != 0)
                     throw new InvalidOperationException($"Native metadata receiver returned {status}.");
             }
@@ -181,9 +183,9 @@ internal static unsafe class Exports
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    internal static int ApplySerializedFields(ulong sceneRuntimeId, NativeByteView fieldsJson)
+    internal static int ApplySerializedFields(ulong sceneRuntimeId, NativeByteView* fieldsJson)
     {
-        if (!TryCopy(fieldsJson, allowEmpty: false, out byte[]? bytes))
+        if (fieldsJson is null || !TryCopy(*fieldsJson, allowEmpty: false, out byte[]? bytes))
             return HostStatus.InvalidArgument;
         return HostErrors.Guard(nameof(ApplySerializedFields), () =>
             HostRegistry.GetScene(sceneRuntimeId).ApplySerializedFields(Encoding.UTF8.GetString(bytes!)));
@@ -195,9 +197,9 @@ internal static unsafe class Exports
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	internal static int InvokeMethod(ulong sceneRuntimeId, ulong attachmentId,
-		NativeByteView methodName)
+		NativeByteView* methodName)
 	{
-		if (attachmentId == 0 || !TryCopy(methodName, allowEmpty: false,
+		if (attachmentId == 0 || methodName is null || !TryCopy(*methodName, allowEmpty: false,
 			out byte[]? methodBytes) || methodBytes!.Length > 512)
 			return HostStatus.InvalidArgument;
 		return HostErrors.Guard(nameof(InvokeMethod), () =>
@@ -273,10 +275,10 @@ internal static unsafe class Exports
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	internal static int InstantiateAttachments(ulong sceneRuntimeId,
-		NativeScriptAttachmentV1* items, uint count, NativeByteView fieldsJson)
+		NativeScriptAttachmentV1* items, uint count, NativeByteView* fieldsJson)
 	{
 		if (count != 0 && items is null || count > 1_000_000
-			|| !TryCopy(fieldsJson, allowEmpty: false, out byte[]? bytes))
+			|| fieldsJson is null || !TryCopy(*fieldsJson, allowEmpty: false, out byte[]? bytes))
 			return HostStatus.InvalidArgument;
 		return HostErrors.Guard(nameof(InstantiateAttachments), () =>
 		{

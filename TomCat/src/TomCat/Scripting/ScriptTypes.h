@@ -144,14 +144,14 @@ namespace TomCat::Scripting {
 	};
 
 	using MetadataReceiverV1 = int32_t(TC_SCRIPT_CALL*)(
-		NativeByteView bytes, uint64_t receiverToken);
+		const NativeByteView* bytes, uint64_t receiverToken);
 
 	struct NativeApiV1
 	{
 		uint32_t Version = NativeApiVersion;
 		uint32_t Size = sizeof(NativeApiV1);
 
-		int32_t(TC_SCRIPT_CALL* Log)(int32_t level, NativeUtf8View message) = nullptr;
+		int32_t(TC_SCRIPT_CALL* Log)(int32_t level, const NativeUtf8View* message) = nullptr;
 		int32_t(TC_SCRIPT_CALL* EmitDiagnostic)(const NativeDiagnosticV1* value) = nullptr;
 		int32_t(TC_SCRIPT_CALL* IsMainThread)() = nullptr;
 		int32_t(TC_SCRIPT_CALL* EntityIsAlive)(EntityHandleV1 entity) = nullptr;
@@ -704,7 +704,7 @@ namespace TomCat::Scripting {
 
 		int32_t(TC_SCRIPT_CALL* CreateDomain)(int32_t domainKind, uint64_t* domainId) = nullptr;
 		int32_t(TC_SCRIPT_CALL* LoadProjectAssembly)(uint64_t domainId,
-			NativeByteView assembly, NativeByteView pdb) = nullptr;
+			const NativeByteView* assembly, const NativeByteView* pdb) = nullptr;
 		int32_t(TC_SCRIPT_CALL* ReadScriptMetadata)(uint64_t domainId,
 			MetadataReceiverV1 receiver, uint64_t receiverToken) = nullptr;
 		int32_t(TC_SCRIPT_CALL* CreateSceneRuntime)(uint64_t domainId, uint64_t sceneSessionId,
@@ -712,7 +712,7 @@ namespace TomCat::Scripting {
 		int32_t(TC_SCRIPT_CALL* InstantiateAll)(uint64_t sceneRuntimeId,
 			const NativeScriptAttachmentV1* items, uint32_t count) = nullptr;
 		int32_t(TC_SCRIPT_CALL* ApplySerializedFields)(uint64_t sceneRuntimeId,
-			NativeByteView fieldsJson) = nullptr;
+			const NativeByteView* fieldsJson) = nullptr;
 		int32_t(TC_SCRIPT_CALL* InvokeCreateAll)(uint64_t sceneRuntimeId) = nullptr;
 		int32_t(TC_SCRIPT_CALL* SetEnabled)(uint64_t sceneRuntimeId,
 			uint64_t attachmentId, int32_t enabled) = nullptr;
@@ -728,14 +728,14 @@ namespace TomCat::Scripting {
 			const uint64_t* attachmentIds, uint32_t count) = nullptr;
 		int32_t(TC_SCRIPT_CALL* InstantiateAttachments)(uint64_t sceneRuntimeId,
 			const NativeScriptAttachmentV1* items, uint32_t count,
-			NativeByteView fieldsJson) = nullptr;
+			const NativeByteView* fieldsJson) = nullptr;
 		// Added in ManagedApi version 2. Structural command projections are
 		// resolved explicitly so a version-1 host is rejected during bootstrap.
 		int32_t(TC_SCRIPT_CALL* ResolveDeferredCommandBatch)(
 			uint64_t sceneRuntimeId, int32_t committed) = nullptr;
 		// Added in ManagedApi version 3 for persistent UI/event callbacks.
 		int32_t(TC_SCRIPT_CALL* InvokeMethod)(uint64_t sceneRuntimeId,
-			uint64_t attachmentId, NativeUtf8View methodName) = nullptr;
+			uint64_t attachmentId, const NativeUtf8View* methodName) = nullptr;
 	};
 
 	using GetManagedApiFn = int32_t(TC_SCRIPT_CALL*)(

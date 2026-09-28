@@ -1292,6 +1292,13 @@ namespace TomCat {
 					PathToUTF8(candidate);
 				return false;
 			}
+#ifdef __EMSCRIPTEN__
+			// Emscripten's preloaded MEMFS files are addressable through libc, but
+			// symlink_status may report synthetic ancestor directories as missing.
+			// Browser projects are confined to the mounted project root above; there
+			// are no host reparse points to defend against.
+			return true;
+#else
 			if (!ValidateNoReparsePathChain(
 				absoluteRoot, false, errorMessage) ||
 				!ValidateNoReparsePathChain(
@@ -1315,6 +1322,7 @@ namespace TomCat {
 				return false;
 			}
 			return true;
+#endif
 		}
 
 		bool RequireNoActiveMigrationJournal(
@@ -3577,6 +3585,7 @@ namespace TomCat {
 	{
 		if (!inspectOnly)
 		{
+#ifndef __EMSCRIPTEN__
 			std::string journalError;
 			if (!RequireNoActiveMigrationJournal(projectPath, journalError))
 			{
@@ -3584,11 +3593,17 @@ namespace TomCat {
 					PathToUTF8(projectPath), journalError);
 				return nullptr;
 			}
+#endif
 		}
 
 		std::error_code error;
+#ifdef __EMSCRIPTEN__
+		// Let the stream open inside the guarded load path be authoritative.
+		// MEMFS does not implement every std::filesystem status query consistently.
+#else
 		if (!std::filesystem::is_regular_file(projectPath, error) || error)
 			return nullptr;
+#endif
 
 		try
 		{
@@ -3654,6 +3669,7 @@ namespace TomCat {
 			project->m_PreservedDocument = ReadWholeFile(projectPath);
 			if (!inspectOnly)
 			{
+#ifndef __EMSCRIPTEN__
 				ProjectMigrationPreview migration;
 				std::string migrationError;
 				if (!BuildProjectMigrationPreview(projectPath, schemaVersion,
@@ -3675,6 +3691,7 @@ namespace TomCat {
 						throw std::runtime_error("Project migration failed: " +
 							migrationError);
 				}
+#endif
 			}
 			return project;
 		}

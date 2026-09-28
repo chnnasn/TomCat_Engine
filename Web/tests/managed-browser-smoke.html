@@ -1,0 +1,84 @@
+<!doctype html><meta charset="utf-8"><title>TomCat managed Web smoke</title>
+<canvas id="canvas" width="640" height="360"></canvas><pre id="status">loading</pre>
+<script type="module">
+const out=value=>document.querySelector('#status').textContent=JSON.stringify(value,null,2);
+const consoleMessages=[];
+const originalLog=console.log.bind(console);
+console.log=(...values)=>{consoleMessages.push(values.map(String).join(' '));originalLog(...values)};
+const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s)};
+const ref=async name=>({name,base64:b64(new Uint8Array(await(await fetch(`./smoke-refs/${name}`)).arrayBuffer()))});
+const rpc=(engine,type,payload={})=>JSON.parse(engine.EditorRpc(JSON.stringify({protocol:'tomcat.web.v1',requestId:crypto.randomUUID(),type,payload})));
+try {
+  await import('./main.js'); const web=globalThis.TomCatWeb, engine=web.engine;
+  const boot=engine.EditorBoot(640,360); if(boot)throw new Error(`boot ${boot}: ${engine.EditorError()}`);
+  const references=await Promise.all(['mscorlib.dll','System.Runtime.dll','TomCat.Managed.dll'].map(ref));
+  const source=`using TomCat;
+public sealed class WebSmoke : TomCatBehaviour
+{
+    private static void Mark(string value) => Log.Info("WEB_LIFECYCLE " + value);
+    protected override void OnCreate() => Mark("OnCreate");
+    protected override void OnEnable() => Mark("OnEnable");
+    protected override void OnUpdate(float dt) => Mark("OnUpdate");
+    protected override void OnFixedUpdate(float dt) => Mark("OnFixedUpdate");
+    protected override void OnDisable() => Mark("OnDisable");
+    protected override void OnDestroy() => Mark("OnDestroy");
+}`;
+  const faultSource=`using TomCat;
+public sealed class WebFaultSmoke : TomCatBehaviour
+{
+    private bool _thrown;
+    protected override void OnCreate() => Log.Info("WEB_FAULT OnCreate");
+    protected override void OnUpdate(float dt)
+    {
+        if (_thrown) return;
+        _thrown = true;
+        Log.Info("WEB_FAULT Throw");
+        throw new System.InvalidOperationException("intentional browser lifecycle smoke failure");
+    }
+    protected override void OnDestroy() => Log.Info("WEB_FAULT OnDestroy");
+}`;
+  const compile=web.compileAndInstall({sources:[{path:'WebSmoke.cs',text:source},{path:'WebFaultSmoke.cs',text:faultSource}],references,scriptAssetsJson:'{"version":1,"assets":{"WebSmoke.cs":123,"WebFaultSmoke.cs":124}}'});
+  if(!compile.succeeded)throw new Error(`compile/install: ${JSON.stringify(compile.diagnostics)}`);
+  const FS=web.runtime.Module.FS, scenePath='/Samples/PhysicsPlayground/Assets/Scene/sample.tomcat';
+  FS.writeFile('/Samples/PhysicsPlayground/Assets/WebSmoke.cs',source);
+  FS.writeFile('/Samples/PhysicsPlayground/Assets/WebSmoke.cs.tcmeta',`SchemaVersion: 2
+Asset:
+  Handle: 123
+  Type: CSharpScript
+  ImportSettings:
+    {}
+  SubAssets:
+    []
+`);
+  FS.writeFile('/Samples/PhysicsPlayground/Assets/WebFaultSmoke.cs',faultSource);
+  FS.writeFile('/Samples/PhysicsPlayground/Assets/WebFaultSmoke.cs.tcmeta',`SchemaVersion: 2
+Asset:
+  Handle: 124
+  Type: CSharpScript
+  ImportSettings:
+    {}
+  SubAssets:
+    []
+`);
+  const originalScene=FS.readFile(scenePath,{encoding:'utf8'});
+  const scripts=`    CSharpScripts:\n      Scripts:\n        - AttachmentID: 9000000000000000001\n          Enabled: true\n          ScriptHandle: 123\n          ClassName: WebSmoke\n          Fields: []\n        - AttachmentID: 9000000000000000002\n          Enabled: true\n          ScriptHandle: 124\n          ClassName: WebFaultSmoke\n          Fields: []\n`;
+  const injectedScene=originalScene.replace(/    Components:\r?\n/,scripts+'    Components:\n');
+  if(injectedScene===originalScene)throw new Error('scene injection point was not found');
+  FS.writeFile(scenePath,injectedScene);
+  const opened=rpc(engine,'project.open',{projectPath:'/Samples/PhysicsPlayground/Project.tcproj'}); if(!opened.ok)throw new Error(JSON.stringify(opened));
+  const controls=[]; for(const command of ['play','pause','step','resume','stop']) { const reply=rpc(engine,'preview.control',{command}); controls.push(reply); if(!reply.ok)throw new Error(JSON.stringify(reply)); if(command==='play'||command==='resume')engine.EditorFrame(1/60); }
+  const lifecycle=consoleMessages.filter(value=>value.includes('WEB_')).map(value=>value.slice(value.indexOf('WEB_')));
+  const required=['WEB_LIFECYCLE OnCreate','WEB_FAULT OnCreate','WEB_LIFECYCLE OnEnable','WEB_FAULT Throw','WEB_LIFECYCLE OnDisable','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDestroy'];
+  let previous=-1; for(const marker of required){const index=lifecycle.indexOf(marker);if(index<=previous)throw new Error(`missing or out-of-order lifecycle marker ${marker}: ${JSON.stringify(lifecycle)}`);previous=index;}
+  for(const marker of ['WEB_FAULT Throw','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDisable','WEB_LIFECYCLE OnDestroy'])if(lifecycle.filter(value=>value===marker).length!==1)throw new Error(`expected exactly one ${marker}: ${JSON.stringify(lifecycle)}`);
+  if(lifecycle.filter(value=>value==='WEB_LIFECYCLE OnUpdate').length<2)throw new Error(`healthy script did not continue after peer fault: ${JSON.stringify(lifecycle)}`);
+  if(!consoleMessages.some(value=>value.includes('intentional browser lifecycle smoke failure')))throw new Error('fault diagnostic was not reported');
+  out({ok:true,boot,diagnostics:compile.diagnostics,lifecycle,controls:controls.map(x=>x.result),state:JSON.parse(engine.EditorState())});
+} catch(error) {
+  const FS=globalThis.TomCatWeb?.runtime?.Module?.FS;
+  let filesystem=null;
+  try { filesystem={hasFS:!!FS,root:!!FS?.analyzePath('/')?.exists,samples:!!FS?.analyzePath('/Samples')?.exists,file:!!FS?.analyzePath('/Samples/PhysicsPlayground/Project.tcproj')?.exists}; }
+  catch(fsError) { filesystem={hasFS:!!FS,error:JSON.stringify(fsError)}; }
+  out({ok:false,error:String(error?.stack??error),filesystem});
+}
+</script>

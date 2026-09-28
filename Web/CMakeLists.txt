@@ -9,7 +9,7 @@ get_filename_component(TC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(TC_SRC "${TC_ROOT}/TomCat/src")
 set(TC_VENDOR "${TC_ROOT}/TomCat/vendor")
 
-add_compile_options(-pthread -fexceptions)
+add_compile_options(-fwasm-exceptions)
 add_compile_definitions(TC_PLATFORM_WEB=1 GLFW_INCLUDE_NONE YAML_CPP_STATIC_DEFINE)
 set(BOX2D_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(BOX2D_BUILD_TESTBED OFF CACHE BOOL "" FORCE)
@@ -51,7 +51,7 @@ target_link_libraries(tc_player_core PUBLIC box2d tc_yaml)
 add_executable(tomcat_player "${TC_SRC}/platform/Web/WebPlayer.cpp")
 target_link_libraries(tomcat_player PRIVATE tc_player_core)
 set(TC_WEB_LINK_OPTIONS
-  --no-entry -pthread -fexceptions
+  --no-entry -fwasm-exceptions
   "-sUSE_GLFW=3" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
   "-sMODULARIZE=1"
   "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=134217728"
@@ -96,7 +96,7 @@ target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
 # Static entrypoint archive consumed by Managed/TomCat.WebHost. The .NET
 # browser-wasm linker owns the final module so native and managed function tables
 # share one WebAssembly memory. Pass this archive plus tc_player_core/tc_yaml and
-# Box2D archives through TomCatWebNativeArchives when publishing the host.
+# Box2D archives through the TomCatWeb*Archive properties when publishing the host.
 add_library(tomcat_managed_web_entrypoints STATIC
   "${TC_SRC}/platform/Web/WebPlayer.cpp"
   "${TC_SRC}/platform/Web/WebEditor.cpp"

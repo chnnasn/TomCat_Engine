@@ -5,18 +5,18 @@ namespace TomCat.Interop;
 public static class ManagedAbi
 {
     public const uint NativeApiVersion = 1;
-    public const uint ManagedApiVersion = 3;
+    public const uint ManagedApiVersion = 5;
     public const uint ScriptManifestVersion = 1;
 }
 
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 8, Size = 16)]
 public readonly unsafe struct NativeByteView(byte* data, ulong length)
 {
     public readonly byte* Data = data;
     public readonly ulong Length = length;
 }
 
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 8, Size = 16)]
 public readonly unsafe struct NativeUtf8View(byte* data, ulong length)
 {
     public readonly byte* Data = data;
@@ -138,7 +138,7 @@ public unsafe struct NativeApiV1
 {
     public uint Version;
     public uint Size;
-    public delegate* unmanaged[Cdecl]<int, NativeUtf8View, int> Log;
+    public delegate* unmanaged[Cdecl]<int, NativeUtf8View*, int> Log;
     public delegate* unmanaged[Cdecl]<NativeDiagnosticV1*, int> EmitDiagnostic;
     public delegate* unmanaged[Cdecl]<int> IsMainThread;
     public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int> EntityIsAlive;
