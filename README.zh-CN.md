@@ -117,7 +117,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。该目标不支持 C# 负载、可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
-- Editor 编译项目 C# 脚本需要安装 **.NET 10 SDK**
+- 从源码构建 TomCat 本身需要 **.NET 10 SDK**；打包后的 Editor 自带固定版本私有 SDK 编译游戏脚本，不读取机器上的全局 C# 环境
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
 - 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；也不支持 Play Mode 热替换或内置 C# 调试器。异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
 

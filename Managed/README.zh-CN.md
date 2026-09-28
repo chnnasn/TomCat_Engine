@@ -7,7 +7,7 @@
 [English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
 
 V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v3，
-ScriptManifest 为 v1。桌面托管使用 .NET 10；实验性 Web 目标会拒绝 C# 负载。
+ScriptManifest 为 v1。桌面托管使用 .NET 10；打包 Editor 自带固定私有 SDK，生成的工程文件只用于 IDE/依赖交换，脚本源码集合和输出布局仍由引擎控制。实验性 Web 目标目前会拒绝 C# 负载。
 
 ## 模块与构建
 
