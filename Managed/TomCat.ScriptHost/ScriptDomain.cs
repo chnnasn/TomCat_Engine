@@ -268,7 +268,8 @@ public sealed class ScriptDomain : IDisposable
 			foreach (FieldDescriptor field in descriptor.FieldsById.Values)
 				field.Manifest.DefaultValue = ToMetadataValue(field, field.Field.GetValue(behaviour));
 		}
-		return JsonSerializer.Serialize(manifest, JsonOptions.Instance);
+		return JsonSerializer.Serialize(manifest,
+			ScriptManifestJsonContext.Default.ScriptManifest);
 	}
 
 	private static object? ToMetadataValue(FieldDescriptor descriptor, object? value)

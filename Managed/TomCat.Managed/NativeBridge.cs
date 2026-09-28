@@ -2248,7 +2248,15 @@ internal static unsafe partial class NativeBridge
 
     internal static void WriteLog(int level, string message)
     {
-        WithUtf8(message, "Log", view => s_api.Log(level, view), s_api.Log != null);
+        ArgumentNullException.ThrowIfNull(message);
+        EnsureMainThread();
+        Require(s_api.Log != null, "Log");
+        byte[] bytes = Encoding.UTF8.GetBytes(message);
+        fixed (byte* pointer = bytes)
+        {
+            NativeUtf8View view = new(pointer, (ulong)bytes.Length);
+            Check(s_api.Log(level, &view), "Log");
+        }
     }
 
 	internal static bool TryBeginDeferredCallbackTransaction(Entity context,

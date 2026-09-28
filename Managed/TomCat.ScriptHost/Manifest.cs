@@ -40,7 +40,7 @@ public enum ScriptFieldType
     AssetRef
 }
 
-public sealed class ScriptManifest
+public sealed partial class ScriptManifest
 {
     [JsonPropertyName("version")]
     public uint Version { get; init; }
@@ -50,7 +50,8 @@ public sealed class ScriptManifest
 
     internal static ScriptManifest Parse(string json)
     {
-        ScriptManifest? manifest = JsonSerializer.Deserialize<ScriptManifest>(json, JsonOptions.Instance);
+        ScriptManifest? manifest = JsonSerializer.Deserialize(json,
+            ScriptManifestJsonContext.Default.ScriptManifest);
         if (manifest is null || manifest.Version != ManagedAbi.ScriptManifestVersion)
             throw new InvalidDataException($"Script manifest version must be {ManagedAbi.ScriptManifestVersion}.");
         return manifest;
@@ -132,6 +133,19 @@ internal static class JsonOptions
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 }
+
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = false,
+    UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
+[JsonSerializable(typeof(ScriptManifest))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(float))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(ulong))]
+[JsonSerializable(typeof(float[]))]
+internal sealed partial class ScriptManifestJsonContext : JsonSerializerContext;
 
 internal sealed class ScriptDescriptor
 {

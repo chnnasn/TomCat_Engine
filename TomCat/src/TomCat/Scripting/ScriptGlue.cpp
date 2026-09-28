@@ -203,12 +203,13 @@ namespace TomCat::Scripting {
 		glm::vec2 ToGlm(NativeVector2 value) { return { value.X, value.Y }; }
 		glm::vec3 ToGlm(NativeVector3 value) { return { value.X, value.Y, value.Z }; }
 
-		int32_t LogCallback(int32_t level, NativeUtf8View message) noexcept
+		int32_t LogCallback(int32_t level, const NativeUtf8View* message) noexcept
 		{
 			return Guard([&]()
 			{
 				std::string text;
-				if (!ReadUtf8(message, text)) return Code(ScriptStatus::InvalidArgument);
+				if (!message || !ReadUtf8(*message, text))
+					return Code(ScriptStatus::InvalidArgument);
 				switch (level)
 				{
 					case 0: TC_Trace("{0}", text); break;
@@ -2916,6 +2917,15 @@ namespace TomCat::Scripting {
 				}
 				if (capability == DeferredCallbackTransactionsCapabilityName)
 				{
+					// Mono's single-threaded browser runtime cannot synchronously re-enter
+					// managed code while CompleteCallback is being invoked from managed code.
+					// ScriptSceneRuntime retains its legacy projected-command path when this
+					// optional capability is absent, so omit it on Web instead of trapping in
+					// mono_wasm_get_interp_to_native_trampoline.
+#ifdef __EMSCRIPTEN__
+					*required = sizeof(NativeDeferredCallbackTransactionsApiV1);
+					return Code(ScriptStatus::Unavailable);
+#else
 					const NativeDeferredCallbackTransactionsApiV1 api =
 						BuildDeferredCallbackTransactionsApiV1();
 					*required = sizeof(api);
@@ -2925,6 +2935,7 @@ namespace TomCat::Scripting {
 						return Code(ScriptStatus::BufferTooSmall);
 					std::memcpy(output, &api, sizeof(api));
 					return Code(ScriptStatus::Success);
+#endif
 				}
 				if (capability == AudioCapabilityName)
 				{

@@ -6,6 +6,8 @@
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
+#include "TomCat/Scripting/ManagedScriptRuntime.h"
+#include "TomCat/Scripting/ScriptDiagnosticSink.h"
 #include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Utils/PathUtils.h"
 #include <yaml-cpp/yaml.h>
@@ -218,10 +220,22 @@ bool WebEditorSession::SetManagedAssembly(std::span<const uint8_t> assembly,
     error = "A C# assembly generation is already loaded; recreate the browser runtime before recompiling";
     return false;
   }
+  std::string managedDiagnostic;
+  Scripting::SetScriptDiagnosticSink([&managedDiagnostic](
+    const Scripting::ScriptDiagnostic& diagnostic) {
+    if (diagnostic.Severity == Scripting::ScriptDiagnosticSeverity::Error)
+      managedDiagnostic = diagnostic.Message;
+  });
   auto probe = Scripting::CreateWebManagedScriptRuntime(assembly, pdb, &error);
   std::string manifest;
-  if (!probe || !probe->ReadProjectMetadata(manifest) || manifest.empty()) {
-    if (error.empty()) error = "Assembly-CSharp metadata validation failed";
+  const bool valid = probe && probe->ReadProjectMetadata(manifest) && !manifest.empty();
+  Scripting::SetScriptDiagnosticSink({});
+  if (!valid) {
+    if (!managedDiagnostic.empty()) error = std::move(managedDiagnostic);
+    else if (auto managedProbe = std::dynamic_pointer_cast<Scripting::ManagedScriptRuntime>(probe);
+      managedProbe && !managedProbe->GetLastError().empty())
+      error = managedProbe->GetLastError();
+    else if (error.empty()) error = "Assembly-CSharp metadata validation failed";
     return false;
   }
   m_ManagedAssembly.assign(assembly.begin(), assembly.end());

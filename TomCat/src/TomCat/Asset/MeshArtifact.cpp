@@ -6,6 +6,8 @@
 #include <charconv>
 #include <cmath>
 #include <map>
+#include <locale>
+#include <sstream>
 #include <string_view>
 #include <tuple>
 
@@ -88,10 +90,18 @@ namespace TomCat {
 
 		bool ParseFloat(std::string_view token, float& value)
 		{
+#ifdef __EMSCRIPTEN__
+			std::istringstream stream{ std::string(token) };
+			stream.imbue(std::locale::classic());
+			stream >> std::noskipws >> value;
+			return stream && stream.peek() == std::char_traits<char>::eof()
+				&& std::isfinite(value);
+#else
 			const auto parsed = std::from_chars(token.data(), token.data() + token.size(),
 				value, std::chars_format::general);
 			return parsed.ec == std::errc{} && parsed.ptr == token.data() + token.size()
 				&& std::isfinite(value);
+#endif
 		}
 
 		bool ParseInt(std::string_view token, int32_t& value)
