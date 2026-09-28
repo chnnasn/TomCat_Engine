@@ -155,6 +155,7 @@ public sealed class ScriptGenerator : IIncrementalGenerator
                 ExecutionOrder = ReadExecutionOrder(script),
                 DisallowMultiple = HasAttribute(script, "TomCat.DisallowMultipleComponentAttribute"),
                 Lifecycle = ReadLifecycle(script),
+                Methods = BuildEventMethods(script),
                 Fields = fields
             });
         }
@@ -256,6 +257,21 @@ public sealed class ScriptGenerator : IIncrementalGenerator
         }
         return fields;
     }
+
+	// UnityEvent-compatible callback surface: only public instance methods whose
+	// complete signature is `void Method()` are offered to authoring tools.
+	private static List<string> BuildEventMethods(INamedTypeSymbol script) => script
+		.GetMembers().OfType<IMethodSymbol>()
+		.Where(static method => !method.IsImplicitlyDeclared && !method.IsStatic
+			&& method.MethodKind == MethodKind.Ordinary
+			&& method.DeclaredAccessibility == Accessibility.Public
+			&& !method.IsGenericMethod && method.Parameters.Length == 0
+			&& method.ReturnsVoid)
+		.OrderBy(static method => method.Locations.FirstOrDefault()?.SourceSpan.Start
+			?? int.MaxValue)
+		.Select(static method => method.Name)
+		.Distinct(StringComparer.Ordinal)
+		.ToList();
 
     private static bool TryGetFieldType(ITypeSymbol type, out string token, out string? typeName)
     {
@@ -444,6 +460,7 @@ public sealed class ScriptGenerator : IIncrementalGenerator
         public int ExecutionOrder { get; init; }
         public bool DisallowMultiple { get; init; }
         public uint Lifecycle { get; init; }
+        public List<string> Methods { get; init; } = [];
         public List<ManifestField> Fields { get; init; } = [];
     }
 

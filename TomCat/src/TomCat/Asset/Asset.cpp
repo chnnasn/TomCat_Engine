@@ -24,6 +24,9 @@ namespace TomCat {
 			case AssetType::CSharpScript: return "CSharpScript";
 			case AssetType::Other: return "Other";
 			case AssetType::Prefab: return "Prefab";
+			case AssetType::AnimationClip: return "AnimationClip";
+			case AssetType::AnimatorController: return "AnimatorController";
+			case AssetType::TilePalette: return "TilePalette";
 		}
 		return "None";
 	}
@@ -43,6 +46,9 @@ namespace TomCat {
 		if (value == "Script") return AssetType::CSharpScript;
 		if (value == "Other") return AssetType::Other;
 		if (value == "Prefab") return AssetType::Prefab;
+		if (value == "AnimationClip") return AssetType::AnimationClip;
+		if (value == "AnimatorController") return AssetType::AnimatorController;
+		if (value == "TilePalette") return AssetType::TilePalette;
 		return AssetType::None;
 	}
 
@@ -71,6 +77,9 @@ namespace TomCat {
 		if (extension == ".tcmat") return AssetType::Material;
 		if (extension == ".cs") return AssetType::CSharpScript;
 		if (extension == ".tcprefab") return AssetType::Prefab;
+		if (extension == ".tcanim") return AssetType::AnimationClip;
+		if (extension == ".tccontroller") return AssetType::AnimatorController;
+		if (extension == ".tctilepalette") return AssetType::TilePalette;
 		return AssetType::Other;
 	}
 

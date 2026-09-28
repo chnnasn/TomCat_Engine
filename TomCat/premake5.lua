@@ -57,7 +57,7 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"ImGui",
 		"yaml-cpp"
 	}
-	buildoptions "/utf-8"
+	buildoptions { "/utf-8", "/bigobj" }
 
 filter "files:vendor/ImGuizmo/**.cpp"
     flags { "NoPCH" }

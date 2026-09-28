@@ -22,6 +22,10 @@ namespace TomCat::Scripting {
 			std::span<const NativeScriptAttachmentV1> attachments) = 0;
 		virtual ScriptStatus ApplySerializedFields(std::string_view fieldsJson) = 0;
 		virtual ScriptStatus InvokeCreateAll() = 0;
+		virtual ScriptStatus InvokeMethod(uint64_t, std::string_view)
+		{
+			return ScriptStatus::Unavailable;
+		}
 		virtual ScriptStatus SetEnabled(uint64_t attachmentId, bool enabled) = 0;
 		virtual ScriptStatus UpdateAll(float deltaTime) = 0;
 		virtual ScriptStatus FixedUpdateAll(float fixedDeltaTime) = 0;

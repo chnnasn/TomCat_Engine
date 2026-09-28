@@ -4,16 +4,17 @@
 
 This page covers this branch's changes and progress. See the [main branch README](https://github.com/chnnasn/TomCat_Engine/blob/main/README.md) for the project overview, shared features, showcase and desktop build baseline; branch-specific requirements and entry points are below.
 
-Documentation updated **2026-09-21**. Validation below cites existing records; this documentation-only update did not rerun engine tests.
+Documentation updated **2026-09-28**. Validation below cites existing records; this merge did not rerun the complete engine test suite.
 
 ## Branch Purpose
 
-Develops Emscripten/WebGL2 targets, shared native ImGui editor panels and browser-host integration, including Scene toolbar and Game-view behavior. The host handles persistence. Use the [Web build and integration guide](Web/README.md); SharedArrayBuffer/Workers are required and C# payloads are unsupported. This branch has its own history and does not necessarily contain the latest desktop mainline changes.
+Develops Emscripten/WebGL2 targets, shared native ImGui editor panels and browser-host integration, including Scene toolbar and Game-view behavior. The host handles persistence. Use the [Web build and integration guide](Web/README.md); SharedArrayBuffer/Workers are required and C# payloads are unsupported. The branch was synchronized with `main` on **2026-09-28** while retaining its Web-specific history.
 
 ## Current Progress
 
 - [x] Emscripten/WebGL2 modules reuse the native Player runtime, TCPAK reader, 2D scenes and ImGui authoring panels; the browser host owns file selection and persistence.
 - [x] Shared draggable Q/W/E/R Scene tools and Pivot/Center, Local/Global controls; Game renders the main camera before Play and after Stop. Browser toolbar placement is persisted when localStorage is available.
+- [x] Latest desktop mainline integration, including structured C# diagnostics, portable PDBs, and bundled pure-managed NuGet, project, transitive, and local DLL dependencies for native Editor/Player builds. Web still rejects C# payloads.
 
 ## Getting Started
 
@@ -27,4 +28,4 @@ The Web guide records 2026-09-16 PhysicsPlayground browser cook/load/render/phys
 ## Limits and Remaining Work
 
 - No C# payloads, audible WebAudio, custom cooked SPIR-V shaders, multisample framebuffers or single-thread fallback. Web authoring remains 2D.
-- Host persistence and broader device/widget/IME acceptance remain integration work; this branch does not automatically track the latest desktop changes.
+- Host persistence and broader device/widget/IME acceptance remain integration work; future desktop changes still require explicit merges.

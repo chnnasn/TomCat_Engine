@@ -188,6 +188,7 @@ namespace TomCat {
 		size_t PumpImportCoordinator(
 			const AssetImportCoordinator::Callback& callback = {});
 		void RequestAssetScan() { m_ImportCoordinator.RequestScan(); }
+		uint64_t GetImportRevision() const { return m_ImportRevision; }
 		AssetImportCoordinator& GetImportCoordinator() { return m_ImportCoordinator; }
 		const AssetImportCoordinator& GetImportCoordinator() const
 		{
@@ -336,6 +337,7 @@ namespace TomCat {
 		AssetRegistry m_Registry;
 		AssetDatabase m_Database;
 		AssetImportCoordinator m_ImportCoordinator;
+		uint64_t m_ImportRevision = 0;
 		bool m_RegistryInitialized = false;
 		std::mutex m_AsyncLoadMutex;
 		std::condition_variable m_AsyncLoadsIdle;

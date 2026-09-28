@@ -2736,6 +2736,88 @@ namespace TomCat::Scripting {
 			return api;
 		}
 
+		NativeSceneApiV1 BuildSceneApiV1()
+		{
+			NativeSceneApiV1 api;
+			api.RequestLoad = +[](uint64_t handle, int32_t index, uint32_t mode, int32_t asynchronous) noexcept -> int32_t
+			{
+				return Guard([&]()
+				{
+					if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+					auto* manager = SceneManager::GetRuntime();
+					if (!manager) return Code(ScriptStatus::Unavailable);
+					if (mode > 1 || (!handle && index < 0)) return 0;
+					const auto loadMode = static_cast<SceneLoadMode>(mode);
+					const bool result = asynchronous
+						? (handle ? manager->RequestLoadSceneAsync(AssetHandle(handle), loadMode) : manager->RequestLoadSceneAsync(static_cast<uint32_t>(index), loadMode))
+						: (handle ? manager->RequestLoadScene(AssetHandle(handle), loadMode) : manager->RequestLoadScene(static_cast<uint32_t>(index), loadMode));
+					return result ? 1 : 0;
+				});
+			};
+			api.RequestUnload = +[](uint64_t handle) noexcept -> int32_t
+			{
+				return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); auto* manager = SceneManager::GetRuntime(); return manager ? (manager->RequestUnloadScene(AssetHandle(handle)) ? 1 : 0) : Code(ScriptStatus::Unavailable); });
+			};
+			api.SetActive = +[](uint64_t handle) noexcept -> int32_t
+			{
+				return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); auto* manager = SceneManager::GetRuntime(); return manager ? (manager->SetActiveScene(AssetHandle(handle)) ? 1 : 0) : Code(ScriptStatus::Unavailable); });
+			};
+			api.SetPersistent = +[](EntityHandleV1 entity, int32_t persistent) noexcept -> int32_t
+			{
+				return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); auto* manager = SceneManager::GetRuntime(); return manager ? (manager->SetEntityPersistent(ScriptEngine::Get().ResolveEntity(entity), persistent != 0) ? 1 : 0) : Code(ScriptStatus::Unavailable); });
+			};
+			api.GetLoadStatus = +[](uint32_t* state, float* progress, int32_t* allow) noexcept -> int32_t
+			{
+				return Guard([&]()
+				{
+					if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+					if (!state || !progress || !allow) return Code(ScriptStatus::InvalidArgument);
+					auto* manager = SceneManager::GetRuntime();
+					if (!manager) return Code(ScriptStatus::Unavailable);
+					*state = static_cast<uint32_t>(manager->GetLoadState()); *progress = manager->GetLoadProgress(); *allow = manager->GetAllowSceneActivation() ? 1 : 0;
+					return Code(ScriptStatus::Success);
+				});
+			};
+			api.SetAllowActivation = +[](int32_t allow) noexcept -> int32_t
+			{
+				return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); auto* manager = SceneManager::GetRuntime(); if (!manager) return Code(ScriptStatus::Unavailable); manager->SetAllowSceneActivation(allow != 0); return Code(ScriptStatus::Success); });
+			};
+			api.CancelLoad = +[]() noexcept -> int32_t
+			{
+				return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); auto* manager = SceneManager::GetRuntime(); return manager ? (manager->CancelPendingLoad() ? 1 : 0) : Code(ScriptStatus::Unavailable); });
+			};
+			api.GetLoadedScenes = +[](uint64_t* handles, uint32_t capacity, uint32_t* required) noexcept -> int32_t
+			{
+				return Guard([&]()
+				{
+					if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+					if (!required) return Code(ScriptStatus::InvalidArgument);
+					auto* manager = SceneManager::GetRuntime();
+					if (!manager) return Code(ScriptStatus::Unavailable);
+					const auto& loaded = manager->GetLoadedSceneHandles();
+					*required = static_cast<uint32_t>(loaded.size());
+					if (capacity < loaded.size() || (!handles && !loaded.empty())) return Code(ScriptStatus::BufferTooSmall);
+					for (size_t index = 0; index < loaded.size(); ++index) handles[index] = static_cast<uint64_t>(loaded[index]);
+					return Code(ScriptStatus::Success);
+				});
+			};
+			api.GetLastError = +[](uint8_t* buffer, uint32_t capacity, uint32_t* required) noexcept -> int32_t
+			{
+				return Guard([&]()
+				{
+					if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+					if (!required) return Code(ScriptStatus::InvalidArgument);
+					auto* manager = SceneManager::GetRuntime();
+					if (!manager) return Code(ScriptStatus::Unavailable);
+					const auto& error = manager->GetLastError(); *required = static_cast<uint32_t>(error.size());
+					if (capacity < error.size() || (!buffer && !error.empty())) return Code(ScriptStatus::BufferTooSmall);
+					if (!error.empty()) std::memcpy(buffer, error.data(), error.size());
+					return Code(ScriptStatus::Success);
+				});
+			};
+			return api;
+		}
+
 		int32_t QueryCapabilityCallback(NativeUtf8View name, uint32_t minimumVersion,
 			void* output, uint32_t capacity, uint32_t* required) noexcept
 		{
@@ -2744,6 +2826,15 @@ namespace TomCat::Scripting {
 				std::string capability;
 				if (!required || !ReadUtf8(name, capability))
 					return Code(ScriptStatus::InvalidArgument);
+				if (capability == SceneCapabilityName)
+				{
+					const NativeSceneApiV1 api = BuildSceneApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version) return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api)) return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
 				if (capability == InputCapabilityName)
 				{
 					const NativeInputApiV1 api = BuildInputApiV1();

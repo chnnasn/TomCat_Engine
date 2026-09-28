@@ -30,6 +30,8 @@ namespace TomCat::Scripting {
 			std::span<const NativeScriptAttachmentV1> attachments) override;
 		ScriptStatus ApplySerializedFields(std::string_view fieldsJson) override;
 		ScriptStatus InvokeCreateAll() override;
+		ScriptStatus InvokeMethod(uint64_t attachmentId,
+			std::string_view methodName) override;
 		ScriptStatus SetEnabled(uint64_t attachmentId, bool enabled) override;
 		ScriptStatus UpdateAll(float deltaTime) override;
 		ScriptStatus FixedUpdateAll(float fixedDeltaTime) override;

@@ -17,7 +17,39 @@
 #include <string>
 #include <vector>
 
+#ifdef TC_PLATFORM_WINDOWS
+	#ifndef NOMINMAX
+		#define NOMINMAX
+	#endif
+	#ifndef WIN32_LEAN_AND_MEAN
+		#define WIN32_LEAN_AND_MEAN
+	#endif
+	#include <Windows.h>
+#endif
+
 namespace {
+
+	std::filesystem::path ExecutableDirectory()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		std::vector<wchar_t> buffer(MAX_PATH);
+		for (;;)
+		{
+			const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+				static_cast<DWORD>(buffer.size()));
+			if (length == 0)
+				return {};
+			if (length < buffer.size() - 1)
+				return std::filesystem::path(
+					std::wstring(buffer.data(), length)).parent_path();
+			if (buffer.size() >= 32768)
+				return {};
+			buffer.resize(buffer.size() * 2);
+		}
+#else
+		return {};
+#endif
+	}
 
 	enum class Command { Help, Cook, Build };
 
@@ -320,6 +352,10 @@ namespace {
 
 int wmain(int argc, wchar_t** argv)
 {
+	// Keep the caller's working directory intact so relative project/output/
+	// template arguments retain their command-line meaning. Engine-owned package
+	// assets are resolved independently from the CLI executable/runtime root.
+	TomCat::ApplicationPaths::SetRuntimePackageRoot(ExecutableDirectory());
 	TomCat::Log::Init(TomCat::ApplicationProduct::Unknown);
 	const Options options = ParseOptions(argc, argv);
 	int exitCode = 0;
@@ -334,5 +370,6 @@ int wmain(int argc, wchar_t** argv)
 	else
 		exitCode = Run(options);
 	TomCat::Log::Shutdown();
+	TomCat::ApplicationPaths::ClearRuntimePackageRoot();
 	return exitCode;
 }

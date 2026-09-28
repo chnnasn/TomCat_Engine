@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -30,6 +31,7 @@ namespace TomCat {
 		uint32_t Line = 0;
 		uint32_t Column = 0;
 		std::string StackTrace;
+        std::string Timestamp;
 	};
 
 	class ConsolePanel
@@ -38,7 +40,9 @@ namespace TomCat {
 		void Push(ConsoleMessage message);
 		void Push(ConsoleMessageSeverity severity, std::string text,
 			std::string source = {});
-		void Clear();
+        void SetOpenSourceCallback(std::function<void(const std::filesystem::path&, uint32_t, uint32_t)> callback) { m_OpenSource=std::move(callback); }
+        void SetErrorPauseCallback(std::function<void()> callback) { m_ErrorPauseCallback=std::move(callback); }
+        void Clear();
 		void OnPlayStarted();
 		std::vector<ConsoleMessage> Snapshot() const;
 
@@ -50,6 +54,7 @@ namespace TomCat {
 		bool IsVisible(ConsoleMessageSeverity severity) const;
 
 	private:
+        std::function<void(const std::filesystem::path&, uint32_t, uint32_t)> m_OpenSource;
 		mutable std::mutex m_Mutex;
 		std::vector<ConsoleMessage> m_Messages;
 		uint64_t m_NextSequence = 1;
@@ -57,7 +62,12 @@ namespace TomCat {
 		bool m_ShowInfo = true;
 		bool m_ShowWarnings = true;
 		bool m_ShowErrors = true;
+        char m_Search[256]{};
+        uint64_t m_SelectedSequence = 0;
 		bool m_Collapse = false;
+        bool m_ErrorPause = false;
+        uint64_t m_LastObservedSequence = 0;
+        std::function<void()> m_ErrorPauseCallback;
 		bool m_ClearOnPlay = true;
 		bool m_AutoScroll = true;
 		bool m_ScrollToBottom = false;

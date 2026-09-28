@@ -1,6 +1,6 @@
 # Browser CJK font
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-18 · [Web guide](../README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [Web guide](../README.md)
 
 `NotoSansSC-Regular.otf` is Noto Sans CJK's Simplified Chinese subset, distributed
 under the SIL Open Font License 1.1 in `LICENSE`.
@@ -18,3 +18,9 @@ Keep [LICENSE](LICENSE) with redistributed font files. Verify the checked-in byt
 ```powershell
 Get-FileHash Web/fonts/NotoSansSC-Regular.otf -Algorithm SHA256
 ```
+
+The local SHA-256 and CMake `/WebFonts` mount were checked again on 2026-09-20;
+the font bytes were not replaced. This font supplies editor ImGui glyphs. Game
+font assets and fallback chains are managed by the runtime font system separately.
+Chinese glyph rendering does not establish browser IME composition support;
+see the [Web limitations](../README.md).
