@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Runtime.InteropServices.JavaScript;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
@@ -18,6 +19,14 @@ public static partial class BrowserCompiler
         string ScriptAssetsJson);
     private sealed record DiagnosticOutput(string Severity, string Code, string Message,
         string? File, int Line, int Column);
+    private sealed record CompileResponse(bool Succeeded, string? Assembly, string? Pdb,
+        DiagnosticOutput[] Diagnostics);
+
+    [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonSerializable(typeof(CompileRequest))]
+    [JsonSerializable(typeof(CompileResponse))]
+    private sealed partial class BrowserJsonContext : JsonSerializerContext;
 
     private sealed class AssetsText(string json) : AdditionalText
     {
@@ -31,8 +40,8 @@ public static partial class BrowserCompiler
     {
         try
         {
-            CompileRequest request = JsonSerializer.Deserialize<CompileRequest>(requestJson,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ??
+            CompileRequest request = JsonSerializer.Deserialize(requestJson,
+                BrowserJsonContext.Default.CompileRequest) ??
                 throw new InvalidDataException("Compile request is empty.");
             if (request.Sources.Length == 0 || request.Sources.Length > 10_000 ||
                 request.References.Length == 0 || request.References.Length > 2_000)
@@ -71,6 +80,7 @@ public static partial class BrowserCompiler
             CSharpCompilation compilation = CSharpCompilation.Create("Assembly-CSharp", trees,
                 references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
                     optimizationLevel: OptimizationLevel.Debug, deterministic: true,
+                    concurrentBuild: false,
                     nullableContextOptions: NullableContextOptions.Enable));
             GeneratorDriver driver = CSharpGeneratorDriver.Create(
                 [new TomCat.ScriptGenerator.ScriptGenerator().AsSourceGenerator()],
@@ -79,30 +89,22 @@ public static partial class BrowserCompiler
                 out ImmutableArray<Diagnostic> generatorDiagnostics);
 
             using var assembly = new MemoryStream();
-            using var pdb = new MemoryStream();
-            EmitResult emit = generated.Emit(assembly, pdb,
-                options: new Microsoft.CodeAnalysis.Emit.EmitOptions(
-                    debugInformationFormat: Microsoft.CodeAnalysis.Emit.DebugInformationFormat.PortablePdb));
+            // Portable PDB emission synchronously waits for Roslyn's debug-source Task.
+            // Single-threaded browser WASM cannot block on monitors, so browser builds
+            // intentionally install without a PDB. The native ABI already accepts it.
+            EmitResult emit = generated.Emit(assembly);
             Diagnostic[] diagnostics = generatorDiagnostics.Concat(emit.Diagnostics).ToArray();
-            object result = new
-            {
-                succeeded = emit.Success,
-                assembly = emit.Success ? Convert.ToBase64String(assembly.ToArray()) : null,
-                pdb = emit.Success ? Convert.ToBase64String(pdb.ToArray()) : null,
-                diagnostics = diagnostics.Select(ToOutput).ToArray()
-            };
-            return JsonSerializer.Serialize(result);
+            var result = new CompileResponse(emit.Success,
+                emit.Success ? Convert.ToBase64String(assembly.ToArray()) : null,
+                emit.Success ? string.Empty : null,
+                diagnostics.Select(ToOutput).ToArray());
+            return JsonSerializer.Serialize(result, BrowserJsonContext.Default.CompileResponse);
         }
         catch (Exception exception)
         {
-            return JsonSerializer.Serialize(new
-            {
-                succeeded = false,
-                assembly = (string?)null,
-                pdb = (string?)null,
-                diagnostics = new[] { new DiagnosticOutput("error", "TCWEB0001",
-                    exception.Message, null, 0, 0) }
-            });
+            var result = new CompileResponse(false, null, null,
+                [new DiagnosticOutput("error", "TCWEB0001", exception.ToString(), null, 0, 0)]);
+            return JsonSerializer.Serialize(result, BrowserJsonContext.Default.CompileResponse);
         }
     }
 

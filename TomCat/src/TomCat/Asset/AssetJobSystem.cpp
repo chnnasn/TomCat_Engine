@@ -29,11 +29,15 @@ namespace TomCat {
 
 		AssetJobSystem::Limits Normalize(AssetJobSystem::Limits limits)
 		{
+#ifdef __EMSCRIPTEN__
+			limits.WorkerCount = 0;
+#else
 			const uint32_t hardware = std::thread::hardware_concurrency();
 			if (limits.WorkerCount == 0)
 				limits.WorkerCount = std::clamp(hardware > 1 ? hardware - 1 : 1u,
 					1u, 8u);
 			limits.WorkerCount = std::clamp(limits.WorkerCount, 1u, 64u);
+#endif
 			limits.MaximumQueuedJobs = std::max<size_t>(limits.MaximumQueuedJobs, 1);
 			limits.MemoryBudgetBytes = std::max<uint64_t>(limits.MemoryBudgetBytes,
 				1024ULL * 1024ULL);
@@ -109,6 +113,10 @@ namespace TomCat {
 	{
 		if (!function)
 			return false;
+#ifdef __EMSCRIPTEN__
+		function();
+		return true;
+#endif
 		if (s_IsAssetWorker)
 		{
 			uint64_t reservation = 0;
@@ -173,6 +181,10 @@ namespace TomCat {
 	{
 		if (!function)
 			throw std::invalid_argument("Asset job function is empty");
+#ifdef __EMSCRIPTEN__
+		function();
+		return;
+#endif
 		// A worker may synchronously request a dependent load. Execute it inline to
 		// avoid a pool-wide dependency deadlock. Nested work shares the parent's
 		// reservation and may not silently claim more memory than the parent holds.

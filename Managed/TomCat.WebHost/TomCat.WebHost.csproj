@@ -5,9 +5,20 @@
     <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
     <WasmMainJSPath>main.js</WasmMainJSPath>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <WasmEnableThreads>true</WasmEnableThreads>
+    <WasmEnableThreads>false</WasmEnableThreads>
     <WasmEnableExceptionHandling>true</WasmEnableExceptionHandling>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- The browser runtime linker specializes JS interop for single-threaded WASM.
+         Keep it enabled, but root reflection-driven engine and compiler assemblies. -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <ILLinkTreatWarningsAsErrors>false</ILLinkTreatWarningsAsErrors>
+    <WasmInitialHeapSize>134217728</WasmInitialHeapSize>
+    <EmccStackSize>4194304</EmccStackSize>
+    <EmccExtraLDFlags>$(EmccExtraLDFlags) -sUSE_GLFW=3 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFORCE_FILESYSTEM=1 -sALLOW_MEMORY_GROWTH=1</EmccExtraLDFlags>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TomCatRepositoryRoot)' != ''">
+    <EmccExtraLDFlags>$(EmccExtraLDFlags) --pre-js &quot;$(TomCatRepositoryRoot)/Web/ManagedWebModule.js&quot;</EmccExtraLDFlags>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../TomCat.Managed/TomCat.Managed.csproj" />
@@ -15,17 +26,32 @@
     <ProjectReference Include="../TomCat.ScriptGenerator/TomCat.ScriptGenerator.csproj" />
     <Reference Include="Microsoft.CodeAnalysis" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.dll" Private="true" />
     <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.CSharp.dll" Private="true" />
-    <NativeFileReference Include="$(TomCatWebNativeArchives)" Condition="'$(TomCatWebNativeArchives)' != ''" />
-    <EmccExtraLDFlags Include="-sUSE_GLFW=3" />
-    <EmccExtraLDFlags Include="-sFORCE_FILESYSTEM=1" />
-    <EmccExtraLDFlags Include="-sALLOW_MEMORY_GROWTH=1" />
-    <EmccExtraLDFlags Include="-sINITIAL_MEMORY=134217728" />
-    <EmccExtraLDFlags Include="-sSTACK_SIZE=4194304" />
-    <EmccExtraLDFlags Include="-sDEFAULT_PTHREAD_STACK_SIZE=2097152" />
-    <EmccExtraLDFlags Include="-sPTHREAD_POOL_SIZE=12" />
-    <EmccExtraLDFlags Include="-sPTHREAD_POOL_SIZE_STRICT=2" />
-    <EmccExtraLDFlags Include="--preload-file=$(TomCatRepositoryRoot)/Samples/PhysicsPlayground@/Samples/PhysicsPlayground" Condition="'$(TomCatRepositoryRoot)' != ''" />
-    <EmccExtraLDFlags Include="--preload-file=$(TomCatRepositoryRoot)/Editor/TomCatInut/Packages@/Packages" Condition="'$(TomCatRepositoryRoot)' != ''" />
-    <EmccExtraLDFlags Include="--preload-file=$(TomCatRepositoryRoot)/Web/fonts@/WebFonts" Condition="'$(TomCatRepositoryRoot)' != ''" />
+    <NativeFileReference Include="$(TomCatWebEntrypointsArchive)" Condition="'$(TomCatWebEntrypointsArchive)' != ''" />
+    <NativeFileReference Include="$(TomCatWebPlayerCoreArchive)" Condition="'$(TomCatWebPlayerCoreArchive)' != ''" />
+    <NativeFileReference Include="$(TomCatWebYamlArchive)" Condition="'$(TomCatWebYamlArchive)' != ''" />
+    <NativeFileReference Include="$(TomCatWebBox2dArchive)" Condition="'$(TomCatWebBox2dArchive)' != ''" />
+    <TrimmerRootAssembly Include="TomCat.Managed" />
+    <TrimmerRootAssembly Include="TomCat.ScriptHost" />
+    <TrimmerRootAssembly Include="TomCat.ScriptGenerator" />
+    <TrimmerRootAssembly Include="TomCat.WebHost" />
+    <TrimmerRootAssembly Include="Microsoft.CodeAnalysis" />
+    <TrimmerRootAssembly Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TomCatRepositoryRoot)' != ''">
+    <WasmFilesToIncludeInFileSystem Include="$(TomCatRepositoryRoot)/Samples/PhysicsPlayground/Project.tcproj">
+      <TargetPath>Samples/PhysicsPlayground/Project.tcproj</TargetPath>
+    </WasmFilesToIncludeInFileSystem>
+    <WasmFilesToIncludeInFileSystem Include="$(TomCatRepositoryRoot)/Samples/PhysicsPlayground/Assets/**/*">
+      <TargetPath>Samples/PhysicsPlayground/Assets/%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+    </WasmFilesToIncludeInFileSystem>
+    <WasmFilesToIncludeInFileSystem Include="$(TomCatRepositoryRoot)/Samples/PhysicsPlayground/ProjectSettings/**/*">
+      <TargetPath>Samples/PhysicsPlayground/ProjectSettings/%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+    </WasmFilesToIncludeInFileSystem>
+    <WasmFilesToIncludeInFileSystem Include="$(TomCatRepositoryRoot)/Editor/TomCatInut/Packages/**/*">
+      <TargetPath>Packages/%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+    </WasmFilesToIncludeInFileSystem>
+    <WasmFilesToIncludeInFileSystem Include="$(TomCatRepositoryRoot)/Web/fonts/**/*">
+      <TargetPath>WebFonts/%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+    </WasmFilesToIncludeInFileSystem>
   </ItemGroup>
 </Project>
