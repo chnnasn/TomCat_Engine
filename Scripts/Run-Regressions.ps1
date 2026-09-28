@@ -7,7 +7,11 @@ param(
 
     [string]$PremakePath = "",
 
-    [string]$MsBuildPath = ""
+    [string]$MsBuildPath = "",
+
+    # Capture the full console output to build\logs\regressions-<timestamp>.log
+    # so local runs stop leaving ad-hoc *.log files in the repository root.
+    [switch]$Log
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,7 +83,17 @@ function Invoke-NativeRegression {
 }
 
 Push-Location $repositoryRoot
+$transcriptStarted = $false
 try {
+    if ($Log) {
+        $logDirectory = Join-Path $repositoryRoot "build\logs"
+        New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+        $transcriptPath = Join-Path $logDirectory `
+            ("regressions-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
+        Start-Transcript -Path $transcriptPath | Out-Null
+        $transcriptStarted = $true
+        Write-Host "Logging regression output to $transcriptPath"
+    }
     Invoke-Checked -Name "Generated component proxy bindings" -Action {
         & (Join-Path $PSScriptRoot "Generate-Component-Proxies.ps1") -Check
     }
@@ -167,5 +181,8 @@ try {
     Write-Host "All TomCat regressions passed."
 }
 finally {
+    if ($transcriptStarted) {
+        Stop-Transcript | Out-Null
+    }
     Pop-Location
 }
