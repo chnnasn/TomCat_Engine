@@ -2,36 +2,35 @@
 
 [English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
 
-此 Emscripten 目标在浏览器中运行已有的 `PlayerRuntimeLayer`、Cooked TCPAK 读取器、
-场景运行时、Renderer2D 和 Box2D。目前覆盖原生引擎功能，尚不能完整替代桌面 Player。
+此目标在浏览器中运行已有的 `PlayerRuntimeLayer`、Cooked TCPAK 读取器、
+场景运行时、Renderer2D、Box2D 和 TomCat C# 脚本 ABI。最终模块由 .NET
+`browser-wasm` 链接，Emscripten C++ 引擎静态库与托管代码共享同一块 WASM 内存。
+站点产物内含 .NET 运行时与 Roslyn 编译器，Player 和 Web Editor 用户无需安装本地 .NET。
 
 [2026-09-20 功能录屏](../docs/portfolio/README.md)来自 Windows 桌面程序。
 共享源码不代表这些片段验证了浏览器端；下文保留浏览器验收的原始日期，本次文档更新未重跑 Web 构建或协议回归。
 
 ## 构建
 
-此前在 Windows 上使用 Emscripten 4.0.15、CMake 与 Ninja 完成验证。
-先激活 Emscripten SDK，再从仓库根目录执行下列命令。要求 CMake 3.20 或更新版本；
-协议回归还需要 Node.js。下文的历史验收日期不代表本次文档更新重新执行了验收。
+构建机需要 .NET 10 的 `wasm-tools` 工作负载、Emscripten、CMake 3.20+ 与 Ninja；
+这些只是发行构建工具，不会要求浏览器客户端安装。激活 Emscripten 后从仓库根目录执行：
 
 ```powershell
 git submodule update --init TomCat/vendor/Box2D TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/ImGuizmo
-emcmake cmake -S Web -B build/web -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/web -j 6
+powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Build-WebManaged.ps1
 ```
 
-构建产物是模块，不包含完整浏览器宿主页或持久化服务。
-将 `tomcat_player.js`、`tomcat_player.wasm` 与 `tomcat_player.data` 放在同一目录，
-通过 localhost HTTP 或 HTTPS 提供访问。pthread Worker 要求页面响应包含：
+脚本检查依赖、构建原生静态库，并将完整 `browser-wasm` 站点发布到
+`build/web-managed`。它不包含项目持久化服务，宿主页仍负责 Canvas、导航和文件保存。
+通过 localhost HTTP 或 HTTPS 提供全部产物；pthread Worker 要求响应包含：
 
 ```text
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-按普通脚本加载 JS，调用 `TomCatPlayerModule({ canvas, locateFile })`，
-等待工厂 Promise 完成后再调用导出函数。使用 `_malloc` 和 `HEAPU8.set` 复制 TCPAK 字节，
-启动结束后始终 `_free` 临时缓冲区。内存可能增长，因此每次分配后重新获取 `HEAPU8`。
+以模块方式加载 `main.js`，等待 `tomcat-web-ready` 事件后使用
+`TomCatWeb.engine.PlayerBoot(width, height, tcpakBytes)`。JS 导出会固定字节数组并调用原 Player 层。
 
 | C 导出函数 | 约定 |
 | --- | --- |
@@ -49,8 +48,8 @@ Cross-Origin-Embedder-Policy: require-corp
 
 ## 原生编辑接口
 
-构建还输出 `tomcat_editor.js/.wasm/.data`，工厂函数为 `TomCatEditorModule`。
-模块编译已有的 `SceneHierarchyPanel`（含 Inspector）、`ContentBrowserPanel`、
+同一个托管模块通过 `TomCatWeb.engine` 导出 Web Editor 入口，并编译已有的
+`SceneHierarchyPanel`（含 Inspector）、`ContentBrowserPanel`、
 `ConsolePanel`、`ImGuiLayer` 主题/图标和 ImGuizmo。浏览器宿主负责导航、文件选择与持久化；
 面板直接来自 C++。Web 专用层提供停靠、场景 Framebuffer、拾取和变换 Gizmo。
 
@@ -78,7 +77,14 @@ Project 面板文件修改暂时禁用，图片由宿主导入。Prefab 创建�
 
 浏览器端复用桌面的 Play 工具栏与 Project Settings 界面源码。Scene 使用原有工具图标，
 Game 绘制主相机；Play 运行由 SceneManager 管理的场景副本，Pause / Step 只推进副本，
-Stop 保留创作场景与编辑历史。包含 C# 或缺少主相机的场景会明确拒绝启动；Play 时禁止变更型 RPC。
+Stop 保留创作场景与编辑历史。缺少主相机的场景会明确拒绝启动；Play 时禁止变更型 RPC。
+
+C# 创作由宿主把源码、引用程序集字节和 `ScriptAssets.json` 交给
+`TomCatWeb.compileAndInstall(request)`。Roslyn 与 TomCat 源生成器直接在浏览器中运行，
+成功生成的可移植 DLL/PDB 经 ABI 与元数据校验后用于 Play。Play/Pause/Step/Stop 沿用桌面端
+脚本生命周期及实体、组件、输入、物理桥接；脚本异常进入现有异常汇报通道，基础设施故障只停止
+当前 Play 会话。browser-wasm 不支持可回收 `AssemblyLoadContext`，所以 Stop 会执行
+OnDisable/OnDestroy、场景、回调和取消令牌清理，但重新编译后必须重建浏览器模块，避免旧代际常驻内存。
 
 Project Settings 修改在 MEMFS 中生效并标记会话未保存。宿主须将
 `ProjectSettings/ProjectSettings.json` 和 `PlayerSettings.json` 与场景一起持久化，
@@ -140,11 +146,12 @@ Sprite 选择赋值、场景像素拾取、ImGuizmo 拖拽、撤销/重做、停
 - GLES3 替代桌面 DSA Buffer/Texture 操作，Framebuffer 为单采样；内置 Shader 使用 GLSL ES 300 和 16 个纹理槽。
 - Box2D 用户设置在 wasm32 中保留完整 64 位实体 UUID；Box2D 及其调用方必须使用相同的 `B2_USER_SETTINGS` 定义。
 - 键盘、指针、焦点、滚轮和标准浏览器手柄映射接入现有输入快照队列；尚未验收真实手柄硬件。
-- 含 C# 的包明确失败：此目标不能使用桌面 hostfxr，浏览器 .NET 运行时与原生 ABI 集成仍待实现。
+- C# 支持 TomCat 的纯托管依赖封装；原生 NuGet 资产、自定义 MSBuild 任务和平台原生库仍会被拒绝。
+- 新托管 TCPAK 标记为 `portable`；旧 `win-x64` 托管包仍可读取，因为原编译策略已经禁止原生资产。ABI、清单、TFM、哈希和大小检查仍然生效。
 - 自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 明确失败；GLSL 转换仅覆盖内置基础 Shader。
 - 音频使用 `NullAudioDevice` 回退，无可听 WebAudio 输出。
 - 必须支持 SharedArrayBuffer/Workers 和 WebGL2，没有单线程回退。
-- 桌面端保留原实现；现有 Windows CI 回归不执行 Web 构建或 WASM 测试，Web 验证也不能代替桌面回归。
+- 桌面端保留 hostfxr 实现；Windows 回归、实际 browser-wasm 发布和浏览器生命周期验收不能互相替代。
 
 共享 TCPAK 当前写入 v7（逐条目 SHA-256），读取兼容 v5/v6/v7。
 包格式兼容不意味着上述 Web 功能限制已经解除。

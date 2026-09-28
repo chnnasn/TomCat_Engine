@@ -54,7 +54,8 @@ namespace TomCat {
 		constexpr uint64_t kMaximumManagedPdbSize = 512ULL * 1024ULL * 1024ULL;
 		constexpr uint64_t kMaximumScriptManifestSize = 16ULL * 1024ULL * 1024ULL;
 		constexpr std::string_view kManagedTargetFramework = "net10.0";
-		constexpr std::string_view kManagedRuntimeIdentifier = "win-x64";
+		constexpr std::string_view kManagedRuntimeIdentifier = "portable";
+		constexpr std::string_view kLegacyManagedRuntimeIdentifier = "win-x64";
 
 		uint32_t RotateRight(uint32_t value, uint32_t amount)
 		{
@@ -1012,7 +1013,8 @@ namespace TomCat {
 				|| payload.ManagedApiVersion != Scripting::ManagedApiVersion
 				|| payload.ScriptManifestVersion != Scripting::ScriptManifestVersion
 				|| payload.TargetFramework != kManagedTargetFramework
-				|| payload.RuntimeIdentifier != kManagedRuntimeIdentifier)
+				|| (payload.RuntimeIdentifier != kManagedRuntimeIdentifier
+					&& payload.RuntimeIdentifier != kLegacyManagedRuntimeIdentifier))
 			{
 				errorMessage = "Managed payload ABI, manifest, TFM, or RID is incompatible";
 				return false;

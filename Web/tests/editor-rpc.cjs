@@ -26,7 +26,10 @@ for (const extension of ['js', 'wasm', 'data']) fs.copyFileSync(path.join(source
       }
       return reply.result;
     }
-    assert.ok(rpc('system.capabilities', {}).capabilities.includes('scene.transact'));
+    const capabilities = rpc('system.capabilities', {}).capabilities;
+    assert.ok(capabilities.includes('scene.transact'));
+    assert.ok(capabilities.includes('script.compile'));
+    assert.ok(capabilities.includes('script.lifecycle'));
     assert.equal(module.ccall('tc_web_editor_take_actions', 'number', [], []), 0);
     let snapshot = rpc('project.open', {projectPath:'/Samples/PhysicsPlayground/Project.tcproj'});
     const square = snapshot.entities.find(entity => entity.name === 'Square');

@@ -1997,6 +1997,9 @@
     <ClCompile Include="src\platform\Web\WebFramebuffer.cpp">
       <Filter>src\platform\Web</Filter>
     </ClCompile>
+    <ClCompile Include="src\platform\Web\WebManagedBootstrap.cpp">
+      <Filter>src\platform\Web</Filter>
+    </ClCompile>
     <ClCompile Include="src\platform\Web\WebPlayer.cpp">
       <Filter>src\platform\Web</Filter>
     </ClCompile>

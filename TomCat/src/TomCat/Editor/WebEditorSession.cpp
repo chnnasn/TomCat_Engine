@@ -5,6 +5,8 @@
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Scripting/ManagedRuntimeFactory.h"
+#include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Utils/PathUtils.h"
 #include <yaml-cpp/yaml.h>
 #include <charconv>
@@ -130,7 +132,9 @@ PropertyValue ReadValue(const YAML::Node& node, PropertyKind kind) {
     default: {
       const size_t count = kind == PropertyKind::Vector2 ? 2 : kind == PropertyKind::Vector3 ? 3 : 4;
       Require(node.IsSequence() && node.size() == count, "Invalid vector dimension");
-      glm::vec4 value(0); for (size_t i = 0; i < count; ++i) value[i] = std::get<float>(ReadValue(node[i], PropertyKind::Float));
+      glm::vec4 value(0); for (size_t i = 0; i < count; ++i)
+        value[static_cast<glm::vec4::length_type>(i)] =
+          std::get<float>(ReadValue(node[i], PropertyKind::Float));
       if (count == 2) return glm::vec2(value); if (count == 3) return glm::vec3(value); return value;
     }
   }
@@ -204,6 +208,25 @@ void Apply(const Ref<Scene>& scene, const YAML::Node& operation, uint64_t& selec
 
 void WebEditorSession::StopPreview() {
   m_Preview.Stop(); m_Preview.DeactivateRuntime(); m_PreviewMode = PreviewMode::Edit;
+  Scripting::ScriptEngine::Get().SetRuntime({});
+}
+bool WebEditorSession::SetManagedAssembly(std::span<const uint8_t> assembly,
+  std::span<const uint8_t> pdb, std::string& error) {
+  if (m_PreviewMode != PreviewMode::Edit) { error = "Stop preview before replacing C# scripts"; return false; }
+  if (assembly.empty()) { error = "Assembly-CSharp.dll is empty"; return false; }
+  if (!m_ManagedAssembly.empty()) {
+    error = "A C# assembly generation is already loaded; recreate the browser runtime before recompiling";
+    return false;
+  }
+  auto probe = Scripting::CreateWebManagedScriptRuntime(assembly, pdb, &error);
+  std::string manifest;
+  if (!probe || !probe->ReadProjectMetadata(manifest) || manifest.empty()) {
+    if (error.empty()) error = "Assembly-CSharp metadata validation failed";
+    return false;
+  }
+  m_ManagedAssembly.assign(assembly.begin(), assembly.end());
+  m_ManagedPdb.assign(pdb.begin(), pdb.end());
+  error.clear(); return true;
 }
 void WebEditorSession::ControlPreview(const std::string& command) {
   Require(bool(m_Scene), "Open a project first", "NO_PROJECT");
@@ -211,9 +234,20 @@ void WebEditorSession::ControlPreview(const std::string& command) {
   if (command == "play") {
     Require(m_PreviewMode == PreviewMode::Edit, "Preview already running", "PREVIEW_STATE");
     EndUIEdit(m_Selected);
+    bool hasScripts = false;
     for (const auto entity : Entities(m_Scene))
-      Require(!entity.HasComponent<CSharpScripts>() || entity.GetComponent<CSharpScripts>().Scripts.empty(),
-        "C# browser execution is not available. Stop preview and use a native-only scene.", "SCRIPT_UNSUPPORTED");
+      hasScripts = hasScripts || (entity.HasComponent<CSharpScripts>() &&
+        !entity.GetComponent<CSharpScripts>().Scripts.empty());
+    if (hasScripts) {
+      Require(!m_ManagedAssembly.empty(),
+        "Compile or upload Assembly-CSharp.dll before Play.", "SCRIPT_ASSEMBLY_REQUIRED");
+      std::string runtimeError;
+      auto runtime = Scripting::CreateWebManagedScriptRuntime(
+        m_ManagedAssembly, m_ManagedPdb, &runtimeError);
+      Require(bool(runtime), "C# WebAssembly runtime startup failed: " + runtimeError,
+        "SCRIPT_RUNTIME_FAILED");
+      Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
+    }
     Require(m_Scene->HasAuthoredPrimaryCamera(), "Add a Primary Camera before Play", "CAMERA_REQUIRED");
     BuildSettings settings; settings.EntrySceneHandle = UUID(m_SceneHandle);
     settings.Scenes.push_back({UUID(m_SceneHandle),true,{}});
@@ -317,7 +351,7 @@ std::string WebEditorSession::Invoke(const std::string& request) {
     auto type = String(root["type"]); auto payload = root["payload"]; Require(payload.IsMap(), "Expected payload object");
     std::string result;
     if (type == "system.capabilities") {
-      result = Object({{"engineBuildId", Quote("tomcat-web-editor-v1")}, {"protocolVersion", "1"}, {"capabilities", Array({Quote("scene.transact"), Quote("history.undo"), Quote("history.redo"), Quote("component.schema"), Quote("asset.list"), Quote("scene.archive"), Quote("preview.control"), Quote("preview.snapshot")})}});
+      result = Object({{"engineBuildId", Quote("tomcat-web-editor-v1")}, {"protocolVersion", "1"}, {"capabilities", Array({Quote("scene.transact"), Quote("history.undo"), Quote("history.redo"), Quote("component.schema"), Quote("asset.list"), Quote("scene.archive"), Quote("script.compile"), Quote("script.lifecycle"), Quote("preview.control"), Quote("preview.snapshot")})}});
     } else if (type == "preview.control") {
       ControlPreview(String(payload["command"])); result = Status();
     } else if (type == "preview.snapshot") {

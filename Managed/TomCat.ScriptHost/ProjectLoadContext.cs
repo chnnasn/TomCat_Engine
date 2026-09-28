@@ -5,7 +5,8 @@ using System.Runtime.Loader;
 
 namespace TomCat.ScriptHost;
 
-internal sealed class ProjectLoadContext(string name) : AssemblyLoadContext(name, isCollectible: true)
+internal sealed class ProjectLoadContext(string name) : AssemblyLoadContext(name,
+    isCollectible: !OperatingSystem.IsBrowser())
 {
     private static readonly Assembly SharedManagedAssembly = typeof(TomCatBehaviour).Assembly;
     private static readonly string SharedManagedName = SharedManagedAssembly.GetName().Name!;
