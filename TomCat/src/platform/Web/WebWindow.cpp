@@ -46,8 +46,23 @@ void WebWindow::CancelCloseRequest() { glfwSetWindowShouldClose(m_Window, GLFW_F
 void WebWindow::Resize(uint32_t width, uint32_t height) {
   glfwSetWindowSize(m_Window, width, height);
   m_Width = width; m_Height = height;
-  WindowResizeEvent event(width, height);
+  // Report the metrics pair, matching WindowsWindow: the framebuffer extent can differ from the
+  // requested window size because Emscripten's GLFW owns the canvas drawing buffer.
+  int framebufferWidth = 0, framebufferHeight = 0;
+  glfwGetFramebufferSize(m_Window, &framebufferWidth, &framebufferHeight);
+  WindowResizeEvent event(WindowMetrics::FromNative(static_cast<int>(width),
+    static_cast<int>(height), framebufferWidth, framebufferHeight, 1.0f, 1.0f));
   if (m_Callback) m_Callback(event);
+}
+uint32_t WebWindow::GetFramebufferWidth() const {
+  int width = 0, height = 0;
+  if (m_Window) glfwGetFramebufferSize(m_Window, &width, &height);
+  return width > 0 ? static_cast<uint32_t>(width) : m_Width;
+}
+uint32_t WebWindow::GetFramebufferHeight() const {
+  int width = 0, height = 0;
+  if (m_Window) glfwGetFramebufferSize(m_Window, &width, &height);
+  return height > 0 ? static_cast<uint32_t>(height) : m_Height;
 }
 }
 #endif // __EMSCRIPTEN__
