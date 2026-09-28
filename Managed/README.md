@@ -3,8 +3,11 @@
 English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
 
 V1 names the scripting feature scope, not every wire-format version: Native ABI
-is v1, Managed ABI is v3, and ScriptManifest is v1. Desktop hosting uses .NET 10;
-the experimental Web target rejects C# payloads.
+is v1, Managed ABI is v3, and ScriptManifest is v1. Desktop hosting uses .NET 10.
+Packaged Editors own a pinned private SDK for script compilation; generated
+project files are an IDE/dependency interchange surface rather than authority
+over the engine's source set and output layout. The experimental Web target
+currently rejects C# payloads.
 
 This directory contains the independently buildable .NET 10 portion of the TomCat C# scripting
 system:

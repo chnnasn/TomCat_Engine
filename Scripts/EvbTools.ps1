@@ -353,6 +353,7 @@ function New-TomCatRuntimeManifest {
     }
 
     $expectedRootEntries = @(
+        'DotNetSdk',
         'Managed',
         'Packages',
         'TomCatCLI.exe',

@@ -15,6 +15,7 @@
 - [x] Emscripten/WebGL2 模块复用原生 Player Runtime、TCPAK 读取、2D 场景和 ImGui 编辑面板，文件选择与持久化由浏览器宿主负责。
 - [x] 共享可拖动 Q/W/E/R Scene 工具与 Pivot/Center、Local/Global 控件；Game 在 Play 前和 Stop 后也显示主相机，localStorage 可用时保存工具栏位置。
 - [x] 已合入最新桌面主线，包括结构化 C# 诊断、portable PDB，以及供原生 Editor/Player 使用的纯托管 NuGet 包、项目引用、传递依赖和本地 DLL 封装；Web 端仍拒绝 C# 负载。
+- [x] 打包后的桌面 Editor 自带固定私有 .NET 10 SDK，不再依赖机器上的全局 C# 环境；浏览器运行时在本分支单独接入。
 
 ## 使用与开发入口
 
