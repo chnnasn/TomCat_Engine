@@ -2,6 +2,8 @@
 
 #include "TomCat/Renderer/Camera.h"
 
+#include <array>
+
 namespace TomCat {
 
 	class SceneCamera : public Camera
@@ -36,6 +38,12 @@ namespace TomCat {
 		ProjectionType GetProjectionType() const { return m_ProjectionType; }
 		bool SetProjectionType(ProjectionType type);
 
+		// TomCat authoring uses local +Z as 3D forward. Returns near-plane corners
+		// first, then far-plane corners, in that +Z local camera space. The order
+		// within each plane is bottom-left, bottom-right, top-right, top-left.
+		bool TryGetLocalFrustumCorners(
+			std::array<glm::vec3, 8>& corners) const;
+
 	private:
 		bool TryCalculateProjection(ProjectionType type, glm::mat4& projection) const;
 		bool RecalculateProjection();
@@ -46,7 +54,7 @@ namespace TomCat {
 		float m_PerspectiveNear = 0.01f, m_PerspectiveFar = 1000.0f;
 
 		float m_OrthographicSize = 10.0f;
-		float m_OrthographicNear = -1.0f, m_OrthographicFar = 1.0f;
+		float m_OrthographicNear = 0.0f, m_OrthographicFar = 1000.0f;
 
 		float m_AspectRatio = 1.0f;
 	};

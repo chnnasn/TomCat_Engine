@@ -33,6 +33,7 @@ namespace TomCat {
 		std::string TypeName;
 		int32_t ExecutionOrder = 0;
 		bool DisallowMultiple = false;
+		std::vector<std::string> EventMethods;
 		std::vector<EditorScriptFieldMetadata> Fields;
 	};
 

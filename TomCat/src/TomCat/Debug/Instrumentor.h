@@ -1,5 +1,7 @@
 #pragma once
 
+#include "TomCat/Debug/FrameProfiler.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -190,9 +192,12 @@ namespace TomCat {
 	public:
 		InstrumentationTimer(const char* name)
 			: m_Name(name),
-			  m_Enabled(Instrumentor::Get().IsSessionActive()),
+			  m_Frame(FrameProfiler::Get().ActiveFrame()),
+			  m_Enabled(m_Frame != 0 || Instrumentor::Get().IsSessionActive()),
 			  m_Stopped(!m_Enabled)
 		{
+			if (m_Frame)
+				m_Depth = s_Depth++;
 			if (m_Enabled)
 				m_StartTimepoint = std::chrono::steady_clock::now();
 		}
@@ -211,12 +216,23 @@ namespace TomCat {
 			auto highResStart = FloatingPointMicroseconds{ m_StartTimepoint.time_since_epoch() };
 			auto elapsedTime = std::chrono::time_point_cast<std::chrono::microseconds>(endTimepoint).time_since_epoch() - std::chrono::time_point_cast<std::chrono::microseconds>(m_StartTimepoint).time_since_epoch();
 
-			Instrumentor::Get().WriteProfile({ m_Name, highResStart, elapsedTime, std::this_thread::get_id() });
+			if (m_Frame)
+			{
+				--s_Depth;
+				FrameProfiler::Get().Record(m_Frame, m_Name, highResStart.count(),
+					std::chrono::duration<double, std::micro>(endTimepoint - m_StartTimepoint).count(),
+					std::hash<std::thread::id>{}(std::this_thread::get_id()), m_Depth);
+			}
+			if (Instrumentor::Get().IsSessionActive())
+				Instrumentor::Get().WriteProfile({ m_Name, highResStart, elapsedTime, std::this_thread::get_id() });
 
 			m_Stopped = true;
 		}
 	private:
 		const char* m_Name;
+		uint64_t m_Frame = 0;
+		uint32_t m_Depth = 0;
+		inline static thread_local uint32_t s_Depth = 0;
 		std::chrono::time_point<std::chrono::steady_clock> m_StartTimepoint;
 		bool m_Enabled;
 		bool m_Stopped;

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Game scripts are compiled by the editor, not by this dependency project. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Add PackageReference, ProjectReference or Reference + HintPath here. -->
+  </ItemGroup>
+</Project>

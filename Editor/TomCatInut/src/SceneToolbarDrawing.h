@@ -1,5 +1,6 @@
 #pragma once
 #include "EditorPlayToolbar.h"
+#include "EditorVisuals.h"
 #include <cmath>
 namespace TomCat {
 		constexpr float kSceneToolbarPadding = 5.0f;
@@ -16,7 +17,6 @@ namespace TomCat {
 			kSceneTransformButtonWidth * 4.0f + kSceneToolbarItemGap * 3.0f;
 inline void DrawSceneToolbarIcon(ImDrawList* draw, const Ref<EditorIconSet>& icons,
   EditorIcon icon, const ImVec2& minimum, const ImVec2& maximum) {
-  if (draw && icons && icons->Get(icon))
-    draw->AddImage(EditorTextureID(icons->Get(icon)),minimum,maximum,{0,1},{1,0});
+  DrawEditorGlyph(draw,icons,icon,minimum,maximum);
 }
 }

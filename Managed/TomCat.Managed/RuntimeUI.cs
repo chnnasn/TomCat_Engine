@@ -156,6 +156,8 @@ public sealed class UIButton : IEntityComponent
 	private const ulong HoverColorId = 0x9f01600000000004UL;
 	private const ulong PressedColorId = 0x9f01600000000005UL;
 	private const ulong SelectedColorId = 0x9f01600000000006UL;
+	private const ulong DisabledColorId = 0x9f01600000000007UL;
+	private const ulong ColorMultiplierId = 0x9f01600000000008UL;
 
 	internal UIButton(Entity entity) => Entity = entity;
 	public Entity Entity { get; }
@@ -165,6 +167,8 @@ public sealed class UIButton : IEntityComponent
 	public Color HoverColor { get => Color(HoverColorId, "HoverColor"); set => Color(HoverColorId, value, "HoverColor"); }
 	public Color PressedColor { get => Color(PressedColorId, "PressedColor"); set => Color(PressedColorId, value, "PressedColor"); }
 	public Color SelectedColor { get => Color(SelectedColorId, "SelectedColor"); set => Color(SelectedColorId, value, "SelectedColor"); }
+	public Color DisabledColor { get => Color(DisabledColorId, "DisabledColor"); set => Color(DisabledColorId, value, "DisabledColor"); }
+	public float ColorMultiplier { get => Float(ColorMultiplierId, "ColorMultiplier"); set => Float(ColorMultiplierId, value, "ColorMultiplier"); }
 	public bool WasClickedThisFrame => NativeBridge.RuntimeUIButtonWasClicked(Entity);
 	public ulong ClickSerial => NativeBridge.GetRuntimeUIButtonClickSerial(Entity);
 	public void Focus() => NativeBridge.FocusRuntimeUIButton(Entity);
@@ -172,6 +176,8 @@ public sealed class UIButton : IEntityComponent
 	private void Bool(ulong id, bool value, string name) => NativeBridge.SetRegisteredBool(Entity, TypeId, id, value, $"UIButton.{name}");
 	private Color Color(ulong id, string name) => NativeBridge.GetRegisteredColor(Entity, TypeId, id, $"UIButton.{name}");
 	private void Color(ulong id, Color value, string name) => NativeBridge.SetRegisteredColor(Entity, TypeId, id, value, $"UIButton.{name}");
+	private float Float(ulong id, string name) => NativeBridge.GetRegisteredFloat(Entity, TypeId, id, $"UIButton.{name}");
+	private void Float(ulong id, float value, string name) => NativeBridge.SetRegisteredFloat(Entity, TypeId, id, value, $"UIButton.{name}");
 }
 
 public sealed class UIEventSystem : IEntityComponent

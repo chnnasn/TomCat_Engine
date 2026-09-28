@@ -10,6 +10,9 @@ namespace TomCat {
 	public:
 		static void Init();
 		static void Shutdown();
+		static void BeginProfileFrame(uint64_t frame);
+		static void EndProfileFrame();
+		static bool SupportsGpuProfiling();
 
 		static void OnWindowResize(uint32_t width, uint32_t height);
 

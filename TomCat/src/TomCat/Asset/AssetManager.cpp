@@ -12,6 +12,8 @@
 #include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scene/Serialization/PrefabLink.h"
+#include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scripting/ScriptField.h"
 #include "TomCat/Scripting/ScriptTypes.h"
@@ -493,7 +495,7 @@ namespace TomCat {
 						+ std::to_string(scriptIndex) + "]";
 					if (!HasExactFields(script,
 						{ "assetHandle", "typeName", "executionOrder",
-							"disallowMultiple", "lifecycle", "fields" }, {},
+							"disallowMultiple", "lifecycle", "fields" }, { "methods" },
 						context, errorMessage))
 						return false;
 					const uint64_t handle = script["assetHandle"].as<uint64_t>();
@@ -508,10 +510,38 @@ namespace TomCat {
 					(void)script["executionOrder"].as<int32_t>();
 					(void)script["disallowMultiple"].as<bool>();
 					const uint32_t lifecycle = script["lifecycle"].as<uint32_t>();
-					if ((lifecycle & ~0x3ffU) != 0)
+					if ((lifecycle & ~0x7ffU) != 0)
 					{
 						errorMessage = context + " contains unknown lifecycle bits";
 						return false;
+					}
+					// Manifest V1 gained optional public parameterless event methods.
+					// Old manifests omit the array; generator/host metadata includes it.
+					const YAML::Node methods = script["methods"];
+					if (methods)
+					{
+						if (!methods.IsSequence())
+						{
+							errorMessage = context + ".methods must be an array";
+							return false;
+						}
+						std::unordered_set<std::string> methodNames;
+						for (const YAML::Node& method : methods)
+						{
+							if (!IsNonemptyMetadataString(method) || method.Tag() != "!")
+							{
+								errorMessage = context + ".methods must contain nonempty JSON strings";
+								return false;
+							}
+							const std::string name = method.as<std::string>();
+							if (name.size() > 512 || std::all_of(name.begin(), name.end(),
+								[](unsigned char character) { return std::isspace(character) != 0; })
+								|| !methodNames.emplace(name).second)
+							{
+								errorMessage = context + ".methods contains an invalid or duplicate method name";
+								return false;
+							}
+						}
 					}
 					const YAML::Node fields = script["fields"];
 					if (!fields.IsSequence())
@@ -641,6 +671,7 @@ namespace TomCat {
 		{
 			uint64_t AssetHandle = 0;
 			std::string TypeName;
+			std::vector<std::string> Methods;
 			std::vector<ScriptFieldRuntimeSignature> Fields;
 			bool operator==(const ScriptRuntimeSignature&) const = default;
 		};
@@ -659,6 +690,12 @@ namespace TomCat {
 					ScriptRuntimeSignature scriptSignature;
 					scriptSignature.AssetHandle = script["assetHandle"].as<uint64_t>();
 					scriptSignature.TypeName = script["typeName"].as<std::string>();
+					if (const YAML::Node methods = script["methods"])
+					{
+						for (const YAML::Node& method : methods)
+							scriptSignature.Methods.push_back(method.as<std::string>());
+						std::sort(scriptSignature.Methods.begin(), scriptSignature.Methods.end());
+					}
 					const YAML::Node fields = script["fields"];
 					scriptSignature.Fields.reserve(fields.size());
 					for (const YAML::Node& field : fields)
@@ -770,7 +807,7 @@ namespace TomCat {
 				return {};
 			std::error_code error;
 			const std::filesystem::path canonical = std::filesystem::weakly_canonical(absolute, error);
-			return (error ? absolute : canonical).lexically_normal();
+			return PathForComparison(error ? absolute : canonical);
 		}
 
 		bool IsWithinOrEqual(const std::filesystem::path& root,
@@ -1455,6 +1492,12 @@ namespace TomCat {
 				hasCSharpScripts = true;
 			if (rawHandle == 0)
 			{
+				// Font=0 was the historical default for TextRenderer/UIText. Runtime
+				// treats it as Legacy Runtime, so Cook must include that same built-in
+				// dependency for old scenes instead of producing an editor-only result.
+				if (reference.Kind == SerializedAssetReferenceKind::Font)
+					runtimeDependencies.emplace(static_cast<uint64_t>(
+						GetDefaultRuntimeFontHandle()));
 				if (!reference.Required)
 					return true;
 				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
@@ -1475,6 +1518,20 @@ namespace TomCat {
 				{
 					errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
 						+ reference.PropertyPath + " uses an engine Sprite where a different "
+							"asset type is required";
+					return false;
+				}
+				runtimeDependencies.emplace(rawHandle);
+				return true;
+			}
+			if (FindBuiltInFontAsset(reference.Handle))
+			{
+				if ((reference.ExpectedType != AssetType::None
+						&& reference.ExpectedType != AssetType::Font)
+					|| reference.Kind == SerializedAssetReferenceKind::CSharpScript)
+				{
+					errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
+						+ reference.PropertyPath + " uses an engine Font where a different "
 							"asset type is required";
 					return false;
 				}
@@ -1569,7 +1626,12 @@ namespace TomCat {
 			}
 			try
 			{
-				std::string serialized(sourceBytes.begin(), sourceBytes.end());
+				auto resolvedScene = CreateRef<Scene>();
+				bool prefabsChanged = false;
+				std::string serialized;
+				if (!SceneArchiveCodec::Decode(sourceBytes, resolvedScene, scenePath, false)
+					|| !PrefabLinkedInstance::RefreshAll(resolvedScene, prefabsChanged, errorMessage, false)
+					|| !SceneArchiveCodec::Encode(resolvedScene, serialized, errorMessage)) return false;
 				std::istringstream input(std::move(serialized));
 				YAML::Node root = YAML::Load(input);
 				// Schema 9 is read-only migration input. Every newly emitted scene,
@@ -1628,7 +1690,11 @@ namespace TomCat {
 			}
 			try
 			{
-				const std::string serialized(bytes.begin(), bytes.end());
+				PrefabArchive resolved;
+				std::string serialized;
+				if (!PrefabArchiveCodec::Load(prefabPath, resolved, errorMessage)
+					|| !PrefabArchiveCodec::Encode(resolved, serialized, errorMessage)) return false;
+				bytes.assign(serialized.begin(), serialized.end());
 				const YAML::Node root = YAML::Load(serialized);
 				if (!AssetReferenceVisitor::VisitPrefab(root,
 					[&](const SerializedAssetReference& reference)
@@ -1916,6 +1982,7 @@ namespace TomCat {
 		return m_ImportCoordinator.PumpMainThread(
 			[this, &callback](const AssetImportEvent& event)
 			{
+				++m_ImportRevision;
 				if (static_cast<uint64_t>(event.Handle) != 0)
 					Release(event.Handle);
 				if (callback)
@@ -1940,6 +2007,38 @@ namespace TomCat {
 			result.Artifact.Handle = handle;
 			result.Artifact.Type = type;
 			result.Artifact.Format = "cooked/tcpak";
+			return result;
+		}
+		if (FindBuiltInFontAsset(handle))
+		{
+			AssetLoadResult result;
+			if (options.Cancellation
+				&& options.Cancellation->IsCancellationRequested())
+			{
+				result.Status = AssetLoadStatus::Cancelled;
+				result.Error = "asset load was cancelled";
+				return result;
+			}
+			const std::filesystem::path source = GetBuiltInFontAssetPath(handle);
+			if (source.empty() || !ReadWholeFile(source, result.Artifact.Bytes))
+			{
+				result.Status = AssetLoadStatus::SourceReadFailed;
+				result.Error = "engine Font source is missing or unreadable";
+				return result;
+			}
+			if (options.Cancellation
+				&& options.Cancellation->IsCancellationRequested())
+			{
+				result.Artifact.Bytes.clear();
+				result.Status = AssetLoadStatus::Cancelled;
+				result.Error = "asset load was cancelled";
+				return result;
+			}
+			result.Status = AssetLoadStatus::Success;
+			result.Artifact.Handle = handle;
+			result.Artifact.Type = AssetType::Font;
+			result.Artifact.SourceSHA256 = ComputeSHA256(result.Artifact.Bytes);
+			result.Artifact.Format = "font/ttf";
 			return result;
 		}
 		if (!m_RegistryInitialized)
@@ -1970,7 +2069,7 @@ namespace TomCat {
 		{
 			try
 			{
-				if (m_RegistryInitialized)
+				if (m_RegistryInitialized && !FindBuiltInFontAsset(handle))
 				{
 					std::future<AssetLoadResult> future =
 						m_Database.LoadArtifactAsync(handle, std::move(options));
@@ -2981,6 +3080,8 @@ namespace TomCat {
 			return {};
 		if (FindBuiltInSpriteAsset(handle))
 			return GetBuiltInSpriteAssetPath(handle);
+		if (FindBuiltInFontAsset(handle))
+			return GetBuiltInFontAssetPath(handle);
 		if (!m_RegistryInitialized)
 			return {};
 		const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
@@ -3429,6 +3530,35 @@ namespace TomCat {
 						rawHandle);
 					return false;
 				}
+				entry.HasCookedBytes = true;
+				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
+				entries.push_back(std::move(entry));
+				builtInObservations.push_back({ handle, source, sourceSHA256 });
+				continue;
+			}
+			if (FindBuiltInFontAsset(handle))
+			{
+				const std::filesystem::path source = GetBuiltInFontAssetPath(handle);
+				std::vector<uint8_t> sourceBytes;
+				if (source.empty() || !ReadWholeFile(source, sourceBytes))
+				{
+					TC_Core_Error("Cannot cook missing engine Font {0} ('{1}')",
+						rawHandle, PathToUTF8(source));
+					return false;
+				}
+				const std::string sourceSHA256 = ComputeSHA256(sourceBytes);
+				std::string currentSHA256;
+				if (!ComputeFileSHA256String(source, currentSHA256)
+					|| currentSHA256 != sourceSHA256)
+				{
+					TC_Core_Error("Engine Font {0} changed while cooking; retry Cook",
+						rawHandle);
+					return false;
+				}
+				SourceEntry entry;
+				entry.RawHandle = rawHandle;
+				entry.RawType = static_cast<uint16_t>(AssetType::Font);
+				entry.CookedBytes = std::move(sourceBytes);
 				entry.HasCookedBytes = true;
 				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 				entries.push_back(std::move(entry));
@@ -4046,7 +4176,7 @@ namespace TomCat {
 				|| currentSHA256 != observation.SourceSHA256)
 			{
 				RemoveTemporaryFile(temporary);
-				TC_Core_Error("Engine Sprite {0} changed before Cook publication",
+				TC_Core_Error("Engine package asset {0} changed before Cook publication",
 					static_cast<uint64_t>(observation.Handle));
 				return false;
 			}
@@ -4356,7 +4486,7 @@ namespace TomCat {
 			{
 				if (rawHandle == 0
 					|| rawType == static_cast<uint16_t>(AssetType::None)
-					|| rawType > static_cast<uint16_t>(AssetType::Prefab)
+					|| rawType > static_cast<uint16_t>(AssetType::TilePalette)
 					|| flags != 0 || reserved != 0)
 					return false;
 				const AssetHandle handle(rawHandle);

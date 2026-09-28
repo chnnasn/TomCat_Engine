@@ -489,8 +489,8 @@ namespace ComponentRegistryRegression {
 				return static_cast<uint64_t>(property.PropertyId)
 					== TomCat::ComponentIds::CameraProperties::Enabled;
 			});
-		Check(cameraDescriptor->SchemaVersion == 2
-			&& cameraDescriptor->Migrations.size() == 1
+		Check(cameraDescriptor->SchemaVersion == 3
+			&& cameraDescriptor->Migrations.size() == 2
 			&& cameraEnabledProperty != cameraDescriptor->Properties.end()
 			&& cameraEnabledProperty->Kind == TomCat::PropertyKind::Bool
 			&& cameraEnabledProperty->DefaultValue == TomCat::PropertyValue(true),
@@ -781,14 +781,14 @@ namespace ComponentRegistryRegression {
 				break;
 			}
 		}
-		Check(cameraRecord && cameraRecord["SchemaVersion"].as<uint32_t>() == 2
+		Check(cameraRecord && cameraRecord["SchemaVersion"].as<uint32_t>() == 3
 			&& cameraRecord["Properties"].size() == cameraDescriptor->Properties.size()
 			&& cameraRecord["Properties"][cameraRecord["Properties"].size() - 1]
 				["PropertyId"].as<uint64_t>()
 				== TomCat::ComponentIds::CameraProperties::Enabled
 			&& !cameraRecord["Properties"][cameraRecord["Properties"].size() - 1]
 				["Value"].as<bool>(),
-			"Camera.Enabled was not serialized in the canonical v2 component record");
+			"Camera.Enabled was not serialized in the canonical v3 component record");
 		auto cameraRoundTrip = TomCat::CreateRef<TomCat::Scene>();
 		Check(TomCat::SceneArchiveCodec::Decode(Bytes(cameraDocument),
 			cameraRoundTrip, "CameraEnabled.scene", false),
@@ -813,6 +813,8 @@ namespace ComponentRegistryRegression {
 			}
 		}
 		cameraV1Entity["Camera"].remove("Enabled");
+		cameraV1Entity["Camera"]["Camera"]["OrthographicNear"] = -1.0f;
+		cameraV1Entity["Camera"]["Camera"]["OrthographicFar"] = 1.0f;
 		for (YAML::Node record : cameraV1Entity["Components"])
 		{
 			if (record["TypeId"].as<uint64_t>() != TomCat::ComponentIds::Camera)
@@ -826,6 +828,13 @@ namespace ComponentRegistryRegression {
 					v1Properties.push_back(YAML::Clone(property));
 			}
 			record["Properties"] = v1Properties;
+			for (YAML::Node property : record["Properties"])
+			{
+				if (property["PropertyId"].as<uint64_t>() == TomCat::ComponentIds::CameraProperties::OrthographicNear)
+					property["Value"] = -1.0f;
+				if (property["PropertyId"].as<uint64_t>() == TomCat::ComponentIds::CameraProperties::OrthographicFar)
+					property["Value"] = 1.0f;
+			}
 			break;
 		}
 		YAML::Emitter cameraV1Emitter;
@@ -841,6 +850,9 @@ namespace ComponentRegistryRegression {
 			&& migratedCamera.GetComponent<TomCat::C_Camera>().Primary
 			&& migratedCameraScene->GetPrimaryCameraEntity() == migratedCamera,
 			"Camera v1 migration did not default independent Enabled state to true");
+		Check(migratedCamera.GetComponent<TomCat::C_Camera>()._Camera.GetOrthographicNearClip() == 0.0f
+			&& migratedCamera.GetComponent<TomCat::C_Camera>()._Camera.GetOrthographicFarClip() == 1.0f,
+			"Camera migration did not normalize the old signed clip range");
 
 		auto cameraPrefabSource = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity cameraPrefabRoot =

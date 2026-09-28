@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
@@ -17,6 +18,21 @@
 #include <glm/glm.hpp>
 
 namespace TomCat {
+
+	struct BuiltInFontAsset
+	{
+		AssetHandle Handle = AssetHandle(0);
+		std::string_view Name;
+		std::string_view PackageRelativePath;
+	};
+
+	// Built-in fonts are immutable package resources with stable handles. Font=0
+	// remains a backwards-compatible alias for Legacy Runtime at render time.
+	[[nodiscard]] std::span<const BuiltInFontAsset> GetBuiltInFontAssets();
+	[[nodiscard]] const BuiltInFontAsset* FindBuiltInFontAsset(AssetHandle handle);
+	[[nodiscard]] const BuiltInFontAsset* FindBuiltInFontAsset(std::string_view name);
+	[[nodiscard]] std::filesystem::path GetBuiltInFontAssetPath(AssetHandle handle);
+	[[nodiscard]] AssetHandle GetDefaultRuntimeFontHandle();
 
 	struct FontGlyph
 	{

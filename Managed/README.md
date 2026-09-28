@@ -1,9 +1,9 @@
 # TomCat managed scripting V1
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-18 · [All documentation](../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
 
 V1 names the scripting feature scope, not every wire-format version: Native ABI
-is v1, Managed ABI is v2, and ScriptManifest is v1. Desktop hosting uses .NET 10;
+is v1, Managed ABI is v3, and ScriptManifest is v1. Desktop hosting uses .NET 10;
 the experimental Web target rejects C# payloads.
 
 This directory contains the independently buildable .NET 10 portion of the TomCat C# scripting
@@ -26,7 +26,34 @@ dotnet run --project Managed/TomCat.Managed.Regression/TomCat.Managed.Regression
 `TomCat.ScriptHost.runtimeconfig.json`, `TomCat.ScriptHost.dll`, and `TomCat.Managed.dll` are emitted
 under `Managed/TomCat.ScriptHost/bin/<Configuration>/net10.0/`.
 
+## Editor inspection, diagnostics and runtime UI
+
+Select a `.cs` resource in Project to inspect its source, assembly/script type and
+compiled serializable-field metadata in the main Inspector. Edit per-entity field
+values on the attached C# component. The resource Inspector does not implement
+Unity-style default-reference assignment on script assets.
+
+Console supports text search, severity filters, duplicate collapsing and selected
+message details; `TCSP1000` identifies a successful compilation. See the
+[debugging guide](../docs/DEBUGGING_AND_PROFILING.md) for external IDE attachment,
+Release portable PDBs and symbol troubleshooting. Profiler's **C# Debugger** view
+provides process information and instructions, not a built-in managed debugger.
+The [2026-09-20 recording](../docs/portfolio/README.md) demonstrates diagnostic
+search; debugger attachment was not acceptance-tested in that session.
+
+Runtime UI uses [RuntimeUI.cs](TomCat.Managed/RuntimeUI.cs) and the
+[generated component proxies](TomCat.Managed/ComponentProxy.Generated.cs), including
+`UISlider`, `UIScrollView`, `UIInputField`, `UITheme`, `UILocalization` and
+`UILocalizedText`. See the [runtime UI guide](../docs/RUNTIME_UI_PRODUCT.zh-CN.md)
+for controls, inherited themes, language fallback and IME commit limitations.
+
 ## Project input and generated manifest
+
+Projects can maintain a standard `TomCat.Dependencies.csproj` beside their `.tcproj`
+to restore managed NuGet packages and reference C# libraries. Runtime dependencies
+are embedded in `Assembly-CSharp.dll` and loaded within each collectible domain,
+including cooked Players. See the [dependency guide](../docs/CSHARP_DEPENDENCIES.md)
+and [project template](Templates/TomCat.Dependencies.csproj) for setup and limitations.
 
 The generated `Assembly-CSharp.csproj` references `TomCat.Managed` normally and
 `TomCat.ScriptGenerator` as an analyzer, then supplies exactly one `ScriptAssets.json` as an
@@ -100,11 +127,11 @@ Version; uint32 Size;`. Native must pass Version 1, at least the V1 table size, 
 callback. Bootstrap validates the complete table before publishing it; a missing callback returns
 unavailable (-8) without replacing an earlier valid binding.
 
-### ManagedApiV1 layout (Managed ABI version 2)
+### ManagedApiV1 layout (Managed ABI version 3)
 
-The historical struct name is retained because version 2 appends one callback to the stable
-version-1 prefix. After `Version` and `Size`, the function pointers are laid out in this exact
-order:
+The historical struct name is retained. Version 2 appended `ResolveDeferredCommandBatch`
+to the stable version-1 prefix; version 3 appended `InvokeMethod` for persistent UI/event
+callbacks. After `Version` and `Size`, the function pointers are laid out in this exact order:
 
 ```text
 int CreateDomain(int32 domainKind, uint64* domainId)
@@ -126,6 +153,7 @@ int DestroyAttachments(uint64 sceneRuntimeId, uint64* attachmentIds, uint32 coun
 int InstantiateAttachments(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items,
                            uint32 count, NativeByteView fieldsJson)
 int ResolveDeferredCommandBatch(uint64 sceneRuntimeId, int32 committed)
+int InvokeMethod(uint64 sceneRuntimeId, uint64 attachmentId, NativeUtf8View methodName)
 ```
 
 `ResolveDeferredCommandBatch` acknowledges the atomic native command batch after staged
@@ -167,9 +195,10 @@ PrefabInstantiateDeferred
 `NativeApiV2` is a size-detected envelope: its stable `NativeApiV1` prefix still
 uses version 1, followed by `QueryCapability`. It discovers optional Input,
 InputEvents, ApplicationPaths, Gameplay, Audio, AudioSpatial, RuntimeUI, Component,
-ComponentString, ComponentSchema, DeferredCommands and DeferredCallbackTransactions
+ComponentString, ComponentSchema, Scene, DeferredCommands and DeferredCallbackTransactions
 V1 tables. The exact capability names and validation are in
-[`NativeBridge.cs`](TomCat.Managed/NativeBridge.cs); do not infer support merely
+[`NativeBridge.cs`](TomCat.Managed/NativeBridge.cs) and
+[`NativeBridge.Scenes.cs`](TomCat.Managed/NativeBridge.Scenes.cs); do not infer support merely
 from the envelope's historical type name.
 
 The current native host queries and supplies both
@@ -226,16 +255,40 @@ Prefab-created script attachments enter through `InstantiateAttachments` only af
 managed callback returns. Their serialized fields are restored before the new batch receives
 `OnCreate` and `OnEnable`; existing instances never receive those callbacks again.
 
-## Scene and snapshot-Prefab APIs
+## Scene and Prefab APIs
 
-`SceneManager` exposes the active `SceneAsset` and build index plus synchronous replacement
-requests by scene handle/index and reload. Requests made during a lifecycle or physics callback are
-committed by the native runtime at the frame-end safe point.
+`SceneManager.LoadScene` and `LoadSceneAsync` accept an enabled build-scene asset or index
+and `SceneLoadMode.Single` or `Additive`. `ReloadActiveScene` reloads with Single semantics.
+An accepted request commits at the frame-end safe point; the return value reports acceptance,
+not completion. Async loading reads bytes and verifies package digests on a worker while the
+current world continues to update. Schema validation, resource preparation and activation remain
+on the main thread and may still cause a long frame for large scenes.
+
+Poll `LoadState`, `LoadProgress`, and `LastError` from a lifecycle callback. Set
+`AllowSceneActivation = false` before a request to hold a prepared scene at `Ready` / 0.9;
+restore it to `true` to permit activation. Successful activation reports `Completed` / 1.
+`CancelPendingLoad` cancels a load before activation. Only one asynchronous load can be pending.
+
+`LoadedScenes` returns the committed asset list. `SetActiveScene` selects the default owner
+for newly created root entities. `UnloadScene` queues removal of one loaded asset's content;
+the final loaded scene cannot be unloaded by itself. Additive scenes share one ECS, physics
+world and script session; loading the same asset twice is rejected. Camera, input-focus and
+audio-listener selection remains shared game logic.
+
+`DontDestroyOnLoad(root)` preserves a root and its descendants, including their existing
+managed instances and runtime state, across Single loads and unloads. `SetPersistent(root, false)`
+returns that subtree to the active scene's ownership. Unloading a scene detaches surviving
+cross-scene children before destroying their old parents, preserving their world transforms.
+Global asset caches are not forcibly purged by scene unload. The new APIs use the optional
+`TomCat.SceneApiV1` table, retaining the original Native V1 ABI. See the
+[scene streaming workflow](../docs/SCENE_STREAMING.zh-CN.md) for lifecycle and failure details.
 
 Scripts can serialize strongly typed `SceneAsset` and `PrefabAsset` fields. A behavior queues a
-snapshot Prefab with `Instantiate(prefab, worldPosition, optionalParent)`. Prefab instances receive
+Prefab with `Instantiate(prefab, worldPosition, optionalParent)`. Runtime instances receive
 fresh Scene UUIDs and AttachmentIDs; hierarchy, `DistanceJoint2D`, and C# `Entity` fields are
 remapped before the batch becomes visible to managed lifecycle dispatch.
+Editor authoring additionally supports linked instance updates, overrides, Apply/Revert,
+nested Prefabs and variants; see the [Prefab workflow](../docs/PREFAB_WORKFLOW.zh-CN.md).
 
 ## Load and unload ownership
 

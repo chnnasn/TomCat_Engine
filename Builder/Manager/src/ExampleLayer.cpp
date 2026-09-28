@@ -4,12 +4,15 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "TomCat/Core/Version.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Project/ProjectManager.h"
 
 #include "TomCat/Math/Math.h"
+#include "TomCat/Asset/TextureArtifact.h"
+#include <fstream>
 #include <shellapi.h>
 #include <cstdio>
 #include <cctype>
@@ -18,6 +21,27 @@
 #include <system_error>
 
 namespace {
+	TomCat::Ref<TomCat::Texture2D> LoadTemplateIcon(const std::filesystem::path& path)
+	{
+		std::ifstream input(path, std::ios::binary | std::ios::ate);
+		const auto size = input ? static_cast<std::streamoff>(input.tellg()) : -1;
+		if (size <= 0 || size > 16 * 1024 * 1024) return {};
+		std::vector<uint8_t> source(static_cast<size_t>(size)), artifact;
+		input.seekg(0);
+		if (!input.read(reinterpret_cast<char*>(source.data()), size)) return {};
+		std::string error;
+		// Preserve source RGBA; mipmaps keep the scene details clean at card size.
+		const TomCat::AssetImportSettings settings = {
+			{ "sRGB", "false" }, { "generateMipmaps", "true" }, { "compression", "none" }
+		};
+		if (!TomCat::BuildTextureArtifact(source, settings, "hub-icon", artifact, error))
+		{
+			TC_Core_Warn("Could not load Hub template icon: {0}", error);
+			return {};
+		}
+		auto texture = TomCat::Texture2D::Create(artifact.data(), artifact.size(), path);
+		return texture && texture->IsLoaded() ? texture : TomCat::Ref<TomCat::Texture2D>{};
+	}
 
 	std::string ToLowerString(const std::string& s)
 	{
@@ -75,7 +99,7 @@ namespace {
 			TomCat::UUID(1000000000000000001ULL), "MainCamera");
 		auto& camera = mainCamera.AddComponent<TomCat::C_Camera>();
 		if (templateName == "2D")
-			camera._Camera.SetOrthographic(10.0f, -1.0f, 1.0f);
+			camera._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
 		else
 			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
 
@@ -133,10 +157,11 @@ namespace TomCat {
 		: Layer("FileManager"), m_SelectedMenu(0)
 	{
 		auto& projectManager = ProjectManager::Get();
-		std::error_code currentPathError;
-		const std::filesystem::path workingDirectory = std::filesystem::current_path(currentPathError);
-		if (currentPathError)
-			TC_Core_Warn("The current working directory could not be resolved: {0}", currentPathError.message());
+		const auto executable = ApplicationPaths::GetExecutablePath();
+		if (!executable)
+			throw std::runtime_error("Could not resolve the Hub executable directory");
+		const std::filesystem::path workingDirectory = executable->parent_path();
+		projectManager.ApplyHubDirectoryDefaults(workingDirectory);
 		const std::filesystem::path projectDirectory = projectManager.GetProjectDirectory().empty()
 			? workingDirectory / "Projects" : projectManager.GetProjectDirectory();
 		if (!projectManager.SetProjectDirectory(projectDirectory))
@@ -156,6 +181,8 @@ namespace TomCat {
 	void ExampleLayer::OnAttach()
 	{
 		TC_PROFILE_FUNCTION();
+		m_TemplateIcons[0] = LoadTemplateIcon("Packages/Resources/Icons/Scene2D.png");
+		m_TemplateIcons[1] = LoadTemplateIcon("Packages/Resources/Icons/Scene3D.png");
 
 		// Use the same Unity editor palette as the editor executable.  The Hub has
 		// a different layout, but sharing the palette keeps the two applications
@@ -184,6 +211,7 @@ namespace TomCat {
 	void ExampleLayer::OnDetach()
 	{
 		TC_PROFILE_FUNCTION();
+		for (auto& icon : m_TemplateIcons) icon.reset();
 	}
 
 	void ExampleLayer::OnUpdate(Timestep ts)
@@ -731,17 +759,32 @@ void ExampleLayer::OnEvent(Event& e)
 			ImU32 bg = hovered ? IM_COL32(98, 98, 98, 255) : IM_COL32(56, 56, 56, 255);
 			dl->AddRectFilled(c0, c1, bg, 2.0f);
 			dl->AddRect(c0, c1, sel ? IM_COL32(44, 93, 135, 255) : IM_COL32(85, 85, 85, 255), 2.0f, 0, sel ? 2.0f : 1.0f);
-			// colored icon square
-			dl->AddRectFilled(ImVec2(c0.x + 18.0f, c0.y + 18.0f), ImVec2(c0.x + 66.0f, c0.y + 66.0f),
-				id == 0 ? IM_COL32(40, 120, 170, 255) : IM_COL32(60, 90, 200, 255), 2.0f);
+			const auto& icon = m_TemplateIcons[id];
+			constexpr float iconSlot = 80.0f;
+			if (icon)
+			{
+				// Artwork bounds in the approved 1254px sources, with a four-pixel
+				// safety margin. Crop only the displayed UVs; preserve the PNGs.
+				const ImVec4 artwork[] = { ImVec4(108, 252, 1147, 1002), ImVec4(138, 165, 1115, 1098) };
+				const ImVec4 bounds = artwork[id];
+				const float width = bounds.z - bounds.x, height = bounds.w - bounds.y;
+				const float scale = iconSlot / std::max(width, height);
+				const ImVec2 iconSize(width * scale, height * scale);
+				const ImVec2 iconMin(c0.x + 18.0f + (iconSlot - iconSize.x) * 0.5f,
+					c0.y + (cardH - iconSize.y) * 0.5f);
+				dl->AddImage((ImTextureID)(uintptr_t)icon->GetRendererID(), iconMin,
+					ImVec2(iconMin.x + iconSize.x, iconMin.y + iconSize.y),
+					ImVec2(bounds.x / icon->GetWidth(), 1.0f - bounds.y / icon->GetHeight()),
+					ImVec2(bounds.z / icon->GetWidth(), 1.0f - bounds.w / icon->GetHeight()));
+			}
 			ImVec2 ls = ImGui::CalcTextSize(label);
 			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(243, 243, 243, 255));
-			ImGui::SetCursorScreenPos(ImVec2(c0.x + 82.0f, c0.y + 24.0f));
+			ImGui::SetCursorScreenPos(ImVec2(c0.x + 18.0f + iconSlot + 16.0f, c0.y + 24.0f));
 			ImGui::Text("%s", label);
 			ImGui::PopStyleColor();
 			ImVec2 ss = ImGui::CalcTextSize(sub);
 			ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(137, 137, 137, 255));
-			ImGui::SetCursorScreenPos(ImVec2(c0.x + 82.0f, c0.y + 62.0f));
+			ImGui::SetCursorScreenPos(ImVec2(c0.x + 18.0f + iconSlot + 16.0f, c0.y + 62.0f));
 			ImGui::Text("%s", sub);
 			ImGui::PopStyleColor();
 		};
