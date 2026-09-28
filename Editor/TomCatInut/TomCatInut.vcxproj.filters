@@ -15,6 +15,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\EditorBuildController.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorDragDrop.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -24,13 +27,22 @@
     <ClInclude Include="src\EditorLayer.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\EditorLayerDetail.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorPlayToolbar.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\EditorPreview.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\EditorProjectSettingsController.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorPropertyTransaction.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\EditorViewportHandles.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\EditorVisuals.h">
@@ -80,7 +92,16 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\EditorBuildController.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\EditorLayer.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\EditorProjectSettingsController.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\EditorViewportHandles.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\Player\PlayerBuilder.cpp">

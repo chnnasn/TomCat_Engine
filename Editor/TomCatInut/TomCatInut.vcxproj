@@ -186,12 +186,16 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\EditorBuildController.h" />
     <ClInclude Include="src\EditorDragDrop.h" />
     <ClInclude Include="src\EditorIcons.h" />
     <ClInclude Include="src\EditorLayer.h" />
+    <ClInclude Include="src\EditorLayerDetail.h" />
     <ClInclude Include="src\EditorPlayToolbar.h" />
     <ClInclude Include="src\EditorPreview.h" />
+    <ClInclude Include="src\EditorProjectSettingsController.h" />
     <ClInclude Include="src\EditorPropertyTransaction.h" />
+    <ClInclude Include="src\EditorViewportHandles.h" />
     <ClInclude Include="src\EditorVisuals.h" />
     <ClInclude Include="src\Player\PlayerBuilder.h" />
     <ClInclude Include="src\SceneToolbarDrawing.h" />
@@ -209,7 +213,10 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClInclude Include="src\panels\SceneInspectorPanel.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\EditorBuildController.cpp" />
     <ClCompile Include="src\EditorLayer.cpp" />
+    <ClCompile Include="src\EditorProjectSettingsController.cpp" />
+    <ClCompile Include="src\EditorViewportHandles.cpp" />
     <ClCompile Include="src\Player\PlayerBuilder.cpp" />
     <ClCompile Include="src\Scripting\ScriptMetadataCache.cpp" />
     <ClCompile Include="src\Scripting\ScriptProjectCompiler.cpp" />
