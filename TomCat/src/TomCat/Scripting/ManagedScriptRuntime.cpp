@@ -71,17 +71,17 @@ namespace TomCat::Scripting {
 			uint64_t m_Token = 0;
 		};
 
-		int32_t ReceiveMetadata(NativeByteView value, uint64_t receiverToken) noexcept
+		int32_t ReceiveMetadata(const NativeByteView* value, uint64_t receiverToken) noexcept
 		{
-			if (receiverToken == 0 || (!value.Data && value.Length != 0)
-				|| value.Length > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+			if (!value || receiverToken == 0 || (!value->Data && value->Length != 0)
+				|| value->Length > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
 				return static_cast<int32_t>(ScriptStatus::InvalidArgument);
 			try
 			{
 				std::string payload;
-				if (value.Length != 0)
-					payload.assign(reinterpret_cast<const char*>(value.Data),
-						static_cast<size_t>(value.Length));
+				if (value->Length != 0)
+					payload.assign(reinterpret_cast<const char*>(value->Data),
+						static_cast<size_t>(value->Length));
 				std::lock_guard<std::mutex> lock(s_MetadataReceiverMutex);
 				const auto iterator = s_MetadataReceivers.find(receiverToken);
 				if (iterator == s_MetadataReceivers.end())
@@ -287,8 +287,10 @@ namespace TomCat::Scripting {
 			"Create Play Domain");
 		if (status != ScriptStatus::Success || domain == 0)
 			return status == ScriptStatus::Success ? ScriptStatus::InvalidState : status;
+		const NativeByteView assemblyView = AsView(m_ProjectAssembly);
+		const NativeByteView pdbView = AsView(m_ProjectPdb);
 		status = ConvertStatus(m_ManagedApi.LoadProjectAssembly(domain,
-			AsView(m_ProjectAssembly), AsView(m_ProjectPdb)), "Load project assembly");
+			&assemblyView, &pdbView), "Load project assembly");
 		if (status != ScriptStatus::Success)
 		{
 			if (!BeginAndPollMetadataUnload(domain))
@@ -343,7 +345,7 @@ namespace TomCat::Scripting {
 			return ScriptStatus::InvalidState;
 		const NativeByteView view{ reinterpret_cast<const uint8_t*>(fieldsJson.data()),
 			static_cast<uint64_t>(fieldsJson.size()) };
-		return ConvertStatus(m_ManagedApi.ApplySerializedFields(m_SceneRuntimeId, view),
+		return ConvertStatus(m_ManagedApi.ApplySerializedFields(m_SceneRuntimeId, &view),
 			"Apply serialized script fields");
 	}
 
@@ -365,7 +367,7 @@ namespace TomCat::Scripting {
 		const NativeUtf8View name{
 			reinterpret_cast<const uint8_t*>(methodName.data()), methodName.size() };
 		return ConvertStatus(m_ManagedApi.InvokeMethod(m_SceneRuntimeId,
-			attachmentId, name), "Invoke script event method");
+			attachmentId, &name), "Invoke script event method");
 	}
 
 	ScriptStatus ManagedScriptRuntime::SetEnabled(uint64_t attachmentId, bool enabled)
@@ -459,7 +461,7 @@ namespace TomCat::Scripting {
 			static_cast<uint64_t>(fieldsJson.size()) };
 		return ConvertStatus(m_ManagedApi.InstantiateAttachments(m_SceneRuntimeId,
 			attachments.empty() ? nullptr : attachments.data(),
-			static_cast<uint32_t>(attachments.size()), fields),
+			static_cast<uint32_t>(attachments.size()), &fields),
 			"Instantiate script attachments");
 	}
 
@@ -509,17 +511,39 @@ namespace TomCat::Scripting {
 			|| !m_ManagedApi.ReadScriptMetadata || m_DomainId != 0)
 			return false;
 		uint64_t metadataDomain = 0;
-		if (m_ManagedApi.CreateDomain(0, &metadataDomain) != 0 || metadataDomain == 0)
+		const int32_t createStatus = m_ManagedApi.CreateDomain(0, &metadataDomain);
+		if (createStatus != 0 || metadataDomain == 0)
+		{
+			if (createStatus != 0)
+				ConvertStatus(createStatus, "Create metadata domain");
+			else
+				m_LastError = "Create metadata domain returned an empty domain ID";
 			return false;
+		}
 		// Metadata validation also runs on the background compiler thread. Keep the
 		// temporary receive state entirely native and identify it across the ABI by
 		// a fixed-width token; the guarded registry makes concurrent validations safe.
 		ScopedMetadataReceiver receiver;
-		bool success = m_ManagedApi.LoadProjectAssembly(metadataDomain,
-			AsView(m_ProjectAssembly), AsView(m_ProjectPdb)) == 0
-			&& m_ManagedApi.ReadScriptMetadata(metadataDomain, &ReceiveMetadata,
-				receiver.GetToken()) == 0
-			&& receiver.Take(manifestJson);
+		const NativeByteView assemblyView = AsView(m_ProjectAssembly);
+		const NativeByteView pdbView = AsView(m_ProjectPdb);
+		const int32_t loadStatus = m_ManagedApi.LoadProjectAssembly(metadataDomain,
+			&assemblyView, &pdbView);
+		bool success = loadStatus == 0;
+		if (!success)
+			ConvertStatus(loadStatus, "Load metadata assembly");
+		if (success)
+		{
+			const int32_t readStatus = m_ManagedApi.ReadScriptMetadata(metadataDomain,
+				&ReceiveMetadata, receiver.GetToken());
+			success = readStatus == 0;
+			if (!success)
+				ConvertStatus(readStatus, "Read script metadata");
+		}
+		if (success && !receiver.Take(manifestJson))
+		{
+			m_LastError = "Managed metadata callback returned no manifest";
+			success = false;
+		}
 		if (!BeginAndPollMetadataUnload(metadataDomain))
 		{
 			OnUnloadFailed("Metadata Domain " + std::to_string(metadataDomain)

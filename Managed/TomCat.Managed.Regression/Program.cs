@@ -878,9 +878,9 @@ internal static unsafe partial class Program
 		fixed (byte* assemblyPointer = assembly)
 		fixed (byte* pdbPointer = pdb)
 		{
-			Equal(0, managed.LoadProjectAssembly(domainId,
-				new NativeByteView(assemblyPointer, (ulong)assembly.Length),
-				new NativeByteView(pdbPointer, (ulong)pdb.Length)),
+			NativeByteView assemblyView = new(assemblyPointer, (ulong)assembly.Length);
+			NativeByteView pdbView = new(pdbPointer, (ulong)pdb.Length);
+			Equal(0, managed.LoadProjectAssembly(domainId, &assemblyView, &pdbView),
 				"metadata ABI LoadProjectAssembly status");
 		}
 
@@ -3202,15 +3202,16 @@ internal static unsafe partial class Program
     }
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int CaptureMetadata(NativeByteView metadata, ulong receiverToken)
+	private static int CaptureMetadata(NativeByteView* metadata, ulong receiverToken)
 	{
-		if (metadata.Data is null || metadata.Length == 0 || metadata.Length > int.MaxValue)
+		if (metadata is null || metadata->Data is null || metadata->Length == 0
+			|| metadata->Length > int.MaxValue)
 			return -1;
 		try
 		{
 			s_metadataReceiverToken = receiverToken;
 			s_metadataReceiverJson = Encoding.UTF8.GetString(
-				new ReadOnlySpan<byte>(metadata.Data, (int)metadata.Length));
+				new ReadOnlySpan<byte>(metadata->Data, (int)metadata->Length));
 			return 0;
 		}
 		catch
@@ -3226,9 +3227,11 @@ internal static unsafe partial class Program
 	private static int InvokeMissingDomain(nint loadProjectAssembly)
 	{
 		byte invalidAssembly = 0;
-		var callback = (delegate* unmanaged[Cdecl]<ulong, NativeByteView,
-			NativeByteView, int>)loadProjectAssembly;
-		return callback(ulong.MaxValue, new NativeByteView(&invalidAssembly, 1), default);
+		var callback = (delegate* unmanaged[Cdecl]<ulong, NativeByteView*,
+			NativeByteView*, int>)loadProjectAssembly;
+		NativeByteView assembly = new(&invalidAssembly, 1);
+		NativeByteView pdb = default;
+		return callback(ulong.MaxValue, &assembly, &pdb);
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
@@ -3249,7 +3252,7 @@ internal static unsafe partial class Program
 	}
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-	private static int StubLog(int level, NativeUtf8View message) => 0;
+	private static int StubLog(int level, NativeUtf8View* message) => 0;
 
 	[UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
 	private static int StubEntityAlive(NativeEntityHandleV1 entity) => 1;

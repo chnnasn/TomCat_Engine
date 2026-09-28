@@ -14,9 +14,11 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <locale>
 #include <map>
 #include <numeric>
 #include <set>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <unordered_set>
@@ -86,10 +88,21 @@ namespace TomCat {
 		{
 			if (text.empty())
 				return false;
-			const char* begin = text.data();
-			const char* end = begin + text.size();
-			const auto parsed = std::from_chars(begin, end, value);
-			return parsed.ec == std::errc{} && parsed.ptr == end;
+			if constexpr (std::is_floating_point_v<T>)
+			{
+				std::istringstream stream{ std::string(text) };
+				stream.imbue(std::locale::classic());
+				stream >> std::noskipws >> value;
+				return stream && stream.peek() == std::char_traits<char>::eof()
+					&& std::isfinite(value);
+			}
+			else
+			{
+				const char* begin = text.data();
+				const char* end = begin + text.size();
+				const auto parsed = std::from_chars(begin, end, value);
+				return parsed.ec == std::errc{} && parsed.ptr == end;
+			}
 		}
 
 		template<size_t Count, typename T>

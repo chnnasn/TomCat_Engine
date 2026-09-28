@@ -124,6 +124,11 @@ namespace TomCat {
 			std::scoped_lock lock(m_WatcherMutex);
 			m_StopRequested = false;
 		}
+#ifdef __EMSCRIPTEN__
+		// Browser authoring uses explicit imports and has no background filesystem.
+		m_Running.store(true, std::memory_order_release);
+		return true;
+#else
 		try
 		{
 			m_Watcher = std::thread(&AssetImportCoordinator::WatcherMain, this);
@@ -135,6 +140,7 @@ namespace TomCat {
 			TC_Core_Error("Could not start asset file monitor: {0}", exception.what());
 			return false;
 		}
+#endif
 	}
 
 	void AssetImportCoordinator::Stop()
