@@ -64,7 +64,7 @@ set(TC_WEB_LINK_OPTIONS
 target_link_options(tomcat_player PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatPlayerModule"
   "--preload-file=${TC_ROOT}/Editor/TomCatInut/Packages/Resources/Sprites@/Packages/Resources/Sprites"
-  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_managed_install','_tc_web_player_boot','_tc_web_player_frame','_tc_web_player_resize','_tc_web_player_shutdown','_tc_web_player_error','_tc_web_player_cook_sample','_tc_web_player_stats']")
+  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_managed_install','_tc_web_player_boot','_tc_web_player_frame','_tc_web_player_resize','_tc_web_player_shutdown','_tc_web_player_error','_tc_web_player_cook','_tc_web_player_cook_sample','_tc_web_player_set_cook_payload','_tc_web_player_clear_cook_payload','_tc_web_player_stats']")
 
 add_executable(tomcat_editor
   "${TC_SRC}/platform/Web/WebEditor.cpp"
