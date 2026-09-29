@@ -83,18 +83,57 @@ const char* tc_web_player_stats() {
   stats += "}";
   return stats.c_str();
 }
-// Development fixture only: cooks the real checked-in sample using the engine's own TCPAK writer.
-int tc_web_player_cook_sample() {
+// Generalized content cook: loads an authoring project staged in MEMFS and
+// writes a TCPAK package without a GL context. The runtime cook entry for
+// server-side workers; the sample below is the same flow with fixed paths.
+int tc_web_player_cook(const char* projectPath, const char* outputPath) {
   lastError.clear();
   if (application) { lastError = "Stop Player before cooking"; return 1; }
+  if (!projectPath || !*projectPath || !outputPath || !*outputPath) {
+    lastError = "Project and output paths are required"; return 3;
+  }
   try {
     TomCat::Log::Init();
-    auto project = TomCat::Project::Load("/Samples/PhysicsPlayground/Project.tcproj");
-    if (!project) throw std::runtime_error("PhysicsPlayground project could not be loaded");
-    if (!TomCat::AssetManager::Get().SetProject(project)) throw std::runtime_error("PhysicsPlayground assets could not be initialized");
-    if (!TomCat::AssetManager::Get().CookToPackage("/PhysicsPlayground.tcpak")) throw std::runtime_error("PhysicsPlayground cook failed");
+    auto project = TomCat::Project::Load(projectPath);
+    if (!project) throw std::runtime_error("Project could not be loaded");
+    if (!TomCat::AssetManager::Get().SetProject(project)) throw std::runtime_error("Assets could not be initialized");
+    if (!TomCat::AssetManager::Get().CookToPackage(outputPath)) throw std::runtime_error("Cook failed");
     return 0;
   } catch (const std::exception& error) { lastError = error.what(); return 2; }
+}
+// Compatibility shim: upstream tooling still cooks the checked-in sample.
+int tc_web_player_cook_sample() {
+  return tc_web_player_cook("/Samples/PhysicsPlayground/Project.tcproj", "/PhysicsPlayground.tcpak");
+}
+// C# project support: inject an already-validated managed payload (assembly +
+// script manifest + optional portable PDB) before cooking. The cook honors
+// this override with priority over desktop last-good discovery; the payload
+// must pass the same validation as any desktop build.
+int tc_web_player_set_cook_payload(const uint8_t* assembly, size_t assemblySize,
+    const char* manifestJson, const char* buildId, const uint8_t* pdb, size_t pdbSize) {
+  lastError.clear();
+  if (application) { lastError = "Stop Player before cooking"; return 1; }
+  if (!assembly || !assemblySize || !manifestJson || !*manifestJson || !buildId || !*buildId) {
+    lastError = "Assembly, script manifest and build id are required"; return 3;
+  }
+  if (assemblySize > 256 * 1024 * 1024 || pdbSize > 256 * 1024 * 1024) {
+    lastError = "Managed payload exceeds the size limit"; return 3;
+  }
+  try {
+    TomCat::Log::Init();
+    std::vector<uint8_t> assemblyBytes(assembly, assembly + assemblySize);
+    std::vector<uint8_t> pdbBytes;
+    if (pdb && pdbSize) pdbBytes.assign(pdb, pdb + pdbSize);
+    if (!TomCat::AssetManager::Get().SetManagedCookPayload(std::move(assemblyBytes),
+        manifestJson, buildId, std::move(pdbBytes)))
+      throw std::runtime_error("Managed cook payload was rejected");
+    return 0;
+  } catch (const std::exception& error) { lastError = error.what(); return 2; }
+}
+// Drops a previously injected payload so later cooks fall back to discovery.
+int tc_web_player_clear_cook_payload() {
+  TomCat::AssetManager::Get().ClearManagedCookPayload();
+  return 0;
 }
 }
 #endif // __EMSCRIPTEN__
