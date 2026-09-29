@@ -3,7 +3,7 @@
 TomCat 的 2D 运行时现使用 Butter，组件序列化、Scene 查询 API 和托管脚本 ABI 保持不变。
 
 - 上游 PR：https://github.com/chnnasn/Butter/pull/1 （已合并）
-- 当前验证版本：`TomCat/vendor/Butter`，提交 `f1b4e4286f554bc31142e4b78ccf4f076aa919cb`
+- 当前验证版本：`TomCat/vendor/Butter`，提交 `18e4858d628caf1369ea801bef982e094c262a21`
 - CCD PR：https://github.com/chnnasn/Butter/pull/2 （已提交，未合并）
 - 引擎适配：`TomCat/src/TomCat/Physics/Physics2D.h`
 - 构建：Butter 是 C++20 header-only 库；桌面项目不再链接 Box2D.lib，Web 目标链接 Butter 的 CMake INTERFACE target。
@@ -33,6 +33,21 @@ Butter 测试可用 `cmake -S TomCat/vendor/Butter -B build/butter -DBUTTER_BUIL
 - Butter Debug CTest：13/13 通过；新的 CCD 程序在 Debug 和 Release 均通过 87 项检查。
 - TomCat Release PhysicsRegression：56/56 通过。新增速度 600 单位/秒的圆撞击薄墙及 Scene 碰撞事件连续性回归。
 - 上游 PR #2 基于已合并 PR #1 的主线；当前没有配置 CI 检查，以上是本地执行结果。
+
+## 上游同步验证（2026-09-29，Windows x64）
+
+- 上游 pin 由 `f1b4e428` 前进到 `18e4858d`（上游单次提交 "Optimize 2D contacts, obstacles, mesh queries, lifetime and CCD scheduling"），子模块内 34 个头文件与上游一致，工作区无本地改动。
+- Butter Debug CTest：27/27 通过。
+- TomCat Release PhysicsRegression：56/56 通过；其余 9 个原生程序全部通过（`ScriptCompilerRegression` 仍受本机缺少 .NET 10 SDK / 托管暂存步骤限制，非物理回归）。
+- 适配层无需改动即可编译通过，但同步后发现一处上游行为变化导致回归，已在适配层修正，见下。
+
+### 适配层修正：`DestroyFixture` 不再隐式唤醒刚体
+
+- 现象：`TestInactiveHierarchyPreservesRuntimeBodyState` 由通过变为失败——「重新激活层级后，原本处于休眠的动态刚体被唤醒」。
+- 根因：新版 Butter 的 `World::destroy_fixture()` 会调用 `wake_neighbors(*body)`，其中对动态刚体直接 `wake()`；旧版 `destroy_fixture()` 只做 `forget_contacts` + 移除夹具。而 Scene 的挂起流程是「先销毁不再需要的夹具 → 再读取 `IsAwake()` 快照」，于是快照被这次隐式唤醒污染，休眠状态在挂起/恢复往返中丢失。
+- 对照 Box2D：`b2Body::DestroyFixture` 只销毁关联接触并调用 `ResetMassData()`，不唤醒刚体；`b2Fixture` 的摩擦/密度/弹性 setter 同样不唤醒。因此这是上游相对 Box2D 语义的偏离。
+- 修正：在 `TomCat/src/TomCat/Physics/Physics2D.h` 的 `Body::DestroyFixture()` 中，跨 `native.destroy_fixture()` 保存并恢复 `sleeping` 与 `sleep_counter`，使夹具销毁对刚体状态保持中性。修正后 PhysicsRegression 恢复 56/56。
+- 保留的差异：`World::destroy_fixture()` 仍会通过 `wake_neighbors` 唤醒与该刚体通过关节/接触相连的**其他**刚体，以及 `World::destroy_body()` 仍会唤醒邻居。这些唤醒是新版求解器重建求解岛所需，且不影响现有断言，未在适配层拦截。
 
 ## 当前边界
 
