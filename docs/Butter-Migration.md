@@ -3,8 +3,9 @@
 TomCat 的 2D 运行时现使用 Butter，组件序列化、Scene 查询 API 和托管脚本 ABI 保持不变。
 
 - 上游 PR：https://github.com/chnnasn/Butter/pull/1 （已合并）
-- 当前验证版本：`TomCat/vendor/Butter`，提交 `18e4858d628caf1369ea801bef982e094c262a21`
+- 当前验证版本：`TomCat/vendor/Butter`，提交 `dfdc5cc0763f98e35adbf06efa672715629e5c01`
 - CCD PR：https://github.com/chnnasn/Butter/pull/2 （已提交，未合并）
+- 休眠/预算修正 PR：https://github.com/chnnasn/Butter/pull/3 、 https://github.com/chnnasn/Butter/pull/4 （均已合并）
 - 引擎适配：`TomCat/src/TomCat/Physics/Physics2D.h`
 - 构建：Butter 是 C++20 header-only 库；桌面项目不再链接 Box2D.lib，Web 目标链接 Butter 的 CMake INTERFACE target。
 - 发布：第三方许可清单包含 Butter 的 MIT LICENSE。
@@ -48,6 +49,15 @@ Butter 测试可用 `cmake -S TomCat/vendor/Butter -B build/butter -DBUTTER_BUIL
 - 对照 Box2D：`b2Body::DestroyFixture` 只销毁关联接触并调用 `ResetMassData()`，不唤醒刚体；`b2Fixture` 的摩擦/密度/弹性 setter 同样不唤醒。因此这是上游相对 Box2D 语义的偏离。
 - 修正：在 `TomCat/src/TomCat/Physics/Physics2D.h` 的 `Body::DestroyFixture()` 中，跨 `native.destroy_fixture()` 保存并恢复 `sleeping` 与 `sleep_counter`，使夹具销毁对刚体状态保持中性。修正后 PhysicsRegression 恢复 56/56。
 - 保留的差异：`World::destroy_fixture()` 仍会通过 `wake_neighbors` 唤醒与该刚体通过关节/接触相连的**其他**刚体，以及 `World::destroy_body()` 仍会唤醒邻居。这些唤醒是新版求解器重建求解岛所需，且不影响现有断言，未在适配层拦截。
+
+### 上游修复落地：适配层绕过已移除（2026-09-29）
+
+上面那处适配层绕过只是临时方案，根因在上游，已提 PR 修正并合并：
+
+- chnnasn/Butter#3「Keep a body's sleep state when its fixture is destroyed」（合并为 `7155457`）——`World::destroy_fixture()` 不再唤醒夹具持有者。`wake_neighbors()` 新增 `wake_self` 形参，且 `wake_connected()` 增加 `skip` 形参把持有者从求解岛传播中排除；邻居唤醒保持不变（`test_2d_optimization` 用例 6 仍断言销毁地板夹具会唤醒压在其上的箱子）。
+- chnnasn/Butter#4「Scale the parked-obstacle budget by build configuration」（合并为 `dfdc5cc`）——`test_2d_obstacles` 的墙钟预算按 `NDEBUG` 缩放（优化构建 300 ns、未优化 2000 ns）。未优化构建（含**不带 `CMAKE_BUILD_TYPE` 的默认构建**）不再假失败。
+
+因此 pin 由 `18e4858d` 前进到 `dfdc5cc`，`Body::DestroyFixture()` 里保存/恢复 `sleeping` + `sleep_counter` 的那段绕过已删除——夹具销毁现在由 Butter 自身保证状态中性。删除后 TomCat Release PhysicsRegression 仍为 **56/56**，其余 8 个原生程序 rc=0（`ScriptCompilerRegression` 仍受本机缺少 .NET 10 SDK 限制，非物理回归）。
 
 ## 当前边界
 

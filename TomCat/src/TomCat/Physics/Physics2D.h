@@ -435,25 +435,18 @@ inline Fixture *Body::CreateFixture(const FixtureDef *def) {
     return ptr;
 }
 inline void Body::DestroyFixture(Fixture *fixture) {
-    // Butter treats a fixture teardown as an external edit and wakes the owning
-    // dynamic body through its neighbour propagation. Box2D -- whose semantics
-    // this facade mirrors -- does not: b2Body::DestroyFixture only destroys the
-    // contacts and calls ResetMassData(). The scene relies on that, because it
-    // destroys a body's fixtures on the way to suspending it and snapshots the
-    // runtime body state afterwards; an implicit wake here would silently turn a
-    // suspended sleeping body back into an awake one. Preserve the sleep state
-    // across the teardown so a fixture edit stays state-neutral.
-    const bool awake = IsAwake();
-    const int sleepCounter = native->sleep_counter;
+    // Box2D's `b2Body::DestroyFixture` destroys the fixture's contacts and calls
+    // `ResetMassData()` without touching the body's sleep state, and the scene
+    // relies on that: it destroys a body's fixtures on the way to suspending it
+    // and snapshots the runtime body state immediately afterwards. Butter's
+    // `World::destroy_fixture` used to wake the owning body through its
+    // neighbour propagation, which had to be undone here; it no longer does
+    // (chnnasn/Butter#3), so the teardown is state-neutral on its own.
     world->native.destroy_fixture(*fixture->native);
     world->fixtureMap.erase(fixture->native);
     std::erase_if(fixtures, [&](auto &f) { return f.get() == fixture; });
     for (size_t i = 0; i < fixtures.size(); ++i)
         fixtures[i]->next = i + 1 < fixtures.size() ? fixtures[i + 1].get() : nullptr;
     ResetMass();
-    if (!awake) {
-        native->sleeping = true;
-        native->sleep_counter = sleepCounter;
-    }
 }
 } // namespace TomCat::Physics2D
