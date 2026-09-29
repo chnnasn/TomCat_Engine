@@ -23,7 +23,7 @@ Project:
   Name: MyGame
   Version: 1.0.0
   Description: 示例游戏项目
-  EditorVersion: 0.3.0
+  EditorVersion: 0.4.0
   Template: 2D
   AssetDirectory: Assets
 ```
