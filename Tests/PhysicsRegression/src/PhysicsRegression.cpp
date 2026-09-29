@@ -3127,7 +3127,7 @@ namespace {
 			assets.GetCookedManagedPayload();
 		Require(mountedPayload
 			&& mountedPayload->NativeApiVersion == 1
-			&& mountedPayload->ManagedApiVersion == 3
+			&& mountedPayload->ManagedApiVersion == 5
 			&& mountedPayload->ScriptManifestVersion == 1
 			&& mountedPayload->TargetFramework == "net10.0"
 			&& mountedPayload->RuntimeIdentifier == "portable"
