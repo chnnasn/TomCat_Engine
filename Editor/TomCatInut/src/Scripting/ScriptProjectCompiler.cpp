@@ -932,7 +932,8 @@ namespace TomCat {
 				std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 				if (iterator->is_directory(error))
 				{
-					if (name == "library" || name == "bin" || name == "obj" || name == "builds"
+					if (name == "library" || name == "bin" || name == "obj"
+						|| name == "build" || name == "builds"
 						|| (!name.empty() && name.front() == '.') || iterator->is_symlink(error))
 						iterator.disable_recursion_pending();
 					continue;
