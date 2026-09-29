@@ -7,6 +7,12 @@
 - `dev_butter`：`62b1d70e` chore(deps): update Butter submodule to 18e4858d
 - `main`：未改动，作为对照基线
 
+> **后续（2026-09-29 同日）**：下面第 4 节记录的那处适配层绕过已在上游修复并合并
+> （chnnasn/Butter#3 合并为 `7155457`，另有 #4 合并为 `dfdc5cc`）。`dev_butter` 的 Butter pin
+> 随后前进到 `dfdc5cc`，`Body::DestroyFixture()` 中的保存/恢复 `sleeping` 已删除。
+> 本文其余部分保留当时（pin `18e4858d`）的记录，见 `docs/Butter-Migration.md` 的
+> 「上游修复落地」一节。
+
 ## 1. 依赖 pin 与上游增量
 
 | 依赖 | 分支 | 旧 pin | 新 pin | 上游增量 |
