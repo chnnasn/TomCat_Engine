@@ -187,6 +187,36 @@ namespace {
 			"the module importer was not registered");
 	}
 
+	void TestEngineBuildCompatibility(const std::filesystem::path& library)
+	{
+		TestProject project(library);
+		const auto manifestPath = project.ModuleDirectory / "module.tomcat";
+		const std::string original = LoadSceneText(manifestPath);
+		std::string incompatible = original;
+		const std::string buildID(TomCat::Version::EngineBuildID);
+		incompatible.replace(incompatible.find(buildID), buildID.size(),
+			"TomCat-incompatible-build");
+		project.WriteFile(manifestPath, incompatible);
+		std::string error;
+		Require(TomCat::ModuleSystem::Get().LoadProjectModules(
+			project.Root.Path, error), "discovery failed: " + error);
+		Require(!TomCat::ModuleSystem::Get().HasModule("TestWeather")
+			&& TomCat::ModuleSystem::Get().GetEditorCommands().empty()
+			&& TomCat::ComponentRegistry::Get().Find(
+				TomCat::UUID(WeatherTypeId)) == nullptr,
+			"incompatible module registered capabilities");
+		std::string unpinned = original;
+		const auto begin = unpinned.find("EngineBuildID:");
+		unpinned.erase(begin, unpinned.find('\n', begin) - begin + 1);
+		project.WriteFile(manifestPath, unpinned);
+		Require(TomCat::ModuleSystem::Get().LoadProjectModules(
+			project.Root.Path, error), "unpinned discovery failed: " + error);
+		Require(TomCat::ModuleSystem::Get().HasModule("TestWeather"),
+			"unpinned module was rejected");
+		Require(TomCat::ModuleSystem::Get().UnloadAllModules(error),
+			"unpinned cleanup failed: " + error);
+	}
+
 	void TestTypedComponentRoundTrip(TestProject& project)
 	{
 		TomCat::Ref<TomCat::Scene> scene = CreateSceneWithWeather(0xA1);
@@ -342,6 +372,7 @@ int main()
 		TestManifestValidation();
 
 		const std::filesystem::path moduleLibrary = FindModuleLibrary();
+		TestEngineBuildCompatibility(moduleLibrary);
 		TestProject project(moduleLibrary);
 		std::cout << "ENTER TestModuleLoadAndRegistration" << std::endl;
 		TestModuleLoadAndRegistration(project);

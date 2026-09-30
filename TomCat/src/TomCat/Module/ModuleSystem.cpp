@@ -311,6 +311,14 @@ namespace TomCat {
 		const ModuleManifest& manifest,
 		const std::filesystem::path& projectDirectory, std::string& error)
 	{
+		if (!manifest.EngineBuildID.empty()
+			&& manifest.EngineBuildID != Version::EngineBuildID)
+		{
+			error = "module EngineBuildID mismatch: expected "
+				+ std::string(Version::EngineBuildID) + ", got "
+				+ manifest.EngineBuildID;
+			return false;
+		}
 		std::error_code fileCode;
 		if (!std::filesystem::is_regular_file(libraryPath, fileCode))
 		{
@@ -359,9 +367,10 @@ namespace TomCat {
 		// exactly what the module added.
 		const std::string moduleDirectory =
 			PathToUTF8(libraryPath.parent_path());
+		const std::string projectDirectoryText = PathToUTF8(projectDirectory);
 		TomCatModule::ModuleContextV1 context;
 		context.EngineBuildID = TomCat::Version::EngineBuildID.data();
-		context.ProjectDirectory = PathToUTF8(projectDirectory).c_str();
+		context.ProjectDirectory = projectDirectoryText.c_str();
 		context.ModuleDirectory = moduleDirectory.c_str();
 		context.ProviderId = loaded.ProviderId = DeriveProviderID(
 			manifest.Name);
