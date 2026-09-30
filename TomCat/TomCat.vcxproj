@@ -198,6 +198,8 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
+    <ClInclude Include="src\TomCat\Module\ModuleSdk.h" />
+    <ClInclude Include="src\TomCat\Module\ModuleSystem.h" />
     <ClInclude Include="src\TomCat\Project\BuildSettings.h" />
     <ClInclude Include="src\TomCat\Project\PlayerSettings.h" />
     <ClInclude Include="src\TomCat\Project\Project.h" />
@@ -729,6 +731,7 @@
     <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
+    <ClCompile Include="src\TomCat\Module\ModuleSystem.cpp" />
     <ClCompile Include="src\TomCat\Project\PlayerSettings.cpp" />
     <ClCompile Include="src\TomCat\Project\Project.cpp" />
     <ClCompile Include="src\TomCat\Project\ProjectManager.cpp" />

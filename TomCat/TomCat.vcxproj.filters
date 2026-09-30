@@ -31,6 +31,9 @@
     <Filter Include="src\TomCat\Math">
       <UniqueIdentifier>{5D096131-C994-CEF5-D2A5-51EA3EB02AF6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Module">
+      <UniqueIdentifier>{39ABBD0E-A5C1-BBA4-EE38-47C65A8E8C2C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Project">
       <UniqueIdentifier>{4A2A22D5-360E-E32A-9F6E-DD7D8B71CDAC}</UniqueIdentifier>
     </Filter>
@@ -266,6 +269,12 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Module\ModuleSdk.h">
+      <Filter>src\TomCat\Module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Module\ModuleSystem.h">
+      <Filter>src\TomCat\Module</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Project\BuildSettings.h">
       <Filter>src\TomCat\Project</Filter>
@@ -1855,6 +1864,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Math\Math.cpp">
       <Filter>src\TomCat\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Module\ModuleSystem.cpp">
+      <Filter>src\TomCat\Module</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Project\PlayerSettings.cpp">
       <Filter>src\TomCat\Project</Filter>

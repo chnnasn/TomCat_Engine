@@ -165,6 +165,7 @@ try {
     Invoke-NativeRegression -Name "P0SafetyRegression"
     Invoke-NativeRegression -Name "SaveDataRegression"
     Invoke-NativeRegression -Name "SceneMigrationRegression"
+    Invoke-NativeRegression -Name "ModuleSdkRegression"
     Invoke-NativeRegression -Name "EditorRecoveryRegression"
 	Invoke-NativeRegression -Name "AudioRegression"
     Invoke-NativeRegression -Name "ImporterRegression"
