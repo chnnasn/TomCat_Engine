@@ -121,6 +121,14 @@ namespace TomCat {
 		const std::string& GetSceneName() const { return m_SceneName; }
 		void SetSceneName(const std::string& sceneName) { m_SceneName = sceneName.empty() ? "Untitled" : sceneName; }
 
+		// Module SDK access to component storage. Module components live in the
+		// same registry as built-ins; the built-in OnComponentAdded hooks do not
+		// run for module-defined types.
+		entt::registry& GetRegistry() { return m_Registry; }
+		[[nodiscard]] const entt::registry& GetRegistry() const { return m_Registry; }
+		// Serialization-order UUIDs of every live entity.
+		[[nodiscard]] const std::vector<UUID>& GetEntityOrder() const { return m_EntityOrder; }
+
 		Entity CreateEntity(const std::string& name = std::string());
 		Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
 		bool RenameEntity(Entity entity, const std::string& requestedName);
