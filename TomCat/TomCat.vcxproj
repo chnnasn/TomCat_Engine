@@ -231,6 +231,7 @@
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
     <ClInclude Include="src\TomCat\Scene\SceneCommandBuffer.h" />
     <ClInclude Include="src\TomCat\Scene\SceneManager.h" />
+    <ClInclude Include="src\TomCat\Scene\SceneMigrator.h" />
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h" />
     <ClInclude Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.h" />
     <ClInclude Include="src\TomCat\Scene\Serialization\ComponentCodecs.h" />
@@ -755,6 +756,7 @@
     <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneCommandBuffer.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneManager.cpp" />
+    <ClCompile Include="src\TomCat\Scene\SceneMigrator.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp" />
     <ClCompile Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.cpp" />
     <ClCompile Include="src\TomCat\Scene\Serialization\ComponentCodecs.cpp" />
