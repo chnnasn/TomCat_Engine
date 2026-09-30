@@ -40,6 +40,9 @@
     <Filter Include="src\TomCat\Runtime">
       <UniqueIdentifier>{37930976-2377-CACB-8CD7-C41E78DAB44D}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Save">
+      <UniqueIdentifier>{E2536431-4EDF-D1F5-57F0-54EAC3FA2DF6}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Scene">
       <UniqueIdentifier>{21A2EF5D-0D9B-0EB0-36CD-F3342225EEBB}</UniqueIdentifier>
     </Filter>
@@ -326,6 +329,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h">
       <Filter>src\TomCat\Runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Save\SaveDataStore.h">
+      <Filter>src\TomCat\Save</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Advanced2D.h">
       <Filter>src\TomCat\Scene</Filter>
@@ -1897,6 +1903,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp">
       <Filter>src\TomCat\Runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Save\SaveDataStore.cpp">
+      <Filter>src\TomCat\Save</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp">
       <Filter>src\TomCat\Scene</Filter>
