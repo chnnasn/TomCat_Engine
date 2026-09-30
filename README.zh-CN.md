@@ -121,7 +121,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - 从源码构建 TomCat 本身需要 **.NET 10 SDK**；打包后的 Editor 自带固定版本私有 SDK 编译游戏脚本，不读取机器上的全局 C# 环境
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
-- 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；也不支持 Play Mode 热替换或内置 C# 调试器。异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
+- 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；C# 采用外部 IDE 附加调试，停止 Play 后重新编译并更新脚本，不提供 Play Mode 热替换。异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
 2026-09-20 核对了上面展示的界面流程，没有重新运行完整原生、托管、Player 或 Web 回归套件。
@@ -207,7 +207,8 @@ vendor/            premake 与第三方依赖
 - [x] 使用稳定 LocalID 的快照 Prefab V1、Hierarchy/Joint/C# Entity 重映射、新 AttachmentID、延迟 C# 创建、Editor 创建/拖入操作与 Cook 依赖遍历
 - [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，嵌入 TCPAK v6 引入、v7 延续的 BootManifest
 - [x] 关联/嵌套 Prefab、Override/Variant，异步读取、叠加场景、持久根对象和卸载（范围见各功能文档）
-- [ ] 通用游戏存档系统
+- [x] [完整游戏验证样例 CoinRunner](Samples/CoinRunner/README.md)：制作、脚本、物理触发、计分、存档持久化、损坏恢复、打包与无头 Player 冒烟（`Scripts\Run-CoinRunnerSmoke.ps1`）；编辑器视觉、操作与 IDE 断点需独立实机验收
+- [x] 通用游戏存档系统：带校验和的版本化槽位文件、原子写入、备份轮换与损坏自动恢复；Play 模式与 Player 中可用的托管 `SaveData`/`SaveDocument` API
 
 ### 资产管线与 2D 内容生产
 
@@ -236,7 +237,7 @@ PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区�
 - [x] 在 Push/PR CI 中运行托管、原生与 Player Release 回归
 - [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
 - [x] 项目迁移预览、明确确认、事务升级和 Editor 中的中断迁移恢复；CLI 升级要求传入 `--migrate`
-- [ ] 通用 Scene Schema 迁移工具与插件/模块 SDK
+- [x] 通用 Scene Schema 迁移工具（SceneMigrator：v9/v10 -> 当前版本的事务化升级、SHA-256 备份、中断迁移日志与恢复；CLI 需 `--migrate`）与原生模块 SDK（`Modules/<名称>/module.tomcat`、版本化宿主表、组件/导入器/编辑器命令扩展点）
 - [ ] Windows/OpenGL 的 2D 流程成熟后，再增加其他平台与渲染后端
 
 ### 未来 3D 范围

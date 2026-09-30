@@ -326,6 +326,23 @@ namespace TomCat::Scripting {
 			uint32_t capacity, uint32_t* required) = nullptr;
 	};
 
+	// Optional application service discovered through NativeApiV2::QueryCapability.
+	// Lets gameplay code request a clean engine shutdown and observe whether a
+	// real window exists (headless runs used by tooling and CI).
+	inline constexpr std::string_view ApplicationCapabilityName =
+		"TomCat.ApplicationApiV1";
+
+	struct NativeApplicationApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeApplicationApiV1);
+
+		// Requests a clean application shutdown with the caller's exit code.
+		int32_t(TC_SCRIPT_CALL* RequestExit)(int32_t exitCode) = nullptr;
+		// Writes 1 when the process owns a real window, 0 for headless runs.
+		int32_t(TC_SCRIPT_CALL* HasWindow)(int32_t* hasWindow) = nullptr;
+	};
+
 	// Optional game save service discovered through NativeApiV2::QueryCapability.
 	// Slots live in the running game's published save directory. Payloads are
 	// opaque bytes owned by the caller; the store adds the versioned envelope,
@@ -808,6 +825,7 @@ namespace TomCat::Scripting {
 	static_assert(std::is_standard_layout_v<NativeInputEventBatchInfoV1>);
 	static_assert(std::is_standard_layout_v<NativeInputEventsApiV1>);
 	static_assert(std::is_standard_layout_v<NativeApplicationPathsApiV1>);
+	static_assert(std::is_standard_layout_v<NativeApplicationApiV1>);
 	static_assert(std::is_standard_layout_v<NativeSaveDataSlotSummaryV1>);
 	static_assert(std::is_standard_layout_v<NativeSaveDataApiV1>);
 	static_assert(std::is_standard_layout_v<NativeAudioApiV1>);

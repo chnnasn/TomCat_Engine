@@ -297,6 +297,21 @@ public static class Physics2D
 	}
 }
 
+/// <summary>
+/// Process-level application services. Quit requests a clean engine shutdown
+/// with the given exit code; HasWindow reports whether a real window exists
+/// (false during headless runs driven by tooling or CI).
+/// </summary>
+public static class Application
+{
+    /// <summary>Requests a clean shutdown. Must be called from the main thread
+    /// inside a script lifecycle callback.</summary>
+    public static void Quit(int exitCode = 0) =>
+        NativeBridge.ApplicationRequestExit(exitCode);
+
+    public static bool HasWindow => NativeBridge.ApplicationHasWindow;
+}
+
 public static class Log
 {
     public static void Trace(string message) => NativeBridge.WriteLog(0, message);
