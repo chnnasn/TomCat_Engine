@@ -23,6 +23,9 @@ internal static unsafe partial class NativeBridge
 	private const int NativeNotFound = -3;
 	private const int NativeBufferTooSmall = -6;
 	private const int NativeUnavailable = -8;
+	private const int SaveDataStatusRecoveredFromBackup = 1;
+	private const int SaveDataStatusMissing = 2;
+	private const int SaveDataStatusCorrupted = 3;
 
 	private static readonly object s_bindGate = new();
     private static NativeApiV1 s_api;
@@ -39,6 +42,7 @@ internal static unsafe partial class NativeBridge
 	private static NativeAudioSpatialApiV1 s_audioSpatialApi;
 	private static NativeRuntimeUIApiV1 s_runtimeUIApi;
 	private static NativeGameplayApiV1 s_gameplayApi;
+	private static NativeSaveDataApiV1 s_saveDataApi;
 	private static readonly UTF8Encoding s_strictUtf8 = new(false, true);
     private static bool s_bound;
 	private static bool s_inputBound;
@@ -53,6 +57,7 @@ internal static unsafe partial class NativeBridge
 	private static bool s_audioSpatialBound;
 	private static bool s_runtimeUIBound;
 	private static bool s_gameplayBound;
+	private static bool s_saveDataBound;
 	[ThreadStatic] private static ulong s_activeDeferredCallbackToken;
 	[ThreadStatic] private static bool s_deferredAbortProtocolFailed;
 
@@ -110,6 +115,9 @@ internal static unsafe partial class NativeBridge
 		NativeGameplayApiV1 gameplayCandidate = default;
 		bool hasGameplayCandidate = TryReadGameplayCapability(api,
 			out gameplayCandidate);
+		NativeSaveDataApiV1 saveDataCandidate = default;
+		bool hasSaveDataCandidate = TryReadSaveDataCapability(api,
+			out saveDataCandidate);
 
 		// Publish only a fully validated table. A rejected rebind leaves the last
 		// complete process-lifetime table and its bound state untouched.
@@ -186,6 +194,11 @@ internal static unsafe partial class NativeBridge
 			{
 				s_gameplayApi = gameplayCandidate;
 				Volatile.Write(ref s_gameplayBound, true);
+			}
+			if (hasSaveDataCandidate && !s_saveDataBound)
+			{
+				s_saveDataApi = saveDataCandidate;
+				Volatile.Write(ref s_saveDataBound, true);
 			}
 		}
         return 0;
@@ -567,6 +580,34 @@ internal static unsafe partial class NativeBridge
 			&& gameplay.SetComponentProperty != null
 			&& gameplay.SpriteAnimatorPlay != null
 			&& gameplay.SpriteAnimatorStop != null;
+	}
+
+	private static bool TryReadSaveDataCapability(NativeApiV1* api,
+		out NativeSaveDataApiV1 saveData)
+	{
+		saveData = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.SaveDataApiV1");
+		NativeSaveDataApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeSaveDataApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeSaveDataApiV1))
+				return false;
+		}
+		saveData = candidate;
+		return saveData.Version == 1
+			&& saveData.Size >= (uint)sizeof(NativeSaveDataApiV1)
+			&& saveData.WriteSlot != null && saveData.ReadSlot != null
+			&& saveData.DeleteSlot != null && saveData.SlotExists != null
+			&& saveData.ListSlots != null;
 	}
 
 	private static bool HasRequiredCallbacks(NativeApiV1 api) =>
@@ -1811,6 +1852,155 @@ internal static unsafe partial class NativeBridge
 		catch (DecoderFallbackException error)
 		{
 			throw new TomCatException($"{operation} returned invalid UTF-8: {error.Message}");
+		}
+	}
+
+
+	// ---- Game save data (optional TomCat.SaveDataApiV1 capability) ----
+
+	private static void RequireSaveData(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_saveDataBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.SaveDataApiV1 capability.");
+	}
+
+	internal static void SaveWriteSlot(string slot, uint dataVersion,
+		ReadOnlySpan<byte> payload)
+	{
+		EnsureMainThread();
+		RequireSaveData(s_saveDataApi.WriteSlot != null, "SaveData.Write");
+		byte[] slotBytes = Encoding.UTF8.GetBytes(slot);
+		if (slotBytes.Length > ManagedAbi.SaveDataMaximumSlotUtf8Bytes
+			|| payload.Length > ManagedAbi.SaveDataMaximumPayloadBytes)
+			throw new ArgumentOutOfRangeException(nameof(slot));
+		fixed (byte* slotPointer = slotBytes)
+		fixed (byte* payloadPointer = payload)
+		{
+			Check(s_saveDataApi.WriteSlot(
+				new NativeUtf8View(slotPointer, (ulong)slotBytes.Length),
+				dataVersion, payloadPointer, (uint)payload.Length),
+				"SaveData.Write");
+		}
+	}
+
+	internal static SaveSlotReadResult SaveReadSlot(string slot)
+	{
+		EnsureMainThread();
+		RequireSaveData(s_saveDataApi.ReadSlot != null, "SaveData.Read");
+		byte[] slotBytes = Encoding.UTF8.GetBytes(slot);
+		if (slotBytes.Length > ManagedAbi.SaveDataMaximumSlotUtf8Bytes)
+			throw new ArgumentOutOfRangeException(nameof(slot));
+		fixed (byte* slotPointer = slotBytes)
+		{
+			var view = new NativeUtf8View(slotPointer, (ulong)slotBytes.Length);
+			uint dataVersion = 0;
+			long savedAtUtc = 0;
+			uint required = 0;
+			int status = s_saveDataApi.ReadSlot(view, &dataVersion, &savedAtUtc,
+				null, 0, &required);
+			if (status == (int)SaveReadStatus.Missing)
+				return SaveSlotReadResult.Missing();
+			if (status < 0)
+				Check(status, "SaveData.Read");
+			if (required > ManagedAbi.SaveDataMaximumPayloadBytes)
+				throw new TomCatException("SaveData.Read returned an invalid payload size.");
+			byte[] payload = required == 0
+				? Array.Empty<byte>()
+				: GC.AllocateUninitializedArray<byte>((int)required);
+			for (int attempt = 0; attempt < 2; ++attempt)
+			{
+				fixed (byte* payloadPointer = payload)
+				{
+					uint capacity = (uint)payload.Length;
+					status = s_saveDataApi.ReadSlot(view, &dataVersion,
+						&savedAtUtc, payloadPointer, capacity, &required);
+				}
+				if (status >= 0)
+				{
+					if (required > (uint)payload.Length)
+						throw new TomCatException(
+							"SaveData.Read changed length while being read.");
+					return new SaveSlotReadResult(
+						(SaveReadStatus)status, dataVersion, savedAtUtc, payload);
+				}
+				if (status != NativeBufferTooSmall
+					|| required > ManagedAbi.SaveDataMaximumPayloadBytes)
+					Check(status, "SaveData.Read");
+				payload = GC.AllocateUninitializedArray<byte>((int)required);
+			}
+			throw new TomCatException("SaveData.Read kept changing the payload size.");
+		}
+	}
+
+	internal static bool SaveDeleteSlot(string slot)
+	{
+		EnsureMainThread();
+		RequireSaveData(s_saveDataApi.DeleteSlot != null, "SaveData.Delete");
+		byte[] slotBytes = Encoding.UTF8.GetBytes(slot);
+		if (slotBytes.Length > ManagedAbi.SaveDataMaximumSlotUtf8Bytes)
+			throw new ArgumentOutOfRangeException(nameof(slot));
+		fixed (byte* slotPointer = slotBytes)
+		{
+			int removed = 0;
+			Check(s_saveDataApi.DeleteSlot(
+				new NativeUtf8View(slotPointer, (ulong)slotBytes.Length), &removed),
+				"SaveData.Delete");
+			return removed != 0;
+		}
+	}
+
+	internal static bool SaveSlotExists(string slot)
+	{
+		EnsureMainThread();
+		RequireSaveData(s_saveDataApi.SlotExists != null, "SaveData.Exists");
+		byte[] slotBytes = Encoding.UTF8.GetBytes(slot);
+		if (slotBytes.Length > ManagedAbi.SaveDataMaximumSlotUtf8Bytes)
+			throw new ArgumentOutOfRangeException(nameof(slot));
+		fixed (byte* slotPointer = slotBytes)
+		{
+			int exists = 0;
+			Check(s_saveDataApi.SlotExists(
+				new NativeUtf8View(slotPointer, (ulong)slotBytes.Length), &exists),
+				"SaveData.Exists");
+			return exists != 0;
+		}
+	}
+
+	internal static SaveSlotInfo[] SaveListSlots()
+	{
+		EnsureMainThread();
+		RequireSaveData(s_saveDataApi.ListSlots != null, "SaveData.ListSlots");
+		uint required = 0;
+		int status = s_saveDataApi.ListSlots(null, 0, &required);
+		Check(status, "SaveData.ListSlots");
+		if (required == 0)
+			return [];
+		if (required > 1_000_000)
+			throw new TomCatException("SaveData.ListSlots returned an invalid count.");
+		var native = new NativeSaveDataSlotSummaryV1[required];
+		fixed (NativeSaveDataSlotSummaryV1* entries = native)
+		{
+			uint actual = required;
+			Check(s_saveDataApi.ListSlots(entries, required, &actual),
+				"SaveData.ListSlots");
+			if (actual > required)
+				throw new TomCatException(
+					"SaveData.ListSlots changed count while being read.");
+			var slots = new SaveSlotInfo[actual];
+			for (int index = 0; index < slots.Length; ++index)
+			{
+				var source = entries[index];
+				int nameBytes = (int)source.SlotUtf8Bytes;
+				if (nameBytes < 0 || nameBytes > NativeSaveDataSlotSummaryV1.MaximumSlotUtf8Bytes)
+					throw new TomCatException(
+						"SaveData.ListSlots returned an invalid slot name length.");
+				string name = Encoding.UTF8.GetString(source.Slot, nameBytes);
+				slots[index] = new SaveSlotInfo(name, source.FormatVersion,
+					source.DataVersion, source.SavedAtUtcUnixSeconds,
+					source.PayloadBytes, source.Corrupted != 0);
+			}
+			return slots;
 		}
 	}
 

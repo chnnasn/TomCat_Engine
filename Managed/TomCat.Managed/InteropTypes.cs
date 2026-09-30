@@ -7,6 +7,8 @@ public static class ManagedAbi
     public const uint NativeApiVersion = 1;
     public const uint ManagedApiVersion = 5;
     public const uint ScriptManifestVersion = 1;
+    public const int SaveDataMaximumSlotUtf8Bytes = 64;
+    public const int SaveDataMaximumPayloadBytes = 16 * 1024 * 1024;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 8, Size = 16)]
@@ -290,6 +292,34 @@ public unsafe struct NativeApplicationPathsApiV1
 	public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetSaveDirectory;
 	public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetLogDirectory;
 	public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetCrashDirectory;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeSaveDataSlotSummaryV1
+{
+	public const int MaximumSlotUtf8Bytes = 64;
+
+	public uint FormatVersion;
+	public uint DataVersion;
+	public uint SlotUtf8Bytes;
+	public uint Corrupted;
+	public long SavedAtUtcUnixSeconds;
+	public ulong PayloadBytes;
+	public fixed byte Slot[MaximumSlotUtf8Bytes];
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeSaveDataApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<NativeUtf8View, uint, byte*, uint, int> WriteSlot;
+	public delegate* unmanaged[Cdecl]<NativeUtf8View, uint*, long*, byte*, uint,
+		uint*, int> ReadSlot;
+	public delegate* unmanaged[Cdecl]<NativeUtf8View, int*, int> DeleteSlot;
+	public delegate* unmanaged[Cdecl]<NativeUtf8View, int*, int> SlotExists;
+	public delegate* unmanaged[Cdecl]<NativeSaveDataSlotSummaryV1*, uint,
+		uint*, int> ListSlots;
 }
 
 [StructLayout(LayoutKind.Sequential)]

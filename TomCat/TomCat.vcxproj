@@ -219,6 +219,7 @@
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
     <ClInclude Include="src\TomCat\Runtime\RuntimeCompatibility.h" />
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h" />
+    <ClInclude Include="src\TomCat\Save\SaveDataStore.h" />
     <ClInclude Include="src\TomCat\Scene\Advanced2D.h" />
     <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h" />
     <ClInclude Include="src\TomCat\Scene\ComponentRegistry.h" />
@@ -744,6 +745,7 @@
     <ClCompile Include="src\TomCat\Renderer\UniformBuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp" />
+    <ClCompile Include="src\TomCat\Save\SaveDataStore.cpp" />
     <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp" />
     <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp" />
     <ClCompile Include="src\TomCat\Scene\ComponentRegistry.cpp" />

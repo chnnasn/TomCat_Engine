@@ -326,6 +326,66 @@ namespace TomCat::Scripting {
 			uint32_t capacity, uint32_t* required) = nullptr;
 	};
 
+	// Optional game save service discovered through NativeApiV2::QueryCapability.
+	// Slots live in the running game's published save directory. Payloads are
+	// opaque bytes owned by the caller; the store adds the versioned envelope,
+	// checksum, atomic install and backup rotation.
+	inline constexpr std::string_view SaveDataCapabilityName =
+		"TomCat.SaveDataApiV1";
+	inline constexpr uint32_t SaveDataMaximumSlotUtf8BytesV1 = 64;
+	inline constexpr uint32_t SaveDataMaximumPayloadBytesV1 =
+		16u * 1024u * 1024u;
+
+	// ReadSlot status codes mirrored by the managed SaveReadStatus enum.
+	inline constexpr int32_t SaveDataReadOkV1 = 0;
+	inline constexpr int32_t SaveDataReadRecoveredFromBackupV1 = 1;
+	inline constexpr int32_t SaveDataReadMissingV1 = 2;
+	inline constexpr int32_t SaveDataReadCorruptedV1 = 3;
+
+	struct NativeSaveDataSlotSummaryV1
+	{
+		uint32_t FormatVersion = 0;
+		uint32_t DataVersion = 0;
+		uint32_t SlotUtf8Bytes = 0;
+		uint32_t Corrupted = 0;
+		int64_t SavedAtUtcUnixSeconds = 0;
+		uint64_t PayloadBytes = 0;
+		uint8_t Slot[SaveDataMaximumSlotUtf8BytesV1] = {};
+	};
+
+	struct NativeSaveDataApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeSaveDataApiV1);
+
+		// Writes an opaque payload atomically and rotates the previous slot to
+		// the backup. SavedAtUtc is captured by the engine.
+		int32_t(TC_SCRIPT_CALL* WriteSlot)(NativeUtf8View slot,
+			uint32_t dataVersion, const uint8_t* payload,
+			uint32_t payloadBytes) = nullptr;
+
+		// Reads the slot with backup fallback. Returns SaveDataRead*V1 status.
+		// payloadBuffer may be null to probe the required payload size through
+		// requiredPayloadBytes.
+		int32_t(TC_SCRIPT_CALL* ReadSlot)(NativeUtf8View slot,
+			uint32_t* dataVersion, int64_t* savedAtUtcUnixSeconds,
+			uint8_t* payloadBuffer, uint32_t payloadCapacity,
+			uint32_t* requiredPayloadBytes) = nullptr;
+
+		// removed reports whether any file was deleted; deleting an absent slot
+		// succeeds with removed == 0.
+		int32_t(TC_SCRIPT_CALL* DeleteSlot)(NativeUtf8View slot,
+			int32_t* removed) = nullptr;
+
+		int32_t(TC_SCRIPT_CALL* SlotExists)(NativeUtf8View slot,
+			int32_t* exists) = nullptr;
+
+		// Entries may be null to probe the required count.
+		int32_t(TC_SCRIPT_CALL* ListSlots)(NativeSaveDataSlotSummaryV1* entries,
+			uint32_t capacity, uint32_t* requiredCount) = nullptr;
+	};
+
+
 	inline constexpr std::string_view ComponentCapabilityName =
 		"TomCat.ComponentApiV1";
 	inline constexpr std::string_view ComponentStringCapabilityName =
@@ -748,6 +808,8 @@ namespace TomCat::Scripting {
 	static_assert(std::is_standard_layout_v<NativeInputEventBatchInfoV1>);
 	static_assert(std::is_standard_layout_v<NativeInputEventsApiV1>);
 	static_assert(std::is_standard_layout_v<NativeApplicationPathsApiV1>);
+	static_assert(std::is_standard_layout_v<NativeSaveDataSlotSummaryV1>);
+	static_assert(std::is_standard_layout_v<NativeSaveDataApiV1>);
 	static_assert(std::is_standard_layout_v<NativeAudioApiV1>);
 	static_assert(std::is_standard_layout_v<NativeAudioSpatialApiV1>);
 	static_assert(std::is_standard_layout_v<NativeRuntimeUIApiV1>);
