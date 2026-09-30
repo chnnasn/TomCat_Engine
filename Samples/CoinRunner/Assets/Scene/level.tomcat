@@ -1,0 +1,1643 @@
+SchemaVersion: 11
+SceneName: Level
+Entities:
+  - Entity: 13842376404676640769
+    Tag:
+      Tag: MainCamera
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Camera:
+      Camera:
+        ProjectionType: 1
+        PerspectiveFOV: 0.785398185
+        PerspectiveNear: 0.00999999978
+        PerspectiveFar: 1000
+        OrthographicSize: 10
+        OrthographicNear: 0
+        OrthographicFar: 1000
+      Primary: true
+      FixedAspectRatio: false
+      BackgroundColor: [0.529999971, 0.810000002, 0.920000017, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676640769
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: MainCamera
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541829
+        StableName: TomCat.Camera
+        SchemaVersion: 3
+        Properties:
+          - PropertyId: 300
+            StableName: Primary
+            Value: true
+          - PropertyId: 301
+            StableName: FixedAspectRatio
+            Value: false
+          - PropertyId: 302
+            StableName: BackgroundColor
+            Value: [0.529999971, 0.810000002, 0.920000017, 1]
+          - PropertyId: 303
+            StableName: ProjectionType
+            Value: 1
+          - PropertyId: 304
+            StableName: OrthographicSize
+            Value: 10
+          - PropertyId: 305
+            StableName: OrthographicNearClip
+            Value: 0
+          - PropertyId: 306
+            StableName: OrthographicFarClip
+            Value: 1000
+          - PropertyId: 307
+            StableName: PerspectiveVerticalFov
+            Value: 0.785398185
+          - PropertyId: 308
+            StableName: PerspectiveNearClip
+            Value: 0.00999999978
+          - PropertyId: 309
+            StableName: PerspectiveFarClip
+            Value: 1000
+          - PropertyId: 310
+            StableName: Enabled
+            Value: true
+    Parent: 0
+  - Entity: 13842376404676640770
+    Tag:
+      Tag: Ground
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [0.239999995, 0.550000012, 0.300000012, 1]
+      SpriteHandle: 0
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Static
+      FixedRotation: false
+    BoxCollider2D:
+      Enabled: true
+      IsTrigger: false
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Size: [0.5, 0.5]
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+      RestitutionThreshold: 0.5
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676640770
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Ground
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [0.239999995, 0.550000012, 0.300000012, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 0
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 0
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541837
+        StableName: TomCat.BoxCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 400
+            StableName: Enabled
+            Value: true
+          - PropertyId: 401
+            StableName: IsTrigger
+            Value: false
+          - PropertyId: 402
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 403
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 404
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 405
+            StableName: Size
+            Value: [0.5, 0.5]
+          - PropertyId: 406
+            StableName: Density
+            Value: 1
+          - PropertyId: 407
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 408
+            StableName: Restitution
+            Value: 0
+          - PropertyId: 409
+            StableName: RestitutionThreshold
+            Value: 0.5
+    Parent: 0
+  - Entity: 13842376404676640771
+    Tag:
+      Tag: LeftWall
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Static
+      FixedRotation: false
+    BoxCollider2D:
+      Enabled: true
+      IsTrigger: false
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Size: [0.5, 0.5]
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+      RestitutionThreshold: 0.5
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676640771
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: LeftWall
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 0
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541837
+        StableName: TomCat.BoxCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 400
+            StableName: Enabled
+            Value: true
+          - PropertyId: 401
+            StableName: IsTrigger
+            Value: false
+          - PropertyId: 402
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 403
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 404
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 405
+            StableName: Size
+            Value: [0.5, 0.5]
+          - PropertyId: 406
+            StableName: Density
+            Value: 1
+          - PropertyId: 407
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 408
+            StableName: Restitution
+            Value: 0
+          - PropertyId: 409
+            StableName: RestitutionThreshold
+            Value: 0.5
+    Parent: 0
+  - Entity: 13842376404676640772
+    Tag:
+      Tag: RightWall
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Static
+      FixedRotation: false
+    BoxCollider2D:
+      Enabled: true
+      IsTrigger: false
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Size: [0.5, 0.5]
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+      RestitutionThreshold: 0.5
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676640772
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: RightWall
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 0
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541837
+        StableName: TomCat.BoxCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 400
+            StableName: Enabled
+            Value: true
+          - PropertyId: 401
+            StableName: IsTrigger
+            Value: false
+          - PropertyId: 402
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 403
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 404
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 405
+            StableName: Size
+            Value: [0.5, 0.5]
+          - PropertyId: 406
+            StableName: Density
+            Value: 1
+          - PropertyId: 407
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 408
+            StableName: Restitution
+            Value: 0
+          - PropertyId: 409
+            StableName: RestitutionThreshold
+            Value: 0.5
+    Parent: 0
+  - Entity: 13842376404676640773
+    Tag:
+      Tag: Player
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [0.899999976, 0.349999994, 0.25, 1]
+      SpriteHandle: 0
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    CSharpScripts:
+      Scripts:
+        - AttachmentID: 13842376404676681729
+          Enabled: true
+          ScriptHandle: 1782105518984047352
+          ClassName: PlayerController
+          Fields: []
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Dynamic
+      FixedRotation: true
+    BoxCollider2D:
+      Enabled: true
+      IsTrigger: false
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Size: [0.5, 0.5]
+      Density: 1
+      Friction: 0
+      Restitution: 0
+      RestitutionThreshold: 0.5
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676640773
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Player
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [0.899999976, 0.349999994, 0.25, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 0
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541833
+        StableName: TomCat.CSharpScripts
+        SchemaVersion: 1
+        Properties:
+          Scripts:
+            - AttachmentID: 13842376404676681729
+              Enabled: true
+              ScriptHandle: 1782105518984047352
+              ClassName: PlayerController
+              Fields:
+                []
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 1
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: true
+      - TypeId: 11457157452030541837
+        StableName: TomCat.BoxCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 400
+            StableName: Enabled
+            Value: true
+          - PropertyId: 401
+            StableName: IsTrigger
+            Value: false
+          - PropertyId: 402
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 403
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 404
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 405
+            StableName: Size
+            Value: [0.5, 0.5]
+          - PropertyId: 406
+            StableName: Density
+            Value: 1
+          - PropertyId: 407
+            StableName: Friction
+            Value: 0
+          - PropertyId: 408
+            StableName: Restitution
+            Value: 0
+          - PropertyId: 409
+            StableName: RestitutionThreshold
+            Value: 0.5
+    Parent: 0
+  - Entity: 13842376404676641024
+    Tag:
+      Tag: Coin 1
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [1, 0.839999974, 0, 1]
+      SpriteHandle: 0
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    CSharpScripts:
+      Scripts:
+        - AttachmentID: 13842376404676685824
+          Enabled: true
+          ScriptHandle: 16138612705537428554
+          ClassName: Coin
+          Fields: []
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Static
+      FixedRotation: false
+    CircleCollider2D:
+      Enabled: true
+      IsTrigger: true
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Radius: 0.5
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676641024
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Coin 1
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [1, 0.839999974, 0, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 0
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541833
+        StableName: TomCat.CSharpScripts
+        SchemaVersion: 1
+        Properties:
+          Scripts:
+            - AttachmentID: 13842376404676685824
+              Enabled: true
+              ScriptHandle: 16138612705537428554
+              ClassName: Coin
+              Fields:
+                []
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 0
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541838
+        StableName: TomCat.CircleCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 500
+            StableName: Enabled
+            Value: true
+          - PropertyId: 501
+            StableName: IsTrigger
+            Value: true
+          - PropertyId: 502
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 503
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 504
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 505
+            StableName: Radius
+            Value: 0.5
+          - PropertyId: 506
+            StableName: Density
+            Value: 1
+          - PropertyId: 507
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 508
+            StableName: Restitution
+            Value: 0
+    Parent: 0
+  - Entity: 13842376404676641025
+    Tag:
+      Tag: Coin 2
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [1, 0.839999974, 0, 1]
+      SpriteHandle: 0
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    CSharpScripts:
+      Scripts:
+        - AttachmentID: 13842376404676685825
+          Enabled: true
+          ScriptHandle: 16138612705537428554
+          ClassName: Coin
+          Fields: []
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Static
+      FixedRotation: false
+    CircleCollider2D:
+      Enabled: true
+      IsTrigger: true
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Radius: 0.5
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676641025
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Coin 2
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [1, 0.839999974, 0, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 0
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541833
+        StableName: TomCat.CSharpScripts
+        SchemaVersion: 1
+        Properties:
+          Scripts:
+            - AttachmentID: 13842376404676685825
+              Enabled: true
+              ScriptHandle: 16138612705537428554
+              ClassName: Coin
+              Fields:
+                []
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 0
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541838
+        StableName: TomCat.CircleCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 500
+            StableName: Enabled
+            Value: true
+          - PropertyId: 501
+            StableName: IsTrigger
+            Value: true
+          - PropertyId: 502
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 503
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 504
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 505
+            StableName: Radius
+            Value: 0.5
+          - PropertyId: 506
+            StableName: Density
+            Value: 1
+          - PropertyId: 507
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 508
+            StableName: Restitution
+            Value: 0
+    Parent: 0
+  - Entity: 13842376404676641026
+    Tag:
+      Tag: Coin 3
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [1, 0.839999974, 0, 1]
+      SpriteHandle: 0
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    CSharpScripts:
+      Scripts:
+        - AttachmentID: 13842376404676685826
+          Enabled: true
+          ScriptHandle: 16138612705537428554
+          ClassName: Coin
+          Fields: []
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Static
+      FixedRotation: false
+    CircleCollider2D:
+      Enabled: true
+      IsTrigger: true
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Radius: 0.5
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676641026
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Coin 3
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [1, 0.839999974, 0, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 0
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541833
+        StableName: TomCat.CSharpScripts
+        SchemaVersion: 1
+        Properties:
+          Scripts:
+            - AttachmentID: 13842376404676685826
+              Enabled: true
+              ScriptHandle: 16138612705537428554
+              ClassName: Coin
+              Fields:
+                []
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 0
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541838
+        StableName: TomCat.CircleCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 500
+            StableName: Enabled
+            Value: true
+          - PropertyId: 501
+            StableName: IsTrigger
+            Value: true
+          - PropertyId: 502
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 503
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 504
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 505
+            StableName: Radius
+            Value: 0.5
+          - PropertyId: 506
+            StableName: Density
+            Value: 1
+          - PropertyId: 507
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 508
+            StableName: Restitution
+            Value: 0
+    Parent: 0
+  - Entity: 13842376404676641027
+    Tag:
+      Tag: Coin 4
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    SpriteRenderer:
+      Enabled: true
+      Color: [1, 0.839999974, 0, 1]
+      SpriteHandle: 0
+      TilingFactor: 1
+      SortingLayer: 0
+      OrderInLayer: 0
+    CSharpScripts:
+      Scripts:
+        - AttachmentID: 13842376404676685827
+          Enabled: true
+          ScriptHandle: 16138612705537428554
+          ClassName: Coin
+          Fields: []
+    Rigidbody2D:
+      Enabled: true
+      BodyType: Static
+      FixedRotation: false
+    CircleCollider2D:
+      Enabled: true
+      IsTrigger: true
+      CollisionLayer: 1
+      CollisionMask: 65535
+      Offset: [0, 0]
+      Radius: 0.5
+      Density: 1
+      Friction: 0.5
+      Restitution: 0
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676641027
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: Coin 4
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541830
+        StableName: TomCat.SpriteRenderer
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 200
+            StableName: Enabled
+            Value: true
+          - PropertyId: 201
+            StableName: Color
+            Value: [1, 0.839999974, 0, 1]
+          - PropertyId: 202
+            StableName: Sprite
+            Value: 0
+          - PropertyId: 203
+            StableName: TilingFactor
+            Value: 1
+          - PropertyId: 204
+            StableName: SortingLayer
+            Value: 0
+          - PropertyId: 205
+            StableName: OrderInLayer
+            Value: 0
+      - TypeId: 11457157452030541833
+        StableName: TomCat.CSharpScripts
+        SchemaVersion: 1
+        Properties:
+          Scripts:
+            - AttachmentID: 13842376404676685827
+              Enabled: true
+              ScriptHandle: 16138612705537428554
+              ClassName: Coin
+              Fields:
+                []
+      - TypeId: 11457157452030541836
+        StableName: TomCat.Rigidbody2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 100
+            StableName: Enabled
+            Value: true
+          - PropertyId: 101
+            StableName: BodyType
+            Value: 0
+          - PropertyId: 102
+            StableName: FixedRotation
+            Value: false
+      - TypeId: 11457157452030541838
+        StableName: TomCat.CircleCollider2D
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 500
+            StableName: Enabled
+            Value: true
+          - PropertyId: 501
+            StableName: IsTrigger
+            Value: true
+          - PropertyId: 502
+            StableName: CollisionLayer
+            Value: 1
+          - PropertyId: 503
+            StableName: CollisionMask
+            Value: 65535
+          - PropertyId: 504
+            StableName: Offset
+            Value: [0, 0]
+          - PropertyId: 505
+            StableName: Radius
+            Value: 0.5
+          - PropertyId: 506
+            StableName: Density
+            Value: 1
+          - PropertyId: 507
+            StableName: Friction
+            Value: 0.5
+          - PropertyId: 508
+            StableName: Restitution
+            Value: 0
+    Parent: 0
+  - Entity: 13842376404676641280
+    Tag:
+      Tag: ScoreText
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676641280
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: ScoreText
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457438927007252483
+        StableName: TomCat.RectTransform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 11457491703565385729
+            StableName: AnchorMin
+            Value: [0.5, 0.5]
+          - PropertyId: 11457491703565385730
+            StableName: AnchorMax
+            Value: [0.5, 0.5]
+          - PropertyId: 11457491703565385731
+            StableName: Pivot
+            Value: [0.5, 0.5]
+          - PropertyId: 11457491703565385732
+            StableName: AnchoredPosition
+            Value: [0, 0]
+          - PropertyId: 11457491703565385733
+            StableName: SizeDelta
+            Value: [100, 100]
+          - PropertyId: 11457491703565385734
+            StableName: ClipChildren
+            Value: false
+      - TypeId: 11457438927007252485
+        StableName: TomCat.UIText
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 11457526887937474561
+            StableName: Enabled
+            Value: true
+          - PropertyId: 11457526887937474562
+            StableName: Font
+            Value: 6071781686982737921
+          - PropertyId: 11457526887937474570
+            StableName: FallbackFont
+            Value: 0
+          - PropertyId: 11457526887937474571
+            StableName: EmojiFont
+            Value: 0
+          - PropertyId: 11457526887937474563
+            StableName: Text
+            Value: Text
+          - PropertyId: 11457526887937474564
+            StableName: FontSize
+            Value: 24
+          - PropertyId: 11457526887937474565
+            StableName: Color
+            Value: [1, 1, 1, 1]
+          - PropertyId: 11457526887937474566
+            StableName: Alignment
+            Value: 0
+          - PropertyId: 11457526887937474567
+            StableName: Wrap
+            Value: true
+          - PropertyId: 11457526887937474568
+            StableName: LineSpacing
+            Value: 1
+          - PropertyId: 11457526887937474569
+            StableName: RaycastTarget
+            Value: false
+    Parent: 0
+  - Entity: 13842376404676641281
+    Tag:
+      Tag: GameManager
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    CSharpScripts:
+      Scripts:
+        - AttachmentID: 13842376404676681730
+          Enabled: true
+          ScriptHandle: 7359497641917518565
+          ClassName: GameManager
+          Fields: []
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676641281
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: GameManager
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457157452030541833
+        StableName: TomCat.CSharpScripts
+        SchemaVersion: 1
+        Properties:
+          Scripts:
+            - AttachmentID: 13842376404676681730
+              Enabled: true
+              ScriptHandle: 7359497641917518565
+              ClassName: GameManager
+              Fields:
+                []
+    Parent: 0

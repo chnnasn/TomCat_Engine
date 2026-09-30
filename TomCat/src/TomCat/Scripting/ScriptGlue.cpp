@@ -6,6 +6,7 @@
 #include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Audio/AudioSceneRuntime.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/Application.h"
 #include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Math/Math.h"
@@ -715,6 +716,35 @@ namespace TomCat::Scripting {
 			return api;
 		}
 
+		int32_t ApplicationRequestExitCallback(int32_t exitCode) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				Application::Get().Close(exitCode);
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t ApplicationHasWindowCallback(int32_t* hasWindow) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!hasWindow) return Code(ScriptStatus::InvalidArgument);
+				*hasWindow = Application::Get().HasWindow() ? 1 : 0;
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		NativeApplicationApiV1 BuildApplicationApiV1()
+		{
+			NativeApplicationApiV1 api;
+			api.RequestExit = &ApplicationRequestExitCallback;
+			api.HasWindow = &ApplicationHasWindowCallback;
+			return api;
+		}
+
 		// The store owns a mutex, so it can be neither moved nor copied: the
 		// optional must be constructed in place from the resolved directory.
 		std::optional<Save::SaveDataStore> ResolveSaveDataStore(
@@ -795,9 +825,9 @@ namespace TomCat::Scripting {
 				const Save::SlotReadStatus status = store->Read(slotName,
 					envelope, payload, error);
 				if (status == Save::SlotReadStatus::Missing)
-					return Code(ScriptStatus::NotFound);
+					return SaveDataReadMissingV1;
 				if (status == Save::SlotReadStatus::Corrupted)
-					return Code(ScriptStatus::InvalidState);
+					return SaveDataReadCorruptedV1;
 				*requiredPayloadBytes = static_cast<uint32_t>(payload.size());
 				if (payloadCapacity < payload.size()
 					|| (!payloadBuffer && !payload.empty()))
@@ -3065,6 +3095,17 @@ namespace TomCat::Scripting {
 				if (capability == ApplicationPathsCapabilityName)
 				{
 					const NativeApplicationPathsApiV1 api = BuildApplicationPathsApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
+				if (capability == ApplicationCapabilityName)
+				{
+					const NativeApplicationApiV1 api = BuildApplicationApiV1();
 					*required = sizeof(api);
 					if (minimumVersion > api.Version)
 						return Code(ScriptStatus::VersionMismatch);

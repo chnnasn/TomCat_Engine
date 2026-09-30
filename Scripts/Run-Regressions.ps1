@@ -161,6 +161,7 @@ try {
 
     Invoke-NativeRegression -Name "PhysicsRegression"
     Invoke-NativeRegression -Name "SpriteAssetRegression"
+    Invoke-NativeRegression -Name "Advanced2DRegression"
     Invoke-NativeRegression -Name "ScriptCompilerRegression"
     Invoke-NativeRegression -Name "P0SafetyRegression"
     Invoke-NativeRegression -Name "SaveDataRegression"
@@ -181,6 +182,12 @@ try {
     }
 
     Write-Host ""
+    Write-Host "== Complete-game verification (CoinRunner) =="
+    & (Join-Path $PSScriptRoot "Run-CoinRunnerSmoke.ps1") -Configuration $Configuration
+    if ($LASTEXITCODE -ne 0) {
+        throw "CoinRunner complete-game smoke failed (exit $LASTEXITCODE)."
+    }
+
     Write-Host "All TomCat regressions passed."
 }
 finally {

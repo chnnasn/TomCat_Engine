@@ -43,6 +43,7 @@ internal static unsafe partial class NativeBridge
 	private static NativeRuntimeUIApiV1 s_runtimeUIApi;
 	private static NativeGameplayApiV1 s_gameplayApi;
 	private static NativeSaveDataApiV1 s_saveDataApi;
+	private static NativeApplicationApiV1 s_applicationApi;
 	private static readonly UTF8Encoding s_strictUtf8 = new(false, true);
     private static bool s_bound;
 	private static bool s_inputBound;
@@ -58,6 +59,7 @@ internal static unsafe partial class NativeBridge
 	private static bool s_runtimeUIBound;
 	private static bool s_gameplayBound;
 	private static bool s_saveDataBound;
+	private static bool s_applicationBound;
 	[ThreadStatic] private static ulong s_activeDeferredCallbackToken;
 	[ThreadStatic] private static bool s_deferredAbortProtocolFailed;
 
@@ -118,6 +120,9 @@ internal static unsafe partial class NativeBridge
 		NativeSaveDataApiV1 saveDataCandidate = default;
 		bool hasSaveDataCandidate = TryReadSaveDataCapability(api,
 			out saveDataCandidate);
+		NativeApplicationApiV1 applicationCandidate = default;
+		bool hasApplicationCandidate = TryReadApplicationCapability(api,
+			out applicationCandidate);
 
 		// Publish only a fully validated table. A rejected rebind leaves the last
 		// complete process-lifetime table and its bound state untouched.
@@ -199,6 +204,11 @@ internal static unsafe partial class NativeBridge
 			{
 				s_saveDataApi = saveDataCandidate;
 				Volatile.Write(ref s_saveDataBound, true);
+			}
+			if (hasApplicationCandidate && !s_applicationBound)
+			{
+				s_applicationApi = applicationCandidate;
+				Volatile.Write(ref s_applicationBound, true);
 			}
 		}
         return 0;
@@ -580,6 +590,32 @@ internal static unsafe partial class NativeBridge
 			&& gameplay.SetComponentProperty != null
 			&& gameplay.SpriteAnimatorPlay != null
 			&& gameplay.SpriteAnimatorStop != null;
+	}
+
+	private static bool TryReadApplicationCapability(NativeApiV1* api,
+		out NativeApplicationApiV1 application)
+	{
+		application = default;
+		if (api->Size < (uint)sizeof(NativeApiV2))
+			return false;
+		NativeApiV2* envelope = (NativeApiV2*)api;
+		if (envelope->QueryCapability == null)
+			return false;
+		byte[] name = Encoding.UTF8.GetBytes("TomCat.ApplicationApiV1");
+		NativeApplicationApiV1 candidate = default;
+		fixed (byte* namePointer = name)
+		{
+			uint required = 0;
+			int status = envelope->QueryCapability(
+				new NativeUtf8View(namePointer, (ulong)name.Length), 1,
+				&candidate, (uint)sizeof(NativeApplicationApiV1), &required);
+			if (status != 0 || required > (uint)sizeof(NativeApplicationApiV1))
+				return false;
+		}
+		application = candidate;
+		return application.Version == 1
+			&& application.Size >= (uint)sizeof(NativeApplicationApiV1)
+			&& application.RequestExit != null && application.HasWindow != null;
 	}
 
 	private static bool TryReadSaveDataCapability(NativeApiV1* api,
@@ -1901,7 +1937,12 @@ internal static unsafe partial class NativeBridge
 				null, 0, &required);
 			if (status == (int)SaveReadStatus.Missing)
 				return SaveSlotReadResult.Missing();
-			if (status < 0)
+			if (status == (int)SaveReadStatus.Corrupted)
+				return new SaveSlotReadResult(SaveReadStatus.Corrupted,
+					0, 0, []);
+			// BufferTooSmall with a required size is the probe answer for a
+			// populated slot; every other negative status is a real failure.
+			if (status < 0 && (status != NativeBufferTooSmall || required == 0))
 				Check(status, "SaveData.Read");
 			if (required > ManagedAbi.SaveDataMaximumPayloadBytes)
 				throw new TomCatException("SaveData.Read returned an invalid payload size.");
@@ -2002,6 +2043,36 @@ internal static unsafe partial class NativeBridge
 			}
 			return slots;
 		}
+	}
+
+	// ---- Application service (optional TomCat.ApplicationApiV1 capability) ----
+
+	internal static void ApplicationRequestExit(int exitCode)
+	{
+		EnsureMainThread();
+		RequireApplication(s_applicationApi.RequestExit != null,
+			"Application.Quit");
+		Check(s_applicationApi.RequestExit(exitCode), "Application.Quit");
+	}
+
+	internal static bool ApplicationHasWindow
+	{
+		get
+		{
+			EnsureMainThread();
+			RequireApplication(s_applicationApi.HasWindow != null,
+				"Application.HasWindow");
+			int hasWindow = 0;
+			Check(s_applicationApi.HasWindow(&hasWindow), "Application.HasWindow");
+			return hasWindow != 0;
+		}
+	}
+
+	private static void RequireApplication(bool condition, string operation)
+	{
+		if (!Volatile.Read(ref s_applicationBound) || !condition)
+			throw new TomCatException(
+				$"{operation} requires the optional TomCat.ApplicationApiV1 capability.");
 	}
 
 	internal static bool InputGamepadBoolean(uint gamepad,

@@ -295,6 +295,15 @@ public unsafe struct NativeApplicationPathsApiV1
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeApplicationApiV1
+{
+	public uint Version;
+	public uint Size;
+	public delegate* unmanaged[Cdecl]<int, int> RequestExit;
+	public delegate* unmanaged[Cdecl]<int*, int> HasWindow;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public unsafe struct NativeSaveDataSlotSummaryV1
 {
 	public const int MaximumSlotUtf8Bytes = 64;
