@@ -8,8 +8,10 @@
 // Compatibility contract (v1):
 //   * Modules are built against the same engine headers, the same MSVC
 //     toolchain and the same entt/yaml-cpp revisions as the host binary. The
-//     host verifies ModuleAbiVersion and EngineBuildID before calling into the
-//     module and rejects every other combination.
+//     host verifies a nonempty manifest EngineBuildID before loading the
+//     library. An omitted/empty ID is unpinned and is the module author's
+//     responsibility. The module validates the host's ModuleAbiVersion in
+//     TomCatModuleMain before registering capabilities.
 //   * The host table below is append-only: new capabilities are added as new
 //     trailing fields and a new capability version. Never reorder or remove
 //     existing fields.
