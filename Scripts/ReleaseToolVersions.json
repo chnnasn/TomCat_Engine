@@ -10,5 +10,10 @@
     "url": "https://www.enigmaprotector.com/assets/files/enigmavb.exe",
     "sha256": "AB743F5E3DD927A288E126BBB053D367F270592E89378C9A06B7F3B15FA1EE35",
     "signerThumbprint": "2603B1C2032C7C286F56FB80A638A2B1EC8E8AC9"
+  },
+  "mesa": {
+    "version": "26.2.3",
+    "url": "https://github.com/pal1000/mesa-dist-win/releases/download/26.2.3/mesa3d-26.2.3-release-msvc.7z",
+    "sha256": "3f3613adb43cfd0f2e665ce2400b130c275f0b3317cb3a05566320a3a67589ed"
   }
 }
