@@ -1,6 +1,6 @@
 # TomCat 中文文档索引
 
-核对日期：2026-09-20。本文覆盖仓库自有文档；`vendor/`、`TomCat/vendor/` 内的上游资料及许可证按原项目维护。
+核对日期：2026-10-01。本文覆盖仓库自有文档；`vendor/`、`TomCat/vendor/` 内的上游资料及许可证按原项目维护。
 
 | 文档 | 中文版本 | 英文版本 |
 | --- | --- | --- |
@@ -21,6 +21,8 @@
 | 分帧激活、国际化、2D 制作与媒体生产 | [P1 使用与边界](P1_PRODUCTION.md) | — |
 | 编辑器面板、资源检查器与界面约定 | [UI 与交互记录](EDITOR_UX_REWORK.md) | — |
 
+最新生产验收入口：[生产验收与构建配置](PRODUCTION_ACCEPTANCE.md)。
+
 ## 最新桌面演示（2026-09-20）
 
 [录制说明](portfolio/README.md)收录 5 段新 GIF：Hub 模板、资源 Inspector、Console 搜索、
@@ -31,9 +33,9 @@ Profiler 与物理播放控制，另有 3 张截图。[capture.json](portfolio/2
 ## 版本依据
 
 产品和格式版本以 [Version.h](../TomCat/src/TomCat/Core/Version.h) 为准。
-当前产品版本为 `0.4.0`，项目写入 v4、场景写入 v11、Prefab 写入 v1、TCPAK 写入 v7；
-TCPAK 读取兼容 v5/v6/v7，Native ABI 为 v1、Managed ABI 为 v5、脚本清单为 v1。
-TCPAK v6 引入 BootManifest，v7 在索引中增加逐条目 SHA-256 摘要。
+当前产品版本为 `0.4.0`，项目写入 v4、场景写入 v11、Prefab 写入 v1、TCPAK 写入 v8；
+TCPAK 读取兼容 v5/v6/v7/v8，Native ABI 为 v1、Managed ABI 为 v5、脚本清单为 v1。
+TCPAK v6 引入 BootManifest，v7 在索引中增加逐条目 SHA-256 摘要，v8 增加原生模块发布载荷。
 
 ## 验证入口
 
@@ -43,8 +45,14 @@ TCPAK v6 引入 BootManifest，v7 在索引中增加逐条目 SHA-256 摘要。
 # Windows：托管、原生、Editor、Hub、CLI、Player 与模板/启动回归
 powershell -ExecutionPolicy Bypass -File Scripts/Run-Regressions.ps1
 
-# Web：先生成 tomcat_editor.js/.wasm/.data，再运行无图形上下文的协议回归
-node Web/tests/editor-rpc.cjs build/web
+# Web：完整托管发布与真实浏览器生命周期冒烟
+./Scripts/Build-WebManaged.ps1
+npm ci --prefix Web/tests --ignore-scripts
+node Web/tests/node_modules/playwright/cli.js install chromium
+./Scripts/Run-WebBrowserSmoke.ps1
+
+# 5000 实体的 10 分钟帧耗时/内存验收
+./Scripts/Run-ProductionSoak.ps1 -DurationSeconds 600
 ```
 
 Windows CI 使用 [.github/workflows/regressions.yml](../.github/workflows/regressions.yml)。

@@ -1390,6 +1390,9 @@ namespace TomCat {
 			if (m_SceneState == SceneState::Edit)
 				CommitImmediateSceneTransaction("Create Sprite");
 		});
+		m_SceneHierarchyPanel.SetScriptOpenCallback([this](AssetHandle handle) {
+			m_ContentBrowserPanel.OpenDiagnosticSource(AssetManager::Get().GetRegistry().GetFileSystemPath(handle));
+		});
 		m_SceneHierarchyPanel.SetAssetRevealCallback([this](AssetHandle handle) {
 			if (FindBuiltInSpriteAsset(handle))
 			{

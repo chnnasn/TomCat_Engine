@@ -61,6 +61,7 @@ namespace TomCat {
 		void DrawCSharpScripts(Entity entity);
 
 	private:
+		std::optional<CSharpScriptEntry> m_ScriptClipboard;
 		HierarchyPanelShared& m_Shared;
 		SceneAuthoringEditorsPanel& m_Authors;
 		std::filesystem::path m_InspectorAssetPath, m_LockedInspectorAssetPath;

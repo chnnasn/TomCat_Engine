@@ -248,7 +248,9 @@ namespace TomCat {
 			"BuildScene-" + std::to_string(static_cast<uint64_t>(scene)));
 		Ref<Scene> staged = CreateRef<Scene>();
 		SceneSerializer serializer(staged);
-		const bool deserialized = serializer.DeserializeDocument(bytes, diagnosticPath, true);
+		// Runtime loading keeps asset handles; rendering resolves GPU resources lazily.
+		// Headless Players have no graphics context, just like the async decode path.
+		const bool deserialized = serializer.DeserializeDocument(bytes, diagnosticPath, false);
 		if (!deserialized)
 			return Fail("build Scene handle " + std::to_string(static_cast<uint64_t>(scene))
 				+ " could not be fully deserialized");
@@ -717,7 +719,7 @@ namespace TomCat {
 			Entity to = m_ActiveScene->CreateEntityWithUUID(identities.at(id), from.GetName());
 			if (!to) { rollback(); error = "could not create Scene entity"; return false; }
 			created.push_back(to.GetUUID());
-			if (!ComponentCodecs::CopyAuthoringComponents(from, to, true, error)) { rollback(); return false; }
+			if (!ComponentCodecs::CopyAuthoringComponents(from, to, false, error)) { rollback(); return false; }
 		}
 		for (const auto& [child, parent] : staged->m_ParentMap)
 			if (!m_ActiveScene->SetParent(m_ActiveScene->FindEntityByUUID(identities.at(child)), m_ActiveScene->FindEntityByUUID(identities.at(parent))))

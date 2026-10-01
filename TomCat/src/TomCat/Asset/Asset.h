@@ -92,6 +92,7 @@ namespace TomCat {
 		std::string Name;
 		AssetType Type = AssetType::None;
 		SpriteSubAssetData Sprite;
+		bool operator==(const AssetSubAsset&) const = default;
 	};
 
 	struct AssetMetadata
@@ -102,6 +103,7 @@ namespace TomCat {
 		AssetImportSettings ImportSettings;
 		std::vector<AssetSubAsset> SubAssets;
 		bool IsMissing = false; // Runtime/cache state; never written to .tcmeta.
+		bool operator==(const AssetMetadata&) const = default;
 
 		explicit operator bool() const
 		{

@@ -44,14 +44,15 @@ namespace {
 
 }
 
-int main()
+int main(int argc, char** argv)
 {
 	TomCat::Log::Init();
 	try
 	{
 		const std::filesystem::path projectPath = std::filesystem::path(
 			"Samples/CoinRunner") / "Project.tcproj";
-		if (std::filesystem::exists(projectPath))
+		const bool refreshScene = argc == 2 && std::string(argv[1]) == "--refresh-scene";
+		if (std::filesystem::exists(projectPath) && !refreshScene)
 		{
 			std::cout << "CoinRunner project already exists; delete it first to "
 				"regenerate.\n";
@@ -67,8 +68,7 @@ int main()
 		config.EditorVersion = std::string(TomCat::Version::ProductVersion);
 		config.Template = "2D";
 		config.AssetDirectory = "Assets";
-		TomCat::Ref<TomCat::Project> project = TomCat::Project::CreateNew(
-			projectPath, config);
+		TomCat::Ref<TomCat::Project> project = refreshScene ? TomCat::Project::Load(projectPath) : TomCat::Project::CreateNew(projectPath, config);
 		Require(project != nullptr, "project creation failed");
 
 		auto scene = TomCat::CreateRef<TomCat::Scene>();
@@ -78,9 +78,9 @@ int main()
 		TomCat::Entity camera = scene->CreateEntityWithUUID(
 			TomCat::UUID(0xC01A000000000001ULL), "MainCamera");
 		auto& cameraComponent = camera.AddComponent<TomCat::C_Camera>();
-		cameraComponent._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
-		camera.GetComponent<TomCat::Transform>()._Translation = glm::vec3(4.0f,
-			2.0f, 0.0f);
+		Require(cameraComponent._Camera.SetOrthographic(16.0f, 0.0f, 1000.0f), "invalid sample camera");
+		camera.GetComponent<TomCat::Transform>()._Translation = glm::vec3(10.0f,
+			3.0f, 0.0f);
 
 		// Ground strip: one static box from x = -2 to x = 22.
 		{
@@ -91,6 +91,7 @@ int main()
 			ground.GetComponent<TomCat::Transform>()._Scale = glm::vec3(24.0f,
 				1.0f, 1.0f);
 			auto& sprite = ground.AddComponent<TomCat::SpriteRenderer>();
+            sprite.SpriteHandle = TomCat::AssetHandle(TomCat::BuiltInSquareSpriteHandleValue);
 			sprite._Color = glm::vec4(0.24f, 0.55f, 0.30f, 1.0f);
 			auto& body = ground.AddComponent<TomCat::Rigidbody2D>();
 			body.Type = TomCat::Rigidbody2D::BodyType::Static;
@@ -127,6 +128,7 @@ int main()
 			player.GetComponent<TomCat::Transform>()._Scale = glm::vec3(0.8f,
 				0.8f, 1.0f);
 			auto& sprite = player.AddComponent<TomCat::SpriteRenderer>();
+            sprite.SpriteHandle = TomCat::AssetHandle(TomCat::BuiltInSquareSpriteHandleValue);
 			sprite._Color = glm::vec4(0.9f, 0.35f, 0.25f, 1.0f);
 			auto& body = player.AddComponent<TomCat::Rigidbody2D>();
 			body.Type = TomCat::Rigidbody2D::BodyType::Dynamic;
@@ -154,6 +156,7 @@ int main()
 			coin.GetComponent<TomCat::Transform>()._Scale = glm::vec3(0.6f, 0.6f,
 				1.0f);
 			auto& sprite = coin.AddComponent<TomCat::SpriteRenderer>();
+            sprite.SpriteHandle = TomCat::AssetHandle(TomCat::BuiltInCircleSpriteHandleValue);
 			sprite._Color = glm::vec4(1.0f, 0.84f, 0.0f, 1.0f);
 			auto& body = coin.AddComponent<TomCat::Rigidbody2D>();
 			body.Type = TomCat::Rigidbody2D::BodyType::Static;
@@ -170,12 +173,23 @@ int main()
 				std::move(script));
 		}
 
+		// Preserve authored local transforms before parenting or serialization.
+        for (auto id : scene->GetEntityOrder()) {
+            auto& t = scene->FindEntityByUUID(id).GetComponent<TomCat::Transform>();
+            t._LocalTranslation=t._Translation; t._LocalRotation=t._Rotation; t._LocalScale=t._Scale;
+        }
+
 		// Score text
 		{
 			TomCat::Entity text = scene->CreateEntityWithUUID(
 				TomCat::UUID(0xC01A000000000200ULL), "ScoreText");
-			text.AddComponent<TomCat::RectTransform>();
-			text.AddComponent<TomCat::UIText>();
+			auto canvas=scene->CreateEntityWithUUID(TomCat::UUID(0xC01A000000000202ULL), "HUD");
+            canvas.AddComponent<TomCat::Canvas>();
+            scene->SetParent(text,canvas);
+            auto& rect=text.AddComponent<TomCat::RectTransform>();
+            rect.AnchorMin = rect.AnchorMax = rect.Pivot = {0, 1};
+            rect.SizeDelta = {1000, 100}; rect.AnchoredPosition = {32, -32};
+            auto& label=text.AddComponent<TomCat::UIText>(); label.FontSize=40; label.Text="Coins: 0/4";
 		}
 
 		// Game manager
@@ -203,7 +217,7 @@ int main()
 		for (const char* name : { "PlayerController.cs", "Coin.cs",
 			"GameManager.cs" })
 		{
-			std::filesystem::copy_file(scriptSources / name,
+			if (!refreshScene) std::filesystem::copy_file(scriptSources / name,
 				scriptsDirectory / name,
 				std::filesystem::copy_options::overwrite_existing);
 		}

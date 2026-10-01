@@ -232,26 +232,46 @@ namespace HierarchyDetail {
 			ImGui::SetTooltip("%s", metadata->Tooltip.c_str());
 	}
 
+	inline std::string ScriptDisplayName(std::string_view name)
+	{
+		if (name.starts_with("m_")) name.remove_prefix(2);
+		while (!name.empty() && name.front() == '_') name.remove_prefix(1);
+		std::string result;
+		for (size_t i=0; i<name.size(); ++i)
+		{
+			const auto c = static_cast<unsigned char>(name[i]);
+			if (c == '_') { if (!result.empty() && result.back() != ' ') result += ' '; continue; }
+			if (i > 0 && std::isupper(c) && !result.empty() && result.back() != ' '
+				&& (std::islower(static_cast<unsigned char>(name[i-1]))
+					|| (i+1<name.size() && std::islower(static_cast<unsigned char>(name[i+1]))))) result += ' ';
+			result += result.empty() ? static_cast<char>(std::toupper(c)) : static_cast<char>(c);
+		}
+		return result;
+	}
+
 	inline bool DrawScriptFieldValue(ScriptField& field,
-		const EditorScriptFieldMetadata* metadata, bool orphan)
+		const EditorScriptFieldMetadata* metadata, bool orphan, const HierarchyPanelShared* shared = nullptr)
 	{
 		ImGui::PushID(field.FieldID.empty() ? field.Name.c_str() : field.FieldID.c_str());
 		std::string label = field.Name.empty() ? "Unnamed Field" : field.Name;
 		if (metadata && !metadata->Name.empty())
 			label = metadata->Name;
+		label = ScriptDisplayName(label);
 		if (orphan)
 			label += " (Orphan)";
 
-		if (orphan)
-			ImGui::TextColored(ImVec4(1.0f, 0.68f, 0.25f, 1.0f), "%s", label.c_str());
-		else
-			ImGui::TextUnformatted(label.c_str());
-		if (metadata && field.Type == ScriptFieldType::Enum && !metadata->TypeName.empty())
-		{
-			ImGui::SameLine();
-			ImGui::TextDisabled("(%s)", metadata->TypeName.c_str());
+		const bool table = ImGui::BeginTable("FieldRow", 2, ImGuiTableFlags_SizingStretchProp);
+		if (table) {
+			ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+			ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
+			ImGui::TableNextRow(); ImGui::TableNextColumn();
 		}
+		ImGui::AlignTextToFramePadding();
+		if (orphan) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.68f, 0.25f, 1.0f));
+		ImGui::TextUnformatted(label.c_str());
+		if (orphan) ImGui::PopStyleColor();
 		DrawScriptFieldTooltip(metadata);
+		if (table) ImGui::TableNextColumn();
 		ImGui::SetNextItemWidth(-1.0f);
 
 		if (!IsScriptFieldValueCompatible(field.Type, field.Value))
@@ -264,6 +284,7 @@ namespace HierarchyDetail {
 				field.Value = DefaultScriptFieldValue(field.Type);
 				changed = true;
 			}
+			if (table) ImGui::EndTable();
 			ImGui::PopID();
 			return changed;
 		}
@@ -383,7 +404,22 @@ namespace HierarchyDetail {
 			case ScriptFieldType::AssetRef:
 			{
 				auto& value = std::get<uint64_t>(field.Value);
-				changed = ImGui::InputScalar("##Value", ImGuiDataType_U64, &value);
+				const bool assetField = field.Type == ScriptFieldType::AssetRef;
+				auto& registry = AssetManager::Get().GetRegistry();
+				const auto* asset = assetField ? registry.GetMetadata(AssetHandle(value)) : nullptr;
+				Entity target = !assetField && shared && shared->Context ? shared->Context->FindEntityByUUID(UUID(value)) : Entity{};
+				std::string reference = value == 0 ? "None" : asset ? PathToUTF8(asset->FilePath.stem()) : target ? target.GetName() : "Missing";
+				EditorIcon icon = !assetField ? EditorIcon::Entity : asset && asset->Type==AssetType::Audio ? EditorIcon::Audio : EditorIcon::GenericFile;
+				const float picker = ImGui::GetFrameHeight();
+				const float available = ImGui::GetContentRegionAvail().x;
+				const ImVec2 start = ImGui::GetCursorScreenPos();
+				ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0,0.5f));
+				if (ImGui::Button(("    " + reference + "##Reference").c_str(), ImVec2(std::max(1.0f,available-picker-ImGui::GetStyle().ItemInnerSpacing.x),0))
+					&& assetField && shared && shared->AssetReveal && asset) shared->AssetReveal(AssetHandle(value));
+				ImGui::PopStyleVar();
+				if (shared) DrawIcon(shared->Icons, icon, ImVec2(start.x+3,start.y+3), ImVec2(start.x+picker-3,start.y+picker-3));
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nHandle: %llu\nDrag a reference or use the picker.", asset ? PathToUTF8(asset->FilePath).c_str() : reference.c_str(), static_cast<unsigned long long>(value));
+
 				if (ImGui::BeginDragDropTarget())
 				{
 					const char* payloadID = field.Type == ScriptFieldType::Entity
@@ -398,10 +434,32 @@ namespace HierarchyDetail {
 					}
 					ImGui::EndDragDropTarget();
 				}
+				ImGui::SameLine(0,ImGui::GetStyle().ItemInnerSpacing.x);
+				if (ImGui::Button("o##ReferencePicker",ImVec2(picker,0))) ImGui::OpenPopup("ReferencePicker");
+				if (ImGui::BeginPopup("ReferencePicker")) {
+					if (ImGui::Selectable("None",value==0)) {value=0;changed=true;}
+					ImGui::Separator();
+					if (assetField) {
+						for (const auto& [handle,candidate] : registry.GetAssets()) {
+							if (candidate.IsMissing) continue;
+							if (ImGui::Selectable((PathToUTF8(candidate.FilePath)+"##"+std::to_string(static_cast<uint64_t>(handle))).c_str(),value==static_cast<uint64_t>(handle))) {
+								value=static_cast<uint64_t>(handle);changed=true;
+							}
+						}
+					} else if (shared && shared->Context) {
+						for (UUID id : shared->Context->GetEntityOrder()) {
+							auto candidate=shared->Context->FindEntityByUUID(id);
+							if (ImGui::Selectable((candidate.GetName()+"##"+std::to_string(static_cast<uint64_t>(id))).c_str(),value==static_cast<uint64_t>(id))) {value=static_cast<uint64_t>(id);changed=true;}
+						}
+					}
+					ImGui::EndPopup();
+				}
+
 				break;
 			}
 		}
 		DrawScriptFieldTooltip(metadata);
+		if (table) ImGui::EndTable();
 		ImGui::PopID();
 		return changed;
 	}
@@ -1250,25 +1308,30 @@ inline bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
 		return changed;
 	}
 
-    static void DrawPropertyActions(const ComponentDescriptor& descriptor, Entity entity, const std::function<void()>& onModified)
+    static bool DrawPropertyActions(const ComponentDescriptor* descriptor, Entity entity, const std::function<void()>& onModified, bool removable)
     {
         static uint64_t copiedType = 0;
         static std::map<std::string, PropertyValue> copied;
-        if (descriptor.Properties.empty()) return;
-        if (ImGui::MenuItem("Copy property values"))
+        const bool hasProperties = descriptor && !descriptor->Properties.empty();
+        const bool reset = ImGui::MenuItem("Reset", nullptr, false, hasProperties);
+        ImGui::Separator();
+        const bool remove = ImGui::MenuItem("Remove Component", nullptr, false, removable);
+        ImGui::MenuItem("Move Up", nullptr, false, false);
+        ImGui::MenuItem("Move Down", nullptr, false, false);
+        if (ImGui::MenuItem("Copy Component", nullptr, false, hasProperties))
         {
-            copied.clear(); copiedType=static_cast<uint64_t>(descriptor.TypeId);
-            for(const auto& property:descriptor.Properties)
+            copied.clear(); copiedType=static_cast<uint64_t>(descriptor->TypeId);
+            for(const auto& property:descriptor->Properties)
                 if(!property.EntityReference) copied.emplace(property.StableName,property.Get(entity));
         }
-        const bool paste = ImGui::MenuItem("Paste property values",nullptr,false,copiedType==static_cast<uint64_t>(descriptor.TypeId) && !copied.empty());
-        const bool reset = ImGui::MenuItem("Reset property values");
+        ImGui::MenuItem("Paste Component As New", nullptr, false, false);
+        const bool paste = ImGui::MenuItem("Paste Component Values",nullptr,false,hasProperties && copiedType==static_cast<uint64_t>(descriptor->TypeId) && !copied.empty());
         if (paste || reset)
         {
             std::vector<std::pair<const PropertyDescriptor*,PropertyValue>> before;
             std::string error;
             bool accepted=true;
-            for(const auto& property:descriptor.Properties)
+            for(const auto& property:descriptor->Properties)
             {
                 const PropertyValue* value=nullptr;
                 if(reset && property.DefaultValue) value=&*property.DefaultValue;
@@ -1285,37 +1348,32 @@ inline bool DrawVec3Control(const std::string& label, glm::vec3& values, float r
             }
         }
         ImGui::Separator();
+        ImGui::MenuItem("Find References In Scene", nullptr, false, false);
+        ImGui::Separator();
+        ImGui::MenuItem("Properties...", nullptr, false, false);
+        ImGui::MenuItem("Edit Script", nullptr, false, false);
+        return remove;
     }
 
-template<typename T, typename UIFunction, typename ModifiedFunction>
-inline void DrawComponent(const std::string& name, Entity entity,
-	const Ref<EditorIconSet>& icons, EditorIcon icon,
-	UIFunction uiFunction, ModifiedFunction onModified, bool editable = true)
+template<typename ModifiedFunction>
+inline bool DrawComponentHeader(const std::string& name, const Ref<EditorIconSet>& icons,
+	EditorIcon icon, bool* enabled, bool editable, ModifiedFunction onModified, const char* popup)
 {
-	// 检查实体是否有效
-	if (!entity)
-		return;
-
-	const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
-	if (entity.HasComponent<T>())
-	{
-		auto& component = entity.GetComponent<T>();
-		ImGui::PushID(name.c_str());
-
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
 		ImGui::Separator();
 		// Let ImGui draw the framed, full-width tree row and folding arrow. The
 		// remaining header content is drawn on top of the empty row so every part
 		// stays in one aligned header instead of being laid out as separate rows.
-		const ImGuiTreeNodeFlags headerFlags = treeNodeFlags | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-		bool open = ImGui::TreeNodeEx((void*)typeid(T).hash_code(), headerFlags, "##ComponentHeader");
+		const ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+		bool open = ImGui::TreeNodeEx("##ComponentHeader", headerFlags, "##ComponentHeader");
+		if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup(popup);
+		ImGui::SetItemAllowOverlap();
 		const ImVec2 headerMin = ImGui::GetItemRectMin();
 		const ImVec2 headerMax = ImGui::GetItemRectMax();
 		const float headerHeight = headerMax.y - headerMin.y;
 		ImVec2 afterHeaderCursor = ImGui::GetCursorPos();
 		ImGui::PopStyleVar();
 
-		bool* enabled = GetComponentEnabledFlag(component);
 		const float contentGap = std::max(3.0f,
 			std::round(ImGui::GetFontSize() * 0.16f));
 		float leftContentX = headerMin.x + ImGui::GetTreeNodeToLabelSpacing();
@@ -1341,7 +1399,9 @@ inline void DrawComponent(const std::string& name, Entity entity,
 		}
 		const float textY = headerMin.y + (headerHeight - ImGui::GetTextLineHeight()) * 0.5f;
 		ImGui::SetCursorScreenPos(ImVec2(leftContentX, textY));
+		ImGui::PushClipRect(ImVec2(leftContentX, headerMin.y), ImVec2(std::max(leftContentX, headerMax.x-headerHeight), headerMax.y), true);
 		ImGui::TextUnformatted(name.c_str());
+		ImGui::PopClipRect();
 
 		// The component menu is the only right-side control. It uses the exact
 		// header height and draws a vertical three-dot glyph in the same bar.
@@ -1364,19 +1424,38 @@ inline void DrawComponent(const std::string& name, Entity entity,
 			drawList->AddCircleFilled(ImVec2(dotCenter.x, dotCenter.y + dot * dotOffset), dotRadius, ImGui::GetColorU32(ImGuiCol_Text));
 		if (menuClicked)
 		{
-			ImGui::OpenPopup("ComponentSettings");
+			ImGui::OpenPopup(popup);
 		}
 		ImGui::SetCursorPos(afterHeaderCursor);
+
+	return open;
+}
+
+template<typename T, typename UIFunction, typename ModifiedFunction>
+inline void DrawComponent(const std::string& name, Entity entity,
+	const Ref<EditorIconSet>& icons, EditorIcon icon,
+	UIFunction uiFunction, ModifiedFunction onModified, bool editable = true)
+{
+	// 检查实体是否有效
+	if (!entity)
+		return;
+
+	if (entity.HasComponent<T>())
+	{
+		auto& component = entity.GetComponent<T>();
+		ImGui::PushID(name.c_str());
+
+		const bool open = DrawComponentHeader(name, icons, icon, GetComponentEnabledFlag(component), editable, onModified, "ComponentSettings");
 
 		bool removeComponent = false;
 		if (ImGui::BeginPopup("ComponentSettings"))
 		{
 			ImGui::BeginDisabled(!editable);
+            const ComponentDescriptor* properties = nullptr;
             for(const auto& descriptor:ComponentRegistry::Get().GetDescriptors())
-                if(descriptor.DisplayName==name && descriptor.Has(entity)) { DrawPropertyActions(descriptor,entity,onModified); break; }
-            if(name != "Transform" && name != "Rect Transform")
-				if (ImGui::MenuItem("Remove component"))
-					removeComponent = true;
+                if(descriptor.DisplayName==name && descriptor.Has(entity)) { properties = &descriptor; break; }
+            removeComponent = DrawPropertyActions(properties, entity, onModified,
+                name != "Transform" && name != "Rect Transform");
 			ImGui::EndDisabled();
 
 			ImGui::EndPopup();
@@ -1408,31 +1487,35 @@ inline void DrawComponent(const std::string& name, Entity entity,
 			return;
 
 		ImGui::PushID(descriptor.StableName.c_str());
-		ImGui::Separator();
-		const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen
-			| ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth
-			| ImGuiTreeNodeFlags_FramePadding;
-		const bool open = ImGui::TreeNodeEx("##RegisteredComponent", flags,
-			"%s", descriptor.DisplayName.c_str());
+		const PropertyDescriptor* enabledProperty = nullptr;
+		bool enabled = true;
+		if (!targets)
+			for (const auto& property : descriptor.Properties)
+				if (property.StableName == "Enabled" && property.Kind == PropertyKind::Bool)
+				{
+					enabledProperty = &property;
+					enabled = std::get<bool>(property.Get(entity));
+					break;
+				}
+		const bool open = DrawComponentHeader(descriptor.DisplayName, {}, EditorIcon::Count,
+            enabledProperty ? &enabled : nullptr, editable && !targets, [&] {
+				std::string error;
+				if (enabledProperty->Set(entity, PropertyValue(enabled), error)) onModified();
+				else TC_Core_Warn("Could not change component enabled state: {0}", error);
+			}, "RegisteredComponentSettings");
 
 		bool remove = false;
-		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 8.0f);
-		ImGui::BeginDisabled(!editable || targets);
-		if (ImGui::SmallButton("..."))
-			ImGui::OpenPopup("RegisteredComponentSettings");
-		ImGui::EndDisabled();
 		if (ImGui::BeginPopup("RegisteredComponentSettings"))
 		{
-			ImGui::BeginDisabled(!editable);
-            DrawPropertyActions(descriptor,entity,onModified);
-			if (ImGui::MenuItem("Remove component"))
-				remove = true;
+			ImGui::BeginDisabled(!editable || targets);
+            remove = DrawPropertyActions(&descriptor,entity,onModified,true);
 			ImGui::EndDisabled();
 			ImGui::EndPopup();
 		}
 
 		if (open)
 		{
+			ImGui::TreePush("RegisteredComponentBody");
 			ImGui::BeginDisabled(!editable);
 			const uint64_t componentType = static_cast<uint64_t>(descriptor.TypeId);
 			if (componentType == ComponentIds::Canvas)
@@ -1441,6 +1524,7 @@ inline void DrawComponent(const std::string& name, Entity entity,
 				ImGui::TextDisabled("World-space text rendered by the active camera");
 			for (const PropertyDescriptor& property : descriptor.Properties)
 			{
+				if (&property == enabledProperty) continue;
 				ImGui::PushID(property.StableName.c_str());
                 PropertyValue value = property.Get(entity);
                 bool mixed=false;

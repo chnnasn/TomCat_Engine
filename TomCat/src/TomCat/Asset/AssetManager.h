@@ -131,7 +131,9 @@ namespace TomCat {
 		void Shutdown();
 		bool IsInitialized() const { return m_RegistryInitialized || IsCookedPackageMounted(); }
 
-		bool Refresh();
+		// Discovery polling preserves live resources when metadata is unchanged.
+		// Explicit refresh still invalidates all resources, including source edits.
+		bool Refresh(bool invalidateRuntimeResources = true);
 		AssetHandle ImportAsset(const std::filesystem::path& path);
 		bool SetImportSettings(AssetHandle handle, const AssetImportSettings& settings);
 		AssetLoadResult LoadImportedArtifact(AssetHandle handle,

@@ -16,6 +16,8 @@ namespace TomCat {
 
 	class Project;
 
+	enum class ScriptBuildProfile : uint8_t { Development, Production };
+
 	enum class ScriptBuildState : uint8_t
 	{
 		Unconfigured = 0,
@@ -69,7 +71,8 @@ namespace TomCat {
 		// the Managed project files in a repository ancestor.
 		bool Configure(const Ref<Project>& project,
 			std::filesystem::path managedApiReference = {},
-			std::filesystem::path generatorReference = {});
+			std::filesystem::path generatorReference = {},
+            ScriptBuildProfile profile = ScriptBuildProfile::Development);
 		void Reset();
 
 		bool RefreshSourceState();
@@ -133,6 +136,7 @@ namespace TomCat {
 		void Emit(const ScriptCompilerDiagnostic& diagnostic) const;
 
 	private:
+		ScriptBuildProfile m_Profile = ScriptBuildProfile::Development;
 		Ref<Project> m_Project;
 		std::filesystem::path m_ScriptProjectDirectory;
 		std::filesystem::path m_AssembliesDirectory;

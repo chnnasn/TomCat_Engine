@@ -1,6 +1,6 @@
 # Experimental Web Player and ImGui editor
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-01 · [All documentation](../docs/README.md)
 
 This target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader, scene
 runtime, Renderer2D, Box2D and TomCat's C# scripting ABI in a browser. The final
@@ -11,8 +11,9 @@ Web Editor users do not install a local .NET SDK.
 
 The [2026-09-20 showcase](../docs/portfolio/README.md) records the Windows desktop
 applications. Shared source does not make those clips browser acceptance evidence;
-the browser observations below retain their original dates. This documentation
-refresh did not rerun the Web build or protocol regression.
+the historical browser observations below retain their original dates. The full
+managed publish and local Edge lifecycle smoke passed on 2026-10-01; see
+[production acceptance](../docs/PRODUCTION_ACCEPTANCE.md) for scope and remaining checks.
 
 ## Build
 
@@ -31,8 +32,8 @@ to `build/web-managed`. `main.js` exposes `globalThis.TomCatWeb` after the
 `tomcat-web-ready` event. The build still expects a hosting page to supply the
 canvas, navigation and persistence.
 
-Serve `tomcat_player.js`, `.wasm` and `.data` from the same directory using HTTP
-localhost or HTTPS. The page requires these response headers for pthread Workers:
+Serve the complete `build/web-managed` directory, including `main.js` and
+`_framework`, over localhost HTTP or HTTPS. The page requires these response headers for pthread Workers:
 
 ```text
 Cross-Origin-Opener-Policy: same-origin
@@ -97,8 +98,8 @@ external C# editors, layout persistence and desktop Build Settings remain unavai
 The browser now shares the desktop Play toolbar and Project Settings view source.
 Scene uses the upstream tool icons; Game renders the primary camera. Play starts
 a SceneManager-owned copy, Pause/Step advance only that copy, and Stop preserves
-the authoring scene and its history. C# scenes and missing primary cameras are
-rejected explicitly. Mutating RPCs are blocked during Play.
+the authoring scene and its history. Missing primary cameras are
+rejected explicitly; C# scenes require compiled and installed assemblies. Mutating RPCs are blocked during Play.
 For C# authoring, the host sends source text, reference-assembly bytes and
 `ScriptAssets.json` to `TomCatWeb.compileAndInstall(request)`. Roslyn and the
 TomCat source generator run inside the browser; successful portable DLL/PDB
@@ -184,8 +185,8 @@ Chinese IME composition or all desktop panel widgets.
 - Existing desktop builds retain their implementation. Full Windows regression
   coverage is supplied by the existing CI workflow; Web validation does not replace it.
 
-The shared current TCPAK writer is v7 (per-entry SHA-256); the reader accepts
-v5/v6/v7. Format compatibility does not remove the Web feature restrictions above.
+The shared current TCPAK writer is v8 (per-entry SHA-256); the reader accepts
+v5/v6/v7/v8. Format compatibility does not remove the Web feature restrictions above.
 The repository's Windows regression workflow does not replace an actual
 browser-wasm publish and browser lifecycle test.
 
@@ -213,3 +214,7 @@ Game renders the active scene's primary camera even before Play and after Stop.
 In edit mode this only renders: it does not start physics or scripts. A missing
 camera displays `No cameras rendering` instead of requiring Play.
 The Web asset RPC also exposes the upstream's bundled Circle/Square textures.
+
+## 2026-10-01 build status / 构建状态
+
+`Scripts/Build-WebManaged.ps1` 已通过原生编译、WASM 链接及 .NET browser-wasm 发布。托管站点应部署完整 `build/web-managed` 目录（包括 `_framework`、`main.js` 及宿主页面）；旧的 `tomcat_player.js/.wasm/.data` 指引仅适用于独立原生 Emscripten 目标。CI 与浏览器验收入口见 [生产验收](../docs/PRODUCTION_ACCEPTANCE.md)。

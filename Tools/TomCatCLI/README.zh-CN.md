@@ -80,3 +80,7 @@ Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe cook --project Samples/
 
 本页命令按当前源码核对；[2026-09-20 桌面录屏](../../docs/portfolio/README.md)只演示 Hub/Editor，
 未重新执行 CLI Cook 或独立 Player 构建验收。完整构建回归入口见[主文档](../../README.zh-CN.md#构建)。
+
+## 脚本构建配置
+
+`cook` / `build` 默认启用正式版 C# 优化，追加 `--development` 使用未优化开发配置。两者缓存隔离并保留 portable PDB；符号不自动嵌入 Player 包。详见[生产验收](../../docs/PRODUCTION_ACCEPTANCE.md)。
