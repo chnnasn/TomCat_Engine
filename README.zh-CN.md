@@ -106,7 +106,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
 - **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
 - **编辑器**：可停靠的 Scene / Game / Hierarchy / Inspector / Project / Console / Profiler 面板、布局持久化、标签栏右键 Maximize / Close Tab / Add Tab、不可折叠的窗口标题、Hierarchy 场景可见性、带导入 Apply/Revert 的资源 Inspector、真实图片缩略图、原有 Packages 图标、可搜索诊断、Undo/Redo、自动保存/恢复、项目锁与用户设置
-- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v7，包含逐条目 SHA-256（Player 兼容读取 v5/v6/v7）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
+- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v8，包含逐条目 SHA-256（Player 兼容读取 v5/v6/v7/v8）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
 - **UI 控件与本地化**：新增滑条、滚动视图、单行 Unicode 输入框、层级主题和游戏语言表回退；支持 OS 输入法提交文字，完整组合态仍有边界，详见 [UI 控件](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **性能分析**：可视化 CPU 时间线、异步 GPU 帧计时、绘制统计、进程内存和资源分配估算；提供 [Profiler 与 C# 断点流程](docs/DEBUGGING_AND_PROFILING.md)
@@ -116,12 +116,12 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 
 - 支持的开发平台：**Windows x64**
 - 渲染后端：**OpenGL 4.6**
-- 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。该目标不支持 C# 负载、可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer。
+- 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。托管 C# 通过 .NET browser-wasm 宿主运行；可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 仍有限制。构建通过与浏览器生命周期验收分别记录。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - 从源码构建 TomCat 本身需要 **.NET 10 SDK**；打包后的 Editor 自带固定版本私有 SDK 编译游戏脚本，不读取机器上的全局 C# 环境
 - 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
-- 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；C# 采用外部 IDE 附加调试，停止 Play 后重新编译并更新脚本，不提供 Play Mode 热替换。异步场景的资源发布与激活仍在主线程，输入框尚无引擎内 IME 预编辑和候选窗定位
+- 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；C# 采用外部 IDE 附加调试，停止 Play 后重新编译并更新脚本，不提供 Play Mode 热替换。场景恢复、激活和上传已有协作式分帧预算；Windows 输入框已有 IME 预编辑和候选窗定位，详见 [P1 能力与边界](docs/P1_PRODUCTION.md)
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
 2026-09-20 核对了上面展示的界面流程，没有重新运行完整原生、托管、Player 或 Web 回归套件。
@@ -196,16 +196,16 @@ vendor/            premake 与第三方依赖
 - [x] CircleCollider2D、隐式静态刚体、Trigger、每 Fixture/项目 Layer 两级碰撞过滤、查询、运动 API 和 DistanceJoint2D
 - [x] 延迟派发的引擎监听器/C# Collision 与 Trigger 回调
 - [x] 项目级 Tag、16 个稳定 Layer 和对称 Physics 2D 碰撞矩阵设置
-- [x] Scene writer v11、reader v9-v11、注册表组件持久化与 Cooked Package v7 物理往返
+- [x] Scene writer v11、reader v9-v11、注册表组件持久化与 Cooked Package v8 物理往返
 - [x] 物理回归测试套件（`Scripts\Run-PhysicsRegression.ps1`）
 
 ### 已完成的 C#、Player、Scene 与 Prefab V1
 
 - [x] 托管运行时、源码生成器、Inspector 字段、last-good 编译、确定性生命周期/物理回调、异常隔离与可回收 Play Domain
 - [x] 独立 win-x64 Player、私有 .NET Runtime、严格版本/Hash Player Template、Build / Build And Run 与 Player 子进程冒烟测试
-- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v7 有序场景与 Player v5/v6/v7 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
+- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v8 有序场景与 Player v5/v6/v7/v8 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
 - [x] 使用稳定 LocalID 的快照 Prefab V1、Hierarchy/Joint/C# Entity 重映射、新 AttachmentID、延迟 C# 创建、Editor 创建/拖入操作与 Cook 依赖遍历
-- [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，嵌入 TCPAK v6 引入、v7 延续的 BootManifest
+- [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，嵌入 TCPAK v6 引入、v7/v8 延续的 BootManifest
 - [x] 关联/嵌套 Prefab、Override/Variant，异步读取、叠加场景、持久根对象和卸载（范围见各功能文档）
 - [x] [完整游戏验证样例 CoinRunner](Samples/CoinRunner/README.md)：制作、脚本、物理触发、计分、存档持久化、损坏恢复、打包与无头 Player 冒烟（`Scripts\Run-CoinRunnerSmoke.ps1`）；编辑器视觉、操作与 IDE 断点需独立实机验收
 - [x] 通用游戏存档系统：带校验和的版本化槽位文件、原子写入、备份轮换与损坏自动恢复；Play 模式与 Player 中可用的托管 `SaveData`/`SaveDocument` API
@@ -215,7 +215,7 @@ vendor/            premake 与第三方依赖
 - [x] ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、`.tcmeta` schema v2 与依赖图
 - [x] 后台 ImportCoordinator：内容 Hash 校验、去抖/合并、变更资产与传递反向依赖重导，以及主线程 Registry/资源发布
 - [x] 纹理导入 sRGB 设置、Mipmap 生成与 RGBA8 / BC3 产物
-- [ ] 更多生产级纹理格式与平台压缩后端
+- [x] BC1/BC3/BC5、ASTC 4×4 LDR、ETC2 RGBA8 产物、mip 链和 CPU 回退；移动 Player 是独立工作
 - [x] 带列表式切片编辑器、Rect/Pivot/Pixels Per Unit/Border 元数据的稳定 Sprite Atlas 子资源，以及自包含的 Cook/Player 载荷
 - [x] 确定性 Sprite 排序、动画 Clip，以及支持 Bool/Int/Float/Trigger 参数、AnyState 和 Exit Time 的 Animator 状态/过渡
 - [x] TTF/OTF/TTC Font 导入、主字体/Fallback/Emoji 运行时字形链与世界空间 Text，以及支持 Anchor、Pivot、布局、裁剪、射线目标、DPI 缩放、鼠标/键盘/手柄控制和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI
@@ -225,10 +225,10 @@ vendor/            premake 与第三方依赖
 ### 引擎系统与工具链
 
 - [x] Input Actions、键盘/鼠标/手柄绑定、输入上下文和重绑定
-- [x] WAV 播放与有界 PCM WAV Streaming、2D 空间音频、设备丢失恢复、AudioSource/AudioListener、Null/XAudio2 后端与 Master/Music/SFX Bus
-- [ ] OGG/Vorbis 解码（当前会明确拒绝不支持的输入，未捆绑解码器）
+- [x] WAV 播放与有界 PCM 流式播放
+- [x] 内置 stb_vorbis 的 OGG/Vorbis 导入，转为 PCM WAV 产物；支持自定义无环增益音频总线图（不含 DSP 效果）
 
-PCM WAV Streaming 在 Authoring 模式读取 Registry 解析出的源文件区间，因为 P0 Audio Importer 是逐字节透传；Cooked Player 则读取验证后的 TCPAK 区间。若未来 Authoring Importer 增加音频转码，必须改为暴露并读取验证后的 DDC Payload 区间，而不是源文件区间。
+Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的 TCPAK 区间。Vorbis 在导入时解码，当前流式播放读取 PCM，而非运行时压缩 Vorbis。
 
 - [x] Undo/Redo、自动保存/恢复与项目锁
 - [x] Editor Console：严重级别计数/过滤、重复日志折叠、Play 时清空与结构化脚本/运行时诊断

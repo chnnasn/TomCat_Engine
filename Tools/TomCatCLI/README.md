@@ -86,3 +86,7 @@ These commands were checked against source. The
 [2026-09-20 desktop recording](../../docs/portfolio/README.md) covers Hub/Editor;
 it did not rerun CLI Cook or standalone Player build acceptance. See the
 [root build guide](../../README.md#building) for the full regression entry point.
+
+## Script build profile
+
+`cook` / `build` default to optimized Production C#. Add `--development` for unoptimized Development C#. Both retain portable PDB in isolated Library build directories; symbols are not automatically embedded in the Player package. See [production acceptance](../../docs/PRODUCTION_ACCEPTANCE.md).

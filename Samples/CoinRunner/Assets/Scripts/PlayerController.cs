@@ -10,7 +10,7 @@ using TomCat;
 /// </summary>
 public sealed class PlayerController : TomCatBehaviour
 {
-    private const float MoveSpeed = 3.5f;
+    public const float MoveSpeed = 3.5f;
     private const float JumpSpeed = 6.5f;
 
     private Rigidbody2D _body = null!;

@@ -1,0 +1,47 @@
+name: Managed Web
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-wasm:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Web/tests/package-lock.json
+      - name: Install WASM workload
+        shell: pwsh
+        run: dotnet workload install wasm-tools
+      - name: Publish managed Web
+        shell: pwsh
+        run: ./Scripts/Build-WebManaged.ps1 *> web-build.log
+      - name: Install browser test dependencies
+        shell: pwsh
+        run: |
+          npm ci --prefix Web/tests --ignore-scripts --no-audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node Web/tests/node_modules/playwright/cli.js install chromium
+      - name: Browser lifecycle smoke
+        shell: pwsh
+        run: ./Scripts/Run-WebBrowserSmoke.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-web-evidence
+          path: |
+            web-build.log
+            build/web-smoke-results/

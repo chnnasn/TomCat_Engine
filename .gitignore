@@ -112,3 +112,10 @@ dist/
 # Managed Web intermediate and published output
 /build/web-managed-native/
 /build/web-managed/
+
+/Web/tests/node_modules/
+/build/web-smoke-results/
+
+/build/production-soak/
+/build/hud-editor/
+/build/hud-validation/

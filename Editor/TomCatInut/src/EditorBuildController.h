@@ -18,6 +18,7 @@ namespace TomCat {
 		bool BuildSettingsSucceeded = false;
 		std::string PlayerBuildStatus;
 		bool PlayerBuildSucceeded = false;
+        bool DevelopmentBuild = false;
 	};
 
 	class EditorBuildController

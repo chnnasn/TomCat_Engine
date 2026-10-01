@@ -49,7 +49,7 @@ CPU scope 在开始时绑定帧编号，线程安全地提交到这一帧。跨�
 
 ## C# 断点流程
 
-引擎在 `TomCatInut.exe` 内通过 hostfxr 托管 .NET 10，没有独立的项目脚本进程。当前项目脚本编译器使用 **Release** 配置，但显式关闭 C# 优化并生成 portable PDB，并将 DLL / PDB 一起传给可回收 `AssemblyLoadContext.LoadFromStream`。该设置由脚本编译器控制，与原生 Editor 的 Debug / Release 配置无关。目前 Player 打包也使用同一脚本编译器，因而同样关闭脚本优化。
+引擎在 `TomCatInut.exe` 内通过 hostfxr 托管 .NET 10，没有独立的项目脚本进程。当前项目脚本编译器使用 **Release** 配置，但显式关闭 C# 优化并生成 portable PDB，并将 DLL / PDB 一起传给可回收 `AssemblyLoadContext.LoadFromStream`。该设置由脚本编译器控制，与原生 Editor 的 Debug / Release 配置无关。Player 正式构建启用脚本优化；Development Build 保持关闭。两种配置均生成 portable PDB，缓存独立，详见 [生产验收与构建配置](PRODUCTION_ACCEPTANCE.md)。
 
 1. 在编辑器中打开含 C# 脚本的项目，等待 Console 出现编译成功和程序集重载成功消息；旧错误记录不会自动清空。元数据验证阶段已初始化 .NET，无需先运行一次 Play。
 2. 使用支持 .NET 10 的 Visual Studio，打开项目脚本源文件。在 **Debug → Attach to Process** 选择 `TomCatInut.exe`；Profiler 的 C# debugger 区显示当前 PID。将代码类型选为托管 .NET / .NET Core（具体文字随 IDE 版本），需要调试 C++ 时可同时选择 native。微软的[附加进程文档](https://learn.microsoft.com/en-us/visualstudio/debugger/attach-to-running-processes-with-the-visual-studio-debugger?view=visualstudio)说明此流程也支持非 Visual Studio 启动的进程。

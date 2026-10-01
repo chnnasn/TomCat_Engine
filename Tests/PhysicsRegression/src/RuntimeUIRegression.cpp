@@ -4,6 +4,9 @@
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Input.h"
+#include "TomCat/Debug/FrameProfiler.h"
+#include <cstdlib>
+
 #include "TomCat/Core/MouseCodes.h"
 #include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Project/Project.h"
@@ -25,6 +28,7 @@
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/Serialization/AssetReferenceVisitor.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Scripting/IScriptRuntime.h"
 #include "TomCat/Scripting/ScriptEngine.h"
 
@@ -60,6 +64,8 @@
 		#define WIN32_LEAN_AND_MEAN
 	#endif
 	#include <Windows.h>
+#include <psapi.h>
+#pragma comment(lib, "Psapi.lib")
 #endif
 
 namespace {
@@ -2017,6 +2023,68 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
         target->Unbind(); Renderer2D::Set2DLighting({1,1,1},{});
     }
 
+    void RunProductionSoak() {
+        using namespace TomCat;
+        const auto seconds=std::clamp(std::atoi(std::getenv("TOMCAT_SOAK_SECONDS")),1,86400);
+        const char* out=std::getenv("TOMCAT_SOAK_OUTPUT");
+        RequireUI(out && *out,"soak output directory required");
+        std::filesystem::create_directories(out);
+        std::ofstream frames(std::filesystem::path(out)/"frames.csv"), cycles(std::filesystem::path(out)/"cycles.csv");
+        frames << "cycle,phase,frame_ms,draws\n"; cycles << "cycle,private_bytes,textures,buffers,framebuffers\n";
+        HiddenOpenGLContext context; RequireUI(context.IsAvailable(),"soak requires OpenGL 4.6");
+        FramebufferSpecification spec;spec.Width=1280;spec.Height=720;spec.Attachments={FramebufferTextureFormat::RGBA8};
+        auto target=Framebuffer::Create(spec);
+        auto authored=CreateRef<Scene>();
+        for(uint32_t i=0;i<5000;++i) {
+            auto entity=authored->CreateEntityWithUUID(UUID(uint64_t(i)+1),"soak entity");
+            auto& t=entity.GetComponent<Transform>();t._LocalTranslation={float(i%100)-50,float(i/100)-25,0};
+        }
+        std::string document,error; RequireUI(SceneSerializer(authored).SerializeDocument(document,error),"soak serialize failed");
+        auto parsed=YAML::Load(document);authored.reset();
+        Camera camera(glm::ortho(-50.f,50.f,-28.125f,28.125f));
+        auto draw=[&]() {
+            target->Bind();RenderCommand::SetClearColor({0,0,0,1});RenderCommand::Clear();Renderer2D::ResetStats();
+            Renderer2D::BeginScene(camera,glm::mat4(1));
+            for(unsigned i=0;i<5000;++i) Renderer2D::DrawQuad(glm::translate(glm::mat4(1),{float(i%100)-50,float(i/100)-25,0}),{.2f,.7f,.3f,1});
+            Renderer2D::EndScene();glFinish();target->Unbind();glfwPollEvents();
+            RequireUI(Renderer2D::GetStats().DrawCalls>0 && glGetError()==GL_NO_ERROR,"soak did not render valid frames");
+        };
+        draw(); const auto baseline=ProfileResourceTracker::Get().Snapshot();
+        const auto start=std::chrono::steady_clock::now();uint32_t cycle=0;
+        do {
+            ++cycle; auto scene=CreateRef<Scene>();
+            {
+                auto task=SceneSerializer::DecodeIncrementally(scene,parsed,"ProductionSoak",false);
+                while(!task.Done()) {
+                    const auto frame=std::chrono::steady_clock::now();task.Advance(32,2);draw();
+                    frames<<cycle<<",decode,"<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-frame).count()<<','<<Renderer2D::GetStats().DrawCalls<<'\n';
+                }
+                RequireUI(task.Succeeded(),"soak decode failed");
+            }
+            {
+                auto task=scene->StartRuntimeIncrementally();
+                while(!task.Done()) {
+                    const auto frame=std::chrono::steady_clock::now();task.Advance(32,2);draw();
+                    frames<<cycle<<",activate,"<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-frame).count()<<','<<Renderer2D::GetStats().DrawCalls<<'\n';
+                }
+                RequireUI(task.Succeeded(),"soak activation failed");
+            }
+            for(unsigned i=0;i<120;++i) {
+                const auto frame=std::chrono::steady_clock::now();scene->OnUpdateRuntime(Timestep(1.f/60),false);draw();
+                frames<<cycle<<",runtime,"<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-frame).count()<<','<<Renderer2D::GetStats().DrawCalls<<'\n';
+            }
+            const auto unload=std::chrono::steady_clock::now();scene->OnRuntimeStop();scene.reset();draw();
+            frames<<cycle<<",unload,"<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-unload).count()<<','<<Renderer2D::GetStats().DrawCalls<<'\n';
+            PROCESS_MEMORY_COUNTERS_EX memory{};memory.cb=sizeof(memory);
+            RequireUI(GetProcessMemoryInfo(GetCurrentProcess(),reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory),sizeof(memory)),"process memory query failed");
+            auto resources=ProfileResourceTracker::Get().Snapshot();
+            cycles<<cycle<<','<<memory.PrivateUsage<<','<<resources.TextureCount<<','<<resources.BufferCount<<','<<resources.FramebufferCount<<'\n';
+            RequireUI(resources.TextureCount==baseline.TextureCount && resources.BufferCount==baseline.BufferCount && resources.FramebufferCount==baseline.FramebufferCount,"resources leaked across soak cycle");
+            frames.flush();cycles.flush();std::cout<<"SOAK cycle="<<cycle<<" private_bytes="<<memory.PrivateUsage<<std::endl;
+        } while(std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count()<seconds);
+        RequireUI(frames.good() && cycles.good(),"soak report write failed");
+    }
+
     void TestLargeSceneDecodeBudget() {
         std::cout << "P1 large scene author" << std::endl;
         using namespace TomCat;
@@ -2565,6 +2633,79 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 					"timed out waiting for asynchronous font preparation");
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
+	}
+
+	void TestCoinRunnerHUD()
+	{
+		HiddenOpenGLContext context;
+		RequireUI(context.IsAvailable(), "CoinRunner HUD requires an OpenGL context");
+		TemporaryUIProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "HUD Source Poll";
+		auto project = TomCat::Project::CreateNew(environment.Root / "Project.tcproj", config);
+		auto& assets = TomCat::AssetManager::Get();
+		RequireUI(project && assets.SetProject(project), "could not create HUD polling project");
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		const auto root = GetExecutableDirectory().parent_path().parent_path().parent_path().parent_path();
+		RequireUI(TomCat::SceneSerializer(scene).Deserialize(root / "Samples/CoinRunner/Assets/Scene/level.tomcat"),
+			"could not load checked-in CoinRunner scene");
+		auto score = scene->FindEntityByUUID(TomCat::UUID(0xC01A000000000200ULL));
+		RequireUI(score && score.HasComponent<TomCat::UIText>(), "CoinRunner score text is missing");
+		auto& label = score.GetComponent<TomCat::UIText>();
+		label.Color = {1,1,1,1};
+		auto& fonts = TomCat::FontManager::Get();
+		(void)fonts.Load(label.Font, label.Text);
+		(void)WaitForFontPreparation();
+		(void)fonts.PumpPublishes();
+		RequireUI(fonts.Load(label.Font, label.Text) != nullptr, "CoinRunner font was not published");
+		const auto publishedFont = fonts.Load(label.Font, label.Text);
+		for (const glm::uvec2 size : {glm::uvec2(1280,720), glm::uvec2(1920,1080)})
+			for (float scale : {1.0f, 1.5f, 1.75f, 2.0f})
+			{
+				RequireUI(assets.Refresh(false), "script discovery refresh failed");
+				RequireUI(fonts.Load(label.Font, label.Text) == publishedFont,
+					"unchanged script discovery discarded the visible font atlas");
+				scene->SetRuntimeUIViewportMetrics({0,0}, scale, {1,1});
+				const auto layout = TomCat::RuntimeUISystem::BuildLayout(*scene, size.x, size.y, 96.0f*scale);
+				const auto found = layout.Rectangles.find(score.GetUUID());
+				RequireUI(found != layout.Rectangles.end() && found->second.Y >= 0
+					&& found->second.Y + found->second.Height <= size.y,
+					"CoinRunner HUD escaped the viewport at high DPI");
+				const auto pixels = CaptureEditModeGamePreview(*scene, size.x, size.y);
+				size_t whitePixels = 0;
+				for (size_t j=0; j<pixels.size(); j+=4)
+					if (pixels[j]>240 && pixels[j+1]>240 && pixels[j+2]>240) ++whitePixels;
+				RequireUI(whitePixels > 50, "CoinRunner Game view contains no visible score glyphs");
+			}
+		// Undo replaces the scene while retaining the already published font atlas.
+		for (int restore = 0; restore < 3; ++restore)
+		{
+			std::string document, error;
+			RequireUI(TomCat::SceneArchiveCodec::Encode(scene, document, error), "HUD snapshot encode failed");
+			auto restored = TomCat::CreateRef<TomCat::Scene>();
+			RequireUI(TomCat::SceneArchiveCodec::Decode({document.begin(), document.end()}, restored,
+				root / "Samples/CoinRunner/Assets/Scene/level.tomcat", true), "HUD snapshot restore failed");
+			scene = std::move(restored);
+			auto visible = [](const std::vector<uint8_t>& pixels) {
+				size_t count = 0;
+				for (size_t j = 0; j < pixels.size(); j += 4)
+					if (pixels[j] > 240 && pixels[j+1] > 240 && pixels[j+2] > 240) ++count;
+				return count > 50;
+			};
+			RequireUI(visible(CaptureEditModeGamePreview(*scene, 1280, 720)), "HUD vanished from Game after undo restore");
+			TomCat::EditorCamera camera(30.0f, 16.0f/9.0f, 0.1f, 1000.0f);
+			camera.Set2DMode(true);
+			camera.SetViewportSize(1280, 720);
+			const auto resolution = scene->FindEntityByUUID(TomCat::UUID(0xC01A000000000202ULL)).GetComponent<TomCat::Canvas>().ReferenceResolution;
+			const auto canvas = TomCat::RuntimeUISystem::GetEditorCanvasTransform(resolution);
+			camera.FrameBounds(glm::vec3(canvas * glm::vec4(0,0,0,1)), glm::vec3(canvas * glm::vec4(resolution,0,1)));
+			RequireUI(visible(CaptureEditorUI(*scene, 1280, 720, camera)), "HUD vanished from Scene after undo restore");
+		}
+		// Visual coverage above complements the headless gameplay/save smoke.
+		RequireUI(assets.Refresh(), "explicit resource refresh failed");
+		RequireUI(fonts.Load(TomCat::GetDefaultRuntimeFontHandle(), "Score") != publishedFont,
+			"explicit refresh must still invalidate cached resources");
+		std::cout << "PASS CoinRunner HUD pixels, unchanged source polls, Scene/Game undo restore and explicit invalidation" << std::endl;
 	}
 
 	void TestCookedRuntimeUIRoundTrip()
@@ -3185,6 +3326,7 @@ namespace TomCat::Tests {
 		RequireUI(TomCat::GetBuiltInFontAssetPath(
 			TomCat::GetDefaultRuntimeFontHandle()) == expectedFont,
 			"built-in default font did not resolve from the executable package root");
+		if (std::getenv("TOMCAT_SOAK_SECONDS")) { RunProductionSoak(); return; }
 		TestUTF8AndDeterministicFontAtlas();
 		TestLayoutClippingAspectAndInput();
 		TestRectTransformTransformAndHitTesting();
@@ -3202,6 +3344,7 @@ namespace TomCat::Tests {
         TestProductUIControls();
 		TestSceneAndPrefabRoundTrip();
 		TestPersistentButtonCallbacks();
+		TestCoinRunnerHUD();
 		TestCookedRuntimeUIRoundTrip();
 	}
 
