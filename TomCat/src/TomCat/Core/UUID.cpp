@@ -23,9 +23,4 @@ namespace TomCat {
 		} while (m_UUID == 0);
 	}
 
-	UUID::UUID(uint64_t uuid)
-		: m_UUID(uuid)
-	{
-	}
-
 }

@@ -31,6 +31,9 @@
     <Filter Include="src\TomCat\Math">
       <UniqueIdentifier>{5D096131-C994-CEF5-D2A5-51EA3EB02AF6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\TomCat\Module">
+      <UniqueIdentifier>{39ABBD0E-A5C1-BBA4-EE38-47C65A8E8C2C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\TomCat\Project">
       <UniqueIdentifier>{4A2A22D5-360E-E32A-9F6E-DD7D8B71CDAC}</UniqueIdentifier>
     </Filter>
@@ -39,6 +42,9 @@
     </Filter>
     <Filter Include="src\TomCat\Runtime">
       <UniqueIdentifier>{37930976-2377-CACB-8CD7-C41E78DAB44D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src\TomCat\Save">
+      <UniqueIdentifier>{E2536431-4EDF-D1F5-57F0-54EAC3FA2DF6}</UniqueIdentifier>
     </Filter>
     <Filter Include="src\TomCat\Scene">
       <UniqueIdentifier>{21A2EF5D-0D9B-0EB0-36CD-F3342225EEBB}</UniqueIdentifier>
@@ -264,6 +270,12 @@
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Module\ModuleSdk.h">
+      <Filter>src\TomCat\Module</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Module\ModuleSystem.h">
+      <Filter>src\TomCat\Module</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Project\BuildSettings.h">
       <Filter>src\TomCat\Project</Filter>
     </ClInclude>
@@ -327,6 +339,9 @@
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h">
       <Filter>src\TomCat\Runtime</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Save\SaveDataStore.h">
+      <Filter>src\TomCat\Save</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Advanced2D.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
@@ -358,6 +373,9 @@
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\SceneManager.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\SceneMigrator.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h">
@@ -1847,6 +1865,9 @@
     <ClCompile Include="src\TomCat\Math\Math.cpp">
       <Filter>src\TomCat\Math</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Module\ModuleSystem.cpp">
+      <Filter>src\TomCat\Module</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Project\PlayerSettings.cpp">
       <Filter>src\TomCat\Project</Filter>
     </ClCompile>
@@ -1898,6 +1919,9 @@
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp">
       <Filter>src\TomCat\Runtime</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Save\SaveDataStore.cpp">
+      <Filter>src\TomCat\Save</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
@@ -1923,6 +1947,9 @@
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneManager.cpp">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Scene\SceneMigrator.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp">

@@ -72,6 +72,8 @@ Tests/InputRegression/*.vcxproj.filters
 Tools/Tools.sln
 Tools/TomCatCLI/*.vcxproj
 Tools/TomCatCLI/*.vcxproj.filters
+Tools/CoinRunnerGen/*.vcxproj
+Tools/CoinRunnerGen/*.vcxproj.filters
 
 #Files
 .user

@@ -198,6 +198,8 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h" />
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h" />
     <ClInclude Include="src\TomCat\Math\Math.h" />
+    <ClInclude Include="src\TomCat\Module\ModuleSdk.h" />
+    <ClInclude Include="src\TomCat\Module\ModuleSystem.h" />
     <ClInclude Include="src\TomCat\Project\BuildSettings.h" />
     <ClInclude Include="src\TomCat\Project\PlayerSettings.h" />
     <ClInclude Include="src\TomCat\Project\Project.h" />
@@ -219,6 +221,7 @@
     <ClInclude Include="src\TomCat\Renderer\VertexArray.h" />
     <ClInclude Include="src\TomCat\Runtime\RuntimeCompatibility.h" />
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h" />
+    <ClInclude Include="src\TomCat\Save\SaveDataStore.h" />
     <ClInclude Include="src\TomCat\Scene\Advanced2D.h" />
     <ClInclude Include="src\TomCat\Scene\BuiltInComponentDescriptors.h" />
     <ClInclude Include="src\TomCat\Scene\ComponentRegistry.h" />
@@ -230,6 +233,7 @@
     <ClInclude Include="src\TomCat\Scene\SceneCamera.h" />
     <ClInclude Include="src\TomCat\Scene\SceneCommandBuffer.h" />
     <ClInclude Include="src\TomCat\Scene\SceneManager.h" />
+    <ClInclude Include="src\TomCat\Scene\SceneMigrator.h" />
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h" />
     <ClInclude Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.h" />
     <ClInclude Include="src\TomCat\Scene\Serialization\ComponentCodecs.h" />
@@ -727,6 +731,7 @@
     <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp" />
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\TomCat\Math\Math.cpp" />
+    <ClCompile Include="src\TomCat\Module\ModuleSystem.cpp" />
     <ClCompile Include="src\TomCat\Project\PlayerSettings.cpp" />
     <ClCompile Include="src\TomCat\Project\Project.cpp" />
     <ClCompile Include="src\TomCat\Project\ProjectManager.cpp" />
@@ -744,6 +749,7 @@
     <ClCompile Include="src\TomCat\Renderer\UniformBuffer.cpp" />
     <ClCompile Include="src\TomCat\Renderer\VertexArray.cpp" />
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp" />
+    <ClCompile Include="src\TomCat\Save\SaveDataStore.cpp" />
     <ClCompile Include="src\TomCat\Scene\Advanced2D.cpp" />
     <ClCompile Include="src\TomCat\Scene\BuiltInComponentDescriptors.cpp" />
     <ClCompile Include="src\TomCat\Scene\ComponentRegistry.cpp" />
@@ -753,6 +759,7 @@
     <ClCompile Include="src\TomCat\Scene\SceneCamera.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneCommandBuffer.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneManager.cpp" />
+    <ClCompile Include="src\TomCat\Scene\SceneMigrator.cpp" />
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp" />
     <ClCompile Include="src\TomCat\Scene\Serialization\AssetReferenceVisitor.cpp" />
     <ClCompile Include="src\TomCat\Scene\Serialization\ComponentCodecs.cpp" />

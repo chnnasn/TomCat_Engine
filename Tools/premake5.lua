@@ -19,3 +19,4 @@ workspace "Tools"
 
 	include "../TomCat"
 	include "TomCatCLI"
+include "CoinRunnerGen"

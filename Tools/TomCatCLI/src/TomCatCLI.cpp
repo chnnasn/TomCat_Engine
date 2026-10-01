@@ -7,6 +7,7 @@
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Scene/SceneMigrator.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Utils/PathUtils.h"
 
@@ -268,6 +269,44 @@ namespace {
 			std::cerr << "Project load failed\n";
 			return 5;
 		}
+
+		// Scene-format migration runs before the asset registry scans the
+		// project so cook always observes current-schema scenes. The same
+		// explicit-opt-in rule as the project format applies.
+		TomCat::SceneMigrationPreview scenePreview;
+		if (!TomCat::SceneMigrator::PreviewProjectMigration(options.ProjectPath,
+			scenePreview, error))
+		{
+			std::cerr << "Scene migration inspection failed: " << error << '\n';
+			return 3;
+		}
+		if (scenePreview.RequiresMigration() && !options.AllowMigration)
+		{
+			std::cerr << "Scene migration is required for "
+				<< scenePreview.Scenes.size() << " scene file(s). Rerun with "
+				"--migrate to upgrade them in place (originals are backed up):\n";
+			for (const auto& scene : scenePreview.Scenes)
+			{
+				if (scene.RequiresMigration())
+					std::cerr << "  " << TomCat::PathToUTF8(scene.RelativePath)
+						<< ": schema " << scene.SourceSchemaVersion << " -> "
+						<< TomCat::SceneMigrator::CurrentSchemaVersion << '\n';
+			}
+			return 4;
+		}
+		if (scenePreview.RequiresMigration())
+		{
+			if (!TomCat::SceneMigrator::MigrateProjectScenes(options.ProjectPath,
+				scenePreview, error))
+			{
+				std::cerr << "Scene migration failed: " << error << '\n';
+				return 4;
+			}
+			std::cout << "Migrated " << scenePreview.Scenes.size()
+				<< " scene file(s) to schema "
+				<< TomCat::SceneMigrator::CurrentSchemaVersion << '\n';
+		}
+
 		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
 		if (!assets.SetProject(project) || !assets.Refresh())
 		{

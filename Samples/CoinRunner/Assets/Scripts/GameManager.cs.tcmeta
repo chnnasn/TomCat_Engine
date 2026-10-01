@@ -1,0 +1,8 @@
+SchemaVersion: 2
+Asset:
+  Handle: 7359497641917518565
+  Type: CSharpScript
+  ImportSettings:
+    {}
+  SubAssets:
+    []
