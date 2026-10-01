@@ -38,6 +38,7 @@
 namespace TomCatModule {
 
 	inline constexpr uint32_t ModuleAbiCurrent = 1;
+	enum class HostKind : uint32_t { Editor = 0, Tool = 1, Player = 2 };
 
 	// Sent to TomCatModuleMain once per load, before any registration call.
 	struct ModuleContextV1
@@ -51,6 +52,7 @@ namespace TomCatModule {
 		// module registers with this ProviderId so the engine can remove the
 		// module's components exactly on unload.
 		uint64_t ProviderId = 0;
+		HostKind Host = HostKind::Editor;
 	};
 
 	// The stable host surface. Every call returns a TomCatScriptStatus-style

@@ -8,6 +8,7 @@
 #include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Scene/SceneMigrator.h"
+#include "TomCat/Module/ModuleSystem.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Utils/PathUtils.h"
 
@@ -227,6 +228,8 @@ namespace {
 			{
 				TomCat::AssetManager::Get().Shutdown();
 				TomCat::AssetJobSystem::Get().Shutdown();
+				std::string moduleError;
+				(void)TomCat::ModuleSystem::Get().UnloadAllModules(moduleError);
 			}
 		} assetSystemCleanup;
 		TomCat::ProjectMigrationRecoveryPreview recoveryPreview;
@@ -269,6 +272,10 @@ namespace {
 			std::cerr << "Project load failed\n";
 			return 5;
 		}
+
+		if (!TomCat::ModuleSystem::Get().LoadProjectModules(project->GetProjectDirectory(),
+				error, true, TomCatModule::HostKind::Tool))
+		{ std::cerr << "Project module initialization failed: " << error << '\n'; return 6; }
 
 		// Scene-format migration runs before the asset registry scans the
 		// project so cook always observes current-schema scenes. The same
