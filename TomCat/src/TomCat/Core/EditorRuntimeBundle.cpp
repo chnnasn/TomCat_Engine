@@ -958,7 +958,7 @@ namespace TomCat {
 		bool CopyRuntimeFile(const std::filesystem::path& source,
 			const std::filesystem::path& destination,
 			const RuntimeManifestFile& manifestFile, RuntimeFileStamp& stamp,
-			std::string& errorMessage)
+			std::string& errorMessage, const std::function<void(uint64_t)>& onBytes)
 		{
 			RuntimeFileStamp sourceStamp;
 			if (!ReadRuntimeFileStamp(source, sourceStamp, errorMessage) ||
@@ -1039,6 +1039,7 @@ namespace TomCat {
 					offset += written;
 				}
 				copied += byteCount;
+				if (onBytes) onBytes(byteCount);
 			}
 			if (copied != manifestFile.Size)
 			{
@@ -1098,6 +1099,7 @@ namespace TomCat {
 						return false;
 					}
 					copied += byteCount;
+					if (onBytes) onBytes(byteCount);
 				}
 				if (input.eof())
 					break;
@@ -1344,7 +1346,7 @@ namespace TomCat {
 
 	bool EnsureEditorRuntimeBundle(const std::filesystem::path& payloadRoot,
 		const std::filesystem::path& cacheBaseRoot,
-		EditorRuntimeBundleResult& result, std::string& errorMessage)
+		EditorRuntimeBundleResult& result, std::string& errorMessage, const EditorRuntimeProgress& progress)
 	{
 		result = {};
 		errorMessage.clear();
@@ -1370,6 +1372,7 @@ namespace TomCat {
 			return false;
 		}
 
+		if (progress) progress(EditorRuntimeStage::Preparing, 0, 0);
 		RuntimeManifest manifest;
 		if (!LoadRuntimeManifest(absolutePayload, manifest, errorMessage))
 			return false;
@@ -1400,6 +1403,7 @@ namespace TomCat {
 			return false;
 		if (finalExists)
 		{
+			if (progress) progress(EditorRuntimeStage::Verifying, 0, 0);
 			std::string validationError;
 			if (ValidateRuntimeTreeQuickly(
 				finalRoot, completionPath, manifest, validationError))
@@ -1493,18 +1497,32 @@ namespace TomCat {
 			RemoveRuntimeTreeSafely(staging, ignored);
 		};
 
+		uint64_t totalBytes = 0, processedBytes = 0;
+		for (const auto& file : manifest.Files) {
+			if (file.Size > UINT64_MAX - totalBytes) {
+				errorMessage = "runtime payload total size overflow";
+				discardStaging(); return false;
+			}
+			totalBytes += file.Size;
+		}
+		if (progress) progress(EditorRuntimeStage::Extracting, 0, totalBytes);
+		const auto onBytes = [&](uint64_t count) {
+			processedBytes += count;
+			if (progress) progress(EditorRuntimeStage::Extracting, processedBytes, totalBytes);
+		};
 		RuntimeFileStamps copiedStamps;
 		for (const RuntimeManifestFile& file : manifest.Files)
 		{
 			RuntimeFileStamp stamp;
 			if (!CopyRuntimeFile(absolutePayload / file.RelativePath,
-				staging / file.RelativePath, file, stamp, errorMessage))
+				staging / file.RelativePath, file, stamp, errorMessage, onBytes))
 			{
 				discardStaging();
 				return false;
 			}
 			copiedStamps.emplace(file.Key, stamp);
 		}
+		if (progress) progress(EditorRuntimeStage::Verifying, 0, 0);
 		std::string writeError;
 		if (!FileSystem::WriteFileAtomically(staging / RuntimeManifestName,
 			manifest.Document, writeError))
@@ -1588,7 +1606,7 @@ namespace TomCat {
 
 	bool ConfigurePackagedEditorRuntime(
 		const std::filesystem::path& payloadRoot,
-		EditorRuntimeBundleResult& result, std::string& errorMessage)
+		EditorRuntimeBundleResult& result, std::string& errorMessage, const EditorRuntimeProgress& progress)
 	{
 		const auto cacheRoot = ApplicationPaths::GetEditorRuntimeCacheRoot();
 		if (!cacheRoot)
@@ -1597,7 +1615,7 @@ namespace TomCat {
 			errorMessage = "the LocalAppData Editor runtime cache is unavailable";
 			return false;
 		}
-		if (!EnsureEditorRuntimeBundle(payloadRoot, *cacheRoot, result, errorMessage))
+		if (!EnsureEditorRuntimeBundle(payloadRoot, *cacheRoot, result, errorMessage, progress))
 			return false;
 		ApplicationPaths::SetRuntimeEditorRoot(result.Root);
 		return true;

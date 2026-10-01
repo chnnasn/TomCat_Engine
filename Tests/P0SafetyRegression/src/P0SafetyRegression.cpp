@@ -337,14 +337,30 @@ namespace {
 		const std::filesystem::path payload = temporary.Path / "Payload";
 		const std::filesystem::path cache = temporary.Path / "Cache";
 		const std::string engineBuildID(TomCat::Version::EngineBuildID);
-		const auto files = WriteRuntimePayload(payload, engineBuildID, "alpha");
+		auto files = WriteRuntimePayload(payload, engineBuildID, "alpha");
+		files.front().Contents = std::string(2 * 1024 * 1024 + 19, 'x');
+		WriteText(payload / files.front().Path, files.front().Contents);
+		WriteText(payload / "runtime-manifest.json", RuntimeManifestDocument(engineBuildID, files));
 
 		TomCat::EditorRuntimeBundleResult first;
 		std::string error;
-		const bool extracted =
-			TomCat::EnsureEditorRuntimeBundle(payload, cache, first, error);
-		Require(extracted,
-			"first runtime extraction failed: " + error);
+		uint64_t expectedBytes = 0, lastBytes = 0;
+		for (const auto& file : files) expectedBytes += file.Contents.size();
+		bool sawExtraction = false, sawVerification = false;
+		size_t byteUpdates = 0;
+		const bool extracted = TomCat::EnsureEditorRuntimeBundle(payload, cache, first, error,
+			[&](TomCat::EditorRuntimeStage stage, uint64_t done, uint64_t total) {
+				if (stage == TomCat::EditorRuntimeStage::Extracting) {
+					Require(total == expectedBytes && done >= lastBytes && done <= total,
+						"extraction progress is not monotonic byte progress");
+					if (done > lastBytes) ++byteUpdates;
+					lastBytes = done; sawExtraction = true;
+				}
+				if (stage == TomCat::EditorRuntimeStage::Verifying) sawVerification = true;
+			});
+		Require(extracted, "first runtime extraction failed: " + error);
+		Require(sawExtraction && sawVerification && lastBytes == expectedBytes && byteUpdates > files.size(),
+			"extraction did not report all bytes and final verification");
 		Require(!first.ReusedExisting && first.EngineBuildID == engineBuildID &&
 			first.ManifestSHA256.size() == 64,
 			"first runtime extraction reported invalid provenance");
@@ -354,7 +370,11 @@ namespace {
 
 		TomCat::EditorRuntimeBundleResult warm;
 		const bool reused =
-			TomCat::EnsureEditorRuntimeBundle(payload, cache, warm, error);
+			TomCat::EnsureEditorRuntimeBundle(payload, cache, warm, error,
+				[&](TomCat::EditorRuntimeStage stage, uint64_t, uint64_t total) {
+					Require(stage != TomCat::EditorRuntimeStage::Extracting && total == 0,
+						"warm cache reported fictional extraction progress");
+				});
 		Require(reused,
 			"warm runtime cache validation failed: " + error);
 		Require(warm.ReusedExisting && warm.Root == first.Root &&
