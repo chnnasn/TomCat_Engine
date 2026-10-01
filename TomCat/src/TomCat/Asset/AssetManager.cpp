@@ -2125,6 +2125,16 @@ namespace TomCat {
 		}
 	}
 
+    Ref<const MaterialArtifact> AssetManager::GetRuntimeMaterial(AssetHandle handle) {
+        if (static_cast<uint64_t>(handle)==0) return {};
+        if (const auto found=m_MaterialCache.find(handle); found!=m_MaterialCache.end()) return found->second;
+        auto result=LoadMaterial(handle);
+        Ref<const MaterialArtifact> material;
+        if(result.Succeeded()) material=std::make_shared<MaterialArtifact>(std::move(result.Asset));
+        else TC_Core_Warn("Material {0} could not be loaded: {1}",static_cast<uint64_t>(handle),result.Error);
+        m_MaterialCache[handle]=material; return material;
+    }
+
 	DecodedMaterialLoadResult AssetManager::LoadMaterial(AssetHandle handle,
 		AssetLoadOptions options)
 	{
@@ -2475,32 +2485,32 @@ namespace TomCat {
 	}
 
 	size_t AssetManager::PumpTexturePublishes(uint32_t maximumUploads,
-		uint64_t maximumUploadBytes)
-	{
-		std::vector<PreparedTexture> ready;
-		uint64_t selectedUploadBytes = 0;
-		{
-			std::lock_guard lock(m_TextureStreamingMutex);
-			while (ready.size() < maximumUploads && !m_PreparedTextures.empty())
-			{
-				const uint64_t nextUploadBytes =
-					m_PreparedTextures.front().EstimatedUploadBytes;
-				if (!ready.empty() && (nextUploadBytes > maximumUploadBytes
-					|| selectedUploadBytes > maximumUploadBytes - nextUploadBytes))
-					break;
-				selectedUploadBytes += nextUploadBytes;
-				m_PreparedTextureBytes -= static_cast<uint64_t>(
-					m_PreparedTextures.front().Bytes.size());
-				ready.emplace_back(std::move(m_PreparedTextures.front()));
-				m_PreparedTextures.pop_front();
-			}
-		}
-		if (!ready.empty())
-			m_TextureStreamingCapacity.notify_all();
+        uint64_t maximumUploadBytes, double maximumMilliseconds)
+    {
+        if (!maximumUploads || !maximumUploadBytes || !std::isfinite(maximumMilliseconds) || maximumMilliseconds <= 0) return 0;
+        const auto start = std::chrono::steady_clock::now();
+        uint64_t selectedUploadBytes = 0;
+        size_t published = 0;
+        uint32_t attempted = 0;
+        while (attempted < maximumUploads)
+        {
+            if (attempted && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() >= maximumMilliseconds) break;
+            PreparedTexture prepared;
+            {
+                std::lock_guard lock(m_TextureStreamingMutex);
+                if (m_PreparedTextures.empty()) break;
+                const uint64_t next = m_PreparedTextures.front().EstimatedUploadBytes;
+                if (attempted && (next > maximumUploadBytes || selectedUploadBytes > maximumUploadBytes - next)) break;
+                // One oversized atomic texture is admitted to prevent starvation.
+                if (next > maximumUploadBytes) ++m_OversizedUploads;
+                selectedUploadBytes += next;
+                m_PreparedTextureBytes -= m_PreparedTextures.front().Bytes.size();
+                prepared = std::move(m_PreparedTextures.front());
+                m_PreparedTextures.pop_front();
+            }
+            ++attempted;
+            m_TextureStreamingCapacity.notify_all();
 
-		size_t published = 0;
-		for (PreparedTexture& prepared : ready)
-		{
 			{
 				std::lock_guard lock(m_TextureStreamingMutex);
 				if (prepared.Generation != m_TextureStreamingGeneration
@@ -2549,16 +2559,23 @@ namespace TomCat {
 			}
 		}
 
-		ScheduleTextureBacklog();
-		return published;
-	}
+        {
+            std::lock_guard lock(m_TextureStreamingMutex);
+            m_LastPublishMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            m_PeakPublishMilliseconds = std::max(m_PeakPublishMilliseconds, m_LastPublishMilliseconds);
+            if (m_LastPublishMilliseconds > maximumMilliseconds) ++m_PublishOverruns;
+        }
+        ScheduleTextureBacklog();
+        return published;
+    }
 
 	TextureStreamingStats AssetManager::GetTextureStreamingStats() const
 	{
 		std::lock_guard lock(m_TextureStreamingMutex);
 		return { m_TexturePreloadBacklog.size(), m_TexturePending.size(),
 			m_PreparedTextures.size(), m_PreparedTextureBytes,
-			m_TextureJobsInFlight };
+			m_TextureJobsInFlight, m_LastPublishMilliseconds, m_PeakPublishMilliseconds,
+            m_PublishOverruns, m_OversizedUploads };
 	}
 
 	void AssetManager::CancelTextureStreaming(bool waitForJobs)
@@ -2864,6 +2881,7 @@ namespace TomCat {
 		}
 		m_TextureCache.erase(handle);
 		m_ShaderCache.erase(handle);
+        m_MaterialCache.erase(handle);
 		m_SpriteDescriptorCache.erase(handle);
 		FontManager::Get().Release(handle);
 		AudioEngine::Get().ReleaseClip(handle);
@@ -2874,6 +2892,7 @@ namespace TomCat {
 		CancelTextureStreaming(true);
 		m_TextureCache.clear();
 		m_ShaderCache.clear();
+        m_MaterialCache.clear();
 		m_SpriteDescriptorCache.clear();
 		m_MissingTexture.reset();
 		FontManager::Get().ReleaseAll();
@@ -2887,6 +2906,7 @@ namespace TomCat {
 		{
 			m_TextureCache.erase(handle);
 			m_ShaderCache.erase(handle);
+        m_MaterialCache.erase(handle);
 			m_SpriteDescriptorCache.erase(handle);
 			FontManager::Get().Release(handle);
 			AudioEngine::Get().ReleaseClip(handle);

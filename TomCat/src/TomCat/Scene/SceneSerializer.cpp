@@ -821,20 +821,31 @@ namespace TomCat {
 		}
 	}
 
-	bool SceneSerializer::DeserializeStream(std::istream& input,
-		const std::filesystem::path& filepath, bool resolveAssets)
+    bool SceneSerializer::DeserializeStream(std::istream& input,
+        const std::filesystem::path& filepath, bool resolveAssets)
+    {
+        try {
+            auto task = DecodeIncrementally(m_Scene, YAML::Load(input), filepath, resolveAssets);
+            while (!task.Done()) task.Advance(UINT32_MAX, 1e30);
+            return !input.bad() && task.Succeeded();
+        } catch (const std::exception& error) {
+            TC_Core_Error("Failed to parse scene '{0}': {1}", PathToUTF8(filepath), error.what());
+            return false;
+        }
+    }
+
+	FrameTask SceneSerializer::DecodeIncrementally(Ref<Scene> target, YAML::Node data,
+        std::filesystem::path filepath, bool resolveAssets)
 	{
-		if (!m_Scene)
+		if (!target)
 		{
 			TC_Core_Error("Cannot deserialize into a null scene");
-			return false;
+			co_return false;
 		}
 
 		try
 		{
-			YAML::Node data = YAML::Load(input);
-			if (input.bad())
-				throw std::runtime_error("Failed while reading the scene file");
+
 			RequireExactFields(data, "scene document",
 				{ "SchemaVersion", "SceneName", "Entities" });
 
@@ -858,8 +869,8 @@ namespace TomCat {
 
 			Ref<Scene> parsedScene = CreateRef<Scene>();
 			parsedScene->SetSceneName(sceneName);
-			parsedScene->m_ViewportWidth = m_Scene->m_ViewportWidth;
-			parsedScene->m_ViewportHeight = m_Scene->m_ViewportHeight;
+			parsedScene->m_ViewportWidth = target->m_ViewportWidth;
+			parsedScene->m_ViewportHeight = target->m_ViewportHeight;
 
 			std::vector<std::pair<UUID, UUID>> pendingParents;
 			std::vector<std::pair<UUID, UUID>> pendingJointConnections;
@@ -868,7 +879,9 @@ namespace TomCat {
 
 			for (std::size_t index = 0; index < entities.size(); ++index)
 			{
-				const YAML::Node entityNode = entities[index];
+				// Isolate the entity arena: legacy canonical maps merge YAML ownership.
+                // Sharing the entire document here makes each merge copy every scene node.
+                const YAML::Node entityNode = YAML::Clone(entities[index]);
 				const std::string context = "Entities[" + std::to_string(index) + "]";
 				if (schemaVersion == CurrentSchemaVersion)
 				{
@@ -959,10 +972,12 @@ namespace TomCat {
 				const uint64_t parentUUID = ReadRequired<uint64_t>(entityNode, "Parent", context);
 				if (parentUUID != 0)
 					pendingParents.emplace_back(uuid, UUID(parentUUID));
+                co_yield 1;
 			}
 
 			for (const auto& [ownerUUID, connectedUUID] : pendingJointConnections)
 			{
+                co_yield 1;
 				if (ownerUUID == connectedUUID)
 					throw std::runtime_error("Entity " + std::to_string(static_cast<uint64_t>(ownerUUID))
 						+ " cannot connect DistanceJoint2D to itself");
@@ -975,6 +990,7 @@ namespace TomCat {
 			std::unordered_map<UUID, UUID> parentLookup;
 			for (const auto& [childUUID, parentUUID] : pendingParents)
 			{
+                co_yield 1;
 				if (childUUID == parentUUID)
 					throw std::runtime_error("Entity " + std::to_string((uint64_t)childUUID) + " cannot parent itself");
 				if (!parsedScene->FindEntityByUUID(parentUUID))
@@ -986,6 +1002,7 @@ namespace TomCat {
 
 			for (const auto& [childUUID, ignoredParent] : parentLookup)
 			{
+                co_yield 1;
 				(void)ignoredParent;
 				std::unordered_set<UUID> chain;
 				UUID cursor = childUUID;
@@ -1002,6 +1019,7 @@ namespace TomCat {
 
 			for (const auto& [childUUID, parentUUID] : pendingParents)
 			{
+                co_yield 1;
 				Entity child = parsedScene->FindEntityByUUID(childUUID);
 				Entity parent = parsedScene->FindEntityByUUID(parentUUID);
 				parsedScene->m_ParentMap[childUUID] = parentUUID;
@@ -1010,21 +1028,21 @@ namespace TomCat {
 			if (!parsedScene->SyncTransformHierarchy())
 				throw std::runtime_error("Scene hierarchy contains a transform that cannot be synchronized losslessly as TRS");
 
-			m_Scene->OnRuntimeStop();
-			m_Scene->m_Registry = std::move(parsedScene->m_Registry);
-			m_Scene->m_SceneName = std::move(parsedScene->m_SceneName);
-			m_Scene->m_EntityMap = std::move(parsedScene->m_EntityMap);
-			m_Scene->m_ParentMap = std::move(parsedScene->m_ParentMap);
-			m_Scene->m_ChildrenMap = std::move(parsedScene->m_ChildrenMap);
-			m_Scene->m_EntityOrder = std::move(parsedScene->m_EntityOrder);
-			m_Scene->m_RuntimeRunning = false;
-			m_Scene->m_PhysicsWorld = nullptr;
-			if (m_Scene->m_ViewportWidth > 0 && m_Scene->m_ViewportHeight > 0)
-				m_Scene->OnViewportResize(m_Scene->m_ViewportWidth, m_Scene->m_ViewportHeight);
+			target->OnRuntimeStop();
+			target->m_Registry = std::move(parsedScene->m_Registry);
+			target->m_SceneName = std::move(parsedScene->m_SceneName);
+			target->m_EntityMap = std::move(parsedScene->m_EntityMap);
+			target->m_ParentMap = std::move(parsedScene->m_ParentMap);
+			target->m_ChildrenMap = std::move(parsedScene->m_ChildrenMap);
+			target->m_EntityOrder = std::move(parsedScene->m_EntityOrder);
+			target->m_RuntimeRunning = false;
+			target->m_PhysicsWorld = nullptr;
+			if (target->m_ViewportWidth > 0 && target->m_ViewportHeight > 0)
+				target->OnViewportResize(target->m_ViewportWidth, target->m_ViewportHeight);
 
 			TC_Core_Trace("{0} scene '{1}' (schema {2})",
 				resolveAssets ? "Deserialized" : "Validated", sceneName, schemaVersion);
-			return true;
+			co_return true;
 		}
 		catch (const YAML::Exception& error)
 		{
@@ -1034,7 +1052,7 @@ namespace TomCat {
 		{
 			TC_Core_Error("Failed to deserialize scene '{0}': {1}", PathToUTF8(filepath), error.what());
 		}
-		return false;
+		co_return false;
 	}
 
 }

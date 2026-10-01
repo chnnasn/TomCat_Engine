@@ -18,6 +18,9 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"vendor/glm/glm/**.inl",
 		"vendor/stb_image/**.h",
 		"vendor/stb_image/**.cpp",
+        "vendor/harfbuzz/src/harfbuzz.cc",
+        "vendor/astcenc/Source/astcenc_*.cpp",
+        "vendor/etc2comp/EtcLib/**.cpp",
 
 		"vendor/ImGuizmo/ImGuizmo.h",
 		"vendor/ImGuizmo/ImGuizmo.cpp"
@@ -35,6 +38,8 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 	{
 		"src",
 		"vendor/spdlog/include",
+        "vendor/etc2comp/EtcLib/Etc",
+        "vendor/etc2comp/EtcLib/EtcCodec",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.ImGui}",
@@ -59,6 +64,13 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 	}
 	buildoptions { "/utf-8", "/bigobj" }
 
+filter "files:vendor/harfbuzz/**"
+    flags { "NoPCH" }
+filter "files:vendor/astcenc/**"
+    flags { "NoPCH" }
+    defines { "ASTCENC_NEON=0", "ASTCENC_SVE=0", "ASTCENC_SSE=20", "ASTCENC_AVX=0", "ASTCENC_POPCNT=0", "ASTCENC_F16C=0" }
+filter "files:vendor/etc2comp/**"
+    flags { "NoPCH" }
 filter "files:vendor/ImGuizmo/**.cpp"
     flags { "NoPCH" }
 

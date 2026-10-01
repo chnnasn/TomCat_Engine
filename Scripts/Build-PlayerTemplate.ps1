@@ -66,6 +66,8 @@ function Resolve-VCReleaseRuntime {
     throw "The required x64 MSVCP140/VCRUNTIME140 redistributable DLLs were not found below $redistRoot."
 }
 
+. (Join-Path $PSScriptRoot "ReleaseArtifactTools.ps1")
+
 $script:PlayerCRuntimeFiles = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 
 function Copy-TemplateDirectory {
@@ -163,6 +165,14 @@ try {
     Copy-TemplateDirectory -Source $runtime.FullName -RelativePath (Join-Path "dotnet\shared\Microsoft.NETCore.App" $runtime.Name) -Root $stagingFull
     Copy-TemplateFile -Source (Join-Path $repositoryRoot "Editor\TomCatInut\Packages\Shaders\Texture.glsl") -RelativePath "Packages\Shaders\Texture.glsl" -Root $stagingFull
     Copy-TemplateFile -Source (Join-Path $repositoryRoot "Editor\TomCatInut\Packages\Shaders\FlatColor.glsl") -RelativePath "Packages\Shaders\FlatColor.glsl" -Root $stagingFull
+
+    $noticeParts = @('TomCat Engine - Third-Party Notices')
+    foreach ($dependency in Get-TomCatReleaseDependencies) {
+        if ($dependency.Mode -eq 'None') { continue }
+        $noticeParts += $dependency.Name
+        $noticeParts += Get-TomCatNoticeText -Path (Join-Path $repositoryRoot $dependency.Notice) -Mode $dependency.Mode
+    }
+    [System.IO.File]::WriteAllText((Join-Path $stagingFull 'THIRD_PARTY_NOTICES.txt'), ($noticeParts -join "`n`n"), [System.Text.UTF8Encoding]::new($false))
 
     $forbidden = @(Get-ChildItem -LiteralPath $stagingFull -Recurse -File -Force |
         Where-Object {

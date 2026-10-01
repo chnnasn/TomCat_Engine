@@ -155,12 +155,21 @@ namespace TomCat {
 		m_Width = artifact.Width;
 		m_Height = artifact.Height;
 		m_DataFormat = GL_RGBA;
-		m_Compressed = artifact.Format == TextureArtifactFormat::BC3
-			&& SupportsBC3Textures();
-		m_InternalFormat = m_Compressed
-			? (artifact.SRGB ? GLCompressedSRGBAlpha_S3TCDXT5
-				: GLCompressedRGBA_S3TCDXT5)
-			: (artifact.SRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8);
+        m_Compressed = ((artifact.Format == TextureArtifactFormat::BC3 || artifact.Format == TextureArtifactFormat::BC1) && SupportsBC3Textures());
+#ifndef TC_PLATFORM_WEB
+        m_Compressed |= artifact.Format == TextureArtifactFormat::BC5; // RGTC is core in desktop GL 3.0.
+#endif
+        auto supports = [](GLenum format) { GLint count=0;glGetIntegerv(GL_NUM_COMPRESSED_TEXTURE_FORMATS,&count);std::vector<GLint> formats(std::max(0,count));if(count)glGetIntegerv(GL_COMPRESSED_TEXTURE_FORMATS,formats.data());return std::find(formats.begin(),formats.end(),static_cast<GLint>(format))!=formats.end(); };
+        const GLenum mobileFormat = artifact.Format==TextureArtifactFormat::ASTC4x4 ? (artifact.SRGB ? 0x93D0 : 0x93B0) : (artifact.SRGB ? 0x9279 : 0x9278);
+        const bool mobile = artifact.Format==TextureArtifactFormat::ASTC4x4 || artifact.Format==TextureArtifactFormat::ETC2RGBA8;
+        if(mobile) m_Compressed=supports(mobileFormat);
+        m_InternalFormat = artifact.SRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+        if (m_Compressed) {
+            if (mobile) m_InternalFormat=mobileFormat;
+            else if (artifact.Format == TextureArtifactFormat::BC5) m_InternalFormat = 0x8DBD; // GL_COMPRESSED_RG_RGTC2
+            else if (artifact.Format == TextureArtifactFormat::BC1) m_InternalFormat = artifact.SRGB ? 0x8C4C : 0x83F0;
+            else m_InternalFormat = artifact.SRGB ? GLCompressedSRGBAlpha_S3TCDXT5 : GLCompressedRGBA_S3TCDXT5;
+        }
 
 		glCreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
 		if (!m_RendererID)
@@ -185,7 +194,7 @@ namespace TomCat {
 			}
 
 			const uint8_t* pixels = mip.Bytes.data();
-			if (artifact.Format == TextureArtifactFormat::BC3)
+			if (artifact.Format != TextureArtifactFormat::RGBA8)
 			{
 				if (!DecompressTextureMip(mip, artifact.Format, decoded, error))
 				{

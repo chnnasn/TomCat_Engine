@@ -1683,6 +1683,40 @@ namespace TomCat::Scripting {
 		int32_t AudioSetMixerVolumeCallback(int32_t group, float value) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); return AudioEngine::Get().SetMixerVolume(static_cast<AudioMixerGroup>(group),value)?0:Code(ScriptStatus::InvalidArgument); }); }
 
+        NativeAudioBusApiV1 BuildAudioBusApiV1() {
+            NativeAudioBusApiV1 api;
+            api.Configure=+[](NativeUtf8View value) noexcept -> int32_t {return Guard([&] {
+                if(!RequireMainThread())return Code(ScriptStatus::WrongThread);
+                std::string document,error;if(value.Length>65536 || !ReadUtf8(value,document))return Code(ScriptStatus::InvalidArgument);
+                if(!AudioEngine::Get().ConfigureBusGraph(document,error)) {TC_Core_Warn("Audio graph rejected: {0}",error);return Code(ScriptStatus::InvalidArgument);}return 0;
+            });};
+            api.SetBus=+[](uint32_t id,float volume,int32_t muted,int32_t solo) noexcept -> int32_t {return Guard([&] {
+                if(!RequireMainThread())return Code(ScriptStatus::WrongThread);
+                return IsBool(muted) && IsBool(solo) && AudioEngine::Get().SetBus(id,volume,muted!=0,solo!=0) ? 0 : Code(ScriptStatus::InvalidArgument);
+            });};
+            return api;
+        }
+        NativeAudioMixerApiV1 BuildAudioMixerApiV1() {
+            NativeAudioMixerApiV1 api;
+            api.SetMuted = +[](int32_t group, int32_t value) noexcept -> int32_t { return Guard([&] {
+                if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+                return (value == 0 || value == 1) && AudioEngine::Get().SetMixerMuted(static_cast<AudioMixerGroup>(group), value != 0) ? 0 : Code(ScriptStatus::InvalidArgument); }); };
+            api.SetSolo = +[](int32_t group, int32_t value) noexcept -> int32_t { return Guard([&] {
+                if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+                return (value == 0 || value == 1) && AudioEngine::Get().SetMixerSolo(static_cast<AudioMixerGroup>(group), value != 0) ? 0 : Code(ScriptStatus::InvalidArgument); }); };
+            api.ApplySnapshot = +[](const float* volumes, uint32_t muted, uint32_t solo, double seconds) noexcept -> int32_t { return Guard([&] {
+                if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+                if (!volumes || muted > 7 || solo > 7) return Code(ScriptStatus::InvalidArgument);
+                AudioMixerSnapshot snapshot;
+                for (uint32_t i=0;i<3;++i) { snapshot.Volumes[i]=volumes[i]; snapshot.Muted[i]=(muted&(1u<<i))!=0; snapshot.Solo[i]=(solo&(1u<<i))!=0; }
+                return AudioEngine::Get().ApplyMixerSnapshot(snapshot,seconds) ? 0 : Code(ScriptStatus::InvalidArgument); }); };
+            api.SetDucking = +[](int32_t trigger, int32_t target, float gain, double attack, double release) noexcept -> int32_t { return Guard([&] {
+                if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+                return AudioEngine::Get().SetDucking(static_cast<AudioMixerGroup>(trigger),static_cast<AudioMixerGroup>(target),gain,attack,release) ? 0 : Code(ScriptStatus::InvalidArgument); }); };
+            api.ClearDucking = +[]() noexcept -> int32_t { return Guard([&] { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioEngine::Get().ClearDucking(); return 0; }); };
+            return api;
+        }
+
 		NativeAudioApiV1 BuildAudioApiV1()
 		{
 			NativeAudioApiV1 api;
@@ -3193,6 +3227,18 @@ namespace TomCat::Scripting {
 					return Code(ScriptStatus::Success);
 #endif
 				}
+                if (capability == "TomCat.AudioBusApiV1") {
+                    const auto api=BuildAudioBusApiV1(); *required=sizeof(api);
+                    if (minimumVersion>api.Version) return Code(ScriptStatus::VersionMismatch);
+                    if (!output || capacity<sizeof(api)) return Code(ScriptStatus::BufferTooSmall);
+                    std::memcpy(output,&api,sizeof(api)); return Code(ScriptStatus::Success);
+                }
+                if (capability == "TomCat.AudioMixerApiV1") {
+                    const auto api=BuildAudioMixerApiV1(); *required=sizeof(api);
+                    if (minimumVersion>api.Version) return Code(ScriptStatus::VersionMismatch);
+                    if (!output || capacity<sizeof(api)) return Code(ScriptStatus::BufferTooSmall);
+                    std::memcpy(output,&api,sizeof(api)); return Code(ScriptStatus::Success);
+                }
 				if (capability == AudioCapabilityName)
 				{
 					const NativeAudioApiV1 api = BuildAudioApiV1();

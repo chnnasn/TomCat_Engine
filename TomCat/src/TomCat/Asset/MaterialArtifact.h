@@ -11,6 +11,7 @@
 #include <vector>
 
 namespace TomCat {
+    inline constexpr uint64_t BuiltinSprite2DShader = 0x5443535052495445ULL;
 
 	enum class MaterialParameterType : uint32_t
 	{

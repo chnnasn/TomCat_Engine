@@ -49,6 +49,13 @@ public sealed unsafe partial class AudioListener
 
 public static class AudioSystem
 {
+    public static void ConfigureBuses(string yamlOrJson) => NativeBridge.ConfigureAudioBuses(yamlOrJson);
+    public static void SetBus(uint id,float volume=1,bool muted=false,bool solo=false) => NativeBridge.SetAudioBus(id,volume,muted,solo);
+    public static void SetMuted(AudioMixerGroup group, bool muted) => NativeBridge.MixerMute(group, muted);
+    public static void SetSolo(AudioMixerGroup group, bool solo) => NativeBridge.MixerSolo(group, solo);
+    public static void ApplySnapshot(float master, float music, float sfx, double fadeSeconds = 0, uint mutedMask = 0, uint soloMask = 0) => NativeBridge.MixerSnapshot(master,music,sfx,mutedMask,soloMask,fadeSeconds);
+    public static void SetDucking(AudioMixerGroup trigger, AudioMixerGroup target, float gain, double attackSeconds = .05, double releaseSeconds = .3) => NativeBridge.MixerDuck(trigger,target,gain,attackSeconds,releaseSeconds);
+    public static void ClearDucking() => NativeBridge.MixerClearDucking();
 	public static bool IsHardwareAvailable => NativeBridge.AudioHardwareAvailable();
 	public static string BackendName => NativeBridge.AudioBackendName();
 

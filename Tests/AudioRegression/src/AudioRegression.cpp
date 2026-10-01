@@ -174,10 +174,19 @@ namespace {
 			"truncated WAV was accepted");
 		const std::vector<uint8_t> ogg{ 'O','g','g','S',0,2,3,4 };
 		Require(!TomCat::AudioClip::Decode(ogg, error, &status)
-			&& status == TomCat::AudioDecodeStatus::UnsupportedEncoding
-			&& error.find("not available") != std::string::npos,
-			"OGG must report explicit unsupported encoding");
+			&& status == TomCat::AudioDecodeStatus::MalformedData,
+            "truncated OGG must report malformed data");
 	}
+
+    void TestVorbisFixture() {
+        std::ifstream input(std::filesystem::path(__FILE__).parent_path().parent_path() / "Fixtures/sine-440-mono.ogg", std::ios::binary);
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+        std::string error;
+        auto clip = TomCat::AudioClip::Decode(bytes, error);
+        Require(clip && clip->GetChannels() == 1 && clip->GetSampleRate() == 8000 && clip->GetFrameCount() == 8000, "real Vorbis fixture did not decode");
+        bytes.resize(64);
+        Require(!TomCat::AudioClip::Decode(bytes, error), "truncated Vorbis fixture was accepted");
+    }
 
 	void TestNullDeviceStateMachine()
 	{
@@ -379,6 +388,31 @@ namespace {
 			"device loss did not rebuild active clip and streaming voices on NullAudioDevice");
 	}
 
+    void TestAudioBusGraph() {
+        using namespace TomCat;std::string error;
+        const std::string document=R"(SchemaVersion: 1
+Buses:
+  - {ID: 0, Name: Master, Volume: 0.5}
+  - {ID: 1, Name: Music, Sends: [{Target: 0}]}
+  - {ID: 2, Name: SFX, Sends: [{Target: 0}]}
+  - {ID: 10, Name: Weapons, Volume: 0.5, Sends: [{Target: 2, Gain: 0.5}, {Target: 1, Gain: 0.25}]}
+  - {ID: 11, Name: Rifle, Sends: [{Target: 10}]}
+)";
+        AudioBusGraph graph;Require(graph.Configure(document,error),"valid bus graph rejected");
+        const std::array<float,3> volumes{1,1,1};const std::array<bool,3> flags{};
+        Require(std::abs(graph.Gain(11,volumes,flags,flags)-.1875f)<.0001f,"audio sends did not accumulate through hierarchy");
+        Require(graph.Set(10,.5f,true,false) && graph.Gain(11,volumes,flags,flags)==0,"ancestor mute failed");
+        Require(graph.Set(10,.5f,false,true) && graph.Gain(11,volumes,flags,flags)>0 && graph.Gain(1,volumes,flags,flags)==0,"bus solo did not isolate subtree");
+        auto cyclic=document;auto position=cyclic.find("{Target: 10}");cyclic.replace(position,12,"{Target: 11}");
+        Require(!graph.Configure(cyclic,error) && graph.Contains(10),"cycle accepted or failed update destroyed graph");
+        AudioEngine engine;Require(engine.Initialize(CreateNullAudioDevice(),error) && engine.ConfigureBusGraph(document,error),"engine bus graph failed");
+        auto clip=AudioClip::Decode(MakeWave(),error);auto voice=engine.CreateVoice(clip,AudioMixerGroup::SFX,{},error);
+        Require(voice && engine.SetVoiceBus(voice,11) && !engine.SetVoiceBus(voice,999),"voice bus routing invalid");
+        auto missing=document;missing.erase(missing.find("  - {ID: 11"));
+        Require(!engine.ConfigureBusGraph(missing,error),"live voice bus removal accepted");
+        Require(engine.DestroyVoice(voice) && engine.ConfigureBusGraph(missing,error),"unused bus removal failed");
+    }
+
 	void TestNoDeviceEngineAndMixers()
 	{
 		std::string error;
@@ -395,6 +429,17 @@ namespace {
 		Require(voice != 0 && engine.SetMixerVolume(TomCat::AudioMixerGroup::Master, 0.5f)
 			&& engine.SetMixerVolume(TomCat::AudioMixerGroup::Music, 0.25f)
 			&& engine.Play(voice), "headless mixer/voice startup failed");
+        auto snapshot = engine.GetMixerSnapshot(); snapshot.Volumes[1] = .75f;
+        Require(engine.ApplyMixerSnapshot(snapshot, 1), "mixer fade rejected");
+        engine.Update(.5);
+        Require(std::abs(engine.GetMixerVolume(TomCat::AudioMixerGroup::Music) - .5f) < .001f, "mixer fade midpoint wrong");
+        engine.Update(.5);
+        Require(std::abs(engine.GetMixerVolume(TomCat::AudioMixerGroup::Music) - .75f) < .001f, "mixer fade endpoint wrong");
+        Require(engine.SetMixerMuted(TomCat::AudioMixerGroup::Music, true) && engine.GetMixerSnapshot().Muted[1], "mute failed");
+        Require(engine.SetMixerSolo(TomCat::AudioMixerGroup::SFX, true) && engine.GetMixerSnapshot().Solo[2], "solo failed");
+        Require(engine.SetDucking(TomCat::AudioMixerGroup::SFX, TomCat::AudioMixerGroup::Music, .2f), "ducking rejected");
+        Require(!engine.SetDucking(TomCat::AudioMixerGroup::Music, TomCat::AudioMixerGroup::Music, .2f), "self ducking accepted");
+        engine.ClearDucking();
 		engine.Update(0.2);
 		Require(engine.GetState(voice) == TomCat::AudioPlaybackState::Stopped,
 			"non-looping Null engine voice did not finish");
@@ -421,7 +466,7 @@ namespace {
 		auto& source = entity.AddComponent<TomCat::AudioSource>();
 		source.Clip = TomCat::AssetHandle(4242);
 		source.Enabled = false; source.PlayOnStart = false; source.Loop = true;
-		source.Volume = 0.75f; source.Pitch = 1.25f; source.MixerGroup = 1;
+		source.Volume = 0.75f; source.Pitch = 1.25f; source.MixerGroup = 1; source.Bus = 10;
 		source.Streaming = true; source.SpatialBlend = 0.6f;
 		source.MinDistance = 2.0f; source.MaxDistance = 40.0f;
 		auto& listener = entity.AddComponent<TomCat::AudioListener>();
@@ -443,7 +488,7 @@ namespace {
 			"Audio components did not round-trip");
 		const auto& loadedSource = loaded.GetComponent<TomCat::AudioSource>();
 		Require(static_cast<uint64_t>(loadedSource.Clip) == 4242
-			&& loadedSource.Loop && loadedSource.MixerGroup == 1
+			&& loadedSource.Loop && loadedSource.MixerGroup == 1 && loadedSource.Bus == 10
 			&& loadedSource.Streaming
 			&& std::abs(loadedSource.SpatialBlend - 0.6f) < 1.0e-6f
 			&& loadedSource.MinDistance == 2.0f
@@ -466,7 +511,7 @@ namespace {
 			TomCat::UUID(decodedPrefab.RootLocalID));
 		Require(prefabEntity.HasComponent<TomCat::AudioSource>()
 			&& static_cast<uint64_t>(prefabEntity.GetComponent<TomCat::AudioSource>().Clip)
-				== 4242, "Audio prefab component did not round-trip");
+				== 4242 && prefabEntity.GetComponent<TomCat::AudioSource>().Bus == 10, "Audio prefab component did not round-trip");
 
 		const YAML::Node root = YAML::Load(document);
 		bool visited = false;
@@ -669,11 +714,13 @@ int main()
 	{
 		TomCat::Log::Init();
 		TestWaveDecode();
-		TestNullDeviceStateMachine();
+		TestVorbisFixture();
+        TestNullDeviceStateMachine();
 		TestBoundedPcmWaveStreaming();
 		TestSpatializationMath();
 		TestDeviceLossRecovery();
-		TestNoDeviceEngineAndMixers();
+		TestAudioBusGraph();
+        TestNoDeviceEngineAndMixers();
 		TestDefaultBackendColdStart();
 		TestScenePrefabAndReferenceRoundTrip();
 		TestCapabilityTable();

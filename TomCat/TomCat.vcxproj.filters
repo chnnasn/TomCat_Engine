@@ -76,6 +76,24 @@
     <Filter Include="vendor\ImGuizmo">
       <UniqueIdentifier>{73BF7F4C-DF4A-ED10-E85B-700554664911}</UniqueIdentifier>
     </Filter>
+    <Filter Include="vendor\astcenc">
+      <UniqueIdentifier>{A3F1DA0C-8FBF-CE12-7853-3F3964C0AA77}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="vendor\astcenc\Source">
+      <UniqueIdentifier>{436A9426-AFD6-4F21-78CA-E77EE4F57189}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="vendor\etc2comp">
+      <UniqueIdentifier>{1F401B7B-8BCB-883F-94DC-0B3400E7E43F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="vendor\etc2comp\EtcLib">
+      <UniqueIdentifier>{41D73B6B-2DD1-64BD-163E-FBCD02D7CA29}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="vendor\etc2comp\EtcLib\Etc">
+      <UniqueIdentifier>{6C8A02C8-589A-AE98-C153-13B7AD829D31}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="vendor\etc2comp\EtcLib\EtcCodec">
+      <UniqueIdentifier>{8AEC1002-F6CF-1F42-FFD2-4D7E6B35E692}</UniqueIdentifier>
+    </Filter>
     <Filter Include="vendor\glm">
       <UniqueIdentifier>{829FC5A8-6E57-07F6-D75E-E051C335A2E6}</UniqueIdentifier>
     </Filter>
@@ -93,6 +111,12 @@
     </Filter>
     <Filter Include="vendor\glm\glm\gtx">
       <UniqueIdentifier>{B3A6A76B-9F8A-68C1-08EB-6214F4ED5243}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="vendor\harfbuzz">
+      <UniqueIdentifier>{EE26F8AF-5AB2-6574-63C3-E868CFCDC174}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="vendor\harfbuzz\src">
+      <UniqueIdentifier>{05AC89AC-710D-67BA-FA7A-AD6C66DB9D79}</UniqueIdentifier>
     </Filter>
     <Filter Include="vendor\stb_image">
       <UniqueIdentifier>{0DA0BA59-F998-D9AB-22CB-BE300E23B9B7}</UniqueIdentifier>
@@ -147,6 +171,9 @@
     <ClInclude Include="src\TomCat\Asset\MeshArtifact.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Asset\MobileTextureCodec.h">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Asset\ShaderArtifact.h">
       <Filter>src\TomCat\Asset</Filter>
     </ClInclude>
@@ -155,6 +182,9 @@
     </ClInclude>
     <ClInclude Include="src\TomCat\Asset\TextureArtifact.h">
       <Filter>src\TomCat\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Audio\AudioBusGraph.h">
+      <Filter>src\TomCat\Audio</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Audio\AudioClip.h">
       <Filter>src\TomCat\Audio</Filter>
@@ -187,6 +217,9 @@
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\EntryPoint.h">
+      <Filter>src\TomCat\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Core\FrameTask.h">
       <Filter>src\TomCat\Core</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Core\Input.h">
@@ -327,6 +360,9 @@
     <ClInclude Include="src\TomCat\Renderer\Shader.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\TextShaper.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Texture.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
@@ -340,6 +376,9 @@
       <Filter>src\TomCat\Runtime</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Runtime\RuntimeUI.h">
+      <Filter>src\TomCat\Runtime</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Runtime\UnicodeText.h">
       <Filter>src\TomCat\Runtime</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Save\SaveDataStore.h">
@@ -1793,6 +1832,9 @@
     <ClCompile Include="src\TomCat\Asset\MeshArtifact.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Asset\MobileTextureCodec.cpp">
+      <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Asset\ShaderArtifact.cpp">
       <Filter>src\TomCat\Asset</Filter>
     </ClCompile>
@@ -1801,6 +1843,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Asset\TextureArtifact.cpp">
       <Filter>src\TomCat\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\AudioBusGraph.cpp">
+      <Filter>src\TomCat\Audio</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Audio\AudioClip.cpp">
       <Filter>src\TomCat\Audio</Filter>
@@ -1913,6 +1958,9 @@
     <ClCompile Include="src\TomCat\Renderer\Shader.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\TextShaper.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Texture.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
@@ -1923,6 +1971,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Runtime\RuntimeUI.cpp">
+      <Filter>src\TomCat\Runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Runtime\UnicodeText.cpp">
       <Filter>src\TomCat\Runtime</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Save\SaveDataStore.cpp">
@@ -2062,6 +2113,120 @@
     </ClCompile>
     <ClCompile Include="vendor\ImGuizmo\ImGuizmo.cpp">
       <Filter>vendor\ImGuizmo</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_averages_and_directions.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_block_sizes.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_color_quantize.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_color_unquantize.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_compress_symbolic.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_compute_variance.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_decompress_symbolic.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_diagnostic_trace.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_entry.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_find_best_partitioning.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_ideal_endpoints_and_weights.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_image.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_integer_sequence.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_mathlib.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_mathlib_softfloat.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_partition_tables.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_percentile_tables.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_pick_best_endpoint_format.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_quantization.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_symbolic_physical.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_weight_align.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\astcenc\Source\astcenc_weight_quant_xfer_tables.cpp">
+      <Filter>vendor\astcenc\Source</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\Etc\Etc.cpp">
+      <Filter>vendor\etc2comp\EtcLib\Etc</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\Etc\EtcFilter.cpp">
+      <Filter>vendor\etc2comp\EtcLib\Etc</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\Etc\EtcImage.cpp">
+      <Filter>vendor\etc2comp\EtcLib\Etc</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\Etc\EtcMath.cpp">
+      <Filter>vendor\etc2comp\EtcLib\Etc</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4Encoding.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4Encoding_ETC1.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4Encoding_R11.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4Encoding_RG11.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4Encoding_RGB8.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4Encoding_RGB8A1.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcBlock4x4Encoding_RGBA8.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcDifferentialTrys.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcIndividualTrys.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\etc2comp\EtcLib\EtcCodec\EtcSortedBlockList.cpp">
+      <Filter>vendor\etc2comp\EtcLib\EtcCodec</Filter>
+    </ClCompile>
+    <ClCompile Include="vendor\harfbuzz\src\harfbuzz.cc">
+      <Filter>vendor\harfbuzz\src</Filter>
     </ClCompile>
     <ClCompile Include="vendor\stb_image\stb_image.cpp">
       <Filter>vendor\stb_image</Filter>

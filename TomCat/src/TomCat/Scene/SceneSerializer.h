@@ -1,5 +1,7 @@
 #pragma once
 #include "Scene.h"
+#include "TomCat/Core/FrameTask.h"
+namespace YAML { class Node; }
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Core/Version.h"
 
@@ -28,6 +30,8 @@ namespace TomCat {
 			const std::filesystem::path& diagnosticPath, bool resolveAssets);
 
 		bool Deserialize(const std::filesystem::path& filepath);
+        static FrameTask DecodeIncrementally(Ref<Scene> target, YAML::Node data,
+            std::filesystem::path diagnosticPath, bool resolveAssets);
 		// Parses and validates the complete current scene schema without resolving
 		// runtime resources. Cook uses this to reject malformed source scenes before
 		// publishing a package.

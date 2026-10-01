@@ -289,7 +289,8 @@ namespace TomCat {
 			&& engine.SetVolume(source.RuntimeVoice, source.Volume)
 			&& engine.SetPitch(source.RuntimeVoice, source.Pitch)
 			&& engine.SetMixerGroup(source.RuntimeVoice,
-				ToMixerGroup(source.MixerGroup));
+				ToMixerGroup(source.MixerGroup))
+            && engine.SetVoiceBus(source.RuntimeVoice,source.Bus);
 	}
 
 	void AudioSceneRuntime::DeferDestroySource(Entity entity)

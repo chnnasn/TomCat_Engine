@@ -573,12 +573,23 @@ namespace TomCat::Scripting {
 		return sceneSessionId;
 	}
 
-	uint64_t ScriptEngine::StartSceneCore(Scene& scene, uint64_t runtimeGeneration,
-		std::span<const UUID> initialEntityIDs, bool flushPendingCreates)
+    uint64_t ScriptEngine::StartSceneCore(Scene& scene, uint64_t runtimeGeneration,
+        std::span<const UUID> initialEntityIDs, bool flushPendingCreates) {
+        uint64_t result = 0;
+        auto task = StartSceneCoreTask(scene, runtimeGeneration, std::vector<UUID>(initialEntityIDs.begin(), initialEntityIDs.end()), flushPendingCreates, result);
+        while (!task.Done()) task.Advance(UINT32_MAX, 1e30);
+        return task.Succeeded() ? result : 0;
+    }
+    FrameTask ScriptEngine::StartSceneIncrementally(Scene& scene, uint64_t generation, uint64_t& result) {
+        return StartSceneCoreTask(scene, generation, scene.m_EntityOrder, true, result);
+    }
+    FrameTask ScriptEngine::StartSceneCoreTask(Scene& scene, uint64_t runtimeGeneration,
+        std::vector<UUID> initialEntityIDs, bool flushPendingCreates, uint64_t& result)
+
 	{
 		auto runtime = GetRuntime();
 		if (!runtime || !runtime->IsReady() || runtimeGeneration == 0)
-			return 0;
+			co_return false;
 
 		const bool sceneRuntimeWasRunning = scene.IsRuntimeRunning();
 		uint64_t session = 0;
@@ -591,7 +602,15 @@ namespace TomCat::Scripting {
 			++m_ProjectionRevision;
 			m_ProjectionSnapshots.clear();
 		}
-		InstallRuntimeEntityBatchCallback(scene, session);
+		bool completed = false;
+        bool managedCreated = false;
+        struct Cleanup { std::function<void()> Fn; ~Cleanup() { Fn(); } } cleanup{[&] {
+            if (completed) return;
+            if (managedCreated) StopScene(session);
+            else { std::lock_guard lock(m_Mutex); m_Scenes.erase(session); m_PendingFixedInput.erase(session); }
+            scene.SetRuntimeEntityBatchCreatedCallback({});
+        }};
+        InstallRuntimeEntityBatchCallback(scene, session);
 		auto sessionIsHealthy = [&]()
 		{
 			std::lock_guard<std::mutex> lock(m_Mutex);
@@ -605,6 +624,7 @@ namespace TomCat::Scripting {
 		std::vector<NativeScriptAttachmentV1> attachments;
 		for (UUID entityId : initialEntityIDs)
 		{
+            co_yield 1;
 			Entity entity = scene.FindEntityByUUID(entityId);
 			if (!entity || !entity.HasComponent<CSharpScripts>())
 				continue;
@@ -621,9 +641,13 @@ namespace TomCat::Scripting {
 		}
 
 		ScriptStatus status = runtime->CreateSceneRuntime(session, runtimeGeneration);
+        managedCreated = IsSuccess(status);
+        co_yield 1;
 		if (IsSuccess(status)) status = runtime->InstantiateAll(attachments);
+        co_yield 1;
 		const std::string fields = SerializeFields(scene, initialEntityIDs);
 		if (IsSuccess(status)) status = runtime->ApplySerializedFields(fields);
+        co_yield 1;
 		if (IsSuccess(status)) status = runtime->InvokeCreateAll();
 		if (IsSuccess(status) && !FlushDeferredCommands(session))
 			status = ScriptStatus::InvalidState;
@@ -667,7 +691,7 @@ namespace TomCat::Scripting {
 				m_SealedDeferredCallbackTransactions.end());
 			++m_ProjectionRevision;
 			m_ProjectionSnapshots.clear();
-			return 0;
+			co_return false;
 		}
 		if (flushPendingCreates)
 		{
@@ -675,10 +699,12 @@ namespace TomCat::Scripting {
 			if (!sessionIsHealthy())
 			{
 				StopScene(session);
-				return 0;
+				co_return false;
 			}
 		}
-		return session;
+		result = session;
+        completed = true;
+        co_return true;
 	}
 
 	void ScriptEngine::StopScene(uint64_t sceneSessionId)

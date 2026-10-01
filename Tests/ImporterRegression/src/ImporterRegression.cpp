@@ -886,6 +886,26 @@ namespace {
 			decoded, error) && decoded.size() == 4 * 4 * 4,
 			"BC3 texture artifact could not use the runtime fallback decoder");
 
+        for(const auto* compression : {"ASTC4x4","ETC2RGBA8"}) {
+            request.Settings={{"compression",compression},{"colorSpace","Linear"}};
+            auto imported=importer->Import(request);TomCat::TextureArtifactView view;
+            Require(imported.Succeeded() && TomCat::ParseTextureArtifact(imported.ArtifactBytes,view,error),(std::string(compression)+" import failed: "+error).c_str());
+            Require(view.Mips.size()==3 && view.Mips.front().Bytes.size()==16,"mobile mip block sizes are wrong");
+            Require(TomCat::DecompressTextureMip(view.Mips.front(),view.Format,decoded,error) && decoded.size()==64,(std::string(compression)+" decode failed: "+error).c_str());
+            double difference=0;for(size_t i=0;i<decoded.size();++i)difference+=std::abs(int(decoded[i])-int(rgbaView.Mips.front().Bytes[i]));
+            Require(difference/decoded.size()<35,"mobile compression pixel error exceeds fixture threshold");
+            auto broken=view.Mips.front();broken.Bytes=broken.Bytes.first(15);Require(!TomCat::DecompressTextureMip(broken,view.Format,decoded,error),"truncated mobile mip was accepted");
+            request.Settings={{"compression",compression},{"colorSpace","sRGB"}};
+            Require(importer->Import(request).Succeeded(),"mobile sRGB encoding failed");
+        }
+        request.Settings = {{"compression", "BC5"}, {"colorSpace", "Linear"}};
+        auto bc5 = importer->Import(request);
+        TomCat::TextureArtifactView bc5View;
+        Require(bc5.Succeeded() && TomCat::ParseTextureArtifact(bc5.ArtifactBytes, bc5View, error) && bc5View.Format == TomCat::TextureArtifactFormat::BC5
+            && TomCat::DecompressTextureMip(bc5View.Mips.front(), bc5View.Format, decoded, error) && decoded.size() == 64, "BC5 production round trip failed");
+        request.Settings = {{"compression", "BC5"}, {"colorSpace", "sRGB"}};
+        Require(!importer->Import(request).Succeeded(), "sRGB BC5 was accepted");
+
 		request.Platform = "editor";
 		request.Settings = { { "colorSpace", "Linear" }, { "mipmaps", "false" },
 			{ "compression", "RGBA8" } };
@@ -1172,6 +1192,17 @@ namespace {
 		Require(importer && importer->GetID() == "tomcat.material.canonical"
 			&& importer->GetVersion() >= 2,
 			"canonical material importer is not registered");
+        const std::string spriteSource="SchemaVersion: 1\nShader: BuiltinSprite2D\nTextures: {NormalMap: 303}\nParameters: {Tint: {Type: Float4, Value: [1, .5, .5, 1]}, Lit: {Type: Bool, Value: true}}\n";
+        std::vector<uint8_t> spriteBytes(spriteSource.begin(),spriteSource.end()),spriteArtifact;
+        std::vector<TomCat::TypedAssetDependency> spriteDependencies;
+        std::string spriteError;
+        TomCat::MaterialArtifact spriteMaterial;
+        Require(TomCat::BuildMaterialArtifact(spriteBytes,spriteArtifact,spriteError)
+            && TomCat::DecodeMaterialArtifact(spriteArtifact,spriteMaterial,spriteError)
+            && static_cast<uint64_t>(spriteMaterial.Shader)==TomCat::BuiltinSprite2DShader
+            && TomCat::ParseMaterialSourceDependencies(spriteBytes,spriteDependencies,spriteError)
+            && spriteDependencies.size()==1 && spriteDependencies.front().Name=="NormalMap", "built-in sprite material production contract failed");
+
 		const std::string source =
 			"SchemaVersion: 1\n"
 			"Shader: 101\n"
