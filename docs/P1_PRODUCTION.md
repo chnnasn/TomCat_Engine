@@ -126,4 +126,4 @@ GPU 测试使用隐藏 OpenGL 上下文和像素读回，断言大精灵内部�
 
 `Scripts/Run-Regressions.ps1 -Log` 全量通过（`build/production-final2.log`），涵盖原生、Managed、独立 Player、CoinRunner 三轮和模块发布。新增真实 Noto 印度文字/阿拉伯连字、塑形字形图集与光标映射测试；九组既有 UI 截图基准保持一致。ASTC/ETC2 测试验证真实编码、mip 块尺寸、CPU 解码像素误差、sRGB 编码及截断数据拒绝。音频验证分支路由增益、父级静音、独奏、环路拒绝及使用中总线保护；另跑 AudioRegression 验证非默认 Bus 的场景与 Prefab 往返（`build/production-audio-final.log`）。
 
-一次中间回归遇到 .NET 脚本编译子进程 CLR 内部错误，重跑全量通过。Web `tc_player_core` 编译并链接成功（`build/production-web-core.log`）；完整 WebManaged 构建停在既有共享 ProjectSettingsView 的 `m_Layer` 未声明错误，未计为完整 Web 验收。GPU 的移动压缩格式原生上传、真实 IME 和非 Windows 完整双向文字仍待对应设备验证。
+一次中间回归遇到 .NET 脚本编译子进程 CLR 内部错误，重跑全量通过。Web `tc_player_core` 编译并链接成功（`build/production-web-core.log`）；后续已修复共享 ProjectSettingsView 的 Web 状态适配，并在 Web CMake 中补齐 SaveData 与拆分后的四个编辑器面板源文件。`Scripts/Build-WebManaged.ps1` 完整通过，包含原生编译、最终 WASM 链接与 .NET browser-wasm 发布（`build/web-panel-fix-final.log`），产物位于 `build/web-managed`。本次验证为构建发布，未替代浏览器交互验收。GPU 的移动压缩格式原生上传、真实 IME 和非 Windows 完整双向文字仍待对应设备验证。
