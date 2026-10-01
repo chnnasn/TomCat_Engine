@@ -285,6 +285,7 @@ namespace TomCat {
 			return IsCookedPackageMounted() && m_CookedManagedPayload
 				? &*m_CookedManagedPayload : nullptr;
 		}
+		const std::vector<uint8_t>& GetCookedModulePayload() const { return m_CookedModulePayload; }
 		bool ReadAssetBytes(AssetHandle handle, std::vector<uint8_t>& bytes,
 			AssetType* type = nullptr) const;
 		std::vector<uint8_t> ReadAssetBytes(AssetHandle handle) const;
@@ -368,6 +369,7 @@ namespace TomCat {
 		Physics2DSettings m_CookedPhysics2DSettings;
 		PlayerSettings m_CookedPlayerSettings;
 		std::optional<ManagedPackagePayload> m_CookedManagedPayload;
+		std::vector<uint8_t> m_CookedModulePayload;
 		std::unordered_map<AssetHandle, CookedEntry> m_CookedEntries;
 		mutable std::ifstream m_CookedPackageStream;
 		mutable std::mutex m_CookedPackageMutex;

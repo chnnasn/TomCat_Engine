@@ -4,6 +4,7 @@
 
 #include <TomCat/Scripting/ManagedRuntimeFactory.h>
 #include <TomCat/Scripting/ScriptEngine.h>
+#include <TomCat/Module/ModuleSystem.h>
 #include <TomCat/Utils/FileSystemUtils.h>
 #include <TomCat/Utils/PathUtils.h>
 
@@ -185,6 +186,9 @@ namespace TomCat {
 			return;
 		}
 		const bool hasWindow = Application::Get().HasWindow();
+		std::string moduleError;
+		if (!ModuleSystem::Get().LoadCookedModules(assets.GetCookedModulePayload(), moduleError))
+		{ Fail("could not load packaged native modules: " + moduleError, 5); return; }
 		std::string shaderError;
 		if (hasWindow && !assets.PreloadCookedShaders(shaderError))
 		{
@@ -244,6 +248,9 @@ namespace TomCat {
 		m_SceneManager.reset();
 		Scripting::ScriptEngine::Get().SetRuntime({});
 		AssetManager::Get().UnmountCookedPackage();
+		std::string moduleError;
+		if (!ModuleSystem::Get().UnloadAllModules(moduleError))
+			TC_Core_Error("Packaged module cleanup failed: {0}", moduleError);
 	}
 
 	void PlayerRuntimeLayer::OnUpdate(Timestep timestep)

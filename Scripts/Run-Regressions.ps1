@@ -188,6 +188,8 @@ try {
         throw "CoinRunner complete-game smoke failed (exit $LASTEXITCODE)."
     }
 
+    & (Join-Path $PSScriptRoot "Run-ModulePublishSmoke.ps1") -Configuration $Configuration
+    if ($LASTEXITCODE -ne 0) { throw "Module publishing smoke failed." }
     Write-Host "All TomCat regressions passed."
 }
 finally {

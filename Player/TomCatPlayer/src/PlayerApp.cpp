@@ -1,4 +1,5 @@
 #include <TomCat.h>
+#include <TomCat/Module/ModuleSystem.h>
 #define TC_APPLICATION_PRODUCT TomCat::ApplicationProduct::Player
 #include <TomCat/Core/EntryPoint.h>
 #include <TomCat/Core/ApplicationPaths.h>
@@ -312,15 +313,20 @@ namespace TomCat {
 							break;
 						}
 						std::string runtimeError;
-						if (!ValidateMountedPlayerManagedRuntime(runtimeError))
+						if (!ModuleSystem::Get().LoadCookedModules(AssetManager::Get().GetCookedModulePayload(), runtimeError)
+                            || !ValidateMountedPlayerManagedRuntime(runtimeError))
 						{
-							TC_Core_Error("TomCat Player: packaged runtime validation failed: {0}",
+							std::string moduleCleanup;
+                            (void)ModuleSystem::Get().UnloadAllModules(moduleCleanup);
+                            TC_Core_Error("TomCat Player: packaged runtime validation failed: {0}",
 								runtimeError);
 							AssetManager::Get().UnmountCookedPackage();
 							Close(5);
 							break;
 						}
-						TC_Core_Info("Package and packaged runtime are valid: {0}",
+						std::string moduleCleanup;
+                        if (!ModuleSystem::Get().UnloadAllModules(moduleCleanup)) { Close(5); break; }
+                        TC_Core_Info("Package and packaged runtime are valid: {0}",
 							PathToUTF8(package));
 						AssetManager::Get().UnmountCookedPackage();
 						Close(0);

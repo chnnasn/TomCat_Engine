@@ -6,6 +6,8 @@
 #include "TextureArtifact.h"
 
 #include "TomCat/Audio/AudioEngine.h"
+#include "TomCat/Module/ModuleSystem.h"
+#include "TomCat/Module/ModulePackage.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Shader.h"
@@ -1506,7 +1508,7 @@ namespace TomCat {
 					+ reference.PropertyPath + " requires a nonzero AssetHandle";
 				return false;
 			}
-			if (rawHandle == kManagedPayloadHandle)
+			if (rawHandle == kManagedPayloadHandle || rawHandle == ModulePackage::Handle)
 			{
 				errorMessage = "Scene '" + PathToUTF8(scenePath) + "' property "
 					+ reference.PropertyPath + " uses the reserved managed-payload handle";
@@ -1891,6 +1893,7 @@ namespace TomCat {
 		m_CookedPhysics2DSettings = Physics2DSettings{};
 		m_CookedPlayerSettings = PlayerSettings{};
 		m_CookedManagedPayload.reset();
+		m_CookedModulePayload.clear();
 		m_ManagedCookPayloadOverride.reset();
 		m_AuthoringProject.reset();
 		m_UsesProjectConfiguration = false;
@@ -3295,6 +3298,14 @@ namespace TomCat {
 		if (!Refresh())
 			return false;
 		Physics2DSettings packagePhysicsSettings;
+		std::vector<uint8_t> modulePayload;
+		if (const Ref<Project> project = m_AuthoringProject.lock())
+		{
+			std::string moduleError;
+			if (!ModuleSystem::Get().LoadProjectModules(project->GetProjectDirectory(),
+				moduleError, true, ModuleSystem::Get().GetHostKind()) || !ModulePackage::Build(project->GetProjectDirectory(), modulePayload, moduleError))
+			{ TC_Core_Error("Module cook failed: {0}", moduleError); return false; }
+		}
 		PlayerSettings packagePlayerSettings;
 		std::vector<AssetHandle> packageBuildScenes;
 		if (m_UsesProjectConfiguration)
@@ -3492,9 +3503,9 @@ namespace TomCat {
 			const AssetHandle handle = pendingAssets.front();
 			pendingAssets.pop_front();
 			const uint64_t rawHandle = static_cast<uint64_t>(handle);
-			if (rawHandle == kManagedPayloadHandle)
+			if (rawHandle == kManagedPayloadHandle || rawHandle == ModulePackage::Handle)
 			{
-				TC_Core_Error("AssetHandle UINT64_MAX is reserved by tcpak v5");
+				TC_Core_Error("AssetHandle is reserved by tcpak special payloads");
 				return false;
 			}
 			if (FindBuiltInSpriteAsset(handle))
@@ -3891,6 +3902,18 @@ namespace TomCat {
 				enqueueAsset(AssetHandle(dependency));
 		}
 
+		if (!modulePayload.empty())
+		{
+			SourceEntry entry;
+			entry.RawHandle = ModulePackage::Handle;
+			entry.RawType = static_cast<uint16_t>(AssetType::None);
+			entry.Flags = ModulePackage::EntryFlag;
+			entry.Reserved = ModulePackage::EntryTag;
+			entry.CookedBytes = modulePayload;
+			entry.HasCookedBytes = true;
+			entry.Size = entry.CookedBytes.size();
+			entries.push_back(std::move(entry));
+		}
 		std::optional<ManagedPackagePayload> managedPayload;
 		if (m_ManagedCookPayloadOverride)
 			managedPayload = *m_ManagedCookPayloadOverride;
@@ -4258,6 +4281,18 @@ namespace TomCat {
 			return false;
 		}
 
+        if (const auto project = m_AuthoringProject.lock())
+        {
+            std::vector<uint8_t> currentModules;
+            std::string moduleError;
+            if (!ModulePackage::Build(project->GetProjectDirectory(), currentModules, moduleError)
+                || currentModules != modulePayload)
+            {
+                RemoveTemporaryFile(temporary);
+                TC_Core_Error("Module inputs changed before publishing Cook: {0}", moduleError);
+                return false;
+            }
+        }
 		std::string installError;
 		if (!FileSystem::InstallTemporaryFileAtomically(temporary, packagePath, installError))
 		{
@@ -4434,6 +4469,7 @@ namespace TomCat {
 
 		std::unordered_map<AssetHandle, CookedEntry> entries;
 		std::optional<CookedEntry> managedEnvelopeEntry;
+		std::optional<CookedEntry> moduleEnvelopeEntry;
 		std::vector<std::pair<uint64_t, uint64_t>> occupiedRanges;
 		try
 		{
@@ -4470,7 +4506,16 @@ namespace TomCat {
 				|| size > packageSize - offset)
 				return false;
 
-			if (rawHandle == kManagedPayloadHandle)
+			if (rawHandle == ModulePackage::Handle && version >= 8)
+			{
+				if (version < 8 || moduleEnvelopeEntry || rawType != static_cast<uint16_t>(AssetType::None)
+					|| flags != ModulePackage::EntryFlag || reserved != ModulePackage::EntryTag
+					|| size == 0 || size > ModulePackage::MaximumBytes) return false;
+				CookedEntry entry; entry.Offset = offset; entry.Size = size;
+				entry.SHA256Digest = digest; entry.HasSHA256Digest = hasEntryDigests;
+				moduleEnvelopeEntry = entry;
+			}
+			else if (rawHandle == kManagedPayloadHandle)
 			{
 				if (managedEnvelopeEntry
 					|| rawType != static_cast<uint16_t>(AssetType::None)
@@ -4537,6 +4582,8 @@ namespace TomCat {
 			if (managedEnvelopeEntry)
 				digestEntries.emplace_back(kManagedPayloadHandle,
 					*managedEnvelopeEntry);
+			if (moduleEnvelopeEntry)
+				digestEntries.emplace_back(ModulePackage::Handle, *moduleEnvelopeEntry);
 		}
 		catch (const std::exception&)
 		{
@@ -4567,6 +4614,12 @@ namespace TomCat {
 
 		std::optional<ManagedPackagePayload> mountedManagedPayload;
 		std::string validationError;
+		std::vector<uint8_t> mountedModulePayload;
+		if (moduleEnvelopeEntry && (!ReadStreamRange(input, moduleEnvelopeEntry->Offset,
+			moduleEnvelopeEntry->Size, mountedModulePayload)
+			|| ComputeSHA256Digest(mountedModulePayload) != moduleEnvelopeEntry->SHA256Digest
+			|| !ModulePackage::Validate(mountedModulePayload, validationError)))
+		{ TC_Core_Error("Rejected native module payload: {0}", validationError); return false; }
 		if (managedEnvelopeEntry)
 		{
 			std::vector<uint8_t> envelope;
@@ -4700,6 +4753,7 @@ namespace TomCat {
 		m_CookedPhysics2DSettings = mountedPhysicsSettings;
 		m_CookedPlayerSettings = std::move(mountedPlayerSettings);
 		m_CookedManagedPayload = std::move(mountedManagedPayload);
+		m_CookedModulePayload = std::move(mountedModulePayload);
 		EnableAsyncLoads();
 		return true;
 	}
@@ -4730,6 +4784,7 @@ namespace TomCat {
 		m_CookedPhysics2DSettings = Physics2DSettings{};
 		m_CookedPlayerSettings = PlayerSettings{};
 		m_CookedManagedPayload.reset();
+		m_CookedModulePayload.clear();
 		if (m_RegistryInitialized)
 			EnableAsyncLoads();
 	}
