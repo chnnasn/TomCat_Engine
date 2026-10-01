@@ -7,7 +7,7 @@ ModuleVersion: 1
 Name: Weather
 DisplayName: Weather Module
 Version: 1.0.0
-EngineBuildID: TomCat-0.4.0
+EngineBuildID: TomCat-0.5.0
 Library: lib/Weather.dll
 Enabled: true
 Runtime: true
