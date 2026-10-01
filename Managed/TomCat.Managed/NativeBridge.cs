@@ -106,7 +106,9 @@ internal static unsafe partial class NativeBridge
 		NativeComponentSchemaApiV1 componentSchemaCandidate = default;
 		bool hasComponentSchemaCandidate = TryReadComponentSchemaCapability(api,
 			out componentSchemaCandidate);
-		NativeAudioApiV1 audioCandidate = default;
+		bool hasMixerCandidate = TryReadMixerCapability(api, out var mixerCandidate);
+        bool hasBusCandidate = TryReadBusCapability(api, out var busCandidate);
+        NativeAudioApiV1 audioCandidate = default;
 		bool hasAudioCandidate = TryReadAudioCapability(api, out audioCandidate);
 		NativeAudioSpatialApiV1 audioSpatialCandidate = default;
 		bool hasAudioSpatialCandidate = TryReadAudioSpatialCapability(api,
@@ -180,7 +182,9 @@ internal static unsafe partial class NativeBridge
 				s_componentSchemaApi = componentSchemaCandidate;
 				Volatile.Write(ref s_componentSchemaBound, true);
 			}
-			if (hasAudioCandidate && !s_audioBound)
+			if (hasBusCandidate && !s_busBound) { s_busApi=busCandidate;Volatile.Write(ref s_busBound,true); }
+            if (hasMixerCandidate && !s_mixerBound) { s_mixerApi = mixerCandidate; Volatile.Write(ref s_mixerBound, true); }
+            if (hasAudioCandidate && !s_audioBound)
 			{
 				s_audioApi = audioCandidate;
 				Volatile.Write(ref s_audioBound, true);

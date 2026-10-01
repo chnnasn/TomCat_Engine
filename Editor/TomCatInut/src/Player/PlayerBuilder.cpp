@@ -285,7 +285,7 @@ namespace TomCat {
 				file == "tomcat.scriptgenerator.dll")
 				return false;
 
-			if (key == "tomcatplayer.exe")
+			if (key == "tomcatplayer.exe" || key == "third_party_notices.txt")
 				return true;
 			const std::vector<std::string> components = PathComponents(relative);
 			if (components.empty())

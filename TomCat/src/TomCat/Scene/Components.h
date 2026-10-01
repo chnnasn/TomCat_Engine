@@ -94,7 +94,10 @@ namespace TomCat {
 		bool Enabled = true;
 		glm::vec4 _Color{ 1.0f, 1.0f, 1.0f, 1.0f };
 		AssetHandle SpriteHandle = AssetHandle(0);
-		// Runtime-only resolved sprite. SpriteHandle is the serialized source of truth.
+		AssetHandle NormalMap = AssetHandle(0);
+        AssetHandle MaterialHandle = AssetHandle(0);
+        bool CastShadows = false;
+        // Runtime-only resolved sprite. SpriteHandle is the serialized source of truth.
 		Ref<Texture2D> Sprite;
 		// Editor animation preview uses a runtime-only handle so scrubbing never
 		// mutates the serialized SpriteHandle (and therefore cannot leak into Save).
@@ -412,7 +415,11 @@ namespace TomCat {
 		bool FixedAspectRatio = false;
 		glm::vec4 BackgroundColor = glm::vec4(0.53f, 0.81f, 0.92f, 1.0f);  // 默认天蓝色
 
-		C_Camera() = default;
+		float Exposure = 0.0f;
+        float Saturation = 1.0f;
+        float Vignette = 0.0f;
+
+        C_Camera() = default;
 		C_Camera(const C_Camera&) = default;
 	};
 
@@ -464,6 +471,7 @@ namespace TomCat {
 		// Matches AudioMixerGroup: 0 Master, 1 Music, 2 SFX. Kept as a byte in
 		// the scene component to avoid coupling Components.h to the backend.
 		uint8_t MixerGroup = 2;
+        uint32_t Bus = UINT32_MAX; // UINT32_MAX routes through the legacy MixerGroup.
 
 		uint64_t RuntimeVoice = 0;
 		AssetHandle RuntimeClipHandle = AssetHandle(0);
@@ -624,6 +632,12 @@ namespace TomCat {
 		glm::vec2 ContentSize{ 300.0f, 600.0f };
 		glm::vec2 Offset{ 0.0f };
 		float ScrollSpeed = 40.0f;
+        bool Virtualized = false;
+        uint32_t VirtualItemCount = 0;
+        float VirtualItemHeight = 24.0f;
+        uint32_t VirtualOverscan = 2;
+        uint32_t RuntimeFirstVisibleIndex = 0;
+        uint32_t RuntimeVisibleCount = 0;
 	};
 
 	struct UIInputField
@@ -641,6 +655,8 @@ namespace TomCat {
 		uint32_t RuntimeSelectionAnchor = 0;
 		uint64_t RuntimeChangeSerial = 0;
 		uint64_t RuntimeLastInputFrame = 0;
+        std::string RuntimePreedit;
+        uint32_t RuntimePreeditCaret = 0;
 	};
 
 	// Inherited by descendants. Authored image/text colors remain multiplicative
@@ -670,6 +686,7 @@ namespace TomCat {
 	{
 		bool Enabled = true;
 		std::string Key;
+        std::string Parameters = "{}";
 	};
 
 	enum class UILayoutDirection : int32_t

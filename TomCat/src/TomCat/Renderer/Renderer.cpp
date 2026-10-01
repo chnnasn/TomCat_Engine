@@ -15,7 +15,8 @@ namespace TomCat {
 
 	void Renderer::Shutdown()
 	{
-		OpenGLProfiler::Shutdown();
+		RenderCommand::ReleaseColorGrade();
+        OpenGLProfiler::Shutdown();
 		Renderer2D::Shutdown();
 	}
 

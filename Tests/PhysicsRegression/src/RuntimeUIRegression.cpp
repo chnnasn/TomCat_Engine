@@ -10,11 +10,13 @@
 #include "TomCat/Renderer/Camera.h"
 #include "TomCat/Renderer/EditorCamera.h"
 #include "TomCat/Renderer/Font.h"
+#include "TomCat/Renderer/TextShaper.h"
 #include "TomCat/Renderer/Framebuffer.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/Renderer.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Runtime/RuntimeUI.h"
+#include "TomCat/Runtime/UnicodeText.h"
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Scene/Entity.h"
@@ -1984,6 +1986,101 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			96.0f, {});
 	}
 
+    void TestFragmentLighting() {
+        std::cout << "P1 GPU test begin" << std::endl;
+        using namespace TomCat;
+        HiddenOpenGLContext context;
+        RequireUI(context.IsAvailable(), "P1 lighting requires OpenGL validation");
+        FramebufferSpecification spec; spec.Width=spec.Height=64; spec.Attachments={FramebufferTextureFormat::RGBA8};
+        auto target=Framebuffer::Create(spec); target->Bind();
+        Camera camera(glm::ortho(-1.f,1.f,-1.f,1.f));
+        Renderer2D::PointLightData light; light.Position={0,0,1}; light.Radius=.5f;
+        auto capture=[&](std::span<const Renderer2D::ShadowEdge> edges) {
+            RenderCommand::SetClearColor({0,0,0,1}); RenderCommand::Clear();
+            Renderer2D::Set2DLighting({0,0,0},std::span(&light,1),edges);
+            Renderer2D::BeginScene(camera,glm::mat4(1));
+            Renderer2D::DrawLitQuad(glm::scale(glm::mat4(1),{2,2,1}),{1,1,1,1},-1);
+            Renderer2D::EndScene();
+            std::array<uint8_t,4> pixel{}; glReadBuffer(GL_COLOR_ATTACHMENT0); glReadPixels(36,32,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel.data()); return pixel[0];
+        };
+        std::cout << "P1 GPU light readback" << std::endl;
+        RequireUI(capture({})>100,"light inside a large quad was lost (vertex lighting regression)");
+        const Renderer2D::ShadowEdge edge{{.05f,-1},{.05f,1}};
+        std::cout << "P1 GPU shadow readback" << std::endl;
+        RequireUI(capture(std::span(&edge,1))<5,"occluder did not shadow fragment");
+        RequireUI(glGetError()==GL_NO_ERROR,"fragment lighting GL error");
+        RenderCommand::SetClearColor({.8f,.2f,.1f,1}); RenderCommand::Clear();
+        RenderCommand::ApplyColorGrade(-1,0,0);
+        std::array<uint8_t,4> gray{}; glReadBuffer(GL_COLOR_ATTACHMENT0); glReadPixels(32,32,1,1,GL_RGBA,GL_UNSIGNED_BYTE,gray.data());
+        RequireUI(std::abs(int(gray[0])-int(gray[1]))<=1 && std::abs(int(gray[1])-int(gray[2]))<=1 && gray[0]>20 && gray[0]<60,"postprocess exposure/saturation pixel mismatch");
+        RequireUI(glGetError()==GL_NO_ERROR,"postprocess GL state error");
+        target->Unbind(); Renderer2D::Set2DLighting({1,1,1},{});
+    }
+
+    void TestLargeSceneDecodeBudget() {
+        std::cout << "P1 large scene author" << std::endl;
+        using namespace TomCat;
+        auto authored = CreateRef<Scene>();
+        for (uint32_t i=0;i<5000;++i) authored->CreateEntityWithUUID(UUID(static_cast<uint64_t>(i)+1), "budget entity " + std::to_string(i));
+        std::string document,error;
+        std::cout << "P1 large scene serialize" << std::endl;
+        RequireUI(SceneSerializer(authored).SerializeDocument(document,error),"large scene fixture serialization failed");
+        auto decoded = CreateRef<Scene>();
+        std::cout << "P1 large scene decode" << std::endl;
+        auto parsed = YAML::Load(document);
+        std::cout << "P1 large scene parsed" << std::endl;
+        auto task = SceneSerializer::DecodeIncrementally(decoded,parsed,"LargeSceneBudget",false);
+        uint32_t frames=0;
+        while (!task.Done() && frames<10000) {
+            RequireUI(task.Advance(32,2.0)<=32,"activation exceeded unit budget"); ++frames;
+            if(frames%1000==0) std::cout << "P1 decode frames=" << frames << std::endl;
+        }
+        RequireUI(task.Succeeded() && frames>100,"large scene was not spread across frames");
+        std::cout << "P1 large scene: entities=5000 frames=" << frames << " peak_ms=" << task.PeakMilliseconds << " overrun_frames=" << task.OverrunFrames << '\n';
+        auto cancelled = CreateRef<Scene>();
+        { auto partial=SceneSerializer::DecodeIncrementally(cancelled,parsed,"CancelBudget",false); partial.Advance(8,2); }
+        std::string empty; RequireUI(SceneSerializer(cancelled).SerializeDocument(empty,error) && YAML::Load(empty)["Entities"].size()==0,"cancelled decode published partial entities");
+    }
+
+    void TestComplexShaping() {
+        using namespace TomCat;
+        auto directory=std::filesystem::path(__FILE__).parent_path().parent_path()/"Fixtures/Shaping";
+        for(const auto& [file,text] : std::vector<std::pair<std::string,std::string>>{{"NotoSansDevanagari.ttf","क्षि"},{"NotoNaskhArabic.ttf","لا"}}) {
+            const auto bytes=ReadBinary(directory/file);auto codepoints=FontAtlasBuilder::DecodeUTF8(text);FontAtlasData atlas;
+            RequireUI(FontAtlasBuilder::Build(bytes,codepoints,atlas),"shaping fixture atlas failed");
+            std::set<uint32_t> closure;auto shaped=TextShaper::Shape(atlas,text,&closure);
+            RequireUI(!shaped.empty() && !closure.empty(),"OpenType shaping produced no glyphs");
+            for(auto glyph:shaped) RequireUI((glyph.Key-TextShaper::GlyphKeyBase)%65536!=0 && glyph.Begin<glyph.End,"OpenType shaping produced missing glyph or invalid cluster");
+            codepoints.insert(codepoints.end(),closure.begin(),closure.end());
+            RequireUI(FontAtlasBuilder::Build(bytes,codepoints,atlas),"shaped glyph atlas failed");
+            for(auto glyph:shaped) RequireUI(atlas.Glyphs.contains(glyph.Key),"shaped glyph missing from atlas");
+            auto layout=TextLayoutEngine::Build(atlas,text,32,0,TextAlignment::Left);
+            RequireUI(!layout.Glyphs.empty() && layout.Width>0 && layout.Carets.contains(0) && layout.Carets.contains(text.size()),"shaped layout lost pixels/carets");
+            RequireUI(shaped.size()<codepoints.size(),"shaping did not consume source font");
+            if(file=="NotoSansDevanagari.ttf") RequireUI(shaped.front().Begin==0 && shaped.front().End==text.size(),"Indic conjunct did not form one shaping cluster");
+            if(file=="NotoNaskhArabic.ttf") RequireUI(layout.Carets.at(0).x>layout.Carets.at(text.size()).x,"Arabic caret direction is wrong");
+        }
+        std::cout<<"PASS HarfBuzz Indic/Arabic shaping, glyph atlas and caret mapping\n";
+    }
+
+    void TestUnicodeProduction() {
+        using namespace TomCat;
+        const std::string combining = "e\xcc\x81";
+        const std::string family = "\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7";
+        RequireUI(UnicodeText::GraphemeBoundaries(combining + family).size() == 3, "combining/ZWJ clusters split");
+        RequireUI(UnicodeText::Previous(combining + family, combining.size()+family.size()) == combining.size(), "grapheme backspace boundary wrong");
+        RequireUI(UnicodeText::PluralCategory("ru", 2) == "few" && UnicodeText::PluralCategory("ar", 0) == "zero", "CLDR plural rules missing");
+        RequireUI(UnicodeText::FormatNumber("de",1234.5) == "1.234,5", "locale number formatting wrong");
+        const std::string hebrew = "\xd7\x90\xd7\x91\xd7\x92";
+        const auto visual = UnicodeText::VisualClusters(hebrew);
+        RequireUI(visual.size() == 3 && visual.front().Begin == 4 && visual.front().RTL, "bidi logical mapping wrong");
+        Input::NotifyComposition(true, combining, static_cast<uint32_t>(combining.size()));
+        RequireUI(Input::GetComposition().Active && Input::GetTextInput().empty(), "preedit leaked into committed text");
+        Input::NotifyWindowFocus(false, 0);
+        RequireUI(!Input::GetComposition().Active, "composition survived focus loss");
+        Input::ClearState();
+    }
+
 	void TestProductUIControls()
 	{
 		using namespace TomCat;
@@ -2081,6 +2178,14 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		field.CharacterLimit = 8;
 		input = {}; input.DisplayFrame = 700; input.TextInput = "!"; update(); update();
 		RequireUI(field.Text == "OK!", "same display-frame text was committed twice");
+        field.CharacterLimit = 1;
+        input = {}; input.SelectAll = true; input.TextInput = "e"; update();
+        input = {}; input.TextInput = "\xcc\x81"; update();
+        RequireUI(field.Text == "e\xcc\x81", "combining accent rejected at grapheme limit");
+        input = {}; input.TextInput = "x"; update();
+        RequireUI(field.Text == "e\xcc\x81", "new grapheme exceeded limit");
+        input = {}; input.Backspace = true; update();
+        RequireUI(field.Text.empty(), "backspace split combined grapheme");
 		field.CharacterLimit = 3;
 		input = {}; input.SelectAll = true; input.TextInput = "OK"; update();
 		input = {}; input.WindowFocused = false; update();
@@ -2092,6 +2197,16 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			&& !after.ClipRegions.at(item.GetUUID()).empty(), "scroll did not move content within its viewport clip");
 		input.ScrollDelta.y = -100.0f; update();
 		RequireUI(Near(scroll.Offset.y, 320.0f), "scroll exceeded content extent");
+        scroll.Virtualized = true; scroll.VirtualItemCount = 100000; scroll.VirtualItemHeight = 20; scroll.Offset.y = 10000;
+        auto virtualLayout = RuntimeUISystem::BuildLayout(*scene,400,300,96);
+        RequireUI(scroll.RuntimeFirstVisibleIndex == 498 && scroll.RuntimeVisibleCount <= 10 && virtualLayout.RenderOrder.size() < 20, "virtual list expanded logical rows");
+        scroll.Virtualized = false;
+        field.RuntimeFocused = true;
+        const auto committed = field.Text;
+        input = {}; input.Composing = true; input.Preedit = "candidate"; input.PreeditCaret = 3; input.Backspace = true; update();
+        RequireUI(field.Text == committed && field.RuntimePreedit == "candidate", "preedit modified committed text");
+        input = {}; update();
+
 		std::string document, error;
 		RequireUI(SceneSerializer(scene).SerializeDocument(document, error), "product UI serialization failed");
 		auto loaded = CreateRef<Scene>();
@@ -3021,8 +3136,12 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 			const float scale = dpi / 96.0f;
 			selectedField.Password = false;
 			const auto normalSelection = selectionBounds(dpi);
-			const float selectedAdvance = glyphAdvance('i') + glyphAdvance(0x6e38) + glyphAdvance(0x620f);
-			RequireUI(normalSelection.Count > 0 && Near(static_cast<float>(normalSelection.MinimumX), (30.0f + glyphAdvance('W')) * scale, 1.0f)
+			float selectedAdvance=0,anchorAdvance=0;
+            for(const auto& glyph:TomCat::TextShaper::Shape(selectionAtlas,selectedField.Text)) {
+                if(glyph.Begin<1) anchorAdvance+=glyph.Advance*24.f/selectionAtlas.PixelHeight;
+                else if(glyph.Begin<8) selectedAdvance+=glyph.Advance*24.f/selectionAtlas.PixelHeight;
+            }
+			RequireUI(normalSelection.Count > 0 && Near(static_cast<float>(normalSelection.MinimumX), (30.0f + anchorAdvance) * scale, 1.0f)
 				&& Near(normalSelection.Width(), selectedAdvance * scale, 1.0f)
 				&& Near(normalSelection.Height(), selectionAtlas.LineHeight * 24.0f / selectionAtlas.PixelHeight * scale, 1.0f),
 				"normal input selection did not follow font advances and DPI");
@@ -3076,7 +3195,11 @@ namespace TomCat::Tests {
 		TestEditorCamera2DProjection();
 		TestSceneCameraFrustumCorners();
 		TestFixedInputCaptureSnapshot();
-		TestProductUIControls();
+		TestFragmentLighting();
+        TestLargeSceneDecodeBudget();
+        TestUnicodeProduction();
+        TestComplexShaping();
+        TestProductUIControls();
 		TestSceneAndPrefabRoundTrip();
 		TestPersistentButtonCallbacks();
 		TestCookedRuntimeUIRoundTrip();

@@ -148,6 +148,7 @@ namespace TomCat {
 			value.RuntimeCaret = value.RuntimeSelectionAnchor = 0;
 			value.RuntimeChangeSerial = 0;
 			value.RuntimeLastInputFrame = 0;
+            value.RuntimePreedit.clear(); value.RuntimePreeditCaret = 0;
 		}
 
 		void ResetTransient(::TomCat::UILocalization& value)
@@ -774,7 +775,11 @@ namespace TomCat {
 			MemberProperty(UIScrollViewProperties::Vertical, "Vertical", "Vertical", &::TomCat::UIScrollView::Vertical),
 			MemberProperty(UIScrollViewProperties::ContentSize, "ContentSize", "ContentSize", &::TomCat::UIScrollView::ContentSize, NonnegativeVector2()),
 			MemberProperty(UIScrollViewProperties::Offset, "Offset", "Offset", &::TomCat::UIScrollView::Offset, NonnegativeVector2()),
-			MemberProperty(UIScrollViewProperties::ScrollSpeed, "ScrollSpeed", "ScrollSpeed", &::TomCat::UIScrollView::ScrollSpeed, FiniteFloat(0.0f, 1000000.0f))
+			MemberProperty(UIScrollViewProperties::ScrollSpeed, "ScrollSpeed", "ScrollSpeed", &::TomCat::UIScrollView::ScrollSpeed, FiniteFloat(0.0f, 1000000.0f)),
+            MemberProperty(UIScrollViewProperties::Virtualized, "Virtualized", "Virtualized", &::TomCat::UIScrollView::Virtualized),
+            MemberProperty(UIScrollViewProperties::VirtualItemCount, "VirtualItemCount", "VirtualItemCount", &::TomCat::UIScrollView::VirtualItemCount),
+            MemberProperty(UIScrollViewProperties::VirtualItemHeight, "VirtualItemHeight", "VirtualItemHeight", &::TomCat::UIScrollView::VirtualItemHeight , FiniteFloat(1.0f, 1000000.0f)),
+            MemberProperty(UIScrollViewProperties::VirtualOverscan, "VirtualOverscan", "VirtualOverscan", &::TomCat::UIScrollView::VirtualOverscan)
 		}));
 		result.push_back(MakeDescriptor<::TomCat::UIInputField>(ComponentIds::UIInputField, "TomCat.UIInputField", "UIInputField", {
 			MemberProperty(UIInputFieldProperties::Enabled, "Enabled", "Enabled", &::TomCat::UIInputField::Enabled),
@@ -801,7 +806,8 @@ namespace TomCat {
 		}));
 		result.push_back(MakeDescriptor<::TomCat::UILocalizedText>(ComponentIds::UILocalizedText, "TomCat.UILocalizedText", "UILocalizedText", {
 			MemberProperty(UILocalizedTextProperties::Enabled, "Enabled", "Enabled", &::TomCat::UILocalizedText::Enabled),
-			MemberProperty(UILocalizedTextProperties::Key, "Key", "Key", &::TomCat::UILocalizedText::Key, ValidText())
+			MemberProperty(UILocalizedTextProperties::Key, "Key", "Key", &::TomCat::UILocalizedText::Key, ValidText()),
+            MemberProperty(UILocalizedTextProperties::Parameters, "Parameters", "Parameters", &::TomCat::UILocalizedText::Parameters, ValidText())
 		}));
 		return result;
 	}

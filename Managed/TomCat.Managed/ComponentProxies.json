@@ -22,7 +22,10 @@
         { "name": "PerspectiveVerticalFov", "propertyId": "307", "kind": "Float" },
         { "name": "PerspectiveNearClip", "propertyId": "308", "kind": "Float" },
         { "name": "PerspectiveFarClip", "propertyId": "309", "kind": "Float" },
-        { "name": "Enabled", "propertyId": "310", "kind": "Bool" }
+        { "name": "Enabled", "propertyId": "310", "kind": "Bool" },
+        { "name": "Exposure", "propertyId": "311", "kind": "Float" },
+        { "name": "Saturation", "propertyId": "312", "kind": "Float" },
+        { "name": "Vignette", "propertyId": "313", "kind": "Float" }
       ]
     },
     {
@@ -36,7 +39,10 @@
         { "name": "Sprite", "propertyId": "202", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<Texture2DAsset>" },
         { "name": "TilingFactor", "propertyId": "203", "kind": "Float" },
         { "name": "SortingLayer", "propertyId": "204", "kind": "Int32" },
-        { "name": "OrderInLayer", "propertyId": "205", "kind": "Int32" }
+        { "name": "OrderInLayer", "propertyId": "205", "kind": "Int32" },
+        { "name": "NormalMap", "propertyId": "206", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<Texture2DAsset>" },
+        { "name": "CastShadows", "propertyId": "207", "kind": "Bool" },
+        { "name": "Material", "propertyId": "208", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<MaterialAsset>" }
       ]
     },
     {
@@ -66,7 +72,8 @@
         { "name": "SpatialBlend", "propertyId": "907", "kind": "Float" },
         { "name": "MinDistance", "propertyId": "908", "kind": "Float" },
         { "name": "MaxDistance", "propertyId": "909", "kind": "Float" },
-        { "name": "MixerGroup", "propertyId": "910", "kind": "UInt32", "conversion": "Enum", "managedType": "AudioMixerGroup" }
+        { "name": "MixerGroup", "propertyId": "910", "kind": "UInt32", "conversion": "Enum", "managedType": "AudioMixerGroup" },
+        { "name": "Bus", "propertyId": "911", "kind": "UInt32" }
       ]
     },
     {
@@ -291,7 +298,11 @@
           "name": "ScrollSpeed",
           "propertyId": "0x9f01a00000000006",
           "kind": "Float"
-        }
+        },
+        { "name": "Virtualized", "propertyId": "0x9f01a00000000007", "kind": "Bool" },
+        { "name": "VirtualItemCount", "propertyId": "0x9f01a00000000008", "kind": "UInt32" },
+        { "name": "VirtualItemHeight", "propertyId": "0x9f01a00000000009", "kind": "Float" },
+        { "name": "VirtualOverscan", "propertyId": "0x9f01a0000000000a", "kind": "UInt32" }
       ]
     },
     {
@@ -420,7 +431,8 @@
           "name": "Key",
           "propertyId": "0x9f01e00000000002",
           "kind": "String"
-        }
+        },
+        { "name": "Parameters", "propertyId": "0x9f01e00000000003", "kind": "String" }
       ]
     }
   ]

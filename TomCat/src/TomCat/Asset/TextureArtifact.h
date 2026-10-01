@@ -14,7 +14,11 @@ namespace TomCat {
 	enum class TextureArtifactFormat : uint32_t
 	{
 		RGBA8 = 1,
-		BC3 = 2
+		BC3 = 2,
+        BC1 = 3,
+        BC5 = 4,
+        ASTC4x4 = 5,
+        ETC2RGBA8 = 6
 	};
 
 	struct TextureArtifactMip

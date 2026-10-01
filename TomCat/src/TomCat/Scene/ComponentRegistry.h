@@ -88,6 +88,9 @@ namespace TomCat {
 			inline constexpr uint64_t TilingFactor = 203;
 			inline constexpr uint64_t SortingLayer = 204;
 			inline constexpr uint64_t OrderInLayer = 205;
+            inline constexpr uint64_t NormalMap = 206;
+            inline constexpr uint64_t CastShadows = 207;
+            inline constexpr uint64_t Material = 208;
 		}
 		namespace CameraProperties {
 			inline constexpr uint64_t Primary = 300;
@@ -101,6 +104,7 @@ namespace TomCat {
 			inline constexpr uint64_t PerspectiveNear = 308;
 			inline constexpr uint64_t PerspectiveFar = 309;
 			inline constexpr uint64_t Enabled = 310;
+            inline constexpr uint64_t Exposure = 311, Saturation = 312, Vignette = 313;
 		}
 		namespace BoxCollider2DProperties {
 			inline constexpr uint64_t Enabled = 400;
@@ -161,6 +165,7 @@ namespace TomCat {
 			inline constexpr uint64_t MinDistance = 908;
 			inline constexpr uint64_t MaxDistance = 909;
 			inline constexpr uint64_t MixerGroup = 910;
+            inline constexpr uint64_t Bus = 911;
 		}
 		namespace AudioListenerProperties {
 			inline constexpr uint64_t Enabled = 920;
@@ -252,6 +257,10 @@ namespace TomCat {
 			inline constexpr uint64_t ContentSize = 0x9f01a00000000004ULL;
 			inline constexpr uint64_t Offset = 0x9f01a00000000005ULL;
 			inline constexpr uint64_t ScrollSpeed = 0x9f01a00000000006ULL;
+            inline constexpr uint64_t Virtualized = 0x9f01a00000000007ULL;
+            inline constexpr uint64_t VirtualItemCount = 0x9f01a00000000008ULL;
+            inline constexpr uint64_t VirtualItemHeight = 0x9f01a00000000009ULL;
+            inline constexpr uint64_t VirtualOverscan = 0x9f01a0000000000aULL;
 		}
 		inline constexpr uint64_t UIInputField = 0x9f0100000000000bULL;
 		namespace UIInputFieldProperties {
@@ -283,6 +292,7 @@ namespace TomCat {
 		namespace UILocalizedTextProperties {
 			inline constexpr uint64_t Enabled = 0x9f01e00000000001ULL;
 			inline constexpr uint64_t Key = 0x9f01e00000000002ULL;
+            inline constexpr uint64_t Parameters = 0x9f01e00000000003ULL;
 		}
 
 

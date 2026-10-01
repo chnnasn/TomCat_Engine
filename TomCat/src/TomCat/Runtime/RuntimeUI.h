@@ -53,6 +53,7 @@ namespace TomCat {
 		float Height = 0.0f;
 		uint32_t LineCount = 0;
 		std::vector<TextGlyphQuad> Glyphs;
+        std::map<size_t, glm::vec2> Carets;
 	};
 
 	class TextLayoutEngine final
@@ -106,6 +107,9 @@ namespace TomCat {
 		bool MouseReleased = false;
 		glm::vec2 ScrollDelta{ 0.0f };
 		std::string TextInput;
+        bool Composing = false;
+        std::string Preedit;
+        uint32_t PreeditCaret = 0;
 		bool Backspace = false;
 		bool Delete = false;
 		bool CaretLeft = false;

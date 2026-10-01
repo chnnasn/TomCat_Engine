@@ -1,5 +1,7 @@
 #include "tcpch.h"
 #include "Font.h"
+#include "TextShaper.h"
+#include "TomCat/Runtime/UnicodeText.h"
 
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
@@ -95,17 +97,18 @@ namespace TomCat {
 		}
 
 		bool Rasterize(stbtt_fontinfo& info, float scale, uint32_t codepoint,
-			uint32_t sourceIndex, RasterGlyph& glyph)
+			uint32_t sourceIndex, RasterGlyph& glyph, bool byIndex = false)
 		{
-			if (stbtt_FindGlyphIndex(&info, static_cast<int>(codepoint)) == 0)
+			const int glyphIndex = byIndex ? static_cast<int>(codepoint) : stbtt_FindGlyphIndex(&info, static_cast<int>(codepoint));
+            if (glyphIndex <= 0 || glyphIndex >= info.numGlyphs)
 				return false;
 			int advance = 0;
 			int bearing = 0;
-			stbtt_GetCodepointHMetrics(&info, static_cast<int>(codepoint),
+			stbtt_GetGlyphHMetrics(&info, glyphIndex,
 				&advance, &bearing);
 			(void)bearing;
 			int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-			stbtt_GetCodepointBitmapBox(&info, static_cast<int>(codepoint), scale,
+			stbtt_GetGlyphBitmapBox(&info, glyphIndex, scale,
 				scale, &x0, &y0, &x1, &y1);
 			const int64_t rasterWidth = static_cast<int64_t>(x1) - x0;
 			const int64_t rasterHeight = static_cast<int64_t>(y1) - y0;
@@ -124,8 +127,8 @@ namespace TomCat {
 			if (glyph.Width == 0 || glyph.Height == 0)
 				return true;
 			glyph.Alpha.assign(static_cast<size_t>(glyph.Width) * glyph.Height, 0);
-			stbtt_MakeCodepointBitmap(&info, glyph.Alpha.data(), glyph.Width,
-				glyph.Height, glyph.Width, scale, scale, static_cast<int>(codepoint));
+			stbtt_MakeGlyphBitmap(&info, glyph.Alpha.data(), glyph.Width,
+				glyph.Height, glyph.Width, scale, scale, glyphIndex);
 			return true;
 		}
 
@@ -295,7 +298,7 @@ namespace TomCat {
 		std::set<uint32_t> codepoints;
 		for (uint32_t value : requestedCodepoints)
 		{
-			if (value <= 0x10ffffu && !(value >= 0xd800u && value <= 0xdfffu))
+			if (value < TextShaper::GlyphKeyBase + 16u * 65536u && !(value >= 0xd800u && value <= 0xdfffu))
 			{
 				codepoints.insert(value);
 				if (codepoints.size() > 65536)
@@ -306,6 +309,8 @@ namespace TomCat {
 		codepoints.insert(ReplacementCodepoint);
 
 		FontAtlasData candidate;
+        for (const auto source : sourceChain) candidate.ShapingSources.emplace_back(source.begin(),source.end());
+        candidate.ShapingScales.resize(sourceChain.size(),1.f);
 		candidate.PixelHeight = pixelHeight;
 		candidate.Ascent = pixelHeight * 0.75f;
 		candidate.Descent = -pixelHeight * 0.25f;
@@ -349,9 +354,12 @@ namespace TomCat {
 			}
 			if (sourceIndex == 0)
 				candidate.UsesSourceFont = true;
-			faces.push_back(face);
+			candidate.ShapingScales[sourceIndex]=face.Scale;
+            faces.push_back(face);
 		}
 
+        TextShaper::AddGlyphClosure(candidate,codepoints);
+        if(codepoints.size()>65536) return false;
 		RasterGlyph fallback = MakeProceduralFallback(pixelHeight);
 		for (FontFace& face : faces)
 		{
@@ -379,8 +387,11 @@ namespace TomCat {
 			for (FontFace& face : faces)
 			{
 				RasterGlyph glyph;
-				if (!Rasterize(face.Info, face.Scale, codepoint,
-					face.SourceIndex, glyph))
+				const bool shaped = codepoint >= TextShaper::GlyphKeyBase;
+                const uint32_t key = codepoint - TextShaper::GlyphKeyBase;
+                if (shaped && key / 65536 != face.SourceIndex) continue;
+                if (!Rasterize(face.Info, face.Scale, shaped ? key % 65536 : codepoint,
+					face.SourceIndex, glyph, shaped))
 					continue;
 				rasterIndices[codepoint] = rasters.size();
 				rasters.push_back(std::move(glyph));
@@ -592,7 +603,7 @@ namespace TomCat {
 			uint64_t generation, PreparedFont prepared)
 		{
 			const uint64_t byteCount = static_cast<uint64_t>(
-				prepared.Atlas.PixelsRGBA.size());
+				prepared.Atlas.RetainedBytes());
 			const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
 			const uint64_t preparedBudget = (std::max<uint64_t>)(
 				1024ULL * 1024ULL, limits.MemoryBudgetBytes / 2);
@@ -635,7 +646,7 @@ namespace TomCat {
 					+ MaximumRasterWorkingBytes;
 				const uint64_t sourceBudget = (std::min)(MaximumFontChainBytes,
 					taskBudget > retainedForAtlasAndRasters
-						? taskBudget - retainedForAtlasAndRasters : taskBudget / 3);
+						? (taskBudget - retainedForAtlasAndRasters) / 2 : taskBudget / 6);
 				const std::array<AssetHandle, 3> handles = {
 					AssetHandle(state->Key[0]), AssetHandle(state->Key[1]),
 					AssetHandle(state->Key[2])
@@ -840,8 +851,8 @@ namespace TomCat {
 			handle = GetDefaultRuntimeFontHandle();
 		const Impl::FontChainKey key = { static_cast<uint64_t>(handle),
 			static_cast<uint64_t>(fallbackFont), static_cast<uint64_t>(emojiFont) };
-		const std::vector<uint32_t> decoded = FontAtlasBuilder::DecodeUTF8(
-			requiredText);
+		std::vector<uint32_t> decoded = FontAtlasBuilder::DecodeUTF8(
+            std::string(requiredText) + UnicodeText::VisualOrder(requiredText));
 		Ref<RuntimeFont> published;
 		{
 			std::lock_guard lock(m_Impl->Mutex);
@@ -856,6 +867,7 @@ namespace TomCat {
 					FontAtlasBuilder::ReplacementCodepoint);
 				found = m_Impl->Fonts.emplace(key, std::move(state)).first;
 			}
+
 			for (uint32_t codepoint : decoded)
 				found->second->RequestedCodepoints.insert(codepoint);
 			m_Impl->QueueIfNeededLocked(found->second);
@@ -885,7 +897,7 @@ namespace TomCat {
 					|| selectedBytes > maximumUploadBytes - nextBytes))
 					break;
 				selectedBytes += nextBytes;
-				m_Impl->PreparedBytes -= nextBytes;
+				m_Impl->PreparedBytes -= m_Impl->Prepared.front().Atlas.RetainedBytes();
 				ready.emplace_back(std::move(m_Impl->Prepared.front()));
 				m_Impl->Prepared.pop_front();
 			}
@@ -938,7 +950,7 @@ namespace TomCat {
 			if (error.empty() && texture && texture->IsLoaded())
 			{
 				// Pixel staging is no longer needed once SetData returns. RuntimeFont
-				// keeps only layout metadata and the GPU resource.
+				// keeps shaping font tables, layout metadata and the GPU resource.
 				std::vector<uint8_t>().swap(prepared.Atlas.PixelsRGBA);
 				runtimeFont = CreateRef<RuntimeFont>(
 					AssetHandle(prepared.State->Key[0]), std::move(prepared.Atlas),
@@ -1025,8 +1037,7 @@ namespace TomCat {
 			{
 				if (!wasRemoved(prepared.State))
 					return false;
-				m_Impl->PreparedBytes -= static_cast<uint64_t>(
-					prepared.Atlas.PixelsRGBA.size());
+				m_Impl->PreparedBytes -= prepared.Atlas.RetainedBytes();
 				return true;
 			});
 		lock.unlock();

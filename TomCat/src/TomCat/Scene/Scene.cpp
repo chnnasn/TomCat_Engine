@@ -771,7 +771,16 @@ namespace TomCat {
 				point.Falloff = light.Falloff;
 				pointLights.push_back(point);
 			}
-			Renderer2D::Set2DLighting(ambientLight, pointLights);
+			std::vector<Renderer2D::ShadowEdge> shadowEdges;
+            for (auto value : registry.view<Transform, SpriteRenderer>()) {
+                const auto& sprite = registry.get<SpriteRenderer>(value);
+                if (!isVisible(value) || !sprite.Enabled || !sprite.CastShadows) continue;
+                if (shadowEdges.size() >= 64) break;
+                const auto matrix = scene.GetRuntimeRenderTransform(registry.get<ID>(value).id);
+                constexpr glm::vec2 corners[] = {{-.5f,-.5f},{.5f,-.5f},{.5f,.5f},{-.5f,.5f}};
+                for (int edge=0; edge<4; ++edge) shadowEdges.push_back({glm::vec2(matrix*glm::vec4(corners[edge],0,1)), glm::vec2(matrix*glm::vec4(corners[(edge+1)%4],0,1)),static_cast<int>(value)});
+            }
+            Renderer2D::Set2DLighting(ambientLight, pointLights, shadowEdges);
 
 			auto spriteView = registry.view<Transform, SpriteRenderer>();
 			struct SpriteRenderItem
@@ -3683,11 +3692,17 @@ namespace TomCat {
 		return glm::vec2(velocity.x, velocity.y);
 	}
 
-	bool Scene::OnRuntimeStart()
+    bool Scene::OnRuntimeStart() {
+        auto task = StartRuntimeIncrementally();
+        while (!task.Done()) task.Advance(UINT32_MAX, 1e30);
+        return task.Succeeded();
+    }
+	FrameTask Scene::StartRuntimeIncrementally()
 	{
-		TC_PROFILE_SCOPE("Scene Runtime Start");
+        m_RuntimeActivating = true;
+        struct ActivatingGuard { bool& Value; ~ActivatingGuard() { Value = false; } } activatingGuard{m_RuntimeActivating};
 		if (m_RuntimeRunning)
-			return true;
+			co_return true;
 
 		m_RuntimeAccumulator = 0.0;
 		m_RuntimeInterpolationAlpha = 1.0f;
@@ -3712,12 +3727,15 @@ namespace TomCat {
 		{
 			TC_Core_Error("Failed to initialize the runtime 2D physics world");
 			OnRuntimeStop();
-			return false;
+			co_return false;
 		}
-		AudioSceneRuntime::Start(*this);
+		co_yield 1;
+        AudioSceneRuntime::Start(*this);
+        co_yield 1;
 		InitializeSpriteAnimations(*this, m_Registry);
 		InitializeParticleSystems(*this, m_Registry);
 		RuntimeUISystem::Reset(m_Registry);
+        co_yield 1;
 
 		bool hasManagedScripts = false;
 		for (const entt::entity entity : m_Registry.view<CSharpScripts>())
@@ -3730,13 +3748,14 @@ namespace TomCat {
 		}
 		if (hasManagedScripts)
 		{
-			m_ScriptSceneSessionID = Scripting::ScriptEngine::Get().StartScene(
-				*this, m_RuntimeSessionGeneration);
+			auto scripts = Scripting::ScriptEngine::Get().StartSceneIncrementally(*this, m_RuntimeSessionGeneration, m_ScriptSceneSessionID);
+            while (!scripts.Done()) { scripts.Advance(1, 1e30); if (!scripts.Done()) co_yield 1; }
+            if (!scripts.Succeeded()) m_ScriptSceneSessionID = 0;
 			if (m_ScriptSceneSessionID == 0)
 			{
 				TC_Core_Error("C# scripts are attached, but the managed runtime or current project assembly is unavailable");
 				OnRuntimeStop();
-				return false;
+				co_return false;
 			}
 		}
 		else
@@ -3749,7 +3768,7 @@ namespace TomCat {
 		// Audio preparation happened before scripts, but PlayOnStart must observe
 		// the hierarchy and source values after managed OnCreate/OnEnable.
 		AudioSceneRuntime::Update(*this, 0.0);
-		return true;
+		co_return true;
 	}
 
 	void Scene::OnRuntimeStop()
@@ -3955,6 +3974,7 @@ namespace TomCat {
 
 	void Scene::OnUpdateRuntime(Timestep ts, bool render)
 	{
+        if (m_RuntimeActivating) return;
 		TC_PROFILE_SCOPE("Scene Runtime Update");
 		if (!m_RuntimeRunning || !m_PhysicsWorld)
 		{
@@ -4128,6 +4148,7 @@ namespace TomCat {
 				camera._Camera.GetProjection() * glm::inverse(cameraTransform),
 				RuntimeUIVisibilityMode::Gameplay);
 			Renderer2D::EndScene();
+            RenderCommand::ApplyColorGrade(camera.Exposure,camera.Saturation,camera.Vignette);
 		}
 		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
 			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,

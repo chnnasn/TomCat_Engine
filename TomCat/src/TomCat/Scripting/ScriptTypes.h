@@ -426,6 +426,21 @@ namespace TomCat::Scripting {
 
 	// Optional audio service discovered through NativeApiV2::QueryCapability.
 	// The frozen NativeApiV1 prefix remains byte-for-byte unchanged.
+    struct NativeAudioBusApiV1 {
+        uint32_t Version=1, Size=sizeof(NativeAudioBusApiV1);
+        int32_t(TC_SCRIPT_CALL* Configure)(NativeUtf8View)=nullptr;
+        int32_t(TC_SCRIPT_CALL* SetBus)(uint32_t,float,int32_t,int32_t)=nullptr;
+    };
+
+    struct NativeAudioMixerApiV1 {
+        uint32_t Version = 1, Size = sizeof(NativeAudioMixerApiV1);
+        int32_t(TC_SCRIPT_CALL* SetMuted)(int32_t, int32_t) = nullptr;
+        int32_t(TC_SCRIPT_CALL* SetSolo)(int32_t, int32_t) = nullptr;
+        int32_t(TC_SCRIPT_CALL* ApplySnapshot)(const float*, uint32_t, uint32_t, double) = nullptr;
+        int32_t(TC_SCRIPT_CALL* SetDucking)(int32_t, int32_t, float, double, double) = nullptr;
+        int32_t(TC_SCRIPT_CALL* ClearDucking)() = nullptr;
+    };
+
 	struct NativeAudioApiV1
 	{
 		uint32_t Version = 1;

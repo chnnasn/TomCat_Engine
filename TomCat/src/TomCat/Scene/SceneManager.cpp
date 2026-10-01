@@ -2,6 +2,7 @@
 #include "SceneManager.h"
 
 #include "SceneSerializer.h"
+#include <yaml-cpp/yaml.h>
 #include "Entity.h"
 #include "Components.h"
 #include "Serialization/ComponentCodecs.h"
@@ -221,7 +222,7 @@ namespace TomCat {
 
 	bool SceneManager::StageScene(AssetHandle scene, uint32_t buildIndex, SceneLoadMode mode)
 	{
-		if (m_Stopping || m_Committing)
+		if (m_Stopping || m_Committing || m_StartupTask)
 			return Fail("a Scene transition cannot be requested during scene activation or teardown");
 		if (mode != SceneLoadMode::Single && mode != SceneLoadMode::Additive)
 			return Fail("unknown Scene load mode");
@@ -258,7 +259,8 @@ namespace TomCat {
 
 		// Replacing an already-staged request is safe: neither Scene has entered
 		// runtime and the current Scene remains alive throughout this function.
-		m_PendingScene = std::move(staged);
+		m_DecodeTask.reset(); m_DecodingScene.reset();
+        m_PendingScene = std::move(staged);
 		m_PendingSceneHandle = scene;
 		m_PendingBuildIndex = static_cast<int32_t>(buildIndex);
 		m_PendingLoadMode = mode;
@@ -332,13 +334,15 @@ namespace TomCat {
 				}
 				if (range.HasSHA256Digest && !VerifyContentSHA256(result.Bytes, range.SHA256Digest))
 				{ result.Error = "async Scene package digest mismatch"; result.Bytes.clear(); return result; }
-				state->Progress = 0.9f;
+				result.Document = std::make_shared<YAML::Node>(YAML::Load(std::string(result.Bytes.begin(), result.Bytes.end())));
+                result.Bytes.clear();
+                state->Progress = 0.8f;
 			}
 			catch (const std::exception& error) { result.Error = error.what(); result.Bytes.clear(); }
 			return result;
 		});
 		auto future = job->get_future();
-		if (!AssetJobSystem::Get().TrySchedule(range.Size, [job]() { (*job)(); }))
+		if (!AssetJobSystem::Get().TrySchedule(range.Size * 16 + 8ULL * 1024ULL * 1024ULL, [job]() { (*job)(); }))
 			return Fail("Scene loader queue is full; retry on a later frame");
 		m_AsyncState = std::move(state);
 		m_AsyncRead = std::move(future);
@@ -350,17 +354,26 @@ namespace TomCat {
 		return true;
 	}
 
+    bool SceneManager::SetActivationBudget(ActivationBudget budget) {
+        if (!CheckOwnerThread("SetActivationBudget") || budget.MaximumUnits == 0
+            || !std::isfinite(budget.Milliseconds) || budget.Milliseconds <= 0) return false;
+        m_ActivationBudget = budget; return true;
+    }
+
 	float SceneManager::GetLoadProgress() const
 	{
 		if (m_LoadState == SceneLoadState::Completed) return 1.0f;
 		if (m_LoadState == SceneLoadState::Ready) return 0.9f;
+        if (m_LoadState == SceneLoadState::Decoding) return 0.8f;
+        if (m_LoadState == SceneLoadState::Activating) return 0.95f;
 		return m_AsyncState ? m_AsyncState->Progress.load() : 0.0f;
 	}
 
 	bool SceneManager::CancelPendingLoad()
 	{
+        if (m_LoadState == SceneLoadState::Activating) return Fail("Scene activation has committed; Stop the runtime to abort startup");
 		if (!CheckOwnerThread("CancelPendingLoad") || m_Committing) return false;
-		if (!m_PendingScene && !m_AsyncRead.valid()) return false;
+		if (!m_DecodeTask && !m_PendingScene && !m_AsyncRead.valid()) return false;
 		ClearPendingTransition();
 		m_LoadState = SceneLoadState::Cancelled;
 		return true;
@@ -383,6 +396,8 @@ namespace TomCat {
 		m_AsyncRead = {};
 		m_AsyncState.reset();
 		m_PendingScene.reset();
+        m_StartupTask.reset(); m_StartupPrevious.reset();
+        m_DecodeTask.reset(); m_DecodingScene.reset();
 		m_PendingSceneHandle = AssetHandle(0);
 		m_PendingBuildIndex = -1;
 	}
@@ -392,6 +407,32 @@ namespace TomCat {
 		if (!CheckOwnerThread("CommitPendingTransition"))
 			return false;
 		if (m_Committing || m_Stopping) return Fail("recursive Scene transition commit is not allowed");
+        if (m_StartupTask) {
+            // Hold the task locally: a lifecycle callback may Stop the manager.
+            const Ref<Scene> activatingScene = m_ActiveScene;
+            auto task = std::move(m_StartupTask);
+            m_Committing = true;
+            const uint32_t units = task->Advance(m_ActivationBudget.MaximumUnits, m_ActivationBudget.Milliseconds);
+            m_Committing = false;
+            ++m_ActivationStatistics.Frames; m_ActivationStatistics.Units += units;
+            m_ActivationStatistics.LastMilliseconds = task->LastMilliseconds;
+            m_ActivationStatistics.PeakMilliseconds = std::max(m_ActivationStatistics.PeakMilliseconds, task->LastMilliseconds);
+            if (task->LastMilliseconds > m_ActivationBudget.Milliseconds) ++m_ActivationStatistics.OverrunFrames;
+            if (s_Runtime != this || !m_ActiveScene) return true;
+            if (!task->Done()) { m_StartupTask = std::move(task); return true; }
+            if (task->Succeeded()) {
+                m_StartupPrevious.reset(); m_LoadState = SceneLoadState::Completed; m_LastError.clear(); return true;
+            }
+            task.reset();
+            m_ActiveScene->OnRuntimeStop();
+            m_ActiveScene = std::move(m_StartupPrevious);
+            m_ActiveSceneHandle = m_StartupPreviousHandle; m_ActiveBuildIndex = m_StartupPreviousIndex;
+            ResetSceneOwnership();
+            if (m_ActiveScene && !m_ActiveScene->OnRuntimeStart()) { m_ActiveScene.reset(); m_ActiveSceneHandle = AssetHandle(0); m_ActiveBuildIndex = -1; }
+            m_LoadState = SceneLoadState::Failed;
+            return Fail("incremental Scene startup failed; attempted to restore previous Scene");
+        }
+
 		if (s_Runtime != this && HasPendingTransition())
 			return Fail("CommitPendingTransition requires this SceneManager to be the active runtime owner");
 		if (m_AsyncRead.valid())
@@ -405,14 +446,31 @@ namespace TomCat {
 				m_LoadState = SceneLoadState::Failed;
 				return Fail(std::move(read.Error));
 			}
-			if (!StageBytes(std::move(read.Bytes), m_PendingSceneHandle,
-				static_cast<uint32_t>(m_PendingBuildIndex), m_PendingLoadMode))
-			{
-				ClearPendingTransition();
-				m_LoadState = SceneLoadState::Failed;
-				return false;
-			}
-		}
+            if (!read.Document) { ClearPendingTransition(); m_LoadState = SceneLoadState::Failed; return Fail("async Scene was cancelled"); }
+            m_DecodingScene = CreateRef<Scene>();
+            m_DecodeTask = std::make_unique<FrameTask>(SceneSerializer::DecodeIncrementally(
+                m_DecodingScene, std::move(*read.Document), UTF8ToPath("AsyncScene"), false));
+            m_ActivationStatistics = {};
+            m_LoadState = SceneLoadState::Decoding;
+        }
+        if (m_DecodeTask) {
+            const auto units = m_DecodeTask->Advance(m_ActivationBudget.MaximumUnits, m_ActivationBudget.Milliseconds);
+            ++m_ActivationStatistics.Frames; m_ActivationStatistics.Units += units;
+            m_ActivationStatistics.LastMilliseconds = m_DecodeTask->LastMilliseconds;
+            m_ActivationStatistics.PeakMilliseconds = m_DecodeTask->PeakMilliseconds;
+            m_ActivationStatistics.OverrunFrames = m_DecodeTask->OverrunFrames;
+            if (!m_DecodeTask->Done()) return true;
+            if (!m_DecodeTask->Succeeded()) { ClearPendingTransition(); m_LoadState = SceneLoadState::Failed; return Fail("incremental Scene decode failed"); }
+            m_DecodeTask.reset();
+            m_PendingScene = std::move(m_DecodingScene);
+            bool changed = false; std::string error;
+            if (!PrefabLinkedInstance::RefreshAll(m_PendingScene, changed, error)) {
+                ClearPendingTransition(); m_LoadState = SceneLoadState::Failed; return Fail(error);
+            }
+            m_LoadState = SceneLoadState::Ready;
+            return true;
+        }
+
 		if (!m_PendingUnloads.empty())
 		{
 			auto unloads = std::move(m_PendingUnloads);
@@ -456,8 +514,15 @@ namespace TomCat {
 		m_ActiveScene = nextScene;
 		m_ActiveSceneHandle = nextHandle;
 		m_ActiveBuildIndex = nextBuildIndex;
-		ResetSceneOwnership();
-		if (!nextScene->OnRuntimeStart())
+        ResetSceneOwnership();
+        if (m_AsyncState) {
+            m_AsyncState.reset();
+            m_StartupPrevious = previousScene; m_StartupPreviousHandle = previousHandle; m_StartupPreviousIndex = previousBuildIndex;
+            m_StartupTask = std::make_unique<FrameTask>(nextScene->StartRuntimeIncrementally());
+            m_LoadState = SceneLoadState::Activating;
+            return true;
+        }
+        if (!nextScene->OnRuntimeStart())
 		{
 			// Discard requests issued by lifecycle callbacks belonging to the failed
 			// transition. A successfully restored Scene may enqueue a fresh request.

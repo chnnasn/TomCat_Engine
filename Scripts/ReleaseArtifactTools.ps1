@@ -31,6 +31,10 @@ function Get-TomCatReleaseDependencies {
         [ordered]@{ Name = 'ImGuizmo'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\ImGuizmo\LICENSE'; Mode = 'Full' },
         [ordered]@{ Name = 'spdlog'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\spdlog\LICENSE'; Mode = 'Full' },
         [ordered]@{ Name = 'stb_image'; Version = '2.30'; License = '(MIT OR Unlicense)'; Notice = 'TomCat\vendor\stb_image\stb_image.h'; Mode = 'StbLicense' },
+        [ordered]@{ Name = 'HarfBuzz'; Version = '10.4.0'; License = 'MIT'; Notice = 'TomCat\vendor\harfbuzz\COPYING'; Mode = 'Full' },
+        [ordered]@{ Name = 'Arm ASTC Encoder'; Version = '5.0.0'; License = 'Apache-2.0'; Notice = 'TomCat\vendor\astcenc\LICENSE.txt'; Mode = 'Full' },
+        [ordered]@{ Name = 'Etc2Comp'; Version = ''; License = 'Apache-2.0'; Notice = 'TomCat\vendor\etc2comp\LICENSE'; Mode = 'Full' },
+        [ordered]@{ Name = 'stb_vorbis'; Version = '1.22'; License = '(MIT OR Unlicense)'; Notice = 'TomCat\vendor\stb_vorbis\stb_vorbis.c'; Mode = 'StbLicense' },
         [ordered]@{ Name = 'yaml-cpp'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\yaml-cpp\LICENSE'; Mode = 'Full' },
         [ordered]@{ Name = 'Khronos KHR platform header'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\Glad\include\KHR\khrplatform.h'; Mode = 'FirstComment' },
         [ordered]@{ Name = 'Glad generated OpenGL loader'; Version = '0.1.36'; License = 'NOASSERTION'; Notice = ''; Mode = 'None' }
