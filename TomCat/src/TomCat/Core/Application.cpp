@@ -259,6 +259,10 @@ namespace TomCat {
 			{
 				TC_PROFILE_SCOPE("Present / VSync wait");
 				m_Window->Present();
+				if (!m_Minimized && !m_FirstFramePresented) {
+					m_FirstFramePresented = true;
+					OnFirstFramePresented();
+				}
 			}
 		}
 		return m_Running;

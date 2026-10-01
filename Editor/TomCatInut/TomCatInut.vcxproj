@@ -195,6 +195,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClInclude Include="src\EditorPreview.h" />
     <ClInclude Include="src\EditorProjectSettingsController.h" />
     <ClInclude Include="src\EditorPropertyTransaction.h" />
+    <ClInclude Include="src\EditorStartupWindow.h" />
     <ClInclude Include="src\EditorViewportHandles.h" />
     <ClInclude Include="src\EditorVisuals.h" />
     <ClInclude Include="src\Player\PlayerBuilder.h" />
