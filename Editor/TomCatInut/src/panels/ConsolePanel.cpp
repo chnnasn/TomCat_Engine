@@ -228,8 +228,12 @@ namespace TomCat {
             ImGui::SetNextItemWidth(std::max(font*3,ImGui::GetContentRegionAvail().x-countersWidth-2));
             EditorSearchField("##ConsoleSearch","",m_Search,sizeof(m_Search));
         }
+        const float countersStart = std::max(ImGui::GetItemRectMax().x + 1.0f,
+            ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x - countersWidth);
+        bool firstCounter = true;
         auto counter=[&](const char* id,ConsoleMessageSeverity severity,size_t count,bool enabled) {
             ImGui::SameLine();
+            if (firstCounter) { ImGui::SetCursorPosX(countersStart - ImGui::GetWindowPos().x); firstCounter = false; }
             const bool pressed=ImGui::Button(id,ImVec2(counterWidth(count),frame));
             const auto a=ImGui::GetItemRectMin();
             DrawSeverityIcon(severity,{a.x+frame*0.5f,a.y+frame*0.5f},font*0.42f,enabled);

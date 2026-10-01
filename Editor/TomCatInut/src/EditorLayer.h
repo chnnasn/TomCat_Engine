@@ -40,6 +40,7 @@ namespace TomCat {
 		virtual void OnAttach() override;
 		virtual void OnDetach() override;
 
+		void OnBeforeInputCapture() override;
 		void OnUpdate(Timestep ts) override;
 		virtual void OnImGuiRender() override;
 		void OnEvent(Event& e) override;

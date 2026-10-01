@@ -3189,14 +3189,42 @@ namespace TomCat::Scripting {
 	{
 		if (!IsMainThread())
 			return;
-		const InputEventQueue::FrameSnapshot& frame = Input::GetFrameSnapshot();
+		InputEventQueue::FrameSnapshot frame = Input::GetFrameSnapshot();
 		if (frame.FrameNumber == m_LastCapturedInputFrame)
 			return;
 		m_LastCapturedInputFrame = frame.FrameNumber;
 		m_InputEventsDroppedThisFrame = frame.DroppedEventCount;
 
 		m_PreviousWindowFocused = m_WindowFocused;
-		m_WindowFocused = Input::IsWindowFocused();
+		m_WindowFocused = m_InputEnabled && Input::IsWindowFocused();
+		// Keep authoring input intact; filter only the runtime snapshot. Keys held
+		// while another editor panel owns focus must be released before gameplay.
+		auto filter = [&](auto& held, auto& pressed, auto& released, auto& blocked, const auto& previous) {
+			for (size_t index = 0; index < held.size(); ++index) {
+				if (!m_InputEnabled) {
+					blocked[index] = held[index];
+					held[index] = pressed[index] = false;
+					released[index] = previous[index];
+				} else if (blocked[index]) {
+					blocked[index] = held[index];
+					held[index] = pressed[index] = released[index] = false;
+				}
+			}
+		};
+		const auto blockedKeys = m_BlockedKeys;
+		const auto blockedMouse = m_BlockedMouseButtons;
+		filter(frame.KeysHeld, frame.KeysPressed, frame.KeysReleased, m_BlockedKeys, m_CurrentKeys);
+		filter(frame.MouseButtonsHeld, frame.MouseButtonsPressed, frame.MouseButtonsReleased,
+			m_BlockedMouseButtons, m_CurrentMouseButtons);
+		std::erase_if(frame.Events, [&](const auto& event) {
+			if (event.Source == InputEventQueue::Device::GamepadConnection) return false;
+			if (!m_InputEnabled) return true;
+			if (event.Source == InputEventQueue::Device::Keyboard)
+				return event.Code < blockedKeys.size() && blockedKeys[event.Code];
+			if (event.Source == InputEventQueue::Device::Mouse)
+				return event.Code < blockedMouse.size() && blockedMouse[event.Code];
+			return false;
+		});
 		m_CurrentKeys = frame.KeysHeld;
 		m_KeysPressedThisFrame = frame.KeysPressed;
 		m_KeysReleasedThisFrame = frame.KeysReleased;
@@ -3237,11 +3265,11 @@ namespace TomCat::Scripting {
 			for (uint32_t button = 0; button < output.Buttons.size(); ++button)
 			{
 				m_GamepadButtonsPressedThisFrame[index][button] =
-					frame.GamepadButtonsPressed[index][button]
+					(m_InputEnabled && frame.GamepadButtonsPressed[index][button])
 					|| (output.Buttons[button]
 						&& !m_PreviousGamepads[index].Buttons[button]);
 				m_GamepadButtonsReleasedThisFrame[index][button] =
-					frame.GamepadButtonsReleased[index][button]
+					(m_InputEnabled && frame.GamepadButtonsReleased[index][button])
 					|| (!output.Buttons[button]
 						&& m_PreviousGamepads[index].Buttons[button]);
 			}
@@ -3288,6 +3316,7 @@ namespace TomCat::Scripting {
 		for (auto& [sceneSessionId, pending] : m_PendingFixedInput)
 		{
 			(void)sceneSessionId;
+			if (!m_InputEnabled) pending = {};
 			AccumulateCurrentInput(pending);
 		}
 	}
