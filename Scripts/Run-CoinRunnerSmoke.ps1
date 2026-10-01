@@ -25,13 +25,26 @@ $templateRoot = Join-Path $repositoryRoot "Tests\bin\$outputName\CoinRunnerTempl
 if ($LASTEXITCODE -ne 0) { throw "CoinRunner Player template staging failed." }
 $playerExecutable = Join-Path $templateRoot "TomCatPlayer.exe"
 
-$projectPath = Join-Path $repositoryRoot "Samples\CoinRunner\Project.tcproj"
-$packagePath = Join-Path $repositoryRoot "Samples\CoinRunner\Build\Game.tcpak"
+# A clean authoring copy prevents a local Development cache from masking
+# Production cook bugs and leaves the user's sample scene/cache untouched.
+$smokeProject = Join-Path $repositoryRoot ("Tests/bin/$outputName/CoinRunnerSmoke-" + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $smokeProject -Force | Out-Null
+foreach ($item in @('Assets', 'ProjectSettings', 'Project.tcproj')) {
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot "Samples/CoinRunner/$item") -Destination $smokeProject -Recurse
+}
+$projectPath = Join-Path $smokeProject 'Project.tcproj'
+$packagePath = Join-Path $smokeProject 'Build/Game.tcpak'
 
 Write-Host "== Cooking CoinRunner =="
 & $cliExecutable cook --project $projectPath --output $packagePath --migrate
 if ($LASTEXITCODE -ne 0) {
     throw "Cook failed with exit $LASTEXITCODE."
+}
+if (-not (Test-Path -LiteralPath (Join-Path $smokeProject 'Library/ScriptAssemblies/Production/last-good.json'))) {
+    throw 'Production cook did not publish its own managed build.'
+}
+if (Test-Path -LiteralPath (Join-Path $smokeProject 'Library/ScriptAssemblies/last-good.json')) {
+    throw 'Production cook unexpectedly populated the Development cache.'
 }
 if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
     throw "Cook did not produce $packagePath."

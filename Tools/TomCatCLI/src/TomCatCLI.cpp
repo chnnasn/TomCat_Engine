@@ -337,19 +337,6 @@ namespace {
 			return 8;
 		}
 
-		if (options.Operation == Command::Cook)
-		{
-			const std::filesystem::path output = options.OutputPath.empty()
-				? project->GetProjectDirectory() / "Build" / "Game.tcpak"
-				: options.OutputPath;
-			if (!assets.CookToPackage(output, settings.EntrySceneHandle))
-			{
-				std::cerr << "Cook failed; see diagnostics above\n";
-				return 9;
-			}
-			std::cout << "Cook succeeded: " << TomCat::PathToUTF8(output) << '\n';
-			return 0;
-		}
 
 		std::string runtimeError;
 		auto runtime = TomCat::Scripting::CreateManagedScriptRuntime(
@@ -369,6 +356,36 @@ namespace {
 			std::cerr << error << '\n';
 			return 11;
 		}
+
+        if (options.Operation == Command::Cook)
+        {
+            // Use the exact build selected above, including its build profile.
+            // Rediscovering last-good.json would silently select Development.
+            std::vector<uint8_t> pdb;
+            if (!managedBuild.PdbPath.empty() && !ReadBinary(managedBuild.PdbPath, pdb, error))
+            {
+                std::cerr << error << '\n';
+                return 11;
+            }
+            if (!assets.SetManagedCookPayload(std::move(assembly), manifest,
+                managedBuild.BuildID, std::move(pdb)))
+            {
+                std::cerr << "The fresh managed cook payload was rejected\n";
+                return 9;
+            }
+            const std::filesystem::path output = options.OutputPath.empty()
+                ? project->GetProjectDirectory() / "Build" / "Game.tcpak"
+                : options.OutputPath;
+            const bool cooked = assets.CookToPackage(output, settings.EntrySceneHandle);
+            assets.ClearManagedCookPayload();
+            if (!cooked)
+            {
+                std::cerr << "Cook failed; see diagnostics above\n";
+                return 9;
+            }
+            std::cout << "Cook succeeded: " << TomCat::PathToUTF8(output) << '\n';
+            return 0;
+        }
 
 		TomCat::PlayerBuildRequest request;
 		request.ProjectInstance = project;
