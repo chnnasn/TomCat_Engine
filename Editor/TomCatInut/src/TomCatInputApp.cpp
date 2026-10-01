@@ -1,5 +1,9 @@
 #include <TomCat.h>
 #include <TomCat/Core/EditorRuntimeBundle.h>
+#include "EditorStartupWindow.h"
+#include <TomCat/Utils/PathUtils.h>
+#include <yaml-cpp/yaml.h>
+#include <fstream>
 
 #include <optional>
 #include <stdexcept>
@@ -136,6 +140,24 @@ namespace TomCat {
 	std::optional<int> BootstrapTomCatEditor(int argc, wchar_t** argv,
 		const std::filesystem::path& launchWorkingDirectory)
 	{
+		const bool showStartup = !IsCliProxyRequested(argc, argv);
+		if (showStartup) {
+			std::filesystem::path project;
+			for (int index = 1; index < argc; ++index)
+				if (argv[index] && argv[index][0] != L'-') { project = argv[index]; break; }
+			if (project.is_relative() && !project.empty()) project = launchWorkingDirectory / project;
+			EditorStartupWindow::Get().Start(project);
+			// The window is already responsive while reading the small project label.
+			std::error_code labelError;
+			if (!project.empty() && std::filesystem::file_size(project, labelError) < 1024 * 1024 && !labelError) {
+				try {
+					std::ifstream input(project);
+					const auto document = YAML::Load(input);
+					if (document["Project"]["Name"])
+						EditorStartupWindow::Get().SetProject(UTF8ToPath(document["Project"]["Name"].as<std::string>()).wstring());
+				} catch (const YAML::Exception&) { /* Project opening reports invalid metadata. */ }
+			}
+		}
 		const std::filesystem::path executableDirectory = ExecutableDirectory();
 		if (executableDirectory.empty())
 			throw std::runtime_error("Could not resolve the Editor executable directory");
@@ -162,7 +184,13 @@ namespace TomCat {
 
 		EditorRuntimeBundleResult runtime;
 		std::string configureError;
-		if (!ConfigurePackagedEditorRuntime(payloadRoot, runtime, configureError))
+		if (!ConfigurePackagedEditorRuntime(payloadRoot, runtime, configureError,
+			[showStartup](EditorRuntimeStage stage, uint64_t done, uint64_t total) {
+				if (!showStartup) return;
+				EditorStartupWindow::Get().Update(stage == EditorRuntimeStage::Extracting
+					? L"正在解包文件" : stage == EditorRuntimeStage::Verifying
+					? L"正在校验文件" : L"正在准备运行环境", done, total);
+			}))
 		{
 			throw std::runtime_error(configureError.empty()
 				? "The packaged Editor runtime could not be configured"
@@ -180,6 +208,7 @@ namespace TomCat {
 #define TC_APPLICATION_PRODUCT TomCat::ApplicationProduct::Editor
 #define TC_APPLICATION_BOOTSTRAP(argc, argv, launchWorkingDirectory) \
 	TomCat::BootstrapTomCatEditor(argc, argv, launchWorkingDirectory)
+#define TC_APPLICATION_STARTUP_ERROR(message) TomCat::EditorStartupWindow::Get().Fail(message)
 #include <TomCat/Core/EntryPoint.h>
 #include <TomCat/Utils/PathUtils.h>
 
@@ -194,8 +223,10 @@ namespace TomCat {
 	class TomCatInput : public Application
 	{
 	public:
+		void OnFirstFramePresented() override { EditorStartupWindow::Get().Close(); }
 		TomCatInput(ApplicationCommandLineArgs args)
 			: Application([] {
+                    EditorStartupWindow::Get().Update(L"正在初始化编辑器");
                     WindowProps props("TomCatEditor",1440,900,"Packages/Resources/Icons/Logo.ico");
                     props.FitToWorkArea=true;
                     props.EditorStyling=true;

@@ -1,4 +1,5 @@
 #include "EditorLayer.h"
+#include "EditorStartupWindow.h"
 #include "EditorPlayToolbar.h"
 #include "SceneToolbarDrawing.h"
 #include <imgui/imgui.h>
@@ -1439,11 +1440,21 @@ namespace TomCat {
 
 		if (!m_StartupProjectPath.empty())
 		{
+			EditorStartupWindow::Get().Update(L"正在打开项目");
 			const std::filesystem::path startup =
 				std::move(m_StartupProjectPath);
 			m_StartupProjectPath.clear();
 			if (!OpenProject(startup))
 			{
+				// Migration/recovery needs the editor's confirmation UI. Other startup
+				// failures must remain visible in the native loading window.
+				if (!m_OpenProjectMigrationModal && !m_OpenProjectMigrationRecoveryModal) {
+					std::string reason = "Could not open project: " + PathToUTF8(startup);
+					const auto messages = m_ConsolePanel.Snapshot();
+					for (auto it = messages.rbegin(); it != messages.rend(); ++it)
+						if (it->Severity == ConsoleMessageSeverity::Error) { reason += "\n" + it->Text; break; }
+					throw std::runtime_error(reason);
+				}
 				std::string recoveryError;
 				if (!m_RecoveryService.Configure({}, recoveryError))
 					TC_Core_Warn("Editor recovery is unavailable: {0}",
@@ -1745,6 +1756,7 @@ namespace TomCat {
 
 	void EditorLayer::UpdateWindowTitle()
 	{
+		if (m_CurrentProject) EditorStartupWindow::Get().SetProject(UTF8ToPath(m_CurrentProject->GetName()).wstring());
 		const std::string projectName = m_CurrentProject && !m_CurrentProject->GetName().empty()
 			? m_CurrentProject->GetName() : "TomCat Editor";
 		std::string sceneName = "Untitled";

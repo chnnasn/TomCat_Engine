@@ -1,9 +1,17 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
+#include <cstdint>
 #include <string>
 
 namespace TomCat {
+
+	enum class EditorRuntimeStage { Preparing, Extracting, Verifying };
+	// Synchronous observer: must not throw. Extracting reports bytes successfully
+	// written across the manifest; total == 0 means indeterminate work. Cached
+	// trees report verification, never fictional extraction progress.
+	using EditorRuntimeProgress = std::function<void(EditorRuntimeStage, uint64_t, uint64_t)>;
 
 	struct EditorRuntimeBundleResult
 	{
@@ -23,7 +31,8 @@ namespace TomCat {
 		const std::filesystem::path& payloadRoot,
 		const std::filesystem::path& cacheBaseRoot,
 		EditorRuntimeBundleResult& result,
-		std::string& errorMessage);
+		std::string& errorMessage,
+		const EditorRuntimeProgress& progress = {});
 
 	// Production convenience entry point. The cache base comes from
 	// ApplicationPaths and the successfully validated root is published there for
@@ -31,6 +40,7 @@ namespace TomCat {
 	[[nodiscard]] bool ConfigurePackagedEditorRuntime(
 		const std::filesystem::path& payloadRoot,
 		EditorRuntimeBundleResult& result,
-		std::string& errorMessage);
+		std::string& errorMessage,
+		const EditorRuntimeProgress& progress = {});
 
 }

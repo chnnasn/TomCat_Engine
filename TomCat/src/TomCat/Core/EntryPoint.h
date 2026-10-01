@@ -250,6 +250,9 @@ int wmain(int argc, wchar_t** argv) {
 			catch (...) {}
 		}
 		(void)TomCat::CrashReporter::WriteReport(exception.what());
+#ifdef TC_APPLICATION_STARTUP_ERROR
+		TC_APPLICATION_STARTUP_ERROR(exception.what());
+#endif
 		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
 		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
 		TomCat::Log::Shutdown();
@@ -272,6 +275,9 @@ int wmain(int argc, wchar_t** argv) {
 		}
 		(void)TomCat::CrashReporter::WriteReport(
 			"unhandled non-standard application exception");
+#ifdef TC_APPLICATION_STARTUP_ERROR
+		TC_APPLICATION_STARTUP_ERROR("Unknown startup error. See the startup log for details.");
+#endif
 		TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
 		TomCat::ApplicationPaths::ClearRuntimeEditorRoot();
 		TomCat::Log::Shutdown();
