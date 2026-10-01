@@ -270,7 +270,10 @@ namespace TomCat {
 				uint32_t version = source["SchemaVersion"].as<uint32_t>();
 				if (version > descriptor.SchemaVersion)
 					return true;
-				prepared = YAML::Load(YAML::Dump(source));
+				// Current-schema records are read-only during decode. Avoid serializing
+                // and reparsing every component in a large scene.
+                if (version == descriptor.SchemaVersion) { prepared = source; compatible = true; return true; }
+                prepared = YAML::Clone(source);
 				while (version < descriptor.SchemaVersion)
 				{
 					const auto migration = std::find_if(descriptor.Migrations.begin(),

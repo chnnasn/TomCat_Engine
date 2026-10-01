@@ -186,6 +186,13 @@ namespace TomCat {
 			return result;
 		}
 
+        template<typename Component>
+        PropertyDescriptor UIntProperty(uint64_t id,const char* name,uint32_t Component::* member) {
+            auto result=Property(id,name,PropertyKind::UInt32,[member](Entity e)->PropertyValue{return e.GetComponent<Component>().*member;},
+                [member](Entity e,const PropertyValue& value,std::string&){e.GetComponent<Component>().*member=std::get<uint32_t>(value);return true;});
+            result.DefaultValue=Component{}.*member;return result;
+        }
+
 		template<typename Component>
 		PropertyDescriptor FloatProperty(uint64_t id, const char* name,
 			float Component::* member, float minimum = -std::numeric_limits<float>::max(),
@@ -554,6 +561,7 @@ namespace TomCat {
 				// a disabled value when this new state must be represented.
 				if (!RequireEncodedProperty(descriptor, properties, "Enabled").as<bool>())
 					legacy["Enabled"] = false;
+                for (const char* name : {"Exposure","Saturation","Vignette"}) legacy[name] = RequireEncodedProperty(descriptor,properties,name);
 				output << YAML::Key << "Camera" << YAML::Value << legacy;
 				return output.good();
 			};
@@ -829,7 +837,7 @@ namespace TomCat {
 					return true;
 				if (!ValidateLegacyMap(legacy, "Camera",
 					{ "Camera", "Primary", "FixedAspectRatio", "BackgroundColor" },
-					{ "Enabled" }, error))
+					{ "Enabled", "Exposure", "Saturation", "Vignette" }, error))
 					return false;
 				const YAML::Node projection = legacy["Camera"];
 				if (!ValidateLegacyMap(projection, "Camera.Camera",
@@ -839,6 +847,7 @@ namespace TomCat {
 					return false;
 				YAML::Node canonical(YAML::NodeType::Map);
 				canonical["Primary"] = legacy["Primary"];
+                for (const char* name : {"Exposure","Saturation","Vignette"}) if(legacy[name]) canonical[name]=legacy[name];
 				canonical["FixedAspectRatio"] = legacy["FixedAspectRatio"];
 				canonical["BackgroundColor"] = legacy["BackgroundColor"];
 				if (legacy["Enabled"])
@@ -1100,12 +1109,19 @@ namespace TomCat {
 			return descriptor;
 		}
 
+        void AddDefaultProperty(YAML::Node& record, uint64_t id, const char* name, const YAML::Node& value) {
+            auto properties=record["Properties"];
+            if(!properties.IsSequence()) throw std::runtime_error("component properties must be a sequence");
+            for(const auto& property:properties) if(property["PropertyId"].as<uint64_t>()==id || property["StableName"].as<std::string>()==name) throw std::runtime_error("new property present in older component schema");
+            YAML::Node property; property["PropertyId"]=id;property["StableName"]=name;property["Value"]=value;properties.push_back(property);
+        }
+
 		ComponentDescriptor MakeCameraDescriptor()
 		{
 			auto descriptor = BaseDescriptor<C_Camera>(ComponentIds::Camera,
 				"TomCat.Camera", "Camera");
 			descriptor.ScriptAccessible = true;
-			descriptor.SchemaVersion = 3;
+			descriptor.SchemaVersion = 4;
 			descriptor.Migrations.push_back({ 1, 2,
 				[](YAML::Node& record, std::string& error)
 				{
@@ -1161,6 +1177,12 @@ namespace TomCat {
 					farProperty["Value"] = farClip;
 					return true;
 				} });
+            descriptor.Migrations.push_back({3,4,[](YAML::Node& record,std::string&) {
+                AddDefaultProperty(record,ComponentIds::CameraProperties::Exposure,"Exposure",YAML::Node(0.f));
+                AddDefaultProperty(record,ComponentIds::CameraProperties::Saturation,"Saturation",YAML::Node(1.f));
+                AddDefaultProperty(record,ComponentIds::CameraProperties::Vignette,"Vignette",YAML::Node(0.f));
+                return true;
+            }});
 			descriptor.EncodeLegacyFields = LegacyCamera();
 			descriptor.DecodeLegacyFields = LegacyCameraDecode();
 			descriptor.Add = [](Entity entity, std::string& error)
@@ -1230,7 +1252,10 @@ namespace TomCat {
 					[](Entity e) -> PropertyValue { return e.GetComponent<C_Camera>()._Camera.GetPerspectiveFarClip(); },
 					[](Entity e, const PropertyValue& v, std::string& error) { if (!e.GetComponent<C_Camera>()._Camera.SetPerspectiveFarClip(std::get<float>(v))) { error = "PerspectiveFarClip is invalid"; return false; } return true; }),
 				BoolProperty<C_Camera>(ComponentIds::CameraProperties::Enabled,
-					"Enabled", &C_Camera::Enabled)
+					"Enabled", &C_Camera::Enabled),
+                FloatProperty<C_Camera>(ComponentIds::CameraProperties::Exposure,"Exposure",&C_Camera::Exposure,-10.f,10.f),
+                FloatProperty<C_Camera>(ComponentIds::CameraProperties::Saturation,"Saturation",&C_Camera::Saturation,0.f,2.f),
+                FloatProperty<C_Camera>(ComponentIds::CameraProperties::Vignette,"Vignette",&C_Camera::Vignette,0.f,1.f)
 			};
 			const C_Camera cameraDefaults;
 			SetPropertyDefault(descriptor, ComponentIds::CameraProperties::Primary,
@@ -1257,11 +1282,19 @@ namespace TomCat {
 			auto descriptor = BaseDescriptor<SpriteRenderer>(ComponentIds::SpriteRenderer,
 				"TomCat.SpriteRenderer", "Sprite Renderer");
 			descriptor.ScriptAccessible = true;
+            descriptor.SchemaVersion=2;
+            descriptor.Migrations.push_back({1,2,[](YAML::Node& record,std::string&) {
+                AddDefaultProperty(record,ComponentIds::SpriteRendererProperties::NormalMap,"NormalMap",YAML::Node(uint64_t(0)));
+                AddDefaultProperty(record,ComponentIds::SpriteRendererProperties::CastShadows,"CastShadows",YAML::Node(false));
+                AddDefaultProperty(record,ComponentIds::SpriteRendererProperties::Material,"Material",YAML::Node(uint64_t(0)));
+                return true;
+            }});
+
 			descriptor.EncodeLegacyFields = LegacyFlatMap("SpriteRenderer",
 				{ { "Sprite", "SpriteHandle" } });
 			descriptor.DecodeLegacyFields = LegacyFlatDecode("SpriteRenderer", false,
 				{ { "Sprite", "SpriteHandle" } },
-				{ "SortingLayer", "OrderInLayer" });
+				{ "SortingLayer", "OrderInLayer", "NormalMap", "CastShadows", "Material" });
 			auto sprite = AssetProperty(ComponentIds::SpriteRendererProperties::Sprite,
 				"Sprite", AssetType::Texture2D,
 				[](Entity entity) -> AssetHandle& { return entity.GetComponent<SpriteRenderer>().SpriteHandle; });
@@ -1285,7 +1318,12 @@ namespace TomCat {
 				IntProperty<SpriteRenderer>(ComponentIds::SpriteRendererProperties::SortingLayer,
 					"SortingLayer", &SpriteRenderer::SortingLayer),
 				IntProperty<SpriteRenderer>(ComponentIds::SpriteRendererProperties::OrderInLayer,
-					"OrderInLayer", &SpriteRenderer::OrderInLayer)
+					"OrderInLayer", &SpriteRenderer::OrderInLayer),
+                AssetProperty(ComponentIds::SpriteRendererProperties::NormalMap, "NormalMap", AssetType::Texture2D,
+                    [](Entity entity) -> AssetHandle& { return entity.GetComponent<SpriteRenderer>().NormalMap; }),
+                BoolProperty<SpriteRenderer>(ComponentIds::SpriteRendererProperties::CastShadows, "CastShadows", &SpriteRenderer::CastShadows),
+                AssetProperty(ComponentIds::SpriteRendererProperties::Material,"Material",AssetType::Material,
+                    [](Entity entity) -> AssetHandle& { return entity.GetComponent<SpriteRenderer>().MaterialHandle; })
 			};
 			return descriptor;
 		}
@@ -1746,9 +1784,11 @@ namespace TomCat {
 			auto descriptor = BaseDescriptor<AudioSource>(ComponentIds::AudioSource,
 				"TomCat.AudioSource", "Audio Source");
 			descriptor.ScriptAccessible = true;
-			descriptor.EncodeLegacyFields = LegacyFlatMap("AudioSource");
+			descriptor.SchemaVersion=2;
+            descriptor.Migrations.push_back({1,2,[](YAML::Node& record,std::string&) {AddDefaultProperty(record,ComponentIds::AudioSourceProperties::Bus,"Bus",YAML::Node(UINT32_MAX));return true;}});
+            descriptor.EncodeLegacyFields = LegacyFlatMap("AudioSource");
 			descriptor.DecodeLegacyFields = LegacyFlatDecode("AudioSource", false, {},
-				{ "Streaming", "SpatialBlend", "MinDistance", "MaxDistance" });
+				{ "Streaming", "SpatialBlend", "MinDistance", "MaxDistance", "Bus" });
 			descriptor.Remove = [](Entity entity, std::string& error)
 			{
 				if (!entity || !entity.HasComponent<AudioSource>())
@@ -1834,7 +1874,8 @@ namespace TomCat {
 				FloatProperty<AudioSource>(ComponentIds::AudioSourceProperties::SpatialBlend,
 					"SpatialBlend", &AudioSource::SpatialBlend, 0.0f, 1.0f),
 				std::move(minDistance), std::move(maxDistance),
-				std::move(mixerGroup)
+				std::move(mixerGroup),
+                UIntProperty<AudioSource>(ComponentIds::AudioSourceProperties::Bus,"Bus",&AudioSource::Bus)
 			};
 			const AudioSource audioDefaults;
 			SetPropertyDefault(descriptor, ComponentIds::AudioSourceProperties::MinDistance,

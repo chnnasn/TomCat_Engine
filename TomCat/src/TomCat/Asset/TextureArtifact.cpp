@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "TextureArtifact.h"
+#include "MobileTextureCodec.h"
 
 #include <stb_image.h>
 
@@ -61,11 +62,12 @@ namespace TomCat {
 				mipHeight = std::max(1u, mipHeight / 2);
 			}
 			uint64_t workingBytes = 0;
-			// Six full RGBA mip chains cover the persistent mip/artifact buffers,
+			// Twenty-four RGBA mip chains cover ETC2 float pixels/block search, ASTC,
+            // and the persistent mip/artifact buffers,
 			// vector growth and stb's format-specific decode workspace (including
 			// the wider temporary representation used by HDR inputs).
-			if (rgbaMipBytes > (std::numeric_limits<uint64_t>::max)() / 6
-				|| !CheckedAdd(encodedBytes, rgbaMipBytes * 6, workingBytes)
+			if (rgbaMipBytes > (std::numeric_limits<uint64_t>::max)() / 24
+				|| !CheckedAdd(encodedBytes, rgbaMipBytes * 24, workingBytes)
 				|| !CheckedAdd(workingBytes,
 					HeaderSize + static_cast<uint64_t>(mipCount) * MipEntrySize,
 					workingBytes)
@@ -447,7 +449,8 @@ namespace TomCat {
 			|| width == 0 || height == 0 || mipCount == 0 || mipCount > 32
 			|| width > MaximumTextureDimension || height > MaximumTextureDimension
 			|| static_cast<uint64_t>(width) * height > MaximumTexturePixels
-			|| flags & ~SRGBFlag || (rawFormat != 1 && rawFormat != 2)
+			|| flags & ~SRGBFlag || (rawFormat < 1 || rawFormat > 6)
+            || (rawFormat == 4 && (flags & SRGBFlag))
 			|| static_cast<uint64_t>(tableOffset) + static_cast<uint64_t>(mipCount)
 				* MipEntrySize > bytes.size())
 		{
@@ -478,7 +481,7 @@ namespace TomCat {
 			const uint64_t expectedSize = artifact.Format == TextureArtifactFormat::RGBA8
 				? static_cast<uint64_t>(mipWidth) * mipHeight * 4
 				: static_cast<uint64_t>((mipWidth + 3) / 4)
-					* ((mipHeight + 3) / 4) * 16;
+					* ((mipHeight + 3) / 4) * (artifact.Format == TextureArtifactFormat::BC1 ? 8 : 16);
 			if (size != expectedSize)
 			{
 				error = "texture artifact mip byte count is invalid";
@@ -526,7 +529,7 @@ namespace TomCat {
 			else { error = "colorSpace must be sRGB or Linear"; return false; }
 		}
 		TextureArtifactFormat format = platform == "windows-x64"
-			? TextureArtifactFormat::BC3 : TextureArtifactFormat::RGBA8;
+			? TextureArtifactFormat::BC3 : (platform == "android" || platform == "android-arm64") ? TextureArtifactFormat::ETC2RGBA8 : (platform == "ios" || platform == "ios-arm64") ? TextureArtifactFormat::ASTC4x4 : TextureArtifactFormat::RGBA8;
 		if (const std::string* compression = FindSetting(settings, { "compression" }))
 		{
 			const std::string value = Lower(*compression);
@@ -535,7 +538,11 @@ namespace TomCat {
 				format = TextureArtifactFormat::RGBA8;
 			else if (value == "bc3" || value == "dxt5")
 				format = TextureArtifactFormat::BC3;
-			else { error = "compression must be Auto, RGBA8 or BC3"; return false; }
+			else if (value == "bc1") format = TextureArtifactFormat::BC1;
+            else if (value == "astc" || value == "astc4x4") format = TextureArtifactFormat::ASTC4x4;
+            else if (value == "etc2" || value == "etc2rgba8") format = TextureArtifactFormat::ETC2RGBA8;
+            else if (value == "bc5") format = TextureArtifactFormat::BC5;
+            else { error = "compression must be Auto, RGBA8, BC1, BC3, BC5, ASTC4x4 or ETC2RGBA8"; return false; }
 		}
 
 		uint64_t estimatedMemory = 0;
@@ -580,8 +587,27 @@ namespace TomCat {
 		mipWidth = static_cast<uint32_t>(width); mipHeight = static_cast<uint32_t>(height);
 		for (auto& mip : rgbaMips)
 		{
-			payloads.push_back(format == TextureArtifactFormat::BC3
-				? CompressBC3(mip, mipWidth, mipHeight) : std::move(mip));
+            if (format == TextureArtifactFormat::ASTC4x4 || format == TextureArtifactFormat::ETC2RGBA8) {
+                std::vector<uint8_t> compressed;
+                if (!EncodeMobileTexture(mip,mipWidth,mipHeight,format,srgb,compressed,error)) return false;
+                payloads.push_back(std::move(compressed));
+            } else if (format == TextureArtifactFormat::BC1) {
+                for (size_t pixel = 3; pixel < mip.size(); pixel += 4) if (mip[pixel] != 255) { error = "BC1 requires opaque pixels; use BC3 for alpha"; return false; }
+                const auto blocks = CompressBC3(mip, mipWidth, mipHeight);
+                std::vector<uint8_t> compact; compact.reserve(blocks.size() / 2);
+                for (size_t offset = 0; offset < blocks.size(); offset += 16) compact.insert(compact.end(), blocks.begin() + offset + 8, blocks.begin() + offset + 16);
+                payloads.push_back(std::move(compact));
+            } else if (format == TextureArtifactFormat::BC5) {
+                if (srgb) { error = "BC5 requires linear color space"; return false; }
+                auto channel = mip;
+                for (size_t pixel = 0; pixel < channel.size(); pixel += 4) channel[pixel + 3] = mip[pixel];
+                const auto red = CompressBC3(channel, mipWidth, mipHeight);
+                for (size_t pixel = 0; pixel < channel.size(); pixel += 4) channel[pixel + 3] = mip[pixel + 1];
+                const auto green = CompressBC3(channel, mipWidth, mipHeight);
+                std::vector<uint8_t> compact(red.size());
+                for (size_t offset = 0; offset < red.size(); offset += 16) { std::copy_n(red.data() + offset, 8, compact.data() + offset); std::copy_n(green.data() + offset, 8, compact.data() + offset + 8); }
+                payloads.push_back(std::move(compact));
+            } else payloads.push_back(format == TextureArtifactFormat::BC3 ? CompressBC3(mip, mipWidth, mipHeight) : mip);
 			mipWidth = std::max(1u, mipWidth / 2);
 			mipHeight = std::max(1u, mipHeight / 2);
 		}
@@ -630,11 +656,38 @@ namespace TomCat {
 		std::string& error)
 	{
 		error.clear(); rgba.clear();
+        if (format == TextureArtifactFormat::ASTC4x4 || format == TextureArtifactFormat::ETC2RGBA8) return DecodeMobileTexture(mip,format,rgba,error);
 		if (format == TextureArtifactFormat::RGBA8)
 		{
 			rgba.assign(mip.Bytes.begin(), mip.Bytes.end());
 			return true;
 		}
+        if (format == TextureArtifactFormat::BC1 || format == TextureArtifactFormat::BC5) {
+            const uint64_t blocks = static_cast<uint64_t>((mip.Width + 3) / 4) * ((mip.Height + 3) / 4);
+            const size_t stride = format == TextureArtifactFormat::BC1 ? 8 : 16;
+            if (!mip.Width || !mip.Height || mip.Width > 16384 || mip.Height > 16384 || blocks * stride != mip.Bytes.size()) { error = "invalid compressed mip"; return false; }
+            std::vector<uint8_t> expanded(static_cast<size_t>(blocks) * 16);
+            for (size_t block = 0; block < blocks; ++block) {
+                auto* out = expanded.data() + block * 16;
+                if (format == TextureArtifactFormat::BC1) { out[0] = out[1] = 255; std::copy_n(mip.Bytes.data() + block * 8, 8, out + 8); }
+                else std::copy_n(mip.Bytes.data() + block * 16, 8, out);
+            }
+            TextureArtifactMip proxy = mip; proxy.Bytes = expanded;
+            if (!DecompressTextureMip(proxy, TextureArtifactFormat::BC3, rgba, error)) return false;
+            if (format == TextureArtifactFormat::BC5) {
+                for (size_t block = 0; block < blocks; ++block) std::copy_n(mip.Bytes.data() + block * 16 + 8, 8, expanded.data() + block * 16);
+                std::vector<uint8_t> green;
+                if (!DecompressTextureMip(proxy, TextureArtifactFormat::BC3, green, error)) return false;
+                for (size_t pixel = 0; pixel < rgba.size(); pixel += 4) {
+                    rgba[pixel] = rgba[pixel + 3]; rgba[pixel + 1] = green[pixel + 3];
+                    const float x = rgba[pixel] / 127.5f - 1.f, y = rgba[pixel + 1] / 127.5f - 1.f;
+                    rgba[pixel + 2] = static_cast<uint8_t>((std::sqrt(std::max(0.f, 1.f - x*x - y*y)) * .5f + .5f) * 255.f);
+                    rgba[pixel + 3] = 255;
+                }
+            }
+            return true;
+        }
+
 		if (format != TextureArtifactFormat::BC3 || mip.Width == 0 || mip.Height == 0)
 		{
 			error = "unsupported compressed texture format"; return false;

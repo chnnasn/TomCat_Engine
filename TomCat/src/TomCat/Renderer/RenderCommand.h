@@ -8,7 +8,10 @@ namespace TomCat {
 	{
 	public:
 
-		inline static void Init()
+		static void ApplyColorGrade(float exposure, float saturation, float vignette) { s_RendererAPI->ApplyColorGrade(exposure, saturation, vignette); }
+        static void ReleaseColorGrade() { s_RendererAPI->ReleaseColorGrade(); }
+
+        inline static void Init()
 		{
 			s_RendererAPI->Init();
 		}

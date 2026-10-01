@@ -273,3 +273,22 @@ Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件
 发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v8 `.tcpak`，并保存入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v8 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵、可选托管发布载荷，以及携带版本化 PlayerSettings 的 BootManifest。场景输入通过 v9-v11 reader 严格解析，并由当前 v11 writer 规范化后写入；缺失、类型错误或未知字段会使 Cook 失败。
 
 独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 验证 v5/v6/v7/v8 包、兼容版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes；v6-v8 还会在创建窗口前应用 BootManifest 中的 PlayerSettings，v5 使用兼容默认值。Player 按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。
+
+
+## P1 生产扩展（2026-10-01）
+
+Scene/Prefab 的注册组件记录新增：SpriteRenderer.NormalMap、Material、CastShadows；Camera.Exposure、Saturation、Vignette；UIScrollView.Virtualized、VirtualItemCount、VirtualItemHeight、VirtualOverscan；UILocalizedText.Parameters。旧字段的 ID 不变，缺少新字段时取默认值；运行时预编辑和虚拟列表索引不写入文档。
+
+`.tcmat` SchemaVersion 1 的 Shader 除非零 AssetHandle 外，可写 `BuiltinSprite2D`。canonical 材质产物使用保留标识 `0x5443535052495445`，该内置程序不产生外部 Shader 依赖，Textures 仍照常收集依赖。
+
+TCTX v1 Format 增加 BC1=3、BC5=4、ASTC4x4=5、ETC2RGBA8=6，已有 RGBA8=1、BC3=2 不变。BC1 每个 4x4 block 为 8 字节，BC3/BC5/ASTC4x4/ETC2RGBA8 为 16 字节，边缘不足 4x4 按完整块计数。BC1 不接受透明输入；BC5 仅允许 Linear。ASTC 为 LDR 4x4，ETC2 为 RGBA8，支持 Linear/sRGB；硬件不支持时 CPU 解码回退。纹理 importer 版本为 5，材质与音频 importer 版本为 3，以重新生成对应 DDC 产物。
+
+OGG/Vorbis 源通过音频 importer 规范化为现有 PCM16 WAV 产物，不增加 Player 内部音频容器格式。
+
+使用方法、平台范围和未覆盖能力见 [P1 生产能力](docs/P1_PRODUCTION.md)。
+
+Camera 组件记录写入 schema 4（从 v3 补齐三个后处理默认值）；SpriteRenderer 写入 schema 2（从 v1 补齐法线、阴影和材质默认值）。场景容器仍为 v11。
+
+### 自定义音频总线（2026-10-01）
+
+AudioSource 组件 schema 升为 2，新增 UInt32 属性 `Bus`（PropertyID 911）。从 schema 1 迁移时补默认值 4294967295，表示沿用 MixerGroup；其他值引用游戏启动时配置的总线 ID。音频总线 YAML/JSON 使用 SchemaVersion 1、Buses 数组；节点字段为 ID、Name、Volume、Muted、Solo、Sends，发送字段为 Target、Gain。运行时验证并原子替换，不修改冻结的 AudioApiV1；通过可选 TomCat.AudioBusApiV1 暴露。配置示例与边界见 [P1 生产能力](docs/P1_PRODUCTION.md#自定义音频总线图)。

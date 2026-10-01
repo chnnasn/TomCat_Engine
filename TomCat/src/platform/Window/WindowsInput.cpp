@@ -4,7 +4,14 @@
 #include "TomCat/Core/Application.h"
 
 #include <algorithm>
+#include <cmath>
 #include <GLFW/glfw3.h>
+#ifdef TC_PLATFORM_WINDOWS
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <imm.h>
+#pragma comment(lib, "imm32.lib")
+#endif
 #ifdef TC_PLATFORM_WEB
 #include <emscripten/html5.h>
 #endif
@@ -18,6 +25,8 @@ namespace TomCat {
 		float s_FrameScrollY = 0.0f;
 		std::string s_PendingTextInput;
 		std::string s_FrameTextInput;
+        Input::CompositionSnapshot s_Composition;
+        bool s_RuntimeIMEEnabled = false;
 		float s_LiveMouseX = 0.0f;
 		float s_LiveMouseY = 0.0f;
 		float s_FrameMouseX = 0.0f;
@@ -68,6 +77,39 @@ namespace TomCat {
 			return snapshot;
 		}
 	}
+
+    void Input::NotifyComposition(bool active, std::string text, uint32_t caret) {
+        s_Composition = {active, active ? std::move(text) : std::string{}, caret};
+        s_Composition.Caret = std::min<uint32_t>(s_Composition.Caret, static_cast<uint32_t>(s_Composition.Text.size()));
+    }
+    const Input::CompositionSnapshot& Input::GetComposition() { return s_Composition; }
+    bool Input::IsRuntimeIMEEnabled() { return s_RuntimeIMEEnabled; }
+    void Input::SetRuntimeIMEEnabled(bool enabled) { if (s_RuntimeIMEEnabled && !enabled) CancelComposition(); s_RuntimeIMEEnabled = enabled; }
+    void Input::CancelComposition() {
+        s_Composition = {};
+#ifdef TC_PLATFORM_WINDOWS
+        auto* app = Application::TryGet();
+        if (!app || !app->HasWindow()) return;
+        HWND window = glfwGetWin32Window(static_cast<GLFWwindow*>(app->GetWindow().GetNativeWindow()));
+        if (HIMC context = ImmGetContext(window)) { ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0); ImmReleaseContext(window, context); }
+#endif
+    }
+    void Input::SetIMECandidatePosition(float x, float y) {
+#ifdef TC_PLATFORM_WINDOWS
+        if (!std::isfinite(x) || !std::isfinite(y)) return;
+        auto* app = Application::TryGet();
+        if (!app || !app->HasWindow()) return;
+        HWND window = glfwGetWin32Window(static_cast<GLFWwindow*>(app->GetWindow().GetNativeWindow()));
+        if (HIMC context = ImmGetContext(window)) {
+            CANDIDATEFORM candidate{}; candidate.dwStyle = CFS_CANDIDATEPOS;
+            candidate.ptCurrentPos = {static_cast<LONG>(std::clamp(x, -100000.f, 100000.f)), static_cast<LONG>(std::clamp(y, -100000.f, 100000.f))};
+            ImmSetCandidateWindow(context, &candidate);
+            COMPOSITIONFORM composition{}; composition.dwStyle = CFS_POINT; composition.ptCurrentPos = candidate.ptCurrentPos;
+            ImmSetCompositionWindow(context, &composition);
+            ImmReleaseContext(window, context);
+        }
+#endif
+    }
 
 	bool Input::IsKeyPressed(KeyCode keyCode)
 	{
@@ -162,6 +204,7 @@ namespace TomCat {
 
 	void Input::ClearState()
 	{
+        CancelComposition();
 		s_PendingTextInput.clear();
 		s_FrameTextInput.clear();
 		s_EventQueue.ClearState();
@@ -281,6 +324,7 @@ namespace TomCat {
 
 	void Input::NotifyWindowFocus(bool focused, double timestamp)
 	{
+        if (!focused) CancelComposition();
 		if (s_LiveWindowFocused == focused)
 			return;
 		if (!focused)

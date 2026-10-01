@@ -113,6 +113,8 @@ namespace TomCat {
 		size_t PreparedCount = 0;
 		uint64_t PreparedBytes = 0;
 		size_t JobsInFlight = 0;
+        double LastPublishMilliseconds = 0, PeakPublishMilliseconds = 0;
+        uint64_t PublishOverruns = 0, OversizedUploads = 0;
 	};
 
 	// Owns loaded project assets. Authoring builds resolve handles through the
@@ -177,7 +179,8 @@ namespace TomCat {
 					return result;
 				});
 		}
-		DecodedMaterialLoadResult LoadMaterial(AssetHandle handle,
+		Ref<const MaterialArtifact> GetRuntimeMaterial(AssetHandle handle);
+        DecodedMaterialLoadResult LoadMaterial(AssetHandle handle,
 			AssetLoadOptions options = {});
 		std::future<DecodedMaterialLoadResult> LoadMaterialAsync(AssetHandle handle,
 			AssetLoadOptions options = {});
@@ -214,7 +217,8 @@ namespace TomCat {
 		// fallback cost when a platform cannot upload BC3 directly.
 		size_t BeginCookedTexturePreload();
 		size_t PumpTexturePublishes(uint32_t maximumUploads = 2,
-			uint64_t maximumUploadBytes = 32ULL * 1024ULL * 1024ULL);
+			uint64_t maximumUploadBytes = 32ULL * 1024ULL * 1024ULL,
+            double maximumMilliseconds = 2.0);
 		TextureStreamingStats GetTextureStreamingStats() const;
 
 		void Release(AssetHandle handle);
@@ -346,6 +350,7 @@ namespace TomCat {
 		bool m_AcceptingAsyncLoads = false;
 		std::unordered_map<AssetHandle, Ref<Texture2D>> m_TextureCache;
 		std::unordered_map<AssetHandle, Ref<Shader>> m_ShaderCache;
+        std::unordered_map<AssetHandle, Ref<const MaterialArtifact>> m_MaterialCache;
 		mutable std::unordered_map<AssetHandle, ResolvedSpriteAsset> m_SpriteDescriptorCache;
 		Ref<Texture2D> m_MissingTexture;
 		mutable std::mutex m_TextureStreamingMutex;
@@ -359,6 +364,8 @@ namespace TomCat {
 		uint64_t m_PreparedTextureBytes = 0;
 		uint64_t m_TextureStreamingGeneration = 1;
 		size_t m_TextureJobsInFlight = 0;
+        double m_LastPublishMilliseconds = 0, m_PeakPublishMilliseconds = 0;
+        uint64_t m_PublishOverruns = 0, m_OversizedUploads = 0;
 		LiveReferenceProvider m_LiveReferenceProvider;
 
 		std::filesystem::path m_CookedPackagePath;

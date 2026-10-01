@@ -22,9 +22,49 @@
 #ifdef TC_PLATFORM_WINDOWS
 #include <windows.h>
 #include <shellapi.h>
+#include <commctrl.h>
+#include <imm.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "imm32.lib")
 #endif
 
 namespace TomCat {
+
+#ifdef TC_PLATFORM_WINDOWS
+    static LRESULT CALLBACK RuntimeIMEProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+        if (message == WM_IME_STARTCOMPOSITION) {
+            Input::NotifyComposition(true);
+            if (Input::IsRuntimeIMEEnabled()) return 0;
+        }
+        if (message == WM_IME_ENDCOMPOSITION) Input::NotifyComposition(false);
+        if (message == WM_IME_COMPOSITION && (lParam & GCS_COMPSTR)) {
+            if (HIMC context = ImmGetContext(window)) {
+                const LONG bytes = ImmGetCompositionStringW(context, GCS_COMPSTR, nullptr, 0);
+                if (bytes >= 0 && bytes <= 65536 && bytes % sizeof(wchar_t) == 0) {
+                    std::wstring wide(bytes / sizeof(wchar_t), L'\0');
+                    ImmGetCompositionStringW(context, GCS_COMPSTR, wide.data(), bytes);
+                    auto utf8 = [](const wchar_t* data, int count) {
+                        const int length = WideCharToMultiByte(CP_UTF8, 0, data, count, nullptr, 0, nullptr, nullptr);
+                        std::string text(length, '\0');
+                        WideCharToMultiByte(CP_UTF8, 0, data, count, text.data(), length, nullptr, nullptr); return text;
+                    };
+                    const LONG cursor = ImmGetCompositionStringW(context, GCS_CURSORPOS, nullptr, 0);
+                    const auto prefix = utf8(wide.data(), static_cast<int>(std::clamp<LONG>(cursor, 0, static_cast<LONG>(wide.size()))));
+                    Input::NotifyComposition(true, utf8(wide.data(), static_cast<int>(wide.size())), static_cast<uint32_t>(prefix.size()));
+                }
+                ImmReleaseContext(window, context);
+            }
+        }
+        if (message == WM_IME_COMPOSITION && Input::IsRuntimeIMEEnabled() && !(lParam & GCS_RESULTSTR)) return 0;
+        // GLFW delivers committed WM_CHAR text exactly once. Hide the default
+        // composition window; the runtime UI draws preedit, IMM owns candidates.
+        if (message == WM_IME_SETCONTEXT && Input::IsRuntimeIMEEnabled()) lParam &= ~ISC_SHOWUICOMPOSITIONWINDOW;
+        if (message == WM_NCDESTROY) RemoveWindowSubclass(window, RuntimeIMEProc, 1);
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
+#endif
 
 	static uint8_t s_GLFWWindowCount = 0;
 
@@ -524,7 +564,11 @@ namespace TomCat {
 				Data.EventCallback(event);
 		});
 
-		initializationGuard.Release();
+		#ifdef TC_PLATFORM_WINDOWS
+        if (!SetWindowSubclass(glfwGetWin32Window(m_Window), RuntimeIMEProc, 1, 0))
+            TC_Core_Warn("Could not install runtime IME preedit handler");
+#endif
+        initializationGuard.Release();
 
 	}
 

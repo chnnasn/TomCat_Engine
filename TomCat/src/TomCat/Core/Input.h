@@ -50,6 +50,14 @@ namespace TomCat {
 		// frame. Key codes must never be used to synthesize user text.
 		static void NotifyCharacter(uint32_t codepoint);
 		static const std::string& GetTextInput();
+        struct CompositionSnapshot { bool Active = false; std::string Text; uint32_t Caret = 0; };
+        static void NotifyComposition(bool active, std::string text = {}, uint32_t caret = 0);
+        static const CompositionSnapshot& GetComposition();
+        static void CancelComposition();
+        static void SetRuntimeIMEEnabled(bool enabled);
+        static bool IsRuntimeIMEEnabled();
+        // Native client coordinates, in window pixels (not framebuffer pixels).
+        static void SetIMECandidatePosition(float x, float y);
 		static std::string GetClipboardText();
 		static bool SetClipboardText(const std::string& text);
 		// GLFW reports joystick hot-plug as ordered callbacks during PollEvents.

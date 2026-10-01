@@ -1,4 +1,5 @@
 #pragma once
+#include "TomCat/Core/FrameTask.h"
 
 #include "IScriptRuntime.h"
 #include "TomCat/Core/UUID.h"
@@ -33,6 +34,7 @@ namespace TomCat {
 			// Returns a nonzero SceneSessionID when all instances were created, bound,
 			// restored, OnCreate'd and initially enabled successfully.
 			uint64_t StartScene(Scene& scene, uint64_t runtimeGeneration);
+            FrameTask StartSceneIncrementally(Scene& scene, uint64_t runtimeGeneration, uint64_t& result);
 			// Safe-point entry for a running Scene that started without scripts. The
 			// existing entities bootstrap transactionally, while entityIDs are sent
 			// through InstantiateAttachments. A failed dynamic batch is rolled back;
@@ -284,7 +286,8 @@ namespace TomCat {
 			bool ApplyDeferredCommands(Scene& scene, uint64_t sceneSessionId,
 				const std::vector<DeferredCommand>& commands,
 				bool publishRuntimeSideEffects, std::string& error) const;
-			uint64_t StartSceneCore(Scene& scene, uint64_t runtimeGeneration,
+			FrameTask StartSceneCoreTask(Scene& scene, uint64_t runtimeGeneration, std::vector<UUID> initialEntityIDs, bool flushPendingCreates, uint64_t& result);
+            uint64_t StartSceneCore(Scene& scene, uint64_t runtimeGeneration,
 				std::span<const UUID> initialEntityIDs, bool flushPendingCreates);
 			void InstallRuntimeEntityBatchCallback(Scene& scene, uint64_t sceneSessionId);
 			void RollbackRuntimeEntityBatch(Scene& scene,

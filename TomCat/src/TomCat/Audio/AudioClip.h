@@ -21,8 +21,7 @@ namespace TomCat {
 	};
 
 	// Immutable, interleaved PCM data ready for a platform audio voice. WAV is
-	// deliberately decoded without a third-party runtime dependency. OGG is
-	// reported as unsupported until a real decoder is shipped.
+	// decoded directly; OGG/Vorbis uses the vendored, bounded stb decoder.
 	class AudioClip final
 	{
 	public:

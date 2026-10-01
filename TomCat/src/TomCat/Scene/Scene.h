@@ -1,4 +1,5 @@
 #pragma once
+#include "TomCat/Core/FrameTask.h"
 #include "entt.hpp"
 #include "TomCat/Core/Timestep.h"
 #include "TomCat/Core/UUID.h"
@@ -154,6 +155,7 @@ namespace TomCat {
 		// result means all partially-created runtime state has already been rolled
 		// back and the caller must remain outside Play mode.
 		bool OnRuntimeStart();
+        FrameTask StartRuntimeIncrementally();
 		void OnRuntimeStop();
 		// Advances scripts and physics by exactly one fixed 1/60 second step,
 		// independent of the most recent display-frame delta.
@@ -281,6 +283,7 @@ namespace TomCat {
 		SceneContactFilter2D* m_ContactFilter = nullptr;
 		SceneContactListener* m_ContactListener = nullptr;
 		bool m_RuntimeRunning = false;
+        bool m_RuntimeActivating = false;
 		double m_RuntimeAccumulator = 0.0;
 		float m_RuntimeInterpolationAlpha = 1.0f;
 		uint64_t m_RuntimeSessionGeneration = 0;

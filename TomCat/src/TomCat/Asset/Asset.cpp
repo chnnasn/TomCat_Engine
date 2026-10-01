@@ -59,7 +59,7 @@ namespace TomCat {
 			[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
 
 		if (extension == ".tomcat") return AssetType::Scene;
-		if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
+		if (extension == ".pnm" || extension == ".ppm" || extension == ".pgm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
 			extension == ".bmp" || extension == ".tga" || extension == ".gif" ||
 			extension == ".psd" || extension == ".hdr" || extension == ".pic")
 			return AssetType::Texture2D;
@@ -68,7 +68,7 @@ namespace TomCat {
 		// Keep type discovery aligned with formats that the P0 importer, cooker and
 		// Player can actually consume end to end. Unsupported containers remain
 		// ordinary files until a decoder/importer is registered for them.
-		if (extension == ".wav")
+		if (extension == ".wav" || extension == ".ogg" || extension == ".oga")
 			return AssetType::Audio;
 		if (extension == ".ttf" || extension == ".otf" || extension == ".ttc")
 			return AssetType::Font;

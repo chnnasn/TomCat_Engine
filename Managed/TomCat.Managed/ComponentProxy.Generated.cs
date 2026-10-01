@@ -173,6 +173,27 @@ public sealed partial class Camera : IEntityComponent
         set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
             0x0000000000000136UL, value);
     }
+
+    public float Exposure
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000137UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000137UL, value);
+    }
+
+    public float Saturation
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000138UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000138UL, value);
+    }
+
+    public float Vignette
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000139UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000139UL, value);
+    }
 }
 
 [RegisteredComponent(0x9f00000000000006UL)]
@@ -223,6 +244,27 @@ public sealed partial class SpriteRenderer : IEntityComponent
         get => RegisteredComponentProperties.GetInt32(Entity, RegisteredTypeId, 0x00000000000000cdUL);
         set => RegisteredComponentProperties.SetInt32(Entity, RegisteredTypeId,
             0x00000000000000cdUL, value);
+    }
+
+    public AssetRef<Texture2DAsset> NormalMap
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x00000000000000ceUL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x00000000000000ceUL, value.Handle);
+    }
+
+    public bool CastShadows
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000000cfUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000000cfUL, value);
+    }
+
+    public AssetRef<MaterialAsset> Material
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x00000000000000d0UL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x00000000000000d0UL, value.Handle);
     }
 }
 
@@ -339,6 +381,13 @@ public sealed partial class AudioSource : IEntityComponent
         get => (AudioMixerGroup)RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x000000000000038eUL);
         set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
             0x000000000000038eUL, (uint)value);
+    }
+
+    public uint Bus
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x000000000000038fUL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x000000000000038fUL, value);
     }
 }
 
@@ -811,6 +860,34 @@ public sealed partial class UIScrollView : IEntityComponent
         set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
             0x9f01a00000000006UL, value);
     }
+
+    public bool Virtualized
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x9f01a00000000007UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x9f01a00000000007UL, value);
+    }
+
+    public uint VirtualItemCount
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x9f01a00000000008UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x9f01a00000000008UL, value);
+    }
+
+    public float VirtualItemHeight
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x9f01a00000000009UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x9f01a00000000009UL, value);
+    }
+
+    public uint VirtualOverscan
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x9f01a0000000000aUL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x9f01a0000000000aUL, value);
+    }
 }
 
 [RegisteredComponent(0x9f0100000000000bUL)]
@@ -979,5 +1056,12 @@ public sealed partial class UILocalizedText : IEntityComponent
         get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01e00000000002UL);
         set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
             0x9f01e00000000002UL, value);
+    }
+
+    public string Parameters
+    {
+        get => RegisteredComponentProperties.GetString(Entity, RegisteredTypeId, 0x9f01e00000000003UL);
+        set => RegisteredComponentProperties.SetString(Entity, RegisteredTypeId,
+            0x9f01e00000000003UL, value);
     }
 }
