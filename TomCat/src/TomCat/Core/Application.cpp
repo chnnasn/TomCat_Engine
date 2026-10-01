@@ -174,6 +174,8 @@ namespace TomCat {
 			while (m_Running)
 			{
 				Input::BeginFrame();
+				for (Layer* layer : m_LayerStack)
+					layer->OnBeforeInputCapture();
 				Scripting::ScriptEngine::Get().CaptureInputState();
 				(void)AssetManager::Get().PumpImportCoordinator();
 				for (Layer* layer : m_LayerStack)
@@ -206,6 +208,8 @@ namespace TomCat {
 			// by this poll, including press+release pairs between display frames.
 			m_Window->PollEvents();
 			Input::BeginFrame();
+			for (Layer* layer : m_LayerStack)
+				layer->OnBeforeInputCapture();
 			Scripting::ScriptEngine::Get().CaptureInputState();
 			if (!m_Running)
 				return false;
