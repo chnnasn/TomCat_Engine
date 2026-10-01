@@ -112,6 +112,7 @@ namespace TomCat {
 		bool IsTilePaletteDocked() const { return m_Authors.IsTilePaletteDocked(); }
 		void SetSceneLoadCallback(const SceneLoadCallback& callback) { m_Shared.SceneLoad = callback; }
 		void SetSpriteCreateCallback(const SpriteCreateCallback& callback) { m_Shared.SpriteCreate = callback; }
+		void SetScriptOpenCallback(const AssetRevealCallback& callback) { m_Shared.ScriptOpen = callback; }
 		void SetAssetRevealCallback(const AssetRevealCallback& callback) { m_Shared.AssetReveal = callback; }
 		void SetSceneModifiedCallback(const SceneModifiedCallback& callback) { m_Shared.SceneModified = callback; }
 		void SetPrefabCreateCallback(PrefabCreateCallback callback)

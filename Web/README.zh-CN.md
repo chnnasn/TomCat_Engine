@@ -1,6 +1,6 @@
 # 实验性 Web Player 与 ImGui 编辑器
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-10-01 · [文档索引](../docs/README.md)
 
 此目标在浏览器中运行已有的 `PlayerRuntimeLayer`、Cooked TCPAK 读取器、
 场景运行时、Renderer2D、Box2D 和 TomCat C# 脚本 ABI。最终模块由 .NET
@@ -8,7 +8,7 @@
 站点产物内含 .NET 运行时与 Roslyn 编译器，Player 和 Web Editor 用户无需安装本地 .NET。
 
 [2026-09-20 功能录屏](../docs/portfolio/README.md)来自 Windows 桌面程序。
-共享源码不代表这些片段验证了浏览器端；下文保留浏览器验收的原始日期，本次文档更新未重跑 Web 构建或协议回归。
+共享源码不代表这些片段验证了浏览器端。2026-10-01 已完成完整托管发布及本机 Edge 生命周期冒烟；历史记录保留原始日期，范围与待验收项见[生产验收](../docs/PRODUCTION_ACCEPTANCE.md)。
 
 ## 构建
 
@@ -153,7 +153,7 @@ Sprite 选择赋值、场景像素拾取、ImGuizmo 拖拽、撤销/重做、停
 - 必须支持 SharedArrayBuffer/Workers 和 WebGL2，没有单线程回退。
 - 桌面端保留 hostfxr 实现；Windows 回归、实际 browser-wasm 发布和浏览器生命周期验收不能互相替代。
 
-共享 TCPAK 当前写入 v7（逐条目 SHA-256），读取兼容 v5/v6/v7。
+共享 TCPAK 当前写入 v8（逐条目 SHA-256 与模块载荷），读取兼容 v5/v6/v7/v8。
 包格式兼容不意味着上述 Web 功能限制已经解除。
 
 ## 2026-09-16 的 Player 验收记录
@@ -173,3 +173,7 @@ Pivot/Center 沿用单选实体原点行为，不表示新增多选或自定义 
 
 Game 在 Play 前和 Stop 后也绘制活动场景主相机。编辑模式仅渲染，不启动物理或脚本；
 缺少相机时显示 `No cameras rendering`。Web 资产 RPC 同时提供引擎内置 Circle / Square 纹理。
+
+## 2026-10-01 build status / 构建状态
+
+`Scripts/Build-WebManaged.ps1` 已通过原生编译、WASM 链接及 .NET browser-wasm 发布。托管站点应部署完整 `build/web-managed` 目录（包括 `_framework`、`main.js` 及宿主页面）；旧的 `tomcat_player.js/.wasm/.data` 指引仅适用于独立原生 Emscripten 目标。CI 与浏览器验收入口见 [生产验收](../docs/PRODUCTION_ACCEPTANCE.md)。

@@ -1,5 +1,5 @@
 SchemaVersion: 11
-SceneName: Level
+SceneName: level
 Entities:
   - Entity: 13842376404676640769
     Tag:
@@ -10,11 +10,11 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [10, 3, 0]
       Rotation: [0, -0, 0]
       Scale: [1, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [10, 3, 0]
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     Camera:
@@ -23,12 +23,15 @@ Entities:
         PerspectiveFOV: 0.785398185
         PerspectiveNear: 0.00999999978
         PerspectiveFar: 1000
-        OrthographicSize: 10
+        OrthographicSize: 16
         OrthographicNear: 0
         OrthographicFar: 1000
       Primary: true
       FixedAspectRatio: false
       BackgroundColor: [0.529999971, 0.810000002, 0.920000017, 1]
+      Exposure: 0
+      Saturation: 1
+      Vignette: 0
     Components:
       - TypeId: 11457157452030541825
         StableName: TomCat.ID
@@ -66,7 +69,7 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [10, 3, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
@@ -75,7 +78,7 @@ Entities:
             Value: [1, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [10, 3, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
@@ -84,7 +87,7 @@ Entities:
             Value: [1, 1, 1]
       - TypeId: 11457157452030541829
         StableName: TomCat.Camera
-        SchemaVersion: 3
+        SchemaVersion: 4
         Properties:
           - PropertyId: 300
             StableName: Primary
@@ -100,7 +103,7 @@ Entities:
             Value: 1
           - PropertyId: 304
             StableName: OrthographicSize
-            Value: 10
+            Value: 16
           - PropertyId: 305
             StableName: OrthographicNearClip
             Value: 0
@@ -119,6 +122,15 @@ Entities:
           - PropertyId: 310
             StableName: Enabled
             Value: true
+          - PropertyId: 311
+            StableName: Exposure
+            Value: 0
+          - PropertyId: 312
+            StableName: Saturation
+            Value: 1
+          - PropertyId: 313
+            StableName: Vignette
+            Value: 0
     Parent: 0
   - Entity: 13842376404676640770
     Tag:
@@ -129,20 +141,23 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [10, -0.5, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [24, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [10, -0.5, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [24, 1, 1]
     SpriteRenderer:
       Enabled: true
       Color: [0.239999995, 0.550000012, 0.300000012, 1]
-      SpriteHandle: 0
+      SpriteHandle: 6071781742850736130
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
+      NormalMap: 0
+      CastShadows: false
+      Material: 0
     Rigidbody2D:
       Enabled: true
       BodyType: Static
@@ -195,25 +210,25 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [10, -0.5, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [24, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [10, -0.5, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [24, 1, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -223,7 +238,7 @@ Entities:
             Value: [0.239999995, 0.550000012, 0.300000012, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 0
+            Value: 6071781742850736130
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1
@@ -232,6 +247,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541836
         StableName: TomCat.Rigidbody2D
@@ -290,13 +314,13 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [-2.5, 2, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [1, 6, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [-2.5, 2, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [1, 6, 1]
     Rigidbody2D:
       Enabled: true
       BodyType: Static
@@ -349,22 +373,22 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [-2.5, 2, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [1, 6, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [-2.5, 2, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [1, 6, 1]
       - TypeId: 11457157452030541836
         StableName: TomCat.Rigidbody2D
         SchemaVersion: 1
@@ -422,13 +446,13 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [22.5, 2, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [1, 6, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [22.5, 2, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [1, 6, 1]
     Rigidbody2D:
       Enabled: true
       BodyType: Static
@@ -481,22 +505,22 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [22.5, 2, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [1, 6, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [22.5, 2, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [1, 6, 1]
       - TypeId: 11457157452030541836
         StableName: TomCat.Rigidbody2D
         SchemaVersion: 1
@@ -554,20 +578,23 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [0, 0.600000024, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.800000012, 0.800000012, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [0, 0.600000024, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.800000012, 0.800000012, 1]
     SpriteRenderer:
       Enabled: true
       Color: [0.899999976, 0.349999994, 0.25, 1]
-      SpriteHandle: 0
+      SpriteHandle: 6071781742850736130
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
+      NormalMap: 0
+      CastShadows: false
+      Material: 0
     CSharpScripts:
       Scripts:
         - AttachmentID: 13842376404676681729
@@ -627,25 +654,25 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [0, 0.600000024, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [0.800000012, 0.800000012, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [0, 0.600000024, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [0.800000012, 0.800000012, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -655,7 +682,7 @@ Entities:
             Value: [0.899999976, 0.349999994, 0.25, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 0
+            Value: 6071781742850736130
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1
@@ -664,6 +691,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541833
         StableName: TomCat.CSharpScripts
@@ -733,20 +769,23 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [5, 0.75, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [5, 0.75, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     SpriteRenderer:
       Enabled: true
       Color: [1, 0.839999974, 0, 1]
-      SpriteHandle: 0
+      SpriteHandle: 6071781742850736129
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
+      NormalMap: 0
+      CastShadows: false
+      Material: 0
     CSharpScripts:
       Scripts:
         - AttachmentID: 13842376404676685824
@@ -805,25 +844,25 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [5, 0.75, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [5, 0.75, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -833,7 +872,7 @@ Entities:
             Value: [1, 0.839999974, 0, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 0
+            Value: 6071781742850736129
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1
@@ -842,6 +881,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541833
         StableName: TomCat.CSharpScripts
@@ -908,20 +956,23 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [9, 0.75, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [9, 0.75, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     SpriteRenderer:
       Enabled: true
       Color: [1, 0.839999974, 0, 1]
-      SpriteHandle: 0
+      SpriteHandle: 6071781742850736129
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
+      NormalMap: 0
+      CastShadows: false
+      Material: 0
     CSharpScripts:
       Scripts:
         - AttachmentID: 13842376404676685825
@@ -980,25 +1031,25 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [9, 0.75, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [9, 0.75, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -1008,7 +1059,7 @@ Entities:
             Value: [1, 0.839999974, 0, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 0
+            Value: 6071781742850736129
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1
@@ -1017,6 +1068,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541833
         StableName: TomCat.CSharpScripts
@@ -1083,20 +1143,23 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [13, 0.75, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [13, 0.75, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     SpriteRenderer:
       Enabled: true
       Color: [1, 0.839999974, 0, 1]
-      SpriteHandle: 0
+      SpriteHandle: 6071781742850736129
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
+      NormalMap: 0
+      CastShadows: false
+      Material: 0
     CSharpScripts:
       Scripts:
         - AttachmentID: 13842376404676685826
@@ -1155,25 +1218,25 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [13, 0.75, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [13, 0.75, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -1183,7 +1246,7 @@ Entities:
             Value: [1, 0.839999974, 0, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 0
+            Value: 6071781742850736129
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1
@@ -1192,6 +1255,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541833
         StableName: TomCat.CSharpScripts
@@ -1258,20 +1330,23 @@ Entities:
       Layer: 0
       HierarchyIcon: Entity
     Transform:
-      Translation: [0, 0, 0]
+      Translation: [17, 0.75, 0]
       Rotation: [0, -0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [17, 0.75, 0]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.600000024, 0.600000024, 1]
     SpriteRenderer:
       Enabled: true
       Color: [1, 0.839999974, 0, 1]
-      SpriteHandle: 0
+      SpriteHandle: 6071781742850736129
       TilingFactor: 1
       SortingLayer: 0
       OrderInLayer: 0
+      NormalMap: 0
+      CastShadows: false
+      Material: 0
     CSharpScripts:
       Scripts:
         - AttachmentID: 13842376404676685827
@@ -1330,25 +1405,25 @@ Entities:
         Properties:
           - PropertyId: 1
             StableName: Translation
-            Value: [0, 0, 0]
+            Value: [17, 0.75, 0]
           - PropertyId: 2
             StableName: Rotation
             Value: [0, -0, 0]
           - PropertyId: 3
             StableName: Scale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [17, 0.75, 0]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [0.600000024, 0.600000024, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -1358,7 +1433,7 @@ Entities:
             Value: [1, 0.839999974, 0, 1]
           - PropertyId: 202
             StableName: Sprite
-            Value: 0
+            Value: 6071781742850736129
           - PropertyId: 203
             StableName: TilingFactor
             Value: 1
@@ -1367,6 +1442,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541833
         StableName: TomCat.CSharpScripts
@@ -1438,7 +1522,7 @@ Entities:
       Scale: [1, 1, 1]
     LocalTransform:
       Translation: [0, 0, 0]
-      Rotation: [0, 0, 0]
+      Rotation: [0, -0, 0]
       Scale: [1, 1, 1]
     Components:
       - TypeId: 11457157452030541825
@@ -1489,7 +1573,7 @@ Entities:
             Value: [0, 0, 0]
           - PropertyId: 5
             StableName: LocalRotation
-            Value: [0, 0, 0]
+            Value: [0, -0, 0]
           - PropertyId: 6
             StableName: LocalScale
             Value: [1, 1, 1]
@@ -1499,19 +1583,19 @@ Entities:
         Properties:
           - PropertyId: 11457491703565385729
             StableName: AnchorMin
-            Value: [0.5, 0.5]
+            Value: [0, 1]
           - PropertyId: 11457491703565385730
             StableName: AnchorMax
-            Value: [0.5, 0.5]
+            Value: [0, 1]
           - PropertyId: 11457491703565385731
             StableName: Pivot
-            Value: [0.5, 0.5]
+            Value: [0, 1]
           - PropertyId: 11457491703565385732
             StableName: AnchoredPosition
-            Value: [0, 0]
+            Value: [32, -32]
           - PropertyId: 11457491703565385733
             StableName: SizeDelta
-            Value: [100, 100]
+            Value: [1000, 100]
           - PropertyId: 11457491703565385734
             StableName: ClipChildren
             Value: false
@@ -1533,25 +1617,120 @@ Entities:
             Value: 0
           - PropertyId: 11457526887937474563
             StableName: Text
-            Value: Text
+            Value: "Coins: 0/4fff"
           - PropertyId: 11457526887937474564
             StableName: FontSize
-            Value: 24
+            Value: 40
           - PropertyId: 11457526887937474565
             StableName: Color
-            Value: [1, 1, 1, 1]
+            Value: [1, 0, 0, 1]
           - PropertyId: 11457526887937474566
             StableName: Alignment
-            Value: 0
+            Value: 1
           - PropertyId: 11457526887937474567
             StableName: Wrap
-            Value: true
+            Value: false
           - PropertyId: 11457526887937474568
             StableName: LineSpacing
             Value: 1
           - PropertyId: 11457526887937474569
             StableName: RaycastTarget
             Value: false
+    Parent: 13842376404676641282
+  - Entity: 13842376404676641282
+    Tag:
+      Tag: HUD
+      Visible: true
+    EntityMetadata:
+      GameplayTag: Untagged
+      Layer: 0
+      HierarchyIcon: Entity
+    Transform:
+      Translation: [0, 0, 0]
+      Rotation: [0, -0, 0]
+      Scale: [1, 1, 1]
+    LocalTransform:
+      Translation: [0, 0, 0]
+      Rotation: [0, 0, 0]
+      Scale: [1, 1, 1]
+    Components:
+      - TypeId: 11457157452030541825
+        StableName: TomCat.ID
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Value
+            Value: 13842376404676641282
+      - TypeId: 11457157452030541826
+        StableName: TomCat.Tag
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Name
+            Value: HUD
+          - PropertyId: 2
+            StableName: Visible
+            Value: true
+      - TypeId: 11457157452030541827
+        StableName: TomCat.EntityMetadata
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: GameplayTag
+            Value: Untagged
+          - PropertyId: 2
+            StableName: Layer
+            Value: 0
+          - PropertyId: 3
+            StableName: HierarchyIcon
+            Value: 1
+      - TypeId: 11457157452030541828
+        StableName: TomCat.Transform
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 1
+            StableName: Translation
+            Value: [0, 0, 0]
+          - PropertyId: 2
+            StableName: Rotation
+            Value: [0, -0, 0]
+          - PropertyId: 3
+            StableName: Scale
+            Value: [1, 1, 1]
+          - PropertyId: 4
+            StableName: LocalTranslation
+            Value: [0, 0, 0]
+          - PropertyId: 5
+            StableName: LocalRotation
+            Value: [0, 0, 0]
+          - PropertyId: 6
+            StableName: LocalScale
+            Value: [1, 1, 1]
+      - TypeId: 11457438927007252482
+        StableName: TomCat.Canvas
+        SchemaVersion: 1
+        Properties:
+          - PropertyId: 11457474111379341313
+            StableName: Enabled
+            Value: true
+          - PropertyId: 11457474111379341314
+            StableName: ScaleMode
+            Value: 1
+          - PropertyId: 11457474111379341315
+            StableName: ReferenceResolution
+            Value: [1920, 1080]
+          - PropertyId: 11457474111379341316
+            StableName: MatchWidthOrHeight
+            Value: 0.5
+          - PropertyId: 11457474111379341317
+            StableName: ScaleFactor
+            Value: 1
+          - PropertyId: 11457474111379341318
+            StableName: ReferenceDPI
+            Value: 96
+          - PropertyId: 11457474111379341319
+            StableName: SortingOrder
+            Value: 0
     Parent: 0
   - Entity: 13842376404676641281
     Tag:

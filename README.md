@@ -117,7 +117,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
 - **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
 - **Editor**: dockable Scene/Game/Hierarchy/Inspector/Project/Console/Profiler panels, saved layouts, tab context menus (Maximize / Close Tab / Add Tab), non-collapsible window headers, Hierarchy Scene visibility, resource Inspector with import Apply/Revert, real image thumbnails, original package icons, searchable diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
-- **Standalone Player**: path-free `.tcpak` v7 packages with per-entry SHA-256 and v5/v6/v7 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
+- **Standalone Player**: path-free `.tcpak` v8 packages with per-entry SHA-256 and v5/v6/v7/v8 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
 - **Product UI and localization**: sliders, scroll views, single-line Unicode input, inherited themes, and game-language tables with fallback; OS IME commits are supported, with composition limits described in [Runtime UI](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **Performance tools**: visual CPU timeline, asynchronous GPU frame timing, draw statistics, process memory and tracked resource estimates; see [profiling and C# debugger setup](docs/DEBUGGING_AND_PROFILING.md)
@@ -127,12 +127,12 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 
 - Supported development platform: **Windows x64**
 - Rendering backend: **OpenGL 4.6**
-- Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). C# payloads, audible audio, custom cooked SPIR-V shaders, and multisample framebuffers are unsupported there.
+- Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). Managed C# is supported through the .NET browser-wasm host; audible audio, custom cooked SPIR-V shaders, and multisample framebuffers remain limited. Browser lifecycle acceptance is separate from a successful build.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Source development requires the **.NET 10 SDK** to build TomCat itself. Packaged Editors carry a pinned private SDK for game-script compilation and do not use a machine-wide C# environment.
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
-- Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. C# debugging uses an external IDE attached to the Editor; scripts are recompiled and updated after stopping Play. Play Mode hot replacement is unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
+- Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. C# debugging uses an external IDE attached to the Editor; scripts are recompiled and updated after stopping Play. Play Mode hot replacement is unsupported. Scene restoration/activation and uploads have cooperative frame budgets; Windows input fields support IME preedit and candidate positioning. See [production capabilities and limits](docs/P1_PRODUCTION.md).
 
 The [recording archive](docs/portfolio/README.md) records the exact scope and
 limitations of each desktop session. The 2026-09-20 refresh checked the UI flows
@@ -209,16 +209,16 @@ vendor/            premake and third-party dependencies
 - [x] CircleCollider2D, implicit static bodies, triggers, per-fixture and project-layer collision filtering, queries, motion API, and DistanceJoint2D
 - [x] Deferred engine/native-script Collision and Trigger callbacks
 - [x] Project Settings for Tags, 16 stable Layers, and the symmetric Physics 2D collision matrix
-- [x] Scene schema v11 writing with v9-v11 reading, registry-backed components, and cooked-package v7 physics round trips
+- [x] Scene schema v11 writing with v9-v11 reading, registry-backed components, and cooked-package v8 physics round trips
 - [x] Physics regression suite (`Scripts\Run-PhysicsRegression.ps1`)
 
 ### Completed V1 C#, Player, Scene, and Prefab Milestones
 
 - [x] Managed runtime, source generator, Inspector fields, last-good compilation, deterministic lifecycle/physics callbacks, exception isolation, and collectible Play domains
 - [x] Independent win-x64 Player, private .NET runtime, strict versioned/hash-checked template, Build / Build And Run, and Player process smoke coverage
-- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v7 ordered scenes with v5/v6/v7 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
+- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v8 ordered scenes with v5/v6/v7/v8 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
 - [x] Snapshot Prefab V1 with stable LocalIDs, hierarchy/Joint/C# Entity remapping, fresh AttachmentIDs, deferred C# creation, Editor creation/drop workflows, and Cook dependency traversal
-- [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the BootManifest introduced with TCPAK v6 and retained in v7
+- [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the BootManifest introduced with TCPAK v6 and retained in v7/v8
 - [x] Linked/nested Prefabs, overrides/variants, asynchronous reads, additive scenes, persistent roots and unloading (see the feature guides for scope)
 - [x] [Complete-game verification sample: CoinRunner](Samples/CoinRunner/README.md) (authoring, scripts, physics triggers, scoring, save persistence, corruption recovery, packaging and headless packaged smoke via `Scripts\Run-CoinRunnerSmoke.ps1`); Editor visuals, controls and IDE breakpoints require separate interactive acceptance.
 - [x] General game save system: checksummed versioned slot files with atomic writes, backup rotation, automatic corruption recovery, and the managed `SaveData`/`SaveDocument` API available in Play mode and the Player
@@ -228,7 +228,7 @@ vendor/            premake and third-party dependencies
 - [x] ImporterRegistry, SHA-256 ArtifactKey generation, derived-data cache, `.tcmeta` schema v2, and dependency graph
 - [x] Background ImportCoordinator with content-hash verification, debounce/coalescing, changed-asset plus transitive reverse-dependent reimport, and main-thread registry/resource publication
 - [x] Texture import with sRGB settings, mipmap generation, and RGBA8 / BC3 artifacts
-- [ ] Broader production texture formats and platform compression backends
+- [x] BC1/BC3/BC5, ASTC 4x4 LDR and ETC2 RGBA8 production artifacts, mip chains and CPU fallback; mobile Player targets remain separate work
 - [x] Stable Sprite Atlas subassets with a list-based slice editor, Rect/Pivot/Pixels Per Unit/Border metadata, and self-contained Cook/Player payloads
 - [x] Deterministic sprite sorting, animation clips, and Animator states/transitions with Bool/Int/Float/Trigger parameters, AnyState, and exit time
 - [x] TTF/OTF/TTC Font import, primary/fallback/emoji runtime glyph chains and world Text, plus Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI with anchors, pivot, layout, clipping, raycast targeting, DPI scaling, mouse/keyboard/gamepad control, and per-interaction gameplay-input consumption
@@ -239,9 +239,9 @@ vendor/            premake and third-party dependencies
 
 - [x] Input Actions, keyboard/mouse/gamepad bindings, contexts, and rebinding
 - [x] WAV playback and bounded PCM WAV streaming, 2D spatial audio, device-loss recovery, AudioSource/AudioListener, Null/XAudio2 backends, and Master/Music/SFX buses
-- [ ] OGG/Vorbis decoding (unsupported inputs are rejected explicitly; no decoder is bundled)
+- [x] OGG/Vorbis import through bundled stb_vorbis, converted to PCM WAV artifacts; custom acyclic gain bus routing (without DSP effects)
 
-PCM WAV streaming reads a registry-resolved source range in authoring mode because the P0 audio importer is byte-for-byte passthrough, and reads a validated TCPAK range in cooked Players. If the authoring importer later transcodes audio, it must expose and use a validated DDC payload range instead of the source range.
+Authoring audio playback uses validated imported DDC artifacts; cooked Players read validated TCPAK ranges. Vorbis is decoded during import, so streaming currently reads PCM rather than compressed Vorbis.
 
 - [x] Undo/Redo, autosave/recovery, and project locking
 - [x] Editor Console with severity counts/filtering, duplicate collapsing, Clear-on-Play, and structured script/runtime diagnostics

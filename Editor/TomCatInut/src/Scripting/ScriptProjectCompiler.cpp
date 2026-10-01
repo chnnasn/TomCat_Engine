@@ -522,15 +522,19 @@ namespace TomCat {
 
 	bool ScriptProjectCompiler::Configure(const Ref<Project>& project,
 		std::filesystem::path managedApiReference,
-		std::filesystem::path generatorReference)
+		std::filesystem::path generatorReference, ScriptBuildProfile profile)
 	{
 		Reset();
 		m_Project = project;
+        m_Profile = profile;
 		if (!m_Project || m_Project->GetProjectDirectory().empty())
 			return false;
 
 		m_ScriptProjectDirectory = m_Project->GetLibraryPath() / "ScriptProject";
 		m_AssembliesDirectory = m_Project->GetLibraryPath() / "ScriptAssemblies";
+        if (m_Profile == ScriptBuildProfile::Production) {
+            m_ScriptProjectDirectory /= "Production"; m_AssembliesDirectory /= "Production";
+        }
 		m_ManagedApiReference = AbsoluteLexical(managedApiReference);
 		m_GeneratorReference = AbsoluteLexical(generatorReference);
 		m_ManagedApiIsProject = m_ManagedApiReference.extension() == ".csproj";
@@ -885,7 +889,8 @@ namespace TomCat {
 		const std::vector<ScriptSource>& sources) const
 	{
 		uint64_t hash = kFNVOffset;
-		HashText(hash, "TomCat.ScriptProject.v3-dependencies");
+		HashText(hash, "TomCat.ScriptProject.v4-profiles");
+        HashText(hash, m_Profile == ScriptBuildProfile::Production ? "Production" : "Development");
 		for (const ScriptSource& source : sources)
 		{
 			HashText(hash, PathToUTF8(source.ProjectRelativePath));
@@ -966,7 +971,7 @@ namespace TomCat {
 			return false;
 		}
 
-		if (!AssetManager::Get().Refresh())
+		if (!AssetManager::Get().Refresh(false))
 		{
 			m_State = ScriptBuildState::Failed;
 			ScriptCompilerDiagnostic diagnostic;
@@ -1099,7 +1104,7 @@ namespace TomCat {
 			<< "    <Deterministic>true</Deterministic>\n"
 			<< "    <DebugType>portable</DebugType>\n"
 			<< "    <DebugSymbols>true</DebugSymbols>\n"
-			<< "    <Optimize>false</Optimize>\n"
+			<< "    <Optimize>" << (m_Profile == ScriptBuildProfile::Production ? "true" : "false") << "</Optimize>\n"
 			<< "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n"
 			<< "    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>\n"
 			<< "    <OutputPath>" << EscapeXml(PathToUTF8(buildDirectory)) << "\\</OutputPath>\n"
@@ -1554,6 +1559,7 @@ namespace TomCat {
 
 		ScriptProjectCompiler worker;
 		worker.m_Project = m_Project;
+        worker.m_Profile = m_Profile;
 		worker.m_ScriptProjectDirectory =
 			m_ScriptProjectDirectory / "Build" / buildID;
 		worker.m_AssembliesDirectory = m_AssembliesDirectory;
@@ -1589,6 +1595,7 @@ namespace TomCat {
 		job->Sources = sources;
 
 		const Ref<Project> project = m_Project;
+        const auto profile = m_Profile;
 		const std::filesystem::path scriptProjectDirectory =
 			m_ScriptProjectDirectory / "Build" / buildID;
 		const std::filesystem::path assembliesDirectory = m_AssembliesDirectory;
@@ -1606,7 +1613,7 @@ namespace TomCat {
 		m_State = ScriptBuildState::Building;
 		try
 		{
-			std::thread([job, project, scriptProjectDirectory, assembliesDirectory,
+			std::thread([job, project, profile, scriptProjectDirectory, assembliesDirectory,
 				managedApiReference, generatorReference, managedSolution,
 				managedRuntimeDirectory, dotNetExecutable, managedApiIsProject,
 				generatorIsProject,
@@ -1617,6 +1624,7 @@ namespace TomCat {
 				{
 					ScriptProjectCompiler worker;
 					worker.m_Project = project;
+                    worker.m_Profile = profile;
 					worker.m_ScriptProjectDirectory = scriptProjectDirectory;
 					worker.m_AssembliesDirectory = assembliesDirectory;
 					worker.m_ManagedApiReference = managedApiReference;

@@ -405,6 +405,33 @@ namespace {
 	}
 #endif
 
+    void TestBuildProfiles() {
+        TemporaryScriptProject environment;
+        TomCat::ProjectConfig config; config.Name="Build profiles";config.AssetDirectory="Assets";
+        auto project=TomCat::Project::CreateNew(environment.Root/"Project.tcproj",config);
+        Require(project!=nullptr,"profile project creation failed");
+        WriteTextFile(project->GetAssetPath()/"Probe.cs","using TomCat; public sealed class Probe : TomCatBehaviour { protected override void OnUpdate(float dt) { int value=42; Log.Info(value.ToString()); } }");
+        Require(TomCat::AssetManager::Get().SetProject(project),"profile assets failed");
+        TomCat::ScriptProjectCompiler development,production;
+        Require(development.Configure(project) && production.Configure(project,{}, {},TomCat::ScriptBuildProfile::Production),"profile configuration failed");
+        auto dev=development.CompileNow();auto prod=production.CompileNow();
+        Require(dev.Succeeded && prod.Succeeded,"profile compilation failed: "+FormatDiagnostics(dev)+FormatDiagnostics(prod));
+        Require(dev.SourceHash!=prod.SourceHash && dev.AssemblyPath!=prod.AssemblyPath,"build profiles shared their cache identity");
+        Require(std::filesystem::exists(dev.PdbPath) && std::filesystem::exists(prod.PdbPath),"portable symbols missing");
+        Require(development.RefreshSourceState() && development.IsCurrentSourceBuilt(),"production build invalidated development last-good");
+        auto verifyProject=[&](const std::filesystem::path& base,const char* expected) {
+            bool found=false;
+            for(auto& entry:std::filesystem::recursive_directory_iterator(base)) if(entry.path().extension()==".csproj") {
+                std::ifstream input(entry.path());std::string text((std::istreambuf_iterator<char>(input)),{});
+                if(text.find(expected)!=std::string::npos)found=true;
+            }
+            Require(found,"generated profile optimization flag missing");
+        };
+        verifyProject(project->GetLibraryPath()/"ScriptProject"/"Build"/dev.BuildID,"<Optimize>false</Optimize>");
+        verifyProject(project->GetLibraryPath()/"ScriptProject"/"Production"/"Build"/prod.BuildID,"<Optimize>true</Optimize>");
+        std::cout<<"PASS development/production optimization, symbols and cache isolation\n";
+    }
+
 	void TestMSBuildDependencyInjectionIsBlocked()
 	{
 		TemporaryScriptProject environment;
@@ -2355,6 +2382,7 @@ int main(int argc, char** argv)
 		TestMissingDotNet10SdkIsActionable();
 		std::cout << "PASS missing .NET 10 SDK has an actionable diagnostic\n";
 #endif
+        TestBuildProfiles();
 		TestMSBuildDependencyInjectionIsBlocked();
 		std::cout << "PASS MSBuild/NuGet/local reference injection is blocked\n";
 		TestAssetRefMarkerValidation();

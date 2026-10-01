@@ -1525,6 +1525,8 @@ namespace TomCat {
 
 		auto& scripts = entity.GetComponent<CSharpScripts>().Scripts;
 		std::optional<size_t> removeIndex;
+		std::optional<std::pair<size_t, size_t>> move;
+		std::optional<CSharpScriptEntry> addition;
 		for (size_t scriptIndex = 0; scriptIndex < scripts.size(); ++scriptIndex)
 		{
 			auto& entry = scripts[scriptIndex];
@@ -1555,36 +1557,89 @@ namespace TomCat {
 				className = PathToUTF8(assetMetadata->FilePath.stem());
 			if (className.empty())
 				className = "Unknown Script";
-			const std::string header = missing
-				? "Missing Script: " + className
-				: className + " (C# Script)";
-
-			ImGui::Separator();
-			if (missing)
-				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.34f, 0.34f, 1.0f));
-			const bool open = ImGui::TreeNodeEx("##CSharpScriptCard",
-				ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed |
-				ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding,
-				"%s", header.c_str());
-			if (missing)
-				ImGui::PopStyleColor();
-
-			if (ImGui::BeginPopupContextItem("ScriptSettings"))
+			const std::string header = ScriptDisplayName(className) + (missing ? " (Missing Script)" : " (Script)");
+			if (missing) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f,0.34f,0.34f,1.0f));
+			const bool open = DrawComponentHeader(header, m_Shared.Icons, EditorIcon::Script,
+				&entry.Enabled, m_Shared.ColliderEditingAllowed, [this] {m_Shared.MarkModified();}, "ScriptSettings");
+			if (missing) ImGui::PopStyleColor();
+			if (ImGui::BeginPopup("ScriptSettings"))
 			{
-				ImGui::BeginDisabled(!m_Shared.ColliderEditingAllowed);
-				if (ImGui::MenuItem("Remove script"))
-					removeIndex = scriptIndex;
-				ImGui::EndDisabled();
+				const bool editable = m_Shared.ColliderEditingAllowed;
+				if (ImGui::MenuItem("Reset", nullptr, false, editable && metadata.has_value())) {
+					entry.Fields.clear();
+					for (const auto& field : metadata->Fields)
+						entry.Fields.emplace_back(field.FieldID, field.Name, field.Type, ScriptMetadataDefaultValue(field));
+					entry.Enabled = true; m_Shared.MarkModified(true);
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Remove Component", nullptr, false, editable)) removeIndex = scriptIndex;
+				if (ImGui::MenuItem("Move Up", nullptr, false, editable && scriptIndex>0)) move = {scriptIndex,scriptIndex-1};
+				if (ImGui::MenuItem("Move Down", nullptr, false, editable && scriptIndex+1<scripts.size())) move = {scriptIndex,scriptIndex+1};
+				if (ImGui::MenuItem("Copy Component")) m_ScriptClipboard = entry;
+				const bool sameScript = m_ScriptClipboard && m_ScriptClipboard->ScriptAsset == entry.ScriptAsset;
+				if (ImGui::MenuItem("Paste Component As New", nullptr, false, editable && sameScript && metadata && !metadata->DisallowMultiple)) {
+					addition = *m_ScriptClipboard; addition->AttachmentID = UUID();
+					ReconcileScriptEntryFields(*addition, *metadata);
+				}
+				if (ImGui::MenuItem("Paste Component Values", nullptr, false, editable && sameScript && metadata)) {
+					entry.Fields = m_ScriptClipboard->Fields; entry.Enabled = m_ScriptClipboard->Enabled;
+					ReconcileScriptEntryFields(entry, *metadata); m_Shared.MarkModified(true);
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Find References In Scene", nullptr, false, !missing)) {
+					m_Shared.MultiSelection.clear();
+					for (UUID id : m_Shared.Context->GetEntityOrder()) {
+						auto candidate = m_Shared.Context->FindEntityByUUID(id);
+						if (candidate.HasComponent<CSharpScripts>() && std::any_of(candidate.GetComponent<CSharpScripts>().Scripts.begin(),
+							candidate.GetComponent<CSharpScripts>().Scripts.end(), [&](const auto& script){return script.ScriptAsset==entry.ScriptAsset;}))
+							m_Shared.MultiSelection.push_back(id);
+					}
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Properties...", nullptr, false, !missing && bool(m_Shared.AssetReveal))) m_Shared.AssetReveal(entry.ScriptAsset);
+				if (ImGui::MenuItem("Edit Script", nullptr, false, !missing && bool(m_Shared.ScriptOpen))) m_Shared.ScriptOpen(entry.ScriptAsset);
 				ImGui::EndPopup();
 			}
 
 			if (open)
 			{
+				if (ImGui::BeginTable("ScriptReference", 2, ImGuiTableFlags_SizingStretchProp)) {
+					ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch, 0.42f);
+					ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.58f);
+					ImGui::TableNextRow(); ImGui::TableNextColumn();
+					ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Script");
+					ImGui::TableNextColumn();
+					const ImVec2 fieldMin = ImGui::GetCursorScreenPos();
+					const float height = ImGui::GetFrameHeight();
+					const float width = std::max(height * 2.0f, ImGui::GetContentRegionAvail().x);
+					const ImVec2 fieldMax(fieldMin.x + width, fieldMin.y + height);
+					ImDrawList* draw = ImGui::GetWindowDrawList();
+					draw->AddRectFilled(fieldMin, fieldMax, ImGui::GetColorU32(ImGuiCol_FrameBg), ImGui::GetStyle().FrameRounding);
+					draw->AddRect(fieldMin, fieldMax, ImGui::GetColorU32(ImGuiCol_Border), ImGui::GetStyle().FrameRounding);
+					ImGui::InvisibleButton("##ScriptReference", ImVec2(width - height, height));
+					if (ImGui::IsItemHovered()) {
+						if (assetMetadata) ImGui::SetTooltip("%s\nDouble-click to edit. Use the circle to reveal the script asset.", PathToUTF8(assetMetadata->FilePath).c_str());
+						if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !missing && m_Shared.ScriptOpen) m_Shared.ScriptOpen(entry.ScriptAsset);
+					}
+					const float iconSize = ImGui::GetFontSize();
+					const float inset = (height - iconSize) * 0.5f;
+					DrawIcon(m_Shared.Icons, EditorIcon::Script,
+						ImVec2(fieldMin.x + 4, fieldMin.y + inset), ImVec2(fieldMin.x + 4 + iconSize, fieldMin.y + inset + iconSize));
+					const std::string reference = (missing ? "Missing: " : "") + className;
+					draw->PushClipRect(fieldMin, ImVec2(fieldMax.x - height, fieldMax.y), true);
+					draw->AddText(ImVec2(fieldMin.x + iconSize + 8, fieldMin.y + inset), ImGui::GetColorU32(ImGuiCol_TextDisabled), reference.c_str());
+					draw->PopClipRect();
+					ImGui::SameLine(0, 0);
+					ImGui::BeginDisabled(missing || !m_Shared.AssetReveal);
+					if (ImGui::InvisibleButton("##RevealScript", ImVec2(height, height))) m_Shared.AssetReveal(entry.ScriptAsset);
+					const ImVec2 center(fieldMax.x - height * 0.5f, fieldMin.y + height * 0.5f);
+					const ImU32 pickerColor = ImGui::GetColorU32(ImGui::IsItemHovered() ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+					draw->AddCircle(center, height * 0.22f, pickerColor, 16, 1.5f);
+					draw->AddCircleFilled(center, height * 0.08f, pickerColor);
+					ImGui::EndDisabled();
+					ImGui::EndTable();
+				}
 				ImGui::BeginDisabled(!m_Shared.ColliderEditingAllowed);
-				if (ImGui::Checkbox("Enabled", &entry.Enabled))
-					m_Shared.MarkModified();
-				if (assetMetadata)
-					ImGui::TextDisabled("%s", PathToUTF8(assetMetadata->FilePath).c_str());
 				if (missing)
 					ImGui::TextWrapped("The script asset is missing or no longer resolves to a C# script. Stored values are preserved.");
 				else if (!metadata)
@@ -1631,7 +1686,7 @@ namespace TomCat {
 						if (matchedIndex != entry.Fields.size())
 						{
 							if (DrawScriptFieldValue(entry.Fields[matchedIndex],
-								&fieldMetadata, false))
+								&fieldMetadata, false, &m_Shared))
 								m_Shared.MarkModified();
 						}
 						else
@@ -1639,7 +1694,7 @@ namespace TomCat {
 							ScriptField pending(fieldMetadata.FieldID, fieldMetadata.Name,
 								fieldMetadata.Type,
 								ScriptMetadataDefaultValue(fieldMetadata));
-							if (DrawScriptFieldValue(pending, &fieldMetadata, false))
+							if (DrawScriptFieldValue(pending, &fieldMetadata, false, &m_Shared))
 							{
 								entry.Fields.push_back(std::move(pending));
 								consumed.push_back(true);
@@ -1661,21 +1716,16 @@ namespace TomCat {
 						ImGui::TextDisabled("Orphaned serialized fields");
 						drewOrphanHeader = true;
 					}
-					if (DrawScriptFieldValue(entry.Fields[fieldIndex], nullptr, true))
+					if (DrawScriptFieldValue(entry.Fields[fieldIndex], nullptr, true, &m_Shared))
 						m_Shared.MarkModified();
 				}
-				if ((!metadata || metadata->Fields.empty()) && entry.Fields.empty())
-					ImGui::TextDisabled("No serialized fields.");
-
-				ImGui::Spacing();
-				if (ImGui::Button("Remove Script"))
-					removeIndex = scriptIndex;
 				ImGui::EndDisabled();
-				ImGui::TreePop();
 			}
 			ImGui::PopID();
 		}
 
+		if (move) { std::swap(scripts[move->first], scripts[move->second]); m_Shared.MarkModified(true); }
+		if (addition) { scripts.push_back(std::move(*addition)); m_Shared.MarkModified(true); }
 		if (removeIndex && *removeIndex < scripts.size())
 		{
 			scripts.erase(scripts.begin() + static_cast<std::ptrdiff_t>(*removeIndex));

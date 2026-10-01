@@ -98,6 +98,7 @@ namespace TomCat {
 		SceneLoadCallback SceneLoad;
 		SpriteCreateCallback SpriteCreate;
 		AssetRevealCallback AssetReveal;
+		AssetRevealCallback ScriptOpen;
 		SceneModifiedCallback SceneModified;
 		PrefabCreateCallback PrefabCreate;
 		PrefabInstantiateCallback PrefabInstantiate;
