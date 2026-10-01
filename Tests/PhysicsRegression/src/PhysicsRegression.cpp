@@ -2847,7 +2847,7 @@ namespace {
 			"asset classification still mixes C#, C++, headers, or Lua");
 		Require(TomCat::AssetTypeFromPath("Music.wav") == TomCat::AssetType::Audio
 			&& TomCat::AssetTypeFromPath("Music.WAV") == TomCat::AssetType::Audio
-			&& TomCat::AssetTypeFromPath("Music.ogg") == TomCat::AssetType::Other
+			&& TomCat::AssetTypeFromPath("Music.ogg") == TomCat::AssetType::Audio
 			&& TomCat::AssetTypeFromPath("Music.mp3") == TomCat::AssetType::Other
 			&& TomCat::AssetTypeFromPath("Music.flac") == TomCat::AssetType::Other
 			&& TomCat::AssetTypeFromPath("Text.ttf") == TomCat::AssetType::Font

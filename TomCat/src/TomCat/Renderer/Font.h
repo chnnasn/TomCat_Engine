@@ -62,8 +62,11 @@ namespace TomCat {
 		std::vector<uint8_t> PixelsRGBA;
 		std::map<uint32_t, FontGlyph> Glyphs;
 		uint64_t DeterministicHash = 0;
+        std::vector<std::vector<uint8_t>> ShapingSources;
+        std::vector<float> ShapingScales;
 
-		const FontGlyph* Find(uint32_t codepoint) const;
+		uint64_t RetainedBytes() const { uint64_t size=PixelsRGBA.size(); for(const auto& bytes:ShapingSources)size+=bytes.size();return size; }
+        const FontGlyph* Find(uint32_t codepoint) const;
 	};
 
 	class FontAtlasBuilder final

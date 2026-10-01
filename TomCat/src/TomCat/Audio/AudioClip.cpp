@@ -1,5 +1,8 @@
 #include "tcpch.h"
 #include "AudioClip.h"
+#define STB_VORBIS_NO_STDIO
+#define STB_VORBIS_NO_PUSHDATA_API
+#include "../../../vendor/stb_vorbis/stb_vorbis.c"
 
 #include <algorithm>
 #include <array>
@@ -70,14 +73,53 @@ namespace TomCat {
 		if (bytes.empty())
 			return Fail(AudioDecodeStatus::EmptyData, "audio data is empty",
 				sourceName, error, status);
-		if (bytes.size() >= 4 && FourCC(bytes.data(), "OggS"))
-			return Fail(AudioDecodeStatus::UnsupportedEncoding,
-				"OGG/Vorbis decoding is not available in this build",
-				sourceName, error, status);
+        if (bytes.size() >= 4 && FourCC(bytes.data(), "OggS"))
+        {
+            if (bytes.size() > 256ULL * 1024 * 1024)
+                return Fail(AudioDecodeStatus::LimitExceeded, "Vorbis source exceeds 256 MiB", sourceName, error, status);
+            // Bound decoder workspace independently from the untrusted stream headers.
+            std::vector<char> workspace(8 * 1024 * 1024);
+            stb_vorbis_alloc allocation{ workspace.data(), static_cast<int>(workspace.size()) };
+            int decoderError = 0;
+            std::unique_ptr<stb_vorbis, decltype(&stb_vorbis_close)> decoder(
+                stb_vorbis_open_memory(bytes.data(), static_cast<int>(bytes.size()), &decoderError, &allocation), stb_vorbis_close);
+            if (!decoder)
+                return Fail(AudioDecodeStatus::MalformedData, "invalid OGG/Vorbis stream", sourceName, error, status);
+            const auto info = stb_vorbis_get_info(decoder.get());
+            const uint64_t frames = stb_vorbis_stream_length_in_samples(decoder.get());
+            if (info.channels < 1 || info.channels > 2 || info.sample_rate == 0
+                || info.sample_rate > MaximumSampleRate || frames == 0
+                || frames > MaximumDecodedAudioBytes / (2 * info.channels))
+                return Fail(AudioDecodeStatus::LimitExceeded, "Vorbis channel/rate/decoded size exceeds limits", sourceName, error, status);
+            Ref<AudioClip> clip = CreateRef<AudioClip>();
+            clip->m_Channels = static_cast<uint16_t>(info.channels);
+            clip->m_SampleRate = info.sample_rate;
+            clip->m_BitsPerSample = 16;
+            clip->m_BlockAlign = static_cast<uint16_t>(info.channels * 2);
+            clip->m_AverageBytesPerSecond = info.sample_rate * clip->m_BlockAlign;
+            clip->m_PcmBytes.reserve(static_cast<size_t>(frames * clip->m_BlockAlign));
+            std::array<short, 8192> block{};
+            uint64_t decodedFrames = 0;
+            for (;;)
+            {
+                const int count = stb_vorbis_get_samples_short_interleaved(decoder.get(), info.channels,
+                    block.data(), static_cast<int>(block.size()));
+                if (count == 0) break;
+                decodedFrames += count;
+                if (decodedFrames > frames)
+                    return Fail(AudioDecodeStatus::MalformedData, "Vorbis sample count mismatch", sourceName, error, status);
+                const auto* first = reinterpret_cast<const uint8_t*>(block.data());
+                clip->m_PcmBytes.insert(clip->m_PcmBytes.end(), first, first + count * clip->m_BlockAlign);
+            }
+            if (decodedFrames != frames || stb_vorbis_get_error(decoder.get()) != VORBIS__no_error)
+                return Fail(AudioDecodeStatus::MalformedData, "truncated OGG/Vorbis stream", sourceName, error, status);
+            if (status) *status = AudioDecodeStatus::Success;
+            return clip;
+        }
 		if (bytes.size() < 12 || !FourCC(bytes.data(), "RIFF")
 			|| !FourCC(bytes.data() + 8, "WAVE"))
 			return Fail(AudioDecodeStatus::UnsupportedContainer,
-				"only RIFF/WAVE audio is supported", sourceName, error, status);
+				"expected RIFF/WAVE or Ogg/Vorbis audio", sourceName, error, status);
 
 		const uint64_t declaredEnd = 8ULL + ReadU32(bytes.data() + 4);
 		if (declaredEnd < 12 || declaredEnd > bytes.size())

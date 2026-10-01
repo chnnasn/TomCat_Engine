@@ -1,7 +1,7 @@
 namespace TomCat;
 
 public enum SceneLoadMode : uint { Single, Additive }
-public enum SceneLoadState : uint { Idle, Reading, Ready, Completed, Failed, Cancelled }
+public enum SceneLoadState : uint { Idle, Reading, Ready, Completed, Failed, Cancelled, Decoding, Activating }
 
 /// <summary>
 /// Frame-end scene transitions. Additive assets share the runtime world, physics

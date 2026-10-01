@@ -25,11 +25,10 @@ namespace TomCat {
 			float Falloff = 1.0f;
 		};
 
-		// Lighting is evaluated per submitted vertex. This keeps the existing
-		// batched material path intact while producing a smooth light gradient
-		// across sprites, tiles and particles.
-		static void Set2DLighting(const glm::vec3& ambient,
-			std::span<const PointLightData> pointLights);
+        // Fragment lighting: bounded to 32 lights and 64 opaque shadow edges.
+        struct ShadowEdge { glm::vec2 A{}, B{}; int EntityID = -1; };
+        static void Set2DLighting(const glm::vec3& ambient,
+            std::span<const PointLightData> pointLights, std::span<const ShadowEdge> edges = {});
 		struct SpriteSortKey
 		{
 			int32_t SortingLayer = 0;

@@ -33,7 +33,11 @@ list(REMOVE_ITEM gl_sources
   "${TC_SRC}/platform/OpenGL/OpenGLContext.cpp")
 list(REMOVE_ITEM TC_SOURCES "${TC_SRC}/TomCat/Renderer/GraphicsContext.cpp"
   "${TC_SRC}/TomCat/Project/ProjectManager.cpp")
-add_library(tc_player_core STATIC ${TC_SOURCES} ${gl_sources}
+file(GLOB TC_ASTC "${TC_VENDOR}/astcenc/Source/astcenc_*.cpp")
+file(GLOB_RECURSE TC_ETC "${TC_VENDOR}/etc2comp/EtcLib/*.cpp")
+set_source_files_properties(${TC_ASTC} PROPERTIES COMPILE_DEFINITIONS "ASTCENC_NEON=0;ASTCENC_SVE=0;ASTCENC_SSE=0;ASTCENC_AVX=0;ASTCENC_POPCNT=0;ASTCENC_F16C=0")
+add_library(tc_player_core STATIC ${TC_SOURCES} ${gl_sources} ${TC_ASTC} ${TC_ETC}
+  "${TC_VENDOR}/harfbuzz/src/harfbuzz.cc"
   "${TC_VENDOR}/stb_image/stb_image.cpp"
   "${TC_SRC}/platform/Window/WindowsInput.cpp"
   "${TC_SRC}/platform/Web/WebWindow.cpp"
@@ -43,6 +47,7 @@ add_library(tc_player_core STATIC ${TC_SOURCES} ${gl_sources}
   "${TC_ROOT}/Player/TomCatPlayer/src/PlayerRuntimeLayer.cpp"
   "${TC_ROOT}/Player/TomCatPlayer/src/PlayerCommandLine.cpp")
 target_include_directories(tc_player_core PUBLIC
+  "${TC_VENDOR}/etc2comp/EtcLib/Etc" "${TC_VENDOR}/etc2comp/EtcLib/EtcCodec"
   "${TC_SRC}" "${TC_ROOT}/Player/TomCatPlayer/src"
   "${TC_VENDOR}/spdlog/include" "${TC_VENDOR}/glm" "${TC_VENDOR}/entt/include"
   "${TC_VENDOR}/stb_image" "${TC_VENDOR}/ImGui" "${TC_VENDOR}/ImGuizmo")

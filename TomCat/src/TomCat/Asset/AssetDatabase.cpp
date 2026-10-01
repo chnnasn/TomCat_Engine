@@ -742,7 +742,9 @@ namespace TomCat {
 				reservation = std::max(scaled(32), 64ULL * 1024ULL * 1024ULL);
 				break;
 			case AssetType::Audio:
-				reservation = std::max(scaled(8), 16ULL * 1024ULL * 1024ULL);
+				// Compressed Vorbis may expand to the 512 MiB PCM limit; reserve
+                // the decoded samples plus canonical artifact before admitting a job.
+                reservation = std::max(scaled(8), 1024ULL * 1024ULL * 1024ULL);
 				break;
 			case AssetType::Material:
 				reservation = std::max(scaled(8), 4ULL * 1024ULL * 1024ULL);

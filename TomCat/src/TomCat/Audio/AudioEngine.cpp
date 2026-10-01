@@ -67,6 +67,8 @@ namespace TomCat {
 		m_Device.reset();
 		m_FallbackReason.clear();
 		m_MixerVolumes = { 1.0f, 1.0f, 1.0f };
+        m_BusGraph=AudioBusGraph{};
+        m_MixerMuted = {}; m_MixerSolo = {}; m_FadeDuration = 0; m_FadeElapsed = 0; m_Ducking = false; m_DuckEnvelope = 1;
 		m_NextVoice = 1;
 		m_UseDefaultRecovery = true;
 	}
@@ -512,8 +514,45 @@ namespace TomCat {
 				return false;
 			}
 		}
+        m_FadeDuration = 0;
 		return true;
 	}
+
+    AudioMixerSnapshot AudioEngine::GetMixerSnapshot() const { return {m_MixerVolumes, m_MixerMuted, m_MixerSolo}; }
+    bool AudioEngine::ApplyMixerSnapshot(const AudioMixerSnapshot& snapshot, double fadeSeconds) {
+        if (!std::isfinite(fadeSeconds) || fadeSeconds < 0) return false;
+        for (float volume : snapshot.Volumes) if (!IsValidVolume(volume)) return false;
+        if (fadeSeconds > 0) {
+            m_FadeStart = GetMixerSnapshot(); m_FadeTarget = snapshot;
+            m_FadeDuration = fadeSeconds; m_FadeElapsed = 0; return true;
+        }
+        const auto previous = GetMixerSnapshot();
+        m_MixerVolumes = snapshot.Volumes; m_MixerMuted = snapshot.Muted; m_MixerSolo = snapshot.Solo;
+        for (const auto& [handle, voice] : m_Voices) if (!ApplyVolume(handle, voice)) {
+            m_MixerVolumes = previous.Volumes; m_MixerMuted = previous.Muted; m_MixerSolo = previous.Solo;
+            for (const auto& [h, v] : m_Voices) ApplyVolume(h, v);
+            return false;
+        }
+        m_FadeDuration = 0; return true;
+    }
+    bool AudioEngine::SetMixerMuted(AudioMixerGroup group, bool muted) {
+        if (!IsValidMixerGroup(group)) return false;
+        auto snapshot = GetMixerSnapshot(); snapshot.Muted[static_cast<size_t>(group)] = muted; return ApplyMixerSnapshot(snapshot);
+    }
+    bool AudioEngine::SetMixerSolo(AudioMixerGroup group, bool solo) {
+        if (!IsValidMixerGroup(group)) return false;
+        auto snapshot = GetMixerSnapshot(); snapshot.Solo[static_cast<size_t>(group)] = solo; return ApplyMixerSnapshot(snapshot);
+    }
+    bool AudioEngine::SetDucking(AudioMixerGroup trigger, AudioMixerGroup target, float gain, double attack, double release) {
+        if (!IsValidMixerGroup(trigger) || !IsValidMixerGroup(target) || trigger == target || target == AudioMixerGroup::Master
+            || !std::isfinite(gain) || gain < 0 || gain > 1 || !std::isfinite(attack) || !std::isfinite(release) || attack < 0 || release < 0) return false;
+        m_Ducking = true; m_DuckTrigger = trigger; m_DuckTarget = target;
+        m_DuckGain = gain; m_DuckAttack = attack; m_DuckRelease = release; return true;
+    }
+    void AudioEngine::ClearDucking() {
+        m_Ducking = false; m_DuckEnvelope = 1;
+        for (const auto& [handle, voice] : m_Voices) ApplyVolume(handle, voice);
+    }
 
 	float AudioEngine::GetMixerVolume(AudioMixerGroup group) const
 	{
@@ -522,7 +561,31 @@ namespace TomCat {
 	}
 
 	void AudioEngine::Update(double deltaSeconds)
-	{
+    {
+        if (!std::isfinite(deltaSeconds) || deltaSeconds < 0) return;
+        if (m_FadeDuration > 0) {
+            const double duration = m_FadeDuration;
+            const double elapsed = std::min(duration, m_FadeElapsed + deltaSeconds);
+            const float t = static_cast<float>(elapsed / duration);
+            auto next = m_FadeStart;
+            for (size_t i = 0; i < 3; ++i) next.Volumes[i] += (m_FadeTarget.Volumes[i] - next.Volumes[i]) * t;
+            if (elapsed >= duration) next = m_FadeTarget;
+            if (ApplyMixerSnapshot(next)) { m_FadeElapsed = elapsed; m_FadeDuration = elapsed < duration ? duration : 0; }
+        }
+        if (m_Ducking) {
+            bool triggered = false;
+            for (const auto& [handle, voice] : m_Voices)
+                if (voice.Group == m_DuckTrigger && voice.DesiredState == AudioPlaybackState::Playing && EffectiveVolume(voice) > 0) { triggered = true; break; }
+            const float target = triggered ? m_DuckGain : 1.f;
+            const double seconds = triggered ? m_DuckAttack : m_DuckRelease;
+            const float next = seconds <= 0 ? target : m_DuckEnvelope + (target - m_DuckEnvelope) * static_cast<float>(1 - std::exp(-deltaSeconds / seconds));
+            const float previous = m_DuckEnvelope; m_DuckEnvelope = next;
+            for (const auto& [handle, voice] : m_Voices) if (!ApplyVolume(handle, voice)) {
+                m_DuckEnvelope = previous;
+                for (const auto& [h, v] : m_Voices) ApplyVolume(h, v);
+                break;
+            }
+        }
 		if (!m_Device)
 			return;
 		m_Device->Update(deltaSeconds);
@@ -553,12 +616,27 @@ namespace TomCat {
 		return std::isfinite(volume) && volume >= 0.0f && volume <= 4.0f;
 	}
 
+    bool AudioEngine::ConfigureBusGraph(std::string_view document,std::string& error) {
+        auto next=m_BusGraph;if(!next.Configure(document,error))return false;
+        for(const auto& [handle,voice]:m_Voices)if(voice.Bus!=UINT32_MAX && !next.Contains(voice.Bus)) {error="audio graph removes a bus used by a live voice";return false;}
+        auto old=m_BusGraph;m_BusGraph=std::move(next);
+        for(const auto& [handle,voice]:m_Voices)if(!ApplyVolume(handle,voice)) {m_BusGraph=std::move(old);for(const auto& [h,v]:m_Voices)ApplyVolume(h,v);error="backend rejected graph update";return false;}return true;
+    }
+    bool AudioEngine::SetBus(uint32_t id,float volume,bool muted,bool solo) {
+        auto old=m_BusGraph;if(!m_BusGraph.Set(id,volume,muted,solo))return false;
+        for(const auto& [handle,voice]:m_Voices)if(!ApplyVolume(handle,voice)) {m_BusGraph=std::move(old);for(const auto& [h,v]:m_Voices)ApplyVolume(h,v);return false;}return true;
+    }
+    bool AudioEngine::SetVoiceBus(AudioVoiceHandle handle,uint32_t bus) {
+        auto found=m_Voices.find(handle);if(found==m_Voices.end() || (bus!=UINT32_MAX && !m_BusGraph.Contains(bus)))return false;
+        auto candidate=found->second;candidate.Bus=bus;if(!ApplyVolume(handle,candidate))return false;found->second.Bus=bus;return true;
+    }
+
 	float AudioEngine::EffectiveVolume(const VoiceRecord& voice) const
 	{
-		const float master = m_MixerVolumes[static_cast<size_t>(AudioMixerGroup::Master)];
-		const float group = voice.Group == AudioMixerGroup::Master ? 1.0f
-			: m_MixerVolumes[static_cast<size_t>(voice.Group)];
-		return std::clamp(voice.Settings.Volume * master * group, 0.0f, 4.0f);
+        auto volumes=m_MixerVolumes;
+        if(m_Ducking) volumes[static_cast<size_t>(m_DuckTarget)]*=m_DuckEnvelope;
+        const uint32_t bus=voice.Bus==UINT32_MAX ? static_cast<uint32_t>(voice.Group) : voice.Bus;
+        return std::clamp(voice.Settings.Volume*m_BusGraph.Gain(bus,volumes,m_MixerMuted,m_MixerSolo),0.f,4.f);
 	}
 
 	bool AudioEngine::ApplyVolume(AudioVoiceHandle,

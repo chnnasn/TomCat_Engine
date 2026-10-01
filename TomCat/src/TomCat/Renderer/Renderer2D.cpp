@@ -50,6 +50,9 @@ namespace TomCat {
 		glm::vec2 TexCoord;
 		float TexIndex;
 		float TilingFactor;
+        float Lit;
+        float NormalIndex;
+        glm::vec4 NormalBasis;
 
 		// Editor-only
 		int EntityID;
@@ -118,6 +121,15 @@ namespace TomCat {
 		glm::vec4 QuadVertexPositions[4];
 		glm::vec3 AmbientLight{ 1.0f };
 		std::vector<Renderer2D::PointLightData> PointLights;
+        struct LightingData {
+            glm::vec4 AmbientCount{1.f, 1.f, 1.f, 0.f};
+            glm::vec4 PositionRadius[32]{}, ColorIntensity[32]{}, Falloff[32]{};
+            glm::vec4 Edges[64]{};
+            glm::ivec4 EdgeOwners[64]{};
+            glm::ivec4 EdgeCount{};
+        } Lighting;
+        Ref<UniformBuffer> LightingBuffer;
+        Ref<Texture2D> SpriteNormal;
 
 		Renderer2D::Statistics Stats;
 
@@ -132,25 +144,20 @@ namespace TomCat {
 
 	static Renderer2DData s_Data;
 
-	static glm::vec4 Apply2DLighting(const glm::vec4& color,
-		const glm::vec3& worldPosition, bool lit)
-	{
-		if (!lit)
-			return color;
-		glm::vec3 lighting = glm::max(s_Data.AmbientLight, glm::vec3(0.0f));
-		for (const Renderer2D::PointLightData& light : s_Data.PointLights)
-		{
-			if (light.Intensity <= 0.0f || light.Radius <= 0.0f)
-				continue;
-			const float distance = glm::length(glm::vec2(worldPosition - light.Position));
-			const float linear = glm::clamp(1.0f - distance / light.Radius, 0.0f, 1.0f);
-			const float attenuation = std::pow(linear,
-				std::max(light.Falloff, 0.0001f));
-			lighting += glm::max(light.Color, glm::vec3(0.0f))
-				* std::max(light.Intensity, 0.0f) * attenuation;
-		}
-		return { glm::vec3(color) * lighting, color.a };
-	}
+    static float NormalTextureIndex(bool lit) {
+        if (!lit || !s_Data.SpriteNormal || !s_Data.SpriteNormal->IsLoaded()) return -1.f;
+        for (uint32_t i = 1; i < s_Data.TextureSlotIndex; ++i)
+            if (*s_Data.TextureSlots[i] == *s_Data.SpriteNormal) return static_cast<float>(i);
+        if (s_Data.TextureSlotIndex >= Renderer2DData::MaxTextureSlots) return -1.f;
+        const uint32_t slot = s_Data.TextureSlotIndex++;
+        s_Data.TextureSlots[slot] = s_Data.SpriteNormal; return static_cast<float>(slot);
+    }
+    static glm::vec4 NormalBasis(const glm::mat4& transform) {
+        glm::vec2 x(transform[0]), y(transform[1]);
+        x = glm::length(x) > 1e-6f ? glm::normalize(x) : glm::vec2(1,0);
+        y = glm::length(y) > 1e-6f ? glm::normalize(y) : glm::vec2(0,1);
+        return {x.x, x.y, y.x, y.y};
+    }
 
 	// Engine infrastructure shaders are code, not project assets. Embedding them
 	// keeps the shipping player independent from an uncooked Packages/Shaders
@@ -163,7 +170,10 @@ layout(location = 1) in vec4 a_Color;
 layout(location = 2) in vec2 a_TexCoord;
 layout(location = 3) in float a_TexIndex;
 layout(location = 4) in float a_TilingFactor;
-layout(location = 5) in int a_EntityID;
+layout(location = 5) in float a_Lit;
+layout(location = 6) in float a_NormalIndex;
+layout(location = 7) in vec4 a_NormalBasis;
+layout(location = 8) in int a_EntityID;
 
 layout(std140, binding = 0) uniform Camera
 {
@@ -180,6 +190,10 @@ struct VertexOutput
 layout(location = 0) out VertexOutput Output;
 layout(location = 3) out flat float v_TexIndex;
 layout(location = 4) out flat int v_EntityID;
+layout(location = 5) out vec3 v_WorldPosition;
+layout(location = 6) out flat float v_Lit;
+layout(location = 7) out flat float v_NormalIndex;
+layout(location = 8) out flat vec4 v_NormalBasis;
 
 void main()
 {
@@ -188,6 +202,8 @@ void main()
 	Output.TilingFactor = a_TilingFactor;
 	v_TexIndex = a_TexIndex;
 	v_EntityID = a_EntityID;
+    v_WorldPosition = a_Position; v_Lit = a_Lit;
+    v_NormalIndex = a_NormalIndex; v_NormalBasis = a_NormalBasis;
 	gl_Position = u_ViewProjection * vec4(a_Position, 1.0);
 }
 )";
@@ -208,8 +224,71 @@ struct VertexOutput
 layout(location = 0) in VertexOutput Input;
 layout(location = 3) in flat float v_TexIndex;
 layout(location = 4) in flat int v_EntityID;
+layout(location = 5) in vec3 v_WorldPosition;
+layout(location = 6) in flat float v_Lit;
+layout(location = 7) in flat float v_NormalIndex;
+layout(location = 8) in flat vec4 v_NormalBasis;
+layout(std140, binding = 1) uniform Lighting {
+    vec4 u_AmbientCount;
+    vec4 u_PositionRadius[32]; vec4 u_ColorIntensity[32]; vec4 u_Falloff[32];
+    vec4 u_Edges[64]; ivec4 u_EdgeOwners[64]; ivec4 u_EdgeCount;
+};
+float cross2(vec2 a, vec2 b) { return a.x*b.y-a.y*b.x; }
+float visibility(vec2 point, vec2 light) {
+    vec2 ray = light-point;
+    for (int e=0; e<u_EdgeCount.x; ++e) {
+        if (v_EntityID != -1 && u_EdgeOwners[e].x == v_EntityID) continue;
+        vec2 a=u_Edges[e].xy, edge=u_Edges[e].zw-a;
+        float denominator=cross2(ray,edge);
+        if (abs(denominator)<0.000001) continue;
+        float t=cross2(a-point,edge)/denominator;
+        float u=cross2(a-point,ray)/denominator;
+        if (t>0.001 && t<0.999 && u>=0.0 && u<=1.0) return 0.0;
+    }
+    return 1.0;
+}
 
 layout(binding = 0) uniform sampler2D u_Textures[32];
+
+vec3 readNormal(int slot) {
+ vec2 uv=Input.TexCoord * Input.TilingFactor;
+ vec2 xy=vec2(0);
+ switch(slot) {
+case 0: xy=texture(u_Textures[0],uv).rg*2.0-1.0; break;
+case 1: xy=texture(u_Textures[1],uv).rg*2.0-1.0; break;
+case 2: xy=texture(u_Textures[2],uv).rg*2.0-1.0; break;
+case 3: xy=texture(u_Textures[3],uv).rg*2.0-1.0; break;
+case 4: xy=texture(u_Textures[4],uv).rg*2.0-1.0; break;
+case 5: xy=texture(u_Textures[5],uv).rg*2.0-1.0; break;
+case 6: xy=texture(u_Textures[6],uv).rg*2.0-1.0; break;
+case 7: xy=texture(u_Textures[7],uv).rg*2.0-1.0; break;
+case 8: xy=texture(u_Textures[8],uv).rg*2.0-1.0; break;
+case 9: xy=texture(u_Textures[9],uv).rg*2.0-1.0; break;
+case 10: xy=texture(u_Textures[10],uv).rg*2.0-1.0; break;
+case 11: xy=texture(u_Textures[11],uv).rg*2.0-1.0; break;
+case 12: xy=texture(u_Textures[12],uv).rg*2.0-1.0; break;
+case 13: xy=texture(u_Textures[13],uv).rg*2.0-1.0; break;
+case 14: xy=texture(u_Textures[14],uv).rg*2.0-1.0; break;
+case 15: xy=texture(u_Textures[15],uv).rg*2.0-1.0; break;
+case 16: xy=texture(u_Textures[16],uv).rg*2.0-1.0; break;
+case 17: xy=texture(u_Textures[17],uv).rg*2.0-1.0; break;
+case 18: xy=texture(u_Textures[18],uv).rg*2.0-1.0; break;
+case 19: xy=texture(u_Textures[19],uv).rg*2.0-1.0; break;
+case 20: xy=texture(u_Textures[20],uv).rg*2.0-1.0; break;
+case 21: xy=texture(u_Textures[21],uv).rg*2.0-1.0; break;
+case 22: xy=texture(u_Textures[22],uv).rg*2.0-1.0; break;
+case 23: xy=texture(u_Textures[23],uv).rg*2.0-1.0; break;
+case 24: xy=texture(u_Textures[24],uv).rg*2.0-1.0; break;
+case 25: xy=texture(u_Textures[25],uv).rg*2.0-1.0; break;
+case 26: xy=texture(u_Textures[26],uv).rg*2.0-1.0; break;
+case 27: xy=texture(u_Textures[27],uv).rg*2.0-1.0; break;
+case 28: xy=texture(u_Textures[28],uv).rg*2.0-1.0; break;
+case 29: xy=texture(u_Textures[29],uv).rg*2.0-1.0; break;
+case 30: xy=texture(u_Textures[30],uv).rg*2.0-1.0; break;
+case 31: xy=texture(u_Textures[31],uv).rg*2.0-1.0; break;
+default: break;
+ } return vec3(xy,sqrt(max(0.0,1.0-dot(xy,xy))));
+}
 
 void main()
 {
@@ -251,6 +330,20 @@ void main()
 	}
 	if (texColor.a < 0.1)
 		discard;
+    if (v_Lit > 0.5) {
+        vec3 lighting = max(u_AmbientCount.rgb, vec3(0));
+        vec3 normal = readNormal(int(v_NormalIndex));
+        normal.xy = mat2(v_NormalBasis.xy, v_NormalBasis.zw) * normal.xy;
+        normal = normalize(normal);
+        for (int i=0; i<int(u_AmbientCount.w); ++i) {
+            vec3 delta=u_PositionRadius[i].xyz-v_WorldPosition;
+            float attenuation=pow(max(0.0,1.0-length(delta.xy)/u_PositionRadius[i].w),u_Falloff[i].x);
+            float diffuse=v_NormalIndex < 0.0 ? 1.0 : max(0.0,dot(normal,normalize(vec3(delta.xy, max(abs(delta.z), 1.0)))));
+            lighting += u_ColorIntensity[i].rgb*u_ColorIntensity[i].w*attenuation*diffuse*visibility(v_WorldPosition.xy,u_PositionRadius[i].xy);
+        }
+        texColor.rgb *= lighting;
+    }
+
 	o_Color = texColor;
 	o_EntityID = v_EntityID;
 }
@@ -392,7 +485,10 @@ void main()
 			{ ShaderDataType::Float2, "a_TexCoord"     },
 			{ ShaderDataType::Float,  "a_TexIndex"     },
 			{ ShaderDataType::Float,  "a_TilingFactor" },
-			{ ShaderDataType::Int,    "a_EntityID"     }
+			{ ShaderDataType::Float, "a_Lit" },
+            { ShaderDataType::Float, "a_NormalIndex" },
+            { ShaderDataType::Float4, "a_NormalBasis" },
+            { ShaderDataType::Int, "a_EntityID" }
 			});
 
 		s_Data.QuadVertexArray->AddVertexBuffer(s_Data.QuadVertexBuffer);
@@ -469,7 +565,8 @@ void main()
 		s_Data.QuadVertexPositions[2] = { 0.5f,  0.5f, 0.0f, 1.0f };
 		s_Data.QuadVertexPositions[3] = { -0.5f,  0.5f, 0.0f, 1.0f };
 
-		s_Data.CameraUniformBuffer = UniformBuffer::Create(sizeof(Renderer2DData::CameraData), 0);
+		s_Data.LightingBuffer = UniformBuffer::Create(sizeof(Renderer2DData::LightingData), 1);
+        s_Data.CameraUniformBuffer = UniformBuffer::Create(sizeof(Renderer2DData::CameraData), 0);
 	}
 
 	void Renderer2D::Shutdown()
@@ -495,6 +592,7 @@ void main()
 		s_Data.TextureSlots.fill(nullptr);
 		s_Data.AmbientLight = glm::vec3(1.0f);
 		s_Data.PointLights.clear();
+        s_Data.LightingBuffer.reset(); s_Data.SpriteNormal.reset();
 		s_Data.CameraUniformBuffer.reset();
 		s_Data.LineShader.reset();
 		s_Data.CircleShader.reset();
@@ -509,10 +607,25 @@ void main()
 	}
 
 	void Renderer2D::Set2DLighting(const glm::vec3& ambient,
-		std::span<const PointLightData> pointLights)
+		std::span<const PointLightData> pointLights, std::span<const ShadowEdge> edges)
 	{
+        if (s_Data.SceneActive) { Flush(); StartBatch(); }
 		s_Data.AmbientLight = glm::max(ambient, glm::vec3(0.0f));
-		s_Data.PointLights.assign(pointLights.begin(), pointLights.end());
+		s_Data.Lighting = {};
+        auto& data = s_Data.Lighting;
+        data.AmbientCount = glm::vec4(s_Data.AmbientLight, 0);
+        uint32_t count=0;
+        for (const auto& light : pointLights) {
+            if (count == 32) break;
+            if (!(light.Radius > 0) || !(light.Intensity > 0)) continue;
+            data.PositionRadius[count] = glm::vec4(light.Position, light.Radius);
+            data.ColorIntensity[count] = glm::vec4(glm::max(light.Color, glm::vec3(0)), light.Intensity);
+            data.Falloff[count] = glm::vec4(std::max(light.Falloff, .0001f), 0,0,0); ++count;
+        }
+        data.AmbientCount.w = static_cast<float>(count);
+        data.EdgeCount.x = static_cast<int>(std::min<size_t>(64, edges.size()));
+        for (int i=0; i<data.EdgeCount.x; ++i) { data.Edges[i] = glm::vec4(edges[i].A, edges[i].B); data.EdgeOwners[i].x=edges[i].EntityID; }
+        if (s_Data.LightingBuffer) s_Data.LightingBuffer->SetData(&data, sizeof(data));
 	}
 
 	void Renderer2D::BeginScene(const Camera& camera, const glm::mat4& transform)
@@ -657,7 +770,7 @@ void main()
 		constexpr glm::vec2 textureCoords[] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
 		const float tilingFactor = 1.0f;
 
-		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices)
+		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices || (s_Data.SpriteNormal && s_Data.TextureSlotIndex + 2 >= Renderer2DData::MaxTextureSlots))
 			NextBatch();
 
 		for (size_t i = 0; i < quadVertexCount; i++)
@@ -665,8 +778,10 @@ void main()
 			const glm::vec3 worldPosition = glm::vec3(
 				transform * s_Data.QuadVertexPositions[i]);
 			s_Data.QuadVertexBufferPtr->Position = worldPosition;
-			s_Data.QuadVertexBufferPtr->Color = Apply2DLighting(color,
-				worldPosition, lit);
+			s_Data.QuadVertexBufferPtr->Color = color;
+            s_Data.QuadVertexBufferPtr->Lit = lit ? 1.f : 0.f;
+            s_Data.QuadVertexBufferPtr->NormalIndex = NormalTextureIndex(lit);
+            s_Data.QuadVertexBufferPtr->NormalBasis = NormalBasis(transform);
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
@@ -701,7 +816,7 @@ void main()
 		constexpr glm::vec2 textureCoords[] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
 		const Ref<Texture2D>& resolvedTexture = texture && texture->IsLoaded() ? texture : s_Data.WhiteTexture;
 
-		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices)
+		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices || (s_Data.SpriteNormal && s_Data.TextureSlotIndex + 2 >= Renderer2DData::MaxTextureSlots))
 			NextBatch();
 
 		float textureIndex = 0.0f;
@@ -730,8 +845,10 @@ void main()
 			const glm::vec3 worldPosition = glm::vec3(
 				transform * s_Data.QuadVertexPositions[i]);
 			s_Data.QuadVertexBufferPtr->Position = worldPosition;
-			s_Data.QuadVertexBufferPtr->Color = Apply2DLighting(tintColor,
-				worldPosition, lit);
+			s_Data.QuadVertexBufferPtr->Color = tintColor;
+            s_Data.QuadVertexBufferPtr->Lit = lit ? 1.f : 0.f;
+            s_Data.QuadVertexBufferPtr->NormalIndex = NormalTextureIndex(lit);
+            s_Data.QuadVertexBufferPtr->NormalBasis = NormalBasis(transform);
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = tilingFactor;
@@ -771,7 +888,7 @@ void main()
 		TC_PROFILE_FUNCTION();
 		const Ref<Texture2D>& resolvedTexture = texture && texture->IsLoaded()
 			? texture : s_Data.WhiteTexture;
-		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices)
+		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices || (s_Data.SpriteNormal && s_Data.TextureSlotIndex + 2 >= Renderer2DData::MaxTextureSlots))
 			NextBatch();
 
 		float textureIndex = 0.0f;
@@ -797,8 +914,10 @@ void main()
 		{
 			const glm::vec3 worldPosition = positions[index];
 			s_Data.QuadVertexBufferPtr->Position = worldPosition;
-			s_Data.QuadVertexBufferPtr->Color = Apply2DLighting(tintColor,
-				worldPosition, lit);
+			s_Data.QuadVertexBufferPtr->Color = tintColor;
+            s_Data.QuadVertexBufferPtr->Lit = lit ? 1.f : 0.f;
+            s_Data.QuadVertexBufferPtr->NormalIndex = NormalTextureIndex(lit);
+            s_Data.QuadVertexBufferPtr->NormalBasis = NormalBasis(glm::mat4(glm::vec4(positions[1] - positions[0], 0), glm::vec4(positions[3] - positions[0], 0), glm::vec4(0,0,1,0), glm::vec4(0,0,0,1)));
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoordinates[index];
 			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
 			s_Data.QuadVertexBufferPtr->TilingFactor = 1.0f;
@@ -947,7 +1066,21 @@ void main()
 	}
 
 	void Renderer2D::DrawSprite(const glm::mat4& transform, SpriteRenderer& src, int entityID)
-	{
+    {
+        struct ResetNormal { ~ResetNormal() { s_Data.SpriteNormal.reset(); } } reset;
+        AssetHandle normal = src.NormalMap;
+        glm::vec4 tint = src._Color;
+        bool lit = true;
+        if (const auto material=AssetManager::Get().GetRuntimeMaterial(src.MaterialHandle)) {
+            if (static_cast<uint64_t>(material->Shader)==BuiltinSprite2DShader) {
+                for (const auto& binding : material->Textures) if (binding.Name=="NormalMap" && static_cast<uint64_t>(normal)==0) normal=binding.Texture;
+                for (const auto& parameter : material->Parameters) {
+                    if (parameter.Name=="Tint" && parameter.Type==MaterialParameterType::Float4) tint*=glm::vec4(parameter.AsFloat(0),parameter.AsFloat(1),parameter.AsFloat(2),parameter.AsFloat(3));
+                    if (parameter.Name=="Lit" && parameter.Type==MaterialParameterType::Bool) lit=parameter.AsBool();
+                }
+            }
+        }
+        s_Data.SpriteNormal = static_cast<uint64_t>(normal) ? AssetManager::Get().LoadTexture(normal) : nullptr;
 		const AssetHandle spriteHandle = src.RuntimeSpriteOverrideActive
 			? src.RuntimeSpriteOverrideHandle : src.SpriteHandle;
 		if (static_cast<uint64_t>(spriteHandle) == 0)
@@ -964,8 +1097,8 @@ void main()
 		if (!assets.ResolveSpriteAsset(spriteHandle, resolved)
 			|| !resolved.IsSubAsset)
 		{
-			DrawQuad(transform, src.Sprite, src.TilingFactor, src._Color, entityID,
-				true);
+			DrawQuad(transform, src.Sprite, src.TilingFactor, tint, entityID,
+				lit);
 			return;
 		}
 		SpriteRenderGeometry geometry;
@@ -979,7 +1112,7 @@ void main()
 				{ geometry.Width, geometry.Height, 1.0f });
 		DrawTexturedQuadRegion(spriteTransform, src.Sprite,
 			{ geometry.UMin, geometry.VMin }, { geometry.UMax, geometry.VMax },
-			src._Color, entityID, true);
+			tint, entityID, lit);
 	}
 
 	void Renderer2D::ResetStats()

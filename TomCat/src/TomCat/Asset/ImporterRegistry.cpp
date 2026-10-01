@@ -433,7 +433,7 @@ namespace TomCat {
 			{
 				return "tomcat.sprite-atlas";
 			}
-			uint32_t GetVersion() const noexcept override { return 3; }
+			uint32_t GetVersion() const noexcept override { return 5; }
 			AssetType GetAssetType() const noexcept override { return AssetType::Texture2D; }
 
 			AssetImportResult Import(const AssetImportRequest& request) const override
@@ -568,7 +568,7 @@ namespace TomCat {
 			{
 				return "tomcat.material.canonical";
 			}
-			uint32_t GetVersion() const noexcept override { return 2; }
+			uint32_t GetVersion() const noexcept override { return 3; }
 			AssetType GetAssetType() const noexcept override { return AssetType::Material; }
 
 			AssetImportResult Import(const AssetImportRequest& request) const override
@@ -639,7 +639,7 @@ namespace TomCat {
 			{
 				return "tomcat.audio.pcm16";
 			}
-			uint32_t GetVersion() const noexcept override { return 2; }
+			uint32_t GetVersion() const noexcept override { return 3; }
 			AssetType GetAssetType() const noexcept override { return AssetType::Audio; }
 
 			AssetImportResult Import(const AssetImportRequest& request) const override

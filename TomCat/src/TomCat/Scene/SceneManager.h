@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Scene.h"
+#include "TomCat/Core/FrameTask.h"
+namespace YAML { class Node; }
 #include "TomCat/Project/BuildSettings.h"
 #include "TomCat/Project/ProjectSettings.h"
 
@@ -17,7 +19,7 @@
 namespace TomCat {
 
 	enum class SceneLoadMode : uint32_t { Single, Additive };
-	enum class SceneLoadState : uint32_t { Idle, Reading, Ready, Completed, Failed, Cancelled };
+	enum class SceneLoadState : uint32_t { Idle, Reading, Ready, Completed, Failed, Cancelled, Decoding, Activating };
 
 	// Loaded scene assets compose into one ECS/physics/script world. Asset ownership
 	// is tracked separately so unloading a scene leaves other scenes and persistent
@@ -50,7 +52,12 @@ namespace TomCat {
 		void SetAllowSceneActivation(bool allow) { m_AllowSceneActivation = allow; }
 		bool GetAllowSceneActivation() const { return m_AllowSceneActivation; }
 		SceneLoadState GetLoadState() const { return m_LoadState; }
-		float GetLoadProgress() const;
+        float GetLoadProgress() const;
+        struct ActivationBudget { uint32_t MaximumUnits = 64; double Milliseconds = 2.0; };
+        struct ActivationStatistics { uint64_t Frames = 0, Units = 0, OverrunFrames = 0; double LastMilliseconds = 0, PeakMilliseconds = 0; };
+        bool SetActivationBudget(ActivationBudget budget);
+        ActivationStatistics GetActivationStatistics() const { return m_ActivationStatistics; }
+
 		bool RequestUnloadScene(AssetHandle scene);
 		bool SetActiveScene(AssetHandle scene);
 		bool SetEntityPersistent(Entity entity, bool persistent = true);
@@ -77,7 +84,7 @@ namespace TomCat {
 		{
 			return m_BuildSceneHandles;
 		}
-		bool HasPendingTransition() const { return m_PendingScene || m_AsyncRead.valid() || !m_PendingUnloads.empty(); }
+		bool HasPendingTransition() const { return m_StartupTask || m_DecodeTask || m_PendingScene || m_AsyncRead.valid() || !m_PendingUnloads.empty(); }
 		const std::string& GetLastError() const { return m_LastError; }
 
 		// The Player/Editor runtime owner binds one non-owning instance for native
@@ -132,7 +139,14 @@ namespace TomCat {
 		bool m_Committing = false;
 		bool m_Stopping = false;
 		struct AsyncReadState { std::atomic<bool> Cancelled{false}; std::atomic<float> Progress{0.0f}; };
-		struct AsyncReadResult { std::vector<uint8_t> Bytes; std::string Error; };
+		struct AsyncReadResult { std::vector<uint8_t> Bytes; std::shared_ptr<YAML::Node> Document; std::string Error; };
+        ActivationBudget m_ActivationBudget;
+        ActivationStatistics m_ActivationStatistics;
+        std::unique_ptr<FrameTask> m_DecodeTask, m_StartupTask;
+        Ref<Scene> m_StartupPrevious;
+        AssetHandle m_StartupPreviousHandle = AssetHandle(0);
+        int32_t m_StartupPreviousIndex = -1;
+        Ref<Scene> m_DecodingScene;
 		std::shared_ptr<AsyncReadState> m_AsyncState;
 		std::future<AsyncReadResult> m_AsyncRead;
 		std::vector<AssetHandle> m_LoadedScenes;

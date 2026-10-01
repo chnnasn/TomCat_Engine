@@ -1,5 +1,7 @@
 #include "tcpch.h"
 #include "RuntimeUI.h"
+#include "UnicodeText.h"
+#include "TomCat/Renderer/TextShaper.h"
 
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/SpriteAsset.h"
@@ -492,7 +494,7 @@ namespace TomCat {
 						const auto& field = entity.GetComponent<UIInputField>();
 						text.Enabled = text.Enabled && field.Enabled;
 						text.Wrap = false;
-						text.Text = field.Password ? std::string(FontAtlasBuilder::DecodeUTF8(field.Text).size(), '*') : field.Text;
+						text.Text = field.Password ? std::string(UnicodeText::GraphemeBoundaries(field.Text).size() - 1, '*') : field.Text;
 						if (field.RuntimeFocused && text.Enabled)
 						{
 							size_t caret = std::min<size_t>(field.RuntimeCaret, field.Text.size());
@@ -507,21 +509,21 @@ namespace TomCat {
 							anchor = repairBoundary(anchor);
 							if (field.Password)
 							{
-								caret = FontAtlasBuilder::DecodeUTF8(std::string_view(field.Text).substr(0, caret)).size();
-								anchor = FontAtlasBuilder::DecodeUTF8(std::string_view(field.Text).substr(0, anchor)).size();
+								caret = UnicodeText::GraphemeBoundaries(std::string_view(field.Text).substr(0, caret)).size() - 1;
+								anchor = UnicodeText::GraphemeBoundaries(std::string_view(field.Text).substr(0, anchor)).size() - 1;
 							}
-							if (const auto font = FontManager::Get().Load(text.Font, text.Text, text.FallbackFont, text.EmojiFont))
+							if (!field.RuntimePreedit.empty()) {
+                                std::string preedit = field.Password ? std::string(UnicodeText::GraphemeBoundaries(field.RuntimePreedit).size() - 1, '*') : field.RuntimePreedit;
+                                text.Text.insert(caret, preedit);
+                                caret += field.Password ? UnicodeText::GraphemeBoundaries(std::string_view(field.RuntimePreedit).substr(0, field.RuntimePreeditCaret)).size() - 1 : field.RuntimePreeditCaret;
+                                anchor = caret;
+                            }
+                            if (const auto font = FontManager::Get().Load(text.Font, text.Text, text.FallbackFont, text.EmojiFont))
 							{
 								const float scale = layout.Scales.at(id);
-								auto measurePrefix = [&](size_t length)
-								{
-									return TextLayoutEngine::Build(font->GetAtlas(),
-										std::string_view(text.Text).substr(0, length), text.FontSize * scale,
-										0.0f, TextAlignment::Left, text.LineSpacing);
-								};
-								const TextLayoutResult caretLayout = measurePrefix(caret);
-								const float caretX = caretLayout.Width;
-								const float anchorX = measurePrefix(anchor).Width;
+								const TextLayoutResult caretLayout = TextLayoutEngine::Build(font->GetAtlas(), text.Text, text.FontSize * scale, 0, TextAlignment::Left, text.LineSpacing);
+                                const float caretX = caretLayout.Carets.contains(caret) ? caretLayout.Carets.at(caret).x : caretLayout.Width;
+                                const float anchorX = caretLayout.Carets.contains(anchor) ? caretLayout.Carets.at(anchor).x : caretLayout.Width;
 								horizontalOffset = std::max(0.0f, caretX - rectangle->second.Width + 8.0f * scale);
 								const float bottom = rectangle->second.Y + std::max(0.0f, rectangle->second.Height - caretLayout.Height);
 								if (caret != anchor)
@@ -536,6 +538,13 @@ namespace TomCat {
 								}
 								caretRectangle = UIRect{ rectangle->second.X + caretX - horizontalOffset,
 									bottom, std::max(1.0f, scale), caretLayout.Height };
+                                if (!field.RuntimePreedit.empty()) {
+                                    const size_t start = field.Password ? UnicodeText::GraphemeBoundaries(std::string_view(field.Text).substr(0,field.RuntimeCaret)).size()-1 : field.RuntimeCaret;
+                                    const size_t end = start + (field.Password ? UnicodeText::GraphemeBoundaries(field.RuntimePreedit).size()-1 : field.RuntimePreedit.size());
+                                    const float x0 = caretLayout.Carets.contains(start) ? caretLayout.Carets.at(start).x : caretX;
+                                    const float x1 = caretLayout.Carets.contains(end) ? caretLayout.Carets.at(end).x : caretX;
+                                    DrawClippedUIQuad({rectangle->second.X+std::min(x0,x1)-horizontalOffset,bottom,std::max(1.f,std::abs(x1-x0)),std::max(1.f,scale)},elementTransform->second,inputClipRegions,{}, {0,0},{1,1},text.Color,static_cast<int>(static_cast<entt::entity>(entity)));
+                                }
 							}
 						}
 						else if (field.Text.empty()) { text.Text = field.Placeholder; text.Color.a *= 0.5f; }
@@ -568,6 +577,22 @@ namespace TomCat {
 				const std::vector<RuntimeUIClipRegion>& inheritedClipRegions)
 			{
 				UIRect contentRect = parentRect;
+                UIScrollView* virtualList = parent.HasComponent<UIScrollView>() ? &parent.GetComponent<UIScrollView>() : nullptr;
+                const bool virtualized = virtualList && virtualList->Enabled && virtualList->Virtualized
+                    && Finite(virtualList->VirtualItemHeight) && virtualList->VirtualItemHeight >= 1.0f;
+                if (virtualized) {
+                    const float row = virtualList->VirtualItemHeight;
+                    virtualList->ContentSize.y = std::max(parentRect.Height / scale, row * virtualList->VirtualItemCount);
+                    const double offset = std::clamp<double>(virtualList->Offset.y, 0.0, std::max(0.0f, virtualList->ContentSize.y - parentRect.Height / scale));
+                    virtualList->Offset.y = static_cast<float>(offset);
+                    const uint32_t top = static_cast<uint32_t>(std::min<double>(virtualList->VirtualItemCount, std::floor(offset / row)));
+                    virtualList->RuntimeFirstVisibleIndex = top - std::min(top, std::min(virtualList->VirtualOverscan, 1024u));
+                    virtualList->RuntimeVisibleCount = static_cast<uint32_t>(std::min<double>(
+                        virtualList->VirtualItemCount - virtualList->RuntimeFirstVisibleIndex,
+                        std::ceil(parentRect.Height / scale / row) + 1 + 2.0 * std::min(virtualList->VirtualOverscan, 1024u)));
+                }
+                if (virtualList && !virtualized) { virtualList->RuntimeFirstVisibleIndex = 0; virtualList->RuntimeVisibleCount = 0; }
+                uint32_t virtualSlot = 0;
 				if (parent.HasComponent<UIScrollView>() && parent.GetComponent<UIScrollView>().Enabled)
 				{
 					auto& scroll = parent.GetComponent<UIScrollView>();
@@ -585,6 +610,8 @@ namespace TomCat {
 					- (group ? group->Padding.w * scale : 0.0f);
 				for (UUID childID : SceneValue.GetChildrenUUIDs(parent))
 				{
+                    const uint32_t slot = virtualSlot++;
+                    if (virtualized && slot >= virtualList->RuntimeVisibleCount) continue;
 					Entity child = SceneValue.FindEntityByUUID(childID);
 					if (!child || !child.HasComponent<RectTransform>()
 						|| child.HasComponent<Canvas>()
@@ -613,6 +640,11 @@ namespace TomCat {
 							verticalCursor -= group->Spacing * scale;
 						}
 					}
+                    if (virtualized) {
+                        const float height = virtualList->VirtualItemHeight * scale;
+                        const double index = static_cast<double>(virtualList->RuntimeFirstVisibleIndex) + slot;
+                        rectangle = { parentRect.X, parentRect.Y + parentRect.Height - static_cast<float>((index + 1) * height - virtualList->Offset.y * scale), parentRect.Width, height };
+                    }
 					const UIRect clip = UIRect::Intersect(rectangle, inheritedClip);
 					if (WriteRuntimeRectangles)
 					{
@@ -715,39 +747,48 @@ namespace TomCat {
 				auto& field = entity.GetComponent<UIInputField>();
 				if (focused && !field.RuntimeFocused)
 					field.RuntimeCaret = field.RuntimeSelectionAnchor = static_cast<uint32_t>(field.Text.size());
-				field.RuntimeFocused = focused;
+				if (!focused) { if (field.RuntimeFocused && !field.RuntimePreedit.empty()) Input::CancelComposition(); field.RuntimePreedit.clear(); field.RuntimePreeditCaret = 0; }
+                field.RuntimeFocused = focused;
 			}
 		}
 
-		size_t PreviousCharacter(const std::string& text, size_t position)
-		{
-			position = std::min(position, text.size());
-			if (position > 0) --position;
-			while (position > 0 && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) --position;
-			return position;
-		}
-
-		size_t NextCharacter(const std::string& text, size_t position)
-		{
-			if (position < text.size()) ++position;
-			while (position < text.size() && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) ++position;
-			return position;
-		}
+        size_t PreviousCharacter(const std::string& text, size_t position) { return UnicodeText::Previous(text, position); }
+        size_t NextCharacter(const std::string& text, size_t position) { return UnicodeText::Next(text, position); }
 
 		void EditInputField(UIInputField& field, const RuntimeUIInputFrame& input)
 		{
 			if (input.DisplayFrame != 0 && field.RuntimeLastInputFrame == input.DisplayFrame) return;
 			field.RuntimeLastInputFrame = input.DisplayFrame;
+            field.RuntimePreedit = input.Composing && !field.ReadOnly ? input.Preedit : std::string{};
+            field.RuntimePreeditCaret = std::min<uint32_t>(input.PreeditCaret, static_cast<uint32_t>(field.RuntimePreedit.size()));
+            if (input.Composing && input.TextInput.empty()) return;
 			field.RuntimeCaret = static_cast<uint32_t>(std::min<size_t>(field.RuntimeCaret, field.Text.size()));
 			field.RuntimeSelectionAnchor = static_cast<uint32_t>(std::min<size_t>(field.RuntimeSelectionAnchor, field.Text.size()));
 			// C# may replace Text while focused. Repair indices to UTF-8 boundaries.
 			while (field.RuntimeCaret < field.Text.size() && (static_cast<unsigned char>(field.Text[field.RuntimeCaret]) & 0xc0) == 0x80) --field.RuntimeCaret;
 			while (field.RuntimeSelectionAnchor < field.Text.size() && (static_cast<unsigned char>(field.Text[field.RuntimeSelectionAnchor]) & 0xc0) == 0x80) --field.RuntimeSelectionAnchor;
+            const auto boundaries = UnicodeText::GraphemeBoundaries(field.Text);
+            auto repair = [&](uint32_t offset) { return static_cast<uint32_t>(*std::prev(std::upper_bound(boundaries.begin(), boundaries.end(), offset))); };
+            field.RuntimeCaret = repair(field.RuntimeCaret);
+            field.RuntimeSelectionAnchor = repair(field.RuntimeSelectionAnchor);
 			if (input.SelectAll) { field.RuntimeSelectionAnchor = 0; field.RuntimeCaret = static_cast<uint32_t>(field.Text.size()); }
 			if (input.CaretHome) field.RuntimeCaret = 0;
 			if (input.CaretEnd) field.RuntimeCaret = static_cast<uint32_t>(field.Text.size());
-			if (input.CaretLeft) field.RuntimeCaret = static_cast<uint32_t>(PreviousCharacter(field.Text, field.RuntimeCaret));
-			if (input.CaretRight) field.RuntimeCaret = static_cast<uint32_t>(NextCharacter(field.Text, field.RuntimeCaret));
+			if (input.CaretLeft || input.CaretRight) {
+                std::vector<size_t> stops;
+                for (const auto& cluster : UnicodeText::VisualClusters(field.Text)) {
+                    const size_t start=cluster.RTL ? cluster.End : cluster.Begin;
+                    const size_t end=cluster.RTL ? cluster.Begin : cluster.End;
+                    if (stops.empty() || stops.back()!=start) stops.push_back(start);
+                    if (stops.back()!=end) stops.push_back(end);
+                }
+                auto current=std::find(stops.begin(),stops.end(),field.RuntimeCaret);
+                if (current!=stops.end()) {
+                    if (input.CaretLeft && current!=stops.begin()) --current;
+                    else if (input.CaretRight && std::next(current)!=stops.end()) ++current;
+                    field.RuntimeCaret=static_cast<uint32_t>(*current);
+                }
+            }
 			if (!input.ExtendSelection && (input.CaretHome || input.CaretEnd || input.CaretLeft || input.CaretRight))
 				field.RuntimeSelectionAnchor = field.RuntimeCaret;
 			bool cutSelection = false;
@@ -774,17 +815,32 @@ namespace TomCat {
 				field.RuntimeCaret = field.RuntimeSelectionAnchor = static_cast<uint32_t>(first);
 				if (valid)
 				{
-					size_t count = FontAtlasBuilder::DecodeUTF8(field.Text).size();
 					std::string insertion;
-					for (size_t pos = 0; pos < insertedText.size();)
+					const auto insertionEdges = UnicodeText::GraphemeBoundaries(insertedText);
+                    for (size_t edge = 1; edge < insertionEdges.size(); ++edge)
 					{
-						const size_t next = NextCharacter(insertedText, pos);
+                        const size_t pos = insertionEdges[edge - 1], next = insertionEdges[edge];
 						const unsigned char firstByte = static_cast<unsigned char>(insertedText[pos]);
-						if (firstByte >= 32 && firstByte != 127 && count < field.CharacterLimit
+						if (firstByte >= 32 && firstByte != 127
 							&& field.Text.size() + insertion.size() + next - pos <= 65536)
-						{ insertion.append(insertedText, pos, next - pos); ++count; }
-						pos = next;
+						{ insertion.append(insertedText, pos, next - pos); }
 					}
+                    // Count the composed string: an inserted accent/ZWJ may join an
+                    // existing cluster even when the field is already at its limit.
+                    const auto edges = UnicodeText::GraphemeBoundaries(insertion);
+                    auto fits = [&](size_t bytes) {
+                        auto candidate = field.Text;
+                        candidate.insert(field.RuntimeCaret, insertion, 0, bytes);
+                        return UnicodeText::GraphemeBoundaries(candidate).size() - 1 <= field.CharacterLimit;
+                    };
+                    if (!fits(insertion.size())) {
+                        size_t low = 0, high = edges.size() - 1;
+                        while (low < high) {
+                            const size_t middle = low + (high - low + 1) / 2;
+                            if (fits(edges[middle])) low = middle; else high = middle - 1;
+                        }
+                        insertion.resize(edges[low]);
+                    }
 					field.Text.insert(field.RuntimeCaret, insertion);
 					field.RuntimeCaret += static_cast<uint32_t>(insertion.size());
 					field.RuntimeSelectionAnchor = field.RuntimeCaret;
@@ -1096,32 +1152,61 @@ namespace TomCat {
 			return result;
 		const float scale = fontSize / atlas.PixelHeight;
 		const float lineHeight = atlas.LineHeight * scale * lineSpacing;
-		struct PendingGlyph { const FontGlyph* Glyph = nullptr; float X = 0.0f; };
+		struct PendingGlyph { const FontGlyph* Glyph = nullptr; float X = 0.0f; float Y = 0.0f; };
 		struct Line { std::vector<PendingGlyph> Glyphs; float Width = 0.0f; };
 		std::vector<Line> lines(1);
-		for (uint32_t codepoint : FontAtlasBuilder::DecodeUTF8(utf8))
-		{
-			if (codepoint == '\r')
-				continue;
-			if (codepoint == '\n')
-			{
-				lines.emplace_back();
-				continue;
-			}
-			const FontGlyph* glyph = atlas.Find(codepoint);
-			if (!glyph)
-				continue;
-			const float advance = glyph->Advance * scale;
-			Line* line = &lines.back();
-			if (maximumWidth > 0.0f && !line->Glyphs.empty()
-				&& line->Width + advance > maximumWidth)
-			{
-				lines.emplace_back();
-				line = &lines.back();
-			}
-			line->Glyphs.push_back({ glyph, line->Width });
-			line->Width += advance;
-		}
+        // Wrap logical graphemes first, then reorder each display line. A wrapped
+        // RTL paragraph must never have its complete visual string wrapped backwards.
+        const auto shapedParagraph=TextShaper::Shape(atlas,utf8);
+        std::map<size_t,float> advances;
+        for(const auto& glyph:shapedParagraph) advances[glyph.Begin]+=glyph.Advance*scale;
+        const auto boundaries = UnicodeText::GraphemeBoundaries(utf8);
+        std::vector<std::pair<size_t,size_t>> ranges;
+        size_t begin=0; float width=0;
+        for (size_t i=1;i<boundaries.size();++i) {
+            auto cluster=utf8.substr(boundaries[i-1],boundaries[i]-boundaries[i-1]);
+            if (cluster.find('\n') != std::string_view::npos) { ranges.push_back({begin,boundaries[i-1]}); begin=boundaries[i]; width=0; continue; }
+            float advance=0;
+            if (!shapedParagraph.empty()) advance=advances[boundaries[i-1]];
+            else for (auto codepoint : FontAtlasBuilder::DecodeUTF8(cluster)) if (const auto* glyph=atlas.Find(codepoint)) advance += glyph->Advance*scale;
+            if (maximumWidth>0 && boundaries[i-1]>begin && width+advance>maximumWidth) { ranges.push_back({begin,boundaries[i-1]}); begin=boundaries[i-1]; width=0; }
+            width+=advance;
+        }
+        ranges.push_back({begin,utf8.size()}); lines.clear();
+        for (const auto& [first,last] : ranges) {
+            lines.emplace_back(); auto& line=lines.back();
+            const float y=static_cast<float>(lines.size()-1)*lineHeight;
+            result.Carets[first]={0,y};
+            const auto shaped=TextShaper::Shape(atlas,utf8.substr(first,last-first));
+            if(!shaped.empty()) {
+                for(size_t i=0;i<shaped.size();) {
+                    const auto& cluster=shaped[i];const float start=line.Width;size_t end=i;
+                    while(end<shaped.size() && shaped[end].Begin==cluster.Begin) {
+                        const auto& item=shaped[end++];
+                        const FontGlyph* glyph=nullptr;
+                        if(auto found=atlas.Glyphs.find(item.Key);found!=atlas.Glyphs.end()) glyph=&found->second;
+                        else { auto cps=FontAtlasBuilder::DecodeUTF8(utf8.substr(first+item.Begin,item.End-item.Begin));if(!cps.empty()) glyph=atlas.Find(cps.front()); }
+                        if(glyph) line.Glyphs.push_back({glyph,line.Width+item.X*scale,item.Y*scale});
+                        line.Width+=item.Advance*scale;
+                    }
+                    const auto clusterEdges=UnicodeText::GraphemeBoundaries(utf8.substr(first+cluster.Begin,cluster.End-cluster.Begin));
+                    for(size_t edge=0;edge<clusterEdges.size();++edge) {
+                        const float t=clusterEdges.size()>1 ? float(edge)/float(clusterEdges.size()-1) : 0;
+                        result.Carets[first+cluster.Begin+clusterEdges[edge]]={cluster.RTL ? line.Width+(start-line.Width)*t : start+(line.Width-start)*t,y};
+                    }
+                    i=end;
+                }
+            } else
+            for (const auto& cluster : UnicodeText::VisualClusters(utf8.substr(first,last-first))) {
+                const float start=line.Width;
+                for (uint32_t codepoint : FontAtlasBuilder::DecodeUTF8(cluster.Text)) {
+                    if (codepoint=='\r') continue;
+                    if (const auto* glyph=atlas.Find(codepoint)) { line.Glyphs.push_back({glyph,line.Width}); line.Width+=glyph->Advance*scale; }
+                }
+                result.Carets[first+cluster.Begin]={cluster.RTL ? line.Width : start,y};
+                result.Carets[first+cluster.End]={cluster.RTL ? start : line.Width,y};
+            }
+        }
 		result.LineCount = static_cast<uint32_t>(lines.size());
 		result.Height = std::max(lineHeight,
 			static_cast<float>(lines.size()) * lineHeight);
@@ -1146,7 +1231,7 @@ namespace TomCat {
 				TextGlyphQuad quad;
 				quad.Codepoint = glyph.Codepoint;
 				quad.Rect = { alignmentOffset + pending.X + glyph.OffsetX * scale,
-					baseline + glyph.OffsetY * scale, glyph.Width * scale,
+					baseline + pending.Y + glyph.OffsetY * scale, glyph.Width * scale,
 					glyph.Height * scale };
 				quad.UVMin = glyph.UVMin;
 				quad.UVMax = glyph.UVMax;
@@ -1330,6 +1415,8 @@ namespace TomCat {
 
 	void RuntimeUISystem::Reset(entt::registry& registry)
 	{
+        for (const auto entity : registry.view<UIInputField>())
+            if (registry.get<UIInputField>(entity).RuntimeFocused) { Input::SetRuntimeIMEEnabled(false); break; }
 		for (const auto entity : registry.view<UISlider>())
 		{
 			auto& slider = registry.get<UISlider>(entity);
@@ -1341,6 +1428,7 @@ namespace TomCat {
 			auto& field = registry.get<UIInputField>(entity);
 			field.RuntimeFocused = false;
 			field.RuntimeCaret = field.RuntimeSelectionAnchor = 0;
+            field.RuntimePreedit.clear(); field.RuntimePreeditCaret = 0;
 			field.RuntimeChangeSerial = 0;
 			field.RuntimeLastInputFrame = 0;
 		}
@@ -1382,6 +1470,10 @@ namespace TomCat {
 		const auto scroll = source.GetScrollDelta();
 		input.ScrollDelta = { scroll.X, scroll.Y };
 		input.TextInput = Input::GetTextInput();
+        const auto& composition = Input::GetComposition();
+        input.Composing = composition.Active;
+        input.Preedit = composition.Text;
+        input.PreeditCaret = composition.Caret;
 		input.DisplayFrame = Input::GetFrameSnapshot().FrameNumber;
 		const bool control = source.IsKeyHeld(341) || source.IsKeyHeld(345);
 		input.Copy = control && source.WasKeyPressed(67);
@@ -1482,6 +1574,10 @@ namespace TomCat {
 		const auto scroll = source.GetScrollDelta();
 		input.ScrollDelta = { scroll.X, scroll.Y };
 		input.TextInput = Input::GetTextInput();
+        const auto& composition = Input::GetComposition();
+        input.Composing = composition.Active;
+        input.Preedit = composition.Text;
+        input.PreeditCaret = composition.Caret;
 		input.DisplayFrame = Input::GetFrameSnapshot().FrameNumber;
 		const bool control = source.IsKeyHeld(341) || source.IsKeyHeld(345);
 		input.Copy = control && source.WasKeyPressed(67);
@@ -1542,6 +1638,43 @@ namespace TomCat {
 		input.GamepadSubmitHeld = source.IsGamepadButtonHeld(0, 0);
 		input.GamepadSubmitReleased = source.WasGamepadButtonReleased(0, 0);
 		UpdateWithInput(scene, registry, viewportWidth, viewportHeight, dpi, input);
+        const auto candidateLayout = BuildLayout(scene, registry, viewportWidth, viewportHeight, dpi);
+        bool hasInput = false;
+        for (auto value : registry.view<UIInputField, ID>()) {
+            const auto& field = registry.get<UIInputField>(value);
+            const auto id = registry.get<ID>(value).id;
+            if (!field.RuntimeFocused || !candidateLayout.Rectangles.contains(id)) continue;
+            hasInput = true;
+            const auto& rect = candidateLayout.Rectangles.at(id);
+            const float scale = candidateLayout.Scales.at(id);
+            UIText text = registry.all_of<UIText>(value) ? registry.get<UIText>(value) : UIText{};
+            size_t caret = std::min<size_t>(field.RuntimeCaret, field.Text.size());
+            std::string displayed = field.Text;
+            displayed.insert(caret, field.RuntimePreedit);
+            caret += std::min<size_t>(field.RuntimePreeditCaret, field.RuntimePreedit.size());
+            if (field.Password) {
+                caret = UnicodeText::GraphemeBoundaries(std::string_view(displayed).substr(0, caret)).size() - 1;
+                displayed.assign(UnicodeText::GraphemeBoundaries(displayed).size() - 1, '*');
+            }
+            if (const auto* theme = FindScope<UITheme>(scene, Entity(value, &scene))) {
+                text.FontSize *= theme->FontScale;
+                if (static_cast<uint64_t>(theme->Font) != 0) text.Font = theme->Font;
+            }
+            float x = 0, height = rect.Height;
+            if (const auto font = FontManager::Get().Load(text.Font, displayed, text.FallbackFont, text.EmojiFont)) {
+                const auto layout = TextLayoutEngine::Build(font->GetAtlas(), displayed, text.FontSize * scale, 0, TextAlignment::Left, text.LineSpacing);
+                x = layout.Carets.contains(caret) ? layout.Carets.at(caret).x : layout.Width;
+                height = layout.Height;
+            }
+            glm::vec2 point;
+            if (TransformUIPosition(candidateLayout.Transforms.at(id), {rect.X + std::min(x, std::max(0.f, rect.Width - 8.f * scale)), rect.Y + std::max(0.f, rect.Height - height)}, point)
+                && screenToFramebufferScale.x > 0 && screenToFramebufferScale.y > 0)
+                Input::SetIMECandidatePosition(viewportOrigin.x + point.x / screenToFramebufferScale.x,
+                    viewportOrigin.y + (viewportHeight - point.y) / screenToFramebufferScale.y);
+            break;
+        }
+        Input::SetRuntimeIMEEnabled(hasInput);
+
 	}
 
 	void RuntimeUISystem::UpdateWithInput(Scene& scene, entt::registry& registry,
@@ -1549,6 +1682,11 @@ namespace TomCat {
 		const RuntimeUIInputFrame& sourceInput)
 	{
 		RuntimeUIInputFrame input = sourceInput;
+        if (input.Composing) {
+            input.Backspace = input.Delete = input.CaretLeft = input.CaretRight = input.CaretHome = input.CaretEnd = false;
+            input.Cancel = input.FocusNext = input.FocusPrevious = input.KeyboardSubmit = input.KeyboardMoveNext = input.KeyboardMovePrevious = false;
+            input.SelectAll = input.Copy = input.Cut = input.Paste = false;
+        }
 		if (s_PointerCaptureScene != &scene)
 			ClearPointerCapture();
 		if (s_ControlOwnershipScene != &scene)
@@ -1986,13 +2124,44 @@ namespace TomCat {
 			}
 			catch (const std::exception&) { localization->RuntimeTranslations.clear(); }
 		}
-		for (const auto& locale : { localization->Locale, localization->FallbackLocale })
-		{
-			const auto language = localization->RuntimeTranslations.find(locale);
-			if (language == localization->RuntimeTranslations.end()) continue;
-			const auto translated = language->second.find(key);
-			if (translated != language->second.end()) return translated->second;
-		}
+        YAML::Node parameters;
+        try {
+            if (entity.HasComponent<UILocalizedText>()) {
+                const auto& value = entity.GetComponent<UILocalizedText>().Parameters;
+                if (value.size() > 65536) return fallback;
+                parameters = YAML::Load(value);
+                if (!parameters.IsMap() || parameters.size() > 64) return fallback;
+            }
+            for (const auto& locale : { localization->Locale, localization->FallbackLocale }) {
+                const auto language = localization->RuntimeTranslations.find(locale);
+                if (language == localization->RuntimeTranslations.end()) continue;
+                auto translated = language->second.end();
+                if (parameters.IsMap() && parameters["count"]) {
+                    const auto category = UnicodeText::PluralCategory(locale, parameters["count"].as<double>());
+                    translated = language->second.find(key + "." + category);
+                    if (translated == language->second.end()) translated = language->second.find(key + ".other");
+                }
+                if (translated == language->second.end()) translated = language->second.find(key);
+                if (translated == language->second.end()) continue;
+                const std::string& pattern = translated->second;
+                std::string result;
+                for (size_t offset = 0; offset < pattern.size();) {
+                    if (pattern.compare(offset, 2, "{{") == 0) { result += '{'; offset += 2; continue; }
+                    if (pattern[offset] != '{') { result += pattern[offset++]; continue; }
+                    const auto end = pattern.find('}', offset + 1);
+                    if (end == std::string::npos) return fallback;
+                    std::string name = pattern.substr(offset + 1, end - offset - 1);
+                    const bool number = name.ends_with(":number");
+                    if (number) name.resize(name.size() - 7);
+                    if (!parameters.IsMap() || !parameters[name] || !parameters[name].IsScalar()) return fallback;
+                    result += number ? UnicodeText::FormatNumber(locale, parameters[name].as<double>()) : parameters[name].as<std::string>();
+                    if (result.size() > 65536) return fallback;
+                    offset = end + 1;
+                }
+                return result;
+            }
+        } catch (const std::exception&) { return fallback; }
+
 		return fallback;
 	}
 

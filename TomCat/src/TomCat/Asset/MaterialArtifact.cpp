@@ -176,7 +176,7 @@ namespace TomCat {
 					error = "material.Shader must be a non-zero AssetHandle";
 					return false;
 				}
-				material.Shader = AssetHandle(root["Shader"].as<uint64_t>());
+				material.Shader = AssetHandle(root["Shader"].Scalar() == "BuiltinSprite2D" ? BuiltinSprite2DShader : root["Shader"].as<uint64_t>());
 				if (static_cast<uint64_t>(material.Shader) == 0)
 				{
 					error = "material.Shader must be a non-zero AssetHandle";
@@ -509,7 +509,8 @@ namespace TomCat {
 		SourceMaterial material;
 		if (!ParseSource(source, material, error))
 			return false;
-		dependencies.push_back({ "Shader", material.Shader, AssetType::Shader });
+		if (static_cast<uint64_t>(material.Shader) != BuiltinSprite2DShader)
+            dependencies.push_back({ "Shader", material.Shader, AssetType::Shader });
 		for (const SourceTexture& texture : material.Textures)
 		{
 			if (static_cast<uint64_t>(texture.Handle) != 0)

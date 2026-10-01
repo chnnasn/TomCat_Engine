@@ -489,8 +489,8 @@ namespace ComponentRegistryRegression {
 				return static_cast<uint64_t>(property.PropertyId)
 					== TomCat::ComponentIds::CameraProperties::Enabled;
 			});
-		Check(cameraDescriptor->SchemaVersion == 3
-			&& cameraDescriptor->Migrations.size() == 2
+		Check(cameraDescriptor->SchemaVersion == 4
+			&& cameraDescriptor->Migrations.size() == 3
 			&& cameraEnabledProperty != cameraDescriptor->Properties.end()
 			&& cameraEnabledProperty->Kind == TomCat::PropertyKind::Bool
 			&& cameraEnabledProperty->DefaultValue == TomCat::PropertyValue(true),
@@ -781,14 +781,10 @@ namespace ComponentRegistryRegression {
 				break;
 			}
 		}
-		Check(cameraRecord && cameraRecord["SchemaVersion"].as<uint32_t>() == 3
-			&& cameraRecord["Properties"].size() == cameraDescriptor->Properties.size()
-			&& cameraRecord["Properties"][cameraRecord["Properties"].size() - 1]
-				["PropertyId"].as<uint64_t>()
-				== TomCat::ComponentIds::CameraProperties::Enabled
-			&& !cameraRecord["Properties"][cameraRecord["Properties"].size() - 1]
-				["Value"].as<bool>(),
-			"Camera.Enabled was not serialized in the canonical v3 component record");
+        YAML::Node cameraEnabledRecord;
+        for (YAML::Node property : cameraRecord["Properties"]) if(property["PropertyId"].as<uint64_t>()==TomCat::ComponentIds::CameraProperties::Enabled) cameraEnabledRecord=property;
+        Check(cameraRecord && cameraRecord["SchemaVersion"].as<uint32_t>()==cameraDescriptor->SchemaVersion && cameraRecord["Properties"].size()==cameraDescriptor->Properties.size()
+            && cameraEnabledRecord && !cameraEnabledRecord["Value"].as<bool>(), "Camera.Enabled was not serialized in the canonical v3 component record");
 		auto cameraRoundTrip = TomCat::CreateRef<TomCat::Scene>();
 		Check(TomCat::SceneArchiveCodec::Decode(Bytes(cameraDocument),
 			cameraRoundTrip, "CameraEnabled.scene", false),
@@ -813,6 +809,7 @@ namespace ComponentRegistryRegression {
 			}
 		}
 		cameraV1Entity["Camera"].remove("Enabled");
+        for(const char* name:{"Exposure","Saturation","Vignette"}) cameraV1Entity["Camera"].remove(name);
 		cameraV1Entity["Camera"]["Camera"]["OrthographicNear"] = -1.0f;
 		cameraV1Entity["Camera"]["Camera"]["OrthographicFar"] = 1.0f;
 		for (YAML::Node record : cameraV1Entity["Components"])
@@ -823,8 +820,7 @@ namespace ComponentRegistryRegression {
 			YAML::Node v1Properties(YAML::NodeType::Sequence);
 			for (const YAML::Node& property : record["Properties"])
 			{
-				if (property["PropertyId"].as<uint64_t>()
-					!= TomCat::ComponentIds::CameraProperties::Enabled)
+				if (property["PropertyId"].as<uint64_t>() < TomCat::ComponentIds::CameraProperties::Enabled)
 					v1Properties.push_back(YAML::Clone(property));
 			}
 			record["Properties"] = v1Properties;
