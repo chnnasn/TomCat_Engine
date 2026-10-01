@@ -154,6 +154,8 @@ std::string TrimASCIIWhitespace(std::string value) {
 	}
 
 void WebProjectSettingsPanel::Draw() {
+    // The desktop controller stores view state on m_Layer; the Web panel owns it directly.
+    auto& m_Layer = *this;
 #include "panels/ProjectSettingsView.inl"
 }
 }

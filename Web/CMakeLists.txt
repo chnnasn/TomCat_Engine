@@ -22,7 +22,7 @@ add_library(tc_yaml STATIC ${TC_YAML})
 target_include_directories(tc_yaml PUBLIC "${TC_VENDOR}/yaml-cpp/include")
 
 set(TC_SOURCES)
-foreach(component Core Asset Audio Math Module Project Renderer Runtime Scene Scripting Utils)
+foreach(component Core Asset Audio Math Module Project Renderer Runtime Save Scene Scripting Utils)
   file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${TC_SRC}/TomCat/${component}/*.cpp")
   list(APPEND TC_SOURCES ${sources})
 endforeach()
@@ -79,6 +79,10 @@ add_executable(tomcat_editor
   "${TC_SRC}/TomCat/ImGui/ImGuiLayer.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiCallback.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneHierarchyPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/HierarchyPanelShared.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneHierarchyTreePanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneInspectorPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneAuthoringEditorsPanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ContentBrowserPanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ConsolePanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
@@ -111,6 +115,10 @@ add_library(tomcat_managed_web_entrypoints STATIC
   "${TC_SRC}/TomCat/ImGui/ImGuiLayer.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiCallback.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneHierarchyPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/HierarchyPanelShared.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneHierarchyTreePanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneInspectorPanel.cpp"
+  "${TC_ROOT}/Editor/TomCatInut/src/panels/SceneAuthoringEditorsPanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ContentBrowserPanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ConsolePanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
