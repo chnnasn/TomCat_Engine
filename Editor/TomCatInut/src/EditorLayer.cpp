@@ -26,6 +26,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "TomCat/Module/ModuleSystem.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Renderer/Font.h"
@@ -2057,6 +2058,36 @@ namespace TomCat {
 				ImGui::EndMenu();
 			}
 
+			if (ImGui::BeginMenu("Modules"))
+			{
+				const auto loadedModules =
+					ModuleSystem::Get().GetLoadedModules();
+				if (loadedModules.empty())
+					ImGui::MenuItem("No modules loaded", nullptr, false, false);
+				for (const auto& module : loadedModules)
+					ImGui::MenuItem(module.DisplayName.c_str(), nullptr, false, false);
+				const auto commands = ModuleSystem::Get().GetEditorCommands();
+				if (!commands.empty())
+					ImGui::Separator();
+				for (const auto& command : commands)
+				{
+					if (ImGui::MenuItem(command.Label.c_str()))
+					{
+						try
+						{
+							command.Callback();
+						}
+						catch (const std::exception& error)
+						{
+							m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+								std::string("Module command failed: ") + error.what(),
+								command.ModuleName);
+							m_ShowConsolePanel = true;
+						}
+					}
+				}
+				ImGui::EndMenu();
+			}
 			if (ImGui::BeginMenu("Help"))
 			{
 				ImGui::MenuItem("TomCat Editor", nullptr, false, false);
@@ -3068,6 +3099,51 @@ namespace TomCat {
 		}
 		if (!PrepareManagedRuntime())
 			return;
+		// Publish the project's per-game data directories so gameplay save
+		// APIs resolve identically in Play mode and in the packaged Player.
+		{
+			PlayerSettings playerSettings = m_CurrentProject->GetPlayerSettings();
+			std::string settingsError;
+			if (!NormalizeAndValidatePlayerSettings(playerSettings, settingsError))
+			{
+				blockPlay("Play was blocked because PlayerSettings are invalid: "
+					+ settingsError);
+				return;
+			}
+			const auto gameDataPaths = ApplicationPaths::GetGameDataPaths(
+				playerSettings.CompanyName, playerSettings.ProductName,
+				playerSettings.SaveDirectory, playerSettings.LogDirectory,
+				playerSettings.CrashDirectory);
+			std::string dataError;
+			if (!gameDataPaths)
+				dataError = "LocalAppData or the game data paths are invalid";
+			else
+			{
+				const std::array<std::filesystem::path, 4> directories = {
+					gameDataPaths->Root, gameDataPaths->Saves,
+					gameDataPaths->Logs, gameDataPaths->Crashes };
+				for (const std::filesystem::path& directory : directories)
+				{
+					std::error_code directoryError;
+					std::filesystem::create_directories(directory,
+						directoryError);
+					if (directoryError || !std::filesystem::is_directory(
+						directory, directoryError) || directoryError)
+					{
+						dataError = "could not create game data directory: "
+							+ directoryError.message();
+						break;
+					}
+				}
+			}
+			if (!dataError.empty())
+			{
+				blockPlay("Play was blocked because game data initialization "
+					"failed: " + dataError);
+				return;
+			}
+			ApplicationPaths::SetRuntimeGameDataPaths(*gameDataPaths);
+		}
 		if (!m_RuntimeSceneManager.ConfigureBuildSettings(buildSettings))
 		{
 			blockPlay("Play could not configure Build Settings: "
@@ -4417,6 +4493,16 @@ namespace TomCat {
 		if (IsSceneRunning())
 			OnSceneStop();
 		m_CurrentProject = project;
+		{
+			std::string moduleError;
+			if (!ModuleSystem::Get().LoadProjectModules(
+				project->GetProjectDirectory(), moduleError))
+			{
+				m_ConsolePanel.Push(ConsoleMessageSeverity::Error,
+					"Module discovery failed: " + moduleError, "Modules");
+				m_ShowConsolePanel = true;
+			}
+		}
 		m_BuildState.BuildSettingsStatus.clear();
 		m_BuildState.BuildSettingsSucceeded = false;
 		m_BuildState.PlayerBuildStatus.clear();

@@ -6,6 +6,7 @@
 #include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Audio/AudioSceneRuntime.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Core/Application.h"
 #include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Math/Math.h"
@@ -16,6 +17,7 @@
 #include "TomCat/Scene/SceneManager.h"
 #include "TomCat/Scene/SpriteAnimation.h"
 #include "TomCat/Runtime/RuntimeUI.h"
+#include "TomCat/Save/SaveDataStore.h"
 #include "TomCat/Utils/PathUtils.h"
 
 #include <algorithm>
@@ -711,6 +713,238 @@ namespace TomCat::Scripting {
 			api.GetSaveDirectory = &ApplicationPathsGetSaveDirectoryCallback;
 			api.GetLogDirectory = &ApplicationPathsGetLogDirectoryCallback;
 			api.GetCrashDirectory = &ApplicationPathsGetCrashDirectoryCallback;
+			return api;
+		}
+
+		int32_t ApplicationRequestExitCallback(int32_t exitCode) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				Application::Get().Close(exitCode);
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t ApplicationHasWindowCallback(int32_t* hasWindow) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!hasWindow) return Code(ScriptStatus::InvalidArgument);
+				*hasWindow = Application::Get().HasWindow() ? 1 : 0;
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		NativeApplicationApiV1 BuildApplicationApiV1()
+		{
+			NativeApplicationApiV1 api;
+			api.RequestExit = &ApplicationRequestExitCallback;
+			api.HasWindow = &ApplicationHasWindowCallback;
+			return api;
+		}
+
+		// The store owns a mutex, so it can be neither moved nor copied: the
+		// optional must be constructed in place from the resolved directory.
+		std::optional<Save::SaveDataStore> ResolveSaveDataStore(
+			int32_t& failureStatus)
+		{
+			const std::optional<std::filesystem::path> directory =
+				ApplicationPaths::GetRuntimeSaveDirectory();
+			if (!directory)
+			{
+				TC_Core_Error("SaveData unavailable: no running game save "
+					"directory was published");
+				failureStatus = Code(ScriptStatus::Unavailable);
+				return std::nullopt;
+			}
+			return std::optional<Save::SaveDataStore>(std::in_place, *directory);
+		}
+
+		int32_t SaveDataValidateSlot(NativeUtf8View slot, std::string& name)
+		{
+			if (!ReadUtf8(slot, name)
+				|| name.size() > Save::MaximumSlotNameBytes
+				|| !Save::IsValidSlotName(name))
+				return Code(ScriptStatus::InvalidArgument);
+			return Code(ScriptStatus::Success);
+		}
+
+		int32_t SaveDataWriteSlotCallback(NativeUtf8View slot,
+			uint32_t dataVersion, const uint8_t* payload,
+			uint32_t payloadBytes) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (payloadBytes > 0 && !payload)
+					return Code(ScriptStatus::InvalidArgument);
+				std::string slotName;
+				const int32_t validation = SaveDataValidateSlot(slot, slotName);
+				if (validation != Code(ScriptStatus::Success))
+					return validation;
+				int32_t failureStatus = Code(ScriptStatus::Success);
+				std::optional<Save::SaveDataStore> store =
+					ResolveSaveDataStore(failureStatus);
+				if (!store)
+					return failureStatus;
+				std::string error;
+				if (!store->Write(slotName, dataVersion,
+					{ payload, payloadBytes }, error))
+				{
+					TC_Core_Error("SaveData write '{0}' failed: {1}", slotName, error);
+					return Code(ScriptStatus::InvalidState);
+				}
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t SaveDataReadSlotCallback(NativeUtf8View slot,
+			uint32_t* dataVersion, int64_t* savedAtUtcUnixSeconds,
+			uint8_t* payloadBuffer, uint32_t payloadCapacity,
+			uint32_t* requiredPayloadBytes) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!dataVersion || !savedAtUtcUnixSeconds || !requiredPayloadBytes)
+					return Code(ScriptStatus::InvalidArgument);
+				std::string slotName;
+				const int32_t validation = SaveDataValidateSlot(slot, slotName);
+				if (validation != Code(ScriptStatus::Success))
+					return validation;
+				int32_t failureStatus = Code(ScriptStatus::Success);
+				std::optional<Save::SaveDataStore> store =
+					ResolveSaveDataStore(failureStatus);
+				if (!store)
+					return failureStatus;
+				Save::SaveEnvelope envelope;
+				std::vector<uint8_t> payload;
+				std::string error;
+				const Save::SlotReadStatus status = store->Read(slotName,
+					envelope, payload, error);
+				if (status == Save::SlotReadStatus::Missing)
+					return SaveDataReadMissingV1;
+				if (status == Save::SlotReadStatus::Corrupted)
+					return SaveDataReadCorruptedV1;
+				*requiredPayloadBytes = static_cast<uint32_t>(payload.size());
+				if (payloadCapacity < payload.size()
+					|| (!payloadBuffer && !payload.empty()))
+					return Code(ScriptStatus::BufferTooSmall);
+				if (!payload.empty())
+					std::memcpy(payloadBuffer, payload.data(), payload.size());
+				*dataVersion = envelope.DataVersion;
+				*savedAtUtcUnixSeconds = envelope.SavedAtUtcUnixSeconds;
+				return static_cast<int32_t>(status);
+			});
+		}
+
+		int32_t SaveDataDeleteSlotCallback(NativeUtf8View slot,
+			int32_t* removed) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!removed) return Code(ScriptStatus::InvalidArgument);
+				std::string slotName;
+				const int32_t validation = SaveDataValidateSlot(slot, slotName);
+				if (validation != Code(ScriptStatus::Success))
+					return validation;
+				int32_t failureStatus = Code(ScriptStatus::Success);
+				std::optional<Save::SaveDataStore> store =
+					ResolveSaveDataStore(failureStatus);
+				if (!store)
+					return failureStatus;
+				bool deleted = false;
+				std::string error;
+				if (!store->Delete(slotName, deleted, error))
+				{
+					TC_Core_Error("SaveData delete '{0}' failed: {1}", slotName, error);
+					return Code(ScriptStatus::InvalidState);
+				}
+				*removed = deleted ? 1 : 0;
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t SaveDataSlotExistsCallback(NativeUtf8View slot,
+			int32_t* exists) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!exists) return Code(ScriptStatus::InvalidArgument);
+				std::string slotName;
+				const int32_t validation = SaveDataValidateSlot(slot, slotName);
+				if (validation != Code(ScriptStatus::Success))
+					return validation;
+				int32_t failureStatus = Code(ScriptStatus::Success);
+				std::optional<Save::SaveDataStore> store =
+					ResolveSaveDataStore(failureStatus);
+				if (!store)
+					return failureStatus;
+				*exists = store->Exists(slotName) ? 1 : 0;
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t SaveDataListSlotsCallback(NativeSaveDataSlotSummaryV1* entries,
+			uint32_t capacity, uint32_t* requiredCount) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!requiredCount) return Code(ScriptStatus::InvalidArgument);
+				int32_t failureStatus = Code(ScriptStatus::Success);
+				std::optional<Save::SaveDataStore> store =
+					ResolveSaveDataStore(failureStatus);
+				if (!store)
+					return failureStatus;
+				std::string error;
+				const std::vector<Save::SlotSummary> slots = store->List(error);
+				if (!error.empty())
+				{
+					TC_Core_Error("SaveData list failed: {0}", error);
+					return Code(ScriptStatus::InvalidState);
+				}
+				for (const Save::SlotSummary& summary : slots)
+				{
+					if (summary.Slot.size() > SaveDataMaximumSlotUtf8BytesV1)
+						return Code(ScriptStatus::InvalidState);
+				}
+				*requiredCount = static_cast<uint32_t>(slots.size());
+				if (capacity < slots.size() || (!entries && !slots.empty()))
+					return Code(ScriptStatus::BufferTooSmall);
+				for (size_t index = 0; index < slots.size(); ++index)
+				{
+					const Save::SlotSummary& summary = slots[index];
+					NativeSaveDataSlotSummaryV1& output = entries[index];
+					output = {};
+					output.FormatVersion = summary.FormatVersion;
+					output.DataVersion = summary.DataVersion;
+					output.SlotUtf8Bytes =
+						static_cast<uint32_t>(summary.Slot.size());
+					output.Corrupted = summary.Corrupted ? 1 : 0;
+					output.SavedAtUtcUnixSeconds =
+						summary.SavedAtUtcUnixSeconds;
+					output.PayloadBytes = summary.PayloadBytes;
+					if (!summary.Slot.empty())
+						std::memcpy(output.Slot, summary.Slot.data(),
+							summary.Slot.size());
+				}
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		NativeSaveDataApiV1 BuildSaveDataApiV1()
+		{
+			NativeSaveDataApiV1 api;
+			api.WriteSlot = &SaveDataWriteSlotCallback;
+			api.ReadSlot = &SaveDataReadSlotCallback;
+			api.DeleteSlot = &SaveDataDeleteSlotCallback;
+			api.SlotExists = &SaveDataSlotExistsCallback;
+			api.ListSlots = &SaveDataListSlotsCallback;
 			return api;
 		}
 
@@ -2861,6 +3095,28 @@ namespace TomCat::Scripting {
 				if (capability == ApplicationPathsCapabilityName)
 				{
 					const NativeApplicationPathsApiV1 api = BuildApplicationPathsApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
+				if (capability == ApplicationCapabilityName)
+				{
+					const NativeApplicationApiV1 api = BuildApplicationApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version)
+						return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api))
+						return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
+				if (capability == SaveDataCapabilityName)
+				{
+					const NativeSaveDataApiV1 api = BuildSaveDataApiV1();
 					*required = sizeof(api);
 					if (minimumVersion > api.Version)
 						return Code(ScriptStatus::VersionMismatch);
