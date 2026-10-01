@@ -62,6 +62,7 @@ namespace {
 		std::filesystem::path OutputPath;
 		std::filesystem::path TemplatePath;
 		bool AllowMigration = false;
+        TomCat::ScriptBuildProfile Profile = TomCat::ScriptBuildProfile::Production;
 		std::string Error;
 	};
 
@@ -70,8 +71,8 @@ namespace {
 		std::cout
 			<< "TomCatCLI - deterministic headless project build/cook\n\n"
 			<< "Usage:\n"
-			<< "  TomCatCLI cook  --project <Project.tcproj> [--output <Game.tcpak>] [--migrate]\n"
-			<< "  TomCatCLI build --project <Project.tcproj> [--template <directory>] [--migrate]\n\n"
+			<< "  TomCatCLI cook  --project <Project.tcproj> [--output <Game.tcpak>] [--migrate] [--development]\n"
+			<< "  TomCatCLI build --project <Project.tcproj> [--template <directory>] [--migrate] [--development]\n\n"
 			<< "Both commands compile and validate the current C# sources first. Projects\n"
 			<< "requiring an upgrade are rejected unless --migrate is explicit. An\n"
 			<< "interrupted migration must be reviewed and resolved in the Editor.\n";
@@ -118,7 +119,8 @@ namespace {
 				if (++index >= argc) return std::nullopt;
 				return std::filesystem::path(argv[index]);
 			};
-			if (option == L"--project")
+			if (option == L"--development") result.Profile = TomCat::ScriptBuildProfile::Development;
+            else if (option == L"--project")
 			{
 				const auto parsed = value();
 				if (!parsed) { result.Error = "--project requires a path"; return result; }
@@ -180,7 +182,7 @@ namespace {
 	}
 
 	bool CompileManaged(const TomCat::Ref<TomCat::Project>& project,
-		TomCat::ScriptProjectCompiler& compiler, TomCat::ScriptBuildResult& build,
+		TomCat::ScriptProjectCompiler& compiler, TomCat::ScriptBuildResult& build, TomCat::ScriptBuildProfile profile,
 		std::string& error)
 	{
 		compiler.SetDiagnosticCallback([](const TomCat::ScriptCompilerDiagnostic& value)
@@ -190,7 +192,7 @@ namespace {
 			stream << (value.Code.empty() ? "C#" : value.Code) << ": "
 				<< value.Message << '\n';
 		});
-		if (!compiler.Configure(project))
+		if (!compiler.Configure(project, {}, {}, profile))
 		{
 			error = "could not configure the managed Release compiler";
 			return false;
@@ -329,7 +331,7 @@ namespace {
 		}
 		TomCat::ScriptProjectCompiler compiler;
 		TomCat::ScriptBuildResult managedBuild;
-		if (!CompileManaged(project, compiler, managedBuild, error))
+		if (!CompileManaged(project, compiler, managedBuild, options.Profile, error))
 		{
 			std::cerr << error << '\n';
 			return 8;

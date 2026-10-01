@@ -499,7 +499,8 @@ using namespace EditorLayerDetail;
 				drawDisabledCombo("Target Platform", "##TargetPlatform", "Windows");
 				drawDisabledCombo("Architecture", "##Architecture", "Intel 64-bit");
                 ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
-                ImGui::TextWrapped("Release player with managed symbols");
+                ImGui::Checkbox("Development Build", &m_BuildState.DevelopmentBuild);
+                ImGui::TextWrapped(m_BuildState.DevelopmentBuild ? "Unoptimized C# with portable symbols" : "Optimized C# with portable symbols");
 				ImGui::EndTable();
 			}
 			ImGui::EndChild();
@@ -597,9 +598,18 @@ using namespace EditorLayerDetail;
 		}
 		const AssetHandle entryScene = buildSettings.EntrySceneHandle;
 
-		// A Player build is always based on a newly compiled and validated Release
+		ScriptProjectCompiler playerCompiler;
+        if (!playerCompiler.Configure(m_Layer.m_CurrentProject, {}, {}, m_BuildState.DevelopmentBuild
+            ? ScriptBuildProfile::Development : ScriptBuildProfile::Production))
+            return fail("Player build failed: could not configure script build profile.");
+        // Building must not replace the Editor's development metadata runtime.
+        struct RestoreRuntime {
+            std::shared_ptr<Scripting::IScriptRuntime> Previous = Scripting::ScriptEngine::Get().GetRuntime();
+            ~RestoreRuntime() { Scripting::ScriptEngine::Get().SetRuntime(std::move(Previous)); }
+        } restoreRuntime;
+        // A Player build is always based on a newly compiled and validated Release
 		// candidate. Never fall back to the previous last-good artifact here.
-		ScriptBuildResult scriptBuild = m_Layer.m_ScriptCompiler.CompileNow();
+		ScriptBuildResult scriptBuild = playerCompiler.CompileNow();
 		if (!scriptBuild.Succeeded || scriptBuild.SourceChangedDuringBuild ||
 			scriptBuild.BuildID.empty() || scriptBuild.AssemblyPath.empty())
 		{
@@ -607,18 +617,18 @@ using namespace EditorLayerDetail;
 				? "Player build failed: C# sources changed during the Release compile. Build again."
 				: "Player build failed: the fresh Release C# candidate did not validate. See Console diagnostics.");
 		}
-		if (!m_Layer.m_ScriptCompiler.RefreshSourceState() ||
-			!m_Layer.m_ScriptCompiler.IsCurrentSourceBuilt() ||
-			m_Layer.m_ScriptCompiler.GetCurrentSourceHash() != scriptBuild.SourceHash ||
-			m_Layer.m_ScriptCompiler.GetLastGoodBuildID() != scriptBuild.BuildID ||
-			AbsoluteLexicalPath(m_Layer.m_ScriptCompiler.GetLastGoodAssemblyPath()) !=
+		if (!playerCompiler.RefreshSourceState() ||
+			!playerCompiler.IsCurrentSourceBuilt() ||
+			playerCompiler.GetCurrentSourceHash() != scriptBuild.SourceHash ||
+			playerCompiler.GetLastGoodBuildID() != scriptBuild.BuildID ||
+			AbsoluteLexicalPath(playerCompiler.GetLastGoodAssemblyPath()) !=
 				AbsoluteLexicalPath(scriptBuild.AssemblyPath))
 		{
 			return fail("Player build failed: the fresh C# candidate no longer matches the current sources.");
 		}
 
 		const std::filesystem::path managedDirectory =
-			m_Layer.m_ScriptCompiler.GetManagedRuntimeDirectory();
+			playerCompiler.GetManagedRuntimeDirectory();
 		if (managedDirectory.empty())
 			return fail("Player build failed: TomCat.ScriptHost Release outputs are unavailable.");
 		std::string runtimeError;
@@ -668,13 +678,13 @@ using namespace EditorLayerDetail;
 		request.ManagedAssembly = std::move(assemblyBytes);
 		request.ScriptManifestJson = scriptManifestJson;
 		request.ScriptBuildID = scriptBuild.BuildID;
-		request.ValidateBeforePublish = [this, scriptBuild]()
+		request.ValidateBeforePublish = [&playerCompiler, scriptBuild]()
 		{
-			return m_Layer.m_ScriptCompiler.RefreshSourceState() &&
-				m_Layer.m_ScriptCompiler.IsCurrentSourceBuilt() &&
-				m_Layer.m_ScriptCompiler.GetCurrentSourceHash() == scriptBuild.SourceHash &&
-				m_Layer.m_ScriptCompiler.GetLastGoodBuildID() == scriptBuild.BuildID &&
-				AbsoluteLexicalPath(m_Layer.m_ScriptCompiler.GetLastGoodAssemblyPath()) ==
+			return playerCompiler.RefreshSourceState() &&
+				playerCompiler.IsCurrentSourceBuilt() &&
+				playerCompiler.GetCurrentSourceHash() == scriptBuild.SourceHash &&
+				playerCompiler.GetLastGoodBuildID() == scriptBuild.BuildID &&
+				AbsoluteLexicalPath(playerCompiler.GetLastGoodAssemblyPath()) ==
 					AbsoluteLexicalPath(scriptBuild.AssemblyPath);
 		};
 		PlayerBuildResult playerBuild = PlayerBuilder::Build(std::move(request));

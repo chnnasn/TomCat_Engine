@@ -73,7 +73,11 @@ Asset:
   for(const marker of ['WEB_FAULT Throw','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDisable','WEB_LIFECYCLE OnDestroy'])if(lifecycle.filter(value=>value===marker).length!==1)throw new Error(`expected exactly one ${marker}: ${JSON.stringify(lifecycle)}`);
   if(lifecycle.filter(value=>value==='WEB_LIFECYCLE OnUpdate').length<2)throw new Error(`healthy script did not continue after peer fault: ${JSON.stringify(lifecycle)}`);
   if(!consoleMessages.some(value=>value.includes('intentional browser lifecycle smoke failure')))throw new Error('fault diagnostic was not reported');
-  out({ok:true,boot,diagnostics:compile.diagnostics,lifecycle,controls:controls.map(x=>x.result),state:JSON.parse(engine.EditorState())});
+  engine.EditorResize(800,450); engine.EditorFrame(1/60);
+  const finalState=JSON.parse(engine.EditorState());
+  if(engine.EditorError())throw new Error(engine.EditorError());
+  engine.EditorShutdown();
+  out({ok:true,shutdown:true,boot,diagnostics:compile.diagnostics,lifecycle,controls:controls.map(x=>x.result),state:finalState});
 } catch(error) {
   const FS=globalThis.TomCatWeb?.runtime?.Module?.FS;
   let filesystem=null;

@@ -31,7 +31,10 @@ No manual DLL copies or runtime junctions are required.
 
 `Tools/CoinRunnerGen` generates the scene using engine APIs and copies the
 canonical source scripts from `Samples/CoinRunnerScripts`. The checked-in sample
-is ready to use; the generator leaves an existing project untouched.
+is ready to use; the generator leaves an existing project untouched by default.
+`CoinRunnerGen --refresh-scene` explicitly regenerates the scene after closing
+the Editor and preserves existing C# sources. The HUD uses a top-left anchor so
+DPI scaling cannot push a fixed center offset beyond the viewport.
 
 ## Interactive acceptance still required
 

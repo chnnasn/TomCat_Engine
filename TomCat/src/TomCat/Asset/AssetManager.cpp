@@ -1941,15 +1941,22 @@ namespace TomCat {
 		return true;
 	}
 
-	bool AssetManager::Refresh()
+	bool AssetManager::Refresh(bool invalidateRuntimeResources)
 	{
 		if (!m_RegistryInitialized || IsCookedPackageMounted())
 			return false;
-		m_ImportCoordinator.CancelPendingImports();
+		const auto before = invalidateRuntimeResources ? AssetRegistry::AssetMap{} : m_Registry.GetAssets();
+		if (invalidateRuntimeResources)
+			m_ImportCoordinator.CancelPendingImports();
 		const bool complete = m_Database.RefreshRegistry();
 		// Refresh may apply a safe partial scan while reporting damaged sidecars.
 		// Any such metadata change must invalidate both successful and missing loads.
-		ReleaseAll();
+		// Script discovery runs several times per second. Dropping the font atlas
+		// on every unchanged scan leaves blank frames until async publication.
+		// Changed identities (including partial scans) must still invalidate caches;
+		// source-only edits are published by the import coordinator per handle.
+		if (invalidateRuntimeResources || before != m_Registry.GetAssets())
+			ReleaseAll();
 		return complete;
 	}
 
