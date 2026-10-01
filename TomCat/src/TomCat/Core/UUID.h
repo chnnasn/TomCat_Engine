@@ -8,7 +8,9 @@ namespace TomCat {
 	{
 	public:
 		UUID();
-		UUID(uint64_t uuid);
+		// Inline so header-only consumers (the Module SDK) can construct
+		// identities without linking the engine library.
+		explicit UUID(uint64_t uuid) : m_UUID(uuid) {}
 		UUID(const UUID&) = default;
 		UUID& operator=(const UUID&) = default;
 

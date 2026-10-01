@@ -217,7 +217,41 @@ Web 不托管桌面 hostfxr/C#，没有可听音频输出，不支持自定义 C
 
 ## 当前格式边界
 
-- `Project.tcproj` 当前写 schema v4，合法 v3 需预览并明确批准后迁移；`BuildSettings.json` 与 `PlayerSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v11 并读取 v9/v10/v11；`.tcpak` 当前写 v7，Player/loader 读取 v5/v6/v7。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
+### 游戏存档容器 `.tcsav`
+
+存档位于运行游戏的 Save 目录，默认 Windows 路径为 `%LOCALAPPDATA%/TomCat/Games/<Company>/<Product>/Saves/`。文件名为 `<slot>.tcsav`，槽名只接受不超过 64 字节的 ASCII 字母、数字、下划线和连字符。容器格式版本由 `Version::SaveFormatCurrent` 控制，当前为 1；游戏载荷版本 `DataVersion` 由游戏负责解释和迁移。
+
+所有整数使用小端编码。文件依次包含：5 字节 ASCII `TCSAV`、1 字节格式版本、2 字节零保留位、uint32 YAML envelope 长度、envelope、uint64 载荷长度、载荷字节，以及覆盖前面全部字节的 32 字节 SHA-256。Envelope 必须恰好包含 `SaveFormatVersion`、`Slot`、`DataVersion`、`SavedAtUtc`（UTC 时间字符串）和 `PayloadLength`，长度上限为 4096 字节；载荷最多 16 MiB。读取校验摘要、完整布局和 envelope/载荷长度一致性，不能将摘要视为加密或防作弊认证。
+
+写入使用同目录临时文件和原子替换，并将之前校验通过的主文件轮换至 `<slot>.tcsav.bak`。主文件缺失或损坏时尝试备份，成功则修复主文件并返回 `RecoveredFromBackup`。原生接口区分 `Ok`、`RecoveredFromBackup`、`Missing`、`Corrupted`；载荷对原生存储层是不透明字节。C# `SaveData` 提供文档和类型化数据接口，不自动迁移游戏业务字段。存档与备份属于玩家数据，不提交至项目仓库。
+
+### 原生模块清单 `module.tomcat`
+
+项目模块放在 `Modules/<directory>/module.tomcat`，清单为 YAML mapping。必需字段为 `ModuleVersion: 1`、`Name`、`DisplayName`、`Version`、`Library`；可选字段为 `EngineBuildID` 和 `Enabled`（默认 true），未知字段被拒绝。`Name` 最多 64 个 ASCII 字母、数字、下划线、连字符或点，首尾不能是点；`DisplayName` 非空且最多 128 字节，`Version` 非空。`Library` 相对于清单目录，规范化后不得越出该目录，也不能是绝对路径。
+
+```yaml
+ModuleVersion: 1
+Name: Weather
+DisplayName: Weather Module
+Version: 1.0.0
+EngineBuildID: TomCat-0.4.0
+Library: lib/Weather.dll
+Enabled: true
+```
+
+非空 `EngineBuildID` 必须与宿主 `Version::EngineBuildID` 完全相同，否则在加载 DLL 前拒绝。省略或留空表示不固定版本，兼容责任由模块作者承担。模块仍须使用相同引擎头文件、工具链与依赖版本构建；版本字符串相同不代表任意 C++ ABI 都兼容。DLL 导出 `TomCatModuleMain`，模块在入口检查宿主 API/ABI 版本后注册组件、导入器和编辑器命令。禁用模块不加载，加载失败的模块记录诊断并跳过。缺失模块的场景组件保留为 opaque 数据，模块恢复后可显式 rehydrate。
+
+### 场景迁移备份与事务日志
+
+通用场景迁移通过现有 reader 解码 schema v9/v10，再以当前 v11 writer 重新序列化和验证，保留未安装模块的 opaque 组件记录。先预览，再执行；项目批量迁移按场景分别提交，后续失败不会撤销已经完成的其他场景。
+
+原始字节保存在 `ProjectSettings/SceneMigrationBackups/<scene-filename>.<original-SHA256-first-16>.bak`。同目录中的 `<scene-filename>.migration-journal` 是 YAML 事务日志，包含 `JournalVersion: 1`、`TransactionID`、`State: Migrating`、`ScenePath`、`OriginalSHA256`、`MigratedSHA256` 和 `BackupFile`。备份和日志先持久化，再原子替换场景；成功完成后删除事务日志，保留原始备份。
+
+中断恢复先预览当前场景、备份和日志中的 SHA-256，再选择保留当前已迁移场景或恢复原始字节；过期预览或摘要不匹配会拒绝恢复。项目迁移预览遇到未处理日志会阻止继续迁移。这些文件与项目格式迁移的 `MigrationBackups/`、`.migration-journal.json` 是两套独立事务记录；`SceneMigrationBackups/` 属于本机恢复数据，应加入项目 `.gitignore`。
+
+### 格式与身份摘要
+
+- `Project.tcproj` 当前写 schema v4，合法 v3 需预览并明确批准后迁移；`BuildSettings.json` 与 `PlayerSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v11 并读取 v9/v10/v11；`.tcpak` 当前写 v7，Player/loader 读取 v5/v6/v7；`.tcsav` 和 `module.tomcat` 当前格式版本均为 1。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
 - 项目资源加载只接受 `AssetHandle`；`BuildSettings.json` 中的 `pathHint` 仅是作者定位信息，不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。

@@ -1,0 +1,7 @@
+/Library/
+/Cache/
+/UserSettings/
+/ProjectSettings/MigrationBackups/
+/ProjectSettings/SceneMigrationBackups/
+/ProjectSettings/.migration-journal.json
+/Build/

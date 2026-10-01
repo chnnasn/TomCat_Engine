@@ -147,6 +147,7 @@ internal static unsafe partial class Program
 		{
 			VerifyDescriptorConstructorFactory();
 			VerifyConstructorGuard();
+			VerifySaveDocumentCodec();
 
 			string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixture");
 			string fixtureAssemblyPath = Path.Combine(fixtureDirectory, "Assembly-CSharp.dll");
@@ -200,6 +201,49 @@ internal static unsafe partial class Program
     private static void VerifyConstructorGuard() =>
         Throws<InvalidOperationException>(static () => _ = new ConstructorProbe(),
             "TomCat API use in a script constructor must be rejected");
+
+	private static void VerifySaveDocumentCodec()
+	{
+		var document = new SaveDocument { Version = 3 };
+		document.Set("label", "run-42");
+		document.Set("score", 1234L);
+		document.Set("accuracy", 0.9875);
+		document.Set("alive", true);
+		document.Set("attempts", 7);
+
+		SaveDocument decoded = SaveDocument.Deserialize(document.Serialize());
+		Check(decoded.Version == 3u, "save document version round-trip");
+		Check(decoded.GetString("label") == "run-42", "string round-trip");
+		Check(decoded.GetLong("score") == 1234L, "long round-trip");
+		Check(Math.Abs(decoded.GetDouble("accuracy") - 0.9875) < 1e-12,
+			"double round-trip");
+		Check(decoded.GetBool("alive"), "bool round-trip");
+		Check(decoded.GetLong("attempts") == 7L, "int widens to long");
+		Check(decoded.GetDouble("score") == 1234.0, "long widens to double");
+		Check(!decoded.TryGetBool("score", out _),
+			"long must not satisfy TryGetBool");
+		Check(!decoded.TryGetLong("label", out _),
+			"string must not satisfy TryGetLong");
+
+		Throws<TomCatException>(() => SaveDocument.Deserialize([1, 2, 3]),
+			"malformed payload must be rejected before use");
+		byte[] foreign = Encoding.UTF8.GetBytes("{\"Version\":1,\"Entries\":{}}");
+		Check(SaveDocument.Deserialize(foreign).Count == 0,
+			"empty envelope decodes to an empty document");
+		byte[] hostile = Encoding.UTF8.GetBytes(
+			"{\"Version\":1,\"Entries\":{\"x\":[\"s\",42]}}");
+		Throws<TomCatException>(() => SaveDocument.Deserialize(hostile),
+			"kind/value mismatch must be rejected");
+		Throws<KeyNotFoundException>(() => decoded.GetBool("absent"),
+			"missing keys must be reported");
+
+		var mutation = new SaveDocument();
+		mutation.Set("slot", "x");
+		Throws<ArgumentException>(() => SaveData.Write("../escape", mutation),
+			"traversal slot names must be rejected");
+		Throws<ArgumentException>(() => SaveData.Write("space slot", mutation),
+			"slot names must be restricted to safe characters");
+	}
 
 	private static void VerifyDescriptorConstructorFactory()
 	{

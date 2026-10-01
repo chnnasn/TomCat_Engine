@@ -132,7 +132,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Source development requires the **.NET 10 SDK** to build TomCat itself. Packaged Editors carry a pinned private SDK for game-script compilation and do not use a machine-wide C# environment.
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
-- Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. Play Mode hot replacement and a built-in C# debugger are also unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
+- Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. C# debugging uses an external IDE attached to the Editor; scripts are recompiled and updated after stopping Play. Play Mode hot replacement is unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
 
 The [recording archive](docs/portfolio/README.md) records the exact scope and
 limitations of each desktop session. The 2026-09-20 refresh checked the UI flows
@@ -220,7 +220,8 @@ vendor/            premake and third-party dependencies
 - [x] Snapshot Prefab V1 with stable LocalIDs, hierarchy/Joint/C# Entity remapping, fresh AttachmentIDs, deferred C# creation, Editor creation/drop workflows, and Cook dependency traversal
 - [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the BootManifest introduced with TCPAK v6 and retained in v7
 - [x] Linked/nested Prefabs, overrides/variants, asynchronous reads, additive scenes, persistent roots and unloading (see the feature guides for scope)
-- [ ] General game save-data system
+- [x] [Complete-game verification sample: CoinRunner](Samples/CoinRunner/README.md) (authoring, scripts, physics triggers, scoring, save persistence, corruption recovery, packaging and headless packaged smoke via `Scripts\Run-CoinRunnerSmoke.ps1`); Editor visuals, controls and IDE breakpoints require separate interactive acceptance.
+- [x] General game save system: checksummed versioned slot files with atomic writes, backup rotation, automatic corruption recovery, and the managed `SaveData`/`SaveDocument` API available in Play mode and the Player
 
 ### Asset Pipeline and 2D Production
 
@@ -249,7 +250,7 @@ PCM WAV streaming reads a registry-resolved source range in authoring mode becau
 - [x] Run managed/native/Player Release regressions on push/PR CI
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
 - [x] Project migration preview, explicit approval, transactional upgrades, and interrupted-migration recovery in the Editor; CLI upgrades require `--migrate`
-- [ ] General scene schema migration tooling and a plugin/module SDK
+- [x] General scene schema migration tooling (SceneMigrator: transactional v9/v10 -> current upgrades, SHA-256 backups, interrupted-migration journals and recovery; CLI `--migrate`) and the native module SDK (`Modules/<name>/module.tomcat`, versioned host table, component/importer/editor-command extension points)
 - [ ] Additional platforms and rendering backends after the Windows/OpenGL 2D workflow is mature
 
 ### Future 3D Scope
