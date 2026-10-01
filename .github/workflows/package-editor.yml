@@ -170,7 +170,7 @@ jobs:
           $pins = Get-Content "$env:GITHUB_WORKSPACE\Scripts\ReleaseToolVersions.json" -Raw | ConvertFrom-Json
           $zip = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version).zip"
           $directory = Join-Path $env:RUNNER_TEMP "premake-$($pins.premake.version)"
-          Invoke-WebRequest -Uri $pins.premake.url -OutFile $zip -UseBasicParsing
+          Invoke-WebRequest -Uri $pins.premake.url -OutFile $zip -UseBasicParsing -MaximumRetryCount 4 -RetryIntervalSec 5
           [void](Assert-TomCatFileSha256 -Path $zip -ExpectedHash $pins.premake.sha256)
           Expand-Archive -LiteralPath $zip -DestinationPath $directory -Force
           $premake = Join-Path $directory 'premake5.exe'
