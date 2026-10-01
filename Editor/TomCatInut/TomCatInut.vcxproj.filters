@@ -42,6 +42,9 @@
     <ClInclude Include="src\EditorPropertyTransaction.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\EditorStartupWindow.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorViewportHandles.h">
       <Filter>src</Filter>
     </ClInclude>

@@ -66,6 +66,8 @@ namespace TomCat {
 		static Application& Get() { return *s_Instance; }
 		static Application* TryGet() { return s_Instance; }
 
+	protected:
+		virtual void OnFirstFramePresented() {}
 	private:
 		void Run();
 		bool OnWindowClose(WindowCloseEvent& e);
@@ -76,6 +78,7 @@ namespace TomCat {
 		ImGuiLayer* m_ImGuiLayer = nullptr;
 		bool m_Running = true;
 		bool m_Minimized = false;
+		bool m_FirstFramePresented = false;
 		bool m_RendererInitialized = false;
 		int m_ExitCode = 0;
 		LayerStack m_LayerStack;
