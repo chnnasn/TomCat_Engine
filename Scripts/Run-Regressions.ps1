@@ -79,6 +79,14 @@ function Invoke-NativeRegression {
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw "$Name executable was not produced: $executable"
     }
+    # CI runners lack a modern GPU driver. Stage the verified software driver
+    # beside test executables only; it must never enter Editor/Player packages.
+    if ($env:TC_TEST_OPENGL_DIRECTORY) {
+        $driver = Join-Path $env:TC_TEST_OPENGL_DIRECTORY 'opengl32.dll'
+        if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) { throw "Missing test OpenGL driver: $driver" }
+        Get-ChildItem -LiteralPath $env:TC_TEST_OPENGL_DIRECTORY -Filter '*.dll' -File |
+            Copy-Item -Destination (Split-Path -Parent $executable) -Force
+    }
     Invoke-Checked -Name $Name -Action { & $executable }
 }
 
