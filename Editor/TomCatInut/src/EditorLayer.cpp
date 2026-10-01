@@ -1484,6 +1484,7 @@ namespace TomCat {
 
 	void EditorLayer::OnDetach()
 	{
+		Scripting::ScriptEngine::Get().SetInputEnabled(true);
 		TC_PROFILE_FUNCTION();
 		RestorePanelLayoutBeforePersistence();
 		if (IsSceneRunning())
@@ -2513,7 +2514,16 @@ namespace TomCat {
 			if (selectedEntity.HasComponent<Transform>())
 			{
 				auto& tc = selectedEntity.GetComponent<Transform>();
-				glm::mat4 transform = tc.GetTransform();
+				const glm::mat4 originalTransform = tc.GetTransform();
+				glm::mat4 transform = originalTransform;
+				glm::vec3 minimum, maximum;
+				const bool standardSingle = m_ActiveScene->GetChildrenUUIDs(selectedEntity).empty()
+					&& !selectedEntity.HasComponent<Tilemap2D>()
+					&& !selectedEntity.HasComponent<ParticleSystem2D>();
+				if ((standardSingle || m_GizmoPivotMode == GizmoPivotMode::Center)
+					&& m_Viewport.GetEntityBounds(selectedEntity, minimum, maximum))
+					transform[3] = glm::vec4((minimum + maximum) * 0.5f, 1.0f);
+				const glm::mat4 initialGizmoTransform = transform;
 
 				bool snap = Input::IsKeyPressed(Key::LeftControl);
 				float snapValue = 0.5f;
@@ -2541,7 +2551,9 @@ namespace TomCat {
 						m_GizmoTransactionActive =
 							m_SceneHistory.HasActiveTransaction();
 					}
-					if (m_ActiveScene->SetWorldTransform(selectedEntity, transform)
+					// Apply the delta around the displayed center, preserving the authored origin.
+					const glm::mat4 editedTransform = transform * glm::inverse(initialGizmoTransform) * originalTransform;
+					if (m_ActiveScene->SetWorldTransform(selectedEntity, editedTransform)
 						&& m_GizmoTransactionActive)
 						UpdateSceneTransaction();
 				}
@@ -3229,6 +3241,26 @@ namespace TomCat {
 
 		// 切换到Scene窗口焦点
 		ImGui::SetWindowFocus("Scene");
+	}
+
+	void EditorLayer::OnBeforeInputCapture()
+	{
+		ImGuiWindow* game = ImGui::FindWindowByName("Game");
+		ImGuiWindow* focused = GImGui->NavWindow;
+		bool enabled = IsSceneRunning() && m_ShowGamePanel && game && game->WasActive
+			&& focused && focused->RootWindow == game->RootWindow
+			&& !ImGui::GetIO().WantTextInput && GImGui->OpenPopupStack.empty();
+		// Native clicks arrive before ImGui changes NavWindow. Revoke gameplay
+		// immediately for a click outside the Game image, including toolbar clicks.
+		const auto& frame = Input::GetFrameSnapshot();
+		if (std::any_of(frame.MouseButtonsPressed.begin(), frame.MouseButtonsPressed.end(),
+			[](bool pressed) { return pressed; }))
+		{
+			const auto [x, y] = Input::GetMousePosition();
+			enabled = enabled && x >= m_GameViewportBounds[0].x && y >= m_GameViewportBounds[0].y
+				&& x < m_GameViewportBounds[1].x && y < m_GameViewportBounds[1].y;
+		}
+		Scripting::ScriptEngine::Get().SetInputEnabled(enabled);
 	}
 
 	void EditorLayer::OnEvent(Event& e)

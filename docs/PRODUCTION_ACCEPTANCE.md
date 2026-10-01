@@ -81,3 +81,12 @@ node Web/tests/node_modules/playwright/cli.js install chromium
 组件菜单支持 Reset、Remove、脚本附件内 Move Up/Down、Copy、同脚本 Paste As New/Values、按脚本附件查找场景引用、Properties 和 Edit Script。禁止多实例的脚本禁用 Paste As New；Play 中禁止修改。Edit Script 复用已配置外部 IDE；Web 没有此回调时禁用。移动仅影响脚本附件次序，脚本 ExecutionOrder 规则仍优先；复制粘贴保留字段引用，跨场景复制实体引用仍需要用户重新绑定。
 
 原生、注册式与 C# 组件菜单采用相同项目顺序和分隔线；不适用的操作灰显。原生组件当前只实现属性 Reset/Copy/Paste Values 及可移除组件的 Remove，其余菜单项不冒充可用。注册式组件的单选 Enabled 移入标题栏。Script 引用使用深色内凹字段、左对齐脚本图标与名称、右侧圆形定位按钮；双击字段打开外部 IDE，圆形按钮定位脚本资产，不替换组件类型。
+
+
+### 编辑器操作轴、输入与 Console（2026-10-02）
+
+- 标准单体对象以自身几何中心显示操作轴；单体 RectTransform 以矩形中心显示，不改变布局 Pivot/Anchor。父对象的 Center 使用自身及可见子对象的包围盒中心，Pivot 保留作者原点；Tilemap/Particle 等不规则集合沿用 Pivot/Center 区分。移动、旋转、缩放使用同一操作中心并补偿原点位置。
+- 编辑器在原始输入冻结后、脚本捕获前决定 Game 输入归属。非 Game 面板、文本编辑和弹窗关闭游戏输入；编辑器原始快捷键仍可用，切回 Game 时需先释放在编辑器按住的键。独立 Player 默认启用输入。InputRegression 覆盖隔离、恢复、失焦释放及原有 FixedUpdate 事件消费。
+- CoinRunner 的 MoveSpeed 改为可序列化 public 实例字段；Inspector 已显示 3.500。场景保存默认值，生成器模板同步修改。
+- Console 隐藏搜索框时保留弹性空白，级别计数保持右对齐。
+- 本轮 Release 编辑器构建、InputRegression 通过；界面确认单体 UI 中心操作轴、Move Speed 字段，中心缩放后 Undo 恢复。窄 Console 布局经过代码检查，尚未完成独立截图验收；Game 正常按键响应仍需持续按键交互复验，瞬时自动按键不能证明 Held 输入行为。

@@ -153,6 +153,8 @@ namespace TomCat {
 			// Called once by Application after native events have been polled and the
 			// display-frame Input snapshot has been frozen.
 			void CaptureInputState();
+			// Editors restrict gameplay to their focused Game view; Players default to enabled.
+			void SetInputEnabled(bool enabled) { m_InputEnabled = enabled; }
 			bool IsKeyHeld(uint32_t key) const;
 			bool WasKeyPressed(uint32_t key) const;
 			bool WasKeyReleased(uint32_t key) const;
@@ -353,6 +355,9 @@ namespace TomCat {
 			NativeVector2 m_PreviousMousePosition{};
 			NativeVector2 m_MouseDelta{};
 			NativeVector2 m_ScrollDelta{};
+			bool m_InputEnabled = true;
+			std::array<bool, 512> m_BlockedKeys{};
+			std::array<bool, 8> m_BlockedMouseButtons{};
 			bool m_WindowFocused = true;
 			bool m_PreviousWindowFocused = true;
 

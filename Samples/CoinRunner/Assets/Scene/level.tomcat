@@ -601,7 +601,11 @@ Entities:
           Enabled: true
           ScriptHandle: 1782105518984047352
           ClassName: PlayerController
-          Fields: []
+          Fields:
+            - FieldID: 545281735c48f9ed79db46de55d1db53
+              Name: MoveSpeed
+              Type: Float
+              Value: 3.5
     Rigidbody2D:
       Enabled: true
       BodyType: Dynamic
@@ -711,7 +715,10 @@ Entities:
               ScriptHandle: 1782105518984047352
               ClassName: PlayerController
               Fields:
-                []
+                - FieldID: 545281735c48f9ed79db46de55d1db53
+                  Name: MoveSpeed
+                  Type: Float
+                  Value: 3.5
       - TypeId: 11457157452030541836
         StableName: TomCat.Rigidbody2D
         SchemaVersion: 1
