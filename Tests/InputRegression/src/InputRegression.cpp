@@ -313,6 +313,46 @@ namespace {
 		TomCat::Input::ClearState();
 	}
 
+	void TestEditorGameplayInputOwnership()
+	{
+		using namespace TomCat;
+		using Action = InputEventQueue::Action;
+		auto& engine = Scripting::ScriptEngine::Get();
+		Input::ClearState();
+		engine.SetInputEnabled(false);
+		Input::NotifyKey(87, Action::Pressed, 50.0);
+		Input::NotifyMouseButton(0, Action::Pressed, 50.1);
+		Input::NotifyScroll(0, 1);
+		Input::BeginFrame();
+		engine.CaptureInputState();
+		Require(Input::IsKeyPressed(Key::W), "editor authoring input was modified");
+		Require(!engine.IsWindowFocused() && !engine.IsKeyHeld(87)
+			&& !engine.WasKeyPressed(87) && !engine.IsMouseButtonHeld(0)
+			&& engine.GetScrollDelta().Y == 0 && engine.GetInputEvents().empty(),
+			"editor input leaked into gameplay");
+		engine.SetInputEnabled(true);
+		Input::BeginFrame(); engine.CaptureInputState();
+		Require(!engine.IsKeyHeld(87) && !engine.IsMouseButtonHeld(0),
+			"held editor shortcut became gameplay input on focus gain");
+		Input::NotifyKey(87, Action::Released, 51.0);
+		Input::NotifyMouseButton(0, Action::Released, 51.1);
+		Input::BeginFrame(); engine.CaptureInputState();
+		Require(!engine.WasKeyReleased(87) && engine.GetInputEvents().empty(),
+			"blocked shortcut release leaked into gameplay");
+		Input::NotifyKey(87, Action::Pressed, 52.0);
+		Input::BeginFrame(); engine.CaptureInputState();
+		Require(engine.IsKeyHeld(87) && engine.WasKeyPressed(87),
+			"fresh Game input was not restored");
+		engine.SetInputEnabled(false);
+		Input::BeginFrame(); engine.CaptureInputState();
+		Require(!engine.IsKeyHeld(87) && engine.WasKeyReleased(87),
+			"focus loss did not release gameplay key");
+		Input::NotifyKey(87, Action::Released, 53.0);
+		Input::BeginFrame(); engine.CaptureInputState();
+		engine.SetInputEnabled(true);
+		Input::ClearState();
+	}
+
 	void TestManagedUpdateAndFixedConsumption()
 	{
 		using Action = TomCat::InputEventQueue::Action;
@@ -736,6 +776,7 @@ int main()
 		TestEditorShortcutRouting();
 		TestScene2DShortcut();
 		TestImGuiEventCaptureChannels();
+		TestEditorGameplayInputOwnership();
 		std::cout << "Input regression suite passed." << std::endl;
 		return 0;
 	}

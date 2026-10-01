@@ -16,6 +16,8 @@ namespace TomCat{
 
 		virtual void OnAttach() {}
 		virtual void OnDetach() {}
+		// Resolve gameplay input ownership after polling, before runtime capture.
+		virtual void OnBeforeInputCapture() {}
 		virtual void OnUpdate(Timestep ts) {}
 		virtual void OnImGuiRender() {}
 		virtual void OnEvent(Event& event){}

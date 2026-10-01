@@ -43,3 +43,9 @@ verify a breakpoint and variables, then stop Play, edit a script, wait for
 successful compilation and play again. Automated headless smoke does not prove
 visual layout, keyboard interaction or IDE breakpoint behavior. See
 `docs/DEBUGGING_AND_PROFILING.md` for the IDE workflow.
+
+The Player Controller exposes `MoveSpeed` as a public instance field (default
+3.5). Select Player to edit **Move Speed** in the Inspector; `const`, `static`
+and `readonly` fields are not serialized Inspector parameters. In Play mode,
+gameplay keyboard/mouse input belongs to the focused Game view. Clicking Scene,
+Hierarchy, Inspector or Console returns input ownership to the editor.

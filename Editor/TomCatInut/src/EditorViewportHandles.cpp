@@ -83,11 +83,19 @@ using namespace EditorLayerDetail;
 
 	void EditorViewportHandles::FrameSceneEntity(Entity root)
 	{
+		glm::vec3 minimum, maximum;
+		if (!GetEntityBounds(root, minimum, maximum)) return;
+		m_Layer.m_EditorCamera.FrameBounds(minimum, maximum);
+		m_Layer.FocusEditorPanel("Scene", m_Layer.m_ShowScenePanel);
+	}
+
+	bool EditorViewportHandles::GetEntityBounds(Entity root, glm::vec3& minimum, glm::vec3& maximum, bool includeChildren)
+	{
 		if (!m_Layer.m_ActiveScene || !root || !root.HasComponent<ID>())
-			return;
+			return false;
 		Entity activeRoot = m_Layer.m_ActiveScene->FindEntityByUUID(root.GetUUID());
 		if (!activeRoot)
-			return;
+			return false;
 
 		struct FocusBounds
 		{
@@ -163,7 +171,7 @@ using namespace EditorLayerDetail;
 						bounds.Add(glm::vec3(transformIt->second
 							* glm::vec4(corner, 0.0f, 1.0f)));
 				}
-				for (UUID childID : m_Layer.m_ActiveScene->GetChildrenUUIDs(entity))
+				if (includeChildren) for (UUID childID : m_Layer.m_ActiveScene->GetChildrenUUIDs(entity))
 				{
 					Entity child = m_Layer.m_ActiveScene->FindEntityByUUID(childID);
 					if (child && m_Layer.m_ActiveScene->GetParent(child) == entity)
@@ -173,10 +181,9 @@ using namespace EditorLayerDetail;
 			collectUI(activeRoot, true);
 			if (bounds.HasGeometry)
 			{
-				m_Layer.m_EditorCamera.FrameBounds(bounds.Minimum, bounds.Maximum);
-				m_Layer.FocusEditorPanel("Scene", m_Layer.m_ShowScenePanel);
+				minimum = bounds.Minimum; maximum = bounds.Maximum;
 			}
-			return;
+			return bounds.HasGeometry;
 		}
 
 		std::unordered_set<uint64_t> visited;
@@ -284,7 +291,7 @@ using namespace EditorLayerDetail;
 						glm::vec3(light.Radius * 2.0f, light.Radius * 2.0f, 1.0f)));
 			}
 
-			for (UUID childID : m_Layer.m_ActiveScene->GetChildrenUUIDs(entity))
+			if (includeChildren) for (UUID childID : m_Layer.m_ActiveScene->GetChildrenUUIDs(entity))
 			{
 				Entity child = m_Layer.m_ActiveScene->FindEntityByUUID(childID);
 				if (child && m_Layer.m_ActiveScene->GetParent(child) == entity)
@@ -306,7 +313,7 @@ using namespace EditorLayerDetail;
 				bounds.Add(pivot);
 		}
 		if (!bounds.HasGeometry)
-			return;
+			return false;
 
 		const glm::vec3 center = (bounds.Minimum + bounds.Maximum) * 0.5f;
 		const glm::vec3 extent = bounds.Maximum - bounds.Minimum;
@@ -315,8 +322,8 @@ using namespace EditorLayerDetail;
 			bounds.Minimum = center - glm::vec3(0.5f);
 			bounds.Maximum = center + glm::vec3(0.5f);
 		}
-		m_Layer.m_EditorCamera.FrameBounds(bounds.Minimum, bounds.Maximum);
-		m_Layer.FocusEditorPanel("Scene", m_Layer.m_ShowScenePanel);
+		minimum = bounds.Minimum; maximum = bounds.Maximum;
+		return true;
 	}
 
 	void EditorViewportHandles::RenderSceneColliderOverlays()
@@ -783,8 +790,21 @@ using namespace EditorLayerDetail;
 		const glm::vec2 pivotPosition{
 			rectangle.X + rectangle.Width * selected.GetComponent<RectTransform>().Pivot.x,
 			rectangle.Y + rectangle.Height * selected.GetComponent<RectTransform>().Pivot.y };
+		glm::vec2 centerPosition{ rectangle.X + rectangle.Width * 0.5f,
+			rectangle.Y + rectangle.Height * 0.5f };
+		if (!m_Layer.m_ActiveScene->GetChildrenUUIDs(selected).empty()) {
+			if (m_Layer.m_GizmoPivotMode == EditorLayer::GizmoPivotMode::Pivot)
+				centerPosition = pivotPosition;
+			else {
+				glm::vec3 minimum, maximum;
+				if (GetEntityBounds(selected, minimum, maximum)
+					&& std::abs(glm::determinant(uiTransformIt->second)) > 0.000001f)
+					centerPosition = glm::vec2(glm::inverse(uiTransformIt->second)
+						* glm::vec4((minimum + maximum) * 0.5f, 1.0f));
+			}
+		}
 		ImVec2 pivotScreen{};
-		visible &= toSceneScreen(pivotPosition, pivotScreen);
+		visible &= toSceneScreen(centerPosition, pivotScreen);
 		if (!visible)
 		{
 			ResetRectTransformEditState();
@@ -844,6 +864,7 @@ using namespace EditorLayerDetail;
 		bool gizmoUsing = false;
 		bool manipulated = false;
 		glm::mat4 gizmoTransform(1.0f);
+		glm::vec2 gizmoPosition = pivotPosition;
 		if (canManipulate)
 		{
 			glm::vec3 gizmoRotation(0.0f);
@@ -859,9 +880,13 @@ using namespace EditorLayerDetail;
 			}
 			// Runtime UI composes each RectTransform in canvas space. Include the
 			// accumulated parent frame so nested rotated/scaled controls receive a
-			// gizmo at the same visible pivot and with the same visible axes.
+			// gizmo at the visible rectangle center and with the same visible axes.
+			// Single UI handles use the rectangle's geometric center. Anchors and
+			// the authored layout pivot still determine placement in the canvas.
+			gizmoPosition = glm::vec2(inverseParentCanvasTransform * uiTransformIt->second
+				* glm::vec4(centerPosition, 0.0f, 1.0f));
 			gizmoTransform = parentCanvasTransform * Math::ComposeTransform(
-				{ pivotPosition.x, pivotPosition.y, 0.0f },
+				{ gizmoPosition.x, gizmoPosition.y, 0.0f },
 				gizmoRotation, gizmoScale);
 
 			// Use the real Scene camera for both Canvas content and its gizmo. In 2D
@@ -941,7 +966,7 @@ using namespace EditorLayerDetail;
 				{
 					glm::vec2 position = selected.GetComponent<RectTransform>()
 						.AnchoredPosition
-						+ (glm::vec2(translation) - pivotPosition) / scaleIt->second;
+						+ (glm::vec2(translation) - gizmoPosition) / scaleIt->second;
 					if (ImGui::GetIO().KeyCtrl)
 						position = glm::round(position);
 					auto& rectTransform = selected.GetComponent<RectTransform>();
@@ -966,6 +991,15 @@ using namespace EditorLayerDetail;
 					const glm::mat4 localTransform = Math::ComposeTransform(
 						authoredTransform._LocalTranslation, localRotation, localScale);
 					changed = m_Layer.m_ActiveScene->SetLocalTransform(selected, localTransform);
+					if (changed) {
+						// Keep the visible center stationary when rotating/scaling an
+						// off-center pivot: center = pivot + rotationScale * offset.
+						const glm::vec2 offset = centerPosition - pivotPosition;
+						const glm::vec2 rotatedOffset = glm::vec2(Math::ComposeTransform(
+							glm::vec3(0.0f), localRotation, localScale) * glm::vec4(offset, 0.0f, 0.0f));
+						selected.GetComponent<RectTransform>().AnchoredPosition +=
+							(glm::vec2(translation) - rotatedOffset - pivotPosition) / scaleIt->second;
+					}
 				}
 				if (changed)
 					m_Layer.UpdateSceneTransaction();

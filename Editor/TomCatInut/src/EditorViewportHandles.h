@@ -64,6 +64,7 @@ namespace TomCat {
 			: m_ViewportState(state), m_Layer(layer) {}
 
 		void FrameSceneEntity(Entity root);
+		bool GetEntityBounds(Entity root, glm::vec3& minimum, glm::vec3& maximum, bool includeChildren = true);
 		void RenderSceneColliderOverlays();
 		void RenderSceneCameraOverlay();
 		void RenderSceneCanvasOverlay();
