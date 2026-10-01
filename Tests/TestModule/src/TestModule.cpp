@@ -22,6 +22,8 @@ namespace {
 	constexpr uint64_t GustLevelPropertyId = 0x7E57100000000003ULL;
 
 	std::atomic<uint32_t> g_PingCount{ 0 };
+    bool g_Player = false;
+    void (TC_MODULE_CALL* g_LogInfo)(const char*) = nullptr;
 
 	bool HasWeather(TomCat::Entity entity)
 	{
@@ -55,6 +57,7 @@ namespace {
 				return false;
 			}
 			WeatherOf(entity).WindSpeed = std::get<float>(value);
+            if (g_Player && g_LogInfo) { const auto message = "MODULE_TYPED WindSpeed=" + std::to_string(WeatherOf(entity).WindSpeed); g_LogInfo(message.c_str()); }
 			return true;
 		};
 		property.DefaultValue = defaultValue;
@@ -82,6 +85,7 @@ namespace {
 				return false;
 			}
 			WeatherOf(entity).GustLevel = std::get<int32_t>(value);
+            if (g_Player && g_LogInfo) { const auto message = "MODULE_TYPED GustLevel=" + std::to_string(WeatherOf(entity).GustLevel); g_LogInfo(message.c_str()); }
 			return true;
 		};
 		property.DefaultValue = defaultValue;
@@ -119,9 +123,11 @@ TC_MODULE_EXPORT uint32_t TC_MODULE_CALL TomCatModuleMain(
 {
 	if (!host || !context
 		|| host->Version != TomCatModule::ModuleAbiCurrent
-		|| context->ProviderId == 0)
+		|| context->ProviderId == 0 || context->Size < sizeof(TomCatModule::ModuleContextV1))
 		return 1;
 
+    g_Player = context->Host == TomCatModule::HostKind::Player;
+    g_LogInfo = host->LogInfo;
 	TomCat::ComponentDescriptor descriptor;
 	descriptor.TypeId = TomCat::UUID(WeatherTypeId);
 	descriptor.StableName = "TestModule.Weather";
@@ -180,11 +186,11 @@ TC_MODULE_EXPORT uint32_t TC_MODULE_CALL TomCatModuleMain(
 	if (host->RegisterComponent(std::move(descriptor))
 		!= TomCatModule::ModuleStatusSuccess)
 		return 2;
-	if (host->RegisterImporter(TomCat::AssetType::Other,
+	if (context->Host != TomCatModule::HostKind::Player && host->RegisterImporter(TomCat::AssetType::Other,
 		std::make_shared<TestWeatherImporter>())
 		!= TomCatModule::ModuleStatusSuccess)
 		return 3;
-	if (host->RegisterEditorCommand("TestModule: Ping", []()
+	if (context->Host != TomCatModule::HostKind::Player && host->RegisterEditorCommand("TestModule: Ping", []()
 		{
 			++g_PingCount;
 		}) != TomCatModule::ModuleStatusSuccess)

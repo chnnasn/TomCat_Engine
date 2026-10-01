@@ -13,6 +13,8 @@
 
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
+#else
+    #include <dlfcn.h>
 #endif
 
 namespace TomCat {
@@ -80,6 +82,8 @@ namespace TomCat {
 		int32_t ModuleRegisterImporter(TomCat::AssetType type,
 			std::shared_ptr<const TomCat::IAssetImporter> importer)
 		{
+			if (ModuleSystem::Get().GetHostKind() == TomCatModule::HostKind::Player)
+				return TomCatModule::ModuleStatusUnavailable;
 			if (!importer || type == TomCat::AssetType::None)
 				return TomCatModule::ModuleStatusInvalidArgument;
 			if (!AssetManager::Get().GetDatabase().GetImporters().Register(
@@ -96,6 +100,8 @@ namespace TomCat {
 		int32_t ModuleRegisterEditorCommand(const char* label,
 			void (TC_MODULE_CALL* callback)())
 		{
+			if (ModuleSystem::Get().GetHostKind() == TomCatModule::HostKind::Player)
+				return TomCatModule::ModuleStatusUnavailable;
 			if (!label || !*label || !callback)
 				return TomCatModule::ModuleStatusInvalidArgument;
 			ModuleSystem::Get().PublishEditorCommand(label, callback);
@@ -139,15 +145,21 @@ namespace TomCat {
 	bool ModuleSystem::ParseManifest(const std::filesystem::path& manifestPath,
 		ModuleManifest& manifest, std::string& error)
 	{
+		std::ifstream input(manifestPath, std::ios::binary);
+		if (!input) { error = "could not open " + PathToUTF8(manifestPath); return false; }
+		const std::string text{ std::istreambuf_iterator<char>(input),
+			std::istreambuf_iterator<char>() };
+        return ParseManifestText(text, manifest, error);
+	}
+
+	bool ModuleSystem::ParseManifestText(std::string_view text,
+		ModuleManifest& manifest, std::string& error)
+	{
+		const std::filesystem::path manifestPath("module.tomcat");
 		manifest = {};
 		try
 		{
-			std::ifstream input(manifestPath, std::ios::binary);
-			if (!input)
-			{
-				error = "could not open " + PathToUTF8(manifestPath);
-				return false;
-			}
+			std::istringstream input{ std::string(text) };
 			YAML::Node document = YAML::Load(input);
 			if (!document.IsMap())
 			{
@@ -157,7 +169,9 @@ namespace TomCat {
 			}
 			static const char* RequiredFields[] = { "ModuleVersion", "Name",
 				"DisplayName", "Version", "Library" };
-			static const char* OptionalFields[] = { "EngineBuildID", "Enabled" };
+			static const char* OptionalFields[] = { "EngineBuildID", "Enabled",
+				"Runtime", "Dependencies", "RuntimeFiles" };
+			std::unordered_set<std::string> keys;
 			for (const char* field : RequiredFields)
 			{
 				if (!document[field])
@@ -170,6 +184,7 @@ namespace TomCat {
 			for (auto entry = document.begin(); entry != document.end(); ++entry)
 			{
 				const std::string key = entry->first.as<std::string>();
+				if (!keys.insert(key).second) { error = "duplicate module field"; return false; }
 				const bool known = std::any_of(std::begin(RequiredFields),
 					std::end(RequiredFields), [&](const char* field)
 					{
@@ -203,6 +218,27 @@ namespace TomCat {
 					document["EngineBuildID"].as<std::string>();
 			if (document["Enabled"])
 				manifest.Enabled = document["Enabled"].as<bool>();
+			if (document["Runtime"]) manifest.Runtime = document["Runtime"].as<bool>();
+			if (document["Dependencies"])
+			{
+				if (!document["Dependencies"].IsSequence()
+					|| document["Dependencies"].size() > 64) { error = "invalid module Dependencies"; return false; }
+				for (const auto& value : document["Dependencies"])
+				{
+					const std::string dependency = value.as<std::string>();
+					if (!IsSafeModuleName(dependency) || dependency == manifest.Name
+						|| std::find(manifest.Dependencies.begin(), manifest.Dependencies.end(), dependency)
+							!= manifest.Dependencies.end()) { error = "invalid module dependency"; return false; }
+					manifest.Dependencies.push_back(dependency);
+				}
+			}
+			if (document["RuntimeFiles"])
+			{
+				if (!document["RuntimeFiles"].IsSequence()
+					|| document["RuntimeFiles"].size() > 64) { error = "invalid module RuntimeFiles"; return false; }
+				for (const auto& value : document["RuntimeFiles"])
+					manifest.RuntimeFiles.push_back(UTF8ToPath(value.as<std::string>()));
+			}
 		}
 		catch (const YAML::Exception& exception)
 		{
@@ -225,6 +261,15 @@ namespace TomCat {
 			error = "module manifest has an invalid identity or library path: "
 				+ PathToUTF8(manifestPath);
 			return false;
+		}
+		std::unordered_set<std::string> files;
+		files.insert(PathToUTF8(manifest.Library.lexically_normal()));
+		for (const auto& file : manifest.RuntimeFiles)
+		{
+			if (!IsSafeRelativeLibraryPath(file) || file.extension() != ".dll"
+				|| file.parent_path().lexically_normal() != manifest.Library.parent_path().lexically_normal()
+				|| !files.insert(PathToUTF8(file.lexically_normal())).second)
+			{ error = "RuntimeFiles must be unique DLLs beside Library"; return false; }
 		}
 		return true;
 	}
@@ -265,36 +310,67 @@ namespace TomCat {
 			ModuleManifest manifest;
 			if (!ParseManifest(manifestPath, manifest, error))
 				return false;
+			if (std::any_of(modules.begin(), modules.end(), [&](const auto& entry)
+				{ return entry.second.Name == manifest.Name; }))
+			{ error = "duplicate module name: " + manifest.Name; return false; }
 			modules.emplace_back(manifestPath, std::move(manifest));
 		}
 		return true;
 	}
 
 	bool ModuleSystem::LoadProjectModules(
-		const std::filesystem::path& projectDirectory, std::string& error)
+		const std::filesystem::path& projectDirectory, std::string& error,
+		bool strict, TomCatModule::HostKind host)
 	{
+        error.clear();
+		m_HostKind = host;
 		std::vector<std::pair<std::filesystem::path, ModuleManifest>> discovered;
 		if (!DiscoverModules(projectDirectory, discovered, error))
 			return false;
 
 		// TomCatModuleMain reenters the host API (command registration), so
 		// the module mutex must not be held across module entry points.
-		for (const auto& [manifestPath, manifest] : discovered)
+		std::vector<size_t> order;
+		std::vector<uint8_t> state(discovered.size());
+		std::function<bool(size_t)> visit = [&](size_t index)
 		{
+			if (state[index] == 2) return true;
+			if (state[index] == 1) { error = "cyclic module dependency"; return false; }
+			state[index] = 1;
+			for (const auto& name : discovered[index].second.Dependencies)
+			{
+				const auto found = std::find_if(discovered.begin(), discovered.end(),
+					[&](const auto& value) { return value.second.Name == name && value.second.Enabled; });
+				if (found == discovered.end() || (host == TomCatModule::HostKind::Player && !found->second.Runtime))
+				{ error = "missing or unavailable module dependency: " + name; return false; }
+				if (!visit(static_cast<size_t>(found - discovered.begin()))) return false;
+			}
+			state[index] = 2; order.push_back(index); return true;
+		};
+		for (size_t index = 0; index < discovered.size(); ++index)
+			if (discovered[index].second.Enabled
+				&& (host != TomCatModule::HostKind::Player || discovered[index].second.Runtime)
+				&& !visit(index)) return false;
+		for (const size_t index : order)
+		{
+			const auto& [manifestPath, manifest] = discovered[index];
 			if (!manifest.Enabled)
 				continue;
-			const bool alreadyLoaded = [&manifest]()
+			const bool alreadyLoaded = [&manifest, &manifestPath, &error]()
 			{
 				std::lock_guard lock(ModuleSystem::Get().m_Mutex);
 				return std::any_of(ModuleSystem::Get().m_Loaded.begin(),
 					ModuleSystem::Get().m_Loaded.end(),
-					[&manifest](const LoadedModule& loaded)
+					[&manifest, &manifestPath, &error](const LoadedModule& loaded)
 					{
-						return loaded.Manifest.Name == manifest.Name;
+						if (loaded.Manifest.Name != manifest.Name) return false;
+                        if (loaded.Path.lexically_normal() != (manifestPath.parent_path() / manifest.Library).lexically_normal()
+                            || loaded.Manifest.Version != manifest.Version || loaded.Manifest.EngineBuildID != manifest.EngineBuildID)
+                            error = "already-loaded module differs from project manifest: " + manifest.Name;
+                        return true;
 					});
 			}();
-			if (alreadyLoaded)
-				continue;
+			if (alreadyLoaded) { if (!error.empty() && strict) return false; continue; }
 			const std::filesystem::path libraryPath = manifestPath.parent_path()
 				/ manifest.Library;
 			std::string moduleError;
@@ -302,6 +378,7 @@ namespace TomCat {
 			{
 				TC_Core_Error("Module '{0}' failed to load: {1}", manifest.Name,
 					moduleError);
+				if (strict) { error = moduleError; return false; }
 			}
 		}
 		return true;
@@ -320,6 +397,8 @@ namespace TomCat {
 			return false;
 		}
 		std::error_code fileCode;
+		FileSystem::PinnedDirectoryChain directoryGuard;
+		if (!directoryGuard.Acquire(libraryPath.parent_path(), error)) return false;
 		if (!std::filesystem::is_regular_file(libraryPath, fileCode))
 		{
 			error = "module library is missing: " + PathToUTF8(libraryPath);
@@ -327,7 +406,8 @@ namespace TomCat {
 		}
 
 #ifdef TC_PLATFORM_WINDOWS
-		HMODULE library = ::LoadLibraryW(libraryPath.c_str());
+		HMODULE library = ::LoadLibraryExW(libraryPath.c_str(), nullptr,
+			LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 		if (!library)
 		{
 			error = "LoadLibrary failed with error "
@@ -374,6 +454,7 @@ namespace TomCat {
 		context.ModuleDirectory = moduleDirectory.c_str();
 		context.ProviderId = loaded.ProviderId = DeriveProviderID(
 			manifest.Name);
+		context.Host = m_HostKind;
 
 		const TomCatModule::ModuleHostApiV1 host = MakeHostApi();
 		// Publish the pending module so RegisterEditorCommand can attribute
@@ -456,6 +537,13 @@ namespace TomCat {
 		}
 		m_Loaded.clear();
 		m_Commands.clear();
+		if (allUnloaded && !m_CookedModuleRoot.empty())
+		{
+			std::error_code cleanup;
+			std::filesystem::remove_all(m_CookedModuleRoot, cleanup);
+			if (cleanup) { error = cleanup.message(); allUnloaded = false; }
+			else m_CookedModuleRoot.clear();
+		}
 		return allUnloaded;
 	}
 

@@ -2,6 +2,7 @@
 #include <TomCat/Core/Log.h>
 #include <TomCat/Core/Version.h>
 #include <TomCat/Module/ModuleSystem.h>
+#include <TomCat/Module/ModulePackage.h>
 #include <TomCat/Scene/ComponentRegistry.h>
 #include <TomCat/Scene/Entity.h>
 #include <TomCat/Scene/Scene.h>
@@ -339,6 +340,59 @@ namespace {
 			"an unsupported manifest version was accepted");
 	}
 
+    void TestPublishedModule(TestProject& project)
+    {
+        std::string error;
+        auto& host = TomCat::ModuleSystem::Get();
+        Require(host.LoadProjectModules(project.Root.Path, error, true), error);
+        std::vector<uint8_t> payload;
+        const auto sidecar = project.ModuleDirectory / "lib" / "Support.dll";
+        const auto manifestPath = project.ModuleDirectory / "module.tomcat";
+        const std::string originalManifest = LoadSceneText(manifestPath);
+        std::filesystem::copy_file(project.ModuleDirectory / "lib" / "TestModule.dll", sidecar);
+        project.WriteFile(manifestPath, originalManifest + "RuntimeFiles: [lib/Support.dll]\n");
+        Require(TomCat::ModulePackage::Build(project.Root.Path, payload, error), error);
+        {
+            TemporaryDirectory extracted;
+            Require(TomCat::ModulePackage::Extract(payload, extracted.Path, error), error);
+            Require(LoadSceneText(extracted.Path / "Modules/TestWeather/lib/Support.dll")
+                == LoadSceneText(sidecar), "declared runtime DLL did not round-trip");
+        }
+        std::filesystem::remove(sidecar);
+        std::vector<uint8_t> rejected;
+        Require(!TomCat::ModulePackage::Build(project.Root.Path, rejected, error),
+            "missing declared runtime DLL accepted");
+        std::filesystem::copy_file(project.ModuleDirectory / "lib" / "TestModule.dll", sidecar);
+        project.WriteFile(manifestPath, originalManifest + "Runtime: false\n");
+        Require(TomCat::ModulePackage::Build(project.Root.Path, rejected, error) && rejected.empty(),
+            "editor-only module was published");
+        project.WriteFile(manifestPath, originalManifest + "RuntimeFiles: [lib/Support.dll]\n");
+        Require(!payload.empty(), "runtime module payload missing");
+        Require(host.UnloadAllModules(error), error);
+        const auto hidden = project.ModuleDirectory.parent_path() / "Hidden";
+        std::filesystem::rename(project.ModuleDirectory, hidden);
+        Require(host.LoadCookedModules(payload, error), "isolated module load: " + error);
+        Require(host.GetHostKind() == TomCatModule::HostKind::Player, "wrong host kind");
+        Require(host.GetEditorCommands().empty(), "Player registered editor commands");
+        {
+            auto scene = TomCat::CreateRef<TomCat::Scene>();
+            TomCat::SceneSerializer loader(scene);
+            Require(loader.Deserialize(project.ScenePath), "published module scene decode");
+            Require(ReadWeatherProperties(scene->FindEntityByUUID(TomCat::UUID(0xA1)))
+                == std::make_pair(2.5f, 3), "published typed component mismatch");
+        }
+        Require(host.UnloadAllModules(error), error);
+        std::filesystem::rename(hidden, project.ModuleDirectory);
+        project.WriteFile(manifestPath, originalManifest);
+        auto document = YAML::Load(std::string(payload.begin(), payload.end()));
+        auto manifest = YAML::Load(document["Modules"][0]["Manifest"].as<std::string>());
+        manifest["Dependencies"].push_back("Absent");
+        document["Modules"][0]["Manifest"] = YAML::Dump(manifest);
+        auto text = YAML::Dump(document);
+        payload.assign(text.begin(), text.end());
+        Require(!host.LoadCookedModules(payload, error), "missing runtime dependency accepted");
+        Require(!host.HasModule("TestWeather"), "failed package left module loaded");
+    }
 	void TestDisabledModuleIsSkipped(TestProject& project)
 	{
 		// Rewrite the manifest with Enabled: false.
@@ -387,14 +441,15 @@ int main()
 		TestEditorCommandRoundTrip(project);
 		std::cout << "EXIT TestEditorCommandRoundTrip" << std::endl;
 		std::cout << "ENTER TestDisabledModuleIsSkipped" << std::endl;
-		TestDisabledModuleIsSkipped(project);
+		TestPublishedModule(project);
+        TestDisabledModuleIsSkipped(project);
 		std::cout << "EXIT TestDisabledModuleIsSkipped" << std::endl;
 
 		std::cout << "PASS module SDK: manifest validation and discovery, "
 			"versioned host handshake, component/importer/editor-command "
 			"registration, typed scene round-trip, opaque round-trip while the "
 			"module is missing, rehydration on reload and disabled-module "
-			"handling\n";
+			"handling, isolated packaged components, runtime DLLs and dependency rejection\n";
 		TomCat::Log::Shutdown();
 		return 0;
 	}
