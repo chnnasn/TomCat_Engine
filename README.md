@@ -250,7 +250,7 @@ PCM WAV streaming reads a registry-resolved source range in authoring mode becau
 - [x] Run managed/native/Player Release regressions on push/PR CI
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
 - [x] Project migration preview, explicit approval, transactional upgrades, and interrupted-migration recovery in the Editor; CLI upgrades require `--migrate`
-- [x] General scene schema migration tooling (SceneMigrator: transactional v9/v10 -> current upgrades, SHA-256 backups, interrupted-migration journals and recovery; CLI `--migrate`) and the native module SDK (`Modules/<name>/module.tomcat`, versioned host table, component/importer/editor-command extension points)
+- [x] General scene schema migration tooling (SceneMigrator: transactional v9/v10 -> current upgrades, SHA-256 backups, interrupted-migration journals and recovery; CLI `--migrate`) and the native module SDK (`Modules/<name>/module.tomcat`, versioned host table, component/importer/editor-command extension points; TCPAK v8 embeds runtime modules and declared DLL dependencies for isolated desktop Player loading)
 - [ ] Additional platforms and rendering backends after the Windows/OpenGL 2D workflow is mature
 
 ### Future 3D Scope

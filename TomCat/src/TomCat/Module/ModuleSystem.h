@@ -2,11 +2,13 @@
 
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Asset/ImporterRegistry.h"
+#include "TomCat/Module/ModuleSdk.h"
 
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <span>
 #include <vector>
 
 namespace TomCat {
@@ -19,6 +21,9 @@ namespace TomCat {
 		std::filesystem::path Library;
 		std::string EngineBuildID;
 		bool Enabled = true;
+		bool Runtime = true;
+		std::vector<std::string> Dependencies;
+		std::vector<std::filesystem::path> RuntimeFiles;
 
 		bool operator==(const ModuleManifest&) const = default;
 	};
@@ -40,9 +45,8 @@ namespace TomCat {
 
 	// Discovers, validates and loads native modules below
 	// <projectDirectory>/Modules. Modules are an editor/tooling extension
-	// surface: cooked Player packages do not carry module libraries, and scenes
-	// authored with module components round-trip through the existing opaque
-	// missing-component path when a module is not loaded.
+	// surface. Runtime modules are embedded in TCPAK v8 and loaded before
+	// runtime scenes; editor-only modules remain authoring extensions.
 	class ModuleSystem
 	{
 	public:
@@ -56,6 +60,8 @@ namespace TomCat {
 		[[nodiscard]] static bool ParseManifest(
 			const std::filesystem::path& manifestPath, ModuleManifest& manifest,
 			std::string& error);
+		[[nodiscard]] static bool ParseManifestText(std::string_view text,
+			ModuleManifest& manifest, std::string& error);
 
 		// Every valid manifest below <projectDirectory>/Modules, sorted by name.
 		// Disabled modules are included with Enabled=false.
@@ -67,7 +73,12 @@ namespace TomCat {
 		// Loads every enabled module of the project. A module that fails to
 		// load is reported and skipped; already-loaded modules stay loaded.
 		[[nodiscard]] bool LoadProjectModules(
-			const std::filesystem::path& projectDirectory, std::string& error);
+			const std::filesystem::path& projectDirectory, std::string& error,
+			bool strict = false,
+			TomCatModule::HostKind host = TomCatModule::HostKind::Editor);
+		// Validated private extraction; retained until all module code is unloaded.
+		[[nodiscard]] bool LoadCookedModules(std::span<const uint8_t> payload,
+			std::string& error);
 
 		// Unloads every module in reverse load order. Registered components are
 		// removed through ComponentRegistry::UnregisterProvider; live entities
@@ -77,6 +88,7 @@ namespace TomCat {
 		[[nodiscard]] std::vector<LoadedModuleInfo> GetLoadedModules() const;
 		[[nodiscard]] std::vector<ModuleEditorCommand> GetEditorCommands() const;
 		[[nodiscard]] bool HasModule(const std::string& name) const;
+		TomCatModule::HostKind GetHostKind() const { return m_HostKind; }
 
 		// Called by the host API while TomCatModuleMain runs on the current
 		// module's behalf; attributes the command to that module.
@@ -107,6 +119,8 @@ namespace TomCat {
 		std::vector<ModuleEditorCommand> m_Commands;
 		LoadedModule* m_PendingModule = nullptr;
 		mutable std::mutex m_Mutex;
+		TomCatModule::HostKind m_HostKind = TomCatModule::HostKind::Editor;
+		std::filesystem::path m_CookedModuleRoot;
 	};
 
 }

@@ -227,7 +227,7 @@ Web 不托管桌面 hostfxr/C#，没有可听音频输出，不支持自定义 C
 
 ### 原生模块清单 `module.tomcat`
 
-项目模块放在 `Modules/<directory>/module.tomcat`，清单为 YAML mapping。必需字段为 `ModuleVersion: 1`、`Name`、`DisplayName`、`Version`、`Library`；可选字段为 `EngineBuildID` 和 `Enabled`（默认 true），未知字段被拒绝。`Name` 最多 64 个 ASCII 字母、数字、下划线、连字符或点，首尾不能是点；`DisplayName` 非空且最多 128 字节，`Version` 非空。`Library` 相对于清单目录，规范化后不得越出该目录，也不能是绝对路径。
+项目模块放在 `Modules/<directory>/module.tomcat`，清单为 YAML mapping。必需字段为 `ModuleVersion: 1`、`Name`、`DisplayName`、`Version`、`Library`；可选字段为 `EngineBuildID`、`Enabled`（默认 true）、`Runtime`（默认 true）、`Dependencies` 与 `RuntimeFiles`，未知字段被拒绝。`Name` 最多 64 个 ASCII 字母、数字、下划线、连字符或点，首尾不能是点；`DisplayName` 非空且最多 128 字节，`Version` 非空。`Library` 相对于清单目录，规范化后不得越出该目录，也不能是绝对路径。
 
 ```yaml
 ModuleVersion: 1
@@ -241,6 +241,14 @@ Enabled: true
 
 非空 `EngineBuildID` 必须与宿主 `Version::EngineBuildID` 完全相同，否则在加载 DLL 前拒绝。省略或留空表示不固定版本，兼容责任由模块作者承担。模块仍须使用相同引擎头文件、工具链与依赖版本构建；版本字符串相同不代表任意 C++ ABI 都兼容。DLL 导出 `TomCatModuleMain`，模块在入口检查宿主 API/ABI 版本后注册组件、导入器和编辑器命令。禁用模块不加载，加载失败的模块记录诊断并跳过。缺失模块的场景组件保留为 opaque 数据，模块恢复后可显式 rehydrate。
 
+`Runtime: false` 用于只在编辑器与 CLI 中加载的模块；发布包只包含 Enabled 与 Runtime 均为 true 的模块。`Dependencies` 为模块 Name 列表（最多 64 项），按依赖顺序初始化；缺失、禁用、重复、自引用或循环依赖导致严格发布失败。`RuntimeFiles` 为 Library 同目录的附属 DLL 相对路径列表（最多 64 项），用于显式携带模块的非系统动态依赖。
+
+CLI cook/build 在场景迁移和 Cook 前严格加载工程模块，任何启用模块的初始化失败都终止发布。编辑器保留诊断后跳过失败模块的行为。SDK 的 ModuleContextV1 末尾追加 Host（Editor/Tool/Player）；模块访问追加字段前应检查 Size。Player 只提供组件注册，导入器和编辑器命令注册返回 ModuleStatusUnavailable，模块入口应按 Host 跳过这些能力。
+
+TCPAK v8 沿用 v7 头和索引，新增保留 Handle UINT64_MAX-1、Type None、Flags 2、Tag 0x31444f4d 的原生模块载荷。载荷是 ModulePackageVersion 1 的 YAML，包含当前 EngineBuildID、规范化清单及 DLL 二进制字节，外层条目有 SHA-256；每个 DLL 最多 64 MiB、载荷最多 256 MiB。Cook 将未固定版本的清单固定到当前引擎，并在原子替换包前重新检查模块输入。
+
+桌面 Player 先校验载荷、依赖图和路径，再在独立临时目录解包并加载模块，随后解码场景，使模块组件直接恢复为强类型数据。场景及脚本销毁后卸载模块并清理目录。发布目录无需作者 Modules/、原始工程或 DLL 路径。旧 v5-v7 无模块载荷的包继续可读；Web Player 暂不支持原生 DLL 模块。完整发布验证见 Scripts/Run-ModulePublishSmoke.ps1。
+
 ### 场景迁移备份与事务日志
 
 通用场景迁移通过现有 reader 解码 schema v9/v10，再以当前 v11 writer 重新序列化和验证，保留未安装模块的 opaque 组件记录。先预览，再执行；项目批量迁移按场景分别提交，后续失败不会撤销已经完成的其他场景。
@@ -251,7 +259,7 @@ Enabled: true
 
 ### 格式与身份摘要
 
-- `Project.tcproj` 当前写 schema v4，合法 v3 需预览并明确批准后迁移；`BuildSettings.json` 与 `PlayerSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v11 并读取 v9/v10/v11；`.tcpak` 当前写 v7，Player/loader 读取 v5/v6/v7；`.tcsav` 和 `module.tomcat` 当前格式版本均为 1。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
+- `Project.tcproj` 当前写 schema v4，合法 v3 需预览并明确批准后迁移；`BuildSettings.json` 与 `PlayerSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v11 并读取 v9/v10/v11；`.tcpak` 当前写 v8，Player/loader 读取 v5/v6/v7/v8；`.tcsav` 和 `module.tomcat` 当前格式版本均为 1。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
 - 项目资源加载只接受 `AssetHandle`；`BuildSettings.json` 中的 `pathHint` 仅是作者定位信息，不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。
@@ -259,9 +267,9 @@ Enabled: true
 
 ## Cook 与 Player
 
-TCPAK v6 引入 BootManifest；当前 v7 在每个索引条目中增加 SHA-256 摘要，并在挂载和相关载荷读取时校验。兼容读取旧包不意味着旧包具有 v7 的完整性字段。版本常量与兼容判断分别见 [Version.h](TomCat/src/TomCat/Core/Version.h) 和 [RuntimeCompatibility.h](TomCat/src/TomCat/Runtime/RuntimeCompatibility.h)。
+TCPAK v6 引入 BootManifest；v7 在每个索引条目中增加 SHA-256 摘要，并在挂载和相关载荷读取时校验。兼容读取旧包不意味着旧包具有 v7 的完整性字段。版本常量与兼容判断分别见 [Version.h](TomCat/src/TomCat/Core/Version.h) 和 [RuntimeCompatibility.h](TomCat/src/TomCat/Runtime/RuntimeCompatibility.h)。
 
 Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件，用于导入和预览。
-发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v7 `.tcpak`，并保存入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v7 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵、可选托管发布载荷，以及携带版本化 PlayerSettings 的 BootManifest。场景输入通过 v9-v11 reader 严格解析，并由当前 v11 writer 规范化后写入；缺失、类型错误或未知字段会使 Cook 失败。
+发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v8 `.tcpak`，并保存入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v8 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵、可选托管发布载荷，以及携带版本化 PlayerSettings 的 BootManifest。场景输入通过 v9-v11 reader 严格解析，并由当前 v11 writer 规范化后写入；缺失、类型错误或未知字段会使 Cook 失败。
 
-独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 验证 v5/v6/v7 包、兼容版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes；v6/v7 还会在创建窗口前应用 BootManifest 中的 PlayerSettings，v5 使用兼容默认值。Player 按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。
+独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 验证 v5/v6/v7/v8 包、兼容版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes；v6-v8 还会在创建窗口前应用 BootManifest 中的 PlayerSettings，v5 使用兼容默认值。Player 按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。

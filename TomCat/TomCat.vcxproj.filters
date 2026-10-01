@@ -270,6 +270,9 @@
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Module\ModulePackage.h">
+      <Filter>src\TomCat\Module</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Module\ModuleSdk.h">
       <Filter>src\TomCat\Module</Filter>
     </ClInclude>
@@ -1864,6 +1867,9 @@
     </ClCompile>
     <ClCompile Include="src\TomCat\Math\Math.cpp">
       <Filter>src\TomCat\Math</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Module\ModulePackage.cpp">
+      <Filter>src\TomCat\Module</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Module\ModuleSystem.cpp">
       <Filter>src\TomCat\Module</Filter>
