@@ -43,3 +43,16 @@ include "ImporterRegression"
 include "InputRegression"
 include "Advanced2DRegression"
 include "ProfilerRegression"
+
+-- Stage the shader compiler even for tests that reach it indirectly through Scene.
+for _, name in ipairs({ "Advanced2DRegression", "AudioRegression",
+    "EditorRecoveryRegression", "InputRegression", "ModuleSdkRegression",
+    "P0SafetyRegression", "ProfilerRegression", "SaveDataRegression",
+    "SceneMigrationRegression" }) do
+    project(name)
+    filter { "system:windows", "configurations:Debug" }
+        postbuildcommands { '{COPYFILE} "$(ProjectDir)../../vendor/VulkanSDK/Bin/shaderc_sharedd.dll" "%{cfg.targetdir}"' }
+    filter { "system:windows", "configurations:Release or Dist" }
+        postbuildcommands { '{COPYFILE} "$(ProjectDir)../../vendor/VulkanSDK/Bin/shaderc_shared.dll" "%{cfg.targetdir}"' }
+    filter {}
+end
