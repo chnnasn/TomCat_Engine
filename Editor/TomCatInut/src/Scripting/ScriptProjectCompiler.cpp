@@ -963,7 +963,7 @@ namespace TomCat {
 		return HexHash(hash);
 	}
 
-	bool ScriptProjectCompiler::RefreshSourceState()
+	bool ScriptProjectCompiler::RefreshSourceState(bool refreshRegistry)
 	{
 		if (!m_Project)
 		{
@@ -971,7 +971,7 @@ namespace TomCat {
 			return false;
 		}
 
-		if (!AssetManager::Get().Refresh(false))
+		if (refreshRegistry && !AssetManager::Get().Refresh(false))
 		{
 			m_State = ScriptBuildState::Failed;
 			ScriptCompilerDiagnostic diagnostic;

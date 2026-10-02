@@ -553,6 +553,18 @@ namespace TomCat {
 		});
 
 
+		glfwSetDropCallback(m_Window, [](GLFWwindow* window, int count, const char** paths)
+		{
+			std::vector<std::filesystem::path> files;
+			for (int index = 0; index < count; ++index)
+				files.push_back(UTF8ToPath(paths[index]));
+			double x = 0, y = 0;
+			glfwGetCursorPos(window, &x, &y);
+			FileDropEvent event(std::move(files), static_cast<float>(x), static_cast<float>(y));
+			auto& data = *static_cast<WindowData*>(glfwGetWindowUserPointer(window));
+			if (data.EventCallback) data.EventCallback(event);
+		});
+
 		glfwSetCharCallback(m_Window, [](GLFWwindow* Window, unsigned int KeyCode)
 		{
 				Input::NotifyCharacter(KeyCode);

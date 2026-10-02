@@ -15,6 +15,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\AssetFileTransfer.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorBuildController.h">
       <Filter>src</Filter>
     </ClInclude>

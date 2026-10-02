@@ -186,6 +186,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\AssetFileTransfer.h" />
     <ClInclude Include="src\EditorBuildController.h" />
     <ClInclude Include="src\EditorDragDrop.h" />
     <ClInclude Include="src\EditorIcons.h" />
