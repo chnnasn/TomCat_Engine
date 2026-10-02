@@ -290,6 +290,7 @@ void ExampleLayer::OnEvent(Event& e)
 	void ExampleLayer::NewProject()
 	{
 		m_ShowNewProjectDialog = true;
+		m_NewProjectTemplate = -1;
 		memset(m_NewProjectName, 0, sizeof(m_NewProjectName));
 		memset(m_NewProjectDescription, 0, sizeof(m_NewProjectDescription));
 		const auto& defaultDir = ProjectManager::Get().GetProjectDirectory();
@@ -861,10 +862,12 @@ void ExampleLayer::OnEvent(Event& e)
 		std::error_code targetError;
 		const std::filesystem::path requestedDirectory = m_NewProjectPath / UTF8ToPath(requestedName);
 		const bool targetExists = validName && std::filesystem::exists(requestedDirectory, targetError);
-		const bool canCreate = validName && !targetExists && !targetError && !m_Editors.empty();
+		const bool templateSelected = m_NewProjectTemplate == 0 || m_NewProjectTemplate == 1;
+		const bool canCreate = templateSelected && validName && !targetExists && !targetError && !m_Editors.empty();
 		ImGui::SetCursorScreenPos(ImVec2(createX, btnY));
 		ImGui::PushStyleColor(ImGuiCol_Button, canCreate ? IM_COL32(44, 93, 135, 255) : IM_COL32(60, 60, 60, 255));
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, canCreate ? IM_COL32(58, 112, 157, 255) : IM_COL32(60, 60, 60, 255));
+		ImGui::BeginDisabled(!canCreate);
 		if (ImGui::Button(T("\u521b\u5efa\u9879\u76ee", "Create Project"), ImVec2(btnW, btnH)) && canCreate) // ????
 		{
 			ProjectConfig config;
@@ -887,9 +890,16 @@ void ExampleLayer::OnEvent(Event& e)
 					PathToUTF8(project->GetProjectPath().parent_path()));
 			}
 		}
+		ImGui::EndDisabled();
 		ImGui::PopStyleColor(2);
 
-		if (m_Editors.empty())
+		if (!templateSelected)
+		{
+			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
+			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.4f, 1.0f), "%s",
+				T("\u8bf7\u9009\u62e9 2D \u6216 3D \u6a21\u677f", "Select a 2D or 3D template"));
+		}
+		else if (m_Editors.empty())
 		{
 			ImGui::SetCursorScreenPos(ImVec2(rightX, btnY - 34.0f));
 			ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s",

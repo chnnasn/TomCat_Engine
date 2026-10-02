@@ -388,6 +388,9 @@ jobs:
             if (-not (Test-Path -LiteralPath $builtPlayer -PathType Leaf)) {
               throw "Packaged Editor Player build smoke did not publish $builtPlayer."
             }
+            # The SDK may create metadata/ during the build. Starting again must
+            # still reuse the same validated runtime instead of extracting it.
+            Invoke-PackagedEditorCliSmoke $warmWorkingDirectory "post-build"
             $buildManifests = @(Get-ChildItem -LiteralPath $runtimeCache `
               -Filter "runtime-manifest.json" -File -Recurse -Force)
             if ($buildManifests.Count -ne 1 -or
