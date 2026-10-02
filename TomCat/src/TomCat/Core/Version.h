@@ -10,13 +10,14 @@ namespace TomCat::Version {
 	inline constexpr std::string_view ProductVersion = "0.5.0";
 	inline constexpr std::string_view EngineBuildID = "TomCat-0.5.0";
 
-	inline constexpr uint32_t ProjectFormatOldest = 3;
+	// Read and write only current formats; minimum fields are retained for product-info consumers.
+	inline constexpr uint32_t ProjectFormatOldest = 4;
 	inline constexpr uint32_t ProjectFormatCurrent = 4;
-	inline constexpr uint32_t SceneFormatOldest = 9;
+	inline constexpr uint32_t SceneFormatOldest = 11;
 	inline constexpr uint32_t SceneFormatCurrent = 11;
 	inline constexpr uint32_t PrefabFormatCurrent = 1;
 
-	inline constexpr uint32_t TcpakFormatOldest = 5;
+	inline constexpr uint32_t TcpakFormatOldest = 8;
 	inline constexpr uint32_t TcpakFormatCurrent = 8;
 	inline constexpr uint32_t PlayerTemplateFormatCurrent = 1;
 	inline constexpr uint32_t SaveFormatCurrent = 1;
@@ -24,5 +25,8 @@ namespace TomCat::Version {
 	inline constexpr uint32_t NativeApiCurrent = 1;
 	inline constexpr uint32_t ManagedApiCurrent = 5;
 	inline constexpr uint32_t ScriptManifestCurrent = 1;
+	// Removing ComponentDescriptor's migration callbacks changes the native
+	// descriptor layout passed across the module boundary. Rebuild modules.
+	inline constexpr uint32_t ModuleAbiCurrent = 2;
 
 }

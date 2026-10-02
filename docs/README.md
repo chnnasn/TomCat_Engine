@@ -34,7 +34,7 @@ Profiler 与物理播放控制，另有 3 张截图。[capture.json](portfolio/2
 
 产品和格式版本以 [Version.h](../TomCat/src/TomCat/Core/Version.h) 为准。
 当前产品版本为 `0.5.0`，项目写入 v4、场景写入 v11、Prefab 写入 v1、TCPAK 写入 v8；
-TCPAK 读取兼容 v5/v6/v7/v8，Native ABI 为 v1、Managed ABI 为 v5、脚本清单为 v1。
+只接受各自当前格式，不读取旧版或未来版本；Native ABI 为 v1、Managed ABI 为 v5、脚本清单为 v1。
 TCPAK v6 引入 BootManifest，v7 在索引中增加逐条目 SHA-256 摘要，v8 增加原生模块发布载荷。
 
 ## 验证入口

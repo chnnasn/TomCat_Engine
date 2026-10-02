@@ -1093,9 +1093,9 @@ namespace {
 		const uint32_t headerSize = ReadLittleEndian32(packageBytes, 12);
 		const uint64_t entryCount = ReadLittleEndian64(packageBytes, 16);
 		const uint64_t entrySize =
-			TomCat::RuntimeCompatibility::TcpakEntrySizeForVersion(packageVersion);
+			TomCat::RuntimeCompatibility::TcpakEntrySize;
 		Require(packageVersion == TomCat::RuntimeCompatibility::TcpakVersion
-			&& TomCat::RuntimeCompatibility::TcpakHasEntryDigests(packageVersion)
+			&& TomCat::RuntimeCompatibility::IsSupportedTcpakVersion(packageVersion)
 			&& headerSize <= packageBytes.size()
 			&& entryCount <= (packageBytes.size() - headerSize) / entrySize,
 			"cooked Shader package has an invalid tcpak v7 index");
@@ -1109,7 +1109,7 @@ namespace {
 			{
 				shaderDigestOffset = indexOffset
 					+ static_cast<size_t>(
-						TomCat::RuntimeCompatibility::TcpakLegacyEntrySize);
+						TomCat::RuntimeCompatibility::TcpakEntryDigestOffset);
 				break;
 			}
 		}
@@ -2247,12 +2247,13 @@ namespace {
 		const std::filesystem::path heroMeta =
 			TomCat::AssetRegistry::GetMetadataPath(heroPath);
 		WriteBytes(heroMeta,
-			"SchemaVersion: 1\n"
+			"SchemaVersion: 2\n"
 			"FutureRoot:\n  Keep: root-value\n"
 			"Asset:\n"
 			"  Handle: 1001\n"
 			"  Type: Texture2D\n"
 			"  ImportSettings:\n    quality: high\n"
+			"  SubAssets: []\n"
 			"  FutureAsset:\n    Keep: asset-value\n");
 		const std::filesystem::path futureMeta =
 			TomCat::AssetRegistry::GetMetadataPath(futurePath);
@@ -2260,6 +2261,12 @@ namespace {
 			"SchemaVersion: 99\nAsset:\n  Handle: 9901\n  Type: Texture2D\n"
 			"  ImportSettings: {}\nFutureOnly: untouched\n";
 		WriteBytes(futureMeta, futureDocument);
+        const auto oldPath = project.Assets / "old.png";
+        const auto oldMeta = TomCat::AssetRegistry::GetMetadataPath(oldPath);
+        const std::string oldDocument = "SchemaVersion: 1\nAsset:\n  Handle: 9902\n  Type: Texture2D\n  ImportSettings: {}\n";
+        WriteBytes(oldPath, "old-source");
+        WriteBytes(oldMeta, oldDocument);
+
 
 		TomCat::AssetRegistry registry;
 		Require(registry.Initialize(project.Assets, project.Library),
@@ -2267,17 +2274,19 @@ namespace {
 		const TomCat::AssetMetadata* migrated =
 			registry.GetMetadata(TomCat::AssetHandle(1001));
 		Require(migrated && migrated->ImportSettings.at("quality") == "high",
-			"v1 tcmeta was not read during migration");
+			"current tcmeta was not read");
 		const std::string migratedDocument = ReadText(heroMeta);
 		Require(migratedDocument.find("SchemaVersion: 2") != std::string::npos &&
 			migratedDocument.find("SubAssets:") != std::string::npos &&
 			migratedDocument.find("FutureRoot") != std::string::npos &&
 			migratedDocument.find("FutureAsset") != std::string::npos,
-			"v1 migration did not preserve unknown fields or emit v2 SubAssets");
+			"current metadata did not preserve extension fields");
 		Require(ReadText(futureMeta) == futureDocument &&
 			registry.GetMetadata(futurePath) == nullptr,
 			"future tcmeta schema was overwritten or registered ambiguously");
 
+        Require(ReadText(oldMeta) == oldDocument && registry.GetMetadata(oldPath) == nullptr,
+            "old metadata was overwritten or accepted");
 		const TomCat::AssetHandle hero(1001);
 		const TomCat::AssetHandle dependency = RequireHandle(registry,
 			dependencyPath, TomCat::AssetType::Shader);

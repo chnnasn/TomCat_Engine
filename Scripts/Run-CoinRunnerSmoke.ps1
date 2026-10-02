@@ -36,7 +36,7 @@ $projectPath = Join-Path $smokeProject 'Project.tcproj'
 $packagePath = Join-Path $smokeProject 'Build/Game.tcpak'
 
 Write-Host "== Cooking CoinRunner =="
-& $cliExecutable cook --project $projectPath --output $packagePath --migrate
+& $cliExecutable cook --project $projectPath --output $packagePath
 if ($LASTEXITCODE -ne 0) {
     throw "Cook failed with exit $LASTEXITCODE."
 }

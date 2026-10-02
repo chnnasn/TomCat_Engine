@@ -30,7 +30,6 @@ namespace TomCat {
 		constexpr std::array<char, 8> kArtifactMagic = {
 			'T', 'C', 'I', 'M', 'P', '0', '0', '1' };
 		constexpr uint32_t kArtifactEnvelopeVersion = 2;
-		constexpr uint32_t kOldestArtifactEnvelopeVersion = 1;
 		constexpr uint64_t kMaximumArtifactBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
 		constexpr uint32_t kMaximumSubAssets = 1'000'000;
 		constexpr uint32_t kMaximumStringBytes = 1024 * 1024;
@@ -165,8 +164,7 @@ namespace TomCat {
 			uint32_t version = 0;
 			uint16_t rawType = 0;
 			if (!ReadU32(input, offset, version)
-				|| version < kOldestArtifactEnvelopeVersion
-				|| version > kArtifactEnvelopeVersion ||
+				|| version != kArtifactEnvelopeVersion ||
 				!ReadU16(input, offset, rawType) ||
 				static_cast<AssetType>(rawType) != expectedType ||
 				!ReadString(input, offset, artifact.Format))
@@ -186,8 +184,7 @@ namespace TomCat {
 					!ReadU16(input, offset, childType))
 					return false;
 				child.Type = static_cast<AssetType>(childType);
-				if (version >= 2
-					&& (!ReadU32(input, offset, child.Sprite.X)
+				if ((!ReadU32(input, offset, child.Sprite.X)
 						|| !ReadU32(input, offset, child.Sprite.Y)
 						|| !ReadU32(input, offset, child.Sprite.Width)
 						|| !ReadU32(input, offset, child.Sprite.Height)
@@ -1366,7 +1363,7 @@ namespace TomCat {
 			if (!root.IsMap() || !root["SchemaVersion"])
 				return false;
 			const uint32_t schemaVersion = root["SchemaVersion"].as<uint32_t>();
-			if (schemaVersion != 1 && schemaVersion != 2)
+			if (schemaVersion != 2)
 				return false;
 			const YAML::Node assets = root["Assets"];
 			if (!assets || !assets.IsSequence())
@@ -1405,19 +1402,8 @@ namespace TomCat {
 				if (!readHandles(entry["Dependencies"], owner, logicalValues))
 					return false;
 				auto& artifactValues = artifactDependencies[owner];
-				if (schemaVersion == 2)
-				{
-					if (!readHandles(entry["ArtifactDependencies"], owner,
-						artifactValues))
-						return false;
-				}
-				else
-				{
-					// Version 1 did not preserve a Sprite slice's atlas owner. Resolve
-					// what is still present so existing projects upgrade automatically.
-					artifactValues = ResolveArtifactDependencies(m_Registry,
-						logicalValues);
-				}
+                if (!readHandles(entry["ArtifactDependencies"], owner, artifactValues))
+                    return false;
 			}
 
 			auto dependents = BuildDependents(dependencies, artifactDependencies);

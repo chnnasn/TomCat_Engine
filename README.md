@@ -117,7 +117,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
 - **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
 - **Editor**: dockable Scene/Game/Hierarchy/Inspector/Project/Console/Profiler panels, saved layouts, tab context menus (Maximize / Close Tab / Add Tab), non-collapsible window headers, Hierarchy Scene visibility, resource Inspector with import Apply/Revert, real image thumbnails, original package icons, searchable diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
-- **Standalone Player**: path-free `.tcpak` v8 packages with per-entry SHA-256 and v5/v6/v7/v8 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
+- **Standalone Player**: path-free `.tcpak` v8 packages with per-entry SHA-256 and v8-only Player loading, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
 - **Product UI and localization**: sliders, scroll views, single-line Unicode input, inherited themes, and game-language tables with fallback; OS IME commits are supported, with composition limits described in [Runtime UI](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **Performance tools**: visual CPU timeline, asynchronous GPU frame timing, draw statistics, process memory and tracked resource estimates; see [profiling and C# debugger setup](docs/DEBUGGING_AND_PROFILING.md)
@@ -209,14 +209,14 @@ vendor/            premake and third-party dependencies
 - [x] CircleCollider2D, implicit static bodies, triggers, per-fixture and project-layer collision filtering, queries, motion API, and DistanceJoint2D
 - [x] Deferred engine/native-script Collision and Trigger callbacks
 - [x] Project Settings for Tags, 16 stable Layers, and the symmetric Physics 2D collision matrix
-- [x] Scene schema v11 writing with v9-v11 reading, registry-backed components, and cooked-package v8 physics round trips
+- [x] Scene schema v11 writing with v11-only reading, registry-backed components, and cooked-package v8 physics round trips
 - [x] Physics regression suite (`Scripts\Run-PhysicsRegression.ps1`)
 
 ### Completed V1 C#, Player, Scene, and Prefab Milestones
 
 - [x] Managed runtime, source generator, Inspector fields, last-good compilation, deterministic lifecycle/physics callbacks, exception isolation, and collectible Play domains
 - [x] Independent win-x64 Player, private .NET runtime, strict versioned/hash-checked template, Build / Build And Run, and Player process smoke coverage
-- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v8 ordered scenes with v5/v6/v7/v8 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
+- [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v8 ordered scenes with v8-only Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
 - [x] Snapshot Prefab V1 with stable LocalIDs, hierarchy/Joint/C# Entity remapping, fresh AttachmentIDs, deferred C# creation, Editor creation/drop workflows, and Cook dependency traversal
 - [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the BootManifest introduced with TCPAK v6 and retained in v7/v8
 - [x] Linked/nested Prefabs, overrides/variants, asynchronous reads, additive scenes, persistent roots and unloading (see the feature guides for scope)
@@ -249,14 +249,18 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 - [ ] GPU draw-call breakdown and managed heap object/reference analysis
 - [x] Run managed/native/Player Release regressions on push/PR CI
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
-- [x] Project migration preview, explicit approval, transactional upgrades, and interrupted-migration recovery in the Editor; CLI upgrades require `--migrate`
-- [x] General scene schema migration tooling (SceneMigrator: transactional v9/v10 -> current upgrades, SHA-256 backups, interrupted-migration journals and recovery; CLI `--migrate`) and the native module SDK (`Modules/<name>/module.tomcat`, versioned host table, component/importer/editor-command extension points; TCPAK v8 embeds runtime modules and declared DLL dependencies for isolated desktop Player loading)
+
+
 - [ ] Additional platforms and rendering backends after the Windows/OpenGL 2D workflow is mature
 
 ### Future 3D Scope
 
 - [ ] Mesh/model import, materials, lights, PBR, shadows, environment rendering, and skeletal animation
 - [ ] Promote the current camera-only 3D template after the 3D runtime and authoring workflow exist
+
+## Format policy
+
+Formats: current versions only; old/future versions are rejected. No project/scene/component migrations or CLI `--migrate`. Native module SDK and corruption recovery remain supported. See PROJECT_SYSTEM.md.
 
 ## Related Projects
 

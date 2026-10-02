@@ -460,15 +460,6 @@ namespace TomCat {
 		bool EntityReference = false;
 	};
 
-	struct ComponentSchemaMigration
-	{
-		uint32_t FromVersion = 0;
-		uint32_t ToVersion = 0;
-		// Receives the complete persisted component record. The registry updates
-		// SchemaVersion after a successful step and validates identity itself.
-		std::function<bool(YAML::Node&, std::string&)> Migrate;
-	};
-
 	struct ComponentDescriptor
 	{
 		using HasFn = std::function<bool(Entity)>;
@@ -493,7 +484,6 @@ namespace TomCat {
 		std::string StableName;
 		std::string DisplayName;
 		uint32_t SchemaVersion = 1;
-		std::vector<ComponentSchemaMigration> Migrations;
 		std::vector<PropertyDescriptor> Properties;
 
 		HasFn Has;

@@ -267,51 +267,20 @@ namespace TomCat {
 			compatible = false;
 			try
 			{
-				uint32_t version = source["SchemaVersion"].as<uint32_t>();
-				if (version > descriptor.SchemaVersion)
-					return true;
-				// Current-schema records are read-only during decode. Avoid serializing
-                // and reparsing every component in a large scene.
-                if (version == descriptor.SchemaVersion) { prepared = source; compatible = true; return true; }
-                prepared = YAML::Clone(source);
-				while (version < descriptor.SchemaVersion)
-				{
-					const auto migration = std::find_if(descriptor.Migrations.begin(),
-						descriptor.Migrations.end(), [version](const auto& candidate)
-						{
-							return candidate.FromVersion == version;
-						});
-					if (migration == descriptor.Migrations.end())
-						return true;
-					if (!migration->Migrate(prepared, error))
-					{
-						if (error.empty())
-							error = descriptor.StableName + " schema migration failed";
-						return false;
-					}
-					version = migration->ToVersion;
-					prepared["SchemaVersion"] = version;
-					std::string validationError;
-					if (!ContainsOnlyFields(prepared,
-						{ "TypeId", "StableName", "SchemaVersion", "Properties" },
-						validationError, descriptor.StableName)
-						|| prepared["TypeId"].as<uint64_t>()
-							!= static_cast<uint64_t>(descriptor.TypeId)
-						|| prepared["StableName"].as<std::string>()
-							!= descriptor.StableName)
-					{
-						error = validationError.empty()
-							? descriptor.StableName + " migration changed component identity"
-							: validationError;
-						return false;
-					}
-				}
-				compatible = version == descriptor.SchemaVersion;
-				return true;
+                const uint32_t version = source["SchemaVersion"].as<uint32_t>();
+                if (version != descriptor.SchemaVersion)
+                {
+                    error = descriptor.StableName + " SchemaVersion must be "
+                        + std::to_string(descriptor.SchemaVersion) + ", got " + std::to_string(version);
+                    return false;
+                }
+                prepared = source;
+                compatible = true;
+                return true;
 			}
 			catch (const std::exception& exception)
 			{
-				error = descriptor.StableName + " migration: " + exception.what();
+				error = descriptor.StableName + ": " + exception.what();
 				return false;
 			}
 		}
@@ -656,26 +625,6 @@ namespace TomCat {
 				error = "Entity-reference metadata requires a non-asset UInt64 property";
 				return false;
 			}
-		}
-		std::sort(descriptor.Migrations.begin(), descriptor.Migrations.end(),
-			[](const ComponentSchemaMigration& left,
-				const ComponentSchemaMigration& right)
-			{
-				return left.FromVersion < right.FromVersion;
-			});
-		uint32_t previousFromVersion = 0;
-		for (const ComponentSchemaMigration& migration : descriptor.Migrations)
-		{
-			if (migration.FromVersion == 0
-				|| migration.FromVersion >= migration.ToVersion
-				|| migration.ToVersion > descriptor.SchemaVersion
-				|| !migration.Migrate
-				|| migration.FromVersion == previousFromVersion)
-			{
-				error = "Component schema migrations must be unique, forward-only, and bounded by the current schema";
-				return false;
-			}
-			previousFromVersion = migration.FromVersion;
 		}
 		m_Descriptors.emplace_back(std::move(descriptor));
 		std::sort(m_Descriptors.begin(), m_Descriptors.end(),

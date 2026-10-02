@@ -851,11 +851,9 @@ namespace TomCat {
 
 			const uint32_t schemaVersion = ReadRequired<uint32_t>(
 				data, "SchemaVersion", "scene document");
-			if (schemaVersion < OldestSupportedSchemaVersion
-				|| schemaVersion > CurrentSchemaVersion)
-				throw std::runtime_error("Scene SchemaVersion must be in ["
-					+ std::to_string(OldestSupportedSchemaVersion) + ", "
-					+ std::to_string(CurrentSchemaVersion) + "], got "
+			if (schemaVersion != CurrentSchemaVersion)
+				throw std::runtime_error("Scene SchemaVersion must be "
+					+ std::to_string(CurrentSchemaVersion) + ", got "
 					+ std::to_string(schemaVersion));
 
 			const std::string sceneName = ReadRequired<std::string>(
@@ -892,23 +890,6 @@ namespace TomCat {
 							"Rigidbody2D", "BoxCollider2D", "CircleCollider2D",
 							"DistanceJoint2D", "AudioSource", "AudioListener",
 							"SpriteAnimator" });
-				}
-				else if (schemaVersion == 10)
-				{
-					RequireExactFields(entityNode, context,
-						{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
-						{ "Camera", "SpriteRenderer", "LineRenderer", "CSharpScripts",
-							"Rigidbody2D", "BoxCollider2D", "CircleCollider2D",
-							"DistanceJoint2D" });
-				}
-				else
-				{
-					// Schema 9 is accepted only as a migration input and did not
-					// define CSharpScripts. Saving the loaded scene always emits 10.
-					RequireExactFields(entityNode, context,
-						{ "Entity", "Tag", "EntityMetadata", "Transform", "LocalTransform", "Parent" },
-						{ "Camera", "SpriteRenderer", "LineRenderer", "Rigidbody2D",
-							"BoxCollider2D", "CircleCollider2D", "DistanceJoint2D" });
 				}
 
 				const uint64_t rawUUID = ReadRequired<uint64_t>(entityNode, "Entity", context);
