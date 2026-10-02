@@ -11,9 +11,14 @@ runtime.Module.canvas = canvas;
 const config = runtime.getConfig();
 const exports = await runtime.getAssemblyExports(config.mainAssemblyName);
 const exitCode = await runtime.runMain();
-if (exitCode !== 0)
-    throw new Error(`TomCat managed Web bootstrap failed with exit code ${exitCode}:\n${
-        exports.TomCat.WebHost.BrowserBootstrap.Error()}`);
+if (exitCode !== 0) {
+    // Read the bootstrap reason through the export surface: a non-zero exit can also be a
+    // runtime level termination, where the assembly exports are no longer reachable.
+    let reason = '(no message)';
+    try { reason = exports.TomCat.WebHost.BrowserBootstrap.Error() || reason; } catch { /* runtime already torn down */ }
+    console.error(`TomCat managed Web bootstrap failed with exit code ${exitCode}:\n${reason}`);
+    throw new Error(`TomCat managed Web bootstrap failed with exit code ${exitCode}:\n${reason}`);
+}
 
 function decodeBase64(value) {
     const binary = atob(value);
