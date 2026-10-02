@@ -100,7 +100,7 @@ target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatEditorModule"
   "--preload-file=${TC_ROOT}/Editor/TomCatInut/Packages@/Packages"
   "--preload-file=${CMAKE_CURRENT_SOURCE_DIR}/fonts@/WebFonts"
-  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_managed_install','_tc_web_editor_set_managed_assembly','_tc_web_editor_boot','_tc_web_editor_frame','_tc_web_editor_resize','_tc_web_editor_shutdown','_tc_web_editor_error','_tc_web_editor_rpc','_tc_web_editor_state','_tc_web_editor_take_actions']")
+  "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_managed_install','_tc_web_editor_set_managed_assembly','_tc_web_editor_boot','_tc_web_editor_frame','_tc_web_editor_resize','_tc_web_editor_shutdown','_tc_web_editor_error','_tc_web_editor_rpc','_tc_web_editor_state','_tc_web_editor_take_actions','_tc_web_editor_set_ui_scale','_tc_web_editor_save_layout','_tc_web_editor_load_layout']")
 
 # Static entrypoint archive consumed by Managed/TomCat.WebHost. The .NET
 # browser-wasm linker owns the final module so native and managed function tables
