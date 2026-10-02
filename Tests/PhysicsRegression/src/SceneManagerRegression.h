@@ -442,10 +442,13 @@ namespace SceneManagerRegression {
 				&& std::count(runtime->Calls.begin(), runtime->Calls.end(), "InstantiateAttachments") == batchCallsAfterRollback,
 				"failed composed startup left a queued lifecycle batch for the next frame");
 
+            // Force preparation to span frames instead of relying on machine speed.
+            Require(manager.SetActivationBudget({1, 2.0}), "could not set incremental test budget");
 			manager.SetAllowSceneActivation(false);
 			Require(manager.RequestLoadSceneAsync(first), "async Scene read was rejected");
 			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-			while (manager.GetLoadState() == TomCat::SceneLoadState::Reading
+			while ((manager.GetLoadState() == TomCat::SceneLoadState::Reading
+                || manager.GetLoadState() == TomCat::SceneLoadState::Decoding)
 				&& std::chrono::steady_clock::now() < deadline)
 			{
 				world->OnUpdateRuntime(TomCat::Timestep(0.0f), false);
@@ -511,7 +514,8 @@ namespace SceneManagerRegression {
 			Require(manager.RequestLoadSceneAsync(first), "malformed Scene fixture was not queued for asynchronous reading");
 			bool asyncFailureReported = false;
 			const auto failureDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-			while (manager.GetLoadState() == TomCat::SceneLoadState::Reading
+			while ((manager.GetLoadState() == TomCat::SceneLoadState::Reading
+                || manager.GetLoadState() == TomCat::SceneLoadState::Decoding)
 				&& std::chrono::steady_clock::now() < failureDeadline)
 			{
 				asyncFailureReported |= !manager.CommitPendingTransition();
