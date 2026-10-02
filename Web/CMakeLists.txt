@@ -64,7 +64,7 @@ set(TC_WEB_LINK_OPTIONS
   "-sASSERTIONS=1" "-sSTACK_OVERFLOW_CHECK=2"
   "-sPTHREAD_POOL_SIZE=12" "-sPTHREAD_POOL_SIZE_STRICT=2"
   "-sFORCE_FILESYSTEM=1"
-  "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','FS','HEAPU8','PThread']"
+  "-sEXPORTED_RUNTIME_METHODS=['ccall','UTF8ToString','FS','HEAPU8']"
   "--preload-file=${TC_ROOT}/Samples/PhysicsPlayground@/Samples/PhysicsPlayground")
 target_link_options(tomcat_player PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatPlayerModule"
