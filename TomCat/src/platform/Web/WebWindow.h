@@ -29,6 +29,11 @@ public:
   void CancelCloseRequest() override;
   void* GetNativeWindow() const override { return m_Window; }
   void Resize(uint32_t width, uint32_t height);
+  // Tell the window the surface scale of the embedding page. The browser host knows it exactly
+  // (devicePixelRatio), whereas the Emscripten GLFW content scale query can stay at 1, so the
+  // host value is authoritative once it has been supplied.
+  void SetDisplayScale(float scale);
+  float GetResolvedContentScale() const;
 private:
   // Recomputes the metrics pair the rest of the engine consumes and reports it when it
   // changed. framebufferWidth/Height are read back from GLFW because it owns the buffer.
@@ -36,6 +41,8 @@ private:
   GLFWwindow* m_Window = nullptr;
   uint32_t m_Width = 0, m_Height = 0;
   float m_ContentScale = 1.0f;
+  // Set once the host supplies the page scale; until then the GLFW query is the only source.
+  bool m_HasHostScale = false;
   EventCallbackFn m_Callback;
 };
 }
