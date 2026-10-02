@@ -1,3 +1,5 @@
+#include "TomCat/Core/Log.h"
+#include "TomCat/Debug/Instrumentor.h"
 #include "SceneHierarchyTreePanel.h"
 #include "SceneHierarchyDetail.h"
 
@@ -24,6 +26,7 @@ namespace TomCat {
 
 	void SceneHierarchyTreePanel::DrawHierarchyWindow(bool* hierarchyOpen, bool sceneDirty)
 	{
+        TC_PROFILE_SCOPE("Panel Hierarchy");
 		m_HierarchyFocused = false;
 		if (!hierarchyOpen || *hierarchyOpen)
 		{
@@ -106,12 +109,42 @@ namespace TomCat {
 
 			if (rootOpen)
 			{
-				for (UUID rootUUID : m_Shared.Context->GetRootEntityUUIDs())
-				{
-					Entity entity = m_Shared.Context->FindEntityByUUID(rootUUID);
-					if (entity)
-						DrawEntityNode(entity);
-				}
+                TC_PROFILE_SCOPE("Hierarchy visible row layout");
+                struct Row { Entity Item; int Depth; };
+                std::vector<Row> rows;
+                std::unordered_map<uint64_t, bool> searchMatches;
+                const std::string query = LowerASCII(m_HierarchySearch.data());
+                std::function<bool(Entity)> matches = [&](Entity item) {
+                    if (query.empty()) return true;
+                    const uint64_t id = static_cast<uint64_t>(item.GetUUID());
+                    if (auto found = searchMatches.find(id); found != searchMatches.end()) return found->second;
+                    bool result = LowerASCII(item.GetName()).find(query) != std::string::npos;
+                    for (UUID childID : m_Shared.Context->GetChildrenUUIDs(item))
+                        if (Entity child = m_Shared.Context->FindEntityByUUID(childID)) result |= matches(child);
+                    searchMatches[id] = result; return result;
+                };
+                std::function<void(Entity, int)> append = [&](Entity item, int depth) {
+                    if (!matches(item)) return;
+                    const uint64_t id = static_cast<uint64_t>(item.GetUUID());
+                    rows.push_back({item, depth}); m_HierarchyVisibleOrder.push_back(item.GetUUID());
+                    if (item == m_ForceExpandParent || m_ForceOpenEntityNodes.contains(id)) m_ExpandedEntities.insert(id);
+                    if (!query.empty() || m_ExpandedEntities.contains(id))
+                        for (UUID childID : m_Shared.Context->GetChildrenUUIDs(item))
+                            if (Entity child = m_Shared.Context->FindEntityByUUID(childID)) append(child, depth + 1);
+                };
+                for (UUID rootID : m_Shared.Context->GetRootEntityUUIDs())
+                    if (Entity item = m_Shared.Context->FindEntityByUUID(rootID)) append(item, 0);
+                ImGuiListClipper clipper;
+                clipper.Begin(static_cast<int>(rows.size()), ImGui::GetFrameHeightWithSpacing());
+                for (size_t index = 0; index < rows.size(); ++index)
+                    if (rows[index].Item == m_RenameEntity || rows[index].Item == m_Shared.SelectionContext)
+                        clipper.ForceDisplayRangeByIndices(static_cast<int>(index), static_cast<int>(index + 1));
+                while (clipper.Step()) for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
+                    const float indent = rows[index].Depth * ImGui::GetStyle().IndentSpacing;
+                    if (indent > 0) ImGui::Indent(indent);
+                    DrawEntityNode(rows[index].Item);
+                    if (indent > 0) ImGui::Unindent(indent);
+                }
 				ImGui::TreePop();
 			}
 
@@ -742,19 +775,8 @@ namespace TomCat {
 		if (!entity)
 			return;
 
-        if (m_HierarchySearch[0])
-        {
-            const std::string query = LowerASCII(m_HierarchySearch.data());
-            std::function<bool(Entity)> matches = [&](Entity candidate) {
-                if (LowerASCII(candidate.GetName()).find(query) != std::string::npos) return true;
-                for (UUID child : m_Shared.Context->GetChildrenUUIDs(candidate))
-                    if (Entity item = m_Shared.Context->FindEntityByUUID(child); item && matches(item)) return true;
-                return false;
-            };
-            if (!matches(entity)) return;
-            ImGui::SetNextItemOpen(true);
-        }
-        m_HierarchyVisibleOrder.push_back(entity.GetUUID());
+        const uint64_t nodeID = static_cast<uint64_t>(entity.GetUUID());
+        ImGui::SetNextItemOpen(m_HierarchySearch[0] || m_ExpandedEntities.contains(nodeID));
         auto& tagComponent = entity.GetComponent<Tag>();
 		auto& tag = tagComponent._Tag;
 		const bool activeInHierarchy = m_Shared.Context->IsActiveInHierarchy(entity);
@@ -774,7 +796,7 @@ namespace TomCat {
 		const bool hasChildren = !children.empty();
 
 		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth
-			| ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_FramePadding;
+			| ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 		if (isSelected)
 			flags |= ImGuiTreeNodeFlags_Selected;
 		if (!hasChildren)
@@ -799,7 +821,15 @@ namespace TomCat {
 
 		const bool renameActive = (m_RenameEntity == entity);
 		bool open = ImGui::TreeNodeEx((void*)(uint64_t)entity.GetUUID(), flags, "");
-		const bool rowHovered = ImGui::IsItemHovered();
+        if (!m_HierarchySearch[0]) {
+            if (open) m_ExpandedEntities.insert(nodeID); else m_ExpandedEntities.erase(nodeID);
+        }
+        if (!ImGui::IsItemVisible() && !renameActive && !ImGui::IsItemActive()) {
+            if (isSelected) ImGui::PopStyleColor(3);
+            if (dimmed) ImGui::PopStyleColor();
+            return;
+        }
+        const bool rowHovered = ImGui::IsItemHovered();
 		const ImVec2 itemMin = ImGui::GetItemRectMin();
 		const ImVec2 itemMax = ImGui::GetItemRectMax();
 		const float iconSize = std::min(std::round(ImGui::GetFontSize() * 0.95f),
@@ -958,16 +988,6 @@ namespace TomCat {
 			}
 		}
 
-		if (open && hasChildren)
-		{
-			for (UUID childUUID : children)
-			{
-				Entity child = m_Shared.Context->FindEntityByUUID(childUUID);
-				if (child)
-					DrawEntityNode(child);
-			}
-			ImGui::TreePop();
-		}
 
 		if (dimmed)
 			ImGui::PopStyleColor();

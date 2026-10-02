@@ -1461,6 +1461,15 @@ namespace TomCat {
 		return iterator == m_Assets.end() ? nullptr : &iterator->second;
 	}
 
+	bool AssetRegistry::IsCurrentAsset(AssetHandle handle) const
+	{
+		const AssetMetadata* metadata = GetMetadata(handle);
+		if (!metadata || metadata->IsMissing)
+			return false;
+		const auto owner = m_PathIndex.find(PathKey(metadata->FilePath));
+		return owner != m_PathIndex.end() && owner->second == handle;
+	}
+
 	const AssetMetadata* AssetRegistry::GetMetadata(const std::filesystem::path& path) const
 	{
 		std::filesystem::path absolutePath, relativePath;

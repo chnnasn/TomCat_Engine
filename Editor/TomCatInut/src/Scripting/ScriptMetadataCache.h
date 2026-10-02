@@ -16,11 +16,13 @@ namespace TomCat {
 	{
 	public:
 		bool ParseAndReplace(std::string_view manifestJson, std::string& errorMessage);
-		void Clear() { m_Scripts.clear(); }
+		void Clear() { m_Scripts.clear(); ++m_Revision; }
+        uint64_t GetRevision() const { return m_Revision; }
 		std::optional<EditorScriptMetadata> Find(AssetHandle handle) const;
 
 	private:
-		std::unordered_map<uint64_t, EditorScriptMetadata> m_Scripts;
+		uint64_t m_Revision = 0;
+        std::unordered_map<uint64_t, EditorScriptMetadata> m_Scripts;
 	};
 
 }

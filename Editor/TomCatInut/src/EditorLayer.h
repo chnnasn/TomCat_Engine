@@ -241,6 +241,12 @@ namespace TomCat {
 		SceneState m_SceneState = SceneState::Edit;
 		bool m_StepRequested = false;
 		bool m_Is2DMode = false;
+        bool m_SceneViewVisible = true, m_GameViewVisible = true;
+        bool m_SceneViewDirty = true, m_GameViewDirty = true;
+        const Scene* m_LastRenderedScene = nullptr;
+        uint64_t m_LastRenderHistory = 0, m_LastRenderImport = 0, m_LastRenderSelection = 0;
+        glm::mat4 m_LastEditorViewProjection{0.0f};
+        glm::vec2 m_LastSceneRenderSize{0.0f}, m_LastGameRenderSize{0.0f};
 
 		using ColliderEditHandle = EditorViewportState::ColliderEditHandle;
 
@@ -324,6 +330,7 @@ namespace TomCat {
 		int m_EditorPanelCycleIndex = 5;
 		bool m_OpenUnsavedChangesModal = false;
 		std::function<bool()> m_PendingUnsavedAction;
+		std::function<void()> m_PendingProjectOpen;
 	};
 
 }

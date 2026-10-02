@@ -9,7 +9,7 @@ namespace TomCat {
 
 	// Editor-owned previews use an uncompressed mip chain. They never change the
 	// source artwork, its import settings, or the texture used by the game.
-	inline Ref<Texture2D> LoadEditorPreview(const std::filesystem::path& path)
+	inline std::vector<uint8_t> BuildEditorPreview(const std::filesystem::path& path)
 	{
 		std::ifstream input(path, std::ios::binary | std::ios::ate);
 		if (!input)
@@ -33,6 +33,13 @@ namespace TomCat {
 		};
 		if (!BuildTextureArtifact(encoded, settings, "editor-preview", artifact, error))
 			return {};
+		return artifact;
+	}
+
+	inline Ref<Texture2D> LoadEditorPreview(const std::filesystem::path& path)
+	{
+        auto artifact = BuildEditorPreview(path);
+        if (artifact.empty()) return {};
 		auto texture = Texture2D::Create(artifact.data(), artifact.size(), path);
 		return texture && texture->IsLoaded() ? texture : Ref<Texture2D>{};
 	}

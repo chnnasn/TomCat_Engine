@@ -126,7 +126,8 @@ namespace TomCat {
 		void SetPrefabCreationAllowed(bool allowed) { m_Shared.PrefabCreationAllowed = allowed; }
 		void SetPrefabActionCallback(std::function<void(Entity, int, UUID, UUID, UUID)> callback)
 		{ m_Shared.PrefabAction = std::move(callback); }
-		void SetScriptMetadataProvider(ScriptMetadataProvider provider)
+		void SetScriptMetadataRevisionProvider(std::function<uint64_t()> provider) { m_Shared.ScriptMetadataRevision = std::move(provider); }
+        void SetScriptMetadataProvider(ScriptMetadataProvider provider)
 		{
 			m_Shared.ScriptMetadata = std::move(provider);
 		}

@@ -77,3 +77,28 @@ CPU scope 在开始时绑定帧编号，线程安全地提交到这一帧。跨�
 `ProfilerRegression` 是无需窗口的原生测试，包含有界历史、并发 scope、过期帧隔离、清空后编号隔离、GPU 结果回填、JSON 转义、资源增减和平衡 resize 检查；用假的 OpenGL 入口驱动真实查询环，验证未 ready 时不读结果、4 槽忙时跳过、暂停后排空、销毁查询。它由 `Scripts/Run-Regressions.ps1` 调用。
 
 桌面交互验收：打开面板并 Record，进入/退出 Play，选帧检查嵌套 scope；切换 VSync 观察 Present；暂停后 GPU 最后几帧应继续回填；关面板应停止新增帧；导出 JSON 后检查可解析；调整 Game/Scene 视口，framebuffer 字节应随尺寸变化，返回原尺寸应回到相同数量/估算大小。
+
+
+## 编辑器面板预算与缓存（2026-10-02）
+
+Profiler 增加 `Panel Project`、`Panel Hierarchy`、`Panel Inspector`、`Panel Console`、`Panel Profiler`，以及目录扫描、快照发布、资源元数据、缩略图解码/发布、搜索索引、层级行布局、脚本字段、日志筛选和性能统计标记。采样仍逐帧记录；Profiler 图表快照以 10 Hz 刷新，选定帧及其 scope 聚合结果复用。
+
+Project 绘制使用后台目录快照和内存资源索引。导入协调器的变更版本触发失效，创建文件夹等本地操作请求刷新；后台每秒补查已访问目录，覆盖空目录、外部重命名及 Packages 变化。目录状态、路径校验在扫描或实际文件操作时读取，常规列表绘制不遍历磁盘。实际移动、删除和拖入仍重新校验路径，不能把显示缓存当作文件操作授权。
+
+Windows 快照通过 `FindFirstFileW/FindNextFileW` 枚举，兼顾单文件打包后的虚拟 Packages。原生目录枚举验收与打包版资源树验收需要分别执行，开发目录中的结果不能替代发行包验证。
+
+Windows 缩略图只运行一个后台读取/解码任务，沿用 64 MiB 源文件、256 MiB 解码预估上限。主线程每帧至多上传一张不超过 512×512 的 RGBA 预览，即至多 1 MiB 像素；这是上传数量/字节预算，不是驱动耗时的硬实时保证。缓存最多 64 张、排队最多 128 项，长期未显示的预览被回收，源文件时间戳和项目代次阻止过期任务覆盖新预览。Inspector 显示源图尺寸，场景纹理和导入配置不受预览分辨率影响。当前单线程 Web 构建按帧延后处理任务，不具备 Windows 后台线程解码能力。
+
+Project 文件行、搜索结果、缩略图网格以及 Hierarchy 展开行使用可见区域裁剪。Hierarchy 保留完整展开顺序供 Shift 多选使用，重命名和选中行可被强制纳入布局。Console 在日志版本或筛选条件变化时才重新复制/折叠/筛选，并继续裁剪可见日志行。Inspector 脚本字段元数据按成功编译版本缓存，项目/场景替换后失效。
+
+Scene/Game 的实际可见状态决定是否绘制 framebuffer。静态编辑场景复用上一帧；相机、分辨率、选中对象、场景历史、活动编辑手势和导入版本变化会请求重绘。粒子、动画预览与自定义材质保守地持续刷新。运行模式的脚本和物理仍逐帧更新，隐藏 Game 只跳过渲染，不暂停模拟。鼠标拾取使用仍有效的 Scene ID attachment。
+
+验证时应分别录制静止场景、相机移动、Inspector 修改、撤销/重做、图片拖入和大量资源滚动。开启 VSync 后总帧耗时可能主要是 Present 等待，应同时比较 `Panel ...` 和视口 scope，而不能把 16.7 ms 全部解释为 CPU 工作。
+
+Scene 画布的左键、中键和右键开始操作时同步面板焦点，标题栏高亮与快捷键路由使用同一焦点；仅悬停不切换焦点。
+
+项目切换在下一次 Update（ImGui NewFrame 之前）执行，避免在菜单/确认框绘制期间重建停靠树。加载布局会清理窗口指向缺失或分割节点的 DockId，保留有效叶节点与自定义面板设置。项目锁还检查进程退出时间，避免诊断工具持有已退出进程句柄时误报项目占用。`EditorRecoveryRegression` 覆盖无效停靠引用和保留进程句柄的退出场景。
+
+2026-10-02 Windows Release 单文件包验收：使用 11 项目的测试副本（2550×1440 图片），在操作停止后导出 240 帧。相对上一轮已修复纹理重复加载的 `final.json`，整帧中位数由 27.282 ms 降为 16.795 ms，P95 由 31.235 ms 降为 26.335 ms；`EditorLayer::OnImGuiRender` 中位数由 25.738 ms 降为 0.328 ms，P95 由 28.838 ms 降为 0.452 ms。新采样中 Project / Hierarchy / Profiler 中位数分别为 0.143 / 0.017 / 0.085 ms；Inspector 未选对象，Console 未显示，不能据此推断其重负载性能。Scene 重绘 1 次，纹理构造 0 次。该结果是同机同项目的交互后静止样本，视角经过用户调整，包含 VSync/系统调度影响，不是固定帧率承诺或大场景基准。
+
+本地证据位于 `build/startup-dark-preview/boxed-image-lag/ui-optimized.json` 与 `ui-comparison.json`（忽略目录）。最终包 SHA256：`63D7FC9B1C8E3B2386F83257CD70B454B478119BEC78C45C752ACFEF137334AF`。打包版已验证项目打开、虚拟 Packages 展开及中键 Scene 焦点同步；原生版另已验证列表压力场景、图片拖入与撤销/重做。EditorRecovery、Profiler、ScriptCompiler 回归和 Web 1×/2× DPI 浏览器冒烟通过。

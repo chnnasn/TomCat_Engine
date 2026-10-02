@@ -23,7 +23,7 @@ const types = {'.html':'text/html','.js':'text/javascript','.json':'application/
  let browser, page;
  try {
   browser=await chromium.launch({headless:true,channel:process.env.TOMCAT_BROWSER_CHANNEL||undefined,args:['--enable-unsafe-swiftshader']});
-  page=await browser.newPage({viewport:{width:960,height:720}});
+  page=await browser.newPage({viewport:{width:960,height:720},deviceScaleFactor:Number(process.env.TOMCAT_BROWSER_DPR||1)});
   page.on('console',m=>logs.push(m.type()+': '+m.text()));page.on('pageerror',e=>pageErrors.push(String(e)));
   await page.goto(`http://127.0.0.1:${server.address().port}/managed-browser-smoke.html`);
   await page.waitForFunction(()=>{try{return typeof JSON.parse(document.querySelector('#status').textContent).ok==='boolean'}catch{return false}},{},{timeout:180000});

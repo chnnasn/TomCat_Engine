@@ -62,6 +62,10 @@ namespace TomCat {
 
 	private:
 		std::optional<CSharpScriptEntry> m_ScriptClipboard;
+        uint64_t m_MetadataRevision = ~uint64_t(0);
+        const Scene* m_MetadataScene = nullptr;
+        std::unordered_map<uint64_t, std::optional<EditorScriptMetadata>> m_MetadataCache;
+        std::unordered_map<uint64_t, size_t> m_ReconciledFields;
 		HierarchyPanelShared& m_Shared;
 		SceneAuthoringEditorsPanel& m_Authors;
 		std::filesystem::path m_InspectorAssetPath, m_LockedInspectorAssetPath;

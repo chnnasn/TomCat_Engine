@@ -1,3 +1,5 @@
+#include "TomCat/Core/Log.h"
+#include "TomCat/Debug/Instrumentor.h"
 #include "../EditorVisuals.h"
 #include "ProfilerPanel.h"
 
@@ -24,7 +26,7 @@ namespace TomCat {
 		{
 			return (static_cast<double>(current) - static_cast<double>(baseline)) / MiB;
 		}
-		void DrawTimeline(const FrameProfile& frame)
+		void DrawTimeline(const FrameProfile& frame, const char* search)
 		{
 			std::map<uint64_t, uint32_t> depths;
 			for (const auto& sample : frame.Samples)
@@ -49,6 +51,7 @@ namespace TomCat {
 			}
 			for (const auto& sample : frame.Samples)
 			{
+                if (search[0] && sample.Name.find(search) == std::string::npos) continue;
 				const float x = static_cast<float>(std::clamp(sample.StartMilliseconds / milliseconds, 0.0, 1.0)) * width;
 				const float end = static_cast<float>(std::clamp((sample.StartMilliseconds + sample.DurationMilliseconds) / milliseconds, 0.0, 1.0)) * width;
 				const float y = offsets[sample.Thread] + (std::min)(sample.Depth, 20u) * rowHeight;
@@ -78,7 +81,13 @@ namespace TomCat {
 		void DrawScopeTable(const FrameProfile& frame, const char* search)
 		{
 			struct Aggregate { std::string Name; double Total = 0, Maximum = 0; uint32_t Calls = 0; };
-			std::unordered_map<std::string, Aggregate> byName;
+			static uint64_t cachedID = 0;
+            static double cachedStart = -1;
+            static std::vector<Aggregate> sorted;
+            if (cachedID != frame.ID || cachedStart != frame.StartMicroseconds) {
+            TC_PROFILE_SCOPE("Profiler scope aggregation");
+            cachedID = frame.ID; cachedStart = frame.StartMicroseconds;
+            std::unordered_map<std::string, Aggregate> byName;
 			for (const auto& sample : frame.Samples)
 			{
 				auto& value = byName[sample.Name];
@@ -87,9 +96,10 @@ namespace TomCat {
 				value.Maximum = (std::max)(value.Maximum, sample.DurationMilliseconds);
 				++value.Calls;
 			}
-			std::vector<Aggregate> sorted;
+			sorted.clear();
 			for (auto& [name, value] : byName) sorted.push_back(std::move(value));
 			std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.Total > b.Total; });
+            }
 			ImGui::TextDisabled("Inclusive scopes overlap; totals must not be added together.");
 			if (ImGui::BeginTable("Scopes", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable, ImVec2(0, 0)))
 			{
@@ -112,12 +122,17 @@ namespace TomCat {
 
     void ProfilerPanel::OnImGuiRender(bool* open)
     {
+        TC_PROFILE_SCOPE("Panel Profiler");
         auto& profiler=FrameProfiler::Get();
         if(open && !*open) { profiler.SetRecording(false); return; }
         PrepareEditorToolWindow(ImVec2(1120,760),ImVec2(640,440));
         if(!BeginEditorWindow("Profiler",open)) { ImGui::End(); return; }
         const float font=ImGui::GetFontSize(), frameHeight=ImGui::GetFrameHeight();
-        auto summaries=profiler.Summaries();
+        if (ImGui::GetTime() >= m_NextChartRefresh) {
+            TC_PROFILE_SCOPE("Profiler chart snapshot");
+            m_Summaries = profiler.Summaries(); m_NextChartRefresh = ImGui::GetTime() + 0.1;
+        }
+        auto& summaries = m_Summaries;
         int selected=-1;
         if(!summaries.empty())
         {
@@ -259,8 +274,10 @@ namespace TomCat {
         ImGui::SameLine(); ImGui::SetNextItemWidth(-1);
         EditorSearchField("##ScopeSearch","Search scopes...",m_ScopeSearch,sizeof(m_ScopeSearch));
         ImGui::Separator();
-        FrameProfile frame;
-        const bool hasFrame=profiler.ReadFrame(m_SelectedFrame,frame);
+        if (m_DisplayedFrame.ID != m_SelectedFrame || !m_HasDisplayedFrame)
+            m_HasDisplayedFrame = profiler.ReadFrame(m_SelectedFrame, m_DisplayedFrame);
+        const FrameProfile& frame = m_DisplayedFrame;
+        const bool hasFrame = m_HasDisplayedFrame && m_SelectedFrame != 0;
         if(m_DetailsView==2)
         {
 #ifdef TC_PLATFORM_WINDOWS
@@ -337,8 +354,7 @@ namespace TomCat {
                 if(frame.DroppedSamples) ImGui::Text("Omitted scopes: %u",frame.DroppedSamples);
                 if(m_DetailsView==1)
                 {
-                    if(m_ScopeSearch[0]) frame.Samples.erase(std::remove_if(frame.Samples.begin(),frame.Samples.end(),[&](const auto& sample){return sample.Name.find(m_ScopeSearch)==std::string::npos;}),frame.Samples.end());
-                    DrawTimeline(frame);
+                    DrawTimeline(frame, m_ScopeSearch);
                 }
                 else DrawScopeTable(frame,m_ScopeSearch);
             }
