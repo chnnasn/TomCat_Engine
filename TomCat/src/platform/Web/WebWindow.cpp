@@ -33,9 +33,24 @@ WebWindow::WebWindow(const WindowProps& props) : m_Width(props.Width), m_Height(
   glfwSetWindowSizeCallback(m_Window, [](GLFWwindow* window, int width, int height) {
     auto& self = *static_cast<WebWindow*>(glfwGetWindowUserPointer(window));
     self.m_Width = width; self.m_Height = height;
-    WindowResizeEvent event(width, height);
-    if (self.m_Callback) self.m_Callback(event);
+    // The browser can resize the canvas box without the device pixel ratio changing, and
+    // zooming changes the ratio at a constant CSS size. Reading both back from GLFW in one
+    // place keeps the reported metrics consistent for either case.
+    self.RefreshMetrics(true);
   });
+  // Browser zoom and monitor changes fire the content scale callback. The interface has to
+  // be rebaked at the new ratio, so report it as a metrics change even when the CSS size
+  // stayed the same.
+  glfwSetWindowContentScaleCallback(m_Window, [](GLFWwindow* window, float xScale, float yScale) {
+    auto& self = *static_cast<WebWindow*>(glfwGetWindowUserPointer(window));
+    const float scale = std::isfinite(xScale) && xScale > 0.0f ? xScale : 1.0f;
+    const float scaleY = std::isfinite(yScale) && yScale > 0.0f ? yScale : 1.0f;
+    const float next = (scale + scaleY) * 0.5f;
+    if (std::abs(next - self.m_ContentScale) < 0.001f) return;
+    self.m_ContentScale = next;
+    self.RefreshMetrics(true);
+  });
+  RefreshMetrics(false);
 }
 WebWindow::~WebWindow() { if (m_Window) glfwDestroyWindow(m_Window); glfwTerminate(); Input::ClearState(); }
 void WebWindow::PollEvents() { glfwPollEvents(); }
@@ -46,13 +61,24 @@ void WebWindow::CancelCloseRequest() { glfwSetWindowShouldClose(m_Window, GLFW_F
 void WebWindow::Resize(uint32_t width, uint32_t height) {
   glfwSetWindowSize(m_Window, width, height);
   m_Width = width; m_Height = height;
-  // Report the metrics pair, matching WindowsWindow: the framebuffer extent can differ from the
-  // requested window size because Emscripten's GLFW owns the canvas drawing buffer.
+  // glfwSetWindowSize drives the canvas resize listener, so the metrics are read back
+  // afterwards instead of assuming the requested size became the buffer extent.
+  RefreshMetrics(true);
+}
+void WebWindow::RefreshMetrics(bool dispatchEvent) {
+  if (!m_Window) return;
+  int windowWidth = 0, windowHeight = 0;
   int framebufferWidth = 0, framebufferHeight = 0;
+  glfwGetWindowSize(m_Window, &windowWidth, &windowHeight);
   glfwGetFramebufferSize(m_Window, &framebufferWidth, &framebufferHeight);
-  WindowResizeEvent event(WindowMetrics::FromNative(static_cast<int>(width),
-    static_cast<int>(height), framebufferWidth, framebufferHeight, 1.0f, 1.0f));
-  if (m_Callback) m_Callback(event);
+  if (windowWidth > 0 && windowHeight > 0) { m_Width = uint32_t(windowWidth); m_Height = uint32_t(windowHeight); }
+  if (!dispatchEvent || !m_Callback) return;
+  // Content scale is the UI scale: the ratio between the CSS box and the drawing buffer can
+  // legitimately differ from it, so the two are reported separately. The event is a named
+  // local because the callback takes a non-const Event reference.
+  WindowResizeEvent event(WindowMetrics::FromNative(static_cast<int>(m_Width),
+    static_cast<int>(m_Height), framebufferWidth, framebufferHeight, m_ContentScale, m_ContentScale));
+  m_Callback(event);
 }
 uint32_t WebWindow::GetFramebufferWidth() const {
   int width = 0, height = 0;
