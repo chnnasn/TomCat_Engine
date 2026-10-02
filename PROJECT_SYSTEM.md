@@ -34,6 +34,7 @@ Project:
 - `Template` 只能是 `2D` 或 `3D`，且是项目模式的唯一真源；Builder 不再向 Editor 传递额外模式参数。
 - `AssetDirectory` 必须是项目内的非空相对路径。
 - Content Browser 的当前目录和展开节点属于 Editor 本机状态，保存在项目的 `UserSettings/editor.json`；加载时会限制在项目资源目录内，越界或不存在的路径会被忽略。
+- Windows 可从资源管理器将文件或目录拖入 Project 面板，复制到当前资源目录或落点文件夹；项目内拖动默认移动，按住 Ctrl 拖动复制。同名复制自动添加编号，不覆盖已有文件；副本不复制 `.tcmeta` UUID，引用仍指向原资源。符号链接及重解析目录不参与导入。
 - `Project` map 只允许上面列出的六个字段；入口场景和场景构建顺序不再保存在 `Project.tcproj`。
 
 ## 仅支持当前格式

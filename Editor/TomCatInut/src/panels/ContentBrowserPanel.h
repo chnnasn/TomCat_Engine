@@ -72,6 +72,7 @@ namespace TomCat {
         void SetScriptMetadataProvider(std::function<std::optional<EditorScriptMetadata>(AssetHandle)> provider) { m_ScriptMetadataProvider = std::move(provider); }
         bool OpenDiagnosticSource(const std::filesystem::path& path, uint32_t line = 0, uint32_t column = 0);
         void OnImGuiRender(bool* open = nullptr);
+		bool OnFileDrop(const std::vector<std::filesystem::path>& paths, float x, float y);
 	private:
         void SelectAssetPath(const std::filesystem::path& path);
         void RefreshInspectorDetails(const std::filesystem::path& path, AssetType type, bool directory);
@@ -124,6 +125,9 @@ namespace TomCat {
 		bool m_AssetMutationsEnabled = true;
 		std::filesystem::path m_ExternalScriptEditor;
 		bool m_Focused = false;
+		struct FileDropTarget { std::array<float, 4> Bounds; std::filesystem::path Directory; };
+		std::vector<FileDropTarget> m_FileDropTargets;
+		void CopyIntoProject(const std::vector<std::filesystem::path>& paths, const std::filesystem::path& directory);
 		bool m_Docked = true;
 
 		// 存储树节点的打开状态
