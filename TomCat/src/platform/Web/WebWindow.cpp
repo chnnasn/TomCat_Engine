@@ -76,9 +76,33 @@ void WebWindow::RefreshMetrics(bool dispatchEvent) {
   // Content scale is the UI scale: the ratio between the CSS box and the drawing buffer can
   // legitimately differ from it, so the two are reported separately. The event is a named
   // local because the callback takes a non-const Event reference.
+  const float scale = GetResolvedContentScale();
   WindowResizeEvent event(WindowMetrics::FromNative(static_cast<int>(m_Width),
-    static_cast<int>(m_Height), framebufferWidth, framebufferHeight, m_ContentScale, m_ContentScale));
+    static_cast<int>(m_Height), framebufferWidth, framebufferHeight, scale, scale));
   m_Callback(event);
+}
+void WebWindow::SetDisplayScale(float scale) {
+  // The host knows the page device pixel ratio exactly; once supplied it is authoritative,
+  // because the Emscripten content scale query can report 1 on a fractional-DPI display.
+  const float next = std::isfinite(scale) && scale > 0.0f ? scale : 1.0f;
+  m_HasHostScale = true;
+  if (std::abs(next - m_ContentScale) < 0.001f) return;
+  m_ContentScale = next;
+  RefreshMetrics(true);
+}
+float WebWindow::GetResolvedContentScale() const {
+  if (m_HasHostScale) return m_ContentScale;
+  // Fallback for hosts that do not report a scale: a drawing buffer larger than the CSS box is
+  // direct evidence of the real ratio.
+  int windowWidth = 0, framebufferWidth = 0;
+  if (m_Window) {
+    int windowHeight = 0, framebufferHeight = 0;
+    glfwGetWindowSize(m_Window, &windowWidth, &windowHeight);
+    glfwGetFramebufferSize(m_Window, &framebufferWidth, &framebufferHeight);
+    if (windowWidth > 0 && framebufferWidth > windowWidth)
+      return static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth);
+  }
+  return m_ContentScale;
 }
 uint32_t WebWindow::GetFramebufferWidth() const {
   int width = 0, height = 0;
