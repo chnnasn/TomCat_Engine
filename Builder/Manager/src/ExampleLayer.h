@@ -53,7 +53,7 @@ namespace TomCat {
 	private:
 		int m_SelectedMenu = 1; // 1 = Projects, 2 = Installs
 		int m_MenuOpenRow = -1; // which project row has its U+22EE menu open (-1 = none)
-		int m_NewProjectTemplate = 1; // 0 = 2D, 1 = 3D
+		int m_NewProjectTemplate = -1; // -1 = unselected, 0 = 2D, 1 = 3D
 		bool m_Chinese = true;
 		std::vector<Ref<Project>> m_Projects;
 		std::vector<Ref<Project>> m_VisibleProjects;
