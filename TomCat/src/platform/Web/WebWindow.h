@@ -16,6 +16,11 @@ public:
   // necessarily the real buffer extent. Read it back from GLFW instead of assuming the default.
   uint32_t GetFramebufferWidth() const override;
   uint32_t GetFramebufferHeight() const override;
+  // Emscripten's GLFW keeps screen coordinates and the canvas drawing buffer apart:
+  // glfwGetWindowSize() reports the CSS box while glfwGetFramebufferSize() reports the
+  // device pixel extent, and the browser device pixel ratio is the UI content scale.
+  // Reporting it here is what keeps fonts and style sizes DPI independent.
+  float GetDPIScale() const override { return m_ContentScale; }
   void SetTitle(const std::string& title) override;
   void SetEventCallback(const EventCallbackFn& callback) override { m_Callback = callback; }
   void SetVSync(bool) override {} // Browser presentation is controlled by requestAnimationFrame.
@@ -25,8 +30,12 @@ public:
   void* GetNativeWindow() const override { return m_Window; }
   void Resize(uint32_t width, uint32_t height);
 private:
+  // Recomputes the metrics pair the rest of the engine consumes and reports it when it
+  // changed. framebufferWidth/Height are read back from GLFW because it owns the buffer.
+  void RefreshMetrics(bool dispatchEvent);
   GLFWwindow* m_Window = nullptr;
   uint32_t m_Width = 0, m_Height = 0;
+  float m_ContentScale = 1.0f;
   EventCallbackFn m_Callback;
 };
 }
