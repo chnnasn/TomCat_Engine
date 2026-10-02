@@ -7,7 +7,6 @@
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Project/Project.h"
-#include "TomCat/Scene/SceneMigrator.h"
 #include "TomCat/Module/ModuleSystem.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Utils/PathUtils.h"
@@ -61,7 +60,6 @@ namespace {
 		std::filesystem::path ProjectPath;
 		std::filesystem::path OutputPath;
 		std::filesystem::path TemplatePath;
-		bool AllowMigration = false;
         TomCat::ScriptBuildProfile Profile = TomCat::ScriptBuildProfile::Production;
 		std::string Error;
 	};
@@ -71,11 +69,10 @@ namespace {
 		std::cout
 			<< "TomCatCLI - deterministic headless project build/cook\n\n"
 			<< "Usage:\n"
-			<< "  TomCatCLI cook  --project <Project.tcproj> [--output <Game.tcpak>] [--migrate] [--development]\n"
-			<< "  TomCatCLI build --project <Project.tcproj> [--template <directory>] [--migrate] [--development]\n\n"
+			<< "  TomCatCLI cook  --project <Project.tcproj> [--output <Game.tcpak>] [--development]\n"
+			<< "  TomCatCLI build --project <Project.tcproj> [--template <directory>] [--development]\n\n"
 			<< "Both commands compile and validate the current C# sources first. Projects\n"
-			<< "requiring an upgrade are rejected unless --migrate is explicit. An\n"
-			<< "interrupted migration must be reviewed and resolved in the Editor.\n";
+			<< "and assets must use the current format; older formats are rejected.\n";
 	}
 
 	bool MakeAbsolute(std::filesystem::path& path, std::string_view option,
@@ -138,8 +135,6 @@ namespace {
 				if (!parsed) { result.Error = "--template requires a path"; return result; }
 				result.TemplatePath = *parsed;
 			}
-			else if (option == L"--migrate")
-				result.AllowMigration = true;
 			else
 			{
 				result.Error = "unknown option: " + TomCat::PathToUTF8(option);
@@ -211,7 +206,6 @@ namespace {
 
 	int Run(const Options& options)
 	{
-		TomCat::ProjectMigrationPreview preview;
 		std::string error;
 		TomCat::EditorProjectLock projectLock;
 		const TomCat::ProjectLockAcquireResult lockResult =
@@ -234,41 +228,7 @@ namespace {
 				(void)TomCat::ModuleSystem::Get().UnloadAllModules(moduleError);
 			}
 		} assetSystemCleanup;
-		TomCat::ProjectMigrationRecoveryPreview recoveryPreview;
-		if (!TomCat::Project::PreviewInterruptedMigration(
-			options.ProjectPath, recoveryPreview, error))
-		{
-			std::cerr << "Interrupted project migration inspection failed: "
-				<< error << '\n';
-			return 3;
-		}
-		if (recoveryPreview.HasPendingRecovery())
-		{
-			std::cerr << "Interrupted project migration requires explicit review. "
-				"Open this project in the Editor to recover it, export its backup, "
-				"or abandon the interrupted transaction. TomCatCLI did not change "
-				"the project or its recovery journal.\n";
-			return 14;
-		}
-		if (!TomCat::Project::PreviewMigration(options.ProjectPath, preview, error))
-		{
-			std::cerr << "Project inspection failed: " << error << '\n';
-			return 3;
-		}
-		if (preview.RequiresMigration() && !options.AllowMigration)
-		{
-			std::cerr << "Project migration is required (schema "
-				<< preview.SourceSchemaVersion << " -> " << preview.TargetSchemaVersion
-				<< "). Review these changes and rerun with --migrate:\n";
-			for (const auto& change : preview.Changes)
-				std::cerr << "  " << TomCat::PathToUTF8(change.RelativePath)
-					<< ": " << change.Reason << '\n';
-			return 4;
-		}
-
-		TomCat::Ref<TomCat::Project> project = preview.RequiresMigration()
-			? TomCat::Project::LoadWithMigration(options.ProjectPath, preview)
-			: TomCat::Project::Load(options.ProjectPath);
+		auto project = TomCat::Project::Load(options.ProjectPath);
 		if (!project)
 		{
 			std::cerr << "Project load failed\n";
@@ -278,43 +238,6 @@ namespace {
 		if (!TomCat::ModuleSystem::Get().LoadProjectModules(project->GetProjectDirectory(),
 				error, true, TomCatModule::HostKind::Tool))
 		{ std::cerr << "Project module initialization failed: " << error << '\n'; return 6; }
-
-		// Scene-format migration runs before the asset registry scans the
-		// project so cook always observes current-schema scenes. The same
-		// explicit-opt-in rule as the project format applies.
-		TomCat::SceneMigrationPreview scenePreview;
-		if (!TomCat::SceneMigrator::PreviewProjectMigration(options.ProjectPath,
-			scenePreview, error))
-		{
-			std::cerr << "Scene migration inspection failed: " << error << '\n';
-			return 3;
-		}
-		if (scenePreview.RequiresMigration() && !options.AllowMigration)
-		{
-			std::cerr << "Scene migration is required for "
-				<< scenePreview.Scenes.size() << " scene file(s). Rerun with "
-				"--migrate to upgrade them in place (originals are backed up):\n";
-			for (const auto& scene : scenePreview.Scenes)
-			{
-				if (scene.RequiresMigration())
-					std::cerr << "  " << TomCat::PathToUTF8(scene.RelativePath)
-						<< ": schema " << scene.SourceSchemaVersion << " -> "
-						<< TomCat::SceneMigrator::CurrentSchemaVersion << '\n';
-			}
-			return 4;
-		}
-		if (scenePreview.RequiresMigration())
-		{
-			if (!TomCat::SceneMigrator::MigrateProjectScenes(options.ProjectPath,
-				scenePreview, error))
-			{
-				std::cerr << "Scene migration failed: " << error << '\n';
-				return 4;
-			}
-			std::cout << "Migrated " << scenePreview.Scenes.size()
-				<< " scene file(s) to schema "
-				<< TomCat::SceneMigrator::CurrentSchemaVersion << '\n';
-		}
 
 		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
 		if (!assets.SetProject(project) || !assets.Refresh())

@@ -417,9 +417,6 @@
     <ClInclude Include="src\TomCat\Scene\SceneManager.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\Scene\SceneMigrator.h">
-      <Filter>src\TomCat\Scene</Filter>
-    </ClInclude>
     <ClInclude Include="src\TomCat\Scene\SceneSerializer.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
@@ -2004,9 +2001,6 @@
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneManager.cpp">
-      <Filter>src\TomCat\Scene</Filter>
-    </ClCompile>
-    <ClCompile Include="src\TomCat\Scene\SceneMigrator.cpp">
       <Filter>src\TomCat\Scene</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Scene\SceneSerializer.cpp">

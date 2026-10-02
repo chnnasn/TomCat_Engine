@@ -382,15 +382,15 @@ namespace {
 
 	std::size_t FindManagedPackageIndexEntry(const std::vector<uint8_t>& package)
 	{
-		Require(package.size() >= TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize,
+		Require(package.size() >= TomCat::RuntimeCompatibility::TcpakBaseHeaderSize,
 			"package fixture has no supported tcpak base header");
 		const uint32_t version = ReadLittleEndian32(package, 8);
 		Require(TomCat::RuntimeCompatibility::IsSupportedTcpakVersion(version),
 			"package fixture has an unsupported tcpak version");
 		const uint32_t baseHeaderSize =
-			TomCat::RuntimeCompatibility::TcpakBaseHeaderSizeForVersion(version);
+			TomCat::RuntimeCompatibility::TcpakBaseHeaderSize;
 		const uint64_t entrySize =
-			TomCat::RuntimeCompatibility::TcpakEntrySizeForVersion(version);
+			TomCat::RuntimeCompatibility::TcpakEntrySize;
 		const uint32_t headerSize = ReadLittleEndian32(package, 12);
 		Require(headerSize >= baseHeaderSize
 			&& headerSize <= package.size(),
@@ -415,9 +415,9 @@ namespace {
 	{
 		const uint32_t version = ReadLittleEndian32(package, 8);
 		const uint64_t entrySize =
-			TomCat::RuntimeCompatibility::TcpakEntrySizeForVersion(version);
+			TomCat::RuntimeCompatibility::TcpakEntrySize;
 		Require(version == TomCat::RuntimeCompatibility::TcpakVersion
-			&& TomCat::RuntimeCompatibility::TcpakHasEntryDigests(version)
+			&& TomCat::RuntimeCompatibility::IsSupportedTcpakVersion(version)
 			&& entryOffset <= package.size()
 			&& entrySize <= package.size() - entryOffset,
 			"tcpak digest refresh requires a complete current index entry");
@@ -434,101 +434,9 @@ namespace {
 				static_cast<size_t>(payloadSize)));
 		const size_t digestOffset = entryOffset
 			+ static_cast<size_t>(
-				TomCat::RuntimeCompatibility::TcpakLegacyEntrySize);
+				TomCat::RuntimeCompatibility::TcpakEntryDigestOffset);
 		std::copy(digest.begin(), digest.end(),
 			package.begin() + digestOffset);
-	}
-
-	std::vector<uint8_t> MakeLegacyTcpakCompatibilityFixture(
-		const std::vector<uint8_t>& current, uint32_t targetVersion)
-	{
-		Require((targetVersion == TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion
-				|| targetVersion == TomCat::RuntimeCompatibility::TcpakBootManifestVersion)
-			&& current.size() >= TomCat::RuntimeCompatibility::TcpakBaseHeaderSize
-			&& ReadLittleEndian32(current, 8)
-				== TomCat::RuntimeCompatibility::TcpakVersion,
-			"legacy conversion requires a current tcpak source and v5/v6 target");
-		const uint32_t currentHeaderSize = ReadLittleEndian32(current, 12);
-		const uint64_t entryCount = ReadLittleEndian64(current, 16);
-		const uint64_t buildSceneCount = ReadLittleEndian64(current, 32);
-		Require(buildSceneCount <= TomCat::RuntimeCompatibility::MaximumBuildSceneCount,
-			"current tcpak source has too many build scenes");
-		const uint64_t sceneBytes64 = buildSceneCount * sizeof(uint64_t);
-		Require(sceneBytes64 <= currentHeaderSize
-			&& currentHeaderSize >= TomCat::RuntimeCompatibility::TcpakBaseHeaderSize
-				+ sceneBytes64,
-			"current tcpak source has an invalid scene table");
-		const std::size_t sceneBytes = static_cast<std::size_t>(sceneBytes64);
-		const std::size_t sceneOffset = currentHeaderSize - sceneBytes;
-		const uint32_t targetHeaderSize =
-			targetVersion == TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion
-			? TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize
-				+ static_cast<uint32_t>(sceneBytes)
-			: currentHeaderSize;
-		const uint64_t currentEntrySize =
-			TomCat::RuntimeCompatibility::TcpakEntrySize;
-		const uint64_t targetEntrySize =
-			TomCat::RuntimeCompatibility::TcpakLegacyEntrySize;
-		Require(currentHeaderSize <= current.size()
-			&& entryCount <= (current.size() - currentHeaderSize)
-				/ TomCat::RuntimeCompatibility::TcpakEntrySize,
-			"current tcpak source has an invalid index");
-		const uint64_t currentDataStart = currentHeaderSize
-			+ entryCount * currentEntrySize;
-		const uint64_t targetDataStart = targetHeaderSize
-			+ entryCount * targetEntrySize;
-		Require(targetDataStart <= currentDataStart
-			&& currentDataStart <= current.size(),
-			"current tcpak source has invalid data offsets");
-		const uint64_t removedBytes = currentDataStart - targetDataStart;
-
-		std::vector<uint8_t> legacy;
-		legacy.reserve(current.size() - static_cast<std::size_t>(removedBytes));
-		if (targetVersion == TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion)
-		{
-			legacy.insert(legacy.end(), current.begin(),
-				current.begin() + TomCat::RuntimeCompatibility::TcpakV5BaseHeaderSize);
-			legacy.insert(legacy.end(), current.begin() + sceneOffset,
-				current.begin() + currentHeaderSize);
-		}
-		else
-		{
-			legacy.insert(legacy.end(), current.begin(),
-				current.begin() + currentHeaderSize);
-		}
-		for (uint64_t index = 0; index < entryCount; ++index)
-		{
-			const std::size_t sourceEntryOffset = currentHeaderSize
-				+ static_cast<std::size_t>(index * currentEntrySize);
-			const std::size_t targetEntryOffset = legacy.size();
-			legacy.insert(legacy.end(), current.begin() + sourceEntryOffset,
-				current.begin() + sourceEntryOffset + targetEntrySize);
-			const uint64_t dataOffset =
-				ReadLittleEndian64(legacy, targetEntryOffset + 16);
-			Require(dataOffset >= removedBytes,
-				"current tcpak index cannot be rebased to its legacy layout");
-			WriteLittleEndian64(legacy, targetEntryOffset + 16,
-				dataOffset - removedBytes);
-		}
-		legacy.insert(legacy.end(), current.begin()
-			+ static_cast<std::size_t>(currentDataStart), current.end());
-		WriteLittleEndian32(legacy, 8, targetVersion);
-		WriteLittleEndian32(legacy, 12, targetHeaderSize);
-		return legacy;
-	}
-
-	std::vector<uint8_t> MakeTcpakV5CompatibilityFixture(
-		const std::vector<uint8_t>& current)
-	{
-		return MakeLegacyTcpakCompatibilityFixture(current,
-			TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion);
-	}
-
-	std::vector<uint8_t> MakeTcpakV6CompatibilityFixture(
-		const std::vector<uint8_t>& current)
-	{
-		return MakeLegacyTcpakCompatibilityFixture(current,
-			TomCat::RuntimeCompatibility::TcpakBootManifestVersion);
 	}
 
 	bool Near(float actual, float expected, float tolerance = 1.0e-4f)
@@ -861,31 +769,10 @@ namespace {
 		std::error_code removeError;
 		Require(std::filesystem::remove(project->GetSettingsPath(), removeError) && !removeError,
 			"could not remove JSON settings fixture for legacy compatibility test");
-		auto legacySettingsProject = TomCat::Project::Load(projectPath);
-		Require(legacySettingsProject != nullptr
-			&& legacySettingsProject->GetSettings() == customized,
-			"missing JSON settings did not fall back to valid legacy settings");
-		Require(!std::filesystem::exists(project->GetSettingsPath()),
-			"loading legacy settings unexpectedly rewrote the project");
-		Require(legacySettingsProject->SaveSettings(),
-			"SaveSettings could not migrate loaded legacy data to JSON");
-		Require(std::filesystem::is_regular_file(project->GetSettingsPath()),
-			"SaveSettings did not create the authoritative JSON settings file");
-		auto migratedSettingsProject = TomCat::Project::Load(projectPath);
-		Require(migratedSettingsProject != nullptr
-			&& migratedSettingsProject->GetSettings() == customized,
-			"project settings changed while legacy data was saved as JSON");
+        Require(!TomCat::Project::Load(projectPath), "legacy YAML settings must not be loaded");
+        Require(!std::filesystem::exists(project->GetSettingsPath()), "rejection created settings");
+        Require(project->SaveSettings(), "could not restore current settings");
 
-		removeError.clear();
-		Require(std::filesystem::remove(project->GetSettingsPath(), removeError) && !removeError,
-			"could not remove JSON settings fixture for missing-file test");
-		removeError.clear();
-		Require(std::filesystem::remove(legacySettingsPath, removeError) && !removeError,
-			"could not remove legacy settings fixture for missing-file test");
-		auto missingSettings = TomCat::Project::Load(projectPath);
-		Require(missingSettings != nullptr && missingSettings->GetSettings() == defaults,
-			"missing project settings did not load backward-compatible defaults");
-		Require(project->SaveSettings(), "could not restore settings after missing-file test");
 	}
 
 	void TestPlayerSettingsPersistenceAndValidation()
@@ -976,30 +863,13 @@ namespace {
 		std::error_code removeError;
 		Require(std::filesystem::remove(project->GetPlayerSettingsPath(), removeError)
 			&& !removeError, "could not remove PlayerSettings migration fixture");
-		auto inspected = TomCat::Project::Inspect(projectPath);
-		Require(inspected != nullptr
-			&& inspected->GetPlayerSettings().ProductName == config.Name
-			&& inspected->GetPlayerSettings().Version == config.Version
-			&& !std::filesystem::exists(project->GetPlayerSettingsPath()),
-			"read-only project inspection wrote PlayerSettings migration output");
-		TomCat::ProjectMigrationPreview migrationPreview;
-		std::string migrationPreviewError;
-		Require(TomCat::Project::PreviewMigration(
-			projectPath, migrationPreview, migrationPreviewError),
-			"missing PlayerSettings migration preview failed");
-		Require(TomCat::Project::Load(projectPath) == nullptr
-			&& !std::filesystem::exists(project->GetPlayerSettingsPath()),
-			"default Project::Load implicitly created missing PlayerSettings");
-		auto migrated = TomCat::Project::LoadWithMigration(
-			projectPath, migrationPreview);
-		Require(migrated != nullptr
-			&& migrated->GetPlayerSettings().ProductName == config.Name
-			&& migrated->GetPlayerSettings().Version == config.Version
-			&& std::filesystem::is_regular_file(project->GetPlayerSettingsPath()),
-			"approved migration did not create missing PlayerSettings defaults");
+        Require(!TomCat::Project::Inspect(projectPath) && !TomCat::Project::Load(projectPath),
+            "missing PlayerSettings must be rejected");
+        Require(!std::filesystem::exists(project->GetPlayerSettingsPath()), "rejection created PlayerSettings");
+
 	}
 
-	void TestLegacyProjectBuildSettingsMigration()
+	void TestLegacyProjectRejected()
 	{
 		TemporaryCookedProject environment;
 		std::filesystem::create_directories(environment.Root / "Assets");
@@ -1019,37 +889,10 @@ namespace {
 			<< "  StartSceneHandle: " << legacyHandle << "\n";
 		WriteTextFile(projectPath, legacyProject.str());
 
-		TomCat::ProjectMigrationPreview migrationPreview;
-		std::string migrationPreviewError;
-		Require(TomCat::Project::PreviewMigration(
-			projectPath, migrationPreview, migrationPreviewError),
-			"legacy project migration preview failed");
-		Require(TomCat::Project::Load(projectPath) == nullptr
-			&& ReadTextFile(projectPath) == legacyProject.str()
-			&& !std::filesystem::exists(
-				environment.Root / "ProjectSettings" / "BuildSettings.json"),
-			"default Project::Load implicitly migrated a schema-v3 project");
-		auto migrated = TomCat::Project::LoadWithMigration(
-			projectPath, migrationPreview);
-		Require(migrated != nullptr,
-			"approved schema-v3 project migration was rejected");
-		const TomCat::BuildSettings& build = migrated->GetBuildSettings();
-		Require(build.EntrySceneHandle == TomCat::AssetHandle(legacyHandle)
-			&& build.Scenes.size() == 1
-			&& build.Scenes[0].Handle == TomCat::AssetHandle(legacyHandle)
-			&& build.Scenes[0].Enabled
-			&& build.Scenes[0].PathHint == "Scenes/Legacy.tomcat",
-			"legacy StartSceneHandle did not migrate into authoritative BuildSettings");
-		const std::string migratedProject = ReadTextFile(projectPath);
-		Require(migratedProject.find("SchemaVersion: 4") != std::string::npos
-			&& migratedProject.find("StartScene") == std::string::npos,
-			"legacy project was not rewritten without duplicate StartScene truth");
-		const std::string migratedBuild = ReadTextFile(migrated->GetBuildSettingsPath());
-		Require(migratedBuild.find(std::to_string(legacyHandle)) != std::string::npos,
-			"BuildSettings migration lost an unsigned 64-bit scene handle");
-		auto reloaded = TomCat::Project::Load(projectPath);
-		Require(reloaded != nullptr && reloaded->GetBuildSettings() == build,
-			"migrated schema-v4 project did not reload its BuildSettings unchanged");
+        Require(!TomCat::Project::Inspect(projectPath) && !TomCat::Project::Load(projectPath),
+            "schema 3 must be rejected");
+        Require(ReadTextFile(projectPath) == legacyProject.str(), "rejection rewrote legacy project");
+
 	}
 
 	TomCat::Entity AddCircleBody(TomCat::Scene& scene, const char* name,
@@ -2689,83 +2532,20 @@ namespace {
 				"save/load changed one of the supported hierarchy icon tokens");
 		}
 
-		YAML::Node legacyV10Node = YAML::Load(serialized);
-		legacyV10Node["SchemaVersion"] = 10;
-		for (YAML::Node entityNode : legacyV10Node["Entities"])
-			entityNode.remove("Components");
-		YAML::Emitter legacyV10Emitter;
-		legacyV10Emitter << legacyV10Node;
-		const std::filesystem::path legacyV10AdapterPath =
-			environment.Root / "legacy_v10_accepted.tomcat";
-		WriteTextFile(legacyV10AdapterPath, legacyV10Emitter.c_str());
-		Require(TomCat::SceneSerializer::ValidateCurrentFormat(legacyV10AdapterPath),
-			"schema-v10 adapter input was rejected");
-		auto legacyV10Loaded = TomCat::CreateRef<TomCat::Scene>();
-		Require(TomCat::SceneSerializer(legacyV10Loaded).Deserialize(legacyV10AdapterPath)
-			&& legacyV10Loaded->FindEntityByUUID(sourceUUID)
-				.HasComponent<TomCat::CSharpScripts>(),
-			"schema-v10 adapter lost CSharpScripts");
-
-		std::string obsolete = serialized;
-		const size_t version = obsolete.find("SchemaVersion: 11");
-		Require(version != std::string::npos, "could not locate serialized schema version");
-		obsolete.replace(version, std::string("SchemaVersion: 11").size(), "SchemaVersion: 8");
-		const std::filesystem::path obsoletePath = environment.Root / "schema_v8_rejected.tomcat";
-		WriteTextFile(obsoletePath, obsolete);
-		Require(!TomCat::SceneSerializer::ValidateCurrentFormat(obsoletePath),
-			"strict current-format validation accepted schema v8");
-		auto obsoleteTarget = TomCat::CreateRef<TomCat::Scene>();
-		TomCat::SceneSerializer obsoleteReader(obsoleteTarget);
-		Require(!obsoleteReader.Deserialize(obsoletePath),
-			"scene reader accepted schema v8 instead of requiring schema 9 through 11");
-
-		auto legacySource = TomCat::CreateRef<TomCat::Scene>();
-		legacySource->SetSceneName("Schema 9 migration");
-		legacySource->CreateEntity("Legacy entity");
-		const std::filesystem::path legacyV10Path =
-			environment.Root / "legacy_source_v11.tomcat";
-		TomCat::SceneSerializer legacyWriter(legacySource);
-		Require(legacyWriter.Serialize(legacyV10Path),
-			"could not create a script-free schema-v11 migration fixture");
-		YAML::Node legacyV9Node = YAML::Load(ReadTextFile(legacyV10Path));
-		legacyV9Node["SchemaVersion"] = 9;
-		for (YAML::Node entityNode : legacyV9Node["Entities"])
-			entityNode.remove("Components");
-		YAML::Emitter legacyV9Emitter;
-		legacyV9Emitter << legacyV9Node;
-		std::string legacyV9 = legacyV9Emitter.c_str();
-		const std::filesystem::path legacyV9Path =
-			environment.Root / "legacy_v9_accepted.tomcat";
-		WriteTextFile(legacyV9Path, legacyV9);
-		Require(TomCat::SceneSerializer::ValidateCurrentFormat(legacyV9Path),
-			"schema-v9 migration input was rejected");
-		auto legacyLoaded = TomCat::CreateRef<TomCat::Scene>();
-		TomCat::SceneSerializer legacyReader(legacyLoaded);
-		Require(legacyReader.Deserialize(legacyV9Path),
-			"schema-v9 migration input did not deserialize");
-		Require(!legacyLoaded->GetRootEntityUUIDs().empty(),
-			"schema-v9 migration input lost its entity");
-		const std::filesystem::path migratedV10Path =
-			environment.Root / "legacy_resaved_as_v11.tomcat";
-		TomCat::SceneSerializer migratedWriter(legacyLoaded);
-		Require(migratedWriter.Serialize(migratedV10Path)
-			&& ReadTextFile(migratedV10Path).find("SchemaVersion: 11")
-				!= std::string::npos,
-			"saving schema-v9 migration input did not upgrade it to schema 11");
-
-		YAML::Node illegalV9Node = YAML::Load(serialized);
-		illegalV9Node["SchemaVersion"] = 9;
-		for (YAML::Node entityNode : illegalV9Node["Entities"])
-			entityNode.remove("Components");
-		YAML::Emitter illegalV9Emitter;
-		illegalV9Emitter << illegalV9Node;
-		std::string illegalV9Scripts = illegalV9Emitter.c_str();
-		const std::filesystem::path illegalV9ScriptsPath =
-			environment.Root / "schema_v9_with_v10_scripts.tomcat";
-		WriteTextFile(illegalV9ScriptsPath, illegalV9Scripts);
-		Require(!TomCat::SceneSerializer::ValidateCurrentFormat(
-			illegalV9ScriptsPath),
-			"strict schema-v9 migration accepted a schema-v10 CSharpScripts field");
+        for (const uint32_t schema : { 0u, 8u, 9u, 10u, 12u })
+        {
+            YAML::Node document = YAML::Load(serialized);
+            document["SchemaVersion"] = schema;
+            YAML::Emitter out; out << document;
+            const auto path = environment.Root / "unsupported.tomcat";
+            WriteTextFile(path, out.c_str());
+            Require(!TomCat::SceneSerializer::ValidateCurrentFormat(path), "unsupported scene validated");
+            auto target = TomCat::CreateRef<TomCat::Scene>();
+            const auto sentinel = target->CreateEntity("Unchanged").GetUUID();
+            Require(!TomCat::SceneSerializer(target).Deserialize(path), "unsupported scene loaded");
+            Require(static_cast<bool>(target->FindEntityByUUID(sentinel)), "failed load changed live scene");
+            Require(ReadTextFile(path) == out.c_str(), "failed load rewrote scene");
+        }
 
 		auto duplicateAttachmentScene = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::CSharpScriptEntry duplicateAttachment;
@@ -3239,7 +3019,7 @@ namespace {
 		for (std::size_t offset = 100; offset < 124; offset += sizeof(uint32_t))
 			bootManifestStringBytes += ReadLittleEndian32(validPackage, offset);
 		const uint32_t buildSceneOffset =
-			TomCat::RuntimeCompatibility::TcpakV6BaseHeaderSize
+			TomCat::RuntimeCompatibility::TcpakBaseHeaderSize
 			+ bootManifestStringBytes;
 		const uint32_t expectedHeaderSize = buildSceneOffset
 			+ 2 * static_cast<uint32_t>(sizeof(uint64_t));
@@ -3266,33 +3046,14 @@ namespace {
 				== static_cast<uint64_t>(sceneHandle),
 			"cooked package did not declare the tcpak v7 BootManifest and scene header");
 
-		const std::vector<uint8_t> v6Package =
-			MakeTcpakV6CompatibilityFixture(validPackage);
-		const std::filesystem::path v6PackagePath =
-			environment.Root / "Build" / "LegacyV6.tcpak";
-		WriteBinaryFile(v6PackagePath, v6Package);
-		Require(assets.MountCookedPackage(v6PackagePath)
-			&& assets.GetCookedPackageVersion()
-				== TomCat::RuntimeCompatibility::TcpakBootManifestVersion
-			&& assets.GetCookedBuildSceneHandles()
-				== std::vector<TomCat::AssetHandle>{ secondaryHandle, sceneHandle }
-			&& assets.GetCookedPlayerSettings() == cookedPlayerSettings,
-			"Player failed to read tcpak v6 after the v7 digest-index upgrade");
-		assets.UnmountCookedPackage();
-
-		const std::vector<uint8_t> v5Package =
-			MakeTcpakV5CompatibilityFixture(validPackage);
-		const std::filesystem::path v5PackagePath =
-			environment.Root / "Build" / "LegacyV5.tcpak";
-		WriteBinaryFile(v5PackagePath, v5Package);
-		Require(assets.MountCookedPackage(v5PackagePath)
-			&& assets.GetCookedPackageVersion()
-				== TomCat::RuntimeCompatibility::OldestSupportedTcpakVersion
-			&& assets.GetCookedBuildSceneHandles()
-				== std::vector<TomCat::AssetHandle>{ secondaryHandle, sceneHandle }
-			&& assets.GetCookedPlayerSettings() == TomCat::PlayerSettings{},
-			"Player failed to read tcpak v5 with safe default PlayerSettings");
-		assets.UnmountCookedPackage();
+        for (const uint32_t version : { 0u, 5u, 6u, 7u, 9u })
+        {
+            auto unsupported = validPackage;
+            WriteLittleEndian32(unsupported, 8, version);
+            const auto path = environment.Root / "Build" / "Unsupported.tcpak";
+            WriteBinaryFile(path, unsupported);
+            Require(!assets.MountCookedPackage(path), "unsupported package version mounted");
+        }
 
 		const std::size_t managedIndex = FindManagedPackageIndexEntry(validPackage);
 		const uint64_t managedEnvelopeOffset64 =
@@ -7079,7 +6840,7 @@ int main(int argc, char** argv)
 	run("project settings persistence and validation", TestProjectSettingsPersistenceAndValidation);
 	run("PlayerSettings strict schema, roundtrip, and migration",
 		TestPlayerSettingsPersistenceAndValidation);
-	run("legacy project BuildSettings migration", TestLegacyProjectBuildSettingsMigration);
+	run("legacy project BuildSettings migration", TestLegacyProjectRejected);
 	run("explicit Player dotnet root is exclusive", TestExplicitDotNetRootIsExclusive);
 	run("fixed accumulator and exact Step", TestFixedAccumulatorAndStep);
 	run("managed Transform world setters preserve hierarchy",

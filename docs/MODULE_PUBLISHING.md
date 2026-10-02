@@ -1,5 +1,7 @@
 # 原生模块发布
 
+当前原生模块 ABI 为 2。组件描述符的旧版本迁移回调已删除，模块必须使用当前 SDK 重新编译；入口必须核对 `host->Version` 和 `context->Version`。清单格式仍为 `ModuleVersion: 1`。
+
 工程中的 `Modules/<name>/module.tomcat` 与原生 DLL 会通过 CLI cook/build 和编辑器 PlayerBuilder 进入 TCPAK v8。桌面 Player 校验包后，在独立临时目录恢复模块，按依赖顺序初始化，再加载场景。发布物不依赖原工程目录。
 
 ```yaml

@@ -1,8 +1,7 @@
 #pragma once
 
 // Project Settings / Player Settings draft editing and persistence,
-// extracted from EditorLayer. The project migration flow stays in
-// EditorLayer because OpenProject owns it.
+// extracted from EditorLayer.
 
 #include "TomCat/Core/Base.h"
 #include "TomCat/Project/ProjectSettings.h"
