@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include "../ProjectBrowserCache.h"
+#include <deque>
 #include <array>
 #include <functional>
 #include <string>
@@ -109,11 +111,26 @@ namespace TomCat {
 		struct PreviewEntry
 		{
 			Ref<Texture2D> Texture;
+            bool Queued = false;
+            uint32_t SourceWidth = 0, SourceHeight = 0;
 			std::filesystem::file_time_type Modified{};
 			int LastUsedFrame = 0;
 		};
 		std::unordered_map<std::filesystem::path, PreviewEntry> m_Previews;
 		double m_NextPreviewRefresh = 0.0;
+        ProjectBrowserCache m_BrowserCache;
+        std::filesystem::path m_CachedAssetRoot, m_CachedPackagesRoot;
+        uint64_t m_BrowserRevision = ~uint64_t(0);
+        double m_NextMetadataRefresh = 0;
+        std::string m_SearchCacheKey;
+        std::vector<std::filesystem::path> m_SearchMatches;
+        std::unordered_map<std::filesystem::path, AssetHandle> m_BrowserHandles;
+        const AssetMetadata* BrowserMetadata(const std::filesystem::path& path) const;
+        void UpdateBrowserCache();
+        struct PreviewResult { std::filesystem::path Path; std::vector<uint8_t> Artifact; uint64_t Generation = 0; std::filesystem::file_time_type Modified{}; };
+        std::future<PreviewResult> m_PreviewJob;
+        std::deque<std::filesystem::path> m_PreviewQueue;
+        uint64_t m_PreviewGeneration = 0;
 		Ref<Texture2D> GetImagePreview(const std::filesystem::path& path);
 		void RefreshImagePreviews();
 		Ref<EditorIconSet> m_Icons;
@@ -208,7 +225,7 @@ namespace TomCat {
 		void DrawFileTreeNode(const std::filesystem::path& path, const std::filesystem::path& root);
 		void DrawBreadcrumbs(const std::filesystem::path& root, const char* rootLabel);
 		void DrawAssetGrid(const std::filesystem::path& root, const char* rootLabel);
-		void DrawAssetItem(const std::filesystem::directory_entry& entry, const std::filesystem::path& root);
+		void DrawAssetItem(const ProjectBrowserCache::Entry& entry, const std::filesystem::path& root);
 		Ref<Texture2D> GetAssetIcon(const std::filesystem::path& path, bool isDirectory,
 			bool isOpen = false);
 		void SubmitDragPayload(const std::filesystem::path& path, const std::filesystem::path& assetRoot, const Ref<Texture2D>& icon);

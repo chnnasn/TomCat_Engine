@@ -4,9 +4,8 @@
 #include "TomCat/Events/KeyEvent.h"
 #include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Events/ApplicationEvent.h"
-// ImGuiStyle is stored by value so a scale change can be recomputed from the authored
-// metrics instead of accumulating on the live style.
-#include "imgui.h"
+#include <memory>
+struct ImGuiStyle;
 
 namespace TomCat {
 
@@ -63,7 +62,7 @@ namespace TomCat {
 		// Kept apart so each source can change without clobbering the other.
 		float m_DpiScale = 1.0f;
 		float m_UserScale = 1.0f;
-		ImGuiStyle m_BaseStyle;
+		std::unique_ptr<ImGuiStyle> m_BaseStyle;
 		bool m_BaseStyleCaptured = false;
 		bool m_FontRebuildPending = false;
 		float m_BaseFontSize = 0.0f;

@@ -1047,6 +1047,35 @@ namespace {
 #endif
 	}
 
+	void TestRenderAssetIdentitySnapshot()
+	{
+		TemporaryProject project;
+		const auto source = project.Assets / "snapshot.bmp";
+		WriteBinary(source, MakeFourByFourBMP());
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"render identity registry initialization failed");
+		const auto original = RequireHandle(registry, source, TomCat::AssetType::Texture2D);
+		Require(registry.IsCurrentAsset(original)
+			&& !registry.IsCurrentAsset(TomCat::AssetHandle(0)),
+			"render identity snapshot did not recognize the live owner");
+		// Rendering sees the last published snapshot, not uncommitted disk changes.
+		std::filesystem::remove(source);
+		Require(registry.IsCurrentAsset(original),
+			"render identity unexpectedly inspected the source filesystem");
+		Require(registry.Refresh() && !registry.IsCurrentAsset(original),
+			"published source deletion did not invalidate render identity");
+		WriteBinary(source, MakeFourByFourBMP());
+		Require(registry.Refresh() && registry.IsCurrentAsset(original),
+			"restored source did not recover render identity");
+		std::filesystem::remove(TomCat::AssetRegistry::GetMetadataPath(source));
+		Require(registry.Refresh(), "replacement source identity refresh failed");
+		const auto replacement = RequireHandle(registry, source, TomCat::AssetType::Texture2D);
+		Require(replacement != original && registry.IsCurrentAsset(replacement)
+			&& !registry.IsCurrentAsset(original),
+			"render identity accepted a previous owner of the same path");
+	}
+
 	void TestCookedShaderRuntimeConsumption()
 	{
 		TemporaryProject project;
@@ -3625,6 +3654,7 @@ int main()
 	{
 		TestScopedPrefabProperties();
 		TestMixedPrefixAssetImport();
+		TestRenderAssetIdentitySnapshot();
 		TestOfflineTextureArtifacts();
 		TestOfflineShaderArtifacts();
 		TestCookedShaderRuntimeConsumption();
