@@ -4,7 +4,19 @@
 #include "SceneToolbarDrawing.h"
 #include <ImGuizmo.h>
 #include <emscripten.h>
+#include <cstdint>
+#include <cstdlib>
+#include <string>
 namespace TomCat {
+namespace {
+	// Persisted workspace format. The managed sections carry the dock tree and window
+	// geometry; the engine section carries state ImGui does not know about. A version
+	// marker lets a future layout change discard data instead of misplacing panels.
+	constexpr int kLayoutSchemaVersion = 1;
+	constexpr const char* kPanelSection = "[TomCatWebPanelLayout][v1]";
+	constexpr size_t kMaxLayoutBytes = 512 * 1024;
+}
+
 	void WebEditorUI::UI_SceneToolbarDragHandle(const char* id, glm::vec2& offset, bool& docked, bool& dragging,
 		const ImVec2& handleMin, const ImVec2& handleMax, float tearX, bool canDock)
 	{
@@ -22,6 +34,58 @@ namespace TomCat {
 	{
 #include "panels/UI_SceneToolbarDockPreview.inl"
 	}
+
+
+uint32_t WebEditorUI::GetPanelVisibilityMask() const {
+  return (m_ShowScene ? 1u : 0u) | (m_ShowGame ? 2u : 0u) | (m_ShowHierarchy ? 4u : 0u)
+    | (m_ShowInspector ? 8u : 0u) | (m_ShowProject ? 16u : 0u) | (m_ShowConsole ? 32u : 0u);
+}
+
+std::string WebEditorUI::ComposeLayoutSettings() const {
+  std::string blob = std::to_string(kLayoutSchemaVersion);
+  blob += '\n';
+  blob += kPanelSection;
+  blob += '\n';
+  blob += std::to_string(GetPanelVisibilityMask());
+  blob += '\n';
+  size_t size = 0;
+  if (const char* imgui = ImGui::SaveIniSettingsToMemory(&size))
+    blob.append(imgui, size);
+  return blob;
+}
+
+bool WebEditorUI::ApplyLayoutSettings(const std::string& settings) {
+  if (settings.empty() || settings.size() > kMaxLayoutBytes)
+    return false;
+  const size_t versionEnd = settings.find('\n');
+  if (versionEnd == std::string::npos || std::atoi(settings.c_str()) != kLayoutSchemaVersion)
+    return false;
+  const size_t sectionEnd = settings.find('\n', versionEnd + 1);
+  if (sectionEnd == std::string::npos || settings.compare(versionEnd + 1, sectionEnd - versionEnd - 1, kPanelSection) != 0)
+    return false;
+  const size_t maskEnd = settings.find('\n', sectionEnd + 1);
+  if (maskEnd == std::string::npos)
+    return false;
+  const uint32_t mask = static_cast<uint32_t>(std::strtoul(settings.c_str() + sectionEnd + 1, nullptr, 10));
+
+  // A blob that carries only the engine section would make ImGui drop the default dock
+  // tree, so the managed sections are required before anything is applied.
+  const std::string managed = settings.substr(maskEnd + 1);
+  if (managed.find("[Window][") == std::string::npos
+    && managed.find("[Table][") == std::string::npos
+    && managed.find("[Docking][") == std::string::npos)
+    return false;
+  ImGui::LoadIniSettingsFromMemory(managed.data(), managed.size());
+
+  m_ShowScene = (mask & 1u) != 0;
+  m_ShowGame = (mask & 2u) != 0;
+  m_ShowHierarchy = (mask & 4u) != 0;
+  m_ShowInspector = (mask & 8u) != 0;
+  m_ShowProject = (mask & 16u) != 0;
+  m_ShowConsole = (mask & 32u) != 0;
+  return true;
+}
+
 
 void WebEditorUI::SaveSceneToolbarLayout() {
   // Editor UI preference only; independent of project contents and scene history.

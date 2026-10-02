@@ -13,6 +13,8 @@
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
+#include "TomCat/Core/Application.h"
+#include "TomCat/ImGui/ImGuiLayer.h"
 
 namespace TomCat {
 // Native file dialogs/external editors have no browser equivalent. Import and
@@ -78,6 +80,14 @@ void WebEditorUI::SyncContext() {
 }
 void WebEditorUI::OnUpdate(Timestep delta) {
   SyncContext();
+  // The browser reports zoom and monitor changes as a content scale change, which can arrive
+  // without a canvas resize. Rebaking fonts and style here keeps interface units tied to CSS
+  // pixels instead of letting the UI shrink or grow with the display.
+  const float displayScale = Application::Get().GetWindow().GetDPIScale();
+  if (std::abs(displayScale - m_DisplayScale) > 0.001f) {
+    m_DisplayScale = displayScale;
+    if (ImGuiLayer* layer = Application::Get().GetImGuiLayer()) layer->SetUiScale(displayScale);
+  }
   if (!m_Context) return;
   m_Session.AdvancePreview(float(delta));
   const uint32_t width = uint32_t(std::clamp(m_ViewportSize.x,1.0f,4096.0f));
