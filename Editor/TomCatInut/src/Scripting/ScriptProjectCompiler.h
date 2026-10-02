@@ -75,7 +75,9 @@ namespace TomCat {
             ScriptBuildProfile profile = ScriptBuildProfile::Development);
 		void Reset();
 
-		bool RefreshSourceState();
+		// UI polling uses the registry maintained by the import watcher. Explicit
+		// builds still request a synchronous refresh before collecting sources.
+		bool RefreshSourceState(bool refreshRegistry = true);
 		ScriptBuildResult CompileNow();
 		bool EnsureCurrentBuild();
 		// Starts an isolated worker build from a main-thread source snapshot. The

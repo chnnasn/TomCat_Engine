@@ -711,7 +711,13 @@ namespace {
 		WriteTextFile(scriptPath,
 			"using TomCat;\nnamespace Regression;\n"
 			"public sealed class LastGoodProbe : TomCatBehaviour { public int Count = 19; }\n");
-		Require(compiler.RefreshSourceState() && compiler.StartCompile(),
+		const auto registryCache = project->GetLibraryPath() / "AssetRegistry.yaml";
+		const auto registryCacheTime = std::filesystem::last_write_time(registryCache);
+		Require(compiler.RefreshSourceState(false) && !compiler.IsCurrentSourceBuilt(),
+			"lightweight editor polling missed an edited script");
+		Require(std::filesystem::last_write_time(registryCache) == registryCacheTime,
+			"lightweight editor polling rewrote the resource registry");
+		Require(compiler.StartCompile(),
 			"corrected source did not start a background rebuild");
 		TomCat::ScriptBuildResult reloaded;
 		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);

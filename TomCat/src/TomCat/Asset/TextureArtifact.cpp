@@ -33,7 +33,8 @@ namespace TomCat {
 		}
 
 		bool ComputeTextureReservation(uint32_t width, uint32_t height,
-			uint64_t encodedBytes, uint64_t& reservationBytes, std::string& error)
+			uint64_t encodedBytes, uint64_t& reservationBytes, std::string& error,
+			TextureArtifactFormat format)
 		{
 			reservationBytes = 0;
 			if (width == 0 || height == 0 || width > MaximumTextureDimension
@@ -66,8 +67,11 @@ namespace TomCat {
             // and the persistent mip/artifact buffers,
 			// vector growth and stb's format-specific decode workspace (including
 			// the wider temporary representation used by HDR inputs).
-			if (rgbaMipBytes > (std::numeric_limits<uint64_t>::max)() / 24
-				|| !CheckedAdd(encodedBytes, rgbaMipBytes * 24, workingBytes)
+			// RGBA/BC builds do not allocate mobile encoder search buffers.
+			const uint64_t chains = (format == TextureArtifactFormat::ASTC4x4
+				|| format == TextureArtifactFormat::ETC2RGBA8) ? 24 : 8;
+			if (rgbaMipBytes > (std::numeric_limits<uint64_t>::max)() / chains
+				|| !CheckedAdd(encodedBytes, rgbaMipBytes * chains, workingBytes)
 				|| !CheckedAdd(workingBytes,
 					HeaderSize + static_cast<uint64_t>(mipCount) * MipEntrySize,
 					workingBytes)
@@ -351,7 +355,7 @@ namespace TomCat {
 
 	bool EstimateTextureBuildMemory(std::span<const uint8_t> encodedSource,
 		uint64_t& reservationBytes, std::string& error, uint32_t* width,
-		uint32_t* height)
+		uint32_t* height, TextureArtifactFormat format)
 	{
 		reservationBytes = 0;
 		error.clear();
@@ -374,7 +378,7 @@ namespace TomCat {
 		}
 		if (!ComputeTextureReservation(static_cast<uint32_t>(decodedWidth),
 			static_cast<uint32_t>(decodedHeight), encodedSource.size(),
-			reservationBytes, error))
+			reservationBytes, error, format))
 			return false;
 		if (width) *width = static_cast<uint32_t>(decodedWidth);
 		if (height) *height = static_cast<uint32_t>(decodedHeight);
@@ -383,7 +387,7 @@ namespace TomCat {
 
 	bool EstimateTextureBuildMemory(const std::filesystem::path& sourcePath,
 		uint64_t& reservationBytes, std::string& error, uint32_t* width,
-		uint32_t* height)
+		uint32_t* height, TextureArtifactFormat format)
 	{
 		reservationBytes = 0;
 		error.clear();
@@ -415,7 +419,7 @@ namespace TomCat {
 		}
 		if (!ComputeTextureReservation(static_cast<uint32_t>(decodedWidth),
 			static_cast<uint32_t>(decodedHeight), static_cast<uint64_t>(fileBytes),
-			reservationBytes, error))
+			reservationBytes, error, format))
 			return false;
 		if (width) *width = static_cast<uint32_t>(decodedWidth);
 		if (height) *height = static_cast<uint32_t>(decodedHeight);
@@ -548,7 +552,7 @@ namespace TomCat {
 		uint64_t estimatedMemory = 0;
 		uint32_t inspectedWidth = 0, inspectedHeight = 0;
 		if (!EstimateTextureBuildMemory(encodedSource, estimatedMemory, error,
-			&inspectedWidth, &inspectedHeight))
+			&inspectedWidth, &inspectedHeight, format))
 			return false;
 		(void)estimatedMemory;
 

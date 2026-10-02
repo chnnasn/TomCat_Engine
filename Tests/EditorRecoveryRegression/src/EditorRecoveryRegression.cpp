@@ -1,6 +1,7 @@
 #include <TomCat/Editor/EditorRecoveryService.h>
 #include <TomCat/Editor/SceneHistory.h>
 #include <TomCat/Utils/PathUtils.h>
+#include "../../../Editor/TomCatInut/src/AssetFileTransfer.h"
 
 #include <chrono>
 #include <filesystem>
@@ -322,10 +323,32 @@ namespace {
 
 }
 
+static void TestAssetFileCopies()
+{
+	TemporaryDirectory temporary;
+	const auto source = temporary.Path / "source";
+	const auto destination = temporary.Path / "Assets";
+	std::filesystem::create_directories(source / "nested");
+	std::filesystem::create_directories(destination);
+	WriteText(source / "nested" / "image.png", "image bytes");
+	WriteText(source / "nested" / "image.png.tcmeta", "original identity");
+	std::filesystem::path result;
+	std::string error;
+	Require(TomCat::CopyAssetFiles(source, destination, result, error), error);
+	Require(std::filesystem::exists(result / "nested" / "image.png"), "nested source was not copied");
+	Require(!std::filesystem::exists(result / "nested" / "image.png.tcmeta"), "copy duplicated asset identity");
+	const auto first = result;
+	Require(TomCat::CopyAssetFiles(source, destination, result, error) && result != first, "collision overwrote original");
+	Require(!TomCat::CopyAssetFiles(source, source / "nested", result, error), "recursive self-copy accepted");
+	Require(!TomCat::CopyAssetFiles(source / "nested" / "image.png.tcmeta", destination, result, error), "sidecar accepted as source");
+	Require(std::filesystem::exists(source / "nested" / "image.png"), "copy removed source");
+}
+
 int main()
 {
 	try
 	{
+		TestAssetFileCopies();
 		TestHistoryBranchAndSelection();
 		TestHistoryMemoryCap();
 		TestImmutableAsyncRecovery();

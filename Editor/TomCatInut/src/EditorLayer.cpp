@@ -1543,7 +1543,8 @@ namespace TomCat {
 			m_ScriptSourcePollCountdown <= 0.0f)
 		{
 			m_ScriptSourcePollCountdown = 0.35f;
-			if (m_ScriptCompiler.RefreshSourceState())
+			TC_PROFILE_SCOPE("Script source polling");
+			if (m_ScriptCompiler.RefreshSourceState(false))
 			{
 				const std::string& sourceHash =
 					m_ScriptCompiler.GetCurrentSourceHash();
@@ -3268,6 +3269,9 @@ namespace TomCat {
 		// Scene wheel zoom is consumed once in OnImGuiRender, including input
 		// from detached windows that never reaches the native editor event path.
 		EventDispatcher dispatcher(e);
+		dispatcher.Dispatch<FileDropEvent>([this](FileDropEvent& drop) {
+			return m_ContentBrowserPanel.OnFileDrop(drop.Paths, drop.X, drop.Y);
+		});
 		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(EditorLayer::OnWindowClose));
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
 		dispatcher.Dispatch<MouseButtonPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonPressed));

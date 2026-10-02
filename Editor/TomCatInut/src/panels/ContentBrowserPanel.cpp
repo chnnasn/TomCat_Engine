@@ -2,8 +2,10 @@
 #include "tcpch.h"
 
 #include "ContentBrowserPanel.h"
+#include "../AssetFileTransfer.h"
 
 #include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
 #include <yaml-cpp/yaml.h>
 #include "TomCat/Asset/ShaderArtifact.h"
 #include "TomCat/Audio/AudioClip.h"
@@ -2355,10 +2357,56 @@ namespace TomCat {
 		ImGui::EndDragDropSource();
 	}
 
+	void ContentBrowserPanel::CopyIntoProject(const std::vector<std::filesystem::path>& paths,
+		const std::filesystem::path& directory)
+	{
+		if (!m_AssetMutationsEnabled || !m_Project || !IsWritablePath(directory)) return;
+		bool copied = false;
+		for (const auto& source : paths) {
+			std::filesystem::path destination;
+			std::string error;
+			if (CopyAssetFiles(source, directory, destination, error)) {
+				copied = true;
+				m_PendingRevealPath = destination;
+				TC_Core_Info("Imported '{0}' into Project", PathToUTF8(destination));
+			} else TC_Core_Error("Could not import '{0}': {1}", PathToUTF8(source), error);
+		}
+		if (copied) AssetManager::Get().Refresh(false);
+	}
+
+	bool ContentBrowserPanel::OnFileDrop(const std::vector<std::filesystem::path>& paths, float x, float y)
+	{
+		if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return false;
+		const auto* projectWindow = ImGui::FindWindowByName("Project");
+		if (!projectWindow) return false;
+		// Do not import through another floating panel covering Project.
+		const auto& windows = ImGui::GetCurrentContext()->Windows;
+		for (int index = windows.Size - 1; index >= 0; --index) {
+			const auto* window = windows[index];
+			if (!window->WasActive || window->Hidden || (window->Flags & ImGuiWindowFlags_NoMouseInputs)) continue;
+			if (!window->OuterRectClipped.Contains(ImVec2(x, y))) continue;
+			if (window->RootWindow != projectWindow->RootWindow) return false;
+			break;
+		}
+		// Specific folder rows take precedence over the Project background.
+		for (auto target = m_FileDropTargets.rbegin(); target != m_FileDropTargets.rend(); ++target) {
+			const auto& bounds = target->Bounds;
+			if (x >= bounds[0] && y >= bounds[1] && x < bounds[2] && y < bounds[3]) {
+				CopyIntoProject(paths, target->Directory);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void ContentBrowserPanel::AcceptAssetMoveTarget(const std::filesystem::path& destinationDirectory)
 	{
 		if (!IsWritablePath(destinationDirectory))
 			return;
+		if (ImGui::IsItemVisible()) {
+			const auto minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
+			m_FileDropTargets.push_back({ { minimum.x, minimum.y, maximum.x, maximum.y }, destinationDirectory });
+		}
 		if (!ImGui::BeginDragDropTarget())
 			return;
 		if (m_EntityPrefabCreateCallback)
@@ -2423,6 +2471,10 @@ namespace TomCat {
 			{
 				TC_Core_Error("Rejected invalid Content Browser move from '{0}' to '{1}'",
 					PathToUTF8(source), PathToUTF8(destinationDirectory));
+			}
+			else if (ImGui::GetIO().KeyCtrl)
+			{
+				CopyIntoProject({ managedSource }, managedDestinationDirectory);
 			}
 			else if (LexicalPath(managedSource.parent_path()) == LexicalPath(managedDestinationDirectory))
 			{
@@ -2707,6 +2759,7 @@ namespace TomCat {
 
 	void ContentBrowserPanel::OnImGuiRender(bool* open)
 	{
+		m_FileDropTargets.clear();
 		RefreshImagePreviews();
 		m_Focused = false;
 		// Assets-menu commands must keep advancing even when the docked Project
@@ -2765,6 +2818,10 @@ namespace TomCat {
 		}
 
 		const std::filesystem::path assetRoot = GetAssetRoot();
+		if (m_Project && IsWritablePath(m_CurrentDirectory)) {
+			const auto position = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+			m_FileDropTargets.push_back({ { position.x, position.y, position.x + size.x, position.y + size.y }, m_CurrentDirectory });
+		}
 		const std::filesystem::path packagesRoot = GetPackagesRoot();
 		std::error_code error;
 		if (!m_Project || !std::filesystem::is_directory(assetRoot, error))
