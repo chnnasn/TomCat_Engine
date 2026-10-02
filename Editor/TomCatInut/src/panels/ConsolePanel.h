@@ -58,6 +58,12 @@ namespace TomCat {
 		mutable std::mutex m_Mutex;
 		std::vector<ConsoleMessage> m_Messages;
 		uint64_t m_NextSequence = 1;
+        uint64_t m_MessageRevision = 0, m_UiRevision = ~uint64_t(0);
+        std::vector<ConsoleMessage> m_UiMessages;
+        struct DisplayMessage { const ConsoleMessage* Message = nullptr; size_t Count = 1; };
+        std::vector<DisplayMessage> m_DisplayMessages;
+        std::string m_FilterKey;
+        size_t m_InfoCount = 0, m_WarningCount = 0, m_ErrorCount = 0;
 		bool m_ShowTrace = true;
 		bool m_ShowInfo = true;
 		bool m_ShowWarnings = true;

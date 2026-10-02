@@ -11,6 +11,19 @@ const rpc=(engine,type,payload={})=>JSON.parse(engine.EditorRpc(JSON.stringify({
 try {
   await import('./main.js'); const web=globalThis.TomCatWeb, engine=web.engine;
   const boot=engine.EditorBoot(640,360); if(boot)throw new Error(`boot ${boot}: ${engine.EditorError()}`);
+  engine.EditorFrame(1/60);
+  const scale=rpc(engine,'editor.setDisplayScale',{scale:devicePixelRatio});
+  if(!scale.ok || !scale.result.applied)throw new Error(`display scale: ${JSON.stringify(scale)}`);
+  engine.EditorFrame(1/60);
+  const metrics=rpc(engine,'editor.setDisplayScale',{scale:devicePixelRatio}).result;
+  if(metrics.baseFontSize!==16 || metrics.bakedFontSize!==Math.round(16*metrics.effectiveScale))throw new Error(`font scale: ${JSON.stringify(metrics)}`);
+  if(rpc(engine,'editor.setDisplayScale',{scale:'2garbage'}).ok)throw new Error('invalid display scale accepted');
+  const spoof=rpc(engine,'system.capabilities',{note:'editor.setDisplayScale',scale:2});
+  if(!spoof.ok || !spoof.result.capabilities)throw new Error('RPC dispatch matched payload text instead of request type');
+  const saved=rpc(engine,'editor.saveLayout');
+  if(!saved.ok || !saved.result.settings)throw new Error('layout save failed');
+  if(!rpc(engine,'editor.loadLayout',{settings:saved.result.settings}).result.applied)throw new Error('layout restore failed');
+  if(rpc(engine,'editor.loadLayout',{settings:saved.result.settings.replace(/^1\n/,'1junk\n')}).result.applied)throw new Error('malformed layout version accepted');
   const references=await Promise.all(['mscorlib.dll','System.Runtime.dll','TomCat.Managed.dll'].map(ref));
   const source=`using TomCat;
 public sealed class WebSmoke : TomCatBehaviour
@@ -77,7 +90,7 @@ Asset:
   const finalState=JSON.parse(engine.EditorState());
   if(engine.EditorError())throw new Error(engine.EditorError());
   engine.EditorShutdown();
-  out({ok:true,shutdown:true,boot,diagnostics:compile.diagnostics,lifecycle,controls:controls.map(x=>x.result),state:finalState});
+  out({ok:true,shutdown:true,boot,displayMetrics:metrics,devicePixelRatio,diagnostics:compile.diagnostics,lifecycle,controls:controls.map(x=>x.result),state:finalState});
 } catch(error) {
   const FS=globalThis.TomCatWeb?.runtime?.Module?.FS;
   let filesystem=null;

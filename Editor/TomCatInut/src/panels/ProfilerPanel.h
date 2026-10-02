@@ -12,6 +12,10 @@ namespace TomCat {
         void OnPlayStarted() { if (m_ClearOnPlay) { FrameProfiler::Get().Clear(); m_SelectedFrame=0; } }
 	private:
 		uint64_t m_SelectedFrame = 0;
+        double m_NextChartRefresh = 0;
+        std::vector<FrameProfileSummary> m_Summaries;
+        FrameProfile m_DisplayedFrame;
+        bool m_HasDisplayedFrame = false;
         std::array<bool,4> m_Modules{true,true,true,true};
         int m_SelectedModule=0, m_DetailsView=0;
         float m_OverviewRatio=0.46f;

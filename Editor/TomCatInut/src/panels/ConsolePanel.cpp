@@ -1,3 +1,5 @@
+#include "TomCat/Core/Log.h"
+#include "TomCat/Debug/Instrumentor.h"
 #include "../EditorVisuals.h"
 #include "ConsolePanel.h"
 
@@ -98,6 +100,7 @@ namespace TomCat {
         std::strftime(timestamp,sizeof(timestamp),"%H:%M:%S",&time);
         message.Timestamp=timestamp;
 		m_Messages.push_back(std::move(message));
+        ++m_MessageRevision;
 		if (m_Messages.size() > kMaximumConsoleMessages)
 		{
 			const size_t overflow = m_Messages.size() - kMaximumConsoleMessages;
@@ -121,6 +124,7 @@ namespace TomCat {
 	{
 		std::lock_guard<std::mutex> lock(m_Mutex);
 		m_Messages.clear();
+        ++m_MessageRevision;
 		m_ScrollToBottom = false;
 	}
 
@@ -150,6 +154,7 @@ namespace TomCat {
 
 	void ConsolePanel::OnImGuiRender(bool* open)
 	{
+        TC_PROFILE_SCOPE("Panel Console");
 		if (open && !*open)
 		{
 			m_Focused = false;
@@ -166,8 +171,17 @@ namespace TomCat {
 			return;
 		}
 
-        const auto messages = Snapshot();
-        size_t informationCount=0,warningCount=0,errorCount=0;
+        bool messagesChanged = false;
+        { TC_PROFILE_SCOPE("Console snapshot");
+          std::lock_guard<std::mutex> lock(m_Mutex);
+          if (m_UiRevision != m_MessageRevision) {
+              m_UiMessages = m_Messages; m_UiRevision = m_MessageRevision; messagesChanged = true;
+          }
+        }
+        const auto& messages = m_UiMessages;
+        size_t informationCount=m_InfoCount,warningCount=m_WarningCount,errorCount=m_ErrorCount;
+        if (messagesChanged) {
+        informationCount=warningCount=errorCount=0;
         for(const auto& message:messages)
         {
             if(message.Severity==ConsoleMessageSeverity::Error)
@@ -179,6 +193,8 @@ namespace TomCat {
             else ++informationCount;
         }
         if(!messages.empty()) m_LastObservedSequence=messages.back().Sequence;
+        m_InfoCount=informationCount; m_WarningCount=warningCount; m_ErrorCount=errorCount;
+        }
         const float font=ImGui::GetFontSize();
         const float frame=ImGui::GetFrameHeight();
         const bool wide=ImGui::GetContentRegionAvail().x>font*38;
@@ -247,13 +263,13 @@ namespace TomCat {
         ImGui::PopStyleVar(2);
         ImGui::EndChild();
         ImGui::PopStyleVar();
-        struct DisplayMessage
-		{
-			const ConsoleMessage* Message = nullptr;
-			size_t Count = 1;
-		};
-		std::vector<DisplayMessage> displayMessages;
-		displayMessages.reserve(messages.size());
+        const std::string filterKey = std::string(m_Search) + (m_ShowTrace?"1":"0") + (m_ShowInfo?"1":"0") + (m_ShowWarnings?"1":"0") + (m_ShowErrors?"1":"0") + (m_Collapse?"1":"0");
+        auto& displayMessages = m_DisplayMessages;
+        if (messagesChanged || cleared || filterKey != m_FilterKey) {
+        TC_PROFILE_SCOPE("Console filter and collapse");
+        m_FilterKey = filterKey;
+        displayMessages.clear();
+        displayMessages.reserve(messages.size());
 		std::unordered_map<std::string, size_t> collapsedIndices;
 		for (const ConsoleMessage& message : messages)
 		{
@@ -273,6 +289,7 @@ namespace TomCat {
 				++displayMessages[iterator->second].Count;
 		}
 
+        }
         const float available=ImGui::GetContentRegionAvail().y;
         const float details=std::min(font*7,available*0.3f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(0,0));

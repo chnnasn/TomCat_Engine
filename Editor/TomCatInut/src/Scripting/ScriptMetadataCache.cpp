@@ -696,6 +696,7 @@ namespace TomCat {
 					throw std::runtime_error("duplicate script assetHandle");
 			}
 			m_Scripts = std::move(parsedScripts);
+            ++m_Revision;
 			return true;
 		}
 		catch (const std::exception& error)

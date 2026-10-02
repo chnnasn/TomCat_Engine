@@ -2635,6 +2635,7 @@ namespace TomCat {
 
 	Ref<Texture2D> AssetManager::LoadTexture(AssetHandle handle)
 	{
+		TC_PROFILE_FUNCTION();
 		if (static_cast<uint64_t>(handle) == 0)
 			return GetMissingTexture();
 		if (!IsCookedPackageMounted())
@@ -2675,8 +2676,10 @@ namespace TomCat {
 				metadata = m_Registry.GetSubAssetOwner(handle, &child);
 			if (!metadata || metadata->IsMissing)
 				return CacheMissingTexture(handle, "handle is not present in the asset registry");
-			const AssetMetadata* current = m_Registry.GetMetadata(metadata->FilePath);
-			if (!current || current->Handle != metadata->Handle || current->IsMissing)
+			// Avoid filesystem canonicalization on every draw of a cached texture.
+			// The published registry owns identity; LoadImportedArtifact validates
+			// managed paths when the source actually needs to be loaded.
+			if (!m_Registry.IsCurrentAsset(metadata->Handle))
 				return CacheMissingTexture(handle, "handle no longer owns its registered path");
 			registeredType = child ? child->Type : metadata->Type;
 			sourceHandle = metadata->Handle;

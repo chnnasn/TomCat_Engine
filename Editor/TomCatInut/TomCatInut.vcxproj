@@ -188,6 +188,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
   <ItemGroup>
     <ClInclude Include="src\AssetFileTransfer.h" />
     <ClInclude Include="src\EditorBuildController.h" />
+    <ClInclude Include="src\EditorDockSettings.h" />
     <ClInclude Include="src\EditorDragDrop.h" />
     <ClInclude Include="src\EditorIcons.h" />
     <ClInclude Include="src\EditorLayer.h" />
@@ -200,6 +201,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
     <ClInclude Include="src\EditorViewportHandles.h" />
     <ClInclude Include="src\EditorVisuals.h" />
     <ClInclude Include="src\Player\PlayerBuilder.h" />
+    <ClInclude Include="src\ProjectBrowserCache.h" />
     <ClInclude Include="src\SceneToolbarDrawing.h" />
     <ClInclude Include="src\Scripting\ScriptEditorMetadata.h" />
     <ClInclude Include="src\Scripting\ScriptMetadataCache.h" />

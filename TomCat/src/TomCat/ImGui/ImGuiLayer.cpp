@@ -23,7 +23,7 @@ namespace {
 	// units stay device independent.
 	constexpr float kEditorBaseFontSize = 16.0f;
 	constexpr float kRuntimeBaseFontSize = 32.0f;
-	constexpr float kMinUiScale = 1.0f;
+	constexpr float kMinUiScale = 0.5f;
 	constexpr float kMaxUiScale = 2.5f;
 }
 
@@ -57,6 +57,7 @@ namespace TomCat {
 
 		// Fonts are baked for the display scale, so the atlas and the style are built together
 		// in one place instead of picking a font size here.
+		m_DpiScale = Application::Get().GetWindow().GetDPIScale();
 		RebuildFonts();
 
 // Setup Dear ImGui style
@@ -75,7 +76,7 @@ namespace TomCat {
 
 		// Remember the authored metrics and derive every later scale from them, so a rebuild
 		// never accumulates style scaling.
-		m_BaseStyle = style;
+		m_BaseStyle = std::make_unique<ImGuiStyle>(style);
 		m_BaseStyleCaptured = true;
 		PrepareImGuiStyle();
 
@@ -220,6 +221,7 @@ namespace TomCat {
 		if (m_FontRebuildPending)
 		{
 			m_FontRebuildPending = false;
+			PrepareImGuiStyle();
 			RebuildFonts();
 			ImGui_ImplOpenGL3_DestroyFontsTexture();
 			ImGui_ImplOpenGL3_CreateFontsTexture();
@@ -420,22 +422,28 @@ namespace TomCat {
 			return;
 
 		ImGuiStyle& style = ImGui::GetStyle();
-		style = m_BaseStyle;
-		style.ScaleAllSizes(EffectiveScale());
+		style = *m_BaseStyle;
+		float coordinateScale = EffectiveScale();
+#ifdef __EMSCRIPTEN__
+		// GLFW/ImGui coordinates are CSS pixels on Web. The framebuffer already
+		// applies DPR, so only the atlas density (not widget sizes) includes it.
+		coordinateScale /= m_DpiScale;
+#endif
+		style.ScaleAllSizes(coordinateScale);
 
 		// Fonts are baked for this scale, so no global glyph stretch is applied:
 		// FontGlobalScale would resample the atlas and blur it.
 		ImGui::GetIO().FontGlobalScale = 1.0f;
+#ifdef __EMSCRIPTEN__
+		ImGui::GetIO().FontGlobalScale = 1.0f / m_DpiScale;
+#endif
 	}
 
 	void ImGuiLayer::RequestFontRebuild()
 	{
 		// Rebuilding between two frames of the same stack would leave the frame that already
 		// captured glyph pointers reading freed memory.
-		if (ImGui::GetCurrentContext() != nullptr && ImGui::GetFrameCount() > 0)
-			m_FontRebuildPending = true;
-		else
-			RebuildFonts();
+		m_FontRebuildPending = true;
 	}
 
 	bool ImGuiLayer::SetUiScale(float scale)
@@ -445,7 +453,6 @@ namespace TomCat {
 			return m_BaseStyleCaptured;
 
 		m_DpiScale = next;
-		PrepareImGuiStyle();
 		RequestFontRebuild();
 		return m_BaseStyleCaptured;
 	}
@@ -457,7 +464,6 @@ namespace TomCat {
 			return;
 
 		m_UserScale = next;
-		PrepareImGuiStyle();
 		RequestFontRebuild();
 	}
 
