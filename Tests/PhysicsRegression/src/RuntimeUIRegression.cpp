@@ -2384,21 +2384,11 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		v2Output << v2Document;
 		auto migratedV2 = TomCat::CreateRef<TomCat::Scene>();
 		RequireUI(downgradedV2Button && v2Output.good()
-			&& TomCat::SceneSerializer(migratedV2).DeserializeDocument(
+			&& !TomCat::SceneSerializer(migratedV2).DeserializeDocument(
 				std::vector<uint8_t>(v2Output.c_str(),
 					v2Output.c_str() + std::strlen(v2Output.c_str())),
 				"RuntimeUIRegression-v2.tomcat", false),
-			"UIButton v2 descriptor payload did not migrate to v3");
-		const auto& migratedV2Button = migratedV2
-			->FindEntityByUUID(TomCat::UUID(10003)).GetComponent<TomCat::UIButton>();
-		RequireUI(migratedV2Button.OnClick.size() == 2
-			&& Near(migratedV2Button.DisabledColor.r, 0.52f)
-			&& Near(migratedV2Button.DisabledColor.g, 0.52f)
-			&& Near(migratedV2Button.DisabledColor.b, 0.52f)
-			&& Near(migratedV2Button.DisabledColor.a, 0.5f)
-			&& Near(migratedV2Button.ColorMultiplier, 1.0f),
-			"UIButton v2-to-v3 migration did not append Color Tint defaults");
-
+			"old UIButton v2 must be rejected");
 		YAML::Node v1Document = YAML::Clone(v2Document);
 		bool downgradedButton = false;
 		for (YAML::Node entityNode : v1Document["Entities"])
@@ -2418,13 +2408,11 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		v1Output << v1Document;
 		auto migratedV1 = TomCat::CreateRef<TomCat::Scene>();
 		RequireUI(downgradedButton && v1Output.good()
-			&& TomCat::SceneSerializer(migratedV1).DeserializeDocument(
+			&& !TomCat::SceneSerializer(migratedV1).DeserializeDocument(
 				std::vector<uint8_t>(v1Output.c_str(),
 					v1Output.c_str() + std::strlen(v1Output.c_str())),
-				"RuntimeUIRegression-v1.tomcat", false)
-			&& migratedV1->FindEntityByUUID(TomCat::UUID(10003))
-				.GetComponent<TomCat::UIButton>().OnClick.empty(),
-			"UIButton v1 descriptor payload did not migrate to an empty OnClick list");
+				"RuntimeUIRegression-v1.tomcat", false),
+			"old UIButton v1 must be rejected");
 		bool sawFont = false, sawFallbackFont = false, sawEmojiFont = false;
 		bool sawImage = false;
 		RequireUI(TomCat::AssetReferenceVisitor::VisitScene(root,

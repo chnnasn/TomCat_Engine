@@ -945,24 +945,9 @@ namespace TomCat {
 		return Project::Inspect(projectPath);
 	}
 
-	bool ProjectManager::PreviewProjectMigration(
-		const std::filesystem::path& projectPath,
-		ProjectMigrationPreview& preview, std::string& errorMessage) const
-	{
-		return Project::PreviewMigration(projectPath, preview, errorMessage);
-	}
-
 	Ref<Project> ProjectManager::LoadProject(const std::filesystem::path& projectPath)
 	{
 		return ActivateLoadedProject(Project::Load(projectPath));
-	}
-
-	Ref<Project> ProjectManager::LoadProjectWithMigration(
-		const std::filesystem::path& projectPath,
-		const ProjectMigrationPreview& approvedMigration)
-	{
-		return ActivateLoadedProject(
-			Project::LoadWithMigration(projectPath, approvedMigration));
 	}
 
 	Ref<Project> ProjectManager::ActivateLoadedProject(Ref<Project> project)

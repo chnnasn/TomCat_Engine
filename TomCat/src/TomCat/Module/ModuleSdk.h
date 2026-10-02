@@ -5,7 +5,7 @@
 // registers components, asset importers and editor commands through the host
 // API table handed to its TomCatModuleMain export.
 //
-// Compatibility contract (v1):
+// Compatibility contract (ABI 2):
 //   * Modules are built against the same engine headers, the same MSVC
 //     toolchain and the same entt/yaml-cpp revisions as the host binary. The
 //     host verifies a nonempty manifest EngineBuildID before loading the
@@ -20,6 +20,7 @@
 //   * All registration happens on the main thread inside TomCatModuleMain.
 
 #include "TomCat/Asset/Importer.h"
+#include "TomCat/Core/Version.h"
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Entity.h"
 
@@ -37,7 +38,7 @@
 
 namespace TomCatModule {
 
-	inline constexpr uint32_t ModuleAbiCurrent = 1;
+	inline constexpr uint32_t ModuleAbiCurrent = TomCat::Version::ModuleAbiCurrent;
 	enum class HostKind : uint32_t { Editor = 0, Tool = 1, Player = 2 };
 
 	// Sent to TomCatModuleMain once per load, before any registration call.

@@ -30,19 +30,18 @@ TomCat.exe --cli build --project C:/Game/Game.tcproj
 包装器验证内嵌清单，在 `%LOCALAPPDATA%\TomCat\Editor\Runtime` 下原子释放或复用匹配的运行时，
 并返回 CLI 子进程的退出码。源码构建仍可直接运行 `Tools/bin` 下的程序。
 
-## 参数与迁移
+## 参数与格式
 
 | 参数 | 适用命令 | 行为 |
 | --- | --- | --- |
 | `--project <路径>` | 两者 | 必填，指定 `.tcproj`；含空格的路径需加引号。 |
 | `--output <路径>` | 仅 `cook` | 默认写入 `<项目>/Build/Game.tcpak`。 |
 | `--template <目录>` | 仅 `build` | 指定 Player 模板；发布位置仍为项目的 Build 目录。 |
-| `--migrate` | 两者 | 明确允许执行预览中的项目事务升级。 |
 
-默认只预览迁移需求并打印受影响文件；检查列表后加 `--migrate` 才允许升级。
-若迁移已中断，须在 Editor 中检查并恢复，CLI 不自动修复恢复日志。
+仅支持当前格式，旧格式和未来版本均拒绝；不自动迁移或修改原文件。
+旧项目请使用之前的引擎版本处理后再打开。
 两个命令均获取项目写锁，运行前应关闭占用同一项目的 Editor 或其他 CLI。
-当前输出 TCPAK v7，包含逐条目 SHA-256 摘要；读取兼容 v5/v6/v7。
+TCPAK 只读写 v8，逐条目 SHA-256 摘要为必需字段。
 
 ## 退出码
 
@@ -50,8 +49,6 @@ TomCat.exe --cli build --project C:/Game/Game.tcproj
 | --- | --- |
 | 0 | 执行成功或显示帮助 |
 | 2 | 参数错误 |
-| 3 | 项目或中断迁移检查失败 |
-| 4 | 需要明确批准项目迁移 |
 | 5 | 项目加载失败 |
 | 6 | 资产注册表初始化失败 |
 | 7 | 未配置已启用的入口场景 |
@@ -61,9 +58,8 @@ TomCat.exe --cli build --project C:/Game/Game.tcproj
 | 11 | 无法读取程序集文件 |
 | 12 | Player 构建失败 |
 | 13 | 项目写锁不可用 |
-| 14 | 中断迁移需要在 Editor 中处理 |
 
-进一步阅读：[项目配置与迁移](../../PROJECT_SYSTEM.md)、[托管脚本](../../Managed/README.zh-CN.md)。
+进一步阅读：[项目配置](../../PROJECT_SYSTEM.md)、[托管脚本](../../Managed/README.zh-CN.md)。
 
 ## 从编辑器创作交接到构建
 

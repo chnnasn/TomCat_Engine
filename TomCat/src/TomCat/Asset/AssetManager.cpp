@@ -57,7 +57,6 @@ namespace TomCat {
 		constexpr uint64_t kMaximumScriptManifestSize = 16ULL * 1024ULL * 1024ULL;
 		constexpr std::string_view kManagedTargetFramework = "net10.0";
 		constexpr std::string_view kManagedRuntimeIdentifier = "portable";
-		constexpr std::string_view kLegacyManagedRuntimeIdentifier = "win-x64";
 
 		uint32_t RotateRight(uint32_t value, uint32_t amount)
 		{
@@ -1015,8 +1014,7 @@ namespace TomCat {
 				|| payload.ManagedApiVersion != Scripting::ManagedApiVersion
 				|| payload.ScriptManifestVersion != Scripting::ScriptManifestVersion
 				|| payload.TargetFramework != kManagedTargetFramework
-				|| (payload.RuntimeIdentifier != kManagedRuntimeIdentifier
-					&& payload.RuntimeIdentifier != kLegacyManagedRuntimeIdentifier))
+				|| payload.RuntimeIdentifier != kManagedRuntimeIdentifier)
 			{
 				errorMessage = "Managed payload ABI, manifest, TFM, or RID is incompatible";
 				return false;
@@ -2294,8 +2292,7 @@ namespace TomCat {
 						offset = entry.Offset, size = entry.Size,
 						expectedDigest = entry.SHA256Digest,
 						verifyDigest = entry.HasSHA256Digest,
-						requireArtifact = packageVersion
-						>= RuntimeCompatibility::TcpakBootManifestVersion]() mutable
+						requireArtifact = true]() mutable
 					{
 						try
 						{
@@ -4185,7 +4182,7 @@ namespace TomCat {
 			const uint64_t digestOffset = packageHeaderSize64
 				+ static_cast<uint64_t>(index)
 					* RuntimeCompatibility::TcpakEntrySize
-				+ RuntimeCompatibility::TcpakLegacyEntrySize;
+				+ RuntimeCompatibility::TcpakEntryDigestOffset;
 			std::array<uint8_t, 32> storedDigest{};
 			std::array<uint8_t, 32> actualDigest{};
 			if (!verification
@@ -4344,7 +4341,7 @@ namespace TomCat {
 			return false;
 		const std::streamoff packageEnd = input.tellg();
 		if (packageEnd < static_cast<std::streamoff>(
-			RuntimeCompatibility::TcpakV5BaseHeaderSize))
+			RuntimeCompatibility::TcpakBaseHeaderSize))
 			return false;
 		const uint64_t packageSize = static_cast<uint64_t>(packageEnd);
 		input.seekg(0, std::ios::beg);
@@ -4372,7 +4369,6 @@ namespace TomCat {
 		}
 		PlayerSettings mountedPlayerSettings;
 		uint64_t bootManifestBytes = 0;
-		if (RuntimeCompatibility::TcpakHasBootManifest(version))
 		{
 			uint32_t manifestSchema = 0;
 			uint32_t rawWindowMode = 0;
@@ -4441,7 +4437,7 @@ namespace TomCat {
 		uint64_t buildSceneBytes = 0;
 		uint64_t expectedHeaderSize = 0;
 		const uint64_t baseHeaderSize =
-			RuntimeCompatibility::TcpakBaseHeaderSizeForVersion(version);
+			RuntimeCompatibility::TcpakBaseHeaderSize;
 		if (buildSceneCount > RuntimeCompatibility::MaximumBuildSceneCount
 			|| !CheckedMultiply(buildSceneCount,
 				static_cast<uint64_t>(sizeof(uint64_t)), buildSceneBytes)
@@ -4482,9 +4478,8 @@ namespace TomCat {
 		uint64_t indexSize = 0;
 		uint64_t dataStart = 0;
 		const uint64_t entrySize =
-			RuntimeCompatibility::TcpakEntrySizeForVersion(version);
-		const bool hasEntryDigests =
-			RuntimeCompatibility::TcpakHasEntryDigests(version);
+			RuntimeCompatibility::TcpakEntrySize;
+		constexpr bool hasEntryDigests = true;
 		if (!CheckedMultiply(entryCount, entrySize, indexSize) ||
 			!CheckedAdd(headerSize, indexSize, dataStart) || dataStart > packageSize ||
 			entryCount > static_cast<uint64_t>((std::numeric_limits<size_t>::max)()))
@@ -4524,8 +4519,7 @@ namespace TomCat {
 				!ReadLittleEndian<uint64_t>(input, offset) ||
 				!ReadLittleEndian<uint64_t>(input, size))
 				return false;
-			if (hasEntryDigests
-				&& !input.read(reinterpret_cast<char*>(digest.data()),
+			if (!input.read(reinterpret_cast<char*>(digest.data()),
 					static_cast<std::streamsize>(digest.size())))
 				return false;
 
@@ -4533,9 +4527,9 @@ namespace TomCat {
 				|| size > packageSize - offset)
 				return false;
 
-			if (rawHandle == ModulePackage::Handle && version >= 8)
+			if (rawHandle == ModulePackage::Handle)
 			{
-				if (version < 8 || moduleEnvelopeEntry || rawType != static_cast<uint16_t>(AssetType::None)
+				if (moduleEnvelopeEntry || rawType != static_cast<uint16_t>(AssetType::None)
 					|| flags != ModulePackage::EntryFlag || reserved != ModulePackage::EntryTag
 					|| size == 0 || size > ModulePackage::MaximumBytes) return false;
 				CookedEntry entry; entry.Offset = offset; entry.Size = size;

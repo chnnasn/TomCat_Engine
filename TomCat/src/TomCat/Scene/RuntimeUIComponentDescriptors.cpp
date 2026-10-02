@@ -545,70 +545,8 @@ namespace TomCat {
 		const ComponentDescriptor::DecodeFn decodeButtonProperties =
 			buttonDescriptor.Decode;
 		buttonDescriptor.SchemaVersion = 3;
-		buttonDescriptor.Migrations.push_back({ 1, 2,
-			[](YAML::Node& record, std::string& error)
-			{
-				const YAML::Node oldProperties = record["Properties"];
-				if (!oldProperties || !oldProperties.IsSequence())
-				{
-					error = "TomCat.UIButton v1 Properties must be a sequence";
-					return false;
-				}
-				YAML::Node payload(YAML::NodeType::Map);
-				payload["Fields"] = oldProperties;
-				payload["OnClick"] = YAML::Node(YAML::NodeType::Sequence);
-				record["Properties"] = payload;
-				return true;
-			} });
-		buttonDescriptor.Migrations.push_back({ 2, 3,
-			[](YAML::Node& record, std::string& error)
-			{
-				YAML::Node fields = record["Properties"]["Fields"];
-				if (!fields || !fields.IsSequence())
-				{
-					error = "TomCat.UIButton v2 Fields must be a sequence";
-					return false;
-				}
-				auto appendIfMissing = [&fields, &error](uint64_t id,
-					const char* stableName, const YAML::Node& value)
-				{
-					for (const YAML::Node& existing : fields)
-					{
-						if (!existing.IsMap() || !existing["PropertyId"]
-							|| !existing["StableName"])
-							continue;
-						const uint64_t existingID = existing["PropertyId"].as<uint64_t>();
-						const std::string existingName =
-							existing["StableName"].as<std::string>();
-						if (existingID == id || existingName == stableName)
-						{
-							if (existingID == id && existingName == stableName)
-								return true;
-							error = "TomCat.UIButton v2 property identity conflicts with "
-								+ std::string(stableName);
-							return false;
-						}
-					}
-					YAML::Node property(YAML::NodeType::Map);
-					property["PropertyId"] = id;
-					property["StableName"] = stableName;
-					property["Value"] = value;
-					fields.push_back(property);
-					return true;
-				};
-				YAML::Node disabled(YAML::NodeType::Sequence);
-				disabled.push_back(0.52f);
-				disabled.push_back(0.52f);
-				disabled.push_back(0.52f);
-				disabled.push_back(0.5f);
-				if (!appendIfMissing(UIButtonProperties::DisabledColor,
-					"DisabledColor", disabled)
-					|| !appendIfMissing(UIButtonProperties::ColorMultiplier,
-						"ColorMultiplier", YAML::Node(1.0f)))
-					return false;
-				record["Properties"]["Fields"] = fields;
-				return true;
-			} });
+
+
 		buttonDescriptor.Encode = [encodeButtonProperties](
 			const ComponentDescriptor& descriptor, Entity entity,
 			YAML::Emitter& output, std::string& error)
