@@ -367,6 +367,8 @@ namespace {
 		RequireExtractedRuntimeMatches(first, files);
 		const auto cliWriteTime =
 			std::filesystem::last_write_time(first.CliExecutable);
+		// A real SDK invocation creates this directory after extraction.
+		std::filesystem::create_directory(first.Root / "DotNetSdk" / "metadata");
 
 		TomCat::EditorRuntimeBundleResult warm;
 		const bool reused =
@@ -383,6 +385,13 @@ namespace {
 		Require(std::filesystem::last_write_time(warm.CliExecutable) == cliWriteTime,
 			"warm runtime cache rewrote a validated file");
 		RequireExtractedRuntimeMatches(warm, files);
+		WriteText(warm.Root / "DotNetSdk" / "metadata" / "unexpected.dll", "untrusted");
+		TomCat::EditorRuntimeBundleResult repaired;
+		Require(TomCat::EnsureEditorRuntimeBundle(payload, cache, repaired, error),
+			"runtime with unexpected SDK metadata contents was not repaired: " + error);
+		Require(!repaired.ReusedExisting &&
+			!std::filesystem::exists(repaired.Root / "DotNetSdk" / "metadata" / "unexpected.dll"),
+			"SDK metadata exception accepted an unlisted payload file");
 	}
 
 	void TestEditorRuntimeBundleExtendedPaths()

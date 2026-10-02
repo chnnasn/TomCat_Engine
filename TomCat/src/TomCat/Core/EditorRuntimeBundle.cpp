@@ -825,6 +825,11 @@ namespace TomCat {
 				const std::string key = NormalizedRuntimeKey(relative);
 				if (std::filesystem::is_directory(status))
 				{
+					// The bundled .NET SDK creates this empty directory on first use.
+					// It is not a payload change. Still traverse it so unlisted files,
+					// child directories and reparse points retain the strict checks.
+					if (key == "dotnetsdk/metadata" && !expectedDirectories.contains(key))
+						continue;
 					if (!expectedDirectories.contains(key) ||
 						!actualDirectories.emplace(key).second)
 					{
