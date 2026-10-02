@@ -36,11 +36,18 @@ namespace TomCat {
 		// Display scale of the surface the interface is drawn on: the device pixel
 		// ratio on the web, the window DPI scale on the desktop. Fonts are baked and
 		// ImGuiStyle is scaled by this value, so interface units stay DPI independent.
-		void SetUiScale(float scale);
+		// Returns false while the authored style has not been captured yet, in which
+		// case the scale is recorded but nothing could be applied.
+		bool SetUiScale(float scale);
 		float GetUiScale() const { return m_DpiScale; }
 		// The editor preference multiplier applied on top of the display scale.
 		void SetUserScale(float scale);
 		float GetUserScale() const { return m_UserScale; }
+		// Reported for the host and for regression checks: the authored size in interface
+		// units, and the size the atlas was actually rasterised at.
+		float GetBaseFontSize() const { return m_BaseFontSize; }
+		float GetBakedFontSize() const { return m_BakedFontSize; }
+		float GetEffectiveScale() const { return EffectiveScale(); }
 	private:
 		void PrepareImGuiStyle();
 		// Effective scale = display scale x user preference, clamped.
@@ -59,6 +66,8 @@ namespace TomCat {
 		ImGuiStyle m_BaseStyle;
 		bool m_BaseStyleCaptured = false;
 		bool m_FontRebuildPending = false;
+		float m_BaseFontSize = 0.0f;
+		float m_BakedFontSize = 0.0f;
 	};
 
 

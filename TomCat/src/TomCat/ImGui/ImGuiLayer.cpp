@@ -112,7 +112,9 @@ namespace TomCat {
 		// Glyphs are rasterised at the size they occupy in device pixels: the interface keeps
 		// its authored metrics at any scale, and text stays crisp on high DPI displays instead
 		// of magnifying a low resolution atlas.
-		const float fontSize = std::round((m_EditorStyling ? kEditorBaseFontSize : kRuntimeBaseFontSize) * EffectiveScale());
+		m_BaseFontSize = m_EditorStyling ? kEditorBaseFontSize : kRuntimeBaseFontSize;
+		m_BakedFontSize = std::round(m_BaseFontSize * EffectiveScale());
+		const float fontSize = m_BakedFontSize;
 		// Dropping the atlas invalidates glyph pointers that visible windows still hold, so
 		// SetUiScale only schedules this call for a frame boundary.
 		io.Fonts->Clear();
@@ -436,15 +438,16 @@ namespace TomCat {
 			RebuildFonts();
 	}
 
-	void ImGuiLayer::SetUiScale(float scale)
+	bool ImGuiLayer::SetUiScale(float scale)
 	{
 		const float next = std::isfinite(scale) && scale > 0.0f ? scale : 1.0f;
 		if (std::abs(next - m_DpiScale) < 0.001f)
-			return;
+			return m_BaseStyleCaptured;
 
 		m_DpiScale = next;
 		PrepareImGuiStyle();
 		RequestFontRebuild();
+		return m_BaseStyleCaptured;
 	}
 
 	void ImGuiLayer::SetUserScale(float scale)
