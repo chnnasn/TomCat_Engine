@@ -6,6 +6,7 @@
 #include <emscripten.h>
 #include <cstdint>
 #include <cstdlib>
+#include <charconv>
 #include <string>
 namespace TomCat {
 namespace {
@@ -58,7 +59,7 @@ bool WebEditorUI::ApplyLayoutSettings(const std::string& settings) {
   if (settings.empty() || settings.size() > kMaxLayoutBytes)
     return false;
   const size_t versionEnd = settings.find('\n');
-  if (versionEnd == std::string::npos || std::atoi(settings.c_str()) != kLayoutSchemaVersion)
+  if (versionEnd == std::string::npos || settings.substr(0, versionEnd) != std::to_string(kLayoutSchemaVersion))
     return false;
   const size_t sectionEnd = settings.find('\n', versionEnd + 1);
   if (sectionEnd == std::string::npos || settings.compare(versionEnd + 1, sectionEnd - versionEnd - 1, kPanelSection) != 0)
@@ -66,7 +67,12 @@ bool WebEditorUI::ApplyLayoutSettings(const std::string& settings) {
   const size_t maskEnd = settings.find('\n', sectionEnd + 1);
   if (maskEnd == std::string::npos)
     return false;
-  const uint32_t mask = static_cast<uint32_t>(std::strtoul(settings.c_str() + sectionEnd + 1, nullptr, 10));
+  uint32_t mask = 0;
+  const char* maskStart = settings.data() + sectionEnd + 1;
+  const char* maskLimit = settings.data() + maskEnd;
+  const auto parsedMask = std::from_chars(maskStart, maskLimit, mask);
+  if (parsedMask.ec != std::errc{} || parsedMask.ptr != maskLimit || (mask & ~63u))
+    return false;
 
   // A blob that carries only the engine section would make ImGui drop the default dock
   // tree, so the managed sections are required before anything is applied.

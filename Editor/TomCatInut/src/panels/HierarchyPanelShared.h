@@ -104,6 +104,7 @@ namespace TomCat {
 		PrefabInstantiateCallback PrefabInstantiate;
 		std::function<void(Entity, int, UUID, UUID, UUID)> PrefabAction;
 		ScriptMetadataProvider ScriptMetadata;
+        std::function<uint64_t()> ScriptMetadataRevision;
 
 		void MarkModified(bool instant = false);
 		void FinishModificationGesture();

@@ -34,6 +34,7 @@ namespace TomCat {
 		}
 		void ResetExpansionState()
 		{
+            m_ExpandedEntities.clear();
 			m_ForceExpandParent = {};
 			m_ForceOpenEntityNodes.clear();
 			m_ForceOpenSceneRoot = false;
@@ -72,6 +73,7 @@ namespace TomCat {
 		// 创建子对象后用于强制展开父节点的一次性标记。
 		Entity m_ForceExpandParent;
 		std::unordered_set<uint64_t> m_ForceOpenEntityNodes;
+        std::unordered_set<uint64_t> m_ExpandedEntities;
 		bool m_ForceOpenSceneRoot = false;
 		Entity m_EntityToDelete;
 		Entity m_ClipboardEntity;

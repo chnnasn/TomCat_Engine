@@ -1,3 +1,5 @@
+#include "TomCat/Core/Log.h"
+#include "TomCat/Debug/Instrumentor.h"
 #include "SceneInspectorPanel.h"
 #include "SceneHierarchyDetail.h"
 
@@ -37,6 +39,7 @@ namespace TomCat {
 
 	void SceneInspectorPanel::DrawInspectorWindow(bool* inspectorOpen)
 	{
+        TC_PROFILE_SCOPE("Panel Inspector");
 		m_InspectorFocused = false;
 		if (!inspectorOpen || *inspectorOpen)
 		{
@@ -1520,6 +1523,14 @@ namespace TomCat {
 
 	void SceneInspectorPanel::DrawCSharpScripts(Entity entity)
 	{
+        TC_PROFILE_SCOPE("Inspector script fields");
+        const uint64_t revision = m_Shared.ScriptMetadataRevision ? m_Shared.ScriptMetadataRevision()
+            : static_cast<uint64_t>(ImGui::GetTime() * 2);
+        if (revision != m_MetadataRevision || m_MetadataScene != m_Shared.Context.get()) {
+            m_MetadataRevision = revision; m_MetadataScene = m_Shared.Context.get();
+            m_MetadataCache.clear(); m_ReconciledFields.clear();
+        }
+
 		if (!entity || !entity.HasComponent<CSharpScripts>())
 			return;
 
@@ -1538,9 +1549,9 @@ namespace TomCat {
 			const bool missing = static_cast<uint64_t>(entry.ScriptAsset) == 0 ||
 				!assetMetadata || assetMetadata->IsMissing ||
 				assetMetadata->Type != AssetType::CSharpScript;
-			std::optional<EditorScriptMetadata> metadata;
-			if (!missing && m_Shared.ScriptMetadata)
-				metadata = m_Shared.ScriptMetadata(entry.ScriptAsset);
+			auto [cached, inserted] = m_MetadataCache.try_emplace(static_cast<uint64_t>(entry.ScriptAsset));
+            if (inserted && !missing && m_Shared.ScriptMetadata) cached->second = m_Shared.ScriptMetadata(entry.ScriptAsset);
+            const auto& metadata = cached->second;
 
 			if (metadata && !metadata->TypeName.empty() &&
 				entry.LastKnownClassName != metadata->TypeName)
@@ -1549,8 +1560,10 @@ namespace TomCat {
 				m_Shared.MarkModified();
 			}
 			if (metadata && m_Shared.ColliderEditingAllowed &&
-				ReconcileScriptEntryFields(entry, *metadata))
-				m_Shared.MarkModified();
+                (!m_ReconciledFields.contains(attachmentID) || m_ReconciledFields[attachmentID] != entry.Fields.size())) {
+                if (ReconcileScriptEntryFields(entry, *metadata)) m_Shared.MarkModified();
+                m_ReconciledFields[attachmentID] = entry.Fields.size();
+            }
 			std::string className = metadata && !metadata->TypeName.empty()
 				? metadata->TypeName : entry.LastKnownClassName;
 			if (className.empty() && assetMetadata)

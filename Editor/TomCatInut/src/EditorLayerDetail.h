@@ -5,6 +5,7 @@
 
 #include "EditorLayer.h"
 #include "EditorPlayToolbar.h"
+#include "EditorDockSettings.h"
 #include "SceneToolbarDrawing.h"
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
@@ -360,7 +361,7 @@ namespace EditorLayerDetail {
 			contents << input.rdbuf();
 			if (input.bad())
 				return false;
-			const std::string settings = contents.str();
+			const std::string settings = SanitizeDockWindowReferences(contents.str());
 			std::istringstream lines(settings);
 			std::string line;
 			bool hasManagedSection = false;

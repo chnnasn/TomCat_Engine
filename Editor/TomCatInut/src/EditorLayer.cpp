@@ -1096,7 +1096,8 @@ namespace TomCat {
 			TC_Core_Warn("One or more editor icons could not be loaded");
 		m_SceneHierarchyPanel.SetIcons(m_EditorIcons);
 		m_SceneHierarchyPanel.SetProject(m_CurrentProject);
-		m_SceneHierarchyPanel.SetScriptMetadataProvider([this](AssetHandle handle)
+		m_SceneHierarchyPanel.SetScriptMetadataRevisionProvider([this] { return m_ScriptMetadata.GetRevision(); });
+        m_SceneHierarchyPanel.SetScriptMetadataProvider([this](AssetHandle handle)
 		{
 			return m_ScriptMetadata.Find(handle);
 		});
@@ -1543,7 +1544,8 @@ namespace TomCat {
 			m_ScriptSourcePollCountdown <= 0.0f)
 		{
 			m_ScriptSourcePollCountdown = 0.35f;
-			if (m_ScriptCompiler.RefreshSourceState())
+			TC_PROFILE_SCOPE("Script source polling");
+			if (m_ScriptCompiler.RefreshSourceState(false))
 			{
 				const std::string& sourceHash =
 					m_ScriptCompiler.GetCurrentSourceHash();
@@ -1582,6 +1584,11 @@ namespace TomCat {
 	void EditorLayer::OnUpdate(Timestep ts)
 	{
 		TC_PROFILE_FUNCTION();
+		if (m_PendingProjectOpen)
+		{
+			auto open = std::exchange(m_PendingProjectOpen, {});
+			open();
+		}
 		if (m_SceneState == SceneState::Edit && !m_SceneHistory.HasActiveTransaction()
 			&& m_PrefabImportRevision != AssetManager::Get().GetImportRevision())
 		{
@@ -1668,15 +1675,44 @@ namespace TomCat {
 		// lighter than the surrounding #383838 panels (#474747); the grid and
 		// selection overlays then provide the additional contrast seen in the
 		// reference.
+        m_EditorCamera.OnUpdate(ts, m_ViewportCameraDragOwned);
+        const auto history = m_SceneHistory.GetCurrentStateId();
+        const auto importRevision = AssetManager::Get().GetImportRevision();
+        const Entity selected = m_SceneHierarchyPanel.GetSelectedEntity();
+        const uint64_t selection = selected ? static_cast<uint64_t>(selected.GetUUID()) : 0;
+        const auto viewProjection = m_EditorCamera.GetViewProjection();
+        const glm::vec2 sceneRenderSize{sceneWidth, sceneHeight}, gameRenderSize{gameWidth, gameHeight};
+        const auto& io = ImGui::GetIO();
+        const bool interacting = ImGui::IsAnyItemActive() || io.MouseDown[0] || io.MouseDown[1] || io.MouseDown[2] || io.MouseWheel != 0;
+        const bool changed = m_LastRenderedScene != m_ActiveScene.get() || history != m_LastRenderHistory
+            || importRevision != m_LastRenderImport || selection != m_LastRenderSelection
+            || viewProjection != m_LastEditorViewProjection || sceneRenderSize != m_LastSceneRenderSize
+            || gameRenderSize != m_LastGameRenderSize || interacting || m_SceneHistory.HasActiveTransaction();
+        // Particle previews and custom materials may depend on time even in Edit.
+        const bool animated = m_ShowAnimationPanel || !m_ActiveScene->GetRegistry().view<ParticleSystem2D>().empty()
+            || !m_ActiveScene->GetRegistry().view<TilemapRenderer2D>().empty()
+            || std::any_of(m_ActiveScene->GetRegistry().view<SpriteRenderer>().begin(),
+                m_ActiveScene->GetRegistry().view<SpriteRenderer>().end(), [&](auto entity) {
+                    const auto& sprite = m_ActiveScene->GetRegistry().get<SpriteRenderer>(entity);
+                    return sprite.RuntimeSpriteOverrideActive || static_cast<uint64_t>(sprite.MaterialHandle) != 0;
+                });
+        m_LastRenderedScene = m_ActiveScene.get(); m_LastRenderHistory = history;
+        m_LastRenderImport = importRevision; m_LastRenderSelection = selection;
+        m_LastEditorViewProjection = viewProjection; m_LastSceneRenderSize = sceneRenderSize; m_LastGameRenderSize = gameRenderSize;
+        m_SceneViewDirty |= changed || animated || IsSceneRunning();
+        m_GameViewDirty |= changed || animated || IsSceneRunning();
+        const bool sceneVisible = m_ShowScenePanel && m_SceneViewVisible;
+        const bool renderGame = m_ShowGamePanel && m_GameViewVisible && m_GameViewDirty;
+        if (sceneVisible) {
 		Renderer2D::ResetStats();
 		m_Framebuffer->Bind();
+        if (m_SceneViewDirty) {
+        TC_PROFILE_SCOPE("Viewport Scene redraw");
 		RenderCommand::SetClearColor({ 71.0f / 255.0f, 71.0f / 255.0f, 71.0f / 255.0f, 1 });
 		RenderCommand::Clear();
 		m_Framebuffer->ClearAttachment(1, -1);
 
 		// Update
-		m_EditorCamera.OnUpdate(ts, m_ViewportCameraDragOwned);
-
 		// Scene窗口始终使用EditorCamera渲染
 		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
 
@@ -1685,6 +1721,7 @@ namespace TomCat {
 		// the Camera icon can select their owning Entity.
 		m_Viewport.RenderSceneCameraOverlay();
 		m_Viewport.RenderSceneCanvasOverlay();
+        }
 
 		// Mouse picking for Scene viewport
 		auto [mx, my] = ImGui::GetMousePos();
@@ -1711,35 +1748,40 @@ namespace TomCat {
 		}
 		// Collider editing remains a visual overlay. It intentionally renders after
 		// picking so its non-pickable handles cannot erase an Entity ID underneath.
-		m_Viewport.RenderSceneColliderOverlays();
-
+		if (m_SceneViewDirty) m_Viewport.RenderSceneColliderOverlays();
+        m_SceneViewDirty = false;
 		m_Framebuffer->Unbind();
+        } else { m_HoveredEntity = {}; m_SceneViewDirty = true; }
 
 		// Render Game View (Runtime Camera) - Always render runtime camera. Reset
 		// here so Game Stats contains no Scene-view draw calls.
 		Renderer2D::ResetStats();
-		m_GameFramebuffer->Bind();
+		if (renderGame) {
+        TC_PROFILE_SCOPE("Viewport Game redraw setup");
+        m_GameFramebuffer->Bind();
 
 		RenderCommand::SetClearColor({ 0.1f, 0.1f, 0.1f, 1 });
 		RenderCommand::Clear();
 		m_GameFramebuffer->ClearAttachment(1, -1);
+        }
 
 		// Game窗口使用Runtime渲染，背景色由摄像机的BackgroundColor设置
 		bool runtimeAdvanced = false;
 		if (m_SceneState == SceneState::Play)
 		{
-			m_ActiveScene->OnUpdateRuntime(ts);
+			m_ActiveScene->OnUpdateRuntime(ts, renderGame);
 			runtimeAdvanced = true;
 		}
 		else if (m_SceneState == SceneState::Pause && m_StepRequested)
 		{
-			m_ActiveScene->OnRuntimeStep();
+			m_ActiveScene->OnRuntimeStep(renderGame);
 			m_StepRequested = false;
 			runtimeAdvanced = true;
 		}
-		else
+		else if (renderGame)
 			m_ActiveScene->OnRenderRuntime();
-		m_GameFramebuffer->Unbind();
+        if (renderGame) { m_GameFramebuffer->Unbind(); m_GameViewDirty = false; }
+        if (!m_GameViewVisible) m_GameViewDirty = true;
 		if (runtimeAdvanced)
 			CommitRuntimeSceneTransition();
 	}
@@ -2109,6 +2151,7 @@ namespace TomCat {
 
 	void EditorLayer::OnImGuiRender()
 	{
+        m_SceneViewVisible = m_GameViewVisible = false;
 		TC_PROFILE_FUNCTION();
 		UpdateWindowTitle();
 
@@ -2376,7 +2419,8 @@ namespace TomCat {
 		const bool sceneVisible = BeginEditorWindow("Scene###Scene", &m_ShowScenePanel,
 			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar
 				| ImGuiWindowFlags_NoScrollWithMouse);
-		m_ScenePanelDocked = ImGui::IsWindowDocked();
+		m_SceneViewVisible = sceneVisible;
+        m_ScenePanelDocked = ImGui::IsWindowDocked();
 		if (!sceneVisible)
 		{
 			m_ViewportFocused = false;
@@ -2405,6 +2449,18 @@ namespace TomCat {
 		ImGui::Image(reinterpret_cast<void*>(sceneTextureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y },
 			ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
 		m_ViewportCanvasHovered = sceneVisible && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+		// Camera navigation uses middle/right clicks too; ImGui only transfers
+		// empty-window focus on left clicks. Keep keyboard routing and the dock
+		// focus indicator aligned with the canvas that actually owns the gesture.
+		if (m_ViewportCanvasHovered && (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+			|| ImGui::IsMouseClicked(ImGuiMouseButton_Right)
+			|| ImGui::IsMouseClicked(ImGuiMouseButton_Middle)))
+		{
+			ImGui::SetWindowFocus();
+			m_ViewportFocused = true;
+			m_EditorPanelCycleIndex = 5;
+		}
+
 
 		// The framebuffer image must remain the current ImGui item while registering
 		// its drop target. Toolbar items submitted later must never steal the target.
@@ -2632,7 +2688,7 @@ namespace TomCat {
 		{
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 
-		BeginEditorWindow("Game", &m_ShowGamePanel,
+		m_GameViewVisible = BeginEditorWindow("Game", &m_ShowGamePanel,
 			ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollWithMouse);
 		m_GamePanelDocked = ImGui::IsWindowDocked();
 		const bool gameViewportFocused = ImGui::IsWindowFocused(
@@ -3274,6 +3330,9 @@ namespace TomCat {
 		// Scene wheel zoom is consumed once in OnImGuiRender, including input
 		// from detached windows that never reaches the native editor event path.
 		EventDispatcher dispatcher(e);
+		dispatcher.Dispatch<FileDropEvent>([this](FileDropEvent& drop) {
+			return m_ContentBrowserPanel.OnFileDrop(drop.Paths, drop.X, drop.Y);
+		});
 		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(EditorLayer::OnWindowClose));
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
 		dispatcher.Dispatch<MouseButtonPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonPressed));
@@ -4055,6 +4114,20 @@ namespace TomCat {
 
 	bool EditorLayer::OpenProject(const std::filesystem::path& path)
 	{
+		// Project switching reloads the dock tree. A menu or unsaved-changes
+		// popup still has live ImGui window pointers until EndFrame, so perform
+		// the switch on the next update before NewFrame instead.
+		if (ImGui::GetCurrentContext() && GImGui->WithinFrameScope)
+		{
+			const bool bypass = m_BypassUnsavedCheck;
+			m_PendingProjectOpen = [this, path, bypass]() {
+				const bool previous = std::exchange(m_BypassUnsavedCheck, bypass);
+				OpenProject(path);
+				m_BypassUnsavedCheck = previous;
+			};
+			return true;
+		}
+
 		if (m_SceneHistory.HasActiveTransaction())
 			CommitSceneTransaction();
 		if (IsSceneDirty() && !m_BypassUnsavedCheck)

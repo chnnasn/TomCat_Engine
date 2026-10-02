@@ -49,6 +49,7 @@ WebWindow::WebWindow(const WindowProps& props) : m_Width(props.Width), m_Height(
   // stayed the same.
   glfwSetWindowContentScaleCallback(m_Window, [](GLFWwindow* window, float xScale, float yScale) {
     auto& self = *static_cast<WebWindow*>(glfwGetWindowUserPointer(window));
+    if (self.m_HasHostScale) { self.RefreshMetrics(true); return; }
     const float scale = std::isfinite(xScale) && xScale > 0.0f ? xScale : 1.0f;
     const float scaleY = std::isfinite(yScale) && yScale > 0.0f ? yScale : 1.0f;
     const float next = (scale + scaleY) * 0.5f;

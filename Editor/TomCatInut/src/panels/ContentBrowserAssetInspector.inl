@@ -48,17 +48,7 @@ void ContentBrowserPanel::RefreshInspectorDetails(const std::filesystem::path& p
         row("Folders", folders); row("Assets", files);
         return;
     }
-    if (type == AssetType::Texture2D)
-    {
-        m_InspectorPreview = LoadEditorPreview(path);
-        if (m_InspectorPreview)
-        {
-            row("Width", m_InspectorPreview->GetWidth()); row("Height", m_InspectorPreview->GetHeight());
-            m_InspectorDetails.emplace_back("Shape", "2D");
-        }
-        else m_InspectorReadError = "Image preview is unavailable (invalid image or preview memory limit).";
-        return;
-    }
+    if (type == AssetType::Texture2D) { m_InspectorPreview = GetImagePreview(path); return; }
     std::vector<uint8_t> bytes;
     const bool text = type == AssetType::CSharpScript || type == AssetType::Shader ||
         type == AssetType::Scene || type == AssetType::Prefab || type == AssetType::Material ||
@@ -194,12 +184,13 @@ void ContentBrowserPanel::DrawAssetInspector(const std::filesystem::path& reques
 {
     if (requestedPath.empty()) { ImGui::TextWrapped("Select an asset in Project."); return; }
     const auto path = LexicalPath(requestedPath);
-    if (GetRootForPath(path).empty()) { ImGui::TextWrapped("This asset is outside the current project."); return; }
+    if (!IsWithinLexicalRoot(GetAssetRoot(), path) && !IsWithinLexicalRoot(GetPackagesRoot(), path)) { ImGui::TextWrapped("This asset is outside the current project."); return; }
     auto& assets = AssetManager::Get();
-    const auto* liveMetadata = assets.GetRegistry().GetMetadata(path);
+    const auto* liveMetadata = BrowserMetadata(path);
     const AssetMetadata metadata = liveMetadata ? *liveMetadata : AssetMetadata{};
     std::error_code error;
-    const bool directory = std::filesystem::is_directory(path, error);
+    const auto* cachedFile = m_BrowserCache.Find(path);
+    const bool directory = path == GetAssetRoot() || path == GetPackagesRoot() || (cachedFile && cachedFile->Directory);
     const auto type = directory ? AssetType::None : liveMetadata ? metadata.Type : AssetTypeFromPath(path);
     const bool changed = m_InspectedPath != path;
     if (changed)
@@ -220,6 +211,14 @@ void ContentBrowserPanel::DrawAssetInspector(const std::filesystem::path& reques
         if (!m_AssetSettingsDirty) m_AssetSettingsBase = m_AssetSettingsDraft = metadata.ImportSettings;
         m_NextInspectorRefresh = ImGui::GetTime() + 1.0;
     }
+    if (type == AssetType::Texture2D && !(cachedFile && cachedFile->Link)) {
+        m_InspectorPreview = GetImagePreview(path);
+        const auto preview = m_Previews.find(path);
+        if (preview != m_Previews.end() && preview->second.SourceWidth) {
+            m_InspectorDetails = {{"Width", std::to_string(preview->second.SourceWidth)},
+                {"Height", std::to_string(preview->second.SourceHeight)}, {"Shape", "2D"}};
+        }
+    }
     ImGui::PushID("AssetDetails");
     const float iconSize = ImGui::GetFontSize() * 2.2f;
     auto icon = directory && m_Icons ? m_Icons->Get(EditorIcon::FolderClosed) : GetAssetIcon(path, false);
@@ -238,7 +237,7 @@ void ContentBrowserPanel::DrawAssetInspector(const std::filesystem::path& reques
     ImGui::TextWrapped("%s (%s)%s", AssetDisplayName(path, directory).c_str(),
         directory ? "Folder" : AssetTypeToString(type), m_AssetSettingsDirty ? " *" : "");
     ImGui::PopTextWrapPos();
-    const bool exists = std::filesystem::exists(path, error);
+    const bool exists = directory || cachedFile != nullptr;
     ImGui::BeginDisabled(!exists);
     if (ImGui::Button("Open"))
     {
@@ -260,7 +259,7 @@ void ContentBrowserPanel::DrawAssetInspector(const std::filesystem::path& reques
     ImGui::EndGroup();
     ImGui::Separator();
     if (!exists || metadata.IsMissing) ImGui::TextWrapped("Source file is missing.");
-    const bool writable = liveMetadata && m_AssetMutationsEnabled && IsWritablePath(path) && !IsReadOnlyPath(path) && exists;
+    const bool writable = liveMetadata && m_AssetMutationsEnabled && IsWithinLexicalRoot(GetAssetRoot(), path) && !(cachedFile && cachedFile->ReadOnly) && exists;
     if (!directory && !IsWritablePath(path)) ImGui::TextDisabled("Read-only package asset");
     if (type == AssetType::Texture2D || type == AssetType::Shader)
     {
@@ -401,7 +400,7 @@ void ContentBrowserPanel::DrawAssetInspector(const std::filesystem::path& reques
     if (ImGui::CollapsingHeader("Asset Information"))
     {
         AssetProperty("Path", PathToUTF8(path));
-        AssetProperty("Access", IsWritablePath(path) && !IsReadOnlyPath(path) ? "Project asset" : "Read-only");
+        AssetProperty("Access", IsWithinLexicalRoot(GetAssetRoot(), path) && !(cachedFile && cachedFile->ReadOnly) ? "Project asset" : "Read-only");
         if (!directory)
         {
             const auto size = std::filesystem::file_size(path, error);

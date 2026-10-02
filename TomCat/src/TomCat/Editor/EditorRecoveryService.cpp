@@ -528,6 +528,10 @@ namespace TomCat {
 		CloseHandle(process);
 		if (!queried)
 			return true;
+		// Debuggers/reporters may retain a handle after process termination.
+		// Such a process still has the same creation time but no live lock owner.
+		if (exit.dwHighDateTime != 0 || exit.dwLowDateTime != 0)
+			return false;
 		const uint64_t start =
 			(static_cast<uint64_t>(creation.dwHighDateTime) << 32)
 			| creation.dwLowDateTime;

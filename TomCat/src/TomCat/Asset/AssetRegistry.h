@@ -26,6 +26,9 @@ namespace TomCat {
 			bool allowMissingLeaf = false) const;
 
 		const AssetMetadata* GetMetadata(AssetHandle handle) const;
+		// Snapshot-only identity check for rendering; never touches the filesystem.
+		// Import/refresh and actual source reads still validate managed paths.
+		[[nodiscard]] bool IsCurrentAsset(AssetHandle handle) const;
 		const AssetMetadata* GetMetadata(const std::filesystem::path& path) const;
 		[[nodiscard]] std::filesystem::path GetFileSystemPath(AssetHandle handle) const;
 		[[nodiscard]] std::vector<AssetHandle> GetHandlesUnderPath(

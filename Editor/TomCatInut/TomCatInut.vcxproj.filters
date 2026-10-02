@@ -21,6 +21,9 @@
     <ClInclude Include="src\EditorBuildController.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\EditorDockSettings.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\EditorDragDrop.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -56,6 +59,9 @@
     </ClInclude>
     <ClInclude Include="src\Player\PlayerBuilder.h">
       <Filter>src\Player</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ProjectBrowserCache.h">
+      <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\SceneToolbarDrawing.h">
       <Filter>src</Filter>

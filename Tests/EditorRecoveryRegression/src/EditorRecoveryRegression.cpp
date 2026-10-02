@@ -3,6 +3,9 @@
 #include <TomCat/Utils/PathUtils.h>
 #include "../../../Editor/TomCatInut/src/AssetFileTransfer.h"
 
+#include "../../../Editor/TomCatInut/src/ProjectBrowserCache.h"
+#include "../../../Editor/TomCatInut/src/EditorDockSettings.h"
+#include <thread>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +13,9 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#ifdef TC_PLATFORM_WINDOWS
+#include <Windows.h>
+#endif
 
 namespace {
 
@@ -18,6 +24,24 @@ namespace {
 		if (!condition)
 			throw std::runtime_error(message);
 	}
+
+    void TestDockWindowReferences() {
+        const auto result = TomCat::SanitizeDockWindowReferences(
+            "[Window][Console]\nDockId=0x00000001,0\n"
+            "[Window][Scene]\nDockId=0x00000002,1\n"
+            "[Window][Missing]\nDockId=0x00000099\n"
+            "[Docking][Data]\nDockSpace ID=0x00000001 Split=X\n"
+            " DockNode ID=0x00000002 Parent=0x00000001\n"
+            "[EditorPanels]\nConsole=0\n");
+        Require(result.find("[Window][Console]\nDockId=0x00000000") != std::string::npos,
+            "split-node window reference was retained");
+        Require(result.find("[Window][Missing]\nDockId=0x00000000") != std::string::npos,
+            "missing-node window reference was retained");
+        Require(result.find("DockId=0x00000002,1") != std::string::npos &&
+            result.find("[EditorPanels]\nConsole=0") != std::string::npos,
+            "valid docking or custom settings changed");
+        std::cout << "PASS dock layout split/missing references and valid leaf preservation\n";
+    }
 
 	class TemporaryDirectory
 	{
@@ -344,16 +368,70 @@ static void TestAssetFileCopies()
 	Require(std::filesystem::exists(source / "nested" / "image.png"), "copy removed source");
 }
 
-int main()
+static void TestProjectBrowserSnapshots()
 {
+    TemporaryDirectory temporary;
+    const auto root = temporary.Path / "Assets";
+    WriteText(root / "image.png", "first");
+    WriteText(root / "image.png.tcmeta", "identity");
+    std::filesystem::create_directories(root / "Folder");
+    auto snapshot = TomCat::ProjectBrowserCache::Scan({root});
+    Require(snapshot.at(root).size() == 2, "browser exposed a sidecar or lost a folder");
+    Require(snapshot.at(root).front().Directory, "browser must sort folders before files");
+    TomCat::ProjectBrowserCache cache;
+    Require(cache.Read(root).empty(), "new cache should not block on disk IO");
+    for (int attempt = 0; attempt < 200 && cache.Read(root).empty(); ++attempt) {
+        cache.Tick(attempt * 0.01); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Require(cache.Read(root).size() == 2, "background browser scan did not publish");
+    std::filesystem::rename(root / "image.png", root / "renamed.png");
+    cache.Invalidate();
+    for (int attempt = 0; attempt < 200 && !cache.Find(root / "renamed.png"); ++attempt) {
+        cache.Tick(3 + attempt * 0.01); std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Require(cache.Find(root / "renamed.png") && !cache.Find(root / "image.png"), "rename left a stale browser entry");
+    cache.Reset();
+    Require(cache.Read(root).empty(), "project switch retained old directory entries");
+    std::cout << "PASS asynchronous browser snapshots, sidecar filtering, rename invalidation and project reset\n";
+}
+
+void TestExitedLockOwner() {
+#ifdef TC_PLATFORM_WINDOWS
+    wchar_t executable[32768]{};
+    Require(GetModuleFileNameW(nullptr, executable, 32768) != 0, "could not locate lock test helper");
+    std::wstring command = L"\"" + std::wstring(executable) + L"\" --lock-child";
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    Require(CreateProcessW(executable, command.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process) != FALSE, "could not start lock test helper");
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    const bool exited = WaitForSingleObject(process.hProcess, 10000) == WAIT_OBJECT_0;
+    const bool timed = GetProcessTimes(process.hProcess, &creation, &exit, &kernel, &user) != FALSE;
+    TomCat::ProjectLockRecord record;
+    record.ProcessId = process.dwProcessId;
+    record.ProcessStart = (uint64_t(creation.dwHighDateTime) << 32) | creation.dwLowDateTime;
+    // Keep the handle open: the process object survives, but ownership must not.
+    const bool alive = TomCat::EditorProjectLock::IsRecordOwnerAlive(record);
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    Require(exited && timed && !alive, "exited process with retained handle still owns project lock");
+    std::cout << "PASS exited project lock owner with retained process handle\n";
+#endif
+}
+
+int main(int argc, char** argv)
+{
+	if (argc == 2 && std::string_view(argv[1]) == "--lock-child") return 0;
 	try
 	{
 		TestAssetFileCopies();
+        TestProjectBrowserSnapshots();
 		TestHistoryBranchAndSelection();
 		TestHistoryMemoryCap();
 		TestImmutableAsyncRecovery();
+		TestDockWindowReferences();
 		TestUndoRedoAutosaveTracksRestoredState();
 		TestProjectLockStaleAndLive();
+		TestExitedLockOwner();
 		std::cout << "PASS Editor recovery: history branching/cap/saved state, "
 			"immutable autosave, undo/redo recovery synchronization, "
 			"non-destructive recovery, and stale/live locks\n";
