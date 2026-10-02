@@ -12,9 +12,7 @@ Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game
 ```
 
 Both commands perform a fresh managed Release compile, validate assets, and use
-the project's enabled entry scene. Migration is preview-only by default; after
-reviewing the printed file list, pass `--migrate` to allow the transactional
-upgrade.
+the project's enabled entry scene. Only current project, scene, component and package formats are supported; unsupported versions are rejected without rewriting the inputs.
 
 Official and local Editor releases contain the CLI, Managed toolchain, and Player
 Template inside the single `TomCat.exe`. Invoke that packaged CLI through the
@@ -45,25 +43,23 @@ pass the resulting directory with `build --template <directory>`.
 | `--project <path>` | Both | Required `.tcproj` path; quote paths containing spaces. |
 | `--output <path>` | `cook` only | Defaults to `<project>/Build/Game.tcpak`. |
 | `--template <directory>` | `build` only | Overrides Player template discovery; build output remains in the project's Build directory. |
-| `--migrate` | Both | Explicitly allows the previewed transactional project upgrade. |
 
 Both commands take the project write lock: close any Editor or other CLI using
-that project first. Interrupted migrations must be reviewed in the Editor.
+that project first.
 `cook` writes the asset package; `build` also supplies the freshly compiled managed
 assembly and manifest to PlayerBuilder and publishes the standalone Player.
-Current TCPAK output is v7 with per-entry SHA-256 digests; readers accept v5/v6/v7.
+TCPAK output and input use v8 with mandatory per-entry SHA-256 digests.
 
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Success or help |
 | 2 | Invalid arguments |
-| 3–5 | Project inspection failed, migration approval required (4), or load failed |
+| 5 | Project load failed (including unsupported format or missing settings) |
 | 6–9 | Asset initialization, entry scene, managed compilation, or Cook failure |
 | 10–12 | Managed metadata, assembly read, or Player build failure |
 | 13 | Project lock unavailable |
-| 14 | Interrupted migration requires Editor review |
 
-See [project configuration and migration](../../PROJECT_SYSTEM.md) and
+See [project configuration](../../PROJECT_SYSTEM.md) and
 [managed scripting](../../Managed/README.md) for the underlying contracts.
 
 ## From editor authoring to a build

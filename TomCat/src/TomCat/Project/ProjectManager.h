@@ -41,11 +41,7 @@ namespace TomCat {
 
 		Ref<Project> CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config);
 		Ref<Project> InspectProject(const std::filesystem::path& projectPath) const;
-		[[nodiscard]] bool PreviewProjectMigration(const std::filesystem::path& projectPath,
-			ProjectMigrationPreview& preview, std::string& errorMessage) const;
 		Ref<Project> LoadProject(const std::filesystem::path& projectPath);
-		Ref<Project> LoadProjectWithMigration(const std::filesystem::path& projectPath,
-			const ProjectMigrationPreview& approvedMigration);
 		Ref<Project> AddProject(const std::filesystem::path& projectPath);
 		[[nodiscard]] bool RemoveProject(const std::filesystem::path& projectPath);
 

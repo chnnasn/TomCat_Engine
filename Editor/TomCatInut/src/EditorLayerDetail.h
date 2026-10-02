@@ -195,31 +195,6 @@ namespace EditorLayerDetail {
 			return (error ? path : absolute).lexically_normal();
 		}
 
-		bool MigrationPreviewsEqual(const ProjectMigrationPreview& left,
-			const ProjectMigrationPreview& right)
-		{
-			if (left.ProjectPath.lexically_normal()
-					!= right.ProjectPath.lexically_normal()
-				|| left.SourceSchemaVersion != right.SourceSchemaVersion
-				|| left.TargetSchemaVersion != right.TargetSchemaVersion
-				|| left.BackupRoot.lexically_normal()
-					!= right.BackupRoot.lexically_normal()
-				|| left.Changes.size() != right.Changes.size())
-				return false;
-			for (size_t index = 0; index < left.Changes.size(); ++index)
-			{
-				const ProjectMigrationChange& a = left.Changes[index];
-				const ProjectMigrationChange& b = right.Changes[index];
-				if (a.RelativePath.lexically_normal()
-						!= b.RelativePath.lexically_normal()
-					|| a.Kind != b.Kind || a.OriginalSize != b.OriginalSize
-					|| a.OriginalSHA256 != b.OriginalSHA256
-					|| a.Reason != b.Reason)
-					return false;
-			}
-			return true;
-		}
-
 		std::string SanitizePrefabFileStem(std::string value)
 		{
 			for (char& character : value)

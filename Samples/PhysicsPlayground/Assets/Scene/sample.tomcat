@@ -24,7 +24,7 @@ Entities:
         PerspectiveNear: 0.00999999978
         PerspectiveFar: 1000
         OrthographicSize: 10
-        OrthographicNear: -1
+        OrthographicNear: 0
         OrthographicFar: 1
       Primary: true
       FixedAspectRatio: false
@@ -84,7 +84,7 @@ Entities:
             Value: [1, 1, 1]
       - TypeId: 11457157452030541829
         StableName: TomCat.Camera
-        SchemaVersion: 2
+        SchemaVersion: 4
         Properties:
           - PropertyId: 300
             StableName: Primary
@@ -103,7 +103,7 @@ Entities:
             Value: 10
           - PropertyId: 305
             StableName: OrthographicNearClip
-            Value: -1
+            Value: 0
           - PropertyId: 306
             StableName: OrthographicFarClip
             Value: 1
@@ -119,6 +119,15 @@ Entities:
           - PropertyId: 310
             StableName: Enabled
             Value: true
+          - PropertyId: 311
+            StableName: Exposure
+            Value: 0
+          - PropertyId: 312
+            StableName: Saturation
+            Value: 1
+          - PropertyId: 313
+            StableName: Vignette
+            Value: 0
     Parent: 0
   - Entity: 2539330170089681506
     Tag:
@@ -213,7 +222,7 @@ Entities:
             Value: [1.39999998, 0.999999821, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -232,6 +241,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541836
         StableName: TomCat.Rigidbody2D
@@ -370,7 +388,7 @@ Entities:
             Value: [3, 0.300000012, 1]
       - TypeId: 11457157452030541830
         StableName: TomCat.SpriteRenderer
-        SchemaVersion: 1
+        SchemaVersion: 2
         Properties:
           - PropertyId: 200
             StableName: Enabled
@@ -389,6 +407,15 @@ Entities:
             Value: 0
           - PropertyId: 205
             StableName: OrderInLayer
+            Value: 0
+          - PropertyId: 206
+            StableName: NormalMap
+            Value: 0
+          - PropertyId: 207
+            StableName: CastShadows
+            Value: false
+          - PropertyId: 208
+            StableName: Material
             Value: 0
       - TypeId: 11457157452030541837
         StableName: TomCat.BoxCollider2D

@@ -137,7 +137,7 @@ namespace TomCat::Save {
 				return false;
 			}
 
-			if (formatVersion == 0 || formatVersion > Version::SaveFormatCurrent
+			if (formatVersion != Version::SaveFormatCurrent
 				|| dataVersion > std::numeric_limits<uint32_t>::max()
 				|| payloadBytes > MaximumPayloadBytes)
 				return false;

@@ -811,22 +811,6 @@ namespace TomCat {
 			};
 		}
 
-		// Old records allowed signed depths. Migrate valid ranges on load while
-		// current authoring setters enforce distances in front of the camera.
-		bool MigrateOrthographicClipRange(float& nearClip, float& farClip,
-			std::string& error)
-		{
-			if (!std::isfinite(nearClip) || !std::isfinite(farClip) || farClip <= nearClip)
-			{
-				error = "Invalid legacy orthographic clip range";
-				return false;
-			}
-			nearClip = std::max(nearClip, 0.0f);
-			if (farClip <= nearClip)
-				farClip = 1000.0f;
-			return true;
-		}
-
 		ComponentDescriptor::LegacyDecodeFn LegacyCameraDecode()
 		{
 			return [](const ComponentDescriptor& descriptor, Entity entity,
@@ -859,8 +843,8 @@ namespace TomCat {
 				canonical["OrthographicSize"] = projection["OrthographicSize"];
 				float nearClip = projection["OrthographicNear"].as<float>();
 				float farClip = projection["OrthographicFar"].as<float>();
-				if (!MigrateOrthographicClipRange(nearClip, farClip, error))
-					return false;
+				if (!std::isfinite(nearClip) || !std::isfinite(farClip) || nearClip < 0.0f || farClip <= nearClip)
+                { error = "Invalid orthographic clip range"; return false; }
 				canonical["OrthographicNearClip"] = nearClip;
 				canonical["OrthographicFarClip"] = farClip;
 				return ApplyLegacyPropertyMap(descriptor, entity, canonical, error);
@@ -1109,80 +1093,15 @@ namespace TomCat {
 			return descriptor;
 		}
 
-        void AddDefaultProperty(YAML::Node& record, uint64_t id, const char* name, const YAML::Node& value) {
-            auto properties=record["Properties"];
-            if(!properties.IsSequence()) throw std::runtime_error("component properties must be a sequence");
-            for(const auto& property:properties) if(property["PropertyId"].as<uint64_t>()==id || property["StableName"].as<std::string>()==name) throw std::runtime_error("new property present in older component schema");
-            YAML::Node property; property["PropertyId"]=id;property["StableName"]=name;property["Value"]=value;properties.push_back(property);
-        }
-
 		ComponentDescriptor MakeCameraDescriptor()
 		{
 			auto descriptor = BaseDescriptor<C_Camera>(ComponentIds::Camera,
 				"TomCat.Camera", "Camera");
 			descriptor.ScriptAccessible = true;
 			descriptor.SchemaVersion = 4;
-			descriptor.Migrations.push_back({ 1, 2,
-				[](YAML::Node& record, std::string& error)
-				{
-					YAML::Node properties = record["Properties"];
-					if (!properties || !properties.IsSequence())
-					{
-						error = "TomCat.Camera v1 properties must be a sequence";
-						return false;
-					}
-					for (const YAML::Node& property : properties)
-					{
-						if (!property["PropertyId"] || !property["StableName"])
-						{
-							error = "TomCat.Camera v1 property identity is invalid";
-							return false;
-						}
-						if (property["PropertyId"].as<uint64_t>()
-								== ComponentIds::CameraProperties::Enabled
-							|| property["StableName"].as<std::string>() == "Enabled")
-						{
-							error = "TomCat.Camera v1 unexpectedly contains Enabled";
-							return false;
-						}
-					}
-					YAML::Node enabled(YAML::NodeType::Map);
-					enabled["PropertyId"] = ComponentIds::CameraProperties::Enabled;
-					enabled["StableName"] = "Enabled";
-					enabled["Value"] = true;
-					properties.push_back(enabled);
-					return true;
-				} });
-			descriptor.Migrations.push_back({ 2, 3,
-				[](YAML::Node& record, std::string& error)
-				{
-					YAML::Node nearProperty, farProperty;
-					for (YAML::Node property : record["Properties"])
-					{
-						if (property["PropertyId"].as<uint64_t>() == ComponentIds::CameraProperties::OrthographicNear)
-							nearProperty = property;
-						if (property["PropertyId"].as<uint64_t>() == ComponentIds::CameraProperties::OrthographicFar)
-							farProperty = property;
-					}
-					if (!nearProperty.IsMap() || !farProperty.IsMap())
-					{
-						error = "TomCat.Camera v2 clip properties are missing";
-						return false;
-					}
-					float nearClip = nearProperty["Value"].as<float>();
-					float farClip = farProperty["Value"].as<float>();
-					if (!MigrateOrthographicClipRange(nearClip, farClip, error))
-						return false;
-					nearProperty["Value"] = nearClip;
-					farProperty["Value"] = farClip;
-					return true;
-				} });
-            descriptor.Migrations.push_back({3,4,[](YAML::Node& record,std::string&) {
-                AddDefaultProperty(record,ComponentIds::CameraProperties::Exposure,"Exposure",YAML::Node(0.f));
-                AddDefaultProperty(record,ComponentIds::CameraProperties::Saturation,"Saturation",YAML::Node(1.f));
-                AddDefaultProperty(record,ComponentIds::CameraProperties::Vignette,"Vignette",YAML::Node(0.f));
-                return true;
-            }});
+
+
+
 			descriptor.EncodeLegacyFields = LegacyCamera();
 			descriptor.DecodeLegacyFields = LegacyCameraDecode();
 			descriptor.Add = [](Entity entity, std::string& error)
@@ -1283,12 +1202,7 @@ namespace TomCat {
 				"TomCat.SpriteRenderer", "Sprite Renderer");
 			descriptor.ScriptAccessible = true;
             descriptor.SchemaVersion=2;
-            descriptor.Migrations.push_back({1,2,[](YAML::Node& record,std::string&) {
-                AddDefaultProperty(record,ComponentIds::SpriteRendererProperties::NormalMap,"NormalMap",YAML::Node(uint64_t(0)));
-                AddDefaultProperty(record,ComponentIds::SpriteRendererProperties::CastShadows,"CastShadows",YAML::Node(false));
-                AddDefaultProperty(record,ComponentIds::SpriteRendererProperties::Material,"Material",YAML::Node(uint64_t(0)));
-                return true;
-            }});
+
 
 			descriptor.EncodeLegacyFields = LegacyFlatMap("SpriteRenderer",
 				{ { "Sprite", "SpriteHandle" } });
@@ -1785,7 +1699,7 @@ namespace TomCat {
 				"TomCat.AudioSource", "Audio Source");
 			descriptor.ScriptAccessible = true;
 			descriptor.SchemaVersion=2;
-            descriptor.Migrations.push_back({1,2,[](YAML::Node& record,std::string&) {AddDefaultProperty(record,ComponentIds::AudioSourceProperties::Bus,"Bus",YAML::Node(UINT32_MAX));return true;}});
+
             descriptor.EncodeLegacyFields = LegacyFlatMap("AudioSource");
 			descriptor.DecodeLegacyFields = LegacyFlatDecode("AudioSource", false, {},
 				{ "Streaming", "SpatialBlend", "MinDistance", "MaxDistance", "Bus" });

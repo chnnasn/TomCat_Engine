@@ -277,20 +277,7 @@ namespace ComponentRegistryRegression {
 			return true;
 		};
 		descriptor.Properties.push_back(std::move(property));
-		descriptor.Migrations.push_back({ 1, 2,
-			[](YAML::Node& record, std::string& error)
-			{
-				YAML::Node properties = record["Properties"];
-				if (!properties || !properties.IsSequence() || properties.size() != 1
-					|| properties[0]["PropertyId"].as<uint64_t>() != oldPropertyId)
-				{
-					error = "PluginCounter v1 payload is invalid";
-					return false;
-				}
-				properties[0]["PropertyId"] = propertyId;
-				properties[0]["StableName"] = "Value";
-				return true;
-			} });
+
 		return descriptor;
 	}
 
@@ -334,11 +321,10 @@ namespace ComponentRegistryRegression {
 		oldRecord.SchemaVersion = 1;
 		oldRecord.SerializedRecord = YAML::Dump(oldNode);
 		Check(registry.Register(MakePluginCounterDescriptor(), error), error);
-		Check(registry.RehydrateOpaqueComponents(liveEntities,
-			TomCat::UUID(providerId), error), error);
-		Check(entity.HasComponent<PluginCounter>()
-			&& entity.GetComponent<PluginCounter>().Value == 41,
-			"v1 opaque component did not migrate to the v2 schema");
+        Check(!registry.RehydrateOpaqueComponents(liveEntities, TomCat::UUID(providerId), error),
+            "old component schema must be rejected");
+        Check(!entity.HasComponent<PluginCounter>() && entity.HasComponent<TomCat::OpaqueComponents>(),
+            "rejected opaque record must remain recoverable");
 
 		Check(registry.UnregisterProvider(TomCat::UUID(providerId), liveEntities,
 			error), error);
@@ -348,8 +334,8 @@ namespace ComponentRegistryRegression {
 		futureRecord.SchemaVersion = 99;
 		futureRecord.SerializedRecord = YAML::Dump(futureNode);
 		Check(registry.Register(MakePluginCounterDescriptor(), error), error);
-		Check(registry.RehydrateOpaqueComponents(liveEntities,
-			TomCat::UUID(providerId), error), error);
+		Check(!registry.RehydrateOpaqueComponents(liveEntities,
+			TomCat::UUID(providerId), error), "future component must be rejected");
 		Check(!entity.HasComponent<PluginCounter>()
 			&& entity.HasComponent<TomCat::OpaqueComponents>(),
 			"future component schema was not preserved as opaque");
@@ -490,7 +476,6 @@ namespace ComponentRegistryRegression {
 					== TomCat::ComponentIds::CameraProperties::Enabled;
 			});
 		Check(cameraDescriptor->SchemaVersion == 4
-			&& cameraDescriptor->Migrations.size() == 3
 			&& cameraEnabledProperty != cameraDescriptor->Properties.end()
 			&& cameraEnabledProperty->Kind == TomCat::PropertyKind::Bool
 			&& cameraEnabledProperty->DefaultValue == TomCat::PropertyValue(true),
@@ -644,21 +629,8 @@ namespace ComponentRegistryRegression {
 		YAML::Emitter legacyEmitter;
 		legacyEmitter << legacyRoot;
 		auto legacyLoaded = TomCat::CreateRef<TomCat::Scene>();
-		Check(TomCat::SceneArchiveCodec::Decode(Bytes(legacyEmitter.c_str()),
-			legacyLoaded, "ComponentRegistry.schema10.scene", false),
-			"Schema 10 Tag.Visible compatibility decode failed");
-		TomCat::Entity legacyLoadedRoot = legacyLoaded->FindEntityByUUID(rootId);
-		Check(legacyLoadedRoot
-			&& !legacyLoadedRoot.GetComponent<TomCat::Tag>().ActiveSelf
-			&& !legacyLoadedRoot.HasComponent<TomCat::EditorVisibility>(),
-			"Schema 10 Tag.Visible was not migrated to gameplay ActiveSelf");
-		std::string migratedDocument;
-		Check(TomCat::SceneArchiveCodec::Encode(legacyLoaded, migratedDocument, error),
-			error);
-		YAML::Node migratedRoot = YAML::Load(migratedDocument);
-		Check(migratedRoot["SchemaVersion"].as<uint32_t>() == 11
-			&& !migratedRoot["Entities"][0]["Tag"]["Visible"].as<bool>(),
-			"Schema 10 ActiveSelf migration did not resave through the stable Visible wire field");
+        Check(!TomCat::SceneArchiveCodec::Decode(Bytes(legacyEmitter.c_str()),
+            legacyLoaded, "ComponentRegistry.schema10.scene", false), "schema 10 must be rejected");
 
 		YAML::Node lowHealthRoot = YAML::Load(sceneDocument);
 		lowHealthRoot["Entities"][0]["Components"][0]["Properties"][0]["Value"] = 50;
@@ -836,19 +808,8 @@ namespace ComponentRegistryRegression {
 		YAML::Emitter cameraV1Emitter;
 		cameraV1Emitter << cameraV1Root;
 		auto migratedCameraScene = TomCat::CreateRef<TomCat::Scene>();
-		Check(TomCat::SceneArchiveCodec::Decode(Bytes(cameraV1Emitter.c_str()),
-			migratedCameraScene, "CameraV1.scene", false),
-			"Camera v1 component record did not migrate to Enabled=true");
-		TomCat::Entity migratedCamera =
-			migratedCameraScene->FindEntityByUUID(addedCamera.GetUUID());
-		Check(migratedCamera
-			&& migratedCamera.GetComponent<TomCat::C_Camera>().Enabled
-			&& migratedCamera.GetComponent<TomCat::C_Camera>().Primary
-			&& migratedCameraScene->GetPrimaryCameraEntity() == migratedCamera,
-			"Camera v1 migration did not default independent Enabled state to true");
-		Check(migratedCamera.GetComponent<TomCat::C_Camera>()._Camera.GetOrthographicNearClip() == 0.0f
-			&& migratedCamera.GetComponent<TomCat::C_Camera>()._Camera.GetOrthographicFarClip() == 1.0f,
-			"Camera migration did not normalize the old signed clip range");
+        Check(!TomCat::SceneArchiveCodec::Decode(Bytes(cameraV1Emitter.c_str()),
+            migratedCameraScene, "CameraV1.scene", false), "old Camera component must be rejected");
 
 		auto cameraPrefabSource = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity cameraPrefabRoot =

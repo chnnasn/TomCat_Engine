@@ -46,7 +46,7 @@ try {
     if ($parent -lt 0) { throw 'Fixture scene has no target entity.' }
     $scene = $scene.Insert($parent, $component + "`n")
     [IO.File]::WriteAllText($scenePath, $scene)
-    & $cli build --project "$project/Project.tcproj" --template $template --migrate
+    & $cli build --project "$project/Project.tcproj" --template $template
     if ($LASTEXITCODE -ne 0) { throw 'Module project build failed.' }
     $build = Join-Path $project 'Build/CoinRunner'
     $detached = Join-Path $root 'Detached'

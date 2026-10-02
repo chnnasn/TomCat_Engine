@@ -106,7 +106,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
 - **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
 - **编辑器**：可停靠的 Scene / Game / Hierarchy / Inspector / Project / Console / Profiler 面板、布局持久化、标签栏右键 Maximize / Close Tab / Add Tab、不可折叠的窗口标题、Hierarchy 场景可见性、带导入 Apply/Revert 的资源 Inspector、真实图片缩略图、原有 Packages 图标、可搜索诊断、Undo/Redo、自动保存/恢复、项目锁与用户设置
-- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v8，包含逐条目 SHA-256（Player 兼容读取 v5/v6/v7/v8）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
+- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v8，包含逐条目 SHA-256（Player 只读取 v8）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
 - **UI 控件与本地化**：新增滑条、滚动视图、单行 Unicode 输入框、层级主题和游戏语言表回退；支持 OS 输入法提交文字，完整组合态仍有边界，详见 [UI 控件](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **性能分析**：可视化 CPU 时间线、异步 GPU 帧计时、绘制统计、进程内存和资源分配估算；提供 [Profiler 与 C# 断点流程](docs/DEBUGGING_AND_PROFILING.md)
@@ -196,14 +196,14 @@ vendor/            premake 与第三方依赖
 - [x] CircleCollider2D、隐式静态刚体、Trigger、每 Fixture/项目 Layer 两级碰撞过滤、查询、运动 API 和 DistanceJoint2D
 - [x] 延迟派发的引擎监听器/C# Collision 与 Trigger 回调
 - [x] 项目级 Tag、16 个稳定 Layer 和对称 Physics 2D 碰撞矩阵设置
-- [x] Scene writer v11、reader v9-v11、注册表组件持久化与 Cooked Package v8 物理往返
+- [x] Scene writer v11、reader v11、注册表组件持久化与 Cooked Package v8 物理往返
 - [x] 物理回归测试套件（`Scripts\Run-PhysicsRegression.ps1`）
 
 ### 已完成的 C#、Player、Scene 与 Prefab V1
 
 - [x] 托管运行时、源码生成器、Inspector 字段、last-good 编译、确定性生命周期/物理回调、异常隔离与可回收 Play Domain
 - [x] 独立 win-x64 Player、私有 .NET Runtime、严格版本/Hash Player Template、Build / Build And Run 与 Player 子进程冒烟测试
-- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v8 有序场景与 Player v5/v6/v7/v8 读取、帧末安全点同步 SceneManager 切换及 C# SceneManager API
+- [x] 共享 `ProjectSettings/BuildSettings.json`、`.tcpak` v8 有序场景与 Player 只读取 v8、帧末安全点同步 SceneManager 切换及 C# SceneManager API
 - [x] 使用稳定 LocalID 的快照 Prefab V1、Hierarchy/Joint/C# Entity 重映射、新 AttachmentID、延迟 C# 创建、Editor 创建/拖入操作与 Cook 依赖遍历
 - [x] 版本化 `PlayerSettings.json` 提供产品/图标/显示/目录配置，嵌入 TCPAK v6 引入、v7/v8 延续的 BootManifest
 - [x] 关联/嵌套 Prefab、Override/Variant，异步读取、叠加场景、持久根对象和卸载（范围见各功能文档）
@@ -236,14 +236,18 @@ Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的
 - [ ] GPU 逐次绘制分解与托管堆对象/引用分析
 - [x] 在 Push/PR CI 中运行托管、原生与 Player Release 回归
 - [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
-- [x] 项目迁移预览、明确确认、事务升级和 Editor 中的中断迁移恢复；CLI 升级要求传入 `--migrate`
-- [x] 通用 Scene Schema 迁移工具（SceneMigrator：v9/v10 -> 当前版本的事务化升级、SHA-256 备份、中断迁移日志与恢复；CLI 需 `--migrate`）与原生模块 SDK（`Modules/<名称>/module.tomcat`、版本化宿主表、组件/导入器/编辑器命令扩展点）
+
+
 - [ ] Windows/OpenGL 的 2D 流程成熟后，再增加其他平台与渲染后端
 
 ### 未来 3D 范围
 
 - [ ] Mesh/模型导入、Material、Light、PBR、阴影、环境渲染和骨骼动画
 - [ ] 等 3D Runtime 与编辑流程成立后，再将当前仅有相机的 3D 模板转为正式功能
+
+## 格式策略
+
+格式策略：只支持当前格式，拒绝旧版和未来版本；已移除项目、场景、组件迁移及 CLI `--migrate`。原生模块 SDK 与损坏恢复继续保留，详见 PROJECT_SYSTEM.md。
 
 ## 相关项目
 

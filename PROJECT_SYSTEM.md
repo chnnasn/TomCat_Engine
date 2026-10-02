@@ -1,6 +1,6 @@
 # TomCat Engine 项目系统
 
-中文文档 · 核对日期：2026-09-18 · [文档索引](docs/README.md)
+中文文档 · 核对日期：2026-10-02 · [文档索引](docs/README.md)
 
 ## 文件与职责
 
@@ -36,13 +36,11 @@ Project:
 - Content Browser 的当前目录和展开节点属于 Editor 本机状态，保存在项目的 `UserSettings/editor.json`；加载时会限制在项目资源目录内，越界或不存在的路径会被忽略。
 - `Project` map 只允许上面列出的六个字段；入口场景和场景构建顺序不再保存在 `Project.tcproj`。
 
-当前 writer 只写 schema v4，并严格校验顶层和 `Project` map。遗留 schema v3 项目可先检查并预览；迁移将其 `StartSceneHandle`/`StartScene` 转入 `ProjectSettings/BuildSettings.json`，再将项目文件升级为 v4。`Project::Load` 拒绝需要迁移的项目；调用方必须先取得 `PreviewMigration`，明确确认后通过 `LoadWithMigration` 执行，过期或不完整的预览会被拒绝。
+## 仅支持当前格式
 
-## 项目迁移与中断恢复
+工程只读写 schema v4；ProjectSettings.json 只接受 v2；BuildSettings.json 和 PlayerSettings.json 必须存在且为 v1；场景只接受 v11，Prefab 只接受 v1，TCPAK 只接受 v8，存档只接受 v1。已注册组件的 SchemaVersion 必须与当前描述符相同。旧版和未来版本均拒绝，不自动升级、不补齐缺失项目设置、不改写输入文件。
 
-迁移预览列出待创建或替换文件，涵盖旧项目格式及需要补齐的项目设置。Editor 提供迁移确认和中断恢复界面；CLI 默认仅报告迁移需求，传入 `--migrate` 才执行升级。迁移通过备份和日志管理多文件变更，相关状态位于 `ProjectSettings/MigrationBackups/` 和 `ProjectSettings/.migration-journal.json`，均不应提交。
-
-若存在未完成的迁移，普通加载不会绕过它。CLI 返回退出码 `14`，应在 Editor 中检查并选择恢复、导出备份或放弃中断事务；重新构建不能替代恢复处理。资产移动/删除的 sidecar 事务与项目格式迁移是不同流程。
+项目和场景迁移器、迁移弹窗与 CLI `--migrate` 已删除；如需升级旧工程，请先使用之前的引擎版本离线处理。历史备份不会被此版本删除。资源事务、编辑器自动保存恢复、存档损坏恢复及 SHA-256 校验继续保留。
 
 ## ProjectSettings/BuildSettings.json schema v1
 
@@ -81,13 +79,13 @@ Project:
 }
 ```
 
-Loader 只接受有效 JSON、schema v1/v2 及精确的 lowerCamel 字段集，writer 固定写 schema v2。`tags` 必须非空且唯一，第一项固定为 `Untagged`；`layerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。层数选择 16 是因为 Box2D 的 Category/Mask 均为 16 位。`collisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
+Loader 只接受有效 JSON、schema v2 及精确的 lowerCamel 字段集，writer 固定写 schema v2。`tags` 必须非空且唯一，第一项固定为 `Untagged`；`layerNames` 始终包含 16 个稳定槽位，第 0 层固定为 `Default`，其余槽位可留空，所有非空名称必须唯一。层数选择 16 是因为 Box2D 的 Category/Mask 均为 16 位。`collisionMasks` 也必须恰好有 16 行，并表示对称矩阵；某一对 Layer 的两个方向不一致时拒绝加载。
 
-新项目会原子写入默认设置，默认所有 Layer 两两允许碰撞。为兼容已有项目，仅当 JSON 不存在时才读取旧的 `ProjectSettings/ProjectSettings.tcsettings` schema v1；加载旧文件本身不会改写磁盘，下一次 `SetSettings` 或 `SaveSettings` 会生成权威 JSON。JSON 一旦存在但内容损坏、版本错误或违反约束，整个项目加载失败，不会回退到旧文件掩盖错误。JSON 与旧文件都不存在时使用内存默认值。Editor 的 Project Settings 中的 `Tags and Layers` 页管理 Tag 和 Layer 名称，`Physics 2D` 页管理对称碰撞矩阵；所有有效修改都会立即通过原子替换写入 JSON，不需要额外点击 Apply，保存失败时 UI 会恢复为最后一次成功保存的值并显示错误。
+新项目会原子写入默认设置，默认所有 Layer 两两允许碰撞。加载必须存在合法的 ProjectSettings.json v2；不再读取旧 .tcsettings 或旧 JSON v1，也不在缺失时回退默认配置。
 
 ## ProjectSettings/PlayerSettings.json schema v1
 
-`PlayerSettings.json` 是产品名称、公司/版本、图标、窗口尺寸与模式、Resizable/VSync 以及 Save/Log/Crash 目录的版本化项目真源。新项目创建默认文件，已有文件在加载时严格校验 schema 和字段，缺失时先使用默认值构造迁移预览，须确认迁移后补齐；Cook 将其写入 TCPAK v7 的 BootManifest，Player 在创建窗口前应用。兼容读取的 v5 包不含 BootManifest，使用受控默认值。
+`PlayerSettings.json` 是产品名称、公司/版本、图标、窗口与数据目录的项目真源。新项目创建默认文件，加载必须存在合法的 schema v1 文件；Cook 将其写入 TCPAK v8 BootManifest，Player 在创建窗口前应用。
 
 ## 项目结构
 
@@ -130,7 +128,7 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 
 ## 启动流程
 
-1. Builder 检查项目配置与项目设置并处理需要确认的迁移；普通加载不自动批准升级。schema v4 要求有效的 `BuildSettings.json`；缺失 Player 设置会进入迁移计划。`ProjectSettings.json` 存在时严格校验，仅在缺失时兼容读取旧 `.tcsettings`。
+1. Builder 检查当前项目格式以及 BuildSettings.json、PlayerSettings.json、ProjectSettings.json；缺失、旧版或损坏均拒绝。
 2. Builder 使用 Unicode 版 `CreateProcessW` 启动 Editor，仅传递项目文件路径；带空格、非 ASCII 字符和 Windows 长路径的参数会被正确引用。
 3. Editor 重新加载项目，从 `Project.Template` 决定 2D/3D 模式。
 4. Editor 从 `BuildSettings.json` 读取有序 Scenes In Build，并按 `entrySceneHandle` 从 Registry 解析入口场景。Handle 为 0、未启用、缺失或类型无效时保留空白编辑场景并报告错误，绝不使用 `pathHint` 回退或绑定同路径下的新资源。
@@ -147,14 +145,14 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 - Editor 的非布局项目状态写入同一项目下的 `UserSettings/editor.json`，不会混入 `imgui.ini` 或 `Project.tcproj`。
 - Hub 没有用户可调整布局；它仍封装只读的默认 `imgui.ini`，但最近打开时间、已知项目列表、本机项目目录和 Editor 目录只写入 `%LOCALAPPDATA%\TomCat\Hub\hub.json`。
 - `%LOCALAPPDATA%\TomCat\Editor`、`Hub`、`Player` 是 EVB 虚拟树之外的真实文件系统目录；三个产品的 `TomCat.log`、无项目 Editor 布局及上述 Editor 运行时缓存分别写入对应目录，不参与 EVB 打包。
-- 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成忽略 `/UserSettings/`、`/Library/`、`/Cache/`、`/ProjectSettings/MigrationBackups/` 和 `/ProjectSettings/.migration-journal.json` 的 `.gitignore`；加载现有项目时会保留原内容并原子补齐缺失规则。
+- 构建脚本只把各程序源码目录中的默认 `imgui.ini` 复制到输出目录，不复制运行产生的 JSON 或用户布局。新建项目会生成忽略 `/UserSettings/`、`/Library/`、`/Cache/`、`/ProjectSettings/MigrationBackups/` 和 `/ProjectSettings/.migration-journal.json` 的 `.gitignore`；加载现有项目不改写忽略规则。
 - 项目根目录不再读取或生成旧式 `imgui.ini`；它只允许作为 Editor 可执行文件的封装默认布局存在。
 - Hub 只读取当前 `hub.json`；文件不存在时使用默认状态，不扫描或迁移旧 INI/YAML 配置。
 - Content Browser 的 `editor.json` 使用明确的 `@assets` / `@packages` 根前缀保存导航状态；旧版 Assets 相对路径仍可读取，任何越出这两个根目录的值都会回退到 `Assets/`。
 
 ## 场景文件 schema v11
 
-`.tomcat` 当前 writer 输出顶层 `SchemaVersion: 11`、`SceneName` 和 `Entities`；reader 严格接受 schema v9/v10/v11，其中 v9/v10 作为只读迁移输入。实体、组件以及层级字段必须与对应版本的完整字段集合精确匹配；任何层级出现缺失、重复或未知字段都会被拒绝。实体关系只使用 `Parent`。schema v11 的每个实体额外保存注册表驱动的 `Components` 序列，组件类型和属性都使用显式稳定 UUID；当前缺失的插件组件作为只读 Missing Component 显示，并连同其嵌套 YAML 载荷无损写回。组件注册表、Opaque Missing Component 往返及 SCB/ComponentApiV1 Bridge 已可用，独立插件/模块 SDK 尚未完成。
+`.tomcat` 当前 writer 输出顶层 `SchemaVersion: 11`、`SceneName` 和 `Entities`；reader 只接受 schema v11。实体、组件以及层级字段必须与对应版本的完整字段集合精确匹配；任何层级出现缺失、重复或未知字段都会被拒绝。实体关系只使用 `Parent`。schema v11 的每个实体额外保存注册表驱动的 `Components` 序列，组件类型和属性都使用显式稳定 UUID；当前缺失的插件组件作为只读 Missing Component 显示，并连同其嵌套 YAML 载荷无损写回。组件注册表、Opaque Missing Component 往返及 SCB/ComponentApiV1 Bridge 已可用，独立模块 SDK 已提供。
 
 每个实体都必须保存 `EntityMetadata`：`GameplayTag` 是项目定义的非空 Tag 字符串，`Layer` 是 0–15 的稳定槽位索引，`HierarchyIcon` 是 `Automatic` 或稳定的显式图标 token。实体名称仍由 `Tag` 组件保存，不与 Gameplay Tag 混用。Inspector 顶部按“图标、启用、名称”排列，并在下一行并排显示 Tag 与 Layer；Inspector 与 Hierarchy 读取同一图标字段，修改后立即同步。新实体默认使用通用 `Entity` 图标；用户主动选择 `Automatic` 后，才按 Camera、Sprite、Rigidbody2D、Collider2D、普通 Entity 的优先级解析。场景中暂时无法在当前项目设置中解析的旧 Tag/Layer 值会保留为 `Undefined`，不会在加载时擅自改写。
 
@@ -243,23 +241,17 @@ Enabled: true
 
 `Runtime: false` 用于只在编辑器与 CLI 中加载的模块；发布包只包含 Enabled 与 Runtime 均为 true 的模块。`Dependencies` 为模块 Name 列表（最多 64 项），按依赖顺序初始化；缺失、禁用、重复、自引用或循环依赖导致严格发布失败。`RuntimeFiles` 为 Library 同目录的附属 DLL 相对路径列表（最多 64 项），用于显式携带模块的非系统动态依赖。
 
-CLI cook/build 在场景迁移和 Cook 前严格加载工程模块，任何启用模块的初始化失败都终止发布。编辑器保留诊断后跳过失败模块的行为。SDK 的 ModuleContextV1 末尾追加 Host（Editor/Tool/Player）；模块访问追加字段前应检查 Size。Player 只提供组件注册，导入器和编辑器命令注册返回 ModuleStatusUnavailable，模块入口应按 Host 跳过这些能力。
+CLI cook/build 在 Cook 前严格加载工程模块，任何启用模块的初始化失败都终止发布。编辑器保留诊断后跳过失败模块的行为。SDK 的 ModuleContextV1 末尾追加 Host（Editor/Tool/Player）；模块访问追加字段前应检查 Size。Player 只提供组件注册，导入器和编辑器命令注册返回 ModuleStatusUnavailable，模块入口应按 Host 跳过这些能力。
 
 TCPAK v8 沿用 v7 头和索引，新增保留 Handle UINT64_MAX-1、Type None、Flags 2、Tag 0x31444f4d 的原生模块载荷。载荷是 ModulePackageVersion 1 的 YAML，包含当前 EngineBuildID、规范化清单及 DLL 二进制字节，外层条目有 SHA-256；每个 DLL 最多 64 MiB、载荷最多 256 MiB。Cook 将未固定版本的清单固定到当前引擎，并在原子替换包前重新检查模块输入。
 
-桌面 Player 先校验载荷、依赖图和路径，再在独立临时目录解包并加载模块，随后解码场景，使模块组件直接恢复为强类型数据。场景及脚本销毁后卸载模块并清理目录。发布目录无需作者 Modules/、原始工程或 DLL 路径。旧 v5-v7 无模块载荷的包继续可读；Web Player 暂不支持原生 DLL 模块。完整发布验证见 Scripts/Run-ModulePublishSmoke.ps1。
-
-### 场景迁移备份与事务日志
-
-通用场景迁移通过现有 reader 解码 schema v9/v10，再以当前 v11 writer 重新序列化和验证，保留未安装模块的 opaque 组件记录。先预览，再执行；项目批量迁移按场景分别提交，后续失败不会撤销已经完成的其他场景。
-
-原始字节保存在 `ProjectSettings/SceneMigrationBackups/<scene-filename>.<original-SHA256-first-16>.bak`。同目录中的 `<scene-filename>.migration-journal` 是 YAML 事务日志，包含 `JournalVersion: 1`、`TransactionID`、`State: Migrating`、`ScenePath`、`OriginalSHA256`、`MigratedSHA256` 和 `BackupFile`。备份和日志先持久化，再原子替换场景；成功完成后删除事务日志，保留原始备份。
-
-中断恢复先预览当前场景、备份和日志中的 SHA-256，再选择保留当前已迁移场景或恢复原始字节；过期预览或摘要不匹配会拒绝恢复。项目迁移预览遇到未处理日志会阻止继续迁移。这些文件与项目格式迁移的 `MigrationBackups/`、`.migration-journal.json` 是两套独立事务记录；`SceneMigrationBackups/` 属于本机恢复数据，应加入项目 `.gitignore`。
+桌面 Player 先校验载荷、依赖图和路径，再在独立临时目录解包并加载模块，随后解码场景，使模块组件直接恢复为强类型数据。场景及脚本销毁后卸载模块并清理目录。发布目录无需作者 Modules/、原始工程或 DLL 路径。旧版本资源包被拒绝；Web Player 暂不支持原生 DLL 模块。完整发布验证见 Scripts/Run-ModulePublishSmoke.ps1。
 
 ### 格式与身份摘要
 
-- `Project.tcproj` 当前写 schema v4，合法 v3 需预览并明确批准后迁移；`BuildSettings.json` 与 `PlayerSettings.json` 只接受 schema v1；`ProjectSettings.json` 当前写 v2 并读取 v1/v2；`.tomcat` 当前写 v11 并读取 v9/v10/v11；`.tcpak` 当前写 v8，Player/loader 读取 v5/v6/v7/v8；`.tcsav` 和 `module.tomcat` 当前格式版本均为 1。旧 `.tcsettings` 仅在 JSON 缺失时以只读兼容方式加载。
+原生模块 ABI 为 2：删除组件迁移回调改变了 C++ 描述符布局，已有模块 DLL 必须使用当前 SDK 重新编译，入口校验宿主和上下文版本后才能注册。
+
+- 工程只读写 schema v4；ProjectSettings.json 只接受 v2；BuildSettings.json 和 PlayerSettings.json 必须存在且为 v1；场景只接受 v11，Prefab 只接受 v1，TCPAK 只接受 v8，存档只接受 v1。已注册组件的 SchemaVersion 必须与当前描述符相同。旧版和未来版本均拒绝，不自动升级、不补齐缺失项目设置、不改写输入文件。
 - 项目资源加载只接受 `AssetHandle`；`BuildSettings.json` 中的 `pathHint` 仅是作者定位信息，不参与身份解析。
 - 不再提供未实现的运行时场景序列化 API。
 - 项目打开历史属于本机 Hub 状态，不应提交到项目仓库。
@@ -267,12 +259,12 @@ TCPAK v8 沿用 v7 头和索引，新增保留 Handle UINT64_MAX-1、Type None�
 
 ## Cook 与 Player
 
-TCPAK v6 引入 BootManifest；v7 在每个索引条目中增加 SHA-256 摘要，并在挂载和相关载荷读取时校验。兼容读取旧包不意味着旧包具有 v7 的完整性字段。版本常量与兼容判断分别见 [Version.h](TomCat/src/TomCat/Core/Version.h) 和 [RuntimeCompatibility.h](TomCat/src/TomCat/Runtime/RuntimeCompatibility.h)。
+TCPAK 只读写 v8，BootManifest 与逐条目 SHA-256 为必需字段。版本常量见 `Version.h`。
 
 Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件，用于导入和预览。
-发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v8 `.tcpak`，并保存入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v8 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵、可选托管发布载荷，以及携带版本化 PlayerSettings 的 BootManifest。场景输入通过 v9-v11 reader 严格解析，并由当前 v11 writer 规范化后写入；缺失、类型错误或未知字段会使 Cook 失败。
+发布时由 `AssetManager` 以 `ProjectSettings/BuildSettings.json` 为真源，将已启用场景按作者顺序写入 v8 `.tcpak`，并保存入口场景 Handle。Cook 从这些场景出发递归收集 Scene、Prefab 和强类型 AssetRef 依赖；未引用资源不进入包，C# 源文件也不会进入包。v8 包同时包含 Handle/类型索引、项目 Physics 2D 碰撞矩阵、可选托管发布载荷，以及携带版本化 PlayerSettings 的 BootManifest。场景输入通过 v11 reader 严格解析，并由当前 v11 writer 规范化后写入；缺失、类型错误或未知字段会使 Cook 失败。
 
-独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 验证 v5/v6/v7/v8 包、兼容版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes；v6-v8 还会在创建窗口前应用 BootManifest 中的 PlayerSettings，v5 使用兼容默认值。Player 按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。
+独立发布入口为 `TomCatPlayer.exe`，不加载项目文件、Editor Layer 或原始 `Assets/`、`.tcmeta`、`Library/`。无参数时运行可执行文件旁的 `Game.tcpak`，也可使用 `--package <path>`；`--validate-package <path>` 验证 v8 包、当前版本及随 Player 发布的私有运行时。Player 挂载包后读取入口与有序 build scenes；在创建窗口前应用 BootManifest 中的 PlayerSettings。Player 按 Handle 启动和切换场景；无效入口、损坏索引、版本或资源类型不匹配都会返回非零退出码，不回退到作者路径或全局 .NET 安装。
 
 
 ## P1 生产扩展（2026-10-01）
@@ -291,4 +283,6 @@ Camera 组件记录写入 schema 4（从 v3 补齐三个后处理默认值）；
 
 ### 自定义音频总线（2026-10-01）
 
-AudioSource 组件 schema 升为 2，新增 UInt32 属性 `Bus`（PropertyID 911）。从 schema 1 迁移时补默认值 4294967295，表示沿用 MixerGroup；其他值引用游戏启动时配置的总线 ID。音频总线 YAML/JSON 使用 SchemaVersion 1、Buses 数组；节点字段为 ID、Name、Volume、Muted、Solo、Sends，发送字段为 Target、Gain。运行时验证并原子替换，不修改冻结的 AudioApiV1；通过可选 TomCat.AudioBusApiV1 暴露。配置示例与边界见 [P1 生产能力](docs/P1_PRODUCTION.md#自定义音频总线图)。
+AudioSource 组件 schema 升为 2，新增 UInt32 属性 `Bus`（PropertyID 911）。当前默认值 4294967295 表示沿用 MixerGroup；schema 1 被拒绝；其他值引用游戏启动时配置的总线 ID。音频总线 YAML/JSON 使用 SchemaVersion 1、Buses 数组；节点字段为 ID、Name、Volume、Muted、Solo、Sends，发送字段为 Target、Gain。运行时验证并原子替换，不修改冻结的 AudioApiV1；通过可选 TomCat.AudioBusApiV1 暴露。配置示例与边界见 [P1 生产能力](docs/P1_PRODUCTION.md#自定义音频总线图)。
+
+资产格式同样只支持当前版本：`.tcmeta` v2、导入产物容器 v2、依赖缓存 v2。旧 sidecar 不自动重写；可重建的旧缓存由正常导入流程重新生成。

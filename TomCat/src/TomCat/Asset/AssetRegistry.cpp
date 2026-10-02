@@ -27,7 +27,6 @@ namespace TomCat {
 	namespace {
 
 		constexpr uint32_t kMetadataSchemaVersion = 2;
-		constexpr uint32_t kOldestReadableMetadataSchemaVersion = 1;
 		constexpr uint32_t kRegistryCacheSchemaVersion = 2;
 
 		void ReadSpriteSubAssetData(const YAML::Node& parent,
@@ -591,8 +590,7 @@ namespace TomCat {
 			if (!root["SchemaVersion"])
 				throw std::runtime_error("unsupported or missing SchemaVersion");
 			const uint32_t parsedSchemaVersion = root["SchemaVersion"].as<uint32_t>();
-			if (parsedSchemaVersion < kOldestReadableMetadataSchemaVersion ||
-				parsedSchemaVersion > kMetadataSchemaVersion)
+			if (parsedSchemaVersion != kMetadataSchemaVersion)
 				throw std::runtime_error("unsupported or missing SchemaVersion");
 
 			const YAML::Node asset = root["Asset"];
@@ -617,7 +615,6 @@ namespace TomCat {
 			}
 
 			std::vector<AssetSubAsset> subAssets;
-			if (parsedSchemaVersion >= 2)
 			{
 				const YAML::Node serializedSubAssets = asset["SubAssets"];
 				if (!serializedSubAssets || !serializedSubAssets.IsSequence())
@@ -749,8 +746,7 @@ namespace TomCat {
 				if (!existing || !root.IsMap() || !root["SchemaVersion"])
 					throw std::runtime_error("existing metadata is not a versioned map");
 				const uint32_t schema = root["SchemaVersion"].as<uint32_t>();
-				if (schema < kOldestReadableMetadataSchemaVersion ||
-					schema > kMetadataSchemaVersion || !root["Asset"] ||
+				if (schema != kMetadataSchemaVersion || !root["Asset"] ||
 					!root["Asset"].IsMap())
 					throw std::runtime_error("existing metadata schema is unsupported");
 			}
@@ -1294,8 +1290,6 @@ namespace TomCat {
 					continue;
 				}
 				metadata = record.ParsedMetadata;
-				metadataNeedsWrite =
-					record.MetadataSchemaVersion < kMetadataSchemaVersion;
 				if (conflictingHandles.find(metadata.Handle) != conflictingHandles.end())
 					continue;
 			}
