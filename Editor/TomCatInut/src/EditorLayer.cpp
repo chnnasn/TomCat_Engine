@@ -1543,8 +1543,7 @@ namespace TomCat {
 			m_ScriptSourcePollCountdown <= 0.0f)
 		{
 			m_ScriptSourcePollCountdown = 0.35f;
-			TC_PROFILE_SCOPE("Script source polling");
-			if (m_ScriptCompiler.RefreshSourceState(false))
+			if (m_ScriptCompiler.RefreshSourceState())
 			{
 				const std::string& sourceHash =
 					m_ScriptCompiler.GetCurrentSourceHash();
@@ -2347,8 +2346,14 @@ namespace TomCat {
             {
                 ImGui::TextUnformatted("Interface"); ImGui::Separator();
                 float scale=m_EditorUIScale;
-                if(ImGui::SliderFloat("UI scale",&scale,0.8f,1.6f,"%.2fx"))
-                { ImGui::GetStyle().ScaleAllSizes(scale/m_EditorUIScale); ImGui::GetIO().FontGlobalScale=scale; m_EditorUIScale=scale; }
+				if(ImGui::SliderFloat("UI scale",&scale,0.8f,1.6f,"%.2fx"))
+				{
+					// The layer owns font baking and style scaling together. Stretching the font
+					// here through FontGlobalScale would resample an atlas that is already baked
+					// for the display scale, which blurs every glyph.
+					m_EditorUIScale=scale;
+					if(ImGuiLayer* layer=Application::Get().GetImGuiLayer()) layer->SetUserScale(scale);
+				}
                 ImGui::TextWrapped("Interface scale applies to this editor session. Layout presets are available under Window > Layouts.");
                 if(ImGui::Button("Reset layout")) m_LayoutRequest=1;
                 ImGui::TextUnformatted("Navigation"); ImGui::Separator();
@@ -3269,9 +3274,6 @@ namespace TomCat {
 		// Scene wheel zoom is consumed once in OnImGuiRender, including input
 		// from detached windows that never reaches the native editor event path.
 		EventDispatcher dispatcher(e);
-		dispatcher.Dispatch<FileDropEvent>([this](FileDropEvent& drop) {
-			return m_ContentBrowserPanel.OnFileDrop(drop.Paths, drop.X, drop.Y);
-		});
 		dispatcher.Dispatch<WindowCloseEvent>(TC_Bind_Event_Fn(EditorLayer::OnWindowClose));
 		dispatcher.Dispatch<KeyPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnKeyPressed));
 		dispatcher.Dispatch<MouseButtonPressedEvent>(TC_Bind_Event_Fn(EditorLayer::OnMouseButtonPressed));
