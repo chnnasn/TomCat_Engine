@@ -61,11 +61,35 @@ void tc_web_editor_resize(int width, int height) {
     static_cast<TomCat::WebWindow&>(application->GetWindow()).Resize(width, height);
 }
 void tc_web_editor_shutdown() {
+  // The workspace has to be captured while the ImGui context still owns the dock tree and
+  // the panel visibility flags; destroying the context discards both.
+  if (editorUI) { response = editorUI->ComposeLayoutSettings(); }
   if (gui) { gui->OnDetach(); gui.reset(); }
   editorUI = nullptr;
   application.reset(); session.reset(); TomCat::AssetManager::Get().Shutdown();
 }
 const char* tc_web_editor_state() { EnsureSession(); response = session->Status(); return response.c_str(); }
 unsigned tc_web_editor_take_actions() { return editorUI ? editorUI->TakeActions() : 0; }
+const char* tc_web_editor_save_layout() {
+  lastError.clear();
+  if (!application || !editorUI) { lastError = "Editor is not running"; return ""; }
+  response = editorUI->ComposeLayoutSettings();
+  return response.c_str();
+}
+int tc_web_editor_load_layout(const char* settings) {
+  lastError.clear();
+  if (!application || !editorUI) { lastError = "Editor is not running"; return 0; }
+  if (!settings) { lastError = "Missing layout settings"; return 0; }
+  if (!editorUI->ApplyLayoutSettings(settings)) {
+    lastError = "Layout settings are not usable for this build";
+    return 0;
+  }
+  return 1;
+}
+void tc_web_editor_set_ui_scale(float scale) {
+  lastError.clear();
+  if (!gui) { lastError = "Editor is not running"; return; }
+  gui->SetUiScale(scale);
+}
 }
 #endif
