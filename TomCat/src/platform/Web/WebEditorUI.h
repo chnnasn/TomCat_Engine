@@ -8,6 +8,8 @@
 #include "panels/ConsolePanel.h"
 #include "WebProjectSettingsPanel.h"
 #include <imgui.h>
+#include <cstdint>
+#include <string>
 
 namespace TomCat {
 class WebEditorSession;
@@ -20,6 +22,13 @@ public:
   void OnUpdate(Timestep delta) override;
   void OnImGuiRender() override;
   unsigned TakeActions() { unsigned result = m_Actions; m_Actions = 0; return result; }
+  // Workspace persistence. The browser host owns the storage; the engine owns the format.
+  // Managed sections ([Window]/[Table]/[Docking]) come from ImGui, and the panel
+  // visibility mask is appended as an engine section in the same blob, mirroring how the
+  // desktop editor keeps its custom ini sections next to the ones ImGui manages.
+  std::string ComposeLayoutSettings() const;
+  bool ApplyLayoutSettings(const std::string& settings);
+  uint32_t GetPanelVisibilityMask() const;
 private:
   void SyncContext();
   void History(bool redo);
@@ -63,6 +72,9 @@ private:
   bool m_ShowHierarchy = true, m_ShowInspector = true, m_ShowProject = true, m_ShowConsole = true;
   int m_GizmoType = -1;
   unsigned m_Actions = 0;
+  // Last display scale the interface was built for. Browser zoom and monitor changes alter
+  // it without a resize, so it is polled and applied through the ImGui layer.
+  float m_DisplayScale = 1.0f;
 };
 }
 #endif
