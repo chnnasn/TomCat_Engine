@@ -2,9 +2,23 @@
 
 #include "Event.h"
 #include "TomCat/Core/WindowMetrics.h"
+#include <filesystem>
+#include <vector>
 
 
 namespace TomCat {
+	// Coordinates use the native window's client space, like MouseMovedEvent.
+	class FileDropEvent : public Event
+	{
+	public:
+		FileDropEvent(std::vector<std::filesystem::path> paths, float x, float y)
+			: Paths(std::move(paths)), X(x), Y(y) {}
+		std::vector<std::filesystem::path> Paths;
+		float X, Y;
+		Event_Class_Type(FileDrop)
+		Event_Class_Category(EventCategoryApplication)
+	};
+
 	class WindowFocusEvent : public Event
 	{
 	public:

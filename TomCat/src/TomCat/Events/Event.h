@@ -16,7 +16,7 @@ namespace TomCat {
 		None = 0,
 		WindowClose, WindowResize, WindowFocus, WindowLostFocus,
 		KeyPressed,KeyReleased,KeyTyped,
-		MouseButtonPressed, MouseButtonReleased,MouseMoved, MouseScrolled
+		MouseButtonPressed, MouseButtonReleased,MouseMoved, MouseScrolled, FileDrop
 
 	};
 

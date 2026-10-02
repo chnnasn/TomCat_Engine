@@ -858,6 +858,23 @@ namespace {
 			&& inspectedWidth == 4 && inspectedHeight == 4
 			&& textureReservation > source.size() * 6,
 			"texture reservation still scales only with compressed source bytes");
+		uint64_t previewReservation = 0;
+		Require(TomCat::EstimateTextureBuildMemory(source, previewReservation, error,
+			nullptr, nullptr, TomCat::TextureArtifactFormat::RGBA8)
+			&& previewReservation < textureReservation,
+			"uncompressed previews reserve mobile encoder working buffers");
+		auto largeHeader = source;
+		for (unsigned index = 0; index < 4; ++index) {
+			largeHeader[18 + index] = static_cast<uint8_t>(2550u >> (index * 8));
+			largeHeader[22 + index] = static_cast<uint8_t>(1440u >> (index * 8));
+		}
+		uint64_t mobileReservation = 0;
+		Require(TomCat::EstimateTextureBuildMemory(largeHeader, mobileReservation, error)
+			&& TomCat::EstimateTextureBuildMemory(largeHeader, previewReservation, error,
+				nullptr, nullptr, TomCat::TextureArtifactFormat::RGBA8)
+			&& mobileReservation > 256ull * 1024 * 1024
+			&& previewReservation < 256ull * 1024 * 1024,
+			"2550x1440 editor preview incorrectly exceeds the preview memory budget");
 		TomCat::AssetImportRequest request;
 		request.Type = TomCat::AssetType::Texture2D;
 		request.SourceBytes = source;

@@ -45,10 +45,12 @@ namespace TomCat {
 	// final artifact. The same dimension limits are enforced by the builder.
 	[[nodiscard]] bool EstimateTextureBuildMemory(
 		std::span<const uint8_t> encodedSource, uint64_t& reservationBytes,
-		std::string& error, uint32_t* width = nullptr, uint32_t* height = nullptr);
+		std::string& error, uint32_t* width = nullptr, uint32_t* height = nullptr,
+		TextureArtifactFormat format = TextureArtifactFormat::ASTC4x4);
 	[[nodiscard]] bool EstimateTextureBuildMemory(
 		const std::filesystem::path& sourcePath, uint64_t& reservationBytes,
-		std::string& error, uint32_t* width = nullptr, uint32_t* height = nullptr);
+		std::string& error, uint32_t* width = nullptr, uint32_t* height = nullptr,
+		TextureArtifactFormat format = TextureArtifactFormat::ASTC4x4);
 	[[nodiscard]] bool BuildTextureArtifact(std::span<const uint8_t> encodedSource,
 		const AssetImportSettings& settings, std::string_view platform,
 		std::vector<uint8_t>& artifact, std::string& error,

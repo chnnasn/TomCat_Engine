@@ -23,7 +23,8 @@ namespace TomCat {
 			return {};
 		uint64_t reservation = 0;
 		std::string error;
-		if (!EstimateTextureBuildMemory(encoded, reservation, error) || reservation > 256ull * 1024 * 1024)
+		if (!EstimateTextureBuildMemory(encoded, reservation, error, nullptr, nullptr,
+			TextureArtifactFormat::RGBA8) || reservation > 256ull * 1024 * 1024)
 			return {};
 		std::vector<uint8_t> artifact;
 		// Match the editor's existing non-sRGB UI texture path.
