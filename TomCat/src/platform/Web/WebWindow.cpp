@@ -14,6 +14,12 @@ WebWindow::WebWindow(const WindowProps& props) : m_Width(props.Width), m_Height(
   glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+  // Emscripten's GLFW keeps the logical window in CSS pixels and only gives the canvas drawing
+  // buffer its device pixel extent when the window is HiDPI aware: updateCanvasDimensions()
+  // multiplies by GLFW.getHiDPIScale() (the page device pixel ratio) in that case, and
+  // glfwGetFramebufferSize then reports the physical extent while glfwGetWindowSize keeps
+  // reporting the CSS box. ImGui turns exactly that pair into DisplayFramebufferScale.
+  glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
   m_Window = glfwCreateWindow(m_Width, m_Height, props.Title.c_str(), nullptr, nullptr);
   if (!m_Window) { glfwTerminate(); throw std::runtime_error("WebGL2 context creation failed"); }
   glfwMakeContextCurrent(m_Window);
