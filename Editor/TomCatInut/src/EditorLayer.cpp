@@ -3189,6 +3189,13 @@ namespace TomCat {
 		m_RuntimeSceneManager.SetRuntimeUIViewportMetrics(
 			m_ShowGamePanel ? m_GameViewportBounds[0] : glm::vec2(-1000000.0f),
 			applicationWindow.GetDPIScale(), screenToFramebufferScale);
+        if (m_AutomationStarting)
+        {
+            m_RuntimeSceneManager.SetViewportSize(m_AutomationWidth, m_AutomationHeight);
+            m_RuntimeSceneManager.SetRuntimeUIViewportMetrics({0, 0}, 1.0f, {1, 1});
+            Scripting::ScriptEngine::Get().SetInputEnabled(true);
+            Scripting::ScriptEngine::Get().CaptureInputState();
+        }
 		Ref<Scene> preparedScene = Scene::Copy(m_EditorScene);
 		if (!preparedScene || !m_RuntimeSceneManager.StartPreparedScene(
 			preparedScene, currentSceneHandle))
@@ -3230,7 +3237,7 @@ namespace TomCat {
 
 	void EditorLayer::OnSceneStop()
 	{
-        Input::ClearAutomationFrame();
+        struct InputCleanup { ~InputCleanup() { Input::ClearAutomationFrame(); } } inputCleanup;
 		if (!IsSceneRunning())
 			return;
 
