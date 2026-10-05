@@ -442,15 +442,20 @@ std::string EditorLayer::ExecuteAutomation(const std::string& request)
             const int height = args["height"] ? args["height"].as<int>() : 360;
             Require(width >= 16 && height >= 16 && width <= 4096 && height <= 4096, "INVALID_ARGUMENT", "Viewport dimensions must be 16..4096.");
             struct StartingScope { bool& Flag; StartingScope(bool& flag) : Flag(flag) { Flag = true; } ~StartingScope() { Flag = false; } } starting(m_AutomationStarting);
-            OnScenePlay();
-            Require(IsSceneRunning(), "PLAY_FAILED", "Compile and enable the saved scene in Build Settings; inspect console diagnostics.");
-            OnScenePause();
             m_AutomationWidth = width;
             m_AutomationHeight = height;
             m_AutomationRuntimeFrame = 0;
             m_AutomationInputQueue.ClearState();
             m_AutomationInput = {};
             Input::SetAutomationFrame(m_AutomationInput);
+            struct FailedStartScope {
+                bool Started = false;
+                ~FailedStartScope() { if (!Started) Input::ClearAutomationFrame(); }
+            } inputScope;
+            OnScenePlay();
+            Require(IsSceneRunning(), "PLAY_FAILED", "Compile and enable the saved scene in Build Settings; inspect console diagnostics.");
+            inputScope.Started = true;
+            OnScenePause();
             Scripting::ScriptEngine::Get().SetInputEnabled(true);
             Scripting::ScriptEngine::Get().CaptureInputState();
             data = Object({{"frame", "0"}});
