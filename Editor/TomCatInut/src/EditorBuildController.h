@@ -17,6 +17,7 @@ namespace TomCat {
 		std::string BuildSettingsStatus;
 		bool BuildSettingsSucceeded = false;
 		std::string PlayerBuildStatus;
+        std::string PlayerOutputDirectory;
 		bool PlayerBuildSucceeded = false;
         bool DevelopmentBuild = false;
 	};

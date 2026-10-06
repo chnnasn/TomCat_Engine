@@ -262,6 +262,10 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 
 Formats: current versions only; old/future versions are rejected. No project/scene/component migrations or CLI `--migrate`. Native module SDK and corruption recovery remain supported. See PROJECT_SYSTEM.md.
 
+## AI automation
+
+The opt-in [native automation service](docs/Automation.md) exposes 72 structured operations for project creation, scene and asset authoring, C# compilation, isolated runtime input tests, and Player builds. The [tool catalog](docs/AutomationTools.json) describes the protocol. Run `Scripts/Run-AutomationRegression.ps1` to verify the complete workflow without desktop input automation.
+
 ## Related Projects
 
 - [Ekit](https://github.com/chnnasn/ekit): a friendly, caller-focused header-only ECS library
