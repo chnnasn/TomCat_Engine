@@ -566,6 +566,7 @@ using namespace EditorLayerDetail;
 	{
 		m_BuildState.PlayerBuildSucceeded = false;
 		m_BuildState.PlayerBuildStatus = "Building Player...";
+        m_BuildState.PlayerOutputDirectory.clear();
 		auto fail = [this](std::string message)
 		{
 			m_BuildState.PlayerBuildSucceeded = false;
@@ -692,6 +693,7 @@ using namespace EditorLayerDetail;
 			return fail("Player build failed: " + playerBuild.Message);
 
 		m_BuildState.PlayerBuildSucceeded = true;
+        m_BuildState.PlayerOutputDirectory = PathToUTF8(playerBuild.OutputDirectory);
 		m_BuildState.PlayerBuildStatus = playerBuild.Message;
 		m_Layer.m_ConsolePanel.Push(ConsoleMessageSeverity::Info,
 			m_BuildState.PlayerBuildStatus, "Player Build");

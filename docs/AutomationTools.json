@@ -1,0 +1,2126 @@
+[
+  {
+    "name": "editor_get_status",
+    "description": "Read connected project, session ID, scene version, edit/play/pause state and dirty flag.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "scene_get_tree",
+    "description": "Read active scene entities with parent IDs and component IDs (runtime scene during Play).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "entity_get",
+    "description": "Read one active-scene entity and its registered component property values.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "component_get_schema",
+    "description": "Discover actual component/property IDs, kinds, names and supported writes. Query before editing; do not guess IDs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "console_get_entries",
+    "description": "Read compiler/runtime diagnostics. Severity 0=trace, 1=info, 2=warning, 3=error. Play may clear older entries.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "entity_create",
+    "description": "Create an entity in the Edit scene with one undo entry; returns its actual unique name and ID.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "entity_delete",
+    "description": "Delete an entity subtree in Edit mode, using the engine structural command validator.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "entity_reparent",
+    "description": "Change parent in Edit mode; parent_id=null makes a root. Cycles are rejected.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "description": "Decimal uint64 string; never convert IDs to floating point."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "parent_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "component_add",
+    "description": "Add an engine-owned component supported by the discovered schema, in Edit mode.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "component_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "component_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "component_remove",
+    "description": "Remove a removable engine-owned component in Edit mode.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "component_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "component_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "component_set",
+    "description": "Set one property through its registered validator. Vectors are arrays; int64/uint64 are decimal strings. Edit mode only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "component_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "property_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 4
+            }
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "component_id",
+        "property_id",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "editor_play",
+    "description": "Start the current scene using normal Editor Play checks. Read console diagnostics on failure.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "editor_pause",
+    "description": "Pause Play; an already-paused scene stays paused.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "editor_step",
+    "description": "Advance a paused runtime scene by exactly one fixed 1/60 second step; returns after the step completes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "editor_stop",
+    "description": "Stop Play and restore the authoring scene; runtime modifications are discarded.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "scene_save",
+    "description": "Save the authoring scene to its existing path in Edit mode. Use scene_save_as for an unsaved scene.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "history_undo",
+    "description": "Undo one scene edit in Edit mode, including manual edits. Inspect scene before undoing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "history_redo",
+    "description": "Redo one scene edit in Edit mode.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "automation_get_capabilities",
+    "description": "List tools implemented by the connected native service; check before using new workflow APIs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "project_create",
+    "description": "Create and open a project in a new/empty workspace directory. Current scene must be saved.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "name": {
+          "type": "string"
+        },
+        "template": {
+          "enum": [
+            "2D",
+            "3D"
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "path",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "project_open",
+    "description": "Open a project within the configured automation workspace. Current scene must be saved.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "scene_new",
+    "description": "Create an empty authoring scene. Save the current scene first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "scene_open",
+    "description": "Open an existing scene asset. Save the current scene first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "scene_save_as",
+    "description": "Save an authoring scene to a new .tomcat asset, without a file dialog.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "scene_get_archive",
+    "description": "Read the canonical scene document, including complex UI, animation, tilemap and script fields.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "scene_set_archive",
+    "description": "Validate and atomically replace the authoring scene from a canonical document, with undo. Read the current archive and preserve identities.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "document"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "asset_list",
+    "description": "List registered assets and handles in stable path order.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_read_text",
+    "description": "Read a text asset up to 512 KiB.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_write_text",
+    "description": "Atomically write/register a script or supported text asset. Replacing a file requires its exact prior contents as expected_text.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "text": {
+          "type": "string"
+        },
+        "expected_text": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "asset_import",
+    "description": "Register an existing project asset and return its stable handle.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "asset_set_import_settings",
+    "description": "Set import settings through the native asset manager.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "handle",
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "asset_move",
+    "description": "Move an asset and its identity sidecar together.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "handle",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "asset_delete",
+    "description": "Delete an unreferenced asset. Referenced assets are rejected.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "script_compile",
+    "description": "Start asynchronous C# compilation. Poll script_get_status and inspect console diagnostics.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "script_attach",
+    "description": "Attach a compiled C# script with metadata defaults and undo.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "script_get_status",
+    "description": "Read compilation state and whether current source has a validated build.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "build_get_settings",
+    "description": "Read entry scene and ordered build scenes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "build_set_scenes",
+    "description": "Validate and persist entry scene and ordered scene list.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entry_scene": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "scenes": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "handle": {
+                "type": "string",
+                "pattern": "^[0-9]+$",
+                "description": "Decimal uint64 string; never convert IDs to floating point."
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "handle"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entry_scene",
+        "scenes"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "build_player",
+    "description": "Build the current project through the native Player pipeline. Long builds may return OUTCOME_UNKNOWN; retain request_id and inspect/retry that same request only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "development": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "prefab_save",
+    "description": "Save an entity subtree as a new .tcprefab asset.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "prefab_instantiate",
+    "description": "Create a linked prefab instance with fresh identities and undo.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "parent_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "prefab_update",
+    "description": "Refresh a linked prefab instance; revert=true also discards its overrides. Undoable.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "revert": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "prefab_get_overrides",
+    "description": "Read linked-instance override paths.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "prefab_action",
+    "description": "Apply all overrides, unpack, or apply/revert one property using the same native file/scene undo path as the Inspector.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "action": {
+          "enum": [
+            "apply",
+            "unpack",
+            "apply_property",
+            "revert_property"
+          ]
+        },
+        "target_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "component_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "property_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "profiler_set_recording",
+    "description": "Enable or disable bounded native frame profiling.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "profiler_get_frames",
+    "description": "Read up to 240 captured frame summaries, GPU/CPU timing and resource usage.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "runtime_start",
+    "description": "Start Play paused at frame zero, with isolated test input. Compile/save/enable the scene first.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 4096
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 4096
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_step",
+    "description": "Advance 1..600 fixed frames. First-frame events support key/button(code,action=press/release/repeat), pointer/scroll(x,y), text(text), focus(focused). Coordinates are game framebuffer pixels.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "frames": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object"
+          }
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_get_input",
+    "description": "Read the last deterministic input snapshot and frame number.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "runtime_assert",
+    "description": "Assert an active-scene registered property equals value; float/vector tolerance is optional.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "component_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "property_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "value": {},
+        "tolerance": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "entity_id",
+        "component_id",
+        "property_id",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_validate",
+    "description": "Import and validate the current source through the native artifact pipeline.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "asset_create_directory",
+    "description": "Create one Assets subdirectory; its parent must exist.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path. Asset operations are relative to Assets; project operations to TOMCAT_AUTOMATION_WORKSPACE."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_get_ui",
+    "description": "Read runtime UI rectangles, transformed centers, resolved text and click state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "runtime_capture",
+    "description": "Render the deterministic runtime to a PPM artifact without advancing time; returns its local path.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_scene_status",
+    "description": "Read streaming state, progress, loaded scenes and activation timings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "runtime_scene_load",
+    "description": "Request asynchronous scene loading. In deterministic sessions, runtime_step advances activation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "additive": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_scene_unload",
+    "description": "Queue unloading one loaded scene.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_scene_cancel",
+    "description": "Cancel a pending scene load when the engine permits it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_scene_activation",
+    "description": "Gate activation and optionally set its native work budget. Supply both budget fields together.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "type": "boolean"
+        },
+        "maximum_units": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "milliseconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "allow"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "runtime_animator",
+    "description": "Drive or inspect a running sprite animator.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "action": {
+          "enum": [
+            "status",
+            "play",
+            "stop",
+            "bool",
+            "int",
+            "float",
+            "trigger"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "value": {},
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "tilemap_set_cells",
+    "description": "Paint or erase a bounded cell batch with one undo entry. Cells contain x,y,sprite or erase, optional tint/flip_x/flip_y/rotation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "cells": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "object"
+          }
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "entity_id",
+        "cells"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "module_list",
+    "description": "List loaded native modules and their published editor commands.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "module_invoke",
+    "description": "Invoke a uniquely named command published by an already loaded native module.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "module",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "save_list",
+    "description": "List slots in the isolated runtime_start save directory.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "save_read",
+    "description": "Read and verify an isolated save slot; may recover its backup. Payload is returned as hex bytes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "slot"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "save_write",
+    "description": "Write a text payload using the engine's atomic save container in the isolated test directory.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "data_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "slot",
+        "text",
+        "data_version"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "save_delete",
+    "description": "Delete one isolated test slot and its backup.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [
+        "slot"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "profiler_export",
+    "description": "Export a Chrome trace artifact from captured native frames.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "project_get_settings",
+    "description": "Read project tags, layer names and collision masks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "project_set_settings",
+    "description": "Validate and persist project tags, layers and collision masks.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "layer_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "collision_masks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "player_get_settings",
+    "description": "Read product, window, icon and data-directory settings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "player_set_settings",
+    "description": "Validate and persist Player settings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "window_mode": {
+          "type": "string"
+        },
+        "save_directory": {
+          "type": "string"
+        },
+        "log_directory": {
+          "type": "string"
+        },
+        "crash_directory": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Decimal uint64 string; never convert IDs to floating point."
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "resizable": {
+          "type": "boolean"
+        },
+        "vsync": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Only for retrying an ambiguous call: use its returned request_id in this same MCP session. Omit for a new operation."
+        },
+        "scene_version": {
+          "type": "string",
+          "description": "Optional optimistic precondition from editor_get_status or scene_get_tree."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": false,
+      "destructiveHint": true
+    }
+  }
+]
