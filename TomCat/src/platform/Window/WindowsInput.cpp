@@ -4,6 +4,7 @@
 #include "TomCat/Core/Application.h"
 
 #include <algorithm>
+#include <optional>
 #include <cmath>
 #include <GLFW/glfw3.h>
 #ifdef TC_PLATFORM_WINDOWS
@@ -19,6 +20,10 @@
 namespace TomCat {
 	namespace {
 		InputEventQueue s_EventQueue;
+        std::optional<Input::AutomationFrame> s_AutomationFrame;
+        std::string s_AutomationClipboard;
+        uint64_t s_InputFrameSerial = 0;
+        InputEventQueue::FrameSnapshot s_PhysicalSnapshot;
 		float s_PendingScrollX = 0.0f;
 		float s_PendingScrollY = 0.0f;
 		float s_FrameScrollX = 0.0f;
@@ -82,7 +87,7 @@ namespace TomCat {
         s_Composition = {active, active ? std::move(text) : std::string{}, caret};
         s_Composition.Caret = std::min<uint32_t>(s_Composition.Caret, static_cast<uint32_t>(s_Composition.Text.size()));
     }
-    const Input::CompositionSnapshot& Input::GetComposition() { return s_Composition; }
+    const Input::CompositionSnapshot& Input::GetComposition() { static const CompositionSnapshot empty; return s_AutomationFrame ? empty : s_Composition; }
     bool Input::IsRuntimeIMEEnabled() { return s_RuntimeIMEEnabled; }
     void Input::SetRuntimeIMEEnabled(bool enabled) { if (s_RuntimeIMEEnabled && !enabled) CancelComposition(); s_RuntimeIMEEnabled = enabled; }
     void Input::CancelComposition() {
@@ -113,18 +118,19 @@ namespace TomCat {
 
 	bool Input::IsKeyPressed(KeyCode keyCode)
 	{
-		return s_EventQueue.GetSnapshot().IsHeld(InputEventQueue::Device::Keyboard,
+		return GetFrameSnapshot().IsHeld(InputEventQueue::Device::Keyboard,
 			static_cast<uint32_t>(keyCode));
 	}
 
 	bool Input::IsMouseButtonPressed(MouseCode button)
 	{
-		return s_EventQueue.GetSnapshot().IsHeld(InputEventQueue::Device::Mouse,
+		return GetFrameSnapshot().IsHeld(InputEventQueue::Device::Mouse,
 			static_cast<uint32_t>(button));
 	}
 
 	std::pair<float, float> Input::GetMousePosition()
 	{
+		if (s_AutomationFrame) return {s_AutomationFrame->MouseX, s_AutomationFrame->MouseY};
 		return { s_FrameMouseX, s_FrameMouseY };
 	}
 
@@ -140,11 +146,12 @@ namespace TomCat {
 
 	bool Input::IsWindowFocused()
 	{
-		return s_FrameWindowFocused;
+		return s_AutomationFrame ? s_AutomationFrame->Focused : s_FrameWindowFocused;
 	}
 
 	Input::GamepadSnapshot Input::GetGamepadSnapshot(uint32_t index)
 	{
+		if (s_AutomationFrame) return {};
 		return index < MaximumGamepads ? s_FrameGamepads[index] : GamepadSnapshot{};
 	}
 
@@ -185,6 +192,8 @@ namespace TomCat {
 			}
 		}
 		s_EventQueue.Freeze();
+        s_PhysicalSnapshot = s_EventQueue.GetSnapshot();
+        s_PhysicalSnapshot.FrameNumber = ++s_InputFrameSerial;
 		s_FrameGamepads = std::move(nextGamepads);
 		s_FrameScrollX = s_PendingScrollX;
 		s_FrameScrollY = s_PendingScrollY;
@@ -199,15 +208,26 @@ namespace TomCat {
 
 	const InputEventQueue::FrameSnapshot& Input::GetFrameSnapshot()
 	{
-		return s_EventQueue.GetSnapshot();
+		return s_AutomationFrame ? s_AutomationFrame->Snapshot : s_PhysicalSnapshot;
 	}
 
-	void Input::ClearState()
+	void Input::SetAutomationFrame(AutomationFrame frame)
+    {
+        frame.Snapshot.FrameNumber = ++s_InputFrameSerial;
+        s_AutomationFrame = std::move(frame);
+    }
+    void Input::ClearAutomationFrame() { s_AutomationFrame.reset(); s_AutomationClipboard.clear(); }
+    bool Input::HasAutomationFrame() { return s_AutomationFrame.has_value(); }
+
+    void Input::ClearState()
 	{
         CancelComposition();
 		s_PendingTextInput.clear();
 		s_FrameTextInput.clear();
 		s_EventQueue.ClearState();
+        ClearAutomationFrame();
+        s_PhysicalSnapshot = s_EventQueue.GetSnapshot();
+        s_PhysicalSnapshot.FrameNumber = ++s_InputFrameSerial;
 		s_PendingScrollX = 0.0f;
 		s_PendingScrollY = 0.0f;
 		s_FrameScrollX = 0.0f;
@@ -281,10 +301,11 @@ namespace TomCat {
 		}
 	}
 
-	const std::string& Input::GetTextInput() { return s_FrameTextInput; }
+	const std::string& Input::GetTextInput() { return s_AutomationFrame ? s_AutomationFrame->Text : s_FrameTextInput; }
 
 	std::string Input::GetClipboardText()
 	{
+        if (s_AutomationFrame) return s_AutomationClipboard;
 		Application* application = Application::TryGet();
 		if (!application || !application->HasWindow()) return {};
 		const char* text = glfwGetClipboardString(static_cast<GLFWwindow*>(application->GetWindow().GetNativeWindow()));
@@ -299,6 +320,7 @@ namespace TomCat {
 
 	bool Input::SetClipboardText(const std::string& text)
 	{
+        if (s_AutomationFrame) { s_AutomationClipboard = text; return true; }
 		Application* application = Application::TryGet();
 		if (!application || !application->HasWindow()) return false;
 		glfwSetClipboardString(static_cast<GLFWwindow*>(application->GetWindow().GetNativeWindow()), text.c_str());
@@ -319,6 +341,7 @@ namespace TomCat {
 
 	std::pair<float, float> Input::ConsumeScrollDelta()
 	{
+		if (s_AutomationFrame) return {s_AutomationFrame->ScrollX, s_AutomationFrame->ScrollY};
 		return { s_FrameScrollX, s_FrameScrollY };
 	}
 

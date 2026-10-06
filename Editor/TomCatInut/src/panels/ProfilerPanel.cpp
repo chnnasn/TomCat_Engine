@@ -120,11 +120,11 @@ namespace TomCat {
 		}
 	}
 
-    void ProfilerPanel::OnImGuiRender(bool* open)
+    void ProfilerPanel::OnImGuiRender(bool* open, bool externalCapture)
     {
         TC_PROFILE_SCOPE("Panel Profiler");
         auto& profiler=FrameProfiler::Get();
-        if(open && !*open) { profiler.SetRecording(false); return; }
+        if(open && !*open) { if (!externalCapture) profiler.SetRecording(false); return; }
         PrepareEditorToolWindow(ImVec2(1120,760),ImVec2(640,440));
         if(!BeginEditorWindow("Profiler",open)) { ImGui::End(); return; }
         const float font=ImGui::GetFontSize(), frameHeight=ImGui::GetFrameHeight();
@@ -360,6 +360,6 @@ namespace TomCat {
             }
         }
         ImGui::EndChild(); ImGui::End();
-        if(open && !*open) profiler.SetRecording(false);
+        if(open && !*open && !externalCapture) profiler.SetRecording(false);
     }
 }
