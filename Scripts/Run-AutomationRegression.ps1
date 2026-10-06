@@ -57,7 +57,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Automation regression failed. Project and diagnostics: $testRoot" }
     Write-Host "Automation regression passed. Project and artifacts: $testRoot"
 } finally {
-    if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id }
     foreach ($name in $variables) { [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process') }
+    if ($process) {
+        try {
+            if (-not $process.HasExited) { Stop-Process -InputObject $process }
+            # Stop-Process requests termination; loaded Mesa DLLs can remain locked
+            # until the OS has finished tearing down the Editor process.
+            if (-not $process.WaitForExit(10000)) { throw 'Editor did not exit within 10 seconds; copied OpenGL drivers were retained.' }
+        } finally { $process.Dispose() }
+    }
     foreach ($driver in $copiedOpenGL) { Remove-Item -LiteralPath $driver }
 }
