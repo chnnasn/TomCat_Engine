@@ -35,6 +35,18 @@ namespace TomCat {
 		// poll. The returned snapshot is immutable until the next BeginFrame. GLFW
 		// exposes gamepad buttons as sampled state (not callbacks), so their event
 		// boundary is one BeginFrame sample.
+        struct AutomationFrame
+        {
+            InputEventQueue::FrameSnapshot Snapshot;
+            float MouseX = 0, MouseY = 0, ScrollX = 0, ScrollY = 0;
+            bool Focused = true;
+            std::string Text;
+        };
+        // Main-thread only. A persistent test snapshot isolates gameplay from
+        // physical events; normal window polling continues for the Editor UI.
+        static void SetAutomationFrame(AutomationFrame frame);
+        static void ClearAutomationFrame();
+        static bool HasAutomationFrame();
 		static void BeginFrame();
 		static const InputEventQueue::FrameSnapshot& GetFrameSnapshot();
 		static void ClearState();

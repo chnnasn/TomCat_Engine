@@ -198,6 +198,9 @@ try {
 
     & (Join-Path $PSScriptRoot "Run-ModulePublishSmoke.ps1") -Configuration $Configuration
     if ($LASTEXITCODE -ne 0) { throw "Module publishing smoke failed." }
+    Invoke-Checked -Name "Native automation workflow" -Action {
+        & (Join-Path $PSScriptRoot "Run-AutomationRegression.ps1") -Configuration $Configuration -SkipBuild
+    }
     Write-Host "All TomCat regressions passed."
 }
 finally {

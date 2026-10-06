@@ -1085,6 +1085,9 @@ namespace TomCat {
 
 	void EditorLayer::OnAttach()
 	{
+        std::string automationError;
+        if (!m_AutomationServer.StartFromEnvironment(automationError))
+            TC_Core_Error("{0}", automationError);
 		TC_PROFILE_FUNCTION();
 		// ImGui's manual persistence signal is consumed by SaveEditorLayoutIfNeeded.
 		// A short debounce keeps layout changes safe without writing every frame.
@@ -1233,70 +1236,8 @@ namespace TomCat {
 				return InstantiatePrefab(handle, parentID, std::nullopt);
 			});
 		m_SceneHierarchyPanel.SetPrefabActionCallback([this](Entity root, int action, UUID target, UUID component, UUID property) {
-			if (m_SceneState != SceneState::Edit || !root || !root.HasComponent<PrefabLink>()) return;
-			if (m_SceneHistory.HasActiveTransaction()) CommitSceneTransaction();
-			const UUID rootID = root.GetUUID();
-			const AssetHandle source = root.GetComponent<PrefabLink>().Source;
-			PrefabFileEdit fileEdit;
-			fileEdit.BeforeState = m_SceneHistory.GetCurrentStateId();
-			fileEdit.Asset = source;
-			const auto sourcePath = AssetManager::Get().GetRegistry().GetFileSystemPath(source);
-			if (action == 2 || action == 5)
-			{
-				std::ifstream input(sourcePath, std::ios::binary);
-				fileEdit.Before.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-			}
-			std::string error;
-			bool succeeded = false;
-			if (action == 4)
-			{
-				std::vector<std::string> paths;
-				if (!PrefabLinkedInstance::GetOverridePaths(m_EditorScene, rootID, paths, error))
-					ReportPrefabOperation(false, error);
-				else
-				{
-					ReportPrefabOperation(true, std::to_string(paths.size()) + " Prefab override(s).");
-					for (const auto& path : paths) m_ConsolePanel.Push(ConsoleMessageSeverity::Info, path, "Prefab");
-					m_ShowConsolePanel = true;
-				}
-				return;
-			}
-			if (action == 3)
-			{
-				root.RemoveComponent<PrefabLink>();
-				succeeded = true;
-			}
-			else
-			{
-				PrefabArchive latest;
-				if (PrefabArchiveCodec::Load(source, latest, error))
-				{
-					if (action == 2 || action == 5)
-					{
-						succeeded = action == 5 ? PrefabLinkedInstance::ApplyProperty(m_EditorScene, rootID, target, component, property, error) : PrefabLinkedInstance::Apply(m_EditorScene, rootID, error);
-					}
-					else if (action == 6) succeeded = PrefabLinkedInstance::RevertProperty(m_EditorScene, rootID, target, component, property, error);
-					else succeeded = PrefabLinkedInstance::Update(m_EditorScene, rootID, latest, action == 1, error);
-				}
-			}
-			if (succeeded)
-			{
-				// UUID was captured before the operation. Never ask an old Entity
-				// wrapper for its identity after Update/Apply replaces the registry.
-				m_SceneHierarchyPanel.ResetForSceneReplacement(m_EditorScene, rootID);
-				ResetSceneInteractionState();
-				CommitImmediateSceneTransaction("Prefab Instance");
-				if (action == 2 || action == 5)
-				{
-					fileEdit.AfterState = m_SceneHistory.GetCurrentStateId();
-					std::ifstream input(sourcePath, std::ios::binary);
-					fileEdit.After.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-					if (fileEdit.BeforeState != fileEdit.AfterState)
-						m_PrefabFileEdits.push_back(std::move(fileEdit));
-					if (m_PrefabFileEdits.size() > 128) m_PrefabFileEdits.erase(m_PrefabFileEdits.begin());
-				}
-			}
-			ReportPrefabOperation(succeeded, succeeded ? "Prefab operation completed." : error);
+            std::string error;
+            (void)ApplyPrefabAction(root, action, target, component, property, error);
 		});
 		m_ContentBrowserPanel.SetEntityPrefabCreateCallback(
 			[this](UUID entityID, const std::filesystem::path& directory) {
@@ -1486,6 +1427,7 @@ namespace TomCat {
 
 	void EditorLayer::OnDetach()
 	{
+        m_AutomationServer.Stop();
 		Scripting::ScriptEngine::Get().SetInputEnabled(true);
 		TC_PROFILE_FUNCTION();
 		RestorePanelLayoutBeforePersistence();
@@ -2328,7 +2270,7 @@ namespace TomCat {
         m_ContentBrowserPanel.OnAssetInspectorRender(&m_ShowAssetInspector);
         m_ConsolePanel.SetErrorPauseCallback([this] { if (m_SceneState == SceneState::Play) OnScenePause(); });
         m_ConsolePanel.SetOpenSourceCallback([this](const std::filesystem::path& path, uint32_t line, uint32_t column) { m_ContentBrowserPanel.OpenDiagnosticSource(path, line, column); });
-        if (ShouldRenderDockPanel("Profiler")) m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel);
+        if (ShouldRenderDockPanel("Profiler")) m_ProfilerPanel.OnImGuiRender(&m_ShowProfilerPanel, m_AutomationCapturing);
         if (m_ShowRuntimeScenes)
         {
             PrepareEditorToolWindow(ImVec2(720,520));
@@ -3187,7 +3129,10 @@ namespace TomCat {
 					+ settingsError);
 				return;
 			}
-			const auto gameDataPaths = ApplicationPaths::GetGameDataPaths(
+			const auto gameDataPaths = m_AutomationStarting
+                ? ApplicationPaths::ResolveGameDataPaths(m_CurrentProject->GetLibraryPath() / "Automation" / m_AutomationSession,
+                    playerSettings.CompanyName, playerSettings.ProductName, playerSettings.SaveDirectory, playerSettings.LogDirectory, playerSettings.CrashDirectory)
+                : ApplicationPaths::GetGameDataPaths(
 				playerSettings.CompanyName, playerSettings.ProductName,
 				playerSettings.SaveDirectory, playerSettings.LogDirectory,
 				playerSettings.CrashDirectory);
@@ -3244,6 +3189,13 @@ namespace TomCat {
 		m_RuntimeSceneManager.SetRuntimeUIViewportMetrics(
 			m_ShowGamePanel ? m_GameViewportBounds[0] : glm::vec2(-1000000.0f),
 			applicationWindow.GetDPIScale(), screenToFramebufferScale);
+        if (m_AutomationStarting)
+        {
+            m_RuntimeSceneManager.SetViewportSize(m_AutomationWidth, m_AutomationHeight);
+            m_RuntimeSceneManager.SetRuntimeUIViewportMetrics({0, 0}, 1.0f, {1, 1});
+            Scripting::ScriptEngine::Get().SetInputEnabled(true);
+            Scripting::ScriptEngine::Get().CaptureInputState();
+        }
 		Ref<Scene> preparedScene = Scene::Copy(m_EditorScene);
 		if (!preparedScene || !m_RuntimeSceneManager.StartPreparedScene(
 			preparedScene, currentSceneHandle))
@@ -3285,6 +3237,7 @@ namespace TomCat {
 
 	void EditorLayer::OnSceneStop()
 	{
+        struct InputCleanup { ~InputCleanup() { Input::ClearAutomationFrame(); } } inputCleanup;
 		if (!IsSceneRunning())
 			return;
 
@@ -3307,7 +3260,15 @@ namespace TomCat {
 
 	void EditorLayer::OnBeforeInputCapture()
 	{
-		ImGuiWindow* game = ImGui::FindWindowByName("Game");
+        m_AutomationServer.Pump([this](const std::string& request) {
+            return ExecuteAutomation(request);
+        });
+		if (Input::HasAutomationFrame())
+        {
+            Scripting::ScriptEngine::Get().SetInputEnabled(IsSceneRunning());
+            return;
+        }
+        ImGuiWindow* game = ImGui::FindWindowByName("Game");
 		ImGuiWindow* focused = GImGui->NavWindow;
 		bool enabled = IsSceneRunning() && m_ShowGamePanel && game && game->WasActive
 			&& focused && focused->RootWindow == game->RootWindow
@@ -4237,5 +4198,73 @@ namespace TomCat {
 		SaveSceneToolbarLayout();
 	}
 
+
+    bool EditorLayer::ApplyPrefabAction(Entity root, int action, UUID target, UUID component, UUID property, std::string& error)
+    {
+			if (m_SceneState != SceneState::Edit || !root || !root.HasComponent<PrefabLink>()) { error = "A linked root in Edit mode is required."; return false; }
+			if (m_SceneHistory.HasActiveTransaction()) CommitSceneTransaction();
+			const UUID rootID = root.GetUUID();
+			const AssetHandle source = root.GetComponent<PrefabLink>().Source;
+			PrefabFileEdit fileEdit;
+			fileEdit.BeforeState = m_SceneHistory.GetCurrentStateId();
+			fileEdit.Asset = source;
+			const auto sourcePath = AssetManager::Get().GetRegistry().GetFileSystemPath(source);
+			if (action == 2 || action == 5)
+			{
+				std::ifstream input(sourcePath, std::ios::binary);
+				fileEdit.Before.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+			}
+			bool succeeded = false;
+			if (action == 4)
+			{
+				std::vector<std::string> paths;
+				if (!PrefabLinkedInstance::GetOverridePaths(m_EditorScene, rootID, paths, error))
+					ReportPrefabOperation(false, error);
+				else
+				{
+					ReportPrefabOperation(true, std::to_string(paths.size()) + " Prefab override(s).");
+					for (const auto& path : paths) m_ConsolePanel.Push(ConsoleMessageSeverity::Info, path, "Prefab");
+					m_ShowConsolePanel = true;
+				}
+				return error.empty();
+			}
+			if (action == 3)
+			{
+				root.RemoveComponent<PrefabLink>();
+				succeeded = true;
+			}
+			else
+			{
+				PrefabArchive latest;
+				if (PrefabArchiveCodec::Load(source, latest, error))
+				{
+					if (action == 2 || action == 5)
+					{
+						succeeded = action == 5 ? PrefabLinkedInstance::ApplyProperty(m_EditorScene, rootID, target, component, property, error) : PrefabLinkedInstance::Apply(m_EditorScene, rootID, error);
+					}
+					else if (action == 6) succeeded = PrefabLinkedInstance::RevertProperty(m_EditorScene, rootID, target, component, property, error);
+					else succeeded = PrefabLinkedInstance::Update(m_EditorScene, rootID, latest, action == 1, error);
+				}
+			}
+			if (succeeded)
+			{
+				// UUID was captured before the operation. Never ask an old Entity
+				// wrapper for its identity after Update/Apply replaces the registry.
+				m_SceneHierarchyPanel.ResetForSceneReplacement(m_EditorScene, rootID);
+				ResetSceneInteractionState();
+				CommitImmediateSceneTransaction("Prefab Instance");
+				if (action == 2 || action == 5)
+				{
+					fileEdit.AfterState = m_SceneHistory.GetCurrentStateId();
+					std::ifstream input(sourcePath, std::ios::binary);
+					fileEdit.After.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+					if (fileEdit.BeforeState != fileEdit.AfterState)
+						m_PrefabFileEdits.push_back(std::move(fileEdit));
+					if (m_PrefabFileEdits.size() > 128) m_PrefabFileEdits.erase(m_PrefabFileEdits.begin());
+				}
+			}
+			ReportPrefabOperation(succeeded, succeeded ? "Prefab operation completed." : error);
+            return succeeded;
+    }
 
 }

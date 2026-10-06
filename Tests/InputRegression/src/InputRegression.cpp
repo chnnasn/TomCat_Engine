@@ -761,10 +761,41 @@ namespace {
 
 }
 
+static void TestAutomationInputIsolation()
+{
+    using namespace TomCat;
+    Input::ClearState();
+    Input::NotifyKey(65, InputEventQueue::Action::Pressed, 0);
+    Input::BeginFrame();
+    Require(Input::IsKeyPressed(KeyCode(65)), "physical setup failed");
+    Input::AutomationFrame frame;
+    InputEventQueue queue;
+    (void)queue.Push(InputEventQueue::Device::Keyboard, 68, InputEventQueue::Action::Pressed, 0);
+    queue.Freeze(); frame.Snapshot = queue.GetSnapshot();
+    frame.Text = "test"; frame.MouseX = 12; frame.ScrollY = -2;
+    Input::SetAutomationFrame(frame);
+    const auto serial = Input::GetFrameSnapshot().FrameNumber;
+    Input::BeginFrame();
+    Require(Input::GetFrameSnapshot().FrameNumber == serial, "physical frame advanced automation input");
+    Require(!Input::IsKeyPressed(KeyCode(65)) && Input::IsKeyPressed(KeyCode(68)), "physical key leaked into test input");
+    Require(Input::GetTextInput() == "test" && Input::GetMouseX() == 12 && Input::ConsumeScrollDelta().second == -2,
+        "automation snapshot lost text/pointer/scroll");
+    Require(Input::SetClipboardText("private") && Input::GetClipboardText() == "private", "test clipboard failed");
+    queue.Freeze(); frame.Snapshot = queue.GetSnapshot(); frame.Text.clear();
+    Input::SetAutomationFrame(frame);
+    Require(Input::GetFrameSnapshot().FrameNumber > serial && !Input::GetFrameSnapshot().KeysPressed[68]
+        && Input::IsKeyPressed(KeyCode(68)), "held state or single-frame edge semantics failed");
+    Input::ClearAutomationFrame(); Input::BeginFrame();
+    Require(Input::IsKeyPressed(KeyCode(65)) && !Input::IsKeyPressed(KeyCode(68)), "physical input did not resume");
+    Input::ClearState();
+    Require(!Input::IsKeyPressed(KeyCode(65)), "clear left stale physical snapshot");
+}
+
 int main()
 {
 	try
 	{
+        TestAutomationInputIsolation();
 		TestOrderedQueuePreservesFastTap();
 		TestFocusLossSynthesizesOrderedReleases();
 		TestBoundedQueuePreservesDroppedEdgeSummary();

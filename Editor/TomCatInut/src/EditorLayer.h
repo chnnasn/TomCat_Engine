@@ -14,6 +14,10 @@
 #include "Scripting/ScriptMetadataCache.h"
 #include "EditorViewportHandles.h"
 #include "EditorBuildController.h"
+#include "Automation/AutomationServer.h"
+#include "TomCat/Core/Input.h"
+#include <map>
+#include <unordered_set>
 #include "EditorProjectSettingsController.h"
 #include <functional>
 #include "TomCat/Project/Project.h"
@@ -45,6 +49,21 @@ namespace TomCat {
 		virtual void OnImGuiRender() override;
 		void OnEvent(Event& e) override;
 	private:
+        std::string ExecuteAutomation(const std::string& request);
+        bool ApplyPrefabAction(Entity root, int action, UUID target, UUID component, UUID property, std::string& error);
+        AutomationServer m_AutomationServer;
+        bool m_AutomationStarting = false;
+        bool m_AutomationCapturing = false;
+        InputEventQueue m_AutomationInputQueue;
+        Input::AutomationFrame m_AutomationInput;
+        uint64_t m_AutomationRuntimeFrame = 0;
+        uint32_t m_AutomationWidth = 640, m_AutomationHeight = 360;
+        std::string m_AutomationSession = std::to_string(static_cast<uint64_t>(UUID()));
+        std::map<std::string, std::pair<std::string, std::string>> m_AutomationResponses;
+        std::deque<std::string> m_AutomationResponseOrder;
+        std::unordered_set<std::string> m_AutomationSeenRequests;
+        const Scene* m_AutomationObservedScene = nullptr;
+        uint64_t m_AutomationSceneEpoch = 0;
 		enum class GizmoPivotMode
 		{
 			Pivot = 0,

@@ -8,7 +8,7 @@ namespace TomCat {
 	class ProfilerPanel
 	{
 	public:
-		void OnImGuiRender(bool* open);
+		void OnImGuiRender(bool* open, bool externalCapture = false);
         void OnPlayStarted() { if (m_ClearOnPlay) { FrameProfiler::Get().Clear(); m_SelectedFrame=0; } }
 	private:
 		uint64_t m_SelectedFrame = 0;
