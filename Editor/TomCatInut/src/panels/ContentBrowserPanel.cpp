@@ -2361,8 +2361,9 @@ namespace TomCat {
 			return;
 		const BuiltInSpriteAsset* builtInSprite =
 			FindBuiltInSpriteAtPath(path, GetPackagesRoot());
-		const bool projectAsset = IsWritablePath(path)
-			&& LexicalPath(assetRoot) == LexicalPath(GetAssetRoot())
+		// Referencing an asset is independent of creating, renaming or deleting it.
+		// Web keeps filesystem mutation actions disabled but still needs Inspector drops.
+		const bool projectAsset = LexicalPath(assetRoot) == LexicalPath(GetAssetRoot())
 			&& IsWithinRoot(assetRoot, path, false);
 		if (!builtInSprite && !projectAsset)
 		{
