@@ -10,10 +10,28 @@
 #include "TomCat/Scene/Entity.h"
 
 #include <glm/glm.hpp>
+#include <functional>
 
 namespace TomCat {
 
 	class EditorLayer;
+	class EditorCamera;
+	class EditorIconSet;
+	class SceneHierarchyPanel;
+	// Both hosts supply state and history callbacks; all geometry, picking and
+	// manipulation below remain the same desktop implementation.
+	struct EditorViewportContext
+	{
+		Ref<Scene>& Scene;
+		EditorCamera& Camera;
+		SceneHierarchyPanel& Hierarchy;
+		Ref<EditorIconSet>& Icons;
+		glm::vec2 (&Bounds)[2];
+		int& GizmoType;
+		std::function<bool()> IsEditing, UsePivot, UseLocal, CanvasHovered, PointerBlocked, HasTransaction;
+		std::function<void(const char*)> BeginTransaction;
+		std::function<void()> UpdateTransaction, CommitTransaction, FocusScene;
+	};
 
 	struct EditorViewportState
 	{
@@ -60,8 +78,9 @@ namespace TomCat {
 	public:
 		using ColliderEditHandle = EditorViewportState::ColliderEditHandle;
 
-		EditorViewportHandles(EditorViewportState& state, EditorLayer& layer)
-			: m_ViewportState(state), m_Layer(layer) {}
+		EditorViewportHandles(EditorViewportState& state, EditorLayer& layer);
+		EditorViewportHandles(EditorViewportState& state, EditorViewportContext context)
+			: m_ViewportState(state), m_Context(std::move(context)) {}
 
 		void FrameSceneEntity(Entity root);
 		bool GetEntityBounds(Entity root, glm::vec3& minimum, glm::vec3& maximum, bool includeChildren = true);
@@ -81,6 +100,6 @@ namespace TomCat {
 
 	private:
 		EditorViewportState& m_ViewportState;
-		EditorLayer& m_Layer;
+		EditorViewportContext m_Context;
 	};
 }

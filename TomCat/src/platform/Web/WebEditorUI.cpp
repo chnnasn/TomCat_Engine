@@ -23,7 +23,28 @@ std::filesystem::path FileDialogs::OpenFile(const char*) { return {}; }
 std::filesystem::path FileDialogs::SaveFile(const char*) { return {}; }
 std::filesystem::path FileDialogs::OpenFolder() { return {}; }
 
-WebEditorUI::WebEditorUI(WebEditorSession& session) : m_Session(session) {}
+WebEditorUI::WebEditorUI(WebEditorSession& session) : m_Session(session),
+  m_Viewport(m_ViewportState, EditorViewportContext{
+    m_Context,m_Camera,m_Hierarchy,m_EditorIcons,m_ViewportBounds,m_GizmoType,
+    [this]{return m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Edit;},
+    [this]{return m_GizmoPivotMode==GizmoPivotMode::Pivot;},
+    [this]{return m_GizmoSpaceMode==GizmoSpaceMode::Local;},
+    [this]{return m_ViewportHovered;},
+    [this]{return m_ToolbarBlocked || IsSceneOrientationGizmoPointerInside();},
+    [this]{return m_Session.HasUIEdit();},
+    [this](const char*){m_Session.BeginUIEdit();},
+    []{}, // EndUIEdit snapshots the completed transaction.
+    [this]{m_Session.EndUIEdit(m_Session.GetSelection());},
+    [this]{m_ShowScene=true; ImGui::SetWindowFocus("Scene");}
+  }) {}
+
+void WebEditorUI::FinishViewportEdit() {
+  m_Viewport.ResetRectTransformEditState();
+  if (m_ViewportState.ColliderTransactionActive || m_GizmoActive)
+    m_Session.EndUIEdit(m_Session.GetSelection());
+  m_Viewport.ResetColliderEditState();
+  m_GizmoActive=false;
+}
 void WebEditorUI::OnAttach() {
   m_Camera.Set2DMode(true);
   LoadSceneToolbarLayout();
@@ -31,7 +52,7 @@ void WebEditorUI::OnAttach() {
   m_Hierarchy.SetIcons(m_EditorIcons); m_Content.SetIcons(m_EditorIcons);
   m_Content.SetAssetMutationsEnabled(false);
   m_Hierarchy.SetPrefabCreationAllowed(false);
-  m_Hierarchy.SetColliderGizmosEnabled(false);
+  m_Hierarchy.SetColliderGizmosEnabled(true);
   m_Hierarchy.SetScriptEditingEnabled(false);
   m_Hierarchy.SetSceneModifiedCallback([this](SceneHierarchyPanel::SceneModificationPhase phase) {
     using Phase = SceneHierarchyPanel::SceneModificationPhase;
@@ -53,6 +74,9 @@ void WebEditorUI::OnAttach() {
     }
   };
   m_Hierarchy.SetSceneLoadCallback(openScene); m_Content.SetSceneOpenCallback(openScene);
+  m_Content.SetAuthoringAssetOpenCallback([this](AssetHandle handle,AssetType type){m_Hierarchy.OpenAuthoringAsset(handle,type);});
+  m_Content.SetAssetSelectionCallback([this](const std::filesystem::path&){m_ShowAssetInspector=true;});
+  m_Console.SetErrorPauseCallback([this]{if(m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Play) Preview("pause");});
   m_Hierarchy.SetSpriteCreateCallback([this](AssetHandle handle) {
     if (!m_Context) return;
     m_Session.BeginUIEdit();
@@ -70,9 +94,12 @@ void WebEditorUI::OnDetach() { m_Session.StopPreview(); }
 void WebEditorUI::SyncContext() {
   if (m_Project != m_Session.GetProject()) {
     m_Project = m_Session.GetProject(); m_Hierarchy.SetProject(m_Project); m_Content.SetProject(m_Project);
+    m_Is2DMode=!m_Project || m_Project->GetConfig().Template=="2D";
+    m_Camera.Set2DMode(m_Is2DMode);
   }
   const auto active = m_Session.GetPreviewScene() ? m_Session.GetPreviewScene() : m_Session.GetScene();
   if (m_Context != active) {
+    FinishViewportEdit();
     m_Context = active; m_Hierarchy.SetContext(m_Context,false,true);
     m_GizmoActive = false;
   }
@@ -94,13 +121,29 @@ void WebEditorUI::OnUpdate(Timestep delta) {
   const uint32_t height = uint32_t(std::clamp(m_ViewportSize.y,1.0f,4096.0f));
   m_Framebuffer->Resize(width,height); m_Framebuffer->Bind();
   // WebGL requires typed clears for mixed float/integer MRT attachments.
-  const GLfloat background[] = {0.12f,0.14f,0.18f,1.0f};
+  const GLfloat background[] = {71.0f/255.0f,71.0f/255.0f,71.0f/255.0f,1.0f};
   glClearBufferfv(GL_COLOR,0,background);
   glClear(GL_DEPTH_BUFFER_BIT);
   m_Framebuffer->ClearAttachment(1,-1);
   m_Context->OnViewportResize(width,height); m_Camera.SetViewportSize(float(width),float(height));
-  m_Camera.OnUpdate(delta,m_ViewportHovered && !m_GizmoActive);
-  m_Context->OnUpdateEditor(delta,m_Camera); m_Framebuffer->Unbind();
+  m_Camera.OnUpdate(delta,m_ViewportHovered && !m_GizmoActive && !m_ViewportState.UIRectDragActive
+    && m_ViewportState.ActiveColliderHandle==EditorViewportState::ColliderEditHandle::None
+    && !IsSceneOrientationGizmoPointerInside());
+  m_Context->OnUpdateEditor(delta,m_Camera);
+  // Camera aspect belongs to the Game view, not the editor's Scene view.
+  m_Context->OnViewportResize(uint32_t(std::max(m_GameSize.x,1.0f)),uint32_t(std::max(m_GameSize.y,1.0f)));
+  m_Viewport.RenderSceneCameraOverlay();
+  m_Viewport.RenderSceneCanvasOverlay();
+  m_HoveredPixel=-1;
+  const auto mouse=ImGui::GetMousePos();
+  const auto boundsSize=m_ViewportBounds[1]-m_ViewportBounds[0];
+  if (boundsSize.x>0 && boundsSize.y>0 && m_ViewportHovered) {
+    const int x=int((mouse.x-m_ViewportBounds[0].x)/boundsSize.x*width);
+    const int y=int((m_ViewportBounds[1].y-mouse.y)/boundsSize.y*height);
+    if(x>=0 && y>=0 && x<int(width) && y<int(height)) m_HoveredPixel=m_Framebuffer->ReadPixel(1,x,y);
+  }
+  m_Viewport.RenderSceneColliderOverlays();
+  m_Framebuffer->Unbind();
   const auto game = m_Context;
   if (game) {
     const uint32_t gameWidth=uint32_t(std::clamp(m_GameSize.x,1.0f,4096.0f));
@@ -119,15 +162,16 @@ void WebEditorUI::History(bool redo) {
   SyncContext();
 }
 void WebEditorUI::DrawViewport() {
-  if (!m_ShowScene) { m_ViewportHovered=false; return; }
+  if (!m_ShowScene) { m_ViewportHovered=false; FinishViewportEdit(); return; }
   // Reserve the shared toolbar's 28px controls and padding in the menu row only.
   // Inflating FramePadding also enlarges the Scene title/tab and popup items.
   const float toolbarHeight=28.0f+2.0f*kSceneToolbarPadding;
   GImGui->NextWindowData.MenuBarOffsetMinVal.y=std::max(0.0f,toolbarHeight-ImGui::GetFrameHeight());
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
-  const bool visible=ImGui::Begin("Scene", &m_ShowScene,ImGuiWindowFlags_MenuBar);
+  ImGui::SetNextWindowScroll(ImVec2(0,0));
+  const bool visible=ImGui::Begin("Scene", &m_ShowScene,ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
   if (!visible && !m_GizmoModeToolbarDragging && !m_GizmoTransformToolbarDragging) {
-    m_ViewportHovered=false; ImGui::End(); ImGui::PopStyleVar(); return;
+    m_ViewportHovered=false; FinishViewportEdit(); ImGui::End(); ImGui::PopStyleVar(); return;
   }
   const bool editing=m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Edit;
   const auto available=ImGui::GetContentRegionAvail();
@@ -150,34 +194,53 @@ void WebEditorUI::DrawViewport() {
   ImGui::EndDisabled();
   if(menu) ImGui::EndMenuBar();
   if(wasDragging && !m_GizmoModeToolbarDragging && !m_GizmoTransformToolbarDragging) SaveSceneToolbarLayout();
+  m_ToolbarBlocked=toolbarBlocked;
   m_ViewportHovered=m_ViewportHovered && !toolbarBlocked;
-  if (m_ViewportHovered && ImGui::GetIO().MouseWheel != 0) {
+  if (m_ViewportHovered && !IsSceneOrientationGizmoPointerInside() && ImGui::GetIO().MouseWheel != 0) {
     MouseScrolledEvent event(0,ImGui::GetIO().MouseWheel); m_Camera.OnEvent(event);
   }
   const auto selected=m_Hierarchy.GetSelectedEntity();
-  if (editing && visible && m_GizmoType>=0 && selected && m_Context) {
-    auto transform=selected.GetComponent<Transform>().GetTransform();
-    ImGuizmo::Enable(!toolbarBlocked || m_GizmoActive);
+  const bool rectHandles=m_Viewport.UI_RectTransformHandles();
+  bool worldActive=false, worldHovered=false;
+  if (editing && visible && m_GizmoType>=0 && selected && m_Context && !rectHandles
+    && !m_Hierarchy.IsEditingCollider() && m_Context->IsVisibleInEditorHierarchy(selected)) {
+    const auto originalTransform=selected.GetComponent<Transform>().GetTransform();
+    auto transform=originalTransform;
+    glm::vec3 minimum,maximum;
+    const bool standardSingle=m_Context->GetChildrenUUIDs(selected).empty()
+      && !selected.HasComponent<Tilemap2D>() && !selected.HasComponent<ParticleSystem2D>();
+    if((standardSingle || m_GizmoPivotMode==GizmoPivotMode::Center) && m_Viewport.GetEntityBounds(selected,minimum,maximum))
+      transform[3]=glm::vec4((minimum+maximum)*0.5f,1.0f);
+    const auto initialGizmoTransform=transform;
+    ImGuizmo::Enable((!toolbarBlocked && !IsSceneOrientationGizmoPointerInside()) || m_GizmoActive);
+    ImGuizmo::AllowAxisFlip(false);
+    ImGuizmo::SetID(0);
     ImGuizmo::SetOrthographic(m_Camera.IsOrthographic()); ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(origin.x,origin.y,size.x,size.y);
     const auto operation=static_cast<ImGuizmo::OPERATION>(m_GizmoType);
     glm::mat4 gizmoView(1.0f),gizmoProjection(1.0f);
     m_Camera.GetRightHandedToolMatrices(gizmoView,gizmoProjection);
-    ImGuizmo::Manipulate(glm::value_ptr(gizmoView),glm::value_ptr(gizmoProjection),operation,m_GizmoSpaceMode==GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,glm::value_ptr(transform));
+    const float snapValue=operation==ImGuizmo::ROTATE ? 45.0f : 0.5f;
+    float snap[3]={snapValue,snapValue,snapValue};
+    ImGuizmo::Manipulate(glm::value_ptr(gizmoView),glm::value_ptr(gizmoProjection),operation,m_GizmoSpaceMode==GizmoSpaceMode::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD,glm::value_ptr(transform),nullptr,ImGui::GetIO().KeyCtrl ? snap : nullptr);
     const bool active=ImGuizmo::IsUsing();
     if (active) {
       if (!m_GizmoActive) m_Session.BeginUIEdit();
-      m_Context->SetWorldTransform(selected,transform);
+      m_Context->SetWorldTransform(selected,transform*glm::inverse(initialGizmoTransform)*originalTransform);
     }
-    if (!active && m_GizmoActive) m_Session.EndUIEdit(selected.GetUUID());
-    m_GizmoActive=active;
+    worldActive=active; worldHovered=ImGuizmo::IsOver(operation);
   }
-  if (editing && m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && (m_GizmoType<0 || !ImGuizmo::IsOver()) && !m_GizmoActive && m_Context) {
-    const auto mouse=ImGui::GetMousePos(); const auto spec=m_Framebuffer->GetSpecification();
-    const int x=int((mouse.x-origin.x)/size.x*spec.Width);
-    const int y=int((1-(mouse.y-origin.y)/size.y)*spec.Height);
-    const int pixel=m_Framebuffer->ReadPixel(1,x,y);
-    Entity entity = pixel < 0 ? Entity{} : Entity(entt::entity(pixel),m_Context.get());
+  if(!worldActive && m_GizmoActive) m_Session.EndUIEdit(m_Session.GetSelection());
+  m_GizmoActive=worldActive;
+  m_Viewport.UI_ColliderEditHandles();
+  UI_SceneOrientationGizmo();
+  if (editing && m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+    && !ImGui::GetIO().KeyAlt && !worldHovered && !m_GizmoActive && m_Context
+    && !m_ViewportState.UIRectHandleHovered && !m_ViewportState.UIRectDragActive
+    && !m_ViewportState.ColliderHandleHovered
+    && m_ViewportState.ActiveColliderHandle==EditorViewportState::ColliderEditHandle::None
+    && !IsSceneOrientationGizmoPointerInside()) {
+    Entity entity = m_HoveredPixel < 0 ? Entity{} : Entity(entt::entity(m_HoveredPixel),m_Context.get());
     m_Hierarchy.SetSelectedEntity(entity); m_Session.SelectFromUI(entity ? uint64_t(entity.GetUUID()) : 0);
   }
   ImGui::End(); ImGui::PopStyleVar();
@@ -185,7 +248,7 @@ void WebEditorUI::DrawViewport() {
 void WebEditorUI::Preview(const char* command) {
   try {
     m_Session.ControlPreview(command); m_PreviewError.clear(); SyncContext();
-    if (std::string(command)=="play") { m_Console.OnPlayStarted(); m_ShowGame=true; ImGui::SetWindowFocus("Game"); }
+    if (std::string(command)=="play") { m_Console.OnPlayStarted(); m_Profiler.OnPlayStarted(); m_ShowGame=true; ImGui::SetWindowFocus("Game"); }
     if (std::string(command)=="stop") { m_ShowScene=true; ImGui::SetWindowFocus("Scene"); }
   } catch(const std::exception& error) {
     m_PreviewError=error.what(); m_Console.Push(ConsoleMessageSeverity::Error,m_PreviewError,"Play");
@@ -241,9 +304,13 @@ void WebEditorUI::OnImGuiRender() {
     }
     if (ImGui::BeginMenu("GameObject",editing)) { m_Hierarchy.DrawGameObjectMenu(); ImGui::EndMenu(); }
     if (ImGui::BeginMenu("Window")) {
+      if (ImGui::MenuItem("2D Scene",nullptr,m_Is2DMode)) { m_Is2DMode=!m_Is2DMode; m_Camera.Set2DMode(m_Is2DMode); }
       ImGui::MenuItem("Scene",nullptr,&m_ShowScene); ImGui::MenuItem("Game",nullptr,&m_ShowGame);
       ImGui::MenuItem("Hierarchy",nullptr,&m_ShowHierarchy); ImGui::MenuItem("Inspector",nullptr,&m_ShowInspector);
-      ImGui::MenuItem("Project",nullptr,&m_ShowProject); ImGui::MenuItem("Console",nullptr,&m_ShowConsole); ImGui::EndMenu();
+      ImGui::MenuItem("Project",nullptr,&m_ShowProject); ImGui::MenuItem("Console",nullptr,&m_ShowConsole);
+      ImGui::MenuItem("Animation",nullptr,&m_ShowAnimation); ImGui::MenuItem("Animator",nullptr,&m_ShowAnimator);
+      ImGui::MenuItem("Tile Palette",nullptr,&m_ShowTilePalette); ImGui::MenuItem("Profiler",nullptr,&m_ShowProfiler);
+      ImGui::MenuItem("Asset Inspector",nullptr,&m_ShowAssetInspector); ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
   }
@@ -269,11 +336,22 @@ void WebEditorUI::OnImGuiRender() {
   const bool editingPanels=m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Edit;
   ImGui::BeginDisabled(!editingPanels);
   m_Hierarchy.OnImGuiRender(&m_ShowHierarchy,&m_ShowInspector);
+  if (const UUID frame=m_Hierarchy.ConsumeFrameEntityRequest(); uint64_t(frame)!=0 && m_Context)
+    m_Viewport.FrameSceneEntity(m_Context->FindEntityByUUID(frame));
   // Panel selection is authoritative until an RPC/history operation swaps it.
   const auto selected=m_Hierarchy.GetSelectedEntity(); m_Session.SelectFromUI(selected ? uint64_t(selected.GetUUID()) : 0);
   m_Content.OnImGuiRender(&m_ShowProject);
+  const auto focus=[](bool requested,bool& show,const char* name){if(requested){show=true;ImGui::SetWindowFocus(name);}};
+  focus(m_Hierarchy.ConsumeAnimationOpenRequest(),m_ShowAnimation,"Animation");
+  focus(m_Hierarchy.ConsumeAnimatorGraphOpenRequest(),m_ShowAnimator,"Animator");
+  focus(m_Hierarchy.ConsumeTilePaletteOpenRequest(),m_ShowTilePalette,"Tile Palette");
+  if(m_ShowAnimation) m_Hierarchy.OnAnimationImGuiRender(&m_ShowAnimation);
+  if(m_ShowAnimator) m_Hierarchy.OnAnimatorGraphImGuiRender(&m_ShowAnimator);
+  if(m_ShowTilePalette) m_Hierarchy.OnTilePaletteImGuiRender(&m_ShowTilePalette);
+  m_Content.OnAssetInspectorRender(&m_ShowAssetInspector);
   ImGui::EndDisabled();
   m_Console.OnImGuiRender(&m_ShowConsole);
+  m_Profiler.OnImGuiRender(&m_ShowProfiler);
   DrawGame(); DrawViewport();
   m_Settings.m_CurrentProject=m_Project; m_Settings.m_Running=!editingPanels; m_Settings.Draw();
   const auto& io=ImGui::GetIO();
@@ -285,6 +363,7 @@ void WebEditorUI::OnImGuiRender() {
   }
   if (editingPanels && !io.WantTextInput && (m_Hierarchy.IsHierarchyFocused() || m_ViewportHovered)) {
     if(!io.KeyCtrl && !io.KeyAlt) {
+      if(ImGui::IsKeyPressed(ImGuiKey_F,false)) m_Viewport.FrameSceneEntity(m_Hierarchy.GetSelectedEntity());
       if(ImGui::IsKeyPressed(ImGuiKey_Q,false)) m_GizmoType=-1;
       if(ImGui::IsKeyPressed(ImGuiKey_W,false)) m_GizmoType=ImGuizmo::TRANSLATE;
       if(ImGui::IsKeyPressed(ImGuiKey_E,false)) m_GizmoType=ImGuizmo::ROTATE;
