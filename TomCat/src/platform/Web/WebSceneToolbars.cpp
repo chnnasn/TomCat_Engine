@@ -9,6 +9,17 @@
 #include <charconv>
 #include <string>
 namespace TomCat {
+void WebEditorUI::UI_SceneOrientationGizmo() {
+  auto& m_EditorCamera = m_Camera;
+#include "panels/UI_SceneOrientationGizmo.inl"
+}
+
+bool WebEditorUI::IsSceneOrientationGizmoPointerInside() const {
+  if (m_Is2DMode) return false;
+  const auto mouse = ImGui::GetMousePos();
+  return mouse.x >= m_SceneOrientationGizmoBounds[0].x && mouse.x < m_SceneOrientationGizmoBounds[1].x
+    && mouse.y >= m_SceneOrientationGizmoBounds[0].y && mouse.y < m_SceneOrientationGizmoBounds[1].y;
+}
 namespace {
 	// Persisted workspace format. The managed sections carry the dock tree and window
 	// geometry; the engine section carries state ImGui does not know about. A version
@@ -39,7 +50,9 @@ namespace {
 
 uint32_t WebEditorUI::GetPanelVisibilityMask() const {
   return (m_ShowScene ? 1u : 0u) | (m_ShowGame ? 2u : 0u) | (m_ShowHierarchy ? 4u : 0u)
-    | (m_ShowInspector ? 8u : 0u) | (m_ShowProject ? 16u : 0u) | (m_ShowConsole ? 32u : 0u);
+    | (m_ShowInspector ? 8u : 0u) | (m_ShowProject ? 16u : 0u) | (m_ShowConsole ? 32u : 0u)
+    | (m_ShowAnimation ? 64u : 0u) | (m_ShowAnimator ? 128u : 0u) | (m_ShowTilePalette ? 256u : 0u)
+    | (m_ShowProfiler ? 512u : 0u) | (m_ShowAssetInspector ? 1024u : 0u);
 }
 
 std::string WebEditorUI::ComposeLayoutSettings() const {
@@ -71,7 +84,7 @@ bool WebEditorUI::ApplyLayoutSettings(const std::string& settings) {
   const char* maskStart = settings.data() + sectionEnd + 1;
   const char* maskLimit = settings.data() + maskEnd;
   const auto parsedMask = std::from_chars(maskStart, maskLimit, mask);
-  if (parsedMask.ec != std::errc{} || parsedMask.ptr != maskLimit || (mask & ~63u))
+  if (parsedMask.ec != std::errc{} || parsedMask.ptr != maskLimit || (mask & ~2047u))
     return false;
 
   // A blob that carries only the engine section would make ImGui drop the default dock
@@ -89,6 +102,11 @@ bool WebEditorUI::ApplyLayoutSettings(const std::string& settings) {
   m_ShowInspector = (mask & 8u) != 0;
   m_ShowProject = (mask & 16u) != 0;
   m_ShowConsole = (mask & 32u) != 0;
+  m_ShowAnimation = (mask & 64u) != 0;
+  m_ShowAnimator = (mask & 128u) != 0;
+  m_ShowTilePalette = (mask & 256u) != 0;
+  m_ShowProfiler = (mask & 512u) != 0;
+  m_ShowAssetInspector = (mask & 1024u) != 0;
   return true;
 }
 
