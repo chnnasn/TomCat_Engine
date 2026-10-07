@@ -6,7 +6,9 @@
 #include "panels/SceneHierarchyPanel.h"
 #include "panels/ContentBrowserPanel.h"
 #include "panels/ConsolePanel.h"
+#include "panels/ProfilerPanel.h"
 #include "WebProjectSettingsPanel.h"
+#include "EditorViewportHandles.h"
 #include <imgui.h>
 #include <cstdint>
 #include <string>
@@ -40,6 +42,7 @@ private:
   SceneHierarchyPanel m_Hierarchy;
   ContentBrowserPanel m_Content;
   ConsolePanel m_Console;
+  ProfilerPanel m_Profiler;
   Ref<Scene> m_Context;
   Ref<Project> m_Project;
   Ref<Framebuffer> m_Framebuffer;
@@ -67,14 +70,23 @@ private:
   void UI_SceneToolbarDockPreview();
   void SaveSceneToolbarLayout();
   void LoadSceneToolbarLayout();
+  void UI_SceneOrientationGizmo();
+  bool IsSceneOrientationGizmoPointerInside() const;
+  void FinishViewportEdit();
+  bool m_Is2DMode = true, m_SceneOrientationGizmoHovered = false, m_ToolbarBlocked = false;
+  glm::vec2 m_SceneOrientationGizmoBounds[2]{};
+  int m_SceneOrientationPressedTarget = -2, m_HoveredPixel = -1;
   std::string m_PreviewError;
   bool m_ViewportHovered = false, m_GizmoActive = false;
   bool m_ShowHierarchy = true, m_ShowInspector = true, m_ShowProject = true, m_ShowConsole = true;
+  bool m_ShowAnimation=false, m_ShowAnimator=false, m_ShowTilePalette=false, m_ShowProfiler=false, m_ShowAssetInspector=false;
   int m_GizmoType = -1;
   unsigned m_Actions = 0;
   // Last display scale the interface was built for. Browser zoom and monitor changes alter
   // it without a resize, so it is polled and applied through the ImGui layer.
   float m_DisplayScale = 1.0f;
+  EditorViewportState m_ViewportState;
+  EditorViewportHandles m_Viewport;
 };
 }
 #endif

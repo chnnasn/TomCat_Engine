@@ -22,6 +22,7 @@ public:
   std::string Status() const;
   void SelectFromUI(uint64_t entity);
   void BeginUIEdit();
+  bool HasUIEdit() const { return m_History.HasActiveTransaction(); }
   void EndUIEdit(uint64_t selection, bool cancel = false);
   std::string HistoryFromUI(bool redo);
   std::string OpenSceneAsset(uint64_t handle);
