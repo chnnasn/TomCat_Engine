@@ -65,6 +65,8 @@ std::string WebEditorUI::ComposeLayoutSettings() const {
   size_t size = 0;
   if (const char* imgui = ImGui::SaveIniSettingsToMemory(&size))
     blob.append(imgui, size);
+  blob += "\n[ContentBrowser]\nLayout=";
+  blob += m_Content.GetLayoutMode() == ContentBrowserPanel::OneColumn ? "OneColumn\n" : "TwoColumn\n";
   return blob;
 }
 
@@ -94,7 +96,18 @@ bool WebEditorUI::ApplyLayoutSettings(const std::string& settings) {
     && managed.find("[Table][") == std::string::npos
     && managed.find("[Docking][") == std::string::npos)
     return false;
+  auto contentLayout = ContentBrowserPanel::TwoColumn;
+  const auto contentSection = managed.find("[ContentBrowser]\nLayout=");
+  if (contentSection != std::string::npos) {
+    const auto start = contentSection + std::string("[ContentBrowser]\nLayout=").size();
+    const auto value = managed.substr(start, managed.find('\n', start) - start);
+    if (value == "OneColumn") contentLayout = ContentBrowserPanel::OneColumn;
+    else if (value != "TwoColumn") return false;
+  }
+  // SetProject loads desktop defaults; do it before applying browser preferences.
+  SyncContext();
   ImGui::LoadIniSettingsFromMemory(managed.data(), managed.size());
+  m_Content.SetLayoutMode(contentLayout);
 
   m_ShowScene = (mask & 1u) != 0;
   m_ShowGame = (mask & 2u) != 0;
