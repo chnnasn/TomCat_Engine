@@ -98,7 +98,16 @@ void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x)
 
 	void OpenGLRendererAPI::Clear()
 	{
+#ifdef __EMSCRIPTEN__
+        // The editor's framebuffer mixes RGBA and integer picking attachments.
+        // WebGL rejects a floating-point glClear across both attachment types.
+        // Picking is cleared explicitly by the framebuffer owner.
+        GLfloat color[4]; glGetFloatv(GL_COLOR_CLEAR_VALUE, color);
+        glClearBufferfv(GL_COLOR, 0, color);
+        glClear(GL_DEPTH_BUFFER_BIT);
+#else
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+#endif
 	}
 
 	void OpenGLRendererAPI::SetDepthTest(bool enabled)
