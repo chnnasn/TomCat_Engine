@@ -55,7 +55,9 @@ void WebEditorUI::OnAttach() {
   m_Content.SetAssetMutationsEnabled(false);
   m_Hierarchy.SetPrefabCreationAllowed(false);
   m_Hierarchy.SetColliderGizmosEnabled(true);
-  m_Hierarchy.SetScriptEditingEnabled(false);
+  // Script components belong to the native Inspector, including removal and
+  // asset drag/drop before managed field metadata has been loaded.
+  m_Hierarchy.SetScriptEditingEnabled(true);
   m_Hierarchy.SetSceneModifiedCallback([this](SceneHierarchyPanel::SceneModificationPhase phase) {
     using Phase = SceneHierarchyPanel::SceneModificationPhase;
     const auto selected = m_Hierarchy.GetSelectedEntity();
