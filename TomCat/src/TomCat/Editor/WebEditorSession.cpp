@@ -393,7 +393,11 @@ std::string WebEditorSession::Invoke(const std::string& request) {
       m_History.Reset(Encode(scene), 0, true); ++m_Revision; result = Snapshot();
     } else {
       Require(bool(m_Scene), "Open a project first", "NO_PROJECT");
-      if (type == "asset.import") {
+      if (type == "asset.refresh") {
+        Require(m_PreviewMode == PreviewMode::Edit, "Stop Play before refreshing assets", "PREVIEW_ACTIVE");
+        Require(AssetManager::Get().Refresh(false), "Project asset metadata could not be refreshed", "IMPORT_FAILED");
+        result = Object({{"refreshed", "true"}});
+      } else if (type == "asset.import") {
         Require(m_PreviewMode == PreviewMode::Edit, "Stop Play before importing assets", "PREVIEW_ACTIVE");
         auto name = String(payload["name"]);
         Require(!name.empty() && name.size() <= 160 && std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_' || c == '.'; }), "Invalid asset file name");
