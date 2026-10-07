@@ -104,6 +104,21 @@ namespace TomCat {
 
 	using namespace EditorLayerDetail;
 
+	EditorViewportHandles::EditorViewportHandles(EditorViewportState& state, EditorLayer& layer)
+        : EditorViewportHandles(state, EditorViewportContext{
+            layer.m_ActiveScene, layer.m_EditorCamera, layer.m_SceneHierarchyPanel,
+            layer.m_EditorIcons, layer.m_ViewportBounds, layer.m_GizmoType,
+            [&layer] { return layer.m_SceneState == EditorLayer::SceneState::Edit; },
+            [&layer] { return layer.m_GizmoPivotMode == EditorLayer::GizmoPivotMode::Pivot; },
+            [&layer] { return layer.m_GizmoSpaceMode == EditorLayer::GizmoSpaceMode::Local; },
+            [&layer] { return layer.m_ViewportCanvasHovered; },
+            [&layer] { return layer.IsSceneOrientationGizmoPointerInside(); },
+            [&layer] { return layer.m_SceneHistory.HasActiveTransaction(); },
+            [&layer](const char* label) { layer.BeginSceneTransaction(label); },
+            [&layer] { layer.UpdateSceneTransaction(); },
+            [&layer] { layer.CommitSceneTransaction(); },
+            [&layer] { layer.FocusEditorPanel("Scene", layer.m_ShowScenePanel); } }) {}
+
 	EditorLayer::EditorLayer(std::filesystem::path startupProjectPath)
 		: Layer("EditorLayer"),
 		  m_StartupProjectPath(std::move(startupProjectPath)),

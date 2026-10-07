@@ -1,99 +1,38 @@
-#include "EditorLayer.h"
-#include "EditorPlayToolbar.h"
-#include "SceneToolbarDrawing.h"
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
-
-#include <algorithm>
-#include <array>
-#include <cctype>
-#include <cmath>
-#include <cstdio>
-#include <fstream>
-#include <iomanip>
-#include <limits>
-#include <optional>
-#include <sstream>
-#include <string_view>
-#include <system_error>
-#include <unordered_set>
-#include <utility>
-#include <vector>
-
-#ifdef TC_PLATFORM_WINDOWS
-	#include <Windows.h>
-#endif
-
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include "TomCat/Scene/SceneSerializer.h"
-#include "TomCat/Scene/Advanced2D.h"
-#include "TomCat/Renderer/Font.h"
-#include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
-#include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
-#include "TomCat/Scene/Serialization/PrefabLink.h"
-#include "TomCat/Asset/AssetManager.h"
-#include "TomCat/Asset/SpriteAsset.h"
-#include "TomCat/Core/ApplicationPaths.h"
-#include "TomCat/Editor/EditorShortcutRouter.h"
-#include "TomCat/Utils/FileSystemUtils.h"
-#include "TomCat/Utils/PlatformUtils.h"
-#include "TomCat/Utils/PathUtils.h"
-#include "TomCat/Project/ProjectManager.h"
-#include "TomCat/Scripting/ManagedRuntimeFactory.h"
-#include "TomCat/Scripting/ScriptDiagnosticSink.h"
-#include "TomCat/Scripting/ScriptEngine.h"
-#include "TomCat/Runtime/RuntimeUI.h"
-
-#include "Player/PlayerBuilder.h"
-#include "ImGuizmo.h"
-
-#include "EditorLayerDetail.h"
+#include "tcpch.h"
 #include "EditorViewportHandles.h"
-
-#include "EditorLayer.h"
-
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
-
+#include "EditorIcons.h"
+#include "panels/SceneHierarchyPanel.h"
+#include "TomCat/Renderer/Renderer2D.h"
+#include "TomCat/Renderer/RenderCommand.h"
+#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Renderer/Font.h"
+#include "TomCat/Scene/Advanced2D.h"
+#include "TomCat/Runtime/RuntimeUI.h"
+#include "TomCat/Math/Math.h"
+#include <ImGui/imgui.h>
+#include <ImGui/imgui_internal.h>
+#include <ImGuizmo.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-
-#include "TomCat/Scene/SceneSerializer.h"
-#include "TomCat/Scene/Advanced2D.h"
-#include "TomCat/Renderer/Font.h"
-#include "TomCat/Asset/AssetManager.h"
-#include "TomCat/Asset/SpriteAsset.h"
-#include "TomCat/Utils/FileSystemUtils.h"
-#include "TomCat/Utils/PlatformUtils.h"
-#include "TomCat/Utils/PathUtils.h"
-#include "TomCat/Project/ProjectManager.h"
-#include "TomCat/Scripting/ManagedRuntimeFactory.h"
-#include "TomCat/Scripting/ScriptEngine.h"
-#include "TomCat/Runtime/RuntimeUI.h"
-#include "Player/PlayerBuilder.h"
-#include "ImGuizmo.h"
-#include <fstream>
-#include <iomanip>
-#include <sstream>
-
+#include <array>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <unordered_set>
 namespace TomCat {
-
-using namespace EditorLayerDetail;
-
 	void EditorViewportHandles::FrameSceneEntity(Entity root)
 	{
 		glm::vec3 minimum, maximum;
 		if (!GetEntityBounds(root, minimum, maximum)) return;
-		m_Layer.m_EditorCamera.FrameBounds(minimum, maximum);
-		m_Layer.FocusEditorPanel("Scene", m_Layer.m_ShowScenePanel);
+		m_Context.Camera.FrameBounds(minimum, maximum);
+		m_Context.FocusScene();
 	}
 
 	bool EditorViewportHandles::GetEntityBounds(Entity root, glm::vec3& minimum, glm::vec3& maximum, bool includeChildren)
 	{
-		if (!m_Layer.m_ActiveScene || !root || !root.HasComponent<ID>())
+		if (!m_Context.Scene || !root || !root.HasComponent<ID>())
 			return false;
-		Entity activeRoot = m_Layer.m_ActiveScene->FindEntityByUUID(root.GetUUID());
+		Entity activeRoot = m_Context.Scene->FindEntityByUUID(root.GetUUID());
 		if (!activeRoot)
 			return false;
 
@@ -130,7 +69,7 @@ using namespace EditorLayerDetail;
 		FocusBounds bounds;
 		Entity canvasOwner;
 		for (Entity current = activeRoot; current;
-			current = m_Layer.m_ActiveScene->GetParent(current))
+			current = m_Context.Scene->GetParent(current))
 		{
 			if (current.HasComponent<Canvas>())
 			{
@@ -141,7 +80,7 @@ using namespace EditorLayerDetail;
 		if (canvasOwner)
 		{
 			const RuntimeUILayoutSnapshot layout =
-				RuntimeUISystem::BuildEditorLayout(*m_Layer.m_ActiveScene,
+				RuntimeUISystem::BuildEditorLayout(*m_Context.Scene,
 					RuntimeUIVisibilityMode::Editor);
 			std::unordered_set<uint64_t> visitedUI;
 			std::function<void(Entity, bool)> collectUI =
@@ -149,7 +88,7 @@ using namespace EditorLayerDetail;
 			{
 				if (!entity || !entity.HasComponent<ID>()
 					|| (!isRoot
-						&& !m_Layer.m_ActiveScene->IsVisibleInEditorHierarchy(entity)))
+						&& !m_Context.Scene->IsVisibleInEditorHierarchy(entity)))
 					return;
 				const UUID id = entity.GetUUID();
 				if (!visitedUI.emplace(static_cast<uint64_t>(id)).second)
@@ -171,10 +110,10 @@ using namespace EditorLayerDetail;
 						bounds.Add(glm::vec3(transformIt->second
 							* glm::vec4(corner, 0.0f, 1.0f)));
 				}
-				if (includeChildren) for (UUID childID : m_Layer.m_ActiveScene->GetChildrenUUIDs(entity))
+				if (includeChildren) for (UUID childID : m_Context.Scene->GetChildrenUUIDs(entity))
 				{
-					Entity child = m_Layer.m_ActiveScene->FindEntityByUUID(childID);
-					if (child && m_Layer.m_ActiveScene->GetParent(child) == entity)
+					Entity child = m_Context.Scene->FindEntityByUUID(childID);
+					if (child && m_Context.Scene->GetParent(child) == entity)
 						collectUI(child, false);
 				}
 			};
@@ -191,7 +130,7 @@ using namespace EditorLayerDetail;
 		std::function<void(Entity, bool)> collect = [&](Entity entity, bool isRoot)
 		{
 			if (!entity || !entity.HasComponent<ID>()
-				|| (!isRoot && !m_Layer.m_ActiveScene->IsVisibleInEditorHierarchy(entity)))
+				|| (!isRoot && !m_Context.Scene->IsVisibleInEditorHierarchy(entity)))
 				return;
 			const UUID id = entity.GetUUID();
 			const uint64_t rawID = static_cast<uint64_t>(id);
@@ -202,7 +141,7 @@ using namespace EditorLayerDetail;
 			glm::mat4 world(1.0f);
 			if (entity.HasComponent<Transform>())
 			{
-				world = m_Layer.m_ActiveScene->GetRuntimeRenderTransform(id);
+				world = m_Context.Scene->GetRuntimeRenderTransform(id);
 				bounds.Pivots.push_back(glm::vec3(world * glm::vec4(0, 0, 0, 1)));
 			}
 
@@ -213,7 +152,7 @@ using namespace EditorLayerDetail;
 			if (entity.HasComponent<Tilemap2D>())
 			{
 				const Tilemap2D& tilemap = entity.GetComponent<Tilemap2D>();
-				const Entity parent = m_Layer.m_ActiveScene->GetParent(entity);
+				const Entity parent = m_Context.Scene->GetParent(entity);
 				const Grid2D* grid = parent && parent.HasComponent<Grid2D>()
 					? &parent.GetComponent<Grid2D>() : nullptr;
 				if (tilemap.Enabled)
@@ -291,17 +230,17 @@ using namespace EditorLayerDetail;
 						glm::vec3(light.Radius * 2.0f, light.Radius * 2.0f, 1.0f)));
 			}
 
-			if (includeChildren) for (UUID childID : m_Layer.m_ActiveScene->GetChildrenUUIDs(entity))
+			if (includeChildren) for (UUID childID : m_Context.Scene->GetChildrenUUIDs(entity))
 			{
-				Entity child = m_Layer.m_ActiveScene->FindEntityByUUID(childID);
-				if (child && m_Layer.m_ActiveScene->GetParent(child) == entity)
+				Entity child = m_Context.Scene->FindEntityByUUID(childID);
+				if (child && m_Context.Scene->GetParent(child) == entity)
 					collect(child, false);
 			}
 		};
 		collect(activeRoot, true);
 
-		for (const ColliderDebugShape& shape : m_Layer.m_ActiveScene->GetColliderDebugShapes(
-			m_Layer.m_SceneState != EditorLayer::SceneState::Edit))
+		for (const ColliderDebugShape& shape : m_Context.Scene->GetColliderDebugShapes(
+			!m_Context.IsEditing()))
 		{
 			if (framedIDs.contains(static_cast<uint64_t>(shape.EntityID)))
 				bounds.AddUnitQuad(shape.Transform);
@@ -328,12 +267,12 @@ using namespace EditorLayerDetail;
 
 	void EditorViewportHandles::RenderSceneColliderOverlays()
 	{
-		if (!m_Layer.m_ActiveScene)
+		if (!m_Context.Scene)
 			return;
 
-		const Entity selectedEntity = m_Layer.m_SceneHierarchyPanel.GetSelectedEntity();
+		const Entity selectedEntity = m_Context.Hierarchy.GetSelectedEntity();
 		if (!selectedEntity || !selectedEntity.HasComponent<ID>()
-			|| !m_Layer.m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity)
+			|| !m_Context.Scene->IsVisibleInEditorHierarchy(selectedEntity)
 			|| (!selectedEntity.HasComponent<BoxCollider2D>()
 				&& !selectedEntity.HasComponent<CircleCollider2D>()))
 		{
@@ -342,19 +281,19 @@ using namespace EditorLayerDetail;
 		const UUID selectedUUID = selectedEntity.GetUUID();
 
 		const SceneHierarchyPanel::ColliderEditMode editMode =
-			m_Layer.m_SceneState == EditorLayer::SceneState::Edit
-			? m_Layer.m_SceneHierarchyPanel.GetColliderEditMode()
+			m_Context.IsEditing()
+			? m_Context.Hierarchy.GetColliderEditMode()
 			: SceneHierarchyPanel::ColliderEditMode::None;
 
 		const std::vector<ColliderDebugShape> shapes =
-			m_Layer.m_ActiveScene->GetColliderDebugShapes(m_Layer.m_SceneState != EditorLayer::SceneState::Edit);
+			m_Context.Scene->GetColliderDebugShapes(!m_Context.IsEditing());
 		if (shapes.empty())
 			return;
 
 		const float previousLineWidth = Renderer2D::GetLineWidth();
 		Renderer2D::SetLineWidth(2.0f);
 		RenderCommand::SetDepthTest(false);
-		Renderer2D::BeginScene(m_Layer.m_EditorCamera);
+		Renderer2D::BeginScene(m_Context.Camera);
 
 		for (const ColliderDebugShape& shape : shapes)
 		{
@@ -385,16 +324,16 @@ using namespace EditorLayerDetail;
 
 	void EditorViewportHandles::RenderSceneCameraOverlay()
 	{
-		if (!m_Layer.m_ActiveScene)
+		if (!m_Context.Scene)
 			return;
 
-		const Entity selected = m_Layer.m_SceneHierarchyPanel.GetSelectedEntity();
+		const Entity selected = m_Context.Hierarchy.GetSelectedEntity();
 		std::vector<Entity> cameraEntities;
 		Entity selectedCamera;
 		for (const entt::entity value
-			: m_Layer.m_ActiveScene->m_Registry.view<Transform, C_Camera, ID>())
+			: m_Context.Scene->m_Registry.view<Transform, C_Camera, ID>())
 		{
-			Entity entity(value, m_Layer.m_ActiveScene.get());
+			Entity entity(value, m_Context.Scene.get());
 			if (selected && selected == entity)
 				selectedCamera = entity;
 			else
@@ -421,7 +360,7 @@ using namespace EditorLayerDetail;
 		for (Entity entity : cameraEntities)
 		{
 			const bool isSelected = selectedCamera && selectedCamera == entity;
-			if (!m_Layer.m_ActiveScene->IsVisibleInEditorHierarchy(entity))
+			if (!m_Context.Scene->IsVisibleInEditorHierarchy(entity))
 				continue;
 			const SceneCamera& camera = entity.GetComponent<C_Camera>()._Camera;
 			CameraOverlayGeometry geometry;
@@ -431,7 +370,7 @@ using namespace EditorLayerDetail;
 			geometry.Projection = camera.GetProjectionType();
 			geometry.OrthographicSize = camera.GetOrthographicSize();
 			geometry.CameraWorld =
-				m_Layer.m_ActiveScene->GetRuntimeCameraTransform(entity.GetUUID());
+				m_Context.Scene->GetRuntimeCameraTransform(entity.GetUUID());
 
 			// The icon is the Camera entity's stable selection target. Keep the
 			// entry even when an extreme Far/FOV cannot be represented as finite
@@ -466,7 +405,7 @@ using namespace EditorLayerDetail;
 		// The overlay gets an infinite far plane. The normal Scene render keeps
 		// its finite projection and depth precision, while authored Camera Far has
 		// no editor-only visualization ceiling.
-		Camera overlayCamera(m_Layer.m_EditorCamera.GetInfiniteFarViewProjection());
+		Camera overlayCamera(m_Context.Camera.GetInfiniteFarViewProjection());
 		const float previousLineWidth = Renderer2D::GetLineWidth();
 		Renderer2D::SetLineWidth(1.5f);
 		RenderCommand::SetDepthTest(false);
@@ -513,8 +452,8 @@ using namespace EditorLayerDetail;
 
 		// Renderer2D flushes lines after quads. Draw icons in a second pass so the
 		// frustum cannot slice through the camera silhouette.
-		const Ref<Texture2D> cameraIcon = m_Layer.m_EditorIcons
-			? m_Layer.m_EditorIcons->Get(EditorIcon::Camera) : Ref<Texture2D>{};
+		const Ref<Texture2D> cameraIcon = m_Context.Icons
+			? m_Context.Icons->Get(EditorIcon::Camera) : Ref<Texture2D>{};
 		if (cameraIcon)
 		{
 			Renderer2D::BeginScene(overlayCamera, glm::mat4(1.0f));
@@ -526,15 +465,15 @@ using namespace EditorLayerDetail;
 				// Retain a minimum pixel size for picking distant cameras.
 				const glm::vec3 iconPosition = glm::vec3(geometry.CameraWorld[3]);
 				const float viewDepth = glm::dot(iconPosition
-					- m_Layer.m_EditorCamera.GetPosition(),
-					m_Layer.m_EditorCamera.GetForwardDirection());
+					- m_Context.Camera.GetPosition(),
+					m_Context.Camera.GetForwardDirection());
 				if (!std::isfinite(viewDepth) || viewDepth <= 0.0001f)
 					continue;
 				const float projectionY = std::abs(
-					m_Layer.m_EditorCamera.GetProjection()[1][1]);
+					m_Context.Camera.GetProjection()[1][1]);
 				const float viewportHeight = std::max(1.0f,
-					m_Layer.m_ViewportBounds[1].y - m_Layer.m_ViewportBounds[0].y);
-				const float depthScale = m_Layer.m_EditorCamera.IsOrthographic()
+					m_Context.Bounds[1].y - m_Context.Bounds[0].y);
+				const float depthScale = m_Context.Camera.IsOrthographic()
 					? 1.0f : viewDepth;
 				const float minimumPickSize = 24.0f * 2.0f * depthScale
 					/ (projectionY * viewportHeight);
@@ -544,11 +483,11 @@ using namespace EditorLayerDetail;
 
 				glm::mat4 iconTransform(1.0f);
 				iconTransform[0] = glm::vec4(
-					m_Layer.m_EditorCamera.GetRightDirection() * iconWorldSize, 0.0f);
+					m_Context.Camera.GetRightDirection() * iconWorldSize, 0.0f);
 				iconTransform[1] = glm::vec4(
-					m_Layer.m_EditorCamera.GetUpDirection() * iconWorldSize, 0.0f);
+					m_Context.Camera.GetUpDirection() * iconWorldSize, 0.0f);
 				iconTransform[2] = glm::vec4(
-					m_Layer.m_EditorCamera.GetForwardDirection(), 0.0f);
+					m_Context.Camera.GetForwardDirection(), 0.0f);
 				iconTransform[3] = glm::vec4(iconPosition, 1.0f);
 				Renderer2D::DrawQuad(iconTransform, cameraIcon, 1.0f,
 					geometry.Selected
@@ -564,16 +503,16 @@ using namespace EditorLayerDetail;
 
 	void EditorViewportHandles::RenderSceneCanvasOverlay()
 	{
-		if (!m_Layer.m_ActiveScene)
+		if (!m_Context.Scene)
 			return;
 		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildEditorLayout(
-			*m_Layer.m_ActiveScene, RuntimeUIVisibilityMode::Editor);
+			*m_Context.Scene, RuntimeUIVisibilityMode::Editor);
 		if (layout.RenderOrder.empty())
 			return;
 
 		Entity selectedCanvas;
-		for (Entity current = m_Layer.m_SceneHierarchyPanel.GetSelectedEntity(); current;
-			current = m_Layer.m_ActiveScene->GetParent(current))
+		for (Entity current = m_Context.Hierarchy.GetSelectedEntity(); current;
+			current = m_Context.Scene->GetParent(current))
 		{
 			if (current.HasComponent<Canvas>())
 			{
@@ -585,11 +524,11 @@ using namespace EditorLayerDetail;
 		const float previousLineWidth = Renderer2D::GetLineWidth();
 		Renderer2D::SetLineWidth(1.5f);
 		RenderCommand::SetDepthTest(false);
-		Renderer2D::BeginScene(m_Layer.m_EditorCamera);
+		Renderer2D::BeginScene(m_Context.Camera);
 		std::vector<Entity> canvasEntities;
-		for (const entt::entity value : m_Layer.m_ActiveScene->m_Registry.view<Canvas, ID>())
+		for (const entt::entity value : m_Context.Scene->m_Registry.view<Canvas, ID>())
 		{
-			Entity canvas(value, m_Layer.m_ActiveScene.get());
+			Entity canvas(value, m_Context.Scene.get());
 			if (!selectedCanvas || selectedCanvas != canvas)
 				canvasEntities.push_back(canvas);
 		}
@@ -603,7 +542,7 @@ using namespace EditorLayerDetail;
 				static_cast<entt::entity>(canvas));
 			const bool isSelected = selectedCanvas && selectedCanvas == canvas;
 			if (!canvas.GetComponent<Canvas>().Enabled
-				|| !m_Layer.m_ActiveScene->IsVisibleInEditorHierarchy(canvas))
+				|| !m_Context.Scene->IsVisibleInEditorHierarchy(canvas))
 				continue;
 			const auto rectangleIt = layout.Rectangles.find(canvas.GetUUID());
 			const auto transformIt = layout.Transforms.find(canvas.GetUUID());
@@ -663,32 +602,32 @@ using namespace EditorLayerDetail;
 
 	bool EditorViewportHandles::WorldToScreen(const glm::vec3& worldPosition, glm::vec2& screenPosition) const
 	{
-		const glm::vec2 viewportSize = m_Layer.m_ViewportBounds[1] - m_Layer.m_ViewportBounds[0];
+		const glm::vec2 viewportSize = m_Context.Bounds[1] - m_Context.Bounds[0];
 		if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
 			return false;
 
-		const glm::vec4 clip = m_Layer.m_EditorCamera.GetViewProjection() * glm::vec4(worldPosition, 1.0f);
+		const glm::vec4 clip = m_Context.Camera.GetViewProjection() * glm::vec4(worldPosition, 1.0f);
 		if (!std::isfinite(clip.w) || clip.w <= 0.000001f)
 			return false;
 		const glm::vec3 ndc = glm::vec3(clip) / clip.w;
 		if (!std::isfinite(ndc.x) || !std::isfinite(ndc.y))
 			return false;
 
-		screenPosition.x = m_Layer.m_ViewportBounds[0].x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
-		screenPosition.y = m_Layer.m_ViewportBounds[0].y + (0.5f - ndc.y * 0.5f) * viewportSize.y;
+		screenPosition.x = m_Context.Bounds[0].x + (ndc.x * 0.5f + 0.5f) * viewportSize.x;
+		screenPosition.y = m_Context.Bounds[0].y + (0.5f - ndc.y * 0.5f) * viewportSize.y;
 		return std::isfinite(screenPosition.x) && std::isfinite(screenPosition.y);
 	}
 
 	bool EditorViewportHandles::ScreenToWorldOnPlane(const glm::vec2& screenPosition, float worldZ,
 		glm::vec2& worldPosition) const
 	{
-		const glm::vec2 viewportSize = m_Layer.m_ViewportBounds[1] - m_Layer.m_ViewportBounds[0];
+		const glm::vec2 viewportSize = m_Context.Bounds[1] - m_Context.Bounds[0];
 		if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
 			return false;
 
-		const float ndcX = ((screenPosition.x - m_Layer.m_ViewportBounds[0].x) / viewportSize.x) * 2.0f - 1.0f;
-		const float ndcY = 1.0f - ((screenPosition.y - m_Layer.m_ViewportBounds[0].y) / viewportSize.y) * 2.0f;
-		const glm::mat4 inverseViewProjection = glm::inverse(m_Layer.m_EditorCamera.GetViewProjection());
+		const float ndcX = ((screenPosition.x - m_Context.Bounds[0].x) / viewportSize.x) * 2.0f - 1.0f;
+		const float ndcY = 1.0f - ((screenPosition.y - m_Context.Bounds[0].y) / viewportSize.y) * 2.0f;
+		const glm::mat4 inverseViewProjection = glm::inverse(m_Context.Camera.GetViewProjection());
 		glm::vec4 nearPoint = inverseViewProjection * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
 		glm::vec4 farPoint = inverseViewProjection * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
 		if (std::abs(nearPoint.w) <= 0.000001f || std::abs(farPoint.w) <= 0.000001f)
@@ -713,7 +652,7 @@ using namespace EditorLayerDetail;
 		if (m_ViewportState.UIRectTransactionActive)
 		{
 			m_ViewportState.UIRectTransactionActive = false;
-			m_Layer.CommitSceneTransaction();
+			m_Context.CommitTransaction();
 		}
 		m_ViewportState.UIRectDragActive = false;
 		m_ViewportState.UIRectHandleHovered = false;
@@ -722,9 +661,9 @@ using namespace EditorLayerDetail;
 
 	bool EditorViewportHandles::UI_RectTransformHandles()
 	{
-		Entity selected = m_Layer.m_SceneHierarchyPanel.GetSelectedEntity();
-		if (!m_Layer.m_ActiveScene || !selected
-			|| !m_Layer.m_ActiveScene->IsVisibleInEditorHierarchy(selected))
+		Entity selected = m_Context.Hierarchy.GetSelectedEntity();
+		if (!m_Context.Scene || !selected
+			|| !m_Context.Scene->IsVisibleInEditorHierarchy(selected))
 		{
 			ResetRectTransformEditState();
 			return false;
@@ -743,7 +682,7 @@ using namespace EditorLayerDetail;
 			return false;
 		}
 
-		const glm::vec2 viewportDisplaySize = m_Layer.m_ViewportBounds[1] - m_Layer.m_ViewportBounds[0];
+		const glm::vec2 viewportDisplaySize = m_Context.Bounds[1] - m_Context.Bounds[0];
 		if (viewportDisplaySize.x <= 0.0f || viewportDisplaySize.y <= 0.0f)
 		{
 			ResetRectTransformEditState();
@@ -751,7 +690,7 @@ using namespace EditorLayerDetail;
 		}
 
 		const RuntimeUILayoutSnapshot layout = RuntimeUISystem::BuildEditorLayout(
-			*m_Layer.m_ActiveScene, RuntimeUIVisibilityMode::Editor);
+			*m_Context.Scene, RuntimeUIVisibilityMode::Editor);
 		const UUID selectedID = selected.GetUUID();
 		const auto rectangleIt = layout.Rectangles.find(selectedID);
 		const auto scaleIt = layout.Scales.find(selectedID);
@@ -792,8 +731,8 @@ using namespace EditorLayerDetail;
 			rectangle.Y + rectangle.Height * selected.GetComponent<RectTransform>().Pivot.y };
 		glm::vec2 centerPosition{ rectangle.X + rectangle.Width * 0.5f,
 			rectangle.Y + rectangle.Height * 0.5f };
-		if (!m_Layer.m_ActiveScene->GetChildrenUUIDs(selected).empty()) {
-			if (m_Layer.m_GizmoPivotMode == EditorLayer::GizmoPivotMode::Pivot)
+		if (!m_Context.Scene->GetChildrenUUIDs(selected).empty()) {
+			if (m_Context.UsePivot())
 				centerPosition = pivotPosition;
 			else {
 				glm::vec3 minimum, maximum;
@@ -812,8 +751,8 @@ using namespace EditorLayerDetail;
 		}
 
 		ImDrawList* draw = ImGui::GetWindowDrawList();
-		ImGui::PushClipRect(ImVec2(m_Layer.m_ViewportBounds[0].x, m_Layer.m_ViewportBounds[0].y),
-			ImVec2(m_Layer.m_ViewportBounds[1].x, m_Layer.m_ViewportBounds[1].y), true);
+		ImGui::PushClipRect(ImVec2(m_Context.Bounds[0].x, m_Context.Bounds[0].y),
+			ImVec2(m_Context.Bounds[1].x, m_Context.Bounds[1].y), true);
 		const ImU32 outline = IM_COL32(72, 166, 255, 255);
 		draw->AddPolyline(rectCorners, 4, outline, ImDrawFlags_Closed, 1.5f);
 		draw->AddCircleFilled(pivotScreen, 4.0f, outline);
@@ -823,7 +762,7 @@ using namespace EditorLayerDetail;
 			ImVec2(pivotScreen.x, pivotScreen.y + 9.0f), outline, 1.5f);
 		ImGui::PopClipRect();
 
-		Entity parent = m_Layer.m_ActiveScene->GetParent(selected);
+		Entity parent = m_Context.Scene->GetParent(selected);
 		const bool layoutControlled = parent && parent.HasComponent<UILayoutGroup>()
 			&& parent.GetComponent<UILayoutGroup>().Enabled;
 		glm::mat4 parentCanvasTransform(1.0f);
@@ -838,24 +777,24 @@ using namespace EditorLayerDetail;
 			&& std::abs(parentDeterminant) > 0.000001f;
 		const glm::mat4 inverseParentCanvasTransform = parentTransformInvertible
 			? glm::inverse(parentCanvasTransform) : glm::mat4(1.0f);
-		const bool translateTool = m_Layer.m_GizmoType == ImGuizmo::OPERATION::TRANSLATE;
-		const bool rotateTool = m_Layer.m_GizmoType == ImGuizmo::OPERATION::ROTATE;
-		const bool scaleTool = m_Layer.m_GizmoType == ImGuizmo::OPERATION::SCALE;
+		const bool translateTool = m_Context.GizmoType == ImGuizmo::OPERATION::TRANSLATE;
+		const bool rotateTool = m_Context.GizmoType == ImGuizmo::OPERATION::ROTATE;
+		const bool scaleTool = m_Context.GizmoType == ImGuizmo::OPERATION::SCALE;
 		const bool supportedTool = translateTool || rotateTool || scaleTool;
 		const bool transformToolAvailable = translateTool
 			|| selected.HasComponent<Transform>();
 		// A layout group authors its children's positions. Rotation and scale remain
 		// independent, matching Unity's driven RectTransform behaviour.
-		const bool canManipulate = m_Layer.m_SceneState == EditorLayer::SceneState::Edit
+		const bool canManipulate = m_Context.IsEditing()
 			&& supportedTool && transformToolAvailable
 			&& parentTransformInvertible && (!translateTool || !layoutControlled)
-			&& (!m_Layer.IsSceneOrientationGizmoPointerInside() || m_ViewportState.UIRectDragActive);
+			&& (!m_Context.PointerBlocked() || m_ViewportState.UIRectDragActive);
 
 		if (m_ViewportState.UIRectTransactionActive && m_ViewportState.UIRectEditEntity != selectedID)
 			ResetRectTransformEditState();
 
 		const ImVec2 mouse = ImGui::GetMousePos();
-		const bool rectangleHovered = m_Layer.m_ViewportCanvasHovered
+		const bool rectangleHovered = m_Context.CanvasHovered()
 			&& (ImTriangleContainsPoint(rectCorners[0], rectCorners[1],
 				rectCorners[2], mouse)
 				|| ImTriangleContainsPoint(rectCorners[0], rectCorners[2],
@@ -894,12 +833,12 @@ using namespace EditorLayerDetail;
 			// without changing ImGuizmo itself.
 			glm::mat4 gizmoView(1.0f);
 			glm::mat4 gizmoProjection(1.0f);
-			m_Layer.m_EditorCamera.GetRightHandedToolMatrices(gizmoView,
+			m_Context.Camera.GetRightHandedToolMatrices(gizmoView,
 				gizmoProjection);
 			ImGuizmo::AllowAxisFlip(false);
-			ImGuizmo::SetOrthographic(m_Layer.m_EditorCamera.IsOrthographic());
+			ImGuizmo::SetOrthographic(m_Context.Camera.IsOrthographic());
 			ImGuizmo::SetDrawlist();
-			ImGuizmo::SetRect(m_Layer.m_ViewportBounds[0].x, m_Layer.m_ViewportBounds[0].y,
+			ImGuizmo::SetRect(m_Context.Bounds[0].x, m_Context.Bounds[0].y,
 				viewportDisplaySize.x, viewportDisplaySize.y);
 			ImGuizmo::SetID(static_cast<int>(static_cast<uint64_t>(selectedID)
 				& 0x7fffffffULL));
@@ -925,13 +864,13 @@ using namespace EditorLayerDetail;
 
 			manipulated = ImGuizmo::Manipulate(glm::value_ptr(gizmoView),
 				glm::value_ptr(gizmoProjection),
-				static_cast<ImGuizmo::OPERATION>(m_Layer.m_GizmoType),
-				m_Layer.m_GizmoSpaceMode == EditorLayer::GizmoSpaceMode::Local
+				static_cast<ImGuizmo::OPERATION>(m_Context.GizmoType),
+				m_Context.UseLocal()
 					? ImGuizmo::LOCAL : ImGuizmo::WORLD,
 				glm::value_ptr(gizmoTransform), nullptr, snap);
 			gizmoUsing = ImGuizmo::IsUsing();
 			gizmoHovered = ImGuizmo::IsOver(
-				static_cast<ImGuizmo::OPERATION>(m_Layer.m_GizmoType));
+				static_cast<ImGuizmo::OPERATION>(m_Context.GizmoType));
 		}
 
 		// The native mouse event is dispatched before this ImGui pass. Preserve the
@@ -946,8 +885,8 @@ using namespace EditorLayerDetail;
 		{
 			const char* label = translateTool ? "Move UI Element"
 				: (rotateTool ? "Rotate UI Element" : "Scale UI Element");
-			m_Layer.BeginSceneTransaction(label);
-			m_ViewportState.UIRectTransactionActive = m_Layer.m_SceneHistory.HasActiveTransaction();
+			m_Context.BeginTransaction(label);
+			m_ViewportState.UIRectTransactionActive = m_Context.HasTransaction();
 			m_ViewportState.UIRectEditEntity = selectedID;
 		}
 		m_ViewportState.UIRectDragActive = gizmoUsing;
@@ -990,7 +929,7 @@ using namespace EditorLayerDetail;
 					}
 					const glm::mat4 localTransform = Math::ComposeTransform(
 						authoredTransform._LocalTranslation, localRotation, localScale);
-					changed = m_Layer.m_ActiveScene->SetLocalTransform(selected, localTransform);
+					changed = m_Context.Scene->SetLocalTransform(selected, localTransform);
 					if (changed) {
 						// Keep the visible center stationary when rotating/scaling an
 						// off-center pivot: center = pivot + rotationScale * offset.
@@ -1002,7 +941,7 @@ using namespace EditorLayerDetail;
 					}
 				}
 				if (changed)
-					m_Layer.UpdateSceneTransaction();
+					m_Context.UpdateTransaction();
 			}
 		}
 
@@ -1016,7 +955,7 @@ using namespace EditorLayerDetail;
 		if (m_ViewportState.ColliderTransactionActive)
 		{
 			m_ViewportState.ColliderTransactionActive = false;
-			m_Layer.CommitSceneTransaction();
+			m_Context.CommitTransaction();
 		}
 		m_ViewportState.ActiveColliderHandle = ColliderEditHandle::None;
 		m_ViewportState.ColliderEditEntity = UUID(0);
@@ -1031,14 +970,14 @@ using namespace EditorLayerDetail;
 	void EditorViewportHandles::UI_ColliderEditHandles()
 	{
 		m_ViewportState.ColliderHandleHovered = false;
-		const SceneHierarchyPanel::ColliderEditMode editMode = m_Layer.m_SceneHierarchyPanel.GetColliderEditMode();
-		Entity selectedEntity = m_Layer.m_SceneHierarchyPanel.GetSelectedEntity();
-		if (m_Layer.m_SceneState != EditorLayer::SceneState::Edit ||
+		const SceneHierarchyPanel::ColliderEditMode editMode = m_Context.Hierarchy.GetColliderEditMode();
+		Entity selectedEntity = m_Context.Hierarchy.GetSelectedEntity();
+		if (!m_Context.IsEditing() ||
 			editMode == SceneHierarchyPanel::ColliderEditMode::None ||
-			!m_Layer.m_ActiveScene ||
+			!m_Context.Scene ||
 			!selectedEntity || !selectedEntity.HasComponent<Transform>() ||
 			!selectedEntity.HasComponent<ID>() ||
-			!m_Layer.m_ActiveScene->IsVisibleInEditorHierarchy(selectedEntity))
+			!m_Context.Scene->IsVisibleInEditorHierarchy(selectedEntity))
 		{
 			ResetColliderEditState();
 			return;
@@ -1052,7 +991,7 @@ using namespace EditorLayerDetail;
 		const ColliderDebugShapeType expectedType =
 			editMode == SceneHierarchyPanel::ColliderEditMode::Box
 			? ColliderDebugShapeType::Box : ColliderDebugShapeType::Circle;
-		const std::vector<ColliderDebugShape> shapes = m_Layer.m_ActiveScene->GetColliderDebugShapes(false);
+		const std::vector<ColliderDebugShape> shapes = m_Context.Scene->GetColliderDebugShapes(false);
 		const auto shapeIt = std::find_if(shapes.begin(), shapes.end(),
 			[&](const ColliderDebugShape& shape)
 			{
@@ -1083,12 +1022,12 @@ using namespace EditorLayerDetail;
 		const glm::vec2 center = shape.Center;
 		const float handleRadius = 6.0f;
 		const bool orientationBlocksActivation =
-			m_Layer.IsSceneOrientationGizmoPointerInside()
+			m_Context.PointerBlocked()
 			&& m_ViewportState.ActiveColliderHandle == ColliderEditHandle::None;
 		const ImVec2 savedCursor = ImGui::GetCursorScreenPos();
 		ImDrawList* draw = ImGui::GetWindowDrawList();
-		ImGui::PushClipRect(ImVec2(m_Layer.m_ViewportBounds[0].x, m_Layer.m_ViewportBounds[0].y),
-			ImVec2(m_Layer.m_ViewportBounds[1].x, m_Layer.m_ViewportBounds[1].y), true);
+		ImGui::PushClipRect(ImVec2(m_Context.Bounds[0].x, m_Context.Bounds[0].y),
+			ImVec2(m_Context.Bounds[1].x, m_Context.Bounds[1].y), true);
 		ImGui::PushID("ColliderEditHandles");
 		ImGui::PushID(static_cast<int>(selectedEntity));
 
@@ -1098,10 +1037,10 @@ using namespace EditorLayerDetail;
 			glm::vec2 screenPosition;
 			if (!WorldToScreen(glm::vec3(worldPosition, transform._Translation.z), screenPosition))
 				return;
-			if (screenPosition.x < m_Layer.m_ViewportBounds[0].x - handleRadius ||
-				screenPosition.x > m_Layer.m_ViewportBounds[1].x + handleRadius ||
-				screenPosition.y < m_Layer.m_ViewportBounds[0].y - handleRadius ||
-				screenPosition.y > m_Layer.m_ViewportBounds[1].y + handleRadius)
+			if (screenPosition.x < m_Context.Bounds[0].x - handleRadius ||
+				screenPosition.x > m_Context.Bounds[1].x + handleRadius ||
+				screenPosition.y < m_Context.Bounds[0].y - handleRadius ||
+				screenPosition.y > m_Context.Bounds[1].y + handleRadius)
 				return;
 
 			const ImVec2 minimum(screenPosition.x - handleRadius, screenPosition.y - handleRadius);
@@ -1127,9 +1066,9 @@ using namespace EditorLayerDetail;
 				const ImVec2 mouse = ImGui::GetMousePos();
 				if (ScreenToWorldOnPlane({ mouse.x, mouse.y }, transform._Translation.z, mouseWorld))
 				{
-					m_Layer.BeginSceneTransaction("Collider Drag");
+					m_Context.BeginTransaction("Collider Drag");
 					m_ViewportState.ColliderTransactionActive =
-						m_Layer.m_SceneHistory.HasActiveTransaction();
+						m_Context.HasTransaction();
 					m_ViewportState.ActiveColliderHandle = handle;
 					m_ViewportState.ColliderEditEntity = selectedUUID;
 					m_ViewportState.ColliderDragStartMouseWorld = mouseWorld;
@@ -1212,7 +1151,7 @@ using namespace EditorLayerDetail;
 			if (m_ViewportState.ColliderTransactionActive)
 			{
 				m_ViewportState.ColliderTransactionActive = false;
-				m_Layer.CommitSceneTransaction();
+				m_Context.CommitTransaction();
 			}
 			m_ViewportState.ActiveColliderHandle = ColliderEditHandle::None;
 			return;
@@ -1296,7 +1235,7 @@ using namespace EditorLayerDetail;
 				{
 					collider.Offset = newOffset;
 					collider.Size = newSize;
-					m_Layer.UpdateSceneTransaction();
+					m_Context.UpdateTransaction();
 				}
 			}
 		}
@@ -1311,7 +1250,7 @@ using namespace EditorLayerDetail;
 					glm::length(collider.Offset - newOffset) > 0.000001f)
 				{
 					collider.Offset = newOffset;
-					m_Layer.UpdateSceneTransaction();
+					m_Context.UpdateTransaction();
 				}
 			}
 			else
@@ -1333,7 +1272,7 @@ using namespace EditorLayerDetail;
 					if (std::abs(collider.Radius - newRadius) > 0.000001f)
 					{
 						collider.Radius = newRadius;
-						m_Layer.UpdateSceneTransaction();
+						m_Context.UpdateTransaction();
 					}
 				}
 			}
