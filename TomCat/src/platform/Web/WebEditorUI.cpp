@@ -106,7 +106,12 @@ void WebEditorUI::SyncContext() {
     m_Context = active; m_Hierarchy.SetContext(m_Context,false,true);
     m_GizmoActive = false;
   }
-  if (m_Context) m_Hierarchy.SetSelectedEntity(m_Context->FindEntityByUUID(UUID(m_Session.GetSelection())));
+  if (m_Context) {
+    const auto selected=m_Context->FindEntityByUUID(UUID(m_Session.GetSelection()));
+    // Reapplying an unchanged selection clears desktop multi-selection and
+    // the asset Inspector. Only synchronize when an RPC/history changed it.
+    if(m_Hierarchy.GetSelectedEntity()!=selected) m_Hierarchy.SetSelectedEntity(selected);
+  }
 }
 void WebEditorUI::OnUpdate(Timestep delta) {
   SyncContext();
@@ -210,6 +215,7 @@ void WebEditorUI::DrawViewport() {
     MouseScrolledEvent event(0,ImGui::GetIO().MouseWheel); m_Camera.OnEvent(event);
   }
   const auto selected=m_Hierarchy.GetSelectedEntity();
+  ImGuizmo::Enable(true);
   const bool rectHandles=m_Viewport.UI_RectTransformHandles();
   bool worldActive=false, worldHovered=false;
   if (editing && visible && m_GizmoType>=0 && selected && m_Context && !rectHandles
