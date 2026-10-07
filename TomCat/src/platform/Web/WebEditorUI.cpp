@@ -3,6 +3,8 @@
 #include "WebEditorUI.h"
 #include "TomCat/Editor/WebEditorSession.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Asset/SpriteAsset.h"
+#include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Events/MouseEvent.h"
@@ -75,7 +77,8 @@ void WebEditorUI::OnAttach() {
   };
   m_Hierarchy.SetSceneLoadCallback(openScene); m_Content.SetSceneOpenCallback(openScene);
   m_Content.SetAuthoringAssetOpenCallback([this](AssetHandle handle,AssetType type){m_Hierarchy.OpenAuthoringAsset(handle,type);});
-  m_Content.SetAssetSelectionCallback([this](const std::filesystem::path&){m_ShowAssetInspector=true;});
+  m_Content.SetAssetSelectionCallback([this](const std::filesystem::path& path){m_Hierarchy.SetAssetSelection(path);if(!path.empty()) m_ShowInspector=true;});
+  m_Hierarchy.SetAssetInspectorRenderer([this](const std::filesystem::path& path){m_Content.DrawAssetInspector(path);});
   m_Console.SetErrorPauseCallback([this]{if(m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Play) Preview("pause");});
   m_Hierarchy.SetSpriteCreateCallback([this](AssetHandle handle) {
     if (!m_Context) return;
@@ -134,15 +137,6 @@ void WebEditorUI::OnUpdate(Timestep delta) {
   m_Context->OnViewportResize(uint32_t(std::max(m_GameSize.x,1.0f)),uint32_t(std::max(m_GameSize.y,1.0f)));
   m_Viewport.RenderSceneCameraOverlay();
   m_Viewport.RenderSceneCanvasOverlay();
-  m_HoveredPixel=-1;
-  const auto mouse=ImGui::GetMousePos();
-  const auto boundsSize=m_ViewportBounds[1]-m_ViewportBounds[0];
-  if (boundsSize.x>0 && boundsSize.y>0 && m_ViewportHovered) {
-    const int x=int((mouse.x-m_ViewportBounds[0].x)/boundsSize.x*width);
-    const int y=int((m_ViewportBounds[1].y-mouse.y)/boundsSize.y*height);
-    if(x>=0 && y>=0 && x<int(width) && y<int(height)) m_HoveredPixel=m_Framebuffer->ReadPixel(1,x,y);
-  }
-  m_Viewport.RenderSceneColliderOverlays();
   m_Framebuffer->Unbind();
   const auto game = m_Context;
   if (game) {
@@ -181,6 +175,22 @@ void WebEditorUI::DrawViewport() {
   ImGui::Image(reinterpret_cast<ImTextureID>(uintptr_t(m_Framebuffer->GetColorAttachmentRendererID())),size,{0,1},{1,0});
   m_ViewportHovered=visible && ImGui::IsItemHovered();
   m_ViewportBounds[0]={origin.x,origin.y}; m_ViewportBounds[1]={origin.x+size.x,origin.y+size.y};
+  if(editing && ImGui::BeginDragDropTarget()) {
+    if(const auto* payload=ImGui::AcceptDragDropPayload(AssetDragDropPayloadID,ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+      payload && payload->DataSize==sizeof(uint64_t) && m_Context) {
+      const AssetHandle handle(*static_cast<const uint64_t*>(payload->Data));
+      const auto* builtIn=FindBuiltInSpriteAsset(handle);
+      const auto* metadata=AssetManager::Get().GetRegistry().GetMetadata(handle);
+      if(builtIn || (metadata && !metadata->IsMissing && metadata->Type==AssetType::Texture2D)) {
+        m_Session.BeginUIEdit();
+        auto sprite=m_Context->CreateEntity(builtIn ? std::string(builtIn->Name) : PathToUTF8(metadata->FilePath.stem()));
+        auto& renderer=sprite.AddComponent<SpriteRenderer>(glm::vec4(1));
+        renderer.SpriteHandle=handle; renderer.Sprite=AssetManager::Get().LoadTexture(handle);
+        m_Session.EndUIEdit(sprite.GetUUID()); m_Hierarchy.SetSelectedEntity(sprite);
+      }
+    }
+    ImGui::EndDragDropTarget();
+  }
   // Use ImGui's actual menu rectangle, not an image origin shifted by padding.
   const ImRect dockRow=ImGui::GetCurrentWindow()->MenuBarRect();
   m_GizmoModeDockHeight=dockRow.GetHeight(); m_GizmoModeDockY=dockRow.Min.y;
@@ -240,9 +250,17 @@ void WebEditorUI::DrawViewport() {
     && !m_ViewportState.ColliderHandleHovered
     && m_ViewportState.ActiveColliderHandle==EditorViewportState::ColliderEditHandle::None
     && !IsSceneOrientationGizmoPointerInside()) {
-    Entity entity = m_HoveredPixel < 0 ? Entity{} : Entity(entt::entity(m_HoveredPixel),m_Context.get());
+    // ImGui updates the pointer in NewFrame, after OnUpdate. Pick with this
+    // frame's pointer before collider outlines write non-selectable IDs.
+    const auto mouse=ImGui::GetMousePos();
+    const auto spec=m_Framebuffer->GetSpecification();
+    const int x=int((mouse.x-origin.x)/size.x*spec.Width);
+    const int y=int((origin.y+size.y-mouse.y)/size.y*spec.Height);
+    const int pixel=m_Framebuffer->ReadPixel(1,x,y);
+    Entity entity = pixel < 0 ? Entity{} : Entity(entt::entity(pixel),m_Context.get());
     m_Hierarchy.SetSelectedEntity(entity); m_Session.SelectFromUI(entity ? uint64_t(entity.GetUUID()) : 0);
   }
+  m_Framebuffer->Bind(); m_Viewport.RenderSceneColliderOverlays(); m_Framebuffer->Unbind();
   ImGui::End(); ImGui::PopStyleVar();
 }
 void WebEditorUI::Preview(const char* command) {
@@ -302,7 +320,7 @@ void WebEditorUI::OnImGuiRender() {
       if(ImGui::MenuItem("Project Settings...")) { m_Settings.m_ShowProjectSettingsPanel=true; m_Settings.m_FocusProjectSettingsPanel=true; }
       ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("GameObject",editing)) { m_Hierarchy.DrawGameObjectMenu(); ImGui::EndMenu(); }
+    if (ImGui::BeginMenu("GameObject",editing)) { if(m_Hierarchy.DrawGameObjectMenu()){m_ShowHierarchy=true;ImGui::SetWindowFocus("Hierarchy");} ImGui::EndMenu(); }
     if (ImGui::BeginMenu("Window")) {
       if (ImGui::MenuItem("2D Scene",nullptr,m_Is2DMode)) { m_Is2DMode=!m_Is2DMode; m_Camera.Set2DMode(m_Is2DMode); }
       ImGui::MenuItem("Scene",nullptr,&m_ShowScene); ImGui::MenuItem("Game",nullptr,&m_ShowGame);
@@ -361,8 +379,11 @@ void WebEditorUI::OnImGuiRender() {
     if (ImGui::IsKeyPressed(ImGuiKey_Y,false)) History(true);
     if (ImGui::IsKeyPressed(ImGuiKey_S,false)) { m_Session.EndUIEdit(m_Session.GetSelection()); m_Actions|=1; }
   }
-  if (editingPanels && !io.WantTextInput && (m_Hierarchy.IsHierarchyFocused() || m_ViewportHovered)) {
+  if (editingPanels && !io.WantTextInput && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId)
+    && !m_GizmoActive && !m_ViewportState.UIRectDragActive && !m_ViewportState.ColliderTransactionActive
+    && (m_Hierarchy.IsHierarchyFocused() || m_Hierarchy.IsInspectorFocused() || m_ViewportHovered)) {
     if(!io.KeyCtrl && !io.KeyAlt) {
+      if(m_ViewportHovered && !m_GizmoActive && ImGui::IsKeyPressed(ImGuiKey_2,false)) { m_Is2DMode=!m_Is2DMode; m_Camera.Set2DMode(m_Is2DMode); }
       if(ImGui::IsKeyPressed(ImGuiKey_F,false)) m_Viewport.FrameSceneEntity(m_Hierarchy.GetSelectedEntity());
       if(ImGui::IsKeyPressed(ImGuiKey_Q,false)) m_GizmoType=-1;
       if(ImGui::IsKeyPressed(ImGuiKey_W,false)) m_GizmoType=ImGuizmo::TRANSLATE;
@@ -371,6 +392,10 @@ void WebEditorUI::OnImGuiRender() {
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Delete,false)) m_Hierarchy.HandleShortcut(261,false);
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D,false)) m_Hierarchy.HandleShortcut(68,true);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_X,false)) m_Hierarchy.HandleShortcut(88,true);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C,false)) m_Hierarchy.HandleShortcut(67,true);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V,false)) m_Hierarchy.HandleShortcut(86,true);
+    if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F2,false)) m_Hierarchy.HandleShortcut(291,false);
   }
 }
 }
