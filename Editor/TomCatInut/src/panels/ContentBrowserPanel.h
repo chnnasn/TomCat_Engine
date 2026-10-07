@@ -31,6 +31,7 @@ namespace TomCat {
 		void SetProject(Ref<Project> project);
 		// Embedded hosts may own persistence/import and expose browsing only.
 		void SetAssetMutationsEnabled(bool enabled) { m_AssetMutationsEnabled = enabled; }
+		void SetAssetDeletionEnabled(bool enabled) { m_AssetDeletionEnabled = enabled; }
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
 		void SetActiveScenePath(const std::filesystem::path& path);
 		// Saves non-layout navigation state to project-local UserSettings/editor.json.
@@ -142,6 +143,7 @@ namespace TomCat {
 		Ref<Project> m_Project;
 		bool m_ProjectStateWritable = true;
 		bool m_AssetMutationsEnabled = true;
+		bool m_AssetDeletionEnabled = false;
 		std::filesystem::path m_ExternalScriptEditor;
 		bool m_Focused = false;
 		struct FileDropTarget { std::array<float, 4> Bounds; std::filesystem::path Directory; };
