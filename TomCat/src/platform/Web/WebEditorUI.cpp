@@ -55,6 +55,12 @@ void WebEditorUI::OnAttach() {
   m_Content.SetAssetMutationsEnabled(false);
   m_Content.SetAssetDeletionEnabled(true);
   m_Content.SetAssetDeletedCallback([this](const std::filesystem::path&) { m_Actions |= 8u; });
+  AssetManager::Get().SetLiveReferenceProvider([this](AssetHandle handle) {
+    auto scene = m_Session.GetScene();
+    auto references = scene ? scene->FindAssetReferences(handle) : std::vector<AssetReference>{};
+    for (auto& reference : references) reference.FilePath = "<Current Web Scene>";
+    return references;
+  });
   m_Hierarchy.SetPrefabCreationAllowed(false);
   m_Hierarchy.SetColliderGizmosEnabled(true);
   // Script components belong to the native Inspector, including removal and
@@ -97,7 +103,7 @@ void WebEditorUI::OnAttach() {
   m_Settings.m_OnChanged = [this] { m_Hierarchy.SetProject(m_Project); };
   m_Console.Push(ConsoleMessageSeverity::Info,"Desktop Hierarchy, Inspector, Project and Console panels loaded.","Web Editor");
 }
-void WebEditorUI::OnDetach() { m_Session.StopPreview(); }
+void WebEditorUI::OnDetach() { AssetManager::Get().SetLiveReferenceProvider({}); m_Session.StopPreview(); }
 void WebEditorUI::SyncContext() {
   if (m_Project != m_Session.GetProject()) {
     m_Project = m_Session.GetProject(); m_Hierarchy.SetProject(m_Project); m_Content.SetProject(m_Project);

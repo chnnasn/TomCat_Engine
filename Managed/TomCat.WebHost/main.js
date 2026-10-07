@@ -8,6 +8,19 @@ const runtime = await dotnet.withModuleConfig({ canvas }).create();
 // The .NET host and Emscripten native module share this object, but the native
 // factory may materialize it after the builder configuration has been merged.
 runtime.Module.canvas = canvas;
+// The bundled .NET 10 Emscripten MEMFS rename can leave the overwritten node
+// in FS's lookup hash. A later rename/delete then exposes the old sidecar again.
+// Invalidate that displaced node only after a successful atomic replacement.
+const fs = runtime.Module.FS;
+const rename = fs.rename;
+fs.rename = function (source, destination) {
+    let displaced;
+    try { displaced = fs.lookupPath(destination).node; } catch { /* Destination may not exist. */ }
+    const result = rename.call(fs, source, destination);
+    if (displaced && fs.lookupPath(destination).node !== displaced)
+        fs.destroyNode(displaced);
+    return result;
+};
 const config = runtime.getConfig();
 const exports = await runtime.getAssemblyExports(config.mainAssemblyName);
 const exitCode = await runtime.runMain();
