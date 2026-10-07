@@ -1404,7 +1404,12 @@ namespace TomCat {
 			if (ImGui::MenuItem("Open", nullptr, false, isDirectory))
 				OpenAsset(target, true);
 			ImGui::Separator();
-			ImGui::MenuItem("Read Only", nullptr, false, false);
+			std::filesystem::path managedPath;
+			const bool canDelete = m_AssetDeletionEnabled && !isRoot
+				&& GetManagedMutationPath(GetAssetRoot(), target, managedPath);
+			if (canDelete) {
+				if (ImGui::MenuItem("Delete")) RequestDeleteAsset(managedPath, isDirectory);
+			} else ImGui::MenuItem("Read Only", nullptr, false, false);
 			return;
 		}
 		if (ImGui::BeginMenu("Create"))

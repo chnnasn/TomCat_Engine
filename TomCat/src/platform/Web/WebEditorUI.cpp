@@ -53,6 +53,8 @@ void WebEditorUI::OnAttach() {
   m_EditorIcons = CreateRef<EditorIconSet>(); m_EditorIcons->Load();
   m_Hierarchy.SetIcons(m_EditorIcons); m_Content.SetIcons(m_EditorIcons);
   m_Content.SetAssetMutationsEnabled(false);
+  m_Content.SetAssetDeletionEnabled(true);
+  m_Content.SetAssetDeletedCallback([this](const std::filesystem::path&) { m_Actions |= 8u; });
   m_Hierarchy.SetPrefabCreationAllowed(false);
   m_Hierarchy.SetColliderGizmosEnabled(true);
   // Script components belong to the native Inspector, including removal and
