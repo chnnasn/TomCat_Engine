@@ -2594,7 +2594,9 @@ namespace TomCat {
 		ImGui::TreeNodeEx("##File", flags, "     %s", AssetDisplayName(path, false).c_str());
 		Ref<Texture2D> icon = ImGui::IsItemVisible() ? GetAssetIcon(path, false) : Ref<Texture2D>{};
 		DrawTreeIcon(icon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-		if (ImGui::IsItemClicked())
+		// Commit selection on release so a drag keeps the entity Inspector visible.
+		if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)
+			&& !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left))
 		{
 			SelectAssetPath(path);
 			m_UserSelectedDirectory = true;
@@ -2734,7 +2736,9 @@ namespace TomCat {
 			ImGui::Button("##MissingAssetIcon", ImVec2(m_ThumbnailSize, m_ThumbnailSize));
 		if (selected)
 			ImGui::PopStyleColor();
-		if (ImGui::IsItemClicked())
+		// Commit selection on release so a drag keeps the entity Inspector visible.
+		if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)
+			&& !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Left))
 		{
 			SelectAssetPath(path);
 			m_UserSelectedDirectory = true;
