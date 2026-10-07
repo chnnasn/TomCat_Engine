@@ -75,7 +75,7 @@ private:
   void FinishViewportEdit();
   bool m_Is2DMode = true, m_SceneOrientationGizmoHovered = false, m_ToolbarBlocked = false;
   glm::vec2 m_SceneOrientationGizmoBounds[2]{};
-  int m_SceneOrientationPressedTarget = -2, m_HoveredPixel = -1;
+  int m_SceneOrientationPressedTarget = -2;
   std::string m_PreviewError;
   bool m_ViewportHovered = false, m_GizmoActive = false;
   bool m_ShowHierarchy = true, m_ShowInspector = true, m_ShowProject = true, m_ShowConsole = true;
