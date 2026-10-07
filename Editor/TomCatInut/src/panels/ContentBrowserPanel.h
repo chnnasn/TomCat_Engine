@@ -59,6 +59,8 @@ namespace TomCat {
 		// Layout uses LocalAppData without a project, otherwise project UserSettings/imgui.ini.
 		void LoadLayoutSetting();
 		void SaveLayoutSetting();
+		LayoutMode GetLayoutMode() const { return m_LayoutMode; }
+		void SetLayoutMode(LayoutMode mode) { m_LayoutMode = mode; }
 
 		// Draws the top-level Assets menu using the same commands and target
 		// semantics as the Project panel context menus. The caller owns BeginMenu.
