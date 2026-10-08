@@ -26,6 +26,7 @@ public:
   void EndUIEdit(uint64_t selection, bool cancel = false);
   std::string HistoryFromUI(bool redo);
   std::string OpenSceneAsset(uint64_t handle);
+  void PersistActiveScene();
   PreviewMode GetPreviewMode() const { return m_PreviewMode; }
   Ref<Scene> GetPreviewScene() const { return m_Preview.GetActiveScene(); }
   void ControlPreview(const std::string& command);
