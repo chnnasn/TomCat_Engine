@@ -7,7 +7,7 @@ using TomCat;
 /// persists progress through the engine save system and ends headless demo
 /// runs so CI can verify the full package loop.
 /// </summary>
-public sealed class GameManager : TomCatBehaviour
+public sealed class GameManager : MonoBehaviour
 {
     private const string SaveSlot = "progress";
     private const uint SaveVersion = 1;
@@ -29,7 +29,7 @@ public sealed class GameManager : TomCatBehaviour
     private double _winElapsed;
     private bool _quitRequested;
 
-    protected override void OnCreate()
+    private void Awake()
     {
         _instance = this;
         _totalCoins = CountCoins();
@@ -41,8 +41,9 @@ public sealed class GameManager : TomCatBehaviour
             + Runs.ToString(CultureInfo.InvariantCulture));
     }
 
-    protected override void OnUpdate(float deltaTime)
+    private void Update()
     {
+        var deltaTime = Time.deltaTime;
         UpdateScoreText();
         if (Application.HasWindow)
             return;
@@ -67,7 +68,7 @@ public sealed class GameManager : TomCatBehaviour
         }
     }
 
-    protected override void OnDestroy()
+    private void OnDestroy()
     {
         // Persist every run, even ones that never finished.
         SaveProgress();

@@ -1466,7 +1466,7 @@ namespace {
 		const std::filesystem::path materialPath =
 			project->GetAssetPath() / "surface.tcmat";
 		WriteBytes(scriptPath,
-			"using TomCat; public sealed class CookClosureProbe : TomCatBehaviour {}\n");
+			"using TomCat; public sealed class CookClosureProbe : MonoBehaviour {}\n");
 		WriteBytes(shaderPath, MakeDependencyShader("cook-dependency-closure"));
 		const std::vector<uint8_t> bitmap = MakeFourByFourBMP();
 		WriteBinary(texturePath, bitmap);

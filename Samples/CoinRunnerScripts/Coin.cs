@@ -4,9 +4,9 @@ using TomCat;
 /// A collectible coin. The circle trigger reports contact with the player;
 /// the coin increments the game score and removes itself.
 /// </summary>
-public sealed class Coin : TomCatBehaviour
+public sealed class Coin : MonoBehaviour
 {
-    protected override void OnTriggerEnter2D(Trigger2D trigger)
+    private void OnTriggerEnter2D(Trigger2D trigger)
     {
         Entity other = trigger.Self.Id == Entity.Id
             ? trigger.Other

@@ -2670,7 +2670,7 @@ namespace {
 			"TOMCAT_LIBRARY_MUST_NOT_BE_COOKED_e98e59f1";
 		WriteTextFile(scriptPath,
 			"using TomCat; // " + sourceMarker
-			+ "\npublic sealed class CookedPlayerProbe : TomCatBehaviour {}\n");
+			+ "\npublic sealed class CookedPlayerProbe : MonoBehaviour {}\n");
 		WriteBinaryFile(iconPath, MakeTestTGA());
 		std::filesystem::create_directories(project->GetAssetPath() / "obj");
 		std::filesystem::create_directories(project->GetAssetPath() / "Library");
@@ -2907,7 +2907,7 @@ namespace {
 			assets.GetCookedManagedPayload();
 		Require(mountedPayload
 			&& mountedPayload->NativeApiVersion == 1
-			&& mountedPayload->ManagedApiVersion == 5
+			&& mountedPayload->ManagedApiVersion == 6
 			&& mountedPayload->ScriptManifestVersion == 1
 			&& mountedPayload->TargetFramework == "net10.0"
 			&& mountedPayload->RuntimeIdentifier == "portable"
@@ -3224,7 +3224,7 @@ namespace {
 		const std::filesystem::path unusedTexturePath =
 			project->GetAssetPath() / "Unused.tga";
 		WriteTextFile(scriptPath,
-			"using TomCat; public sealed class ReferenceProbe : TomCatBehaviour {}\n");
+			"using TomCat; public sealed class ReferenceProbe : MonoBehaviour {}\n");
 		WriteBinaryFile(referencedTexturePath, MakeTestTGA());
 		WriteBinaryFile(entityValueTexturePath, MakeTestTGA());
 		WriteBinaryFile(unusedTexturePath, MakeTestTGA());
@@ -3887,7 +3887,7 @@ namespace {
 		const std::filesystem::path scriptPath =
 			project->GetAssetPath() / "SpawnProbe.cs";
 		WriteTextFile(scriptPath,
-			"using TomCat; public sealed class SpawnProbe : TomCatBehaviour {}\n");
+			"using TomCat; public sealed class SpawnProbe : MonoBehaviour {}\n");
 		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
 		Require(assets.SetProject(project),
 			"could not initialize assets for initial-OnCreate Prefab test");

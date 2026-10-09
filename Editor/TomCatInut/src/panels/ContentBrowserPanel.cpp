@@ -1286,12 +1286,12 @@ namespace TomCat {
 		std::string source;
 		source.reserve(256);
 		source += "using TomCat;\n\n";
-		source += "public sealed class " + className + " : TomCatBehaviour\n";
+		source += "public sealed class " + className + " : MonoBehaviour\n";
 		source += "{\n";
-		source += "    protected override void OnCreate()\n";
+		source += "    private void Awake()\n";
 		source += "    {\n";
 		source += "    }\n\n";
-		source += "    protected override void OnUpdate(float deltaTime)\n";
+		source += "    private void Update()\n";
 		source += "    {\n";
 		source += "    }\n";
 		source += "}\n";
