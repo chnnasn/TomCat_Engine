@@ -4,6 +4,7 @@
 #include "TomCat/Scene/SceneManager.h"
 #include "TomCat/Project/PlayerSettings.h"
 #include <string>
+#include <filesystem>
 #include <span>
 #include <vector>
 
@@ -25,7 +26,9 @@ public:
   bool HasUIEdit() const { return m_History.HasActiveTransaction(); }
   void EndUIEdit(uint64_t selection, bool cancel = false);
   std::string HistoryFromUI(bool redo);
-  std::string OpenSceneAsset(uint64_t handle);
+  std::string OpenSceneAsset(uint64_t handle, bool discardDetached = false);
+  std::filesystem::path ActiveScenePath() const;
+  void SyncSceneAssetName();
   void PersistActiveScene();
   PreviewMode GetPreviewMode() const { return m_PreviewMode; }
   Ref<Scene> GetPreviewScene() const { return m_Preview.GetActiveScene(); }
@@ -35,7 +38,7 @@ public:
   bool SetManagedAssembly(std::span<const uint8_t> assembly,
     std::span<const uint8_t> pdb, std::string& error);
 private:
-  std::string Snapshot() const;
+  std::string Snapshot();
   bool SettingsDirty() const;
   ProjectSettings m_SavedSettings;
   PlayerSettings m_SavedPlayerSettings;
