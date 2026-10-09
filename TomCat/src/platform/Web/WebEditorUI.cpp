@@ -68,6 +68,9 @@ void WebEditorUI::OnAttach() {
   // Script components belong to the native Inspector, including removal and
   // asset drag/drop before managed field metadata has been loaded.
   m_Hierarchy.SetScriptEditingEnabled(true);
+  m_Hierarchy.SetScriptMetadataProvider([this](AssetHandle handle) { return m_ScriptMetadata.Find(handle); });
+  m_Hierarchy.SetScriptMetadataRevisionProvider([this] { return m_ScriptMetadata.GetRevision(); });
+  m_Content.SetScriptMetadataProvider([this](AssetHandle handle) { return m_ScriptMetadata.Find(handle); });
   m_Hierarchy.SetSceneModifiedCallback([this](SceneHierarchyPanel::SceneModificationPhase phase) {
     using Phase = SceneHierarchyPanel::SceneModificationPhase;
     const auto selected = m_Hierarchy.GetSelectedEntity();
@@ -110,6 +113,12 @@ void WebEditorUI::OnAttach() {
 }
 void WebEditorUI::OnDetach() { AssetManager::Get().SetLiveReferenceProvider({}); m_Session.StopPreview(); }
 void WebEditorUI::SyncContext() {
+  if (m_ScriptMetadataGeneration != m_Session.GetScriptMetadataRevision()) {
+    m_ScriptMetadataGeneration = m_Session.GetScriptMetadataRevision();
+    std::string error;
+    if (!m_ScriptMetadata.ParseAndReplace(m_Session.GetScriptManifest(),error))
+      m_Console.Push(ConsoleMessageSeverity::Error,error,"C# metadata");
+  }
   m_Session.SyncSceneAssetName();
   if (m_Project != m_Session.GetProject()) {
     m_Project = m_Session.GetProject(); m_Hierarchy.SetProject(m_Project); m_Content.SetProject(m_Project);

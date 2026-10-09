@@ -8,6 +8,7 @@
 #include "panels/ConsolePanel.h"
 #include "panels/ProfilerPanel.h"
 #include "WebProjectSettingsPanel.h"
+#include "Scripting/ScriptMetadataCache.h"
 #include "EditorViewportHandles.h"
 #include <imgui.h>
 #include <cstdint>
@@ -39,6 +40,8 @@ private:
   void DrawToolbar();
   void Preview(const char* command);
   WebEditorSession& m_Session;
+  ScriptMetadataCache m_ScriptMetadata;
+  uint64_t m_ScriptMetadataGeneration = 0;
   SceneHierarchyPanel m_Hierarchy;
   ContentBrowserPanel m_Content;
   ConsolePanel m_Console;
