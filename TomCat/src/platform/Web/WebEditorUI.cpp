@@ -80,6 +80,9 @@ void WebEditorUI::OnAttach() {
     if (phase == Phase::Cancel) m_Session.EndUIEdit(id,true);
   });
   const auto openScene = [this](AssetHandle handle) {
+    if (m_Session.ActiveScenePath().empty()) {
+      m_PendingSceneOpen = uint64_t(handle); m_ConfirmSceneOpen = true; return;
+    }
     try {
       const auto result = m_Session.OpenSceneAsset(handle);
       if (result.find("\"ok\":false") != std::string::npos) m_Console.Push(ConsoleMessageSeverity::Error,result,"Scene");
@@ -107,11 +110,13 @@ void WebEditorUI::OnAttach() {
 }
 void WebEditorUI::OnDetach() { AssetManager::Get().SetLiveReferenceProvider({}); m_Session.StopPreview(); }
 void WebEditorUI::SyncContext() {
+  m_Session.SyncSceneAssetName();
   if (m_Project != m_Session.GetProject()) {
     m_Project = m_Session.GetProject(); m_Hierarchy.SetProject(m_Project); m_Content.SetProject(m_Project);
     m_Is2DMode=!m_Project || m_Project->GetConfig().Template=="2D";
     m_Camera.Set2DMode(m_Is2DMode);
   }
+  m_Content.SetActiveScenePath(m_Session.ActiveScenePath());
   const auto active = m_Session.GetPreviewScene() ? m_Session.GetPreviewScene() : m_Session.GetScene();
   if (m_Context != active) {
     FinishViewportEdit();
@@ -320,6 +325,19 @@ void WebEditorUI::DrawGame() {
 }
 void WebEditorUI::OnImGuiRender() {
   SyncContext();
+  if (m_ConfirmSceneOpen) { ImGui::OpenPopup("Open another scene?"); m_ConfirmSceneOpen = false; }
+  if (ImGui::BeginPopupModal("Open another scene?",nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("The current scene has no file in Assets.");
+    ImGui::TextUnformatted("Opening another scene will discard its in-memory content.");
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::SameLine();
+    if (ImGui::Button("Discard and open")) {
+      try { m_Session.OpenSceneAsset(m_PendingSceneOpen,true); m_Actions |= 8u; }
+      catch (const std::exception& error) { m_Console.Push(ConsoleMessageSeverity::Error,error.what(),"Scene"); }
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
   const bool editing=m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Edit;
   if (ImGui::BeginMainMenuBar()) {
     if (ImGui::BeginMenu("File")) {
