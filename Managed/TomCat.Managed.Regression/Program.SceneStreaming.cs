@@ -50,9 +50,9 @@ internal static unsafe partial class Program
         probe.__Create();
     }
 
-    private sealed class SceneStreamingProbe : TomCatBehaviour
+    private sealed class SceneStreamingProbe : MonoBehaviour
     {
-        protected override void OnCreate()
+        private void Awake()
         {
             Check(SceneManager.LoadSceneAsync(new SceneAsset(8201), SceneLoadMode.Additive), "async scene handle request");
             Equal((8201UL, -1, 1U, 1), s_sceneRequest, "async Scene mode and handle marshalling");

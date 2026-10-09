@@ -3,21 +3,21 @@ using TomCat;
 namespace Game;
 
 [DefaultExecutionOrder(100)]
-public sealed class FaultyBehaviour : TomCatBehaviour
+public sealed class FaultyBehaviour : MonoBehaviour
 {
     public int Creates;
     public int Enables;
     public int Updates;
     public int Destroys;
 
-    protected override void OnCreate() => Creates++;
-    protected override void OnEnable() => Enables++;
+    private void Awake() => Creates++;
+    private void OnEnable() => Enables++;
 
-    protected override void OnUpdate(float deltaTime)
-    {
+    private void Update()
+    { var deltaTime = Time.deltaTime;
         Updates++;
         throw new InvalidOperationException("fixture failure");
     }
 
-    protected override void OnDestroy() => Destroys++;
+    private void OnDestroy() => Destroys++;
 }

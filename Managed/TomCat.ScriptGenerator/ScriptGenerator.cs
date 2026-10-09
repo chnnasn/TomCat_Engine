@@ -13,7 +13,7 @@ namespace TomCat.ScriptGenerator;
 [Generator(LanguageNames.CSharp)]
 public sealed partial class ScriptGenerator : IIncrementalGenerator
 {
-    private const string BehaviourMetadataName = "TomCat.TomCatBehaviour";
+    private const string BehaviourMetadataName = "TomCat.MonoBehaviour";
 
     private static readonly DiagnosticDescriptor MissingAssets = Error("TCG001",
         "ScriptAssets.json is missing",
@@ -21,9 +21,9 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor InvalidAssets = Error("TCG002",
         "ScriptAssets.json is invalid", "ScriptAssets.json is invalid: {0}");
     private static readonly DiagnosticDescriptor UnmappedScript = Error("TCG003",
-        "Script has no AssetHandle", "TomCatBehaviour '{0}' is not mapped in ScriptAssets.json");
+        "Script has no AssetHandle", "MonoBehaviour '{0}' is not mapped in ScriptAssets.json");
     private static readonly DiagnosticDescriptor MultipleScripts = Error("TCG004",
-        "Only one script is allowed per file", "Source file '{0}' contains {1} TomCatBehaviour types");
+        "Only one script is allowed per file", "Source file '{0}' contains {1} MonoBehaviour types");
     private static readonly DiagnosticDescriptor FileNameMismatch = Error("TCG005",
         "Script file and class names differ", "Script class '{0}' must be declared in '{0}.cs'");
     private static readonly DiagnosticDescriptor InvalidScriptType = Error("TCG006",
@@ -34,7 +34,7 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor UnsupportedField = Error("TCG008",
         "Serialized field type is unsupported", "Serialized field '{0}.{1}' has unsupported type '{2}'");
     private static readonly DiagnosticDescriptor DuplicateAsset = Error("TCG009",
-        "Duplicate script AssetHandle", "AssetHandle {0} maps to more than one TomCatBehaviour");
+        "Duplicate script AssetHandle", "AssetHandle {0} maps to more than one MonoBehaviour");
     private static readonly DiagnosticDescriptor UnsupportedAssetMarker = Error("TCG010",
         "AssetRef marker type is unsupported",
         "Serialized field '{0}.{1}' uses unsupported AssetRef marker '{2}'; use a built-in TomCat asset marker");
@@ -154,7 +154,7 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
                 TypeName = script.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                 ExecutionOrder = ReadExecutionOrder(script),
                 DisallowMultiple = HasAttribute(script, "TomCat.DisallowMultipleComponentAttribute"),
-                Lifecycle = ReadLifecycle(script),
+                Lifecycle = ReadLifecycle(script, context),
                 Methods = BuildEventMethods(script),
                 Fields = fields
             });
@@ -295,14 +295,14 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
             return true;
         }
 
-        string metadataName = type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
+        string metadataName = type.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
         token = metadataName switch
         {
             "TomCat.Vector2" => "Vector2",
             "TomCat.Vector3" => "Vector3",
             "TomCat.Vector4" => "Vector4",
             "TomCat.Color" => "Color",
-            "TomCat.Entity" => "Entity",
+            "TomCat.Entity" or "TomCat.GameObject" => "Entity",
 			"TomCat.SceneAsset" => "AssetRef",
 			"TomCat.PrefabAsset" => "AssetRef",
             _ => string.Empty
@@ -344,21 +344,33 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
         "TomCat.SceneAsset" or
         "TomCat.PrefabAsset";
 
-    private static uint ReadLifecycle(INamedTypeSymbol script)
+    private static uint ReadLifecycle(INamedTypeSymbol script, SourceProductionContext context)
     {
         uint result = 0;
         (string Name, uint Flag)[] callbacks =
         [
-            ("OnCreate", 1u << 0), ("OnEnable", 1u << 1), ("OnUpdate", 1u << 2),
-            ("OnFixedUpdate", 1u << 3), ("OnCollisionEnter2D", 1u << 4),
+            ("Awake", 1u << 0), ("OnEnable", 1u << 1), ("Update", 1u << 2),
+            ("FixedUpdate", 1u << 3), ("OnCollisionEnter2D", 1u << 4),
             ("OnCollisionExit2D", 1u << 5), ("OnTriggerEnter2D", 1u << 6),
             ("OnTriggerExit2D", 1u << 7), ("OnDisable", 1u << 8), ("OnDestroy", 1u << 9),
-            ("OnLateUpdate", 1u << 10)
+            ("LateUpdate", 1u << 10), ("Start", 1u << 11)
         ];
         foreach ((string name, uint flag) in callbacks)
         {
-            if (script.GetMembers(name).OfType<IMethodSymbol>().Any(static method => method.IsOverride))
-                result |= flag;
+            for (INamedTypeSymbol? type = script; type is not null && type.ToDisplayString() != BehaviourMetadataName; type = type.BaseType)
+            {
+                int count = name.StartsWith("OnCollision", StringComparison.Ordinal) || name.StartsWith("OnTrigger", StringComparison.Ordinal) ? 1 : 0;
+                string? argument = name.StartsWith("OnCollision", StringComparison.Ordinal) ? "TomCat.Collision2D" : name.StartsWith("OnTrigger", StringComparison.Ordinal) ? "TomCat.Trigger2D" : null;
+                var methods = type.GetMembers(name).OfType<IMethodSymbol>().ToArray();
+                bool Valid(IMethodSymbol method) => !method.IsStatic && !method.IsAsync && method.ReturnsVoid && !method.IsGenericMethod && method.Parameters.Length == count && (count == 0 || (method.Parameters[0].RefKind == RefKind.None && method.Parameters[0].Type.ToDisplayString() == argument));
+                foreach (var method in methods.Where(method => !Valid(method)))
+                    context.ReportDiagnostic(Diagnostic.Create(Error("TCG011", "Invalid lifecycle message", "Lifecycle message '{0}' must be a synchronous non-static void method with {1}; use Tasks.Run for asynchronous work"), method.Locations.FirstOrDefault(), name, count == 0 ? "no parameters" : "one " + argument + " parameter"));
+                if (methods.Any(Valid))
+                {
+                    result |= flag;
+                    break;
+                }
+            }
         }
         return result;
     }

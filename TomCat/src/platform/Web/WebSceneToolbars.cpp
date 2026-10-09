@@ -86,7 +86,7 @@ bool WebEditorUI::ApplyLayoutSettings(const std::string& settings) {
   const char* maskStart = settings.data() + sectionEnd + 1;
   const char* maskLimit = settings.data() + maskEnd;
   const auto parsedMask = std::from_chars(maskStart, maskLimit, mask);
-  if (parsedMask.ec != std::errc{} || parsedMask.ptr != maskLimit || (mask & ~2047u))
+  if (parsedMask.ec != std::errc{} || parsedMask.ptr != maskLimit || (mask & ~4095u))
     return false;
 
   // A blob that carries only the engine section would make ImGui drop the default dock

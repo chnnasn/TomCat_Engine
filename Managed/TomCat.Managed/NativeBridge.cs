@@ -682,7 +682,7 @@ internal static unsafe partial class NativeBridge
 				"WrongThread: TomCat engine APIs may only be used from the main thread.");
 		if (requireLifecycleContext && !ScriptExecutionContext.IsActive)
 			throw new TomCatException(
-				"TomCat engine APIs cannot be used from a script constructor or field initializer. Use OnCreate or another lifecycle callback.");
+				"TomCat engine APIs cannot be used from a script constructor or field initializer. Use Awake or another lifecycle callback.");
     }
 
     internal static NativeEntityHandleV1 ToNative(Entity entity) =>
@@ -2422,31 +2422,31 @@ internal static unsafe partial class NativeBridge
     internal static bool GetBehaviourEnabled(ScriptInstanceHandle instance)
     {
         EnsureMainThread();
-        Require(s_api.BehaviourGetEnabled != null, "TomCatBehaviour.Enabled");
-        return ReadBoolean(s_api.BehaviourGetEnabled(instance.Value), "TomCatBehaviour.Enabled");
+        Require(s_api.BehaviourGetEnabled != null, "MonoBehaviour.Enabled");
+        return ReadBoolean(s_api.BehaviourGetEnabled(instance.Value), "MonoBehaviour.Enabled");
     }
 
 	internal static void SetBehaviourEnabled(ScriptInstanceHandle instance, bool enabled)
     {
         EnsureMainThread();
-        Require(s_api.BehaviourSetEnabledDeferred != null, "TomCatBehaviour.Enabled");
+        Require(s_api.BehaviourSetEnabledDeferred != null, "MonoBehaviour.Enabled");
 		int status = s_api.BehaviourSetEnabledDeferred(instance.Value,
 			enabled ? 1 : 0);
 		if (status != 0 && ScriptExecutionContext.IsActive)
 			AbortDeferredCommandBatch(ScriptExecutionContext.CurrentEntity,
-				"TomCatBehaviour.Enabled mutation was rejected");
-		Check(status, "TomCatBehaviour.Enabled");
+				"MonoBehaviour.Enabled mutation was rejected");
+		Check(status, "MonoBehaviour.Enabled");
 	}
 
 	internal static void RemoveBehaviour(ScriptInstanceHandle instance)
 	{
 		EnsureMainThread();
-		Require(s_api.BehaviourRemoveDeferred != null, "TomCatBehaviour.RemoveFromEntity");
+		Require(s_api.BehaviourRemoveDeferred != null, "MonoBehaviour.RemoveFromEntity");
 		int status = s_api.BehaviourRemoveDeferred(instance.Value);
 		if (status != 0 && ScriptExecutionContext.IsActive)
 			AbortDeferredCommandBatch(ScriptExecutionContext.CurrentEntity,
-				"TomCatBehaviour.RemoveFromEntity mutation was rejected");
-		Check(status, "TomCatBehaviour.RemoveFromEntity");
+				"MonoBehaviour.RemoveFromEntity mutation was rejected");
+		Check(status, "MonoBehaviour.RemoveFromEntity");
 	}
 
 	internal static ulong GetActiveSceneHandle()
@@ -2497,7 +2497,7 @@ internal static unsafe partial class NativeBridge
 	{
 		EnsureMainThread();
 		Require(s_api.PrefabInstantiateDeferred != null,
-			"TomCatBehaviour.Instantiate");
+			"MonoBehaviour.Instantiate");
 		if (prefab.Handle == 0)
 		{
 			AbortDeferredCommandBatch(context,
@@ -2508,7 +2508,7 @@ internal static unsafe partial class NativeBridge
 			? default : ToNative(parent);
 		return ReadBoolean(s_api.PrefabInstantiateDeferred(ToNative(context),
 			prefab.Handle, ToNative(worldPosition), parentHandle),
-			"TomCatBehaviour.Instantiate");
+			"MonoBehaviour.Instantiate");
 	}
 
     internal static void WriteLog(int level, string message)

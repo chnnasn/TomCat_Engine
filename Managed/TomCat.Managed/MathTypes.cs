@@ -10,6 +10,14 @@ public struct Vector2 : IEquatable<Vector2>
 
     public Vector2(float x, float y) => (X, Y) = (x, y);
 
+    public float x { readonly get => X; set => X = value; }
+    public float y { readonly get => Y; set => Y = value; }
+    public static Vector2 zero => Zero;
+    public static Vector2 one => One;
+    public static Vector2 right => new(1, 0);
+    public static Vector2 left => new(-1, 0);
+    public static Vector2 up => new(0, 1);
+    public static Vector2 down => new(0, -1);
     public static Vector2 Zero => default;
     public static Vector2 One => new(1.0f, 1.0f);
     public static Vector2 operator +(Vector2 left, Vector2 right) => new(left.X + right.X, left.Y + right.Y);
@@ -29,6 +37,17 @@ public struct Vector3 : IEquatable<Vector3>
 
     public Vector3(float x, float y, float z) => (X, Y, Z) = (x, y, z);
 
+    public float x { readonly get => X; set => X = value; }
+    public float y { readonly get => Y; set => Y = value; }
+    public float z { readonly get => Z; set => Z = value; }
+    public static Vector3 zero => Zero;
+    public static Vector3 one => One;
+    public static Vector3 right => new(1, 0, 0);
+    public static Vector3 left => new(-1, 0, 0);
+    public static Vector3 up => new(0, 1, 0);
+    public static Vector3 down => new(0, -1, 0);
+    public static Vector3 forward => new(0, 0, 1);
+    public static Vector3 back => new(0, 0, -1);
     public static Vector3 Zero => default;
     public static Vector3 One => new(1.0f, 1.0f, 1.0f);
     public static Vector3 operator +(Vector3 left, Vector3 right) => new(left.X + right.X, left.Y + right.Y, left.Z + right.Z);
@@ -50,6 +69,12 @@ public struct Vector4 : IEquatable<Vector4>
 
     public Vector4(float x, float y, float z, float w) => (X, Y, Z, W) = (x, y, z, w);
 
+    public float x { readonly get => X; set => X = value; }
+    public float y { readonly get => Y; set => Y = value; }
+    public float z { readonly get => Z; set => Z = value; }
+    public float w { readonly get => W; set => W = value; }
+    public static Vector4 zero => Zero;
+    public static Vector4 one => One;
     public static Vector4 Zero => default;
     public static Vector4 One => new(1.0f, 1.0f, 1.0f, 1.0f);
     public readonly bool Equals(Vector4 other) => X.Equals(other.X) && Y.Equals(other.Y) && Z.Equals(other.Z) && W.Equals(other.W);
@@ -68,6 +93,12 @@ public struct Color : IEquatable<Color>
 
     public Color(float r, float g, float b, float a = 1.0f) => (R, G, B, A) = (r, g, b, a);
 
+    public float r { readonly get => R; set => R = value; }
+    public float g { readonly get => G; set => G = value; }
+    public float b { readonly get => B; set => B = value; }
+    public float a { readonly get => A; set => A = value; }
+    public static Color white => White;
+    public static Color black => Black;
     public static Color White => new(1.0f, 1.0f, 1.0f, 1.0f);
     public static Color Black => new(0.0f, 0.0f, 0.0f, 1.0f);
     public readonly bool Equals(Color other) => R.Equals(other.R) && G.Equals(other.G) && B.Equals(other.B) && A.Equals(other.A);

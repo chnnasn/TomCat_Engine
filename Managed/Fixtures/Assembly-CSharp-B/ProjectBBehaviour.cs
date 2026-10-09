@@ -2,12 +2,12 @@ using TomCat;
 
 namespace GameB;
 
-public sealed class ProjectBBehaviour : TomCatBehaviour
+public sealed class ProjectBBehaviour : MonoBehaviour
 {
 	private static int s_staticCreates;
 
 	public int ObservedStaticCreateSequence;
 
-	protected override void OnCreate() =>
+	private void Awake() =>
 		ObservedStaticCreateSequence = ++s_staticCreates;
 }

@@ -218,7 +218,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		// after moving the public proxy to a class for natural chained setters.
 		foreach (FieldDescriptor descriptor in instance.Descriptor.FieldsById.Values)
 		{
-			if (descriptor.Manifest.Type == ScriptFieldType.Entity &&
+			if (descriptor.Manifest.Type == ScriptFieldType.Entity && descriptor.Field.FieldType == typeof(Entity) &&
 				descriptor.Field.GetValue(instance.Behaviour) is null)
 			{
 				descriptor.Field.SetValue(instance.Behaviour,
@@ -319,7 +319,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 			{
 				if (instance.State == ScriptInstanceState.Ready)
 				{
-					Invoke(instance, "OnCreate",
+					Invoke(instance, "Awake",
 						static behaviour => behaviour.__Create());
 					instance.Created = instance.State == ScriptInstanceState.Ready;
 				}
@@ -330,7 +330,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 			--_deferLifecycleConvergenceDepth;
 		}
 
-		// All OnCreate callbacks finish before any initial OnEnable. Per-callback
+		// All Awake callbacks finish before any initial OnEnable. Per-callback
 		// transactions are already authoritative here, so one convergence pass can
 		// reconcile both new and existing instances. A legacy host retains the
 		// projected batch view until its phase-level acknowledgement.
@@ -385,6 +385,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
     {
         ValidateDispatch(deltaTime, nameof(deltaTime));
 		TimeRuntime.BeginFrame(deltaTime);
+        PumpTasks(false);
 		if (_instances.Count != 0)
 		{
 			using var inputScope = ScriptExecutionContext.Enter(
@@ -392,9 +393,9 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 			InputActionRuntime.UpdateEnabled(_domainCancellation,
 				InputActionUpdatePhase.DisplayFrame, InvokeInputActionCallback);
 		}
-		DispatchActiveCallbacks("OnUpdate",
+		DispatchActiveCallbacks("Update",
 			behaviour => behaviour.__Update(deltaTime));
-		DispatchActiveCallbacks("OnLateUpdate",
+		DispatchActiveCallbacks("LateUpdate",
 			behaviour => behaviour.__LateUpdate(deltaTime));
         FlushDeferredChanges();
     }
@@ -405,6 +406,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		TimeRuntime.BeginFixedStep(fixedDeltaTime);
 		try
 		{
+			PumpTasks(true);
 			// Native code enters the scene's fixed-input scope before this call.
 			// Evaluate actions now so the first substep sees accumulated edges and
 			// catch-up substeps see the same held state without replaying them.
@@ -415,7 +417,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 				InputActionRuntime.UpdateEnabled(_domainCancellation,
 					InputActionUpdatePhase.FixedStep);
 			}
-			DispatchActiveCallbacks("OnFixedUpdate",
+			DispatchActiveCallbacks("FixedUpdate",
 				behaviour => behaviour.__FixedUpdate(fixedDeltaTime));
 			FlushDeferredChanges();
 		}
@@ -423,6 +425,26 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		{
 			TimeRuntime.EndFixedStep();
 		}
+    }
+
+    private int _taskCursor;
+    private void PumpTasks(bool fixedStep)
+    {
+        var instances = _instances.ToArray();
+        if (instances.Length == 0) return;
+        int budget = 256;
+        int start = _taskCursor % instances.Length;
+        for (int offset = 0; offset < instances.Length && budget > 0; ++offset)
+        {
+            int index = (start + offset) % instances.Length;
+            var instance = instances[index];
+            _taskCursor = (index + 1) % instances.Length;
+            if (!instance.Created || instance.Behaviour is null || instance.Destroying ||
+                instance.State != ScriptInstanceState.Ready) continue;
+            budget -= instance.Behaviour.__PumpTasks(fixedStep, continuation =>
+                Invoke(instance, "Task", behaviour => behaviour.__TaskContinuation(continuation)),
+                Math.Min(64, budget));
+        }
     }
 
     public void DispatchPhysicsEvents(IEnumerable<ScriptPhysicsEvent> events)
@@ -641,7 +663,9 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
             ScriptFieldType.Vector4 => ReadVector4(value),
             ScriptFieldType.Color => ReadColor(value),
 			ScriptFieldType.Enum => ReadEnum(descriptor.Field.FieldType, value.GetInt64()),
-            ScriptFieldType.Entity => new Entity(SceneSessionId, value.GetUInt64(), RuntimeGeneration),
+            ScriptFieldType.Entity => descriptor.Field.FieldType == typeof(GameObject)
+                ? (value.GetUInt64() == 0 ? null : new GameObject(new Entity(SceneSessionId, value.GetUInt64(), RuntimeGeneration)))
+                : new Entity(SceneSessionId, value.GetUInt64(), RuntimeGeneration),
             ScriptFieldType.AssetRef => Activator.CreateInstance(descriptor.Field.FieldType, value.GetUInt64()),
             _ => throw new InvalidDataException($"Unsupported field type {descriptor.Manifest.Type}.")
 		};
@@ -722,14 +746,17 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 	}
 
 	private void DispatchActiveCallbacks(string callback,
-		Action<TomCatBehaviour> dispatch)
+		Action<MonoBehaviour> dispatch)
 	{
-		foreach (ScriptInstance instance in _instances.ToArray())
-		{
-			if (!CanDispatch(instance))
-				continue;
-			Invoke(instance, callback, dispatch);
-		}
+        ScriptInstance[] batch = _instances.ToArray();
+        foreach (ScriptInstance instance in batch)
+        {
+            if (!CanDispatch(instance) || instance.Started) continue;
+            instance.Started = true;
+            Invoke(instance, "Start", static behaviour => behaviour.__Start());
+        }
+        foreach (ScriptInstance instance in batch)
+            if (instance.Started && CanDispatch(instance)) Invoke(instance, callback, dispatch);
 	}
 
 	private void ConvergeLifecycleActivation()
@@ -992,7 +1019,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		return instance.Attachment.Entity.IsValid;
 	}
 
-    private void Invoke(ScriptInstance instance, string callback, Action<TomCatBehaviour> invoke,
+    private void Invoke(ScriptInstance instance, string callback, Action<MonoBehaviour> invoke,
         bool allowFaulted = false)
     {
         if (instance.Behaviour is null || instance.State == ScriptInstanceState.Destroyed ||
@@ -1011,6 +1038,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
 		try
         {
             invoke(instance.Behaviour);
+            instance.Behaviour?.__CheckTasks();
         }
         catch (Exception exception)
         {
@@ -1126,6 +1154,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
     private static void MarkFaulted(ScriptInstance instance, string callback, Exception exception)
     {
         instance.State = ScriptInstanceState.Faulted;
+        instance.Behaviour?.__CancelTasks();
         string message = $"Managed script '{instance.Descriptor.Manifest.TypeName}' on entity " +
             $"{instance.Attachment.Entity.Id}, attachment {instance.Attachment.AttachmentId}, " +
             $"callback {callback} threw {exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}";
@@ -1139,10 +1168,11 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         internal ScriptAttachment Attachment { get; } = attachment;
         internal ScriptDescriptor Descriptor { get; } = descriptor;
         internal int Sequence { get; } = sequence;
-        internal TomCatBehaviour? Behaviour { get; set; }
+        internal MonoBehaviour? Behaviour { get; set; }
         internal bool Enabled { get; set; } = attachment.Enabled;
 		internal bool LifecycleActive { get; set; }
 		internal bool Created { get; set; }
+		internal bool Started { get; set; }
 		internal bool Destroying { get; set; }
 		internal ScriptInstanceState State { get; set; } = ScriptInstanceState.Ready;
     }
