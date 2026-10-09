@@ -17,7 +17,7 @@ internal static unsafe partial class Program
 	private const int ActiveSceneBuildIndex = 2;
 	private const ulong MetadataReceiverSentinel = 0xC0DEC0DE5A17UL;
 	private const string ConstructorGuardMessage =
-		"TomCat engine APIs cannot be used from a script constructor or field initializer. Use OnCreate or another lifecycle callback.";
+		"TomCat engine APIs cannot be used from a script constructor or field initializer. Use Awake or another lifecycle callback.";
 	private const string WrongThreadMessage =
 		"WrongThread: TomCat engine APIs may only be used from the main thread.";
 	private static int s_diagnostics;
@@ -251,7 +251,7 @@ internal static unsafe partial class Program
 			BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 		PropertyInfo? factory = properties.SingleOrDefault(property =>
 			property.Name == nameof(ScriptDescriptor.ConstructorFactory));
-		Check(factory?.PropertyType == typeof(Func<TomCatBehaviour>),
+		Check(factory?.PropertyType == typeof(Func<MonoBehaviour>),
 			"ScriptDescriptor must cache a strongly typed constructor factory");
 		Check(properties.All(property => property.PropertyType != typeof(ConstructorInfo)),
 			"ScriptDescriptor must not retain ConstructorInfo for runtime instantiation");
@@ -349,6 +349,9 @@ internal static unsafe partial class Program
 		Check(rejectedOutput.CreateDomain == null,
 			"a rejected NativeApiV1 table must not partially populate ManagedApiV1");
 
+		VerifyUnityMessages();
+        VerifyScriptTasks();
+        VerifyCoroutines();
 		s_removedAttachment = 0;
 		var removalProbe = new RemovalProbe();
 		removalProbe.__Bind(new Entity(SceneSession, 9, RuntimeGeneration),
@@ -859,11 +862,11 @@ internal static unsafe partial class Program
 		Equal(4, s_requestedSceneIndex, "SceneManager.LoadScene(int) request");
 		Equal(1, s_sceneReloadRequests, "SceneManager.ReloadActiveScene request");
 		Equal(9001UL, s_requestedPrefabHandle,
-			"TomCatBehaviour.Instantiate Prefab handle");
+			"MonoBehaviour.Instantiate Prefab handle");
 		Equal(8UL, s_requestedPrefabParent.EntityId,
-			"TomCatBehaviour.Instantiate parent entity");
+			"MonoBehaviour.Instantiate parent entity");
 		Equal(6.0f, s_requestedPrefabPosition.X,
-			"TomCatBehaviour.Instantiate world position X");
+			"MonoBehaviour.Instantiate world position X");
 		Equal(4, s_componentHasCalls,
 			"registry component generic Has/Get proxy checks");
 		Equal(1, s_componentAddCalls, "registry component Add call");
@@ -947,7 +950,7 @@ internal static unsafe partial class Program
 				JsonElement lifecycle = script.GetProperty("lifecycle");
 				Equal(JsonValueKind.Number, lifecycle.ValueKind,
 					"metadata receiver lifecycle must be a native ABI bitmask");
-				Check(lifecycle.TryGetUInt32(out uint bits) && (bits & ~0x7ffU) == 0,
+				Check(lifecycle.TryGetUInt32(out uint bits) && (bits & ~0xfffU) == 0,
 					"metadata receiver lifecycle contains invalid ABI bits");
 				if (script.GetProperty("typeName").GetString() == "Game.GoodBehaviour")
 				{
@@ -1039,7 +1042,7 @@ internal static unsafe partial class Program
 		Equal(ScriptLifecycle.Create | ScriptLifecycle.Enable |
 			ScriptLifecycle.Update | ScriptLifecycle.FixedUpdate |
 			ScriptLifecycle.CollisionEnter2D | ScriptLifecycle.TriggerExit2D |
-			ScriptLifecycle.Disable | ScriptLifecycle.Destroy | ScriptLifecycle.LateUpdate,
+			ScriptLifecycle.Disable | ScriptLifecycle.Destroy | ScriptLifecycle.LateUpdate | ScriptLifecycle.Start,
 			good.Lifecycle, "lifecycle metadata");
         Check((faulty.Lifecycle & ScriptLifecycle.Update) != 0, "faulty lifecycle metadata");
 		Check(good.Methods.SequenceEqual(["HandleButtonClick", "ThrowButtonClick"]),
@@ -1078,6 +1081,7 @@ internal static unsafe partial class Program
               {"fieldId":"","name":"Mask","type":"Vector4","value":[4.0,5.0,6.0,7.0]},
               {"fieldId":"","name":"Tint","type":"Color","value":[0.1,0.2,0.3,0.4]},
               {"fieldId":"","name":"Target","type":"Entity","value":4},
+              {"fieldId":"","name":"ObjectTarget","type":"Entity","value":4},
               {"fieldId":"","name":"Texture","type":"AssetRef","value":987654321},
               {"fieldId":"","name":"Mode","type":"Enum","value":2},
               {"fieldId":"","name":"WideMode","type":"Enum","value":-2},
@@ -1094,6 +1098,7 @@ internal static unsafe partial class Program
         Equal(new Vector4(4, 5, 6, 7), scene.ReadFieldValue(100, "Mask"), "Vector4 restore");
         Equal(new Color(0.1f, 0.2f, 0.3f, 0.4f), scene.ReadFieldValue(100, "Tint"), "Color restore");
         Equal(other, scene.ReadFieldValue(100, "Target"), "Entity restore");
+        Equal(new GameObject(other), scene.ReadFieldValue(100, "ObjectTarget"), "GameObject restore");
         Equal(987654321UL, ReadUlongProperty(scene.ReadFieldValue(100, "Texture"), "Handle"),
             "AssetRef restore");
 		Equal(2L, Convert.ToInt64(scene.ReadFieldValue(100, "Mode")), "Enum restore");
@@ -1111,7 +1116,7 @@ internal static unsafe partial class Program
 		Equal(2, scene.ReadFieldValue(200, "ObservedStaticCreateSequence"),
 			"second script static state in a fresh Play Domain");
         AssertPrefix(scene.CallbackTrace,
-            "100:OnCreate", "200:OnCreate", "300:OnCreate",
+            "100:Awake", "200:Awake", "300:Awake",
             "100:OnEnable", "200:OnEnable", "300:OnEnable");
 		scene.InvokeMethod(100, "HandleButtonClick");
 		Equal(1, scene.ReadFieldValue(100, "ButtonClicks"),
@@ -1139,10 +1144,10 @@ internal static unsafe partial class Program
 			]}]}
 			""");
 		Equal(33.25f, scene.ReadFieldValue(250, "_speed"),
-			"dynamic attachment field restore before OnCreate");
+			"dynamic attachment field restore before Awake");
 		Equal(3, scene.ReadFieldValue(250, "ObservedStaticCreateSequence"),
-			"dynamic attachment OnCreate sequence");
-		AssertSuffix(scene.CallbackTrace, "250:OnCreate", "250:OnEnable");
+			"dynamic attachment Awake sequence");
+		AssertSuffix(scene.CallbackTrace, "250:Awake", "250:OnEnable");
 		Entity throwingEventEntity = new(SceneSession, 6, RuntimeGeneration);
 		scene.InstantiateAttachments([
 			new ScriptAttachment(throwingEventEntity, 275, 1001, true)
@@ -1171,6 +1176,7 @@ internal static unsafe partial class Program
         Equal(1, scene.ReadFieldValue(300, "Updates"), "faulted instance is quarantined");
         Equal(2, scene.ReadFieldValue(100, "Updates"), "healthy instance continues");
         Equal(2, scene.ReadFieldValue(200, "Updates"), "second healthy instance continues");
+		Equal(1, scene.ReadFieldValue(100, "Starts"), "Start runs once");
 		Equal(2, scene.ReadFieldValue(100, "LateUpdates"), "late update dispatch");
 		Equal(2, scene.ReadFieldValue(200, "LateUpdates"), "late update execution order");
 		Equal(frameBefore + 2, Time.FrameCount, "frame clock advances once per UpdateAll");
@@ -1313,6 +1319,42 @@ internal static unsafe partial class Program
 		Equal(diagnosticsBefore + 1, s_diagnostics,
 			"faulting callback reports one diagnostic");
 		throwingScene.DestroyAll();
+
+        var taskEntity = new Entity(81, 5, 71);
+        var taskScene = domain.CreateSceneRuntime(81, 71);
+        taskScene.InstantiateAll([new ScriptAttachment(taskEntity, 1800, 1001, true)]);
+        taskScene.ApplySerializedFields("""
+            {"attachments":[{"attachmentId":1800,"fields":[
+             {"fieldId":"","name":"QueueNameThenThrowFromTask","type":"Bool","value":true}
+            ]}]}
+            """);
+        taskScene.InvokeCreateAll();
+        ResetAbortBatchCapture();
+        s_entityTextSetterCalls = 0;
+        taskScene.UpdateAll(0.01f);
+        Equal(1, s_entityTextSetterCalls, "task mutation issued before failure");
+        Equal(1, s_abortBatchCalls, "failed task aborts its continuation transaction");
+        AssertAbortBatchContext(taskEntity, "task abort context");
+        Equal(ScriptInstanceState.Faulted, taskScene.GetInstanceState(1800), "failed task quarantines its owner");
+        taskScene.DestroyAll();
+
+        var coroutineEntity = new Entity(82, 5, 72);
+        var coroutineScene = domain.CreateSceneRuntime(82, 72);
+        coroutineScene.InstantiateAll([new ScriptAttachment(coroutineEntity, 1801, 1001, true)]);
+        coroutineScene.ApplySerializedFields("""
+            {"attachments":[{"attachmentId":1801,"fields":[
+             {"fieldId":"","name":"QueueNameThenThrowFromCoroutine","type":"Bool","value":true}
+            ]}]}
+            """);
+        coroutineScene.InvokeCreateAll();
+        ResetAbortBatchCapture();
+        s_entityTextSetterCalls = 0;
+        coroutineScene.UpdateAll(0.01f);
+        Equal(1, s_entityTextSetterCalls, "coroutine mutation issued before failure");
+        Equal(1, s_abortBatchCalls, "failed coroutine aborts its continuation transaction");
+        AssertAbortBatchContext(coroutineEntity, "coroutine abort context");
+        Equal(ScriptInstanceState.Faulted, coroutineScene.GetInstanceState(1801), "failed coroutine quarantines its owner");
+        coroutineScene.DestroyAll();
 
 		const ulong validationSceneSession = 32;
 		const ulong validationGeneration = 28;
@@ -1666,9 +1708,9 @@ internal static unsafe partial class Program
 			Equal(0, scene.ReadFieldValue(972, "UpdateAxisPerformedEvents"),
 				"reentrant disable suppresses later actions in the map");
 			Equal(0, scene.ReadFieldValue(972, "UpdateActionHeldObservations"),
-				"reentrant disable clears display held state before OnUpdate");
+				"reentrant disable clears display held state before Update");
 			Equal(0, scene.ReadFieldValue(972, "UpdateActionPressedObservations"),
-				"reentrant disable clears display press state before OnUpdate");
+				"reentrant disable clears display press state before Update");
 			scene.UpdateAll(1.0f / 144.0f);
 			Equal(1, scene.ReadFieldValue(972, "UpdateActionCanceledEvents"),
 				"disabled map does not replay a reentrant cancellation");
@@ -2505,6 +2547,7 @@ internal static unsafe partial class Program
 		scene.ApplySerializedFields($$"""
 			{"attachments":[{"attachmentId":{{attachmentId}},"fields":[
 			  {"fieldId":"","name":"Count","type":"Int32","value":{{restoredCount}}},
+			  {"fieldId":"","name":"EnableCoroutine","type":"Bool","value":true},
 			  {"fieldId":"","name":"Target","type":"Entity","value":{{target.Id}}}
 			]}]}
 			""");
@@ -2515,7 +2558,7 @@ internal static unsafe partial class Program
 
 		scene.InvokeCreateAll();
 		Equal(1, scene.ReadFieldValue(attachmentId, "Creates"),
-			$"Play Domain cycle {cycleIndex + 1} OnCreate");
+			$"Play Domain cycle {cycleIndex + 1} Awake");
 		Equal(1, scene.ReadFieldValue(attachmentId, "Enables"),
 			$"Play Domain cycle {cycleIndex + 1} OnEnable");
 		Equal(1, scene.ReadFieldValue(attachmentId,
@@ -4791,19 +4834,19 @@ internal static unsafe partial class Program
 		return prefabHandle == 0 ? 0 : 1;
 	}
 
-	private sealed class ConstructorProbe : TomCatBehaviour
+	private sealed class ConstructorProbe : MonoBehaviour
     {
         internal ConstructorProbe() => _ = Entity;
 	}
 
-	private sealed class RemovalProbe : TomCatBehaviour
+	private sealed class RemovalProbe : MonoBehaviour
 	{
-		protected override void OnCreate() => RemoveFromEntity();
+		private void Awake() => RemoveFromEntity();
 	}
 
-	private sealed class NaturalProxySyntaxProbe : TomCatBehaviour
+	private sealed class NaturalProxySyntaxProbe : MonoBehaviour
 	{
-		protected override void OnCreate()
+		private void Awake()
 		{
 			ExtensionProxy extension = Entity.GetComponent<ExtensionProxy>();
 			if (extension.Entity != Entity)
@@ -4967,9 +5010,9 @@ internal static unsafe partial class Program
 		}
 	}
 
-	private sealed class BackgroundThreadApiProbe : TomCatBehaviour
+	private sealed class BackgroundThreadApiProbe : MonoBehaviour
 	{
-		protected override void OnCreate()
+		private void Awake()
 		{
 			AssertWrongThread(() => _ = Entity.IsValid, "Entity.IsValid");
 			AssertWrongThread(() => _ = Input.IsKeyHeld(KeyCode.Space), "Input.IsKeyHeld");
@@ -4980,12 +5023,12 @@ internal static unsafe partial class Program
 		}
 	}
 
-	private sealed class ConstructorInputProbe : TomCatBehaviour
+	private sealed class ConstructorInputProbe : MonoBehaviour
 	{
 		internal ConstructorInputProbe() => _ = Input.IsKeyHeld(KeyCode.Space);
 	}
 
-	private sealed class ExtendedInputProbe : TomCatBehaviour
+	private sealed class ExtendedInputProbe : MonoBehaviour
 	{
 		private InputActionMap _gameplayMap = null!;
 		private InputActionMap _uiMap = null!;
@@ -5007,7 +5050,7 @@ internal static unsafe partial class Program
 		internal int AxisPerformedCount { get; private set; }
 		internal int AxisCanceledCount { get; private set; }
 
-		protected override void OnCreate()
+		private void Awake()
 		{
 			Check(Input.IsWindowFocused, "V2 input focus state");
 			InputEventBatch inputBatch = Input.EventBatch;
@@ -5085,8 +5128,8 @@ internal static unsafe partial class Program
 			_uiMap.Enable();
 		}
 
-		protected override void OnUpdate(float deltaTime)
-		{
+		private void Update()
+		{ var deltaTime = Time.deltaTime;
 			if (RequestRuntimeCaptureTest)
 			{
 				RequestRuntimeCaptureTest = false;
@@ -5119,7 +5162,7 @@ internal static unsafe partial class Program
 				InputActionUpdatePhase.DisplayFrame);
 		}
 
-		protected override void OnDestroy()
+		private void OnDestroy()
 		{
 			_uiMap.Disable();
 			_gameplayMap.Disable();
@@ -5127,11 +5170,11 @@ internal static unsafe partial class Program
 		}
 	}
 
-	private sealed class RuntimeUIProxyProbe : TomCatBehaviour
+	private sealed class RuntimeUIProxyProbe : MonoBehaviour
 	{
 		internal bool Passed { get; private set; }
 
-		protected override void OnCreate()
+		private void Awake()
 		{
 			var text = new UIText(Entity) { Text = "开始 TomCat 😀" };
 			text.FallbackFont = new AssetRef<FontAsset>(9102);
@@ -5160,10 +5203,10 @@ internal static unsafe partial class Program
 		}
 	}
 
-	private sealed class AudioSpatialProxyProbe : TomCatBehaviour
+	private sealed class AudioSpatialProxyProbe : MonoBehaviour
 	{
 		public bool Passed { get; private set; }
-		protected override void OnCreate()
+		private void Awake()
 		{
 			var audio = new AudioSource(Entity);
 			audio.Streaming = true;
@@ -5177,7 +5220,7 @@ internal static unsafe partial class Program
 		}
 	}
 
-	private sealed class ConstructorLogProbe : TomCatBehaviour
+	private sealed class ConstructorLogProbe : MonoBehaviour
 	{
 		internal ConstructorLogProbe() => Log.Info("constructor");
 	}

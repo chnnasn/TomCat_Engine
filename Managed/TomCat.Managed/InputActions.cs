@@ -130,12 +130,12 @@ internal readonly record struct ControlToken(InputBindingKind Kind, uint Code, u
 
 /// <summary>
 /// An action is evaluated independently for the display-frame and fixed-step
-/// timelines. Properties read from OnFixedUpdate expose the current fixed input
+/// timelines. Properties read from FixedUpdate expose the current fixed input
 /// snapshot; other callbacks expose the display-frame snapshot. The first fixed
 /// step for a scene consumes its pending edges, while catch-up steps retain held
 /// values without replaying Pressed/Released. Started, Performed, and Canceled
 /// retain their display-frame cadence; fixed-step scripts should poll Value,
-/// IsPressed, and WasPressed/ReleasedThisFrame from OnFixedUpdate.
+/// IsPressed, and WasPressed/ReleasedThisFrame from FixedUpdate.
 /// </summary>
 public sealed class InputAction
 {
@@ -250,7 +250,7 @@ public sealed class InputAction
 			foreach (ControlToken control in activeControls)
 				controlsToConsume.Add(control);
 
-		// Fixed evaluation is a polling snapshot for OnFixedUpdate and later physics
+		// Fixed evaluation is a polling snapshot for FixedUpdate and later physics
 		// callbacks in the same native step. Public action events retain their
 		// display-frame cadence.
 		if (phase != InputActionUpdatePhase.DisplayFrame)

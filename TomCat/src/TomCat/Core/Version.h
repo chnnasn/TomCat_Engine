@@ -23,7 +23,7 @@ namespace TomCat::Version {
 	inline constexpr uint32_t SaveFormatCurrent = 1;
 	inline constexpr uint32_t PlayerAbiCurrent = 1;
 	inline constexpr uint32_t NativeApiCurrent = 1;
-	inline constexpr uint32_t ManagedApiCurrent = 5;
+	inline constexpr uint32_t ManagedApiCurrent = 6;
 	inline constexpr uint32_t ScriptManifestCurrent = 1;
 	// Removing ComponentDescriptor's migration callbacks changes the native
 	// descriptor layout passed across the module boundary. Rebuild modules.

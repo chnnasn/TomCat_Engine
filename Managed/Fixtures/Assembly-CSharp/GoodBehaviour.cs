@@ -4,7 +4,7 @@ namespace Game;
 
 [DefaultExecutionOrder(-100)]
 [DisallowMultipleComponent]
-public sealed class GoodBehaviour : TomCatBehaviour
+public sealed class GoodBehaviour : MonoBehaviour
 {
 	// The host supports non-public parameterless constructors and compiles the
 	// access once while loading the collectible project assembly.
@@ -29,6 +29,7 @@ public sealed class GoodBehaviour : TomCatBehaviour
     // The scene host replaces this null-forgiving CLR default with the invalid
     // zero Entity handle before applying serialized values.
     public Entity Target = null!;
+    public GameObject? ObjectTarget;
 	public Entity ReparentParent = null!;
     public AssetRef<Texture2DAsset> Texture;
 	public SceneAsset NextScene;
@@ -61,12 +62,22 @@ public sealed class GoodBehaviour : TomCatBehaviour
 	public bool DisableInputActionMapWhenPressedInUpdate;
 	public bool ThrowOnInputActionCanceled;
 	public bool QueueNameThenThrowOnUpdate;
+    public bool QueueNameThenThrowFromTask;
+    public bool QueueNameThenThrowFromCoroutine;
+    public bool EnableCoroutine;
 	public bool QueueNameThenCatchNullTagOnUpdate;
 	public bool CaptureCrossSceneJointTargetOnCreate;
 	public bool QueueNameThenCatchCrossSceneJointOnUpdate;
 	public bool DomainCancellationCanBeCanceled;
 	public int ObservedStaticCreateSequence;
 
+    public int Starts;
+    private void Start()
+    {
+        if (Creates != 1 || Enables < 1 || Updates != 0 || FixedUpdates != 0)
+            throw new System.InvalidOperationException("Start must follow Awake/OnEnable and precede updates");
+        Starts++;
+    }
     public int Creates;
     public int Enables;
     public int Updates;
@@ -112,8 +123,20 @@ public sealed class GoodBehaviour : TomCatBehaviour
 	public void ThrowButtonClick() => throw new InvalidOperationException(
 		"intentional button callback regression failure");
 
-	protected override void OnCreate()
+	private void Awake()
 	{
+        if (EnableCoroutine || QueueNameThenThrowFromCoroutine) StartCoroutine(LifetimeCoroutine());
+        // Every fixture instance owns pending work, exercising cancellation in all unload cycles.
+        Tasks.Run(async token =>
+        {
+            if (QueueNameThenThrowFromTask)
+            {
+                await Tasks.NextFrame(token);
+                Entity.Name = "task-mutation-must-roll-back";
+                throw new InvalidOperationException("intentional asynchronous transaction failure");
+            }
+            await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
+        });
 		Creates++;
 		ObservedStaticCreateSequence = ++StaticCreates;
 		DomainCancellationCanBeCanceled =
@@ -182,14 +205,24 @@ public sealed class GoodBehaviour : TomCatBehaviour
 		if (CaptureCrossSceneJointTargetOnCreate)
 			s_crossSceneJointTarget = Entity;
 	}
-    protected override void OnEnable()
+    private System.Collections.IEnumerator LifetimeCoroutine()
+    {
+        if (QueueNameThenThrowFromCoroutine)
+        {
+            yield return null;
+            Entity.Name = "coroutine-mutation-must-roll-back";
+            throw new InvalidOperationException("intentional coroutine transaction failure");
+        }
+        yield return Yield.Until(() => false);
+    }
+    private void OnEnable()
 	{
 		Enables++;
 		if (DisableSelfOnEnable)
 			Entity.ActiveSelf = false;
 	}
-    protected override void OnUpdate(float deltaTime)
-	{
+    private void Update()
+	{ var deltaTime = Time.deltaTime;
 		Updates++;
 		ObserveInputAction(false);
 		if (QueueNameThenThrowOnUpdate)
@@ -245,9 +278,9 @@ public sealed class GoodBehaviour : TomCatBehaviour
 			TargetActiveInHierarchyAfterMutation = Target.ActiveInHierarchy;
 		}
 	}
-    protected override void OnLateUpdate(float deltaTime) => LateUpdates++;
-	protected override void OnFixedUpdate(float fixedDeltaTime)
-	{
+    private void LateUpdate() => LateUpdates++;
+	private void FixedUpdate()
+	{ var fixedDeltaTime = Time.fixedDeltaTime;
 		FixedUpdates++;
 		InputEventBatch input = Input.EventBatch;
 		FixedInputFirstSequence = unchecked((long)input.FirstSequence);
@@ -261,7 +294,7 @@ public sealed class GoodBehaviour : TomCatBehaviour
 		if (DisableTargetOnFixedUpdate)
 			Target.ActiveSelf = false;
 	}
-    protected override void OnCollisionEnter2D(Collision2D collision)
+    private void OnCollisionEnter2D(Collision2D collision)
     {
         CollisionEnters++;
 		InputEventBatch input = Input.EventBatch;
@@ -279,8 +312,8 @@ public sealed class GoodBehaviour : TomCatBehaviour
         if (RemoveOnCollisionEnter)
             RemoveFromEntity();
     }
-    protected override void OnTriggerExit2D(Trigger2D trigger) => TriggerExits++;
-	protected override void OnDisable()
+    private void OnTriggerExit2D(Trigger2D trigger) => TriggerExits++;
+	private void OnDisable()
 	{
 		Disables++;
 		if (EnableSelfOnDisable)
@@ -288,7 +321,7 @@ public sealed class GoodBehaviour : TomCatBehaviour
 		if (EnableBehaviourOnDisable)
 			Enabled = true;
 	}
-	protected override void OnDestroy()
+	private void OnDestroy()
 	{
 		_inputActionMap?.Disable();
 		Destroys++;

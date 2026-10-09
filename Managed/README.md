@@ -256,7 +256,7 @@ attachments in scene-entity order and then mount order. The host performs a stab
 `DefaultExecutionOrder`, using that input sequence as the tie-breaker, and destroys in reverse.
 Prefab-created script attachments enter through `InstantiateAttachments` only after the current
 managed callback returns. Their serialized fields are restored before the new batch receives
-`OnCreate` and `OnEnable`; existing instances never receive those callbacks again.
+`Awake` and `OnEnable`; existing instances never receive those callbacks again.
 
 ## Scene and Prefab APIs
 
@@ -297,7 +297,32 @@ nested Prefabs and variants; see the [Prefab workflow](../docs/PREFAB_WORKFLOW.z
 
 `TomCat.ScriptHost` and `TomCat.Managed` stay in the default ALC. Each game project DLL/PDB is loaded
 from bytes into a collectible ALC. The custom loader always resolves `TomCat.Managed` to the default
-ALC copy, preserving `TomCatBehaviour` type identity. `BeginUnloadDomain` stops dispatch, destroys
+ALC copy, preserving `MonoBehaviour` type identity. `BeginUnloadDomain` stops dispatch, destroys
 instances, clears reflection caches, calls `AssemblyLoadContext.Unload`, and retains only a weak
 reference. Native must poll `PollUnload`; a domain that cannot unload must be reported and must not
 be silently accumulated.
+
+## Unity-style scripting (Managed API 6)
+
+Derive from `MonoBehaviour` and declare `void Awake()`, `void Start()`,
+`void Update()`, `void FixedUpdate()` and `void LateUpdate()` without `override`.
+Read `Time.deltaTime` (the fixed timestep inside physics callbacks), `Time.time`,
+`Time.fixedTime`, and `Time.frameCount`. Start runs once before the first enabled update.
+Private/inherited messages are bound once per instance. Invalid message signatures report TCG011.
+Common entry points include `gameObject`, `transform.position`, `enabled`,
+`Input.GetKey/GetKeyDown/GetKeyUp`, `Debug.Log`, and lowercase vector components.
+Euler angle aliases use degrees; existing RotationEuler properties use radians.
+Serialized GameObject fields use scene entity references.
+
+Recompile old script DLLs; replace TomCatBehaviour with MonoBehaviour, OnCreate
+with Awake, and parameterized OnUpdate/OnFixedUpdate/OnLateUpdate with parameterless
+Update/FixedUpdate/LateUpdate. See the Chinese guide for an example and scope.
+This is not UnityEngine binary compatibility: inactive objects still receive Awake
+on instantiation; timeScale and full Quaternion APIs are not implemented.
+Iterator coroutines are available through StartCoroutine/StopCoroutine and the shared
+Tasks scope, with immutable Yield.Frames/Seconds/Until/While/FixedStep instructions.
+See the [coroutine guide](COROUTINES.zh-CN.md) for timing, cancellation and ownership rules.
+Component queries target registered engine components, not arbitrary scripts;
+GetComponent still throws for missing components.
+
+Instance-owned `Tasks` now provide explicit main-thread dispatch, frame/fixed-step waits, cancellation and fault handling. See [script task semantics](SCRIPT_TASKS.zh-CN.md). Lifecycle messages must remain synchronous; launch tracked asynchronous work with `Tasks.Run`.

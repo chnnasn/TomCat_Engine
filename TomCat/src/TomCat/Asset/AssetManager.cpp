@@ -512,7 +512,7 @@ namespace TomCat {
 					(void)script["executionOrder"].as<int32_t>();
 					(void)script["disallowMultiple"].as<bool>();
 					const uint32_t lifecycle = script["lifecycle"].as<uint32_t>();
-					if ((lifecycle & ~0x7ffU) != 0)
+					if ((lifecycle & ~0xfffU) != 0)
 					{
 						errorMessage = context + " contains unknown lifecycle bits";
 						return false;

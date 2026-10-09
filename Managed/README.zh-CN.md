@@ -237,7 +237,7 @@ Attachment ID 必须随机生成、非零，并在场景运行时中唯一；ABI
 宿主按 `DefaultExecutionOrder` 稳定排序，相同值保持输入顺序，销毁时逆序执行。
 
 Prefab 创建的脚本附件只在当前托管回调返回后通过 `InstantiateAttachments` 接入。
-新批次先恢复序列化字段，再调用 `OnCreate` 与 `OnEnable`；已有实例不会重复接收这些回调。
+新批次先恢复序列化字段，再调用 `Awake` 与 `OnEnable`；已有实例不会重复接收这些回调。
 
 ## 场景与 Prefab API
 
@@ -273,7 +273,44 @@ Prefab 创建的脚本附件只在当前托管回调返回后通过 `Instantiate
 
 `TomCat.ScriptHost` 和 `TomCat.Managed` 常驻默认 ALC。
 每个项目 DLL/PDB 从字节载入可回收 ALC；自定义加载器始终把 `TomCat.Managed` 解析到默认
-ALC 中的副本，以保持 `TomCatBehaviour` 的类型身份。
+ALC 中的副本，以保持 `MonoBehaviour` 的类型身份。
 
 `BeginUnloadDomain` 停止派发、销毁实例、清理反射缓存，调用 `AssemblyLoadContext.Unload`，
 仅保留弱引用。原生必须轮询 `PollUnload`；不能卸载的域必须报告，不能静默累积。
+
+## Unity 风格脚本（Managed API 6）
+
+```csharp
+using TomCat;
+public sealed class Player : MonoBehaviour
+{
+    public float MoveSpeed = 3.5f;
+    void Update()
+    {
+        if (Input.GetKey(KeyCode.D))
+            transform.position += Vector3.right * MoveSpeed * Time.deltaTime;
+    }
+}
+```
+
+生命周期使用 `Awake()`、`OnEnable()`、`Start()`、`Update()`、`FixedUpdate()`、
+`LateUpdate()`、`OnDisable()`、`OnDestroy()`，不写 `override`，帧回调不带参数。
+支持私有方法及基类消息；消息委托在实例绑定时缓存。`Start` 在首次启用更新前执行一次，
+禁用后再启用不会重复执行。同一批对象先运行所有待执行的 Start，再运行更新。
+`Time.deltaTime` 在固定步及物理事件期间返回固定步长，离开固定步恢复渲染帧步长。
+
+常用入口包括 `gameObject`、`transform`、`enabled`、`isActiveAndEnabled`、
+`gameObject.SetActive`、`name`、`tag`、`CompareTag`、`Debug.Log/LogWarning/LogError`、
+`Input.GetKey/GetKeyDown/GetKeyUp`、向量小写分量和方向常量。
+`transform.eulerAngles/localEulerAngles` 使用角度；底层 `RotationEuler` 保持弧度。
+`GameObject` 字段可在 Inspector 中序列化为场景对象引用。
+
+迁移：`TomCatBehaviour` 改为 `MonoBehaviour`，`OnCreate` 改为 `Awake`，
+`OnUpdate(float dt)` 改为 `Update()` 并读取 `Time.deltaTime`；固定帧和 LateUpdate 同理。
+旧脚本 DLL 必须重编译。错误的生命周期签名会产生 TCG011 编译诊断。
+
+这是常用脚本写法对齐，不是 UnityEngine 二进制兼容层。现有 PascalCase 数据 API 仍可使用。
+当前仍在实例创建时对未激活对象执行 Awake；提供[TomCat 协程](COROUTINES.zh-CN.md)，尚不支持 timeScale 或完整 Quaternion API。
+GetComponent/AddComponent 当前面向引擎注册组件，不支持任意脚本类型；GetComponent 缺失组件时仍抛出异常。
+
+异步脚本使用实例级 `Tasks`：主线程返回、帧等待、取消和异常规则见[脚本任务说明](SCRIPT_TASKS.zh-CN.md)。

@@ -8,7 +8,7 @@ using TomCat;
 /// - physics, triggers, scoring, saving and shutdown - is exercised without
 /// user input.
 /// </summary>
-public sealed class PlayerController : TomCatBehaviour
+public sealed class PlayerController : MonoBehaviour
 {
     public float MoveSpeed = 3.5f;
     private const float JumpSpeed = 6.5f;
@@ -17,14 +17,15 @@ public sealed class PlayerController : TomCatBehaviour
     private bool _headless;
     private float _groundedCooldown;
 
-    protected override void OnCreate()
+    private void Awake()
     {
         _body = GetComponent<Rigidbody2D>();
         _headless = !Application.HasWindow;
     }
 
-    protected override void OnFixedUpdate(float fixedDeltaTime)
+    private void FixedUpdate()
     {
+        var fixedDeltaTime = Time.fixedDeltaTime;
         _groundedCooldown = MathF.Max(0.0f, _groundedCooldown - fixedDeltaTime);
         if (_headless)
         {
@@ -33,13 +34,13 @@ public sealed class PlayerController : TomCatBehaviour
         }
 
         float direction = 0.0f;
-        if (Input.IsKeyHeld(KeyCode.A) || Input.IsKeyHeld(KeyCode.Left))
+        if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.Left))
             direction -= 1.0f;
-        if (Input.IsKeyHeld(KeyCode.D) || Input.IsKeyHeld(KeyCode.Right))
+        if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.Right))
             direction += 1.0f;
         float vertical = _body.LinearVelocity.Y;
-        if ((Input.IsKeyHeld(KeyCode.Space) || Input.IsKeyHeld(KeyCode.W)
-            || Input.IsKeyHeld(KeyCode.Up)) && _groundedCooldown <= 0.0f)
+        if ((Input.GetKey(KeyCode.Space) || Input.GetKey(KeyCode.W)
+            || Input.GetKey(KeyCode.Up)) && _groundedCooldown <= 0.0f)
         {
             vertical = JumpSpeed;
             _groundedCooldown = 0.25f;

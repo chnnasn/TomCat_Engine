@@ -26,29 +26,55 @@ try {
   if(rpc(engine,'editor.loadLayout',{settings:saved.result.settings.replace(/^1\n/,'1junk\n')}).result.applied)throw new Error('malformed layout version accepted');
   const references=await Promise.all(['mscorlib.dll','System.Runtime.dll','TomCat.Managed.dll'].map(ref));
   const source=`using TomCat;
-public sealed class WebSmoke : TomCatBehaviour
+public sealed class WebSmoke : MonoBehaviour
 {
     private static void Mark(string value) => Log.Info("WEB_LIFECYCLE " + value);
-    protected override void OnCreate() => Mark("OnCreate");
-    protected override void OnEnable() => Mark("OnEnable");
-    protected override void OnUpdate(float dt) => Mark("OnUpdate");
-    protected override void OnFixedUpdate(float dt) => Mark("OnFixedUpdate");
-    protected override void OnDisable() => Mark("OnDisable");
-    protected override void OnDestroy() => Mark("OnDestroy");
+    private void Awake()
+    {
+        Mark("Awake");
+        StartCoroutine(CoroutineSmoke());
+        Tasks.Run(async token => { await Tasks.NextFrame(token); Mark("TaskFrame"); });
+        Tasks.Run(async token =>
+        {
+            try { while (true) await Tasks.NextFrame(token); }
+            finally { Mark("TaskCancelled"); }
+        });
+        Tasks.Run(async token =>
+        {
+            try { await Tasks.NextFixedStep(token); await Tasks.NextFrame(token); Mark("TaskFixed"); }
+            finally { Mark("TaskCleanup"); }
+        });
+    }
+    private System.Collections.IEnumerator CoroutineSmoke()
+    {
+        try
+        {
+            yield return null; Mark("CoroutineFrame");
+            yield return Yield.Seconds(0); Mark("CoroutineDelay");
+            yield return Yield.Until(() => true); Mark("CoroutineCondition");
+            while (true) yield return null;
+        }
+        finally { Mark("CoroutineCleanup"); }
+    }
+    private void OnEnable() => Mark("OnEnable");
+    private void Update() => Mark("Update");
+    private void FixedUpdate() => Mark("FixedUpdate");
+    private void OnDisable() => Mark("OnDisable");
+    private void OnDestroy() => Mark("OnDestroy");
 }`;
   const faultSource=`using TomCat;
-public sealed class WebFaultSmoke : TomCatBehaviour
+public sealed class WebFaultSmoke : MonoBehaviour
 {
     private bool _thrown;
-    protected override void OnCreate() => Log.Info("WEB_FAULT OnCreate");
-    protected override void OnUpdate(float dt)
+    private void Awake() => Log.Info("WEB_FAULT Awake");
+    private void Update()
     {
         if (_thrown) return;
         _thrown = true;
         Log.Info("WEB_FAULT Throw");
         throw new System.InvalidOperationException("intentional browser lifecycle smoke failure");
     }
-    protected override void OnDestroy() => Log.Info("WEB_FAULT OnDestroy");
+    private void OnDestroy() => Log.Info("WEB_FAULT OnDestroy");
 }`;
   const compile=web.compileAndInstall({sources:[{path:'WebSmoke.cs',text:source},{path:'WebFaultSmoke.cs',text:faultSource}],references,scriptAssetsJson:'{"version":1,"assets":{"WebSmoke.cs":123,"WebFaultSmoke.cs":124}}'});
   if(!compile.succeeded)throw new Error(`compile/install: ${JSON.stringify(compile.diagnostics)}`);
@@ -79,12 +105,15 @@ Asset:
   if(injectedScene===originalScene)throw new Error('scene injection point was not found');
   FS.writeFile(scenePath,injectedScene);
   const opened=rpc(engine,'project.open',{projectPath:'/Samples/PhysicsPlayground/Project.tcproj'}); if(!opened.ok)throw new Error(JSON.stringify(opened));
-  const controls=[]; for(const command of ['play','pause','step','resume','stop']) { const reply=rpc(engine,'preview.control',{command}); controls.push(reply); if(!reply.ok)throw new Error(JSON.stringify(reply)); if(command==='play'||command==='resume')engine.EditorFrame(1/60); }
+  const controls=[]; for(const command of ['play','pause','step','resume','stop']) { const reply=rpc(engine,'preview.control',{command}); controls.push(reply); if(!reply.ok)throw new Error(JSON.stringify(reply)); if(command==='play'||command==='resume'){for(let frame=0;frame<(command==='resume'?3:1);++frame)engine.EditorFrame(1/60);} }
   const lifecycle=consoleMessages.filter(value=>value.includes('WEB_')).map(value=>value.slice(value.indexOf('WEB_')));
-  const required=['WEB_LIFECYCLE OnCreate','WEB_FAULT OnCreate','WEB_LIFECYCLE OnEnable','WEB_FAULT Throw','WEB_LIFECYCLE OnDisable','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDestroy'];
+  const required=['WEB_LIFECYCLE Awake','WEB_FAULT Awake','WEB_LIFECYCLE OnEnable','WEB_FAULT Throw','WEB_LIFECYCLE OnDisable','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDestroy'];
   let previous=-1; for(const marker of required){const index=lifecycle.indexOf(marker);if(index<=previous)throw new Error(`missing or out-of-order lifecycle marker ${marker}: ${JSON.stringify(lifecycle)}`);previous=index;}
   for(const marker of ['WEB_FAULT Throw','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDisable','WEB_LIFECYCLE OnDestroy'])if(lifecycle.filter(value=>value===marker).length!==1)throw new Error(`expected exactly one ${marker}: ${JSON.stringify(lifecycle)}`);
-  if(lifecycle.filter(value=>value==='WEB_LIFECYCLE OnUpdate').length<2)throw new Error(`healthy script did not continue after peer fault: ${JSON.stringify(lifecycle)}`);
+  for(const marker of ['TaskFrame','TaskFixed','TaskCleanup','TaskCancelled','CoroutineFrame','CoroutineDelay','CoroutineCondition','CoroutineCleanup'])if(!lifecycle.includes('WEB_LIFECYCLE '+marker))throw new Error('missing async marker '+marker);
+  if(lifecycle.indexOf('WEB_LIFECYCLE CoroutineCleanup')>lifecycle.indexOf('WEB_LIFECYCLE OnDestroy'))throw new Error('coroutine cleanup must precede destruction');
+  if(lifecycle.indexOf('WEB_LIFECYCLE TaskCancelled')>lifecycle.indexOf('WEB_LIFECYCLE OnDestroy'))throw new Error('task cancellation must precede destruction');
+  if(lifecycle.filter(value=>value==='WEB_LIFECYCLE Update').length<2)throw new Error(`healthy script did not continue after peer fault: ${JSON.stringify(lifecycle)}`);
   if(!consoleMessages.some(value=>value.includes('intentional browser lifecycle smoke failure')))throw new Error('fault diagnostic was not reported');
   engine.EditorResize(800,450); engine.EditorFrame(1/60);
   const finalState=JSON.parse(engine.EditorState());

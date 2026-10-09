@@ -19,7 +19,8 @@ public enum ScriptLifecycle : uint
     TriggerExit2D = 1 << 7,
     Disable = 1 << 8,
     Destroy = 1 << 9,
-    LateUpdate = 1 << 10
+    LateUpdate = 1 << 10,
+    Start = 1 << 11
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ScriptFieldType>))]
@@ -151,7 +152,7 @@ internal sealed class ScriptDescriptor
 {
     internal required ScriptTypeManifest Manifest { get; init; }
     internal required Type Type { get; init; }
-    internal required Func<TomCatBehaviour> ConstructorFactory { get; init; }
+    internal required Func<MonoBehaviour> ConstructorFactory { get; init; }
 	internal required Dictionary<string, MethodInfo> EventMethods { get; init; }
     internal required Dictionary<string, FieldDescriptor> FieldsById { get; init; }
     internal required Dictionary<string, FieldDescriptor> FieldsByName { get; init; }

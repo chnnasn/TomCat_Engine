@@ -8,7 +8,7 @@ namespace TomCat.ScriptHost;
 internal sealed class ProjectLoadContext(string name) : AssemblyLoadContext(name,
     isCollectible: !OperatingSystem.IsBrowser())
 {
-    private static readonly Assembly SharedManagedAssembly = typeof(TomCatBehaviour).Assembly;
+    private static readonly Assembly SharedManagedAssembly = typeof(MonoBehaviour).Assembly;
     private static readonly string SharedManagedName = SharedManagedAssembly.GetName().Name!;
     private readonly Dictionary<string, byte[]> _dependencies = new(StringComparer.OrdinalIgnoreCase);
 

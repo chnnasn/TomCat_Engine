@@ -178,19 +178,19 @@ public sealed class ScriptDomain : IDisposable
     {
         Type type = assembly.GetType(manifest.TypeName, throwOnError: true, ignoreCase: false)!;
         if (!type.IsClass || type.IsAbstract || type.ContainsGenericParameters || type.IsNested ||
-            !typeof(TomCatBehaviour).IsAssignableFrom(type))
-            throw new InvalidDataException($"Manifest type '{manifest.TypeName}' is not a mountable TomCatBehaviour.");
+            !typeof(MonoBehaviour).IsAssignableFrom(type))
+            throw new InvalidDataException($"Manifest type '{manifest.TypeName}' is not a mountable MonoBehaviour.");
         ConstructorInfo constructor = type.GetConstructor(BindingFlags.Instance | BindingFlags.Public |
             BindingFlags.NonPublic, binder: null, Type.EmptyTypes, modifiers: null) ??
             throw new InvalidDataException($"Script '{manifest.TypeName}' has no parameterless constructor.");
-		Func<TomCatBehaviour> constructorFactory;
+		Func<MonoBehaviour> constructorFactory;
 		try
 		{
 			NewExpression create = Expression.New(constructor);
-			UnaryExpression convert = Expression.Convert(create, typeof(TomCatBehaviour));
+			UnaryExpression convert = Expression.Convert(create, typeof(MonoBehaviour));
 			constructorFactory = OperatingSystem.IsBrowser()
-				? () => (TomCatBehaviour)constructor.Invoke(null)
-				: Expression.Lambda<Func<TomCatBehaviour>>(convert).Compile();
+				? () => (MonoBehaviour)constructor.Invoke(null)
+				: Expression.Lambda<Func<MonoBehaviour>>(convert).Compile();
 		}
 		catch (Exception exception)
 		{
@@ -251,7 +251,7 @@ public sealed class ScriptDomain : IDisposable
 	{
 		foreach (ScriptDescriptor descriptor in descriptors.Values)
 		{
-			TomCatBehaviour behaviour;
+			MonoBehaviour behaviour;
 			try
 			{
 				behaviour = descriptor.ConstructorFactory();
@@ -290,7 +290,7 @@ public sealed class ScriptDomain : IDisposable
 				EnumToStorageBits(descriptor.Field.FieldType, value),
 			// Entity is a reference proxy, but its serialized form remains the same
 			// V1 UInt64 handle. An uninitialized field is the invalid zero handle.
-			ScriptFieldType.Entity => value is Entity entity ? entity.Id : 0UL,
+			ScriptFieldType.Entity => value is Entity entity ? entity.Id : value is GameObject gameObject ? gameObject.Entity.Id : 0UL,
 			ScriptFieldType.AssetRef when value is not null =>
 				value.GetType().GetProperty("Handle")?.GetValue(value) as ulong? ?? 0UL,
 			_ => throw new InvalidDataException(

@@ -5,7 +5,7 @@ namespace TomCat.Interop;
 public static class ManagedAbi
 {
     public const uint NativeApiVersion = 1;
-    public const uint ManagedApiVersion = 5;
+    public const uint ManagedApiVersion = 6;
     public const uint ScriptManifestVersion = 1;
     public const int SaveDataMaximumSlotUtf8Bytes = 64;
     public const int SaveDataMaximumPayloadBytes = 16 * 1024 * 1024;

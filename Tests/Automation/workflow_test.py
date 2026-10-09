@@ -138,10 +138,10 @@ def main():
     assert c.call('player_get_settings')['width'] == 640
     assert 'loaded' in c.call('module_list')
     code = '''using TomCat;
-public sealed class AutomationProbe : TomCatBehaviour
+public sealed class AutomationProbe : MonoBehaviour
 {
-    protected override void OnFixedUpdate(float dt)
-    {
+    private void FixedUpdate()
+    { var dt = Time.fixedDeltaTime;
         if (Input.IsKeyHeld(KeyCode.D))
         {
             Vector3 p = Transform.Position;

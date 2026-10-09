@@ -183,8 +183,8 @@ public readonly record struct InputEventBatch(ulong FirstFrameNumber,
 
 /// <summary>
 /// Input is frozen once after native event polling at the start of each display
-/// frame. OnUpdate observes that frame's ordered transitions. Each scene carries
-/// unconsumed transitions across display frames; its next OnFixedUpdate observes
+/// frame. Update observes that frame's ordered transitions. Each scene carries
+/// unconsumed transitions across display frames; its next FixedUpdate observes
 /// the accumulated ordered batch exactly once. Later catch-up fixed steps expose
 /// held state but no transition, mouse delta, or scroll delta. Keyboard, mouse,
 /// and gamepad hot-plug edges come from callbacks. GLFW exposes standard gamepad
@@ -193,7 +193,10 @@ public readonly record struct InputEventBatch(ulong FirstFrameNumber,
 /// </summary>
 public static unsafe class Input
 {
-	public const uint MaximumGamepads = 16;
+	public static bool GetKey(KeyCode key) => IsKeyHeld(key);
+    public static bool GetKeyDown(KeyCode key) => WasKeyPressed(key);
+    public static bool GetKeyUp(KeyCode key) => WasKeyReleased(key);
+    public const uint MaximumGamepads = 16;
 	public static InputEventBatch EventBatch => NativeBridge.GetInputEventBatch();
 
     public static bool IsKeyHeld(KeyCode key) => NativeBridge.InputBoolean(key,

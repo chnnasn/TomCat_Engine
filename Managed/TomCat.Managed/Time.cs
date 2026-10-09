@@ -3,7 +3,15 @@ namespace TomCat;
 /// <summary>Frame and fixed-step timing for the active Play scene.</summary>
 public static class Time
 {
-	public static float DeltaTime => TimeRuntime.DeltaTime;
+    public static float deltaTime => DeltaTime;
+    public static float fixedDeltaTime => FixedDeltaTime;
+    public static float time => (float)timeAsDouble;
+    public static double timeAsDouble => InFixedUpdate ? FixedElapsedTime : ElapsedTime;
+    public static float fixedTime => (float)FixedElapsedTime;
+    public static double fixedTimeAsDouble => FixedElapsedTime;
+    public static int frameCount => unchecked((int)FrameCount);
+    public static bool inFixedTimeStep => InFixedUpdate;
+	public static float DeltaTime => TimeRuntime.InFixedUpdate ? TimeRuntime.FixedDeltaTime : TimeRuntime.DeltaTime;
 	public static float FixedDeltaTime => TimeRuntime.FixedDeltaTime;
 	public static double ElapsedTime => TimeRuntime.ElapsedTime;
 	public static double FixedElapsedTime => TimeRuntime.FixedElapsedTime;

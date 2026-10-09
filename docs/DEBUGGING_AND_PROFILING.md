@@ -53,7 +53,7 @@ CPU scope 在开始时绑定帧编号，线程安全地提交到这一帧。跨�
 
 1. 在编辑器中打开含 C# 脚本的项目，等待 Console 出现编译成功和程序集重载成功消息；旧错误记录不会自动清空。元数据验证阶段已初始化 .NET，无需先运行一次 Play。
 2. 使用支持 .NET 10 的 Visual Studio，打开项目脚本源文件。在 **Debug → Attach to Process** 选择 `TomCatInut.exe`；Profiler 的 C# debugger 区显示当前 PID。将代码类型选为托管 .NET / .NET Core（具体文字随 IDE 版本），需要调试 C++ 时可同时选择 native。微软的[附加进程文档](https://learn.microsoft.com/en-us/visualstudio/debugger/attach-to-running-processes-with-the-visual-studio-debugger?view=visualstudio)说明此流程也支持非 Visual Studio 启动的进程。
-3. 在 `OnUpdate` 或 `OnCreate` 的可执行语句上设断点，再进入 Play。附加后才进入新的 Play 可以捕捉初始化回调。断点命中后使用 Locals、Watch、Call Stack；继续执行前不要认为游戏的实时帧率仍有意义。
+3. 在 `Update` 或 `Awake` 的可执行语句上设断点，再进入 Play。附加后才进入新的 Play 可以捕捉初始化回调。断点命中后使用 Locals、Watch、Call Stack；继续执行前不要认为游戏的实时帧率仍有意义。
 4. 如果断点为空心，在 **Debug → Windows → Modules** 查找当前 `Assembly-CSharp`，检查 symbol 状态。实际产物在项目 `Library/ScriptAssemblies/Build/<build-id>/`；`last-good.json` 标识最后成功构建。DLL 与 PDB 必须来自同一次构建，不要将旧 PDB 与新 DLL 混用。参见[微软符号与源码匹配说明](https://learn.microsoft.com/en-us/visualstudio/debugger/specify-symbol-dot-pdb-and-source-files-in-the-visual-studio-debugger?view=visualstudio)。
 5. 编译器将项目根目录映射为 `.` 写入 PDB。如果 IDE 提示缺少 `./Assets/...cs`，定位到当前项目根目录下对应源码。源码应与构建版本完全一致；保存脚本后先停止 Play，等待新编译成功再开始下一次 Play。
 6. 项目脚本默认关闭编译优化，便于逐行调试和查看局部变量。引擎托管库仍可使用 Release 优化；调试这些库时可调整 IDE 的 Just My Code 和 JIT 优化选项。

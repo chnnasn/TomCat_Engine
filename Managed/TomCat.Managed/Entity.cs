@@ -208,6 +208,15 @@ internal static class ComponentProxy<T> where T : class, IEntityComponent
 public sealed unsafe class Transform : IEntityComponent
 {
     internal Transform(Entity entity) => Entity = entity;
+    public GameObject gameObject => new(Entity);
+    public Vector3 position { get => Position; set => Position = value; }
+    public Vector3 localPosition { get => LocalPosition; set => LocalPosition = value; }
+    public Vector3 localScale { get => LocalScale; set => LocalScale = value; }
+    public Vector3 lossyScale => Scale;
+    public Vector3 eulerAngles { get => RotationEuler * (180f / MathF.PI); set => RotationEuler = value * (MathF.PI / 180f); }
+    public Vector3 localEulerAngles { get => LocalRotationEuler * (180f / MathF.PI); set => LocalRotationEuler = value * (MathF.PI / 180f); }
+    public int childCount => Entity.Children.Count;
+    public Transform GetChild(int index) => Entity.Children[index].GetComponent<Transform>();
     public Entity Entity { get; }
 
     public Vector3 Position
@@ -257,6 +266,7 @@ public sealed unsafe class Transform : IEntityComponent
 
 public sealed unsafe partial class Rigidbody2D
 {
+    public Vector2 linearVelocity { get => LinearVelocity; set => LinearVelocity = value; }
     public Vector2 LinearVelocity
     {
         get => NativeBridge.GetRigidbodyVelocity(Entity);

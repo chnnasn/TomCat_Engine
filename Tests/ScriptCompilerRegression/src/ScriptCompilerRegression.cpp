@@ -410,7 +410,7 @@ namespace {
         TomCat::ProjectConfig config; config.Name="Build profiles";config.AssetDirectory="Assets";
         auto project=TomCat::Project::CreateNew(environment.Root/"Project.tcproj",config);
         Require(project!=nullptr,"profile project creation failed");
-        WriteTextFile(project->GetAssetPath()/"Probe.cs","using TomCat; public sealed class Probe : TomCatBehaviour { protected override void OnUpdate(float dt) { int value=42; Log.Info(value.ToString()); } }");
+        WriteTextFile(project->GetAssetPath()/"Probe.cs","using TomCat; public sealed class Probe : MonoBehaviour { private void Update() { var dt = Time.deltaTime; int value=42; Log.Info(value.ToString()); } }");
         Require(TomCat::AssetManager::Get().SetProject(project),"profile assets failed");
         TomCat::ScriptProjectCompiler development,production;
         Require(development.Configure(project) && production.Configure(project,{}, {},TomCat::ScriptBuildProfile::Production),"profile configuration failed");
@@ -448,7 +448,7 @@ namespace {
 		WriteTextFile(scriptPath,
 			"using TomCat;\n"
 			"namespace Regression;\n"
-			"public sealed class MSBuildGuardProbe : TomCatBehaviour\n"
+			"public sealed class MSBuildGuardProbe : MonoBehaviour\n"
 			"{\n"
 			"    public int Count = 1;\n"
 			"}\n");
@@ -505,7 +505,7 @@ namespace {
 		WriteTextFile(scriptPath,
 			"using TomCat;\n"
 			"namespace Regression;\n"
-			"public sealed class MSBuildGuardProbe : TomCatBehaviour\n"
+			"public sealed class MSBuildGuardProbe : MonoBehaviour\n"
 			"{\n"
 			"    public int Count = 2;\n"
 			"}\n");
@@ -586,7 +586,7 @@ namespace {
 			"using TomCat;\n"
 			"namespace Regression;\n"
 			"public sealed class UnknownAsset;\n"
-			"public sealed class AssetRefMarkerProbe : TomCatBehaviour\n"
+			"public sealed class AssetRefMarkerProbe : MonoBehaviour\n"
 			"{\n"
 			"    public AssetRef<UnknownAsset> Asset;\n"
 			"}\n");
@@ -609,7 +609,7 @@ namespace {
 		WriteTextFile(scriptPath,
 			"using TomCat;\n"
 			"namespace Regression;\n"
-			"public sealed class AssetRefMarkerProbe : TomCatBehaviour\n"
+			"public sealed class AssetRefMarkerProbe : MonoBehaviour\n"
 			"{\n"
 			"    public AssetRef<Texture2DAsset> Asset;\n"
 			"}\n");
@@ -636,7 +636,7 @@ namespace {
 		WriteTextFile(scriptPath,
 			"using TomCat;\n"
 			"namespace Regression;\n"
-			"public sealed class LastGoodProbe : TomCatBehaviour\n"
+			"public sealed class LastGoodProbe : MonoBehaviour\n"
 			"{\n"
 			"    public int Count = 7;\n"
 			"}\n");
@@ -677,7 +677,7 @@ namespace {
 		WriteTextFile(scriptPath,
 			"using TomCat;\n"
 			"namespace Regression;\n"
-			"public sealed class LastGoodProbe : TomCatBehaviour\n"
+			"public sealed class LastGoodProbe : MonoBehaviour\n"
 			"{\n"
 			"    public int Count = ;\n"
 			"}\n");
@@ -710,7 +710,7 @@ namespace {
 
 		WriteTextFile(scriptPath,
 			"using TomCat;\nnamespace Regression;\n"
-			"public sealed class LastGoodProbe : TomCatBehaviour { public int Count = 19; }\n");
+			"public sealed class LastGoodProbe : MonoBehaviour { public int Count = 19; }\n");
 		const auto registryCache = project->GetLibraryPath() / "AssetRegistry.yaml";
 		const auto registryCacheTime = std::filesystem::last_write_time(registryCache);
 		Require(compiler.RefreshSourceState(false) && !compiler.IsCurrentSourceBuilt(),
@@ -1524,7 +1524,7 @@ namespace {
 </Project>)XML";
 		WriteTextFile(dependencies, dependencyProject);
 		const auto scriptPath = project->GetAssetPath() / "DependencyProbe.cs";
-		WriteTextFile(scriptPath, "using TomCat; public sealed class DependencyProbe : TomCatBehaviour { public int Count = DependencyParent.Value.Read() + Helper.Read() + RawValue.Read(); }");
+		WriteTextFile(scriptPath, "using TomCat; public sealed class DependencyProbe : MonoBehaviour { public int Count = DependencyParent.Value.Read() + Helper.Read() + RawValue.Read(); }");
 		auto& assets = TomCat::AssetManager::Get();
 		Require(assets.SetProject(project), "could not initialize dependency assets");
 		TomCat::ScriptProjectCompiler compiler;
@@ -1689,40 +1689,40 @@ namespace {
 		WriteTextFile(lifecycleSource, R"CS(using TomCat;
 namespace E2E;
 [DefaultExecutionOrder(0)]
-public sealed class LifecycleProbe : TomCatBehaviour
+public sealed class LifecycleProbe : MonoBehaviour
 {
     [SerializeField] private int _seed = 3;
-    protected override void OnCreate()
+    private void Awake()
     {
         Entity.Tag = _seed == 17 ? "created" : "bad-field";
         Transform.Position = new Vector3(0.0f, 0.0f, 1.0f);
     }
-    protected override void OnEnable() => Entity.Tag = Entity.Tag == "created" ? "enabled" : "bad-enable";
-    protected override void OnFixedUpdate(float dt)
-    {
+    private void OnEnable() => Entity.Tag = Entity.Tag == "created" ? "enabled" : "bad-enable";
+    private void FixedUpdate()
+    { var dt = Time.fixedDeltaTime;
         Entity.Tag = Entity.Tag == "enabled" ? "fixed" : "bad-fixed";
         GetComponent<Rigidbody2D>().LinearVelocity = new Vector2(0.0f, 5.0f);
     }
-    protected override void OnUpdate(float dt) => Entity.Tag = Entity.Tag == "fixed" ? "updated" : "bad-update";
-    protected override void OnLateUpdate(float dt) { }
+    private void Update() => Entity.Tag = Entity.Tag == "fixed" ? "updated" : "bad-update";
+    private void LateUpdate() { var dt = Time.deltaTime; }
     public void OnButtonClick() { }
-    protected override void OnCollisionEnter2D(Collision2D collision) => Entity.Name = "collision-received";
+    private void OnCollisionEnter2D(Collision2D collision) => Entity.Name = "collision-received";
 }
 )CS" + std::string("// ") + std::string(sourceMarker) + "\n");
 		WriteTextFile(faultySource, R"CS(using System;
 using TomCat;
 namespace E2E;
 [DefaultExecutionOrder(-100)]
-public sealed class FaultyProbe : TomCatBehaviour
+public sealed class FaultyProbe : MonoBehaviour
 {
     private Entity _lifecycle = null!;
-    protected override void OnCreate()
+    private void Awake()
     {
         _lifecycle = World.Find("Lifecycle target")
             ?? throw new InvalidOperationException("missing lifecycle target");
     }
-    protected override void OnUpdate(float dt)
-    {
+    private void Update()
+    { var dt = Time.deltaTime;
         _lifecycle.Tag = "faulty-write-must-roll-back";
         throw new InvalidOperationException("intentional e2e failure" + BundledRuntime.Message());
     }
@@ -1730,18 +1730,18 @@ public sealed class FaultyProbe : TomCatBehaviour
 )CS");
 		WriteTextFile(triggerSource, R"CS(using TomCat;
 namespace E2E;
-public sealed class TriggerProbe : TomCatBehaviour
+public sealed class TriggerProbe : MonoBehaviour
 {
-    protected override void OnTriggerEnter2D(Trigger2D trigger) => Entity.Name = "trigger-received";
+    private void OnTriggerEnter2D(Trigger2D trigger) => Entity.Name = "trigger-received";
 }
 )CS");
 		WriteTextFile(transitionSource, R"CS(using System;
 using TomCat;
 namespace E2E;
-public sealed class EntryTransitionProbe : TomCatBehaviour
+public sealed class EntryTransitionProbe : MonoBehaviour
 {
     public SceneAsset NextScene;
-    protected override void OnCreate()
+    private void Awake()
     {
         if (SceneManager.ActiveBuildIndex != 0)
             Environment.Exit(81);
@@ -1757,7 +1757,7 @@ public sealed class EntryTransitionProbe : TomCatBehaviour
 using TomCat;
 namespace E2E;
 [DefaultExecutionOrder(100)]
-public sealed class PrefabSpawnerProbe : TomCatBehaviour
+public sealed class PrefabSpawnerProbe : MonoBehaviour
 {
     public PrefabAsset BulletPrefab;
     private int _frame;
@@ -1767,7 +1767,7 @@ public sealed class PrefabSpawnerProbe : TomCatBehaviour
     private Entity? _runtimeGroup;
     private Entity? _runtimeMarker;
     private bool _runtimeChainValidated;
-    protected override void OnCreate()
+    private void Awake()
     {
         if (SceneManager.ActiveBuildIndex != 1 || !BulletPrefab.IsValid)
             Environment.Exit(84);
@@ -1779,8 +1779,8 @@ public sealed class PrefabSpawnerProbe : TomCatBehaviour
         _input.Enable();
         Log.Info("TOMCAT_PLAYER_E2E_SCENE_2_STARTED");
     }
-    protected override void OnUpdate(float deltaTime)
-    {
+    private void Update()
+    { var deltaTime = Time.deltaTime;
         _frame++;
 		_elapsedSeconds += deltaTime;
 		if (!_inputValidated)
@@ -1858,11 +1858,11 @@ public static class PlayerAcceptanceState
     public static int Collisions;
 }
 [DefaultExecutionOrder(-100)]
-public sealed class BulletProbe : TomCatBehaviour
+public sealed class BulletProbe : MonoBehaviour
 {
     public int ExpectedSeed = 7;
     private bool _collided;
-    protected override void OnCreate()
+    private void Awake()
     {
         if (SceneManager.ActiveBuildIndex != 1)
             Environment.Exit(88);
@@ -1881,14 +1881,14 @@ public sealed class BulletProbe : TomCatBehaviour
         if (animator.Speed != 1.5f)
             Environment.Exit(95);
     }
-    protected override void OnEnable()
+    private void OnEnable()
     {
         PlayerAcceptanceState.Created++;
         Log.Info("TOMCAT_PLAYER_E2E_PREFAB_ENABLED_" + PlayerAcceptanceState.Created);
         if (PlayerAcceptanceState.Created > 2)
             Environment.Exit(91);
     }
-    protected override void OnCollisionEnter2D(Collision2D collision)
+    private void OnCollisionEnter2D(Collision2D collision)
     {
         if (_collided)
             return;
