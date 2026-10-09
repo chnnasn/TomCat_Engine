@@ -239,6 +239,8 @@ bool WebEditorSession::SetManagedAssembly(std::span<const uint8_t> assembly,
     else if (error.empty()) error = "Assembly-CSharp metadata validation failed";
     return false;
   }
+  m_ScriptManifest = std::move(manifest);
+  ++m_ScriptMetadataRevision;
   m_ManagedAssembly.assign(assembly.begin(), assembly.end());
   m_ManagedPdb.assign(pdb.begin(), pdb.end());
   error.clear(); return true;

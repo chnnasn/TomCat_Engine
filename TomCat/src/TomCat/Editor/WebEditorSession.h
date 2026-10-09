@@ -30,6 +30,8 @@ public:
   std::filesystem::path ActiveScenePath() const;
   void SyncSceneAssetName();
   void PersistActiveScene();
+  const std::string& GetScriptManifest() const { return m_ScriptManifest; }
+  uint64_t GetScriptMetadataRevision() const { return m_ScriptMetadataRevision; }
   PreviewMode GetPreviewMode() const { return m_PreviewMode; }
   Ref<Scene> GetPreviewScene() const { return m_Preview.GetActiveScene(); }
   void ControlPreview(const std::string& command);
@@ -51,6 +53,8 @@ private:
   SceneManager m_Preview;
   PreviewMode m_PreviewMode = PreviewMode::Edit;
   uint64_t m_PreviewFrames = 0;
+  std::string m_ScriptManifest;
+  uint64_t m_ScriptMetadataRevision = 0;
   std::vector<uint8_t> m_ManagedAssembly;
   std::vector<uint8_t> m_ManagedPdb;
 };
