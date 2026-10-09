@@ -30,6 +30,7 @@ namespace TomCat {
 		~ContentBrowserPanel();
 		void SetProject(Ref<Project> project);
 		// Embedded hosts may own persistence/import and expose browsing only.
+		void SetAssetsChangedCallback(std::function<void()> callback) { m_AssetsChangedCallback = std::move(callback); }
 		void SetAssetMutationsEnabled(bool enabled) { m_AssetMutationsEnabled = enabled; }
 		void SetAssetDeletionEnabled(bool enabled) { m_AssetDeletionEnabled = enabled; }
 		void SetIcons(const Ref<EditorIconSet>& icons) { m_Icons = icons; }
@@ -142,6 +143,7 @@ namespace TomCat {
 		LayoutMode m_LayoutMode;
 		Ref<Project> m_Project;
 		bool m_ProjectStateWritable = true;
+		std::function<void()> m_AssetsChangedCallback;
 		bool m_AssetMutationsEnabled = true;
 		bool m_AssetDeletionEnabled = false;
 		std::filesystem::path m_ExternalScriptEditor;
@@ -161,6 +163,7 @@ namespace TomCat {
 		enum class AuthoringAssetKind : uint8_t
 		{
 			None = 0,
+			Scene,
 			AnimationClip,
 			AnimatorController,
 			TilePalette

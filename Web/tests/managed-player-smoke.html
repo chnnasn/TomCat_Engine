@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>TomCat packaged texture smoke</title>
+<canvas id="canvas" width="640" height="360"></canvas><pre id="status">loading</pre>
+<script type="module">
+const out=value=>document.querySelector('#status').textContent=JSON.stringify(value,null,2);
+try {
+  await import('./main.js');
+  const engine=globalThis.TomCatWeb.engine;
+  const bytes=new Uint8Array(await(await fetch('./multitexture.tcpak')).arrayBuffer());
+  const boot=engine.PlayerBoot(640,360,bytes);
+  if(boot)throw new Error(`boot ${boot}: ${engine.PlayerError()}`);
+  for(let frame=0;frame<10;frame++)engine.PlayerFrame(1/60);
+  if(engine.PlayerError())throw new Error(engine.PlayerError());
+  engine.PlayerShutdown();
+  out({ok:true,shutdown:true,boot,frames:10});
+} catch(error) {out({ok:false,error:String(error?.stack??error)});}
+</script>

@@ -2255,7 +2255,9 @@ namespace TomCat {
 	void AssetManager::ScheduleTextureBacklog()
 	{
 		const AssetJobSystem::Limits limits = AssetJobSystem::Get().GetLimits();
-		const size_t maximumPending = (std::max<size_t>)(2,
+		// Web executes jobs inline (zero workers). A second prepared texture
+		// would wait for capacity on the same thread that must publish the first.
+		const size_t maximumPending = (std::max<size_t>)(1,
 			static_cast<size_t>(limits.WorkerCount) * 2);
 		for (;;)
 		{

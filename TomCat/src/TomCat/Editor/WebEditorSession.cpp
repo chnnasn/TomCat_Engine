@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "WebEditorSession.h"
+#include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
@@ -238,6 +239,8 @@ bool WebEditorSession::SetManagedAssembly(std::span<const uint8_t> assembly,
     else if (error.empty()) error = "Assembly-CSharp metadata validation failed";
     return false;
   }
+  m_ScriptManifest = std::move(manifest);
+  ++m_ScriptMetadataRevision;
   m_ManagedAssembly.assign(assembly.begin(), assembly.end());
   m_ManagedPdb.assign(pdb.begin(), pdb.end());
   error.clear(); return true;
@@ -315,17 +318,56 @@ std::string WebEditorSession::HistoryFromUI(bool redo) {
   EndUIEdit(m_Selected);
   return Invoke(Object({{"protocol",Quote("tomcat.web.v1")},{"requestId",Quote("imgui-history")},{"type",Quote(redo ? "history.redo" : "history.undo")},{"payload",Object({{"sceneHandle",Id(m_SceneHandle)},{"baseRevision",std::to_string(m_Revision)}})}}));
 }
-std::string WebEditorSession::OpenSceneAsset(uint64_t handle) {
+std::filesystem::path WebEditorSession::ActiveScenePath() const {
+  if (!m_Project || !m_Scene) return {};
+  const auto& registry = AssetManager::Get().GetRegistry();
+  const auto* metadata = registry.GetMetadata(UUID(m_SceneHandle));
+  if (!metadata || metadata->IsMissing || metadata->Type != AssetType::Scene) return {};
+  const auto path = registry.GetFileSystemPath(UUID(m_SceneHandle));
+  return std::filesystem::is_regular_file(path) ? path : std::filesystem::path{};
+}
+void WebEditorSession::SyncSceneAssetName() {
+  const auto path = ActiveScenePath();
+  if (path.empty() || HasUIEdit()) return;
+  const auto name = PathToUTF8(path.stem());
+  if (m_Scene->GetSceneName() == name) return;
+  m_Scene->SetSceneName(name);
+  m_History.RefreshCurrentSnapshot(Encode(m_Scene),m_Selected);
+  m_History.InvalidateSavedState();
+  ++m_Revision;
+}
+void WebEditorSession::PersistActiveScene() {
+  Require(bool(m_Scene) && bool(m_Project), "Open a project first", "NO_PROJECT");
+  Require(!HasUIEdit(), "Finish the active ImGui edit before saving", "EDIT_ACTIVE");
+  // A deleted/unbound scene lives in the host's project snapshot. Autosave must
+  // never manufacture a scene asset or recreate a user-deleted directory.
+  const auto path = ActiveScenePath();
+  if (path.empty()) return;
+  SyncSceneAssetName();
+  std::ifstream existing(path,std::ios::binary);
+  const std::string saved((std::istreambuf_iterator<char>(existing)),{});
+  if (saved == Encode(m_Scene)) return;
+  Require(SceneSerializer(m_Scene).Serialize(path), "Could not save active scene asset");
+}
+std::string WebEditorSession::OpenSceneAsset(uint64_t handle, bool discardDetached) {
+  Require(m_PreviewMode == PreviewMode::Edit, "Stop Play before opening a scene", "PREVIEW_ACTIVE");
   const auto* metadata = AssetManager::Get().GetRegistry().GetMetadata(UUID(handle));
   Require(metadata && metadata->Type == AssetType::Scene, "Expected Scene asset");
   std::ifstream file(AssetManager::Get().GetRegistry().GetFileSystemPath(UUID(handle)),std::ios::binary);
   Require(bool(file), "Scene asset missing");
   std::string archive((std::istreambuf_iterator<char>(file)),{});
-  EndUIEdit(m_Selected);
-  return Invoke(Object({{"protocol",Quote("tomcat.web.v1")},{"requestId",Quote("imgui-open")},{"type",Quote("scene.loadArchive")},{"payload",Object({{"sceneHandle",Id(m_SceneHandle)},{"baseRevision",std::to_string(m_Revision)},{"archive",Quote(archive)}})}}));
+  auto scene = Decode(archive); // Validate the destination before changing the active scene.
+  if (m_SceneHandle == handle) return Snapshot();
+  Require(!ActiveScenePath().empty() || discardDetached,
+    "The current scene has no asset file. Confirm discarding it before opening another scene.", "SCENE_DETACHED");
+  EndUIEdit(m_Selected); PersistActiveScene();
+  m_Scene = scene; m_SceneHandle = handle; m_Selected = 0; ++m_Revision;
+  m_History.Reset(archive,0,true);
+  return Snapshot();
 }
 
-std::string WebEditorSession::Snapshot() const {
+std::string WebEditorSession::Snapshot() {
+  SyncSceneAssetName();
   std::vector<std::string> entities, schemas;
   for (const auto& descriptor : ComponentRegistry::Get().GetDescriptors()) {
     if (!descriptor.InspectorVisible || uint64_t(descriptor.ProviderId) != 0) continue;
@@ -368,6 +410,10 @@ std::string WebEditorSession::Invoke(const std::string& request) {
       result = Object({{"engineBuildId", Quote("tomcat-web-editor-v1")}, {"protocolVersion", "1"}, {"capabilities", Array({Quote("scene.transact"), Quote("history.undo"), Quote("history.redo"), Quote("component.schema"), Quote("asset.list"), Quote("scene.archive"), Quote("script.compile"), Quote("script.lifecycle"), Quote("preview.control"), Quote("preview.snapshot")})}});
     } else if (type == "preview.control") {
       ControlPreview(String(payload["command"])); result = Status();
+    } else if (type == "scene.persist") {
+      PersistActiveScene(); result = Snapshot();
+    } else if (type == "scene.openAsset") {
+      result = OpenSceneAsset(ReadId(payload["handle"]), payload["discardDetached"] && payload["discardDetached"].as<bool>());
     } else if (type == "preview.snapshot") {
       Require(bool(GetPreviewScene()), "Start Play first", "PREVIEW_STATE");
       result = Object({{"archive",Quote(Encode(GetPreviewScene()))},{"frames",std::to_string(m_PreviewFrames)}});
@@ -389,7 +435,23 @@ std::string WebEditorSession::Invoke(const std::string& request) {
         scene->CreateEntity("Main Camera").AddComponent<C_Camera>();
         if (payload["template"] && String(payload["template"]) == "2D") scene->CreateEntity("Player").AddComponent<SpriteRenderer>();
       }
+      if (type == "project.new" && payload["activeSceneHandle"]) {
+        const auto requested = ReadId(payload["activeSceneHandle"]);
+        const auto* metadata = AssetManager::Get().GetRegistry().GetMetadata(UUID(requested));
+        if (metadata && !metadata->IsMissing && metadata->Type == AssetType::Scene) handle = requested;
+      }
       m_Project = project; m_SavedSettings=project->GetSettings(); m_SavedPlayerSettings=project->GetPlayerSettings(); m_Scene = scene; m_SceneHandle = handle; m_Selected = 0;
+      // Only explicit new-project creation gets an initial asset, directly in
+      // Assets. Restoring a project must respect its exact user-owned file tree.
+      if (type == "project.new" && !payload["activeSceneHandle"]) {
+        auto path = project->GetAssetPath() / "Scene.tomcat";
+        for (int suffix=1; std::filesystem::exists(path); ++suffix)
+          path = project->GetAssetPath() / ("Scene" + std::to_string(suffix) + ".tomcat");
+        scene->SetSceneName(PathToUTF8(path.stem()));
+        Require(SceneSerializer(scene).Serialize(path), "Could not create initial scene asset");
+        m_SceneHandle = uint64_t(AssetManager::Get().ImportAsset(path));
+        Require(m_SceneHandle != 0, "Could not register initial scene asset");
+      }
       m_History.Reset(Encode(scene), 0, true); ++m_Revision; result = Snapshot();
     } else {
       Require(bool(m_Scene), "Open a project first", "NO_PROJECT");
