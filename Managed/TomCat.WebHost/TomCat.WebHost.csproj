@@ -11,6 +11,8 @@
     <!-- The browser runtime linker specializes JS interop for single-threaded WASM.
          Keep it enabled, but root reflection-driven engine and compiler assemblies. -->
     <PublishTrimmed>true</PublishTrimmed>
+    <!-- Scripts and the rooted SaveDocument DTOs use reflection-based JSON. -->
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
     <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
     <ILLinkTreatWarningsAsErrors>false</ILLinkTreatWarningsAsErrors>
     <WasmInitialHeapSize>134217728</WasmInitialHeapSize>
