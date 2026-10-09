@@ -115,6 +115,18 @@ Asset:
   if(lifecycle.indexOf('WEB_LIFECYCLE TaskCancelled')>lifecycle.indexOf('WEB_LIFECYCLE OnDestroy'))throw new Error('task cancellation must precede destruction');
   if(lifecycle.filter(value=>value==='WEB_LIFECYCLE Update').length<2)throw new Error(`healthy script did not continue after peer fault: ${JSON.stringify(lifecycle)}`);
   if(!consoleMessages.some(value=>value.includes('intentional browser lifecycle smoke failure')))throw new Error('fault diagnostic was not reported');
+  // The Web host captures through scene.persist; a deleted scene must stay deleted.
+  const created=rpc(engine,'project.new',{name:'Web authoring',template:'2D'});
+  if(!created.ok)throw new Error(`project.new: ${JSON.stringify(created)}`);
+  const authoredPath='/Samples/PhysicsPlayground/Assets/Scene.tomcat';
+  if(!FS.analyzePath(authoredPath).exists)throw new Error('new project has no scene asset');
+  const persisted=rpc(engine,'scene.persist');
+  if(!persisted.ok)throw new Error(`scene.persist: ${JSON.stringify(persisted)}`);
+  if(!rpc(engine,'scene.openAsset',{handle:created.result.sceneHandle}).ok)throw new Error('scene.openAsset failed');
+  FS.unlink(authoredPath);
+  if(!rpc(engine,'scene.persist').ok || FS.analyzePath(authoredPath).exists)throw new Error('autosave recreated a deleted scene');
+  const restored=rpc(engine,'project.new',{name:'Restored',template:'2D',activeSceneHandle:created.result.sceneHandle});
+  if(!restored.ok || FS.analyzePath(authoredPath).exists)throw new Error('restore recreated a deleted scene');
   engine.EditorResize(800,450); engine.EditorFrame(1/60);
   const finalState=JSON.parse(engine.EditorState());
   if(engine.EditorError())throw new Error(engine.EditorError());
