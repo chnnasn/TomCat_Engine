@@ -3446,7 +3446,10 @@ namespace {
 			Require(!assets.SetManagedCookPayload(MakeManagedAssemblyFixture(invalid), invalid,
 				"invalid-event-methods"), "managed payload accepted malformed event-method metadata");
 		}
-		const std::string invalidLifecycle = withEventMethods(embeddedManifest, "[]", 2048);
+		const std::string startLifecycle = withEventMethods(embeddedManifest, "[]", 2048);
+		Require(assets.SetManagedCookPayload(MakeManagedAssemblyFixture(startLifecycle),
+			startLifecycle, "start-lifecycle-bit"), "managed payload rejected the Start lifecycle bit");
+		const std::string invalidLifecycle = withEventMethods(embeddedManifest, "[]", 4096);
 		Require(!assets.SetManagedCookPayload(MakeManagedAssemblyFixture(invalidLifecycle),
 			invalidLifecycle, "invalid-lifecycle-bit"), "managed payload accepted an undefined lifecycle bit");
 		Require(!assets.SetManagedCookPayload(MakeManagedAssemblyFixture(eventEmbeddedManifest),

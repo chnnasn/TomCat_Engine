@@ -123,7 +123,7 @@ Invoke-Checked $emcmakeExecutable @(
     '-G', 'Ninja', "-DCMAKE_BUILD_TYPE=$Configuration"
 ) 'Emscripten CMake configure'
 Invoke-Checked $cmake.Source @(
-    '--build', $BuildDirectory, '--target', 'tomcat_managed_web_entrypoints',
+    '--build', $BuildDirectory, '--target', 'tomcat_managed_web_entrypoints', 'tomcat_player',
     '--config', $Configuration, '--parallel'
 ) 'TomCat Web native archive build'
 

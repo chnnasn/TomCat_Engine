@@ -8,6 +8,7 @@
 #include "panels/ConsolePanel.h"
 #include "panels/ProfilerPanel.h"
 #include "WebProjectSettingsPanel.h"
+#include "Scripting/ScriptMetadataCache.h"
 #include "EditorViewportHandles.h"
 #include <imgui.h>
 #include <cstdint>
@@ -39,6 +40,8 @@ private:
   void DrawToolbar();
   void Preview(const char* command);
   WebEditorSession& m_Session;
+  ScriptMetadataCache m_ScriptMetadata;
+  uint64_t m_ScriptMetadataGeneration = 0;
   SceneHierarchyPanel m_Hierarchy;
   ContentBrowserPanel m_Content;
   ConsolePanel m_Console;
@@ -82,6 +85,8 @@ private:
   bool m_ShowAnimation=false, m_ShowAnimator=false, m_ShowTilePalette=false, m_ShowProfiler=false, m_ShowAssetInspector=false;
   int m_GizmoType = -1;
   unsigned m_Actions = 0;
+  uint64_t m_PendingSceneOpen = 0;
+  bool m_ConfirmSceneOpen = false;
   // Last display scale the interface was built for. Browser zoom and monitor changes alter
   // it without a resize, so it is polled and applied through the ImGui layer.
   float m_DisplayScale = 1.0f;

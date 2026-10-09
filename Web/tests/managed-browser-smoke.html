@@ -32,6 +32,12 @@ public sealed class WebSmoke : MonoBehaviour
     private void Awake()
     {
         Mark("Awake");
+        if (!enabled || World.All.Count == 0) throw new System.Exception("Web native query/behaviour bridge failed");
+        var document = new SaveDocument { Version = 7 };
+        document.Set("score", 42L);
+        var restored = SaveDocument.Deserialize(document.Serialize());
+        if (restored.Version != 7 || restored.GetLong("score") != 42L) throw new System.Exception("Web save document roundtrip failed");
+        Mark("QueryAndSaveDocument");
         StartCoroutine(CoroutineSmoke());
         Tasks.Run(async token => { await Tasks.NextFrame(token); Mark("TaskFrame"); });
         Tasks.Run(async token =>
@@ -110,11 +116,23 @@ Asset:
   const required=['WEB_LIFECYCLE Awake','WEB_FAULT Awake','WEB_LIFECYCLE OnEnable','WEB_FAULT Throw','WEB_LIFECYCLE OnDisable','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDestroy'];
   let previous=-1; for(const marker of required){const index=lifecycle.indexOf(marker);if(index<=previous)throw new Error(`missing or out-of-order lifecycle marker ${marker}: ${JSON.stringify(lifecycle)}`);previous=index;}
   for(const marker of ['WEB_FAULT Throw','WEB_FAULT OnDestroy','WEB_LIFECYCLE OnDisable','WEB_LIFECYCLE OnDestroy'])if(lifecycle.filter(value=>value===marker).length!==1)throw new Error(`expected exactly one ${marker}: ${JSON.stringify(lifecycle)}`);
-  for(const marker of ['TaskFrame','TaskFixed','TaskCleanup','TaskCancelled','CoroutineFrame','CoroutineDelay','CoroutineCondition','CoroutineCleanup'])if(!lifecycle.includes('WEB_LIFECYCLE '+marker))throw new Error('missing async marker '+marker);
+  for(const marker of ['QueryAndSaveDocument','TaskFrame','TaskFixed','TaskCleanup','TaskCancelled','CoroutineFrame','CoroutineDelay','CoroutineCondition','CoroutineCleanup'])if(!lifecycle.includes('WEB_LIFECYCLE '+marker))throw new Error('missing async marker '+marker);
   if(lifecycle.indexOf('WEB_LIFECYCLE CoroutineCleanup')>lifecycle.indexOf('WEB_LIFECYCLE OnDestroy'))throw new Error('coroutine cleanup must precede destruction');
   if(lifecycle.indexOf('WEB_LIFECYCLE TaskCancelled')>lifecycle.indexOf('WEB_LIFECYCLE OnDestroy'))throw new Error('task cancellation must precede destruction');
   if(lifecycle.filter(value=>value==='WEB_LIFECYCLE Update').length<2)throw new Error(`healthy script did not continue after peer fault: ${JSON.stringify(lifecycle)}`);
   if(!consoleMessages.some(value=>value.includes('intentional browser lifecycle smoke failure')))throw new Error('fault diagnostic was not reported');
+  // The Web host captures through scene.persist; a deleted scene must stay deleted.
+  const created=rpc(engine,'project.new',{name:'Web authoring',template:'2D'});
+  if(!created.ok)throw new Error(`project.new: ${JSON.stringify(created)}`);
+  const authoredPath='/Samples/PhysicsPlayground/Assets/Scene.tomcat';
+  if(!FS.analyzePath(authoredPath).exists)throw new Error('new project has no scene asset');
+  const persisted=rpc(engine,'scene.persist');
+  if(!persisted.ok)throw new Error(`scene.persist: ${JSON.stringify(persisted)}`);
+  if(!rpc(engine,'scene.openAsset',{handle:created.result.sceneHandle}).ok)throw new Error('scene.openAsset failed');
+  FS.unlink(authoredPath);
+  if(!rpc(engine,'scene.persist').ok || FS.analyzePath(authoredPath).exists)throw new Error('autosave recreated a deleted scene');
+  const restored=rpc(engine,'project.new',{name:'Restored',template:'2D',activeSceneHandle:created.result.sceneHandle});
+  if(!restored.ok || FS.analyzePath(authoredPath).exists)throw new Error('restore recreated a deleted scene');
   engine.EditorResize(800,450); engine.EditorFrame(1/60);
   const finalState=JSON.parse(engine.EditorState());
   if(engine.EditorError())throw new Error(engine.EditorError());

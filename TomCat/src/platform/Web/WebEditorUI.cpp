@@ -52,7 +52,9 @@ void WebEditorUI::OnAttach() {
   LoadSceneToolbarLayout();
   m_EditorIcons = CreateRef<EditorIconSet>(); m_EditorIcons->Load();
   m_Hierarchy.SetIcons(m_EditorIcons); m_Content.SetIcons(m_EditorIcons);
-  m_Content.SetAssetMutationsEnabled(false);
+  m_Content.SetAssetMutationsEnabled(true);
+  m_Content.SetAssetsChangedCallback([this] { m_Actions |= 8u; });
+  m_Content.SetAssetRenamedCallback([this](const auto&, const auto&) { m_Actions |= 8u; return true; });
   m_Content.SetAssetDeletionEnabled(true);
   m_Content.SetAssetDeletedCallback([this](const std::filesystem::path&) { m_Actions |= 8u; });
   AssetManager::Get().SetLiveReferenceProvider([this](AssetHandle handle) {
@@ -66,6 +68,9 @@ void WebEditorUI::OnAttach() {
   // Script components belong to the native Inspector, including removal and
   // asset drag/drop before managed field metadata has been loaded.
   m_Hierarchy.SetScriptEditingEnabled(true);
+  m_Hierarchy.SetScriptMetadataProvider([this](AssetHandle handle) { return m_ScriptMetadata.Find(handle); });
+  m_Hierarchy.SetScriptMetadataRevisionProvider([this] { return m_ScriptMetadata.GetRevision(); });
+  m_Content.SetScriptMetadataProvider([this](AssetHandle handle) { return m_ScriptMetadata.Find(handle); });
   m_Hierarchy.SetSceneModifiedCallback([this](SceneHierarchyPanel::SceneModificationPhase phase) {
     using Phase = SceneHierarchyPanel::SceneModificationPhase;
     const auto selected = m_Hierarchy.GetSelectedEntity();
@@ -78,6 +83,9 @@ void WebEditorUI::OnAttach() {
     if (phase == Phase::Cancel) m_Session.EndUIEdit(id,true);
   });
   const auto openScene = [this](AssetHandle handle) {
+    if (m_Session.ActiveScenePath().empty()) {
+      m_PendingSceneOpen = uint64_t(handle); m_ConfirmSceneOpen = true; return;
+    }
     try {
       const auto result = m_Session.OpenSceneAsset(handle);
       if (result.find("\"ok\":false") != std::string::npos) m_Console.Push(ConsoleMessageSeverity::Error,result,"Scene");
@@ -105,11 +113,19 @@ void WebEditorUI::OnAttach() {
 }
 void WebEditorUI::OnDetach() { AssetManager::Get().SetLiveReferenceProvider({}); m_Session.StopPreview(); }
 void WebEditorUI::SyncContext() {
+  if (m_ScriptMetadataGeneration != m_Session.GetScriptMetadataRevision()) {
+    m_ScriptMetadataGeneration = m_Session.GetScriptMetadataRevision();
+    std::string error;
+    if (!m_ScriptMetadata.ParseAndReplace(m_Session.GetScriptManifest(),error))
+      m_Console.Push(ConsoleMessageSeverity::Error,error,"C# metadata");
+  }
+  m_Session.SyncSceneAssetName();
   if (m_Project != m_Session.GetProject()) {
     m_Project = m_Session.GetProject(); m_Hierarchy.SetProject(m_Project); m_Content.SetProject(m_Project);
     m_Is2DMode=!m_Project || m_Project->GetConfig().Template=="2D";
     m_Camera.Set2DMode(m_Is2DMode);
   }
+  m_Content.SetActiveScenePath(m_Session.ActiveScenePath());
   const auto active = m_Session.GetPreviewScene() ? m_Session.GetPreviewScene() : m_Session.GetScene();
   if (m_Context != active) {
     FinishViewportEdit();
@@ -318,6 +334,19 @@ void WebEditorUI::DrawGame() {
 }
 void WebEditorUI::OnImGuiRender() {
   SyncContext();
+  if (m_ConfirmSceneOpen) { ImGui::OpenPopup("Open another scene?"); m_ConfirmSceneOpen = false; }
+  if (ImGui::BeginPopupModal("Open another scene?",nullptr,ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextUnformatted("The current scene has no file in Assets.");
+    ImGui::TextUnformatted("Opening another scene will discard its in-memory content.");
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::SameLine();
+    if (ImGui::Button("Discard and open")) {
+      try { m_Session.OpenSceneAsset(m_PendingSceneOpen,true); m_Actions |= 8u; }
+      catch (const std::exception& error) { m_Console.Push(ConsoleMessageSeverity::Error,error.what(),"Scene"); }
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
   const bool editing=m_Session.GetPreviewMode()==WebEditorSession::PreviewMode::Edit;
   if (ImGui::BeginMainMenuBar()) {
     if (ImGui::BeginMenu("File")) {
