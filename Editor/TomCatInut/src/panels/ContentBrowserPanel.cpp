@@ -2,6 +2,8 @@
 #include "tcpch.h"
 
 #include "ContentBrowserPanel.h"
+#include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Scene/Entity.h"
 #include "../AssetFileTransfer.h"
 
 #include <imgui/imgui.h>
@@ -1258,6 +1260,7 @@ namespace TomCat {
 		m_ExpandedNodes.insert(PathToUTF8(parent));
 		m_PendingOpenDirectories.insert(PathToUTF8(parent));
 		BeginRename(newFolder);
+        if(m_AssetsChangedCallback) m_AssetsChangedCallback();
 	}
 
 	void ContentBrowserPanel::FlushPendingCreateScript()
@@ -1314,6 +1317,7 @@ namespace TomCat {
 
 		m_CurrentDirectory = parent;
 		SelectAssetPath(scriptPath);
+        if(m_AssetsChangedCallback) m_AssetsChangedCallback();
 		m_UserSelectedDirectory = true;
 		m_ExpandedNodes.insert(PathToUTF8(parent));
 		m_PendingOpenDirectories.insert(PathToUTF8(parent));
@@ -1345,6 +1349,16 @@ namespace TomCat {
 		std::string contents;
 		switch (kind)
 		{
+			case AuthoringAssetKind::Scene: {
+                baseName = "New Scene"; extension = ".tomcat";
+                auto scene = CreateRef<Scene>(); scene->SetSceneName("New Scene");
+                scene->CreateEntity("Main Camera").AddComponent<C_Camera>();
+                std::string error;
+                if (!SceneSerializer(scene).SerializeDocument(contents,error)) {
+                    TC_Core_Error("Could not create scene: {0}",error); return;
+                }
+                break;
+            }
 			case AuthoringAssetKind::AnimationClip:
 				baseName = "New Animation";
 				extension = ".tcanim";
@@ -1391,6 +1405,7 @@ namespace TomCat {
 		m_ExpandedNodes.insert(PathToUTF8(parent));
 		m_PendingOpenDirectories.insert(PathToUTF8(parent));
 		BeginRename(assetPath);
+        if(m_AssetsChangedCallback) m_AssetsChangedCallback();
 	}
 
 	void ContentBrowserPanel::DrawContextMenuBody(const std::filesystem::path& target,
@@ -1414,6 +1429,10 @@ namespace TomCat {
 		}
 		if (ImGui::BeginMenu("Create"))
 		{
+            if (ImGui::MenuItem("Scene")) {
+                m_PendingCreateAuthoringAssetParent = isDirectory ? target : target.parent_path();
+                m_PendingCreateAuthoringAsset = AuthoringAssetKind::Scene;
+            }
 			if (ImGui::MenuItem("Folder"))
 				m_PendingCreateFolderParent = isDirectory ? target : target.parent_path();
 			if (ImGui::MenuItem("C# Script"))
@@ -1446,9 +1465,11 @@ namespace TomCat {
 			OpenAsset(target, isDirectory);
 		const bool csharpScript = !isDirectory
 			&& ToLower(PathToUTF8(target.extension())) == ".cs";
+#ifndef __EMSCRIPTEN__
 		if (csharpScript && ImGui::MenuItem("Open With...", nullptr, false,
 			m_Project && m_ProjectStateWritable))
 			ChooseExternalScriptEditor(target);
+#endif
 		if (!isDirectory && AssetTypeFromPath(target) == AssetType::Texture2D
 			&& ImGui::MenuItem("Sprite Atlas Tools..."))
 			BeginAtlasEditor(target);

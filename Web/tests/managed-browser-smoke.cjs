@@ -33,6 +33,12 @@ const types = {'.html':'text/html','.js':'text/javascript','.json':'application/
   await page.screenshot({path:path.join(output,'browser.png'),fullPage:true});
   assert.equal(result.ok,true,JSON.stringify(result));assert.deepEqual(pageErrors,[]);
   console.log('PASS managed browser lifecycle, fault isolation and preview controls');
+  await page.goto(`http://127.0.0.1:${server.address().port}/managed-player-smoke.html`);
+  await page.waitForFunction(()=>{try{return typeof JSON.parse(document.querySelector('#status').textContent).ok==='boolean'}catch{return false}},{},{timeout:60000});
+  const player=JSON.parse(await page.locator('#status').textContent());
+  await fs.writeFile(path.join(output,'player-result.json'),JSON.stringify(player,null,2));
+  assert.equal(player.ok,true,JSON.stringify(player));assert.deepEqual(pageErrors,[]);
+  console.log('PASS packaged player with multiple textures, frames and shutdown');
  } catch(error) {
   if(page) await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});
   await fs.writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(error),pageErrors},null,2));

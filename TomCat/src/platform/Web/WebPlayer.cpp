@@ -1,6 +1,7 @@
 #include "tcpch.h"
 #ifdef __EMSCRIPTEN__
 #include "TomCat/Core/Application.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Core/Input.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/AssetJobSystem.h"
@@ -21,6 +22,7 @@ std::string lastError, stats;
 uint64_t frames = 0;
 void Shutdown() {
   application.reset();
+  TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
   TomCat::AssetManager::Get().UnmountCookedPackage();
   TomCat::Input::ClearState();
   frames = 0;
@@ -42,6 +44,16 @@ int tc_web_player_boot(int width, int height, const uint8_t* bytes, size_t size)
     if (!file) throw std::runtime_error("Could not stage Game.tcpak in MEMFS");
     auto& assets = TomCat::AssetManager::Get();
     if (!assets.MountCookedPackage("/Game.tcpak")) throw std::runtime_error("TCPAK validation failed");
+    const auto& settings = assets.GetCookedPlayerSettings();
+    // Publish the same per-game paths as the desktop player before Awake runs.
+    // This is session-local MEMFS; persistence across reloads belongs to the host.
+    const auto paths = TomCat::ApplicationPaths::ResolveGameDataPaths("/UserData",
+      settings.CompanyName, settings.ProductName, settings.SaveDirectory,
+      settings.LogDirectory, settings.CrashDirectory);
+    if (!paths) throw std::runtime_error("Invalid packaged game data paths");
+    for (const auto& path : {paths->Saves, paths->Logs, paths->Crashes})
+      std::filesystem::create_directories(path);
+    TomCat::ApplicationPaths::SetRuntimeGameDataPaths(*paths);
     assets.UnmountCookedPackage();
     application = std::make_unique<TomCat::Application>(TomCat::WindowProps("TomCat Web Player", width, height), false);
     application->PushLayer(new TomCat::PlayerRuntimeLayer("/Game.tcpak"));
