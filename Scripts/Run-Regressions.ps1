@@ -181,6 +181,17 @@ try {
     Invoke-NativeRegression -Name "InputRegression"
     Invoke-NativeRegression -Name "ProfilerRegression"
 
+    # The shared renderer contract must also remain valid on the default backend.
+    # Vulkan GPU/layer coverage is available through Run-RHIRegression.ps1.
+    $savedRenderer = $env:TC_RENDERER
+    try {
+        $env:TC_RENDERER = 'opengl'
+        Invoke-NativeRegression -Name "RHIRegression"
+    }
+    finally {
+        $env:TC_RENDERER = $savedRenderer
+    }
+
     $playerSmoke = Join-Path $PSScriptRoot "Run-CSharpPlayerSmoke.ps1"
     if (-not (Test-Path -LiteralPath $playerSmoke -PathType Leaf)) {
         throw "Player cook/start smoke runner was not found: $playerSmoke"

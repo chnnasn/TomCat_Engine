@@ -168,6 +168,13 @@ void VulkanContext::InitImGui() {
     info.CheckVkResultFn = [](VkResult result) { VulkanCheck(result, "ImGui Vulkan"); };
     if (!ImGui_ImplVulkan_Init(&info, m_RenderPass)) throw std::runtime_error("Cannot initialize ImGui Vulkan renderer");
     m_ImGui = true;
+    RebuildImGuiFonts();
+}
+void VulkanContext::RebuildImGuiFonts() {
+    if (!m_ImGui) return;
+    m_Device->SubmitAndWait();
+    VulkanCheck(vkDeviceWaitIdle(m_Device->Device), "Wait before rebuilding UI fonts");
+    ImGui_ImplVulkan_DestroyFontsTexture();
     if (!ImGui_ImplVulkan_CreateFontsTexture(m_Device->Commands())) throw std::runtime_error("Cannot upload ImGui font atlas");
     m_Device->SubmitAndWait();
     ImGui_ImplVulkan_DestroyFontUploadObjects();

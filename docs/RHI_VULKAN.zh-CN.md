@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-在 `dev_vulkan` 上保留 OpenGL/WebGL 路径，增加可选择的桌面 Vulkan 后端。验收对象是现有 Editor、Hub 和 Player：批量精灵、圆形、线条、字体与运行时 UI、Scene/Game 离屏视口、整数实体拾取、资源预览、ImGui 多窗口、纹理导入产物和 GPU 计时。不能用“窗口能清屏”代替编辑器迁移验收。
+`dev_vulkan` 的 RHI 与桌面 Vulkan 后端已于 2026-10-16 合入 `main`，同时保留默认 OpenGL 与 WebGL 路径。验收对象是现有 Editor、Hub 和 Player：批量精灵、圆形、线条、字体与运行时 UI、Scene/Game 离屏视口、整数实体拾取、资源预览、ImGui 多窗口、纹理导入产物和 GPU 计时。不能用“窗口能清屏”代替编辑器迁移验收。
 
 现有 `Renderer2D` 负责排序、CPU 顶点批处理和场景数据；资源类与 `RendererAPI` 是兼容前端。后端负责设备、GPU 内存、不可变绘制状态、描述符、提交同步和呈现。场景与编辑器不得持有 Vulkan 对象。ImGui 的纹理标识单独通过 UI 互操作接口提供，不能把 64 位 descriptor set 截断为 OpenGL 的 32 位纹理编号。
 
@@ -65,7 +65,44 @@ Editor、Hub、CLI 和 Player 都使用这个选择。Vulkan 需要显卡驱动�
 
 `-Validation` 需要安装 Khronos validation layer（Vulkan SDK）。普通运行不需要该 layer。可手动设置 `TC_VULKAN_VALIDATION=1`，诊断写入标准错误；`TC_VULKAN_DEVICE` 按设备名子串筛选。
 
-## 验证记录（2026-09-21）
+## 主线集成（2026-10-16）
+
+合并保留主线的 Editor 面板拆分、Web Module/Save 模块、DPI 字体缩放和后处理生命周期，并补齐以下跨后端行为：
+
+- Editor 公共图标和视口使用指针宽度的 UI 纹理句柄。
+- Vulkan 支持主线曝光、饱和度和暗角处理，保留颜色 alpha、实体 ID 与深度附件。
+- 字体缩放在帧边界等待 GPU 后重建 atlas、回收旧 descriptor，不关闭辅助窗口。
+- `Framebuffer::ReadColorAttachment` 提供同步 RGBA8 读回；Editor 自动化截图使用该接口，保留 PPM 格式与方向。
+- 新增的 SaveData、SceneMigration 和 ModuleSdk 测试补齐 Vulkan loader 延迟加载配置。
+- `Run-Regressions.ps1` 包含默认 OpenGL RHI 回归；RHI 回归验证调色后的实际像素、字体重建、BC3/ETC2/ASTC 上传和读回错误边界。
+
+复验命令（按顺序运行，避免 Managed DLL 重建与脚本编译测试相互干扰）：
+
+```powershell
+./Scripts/Run-Regressions.ps1 -Configuration Release -Log
+./Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
+$env:TC_RENDERER = 'vulkan'
+$env:TC_VULKAN_VALIDATION = '1'
+./Scripts/Run-AutomationRegression.ps1 -Configuration Release -SkipBuild
+./Scripts/Run-CSharpPlayerSmoke.ps1 -Configuration Release -RequirePlayer
+Remove-Item Env:TC_RENDERER, Env:TC_VULKAN_VALIDATION
+./Scripts/Build-WebManaged.ps1
+./Scripts/Run-WebBrowserSmoke.ps1
+```
+
+本次实际验证结果：
+
+| 项目 | 结果 |
+| --- | --- |
+| Release 完整入口 | Managed、14 个原生回归、Editor/Hub/CLI/Player 构建、Player Template、C# Player、CoinRunner、模块发布与编辑器自动化全部通过 |
+| Vulkan RHI | NVIDIA GeForce RTX 5060 Laptop GPU，Khronos 同步验证与多窗口通过，无 validation error |
+| Vulkan Editor | 创建项目、编写/编译/挂载脚本、Prefab、保存、输入/步进/断言、截图、停止和 Player 导出通过，验证层 stderr 为空 |
+| Vulkan Player | C# 烘焙/打包、私有运行时和真实 Player 脚本完成退出码 73 通过 |
+| Web | 最终 Emscripten/.NET Web 构建通过；Edge 浏览器生命周期、故障隔离、预览控制及多纹理打包 Player 启动/帧推进/关闭通过 |
+
+本地完整日志位于 `build/logs/merge-vulkan-*`。首次完整运行曾遇到场景原子替换 `Access denied`，定向与最终串行全套复测均通过；另一次并行构建干扰了测试 DLL 和编译输入，最终验证已串行执行。未将这些瞬时失败解释为已修复的文件系统缺陷。本轮未重跑集显测试或长时间性能 soak。
+
+## 分支原始验证记录（2026-09-21）
 
 | 项目 | 实际结果 |
 | --- | --- |
@@ -86,5 +123,5 @@ Editor、Hub、CLI 和 Player 都使用这个选择。Vulkan 需要显卡驱动�
 - 要求 Vulkan 1.2、独立 attachment 混合和至少 32 个采样纹理槽。宽线与 timestamp 按能力降级；默认优先独显，可手动指定设备。
 - 当前 framebuffer 支持单采样 RGBA8、R32_SINT 与深度模板；MSAA、compute、storage image/buffer 和 push constant 不在现有前端迁移范围。
 - shader 转换支持现有引擎 GLSL 约定，使用 set 0 UBO、set 1 sampler、set 2 命名 uniform；不保证任意第三方 GLSL 能自动转换。自定义 shader 应遵循该布局。
-- BC3 导入产物通过 CPU 解压后上传 RGBA，保留 mipmap 和 sRGB 语义，尚未启用设备原生 BC3 上传。
+- BC1、BC3、BC5、ETC2RGBA8 与 ASTC4x4 导入产物通过 CPU 解压后上传 RGBA，保留 mipmap 和 sRGB 语义，尚未启用设备原生压缩纹理上传。
 - 编辑器维持原来的单主窗口输入策略。`TC_IMGUI_VIEWPORTS=1` 可开启已验证的辅助窗口渲染，但未新增分离 Scene 窗口的完整输入路由，默认关闭。

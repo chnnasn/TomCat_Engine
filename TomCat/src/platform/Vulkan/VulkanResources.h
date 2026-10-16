@@ -89,6 +89,7 @@ public:
     void Unbind() override;
     bool Resize(uint32_t width, uint32_t height) override;
     int ReadPixel(uint32_t attachment, int x, int y) override;
+    bool ReadColorAttachment(uint32_t attachment, std::vector<uint8_t>& pixels) override;
     void ClearAttachment(uint32_t attachment, int value) override;
     uint32_t GetColorAttachmentRendererID(uint32_t index) const override;
     uintptr_t GetColorAttachmentUITextureID(uint32_t index) const override;

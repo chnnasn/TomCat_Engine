@@ -12,6 +12,7 @@
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
+#include <cmath>
 #include <stdexcept>
 
 using namespace TomCat;
@@ -20,16 +21,38 @@ void Require(bool value, const char* message) { if (!value) throw std::runtime_e
 glm::mat4 Quad(float x, float y, float width, float height) {
     return glm::translate(glm::mat4(1), glm::vec3(x, y, 0)) * glm::scale(glm::mat4(1), glm::vec3(width, height, 1));
 }
+std::array<uint8_t, 4> ReadColor(const Ref<Framebuffer>& target, int x, int y) {
+    const auto& spec = target->GetSpecification();
+    Require(x >= 0 && y >= 0 && uint32_t(x) < spec.Width && uint32_t(y) < spec.Height,
+        "Color sample is outside the framebuffer");
+    std::vector<uint8_t> pixels;
+    Require(target->ReadColorAttachment(0, pixels), "RGBA8 framebuffer readback failed");
+    Require(pixels.size() == size_t(spec.Width) * spec.Height * 4,
+        "Framebuffer readback byte count does not match its dimensions");
+    std::array<uint8_t, 4> pixel{};
+    const size_t offset = (size_t(y) * spec.Width + size_t(x)) * 4;
+    std::copy_n(pixels.data() + offset, pixel.size(), pixel.data());
+    return pixel;
+}
 class UILayer final : public Layer {
 public:
     Ref<Framebuffer> Target;
     Ref<Texture2D> Texture;
     bool Detached = false;
+    float RequestedUiScale = 0.0f;
     void OnImGuiRender() override {
         ImGui::SetNextWindowSize({220, 160}, ImGuiCond_Always);
         ImGui::Begin("RHI regression");
         ImGui::Image(reinterpret_cast<ImTextureID>(Target->GetColorAttachmentUITextureID()), {64, 64}, {0, 1}, {1, 0});
         ImGui::Image(reinterpret_cast<ImTextureID>(Texture->GetUITextureID()), {16, 16});
+        if (RequestedUiScale > 0.0f) {
+            auto* gui = Application::Get().GetImGuiLayer();
+            const float previousFontSize = gui->GetBakedFontSize();
+            Require(gui->SetUiScale(RequestedUiScale), "UI scale was not accepted");
+            Require(gui->GetBakedFontSize() == previousFontSize, "Font atlas rebuilt during an active UI frame");
+            RequestedUiScale = 0.0f;
+        }
+        ImGui::TextUnformatted("Font atlas rebuild regression");
         ImGui::End();
         if (Detached) {
             ImGui::SetNextWindowPos({1000, 100}, ImGuiCond_Always);
@@ -60,6 +83,14 @@ void Run() {
     framebuffer->Bind();
     RenderCommand::SetDepthTest(false);
     RenderCommand::SetClearColor({0, 0, 0, 1}); RenderCommand::Clear();
+    Require(ReadColor(framebuffer, 0, 0) == std::array<uint8_t, 4>{0, 0, 0, 255},
+        "Color readback did not return the cleared RGBA8 pixel");
+    std::vector<uint8_t> invalidReadback{1, 2, 3, 4};
+    Require(!framebuffer->ReadColorAttachment(1, invalidReadback) && invalidReadback.empty(),
+        "Integer attachment readback must fail and clear its output");
+    invalidReadback = {1, 2, 3, 4};
+    Require(!framebuffer->ReadColorAttachment(2, invalidReadback) && invalidReadback.empty(),
+        "Out-of-range color attachment readback must fail and clear its output");
     framebuffer->ClearAttachment(1, -1);
     Renderer2D::BeginScene(camera, glm::mat4(1));
     Renderer2D::DrawQuad(Quad(-0.5f, 0, 0.7f, 0.7f), texture, 1, glm::vec4(1), 11);
@@ -99,6 +130,23 @@ void Run() {
     RHI::RenderDevice::Get().WaitIdle(); app.Tick(1.0f / 60);
     Require(framebuffer->GetColorAttachmentUITextureID() != 0, "Missing framebuffer UI texture");
     Require(texture->GetUITextureID() != 0, "Missing texture UI descriptor");
+    // A display-scale change can arrive while UI draw commands still reference
+    // the previous font atlas. Exercise deferred replacement on both backends,
+    // then render again to use the new GPU font texture and its descriptors.
+    auto* gui = app.GetImGuiLayer();
+    const float originalUiScale = gui->GetUiScale();
+    for (float scale : {1.0f, 1.5f, 2.0f, 1.0f}) {
+        ui->RequestedUiScale = scale;
+        app.Tick(1.0f / 60);
+        app.Tick(1.0f / 60);
+        const float expectedFontSize = std::round(gui->GetBaseFontSize() * scale);
+        Require(std::abs(gui->GetBakedFontSize() - expectedFontSize) < 0.01f, "Display scale did not rebuild the font atlas");
+        Require(ImGui::GetIO().Fonts->IsBuilt() && ImGui::GetIO().Fonts->TexID != 0, "Rebuilt font atlas has no GPU texture");
+        Require(ImGui::GetIO().FontDefault && std::abs(ImGui::GetIO().FontDefault->FontSize - expectedFontSize) < 0.01f,
+            "Default UI font did not follow display scale");
+    }
+    gui->SetUiScale(originalUiScale);
+    app.Tick(1.0f / 60);
     if (Renderer::SupportsGpuProfiling()) {
         auto summaries = FrameProfiler::Get().Summaries();
         Require(std::any_of(summaries.begin(), summaries.end(), [](auto& s) { return s.GpuMilliseconds >= 0; }), "GPU timestamp never completed");
@@ -160,13 +208,36 @@ void Run() {
     Require(framebuffer->ReadPixel(1,24,48) == 88 && framebuffer->ReadPixel(1,72,48) == 99, "Offline shader/named uniform snapshots failed");
     std::ifstream encodedFile("Packages/Resources/Sprites/TomCat/Square.tga", std::ios::binary);
     std::vector<uint8_t> encoded((std::istreambuf_iterator<char>(encodedFile)), {});
-    if (!BuildTextureArtifact(encoded, {{"compression","BC3"},{"generateMipmaps","true"}}, "windows-x64", artifact, error))
-        throw std::runtime_error(error);
-    auto importedTexture = Texture2D::Create(artifact.data(), artifact.size());
-    Require(importedTexture && importedTexture->IsLoaded(), "BC3 mipmapped texture artifact upload failed");
-    RenderCommand::Clear(); Renderer2D::BeginScene(camera, glm::mat4(1));
-    Renderer2D::DrawQuad(glm::mat4(1), importedTexture, 1, glm::vec4(1), 111); Renderer2D::EndScene();
-    Require(framebuffer->ReadPixel(1,48,48) == 111, "Imported texture did not render");
+    for (const char* compression : {"BC3", "ETC2RGBA8", "ASTC4x4"}) {
+        if (!BuildTextureArtifact(encoded, {{"compression",compression},{"generateMipmaps","true"}}, "windows-x64", artifact, error))
+            throw std::runtime_error(std::string(compression) + " artifact build failed: " + error);
+        auto importedTexture = Texture2D::Create(artifact.data(), artifact.size());
+        Require(importedTexture && importedTexture->IsLoaded(), (std::string(compression) + " mipmapped texture artifact upload failed").c_str());
+        RenderCommand::Clear(); Renderer2D::BeginScene(camera, glm::mat4(1));
+        Renderer2D::DrawQuad(glm::mat4(1), importedTexture, 1, glm::vec4(1), 111); Renderer2D::EndScene();
+        Require(framebuffer->ReadPixel(1,48,48) == 111, (std::string(compression) + " imported texture did not render").c_str());
+    }
+
+    // Shared scene postprocessing must transform actual pixels on each backend,
+    // preserve the picking attachment, and leave normal drawing usable afterward.
+    RenderCommand::SetClearColor({0.8f, 0.2f, 0.1f, 0.5f}); RenderCommand::Clear();
+    framebuffer->ClearAttachment(1, 122);
+    RenderCommand::ApplyColorGrade(-1, 0, 0);
+    const auto gray = ReadColor(framebuffer, 48, 48);
+    Require(std::abs(int(gray[0]) - int(gray[1])) <= 1 && std::abs(int(gray[1]) - int(gray[2])) <= 1
+        && gray[0] > 38 && gray[0] < 45, "Color grading exposure/saturation pixel mismatch");
+    Require(std::abs(int(gray[3]) - 128) <= 1, "Color grading changed alpha");
+    Require(framebuffer->ReadPixel(1,48,48) == 122, "Color grading overwrote entity picking");
+    RenderCommand::SetClearColor({0.8f, 0.8f, 0.8f, 1}); RenderCommand::Clear();
+    framebuffer->ClearAttachment(1, 123);
+    RenderCommand::ApplyColorGrade(0, 1, 1);
+    Require(ReadColor(framebuffer, 48, 48)[0] > 195 && ReadColor(framebuffer, 0, 0)[0] < 8,
+        "Color grading vignette did not darken the corners");
+    Require(framebuffer->ReadPixel(1,0,0) == 123, "Vignette overwrote entity picking");
+    Renderer2D::BeginScene(camera, glm::mat4(1));
+    Renderer2D::DrawQuad(glm::mat4(1), glm::vec4(1), 124); Renderer2D::EndScene();
+    Require(framebuffer->ReadPixel(1,48,48) == 124 && ReadColor(framebuffer, 48, 48)[0] > 250,
+        "Color grading did not restore normal color/picking writes");
     framebuffer->Unbind();
     FrameProfiler::Get().SetRecording(false);
     Require(RHI::RenderDevice::Get().ValidationErrors() == 0, "Vulkan validation reported errors");
