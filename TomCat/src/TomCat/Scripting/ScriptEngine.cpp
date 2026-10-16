@@ -1475,20 +1475,22 @@ namespace TomCat::Scripting {
 			return Math::ComposeTransform(vector(state.LocalTranslation),
 				vector(state.LocalRotation), vector(state.LocalScale));
 		};
-		auto setWorld = [&](ProjectedEntityState& state, const glm::mat4& matrix)
+		auto setWorld = [&](ProjectedEntityState& state, const glm::mat4& matrix,
+			const glm::vec3& scaleSigns)
 		{
 			glm::vec3 translation{}, rotation{}, scale{};
-			if (!Math::DecomposeTransform(matrix, translation, rotation, scale))
+			if (!Math::DecomposeTransformWithScaleSigns(matrix, scaleSigns, translation, rotation, scale))
 				return false;
 			state.Translation = native(translation);
 			state.Rotation = native(rotation);
 			state.Scale = native(scale);
 			return true;
 		};
-		auto setLocal = [&](ProjectedEntityState& state, const glm::mat4& matrix)
+		auto setLocal = [&](ProjectedEntityState& state, const glm::mat4& matrix,
+			const glm::vec3& scaleSigns)
 		{
 			glm::vec3 translation{}, rotation{}, scale{};
-			if (!Math::DecomposeTransform(matrix, translation, rotation, scale))
+			if (!Math::DecomposeTransformWithScaleSigns(matrix, scaleSigns, translation, rotation, scale))
 				return false;
 			state.LocalTranslation = native(translation);
 			state.LocalRotation = native(rotation);
@@ -1514,12 +1516,12 @@ namespace TomCat::Scripting {
 				return failProjection(
 					"Projected transform parent matrix is singular");
 			if (!setLocal(state, glm::inverse(parentWorld)
-				* composeWorld(state)))
+				* composeWorld(state), vector(state.Scale) / vector(parent->second.Scale)))
 				return failProjection(
 					"Projected world transform cannot be represented locally");
 			return true;
 		};
-		auto updateWorldSubtree = [&](uint64_t root)
+		auto updateWorldSubtree = [&](uint64_t root, bool preserveRootWorld = false)
 		{
 			std::vector<uint64_t> pending{ root };
 			std::unordered_set<uint64_t> visited;
@@ -1535,6 +1537,7 @@ namespace TomCat::Scripting {
 					return failProjection(
 						"Projected transform subtree contains a missing entity");
 				glm::mat4 world = composeLocal(current->second);
+				glm::vec3 worldScaleSigns = vector(current->second.LocalScale);
 				if (current->second.ParentId != 0)
 				{
 					const auto parent = snapshot->Entities.find(
@@ -1544,8 +1547,19 @@ namespace TomCat::Scripting {
 						return failProjection(
 							"Projected transform subtree has a missing parent");
 					world = composeWorld(parent->second) * world;
+					worldScaleSigns *= vector(parent->second.Scale);
 				}
-				if (!setWorld(current->second, world))
+				if (id == root && preserveRootWorld)
+				{
+					// The world-space command already supplied the authoritative TRS.
+				}
+				else if (current->second.ParentId == 0)
+				{
+					current->second.Translation = current->second.LocalTranslation;
+					current->second.Rotation = current->second.LocalRotation;
+					current->second.Scale = current->second.LocalScale;
+				}
+				else if (!setWorld(current->second, world, worldScaleSigns))
 					return failProjection(
 						"Projected local transform cannot be represented in world space");
 				if (const auto children = snapshot->Children.find(id);
@@ -1681,7 +1695,7 @@ namespace TomCat::Scripting {
 				if (parentId != 0)
 					snapshot->Children[parentId].push_back(id);
 				if (!updateLocalFromWorld(snapshot->Entities.at(id))
-					|| !updateWorldSubtree(id))
+					|| !updateWorldSubtree(id, true))
 					break;
 				continue;
 			}
@@ -1750,7 +1764,7 @@ namespace TomCat::Scripting {
 					newChildren.push_back(id);
 				}
 				state = std::move(updatedState);
-				if (!updateWorldSubtree(id))
+				if (!updateWorldSubtree(id, true))
 					break;
 			}
 			else if (state.Alive
@@ -1799,7 +1813,7 @@ namespace TomCat::Scripting {
 					|| command.PropertyId == static_cast<uint32_t>(Scale))
 				{
 					if (!updateLocalFromWorld(state)
-						|| !updateWorldSubtree(id))
+						|| !updateWorldSubtree(id, true))
 						break;
 				}
 				else if (!updateWorldSubtree(id))

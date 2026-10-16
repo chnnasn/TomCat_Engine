@@ -656,9 +656,11 @@ namespace TomCat {
 		};
 
 		bool CollectPendingWorldTransforms(Scene* scene, Entity entity,
-			const glm::mat4& parentWorldTransform, const glm::mat4* localTransformOverride,
+			const glm::mat4& parentWorldTransform, const glm::vec3& parentWorldScale,
+			bool hasParent, const PendingWorldTransform* localTransformOverride,
 			std::vector<PendingWorldTransform>& pendingTransforms,
-			std::unordered_set<UUID>& visited)
+			std::unordered_set<UUID>& visited,
+			const PendingWorldTransform* worldTransformOverride = nullptr)
 		{
 			if (!scene || !entity || !entity.HasComponent<ID>() || !entity.HasComponent<Transform>())
 				return false;
@@ -668,13 +670,25 @@ namespace TomCat {
 				return false;
 
 			const auto& transform = entity.GetComponent<Transform>();
-			const glm::mat4 localTransform = localTransformOverride
-				? *localTransformOverride
-				: transform.GetLocalTransform();
+			const PendingWorldTransform local = localTransformOverride
+				? *localTransformOverride : PendingWorldTransform{ entity,
+					transform._LocalTranslation, transform._LocalRotation, transform._LocalScale };
+			const glm::mat4 localTransform = Math::ComposeTransform(
+				local.Translation, local.Rotation, local.Scale);
 			const glm::mat4 worldTransform = parentWorldTransform * localTransform;
 
 			PendingWorldTransform pending{ entity };
-			if (!TryDecomposeFiniteTransform(worldTransform,
+			if (worldTransformOverride || !hasParent)
+			{
+				// Validate representability, but do not replace explicitly authored TRS
+				// with one of the other equivalent signed-scale decompositions.
+				glm::vec3 translation{}, rotation{}, scale{};
+				if (!TryDecomposeFiniteTransform(worldTransform, translation, rotation, scale))
+					return false;
+				pending = worldTransformOverride ? *worldTransformOverride : local;
+			}
+			else if (!Math::DecomposeTransformWithScaleSigns(worldTransform,
+				parentWorldScale * local.Scale,
 				pending.Translation, pending.Rotation, pending.Scale))
 				return false;
 
@@ -685,7 +699,8 @@ namespace TomCat {
 			{
 				Entity child = scene->FindEntityByUUID(childUUID);
 				if (!child || scene->GetParent(child) != entity
-					|| !CollectPendingWorldTransforms(scene, child, normalizedWorldTransform, nullptr,
+					|| !CollectPendingWorldTransforms(scene, child, normalizedWorldTransform,
+						pending.Scale, true, nullptr,
 					pendingTransforms, visited))
 					return false;
 			}
@@ -715,7 +730,8 @@ namespace TomCat {
 			for (UUID rootUUID : scene->GetRootEntityUUIDs())
 			{
 				Entity root = scene->FindEntityByUUID(rootUUID);
-				if (!root || !CollectPendingWorldTransforms(scene, root, glm::mat4(1.0f), nullptr,
+				if (!root || !CollectPendingWorldTransforms(scene, root, glm::mat4(1.0f),
+					glm::vec3(1.0f), false, nullptr,
 					pendingTransforms, visited))
 					return false;
 			}
@@ -1380,12 +1396,23 @@ namespace TomCat {
 
 	bool Scene::SetWorldTransform(Entity entity, const glm::mat4& worldTransform)
 	{
+		glm::vec3 translation{}, rotation{}, scale{};
+		return TryDecomposeFiniteTransform(worldTransform, translation, rotation, scale)
+			&& SetWorldTransform(entity, translation, rotation, scale);
+	}
+
+	bool Scene::SetWorldTransform(Entity entity, const glm::vec3& translation,
+		const glm::vec3& rotation, const glm::vec3& scale)
+	{
 		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
-			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>() || !IsFinite(worldTransform))
+			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>()
+			|| !IsFinite(translation) || !IsFinite(rotation) || !IsFinite(scale))
 			return false;
 
+		const glm::mat4 worldTransform = Math::ComposeTransform(translation, rotation, scale);
 		const Entity parent = GetParent(entity);
 		const glm::mat4 parentWorld = parent ? parent.GetComponent<Transform>().GetTransform() : glm::mat4(1.0f);
+		const glm::vec3 parentScale = parent ? parent.GetComponent<Transform>()._Scale : glm::vec3(1.0f);
 		const float parentDeterminant = glm::determinant(parentWorld);
 		if (!IsFinite(parentWorld) || !std::isfinite(parentDeterminant)
 			|| std::abs(parentDeterminant) <= 1.0e-8f)
@@ -1394,53 +1421,56 @@ namespace TomCat {
 			return false;
 		}
 
-		const glm::mat4 localTransform = glm::inverse(parentWorld) * worldTransform;
-		glm::vec3 worldTranslation{}, worldRotation{}, worldScale{};
-		glm::vec3 localTranslation{}, localRotation{}, localScale{};
-		if (!TryDecomposeFiniteTransform(worldTransform, worldTranslation, worldRotation, worldScale)
-			|| !TryDecomposeFiniteTransform(localTransform, localTranslation, localRotation, localScale))
+		const PendingWorldTransform requestedWorld{ entity, translation, rotation, scale };
+		PendingWorldTransform requestedLocal = requestedWorld;
+		if (parent && !Math::DecomposeTransformWithScaleSigns(
+			glm::inverse(parentWorld) * worldTransform, scale / parentScale,
+			requestedLocal.Translation, requestedLocal.Rotation, requestedLocal.Scale))
 			return false;
-
-		const glm::mat4 normalizedLocalTransform = Math::ComposeTransform(
-			localTranslation, localRotation, localScale);
 		std::vector<PendingWorldTransform> pendingTransforms;
 		std::unordered_set<UUID> visited;
-		if (!CollectPendingWorldTransforms(this, entity, parentWorld, &normalizedLocalTransform,
-			pendingTransforms, visited))
+		if (!CollectPendingWorldTransforms(this, entity, parentWorld, parentScale,
+			static_cast<bool>(parent), &requestedLocal, pendingTransforms, visited, &requestedWorld))
 			return false;
 
 		auto& transform = entity.GetComponent<Transform>();
-		transform._LocalTranslation = localTranslation;
-		transform._LocalRotation = localRotation;
-		transform._LocalScale = localScale;
+		transform._LocalTranslation = requestedLocal.Translation;
+		transform._LocalRotation = requestedLocal.Rotation;
+		transform._LocalScale = requestedLocal.Scale;
 		ApplyPendingWorldTransforms(pendingTransforms);
 		return true;
 	}
 
 	bool Scene::SetLocalTransform(Entity entity, const glm::mat4& localTransform)
 	{
+		glm::vec3 translation{}, rotation{}, scale{};
+		return TryDecomposeFiniteTransform(localTransform, translation, rotation, scale)
+			&& SetLocalTransform(entity, translation, rotation, scale);
+	}
+
+	bool Scene::SetLocalTransform(Entity entity, const glm::vec3& translation,
+		const glm::vec3& rotation, const glm::vec3& scale)
+	{
 		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle)
-			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>() || !IsFinite(localTransform))
+			|| !entity.HasComponent<ID>() || !entity.HasComponent<Transform>()
+			|| !IsFinite(translation) || !IsFinite(rotation) || !IsFinite(scale))
 			return false;
 
 		const Entity parent = GetParent(entity);
 		const glm::mat4 parentWorld = parent ? parent.GetComponent<Transform>().GetTransform() : glm::mat4(1.0f);
-		glm::vec3 localTranslation{}, localRotation{}, localScale{};
-		if (!TryDecomposeFiniteTransform(localTransform, localTranslation, localRotation, localScale))
-			return false;
-
-		const glm::mat4 normalizedLocalTransform = Math::ComposeTransform(
-			localTranslation, localRotation, localScale);
+		const glm::vec3 parentScale = parent ? parent.GetComponent<Transform>()._Scale : glm::vec3(1.0f);
+		const PendingWorldTransform requestedLocal{ entity, translation, rotation, scale };
 		std::vector<PendingWorldTransform> pendingTransforms;
 		std::unordered_set<UUID> visited;
-		if (!CollectPendingWorldTransforms(this, entity, parentWorld, &normalizedLocalTransform,
+		if (!CollectPendingWorldTransforms(this, entity, parentWorld, parentScale,
+			static_cast<bool>(parent), &requestedLocal,
 			pendingTransforms, visited))
 			return false;
 
 		auto& transform = entity.GetComponent<Transform>();
-		transform._LocalTranslation = localTranslation;
-		transform._LocalRotation = localRotation;
-		transform._LocalScale = localScale;
+		transform._LocalTranslation = translation;
+		transform._LocalRotation = rotation;
+		transform._LocalScale = scale;
 		ApplyPendingWorldTransforms(pendingTransforms);
 		return true;
 	}
@@ -1786,14 +1816,19 @@ namespace TomCat {
 			}
 
 			const glm::mat4 newLocal = glm::inverse(newParentWorld) * childWorld;
-			if (!TryDecomposeFiniteTransform(newLocal, localTranslation, localRotation, localScale))
+			if (!Math::DecomposeTransformWithScaleSigns(newLocal,
+				childTransform._Scale / parent.GetComponent<Transform>()._Scale,
+				localTranslation, localRotation, localScale))
 				return false;
 
-			const glm::mat4 normalizedLocalTransform = Math::ComposeTransform(
-				localTranslation, localRotation, localScale);
+			const PendingWorldTransform requestedLocal{ child,
+				localTranslation, localRotation, localScale };
+			const PendingWorldTransform requestedWorld{ child, childTransform._Translation,
+				childTransform._Rotation, childTransform._Scale };
 			std::unordered_set<UUID> visited;
-			if (!CollectPendingWorldTransforms(this, child, newParentWorld, &normalizedLocalTransform,
-				pendingTransforms, visited))
+			if (!CollectPendingWorldTransforms(this, child, newParentWorld,
+				parent.GetComponent<Transform>()._Scale, true, &requestedLocal,
+				pendingTransforms, visited, &requestedWorld))
 				return false;
 		}
 
@@ -3857,7 +3892,7 @@ namespace TomCat {
 			translation.x = position.x;
 			translation.y = position.y;
 			rotation.z = body->GetAngle();
-			if (!SetWorldTransform(entity, Math::ComposeTransform(translation, rotation, scale)))
+			if (!SetWorldTransform(entity, translation, rotation, scale))
 				TC_Core_Warn("Could not apply the physics transform to entity '{0}'", entity.GetName());
 		}
 	}
