@@ -5726,6 +5726,337 @@ namespace {
 			? "projected transaction regression failed" : failure.c_str());
 	}
 
+	void TestRetainedProjectionRemainsImmutableDuringNestedQuery()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		auto effects = std::make_shared<ProviderTransactionEffects>();
+		auto descriptor = MakeProviderTransactionDescriptor(effects);
+		std::function<void()> nestedRead;
+		bool entered = false;
+		descriptor.Properties.front().Get = [&](TomCat::Entity projected) -> TomCat::PropertyValue
+		{
+			if (!entered && nestedRead)
+			{
+				entered = true;
+				nestedRead();
+			}
+			return projected.GetComponent<ProviderTransactionComponent>().Value;
+		};
+		auto& registry = TomCat::ComponentRegistry::Get();
+		std::string error;
+		Require(registry.Register(std::move(descriptor), error), error.c_str());
+		TomCat::Scene scene;
+		auto entity = scene.CreateEntity("Retained projection");
+		entity.AddComponent<ProviderTransactionComponent>().Value = 17;
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0x778);
+		Require(session != 0, "nested projection startup failed");
+		const EntityHandleV1 handle{ session,
+			static_cast<uint64_t>(entity.GetUUID()), 0x778 };
+		nestedRead = [&]
+		{
+			NativePropertyValueV1 update{};
+			update.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+			update.Integer = 23;
+			Require(engine.QueueSetRegisteredComponentProperty(handle,
+				ProviderTransactionTypeId, ProviderTransactionValueId, update),
+				"nested property write failed");
+			NativePropertyValueV1 nested{};
+			bool useDefault = true;
+			Require(engine.TryGetProjectedRegisteredComponentProperty(handle,
+				ProviderTransactionTypeId, ProviderTransactionValueId, nested, useDefault)
+				&& !useDefault && nested.Integer == 23,
+				"nested query did not observe the new command prefix");
+		};
+		NativePropertyValueV1 outer{};
+		bool useDefault = true;
+		Require(engine.TryGetProjectedRegisteredComponentProperty(handle,
+			ProviderTransactionTypeId, ProviderTransactionValueId, outer, useDefault)
+			&& !useDefault && outer.Integer == 17 && entered,
+			"incremental update mutated the snapshot retained by an outer reader");
+		Require(entity.GetComponent<ProviderTransactionComponent>().Value == 17,
+			"nested query changed live state before commit");
+		Require(engine.FlushDeferredCommands(session)
+			&& entity.GetComponent<ProviderTransactionComponent>().Value == 23,
+			"nested projection command did not commit");
+		engine.StopScene(session);
+		nestedRead = {};
+		const std::vector<TomCat::Entity> entities{ entity };
+		Require(registry.UnregisterProvider(TomCat::UUID(ProviderTransactionProviderId),
+			entities, error), error.c_str());
+	}
+
+	void TestSceneCopyPreservesIdentityNamesAndOrder()
+	{
+		auto source = TomCat::CreateRef<TomCat::Scene>();
+		const auto first = source->CreateEntity("Shared");
+		auto second = source->CreateEntity("Shared");
+		auto unnamed = source->CreateEntity();
+		const auto secondUnnamed = source->CreateEntityWithUUID(TomCat::UUID());
+		Require(first.GetName() == "Shared" && second.GetName() == "Shared (1)"
+			&& unnamed.GetName() == "Entity" && secondUnnamed.GetName() == "Entity (1)",
+			"public creation stopped generating unique names or default names");
+		// Raw authoring Tags can bypass RenameEntity. Preserve the historical
+		// copy behavior that resolves these duplicates/empty names in entity order.
+		second.GetComponent<TomCat::Tag>()._Tag = first.GetName();
+		unnamed.GetComponent<TomCat::Tag>()._Tag.clear();
+		Require(source->SetParent(second, first), "copy fixture parent failed");
+		auto copied = TomCat::Scene::Copy(source);
+		Require(copied && copied->GetEntityOrder() == source->GetEntityOrder(),
+			"Scene copy changed entity identities or creation order");
+		Require(copied->FindEntityByUUID(first.GetUUID()).GetName() == "Shared"
+			&& copied->FindEntityByUUID(second.GetUUID()).GetName() == "Shared (1)"
+			&& copied->FindEntityByUUID(unnamed.GetUUID()).GetName() == "Entity"
+			&& copied->FindEntityByUUID(secondUnnamed.GetUUID()).GetName() == "Entity (1)",
+			"Scene copy changed historical duplicate/empty name resolution");
+		Require(copied->GetParent(copied->FindEntityByUUID(second.GetUUID())).GetUUID()
+			== first.GetUUID(), "Scene copy changed the parent identity");
+		Require(copied->CreateEntity("Shared").GetName() == "Shared (2)",
+			"public creation after Scene copy did not resolve duplicate names");
+	}
+
+	void TestEntityNameIndexAndBurstCreateDestroy()
+	{
+		TomCat::EntityNameIndex names;
+		constexpr size_t Count = 256;
+		for (size_t index = 0; index < Count; ++index)
+		{
+			const auto expected = index == 0 ? "Fragment"
+				: "Fragment (" + std::to_string(index) + ")";
+			const auto name = names.MakeUnique("Fragment");
+			Require(name == expected, "indexed suffix allocation changed dense names");
+			names.Add(name);
+		}
+		Require(names.GetProbeCount() <= Count * 3,
+			"dense name allocation repeatedly scanned an already occupied prefix");
+		names.Add("Fragment (17)");
+		names.Remove("Fragment (17)");
+		Require(names.MakeUnique("Fragment") == "Fragment (256)",
+			"removing one duplicate incorrectly freed an occupied name");
+		names.Remove("Fragment (17)");
+		Require(names.MakeUnique("Fragment") == "Fragment (17)",
+			"name index did not reuse the smallest suffix hole");
+		names.Add("Fragment (17)");
+		names.Add("Fragment (1) (1)");
+		Require(names.MakeUnique("Fragment (1)") == "Fragment (1) (2)",
+			"literal suffix-like names were parsed as another base");
+
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		auto contextEntity = scene.CreateEntity("Context");
+		auto direct = scene.CreateEntity("Direct");
+		direct.GetComponent<TomCat::Tag>()._Tag = "Direct (1)";
+		Require(scene.CreateEntity("Direct").GetName() == "Direct"
+			&& scene.CreateEntity("Direct").GetName() == "Direct (2)",
+			"Scene names ignored a direct native Tag write");
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0xba57);
+		Require(session != 0, "burst naming Scene startup failed");
+		const EntityHandleV1 context{ session,
+			static_cast<uint64_t>(contextEntity.GetUUID()), 0xba57 };
+		std::vector<EntityHandleV1> created;
+		const auto before = engine.GetProjectionStatistics();
+		for (size_t index = 0; index < Count; ++index)
+		{
+			EntityHandleV1 item{};
+			Require(engine.QueueCreateEntity(context, "Fragment", {}, {}, item),
+				"burst entity creation failed");
+			std::string name;
+			Require(engine.GetProjectedEntityName(item, name)
+				&& name == (index == 0 ? "Fragment"
+					: "Fragment (" + std::to_string(index) + ")"),
+				"projected name disagreed with common naming policy");
+			created.push_back(item);
+		}
+		const auto projected = engine.GetProjectionStatistics();
+		Require(projected.NameLookupProbes - before.NameLookupProbes >= Count
+			&& projected.NameLookupProbes - before.NameLookupProbes <= Count * 3,
+			"projected burst names did not use the incremental suffix index");
+		Require(engine.QueueDestroyEntity(created[17]), "burst destroy failed");
+		EntityHandleV1 replacement{};
+		Require(engine.QueueCreateEntity(context, "Fragment", {}, {}, replacement),
+			"burst replacement failed");
+		std::string replacementName;
+		Require(engine.GetProjectedEntityName(replacement, replacementName)
+			&& replacementName == "Fragment (17)",
+			"projected destroy did not release a name hole");
+		Require(engine.QueueSetEntityName(created[19], "Moved")
+			&& engine.FlushDeferredCommands(session), "burst naming commit failed");
+		Require(scene.FindEntityByUUID(TomCat::UUID(replacement.EntityId)).GetName()
+			== replacementName
+			&& !scene.FindEntityByUUID(TomCat::UUID(created[17].EntityId))
+			&& scene.CreateEntity("Fragment").GetName() == "Fragment (19)",
+			"live create/destroy/rename naming diverged from projection");
+		engine.StopScene(session);
+		// Retain the old repair behavior if native authoring code corrupts ID.
+		auto damaged = scene.CreateEntity("Damaged ID");
+		const auto damagedId = damaged.GetUUID();
+		damaged.GetComponent<TomCat::ID>().id = contextEntity.GetUUID();
+		scene.DestroyEntity(damaged);
+		Require(!scene.FindEntityByUUID(damagedId)
+			&& std::find(scene.GetEntityOrder().begin(), scene.GetEntityOrder().end(), damagedId)
+				== scene.GetEntityOrder().end()
+			&& scene.FindEntityByUUID(contextEntity.GetUUID()),
+			"fast destroy removed another entity after an ID mismatch");
+		auto missing = scene.CreateEntity("Missing ID");
+		const auto missingId = missing.GetUUID();
+		missing.RemoveComponent<TomCat::ID>();
+		scene.DestroyEntity(missing);
+		Require(!scene.FindEntityByUUID(missingId)
+			&& std::find(scene.GetEntityOrder().begin(), scene.GetEntityOrder().end(), missingId)
+				== scene.GetEntityOrder().end(),
+			"fast destroy lost the missing-ID recovery path");
+	}
+
+	void TestIncrementalProjectionAcrossScenes()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene firstScene, secondScene;
+		auto first = firstScene.CreateEntity("First Scene");
+		auto second = secondScene.CreateEntity("Second Scene");
+		auto& engine = ScriptEngine::Get();
+		const auto firstSession = engine.StartScene(firstScene, 0x123);
+		const auto secondSession = engine.StartScene(secondScene, 0x456);
+		Require(firstSession && secondSession, "two-Scene projection startup failed");
+		const EntityHandleV1 firstHandle{ firstSession,
+			static_cast<uint64_t>(first.GetUUID()), 0x123 };
+		const EntityHandleV1 secondHandle{ secondSession,
+			static_cast<uint64_t>(second.GetUUID()), 0x456 };
+		const auto before = engine.GetProjectionStatistics();
+		for (uint32_t index = 0; index < 12; ++index)
+		{
+			Require(engine.QueueSetLayer(firstHandle, index)
+				&& engine.QueueSetLayer(secondHandle, index + 1),
+				"interleaved Scene writes failed");
+			uint32_t firstLayer = 0, secondLayer = 0;
+			Require(engine.GetProjectedLayer(firstHandle, firstLayer)
+				&& engine.GetProjectedLayer(secondHandle, secondLayer)
+				&& firstLayer == index && secondLayer == index + 1,
+				"global queue offset skipped or mixed another Scene's writes");
+		}
+		const auto after = engine.GetProjectionStatistics();
+		Require(after.SceneCopies - before.SceneCopies == 2
+			&& after.ReplayedCommands - before.ReplayedCommands == 24,
+			"interleaved Scene writes rebuilt snapshots or replayed prefixes");
+		Require(engine.FlushDeferredCommands(firstSession),
+			"first Scene flush failed");
+		uint32_t secondLayer = 0;
+		Require(engine.GetProjectedLayer(secondHandle, secondLayer) && secondLayer == 12
+			&& first.GetLayer() == 11 && second.GetLayer() == 0,
+			"queue erasure reused a stale offset or committed another Scene");
+		Require(engine.FlushDeferredCommands(secondSession) && second.GetLayer() == 12,
+			"second Scene flush failed after queue compaction");
+		engine.StopScene(secondSession);
+		engine.StopScene(firstSession);
+	}
+
+	void TestIncrementalDeferredProjectionCostAndIsolation()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		std::vector<TomCat::Entity> sprites;
+		for (size_t index = 0; index < 192; ++index)
+		{
+			auto entity = scene.CreateEntity("Projection cost " + std::to_string(index));
+			entity.AddComponent<TomCat::SpriteRenderer>();
+			sprites.push_back(entity);
+		}
+		auto& engine = ScriptEngine::Get();
+		constexpr uint64_t Generation = 0xc057;
+		const uint64_t session = engine.StartScene(scene, Generation);
+		Require(session != 0, "could not start incremental projection fixture");
+		auto handle = [session](TomCat::Entity entity)
+		{
+			return EntityHandleV1{ session,
+				static_cast<uint64_t>(entity.GetUUID()), Generation };
+		};
+		const auto context = handle(sprites.front());
+		const auto before = engine.GetProjectionStatistics();
+		uint64_t token = 0;
+		Require(engine.BeginDeferredCallbackTransaction(context, token),
+			"could not begin incremental projection callback");
+		for (size_t index = 0; index < sprites.size(); ++index)
+		{
+			const auto target = handle(sprites[index]);
+			NativePropertyValueV1 position{};
+			position.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector3);
+			position.Vector = { static_cast<float>(index + 1), 2.0f, 0.0f, 0.0f };
+			Require(engine.QueueSetComponentProperty(target,
+				NativeComponentType::Transform,
+				TomCat::ComponentIds::TransformProperties::Translation, position),
+				"incremental transform write was rejected");
+			NativeVector3 projectedPosition{};
+			Require(engine.GetProjectedTransformProperty(target,
+				TomCat::ComponentIds::TransformProperties::Translation,
+				projectedPosition) && projectedPosition.X == position.Vector.X,
+				"incremental transform read lost the last write");
+			NativePropertyValueV1 color{};
+			color.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector4);
+			color.Vector = { 0.25f, 0.5f, 0.75f, 1.0f };
+			Require(engine.QueueSetRegisteredComponentProperty(target,
+				TomCat::ComponentIds::SpriteRenderer,
+				TomCat::ComponentIds::SpriteRendererProperties::Color, color),
+				"incremental registered property write was rejected");
+			NativePropertyValueV1 projectedColor{};
+			bool useDefault = true;
+			Require(engine.TryGetProjectedRegisteredComponentProperty(target,
+				TomCat::ComponentIds::SpriteRenderer,
+				TomCat::ComponentIds::SpriteRendererProperties::Color,
+				projectedColor, useDefault) && !useDefault
+				&& projectedColor.Vector.X == color.Vector.X,
+				"incremental registered read lost the last write");
+			Require(sprites[index].GetComponent<TomCat::Transform>()._Translation.x == 0.0f
+				&& sprites[index].GetComponent<TomCat::SpriteRenderer>()._Color.r == 1.0f,
+				"incremental validation changed the live Scene before commit");
+		}
+		const auto projected = engine.GetProjectionStatistics();
+		Require(projected.SceneCopies - before.SceneCopies <= 1
+			&& projected.ReplayedCommands - before.ReplayedCommands == sprites.size() * 2
+			&& projected.IncrementalUpdates - before.IncrementalUpdates >= sprites.size(),
+			"ordinary writes rebuilt the Scene or replayed an already projected prefix");
+		Require(engine.CompleteDeferredCallbackTransaction(token),
+			"incremental projection callback did not commit");
+		const auto committed = engine.GetProjectionStatistics();
+		Require(committed.CommitValidationCopies - before.CommitValidationCopies == 1,
+			"callback commit did not retain exactly one independent validation copy");
+		for (size_t index = 0; index < sprites.size(); ++index)
+			Require(sprites[index].GetComponent<TomCat::Transform>()._Translation.x
+				== static_cast<float>(index + 1)
+				&& sprites[index].GetComponent<TomCat::SpriteRenderer>()._Color.r == 0.25f,
+				"incremental projection and committed state disagree");
+
+		// An incrementally projected structural suffix must remain isolated too.
+		Require(engine.BeginDeferredCallbackTransaction(context, token),
+			"could not begin incremental rollback callback");
+		EntityHandleV1 created{};
+		Require(engine.QueueCreateEntity(context, "Projection temporary", {}, {}, created)
+			&& engine.QueueAddRegisteredComponent(created, TomCat::ComponentIds::SpriteRenderer)
+			&& engine.QueueSetParent(created, context),
+			"incremental structural suffix was rejected");
+		EntityHandleV1 projectedParent{};
+		Require(engine.GetProjectedParent(created, projectedParent)
+			&& projectedParent.EntityId == context.EntityId
+			&& engine.QueueDestroyEntity(created),
+			"incremental create/reparent was not visible");
+		bool alive = true;
+		Require(engine.GetProjectedEntityLiveness(created, alive) && !alive
+			&& engine.MarkDeferredCommandBatchFailed(context, "cost fixture rollback")
+			&& engine.CompleteDeferredCallbackTransaction(token)
+			&& !scene.FindEntityByUUID(TomCat::UUID(created.EntityId)),
+			"incremental structural rollback leaked into the live Scene");
+		Require(engine.GetProjectedEntityLiveness(context, alive) && alive,
+			"aborted incremental projection poisoned the next query");
+		engine.StopScene(session);
+	}
+
 	void TestRegisteredAddProjectionMatchesDescriptorSemantics()
 	{
 		using namespace TomCat::Scripting;
@@ -6818,6 +7149,8 @@ namespace {
 	}
 }
 
+#include "ImmediateProjectionRegression.h"
+
 int main(int argc, char** argv)
 {
 	TomCat::Log::Init();
@@ -6909,6 +7242,18 @@ int main(int argc, char** argv)
 		TestProjectedTransactionReadYourWritesAndRollback);
 	run("registered Add projection matches descriptor side effects",
 		TestRegisteredAddProjectionMatchesDescriptorSemantics);
+	run("incremental deferred projection cost and isolation",
+		TestIncrementalDeferredProjectionCostAndIsolation);
+	run("retained projection remains immutable during nested query",
+		TestRetainedProjectionRemainsImmutableDuringNestedQuery);
+	run("incremental projection across interleaved Scenes",
+		TestIncrementalProjectionAcrossScenes);
+	run("Scene copy preserves identity, names, and creation order",
+		TestSceneCopyPreservesIdentityNamesAndOrder);
+	run("indexed names and burst create/destroy preserve suffix gaps",
+		TestEntityNameIndexAndBurstCreateDestroy);
+	run("immediate mutation invalidates incremental projection",
+		TestImmediateMutationInvalidatesProjection);
 	run("deferred disable precedes subtree attachment destruction",
 		TestDeferredDisableBeforeSubtreeDestroyOrdering);
 	run("deferred last behaviour removal precedes owner destruction",
