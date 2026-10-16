@@ -523,6 +523,11 @@ namespace TomCat {
 		// effects outside the supplied validation Entity.
 		bool ScriptAccessible = false;
 		bool SupportsTransactionalValidation = false;
+		// Optional native replay contract for Has/Add/Remove and property Get/Set:
+		// callbacks do not create/destroy entities or modify any entity's Tag name,
+		// including through nested callbacks. False keeps conservative name-index
+		// invalidation for arbitrary provider code. This is not a managed ABI field.
+		bool PreservesEntityNames = false;
 	};
 
 	// Unknown plugin components are retained as validated YAML records. A scene

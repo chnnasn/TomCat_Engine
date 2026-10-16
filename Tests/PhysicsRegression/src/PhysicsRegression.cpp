@@ -6050,6 +6050,84 @@ namespace {
 			entities, error), error.c_str());
 	}
 
+	void TestRegisteredSpriteBurstReusesReplayNames()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		const NativeApiV2 native = BuildNativeApiV2();
+		NativeComponentApiV1 components{};
+		const NativeUtf8View capability{
+			reinterpret_cast<const uint8_t*>(ComponentCapabilityName.data()),
+			ComponentCapabilityName.size() };
+		uint32_t required = 0;
+		Require(native.QueryCapability(capability, 1, &components, sizeof(components), &required) == 0,
+			"registered sprite burst capability is unavailable");
+		TomCat::Scene scene;
+		auto owner = scene.CreateEntity("Sprite burst owner");
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0xb0757);
+		Require(session != 0, "registered sprite burst startup failed");
+		const EntityHandleV1 context{ session, static_cast<uint64_t>(owner.GetUUID()), 0xb0757 };
+		constexpr size_t Count = 256;
+		std::vector<EntityHandleV1> created;
+		NativePropertyValueV1 color{}, order{}, asset{};
+		color.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector4);
+		color.Vector = { .25f, .5f, .75f, 1.f };
+		order.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+		asset.Kind = static_cast<uint32_t>(NativePropertyKindV1::UInt64);
+		const auto before = engine.GetProjectionStatistics();
+		for (size_t index = 0; index < Count; ++index)
+		{
+			EntityHandleV1 item{};
+			Require(engine.QueueCreateEntity(context, "Sprite fragment", {}, {}, item),
+				"registered sprite burst creation failed");
+			// Exercise the same registered Add/Has/Set/Get tables used by generated
+			// C# proxies, interleaved with the Transform convenience API.
+			Require(components.Add(item, TomCat::ComponentIds::SpriteRenderer) == 0
+				&& components.Has(item, TomCat::ComponentIds::SpriteRenderer) == 1
+				&& components.Has(item, TomCat::ComponentIds::Transform) == 1,
+				"registered sprite burst Add/Has failed");
+			order.Integer = static_cast<int32_t>(index);
+			Require(components.SetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+				TomCat::ComponentIds::SpriteRendererProperties::Color, color) == 0
+				&& components.SetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+					TomCat::ComponentIds::SpriteRendererProperties::OrderInLayer, order) == 0
+				&& components.SetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+					TomCat::ComponentIds::SpriteRendererProperties::Sprite, asset) == 0
+				&& native.V1.TransformSetPosition(item, { float(index), 2.f, 0.f }) == 0
+				&& native.V1.TransformSetRotationEuler(item, { 0.f, 0.f, .25f }) == 0
+				&& native.V1.TransformSetScale(item, { 2.f, 3.f, 1.f }) == 0,
+				"registered sprite burst property write failed");
+			NativePropertyValueV1 projected{};
+			Require(components.GetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+				TomCat::ComponentIds::SpriteRendererProperties::Color, &projected) == 0
+				&& projected.Vector.X == color.Vector.X,
+				"registered sprite burst read-your-writes failed");
+			created.push_back(item);
+		}
+		const auto projected = engine.GetProjectionStatistics();
+		Require(projected.ReplayNameIndexBuilds - before.ReplayNameIndexBuilds == 1
+			&& projected.ReplayNameLookupProbes - before.ReplayNameLookupProbes <= Count * 3
+			&& scene.GetEntityOrder().size() == 1,
+			"registered sprite/transform access invalidated replay names or changed live state");
+		Require(engine.FlushDeferredCommands(session), "registered sprite burst commit failed");
+		const auto committed = engine.GetProjectionStatistics();
+		Require(committed.ReplayNameIndexBuilds - before.ReplayNameIndexBuilds == 3
+			&& committed.ReplayNameLookupProbes - before.ReplayNameLookupProbes <= Count * 9,
+			"sprite burst validation/live replay rebuilt name indexes per entity");
+		for (size_t index = 0; index < Count; ++index)
+		{
+			auto entity = scene.FindEntityByUUID(TomCat::UUID(created[index].EntityId));
+			Require(entity && entity.GetName() == (index == 0 ? "Sprite fragment"
+				: "Sprite fragment (" + std::to_string(index) + ")")
+				&& entity.GetComponent<TomCat::SpriteRenderer>().OrderInLayer == int32_t(index)
+				&& std::abs(entity.GetComponent<TomCat::Transform>()._Translation.x - float(index)) < .001f,
+				"sprite burst committed names/order/transform differ from projection");
+		}
+		engine.StopScene(session);
+	}
+
 	void TestIncrementalDeferredProjectionCostAndIsolation()
 	{
 		using namespace TomCat::Scripting;
@@ -7348,6 +7426,8 @@ int main(int argc, char** argv)
 		TestEntityNameIndexAndBurstCreateDestroy);
 	run("replay names observe provider writes and retain callback commands",
 		TestReplayNamesObserveProvidersAndPreserveCallbackCommands);
+	run("registered sprite burst reuses replay names",
+		TestRegisteredSpriteBurstReusesReplayNames);
 	run("immediate mutation invalidates incremental projection",
 		TestImmediateMutationInvalidatesProjection);
 	run("deferred disable precedes subtree attachment destruction",

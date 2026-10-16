@@ -1073,6 +1073,7 @@ namespace TomCat {
 		{
 			auto descriptor = BaseDescriptor<Transform>(ComponentIds::Transform,
 				"TomCat.Transform", "Transform", false);
+			descriptor.PreservesEntityNames = true;
 			descriptor.ScriptAccessible = true;
 			descriptor.EncodeLegacyFields = LegacyTransform();
 			descriptor.DecodeLegacyFields = LegacyTransformDecode();
@@ -1200,6 +1201,7 @@ namespace TomCat {
 		{
 			auto descriptor = BaseDescriptor<SpriteRenderer>(ComponentIds::SpriteRenderer,
 				"TomCat.SpriteRenderer", "Sprite Renderer");
+			descriptor.PreservesEntityNames = true;
 			descriptor.ScriptAccessible = true;
             descriptor.SchemaVersion=2;
 

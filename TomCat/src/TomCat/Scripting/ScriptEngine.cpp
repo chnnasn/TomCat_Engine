@@ -2396,7 +2396,8 @@ namespace TomCat::Scripting {
 			UUID(entity.EntityId));
 		if (!projected)
 			return false;
-		snapshot->ReplayNames.reset();
+		if (!descriptor->PreservesEntityNames)
+			snapshot->ReplayNames.reset();
 		present = descriptor->Has(projected);
 		return true;
 	}
@@ -2429,7 +2430,8 @@ namespace TomCat::Scripting {
 			return false;
 		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
 			UUID(entity.EntityId));
-		snapshot->ReplayNames.reset();
+		if (!descriptor->PreservesEntityNames)
+			snapshot->ReplayNames.reset();
 		return projected && descriptor->Has(projected)
 			&& WriteProjectedProperty(property->Kind, property->Get(projected),
 				value);
@@ -2462,7 +2464,8 @@ namespace TomCat::Scripting {
 			return false;
 		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
 			UUID(entity.EntityId));
-		snapshot->ReplayNames.reset();
+		if (!descriptor->PreservesEntityNames)
+			snapshot->ReplayNames.reset();
 		if (!projected || !descriptor->Has(projected))
 			return false;
 		PropertyValue projectedValue = property->Get(projected);
@@ -2635,6 +2638,13 @@ namespace TomCat::Scripting {
 				case DeferredCommandKind::SetRegisteredComponentStringProperty:
 				case DeferredCommandKind::AddRegisteredComponent:
 				case DeferredCommandKind::RemoveRegisteredComponent:
+				{
+					const auto* descriptor = ComponentRegistry::Get().Find(
+						UUID(command.RegisteredTypeId));
+					if (!descriptor || !descriptor->PreservesEntityNames)
+						names.reset();
+					break;
+				}
 				case DeferredCommandKind::InstantiatePrefab:
 				case DeferredCommandKind::DestroyEntity:
 					names.reset();
