@@ -28,7 +28,7 @@
 
 ## 当前主线
 
-产品版本为 **0.6.0**。`dev_vulkan` 已合入 `main`；桌面默认 OpenGL 4.6，可在进程启动前设置 `TC_RENDERER=vulkan` 选择 Vulkan 1.2。CLI 烘焙与 Player 启动必须选择同一后端。浏览器仍使用 WebGL2，主线已包含 .NET browser-wasm C# 宿主、Project 编辑与场景持久化。
+产品版本为 **0.6.0**。主线已支持 Vulkan 后端；桌面默认 OpenGL 4.6，可在进程启动前设置 `TC_RENDERER=vulkan` 选择 Vulkan 1.2。CLI 烘焙与 Player 启动必须选择同一后端。浏览器仍使用 WebGL2，主线已包含 .NET browser-wasm C# 宿主、Project 编辑与场景持久化。
 
 2026-10-16 的完整 Release 套件（Managed、14 个原生回归、应用构建、模板、Player、CoinRunner、模块发布、Editor 自动化）、Vulkan 同步验证/多窗口/Editor/Player，以及托管 Web 构建和 Edge 浏览器冒烟均通过。硬件范围、日志与未重跑项目见上方集成记录；这些结果不等同新录屏、全部设备验收或性能结论。
 

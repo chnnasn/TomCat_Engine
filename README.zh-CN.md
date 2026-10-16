@@ -14,19 +14,16 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **main — 桌面主线与功能集成基线**
 
-用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，默认使用 OpenGL，可选择 Vulkan 后端。它是下列专项分支的公共基线；`dev_vulkan` 已于 2026-10-16 合入主线。
+用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，默认使用 OpenGL，可选择 Vulkan 后端。它是下列专项分支的公共基线。
 
-分支定位核对日期：**2026-10-16**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`；其他专项分支继续独立演进。
+分支定位核对日期：**2026-10-16**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`。下表仅列出仍保留的分支，专项分支继续独立演进。
 
 | 分支 | 作用 |
 | --- | --- |
 | [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
-| `Build_System`（历史分支） | 构建、打包与 C# 工具链已集成到 main |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
-| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端，已合入 main |
-| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 托管浏览器 Editor/Player 基线已合入 main，后续 Web 功能已包含在主线 |
 
 **分支生命周期约定。** 对单人项目而言专项分支必须有时间盒:每条专项分支都要在季度分支核对时(最迟)完成合并进 `main`(整体或按集成切片),或执行归档——删除分支,历史仍可通过 Git 找回。在一个核对周期内既未合并也无活动的分支先归档。下次核对:**2026-12-21**。
 

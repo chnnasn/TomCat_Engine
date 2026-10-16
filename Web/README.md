@@ -277,7 +277,7 @@ The Web asset RPC also exposes the upstream's bundled Circle/Square textures.
 ## Build status (2026-10-16)
 
 The final `Scripts/Build-WebManaged.ps1` run passed native compilation, WASM
-linking and .NET browser-wasm publication after merging `dev_vulkan`; the local
+linking and .NET browser-wasm publication after the Vulkan/RHI integration; the local
 Edge run of `Scripts/Run-WebBrowserSmoke.ps1` also passed. Deploy the complete
 `build/web-managed` directory with `_framework`, `main.js` and a hosting page.
 The standalone `tomcat_player.js/.wasm/.data` files belong to the native
