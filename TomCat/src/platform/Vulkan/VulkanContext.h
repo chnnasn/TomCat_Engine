@@ -20,6 +20,7 @@ private:
     void Recreate(uint32_t width, uint32_t height);
     void DestroySwapchain();
     void BlitDefault();
+    uint64_t SubmitFrameCommands(VkSemaphore signal = VK_NULL_HANDLE);
     GLFWwindow* m_Window;
     std::shared_ptr<VulkanDevice> m_Device;
     std::unique_ptr<VulkanFramebuffer> m_Default;
@@ -27,7 +28,15 @@ private:
     VkSwapchainKHR m_Swapchain = VK_NULL_HANDLE;
     VkFormat m_Format = VK_FORMAT_UNDEFINED;
     VkRenderPass m_RenderPass = VK_NULL_HANDLE;
-    VkFence m_AcquireFence = VK_NULL_HANDLE;
+    // Bound CPU lead before ImGui reuses its main-window vertex/index ring.
+    // Presentation semaphores below belong to swapchain images, not frames.
+    struct FrameSync {
+        VkSemaphore Acquired = VK_NULL_HANDLE;
+        uint64_t Submission = 0;
+    };
+    std::array<FrameSync, 2> m_Frames{};
+    uint32_t m_Frame = 0;
+    bool m_AcquireWaitPending = false, m_FrameStarted = false;
     std::vector<VkImage> m_Images;
     std::vector<VkImageView> m_Views;
     std::vector<VkFramebuffer> m_Framebuffers;

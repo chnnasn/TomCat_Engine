@@ -7,7 +7,9 @@
 #include "TomCat/RHI/RenderDevice.h"
 #include "TomCat/Asset/ShaderArtifact.h"
 #include "TomCat/Asset/TextureArtifact.h"
+#include "platform/Vulkan/VulkanDevice.h"
 #include <fstream>
+#include <functional>
 #include <imgui.h>
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -39,7 +41,11 @@ public:
     Ref<Framebuffer> Target;
     Ref<Texture2D> Texture;
     bool Detached = false;
+    ImVec2 DetachedPosition{1000, 100};
+    ImVec2 DetachedSize{180, 120};
     float RequestedUiScale = 0.0f;
+    std::function<void()> Update;
+    void OnUpdate(Timestep) override { if (Update) Update(); }
     void OnImGuiRender() override {
         ImGui::SetNextWindowSize({220, 160}, ImGuiCond_Always);
         ImGui::Begin("RHI regression");
@@ -55,14 +61,190 @@ public:
         ImGui::TextUnformatted("Font atlas rebuild regression");
         ImGui::End();
         if (Detached) {
-            ImGui::SetNextWindowPos({1000, 100}, ImGuiCond_Always);
-            ImGui::SetNextWindowSize({180, 120}, ImGuiCond_Always);
+            ImGui::SetNextWindowPos(DetachedPosition, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(DetachedSize, ImGuiCond_Always);
             ImGui::Begin("Detached RHI viewport");
             ImGui::Image(reinterpret_cast<ImTextureID>(Target->GetColorAttachmentUITextureID()), {64, 64}, {0, 1}, {1, 0});
             ImGui::End();
         }
     }
 };
+std::vector<uint8_t> SolidPixels(uint32_t width, uint32_t height, const std::array<uint8_t, 4>& color) {
+    std::vector<uint8_t> pixels(size_t(width) * height * color.size());
+    for (size_t i = 0; i < pixels.size(); i += color.size())
+        std::copy(color.begin(), color.end(), pixels.begin() + i);
+    return pixels;
+}
+void RequireColor(const std::array<uint8_t, 4>& actual, const std::array<uint8_t, 4>& expected, const char* message) {
+    for (size_t i = 0; i < actual.size(); ++i)
+        Require(std::abs(int(actual[i]) - int(expected[i])) <= 1, message);
+}
+void RunVulkanSubmissionRegression(Application& app, UILayer& ui, const Camera& camera,
+    const FramebufferSpecification& spec) {
+    if (Renderer::GetAPI() != RendererAPI::API::Vulkan) return;
+    const auto device = VulkanDevice::Current();
+    constexpr uint32_t frames = VulkanDevice::FramesInFlight * 4;
+    std::array<Ref<Framebuffer>, frames> targets;
+    for (auto& target : targets) target = Framebuffer::Create(spec);
+    auto texture = Texture2D::Create(3, 5);
+
+    // Every target survives several complete turns of the submission ring. Read
+    // back only after both runs: per-frame readback would hide premature reuse of
+    // vertex/uniform snapshots, descriptors, and texture staging memory.
+    const auto before = device->SubmissionStats();
+    VulkanSubmissionStats warmed;
+    for (uint32_t pass = 0; pass < 2; ++pass) {
+        for (uint32_t frame = 0; frame < frames; ++frame) {
+            auto& target = targets[frame];
+            target->Bind(); RenderCommand::SetClearColor({0, 0, 0, 1}); RenderCommand::Clear();
+            auto pixels = SolidPixels(3, 5, {uint8_t(32 + frame * 7), 80, 160, 255});
+            texture->SetData(pixels.data(), static_cast<uint32_t>(pixels.size()));
+            std::fill(pixels.begin(), pixels.end(), 0);
+            Renderer2D::BeginScene(camera, glm::mat4(1));
+            Renderer2D::DrawQuad(Quad(-0.65f, 0, 0.55f, 0.7f), texture, 1, glm::vec4(1), 200 + frame);
+            Renderer2D::Flush();
+            texture->SetData(pixels.data(), static_cast<uint32_t>(pixels.size()));
+            Renderer2D::DrawQuad(Quad(0, 0, 0.55f, 0.7f), texture, 1, glm::vec4(1), 300 + frame);
+            Renderer2D::Flush();
+            pixels = SolidPixels(3, 5, {180, uint8_t(48 + frame * 5), 32, 255});
+            texture->SetData(pixels.data(), static_cast<uint32_t>(pixels.size()));
+            std::fill(pixels.begin(), pixels.end(), 0);
+            Renderer2D::DrawQuad(Quad(0.65f, 0, 0.55f, 0.7f), texture, 1, glm::vec4(1), 400 + frame);
+            Renderer2D::Flush();
+            // Small uploads between draw batches force repeated vertex/index/UBO
+            // suballocations, including UBO alignment after 60-byte texture data.
+            for (int batch = 0; batch < 40; ++batch) {
+                Renderer2D::DrawQuad(Quad(-0.9f + (batch % 10) * 0.2f, -0.85f, 0.08f, 0.08f),
+                    glm::vec4(1), 500 + batch);
+                Renderer2D::Flush();
+            }
+            Renderer2D::EndScene();
+            target->Unbind();
+            Require(app.Tick(1.0f / 60), "Application stopped during asynchronous submission stress");
+            Require(device->SubmissionStats().PeakInFlight <= VulkanDevice::FramesInFlight,
+                "Vulkan exceeded its bounded submission ring");
+        }
+        if (pass == 0) warmed = device->SubmissionStats();
+    }
+    const auto steady = device->SubmissionStats();
+    Require(steady.SubmissionCount >= before.SubmissionCount + frames * 2,
+        "Asynchronous frame stress did not submit every frame");
+    Require(steady.ExplicitWaitCount == before.ExplicitWaitCount,
+        "Normal Vulkan drawing or presentation performed an explicit queue drain");
+    Require(steady.UploadPageAllocations == warmed.UploadPageAllocations,
+        "Steady-state small uploads did not reuse the warmed upload arenas");
+    Require(steady.UploadBytes > warmed.UploadBytes, "Submission stress did not exercise upload arenas");
+    std::cout << "Vulkan asynchronous stress: " << steady.SubmissionCount - before.SubmissionCount
+        << " submissions, " << steady.ExplicitWaitCount - before.ExplicitWaitCount
+        << " explicit waits, " << steady.UploadPageAllocations - warmed.UploadPageAllocations
+        << " steady-state upload allocations, peak " << steady.PeakInFlight << " submission slots\n";
+
+    for (uint32_t frame = 0; frame < frames; ++frame) {
+        auto& target = targets[frame]; target->Bind();
+        Require(target->ReadPixel(1, 16, 48) == 200 + int(frame), "Earlier frame vertex/descriptor snapshot was overwritten");
+        Require(target->ReadPixel(1, 48, 48) == -1, "Transparent texture snapshot wrote picking data");
+        Require(target->ReadPixel(1, 80, 48) == 400 + int(frame), "Later frame vertex/descriptor snapshot was overwritten");
+        RequireColor(ReadColor(target, 16, 48), {uint8_t(32 + frame * 7), 80, 160, 255},
+            "Texture update or upload arena reuse changed an earlier draw");
+        RequireColor(ReadColor(target, 80, 48), {180, uint8_t(48 + frame * 5), 32, 255},
+            "Texture upload did not snapshot its CPU source before returning");
+        target->Unbind();
+    }
+
+    // A full Renderer2D batch uploads more than 5 MiB of vertices. Its pages
+    // must also stay warm; a small-draw-only test misses large vertex churn.
+    VulkanSubmissionStats fullBatchWarmed;
+    for (uint32_t frame = 0; frame < 12; ++frame) {
+        targets[0]->Bind(); RenderCommand::Clear();
+        Renderer2D::BeginScene(camera, glm::mat4(1));
+        for (int row = 0; row < 100; ++row)
+            for (int column = 0; column < 200; ++column)
+                Renderer2D::DrawQuad(Quad(-1.0f + (float(column) + 0.5f) * 0.01f,
+                    -1.0f + (float(row) + 0.5f) * 0.02f, 0.0101f, 0.0201f), glm::vec4(1), 900 + frame);
+        Renderer2D::EndScene(); targets[0]->Unbind();
+        app.Tick(1.0f / 60);
+        if (frame == 5) fullBatchWarmed = device->SubmissionStats();
+    }
+    Require(device->SubmissionStats().UploadPageAllocations == fullBatchWarmed.UploadPageAllocations,
+        "Full Renderer2D batches reallocated large vertex pages after warmup");
+    Require(device->SubmissionStats().ExplicitWaitCount == fullBatchWarmed.ExplicitWaitCount,
+        "Full Renderer2D batches performed an explicit queue drain");
+    targets[0]->Bind();
+    Require(targets[0]->ReadPixel(1, 48, 48) == 911, "Full Renderer2D batch failed after submission slot reuse");
+    targets[0]->Unbind();
+
+    // More than 4 MiB exceeds the normal arena page; follow it with a small
+    // transfer and aligned uniforms, then destroy the CPU payload before submit.
+    auto largeTexture = Texture2D::Create(1025, 1025);
+    auto largePixels = SolidPixels(1025, 1025, {24, 192, 64, 255});
+    largeTexture->SetData(largePixels.data(), static_cast<uint32_t>(largePixels.size()));
+    std::fill(largePixels.begin(), largePixels.end(), 0);
+    auto smallPixels = SolidPixels(3, 5, {208, 48, 128, 255});
+    texture->SetData(smallPixels.data(), static_cast<uint32_t>(smallPixels.size()));
+    targets[0]->Bind(); RenderCommand::Clear(); Renderer2D::BeginScene(camera, glm::mat4(1));
+    Renderer2D::DrawQuad(Quad(-0.5f, 0, 0.7f, 0.7f), largeTexture, 1, glm::vec4(1), 601);
+    Renderer2D::Flush();
+    Renderer2D::DrawQuad(Quad(0.5f, 0, 0.7f, 0.7f), texture, 1, glm::vec4(1), 602);
+    Renderer2D::EndScene(); targets[0]->Unbind();
+    for (uint32_t frame = 0; frame < frames; ++frame) app.Tick(1.0f / 60);
+    targets[0]->Bind();
+    RequireColor(ReadColor(targets[0], 24, 48), {24, 192, 64, 255}, "Oversized upload payload was corrupted");
+    RequireColor(ReadColor(targets[0], 72, 48), {208, 48, 128, 255}, "Small upload after oversized allocation was corrupted");
+    Require(targets[0]->ReadPixel(1, 24, 48) == 601 && targets[0]->ReadPixel(1, 72, 48) == 602,
+        "Draw snapshots following oversized uploads failed");
+    targets[0]->Unbind();
+
+    // A deliberate mid-frame readback splits timestamp recording across command
+    // buffers. The completed GPU time must still belong to this exact CPU frame.
+    uint64_t splitFrame = 0;
+    ui.Update = [&] {
+        splitFrame = FrameProfiler::Get().ActiveFrame();
+        targets[0]->Bind(); RenderCommand::Clear();
+        Renderer2D::BeginScene(camera, glm::mat4(1));
+        Renderer2D::DrawQuad(Quad(-0.5f, 0, 0.7f, 0.7f), glm::vec4(1), 701);
+        Renderer2D::EndScene();
+        Require(targets[0]->ReadPixel(1, 24, 48) == 701, "Mid-profile readback failed");
+        Renderer2D::BeginScene(camera, glm::mat4(1));
+        Renderer2D::DrawQuad(Quad(0.5f, 0, 0.7f, 0.7f), glm::vec4(1), 702);
+        Renderer2D::EndScene(); targets[0]->Unbind();
+    };
+    app.Tick(1.0f / 60); ui.Update = {};
+    for (uint32_t frame = 0; frame < frames; ++frame) app.Tick(1.0f / 60);
+    RHI::RenderDevice::Get().WaitIdle(); app.Tick(1.0f / 60);
+    if (Renderer::SupportsGpuProfiling()) {
+        FrameProfile profile;
+        Require(splitFrame != 0 && FrameProfiler::Get().ReadFrame(splitFrame, profile)
+            && std::isfinite(profile.GpuMilliseconds) && profile.GpuMilliseconds >= 0,
+            "Split GPU timestamp queries were lost or assigned to another frame");
+    }
+    targets[0]->Bind();
+    Require(targets[0]->ReadPixel(1, 24, 48) == 701 && targets[0]->ReadPixel(1, 72, 48) == 702,
+        "Drawing after mid-profile readback failed");
+    targets[0]->Unbind();
+
+    // Resize and destruction must protect work that was submitted without a
+    // caller wait. These are permitted drain points, unlike the steady loop.
+    auto disposable = Framebuffer::Create(spec);
+    disposable->Bind(); RenderCommand::Clear(); Renderer2D::BeginScene(camera, glm::mat4(1));
+    Renderer2D::DrawQuad(glm::mat4(1), largeTexture, 1, glm::vec4(1), 801);
+    Renderer2D::EndScene(); disposable->Unbind(); app.Tick(1.0f / 60);
+    Require(disposable->Resize(128, 128), "Resize while a submission was pending failed");
+    disposable->Bind(); RenderCommand::Clear(); Renderer2D::BeginScene(camera, glm::mat4(1));
+    Renderer2D::DrawQuad(glm::mat4(1), largeTexture, 1, glm::vec4(1), 802);
+    Renderer2D::EndScene(); disposable->Unbind(); app.Tick(1.0f / 60);
+    disposable.reset();
+    targets[0]->Bind(); Renderer2D::BeginScene(camera, glm::mat4(1));
+    Renderer2D::DrawQuad(glm::mat4(1), largeTexture, 1, glm::vec4(1), 803);
+    Renderer2D::EndScene(); targets[0]->Unbind(); app.Tick(1.0f / 60);
+    // Clear Renderer2D's CPU-side texture references before the final release.
+    targets[0]->Bind(); Renderer2D::BeginScene(camera, glm::mat4(1)); Renderer2D::EndScene(); targets[0]->Unbind();
+    largeTexture.reset(); texture.reset();
+    for (uint32_t frame = 0; frame < frames; ++frame) app.Tick(1.0f / 60);
+    targets[0]->Bind();
+    Require(targets[0]->ReadPixel(1, 48, 48) == 803, "Destroying a submitted texture invalidated a retained draw");
+    RequireColor(ReadColor(targets[0], 48, 48), {24, 192, 64, 255}, "Destroyed texture was released before its GPU consumers");
+    targets[0]->Unbind();
+}
 void Run() {
     if (std::getenv("TC_RHI_TEST_VIEWPORTS")) _putenv_s("TC_IMGUI_VIEWPORTS", "1");
     WindowProps props("TomCat RHI regression", 320, 240);
@@ -130,6 +312,7 @@ void Run() {
     RHI::RenderDevice::Get().WaitIdle(); app.Tick(1.0f / 60);
     Require(framebuffer->GetColorAttachmentUITextureID() != 0, "Missing framebuffer UI texture");
     Require(texture->GetUITextureID() != 0, "Missing texture UI descriptor");
+    RunVulkanSubmissionRegression(app, *ui, camera, spec);
     // A display-scale change can arrive while UI draw commands still reference
     // the previous font atlas. Exercise deferred replacement on both backends,
     // then render again to use the new GPU font texture and its descriptors.
@@ -167,6 +350,26 @@ void Run() {
     if (std::getenv("TC_RHI_TEST_VIEWPORTS")) {
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; ui->Detached = true;
         for (int i = 0; i < 4; ++i) app.Tick(1.0f / 60);
+        Require(ImGui::GetPlatformIO().Viewports.Size > 1, "Detached platform viewport was not created");
+        if (Renderer::GetAPI() == RendererAPI::API::Vulkan) {
+            const auto device = VulkanDevice::Current();
+            const auto beforeDetached = device->SubmissionStats();
+            const bool wasRecording = FrameProfiler::Get().IsRecording();
+            FrameProfiler::Get().SetRecording(false);
+            // Keep the viewport dimensions fixed here: resize is an intentional
+            // drain point and must not hide waits during ordinary platform UI.
+            for (int i = 0; i < 12; ++i) app.Tick(1.0f / 60);
+            FrameProfiler::Get().SetRecording(wasRecording);
+            Require(device->SubmissionStats().ExplicitWaitCount == beforeDetached.ExplicitWaitCount,
+                "Steady detached viewport frames performed an explicit queue drain");
+            Require(device->SubmissionStats().SubmissionCount >= beforeDetached.SubmissionCount + 12,
+                "Detached viewport frames without GPU profiling did not submit");
+        }
+        for (int i = 0; i < 24; ++i) {
+            ui->DetachedPosition = {1000.0f + float(i * 2), 100.0f};
+            if (i % 6 == 0) ui->DetachedSize = {180.0f + float((i / 6) % 2) * 40.0f, 120.0f + float((i / 6) % 3) * 24.0f};
+            app.Tick(1.0f / 60);
+        }
         ui->Detached = false;
         for (int i = 0; i < 3; ++i) app.Tick(1.0f / 60);
     }
@@ -240,6 +443,7 @@ void Run() {
         "Color grading did not restore normal color/picking writes");
     framebuffer->Unbind();
     FrameProfiler::Get().SetRecording(false);
+    RHI::RenderDevice::Get().WaitIdle();
     Require(RHI::RenderDevice::Get().ValidationErrors() == 0, "Vulkan validation reported errors");
     std::cout << "RHI regression passed: " << RHI::RenderDevice::Get().Capabilities().Name << '\n';
 }

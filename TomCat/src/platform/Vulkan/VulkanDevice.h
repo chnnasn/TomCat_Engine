@@ -7,6 +7,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct GLFWwindow;
@@ -31,6 +32,19 @@ struct VulkanBufferAllocation {
     ~VulkanBufferAllocation();
 };
 
+// A snapshot in the current submission's upload arena. The slot owns its memory;
+// callers may use the slice until Submit(), without retaining an allocation.
+struct VulkanBufferSlice {
+    VkBuffer Buffer = VK_NULL_HANDLE;
+    VkDeviceSize Offset = 0, Size = 0;
+    void* Mapped = nullptr;
+};
+
+struct VulkanSubmissionStats {
+    uint64_t SubmissionCount = 0, ExplicitWaitCount = 0, SlotWaitCount = 0;
+    uint64_t UploadPageAllocations = 0, UploadBytes = 0, PeakInFlight = 0;
+};
+
 struct VulkanImageAllocation {
     VkDevice Device = VK_NULL_HANDLE;
     VkImage Image = VK_NULL_HANDLE;
@@ -45,6 +59,7 @@ struct VulkanImageAllocation {
 
 class VulkanDevice : public std::enable_shared_from_this<VulkanDevice> {
 public:
+    static constexpr uint32_t FramesInFlight = 3;
     static std::shared_ptr<VulkanDevice> Current();
     static std::shared_ptr<VulkanDevice> Create(GLFWwindow* window);
     ~VulkanDevice();
@@ -58,7 +73,6 @@ public:
     uint32_t QueueFamily = 0;
     VkPhysicalDeviceProperties Properties{};
     VkPhysicalDeviceFeatures Features{};
-    VkDescriptorPool DescriptorPool = VK_NULL_HANDLE;
     VkDescriptorPool ImGuiPool = VK_NULL_HANDLE;
     VulkanFramebuffer* Target = nullptr;
     VulkanFramebuffer* DefaultTarget = nullptr;
@@ -71,11 +85,15 @@ public:
     VkViewport Viewport{0, 0, 1, 1, 0, 1};
 
     VkCommandBuffer Commands();
-    void PrepareDraw() { if (m_Retained.size() > 512) SubmitAndWait(); }
+    void PrepareDraw();
     void Barrier();
+    uint64_t Submit(VkSemaphore signal = VK_NULL_HANDLE, VkSemaphore wait = VK_NULL_HANDLE,
+        VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    void WaitForSubmission(uint64_t serial);
     void SubmitAndWait(VkSemaphore signal = VK_NULL_HANDLE);
     void DrainForDestruction() noexcept;
     void Keep(std::shared_ptr<void> object);
+    VulkanBufferSlice Upload(VkDeviceSize size, VkBufferUsageFlags usage, const void* data, VkDeviceSize alignment = 1);
     std::shared_ptr<VulkanBufferAllocation> Buffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data = nullptr);
     std::shared_ptr<VulkanImageAllocation> Image(uint32_t width, uint32_t height, VkFormat format,
         VkImageUsageFlags usage, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT, uint32_t mips = 1);
@@ -85,21 +103,51 @@ public:
     void BeginProfile(uint64_t frame);
     void EndProfile();
     bool SupportsProfiling() const { return m_TimestampBits != 0; }
+    const VulkanSubmissionStats& SubmissionStats() const { return m_Stats; }
     std::atomic<uint32_t> ValidationErrors{0};
 
 private:
     VulkanDevice() = default;
     void Initialize(GLFWwindow* window);
-    VkCommandPool m_CommandPool = VK_NULL_HANDLE;
-    VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
-    VkFence m_Fence = VK_NULL_HANDLE;
-    bool m_Recording = false;
-    std::vector<std::shared_ptr<void>> m_Retained;
-    VkQueryPool m_QueryPool = VK_NULL_HANDLE;
+    struct UploadPage {
+        std::shared_ptr<VulkanBufferAllocation> Allocation;
+        VkDeviceSize Used = 0;
+        bool Cacheable = true;
+    };
+    struct SubmissionSlot {
+        VkCommandPool CommandPool = VK_NULL_HANDLE;
+        VkCommandBuffer CommandBuffer = VK_NULL_HANDLE;
+        VkFence Fence = VK_NULL_HANDLE;
+        std::vector<VkDescriptorPool> DescriptorPools;
+        size_t DescriptorPoolIndex = 0;
+        VkQueryPool QueryPool = VK_NULL_HANDLE;
+        bool Recording = false, InFlight = false, ProfileEnded = false;
+        uint64_t Serial = 0, ProfileFrame = 0;
+        uint32_t DescriptorSets = 0;
+        std::vector<std::shared_ptr<void>> Retained;
+        std::vector<UploadPage> UploadPages;
+        VkDeviceSize UploadUsed = 0;
+    };
+    struct ProfileResult {
+        double Milliseconds = 0;
+        uint32_t PendingSegments = 0;
+        bool Ended = false;
+    };
+    SubmissionSlot& AcquireSlot();
+    VkDescriptorPool CreateDrawDescriptorPool();
+    bool CompleteSlot(SubmissionSlot& slot, bool wait);
+    void CollectCompleted();
+    void StartProfileSegment(SubmissionSlot& slot);
+    void EndProfileSegment(SubmissionSlot& slot);
+    void PublishProfiles();
+    std::array<SubmissionSlot, FramesInFlight> m_Slots;
+    uint32_t m_CurrentSlot = 0;
+    uint64_t m_NextSerial = 0, m_CompletedSerial = 0;
+    VulkanSubmissionStats m_Stats;
     uint32_t m_TimestampBits = 0;
-    uint64_t m_ProfileFrame = 0, m_PendingProfileFrame = 0;
-    double m_PendingProfileTime = 0;
-    bool m_ProfileEnded = false;
+    uint64_t m_ProfileFrame = 0;
+    std::unordered_map<uint64_t, ProfileResult> m_ProfileResults;
+    bool m_Draining = false;
     VkDebugUtilsMessengerEXT m_DebugMessenger = VK_NULL_HANDLE;
 };
 

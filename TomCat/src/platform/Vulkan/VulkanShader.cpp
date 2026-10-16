@@ -217,15 +217,17 @@ void VulkanShader::Draw(const Ref<VertexArray>& array, uint32_t count, bool inde
         auto* source = dynamic_cast<VulkanVertexBuffer*>(vertex.get());
         if (!source) throw std::invalid_argument("Mixed backend vertex buffer");
         auto data = source->Data();
-        auto buffer = m_Device->Buffer(data.size(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, data.data());
-        buffers.push_back(buffer->Buffer); offsets.push_back(0); m_Device->Keep(buffer);
+        // Each draw owns a snapshot until its submission completes, even if the
+        // CPU buffer is updated again before this frame reaches the GPU.
+        auto buffer = m_Device->Upload(data.size(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, data.data(), 4);
+        buffers.push_back(buffer.Buffer); offsets.push_back(buffer.Offset);
     }
-    std::shared_ptr<VulkanBufferAllocation> indices;
+    VulkanBufferSlice indices{};
     if (indexed) {
         auto* source = dynamic_cast<VulkanIndexBuffer*>(array->GetIndexBuffer().get());
         if (!source || count > source->GetCount()) throw std::invalid_argument("Invalid index buffer/count");
         auto data = source->Data();
-        indices = m_Device->Buffer(data.size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, data.data()); m_Device->Keep(indices);
+        indices = m_Device->Upload(VkDeviceSize(count) * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, data.data(), alignof(uint32_t));
     }
     std::vector<VkDescriptorSet> sets;
     for (auto layout : m_Layouts) sets.push_back(m_Device->AllocateDescriptor(layout));
@@ -238,8 +240,8 @@ void VulkanShader::Draw(const Ref<VertexArray>& array, uint32_t count, bool inde
         if (binding.Type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
             const auto& bytes = binding.NamedData.empty() ? m_Device->Uniforms.at(binding.Slot) : binding.NamedData;
             if (bytes.size() < binding.Size || binding.Count != 1) throw std::runtime_error("Uniform buffer missing or too small");
-            auto buffer = m_Device->Buffer(bytes.size(), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, bytes.data());
-            bufferInfo = {buffer->Buffer, 0, binding.Size}; write.pBufferInfo = &bufferInfo; m_Device->Keep(buffer);
+            auto buffer = m_Device->Upload(binding.Size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, bytes.data());
+            bufferInfo = {buffer.Buffer, buffer.Offset, binding.Size}; write.pBufferInfo = &bufferInfo;
         } else {
             for (uint32_t i = 0; i < binding.Count; ++i) {
                 const uint32_t slot = binding.Slot + i;
@@ -263,7 +265,7 @@ void VulkanShader::Draw(const Ref<VertexArray>& array, uint32_t count, bool inde
     vkCmdSetLineWidth(commands, m_Device->Features.wideLines ? std::clamp(m_Device->LineWidth, limits.lineWidthRange[0], limits.lineWidthRange[1]) : 1.0f);
     if (!buffers.empty()) vkCmdBindVertexBuffers(commands, 0, static_cast<uint32_t>(buffers.size()), buffers.data(), offsets.data());
     if (!sets.empty()) vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Layout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-    if (indexed) { vkCmdBindIndexBuffer(commands, indices->Buffer, 0, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(commands, count, 1, 0, 0, 0); }
+    if (indexed) { vkCmdBindIndexBuffer(commands, indices.Buffer, indices.Offset, VK_INDEX_TYPE_UINT32); vkCmdDrawIndexed(commands, count, 1, 0, 0, 0); }
     else vkCmdDraw(commands, count, 1, 0, 0);
     vkCmdEndRenderPass(commands);
     FrameProfiler::Get().RecordDraw(count);
