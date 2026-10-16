@@ -1110,8 +1110,15 @@ namespace {
 		NativeVector3 rejectedRead{};
 		Require(native.TransformGetScale(handle(root), &rejectedRead) != 0,
 			"singular transform was exposed as a valid projected read before flush");
-		Require(!ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession)
-			&& Near(root.GetComponent<TomCat::Transform>().GetTransform(), before.GetTransform())
+		const auto abortsBefore = runtime->DeferredBatchAbortCount;
+		const auto commitsBefore = runtime->DeferredBatchCommitCount;
+		// A successfully acknowledged abort returns true: the runtime can keep
+		// running after rejecting the batch. Check publication separately.
+		Require(ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession)
+			&& runtime->DeferredBatchAbortCount == abortsBefore + 1
+			&& runtime->DeferredBatchCommitCount == commitsBefore,
+			"singular-transform rejection was not acknowledged without publication");
+		Require(Near(root.GetComponent<TomCat::Transform>().GetTransform(), before.GetTransform())
 			&& Near(root.GetComponent<TomCat::Transform>().GetLocalTransform(), before.GetLocalTransform()),
 			"rejected signed-transform batch partially changed live ECS");
 		Require(native.TransformSetScale(handle(root),
@@ -6116,6 +6123,84 @@ namespace {
 			"fast destroy lost the missing-ID recovery path");
 	}
 
+	void TestEntityNameRemovalKeepsUnrelatedSuffixCursors()
+	{
+		TomCat::EntityNameIndex names;
+		constexpr size_t Count = 256;
+		for (size_t index = 0; index < Count; ++index)
+			names.Add(names.MakeUnique("Fragment"));
+		const auto before = names.GetProbeCount();
+		for (size_t index = 0; index < Count; ++index)
+		{
+			// A different population disappearing must not restart Fragment's
+			// suffix scan on each create/destroy pair.
+			const auto unrelated = "Enemy (" + std::to_string(index + 1) + ")";
+			names.Add(unrelated);
+			names.Remove(unrelated);
+			const auto next = names.MakeUnique("Fragment");
+			Require(next == "Fragment (" + std::to_string(Count + index) + ")",
+				"unrelated removal changed dense suffix allocation");
+			names.Add(next);
+		}
+		Require(names.GetProbeCount() - before <= Count * 3,
+			"unrelated removals restarted the occupied suffix scan");
+		names.Add("Fragment (1) (1)");
+		names.Add("Fragment (1) (2)");
+		Require(names.MakeUnique("Fragment (1)") == "Fragment (1) (3)",
+			"nested literal base fixture failed");
+		names.Remove("Fragment (1) (1)");
+		Require(names.MakeUnique("Fragment (1)") == "Fragment (1) (1)",
+			"nested suffix removal did not reuse the smallest hole");
+		const auto malformedBefore = names.GetProbeCount();
+		for (const std::string malformed : { "Fragment (01)", "Fragment (+1)",
+			"Fragment (0)", "Fragment (4294967296)", "Fragment (2x)", "Fragment ()" })
+		{
+			names.Add(malformed);
+			names.Remove(malformed);
+			Require(names.MakeUnique("Fragment") == "Fragment (512)",
+				"noncanonical suffix removal changed the next name");
+		}
+		Require(names.GetProbeCount() - malformedBefore <= 13,
+			"noncanonical suffix removal invalidated a canonical cursor");
+
+		// Compare mixed raw duplicates, removal and nested requests against the
+		// historical policy: always scan from suffix 1 to the first free name.
+		TomCat::EntityNameIndex mixed;
+		std::unordered_map<std::string, size_t> occupied;
+		std::vector<std::string> instances;
+		const std::vector<std::string> requests{ "Fragment", "Enemy", "Fragment (1)",
+			"Fragment (01)", "Arc (1) (2)", "", "Entity", " (1)", "Arc (", "Arc ()" };
+		uint32_t random = 0x19c057u;
+		for (size_t step = 0; step < 3000; ++step)
+		{
+			random = random * 1664525u + 1013904223u;
+			if (step % 4 == 0 && !instances.empty())
+			{
+				const auto index = random % instances.size();
+				const auto removed = instances[index];
+				mixed.Remove(removed);
+				if (--occupied[removed] == 0)
+					occupied.erase(removed);
+				instances.erase(instances.begin() + index);
+				continue;
+			}
+			const auto& requested = requests[random % requests.size()];
+			std::string next = requested;
+			if (step % 7 != 0)
+			{
+				const auto base = requested.empty() ? std::string("Entity") : requested;
+				next = base;
+				for (uint32_t suffix = 1; occupied.contains(next); ++suffix)
+					next = base + " (" + std::to_string(suffix) + ")";
+				Require(mixed.MakeUnique(requested) == next,
+					"targeted suffix invalidation diverged from first-free naming");
+			}
+			mixed.Add(next);
+			++occupied[next];
+			instances.push_back(next);
+		}
+	}
+
 	void TestIncrementalProjectionAcrossScenes()
 	{
 		using namespace TomCat::Scripting;
@@ -7687,6 +7772,8 @@ int main(int argc, char** argv)
 		TestSceneCopyPreservesIdentityNamesAndOrder);
 	run("indexed names and burst create/destroy preserve suffix gaps",
 		TestEntityNameIndexAndBurstCreateDestroy);
+	run("name removal preserves unrelated suffix cursors and first-free policy",
+		TestEntityNameRemovalKeepsUnrelatedSuffixCursors);
 	run("replay names observe provider writes and retain callback commands",
 		TestReplayNamesObserveProvidersAndPreserveCallbackCommands);
 	run("registered sprite burst reuses replay names",
