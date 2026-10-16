@@ -9,7 +9,6 @@
 #include <charconv>
 #include <set>
 #include <fstream>
-#include <glad/glad.h>
 #include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Runtime/RuntimeUI.h"
 #include "TomCat/Scene/SpriteAnimation.h"
@@ -779,23 +778,20 @@ std::string EditorLayer::ExecuteAutomation(const std::string& request)
                 Require(m_GameFramebuffer->Resize(m_AutomationWidth, m_AutomationHeight), "RENDER_FAILED", "Framebuffer resize failed.");
                 m_ActiveScene->OnViewportResize(m_AutomationWidth, m_AutomationHeight);
                 m_ActiveScene->SetRuntimeUIViewportMetrics({0, 0}, 1.0f, {1, 1});
-                std::vector<uint8_t> pixels(size_t(m_AutomationWidth) * m_AutomationHeight * 3);
+                std::vector<uint8_t> pixels;
                 m_GameFramebuffer->Bind();
                 try
                 {
                     m_ActiveScene->OnRenderRuntime();
-                    GLint previousAlignment = 4;
-                    glGetIntegerv(GL_PACK_ALIGNMENT, &previousAlignment);
-                    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                    glReadBuffer(GL_COLOR_ATTACHMENT0);
-                    glReadPixels(0, 0, m_AutomationWidth, m_AutomationHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
-                    glPixelStorei(GL_PACK_ALIGNMENT, previousAlignment);
+                    Require(m_GameFramebuffer->ReadColorAttachment(0, pixels), "RENDER_FAILED", "Framebuffer capture failed.");
                 }
                 catch (...) { m_GameFramebuffer->Unbind(); throw; }
                 m_GameFramebuffer->Unbind();
                 std::string ppm = "P6\n" + std::to_string(m_AutomationWidth) + " " + std::to_string(m_AutomationHeight) + "\n255\n";
+                ppm.reserve(ppm.size() + size_t(m_AutomationWidth) * m_AutomationHeight * 3);
                 for (int row = int(m_AutomationHeight) - 1; row >= 0; --row)
-                    ppm.append(reinterpret_cast<const char*>(pixels.data() + size_t(row) * m_AutomationWidth * 3), size_t(m_AutomationWidth) * 3);
+                    for (uint32_t column = 0; column < m_AutomationWidth; ++column)
+                        ppm.append(reinterpret_cast<const char*>(pixels.data() + (size_t(row) * m_AutomationWidth + column) * 4), 3);
                 Require(FileSystem::WriteFileAtomically(path, ppm, error), "WRITE_FAILED", error);
             }
             data = Object({{"path", Quote(PathToUTF8(path))}});

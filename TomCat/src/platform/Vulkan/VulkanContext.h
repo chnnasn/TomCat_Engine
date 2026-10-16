@@ -11,6 +11,7 @@ public:
     void SwapBuffers() override;
     void SetVSync(bool enabled) override { if (m_VSync != enabled) { m_VSync = enabled; m_Rebuild = true; } }
     void InitImGui();
+    void RebuildImGuiFonts();
     void ShutdownImGui();
     void RenderImGui(ImDrawData* data);
     static VulkanContext& Current();

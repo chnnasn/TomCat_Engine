@@ -60,6 +60,10 @@ namespace TomCat {
 
 		virtual bool Resize(uint32_t width, uint32_t height) = 0;
 		virtual int ReadPixel(uint32_t attachmentIndex, int x, int y) = 0;
+		// Synchronous, tightly packed RGBA8 readback. The first row is framebuffer
+		// y=0, matching ReadPixel; bindings are preserved. Unsupported attachments
+		// (including integer or multisampled targets) return false and clear pixels.
+		virtual bool ReadColorAttachment(uint32_t attachmentIndex, std::vector<uint8_t>& pixels) = 0;
 
 		virtual void ClearAttachment(uint32_t attachmentIndex, int value) = 0;
 
