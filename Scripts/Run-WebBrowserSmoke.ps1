@@ -7,6 +7,8 @@ if(!$NativeBuildDirectory){$NativeBuildDirectory=Join-Path $root 'build/web-mana
 if(!(Test-Path (Join-Path $OutputDirectory '_framework/dotnet.js'))){throw 'Run Build-WebManaged.ps1 first.'}
 Copy-Item (Join-Path $root 'Web/tests/managed-browser-smoke.html') $OutputDirectory -Force
 Copy-Item (Join-Path $root 'Web/tests/managed-player-smoke.html') $OutputDirectory -Force
+Copy-Item (Join-Path $root 'Web/tests/web-clear-regression.html') $OutputDirectory -Force
+Copy-Item (Join-Path $root 'Web/tests/web-clear-regression.js') $OutputDirectory -Force
 & node (Join-Path $root 'Web/tests/create-player-fixture.cjs') $NativeBuildDirectory $OutputDirectory
 if($LASTEXITCODE -ne 0){throw 'Player package fixture failed.'}
 $refs=Join-Path $OutputDirectory 'smoke-refs'

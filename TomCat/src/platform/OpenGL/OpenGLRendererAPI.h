@@ -30,5 +30,10 @@ namespace TomCat{
         bool m_GradeFramebufferComplete = false;
         // Renderer instances belong to one initialized context, never a global GL cache.
         int m_MaxDrawBuffers = 1;
+#ifdef TC_PLATFORM_WEB
+        // Web clearBufferfv needs the color supplied through this renderer API.
+        // Native Clear deliberately continues to honor direct glClearColor calls.
+        glm::vec4 m_ClearColor{0.0f};
+#endif
 	};
 }

@@ -5876,6 +5876,10 @@ namespace {
 		Require(projected.NameLookupProbes - before.NameLookupProbes >= Count
 			&& projected.NameLookupProbes - before.NameLookupProbes <= Count * 3,
 			"projected burst names did not use the incremental suffix index");
+		Require(projected.ReplayNameIndexBuilds - before.ReplayNameIndexBuilds == 1
+			&& projected.ReplayNameLookupProbes - before.ReplayNameLookupProbes >= Count
+			&& projected.ReplayNameLookupProbes - before.ReplayNameLookupProbes <= Count * 3,
+			"incremental component replay rebuilt names or rescanned occupied suffixes");
 		Require(engine.QueueDestroyEntity(created[17]), "burst destroy failed");
 		EntityHandleV1 replacement{};
 		Require(engine.QueueCreateEntity(context, "Fragment", {}, {}, replacement),
@@ -5946,14 +5950,104 @@ namespace {
 			"interleaved Scene writes rebuilt snapshots or replayed prefixes");
 		Require(engine.FlushDeferredCommands(firstSession),
 			"first Scene flush failed");
+		Require(engine.GetProjectionStatistics().FlushCommandsVisited
+			- after.FlushCommandsVisited == 24,
+			"interleaved flush did not extract each queued command once");
 		uint32_t secondLayer = 0;
 		Require(engine.GetProjectedLayer(secondHandle, secondLayer) && secondLayer == 12
 			&& first.GetLayer() == 11 && second.GetLayer() == 0,
 			"queue erasure reused a stale offset or committed another Scene");
 		Require(engine.FlushDeferredCommands(secondSession) && second.GetLayer() == 12,
 			"second Scene flush failed after queue compaction");
+		Require(engine.GetProjectionStatistics().FlushCommandsVisited
+			- after.FlushCommandsVisited == 36,
+			"second flush rescanned discarded commands");
+		Require(engine.QueueSetLayer(firstHandle, 10)
+			&& engine.QueueSetLayer(secondHandle, 13)
+			&& engine.MarkDeferredCommandBatchFailed(firstHandle, "compaction rollback")
+			&& engine.QueueSetLayer(secondHandle, 14),
+			"failed interleaved batch setup failed");
+		Require(engine.FlushDeferredCommands(firstSession)
+			&& first.GetLayer() == 11 && second.GetLayer() == 12,
+			"failed compacted batch leaked writes into either Scene");
+		Require(engine.FlushDeferredCommands(secondSession) && second.GetLayer() == 14,
+			"aborted Scene extraction lost or reordered another Scene's commands");
 		engine.StopScene(secondSession);
 		engine.StopScene(firstSession);
+	}
+
+	void TestReplayNamesObserveProvidersAndPreserveCallbackCommands()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		auto effects = std::make_shared<ProviderTransactionEffects>();
+		auto descriptor = MakeProviderTransactionDescriptor(effects);
+		EntityHandleV1 context{}, otherContext{}, first{}, second{};
+		bool callbackQueued = false;
+		descriptor.Properties.front().Set = [&](TomCat::Entity owner,
+			const TomCat::PropertyValue& value, std::string&)
+		{
+			owner.GetComponent<ProviderTransactionComponent>().Value = std::get<int32_t>(value);
+			auto created = owner.GetScene()->FindEntityByUUID(TomCat::UUID(first.EntityId));
+			Require(static_cast<bool>(created), "provider did not see prior created identity");
+			created.GetComponent<TomCat::Tag>()._Tag = "Moved by provider";
+			if (TomCat::GetComponentMutationPhase() == TomCat::ComponentMutationPhase::Commit)
+			{
+				callbackQueued = ScriptEngine::Get().QueueSetLayer(otherContext, 6)
+					&& ScriptEngine::Get().QueueSetLayer(context, 9)
+					&& ScriptEngine::Get().QueueSetLayer(otherContext, 7);
+				Require(callbackQueued, "provider could not append the next deferred batch");
+			}
+			return true;
+		};
+		descriptor.Properties.front().Get = [&](TomCat::Entity owner) -> TomCat::PropertyValue
+		{
+			auto created = owner.GetScene()->FindEntityByUUID(TomCat::UUID(second.EntityId));
+			return int32_t(created && created.GetName() == "Burst");
+		};
+		auto& registry = TomCat::ComponentRegistry::Get();
+		std::string error;
+		Require(registry.Register(std::move(descriptor), error), error.c_str());
+		TomCat::Scene scene, otherScene;
+		auto owner = scene.CreateEntity("Provider owner");
+		auto otherOwner = otherScene.CreateEntity("Other callback target");
+		owner.AddComponent<ProviderTransactionComponent>();
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0xca11);
+		const auto otherSession = engine.StartScene(otherScene, 0xca12);
+		Require(session != 0 && otherSession != 0, "provider naming Scene startup failed");
+		context = { session, static_cast<uint64_t>(owner.GetUUID()), 0xca11 };
+		otherContext = { otherSession, static_cast<uint64_t>(otherOwner.GetUUID()), 0xca12 };
+		NativePropertyValueV1 value{};
+		value.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+		value.Integer = 1;
+		Require(engine.QueueCreateEntity(context, "Burst", {}, {}, first)
+			&& engine.QueueSetRegisteredComponentProperty(context,
+				ProviderTransactionTypeId, ProviderTransactionValueId, value)
+			&& engine.QueueCreateEntity(context, "Burst", {}, {}, second),
+			"provider naming commands failed");
+		NativePropertyValueV1 projected{};
+		bool useDefault = true;
+		Require(engine.TryGetProjectedRegisteredComponentProperty(context,
+			ProviderTransactionTypeId, ProviderTransactionValueId, projected, useDefault)
+			&& !useDefault && projected.Integer == 1 && !callbackQueued,
+			"projection reused a stale replay name after a provider's direct Tag write");
+		Require(engine.FlushDeferredCommands(session)
+			&& scene.FindEntityByUUID(TomCat::UUID(first.EntityId)).GetName() == "Moved by provider"
+			&& scene.FindEntityByUUID(TomCat::UUID(second.EntityId)).GetName() == "Burst"
+			&& callbackQueued && owner.GetLayer() == 0 && otherOwner.GetLayer() == 0,
+			"commit naming or callback batch isolation changed");
+		Require(engine.FlushDeferredCommands(session) && owner.GetLayer() == 9
+			&& otherOwner.GetLayer() == 0,
+			"flush extraction swallowed commands appended during live publication");
+		Require(engine.FlushDeferredCommands(otherSession) && otherOwner.GetLayer() == 7,
+			"same-Scene flush swallowed or reordered callback commands for another Scene");
+		engine.StopScene(otherSession);
+		engine.StopScene(session);
+		const std::vector<TomCat::Entity> entities{ owner };
+		Require(registry.UnregisterProvider(TomCat::UUID(ProviderTransactionProviderId),
+			entities, error), error.c_str());
 	}
 
 	void TestIncrementalDeferredProjectionCostAndIsolation()
@@ -7252,6 +7346,8 @@ int main(int argc, char** argv)
 		TestSceneCopyPreservesIdentityNamesAndOrder);
 	run("indexed names and burst create/destroy preserve suffix gaps",
 		TestEntityNameIndexAndBurstCreateDestroy);
+	run("replay names observe provider writes and retain callback commands",
+		TestReplayNamesObserveProvidersAndPreserveCallbackCommands);
 	run("immediate mutation invalidates incremental projection",
 		TestImmediateMutationInvalidatesProjection);
 	run("deferred disable precedes subtree attachment destruction",
