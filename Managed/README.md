@@ -1,13 +1,14 @@
 # TomCat managed scripting V1
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-16 · [All documentation](../docs/README.md)
 
 V1 names the scripting feature scope, not every wire-format version: Native ABI
-is v1, Managed ABI is v3, and ScriptManifest is v1. Desktop hosting uses .NET 10.
+is v1, Managed ABI is v6, and ScriptManifest is v1. Desktop hosting uses .NET 10.
 Packaged Editors own a pinned private SDK for script compilation; generated
 project files are an IDE/dependency interchange surface rather than authority
-over the engine's source set and output layout. The experimental Web target
-currently rejects C# payloads.
+over the engine's source set and output layout. The experimental Web target uses
+.NET `browser-wasm` and supports browser C# compilation and execution; see the
+[Web guide](../Web/README.md) for its separate build and module lifetime rules.
 
 This directory contains the independently buildable .NET 10 portion of the TomCat C# scripting
 system:
@@ -18,6 +19,8 @@ system:
 - `TomCat.ScriptGenerator`: the compile-time script recognizer, diagnostics, and embedded manifest
   generator. It references the Roslyn binaries shipped with the .NET SDK and has no NuGet dependency.
 - `TomCat.Managed.Regression`: a no-test-framework executable regression suite.
+- `TomCat.WebHost`: the browser host and Roslyn compiler, built separately through
+  `Scripts/Build-WebManaged.ps1` rather than the desktop solution.
 
 Build and test with the .NET 10 SDK:
 
@@ -28,6 +31,14 @@ dotnet run --project Managed/TomCat.Managed.Regression/TomCat.Managed.Regression
 
 `TomCat.ScriptHost.runtimeconfig.json`, `TomCat.ScriptHost.dll`, and `TomCat.Managed.dll` are emitted
 under `Managed/TomCat.ScriptHost/bin/<Configuration>/net10.0/`.
+
+The 2026-10-16 mainline integration passed the managed Release suite, native
+integration regressions and C# Player smoke on OpenGL and Vulkan. The Vulkan
+Player completed its script with the expected smoke-test exit code 73; the Web
+build and browser lifecycle smoke also passed. See the
+[integration record](../docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16) for scope and logs.
+Run the full regression entry point from the [root build guide](../README.md#building)
+sequentially with other builds so they do not replace managed test/compiler inputs.
 
 ## Editor inspection, diagnostics and runtime UI
 
@@ -106,7 +117,7 @@ numbers. An unknown or type-mismatched field remains native-side orphan data and
 produce compiler error `TCG010`. Both `IsValid` and Cook check the asset's actual type; marker
 support describes asset identity and does not imply that a runtime loader exists for every type.
 
-## Native bootstrap contract
+## Desktop native bootstrap contract
 
 Initialize CoreCLR once with `TomCat.ScriptHost.runtimeconfig.json`, then use hostfxr's
 `load_assembly_and_get_function_pointer` with:
@@ -126,24 +137,27 @@ public static int GetManagedApi(NativeApiV1* nativeApi, ManagedApiV1* managedApi
 ```
 
 All function pointers use Cdecl and return an `int32` status. Both tables begin with `uint32
-Version; uint32 Size;`. Native must pass Version 1, at least the V1 table size, and every V1
-callback. Bootstrap validates the complete table before publishing it; a missing callback returns
+Version; uint32 Size;`. Initialize the native input table with Version 1, at least its V1
+table size, and every V1 callback; initialize the managed output table with Version 6 and
+at least `sizeof(ManagedApiV1)`. Bootstrap validates the complete table before publishing it; a missing callback returns
 unavailable (-8) without replacing an earlier valid binding.
 
-### ManagedApiV1 layout (Managed ABI version 3)
+### ManagedApiV1 layout (Managed ABI version 6)
 
 The historical struct name is retained. Version 2 appended `ResolveDeferredCommandBatch`
 to the stable version-1 prefix; version 3 appended `InvokeMethod` for persistent UI/event
-callbacks. After `Version` and `Size`, the function pointers are laid out in this exact order:
+callbacks. The current handshake requires version 6 even though the historical struct
+name remains `ManagedApiV1`. After `Version` and `Size`, the function pointers are laid out
+in this exact order:
 
 ```text
 int CreateDomain(int32 domainKind, uint64* domainId)
-int LoadProjectAssembly(uint64 domainId, NativeByteView assembly, NativeByteView pdb)
+int LoadProjectAssembly(uint64 domainId, NativeByteView* assembly, NativeByteView* pdb)
 int ReadScriptMetadata(uint64 domainId, MetadataReceiver receiver, uint64 receiverToken)
 int CreateSceneRuntime(uint64 domainId, uint64 sceneSessionId,
                        uint64 runtimeGeneration, uint64* sceneRuntimeId)
 int InstantiateAll(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items, uint32 count)
-int ApplySerializedFields(uint64 sceneRuntimeId, NativeByteView fieldsJson)
+int ApplySerializedFields(uint64 sceneRuntimeId, NativeByteView* fieldsJson)
 int InvokeCreateAll(uint64 sceneRuntimeId)
 int SetEnabled(uint64 sceneRuntimeId, uint64 attachmentId, int32 enabled)
 int UpdateAll(uint64 sceneRuntimeId, float deltaTime)
@@ -154,16 +168,16 @@ int BeginUnloadDomain(uint64 domainId)
 int PollUnload(uint64 domainId, int32* unloaded)
 int DestroyAttachments(uint64 sceneRuntimeId, uint64* attachmentIds, uint32 count)
 int InstantiateAttachments(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items,
-                           uint32 count, NativeByteView fieldsJson)
+                           uint32 count, NativeByteView* fieldsJson)
 int ResolveDeferredCommandBatch(uint64 sceneRuntimeId, int32 committed)
-int InvokeMethod(uint64 sceneRuntimeId, uint64 attachmentId, NativeUtf8View methodName)
+int InvokeMethod(uint64 sceneRuntimeId, uint64 attachmentId, NativeByteView* methodName)
 ```
 
 `ResolveDeferredCommandBatch` acknowledges the atomic native command batch after staged
 validation and live replay. A zero value discards managed projected lifecycle state; one publishes
 it after the native Scene commit succeeds.
 
-`MetadataReceiver` is `int(NativeByteView json, uint64 receiverToken)`. The token is opaque to
+`MetadataReceiver` is `int(NativeByteView* json, uint64 receiverToken)`. The token is opaque to
 managed code and resolves only to a short-lived, thread-safe native receive context. Domain kinds are Metadata = 0 and
 Play = 1. Status values are success = 0, invalid argument = -1, invalid state = -2, not found = -3,
 version mismatch = -4, contained managed exception = -5, buffer too small = -6, wrong thread = -7,
@@ -197,7 +211,7 @@ PrefabInstantiateDeferred
 
 `NativeApiV2` is a size-detected envelope: its stable `NativeApiV1` prefix still
 uses version 1, followed by `QueryCapability`. It discovers optional Input,
-InputEvents, ApplicationPaths, Gameplay, Audio, AudioSpatial, RuntimeUI, Component,
+InputEvents, ApplicationPaths, Application, SaveData, Gameplay, Audio, AudioSpatial, RuntimeUI, Component,
 ComponentString, ComponentSchema, Scene, DeferredCommands and DeferredCallbackTransactions
 V1 tables. The exact capability names and validation are in
 [`NativeBridge.cs`](TomCat.Managed/NativeBridge.cs) and
@@ -295,12 +309,16 @@ nested Prefabs and variants; see the [Prefab workflow](../docs/PREFAB_WORKFLOW.z
 
 ## Load and unload ownership
 
-`TomCat.ScriptHost` and `TomCat.Managed` stay in the default ALC. Each game project DLL/PDB is loaded
+On desktop, `TomCat.ScriptHost` and `TomCat.Managed` stay in the default ALC. Each game project DLL/PDB is loaded
 from bytes into a collectible ALC. The custom loader always resolves `TomCat.Managed` to the default
 ALC copy, preserving `MonoBehaviour` type identity. `BeginUnloadDomain` stops dispatch, destroys
 instances, clears reflection caches, calls `AssemblyLoadContext.Unload`, and retains only a weak
 reference. Native must poll `PollUnload`; a domain that cannot unload must be reported and must not
 be silently accumulated.
+
+Browser project contexts are not collectible. Stop still destroys scene instances,
+clears callbacks and cancels tracked work; installing a new compiled generation
+requires recreating the browser module. See the [Web guide](../Web/README.md).
 
 ## Unity-style scripting (Managed API 6)
 
@@ -325,4 +343,9 @@ See the [coroutine guide](COROUTINES.zh-CN.md) for timing, cancellation and owne
 Component queries target registered engine components, not arbitrary scripts;
 GetComponent still throws for missing components.
 
-Instance-owned `Tasks` now provide explicit main-thread dispatch, frame/fixed-step waits, cancellation and fault handling. See [script task semantics](SCRIPT_TASKS.zh-CN.md). Lifecycle messages must remain synchronous; launch tracked asynchronous work with `Tasks.Run`.
+Instance-owned `Tasks` provide `MainThread`, `NextFrame` and `NextFixedStep` waits,
+cancellation and fault handling. Lifecycle messages must remain synchronous; launch
+tracked asynchronous work with `Tasks.Run`, and explicitly await `Tasks.MainThread`
+before accessing engine objects after background work. Removing a script, destroying
+its object, stopping Play or a script fault cancels its tasks and coroutines; ordinary
+disable does not. See [script task semantics](SCRIPT_TASKS.zh-CN.md).

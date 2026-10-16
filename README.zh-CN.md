@@ -16,21 +16,21 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，默认使用 OpenGL，可选择 Vulkan 后端。它是下列专项分支的公共基线；`dev_vulkan` 已于 2026-10-16 合入主线。
 
-分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
+分支定位核对日期：**2026-10-16**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`；其他专项分支继续独立演进。
 
 | 分支 | 作用 |
 | --- | --- |
 | [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
-| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | 构建、打包与 C# 工具链开发 |
+| `Build_System`（历史分支） | 构建、打包与 C# 工具链已集成到 main |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
 | [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端，已合入 main |
-| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 托管浏览器 Editor/Player 基线已合入 main，后续 Web 功能已包含在主线 |
 
 **分支生命周期约定。** 对单人项目而言专项分支必须有时间盒:每条专项分支都要在季度分支核对时(最迟)完成合并进 `main`(整体或按集成切片),或执行归档——删除分支,历史仍可通过 Git 找回。在一个核对周期内既未合并也无活动的分支先归档。下次核对:**2026-12-21**。
 
-文档于 **2026-09-20** 按仓库源码核对，当前产品版本为 **0.4.0**。
+文档于 **2026-10-16** 按仓库源码核对，当前产品版本为 **0.6.0**。
 全部指南及中文入口见[文档索引](docs/README.md)。
 
 ---
@@ -95,12 +95,12 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 
 ## 特性
 
-- **2D 渲染**：OpenGL 批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图、实体拾取、带 Rect/Pivot/PPU/Border 语义的稳定 Sprite Atlas 子资源、确定性 Sprite 排序、动画 Clip 与参数驱动的 Animator 状态机
+- **2D 渲染**：共用 RHI 的 OpenGL/Vulkan 后端批渲染 Sprite、线条和圆形，支持相机、基于 Framebuffer 的 Scene/Game 视图、实体拾取、颜色后处理与 GPU 计时，以及带 Rect/Pivot/PPU/Border 语义的稳定 Sprite Atlas 子资源、确定性 Sprite 排序、动画 Clip 与参数驱动的 Animator 状态机
 - **场景系统**：ECS 实体、父子层级、稳定 UUID、严格 YAML 场景序列化、有序 Build Settings、异步读取/激活控制、共享运行世界的叠加场景、持久根对象与显式卸载
 - **资产身份工作流**：稳定 `AssetHandle` 引用、`.tcmeta` schema-v2 Sidecar、ImporterRegistry、SHA-256 ArtifactKey、派生数据缓存、依赖跟踪，以及支持去抖内容监控、反向依赖重导和主线程发布的后台 ImportCoordinator
 - **2D 物理**：固定 60 Hz Box2D 运行时、显式/隐式静态刚体、Box/Circle 碰撞体、Trigger、过滤、Raycast/AABB 查询、力、冲量和 `DistanceJoint2D`
 - **物理编辑体验**：Scene 视图碰撞轮廓、碰撞体句柄、项目 Tag/Layer 与 Physics 2D 碰撞矩阵、合并的 Play/Stop 按钮与 Pause/Step 控制，以及延迟派发的 C# Collision/Trigger 回调
-- **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、完整生命周期、Entity/Transform/Input/Physics/Scene API、结构化诊断、portable PDB、last-good 程序集、Cooked 托管负载，以及纯托管 NuGet 包、项目引用、传递依赖和本地 DLL 的封装；详见 [C# 依赖指南](docs/CSHARP_DEPENDENCIES.md)
+- **C# 脚本**：.NET 10 项目编译、Inspector 序列化字段、可回收 Play Domain、`MonoBehaviour` 生命周期、作用域任务/协程、Entity/Transform/Input/Physics/Scene API、结构化诊断、portable PDB、last-good 程序集、Cooked 托管负载，以及纯托管 NuGet 包、项目引用、传递依赖和本地 DLL 的封装；详见[托管脚本](Managed/README.zh-CN.md)和 [C# 依赖指南](docs/CSHARP_DEPENDENCIES.md)
 - **Prefab**：LocalID 实体子树和引用重映射、编辑器关联更新、Override、Apply/Revert、嵌套和变体；运行时 C# `Instantiate` 保持快照语义，详见 [Prefab 工作流](docs/PREFAB_WORKFLOW.zh-CN.md)
 - **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
@@ -110,7 +110,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
 - **UI 控件与本地化**：新增滑条、滚动视图、单行 Unicode 输入框、层级主题和游戏语言表回退；支持 OS 输入法提交文字，完整组合态仍有边界，详见 [UI 控件](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **性能分析**：可视化 CPU 时间线、异步 GPU 帧计时、绘制统计、进程内存和资源分配估算；提供 [Profiler 与 C# 断点流程](docs/DEBUGGING_AND_PROFILING.md)
-- **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、物理、Sprite 资产、脚本编译、安全边界、Editor 恢复、音频、导入器、输入、SceneManager、Prefab、Cook 与隔离 Player 启动；另有独立 WASM 编辑器协议回归
+- **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、含 OpenGL RHI 的 14 个原生回归程序、应用构建、Player 模板、C# Player 启动、CoinRunner、模块发布与 Editor 自动化；Vulkan 验证层/多窗口和 Web 浏览器测试有独立入口
 
 ## 当前范围
 
@@ -124,13 +124,13 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；C# 采用外部 IDE 附加调试，停止 Play 后重新编译并更新脚本，不提供 Play Mode 热替换。场景恢复、激活和上传已有协作式分帧预算；Windows 输入框已有 IME 预编辑和候选窗定位，详见 [P1 能力与边界](docs/P1_PRODUCTION.md)
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
-2026-09-20 核对了上面展示的界面流程，没有重新运行完整原生、托管、Player 或 Web 回归套件。
+最新的 **2026-10-16** 主线集成验收已通过完整 Release 回归、Vulkan RHI 同步验证与多窗口、Vulkan Editor 自动化与 Player 启动，以及托管 Web 构建和 Edge 浏览器冒烟，详见[验证记录与边界](docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)。上面展示的仍是 2026-09-20 原始录屏，其覆盖范围保持原样；本次没有重新录制。
 
 ## 构建
 
 ### 依赖
 
-- Windows x64，并具备支持 OpenGL 4.6 的显卡与驱动
+- Windows x64；默认后端和完整原生套件需要支持 OpenGL 4.6 的显卡与驱动，运行 Vulkan 后端还需要支持 Vulkan 1.2 的驱动
 - Visual Studio 2022+
 - .NET 10 SDK（Editor 编译项目 C# 脚本必需）
 - Python 3 与 `pip`（供 Setup 辅助脚本使用）
@@ -159,7 +159,27 @@ Release x64 源码构建的实际入口：
 打包后的 Editor 名为 `TomCat.exe`；重新编译源码不会自动替换已经打包或另行安装的程序。
 创建或启动项目前，在 Hub 设置中将 Editor 搜索目录指向需要使用的安装位置。
 
-由 `Scripts\Setup.bat` 准备 Premake 后，运行 `powershell -ExecutionPolicy Bypass -File Scripts\Run-Regressions.ps1` 可执行完整 Release 回归套件。
+### 选择渲染后端与测试
+
+在启动 Editor、Hub、CLI 或 Player 前选择桌面后端：
+
+```powershell
+$env:TC_RENDERER = 'vulkan' # 可选；未设置或设为 'opengl' 时使用 OpenGL
+& ./Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe
+```
+
+烘焙/构建与 Player 启动必须使用同一后端。包内只包含所选后端的 Shader，切换后端需要重新烘焙；Web 继续使用 WebGL2。Vulkan 当前只支持单采样 Framebuffer，其他能力和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
+
+由 `Scripts\Setup.bat` 准备 Premake 后，按顺序执行：
+
+```powershell
+$env:TC_RENDERER = 'opengl'
+powershell -ExecutionPolicy Bypass -File Scripts/Run-Regressions.ps1 -Configuration Release -Log
+# 需要 Vulkan 显卡/驱动与 Khronos validation layer：
+powershell -ExecutionPolicy Bypass -File Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
+```
+
+完整 Release 套件已包含 OpenGL RHI 与 Editor 自动化。[文档索引](docs/README.md#验证入口)列出 Vulkan Editor/Player、Web 构建/浏览器与可选长时间测试入口。构建与测试应串行运行，避免 Managed 重建替换脚本编译测试正在使用的程序集。
 
 ## 目录结构
 
@@ -238,7 +258,9 @@ Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的
 - [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
 
 
-- [ ] Windows/OpenGL 的 2D 流程成熟后，再增加其他平台与渲染后端
+- [x] RHI 集成可选 Vulkan 后端，覆盖 DPI 字体重建、颜色后处理、压缩纹理回退、GPU 计时与跨后端自动化截图
+- [x] 实验性 WebGL2 Editor/Player，支持托管 C# 生命周期、Project 编辑、场景持久化与工作区布局保存，详见 [Web 范围](Web/README.zh-CN.md)
+- [ ] 更多平台、桌面后端与 Vulkan 多帧并行/上传性能优化
 
 ### 未来 3D 范围
 
@@ -247,7 +269,11 @@ Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的
 
 ## 格式策略
 
-格式策略：只支持当前格式，拒绝旧版和未来版本；已移除项目、场景、组件迁移及 CLI `--migrate`。原生模块 SDK 与损坏恢复继续保留，详见 PROJECT_SYSTEM.md。
+格式策略：只支持当前格式，拒绝旧版和未来版本；已移除项目、场景、组件迁移及 CLI `--migrate`。原生模块 SDK 与损坏恢复继续保留。[Version.h](TomCat/src/TomCat/Core/Version.h) 定义产品 0.6.0、Project v4、Scene v11、Prefab v1、TCPAK v8、Native API v1、Managed API v6 与 Module ABI v2，详见[项目系统](PROJECT_SYSTEM.md)。
+
+## AI 自动化
+
+按需启用的[原生自动化服务](docs/Automation.md)提供 72 项结构化操作，覆盖项目创建、场景与资产编辑、C# 编译、隔离的运行时输入测试、帧缓冲截图和 Player 构建。[工具目录](docs/AutomationTools.json)描述协议。运行 `Scripts/Run-AutomationRegression.ps1` 可验证完整流程，支持通过 `TC_RENDERER` 选择任一桌面后端。
 
 ## 相关项目
 

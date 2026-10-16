@@ -1,6 +1,6 @@
 # TomCatCLI 无界面构建工具
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-10-16 · [文档索引](../../docs/README.md)
 
 `TomCatCLI` 是 CI 资源 Cook 和 Windows 独立 Player 构建的无窗口入口。
 以下源码构建命令从仓库根目录、Visual Studio 开发者终端执行；先运行
@@ -13,7 +13,7 @@ Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe cook --project C:/Game/
 Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game/Game.tcproj
 ```
 
-两个命令都会重新执行托管 Release 编译、校验资产，并使用项目 Build Settings 中已启用的入口场景。
+两个命令都会重新执行托管编译，默认使用 Production 配置，校验资产，并使用项目 Build Settings 中已启用的入口场景。
 `cook` 写入资源包；`build` 还将新编译的托管程序集和脚本清单传给 PlayerBuilder，发布独立 Player。
 源码构建可使用 `Scripts/Build-PlayerTemplate.ps1` 生成模板，再通过 `build --template <目录>` 指定。
 
@@ -37,6 +37,9 @@ TomCat.exe --cli build --project C:/Game/Game.tcproj
 | `--project <路径>` | 两者 | 必填，指定 `.tcproj`；含空格的路径需加引号。 |
 | `--output <路径>` | 仅 `cook` | 默认写入 `<项目>/Build/Game.tcpak`。 |
 | `--template <目录>` | 仅 `build` | 指定 Player 模板；发布位置仍为项目的 Build 目录。 |
+| `--development` | 两者 | 使用未优化的 Development C#，代替默认优化的 Production C#。 |
+
+使用 `TomCatCLI help`（或 `--help` / `-h`）查看用法；相对路径按调用者当前工作目录解析。
 
 仅支持当前格式，旧格式和未来版本均拒绝；不自动迁移或修改原文件。
 旧项目请使用之前的引擎版本处理后再打开。
@@ -50,16 +53,33 @@ TCPAK 只读写 v8，逐条目 SHA-256 摘要为必需字段。
 | 0 | 执行成功或显示帮助 |
 | 2 | 参数错误 |
 | 5 | 项目加载失败 |
-| 6 | 资产注册表初始化失败 |
+| 6 | 项目模块或资产注册表初始化失败 |
 | 7 | 未配置已启用的入口场景 |
 | 8 | 托管编译失败或编译期间源码发生变化 |
 | 9 | Cook 失败 |
 | 10 | 无法读取新编译的托管元数据 |
-| 11 | 无法读取程序集文件 |
+| 11 | 无法读取程序集或 PDB 文件 |
 | 12 | Player 构建失败 |
 | 13 | 项目写锁不可用 |
 
 进一步阅读：[项目配置](../../PROJECT_SYSTEM.md)、[托管脚本](../../Managed/README.zh-CN.md)。
+
+## 渲染后端选择
+
+桌面 Editor、Hub、CLI 与 Player 在每个进程中读取一次 `TC_RENDERER`：
+默认 `opengl`，设置为 `vulkan` 则使用 Vulkan。Cook/build 与生成的 Player 必须使用同一值，
+因为每个包只包含一个后端的 shader。例如：
+
+```powershell
+$env:TC_RENDERER = 'vulkan'
+Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game/Game.tcproj --template C:/Game/PlayerTemplate
+```
+
+启动该 Player 时保留 `TC_RENDERER=vulkan`。切回 OpenGL 时设置为 `opengl` 并重新烘焙/构建；
+已有包不能直接切换后端。Vulkan 运行需要支持 Vulkan 1.2 的驱动和 loader。
+loader 使用延迟加载，OpenGL 和无界面工具启动时不需要加载它。
+验证层和设备选择见[RHI/Vulkan 集成指南](../../docs/RHI_VULKAN.zh-CN.md)。
+浏览器目标继续使用 WebGL 2，独立构建入口见[Web 指南](../../Web/README.zh-CN.md)。
 
 ## 从编辑器创作交接到构建
 
@@ -74,9 +94,14 @@ Project 资源检查器中的 Apply 先保存导入设置；场景编辑也需�
 Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe cook --project Samples/PhysicsPlayground/Project.tcproj
 ```
 
-本页命令按当前源码核对；[2026-09-20 桌面录屏](../../docs/portfolio/README.md)只演示 Hub/Editor，
-未重新执行 CLI Cook 或独立 Player 构建验收。完整构建回归入口见[主文档](../../README.zh-CN.md#构建)。
+2026-10-16 主线集成已通过完整 Release 回归、CLI 与 Player 构建、Player Template 和 C# Player 冒烟。
+Vulkan 烘焙/构建及真实 Player 脚本也已通过，预期测试退出码为 73。
+范围与日志见[集成记录](../../docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)，
+完整构建回归入口见[主文档](../../README.zh-CN.md#构建)。
+构建与回归脚本应串行运行，避免在测试中替换托管编译输入。
 
 ## 脚本构建配置
 
-`cook` / `build` 默认启用正式版 C# 优化，追加 `--development` 使用未优化开发配置。两者缓存隔离并保留 portable PDB；符号不自动嵌入 Player 包。详见[生产验收](../../docs/PRODUCTION_ACCEPTANCE.md)。
+`cook` / `build` 默认启用 Production C# 优化，追加 `--development` 使用未优化 Development 配置。
+两种配置在 Library 中分别缓存并保留 portable PDB。`cook` 将所选构建的 PDB 写入托管包负载；
+`build` 当前不将它写入发布的 Player 包。详见[生产验收](../../docs/PRODUCTION_ACCEPTANCE.md)。
