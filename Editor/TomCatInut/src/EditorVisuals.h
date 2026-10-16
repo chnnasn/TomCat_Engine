@@ -25,7 +25,7 @@ inline void DrawEditorGlyph(ImDrawList* draw, const Ref<EditorIconSet>& icons,
     const auto artwork=icons ? icons : g_EditorVisualIcons.lock();
     if (artwork && artwork->Get(icon))
     {
-        draw->AddImage(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(artwork->Get(icon)->GetRendererID())),
+        draw->AddImage(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(artwork->Get(icon)->GetUITextureID())),
             minimum,maximum,ImVec2(0,1),ImVec2(1,0),tint);
         return;
     }

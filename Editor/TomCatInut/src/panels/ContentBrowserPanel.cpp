@@ -76,7 +76,7 @@ namespace TomCat {
 		ImTextureID ToImGuiTextureID(const Ref<Texture2D>& texture)
 		{
 			return texture
-				? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetRendererID()))
+				? reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(texture->GetUITextureID()))
 				: nullptr;
 		}
 
