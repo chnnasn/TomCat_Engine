@@ -6335,6 +6335,87 @@ namespace {
 			entities, error), error.c_str());
 	}
 
+	void TestUnmodifiedLivenessAvoidsMetadataSnapshots()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene, otherScene;
+		auto parent = scene.CreateEntity("Live parent");
+		auto child = scene.CreateEntity("Live child");
+		auto other = otherScene.CreateEntity("Other pending Scene");
+		Require(scene.SetParent(child, parent), "live query hierarchy setup failed");
+		for (size_t index = 0; index < 512; ++index)
+			scene.CreateEntity("Live sprite " + std::to_string(index))
+				.AddComponent<TomCat::SpriteRenderer>();
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0x11fe);
+		const auto otherSession = engine.StartScene(otherScene, 0x11ff);
+		Require(session && otherSession, "live query Scenes did not start");
+		const EntityHandleV1 context{ session, static_cast<uint64_t>(parent.GetUUID()), 0x11fe };
+		const EntityHandleV1 target{ session, static_cast<uint64_t>(child.GetUUID()), 0x11fe };
+		const EntityHandleV1 otherContext{ otherSession, static_cast<uint64_t>(other.GetUUID()), 0x11ff };
+		Require(engine.QueueSetLayer(otherContext, 7), "other Scene queue setup failed");
+		engine.NotifyImmediateMutation();
+		const auto before = engine.GetProjectionStatistics();
+		for (size_t phase = 0; phase < 8; ++phase)
+		{
+			engine.NotifyImmediateMutation();
+			bool alive = false, active = false;
+			Require(engine.GetProjectedEntityLiveness(target, alive) && alive
+				&& engine.GetProjectedActiveInHierarchy(target, active) && active
+				&& engine.FlushDeferredCommands(session),
+				"unmodified query lost liveness or ancestor activity");
+		}
+		const auto direct = engine.GetProjectionStatistics();
+		Require(direct.MetadataSnapshots == before.MetadataSnapshots
+			&& direct.SceneCopies == before.SceneCopies
+			&& direct.UnmodifiedMetadataQueries - before.UnmodifiedMetadataQueries == 16,
+			"empty lifecycle phases built a full metadata/component snapshot");
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		bool alive = false, active = true;
+		Require(engine.GetProjectedActiveInHierarchy(target, active) && !active,
+			"unmodified query ignored current live parent activity");
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
+		{
+			TomCat::ComponentMutationPhaseScope validation(TomCat::ComponentMutationPhase::Validation);
+			Require(engine.GetProjectedEntityLiveness(target, alive) && alive,
+				"validation liveness query failed");
+		}
+		Require(engine.GetProjectionStatistics().MetadataSnapshots == direct.MetadataSnapshots + 1
+			&& engine.GetProjectionStatistics().UnmodifiedMetadataQueries == direct.UnmodifiedMetadataQueries + 1,
+			"validation query bypassed its isolated projection");
+		const auto cachedQueries = engine.GetProjectionStatistics().UnmodifiedMetadataQueries;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		Require(engine.GetProjectedActiveInHierarchy(target, active) && active
+			&& engine.GetProjectionStatistics().UnmodifiedMetadataQueries == cachedQueries,
+			"an existing snapshot was bypassed by a fresh live read");
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
+		engine.NotifyImmediateMutation();
+		Require(engine.QueueSetActiveSelf(context, false)
+			&& engine.GetProjectedActiveInHierarchy(target, active) && !active
+			&& parent.GetComponent<TomCat::Tag>().ActiveSelf,
+			"pending activity did not preserve isolated read-your-writes");
+		Require(engine.QueueDestroyEntity(target)
+			&& engine.GetProjectedEntityLiveness(target, alive) && !alive,
+			"pending destroy was read as live by the fast path");
+		Require(engine.MarkDeferredCommandBatchFailed(context, "unmodified query rollback")
+			&& !engine.GetProjectedEntityLiveness(context, alive)
+			&& !engine.GetProjectedActiveInHierarchy(context, active)
+			&& engine.FlushDeferredCommands(session)
+			&& scene.FindEntityByUUID(child.GetUUID())
+			&& parent.GetComponent<TomCat::Tag>().ActiveSelf,
+			"invalid pending projection leaked live reads or escaped rollback");
+		auto stale = target;
+		++stale.RuntimeGeneration;
+		Require(!engine.GetProjectedEntityLiveness(stale, alive)
+			&& !engine.GetProjectedActiveInHierarchy(stale, active)
+			&& engine.FlushDeferredCommands(otherSession) && other.GetLayer() == 7,
+			"unmodified query accepted stale generation or lost another Scene's batch");
+		engine.StopScene(otherSession);
+		engine.StopScene(session);
+	}
+
 	void TestMetadataQueriesLazilyCreateComponentProjection()
 	{
 		using namespace TomCat::Scripting;
@@ -6456,6 +6537,8 @@ namespace {
 			&& projected.ReplayNameLookupProbes - before.ReplayNameLookupProbes <= Count * 3
 			&& scene.GetEntityOrder().size() == 1,
 			"registered sprite/transform access invalidated replay names or changed live state");
+		Require(projected.ComponentPresenceCommandsVisited == before.ComponentPresenceCommandsVisited,
+			"three intrinsic Transform writes per sprite rescanned the growing command batch");
 		Require(engine.FlushDeferredCommands(session), "registered sprite burst commit failed");
 		const auto committed = engine.GetProjectionStatistics();
 		Require(committed.ReplayNameIndexBuilds - before.ReplayNameIndexBuilds == 3
@@ -7780,6 +7863,8 @@ int main(int argc, char** argv)
 		TestRegisteredSpriteBurstReusesReplayNames);
 	run("metadata queries lazily create component projections",
 		TestMetadataQueriesLazilyCreateComponentProjection);
+	run("unmodified liveness and activity skip metadata snapshots",
+		TestUnmodifiedLivenessAvoidsMetadataSnapshots);
 	run("audio stop traverses sources and preserves teardown callbacks",
 		TestAudioStopTraversesSources);
 	run("immediate mutation invalidates incremental projection",

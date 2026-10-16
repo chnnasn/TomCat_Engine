@@ -1323,6 +1323,8 @@ namespace TomCat::Scripting {
 			}
 
 			scene = binding->second.ScenePointer;
+			if (!snapshot)
+				++m_ProjectionStatistics.MetadataSnapshots;
 			revision = m_ProjectionRevision;
 			const size_t firstCommand = snapshot ? snapshot->CommandOffset : 0;
 			commandOffset = m_DeferredCommands.size();
@@ -1912,10 +1914,44 @@ namespace TomCat::Scripting {
 		m_ProjectionSnapshots.clear();
 	}
 
+	Scene* ScriptEngine::GetUnmodifiedSceneForMetadataQuery(const EntityHandleV1& context) const
+	{
+		if (!IsMainThread() || context.SceneSessionId == 0 || context.EntityId == 0
+			|| context.RuntimeGeneration == 0 || DeferredValidationScene
+			|| GetComponentMutationPhase() == ComponentMutationPhase::Validation)
+			return nullptr;
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		const auto binding = m_Scenes.find(context.SceneSessionId);
+		if (binding == m_Scenes.end() || !binding->second.ScenePointer
+			|| binding->second.RuntimeGeneration != context.RuntimeGeneration
+			|| m_ProjectionSnapshots.contains(context.SceneSessionId))
+			return nullptr;
+		// A cached/retained view and every pending mutation (including AbortBatch)
+		// keep using the normal isolated projection. Commands for another Scene
+		// cannot affect this query. No callbacks run between this check and read.
+		for (const auto& command : m_DeferredCommands)
+		{
+			if (command.Entity.SceneSessionId == context.SceneSessionId
+				&& command.Entity.RuntimeGeneration == context.RuntimeGeneration)
+				return nullptr;
+		}
+		++m_ProjectionStatistics.UnmodifiedMetadataQueries;
+		return binding->second.ScenePointer;
+	}
+
 	bool ScriptEngine::GetProjectedEntityLiveness(const EntityHandleV1& entity,
 		bool& alive) const
 	{
 		alive = false;
+		if (Scene* scene = GetUnmodifiedSceneForMetadataQuery(entity))
+		{
+			Entity target = scene->FindEntityByUUID(UUID(entity.EntityId));
+			if (!target || !target.HasComponent<Tag>()
+				|| !target.HasComponent<EntityMetadata>() || !target.HasComponent<Transform>())
+				return false;
+			alive = true;
+			return true;
+		}
 		const auto snapshot = GetProjectionSnapshot(entity);
 		if (!snapshot || !snapshot->Valid)
 			return false;
@@ -2028,6 +2064,29 @@ namespace TomCat::Scripting {
 		bool& active) const
 	{
 		active = false;
+		if (Scene* scene = GetUnmodifiedSceneForMetadataQuery(entity))
+		{
+			uint64_t current = entity.EntityId;
+			// At most one visit per entity is possible in a valid ancestry chain.
+			// A count bound rejects cycles without allocating a set for root reads.
+			size_t remaining = scene->m_EntityMap.size();
+			while (current != 0 && remaining-- > 0)
+			{
+				Entity target = scene->FindEntityByUUID(UUID(current));
+				if (!target || !target.HasComponent<Tag>()
+					|| !target.HasComponent<EntityMetadata>() || !target.HasComponent<Transform>())
+					return false;
+				if (!target.GetComponent<Tag>().ActiveSelf)
+					return true;
+				const auto parent = scene->m_ParentMap.find(UUID(current));
+				current = parent == scene->m_ParentMap.end()
+					? 0 : static_cast<uint64_t>(parent->second);
+			}
+			if (current != 0)
+				return false;
+			active = true;
+			return true;
+		}
 		const auto snapshot = GetProjectionSnapshot(entity);
 		if (!snapshot || !snapshot->Valid)
 			return false;
@@ -2131,10 +2190,16 @@ namespace TomCat::Scripting {
 		Entity resolved = ResolveEntity(entity);
 		present = resolved ? HasNativeComponent(resolved, componentType)
 			: componentType == NativeComponentType::Transform;
+		// Transform is intrinsic and deferred removal is rejected. Once present,
+		// no queued Add/Remove can change it. Three TRS writes per entity must not
+		// each rescan the entire growing batch merely to recheck this invariant.
+		if (componentType == NativeComponentType::Transform && present)
+			return true;
 
 		std::lock_guard<std::mutex> lock(m_Mutex);
 		for (const DeferredCommand& command : m_DeferredCommands)
 		{
+			++m_ProjectionStatistics.ComponentPresenceCommandsVisited;
 			if (!SameEntity(command.Entity, entity)
 				|| command.ComponentType != componentType)
 				continue;

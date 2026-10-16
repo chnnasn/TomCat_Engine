@@ -3304,6 +3304,8 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 
 }
 
+#include "FontSourceReuseRegression.h"
+
 namespace TomCat::Tests {
 
 	void RunRuntimeUIRegression()
@@ -3338,6 +3340,7 @@ namespace TomCat::Tests {
 		TestPersistentButtonCallbacks();
 		TestCoinRunnerHUD();
 		TestCookedRuntimeUIRoundTrip();
+		TestPublishedFontSourceReuse();
 	}
 
 }

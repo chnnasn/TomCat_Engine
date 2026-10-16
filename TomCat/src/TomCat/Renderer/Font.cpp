@@ -652,6 +652,18 @@ namespace TomCat {
 					AssetHandle(state->Key[2])
 				};
 				std::vector<std::vector<uint8_t>> sources(handles.size());
+				std::vector<std::span<const uint8_t>> sourceSpans(handles.size());
+				// A published atlas already retains the verified source bytes for
+				// shaping. Keep that immutable generation alive while adding glyphs,
+				// rather than rereading and hashing the same artifacts for each growth.
+				// Release/ReleaseAll removes the state, so a new generation must load
+				// and validate its own sources through AssetManager again.
+				Ref<RuntimeFont> published;
+				{
+					std::lock_guard lock(Mutex);
+					if (IsCurrentLocked(state, generation))
+						published = state->Published;
+				}
 				uint64_t sourceBytes = 0;
 				AssetManager& assets = AssetManager::Get();
 				for (size_t index = 0; index < handles.size(); ++index)
@@ -673,6 +685,24 @@ namespace TomCat {
 						duplicate = duplicate || handles[previous] == handles[index];
 					if (duplicate)
 						continue;
+
+					if (published && index < published->GetAtlas().ShapingSources.size())
+					{
+						const auto& retained = published->GetAtlas().ShapingSources[index];
+						if (!retained.empty())
+						{
+							if (retained.size() > sourceBudget - (std::min)(sourceBytes,
+								sourceBudget))
+							{
+								AppendWarning(prepared.Warning, "font chain entry "
+									+ std::to_string(index) + " exceeds the runtime memory budget");
+								continue;
+							}
+							sourceBytes += retained.size();
+							sourceSpans[index] = retained;
+							continue;
+						}
+					}
 
 					uint64_t expectedBytes = 0;
 					CookedAssetRange range;
@@ -725,12 +755,9 @@ namespace TomCat {
 					}
 					sourceBytes += loadedBytes;
 					sources[index] = std::move(loaded.Artifact.Bytes);
+					sourceSpans[index] = sources[index];
 				}
 
-				std::vector<std::span<const uint8_t>> sourceSpans;
-				sourceSpans.reserve(sources.size());
-				for (const std::vector<uint8_t>& source : sources)
-					sourceSpans.emplace_back(source.data(), source.size());
 				bool current = false;
 				{
 					std::lock_guard lock(Mutex);
