@@ -28,7 +28,7 @@ const output = path.resolve(process.argv[3]);
     module.FS.writeFile(audioPath + '.tcmeta', 'SchemaVersion: 2\nAsset:\n  Handle: 7770000000000000007\n  Type: Audio\n  ImportSettings: {}\n  SubAssets: []\n');
     const properties = [
       [900, 'Enabled', true], [901, 'Clip', '7770000000000000007'], [902, 'PlayOnStart', true],
-      [903, 'Loop', true], [904, 'Streaming', false], [905, 'Volume', .5], [906, 'Pitch', .02],
+      [903, 'Loop', true], [904, 'Streaming', false], [905, 'Volume', .5], [906, 'Pitch', Math.fround(.02).toPrecision(9)],
       [907, 'SpatialBlend', 0], [908, 'MinDistance', 1], [909, 'MaxDistance', 20], [910, 'MixerGroup', 1], [911, 'Bus', 4294967295],
     ];
     const audio = '      - TypeId: ' + String(0x9f0000000000000an) + '\n        StableName: TomCat.AudioSource\n        SchemaVersion: 2\n        Properties:\n'
