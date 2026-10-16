@@ -125,6 +125,38 @@ logical cleanup (OnDisable/OnDestroy, scenes, callbacks and cancellation), but a
 new compiled generation requires recreating the browser module. This also bounds
 memory retained by non-collectible browser load contexts.
 
+Scripts compile after publishing, so their BCL calls cannot inform ILLink.
+`ScriptRuntimeRoots.xml` retains the implementations behind the browser script
+reference assemblies, including numerical, collection, text and JSON APIs.
+The managed browser smoke compiles these calls dynamically and executes them.
+
+The single-threaded Web font scheduler applies backpressure before preparing
+another atlas, so multiple font chains cannot block their own publication.
+The packaged browser fixture cooks two real fonts and checks rendered pixels
+from both, along with multiple textures and native audio output.
+
+### Browser audio
+
+The shared `AudioSource`/`AudioListener` and mixer APIs drive a module-owned
+WebAudio device. Resident PCM WAV (8/16/24/32-bit integer or 32-bit float) and
+decoded OGG/Vorbis clips support play, pause/resume, stop, looping, volume and
+pitch from 0.01 to 4. Mono sources use equal-power stereo panning; multichannel
+sources preserve channel identity, folding additional channels into stereo.
+Browsers may keep the AudioContext suspended until a click or key press inside
+the player; the device resumes on that gesture. Player/editor shutdown stops
+voices, releases clip caches and closes the context. If AudioContext creation
+fails, the existing Null backend reports the fallback reason.
+
+`Streaming=true` is rejected explicitly instead of decoding an unbounded stream
+into memory. Use resident clips only when their decoded size fits the game's
+memory budget. The tests verify rendered browser samples and a real cooked
+AudioSource signal, not physical speaker output or every browser/device:
+
+```powershell
+node Web/tests/web-audio.cjs
+./Scripts/Run-WebBrowserSmoke.ps1
+```
+
 Project settings changes apply in MEMFS and mark the session dirty. Hosts must
 persist `ProjectSettings/ProjectSettings.json` and
 `ProjectSettings/PlayerSettings.json` with the scene, restore them before
@@ -234,8 +266,9 @@ Chinese IME composition or all desktop panel widgets.
   rejected. ABI, manifest, TFM, hash and payload-size checks also apply.
 - Custom cooked SPIR-V shaders and multisample framebuffers explicitly fail.
   GLSL conversion covers embedded infrastructure shaders only.
-- Audio uses the upstream NullAudioDevice fallback; this target has no audible
-  WebAudio output. Do not advertise audio support.
+- Resident AudioSource clips use WebAudio (PCM WAV and decoded OGG/Vorbis).
+  Streaming sources are explicitly rejected; disable Streaming for resident clips.
+  Browsers may require a click or key press inside the player to enable sound.
 - SharedArrayBuffer/Workers and WebGL2 are required; no single-thread fallback.
 - Desktop rendering supports OpenGL and Vulkan through RHI; desktop C# still
   uses hostfxr. Windows regression and Web validation are separate checks.

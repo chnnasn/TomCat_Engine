@@ -57,6 +57,7 @@ add_executable(tomcat_player "${TC_SRC}/platform/Web/WebPlayer.cpp")
 target_link_libraries(tomcat_player PRIVATE tc_player_core)
 set(TC_WEB_LINK_OPTIONS
   --no-entry -fwasm-exceptions
+  "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/WebAudio.js"
   "-sUSE_GLFW=3" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
   "-sMODULARIZE=1"
   "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=134217728"

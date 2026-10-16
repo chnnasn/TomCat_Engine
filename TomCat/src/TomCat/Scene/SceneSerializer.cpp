@@ -6,6 +6,7 @@
 #include "Entity.h"
 #include "Serialization/SceneArchiveCodec.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Audio/AudioDevice.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 
@@ -300,9 +301,9 @@ namespace TomCat {
 			if (!IsFinite(source.Volume) || source.Volume < 0.0f
 				|| source.Volume > 4.0f)
 				throw std::runtime_error(context + ".Volume must be finite and in [0, 4]");
-			if (!IsFinite(source.Pitch) || source.Pitch < 0.25f
-				|| source.Pitch > 4.0f)
-				throw std::runtime_error(context + ".Pitch must be finite and in [0.25, 4]");
+			if (!IsFinite(source.Pitch) || source.Pitch < MinimumAudioPitch
+				|| source.Pitch > MaximumAudioPitch)
+				throw std::runtime_error(context + ".Pitch must be finite and in [0.01, 4]");
 			if (source.MixerGroup > 2)
 				throw std::runtime_error(context + ".MixerGroup must be Master, Music, or SFX");
 			if (!IsFinite(source.SpatialBlend) || source.SpatialBlend < 0.0f

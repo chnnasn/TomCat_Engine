@@ -30,8 +30,8 @@ namespace TomCat {
 
 		bool ValidPitch(float value)
 		{
-			return std::isfinite(value) && value >= XAUDIO2_MIN_FREQ_RATIO
-				&& value <= 4.0f;
+			return std::isfinite(value) && value >= MinimumAudioPitch
+				&& value <= MaximumAudioPitch;
 		}
 
 		class WindowsAudioDevice final : public IAudioDevice
@@ -584,6 +584,10 @@ namespace TomCat {
 		fallbackReason.clear();
 #if defined(TC_PLATFORM_WINDOWS)
 		auto device = std::make_unique<WindowsAudioDevice>();
+		if (device->Initialize(fallbackReason))
+			return device;
+#elif defined(TC_PLATFORM_WEB)
+		auto device = CreateWebAudioDevice();
 		if (device->Initialize(fallbackReason))
 			return device;
 #else
