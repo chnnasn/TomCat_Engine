@@ -209,8 +209,8 @@ namespace TomCat {
 			return 0;
 		}
 		if (!clip || !IsValidMixerGroup(group) || !IsValidVolume(settings.Volume)
-			|| !std::isfinite(settings.Pitch) || settings.Pitch < 0.25f
-			|| settings.Pitch > 4.0f)
+			|| !std::isfinite(settings.Pitch) || settings.Pitch < MinimumAudioPitch
+			|| settings.Pitch > MaximumAudioPitch)
 		{
 			error = "Audio voice settings are invalid";
 			return 0;
@@ -248,8 +248,8 @@ namespace TomCat {
 			return 0;
 		}
 		if (!source || !IsValidMixerGroup(group) || !IsValidVolume(settings.Volume)
-			|| !std::isfinite(settings.Pitch) || settings.Pitch < 0.25f
-			|| settings.Pitch > 4.0f)
+			|| !std::isfinite(settings.Pitch) || settings.Pitch < MinimumAudioPitch
+			|| settings.Pitch > MaximumAudioPitch)
 		{
 			error = "Audio streaming voice settings are invalid";
 			return 0;
@@ -436,7 +436,7 @@ namespace TomCat {
 
 	bool AudioEngine::SetPitch(AudioVoiceHandle voice, float pitch)
 	{
-		if (!std::isfinite(pitch) || pitch < 0.25f || pitch > 4.0f)
+		if (!std::isfinite(pitch) || pitch < MinimumAudioPitch || pitch > MaximumAudioPitch)
 			return false;
 		auto iterator = m_Voices.find(voice);
 		if (iterator == m_Voices.end())

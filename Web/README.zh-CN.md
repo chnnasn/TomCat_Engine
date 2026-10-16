@@ -192,7 +192,7 @@ Sprite 选择赋值、场景像素拾取、ImGuizmo 拖拽、撤销/重做、停
 - C# 支持 TomCat 的纯托管依赖封装；原生 NuGet 资产、自定义 MSBuild 任务和平台原生库仍会被拒绝。
 - 托管 TCPAK 载荷必须使用 `portable` RID，`win-x64` 载荷会被拒绝；同时校验 ABI、清单、TFM、哈希和大小。
 - 自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 明确失败；GLSL 转换仅覆盖内置基础 Shader。
-- 音频使用 `NullAudioDevice` 回退，无可听 WebAudio 输出。
+- 内存 AudioSource 音频通过 WebAudio 播放（PCM WAV 与已解码的 OGG/Vorbis）。Streaming 显式拒绝，常驻音频须关闭 Streaming。浏览器可能要求先在播放器内点击或按键才能出声。
 - 必须支持 SharedArrayBuffer/Workers 和 WebGL2，没有单线程回退。
 - 桌面渲染通过 RHI 支持 OpenGL 与 Vulkan，桌面 C# 保留 hostfxr 实现；Windows 回归与 Web 验证分别执行。
 
@@ -220,6 +220,23 @@ Game 在 Play 前和 Stop 后也绘制活动场景主相机。编辑模式仅渲
 缺少相机时显示 `No cameras rendering`。Web 资产 RPC 同时提供引擎内置 Circle / Square 纹理。
 
 ## 构建状态（2026-10-16）
+
+### 浏览器音频与动态脚本运行库
+
+共享 `AudioSource`、`AudioListener` 与混音接口现可驱动模块内独立的 WebAudio 设备。
+常驻 PCM WAV（8/16/24/32 位整数或 32 位浮点）及已解码 OGG/Vorbis 支持播放、暂停续播、
+停止、循环、音量与 0.01–4 的 Pitch。单声道按等功率方式定位，立体声保留左右通道；更多声道折入立体声。
+浏览器可能等待播放器内的点击或按键才能恢复 AudioContext。播放器/编辑器关闭会停止音轨、
+释放音频缓存并关闭 Context。创建 AudioContext 失败时仍回退 Null，并报告原因。
+`Streaming=true` 会明确拒绝，不会将有界流偷换为全量内存读取；请按游戏内存预算使用常驻音频。
+
+脚本在发布后才编译，ILLink 无法提前看到它们调用的 BCL。
+`ScriptRuntimeRoots.xml` 保留浏览器脚本引用程序集对应的运行库实现，防止数学、集合、文本、JSON API
+被裁剪。managed 冒烟会动态编译并执行这些 API，并检查真实烘焙 AudioSource 的非零音频信号和关闭清理。
+单线程 Web 字体调度会先发布已准备的图集，再准备下一套字体，避免等待自身清空队列而死锁，
+同时保留原有内存上限。烘焙浏览器用例包含两套真实字体，并通过实际画面像素检查两套字体都已渲染。
+`node Web/tests/web-audio.cjs` 另检查浏览器实际渲染的 PCM、声道、音量、变调、暂停续播及生命周期；
+这些测试不代表物理扬声器输出或所有浏览器/设备均已验收。
 
 完成 Vulkan/RHI 集成后，最终一次 `Scripts/Build-WebManaged.ps1` 已通过原生编译、WASM 链接及
 .NET browser-wasm 发布，`Scripts/Run-WebBrowserSmoke.ps1` 本机 Edge 冒烟也已通过。
