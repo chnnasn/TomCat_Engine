@@ -130,13 +130,15 @@ namespace TomCat {
 	void AudioSceneRuntime::Stop(Scene& scene)
 	{
 		FlushDeferredVoiceDestroys(scene);
-		for (Entity entity : CollectEntities(scene))
+		// Stop runs after managed OnDestroy, including any sources it created.
+		// DestroySource only releases a backend voice and resets runtime fields;
+		// none of the audio backends invoke script callbacks or mutate this storage.
+		// Do not walk every non-audio entity when a validation Scene is discarded.
+		auto sources = scene.GetRegistry().view<AudioSource>();
+		for (const entt::entity handle : sources)
 		{
-			if (entity.HasComponent<AudioSource>())
-			{
-				DestroySource(entity);
-				entity.GetComponent<AudioSource>().RuntimeAutoPlayEvaluated = false;
-			}
+			DestroySource(Entity(handle, &scene));
+			sources.get<AudioSource>(handle).RuntimeAutoPlayEvaluated = false;
 		}
 	}
 
