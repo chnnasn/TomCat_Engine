@@ -21,7 +21,8 @@ project "RHIRegression"
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
-		"%{IncludeDir.yaml_cpp}"
+		"%{IncludeDir.yaml_cpp}",
+		"%{IncludeDir.VulkanSDK}"
 	}
 
 	libdirs

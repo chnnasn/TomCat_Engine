@@ -21,7 +21,13 @@
 
 ## 提交与资源生命周期
 
-采用单 graphics/present queue、单应用渲染线程。命令按调用顺序记录；每次 draw 固化顶点、索引、uniform、纹理绑定和 pipeline 状态。资源更新、同步拾取、窗口呈现是提交边界。提交完成前不覆盖上传内存、不回收 descriptor、不销毁引用的资源。首版优先正确性；并行 command recording、独立 transfer queue、bindless 和 render graph 不作为迁移前提。
+采用单 graphics/present queue、单应用渲染线程。命令按调用顺序记录；每次 draw 固化顶点、索引、uniform、纹理绑定和 pipeline 状态。普通呈现异步提交，主窗口允许两帧在途；三个提交槽各自拥有 command pool/buffer、fence、descriptor pool、资源引用和 timestamp query。只在复用仍忙的槽或帧时等待对应 fence。提交完成前不覆盖上传内存、不回收 descriptor、不销毁引用的资源。这里的多帧在途用于重叠 CPU 准备与 GPU 执行，未引入多线程 command recording、独立 transfer queue、bindless 或 render graph。
+
+顶点、索引、uniform 快照和纹理 mip staging 使用提交槽内持久映射的 host-visible/coherent 上传页，按 offset 子分配；uniform 遵守设备的 `minUniformBufferOffsetAlignment`，纹理复制和索引遵守各自对齐。普通页为 1 MiB，大绘制快照也可复用缓存，每槽缓存总计不超过 8 MiB；一次性大纹理 staging 和超出缓存上限的页在 fence 完成后释放。每次 draw 只复制实际使用的索引数量和反射声明的 uniform 大小。常规绘制不再为每份快照创建、映射和销毁独立 Vulkan buffer。
+
+主窗口使用按帧复用的 acquire semaphore，GPU 在首次访问 swapchain image 前等待；呈现完成 semaphore 按 image 管理。辅助 ImGui 窗口提交前先提交离屏生产命令并建立内存依赖，帧末提交的 fence 覆盖同队列的辅助窗口工作。主窗口暂不可呈现时仍提交帧尾标记，保护 UI 顶点/索引缓冲区的复用。GPU 计时按提交分段，fence 完成后非阻塞读取并汇总到原帧。
+
+`ReadPixel`、RGBA 截图、显式 `WaitIdle`、资源销毁/resize、字体重建和 swapchain 重建仍保留同步边界；拾取与截图继续返回当前调用位置的结果。上传页优化没有改变纹理格式或压缩产物的 CPU 解压语义。
 
 离屏颜色、整数 ID 和深度 attachment 必须独立定义格式与清除值；ID attachment 禁用混合，清除值为 -1。离屏结果在 UI 采样前建立写入到采样的依赖。resize 先创建完整新目标，成功后替换，旧目标等 GPU 完成后回收；零尺寸窗口跳过呈现。surface out-of-date/suboptimal 触发重建，device lost 明确报错。
 
@@ -102,6 +108,34 @@ Remove-Item Env:TC_RENDERER, Env:TC_VULKAN_VALIDATION
 
 本地完整日志位于 `build/logs/merge-vulkan-*`。首次完整运行曾遇到场景原子替换 `Access denied`，定向与最终串行全套复测均通过；另一次并行构建干扰了测试 DLL 和编译输入，最终验证已串行执行。未将这些瞬时失败解释为已修复的文件系统缺陷。本轮未重跑集显测试或长时间性能 soak。
 
+## 多帧与上传优化验收（2026-10-16）
+
+本次新增回归在连续帧结束后才读取像素，避免每帧 readback 掩盖在途资源被提前复用的问题。覆盖同一纹理的多次更新、CPU 源数据覆盖、跨提交的顶点/uniform/descriptor 快照、超过 4 MiB 的纹理上传、满批 20,000 个精灵、GPU 计时中途 readback、在途资源 resize/销毁，以及辅助窗口持续渲染、移动、resize 和关闭。
+
+| 验证 | 本次结果 |
+| --- | --- |
+| NVIDIA RTX 5060 Laptop，Vulkan 单窗口及多窗口 | Release RHI 回归与 Khronos 同步验证通过，无 validation error |
+| Intel RaptorLake-S Mobile，Vulkan 多窗口 | 同一回归与同步验证通过，无 validation error |
+| 连续帧压力段 | 24 帧产生 96 次提交、0 次显式队列等待；后 12 帧复用暖缓存，上传页新分配为 0；最多使用 3 个提交槽 |
+| 20,000 精灵满批次 | 6 帧热身后再运行 6 帧，上传页新分配和显式队列等待均为 0，最终实体像素正确 |
+| 辅助窗口稳态 | 关闭 GPU profiling 后连续 12 帧正常提交，显式队列等待未增加 |
+| OpenGL | 默认后端 RHI 回归通过 |
+| Vulkan Editor | 重新构建后，项目创建、编辑、C# 编译、Prefab、输入/步进、截图、保存和 Player 导出通过；Editor 验证层 stderr 为空 |
+| Vulkan Player | 使用本次构建的 Player 刷新模板，显式包路径及默认启动均完成 C# 脚本并返回验收退出码 73 |
+
+这里的“0 次显式队列等待”针对普通绘制/呈现压力段，不包含必要的提交槽 fence 复用等待，也不包含后续同步读回、resize 或销毁。计数验证说明消除了对应的逐提交队列等待与重复上传分配；没有进行优化前后 FPS、帧延迟或吞吐量基准，不据此推断固定的性能提升比例。
+
+复现 GPU 回归：
+
+```powershell
+./Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
+./Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation
+./Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport -Device Intel
+./Scripts/Run-RHIRegression.ps1 -Backend opengl
+```
+
+本次本地日志为 `build/logs/vulkan-frames-*.log`。初次受限编译发生 MSVC C1902，并留下旧对象文件，导致一次类布局不一致的启动异常；在正常构建环境重新编译受影响单元后，上述回归全部通过。
+
 ## 分支原始验证记录（2026-09-21）
 
 | 项目 | 实际结果 |
@@ -119,7 +153,7 @@ Remove-Item Env:TC_RENDERER, Env:TC_VULKAN_VALIDATION
 
 本次迁移覆盖现有二维渲染和编辑器资源入口；RHI 保留即时调用式前端，Vulkan 内部负责显式记录和状态快照。它尚不是面向任意高级渲染功能的 command-list/render-graph API。
 
-- 使用保守的 fence 等待、GENERAL 离屏布局和同步拾取保证正确性，尚未优化多帧并行与上传分配；不声称性能优于 OpenGL。
+- 已实现两帧在途呈现、按 fence 回收的提交槽和持久映射上传页；仍使用 GENERAL 离屏布局、保守的全局内存 barrier 与同步拾取。未实现独立传输队列、设备本地静态几何缓存或异步拾取；不据此声称性能优于 OpenGL。
 - 要求 Vulkan 1.2、独立 attachment 混合和至少 32 个采样纹理槽。宽线与 timestamp 按能力降级；默认优先独显，可手动指定设备。
 - 当前 framebuffer 支持单采样 RGBA8、R32_SINT 与深度模板；MSAA、compute、storage image/buffer 和 push constant 不在现有前端迁移范围。
 - shader 转换支持现有引擎 GLSL 约定，使用 set 0 UBO、set 1 sampler、set 2 命名 uniform；不保证任意第三方 GLSL 能自动转换。自定义 shader 应遵循该布局。

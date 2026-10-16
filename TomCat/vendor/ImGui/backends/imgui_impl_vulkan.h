@@ -126,7 +126,8 @@ struct ImGui_ImplVulkanH_Frame
 struct ImGui_ImplVulkanH_FrameSemaphores
 {
     VkSemaphore         ImageAcquiredSemaphore;
-    VkSemaphore         RenderCompleteSemaphore;
+    VkSemaphore         RenderCompleteSemaphore; // Indexed by acquired image when used by platform windows.
+    VkFence             ImageAcquiredFence;     // Non-owning: submission that last consumed ImageAcquiredSemaphore.
 };
 
 // Helper structure to hold the data needed by one rendering context into one OS window
@@ -145,7 +146,7 @@ struct ImGui_ImplVulkanH_Window
     VkClearValue        ClearValue;
     uint32_t            FrameIndex;             // Current frame being rendered to (0 <= FrameIndex < FrameInFlightCount)
     uint32_t            ImageCount;             // Number of simultaneous in-flight frames (returned by vkGetSwapchainImagesKHR, usually derived from min_image_count)
-    uint32_t            SemaphoreIndex;         // Current set of swapchain wait semaphores we're using (needs to be distinct from per frame data)
+    uint32_t            SemaphoreIndex;         // Current acquire semaphore slot; present semaphores use FrameIndex.
     ImGui_ImplVulkanH_Frame*            Frames;
     ImGui_ImplVulkanH_FrameSemaphores*  FrameSemaphores;
 

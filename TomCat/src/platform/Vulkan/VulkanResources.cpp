@@ -103,12 +103,15 @@ uintptr_t VulkanTexture2D::GetUITextureID() const {
 void VulkanTexture2D::Upload(uint32_t level, const void* data, size_t size) {
     const uint32_t width = std::max(1u, m_Image->Width >> level), height = std::max(1u, m_Image->Height >> level);
     if (!data || size != uint64_t(width) * height * 4) throw std::invalid_argument("Invalid RGBA texture payload");
-    auto staging = m_Device->Buffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data);
+    // Texture artifacts are decoded to RGBA8 above, so every copy has a
+    // four-byte texel alignment regardless of the artifact's compression.
+    auto staging = m_Device->Upload(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, 4);
     m_Device->Barrier();
     VkBufferImageCopy copy{};
+    copy.bufferOffset = staging.Offset;
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1}; copy.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(m_Device->Commands(), staging->Buffer, m_Image->Image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-    m_Device->Keep(staging); m_Device->Keep(m_Image);
+    vkCmdCopyBufferToImage(m_Device->Commands(), staging.Buffer, m_Image->Image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+    m_Device->Keep(m_Image);
     m_Device->Barrier();
 }
 void VulkanTexture2D::SetData(const void* data, uint32_t size) {

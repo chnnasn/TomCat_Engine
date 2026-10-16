@@ -3,11 +3,16 @@
 #include <GLFW/glfw3.h>
 #include <stdexcept>
 #include <cstring>
+#include <limits>
 
 
 namespace TomCat {
 namespace {
 std::weak_ptr<VulkanDevice> s_Device;
+constexpr VkBufferUsageFlags UploadUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+    | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+constexpr VkDeviceSize UploadPageSize = 1024 * 1024;
+constexpr VkDeviceSize SubmissionUploadBudget = 8 * UploadPageSize;
 VKAPI_ATTR VkBool32 VKAPI_CALL ValidationMessage(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* message, void* user) {
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
@@ -144,34 +149,40 @@ void VulkanDevice::Initialize(GLFWwindow* window) {
     VulkanCheck(vkCreateDevice(PhysicalDevice, &create, nullptr, &Device), "Create device");
     vkGetDeviceQueue(Device, QueueFamily, 0, &Queue);
     VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; pool.queueFamilyIndex = QueueFamily;
-    VulkanCheck(vkCreateCommandPool(Device, &pool, nullptr, &m_CommandPool), "Create command pool");
+    pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT; pool.queueFamilyIndex = QueueFamily;
     VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    allocate.commandPool = m_CommandPool; allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount = 1;
-    VulkanCheck(vkAllocateCommandBuffers(Device, &allocate, &m_CommandBuffer), "Allocate command buffer");
+    allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; allocate.commandBufferCount = 1;
     VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    VulkanCheck(vkCreateFence(Device, &fence, nullptr, &m_Fence), "Create submission fence");
     VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768}};
     VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     descriptors.maxSets = 4096; descriptors.poolSizeCount = 2; descriptors.pPoolSizes = sizes;
-    VulkanCheck(vkCreateDescriptorPool(Device, &descriptors, nullptr, &DescriptorPool), "Create draw descriptor pool");
+    for (auto& slot : m_Slots) {
+        VulkanCheck(vkCreateCommandPool(Device, &pool, nullptr, &slot.CommandPool), "Create command pool");
+        allocate.commandPool = slot.CommandPool;
+        VulkanCheck(vkAllocateCommandBuffers(Device, &allocate, &slot.CommandBuffer), "Allocate command buffer");
+        VulkanCheck(vkCreateFence(Device, &fence, nullptr, &slot.Fence), "Create submission fence");
+        slot.DescriptorPools.push_back(CreateDrawDescriptorPool());
+        if (SupportsProfiling()) {
+            VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            query.queryType = VK_QUERY_TYPE_TIMESTAMP; query.queryCount = 2;
+            VulkanCheck(vkCreateQueryPool(Device, &query, nullptr, &slot.QueryPool), "Create timestamps");
+        }
+    }
     descriptors.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     VulkanCheck(vkCreateDescriptorPool(Device, &descriptors, nullptr, &ImGuiPool), "Create UI descriptor pool");
-    if (SupportsProfiling()) {
-        VkQueryPoolCreateInfo query{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-        query.queryType = VK_QUERY_TYPE_TIMESTAMP; query.queryCount = 2;
-        VulkanCheck(vkCreateQueryPool(Device, &query, nullptr, &m_QueryPool), "Create timestamps");
-    }
     TC_Core_Info("Vulkan device: {0}", Properties.deviceName);
 }
 VulkanDevice::~VulkanDevice() {
     if (Device) vkDeviceWaitIdle(Device);
-    m_Retained.clear();
-    if (m_QueryPool) vkDestroyQueryPool(Device, m_QueryPool, nullptr);
-    if (DescriptorPool) vkDestroyDescriptorPool(Device, DescriptorPool, nullptr);
+    for (auto& slot : m_Slots) {
+        slot.Retained.clear();
+        slot.UploadPages.clear();
+        if (slot.QueryPool) vkDestroyQueryPool(Device, slot.QueryPool, nullptr);
+        for (auto descriptors : slot.DescriptorPools) vkDestroyDescriptorPool(Device, descriptors, nullptr);
+        if (slot.Fence) vkDestroyFence(Device, slot.Fence, nullptr);
+        if (slot.CommandPool) vkDestroyCommandPool(Device, slot.CommandPool, nullptr);
+    }
     if (ImGuiPool) vkDestroyDescriptorPool(Device, ImGuiPool, nullptr);
-    if (m_Fence) vkDestroyFence(Device, m_Fence, nullptr);
-    if (m_CommandPool) vkDestroyCommandPool(Device, m_CommandPool, nullptr);
     if (Device) vkDestroyDevice(Device, nullptr);
     if (m_DebugMessenger) {
         auto destroyDebug = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(Instance, "vkDestroyDebugUtilsMessengerEXT"));
@@ -180,13 +191,80 @@ VulkanDevice::~VulkanDevice() {
     if (Instance) vkDestroyInstance(Instance, nullptr);
 }
 VkCommandBuffer VulkanDevice::Commands() {
-    if (!m_Recording) {
+    auto& slot = AcquireSlot();
+    if (!slot.Recording) {
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        VulkanCheck(vkBeginCommandBuffer(m_CommandBuffer, &begin), "Begin commands");
-        m_Recording = true;
+        VulkanCheck(vkBeginCommandBuffer(slot.CommandBuffer, &begin), "Begin commands");
+        slot.Recording = true;
+        StartProfileSegment(slot);
     }
-    return m_CommandBuffer;
+    return slot.CommandBuffer;
+}
+VulkanDevice::SubmissionSlot& VulkanDevice::AcquireSlot() {
+    auto& slot = m_Slots[m_CurrentSlot];
+    if (slot.InFlight) CompleteSlot(slot, true);
+    return slot;
+}
+bool VulkanDevice::CompleteSlot(SubmissionSlot& slot, bool wait) {
+    if (!slot.InFlight) return true;
+    const auto status = vkGetFenceStatus(Device, slot.Fence);
+    if (status == VK_NOT_READY) {
+        if (!wait) return false;
+        ++m_Stats.SlotWaitCount;
+        VulkanCheck(vkWaitForFences(Device, 1, &slot.Fence, true, UINT64_MAX), "Wait for submission slot");
+    } else VulkanCheck(status, "Query submission fence");
+    if (slot.ProfileFrame) {
+        uint64_t timestamps[2]{};
+        // Fence completion makes both timestamp results available; never wait on
+        // query retrieval while the CPU could be preparing another submission.
+        VulkanCheck(vkGetQueryPoolResults(Device, slot.QueryPool, 0, 2, sizeof(timestamps), timestamps,
+            sizeof(uint64_t), VK_QUERY_RESULT_64_BIT), "Read timestamps");
+        const uint64_t mask = m_TimestampBits == 64 ? UINT64_MAX : ((uint64_t(1) << m_TimestampBits) - 1);
+        auto& result = m_ProfileResults.at(slot.ProfileFrame);
+        result.Milliseconds += double((timestamps[1] - timestamps[0]) & mask) * Properties.limits.timestampPeriod / 1000000.0;
+        --result.PendingSegments;
+    }
+    VulkanCheck(vkResetFences(Device, 1, &slot.Fence), "Reset submission fence");
+    VulkanCheck(vkResetCommandPool(Device, slot.CommandPool, 0), "Reset command pool");
+    for (auto descriptors : slot.DescriptorPools)
+        VulkanCheck(vkResetDescriptorPool(Device, descriptors, 0), "Reset draw descriptors");
+    while (slot.DescriptorPools.size() > 2) {
+        vkDestroyDescriptorPool(Device, slot.DescriptorPools.back(), nullptr);
+        slot.DescriptorPools.pop_back();
+    }
+    slot.DescriptorPoolIndex = 0;
+    slot.InFlight = false;
+    m_CompletedSerial = (std::max)(m_CompletedSerial, slot.Serial);
+    slot.ProfileFrame = 0; slot.ProfileEnded = false; slot.DescriptorSets = 0;
+    slot.UploadUsed = 0;
+    // Keep a bounded warm cache. One-off texture uploads must not pin their
+    // oversized staging buffers, while full Renderer2D batches reuse geometry
+    // pages larger than the standard page. Prefer large reusable allocations.
+    std::stable_sort(slot.UploadPages.begin(), slot.UploadPages.end(), [](const auto& a, const auto& b) {
+        return a.Allocation->Size > b.Allocation->Size;
+    });
+    VkDeviceSize cachedBytes = 0;
+    std::erase_if(slot.UploadPages, [&](const auto& page) {
+        if (!page.Cacheable || page.Allocation->Size > SubmissionUploadBudget - cachedBytes) return true;
+        cachedBytes += page.Allocation->Size;
+        return false;
+    });
+    for (auto& page : slot.UploadPages) page.Used = 0;
+    slot.Retained.clear();
+    PublishProfiles();
+    return true;
+}
+void VulkanDevice::CollectCompleted() {
+    for (auto& slot : m_Slots) CompleteSlot(slot, false);
+    PublishProfiles();
+}
+void VulkanDevice::PrepareDraw() {
+    auto& slot = AcquireSlot();
+    // Roll over only before a draw: all slices and descriptor sets assembled by
+    // that draw must belong to the same slot until its commands are submitted.
+    if (slot.Retained.size() > 512 || slot.DescriptorSets >= 1024 || slot.UploadUsed >= SubmissionUploadBudget)
+        Submit();
 }
 void VulkanDevice::Barrier() {
     VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -195,35 +273,106 @@ void VulkanDevice::Barrier() {
     vkCmdPipelineBarrier(Commands(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
         0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
-void VulkanDevice::SubmitAndWait(VkSemaphore signal) {
-    if (signal) Commands();
-    if (!m_Recording) return;
-    VulkanCheck(vkEndCommandBuffer(m_CommandBuffer), "End commands");
+uint64_t VulkanDevice::Submit(VkSemaphore signal, VkSemaphore wait, VkPipelineStageFlags waitStage) {
+    if (signal || wait) Commands();
+    auto& slot = m_Slots[m_CurrentSlot];
+    if (!slot.Recording) return 0;
+    EndProfileSegment(slot);
+    VulkanCheck(vkEndCommandBuffer(slot.CommandBuffer), "End commands");
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submit.commandBufferCount = 1; submit.pCommandBuffers = &m_CommandBuffer;
+    submit.commandBufferCount = 1; submit.pCommandBuffers = &slot.CommandBuffer;
     if (signal) { submit.signalSemaphoreCount = 1; submit.pSignalSemaphores = &signal; }
-    VulkanCheck(vkQueueSubmit(Queue, 1, &submit, m_Fence), "Submit commands");
-    VulkanCheck(vkWaitForFences(Device, 1, &m_Fence, true, UINT64_MAX), "Wait for commands");
-    VulkanCheck(vkResetFences(Device, 1, &m_Fence), "Reset fence");
-    VulkanCheck(vkResetCommandPool(Device, m_CommandPool, 0), "Reset command pool");
-    m_Recording = false;
-    m_Retained.clear();
-    VulkanCheck(vkResetDescriptorPool(Device, DescriptorPool, 0), "Reset descriptors");
-    if (m_ProfileEnded) {
-        uint64_t timestamps[2]{};
-        VulkanCheck(vkGetQueryPoolResults(Device, m_QueryPool, 0, 2, sizeof(timestamps), timestamps,
-            sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT), "Read timestamps");
-        const uint64_t mask = m_TimestampBits == 64 ? UINT64_MAX : ((uint64_t(1) << m_TimestampBits) - 1);
-        m_PendingProfileFrame = m_ProfileFrame;
-        m_PendingProfileTime = double((timestamps[1] - timestamps[0]) & mask) * Properties.limits.timestampPeriod / 1000000.0;
-        m_ProfileEnded = false; m_ProfileFrame = 0;
+    if (wait) {
+        submit.waitSemaphoreCount = 1; submit.pWaitSemaphores = &wait; submit.pWaitDstStageMask = &waitStage;
     }
+    VulkanCheck(vkQueueSubmit(Queue, 1, &submit, slot.Fence), "Submit commands");
+    slot.Recording = false; slot.InFlight = true; slot.Serial = ++m_NextSerial;
+    ++m_Stats.SubmissionCount;
+    const auto inFlight = static_cast<uint64_t>(std::count_if(m_Slots.begin(), m_Slots.end(), [](const auto& s) { return s.InFlight; }));
+    m_Stats.PeakInFlight = (std::max)(m_Stats.PeakInFlight, inFlight);
+    m_CurrentSlot = (m_CurrentSlot + 1) % FramesInFlight;
+    // Acquiring the next slot is deliberately deferred until recording resumes.
+    return slot.Serial;
 }
-void VulkanDevice::Keep(std::shared_ptr<void> object) { m_Retained.push_back(std::move(object)); }
+void VulkanDevice::WaitForSubmission(uint64_t serial) {
+    if (!serial || serial <= m_CompletedSerial) return;
+    for (auto& slot : m_Slots) {
+        if (slot.InFlight && slot.Serial == serial) {
+            CompleteSlot(slot, true);
+            CollectCompleted();
+            return;
+        }
+    }
+    throw std::invalid_argument("Unknown Vulkan submission serial");
+}
+void VulkanDevice::SubmitAndWait(VkSemaphore signal) {
+    Submit(signal);
+    ++m_Stats.ExplicitWaitCount;
+    // ImGui platform windows submit directly to this queue. A queue drain also
+    // covers them when there is no engine command buffer currently recording.
+    VulkanCheck(vkQueueWaitIdle(Queue), "Wait for graphics queue");
+    CollectCompleted();
+}
+void VulkanDevice::Keep(std::shared_ptr<void> object) {
+    Commands();
+    m_Slots[m_CurrentSlot].Retained.push_back(std::move(object));
+}
 void VulkanDevice::DrainForDestruction() noexcept {
+    if (m_Draining) return;
+    m_Draining = true;
     try { SubmitAndWait(); }
     catch (const std::exception& e) { std::fprintf(stderr, "Vulkan cleanup: %s\n", e.what()); }
     if (Device) vkDeviceWaitIdle(Device);
+    m_Draining = false;
+}
+VulkanBufferSlice VulkanDevice::Upload(VkDeviceSize size, VkBufferUsageFlags usage, const void* data, VkDeviceSize alignment) {
+    if (!size || !data) throw std::invalid_argument("Empty Vulkan upload");
+    if (size > (std::numeric_limits<size_t>::max)() || size > VkDeviceSize((std::numeric_limits<int64_t>::max)()))
+        throw std::length_error("Vulkan upload is too large");
+    if (!usage || (usage & ~UploadUsage)) throw std::invalid_argument("Unsupported Vulkan upload usage");
+    if ((usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) && size > Properties.limits.maxUniformBufferRange)
+        throw std::length_error("Vulkan upload exceeds the uniform buffer range");
+    if (!alignment || (alignment & (alignment - 1))) throw std::invalid_argument("Upload alignment must be a power of two");
+    alignment = (std::max)(alignment, VkDeviceSize(4));
+    if (usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
+        alignment = (std::max)(alignment, Properties.limits.minUniformBufferOffsetAlignment);
+    Commands();
+    auto& slot = m_Slots[m_CurrentSlot];
+    if (size > (std::numeric_limits<VkDeviceSize>::max)() - slot.UploadUsed)
+        throw std::length_error("Vulkan submission upload size overflow");
+    const bool standardPage = size <= UploadPageSize;
+    const bool geometry = (usage & (VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) != 0;
+    const bool cacheable = standardPage || (geometry && size <= SubmissionUploadBudget);
+    UploadPage* selected = nullptr;
+    VkDeviceSize selectedOffset = 0;
+    for (auto& page : slot.UploadPages) {
+        // Small allocations must not consume the beginning of a cached large
+        // geometry page before the frame's full batch arrives. Temporary large
+        // texture staging also stays separate from the warm geometry cache.
+        if ((page.Allocation->Size <= UploadPageSize) != standardPage || page.Cacheable != cacheable) continue;
+        const auto remainder = page.Used % alignment;
+        const auto padding = remainder ? alignment - remainder : 0;
+        if (padding <= page.Allocation->Size - page.Used && size <= page.Allocation->Size - page.Used - padding) {
+            if (!selected || page.Allocation->Size - page.Used < selected->Allocation->Size - selected->Used) {
+                selected = &page;
+                selectedOffset = page.Used + padding;
+            }
+        }
+    }
+    if (selected) {
+        auto* destination = static_cast<uint8_t*>(selected->Allocation->Mapped) + selectedOffset;
+        std::memcpy(destination, data, static_cast<size_t>(size));
+        selected->Used = selectedOffset + size;
+        slot.UploadUsed += size; m_Stats.UploadBytes += size;
+        return {selected->Allocation->Buffer, selectedOffset, size, destination};
+    }
+    const auto capacity = (std::max)(UploadPageSize, size);
+    slot.UploadPages.push_back({Buffer(capacity, UploadUsage), 0, cacheable});
+    ++m_Stats.UploadPageAllocations;
+    auto& page = slot.UploadPages.back();
+    std::memcpy(page.Allocation->Mapped, data, static_cast<size_t>(size));
+    page.Used = size; slot.UploadUsed += size; m_Stats.UploadBytes += size;
+    return {page.Allocation->Buffer, 0, size, page.Allocation->Mapped};
 }
 uint32_t VulkanDevice::MemoryType(uint32_t bits, VkMemoryPropertyFlags flags) const {
     VkPhysicalDeviceMemoryProperties memory{};
@@ -288,11 +437,34 @@ std::shared_ptr<VulkanImageAllocation> VulkanDevice::Image(uint32_t width, uint3
     Keep(image);
     return image;
 }
+VkDescriptorPool VulkanDevice::CreateDrawDescriptorPool() {
+    VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768}};
+    VkDescriptorPoolCreateInfo create{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    create.maxSets = 4096; create.poolSizeCount = 2; create.pPoolSizes = sizes;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VulkanCheck(vkCreateDescriptorPool(Device, &create, nullptr, &pool), "Create draw descriptor pool");
+    return pool;
+}
 VkDescriptorSet VulkanDevice::AllocateDescriptor(VkDescriptorSetLayout layout) {
+    Commands();
+    auto& slot = m_Slots[m_CurrentSlot];
     VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocate.descriptorPool = DescriptorPool; allocate.descriptorSetCount = 1; allocate.pSetLayouts = &layout;
+    allocate.descriptorSetCount = 1; allocate.pSetLayouts = &layout;
     VkDescriptorSet set{};
-    VulkanCheck(vkAllocateDescriptorSets(Device, &allocate, &set), "Allocate draw descriptor");
+    while (slot.DescriptorPoolIndex < slot.DescriptorPools.size()) {
+        allocate.descriptorPool = slot.DescriptorPools[slot.DescriptorPoolIndex];
+        const auto result = vkAllocateDescriptorSets(Device, &allocate, &set);
+        if (result == VK_SUCCESS) { ++slot.DescriptorSets; return set; }
+        if (result != VK_ERROR_OUT_OF_POOL_MEMORY && result != VK_ERROR_FRAGMENTED_POOL)
+            VulkanCheck(result, "Allocate draw descriptor");
+        ++slot.DescriptorPoolIndex;
+    }
+    // Descriptor-heavy shaders may exhaust one descriptor type before maxSets.
+    // Grow the current slot without submitting slices from an unfinished draw.
+    slot.DescriptorPools.push_back(CreateDrawDescriptorPool());
+    allocate.descriptorPool = slot.DescriptorPools.back();
+    VulkanCheck(vkAllocateDescriptorSets(Device, &allocate, &set), "Allocate draw descriptor in new pool");
+    ++slot.DescriptorSets;
     return set;
 }
 VkFormat VulkanDevice::DepthFormat() const {
@@ -302,19 +474,45 @@ VkFormat VulkanDevice::DepthFormat() const {
     }
     throw std::runtime_error("No supported depth/stencil format");
 }
-void VulkanDevice::BeginProfile(uint64_t frame) {
-    if (m_PendingProfileFrame) {
-        FrameProfiler::Get().SetGpuTime(m_PendingProfileFrame, m_PendingProfileTime);
-        m_PendingProfileFrame = 0;
+void VulkanDevice::StartProfileSegment(SubmissionSlot& slot) {
+    if (!m_ProfileFrame || slot.ProfileFrame) return;
+    slot.ProfileFrame = m_ProfileFrame;
+    ++m_ProfileResults.at(m_ProfileFrame).PendingSegments;
+    vkCmdResetQueryPool(slot.CommandBuffer, slot.QueryPool, 0, 2);
+    vkCmdWriteTimestamp(slot.CommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, slot.QueryPool, 0);
+}
+void VulkanDevice::EndProfileSegment(SubmissionSlot& slot) {
+    if (!slot.ProfileFrame || slot.ProfileEnded) return;
+    vkCmdWriteTimestamp(slot.CommandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, slot.QueryPool, 1);
+    slot.ProfileEnded = true;
+}
+void VulkanDevice::PublishProfiles() {
+    for (auto it = m_ProfileResults.begin(); it != m_ProfileResults.end();) {
+        // FrameProfiler accepts results only after EndFrame has stored the frame.
+        // A readback may finish the GPU while that CPU frame is still active.
+        if (it->second.Ended && !it->second.PendingSegments && FrameProfiler::Get().ActiveFrame() != it->first) {
+            FrameProfiler::Get().SetGpuTime(it->first, it->second.Milliseconds);
+            it = m_ProfileResults.erase(it);
+        } else ++it;
     }
+}
+void VulkanDevice::BeginProfile(uint64_t frame) {
+    CollectCompleted();
+    if (m_ProfileFrame) EndProfile();
     if (!frame || !SupportsProfiling()) return;
+    // A slot has one query pair. Preserve an ended frame's queries when callers
+    // start another profile before submitting its commands.
+    if (m_Slots[m_CurrentSlot].ProfileFrame) Submit();
     m_ProfileFrame = frame;
-    vkCmdResetQueryPool(Commands(), m_QueryPool, 0, 2);
-    vkCmdWriteTimestamp(Commands(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_QueryPool, 0);
+    m_ProfileResults.try_emplace(frame);
+    Commands();
+    StartProfileSegment(m_Slots[m_CurrentSlot]);
 }
 void VulkanDevice::EndProfile() {
     if (!m_ProfileFrame) return;
-    vkCmdWriteTimestamp(Commands(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_QueryPool, 1);
-    m_ProfileEnded = true;
+    Commands();
+    EndProfileSegment(m_Slots[m_CurrentSlot]);
+    m_ProfileResults.at(m_ProfileFrame).Ended = true;
+    m_ProfileFrame = 0;
 }
 }

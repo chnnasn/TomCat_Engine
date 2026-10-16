@@ -1,6 +1,7 @@
 #include "tcpch.h"
 #include "VulkanContext.h"
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 #include "backends/imgui_impl_vulkan.h"
 #include <stdexcept>
 
@@ -13,8 +14,9 @@ VulkanContext& VulkanContext::Current() {
 void VulkanContext::Init() {
     m_Device = VulkanDevice::Create(m_Window);
     VulkanCheck(glfwCreateWindowSurface(m_Device->Instance, m_Window, nullptr, &m_Surface), "Create window surface");
-    VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    VulkanCheck(vkCreateFence(m_Device->Device, &fence, nullptr, &m_AcquireFence), "Create acquire fence");
+    VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    for (auto& frame : m_Frames)
+        VulkanCheck(vkCreateSemaphore(m_Device->Device, &semaphore, nullptr, &frame.Acquired), "Create frame acquire semaphore");
     int width, height; glfwGetFramebufferSize(m_Window, &width, &height);
     FramebufferSpecification spec;
     spec.Width = std::max(width, 1); spec.Height = std::max(height, 1);
@@ -32,7 +34,8 @@ VulkanContext::~VulkanContext() {
     m_Default.reset();
     DestroySwapchain();
     if (m_RenderPass) vkDestroyRenderPass(m_Device->Device, m_RenderPass, nullptr);
-    if (m_AcquireFence) vkDestroyFence(m_Device->Device, m_AcquireFence, nullptr);
+    for (auto& frame : m_Frames)
+        if (frame.Acquired) vkDestroySemaphore(m_Device->Device, frame.Acquired, nullptr);
     if (m_Surface) vkDestroySurfaceKHR(m_Device->Instance, m_Surface, nullptr);
     if (s_Context == this) s_Context = nullptr;
 }
@@ -123,21 +126,33 @@ void VulkanContext::Recreate(uint32_t width, uint32_t height) {
         VulkanCheck(vkCreateSemaphore(m_Device->Device, &semaphore, nullptr, &m_Ready[i]), "Create image present semaphore");
     }
     if (m_ImGui) ImGui_ImplVulkan_SetMinImageCount(m_MinImages);
+    for (auto& frame : m_Frames) frame.Submission = 0;
+    m_Frame = 0;
     m_Rebuild = false;
 }
 bool VulkanContext::Acquire() {
     if (m_Acquired) return true;
+    if (!m_FrameStarted) {
+        m_Device->WaitForSubmission(m_Frames[m_Frame].Submission);
+        m_FrameStarted = true;
+    }
     int width, height; glfwGetFramebufferSize(m_Window, &width, &height);
     if (width <= 0 || height <= 0) return false;
     if (m_Rebuild || uint32_t(width) != m_Width || uint32_t(height) != m_Height) Recreate(width, height);
     if (!m_Swapchain) return false;
-    auto result = vkAcquireNextImageKHR(m_Device->Device, m_Swapchain, UINT64_MAX, VK_NULL_HANDLE, m_AcquireFence, &m_Image);
+    auto& frame = m_Frames[m_Frame];
+    auto result = vkAcquireNextImageKHR(m_Device->Device, m_Swapchain, UINT64_MAX, frame.Acquired, VK_NULL_HANDLE, &m_Image);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) { m_Rebuild = true; return false; }
     if (result == VK_SUBOPTIMAL_KHR) m_Rebuild = true;
     else VulkanCheck(result, "Acquire image");
-    VulkanCheck(vkWaitForFences(m_Device->Device, 1, &m_AcquireFence, true, UINT64_MAX), "Wait for image acquisition");
-    VulkanCheck(vkResetFences(m_Device->Device, 1, &m_AcquireFence), "Reset acquire fence");
+    m_AcquireWaitPending = true;
     m_Acquired = true; return true;
+}
+uint64_t VulkanContext::SubmitFrameCommands(VkSemaphore signal) {
+    const auto wait = m_AcquireWaitPending ? m_Frames[m_Frame].Acquired : VK_NULL_HANDLE;
+    const auto submission = m_Device->Submit(signal, wait, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    m_AcquireWaitPending = false;
+    return submission;
 }
 void VulkanContext::BlitDefault() {
     m_Device->Barrier();
@@ -147,7 +162,9 @@ void VulkanContext::BlitDefault() {
     barrier.image = m_Images[m_Image]; barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     auto commands = m_Device->Commands();
-    vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    // Match the acquire semaphore's wait stage so the layout transition also
+    // waits for the presentation engine to release this image.
+    vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
     const auto& source = m_Default->Colors().at(0);
     VkImageBlit blit{};
     blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -186,7 +203,7 @@ void VulkanContext::ShutdownImGui() {
     ImGui_ImplVulkan_Shutdown(); m_ImGui = false;
 }
 void VulkanContext::RenderImGui(ImDrawData* data) {
-    if (!Acquire()) { m_Device->SubmitAndWait(); return; }
+    if (!Acquire()) { m_Device->Barrier(); m_Device->Submit(); return; }
     BlitDefault();
     m_Device->Barrier();
     VkRenderPassBeginInfo pass{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -195,21 +212,35 @@ void VulkanContext::RenderImGui(ImDrawData* data) {
     ImGui_ImplVulkan_RenderDrawData(data, m_Device->Commands());
     vkCmdEndRenderPass(m_Device->Commands());
     m_Rendered = true;
-    // Platform windows submit directly to this same queue after this call.
-    // Finish the offscreen producers and the main UI before they sample them.
-    m_Device->SubmitAndWait();
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+        // Platform windows submit to the same queue after this call. Publish
+        // offscreen writes before their samples without blocking the CPU.
+        m_Device->Barrier();
+        SubmitFrameCommands();
+    }
 }
 void VulkanContext::SwapBuffers() {
-    if (!Acquire()) { m_Device->SubmitAndWait(); return; }
+    if (!Acquire()) {
+        // A minimized/out-of-date main surface must still bound CPU lead for
+        // any platform windows rendered this frame. Submit a tail marker even
+        // when profiling and main-window rendering produced no commands.
+        m_Device->Commands();
+        m_Frames[m_Frame].Submission = m_Device->Submit();
+        m_Frame = (m_Frame + 1) % static_cast<uint32_t>(m_Frames.size());
+        m_FrameStarted = false;
+        return;
+    }
     if (!m_Rendered) BlitDefault();
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.image = m_Images[m_Image]; barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(m_Device->Commands(), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+    vkCmdPipelineBarrier(m_Device->Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
-    m_Device->SubmitAndWait(m_Ready[m_Image]);
+    // This tail submission also covers any ImGui platform-window work queued
+    // between RenderImGui and SwapBuffers, including its image reads.
+    m_Frames[m_Frame].Submission = SubmitFrameCommands(m_Ready[m_Image]);
     VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     present.waitSemaphoreCount = 1; present.pWaitSemaphores = &m_Ready[m_Image];
     present.swapchainCount = 1; present.pSwapchains = &m_Swapchain; present.pImageIndices = &m_Image;
@@ -217,5 +248,7 @@ void VulkanContext::SwapBuffers() {
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) m_Rebuild = true;
     else VulkanCheck(result, "Present image");
     m_Acquired = m_Rendered = false;
+    m_Frame = (m_Frame + 1) % static_cast<uint32_t>(m_Frames.size());
+    m_FrameStarted = false;
 }
 }
