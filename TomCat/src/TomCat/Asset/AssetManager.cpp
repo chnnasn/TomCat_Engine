@@ -2770,8 +2770,12 @@ namespace TomCat {
 			? "Shader-" + std::to_string(static_cast<uint64_t>(handle))
 			: PathToUTF8(sourcePath.stem());
 		std::string error;
-		Ref<Shader> shader = Shader::CreateFromArtifact(name,
-			loaded.Artifact.Bytes, &error);
+		std::span<const uint8_t> shaderBytes;
+		Ref<Shader> shader;
+		const ShaderArtifactTarget target = RendererAPI::GetAPI() == RendererAPI::API::Vulkan
+			? ShaderArtifactTarget::Vulkan : ShaderArtifactTarget::OpenGL;
+		if (SelectShaderArtifact(loaded.Artifact.Bytes, target, shaderBytes, error))
+			shader = Shader::CreateFromArtifact(name, shaderBytes, &error);
 		if (!shader && !cooked && !IsShaderArtifact(loaded.Artifact.Bytes)
 			&& !sourcePath.empty())
 		{
@@ -3870,7 +3874,11 @@ namespace TomCat {
 			{
 				AssetLoadOptions importOptions;
 				importOptions.Platform = "windows-x64";
-				importOptions.Backend = RendererAPI::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl";
+				// Ship both compiled shader targets so the same package can select
+				// Vulkan or fall back to OpenGL on the destination machine. The
+				// distinct backend key cannot reuse old single-target shader caches.
+				importOptions.Backend = metadata.Type == AssetType::Shader ? "desktop"
+					: RendererAPI::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl";
 				// Cook is a read-only transaction over the pinned authoring snapshot.
 				importOptions.DeferMetadataCommit = true;
 				AssetLoadResult imported = m_Database.LoadArtifact(handle,

@@ -10,6 +10,7 @@
 
 #include "TomCat/Renderer/GraphicsContext.h"
 #include "TomCat/Renderer/RendererAPI.h"
+#include "platform/Vulkan/VulkanSupport.h"
 
 #include <stb_image.h>
 #include <algorithm>
@@ -192,6 +193,8 @@ namespace TomCat {
 			static_cast<int>(props.Height), 1.0f, 1.0f);
 
 		TC_Core_Info("Create window {0} {1} {2}", props.Title, props.Width, props.Height);
+		// Resolve the headless-safe capability probe before acquiring GLFW resources.
+		const auto initialBackend = RendererAPI::GetAPI();
 
 		if (s_GLFWWindowCount == 0)
 		{
@@ -205,7 +208,7 @@ namespace TomCat {
 
         glfwDefaultWindowHints();
         glfwWindowHint(GLFW_VISIBLE, props.Visible ? GLFW_TRUE : GLFW_FALSE);
-        if (RendererAPI::GetAPI() == RendererAPI::API::Vulkan)
+        if (initialBackend == RendererAPI::API::Vulkan)
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         else {
             glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -279,11 +282,27 @@ namespace TomCat {
 			++s_GLFWWindowCount;
 		}
 		GLFWWindowInitializationGuard initializationGuard(m_Window, m_Context);
+		try {
+			m_Context = GraphicsContext::Create(m_Window);
+			m_Context->Init();
+		} catch (const VulkanUnsupportedError& error) {
+			// A supported device can still lack the actual window's surface format
+			// or presentation capabilities. Retry before any renderer assets exist.
+			if (s_GLFWWindowCount != 1 || !RendererAPI::TryUseOpenGLFallback(error.what())) throw;
+			m_Context.reset();
+			glfwDestroyWindow(m_Window);
+			m_Window = nullptr;
+			glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+			glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+			m_Window = glfwCreateWindow(windowWidth, windowHeight, m_Data.Title.c_str(), monitor, nullptr);
+			if (!m_Window) throw std::runtime_error("Failed to create OpenGL fallback window");
+			m_Context = GraphicsContext::Create(m_Window);
+			m_Context->Init();
+		}
 		if (props.DisplayMode == WindowDisplayMode::Borderless || fitWorkspace)
 			glfwSetWindowPos(m_Window, windowX, windowY);
-
-		m_Context = GraphicsContext::Create(m_Window);
-		m_Context->Init();
 
 		glfwSetWindowUserPointer(m_Window, &m_Data);
 		RefreshNativeMetrics(false);

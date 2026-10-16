@@ -28,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -958,7 +959,7 @@ namespace {
 			"#type vertex\n"
 			"#version 450 core\n"
 			"layout(location = 0) in vec3 a_Position;\n"
-			"uniform mat4 u_ViewProjection;\n"
+			"layout(location = 0) uniform mat4 u_ViewProjection;\n"
 			"void main() { gl_Position = u_ViewProjection * vec4(a_Position, 1.0); }\n"
 			"#type fragment\n"
 			"#version 450 core\n"
@@ -996,6 +997,51 @@ namespace {
 				[](const TomCat::ShaderResourceView& resource)
 				{ return resource.Name == "u_ViewProjection"; }),
 			"offline shader reflection omitted declared resources");
+
+		request.Backend = "desktop";
+		const TomCat::AssetImportResult bundled = importer->Import(request);
+		Require(bundled.Succeeded()
+			&& bundled.Format == "shader/spirv-reflection-bundle-v1"
+			&& TomCat::IsShaderArtifact(bundled.ArtifactBytes)
+			&& TomCat::IsShaderArtifactBundle(bundled.ArtifactBytes)
+			&& bundled.ArtifactBytes == importer->Import(request).ArtifactBytes,
+			"desktop shader import did not produce a deterministic compiled bundle");
+		std::span<const uint8_t> selected;
+		Require(TomCat::SelectShaderArtifact(bundled.ArtifactBytes,
+			TomCat::ShaderArtifactTarget::OpenGL, selected, error)
+			&& std::equal(selected.begin(), selected.end(),
+				first.ArtifactBytes.begin(), first.ArtifactBytes.end()),
+			"desktop shader bundle did not preserve its OpenGL fallback variant");
+		Require(TomCat::SelectShaderArtifact(bundled.ArtifactBytes,
+			TomCat::ShaderArtifactTarget::Vulkan, selected, error)
+			&& TomCat::ParseShaderArtifact(selected, view, error)
+			&& view.Target == TomCat::ShaderArtifactTarget::Vulkan
+			&& view.Stages.size() == 2,
+			"desktop shader bundle did not contain a validated Vulkan variant");
+		Require(TomCat::SelectShaderArtifact(first.ArtifactBytes,
+			TomCat::ShaderArtifactTarget::OpenGL, selected, error)
+			&& selected.size() == first.ArtifactBytes.size()
+			&& !TomCat::SelectShaderArtifact(first.ArtifactBytes,
+				TomCat::ShaderArtifactTarget::Vulkan, selected, error)
+			&& selected.empty(),
+			"legacy single-target shader selection accepted an incompatible renderer");
+		std::vector<uint8_t> malformedBundle = bundled.ArtifactBytes;
+		malformedBundle.pop_back();
+		Require(!TomCat::SelectShaderArtifact(malformedBundle,
+			TomCat::ShaderArtifactTarget::OpenGL, selected, error),
+			"truncated desktop shader bundle was accepted");
+		malformedBundle = bundled.ArtifactBytes;
+		WriteLittleEndian32(malformedBundle, 8, UINT32_MAX);
+		Require(!TomCat::SelectShaderArtifact(malformedBundle,
+			TomCat::ShaderArtifactTarget::OpenGL, selected, error),
+			"desktop shader bundle accepted an overflowing variant size");
+		malformedBundle = bundled.ArtifactBytes;
+		const size_t vulkanOffset = 16 + ReadLittleEndian32(malformedBundle, 8);
+		WriteLittleEndian32(malformedBundle, vulkanOffset + 8,
+			static_cast<uint32_t>(TomCat::ShaderArtifactTarget::OpenGL));
+		Require(!TomCat::SelectShaderArtifact(malformedBundle,
+			TomCat::ShaderArtifactTarget::OpenGL, selected, error),
+			"desktop shader bundle accepted a second OpenGL variant instead of Vulkan");
 
 		std::vector<uint8_t> truncated = first.ArtifactBytes;
 		truncated.pop_back();
@@ -1087,7 +1133,7 @@ namespace {
 			"void main(){ gl_Position=vec4(a_Position,1.0); }\n"
 			"#type fragment\n#version 450 core\n"
 			"layout(location=0) out vec4 o_Color;\n"
-			"uniform vec4 u_Tint;\n"
+			"layout(location = 2) uniform vec4 u_Tint;\n"
 			"void main(){ o_Color=u_Tint; }\n");
 
 		TomCat::AssetRegistry registry;
@@ -1107,6 +1153,15 @@ namespace {
 		} managerCleanup;
 		Require(manager.Initialize(project.Assets, project.Library),
 			"shader runtime AssetManager did not initialize");
+		const TomCat::ShaderLoadResult authoringArtifact =
+			manager.LoadTypedArtifact<TomCat::AssetType::Shader>(shaderHandle);
+		TomCat::ShaderArtifactView authoringView;
+		std::string authoringError;
+		Require(authoringArtifact.Succeeded()
+			&& TomCat::ParseShaderArtifact(authoringArtifact.Artifact.Bytes,
+				authoringView, authoringError)
+			&& authoringView.Target == TomCat::ShaderArtifactTarget::OpenGL,
+			"authoring shader cache did not retain its selected single target");
 		const std::filesystem::path package =
 			project.Root / "Cooked Shader Runtime.tcpak";
 		Require(manager.CookToPackage(package, TomCat::AssetHandle(0)),
@@ -1122,11 +1177,19 @@ namespace {
 			manager.LoadTypedArtifact<TomCat::AssetType::Shader>(shaderHandle);
 		TomCat::ShaderArtifactView parsed;
 		std::string parseError;
+		std::span<const uint8_t> selected;
 		Require(artifact.Succeeded()
-			&& TomCat::ParseShaderArtifact(artifact.Artifact.Bytes, parsed, parseError)
+			&& TomCat::IsShaderArtifactBundle(artifact.Artifact.Bytes)
+			&& TomCat::SelectShaderArtifact(artifact.Artifact.Bytes,
+				TomCat::ShaderArtifactTarget::Vulkan, selected, parseError)
+			&& TomCat::ParseShaderArtifact(selected, parsed, parseError)
+			&& parsed.Target == TomCat::ShaderArtifactTarget::Vulkan
+			&& TomCat::SelectShaderArtifact(artifact.Artifact.Bytes,
+				TomCat::ShaderArtifactTarget::OpenGL, selected, parseError)
+			&& TomCat::ParseShaderArtifact(selected, parsed, parseError)
 			&& parsed.Target == TomCat::ShaderArtifactTarget::OpenGL
 			&& parsed.Stages.size() == 2,
-			"cooked shader bytes were not a validated OpenGL artifact");
+			"cooked shader bundle did not support both desktop renderers without source GLSL");
 
 		TomCat::CookedAssetRange cookedRange;
 		Require(manager.TryGetCookedAssetRange(shaderHandle, cookedRange)
@@ -3649,6 +3712,13 @@ namespace {
 
 int main()
 {
+	// This suite publishes shaders into its own OpenGL context. Keep that fixture
+	// independent of the production application's automatic backend selection.
+#ifdef TC_PLATFORM_WINDOWS
+	_putenv_s("TC_RENDERER", "opengl");
+#else
+	setenv("TC_RENDERER", "opengl", 1);
+#endif
 	TomCat::Log::Init();
 	try
 	{

@@ -32,6 +32,10 @@ namespace TomCat {
 
 		static API GetAPI();
 		static Scope<RendererAPI> Create();
+	private:
+		friend class WindowsWindow;
+		// Only the first native window may fall back, before renderer resources exist.
+		static bool TryUseOpenGLFallback(const char* reason);
 	};
 
 }

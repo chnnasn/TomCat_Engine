@@ -16,7 +16,7 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **main — Desktop mainline and integration baseline**
 
-Use this branch for the Windows 2D Editor, Hub and standalone Player workflow, with OpenGL by default and an optional Vulkan backend. It provides the shared baseline for the specialist branches below.
+Use this branch for the Windows 2D Editor, Hub and standalone Player workflow. Desktop rendering prefers Vulkan and falls back to OpenGL when Vulkan is unsupported. It provides the shared baseline for the specialist branches below.
 
 Branch roles reviewed on **2026-10-16**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`. Only retained branches are listed below; the specialist branches continue independently.
 
@@ -123,7 +123,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 ## Current Scope
 
 - Supported development platform: **Windows x64**
-- Rendering backends: **OpenGL 4.6** (default) and **Vulkan 1.2** (`TC_RENDERER=vulkan`); see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md).
+- Rendering backends: **Vulkan 1.2** by default when supported, with automatic **OpenGL 4.6** fallback; see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md).
 - Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). Managed C# is supported through the .NET browser-wasm host; audible audio, custom cooked SPIR-V shaders, and multisample framebuffers remain limited. Browser lifecycle acceptance is separate from a successful build.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
@@ -142,13 +142,13 @@ footage and its narrower coverage; no new recording was produced for this check.
 
 ### Dependencies
 
-- Windows x64 with an OpenGL 4.6-capable GPU/driver for the default backend and full native suite; Vulkan rendering additionally requires a Vulkan 1.2-capable driver
+- Windows x64 with a Vulkan 1.2-capable GPU/driver, or OpenGL 4.6 for fallback; the full native regression suite explicitly uses OpenGL
 - Visual Studio 2022+
 - .NET 10 SDK (required to compile project C# scripts in the Editor)
 - Python 3 with `pip` (used by the setup helper)
 - premake5 (auto-downloaded by the setup script)
 
-> Both rendering backends use ShaderC and SPIRV-Cross supplied by the `vendor/VulkanSDK` submodule (VulkanSDK-Windows). The Vulkan loader is delay-loaded, so OpenGL and headless tools do not require a Vulkan driver. Vulkan rendering requires a compatible driver; validation additionally requires the Khronos validation layer.
+> Both rendering backends use ShaderC and SPIRV-Cross supplied by the `vendor/VulkanSDK` submodule (VulkanSDK-Windows). Automatic selection safely checks for a compatible Vulkan loader and driver, including in headless tools; a missing Vulkan runtime falls back to OpenGL. Vulkan validation additionally requires the Khronos validation layer.
 
 ### Steps
 
@@ -174,31 +174,43 @@ at the intended Editor installation before creating or launching a project.
 
 ### Renderer selection and tests
 
-Choose the desktop backend before starting the Editor, Hub, CLI or Player:
+Desktop Editor, Hub, CLI and Player automatically prefer Vulkan. An unset `TC_RENDERER` or `auto` enables this policy; `vulkan` and `opengl` force that backend. Forced Vulkan reports unsupported hardware instead of falling back. Select before starting the process:
 
 ```powershell
-$env:TC_RENDERER = 'vulkan' # optional; unset or 'opengl' uses OpenGL
+$env:TC_RENDERER = 'auto' # optional; Vulkan when supported, otherwise OpenGL
 & ./Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe
 ```
 
-Cook/build and launch a packaged Player with the same backend. A package contains
-shaders for the selected backend; switching backends requires recooking. Web
+New desktop cook/build outputs contain precompiled shaders for both backends,
+so a Player can select Vulkan or fall back to OpenGL on its own machine. Older
+single-backend packages require their original backend or a recook. Web
 continues to use WebGL2. Vulkan currently supports single-sample framebuffers;
 see the [backend capabilities and limits](docs/RHI_VULKAN.zh-CN.md).
+Rebuild Player Templates with `Scripts/Build-PlayerTemplate.ps1 -Build` before
+publishing: template format 2 is required to load the new shader bundles.
 
 After `Scripts\Setup.bat` has prepared Premake, run these checks sequentially:
 
 ```powershell
-$env:TC_RENDERER = 'opengl'
+# This broad suite explicitly uses OpenGL, including on CI software drivers:
 powershell -ExecutionPolicy Bypass -File Scripts/Run-Regressions.ps1 -Configuration Release -Log
+# Checks automatic selection, fallback, overrides and initialization:
+powershell -ExecutionPolicy Bypass -File Scripts/Run-BackendSelectionRegression.ps1
 # Requires a Vulkan GPU/driver and the Khronos validation layer:
 powershell -ExecutionPolicy Bypass -File Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
+# After building the current tests/CLI, refresh the smoke-test Player template:
+./Scripts/Build-PlayerTemplate.ps1 -Configuration Release -Build -Destination ./Tests/bin/Release-windows-x86_64/PlayerTemplateRegression
+./Scripts/Run-CSharpPlayerSmoke.ps1 -Configuration Release -RequirePlayer -Graphics
 ```
 
 The complete Release suite includes OpenGL RHI and Editor automation. The
 [documentation index](docs/README.md#验证入口) lists Vulkan Editor/Player, Web
 build/browser and optional soak checks. Run builds and tests sequentially so a
 Managed rebuild does not replace assemblies in use by script compilation tests.
+The Player smoke's `-Graphics` mode opens real graphics windows and checks the
+same package with automatic selection and forced-unavailable Vulkan fallback,
+including the selected-backend logs and script completion code 73. Its default
+mode is headless.
 
 ## Directory Layout
 
@@ -277,7 +289,7 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
 
 
-- [x] RHI integration with optional Vulkan rendering, DPI font rebuilding, color grading, compressed texture fallback, GPU timing and backend-independent automation capture
+- [x] RHI integration with Vulkan preferred and OpenGL fallback, DPI font rebuilding, color grading, compressed texture fallback, GPU timing and backend-independent automation capture
 - [x] Experimental WebGL2 Editor/Player with managed C# lifecycle, Project authoring, scene persistence and saved workspace layouts; see [Web scope](Web/README.md)
 - [x] Vulkan frames in flight and reusable mapped upload pages for draw snapshots and texture staging
 - [ ] Additional platforms, desktop backends and further Vulkan synchronization/transfer optimization

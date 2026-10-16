@@ -14,16 +14,17 @@
 4. 点击 **Play**：矩形下落并落在地板上。使用 **Pause / Step** 检查运行状态，
    再点击同一个 **Stop** 按钮返回编辑场景。
 
-桌面默认使用 OpenGL；主线也支持 Vulkan，可从仓库根目录设置后端并启动：
+桌面默认优先使用 Vulkan，不支持时自动回退 OpenGL。从仓库根目录启动：
 
 ```powershell
-$env:TC_RENDERER = 'vulkan'
+$env:TC_RENDERER = 'auto' # 可省略；默认自动选择
 & ./Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe
 ```
 
-Vulkan 需要 Vulkan 1.2 驱动，后端在进程启动时确定；切回时设置
-`$env:TC_RENDERER = 'opengl'` 并重启。导出的 Player 必须与烘焙时使用同一后端，
-切换后端后需重新烘焙。启动、验证层与 GPU 回归命令见 [RHI 与 Vulkan 指南](../../docs/RHI_VULKAN.zh-CN.md#启动与构建)。
+Vulkan 需要 Vulkan 1.2 驱动，后端在进程初始化时确定。设置
+`$env:TC_RENDERER = 'opengl'` 可强制 OpenGL，设为 `vulkan` 可强制 Vulkan（不支持时会报错）。
+新的桌面 Player 包含两个后端的预编译 Shader，可独立自动选择；旧单后端包需匹配原后端或重新烘焙。
+启动、验证层与 GPU 回归命令见 [RHI 与 Vulkan 指南](../../docs/RHI_VULKAN.zh-CN.md#启动与构建)。
 
 | 实体 | 编辑状态配置 |
 | --- | --- |

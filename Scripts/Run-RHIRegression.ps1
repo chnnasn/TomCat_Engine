@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('opengl', 'vulkan')][string]$Backend = 'vulkan',
+    [ValidateSet('auto', 'opengl', 'vulkan')][string]$Backend = 'vulkan',
     [ValidateSet('Debug', 'Release', 'Dist')][string]$Configuration = 'Release',
     [switch]$Validation,
     [switch]$MultiViewport,
@@ -24,7 +24,7 @@ try {
     & $MsBuildPath Tests/RHIRegression/RHIRegression.vcxproj /m:4 "/p:Configuration=$Configuration" /p:Platform=x64 /v:minimal /nologo
     if ($LASTEXITCODE -ne 0) { throw 'RHI regression build failed' }
     $env:TC_RENDERER = $Backend
-    $env:TC_VULKAN_VALIDATION = if ($Validation -and $Backend -eq 'vulkan') { '1' } else { $null }
+    $env:TC_VULKAN_VALIDATION = if ($Validation -and $Backend -ne 'opengl') { '1' } else { $null }
     $env:TC_VULKAN_DEVICE = $Device
     $env:TC_RHI_TEST_VIEWPORTS = if ($MultiViewport) { '1' } else { $null }
     $env:TC_IMGUI_VIEWPORTS = $null

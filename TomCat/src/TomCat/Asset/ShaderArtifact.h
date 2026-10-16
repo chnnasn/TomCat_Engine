@@ -64,8 +64,14 @@ namespace TomCat {
 	};
 
 	[[nodiscard]] bool IsShaderArtifact(std::span<const uint8_t> bytes);
+	[[nodiscard]] bool IsShaderArtifactBundle(std::span<const uint8_t> bytes);
 	[[nodiscard]] bool ParseShaderArtifact(std::span<const uint8_t> bytes,
 		ShaderArtifactView& artifact, std::string& error);
+	// Accepts a legacy single-target artifact or a desktop bundle. The returned
+	// span borrows bytes and is always a validated single-target artifact.
+	[[nodiscard]] bool SelectShaderArtifact(std::span<const uint8_t> bytes,
+		ShaderArtifactTarget target, std::span<const uint8_t>& selected,
+		std::string& error);
 	[[nodiscard]] bool BuildShaderArtifact(std::span<const uint8_t> source,
 		const std::filesystem::path& sourcePath,
 		const AssetImportSettings& settings, std::string_view backend,

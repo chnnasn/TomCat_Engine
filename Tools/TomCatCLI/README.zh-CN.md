@@ -15,7 +15,7 @@ Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game
 
 两个命令都会重新执行托管编译，默认使用 Production 配置，校验资产，并使用项目 Build Settings 中已启用的入口场景。
 `cook` 写入资源包；`build` 还将新编译的托管程序集和脚本清单传给 PlayerBuilder，发布独立 Player。
-源码构建可使用 `Scripts/Build-PlayerTemplate.ps1` 生成模板，再通过 `build --template <目录>` 指定。
+源码构建可使用 `Scripts/Build-PlayerTemplate.ps1 -Build` 生成模板，再通过 `build --template <目录>` 指定。
 
 ## 打包版入口
 
@@ -66,18 +66,21 @@ TCPAK 只读写 v8，逐条目 SHA-256 摘要为必需字段。
 
 ## 渲染后端选择
 
-桌面 Editor、Hub、CLI 与 Player 在每个进程中读取一次 `TC_RENDERER`：
-默认 `opengl`，设置为 `vulkan` 则使用 Vulkan。Cook/build 与生成的 Player 必须使用同一值，
-因为每个包只包含一个后端的 shader。例如：
+桌面 Editor、Hub、CLI 与 Player 在每个进程中读取一次 `TC_RENDERER`。
+未设置或设为 `auto` 时优先 Vulkan，不支持才回退 OpenGL；设为 `opengl` / `vulkan`
+时强制对应后端，强制 Vulkan 不可用时明确报错。无窗口 CLI 不创建窗口也能探测设备支持。
+例如：
 
 ```powershell
-$env:TC_RENDERER = 'vulkan'
+$env:TC_RENDERER = 'auto'
 Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game/Game.tcproj --template C:/Game/PlayerTemplate
 ```
 
-启动该 Player 时保留 `TC_RENDERER=vulkan`。切回 OpenGL 时设置为 `opengl` 并重新烘焙/构建；
-已有包不能直接切换后端。Vulkan 运行需要支持 Vulkan 1.2 的驱动和 loader。
-loader 使用延迟加载，OpenGL 和无界面工具启动时不需要加载它。
+新的桌面 cook/build 产物包含 OpenGL 与 Vulkan 两种预编译 Shader，Player 可按运行机器
+独立选择后端；包中不附带 Shader 源码。旧单后端包仍需使用原后端，或重新烘焙。
+Vulkan 运行需要支持 Vulkan 1.2 的驱动和 loader，自动选择会在缺少这些支持时安全回退。
+发布前需执行 `Scripts/Build-PlayerTemplate.ps1 -Build` 重建模板。构建器要求 Player Template
+格式 2，拒绝无法读取新 Shader bundle 的旧模板；TCPAK 仍为版本 8。
 验证层和设备选择见[RHI/Vulkan 集成指南](../../docs/RHI_VULKAN.zh-CN.md)。
 浏览器目标继续使用 WebGL 2，独立构建入口见[Web 指南](../../Web/README.zh-CN.md)。
 
@@ -99,6 +102,15 @@ Vulkan 烘焙/构建及真实 Player 脚本也已通过，预期测试退出码�
 范围与日志见[集成记录](../../docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)，
 完整构建回归入口见[主文档](../../README.zh-CN.md#构建)。
 构建与回归脚本应串行运行，避免在测试中替换托管编译输入。
+
+验证真实图形 Player 时，先按当前源码重新构建 Managed Release、`ScriptCompilerRegression` 和 `TomCatCLI`，再执行：
+
+```powershell
+./Scripts/Build-PlayerTemplate.ps1 -Configuration Release -Build -Destination ./Tests/bin/Release-windows-x86_64/PlayerTemplateRegression
+./Scripts/Run-CSharpPlayerSmoke.ps1 -Configuration Release -RequirePlayer -Graphics
+```
+
+默认冒烟是无窗口模式。`-Graphics` 会打开真实图形窗口，对同一包先验证默认后端，再用不存在的 Vulkan 设备筛选验证自动回退 OpenGL，并检查游戏日志中的实际后端和 C# 脚本完成退出码 73。
 
 ## 脚本构建配置
 

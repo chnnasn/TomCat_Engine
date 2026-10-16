@@ -18,6 +18,9 @@ namespace TomCat {
 	namespace {
 
 		constexpr std::array<uint8_t, 4> kMagic = { 'T', 'C', 'S', 'H' };
+		constexpr std::array<uint8_t, 4> kBundleMagic = { 'T', 'C', 'S', 'B' };
+		constexpr uint32_t kBundleVersion = 1;
+		constexpr uint32_t kBundleHeaderSize = 16;
 		constexpr std::array<uint8_t, 4> kSpirvMagic = { 0x03, 0x02, 0x23, 0x07 };
 		constexpr uint32_t kVersion = 1;
 		constexpr uint32_t kHeaderSize = 36;
@@ -309,7 +312,14 @@ namespace TomCat {
 	bool IsShaderArtifact(std::span<const uint8_t> bytes)
 	{
 		return bytes.size() >= kMagic.size()
-			&& std::equal(kMagic.begin(), kMagic.end(), bytes.begin());
+			&& (std::equal(kMagic.begin(), kMagic.end(), bytes.begin())
+				|| IsShaderArtifactBundle(bytes));
+	}
+
+	bool IsShaderArtifactBundle(std::span<const uint8_t> bytes)
+	{
+		return bytes.size() >= kBundleMagic.size()
+			&& std::equal(kBundleMagic.begin(), kBundleMagic.end(), bytes.begin());
 	}
 
 	bool ParseShaderArtifact(std::span<const uint8_t> bytes,
@@ -319,7 +329,8 @@ namespace TomCat {
 		error.clear();
 		uint32_t version = 0, target = 0, stageCount = 0, resourceCount = 0;
 		uint32_t stageOffset = 0, resourceOffset = 0, stringOffset = 0, totalSize = 0;
-		if (bytes.size() < kHeaderSize || !IsShaderArtifact(bytes)
+		if (bytes.size() < kHeaderSize
+			|| !std::equal(kMagic.begin(), kMagic.end(), bytes.begin())
 			|| !ReadU32(bytes, 4, version) || version != kVersion
 			|| !ReadU32(bytes, 8, target)
 			|| (target != static_cast<uint32_t>(ShaderArtifactTarget::OpenGL)
@@ -441,6 +452,60 @@ namespace TomCat {
 		return true;
 	}
 
+	bool SelectShaderArtifact(std::span<const uint8_t> bytes,
+		ShaderArtifactTarget target, std::span<const uint8_t>& selected,
+		std::string& error)
+	{
+		selected = {};
+		error.clear();
+		if (target != ShaderArtifactTarget::OpenGL
+			&& target != ShaderArtifactTarget::Vulkan)
+		{
+			error = "shader artifact target is unsupported";
+			return false;
+		}
+		ShaderArtifactView parsed;
+		if (!IsShaderArtifactBundle(bytes))
+		{
+			if (!ParseShaderArtifact(bytes, parsed, error))
+				return false;
+			if (parsed.Target != target)
+			{
+				error = "shader artifact does not contain the active renderer target; rebuild the desktop package";
+				return false;
+			}
+			selected = bytes;
+			return true;
+		}
+
+		uint32_t version = 0, openGLSize = 0, vulkanSize = 0;
+		if (bytes.size() < kBundleHeaderSize
+			|| !ReadU32(bytes, 4, version) || version != kBundleVersion
+			|| !ReadU32(bytes, 8, openGLSize) || openGLSize < kHeaderSize
+			|| !ReadU32(bytes, 12, vulkanSize) || vulkanSize < kHeaderSize
+			|| static_cast<uint64_t>(kBundleHeaderSize) + openGLSize + vulkanSize != bytes.size())
+		{
+			error = "desktop shader bundle header is invalid or unsupported";
+			return false;
+		}
+		const auto openGL = bytes.subspan(kBundleHeaderSize, openGLSize);
+		const auto vulkan = bytes.subspan(static_cast<size_t>(kBundleHeaderSize) + openGLSize, vulkanSize);
+		if (!ParseShaderArtifact(openGL, parsed, error)
+			|| parsed.Target != ShaderArtifactTarget::OpenGL)
+		{
+			error = "desktop shader bundle contains an invalid OpenGL variant";
+			return false;
+		}
+		if (!ParseShaderArtifact(vulkan, parsed, error)
+			|| parsed.Target != ShaderArtifactTarget::Vulkan)
+		{
+			error = "desktop shader bundle contains an invalid Vulkan variant";
+			return false;
+		}
+		selected = target == ShaderArtifactTarget::OpenGL ? openGL : vulkan;
+		return true;
+	}
+
 	bool BuildShaderArtifact(std::span<const uint8_t> source,
 		const std::filesystem::path& sourcePath,
 		const AssetImportSettings& settings, std::string_view backend,
@@ -453,11 +518,33 @@ namespace TomCat {
 #else
 		artifact.clear();
 		error.clear();
+		const std::string normalizedBackend = Lower(std::string(backend));
+		if (normalizedBackend == "desktop")
+		{
+			std::vector<uint8_t> openGL, vulkan;
+			if (!BuildShaderArtifact(source, sourcePath, settings, "opengl", openGL, error)
+				|| !BuildShaderArtifact(source, sourcePath, settings, "vulkan", vulkan, error))
+				return false;
+			const uint64_t totalSize = static_cast<uint64_t>(kBundleHeaderSize)
+				+ openGL.size() + vulkan.size();
+			if (totalSize > UINT32_MAX)
+			{
+				error = "desktop shader bundle exceeds the size limit";
+				return false;
+			}
+			artifact.reserve(static_cast<size_t>(totalSize));
+			artifact.insert(artifact.end(), kBundleMagic.begin(), kBundleMagic.end());
+			AppendU32(artifact, kBundleVersion);
+			AppendU32(artifact, static_cast<uint32_t>(openGL.size()));
+			AppendU32(artifact, static_cast<uint32_t>(vulkan.size()));
+			artifact.insert(artifact.end(), openGL.begin(), openGL.end());
+			artifact.insert(artifact.end(), vulkan.begin(), vulkan.end());
+			return true;
+		}
 		std::vector<SourceStage> sourceStages;
 		if (!ParseSourceStages(source, sourcePath, sourceStages, error))
 			return false;
 
-		const std::string normalizedBackend = Lower(std::string(backend));
 		ShaderArtifactTarget target;
 		if (normalizedBackend.empty() || normalizedBackend == "opengl")
 			target = ShaderArtifactTarget::OpenGL;
@@ -465,7 +552,7 @@ namespace TomCat {
 			target = ShaderArtifactTarget::Vulkan;
 		else
 		{
-			error = "shader backend is unsupported; expected opengl or vulkan";
+			error = "shader backend is unsupported; expected opengl, vulkan or desktop";
 			return false;
 		}
 		if (target == ShaderArtifactTarget::Vulkan)
@@ -497,7 +584,7 @@ namespace TomCat {
 				remapped.append(code, cursor, std::string::npos); code = std::move(remapped);
 				// Legacy scalar/vector/matrix uniforms become a named std140 block.
 				// Explicit Vulkan blocks retain their declared set/binding.
-				const std::regex plain(R"(uniform\s+((?:float|int|uint|bool|[biu]?vec[234]|mat[234])\s+\w+\s*(?:\[\s*\d+\s*\])?)\s*;)");
+				const std::regex plain(R"((?:layout\s*\([^)]*\)\s*)?uniform\s+((?:float|int|uint|bool|[biu]?vec[234]|mat[234])\s+\w+\s*(?:\[\s*\d+\s*\])?)\s*;)");
 				std::string members;
 				for (std::sregex_iterator it(code.begin(), code.end(), plain), end; it != end; ++it) members += (*it)[1].str() + ";\n";
 				code = std::regex_replace(code, plain, "");
