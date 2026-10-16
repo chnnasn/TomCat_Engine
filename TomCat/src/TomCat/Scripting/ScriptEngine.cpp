@@ -1835,7 +1835,7 @@ namespace TomCat::Scripting {
 					}
 					if (!ApplyDeferredCommands(*snapshot->ProjectedScene,
 						context.SceneSessionId, commands, false,
-						componentProjectionError))
+						componentProjectionError, &snapshot->ReplayNames))
 					{
 						failProjection(
 							"Projected component command replay failed: "
@@ -2396,6 +2396,7 @@ namespace TomCat::Scripting {
 			UUID(entity.EntityId));
 		if (!projected)
 			return false;
+		snapshot->ReplayNames.reset();
 		present = descriptor->Has(projected);
 		return true;
 	}
@@ -2428,6 +2429,7 @@ namespace TomCat::Scripting {
 			return false;
 		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
 			UUID(entity.EntityId));
+		snapshot->ReplayNames.reset();
 		return projected && descriptor->Has(projected)
 			&& WriteProjectedProperty(property->Kind, property->Get(projected),
 				value);
@@ -2460,6 +2462,7 @@ namespace TomCat::Scripting {
 			return false;
 		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
 			UUID(entity.EntityId));
+		snapshot->ReplayNames.reset();
 		if (!projected || !descriptor->Has(projected))
 			return false;
 		PropertyValue projectedValue = property->Get(projected);
@@ -2585,9 +2588,30 @@ namespace TomCat::Scripting {
 
 	bool ScriptEngine::ApplyDeferredCommands(Scene& targetScene,
 		uint64_t sceneSessionId, const std::vector<DeferredCommand>& commands,
-		bool publishRuntimeSideEffects, std::string& error) const
+		bool publishRuntimeSideEffects, std::string& error,
+		std::optional<EntityNameIndex>* replayNames) const
 	{
 		error.clear();
+		std::optional<EntityNameIndex> localNames;
+		auto& names = replayNames ? *replayNames : localNames;
+		auto uniqueName = [&](const std::string& requested)
+		{
+			if (!names)
+			{
+				names.emplace();
+				names->Reserve(targetScene.m_EntityOrder.size());
+				for (auto entityId : targetScene.m_Registry.view<Tag>())
+					names->Add(targetScene.m_Registry.get<Tag>(entityId)._Tag);
+				std::lock_guard<std::mutex> lock(m_Mutex);
+				++m_ProjectionStatistics.ReplayNameIndexBuilds;
+			}
+			const uint64_t before = names->GetProbeCount();
+			std::string result = names->MakeUnique(requested);
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			m_ProjectionStatistics.ReplayNameLookupProbes +=
+				names->GetProbeCount() - before;
+			return result;
+		};
 		auto runtime = publishRuntimeSideEffects ? GetRuntime() : nullptr;
 		std::vector<UUID> createdEntities;
 		std::vector<DeferredRuntimeEffect> runtimeEffects;
@@ -2602,6 +2626,21 @@ namespace TomCat::Scripting {
 			++commandIndex)
 		{
 			const DeferredCommand& command = commands[commandIndex];
+			// These commands can call providers/lifecycle code or change arbitrary
+			// authoring state. Native Tag references remain writable; never retain a
+			// name index across an uncontrolled callback or destruction boundary.
+			switch (command.Kind)
+			{
+				case DeferredCommandKind::SetRegisteredComponentProperty:
+				case DeferredCommandKind::SetRegisteredComponentStringProperty:
+				case DeferredCommandKind::AddRegisteredComponent:
+				case DeferredCommandKind::RemoveRegisteredComponent:
+				case DeferredCommandKind::InstantiatePrefab:
+				case DeferredCommandKind::DestroyEntity:
+					names.reset();
+					break;
+				default: break;
+			}
 			auto fail = [&](std::string reason)
 			{
 				error = "Deferred script command " + std::to_string(commandIndex)
@@ -2618,7 +2657,8 @@ namespace TomCat::Scripting {
 			if (command.Kind == DeferredCommandKind::CreateEntity)
 			{
 				Scene* scene = ResolveScene(command.Entity);
-				if (!scene || scene->FindEntityByUUID(UUID(command.Entity.EntityId)))
+				if (!scene || scene != &targetScene || command.Entity.EntityId == 0
+					|| scene->FindEntityByUUID(UUID(command.Entity.EntityId)))
 					return fail("reserved entity target is unavailable or already exists");
 				const bool hasParent = command.Parent.SceneSessionId != 0
 					|| command.Parent.EntityId != 0
@@ -2631,10 +2671,12 @@ namespace TomCat::Scripting {
 						return fail("reserved entity parent is unavailable");
 					parent = parentEntity.GetUUID();
 				}
-				Entity created = scene->CreateEntityWithUUID(
-					UUID(command.Entity.EntityId), command.Name);
+				const std::string name = uniqueName(command.Name);
+				Entity created = scene->CreateEntityIdentity(
+					UUID(command.Entity.EntityId), name);
 				if (!created)
 					return fail("could not create the reserved entity");
+				names->Add(name);
 				if (parent && !scene->SetParent(created,
 					scene->FindEntityByUUID(*parent)))
 					return fail("could not assign the reserved entity parent");
@@ -2668,9 +2710,13 @@ namespace TomCat::Scripting {
 				Entity entity = ResolveEntity(command.Entity);
 				if (!entity || !entity.HasComponent<Tag>() || command.Name.empty())
 					return fail("entity name target or value is unavailable");
-				if (entity.GetName() != command.Name
-					&& !targetScene.RenameEntity(entity, command.Name))
-					return fail("entity name could not be made unique");
+				if (entity.GetName() != command.Name)
+				{
+					const std::string name = uniqueName(command.Name);
+					names->Remove(entity.GetName());
+					entity.GetComponent<Tag>()._Tag = name;
+					names->Add(name);
+				}
 				continue;
 			}
 			if (command.Kind == DeferredCommandKind::SetGameplayTag)
@@ -2941,16 +2987,25 @@ namespace TomCat::Scripting {
 				blockingCallbackToken = m_OpenDeferredCallbackTransaction->Token;
 			else
 			{
-				for (auto iterator = m_DeferredCommands.begin();
-					iterator != m_DeferredCommands.end();)
+				// Stable single-pass extraction. Erasing each selected element shifts
+				// the full remaining command stream and makes large bursts quadratic.
+				commands.reserve(m_DeferredCommands.size());
+				size_t retained = 0;
+				m_ProjectionStatistics.FlushCommandsVisited += m_DeferredCommands.size();
+				for (size_t index = 0; index < m_DeferredCommands.size(); ++index)
 				{
-					if (iterator->Entity.SceneSessionId == sceneSessionId)
+					auto& command = m_DeferredCommands[index];
+					if (command.Entity.SceneSessionId == sceneSessionId)
+						commands.push_back(std::move(command));
+					else
 					{
-						commands.push_back(std::move(*iterator));
-						iterator = m_DeferredCommands.erase(iterator);
+						if (retained != index)
+							m_DeferredCommands[retained] = std::move(command);
+						++retained;
 					}
-					else ++iterator;
 				}
+				m_DeferredCommands.erase(m_DeferredCommands.begin() + retained,
+					m_DeferredCommands.end());
 				if (!commands.empty())
 				{
 					++m_ProjectionRevision;
