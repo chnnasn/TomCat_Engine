@@ -1353,10 +1353,17 @@ namespace TomCat {
 						return false;
 					}
 				}
-				if (handles != manifestHandles)
+				// ScriptAssets maps every compiled C# source file, including helper
+				// classes. The generated manifest only contains mountable behaviours.
+				// Every behaviour still needs its source mapping; unused helper handles
+				// must not become script types or bypass the scene-reference checks.
+				for (const uint64_t handle : manifestHandles)
 				{
-					errorMessage = "ScriptAssets.json handles do not match the generated manifest";
-					return false;
+					if (handles.find(handle) == handles.end())
+					{
+						errorMessage = "ScriptAssets.json is missing a generated manifest handle";
+						return false;
+					}
 				}
 				return true;
 			}
