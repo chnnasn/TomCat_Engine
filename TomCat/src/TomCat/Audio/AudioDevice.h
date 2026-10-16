@@ -11,6 +11,8 @@
 namespace TomCat {
 
 	using AudioVoiceHandle = uint64_t;
+	inline constexpr float MinimumAudioPitch = 0.01f;
+	inline constexpr float MaximumAudioPitch = 4.0f;
 
 	enum class AudioPlaybackState : int32_t
 	{
@@ -81,7 +83,10 @@ namespace TomCat {
 		float maxDistance);
 
 	std::unique_ptr<IAudioDevice> CreateNullAudioDevice();
-	// Returns an initialized Windows XAudio2 device when possible. Initialization
+	#if defined(TC_PLATFORM_WEB)
+	std::unique_ptr<IAudioDevice> CreateWebAudioDevice();
+	#endif
+	// Returns an initialized platform device (XAudio2 or WebAudio) when possible. Initialization
 	// failures are reported in fallbackReason and yield an initialized Null device.
 	std::unique_ptr<IAudioDevice> CreateDefaultAudioDevice(
 		std::string& fallbackReason);

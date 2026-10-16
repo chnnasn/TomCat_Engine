@@ -38,6 +38,9 @@ jobs:
       - name: Browser lifecycle smoke
         shell: pwsh
         run: ./Scripts/Run-WebBrowserSmoke.ps1
+      - name: Browser audio output regression
+        shell: pwsh
+        run: node Web/tests/web-audio.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -213,7 +213,9 @@ namespace {
 			&& device->GetPlaybackSeconds(voice) < clip->GetDurationSeconds(),
 			"looping Null voice stopped");
 		Require(device->SetVolume(voice, 4.0f) && !device->SetVolume(voice, -0.1f)
-			&& device->SetPitch(voice, 0.25f) && !device->SetPitch(voice, 0.0f),
+			&& device->SetPitch(voice, TomCat::MinimumAudioPitch)
+			&& device->SetPitch(voice, 0.02f) && !device->SetPitch(voice, 0.009f)
+			&& !device->SetPitch(voice, 0.0f),
 			"Null voice parameter validation failed");
 		Require(device->Stop(voice)
 			&& device->GetState(voice) == TomCat::AudioPlaybackState::Stopped
@@ -466,7 +468,7 @@ Buses:
 		auto& source = entity.AddComponent<TomCat::AudioSource>();
 		source.Clip = TomCat::AssetHandle(4242);
 		source.Enabled = false; source.PlayOnStart = false; source.Loop = true;
-		source.Volume = 0.75f; source.Pitch = 1.25f; source.MixerGroup = 1; source.Bus = 10;
+		source.Volume = 0.75f; source.Pitch = 0.02f; source.MixerGroup = 1; source.Bus = 10;
 		source.Streaming = true; source.SpatialBlend = 0.6f;
 		source.MinDistance = 2.0f; source.MaxDistance = 40.0f;
 		auto& listener = entity.AddComponent<TomCat::AudioListener>();
@@ -490,6 +492,7 @@ Buses:
 		Require(static_cast<uint64_t>(loadedSource.Clip) == 4242
 			&& loadedSource.Loop && loadedSource.MixerGroup == 1 && loadedSource.Bus == 10
 			&& loadedSource.Streaming
+			&& std::abs(loadedSource.Pitch - 0.02f) < 1.0e-6f
 			&& std::abs(loadedSource.SpatialBlend - 0.6f) < 1.0e-6f
 			&& loadedSource.MinDistance == 2.0f
 			&& loadedSource.MaxDistance == 40.0f

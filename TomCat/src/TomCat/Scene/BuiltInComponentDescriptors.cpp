@@ -1784,7 +1784,7 @@ namespace TomCat {
 					"Volume", &AudioSource::Volume, 0.0f, 4.0f),
 				FloatProperty<AudioSource>(
 					ComponentIds::AudioSourceProperties::Pitch,
-					"Pitch", &AudioSource::Pitch, 0.25f, 4.0f),
+					"Pitch", &AudioSource::Pitch, MinimumAudioPitch, MaximumAudioPitch),
 				FloatProperty<AudioSource>(ComponentIds::AudioSourceProperties::SpatialBlend,
 					"SpatialBlend", &AudioSource::SpatialBlend, 0.0f, 1.0f),
 				std::move(minDistance), std::move(maxDistance),

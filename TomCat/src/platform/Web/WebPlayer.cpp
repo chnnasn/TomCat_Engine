@@ -5,6 +5,7 @@
 #include "TomCat/Core/Input.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/AssetJobSystem.h"
+#include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/Renderer2D.h"
@@ -22,6 +23,7 @@ std::string lastError, stats;
 uint64_t frames = 0;
 void Shutdown() {
   application.reset();
+  TomCat::AudioEngine::Get().Shutdown();
   TomCat::ApplicationPaths::ClearRuntimeGameDataPaths();
   TomCat::AssetManager::Get().UnmountCookedPackage();
   TomCat::Input::ClearState();

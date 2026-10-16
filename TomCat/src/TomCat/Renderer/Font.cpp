@@ -787,6 +787,13 @@ namespace TomCat {
 					std::lock_guard lock(Mutex);
 					if (JobsInFlight >= maximumPending || Backlog.empty())
 						return;
+					// The Web executor runs jobs inline. A completed atlas must be
+					// published before preparing another one: FinishJob cannot wait
+					// for this same thread to drain its bounded prepared queue.
+					// Starting with an empty queue also retains the existing per-job
+					// memory budget rather than accumulating unbounded atlases.
+					if (limits.WorkerCount == 0 && !Prepared.empty())
+						return;
 					state = Backlog.front();
 					Backlog.pop_front();
 					state->Backlogged = false;
