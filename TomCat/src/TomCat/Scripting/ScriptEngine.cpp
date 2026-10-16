@@ -1128,7 +1128,9 @@ namespace TomCat::Scripting {
 			return false;
 		m_DeferredCommands.push_back(std::move(command));
 		++m_ProjectionRevision;
-		m_ProjectionSnapshots.clear();
+		// Appending preserves every cached command prefix. The next query can
+		// replay only the suffix into its isolated validation Scene. Queue removal,
+		// live mutation and transaction completion still invalidate all snapshots.
 		return true;
 	}
 
@@ -1290,6 +1292,8 @@ namespace TomCat::Scripting {
 
 		Scene* scene = nullptr;
 		uint64_t revision = 0;
+		size_t commandOffset = 0;
+		std::shared_ptr<ProjectionSnapshot> snapshot;
 		std::vector<DeferredCommand> commands;
 		{
 			std::lock_guard<std::mutex> lock(m_Mutex);
@@ -1297,19 +1301,33 @@ namespace TomCat::Scripting {
 			if (binding == m_Scenes.end() || !binding->second.ScenePointer
 				|| binding->second.RuntimeGeneration != context.RuntimeGeneration)
 				return {};
-			if (const auto cached = m_ProjectionSnapshots.find(
-					context.SceneSessionId);
-				cached != m_ProjectionSnapshots.end() && cached->second
-				&& cached->second->Revision == m_ProjectionRevision
-				&& cached->second->RuntimeGeneration
-					== context.RuntimeGeneration)
-				return cached->second;
+			const auto cached = m_ProjectionSnapshots.find(context.SceneSessionId);
+			if (cached != m_ProjectionSnapshots.end() && cached->second
+				&& cached->second->RuntimeGeneration == context.RuntimeGeneration)
+			{
+				if (cached->second->Revision == m_ProjectionRevision)
+					return cached->second;
+				// Never mutate a snapshot retained by a nested query/descriptor.
+				// Taking exclusive ownership also keeps partially applied deltas
+				// out of the cache if descriptor validation reenters ScriptEngine.
+				if (cached->second.use_count() == 1 && cached->second->Valid
+					&& cached->second->ProjectedScene
+					&& cached->second->CommandOffset <= m_DeferredCommands.size())
+				{
+					snapshot = std::move(cached->second);
+					m_ProjectionSnapshots.erase(cached);
+					++m_ProjectionStatistics.IncrementalUpdates;
+				}
+			}
 
 			scene = binding->second.ScenePointer;
 			revision = m_ProjectionRevision;
-			commands.reserve(m_DeferredCommands.size());
-			for (const DeferredCommand& command : m_DeferredCommands)
+			const size_t firstCommand = snapshot ? snapshot->CommandOffset : 0;
+			commandOffset = m_DeferredCommands.size();
+			commands.reserve(commandOffset - firstCommand);
+			for (size_t index = firstCommand; index < commandOffset; ++index)
 			{
+				const DeferredCommand& command = m_DeferredCommands[index];
 				if (command.Entity.SceneSessionId == context.SceneSessionId
 					&& command.Entity.RuntimeGeneration
 						== context.RuntimeGeneration)
@@ -1317,9 +1335,12 @@ namespace TomCat::Scripting {
 			}
 		}
 
-		auto snapshot = std::make_shared<ProjectionSnapshot>();
+		const bool incremental = snapshot != nullptr;
+		if (!snapshot)
+			snapshot = std::make_shared<ProjectionSnapshot>();
 		snapshot->Revision = revision;
 		snapshot->RuntimeGeneration = context.RuntimeGeneration;
+		snapshot->CommandOffset = commandOffset;
 		snapshot->Order.reserve(scene->m_EntityOrder.size() + commands.size());
 		snapshot->Entities.reserve(scene->m_EntityOrder.size() + commands.size());
 		snapshot->Children.reserve(scene->m_ChildrenMap.size() + commands.size());
@@ -1342,97 +1363,101 @@ namespace TomCat::Scripting {
 		{
 			return glm::vec3(value.X, value.Y, value.Z);
 		};
-		for (UUID entityId : scene->m_EntityOrder)
+		if (!incremental)
 		{
-			Entity entity = scene->FindEntityByUUID(entityId);
-			if (!entity || !entity.HasComponent<Tag>()
-				|| !entity.HasComponent<EntityMetadata>()
-				|| !entity.HasComponent<Transform>())
+			for (UUID entityId : scene->m_EntityOrder)
 			{
-				failProjection("Scene entity " + std::to_string(
-					static_cast<uint64_t>(entityId))
-					+ " is missing a required identity component");
-				break;
+				Entity entity = scene->FindEntityByUUID(entityId);
+				if (!entity || !entity.HasComponent<Tag>()
+					|| !entity.HasComponent<EntityMetadata>()
+					|| !entity.HasComponent<Transform>())
+				{
+					failProjection("Scene entity " + std::to_string(
+						static_cast<uint64_t>(entityId))
+						+ " is missing a required identity component");
+					break;
+				}
+				const uint64_t id = static_cast<uint64_t>(entityId);
+				if (id == 0 || snapshot->Entities.find(id)
+					!= snapshot->Entities.end())
+				{
+					failProjection("Scene projection contains a duplicate or zero entity ID");
+					break;
+				}
+				const auto& transform = entity.GetComponent<Transform>();
+				ProjectedEntityState state;
+				state.Handle = { context.SceneSessionId, id,
+					context.RuntimeGeneration };
+				state.Name = entity.GetName();
+				state.GameplayTag = entity.GetGameplayTag();
+				state.Layer = entity.GetLayer();
+				state.ActiveSelf = entity.GetComponent<Tag>().ActiveSelf;
+				state.Translation = native(transform._Translation);
+				state.Rotation = native(transform._Rotation);
+				state.Scale = native(transform._Scale);
+				state.LocalTranslation = native(transform._LocalTranslation);
+				state.LocalRotation = native(transform._LocalRotation);
+				state.LocalScale = native(transform._LocalScale);
+				if (const auto parent = scene->m_ParentMap.find(entityId);
+					parent != scene->m_ParentMap.end())
+					state.ParentId = static_cast<uint64_t>(parent->second);
+				snapshot->Order.push_back(id);
+				snapshot->Entities.emplace(id, std::move(state));
 			}
-			const uint64_t id = static_cast<uint64_t>(entityId);
-			if (id == 0 || snapshot->Entities.find(id)
-				!= snapshot->Entities.end())
-			{
-				failProjection("Scene projection contains a duplicate or zero entity ID");
-				break;
-			}
-			const auto& transform = entity.GetComponent<Transform>();
-			ProjectedEntityState state;
-			state.Handle = { context.SceneSessionId, id,
-				context.RuntimeGeneration };
-			state.Name = entity.GetName();
-			state.GameplayTag = entity.GetGameplayTag();
-			state.Layer = entity.GetLayer();
-			state.ActiveSelf = entity.GetComponent<Tag>().ActiveSelf;
-			state.Translation = native(transform._Translation);
-			state.Rotation = native(transform._Rotation);
-			state.Scale = native(transform._Scale);
-			state.LocalTranslation = native(transform._LocalTranslation);
-			state.LocalRotation = native(transform._LocalRotation);
-			state.LocalScale = native(transform._LocalScale);
-			if (const auto parent = scene->m_ParentMap.find(entityId);
-				parent != scene->m_ParentMap.end())
-				state.ParentId = static_cast<uint64_t>(parent->second);
-			snapshot->Order.push_back(id);
-			snapshot->Entities.emplace(id, std::move(state));
-		}
 
-		if (snapshot->Valid)
-		{
-			std::unordered_set<uint64_t> linkedChildren;
-			linkedChildren.reserve(snapshot->Entities.size());
-			for (const auto& [parentIdValue, sceneChildren] :
-				scene->m_ChildrenMap)
-			{
-				const uint64_t parentId = static_cast<uint64_t>(parentIdValue);
-				if (snapshot->Entities.find(parentId)
-					== snapshot->Entities.end())
-				{
-					failProjection("Scene child index references a missing parent");
-					break;
-				}
-				auto& children = snapshot->Children[parentId];
-				children.reserve(sceneChildren.size());
-				std::unordered_set<uint64_t> siblingIds;
-				siblingIds.reserve(sceneChildren.size());
-				for (UUID childIdValue : sceneChildren)
-				{
-					const uint64_t childId =
-						static_cast<uint64_t>(childIdValue);
-					const auto child = snapshot->Entities.find(childId);
-					if (child == snapshot->Entities.end()
-						|| child->second.ParentId != parentId
-						|| !siblingIds.emplace(childId).second
-						|| !linkedChildren.emplace(childId).second)
-					{
-						failProjection("Scene parent and child indexes disagree");
-						break;
-					}
-					children.push_back(childId);
-				}
-				if (!snapshot->Valid)
-					break;
-			}
 			if (snapshot->Valid)
 			{
-				for (const auto& [id, state] : snapshot->Entities)
+				std::unordered_set<uint64_t> linkedChildren;
+				linkedChildren.reserve(snapshot->Entities.size());
+				for (const auto& [parentIdValue, sceneChildren] :
+					scene->m_ChildrenMap)
 				{
-					if (state.ParentId == 0)
-						continue;
-					if (snapshot->Entities.find(state.ParentId)
-							== snapshot->Entities.end()
-						|| linkedChildren.find(id) == linkedChildren.end())
+					const uint64_t parentId = static_cast<uint64_t>(parentIdValue);
+					if (snapshot->Entities.find(parentId)
+						== snapshot->Entities.end())
 					{
-						failProjection("Scene hierarchy contains an unindexed parent link");
+						failProjection("Scene child index references a missing parent");
 						break;
+					}
+					auto& children = snapshot->Children[parentId];
+					children.reserve(sceneChildren.size());
+					std::unordered_set<uint64_t> siblingIds;
+					siblingIds.reserve(sceneChildren.size());
+					for (UUID childIdValue : sceneChildren)
+					{
+						const uint64_t childId =
+							static_cast<uint64_t>(childIdValue);
+						const auto child = snapshot->Entities.find(childId);
+						if (child == snapshot->Entities.end()
+							|| child->second.ParentId != parentId
+							|| !siblingIds.emplace(childId).second
+							|| !linkedChildren.emplace(childId).second)
+						{
+							failProjection("Scene parent and child indexes disagree");
+							break;
+						}
+						children.push_back(childId);
+					}
+					if (!snapshot->Valid)
+						break;
+				}
+				if (snapshot->Valid)
+				{
+					for (const auto& [id, state] : snapshot->Entities)
+					{
+						if (state.ParentId == 0)
+							continue;
+						if (snapshot->Entities.find(state.ParentId)
+								== snapshot->Entities.end()
+							|| linkedChildren.find(id) == linkedChildren.end())
+						{
+							failProjection("Scene hierarchy contains an unindexed parent link");
+							break;
+						}
 					}
 				}
 			}
+
 		}
 
 		auto composeWorld = [&](const ProjectedEntityState& state)
@@ -1790,8 +1815,13 @@ namespace TomCat::Scripting {
 			{
 				ComponentMutationPhaseScope validationPhase(
 					ComponentMutationPhase::Validation);
-				std::shared_ptr<Scene> nonOwning(scene, [](Scene*) {});
-				snapshot->ProjectedScene = Scene::Copy(nonOwning);
+				if (!incremental)
+				{
+					std::shared_ptr<Scene> nonOwning(scene, [](Scene*) {});
+					snapshot->ProjectedScene = Scene::Copy(nonOwning);
+					std::lock_guard<std::mutex> lock(m_Mutex);
+					++m_ProjectionStatistics.SceneCopies;
+				}
 				if (!snapshot->ProjectedScene)
 					failProjection(
 						"Projected component Scene could not be copied");
@@ -1801,6 +1831,10 @@ namespace TomCat::Scripting {
 					DeferredValidationSceneScope validationScope(
 						*snapshot->ProjectedScene, context.SceneSessionId,
 						context.RuntimeGeneration);
+					{
+						std::lock_guard<std::mutex> lock(m_Mutex);
+						m_ProjectionStatistics.ReplayedCommands += commands.size();
+					}
 					if (!ApplyDeferredCommands(*snapshot->ProjectedScene,
 						context.SceneSessionId, commands, false,
 						componentProjectionError))
@@ -1836,6 +1870,20 @@ namespace TomCat::Scripting {
 			m_ProjectionSnapshots[context.SceneSessionId] = snapshot;
 		}
 		return snapshot;
+	}
+
+	ScriptEngine::ProjectionStatistics ScriptEngine::GetProjectionStatistics() const
+	{
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		return m_ProjectionStatistics;
+	}
+
+	void ScriptEngine::NotifyImmediateMutation()
+	{
+		if (IsMainThread()
+			&& !DeferredValidationScene
+			&& GetComponentMutationPhase() != ComponentMutationPhase::Validation)
+			InvalidateProjectionSnapshots();
 	}
 
 	void ScriptEngine::InvalidateProjectionSnapshots() const
@@ -3015,6 +3063,8 @@ namespace TomCat::Scripting {
 			ComponentMutationPhaseScope validationPhase(
 				ComponentMutationPhase::Validation);
 			staged = Scene::Copy(nonOwning);
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			++m_ProjectionStatistics.CommitValidationCopies;
 		}
 		catch (const std::exception& exception)
 		{

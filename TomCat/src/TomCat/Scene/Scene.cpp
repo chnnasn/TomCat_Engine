@@ -1238,6 +1238,9 @@ namespace TomCat {
 		newScene->m_Physics2DSettings = other->m_Physics2DSettings;
 
 		std::unordered_map<UUID, entt::entity> enttMap;
+		enttMap.reserve(other->m_EntityOrder.size());
+		newScene->m_EntityMap.reserve(other->m_EntityOrder.size());
+		newScene->m_EntityOrder.reserve(other->m_EntityOrder.size());
 
 		// Create entities in their original creation order so the hierarchy keeps
 		// newly created items at the bottom after a scene copy.
@@ -1246,8 +1249,11 @@ namespace TomCat {
 			Entity sourceEntity = other->FindEntityByUUID(uuid);
 			if (!sourceEntity)
 				continue;
-			const std::string name = newScene->MakeUniqueEntityName(sourceEntity.GetName());
-			Entity newEntity = newScene->CreateEntityWithUUID(uuid, name);
+			// The source identities are already validated and the codec below
+			// preserves their exact Tags. Re-running unique-name scans here made
+			// every validation Scene copy quadratic in the number of entities.
+			Entity newEntity = newScene->CreateEntityIdentity(uuid,
+				sourceEntity.GetName());
 			enttMap[uuid] = (entt::entity)newEntity;
 		}
 
@@ -1294,11 +1300,10 @@ namespace TomCat {
 
 	Entity Scene::CreateEntity(const std::string& name)
 	{
-		const std::string baseName = name.empty() ? "Entity" : name;
 		UUID uuid;
 		while ((uint64_t)uuid == 0 || m_EntityMap.find(uuid) != m_EntityMap.end())
 			uuid = UUID();
-		return CreateEntityWithUUID(uuid, MakeUniqueEntityName(baseName));
+		return CreateEntityWithUUID(uuid, name);
 	}
 
 	Entity Scene::CreateEntityWithUUID(UUID uuid, const std::string& name)
@@ -1314,12 +1319,17 @@ namespace TomCat {
 			return {};
 		}
 
+		return CreateEntityIdentity(uuid, MakeUniqueEntityName(name));
+	}
+
+	Entity Scene::CreateEntityIdentity(UUID uuid, const std::string& name)
+	{
 		Entity entity = { m_Registry.create(), this };
 		entity.AddComponent<ID>(uuid);
 		entity.AddComponent<EntityMetadata>();
 		entity.AddComponent<Transform>();
 		auto& tag = entity.AddComponent<Tag>();
-		tag._Tag = MakeUniqueEntityName(name.empty() ? "Entity" : name);
+		tag._Tag = name;
 		m_EntityMap.emplace(uuid, (entt::entity)entity);
 		m_EntityOrder.push_back(uuid);
 		return entity;
