@@ -1104,13 +1104,20 @@ namespace {
 		// Validation must remain transactional: a valid move preceding a singular
 		// scale cannot leak into live ECS state when the batch is rejected.
 		const auto before = root.GetComponent<TomCat::Transform>();
+		const auto abortsBefore = runtime->DeferredBatchAbortCount;
+		const auto commitsBefore = runtime->DeferredBatchCommitCount;
 		Require(native.TransformSetPosition(handle(root), {100,200,0}) == 0
 			&& native.TransformSetScale(handle(root), {0,1,1}) == 0,
 			"could not queue singular-transform rollback probe");
 		NativeVector3 rejectedRead{};
 		Require(native.TransformGetScale(handle(root), &rejectedRead) != 0,
 			"singular transform was exposed as a valid projected read before flush");
-		Require(!ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession)
+		// A contained validation rejection is a successful flush protocol: the
+		// managed side acknowledges AbortDeferredBatch and Play remains active.
+		Require(ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession)
+			&& runtime->DeferredBatchAbortCount == abortsBefore + 1
+			&& runtime->DeferredBatchCommitCount == commitsBefore
+			&& scene.IsRuntimeRunning()
 			&& Near(root.GetComponent<TomCat::Transform>().GetTransform(), before.GetTransform())
 			&& Near(root.GetComponent<TomCat::Transform>().GetLocalTransform(), before.GetLocalTransform()),
 			"rejected signed-transform batch partially changed live ECS");
