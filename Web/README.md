@@ -130,6 +130,11 @@ Scripts compile after publishing, so their BCL calls cannot inform ILLink.
 reference assemblies, including numerical, collection, text and JSON APIs.
 The managed browser smoke compiles these calls dynamically and executes them.
 
+The single-threaded Web font scheduler applies backpressure before preparing
+another atlas, so multiple font chains cannot block their own publication.
+The packaged browser fixture cooks two real fonts and checks rendered pixels
+from both, along with multiple textures and native audio output.
+
 ### Browser audio
 
 The shared `AudioSource`/`AudioListener` and mixer APIs drive a module-owned

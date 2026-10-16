@@ -1,4 +1,4 @@
-<!doctype html><meta charset="utf-8"><title>TomCat packaged texture smoke</title>
+<!doctype html><meta charset="utf-8"><title>TomCat packaged asset smoke</title>
 <canvas id="canvas" width="640" height="360"></canvas><pre id="status">loading</pre>
 <script type="module">
 const out=value=>document.querySelector('#status').textContent=JSON.stringify(value,null,2);
@@ -18,6 +18,17 @@ try {
   if(boot)throw new Error(`boot ${boot}: ${engine.PlayerError()}`);
   for(let frame=0;frame<10;frame++)engine.PlayerFrame(1/60);
   if(engine.PlayerError())throw new Error(engine.PlayerError());
+  // Read the actual framebuffer immediately after rendering. Each font chain
+  // has a unique text color; merely surviving frames would miss dropped jobs.
+  const gl=document.querySelector('#canvas').getContext('webgl2');
+  const pixels=new Uint8Array(640*360*4);
+  gl.readPixels(0,0,640,360,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+  let regularPixels=0,boldPixels=0;
+  for(let index=0;index<pixels.length;index+=4){
+    if(pixels[index]>200 && pixels[index+1]<80 && pixels[index+2]>200)regularPixels++;
+    if(pixels[index]<80 && pixels[index+1]>200 && pixels[index+2]>200)boldPixels++;
+  }
+  if(regularPixels<10 || boldPixels<10)throw new Error(`Both font chains must render: ${regularPixels}, ${boldPixels}`);
   if(contexts.length!==1 || !gains.length)throw new Error('Native AudioSource did not create WebAudio output');
   const context=contexts[0], analyser=context.createAnalyser();
   gains[0].connect(analyser);
@@ -34,6 +45,6 @@ try {
   engine.PlayerShutdown();
   await new Promise(resolve=>setTimeout(resolve,50));
   if(context.state!=='closed')throw new Error('Player shutdown retained its AudioContext');
-  out({ok:true,shutdown:true,boot,frames:10,audible,audioClosed:true});
+  out({ok:true,shutdown:true,boot,frames:10,regularPixels,boldPixels,audible,audioClosed:true});
 } catch(error) {out({ok:false,error:String(error?.stack??error)});}
 </script>

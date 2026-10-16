@@ -41,7 +41,8 @@ const types = {'.html':'text/html','.js':'text/javascript','.json':'application/
   await fs.writeFile(path.join(output,'player-result.json'),JSON.stringify(player,null,2));
   assert.equal(player.ok,true,JSON.stringify(player));assert.deepEqual(pageErrors,[]);
   assert.equal(player.audible,true);assert.equal(player.audioClosed,true);
-  console.log('PASS packaged player with multiple textures, real AudioSource output, frames and audio shutdown');
+  assert.ok(player.regularPixels>=10);assert.ok(player.boldPixels>=10);
+  console.log('PASS packaged player with multiple textures/fonts, real AudioSource output, frames and audio shutdown');
  } catch(error) {
   if(page) await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});
   await fs.writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(error),pageErrors},null,2));
