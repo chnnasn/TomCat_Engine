@@ -88,6 +88,9 @@ namespace TomCat {
 				uint64_t ReplayNameIndexBuilds = 0;
 				uint64_t ReplayNameLookupProbes = 0;
 				uint64_t FlushCommandsVisited = 0;
+				uint64_t MetadataSnapshots = 0;
+				uint64_t UnmodifiedMetadataQueries = 0;
+				uint64_t ComponentPresenceCommandsVisited = 0;
 			};
 			// Cumulative native diagnostics; no managed ABI or wall-clock threshold.
 			ProjectionStatistics GetProjectionStatistics() const;
@@ -297,7 +300,8 @@ namespace TomCat {
 			};
 
 			std::shared_ptr<const ProjectionSnapshot> GetProjectionSnapshot(
-				const EntityHandleV1& context) const;
+				const EntityHandleV1& context, bool requireComponentScene = false) const;
+			Scene* GetUnmodifiedSceneForMetadataQuery(const EntityHandleV1& context) const;
 			void InvalidateProjectionSnapshots() const;
 			bool DrainDeferredCallbackTransactions();
 			bool CommitDeferredCommandBatch(uint64_t sceneSessionId,

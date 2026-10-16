@@ -1284,7 +1284,8 @@ namespace TomCat::Scripting {
 
 
 	std::shared_ptr<const ScriptEngine::ProjectionSnapshot>
-		ScriptEngine::GetProjectionSnapshot(const EntityHandleV1& context) const
+		ScriptEngine::GetProjectionSnapshot(const EntityHandleV1& context,
+			bool requireComponentScene) const
 	{
 		if (context.SceneSessionId == 0 || context.EntityId == 0
 			|| context.RuntimeGeneration == 0 || !IsMainThread())
@@ -1305,13 +1306,14 @@ namespace TomCat::Scripting {
 			if (cached != m_ProjectionSnapshots.end() && cached->second
 				&& cached->second->RuntimeGeneration == context.RuntimeGeneration)
 			{
-				if (cached->second->Revision == m_ProjectionRevision)
+				if (cached->second->Revision == m_ProjectionRevision
+					&& (!cached->second->Valid || !requireComponentScene
+						|| cached->second->ProjectedScene))
 					return cached->second;
 				// Never mutate a snapshot retained by a nested query/descriptor.
 				// Taking exclusive ownership also keeps partially applied deltas
 				// out of the cache if descriptor validation reenters ScriptEngine.
 				if (cached->second.use_count() == 1 && cached->second->Valid
-					&& cached->second->ProjectedScene
 					&& cached->second->CommandOffset <= m_DeferredCommands.size())
 				{
 					snapshot = std::move(cached->second);
@@ -1321,6 +1323,8 @@ namespace TomCat::Scripting {
 			}
 
 			scene = binding->second.ScenePointer;
+			if (!snapshot)
+				++m_ProjectionStatistics.MetadataSnapshots;
 			revision = m_ProjectionRevision;
 			const size_t firstCommand = snapshot ? snapshot->CommandOffset : 0;
 			commandOffset = m_DeferredCommands.size();
@@ -1821,13 +1825,18 @@ namespace TomCat::Scripting {
 			}
 		}
 
-		if (snapshot->Valid)
+		// Metadata-only queries with no pending mutation do not execute providers.
+		// Defer the isolated component copy until a command needs validation or a
+		// registered query actually needs authoring components. Existing projected
+		// Scenes still receive every suffix; commit keeps its independent copy.
+		if (snapshot->Valid && (requireComponentScene
+			|| snapshot->ProjectedScene || !commands.empty()))
 		{
 			try
 			{
 				ComponentMutationPhaseScope validationPhase(
 					ComponentMutationPhase::Validation);
-				if (!incremental)
+				if (!snapshot->ProjectedScene)
 				{
 					std::shared_ptr<Scene> nonOwning(scene, [](Scene*) {});
 					snapshot->ProjectedScene = Scene::Copy(nonOwning);
@@ -1905,10 +1914,44 @@ namespace TomCat::Scripting {
 		m_ProjectionSnapshots.clear();
 	}
 
+	Scene* ScriptEngine::GetUnmodifiedSceneForMetadataQuery(const EntityHandleV1& context) const
+	{
+		if (!IsMainThread() || context.SceneSessionId == 0 || context.EntityId == 0
+			|| context.RuntimeGeneration == 0 || DeferredValidationScene
+			|| GetComponentMutationPhase() == ComponentMutationPhase::Validation)
+			return nullptr;
+		std::lock_guard<std::mutex> lock(m_Mutex);
+		const auto binding = m_Scenes.find(context.SceneSessionId);
+		if (binding == m_Scenes.end() || !binding->second.ScenePointer
+			|| binding->second.RuntimeGeneration != context.RuntimeGeneration
+			|| m_ProjectionSnapshots.contains(context.SceneSessionId))
+			return nullptr;
+		// A cached/retained view and every pending mutation (including AbortBatch)
+		// keep using the normal isolated projection. Commands for another Scene
+		// cannot affect this query. No callbacks run between this check and read.
+		for (const auto& command : m_DeferredCommands)
+		{
+			if (command.Entity.SceneSessionId == context.SceneSessionId
+				&& command.Entity.RuntimeGeneration == context.RuntimeGeneration)
+				return nullptr;
+		}
+		++m_ProjectionStatistics.UnmodifiedMetadataQueries;
+		return binding->second.ScenePointer;
+	}
+
 	bool ScriptEngine::GetProjectedEntityLiveness(const EntityHandleV1& entity,
 		bool& alive) const
 	{
 		alive = false;
+		if (Scene* scene = GetUnmodifiedSceneForMetadataQuery(entity))
+		{
+			Entity target = scene->FindEntityByUUID(UUID(entity.EntityId));
+			if (!target || !target.HasComponent<Tag>()
+				|| !target.HasComponent<EntityMetadata>() || !target.HasComponent<Transform>())
+				return false;
+			alive = true;
+			return true;
+		}
 		const auto snapshot = GetProjectionSnapshot(entity);
 		if (!snapshot || !snapshot->Valid)
 			return false;
@@ -2021,6 +2064,29 @@ namespace TomCat::Scripting {
 		bool& active) const
 	{
 		active = false;
+		if (Scene* scene = GetUnmodifiedSceneForMetadataQuery(entity))
+		{
+			uint64_t current = entity.EntityId;
+			// At most one visit per entity is possible in a valid ancestry chain.
+			// A count bound rejects cycles without allocating a set for root reads.
+			size_t remaining = scene->m_EntityMap.size();
+			while (current != 0 && remaining-- > 0)
+			{
+				Entity target = scene->FindEntityByUUID(UUID(current));
+				if (!target || !target.HasComponent<Tag>()
+					|| !target.HasComponent<EntityMetadata>() || !target.HasComponent<Transform>())
+					return false;
+				if (!target.GetComponent<Tag>().ActiveSelf)
+					return true;
+				const auto parent = scene->m_ParentMap.find(UUID(current));
+				current = parent == scene->m_ParentMap.end()
+					? 0 : static_cast<uint64_t>(parent->second);
+			}
+			if (current != 0)
+				return false;
+			active = true;
+			return true;
+		}
 		const auto snapshot = GetProjectionSnapshot(entity);
 		if (!snapshot || !snapshot->Valid)
 			return false;
@@ -2124,10 +2190,16 @@ namespace TomCat::Scripting {
 		Entity resolved = ResolveEntity(entity);
 		present = resolved ? HasNativeComponent(resolved, componentType)
 			: componentType == NativeComponentType::Transform;
+		// Transform is intrinsic and deferred removal is rejected. Once present,
+		// no queued Add/Remove can change it. Three TRS writes per entity must not
+		// each rescan the entire growing batch merely to recheck this invariant.
+		if (componentType == NativeComponentType::Transform && present)
+			return true;
 
 		std::lock_guard<std::mutex> lock(m_Mutex);
 		for (const DeferredCommand& command : m_DeferredCommands)
 		{
+			++m_ProjectionStatistics.ComponentPresenceCommandsVisited;
 			if (!SameEntity(command.Entity, entity)
 				|| command.ComponentType != componentType)
 				continue;
@@ -2398,7 +2470,7 @@ namespace TomCat::Scripting {
 			: ComponentRegistry::Get().Find(UUID(componentTypeId));
 		if (!descriptor || !descriptor->ScriptAccessible)
 			return false;
-		const auto snapshot = GetProjectionSnapshot(entity);
+		const auto snapshot = GetProjectionSnapshot(entity, true);
 		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
 			return false;
 		const auto state = snapshot->Entities.find(entity.EntityId);
@@ -2410,7 +2482,8 @@ namespace TomCat::Scripting {
 			UUID(entity.EntityId));
 		if (!projected)
 			return false;
-		snapshot->ReplayNames.reset();
+		if (!descriptor->PreservesEntityNames)
+			snapshot->ReplayNames.reset();
 		present = descriptor->Has(projected);
 		return true;
 	}
@@ -2435,7 +2508,7 @@ namespace TomCat::Scripting {
 		if (property == descriptor->Properties.end() || !property->Get
 			|| property->Kind == PropertyKind::String)
 			return false;
-		const auto snapshot = GetProjectionSnapshot(entity);
+		const auto snapshot = GetProjectionSnapshot(entity, true);
 		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
 			return false;
 		const auto state = snapshot->Entities.find(entity.EntityId);
@@ -2443,7 +2516,8 @@ namespace TomCat::Scripting {
 			return false;
 		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
 			UUID(entity.EntityId));
-		snapshot->ReplayNames.reset();
+		if (!descriptor->PreservesEntityNames)
+			snapshot->ReplayNames.reset();
 		return projected && descriptor->Has(projected)
 			&& WriteProjectedProperty(property->Kind, property->Get(projected),
 				value);
@@ -2468,7 +2542,7 @@ namespace TomCat::Scripting {
 		if (property == descriptor->Properties.end() || !property->Get
 			|| property->Kind != PropertyKind::String)
 			return false;
-		const auto snapshot = GetProjectionSnapshot(entity);
+		const auto snapshot = GetProjectionSnapshot(entity, true);
 		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
 			return false;
 		const auto state = snapshot->Entities.find(entity.EntityId);
@@ -2476,7 +2550,8 @@ namespace TomCat::Scripting {
 			return false;
 		Entity projected = snapshot->ProjectedScene->FindEntityByUUID(
 			UUID(entity.EntityId));
-		snapshot->ReplayNames.reset();
+		if (!descriptor->PreservesEntityNames)
+			snapshot->ReplayNames.reset();
 		if (!projected || !descriptor->Has(projected))
 			return false;
 		PropertyValue projectedValue = property->Get(projected);
@@ -2649,6 +2724,13 @@ namespace TomCat::Scripting {
 				case DeferredCommandKind::SetRegisteredComponentStringProperty:
 				case DeferredCommandKind::AddRegisteredComponent:
 				case DeferredCommandKind::RemoveRegisteredComponent:
+				{
+					const auto* descriptor = ComponentRegistry::Get().Find(
+						UUID(command.RegisteredTypeId));
+					if (!descriptor || !descriptor->PreservesEntityNames)
+						names.reset();
+					break;
+				}
 				case DeferredCommandKind::InstantiatePrefab:
 				case DeferredCommandKind::DestroyEntity:
 					names.reset();
