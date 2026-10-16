@@ -37,6 +37,7 @@
 #include <glad/glad.h>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+#include "OpenGLColorGradeRegression.h"
 
 #include <algorithm>
 #include <array>
@@ -2021,6 +2022,7 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
         RequireUI(std::abs(int(gray[0])-int(gray[1]))<=1 && std::abs(int(gray[1])-int(gray[2]))<=1 && gray[0]>20 && gray[0]<60,"postprocess exposure/saturation pixel mismatch");
         RequireUI(glGetError()==GL_NO_ERROR,"postprocess GL state error");
         target->Unbind(); Renderer2D::Set2DLighting({1,1,1},{});
+        OpenGLColorGradeRegression::Run();
     }
 
     void RunProductionSoak() {

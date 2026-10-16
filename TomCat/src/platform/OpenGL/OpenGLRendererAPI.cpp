@@ -14,6 +14,7 @@ namespace TomCat {
         if (m_GradeFramebuffer) glDeleteFramebuffers(1,&m_GradeFramebuffer);
         if (m_GradeVAO) glDeleteVertexArrays(1,&m_GradeVAO);
         m_GradeTexture=m_GradeFramebuffer=m_GradeVAO=0; m_GradeWidth=m_GradeHeight=0;
+        m_GradeFramebufferComplete=false;
     }
     void OpenGLRendererAPI::ApplyColorGrade(float exposure,float saturation,float vignette) {
         if (!std::isfinite(exposure) || !std::isfinite(saturation) || !std::isfinite(vignette)) return;
@@ -22,13 +23,15 @@ namespace TomCat {
         glGetIntegerv(GL_VIEWPORT,viewport); if (viewport[2]<=0 || viewport[3]<=0) return;
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw); glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read);
         glGetIntegerv(GL_READ_BUFFER,&readBuffer); glGetIntegerv(GL_CURRENT_PROGRAM,&program);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER,draw); glGetIntegerv(GL_READ_BUFFER,&drawReadBuffer);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER,read);
+        drawReadBuffer=readBuffer;
+        if (draw!=read) {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER,draw); glGetIntegerv(GL_READ_BUFFER,&drawReadBuffer);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER,read);
+        }
         glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&vao); glGetIntegerv(GL_ACTIVE_TEXTURE,&activeTexture);
         glActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture);
         const bool depth=glIsEnabled(GL_DEPTH_TEST), blend=glIsEnabled(GL_BLEND), scissor=glIsEnabled(GL_SCISSOR_TEST), stencil=glIsEnabled(GL_STENCIL_TEST);
-        GLint maxBuffers=0; glGetIntegerv(GL_MAX_DRAW_BUFFERS,&maxBuffers);
-        std::vector<GLenum> buffers(static_cast<size_t>(draw ? maxBuffers : 1));
+        std::vector<GLenum> buffers(static_cast<size_t>(draw ? m_MaxDrawBuffers : 1));
         for (size_t i=0;i<buffers.size();++i) { GLint value=0; glGetIntegerv(GL_DRAW_BUFFER0+static_cast<GLenum>(i),&value); buffers[i]=static_cast<GLenum>(value); }
         struct Restore { std::function<void()> Fn; ~Restore(){Fn();} } restore{[&] {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER,draw); glDrawBuffers(static_cast<GLsizei>(buffers.size()),buffers.data());
@@ -51,20 +54,41 @@ layout(binding=0) uniform sampler2D u_Source;
 layout(std140,binding=2) uniform ColorGrade { vec4 u_Grade; };
 void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x);float luma=dot(rgb,vec3(.2126,.7152,.0722));rgb=mix(vec3(luma),rgb,u_Grade.y);vec2 d=v_UV*2.0-1.0;rgb*=1.0-u_Grade.z*smoothstep(.2,1.4,dot(d,d));o_Color=vec4(rgb,color.a);}
 )");
-            m_GradeUniform=UniformBuffer::Create(sizeof(glm::vec4),2);
-            glGenTextures(1,&m_GradeTexture); glGenFramebuffers(1,&m_GradeFramebuffer); glGenVertexArrays(1,&m_GradeVAO);
         }
-        glBindTexture(GL_TEXTURE_2D,m_GradeTexture);
-        if(m_GradeWidth!=viewport[2] || m_GradeHeight!=viewport[3]) {
+        if (!m_GradeUniform) m_GradeUniform=UniformBuffer::Create(sizeof(glm::vec4),2);
+        if (!m_GradeFramebuffer) {
+            m_GradeFramebufferComplete=false;
+            glGenFramebuffers(1,&m_GradeFramebuffer);
+        }
+        if (!m_GradeVAO) glGenVertexArrays(1,&m_GradeVAO);
+        if (!m_GradeShader || !m_GradeUniform || !m_GradeFramebuffer || !m_GradeVAO) return;
+        if(!m_GradeTexture || m_GradeWidth!=viewport[2] || m_GradeHeight!=viewport[3]) {
+            m_GradeFramebufferComplete=false;
+            // A fresh image also makes allocation failure incomplete, instead of
+            // accidentally accepting a complete texture with the previous size.
+            if (m_GradeTexture) glDeleteTextures(1,&m_GradeTexture);
+            m_GradeTexture=0;
+            glGenTextures(1,&m_GradeTexture);
+            if (!m_GradeTexture) return;
+            glBindTexture(GL_TEXTURE_2D,m_GradeTexture);
             glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,viewport[2],viewport[3],0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
             glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
             m_GradeWidth=viewport[2];m_GradeHeight=viewport[3];
         }
+        else glBindTexture(GL_TEXTURE_2D,m_GradeTexture);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER,m_GradeFramebuffer);
-        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,m_GradeTexture,0);
-        const GLenum destination=GL_COLOR_ATTACHMENT0;glDrawBuffers(1,&destination);
-        if(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) return;
+        // This framebuffer and its draw buffers are private to this pass. Only
+        // resource/storage changes invalidate completeness; ordinary frames do not.
+        if (!m_GradeFramebufferComplete) {
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,m_GradeTexture,0);
+            const GLenum destination=GL_COLOR_ATTACHMENT0;glDrawBuffers(1,&destination);
+            if(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) {
+                m_GradeWidth=m_GradeHeight=0; // retry storage allocation next time
+                return;
+            }
+            m_GradeFramebufferComplete=true;
+        }
         glBindFramebuffer(GL_READ_FRAMEBUFFER,draw);glReadBuffer(draw ? GL_COLOR_ATTACHMENT0 : GL_BACK);
         glDisable(GL_SCISSOR_TEST);
         glBlitFramebuffer(viewport[0],viewport[1],viewport[0]+viewport[2],viewport[1]+viewport[3],0,0,viewport[2],viewport[3],GL_COLOR_BUFFER_BIT,GL_NEAREST);
@@ -79,6 +103,9 @@ void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x)
 	void OpenGLRendererAPI::Init()
 	{
 		TC_PROFILE_FUNCTION();
+
+        glGetIntegerv(GL_MAX_DRAW_BUFFERS,&m_MaxDrawBuffers);
+        m_MaxDrawBuffers=std::max(m_MaxDrawBuffers,1);
 
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
