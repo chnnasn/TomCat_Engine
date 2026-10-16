@@ -1112,13 +1112,14 @@ namespace {
 		NativeVector3 rejectedRead{};
 		Require(native.TransformGetScale(handle(root), &rejectedRead) != 0,
 			"singular transform was exposed as a valid projected read before flush");
-		// A contained validation rejection is a successful flush protocol: the
-		// managed side acknowledges AbortDeferredBatch and Play remains active.
+		// A successfully acknowledged abort returns true: the runtime can keep
+		// running after rejecting the batch. Check publication separately.
 		Require(ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession)
 			&& runtime->DeferredBatchAbortCount == abortsBefore + 1
 			&& runtime->DeferredBatchCommitCount == commitsBefore
-			&& scene.IsRuntimeRunning()
-			&& Near(root.GetComponent<TomCat::Transform>().GetTransform(), before.GetTransform())
+			&& scene.IsRuntimeRunning(),
+			"singular-transform rejection was not acknowledged without publication");
+		Require(Near(root.GetComponent<TomCat::Transform>().GetTransform(), before.GetTransform())
 			&& Near(root.GetComponent<TomCat::Transform>().GetLocalTransform(), before.GetLocalTransform()),
 			"rejected signed-transform batch partially changed live ECS");
 		Require(native.TransformSetScale(handle(root),
@@ -6123,6 +6124,84 @@ namespace {
 			"fast destroy lost the missing-ID recovery path");
 	}
 
+	void TestEntityNameRemovalKeepsUnrelatedSuffixCursors()
+	{
+		TomCat::EntityNameIndex names;
+		constexpr size_t Count = 256;
+		for (size_t index = 0; index < Count; ++index)
+			names.Add(names.MakeUnique("Fragment"));
+		const auto before = names.GetProbeCount();
+		for (size_t index = 0; index < Count; ++index)
+		{
+			// A different population disappearing must not restart Fragment's
+			// suffix scan on each create/destroy pair.
+			const auto unrelated = "Enemy (" + std::to_string(index + 1) + ")";
+			names.Add(unrelated);
+			names.Remove(unrelated);
+			const auto next = names.MakeUnique("Fragment");
+			Require(next == "Fragment (" + std::to_string(Count + index) + ")",
+				"unrelated removal changed dense suffix allocation");
+			names.Add(next);
+		}
+		Require(names.GetProbeCount() - before <= Count * 3,
+			"unrelated removals restarted the occupied suffix scan");
+		names.Add("Fragment (1) (1)");
+		names.Add("Fragment (1) (2)");
+		Require(names.MakeUnique("Fragment (1)") == "Fragment (1) (3)",
+			"nested literal base fixture failed");
+		names.Remove("Fragment (1) (1)");
+		Require(names.MakeUnique("Fragment (1)") == "Fragment (1) (1)",
+			"nested suffix removal did not reuse the smallest hole");
+		const auto malformedBefore = names.GetProbeCount();
+		for (const std::string malformed : { "Fragment (01)", "Fragment (+1)",
+			"Fragment (0)", "Fragment (4294967296)", "Fragment (2x)", "Fragment ()" })
+		{
+			names.Add(malformed);
+			names.Remove(malformed);
+			Require(names.MakeUnique("Fragment") == "Fragment (512)",
+				"noncanonical suffix removal changed the next name");
+		}
+		Require(names.GetProbeCount() - malformedBefore <= 13,
+			"noncanonical suffix removal invalidated a canonical cursor");
+
+		// Compare mixed raw duplicates, removal and nested requests against the
+		// historical policy: always scan from suffix 1 to the first free name.
+		TomCat::EntityNameIndex mixed;
+		std::unordered_map<std::string, size_t> occupied;
+		std::vector<std::string> instances;
+		const std::vector<std::string> requests{ "Fragment", "Enemy", "Fragment (1)",
+			"Fragment (01)", "Arc (1) (2)", "", "Entity", " (1)", "Arc (", "Arc ()" };
+		uint32_t random = 0x19c057u;
+		for (size_t step = 0; step < 3000; ++step)
+		{
+			random = random * 1664525u + 1013904223u;
+			if (step % 4 == 0 && !instances.empty())
+			{
+				const auto index = random % instances.size();
+				const auto removed = instances[index];
+				mixed.Remove(removed);
+				if (--occupied[removed] == 0)
+					occupied.erase(removed);
+				instances.erase(instances.begin() + index);
+				continue;
+			}
+			const auto& requested = requests[random % requests.size()];
+			std::string next = requested;
+			if (step % 7 != 0)
+			{
+				const auto base = requested.empty() ? std::string("Entity") : requested;
+				next = base;
+				for (uint32_t suffix = 1; occupied.contains(next); ++suffix)
+					next = base + " (" + std::to_string(suffix) + ")";
+				Require(mixed.MakeUnique(requested) == next,
+					"targeted suffix invalidation diverged from first-free naming");
+			}
+			mixed.Add(next);
+			++occupied[next];
+			instances.push_back(next);
+		}
+	}
+
 	void TestIncrementalProjectionAcrossScenes()
 	{
 		using namespace TomCat::Scripting;
@@ -6255,6 +6334,227 @@ namespace {
 		const std::vector<TomCat::Entity> entities{ owner };
 		Require(registry.UnregisterProvider(TomCat::UUID(ProviderTransactionProviderId),
 			entities, error), error.c_str());
+	}
+
+	void TestUnmodifiedLivenessAvoidsMetadataSnapshots()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene, otherScene;
+		auto parent = scene.CreateEntity("Live parent");
+		auto child = scene.CreateEntity("Live child");
+		auto other = otherScene.CreateEntity("Other pending Scene");
+		Require(scene.SetParent(child, parent), "live query hierarchy setup failed");
+		for (size_t index = 0; index < 512; ++index)
+			scene.CreateEntity("Live sprite " + std::to_string(index))
+				.AddComponent<TomCat::SpriteRenderer>();
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0x11fe);
+		const auto otherSession = engine.StartScene(otherScene, 0x11ff);
+		Require(session && otherSession, "live query Scenes did not start");
+		const EntityHandleV1 context{ session, static_cast<uint64_t>(parent.GetUUID()), 0x11fe };
+		const EntityHandleV1 target{ session, static_cast<uint64_t>(child.GetUUID()), 0x11fe };
+		const EntityHandleV1 otherContext{ otherSession, static_cast<uint64_t>(other.GetUUID()), 0x11ff };
+		Require(engine.QueueSetLayer(otherContext, 7), "other Scene queue setup failed");
+		engine.NotifyImmediateMutation();
+		const auto before = engine.GetProjectionStatistics();
+		for (size_t phase = 0; phase < 8; ++phase)
+		{
+			engine.NotifyImmediateMutation();
+			bool alive = false, active = false;
+			Require(engine.GetProjectedEntityLiveness(target, alive) && alive
+				&& engine.GetProjectedActiveInHierarchy(target, active) && active
+				&& engine.FlushDeferredCommands(session),
+				"unmodified query lost liveness or ancestor activity");
+		}
+		const auto direct = engine.GetProjectionStatistics();
+		Require(direct.MetadataSnapshots == before.MetadataSnapshots
+			&& direct.SceneCopies == before.SceneCopies
+			&& direct.UnmodifiedMetadataQueries - before.UnmodifiedMetadataQueries == 16,
+			"empty lifecycle phases built a full metadata/component snapshot");
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		bool alive = false, active = true;
+		Require(engine.GetProjectedActiveInHierarchy(target, active) && !active,
+			"unmodified query ignored current live parent activity");
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
+		{
+			TomCat::ComponentMutationPhaseScope validation(TomCat::ComponentMutationPhase::Validation);
+			Require(engine.GetProjectedEntityLiveness(target, alive) && alive,
+				"validation liveness query failed");
+		}
+		Require(engine.GetProjectionStatistics().MetadataSnapshots == direct.MetadataSnapshots + 1
+			&& engine.GetProjectionStatistics().UnmodifiedMetadataQueries == direct.UnmodifiedMetadataQueries + 1,
+			"validation query bypassed its isolated projection");
+		const auto cachedQueries = engine.GetProjectionStatistics().UnmodifiedMetadataQueries;
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
+		Require(engine.GetProjectedActiveInHierarchy(target, active) && active
+			&& engine.GetProjectionStatistics().UnmodifiedMetadataQueries == cachedQueries,
+			"an existing snapshot was bypassed by a fresh live read");
+		parent.GetComponent<TomCat::Tag>().ActiveSelf = true;
+		engine.NotifyImmediateMutation();
+		Require(engine.QueueSetActiveSelf(context, false)
+			&& engine.GetProjectedActiveInHierarchy(target, active) && !active
+			&& parent.GetComponent<TomCat::Tag>().ActiveSelf,
+			"pending activity did not preserve isolated read-your-writes");
+		Require(engine.QueueDestroyEntity(target)
+			&& engine.GetProjectedEntityLiveness(target, alive) && !alive,
+			"pending destroy was read as live by the fast path");
+		Require(engine.MarkDeferredCommandBatchFailed(context, "unmodified query rollback")
+			&& !engine.GetProjectedEntityLiveness(context, alive)
+			&& !engine.GetProjectedActiveInHierarchy(context, active)
+			&& engine.FlushDeferredCommands(session)
+			&& scene.FindEntityByUUID(child.GetUUID())
+			&& parent.GetComponent<TomCat::Tag>().ActiveSelf,
+			"invalid pending projection leaked live reads or escaped rollback");
+		auto stale = target;
+		++stale.RuntimeGeneration;
+		Require(!engine.GetProjectedEntityLiveness(stale, alive)
+			&& !engine.GetProjectedActiveInHierarchy(stale, active)
+			&& engine.FlushDeferredCommands(otherSession) && other.GetLayer() == 7,
+			"unmodified query accepted stale generation or lost another Scene's batch");
+		engine.StopScene(otherSession);
+		engine.StopScene(session);
+	}
+
+	void TestMetadataQueriesLazilyCreateComponentProjection()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene, otherScene;
+		auto owner = scene.CreateEntity("Lazy projection owner");
+		owner.AddComponent<TomCat::SpriteRenderer>();
+		auto other = otherScene.CreateEntity("Other lazy Scene");
+		for (size_t index = 0; index < 192; ++index)
+			scene.CreateEntity("Lazy sprite").AddComponent<TomCat::SpriteRenderer>();
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0x1a2);
+		const auto otherSession = engine.StartScene(otherScene, 0x1a3);
+		Require(session && otherSession, "lazy projection Scenes did not start");
+		const EntityHandleV1 context{ session, static_cast<uint64_t>(owner.GetUUID()), 0x1a2 };
+		const EntityHandleV1 otherContext{ otherSession, static_cast<uint64_t>(other.GetUUID()), 0x1a3 };
+		const auto before = engine.GetProjectionStatistics();
+		for (size_t frame = 0; frame < 8; ++frame)
+		{
+			// Runtime phases discard snapshots independently of whether a script
+			// records mutations. Empty liveness/active reads must not clone sprites.
+			engine.NotifyImmediateMutation();
+			bool alive = false, active = false, present = false;
+			std::string name;
+			Require(engine.GetProjectedEntityLiveness(context, alive) && alive
+				&& engine.GetProjectedActiveInHierarchy(context, active) && active
+				&& engine.GetProjectedEntityName(context, name) && name == owner.GetName()
+				&& engine.GetProjectedComponentPresence(context, NativeComponentType::SpriteRenderer, present)
+				&& present && engine.FlushDeferredCommands(session),
+				"metadata-only phase lost live identity, activity, name or component presence");
+		}
+		Require(engine.GetProjectionStatistics().SceneCopies == before.SceneCopies,
+			"empty metadata/liveness phases copied authoring components");
+		Require(engine.QueueSetLayer(otherContext, 3), "other-Scene pending mutation failed");
+		bool active = false;
+		Require(engine.GetProjectedActiveInHierarchy(context, active) && active
+			&& engine.GetProjectionStatistics().SceneCopies == before.SceneCopies,
+			"another Scene's pending command forced a component copy");
+		NativePropertyValueV1 color{};
+		bool useDefault = true;
+		Require(engine.TryGetProjectedRegisteredComponentProperty(context,
+			TomCat::ComponentIds::SpriteRenderer, TomCat::ComponentIds::SpriteRendererProperties::Color,
+			color, useDefault) && !useDefault && color.Vector.X == 1.f
+			&& engine.GetProjectionStatistics().SceneCopies - before.SceneCopies == 1,
+			"registered query did not lazily materialize its isolated component Scene");
+		engine.NotifyImmediateMutation();
+		uint32_t layer = 0;
+		Require(engine.QueueSetLayer(context, 5)
+			&& engine.GetProjectedLayer(context, layer) && layer == 5 && owner.GetLayer() == 0
+			&& engine.GetProjectionStatistics().SceneCopies - before.SceneCopies == 2,
+			"first mutation after metadata-only projection lost isolated read-your-writes");
+		Require(engine.MarkDeferredCommandBatchFailed(context, "lazy projection rollback")
+			&& engine.FlushDeferredCommands(session) && owner.GetLayer() == 0
+			&& engine.FlushDeferredCommands(otherSession) && other.GetLayer() == 3,
+			"lazy projection failure changed live state or lost another Scene's commands");
+		engine.StopScene(otherSession);
+		engine.StopScene(session);
+	}
+
+	void TestRegisteredSpriteBurstReusesReplayNames()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		const NativeApiV2 native = BuildNativeApiV2();
+		NativeComponentApiV1 components{};
+		const NativeUtf8View capability{
+			reinterpret_cast<const uint8_t*>(ComponentCapabilityName.data()),
+			ComponentCapabilityName.size() };
+		uint32_t required = 0;
+		Require(native.QueryCapability(capability, 1, &components, sizeof(components), &required) == 0,
+			"registered sprite burst capability is unavailable");
+		TomCat::Scene scene;
+		auto owner = scene.CreateEntity("Sprite burst owner");
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0xb0757);
+		Require(session != 0, "registered sprite burst startup failed");
+		const EntityHandleV1 context{ session, static_cast<uint64_t>(owner.GetUUID()), 0xb0757 };
+		constexpr size_t Count = 256;
+		std::vector<EntityHandleV1> created;
+		NativePropertyValueV1 color{}, order{}, asset{};
+		color.Kind = static_cast<uint32_t>(NativePropertyKindV1::Vector4);
+		color.Vector = { .25f, .5f, .75f, 1.f };
+		order.Kind = static_cast<uint32_t>(NativePropertyKindV1::Int32);
+		asset.Kind = static_cast<uint32_t>(NativePropertyKindV1::UInt64);
+		const auto before = engine.GetProjectionStatistics();
+		for (size_t index = 0; index < Count; ++index)
+		{
+			EntityHandleV1 item{};
+			Require(engine.QueueCreateEntity(context, "Sprite fragment", {}, {}, item),
+				"registered sprite burst creation failed");
+			// Exercise the same registered Add/Has/Set/Get tables used by generated
+			// C# proxies, interleaved with the Transform convenience API.
+			Require(components.Add(item, TomCat::ComponentIds::SpriteRenderer) == 0
+				&& components.Has(item, TomCat::ComponentIds::SpriteRenderer) == 1
+				&& components.Has(item, TomCat::ComponentIds::Transform) == 1,
+				"registered sprite burst Add/Has failed");
+			order.Integer = static_cast<int32_t>(index);
+			Require(components.SetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+				TomCat::ComponentIds::SpriteRendererProperties::Color, color) == 0
+				&& components.SetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+					TomCat::ComponentIds::SpriteRendererProperties::OrderInLayer, order) == 0
+				&& components.SetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+					TomCat::ComponentIds::SpriteRendererProperties::Sprite, asset) == 0
+				&& native.V1.TransformSetPosition(item, { float(index), 2.f, 0.f }) == 0
+				&& native.V1.TransformSetRotationEuler(item, { 0.f, 0.f, .25f }) == 0
+				&& native.V1.TransformSetScale(item, { 2.f, 3.f, 1.f }) == 0,
+				"registered sprite burst property write failed");
+			NativePropertyValueV1 projected{};
+			Require(components.GetProperty(item, TomCat::ComponentIds::SpriteRenderer,
+				TomCat::ComponentIds::SpriteRendererProperties::Color, &projected) == 0
+				&& projected.Vector.X == color.Vector.X,
+				"registered sprite burst read-your-writes failed");
+			created.push_back(item);
+		}
+		const auto projected = engine.GetProjectionStatistics();
+		Require(projected.ReplayNameIndexBuilds - before.ReplayNameIndexBuilds == 1
+			&& projected.ReplayNameLookupProbes - before.ReplayNameLookupProbes <= Count * 3
+			&& scene.GetEntityOrder().size() == 1,
+			"registered sprite/transform access invalidated replay names or changed live state");
+		Require(projected.ComponentPresenceCommandsVisited == before.ComponentPresenceCommandsVisited,
+			"three intrinsic Transform writes per sprite rescanned the growing command batch");
+		Require(engine.FlushDeferredCommands(session), "registered sprite burst commit failed");
+		const auto committed = engine.GetProjectionStatistics();
+		Require(committed.ReplayNameIndexBuilds - before.ReplayNameIndexBuilds == 3
+			&& committed.ReplayNameLookupProbes - before.ReplayNameLookupProbes <= Count * 9,
+			"sprite burst validation/live replay rebuilt name indexes per entity");
+		for (size_t index = 0; index < Count; ++index)
+		{
+			auto entity = scene.FindEntityByUUID(TomCat::UUID(created[index].EntityId));
+			Require(entity && entity.GetName() == (index == 0 ? "Sprite fragment"
+				: "Sprite fragment (" + std::to_string(index) + ")")
+				&& entity.GetComponent<TomCat::SpriteRenderer>().OrderInLayer == int32_t(index)
+				&& std::abs(entity.GetComponent<TomCat::Transform>()._Translation.x - float(index)) < .001f,
+				"sprite burst committed names/order/transform differ from projection");
+		}
+		engine.StopScene(session);
 	}
 
 	void TestIncrementalDeferredProjectionCostAndIsolation()
@@ -7451,6 +7751,7 @@ namespace {
 }
 
 #include "ImmediateProjectionRegression.h"
+#include "AudioStopRegression.h"
 
 int main(int argc, char** argv)
 {
@@ -7555,8 +7856,18 @@ int main(int argc, char** argv)
 		TestSceneCopyPreservesIdentityNamesAndOrder);
 	run("indexed names and burst create/destroy preserve suffix gaps",
 		TestEntityNameIndexAndBurstCreateDestroy);
+	run("name removal preserves unrelated suffix cursors and first-free policy",
+		TestEntityNameRemovalKeepsUnrelatedSuffixCursors);
 	run("replay names observe provider writes and retain callback commands",
 		TestReplayNamesObserveProvidersAndPreserveCallbackCommands);
+	run("registered sprite burst reuses replay names",
+		TestRegisteredSpriteBurstReusesReplayNames);
+	run("metadata queries lazily create component projections",
+		TestMetadataQueriesLazilyCreateComponentProjection);
+	run("unmodified liveness and activity skip metadata snapshots",
+		TestUnmodifiedLivenessAvoidsMetadataSnapshots);
+	run("audio stop traverses sources and preserves teardown callbacks",
+		TestAudioStopTraversesSources);
 	run("immediate mutation invalidates incremental projection",
 		TestImmediateMutationInvalidatesProjection);
 	run("deferred disable precedes subtree attachment destruction",
