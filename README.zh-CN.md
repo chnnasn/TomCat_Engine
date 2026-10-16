@@ -257,7 +257,8 @@ Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的
 
 - [x] RHI 集成可选 Vulkan 后端，覆盖 DPI 字体重建、颜色后处理、压缩纹理回退、GPU 计时与跨后端自动化截图
 - [x] 实验性 WebGL2 Editor/Player，支持托管 C# 生命周期、Project 编辑、场景持久化与工作区布局保存，详见 [Web 范围](Web/README.zh-CN.md)
-- [ ] 更多平台、桌面后端与 Vulkan 多帧并行/上传性能优化
+- [x] Vulkan 多帧在途呈现与可复用映射上传页，覆盖绘制快照和纹理 staging
+- [ ] 更多平台、桌面后端与进一步的 Vulkan 同步/传输优化
 
 ### 未来 3D 范围
 

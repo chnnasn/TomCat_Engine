@@ -279,7 +279,8 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 
 - [x] RHI integration with optional Vulkan rendering, DPI font rebuilding, color grading, compressed texture fallback, GPU timing and backend-independent automation capture
 - [x] Experimental WebGL2 Editor/Player with managed C# lifecycle, Project authoring, scene persistence and saved workspace layouts; see [Web scope](Web/README.md)
-- [ ] Additional platforms, desktop backends and Vulkan multi-frame/upload performance work
+- [x] Vulkan frames in flight and reusable mapped upload pages for draw snapshots and texture staging
+- [ ] Additional platforms, desktop backends and further Vulkan synchronization/transfer optimization
 
 ### Future 3D Scope
 
