@@ -18,21 +18,21 @@ through visual authoring tools, while the Player runs packaged games independent
 
 Use this branch for the Windows 2D Editor, Hub and standalone Player workflow, with OpenGL by default and an optional Vulkan backend. It provides the shared baseline for the specialist branches below; `dev_vulkan` is integrated here as of 2026-10-16.
 
-Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this map to choose a development track and check that branch for its actual capabilities.
+Branch roles reviewed on **2026-10-16**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`; the other specialist branches continue independently.
 
 | Branch | Purpose |
 | --- | --- |
 | [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | Desktop mainline and integration baseline |
-| [Build_System](https://github.com/chnnasn/TomCat_Engine/tree/Build_System) | Build, packaging and C# toolchain development |
+| `Build_System` (historical) | Build, packaging and C# toolchain work integrated into main |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
 | [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend, integrated into main |
-| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Experimental browser Editor and Player development |
+| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Managed browser Editor/Player baseline integrated into main; subsequent Web features are included in main |
 
 **Branch lifecycle policy.** Specialty branches are time-boxed for a single-developer project: each branch must land in `main` (fully or as an integration slice) or be archived — branch deleted, history remaining recoverable via Git — at the quarterly branch review, at latest. A branch that has neither merged nor seen activity for one review cycle is archived first. Next review: **2026-12-21**.
 
-Documentation reviewed against the repository on **2026-09-20**. Product version: **0.6.0**.
+Documentation reviewed against the repository on **2026-10-16**. Product version: **0.6.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
 
 ---
@@ -106,12 +106,12 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 
 ## Features
 
-- **2D rendering**: OpenGL batched sprites, lines, circles, cameras, framebuffer-based Scene/Game views, entity picking, stable Sprite Atlas subassets with Rect/Pivot/PPU/Border semantics, deterministic sprite sorting, animation clips, and a parameter-driven Animator state machine
+- **2D rendering**: shared RHI with OpenGL/Vulkan backends for batched sprites, lines, circles, cameras, framebuffer-based Scene/Game views, entity picking, color grading and GPU timing; stable Sprite Atlas subassets with Rect/Pivot/PPU/Border semantics, deterministic sprite sorting, animation clips, and a parameter-driven Animator state machine
 - **Scene system**: ECS entities, hierarchy, stable UUIDs, strict YAML serialization, ordered Build Settings, asynchronous reads with activation control, additive ownership in a shared runtime world, persistent roots, and explicit unloading
 - **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` schema-v2 sidecars, ImporterRegistry, SHA-256 artifact keys, a derived-data cache, dependency tracking, and a background ImportCoordinator with debounced content monitoring, reverse-dependent reimport, and main-thread publication
 - **2D physics**: fixed 60 Hz Box2D runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
 - **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, combined Play/Stop plus Pause/Step controls, and deferred C# Collision/Trigger callbacks
-- **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, structured diagnostics, portable PDBs, last-good assemblies, cooked managed payloads, and bundled pure-managed NuGet, project, transitive, and local DLL dependencies. See the [dependency guide](docs/CSHARP_DEPENDENCIES.md).
+- **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, `MonoBehaviour` lifecycle callbacks, scoped tasks/coroutines, Entity/Transform/Input/Physics/Scene APIs, structured diagnostics, portable PDBs, last-good assemblies, cooked managed payloads, and bundled pure-managed NuGet, project, transitive, and local DLL dependencies. See [Managed scripting](Managed/README.md) and the [dependency guide](docs/CSHARP_DEPENDENCIES.md).
 - **Prefabs**: LocalID subtrees and reference remapping, linked editor updates, overrides, Apply/Revert, nested Prefabs and variants; runtime C# `Instantiate` retains snapshot semantics. See the [Prefab workflow](docs/PREFAB_WORKFLOW.zh-CN.md).
 - **Input**: action maps, keyboard/mouse/gamepad bindings, contexts, and runtime rebinding
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
@@ -121,7 +121,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
 - **Product UI and localization**: sliders, scroll views, single-line Unicode input, inherited themes, and game-language tables with fallback; OS IME commits are supported, with composition limits described in [Runtime UI](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **Performance tools**: visual CPU timeline, asynchronous GPU frame timing, draw statistics, process memory and tracked resource estimates; see [profiling and C# debugger setup](docs/DEBUGGING_AND_PROFILING.md)
-- **Regression coverage**: one Release entry point for managed ABI/lifecycle, physics, Sprite assets, scripts, safety, Editor recovery, audio, importers, input, SceneManager, Prefab, Cook, and isolated Player startup; a separate WASM editor protocol regression
+- **Regression coverage**: one Release entry point for managed ABI/lifecycle, 14 native regression executables including OpenGL RHI, application builds, Player templates, C# Player startup, CoinRunner, module publishing and Editor automation; separate Vulkan validation/multi-viewport and Web browser suites
 
 ## Current Scope
 
@@ -134,15 +134,18 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
 - Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. C# debugging uses an external IDE attached to the Editor; scripts are recompiled and updated after stopping Play. Play Mode hot replacement is unsupported. Scene restoration/activation and uploads have cooperative frame budgets; Windows input fields support IME preedit and candidate positioning. See [production capabilities and limits](docs/P1_PRODUCTION.md).
 
-The [recording archive](docs/portfolio/README.md) records the exact scope and
-limitations of each desktop session. The 2026-09-20 refresh checked the UI flows
-shown above; it did not rerun the complete native, managed, Player or Web regression suites.
+The latest integration check on **2026-10-16** passed the full Release suite,
+Vulkan RHI with synchronization validation and multiple viewports, Vulkan Editor
+automation and Player startup, and the managed Web build and Edge browser smoke.
+See the [validation record and limits](docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16).
+The [recording archive](docs/portfolio/README.md) retains the original 2026-09-20
+footage and its narrower coverage; no new recording was produced for this check.
 
 ## Building
 
 ### Dependencies
 
-- Windows x64 with an OpenGL 4.6-capable GPU/driver
+- Windows x64 with an OpenGL 4.6-capable GPU/driver for the default backend and full native suite; Vulkan rendering additionally requires a Vulkan 1.2-capable driver
 - Visual Studio 2022+
 - .NET 10 SDK (required to compile project C# scripts in the Editor)
 - Python 3 with `pip` (used by the setup helper)
@@ -172,7 +175,33 @@ The packaged Editor is named `TomCat.exe`; rebuilding the source executable does
 not update an already packaged or separately installed copy. Point Hub Settings
 at the intended Editor installation before creating or launching a project.
 
-After `Scripts\Setup.bat` has prepared Premake, run the complete Release suite with `powershell -ExecutionPolicy Bypass -File Scripts\Run-Regressions.ps1`.
+### Renderer selection and tests
+
+Choose the desktop backend before starting the Editor, Hub, CLI or Player:
+
+```powershell
+$env:TC_RENDERER = 'vulkan' # optional; unset or 'opengl' uses OpenGL
+& ./Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe
+```
+
+Cook/build and launch a packaged Player with the same backend. A package contains
+shaders for the selected backend; switching backends requires recooking. Web
+continues to use WebGL2. Vulkan currently supports single-sample framebuffers;
+see the [backend capabilities and limits](docs/RHI_VULKAN.zh-CN.md).
+
+After `Scripts\Setup.bat` has prepared Premake, run these checks sequentially:
+
+```powershell
+$env:TC_RENDERER = 'opengl'
+powershell -ExecutionPolicy Bypass -File Scripts/Run-Regressions.ps1 -Configuration Release -Log
+# Requires a Vulkan GPU/driver and the Khronos validation layer:
+powershell -ExecutionPolicy Bypass -File Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
+```
+
+The complete Release suite includes OpenGL RHI and Editor automation. The
+[documentation index](docs/README.md#验证入口) lists Vulkan Editor/Player, Web
+build/browser and optional soak checks. Run builds and tests sequentially so a
+Managed rebuild does not replace assemblies in use by script compilation tests.
 
 ## Directory Layout
 
@@ -251,7 +280,9 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
 
 
-- [ ] Additional platforms and rendering backends after the Windows/OpenGL 2D workflow is mature
+- [x] RHI integration with optional Vulkan rendering, DPI font rebuilding, color grading, compressed texture fallback, GPU timing and backend-independent automation capture
+- [x] Experimental WebGL2 Editor/Player with managed C# lifecycle, Project authoring, scene persistence and saved workspace layouts; see [Web scope](Web/README.md)
+- [ ] Additional platforms, desktop backends and Vulkan multi-frame/upload performance work
 
 ### Future 3D Scope
 
@@ -260,11 +291,11 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 
 ## Format policy
 
-Formats: current versions only; old/future versions are rejected. No project/scene/component migrations or CLI `--migrate`. Native module SDK and corruption recovery remain supported. See PROJECT_SYSTEM.md.
+Formats: current versions only; old/future versions are rejected. No project/scene/component migrations or CLI `--migrate`. Native module SDK and corruption recovery remain supported. [Version.h](TomCat/src/TomCat/Core/Version.h) defines product 0.6.0, Project v4, Scene v11, Prefab v1, TCPAK v8, Native API v1, Managed API v6 and Module ABI v2; see [the project system](PROJECT_SYSTEM.md).
 
 ## AI automation
 
-The opt-in [native automation service](docs/Automation.md) exposes 72 structured operations for project creation, scene and asset authoring, C# compilation, isolated runtime input tests, and Player builds. The [tool catalog](docs/AutomationTools.json) describes the protocol. Run `Scripts/Run-AutomationRegression.ps1` to verify the complete workflow without desktop input automation.
+The opt-in [native automation service](docs/Automation.md) exposes 72 structured operations for project creation, scene and asset authoring, C# compilation, isolated runtime input tests, framebuffer capture, and Player builds. The [tool catalog](docs/AutomationTools.json) describes the protocol. Run `Scripts/Run-AutomationRegression.ps1` to verify the complete workflow without desktop input automation; it supports either desktop backend selected by `TC_RENDERER`.
 
 ## Related Projects
 

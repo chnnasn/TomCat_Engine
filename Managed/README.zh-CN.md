@@ -1,13 +1,10 @@
 # TomCat 托管脚本 V1
 
-项目可通过根目录的标准 `TomCat.Dependencies.csproj` 还原纯托管 NuGet 包并引用 C# 库。
-依赖随脚本程序集封装并在各自脚本域中加载，Cook / Player 使用同一份依赖。
-用法与限制见[依赖指南](../docs/CSHARP_DEPENDENCIES.md)和[项目模板](Templates/TomCat.Dependencies.csproj)。
+[English](README.md) | 简体中文 · 核对日期：2026-10-16 · [文档索引](../docs/README.md)
 
-[English](README.md) | 简体中文 · 核对日期：2026-09-20 · [文档索引](../docs/README.md)
-
-V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v3，
-ScriptManifest 为 v1。桌面托管使用 .NET 10；打包 Editor 自带固定私有 SDK，生成的工程文件只用于 IDE/依赖交换，脚本源码集合和输出布局仍由引擎控制。实验性 Web 目标目前会拒绝 C# 负载。
+V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v6，
+ScriptManifest 为 v1。桌面托管使用 .NET 10；打包 Editor 自带固定私有 SDK，生成的工程文件只用于 IDE/依赖交换，脚本源码集合和输出布局仍由引擎控制。
+实验性 Web 目标使用 .NET `browser-wasm`，支持浏览器内 C# 编译与执行；独立构建及模块生命周期见[Web 指南](../Web/README.zh-CN.md)。
 
 ## 模块与构建
 
@@ -17,6 +14,7 @@ ScriptManifest 为 v1。桌面托管使用 .NET 10；打包 Editor 自带固定�
 - `TomCat.ScriptHost`：常驻默认 ALC（程序集加载上下文）的宿主，负责可回收项目域、实例生命周期、字段恢复、故障隔离和原生导出。
 - `TomCat.ScriptGenerator`：编译期脚本识别、诊断和嵌入清单生成器，引用 .NET SDK 自带 Roslyn，无 NuGet 依赖。
 - `TomCat.Managed.Regression`：不依赖测试框架的可执行回归套件。
+- `TomCat.WebHost`：浏览器宿主与 Roslyn 编译器，通过 `Scripts/Build-WebManaged.ps1` 单独构建，不包含在桌面 solution 中。
 
 从仓库根目录使用 .NET 10 SDK 构建和测试：
 
@@ -27,6 +25,11 @@ dotnet run --project Managed/TomCat.Managed.Regression/TomCat.Managed.Regression
 
 `TomCat.ScriptHost.runtimeconfig.json`、`TomCat.ScriptHost.dll` 与 `TomCat.Managed.dll`
 输出到 `Managed/TomCat.ScriptHost/bin/<Configuration>/net10.0/`。
+
+2026-10-16 主线集成已通过 Managed Release 套件、原生集成回归及 OpenGL / Vulkan C# Player 冒烟。
+Vulkan Player 的真实脚本以预期测试退出码 73 完成；Web 构建和浏览器生命周期冒烟也已通过。
+范围与日志见[集成记录](../docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)。
+完整回归入口见[根构建指南](../README.zh-CN.md#构建)；与其他构建串行执行，避免替换托管测试或编译器输入。
 
 ## 编辑器检查、诊断与运行时 UI
 
@@ -45,6 +48,10 @@ Profiler 的 **C# Debugger** 视图给出进程信息与流程，编辑器没有
 控件行为、主题继承、语言回退及 IME 提交边界见[运行时 UI 指南](../docs/RUNTIME_UI_PRODUCT.zh-CN.md)。
 
 ## 项目输入与生成清单
+
+项目可通过根目录的标准 `TomCat.Dependencies.csproj` 还原纯托管 NuGet 包并引用 C# 库。
+依赖随脚本程序集封装并在各自脚本域中加载，Cook / Player 使用同一份依赖。
+用法与限制见[依赖指南](../docs/CSHARP_DEPENDENCIES.md)和[项目模板](Templates/TomCat.Dependencies.csproj)。
 
 生成的 `Assembly-CSharp.csproj` 正常引用 `TomCat.Managed`，把 `TomCat.ScriptGenerator`
 作为分析器，并且只提供一份 `ScriptAssets.json` 作为 `AdditionalFiles`：
@@ -91,7 +98,7 @@ Profiler 的 **C# Debugger** 视图给出进程信息与流程，编辑器没有
 `MeshAsset`、`MaterialAsset`、`SceneAsset` 与 `PrefabAsset`；其他标记产生编译错误 `TCG010`。
 `IsValid` 和 Cook 均检查真实资产类型。标记可用只表示支持该资产身份，不代表每种类型已有运行时加载器。
 
-## 原生启动约定
+## 桌面原生启动约定
 
 用 `TomCat.ScriptHost.runtimeconfig.json` 初始化一次 CoreCLR，再调用 hostfxr 的
 `load_assembly_and_get_function_pointer`，参数为：
@@ -111,22 +118,24 @@ public static int GetManagedApi(NativeApiV1* nativeApi, ManagedApiV1* managedApi
 ```
 
 所有函数指针使用 Cdecl，并返回 `int32` 状态码。两张表都以 `uint32 Version; uint32 Size;`
-开头。原生输入表必须传入版本 1、不小于 V1 的表大小和全部 V1 回调。
+开头。原生输入表必须传入版本 1、不小于 V1 的表大小和全部 V1 回调；
+托管输出表需预先填入版本 6 和不小于 `sizeof(ManagedApiV1)` 的大小。
 启动时先完整校验，再发布绑定；缺少回调返回 unavailable（-8），不会覆盖先前有效绑定。
 
-### ManagedApiV1 布局（Managed ABI v3）
+### ManagedApiV1 布局（Managed ABI v6）
 
 类型沿用历史名称。v2 在稳定的 v1 前缀后追加 `ResolveDeferredCommandBatch`，
-v3 再追加供持久 UI/事件回调使用的 `InvokeMethod`。`Version` 和 `Size` 后严格依次为：
+v3 再追加供持久 UI/事件回调使用的 `InvokeMethod`。当前握手要求版本 6，结构体仍沿用
+`ManagedApiV1` 名称。`Version` 和 `Size` 后严格依次为：
 
 ```text
 int CreateDomain(int32 domainKind, uint64* domainId)
-int LoadProjectAssembly(uint64 domainId, NativeByteView assembly, NativeByteView pdb)
+int LoadProjectAssembly(uint64 domainId, NativeByteView* assembly, NativeByteView* pdb)
 int ReadScriptMetadata(uint64 domainId, MetadataReceiver receiver, uint64 receiverToken)
 int CreateSceneRuntime(uint64 domainId, uint64 sceneSessionId,
                        uint64 runtimeGeneration, uint64* sceneRuntimeId)
 int InstantiateAll(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items, uint32 count)
-int ApplySerializedFields(uint64 sceneRuntimeId, NativeByteView fieldsJson)
+int ApplySerializedFields(uint64 sceneRuntimeId, NativeByteView* fieldsJson)
 int InvokeCreateAll(uint64 sceneRuntimeId)
 int SetEnabled(uint64 sceneRuntimeId, uint64 attachmentId, int32 enabled)
 int UpdateAll(uint64 sceneRuntimeId, float deltaTime)
@@ -137,15 +146,15 @@ int BeginUnloadDomain(uint64 domainId)
 int PollUnload(uint64 domainId, int32* unloaded)
 int DestroyAttachments(uint64 sceneRuntimeId, uint64* attachmentIds, uint32 count)
 int InstantiateAttachments(uint64 sceneRuntimeId, NativeScriptAttachmentV1* items,
-                           uint32 count, NativeByteView fieldsJson)
+                           uint32 count, NativeByteView* fieldsJson)
 int ResolveDeferredCommandBatch(uint64 sceneRuntimeId, int32 committed)
-int InvokeMethod(uint64 sceneRuntimeId, uint64 attachmentId, NativeUtf8View methodName)
+int InvokeMethod(uint64 sceneRuntimeId, uint64 attachmentId, NativeByteView* methodName)
 ```
 
 `ResolveDeferredCommandBatch` 在原生命令批次完成暂存校验和实际重放后确认结果。
 传 0 丢弃托管侧预计的生命周期状态；传 1 在原生 Scene 提交成功后发布该状态。
 
-`MetadataReceiver` 为 `int(NativeByteView json, uint64 receiverToken)`。
+`MetadataReceiver` 为 `int(NativeByteView* json, uint64 receiverToken)`。
 token 对托管代码不透明，只解析为生命周期短且线程安全的原生接收上下文。
 域类型为 Metadata = 0、Play = 1。
 
@@ -186,7 +195,7 @@ PrefabInstantiateDeferred
 ```
 
 `NativeApiV2` 是根据大小检测的扩展封装，稳定的 `NativeApiV1` 前缀仍用版本 1，
-后接 `QueryCapability`。可选 V1 能力表覆盖 Input、InputEvents、ApplicationPaths、Gameplay、
+后接 `QueryCapability`。可选 V1 能力表覆盖 Input、InputEvents、ApplicationPaths、Application、SaveData、Gameplay、
 Audio、AudioSpatial、RuntimeUI、Component、ComponentString、ComponentSchema、Scene、DeferredCommands
 和 DeferredCallbackTransactions。确切名称与校验规则见
 [NativeBridge.cs](TomCat.Managed/NativeBridge.cs) 与
@@ -271,12 +280,15 @@ Prefab 创建的脚本附件只在当前托管回调返回后通过 `Instantiate
 
 ## 加载与卸载所有权
 
-`TomCat.ScriptHost` 和 `TomCat.Managed` 常驻默认 ALC。
+桌面端的 `TomCat.ScriptHost` 和 `TomCat.Managed` 常驻默认 ALC。
 每个项目 DLL/PDB 从字节载入可回收 ALC；自定义加载器始终把 `TomCat.Managed` 解析到默认
 ALC 中的副本，以保持 `MonoBehaviour` 的类型身份。
 
 `BeginUnloadDomain` 停止派发、销毁实例、清理反射缓存，调用 `AssemblyLoadContext.Unload`，
 仅保留弱引用。原生必须轮询 `PollUnload`；不能卸载的域必须报告，不能静默累积。
+
+浏览器中的项目加载上下文不可回收。Stop 仍销毁场景实例、清理回调并取消已跟踪工作；
+安装新一代编译产物需要重建浏览器模块，见[Web 指南](../Web/README.zh-CN.md)。
 
 ## Unity 风格脚本（Managed API 6）
 
@@ -310,7 +322,12 @@ public sealed class Player : MonoBehaviour
 旧脚本 DLL 必须重编译。错误的生命周期签名会产生 TCG011 编译诊断。
 
 这是常用脚本写法对齐，不是 UnityEngine 二进制兼容层。现有 PascalCase 数据 API 仍可使用。
-当前仍在实例创建时对未激活对象执行 Awake；提供[TomCat 协程](COROUTINES.zh-CN.md)，尚不支持 timeScale 或完整 Quaternion API。
+当前仍在实例创建时对未激活对象执行 Awake，尚不支持 timeScale 或完整 Quaternion API。
+迭代器协程使用 `StartCoroutine` / `StopCoroutine` 和共享的 `Tasks` 作用域，支持不可变的
+`Yield.Frames` / `Seconds` / `Until` / `While` / `FixedStep` 等待指令，见[TomCat 协程](COROUTINES.zh-CN.md)。
 GetComponent/AddComponent 当前面向引擎注册组件，不支持任意脚本类型；GetComponent 缺失组件时仍抛出异常。
 
-异步脚本使用实例级 `Tasks`：主线程返回、帧等待、取消和异常规则见[脚本任务说明](SCRIPT_TASKS.zh-CN.md)。
+实例级 `Tasks` 提供 `MainThread`、`NextFrame`、`NextFixedStep` 等待及取消、异常处理。
+生命周期消息必须保持同步，通过 `Tasks.Run` 启动受跟踪异步工作；后台工作结束后，
+访问引擎对象前显式等待 `Tasks.MainThread`。脚本移除、对象销毁、停止 Play 或脚本故障会取消任务与协程，
+普通禁用不会取消。完整语义见[脚本任务说明](SCRIPT_TASKS.zh-CN.md)。
