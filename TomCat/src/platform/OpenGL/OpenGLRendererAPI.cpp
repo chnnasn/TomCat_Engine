@@ -106,6 +106,11 @@ void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x)
 
         glGetIntegerv(GL_MAX_DRAW_BUFFERS,&m_MaxDrawBuffers);
         m_MaxDrawBuffers=std::max(m_MaxDrawBuffers,1);
+#ifdef TC_PLATFORM_WEB
+        // Application creates/makes current its WebWindow before Renderer::Init.
+        // Seed from this context once, including after a renderer restart.
+        glGetFloatv(GL_COLOR_CLEAR_VALUE,&m_ClearColor.x);
+#endif
 
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -121,16 +126,27 @@ void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x)
 	void OpenGLRendererAPI::SetClearColor(const glm::vec4& color)
 	{
 		glClearColor(color.r, color.g, color.b, color.a);
+#ifdef TC_PLATFORM_WEB
+        if (std::isfinite(color.r) && std::isfinite(color.g)
+            && std::isfinite(color.b) && std::isfinite(color.a)) {
+            // glClearColor clamps its stored state; clearBufferfv does not.
+            m_ClearColor={std::clamp(color.r,0.0f,1.0f),std::clamp(color.g,0.0f,1.0f),
+                std::clamp(color.b,0.0f,1.0f),std::clamp(color.a,0.0f,1.0f)};
+        } else {
+            // Keep the existing GL/API behavior for NaN/Infinity, rather than
+            // introducing a different validation or guessed NaN conversion.
+            glGetFloatv(GL_COLOR_CLEAR_VALUE,&m_ClearColor.x);
+        }
+#endif
 	}
 
 	void OpenGLRendererAPI::Clear()
 	{
-#ifdef __EMSCRIPTEN__
+#ifdef TC_PLATFORM_WEB
         // The editor's framebuffer mixes RGBA and integer picking attachments.
         // WebGL rejects a floating-point glClear across both attachment types.
         // Picking is cleared explicitly by the framebuffer owner.
-        GLfloat color[4]; glGetFloatv(GL_COLOR_CLEAR_VALUE, color);
-        glClearBufferfv(GL_COLOR, 0, color);
+        glClearBufferfv(GL_COLOR, 0, &m_ClearColor.x);
         glClear(GL_DEPTH_BUFFER_BIT);
 #else
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
