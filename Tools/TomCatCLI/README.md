@@ -35,7 +35,7 @@ CLI process exit code. Source builds can continue to run the executable under
 
 Run source-build commands from the repository root in a Visual Studio developer
 shell, after `Scripts/Setup.bat`. Project compilation requires the .NET 10 SDK.
-For a source-built Player template, use `Scripts/Build-PlayerTemplate.ps1` and
+For a source-built Player template, use `Scripts/Build-PlayerTemplate.ps1 -Build` and
 pass the resulting directory with `build --template <directory>`.
 
 | Option | Scope | Behavior |
@@ -68,20 +68,25 @@ See [project configuration](../../PROJECT_SYSTEM.md) and
 
 ## Renderer selection
 
-Desktop Editor, Hub, CLI and Player read `TC_RENDERER` once per process:
-`opengl` is the default; `vulkan` selects the Vulkan backend. Cook/build and the
-resulting Player must use the same value because each package contains shaders
-for one backend. For example:
+Desktop Editor, Hub, CLI and Player read `TC_RENDERER` once per process. Unset or
+`auto` prefers Vulkan and falls back to OpenGL when Vulkan is unsupported;
+`opengl` and `vulkan` force that backend, with an error if forced Vulkan is
+unavailable. The headless CLI probes device support without creating a window.
+For example:
 
 ```powershell
-$env:TC_RENDERER = 'vulkan'
+$env:TC_RENDERER = 'auto'
 Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game/Game.tcproj --template C:/Game/PlayerTemplate
 ```
 
-Keep `TC_RENDERER=vulkan` when launching that Player. Set it to `opengl` and
-recook/rebuild when switching back; an existing package cannot switch backends.
-Vulkan execution requires a Vulkan 1.2 driver and loader. The loader is
-delay-loaded, so OpenGL and headless tools do not require it at startup.
+New desktop cook/build outputs contain precompiled OpenGL and Vulkan shader
+variants, so the Player selects its backend independently on its own machine.
+Shader source is not shipped. Older single-backend packages still require their
+original backend or a recook. Vulkan execution requires a Vulkan 1.2 driver and
+loader; automatic selection safely falls back when they are unavailable.
+Rebuild Player Templates using `Scripts/Build-PlayerTemplate.ps1 -Build` before
+publishing. The builder requires template format 2 and rejects older templates,
+whose Player cannot read the new shader bundles; TCPAK remains version 8.
 See [RHI/Vulkan integration](../../docs/RHI_VULKAN.zh-CN.md) for validation-layer
 and device-selection options. The browser target continues to use WebGL 2;
 its build entry point is in the [Web guide](../../Web/README.md).
@@ -109,6 +114,19 @@ Player script also passed, with the expected smoke-test exit code 73. See the
 and logs, and the [root build guide](../../README.md#building) for the full
 regression entry point. Run build/regression scripts sequentially to avoid
 replacing managed compilation inputs during a test.
+
+To test a package in real graphics windows, first rebuild Managed Release,
+`ScriptCompilerRegression` and `TomCatCLI` from the current sources, then run:
+
+```powershell
+./Scripts/Build-PlayerTemplate.ps1 -Configuration Release -Build -Destination ./Tests/bin/Release-windows-x86_64/PlayerTemplateRegression
+./Scripts/Run-CSharpPlayerSmoke.ps1 -Configuration Release -RequirePlayer -Graphics
+```
+
+The default smoke mode is headless. `-Graphics` runs the same package first with
+automatic backend selection, then with an unavailable Vulkan device filter to
+exercise OpenGL fallback. It checks the backend in the game log and the C#
+script's completion exit code 73.
 
 ## Script build profile
 

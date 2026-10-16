@@ -534,6 +534,9 @@
     <ClInclude Include="src\platform\Vulkan\VulkanShader.h">
       <Filter>src\platform\Vulkan</Filter>
     </ClInclude>
+    <ClInclude Include="src\platform\Vulkan\VulkanSupport.h">
+      <Filter>src\platform\Vulkan</Filter>
+    </ClInclude>
     <ClInclude Include="src\platform\Web\WebEditorUI.h">
       <Filter>src\platform\Web</Filter>
     </ClInclude>
@@ -2103,6 +2106,9 @@
       <Filter>src\platform\Vulkan</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Vulkan\VulkanShader.cpp">
+      <Filter>src\platform\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Vulkan\VulkanSupport.cpp">
       <Filter>src\platform\Vulkan</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Web\WebEditor.cpp">

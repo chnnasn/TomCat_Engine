@@ -552,6 +552,8 @@ namespace TomCat {
 				if (!BuildShaderArtifact(request.SourceBytes, request.SourcePath,
 					request.Settings, request.Backend, result.ArtifactBytes, result.Error))
 					return result;
+				if (IsShaderArtifactBundle(result.ArtifactBytes))
+					result.Format = "shader/spirv-reflection-bundle-v1";
 				if (request.IsCancellationRequested())
 				{
 					result.ArtifactBytes.clear();

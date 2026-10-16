@@ -14,7 +14,7 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **main — 桌面主线与功能集成基线**
 
-用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，默认使用 OpenGL，可选择 Vulkan 后端。它是下列专项分支的公共基线。
+用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，桌面默认优先使用 Vulkan，不支持时自动回退 OpenGL。它是下列专项分支的公共基线。
 
 分支定位核对日期：**2026-10-16**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`。下表仅列出仍保留的分支，专项分支继续独立演进。
 
@@ -112,7 +112,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 ## 当前范围
 
 - 支持的开发平台：**Windows x64**
-- 渲染后端：**OpenGL 4.6**（默认）与 **Vulkan 1.2**（`TC_RENDERER=vulkan`）；配置和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
+- 渲染后端：默认优先 **Vulkan 1.2**，不支持时自动回退 **OpenGL 4.6**；配置和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
 - 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。托管 C# 通过 .NET browser-wasm 宿主运行；可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 仍有限制。构建通过与浏览器生命周期验收分别记录。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
@@ -127,13 +127,13 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 
 ### 依赖
 
-- Windows x64；默认后端和完整原生套件需要支持 OpenGL 4.6 的显卡与驱动，运行 Vulkan 后端还需要支持 Vulkan 1.2 的驱动
+- Windows x64；需要支持 Vulkan 1.2 的显卡与驱动，或支持 OpenGL 4.6 以使用回退后端；完整原生回归套件显式使用 OpenGL
 - Visual Studio 2022+
 - .NET 10 SDK（Editor 编译项目 C# 脚本必需）
 - Python 3 与 `pip`（供 Setup 辅助脚本使用）
 - premake5（Setup 脚本自动下载）
 
-> 两种渲染后端使用 `vendor/VulkanSDK` 子模块（VulkanSDK-Windows）提供的 ShaderC 和 SPIRV-Cross。Vulkan loader 使用延迟加载，OpenGL 和无窗口工具无需 Vulkan 驱动；运行 Vulkan 后端需要兼容驱动，启用验证还需要 Khronos validation layer。
+> 两种渲染后端使用 `vendor/VulkanSDK` 子模块（VulkanSDK-Windows）提供的 ShaderC 和 SPIRV-Cross。自动选择会安全探测 Vulkan loader 和驱动，无窗口工具也使用该策略；缺少 Vulkan 运行环境时回退 OpenGL。启用 Vulkan 验证还需要 Khronos validation layer。
 
 ### 步骤
 
@@ -158,25 +158,32 @@ Release x64 源码构建的实际入口：
 
 ### 选择渲染后端与测试
 
-在启动 Editor、Hub、CLI 或 Player 前选择桌面后端：
+桌面 Editor、Hub、CLI 与 Player 默认优先 Vulkan。`TC_RENDERER` 未设置或为 `auto` 时自动选择；设为 `vulkan` 或 `opengl` 时强制使用对应后端，强制 Vulkan 不支持时明确报错。需在启动进程前设置：
 
 ```powershell
-$env:TC_RENDERER = 'vulkan' # 可选；未设置或设为 'opengl' 时使用 OpenGL
+$env:TC_RENDERER = 'auto' # 可选；支持时使用 Vulkan，否则回退 OpenGL
 & ./Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe
 ```
 
-烘焙/构建与 Player 启动必须使用同一后端。包内只包含所选后端的 Shader，切换后端需要重新烘焙；Web 继续使用 WebGL2。Vulkan 当前只支持单采样 Framebuffer，其他能力和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
+新的桌面烘焙/构建产物包含两个后端的预编译 Shader，Player 可按运行机器能力选择 Vulkan 或回退 OpenGL。旧单后端包需使用原后端，或重新烘焙；Web 继续使用 WebGL2。Vulkan 当前只支持单采样 Framebuffer，其他能力和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
+发布前需执行 `Scripts/Build-PlayerTemplate.ps1 -Build` 重建 Player Template；新 Shader bundle 要求模板格式 2。
 
 由 `Scripts\Setup.bat` 准备 Premake 后，按顺序执行：
 
 ```powershell
-$env:TC_RENDERER = 'opengl'
+# 完整套件显式使用 OpenGL，兼容 CI 软件驱动：
 powershell -ExecutionPolicy Bypass -File Scripts/Run-Regressions.ps1 -Configuration Release -Log
+# 验证默认选择、自动回退、显式覆盖与实际初始化：
+powershell -ExecutionPolicy Bypass -File Scripts/Run-BackendSelectionRegression.ps1
 # 需要 Vulkan 显卡/驱动与 Khronos validation layer：
 powershell -ExecutionPolicy Bypass -File Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
+# 先构建当前测试/CLI，再刷新冒烟测试使用的 Player Template：
+./Scripts/Build-PlayerTemplate.ps1 -Configuration Release -Build -Destination ./Tests/bin/Release-windows-x86_64/PlayerTemplateRegression
+./Scripts/Run-CSharpPlayerSmoke.ps1 -Configuration Release -RequirePlayer -Graphics
 ```
 
 完整 Release 套件已包含 OpenGL RHI 与 Editor 自动化。[文档索引](docs/README.md#验证入口)列出 Vulkan Editor/Player、Web 构建/浏览器与可选长时间测试入口。构建与测试应串行运行，避免 Managed 重建替换脚本编译测试正在使用的程序集。
+Player 冒烟的 `-Graphics` 模式会打开真实图形窗口，对同一包验证默认选择和 Vulkan 不可用时的 OpenGL 回退，并检查后端日志及脚本完成退出码 73；不加该参数时默认无窗口。
 
 ## 目录结构
 
@@ -255,7 +262,7 @@ Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的
 - [x] 组件注册/反射、Opaque Missing Component 保留与 SCB/ComponentApiV1 Bridge
 
 
-- [x] RHI 集成可选 Vulkan 后端，覆盖 DPI 字体重建、颜色后处理、压缩纹理回退、GPU 计时与跨后端自动化截图
+- [x] RHI 默认优先 Vulkan，不支持时回退 OpenGL，覆盖 DPI 字体重建、颜色后处理、压缩纹理回退、GPU 计时与跨后端自动化截图
 - [x] 实验性 WebGL2 Editor/Player，支持托管 C# 生命周期、Project 编辑、场景持久化与工作区布局保存，详见 [Web 范围](Web/README.zh-CN.md)
 - [x] Vulkan 多帧在途呈现与可复用映射上传页，覆盖绘制快照和纹理 staging
 - [ ] 更多平台、桌面后端与进一步的 Vulkan 同步/传输优化

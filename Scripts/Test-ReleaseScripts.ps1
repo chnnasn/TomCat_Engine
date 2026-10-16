@@ -5,6 +5,23 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'ReleaseArtifactTools.ps1')
 . (Join-Path $PSScriptRoot 'ReleaseProvenanceTools.ps1')
 . (Join-Path $PSScriptRoot 'EvbTools.ps1')
+. (Join-Path $PSScriptRoot 'VersionTools.ps1')
+
+$currentVersion = Get-TomCatVersionInfo -RepositoryRoot $repositoryRoot
+$playerStamp = "TomCatPlayer $($currentVersion.ProductVersion) build=$($currentVersion.EngineBuildID) tcpak=$($currentVersion.TcpakVersion) abi=$($currentVersion.PlayerAbiVersion) template=$($currentVersion.PlayerTemplateSchemaVersion) native-api=1"
+Assert-TomCatPlayerTemplateVersion -VersionOutput $playerStamp -VersionInfo $currentVersion
+foreach ($staleStamp in @(
+        ($playerStamp -replace ' template=\d+', ''),
+        ($playerStamp -replace ' template=\d+', ' template=1'),
+        ($playerStamp -replace ' tcpak=\d+', ' tcpak=0'),
+        ($playerStamp -replace ' build=\S+', ' build=TomCat-old'))) {
+    $rejection = ''
+    try { Assert-TomCatPlayerTemplateVersion -VersionOutput $staleStamp -VersionInfo $currentVersion }
+    catch { $rejection = $_.Exception.Message }
+    if ($rejection -notmatch 'Build-PlayerTemplate.ps1 -Build') {
+        throw 'Player template generation accepted an older binary or omitted the rebuild instruction.'
+    }
+}
 
 $parseFailures = New-Object 'System.Collections.Generic.List[string]'
 foreach ($script in Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File | Sort-Object Name) {

@@ -28,6 +28,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -2248,6 +2249,18 @@ public sealed class BulletProbe : MonoBehaviour
 			Require(!templateCopyError,
 				"could not create a disposable template for hash validation: "
 				+ templateCopyError.message());
+			const auto templateManifestPath = tamperedRequest.TemplateDirectory / "template.json";
+			const std::string currentTemplateManifest = ReadTextFile(templateManifestPath);
+			const std::string legacyTemplateManifest = std::regex_replace(currentTemplateManifest,
+				std::regex(R"("SchemaVersion"\s*:\s*\d+)"), "\"SchemaVersion\": 1");
+			Require(legacyTemplateManifest != currentTemplateManifest,
+				"could not prepare the legacy single-target Player template fixture");
+			WriteTextFile(templateManifestPath, legacyTemplateManifest);
+			const auto legacyTemplateBuild = TomCat::PlayerBuilder::Build(tamperedRequest);
+			Require(!legacyTemplateBuild.Succeeded
+				&& legacyTemplateBuild.Message.find("template compatibility") != std::string::npos,
+				"PlayerBuilder accepted a legacy template without desktop shader bundle support");
+			WriteTextFile(templateManifestPath, currentTemplateManifest);
 			WriteTextFile(tamperedRequest.TemplateDirectory /
 				"Packages" / "Shaders" / "Texture.glsl", "tampered template file\n");
 			const auto rejectedBuild = TomCat::PlayerBuilder::Build(
@@ -2299,6 +2312,25 @@ public sealed class BulletProbe : MonoBehaviour
 
 		ValidateWithIndependentPlayer(playerPackagePath);
 		RunWithIndependentPlayer(playerPackagePath, 73);
+		if (const auto player = ReadEnvironment("TOMCAT_E2E_PLAYER_EXE");
+			player && !player->empty() && !EnvironmentFlag("TOMCAT_E2E_PLAYER_HEADLESS"))
+		{
+			// Run the exact same cooked package on the fallback backend, without
+			// source assets or recooking its shaders for the second process.
+			ScopedEnvironmentVariable automaticRenderer("TC_RENDERER", std::string("auto"));
+			ScopedEnvironmentVariable unavailableDevice("TC_VULKAN_DEVICE",
+				std::string("TomCat-regression-no-device-822d390a"));
+			RunWithIndependentPlayer(playerPackagePath, 73);
+			const auto& settings = project->GetPlayerSettings();
+			const auto dataPaths = TomCat::ApplicationPaths::GetGameDataPaths(settings.CompanyName,
+				settings.ProductName, settings.SaveDirectory, settings.LogDirectory, settings.CrashDirectory);
+			Require(dataPaths.has_value(), "Could not resolve the packaged game's log directory");
+			const auto playerLog = ReadTextFile(dataPaths->Logs / "Player.log");
+			const auto launch = playerLog.rfind("Launching ");
+			Require(launch != std::string::npos && playerLog.find("Renderer: OpenGL fallback", launch) != std::string::npos,
+				"Player did not report automatic OpenGL fallback for the same cooked package");
+			std::cout << "PASS unchanged desktop package runs after automatic OpenGL fallback\n";
+		}
 		if (!builtPlayerExecutable.empty())
 		{
 			const std::filesystem::path foreignWorkingDirectory =

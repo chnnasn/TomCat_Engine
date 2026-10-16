@@ -341,7 +341,7 @@ namespace TomCat {
 				const YAML::Node document = YAML::LoadFile(PathToUTF8(manifestPath));
 				if (!HasExactFields(document, { "SchemaVersion", "EngineBuildID",
 					"TcpakVersion", "PlayerAbiVersion", "Files" }))
-					throw std::runtime_error("template.json must contain only the V1 fields");
+					throw std::runtime_error("template.json contains missing or unsupported fields");
 				if (document["SchemaVersion"].as<uint32_t>() !=
 						RuntimeCompatibility::PlayerTemplateSchemaVersion ||
 					document["EngineBuildID"].as<std::string>() !=
@@ -350,7 +350,7 @@ namespace TomCat {
 						RuntimeCompatibility::TcpakVersion ||
 					document["PlayerAbiVersion"].as<uint32_t>() !=
 						RuntimeCompatibility::PlayerAbiVersion)
-					throw std::runtime_error("template compatibility does not match this Editor");
+					throw std::runtime_error("template compatibility does not match this Editor; rebuild it with Scripts/Build-PlayerTemplate.ps1 -Build");
 
 				const YAML::Node files = document["Files"];
 				if (!files.IsSequence() || files.size() == 0)

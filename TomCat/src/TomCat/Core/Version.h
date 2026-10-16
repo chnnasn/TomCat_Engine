@@ -19,7 +19,8 @@ namespace TomCat::Version {
 
 	inline constexpr uint32_t TcpakFormatOldest = 8;
 	inline constexpr uint32_t TcpakFormatCurrent = 8;
-	inline constexpr uint32_t PlayerTemplateFormatCurrent = 1;
+	// V2 templates can load desktop shader bundles for automatic GL fallback.
+	inline constexpr uint32_t PlayerTemplateFormatCurrent = 2;
 	inline constexpr uint32_t SaveFormatCurrent = 1;
 	inline constexpr uint32_t PlayerAbiCurrent = 1;
 	inline constexpr uint32_t NativeApiCurrent = 1;

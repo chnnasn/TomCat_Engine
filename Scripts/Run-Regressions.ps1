@@ -92,7 +92,11 @@ function Invoke-NativeRegression {
 
 Push-Location $repositoryRoot
 $transcriptStarted = $false
+$savedRenderer = $env:TC_RENDERER
 try {
+    # Keep this broad suite reproducible on CI's software OpenGL driver. Desktop
+    # automatic selection is covered separately by Run-BackendSelectionRegression.
+    $env:TC_RENDERER = 'opengl'
     if ($Log) {
         $logDirectory = Join-Path $repositoryRoot "build\logs"
         New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
@@ -181,16 +185,8 @@ try {
     Invoke-NativeRegression -Name "InputRegression"
     Invoke-NativeRegression -Name "ProfilerRegression"
 
-    # The shared renderer contract must also remain valid on the default backend.
     # Vulkan GPU/layer coverage is available through Run-RHIRegression.ps1.
-    $savedRenderer = $env:TC_RENDERER
-    try {
-        $env:TC_RENDERER = 'opengl'
-        Invoke-NativeRegression -Name "RHIRegression"
-    }
-    finally {
-        $env:TC_RENDERER = $savedRenderer
-    }
+    Invoke-NativeRegression -Name "RHIRegression"
 
     $playerSmoke = Join-Path $PSScriptRoot "Run-CSharpPlayerSmoke.ps1"
     if (-not (Test-Path -LiteralPath $playerSmoke -PathType Leaf)) {
@@ -215,6 +211,7 @@ try {
     Write-Host "All TomCat regressions passed."
 }
 finally {
+    $env:TC_RENDERER = $savedRenderer
     if ($transcriptStarted) {
         Stop-Transcript | Out-Null
     }

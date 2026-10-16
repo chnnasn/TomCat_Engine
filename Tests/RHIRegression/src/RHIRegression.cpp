@@ -16,10 +16,43 @@
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
+#include <string_view>
 
 using namespace TomCat;
 namespace {
 void Require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+struct BackendOptions {
+    std::string Expected;
+    bool SelectionOnly = false;
+    bool InitializationOnly = false;
+    bool SimulateLateVulkanUnavailable = false;
+};
+BackendOptions ParseBackendOptions(int argc, char** argv) {
+    BackendOptions options;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view argument(argv[i]);
+        if (argument == "--expect-backend" && i + 1 < argc) {
+            options.Expected = argv[++i];
+            if (options.Expected != "opengl" && options.Expected != "vulkan")
+                throw std::invalid_argument("--expect-backend must be opengl or vulkan");
+        }
+        else if (argument == "--backend-selection-only") options.SelectionOnly = true;
+        else if (argument == "--backend-initialization-only") options.InitializationOnly = true;
+        else if (argument == "--simulate-late-vulkan-unavailable") options.SimulateLateVulkanUnavailable = true;
+        else throw std::invalid_argument("Unknown or incomplete RHI regression option: " + std::string(argument));
+    }
+    if (options.SelectionOnly && options.InitializationOnly)
+        throw std::invalid_argument("Backend selection-only and initialization-only modes are mutually exclusive");
+    if (options.SelectionOnly && options.SimulateLateVulkanUnavailable)
+        throw std::invalid_argument("Late Vulkan unavailability requires window initialization");
+    return options;
+}
+void CheckBackend(const BackendOptions& options) {
+    const std::string_view backend = RendererAPI::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl";
+    if (!options.Expected.empty() && options.Expected != backend)
+        throw std::runtime_error("Expected backend " + options.Expected + ", selected " + std::string(backend));
+    std::cout << "Selected backend: " << backend << '\n';
+}
 glm::mat4 Quad(float x, float y, float width, float height) {
     return glm::translate(glm::mat4(1), glm::vec3(x, y, 0)) * glm::scale(glm::mat4(1), glm::vec3(width, height, 1));
 }
@@ -245,14 +278,23 @@ void RunVulkanSubmissionRegression(Application& app, UILayer& ui, const Camera& 
     RequireColor(ReadColor(targets[0], 48, 48), {24, 192, 64, 255}, "Destroyed texture was released before its GPU consumers");
     targets[0]->Unbind();
 }
-void Run() {
+void Run(const BackendOptions& options) {
     if (std::getenv("TC_RHI_TEST_VIEWPORTS")) _putenv_s("TC_IMGUI_VIEWPORTS", "1");
     WindowProps props("TomCat RHI regression", 320, 240);
     props.Visible = false; props.VSync = false;
     Application app(props, true);
+    CheckBackend(options);
     ImGui::GetIO().IniFilename = nullptr;
     if (std::getenv("TC_RHI_TEST_VIEWPORTS")) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     else ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+    if (options.InitializationOnly) {
+        for (int frame = 0; frame < 3; ++frame)
+            Require(app.Tick(1.0f / 60), "Application stopped during backend initialization regression");
+        RHI::RenderDevice::Get().WaitIdle();
+        Require(RHI::RenderDevice::Get().ValidationErrors() == 0, "Vulkan validation reported initialization errors");
+        std::cout << "Backend initialization regression passed\n";
+        return;
+    }
     FramebufferSpecification spec;
     spec.Width = 96; spec.Height = 96;
     spec.Attachments = {FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::DEPTH24STENCIL8};
@@ -387,15 +429,19 @@ void Run() {
         "void main(){color=vec4(1);entity=u_Entity;}\n";
     // OpenGL plain uniform locations share a namespace across shader stages.
     // Assign them explicitly instead of letting each stage start at location 0.
-    if (Renderer::GetAPI() == RendererAPI::API::OpenGL) {
-        source.insert(source.find("uniform mat4"), "layout(location=0) ");
-        source.insert(source.find("uniform int"), "layout(location=4) ");
-    }
+    source.insert(source.find("uniform mat4"), "layout(location=0) ");
+    source.insert(source.find("uniform int"), "layout(location=4) ");
     std::vector<uint8_t> artifact; std::string error;
     if (!BuildShaderArtifact(std::span(reinterpret_cast<const uint8_t*>(source.data()), source.size()),
-        "RHI.glsl", {}, Renderer::GetAPI() == RendererAPI::API::Vulkan ? "vulkan" : "opengl", artifact, error))
+        "RHI.glsl", {}, "desktop", artifact, error))
         throw std::runtime_error(error);
-    auto shader = Shader::CreateFromArtifact("RHI.Artifact", artifact, &error);
+    Require(IsShaderArtifactBundle(artifact), "Desktop shader cook did not produce a backend bundle");
+    source.clear(); // Runtime consumes only the cooked bytes, without source compilation.
+    std::span<const uint8_t> selected;
+    if (!SelectShaderArtifact(artifact,
+        Renderer::GetAPI() == RendererAPI::API::Vulkan ? ShaderArtifactTarget::Vulkan : ShaderArtifactTarget::OpenGL,
+        selected, error)) throw std::runtime_error(error);
+    auto shader = Shader::CreateFromArtifact("RHI.Artifact", selected, &error);
     Require(shader != nullptr, error.c_str());
     float vertices[] = {-0.5f,-0.5f,0, 0.5f,-0.5f,0, 0.5f,0.5f,0, -0.5f,0.5f,0};
     uint32_t indices[] = {0,1,2,2,3,0};
@@ -448,8 +494,22 @@ void Run() {
     std::cout << "RHI regression passed: " << RHI::RenderDevice::Get().Capabilities().Name << '\n';
 }
 }
-int main() {
+int main(int argc, char** argv) {
     Log::Init();
-    try { std::filesystem::current_path("Editor/TomCatInut"); Run(); return 0; }
+    try {
+        const auto options = ParseBackendOptions(argc, argv);
+        if (options.SimulateLateVulkanUnavailable) {
+            Require(RendererAPI::GetAPI() == RendererAPI::API::Vulkan,
+                "Late Vulkan unavailability test requires a supported Vulkan device");
+            // Selection has already succeeded, but device initialization must
+            // now fail. This exercises window cleanup/recreation without a
+            // production test hook or changing any system driver settings.
+            Require(_putenv_s("TC_VULKAN_DEVICE", "TomCat-RHI-regression-no-such-device-9eaa4f2e") == 0,
+                "Could not simulate late Vulkan device unavailability");
+        }
+        if (options.SelectionOnly) CheckBackend(options);
+        else { std::filesystem::current_path("Editor/TomCatInut"); Run(options); }
+        return 0;
+    }
     catch (const std::exception& e) { std::cerr << "RHI regression failed: " << e.what() << '\n'; return 1; }
 }

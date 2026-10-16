@@ -1,7 +1,8 @@
 param(
     [ValidateSet("Debug", "Release", "Dist")]
     [string]$Configuration = "Release",
-    [switch]$RequirePlayer
+    [switch]$RequirePlayer,
+    [switch]$Graphics
 )
 
 $ErrorActionPreference = "Stop"
@@ -191,7 +192,7 @@ try {
 	$env:DOTNET_ROOT_X64 = $privateDotNetRoot
     if ($playerExecutable) {
         $env:TOMCAT_E2E_PLAYER_EXE = $playerExecutable
-		$env:TOMCAT_E2E_PLAYER_HEADLESS = "1"
+		$env:TOMCAT_E2E_PLAYER_HEADLESS = if ($Graphics) { "0" } else { "1" }
 		$env:TOMCAT_E2E_PLAYER_TEMPLATE = $playerTemplateRoot
         $env:TOMCAT_E2E_REQUIRE_PLAYER = "1"
     }

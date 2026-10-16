@@ -28,7 +28,7 @@
 
 ## 当前主线
 
-产品版本为 **0.6.0**。主线已支持 Vulkan 后端；桌面默认 OpenGL 4.6，可在进程启动前设置 `TC_RENDERER=vulkan` 选择 Vulkan 1.2。CLI 烘焙与 Player 启动必须选择同一后端。浏览器仍使用 WebGL2，主线已包含 .NET browser-wasm C# 宿主、Project 编辑与场景持久化。
+产品版本为 **0.6.0**。桌面默认优先 Vulkan 1.2，不支持时自动回退 OpenGL 4.6。`TC_RENDERER=auto` 与未设置相同；`vulkan` / `opengl` 则强制指定后端。新的桌面烘焙包包含两个后端的预编译 Shader，Player 可独立选择；旧单后端包需匹配原后端或重新烘焙。浏览器仍使用 WebGL2，主线已包含 .NET browser-wasm C# 宿主、Project 编辑与场景持久化。
 
 2026-10-16 的完整 Release 套件（Managed、14 个原生回归、应用构建、模板、Player、CoinRunner、模块发布、Editor 自动化）、Vulkan 同步验证/多窗口/Editor/Player，以及托管 Web 构建和 Edge 浏览器冒烟均通过。硬件范围、日志与未重跑项目见上方集成记录；这些结果不等同新录屏、全部设备验收或性能结论。
 
@@ -52,8 +52,10 @@ TCPAK v6 引入 BootManifest，v7 在索引中增加逐条目 SHA-256 摘要，v
 
 ```powershell
 # Windows：托管、14 个原生程序（含 OpenGL RHI）、应用/发布与自动化回归
-$env:TC_RENDERER = 'opengl'
 powershell -ExecutionPolicy Bypass -File Scripts/Run-Regressions.ps1 -Configuration Release -Log
+
+# 桌面默认选择、不可用设备回退、显式覆盖与窗口初始化
+powershell -ExecutionPolicy Bypass -File Scripts/Run-BackendSelectionRegression.ps1
 
 # Vulkan：真实 GPU、同步验证和 ImGui 多窗口；需要 Khronos validation layer
 powershell -ExecutionPolicy Bypass -File Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
