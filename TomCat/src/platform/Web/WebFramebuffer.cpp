@@ -86,6 +86,31 @@ int OpenGLFramebuffer::ReadPixel(uint32_t index, int x, int y) {
   glReadBuffer(GL_COLOR_ATTACHMENT0 + index); int value = -1; glReadPixels(x, y, 1, 1, GL_RED_INTEGER, GL_INT, &value);
   glBindFramebuffer(GL_READ_FRAMEBUFFER, old); return value;
 }
+bool OpenGLFramebuffer::ReadColorAttachment(uint32_t index, std::vector<uint8_t>& pixels) {
+  pixels.clear();
+  if (!m_RendererID || index >= m_ColorAttachments.size() || m_Specification.Samples != 1
+      || m_ColorAttachmentSpecifications[index].TextureFormat != FramebufferTextureFormat::RGBA8) return false;
+  pixels.resize(size_t(m_Specification.Width) * m_Specification.Height * 4);
+  GLint previousFramebuffer = 0, previousBuffer = 0, previousPackBuffer = 0;
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousFramebuffer);
+  glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previousPackBuffer);
+  const GLenum packNames[] = {GL_PACK_ALIGNMENT, GL_PACK_ROW_LENGTH, GL_PACK_SKIP_ROWS, GL_PACK_SKIP_PIXELS};
+  GLint packValues[4]{};
+  for (size_t i = 0; i < 4; ++i) {
+    glGetIntegerv(packNames[i], &packValues[i]);
+    glPixelStorei(packNames[i], i == 0 ? 1 : 0);
+  }
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, m_RendererID);
+  glGetIntegerv(GL_READ_BUFFER, &previousBuffer);
+  glReadBuffer(GL_COLOR_ATTACHMENT0 + index);
+  glReadPixels(0, 0, m_Specification.Width, m_Specification.Height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+  glReadBuffer(previousBuffer);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, previousFramebuffer);
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, previousPackBuffer);
+  for (size_t i = 0; i < 4; ++i) glPixelStorei(packNames[i], packValues[i]);
+  return true;
+}
 void OpenGLFramebuffer::ClearAttachment(uint32_t index, int value) {
   if (index >= m_ColorAttachments.size()) throw std::out_of_range("Framebuffer attachment");
   GLint old; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &old); glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_RendererID);

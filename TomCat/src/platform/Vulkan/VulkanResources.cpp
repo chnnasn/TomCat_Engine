@@ -65,7 +65,7 @@ void VulkanTexture2D::Load(const void* encoded, size_t size) {
         for (uint32_t i = 0; i < artifact.Mips.size(); ++i) {
             const auto& mip = artifact.Mips[i];
             std::vector<uint8_t> decoded;
-            if (artifact.Format == TextureArtifactFormat::BC3) {
+            if (artifact.Format != TextureArtifactFormat::RGBA8) {
                 if (!DecompressTextureMip(mip, artifact.Format, decoded, error)) throw std::runtime_error(error);
                 Upload(i, decoded.data(), decoded.size());
             } else Upload(i, mip.Bytes.data(), mip.Bytes.size());
@@ -256,6 +256,24 @@ int VulkanFramebuffer::ReadPixel(uint32_t attachment, int x, int y) {
     vkCmdCopyImageToBuffer(m_Device->Commands(), image->Image, VK_IMAGE_LAYOUT_GENERAL, staging->Buffer, 1, &copy);
     m_Device->SubmitAndWait();
     int value = -1; std::memcpy(&value, staging->Mapped, sizeof(value)); return value;
+}
+bool VulkanFramebuffer::ReadColorAttachment(uint32_t attachment, std::vector<uint8_t>& pixels) {
+    pixels.clear();
+    if (attachment >= m_Colors.size() || m_Spec.Samples != 1
+        || m_Colors[attachment]->Format != VK_FORMAT_R8G8B8A8_UNORM) return false;
+    const auto image = m_Colors[attachment];
+    const size_t bytes = size_t(m_Spec.Width) * m_Spec.Height * 4;
+    auto staging = m_Device->Buffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    m_Device->Barrier();
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {m_Spec.Width, m_Spec.Height, 1};
+    vkCmdCopyImageToBuffer(m_Device->Commands(), image->Image, VK_IMAGE_LAYOUT_GENERAL, staging->Buffer, 1, &copy);
+    m_Device->Keep(image); m_Device->Keep(staging);
+    m_Device->SubmitAndWait();
+    pixels.resize(bytes);
+    std::memcpy(pixels.data(), staging->Mapped, bytes);
+    return true;
 }
 uint32_t VulkanFramebuffer::GetColorAttachmentRendererID(uint32_t) const { throw std::logic_error("Use GetColorAttachmentUITextureID for Vulkan"); }
 uintptr_t VulkanFramebuffer::GetColorAttachmentUITextureID(uint32_t index) const {

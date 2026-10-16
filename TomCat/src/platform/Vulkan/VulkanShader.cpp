@@ -149,11 +149,11 @@ VkFormat VertexFormat(ShaderDataType type) {
     }
 }
 }
-VkPipeline VulkanShader::Pipeline(const VertexArray& array, VulkanFramebuffer& target, bool indexed) const {
+VkPipeline VulkanShader::Pipeline(const VertexArray& array, VulkanFramebuffer& target, bool indexed, bool colorGrade) const {
     std::vector<VkVertexInputBindingDescription> bindings;
     std::vector<VkVertexInputAttributeDescription> attributes;
     std::ostringstream key;
-    key << indexed << ':' << m_Device->DepthTest << ':';
+    key << indexed << ':' << m_Device->DepthTest << ':' << colorGrade << ':';
     uint32_t location = 0;
     for (uint32_t i = 0; i < array.GetVertexBuffers().size(); ++i) {
         const auto& layout = array.GetVertexBuffers()[i]->GetLayout();
@@ -181,11 +181,12 @@ VkPipeline VulkanShader::Pipeline(const VertexArray& array, VulkanFramebuffer& t
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    depth.depthTestEnable = depth.depthWriteEnable = m_Device->DepthTest && target.Depth(); depth.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth.depthTestEnable = depth.depthWriteEnable = !colorGrade && m_Device->DepthTest && target.Depth(); depth.depthCompareOp = VK_COMPARE_OP_LESS;
     std::vector<VkPipelineColorBlendAttachmentState> blends;
     for (auto& color : target.Colors()) {
         VkPipelineColorBlendAttachmentState blend{};
-        blend.colorWriteMask = 0xf; blend.blendEnable = color->Format != VK_FORMAT_R32_SINT;
+        blend.colorWriteMask = colorGrade && !blends.empty() ? 0 : 0xf;
+        blend.blendEnable = !colorGrade && color->Format != VK_FORMAT_R32_SINT;
         blend.srcColorBlendFactor = blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
         blend.dstColorBlendFactor = blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
         blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_ADD;
@@ -205,11 +206,11 @@ VkPipeline VulkanShader::Pipeline(const VertexArray& array, VulkanFramebuffer& t
     VulkanCheck(vkCreateGraphicsPipelines(m_Device->Device, VK_NULL_HANDLE, 1, &create, nullptr, &pipeline), "Create graphics pipeline");
     m_Pipelines.emplace(key.str(), pipeline); return pipeline;
 }
-void VulkanShader::Draw(const Ref<VertexArray>& array, uint32_t count, bool indexed) const {
+void VulkanShader::Draw(const Ref<VertexArray>& array, uint32_t count, bool indexed, bool colorGrade) const {
     auto* target = m_Device->Target ? m_Device->Target : m_Device->DefaultTarget;
     if (!array || !target || !count) return;
     m_Device->PrepareDraw();
-    auto pipeline = Pipeline(*array, *target, indexed);
+    auto pipeline = Pipeline(*array, *target, indexed, colorGrade);
     std::vector<VkBuffer> buffers;
     std::vector<VkDeviceSize> offsets;
     for (auto& vertex : array->GetVertexBuffers()) {

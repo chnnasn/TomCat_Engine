@@ -21,7 +21,7 @@ public:
     void SetFloat4(const std::string& name, const glm::vec4& value) override;
     void SetMat4(const std::string& name, const glm::mat4& value) override;
     const std::string& GetName() const override { return m_Name; }
-    void Draw(const Ref<VertexArray>& array, uint32_t count, bool indexed) const;
+    void Draw(const Ref<VertexArray>& array, uint32_t count, bool indexed, bool colorGrade = false) const;
 private:
     struct Binding {
         uint32_t Set = 0, Slot = 0, Count = 1, Size = 0;
@@ -35,7 +35,7 @@ private:
     void Load(std::span<const uint8_t> artifact);
     void Destroy();
     void SetUniform(const std::string& name, const void* value, size_t size);
-    VkPipeline Pipeline(const VertexArray& array, VulkanFramebuffer& target, bool indexed) const;
+    VkPipeline Pipeline(const VertexArray& array, VulkanFramebuffer& target, bool indexed, bool colorGrade) const;
     std::shared_ptr<VulkanDevice> m_Device;
     std::string m_Name;
     std::vector<VkShaderModule> m_Modules;
