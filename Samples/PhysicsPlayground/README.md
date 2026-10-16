@@ -1,6 +1,6 @@
 # PhysicsPlayground
 
-中文文档 · 核对日期：2026-09-20 · [文档索引](../../docs/README.md)
+中文文档 · 核对日期：2026-10-16 · [文档索引](../../docs/README.md)
 
 一个用于体验 TomCat 2D 物理系统的最小示例：倾斜矩形在重力作用下落到静态地板上，
 展示 Sprite、Transform、动态刚体与碰撞体之间的配合。
@@ -14,6 +14,17 @@
 4. 点击 **Play**：矩形下落并落在地板上。使用 **Pause / Step** 检查运行状态，
    再点击同一个 **Stop** 按钮返回编辑场景。
 
+桌面默认使用 OpenGL；`dev_vulkan` 已合入主线，可从仓库根目录设置后端并启动：
+
+```powershell
+$env:TC_RENDERER = 'vulkan'
+& ./Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe
+```
+
+Vulkan 需要 Vulkan 1.2 驱动，后端在进程启动时确定；切回时设置
+`$env:TC_RENDERER = 'opengl'` 并重启。导出的 Player 必须与烘焙时使用同一后端，
+切换后端后需重新烘焙。启动、验证层与 GPU 回归命令见 [RHI 与 Vulkan 指南](../../docs/RHI_VULKAN.zh-CN.md#启动与构建)。
+
 | 实体 | 编辑状态配置 |
 | --- | --- |
 | MainCamera | 正交相机，天蓝色背景 |
@@ -24,7 +35,7 @@
 入口场景 Handle 为 `12007672766582721512`，由 `ProjectSettings/BuildSettings.json` 保存；
 资源及 `.tcmeta` 应一起保留，避免引用身份变化。
 
-## 当前桌面录屏与检查点
+## 桌面录屏与检查点
 
 ![2026-09-20 实际物理播放控制](../../docs/portfolio/2026-09-20/05-play-controls.gif)
 
@@ -48,7 +59,21 @@ Web CMake 目标将本目录预加载到 `/Samples/PhysicsPlayground`。
 `tc_web_player_cook_sample()` 在 MEMFS 生成 `/PhysicsPlayground.tcpak`，
 用 `FS.readFile` 读取，再传给 `tc_web_player_boot`。
 该流程使用真实 Cook、TCPAK 读取、Renderer2D 与 Box2D；浏览器宿主仍需提供画布、帧循环与隔离响应头。
+浏览器继续使用 WebGL 2，不使用桌面 Vulkan 后端。
 
-编辑器协议回归入口为 `node Web/tests/editor-rpc.cjs build/web`，需先生成 Web 编辑器模块。
-此命令不检验画面；浏览器中应另行观察下落、接地、停止和重新启动。
+`Build-WebManaged.ps1` 会配置 `build/web-managed-native`，但不会构建独立的
+`tomcat_editor`。使用与托管构建相同的 Emscripten 环境；若依赖脚本自动发现 SDK，
+先在当前 PowerShell 会话直接调用 `./Scripts/Build-WebManaged.ps1`，保留其设置的环境变量，
+再从仓库根目录构建编辑器模块并运行协议回归：
+
+```powershell
+cmake --build build/web-managed-native --target tomcat_editor --parallel
+node Web/tests/editor-rpc.cjs build/web-managed-native
+```
+
+协议回归不检验画面；浏览器中应另行观察下落、接地、停止和重新启动。
 此示例没有覆盖 C#、音频、第三方 Shader 或全部输入设备。
+
+2026-10-16 主线合并后的完整 Web 构建与 Edge 浏览器生命周期、预览控制、
+多纹理打包 Player 冒烟均通过；验证范围与未重跑项见 [主线集成记录](../../docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)。
+上方 2026-09-20 录屏保留其原始日期与范围。
