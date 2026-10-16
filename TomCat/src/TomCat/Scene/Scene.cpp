@@ -14,6 +14,7 @@
 #include "TomCat/Runtime/RuntimeUI.h"
 #include "TomCat/Math/Math.h"
 #include "Entity.h"
+#include "EntityNameIndex.h"
 #include "Serialization/ComponentCodecs.h"
 
 #include <algorithm>
@@ -1241,6 +1242,8 @@ namespace TomCat {
 		enttMap.reserve(other->m_EntityOrder.size());
 		newScene->m_EntityMap.reserve(other->m_EntityOrder.size());
 		newScene->m_EntityOrder.reserve(other->m_EntityOrder.size());
+		EntityNameIndex copiedNames;
+		copiedNames.Reserve(other->m_EntityOrder.size());
 
 		// Create entities in their original creation order so the hierarchy keeps
 		// newly created items at the bottom after a scene copy.
@@ -1249,11 +1252,11 @@ namespace TomCat {
 			Entity sourceEntity = other->FindEntityByUUID(uuid);
 			if (!sourceEntity)
 				continue;
-			// The source identities are already validated and the codec below
-			// preserves their exact Tags. Re-running unique-name scans here made
-			// every validation Scene copy quadratic in the number of entities.
-			Entity newEntity = newScene->CreateEntityIdentity(uuid,
-				sourceEntity.GetName());
+			// Resolve names with the same rules as authoring creation, including
+			// raw duplicate/empty Tags, without rescanning all earlier identities.
+			const std::string name = copiedNames.MakeUnique(sourceEntity.GetName());
+			copiedNames.Add(name);
+			Entity newEntity = newScene->CreateEntityIdentity(uuid, name);
 			enttMap[uuid] = (entt::entity)newEntity;
 		}
 
@@ -1366,12 +1369,13 @@ namespace TomCat {
 		if (!nameExists(baseName))
 			return baseName;
 
-		for (uint32_t suffix = 1; ; ++suffix)
-		{
-			std::string candidate = baseName + " (" + std::to_string(suffix) + ")";
-			if (!nameExists(candidate))
-				return candidate;
-		}
+		// Keep the common unique-name path allocation-free. On a collision,
+		// collect names once instead of scanning the entire registry per suffix.
+		// Rebuilding here observes even direct native Tag writes and deserialization.
+		EntityNameIndex names;
+		for (auto entityID : m_Registry.view<Tag>())
+			names.Add(m_Registry.get<Tag>(entityID)._Tag);
+		return names.MakeUnique(baseName);
 	}
 
 	bool Scene::SetWorldTransform(Entity entity, const glm::mat4& worldTransform)
@@ -1462,8 +1466,11 @@ namespace TomCat {
 		if (!entity || entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle))
 			return;
 
-		const auto entityMapIt = std::find_if(m_EntityMap.begin(), m_EntityMap.end(),
-			[handle = entity.m_EntityHandle](const auto& entry) { return entry.second == handle; });
+		auto entityMapIt = entity.HasComponent<ID>()
+			? m_EntityMap.find(entity.GetUUID()) : m_EntityMap.end();
+		if (entityMapIt == m_EntityMap.end() || entityMapIt->second != entity.m_EntityHandle)
+			entityMapIt = std::find_if(m_EntityMap.begin(), m_EntityMap.end(),
+				[handle = entity.m_EntityHandle](const auto& entry) { return entry.second == handle; });
 		if (entityMapIt == m_EntityMap.end())
 		{
 			TC_Core_Error("Cannot destroy an entity that is missing from the scene UUID index");

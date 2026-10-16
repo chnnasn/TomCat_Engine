@@ -3,6 +3,7 @@
 
 #include "IScriptRuntime.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Scene/EntityNameIndex.h"
 
 #include <array>
 #include <cstddef>
@@ -83,6 +84,7 @@ namespace TomCat {
 				uint64_t IncrementalUpdates = 0;
 				uint64_t ReplayedCommands = 0;
 				uint64_t CommitValidationCopies = 0;
+				uint64_t NameLookupProbes = 0;
 			};
 			// Cumulative native diagnostics; no managed ABI or wall-clock threshold.
 			ProjectionStatistics GetProjectionStatistics() const;
@@ -281,6 +283,7 @@ namespace TomCat {
 				std::vector<uint64_t> Order;
 				std::unordered_map<uint64_t, ProjectedEntityState> Entities;
 				std::unordered_map<uint64_t, std::vector<uint64_t>> Children;
+				EntityNameIndex Names;
 				// Validation-only Scene produced by replaying the same ordered command
 				// stream used at commit. Registered component queries read this copy so
 				// descriptor Add side effects are visible inside the recording callback.

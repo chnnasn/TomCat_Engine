@@ -1341,9 +1341,13 @@ namespace TomCat::Scripting {
 		snapshot->Revision = revision;
 		snapshot->RuntimeGeneration = context.RuntimeGeneration;
 		snapshot->CommandOffset = commandOffset;
-		snapshot->Order.reserve(scene->m_EntityOrder.size() + commands.size());
-		snapshot->Entities.reserve(scene->m_EntityOrder.size() + commands.size());
-		snapshot->Children.reserve(scene->m_ChildrenMap.size() + commands.size());
+		if (!incremental)
+		{
+			snapshot->Order.reserve(scene->m_EntityOrder.size() + commands.size());
+			snapshot->Entities.reserve(scene->m_EntityOrder.size() + commands.size());
+			snapshot->Children.reserve(scene->m_ChildrenMap.size() + commands.size());
+			snapshot->Names.Reserve(scene->m_EntityOrder.size() + commands.size());
+		}
 
 		auto failProjection = [&](std::string error)
 		{
@@ -1389,6 +1393,7 @@ namespace TomCat::Scripting {
 				state.Handle = { context.SceneSessionId, id,
 					context.RuntimeGeneration };
 				state.Name = entity.GetName();
+				snapshot->Names.Add(state.Name);
 				state.GameplayTag = entity.GetGameplayTag();
 				state.Layer = entity.GetLayer();
 				state.ActiveSelf = entity.GetComponent<Tag>().ActiveSelf;
@@ -1602,6 +1607,7 @@ namespace TomCat::Scripting {
 				if (!entity->second.Alive)
 					continue;
 				entity->second.Alive = false;
+				snapshot->Names.Remove(entity->second.Name);
 				if (const auto children = snapshot->Children.find(id);
 					children != snapshot->Children.end())
 				{
@@ -1621,26 +1627,12 @@ namespace TomCat::Scripting {
 		};
 		auto makeUniqueName = [&](const std::string& requestedName)
 		{
-			const std::string baseName = requestedName.empty()
-				? "Entity" : requestedName;
-			auto nameExists = [&](const std::string& candidate)
-			{
-				return std::any_of(snapshot->Entities.begin(),
-					snapshot->Entities.end(), [&](const auto& item)
-					{
-						return item.second.Alive
-							&& item.second.Name == candidate;
-					});
-			};
-			if (!nameExists(baseName))
-				return baseName;
-			for (uint32_t suffix = 1; ; ++suffix)
-			{
-				std::string candidate = baseName + " ("
-					+ std::to_string(suffix) + ")";
-				if (!nameExists(candidate))
-					return candidate;
-			}
+			const auto before = snapshot->Names.GetProbeCount();
+			std::string name = snapshot->Names.MakeUnique(requestedName);
+			std::lock_guard<std::mutex> lock(m_Mutex);
+			m_ProjectionStatistics.NameLookupProbes +=
+				snapshot->Names.GetProbeCount() - before;
+			return name;
 		};
 
 		using namespace ComponentIds::TransformProperties;
@@ -1681,6 +1673,7 @@ namespace TomCat::Scripting {
 				state.Handle = command.Entity;
 				state.ParentId = parentId;
 				state.Name = makeUniqueName(command.Name);
+				snapshot->Names.Add(state.Name);
 				state.Translation = command.WorldPosition;
 				state.LocalTranslation = command.WorldPosition;
 				snapshot->Order.push_back(id);
@@ -1767,7 +1760,12 @@ namespace TomCat::Scripting {
 				&& command.Kind == DeferredCommandKind::SetEntityName)
 			{
 				if (state.Name != command.Name)
-					state.Name = makeUniqueName(command.Name);
+				{
+					std::string name = makeUniqueName(command.Name);
+					snapshot->Names.Remove(state.Name);
+					snapshot->Names.Add(name);
+					state.Name = std::move(name);
+				}
 			}
 			else if (state.Alive
 				&& command.Kind == DeferredCommandKind::SetGameplayTag)
