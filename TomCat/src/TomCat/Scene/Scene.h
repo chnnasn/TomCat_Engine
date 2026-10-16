@@ -271,6 +271,9 @@ namespace TomCat {
 		void RenderRuntimeScene();
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
+		// Internal bulk-copy path: caller has validated UUID uniqueness and owns
+		// the exact name. Public authoring creation still resolves unique names.
+		Entity CreateEntityIdentity(UUID uuid, const std::string& name);
 	private:
 		entt::registry m_Registry;
 		std::string m_SceneName = "Untitled";

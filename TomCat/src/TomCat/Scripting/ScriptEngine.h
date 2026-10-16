@@ -3,6 +3,7 @@
 
 #include "IScriptRuntime.h"
 #include "TomCat/Core/UUID.h"
+#include "TomCat/Scene/EntityNameIndex.h"
 
 #include <array>
 #include <cstddef>
@@ -77,6 +78,19 @@ namespace TomCat {
 			bool BeginDeferredCallbackTransaction(const EntityHandleV1& context,
 				uint64_t& token);
 			bool CompleteDeferredCallbackTransaction(uint64_t token);
+			struct ProjectionStatistics
+			{
+				uint64_t SceneCopies = 0;
+				uint64_t IncrementalUpdates = 0;
+				uint64_t ReplayedCommands = 0;
+				uint64_t CommitValidationCopies = 0;
+				uint64_t NameLookupProbes = 0;
+			};
+			// Cumulative native diagnostics; no managed ABI or wall-clock threshold.
+			ProjectionStatistics GetProjectionStatistics() const;
+			// Immediate script capabilities that change authoring state must discard
+			// deferred read snapshots before subsequent queries or suffix replay.
+			void NotifyImmediateMutation();
 			bool QueueCreateEntity(const EntityHandleV1& context, std::string name,
 				NativeVector3 worldPosition, const EntityHandleV1& parent,
 				EntityHandleV1& reservedEntity);
@@ -262,10 +276,14 @@ namespace TomCat {
 				uint64_t Revision = 0;
 				uint64_t RuntimeGeneration = 0;
 				bool Valid = true;
+				// Prefix of the append-only deferred queue already projected. Removing
+				// commands or changing live state always discards the entire cache.
+				size_t CommandOffset = 0;
 				std::string Error;
 				std::vector<uint64_t> Order;
 				std::unordered_map<uint64_t, ProjectedEntityState> Entities;
 				std::unordered_map<uint64_t, std::vector<uint64_t>> Children;
+				EntityNameIndex Names;
 				// Validation-only Scene produced by replaying the same ordered command
 				// stream used at commit. Registered component queries read this copy so
 				// descriptor Add side effects are visible inside the recording callback.
@@ -342,7 +360,8 @@ namespace TomCat {
 			bool m_DrainingDeferredCallbackTransactions = false;
 			mutable uint64_t m_ProjectionRevision = 1;
 			mutable std::unordered_map<uint64_t,
-				std::shared_ptr<const ProjectionSnapshot>> m_ProjectionSnapshots;
+				std::shared_ptr<ProjectionSnapshot>> m_ProjectionSnapshots;
+			mutable ProjectionStatistics m_ProjectionStatistics;
 			uint64_t m_NextSceneSessionId = 1;
 			std::thread::id m_MainThread;
 			std::array<bool, 512> m_CurrentKeys{};

@@ -27,5 +27,8 @@ namespace TomCat{
         Ref<UniformBuffer> m_GradeUniform;
         uint32_t m_GradeTexture = 0, m_GradeFramebuffer = 0, m_GradeVAO = 0;
         int m_GradeWidth = 0, m_GradeHeight = 0;
+        bool m_GradeFramebufferComplete = false;
+        // Renderer instances belong to one initialized context, never a global GL cache.
+        int m_MaxDrawBuffers = 1;
 	};
 }

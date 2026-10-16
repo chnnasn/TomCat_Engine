@@ -1580,7 +1580,11 @@ namespace TomCat::Scripting {
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
 				Entity entity = Resolve(handle);
 				if (!entity) return Code(ScriptStatus::NotFound);
-				if (!entity.HasComponent<AudioSource>()) entity.AddComponent<AudioSource>();
+				if (!entity.HasComponent<AudioSource>())
+				{
+					entity.AddComponent<AudioSource>();
+					ScriptEngine::Get().NotifyImmediateMutation();
+				}
 				return Code(ScriptStatus::Success);
 			});
 		}
@@ -1594,6 +1598,7 @@ namespace TomCat::Scripting {
 				if (!ResolveAudioSource(handle, &entity)) return Code(ScriptStatus::NotFound);
 				AudioSceneRuntime::DestroySource(entity);
 				entity.RemoveComponent<AudioSource>();
+				ScriptEngine::Get().NotifyImmediateMutation();
 				return Code(ScriptStatus::Success);
 			});
 		}
@@ -1624,6 +1629,7 @@ namespace TomCat::Scripting {
 				{
 					AudioSceneRuntime::DestroySource(entity);
 					source->Clip = AssetHandle(value);
+					ScriptEngine::Get().NotifyImmediateMutation();
 				}
 				return Code(ScriptStatus::Success);
 			});
@@ -1632,27 +1638,27 @@ namespace TomCat::Scripting {
 		int32_t AudioGetEnabledCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); return s ? (s->Enabled?1:0) : Code(ScriptStatus::NotFound); }); }
 		int32_t AudioSetEnabledCallback(EntityHandleV1 handle, int32_t value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); s->Enabled=value!=0; if(!s->Enabled)AudioSceneRuntime::DestroySource(e); return 0; }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); s->Enabled=value!=0; ScriptEngine::Get().NotifyImmediateMutation(); if(!s->Enabled)AudioSceneRuntime::DestroySource(e); return 0; }); }
 		int32_t AudioGetPlayOnStartCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); return s ? (s->PlayOnStart?1:0) : Code(ScriptStatus::NotFound); }); }
 		int32_t AudioSetPlayOnStartCallback(EntityHandleV1 handle, int32_t value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); s->PlayOnStart=value!=0; return 0; }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); s->PlayOnStart=value!=0; ScriptEngine::Get().NotifyImmediateMutation(); return 0; }); }
 		int32_t AudioGetLoopCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); return s ? (s->Loop?1:0) : Code(ScriptStatus::NotFound); }); }
 		int32_t AudioSetLoopCallback(EntityHandleV1 handle, int32_t value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); s->Loop=value!=0; return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); s->Loop=value!=0; ScriptEngine::Get().NotifyImmediateMutation(); return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
 		int32_t AudioGetVolumeCallback(EntityHandleV1 handle, float* value) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->Volume; return 0; }); }
 		int32_t AudioSetVolumeCallback(EntityHandleV1 handle, float value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<0.0f||value>4.0f)return Code(ScriptStatus::InvalidArgument); s->Volume=value; return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<0.0f||value>4.0f)return Code(ScriptStatus::InvalidArgument); s->Volume=value; ScriptEngine::Get().NotifyImmediateMutation(); return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
 		int32_t AudioGetPitchCallback(EntityHandleV1 handle, float* value) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->Pitch; return 0; }); }
 		int32_t AudioSetPitchCallback(EntityHandleV1 handle, float value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<MinimumAudioPitch||value>MaximumAudioPitch)return Code(ScriptStatus::InvalidArgument); s->Pitch=value; return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<MinimumAudioPitch||value>MaximumAudioPitch)return Code(ScriptStatus::InvalidArgument); s->Pitch=value; ScriptEngine::Get().NotifyImmediateMutation(); return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
 		int32_t AudioGetMixerGroupCallback(EntityHandleV1 handle, int32_t* value) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->MixerGroup; return 0; }); }
 		int32_t AudioSetMixerGroupCallback(EntityHandleV1 handle, int32_t value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(value<0||value>2)return Code(ScriptStatus::InvalidArgument); s->MixerGroup=static_cast<uint8_t>(value); return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(value<0||value>2)return Code(ScriptStatus::InvalidArgument); s->MixerGroup=static_cast<uint8_t>(value); ScriptEngine::Get().NotifyImmediateMutation(); return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
 
 		int32_t AudioPlayCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e=Resolve(handle); return !e?Code(ScriptStatus::NotFound):(AudioSceneRuntime::Play(e)?0:Code(ScriptStatus::InvalidState)); }); }
@@ -1666,17 +1672,17 @@ namespace TomCat::Scripting {
 		int32_t AudioHasListenerCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e=Resolve(handle); return e?(e.HasComponent<AudioListener>()?1:0):Code(ScriptStatus::NotFound); }); }
 		int32_t AudioAddListenerCallback(EntityHandleV1 handle) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e=Resolve(handle); if(!e)return Code(ScriptStatus::NotFound); if(!e.HasComponent<AudioListener>())e.AddComponent<AudioListener>(); return 0; }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e=Resolve(handle); if(!e)return Code(ScriptStatus::NotFound); if(!e.HasComponent<AudioListener>()){e.AddComponent<AudioListener>();ScriptEngine::Get().NotifyImmediateMutation();} return 0; }); }
 		int32_t AudioRemoveListenerCallback(EntityHandleV1 handle) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e=Resolve(handle); if(!e||!e.HasComponent<AudioListener>())return Code(ScriptStatus::NotFound); e.RemoveComponent<AudioListener>(); return 0; }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e=Resolve(handle); if(!e||!e.HasComponent<AudioListener>())return Code(ScriptStatus::NotFound); e.RemoveComponent<AudioListener>(); ScriptEngine::Get().NotifyImmediateMutation(); return 0; }); }
 		int32_t AudioGetListenerEnabledCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioListener* l=ResolveAudioListener(handle); return l?(l->Enabled?1:0):Code(ScriptStatus::NotFound); }); }
 		int32_t AudioSetListenerEnabledCallback(EntityHandleV1 handle, int32_t value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioListener* l=ResolveAudioListener(handle); if(!l)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); l->Enabled=value!=0; return 0; }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioListener* l=ResolveAudioListener(handle); if(!l)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); l->Enabled=value!=0; ScriptEngine::Get().NotifyImmediateMutation(); return 0; }); }
 		int32_t AudioGetListenerPrimaryCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioListener* l=ResolveAudioListener(handle); return l?(l->Primary?1:0):Code(ScriptStatus::NotFound); }); }
 		int32_t AudioSetListenerPrimaryCallback(EntityHandleV1 handle, int32_t value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioListener* l=ResolveAudioListener(handle); if(!l)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); l->Primary=value!=0; return 0; }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioListener* l=ResolveAudioListener(handle); if(!l)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); l->Primary=value!=0; ScriptEngine::Get().NotifyImmediateMutation(); return 0; }); }
 
 		int32_t AudioGetMixerVolumeCallback(int32_t group, float* value) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); if(!value||group<0||group>2)return Code(ScriptStatus::InvalidArgument); *value=AudioEngine::Get().GetMixerVolume(static_cast<AudioMixerGroup>(group)); return 0; }); }
@@ -1735,19 +1741,19 @@ namespace TomCat::Scripting {
 		int32_t AudioGetStreamingCallback(EntityHandleV1 handle) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); return s?(s->Streaming?1:0):Code(ScriptStatus::NotFound); }); }
 		int32_t AudioSetStreamingCallback(EntityHandleV1 handle, int32_t value) noexcept
-		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); const bool next=value!=0; if(s->Streaming!=next){AudioSceneRuntime::DestroySource(e);s->Streaming=next;} return 0; }); }
+		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!IsBool(value))return Code(ScriptStatus::InvalidArgument); const bool next=value!=0; if(s->Streaming!=next){AudioSceneRuntime::DestroySource(e);s->Streaming=next;ScriptEngine::Get().NotifyImmediateMutation();} return 0; }); }
 		int32_t AudioGetSpatialBlendCallback(EntityHandleV1 handle, float* value) noexcept
 		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->SpatialBlend; return 0; }); }
 		int32_t AudioSetSpatialBlendCallback(EntityHandleV1 handle, float value) noexcept
-		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<0.0f||value>1.0f)return Code(ScriptStatus::InvalidArgument); s->SpatialBlend=value; return 0; }); }
+		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<0.0f||value>1.0f)return Code(ScriptStatus::InvalidArgument); s->SpatialBlend=value; ScriptEngine::Get().NotifyImmediateMutation(); return 0; }); }
 		int32_t AudioGetMinDistanceCallback(EntityHandleV1 handle, float* value) noexcept
 		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->MinDistance; return 0; }); }
 		int32_t AudioSetMinDistanceCallback(EntityHandleV1 handle, float value) noexcept
-		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<0.0f||value>=s->MaxDistance)return Code(ScriptStatus::InvalidArgument); s->MinDistance=value; return 0; }); }
+		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<0.0f||value>=s->MaxDistance)return Code(ScriptStatus::InvalidArgument); s->MinDistance=value; ScriptEngine::Get().NotifyImmediateMutation(); return 0; }); }
 		int32_t AudioGetMaxDistanceCallback(EntityHandleV1 handle, float* value) noexcept
 		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->MaxDistance; return 0; }); }
 		int32_t AudioSetMaxDistanceCallback(EntityHandleV1 handle, float value) noexcept
-		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<=s->MinDistance)return Code(ScriptStatus::InvalidArgument); s->MaxDistance=value; return 0; }); }
+		{ return Guard([&]() { if(!RequireMainThread())return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<=s->MinDistance)return Code(ScriptStatus::InvalidArgument); s->MaxDistance=value; ScriptEngine::Get().NotifyImmediateMutation(); return 0; }); }
 
 		NativeAudioSpatialApiV1 BuildAudioSpatialApiV1()
 		{
@@ -2792,8 +2798,12 @@ namespace TomCat::Scripting {
 					return Code(ScriptStatus::InvalidArgument);
 				auto& animator = entity.GetComponent<SpriteAnimator>();
 				auto& renderer = entity.GetComponent<SpriteRenderer>();
-				return SpriteAnimatorRuntime::Play(animator, renderer, clipName,
-					restart != 0) ? 1 : 0;
+				const bool playing = SpriteAnimatorRuntime::Play(animator, renderer,
+					clipName, restart != 0);
+				// Play applies the first sprite immediately, outside the deferred queue.
+				if (playing)
+					ScriptEngine::Get().NotifyImmediateMutation();
+				return playing ? 1 : 0;
 			});
 		}
 
@@ -2806,6 +2816,7 @@ namespace TomCat::Scripting {
 				if (!entity || !entity.HasComponent<SpriteAnimator>())
 					return Code(ScriptStatus::NotFound);
 				SpriteAnimatorRuntime::Stop(entity.GetComponent<SpriteAnimator>());
+				ScriptEngine::Get().NotifyImmediateMutation();
 				return Code(ScriptStatus::Success);
 			});
 		}
@@ -2822,9 +2833,11 @@ namespace TomCat::Scripting {
 					return Code(ScriptStatus::NotFound);
 				if (!ReadUtf8(parameterView, parameter) || parameter.empty())
 					return Code(ScriptStatus::InvalidArgument);
-				return SpriteAnimatorRuntime::SetBool(
-					entity.GetComponent<SpriteAnimator>(), parameter, value != 0)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
+				const bool changed = SpriteAnimatorRuntime::SetBool(
+					entity.GetComponent<SpriteAnimator>(), parameter, value != 0);
+				if (changed)
+					ScriptEngine::Get().NotifyImmediateMutation();
+				return changed ? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
 			});
 		}
 
@@ -2839,9 +2852,11 @@ namespace TomCat::Scripting {
 					return Code(ScriptStatus::NotFound);
 				if (!ReadUtf8(parameterView, parameter) || parameter.empty())
 					return Code(ScriptStatus::InvalidArgument);
-				return SpriteAnimatorRuntime::SetInt(
-					entity.GetComponent<SpriteAnimator>(), parameter, value)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
+				const bool changed = SpriteAnimatorRuntime::SetInt(
+					entity.GetComponent<SpriteAnimator>(), parameter, value);
+				if (changed)
+					ScriptEngine::Get().NotifyImmediateMutation();
+				return changed ? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
 			});
 		}
 
@@ -2856,9 +2871,11 @@ namespace TomCat::Scripting {
 					return Code(ScriptStatus::NotFound);
 				if (!ReadUtf8(parameterView, parameter) || parameter.empty())
 					return Code(ScriptStatus::InvalidArgument);
-				return SpriteAnimatorRuntime::SetFloat(
-					entity.GetComponent<SpriteAnimator>(), parameter, value)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
+				const bool changed = SpriteAnimatorRuntime::SetFloat(
+					entity.GetComponent<SpriteAnimator>(), parameter, value);
+				if (changed)
+					ScriptEngine::Get().NotifyImmediateMutation();
+				return changed ? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
 			});
 		}
 
@@ -2873,9 +2890,11 @@ namespace TomCat::Scripting {
 					return Code(ScriptStatus::NotFound);
 				if (!ReadUtf8(parameterView, parameter) || parameter.empty())
 					return Code(ScriptStatus::InvalidArgument);
-				return SpriteAnimatorRuntime::SetTrigger(
-					entity.GetComponent<SpriteAnimator>(), parameter)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
+				const bool changed = SpriteAnimatorRuntime::SetTrigger(
+					entity.GetComponent<SpriteAnimator>(), parameter);
+				if (changed)
+					ScriptEngine::Get().NotifyImmediateMutation();
+				return changed ? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
 			});
 		}
 
@@ -2890,9 +2909,11 @@ namespace TomCat::Scripting {
 					return Code(ScriptStatus::NotFound);
 				if (!ReadUtf8(parameterView, parameter) || parameter.empty())
 					return Code(ScriptStatus::InvalidArgument);
-				return SpriteAnimatorRuntime::ResetTrigger(
-					entity.GetComponent<SpriteAnimator>(), parameter)
-					? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
+				const bool changed = SpriteAnimatorRuntime::ResetTrigger(
+					entity.GetComponent<SpriteAnimator>(), parameter);
+				if (changed)
+					ScriptEngine::Get().NotifyImmediateMutation();
+				return changed ? Code(ScriptStatus::Success) : Code(ScriptStatus::NotFound);
 			});
 		}
 
