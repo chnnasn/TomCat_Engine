@@ -45,7 +45,7 @@ namespace TomCat {
 		{
 			return std::isfinite(source.Volume) && source.Volume >= 0.0f
 				&& source.Volume <= 4.0f && std::isfinite(source.Pitch)
-				&& source.Pitch >= 0.25f && source.Pitch <= 4.0f
+				&& source.Pitch >= MinimumAudioPitch && source.Pitch <= MaximumAudioPitch
 				&& source.MixerGroup <= static_cast<uint8_t>(AudioMixerGroup::SFX)
 				&& std::isfinite(source.SpatialBlend)
 				&& source.SpatialBlend >= 0.0f && source.SpatialBlend <= 1.0f

@@ -1648,7 +1648,7 @@ namespace TomCat::Scripting {
 		int32_t AudioGetPitchCallback(EntityHandleV1 handle, float* value) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->Pitch; return 0; }); }
 		int32_t AudioSetPitchCallback(EntityHandleV1 handle, float value) noexcept
-		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<0.25f||value>4.0f)return Code(ScriptStatus::InvalidArgument); s->Pitch=value; return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
+		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); Entity e; AudioSource* s=ResolveAudioSource(handle,&e); if(!s)return Code(ScriptStatus::NotFound); if(!std::isfinite(value)||value<MinimumAudioPitch||value>MaximumAudioPitch)return Code(ScriptStatus::InvalidArgument); s->Pitch=value; return s->RuntimeVoice==0||AudioSceneRuntime::ApplySettings(e)?0:Code(ScriptStatus::InvalidState); }); }
 		int32_t AudioGetMixerGroupCallback(EntityHandleV1 handle, int32_t* value) noexcept
 		{ return Guard([&]() { if (!RequireMainThread()) return Code(ScriptStatus::WrongThread); AudioSource* s=ResolveAudioSource(handle); if(!s)return Code(ScriptStatus::NotFound); if(!value)return Code(ScriptStatus::InvalidArgument); *value=s->MixerGroup; return 0; }); }
 		int32_t AudioSetMixerGroupCallback(EntityHandleV1 handle, int32_t value) noexcept

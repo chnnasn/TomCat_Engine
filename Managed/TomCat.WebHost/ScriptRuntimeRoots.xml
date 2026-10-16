@@ -1,0 +1,17 @@
+<linker>
+  <!-- User assemblies are compiled/loaded after publish, so their BCL calls are
+       invisible to ILLink. Preserve the implementations behind the script
+       reference assemblies, including forwarded core types such as MathF,
+       Random, String, List<T>, Dictionary<TKey,TValue>, and Task. Keeping only
+       TomCat/Roslyn rooted leaves valid scripts with MissingMethodException. -->
+  <assembly fullname="System.Private.CoreLib" preserve="all" />
+  <assembly fullname="System.Collections" preserve="all" />
+  <assembly fullname="System.Linq" preserve="all" />
+  <assembly fullname="System.ObjectModel" preserve="all" />
+  <assembly fullname="System.Console" preserve="all" />
+  <assembly fullname="System.Memory" preserve="all" />
+  <assembly fullname="System.Threading" preserve="all" />
+  <assembly fullname="System.Runtime.InteropServices" preserve="all" />
+  <assembly fullname="System.Text.Json" preserve="all" />
+  <assembly fullname="System.ComponentModel.Primitives" preserve="all" />
+</linker>

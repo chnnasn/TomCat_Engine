@@ -16,7 +16,7 @@ namespace TomCat {
 
 		bool ValidPitch(float value)
 		{
-			return std::isfinite(value) && value >= 0.25f && value <= 4.0f;
+			return std::isfinite(value) && value >= MinimumAudioPitch && value <= MaximumAudioPitch;
 		}
 
 		class NullAudioDevice final : public IAudioDevice

@@ -3,6 +3,7 @@
 #include "TomCat/Core/Application.h"
 #include "TomCat/Core/Layer.h"
 #include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Editor/WebEditorSession.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Renderer/EditorCamera.h"
@@ -163,7 +164,9 @@ void tc_web_editor_shutdown() {
   if (editorUI) { response = editorUI->ComposeLayoutSettings(); }
   if (gui) { gui->OnDetach(); gui.reset(); }
   editorUI = nullptr;
-  application.reset(); session.reset(); TomCat::AssetManager::Get().Shutdown();
+  application.reset(); session.reset();
+  TomCat::AudioEngine::Get().Shutdown();
+  TomCat::AssetManager::Get().Shutdown();
 }
 const char* tc_web_editor_state() { EnsureSession(); response = session->Status(); return response.c_str(); }
 unsigned tc_web_editor_take_actions() { return editorUI ? editorUI->TakeActions() : 0; }
