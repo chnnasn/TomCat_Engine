@@ -2646,9 +2646,10 @@ namespace TomCat::Scripting {
 						const bool worldProperty =
 							propertyId <= static_cast<uint32_t>(Scale);
 						return (worldProperty
-							? scene->SetWorldTransform(entity, transform.GetTransform())
+							? scene->SetWorldTransform(entity, transform._Translation,
+								transform._Rotation, transform._Scale)
 							: scene->SetLocalTransform(entity,
-								transform.GetLocalTransform()))
+								transform._LocalTranslation, transform._LocalRotation, transform._LocalScale))
 							? Code(ScriptStatus::Success)
 							: Code(ScriptStatus::InvalidArgument);
 					}
