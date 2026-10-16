@@ -2658,6 +2658,8 @@ namespace {
 
 		const std::filesystem::path scriptPath =
 			project->GetAssetPath() / "CookedPlayerProbe.cs";
+		const std::filesystem::path helperPath =
+			project->GetAssetPath() / "CookedPlayerRules.cs";
 		const std::filesystem::path iconPath =
 			project->GetAssetPath() / "PlayerIcon.tga";
 		const std::string sourceMarker =
@@ -2671,6 +2673,9 @@ namespace {
 		WriteTextFile(scriptPath,
 			"using TomCat; // " + sourceMarker
 			+ "\npublic sealed class CookedPlayerProbe : MonoBehaviour {}\n");
+		WriteTextFile(helperPath,
+			"// " + sourceMarker
+			+ "\npublic static class CookedPlayerRules { public const int Speed = 5; }\n");
 		WriteBinaryFile(iconPath, MakeTestTGA());
 		std::filesystem::create_directories(project->GetAssetPath() / "obj");
 		std::filesystem::create_directories(project->GetAssetPath() / "Library");
@@ -2689,6 +2694,12 @@ namespace {
 			&& static_cast<uint64_t>(scriptMetadata->Handle) != 0,
 			".cs source did not receive a stable CSharpScript AssetHandle");
 		const TomCat::AssetHandle scriptHandle = scriptMetadata->Handle;
+		const TomCat::AssetMetadata* helperMetadata =
+			assets.Registry().GetMetadata(helperPath);
+		Require(helperMetadata && !helperMetadata->IsMissing
+			&& helperMetadata->Type == TomCat::AssetType::CSharpScript,
+			"helper source did not receive a CSharpScript AssetHandle");
+		const TomCat::AssetHandle helperHandle = helperMetadata->Handle;
 		const TomCat::AssetMetadata* iconMetadata =
 			assets.Registry().GetMetadata(iconPath);
 		Require(iconMetadata && !iconMetadata->IsMissing
@@ -2866,11 +2877,44 @@ namespace {
 			"  \"assembly\": \"Build/" + buildID + "/Assembly-CSharp.dll\",\n"
 			"  \"pdb\": \"Build/" + buildID + "/Assembly-CSharp.pdb\"\n"
 			"}\n");
-		WriteTextFile(project->GetLibraryPath() / "ScriptProject" / "ScriptAssets.json",
-			"{\n  \"version\": 1,\n  \"assets\": {\n"
-			"    \"CookedPlayerProbe.cs\": "
-			+ std::to_string(static_cast<uint64_t>(scriptHandle))
-			+ "\n  }\n}\n");
+		const auto scriptMapPath =
+			project->GetLibraryPath() / "ScriptProject" / "ScriptAssets.json";
+		const std::string scriptEntry = "\"CookedPlayerProbe.cs\":"
+			+ std::to_string(static_cast<uint64_t>(scriptHandle));
+		const std::string helperEntry = "\"CookedPlayerRules.cs\":"
+			+ std::to_string(static_cast<uint64_t>(helperHandle));
+		auto writeScriptMap = [&](const std::string& entries)
+		{
+			WriteTextFile(scriptMapPath, "{\"version\":1,\"assets\":{" + entries + "}}");
+		};
+		auto rejectScriptMap = [&](const std::string& entries, const char* reason)
+		{
+			writeScriptMap(entries);
+			Require(!assets.CookToPackage(environment.Root / "Build" / "InvalidScriptMap.tcpak"), reason);
+		};
+		rejectScriptMap(helperEntry,
+			"cook accepted a source map missing its manifest behaviour handle");
+		rejectScriptMap("\"CookedPlayerProbe.cs\":"
+			+ std::to_string(static_cast<uint64_t>(helperHandle)),
+			"cook accepted an unmatched handle under the behaviour source path");
+		rejectScriptMap(scriptEntry + ",\"CookedPlayerRules.cs\":"
+			+ std::to_string(static_cast<uint64_t>(scriptHandle)),
+			"cook accepted duplicate source handles");
+		rejectScriptMap(scriptEntry + "," + scriptEntry,
+			"cook accepted duplicate source paths");
+		rejectScriptMap(scriptEntry + ",\"../CookedPlayerRules.cs\":"
+			+ std::to_string(static_cast<uint64_t>(helperHandle)),
+			"cook accepted a helper source traversal path");
+		rejectScriptMap(scriptEntry + ",\"CookedPlayerRules.cs\":0",
+			"cook accepted a zero helper source handle");
+		writeScriptMap(scriptEntry + "," + helperEntry);
+		ground.GetComponent<TomCat::CSharpScripts>().Scripts.front().ScriptAsset = helperHandle;
+		Require(writer.Serialize(sourceScenePath)
+			&& !assets.CookToPackage(environment.Root / "Build" / "HelperAsBehaviour.tcpak"),
+			"cook accepted a helper source as a mountable behaviour absent from the manifest");
+		ground.GetComponent<TomCat::CSharpScripts>().Scripts.front().ScriptAsset = scriptHandle;
+		Require(writer.Serialize(sourceScenePath),
+			"could not restore the scene behaviour after the helper attachment probe");
 
 		const std::filesystem::path packagePath = environment.Root / "Build" / "Game.tcpak";
 		Require(assets.CookToPackage(packagePath),
@@ -2920,6 +2964,8 @@ namespace {
 		std::vector<uint8_t> forbiddenSourceBytes;
 		Require(!assets.ReadAssetBytes(scriptHandle, forbiddenSourceBytes),
 			"tcpak v7 exposed a C# source asset entry");
+		Require(!assets.ReadAssetBytes(helperHandle, forbiddenSourceBytes),
+			"tcpak exposed a helper C# source asset entry");
 		std::vector<uint8_t> cookedBytes;
 		TomCat::AssetType cookedType = TomCat::AssetType::None;
 		Require(assets.ReadAssetBytes(sceneHandle, cookedBytes, &cookedType)
