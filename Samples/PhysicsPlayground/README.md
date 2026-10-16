@@ -14,7 +14,7 @@
 4. 点击 **Play**：矩形下落并落在地板上。使用 **Pause / Step** 检查运行状态，
    再点击同一个 **Stop** 按钮返回编辑场景。
 
-桌面默认使用 OpenGL；`dev_vulkan` 已合入主线，可从仓库根目录设置后端并启动：
+桌面默认使用 OpenGL；主线也支持 Vulkan，可从仓库根目录设置后端并启动：
 
 ```powershell
 $env:TC_RENDERER = 'vulkan'
