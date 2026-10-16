@@ -297,7 +297,7 @@ namespace TomCat {
 			};
 
 			std::shared_ptr<const ProjectionSnapshot> GetProjectionSnapshot(
-				const EntityHandleV1& context) const;
+				const EntityHandleV1& context, bool requireComponentScene = false) const;
 			void InvalidateProjectionSnapshots() const;
 			bool DrainDeferredCallbackTransactions();
 			bool CommitDeferredCommandBatch(uint64_t sceneSessionId,

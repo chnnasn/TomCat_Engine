@@ -6050,6 +6050,66 @@ namespace {
 			entities, error), error.c_str());
 	}
 
+	void TestMetadataQueriesLazilyCreateComponentProjection()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene, otherScene;
+		auto owner = scene.CreateEntity("Lazy projection owner");
+		owner.AddComponent<TomCat::SpriteRenderer>();
+		auto other = otherScene.CreateEntity("Other lazy Scene");
+		for (size_t index = 0; index < 192; ++index)
+			scene.CreateEntity("Lazy sprite").AddComponent<TomCat::SpriteRenderer>();
+		auto& engine = ScriptEngine::Get();
+		const auto session = engine.StartScene(scene, 0x1a2);
+		const auto otherSession = engine.StartScene(otherScene, 0x1a3);
+		Require(session && otherSession, "lazy projection Scenes did not start");
+		const EntityHandleV1 context{ session, static_cast<uint64_t>(owner.GetUUID()), 0x1a2 };
+		const EntityHandleV1 otherContext{ otherSession, static_cast<uint64_t>(other.GetUUID()), 0x1a3 };
+		const auto before = engine.GetProjectionStatistics();
+		for (size_t frame = 0; frame < 8; ++frame)
+		{
+			// Runtime phases discard snapshots independently of whether a script
+			// records mutations. Empty liveness/active reads must not clone sprites.
+			engine.NotifyImmediateMutation();
+			bool alive = false, active = false, present = false;
+			std::string name;
+			Require(engine.GetProjectedEntityLiveness(context, alive) && alive
+				&& engine.GetProjectedActiveInHierarchy(context, active) && active
+				&& engine.GetProjectedEntityName(context, name) && name == owner.GetName()
+				&& engine.GetProjectedComponentPresence(context, NativeComponentType::SpriteRenderer, present)
+				&& present && engine.FlushDeferredCommands(session),
+				"metadata-only phase lost live identity, activity, name or component presence");
+		}
+		Require(engine.GetProjectionStatistics().SceneCopies == before.SceneCopies,
+			"empty metadata/liveness phases copied authoring components");
+		Require(engine.QueueSetLayer(otherContext, 3), "other-Scene pending mutation failed");
+		bool active = false;
+		Require(engine.GetProjectedActiveInHierarchy(context, active) && active
+			&& engine.GetProjectionStatistics().SceneCopies == before.SceneCopies,
+			"another Scene's pending command forced a component copy");
+		NativePropertyValueV1 color{};
+		bool useDefault = true;
+		Require(engine.TryGetProjectedRegisteredComponentProperty(context,
+			TomCat::ComponentIds::SpriteRenderer, TomCat::ComponentIds::SpriteRendererProperties::Color,
+			color, useDefault) && !useDefault && color.Vector.X == 1.f
+			&& engine.GetProjectionStatistics().SceneCopies - before.SceneCopies == 1,
+			"registered query did not lazily materialize its isolated component Scene");
+		engine.NotifyImmediateMutation();
+		uint32_t layer = 0;
+		Require(engine.QueueSetLayer(context, 5)
+			&& engine.GetProjectedLayer(context, layer) && layer == 5 && owner.GetLayer() == 0
+			&& engine.GetProjectionStatistics().SceneCopies - before.SceneCopies == 2,
+			"first mutation after metadata-only projection lost isolated read-your-writes");
+		Require(engine.MarkDeferredCommandBatchFailed(context, "lazy projection rollback")
+			&& engine.FlushDeferredCommands(session) && owner.GetLayer() == 0
+			&& engine.FlushDeferredCommands(otherSession) && other.GetLayer() == 3,
+			"lazy projection failure changed live state or lost another Scene's commands");
+		engine.StopScene(otherSession);
+		engine.StopScene(session);
+	}
+
 	void TestRegisteredSpriteBurstReusesReplayNames()
 	{
 		using namespace TomCat::Scripting;
@@ -7322,6 +7382,7 @@ namespace {
 }
 
 #include "ImmediateProjectionRegression.h"
+#include "AudioStopRegression.h"
 
 int main(int argc, char** argv)
 {
@@ -7428,6 +7489,10 @@ int main(int argc, char** argv)
 		TestReplayNamesObserveProvidersAndPreserveCallbackCommands);
 	run("registered sprite burst reuses replay names",
 		TestRegisteredSpriteBurstReusesReplayNames);
+	run("metadata queries lazily create component projections",
+		TestMetadataQueriesLazilyCreateComponentProjection);
+	run("audio stop traverses sources and preserves teardown callbacks",
+		TestAudioStopTraversesSources);
 	run("immediate mutation invalidates incremental projection",
 		TestImmediateMutationInvalidatesProjection);
 	run("deferred disable precedes subtree attachment destruction",

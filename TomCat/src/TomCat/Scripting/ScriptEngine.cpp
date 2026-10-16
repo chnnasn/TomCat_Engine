@@ -1284,7 +1284,8 @@ namespace TomCat::Scripting {
 
 
 	std::shared_ptr<const ScriptEngine::ProjectionSnapshot>
-		ScriptEngine::GetProjectionSnapshot(const EntityHandleV1& context) const
+		ScriptEngine::GetProjectionSnapshot(const EntityHandleV1& context,
+			bool requireComponentScene) const
 	{
 		if (context.SceneSessionId == 0 || context.EntityId == 0
 			|| context.RuntimeGeneration == 0 || !IsMainThread())
@@ -1305,13 +1306,14 @@ namespace TomCat::Scripting {
 			if (cached != m_ProjectionSnapshots.end() && cached->second
 				&& cached->second->RuntimeGeneration == context.RuntimeGeneration)
 			{
-				if (cached->second->Revision == m_ProjectionRevision)
+				if (cached->second->Revision == m_ProjectionRevision
+					&& (!cached->second->Valid || !requireComponentScene
+						|| cached->second->ProjectedScene))
 					return cached->second;
 				// Never mutate a snapshot retained by a nested query/descriptor.
 				// Taking exclusive ownership also keeps partially applied deltas
 				// out of the cache if descriptor validation reenters ScriptEngine.
 				if (cached->second.use_count() == 1 && cached->second->Valid
-					&& cached->second->ProjectedScene
 					&& cached->second->CommandOffset <= m_DeferredCommands.size())
 				{
 					snapshot = std::move(cached->second);
@@ -1807,13 +1809,18 @@ namespace TomCat::Scripting {
 			}
 		}
 
-		if (snapshot->Valid)
+		// Metadata-only queries with no pending mutation do not execute providers.
+		// Defer the isolated component copy until a command needs validation or a
+		// registered query actually needs authoring components. Existing projected
+		// Scenes still receive every suffix; commit keeps its independent copy.
+		if (snapshot->Valid && (requireComponentScene
+			|| snapshot->ProjectedScene || !commands.empty()))
 		{
 			try
 			{
 				ComponentMutationPhaseScope validationPhase(
 					ComponentMutationPhase::Validation);
-				if (!incremental)
+				if (!snapshot->ProjectedScene)
 				{
 					std::shared_ptr<Scene> nonOwning(scene, [](Scene*) {});
 					snapshot->ProjectedScene = Scene::Copy(nonOwning);
@@ -2384,7 +2391,7 @@ namespace TomCat::Scripting {
 			: ComponentRegistry::Get().Find(UUID(componentTypeId));
 		if (!descriptor || !descriptor->ScriptAccessible)
 			return false;
-		const auto snapshot = GetProjectionSnapshot(entity);
+		const auto snapshot = GetProjectionSnapshot(entity, true);
 		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
 			return false;
 		const auto state = snapshot->Entities.find(entity.EntityId);
@@ -2422,7 +2429,7 @@ namespace TomCat::Scripting {
 		if (property == descriptor->Properties.end() || !property->Get
 			|| property->Kind == PropertyKind::String)
 			return false;
-		const auto snapshot = GetProjectionSnapshot(entity);
+		const auto snapshot = GetProjectionSnapshot(entity, true);
 		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
 			return false;
 		const auto state = snapshot->Entities.find(entity.EntityId);
@@ -2456,7 +2463,7 @@ namespace TomCat::Scripting {
 		if (property == descriptor->Properties.end() || !property->Get
 			|| property->Kind != PropertyKind::String)
 			return false;
-		const auto snapshot = GetProjectionSnapshot(entity);
+		const auto snapshot = GetProjectionSnapshot(entity, true);
 		if (!snapshot || !snapshot->Valid || !snapshot->ProjectedScene)
 			return false;
 		const auto state = snapshot->Entities.find(entity.EntityId);
