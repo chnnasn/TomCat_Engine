@@ -93,4 +93,32 @@ namespace TomCat::Math {
 		return true;
 	}
 
+	bool DecomposeTransformWithScaleSigns(const glm::mat4& transform, const glm::vec3& scaleSigns,
+		glm::vec3& translation, glm::vec3& rotation, glm::vec3& scale)
+	{
+		glm::vec3 newTranslation{}, newRotation{}, newScale{};
+		if (!DecomposeTransform(transform, newTranslation, newRotation, newScale))
+			return false;
+		glm::vec3 flips(1.0f);
+		for (glm::length_t axis = 0; axis < 3; ++axis)
+		{
+			if (!std::isfinite(scaleSigns[axis]) || scaleSigns[axis] == 0.0f)
+				return false;
+			flips[axis] = std::signbit(scaleSigns[axis]) == std::signbit(newScale[axis])
+				? 1.0f : -1.0f;
+		}
+		// An equivalent proper rotation can move two scale signs, never one.
+		if (flips.x * flips.y * flips.z < 0.0f)
+			return false;
+		glm::mat3 basis = glm::mat3_cast(glm::quat(newRotation));
+		for (glm::length_t axis = 0; axis < 3; ++axis)
+			basis[axis] *= flips[axis];
+		newRotation = glm::eulerAngles(glm::normalize(glm::quat_cast(basis)));
+		newScale *= flips;
+		translation = newTranslation;
+		rotation = newRotation;
+		scale = newScale;
+		return true;
+	}
+
 }

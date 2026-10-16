@@ -138,6 +138,11 @@ namespace TomCat {
 		bool MoveEntity(Entity entity, Entity target, EntityPlacement placement);
 		bool SetWorldTransform(Entity entity, const glm::mat4& worldTransform);
 		bool SetLocalTransform(Entity entity, const glm::mat4& localTransform);
+		// Component setters preserve the supplied TRS representation, including scale signs.
+		bool SetWorldTransform(Entity entity, const glm::vec3& translation,
+			const glm::vec3& rotation, const glm::vec3& scale);
+		bool SetLocalTransform(Entity entity, const glm::vec3& translation,
+			const glm::vec3& rotation, const glm::vec3& scale);
 		bool SyncTransformHierarchy();
 		Entity GetParent(Entity entity);
 		std::vector<UUID> GetChildrenUUIDs(Entity entity);

@@ -997,6 +997,160 @@ namespace {
 		scene.OnRuntimeStop();
 	}
 
+	void TestManagedSignedTransformComponents()
+	{
+		using namespace TomCat::Scripting;
+		auto runtime = std::make_shared<ManagedRuntimeProbe>();
+		ScriptRuntimeOverride runtimeOverride(runtime);
+		TomCat::Scene scene;
+		auto root = scene.CreateEntity("Signed root");
+		auto parent = scene.CreateEntity("Signed parent");
+		auto child = scene.CreateEntity("Signed child");
+		Require(scene.SetWorldTransform(parent, { 10, 3, 0 }, { 0, 0, 0.3f }, { -2, 2, 2 })
+			&& scene.SetParent(child, parent), "could not create signed hierarchy");
+		AttachManagedProbe(root, 8111);
+		Require(scene.OnRuntimeStart(), "signed transform fixture did not start");
+		const auto native = BuildNativeApiV1();
+		const auto envelope = BuildNativeApiV2();
+		NativeGameplayApiV1 gameplay{};
+		const std::string capability(GameplayCapabilityName);
+		uint32_t required = 0;
+		Require(envelope.QueryCapability({ reinterpret_cast<const uint8_t*>(capability.data()),
+			capability.size() }, 1, &gameplay, sizeof(gameplay), &required) == 0,
+			"signed transform gameplay API missing");
+		auto handle = [&](TomCat::Entity entity) {
+			return EntityHandleV1{ runtime->LastSceneSession,
+				static_cast<uint64_t>(entity.GetUUID()), runtime->LastRuntimeGeneration };
+		};
+		auto read = [&](auto getter, TomCat::Entity entity) {
+			NativeVector3 value{};
+			Require(getter(handle(entity), &value) == 0, "signed transform projected getter failed");
+			return glm::vec3(value.X, value.Y, value.Z);
+		};
+		auto flush = [&]() {
+			Require(ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession),
+				"signed transform batch failed");
+		};
+
+		// The Return reproduction: left, position update, right. Exercise every
+		// signed axis combination as well as repeated same-callback reads/flushes.
+		const std::array<glm::vec3, 10> scales{{ {-1,1,1}, {1,1,1}, {1,-1,1},
+			{1,1,-1}, {-1,-1,1}, {-1,1,-1}, {1,-1,-1}, {-1,-1,-1}, {-1,1,1}, {1,1,1} }};
+		for (const auto& scale : scales)
+		{
+			Require(native.TransformSetScale(handle(root), {scale.x,scale.y,scale.z}) == 0,
+				"signed world scale setter failed");
+			Require(Near(read(native.TransformGetScale, root), scale)
+				&& Near(read(native.TransformGetRotationEuler, root), glm::vec3(0)),
+				"projected signed scale injected a rotation or changed scale axes");
+			Require(native.TransformSetPosition(handle(root), {4,5,0}) == 0,
+				"position after signed scale failed");
+			Require(Near(read(native.TransformGetScale, root), scale),
+				"position write canonicalized the projected signed scale");
+			flush();
+			Require(scene.SyncTransformHierarchy(), "signed root hierarchy sync failed");
+			const auto& transform = root.GetComponent<TomCat::Transform>();
+			Require(Near(transform._Scale, scale) && Near(transform._LocalScale, scale)
+				&& Near(transform._Rotation, glm::vec3(0))
+				&& Near(transform.GetTransform(), TomCat::Math::ComposeTransform({4,5,0},{0,0,0},scale)),
+				"committed signed root changed representation or matrix after hierarchy sync");
+		}
+
+		for (const float sign : { -1.0f, 1.0f, -1.0f, 1.0f })
+		{
+			Require(gameplay.TransformSetLocalScale(handle(child), {sign,1,1}) == 0
+				&& gameplay.TransformSetLocalRotationEuler(handle(child), {0,0,0.2f}) == 0
+				&& gameplay.TransformSetLocalPosition(handle(child), {2,1,0}) == 0,
+				"signed local setters failed");
+			Require(Near(read(gameplay.TransformGetLocalScale, child), {sign,1,1})
+				&& Near(read(gameplay.TransformGetLocalRotationEuler, child), {0,0,0.2f}),
+				"signed local projection lost authored components");
+			flush();
+			Require(scene.SyncTransformHierarchy(), "signed child hierarchy sync failed");
+			const auto& transform = child.GetComponent<TomCat::Transform>();
+			Require(Near(transform._LocalScale, {sign,1,1})
+				&& Near(transform._LocalRotation, {0,0,0.2f})
+				&& Near(transform.GetTransform(), parent.GetComponent<TomCat::Transform>().GetTransform()
+					* transform.GetLocalTransform(), 3.0e-4f),
+				"signed local commit is inconsistent with its reflected parent");
+		}
+		Require(native.TransformSetRotationEuler(handle(child), {0,0,0}) == 0
+			&& native.TransformSetScale(handle(child), {-1,1,1}) == 0,
+			"signed child world setters failed");
+		Require(Near(read(native.TransformGetScale, child), {-1,1,1})
+			&& Near(read(native.TransformGetRotationEuler, child), {0,0,0}),
+			"signed child world read-your-writes lost its requested representation");
+		flush();
+		Require(scene.SyncTransformHierarchy()
+			&& Near(child.GetComponent<TomCat::Transform>()._Scale, {-1,1,1})
+			&& Near(child.GetComponent<TomCat::Transform>()._Rotation, {0,0,0}),
+			"signed child world commit/sync injected a rotation");
+
+		Require(native.TransformSetScale(handle(root), {-1,1,1}) == 0,
+			"signed reparent probe scale failed");
+		const glm::mat4 reparentWorld = TomCat::Math::ComposeTransform({4,5,0},{0,0,0},{-1,1,1});
+		Require(gameplay.SetParentDeferred(handle(root), handle(parent)) == 0
+			&& Near(read(native.TransformGetScale, root), {-1,1,1})
+			&& Near(read(native.TransformGetRotationEuler, root), {0,0,0})
+			&& gameplay.SetParentDeferred(handle(root), {}) == 0
+			&& Near(read(native.TransformGetScale, root), {-1,1,1}),
+			"signed reparent roundtrip changed projected world TRS");
+		flush();
+		Require(scene.SyncTransformHierarchy() && !scene.GetParent(root)
+			&& Near(root.GetComponent<TomCat::Transform>().GetTransform(), reparentWorld)
+			&& Near(root.GetComponent<TomCat::Transform>()._Scale, {-1,1,1}),
+			"signed reparent roundtrip changed committed world TRS");
+
+		// Validation must remain transactional: a valid move preceding a singular
+		// scale cannot leak into live ECS state when the batch is rejected.
+		const auto before = root.GetComponent<TomCat::Transform>();
+		Require(native.TransformSetPosition(handle(root), {100,200,0}) == 0
+			&& native.TransformSetScale(handle(root), {0,1,1}) == 0,
+			"could not queue singular-transform rollback probe");
+		NativeVector3 rejectedRead{};
+		Require(native.TransformGetScale(handle(root), &rejectedRead) != 0,
+			"singular transform was exposed as a valid projected read before flush");
+		Require(!ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession)
+			&& Near(root.GetComponent<TomCat::Transform>().GetTransform(), before.GetTransform())
+			&& Near(root.GetComponent<TomCat::Transform>().GetLocalTransform(), before.GetLocalTransform()),
+			"rejected signed-transform batch partially changed live ECS");
+		Require(native.TransformSetScale(handle(root),
+			{ std::numeric_limits<float>::quiet_NaN(), 1, 1 }) != 0
+			&& Near(root.GetComponent<TomCat::Transform>().GetTransform(), before.GetTransform()),
+			"non-finite signed scale was accepted or changed live ECS");
+		ScriptEngine::Get().FlushDeferredCommands(runtime->LastSceneSession);
+		scene.OnRuntimeStop();
+
+		// Descendant shear rejection stays atomic even with explicit TRS input.
+		const auto oldParent = parent.GetComponent<TomCat::Transform>();
+		const auto oldChild = child.GetComponent<TomCat::Transform>();
+		Require(!scene.SetWorldTransform(parent, {0,0,0}, {0,0,0}, {-3,2,2})
+			&& Near(parent.GetComponent<TomCat::Transform>().GetTransform(), oldParent.GetTransform())
+			&& Near(child.GetComponent<TomCat::Transform>().GetTransform(), oldChild.GetTransform()),
+			"non-representable descendant shear partially committed a signed transform");
+	}
+
+	void TestSignedTransformPhysicsWriteback()
+	{
+		TomCat::Scene scene;
+		auto entity = AddCircleBody(scene, "Signed physics body",
+			TomCat::Rigidbody2D::BodyType::Dynamic, {0,10});
+		Require(scene.SetWorldTransform(entity, {0,10,0}, {0,0,0}, {-1,1,1})
+			&& scene.OnRuntimeStart(), "signed physics body could not start");
+		for (int step = 0; step < 4; ++step) scene.OnRuntimeStep(false);
+		const auto& transform = entity.GetComponent<TomCat::Transform>();
+		Require(Near(transform._Scale, {-1,1,1}) && Near(transform._Rotation, {0,0,0})
+			&& transform._Translation.y < 10.0f,
+			"physics writeback canonicalized signed scale or injected a rotation");
+		Require(scene.SetWorldTransform(entity, transform._Translation, transform._Rotation, {1,1,1}),
+			"physics body could not face right again");
+		scene.OnRuntimeStep(false);
+		const glm::mat4 rendered = scene.GetRuntimeRenderTransform(entity.GetUUID());
+		Require(rendered[0][0] > 0.99f && rendered[1][1] > 0.99f,
+			"physics interpolation rendered the restored scale upside down");
+		scene.OnRuntimeStop();
+	}
+
 	void MoveRuntimeBody(TomCat::Entity entity, const glm::vec2& position)
 	{
 		auto* body = static_cast<b2Body*>(entity.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
@@ -7321,6 +7475,8 @@ int main(int argc, char** argv)
 	run("fixed accumulator and exact Step", TestFixedAccumulatorAndStep);
 	run("managed Transform world setters preserve hierarchy",
 		TestManagedTransformSettersRespectHierarchy);
+	run("managed signed TRS projection, hierarchy, and atomic rejection", TestManagedSignedTransformComponents);
+	run("signed TRS physics writeback and render orientation", TestSignedTransformPhysicsWriteback);
 	run("30/60/144Hz one- and ten-second consistency", TestFrameRateIndependentPhysics);
 	run("incremental physics synchronization preserves object identity",
 		TestIncrementalPhysicsSynchronizationPreservesObjectIdentity);
