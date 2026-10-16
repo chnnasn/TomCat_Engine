@@ -39,6 +39,16 @@
     <TrimmerRootAssembly Include="Microsoft.CodeAnalysis" />
     <TrimmerRootAssembly Include="Microsoft.CodeAnalysis.CSharp" />
     <TrimmerRootDescriptor Include="ScriptRuntimeRoots.xml" />
+    <!-- Dynamic scripts resolve reference-assembly types through these runtime
+         facades. Root the assemblies as well as their implementations: merely
+         preserving CoreLib does not retain unused ExportedType forwarders. -->
+    <TrimmerRootAssembly Include="mscorlib" RootMode="All" />
+    <TrimmerRootAssembly Include="netstandard" RootMode="All" />
+    <TrimmerRootAssembly Include="System.Runtime" RootMode="All" />
+    <TrimmerRootAssembly Include="System.Runtime.Extensions" RootMode="All" />
+    <TrimmerRootAssembly Include="System.Threading.Tasks" RootMode="All" />
+    <TrimmerRootAssembly Include="System.Text.Encoding" RootMode="All" />
+    <TrimmerRootAssembly Include="System.Text.Encoding.Extensions" RootMode="All" />
   </ItemGroup>
   <ItemGroup Condition="'$(TomCatRepositoryRoot)' != ''">
     <WasmFilesToIncludeInFileSystem Include="$(TomCatRepositoryRoot)/Samples/PhysicsPlayground/Project.tcproj">
