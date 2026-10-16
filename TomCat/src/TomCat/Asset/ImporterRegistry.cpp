@@ -532,7 +532,7 @@ namespace TomCat {
 			{
 				return "tomcat.shader.spirv";
 			}
-			uint32_t GetVersion() const noexcept override { return 2; }
+			uint32_t GetVersion() const noexcept override { return 3; }
 			AssetType GetAssetType() const noexcept override { return AssetType::Shader; }
 
 			AssetImportResult Import(const AssetImportRequest& request) const override

@@ -1,62 +1,14 @@
 #include "tcpch.h"
 #include "Shader.h"
-
-#include "Renderer.h"
-#include "platform/OpenGL/OpenGLShader.h"
-
+#include "TomCat/RHI/RenderDevice.h"
 namespace TomCat {
-
-
-	Ref<Shader> Shader::Create(const std::filesystem::path& filepath)
-	{
-		switch (Renderer::GetAPI())
-		{
-			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
-
-			case RendererAPI::API::OpenGL: return std::make_shared< OpenGLShader>(filepath);
-		}
-		TC_Core_Assert(false, "unknown rendererapi");
-		return nullptr;
-	}
-
-	Ref<Shader> Shader::Create(const std::string& name,const std::string& vertexSrc, const std::string& fragmentSrc)
-	{
-		switch (Renderer::GetAPI())
-		{
-			case RendererAPI::API::None: TC_Core_Assert(false, "RendererAPI : null"); return nullptr;
-
-			case RendererAPI::API::OpenGL: return std::make_shared< OpenGLShader>(name,vertexSrc, fragmentSrc);
-		}
-		TC_Core_Assert(false, "unknown rendererapi");
-		return nullptr;
-	}
-
-	Ref<Shader> Shader::CreateFromArtifact(const std::string& name,
-		std::span<const uint8_t> artifact, std::string* error)
-	{
-		if (error)
-			error->clear();
-		try
-		{
-			switch (Renderer::GetAPI())
-			{
-				case RendererAPI::API::OpenGL:
-					return std::make_shared<OpenGLShader>(name, artifact);
-				case RendererAPI::API::None:
-					if (error) *error = "renderer API is unavailable";
-					return nullptr;
-			}
-			if (error) *error = "renderer API is unsupported";
-			return nullptr;
-		}
-		catch (const std::exception& exception)
-		{
-			if (error)
-				*error = exception.what();
-			return nullptr;
-		}
-	}
-
+Ref<Shader> Shader::Create(const std::filesystem::path& path) { return RHI::RenderDevice::Get().CreateShader(path); }
+Ref<Shader> Shader::Create(const std::string& name, const std::string& vertex, const std::string& fragment) { return RHI::RenderDevice::Get().CreateShader(name, vertex, fragment); }
+Ref<Shader> Shader::CreateFromArtifact(const std::string& name, std::span<const uint8_t> artifact, std::string* error) {
+    if (error) error->clear();
+    try { return RHI::RenderDevice::Get().CreateShader(name, artifact); }
+    catch (const std::exception& e) { if (error) *error = e.what(); return nullptr; }
+}
 	void ShaderLibrary:: Add(const std::string& name, const Ref<Shader>& shader)
 	{
 		if (!shader)

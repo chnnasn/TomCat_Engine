@@ -43,6 +43,7 @@ include "ImporterRegression"
 include "InputRegression"
 include "Advanced2DRegression"
 include "ProfilerRegression"
+include "RHIRegression"
 
 -- Stage the shader compiler even for tests that reach it indirectly through Scene.
 for _, name in ipairs({ "Advanced2DRegression", "AudioRegression",

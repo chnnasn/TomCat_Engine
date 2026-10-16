@@ -3,6 +3,7 @@
 
 #include "TomCat/Renderer/Renderer.h"
 #include "Platform/OpenGL/OpenGLContext.h"
+#include "platform/Vulkan/VulkanContext.h"
 
 namespace TomCat {
 
@@ -12,6 +13,7 @@ namespace TomCat {
 		{
 		case RendererAPI::API::None:    TC_Core_Assert(false, "RendererAPI::None is currently not supported!"); return nullptr;
 		case RendererAPI::API::OpenGL:  return CreateScope<OpenGLContext>(static_cast<GLFWwindow*>(window));
+		case RendererAPI::API::Vulkan:  return CreateScope<VulkanContext>(static_cast<GLFWwindow*>(window));
 		}
 
 		TC_Core_Assert(false, "Unknown RendererAPI!");

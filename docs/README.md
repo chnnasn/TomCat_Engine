@@ -20,6 +20,7 @@
 | 滑条、滚动、输入、主题与游戏本地化 | [运行时 UI 控件](RUNTIME_UI_PRODUCT.zh-CN.md) | — |
 | 分帧激活、国际化、2D 制作与媒体生产 | [P1 使用与边界](P1_PRODUCTION.md) | — |
 | 编辑器面板、资源检查器与界面约定 | [UI 与交互记录](EDITOR_UX_REWORK.md) | — |
+| RHI 分层、Vulkan 后端、运行与 GPU 回归 | [RHI 与 Vulkan](RHI_VULKAN.zh-CN.md) | — |
 
 最新生产验收入口：[生产验收与构建配置](PRODUCTION_ACCEPTANCE.md)。
 
