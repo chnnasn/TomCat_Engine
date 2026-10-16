@@ -8,7 +8,7 @@ Box2D physics into one development environment. Its engine library provides the
 rendering, ECS scene model, and runtime systems; the Editor exposes those systems
 through visual authoring tools, while the Player runs packaged games independently.
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
@@ -16,7 +16,7 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **main — Desktop mainline and integration baseline**
 
-Use this branch for the Windows/OpenGL 2D Editor, Hub and standalone Player workflow. It provides the shared baseline for the specialist branches below; their changes are not automatically present here.
+Use this branch for the Windows 2D Editor, Hub and standalone Player workflow, with OpenGL by default and an optional Vulkan backend. It provides the shared baseline for the specialist branches below; `dev_vulkan` is integrated here as of 2026-10-16.
 
 Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this map to choose a development track and check that branch for its actual capabilities.
 
@@ -27,7 +27,7 @@ Branch roles reviewed on **2026-09-21**. Branches evolve independently; use this
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
-| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend development |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend, integrated into main |
 | [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Experimental browser Editor and Player development |
 
 **Branch lifecycle policy.** Specialty branches are time-boxed for a single-developer project: each branch must land in `main` (fully or as an integration slice) or be archived — branch deleted, history remaining recoverable via Git — at the quarterly branch review, at latest. A branch that has neither merged nor seen activity for one review cycle is archived first. Next review: **2026-12-21**.
@@ -126,7 +126,7 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 ## Current Scope
 
 - Supported development platform: **Windows x64**
-- Rendering backend: **OpenGL 4.6**
+- Rendering backends: **OpenGL 4.6** (default) and **Vulkan 1.2** (`TC_RENDERER=vulkan`); see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md).
 - Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). Managed C# is supported through the .NET browser-wasm host; audible audio, custom cooked SPIR-V shaders, and multisample framebuffers remain limited. Browser lifecycle acceptance is separate from a successful build.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
@@ -148,7 +148,7 @@ shown above; it did not rerun the complete native, managed, Player or Web regres
 - Python 3 with `pip` (used by the setup helper)
 - premake5 (auto-downloaded by the setup script)
 
-> The OpenGL shader pipeline uses ShaderC and SPIRV-Cross supplied by the `vendor/VulkanSDK` submodule (VulkanSDK-Windows). These tools compile and reflect SPIR-V shaders; TomCat does not link the Vulkan renderer/loader. No manual SDK install or environment variables are needed.
+> Both rendering backends use ShaderC and SPIRV-Cross supplied by the `vendor/VulkanSDK` submodule (VulkanSDK-Windows). The Vulkan loader is delay-loaded, so OpenGL and headless tools do not require a Vulkan driver. Vulkan rendering requires a compatible driver; validation additionally requires the Khronos validation layer.
 
 ### Steps
 

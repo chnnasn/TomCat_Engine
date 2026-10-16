@@ -6,7 +6,7 @@ TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Box2D 物理集成在
 引擎库提供渲染、ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
 Player 则负责脱离编辑器运行打包后的游戏。
 
-**C++20 · OpenGL · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
 
 **语言**：[English](README.md) | 简体中文
 
@@ -14,7 +14,7 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **main — 桌面主线与功能集成基线**
 
-用于 Windows/OpenGL 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成。它是下列专项分支的公共基线，专项分支的改动不会自动出现在本分支。
+用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，默认使用 OpenGL，可选择 Vulkan 后端。它是下列专项分支的公共基线；`dev_vulkan` 已于 2026-10-16 合入主线。
 
 分支定位核对日期：**2026-09-21**。各分支独立演进，下表用于选择开发方向，具体能力以所选分支源码为准。
 
@@ -25,7 +25,7 @@ Player 则负责脱离编辑器运行打包后的游戏。
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
-| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端开发 |
+| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI 抽象与 Vulkan 后端，已合入 main |
 | [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | 实验性浏览器 Editor 与 Player 开发 |
 
 **分支生命周期约定。** 对单人项目而言专项分支必须有时间盒:每条专项分支都要在季度分支核对时(最迟)完成合并进 `main`(整体或按集成切片),或执行归档——删除分支,历史仍可通过 Git 找回。在一个核对周期内既未合并也无活动的分支先归档。下次核对:**2026-12-21**。
@@ -115,7 +115,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 ## 当前范围
 
 - 支持的开发平台：**Windows x64**
-- 渲染后端：**OpenGL 4.6**
+- 渲染后端：**OpenGL 4.6**（默认）与 **Vulkan 1.2**（`TC_RENDERER=vulkan`）；配置和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
 - 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。托管 C# 通过 .NET browser-wasm 宿主运行；可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 仍有限制。构建通过与浏览器生命周期验收分别记录。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
@@ -136,7 +136,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - Python 3 与 `pip`（供 Setup 辅助脚本使用）
 - premake5（Setup 脚本自动下载）
 
-> OpenGL 着色器管线使用 `vendor/VulkanSDK` 子模块（VulkanSDK-Windows）提供的 ShaderC 和 SPIRV-Cross，负责 SPIR-V 编译与反射；TomCat 不链接 Vulkan 渲染器或加载器。无需手动安装 SDK 或设置环境变量。
+> 两种渲染后端使用 `vendor/VulkanSDK` 子模块（VulkanSDK-Windows）提供的 ShaderC 和 SPIRV-Cross。Vulkan loader 使用延迟加载，OpenGL 和无窗口工具无需 Vulkan 驱动；运行 Vulkan 后端需要兼容驱动，启用验证还需要 Khronos validation layer。
 
 ### 步骤
 
