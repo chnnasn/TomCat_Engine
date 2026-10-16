@@ -16,19 +16,16 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **main — Desktop mainline and integration baseline**
 
-Use this branch for the Windows 2D Editor, Hub and standalone Player workflow, with OpenGL by default and an optional Vulkan backend. It provides the shared baseline for the specialist branches below; `dev_vulkan` is integrated here as of 2026-10-16.
+Use this branch for the Windows 2D Editor, Hub and standalone Player workflow, with OpenGL by default and an optional Vulkan backend. It provides the shared baseline for the specialist branches below.
 
-Branch roles reviewed on **2026-10-16**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`; the other specialist branches continue independently.
+Branch roles reviewed on **2026-10-16**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`. Only retained branches are listed below; the specialist branches continue independently.
 
 | Branch | Purpose |
 | --- | --- |
 | [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | Desktop mainline and integration baseline |
-| `Build_System` (historical) | Build, packaging and C# toolchain work integrated into main |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
-| [dev_vulkan](https://github.com/chnnasn/TomCat_Engine/tree/dev_vulkan) | RHI abstraction and Vulkan backend, integrated into main |
-| [main_web](https://github.com/chnnasn/TomCat_Engine/tree/main_web) | Managed browser Editor/Player baseline integrated into main; subsequent Web features are included in main |
 
 **Branch lifecycle policy.** Specialty branches are time-boxed for a single-developer project: each branch must land in `main` (fully or as an integration slice) or be archived — branch deleted, history remaining recoverable via Git — at the quarterly branch review, at latest. A branch that has neither merged nor seen activity for one review cycle is archived first. Next review: **2026-12-21**.
 

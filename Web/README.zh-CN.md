@@ -221,7 +221,7 @@ Game 在 Play 前和 Stop 后也绘制活动场景主相机。编辑模式仅渲
 
 ## 构建状态（2026-10-16）
 
-合并 `dev_vulkan` 后，最终一次 `Scripts/Build-WebManaged.ps1` 已通过原生编译、WASM 链接及
+完成 Vulkan/RHI 集成后，最终一次 `Scripts/Build-WebManaged.ps1` 已通过原生编译、WASM 链接及
 .NET browser-wasm 发布，`Scripts/Run-WebBrowserSmoke.ps1` 本机 Edge 冒烟也已通过。
 托管站点应部署完整 `build/web-managed` 目录，包括 `_framework`、`main.js` 及宿主页面。
 独立 `tomcat_player.js/.wasm/.data` 属于原生 Emscripten 测试目标，不能替代托管站点。
