@@ -116,6 +116,19 @@ $tcpakVersion = $versionInfo.TcpakVersion
 $playerAbiVersion = $versionInfo.PlayerAbiVersion
 $templateSchemaVersion = $versionInfo.PlayerTemplateSchemaVersion
 
+if (-not (Test-Path -LiteralPath $playerExecutable -PathType Leaf)) {
+    throw 'TomCatPlayer executable is missing. Run Scripts/Build-PlayerTemplate.ps1 -Build.'
+}
+try {
+    $playerVersionOutput = @(& $playerExecutable --version 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "TomCatPlayer --version returned exit $LASTEXITCODE."
+    }
+    Assert-TomCatPlayerTemplateVersion -VersionOutput ($playerVersionOutput -join "`n") -VersionInfo $versionInfo
+} catch {
+    throw "Player binary compatibility could not be verified. Run Scripts/Build-PlayerTemplate.ps1 -Build. $($_.Exception.Message)"
+}
+
 $managedRoot = Join-Path $repositoryRoot "Managed\TomCat.ScriptHost\bin\Release\net10.0"
 $vcRuntimeRoot = Resolve-VCReleaseRuntime
 $dotnetExecutable = Assert-DotNet10Sdk

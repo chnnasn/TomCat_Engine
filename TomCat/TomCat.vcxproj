@@ -276,6 +276,7 @@
     <ClInclude Include="src\platform\Vulkan\VulkanRendererAPI.h" />
     <ClInclude Include="src\platform\Vulkan\VulkanResources.h" />
     <ClInclude Include="src\platform\Vulkan\VulkanShader.h" />
+    <ClInclude Include="src\platform\Vulkan\VulkanSupport.h" />
     <ClInclude Include="src\platform\Web\WebEditorUI.h" />
     <ClInclude Include="src\platform\Web\WebProjectSettingsPanel.h" />
     <ClInclude Include="src\platform\Web\WebWindow.h" />
@@ -801,6 +802,7 @@
     <ClCompile Include="src\platform\Vulkan\VulkanDevice.cpp" />
     <ClCompile Include="src\platform\Vulkan\VulkanResources.cpp" />
     <ClCompile Include="src\platform\Vulkan\VulkanShader.cpp" />
+    <ClCompile Include="src\platform\Vulkan\VulkanSupport.cpp" />
     <ClCompile Include="src\platform\Web\WebEditor.cpp" />
     <ClCompile Include="src\platform\Web\WebEditorUI.cpp" />
     <ClCompile Include="src\platform\Web\WebFramebuffer.cpp" />

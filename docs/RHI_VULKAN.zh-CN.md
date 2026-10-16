@@ -2,7 +2,7 @@
 
 ## 目标与边界
 
-`dev_vulkan` 的 RHI 与桌面 Vulkan 后端已于 2026-10-16 合入 `main`，同时保留默认 OpenGL 与 WebGL 路径。验收对象是现有 Editor、Hub 和 Player：批量精灵、圆形、线条、字体与运行时 UI、Scene/Game 离屏视口、整数实体拾取、资源预览、ImGui 多窗口、纹理导入产物和 GPU 计时。不能用“窗口能清屏”代替编辑器迁移验收。
+`dev_vulkan` 的 RHI 与桌面 Vulkan 后端已于 2026-10-16 合入 `main`。当前桌面默认优先 Vulkan，不支持时自动回退 OpenGL；浏览器保留 WebGL 路径。验收对象是现有 Editor、Hub 和 Player：批量精灵、圆形、线条、字体与运行时 UI、Scene/Game 离屏视口、整数实体拾取、资源预览、ImGui 多窗口、纹理导入产物和 GPU 计时。不能用“窗口能清屏”代替编辑器迁移验收。
 
 现有 `Renderer2D` 负责排序、CPU 顶点批处理和场景数据；资源类与 `RendererAPI` 是兼容前端。后端负责设备、GPU 内存、不可变绘制状态、描述符、提交同步和呈现。场景与编辑器不得持有 Vulkan 对象。ImGui 的纹理标识单独通过 UI 互操作接口提供，不能把 64 位 descriptor set 截断为 OpenGL 的 32 位纹理编号。
 
@@ -50,26 +50,51 @@
 
 ## 启动与构建
 
-默认仍为 OpenGL。进程启动时读取 `TC_RENDERER`，同一进程不能动态切换后端。从仓库根目录运行：
+桌面默认优先 Vulkan。进程首次选择后端时读取 `TC_RENDERER`：
+
+| 配置 | 行为 |
+| --- | --- |
+| 未设置或 `auto` | 探测 Vulkan loader、设备与所需能力；不支持时回退 OpenGL |
+| `vulkan` | 强制 Vulkan；不支持时报告原因并终止初始化 |
+| `opengl` | 强制 OpenGL，跳过 Vulkan 探测 |
+| 其他值 | 报配置错误 |
+
+自动模式还会在实际窗口的 Vulkan surface 不支持时清理未完成的初始化，重建 OpenGL 窗口。正常运行期间不切换后端；设备丢失、Shader 错误和验证配置错误不会被当作兼容性回退。启动日志记录所选后端和回退原因。从仓库根目录运行：
 
 ```powershell
-$env:TC_RENDERER = 'vulkan'
+$env:TC_RENDERER = 'auto' # 与不设置变量相同
 & ./Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe
 ```
 
-Editor、Hub、CLI 和 Player 都使用这个选择。Vulkan 需要显卡驱动提供的 loader 和 Vulkan 1.2；OpenGL 使用延迟加载链接，不在启动时加载 Vulkan loader。编译依赖由 `vendor/VulkanSDK` 提供。
+Editor、Hub、CLI 和 Player 都使用这个选择。无窗口 CLI 也能安全探测 Vulkan，不需要先创建 GLFW 窗口；缺少 loader 时不会因延迟加载失败而崩溃。Vulkan 要求兼容 loader、Vulkan 1.2、独立 attachment 混合、至少 32 个采样纹理槽、swapchain 扩展和可呈现的图形队列。编译依赖由 `vendor/VulkanSDK` 提供。
 
-烘焙与运行必须使用同一后端。打包只包含所选目标的 shader，尚不支持同一包在 GL/Vulkan 之间自动切换。设置 `TC_RENDERER=vulkan` 后执行现有 `TomCatCLI build --project ... --template ...`，启动生成的游戏时也保留该变量。切换回 GL 时重新烘焙。
+新的桌面烘焙包同时包含 OpenGL 与 Vulkan 的预编译 SPIR-V 和反射数据，不包含 Shader 源码；运行时按所选后端读取对应产物。因此 CLI 烘焙与 Player 启动不需要相同的 `TC_RENDERER`，同一个新包可在不支持 Vulkan 的机器上回退 OpenGL。Editor 日常资源导入仍只编译当前后端。旧单后端包仍可在原后端运行，跨后端运行前需重新烘焙。
+
+TCPAK 版本仍为 8，桌面 Shader 使用 TCSB v1 容器保存两个 TCSH v1 目标。Player Template 格式升级到 2，以防旧 Player 模板导出无法读取新 Shader 的游戏；发布前执行 `Scripts/Build-PlayerTemplate.ps1 -Build` 重建模板。旧格式 1 模板会被明确拒绝。
 
 ```powershell
 # 编译并运行真实 GPU 回归；需要 Visual Studio C++ 工具链
+./Scripts/Run-BackendSelectionRegression.ps1
+# 可选断言测试机自动选择 Vulkan；否则按实际能力检查自动策略
+./Scripts/Run-BackendSelectionRegression.ps1 -SkipBuild -ExpectedAutoBackend vulkan
 ./Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport
 ./Scripts/Run-RHIRegression.ps1 -Backend opengl
 # 可选指定设备；默认优先独立显卡
 ./Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation -Device Intel
 ```
 
+`Run-BackendSelectionRegression.ps1` 在独立进程中验证未设置/`auto`、强制后端、非法配置，以及使用不匹配的 `TC_VULKAN_DEVICE` 模拟无可用 Vulkan 设备。支持 Vulkan 的机器还会在探测成功后改变设备筛选，验证实际 Vulkan 初始化失败后的窗口重建与显式模式报错。回退用例会执行完整 OpenGL RHI 绘制与读回，包含桌面 Shader bundle 消费；初始化用例会创建隐藏窗口并呈现。`Run-Regressions.ps1` 为了适配 CI 软件驱动，对整套通用回归显式设置 OpenGL，退出时恢复调用者环境。
+
 `-Validation` 需要安装 Khronos validation layer（Vulkan SDK）。普通运行不需要该 layer。可手动设置 `TC_VULKAN_VALIDATION=1`，诊断写入标准错误；`TC_VULKAN_DEVICE` 按设备名子串筛选。
+
+验证同一个新包的真实图形 Player 启动与回退时，先按当前源码构建 Managed Release、`ScriptCompilerRegression` 和 `TomCatCLI`，再重建测试专用 Player Template：
+
+```powershell
+./Scripts/Build-PlayerTemplate.ps1 -Configuration Release -Build -Destination ./Tests/bin/Release-windows-x86_64/PlayerTemplateRegression
+./Scripts/Run-CSharpPlayerSmoke.ps1 -Configuration Release -RequirePlayer -Graphics
+```
+
+`-Graphics` 开启真实图形窗口；不加该参数的默认冒烟是无窗口模式。图形模式对同一包先验证默认后端，再以 `auto` 和不存在的设备筛选验证 OpenGL 回退，检查 C# 脚本完成退出码 73，并从游戏日志断言实际后端。
 
 ## 主线集成（2026-10-16）
 

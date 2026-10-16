@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "VulkanContext.h"
+#include "VulkanSupport.h"
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include "backends/imgui_impl_vulkan.h"
@@ -13,7 +14,9 @@ VulkanContext& VulkanContext::Current() {
 }
 void VulkanContext::Init() {
     m_Device = VulkanDevice::Create(m_Window);
-    VulkanCheck(glfwCreateWindowSurface(m_Device->Instance, m_Window, nullptr, &m_Surface), "Create window surface");
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VulkanCheckSupport(glfwCreateWindowSurface(m_Device->Instance, m_Window, nullptr, &surface), "Create window surface");
+    m_Surface = surface;
     VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (auto& frame : m_Frames)
         VulkanCheck(vkCreateSemaphore(m_Device->Device, &semaphore, nullptr, &frame.Acquired), "Create frame acquire semaphore");
@@ -52,7 +55,6 @@ void VulkanContext::Recreate(uint32_t width, uint32_t height) {
     VulkanCheck(vkDeviceWaitIdle(m_Device->Device), "Wait before swapchain recreation");
     VkSurfaceCapabilitiesKHR caps{};
     VulkanCheck(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_Device->PhysicalDevice, m_Surface, &caps), "Query surface capabilities");
-    if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) throw std::runtime_error("Surface does not support transfer destination");
     VkExtent2D extent = caps.currentExtent;
     if (extent.width == UINT32_MAX) extent = {std::clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width), std::clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height)};
     if (!extent.width || !extent.height) return;
@@ -60,11 +62,12 @@ void VulkanContext::Recreate(uint32_t width, uint32_t height) {
     VulkanCheck(vkGetPhysicalDeviceSurfaceFormatsKHR(m_Device->PhysicalDevice, m_Surface, &count, nullptr), "Query surface formats");
     std::vector<VkSurfaceFormatKHR> formats(count);
     VulkanCheck(vkGetPhysicalDeviceSurfaceFormatsKHR(m_Device->PhysicalDevice, m_Surface, &count, formats.data()), "Query surface formats");
+    if (const auto* reason = VulkanSurfaceRequirementFailure(caps, formats, m_Format))
+        throw VulkanUnsupportedError(reason);
     auto chosen = std::find_if(formats.begin(), formats.end(), [&](auto f) {
         return (m_Format != VK_FORMAT_UNDEFINED ? f.format == m_Format : (f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM))
             && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     });
-    if (chosen == formats.end()) throw std::runtime_error("Surface requires an unsupported color format (RGBA/BGRA UNORM required)");
     m_Format = chosen->format;
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     if (!m_VSync) {
@@ -75,7 +78,6 @@ void VulkanContext::Recreate(uint32_t width, uint32_t height) {
             if (std::find(modes.begin(), modes.end(), preferred) != modes.end()) { mode = preferred; break; }
     }
     m_MinImages = std::max(2u, caps.minImageCount);
-    if (caps.maxImageCount && m_MinImages > caps.maxImageCount) throw std::runtime_error("Surface cannot provide two images for ImGui");
     VkSwapchainCreateInfoKHR create{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     create.surface = m_Surface; create.minImageCount = m_MinImages; create.imageFormat = m_Format; create.imageColorSpace = chosen->colorSpace;
     create.imageExtent = extent; create.imageArrayLayers = 1;
@@ -88,7 +90,7 @@ void VulkanContext::Recreate(uint32_t width, uint32_t height) {
     }
     create.presentMode = mode; create.clipped = true; create.oldSwapchain = m_Swapchain;
     VkSwapchainKHR replacement{};
-    VulkanCheck(vkCreateSwapchainKHR(m_Device->Device, &create, nullptr, &replacement), "Create swapchain");
+    VulkanCheckSupport(vkCreateSwapchainKHR(m_Device->Device, &create, nullptr, &replacement), "Create swapchain");
     DestroySwapchain(); m_Swapchain = replacement;
     m_Width = extent.width; m_Height = extent.height;
     VulkanCheck(vkGetSwapchainImagesKHR(m_Device->Device, m_Swapchain, &count, nullptr), "Get swapchain images");

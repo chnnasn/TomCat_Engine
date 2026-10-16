@@ -337,6 +337,7 @@ namespace TomCat {
 							<< " build=" << RuntimeCompatibility::EngineBuildID
 							<< " tcpak=" << RuntimeCompatibility::TcpakVersion
 							<< " abi=" << RuntimeCompatibility::PlayerAbiVersion
+							<< " template=" << RuntimeCompatibility::PlayerTemplateSchemaVersion
 							<< " native-api=" << Scripting::NativeApiVersion << '\n';
 						Close(0);
 						break;

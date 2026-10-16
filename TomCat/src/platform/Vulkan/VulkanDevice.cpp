@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "VulkanDevice.h"
+#include "VulkanSupport.h"
 #include <GLFW/glfw3.h>
 #include <stdexcept>
 #include <cstring>
@@ -53,13 +54,18 @@ std::shared_ptr<VulkanDevice> VulkanDevice::Create(GLFWwindow* window) {
     return device;
 }
 void VulkanDevice::Initialize(GLFWwindow* window) {
-    if (!glfwVulkanSupported()) throw std::runtime_error("Vulkan loader/driver is unavailable");
+    if (!glfwVulkanSupported()) throw VulkanUnsupportedError("Vulkan loader/driver is unavailable");
+    auto enumerateVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(glfwGetInstanceProcAddress(VK_NULL_HANDLE, "vkEnumerateInstanceVersion"));
+    if (!enumerateVersion) throw VulkanUnsupportedError("Vulkan loader does not support Vulkan 1.2");
+    uint32_t version = VK_API_VERSION_1_0;
+    VulkanCheck(enumerateVersion(&version), "Query Vulkan loader version");
+    if (version < RequiredVulkanVersion) throw VulkanUnsupportedError("Vulkan loader does not support Vulkan 1.2");
     uint32_t count = 0;
     const char** required = glfwGetRequiredInstanceExtensions(&count);
-    if (!required || !count) throw std::runtime_error("GLFW cannot provide a Vulkan surface");
+    if (!required || !count) throw VulkanUnsupportedError("GLFW cannot provide a Vulkan surface");
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "TomCat";
-    app.apiVersion = VK_API_VERSION_1_2;
+    app.apiVersion = RequiredVulkanVersion;
     VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     info.pApplicationInfo = &app;
     info.enabledExtensionCount = count;
@@ -88,7 +94,14 @@ void VulkanDevice::Initialize(GLFWwindow* window) {
         info.ppEnabledExtensionNames = extensions.data();
         debug.pNext = &validationFeatures; info.pNext = &debug;
     }
-    VulkanCheck(vkCreateInstance(&info, nullptr, &Instance), "Create instance");
+    VkInstance instance = VK_NULL_HANDLE;
+    const auto instanceResult = vkCreateInstance(&info, nullptr, &instance);
+    // An explicitly requested validation/debug extension must not silently turn
+    // validation off by selecting another backend.
+    if (info.enabledLayerCount && instanceResult == VK_ERROR_EXTENSION_NOT_PRESENT)
+        VulkanCheck(instanceResult, "Create validation instance");
+    VulkanCheckSupport(instanceResult, "Create instance");
+    Instance = instance;
     if (info.enabledLayerCount) {
         debug.pNext = nullptr;
         auto createDebug = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(Instance, "vkCreateDebugUtilsMessengerEXT"));
@@ -96,7 +109,7 @@ void VulkanDevice::Initialize(GLFWwindow* window) {
         VulkanCheck(createDebug(Instance, &debug, nullptr, &m_DebugMessenger), "Create validation messenger");
     }
     VkSurfaceKHR surface = VK_NULL_HANDLE;
-    VulkanCheck(glfwCreateWindowSurface(Instance, window, nullptr, &surface), "Create probe surface");
+    VulkanCheckSupport(glfwCreateWindowSurface(Instance, window, nullptr, &surface), "Create probe surface");
     try {
         VulkanCheck(vkEnumeratePhysicalDevices(Instance, &count, nullptr), "Enumerate physical devices");
         std::vector<VkPhysicalDevice> devices(count);
@@ -108,33 +121,42 @@ void VulkanDevice::Initialize(GLFWwindow* window) {
             VkPhysicalDeviceFeatures features{};
             vkGetPhysicalDeviceProperties(candidate, &properties);
             vkGetPhysicalDeviceFeatures(candidate, &features);
-            if (requestedDevice && *requestedDevice && std::string_view(properties.deviceName).find(requestedDevice) == std::string_view::npos) continue;
+            if (!VulkanDeviceMatchesRequest(properties, requestedDevice)) continue;
             const int score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 2 : 1;
             if (score <= bestScore) continue;
-            if (properties.apiVersion < VK_API_VERSION_1_2 || !features.independentBlend
-                || properties.limits.maxPerStageDescriptorSamplers < 32) continue;
+            if (VulkanDeviceRequirementFailure(properties, features)) continue;
             uint32_t extensionCount = 0;
             VulkanCheck(vkEnumerateDeviceExtensionProperties(candidate, nullptr, &extensionCount, nullptr), "Enumerate device extensions");
             std::vector<VkExtensionProperties> extensions(extensionCount);
             VulkanCheck(vkEnumerateDeviceExtensionProperties(candidate, nullptr, &extensionCount, extensions.data()), "Enumerate device extensions");
-            if (std::none_of(extensions.begin(), extensions.end(), [](auto& e) { return std::strcmp(e.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0; })) continue;
+            if (!VulkanHasSwapchainExtension(extensions)) continue;
             uint32_t familyCount = 0;
             vkGetPhysicalDeviceQueueFamilyProperties(candidate, &familyCount, nullptr);
             std::vector<VkQueueFamilyProperties> families(familyCount);
             vkGetPhysicalDeviceQueueFamilyProperties(candidate, &familyCount, families.data());
+            uint32_t presentFamily = UINT32_MAX;
             for (uint32_t i = 0; i < familyCount; ++i) {
                 VkBool32 present = false;
                 VulkanCheck(vkGetPhysicalDeviceSurfaceSupportKHR(candidate, i, surface, &present), "Query present support");
-                if (!(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) || !present) continue;
-                PhysicalDevice = candidate; QueueFamily = i; Properties = properties; Features = features;
-                m_TimestampBits = families[i].timestampValidBits;
-                bestScore = score;
+                if (!families[i].queueCount || !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) || !present) continue;
+                presentFamily = i;
                 break;
             }
+            if (presentFamily == UINT32_MAX) continue;
+            VkSurfaceCapabilitiesKHR capabilities{};
+            VulkanCheck(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(candidate, surface, &capabilities), "Query device surface capabilities");
+            uint32_t formatCount = 0;
+            VulkanCheck(vkGetPhysicalDeviceSurfaceFormatsKHR(candidate, surface, &formatCount, nullptr), "Query device surface formats");
+            std::vector<VkSurfaceFormatKHR> formats(formatCount);
+            VulkanCheck(vkGetPhysicalDeviceSurfaceFormatsKHR(candidate, surface, &formatCount, formats.data()), "Query device surface formats");
+            if (VulkanSurfaceRequirementFailure(capabilities, formats)) continue;
+            PhysicalDevice = candidate; QueueFamily = presentFamily; Properties = properties; Features = features;
+            m_TimestampBits = families[presentFamily].timestampValidBits;
+            bestScore = score;
         }
     } catch (...) { vkDestroySurfaceKHR(Instance, surface, nullptr); throw; }
     vkDestroySurfaceKHR(Instance, surface, nullptr);
-    if (!PhysicalDevice) throw std::runtime_error("Vulkan requires a 1.2 graphics/present device with independent blend and 32 texture slots");
+    if (!PhysicalDevice) throw VulkanUnsupportedError("Vulkan requires a 1.2 graphics/present device with independent blend, 32 texture slots and a compatible window surface");
     float priority = 1;
     VkDeviceQueueCreateInfo queue{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
     queue.queueFamilyIndex = QueueFamily; queue.queueCount = 1; queue.pQueuePriorities = &priority;
@@ -146,7 +168,9 @@ void VulkanDevice::Initialize(GLFWwindow* window) {
     create.queueCreateInfoCount = 1; create.pQueueCreateInfos = &queue;
     create.enabledExtensionCount = 1; create.ppEnabledExtensionNames = &extension;
     create.pEnabledFeatures = &enabled;
-    VulkanCheck(vkCreateDevice(PhysicalDevice, &create, nullptr, &Device), "Create device");
+    VkDevice device = VK_NULL_HANDLE;
+    VulkanCheckSupport(vkCreateDevice(PhysicalDevice, &create, nullptr, &device), "Create device");
+    Device = device;
     vkGetDeviceQueue(Device, QueueFamily, 0, &Queue);
     VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT; pool.queueFamilyIndex = QueueFamily;
