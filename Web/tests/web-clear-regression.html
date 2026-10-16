@@ -1,0 +1,50 @@
+<!doctype html><meta charset="utf-8"><title>TomCat Web clear regression</title>
+<canvas id="canvas" width="640" height="360"></canvas><pre id="status">loading</pre>
+<script type="module">
+import {observeWebClear} from './web-clear-regression.js';
+const out=value=>document.querySelector('#status').textContent=JSON.stringify(value,null,2);
+const require=(condition,message)=>{if(!condition)throw new Error(message)};
+const probe=observeWebClear(),cycles=[];
+let engine,booted=false;
+const rpc=(type,payload={})=>{
+  const reply=JSON.parse(engine.EditorRpc(JSON.stringify({protocol:'tomcat.web.v1',requestId:crypto.randomUUID(),type,payload})));
+  require(reply.ok,JSON.stringify(reply));return reply.result;
+};
+try {
+  await import('./main.js');engine=globalThis.TomCatWeb.engine;
+  // A second boot must seed a new renderer from its current GL context. This
+  // does not claim that the browser allocates a different JavaScript GL object.
+  for(let cycle=0;cycle<2;cycle++){
+    const beforeBoot=probe.snapshot();
+    const boot=engine.EditorBoot(640,360);require(boot===0,`boot ${boot}: ${engine.EditorError()}`);booted=true;
+    const initialized=probe.snapshot();
+    require(initialized.queries-beforeBoot.queries===1,'Renderer Init must query current clear color exactly once per boot');
+    let scene=rpc('project.new',{name:`Clear regression ${cycle}`,template:'2D'});
+    const camera=scene.entities.find(entity=>entity.name==='Main Camera');
+    require(camera,'Clear fixture needs its real native primary camera');
+    const schema=scene.schemas.find(item=>item.properties.some(property=>property.name==='BackgroundColor'));
+    const colorId=schema?.properties.find(item=>item.name==='BackgroundColor')?.id;
+    require(schema && colorId,'Native camera background schema is unavailable');
+    const colors=cycle===0 ? [[.2,.4,.6,1],[.8,.25,.1,.5]] : [[.1,.7,.3,1]];
+    for(const color of colors){
+      scene=rpc('scene.transact',{sceneHandle:scene.sceneHandle,baseRevision:scene.revision,label:'Clear color regression',
+        operations:[{op:'component.patch',entityId:camera.id,componentId:schema.id,properties:{[colorId]:color}}]});
+      rpc('preview.control',{command:'play'});
+      for(let frame=0;frame<6;frame++)engine.EditorFrame(1/60);
+      require(!engine.EditorError(),engine.EditorError());
+      rpc('preview.control',{command:'stop'});
+      require(probe.snapshot().colors.some(actual=>actual.every((value,index)=>Math.abs(value-color[index])<1e-6)),
+        `Actual native preview never cleared with camera color ${color}`);
+    }
+    const after=probe.snapshot();
+    require(after.queries===initialized.queries,'Steady Web frames queried GL_COLOR_CLEAR_VALUE');
+    require(after.clears>initialized.clears && after.mixed>initialized.mixed,'Actual Web default/MRT clears were not observed');
+    cycles.push({initQueries:initialized.queries-beforeBoot.queries,steadyQueries:after.queries-initialized.queries,
+      colorClears:after.clears-initialized.clears,mixedClears:after.mixed-initialized.mixed,requestedColors:colors});
+    engine.EditorShutdown();booted=false;
+  }
+  out({ok:true,cycles,coverage:'Actual Web Init/SetClearColor/Clear, GPU color and alpha, changed camera colors, MRT integer picking, two renderer lifecycles, zero steady color-state queries',
+    limits:'Camera authoring requires unit finite colors; out-of-range/NaN RendererAPI inputs are not claimed as browser-covered.'});
+} catch(error){out({ok:false,error:String(error?.stack??error),cycles,observation:probe.snapshot()})}
+finally{if(booted)try{engine.EditorShutdown()}catch{}probe.restore()}
+</script>

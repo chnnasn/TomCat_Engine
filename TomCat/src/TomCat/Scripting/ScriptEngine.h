@@ -85,6 +85,9 @@ namespace TomCat {
 				uint64_t ReplayedCommands = 0;
 				uint64_t CommitValidationCopies = 0;
 				uint64_t NameLookupProbes = 0;
+				uint64_t ReplayNameIndexBuilds = 0;
+				uint64_t ReplayNameLookupProbes = 0;
+				uint64_t FlushCommandsVisited = 0;
 			};
 			// Cumulative native diagnostics; no managed ABI or wall-clock threshold.
 			ProjectionStatistics GetProjectionStatistics() const;
@@ -288,6 +291,9 @@ namespace TomCat {
 				// stream used at commit. Registered component queries read this copy so
 				// descriptor Add side effects are visible inside the recording callback.
 				std::shared_ptr<Scene> ProjectedScene;
+				// Only a replay acceleration hint; descriptor callbacks discard it.
+				// Unlike Names, this tracks actual authoring Tags in ProjectedScene.
+				mutable std::optional<EntityNameIndex> ReplayNames;
 			};
 
 			std::shared_ptr<const ProjectionSnapshot> GetProjectionSnapshot(
@@ -305,7 +311,8 @@ namespace TomCat {
 				bool& present, EntityHandleV1* owner = nullptr) const;
 			bool ApplyDeferredCommands(Scene& scene, uint64_t sceneSessionId,
 				const std::vector<DeferredCommand>& commands,
-				bool publishRuntimeSideEffects, std::string& error) const;
+				bool publishRuntimeSideEffects, std::string& error,
+				std::optional<EntityNameIndex>* replayNames = nullptr) const;
 			FrameTask StartSceneCoreTask(Scene& scene, uint64_t runtimeGeneration, std::vector<UUID> initialEntityIDs, bool flushPendingCreates, uint64_t& result);
             uint64_t StartSceneCore(Scene& scene, uint64_t runtimeGeneration,
 				std::span<const UUID> initialEntityIDs, bool flushPendingCreates);
