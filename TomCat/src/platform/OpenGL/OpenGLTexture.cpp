@@ -211,11 +211,15 @@ namespace TomCat {
 				m_DataFormat, GL_UNSIGNED_BYTE, pixels);
 		}
 
-		glTextureParameteri(m_RendererID, GL_TEXTURE_MIN_FILTER,
-			artifact.Mips.size() > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
-		glTextureParameteri(m_RendererID, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		const bool nearest = artifact.Sampling.Filter == TextureFilterMode::Nearest;
+		glTextureParameteri(m_RendererID, GL_TEXTURE_MIN_FILTER, artifact.Mips.size() > 1
+			? (nearest ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR)
+			: (nearest ? GL_NEAREST : GL_LINEAR));
+		glTextureParameteri(m_RendererID, GL_TEXTURE_MAG_FILTER, nearest ? GL_NEAREST : GL_LINEAR);
+		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_S,
+			artifact.Sampling.WrapU == TextureWrapMode::Clamp ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_T,
+			artifact.Sampling.WrapV == TextureWrapMode::Clamp ? GL_CLAMP_TO_EDGE : GL_REPEAT);
 		glTextureParameteri(m_RendererID, GL_TEXTURE_MAX_LEVEL,
 			static_cast<GLint>(artifact.Mips.size() - 1));
 		m_IsLoaded = true;

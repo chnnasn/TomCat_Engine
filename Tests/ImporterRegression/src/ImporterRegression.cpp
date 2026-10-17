@@ -847,7 +847,7 @@ namespace {
 		registry.RegisterBuiltInImporters();
 		const std::shared_ptr<const TomCat::IAssetImporter> importer =
 			registry.Find(TomCat::AssetType::Texture2D);
-		Require(importer && importer->GetVersion() >= 3,
+		Require(importer && importer->GetVersion() >= 6,
 			"offline texture importer is not registered");
 
 		const std::vector<uint8_t> source = MakeFourByFourBMP();
@@ -890,6 +890,50 @@ namespace {
 			&& rgbaView.Mips.size() == 3
 			&& rgbaView.Mips[1].Width == 2 && rgbaView.Mips[2].Width == 1,
 			"RGBA texture artifact lost dimensions, color space, or mip chain");
+		Require(rgbaView.Version == 1
+			&& rgbaView.Sampling.Filter == TomCat::TextureFilterMode::Linear
+			&& rgbaView.Sampling.WrapU == TomCat::TextureWrapMode::Repeat
+			&& rgbaView.Sampling.WrapV == TomCat::TextureWrapMode::Repeat,
+			"legacy texture sampling defaults changed");
+		for (bool nearest : { false, true })
+			for (bool clampU : { false, true })
+				for (bool clampV : { false, true })
+				{
+					request.Settings = { { "filterMode", nearest ? "Nearest" : "Linear" },
+						{ "wrapU", clampU ? "Clamp" : "Repeat" }, { "wrapV", clampV ? "Clamp" : "Repeat" } };
+					const auto imported = importer->Import(request);
+					TomCat::TextureArtifactView view;
+					Require(imported.Succeeded() && TomCat::ParseTextureArtifact(imported.ArtifactBytes, view, error),
+						"texture sampling import/parse failed");
+					const bool customized = nearest || clampU || clampV;
+					Require(view.Version == (customized ? 2 : 1)
+						&& imported.Format == (customized ? "texture/tctx-v2" : "texture/tctx-v1")
+						&& view.Sampling.Filter == (nearest ? TomCat::TextureFilterMode::Nearest : TomCat::TextureFilterMode::Linear)
+						&& view.Sampling.WrapU == (clampU ? TomCat::TextureWrapMode::Clamp : TomCat::TextureWrapMode::Repeat)
+						&& view.Sampling.WrapV == (clampV ? TomCat::TextureWrapMode::Clamp : TomCat::TextureWrapMode::Repeat),
+						"cooked sampling settings or artifact version did not round trip");
+					Require(view.Mips.size() == rgbaView.Mips.size()
+						&& std::equal(view.Mips[0].Bytes.begin(), view.Mips[0].Bytes.end(), rgbaView.Mips[0].Bytes.begin()),
+						"sampling metadata changed source texels");
+					if (!customized)
+						Require(imported.ArtifactBytes == rgbaResult.ArtifactBytes,
+							"explicit legacy defaults changed v1 artifact bytes");
+					auto invalid = imported.ArtifactBytes;
+					invalid[24] |= 0x80;
+					Require(!TomCat::ParseTextureArtifact(invalid, view, error), "unknown texture flags were accepted");
+					if (customized)
+					{
+						invalid = imported.ArtifactBytes; invalid[4] = 1;
+						Require(!TomCat::ParseTextureArtifact(invalid, view, error), "v1 accepted v2 sampling flags");
+					}
+				}
+		for (const auto& invalid : { TomCat::AssetImportSettings{{ "filterMode", "typo" }},
+			TomCat::AssetImportSettings{{ "wrapU", "typo" }}, TomCat::AssetImportSettings{{ "wrapV", "typo" }} })
+		{
+			request.Settings = invalid;
+			Require(!importer->Import(request).Succeeded(), "invalid sampling setting was silently ignored");
+		}
+		request.Settings.clear();
 
 		request.Platform = "windows-x64";
 		TomCat::AssetImportResult bc3Result = importer->Import(request);

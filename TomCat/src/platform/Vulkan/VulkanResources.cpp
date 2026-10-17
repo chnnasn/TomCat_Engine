@@ -61,7 +61,7 @@ void VulkanTexture2D::Load(const void* encoded, size_t size) {
         m_Image = m_Device->Image(artifact.Width, artifact.Height,
             artifact.SRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM,
             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
-            static_cast<uint32_t>(artifact.Mips.size()));
+            static_cast<uint32_t>(artifact.Mips.size()), artifact.Sampling);
         for (uint32_t i = 0; i < artifact.Mips.size(); ++i) {
             const auto& mip = artifact.Mips[i];
             std::vector<uint8_t> decoded;
