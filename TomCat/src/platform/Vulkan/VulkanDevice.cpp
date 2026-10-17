@@ -424,7 +424,7 @@ std::shared_ptr<VulkanBufferAllocation> VulkanDevice::Buffer(VkDeviceSize size, 
     return buffer;
 }
 std::shared_ptr<VulkanImageAllocation> VulkanDevice::Image(uint32_t width, uint32_t height, VkFormat format,
-    VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mips) {
+    VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t mips, const TextureSampling& sampling) {
     if (!width || !height || width > Properties.limits.maxImageDimension2D || height > Properties.limits.maxImageDimension2D)
         throw std::invalid_argument("Invalid Vulkan image dimensions");
     auto image = std::make_shared<VulkanImageAllocation>();
@@ -445,9 +445,12 @@ std::shared_ptr<VulkanImageAllocation> VulkanDevice::Image(uint32_t width, uint3
     VulkanCheck(vkCreateImageView(Device, &view, nullptr, &image->View), "Create image view");
     if (usage & VK_IMAGE_USAGE_SAMPLED_BIT) {
         VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        sampler.magFilter = sampler.minFilter = format == VK_FORMAT_R32_SINT ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
-        sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        const bool nearest = sampling.Filter == TextureFilterMode::Nearest;
+        sampler.magFilter = sampler.minFilter = format == VK_FORMAT_R32_SINT || nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+        sampler.mipmapMode = nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler.addressModeU = sampling.WrapU == TextureWrapMode::Clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler.addressModeV = sampling.WrapV == TextureWrapMode::Clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         sampler.maxLod = float(mips - 1);
         VulkanCheck(vkCreateSampler(Device, &sampler, nullptr, &image->Sampler), "Create sampler");
     }

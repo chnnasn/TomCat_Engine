@@ -286,6 +286,18 @@ void ContentBrowserPanel::DrawAssetInspector(const std::filesystem::path& reques
         {
             boolean("sRGB (Color Texture)", "sRGB", true);
             boolean("Generate Mipmaps", "generateMipmaps", true);
+            auto samplingChoice = [&](const char* label, const char* key, const char* first,
+                const char* second, const char* firstValue, const char* secondValue) {
+                const auto setting = m_AssetSettingsDraft.find(key);
+                int selected = setting != m_AssetSettingsDraft.end() && ToLower(setting->second) == secondValue ? 1 : 0;
+                const char* choices[] = { first, second };
+                ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x * 0.6f));
+                if (ImGui::Combo(label, &selected, choices, 2))
+                    m_AssetSettingsDraft[key] = selected ? secondValue : firstValue;
+            };
+            samplingChoice("Filter", "filterMode", "Linear", "Nearest (Point)", "linear", "nearest");
+            samplingChoice("Wrap U", "wrapU", "Repeat", "Clamp", "repeat", "clamp");
+            samplingChoice("Wrap V", "wrapV", "Repeat", "Clamp", "repeat", "clamp");
             const char* choices[] = { "Automatic", "RGBA32 (Uncompressed)", "BC3 / DXT5" };
             const auto it = m_AssetSettingsDraft.find("compression");
             const auto compression = it == m_AssetSettingsDraft.end() ? "auto" : ToLower(it->second);

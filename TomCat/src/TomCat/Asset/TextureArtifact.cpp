@@ -11,15 +11,21 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <utility>
 
 namespace TomCat {
 
 	namespace {
 		constexpr std::array<uint8_t, 4> Magic = { 'T', 'C', 'T', 'X' };
-		constexpr uint16_t Version = 1;
+		constexpr uint16_t LegacyVersion = 1;
+		constexpr uint16_t SamplingVersion = 2;
 		constexpr uint32_t HeaderSize = 32;
 		constexpr uint32_t MipEntrySize = 24;
 		constexpr uint32_t SRGBFlag = 1;
+		constexpr uint32_t NearestFlag = 2;
+		constexpr uint32_t ClampUFlag = 4;
+		constexpr uint32_t ClampVFlag = 8;
+		constexpr uint32_t SamplingFlags = NearestFlag | ClampUFlag | ClampVFlag;
 		constexpr uint32_t MaximumTextureDimension = 16'384;
 		constexpr uint64_t MaximumTexturePixels = 64ULL * 1024ULL * 1024ULL;
 		constexpr uint64_t ReservationSafetyBytes = 1024ULL * 1024ULL;
@@ -449,11 +455,13 @@ namespace TomCat {
 			error = "texture artifact header is truncated";
 			return false;
 		}
-		if (version != Version || headerSize != HeaderSize || tableOffset != HeaderSize
+		const uint32_t supportedFlags = SRGBFlag | (version == SamplingVersion ? SamplingFlags : 0);
+		if ((version != LegacyVersion && version != SamplingVersion)
+			|| headerSize != HeaderSize || tableOffset != HeaderSize
 			|| width == 0 || height == 0 || mipCount == 0 || mipCount > 32
 			|| width > MaximumTextureDimension || height > MaximumTextureDimension
 			|| static_cast<uint64_t>(width) * height > MaximumTexturePixels
-			|| flags & ~SRGBFlag || (rawFormat < 1 || rawFormat > 6)
+			|| flags & ~supportedFlags || (rawFormat < 1 || rawFormat > 6)
             || (rawFormat == 4 && (flags & SRGBFlag))
 			|| static_cast<uint64_t>(tableOffset) + static_cast<uint64_t>(mipCount)
 				* MipEntrySize > bytes.size())
@@ -461,8 +469,12 @@ namespace TomCat {
 			error = "texture artifact header is invalid or unsupported";
 			return false;
 		}
+		artifact.Version = version;
 		artifact.Width = width; artifact.Height = height;
 		artifact.SRGB = (flags & SRGBFlag) != 0;
+		artifact.Sampling.Filter = flags & NearestFlag ? TextureFilterMode::Nearest : TextureFilterMode::Linear;
+		artifact.Sampling.WrapU = flags & ClampUFlag ? TextureWrapMode::Clamp : TextureWrapMode::Repeat;
+		artifact.Sampling.WrapV = flags & ClampVFlag ? TextureWrapMode::Clamp : TextureWrapMode::Repeat;
 		artifact.Format = static_cast<TextureArtifactFormat>(rawFormat);
 		artifact.Mips.reserve(mipCount);
 		uint32_t expectedWidth = width, expectedHeight = height;
@@ -518,6 +530,22 @@ namespace TomCat {
 			return false;
 		}
 		bool srgb = true, mipmaps = true;
+		uint32_t samplingFlags = 0;
+		if (const auto* filter = FindSetting(settings, { "filterMode" }))
+		{
+			const std::string value = Lower(*filter);
+			if (value == "nearest") samplingFlags |= NearestFlag;
+			else if (value != "linear") { error = "filterMode must be Linear or Nearest"; return false; }
+		}
+		for (const auto& [name, flag] : { std::pair{ "wrapU", ClampUFlag }, std::pair{ "wrapV", ClampVFlag } })
+		{
+			if (const auto* wrap = FindSetting(settings, { name }))
+			{
+				const std::string value = Lower(*wrap);
+				if (value == "clamp") samplingFlags |= flag;
+				else if (value != "repeat") { error = std::string(name) + " must be Repeat or Clamp"; return false; }
+			}
+		}
 		if (!ParseBool(FindSetting(settings, { "sRGB", "srgb" }), true, srgb)
 			|| !ParseBool(FindSetting(settings, { "generateMipmaps", "mipmaps" }),
 				true, mipmaps))
@@ -632,12 +660,14 @@ namespace TomCat {
 		}
 		artifact.reserve(static_cast<size_t>(artifactBytes));
 		artifact.insert(artifact.end(), Magic.begin(), Magic.end());
-		AppendU16(artifact, Version); AppendU16(artifact, HeaderSize);
+		// Default settings stay byte-compatible with v1. Non-default sampling
+		// uses v2 so old readers reject it instead of silently rendering differently.
+		AppendU16(artifact, samplingFlags ? SamplingVersion : LegacyVersion); AppendU16(artifact, HeaderSize);
 		AppendU32(artifact, static_cast<uint32_t>(width));
 		AppendU32(artifact, static_cast<uint32_t>(height));
 		AppendU32(artifact, static_cast<uint32_t>(payloads.size()));
 		AppendU32(artifact, static_cast<uint32_t>(format));
-		AppendU32(artifact, srgb ? SRGBFlag : 0); AppendU32(artifact, HeaderSize);
+		AppendU32(artifact, (srgb ? SRGBFlag : 0) | samplingFlags); AppendU32(artifact, HeaderSize);
 		uint64_t offset = HeaderSize + static_cast<uint64_t>(payloads.size()) * MipEntrySize;
 		mipWidth = static_cast<uint32_t>(width); mipHeight = static_cast<uint32_t>(height);
 		for (const auto& payload : payloads)
