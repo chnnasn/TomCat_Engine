@@ -187,7 +187,8 @@ VkPipeline VulkanShader::Pipeline(const VertexArray& array, VulkanFramebuffer& t
         VkPipelineColorBlendAttachmentState blend{};
         blend.colorWriteMask = colorGrade && !blends.empty() ? 0 : 0xf;
         blend.blendEnable = !colorGrade && color->Format != VK_FORMAT_R32_SINT;
-        blend.srcColorBlendFactor = blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blend.dstColorBlendFactor = blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
         blend.colorBlendOp = blend.alphaBlendOp = VK_BLEND_OP_ADD;
         blends.push_back(blend);

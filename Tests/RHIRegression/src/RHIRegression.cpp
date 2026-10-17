@@ -74,6 +74,36 @@ std::array<uint8_t, 4> ReadColor(const Ref<Framebuffer>& target, int x, int y) {
     std::copy_n(pixels.data() + offset, pixel.size(), pixel.data());
     return pixel;
 }
+void CheckSourceOverAlpha(const Ref<Framebuffer>& target, const Camera& camera) {
+    // UI textures contain straight color, while a composited render target
+    // stores source-over coverage. Squaring source alpha makes an opaque
+    // canvas translucent and lets the browser's page background leak through.
+    auto texture = Texture2D::Create(1, 1);
+    const std::array<uint8_t, 4> texel{245, 245, 245, 255};
+    texture->SetData(texel.data(), uint32_t(texel.size()));
+    const float alpha = 145.0f / 255.0f;
+    auto draw = [&] {
+        Renderer2D::BeginScene(camera, glm::mat4(1));
+        Renderer2D::DrawQuad(glm::mat4(1), texture, 1, {1, 1, 1, alpha}, 126);
+        Renderer2D::EndScene();
+    };
+    auto expect = [&](std::array<int, 4> expected, const char* message) {
+        const auto actual = ReadColor(target, 48, 48);
+        for (size_t channel = 0; channel < actual.size(); ++channel)
+            Require(std::abs(int(actual[channel]) - expected[channel]) <= 1, message);
+    };
+    target->Bind();
+    RenderCommand::SetClearColor({29.0f / 255, 33.0f / 255, 45.0f / 255, 1});
+    RenderCommand::Clear(); draw();
+    expect({152, 154, 159, 255}, "Translucent UI over opaque target changed RGB or lost opaque alpha");
+    RenderCommand::SetClearColor({0, 0, 0, 0}); RenderCommand::Clear(); draw();
+    expect({139, 139, 139, 145}, "Translucent UI over transparent target did not preserve source coverage");
+    Renderer2D::BeginScene(camera, glm::mat4(1));
+    Renderer2D::DrawQuad(glm::mat4(1), glm::vec4(0, 1, 0, 0.5f), 127);
+    Renderer2D::EndScene();
+    expect({70, 197, 70, 200}, "Layered source-over alpha did not accumulate destination coverage");
+    Require(target->ReadPixel(1, 48, 48) == 127, "Alpha blending changed integer picking writes");
+}
 void CheckTextureSampling(const Ref<Framebuffer>& target, const Camera& camera) {
     // Top and left edges are transparent; bottom and right edges are opaque.
     // Magnification with linear/repeat used to leak the opposite edge into
@@ -615,6 +645,7 @@ void Run(const BackendOptions& options) {
 
     CheckTextureSampling(framebuffer, camera);
     CheckTextureReadiness(framebuffer, camera);
+    CheckSourceOverAlpha(framebuffer, camera);
 
     // Shared scene postprocessing must transform actual pixels on each backend,
     // preserve the picking attachment, and leave normal drawing usable afterward.
@@ -636,6 +667,7 @@ void Run(const BackendOptions& options) {
     Renderer2D::DrawQuad(glm::mat4(1), glm::vec4(1), 124); Renderer2D::EndScene();
     Require(framebuffer->ReadPixel(1,48,48) == 124 && ReadColor(framebuffer, 48, 48)[0] > 250,
         "Color grading did not restore normal color/picking writes");
+    CheckSourceOverAlpha(framebuffer, camera);
     framebuffer->Unbind();
     FrameProfiler::Get().SetRecording(false);
     RHI::RenderDevice::Get().WaitIdle();
