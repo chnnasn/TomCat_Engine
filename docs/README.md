@@ -18,6 +18,7 @@
 | Prefab、场景、调试与 UI 目标及交付边界 | [能力开发方案](PRODUCT_CAPABILITIES_PLAN.zh-CN.md) | — |
 | 关联 Prefab、覆盖、嵌套和变体 | [Prefab 工作流](PREFAB_WORKFLOW.zh-CN.md) | — |
 | 异步加载、叠加、持久对象与显式卸载 | [场景流式加载](SCENE_STREAMING.zh-CN.md) | — |
+| 纹理预加载、失败诊断与 GPU 就绪屏障 | [纹理就绪状态](TEXTURE_READINESS.zh-CN.md) | — |
 | 性能采集、资源统计与 C# 断点流程 | [调试与性能分析](DEBUGGING_AND_PROFILING.md) | — |
 | 滑条、滚动、输入、主题与游戏本地化 | [运行时 UI 控件](RUNTIME_UI_PRODUCT.zh-CN.md) | — |
 | 分帧激活、国际化、2D 制作与媒体生产 | [P1 使用与边界](P1_PRODUCTION.md) | — |

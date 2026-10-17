@@ -3027,6 +3027,41 @@ namespace TomCat::Scripting {
 			return api;
 		}
 
+		NativeTextureAssetsApiV1 BuildTextureAssetsApiV1()
+		{
+			NativeTextureAssetsApiV1 api;
+			api.RequestLoad = +[](uint64_t handle, uint32_t* state) noexcept -> int32_t
+			{
+				return Guard([&]()
+				{
+					if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+					if (!state) return Code(ScriptStatus::InvalidArgument);
+					*state = static_cast<uint32_t>(AssetManager::Get().RequestTextureLoad(AssetHandle(handle)));
+					return Code(ScriptStatus::Success);
+				});
+			};
+			api.GetLoadState = +[](uint64_t handle, uint32_t* state) noexcept -> int32_t
+			{
+				return Guard([&]()
+				{
+					if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+					if (!state) return Code(ScriptStatus::InvalidArgument);
+					*state = static_cast<uint32_t>(AssetManager::Get().GetTextureLoadState(AssetHandle(handle)));
+					return Code(ScriptStatus::Success);
+				});
+			};
+			api.GetLoadError = +[](uint64_t handle, uint8_t* buffer, uint32_t capacity, uint32_t* required) noexcept -> int32_t
+			{
+				return Guard([&]()
+				{
+					if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+					return WriteUtf8(AssetManager::Get().GetTextureLoadError(AssetHandle(handle)),
+						buffer, capacity, required);
+				});
+			};
+			return api;
+		}
+
 		NativeSceneApiV1 BuildSceneApiV1()
 		{
 			NativeSceneApiV1 api;
@@ -3117,6 +3152,15 @@ namespace TomCat::Scripting {
 				std::string capability;
 				if (!required || !ReadUtf8(name, capability))
 					return Code(ScriptStatus::InvalidArgument);
+				if (capability == TextureAssetsCapabilityName)
+				{
+					const NativeTextureAssetsApiV1 api = BuildTextureAssetsApiV1();
+					*required = sizeof(api);
+					if (minimumVersion > api.Version) return Code(ScriptStatus::VersionMismatch);
+					if (!output || capacity < sizeof(api)) return Code(ScriptStatus::BufferTooSmall);
+					std::memcpy(output, &api, sizeof(api));
+					return Code(ScriptStatus::Success);
+				}
 				if (capability == SceneCapabilityName)
 				{
 					const NativeSceneApiV1 api = BuildSceneApiV1();
