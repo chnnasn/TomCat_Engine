@@ -1278,6 +1278,18 @@ namespace {
 		requireCooked(square, squareBytes, false);
 		requireCooked(circle, circleBytes, true);
 
+		using TomCat::TextureLoadState;
+		Require(assets.GetTextureLoadState(square) == TextureLoadState::NotRequested
+			&& assets.GetTextureLoadState(circle) == TextureLoadState::NotRequested,
+			"reading cooked texture bytes falsely marked GPU textures ready");
+		for (const auto invalid : { TomCat::AssetHandle(0), sceneHandle,
+			TomCat::AssetHandle(1) })
+		{
+			Require(assets.GetTextureLoadState(invalid) == TextureLoadState::Invalid
+				&& assets.RequestTextureLoad(invalid) == TextureLoadState::Invalid,
+				"zero, non-texture or absent cooked handle was accepted as a texture");
+		}
+
 		// Player startup must enqueue package textures without synchronously
 		// decoding or touching OpenGL. This regression intentionally never creates
 		// a renderer; it waits only for the worker-side read/validation stage, then
@@ -1286,6 +1298,15 @@ namespace {
 			"cooked texture preload did not discover package textures");
 		Require(assets.BeginCookedTexturePreload() == 0,
 			"repeated cooked texture preload duplicated pending reads");
+		const auto pendingBefore = assets.GetTextureStreamingStats().PendingCount;
+		for (uint32_t attempt = 0; attempt < 100; ++attempt)
+		{
+			Require(assets.GetTextureLoadState(square) == TextureLoadState::Loading
+				&& assets.RequestTextureLoad(square) == TextureLoadState::Loading,
+				"an unpublished cooked texture did not remain Loading");
+		}
+		Require(assets.GetTextureStreamingStats().PendingCount == pendingBefore,
+			"texture readiness queries or repeated requests duplicated pending work");
 		TomCat::TextureStreamingStats streaming;
 		for (uint32_t attempt = 0; attempt < 500; ++attempt)
 		{
@@ -1298,12 +1319,25 @@ namespace {
 		Require(streaming.PreparedCount >= 2
 			&& streaming.PreparedBytes != 0 && streaming.BacklogCount == 0,
 			"cooked texture preload did not prepare artifacts asynchronously");
+		Require(assets.GetTextureLoadState(square) == TextureLoadState::Loading
+			&& assets.GetTextureLoadState(circle) == TextureLoadState::Loading
+			&& assets.GetTextureLoadError(square).empty(),
+			"CPU-prepared bytes were reported Ready before GPU publication");
 		assets.UnmountCookedPackage();
 		streaming = assets.GetTextureStreamingStats();
 		Require(streaming.BacklogCount == 0 && streaming.PendingCount == 0
 			&& streaming.PreparedCount == 0 && streaming.PreparedBytes == 0
 			&& streaming.JobsInFlight == 0,
 			"package unmount retained texture preload jobs or artifact memory");
+		Require(assets.GetTextureLoadState(square) == TextureLoadState::Invalid,
+			"unmounted texture retained its previous load state");
+		Require(assets.MountCookedPackage(packagePath)
+			&& assets.GetTextureLoadState(square) == TextureLoadState::NotRequested
+			&& assets.GetTextureLoadError(square).empty(),
+			"remount retained a stale texture load state or error");
+		Require(assets.RequestTextureLoad(square) == TextureLoadState::Loading,
+			"remounted texture could not be requested again");
+		assets.UnmountCookedPackage();
 	}
 
 	void TestColdDirectAtlasCookIsReadOnly()

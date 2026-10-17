@@ -81,6 +81,7 @@ internal static unsafe partial class NativeBridge
 			return NativeUnavailable;
 		NativeSceneApiV1 sceneCandidate = default;
 		bool hasSceneCandidate = TryReadSceneCapability(api, out sceneCandidate);
+		bool hasTextureAssetsCandidate = TryReadTextureAssetsCapability(api, out var textureAssetsCandidate);
 		NativeInputApiV1 inputCandidate = default;
 		bool hasInputCandidate = TryReadInputCapability(api, out inputCandidate);
 		NativeInputEventsApiV1 inputEventsCandidate = default;
@@ -130,6 +131,11 @@ internal static unsafe partial class NativeBridge
 		// complete process-lifetime table and its bound state untouched.
 		lock (s_bindGate)
 		{
+			if (hasTextureAssetsCandidate && !s_textureAssetsBound)
+			{
+				s_textureAssetsApi = textureAssetsCandidate;
+				Volatile.Write(ref s_textureAssetsBound, true);
+			}
 			if (hasSceneCandidate && !s_sceneBound)
 			{
 				s_sceneApi = sceneCandidate;

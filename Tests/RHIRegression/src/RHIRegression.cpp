@@ -7,6 +7,9 @@
 #include "TomCat/RHI/RenderDevice.h"
 #include "TomCat/Asset/ShaderArtifact.h"
 #include "TomCat/Asset/TextureArtifact.h"
+#include "TomCat/Asset/AssetManager.h"
+#include "TomCat/Scene/SceneSerializer.h"
+#include "TomCat/Scene/Entity.h"
 #include "platform/Vulkan/VulkanDevice.h"
 #include <fstream>
 #include <functional>
@@ -17,6 +20,8 @@
 #include <cmath>
 #include <stdexcept>
 #include <string_view>
+#include <chrono>
+#include <thread>
 
 using namespace TomCat;
 namespace {
@@ -102,6 +107,113 @@ void CheckTextureSampling(const Ref<Framebuffer>& target, const Camera& camera) 
     const auto nearest = draw({{"filterMode", "nearest"}, {"wrapU", "clamp"}, {"wrapV", "clamp"}});
     Require(nearest[0] == 0 && nearest[1] == 0 && nearest[2] > 250,
         "nearest/clamp did not preserve opaque pixel-art texels without edge bleed");
+}
+void CheckTextureReadiness(const Ref<Framebuffer>& target, const Camera& camera) {
+    auto& assets = AssetManager::Get();
+    struct Fixture {
+        std::filesystem::path Root = std::filesystem::temp_directory_path()
+            / ("TomCat-TextureReadiness-" + std::to_string(uint64_t(UUID())));
+        ~Fixture() { AssetManager::Get().Shutdown(); std::error_code error; std::filesystem::remove_all(Root, error); }
+    } fixture;
+    const auto directory = fixture.Root / "Assets";
+    std::filesystem::create_directories(directory);
+    // A non-power-of-two texture verifies that Ready describes an uploaded
+    // resource, not merely valid source metadata or a shared fallback texture.
+    std::vector<uint8_t> tga(18 + 3 * 2 * 4, 0);
+    tga[2] = 2; tga[12] = 3; tga[14] = 2; tga[16] = 32; tga[17] = 0x28;
+    for (size_t offset = 18; offset < tga.size(); offset += 4) {
+        tga[offset + 1] = 255; tga[offset + 3] = 255;
+    }
+    const auto write = [](const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
+        std::ofstream output(path, std::ios::binary); output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        Require(bool(output), "could not write texture readiness fixture");
+    };
+    write(directory / "Ready.tga", tga);
+    write(directory / "Atlas.tga", tga);
+    write(directory / "Broken.tga", {1, 2, 3});
+    Require(assets.Initialize(directory, fixture.Root / "Library"), "texture readiness registry initialization failed");
+    const auto valid = assets.Registry().ImportAsset(directory / "Ready.tga");
+    const auto broken = assets.Registry().ImportAsset(directory / "Broken.tga");
+    Require(uint64_t(valid) != 0 && uint64_t(broken) != 0, "texture readiness fixture handles are missing");
+    Require(assets.SetImportSettings(valid, {{"compression", "rgba8"}, {"generateMipmaps", "false"}, {"sRGB", "false"}}),
+        "texture readiness import settings failed");
+    Require(assets.GetTextureLoadState(valid) == TextureLoadState::NotRequested,
+        "metadata or import preparation was mistaken for GPU readiness");
+    Require(assets.RequestTextureLoad(valid) == TextureLoadState::Ready
+        && assets.GetTextureLoadError(valid).empty(), "authoring texture did not become GPU ready");
+    const auto drawReady = [&]() {
+        auto texture = assets.LoadTexture(valid);
+        Require(texture && texture != assets.GetMissingTexture() && texture->IsLoaded()
+            && texture->GetWidth() == 3 && texture->GetHeight() == 2, "Ready returned a placeholder or wrong texture");
+        target->Bind(); RenderCommand::SetClearColor({0, 0, 0, 1}); RenderCommand::Clear();
+        Renderer2D::BeginScene(camera, glm::mat4(1));
+        Renderer2D::DrawQuad(glm::mat4(1), texture, 1, glm::vec4(1), 126);
+        Renderer2D::EndScene();
+        const auto pixel = ReadColor(target, 48, 48);
+        Require(pixel[0] == 0 && pixel[1] > 250 && pixel[2] == 0, "Ready texture did not render its real GPU pixels");
+    };
+    drawReady();
+
+    const auto atlas = assets.Registry().ImportAsset(directory / "Atlas.tga");
+    Require(assets.SetImportSettings(atlas, {{"compression", "rgba8"}, {"generateMipmaps", "false"}, {"sRGB", "false"},
+        {"SpriteMode", "Multiple"}, {"SpriteAtlasSchema", "2"}, {"Sprite.slice.Name", "Slice"},
+        {"Sprite.slice.Rect", "0,0,3,2"}, {"Sprite.slice.Pivot", "0.5,0.5"},
+        {"Sprite.slice.PixelsPerUnit", "1"}, {"Sprite.slice.Border", "0,0,0,0"}}), "sprite child fixture settings failed");
+    const auto imported = assets.LoadImportedArtifact(atlas);
+    Require(imported.Succeeded() && imported.Artifact.SubAssets.size() == 1, "sprite child fixture import failed");
+    const auto child = imported.Artifact.SubAssets.front().Handle;
+    const auto childTexture = assets.LoadTexture(child);
+    Require(childTexture && childTexture != assets.GetMissingTexture()
+        && assets.GetTextureLoadState(child) == TextureLoadState::Ready,
+        "ordinary child LoadTexture was not reflected by readiness queries");
+    assets.Release(child);
+    Require(assets.GetTextureLoadState(child) == TextureLoadState::NotRequested,
+        "releasing a sprite child retained its owner's Ready state");
+    Require(assets.RequestTextureLoad(child) == TextureLoadState::Ready,
+        "explicit sprite child request did not publish the requested cache key");
+    assets.Release(child);
+    Require(assets.GetTextureLoadState(child) == TextureLoadState::NotRequested,
+        "releasing an explicitly requested sprite child retained stale Ready");
+
+    Require(assets.RequestTextureLoad(broken) == TextureLoadState::Failed
+        && !assets.GetTextureLoadError(broken).empty(), "invalid source did not report a diagnostic Failed state");
+    auto missing = assets.LoadTexture(broken);
+    Require(missing && missing->IsLoaded() && missing == assets.GetMissingTexture()
+        && assets.GetTextureLoadState(broken) == TextureLoadState::Failed,
+        "the loaded shared missing texture was incorrectly reported Ready");
+    Require(assets.GetTextureLoadState(AssetHandle(0)) == TextureLoadState::Invalid
+        && !assets.GetTextureLoadError(AssetHandle(0)).empty(), "invalid texture handle has no distinct state or diagnostic");
+    assets.Release(valid);
+    Require(assets.GetTextureLoadState(valid) == TextureLoadState::NotRequested
+        && assets.RequestTextureLoad(valid) == TextureLoadState::Ready, "released texture retained stale Ready or could not reload");
+    drawReady();
+
+    auto scene = CreateRef<Scene>();
+    scene->CreateEntity("Ready Sprite").AddComponent<SpriteRenderer>().SpriteHandle = valid;
+    const auto scenePath = directory / "Ready.tomcat";
+    Require(SceneSerializer(scene).Serialize(scenePath), "texture readiness scene could not be saved");
+    const auto sceneMetadata = assets.Registry().GetMetadata(scenePath);
+    Require(sceneMetadata != nullptr, "texture readiness scene was not imported");
+    const auto package = fixture.Root / "Ready.tcpak";
+    Require(assets.CookToPackage(package, sceneMetadata->Handle), "texture readiness package cook failed");
+    assets.Shutdown();
+    for (int mount = 0; mount < 2; ++mount) {
+        Require(assets.MountCookedPackage(package), "texture readiness package mount failed");
+        Require(assets.GetTextureLoadState(valid) == TextureLoadState::NotRequested,
+            "package remount retained stale authoring or previous GPU Ready state");
+        Require(assets.RequestTextureLoad(valid) == TextureLoadState::Loading,
+            "cooked request was marked Ready before publishing to the GPU");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (assets.GetTextureLoadState(valid) == TextureLoadState::Loading && std::chrono::steady_clock::now() < deadline) {
+            assets.PumpTexturePublishes(); std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        Require(assets.GetTextureLoadState(valid) == TextureLoadState::Ready
+            && assets.RequestTextureLoad(valid) == TextureLoadState::Ready, "published cooked texture did not become or remain Ready");
+        drawReady();
+        assets.UnmountCookedPackage();
+        Require(assets.GetTextureLoadState(valid) == TextureLoadState::Invalid,
+            "unmounted texture retained stale Ready state");
+    }
 }
 class UILayer final : public Layer {
 public:
@@ -502,6 +614,7 @@ void Run(const BackendOptions& options) {
     }
 
     CheckTextureSampling(framebuffer, camera);
+    CheckTextureReadiness(framebuffer, camera);
 
     // Shared scene postprocessing must transform actual pixels on each backend,
     // preserve the picking attachment, and leave normal drawing usable afterward.
