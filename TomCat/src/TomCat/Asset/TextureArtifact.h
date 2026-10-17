@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Asset.h"
+#include "TomCat/Renderer/TextureSampling.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -30,10 +31,12 @@ namespace TomCat {
 
 	struct TextureArtifactView
 	{
+		uint16_t Version = 1;
 		uint32_t Width = 0;
 		uint32_t Height = 0;
 		bool SRGB = true;
 		TextureArtifactFormat Format = TextureArtifactFormat::RGBA8;
+		TextureSampling Sampling;
 		std::vector<TextureArtifactMip> Mips;
 	};
 

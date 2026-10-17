@@ -433,7 +433,7 @@ namespace TomCat {
 			{
 				return "tomcat.sprite-atlas";
 			}
-			uint32_t GetVersion() const noexcept override { return 5; }
+			uint32_t GetVersion() const noexcept override { return 6; }
 			AssetType GetAssetType() const noexcept override { return AssetType::Texture2D; }
 
 			AssetImportResult Import(const AssetImportRequest& request) const override
@@ -461,6 +461,8 @@ namespace TomCat {
 				if (!BuildTextureArtifact(request.SourceBytes, request.Settings,
 					request.Platform, result.ArtifactBytes, result.Error, &width, &height))
 					return result;
+				// BuildTextureArtifact emits a validated 32-byte header.
+				if (result.ArtifactBytes[4] == 2) result.Format = "texture/tctx-v2";
 
 				std::vector<AssetSubAsset> sprites;
 				if (!ParseSpriteAtlasSettings(request.Settings, sprites, result.Error))

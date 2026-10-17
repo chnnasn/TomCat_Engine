@@ -69,6 +69,40 @@ std::array<uint8_t, 4> ReadColor(const Ref<Framebuffer>& target, int x, int y) {
     std::copy_n(pixels.data() + offset, pixel.size(), pixel.data());
     return pixel;
 }
+void CheckTextureSampling(const Ref<Framebuffer>& target, const Camera& camera) {
+    // Top and left edges are transparent; bottom and right edges are opaque.
+    // Magnification with linear/repeat used to leak the opposite edge into
+    // cropped sprites. Exercise the real importer, GPU upload and draw path.
+    std::vector<uint8_t> tga(18 + 16 * 16 * 4, 0);
+    tga[2] = 2; tga[12] = 16; tga[14] = 16; tga[16] = 32; tga[17] = 0x28;
+    for (size_t y = 0; y < 16; ++y)
+        for (size_t x = 0; x < 16; ++x)
+            if (y == 15 || x == 15)
+                std::fill_n(tga.data() + 18 + (y * 16 + x) * 4, 4, uint8_t(255));
+    auto draw = [&](const AssetImportSettings& sampling) {
+        auto settings = sampling;
+        settings["compression"] = "rgba8"; settings["generateMipmaps"] = "false"; settings["sRGB"] = "false";
+        std::vector<uint8_t> artifact; std::string error;
+        Require(BuildTextureArtifact(tga, settings, "editor", artifact, error), error.c_str());
+        auto texture = Texture2D::Create(artifact.data(), artifact.size());
+        Require(texture && texture->IsLoaded(), "sampling texture upload failed");
+        target->Bind(); RenderCommand::SetClearColor({0, 0, 0, 1}); RenderCommand::Clear();
+        Renderer2D::BeginScene(camera, glm::mat4(1));
+        Renderer2D::DrawQuad(glm::mat4(1), texture, 1, glm::vec4(1), 125);
+        Renderer2D::EndScene();
+        return std::array{ReadColor(target, 48, 71)[0], ReadColor(target, 24, 48)[0], ReadColor(target, 48, 26)[0]};
+    };
+    const auto legacy = draw({});
+    Require(legacy[0] > 5 && legacy[1] > 5, "legacy repeat sampling no longer wraps opposite edges");
+    const auto clampV = draw({{"wrapV", "clamp"}});
+    Require(clampV[0] == 0 && clampV[1] > 5, "vertical clamp changed U wrapping or leaked the bottom edge");
+    const auto clamp = draw({{"wrapU", "clamp"}, {"wrapV", "clamp"}});
+    Require(clamp[0] == 0 && clamp[1] == 0 && clamp[2] > 5 && clamp[2] < 245,
+        "clamp failed to remove edge bleed while retaining linear interpolation");
+    const auto nearest = draw({{"filterMode", "nearest"}, {"wrapU", "clamp"}, {"wrapV", "clamp"}});
+    Require(nearest[0] == 0 && nearest[1] == 0 && nearest[2] > 250,
+        "nearest/clamp did not preserve opaque pixel-art texels without edge bleed");
+}
 class UILayer final : public Layer {
 public:
     Ref<Framebuffer> Target;
@@ -466,6 +500,8 @@ void Run(const BackendOptions& options) {
         Renderer2D::DrawQuad(glm::mat4(1), importedTexture, 1, glm::vec4(1), 111); Renderer2D::EndScene();
         Require(framebuffer->ReadPixel(1,48,48) == 111, (std::string(compression) + " imported texture did not render").c_str());
     }
+
+    CheckTextureSampling(framebuffer, camera);
 
     // Shared scene postprocessing must transform actual pixels on each backend,
     // preserve the picking attachment, and leave normal drawing usable afterward.

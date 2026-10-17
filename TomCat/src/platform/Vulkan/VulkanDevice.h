@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include "TomCat/Renderer/TextureSampling.h"
 #include <array>
 #include <atomic>
 #include <functional>
@@ -96,7 +97,8 @@ public:
     VulkanBufferSlice Upload(VkDeviceSize size, VkBufferUsageFlags usage, const void* data, VkDeviceSize alignment = 1);
     std::shared_ptr<VulkanBufferAllocation> Buffer(VkDeviceSize size, VkBufferUsageFlags usage, const void* data = nullptr);
     std::shared_ptr<VulkanImageAllocation> Image(uint32_t width, uint32_t height, VkFormat format,
-        VkImageUsageFlags usage, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT, uint32_t mips = 1);
+        VkImageUsageFlags usage, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT, uint32_t mips = 1,
+        const TextureSampling& sampling = {});
     VkDescriptorSet AllocateDescriptor(VkDescriptorSetLayout layout);
     uint32_t MemoryType(uint32_t bits, VkMemoryPropertyFlags flags) const;
     VkFormat DepthFormat() const;
