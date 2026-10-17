@@ -162,6 +162,7 @@ internal static unsafe partial class Program
 
 			VerifyBootstrapAbi(assembly, pdb);
 			VerifySceneStreamingCapability();
+			VerifyTextureAssetsCapability();
 			ScriptDomain primary = BeginRuntimeUnload(assembly, pdb);
 			Check(PollUntilUnloaded(primary), "primary collectible ALC leaked");
 			ScriptDomain projectB = BeginProjectBSwitchUnload(assemblyB, pdbB);
@@ -332,6 +333,7 @@ internal static unsafe partial class Program
 			managed.DestroyAttachments != null && managed.InstantiateAttachments != null &&
 			managed.ResolveDeferredCommandBatch != null && managed.InvokeMethod != null,
 			"GetManagedApi must populate every V1 export");
+		VerifyTextureAssetsUnavailable();
 		VerifyOptionalInputCapability(native, bootstrap);
 		VerifyNaturalProxySyntax();
 		VerifyMetadataReceiverToken(managed, assembly, pdb);
@@ -3461,6 +3463,14 @@ internal static unsafe partial class Program
 			return -1;
 		string capability = Encoding.UTF8.GetString(
 			new ReadOnlySpan<byte>(name.Data, (int)name.Length));
+		if (capability == "TomCat.TextureAssetsApiV1")
+		{
+			*required = (uint)sizeof(NativeTextureAssetsApiV1);
+			if (minimumVersion > 1) return -4;
+			if (output is null || capacity < sizeof(NativeTextureAssetsApiV1)) return -6;
+			*(NativeTextureAssetsApiV1*)output = CreateTextureAssetsTestApi();
+			return 0;
+		}
 		if (capability == "TomCat.SceneApiV1")
 		{
 			*required = (uint)sizeof(NativeSceneApiV1);

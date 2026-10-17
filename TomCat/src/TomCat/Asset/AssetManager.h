@@ -106,6 +106,8 @@ namespace TomCat {
 		bool HasSHA256Digest = false;
 	};
 
+	enum class TextureLoadState : uint32_t { NotRequested = 0, Loading = 1, Ready = 2, Failed = 3, Invalid = 4 };
+
 	struct TextureStreamingStats
 	{
 		size_t BacklogCount = 0;
@@ -203,6 +205,12 @@ namespace TomCat {
 		const AssetDatabase& GetDatabase() const { return m_Database; }
 
 		Ref<Texture2D> LoadTexture(AssetHandle handle);
+		// Graphics/application thread only. Queries never perform I/O or publish
+		// resources. Requests stream in cooked players; authoring uses the existing
+		// synchronous importer/GPU loader. A placeholder is never Ready.
+		TextureLoadState RequestTextureLoad(AssetHandle handle);
+		TextureLoadState GetTextureLoadState(AssetHandle handle) const;
+		std::string GetTextureLoadError(AssetHandle handle) const;
 		// Loads and publishes an offline shader artifact on the calling graphics
 		// thread. A current renderer context is required for the first load.
 		Ref<Shader> LoadShader(AssetHandle handle);
@@ -325,6 +333,7 @@ namespace TomCat {
 		AssetManager& operator=(const AssetManager&) = delete;
 
 		Ref<Texture2D> CacheMissingTexture(AssetHandle handle, const char* reason);
+		bool ResolveTextureLoadHandle(AssetHandle handle, AssetHandle& resolved) const;
 		bool RequestCookedTexture(AssetHandle handle, bool prioritize);
 		void ScheduleTextureBacklog();
 		void PrepareCookedTexture(AssetHandle handle, uint64_t generation,

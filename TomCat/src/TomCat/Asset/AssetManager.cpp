@@ -2637,12 +2637,88 @@ namespace TomCat {
 	Ref<Texture2D> AssetManager::CacheMissingTexture(AssetHandle handle, const char* reason)
 	{
 		if (static_cast<uint64_t>(handle) != 0)
+		{
 			TC_Core_Warn("Using the missing texture for asset {0}: {1}",
 				static_cast<uint64_t>(handle), reason ? reason : "asset is unavailable");
+			std::lock_guard lock(m_TextureStreamingMutex);
+			m_TextureFailures[handle] = reason ? reason : "asset is unavailable";
+		}
 		Ref<Texture2D> missing = GetMissingTexture();
 		if (static_cast<uint64_t>(handle) != 0 && missing)
 			m_TextureCache[handle] = missing;
 		return missing;
+	}
+
+	bool AssetManager::ResolveTextureLoadHandle(AssetHandle handle, AssetHandle& resolved) const
+	{
+		resolved = handle;
+		if (static_cast<uint64_t>(handle) == 0) return false;
+		if (IsCookedPackageMounted())
+		{
+			const auto entry = m_CookedEntries.find(handle);
+			return entry != m_CookedEntries.end() && entry->second.Type == AssetType::Texture2D;
+		}
+		if (FindBuiltInSpriteAsset(handle)) return true;
+		if (!m_RegistryInitialized) return false;
+		const AssetSubAsset* child = nullptr;
+		const AssetMetadata* metadata = m_Registry.GetMetadata(handle);
+		if (!metadata) metadata = m_Registry.GetSubAssetOwner(handle, &child);
+		if (!metadata || metadata->IsMissing || !m_Registry.IsCurrentAsset(metadata->Handle)
+			|| (child ? child->Type : metadata->Type) != AssetType::Texture2D) return false;
+		// LoadTexture and Release cache authoring sprite children by their requested
+		// handle. The owner is used only to validate identity and read the artifact.
+		return true;
+	}
+
+	TextureLoadState AssetManager::GetTextureLoadState(AssetHandle handle) const
+	{
+		AssetHandle resolved;
+		if (!ResolveTextureLoadHandle(handle, resolved)) return TextureLoadState::Invalid;
+		const auto cached = m_TextureCache.find(resolved);
+		if (cached != m_TextureCache.end())
+			return cached->second && cached->second != m_MissingTexture && cached->second->IsLoaded()
+				? TextureLoadState::Ready : TextureLoadState::Failed;
+		std::lock_guard lock(m_TextureStreamingMutex);
+		if (m_TextureFailures.contains(resolved)) return TextureLoadState::Failed;
+		if (m_TextureBacklogSet.contains(resolved) || m_TexturePending.contains(resolved))
+			return TextureLoadState::Loading;
+		return TextureLoadState::NotRequested;
+	}
+
+	TextureLoadState AssetManager::RequestTextureLoad(AssetHandle handle)
+	{
+		const auto state = GetTextureLoadState(handle);
+		if (state != TextureLoadState::NotRequested) return state;
+		AssetHandle resolved;
+		if (!ResolveTextureLoadHandle(handle, resolved)) return TextureLoadState::Invalid;
+		if (IsCookedPackageMounted()) (void)RequestCookedTexture(resolved, false);
+		else
+		{
+			try { (void)LoadTexture(resolved); }
+			catch (const std::exception& exception)
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				m_TextureFailures[resolved] = exception.what();
+			}
+			catch (...)
+			{
+				std::lock_guard lock(m_TextureStreamingMutex);
+				m_TextureFailures[resolved] = "unknown error while loading texture";
+			}
+		}
+		return GetTextureLoadState(handle);
+	}
+
+	std::string AssetManager::GetTextureLoadError(AssetHandle handle) const
+	{
+		const auto state = GetTextureLoadState(handle);
+		if (state == TextureLoadState::Invalid) return "texture handle is missing or is not a Texture2D asset";
+		if (state != TextureLoadState::Failed) return {};
+		AssetHandle resolved;
+		(void)ResolveTextureLoadHandle(handle, resolved);
+		std::lock_guard lock(m_TextureStreamingMutex);
+		const auto error = m_TextureFailures.find(resolved);
+		return error != m_TextureFailures.end() ? error->second : "texture could not be published to the GPU";
 	}
 
 	Ref<Texture2D> AssetManager::LoadTexture(AssetHandle handle)
