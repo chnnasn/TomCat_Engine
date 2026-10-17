@@ -3286,7 +3286,12 @@ namespace TomCat {
 
 		{
 			std::lock_guard<std::mutex> lock(m_CookedPackageMutex);
+			// A seek may reuse buffered bytes after the package was modified through
+			// another file handle (notably with the Windows CRT). Every explicit
+			// asset read must validate current bytes, not an earlier buffered copy.
+			m_CookedPackageStream.close();
 			m_CookedPackageStream.clear();
+			m_CookedPackageStream.open(m_CookedPackagePath, std::ios::binary);
 			m_CookedPackageStream.seekg(static_cast<std::streamoff>(entry.Offset), std::ios::beg);
 			if (!m_CookedPackageStream)
 			{

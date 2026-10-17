@@ -841,6 +841,70 @@ namespace {
 		jobs.Configure({});
 	}
 
+	void TestCookedReadsObserveExternalChanges()
+	{
+		TemporaryProject project;
+		const auto texturePath = project.Assets / "Small.bmp";
+		WriteBinary(texturePath, MakeFourByFourBMP());
+		auto& manager = TomCat::AssetManager::Get();
+		manager.Shutdown();
+		struct ManagerCleanup final
+		{
+			~ManagerCleanup() { TomCat::AssetManager::Get().Shutdown(); }
+		} cleanup;
+		Require(manager.Initialize(project.Assets, project.Library),
+			"fresh-read registry did not initialize");
+		const auto handle = RequireHandle(manager.Registry(), texturePath,
+			TomCat::AssetType::Texture2D);
+		const auto packagePath = project.Root / "FreshReads.tcpak";
+		Require(manager.CookToPackage(packagePath, TomCat::AssetHandle(0)),
+			"fresh-read fixture did not cook");
+		manager.Shutdown();
+		// Keep the small indexed payload away from EOF so a CRT input buffer
+		// retains bytes across seeks, independently of asset ordering/alignment.
+		{
+			std::ofstream padding(packagePath, std::ios::binary | std::ios::app);
+			const std::vector<char> bytes(8192, 0);
+			padding.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+			Require(padding.good(), "could not pad fresh-read fixture");
+		}
+		Require(manager.MountCookedPackage(packagePath),
+			"fresh-read fixture did not mount");
+		TomCat::CookedAssetRange range;
+		std::vector<uint8_t> original;
+		Require(manager.TryGetCookedAssetRange(handle, range)
+			&& range.HasSHA256Digest && manager.ReadAssetBytes(handle, original)
+			&& original.size() > 8 && original.size() < 2048,
+			"fresh-read fixture must exercise a small buffered asset");
+		auto patch = [&](uint8_t value) {
+			std::fstream package(packagePath,
+				std::ios::binary | std::ios::in | std::ios::out);
+			package.seekp(static_cast<std::streamoff>(range.Offset + 8));
+			package.put(static_cast<char>(value));
+			package.flush();
+			Require(package.good(), "could not patch fresh-read fixture");
+		};
+		for (unsigned attempt = 0; attempt < 3; ++attempt)
+		{
+			// Warm the exact range immediately before changing it through another
+			// file handle. seekg alone can reuse stale CRT bytes on Windows.
+			std::vector<uint8_t> bytes;
+			Require(manager.ReadAssetBytes(handle, bytes) && bytes == original,
+				"a repaired cooked asset did not recover without remounting");
+			patch(original[8] ^ 0x5a);
+			TomCat::AssetType type = TomCat::AssetType::Texture2D;
+			Require(!manager.ReadAssetBytes(handle, bytes, &type) && bytes.empty()
+				&& type == TomCat::AssetType::None,
+				"fresh cooked read accepted stale bytes after external mutation");
+			Require(!manager.LoadImportedArtifact(handle).Succeeded(),
+				"artifact load bypassed fresh cooked payload validation");
+			patch(original[8]);
+		}
+		Require(manager.ReadAssetBytes(handle) == original,
+			"the final repaired cooked asset did not recover");
+		std::cout << "PASS fresh cooked payload reads, SHA rejection and repair without remount\n";
+	}
+
 	void TestOfflineTextureArtifacts()
 	{
 		TomCat::ImporterRegistry registry;
@@ -3770,6 +3834,7 @@ int main()
 		TestMixedPrefixAssetImport();
 		TestRenderAssetIdentitySnapshot();
 		TestOfflineTextureArtifacts();
+		TestCookedReadsObserveExternalChanges();
 		TestOfflineShaderArtifacts();
 		TestCookedShaderRuntimeConsumption();
 		TestCanonicalMaterialArtifacts();
