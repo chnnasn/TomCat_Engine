@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>TomCat Web source-over alpha regression</title>
+<canvas id="canvas" width="640" height="360"></canvas><pre id="status">loading</pre>
+<script type="module">
+import {checkWebSourceOverAlpha} from './web-alpha-regression.js';
+const out=value=>document.querySelector('#status').textContent=JSON.stringify(value,null,2);
+const require=(condition,message)=>{if(!condition)throw new Error(message)};
+const cycles=[];let engine,booted=false;
+try {
+  await import('./main.js');engine=globalThis.TomCatWeb.engine;
+  for(let cycle=0;cycle<2;cycle++){
+    const boot=engine.EditorBoot(640,360);require(boot===0,`boot ${boot}: ${engine.EditorError()}`);booted=true;
+    const gl=document.querySelector('#canvas').getContext('webgl2');
+    const initial=checkWebSourceOverAlpha(gl);
+    const reply=JSON.parse(engine.EditorRpc(JSON.stringify({protocol:'tomcat.web.v1',requestId:crypto.randomUUID(),
+      type:'project.new',payload:{name:`Alpha regression ${cycle}`,template:'2D'}})));
+    require(reply.ok,JSON.stringify(reply));
+    for(let frame=0;frame<3;frame++)engine.EditorFrame(1/60);
+    require(!engine.EditorError(),engine.EditorError());
+    const afterEditorFrames=checkWebSourceOverAlpha(gl);
+    cycles.push({initial,afterEditorFrames});
+    engine.EditorShutdown();booted=false;
+  }
+  out({ok:true,cycles,coverage:'Native Web blend state, actual RGBA8 GPU readback, opaque/transparent backgrounds, two translucent layers, editor state restoration and renderer restart'});
+}catch(error){out({ok:false,error:String(error?.stack??error),cycles})}
+finally{if(booted)try{engine.EditorShutdown()}catch{}}
+</script>
