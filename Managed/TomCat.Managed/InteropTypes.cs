@@ -197,6 +197,16 @@ public unsafe struct NativeApiV2
 }
 
 [StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeTextureAssetsApiV1
+{
+    public uint Version;
+    public uint Size;
+    public delegate* unmanaged[Cdecl]<ulong, uint*, int> RequestLoad;
+    public delegate* unmanaged[Cdecl]<ulong, uint*, int> GetLoadState;
+    public delegate* unmanaged[Cdecl]<ulong, byte*, uint, uint*, int> GetLoadError;
+}
+
+[StructLayout(LayoutKind.Sequential)]
 public unsafe struct NativeSceneApiV1
 {
     public uint Version;

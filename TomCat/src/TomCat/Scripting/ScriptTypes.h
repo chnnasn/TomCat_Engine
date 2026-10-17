@@ -218,6 +218,15 @@ namespace TomCat::Scripting {
 	};
 
 	inline constexpr std::string_view InputCapabilityName = "TomCat.InputApiV1";
+	inline constexpr std::string_view TextureAssetsCapabilityName = "TomCat.TextureAssetsApiV1";
+	struct NativeTextureAssetsApiV1
+	{
+		uint32_t Version = 1;
+		uint32_t Size = sizeof(NativeTextureAssetsApiV1);
+		int32_t(TC_SCRIPT_CALL* RequestLoad)(uint64_t handle, uint32_t* state) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetLoadState)(uint64_t handle, uint32_t* state) = nullptr;
+		int32_t(TC_SCRIPT_CALL* GetLoadError)(uint64_t handle, uint8_t* buffer, uint32_t capacity, uint32_t* required) = nullptr;
+	};
 	inline constexpr std::string_view SceneCapabilityName = "TomCat.SceneApiV1";
 	struct NativeSceneApiV1
 	{
