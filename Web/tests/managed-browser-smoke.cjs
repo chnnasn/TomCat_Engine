@@ -49,6 +49,12 @@ const types = {'.html':'text/html','.js':'text/javascript','.json':'application/
   await fs.writeFile(path.join(output,'clear-result.json'),JSON.stringify(clear,null,2));
   assert.equal(clear.ok,true,JSON.stringify(clear));assert.deepEqual(pageErrors,[]);
   console.log('PASS Web clear colors, alpha, integer picking, renderer lifecycles and steady query count');
+  await page.goto(`http://127.0.0.1:${server.address().port}/web-alpha-regression.html`);
+  await page.waitForFunction(()=>{try{return typeof JSON.parse(document.querySelector('#status').textContent).ok==='boolean'}catch{return false}},{},{timeout:60000});
+  const alpha=JSON.parse(await page.locator('#status').textContent());
+  await fs.writeFile(path.join(output,'alpha-result.json'),JSON.stringify(alpha,null,2));
+  assert.equal(alpha.ok,true,JSON.stringify(alpha));assert.deepEqual(pageErrors,[]);
+  console.log('PASS Web source-over alpha pixels, inherited native blend factors and editor state restoration');
  } catch(error) {
   if(page) await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});
   await fs.writeFile(path.join(output,'failure.json'),JSON.stringify({error:String(error),pageErrors},null,2));

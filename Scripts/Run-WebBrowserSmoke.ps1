@@ -9,6 +9,8 @@ Copy-Item (Join-Path $root 'Web/tests/managed-browser-smoke.html') $OutputDirect
 Copy-Item (Join-Path $root 'Web/tests/managed-player-smoke.html') $OutputDirectory -Force
 Copy-Item (Join-Path $root 'Web/tests/web-clear-regression.html') $OutputDirectory -Force
 Copy-Item (Join-Path $root 'Web/tests/web-clear-regression.js') $OutputDirectory -Force
+Copy-Item (Join-Path $root 'Web/tests/web-alpha-regression.html') $OutputDirectory -Force
+Copy-Item (Join-Path $root 'Web/tests/web-alpha-regression.js') $OutputDirectory -Force
 & node (Join-Path $root 'Web/tests/create-player-fixture.cjs') $NativeBuildDirectory $OutputDirectory
 if($LASTEXITCODE -ne 0){throw 'Player package fixture failed.'}
 $refs=Join-Path $OutputDirectory 'smoke-refs'
