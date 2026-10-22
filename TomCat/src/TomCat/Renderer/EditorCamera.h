@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Camera.h"
-#include "TomCat/Core/Timestep.h"
+#include "TomCat/Core/TimeStep.h"
 #include "TomCat/Events/Event.h"
 #include "TomCat/Events/MouseEvent.h"
 

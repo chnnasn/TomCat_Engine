@@ -65,6 +65,10 @@ namespace TomCat {
 			buffer.resize(buffer.size() * 2);
 		}
 		return {};
+#elif defined(TC_PLATFORM_LINUX)
+            std::error_code error;
+            const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+            return error ? std::filesystem::path{} : executable.parent_path();
 #else
 		std::error_code error;
 		const std::filesystem::path current = std::filesystem::current_path(error);

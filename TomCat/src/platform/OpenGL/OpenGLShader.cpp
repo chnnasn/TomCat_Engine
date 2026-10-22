@@ -1,5 +1,5 @@
 #include "tcpch.h"
-#include "Platform/OpenGL/OpenGLShader.h"
+#include "platform/OpenGL/OpenGLShader.h"
 
 #include "TomCat/Asset/ShaderArtifact.h"
 

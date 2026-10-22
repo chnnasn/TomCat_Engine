@@ -31,7 +31,11 @@ private:
     std::thread m_Thread;
     std::mutex m_Mutex;
     std::deque<std::shared_ptr<Request>> m_Requests;
+#ifdef _WIN32
     uintptr_t m_Listener = ~uintptr_t(0);
+#else
+    int m_Listener = -1;
+#endif
     std::string m_Token;
     bool m_WinsockStarted = false;
 };

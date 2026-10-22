@@ -24,15 +24,9 @@ namespace TomCat {
 	namespace {
 		bool IsHeadlessPlayerSmokeRequested()
 		{
-			char* value = nullptr;
-			size_t valueLength = 0;
-			if (_dupenv_s(&value, &valueLength, "TOMCAT_E2E_PLAYER_HEADLESS") != 0
-				|| !value)
-				return false;
-			const std::string_view setting(value);
-			const bool requested = setting == "1" || setting == "true" || setting == "on"
-				|| setting == "yes";
-			std::free(value);
+			const char* value = std::getenv("TOMCAT_E2E_PLAYER_HEADLESS");
+			const std::string_view setting(value ? value : "");
+			const bool requested = setting == "1" || setting == "true" || setting == "on" || setting == "yes";
 			return requested;
 		}
 

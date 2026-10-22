@@ -1,5 +1,5 @@
 #include "tcpch.h"
-#include "Platform/OpenGL/OpenGLTexture.h"
+#include "platform/OpenGL/OpenGLTexture.h"
 #include "TomCat/Asset/TextureArtifact.h"
 #include "TomCat/Utils/PathUtils.h"
 

@@ -1,7 +1,7 @@
 #include "tcpch.h"
 #include "TomCat/Core/Window.h"
 
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 #include "platform/Window/WindowsWindow.h"
 #endif
 #ifdef TC_PLATFORM_WEB
@@ -13,7 +13,7 @@ namespace TomCat
 
 	Scope<Window> Window::Create(const WindowProps& props)
 	{
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 		return CreateScope<WindowsWindow>(props);
 #elif defined(TC_PLATFORM_WEB)
 		return CreateScope<WebWindow>(props);

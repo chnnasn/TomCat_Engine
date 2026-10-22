@@ -1,6 +1,17 @@
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+using SOCKET = int;
+constexpr SOCKET INVALID_SOCKET = -1;
+static int closesocket(SOCKET socket) { return close(socket); }
+static int ioctlsocket(SOCKET socket, unsigned long command, unsigned long* value) { return ioctl(socket, command, value); }
+#endif
 #include "AutomationServer.h"
 
 #include <algorithm>
@@ -18,12 +29,8 @@ namespace {
 
     std::string Environment(const char* name)
     {
-        char* value = nullptr;
-        size_t length = 0;
-        _dupenv_s(&value, &length, name);
-        std::string result = value ? value : "";
-        free(value);
-        return result;
+        const char* value = std::getenv(name);
+        return value ? value : "";
     }
 
     void Reply(SOCKET socket, int status, const std::string& body)
@@ -36,7 +43,12 @@ namespace {
         while (sent < message.size())
         {
             const int count = send(socket, message.data() + sent,
-                static_cast<int>(message.size() - sent), 0);
+                static_cast<int>(message.size() - sent),
+#ifdef _WIN32
+                0);
+#else
+                MSG_NOSIGNAL);
+#endif
             if (count <= 0) break;
             sent += count;
         }
@@ -59,15 +71,23 @@ bool AutomationServer::StartFromEnvironment(std::string& error)
         error = "Automation requires port 1..65535 and a token of at least 16 characters.";
         return false;
     }
+    #ifdef _WIN32
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
     { error = "Automation WSAStartup failed."; return false; }
     m_WinsockStarted = true;
+    #endif
+#ifdef _WIN32
     SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#else
+    SOCKET listener = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
+#endif
     m_Listener = listener;
+    #ifdef _WIN32
     BOOL exclusive = TRUE;
     setsockopt(listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
         reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+    #endif
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_port = htons(static_cast<u_short>(port));
@@ -91,7 +111,9 @@ void AutomationServer::Stop()
     if (m_Thread.joinable()) m_Thread.join();
     if (m_Listener != INVALID_SOCKET) closesocket(m_Listener);
     m_Listener = INVALID_SOCKET;
+    #ifdef _WIN32
     if (m_WinsockStarted) WSACleanup();
+    #endif
     m_WinsockStarted = false;
     std::lock_guard lock(m_Mutex);
     m_Requests.clear();
@@ -117,12 +139,20 @@ void AutomationServer::Serve()
     using namespace std::chrono;
     while (m_Running)
     {
+#ifdef _WIN32
         SOCKET client = accept(m_Listener, nullptr, nullptr);
+#else
+        SOCKET client = accept4(m_Listener, nullptr, nullptr, SOCK_CLOEXEC);
+#endif
         if (client == INVALID_SOCKET)
         { std::this_thread::sleep_for(milliseconds(10)); continue; }
         u_long blocking = 0;
         ioctlsocket(client, FIONBIO, &blocking);
+#ifdef _WIN32
         DWORD timeout = 1000;
+#else
+        timeval timeout{1, 0};
+#endif
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
         setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
         std::string input;
