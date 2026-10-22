@@ -14,13 +14,21 @@ jobs:
         configuration: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
       - name: Initialize portable dependencies
         run: git submodule update --init --recursive TomCat/vendor/GLFW TomCat/vendor/ImGui TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/yaml-cpp TomCat/vendor/Box2D TomCat/vendor/ImGuizmo
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev libvulkan-dev libshaderc-dev glslang-dev glslang-tools spirv-tools libspirv-cross-c-shared-dev zenity
+          sudo apt-get install -y ninja-build ccache pkg-config libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev libvulkan-dev libshaderc-dev glslang-dev glslang-tools spirv-tools libspirv-cross-c-shared-dev libopenal-dev zenity xvfb
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: linux-ccache-${{ matrix.configuration }}-${{ github.sha }}
+          restore-keys: linux-ccache-${{ matrix.configuration }}-
       - name: Build and run headless tests
         env:
           TC_BUILD_TYPE: ${{ matrix.configuration }}
-        run: bash Scripts/Linux_Build.sh
+        run: bash Scripts/Linux_Build.sh -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache

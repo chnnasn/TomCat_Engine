@@ -1,6 +1,8 @@
 #include "PlayerBuilder.h"
 
 #include <TomCat/Asset/AssetManager.h>
+#include <TomCat/Asset/ContentHash.h>
+#include <fstream>
 #include <TomCat/Core/ApplicationPaths.h>
 #include <TomCat/Core/Log.h>
 #include <TomCat/Project/Project.h>
@@ -28,12 +30,31 @@
 	#include <Windows.h>
 	#include <bcrypt.h>
 	#pragma comment(lib, "bcrypt.lib")
+#elif defined(TC_PLATFORM_LINUX)
+    #include "platform/Linux/LinuxProcess.h"
+    #include <unistd.h>
 #endif
 
 namespace TomCat {
 	namespace {
 
-		struct TemplateFile
+#ifdef TC_PLATFORM_LINUX
+        constexpr const char* PlayerFilename = "TomCatPlayer";
+        constexpr const char* PlayerKey = "tomcatplayer";
+        constexpr const char* ExecutableSuffix = "";
+        constexpr const char* RuntimeIdentifier = "linux-x64";
+        constexpr const char* HostFxrFilename = "libhostfxr.so";
+        constexpr const char* CoreClrFilename = "libcoreclr.so";
+#else
+        constexpr const char* PlayerFilename = "TomCatPlayer.exe";
+        constexpr const char* PlayerKey = "tomcatplayer.exe";
+        constexpr const char* ExecutableSuffix = ".exe";
+        constexpr const char* RuntimeIdentifier = "win-x64";
+        constexpr const char* HostFxrFilename = "hostfxr.dll";
+        constexpr const char* CoreClrFilename = "coreclr.dll";
+#endif
+
+        struct TemplateFile
 		{
 			std::filesystem::path RelativePath;
 			std::string SHA256;
@@ -252,10 +273,7 @@ namespace TomCat {
 			digest = output.str();
 			return true;
 #else
-			(void)path;
-			(void)digest;
-			errorMessage = "Player export is supported only on Windows x64.";
-			return false;
+            return ComputeFileContentSHA256(path, digest, errorMessage);
 #endif
 		}
 
@@ -285,7 +303,7 @@ namespace TomCat {
 				file == "tomcat.scriptgenerator.dll")
 				return false;
 
-			if (key == "tomcatplayer.exe" || key == "third_party_notices.txt")
+			if (key == PlayerKey || key == "third_party_notices.txt")
 				return true;
 			const std::vector<std::string> components = PathComponents(relative);
 			if (components.empty())
@@ -295,7 +313,7 @@ namespace TomCat {
 			{
 				if (components.size() == 5 && components[1] == "host" &&
 					components[2] == "fxr" && IsDotNet10Version(components[3]))
-					return components[4] == "hostfxr.dll";
+					return components[4] == HostFxrFilename;
 				return components.size() >= 5 && components[1] == "shared" &&
 					components[2] == "microsoft.netcore.app" &&
 					IsDotNet10Version(components[3]);
@@ -310,8 +328,14 @@ namespace TomCat {
 			if (first == "packages")
 				return key == "packages/shaders/texture.glsl" ||
 					key == "packages/shaders/flatcolor.glsl";
-			return key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
-				key == "vcruntime140.dll" || key == "vcruntime140_1.dll";
+#ifdef TC_PLATFORM_LINUX
+            // Graphics/audio and C++ runtime dependencies are provided by the target OS.
+            // The shader compiler is linked statically into the Linux Player.
+            return false;
+#else
+            return key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
+                key == "vcruntime140.dll" || key == "vcruntime140_1.dll";
+#endif
 		}
 
 		bool LoadAndValidateManifest(const std::filesystem::path& root,
@@ -350,7 +374,7 @@ namespace TomCat {
 						RuntimeCompatibility::TcpakVersion ||
 					document["PlayerAbiVersion"].as<uint32_t>() !=
 						RuntimeCompatibility::PlayerAbiVersion)
-					throw std::runtime_error("template compatibility does not match this Editor; rebuild it with Scripts/Build-PlayerTemplate.ps1 -Build");
+					throw std::runtime_error("template compatibility does not match this Editor; rebuild the template for this platform");
 
 				const YAML::Node files = document["Files"];
 				if (!files.IsSequence() || files.size() == 0)
@@ -386,7 +410,7 @@ namespace TomCat {
 						PathComponents(entry.RelativePath);
 					if (!seen.emplace(key).second)
 						throw std::runtime_error("Files contains a duplicate path");
-					hasPlayer |= key == "tomcatplayer.exe";
+					hasPlayer |= key == PlayerKey;
 					hasManagedApi |= key == "managed/tomcat.managed.dll";
 					hasHost |= key == "managed/tomcat.scripthost.dll";
 					hasRuntimeConfig |=
@@ -395,11 +419,11 @@ namespace TomCat {
 					hasHostFxr |= key.size() > 12 &&
 						key.rfind("dotnet/host/", 0) == 0 &&
 						LowerASCII(PathToUTF8(entry.RelativePath.filename())) ==
-							"hostfxr.dll";
+							HostFxrFilename;
 					hasCoreClr |= key.size() > 14 &&
 						key.rfind("dotnet/shared/", 0) == 0 &&
 						LowerASCII(PathToUTF8(entry.RelativePath.filename())) ==
-							"coreclr.dll";
+							CoreClrFilename;
 					if (components.size() == 5 && components[0] == "dotnet" &&
 						components[1] == "host" && components[2] == "fxr")
 						hostFxrVersions.emplace(components[3]);
@@ -414,9 +438,11 @@ namespace TomCat {
 				}
 				if (!hasPlayer || !hasManagedApi || !hasHost ||
 					!hasRuntimeConfig || !hasDeps || !hasHostFxr || !hasCoreClr ||
-					!hasShaderCompiler || !hasTextureShader || !hasFlatColorShader ||
-					!seen.contains("msvcp140.dll") || !seen.contains("vcruntime140.dll") ||
-					!seen.contains("vcruntime140_1.dll") ||
+                    !hasTextureShader || !hasFlatColorShader ||
+#ifdef TC_PLATFORM_WINDOWS
+                    !hasShaderCompiler || !seen.contains("msvcp140.dll") ||
+                    !seen.contains("vcruntime140.dll") || !seen.contains("vcruntime140_1.dll") ||
+#endif
 					hostFxrVersions.size() != 1 || runtimeVersions.size() != 1)
 					throw std::runtime_error(
 						"template is missing or mixes required Player/runtime files");
@@ -480,6 +506,18 @@ namespace TomCat {
 					return false;
 				}
 			}
+#ifdef TC_PLATFORM_LINUX
+            std::array<unsigned char, 20> header{};
+            std::ifstream player(root / PlayerFilename, std::ios::binary);
+            if (!player.read(reinterpret_cast<char*>(header.data()), header.size()) ||
+                header[0] != 0x7f || header[1] != 'E' || header[2] != 'L' || header[3] != 'F' ||
+                header[4] != 2 || header[5] != 1 || header[18] != 62 || header[19] != 0 ||
+                access((root / PlayerFilename).c_str(), X_OK) != 0)
+            {
+                errorMessage = "Linux template requires an executable ELF64 x86_64 Player.";
+                return false;
+            }
+#endif
 			return true;
 		}
 
@@ -618,32 +656,10 @@ namespace TomCat {
 
 	std::filesystem::path PlayerBuilder::FindDefaultTemplateDirectory()
 	{
-		if (const auto runtimeRoot = ApplicationPaths::GetRuntimeEditorRoot())
-		{
-			return *runtimeRoot / "Packages" /
-				"PlayerTemplates" / "win-x64";
-		}
-#ifdef TC_PLATFORM_WINDOWS
-		std::vector<wchar_t> buffer(MAX_PATH);
-		for (;;)
-		{
-			const DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
-				static_cast<DWORD>(buffer.size()));
-			if (length == 0)
-				break;
-			if (length < buffer.size() - 1)
-			{
-				const std::filesystem::path executable(
-					std::wstring(buffer.data(), length));
-				return executable.parent_path() / "Packages" /
-					"PlayerTemplates" / "win-x64";
-			}
-			if (buffer.size() >= 32768)
-				break;
-			buffer.resize(buffer.size() * 2);
-		}
-#endif
-		return {};
+        const auto root = ApplicationPaths::GetRuntimeEditorRoot().value_or(
+            ApplicationPaths::GetExecutablePath().value_or(std::filesystem::path{}).parent_path());
+        return root.empty() ? std::filesystem::path{} :
+            root / "Packages" / "PlayerTemplates" / RuntimeIdentifier;
 	}
 
 	PlayerBuildResult PlayerBuilder::Build(PlayerBuildRequest request)
@@ -683,7 +699,7 @@ namespace TomCat {
 			request.ProjectInstance->GetPlayerSettings().ProductName);
 		const std::string directoryName = SanitizeDirectoryName(productStem);
 		const std::filesystem::path playerExecutableName =
-			UTF8ToPath(productStem + ".exe");
+			UTF8ToPath(productStem + ExecutableSuffix);
 		const std::filesystem::path output = buildRoot / UTF8ToPath(directoryName);
 		const std::filesystem::path staging = buildRoot /
 			UTF8ToPath(directoryName + ".staging-" + request.ScriptBuildID);
@@ -724,9 +740,9 @@ namespace TomCat {
 				return failStaged("A Player template file changed while it was being staged: '" +
 					PathToUTF8(file.RelativePath) + "'.");
 		}
-		const std::filesystem::path templatePlayer = staging / "TomCatPlayer.exe";
+		const std::filesystem::path templatePlayer = staging / PlayerFilename;
 		const std::filesystem::path productPlayer = staging / playerExecutableName;
-		if (NormalizedKey(playerExecutableName) != "tomcatplayer.exe")
+		if (NormalizedKey(playerExecutableName) != PlayerKey)
 		{
 			error.clear();
 			std::filesystem::rename(templatePlayer, productPlayer, error);
@@ -749,7 +765,7 @@ namespace TomCat {
 		for (const TemplateFile& file : manifest.Files)
 		{
 			const std::string key = NormalizedKey(file.RelativePath);
-			expected.emplace(key == "tomcatplayer.exe"
+			expected.emplace(key == PlayerKey
 				? NormalizedKey(playerExecutableName) : key);
 		}
 		std::unordered_set<std::string> actual;
@@ -809,9 +825,11 @@ namespace TomCat {
 		CloseHandle(process.hThread);
 		CloseHandle(process.hProcess);
 		return true;
+#elif defined(TC_PLATFORM_LINUX)
+        return Linux::StartProcess({PathToUTF8(executable)}, workingDirectory, errorMessage);
 #else
-		(void)executable;
-		(void)workingDirectory;
+        (void)executable;
+        (void)workingDirectory;
 		errorMessage = "Player launch is supported only on Windows x64.";
 		return false;
 #endif

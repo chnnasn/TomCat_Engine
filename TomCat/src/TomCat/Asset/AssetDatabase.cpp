@@ -727,24 +727,24 @@ namespace TomCat {
 				if (EstimateTextureBuildMemory(source, texturePeak, estimateError))
 					reservation = std::max(reservation, texturePeak);
 				else
-					reservation = std::max(reservation, 16ULL * 1024ULL * 1024ULL);
+					reservation = std::max<uint64_t>(reservation, 16ULL * 1024ULL * 1024ULL);
 				break;
 			}
 			case AssetType::Shader:
-				reservation = std::max(scaled(12), 64ULL * 1024ULL * 1024ULL);
+				reservation = std::max<uint64_t>(scaled(12), 64ULL * 1024ULL * 1024ULL);
 				break;
 			case AssetType::Mesh:
 				// OBJ parsing keeps source text, vertex build records and ordered-map
 				// nodes alive together before the packed artifact is emitted.
-				reservation = std::max(scaled(32), 64ULL * 1024ULL * 1024ULL);
+				reservation = std::max<uint64_t>(scaled(32), 64ULL * 1024ULL * 1024ULL);
 				break;
 			case AssetType::Audio:
 				// Compressed Vorbis may expand to the 512 MiB PCM limit; reserve
                 // the decoded samples plus canonical artifact before admitting a job.
-                reservation = std::max(scaled(8), 1024ULL * 1024ULL * 1024ULL);
+                reservation = std::max<uint64_t>(scaled(8), 1024ULL * 1024ULL * 1024ULL);
 				break;
 			case AssetType::Material:
-				reservation = std::max(scaled(8), 4ULL * 1024ULL * 1024ULL);
+				reservation = std::max<uint64_t>(scaled(8), 4ULL * 1024ULL * 1024ULL);
 				break;
 			default:
 				break;
