@@ -18,7 +18,7 @@ through visual authoring tools, while the Player runs packaged games independent
 
 Use this branch for the Windows 2D Editor, Hub and standalone Player workflow. Desktop rendering prefers Vulkan and falls back to OpenGL when Vulkan is unsupported. It provides the shared baseline for the specialist branches below.
 
-Branch roles reviewed on **2026-10-16**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`. Only retained branches are listed below; the specialist branches continue independently.
+Branch roles reviewed on **2026-10-22**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`. The table lists current development branches; see [project status](docs/PROJECT_STATUS.zh-CN.md) for their integration boundaries.
 
 | Branch | Purpose |
 | --- | --- |
@@ -27,10 +27,10 @@ Branch roles reviewed on **2026-10-16**. Build/toolchain, managed Web, and Vulka
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
 
-**Branch lifecycle policy.** Specialty branches are time-boxed for a single-developer project: each branch must land in `main` (fully or as an integration slice) or be archived — branch deleted, history remaining recoverable via Git — at the quarterly branch review, at latest. A branch that has neither merged nor seen activity for one review cycle is archived first. Next review: **2026-12-21**.
+**Branch maintenance.** Review specialist branches against `main` regularly and integrate independently verifiable changes. Create a recoverable archive reference before removing an inactive development branch. Next branch review: **2026-12-21**.
 
-Documentation reviewed against the repository on **2026-10-16**. Product version: **0.6.0**.
-See the [documentation index](docs/README.md) for all guides and Chinese editions.
+Records reconciled with source, Git history and remote CI on **2026-10-22**. Product version: **0.6.0**.
+See [status and acceptance](docs/PROJECT_STATUS.zh-CN.md) for delivery and validation boundaries, [project evolution](docs/PROJECT_HISTORY.zh-CN.md) for feature updates and Git history, and the [documentation index](docs/README.md) for all guides.
 
 ---
 
@@ -124,19 +124,19 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 
 - Supported development platform: **Windows x64**
 - Rendering backends: **Vulkan 1.2** by default when supported, with automatic **OpenGL 4.6** fallback; see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md).
-- Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). Managed C# is supported through the .NET browser-wasm host; audible audio, custom cooked SPIR-V shaders, and multisample framebuffers remain limited. Browser lifecycle acceptance is separate from a successful build.
+- Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). Managed C# runs through the .NET browser-wasm host, and resident audio uses WebAudio. Streaming audio, custom cooked SPIR-V shaders and multisample framebuffers remain unsupported. Browser autoplay policy may require a click or key press; audio signal regressions do not verify physical speaker output.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Source development requires the **.NET 10 SDK** to build TomCat itself. Packaged Editors carry a pinned private SDK for game-script compilation and do not use a machine-wide C# environment.
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
 - Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. C# debugging uses an external IDE attached to the Editor; scripts are recompiled and updated after stopping Play. Play Mode hot replacement is unsupported. Scene restoration/activation and uploads have cooperative frame budgets; Windows input fields support IME preedit and candidate positioning. See [production capabilities and limits](docs/P1_PRODUCTION.md).
 
-The latest integration check on **2026-10-16** passed the full Release suite,
-Vulkan RHI with synchronization validation and multiple viewports, Vulkan Editor
-automation and Player startup, and the managed Web build and Edge browser smoke.
-See the [validation record and limits](docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16).
+The pre-cleanup mainline `b04d81d8` passed Windows Release and Managed Web CI on
+**2026-10-17**; see the [acceptance ledger and run links](docs/PROJECT_STATUS.zh-CN.md#验收记录).
+Vulkan hardware validation remains recorded in the **2026-10-16**
+[integration report](docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16).
 The [recording archive](docs/portfolio/README.md) retains the original 2026-09-20
-footage and its narrower coverage; no new recording was produced for this check.
+footage. This records cleanup did not rerun hardware acceptance or produce new recordings.
 
 ## Building
 

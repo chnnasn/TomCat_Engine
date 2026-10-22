@@ -1,11 +1,15 @@
 # TomCat 中文文档索引
 
-核对日期：2026-10-16。本文覆盖仓库自有文档及依赖集成说明；`vendor/`、`TomCat/vendor/` 内的上游原始资料及许可证按原项目维护。
+核对日期：2026-10-22。本文覆盖仓库自有文档及依赖集成说明；`vendor/`、`TomCat/vendor/` 内的上游原始资料及许可证按原项目维护。
+
+先看[项目状态与验收](PROJECT_STATUS.zh-CN.md)了解当前交付和未完成事项，再用[项目演进与 Git 主线](PROJECT_HISTORY.zh-CN.md)追踪功能更新。专题指南说明当前用法；带日期的方案、演示和验收保留原始范围。
 
 | 文档 | 中文版本 | 英文版本 |
 | --- | --- | --- |
 | 项目介绍、构建与功能范围 | [项目总览](../README.zh-CN.md) | [Overview](../README.md) |
-| 项目配置、资产、场景、迁移与发布 | [项目系统](../PROJECT_SYSTEM.md) | — |
+| 当前交付、分支边界与验收汇总 | [项目状态](PROJECT_STATUS.zh-CN.md) | — |
+| 功能演进、提交映射与历史归档 | [Git 主线记录](PROJECT_HISTORY.zh-CN.md) | — |
+| 项目配置、资产、场景、格式与发布 | [项目系统](../PROJECT_SYSTEM.md) | — |
 | C# 脚本、原生 ABI 与生命周期 | [托管脚本](../Managed/README.zh-CN.md) | [Managed scripting](../Managed/README.md) |
 | NuGet 还原、项目引用与托管依赖加载 | [C# 项目依赖](CSHARP_DEPENDENCIES.md) | — |
 | 无界面 Cook 与 Player 构建 | [TomCatCLI](../Tools/TomCatCLI/README.zh-CN.md) | [TomCatCLI](../Tools/TomCatCLI/README.md) |
@@ -15,30 +19,33 @@
 | 完整游戏、存档与独立 Player 示例 | — | [CoinRunner](../Samples/CoinRunner/README.md) |
 | Editor 结构化操作、输入测试与截图 | [原生自动化](Automation.md) | [工具协议目录](AutomationTools.json) |
 | 桌面实机录制、历史问题与复现 | [录制说明](portfolio/README.md) | — |
-| Prefab、场景、调试与 UI 目标及交付边界 | [能力开发方案](PRODUCT_CAPABILITIES_PLAN.zh-CN.md) | — |
+| Prefab、场景、调试与 UI 原始目标（历史） | [开发方案归档](PRODUCT_CAPABILITIES_PLAN.zh-CN.md) | — |
 | 关联 Prefab、覆盖、嵌套和变体 | [Prefab 工作流](PREFAB_WORKFLOW.zh-CN.md) | — |
 | 异步加载、叠加、持久对象与显式卸载 | [场景流式加载](SCENE_STREAMING.zh-CN.md) | — |
 | 纹理预加载、失败诊断与 GPU 就绪屏障 | [纹理就绪状态](TEXTURE_READINESS.zh-CN.md) | — |
+| 过滤/寻址参数、TCTX v1/v2 与 Cook | — | [Texture sampling](texture-sampling.md) |
 | 性能采集、资源统计与 C# 断点流程 | [调试与性能分析](DEBUGGING_AND_PROFILING.md) | — |
 | 滑条、滚动、输入、主题与游戏本地化 | [运行时 UI 控件](RUNTIME_UI_PRODUCT.zh-CN.md) | — |
 | 分帧激活、国际化、2D 制作与媒体生产 | [P1 使用与边界](P1_PRODUCTION.md) | — |
 | 编辑器面板、资源检查器与界面约定 | [UI 与交互记录](EDITOR_UX_REWORK.md) | — |
 | RHI 分层、Vulkan 后端、运行与 GPU 回归 | [RHI 与 Vulkan](RHI_VULKAN.zh-CN.md) | — |
+| P0 自动回归与交互缺口（历史） | — | [2026-09-30 验收](P0_ACCEPTANCE_2026-09-30.md) |
+| HUD、字体、构建与 soak（历史） | [2026-10-01/02 验收](PRODUCTION_ACCEPTANCE.md) | — |
 
-最新主线集成验收：[2026-10-16 RHI/Vulkan 与跨平台验证](RHI_VULKAN.zh-CN.md#主线集成2026-10-16)。此前的 HUD、字体与构建配置验收见[生产验收与构建配置](PRODUCTION_ACCEPTANCE.md)。
+远端 CI、Vulkan 实机、桌面交互与 soak 的结果分别记录在[验收汇总](PROJECT_STATUS.zh-CN.md#验收记录)，不以任一通过项覆盖全部平台或性能要求。
 
 ## 当前主线
 
 产品版本为 **0.6.0**。桌面默认优先 Vulkan 1.2，不支持时自动回退 OpenGL 4.6。`TC_RENDERER=auto` 与未设置相同；`vulkan` / `opengl` 则强制指定后端。新的桌面烘焙包包含两个后端的预编译 Shader，Player 可独立选择；旧单后端包需匹配原后端或重新烘焙。浏览器仍使用 WebGL2，主线已包含 .NET browser-wasm C# 宿主、Project 编辑与场景持久化。
 
-2026-10-16 的完整 Release 套件（Managed、14 个原生回归、应用构建、模板、Player、CoinRunner、模块发布、Editor 自动化）、Vulkan 同步验证/多窗口/Editor/Player，以及托管 Web 构建和 Edge 浏览器冒烟均通过。硬件范围、日志与未重跑项目见上方集成记录；这些结果不等同新录屏、全部设备验收或性能结论。
+整理前主线 `b04d81d8` 的 2026-10-17 Windows Release 和 Managed Web CI 均已通过；Vulkan 实机记录为 2026-10-16，600 秒 soak 则保留其 P99 未达标结果。新旧源码基线、运行链接和待验证项见[项目状态](PROJECT_STATUS.zh-CN.md)。
 
 ## 最新桌面演示（2026-09-20）
 
 [录制说明](portfolio/README.md)收录 5 段新 GIF：Hub 模板、资源 Inspector、Console 搜索、
 Profiler 与物理播放控制，另有 3 张截图。[capture.json](portfolio/2026-09-20/capture.json)
 记录源码提交、运行程序与原片 SHA-256、裁剪和剪辑区间；重导脚本支持按日期清单导出。
-旧的 2026-09-15 素材仍保留作历史记录。2026-10-16 的 README 更新同步当前源码、构建和测试入口，未重新录制或改变历史素材的验收范围。
+旧的 2026-09-15 素材仍保留作历史记录。后续文档整理没有重新录制或改变历史素材的验收范围。
 
 ## 版本依据
 
@@ -75,7 +82,7 @@ npm ci --prefix Web/tests --ignore-scripts
 node Web/tests/node_modules/playwright/cli.js install chromium
 ./Scripts/Run-WebBrowserSmoke.ps1
 
-# 可选：5000 实体的 10 分钟帧耗时/内存验收（本次合并未重跑）
+# 可选：5000 实体的 10 分钟帧耗时/内存验收（历史 P99 未达标，需目标机复测）
 ./Scripts/Run-ProductionSoak.ps1 -DurationSeconds 600
 ```
 
@@ -89,3 +96,5 @@ Web 协议回归不验证浏览器绘制、宿主持久化、中文输入法或�
 新增项目文档应提供完整中文正文；已有英文版时使用同目录 `README.zh-CN.md` 并添加双向语言链接。
 已有纯中文文档沿用原路径。更改格式版本、CLI 参数或平台范围时，同步更新两种语言及本索引。
 API 名称、字段大小写、命令参数和路径保持源码原文。
+
+维护记录时同步以下职责：README 保留产品概览和入口；专题指南维护当前用法与限制；项目状态汇总实现、验证和待办；项目演进解释功能更新和 Git 关系。原始方案不继续充当当前待办，历史验收不改日期冒充复测。本地日志应注明是否纳入 Git，CI 应链接具体运行和 SHA。

@@ -1,5 +1,7 @@
 # P0 integration acceptance — 2026-09-30
 
+历史记录：仅适用于 2026-09-30 的验收基线。后续格式策略已移除迁移功能；下文的迁移、构建与交互状态保留为当时记录。当前进度、CI 和待验收项见[项目状态](PROJECT_STATUS.zh-CN.md)。
+
 Validated on Windows x64 in Release configuration. This record covers the
 CoinRunner delivery, module compatibility check and persistent-format docs.
 

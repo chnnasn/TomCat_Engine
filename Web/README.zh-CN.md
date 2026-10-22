@@ -1,6 +1,6 @@
 # 实验性 Web Player 与 ImGui 编辑器
 
-[English](README.md) | 简体中文 · 核对日期：2026-10-16 · [文档索引](../docs/README.md)
+[English](README.md) | 简体中文 · 状态记录核对：2026-10-22 · [文档索引](../docs/README.md)
 
 此目标在浏览器中运行已有的 `PlayerRuntimeLayer`、Cooked TCPAK 读取器、
 场景运行时、Renderer2D、Box2D 和 TomCat C# 脚本 ABI。最终模块由 .NET
@@ -13,7 +13,7 @@
 [2026-09-20 功能录屏](../docs/portfolio/README.md)来自 Windows 桌面程序。
 共享源码不代表这些片段验证了浏览器端。2026-10-16 在 Vulkan 集成后再次通过完整托管发布及本机 Edge 冒烟；
 历史记录保留原始日期，范围与待验收项见[主线集成记录](../docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)
-与[生产验收](../docs/PRODUCTION_ACCEPTANCE.md)。
+与[生产验收](../docs/PRODUCTION_ACCEPTANCE.md)。2026-10-17 主线的 Managed Web CI 已通过，包含浏览器音频回归；提交、运行链接与覆盖边界统一见[项目状态](../docs/PROJECT_STATUS.zh-CN.md#验收记录)。
 
 ## 构建
 

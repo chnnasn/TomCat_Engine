@@ -1,6 +1,6 @@
 # TomCat Engine 项目系统
 
-中文文档 · 核对日期：2026-10-02 · [文档索引](docs/README.md)
+中文文档 · 状态与格式说明核对：2026-10-22 · [文档索引](docs/README.md) · [项目状态](docs/PROJECT_STATUS.zh-CN.md)
 
 ## 文件与职责
 
@@ -23,7 +23,7 @@ Project:
   Name: MyGame
   Version: 1.0.0
   Description: 示例游戏项目
-  EditorVersion: 0.4.0
+  EditorVersion: 0.6.0
   Template: 2D
   AssetDirectory: Assets
 ```
@@ -125,7 +125,7 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 
 当前资产基础设施包含 ImporterRegistry、SHA-256 ArtifactKey、原子安装的派生数据缓存、依赖图和后台 `AssetImportCoordinator`。Scene/Prefab 的真实 Handle 引用由 `AssetReferenceVisitor` 自动发现，Atlas 子资源会归一化为其父资源；正反向图原子保存到可删除重建的 `Library/AssetDependencies.yaml`，因此重启或删除整个 `Library` 后仍能从作者数据恢复。Coordinator 监控 `Assets/` 中的源文件与 `.tcmeta`，以内容 Hash 而非单纯 mtime 判定真实变化；普通轮询先筛选时间/大小候选，并周期性或按请求执行完整内容校验，因此只触碰 mtime 不会触发重导。连续快速写入会去抖并合并为最终版本；每个批次只导入实际变化的资源及其传递反向依赖，外部修改导入设置也会失效对应 ArtifactKey。
 
-扫描、Hash 与 Importer 工作在后台线程；`PumpMainThread` 才提交 Registry/子资源元数据、清理运行时资源缓存并派发完成事件，OpenGL 等主线程资源创建不会从监控线程发生。停止 Coordinator 会取消并等待在途任务，不再晚到回调。生产级真实格式转码、平台纹理压缩与 Mipmap 生成仍未完成；当前能力不能等同于这些格式处理已经可用于生产。
+扫描、Hash 与 Importer 工作在后台线程；`PumpMainThread` 才提交 Registry/子资源元数据、清理运行时资源缓存并派发完成事件，GPU 资源发布不会从监控线程发生。停止 Coordinator 会取消并等待在途任务，不再晚到回调。纹理导入已支持 sRGB、Mipmap 及 RGBA8、BC1/BC3/BC5、ASTC4x4、ETC2RGBA8 产物，音频导入支持 OGG/Vorbis 转 PCM WAV；格式与平台边界见 [P1 生产能力](docs/P1_PRODUCTION.md)。压缩产物支持不代表已交付移动 Player 或完成移动设备原生上传验收。
 
 ## 启动流程
 
@@ -270,17 +270,17 @@ Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件
 
 ## P1 生产扩展（2026-10-01）
 
-Scene/Prefab 的注册组件记录新增：SpriteRenderer.NormalMap、Material、CastShadows；Camera.Exposure、Saturation、Vignette；UIScrollView.Virtualized、VirtualItemCount、VirtualItemHeight、VirtualOverscan；UILocalizedText.Parameters。旧字段的 ID 不变，缺少新字段时取默认值；运行时预编辑和虚拟列表索引不写入文档。
+Scene/Prefab 的注册组件记录新增：SpriteRenderer.NormalMap、Material、CastShadows；Camera.Exposure、Saturation、Vignette；UIScrollView.Virtualized、VirtualItemCount、VirtualItemHeight、VirtualOverscan；UILocalizedText.Parameters。旧字段的 ID 不变。当前读取要求组件版本与字段集合法，不再对旧版组件执行补字段迁移；运行时预编辑和虚拟列表索引不写入文档。
 
 `.tcmat` SchemaVersion 1 的 Shader 除非零 AssetHandle 外，可写 `BuiltinSprite2D`。canonical 材质产物使用保留标识 `0x5443535052495445`，该内置程序不产生外部 Shader 依赖，Textures 仍照常收集依赖。
 
-TCTX v1 Format 增加 BC1=3、BC5=4、ASTC4x4=5、ETC2RGBA8=6，已有 RGBA8=1、BC3=2 不变。BC1 每个 4x4 block 为 8 字节，BC3/BC5/ASTC4x4/ETC2RGBA8 为 16 字节，边缘不足 4x4 按完整块计数。BC1 不接受透明输入；BC5 仅允许 Linear。ASTC 为 LDR 4x4，ETC2 为 RGBA8，支持 Linear/sRGB；硬件不支持时 CPU 解码回退。纹理 importer 版本为 5，材质与音频 importer 版本为 3，以重新生成对应 DDC 产物。
+TCTX Format 包含 BC1=3、BC5=4、ASTC4x4=5、ETC2RGBA8=6，已有 RGBA8=1、BC3=2 不变。BC1 每个 4x4 block 为 8 字节，BC3/BC5/ASTC4x4/ETC2RGBA8 为 16 字节，边缘不足 4x4 按完整块计数。BC1 不接受透明输入；BC5 仅允许 Linear。ASTC 为 LDR 4x4，ETC2 为 RGBA8，支持 Linear/sRGB；硬件不支持时 CPU 解码回退。当前纹理 importer 版本为 6，材质与音频 importer 版本为 3。默认采样仍输出 TCTX v1，非默认过滤或寻址输出 v2；reader 接受这两种纹理载荷，详见[纹理采样](docs/texture-sampling.md)。此兼容范围与 TCPAK 外层容器只接受 v8 的规则分别定义。
 
 OGG/Vorbis 源通过音频 importer 规范化为现有 PCM16 WAV 产物，不增加 Player 内部音频容器格式。
 
 使用方法、平台范围和未覆盖能力见 [P1 生产能力](docs/P1_PRODUCTION.md)。
 
-Camera 组件记录写入 schema 4（从 v3 补齐三个后处理默认值）；SpriteRenderer 写入 schema 2（从 v1 补齐法线、阴影和材质默认值）。场景容器仍为 v11。
+Camera 组件记录只接受当前 schema 4；SpriteRenderer 只接受当前 schema 2。旧版组件不会自动补齐后处理、法线、阴影或材质字段。场景容器仍为 v11。
 
 ### 自定义音频总线（2026-10-01）
 

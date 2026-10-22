@@ -1,10 +1,10 @@
-# Prefab、场景、调试与 UI 开发方案
+# Prefab、场景、调试与 UI 原始开发方案（历史）
 
-核查日期：2026-09-19。下文保留最初的完整目标清单；具体已实现范围以 [Prefab 工作流](PREFAB_WORKFLOW.zh-CN.md)、[场景组织](SCENE_STREAMING.zh-CN.md)、[运行时 UI](RUNTIME_UI_PRODUCT.zh-CN.md) 和 [Profiler](DEBUGGING_AND_PROFILING.md) 为准，不将目标清单当作完成证明。
+原始方案：2026-09-19；归档说明更新：2026-10-22。本文保留需求提出时的背景、目标和验收设计，不再维护为当前待办表。当前交付与验收入口见[项目状态](PROJECT_STATUS.zh-CN.md)，具体操作见 [Prefab 工作流](PREFAB_WORKFLOW.zh-CN.md)、[场景组织](SCENE_STREAMING.zh-CN.md)、[运行时 UI](RUNTIME_UI_PRODUCT.zh-CN.md) 和 [Profiler](DEBUGGING_AND_PROFILING.md)。
 
-本次已实现并进入集成验收：关联 Prefab、整实例覆盖操作、嵌套和变体；异步场景读取、叠加、持久根对象和卸载；CPU/GPU 帧分析与资源估算；基础产品 UI 控件、主题和语言表。实际场景架构采用共享 ECS/物理/脚本世界，以保留持久脚本实例，区别于下文原提案的独立物理世界。逐字段 Apply 面板、完整 IME 组合态、虚拟列表、独立主题资产和托管堆对象归属分析仍属于后续目标。
+后续交付已包含关联/嵌套 Prefab、变体、Inspector 逐属性 Apply/Revert、异步和分帧场景加载、CPU/GPU 帧分析、Windows IME 预编辑、固定行高虚拟列表及参数化本地化。实际场景架构采用共享 ECS/物理/脚本世界，区别于下文原提案的独立物理世界。独立主题资产、托管堆对象归属分析等边界以现行指南为准；实现与实机验收分别记录。
 
-## 现状与交付目标
+## 立项时的现状与交付目标
 
 | 领域 | 已有实现 | 本轮需求目标 | 用户可验收结果 |
 | --- | --- | --- | --- |
@@ -17,7 +17,7 @@
 
 源码入口：[PrefabArchiveCodec](../TomCat/src/TomCat/Scene/Serialization/PrefabArchiveCodec.cpp)、[EntityArchive](../TomCat/src/TomCat/Scene/Serialization/EntityArchive.h)、[ComponentCodecs](../TomCat/src/TomCat/Scene/Serialization/ComponentCodecs.cpp)、[SceneHistory](../TomCat/src/TomCat/Editor/SceneHistory.cpp)。
 
-当前 CaptureSubtree 按遍历顺序生成 `index + 1` 的 LocalID。它保证单份快照内的身份与引用一致，但不能保证修改模板层级后的身份连续性。关联更新必须先解决这个问题。
+立项时 CaptureSubtree 按遍历顺序生成 `index + 1` 的 LocalID。它保证单份快照内的身份与引用一致，但不能保证修改模板层级后的身份连续性，因此原方案要求关联更新先解决稳定身份问题。
 
 ### 数据和操作约定
 
