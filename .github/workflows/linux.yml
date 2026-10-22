@@ -32,3 +32,14 @@ jobs:
         env:
           TC_BUILD_TYPE: ${{ matrix.configuration }}
         run: bash Scripts/Linux_Build.sh -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Package tested game
+        run: tar -C build/linux -czf linux-player-${{ matrix.configuration }}.tar.gz acceptance-game
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-player-${{ matrix.configuration }}
+          path: linux-player-${{ matrix.configuration }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-test-logs-${{ matrix.configuration }}
+          path: build/linux/Testing/Temporary/

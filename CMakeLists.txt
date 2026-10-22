@@ -130,7 +130,7 @@ endforeach()
 
 include(CTest)
 if(BUILD_TESTING)
-    foreach(test InputRegression SaveDataRegression LinuxPlatformRegression)
+    foreach(test InputRegression SaveDataRegression LinuxPlatformRegression AudioRegression LinuxAudioRegression)
         file(GLOB sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Tests/${test}/src/*.cpp")
         add_executable(${test} ${sources})
         target_link_libraries(${test} PRIVATE TomCat)
@@ -141,4 +141,14 @@ if(BUILD_TESTING)
     add_test(NAME EditorIdentity COMMAND TomCatInut --product-info-json)
     add_test(NAME HubIdentity COMMAND Manager --product-info-json)
     set_tests_properties(PlayerVersion EditorIdentity HubIdentity PROPERTIES TIMEOUT 30 ENVIRONMENT "TC_RENDERER=opengl")
+    add_executable(LinuxRuntimeRegression Tests/LinuxRuntimeRegression/src/LinuxRuntimeRegression.cpp)
+    target_link_libraries(LinuxRuntimeRegression PRIVATE tc_build_tools)
+    add_dependencies(LinuxRuntimeRegression TomCatCLI_managed TomCatInut_managed)
+    find_program(XVFB_RUN xvfb-run REQUIRED)
+    add_test(NAME LinuxRuntimeRegression COMMAND "${XVFB_RUN}" -a "$<TARGET_FILE:LinuxRuntimeRegression>"
+        "$<TARGET_FILE:TomCatCLI>" "${CMAKE_BINARY_DIR}/bin/Editor/Packages/PlayerTemplates/linux-x64"
+        "${CMAKE_BINARY_DIR}/acceptance-game")
+    set_tests_properties(LinuxRuntimeRegression PROPERTIES TIMEOUT 600
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        ENVIRONMENT "TC_RENDERER=opengl;LIBGL_ALWAYS_SOFTWARE=1;ALSOFT_DRIVERS=null")
 endif()
