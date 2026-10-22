@@ -1,5 +1,7 @@
 # RHI 与 Vulkan 迁移
 
+本文包含现行后端说明和按日期保留的实机记录。当前源码基线、远端 CI 与待验证项见[项目状态](PROJECT_STATUS.zh-CN.md)；历史 GPU 测量不自动覆盖后续提交。
+
 ## 目标与边界
 
 `dev_vulkan` 的 RHI 与桌面 Vulkan 后端已于 2026-10-16 合入 `main`。当前桌面默认优先 Vulkan，不支持时自动回退 OpenGL；浏览器保留 WebGL 路径。验收对象是现有 Editor、Hub 和 Player：批量精灵、圆形、线条、字体与运行时 UI、Scene/Game 离屏视口、整数实体拾取、资源预览、ImGui 多窗口、纹理导入产物和 GPU 计时。不能用“窗口能清屏”代替编辑器迁移验收。

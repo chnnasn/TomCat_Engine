@@ -1,5 +1,7 @@
 # 关联 Prefab、嵌套和变体
 
+状态核对：2026-10-22 · [项目状态与验收](PROJECT_STATUS.zh-CN.md)。
+
 编辑模式从 Project 拖入 `.tcprefab` 时，实例根保存 `PrefabLink`，包括模板 Handle、LocalID/场景 UUID 映射和上一次模板基线。场景仍保存完整实体内容。运行时 C# `Instantiate` 继续使用快照创建和延迟脚本初始化，不在游戏运行中自动修改已有实例。
 
 ## 编辑工作流
@@ -28,6 +30,6 @@ Apply 先在临时场景验证结果和其他实例，并检查新增嵌套引�
 
 ## 数据范围
 
-关联数据通过现有 Scene 11 的组件注册格式保存，Prefab 文档仍为 schema 1。组件和脚本字段的稳定身份用于合并；无稳定元素身份的数组、向量作为整体覆盖。当前菜单提供整实例 Apply/Revert，尚无逐字段勾选的覆盖面板。
+关联数据通过现有 Scene 11 的组件注册格式保存，Prefab 文档仍为 schema 1。组件和脚本字段的稳定身份用于合并；无稳定元素身份的数组、向量作为整体覆盖。Hierarchy 菜单提供整实例 Apply/Revert；Inspector 的 **Overrides** 展示可枚举属性的 Source/Instance 值，并提供 **Apply property / Revert property**。结构差异另列在 **All changes (including structure)**，不等同所有结构操作均可逐项应用。
 
-测试位于 `Tests/PhysicsRegression/src/PrefabRegression.h`，覆盖两个实例的覆盖隔离、保存重载、位置保持、新增实体 Apply、外部模板刷新、复制后的引用隔离、嵌套继承、变体覆盖和循环拒绝。图形交互与跨文件 Undo/Redo 还需结合真实项目操作验收。
+测试位于 `Tests/PhysicsRegression/src/PrefabRegression.h`，覆盖两个实例的覆盖隔离、保存重载、位置保持、新增实体 Apply、外部模板刷新、复制后的引用隔离、嵌套继承、变体覆盖和循环拒绝。`Tests/ImporterRegression/src/ImporterRegression.cpp` 另覆盖逐属性 Apply/Revert、兄弟实例传播和非法属性拒绝。图形交互与跨文件 Undo/Redo 的验收范围仍需结合具体项目记录。

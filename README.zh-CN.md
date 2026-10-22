@@ -16,7 +16,7 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，桌面默认优先使用 Vulkan，不支持时自动回退 OpenGL。它是下列专项分支的公共基线。
 
-分支定位核对日期：**2026-10-16**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`。下表仅列出仍保留的分支，专项分支继续独立演进。
+分支定位核对日期：**2026-10-22**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`。下表列出当前开发分支；专项能力是否已合入主线，以[项目状态](docs/PROJECT_STATUS.zh-CN.md)为准。
 
 | 分支 | 作用 |
 | --- | --- |
@@ -25,10 +25,10 @@ Player 则负责脱离编辑器运行打包后的游戏。
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
 
-**分支生命周期约定。** 对单人项目而言专项分支必须有时间盒:每条专项分支都要在季度分支核对时(最迟)完成合并进 `main`(整体或按集成切片),或执行归档——删除分支,历史仍可通过 Git 找回。在一个核对周期内既未合并也无活动的分支先归档。下次核对:**2026-12-21**。
+**分支维护。** 专项分支定期核对与 `main` 的差异，将可独立验证的功能合入主线。停止维护的分支先建立可恢复的归档引用，再移除开发分支。下次分支核对：**2026-12-21**。
 
-文档于 **2026-10-16** 按仓库源码核对，当前产品版本为 **0.6.0**。
-全部指南及中文入口见[文档索引](docs/README.md)。
+记录于 **2026-10-22** 对照源码、Git 历史和远端 CI 整理，当前产品版本为 **0.6.0**。
+[项目状态与验收](docs/PROJECT_STATUS.zh-CN.md)汇总当前交付和待验证项；[项目演进](docs/PROJECT_HISTORY.zh-CN.md)说明功能更新、Git 主线与发布标签的关系。全部指南见[文档索引](docs/README.md)。
 
 ---
 
@@ -113,7 +113,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 
 - 支持的开发平台：**Windows x64**
 - 渲染后端：默认优先 **Vulkan 1.2**，不支持时自动回退 **OpenGL 4.6**；配置和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
-- 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。托管 C# 通过 .NET browser-wasm 宿主运行；可听音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 仍有限制。构建通过与浏览器生命周期验收分别记录。
+- 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。托管 C# 通过 .NET browser-wasm 宿主运行；常驻音频通过 WebAudio 输出，流式音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 尚不支持。浏览器自动播放策略仍可能要求用户先点击或按键；音频信号回归不等于物理扬声器验收。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
 - 从源码构建 TomCat 本身需要 **.NET 10 SDK**；打包后的 Editor 自带固定版本私有 SDK 编译游戏脚本，不读取机器上的全局 C# 环境
@@ -121,7 +121,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；C# 采用外部 IDE 附加调试，停止 Play 后重新编译并更新脚本，不提供 Play Mode 热替换。场景恢复、激活和上传已有协作式分帧预算；Windows 输入框已有 IME 预编辑和候选窗定位，详见 [P1 能力与边界](docs/P1_PRODUCTION.md)
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
-最新的 **2026-10-16** 主线集成验收已通过完整 Release 回归、Vulkan RHI 同步验证与多窗口、Vulkan Editor 自动化与 Player 启动，以及托管 Web 构建和 Edge 浏览器冒烟，详见[验证记录与边界](docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)。上面展示的仍是 2026-09-20 原始录屏，其覆盖范围保持原样；本次没有重新录制。
+整理前主线 `b04d81d8` 的 **2026-10-17** Windows Release 与 Managed Web CI 均通过，见[验收记录及运行链接](docs/PROJECT_STATUS.zh-CN.md#验收记录)。Vulkan 实机验证保留在 **2026-10-16** 的[集成记录](docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)中。上面展示的仍是 2026-09-20 原始录屏；记录整理没有重跑实机验收或重新录制。
 
 ## 构建
 

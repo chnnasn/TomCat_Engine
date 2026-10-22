@@ -1,6 +1,6 @@
 # Experimental Web Player and ImGui editor
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-16 · [All documentation](../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Status records reviewed 2026-10-22 · [All documentation](../docs/README.md)
 
 This target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader, scene
 runtime, Renderer2D, Box2D and TomCat's C# scripting ABI in a browser. The final
@@ -18,6 +18,10 @@ the historical browser observations below retain their original dates. The full
 managed publish and local Edge smoke passed again after the Vulkan integration
 on 2026-10-16; see the [integration record](../docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)
 and [production acceptance](../docs/PRODUCTION_ACCEPTANCE.md) for scope and remaining checks.
+
+Managed Web CI also passed on the 2026-10-17 mainline, including browser audio
+regressions. The [acceptance ledger](../docs/PROJECT_STATUS.zh-CN.md#验收记录)
+links the exact source revision and CI run separately from historical hardware checks.
 
 ## Build
 
