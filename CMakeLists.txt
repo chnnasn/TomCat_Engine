@@ -91,6 +91,9 @@ target_link_libraries(TomCat PUBLIC tc_box2d tc_yaml tc_glad tc_imgui glfw
     Threads::Threads OpenGL::GL OpenAL::OpenAL Vulkan::Vulkan ${CMAKE_DL_LIBS}
     PkgConfig::SHADERC glslang::SPIRV glslang::glslang SPIRV-Tools-opt SPIRV-Tools-static
     spirv-cross-glsl spirv-cross-core)
+# The pinned ImGui fork calls TomCat's title-bar callbacks. Model the static
+# archive cycle so GNU ld rescans the engine for headless consumers as well.
+target_link_libraries(tc_imgui INTERFACE TomCat)
 
 function(tc_application target source output packages)
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${source}/*.cpp")

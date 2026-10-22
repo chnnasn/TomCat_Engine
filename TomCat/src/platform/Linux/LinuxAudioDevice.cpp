@@ -60,8 +60,13 @@ public:
     }
     void Shutdown() override {
         if (m_Context) {
-            alcMakeContextCurrent(m_Context);
-            while (!m_Voices.empty()) DestroyVoice(m_Voices.begin()->first);
+            if (alcMakeContextCurrent(m_Context)) {
+                for (auto& [handle, voice] : m_Voices) {
+                    alDeleteSources(1, &voice.Source);
+                    alDeleteBuffers(BufferCount, voice.Buffers.data());
+                }
+            }
+            m_Voices.clear();
             alcMakeContextCurrent(nullptr);
             alcDestroyContext(m_Context);
             m_Context = nullptr;

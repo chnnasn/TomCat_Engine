@@ -28,10 +28,14 @@ jobs:
           path: ~/.cache/ccache
           key: linux-ccache-${{ matrix.configuration }}-${{ github.sha }}
           restore-keys: linux-ccache-${{ matrix.configuration }}-
-      - name: Build and run headless tests
-        env:
-          TC_BUILD_TYPE: ${{ matrix.configuration }}
-        run: bash Scripts/Linux_Build.sh -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Configure native Linux build
+        run: cmake -S . -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build native and managed programs
+        run: cmake --build build/linux --parallel 2 -- -k 0
+      - name: Stage private .NET Player template
+        run: python3 Scripts/Build-LinuxPlayerTemplate.py --build-dir build/linux
+      - name: Run platform, audio and exported-game tests
+        run: ctest --test-dir build/linux --output-on-failure
       - uses: actions/cache/save@v4
         if: always()
         with:
