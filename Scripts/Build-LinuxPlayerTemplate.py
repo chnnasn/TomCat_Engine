@@ -17,6 +17,33 @@ def newest(root):
     return max(versions, key=lambda p: tuple(map(int, p.name.split('.'))))
 
 
+def notices(root, build):
+    parts = ['TomCat Engine - Third-Party Notices']
+    # Consume the same checked-in notice catalog as the Windows release tools.
+    catalog = (root / 'Scripts/ReleaseArtifactTools.ps1').read_text(encoding='utf-8-sig')
+    entries = re.findall(r"Name = '([^']+)';[^\n]*Notice = '([^']*)'; Mode = '([^']+)'", catalog)
+    if not entries:
+        raise RuntimeError('The release notice catalog could not be read')
+    for name, relative, mode in entries:
+        if mode == 'None':
+            continue
+        text = (root / relative.replace('\\', '/')).read_text(encoding='utf-8-sig')
+        if mode == 'FirstComment':
+            text = re.search(r'/\*.*?\*/', text, re.S).group()
+        elif mode == 'StbLicense':
+            marker = text.index('This software is available under 2 licenses')
+            text = text[text.rindex('/*', 0, marker):]
+        elif mode != 'Full':
+            raise RuntimeError(f'Unknown notice mode: {mode}')
+        parts += [name, text.strip()]
+    parts += ['SPIRV-Cross', (build / 'dependencies/spirv_cross/LICENSE').read_text(encoding='utf-8')]
+    for package in ('libshaderc-dev', 'glslang-dev', 'spirv-tools'):
+        path = Path('/usr/share/doc') / package / 'copyright'
+        if path.is_file():
+            parts += [package, path.read_text(encoding='utf-8')]
+    return '\n\n'.join(parts) + '\n'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir', type=Path, default=Path('build/linux'))
@@ -53,10 +80,8 @@ def main():
         shutil.copytree(runtime, stage / 'dotnet/shared/Microsoft.NETCore.App' / runtime.name)
         for name in ('Texture.glsl', 'FlatColor.glsl'):
             copy(root / 'Editor/TomCatInut/Packages/Shaders' / name, Path('Packages/Shaders') / name)
-        # Runtime distribution includes its own license notices. Keep the engine's too.
-        notices = root / 'THIRD_PARTY_NOTICES.txt'
-        if notices.is_file():
-            copy(notices, notices.name)
+        # The .NET distribution also carries notices inside its runtime directory.
+        (stage / 'THIRD_PARTY_NOTICES.txt').write_text(notices(root, build), encoding='utf-8')
         files = []
         for path in sorted(stage.rglob('*')):
             if path.is_file():
