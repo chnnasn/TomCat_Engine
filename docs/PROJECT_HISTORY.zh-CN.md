@@ -24,7 +24,10 @@
 
 ```powershell
 # 按主线开发顺序查看每次更新
-git log main --reverse --format='%h %s'
+git log main --first-parent --reverse --format='%h %s'
+
+# 查看发布标签与主线的集成关系
+git log main --graph --oneline --decorate
 
 # 聚焦渲染更新，或查看某次更新的文件差异
 git log main --oneline --grep='renderer'
@@ -45,15 +48,15 @@ git show <commit>
 2026-10-22 对完整 `main` 历史整理：原可达历史为 393 个提交，第一父链有 208 个集成快照；重建为 206 个单父提交。两次只连接重复祖先、文件内容未变化的合并节点被跳过，其余集成快照逐一保持原 Git tree。之后单独提交文档整理，因此主线总提交数会继续增加。
 
 - 原主线顶点：`b04d81d80a92fdf28ce7c27d37e24005e8a8f984`。
-- 对应的新代码基线：`65f38cfb7b1345dae411882f76b3fa7204e17722`。
+- 恢复发布标签关系后的代码基线：`17b11340678c4387b94a36d0a30d3dabf75cc4dd`；首次整理对应 `65f38cfb`，两者文件内容相同。
 - 原始完整历史保存在标签 `archive/main-before-cleanup-2026-10-22`，包含原功能分支的细粒度提交和合并关系。
 - [新旧提交映射](history/main-rewrite-map.tsv)记录全部 208 个原集成节点。`rewrite` 表示保留同一文件快照；`skip-identical-tree` 指向内容相同的前一个新节点，不代表删除了功能。
 - 新提交正文的 `Original-Commit` 指向原集成提交；PR 和旧 CI 仍属于原 SHA，不能冒充新 SHA 的检查结果。
-- 现有 `v0.1.0` 至 `v0.6.0` 发布标签及三个专项开发分支保持原引用。它们仍位于原历史，不要求成为新主线的祖先；不要仅用 `git describe` 判断当前产品版本。
+- 首次整理保留了原发布标签，导致它们不在新主线的祖先中；后续已按下节恢复六个版本的关联。三个专项开发分支仍保持原引用。
 
 ```powershell
 # 核对重写前后的代码快照；应没有差异
-git diff --exit-code archive/main-before-cleanup-2026-10-22 65f38cfb --
+git diff --exit-code archive/main-before-cleanup-2026-10-22 17b11340 --
 
 # 需要原始开发细节或旧 CI 对应源码时
 git log archive/main-before-cleanup-2026-10-22 --graph --oneline
@@ -62,13 +65,40 @@ git show <original-commit>
 
 这次整理改变提交身份与呈现顺序，不改写历史验收结果，也不把专项分支能力算作已经合入主线。
 
+## 发布标签
+
+`v0.1.0` 至 `v0.6.0` 已重新关联到 `main` 可达的发布节点。每个目标的 Git tree 与原标签完全一致；现有 Release 的名称、说明和二进制附件保持原样，不把最新版源码重新标记为旧版本。
+
+| 标签 | 主线可达提交 | 发布内容概要 |
+| --- | --- | --- |
+| `v0.1.0` | `e969d893` | 双语项目指南与 MIT 许可 |
+| `v0.2.0` | `c2f7eb1e` | C#、独立 Player 与发布流程，修复 Player 模板长路径 |
+| `v0.3.0` | `b6759bf2` | 2D 制作能力、编辑器交互、Hub 状态隔离与 Windows 扩展路径 |
+| `v0.4.0` | `8071d64d` | 托管工具链、Web 脚本与编辑器服务拆分 |
+| `v0.5.0` | `0cf7db30` | 资源拖放与场景性能修复 |
+| `v0.6.0` | `454f13b5` | 0.6.0 发布基线；后续 Vulkan、音频及资源修复继续记录在主线 |
+
+`v0.3.0` 的原发布快照未出现在首次整理的第一父链中，因此补回独立发布节点，并将其作为原 2D 制作能力集成节点的第二父提交。主线已有节点的文件快照均未改变；这一处集成关系保留版本来源，第一父链仍按功能集成顺序阅读。
+
+[标签映射](history/release-tags.tsv)记录原标签对象、原提交、新提交、树对象及备份标签。原标签对象保存在 `archive/releases/v0.x.0-before-cleanup`；补回发布关系前的主线保存在 `archive/main-before-release-tags-2026-10-22`。原始发布附件和旧 CI 中嵌入的提交号仍对应原源码，不能当作新 SHA 的回归结果。
+
+```powershell
+# 六个版本均应列出；按版本号排序
+git tag --merged main --list 'v*' --sort=version:refname
+git describe --tags --match 'v[0-9]*' main
+```
+
+版本常量仍以 `Version.h` 为准；`git describe` 在未发布提交上会带提交距离，并不表示已发布新版本。
+
 ## 已有克隆如何同步
 
 旧 `main` 与新 `main` 的 SHA 不兼容。先保留本地工作，不要直接把旧主线 `git pull` 合并回新主线。没有未提交改动时，可以保留旧分支再重建本地跟踪分支：
 
 ```powershell
 git status
-git fetch origin --tags
+git fetch origin
+# 仅更新本次重新关联的六个发布标签，保留其他本地标签
+git fetch origin '+refs/tags/v0.1.0:refs/tags/v0.1.0' '+refs/tags/v0.2.0:refs/tags/v0.2.0' '+refs/tags/v0.3.0:refs/tags/v0.3.0' '+refs/tags/v0.4.0:refs/tags/v0.4.0' '+refs/tags/v0.5.0:refs/tags/v0.5.0' '+refs/tags/v0.6.0:refs/tags/v0.6.0'
 git switch main
 git branch -m archive/local-main-before-cleanup
 git switch -c main --track origin/main
