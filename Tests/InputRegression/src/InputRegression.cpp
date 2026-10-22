@@ -10,7 +10,7 @@
 #include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Scripting/ScriptGlue.h"
 
-#include <imgui/imgui.h>
+#include <ImGui/imgui.h>
 
 #include <cmath>
 #include <functional>

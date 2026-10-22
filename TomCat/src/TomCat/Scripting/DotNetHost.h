@@ -26,8 +26,8 @@ namespace TomCat {
 		DotNetHost& operator=(const DotNetHost&) = delete;
 
 		bool Initialize(const Configuration& configuration);
-		void* GetUnmanagedFunction(const wchar_t* assemblyQualifiedType,
-			const wchar_t* methodName);
+		void* GetUnmanagedFunction(const char* assemblyQualifiedType,
+			const char* methodName);
 
 		bool IsInitialized() const { return m_LoadAssemblyAndGetFunctionPointer != nullptr; }
 		const std::string& GetLastError() const { return m_LastError; }

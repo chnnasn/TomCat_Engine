@@ -1,0 +1,2 @@
+# Linux entry points must remain runnable after a Windows checkout with autocrlf.
+*.sh text eol=lf

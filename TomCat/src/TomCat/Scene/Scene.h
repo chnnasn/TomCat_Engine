@@ -1,7 +1,7 @@
 #pragma once
 #include "TomCat/Core/FrameTask.h"
 #include "entt.hpp"
-#include "TomCat/Core/Timestep.h"
+#include "TomCat/Core/TimeStep.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Project/ProjectSettings.h"

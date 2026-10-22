@@ -1,8 +1,8 @@
 #include "EditorLayer.h"
 #include "EditorPlayToolbar.h"
 #include "SceneToolbarDrawing.h"
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
+#include <ImGui/imgui.h>
+#include <ImGui/imgui_internal.h>
 
 #include <algorithm>
 #include <array>
@@ -53,8 +53,8 @@
 
 #include "EditorLayer.h"
 
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
+#include <ImGui/imgui.h>
+#include <ImGui/imgui_internal.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>

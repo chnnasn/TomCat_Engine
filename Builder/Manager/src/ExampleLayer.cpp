@@ -1,5 +1,5 @@
 #include "ExampleLayer.h"
-#include <imgui/imgui.h>
+#include <ImGui/imgui.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -13,7 +13,11 @@
 #include "TomCat/Math/Math.h"
 #include "TomCat/Asset/TextureArtifact.h"
 #include <fstream>
+#ifdef TC_PLATFORM_WINDOWS
 #include <shellapi.h>
+#elif defined(TC_PLATFORM_LINUX)
+#include "platform/Linux/LinuxProcess.h"
+#endif
 #include <cstdio>
 #include <cctype>
 #include <algorithm>
@@ -1045,7 +1049,13 @@ void ExampleLayer::RenderSettingsDialog()
 		std::error_code error;
 		if (std::filesystem::is_directory(dir, error) && !error)
 		{
+#ifdef TC_PLATFORM_WINDOWS
 			ShellExecuteW(NULL, L"open", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+#elif defined(TC_PLATFORM_LINUX)
+            std::string error;
+            if (!TomCat::Linux::StartProcess({"xdg-open", TomCat::PathToUTF8(dir)}, {}, error))
+                TC_Core_Warn("Could not open folder: {0}", error);
+#endif
 		}
 		else if (error)
 		{

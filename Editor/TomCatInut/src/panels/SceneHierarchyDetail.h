@@ -7,10 +7,10 @@
 
 #include "SceneHierarchyPanel.h"
 
-#include <imgui/imgui.h>
+#include <ImGui/imgui.h>
 #include <yaml-cpp/yaml.h>
 #include <set>
-#include <imgui/imgui_internal.h>
+#include <ImGui/imgui_internal.h>
 
 #include <glm/gtc/type_ptr.hpp>
 

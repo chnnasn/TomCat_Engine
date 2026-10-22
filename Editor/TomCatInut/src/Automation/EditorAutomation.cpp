@@ -807,11 +807,8 @@ std::string EditorLayer::ExecuteAutomation(const std::string& request)
         {
             Require(m_SceneState == SceneState::Edit && !IsSceneDirty(), "UNSAVED_CHANGES", "Save the scene and stop Play before switching projects.");
             Require(!m_ScriptCompiler.IsCompileInProgress(), "EDITOR_BUSY", "Wait for compilation before switching projects.");
-            char* workspaceValue = nullptr;
-            size_t workspaceLength = 0;
-            _dupenv_s(&workspaceValue, &workspaceLength, "TOMCAT_AUTOMATION_WORKSPACE");
+            const char* workspaceValue = std::getenv("TOMCAT_AUTOMATION_WORKSPACE");
             const std::string workspace = workspaceValue ? workspaceValue : "";
-            free(workspaceValue);
             Require(!workspace.empty(), "WORKSPACE_REQUIRED", "Set TOMCAT_AUTOMATION_WORKSPACE when launching the Editor to enable project creation/open.");
             const auto path = BoundedPath(UTF8ToPath(workspace), Text(args, "path"));
             Require(path.extension() == ".tcproj", "INVALID_ARGUMENT", "Expected a .tcproj path relative to the automation workspace.");

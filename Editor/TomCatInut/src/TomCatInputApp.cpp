@@ -16,6 +16,7 @@
 	#include <Windows.h>
 #endif
 
+#ifdef TC_PLATFORM_WINDOWS
 namespace TomCat {
 	namespace {
 
@@ -205,10 +206,13 @@ namespace TomCat {
 
 }
 
+#endif
 #define TC_APPLICATION_PRODUCT TomCat::ApplicationProduct::Editor
+#ifdef TC_PLATFORM_WINDOWS
 #define TC_APPLICATION_BOOTSTRAP(argc, argv, launchWorkingDirectory) \
 	TomCat::BootstrapTomCatEditor(argc, argv, launchWorkingDirectory)
 #define TC_APPLICATION_STARTUP_ERROR(message) TomCat::EditorStartupWindow::Get().Fail(message)
+#endif
 #include <TomCat/Core/EntryPoint.h>
 #include <TomCat/Utils/PathUtils.h>
 

@@ -10,11 +10,15 @@ Player 则负责脱离编辑器运行打包后的游戏。
 
 **语言**：[English](README.md) | 简体中文
 
+## Linux 开发分支
+
+`dev_linux` 接入 Linux x86_64 原生构建、C#/.NET 10、OpenAL 音频与游戏导出，通过 GitHub Actions 构建并测试。构建方法、测试入口和实机验收边界见 [Linux 移植说明](docs/LINUX.zh-CN.md)。
+
 ## 当前分支的作用
 
-**main — 桌面主线与功能集成基线**
+**dev_linux — Linux 原生平台适配**
 
-用于 Windows 2D 编辑器、Hub 与独立 Player 的主线开发和功能集成，桌面默认优先使用 Vulkan，不支持时自动回退 OpenGL。它是下列专项分支的公共基线。
+基于 `main` 开展 Linux 源码移植，接入 CMake、GLFW/OpenGL、C#、音频和游戏导出。当前范围与待验证功能见上方 Linux 移植说明；`main` 仍是 Windows 桌面集成基线。
 
 分支定位核对日期：**2026-10-22**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`。下表列出当前开发分支；专项能力是否已合入主线，以[项目状态](docs/PROJECT_STATUS.zh-CN.md)为准。
 

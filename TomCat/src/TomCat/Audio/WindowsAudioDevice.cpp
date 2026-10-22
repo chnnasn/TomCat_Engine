@@ -1,4 +1,7 @@
 #include "tcpch.h"
+#ifdef TC_PLATFORM_LINUX
+#include "platform/Linux/LinuxAudioDevice.h"
+#endif
 #include "AudioDevice.h"
 
 #if defined(TC_PLATFORM_WINDOWS)
@@ -586,6 +589,9 @@ namespace TomCat {
 		auto device = std::make_unique<WindowsAudioDevice>();
 		if (device->Initialize(fallbackReason))
 			return device;
+#elif defined(TC_PLATFORM_LINUX)
+        auto device = CreateOpenALAudioDevice();
+        if (device->Initialize(fallbackReason)) return device;
 #elif defined(TC_PLATFORM_WEB)
 		auto device = CreateWebAudioDevice();
 		if (device->Initialize(fallbackReason))

@@ -2,7 +2,7 @@
 
 #define IMGUI_IMPL_OPENGL_LOADER_CUSTOM
 
-#include "Glad/glad.h"
+#include "glad/glad.h"
 #include <vulkan/vulkan.h>
 
 #include "backends/imgui_impl_opengl3.cpp"

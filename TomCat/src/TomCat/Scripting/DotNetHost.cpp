@@ -2,6 +2,7 @@
 #include "DotNetHost.h"
 
 #include "TomCat/Core/Log.h"
+#include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Utils/PathUtils.h"
 
 #include <algorithm>
@@ -9,11 +10,14 @@
 #include <charconv>
 #include <cstdlib>
 #include <mutex>
+#include <sstream>
 #include <system_error>
 #include <vector>
 
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
+#elif defined(TC_PLATFORM_LINUX)
+	#include <dlfcn.h>
 #endif
 
 namespace TomCat {
@@ -48,24 +52,39 @@ namespace TomCat {
 			return !error && equivalent;
 		}
 
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 #ifdef TC_PLATFORM_WINDOWS
-		using hostfxr_handle = void*;
-		using hostfxr_initialize_for_runtime_config_fn = int32_t(__cdecl*)(
-			const wchar_t*, const void*, hostfxr_handle*);
-		using hostfxr_get_runtime_delegate_fn = int32_t(__cdecl*)(
+        using HostChar = wchar_t;
+        #define TC_HOST_CALL __cdecl
+        #define TC_DELEGATE_CALL __stdcall
+        auto OpenHostLibrary(const std::filesystem::path& path) { return LoadLibraryW(path.c_str()); }
+        auto HostSymbol(HMODULE library, const char* name) { return GetProcAddress(library, name); }
+        void CloseHostLibrary(HMODULE library) { FreeLibrary(library); }
+#else
+        using HostChar = char;
+        #define TC_HOST_CALL
+        #define TC_DELEGATE_CALL
+        void* OpenHostLibrary(const std::filesystem::path& path) { return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL); }
+        void* HostSymbol(void* library, const char* name) { return dlsym(library, name); }
+        void CloseHostLibrary(void* library) { dlclose(library); }
+#endif
+        using hostfxr_handle = void*;
+		using hostfxr_initialize_for_runtime_config_fn = int32_t(TC_HOST_CALL*)(
+			const HostChar*, const void*, hostfxr_handle*);
+		using hostfxr_get_runtime_delegate_fn = int32_t(TC_HOST_CALL*)(
 			hostfxr_handle, int32_t, void**);
-		using hostfxr_close_fn = int32_t(__cdecl*)(hostfxr_handle);
-		using hostfxr_error_writer_fn = void(__cdecl*)(const wchar_t*);
-		using hostfxr_set_error_writer_fn = hostfxr_error_writer_fn (__cdecl*)(
+		using hostfxr_close_fn = int32_t(TC_HOST_CALL*)(hostfxr_handle);
+		using hostfxr_error_writer_fn = void(TC_HOST_CALL*)(const HostChar*);
+		using hostfxr_set_error_writer_fn = hostfxr_error_writer_fn (TC_HOST_CALL*)(
 			hostfxr_error_writer_fn);
-		using load_assembly_and_get_function_pointer_fn = int32_t(__stdcall*)(
-			const wchar_t*, const wchar_t*, const wchar_t*, const wchar_t*, void*, void**);
+		using load_assembly_and_get_function_pointer_fn = int32_t(TC_DELEGATE_CALL*)(
+			const HostChar*, const HostChar*, const HostChar*, const HostChar*, void*, void**);
 
 		constexpr int32_t LoadAssemblyAndGetFunctionPointerDelegate = 5;
-		const wchar_t* const UnmanagedCallersOnlyMethod =
-			reinterpret_cast<const wchar_t*>(static_cast<intptr_t>(-1));
+		const HostChar* const UnmanagedCallersOnlyMethod =
+			reinterpret_cast<const HostChar*>(static_cast<intptr_t>(-1));
 
-		void __cdecl WriteHostFxrError(const wchar_t* message)
+		void TC_HOST_CALL WriteHostFxrError(const HostChar* message)
 		{
 			if (!message)
 				return;
@@ -149,6 +168,26 @@ namespace TomCat {
 				static_cast<DWORD>(buffer.size())); length > 0 && length < buffer.size())
 				candidates.emplace_back(std::filesystem::path(
 					std::wstring(buffer.data(), length)) / L"dotnet");
+#elif defined(TC_PLATFORM_LINUX)
+            for (const char* name : {"DOTNET_ROOT_X64", "DOTNET_ROOT"})
+                if (const char* value = std::getenv(name); value && *value)
+                    candidates.emplace_back(value);
+            if (const char* path = std::getenv("PATH"))
+            {
+                std::istringstream entries(path);
+                std::string entry;
+                while (std::getline(entries, entry, ':'))
+                {
+                    if (entry.empty()) continue;
+                    std::error_code error;
+                    auto executable = std::filesystem::canonical(std::filesystem::path(entry) / "dotnet", error);
+                    if (!error) candidates.push_back(executable.parent_path());
+                }
+            }
+            candidates.emplace_back("/usr/share/dotnet");
+            candidates.emplace_back("/usr/lib/dotnet");
+            if (const char* home = std::getenv("HOME"))
+                candidates.emplace_back(std::filesystem::path(home) / ".dotnet");
 #endif
 		}
 
@@ -173,7 +212,7 @@ namespace TomCat {
 	bool DotNetHost::ResolveHostFxr(const std::filesystem::path& dotnetRoot,
 		std::filesystem::path& hostFxrPath)
 	{
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 		const std::filesystem::path fxrRoot = dotnetRoot / "host" / "fxr";
 		std::vector<std::filesystem::path> versions;
 		std::error_code error;
@@ -191,7 +230,11 @@ namespace TomCat {
 		std::sort(versions.begin(), versions.end(), VersionLess);
 		for (auto iterator = versions.rbegin(); iterator != versions.rend(); ++iterator)
 		{
-			const std::filesystem::path candidate = *iterator / "hostfxr.dll";
+			#ifdef TC_PLATFORM_WINDOWS
+            const std::filesystem::path candidate = *iterator / "hostfxr.dll";
+#else
+            const std::filesystem::path candidate = *iterator / "libhostfxr.so";
+#endif
 			if (std::filesystem::is_regular_file(candidate, error) && !error)
 			{
 				hostFxrPath = candidate;
@@ -199,12 +242,12 @@ namespace TomCat {
 			}
 			error.clear();
 		}
-		SetError("The selected dotnet root has no usable hostfxr.dll: " + PathToUTF8(dotnetRoot));
+		SetError("The selected dotnet root has no usable hostfxr library: " + PathToUTF8(dotnetRoot));
 		return false;
 #else
 		(void)dotnetRoot;
 		(void)hostFxrPath;
-		SetError("CoreCLR hosting is currently implemented for Windows only");
+		SetError("CoreCLR hosting is currently available on Windows and Linux");
 		return false;
 #endif
 	}
@@ -216,7 +259,7 @@ namespace TomCat {
 			return true;
 		m_LastError.clear();
 
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 		std::error_code error;
 		const std::filesystem::path runtimeConfigPath = std::filesystem::absolute(
 			configuration.RuntimeConfigPath, error).lexically_normal();
@@ -273,51 +316,45 @@ namespace TomCat {
 		if (!ResolveHostFxr(dotnetRoot, hostFxrPath))
 			return false;
 
-		HMODULE library = LoadLibraryW(hostFxrPath.c_str());
+		auto library = OpenHostLibrary(hostFxrPath);
 		if (!library)
 		{
-			SetError("Could not load hostfxr.dll from " + PathToUTF8(hostFxrPath));
+			SetError("Could not load hostfxr from " + PathToUTF8(hostFxrPath));
 			return false;
 		}
 		auto initialize = reinterpret_cast<hostfxr_initialize_for_runtime_config_fn>(
-			GetProcAddress(library, "hostfxr_initialize_for_runtime_config"));
+			HostSymbol(library, "hostfxr_initialize_for_runtime_config"));
 		auto getDelegate = reinterpret_cast<hostfxr_get_runtime_delegate_fn>(
-			GetProcAddress(library, "hostfxr_get_runtime_delegate"));
+			HostSymbol(library, "hostfxr_get_runtime_delegate"));
 		auto close = reinterpret_cast<hostfxr_close_fn>(
-			GetProcAddress(library, "hostfxr_close"));
+			HostSymbol(library, "hostfxr_close"));
 		auto setErrorWriter = reinterpret_cast<hostfxr_set_error_writer_fn>(
-			GetProcAddress(library, "hostfxr_set_error_writer"));
+			HostSymbol(library, "hostfxr_set_error_writer"));
 		if (!initialize || !getDelegate || !close)
 		{
-			FreeLibrary(library);
-			SetError("hostfxr.dll does not expose the required .NET hosting functions");
+			CloseHostLibrary(library);
+			SetError("hostfxr does not expose the required .NET hosting functions");
 			return false;
 		}
 		if (setErrorWriter)
 			setErrorWriter(&WriteHostFxrError);
 
 		struct InitializeParameters
-		{
-			size_t Size;
-			const wchar_t* HostPath;
-			const wchar_t* DotNetRoot;
-		};
-		std::array<wchar_t, 32768> executablePath{};
-		const DWORD executableLength = GetModuleFileNameW(nullptr, executablePath.data(),
-			static_cast<DWORD>(executablePath.size()));
-		InitializeParameters parameters{};
-		parameters.Size = sizeof(parameters);
-		parameters.HostPath = executableLength > 0 && executableLength < executablePath.size()
-			? executablePath.data() : nullptr;
-		const std::wstring dotnetRootString = dotnetRoot.wstring();
-		parameters.DotNetRoot = dotnetRootString.c_str();
-
-		hostfxr_handle context = nullptr;
-		const std::wstring runtimeConfig = runtimeConfigPath.wstring();
+        {
+            size_t Size;
+            const HostChar* HostPath;
+            const HostChar* DotNetRoot;
+        };
+        const auto executablePath = ApplicationPaths::GetExecutablePath().value_or(std::filesystem::path{}).native();
+        const auto dotnetRootString = dotnetRoot.native();
+        const InitializeParameters parameters{sizeof(InitializeParameters),
+            executablePath.empty() ? nullptr : executablePath.c_str(), dotnetRootString.c_str()};
+        hostfxr_handle context = nullptr;
+        const auto runtimeConfig = runtimeConfigPath.native();
 		const int32_t initializeResult = initialize(runtimeConfig.c_str(), &parameters, &context);
 		if (initializeResult < 0 || !context)
 		{
-			FreeLibrary(library);
+			CloseHostLibrary(library);
 			SetError("hostfxr failed to initialize TomCat.ScriptHost (status "
 				+ std::to_string(initializeResult) + ")");
 			return false;
@@ -329,7 +366,7 @@ namespace TomCat {
 		close(context);
 		if (delegateResult < 0 || !loadAssembly)
 		{
-			FreeLibrary(library);
+			CloseHostLibrary(library);
 			SetError("hostfxr could not provide load_assembly_and_get_function_pointer (status "
 				+ std::to_string(delegateResult) + ")");
 			return false;
@@ -349,13 +386,13 @@ namespace TomCat {
 		return true;
 #else
 		(void)configuration;
-		SetError("CoreCLR hosting is currently implemented for Windows only");
+		SetError("CoreCLR hosting is currently available on Windows and Linux");
 		return false;
 #endif
 	}
 
-	void* DotNetHost::GetUnmanagedFunction(const wchar_t* assemblyQualifiedType,
-		const wchar_t* methodName)
+	void* DotNetHost::GetUnmanagedFunction(const char* assemblyQualifiedType,
+		const char* methodName)
 	{
 		std::lock_guard<std::mutex> lock(GetProcessHostMutex());
 		if (!IsInitialized() || !assemblyQualifiedType || !methodName)
@@ -364,13 +401,15 @@ namespace TomCat {
 			return nullptr;
 		}
 
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 		auto loadAssembly = reinterpret_cast<load_assembly_and_get_function_pointer_fn>(
 			m_LoadAssemblyAndGetFunctionPointer);
 		void* function = nullptr;
-		const std::wstring assemblyPath = m_ScriptHostAssemblyPath.wstring();
-		const int32_t result = loadAssembly(assemblyPath.c_str(), assemblyQualifiedType,
-			methodName, UnmanagedCallersOnlyMethod, nullptr, &function);
+		const auto assemblyPath = m_ScriptHostAssemblyPath.native();
+        const auto type = UTF8ToPath(assemblyQualifiedType).native();
+        const auto method = UTF8ToPath(methodName).native();
+		const int32_t result = loadAssembly(assemblyPath.c_str(), type.c_str(),
+			method.c_str(), UnmanagedCallersOnlyMethod, nullptr, &function);
 		if (result != 0 || !function)
 		{
 			SetError("Could not resolve the managed entry point (status "

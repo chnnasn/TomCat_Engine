@@ -48,6 +48,7 @@ obj/
 .codemap/
 
 # CMake/MSBuild generated metadata
+/build/linux/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

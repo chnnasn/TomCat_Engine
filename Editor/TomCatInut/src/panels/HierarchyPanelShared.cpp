@@ -1,6 +1,6 @@
 #include "HierarchyPanelShared.h"
 
-#include <imgui/imgui.h>
+#include <ImGui/imgui.h>
 
 #include "TomCat/Scene/Components.h"
 

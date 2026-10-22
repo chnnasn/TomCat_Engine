@@ -139,7 +139,7 @@ namespace TomCat::Scripting {
 		}
 
 		void* bootstrap = m_Host.GetUnmanagedFunction(
-			L"TomCat.ScriptHost.EntryPoint, TomCat.ScriptHost", L"GetManagedApi");
+			"TomCat.ScriptHost.EntryPoint, TomCat.ScriptHost", "GetManagedApi");
 		if (!bootstrap)
 		{
 			m_LastError = m_Host.GetLastError();

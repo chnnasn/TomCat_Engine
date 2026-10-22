@@ -4,7 +4,7 @@
 
 #include <GLFW/glfw3.h>
 
-#include <Glad/glad.h>
+#include <glad/glad.h>
 #include <stdexcept>
 
 namespace TomCat {
@@ -25,8 +25,13 @@ namespace TomCat {
 		int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 		if (!status)
 			throw std::runtime_error("Failed to initialize Glad");
-		if (!GLAD_GL_VERSION_4_6)
+#ifdef TC_PLATFORM_LINUX
+        if (!GLAD_GL_VERSION_4_5)
+            throw std::runtime_error("TomCat requires OpenGL 4.5 or newer");
+#else
+        if (!GLAD_GL_VERSION_4_6)
 			throw std::runtime_error("TomCat requires OpenGL 4.6 for SPIR-V shader specialization");
+#endif
 
 		TC_Core_Info("OpenGL Info");
 		TC_Core_Info("Vendor: {0}", reinterpret_cast<const char*>(glGetString(GL_VENDOR)));

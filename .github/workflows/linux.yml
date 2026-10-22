@@ -1,0 +1,54 @@
+name: Linux native
+on:
+  push:
+    branches: [dev_linux, main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Initialize portable dependencies
+        run: git submodule update --init --recursive TomCat/vendor/GLFW TomCat/vendor/ImGui TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/yaml-cpp TomCat/vendor/Box2D TomCat/vendor/ImGuizmo
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache pkg-config libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev libvulkan-dev libshaderc-dev glslang-dev glslang-tools spirv-tools libspirv-cross-c-shared-dev libopenal-dev zenity xvfb
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: linux-ccache-${{ matrix.configuration }}-${{ github.sha }}
+          restore-keys: linux-ccache-${{ matrix.configuration }}-
+      - name: Configure native Linux build
+        run: cmake -S . -B build/linux -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build native and managed programs
+        run: cmake --build build/linux --parallel 2 -- -k 0
+      - name: Stage private .NET Player template
+        run: python3 Scripts/Build-LinuxPlayerTemplate.py --build-dir build/linux
+      - name: Run platform, audio and exported-game tests
+        run: ctest --test-dir build/linux --output-on-failure
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.cache/ccache
+          key: linux-ccache-${{ matrix.configuration }}-${{ github.sha }}
+      - name: Package tested game
+        run: tar -C build/linux -czf linux-player-${{ matrix.configuration }}.tar.gz acceptance-game
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-player-${{ matrix.configuration }}
+          path: linux-player-${{ matrix.configuration }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-test-logs-${{ matrix.configuration }}
+          path: build/linux/Testing/Temporary/

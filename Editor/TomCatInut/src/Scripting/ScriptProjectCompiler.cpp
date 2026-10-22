@@ -24,6 +24,10 @@
 
 #ifdef TC_PLATFORM_WINDOWS
 #include <Windows.h>
+#elif defined(TC_PLATFORM_LINUX)
+#include "platform/Linux/LinuxProcess.h"
+#include <unistd.h>
+#include <cstdlib>
 #endif
 
 namespace TomCat {
@@ -142,6 +146,8 @@ namespace TomCat {
 					break;
 				buffer.resize(buffer.size() * 2);
 			}
+#elif defined(TC_PLATFORM_LINUX)
+            return ApplicationPaths::GetExecutablePath().value_or(std::filesystem::path{}).parent_path();
 #endif
 			std::error_code error;
 			return std::filesystem::current_path(error);
@@ -210,6 +216,34 @@ namespace TomCat {
 				static_cast<DWORD>(std::size(resolved)), resolved, nullptr);
 			if (length != 0 && length < std::size(resolved))
 				return AbsoluteLexical(std::filesystem::path(resolved));
+#elif defined(TC_PLATFORM_LINUX)
+            auto executable = [](const std::filesystem::path& path) {
+                return IsRegularFile(path) && access(path.c_str(), X_OK) == 0;
+            };
+            if (const auto root = ApplicationPaths::GetRuntimeEditorRoot())
+            {
+                const auto candidate = *root / "DotNetSdk" / "dotnet";
+                return executable(candidate) ? AbsoluteLexical(candidate) : std::filesystem::path{};
+            }
+            const auto beside = ExecutableDirectory() / "DotNetSdk" / "dotnet";
+            if (executable(beside)) return AbsoluteLexical(beside);
+            for (const char* name : {"DOTNET_ROOT_X64", "DOTNET_ROOT"})
+                if (const char* root = std::getenv(name); root && *root)
+                {
+                    const auto candidate = std::filesystem::path(root) / "dotnet";
+                    if (executable(candidate)) return AbsoluteLexical(candidate);
+                }
+            if (const char* path = std::getenv("PATH"))
+            {
+                std::istringstream entries(path);
+                std::string entry;
+                while (std::getline(entries, entry, ':'))
+                {
+                    if (entry.empty()) continue;
+                    const auto candidate = std::filesystem::path(entry) / "dotnet";
+                    if (executable(candidate)) return AbsoluteLexical(candidate);
+                }
+            }
 #endif
 			return {};
 		}
@@ -223,6 +257,8 @@ namespace TomCat {
 			output << ticks;
 #ifdef TC_PLATFORM_WINDOWS
 			output << '-' << GetCurrentProcessId();
+#elif defined(TC_PLATFORM_LINUX)
+            output << '-' << getpid();
 #endif
 			output << '-' << sequence.fetch_add(1, std::memory_order_relaxed);
 			return output.str();
@@ -414,6 +450,62 @@ namespace TomCat {
 			return RunDotNetCommand(dotnetExecutable, arguments, projectPath.parent_path(), processOutput,
 				exitCode, launchError);
 		}
+#elif defined(TC_PLATFORM_LINUX)
+        bool RunDotNetCommand(const std::filesystem::path& executable,
+            std::vector<std::string> arguments, const std::filesystem::path& workingDirectory,
+            std::string& output, int& exitCode, std::string& error)
+        {
+            arguments.insert(arguments.begin(), PathToUTF8(executable));
+            auto result = Linux::RunProcess(arguments, workingDirectory, std::chrono::minutes(5));
+            output = std::move(result.Output);
+            exitCode = result.ExitCode;
+            error = std::move(result.Error);
+            return error.empty();
+        }
+        bool RunDotNetBuild(const std::filesystem::path& executable,
+            const std::filesystem::path& project, std::string& output, int& exitCode, std::string& error)
+        {
+            return RunDotNetCommand(executable, {"build", PathToUTF8(project),
+                "--configuration", "Release", "--nologo", "--verbosity", "minimal",
+                "-nodeReuse:false", "-p:UseSharedCompilation=false"}, project.parent_path(), output, exitCode, error);
+        }
+        bool RunRestrictedDotNetBuild(const std::filesystem::path& executable,
+            const std::filesystem::path& project, std::string& output, int& exitCode,
+            std::string& error, bool dependenciesEnabled)
+        {
+            static constexpr std::array<const char*, 19> lockedProperties = {
+				"ImportDirectoryBuildProps=false",
+				"ImportDirectoryBuildTargets=false",
+				"ImportDirectoryPackagesProps=false",
+				"ImportProjectExtensionProps=false",
+				"ImportProjectExtensionTargets=false",
+				"RestoreEnableGlobalPackageReference=false",
+				"ManagePackageVersionsCentrally=false",
+				"ImportUserLocationsByWildcardBeforeMicrosoftCommonProps=false",
+				"ImportUserLocationsByWildcardAfterMicrosoftCommonProps=false",
+				"ImportUserLocationsByWildcardBeforeMicrosoftCommonTargets=false",
+				"ImportUserLocationsByWildcardAfterMicrosoftCommonTargets=false",
+				"ImportUserLocationsByWildcardBeforeMicrosoftCSharpTargets=false",
+				"ImportUserLocationsByWildcardAfterMicrosoftCSharpTargets=false",
+				"ImportByWildcardBeforeMicrosoftCommonProps=false",
+				"ImportByWildcardAfterMicrosoftCommonProps=false",
+				"ImportByWildcardBeforeMicrosoftCommonTargets=false",
+				"ImportByWildcardAfterMicrosoftCommonTargets=false",
+				"ImportByWildcardBeforeMicrosoftCSharpTargets=false",
+				"ImportByWildcardAfterMicrosoftCSharpTargets=false"
+			};
+
+            std::vector<std::string> arguments{"build", "-noAutoResponse", PathToUTF8(project),
+                "--configuration", "Release", "--nologo", "--verbosity", "minimal",
+                "-nodeReuse:false", "-p:UseSharedCompilation=false"};
+            for (const char* property : lockedProperties)
+            {
+                if (dependenciesEnabled && (std::string_view(property) == "ImportProjectExtensionProps=false"
+                    || std::string_view(property) == "ImportProjectExtensionTargets=false")) continue;
+                arguments.push_back(std::string("-p:") + property);
+            }
+            return RunDotNetCommand(executable, std::move(arguments), project.parent_path(), output, exitCode, error);
+        }
 #else
 		bool RunDotNetBuild(const std::filesystem::path&, const std::filesystem::path&,
 			std::string&, int& exitCode,
@@ -437,11 +529,16 @@ namespace TomCat {
 		bool CheckDotNet10Sdk(const std::filesystem::path& dotnetExecutable,
 			std::string& errorMessage)
 		{
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 			std::string output;
 			std::string launchError;
 			int exitCode = -1;
-			if (!RunDotNetCommand(dotnetExecutable, L"--list-sdks", {}, output,
+			#ifdef TC_PLATFORM_WINDOWS
+            const std::wstring arguments = L"--list-sdks";
+#else
+            const std::vector<std::string> arguments{"--list-sdks"};
+#endif
+            if (!RunDotNetCommand(dotnetExecutable, arguments, {}, output,
 				exitCode, launchError))
 			{
 				errorMessage = "TomCat's .NET 10 SDK could not be started. " +
