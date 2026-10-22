@@ -34,6 +34,12 @@
 
 namespace TomCat {
 
+#ifdef TC_PLATFORM_LINUX
+    static constexpr int DesktopOpenGLMinorVersion = 5;
+#else
+    static constexpr int DesktopOpenGLMinorVersion = 6;
+#endif
+
 #ifdef TC_PLATFORM_WINDOWS
     static LRESULT CALLBACK RuntimeIMEProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
         if (message == WM_IME_STARTCOMPOSITION) {
@@ -212,7 +218,7 @@ namespace TomCat {
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         else {
             glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, DesktopOpenGLMinorVersion);
             glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         }
 		glfwWindowHint(GLFW_RESIZABLE,
@@ -294,7 +300,7 @@ namespace TomCat {
 			m_Window = nullptr;
 			glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
 			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, DesktopOpenGLMinorVersion);
 			glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 			m_Window = glfwCreateWindow(windowWidth, windowHeight, m_Data.Title.c_str(), monitor, nullptr);
 			if (!m_Window) throw std::runtime_error("Failed to create OpenGL fallback window");

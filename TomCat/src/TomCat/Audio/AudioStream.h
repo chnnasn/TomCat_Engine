@@ -33,6 +33,7 @@ namespace TomCat {
 		virtual const AudioStreamFormat& GetFormat() const = 0;
 		virtual uint64_t GetFrameCount() const = 0;
 		virtual uint64_t GetFramePosition() const = 0;
+		// Returns the number of bytes copied, always a multiple of BlockAlign.
 		virtual size_t ReadFrames(std::span<uint8_t> destination) = 0;
 		virtual bool SeekFrame(uint64_t frame) = 0;
 		virtual std::unique_ptr<IAudioStream> Clone() const = 0;

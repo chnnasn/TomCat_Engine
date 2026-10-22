@@ -113,6 +113,19 @@ public sealed class LinuxProbe : MonoBehaviour
         const auto player = exported / "Linux Acceptance";
         Require(access(player.c_str(), X_OK) == 0 && std::filesystem::file_size(exported / "Game.tcpak") > 0,
             "export omitted executable permissions or package");
+        const auto originalSettings = project->GetPlayerSettings();
+        for (const auto& [product, filename] : std::vector<std::pair<std::string, std::string>>{
+            {"tomcatplayer", "tomcatplayer"}, {"Game.tcpak", "_Game.tcpak"}}) {
+            auto renamed = originalSettings;
+            renamed.ProductName = product;
+            Require(project->SetPlayerSettings(renamed), "could not set export product name");
+            Require(Run(command, root).ExitCode == 0, "product-name export failed");
+            const auto binary = projectPath.parent_path() / "Build" / filename / filename;
+            Require(access(binary.c_str(), X_OK) == 0 &&
+                Run({binary.string(), "--validate-package", "Game.tcpak"}, root).ExitCode == 0,
+                "case-sensitive or reserved product name broke export");
+        }
+        Require(project->SetPlayerSettings(originalSettings), "could not restore product settings");
         // The published game must survive a missing SDK/source tree and unrelated cwd.
         std::filesystem::rename(project->GetAssetPath(), projectPath.parent_path() / "SourcesUnavailable");
         setenv("DOTNET_ROOT", "/no-system-dotnet", 1);

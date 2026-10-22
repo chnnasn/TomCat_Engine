@@ -583,6 +583,14 @@ namespace TomCat {
 				value.resize(value.size() - 4);
 			while (!value.empty() && (value.back() == ' ' || value.back() == '.'))
 				value.pop_back();
+#ifdef TC_PLATFORM_LINUX
+            // Linux executables have no .exe suffix: product names can otherwise
+            // overwrite Game.tcpak or collide with a packaged runtime directory.
+            const std::string key = LowerASCII(value);
+            if (key == "game.tcpak" || key == "dotnet" || key == "managed" ||
+                key == "packages" || key == "template.json" || key == "third_party_notices.txt")
+                value.insert(value.begin(), '_');
+#endif
 			return value.empty() ? "TomCatGame" : value;
 		}
 
@@ -742,7 +750,11 @@ namespace TomCat {
 		}
 		const std::filesystem::path templatePlayer = staging / PlayerFilename;
 		const std::filesystem::path productPlayer = staging / playerExecutableName;
-		if (NormalizedKey(playerExecutableName) != PlayerKey)
+#ifdef TC_PLATFORM_LINUX
+        if (playerExecutableName != PlayerFilename)
+#else
+        if (NormalizedKey(playerExecutableName) != PlayerKey)
+#endif
 		{
 			error.clear();
 			std::filesystem::rename(templatePlayer, productPlayer, error);
