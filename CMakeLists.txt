@@ -18,7 +18,7 @@ endif()
 
 set(TC_SRC "${CMAKE_CURRENT_SOURCE_DIR}/TomCat/src")
 set(TC_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/TomCat/vendor")
-foreach(dependency GLFW ImGui glm spdlog yaml-cpp Box2D ImGuizmo)
+foreach(dependency GLFW glm spdlog Box2D ImGuizmo)
     if(NOT EXISTS "${TC_VENDOR}/${dependency}/.git")
         message(FATAL_ERROR "Initialize TomCat/vendor/${dependency} with git submodule update --init --recursive TomCat/vendor/${dependency}")
     endif()
