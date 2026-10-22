@@ -43,6 +43,11 @@ namespace TomCat {
 		inline constexpr uint64_t CircleCollider2D = 0x9f0000000000000eULL;
 		inline constexpr uint64_t DistanceJoint2D = 0x9f0000000000000fULL;
 		inline constexpr uint64_t EditorVisibility = 0x9f00000000000010ULL;
+		inline constexpr uint64_t Tilemap2D = 0x9f00000000000011ULL;
+		inline constexpr uint64_t ParticleSystem2D = 0x9f00000000000012ULL;
+		inline constexpr uint64_t Light2D = 0x9f00000000000013ULL;
+		inline constexpr uint64_t Grid2D = 0x9f00000000000014ULL;
+		inline constexpr uint64_t TilemapRenderer2D = 0x9f00000000000015ULL;
 
 		// Property IDs below preserve the numeric IDs exposed by the original
 		// gameplay ABI. They are now persisted 64-bit identities owned by the
@@ -135,6 +140,7 @@ namespace TomCat {
 			inline constexpr uint64_t Speed = 701;
 			inline constexpr uint64_t PlayOnStart = 704;
 			inline constexpr uint64_t InitialClip = 705;
+			inline constexpr uint64_t Controller = 706;
 		}
 		namespace LineRendererProperties {
 			inline constexpr uint64_t Enabled = 800;
@@ -160,6 +166,57 @@ namespace TomCat {
 			inline constexpr uint64_t Enabled = 920;
 			inline constexpr uint64_t Primary = 921;
 		}
+		namespace Tilemap2DProperties {
+			inline constexpr uint64_t Enabled = 1000;
+			inline constexpr uint64_t CellSize = 1001;
+			inline constexpr uint64_t CellGap = 1002;
+			inline constexpr uint64_t SortingLayer = 1003;
+			inline constexpr uint64_t OrderInLayer = 1004;
+		}
+		namespace Grid2DProperties {
+			inline constexpr uint64_t CellSize = 1300;
+			inline constexpr uint64_t CellGap = 1301;
+			inline constexpr uint64_t Layout = 1302;
+			inline constexpr uint64_t Swizzle = 1303;
+		}
+		namespace TilemapRenderer2DProperties {
+			inline constexpr uint64_t Enabled = 1400;
+			inline constexpr uint64_t SortOrder = 1401;
+			inline constexpr uint64_t Mode = 1402;
+			inline constexpr uint64_t DetectChunkCulling = 1403;
+			inline constexpr uint64_t SortingLayer = 1404;
+			inline constexpr uint64_t OrderInLayer = 1405;
+			inline constexpr uint64_t Material = 1406;
+		}
+		namespace ParticleSystem2DProperties {
+			inline constexpr uint64_t Enabled = 1100;
+			inline constexpr uint64_t PlayOnStart = 1101;
+			inline constexpr uint64_t Loop = 1102;
+			inline constexpr uint64_t Duration = 1103;
+			inline constexpr uint64_t EmissionRate = 1104;
+			inline constexpr uint64_t MaxParticles = 1105;
+			inline constexpr uint64_t StartLifetime = 1106;
+			inline constexpr uint64_t StartSpeed = 1107;
+			inline constexpr uint64_t StartSize = 1108;
+			inline constexpr uint64_t EndSize = 1109;
+			inline constexpr uint64_t GravityScale = 1110;
+			inline constexpr uint64_t Direction = 1111;
+			inline constexpr uint64_t SpreadDegrees = 1112;
+			inline constexpr uint64_t StartColor = 1113;
+			inline constexpr uint64_t EndColor = 1114;
+			inline constexpr uint64_t Sprite = 1115;
+			inline constexpr uint64_t SortingLayer = 1116;
+			inline constexpr uint64_t OrderInLayer = 1117;
+			inline constexpr uint64_t Seed = 1118;
+		}
+		namespace Light2DProperties {
+			inline constexpr uint64_t Enabled = 1200;
+			inline constexpr uint64_t Type = 1201;
+			inline constexpr uint64_t Color = 1202;
+			inline constexpr uint64_t Intensity = 1203;
+			inline constexpr uint64_t Radius = 1204;
+			inline constexpr uint64_t Falloff = 1205;
+		}
 		inline constexpr uint64_t Health = 0x8d0df196efd946a1ULL;
 		namespace HealthProperties {
 			inline constexpr uint64_t Maximum = 0x91bc0a20e4f64ed1ULL;
@@ -174,6 +231,60 @@ namespace TomCat {
 		inline constexpr uint64_t UIButton = 0x9f01000000000006ULL;
 		inline constexpr uint64_t UIEventSystem = 0x9f01000000000007ULL;
 		inline constexpr uint64_t UILayoutGroup = 0x9f01000000000008ULL;
+		inline constexpr uint64_t UISlider = 0x9f01000000000009ULL;
+		namespace UISliderProperties {
+			inline constexpr uint64_t Enabled = 0x9f01900000000001ULL;
+			inline constexpr uint64_t Interactable = 0x9f01900000000002ULL;
+			inline constexpr uint64_t Minimum = 0x9f01900000000003ULL;
+			inline constexpr uint64_t Maximum = 0x9f01900000000004ULL;
+			inline constexpr uint64_t Value = 0x9f01900000000005ULL;
+			inline constexpr uint64_t Step = 0x9f01900000000006ULL;
+			inline constexpr uint64_t WholeNumbers = 0x9f01900000000007ULL;
+			inline constexpr uint64_t Vertical = 0x9f01900000000008ULL;
+			inline constexpr uint64_t TrackColor = 0x9f01900000000009ULL;
+			inline constexpr uint64_t FillColor = 0x9f0190000000000aULL;
+		}
+		inline constexpr uint64_t UIScrollView = 0x9f0100000000000aULL;
+		namespace UIScrollViewProperties {
+			inline constexpr uint64_t Enabled = 0x9f01a00000000001ULL;
+			inline constexpr uint64_t Horizontal = 0x9f01a00000000002ULL;
+			inline constexpr uint64_t Vertical = 0x9f01a00000000003ULL;
+			inline constexpr uint64_t ContentSize = 0x9f01a00000000004ULL;
+			inline constexpr uint64_t Offset = 0x9f01a00000000005ULL;
+			inline constexpr uint64_t ScrollSpeed = 0x9f01a00000000006ULL;
+		}
+		inline constexpr uint64_t UIInputField = 0x9f0100000000000bULL;
+		namespace UIInputFieldProperties {
+			inline constexpr uint64_t Enabled = 0x9f01b00000000001ULL;
+			inline constexpr uint64_t Interactable = 0x9f01b00000000002ULL;
+			inline constexpr uint64_t Text = 0x9f01b00000000003ULL;
+			inline constexpr uint64_t Placeholder = 0x9f01b00000000004ULL;
+			inline constexpr uint64_t CharacterLimit = 0x9f01b00000000005ULL;
+			inline constexpr uint64_t Password = 0x9f01b00000000006ULL;
+			inline constexpr uint64_t ReadOnly = 0x9f01b00000000007ULL;
+		}
+		inline constexpr uint64_t UITheme = 0x9f0100000000000cULL;
+		namespace UIThemeProperties {
+			inline constexpr uint64_t Enabled = 0x9f01c00000000001ULL;
+			inline constexpr uint64_t TextColor = 0x9f01c00000000002ULL;
+			inline constexpr uint64_t ImageColor = 0x9f01c00000000003ULL;
+			inline constexpr uint64_t AccentColor = 0x9f01c00000000004ULL;
+			inline constexpr uint64_t Font = 0x9f01c00000000005ULL;
+			inline constexpr uint64_t FontScale = 0x9f01c00000000006ULL;
+		}
+		inline constexpr uint64_t UILocalization = 0x9f0100000000000dULL;
+		namespace UILocalizationProperties {
+			inline constexpr uint64_t Enabled = 0x9f01d00000000001ULL;
+			inline constexpr uint64_t Locale = 0x9f01d00000000002ULL;
+			inline constexpr uint64_t FallbackLocale = 0x9f01d00000000003ULL;
+			inline constexpr uint64_t Table = 0x9f01d00000000004ULL;
+		}
+		inline constexpr uint64_t UILocalizedText = 0x9f0100000000000eULL;
+		namespace UILocalizedTextProperties {
+			inline constexpr uint64_t Enabled = 0x9f01e00000000001ULL;
+			inline constexpr uint64_t Key = 0x9f01e00000000002ULL;
+		}
+
 
 			namespace TextRendererProperties {
 			inline constexpr uint64_t Enabled = 0x9f01100000000001ULL;
@@ -231,6 +342,8 @@ namespace TomCat {
 			inline constexpr uint64_t HoverColor = 0x9f01600000000004ULL;
 			inline constexpr uint64_t PressedColor = 0x9f01600000000005ULL;
 			inline constexpr uint64_t SelectedColor = 0x9f01600000000006ULL;
+			inline constexpr uint64_t DisabledColor = 0x9f01600000000007ULL;
+			inline constexpr uint64_t ColorMultiplier = 0x9f01600000000008ULL;
 		}
 		namespace UIEventSystemProperties {
 			inline constexpr uint64_t Enabled = 0x9f01700000000001ULL;

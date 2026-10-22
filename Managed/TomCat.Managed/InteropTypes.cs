@@ -5,7 +5,7 @@ namespace TomCat.Interop;
 public static class ManagedAbi
 {
     public const uint NativeApiVersion = 1;
-    public const uint ManagedApiVersion = 2;
+    public const uint ManagedApiVersion = 3;
     public const uint ScriptManifestVersion = 1;
 }
 
@@ -192,6 +192,22 @@ public unsafe struct NativeApiV2
 {
 	public NativeApiV1 V1;
 	public delegate* unmanaged[Cdecl]<NativeUtf8View, uint, void*, uint, uint*, int> QueryCapability;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct NativeSceneApiV1
+{
+    public uint Version;
+    public uint Size;
+    public delegate* unmanaged[Cdecl]<ulong, int, uint, int, int> RequestLoad;
+    public delegate* unmanaged[Cdecl]<ulong, int> RequestUnload;
+    public delegate* unmanaged[Cdecl]<ulong, int> SetActive;
+    public delegate* unmanaged[Cdecl]<NativeEntityHandleV1, int, int> SetPersistent;
+    public delegate* unmanaged[Cdecl]<uint*, float*, int*, int> GetLoadStatus;
+    public delegate* unmanaged[Cdecl]<int, int> SetAllowActivation;
+    public delegate* unmanaged[Cdecl]<int> CancelLoad;
+    public delegate* unmanaged[Cdecl]<ulong*, uint, uint*, int> GetLoadedScenes;
+    public delegate* unmanaged[Cdecl]<byte*, uint, uint*, int> GetLastError;
 }
 
 [StructLayout(LayoutKind.Sequential)]

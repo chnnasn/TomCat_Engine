@@ -1,4 +1,5 @@
 #include "TomCat/Asset/AssetDatabase.h"
+#include "TomCat/Asset/Advanced2DAuthoringAssets.h"
 #include "TomCat/Asset/AssetImportCoordinator.h"
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/ArtifactKey.h"
@@ -20,7 +21,9 @@
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Scene/Serialization/PrefabArchiveCodec.h"
+#include "TomCat/Scene/Serialization/PrefabLink.h"
 
+#include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -686,6 +689,50 @@ namespace {
 	TomCat::AssetHandle RequireHandle(TomCat::AssetRegistry& registry,
 		const std::filesystem::path& path, TomCat::AssetType expected);
 
+    void TestScopedPrefabProperties()
+    {
+        using namespace TomCat;
+        TemporaryProject project;
+        auto& assets=AssetManager::Get(); assets.Shutdown();
+        Require(assets.Initialize(project.Assets,project.Library),"Cannot initialize scoped prefab test");
+        struct Shutdown { ~Shutdown(){AssetManager::Get().Shutdown();} } shutdown;
+        auto source=CreateRef<Scene>(); Entity templateRoot=source->CreateEntity("Enemy");
+        templateRoot.AddComponent<HealthComponent>();
+        PrefabArchive archive; std::string error,document;
+        auto checked=[&](bool success){if(!success) throw std::runtime_error(error);};
+        checked(PrefabArchiveCodec::CaptureSubtree(source,templateRoot,archive,error));
+        checked(PrefabArchiveCodec::Encode(archive,document,error));
+        const auto path=project.Assets/"Enemy.tcprefab"; WriteBytes(path,document);
+        AssetHandle asset=assets.ImportAsset(path); Require(static_cast<uint64_t>(asset)!=0,"Cannot import scoped prefab");
+        auto scene=CreateRef<Scene>(); PrefabInstantiateOptions options; options.ResolveAssets=false;
+        PrefabInstantiationResult first,second;
+        checked(PrefabArchiveCodec::Instantiate(archive,*scene,options,first,error));
+        checked(PrefabLinkedInstance::Attach(scene,asset,archive,first,error));
+        checked(PrefabArchiveCodec::Instantiate(archive,*scene,options,second,error));
+        checked(PrefabLinkedInstance::Attach(scene,asset,archive,second,error));
+        const UUID one=first.Root.GetUUID(),two=second.Root.GetUUID();
+        first.Root.GetComponent<HealthComponent>().Maximum=150;
+        first.Root.GetComponent<HealthComponent>().Invulnerable=true;
+        std::vector<PrefabPropertyOverride> overrides;
+        checked(PrefabLinkedInstance::GetPropertyOverrides(scene,one,overrides,error));
+        Require(overrides.size()==2,"Expected two property overrides");
+        checked(PrefabLinkedInstance::ApplyProperty(scene,one,one,UUID(ComponentIds::Health),UUID(ComponentIds::HealthProperties::Maximum),error));
+        Require(scene->FindEntityByUUID(two).GetComponent<HealthComponent>().Maximum==150,"Property Apply did not update sibling instance");
+        Require(!scene->FindEntityByUUID(two).GetComponent<HealthComponent>().Invulnerable,"Property Apply leaked another override to sibling");
+        Require(scene->FindEntityByUUID(one).GetComponent<HealthComponent>().Invulnerable,"Property Apply lost another local override");
+        checked(PrefabLinkedInstance::GetPropertyOverrides(scene,one,overrides,error));
+        Require(overrides.size()==1 && overrides.front().PropertyID==UUID(ComponentIds::HealthProperties::Invulnerable),"Applied property still appears overridden");
+        PrefabArchive saved; checked(PrefabArchiveCodec::Load(path,saved,error));
+        auto savedRoot=saved.TemplateScene->FindEntityByUUID(UUID(saved.RootLocalID));
+        Require(savedRoot.GetComponent<HealthComponent>().Maximum==150 && !savedRoot.GetComponent<HealthComponent>().Invulnerable,"Source asset contains unrelated edits");
+        checked(PrefabLinkedInstance::RevertProperty(scene,one,one,UUID(ComponentIds::Health),UUID(ComponentIds::HealthProperties::Invulnerable),error));
+        Require(!scene->FindEntityByUUID(one).GetComponent<HealthComponent>().Invulnerable,"Scoped Revert did not restore baseline");
+        const std::string before=YAML::Dump(YAML::LoadFile(path.string()));
+        Require(!PrefabLinkedInstance::ApplyProperty(scene,one,one,UUID(ComponentIds::Health),UUID(999),error),"Unknown property was accepted");
+        Require(YAML::Dump(YAML::LoadFile(path.string()))==before,"Rejected Apply modified source file");
+        std::cout<<"PASS scoped Prefab Apply/Revert preserves unrelated overrides and propagates only selected property\n";
+    }
+
 	void TestAsyncAssetOwnerLifecycle()
 	{
 		using namespace std::chrono_literals;
@@ -925,6 +972,42 @@ namespace {
 		Require(TomCat::AssetTypeFromPath("unsupported.comp") == TomCat::AssetType::Other
 			&& TomCat::AssetTypeFromPath("unsupported.hlsl") == TomCat::AssetType::Other,
 			"unsupported shader languages are still advertised as production assets");
+		Require(TomCat::AssetTypeFromPath("Walk.tcanim") == TomCat::AssetType::AnimationClip
+			&& TomCat::AssetTypeFromPath("Player.tccontroller")
+				== TomCat::AssetType::AnimatorController
+			&& TomCat::AssetTypeFromPath("Ground.tctilepalette")
+				== TomCat::AssetType::TilePalette,
+			"2D authoring asset extensions were not assigned stable asset types");
+	}
+
+	void TestMixedPrefixAssetImport()
+	{
+#ifdef TC_PLATFORM_WINDOWS
+		TemporaryProject project;
+		const auto scene = project.Assets / "sample.tomcat";
+		const auto outside = project.Root / "AssetsOutside" / "sample.tomcat";
+		WriteBytes(scene, "Scene: PrefixTest\nEntities: []\n");
+		std::filesystem::create_directories(outside.parent_path());
+		WriteBytes(outside, "Scene: Outside\nEntities: []\n");
+		auto extended = [](const std::filesystem::path& path) {
+			return std::filesystem::path(L"\\\\?\\" + path.wstring());
+		};
+		for (bool extendedRoot : { false, true })
+		{
+			TomCat::AssetRegistry registry;
+			Require(registry.Initialize(extendedRoot ? extended(project.Assets) : project.Assets,
+				extendedRoot ? extended(project.Library) : project.Library), "mixed-prefix registry initialization failed");
+			const auto normalHandle = RequireHandle(registry, scene, TomCat::AssetType::Scene);
+			const auto extendedHandle = RequireHandle(registry, extended(scene), TomCat::AssetType::Scene);
+			Require(normalHandle == extendedHandle, "path prefixes created different identities for the same asset");
+			Require(static_cast<uint64_t>(registry.ImportAsset(outside)) == 0 &&
+				static_cast<uint64_t>(registry.ImportAsset(extended(outside))) == 0,
+				"mixed-prefix containment accepted an asset outside Assets");
+			Require(static_cast<uint64_t>(registry.ImportAsset(scene.string() + ".tcmeta")) == 0,
+				"mixed-prefix containment imported metadata as an asset");
+			registry.Shutdown();
+		}
+#endif
 	}
 
 	void TestCookedShaderRuntimeConsumption()
@@ -3398,6 +3481,84 @@ namespace {
 		registry.Shutdown();
 	}
 
+	void TestAuthoringDependencyValidationRejectsInvalidEdges()
+	{
+		TemporaryProject project;
+		const auto builtIns = TomCat::GetBuiltInSpriteAssets();
+		Require(!builtIns.empty(),
+			"authoring dependency validation needs one built-in Sprite");
+
+		TomCat::AnimationClipAsset clip;
+		clip.Clip.Name = "Dependency Clip";
+		clip.Clip.Frames.push_back({ builtIns.front().Handle, 1.0f / 12.0f });
+		std::string document;
+		std::string error;
+		Require(TomCat::AnimationClipAssetCodec::Encode(clip, document, error),
+			"authoring dependency clip could not be encoded");
+		const std::filesystem::path clipPath = project.Assets / "Dependency.tcanim";
+		const std::filesystem::path shaderPath = project.Assets / "WrongType.glsl";
+		WriteBytes(clipPath, document);
+		WriteBytes(shaderPath, MakeDependencyShader("authoring-wrong-type"));
+
+		TomCat::AssetRegistry registry;
+		Require(registry.Initialize(project.Assets, project.Library),
+			"authoring dependency registry did not initialize");
+		const TomCat::AssetHandle clipHandle = RequireHandle(registry, clipPath,
+			TomCat::AssetType::AnimationClip);
+		const TomCat::AssetHandle shaderHandle = RequireHandle(registry, shaderPath,
+			TomCat::AssetType::Shader);
+
+		TomCat::AnimatorControllerAsset controller;
+		controller.InitialState = "State";
+		controller.States.push_back({ "State", clipHandle, 1.0f });
+		Require(TomCat::AnimatorControllerAssetCodec::Encode(
+			controller, document, error),
+			"authoring dependency controller could not be encoded");
+		const std::filesystem::path controllerPath =
+			project.Assets / "Dependency.tccontroller";
+		WriteBytes(controllerPath, document);
+		Require(registry.Refresh(),
+			"authoring dependency controller was not discovered");
+		const TomCat::AssetHandle controllerHandle = RequireHandle(registry,
+			controllerPath, TomCat::AssetType::AnimatorController);
+
+		TomCat::AssetDatabase database;
+		Require(database.Initialize(registry, project.Library),
+			"authoring dependency database did not initialize");
+		const auto valid = database.GetDependencySnapshot(controllerHandle);
+		Require(valid.Dependencies.size() == 1
+			&& valid.Dependencies[0] == clipHandle,
+			"valid Controller-to-AnimationClip edge was not discovered");
+
+		auto writeControllerReference = [&](TomCat::AssetHandle handle)
+		{
+			controller.States[0].ClipHandle = handle;
+			Require(TomCat::AnimatorControllerAssetCodec::Encode(
+				controller, document, error),
+				"invalid-edge controller fixture could not be encoded");
+			WriteBytes(controllerPath, document);
+		};
+		writeControllerReference(TomCat::AssetHandle(0x0badf00dULL));
+		Require(!database.RefreshRegistry(),
+			"authoring dependency discovery accepted a missing handle");
+		writeControllerReference(shaderHandle);
+		Require(!database.RefreshRegistry(),
+			"authoring dependency discovery accepted the wrong asset type");
+		writeControllerReference(controllerHandle);
+		Require(!database.RefreshRegistry(),
+			"authoring dependency discovery accepted a self reference");
+
+		writeControllerReference(clipHandle);
+		Require(database.RefreshRegistry(),
+			"authoring dependency discovery did not recover after valid source restore");
+		const auto restored = database.GetDependencySnapshot(controllerHandle);
+		Require(restored.Dependencies.size() == 1
+			&& restored.Dependencies[0] == clipHandle,
+			"restored authoring dependency graph is incorrect");
+		database.Shutdown();
+		registry.Shutdown();
+	}
+
 }
 
 int main()
@@ -3405,6 +3566,8 @@ int main()
 	TomCat::Log::Init();
 	try
 	{
+		TestScopedPrefabProperties();
+		TestMixedPrefixAssetImport();
 		TestOfflineTextureArtifacts();
 		TestOfflineShaderArtifacts();
 		TestCookedShaderRuntimeConsumption();
@@ -3425,6 +3588,7 @@ int main()
 		TestCoordinatorRetriesStaleDeferredFinalization();
 		TestCoordinatorRefreshesDiscoverableClosureBeforeStaleRetry();
 		TestFileMonitorImportCoordinator();
+		TestAuthoringDependencyValidationRejectsInvalidEdges();
 		TestBoundedAssetJobSystem();
 		std::cout << "PASS production artifacts, bounded jobs, DDC, tcmeta v2, and monitored reimport\n";
 		return 0;

@@ -197,6 +197,231 @@
       "managedType": "UILayoutGroup",
       "stableName": "TomCat.UILayoutGroup",
       "typeId": "0x9f01000000000008"
+    },
+    {
+      "managedType": "UISlider",
+      "stableName": "TomCat.UISlider",
+      "typeId": "0x9f01000000000009",
+      "generateProxy": true,
+      "properties": [
+        {
+          "name": "Enabled",
+          "propertyId": "0x9f01900000000001",
+          "kind": "Bool"
+        },
+        {
+          "name": "Interactable",
+          "propertyId": "0x9f01900000000002",
+          "kind": "Bool"
+        },
+        {
+          "name": "Minimum",
+          "propertyId": "0x9f01900000000003",
+          "kind": "Float"
+        },
+        {
+          "name": "Maximum",
+          "propertyId": "0x9f01900000000004",
+          "kind": "Float"
+        },
+        {
+          "name": "Value",
+          "propertyId": "0x9f01900000000005",
+          "kind": "Float"
+        },
+        {
+          "name": "Step",
+          "propertyId": "0x9f01900000000006",
+          "kind": "Float"
+        },
+        {
+          "name": "WholeNumbers",
+          "propertyId": "0x9f01900000000007",
+          "kind": "Bool"
+        },
+        {
+          "name": "Vertical",
+          "propertyId": "0x9f01900000000008",
+          "kind": "Bool"
+        },
+        {
+          "name": "TrackColor",
+          "propertyId": "0x9f01900000000009",
+          "kind": "Color"
+        },
+        {
+          "name": "FillColor",
+          "propertyId": "0x9f0190000000000a",
+          "kind": "Color"
+        }
+      ]
+    },
+    {
+      "managedType": "UIScrollView",
+      "stableName": "TomCat.UIScrollView",
+      "typeId": "0x9f0100000000000a",
+      "generateProxy": true,
+      "properties": [
+        {
+          "name": "Enabled",
+          "propertyId": "0x9f01a00000000001",
+          "kind": "Bool"
+        },
+        {
+          "name": "Horizontal",
+          "propertyId": "0x9f01a00000000002",
+          "kind": "Bool"
+        },
+        {
+          "name": "Vertical",
+          "propertyId": "0x9f01a00000000003",
+          "kind": "Bool"
+        },
+        {
+          "name": "ContentSize",
+          "propertyId": "0x9f01a00000000004",
+          "kind": "Vector2"
+        },
+        {
+          "name": "Offset",
+          "propertyId": "0x9f01a00000000005",
+          "kind": "Vector2"
+        },
+        {
+          "name": "ScrollSpeed",
+          "propertyId": "0x9f01a00000000006",
+          "kind": "Float"
+        }
+      ]
+    },
+    {
+      "managedType": "UIInputField",
+      "stableName": "TomCat.UIInputField",
+      "typeId": "0x9f0100000000000b",
+      "generateProxy": true,
+      "properties": [
+        {
+          "name": "Enabled",
+          "propertyId": "0x9f01b00000000001",
+          "kind": "Bool"
+        },
+        {
+          "name": "Interactable",
+          "propertyId": "0x9f01b00000000002",
+          "kind": "Bool"
+        },
+        {
+          "name": "Text",
+          "propertyId": "0x9f01b00000000003",
+          "kind": "String"
+        },
+        {
+          "name": "Placeholder",
+          "propertyId": "0x9f01b00000000004",
+          "kind": "String"
+        },
+        {
+          "name": "CharacterLimit",
+          "propertyId": "0x9f01b00000000005",
+          "kind": "UInt32"
+        },
+        {
+          "name": "Password",
+          "propertyId": "0x9f01b00000000006",
+          "kind": "Bool"
+        },
+        {
+          "name": "ReadOnly",
+          "propertyId": "0x9f01b00000000007",
+          "kind": "Bool"
+        }
+      ]
+    },
+    {
+      "managedType": "UITheme",
+      "stableName": "TomCat.UITheme",
+      "typeId": "0x9f0100000000000c",
+      "generateProxy": true,
+      "properties": [
+        {
+          "name": "Enabled",
+          "propertyId": "0x9f01c00000000001",
+          "kind": "Bool"
+        },
+        {
+          "name": "TextColor",
+          "propertyId": "0x9f01c00000000002",
+          "kind": "Color"
+        },
+        {
+          "name": "ImageColor",
+          "propertyId": "0x9f01c00000000003",
+          "kind": "Color"
+        },
+        {
+          "name": "AccentColor",
+          "propertyId": "0x9f01c00000000004",
+          "kind": "Color"
+        },
+        {
+          "name": "Font",
+          "propertyId": "0x9f01c00000000005",
+          "kind": "UInt64",
+          "conversion": "AssetRef",
+          "managedType": "AssetRef<FontAsset>"
+        },
+        {
+          "name": "FontScale",
+          "propertyId": "0x9f01c00000000006",
+          "kind": "Float"
+        }
+      ]
+    },
+    {
+      "managedType": "UILocalization",
+      "stableName": "TomCat.UILocalization",
+      "typeId": "0x9f0100000000000d",
+      "generateProxy": true,
+      "properties": [
+        {
+          "name": "Enabled",
+          "propertyId": "0x9f01d00000000001",
+          "kind": "Bool"
+        },
+        {
+          "name": "Locale",
+          "propertyId": "0x9f01d00000000002",
+          "kind": "String"
+        },
+        {
+          "name": "FallbackLocale",
+          "propertyId": "0x9f01d00000000003",
+          "kind": "String"
+        },
+        {
+          "name": "Table",
+          "propertyId": "0x9f01d00000000004",
+          "kind": "String"
+        }
+      ]
+    },
+    {
+      "managedType": "UILocalizedText",
+      "stableName": "TomCat.UILocalizedText",
+      "typeId": "0x9f0100000000000e",
+      "generateProxy": true,
+      "properties": [
+        {
+          "name": "Enabled",
+          "propertyId": "0x9f01e00000000001",
+          "kind": "Bool"
+        },
+        {
+          "name": "Key",
+          "propertyId": "0x9f01e00000000002",
+          "kind": "String"
+        }
+      ]
     }
   ]
 }

@@ -1,10 +1,15 @@
 # Experimental Web Player and ImGui editor
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-18 · [All documentation](../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-09-20 · [All documentation](../docs/README.md)
 
 This Emscripten target runs the existing `PlayerRuntimeLayer`, cooked TCPAK reader,
 scene runtime, Renderer2D and Box2D in a browser. It is a native-only milestone,
 not a full replacement for the desktop Player.
+
+The [2026-09-20 showcase](../docs/portfolio/README.md) records the Windows desktop
+applications. Shared source does not make those clips browser acceptance evidence;
+the browser observations below retain their original dates. This documentation
+refresh did not rerun the Web build or protocol regression.
 
 ## Build
 

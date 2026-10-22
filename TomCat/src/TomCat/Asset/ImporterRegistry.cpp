@@ -777,11 +777,14 @@ namespace TomCat {
 	void ImporterRegistry::RegisterBuiltInImporters()
 	{
 		struct Descriptor { AssetType Type; const char* ID; const char* Format; };
-		static constexpr std::array<Descriptor, 4> descriptors = {{
+		static constexpr std::array<Descriptor, 7> descriptors = {{
 			{ AssetType::Other, "tomcat.other.passthrough", "source-other/v1" },
 			{ AssetType::Scene, "tomcat.scene.passthrough", "scene-archive/v1" },
 			{ AssetType::Prefab, "tomcat.prefab.passthrough", "prefab-archive/v1" },
-			{ AssetType::CSharpScript, "tomcat.csharp.passthrough", "csharp-source/v1" }
+			{ AssetType::CSharpScript, "tomcat.csharp.passthrough", "csharp-source/v1" },
+			{ AssetType::AnimationClip, "tomcat.animation-clip.passthrough", "animation-clip/v1" },
+			{ AssetType::AnimatorController, "tomcat.animator-controller.passthrough", "animator-controller/v1" },
+			{ AssetType::TilePalette, "tomcat.tile-palette.passthrough", "tile-palette/v1" }
 		}};
 		(void)Register(std::make_shared<SpriteTextureImporter>(), false);
 		(void)Register(std::make_shared<CanonicalAudioImporter>(), false);

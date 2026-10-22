@@ -58,6 +58,8 @@ namespace TomCat {
 		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_S, GL_REPEAT);
 		glTextureParameteri(m_RendererID, GL_TEXTURE_WRAP_T, GL_REPEAT);
 		m_IsLoaded = true;
+		m_ProfileBytes = static_cast<uint64_t>(m_Width) * m_Height * 4;
+		ProfileResourceTracker::Get().Texture(1, static_cast<int64_t>(m_ProfileBytes));
 	}
 
 	OpenGLTexture2D::OpenGLTexture2D(const std::filesystem::path& path)
@@ -208,6 +210,9 @@ namespace TomCat {
 		glTextureParameteri(m_RendererID, GL_TEXTURE_MAX_LEVEL,
 			static_cast<GLint>(artifact.Mips.size() - 1));
 		m_IsLoaded = true;
+		for (const auto& mip : artifact.Mips)
+			m_ProfileBytes += m_Compressed ? mip.Bytes.size() : static_cast<uint64_t>(mip.Width) * mip.Height * 4;
+		ProfileResourceTracker::Get().Texture(1, static_cast<int64_t>(m_ProfileBytes));
 		return true;
 	}
 
@@ -230,6 +235,11 @@ namespace TomCat {
 				m_DataFormat, GL_UNSIGNED_BYTE, rgbaPixels);
 		}
 		m_IsLoaded = m_RendererID != 0;
+		if (m_IsLoaded)
+		{
+			m_ProfileBytes = static_cast<uint64_t>(m_Width) * m_Height * 4;
+			ProfileResourceTracker::Get().Texture(1, static_cast<int64_t>(m_ProfileBytes));
+		}
 	}
 
 	OpenGLTexture2D::~OpenGLTexture2D()
@@ -238,6 +248,8 @@ namespace TomCat {
 
 		if (m_RendererID)
 			glDeleteTextures(1, &m_RendererID);
+		if (m_ProfileBytes)
+			ProfileResourceTracker::Get().Texture(-1, -static_cast<int64_t>(m_ProfileBytes));
 	}
 
 	void OpenGLTexture2D::SetData(const void* data, uint32_t size)

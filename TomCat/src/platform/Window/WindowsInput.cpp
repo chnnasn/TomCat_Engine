@@ -16,6 +16,8 @@ namespace TomCat {
 		float s_PendingScrollY = 0.0f;
 		float s_FrameScrollX = 0.0f;
 		float s_FrameScrollY = 0.0f;
+		std::string s_PendingTextInput;
+		std::string s_FrameTextInput;
 		float s_LiveMouseX = 0.0f;
 		float s_LiveMouseY = 0.0f;
 		float s_FrameMouseX = 0.0f;
@@ -149,6 +151,8 @@ namespace TomCat {
 		s_FrameMouseX = s_LiveMouseX;
 		s_FrameMouseY = s_LiveMouseY;
 		s_FrameWindowFocused = s_LiveWindowFocused;
+		s_FrameTextInput = s_LiveWindowFocused ? std::move(s_PendingTextInput) : std::string{};
+		s_PendingTextInput.clear();
 	}
 
 	const InputEventQueue::FrameSnapshot& Input::GetFrameSnapshot()
@@ -158,6 +162,8 @@ namespace TomCat {
 
 	void Input::ClearState()
 	{
+		s_PendingTextInput.clear();
+		s_FrameTextInput.clear();
 		s_EventQueue.ClearState();
 		s_PendingScrollX = 0.0f;
 		s_PendingScrollY = 0.0f;
@@ -205,6 +211,57 @@ namespace TomCat {
 		s_PendingScrollY += yOffset;
 	}
 
+	void Input::NotifyCharacter(uint32_t codepoint)
+	{
+		if (!s_LiveWindowFocused || codepoint < 32 || codepoint == 127
+			|| codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)
+			|| s_PendingTextInput.size() > 65532)
+			return;
+		if (codepoint < 0x80) s_PendingTextInput += static_cast<char>(codepoint);
+		else if (codepoint < 0x800)
+		{
+			s_PendingTextInput += static_cast<char>(0xc0 | (codepoint >> 6));
+			s_PendingTextInput += static_cast<char>(0x80 | (codepoint & 0x3f));
+		}
+		else if (codepoint < 0x10000)
+		{
+			s_PendingTextInput += static_cast<char>(0xe0 | (codepoint >> 12));
+			s_PendingTextInput += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
+			s_PendingTextInput += static_cast<char>(0x80 | (codepoint & 0x3f));
+		}
+		else
+		{
+			s_PendingTextInput += static_cast<char>(0xf0 | (codepoint >> 18));
+			s_PendingTextInput += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f));
+			s_PendingTextInput += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
+			s_PendingTextInput += static_cast<char>(0x80 | (codepoint & 0x3f));
+		}
+	}
+
+	const std::string& Input::GetTextInput() { return s_FrameTextInput; }
+
+	std::string Input::GetClipboardText()
+	{
+		Application* application = Application::TryGet();
+		if (!application || !application->HasWindow()) return {};
+		const char* text = glfwGetClipboardString(static_cast<GLFWwindow*>(application->GetWindow().GetNativeWindow()));
+		if (!text) return {};
+		size_t size = 0;
+		while (size < 65536 && text[size] != '\0') ++size;
+		// Avoid truncating in the middle of a UTF-8 sequence at the size limit.
+		if (size == 65536)
+			while (size > 0 && (static_cast<unsigned char>(text[size]) & 0xc0) == 0x80) --size;
+		return std::string(text, size);
+	}
+
+	bool Input::SetClipboardText(const std::string& text)
+	{
+		Application* application = Application::TryGet();
+		if (!application || !application->HasWindow()) return false;
+		glfwSetClipboardString(static_cast<GLFWwindow*>(application->GetWindow().GetNativeWindow()), text.c_str());
+		return true;
+	}
+
 	void Input::NotifyGamepadConnection(uint32_t gamepad, bool connected,
 		double timestamp)
 	{
@@ -228,6 +285,8 @@ namespace TomCat {
 			return;
 		if (!focused)
 		{
+			s_PendingTextInput.clear();
+			s_FrameTextInput.clear();
 			s_EventQueue.ReleaseAll(timestamp);
 			s_PendingScrollX = 0.0f;
 			s_PendingScrollY = 0.0f;

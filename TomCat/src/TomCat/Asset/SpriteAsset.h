@@ -3,6 +3,7 @@
 #include "Asset.h"
 
 #include <span>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,86 @@ namespace TomCat {
 	class AssetRegistry;
 
 	inline constexpr uint32_t SpriteAtlasSettingsSchemaVersion = 2;
+
+	struct SpriteAtlasRect
+	{
+		uint32_t X = 0;
+		uint32_t Y = 0;
+		uint32_t Width = 0;
+		uint32_t Height = 0;
+
+		bool operator==(const SpriteAtlasRect&) const = default;
+	};
+
+	struct SpriteAtlasSliceOptions
+	{
+		uint8_t AlphaThreshold = 1;
+		uint32_t MinimumOpaquePixels = 1;
+		uint32_t Padding = 0;
+	};
+
+	struct SpriteAtlasGridOptions
+	{
+		uint32_t CellWidth = 32;
+		uint32_t CellHeight = 32;
+		uint32_t OffsetX = 0;
+		uint32_t OffsetY = 0;
+		uint32_t SpacingX = 0;
+		uint32_t SpacingY = 0;
+		bool IncludePartialCells = false;
+	};
+
+	struct SpriteAtlasPackOptions
+	{
+		uint32_t MaximumWidth = 4096;
+		uint32_t MaximumHeight = 4096;
+		uint32_t Padding = 1;
+		bool PowerOfTwo = true;
+	};
+
+	struct SpriteAtlasPackedLayout
+	{
+		uint32_t Width = 0;
+		uint32_t Height = 0;
+		// Placements retain the same order as the input Rects. Only Width and
+		// Height are read from input Rects; X/Y are ignored.
+		std::vector<SpriteAtlasRect> Placements;
+	};
+
+	// Finds four-connected opaque islands in top-left-origin RGBA pixels. The
+	// result is deterministic and sorted by Y, then X. Padding expands each
+	// bounding rectangle while clipping it to the image.
+	[[nodiscard]] bool SliceSpriteAtlasByAlpha(std::span<const uint8_t> rgbaPixels,
+		uint32_t width, uint32_t height, const SpriteAtlasSliceOptions& options,
+		std::vector<SpriteAtlasRect>& regions, std::string& error);
+
+	// Produces a regular grid in top-left source coordinates. Partial edge cells
+	// are either omitted or clipped according to IncludePartialCells.
+	[[nodiscard]] bool SliceSpriteAtlasGrid(uint32_t width, uint32_t height,
+		const SpriteAtlasGridOptions& options, std::vector<SpriteAtlasRect>& regions,
+		std::string& error);
+
+	// Matches generated regions to existing slices before creating deterministic
+	// IDs for new regions. Exact Rect matches win, followed by overlap. Matched
+	// slices keep their persistent ID, name, pivot, PPU and valid border values.
+	[[nodiscard]] std::vector<AssetSubAsset> ReconcileSpriteAtlasSlices(
+		std::span<const SpriteAtlasRect> regions,
+		std::span<const AssetSubAsset> existingSlices,
+		float defaultPixelsPerUnit = 100.0f);
+
+	// Deterministically packs rectangle sizes with a skyline search. Padding is
+	// reserved around every item and placements map directly to input order.
+	[[nodiscard]] bool PackSpriteAtlasRects(std::span<const SpriteAtlasRect> rects,
+		const SpriteAtlasPackOptions& options, SpriteAtlasPackedLayout& layout,
+		std::string& error);
+
+	// Re-packs regions from one RGBA image and extrudes edge pixels through the
+	// requested padding. This is the reusable core used by editor export tools.
+	[[nodiscard]] bool BuildPackedSpriteAtlasRGBA(
+		std::span<const uint8_t> sourceRGBA, uint32_t sourceWidth,
+		uint32_t sourceHeight, std::span<const SpriteAtlasRect> sourceRegions,
+		const SpriteAtlasPackOptions& options, SpriteAtlasPackedLayout& layout,
+		std::vector<uint8_t>& packedRGBA, std::string& error);
 
 	// Multiple-Sprite settings are a flat, canonical map so they naturally feed
 	// ArtifactKey. Entries use Sprite.<persistent-id>.{Name,Rect,Pivot,

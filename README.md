@@ -12,7 +12,7 @@ through visual authoring tools, while the Player runs packaged games independent
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
-Documentation reviewed against the repository on **2026-09-18**. Product version: **0.2.0**.
+Documentation reviewed against the repository on **2026-09-20**. Product version: **0.3.0**.
 See the [documentation index](docs/README.md) for all guides and Chinese editions.
 
 ---
@@ -30,60 +30,77 @@ See the [documentation index](docs/README.md) for all guides and Chinese edition
 
 ## Showcase
 
-### Projects and workspace
+Recorded on **2026-09-20** with the Windows Release Hub and Editor at source
+commit `8393eeb`. These are actual application recordings; the
+[capture notes, hashes and cuts](docs/portfolio/README.md) distinguish this
+session from the archived 2026-09-15 authoring demonstration.
 
-The Hub organizes projects and discovers installed Editors from their compiled
-product identity, so version selection and launching do not depend on folder or
-executable names. The Editor brings Scene, Game, Hierarchy, Inspector, Project,
-and Console panels together in a responsive dockable workspace whose panel
-visibility and layout are saved as they change.
+### Hub and scene templates
 
-![Full-screen Hub project creation and Editor project opening](docs/portfolio/01-hub-project.gif)
+The Hub keeps its own layout, with the cat-cube application icon and distinct
+2D/3D scene template artwork. This session demonstrates template selection.
+No Editor installation was recognized in the recording environment, so it does
+not demonstrate successful project creation or launching from the Hub.
 
-### Visual 2D authoring
+![Hub 2D and 3D template selection](docs/portfolio/2026-09-20/01-hub-templates.gif)
 
-Entities are assembled from components. Built-in Sprite primitives, hierarchy
-organization, Scene-only visibility controls, and editable transforms make it easy
-to compose a scene and adjust each object's position, rotation, and scale.
+### Project assets and Inspector
 
-![Full-screen Sprite creation and Transform editing](docs/portfolio/02-sprite-transform.gif)
+Selecting a Project resource opens its type-specific information in the main
+Inspector. The recording shows entity properties, a Scene asset, then a package
+image's import settings and preview. Images have real thumbnails even in the
+single-column list; package resources are read-only. The Inspector lock sits at
+the far right of the tab row, and the original Packages icon set remains in use.
 
-### Component-based physics
+![Entity, Scene and texture inspection](docs/portfolio/2026-09-20/02-asset-inspector.gif)
 
-Rigidbody2D and collider components connect scene objects to Box2D. The Inspector
-exposes body types and collision properties, while Scene overlays show collider
-bounds alongside the artwork.
+### Console search and details
 
-![Full-screen rigidbody and floor collider authoring](docs/portfolio/03-physics-authoring.gif)
+Console combines severity counts, duplicate collapsing and text search with
+two-line message rows and a separate details area. Here, searching `TCSP1000`
+filters the actual script compilation messages to the success diagnostic.
+
+![Console filtering and selected diagnostic details](docs/portfolio/2026-09-20/03-console-search.gif)
+
+### Visual profiling
+
+The dockable Profiler offers CPU Usage, GPU Usage, Rendering and Memory modules,
+frame selection, and Hierarchy/Timeline details. This recording captures Edit-mode
+samples, stops recording, selects a frame and opens the module selector. OBS was
+running throughout; the displayed timings are not performance benchmarks.
+
+![Profiler recording, frame selection and Timeline](docs/portfolio/2026-09-20/04-profiler.gif)
 
 ### Live simulation
 
-Play Mode runs the scene with fixed-step physics. The combined Play/Stop control,
-Pause, and single-frame Step support runtime inspection and return to the authored
-scene when playback stops.
+Play runs a copy of the authored scene with fixed-step Box2D physics. The sample
+rectangle falls onto the floor; Pause and Step inspect runtime state, and Stop
+restores its initial position and rotation. Physics footage stays at real-time speed.
 
-![Full-screen live Box2D simulation and playback controls](docs/portfolio/04-play-pause-step-stop.gif)
+![Box2D Play, Pause, Step and Stop](docs/portfolio/2026-09-20/05-play-controls.gif)
 
-Explore [PhysicsPlayground](Samples/PhysicsPlayground/README.md), a small 2D sample
-with a dynamic rectangle and a static floor, or view the
-[Editor screenshot](docs/portfolio/editor-fullscreen.png).
+Open [PhysicsPlayground](Samples/PhysicsPlayground/README.md) to reproduce it.
+Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
+[asset Inspector](docs/portfolio/2026-09-20/editor-assets.png),
+[Profiler Timeline](docs/portfolio/2026-09-20/profiler-timeline.png).
 
 ## Features
 
 - **2D rendering**: OpenGL batched sprites, lines, circles, cameras, framebuffer-based Scene/Game views, entity picking, stable Sprite Atlas subassets with Rect/Pivot/PPU/Border semantics, deterministic sprite sorting, animation clips, and a parameter-driven Animator state machine
-- **Scene system**: ECS entities, parent/child hierarchy, stable UUIDs, strict YAML scene serialization, ordered Build Settings, and frame-end single-scene replacement
+- **Scene system**: ECS entities, hierarchy, stable UUIDs, strict YAML serialization, ordered Build Settings, asynchronous reads with activation control, additive ownership in a shared runtime world, persistent roots, and explicit unloading
 - **Asset identity workflow**: stable `AssetHandle` references, `.tcmeta` schema-v2 sidecars, ImporterRegistry, SHA-256 artifact keys, a derived-data cache, dependency tracking, and a background ImportCoordinator with debounced content monitoring, reverse-dependent reimport, and main-thread publication
 - **2D physics**: fixed 60 Hz Box2D runtime, explicit and implicit-static bodies, Box/Circle colliders, triggers, filtering, ray/AABB queries, forces, impulses, and `DistanceJoint2D`
 - **Physics authoring**: Scene-view collider overlays, collider handles, project Tags/Layers and a Physics 2D collision matrix, combined Play/Stop plus Pause/Step controls, and deferred C# Collision/Trigger callbacks
 - **C# scripting**: .NET 10 project compilation, serialized Inspector fields, collectible Play domains, lifecycle callbacks, Entity/Transform/Input/Physics/Scene APIs, diagnostics, last-good assemblies, and cooked managed payloads
-- **Snapshot Prefabs**: `.tcprefab` entity-subtree snapshots with stable LocalIDs, reference remapping, runtime C# `Instantiate`, and ordinary unlinked instances
+- **Prefabs**: LocalID subtrees and reference remapping, linked editor updates, overrides, Apply/Revert, nested Prefabs and variants; runtime C# `Instantiate` retains snapshot semantics. See the [Prefab workflow](docs/PREFAB_WORKFLOW.zh-CN.md).
 - **Input**: action maps, keyboard/mouse/gamepad bindings, contexts, and runtime rebinding
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
 - **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
-- **Editor**: ImGui Scene, Game, Hierarchy, Inspector, Project, and Console panels with responsive docking, actively persisted panel visibility/layout, Hierarchy Scene visibility controls, collapsed and filtered diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
+- **Editor**: dockable Scene/Game/Hierarchy/Inspector/Project/Console/Profiler panels, saved layouts, tab context menus (Maximize / Close Tab / Add Tab), non-collapsible window headers, Hierarchy Scene visibility, resource Inspector with import Apply/Revert, real image thumbnails, original package icons, searchable diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
 - **Standalone Player**: path-free `.tcpak` v7 packages with per-entry SHA-256 and v5/v6/v7 Player compatibility, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
-- **Localization**: dynamically generated Chinese glyph ranges, with Chinese/English UI switching in the Hub
+- **Product UI and localization**: sliders, scroll views, single-line Unicode input, inherited themes, and game-language tables with fallback; OS IME commits are supported, with composition limits described in [Runtime UI](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
+- **Performance tools**: visual CPU timeline, asynchronous GPU frame timing, draw statistics, process memory and tracked resource estimates; see [profiling and C# debugger setup](docs/DEBUGGING_AND_PROFILING.md)
 - **Regression coverage**: one Release entry point for managed ABI/lifecycle, physics, Sprite assets, scripts, safety, Editor recovery, audio, importers, input, SceneManager, Prefab, Cook, and isolated Player startup; a separate WASM editor protocol regression
 
 ## Current Scope
@@ -95,12 +112,11 @@ with a dynamic rectangle and a static floor, or view the
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
 - Editor-side C# compilation requires the **.NET 10 SDK**
 - Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
-- V1 deliberately excludes NuGet/third-party managed DLLs, Play Mode hot reload, script debugging, additive/asynchronous scenes, linked Prefab updates, overrides, nested Prefabs, and variants
+- NuGet/third-party managed DLLs, Play Mode hot reload, and a built-in C# debugger are unsupported. Async scene resource publication/activation remains on the main thread; input fields do not yet provide engine-side IME preedit or candidate-window positioning.
 
-The [2026-09-15 capture](docs/portfolio/README.md) recorded a Hub project-loading
-failure during Windows extended-path migration checks. Its workaround was
-**File → Open Project** with a normal Windows path. That historical observation
-does not establish the status of the current build.
+The [recording archive](docs/portfolio/README.md) records the exact scope and
+limitations of each desktop session. The 2026-09-20 refresh checked the UI flows
+shown above; it did not rerun the complete native, managed, Player or Web regression suites.
 
 ## Building
 
@@ -112,7 +128,7 @@ does not establish the status of the current build.
 - Python 3 with `pip` (used by the setup helper)
 - premake5 (auto-downloaded by the setup script)
 
-> The Vulkan SDK is provided automatically via a git submodule (`vendor/VulkanSDK`, based on VulkanSDK-Windows) - no manual install or environment variables needed.
+> The OpenGL shader pipeline uses ShaderC and SPIRV-Cross supplied by the `vendor/VulkanSDK` submodule (VulkanSDK-Windows). These tools compile and reflect SPIR-V shaders; TomCat does not link the Vulkan renderer/loader. No manual SDK install or environment variables are needed.
 
 ### Steps
 
@@ -123,6 +139,18 @@ does not establish the status of the current build.
 
 The CLI solution is generated separately; follow [TomCatCLI](Tools/TomCatCLI/README.md).
 Web uses its own [CMake/Emscripten build](Web/README.md).
+
+Source-build executable locations (Release x64):
+
+| Application | Path from the repository root |
+| --- | --- |
+| Editor | `Editor/bin/Release-windows-x86_64/TomCatInut/TomCatInut.exe` |
+| Hub | `Builder/bin/Release-windows-x86_64/Manager/Manager.exe` |
+| Headless CLI | `Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe` |
+
+The packaged Editor is named `TomCat.exe`; rebuilding the source executable does
+not update an already packaged or separately installed copy. Point Hub Settings
+at the intended Editor installation before creating or launching a project.
 
 After `Scripts\Setup.bat` has prepared Premake, run the complete Release suite with `powershell -ExecutionPolicy Bypass -File Scripts\Run-Regressions.ps1`.
 
@@ -171,18 +199,20 @@ vendor/            premake and third-party dependencies
 - [x] Shared `ProjectSettings/BuildSettings.json`, `.tcpak` v7 ordered scenes with v5/v6/v7 Player reading, synchronous safe frame-end SceneManager transitions, and C# SceneManager API
 - [x] Snapshot Prefab V1 with stable LocalIDs, hierarchy/Joint/C# Entity remapping, fresh AttachmentIDs, deferred C# creation, Editor creation/drop workflows, and Cook dependency traversal
 - [x] Versioned `PlayerSettings.json` for product/icon/display/directory settings, embedded in the BootManifest introduced with TCPAK v6 and retained in v7
-- [ ] Additive/asynchronous scenes, linked/nested Prefabs, overrides/variants, and save data
+- [x] Linked/nested Prefabs, overrides/variants, asynchronous reads, additive scenes, persistent roots and unloading (see the feature guides for scope)
+- [ ] General game save-data system
 
 ### Asset Pipeline and 2D Production
 
 - [x] ImporterRegistry, SHA-256 ArtifactKey generation, derived-data cache, `.tcmeta` schema v2, and dependency graph
 - [x] Background ImportCoordinator with content-hash verification, debounce/coalescing, changed-asset plus transitive reverse-dependent reimport, and main-thread registry/resource publication
-- [ ] Production format transcoding, platform texture compression, and mipmap generation
+- [x] Texture import with sRGB settings, mipmap generation, and RGBA8 / BC3 artifacts
+- [ ] Broader production texture formats and platform compression backends
 - [x] Stable Sprite Atlas subassets with a list-based slice editor, Rect/Pivot/Pixels Per Unit/Border metadata, and self-contained Cook/Player payloads
 - [x] Deterministic sprite sorting, animation clips, and Animator states/transitions with Bool/Int/Float/Trigger parameters, AnyState, and exit time
 - [x] TTF/OTF/TTC Font import, primary/fallback/emoji runtime glyph chains and world Text, plus Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup UI with anchors, pivot, layout, clipping, raycast targeting, DPI scaling, mouse/keyboard/gamepad control, and per-interaction gameplay-input consumption
-- [ ] Automatic atlas packing/slicing tools and a visual Animator graph editor (outside P0)
-- [ ] Tilemaps, particles, and 2D lighting
+- [x] Automatic transparent-region/grid atlas slicing, deterministic atlas packing, packed TGA export, and a visual Animator graph editor
+- [x] Sparse Tilemap2D authoring, deterministic fixed-step ParticleSystem2D simulation, and global/point 2D lighting for sprites, tiles, and particles
 
 ### Engine Systems and Tooling
 
@@ -194,7 +224,8 @@ PCM WAV streaming reads a registry-resolved source range in authoring mode becau
 
 - [x] Undo/Redo, autosave/recovery, and project locking
 - [x] Editor Console with severity counts/filtering, duplicate collapsing, Clear-on-Play, and structured script/runtime diagnostics
-- [ ] Editor Profiler
+- [x] Editor Profiler: CPU Hierarchy/Timeline, asynchronous GPU timing, rendering counters, memory/resource baselines and CPU trace export
+- [ ] GPU draw-call breakdown and managed heap object/reference analysis
 - [x] Run managed/native/Player Release regressions on push/PR CI
 - [x] Component registry/reflection, opaque missing-component preservation, and the SCB/ComponentApiV1 bridge
 - [x] Project migration preview, explicit approval, transactional upgrades, and interrupted-migration recovery in the Editor; CLI upgrades require `--migrate`
