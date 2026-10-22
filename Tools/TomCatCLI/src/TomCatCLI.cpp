@@ -94,7 +94,6 @@ namespace {
 	}
 
 	Options ParseOptions(const std::vector<std::string>& argv)
-	
 	{
 		const int argc = static_cast<int>(argv.size());
 		Options result;
