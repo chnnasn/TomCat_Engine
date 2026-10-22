@@ -448,19 +448,28 @@ using namespace EditorLayerDetail;
 				ImGui::PopID();
 			};
 
-            drawPlatformRow("Windows (64-bit)", true, false, 0);
-            ImGui::TextWrapped("This build pipeline exports Windows players. Other targets are not available here.");
+#ifdef TC_PLATFORM_LINUX
+            constexpr const char* targetLabel = "Linux (64-bit)";
+            constexpr const char* targetPlatform = "Linux";
+            constexpr int platformGlyph = 1;
+#else
+            constexpr const char* targetLabel = "Windows (64-bit)";
+            constexpr const char* targetPlatform = "Windows";
+            constexpr int platformGlyph = 0;
+#endif
+            drawPlatformRow(targetLabel, true, false, platformGlyph);
+            ImGui::TextWrapped("Exports a native %s player with a private .NET runtime.", targetPlatform);
 			ImGui::EndChild();
 
 			ImGui::TableSetColumnIndex(1);
 			ImGui::BeginChild("##PlatformOptions", ImVec2(0.0f, platformHeight), false);
 			const ImVec2 headerStart = ImGui::GetCursorScreenPos();
 			ImGui::Dummy(ImVec2(34.0f, 28.0f));
-			drawPlatformGlyph(0, headerStart, 28.0f,
+			drawPlatformGlyph(platformGlyph, headerStart, 28.0f,
 				ImGui::GetColorU32(ImGuiCol_Text));
 			ImGui::SameLine();
 			ImGui::AlignTextToFramePadding();
-			ImGui::TextUnformatted("Windows (64-bit)");
+			ImGui::TextUnformatted(targetLabel);
 			ImGui::Separator();
 
 			const ImGuiTableFlags optionFlags = ImGuiTableFlags_SizingStretchProp;
@@ -496,7 +505,7 @@ using namespace EditorLayerDetail;
 					ImGui::EndDisabled();
 				};
 
-				drawDisabledCombo("Target Platform", "##TargetPlatform", "Windows");
+				drawDisabledCombo("Target Platform", "##TargetPlatform", targetPlatform);
 				drawDisabledCombo("Architecture", "##Architecture", "Intel 64-bit");
                 ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
                 ImGui::Checkbox("Development Build", &m_BuildState.DevelopmentBuild);
