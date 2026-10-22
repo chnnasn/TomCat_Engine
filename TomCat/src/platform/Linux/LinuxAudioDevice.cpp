@@ -263,16 +263,16 @@ private:
         return alGetError() == AL_NO_ERROR;
     }
     bool Fill(Voice& voice, ALuint buffer) {
-        size_t frames = voice.Stream->ReadFrames(voice.Scratch);
-        if (!frames && voice.Settings.Loop) {
+        size_t bytes = voice.Stream->ReadFrames(voice.Scratch);
+        if (!bytes && voice.Settings.Loop) {
             if (!voice.Stream->SeekFrame(0)) return false;
-            frames = voice.Stream->ReadFrames(voice.Scratch);
+            bytes = voice.Stream->ReadFrames(voice.Scratch);
         }
-        if (!frames) return true; // EOF; no empty buffers enter the queue.
-        if (frames > ChunkFrames || !Upload(voice, buffer,
-            std::span<const uint8_t>(voice.Scratch.data(), frames * voice.Format.BlockAlign))) return false;
+        if (!bytes) return true; // EOF; no empty buffers enter the queue.
+        if (bytes > voice.Scratch.size() || bytes % voice.Format.BlockAlign != 0 || !Upload(voice, buffer,
+            std::span<const uint8_t>(voice.Scratch.data(), bytes))) return false;
         alSourceQueueBuffers(voice.Source, 1, &buffer);
-        voice.QueuedFrames.push_back(frames);
+        voice.QueuedFrames.push_back(bytes / voice.Format.BlockAlign);
         return alGetError() == AL_NO_ERROR;
     }
     bool Prepare(Voice& voice, uint64_t frame) {

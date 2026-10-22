@@ -560,8 +560,22 @@ namespace TomCat {
 	{
 		if (m_OpenGLSPIRV.empty())
 			throw std::runtime_error("Cannot create an OpenGL program without shader stages: " + m_Identity);
-		if (!glSpecializeShader)
-			throw std::runtime_error("OpenGL SPIR-V specialization is unavailable; OpenGL 4.6 is required");
+        // Mesa's software renderer and some Linux drivers expose GL 4.5. Keep
+        // cooked SPIR-V as the portable artifact, translating it to GLSL when
+        // native specialization is unavailable. Translate before allocating GL
+        // handles so reflection/compiler exceptions cannot leak a program.
+        std::unordered_map<GLenum, std::string> glslSources;
+        if (!glSpecializeShader) {
+            for (const auto& [stage, spirv] : m_OpenGLSPIRV) {
+                spirv_cross::CompilerGLSL compiler(spirv);
+                auto options = compiler.get_common_options();
+                options.version = 450;
+                options.es = false;
+                options.vulkan_semantics = false;
+                compiler.set_common_options(options);
+                glslSources.emplace(stage, compiler.compile());
+            }
+        }
 
 		GLuint program = glCreateProgram();
 		if (!program)
@@ -571,8 +585,16 @@ namespace TomCat {
 		for (auto&& [stage, spirv] : m_OpenGLSPIRV)
 		{
 			GLuint shaderID = shaderIDs.emplace_back(glCreateShader(stage));
-			glShaderBinary(1, &shaderID, GL_SHADER_BINARY_FORMAT_SPIR_V, spirv.data(), static_cast<GLsizei>(spirv.size() * sizeof(uint32_t)));
-			glSpecializeShader(shaderID, "main", 0, nullptr, nullptr);
+            if (glSpecializeShader) {
+                glShaderBinary(1, &shaderID, GL_SHADER_BINARY_FORMAT_SPIR_V, spirv.data(), static_cast<GLsizei>(spirv.size() * sizeof(uint32_t)));
+                glSpecializeShader(shaderID, "main", 0, nullptr, nullptr);
+            } else {
+                const auto& source = glslSources.at(stage);
+                const GLchar* text = source.c_str();
+                const GLint length = static_cast<GLint>(source.size());
+                glShaderSource(shaderID, 1, &text, &length);
+                glCompileShader(shaderID);
+            }
 
 			GLint isCompiled = GL_FALSE;
 			glGetShaderiv(shaderID, GL_COMPILE_STATUS, &isCompiled);
