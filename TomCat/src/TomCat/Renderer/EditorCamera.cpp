@@ -5,7 +5,7 @@
 #include "TomCat/Core/KeyCodes.h"
 #include "TomCat/Core/MouseCodes.h"
 
-#include <glfw/glfw3.h>
+#include <GLFW/glfw3.h>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/constants.hpp>
 

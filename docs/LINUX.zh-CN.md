@@ -1,80 +1,93 @@
-# Linux 源码适配（dev_linux）
+# Linux 原生移植（dev_linux）
 
-此分支增加 Linux x86_64 原生构建入口，目标为 Ubuntu 24.04、GCC 13、
-X11/XWayland 和 OpenGL 4.6。它是首轮移植，尚未完成 Linux 编译和图形验收，
-不能视为与 Windows 功能等价的发行版。
+当前目标为 Ubuntu 24.04、x86_64、GCC 13、X11/XWayland 和 OpenGL。
+已接入 Editor、Hub、Player、CLI、C#/.NET 10、OpenAL Soft 音频及 Linux 游戏导出。
+尚不承诺所有发行版、GPU 或桌面环境与 Windows 功能等价。
 
 ## 构建
 
-在仓库根目录执行。Linux 使用发行版的 Vulkan、ShaderC、SPIRV-Cross 开发包，
-不使用仓库中的 `vendor/VulkanSDK` Windows 二进制库。
+先安装 .NET 10 SDK，使 `dotnet --list-sdks` 能列出 10.x SDK。
+源码开发允许使用 `DOTNET_ROOT_X64`、`DOTNET_ROOT` 或 PATH 中的 SDK；
+已指定打包 Editor 根目录时，只使用该目录的 `DotNetSdk/dotnet`。
 
 ```bash
 git submodule update --init --recursive \
-  TomCat/vendor/GLFW TomCat/vendor/ImGui TomCat/vendor/glm \
-  TomCat/vendor/spdlog TomCat/vendor/yaml-cpp TomCat/vendor/Box2D \
-  TomCat/vendor/ImGuizmo
-
+  TomCat/vendor/GLFW TomCat/vendor/glm TomCat/vendor/spdlog \
+  TomCat/vendor/Box2D TomCat/vendor/ImGuizmo
 sudo apt-get update
-sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+sudo apt-get install -y build-essential cmake ninja-build pkg-config python3 \
   libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
   libgl1-mesa-dev libvulkan-dev libshaderc-dev glslang-dev glslang-tools \
-  spirv-tools libspirv-cross-c-shared-dev zenity
-
+  spirv-tools libspirv-cross-c-shared-dev libopenal-dev zenity xvfb
 bash Scripts/Linux_Build.sh
 ```
 
-脚本完成 CMake 配置、构建和 CTest。默认使用两个编译进程以控制内存占用；
-可设置 `TC_BUILD_JOBS=4`、`TC_BUILD_TYPE=Debug`、`TC_BUILD_DIR=/absolute/path`。
-额外参数传给 CMake，例如 `bash Scripts/Linux_Build.sh -DBUILD_TESTING=OFF`。
+ImGui、yaml-cpp 等已作为普通源码纳入仓库。Linux 使用系统 Vulkan、ShaderC、
+SPIRV-Cross 开发库，不使用 `vendor/VulkanSDK` 的 Windows 库。
+脚本编译原生程序和托管项目，生成 Player 模板，再运行 CTest。
+默认两个编译进程；可设置 `TC_BUILD_JOBS`、`TC_BUILD_TYPE=Debug`、`TC_BUILD_DIR`。
+额外参数传给 CMake。
 
 ```bash
-TC_RENDERER=opengl ./build/linux/bin/Editor/TomCatInut Samples/PhysicsPlayground/Project.tcproj
+TC_RENDERER=opengl ./build/linux/bin/Editor/TomCatInut /absolute/Project.tcproj
 TC_RENDERER=opengl ./build/linux/bin/Hub/Manager
-./build/linux/bin/Player/TomCatPlayer --version
+./build/linux/bin/CLI/TomCatCLI build --project /absolute/Project.tcproj \
+  --template ./build/linux/bin/Editor/Packages/PlayerTemplates/linux-x64
 ```
 
-Editor/Hub 的 Packages 会复制到各自可执行文件旁边。Editor 的相对项目参数
-先按启动目录解析，再切换到资源目录；Player 保留启动目录。
-Hub 设置中的 Editor 搜索目录可指向 `build/linux/bin/Editor`。
-日志、设置、存档使用 `$XDG_DATA_HOME/TomCat`，未设置或不是绝对路径时，
-使用 `$HOME/.local/share/TomCat`。
+Editor/Hub 的 Packages 和 Editor/CLI 的 Managed 自动复制到程序旁边。
+Editor 菜单导出默认选择旁边的 `Packages/PlayerTemplates/linux-x64`。
+CLI 也支持 `cook --project ... --output ...`，导出默认编译 Production C#。
+模板可单独重建：
 
-## 本轮代码范围
+```bash
+python3 Scripts/Build-LinuxPlayerTemplate.py --build-dir build/linux
+```
 
-- Linux 平台识别和调试断点；修正大小写敏感的头文件路径。
-- GLFW 桌面窗口、键鼠输入与现有 OpenGL 渲染路径复用。
-- UTF-8 程序入口、可执行文件定位、产品身份查询、用户数据目录。
-- Zenity 文件/目录选择；直接传递进程参数，不经过 shell 解释文件名。
-- Hub 的 Editor 扫描、启动和打开目录。
-- 编辑器自动化服务的 POSIX socket 分支，仍仅绑定 loopback 并要求 token。
-- 使用 `flock` 的项目排他锁；进程崩溃后内核释放锁，可再次打开项目。
-  Linux 保留锁文件 inode，避免删除并重建锁文件造成并发双重持锁。
+导出结果位于项目 `Build/<ProductName>/`。其中包括无 `.exe` 后缀的 ELF 程序、
+`Game.tcpak`、Managed 和私有 `dotnet` 运行时，不需要目标机器安装 .NET SDK。
+模板严格检查文件列表、SHA-256、版本、软链接及 ELF 架构，并保留执行权限。
+运行时缺失会明确报错，不回退到机器上的其他 .NET。
+这不是完全静态的发行包：目标系统仍需兼容的 glibc/libstdc++、OpenGL/Vulkan、
+X11 与 OpenAL 系统库及 .NET 的系统依赖。优先在 Ubuntu 24.04 x86_64 验收。
 
-## 尚未支持或验收
+## C# 与音频
 
-- **C# 编译和 CoreCLR 托管仍为 Windows 实现**；含 C# 脚本的项目不能视为
-  Linux 可运行项目，Play 与 Player 的托管启动链路尚需移植。
-- 音频使用现有 NullAudioDevice，没有 Linux 硬件音频输出。
-- Vulkan 自动探测仍仅实现 Windows，Linux 当前回退到 OpenGL；强制 Vulkan
-  会明确失败。仍需系统 Vulkan 库用于链接共享渲染代码。
-- Player 导出模板、私有 .NET 打包、CLI、Windows 单文件发布没有迁移。
-  CMake 的 Player 目标不代表已能导出完整 Linux 游戏。
-- 输入法预编辑、系统字体回退、崩溃转储、进程内存统计及外部 C# 编辑器启动
-  尚未达到 Windows 功能对等。Wayland 原生后端和 ARM64 不在本轮范围。
-- 实机窗口、资源、渲染、输入、文件对话框和自动化服务需在 Linux 桌面验收。
-  无头测试通过也不代表图形功能通过。
+Linux 通过 `dlopen(libhostfxr.so)` 托管 CoreCLR，保持 Native/Managed API 校验。
+脚本编译使用直接 argv 和有超时的子进程，不通过 shell；保留 MSBuild 隔离属性、
+失败构建保留 last-good、编译后元数据验证和导出前源码一致性校验。
 
-## 验证入口
+默认音频后端为 OpenAL Soft，使用系统默认音频设备。支持 PCM/OGG 解码后的驻留
+播放、有界队列流式播放、暂停/停止/重播、循环、音量、音调和空间声像；立体声
+保留左右声道。设备不可用时降级为 NullAudioDevice，并报告原因。
+CI 使用同一后端的 [OpenAL 回环扩展](https://openal-soft.org/openal-extensions/SOFT_loopback.txt)
+读取实际混音样本，验证声道、播放状态和流式队列。回环通过不代表扬声器已实测。
 
-`.github/workflows/linux.yml` 在 Ubuntu 24.04 分别构建 Debug/Release，并运行：
-InputRegression、SaveDataRegression、LinuxPlatformRegression、Player 版本查询、
-Editor/Hub 产品身份查询。平台测试覆盖 XDG 路径、参数原样传递、启动失败、
-子进程超时、锁互斥和进程退出后的锁恢复。
+## CI 与验收
 
-本地环境目前只有 Windows，没有 WSL；新增 Linux 测试和 CI 需要在 Linux
-环境实际运行，不能将添加工作流等同于 CI 已通过。
+[Linux native 工作流](https://github.com/chnnasn/TomCat_Engine/actions/workflows/linux.yml)
+在 Ubuntu 24.04 分别构建 Debug/Release。测试覆盖：
 
-本轮本地验证（2026-10-22）：Windows Release Editor、Hub、Player 构建通过；
-InputRegression、SaveDataRegression、EditorRecoveryRegression 通过；
-Bash 脚本语法、工作流 YAML 解析和 `git diff --check` 通过。
+- InputRegression、SaveDataRegression 和产品版本/身份查询。
+- LinuxPlatformRegression：XDG 路径、参数传递、子进程失败/超时、文件锁和崩溃释放。
+- AudioRegression 与 LinuxAudioRegression：引擎音频逻辑及 OpenAL 的实际 PCM 输出。
+- LinuxRuntimeRegression：中文/空格项目路径、C# 编译和元数据、MSBuild 隔离、失败
+  构建恢复、CLI 导出；从无 SDK、源文件被移走的环境验证私有 .NET，执行 C#
+  Awake/Update 与原生 Entity API，再在 Xvfb/Mesa 下运行带窗口的 Player。
+
+成功后工作流上传 `linux-player-Debug/Release`：tar.gz 保留执行权限，内含本轮
+验收游戏。下载解压后运行其中的 `Linux Acceptance`；该游戏执行三帧脚本后退出。
+CTest 日志也作为 artifact 上传。
+
+Linux 桌面验收仍需检查 Editor 操作、真实 GPU/显示器、键鼠输入、Zenity 对话框、
+扬声器/耳机、设备断开重连，以及 PulseAudio/PipeWire/ALSA 的实际路由。
+用户数据使用 `$XDG_DATA_HOME/TomCat`，无绝对 XDG 路径时回退到
+`$HOME/.local/share/TomCat`。Hub 的 Editor 搜索目录可指向 `build/linux/bin/Editor`。
+
+## 边界
+
+- Vulkan 自动探测尚未完成 Linux 适配，当前桌面渲染使用 OpenGL。
+- Wayland 原生后端、ARM64、Windows 单文件发布系统不在本轮范围。
+- 输入法预编辑、系统字体回退、崩溃转储、外部 C# 编辑器启动和整套 Editor
+  发行包还需要专门适配；原生模块的 Windows DLL 包不能直接在 Linux 使用。
+- GitHub runner 的图形/音频验收不能代替真实桌面和硬件的兼容性测试。

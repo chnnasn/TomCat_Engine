@@ -23,7 +23,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache pkg-config libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev libvulkan-dev libshaderc-dev glslang-dev glslang-tools spirv-tools libspirv-cross-c-shared-dev libopenal-dev zenity xvfb
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: linux-ccache-${{ matrix.configuration }}-${{ github.sha }}
@@ -32,6 +32,11 @@ jobs:
         env:
           TC_BUILD_TYPE: ${{ matrix.configuration }}
         run: bash Scripts/Linux_Build.sh -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.cache/ccache
+          key: linux-ccache-${{ matrix.configuration }}-${{ github.sha }}
       - name: Package tested game
         run: tar -C build/linux -czf linux-player-${{ matrix.configuration }}.tar.gz acceptance-game
       - uses: actions/upload-artifact@v4

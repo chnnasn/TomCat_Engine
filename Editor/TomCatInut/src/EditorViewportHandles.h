@@ -22,7 +22,7 @@ namespace TomCat {
 	// manipulation below remain the same desktop implementation.
 	struct EditorViewportContext
 	{
-		Ref<Scene>& Scene;
+        Ref<TomCat::Scene>& Scene;
 		EditorCamera& Camera;
 		SceneHierarchyPanel& Hierarchy;
 		Ref<EditorIconSet>& Icons;
