@@ -14,13 +14,13 @@ through visual authoring tools, while the Player runs packaged games independent
 
 ## Linux development branch
 
-`dev_linux` adds an initial Linux x86_64 CMake build and platform port. Linux compilation and desktop validation are pending; see the [Linux guide and remaining limitations](docs/LINUX.zh-CN.md).
+`dev_linux` adds Linux x86_64 builds, C#/.NET 10 hosting, OpenAL audio and native game export. GitHub Actions builds Debug/Release and tests exported games; see the [Linux guide and hardware validation limits](docs/LINUX.zh-CN.md).
 
 ## Current Branch Purpose
 
 **dev_linux — Native Linux platform port**
 
-This branch ports the `main` baseline to Linux, starting with CMake, GLFW/OpenGL and desktop platform interfaces. See the Linux guide above for pending validation and feature gaps. `main` remains the Windows desktop integration baseline.
+This branch ports the `main` baseline to Linux, including CMake, GLFW/OpenGL, C#, audio and game export. See the Linux guide above for validation and feature gaps. `main` remains the Windows desktop integration baseline.
 
 Branch roles reviewed on **2026-10-22**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`. The table lists current development branches; see [project status](docs/PROJECT_STATUS.zh-CN.md) for their integration boundaries.
 

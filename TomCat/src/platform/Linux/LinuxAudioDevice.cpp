@@ -299,6 +299,8 @@ private:
         alGenBuffers(BufferCount, voice.Buffers.data());
         voice.Settings = settings;
         alSourcei(voice.Source, AL_SOURCE_RELATIVE, AL_TRUE);
+        if (f.Channels > 1 && alIsExtensionPresent("AL_SOFT_direct_channels"))
+            alSourcei(voice.Source, AL_DIRECT_CHANNELS_SOFT, AL_TRUE);
         alSource3f(voice.Source, AL_POSITION, 0, 0, -1);
         alSourcef(voice.Source, AL_ROLLOFF_FACTOR, 0);
         alSourcef(voice.Source, AL_MAX_GAIN, 1);

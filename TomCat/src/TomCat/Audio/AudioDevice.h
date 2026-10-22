@@ -86,7 +86,7 @@ namespace TomCat {
 	#if defined(TC_PLATFORM_WEB)
 	std::unique_ptr<IAudioDevice> CreateWebAudioDevice();
 	#endif
-	// Returns an initialized platform device (XAudio2 or WebAudio) when possible. Initialization
+	// Returns an initialized platform device (XAudio2, OpenAL or WebAudio) when possible. Initialization
 	// failures are reported in fallbackReason and yield an initialized Null device.
 	std::unique_ptr<IAudioDevice> CreateDefaultAudioDevice(
 		std::string& fallbackReason);

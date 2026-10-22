@@ -453,7 +453,8 @@ Buses:
 		auto device = TomCat::CreateDefaultAudioDevice(fallbackReason);
 		Require(device != nullptr, "default audio factory returned no device");
 		if (device->IsHardwareAvailable())
-			Require(std::string(device->GetBackendName()) == "Windows XAudio2"
+			Require((std::string(device->GetBackendName()) == "Windows XAudio2"
+                || std::string(device->GetBackendName()) == "OpenAL Soft")
 				&& fallbackReason.empty(), "hardware backend identity is wrong");
 		else
 			Require(std::string(device->GetBackendName()) == "NullAudioDevice"

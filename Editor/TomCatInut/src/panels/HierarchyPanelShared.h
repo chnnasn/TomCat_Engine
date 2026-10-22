@@ -54,7 +54,7 @@ namespace TomCat {
 	{
 		// Scene / project / icons
 		Ref<Scene> Context;
-		Ref<Project> Project;
+		Ref<TomCat::Project> Project;
 		Ref<EditorIconSet> Icons;
 
 		// Selection model

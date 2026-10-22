@@ -34,9 +34,17 @@ pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc_combined)
 find_package(glslang CONFIG REQUIRED)
 find_package(SPIRV-Tools CONFIG REQUIRED)
 find_package(SPIRV-Tools-opt CONFIG REQUIRED)
-find_path(SPIRV_CROSS_INCLUDE_DIR spirv_cross/spirv_cross.hpp REQUIRED)
-find_library(SPIRV_CROSS_CORE spirv-cross-core REQUIRED)
-find_library(SPIRV_CROSS_GLSL spirv-cross-glsl REQUIRED)
+# Ubuntu 24.04's SPIRV-Cross predates plain-uniform reflection used by cooked shaders.
+include(FetchContent)
+foreach(feature CLI TESTS HLSL MSL CPP REFLECT C_API UTIL)
+    set(SPIRV_CROSS_ENABLE_${feature} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(SPIRV_CROSS_STATIC ON CACHE BOOL "" FORCE)
+FetchContent_Declare(spirv_cross
+    URL https://github.com/KhronosGroup/SPIRV-Cross/archive/d8e3e2b141b8c8a167b2e3984736a6baacff316c.tar.gz
+    URL_HASH SHA256=18e4abb4ae97451c3d90bb23eb1c22859c8ef08bd5d8d3ec09e035846bbf6556
+    SOURCE_DIR "${CMAKE_BINARY_DIR}/dependencies/spirv_cross")
+FetchContent_MakeAvailable(spirv_cross)
 
 # Use the pinned GLFW fork (including the Editor's window styling extensions).
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -73,7 +81,7 @@ add_library(TomCat STATIC ${TC_SOURCES} ${TC_ASTC} ${TC_ETC}
     "${TC_VENDOR}/harfbuzz/src/harfbuzz.cc" "${TC_VENDOR}/stb_image/stb_image.cpp")
 target_include_directories(TomCat PUBLIC
     "${TC_SRC}" "${TC_VENDOR}" "${TC_VENDOR}/spdlog/include" "${TC_VENDOR}/glm"
-    "${TC_VENDOR}/entt/include" "${TC_VENDOR}/stb_image" "${SPIRV_CROSS_INCLUDE_DIR}"
+    "${TC_VENDOR}/entt/include" "${TC_VENDOR}/stb_image" "${CMAKE_BINARY_DIR}/dependencies"
     PRIVATE "${TC_VENDOR}/etc2comp/EtcLib/Etc" "${TC_VENDOR}/etc2comp/EtcLib/EtcCodec")
 target_compile_definitions(TomCat PUBLIC TC_PLATFORM_LINUX=1 GLFW_INCLUDE_NONE
     "$<$<CONFIG:Debug>:TC_DEBUG>" "$<$<NOT:$<CONFIG:Debug>>:TC_RELEASE>"
@@ -81,7 +89,7 @@ target_compile_definitions(TomCat PUBLIC TC_PLATFORM_LINUX=1 GLFW_INCLUDE_NONE
 target_link_libraries(TomCat PUBLIC tc_box2d tc_yaml tc_glad tc_imgui glfw
     Threads::Threads OpenGL::GL OpenAL::OpenAL Vulkan::Vulkan ${CMAKE_DL_LIBS}
     PkgConfig::SHADERC glslang::SPIRV glslang::glslang SPIRV-Tools-opt SPIRV-Tools-static
-    "${SPIRV_CROSS_GLSL}" "${SPIRV_CROSS_CORE}")
+    spirv-cross-glsl spirv-cross-core)
 
 function(tc_application target source output packages)
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${source}/*.cpp")
