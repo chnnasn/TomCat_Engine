@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -26,7 +25,9 @@ def main():
     root = Path(__file__).resolve().parent.parent
     build = args.build_dir.resolve()
     player = build / 'bin/Player/TomCatPlayer'
-    if player.read_bytes()[:6] != b'\x7fELF\x02\x01':
+    with player.open('rb') as executable:
+        header = executable.read(20)
+    if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\x3e\x00':
         raise RuntimeError('Expected a Linux ELF64 Player')
     version = subprocess.check_output([str(player), '--version'], text=True)
     values = dict(re.findall(r'([\w-]+)=([^\s]+)', version))

@@ -22,8 +22,8 @@ sudo apt-get install -y build-essential cmake ninja-build pkg-config python3 \
 bash Scripts/Linux_Build.sh
 ```
 
-ImGui、yaml-cpp 等已作为普通源码纳入仓库。Linux 使用系统 Vulkan、ShaderC、
-SPIRV-Cross 开发库，不使用 `vendor/VulkanSDK` 的 Windows 库。
+ImGui、yaml-cpp 等已作为普通源码纳入仓库。Linux 使用系统 Vulkan、ShaderC 库，CMake 下载并校验固定版本的
+SPIRV-Cross 源码，不使用 `vendor/VulkanSDK` 的 Windows 库。
 脚本编译原生程序和托管项目，生成 Player 模板，再运行 CTest。
 默认两个编译进程；可设置 `TC_BUILD_JOBS`、`TC_BUILD_TYPE=Debug`、`TC_BUILD_DIR`。
 额外参数传给 CMake。

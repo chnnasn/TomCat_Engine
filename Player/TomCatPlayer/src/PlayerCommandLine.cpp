@@ -92,14 +92,14 @@ namespace TomCat {
 	const char* GetPlayerHelpText()
 	{
 		return
-			"TomCatPlayer - TomCat Engine Windows x64 runtime\n"
+			"TomCatPlayer - TomCat Engine desktop runtime\n"
 			"\n"
 			"Usage:\n"
-			"  TomCatPlayer.exe                          Run Game.tcpak beside the executable\n"
-			"  TomCatPlayer.exe --package <path>         Run a cooked package\n"
-			"  TomCatPlayer.exe --validate-package <path> Validate package and private runtime, then exit\n"
-			"  TomCatPlayer.exe --version                Print compatibility versions\n"
-			"  TomCatPlayer.exe --help                   Show this help\n";
+			"  TomCatPlayer                          Run Game.tcpak beside the executable\n"
+			"  TomCatPlayer --package <path>         Run a cooked package\n"
+			"  TomCatPlayer --validate-package <path> Validate package and private runtime, then exit\n"
+			"  TomCatPlayer --version                Print compatibility versions\n"
+			"  TomCatPlayer --help                   Show this help\n";
 	}
 
 }

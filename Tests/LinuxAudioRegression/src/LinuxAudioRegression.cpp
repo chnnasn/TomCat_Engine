@@ -26,10 +26,21 @@ double Energy(const std::vector<float>& samples, int channel = -1) {
     return energy;
 }
 }
-int main() {
+int main(int argc, char** argv) {
     TomCat::Log::Init();
     try {
         std::string error;
+        if (argc == 2) {
+            auto platform = TomCat::CreateDefaultAudioDevice(error);
+            const bool unavailable = std::string_view(argv[1]) == "--unavailable";
+            Require(platform && platform->IsOperational(), "default device is not operational");
+            Require(unavailable ? (!platform->IsHardwareAvailable() && !error.empty() &&
+                std::string_view(platform->GetBackendName()) == "NullAudioDevice") :
+                (platform->IsHardwareAvailable() && error.empty() &&
+                std::string_view(platform->GetBackendName()) == "OpenAL Soft"), "default device/fallback selection failed");
+            std::cout << "PASS platform audio device selection\n";
+            return 0;
+        }
         auto device = TomCat::CreateOpenALAudioDevice(true);
         Require(device->Initialize(error), error);
         Require(device->IsOperational() && !device->IsHardwareAvailable(), "loopback reported a hardware endpoint");

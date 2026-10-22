@@ -40,6 +40,7 @@ foreach(feature CLI TESTS HLSL MSL CPP REFLECT C_API UTIL)
     set(SPIRV_CROSS_ENABLE_${feature} OFF CACHE BOOL "" FORCE)
 endforeach()
 set(SPIRV_CROSS_STATIC ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(spirv_cross
     URL https://github.com/KhronosGroup/SPIRV-Cross/archive/d8e3e2b141b8c8a167b2e3984736a6baacff316c.tar.gz
     URL_HASH SHA256=18e4abb4ae97451c3d90bb23eb1c22859c8ef08bd5d8d3ec09e035846bbf6556
@@ -146,6 +147,10 @@ if(BUILD_TESTING)
         set_tests_properties(${test} PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60 ENVIRONMENT "TC_RENDERER=opengl")
     endforeach()
     add_test(NAME PlayerVersion COMMAND TomCatPlayer --version)
+    add_test(NAME LinuxAudioDevice COMMAND LinuxAudioRegression --device)
+    set_tests_properties(LinuxAudioDevice PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null" TIMEOUT 30)
+    add_test(NAME LinuxAudioUnavailable COMMAND LinuxAudioRegression --unavailable)
+    set_tests_properties(LinuxAudioUnavailable PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=tomcat-unavailable-backend" TIMEOUT 30)
     add_test(NAME EditorIdentity COMMAND TomCatInut --product-info-json)
     add_test(NAME HubIdentity COMMAND Manager --product-info-json)
     set_tests_properties(PlayerVersion EditorIdentity HubIdentity PROPERTIES TIMEOUT 30 ENVIRONMENT "TC_RENDERER=opengl")
