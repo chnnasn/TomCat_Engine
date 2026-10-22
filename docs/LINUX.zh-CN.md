@@ -1,6 +1,8 @@
-# Linux 原生移植（dev_linux）
+# Linux 构建、运行与导出
 
-当前目标为 Ubuntu 24.04、x86_64、GCC 13、X11/XWayland 和 OpenGL。
+Linux 初步支持已于 2026-10-22 通过 [9a9a303a](https://github.com/chnnasn/TomCat_Engine/commit/9a9a303a56893d50eb02a6280603324a6741f9cc) 合入 `main`；新开发和构建使用当前主线。`dev_linux` 保留原开发历史，提交移植关系见[集成记录](PROJECT_HISTORY.zh-CN.md#linux-合入主线2026-10-22)。
+
+当前目标为 Ubuntu 24.04、x86_64、GCC 13、X11/XWayland 和 OpenGL 4.5+。
 已接入 Editor、Hub、Player、CLI、C#/.NET 10、OpenAL Soft 音频及 Linux 游戏导出。
 尚不承诺所有发行版、GPU 或桌面环境与 Windows 功能等价。
 
@@ -11,6 +13,7 @@
 已指定打包 Editor 根目录时，只使用该目录的 `DotNetSdk/dotnet`。
 
 ```bash
+# 已检出 main；以下命令在仓库根目录执行
 git submodule update --init --recursive \
   TomCat/vendor/GLFW TomCat/vendor/glm TomCat/vendor/spdlog \
   TomCat/vendor/Box2D TomCat/vendor/ImGuizmo
@@ -27,6 +30,9 @@ SPIRV-Cross 源码，不使用 `vendor/VulkanSDK` 的 Windows 库。
 脚本编译原生程序和托管项目，生成 Player 模板，再运行 CTest。
 默认两个编译进程；可设置 `TC_BUILD_JOBS`、`TC_BUILD_TYPE=Debug`、`TC_BUILD_DIR`。
 额外参数传给 CMake。
+
+Linux 创建 OpenGL 4.5 核心上下文。驱动不提供原生 SPIR-V specialization 时，
+通过 SPIRV-Cross 转为 GLSL 450 后编译；CI 已在 Mesa llvmpipe GL 4.5 下运行带窗口的 Player。
 
 ```bash
 TC_RENDERER=opengl ./build/linux/bin/Editor/TomCatInut /absolute/Project.tcproj
@@ -66,7 +72,7 @@ CI 使用同一后端的 [OpenAL 回环扩展](https://openal-soft.org/openal-ex
 ## CI 与验收
 
 [Linux native 工作流](https://github.com/chnnasn/TomCat_Engine/actions/workflows/linux.yml)
-在 Ubuntu 24.04 分别构建 Debug/Release。测试覆盖：
+由 `main` / `dev_linux` push、PR 或手动触发，在 Ubuntu 24.04 分别构建 Debug/Release，每种配置运行 11 项 CTest。测试覆盖：
 
 - InputRegression、SaveDataRegression 和产品版本/身份查询。
 - LinuxPlatformRegression：XDG 路径、参数传递、子进程失败/超时、文件锁和崩溃释放。
@@ -75,9 +81,21 @@ CI 使用同一后端的 [OpenAL 回环扩展](https://openal-soft.org/openal-ex
   构建恢复、CLI 导出；从无 SDK、源文件被移走的环境验证私有 .NET，执行 C#
   Awake/Update 与原生 Entity API，再在 Xvfb/Mesa 下运行带窗口的 Player。
 
-成功后工作流上传 `linux-player-Debug/Release`：tar.gz 保留执行权限，内含本轮
-验收游戏。下载解压后运行其中的 `Linux Acceptance`；该游戏执行三帧脚本后退出。
-CTest 日志也作为 artifact 上传。
+2026-10-22 已核验的移植基线为 `2b6d2308`：[Debug job](https://github.com/chnnasn/TomCat_Engine/actions/runs/39789173074/job/119860283533)
+和 [Release job](https://github.com/chnnasn/TomCat_Engine/actions/runs/39791001982/job/119866694708)
+分别记录 11/11 项通过。两项来自不同 workflow 运行，整轮运行最终均取消；这里记录的是已完成 job 的 CTest 结果。
+主线 `9a9a303a` 保留相同 Linux 补丁，其[合并后 Linux CI](https://github.com/chnnasn/TomCat_Engine/actions/runs/39818207868)
+结果独立查询。跨平台验收汇总见[项目状态](PROJECT_STATUS.zh-CN.md#验收记录)。
+
+每个配置成功完成测试后上传 `linux-player-Debug` 或 `linux-player-Release`：其中的 tar.gz 保留执行权限，内含本轮验收游戏。CTest 日志单独上传到 `linux-test-logs-Debug/Release`。
+在 Actions 运行页面下载并解开 artifact 的 ZIP，再解开其中的 tar.gz：
+
+```bash
+tar -xzf linux-player-Release.tar.gz
+TC_RENDERER=opengl './acceptance-game/Linux Acceptance'
+```
+
+该验收游戏执行三帧脚本后退出；它用于检查导出与启动链路，不是完整 Editor 发行包。
 
 Linux 桌面验收仍需检查 Editor 操作、真实 GPU/显示器、键鼠输入、Zenity 对话框、
 扬声器/耳机、设备断开重连，以及 PulseAudio/PipeWire/ALSA 的实际路由。

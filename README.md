@@ -8,25 +8,26 @@ Box2D physics into one development environment. Its engine library provides the
 rendering, ECS scene model, and runtime systems; the Editor exposes those systems
 through visual authoring tools, while the Player runs packaged games independently.
 
-**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows / Linux x64 · MIT**
 
 **Languages**: English | [简体中文](README.zh-CN.md)
 
-## Linux development branch
+## Linux support
 
-`dev_linux` adds Linux x86_64 builds, C#/.NET 10 hosting, OpenAL audio and native game export. GitHub Actions builds Debug/Release and tests exported games; see the [Linux guide and hardware validation limits](docs/LINUX.zh-CN.md).
+Initial Linux x86_64 support is part of `main` as of [9a9a303a](https://github.com/chnnasn/TomCat_Engine/commit/9a9a303a56893d50eb02a6280603324a6741f9cc) (2026-10-22): CMake builds for Editor, Hub, Player and CLI, C#/.NET 10 hosting, OpenAL Soft audio and native game export. The initial target is Ubuntu 24.04 with X11/XWayland and OpenGL 4.5+. See the [Linux build guide, CI evidence and desktop validation limits](docs/LINUX.zh-CN.md).
 
 ## Current Branch Purpose
 
-**dev_linux — Native Linux platform port**
+**main — Feature integration baseline**
 
-This branch ports the `main` baseline to Linux, including CMake, GLFW/OpenGL, C#, audio and game export. See the Linux guide above for validation and feature gaps. `main` remains the Windows desktop integration baseline.
+`main` integrates Windows desktop development, initial Linux support and the experimental Web target. Published tags remain fixed release snapshots; the current mainline contains additional changes beyond `v0.6.0`.
 
-Branch roles reviewed on **2026-10-22**. Build/toolchain, managed Web, and Vulkan work have been integrated into `main`. The table lists current development branches; see [project status](docs/PROJECT_STATUS.zh-CN.md) for their integration boundaries.
+Branch roles reviewed on **2026-10-22**. Build/toolchain, managed Web, Vulkan and the initial Linux port have been integrated into `main`. The table lists retained development branches; see [project status](docs/PROJECT_STATUS.zh-CN.md) for their integration boundaries.
 
 | Branch | Purpose |
 | --- | --- |
 | [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | Desktop mainline and integration baseline |
+| [dev_linux](https://github.com/chnnasn/TomCat_Engine/tree/dev_linux) | Initial Linux port integrated into `main`; retained at its original development history |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
@@ -116,9 +117,9 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - **Prefabs**: LocalID subtrees and reference remapping, linked editor updates, overrides, Apply/Revert, nested Prefabs and variants; runtime C# `Instantiate` retains snapshot semantics. See the [Prefab workflow](docs/PREFAB_WORKFLOW.zh-CN.md).
 - **Input**: action maps, keyboard/mouse/gamepad bindings, contexts, and runtime rebinding
 - **Runtime text and UI**: TTF/OTF/TTC fonts, deterministic on-demand glyph atlases, strict UTF-8 with explicit primary/CJK/emoji fallback chains and a final replacement glyph, world text, and Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup components with DPI-aware layout, clipping, raycast targeting, navigation, and per-interaction gameplay-input capture
-- **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null and XAudio2 backends, device-loss fallback, and Master/Music/SFX buses
+- **Audio**: in-memory WAV clips, bounded PCM WAV streaming, 2D spatial audio, AudioSource/AudioListener, Null, Windows XAudio2 and Linux OpenAL Soft backends, device-loss fallback, and Master/Music/SFX buses
 - **Editor**: dockable Scene/Game/Hierarchy/Inspector/Project/Console/Profiler panels, saved layouts, tab context menus (Maximize / Close Tab / Add Tab), non-collapsible window headers, Hierarchy Scene visibility, resource Inspector with import Apply/Revert, real image thumbnails, original package icons, searchable diagnostics, Undo/Redo, autosave/recovery, project locking, and user settings
-- **Standalone Player**: path-free `.tcpak` v8 packages with per-entry SHA-256 and v8-only Player loading, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, fixed hashed win-x64 Player Templates, and a bundled private .NET runtime
+- **Standalone Player**: path-free `.tcpak` v8 packages with per-entry SHA-256 and v8-only Player loading, an independent non-Editor executable, versioned PlayerSettings/BootManifest data, hashed win-x64 and linux-x64 Player Templates, and a bundled private .NET runtime
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
 - **Product UI and localization**: sliders, scroll views, single-line Unicode input, inherited themes, and game-language tables with fallback; OS IME commits are supported, with composition limits described in [Runtime UI](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **Performance tools**: visual CPU timeline, asynchronous GPU frame timing, draw statistics, process memory and tracked resource estimates; see [profiling and C# debugger setup](docs/DEBUGGING_AND_PROFILING.md)
@@ -126,13 +127,13 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 
 ## Current Scope
 
-- Supported development platform: **Windows x64**
-- Rendering backends: **Vulkan 1.2** by default when supported, with automatic **OpenGL 4.6** fallback; see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md).
+- Development platforms: **Windows x64** and initial **Linux x86_64** support targeting Ubuntu 24.04; Linux desktop interaction and physical devices still require acceptance testing.
+- Windows rendering: **Vulkan 1.2** by default when supported, with automatic **OpenGL 4.6** fallback; see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md). Linux uses **OpenGL 4.5+**; Linux Vulkan probing and native Wayland are not yet supported.
 - Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). Managed C# runs through the .NET browser-wasm host, and resident audio uses WebAudio. Streaming audio, custom cooked SPIR-V shaders and multisample framebuffers remain unsupported. Browser autoplay policy may require a click or key press; audio signal regressions do not verify physical speaker output.
 - Primary engine scope: **2D**
 - The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
-- Source development requires the **.NET 10 SDK** to build TomCat itself. Packaged Editors carry a pinned private SDK for game-script compilation and do not use a machine-wide C# environment.
-- Exported Players carry a fixed private .NET runtime and the required C++ runtime DLLs, without requiring global .NET or Visual Studio
+- Source development requires the **.NET 10 SDK** to build TomCat itself. Packaged Windows Editors carry a pinned private SDK for game-script compilation. Linux source builds discover the SDK through `DOTNET_ROOT_X64`, `DOTNET_ROOT` or PATH; a complete Linux Editor distribution remains separate work.
+- Exported Players carry a private .NET runtime and do not require a global .NET SDK. Windows exports include the required C++ runtime DLLs; Linux exports are ELF executables that require compatible system graphics, audio and runtime libraries.
 - Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. C# debugging uses an external IDE attached to the Editor; scripts are recompiled and updated after stopping Play. Play Mode hot replacement is unsupported. Scene restoration/activation and uploads have cooperative frame budgets; Windows input fields support IME preedit and candidate positioning. See [production capabilities and limits](docs/P1_PRODUCTION.md).
 
 The pre-cleanup mainline `b04d81d8` passed Windows Release and Managed Web CI on
@@ -143,6 +144,8 @@ The [recording archive](docs/portfolio/README.md) retains the original 2026-09-2
 footage. This records cleanup did not rerun hardware acceptance or produce new recordings.
 
 ## Building
+
+The following instructions cover Windows. For Linux, install the dependencies in the [Linux guide](docs/LINUX.zh-CN.md), then run `bash Scripts/Linux_Build.sh` from a `main` checkout. It builds native and managed targets, stages a Player template and runs CTest.
 
 ### Dependencies
 
@@ -221,12 +224,12 @@ mode is headless.
 ```
 TomCat/            Engine core (rendering, ECS, physics, ImGui integration)
 Editor/TomCatInut/ Editor application
-Player/            Independent Windows x64 game runtime
+Player/            Independent Windows/Linux x64 game runtime
 Managed/           .NET 10 runtime API, source generator, host, and regressions
 Builder/Manager/   Hub (project center)
 Tests/             Engine regression test projects
 Scripts/           Build & packaging scripts
-Tools/TomCatCLI/    Headless cook and Windows Player build commands
+Tools/TomCatCLI/    Headless cook and native Player build commands
 Web/               Experimental browser targets, fonts, and WASM protocol regression
 Samples/           Reproducible sample projects
 docs/              Documentation index and recorded demonstrations
@@ -280,7 +283,7 @@ vendor/            premake and third-party dependencies
 ### Engine Systems and Tooling
 
 - [x] Input Actions, keyboard/mouse/gamepad bindings, contexts, and rebinding
-- [x] WAV playback and bounded PCM WAV streaming, 2D spatial audio, device-loss recovery, AudioSource/AudioListener, Null/XAudio2 backends, and Master/Music/SFX buses
+- [x] WAV playback and bounded PCM WAV streaming, 2D spatial audio, device-loss fallback, AudioSource/AudioListener, Null/XAudio2/OpenAL Soft backends, and Master/Music/SFX buses
 - [x] OGG/Vorbis import through bundled stb_vorbis, converted to PCM WAV artifacts; custom acyclic gain bus routing (without DSP effects)
 
 Authoring audio playback uses validated imported DDC artifacts; cooked Players read validated TCPAK ranges. Vorbis is decoded during import, so streaming currently reads PCM rather than compressed Vorbis.
@@ -296,6 +299,7 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 - [x] RHI integration with Vulkan preferred and OpenGL fallback, DPI font rebuilding, color grading, compressed texture fallback, GPU timing and backend-independent automation capture
 - [x] Experimental WebGL2 Editor/Player with managed C# lifecycle, Project authoring, scene persistence and saved workspace layouts; see [Web scope](Web/README.md)
 - [x] Vulkan frames in flight and reusable mapped upload pages for draw snapshots and texture staging
+- [x] Initial Linux x86_64 port: CMake, C# hosting, OpenAL Soft, native export and Debug/Release CI; see the [Linux guide](docs/LINUX.zh-CN.md) for tested scope
 - [ ] Additional platforms, desktop backends and further Vulkan synchronization/transfer optimization
 
 ### Future 3D Scope

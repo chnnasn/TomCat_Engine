@@ -1,9 +1,10 @@
 # TomCatCLI 无界面构建工具
 
-[English](README.md) | 简体中文 · 核对日期：2026-10-16 · [文档索引](../../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-10-22 · [文档索引](../../docs/README.md)
 
-`TomCatCLI` 是 CI 资源 Cook 和 Windows 独立 Player 构建的无窗口入口。
-以下源码构建命令从仓库根目录、Visual Studio 开发者终端执行；先运行
+`TomCatCLI` 是 CI 资源 Cook 和 Windows/Linux 原生 Player 构建的无窗口入口。
+各平台构建本机平台的 Player，尚不提供跨平台交叉导出。
+以下 Windows 源码构建命令从仓库根目录、Visual Studio 开发者终端执行；先运行
 `Scripts/Setup.bat` 准备 Premake，并安装 .NET 10 SDK 供项目 C# 编译使用。
 
 ```powershell
@@ -17,9 +18,22 @@ Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game
 `cook` 写入资源包；`build` 还将新编译的托管程序集和脚本清单传给 PlayerBuilder，发布独立 Player。
 源码构建可使用 `Scripts/Build-PlayerTemplate.ps1 -Build` 生成模板，再通过 `build --template <目录>` 指定。
 
-## 打包版入口
+## Linux 构建与导出
 
-官方及本地 Editor 发布物的单个 `TomCat.exe` 内含 CLI、Managed 工具链和 Player Template：
+Linux 支持已进入 `main`。先按 [Linux 指南](../../docs/LINUX.zh-CN.md)安装 .NET 10 SDK 与系统依赖，再从仓库根目录执行：
+
+```bash
+bash Scripts/Linux_Build.sh
+TC_RENDERER=opengl ./build/linux/bin/CLI/TomCatCLI cook --project /absolute/Game/Game.tcproj
+TC_RENDERER=opengl ./build/linux/bin/CLI/TomCatCLI build --project /absolute/Game/Game.tcproj \
+  --template ./build/linux/bin/Editor/Packages/PlayerTemplates/linux-x64
+```
+
+构建脚本同时生成模板。导出在项目 `Build/<ProductName>/` 下写入可执行 ELF、`Game.tcpak`、Managed 程序集和私有 .NET Runtime；目标机器需要兼容的系统库，无需 .NET SDK。Linux 使用 OpenGL 4.5+；Vulkan 探测和 Windows 单文件 Editor 包装器不属于当前 Linux 范围。测试证据及验收游戏下载见 [Linux CI](../../docs/LINUX.zh-CN.md#ci-与验收)。
+
+## Windows 打包版入口
+
+Windows 官方及本地 Editor 发布物的单个 `TomCat.exe` 内含 CLI、Managed 工具链和 Player Template：
 
 ```powershell
 TomCat.exe --cli cook --project C:/Game/Game.tcproj --output C:/Game/Build/Game.tcpak
@@ -67,9 +81,9 @@ TCPAK 只读写 v8，逐条目 SHA-256 摘要为必需字段。
 ## 渲染后端选择
 
 桌面 Editor、Hub、CLI 与 Player 在每个进程中读取一次 `TC_RENDERER`。
-未设置或设为 `auto` 时优先 Vulkan，不支持才回退 OpenGL；设为 `opengl` / `vulkan`
+Windows 未设置或设为 `auto` 时优先 Vulkan，不支持才回退 OpenGL；设为 `opengl` / `vulkan`
 时强制对应后端，强制 Vulkan 不可用时明确报错。无窗口 CLI 不创建窗口也能探测设备支持。
-例如：
+Linux 使用 `TC_RENDERER=opengl`，Vulkan 探测尚未移植。Windows 示例：
 
 ```powershell
 $env:TC_RENDERER = 'auto'

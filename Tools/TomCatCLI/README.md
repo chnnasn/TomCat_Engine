@@ -1,8 +1,8 @@
 # TomCatCLI
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-16 · [All documentation](../../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-22 · [All documentation](../../docs/README.md)
 
-`TomCatCLI` is the window-free entry point for CI cooks and Windows Player builds.
+`TomCatCLI` is the window-free entry point for CI cooks and native Windows/Linux Player builds. Each host exports its own platform's Player; cross-platform export is not provided. The commands below build the Windows CLI.
 
 ```powershell
 vendor/premake/bin/premake5.exe --file=Tools/premake5.lua vs2022
@@ -14,7 +14,7 @@ Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game
 Both commands perform a fresh managed compile using the Production profile by default, validate assets, and use
 the project's enabled entry scene. Only current project, scene, component and package formats are supported; unsupported versions are rejected without rewriting the inputs.
 
-Official and local Editor releases contain the CLI, Managed toolchain, and Player
+Windows Editor releases contain the CLI, Managed toolchain, and Player
 Template inside the single `TomCat.exe`. Invoke that packaged CLI through the
 Editor wrapper:
 
@@ -31,9 +31,22 @@ matching runtime below `%LOCALAPPDATA%\TomCat\Editor\Runtime`, and returns the
 CLI process exit code. Source builds can continue to run the executable under
 `Tools/bin` directly.
 
+## Linux build and export
+
+Linux support is integrated into `main`. Install the .NET 10 SDK and system dependencies from the [Linux guide](../../docs/LINUX.zh-CN.md), then run from the repository root:
+
+```bash
+bash Scripts/Linux_Build.sh
+TC_RENDERER=opengl ./build/linux/bin/CLI/TomCatCLI cook --project /absolute/Game/Game.tcproj
+TC_RENDERER=opengl ./build/linux/bin/CLI/TomCatCLI build --project /absolute/Game/Game.tcproj \
+  --template ./build/linux/bin/Editor/Packages/PlayerTemplates/linux-x64
+```
+
+The build script also stages the template. Export writes an executable ELF file, `Game.tcpak`, Managed assemblies and a private .NET runtime under the project's `Build/<ProductName>/`. The target machine needs compatible system libraries but no .NET SDK. Linux uses OpenGL 4.5+; Vulkan probing and the Windows single-file Editor wrapper are outside the current Linux scope. Test evidence and downloadable acceptance games are in the [Linux CI guide](../../docs/LINUX.zh-CN.md#ci-与验收).
+
 ## Options and prerequisites
 
-Run source-build commands from the repository root in a Visual Studio developer
+Run Windows source-build commands from the repository root in a Visual Studio developer
 shell, after `Scripts/Setup.bat`. Project compilation requires the .NET 10 SDK.
 For a source-built Player template, use `Scripts/Build-PlayerTemplate.ps1 -Build` and
 pass the resulting directory with `build --template <directory>`.
@@ -68,11 +81,11 @@ See [project configuration](../../PROJECT_SYSTEM.md) and
 
 ## Renderer selection
 
-Desktop Editor, Hub, CLI and Player read `TC_RENDERER` once per process. Unset or
+Desktop Editor, Hub, CLI and Player read `TC_RENDERER` once per process. On Windows, unset or
 `auto` prefers Vulkan and falls back to OpenGL when Vulkan is unsupported;
 `opengl` and `vulkan` force that backend, with an error if forced Vulkan is
 unavailable. The headless CLI probes device support without creating a window.
-For example:
+On Linux, use `TC_RENDERER=opengl`; Vulkan probing is not yet ported. Windows example:
 
 ```powershell
 $env:TC_RENDERER = 'auto'

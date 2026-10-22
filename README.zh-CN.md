@@ -6,25 +6,26 @@ TomCat 将场景搭建、资源管理、C# 游戏逻辑和 Box2D 物理集成在
 引擎库提供渲染、ECS 场景模型与运行时系统，Editor 提供对应的可视化编辑工具，
 Player 则负责脱离编辑器运行打包后的游戏。
 
-**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows x64 · MIT**
+**C++20 · OpenGL / Vulkan · ImGui · Box2D · .NET 10 · Windows / Linux x64 · MIT**
 
 **语言**：[English](README.md) | 简体中文
 
-## Linux 开发分支
+## Linux 支持
 
-`dev_linux` 接入 Linux x86_64 原生构建、C#/.NET 10、OpenAL 音频与游戏导出，通过 GitHub Actions 构建并测试。构建方法、测试入口和实机验收边界见 [Linux 移植说明](docs/LINUX.zh-CN.md)。
+Linux x86_64 初步支持已于 **2026-10-22** 通过 [9a9a303a](https://github.com/chnnasn/TomCat_Engine/commit/9a9a303a56893d50eb02a6280603324a6741f9cc) 合入 `main`，包含 Editor、Hub、Player、CLI 的 CMake 构建、C#/.NET 10、OpenAL Soft 音频与原生游戏导出。当前目标为 Ubuntu 24.04、X11/XWayland 和 OpenGL 4.5+。构建方法、CI 证据和桌面验收边界见 [Linux 使用说明](docs/LINUX.zh-CN.md)。
 
 ## 当前分支的作用
 
-**dev_linux — Linux 原生平台适配**
+**main — 功能集成主线**
 
-基于 `main` 开展 Linux 源码移植，接入 CMake、GLFW/OpenGL、C#、音频和游戏导出。当前范围与待验证功能见上方 Linux 移植说明；`main` 仍是 Windows 桌面集成基线。
+`main` 集成 Windows 桌面开发、Linux 初步支持和实验性 Web 目标。发布标签仍对应固定版本快照；当前主线包含 `v0.6.0` 发布后的增量。
 
-分支定位核对日期：**2026-10-22**。构建工具链、托管 Web 与 Vulkan 工作已集成到 `main`。下表列出当前开发分支；专项能力是否已合入主线，以[项目状态](docs/PROJECT_STATUS.zh-CN.md)为准。
+分支定位核对日期：**2026-10-22**。构建工具链、托管 Web、Vulkan 和 Linux 初步移植已集成到 `main`。下表列出保留的开发分支；专项能力是否已合入主线，以[项目状态](docs/PROJECT_STATUS.zh-CN.md)为准。
 
 | 分支 | 作用 |
 | --- | --- |
 | [main](https://github.com/chnnasn/TomCat_Engine/tree/main) | 桌面主线与功能集成基线 |
+| [dev_linux](https://github.com/chnnasn/TomCat_Engine/tree/dev_linux) | 初步 Linux 移植已合入 `main`；分支保留原开发历史 |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
 | [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
@@ -105,9 +106,9 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - **Prefab**：LocalID 实体子树和引用重映射、编辑器关联更新、Override、Apply/Revert、嵌套和变体；运行时 C# `Instantiate` 保持快照语义，详见 [Prefab 工作流](docs/PREFAB_WORKFLOW.zh-CN.md)
 - **输入**：Action Map、键盘/鼠标/手柄绑定、输入上下文与运行时重绑定
 - **运行时文字与 UI**：TTF/OTF/TTC 字体、确定性按需字形图集、严格 UTF-8、显式主字体/CJK/Emoji 回退链与最终替代字形、世界空间文字，以及具备 DPI 感知布局、裁剪、射线目标、导航和逐次交互 Gameplay 输入消费的 Canvas/RectTransform/Image/Text/Button/EventSystem/LayoutGroup 组件
-- **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null 与 XAudio2 后端、设备丢失降级，以及 Master/Music/SFX Bus
+- **音频**：内存 WAV Clip、有界 PCM WAV 流式播放、2D 空间音频、AudioSource/AudioListener、Null、Windows XAudio2 与 Linux OpenAL Soft 后端、设备丢失降级，以及 Master/Music/SFX Bus
 - **编辑器**：可停靠的 Scene / Game / Hierarchy / Inspector / Project / Console / Profiler 面板、布局持久化、标签栏右键 Maximize / Close Tab / Add Tab、不可折叠的窗口标题、Hierarchy 场景可见性、带导入 Apply/Revert 的资源 Inspector、真实图片缩略图、原有 Packages 图标、可搜索诊断、Undo/Redo、自动保存/恢复、项目锁与用户设置
-- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v8，包含逐条目 SHA-256（Player 只读取 v8）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 Player Template 与私有 .NET Runtime
+- **独立 Player**：按 Handle 寻址且无作者路径的 `.tcpak` v8，包含逐条目 SHA-256（Player 只读取 v8）、与 Editor 分离的运行程序、版本化 PlayerSettings/BootManifest、固定 Hash 白名单 win-x64 / linux-x64 Player Template 与私有 .NET Runtime
 - **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
 - **UI 控件与本地化**：新增滑条、滚动视图、单行 Unicode 输入框、层级主题和游戏语言表回退；支持 OS 输入法提交文字，完整组合态仍有边界，详见 [UI 控件](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **性能分析**：可视化 CPU 时间线、异步 GPU 帧计时、绘制统计、进程内存和资源分配估算；提供 [Profiler 与 C# 断点流程](docs/DEBUGGING_AND_PROFILING.md)
@@ -115,19 +116,22 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 
 ## 当前范围
 
-- 支持的开发平台：**Windows x64**
-- 渲染后端：默认优先 **Vulkan 1.2**，不支持时自动回退 **OpenGL 4.6**；配置和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
+- 开发平台：**Windows x64**，以及以 Ubuntu 24.04 为目标的 **Linux x86_64 初步支持**；Linux 桌面交互与真实设备仍需验收。
+- Windows 渲染后端：默认优先 **Vulkan 1.2**，不支持时自动回退 **OpenGL 4.6**；配置和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
 - 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。托管 C# 通过 .NET browser-wasm 宿主运行；常驻音频通过 WebAudio 输出，流式音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 尚不支持。浏览器自动播放策略仍可能要求用户先点击或按键；音频信号回归不等于物理扬声器验收。
 - 当前引擎主范围：**2D**
 - 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
-- 从源码构建 TomCat 本身需要 **.NET 10 SDK**；打包后的 Editor 自带固定版本私有 SDK 编译游戏脚本，不读取机器上的全局 C# 环境
-- 导出的 Player 携带固定私有 .NET Runtime 和所需 C++ 运行库，不依赖用户电脑的全局 .NET 环境或 Visual Studio
+- 从源码构建 TomCat 本身需要 **.NET 10 SDK**；Windows 打包 Editor 自带固定私有 SDK。Linux 源码构建通过 `DOTNET_ROOT_X64`、`DOTNET_ROOT` 或 PATH 查找 SDK。
+- 导出的 Player 携带私有 .NET Runtime，无需全局 .NET SDK。Windows 导出包含所需 C++ 运行库；Linux 导出为 ELF 程序，仍依赖兼容的系统图形、音频和运行库。
+- Linux 使用 **OpenGL 4.5+**；Linux Vulkan 探测、Wayland 原生后端和完整 Editor 发行包尚未完成，见 [Linux 范围](docs/LINUX.zh-CN.md#边界)。
 - 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；C# 采用外部 IDE 附加调试，停止 Play 后重新编译并更新脚本，不提供 Play Mode 热替换。场景恢复、激活和上传已有协作式分帧预算；Windows 输入框已有 IME 预编辑和候选窗定位，详见 [P1 能力与边界](docs/P1_PRODUCTION.md)
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
 整理前主线 `b04d81d8` 的 **2026-10-17** Windows Release 与 Managed Web CI 均通过，见[验收记录及运行链接](docs/PROJECT_STATUS.zh-CN.md#验收记录)。Vulkan 实机验证保留在 **2026-10-16** 的[集成记录](docs/RHI_VULKAN.zh-CN.md#主线集成2026-10-16)中。上面展示的仍是 2026-09-20 原始录屏；记录整理没有重跑实机验收或重新录制。
 
 ## 构建
+
+以下为 Windows 构建流程。Linux 请先按 [Linux 指南](docs/LINUX.zh-CN.md)安装依赖，再从 `main` 工作区运行 `bash Scripts/Linux_Build.sh`；脚本构建原生与托管程序、生成 Player 模板并运行 CTest。
 
 ### 依赖
 
@@ -194,12 +198,12 @@ Player 冒烟的 `-Graphics` 模式会打开真实图形窗口，对同一包验
 ```
 TomCat/            引擎核心库（渲染、ECS、物理、ImGui 集成）
 Editor/TomCatInut/ Editor 应用
-Player/            独立 Windows x64 游戏运行时
+Player/            独立 Windows/Linux x64 游戏运行时
 Managed/           .NET 10 运行时 API、源码生成器、Host 与回归
 Builder/Manager/   Hub（项目中心）
 Tests/             引擎回归测试工程
 Scripts/           构建与打包脚本
-Tools/TomCatCLI/    无界面 Cook 与 Windows Player 构建命令
+Tools/TomCatCLI/    无界面 Cook 与原生 Player 构建命令
 Web/               实验性浏览器目标、字体与 WASM 协议回归
 Samples/           可复现示例项目
 docs/              文档索引与实机演示素材
@@ -254,6 +258,7 @@ vendor/            premake 与第三方依赖
 
 - [x] Input Actions、键盘/鼠标/手柄绑定、输入上下文和重绑定
 - [x] WAV 播放与有界 PCM 流式播放
+- [x] Windows XAudio2、Linux OpenAL Soft 和设备不可用时的 Null 降级
 - [x] 内置 stb_vorbis 的 OGG/Vorbis 导入，转为 PCM WAV 产物；支持自定义无环增益音频总线图（不含 DSP 效果）
 
 Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的 TCPAK 区间。Vorbis 在导入时解码，当前流式播放读取 PCM，而非运行时压缩 Vorbis。
@@ -269,6 +274,7 @@ Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的
 - [x] RHI 默认优先 Vulkan，不支持时回退 OpenGL，覆盖 DPI 字体重建、颜色后处理、压缩纹理回退、GPU 计时与跨后端自动化截图
 - [x] 实验性 WebGL2 Editor/Player，支持托管 C# 生命周期、Project 编辑、场景持久化与工作区布局保存，详见 [Web 范围](Web/README.zh-CN.md)
 - [x] Vulkan 多帧在途呈现与可复用映射上传页，覆盖绘制快照和纹理 staging
+- [x] Linux x86_64 初步移植：CMake、C# 宿主、OpenAL Soft、原生导出与 Debug/Release CI；已验证范围见 [Linux 指南](docs/LINUX.zh-CN.md)
 - [ ] 更多平台、桌面后端与进一步的 Vulkan 同步/传输优化
 
 ### 未来 3D 范围

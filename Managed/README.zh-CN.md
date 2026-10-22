@@ -1,10 +1,12 @@
 # TomCat 托管脚本 V1
 
-[English](README.md) | 简体中文 · 核对日期：2026-10-16 · [文档索引](../docs/README.md)
+[English](README.md) | 简体中文 · 核对日期：2026-10-22 · [文档索引](../docs/README.md)
 
 V1 表示脚本功能范围，不代表所有协议版本相同：当前 Native ABI 为 v1、Managed ABI 为 v6，
-ScriptManifest 为 v1。桌面托管使用 .NET 10；打包 Editor 自带固定私有 SDK，生成的工程文件只用于 IDE/依赖交换，脚本源码集合和输出布局仍由引擎控制。
+ScriptManifest 为 v1。桌面托管使用 .NET 10；Windows 打包 Editor 自带固定私有 SDK，生成的工程文件只用于 IDE/依赖交换，脚本源码集合和输出布局仍由引擎控制。
 实验性 Web 目标使用 .NET `browser-wasm`，支持浏览器内 C# 编译与执行；独立构建及模块生命周期见[Web 指南](../Web/README.zh-CN.md)。
+
+Linux CoreCLR 宿主与项目编译已进入 `main`。Linux 源码构建通过 `DOTNET_ROOT_X64`、`DOTNET_ROOT` 或 PATH 查找 .NET 10 SDK；导出的 Linux Player 使用私有运行时，无需 SDK。显式指定的私有运行时缺失时会报错，不回退到全局安装。Linux 回归覆盖元数据、失败构建保留 last-good、导出后 C# 生命周期和原生 Entity 调用，见 [Linux 指南及测试证据](../docs/LINUX.zh-CN.md)。完整 Linux Editor 发行包及外部 IDE 集成仍需独立适配。
 
 ## 模块与构建
 

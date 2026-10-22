@@ -13,6 +13,7 @@
 | C# 脚本、原生 ABI 与生命周期 | [托管脚本](../Managed/README.zh-CN.md) | [Managed scripting](../Managed/README.md) |
 | NuGet 还原、项目引用与托管依赖加载 | [C# 项目依赖](CSHARP_DEPENDENCIES.md) | — |
 | 无界面 Cook 与 Player 构建 | [TomCatCLI](../Tools/TomCatCLI/README.zh-CN.md) | [TomCatCLI](../Tools/TomCatCLI/README.md) |
+| Linux 构建、C#、音频、导出与 CI | [Linux 使用说明](LINUX.zh-CN.md) | — |
 | 浏览器构建、编辑接口与限制 | [Web 指南](../Web/README.zh-CN.md) | [Web guide](../Web/README.md) |
 | 浏览器中文字形与字体来源 | [字体说明](../Web/fonts/README.zh-CN.md) | [Font notes](../Web/fonts/README.md) |
 | 2D 物理示例 | [PhysicsPlayground](../Samples/PhysicsPlayground/README.md) | — |
@@ -36,7 +37,9 @@
 
 ## 当前主线
 
-产品版本为 **0.6.0**。桌面默认优先 Vulkan 1.2，不支持时自动回退 OpenGL 4.6。`TC_RENDERER=auto` 与未设置相同；`vulkan` / `opengl` 则强制指定后端。新的桌面烘焙包包含两个后端的预编译 Shader，Player 可独立选择；旧单后端包需匹配原后端或重新烘焙。浏览器仍使用 WebGL2，主线已包含 .NET browser-wasm C# 宿主、Project 编辑与场景持久化。
+产品版本为 **0.6.0**。Windows 默认优先 Vulkan 1.2，不支持时自动回退 OpenGL 4.6。`TC_RENDERER=auto` 与未设置相同；`vulkan` / `opengl` 则强制指定后端。新的桌面烘焙包包含两个后端的预编译 Shader，Player 可独立选择；旧单后端包需匹配原后端或重新烘焙。浏览器仍使用 WebGL2，主线已包含 .NET browser-wasm C# 宿主、Project 编辑与场景持久化。
+
+Linux 初步支持于 `9a9a303a` 合入主线：Ubuntu 24.04 x86_64、X11/XWayland、OpenGL 4.5+、C#/.NET 10、OpenAL Soft 与 ELF 游戏导出。Linux 使用 `TC_RENDERER=opengl`；Vulkan 探测、完整 Editor 发行包和真实桌面/硬件验收仍有边界，见 [Linux 指南](LINUX.zh-CN.md)。发布 tag 的祖先关系和对象指向在本次合并中保持不变。
 
 整理前主线 `b04d81d8` 的 2026-10-17 Windows Release 和 Managed Web CI 均已通过；Vulkan 实机记录为 2026-10-16，600 秒 soak 则保留其 P99 未达标结果。新旧源码基线、运行链接和待验证项见[项目状态](PROJECT_STATUS.zh-CN.md)。
 
@@ -86,6 +89,15 @@ node Web/tests/node_modules/playwright/cli.js install chromium
 ./Scripts/Run-ProductionSoak.ps1 -DurationSeconds 600
 ```
 
+Linux 从仓库根目录执行，先按 [Linux 指南](LINUX.zh-CN.md#构建)安装 SDK 与系统依赖：
+
+```bash
+bash Scripts/Linux_Build.sh
+# 单独的 Debug 构建目录，便于保留两种配置的产物
+TC_BUILD_TYPE=Debug TC_BUILD_DIR="$PWD/build/linux/debug" bash Scripts/Linux_Build.sh
+```
+
+Linux 脚本包含 C# 构建、Player 模板生成和 11 项 CTest；CI 使用 [.github/workflows/linux.yml](../.github/workflows/linux.yml)，产物下载和验收范围见 [Linux CI](LINUX.zh-CN.md#ci-与验收)。
 Windows CI 使用 [.github/workflows/regressions.yml](../.github/workflows/regressions.yml)。
 若使用本机 Edge，可设置 `$env:TOMCAT_BROWSER_CHANNEL = 'msedge'`，无需下载测试 Chromium；仍需安装 `Web/tests` 的 Playwright 依赖。
 Web 协议回归不验证浏览器绘制、宿主持久化、中文输入法或真实手柄，需另做浏览器验收。

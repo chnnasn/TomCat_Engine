@@ -1,14 +1,16 @@
 # TomCat managed scripting V1
 
-English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-16 · [All documentation](../docs/README.md)
+English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-22 · [All documentation](../docs/README.md)
 
 V1 names the scripting feature scope, not every wire-format version: Native ABI
 is v1, Managed ABI is v6, and ScriptManifest is v1. Desktop hosting uses .NET 10.
-Packaged Editors own a pinned private SDK for script compilation; generated
+Packaged Windows Editors own a pinned private SDK for script compilation; generated
 project files are an IDE/dependency interchange surface rather than authority
 over the engine's source set and output layout. The experimental Web target uses
 .NET `browser-wasm` and supports browser C# compilation and execution; see the
 [Web guide](../Web/README.md) for its separate build and module lifetime rules.
+
+Linux CoreCLR hosting and project compilation are integrated into `main`. Linux source builds locate the .NET 10 SDK through `DOTNET_ROOT_X64`, `DOTNET_ROOT` or PATH. Exported Linux Players load their private runtime without an SDK; an explicitly selected private runtime must exist and does not fall back to a global installation. The Linux regression covers metadata, failed-build last-good recovery, exported C# lifecycle and native Entity calls. See the [Linux guide and test evidence](../docs/LINUX.zh-CN.md); a complete packaged Linux Editor and external IDE integration still need separate work.
 
 This directory contains the independently buildable .NET 10 portion of the TomCat C# scripting
 system:
