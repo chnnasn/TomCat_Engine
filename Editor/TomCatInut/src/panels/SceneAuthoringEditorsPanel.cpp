@@ -1,8 +1,8 @@
 #include "SceneAuthoringEditorsPanel.h"
 #include "SceneHierarchyDetail.h"
 
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
+#include <ImGui/imgui.h>
+#include <ImGui/imgui_internal.h>
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>

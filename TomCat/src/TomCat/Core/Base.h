@@ -4,6 +4,7 @@
 #include "TomCat/Core/MouseCodes.h"
 
 #include <cstdio>
+#include <csignal>
 #include <memory>
 
 #ifdef _MSC_VER
@@ -50,8 +51,9 @@
 	#define TC_PLATFORM_ANDROID
 	#error "Android is not supported!"
 #elif defined(__linux__)
-	#define TC_PLATFORM_LINUX
-	#error "Linux is not supported!"
+	#ifndef TC_PLATFORM_LINUX
+		#define TC_PLATFORM_LINUX 1
+	#endif
 
 #else
 		/* Unknown compiler/platform */
@@ -80,7 +82,12 @@ namespace TomCat::Detail {
 }
 
 #ifdef TC_ENABLE_ASSERTS
-	#define TC_Assert(x, ...) do { if (!(x)) { ::TomCat::Detail::ReportAssertionFailure(#x, __FILE__, __LINE__, "" __VA_ARGS__); __debugbreak(); } } while (false)
+	#ifdef _MSC_VER
+		#define TC_DEBUG_BREAK() __debugbreak()
+	#else
+		#define TC_DEBUG_BREAK() std::raise(SIGTRAP)
+	#endif
+	#define TC_Assert(x, ...) do { if (!(x)) { ::TomCat::Detail::ReportAssertionFailure(#x, __FILE__, __LINE__, "" __VA_ARGS__); TC_DEBUG_BREAK(); } } while (false)
 	#define TC_Core_Assert(x, ...) TC_Assert(x, __VA_ARGS__)
 #else
 	#define TC_Assert(x, ...) ((void)0)

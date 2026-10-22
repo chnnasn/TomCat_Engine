@@ -2,7 +2,7 @@
 #include "TomCat/Renderer/GraphicsContext.h"
 
 #include "TomCat/Renderer/Renderer.h"
-#include "Platform/OpenGL/OpenGLContext.h"
+#include "platform/OpenGL/OpenGLContext.h"
 #include "platform/Vulkan/VulkanContext.h"
 
 namespace TomCat {

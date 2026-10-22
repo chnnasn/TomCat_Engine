@@ -1,5 +1,5 @@
 #include "tcpch.h"
-#include "Platform/OpenGL/OpenGLVertexArray.h"
+#include "platform/OpenGL/OpenGLVertexArray.h"
 
 #include "OpenGLApi.h"
 

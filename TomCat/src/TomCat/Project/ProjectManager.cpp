@@ -1,4 +1,8 @@
 #include "tcpch.h"
+#ifdef TC_PLATFORM_LINUX
+#include "platform/Linux/LinuxProcess.h"
+#include <unistd.h>
+#endif
 #include "ProjectManager.h"
 #include "TomCat/Core/ApplicationPaths.h"
 #include "TomCat/Utils/FileSystemUtils.h"
@@ -596,6 +600,17 @@ namespace TomCat {
 			return output;
 		}
 
+#elif defined(TC_PLATFORM_LINUX)
+        std::optional<std::string> QueryProductInfo(const std::filesystem::path& executablePath)
+        {
+            auto result = Linux::RunProcess({PathToUTF8(executablePath), "--product-info-json"},
+                executablePath.parent_path(), std::chrono::seconds(10), false);
+            if (result.ExitCode != 0 || result.Output.empty() || result.Output.size() >= 64 * 1024)
+                return std::nullopt;
+            return result.Output;
+        }
+#endif
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 		std::optional<EditorInstallation> InspectEditorExecutable(
 			const std::filesystem::path& executablePath)
 		{
@@ -727,10 +742,14 @@ namespace TomCat {
 					pending.push_back(entry.path());
 				else if (entry.is_regular_file(entryError) && !entryError)
 				{
+#ifdef TC_PLATFORM_LINUX
+                    if (entry.path().extension().empty() && access(entry.path().c_str(), X_OK) == 0)
+#else
 					std::wstring extension = entry.path().extension().wstring();
 					std::transform(extension.begin(), extension.end(), extension.begin(),
 						[](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
 					if (extension == L".exe")
+#endif
 						candidates.push_back(entry.path());
 				}
 				iterator.increment(error);
@@ -1132,6 +1151,7 @@ namespace TomCat {
 		const std::filesystem::path& editorPath = *resolvedEditor;
 		TC_Core_Info("Using Editor executable: {0}", PathToUTF8(editorPath));
 
+#ifdef TC_PLATFORM_WINDOWS
 		const std::wstring applicationPath = ExtendedLengthPath(editorPath);
 		const std::wstring projectPath = ExtendedLengthPath(project->GetProjectPath());
 		std::wstring command = QuoteWindowsArgument(applicationPath) + L" " + QuoteWindowsArgument(projectPath);
@@ -1153,6 +1173,12 @@ namespace TomCat {
 		{
 			TC_Core_Error("Failed to open editor. Error code: {0}", GetLastError());
 		}
+#elif defined(TC_PLATFORM_LINUX)
+        std::string error;
+        if (Linux::StartProcess({PathToUTF8(editorPath), PathToUTF8(project->GetProjectPath())}, editorPath.parent_path(), error))
+            (void)RecordProjectOpened(project);
+        else TC_Core_Error("Failed to open editor: {0}", error);
+#endif
 	}
 
 	bool ProjectManager::IsProjectFile(const std::filesystem::path& path) const

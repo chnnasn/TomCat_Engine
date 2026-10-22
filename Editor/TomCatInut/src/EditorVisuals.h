@@ -3,7 +3,7 @@
 #ifdef __EMSCRIPTEN__
 #include <imgui.h>
 #else
-#include <imgui/imgui.h>
+#include <ImGui/imgui.h>
 #endif
 #include <algorithm>
 #include <cmath>

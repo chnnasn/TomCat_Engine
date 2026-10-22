@@ -286,5 +286,7 @@ int wmain(int argc, wchar_t** argv) {
 	}
 }
 
+#elif defined(TC_PLATFORM_LINUX)
+#include "platform/Linux/LinuxEntryPoint.h"
 #endif
 

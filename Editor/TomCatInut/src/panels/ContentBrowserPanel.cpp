@@ -6,8 +6,8 @@
 #include "TomCat/Scene/Entity.h"
 #include "../AssetFileTransfer.h"
 
-#include <imgui/imgui.h>
-#include <imgui/imgui_internal.h>
+#include <ImGui/imgui.h>
+#include <ImGui/imgui_internal.h>
 #include <yaml-cpp/yaml.h>
 #include "TomCat/Asset/ShaderArtifact.h"
 #include "TomCat/Audio/AudioClip.h"

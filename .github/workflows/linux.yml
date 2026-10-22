@@ -1,0 +1,26 @@
+name: Linux native
+on:
+  push:
+    branches: [dev_linux, main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize portable dependencies
+        run: git submodule update --init --recursive TomCat/vendor/GLFW TomCat/vendor/ImGui TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/yaml-cpp TomCat/vendor/Box2D TomCat/vendor/ImGuizmo
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev libvulkan-dev libshaderc-dev glslang-dev glslang-tools spirv-tools libspirv-cross-c-shared-dev zenity
+      - name: Build and run headless tests
+        env:
+          TC_BUILD_TYPE: ${{ matrix.configuration }}
+        run: bash Scripts/Linux_Build.sh

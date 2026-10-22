@@ -2,14 +2,14 @@
 
 #include "TomCat.h"
 #include "EditorIcons.h"
-#include "Panels/SceneHierarchyPanel.h"
+#include "panels/SceneHierarchyPanel.h"
 
 #include "TomCat/Renderer/EditorCamera.h"
 #include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Editor/SceneHistory.h"
-#include "Panels/ContentBrowserPanel.h"
-#include "Panels/ConsolePanel.h"
-#include "Panels/ProfilerPanel.h"
+#include "panels/ContentBrowserPanel.h"
+#include "panels/ConsolePanel.h"
+#include "panels/ProfilerPanel.h"
 #include "Scripting/ScriptProjectCompiler.h"
 #include "Scripting/ScriptMetadataCache.h"
 #include "EditorViewportHandles.h"

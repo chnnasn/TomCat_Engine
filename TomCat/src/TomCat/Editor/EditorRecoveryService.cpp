@@ -18,6 +18,12 @@
 
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
+#elif defined(TC_PLATFORM_LINUX)
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 
 namespace TomCat {
@@ -101,6 +107,24 @@ namespace TomCat {
 			return token.str();
 		}
 
+#ifdef TC_PLATFORM_LINUX
+        uint64_t LinuxProcessStart(uint64_t processId)
+        {
+            std::ifstream input("/proc/" + std::to_string(processId) + "/stat");
+            std::string line;
+            if (!std::getline(input, line)) return 0;
+            // comm (field 2) may contain spaces and parentheses.
+            const auto end = line.rfind(')');
+            if (end == std::string::npos) return 0;
+            std::istringstream fields(line.substr(end + 1));
+            std::string value;
+            for (int field = 3; field <= 22; ++field)
+                if (!(fields >> value)) return 0;
+            uint64_t start = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), start);
+            return parsed.ec == std::errc{} ? start : 0;
+        }
+#endif
 		bool CurrentProcessIdentity(uint64_t& processId, uint64_t& processStart)
 		{
 #ifdef TC_PLATFORM_WINDOWS
@@ -111,6 +135,10 @@ namespace TomCat {
 			processStart = (static_cast<uint64_t>(creation.dwHighDateTime) << 32)
 				| creation.dwLowDateTime;
 			return processStart != 0;
+#elif defined(TC_PLATFORM_LINUX)
+            processId = static_cast<uint64_t>(getpid());
+            processStart = LinuxProcessStart(processId);
+            return processStart != 0;
 #else
 			processId = 1;
 			processStart = static_cast<uint64_t>(
@@ -356,6 +384,31 @@ namespace TomCat {
 		}
 		error = "project lock changed while it was being acquired";
 		return ProjectLockAcquireResult::Unavailable;
+#elif defined(TC_PLATFORM_LINUX)
+        const int descriptor = open(lockPath.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (descriptor < 0) { error = std::strerror(errno); return ProjectLockAcquireResult::Unavailable; }
+        if (flock(descriptor, LOCK_EX | LOCK_NB) != 0) {
+            const int failure = errno;
+            close(descriptor);
+            error = std::strerror(failure);
+            return failure == EWOULDBLOCK ? ProjectLockAcquireResult::LiveOwner : ProjectLockAcquireResult::Unavailable;
+        }
+        const auto document = SerializeRecord(ownRecord);
+        bool written = ftruncate(descriptor, 0) == 0;
+        size_t offset = 0;
+        while (written && offset < document.size()) {
+            const auto count = write(descriptor, document.data() + offset, document.size() - offset);
+            if (count < 0 && errno == EINTR) continue;
+            if (count <= 0) written = false;
+            else offset += static_cast<size_t>(count);
+        }
+        if (!written || fsync(descriptor) != 0) {
+            error = std::strerror(errno); close(descriptor); return ProjectLockAcquireResult::Unavailable;
+        }
+        m_NativeHandle = reinterpret_cast<void*>(static_cast<intptr_t>(descriptor) + 1);
+        m_LockPath = lockPath;
+        m_Record = std::move(ownRecord);
+        return ProjectLockAcquireResult::Acquired;
 #else
 		if (std::filesystem::exists(lockPath))
 		{
@@ -389,6 +442,10 @@ namespace TomCat {
 		// PID/process-start stale-owner check can validate and replace it.
 		std::error_code error;
 		std::filesystem::remove(m_LockPath, error);
+#elif defined(TC_PLATFORM_LINUX)
+        // Keep the inode: unlinking a flock file lets concurrent openers lock
+        // different inodes. The kernel releases ownership even after a crash.
+        close(static_cast<int>(reinterpret_cast<intptr_t>(m_NativeHandle) - 1));
 #else
 		std::error_code error;
 		std::filesystem::remove(m_LockPath, error);
@@ -536,6 +593,9 @@ namespace TomCat {
 			(static_cast<uint64_t>(creation.dwHighDateTime) << 32)
 			| creation.dwLowDateTime;
 		return start == record.ProcessStart;
+#elif defined(TC_PLATFORM_LINUX)
+        return record.ProcessId != 0 && record.ProcessStart != 0
+            && LinuxProcessStart(record.ProcessId) == record.ProcessStart;
 #else
 		return false;
 #endif

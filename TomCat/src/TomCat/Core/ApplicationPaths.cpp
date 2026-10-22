@@ -4,6 +4,7 @@
 #include "TomCat/Utils/PathUtils.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cctype>
 #include <cwctype>
 #include <mutex>
@@ -95,11 +96,11 @@ namespace TomCat {
 		std::wstring filename = executablePath.filename().wstring();
 		std::transform(filename.begin(), filename.end(), filename.begin(),
 			[](wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
-		if (filename == L"tomcat.exe" || filename == L"tomcatinut.exe")
+		if (filename == L"tomcat.exe" || filename == L"tomcatinut.exe" || filename == L"tomcat" || filename == L"tomcatinut")
 			return ApplicationProduct::Editor;
-		if (filename == L"manager.exe" || filename == L"tomcathub.exe")
+		if (filename == L"manager.exe" || filename == L"tomcathub.exe" || filename == L"manager" || filename == L"tomcathub")
 			return ApplicationProduct::Hub;
-		if (filename == L"tomcatplayer.exe")
+		if (filename == L"tomcatplayer.exe" || filename == L"tomcatplayer")
 			return ApplicationProduct::Player;
 		return ApplicationProduct::Unknown;
 	}
@@ -126,6 +127,10 @@ namespace TomCat {
 				return std::nullopt;
 			buffer.resize(buffer.size() * 2);
 		}
+#elif defined(TC_PLATFORM_LINUX)
+		std::error_code error;
+		const auto path = std::filesystem::read_symlink("/proc/self/exe", error);
+		return error ? std::nullopt : std::optional<std::filesystem::path>(path);
 #else
 		return std::nullopt;
 #endif
@@ -155,6 +160,12 @@ namespace TomCat {
 		const std::filesystem::path resultPath(localAppData);
 		CoTaskMemFree(localAppData);
 		return resultPath;
+#elif defined(TC_PLATFORM_LINUX)
+		if (const char* data = std::getenv("XDG_DATA_HOME"); data && *data)
+			if (std::filesystem::path(data).is_absolute()) return std::filesystem::path(data);
+		if (const char* home = std::getenv("HOME"); home && *home)
+			if (std::filesystem::path(home).is_absolute()) return std::filesystem::path(home) / ".local/share";
+		return std::nullopt;
 #else
 		return std::nullopt;
 #endif

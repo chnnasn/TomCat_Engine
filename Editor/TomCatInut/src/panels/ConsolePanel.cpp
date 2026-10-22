@@ -3,7 +3,7 @@
 #include "../EditorVisuals.h"
 #include "ConsolePanel.h"
 
-#include <imgui/imgui.h>
+#include <ImGui/imgui.h>
 
 #include <algorithm>
 #include <cmath>

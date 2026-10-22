@@ -7,7 +7,7 @@
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Renderer.h"
 #include "TomCat/Utils/PlatformUtils.h"
-#include <imgui/imgui.h>
+#include <ImGui/imgui.h>
 
 #include <array>
 #include <cfloat>
