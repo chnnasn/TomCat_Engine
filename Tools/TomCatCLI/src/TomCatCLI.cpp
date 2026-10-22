@@ -48,7 +48,7 @@ namespace {
 			buffer.resize(buffer.size() * 2);
 		}
 #else
-		return {};
+		return TomCat::ApplicationPaths::GetExecutablePath().value_or(std::filesystem::path{}).parent_path();
 #endif
 	}
 
@@ -93,15 +93,17 @@ namespace {
 		return true;
 	}
 
-	Options ParseOptions(int argc, wchar_t** argv)
+	Options ParseOptions(const std::vector<std::string>& argv)
+	
 	{
+		const int argc = static_cast<int>(argv.size());
 		Options result;
 		if (argc < 2)
 			return result;
-		const std::wstring command(argv[1]);
-		if (command == L"cook") result.Operation = Command::Cook;
-		else if (command == L"build") result.Operation = Command::Build;
-		else if (command == L"help" || command == L"--help" || command == L"-h")
+		const std::string command(argv[1]);
+		if (command == "cook") result.Operation = Command::Cook;
+		else if (command == "build") result.Operation = Command::Build;
+		else if (command == "help" || command == "--help" || command == "-h")
 			return result;
 		else
 		{
@@ -110,26 +112,26 @@ namespace {
 		}
 		for (int index = 2; index < argc; ++index)
 		{
-			const std::wstring option(argv[index]);
+			const std::string option(argv[index]);
 			auto value = [&]() -> std::optional<std::filesystem::path>
 			{
 				if (++index >= argc) return std::nullopt;
-				return std::filesystem::path(argv[index]);
+				return TomCat::UTF8ToPath(argv[index]);
 			};
-			if (option == L"--development") result.Profile = TomCat::ScriptBuildProfile::Development;
-            else if (option == L"--project")
+			if (option == "--development") result.Profile = TomCat::ScriptBuildProfile::Development;
+            else if (option == "--project")
 			{
 				const auto parsed = value();
 				if (!parsed) { result.Error = "--project requires a path"; return result; }
 				result.ProjectPath = *parsed;
 			}
-			else if (option == L"--output")
+			else if (option == "--output")
 			{
 				const auto parsed = value();
 				if (!parsed) { result.Error = "--output requires a path"; return result; }
 				result.OutputPath = *parsed;
 			}
-			else if (option == L"--template")
+			else if (option == "--template")
 			{
 				const auto parsed = value();
 				if (!parsed) { result.Error = "--template requires a path"; return result; }
@@ -338,14 +340,21 @@ namespace {
 
 }
 
-int wmain(int argc, wchar_t** argv)
+#ifdef TC_PLATFORM_WINDOWS
+int wmain(int argc, wchar_t** nativeArgs)
+#else
+int main(int argc, char** nativeArgs)
+#endif
 {
+    std::vector<std::string> argv;
+    for (int index = 0; index < argc; ++index)
+        argv.push_back(TomCat::PathToUTF8(std::filesystem::path(nativeArgs[index])));
 	// Keep the caller's working directory intact so relative project/output/
 	// template arguments retain their command-line meaning. Engine-owned package
 	// assets are resolved independently from the CLI executable/runtime root.
 	TomCat::ApplicationPaths::SetRuntimePackageRoot(ExecutableDirectory());
 	TomCat::Log::Init(TomCat::ApplicationProduct::Unknown);
-	const Options options = ParseOptions(argc, argv);
+	const Options options = ParseOptions(argv);
 	int exitCode = 0;
 	if (!options.Error.empty())
 	{

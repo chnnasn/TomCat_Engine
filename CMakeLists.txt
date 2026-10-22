@@ -26,6 +26,8 @@ endforeach()
 
 find_package(Threads REQUIRED)
 find_package(OpenGL REQUIRED)
+find_package(OpenAL REQUIRED)
+find_program(DOTNET_EXECUTABLE dotnet REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc_combined)
@@ -77,7 +79,7 @@ target_compile_definitions(TomCat PUBLIC TC_PLATFORM_LINUX=1 GLFW_INCLUDE_NONE
     "$<$<CONFIG:Debug>:TC_DEBUG>" "$<$<NOT:$<CONFIG:Debug>>:TC_RELEASE>"
     PRIVATE _GNU_SOURCE)
 target_link_libraries(TomCat PUBLIC tc_box2d tc_yaml tc_glad tc_imgui glfw
-    Threads::Threads OpenGL::GL Vulkan::Vulkan ${CMAKE_DL_LIBS}
+    Threads::Threads OpenGL::GL OpenAL::OpenAL Vulkan::Vulkan ${CMAKE_DL_LIBS}
     PkgConfig::SHADERC glslang::SPIRV glslang::glslang SPIRV-Tools-opt SPIRV-Tools-static
     "${SPIRV_CROSS_GLSL}" "${SPIRV_CROSS_CORE}")
 
@@ -96,6 +98,35 @@ endfunction()
 tc_application(TomCatInut "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/src" Editor "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/Packages")
 tc_application(Manager "${CMAKE_CURRENT_SOURCE_DIR}/Builder/Manager/src" Hub "${CMAKE_CURRENT_SOURCE_DIR}/Builder/Manager/Packages")
 tc_application(TomCatPlayer "${CMAKE_CURRENT_SOURCE_DIR}/Player/TomCatPlayer/src" Player "")
+
+set(TC_EDITOR_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/src")
+add_library(tc_build_tools STATIC
+    "${TC_EDITOR_SRC}/Scripting/ScriptProjectCompiler.cpp"
+    "${TC_EDITOR_SRC}/Scripting/ScriptMetadataCache.cpp"
+    "${TC_EDITOR_SRC}/Player/PlayerBuilder.cpp")
+target_include_directories(tc_build_tools PUBLIC "${TC_EDITOR_SRC}")
+target_link_libraries(tc_build_tools PUBLIC TomCat)
+tc_application(TomCatCLI "${CMAKE_CURRENT_SOURCE_DIR}/Tools/TomCatCLI/src" CLI "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/Packages")
+target_link_libraries(TomCatCLI PRIVATE tc_build_tools)
+
+add_custom_target(tc_managed ALL
+    COMMAND "${DOTNET_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/Managed/TomCat.Managed.slnx"
+        --configuration Release --nologo -nodeReuse:false -p:UseSharedCompilation=false
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" VERBATIM)
+set(TC_MANAGED_OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/Managed/TomCat.ScriptHost/bin/Release/net10.0")
+set(TC_MANAGED_FILES
+    "${TC_MANAGED_OUTPUT}/TomCat.Managed.dll"
+    "${TC_MANAGED_OUTPUT}/TomCat.ScriptHost.dll"
+    "${TC_MANAGED_OUTPUT}/TomCat.ScriptHost.runtimeconfig.json"
+    "${TC_MANAGED_OUTPUT}/TomCat.ScriptHost.deps.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Managed/TomCat.ScriptGenerator/bin/Release/net10.0/TomCat.ScriptGenerator.dll")
+foreach(app TomCatInut TomCatCLI)
+    add_dependencies(${app} tc_managed)
+    add_custom_target(${app}_managed ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${app}>/Managed"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TC_MANAGED_FILES} "$<TARGET_FILE_DIR:${app}>/Managed"
+        DEPENDS ${app} tc_managed VERBATIM)
+endforeach()
 
 include(CTest)
 if(BUILD_TESTING)
