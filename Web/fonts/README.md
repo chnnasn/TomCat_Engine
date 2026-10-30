@@ -1,4 +1,4 @@
-# Browser CJK font
+# Web and Linux UI CJK font
 
 English | [简体中文](README.zh-CN.md) · Reviewed 2026-10-16 · [Web guide](../README.md)
 
@@ -9,8 +9,10 @@ under the SIL Open Font License 1.1 in `LICENSE`.
 - Downloaded: 2026-09-16
 - SHA-256: `faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9`
 
-The Web editor merges its CJK glyphs into the existing OpenSans fonts. Desktop
-font selection is unchanged. This avoids redistributing Windows system fonts.
+Web and Linux ImGui UIs merge its CJK glyphs into the existing OpenSans fonts.
+Windows system-font selection is unchanged. Linux CMake stages the font and
+`LICENSE` under `Packages/fonts/noto/` next to the Hub, Editor and CLI, avoiding
+language-pack dependencies and redistribution of Windows system fonts.
 
 `Web/CMakeLists.txt` preloads this directory at `/WebFonts` in the standalone
 editor module. `Managed/TomCat.WebHost/TomCat.WebHost.csproj` includes the same
@@ -24,5 +26,7 @@ Get-FileHash Web/fonts/NotoSansSC-Regular.otf -Algorithm SHA256
 The local SHA-256 and native/managed `/WebFonts` mounts were checked again on 2026-10-16;
 the font bytes were not replaced. This font supplies editor ImGui glyphs. Game
 font assets and fallback chains are managed by the runtime font system separately.
+The 2026-10-30 Linux Hub missing-glyph fix reuses the same font bytes and SHA-256;
+see the [Linux build and glyph regression guide](../../docs/LINUX.zh-CN.md).
 Chinese glyph rendering does not establish browser IME composition support;
 see the [Web limitations](../README.md).

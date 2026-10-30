@@ -306,6 +306,9 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
       <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\ImGui\ImGuiFonts.h">
+      <Filter>src\TomCat\ImGui</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Math\Math.h">
       <Filter>src\TomCat\Math</Filter>
     </ClInclude>
@@ -1932,6 +1935,9 @@
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp">
+      <Filter>src\TomCat\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\ImGui\ImGuiFonts.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Math\Math.cpp">

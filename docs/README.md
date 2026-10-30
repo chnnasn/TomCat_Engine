@@ -97,7 +97,7 @@ bash Scripts/Linux_Build.sh
 TC_BUILD_TYPE=Debug TC_BUILD_DIR="$PWD/build/linux/debug" bash Scripts/Linux_Build.sh
 ```
 
-Linux 脚本包含 C# 构建、Player 模板生成和 11 项 CTest；CI 使用 [.github/workflows/linux.yml](../.github/workflows/linux.yml)，产物下载和验收范围见 [Linux CI](LINUX.zh-CN.md#ci-与验收)。
+Linux 脚本包含 C# 构建、Player 模板生成和 13 项 CTest（含 Hub/Editor 中文字形检查）；CI 使用 [.github/workflows/linux.yml](../.github/workflows/linux.yml)，产物下载和验收范围见 [Linux CI](LINUX.zh-CN.md#ci-与验收)。
 Windows CI 使用 [.github/workflows/regressions.yml](../.github/workflows/regressions.yml)。
 若使用本机 Edge，可设置 `$env:TOMCAT_BROWSER_CHANNEL = 'msedge'`，无需下载测试 Chromium；仍需安装 `Web/tests` 的 Playwright 依赖。
 Web 协议回归不验证浏览器绘制、宿主持久化、中文输入法或真实手柄，需另做浏览器验收。

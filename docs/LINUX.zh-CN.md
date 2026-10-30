@@ -42,6 +42,18 @@ TC_RENDERER=opengl ./build/linux/bin/Hub/Manager
 ```
 
 Editor/Hub 的 Packages 和 Editor/CLI 的 Managed 自动复制到程序旁边。
+Linux 构建还把仓库的 `Web/fonts/NotoSansSC-Regular.otf` 与 OFL `LICENSE`
+复制到各程序的 `Packages/fonts/noto/`。Hub 与 Editor 使用这份字体补充中文及符号，
+不依赖 `C:/Windows/Fonts` 或用户安装的中文语言包。分发程序时须保留整个 `Packages` 目录。
+
+如果旧版 Hub 的中文显示为问号，更新到包含字体修复的源码后，在已有构建目录执行：
+
+```bash
+cmake --build build/linux --target Manager --parallel 2
+TC_RENDERER=opengl ./build/linux/bin/Hub/Manager
+```
+
+单独构建 `Manager` 也会补齐字体和许可证；仅安装系统中文字体不能修复旧程序的 Windows 字体路径。
 Editor 菜单导出默认选择旁边的 `Packages/PlayerTemplates/linux-x64`。
 CLI 也支持 `cook --project ... --output ...`，导出默认编译 Production C#。
 模板可单独重建：
@@ -72,11 +84,12 @@ CI 使用同一后端的 [OpenAL 回环扩展](https://openal-soft.org/openal-ex
 ## CI 与验收
 
 [Linux native 工作流](https://github.com/chnnasn/TomCat_Engine/actions/workflows/linux.yml)
-由 `main` / `dev_linux` push、PR 或手动触发，在 Ubuntu 24.04 分别构建 Debug/Release，每种配置运行 11 项 CTest。测试覆盖：
+由 `main` / `dev_linux` push、PR 或手动触发，在 Ubuntu 24.04 分别构建 Debug/Release，每种配置运行 13 项 CTest。测试覆盖：
 
 - InputRegression、SaveDataRegression 和产品版本/身份查询。
 - LinuxPlatformRegression：XDG 路径、参数传递、子进程失败/超时、文件锁和崩溃释放。
 - AudioRegression 与 LinuxAudioRegression：引擎音频逻辑及 OpenAL 的实际 PCM 输出。
+- ManagerChineseFonts / TomCatInutChineseFonts：从打包后的程序目录构建真实字体图集，检查 Hub 源码中的中文在粗体/常规字体、Hub/Editor 字号和 DPI 重建后均有实际字形，防止静默回退成问号。
 - LinuxRuntimeRegression：中文/空格项目路径、C# 编译和元数据、MSBuild 隔离、失败
   构建恢复、CLI 导出；从无 SDK、源文件被移走的环境验证私有 .NET，执行 C#
   Awake/Update 与原生 Entity API，再在 Xvfb/Mesa 下运行带窗口的 Player。

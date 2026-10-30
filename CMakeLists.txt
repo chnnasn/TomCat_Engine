@@ -104,6 +104,19 @@ function(tc_application target source output packages)
     if(packages)
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${packages}" "$<TARGET_FILE_DIR:${target}>/Packages")
+        # Reuse the checked-in OFL font; Linux must not depend on Windows fonts
+        # or on a language pack being installed on the user's desktop.
+        # A dependency stages fonts even for --target Manager and repairs them
+        # when the executable is already up to date.
+        set(font_directory "${CMAKE_BINARY_DIR}/bin/${output}/Packages/fonts/noto")
+        add_custom_target(${target}_fonts
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${font_directory}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/Web/fonts/NotoSansSC-Regular.otf"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Web/fonts/LICENSE"
+                "${font_directory}"
+            VERBATIM)
+        add_dependencies(${target} ${target}_fonts)
     endif()
 endfunction()
 
@@ -167,4 +180,13 @@ if(BUILD_TESTING)
     set_tests_properties(LinuxRuntimeRegression PROPERTIES TIMEOUT 600
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         ENVIRONMENT "TC_RENDERER=opengl;LIBGL_ALWAYS_SOFTWARE=1;ALSOFT_DRIVERS=null")
+    add_executable(ImGuiFontRegression Tests/ImGuiFontRegression/src/ImGuiFontRegression.cpp)
+    target_link_libraries(ImGuiFontRegression PRIVATE TomCat)
+    add_dependencies(ImGuiFontRegression Manager TomCatInut)
+    foreach(app Manager TomCatInut)
+        add_test(NAME ${app}ChineseFonts COMMAND ImGuiFontRegression
+            "${CMAKE_CURRENT_SOURCE_DIR}/Builder/Manager/src/ExampleLayer.cpp")
+        set_tests_properties(${app}ChineseFonts PROPERTIES
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:${app}>" TIMEOUT 60)
+    endforeach()
 endif()
