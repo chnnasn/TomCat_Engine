@@ -189,4 +189,13 @@ if(BUILD_TESTING)
         set_tests_properties(${app}ChineseFonts PROPERTIES
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:${app}>" TIMEOUT 60)
     endforeach()
+    find_package(X11 REQUIRED)
+    add_executable(WindowIconRegression Tests/WindowIconRegression/src/WindowIconRegression.cpp)
+    target_link_libraries(WindowIconRegression PRIVATE TomCat X11::X11)
+    add_dependencies(WindowIconRegression Manager TomCatInut)
+    add_test(NAME LinuxWindowIcons COMMAND "${XVFB_RUN}" -a "$<TARGET_FILE:WindowIconRegression>"
+        "$<TARGET_FILE_DIR:Manager>/Packages/Resources/Icons/HubLogo.ico"
+        "$<TARGET_FILE_DIR:TomCatInut>/Packages/Resources/Icons/Logo.ico")
+    set_tests_properties(LinuxWindowIcons PROPERTIES TIMEOUT 60
+        ENVIRONMENT "TC_RENDERER=opengl;LIBGL_ALWAYS_SOFTWARE=1")
 endif()

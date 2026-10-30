@@ -1,6 +1,7 @@
 #include "tcpch.h"
 
 #include "WindowsWindow.h"
+#include "WindowIcon.h"
 
 #include "TomCat/Events/KeyEvent.h"
 #include "TomCat/Events/MouseEvent.h"
@@ -12,12 +13,9 @@
 #include "TomCat/Renderer/RendererAPI.h"
 #include "platform/Vulkan/VulkanSupport.h"
 
-#include <stb_image.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <fstream>
-#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -126,23 +124,6 @@ namespace TomCat {
 	static void GLFWErrorCallback(int error, const char* description)
 	{
 		TC_Core_Error("GLFW error ({0}): {1}", error, description);
-	}
-
-	static stbi_uc* LoadImageFile(const std::filesystem::path& path, int* width, int* height,
-		int* channels, int desiredChannels)
-	{
-		std::ifstream input(path, std::ios::binary | std::ios::ate);
-		std::streamoff size = -1;
-		if (input)
-			size = static_cast<std::streamoff>(input.tellg());
-		if (size <= 0 || size > std::numeric_limits<int>::max())
-			return nullptr;
-		std::vector<stbi_uc> encoded(static_cast<size_t>(size));
-		input.seekg(0, std::ios::beg);
-		if (!input.read(reinterpret_cast<char*>(encoded.data()), static_cast<std::streamsize>(size)))
-			return nullptr;
-		return stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()),
-			width, height, channels, desiredChannels);
 	}
 
 	WindowsWindow::WindowsWindow(const WindowProps& props) 
@@ -415,16 +396,14 @@ namespace TomCat {
 
 			if (!iconLoaded)
 			{
-				int width, height, channels;
-				stbi_uc* pixels = LoadImageFile(props.IconPath, &width, &height, &channels, 4);
-				if (pixels)
+				auto images = LoadWindowIcon(props.IconPath);
+				if (!images.empty())
 				{
-					GLFWimage icon;
-					icon.width = width;
-					icon.height = height;
-					icon.pixels = pixels;
-					glfwSetWindowIcon(m_Window, 1, &icon);
-					stbi_image_free(pixels);
+					std::vector<GLFWimage> icons;
+					icons.reserve(images.size());
+					for (auto& image : images)
+						icons.push_back({image.Width, image.Height, image.Pixels.data()});
+					glfwSetWindowIcon(m_Window, static_cast<int>(icons.size()), icons.data());
 					iconLoaded = true;
 				}
 			}

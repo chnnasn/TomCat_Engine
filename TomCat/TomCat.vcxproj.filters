@@ -552,6 +552,9 @@
     <ClInclude Include="src\platform\Window\WindowsWindow.h">
       <Filter>src\platform\Window</Filter>
     </ClInclude>
+    <ClInclude Include="src\platform\Window\WindowIcon.h">
+      <Filter>src\platform\Window</Filter>
+    </ClInclude>
     <ClInclude Include="src\tcpch.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -2151,6 +2154,9 @@
       <Filter>src\platform\Window</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Window\WindowsWindow.cpp">
+      <Filter>src\platform\Window</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Window\WindowIcon.cpp">
       <Filter>src\platform\Window</Filter>
     </ClCompile>
     <ClCompile Include="src\tcpch.cpp">

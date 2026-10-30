@@ -54,6 +54,8 @@ TC_RENDERER=opengl ./build/linux/bin/Hub/Manager
 ```
 
 单独构建 `Manager` 也会补齐字体和许可证；仅安装系统中文字体不能修复旧程序的 Windows 字体路径。
+窗口图标在 Linux 直接解析 ICO 内的 PNG 或未压缩 32 位 DIB 帧，再将 RGBA 图像交给 GLFW；
+Hub 的多尺寸 `HubLogo.ico` 与 Editor 的 `Logo.ico` 无需转换，原有 PNG 图标也可使用。
 Editor 菜单导出默认选择旁边的 `Packages/PlayerTemplates/linux-x64`。
 CLI 也支持 `cook --project ... --output ...`，导出默认编译 Production C#。
 模板可单独重建：
@@ -84,12 +86,13 @@ CI 使用同一后端的 [OpenAL 回环扩展](https://openal-soft.org/openal-ex
 ## CI 与验收
 
 [Linux native 工作流](https://github.com/chnnasn/TomCat_Engine/actions/workflows/linux.yml)
-由 `main` / `dev_linux` push、PR 或手动触发，在 Ubuntu 24.04 分别构建 Debug/Release，每种配置运行 13 项 CTest。测试覆盖：
+由 `main` / `dev_linux` push、PR 或手动触发，在 Ubuntu 24.04 分别构建 Debug/Release，每种配置运行 14 项 CTest。测试覆盖：
 
 - InputRegression、SaveDataRegression 和产品版本/身份查询。
 - LinuxPlatformRegression：XDG 路径、参数传递、子进程失败/超时、文件锁和崩溃释放。
 - AudioRegression 与 LinuxAudioRegression：引擎音频逻辑及 OpenAL 的实际 PCM 输出。
 - ManagerChineseFonts / TomCatInutChineseFonts：从打包后的程序目录构建真实字体图集，检查 Hub 源码中的中文在粗体/常规字体、Hub/Editor 字号和 DPI 重建后均有实际字形，防止静默回退成问号。
+- LinuxWindowIcons：读取打包后的 Hub/Editor ICO，校验多尺寸图像、像素和透明度、无效输入处理；在 Xvfb/Mesa 下创建窗口并逐像素核对 X11 `_NET_WM_ICON` 属性。
 - LinuxRuntimeRegression：中文/空格项目路径、C# 编译和元数据、MSBuild 隔离、失败
   构建恢复、CLI 导出；从无 SDK、源文件被移走的环境验证私有 .NET，执行 C#
   Awake/Update 与原生 Entity API，再在 Xvfb/Mesa 下运行带窗口的 Player。
