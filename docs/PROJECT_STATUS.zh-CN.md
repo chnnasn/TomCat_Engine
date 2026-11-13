@@ -1,13 +1,13 @@
 # 项目状态与验收
 
-记录核对：2026-10-22。本文是当前交付、分支边界和验收状态的汇总入口；操作细节由专题指南维护，历史方案和原始验收保留在各自文档中。
+记录核对于 2026-11-13。本文汇总当前交付、分支边界和验收状态。操作细节由专题指南维护，历史方案和原始验收保留在各自文档中。
 
 ## 当前基线
 
 - 产品版本 **0.6.0**，版本常量以 [Version.h](../TomCat/src/TomCat/Core/Version.h) 为准。
 - `main` 是功能集成主线。历史整理前代码基线为 `b04d81d8`，恢复发布关联后对应 `17b11340`（首次整理为 `65f38cfb`）；这些节点的 Git tree 完全相同。记录与发布关联整理完成于 `dc684bc8`，随后 [9a9a303a](https://github.com/chnnasn/TomCat_Engine/commit/9a9a303a56893d50eb02a6280603324a6741f9cc) 合入 Linux 初步支持，已包含源码增量。
 - 六个发布标签已重新关联到主线可达的等价发布快照，源码树与原版本一致，Release 附件保留。不能用版本号相同推断当前 `main` 与 `v0.6.0` 内容相同。提交映射、标签目标与同步方式见[项目演进](PROJECT_HISTORY.zh-CN.md#发布标签)。
-- Windows x64 使用 Vulkan 1.2 优先、OpenGL 4.6 回退；Linux x86_64 初步支持以 Ubuntu 24.04、X11/XWayland 和 OpenGL 4.5+ 为目标。WebGL2/.NET browser-wasm 是实验目标。主线使用 Box2D 和 EnTT，专项分支能力单独记录。
+- Windows x64 使用 Vulkan 1.2 优先、OpenGL 4.6 回退。Linux x86_64 支持 Ubuntu 24.04、X11/XWayland 下的 Vulkan 1.2 和 OpenGL 4.5+。WebGL2/.NET browser-wasm 是实验目标。主线使用 Box2D 和 EnTT，专项分支能力单独记录。
 
 ## 已交付能力
 
@@ -48,14 +48,14 @@
 | 待性能复测 | 独占目标机器重跑 soak；补真实 C#、资源上传、重物理与 OS Present 工作负载 |
 | 待人工/设备验收 | 外部 IDE 断点/Watch/调用栈，真实中文/日文 IME、多屏 DPI、手柄、物理音频输出与跨浏览器覆盖 |
 | Linux 待桌面验收 | Editor 完整操作、真实 GPU/显示器、Zenity、扬声器/耳机、设备断开重连及 PulseAudio/PipeWire/ALSA 路由；CI 的 Xvfb/Mesa 与 OpenAL 回环不能代替这些检查 |
-| Linux 待适配 | Vulkan 探测、Wayland 原生后端、ARM64、IME 预编辑/字体回退、崩溃转储、外部 C# 编辑器启动及完整 Editor 发行包 |
+| Linux 待适配 | Wayland 原生后端、ARM64、IME 预编辑/字体回退、崩溃转储、外部 C# 编辑器启动及完整 Editor 发行包 |
 | 已实现但有边界 | 场景与纹理预算为协作式软预算；叠加/持久实体合并仍有原子事务。虚拟列表限纵向固定行高；非 Windows 不具备完整 ICU/IME 行为 |
 | 待实现 | Web 流式音频；GPU draw-call 明细和托管堆对象归属分析；独立主题资产；完整移动 Player；主线生产级 3D 工作流 |
 | 后端范围外 | Vulkan MSAA、独立传输队列和异步拾取等见 [RHI 限制](RHI_VULKAN.zh-CN.md#当前能力与限制)，不以“RHI 已集成”推断全部图形能力完成 |
 
 ## 专项分支
 
-以下是 2026-10-22 从远端读取的开发分支快照；分支引用保留，是否已集成按功能增量核对。
+以下开发分支快照核对于 2026-11-13。分支引用保留，集成状态按功能增量核对。
 
 | 分支 | 核对时提交 | 专项增量及与主线的关系 |
 | --- | --- | --- |

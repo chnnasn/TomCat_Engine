@@ -29,6 +29,28 @@ namespace TomCat {
 
 		const std::vector<ModelSubmesh>& GetSubmeshes() const { return m_Submeshes; }
 		const std::string& GetPath() const { return m_Path; }
+        bool GetBounds(glm::vec3& minimum, glm::vec3& maximum) const
+        {
+            bool hasBounds = false;
+            for (const ModelSubmesh& submesh : m_Submeshes)
+            {
+                glm::vec3 submeshMinimum, submeshMaximum;
+                if (!submesh.Mesh || !submesh.Mesh->GetBounds(submeshMinimum, submeshMaximum))
+                    continue;
+                if (!hasBounds)
+                {
+                    minimum = submeshMinimum;
+                    maximum = submeshMaximum;
+                    hasBounds = true;
+                }
+                else
+                {
+                    minimum = glm::min(minimum, submeshMinimum);
+                    maximum = glm::max(maximum, submeshMaximum);
+                }
+            }
+            return hasBounds;
+        }
 
 	private:
 		std::vector<ModelSubmesh> m_Submeshes;

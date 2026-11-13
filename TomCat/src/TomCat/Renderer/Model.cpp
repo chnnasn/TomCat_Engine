@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "TomCat/Renderer/Model.h"
+#include "TomCat/Utils/PathUtils.h"
 
 #ifndef TC_PLATFORM_WEB
 #include <assimp/Importer.hpp>
@@ -81,8 +82,8 @@ namespace TomCat {
 				aiString texPath;
 				if (material->GetTexture(aiTextureType_DIFFUSE, 0, &texPath) == AI_SUCCESS)
 				{
-					std::filesystem::path p = std::filesystem::path(baseDir) / texPath.C_Str();
-					Ref<Texture2D> tex = Texture2D::Create(p.string());
+					std::filesystem::path p = UTF8ToPath(baseDir) / UTF8ToPath(texPath.C_Str());
+					Ref<Texture2D> tex = Texture2D::Create(PathToUTF8(p));
 					if (tex && tex->IsLoaded())
 					{
 						sub.DiffuseTexture = tex;
@@ -143,7 +144,7 @@ namespace TomCat {
 
 		Ref<Model> model = CreateRef<Model>();
 		model->m_Path = filepath;
-		std::string baseDir = std::filesystem::path(filepath).parent_path().string();
+		std::string baseDir = PathToUTF8(UTF8ToPath(filepath).parent_path());
 		ProcessNode(scene->mRootNode, scene, baseDir, glm::mat4(1.0f), model->m_Submeshes);
 		return model;
 #endif

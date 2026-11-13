@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "MeshArtifact.h"
+#include "TomCat/Utils/PathUtils.h"
 
 #ifndef TC_PLATFORM_WEB
 #include <assimp/Importer.hpp>
@@ -33,13 +34,13 @@ namespace TomCat {
 			ModelSourceIO(std::filesystem::path path, std::span<const uint8_t> bytes, std::vector<std::filesystem::path>* paths = nullptr)
 				: m_Path(path.lexically_normal()), m_Bytes(bytes), m_Paths(paths) {}
 			bool Exists(const char* path) const override {
-				return std::filesystem::path(path).lexically_normal() == m_Path || m_Default.Exists(path);
+				return UTF8ToPath(path).lexically_normal() == m_Path || m_Default.Exists(path);
 			}
 			Assimp::IOStream* Open(const char* path, const char* mode = "rb") override {
-				if (std::filesystem::path(path).lexically_normal() == m_Path)
+				if (UTF8ToPath(path).lexically_normal() == m_Path)
 					return new Assimp::MemoryIOStream(m_Bytes.data(), m_Bytes.size());
 				auto* stream = m_Default.Open(path, mode);
-				if (stream && m_Paths) m_Paths->push_back(std::filesystem::path(path).lexically_normal());
+				if (stream && m_Paths) m_Paths->push_back(UTF8ToPath(path).lexically_normal());
 				return stream;
 			}
 			char getOsSeparator() const override { return m_Default.getOsSeparator(); }
@@ -421,7 +422,7 @@ namespace TomCat {
 		if (extension == ".obj" && std::string_view(reinterpret_cast<const char*>(source.data()), source.size()).find("mtllib") == std::string_view::npos) return true;
 		Assimp::Importer importer;
 		importer.SetIOHandler(new ModelSourceIO(sourcePath, source, &paths));
-		const auto* scene = importer.ReadFile(sourcePath.string(), aiProcess_Triangulate);
+		const auto* scene = importer.ReadFile(PathToUTF8(sourcePath), aiProcess_Triangulate);
 		if (!scene) { error = importer.GetErrorString(); return false; }
 		for (uint32_t m = 0; m < scene->mNumMaterials; ++m) {
 			aiString texture;
@@ -429,7 +430,7 @@ namespace TomCat {
 			if (material->GetTexture(aiTextureType_DIFFUSE, 0, &texture) != AI_SUCCESS)
 				material->GetTexture(aiTextureType_BASE_COLOR, 0, &texture);
 			if (texture.length && !scene->GetEmbeddedTexture(texture.C_Str()))
-				paths.push_back((sourcePath.parent_path() / texture.C_Str()).lexically_normal());
+				paths.push_back((sourcePath.parent_path() / UTF8ToPath(texture.C_Str())).lexically_normal());
 		}
 		std::sort(paths.begin(), paths.end());
 		paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -452,7 +453,7 @@ namespace TomCat {
 			Assimp::Importer importer;
 			importer.SetIOHandler(new ModelSourceIO(sourcePath, source));
 			// Pre-transform bakes node hierarchy into vertices, matching the original Model loader.
-			const auto* scene = importer.ReadFile(sourcePath.string(), aiProcess_Triangulate
+			const auto* scene = importer.ReadFile(PathToUTF8(sourcePath), aiProcess_Triangulate
 				| aiProcess_JoinIdenticalVertices | aiProcess_GenNormals | aiProcess_PreTransformVertices | aiProcess_FlipUVs);
 			if (!scene || !scene->HasMeshes()) { error = importer.GetErrorString(); return false; }
 			std::ostringstream obj;
@@ -485,7 +486,7 @@ namespace TomCat {
 						}
 						else if (!embedded)
 						{
-							const auto path = sourcePath.parent_path() / texture.C_Str();
+							const auto path = sourcePath.parent_path() / UTF8ToPath(texture.C_Str());
 							std::error_code ec;
 							const auto size = std::filesystem::file_size(path, ec);
 							if (!ec && size <= 64 * 1024 * 1024) {

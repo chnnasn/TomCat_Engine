@@ -41,7 +41,7 @@
 
 ## 构建和验证
 
-先执行 `git submodule update --init --recursive`。本机需要 VS 2022 C++ 工具链、CMake、.NET 10；TomCat 的 prebuild 会构建 Assimp，原生应用的 postbuild 会复制其 DLL，Player 模板和 Editor 打包流程也包含该依赖。
+先执行 `git submodule update --init --recursive`。本机需要 VS 2022 或更新版本的 C++ 工具链、v143、支持该 VS 版本的 CMake，以及 .NET 10。TomCat 的 prebuild 会构建 Assimp，原生应用的 postbuild 会复制其 DLL，Player 模板和 Editor 打包流程也包含该依赖。
 
 ```powershell
 Scripts/Run-Regressions.ps1 -Configuration Release
@@ -50,6 +50,6 @@ Scripts/Run-RHIRegression.ps1 -Backend vulkan -Validation
 
 Linux 依赖与构建入口见 [Linux 使用说明](LINUX.zh-CN.md)。CMake 的 CTest 包含无窗口 3D 回归，以及通过 Xvfb 运行的 OpenGL、Vulkan 3D 绘制回归。
 
-默认 3D 回归检查六种图元、场景、Play 副本、Prefab、Cook 引用、属性约束、glTF 节点与材质 Artifact。`--gpu` 检查实体拾取、禁用组件、2D/3D 相机缓冲切换、灯光方向与锥角、阴影、PBR 参数、天空拾取、HDR 采样和渲染状态恢复。使用 `TC_RENDERER` 选择后端，`--expect-backend opengl` 或 `--expect-backend vulkan` 校验实际选用的后端。
+默认 3D 回归检查六种图元、场景、Play 副本、Prefab、Cook 引用、属性约束、glTF 节点与材质 Artifact、中文模型路径、外部 buffer 更新和离线包加载。`--gpu` 检查模型包围盒、实体拾取、禁用组件、2D/3D 相机缓冲切换、灯光方向与锥角、阴影、PBR 参数、天空拾取、HDR 采样和渲染状态恢复。使用 `TC_RENDERER` 选择后端，`--expect-backend opengl` 或 `--expect-backend vulkan` 校验实际选用的后端。
 
 HDR Artifact 使用独立格式编号 7，保留主线 BC1、BC5、ASTC4x4、ETC2RGBA8 的编号与采样设置。纹理导入器版本更新为 7，以便已有项目重新生成 HDR 缓存。

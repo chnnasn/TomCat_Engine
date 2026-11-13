@@ -101,7 +101,7 @@
       <AdditionalOptions>/DELAYLOAD:vulkan-1.dll %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y "E:\Github\TomCat_Engine\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
+      <Command>copy /B /Y "$(ProjectDir)..\..\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
 if errorlevel 1 exit /b 1
 if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Debug-windows-x86_64/Manager\" &gt; nul
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
@@ -138,7 +138,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <AdditionalOptions>/DELAYLOAD:vulkan-1.dll %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y "E:\Github\TomCat_Engine\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
+      <Command>copy /B /Y "$(ProjectDir)..\..\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
 if errorlevel 1 exit /b 1
 if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Release-windows-x86_64/Manager\" &gt; nul
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul
@@ -175,7 +175,7 @@ copy /Y "$(ProjectDir)imgui.ini" "$(OutDir)imgui.ini" &gt; nul</Command>
       <AdditionalOptions>/DELAYLOAD:vulkan-1.dll %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y "E:\Github\TomCat_Engine\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
+      <Command>copy /B /Y "$(ProjectDir)..\..\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
 if errorlevel 1 exit /b 1
 if exist "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" copy /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "../bin/Dist-windows-x86_64/Manager\" &gt; nul
 if exist "$(ProjectDir)Packages" xcopy /E /Y /I "$(ProjectDir)Packages" "$(OutDir)Packages\" &gt; nul

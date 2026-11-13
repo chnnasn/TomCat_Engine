@@ -1,6 +1,7 @@
 #include "tcpch.h"
 #include "TomCat/Renderer/Mesh.h"
 #include "TomCat/Asset/MeshArtifact.h"
+#include "TomCat/Utils/PathUtils.h"
 
 #include <array>
 #include <glm/gtc/constants.hpp>
@@ -17,6 +18,16 @@ namespace TomCat {
 	Mesh::Mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
 	{
 		m_IndexCount = (uint32_t)indices.size();
+        if (!indices.empty())
+        {
+            m_BoundsMinimum = m_BoundsMaximum = vertices.at(indices.front()).Position;
+            for (uint32_t index : indices)
+            {
+                const glm::vec3& position = vertices.at(index).Position;
+                m_BoundsMinimum = glm::min(m_BoundsMinimum, position);
+                m_BoundsMaximum = glm::max(m_BoundsMaximum, position);
+            }
+        }
 
 		m_VertexArray = VertexArray::Create();
 
@@ -34,7 +45,8 @@ namespace TomCat {
 
 	Ref<Mesh> Mesh::LoadOBJ(const std::string& filepath)
 	{
-		std::ifstream file(filepath, std::ios::binary);
+        const std::filesystem::path sourcePath = UTF8ToPath(filepath);
+		std::ifstream file(sourcePath, std::ios::binary);
 		if (!file)
 		{
 			TC_Core_Error("Mesh::LoadOBJ: failed to open '{0}'", filepath);
@@ -44,7 +56,7 @@ namespace TomCat {
 		std::vector<uint8_t> bytes;
 		std::string error;
 		MeshArtifactView artifact;
-		if (!BuildMeshArtifact(source, filepath, bytes, error)
+		if (!BuildMeshArtifact(source, sourcePath, bytes, error)
 			|| !ParseMeshArtifact(bytes, artifact, error))
 		{
 			TC_Core_Error("Mesh::LoadOBJ: {0} ({1})", filepath, error);

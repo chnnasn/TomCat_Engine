@@ -22,7 +22,7 @@ Initial Linux x86_64 support is part of `main` as of [9a9a303a](https://github.c
 
 `main` integrates Windows desktop development, initial Linux support and the experimental Web target. Published tags remain fixed release snapshots; the current mainline contains additional changes beyond `v0.6.0`.
 
-Branch roles reviewed on **2026-10-22**. Build/toolchain, managed Web, Vulkan and the initial Linux port have been integrated into `main`. The table lists retained development branches; see [project status](docs/PROJECT_STATUS.zh-CN.md) for their integration boundaries.
+Branch roles reviewed on **2026-11-13**. Build/toolchain, managed Web, Vulkan, Linux support and static 3D have been integrated into `main`. The table lists retained development branches. See [project status](docs/PROJECT_STATUS.zh-CN.md) for their integration boundaries.
 
 | Branch | Purpose |
 | --- | --- |

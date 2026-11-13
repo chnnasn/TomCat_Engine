@@ -58,10 +58,7 @@ TomCatConsumerLinksDebug = {
 IncludeDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp/include"
 IncludeDir["AssimpBuild"] = "%{wks.location}/../TomCat/vendor/Assimp-build/include"
 table.insert(TomCatConsumerLinks, "%{wks.location}/../TomCat/vendor/Assimp-build/lib/Release/assimp-vc143-mt.lib")
-local assimpRuntime = path.join(_SCRIPT_DIR, "TomCat/vendor/Assimp-build/bin/Release/assimp-vc143-mt.dll")
-filter { "system:windows", "kind:ConsoleApp or WindowedApp" }
-postbuildcommands {
-    '{COPYFILE} "' .. assimpRuntime .. '" "$(TargetDir)assimp-vc143-mt.dll"',
+TomCatConsumerPostBuildCommands = {
+    '{COPYFILE} "$(ProjectDir)%{path.getrelative(prj.location, wks.location)}/../TomCat/vendor/Assimp-build/bin/Release/assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"',
     'if errorlevel 1 exit /b 1'
 }
-filter {}

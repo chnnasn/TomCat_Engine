@@ -4,6 +4,7 @@
 #include "TomCat/Renderer/Renderer.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/Renderer3D.h"
+#include "TomCat/Renderer/Model.h"
 #include "TomCat/Renderer/Framebuffer.h"
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Scene/Scene.h"
@@ -16,6 +17,7 @@
 #include "TomCat/Asset/MeshArtifact.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Project/Project.h"
+#include "TomCat/Utils/PathUtils.h"
 #include <fstream>
 #include <array>
 #include <cstring>
@@ -165,9 +167,11 @@ static void TestHDR()
     bytes.pop_back(); Check(!ParseTextureArtifact(bytes, view, error), "Truncated HDR accepted");
 }
 
+static const std::string ModelSource = R"MODEL({"asset":{"version":"2.0"},"buffers":[{"uri":"data:application/octet-stream;base64,AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAAAAAAD8AAAAAAAABAAIA","byteLength":42}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-0.5,-0.5,0],"max":[0.5,0.5,0]},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.3,0.5,0.7,1]}}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],"nodes":[{"mesh":0,"translation":[0,0,2]}],"scenes":[{"nodes":[0]}],"scene":0})MODEL";
+
 static void TestModelArtifact()
 {
-    const std::string source = R"MODEL({"asset":{"version":"2.0"},"buffers":[{"uri":"data:application/octet-stream;base64,AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAAAAAAD8AAAAAAAABAAIA","byteLength":42}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-0.5,-0.5,0],"max":[0.5,0.5,0]},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],"materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0.3,0.5,0.7,1]}}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],"nodes":[{"mesh":0,"translation":[0,0,2]}],"scenes":[{"nodes":[0]}],"scene":0})MODEL";
+    const std::string& source = ModelSource;
     std::vector<uint8_t> packed;
     std::string error;
     Check(BuildMeshArtifact({reinterpret_cast<const uint8_t*>(source.data()), source.size()}, "memory.gltf", packed, error), error);
@@ -179,16 +183,40 @@ static void TestModelArtifact()
     Check(std::abs(mesh.GetParts()[0].Color[0] - 0.3f) < 0.001f, "Model material color lost");
 
     struct Fixture {
-        std::filesystem::path Root = std::filesystem::temp_directory_path() / ("tomcat_3d_" + std::to_string(static_cast<uint64_t>(UUID())));
+        std::filesystem::path Root = std::filesystem::temp_directory_path()
+            / UTF8ToPath("tomcat_3d_模型_" + std::to_string(static_cast<uint64_t>(UUID())));
         ~Fixture() { AssetManager::Get().Shutdown(); std::error_code ignored; std::filesystem::remove_all(Root, ignored); }
     } fixture;
     auto& assets = AssetManager::Get();
     assets.Shutdown();
     std::filesystem::create_directories(fixture.Root / "Assets");
-    { std::ofstream file(fixture.Root / "Assets/model.gltf"); file << source; }
+    const auto modelPath = fixture.Root / "Assets" / UTF8ToPath("模型.gltf");
+    std::string externalSource = source;
+    const size_t bufferUri = externalSource.find("data:application/octet-stream;base64,");
+    const size_t bufferUriEnd = externalSource.find('"', bufferUri);
+    externalSource.replace(bufferUri, bufferUriEnd - bufferUri, "几何.bin");
+    { std::ofstream file(modelPath); file << externalSource; }
+    const auto writeGeometry = [&](float z)
+    {
+        const std::array<float, 9> positions{-0.5f, -0.5f, z, 0.5f, -0.5f, z, 0, 0.5f, z};
+        const std::array<uint16_t, 3> indices{0, 1, 2};
+        std::ofstream file(fixture.Root / "Assets" / UTF8ToPath("几何.bin"), std::ios::binary);
+        file.write(reinterpret_cast<const char*>(positions.data()), sizeof(positions));
+        file.write(reinterpret_cast<const char*>(indices.data()), sizeof(indices));
+    };
+    writeGeometry(0);
     Check(assets.Initialize(fixture.Root / "Assets", fixture.Root / "Library"), "Asset initialization failed");
-    const auto modelHandle = assets.ImportAsset(fixture.Root / "Assets/model.gltf");
+    const auto modelHandle = assets.ImportAsset(modelPath);
     Check(static_cast<uint64_t>(modelHandle) != 0, "Model not registered");
+    auto imported = assets.LoadMesh(modelHandle);
+    Check(imported.Succeeded() && imported.Asset.DecodeVertex(0, vertex)
+        && std::abs(vertex.Position[2] - 2.0f) < 0.001f,
+        "Unicode model path or external buffer failed to import");
+    writeGeometry(1);
+    auto refreshed = assets.LoadMesh(modelHandle);
+    Check(refreshed.Succeeded() && refreshed.Asset.DecodeVertex(0, vertex)
+        && std::abs(vertex.Position[2] - 3.0f) < 0.001f,
+        "External model buffer change reused stale geometry");
     auto hdr = HDRSource();
     { std::ofstream file(fixture.Root / "Assets/sky.hdr", std::ios::binary); file.write(reinterpret_cast<const char*>(hdr.data()), hdr.size()); }
     const auto skyHandle = assets.ImportAsset(fixture.Root / "Assets/sky.hdr");
@@ -207,7 +235,9 @@ static void TestModelArtifact()
     Check(assets.MountCookedPackage(package), "3D package mount failed");
     auto cooked = assets.LoadMesh(modelHandle);
     Check(cooked.Succeeded() && cooked.Asset.GetParts().size() == 1
-        && std::abs(cooked.Asset.GetParts()[0].Color[0] - 0.3f) < 0.001f, "Cooked model required authoring files or lost material");
+        && std::abs(cooked.Asset.GetParts()[0].Color[0] - 0.3f) < 0.001f
+        && cooked.Asset.DecodeVertex(0, vertex) && std::abs(vertex.Position[2] - 3.0f) < 0.001f,
+        "Cooked model required authoring files or lost material/updated geometry");
     auto cookedSky = assets.LoadImportedArtifact(skyHandle); TextureArtifactView skyView;
     Check(cookedSky.Succeeded() && ParseTextureArtifact(cookedSky.Artifact.Bytes, skyView, error)
         && skyView.Format == TextureArtifactFormat::RGBA32F, "Cook lost HDR panorama dependency");
@@ -260,6 +290,36 @@ static void TestSamples()
             && restored->GetEntityOrder().size() == entityCount, "Sample cook/load lost scene entities");
         assets.Shutdown();
     }
+}
+
+static void TestMeshBounds()
+{
+    glm::vec3 minimum, maximum;
+    auto cube = Mesh::CreateCube();
+    Check(cube->GetBounds(minimum, maximum) && minimum == glm::vec3(-0.5f) && maximum == glm::vec3(0.5f),
+        "Cube local bounds are incorrect");
+    auto plane = Mesh::CreateGroundPlane();
+    Check(plane->GetBounds(minimum, maximum) && minimum == glm::vec3(-5, 0, -5)
+        && maximum == glm::vec3(5, 0, 5), "Plane local bounds are incorrect");
+    const std::vector<Vertex> vertices{
+        {{-1, -2, 3}, {0, 0, 1}, {0, 0}},
+        {{2, -2, 3}, {0, 0, 1}, {1, 0}},
+        {{0, 4, 3}, {0, 0, 1}, {0, 1}},
+        {{1000, 1000, 1000}, {0, 0, 1}, {0, 0}}};
+    auto subset = Mesh::Create(vertices, {0, 1, 2});
+    Check(subset->GetBounds(minimum, maximum) && minimum == glm::vec3(-1, -2, 3)
+        && maximum == glm::vec3(2, 4, 3), "Unused vertices expanded the drawable mesh bounds");
+    std::vector<uint8_t> packed;
+    std::string error;
+    Check(BuildMeshArtifact({reinterpret_cast<const uint8_t*>(ModelSource.data()), ModelSource.size()},
+        "bounds.gltf", packed, error), error);
+    MeshArtifact artifact;
+    Check(DecodeMeshArtifact(packed, artifact, error), error);
+    auto model = Model::FromArtifact(artifact);
+    Check(model && model->GetBounds(minimum, maximum)
+        && glm::length(minimum - glm::vec3(-0.5f, -0.5f, 2)) < 0.0001f
+        && glm::length(maximum - glm::vec3(0.5f, 0.5f, 2)) < 0.0001f,
+        "Imported model bounds lost the baked node transform");
 }
 
 static void TestLightingPixels(const Ref<Framebuffer>& buffer)
@@ -376,6 +436,7 @@ static void TestRendering(const std::filesystem::path& demoPath = {}, bool primi
     Check(expectedBackend.empty() || backend == expectedBackend,
         "Expected backend " + expectedBackend + ", selected " + backend);
     std::cout << "Selected backend: " << backend << '\n';
+    TestMeshBounds();
     {
         FramebufferSpecification spec;
         spec.Width = spec.Height = 128;

@@ -40,6 +40,33 @@ if ($parseFailures.Count -gt 0) {
     throw "PowerShell syntax check failed:`n$($parseFailures -join "`n")"
 }
 
+$visualStudioInstances = @(
+    [pscustomobject]@{ installationVersion = '17.14.0'; installationPath = 'C:\VS2022' },
+    [pscustomobject]@{ installationVersion = '18.0.0'; installationPath = 'C:\VS2026' }
+)
+$visualStudioGenerators = @(
+    [pscustomobject]@{ name = 'Visual Studio 17 2022' },
+    [pscustomobject]@{ name = 'Visual Studio 18 2026' }
+)
+$selectedGenerator = Select-TomCatVisualStudioGenerator -Instances $visualStudioInstances -Generators $visualStudioGenerators
+if ($selectedGenerator.Generator -ne 'Visual Studio 18 2026' -or $selectedGenerator.InstallationPath -ne 'C:\VS2026') {
+    throw 'Assimp toolchain discovery did not select the latest installed Visual Studio supported by CMake.'
+}
+$selectedGenerator = Select-TomCatVisualStudioGenerator -Instances @($visualStudioInstances[1]) -Generators $visualStudioGenerators
+if ($selectedGenerator.Generator -ne 'Visual Studio 18 2026') {
+    throw 'Assimp toolchain discovery requires Visual Studio 2022 on a Visual Studio 2026-only machine.'
+}
+$selectedGenerator = Select-TomCatVisualStudioGenerator -Instances $visualStudioInstances -Generators @($visualStudioGenerators[0])
+if ($selectedGenerator.Generator -ne 'Visual Studio 17 2022' -or $selectedGenerator.InstallationPath -ne 'C:\VS2022') {
+    throw 'Assimp toolchain discovery failed to use an installed generator supported by an older CMake.'
+}
+foreach ($unsupportedInstances in @(@(), @($visualStudioInstances[1]))) {
+    $rejected = $false
+    try { Select-TomCatVisualStudioGenerator -Instances $unsupportedInstances -Generators @($visualStudioGenerators[0]) | Out-Null }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw 'Assimp toolchain discovery accepted an unavailable Visual Studio generator.' }
+}
+
 $toolManifestPath = Join-Path $PSScriptRoot 'ReleaseToolVersions.json'
 $toolManifest = Get-Content -LiteralPath $toolManifestPath -Raw | ConvertFrom-Json
 if ($toolManifest.schemaVersion -ne 1) { throw 'Unsupported ReleaseToolVersions.json schema.' }

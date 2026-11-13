@@ -45,12 +45,21 @@ namespace TomCat {
 
 		const Ref<VertexArray>& GetVertexArray() const { return m_VertexArray; }
 		uint32_t GetIndexCount() const { return m_IndexCount; }
+        bool GetBounds(glm::vec3& minimum, glm::vec3& maximum) const
+        {
+            if (m_IndexCount == 0) return false;
+            minimum = m_BoundsMinimum;
+            maximum = m_BoundsMaximum;
+            return true;
+        }
 
 		Mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
 
 	private:
 		Ref<VertexArray> m_VertexArray;
 		uint32_t m_IndexCount = 0;
+        glm::vec3 m_BoundsMinimum{0.0f};
+        glm::vec3 m_BoundsMaximum{0.0f};
 		std::string m_Name;
 	};
 

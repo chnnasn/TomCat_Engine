@@ -1125,7 +1125,7 @@ namespace TomCat {
 				if (!ComputeFileContentSHA256(path, hash, readError))
 					return Failure(AssetLoadStatus::SourceReadFailed, readError);
 				attempt.Snapshots[snapshotIndex].ModelSources.emplace_back(path, hash);
-				const std::string identity = path.lexically_relative(sourcePath.parent_path()).generic_string() + "\n" + hash;
+				const std::string identity = PathToUTF8(path.lexically_relative(sourcePath.parent_path())) + "\n" + hash;
 				dependencyKeys.push_back(ComputeContentSHA256(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(identity.data()), identity.size())));
 			}
 		}
