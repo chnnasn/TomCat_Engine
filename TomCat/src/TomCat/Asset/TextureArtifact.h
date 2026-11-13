@@ -19,7 +19,8 @@ namespace TomCat {
         BC1 = 3,
         BC5 = 4,
         ASTC4x4 = 5,
-        ETC2RGBA8 = 6
+        ETC2RGBA8 = 6,
+        RGBA32F = 7 // Linear HDR radiance, little-endian IEEE 754 floats.
 	};
 
 	struct TextureArtifactMip

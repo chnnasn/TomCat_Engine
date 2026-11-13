@@ -163,7 +163,8 @@ namespace TomCat {
         const GLenum mobileFormat = artifact.Format==TextureArtifactFormat::ASTC4x4 ? (artifact.SRGB ? 0x93D0 : 0x93B0) : (artifact.SRGB ? 0x9279 : 0x9278);
         const bool mobile = artifact.Format==TextureArtifactFormat::ASTC4x4 || artifact.Format==TextureArtifactFormat::ETC2RGBA8;
         if(mobile) m_Compressed=supports(mobileFormat);
-        m_InternalFormat = artifact.SRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+        m_InternalFormat = artifact.Format == TextureArtifactFormat::RGBA32F
+            ? GL_RGBA16F : (artifact.SRGB ? GL_SRGB8_ALPHA8 : GL_RGBA8);
         if (m_Compressed) {
             if (mobile) m_InternalFormat=mobileFormat;
             else if (artifact.Format == TextureArtifactFormat::BC5) m_InternalFormat = 0x8DBD; // GL_COMPRESSED_RG_RGTC2
@@ -194,7 +195,7 @@ namespace TomCat {
 			}
 
 			const uint8_t* pixels = mip.Bytes.data();
-			if (artifact.Format != TextureArtifactFormat::RGBA8)
+			if (artifact.Format != TextureArtifactFormat::RGBA8 && artifact.Format != TextureArtifactFormat::RGBA32F)
 			{
 				if (!DecompressTextureMip(mip, artifact.Format, decoded, error))
 				{
@@ -208,7 +209,7 @@ namespace TomCat {
 			}
 			glTextureSubImage2D(m_RendererID, static_cast<GLint>(level), 0, 0,
 				static_cast<GLsizei>(mip.Width), static_cast<GLsizei>(mip.Height),
-				m_DataFormat, GL_UNSIGNED_BYTE, pixels);
+				m_DataFormat, artifact.Format == TextureArtifactFormat::RGBA32F ? GL_FLOAT : GL_UNSIGNED_BYTE, pixels);
 		}
 
 		const bool nearest = artifact.Sampling.Filter == TextureFilterMode::Nearest;
@@ -224,7 +225,7 @@ namespace TomCat {
 			static_cast<GLint>(artifact.Mips.size() - 1));
 		m_IsLoaded = true;
 		for (const auto& mip : artifact.Mips)
-			m_ProfileBytes += m_Compressed ? mip.Bytes.size() : static_cast<uint64_t>(mip.Width) * mip.Height * 4;
+			m_ProfileBytes += m_Compressed ? mip.Bytes.size() : static_cast<uint64_t>(mip.Width) * mip.Height * (artifact.Format == TextureArtifactFormat::RGBA32F ? 8 : 4);
 		ProfileResourceTracker::Get().Texture(1, static_cast<int64_t>(m_ProfileBytes));
 		return true;
 	}
@@ -269,7 +270,8 @@ namespace TomCat {
 	{
 		TC_PROFILE_FUNCTION();
 
-		const uint64_t bpp = m_DataFormat == GL_RGBA ? 4ULL : 3ULL;
+		const bool floatingPoint = m_InternalFormat == GL_RGBA16F;
+		const uint64_t bpp = floatingPoint ? 16ULL : (m_DataFormat == GL_RGBA ? 4ULL : 3ULL);
 		const uint64_t expectedSize = static_cast<uint64_t>(m_Width) * m_Height * bpp;
 		if (m_Compressed)
 		{
@@ -282,7 +284,8 @@ namespace TomCat {
 			TC_Core_Error("Invalid texture upload: expected {0} bytes, received {1}", expectedSize, size);
 			return;
 		}
-		glTextureSubImage2D(m_RendererID, 0, 0, 0, m_Width, m_Height, m_DataFormat, GL_UNSIGNED_BYTE, data);
+		glTextureSubImage2D(m_RendererID, 0, 0, 0, m_Width, m_Height, m_DataFormat,
+			floatingPoint ? GL_FLOAT : GL_UNSIGNED_BYTE, data);
 	}
 
 	void OpenGLTexture2D::Bind(uint32_t slot) const

@@ -33,11 +33,20 @@ namespace TomCat {
 			uint32_t& value) const noexcept;
 	};
 
+	struct MeshArtifactPart
+	{
+		uint32_t FirstIndex = 0;
+		uint32_t IndexCount = 0;
+		std::array<float, 4> Color{1, 1, 1, 1};
+		std::vector<uint8_t> Texture;
+	};
+
 	// Owning packed mesh. Vertex/index spans returned by this object remain valid
 	// until the object is moved, assigned or destroyed.
 	class MeshArtifact
 	{
 	public:
+		const std::vector<MeshArtifactPart>& GetParts() const { return m_Parts; }
 		[[nodiscard]] uint32_t GetVertexCount() const noexcept { return m_VertexCount; }
 		[[nodiscard]] uint32_t GetIndexCount() const noexcept { return m_IndexCount; }
 		[[nodiscard]] std::span<const uint8_t> GetPackedVertices() const noexcept;
@@ -51,6 +60,7 @@ namespace TomCat {
 		friend bool DecodeMeshArtifact(std::vector<uint8_t> bytes,
 			MeshArtifact& artifact, std::string& error);
 		std::vector<uint8_t> m_Bytes;
+		std::vector<MeshArtifactPart> m_Parts;
 		uint32_t m_VertexCount = 0;
 		uint32_t m_IndexCount = 0;
 		uint32_t m_VertexOffset = 0;
@@ -64,6 +74,8 @@ namespace TomCat {
 	// directly into the owning mesh without a second bulk allocation.
 	[[nodiscard]] bool DecodeMeshArtifact(std::vector<uint8_t> bytes,
 		MeshArtifact& artifact, std::string& error);
+	[[nodiscard]] bool CollectModelDependencies(std::span<const uint8_t> source,
+		const std::filesystem::path& sourcePath, std::vector<std::filesystem::path>& paths, std::string& error);
 	[[nodiscard]] bool BuildMeshArtifact(std::span<const uint8_t> source,
 		const std::filesystem::path& sourcePath,
 		std::vector<uint8_t>& artifact, std::string& error);

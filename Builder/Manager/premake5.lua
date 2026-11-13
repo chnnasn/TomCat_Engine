@@ -56,6 +56,7 @@ project "Manager"
 
 
 	filter "system:windows"
+        postbuildcommands (TomCatConsumerPostBuildCommands)
 		systemversion "latest"
 
 	defines

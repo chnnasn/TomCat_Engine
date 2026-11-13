@@ -57,6 +57,7 @@ project "TomCatInut"
 
 
 	filter "system:windows"
+        postbuildcommands (TomCatConsumerPostBuildCommands)
 		systemversion "latest"
 		
 	defines

@@ -75,7 +75,8 @@ namespace TomCat {
 			// the wider temporary representation used by HDR inputs).
 			// RGBA/BC builds do not allocate mobile encoder search buffers.
 			const uint64_t chains = (format == TextureArtifactFormat::ASTC4x4
-				|| format == TextureArtifactFormat::ETC2RGBA8) ? 24 : 8;
+				|| format == TextureArtifactFormat::ETC2RGBA8) ? 24
+				: format == TextureArtifactFormat::RGBA32F ? 16 : 8;
 			if (rgbaMipBytes > (std::numeric_limits<uint64_t>::max)() / chains
 				|| !CheckedAdd(encodedBytes, rgbaMipBytes * chains, workingBytes)
 				|| !CheckedAdd(workingBytes,
@@ -382,6 +383,8 @@ namespace TomCat {
 				+ (stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
 			return false;
 		}
+		if (stbi_is_hdr_from_memory(encodedSource.data(), static_cast<int>(encodedSource.size())))
+			format = TextureArtifactFormat::RGBA32F;
 		if (!ComputeTextureReservation(static_cast<uint32_t>(decodedWidth),
 			static_cast<uint32_t>(decodedHeight), encodedSource.size(),
 			reservationBytes, error, format))
@@ -423,6 +426,10 @@ namespace TomCat {
 				+ (stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
 			return false;
 		}
+		input.clear();
+		input.seekg(0);
+		if (stbi_is_hdr_from_callbacks(&callbacks, &input))
+			format = TextureArtifactFormat::RGBA32F;
 		if (!ComputeTextureReservation(static_cast<uint32_t>(decodedWidth),
 			static_cast<uint32_t>(decodedHeight), static_cast<uint64_t>(fileBytes),
 			reservationBytes, error, format))
@@ -461,8 +468,9 @@ namespace TomCat {
 			|| width == 0 || height == 0 || mipCount == 0 || mipCount > 32
 			|| width > MaximumTextureDimension || height > MaximumTextureDimension
 			|| static_cast<uint64_t>(width) * height > MaximumTexturePixels
-			|| flags & ~supportedFlags || (rawFormat < 1 || rawFormat > 6)
-            || (rawFormat == 4 && (flags & SRGBFlag))
+			|| flags & ~supportedFlags || (rawFormat < 1 || rawFormat > 7)
+			|| ((rawFormat == static_cast<uint32_t>(TextureArtifactFormat::BC5)
+				|| rawFormat == static_cast<uint32_t>(TextureArtifactFormat::RGBA32F)) && (flags & SRGBFlag))
 			|| static_cast<uint64_t>(tableOffset) + static_cast<uint64_t>(mipCount)
 				* MipEntrySize > bytes.size())
 		{
@@ -496,6 +504,8 @@ namespace TomCat {
 			}
 			const uint64_t expectedSize = artifact.Format == TextureArtifactFormat::RGBA8
 				? static_cast<uint64_t>(mipWidth) * mipHeight * 4
+				: artifact.Format == TextureArtifactFormat::RGBA32F
+					? static_cast<uint64_t>(mipWidth) * mipHeight * 16
 				: static_cast<uint64_t>((mipWidth + 3) / 4)
 					* ((mipHeight + 3) / 4) * (artifact.Format == TextureArtifactFormat::BC1 ? 8 : 16);
 			if (size != expectedSize)
@@ -586,6 +596,67 @@ namespace TomCat {
 
 		int width = 0, height = 0, channels = 0;
 		stbi_set_flip_vertically_on_load_thread(1);
+        std::vector<std::vector<uint8_t>> payloads;
+        uint32_t mipWidth = 0, mipHeight = 0;
+        if (stbi_is_hdr_from_memory(encodedSource.data(), static_cast<int>(encodedSource.size())))
+        {
+            format = TextureArtifactFormat::RGBA32F;
+            srgb = false;
+            float* data = stbi_loadf_from_memory(encodedSource.data(),
+                static_cast<int>(encodedSource.size()), &width, &height, &channels, 4);
+            if (!data || width != static_cast<int>(inspectedWidth)
+                || height != static_cast<int>(inspectedHeight))
+            {
+                if (data) stbi_image_free(data);
+                error = "HDR image decode failed";
+                return false;
+            }
+            std::vector<float> pixels(data, data + static_cast<size_t>(width) * height * 4);
+            stbi_image_free(data);
+            for (float& value : pixels)
+                value = std::isfinite(value) ? std::clamp(value, 0.0f, 65504.0f) : 0.0f;
+            mipWidth = width;
+            mipHeight = height;
+            for (;;)
+            {
+                std::vector<uint8_t> bytes;
+                bytes.reserve(pixels.size() * sizeof(float));
+                for (float value : pixels)
+                {
+                    uint32_t bits;
+                    std::memcpy(&bits, &value, sizeof(bits));
+                    AppendU32(bytes, bits);
+                }
+                payloads.push_back(std::move(bytes));
+                if (!mipmaps || (mipWidth == 1 && mipHeight == 1)) break;
+                const uint32_t nextWidth = std::max(1u, mipWidth / 2);
+                const uint32_t nextHeight = std::max(1u, mipHeight / 2);
+                std::vector<float> next(static_cast<size_t>(nextWidth) * nextHeight * 4);
+                for (uint32_t y = 0; y < nextHeight; ++y)
+                {
+                    for (uint32_t x = 0; x < nextWidth; ++x)
+                    {
+                        for (uint32_t channel = 0; channel < 4; ++channel)
+                        {
+                            float sum = 0;
+                            for (uint32_t dy = 0; dy < 2; ++dy)
+                            {
+                                for (uint32_t dx = 0; dx < 2; ++dx)
+                                {
+                                    const uint32_t sourceX = std::min(x * 2 + dx, mipWidth - 1);
+                                    const uint32_t sourceY = std::min(y * 2 + dy, mipHeight - 1);
+                                    sum += pixels[(static_cast<size_t>(sourceY) * mipWidth + sourceX) * 4 + channel];
+                                }
+                            }
+                            next[(static_cast<size_t>(y) * nextWidth + x) * 4 + channel] = sum * 0.25f;
+                        }
+                    }
+                }
+                pixels = std::move(next);
+                mipWidth = nextWidth;
+                mipHeight = nextHeight;
+            }
+        } else {
 		stbi_uc* decoded = stbi_load_from_memory(encodedSource.data(),
 			static_cast<int>(encodedSource.size()), &width, &height, &channels,
 			STBI_rgb_alpha);
@@ -606,15 +677,15 @@ namespace TomCat {
 		std::vector<std::vector<uint8_t>> rgbaMips;
 		rgbaMips.emplace_back(decoded, decoded + static_cast<size_t>(baseBytes));
 		stbi_image_free(decoded);
-		uint32_t mipWidth = static_cast<uint32_t>(width);
-		uint32_t mipHeight = static_cast<uint32_t>(height);
+		mipWidth = static_cast<uint32_t>(width);
+		mipHeight = static_cast<uint32_t>(height);
 		while (mipmaps && (mipWidth > 1 || mipHeight > 1))
 		{
 			rgbaMips.push_back(BuildNextMip(rgbaMips.back(), mipWidth, mipHeight, srgb));
 			mipWidth = std::max(1u, mipWidth / 2);
 			mipHeight = std::max(1u, mipHeight / 2);
 		}
-		std::vector<std::vector<uint8_t>> payloads;
+
 		payloads.reserve(rgbaMips.size());
 		mipWidth = static_cast<uint32_t>(width); mipHeight = static_cast<uint32_t>(height);
 		for (auto& mip : rgbaMips)
@@ -643,6 +714,7 @@ namespace TomCat {
 			mipWidth = std::max(1u, mipWidth / 2);
 			mipHeight = std::max(1u, mipHeight / 2);
 		}
+        }
 		uint64_t artifactBytes = HeaderSize
 			+ static_cast<uint64_t>(payloads.size()) * MipEntrySize;
 		for (const auto& payload : payloads)
@@ -691,6 +763,28 @@ namespace TomCat {
 	{
 		error.clear(); rgba.clear();
         if (format == TextureArtifactFormat::ASTC4x4 || format == TextureArtifactFormat::ETC2RGBA8) return DecodeMobileTexture(mip,format,rgba,error);
+        if (format == TextureArtifactFormat::RGBA32F)
+        {
+            const size_t count = static_cast<size_t>(mip.Width) * mip.Height * 4;
+            if (mip.Bytes.size() != count * sizeof(float))
+            {
+                error = "HDR mip byte count is invalid";
+                return false;
+            }
+            rgba.resize(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                uint32_t bits;
+                (void)ReadU32(mip.Bytes, i * sizeof(float), bits);
+                float value;
+                std::memcpy(&value, &bits, sizeof(value));
+                value = std::isfinite(value) ? std::max(value, 0.0f) : 0.0f;
+                if (i % 4 != 3)
+                    value = std::pow(value / (1.0f + value), 1.0f / 2.2f);
+                rgba[i] = static_cast<uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+            }
+            return true;
+        }
 		if (format == TextureArtifactFormat::RGBA8)
 		{
 			rgba.assign(mip.Bytes.begin(), mip.Bytes.end());

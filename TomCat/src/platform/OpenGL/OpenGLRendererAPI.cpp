@@ -8,6 +8,77 @@
 
 namespace TomCat {
 
+    namespace {
+        class OpenGLRenderState final : public RenderState {
+        public:
+            OpenGLRenderState() {
+                glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_Draw);
+                glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &m_Read);
+                glGetIntegerv(GL_VIEWPORT, m_Viewport);
+                glGetIntegerv(GL_DEPTH_FUNC, &m_DepthFunction);
+                glGetIntegerv(GL_CURRENT_PROGRAM, &m_Program);
+                glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &m_VertexArray);
+                glGetIntegerv(GL_ACTIVE_TEXTURE, &m_ActiveTexture);
+                glGetIntegerv(GL_UNIFORM_BUFFER_BINDING, &m_UniformBuffer);
+                glGetFloatv(GL_COLOR_CLEAR_VALUE, m_ClearColor);
+                glGetBooleanv(GL_DEPTH_WRITEMASK, &m_DepthWrite);
+                m_Depth = glIsEnabled(GL_DEPTH_TEST);
+                m_Blend = glIsEnabled(GL_BLEND);
+                m_Cull = glIsEnabled(GL_CULL_FACE);
+                for (uint32_t slot = 0; slot < 3; ++slot) {
+                    glActiveTexture(GL_TEXTURE0 + slot);
+                    glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_Textures[slot]);
+                    glGetIntegeri_v(GL_UNIFORM_BUFFER_BINDING, slot, &m_Uniforms[slot]);
+                }
+                glActiveTexture(m_ActiveTexture);
+            }
+            void RestoreTarget() override {
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_Draw);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Read);
+                glViewport(m_Viewport[0], m_Viewport[1], m_Viewport[2], m_Viewport[3]);
+            }
+            ~OpenGLRenderState() override {
+                RestoreTarget();
+                glDepthFunc(m_DepthFunction);
+                glDepthMask(m_DepthWrite);
+                SetEnabled(GL_DEPTH_TEST, m_Depth);
+                SetEnabled(GL_BLEND, m_Blend);
+                SetEnabled(GL_CULL_FACE, m_Cull);
+                glClearColor(m_ClearColor[0], m_ClearColor[1], m_ClearColor[2], m_ClearColor[3]);
+                glUseProgram(m_Program);
+                glBindVertexArray(m_VertexArray);
+                for (uint32_t slot = 0; slot < 3; ++slot) {
+                    glActiveTexture(GL_TEXTURE0 + slot);
+                    glBindTexture(GL_TEXTURE_2D, m_Textures[slot]);
+                    glBindBufferBase(GL_UNIFORM_BUFFER, slot, m_Uniforms[slot]);
+                }
+                glBindBuffer(GL_UNIFORM_BUFFER, m_UniformBuffer);
+                glActiveTexture(m_ActiveTexture);
+            }
+        private:
+            static void SetEnabled(GLenum capability, bool enabled) {
+                if (enabled) glEnable(capability);
+                else glDisable(capability);
+            }
+            GLint m_Draw{}, m_Read{}, m_Viewport[4]{}, m_DepthFunction{}, m_Program{}, m_VertexArray{};
+            GLint m_ActiveTexture{}, m_UniformBuffer{}, m_Textures[3]{}, m_Uniforms[3]{};
+            GLfloat m_ClearColor[4]{};
+            GLboolean m_Depth{}, m_Blend{}, m_Cull{}, m_DepthWrite{};
+        };
+    }
+
+    Scope<RenderState> OpenGLRendererAPI::CaptureState() { return CreateScope<OpenGLRenderState>(); }
+    void OpenGLRendererAPI::SetDepthWrite(bool enabled) { glDepthMask(enabled ? GL_TRUE : GL_FALSE); }
+    void OpenGLRendererAPI::SetDepthLessEqual(bool enabled) { glDepthFunc(enabled ? GL_LEQUAL : GL_LESS); }
+    void OpenGLRendererAPI::SetBlending(bool enabled) {
+        if (enabled) glEnable(GL_BLEND);
+        else glDisable(GL_BLEND);
+    }
+    void OpenGLRendererAPI::SetCullFaces(bool enabled) {
+        if (enabled) glEnable(GL_CULL_FACE);
+        else glDisable(GL_CULL_FACE);
+    }
+
     void OpenGLRendererAPI::ReleaseColorGrade() {
         m_GradeShader.reset(); m_GradeUniform.reset();
         if (m_GradeTexture) glDeleteTextures(1,&m_GradeTexture);

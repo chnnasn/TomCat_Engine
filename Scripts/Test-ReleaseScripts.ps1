@@ -40,6 +40,33 @@ if ($parseFailures.Count -gt 0) {
     throw "PowerShell syntax check failed:`n$($parseFailures -join "`n")"
 }
 
+$visualStudioInstances = @(
+    [pscustomobject]@{ installationVersion = '17.14.0'; installationPath = 'C:\VS2022' },
+    [pscustomobject]@{ installationVersion = '18.0.0'; installationPath = 'C:\VS2026' }
+)
+$visualStudioGenerators = @(
+    [pscustomobject]@{ name = 'Visual Studio 17 2022' },
+    [pscustomobject]@{ name = 'Visual Studio 18 2026' }
+)
+$selectedGenerator = Select-TomCatVisualStudioGenerator -Instances $visualStudioInstances -Generators $visualStudioGenerators
+if ($selectedGenerator.Generator -ne 'Visual Studio 18 2026' -or $selectedGenerator.InstallationPath -ne 'C:\VS2026') {
+    throw 'Assimp toolchain discovery did not select the latest installed Visual Studio supported by CMake.'
+}
+$selectedGenerator = Select-TomCatVisualStudioGenerator -Instances @($visualStudioInstances[1]) -Generators $visualStudioGenerators
+if ($selectedGenerator.Generator -ne 'Visual Studio 18 2026') {
+    throw 'Assimp toolchain discovery requires Visual Studio 2022 on a Visual Studio 2026-only machine.'
+}
+$selectedGenerator = Select-TomCatVisualStudioGenerator -Instances $visualStudioInstances -Generators @($visualStudioGenerators[0])
+if ($selectedGenerator.Generator -ne 'Visual Studio 17 2022' -or $selectedGenerator.InstallationPath -ne 'C:\VS2022') {
+    throw 'Assimp toolchain discovery failed to use an installed generator supported by an older CMake.'
+}
+foreach ($unsupportedInstances in @(@(), @($visualStudioInstances[1]))) {
+    $rejected = $false
+    try { Select-TomCatVisualStudioGenerator -Instances $unsupportedInstances -Generators @($visualStudioGenerators[0]) | Out-Null }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw 'Assimp toolchain discovery accepted an unavailable Visual Studio generator.' }
+}
+
 $toolManifestPath = Join-Path $PSScriptRoot 'ReleaseToolVersions.json'
 $toolManifest = Get-Content -LiteralPath $toolManifestPath -Raw | ConvertFrom-Json
 if ($toolManifest.schemaVersion -ne 1) { throw 'Unsupported ReleaseToolVersions.json schema.' }
@@ -204,7 +231,7 @@ if ($editorTemplate -notmatch '<CompressFiles>True</CompressFiles>' -or
     throw 'Editor EVB template must compress and expose Packages plus .tomcat-runtime marker trees.'
 }
 foreach ($runtimeName in @(
-        'shaderc_shared.dll', 'msvcp140.dll', 'vcruntime140.dll',
+        'shaderc_shared.dll', 'assimp-vc143-mt.dll', 'msvcp140.dll', 'vcruntime140.dll',
         'vcruntime140_1.dll')) {
     if ($editorTemplate -notmatch "(?is)<Name>\s*$([regex]::Escape($runtimeName))\s*</Name>") {
         throw "Editor EVB root does not virtualize required native runtime $runtimeName."
@@ -341,7 +368,7 @@ try {
     }
     Copy-Item -LiteralPath $fixture -Destination (Join-Path $payloadRoot 'DotNetSdk\dotnet.exe')
     foreach ($name in @(
-            'TomCatCLI.exe', 'shaderc_shared.dll', 'msvcp140.dll',
+            'TomCatCLI.exe', 'shaderc_shared.dll', 'assimp-vc143-mt.dll', 'msvcp140.dll',
             'vcruntime140.dll', 'vcruntime140_1.dll')) {
         Copy-Item -LiteralPath $fixture -Destination (Join-Path $payloadRoot $name)
     }

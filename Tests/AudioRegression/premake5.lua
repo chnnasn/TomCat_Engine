@@ -31,6 +31,7 @@ project "AudioRegression"
 	buildoptions "/utf-8"
 
 	filter "system:windows"
+        postbuildcommands (TomCatConsumerPostBuildCommands)
 		systemversion "latest"
 		defines { "TC_PLATFORM_WINDOWS", "YAML_CPP_STATIC_DEFINE" }
 

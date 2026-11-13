@@ -509,6 +509,18 @@ namespace TomCat {
 			}
 		}
 
+		for (const auto& metadata : m_Database->GetAllMetadataSnapshots()) {
+			if (metadata.Type != AssetType::Mesh || metadata.IsMissing || candidates.contains(metadata.Handle)) continue;
+			for (const auto& change : changes) {
+				// Model sidecars can live in nested texture folders. Conservatively refresh
+				// models for any source change; their content-key cache avoids rebuilding unchanged inputs.
+				if (!AssetRegistry::IsMetaFile(change.RelativePath)) {
+					candidates.emplace(metadata.Handle, Candidate{metadata.Handle, metadata.FilePath, AssetFileChangeKind::Modified, true});
+					break;
+				}
+			}
+		}
+
 		for (AssetHandle root : dependencyRoots)
 		{
 			for (AssetHandle dependent : m_Database->GetDependents(root, true))

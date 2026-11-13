@@ -29,7 +29,7 @@ TC_RENDERER=opengl ./build/linux/bin/CLI/TomCatCLI build --project /absolute/Gam
   --template ./build/linux/bin/Editor/Packages/PlayerTemplates/linux-x64
 ```
 
-构建脚本同时生成模板。导出在项目 `Build/<ProductName>/` 下写入可执行 ELF、`Game.tcpak`、Managed 程序集和私有 .NET Runtime；目标机器需要兼容的系统库，无需 .NET SDK。Linux 使用 OpenGL 4.5+；Vulkan 探测和 Windows 单文件 Editor 包装器不属于当前 Linux 范围。测试证据及验收游戏下载见 [Linux CI](../../docs/LINUX.zh-CN.md#ci-与验收)。
+构建脚本同时生成模板。导出在项目 `Build/<ProductName>/` 下写入可执行 ELF、`Game.tcpak`、Managed 程序集和私有 .NET Runtime；目标机器需要兼容的系统库，无需 .NET SDK。Linux 在 X11/XWayland 下支持 Vulkan 1.2 和 OpenGL 4.5+。Windows 单文件 Editor 包装器仍由 Windows 发布流程提供。测试证据及验收游戏下载见 [Linux CI](../../docs/LINUX.zh-CN.md#ci-与验收)。
 
 ## Windows 打包版入口
 
@@ -83,7 +83,7 @@ TCPAK 只读写 v8，逐条目 SHA-256 摘要为必需字段。
 桌面 Editor、Hub、CLI 与 Player 在每个进程中读取一次 `TC_RENDERER`。
 Windows 未设置或设为 `auto` 时优先 Vulkan，不支持才回退 OpenGL；设为 `opengl` / `vulkan`
 时强制对应后端，强制 Vulkan 不可用时明确报错。无窗口 CLI 不创建窗口也能探测设备支持。
-Linux 使用 `TC_RENDERER=opengl`，Vulkan 探测尚未移植。Windows 示例：
+Linux 使用相同的后端选择策略，窗口后端为 X11/XWayland。下面给出 Windows 的设置方式。
 
 ```powershell
 $env:TC_RENDERER = 'auto'

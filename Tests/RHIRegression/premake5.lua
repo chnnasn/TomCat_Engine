@@ -39,6 +39,7 @@ project "RHIRegression"
 	defines "_CRT_SECURE_NO_WARNINGS"
 
 	filter "system:windows"
+        postbuildcommands (TomCatConsumerPostBuildCommands)
 		systemversion "latest"
 		defines { "TC_PLATFORM_WINDOWS", "YAML_CPP_STATIC_DEFINE" }
 

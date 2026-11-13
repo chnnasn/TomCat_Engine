@@ -54,3 +54,11 @@ TomCatConsumerLinksDebug = {
 	"%{Library.SPIRV_Cross_Debug}",
 	"%{Library.SPIRV_Cross_GLSL_Debug}"
 }
+
+IncludeDir["Assimp"] = "%{wks.location}/../TomCat/vendor/Assimp/include"
+IncludeDir["AssimpBuild"] = "%{wks.location}/../TomCat/vendor/Assimp-build/include"
+table.insert(TomCatConsumerLinks, "%{wks.location}/../TomCat/vendor/Assimp-build/lib/Release/assimp-vc143-mt.lib")
+TomCatConsumerPostBuildCommands = {
+    '{COPYFILE} "$(ProjectDir)%{path.getrelative(prj.location, wks.location)}/../TomCat/vendor/Assimp-build/bin/Release/assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"',
+    'if errorlevel 1 exit /b 1'
+}

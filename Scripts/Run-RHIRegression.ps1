@@ -21,8 +21,8 @@ Push-Location $repositoryRoot
 try {
     & ./vendor/premake/bin/premake5.exe --file=Tests/premake5.lua vs2022
     if ($LASTEXITCODE -ne 0) { throw 'Premake failed' }
-    & $MsBuildPath Tests/RHIRegression/RHIRegression.vcxproj /m:4 "/p:Configuration=$Configuration" /p:Platform=x64 /v:minimal /nologo
-    if ($LASTEXITCODE -ne 0) { throw 'RHI regression build failed' }
+    & $MsBuildPath Tests/Tests.sln '/t:RHIRegression;Renderer3DRegression' /m:4 "/p:Configuration=$Configuration" /p:Platform=x64 /v:minimal /nologo
+    if ($LASTEXITCODE -ne 0) { throw 'RHI/3D regression build failed' }
     $env:TC_RENDERER = $Backend
     $env:TC_VULKAN_VALIDATION = if ($Validation -and $Backend -ne 'opengl') { '1' } else { $null }
     $env:TC_VULKAN_DEVICE = $Device
@@ -31,6 +31,10 @@ try {
     $env:PATH = (Join-Path $repositoryRoot 'vendor/VulkanSDK/Bin') + ';' + $env:PATH
     & "Tests/bin/$Configuration-windows-x86_64/RHIRegression/RHIRegression.exe"
     if ($LASTEXITCODE -ne 0) { throw "RHI regression failed ($Backend, exit $LASTEXITCODE)" }
+    $renderer3DArguments = @('--gpu')
+    if ($Backend -ne 'auto') { $renderer3DArguments += @('--expect-backend', $Backend) }
+    & "Tests/bin/$Configuration-windows-x86_64/Renderer3DRegression/Renderer3DRegression.exe" @renderer3DArguments
+    if ($LASTEXITCODE -ne 0) { throw "3D regression failed ($Backend, exit $LASTEXITCODE)" }
 }
 finally {
     foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }

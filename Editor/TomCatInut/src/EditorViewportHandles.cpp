@@ -6,6 +6,7 @@
 #include "TomCat/Renderer/RenderCommand.h"
 #include "TomCat/Renderer/EditorCamera.h"
 #include "TomCat/Renderer/Font.h"
+#include "TomCat/Renderer/Model.h"
 #include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Runtime/RuntimeUI.h"
 #include "TomCat/Math/Math.h"
@@ -52,6 +53,14 @@ namespace TomCat {
 				Maximum = glm::max(Maximum, point);
 				HasGeometry = true;
 			}
+
+            void AddBox(const glm::vec3& minimum, const glm::vec3& maximum, const glm::mat4& transform)
+            {
+                for (float x : {minimum.x, maximum.x})
+                    for (float y : {minimum.y, maximum.y})
+                        for (float z : {minimum.z, maximum.z})
+                            Add(glm::vec3(transform * glm::vec4(x, y, z, 1.0f)));
+            }
 
 			void AddUnitQuad(const glm::mat4& transform)
 			{
@@ -144,6 +153,19 @@ namespace TomCat {
 				world = m_Context.Scene->GetRuntimeRenderTransform(id);
 				bounds.Pivots.push_back(glm::vec3(world * glm::vec4(0, 0, 0, 1)));
 			}
+
+            if (entity.HasComponent<MeshComponent>())
+            {
+                const MeshComponent& mesh = entity.GetComponent<MeshComponent>();
+                if (mesh.Enabled)
+                {
+                    glm::vec3 localMinimum, localMaximum;
+                    if (mesh.MeshAsset && mesh.MeshAsset->GetBounds(localMinimum, localMaximum))
+                        bounds.AddBox(localMinimum, localMaximum, world);
+                    if (mesh.Model && mesh.Model->GetBounds(localMinimum, localMaximum))
+                        bounds.AddBox(localMinimum, localMaximum, world);
+                }
+            }
 
 			if (entity.HasComponent<SpriteRenderer>()
 				&& entity.GetComponent<SpriteRenderer>().Enabled)

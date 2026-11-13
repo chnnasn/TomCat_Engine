@@ -47,6 +47,7 @@ project "ScriptCompilerRegression"
 	buildoptions "/utf-8"
 
 	filter "system:windows"
+        postbuildcommands (TomCatConsumerPostBuildCommands)
 		systemversion "latest"
 		defines
 		{

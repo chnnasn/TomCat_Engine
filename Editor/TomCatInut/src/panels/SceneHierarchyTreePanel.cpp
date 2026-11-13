@@ -190,6 +190,14 @@ namespace TomCat {
 						m_Shared.SceneLoad(handle);
 					else if (metadata && metadata->Type == AssetType::Texture2D && m_Shared.SpriteCreate)
 						m_Shared.SpriteCreate(handle);
+                    else if (metadata && !metadata->IsMissing && metadata->Type == AssetType::Mesh && m_Shared.Context)
+                    {
+                        Entity model = m_Shared.Context->CreateEntity(PathToUTF8(metadata->FilePath.stem()));
+                        model.AddComponent<MeshComponent>().MeshHandle = handle;
+                        m_Shared.SelectionContext = model;
+                        m_ForceOpenSceneRoot = true;
+                        m_Shared.MarkModified(true);
+                    }
 					else if (metadata && !metadata->IsMissing
 						&& metadata->Type == AssetType::Prefab
 						&& m_Shared.PrefabInstantiate)
@@ -483,6 +491,41 @@ namespace TomCat {
 			BeginRename(entity);
 			m_Shared.MarkModified(true);
 		};
+
+        if (ImGui::BeginMenu("3D Object"))
+        {
+            const char* primitiveNames[] = {"Cube", "Sphere", "Capsule", "Cylinder", "Plane", "Quad"};
+            const int primitiveTypes[] = {1, 3, 4, 5, 6, 2};
+            for (int index = 0; index < static_cast<int>(std::size(primitiveNames)); ++index)
+            {
+                if (ImGui::MenuItem(primitiveNames[index]))
+                {
+                    Entity entity = m_Shared.Context->CreateEntity(primitiveNames[index]);
+                    entity.AddComponent<MeshComponent>().PrimitiveType = primitiveTypes[index];
+                    CreateAsSelectedChild(entity);
+                }
+            }
+            ImGui::Separator();
+            const char* lightNames[] = {"Directional Light", "Point Light", "Spot Light"};
+            for (int type = 0; type < static_cast<int>(std::size(lightNames)); ++type)
+            {
+                if (ImGui::MenuItem(lightNames[type]))
+                {
+                    Entity entity = m_Shared.Context->CreateEntity(lightNames[type]);
+                    entity.AddComponent<Light3D>().Type = type;
+                    if (type == 0)
+                        entity.GetComponent<Transform>()._Rotation = glm::radians(glm::vec3(55, -30, 0));
+                    CreateAsSelectedChild(entity);
+                }
+            }
+            if (ImGui::MenuItem("Sky / Environment"))
+            {
+                Entity entity = m_Shared.Context->CreateEntity("Environment");
+                entity.AddComponent<Environment3D>();
+                CreateAsSelectedChild(entity);
+            }
+            ImGui::EndMenu();
+        }
 
 		if (ImGui::MenuItem("Create Empty Entity"))
 		{

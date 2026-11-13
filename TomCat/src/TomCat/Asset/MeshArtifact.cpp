@@ -1,5 +1,18 @@
 #include "tcpch.h"
 #include "MeshArtifact.h"
+#include "TomCat/Utils/PathUtils.h"
+
+#ifndef TC_PLATFORM_WEB
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#include <assimp/material.h>
+#include <assimp/MemoryIOWrapper.h>
+#include <assimp/DefaultIOSystem.h>
+#include <fstream>
+#include <glm/gtc/matrix_inverse.hpp>
+#include <sstream>
+#endif
 
 #include <algorithm>
 #include <bit>
@@ -15,6 +28,30 @@ namespace TomCat {
 
 	namespace {
 
+#ifndef TC_PLATFORM_WEB
+		class ModelSourceIO : public Assimp::IOSystem {
+		public:
+			ModelSourceIO(std::filesystem::path path, std::span<const uint8_t> bytes, std::vector<std::filesystem::path>* paths = nullptr)
+				: m_Path(path.lexically_normal()), m_Bytes(bytes), m_Paths(paths) {}
+			bool Exists(const char* path) const override {
+				return UTF8ToPath(path).lexically_normal() == m_Path || m_Default.Exists(path);
+			}
+			Assimp::IOStream* Open(const char* path, const char* mode = "rb") override {
+				if (UTF8ToPath(path).lexically_normal() == m_Path)
+					return new Assimp::MemoryIOStream(m_Bytes.data(), m_Bytes.size());
+				auto* stream = m_Default.Open(path, mode);
+				if (stream && m_Paths) m_Paths->push_back(UTF8ToPath(path).lexically_normal());
+				return stream;
+			}
+			char getOsSeparator() const override { return m_Default.getOsSeparator(); }
+			void Close(Assimp::IOStream* stream) override { delete stream; }
+		private:
+			Assimp::DefaultIOSystem m_Default;
+			std::filesystem::path m_Path;
+			std::span<const uint8_t> m_Bytes;
+			std::vector<std::filesystem::path>* m_Paths;
+		};
+#endif
 		constexpr std::array<uint8_t, 4> kMagic = { 'T', 'C', 'M', 'S' };
 		constexpr uint32_t kVersion = 1;
 		constexpr uint32_t kHeaderSize = 32;
@@ -261,7 +298,7 @@ namespace TomCat {
 		uint32_t version = 0, stride = 0, vertexCount = 0, indexCount = 0;
 		uint32_t vertexOffset = 0, indexOffset = 0, totalSize = 0;
 		if (bytes.size() < kHeaderSize || !IsMeshArtifact(bytes)
-			|| !ReadU32(bytes, 4, version) || version != kVersion
+			|| !ReadU32(bytes, 4, version) || (version != kVersion && version != 2)
 			|| !ReadU32(bytes, 8, stride) || stride != MeshArtifactVertexStride
 			|| !ReadU32(bytes, 12, vertexCount) || vertexCount == 0 || vertexCount > kMaximumVertices
 			|| !ReadU32(bytes, 16, indexCount) || indexCount == 0
@@ -277,10 +314,29 @@ namespace TomCat {
 		const uint64_t expectedSize = expectedIndex
 			+ static_cast<uint64_t>(indexCount) * sizeof(uint32_t);
 		if (vertexOffset != kHeaderSize || indexOffset != expectedIndex
-			|| expectedSize != bytes.size())
+			|| expectedSize > bytes.size() || (version == 1 && expectedSize != bytes.size()))
 		{
 			error = "mesh artifact data layout is invalid";
 			return false;
+		}
+		if (version == 2)
+		{
+			size_t cursor = static_cast<size_t>(expectedSize);
+			uint32_t count = 0, covered = 0;
+			if (!ReadU32(bytes, cursor, count) || !count || count > indexCount / 3) { error = "invalid model part count"; return false; }
+			cursor += 4;
+			for (uint32_t i = 0; i < count; ++i)
+			{
+				uint32_t first = 0, size = 0, texture = 0;
+				if (!ReadU32(bytes, cursor, first) || !ReadU32(bytes, cursor + 4, size)
+					|| first != covered || !size || size % 3 || size > indexCount - covered) { error = "invalid model part range"; return false; }
+				for (size_t c = 0; c < 4; ++c) { float value; if (!ReadFloat(bytes, cursor + 8 + c * 4, value)) { error = "invalid model color"; return false; } }
+				if (!ReadU32(bytes, cursor + 24, texture) || texture > 64 * 1024 * 1024
+					|| cursor + 28 > bytes.size() || texture > bytes.size() - cursor - 28) { error = "invalid model texture"; return false; }
+				cursor += 28 + texture;
+				covered += size;
+			}
+			if (cursor != bytes.size() || covered != indexCount) { error = "incomplete model parts"; return false; }
 		}
 		artifact.VertexCount = vertexCount;
 		artifact.IndexCount = indexCount;
@@ -333,8 +389,52 @@ namespace TomCat {
 			view.PackedVertices.data() - bytes.data());
 		decoded.m_IndexOffset = static_cast<uint32_t>(
 			view.PackedIndices.data() - bytes.data());
+		uint32_t version = 0;
+		ReadU32(bytes, 4, version);
+		if (version == 2)
+		{
+			size_t cursor = decoded.m_IndexOffset + static_cast<size_t>(view.IndexCount) * 4;
+			uint32_t count = 0;
+			ReadU32(bytes, cursor, count); cursor += 4;
+			for (uint32_t i = 0; i < count; ++i)
+			{
+				MeshArtifactPart part;
+				ReadU32(bytes, cursor, part.FirstIndex);
+				ReadU32(bytes, cursor + 4, part.IndexCount);
+				for (size_t c = 0; c < 4; ++c) ReadFloat(bytes, cursor + 8 + c * 4, part.Color[c]);
+				uint32_t size = 0; ReadU32(bytes, cursor + 24, size); cursor += 28;
+				part.Texture.assign(bytes.begin() + cursor, bytes.begin() + cursor + size);
+				cursor += size;
+				decoded.m_Parts.push_back(std::move(part));
+			}
+		}
 		decoded.m_Bytes = std::move(bytes);
 		artifact = std::move(decoded);
+		return true;
+	}
+
+	bool CollectModelDependencies(std::span<const uint8_t> source,
+		const std::filesystem::path& sourcePath, std::vector<std::filesystem::path>& paths, std::string& error)
+	{
+		paths.clear();
+#ifndef TC_PLATFORM_WEB
+		const auto extension = LowerExtension(sourcePath);
+		if (extension == ".obj" && std::string_view(reinterpret_cast<const char*>(source.data()), source.size()).find("mtllib") == std::string_view::npos) return true;
+		Assimp::Importer importer;
+		importer.SetIOHandler(new ModelSourceIO(sourcePath, source, &paths));
+		const auto* scene = importer.ReadFile(PathToUTF8(sourcePath), aiProcess_Triangulate);
+		if (!scene) { error = importer.GetErrorString(); return false; }
+		for (uint32_t m = 0; m < scene->mNumMaterials; ++m) {
+			aiString texture;
+			const auto* material = scene->mMaterials[m];
+			if (material->GetTexture(aiTextureType_DIFFUSE, 0, &texture) != AI_SUCCESS)
+				material->GetTexture(aiTextureType_BASE_COLOR, 0, &texture);
+			if (texture.length && !scene->GetEmbeddedTexture(texture.C_Str()))
+				paths.push_back((sourcePath.parent_path() / UTF8ToPath(texture.C_Str())).lexically_normal());
+		}
+		std::sort(paths.begin(), paths.end());
+		paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+#endif
 		return true;
 	}
 
@@ -344,6 +444,97 @@ namespace TomCat {
 	{
 		artifact.clear();
 		error.clear();
+#ifndef TC_PLATFORM_WEB
+		const auto extension = LowerExtension(sourcePath);
+		if (extension == ".fbx" || extension == ".gltf" || extension == ".glb"
+			|| (extension == ".obj" && std::string_view(reinterpret_cast<const char*>(source.data()), source.size()).find("mtllib") != std::string_view::npos))
+		{
+			if (source.empty() || source.size() > kMaximumSourceBytes) { error = "Model source is empty or oversized"; return false; }
+			Assimp::Importer importer;
+			importer.SetIOHandler(new ModelSourceIO(sourcePath, source));
+			// Pre-transform bakes node hierarchy into vertices, matching the original Model loader.
+			const auto* scene = importer.ReadFile(PathToUTF8(sourcePath), aiProcess_Triangulate
+				| aiProcess_JoinIdenticalVertices | aiProcess_GenNormals | aiProcess_PreTransformVertices | aiProcess_FlipUVs);
+			if (!scene || !scene->HasMeshes()) { error = importer.GetErrorString(); return false; }
+			std::ostringstream obj;
+			obj.imbue(std::locale::classic());
+			obj.precision(9);
+			uint64_t offset = 1;
+			std::vector<MeshArtifactPart> parts;
+			uint32_t firstIndex = 0;
+			for (uint32_t m = 0; m < scene->mNumMeshes; ++m)
+			{
+				const aiMesh* mesh = scene->mMeshes[m];
+				MeshArtifactPart part;
+				part.FirstIndex = firstIndex;
+				if (mesh->mMaterialIndex < scene->mNumMaterials)
+				{
+					const auto* material = scene->mMaterials[mesh->mMaterialIndex];
+					aiColor4D color(1,1,1,1);
+					material->Get(AI_MATKEY_COLOR_DIFFUSE, color);
+					part.Color = {color.r,color.g,color.b,color.a};
+					aiString texture;
+					if (material->GetTexture(aiTextureType_DIFFUSE, 0, &texture) != AI_SUCCESS)
+						material->GetTexture(aiTextureType_BASE_COLOR, 0, &texture);
+					if (texture.length)
+					{
+						const aiTexture* embedded = scene->GetEmbeddedTexture(texture.C_Str());
+						if (embedded && !embedded->mHeight && embedded->mWidth <= 64 * 1024 * 1024)
+						{
+							const auto* bytes = reinterpret_cast<const uint8_t*>(embedded->pcData);
+							part.Texture.assign(bytes, bytes + embedded->mWidth);
+						}
+						else if (!embedded)
+						{
+							const auto path = sourcePath.parent_path() / UTF8ToPath(texture.C_Str());
+							std::error_code ec;
+							const auto size = std::filesystem::file_size(path, ec);
+							if (!ec && size <= 64 * 1024 * 1024) {
+								std::ifstream input(path, std::ios::binary);
+								part.Texture.assign(std::istreambuf_iterator<char>(input), {});
+							}
+						}
+					}
+				}
+				if (offset + mesh->mNumVertices > kMaximumVertices) { error = "Model exceeds vertex limit"; return false; }
+				for (uint32_t v = 0; v < mesh->mNumVertices; ++v)
+				{
+					const auto p = mesh->mVertices[v];
+					const auto n = mesh->HasNormals() ? mesh->mNormals[v] : aiVector3D(0,1,0);
+					const auto uv = mesh->HasTextureCoords(0) ? mesh->mTextureCoords[0][v] : aiVector3D();
+					obj << "v " << p.x << ' ' << p.y << ' ' << p.z << '\n';
+					obj << "vn " << n.x << ' ' << n.y << ' ' << n.z << '\n';
+					obj << "vt " << uv.x << ' ' << uv.y << '\n';
+				}
+				for (uint32_t f = 0; f < mesh->mNumFaces; ++f)
+				{
+					const auto& face = mesh->mFaces[f];
+					if (face.mNumIndices != 3) continue;
+					part.IndexCount += 3;
+					obj << "f";
+					for (uint32_t j = 0; j < 3; ++j) { const auto i = offset + face.mIndices[j]; obj << ' ' << i << '/' << i << '/' << i; }
+					obj << '\n';
+				}
+				offset += mesh->mNumVertices;
+				firstIndex += part.IndexCount;
+				if (part.IndexCount) parts.push_back(std::move(part));
+			}
+			const std::string text = obj.str();
+			if (!BuildMeshArtifact(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(text.data()), text.size()), "model.obj", artifact, error)) return false;
+			AppendU32(artifact, static_cast<uint32_t>(parts.size()));
+			for (const auto& part : parts) {
+				AppendU32(artifact, part.FirstIndex); AppendU32(artifact, part.IndexCount);
+				for (float c : part.Color) AppendFloat(artifact, c);
+				AppendU32(artifact, static_cast<uint32_t>(part.Texture.size()));
+				artifact.insert(artifact.end(), part.Texture.begin(), part.Texture.end());
+			}
+			if (artifact.size() > UINT32_MAX) { error = "Model artifact too large"; artifact.clear(); return false; }
+			artifact[4] = 2;
+			for (uint32_t i = 0; i < 4; ++i) artifact[28 + i] = static_cast<uint8_t>(artifact.size() >> (i * 8));
+			MeshArtifactView validation;
+			return ParseMeshArtifact(artifact, validation, error);
+		}
+#endif
 		if (LowerExtension(sourcePath) != ".obj")
 		{
 			error = "mesh format is unsupported; the built-in importer currently supports OBJ only";

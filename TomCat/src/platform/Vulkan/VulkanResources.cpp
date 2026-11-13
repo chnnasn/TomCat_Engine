@@ -28,12 +28,14 @@ void VulkanVertexArray::AddVertexBuffer(const Ref<VertexBuffer>& buffer) {
 VulkanUniformBuffer::VulkanUniformBuffer(uint32_t size, uint32_t binding)
     : m_Device(VulkanDevice::Current()), m_Binding(binding) {
     if (binding >= m_Device->Uniforms.size() || !size) throw std::invalid_argument("Invalid uniform buffer binding/size");
-    m_Device->Uniforms[binding].resize(size);
+    m_Data.resize(size);
+    m_Device->Uniforms[binding] = m_Data;
 }
 void VulkanUniformBuffer::SetData(const void* data, uint32_t size, uint32_t offset) {
-    auto& bytes = m_Device->Uniforms.at(m_Binding);
+    auto& bytes = m_Data;
     if (!data || offset > bytes.size() || size > bytes.size() - offset) throw std::out_of_range("Uniform upload exceeds capacity");
     std::memcpy(bytes.data() + offset, data, size);
+    m_Device->Uniforms.at(m_Binding) = bytes;
 }
 
 VulkanTexture2D::VulkanTexture2D(uint32_t width, uint32_t height) : m_Device(VulkanDevice::Current()) {
@@ -59,17 +61,18 @@ void VulkanTexture2D::Load(const void* encoded, size_t size) {
         TextureArtifactView artifact; std::string error;
         if (!ParseTextureArtifact(bytes, artifact, error)) { TC_Core_Error("Vulkan texture: {0}", error); return; }
         m_Image = m_Device->Image(artifact.Width, artifact.Height,
-            artifact.SRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM,
+            artifact.Format == TextureArtifactFormat::RGBA32F ? VK_FORMAT_R32G32B32A32_SFLOAT
+                : (artifact.SRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM),
             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
             static_cast<uint32_t>(artifact.Mips.size()), artifact.Sampling);
         for (uint32_t i = 0; i < artifact.Mips.size(); ++i) {
             const auto& mip = artifact.Mips[i];
             std::vector<uint8_t> decoded;
-            if (artifact.Format != TextureArtifactFormat::RGBA8) {
+            if (artifact.Format != TextureArtifactFormat::RGBA8 && artifact.Format != TextureArtifactFormat::RGBA32F) {
                 if (!DecompressTextureMip(mip, artifact.Format, decoded, error)) throw std::runtime_error(error);
                 Upload(i, decoded.data(), decoded.size());
             } else Upload(i, mip.Bytes.data(), mip.Bytes.size());
-            m_ProfileBytes += uint64_t(mip.Width) * mip.Height * 4;
+            m_ProfileBytes += uint64_t(mip.Width) * mip.Height * (artifact.Format == TextureArtifactFormat::RGBA32F ? 16 : 4);
         }
     } else {
         if (size > INT_MAX) return;
@@ -102,10 +105,9 @@ uintptr_t VulkanTexture2D::GetUITextureID() const {
 }
 void VulkanTexture2D::Upload(uint32_t level, const void* data, size_t size) {
     const uint32_t width = std::max(1u, m_Image->Width >> level), height = std::max(1u, m_Image->Height >> level);
-    if (!data || size != uint64_t(width) * height * 4) throw std::invalid_argument("Invalid RGBA texture payload");
-    // Texture artifacts are decoded to RGBA8 above, so every copy has a
-    // four-byte texel alignment regardless of the artifact's compression.
-    auto staging = m_Device->Upload(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, 4);
+    const uint32_t texelSize = m_Image->Format == VK_FORMAT_R32G32B32A32_SFLOAT ? 16 : 4;
+    if (!data || size != uint64_t(width) * height * texelSize) throw std::invalid_argument("Invalid RGBA texture payload");
+    auto staging = m_Device->Upload(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, texelSize);
     m_Device->Barrier();
     VkBufferImageCopy copy{};
     copy.bufferOffset = staging.Offset;
@@ -121,6 +123,7 @@ void VulkanTexture2D::SetData(const void* data, uint32_t size) {
 void VulkanTexture2D::Bind(uint32_t slot) const {
     if (slot >= m_Device->Textures.size()) throw std::out_of_range("Texture slot out of range");
     m_Device->Textures[slot] = this;
+    m_Device->SampledAttachments[slot].reset();
 }
 
 VulkanFramebuffer::VulkanFramebuffer(const FramebufferSpecification& spec)
@@ -138,7 +141,15 @@ void VulkanFramebuffer::Create() {
         throw std::invalid_argument("Invalid framebuffer extent");
     if (m_Spec.Samples != 1) throw std::invalid_argument("Vulkan framebuffer currently requires one sample");
     for (auto attachment : m_Spec.Attachments.Attachments) {
-        if (attachment.TextureFormat == FramebufferTextureFormat::DEPTH24STENCIL8) {
+        if (attachment.TextureFormat == FramebufferTextureFormat::DEPTH32F) {
+            if (m_Depth) throw std::invalid_argument("Duplicate depth attachment");
+            TextureSampling sampling;
+            sampling.Filter = TextureFilterMode::Nearest;
+            sampling.WrapU = sampling.WrapV = TextureWrapMode::Clamp;
+            m_Depth = m_Device->Image(m_Spec.Width, m_Spec.Height, VK_FORMAT_D32_SFLOAT,
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_DEPTH_BIT, 1, sampling);
+        } else if (attachment.TextureFormat == FramebufferTextureFormat::DEPTH24STENCIL8) {
             if (m_Depth) throw std::invalid_argument("Duplicate depth attachment");
             m_Depth = m_Device->Image(m_Spec.Width, m_Spec.Height, m_Device->DepthFormat(),
                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -194,6 +205,8 @@ void VulkanFramebuffer::Destroy() {
     if (m_Framebuffer) vkDestroyFramebuffer(m_Device->Device, m_Framebuffer, nullptr);
     if (m_RenderPass) vkDestroyRenderPass(m_Device->Device, m_RenderPass, nullptr);
     m_Framebuffer = VK_NULL_HANDLE; m_RenderPass = VK_NULL_HANDLE;
+    for (auto& attachment : m_Device->SampledAttachments)
+        if (attachment == m_Depth) attachment.reset();
     m_Colors.clear(); m_Depth.reset();
     if (m_ProfileBytes) ProfileResourceTracker::Get().Framebuffer(-1, -static_cast<int64_t>(m_ProfileBytes));
     m_ProfileBytes = 0;
@@ -203,6 +216,17 @@ void VulkanFramebuffer::Bind() {
     m_Device->Viewport = {0, 0, float(m_Spec.Width), float(m_Spec.Height), 0, 1};
 }
 void VulkanFramebuffer::Unbind() { m_Device->Target = m_Device->DefaultTarget; }
+void VulkanFramebuffer::BindDepthAttachment(uint32_t slot) const {
+    if (!m_Depth || !m_Depth->Sampler) throw std::logic_error("Framebuffer has no sampleable depth attachment");
+    m_Device->SampledAttachments.at(slot) = m_Depth;
+}
+void VulkanFramebuffer::ClearDepth() {
+    if (!m_Depth) return;
+    m_Device->Barrier();
+    VkImageSubresourceRange range{m_Depth->Aspect, 0, 1, 0, 1};
+    VkClearDepthStencilValue value{1.0f, 0};
+    vkCmdClearDepthStencilImage(m_Device->Commands(), m_Depth->Image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+}
 bool VulkanFramebuffer::Resize(uint32_t width, uint32_t height) {
     if (!width || !height || width > MaxFramebufferSize || height > MaxFramebufferSize) return false;
     if (width == m_Spec.Width && height == m_Spec.Height) return true;

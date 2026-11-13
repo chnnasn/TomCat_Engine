@@ -126,3 +126,12 @@ git switch -c main --track origin/main
 ```
 
 若本地有未提交修改，先提交或另行保存；若有未推送提交，从保留的旧分支选取自己的增量，逐项移植到新主线并验证。不要对包含旧主线历史的专项分支直接整段合并。
+
+
+## 2026-11-13 静态 3D 集成
+
+来源为 `dev_opengl3D` 的 `cc2a2001`，独立功能增量基线为该分支此前合入的 `aa5911e9`。历史整理后的主线与来源分支没有共同祖先，因此在 `203f74c3` 上应用 `aa5911e9..cc2a2001` 的功能增量，再合并兼容分支。主线后续的 RHI、Vulkan、Linux、脚本、格式和编辑器拆分功能参与逐项整合。
+
+3D 绘制使用共用 RHI，包含深度附件采样、渲染状态恢复和 HDR 上传。模型导入通过 Assimp，Windows 包含运行库，Linux 静态链接。Mesh Renderer 使用 schema 2，两个示例场景的 Camera 更新到主线 schema 4。HDR Artifact 采用格式编号 7，沿用既有压缩纹理编号。构建与回归入口见 [3D 指南](OPENGL_3D.zh-CN.md)。
+
+集成提交为 `c17ed085`，兼容修复为 `fc1b1e6e`。后者通过 Windows Release、Linux Debug/Release 和 Managed Web 三端 CI，再以合并提交接入 `main`。源分支 `dev_opengl3D` 保留 `cc2a2001`，本次按功能增量迁移，原分支提交 SHA 与整理后的主线祖先关系独立。验收范围与运行链接见 [项目状态](PROJECT_STATUS.zh-CN.md#验收记录)。

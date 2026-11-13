@@ -51,7 +51,9 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 
 
 		"%{IncludeDir.ImGuizmo}",
-		"%{IncludeDir.VulkanSDK}"
+		"%{IncludeDir.VulkanSDK}",
+		"%{IncludeDir.Assimp}",
+		"%{IncludeDir.AssimpBuild}"
 	}
 
 	dependson
@@ -63,6 +65,11 @@ objdir ("../TomCat/bin-int/" .. outputdir .."/%{prj.name}")
 		"yaml-cpp"
 	}
 	buildoptions { "/utf-8", "/bigobj" }
+
+filter "system:windows"
+    prebuildcommands {
+        'powershell -NoProfile -ExecutionPolicy Bypass -File "../Scripts/Build-Assimp.ps1"'
+    }
 
 filter "files:vendor/harfbuzz/**"
     flags { "NoPCH" }

@@ -1,13 +1,13 @@
 # 项目状态与验收
 
-记录核对：2026-10-22。本文是当前交付、分支边界和验收状态的汇总入口；操作细节由专题指南维护，历史方案和原始验收保留在各自文档中。
+记录核对于 2026-11-13。本文汇总当前交付、分支边界和验收状态。操作细节由专题指南维护，历史方案和原始验收保留在各自文档中。
 
 ## 当前基线
 
 - 产品版本 **0.6.0**，版本常量以 [Version.h](../TomCat/src/TomCat/Core/Version.h) 为准。
 - `main` 是功能集成主线。历史整理前代码基线为 `b04d81d8`，恢复发布关联后对应 `17b11340`（首次整理为 `65f38cfb`）；这些节点的 Git tree 完全相同。记录与发布关联整理完成于 `dc684bc8`，随后 [9a9a303a](https://github.com/chnnasn/TomCat_Engine/commit/9a9a303a56893d50eb02a6280603324a6741f9cc) 合入 Linux 初步支持，已包含源码增量。
 - 六个发布标签已重新关联到主线可达的等价发布快照，源码树与原版本一致，Release 附件保留。不能用版本号相同推断当前 `main` 与 `v0.6.0` 内容相同。提交映射、标签目标与同步方式见[项目演进](PROJECT_HISTORY.zh-CN.md#发布标签)。
-- Windows x64 使用 Vulkan 1.2 优先、OpenGL 4.6 回退；Linux x86_64 初步支持以 Ubuntu 24.04、X11/XWayland 和 OpenGL 4.5+ 为目标。WebGL2/.NET browser-wasm 是实验目标。主线使用 Box2D 和 EnTT，专项分支能力单独记录。
+- Windows x64 使用 Vulkan 1.2 优先、OpenGL 4.6 回退。Linux x86_64 支持 Ubuntu 24.04、X11/XWayland 下的 Vulkan 1.2 和 OpenGL 4.5+。WebGL2/.NET browser-wasm 是实验目标。主线使用 Box2D 和 EnTT，专项分支能力单独记录。
 
 ## 已交付能力
 
@@ -20,6 +20,7 @@
 | 场景与 Prefab | 关联/嵌套/变体、整实例及逐属性覆盖、异步读取、分帧恢复、叠加与持久根对象 | [Prefab](PREFAB_WORKFLOW.zh-CN.md)、[场景流式加载](SCENE_STREAMING.zh-CN.md) |
 | C# 与运行时 | 生命周期、物理回调、协程与作用域任务、托管依赖、存档、脚本投影和批量变更优化 | [脚本指南](../Managed/README.zh-CN.md)、[CoinRunner](../Samples/CoinRunner/README.md) |
 | UI 与媒体 | Windows 字素/塑形/IME 预编辑、固定行高虚拟列表、本地化参数、2D 光照与后处理、OGG 导入和音频总线 | [Runtime UI](RUNTIME_UI_PRODUCT.zh-CN.md)、[P1 边界](P1_PRODUCTION.md) |
+| 静态 3D | 六种图元、OBJ/FBX/glTF/GLB、PBR、灯光、HDR 天空、方向光阴影、Scene/Game、Prefab、C# 组件与 Player | [3D 指南](OPENGL_3D.zh-CN.md) |
 | 桌面渲染 | RHI、Vulkan/OpenGL、自动后端选择、双后端着色器包、多帧提交、上传页复用、source-over alpha 修复 | [RHI 与 Vulkan](RHI_VULKAN.zh-CN.md) |
 | Linux 原生平台 | Editor/Hub/Player/CLI 的 CMake 构建、CoreCLR 与脚本编译、OpenAL Soft、携带私有 .NET 的 ELF 游戏导出；GL 4.5 使用 GLSL 编译路径 | [Linux 使用说明](LINUX.zh-CN.md) |
 | Web | 原生编辑面板、Project 编辑与场景持久化、托管脚本生命周期、常驻 WebAudio 音频 | [Web 指南](../Web/README.zh-CN.md) |
@@ -29,6 +30,10 @@
 
 | 对象与基线 | 结果 | 证据与适用范围 |
 | --- | --- | --- |
+| 静态 3D 集成 `fc1b1e6e`，2026-11-13 Windows CI | 完整 Release 回归通过 | [Regressions #43499423353](https://github.com/chnnasn/TomCat_Engine/actions/runs/43499423353)。包含原生与托管回归、软件 OpenGL 3D、应用构建、Player、模块发布和编辑器自动化 |
+| 同一集成基线，Ubuntu 24.04 | Debug / Release 各 17/17 项 CTest 通过 | [Linux native #43499425293](https://github.com/chnnasn/TomCat_Engine/actions/runs/43499425293)。包含 Mesa OpenGL 3D、Vulkan 验证层、中文模型路径、外部 buffer 变更、模型包离线加载和携带私有 .NET 的导出游戏 |
+| 同一集成基线，Managed Web | 编译与浏览器回归通过 | [Managed Web #43499422981](https://github.com/chnnasn/TomCat_Engine/actions/runs/43499422981)。覆盖 Web 编译发布、浏览器脚本生命周期与音频输出 |
+| 同一集成基线，Windows 本机 NVIDIA GeForce RTX 5060 Laptop GPU | OpenGL 3D、Vulkan 3D、多视口 RHI 通过，Vulkan 验证层 0 错误 | `Run-RHIRegression.ps1 -Backend vulkan -Validation -MultiViewport` 及 OpenGL `Renderer3DRegression --gpu --expect-backend opengl`。覆盖 HDR 天空、三类灯光、方向光阴影、PBR、拾取与 2D/3D 状态切换。本地日志为 `build/opengl3d-rhi-vulkan-final.log` 和 `build/opengl3d-gpu-opengl-final.log` |
 | Linux 移植 `2b6d2308`，2026-10-22 Ubuntu 24.04 | Debug / Release 各 11/11 项 CTest 通过 | [Debug job](https://github.com/chnnasn/TomCat_Engine/actions/runs/39789173074/job/119860283533)、[Release job](https://github.com/chnnasn/TomCat_Engine/actions/runs/39791001982/job/119866694708)。包括 OpenAL 回环 PCM、C# 编译/失败恢复、CLI 导出、无 SDK 环境下的私有 CoreCLR 和 Xvfb/Mesa GL 4.5 Player；两项分别来自不同运行，整轮 workflow 最终均取消，不记为整轮 CI 通过 |
 | 主线合并 `9a9a303a`，2026-10-22 | 已触发合并后检查，结果独立查询 | [Linux native](https://github.com/chnnasn/TomCat_Engine/actions/runs/39818207868)、[Windows Regressions](https://github.com/chnnasn/TomCat_Engine/actions/runs/39818207905)、[Managed Web](https://github.com/chnnasn/TomCat_Engine/actions/runs/39818207765)。Linux 补丁与已测分支完全相同，发布历史文档与 tag 保留；此处不将分支测试结论记为合并 SHA 的 CI 通过 |
 | 原主线 `b04d81d8`，2026-10-17 Windows CI | 通过 | [Regressions #39036211837](https://github.com/chnnasn/TomCat_Engine/actions/runs/39036211837)。Release 入口使用软件 OpenGL，覆盖托管、原生、应用/发布与自动化；不能据此声称 Vulkan 实机验收通过 |
@@ -47,20 +52,20 @@
 | 待性能复测 | 独占目标机器重跑 soak；补真实 C#、资源上传、重物理与 OS Present 工作负载 |
 | 待人工/设备验收 | 外部 IDE 断点/Watch/调用栈，真实中文/日文 IME、多屏 DPI、手柄、物理音频输出与跨浏览器覆盖 |
 | Linux 待桌面验收 | Editor 完整操作、真实 GPU/显示器、Zenity、扬声器/耳机、设备断开重连及 PulseAudio/PipeWire/ALSA 路由；CI 的 Xvfb/Mesa 与 OpenAL 回环不能代替这些检查 |
-| Linux 待适配 | Vulkan 探测、Wayland 原生后端、ARM64、IME 预编辑/字体回退、崩溃转储、外部 C# 编辑器启动及完整 Editor 发行包 |
+| Linux 待适配 | Wayland 原生后端、ARM64、IME 预编辑/字体回退、崩溃转储、外部 C# 编辑器启动及完整 Editor 发行包 |
 | 已实现但有边界 | 场景与纹理预算为协作式软预算；叠加/持久实体合并仍有原子事务。虚拟列表限纵向固定行高；非 Windows 不具备完整 ICU/IME 行为 |
 | 待实现 | Web 流式音频；GPU draw-call 明细和托管堆对象归属分析；独立主题资产；完整移动 Player；主线生产级 3D 工作流 |
 | 后端范围外 | Vulkan MSAA、独立传输队列和异步拾取等见 [RHI 限制](RHI_VULKAN.zh-CN.md#当前能力与限制)，不以“RHI 已集成”推断全部图形能力完成 |
 
 ## 专项分支
 
-以下是 2026-10-22 从远端读取的开发分支快照；分支引用保留，是否已集成按功能增量核对。
+以下开发分支快照核对于 2026-11-13。分支引用保留，集成状态按功能增量核对。
 
 | 分支 | 核对时提交 | 专项增量及与主线的关系 |
 | --- | --- | --- |
 | `dev_linux` | `2b6d2308` | 8 个 Linux 提交已在新主线重放并由 `9a9a303a` 合入，内容已集成；分支仍保留旧祖先，不能用原提交是否为 `main` 祖先判断功能是否缺失 |
 | `dev_butter` | `f39996cc` | Butter 物理适配及 CCD，尚未替代主线 Box2D；见[迁移记录](https://github.com/chnnasn/TomCat_Engine/blob/dev_butter/docs/Butter-Migration.md) |
 | `dev_ekit` | `c6784dd4` | ekit ECS 迁移，尚未替代主线 EnTT；见[迁移指南](https://github.com/chnnasn/TomCat_Engine/blob/dev_ekit/docs/EKIT_MIGRATION.md) |
-| `dev_opengl3D` | `cc2a2001` | 静态模型、PBR、光照与阴影开发，尚未作为主线 3D 能力发布；见[3D 指南](https://github.com/chnnasn/TomCat_Engine/blob/dev_opengl3D/docs/OPENGL_3D.zh-CN.md) |
+| `dev_opengl3D` | `cc2a2001` | 静态模型、PBR、光照与阴影已按独立增量集成主线，并适配 RHI、Linux 和 Vulkan，见 [3D 指南](OPENGL_3D.zh-CN.md) |
 
 专项分支的旧验收结果只适用于其原基线。历史整理后继续集成这些分支时，应从新 `main` 准备功能增量，避免把旧主线的整段祖先再次合入。

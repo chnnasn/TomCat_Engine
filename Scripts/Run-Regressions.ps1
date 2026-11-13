@@ -73,7 +73,7 @@ function Invoke-Checked {
 }
 
 function Invoke-NativeRegression {
-    param([Parameter(Mandatory)][string]$Name)
+    param([Parameter(Mandatory)][string]$Name, [string[]]$Arguments = @())
     $outputDirectory = "$Configuration-windows-x86_64"
     $executable = Join-Path $repositoryRoot "Tests\bin\$outputDirectory\$Name\$Name.exe"
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
@@ -87,7 +87,7 @@ function Invoke-NativeRegression {
         Get-ChildItem -LiteralPath $env:TC_TEST_OPENGL_DIRECTORY -Filter '*.dll' -File |
             Copy-Item -Destination (Split-Path -Parent $executable) -Force
     }
-    Invoke-Checked -Name $Name -Action { & $executable }
+    Invoke-Checked -Name $Name -Action { & $executable @Arguments }
 }
 
 Push-Location $repositoryRoot
@@ -171,6 +171,8 @@ try {
         & $templateBuilder -Configuration $Configuration -Destination $templateOutput
     }
 
+    Invoke-NativeRegression -Name "Renderer3DRegression"
+    Invoke-NativeRegression -Name "Renderer3DRegression" -Arguments '--gpu', '--expect-backend', 'opengl'
     Invoke-NativeRegression -Name "PhysicsRegression"
     Invoke-NativeRegression -Name "SpriteAssetRegression"
     Invoke-NativeRegression -Name "Advanced2DRegression"

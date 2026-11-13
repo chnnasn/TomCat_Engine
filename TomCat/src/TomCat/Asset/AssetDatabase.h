@@ -67,6 +67,7 @@ namespace TomCat {
 
 	struct AssetLoadInputSnapshot
 	{
+		std::vector<std::pair<std::filesystem::path, std::string>> ModelSources;
 		AssetMetadata Metadata;
 		std::filesystem::path SourcePath;
 		AssetDependencySnapshot Dependencies;

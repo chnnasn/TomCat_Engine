@@ -156,6 +156,7 @@ namespace TomCat {
 			switch (format)
 			{
 			case FramebufferTextureFormat::DEPTH24STENCIL8:  return true;
+			case FramebufferTextureFormat::DEPTH32F: return true;
 			}
 
 			return false;
@@ -250,6 +251,13 @@ namespace TomCat {
 			case FramebufferTextureFormat::DEPTH24STENCIL8:
 				Utils::AttachDepthTexture(pending.DepthAttachment, m_Specification.Samples, GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL_ATTACHMENT, m_Specification.Width, m_Specification.Height);
 				break;
+			case FramebufferTextureFormat::DEPTH32F:
+				Utils::AttachDepthTexture(pending.DepthAttachment, m_Specification.Samples, GL_DEPTH_COMPONENT32F, GL_DEPTH_ATTACHMENT, m_Specification.Width, m_Specification.Height);
+				if (!multisample) {
+					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+				}
+				break;
 			}
 		}
 
@@ -262,6 +270,7 @@ namespace TomCat {
 		{
 			// Only depth-pass
 			glDrawBuffer(GL_NONE);
+			glReadBuffer(GL_NONE);
 		}
 
 		const GLenum framebufferStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -311,6 +320,20 @@ namespace TomCat {
 		}
 		glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 		glViewport(0, 0, m_Specification.Width, m_Specification.Height);
+	}
+
+	void OpenGLFramebuffer::BindDepthAttachment(uint32_t slot) const
+	{
+		if (!m_DepthAttachment || m_Specification.Samples != 1)
+			throw std::logic_error("Depth sampling requires a single-sample depth attachment");
+		glBindTextureUnit(slot, m_DepthAttachment);
+	}
+
+	void OpenGLFramebuffer::ClearDepth()
+	{
+		if (!m_DepthAttachment) return;
+		const float depth = 1.0f;
+		glClearNamedFramebufferfv(m_RendererID, GL_DEPTH, 0, &depth);
 	}
 
 	void OpenGLFramebuffer::Unbind()

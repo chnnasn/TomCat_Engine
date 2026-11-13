@@ -37,6 +37,12 @@ namespace TomCat {
 			s_RendererAPI->SetDepthTest(enabled);
 		}
 
+		static void SetDepthWrite(bool enabled) { s_RendererAPI->SetDepthWrite(enabled); }
+		static void SetDepthLessEqual(bool enabled) { s_RendererAPI->SetDepthLessEqual(enabled); }
+		static void SetBlending(bool enabled) { s_RendererAPI->SetBlending(enabled); }
+		static void SetCullFaces(bool enabled) { s_RendererAPI->SetCullFaces(enabled); }
+		static Scope<RenderState> CaptureState() { return s_RendererAPI->CaptureState(); }
+
 		inline static void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t count = 0)
 		{
 

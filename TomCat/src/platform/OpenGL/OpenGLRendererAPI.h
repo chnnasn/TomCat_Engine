@@ -17,6 +17,11 @@ namespace TomCat{
 		virtual void SetClearColor(const glm::vec4& color)override;
 		virtual void Clear() override;
 		virtual void SetDepthTest(bool enabled) override;
+		void SetDepthWrite(bool enabled) override;
+		void SetDepthLessEqual(bool enabled) override;
+		void SetBlending(bool enabled) override;
+		void SetCullFaces(bool enabled) override;
+		Scope<RenderState> CaptureState() override;
 
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) override;
 		virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) override;

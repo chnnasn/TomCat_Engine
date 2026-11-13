@@ -333,7 +333,7 @@ namespace TomCat {
             // The shader compiler is linked statically into the Linux Player.
             return false;
 #else
-            return key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
+            return key == "assimp-vc143-mt.dll" || key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
                 key == "vcruntime140.dll" || key == "vcruntime140_1.dll";
 #endif
 		}

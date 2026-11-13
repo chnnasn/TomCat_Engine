@@ -1,6 +1,26 @@
 # Dependency-free helpers shared by local release checks and GitHub Actions.
 # Tool pins live in ReleaseToolVersions.json so setup and CI cannot drift.
 
+function Select-TomCatVisualStudioGenerator {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Instances,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Generators
+    )
+
+    foreach ($instance in @($Instances | Sort-Object { [version]$_.installationVersion } -Descending)) {
+        $major = ([version]$instance.installationVersion).Major
+        $generator = $Generators | Where-Object { $_.name -like "Visual Studio $major *" } |
+            Select-Object -First 1 -ExpandProperty name
+        if ($generator) {
+            return [pscustomobject]@{
+                Generator = $generator
+                InstallationPath = $instance.installationPath
+            }
+        }
+    }
+    throw 'Install a Visual Studio C++ toolchain and a CMake version supporting that Visual Studio release.'
+}
+
 function Assert-TomCatFileSha256 {
     param(
         [Parameter(Mandatory)]

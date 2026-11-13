@@ -20,7 +20,7 @@ Linux x86_64 初步支持已于 **2026-10-22** 通过 [9a9a303a](https://github.
 
 `main` 集成 Windows 桌面开发、Linux 初步支持和实验性 Web 目标。发布标签仍对应固定版本快照；当前主线包含 `v0.6.0` 发布后的增量。
 
-分支定位核对日期：**2026-10-22**。构建工具链、托管 Web、Vulkan 和 Linux 初步移植已集成到 `main`。下表列出保留的开发分支；专项能力是否已合入主线，以[项目状态](docs/PROJECT_STATUS.zh-CN.md)为准。
+分支定位核对于 **2026-11-13**。构建工具链、托管 Web、Vulkan、Linux 支持和静态 3D 已集成到 `main`。下表列出保留的开发分支，专项能力的集成状态见[项目状态](docs/PROJECT_STATUS.zh-CN.md)。
 
 | 分支 | 作用 |
 | --- | --- |
@@ -28,7 +28,7 @@ Linux x86_64 初步支持已于 **2026-10-22** 通过 [9a9a303a](https://github.
 | [dev_linux](https://github.com/chnnasn/TomCat_Engine/tree/dev_linux) | 初步 Linux 移植已合入 `main`；分支保留原开发历史 |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D 物理后端集成 |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS 迁移与场景遍历优化 |
-| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL 静态 3D 渲染开发 |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | 静态 3D 来源分支，已适配 RHI 并集成主线 |
 
 **分支维护。** 专项分支定期核对与 `main` 的差异，将可独立验证的功能合入主线。停止维护的分支先建立可恢复的归档引用，再移除开发分支。下次分支核对：**2026-12-21**。
 
@@ -112,7 +112,7 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - **Hub 项目管理器**：项目创建与发现、基于产品身份扫描 Editor 安装、版本选择、按准确可执行文件路径启动和用户级最近项目状态
 - **UI 控件与本地化**：新增滑条、滚动视图、单行 Unicode 输入框、层级主题和游戏语言表回退；支持 OS 输入法提交文字，完整组合态仍有边界，详见 [UI 控件](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **性能分析**：可视化 CPU 时间线、异步 GPU 帧计时、绘制统计、进程内存和资源分配估算；提供 [Profiler 与 C# 断点流程](docs/DEBUGGING_AND_PROFILING.md)
-- **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、含 OpenGL RHI 的 14 个原生回归程序、应用构建、Player 模板、C# Player 启动、CoinRunner、模块发布与 Editor 自动化；Vulkan 验证层/多窗口和 Web 浏览器测试有独立入口
+- **回归测试**：统一 Release 入口覆盖托管 ABI/生命周期、含 OpenGL RHI 的 15 个原生回归程序、应用构建、Player 模板、C# Player 启动、CoinRunner、模块发布与 Editor 自动化；Vulkan 验证层/多窗口和 Web 浏览器测试有独立入口
 
 ## 当前范围
 
@@ -120,10 +120,10 @@ Stop 恢复原有位置和旋转。物理片段保持原速。
 - Windows 渲染后端：默认优先 **Vulkan 1.2**，不支持时自动回退 **OpenGL 4.6**；配置和限制见 [RHI 与 Vulkan](docs/RHI_VULKAN.zh-CN.md)。
 - 实验性浏览器目标需要 **WebGL2 + SharedArrayBuffer/Workers**，详见 [Web 构建与限制](Web/README.zh-CN.md)。托管 C# 通过 .NET browser-wasm 宿主运行；常驻音频通过 WebAudio 输出，流式音频、自定义 Cooked SPIR-V Shader 和多重采样 Framebuffer 尚不支持。浏览器自动播放策略仍可能要求用户先点击或按键；音频信号回归不等于物理扬声器验收。
 - 当前引擎主范围：**2D**
-- 实验性 3D 模板仅配置透视相机，尚未实现生产级 3D 渲染器
+- 静态 3D 渲染支持六种图元、OBJ/FBX/glTF/GLB 模型、灯光、方向光阴影、HDR 天空和金属度/粗糙度 PBR，使用 OpenGL/Vulkan 共用 RHI，见 [3D 使用说明](docs/OPENGL_3D.zh-CN.md)。
 - 从源码构建 TomCat 本身需要 **.NET 10 SDK**；Windows 打包 Editor 自带固定私有 SDK。Linux 源码构建通过 `DOTNET_ROOT_X64`、`DOTNET_ROOT` 或 PATH 查找 SDK。
 - 导出的 Player 携带私有 .NET Runtime，无需全局 .NET SDK。Windows 导出包含所需 C++ 运行库；Linux 导出为 ELF 程序，仍依赖兼容的系统图形、音频和运行库。
-- Linux 使用 **OpenGL 4.5+**；Linux Vulkan 探测、Wayland 原生后端和完整 Editor 发行包尚未完成，见 [Linux 范围](docs/LINUX.zh-CN.md#边界)。
+- Linux 在 X11/XWayland 下支持 **Vulkan 1.2** 和 **OpenGL 4.5+**。Wayland 原生后端和完整 Editor 发行包仍待完成，见 [Linux 范围](docs/LINUX.zh-CN.md#边界)。
 - 仍不支持原生托管依赖和 NuGet 内容资产，不能视为兼容所有 NuGet 包；C# 采用外部 IDE 附加调试，停止 Play 后重新编译并更新脚本，不提供 Play Mode 热替换。场景恢复、激活和上传已有协作式分帧预算；Windows 输入框已有 IME 预编辑和候选窗定位，详见 [P1 能力与边界](docs/P1_PRODUCTION.md)
 
 [录制档案](docs/portfolio/README.md)分别记录各次桌面演示的实际覆盖与限制。
@@ -277,10 +277,11 @@ Authoring 播放读取验证后的 DDC 产物，Cooked Player 读取验证后的
 - [x] Linux x86_64 初步移植：CMake、C# 宿主、OpenAL Soft、原生导出与 Debug/Release CI；已验证范围见 [Linux 指南](docs/LINUX.zh-CN.md)
 - [ ] 更多平台、桌面后端与进一步的 Vulkan 同步/传输优化
 
-### 未来 3D 范围
+### 3D 范围
 
-- [ ] Mesh/模型导入、Material、Light、PBR、阴影、环境渲染和骨骼动画
-- [ ] 等 3D Runtime 与编辑流程成立后，再将当前仅有相机的 3D 模板转为正式功能
+- [x] 静态模型导入、六种内置图元、灯光、PBR、方向光阴影和 HDR 环境渲染，使用 OpenGL/Vulkan 共用 RHI
+- [x] Scene/Game 编辑与拾取、组件脚本、Prefab 和 Player 集成
+- [ ] 骨骼动画、3D 物理和高级材质编辑
 
 ## 格式策略
 

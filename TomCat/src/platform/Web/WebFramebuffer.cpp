@@ -8,7 +8,7 @@ namespace TomCat {
 OpenGLFramebuffer::OpenGLFramebuffer(const FramebufferSpecification& spec) : m_Specification(spec) {
   if (spec.Samples != 1) throw std::invalid_argument("Web framebuffer currently supports single-sample targets only");
   for (auto attachment : spec.Attachments.Attachments)
-    if (attachment.TextureFormat == FramebufferTextureFormat::DEPTH24STENCIL8) m_DepthAttachmentSpecification = attachment;
+    if (attachment.TextureFormat == FramebufferTextureFormat::DEPTH24STENCIL8 || attachment.TextureFormat == FramebufferTextureFormat::DEPTH32F) m_DepthAttachmentSpecification = attachment;
     else m_ColorAttachmentSpecifications.push_back(attachment);
   if (!spec.Width || !spec.Height || spec.Width > 8192 || spec.Height > 8192)
     throw std::invalid_argument("Invalid Web framebuffer dimensions");
@@ -47,8 +47,13 @@ bool OpenGLFramebuffer::Invalidate() {
   }
   if (m_DepthAttachmentSpecification.TextureFormat != FramebufferTextureFormat::None) {
     glGenTextures(1, &m_DepthAttachment); glBindTexture(GL_TEXTURE_2D, m_DepthAttachment);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, m_Specification.Width, m_Specification.Height);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_DepthAttachment, 0);
+    const bool depthOnly = m_DepthAttachmentSpecification.TextureFormat == FramebufferTextureFormat::DEPTH32F;
+    glTexStorage2D(GL_TEXTURE_2D, 1, depthOnly ? GL_DEPTH_COMPONENT32F : GL_DEPTH24_STENCIL8, m_Specification.Width, m_Specification.Height);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, depthOnly ? GL_DEPTH_ATTACHMENT : GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_DepthAttachment, 0);
   }
   if (!buffers.empty()) glDrawBuffers(buffers.size(), buffers.data());
   else { const GLenum none = GL_NONE; glDrawBuffers(1, &none); glReadBuffer(GL_NONE); }
@@ -60,6 +65,20 @@ bool OpenGLFramebuffer::Invalidate() {
 }
 void OpenGLFramebuffer::Bind() { glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID); glViewport(0, 0, m_Specification.Width, m_Specification.Height); }
 void OpenGLFramebuffer::Unbind() { glBindFramebuffer(GL_FRAMEBUFFER, 0); }
+void OpenGLFramebuffer::BindDepthAttachment(uint32_t slot) const {
+  if (!m_DepthAttachment) throw std::logic_error("Framebuffer has no depth attachment");
+  glActiveTexture(GL_TEXTURE0 + slot);
+  glBindTexture(GL_TEXTURE_2D, m_DepthAttachment);
+}
+void OpenGLFramebuffer::ClearDepth() {
+  if (!m_DepthAttachment) return;
+  GLint previous;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_RendererID);
+  const float depth = 1.0f;
+  glClearBufferfv(GL_DEPTH, 0, &depth);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previous);
+}
 bool OpenGLFramebuffer::Resize(uint32_t width, uint32_t height) {
   if (!width || !height || width > 8192 || height > 8192) return false;
   if (width == m_Specification.Width && height == m_Specification.Height) return true;
