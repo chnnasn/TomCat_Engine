@@ -16,6 +16,7 @@
 | Linux 构建、C#、音频、导出与 CI | [Linux 使用说明](LINUX.zh-CN.md) | — |
 | 浏览器构建、编辑接口与限制 | [Web 指南](../Web/README.zh-CN.md) | [Web guide](../Web/README.md) |
 | 浏览器中文字形与字体来源 | [字体说明](../Web/fonts/README.zh-CN.md) | [Font notes](../Web/fonts/README.md) |
+| 静态 3D、PBR、灯光、阴影与双后端回归 | [3D 指南](OPENGL_3D.zh-CN.md) | — |
 | 2D 物理示例 | [PhysicsPlayground](../Samples/PhysicsPlayground/README.md) | — |
 | 完整游戏、存档与独立 Player 示例 | — | [CoinRunner](../Samples/CoinRunner/README.md) |
 | Editor 结构化操作、输入测试与截图 | [原生自动化](Automation.md) | [工具协议目录](AutomationTools.json) |
@@ -62,7 +63,7 @@ TCPAK v6 引入 BootManifest，v7 在索引中增加逐条目 SHA-256 摘要，v
 以下命令从仓库根目录按顺序执行，先按对应构建指南安装工具和依赖。不要在原生/脚本回归运行时并行重建 Managed 或覆盖测试程序的 DLL。
 
 ```powershell
-# Windows：托管、14 个原生程序（含 OpenGL RHI）、应用/发布与自动化回归
+# Windows：托管、15 个原生程序（含 OpenGL RHI）、应用/发布与自动化回归
 powershell -ExecutionPolicy Bypass -File Scripts/Run-Regressions.ps1 -Configuration Release -Log
 
 # 桌面默认选择、不可用设备回退、显式覆盖与窗口初始化

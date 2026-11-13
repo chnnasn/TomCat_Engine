@@ -14,7 +14,7 @@ std::string ToGLES(std::string source, GLenum stage) {
   source.erase(0, source.find_first_not_of(" \t\r\n"));
   source = std::regex_replace(source, std::regex(R"(#version 450 core)"), "#version 300 es\nprecision highp float;\nprecision highp int;");
   source = std::regex_replace(source, std::regex(R"(layout\(std140,\s*binding\s*=\s*[0-9]+\))"), "layout(std140)");
-  source = std::regex_replace(source, std::regex(R"(layout\(binding\s*=\s*0\) )"), "");
+  source = std::regex_replace(source, std::regex(R"(layout\((location\s*=\s*[0-9]+,\s*)?binding\s*=\s*[0-9]+\)\s*)"), "");
   source = std::regex_replace(source, std::regex(stage == GL_VERTEX_SHADER ? R"(layout\(location\s*=\s*[0-9]+\) out)" : R"(layout\(location\s*=\s*[0-9]+\) in)"), stage == GL_VERTEX_SHADER ? "out" : "in");
   source = std::regex_replace(source, std::regex(R"(u_Textures\[32\])"), "u_Textures[16]");
   source = std::regex_replace(source, std::regex(R"(\b(out|in) flat\b)"), "flat $1");
@@ -43,10 +43,13 @@ OpenGLShader::OpenGLShader(const std::string& name, const std::string& vertex, c
     m_RendererID = glCreateProgram(); glAttachShader(m_RendererID, vs); glAttachShader(m_RendererID, fs); glLinkProgram(m_RendererID);
     GLint ok = 0; glGetProgramiv(m_RendererID, GL_LINK_STATUS, &ok);
     if (!ok) { char log[4096]{}; glGetProgramInfoLog(m_RendererID, sizeof(log), nullptr, log); throw std::runtime_error(log); }
-    const GLuint camera = glGetUniformBlockIndex(m_RendererID, "Camera");
-    if (camera != GL_INVALID_INDEX) glUniformBlockBinding(m_RendererID, camera, 0);
-    const GLuint lighting=glGetUniformBlockIndex(m_RendererID,"Lighting"); if(lighting!=GL_INVALID_INDEX)glUniformBlockBinding(m_RendererID,lighting,1);
-    const GLuint grade=glGetUniformBlockIndex(m_RendererID,"ColorGrade"); if(grade!=GL_INVALID_INDEX)glUniformBlockBinding(m_RendererID,grade,2);
+    const std::regex block(R"(layout\s*\(std140,\s*binding\s*=\s*([0-9]+)\)\s*uniform\s+(\w+))");
+    for (const auto* source : {&vertex, &fragment}) {
+      for (std::sregex_iterator it(source->begin(), source->end(), block), end; it != end; ++it) {
+        const GLuint index = glGetUniformBlockIndex(m_RendererID, (*it)[2].str().c_str());
+        if (index != GL_INVALID_INDEX) glUniformBlockBinding(m_RendererID, index, std::stoul((*it)[1].str()));
+      }
+    }
   } catch (...) { glDeleteShader(vs); if (fs) glDeleteShader(fs); if (m_RendererID) glDeleteProgram(m_RendererID); throw; }
   glDeleteShader(vs); glDeleteShader(fs);
 }

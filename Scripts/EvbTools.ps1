@@ -359,6 +359,7 @@ function New-TomCatRuntimeManifest {
         'TomCatCLI.exe',
         'msvcp140.dll',
         'shaderc_shared.dll',
+        'assimp-vc143-mt.dll',
         'vcruntime140.dll',
         'vcruntime140_1.dll'
     ) | Sort-Object

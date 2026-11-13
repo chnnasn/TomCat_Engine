@@ -64,6 +64,9 @@
     <Filter Include="src\platform">
       <UniqueIdentifier>{41663D6D-2DC9-CC11-D64E-05C8C2909894}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\platform\Linux">
+      <UniqueIdentifier>{2086F859-0C6A-B9AF-75CA-B30261CDA331}</UniqueIdentifier>
+    </Filter>
     <Filter Include="src\platform\OpenGL">
       <UniqueIdentifier>{555C82A0-C1BD-5FAE-4A2B-A660B68B966D}</UniqueIdentifier>
     </Filter>
@@ -303,10 +306,10 @@
     <ClInclude Include="src\TomCat\ImGui\ImGuiCallback.h">
       <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
+    <ClInclude Include="src\TomCat\ImGui\ImGuiFonts.h">
       <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
-    <ClInclude Include="src\TomCat\ImGui\ImGuiFonts.h">
+    <ClInclude Include="src\TomCat\ImGui\ImGuiLayer.h">
       <Filter>src\TomCat\ImGui</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Math\Math.h">
@@ -357,6 +360,12 @@
     <ClInclude Include="src\TomCat\Renderer\GraphicsContext.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Mesh.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Model.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\RenderCommand.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
@@ -364,6 +373,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Renderer2D.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\Renderer3D.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\RendererAPI.h">
@@ -376,6 +388,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\Texture.h">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Renderer\TextureSampling.h">
       <Filter>src\TomCat\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Renderer\UniformBuffer.h">
@@ -409,6 +424,9 @@
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Entity.h">
+      <Filter>src\TomCat\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TomCat\Scene\EntityNameIndex.h">
       <Filter>src\TomCat\Scene</Filter>
     </ClInclude>
     <ClInclude Include="src\TomCat\Scene\Physics2DEvents.h">
@@ -492,6 +510,15 @@
     <ClInclude Include="src\TomCat\Utils\PlatformUtils.h">
       <Filter>src\TomCat\Utils</Filter>
     </ClInclude>
+    <ClInclude Include="src\platform\Linux\LinuxAudioDevice.h">
+      <Filter>src\platform\Linux</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Linux\LinuxEntryPoint.h">
+      <Filter>src\platform\Linux</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform\Linux\LinuxProcess.h">
+      <Filter>src\platform\Linux</Filter>
+    </ClInclude>
     <ClInclude Include="src\platform\OpenGL\OpenGLApi.h">
       <Filter>src\platform\OpenGL</Filter>
     </ClInclude>
@@ -549,10 +576,10 @@
     <ClInclude Include="src\platform\Web\WebWindow.h">
       <Filter>src\platform\Web</Filter>
     </ClInclude>
-    <ClInclude Include="src\platform\Window\WindowsWindow.h">
+    <ClInclude Include="src\platform\Window\WindowIcon.h">
       <Filter>src\platform\Window</Filter>
     </ClInclude>
-    <ClInclude Include="src\platform\Window\WindowIcon.h">
+    <ClInclude Include="src\platform\Window\WindowsWindow.h">
       <Filter>src\platform\Window</Filter>
     </ClInclude>
     <ClInclude Include="src\tcpch.h">
@@ -1892,6 +1919,9 @@
     <ClCompile Include="src\TomCat\Audio\NullAudioDevice.cpp">
       <Filter>src\TomCat\Audio</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Audio\WebAudioDevice.cpp">
+      <Filter>src\TomCat\Audio</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Audio\WindowsAudioDevice.cpp">
       <Filter>src\TomCat\Audio</Filter>
     </ClCompile>
@@ -1937,10 +1967,10 @@
     <ClCompile Include="src\TomCat\ImGui\ImGuiCallback.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp">
+    <ClCompile Include="src\TomCat\ImGui\ImGuiFonts.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
-    <ClCompile Include="src\TomCat\ImGui\ImGuiFonts.cpp">
+    <ClCompile Include="src\TomCat\ImGui\ImGuiLayer.cpp">
       <Filter>src\TomCat\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Math\Math.cpp">
@@ -1979,6 +2009,12 @@
     <ClCompile Include="src\TomCat\Renderer\GraphicsContext.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Mesh.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Model.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\RenderCommand.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
@@ -1986,6 +2022,9 @@
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\Renderer2D.cpp">
+      <Filter>src\TomCat\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\TomCat\Renderer\Renderer3D.cpp">
       <Filter>src\TomCat\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\TomCat\Renderer\RendererAPI.cpp">
@@ -2078,6 +2117,15 @@
     <ClCompile Include="src\TomCat\Utils\FileSystemUtils.cpp">
       <Filter>src\TomCat\Utils</Filter>
     </ClCompile>
+    <ClCompile Include="src\platform\Linux\LinuxAudioDevice.cpp">
+      <Filter>src\platform\Linux</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Linux\LinuxPlatformUtils.cpp">
+      <Filter>src\platform\Linux</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\Linux\LinuxProcess.cpp">
+      <Filter>src\platform\Linux</Filter>
+    </ClCompile>
     <ClCompile Include="src\platform\OpenGL\OpenGLBuffer.cpp">
       <Filter>src\platform\OpenGL</Filter>
     </ClCompile>
@@ -2147,6 +2195,9 @@
     <ClCompile Include="src\platform\Web\WebWindow.cpp">
       <Filter>src\platform\Web</Filter>
     </ClCompile>
+    <ClCompile Include="src\platform\Window\WindowIcon.cpp">
+      <Filter>src\platform\Window</Filter>
+    </ClCompile>
     <ClCompile Include="src\platform\Window\WindowsInput.cpp">
       <Filter>src\platform\Window</Filter>
     </ClCompile>
@@ -2154,9 +2205,6 @@
       <Filter>src\platform\Window</Filter>
     </ClCompile>
     <ClCompile Include="src\platform\Window\WindowsWindow.cpp">
-      <Filter>src\platform\Window</Filter>
-    </ClCompile>
-    <ClCompile Include="src\platform\Window\WindowIcon.cpp">
       <Filter>src\platform\Window</Filter>
     </ClCompile>
     <ClCompile Include="src\tcpch.cpp">

@@ -30,7 +30,7 @@ Branch roles reviewed on **2026-10-22**. Build/toolchain, managed Web, Vulkan an
 | [dev_linux](https://github.com/chnnasn/TomCat_Engine/tree/dev_linux) | Initial Linux port integrated into `main`; retained at its original development history |
 | [dev_butter](https://github.com/chnnasn/TomCat_Engine/tree/dev_butter) | Butter 2D physics integration |
 | [dev_ekit](https://github.com/chnnasn/TomCat_Engine/tree/dev_ekit) | ekit ECS migration and scene iteration |
-| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | OpenGL static 3D rendering development |
+| [dev_opengl3D](https://github.com/chnnasn/TomCat_Engine/tree/dev_opengl3D) | Static 3D source branch, integrated into main with RHI compatibility |
 
 **Branch maintenance.** Review specialist branches against `main` regularly and integrate independently verifiable changes. Create a recoverable archive reference before removing an inactive development branch. Next branch review: **2026-12-21**.
 
@@ -123,15 +123,15 @@ Still images: [Hub](docs/portfolio/2026-09-20/hub-templates.png),
 - **Hub**: project creation and discovery, identity-based Editor installation scanning and version selection, exact executable-path launching, and per-user recent-project state
 - **Product UI and localization**: sliders, scroll views, single-line Unicode input, inherited themes, and game-language tables with fallback; OS IME commits are supported, with composition limits described in [Runtime UI](docs/RUNTIME_UI_PRODUCT.zh-CN.md)
 - **Performance tools**: visual CPU timeline, asynchronous GPU frame timing, draw statistics, process memory and tracked resource estimates; see [profiling and C# debugger setup](docs/DEBUGGING_AND_PROFILING.md)
-- **Regression coverage**: one Release entry point for managed ABI/lifecycle, 14 native regression executables including OpenGL RHI, application builds, Player templates, C# Player startup, CoinRunner, module publishing and Editor automation; separate Vulkan validation/multi-viewport and Web browser suites
+- **Regression coverage**: one Release entry point for managed ABI/lifecycle, 15 native regression executables including OpenGL RHI, application builds, Player templates, C# Player startup, CoinRunner, module publishing and Editor automation; separate Vulkan validation/multi-viewport and Web browser suites
 
 ## Current Scope
 
 - Development platforms: **Windows x64** and initial **Linux x86_64** support targeting Ubuntu 24.04; Linux desktop interaction and physical devices still require acceptance testing.
-- Windows rendering: **Vulkan 1.2** by default when supported, with automatic **OpenGL 4.6** fallback; see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md). Linux uses **OpenGL 4.5+**; Linux Vulkan probing and native Wayland are not yet supported.
+- Windows rendering: **Vulkan 1.2** by default when supported, with automatic **OpenGL 4.6** fallback; see [RHI and Vulkan setup and limitations](docs/RHI_VULKAN.zh-CN.md). Linux supports **Vulkan 1.2** and **OpenGL 4.5+** on X11/XWayland. Native Wayland remains future work.
 - Experimental browser target: **WebGL2 + SharedArrayBuffer/Workers**; see [Web setup and limitations](Web/README.md). Managed C# runs through the .NET browser-wasm host, and resident audio uses WebAudio. Streaming audio, custom cooked SPIR-V shaders and multisample framebuffers remain unsupported. Browser autoplay policy may require a click or key press; audio signal regressions do not verify physical speaker output.
-- Primary engine scope: **2D**
-- The experimental 3D template configures a perspective camera; a production 3D renderer is not implemented yet
+- Engine scope includes **2D and static 3D**. Physics uses Box2D, and skeletal animation remains future work.
+- Static 3D rendering supports six primitives, OBJ/FBX/glTF/GLB models, editable lights, directional shadows, HDR skies and metallic/roughness PBR through OpenGL and Vulkan. See the [3D guide](docs/OPENGL_3D.zh-CN.md).
 - Source development requires the **.NET 10 SDK** to build TomCat itself. Packaged Windows Editors carry a pinned private SDK for game-script compilation. Linux source builds discover the SDK through `DOTNET_ROOT_X64`, `DOTNET_ROOT` or PATH; a complete Linux Editor distribution remains separate work.
 - Exported Players carry a private .NET runtime and do not require a global .NET SDK. Windows exports include the required C++ runtime DLLs; Linux exports are ELF executables that require compatible system graphics, audio and runtime libraries.
 - Native managed dependencies and NuGet content assets remain unsupported; not every NuGet package is compatible. C# debugging uses an external IDE attached to the Editor; scripts are recompiled and updated after stopping Play. Play Mode hot replacement is unsupported. Scene restoration/activation and uploads have cooperative frame budgets; Windows input fields support IME preedit and candidate positioning. See [production capabilities and limits](docs/P1_PRODUCTION.md).
@@ -302,10 +302,11 @@ Authoring audio playback uses validated imported DDC artifacts; cooked Players r
 - [x] Initial Linux x86_64 port: CMake, C# hosting, OpenAL Soft, native export and Debug/Release CI; see the [Linux guide](docs/LINUX.zh-CN.md) for tested scope
 - [ ] Additional platforms, desktop backends and further Vulkan synchronization/transfer optimization
 
-### Future 3D Scope
+### 3D Scope
 
-- [ ] Mesh/model import, materials, lights, PBR, shadows, environment rendering, and skeletal animation
-- [ ] Promote the current camera-only 3D template after the 3D runtime and authoring workflow exist
+- [x] Static model import, six built-in primitives, lights, PBR, directional shadows and HDR environment rendering through OpenGL/Vulkan
+- [x] Scene/Game authoring, picking, component scripting, Prefabs and Player integration
+- [ ] Skeletal animation, 3D physics and advanced material authoring
 
 ## Format policy
 

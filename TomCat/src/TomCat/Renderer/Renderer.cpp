@@ -2,6 +2,7 @@
 #include "Renderer.h"
 #include "Renderer2D.h"
 #include "TomCat/RHI/RenderDevice.h"
+#include "Renderer3D.h"
 
 namespace TomCat {
 
@@ -28,6 +29,7 @@ namespace TomCat {
 		RenderCommand::ReleaseColorGrade();
 		RHI::RenderDevice::Get().ShutdownProfiling();
 		Renderer2D::Shutdown();
+		Renderer3D::Shutdown();
 		RenderCommand::Shutdown();
 		RHI::RenderDevice::Shutdown();
 	}

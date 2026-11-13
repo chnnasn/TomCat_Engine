@@ -153,7 +153,9 @@ VkPipeline VulkanShader::Pipeline(const VertexArray& array, VulkanFramebuffer& t
     std::vector<VkVertexInputBindingDescription> bindings;
     std::vector<VkVertexInputAttributeDescription> attributes;
     std::ostringstream key;
-    key << indexed << ':' << m_Device->DepthTest << ':' << colorGrade << ':';
+    key << indexed << ':' << m_Device->DepthTest << ':' << colorGrade << ':'
+        << m_Device->DepthWrite << ':' << m_Device->DepthLessEqual << ':'
+        << m_Device->Blending << ':' << m_Device->CullFaces << ':';
     uint32_t location = 0;
     for (uint32_t i = 0; i < array.GetVertexBuffers().size(); ++i) {
         const auto& layout = array.GetVertexBuffers()[i]->GetLayout();
@@ -176,17 +178,20 @@ VkPipeline VulkanShader::Pipeline(const VertexArray& array, VulkanFramebuffer& t
     VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
     viewport.viewportCount = viewport.scissorCount = 1;
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-    raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = m_Device->CullFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
     raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; raster.lineWidth = 1;
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    depth.depthTestEnable = depth.depthWriteEnable = !colorGrade && m_Device->DepthTest && target.Depth(); depth.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth.depthTestEnable = !colorGrade && m_Device->DepthTest && target.Depth();
+    depth.depthWriteEnable = depth.depthTestEnable && m_Device->DepthWrite;
+    depth.depthCompareOp = m_Device->DepthLessEqual ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
     std::vector<VkPipelineColorBlendAttachmentState> blends;
     for (auto& color : target.Colors()) {
         VkPipelineColorBlendAttachmentState blend{};
         blend.colorWriteMask = colorGrade && !blends.empty() ? 0 : 0xf;
-        blend.blendEnable = !colorGrade && color->Format != VK_FORMAT_R32_SINT;
+        blend.blendEnable = !colorGrade && m_Device->Blending && color->Format != VK_FORMAT_R32_SINT;
         blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
         blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blend.dstColorBlendFactor = blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -247,9 +252,12 @@ void VulkanShader::Draw(const Ref<VertexArray>& array, uint32_t count, bool inde
             for (uint32_t i = 0; i < binding.Count; ++i) {
                 const uint32_t slot = binding.Slot + i;
                 if (slot >= m_Device->Textures.size()) throw std::runtime_error("Shader texture array exceeds RHI capacity");
-                auto texture = m_Device->Textures[slot] ? m_Device->Textures[slot] : m_Device->Textures[0];
-                if (!texture || !texture->IsLoaded()) throw std::runtime_error("Shader requires an unbound texture");
-                auto image = texture->NativeImage();
+                auto image = m_Device->SampledAttachments[slot];
+                if (!image) {
+                    auto texture = m_Device->Textures[slot] ? m_Device->Textures[slot] : m_Device->Textures[0];
+                    if (!texture || !texture->IsLoaded()) throw std::runtime_error("Shader requires an unbound texture");
+                    image = texture->NativeImage();
+                }
                 images.push_back({image->Sampler, image->View, VK_IMAGE_LAYOUT_GENERAL}); m_Device->Keep(image);
             }
             write.pImageInfo = images.data();

@@ -20,6 +20,7 @@
 | 场景与 Prefab | 关联/嵌套/变体、整实例及逐属性覆盖、异步读取、分帧恢复、叠加与持久根对象 | [Prefab](PREFAB_WORKFLOW.zh-CN.md)、[场景流式加载](SCENE_STREAMING.zh-CN.md) |
 | C# 与运行时 | 生命周期、物理回调、协程与作用域任务、托管依赖、存档、脚本投影和批量变更优化 | [脚本指南](../Managed/README.zh-CN.md)、[CoinRunner](../Samples/CoinRunner/README.md) |
 | UI 与媒体 | Windows 字素/塑形/IME 预编辑、固定行高虚拟列表、本地化参数、2D 光照与后处理、OGG 导入和音频总线 | [Runtime UI](RUNTIME_UI_PRODUCT.zh-CN.md)、[P1 边界](P1_PRODUCTION.md) |
+| 静态 3D | 六种图元、OBJ/FBX/glTF/GLB、PBR、灯光、HDR 天空、方向光阴影、Scene/Game、Prefab、C# 组件与 Player | [3D 指南](OPENGL_3D.zh-CN.md) |
 | 桌面渲染 | RHI、Vulkan/OpenGL、自动后端选择、双后端着色器包、多帧提交、上传页复用、source-over alpha 修复 | [RHI 与 Vulkan](RHI_VULKAN.zh-CN.md) |
 | Linux 原生平台 | Editor/Hub/Player/CLI 的 CMake 构建、CoreCLR 与脚本编译、OpenAL Soft、携带私有 .NET 的 ELF 游戏导出；GL 4.5 使用 GLSL 编译路径 | [Linux 使用说明](LINUX.zh-CN.md) |
 | Web | 原生编辑面板、Project 编辑与场景持久化、托管脚本生命周期、常驻 WebAudio 音频 | [Web 指南](../Web/README.zh-CN.md) |
@@ -61,6 +62,6 @@
 | `dev_linux` | `2b6d2308` | 8 个 Linux 提交已在新主线重放并由 `9a9a303a` 合入，内容已集成；分支仍保留旧祖先，不能用原提交是否为 `main` 祖先判断功能是否缺失 |
 | `dev_butter` | `f39996cc` | Butter 物理适配及 CCD，尚未替代主线 Box2D；见[迁移记录](https://github.com/chnnasn/TomCat_Engine/blob/dev_butter/docs/Butter-Migration.md) |
 | `dev_ekit` | `c6784dd4` | ekit ECS 迁移，尚未替代主线 EnTT；见[迁移指南](https://github.com/chnnasn/TomCat_Engine/blob/dev_ekit/docs/EKIT_MIGRATION.md) |
-| `dev_opengl3D` | `cc2a2001` | 静态模型、PBR、光照与阴影开发，尚未作为主线 3D 能力发布；见[3D 指南](https://github.com/chnnasn/TomCat_Engine/blob/dev_opengl3D/docs/OPENGL_3D.zh-CN.md) |
+| `dev_opengl3D` | `cc2a2001` | 静态模型、PBR、光照与阴影已按独立增量集成主线，并适配 RHI、Linux 和 Vulkan，见 [3D 指南](OPENGL_3D.zh-CN.md) |
 
 专项分支的旧验收结果只适用于其原基线。历史整理后继续集成这些分支时，应从新 `main` 准备功能增量，避免把旧主线的整段祖先再次合入。

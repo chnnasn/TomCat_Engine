@@ -2348,9 +2348,9 @@ namespace {
 			"OBJ with an out-of-range face index was accepted");
 		request.SourcePath = "unsupported.fbx";
 		Require(!importer->Import(request).Succeeded()
-			&& TomCat::AssetTypeFromPath("unsupported.fbx") == TomCat::AssetType::Other
-			&& TomCat::AssetTypeFromPath("unsupported.gltf") == TomCat::AssetType::Other,
-			"unsupported mesh containers are still advertised as production assets");
+			&& TomCat::AssetTypeFromPath("unsupported.fbx") == TomCat::AssetType::Mesh
+			&& TomCat::AssetTypeFromPath("unsupported.gltf") == TomCat::AssetType::Mesh,
+			"invalid FBX was accepted or supported model extensions were not recognized");
 	}
 
 	void TestOfflineAudioArtifact()

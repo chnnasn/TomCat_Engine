@@ -1,4 +1,5 @@
 #include "tcpch.h"
+#include "MeshArtifact.h"
 #include "AssetDatabase.h"
 
 #include "ArtifactKey.h"
@@ -937,6 +938,10 @@ namespace TomCat {
 	{
 		for (const AssetLoadInputSnapshot& expected : attempt.Snapshots)
 		{
+			for (const auto& [path, hash] : expected.ModelSources) {
+				std::string current, error;
+				if (!ComputeFileContentSHA256(path, current, error) || current != hash) return false;
+			}
 			if (expected.SourceSHA256.empty())
 				continue;
 			std::string currentHash;
@@ -1025,6 +1030,7 @@ namespace TomCat {
 			else if (!SameMetadata(current.Metadata, expected.Metadata))
 				return AssetLoadStatus::StaleSnapshot;
 			current.SourceSHA256 = expected.SourceSHA256;
+			current.ModelSources = expected.ModelSources;
 			refreshed.push_back(std::move(current));
 		}
 		attempt.GraphRevision = m_DependencyGraphRevision;
@@ -1110,6 +1116,20 @@ namespace TomCat {
 				AssetLoadStatus::SourceReadFailed, std::move(readError));
 		}
 		const std::string sourceHash = ComputeContentSHA256(sourceBytes);
+		if (metadata.Type == AssetType::Mesh) {
+			std::vector<std::filesystem::path> paths;
+			if (!CollectModelDependencies(sourceBytes, sourcePath, paths, readError))
+				return Failure(AssetLoadStatus::ImportFailed, readError);
+			for (const auto& path : paths) {
+				std::string hash;
+				if (!ComputeFileContentSHA256(path, hash, readError))
+					return Failure(AssetLoadStatus::SourceReadFailed, readError);
+				attempt.Snapshots[snapshotIndex].ModelSources.emplace_back(path, hash);
+				const std::string identity = path.lexically_relative(sourcePath.parent_path()).generic_string() + "\n" + hash;
+				dependencyKeys.push_back(ComputeContentSHA256(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(identity.data()), identity.size())));
+			}
+		}
+
 		attempt.Snapshots[snapshotIndex].SourceSHA256 = sourceHash;
 		const std::string& dependencySourceHash =
 			attempt.Snapshots[snapshotIndex].Dependencies.SourceSHA256;

@@ -42,7 +42,7 @@ TC_RENDERER=opengl ./build/linux/bin/CLI/TomCatCLI build --project /absolute/Gam
   --template ./build/linux/bin/Editor/Packages/PlayerTemplates/linux-x64
 ```
 
-The build script also stages the template. Export writes an executable ELF file, `Game.tcpak`, Managed assemblies and a private .NET runtime under the project's `Build/<ProductName>/`. The target machine needs compatible system libraries but no .NET SDK. Linux uses OpenGL 4.5+; Vulkan probing and the Windows single-file Editor wrapper are outside the current Linux scope. Test evidence and downloadable acceptance games are in the [Linux CI guide](../../docs/LINUX.zh-CN.md#ci-与验收).
+The build script also stages the template. Export writes an executable ELF file, `Game.tcpak`, Managed assemblies and a private .NET runtime under the project's `Build/<ProductName>/`. The target machine needs compatible system libraries but no .NET SDK. Linux supports Vulkan 1.2 and OpenGL 4.5+ on X11/XWayland. The Windows single-file Editor wrapper remains platform-specific. Test evidence and downloadable acceptance games are in the [Linux CI guide](../../docs/LINUX.zh-CN.md#ci-与验收).
 
 ## Options and prerequisites
 
@@ -85,7 +85,7 @@ Desktop Editor, Hub, CLI and Player read `TC_RENDERER` once per process. On Wind
 `auto` prefers Vulkan and falls back to OpenGL when Vulkan is unsupported;
 `opengl` and `vulkan` force that backend, with an error if forced Vulkan is
 unavailable. The headless CLI probes device support without creating a window.
-On Linux, use `TC_RENDERER=opengl`; Vulkan probing is not yet ported. Windows example:
+Linux uses the same selection policy with X11/XWayland. Windows example:
 
 ```powershell
 $env:TC_RENDERER = 'auto'

@@ -93,7 +93,9 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_sharedd.dll" "..\bin\Debug-windows-x86_64\ProfilerRegression"</Command>
+      <Command>copy /B /Y "E:\Github\TomCat_Engine\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
+if errorlevel 1 exit /b 1
+copy /B /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_sharedd.dll" "..\bin\Debug-windows-x86_64\ProfilerRegression"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -118,7 +120,9 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\ProfilerRegression"</Command>
+      <Command>copy /B /Y "E:\Github\TomCat_Engine\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
+if errorlevel 1 exit /b 1
+copy /B /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Release-windows-x86_64\ProfilerRegression"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
@@ -143,7 +147,9 @@
       <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <PostBuildEvent>
-      <Command>copy /B /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\ProfilerRegression"</Command>
+      <Command>copy /B /Y "E:\Github\TomCat_Engine\TomCat\vendor\Assimp-build\bin\Release\assimp-vc143-mt.dll" "$(TargetDir)assimp-vc143-mt.dll"
+if errorlevel 1 exit /b 1
+copy /B /Y "$(ProjectDir)..\..\vendor\VulkanSDK\Bin\shaderc_shared.dll" "..\bin\Dist-windows-x86_64\ProfilerRegression"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

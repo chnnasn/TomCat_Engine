@@ -162,6 +162,7 @@ try {
         $shaderDll = Join-Path $repositoryRoot "vendor\VulkanSDK\Bin\shaderc_shared.dll"
     }
     Copy-TemplateFile -Source $shaderDll -RelativePath "shaderc_shared.dll" -Root $stagingFull
+    Copy-TemplateFile -Source (Join-Path $repositoryRoot "TomCat/vendor/Assimp-build/bin/Release/assimp-vc143-mt.dll") -RelativePath "assimp-vc143-mt.dll" -Root $stagingFull
     foreach ($name in $script:PlayerCRuntimeFiles) {
         Copy-TemplateFile -Source (Join-Path $vcRuntimeRoot $name) -RelativePath $name -Root $stagingFull
     }

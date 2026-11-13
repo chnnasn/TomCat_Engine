@@ -160,6 +160,9 @@ namespace HierarchyDetail {
 	{
 		switch (static_cast<uint64_t>(descriptor.TypeId))
 		{
+		case ComponentIds::MeshRenderer:
+		case ComponentIds::Light3D:
+		case ComponentIds::Environment3D:
 		case ComponentIds::Camera:
 		case ComponentIds::SpriteRenderer:
 		case ComponentIds::LineRenderer:
@@ -1522,6 +1525,10 @@ inline void DrawComponent(const std::string& name, Entity entity,
 				ImGui::TextDisabled("Screen Space - Overlay");
 			else if (componentType == ComponentIds::TextRenderer)
 				ImGui::TextDisabled("World-space text rendered by the active camera");
+            if (componentType == ComponentIds::Light3D)
+                ImGui::TextDisabled("Direction: local +Z. Shadows: one directional light.");
+            else if (componentType == ComponentIds::Environment3D)
+                ImGui::TextDisabled("Panorama: equirectangular image / HDR. Rotation: degrees.");
 			for (const PropertyDescriptor& property : descriptor.Properties)
 			{
 				if (&property == enabledProperty) continue;
@@ -1572,6 +1579,18 @@ inline void DrawComponent(const std::string& name, Entity entity,
 							labels = layoutDirectionLabels;
 							labelCount = static_cast<int>(std::size(layoutDirectionLabels));
 						}
+                        if (componentType == ComponentIds::Light3D && property.StableName == "Type")
+                        {
+                            static const char* lightTypes[] = {"Directional", "Point", "Spot"};
+                            labels = lightTypes;
+                            labelCount = static_cast<int>(std::size(lightTypes));
+                        }
+                        else if (componentType == ComponentIds::MeshRenderer && property.StableName == "Primitive")
+                        {
+                            static const char* primitives[] = {"None", "Cube", "Quad", "Sphere", "Capsule", "Cylinder", "Plane"};
+                            labels = primitives;
+                            labelCount = static_cast<int>(std::size(primitives));
+                        }
 						if (labels && item >= 0 && item < labelCount)
 							changed = ImGui::Combo("##Value", &item,
 								labels, labelCount);

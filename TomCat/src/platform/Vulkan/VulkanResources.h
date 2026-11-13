@@ -53,6 +53,7 @@ public:
 private:
     std::shared_ptr<VulkanDevice> m_Device;
     uint32_t m_Binding;
+    std::vector<uint8_t> m_Data;
 };
 
 class VulkanTexture2D final : public Texture2D {
@@ -87,6 +88,8 @@ public:
     ~VulkanFramebuffer() override;
     void Bind() override;
     void Unbind() override;
+    void BindDepthAttachment(uint32_t slot) const override;
+    void ClearDepth() override;
     bool Resize(uint32_t width, uint32_t height) override;
     int ReadPixel(uint32_t attachment, int x, int y) override;
     bool ReadColorAttachment(uint32_t attachment, std::vector<uint8_t>& pixels) override;

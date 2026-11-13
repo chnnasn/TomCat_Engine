@@ -18,7 +18,7 @@ endif()
 
 set(TC_SRC "${CMAKE_CURRENT_SOURCE_DIR}/TomCat/src")
 set(TC_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/TomCat/vendor")
-foreach(dependency GLFW glm spdlog Box2D ImGuizmo)
+foreach(dependency GLFW glm spdlog Box2D ImGuizmo Assimp)
     if(NOT EXISTS "${TC_VENDOR}/${dependency}/.git")
         message(FATAL_ERROR "Initialize TomCat/vendor/${dependency} with git submodule update --init --recursive TomCat/vendor/${dependency}")
     endif()
@@ -55,6 +55,22 @@ set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "X11/XWayland is the initial Linux backend")
 add_subdirectory("${TC_VENDOR}/GLFW" dependencies/glfw EXCLUDE_FROM_ALL)
 
+# Keep the importer in exported Players without adding a private shared-library
+# dependency. Scope BUILD_SHARED_LIBS so other dependencies keep their settings.
+function(tc_add_assimp)
+    set(BUILD_SHARED_LIBS OFF)
+    set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_USE_CCACHE OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
+    set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${TC_VENDOR}/Assimp" dependencies/assimp EXCLUDE_FROM_ALL)
+endfunction()
+tc_add_assimp()
+
 file(GLOB_RECURSE TC_BOX2D CONFIGURE_DEPENDS "${TC_VENDOR}/Box2D/src/*.cpp")
 add_library(tc_box2d STATIC ${TC_BOX2D})
 target_include_directories(tc_box2d PUBLIC "${TC_VENDOR}/Box2D/include" PRIVATE "${TC_VENDOR}/Box2D/src")
@@ -87,7 +103,7 @@ target_include_directories(TomCat PUBLIC
 target_compile_definitions(TomCat PUBLIC TC_PLATFORM_LINUX=1 GLFW_INCLUDE_NONE
     "$<$<CONFIG:Debug>:TC_DEBUG>" "$<$<NOT:$<CONFIG:Debug>>:TC_RELEASE>"
     PRIVATE _GNU_SOURCE)
-target_link_libraries(TomCat PUBLIC tc_box2d tc_yaml tc_glad tc_imgui glfw
+target_link_libraries(TomCat PUBLIC tc_box2d tc_yaml tc_glad tc_imgui glfw assimp::assimp
     Threads::Threads OpenGL::GL OpenAL::OpenAL Vulkan::Vulkan ${CMAKE_DL_LIBS}
     PkgConfig::SHADERC glslang::SPIRV glslang::glslang SPIRV-Tools-opt SPIRV-Tools-static
     spirv-cross-glsl spirv-cross-core)
@@ -174,6 +190,19 @@ if(BUILD_TESTING)
     target_link_libraries(LinuxRuntimeRegression PRIVATE tc_build_tools)
     add_dependencies(LinuxRuntimeRegression TomCatCLI_managed TomCatInut_managed)
     find_program(XVFB_RUN xvfb-run REQUIRED)
+    add_executable(Renderer3DRegression Tests/Renderer3DRegression/src/Renderer3DRegression.cpp)
+    target_link_libraries(Renderer3DRegression PRIVATE TomCat)
+    add_test(NAME Renderer3DRegression COMMAND Renderer3DRegression)
+    set_tests_properties(Renderer3DRegression PROPERTIES TIMEOUT 60
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" ENVIRONMENT "TC_RENDERER=opengl")
+    foreach(backend opengl vulkan)
+        add_test(NAME Renderer3D_${backend} COMMAND "${XVFB_RUN}" -a
+            "$<TARGET_FILE:Renderer3DRegression>" --gpu --expect-backend "${backend}")
+        set_tests_properties(Renderer3D_${backend} PROPERTIES TIMEOUT 180
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            ENVIRONMENT "TC_RENDERER=${backend};LIBGL_ALWAYS_SOFTWARE=1")
+    endforeach()
+    set_property(TEST Renderer3D_vulkan APPEND PROPERTY ENVIRONMENT "TC_VULKAN_VALIDATION=1")
     add_test(NAME LinuxRuntimeRegression COMMAND "${XVFB_RUN}" -a "$<TARGET_FILE:LinuxRuntimeRegression>"
         "$<TARGET_FILE:TomCatCLI>" "${CMAKE_BINARY_DIR}/bin/Editor/Packages/PlayerTemplates/linux-x64"
         "${CMAKE_BINARY_DIR}/acceptance-game")

@@ -152,6 +152,7 @@ New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $stagedBoxedExe) -Force | Out-Null
 Copy-Item -LiteralPath $cliSource -Destination (Join-Path $payloadRoot "TomCatCLI.exe") -Force
 Copy-Item -LiteralPath $cliShaderSource -Destination (Join-Path $payloadRoot "shaderc_shared.dll") -Force
+Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $cliSource) "assimp-vc143-mt.dll") -Destination (Join-Path $payloadRoot "assimp-vc143-mt.dll") -Force
 foreach ($name in $nativeRuntimeFiles) {
     $runtimeSource = Join-Path $playerTemplate $name
     if (-not (Test-Path -LiteralPath $runtimeSource -PathType Leaf)) {

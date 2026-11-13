@@ -72,7 +72,7 @@ namespace TomCat {
 			return AssetType::Audio;
 		if (extension == ".ttf" || extension == ".otf" || extension == ".ttc")
 			return AssetType::Font;
-		if (extension == ".obj")
+		if (extension == ".obj" || extension == ".fbx" || extension == ".gltf" || extension == ".glb")
 			return AssetType::Mesh;
 		if (extension == ".tcmat") return AssetType::Material;
 		if (extension == ".cs") return AssetType::CSharpScript;

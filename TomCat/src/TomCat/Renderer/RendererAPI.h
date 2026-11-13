@@ -5,6 +5,13 @@
 
 namespace TomCat {
 
+	class RenderState
+	{
+	public:
+		virtual ~RenderState() = default;
+		virtual void RestoreTarget() = 0;
+	};
+
 	class RendererAPI 
 	{
 	public:
@@ -25,6 +32,12 @@ namespace TomCat {
 		virtual void SetClearColor(const glm::vec4& color) = 0;
 		virtual void Clear() = 0;
 		virtual void SetDepthTest(bool enabled) = 0;
+		virtual void SetDepthWrite(bool enabled) = 0;
+		virtual void SetDepthLessEqual(bool enabled) = 0;
+		virtual void SetBlending(bool enabled) = 0;
+		virtual void SetCullFaces(bool enabled) = 0;
+		// Restores the target, pipeline and resource bindings when destroyed.
+		virtual Scope<RenderState> CaptureState() = 0;
 
 		virtual void DrawIndexed(const Ref<VertexArray>& vertexArray, uint32_t indexCount = 0) = 0;
 		virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) = 0;

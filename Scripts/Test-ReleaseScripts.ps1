@@ -204,7 +204,7 @@ if ($editorTemplate -notmatch '<CompressFiles>True</CompressFiles>' -or
     throw 'Editor EVB template must compress and expose Packages plus .tomcat-runtime marker trees.'
 }
 foreach ($runtimeName in @(
-        'shaderc_shared.dll', 'msvcp140.dll', 'vcruntime140.dll',
+        'shaderc_shared.dll', 'assimp-vc143-mt.dll', 'msvcp140.dll', 'vcruntime140.dll',
         'vcruntime140_1.dll')) {
     if ($editorTemplate -notmatch "(?is)<Name>\s*$([regex]::Escape($runtimeName))\s*</Name>") {
         throw "Editor EVB root does not virtualize required native runtime $runtimeName."
@@ -341,7 +341,7 @@ try {
     }
     Copy-Item -LiteralPath $fixture -Destination (Join-Path $payloadRoot 'DotNetSdk\dotnet.exe')
     foreach ($name in @(
-            'TomCatCLI.exe', 'shaderc_shared.dll', 'msvcp140.dll',
+            'TomCatCLI.exe', 'shaderc_shared.dll', 'assimp-vc143-mt.dll', 'msvcp140.dll',
             'vcruntime140.dll', 'vcruntime140_1.dll')) {
         Copy-Item -LiteralPath $fixture -Destination (Join-Path $payloadRoot $name)
     }

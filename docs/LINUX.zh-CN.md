@@ -2,7 +2,7 @@
 
 Linux 初步支持已于 2026-10-22 通过 [9a9a303a](https://github.com/chnnasn/TomCat_Engine/commit/9a9a303a56893d50eb02a6280603324a6741f9cc) 合入 `main`；新开发和构建使用当前主线。`dev_linux` 保留原开发历史，提交移植关系见[集成记录](PROJECT_HISTORY.zh-CN.md#linux-合入主线2026-10-22)。
 
-当前目标为 Ubuntu 24.04、x86_64、GCC 13、X11/XWayland 和 OpenGL 4.5+。
+当前目标为 Ubuntu 24.04、x86_64、GCC 13、X11/XWayland，以及 Vulkan 1.2 / OpenGL 4.5+。
 已接入 Editor、Hub、Player、CLI、C#/.NET 10、OpenAL Soft 音频及 Linux 游戏导出。
 尚不承诺所有发行版、GPU 或桌面环境与 Windows 功能等价。
 
@@ -16,27 +16,33 @@ Linux 初步支持已于 2026-10-22 通过 [9a9a303a](https://github.com/chnnasn
 # 已检出 main；以下命令在仓库根目录执行
 git submodule update --init --recursive \
   TomCat/vendor/GLFW TomCat/vendor/glm TomCat/vendor/spdlog \
-  TomCat/vendor/Box2D TomCat/vendor/ImGuizmo
+  TomCat/vendor/Box2D TomCat/vendor/ImGuizmo TomCat/vendor/Assimp
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config python3 \
   libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
-  libgl1-mesa-dev libvulkan-dev libshaderc-dev glslang-dev glslang-tools \
+  libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers \
+  libshaderc-dev glslang-dev glslang-tools \
   spirv-tools libspirv-cross-c-shared-dev libopenal-dev zenity xvfb
 bash Scripts/Linux_Build.sh
 ```
 
 ImGui、yaml-cpp 等已作为普通源码纳入仓库。Linux 使用系统 Vulkan、ShaderC 库，CMake 下载并校验固定版本的
-SPIRV-Cross 源码，不使用 `vendor/VulkanSDK` 的 Windows 库。
+SPIRV-Cross 源码，不使用 `vendor/VulkanSDK` 的 Windows 库。Assimp 从固定子模块版本静态构建，
+Editor、CLI 与 Player 共享模型导入实现，导出程序无需额外分发 Assimp `.so`。
 脚本编译原生程序和托管项目，生成 Player 模板，再运行 CTest。
 默认两个编译进程；可设置 `TC_BUILD_JOBS`、`TC_BUILD_TYPE=Debug`、`TC_BUILD_DIR`。
 额外参数传给 CMake。
 
 Linux 创建 OpenGL 4.5 核心上下文。驱动不提供原生 SPIR-V specialization 时，
 通过 SPIRV-Cross 转为 GLSL 450 后编译；CI 已在 Mesa llvmpipe GL 4.5 下运行带窗口的 Player。
+自动选择通过无窗口 Vulkan 能力探测优先使用 Vulkan，初始化时再检查实际 X11 表面的呈现能力，
+遇到不兼容驱动或表面时回退到 OpenGL。`TC_RENDERER=vulkan` 强制使用 Vulkan，失败时报告原因。
+3D 基础体、模型材质、灯光、天空与阴影使用同一渲染入口。
 
 ```bash
 TC_RENDERER=opengl ./build/linux/bin/Editor/TomCatInut /absolute/Project.tcproj
 TC_RENDERER=opengl ./build/linux/bin/Hub/Manager
+TC_RENDERER=vulkan ./build/linux/bin/Editor/TomCatInut /absolute/Project.tcproj
 ./build/linux/bin/CLI/TomCatCLI build --project /absolute/Project.tcproj \
   --template ./build/linux/bin/Editor/Packages/PlayerTemplates/linux-x64
 ```
@@ -86,9 +92,10 @@ CI 使用同一后端的 [OpenAL 回环扩展](https://openal-soft.org/openal-ex
 ## CI 与验收
 
 [Linux native 工作流](https://github.com/chnnasn/TomCat_Engine/actions/workflows/linux.yml)
-由 `main` / `dev_linux` push、PR 或手动触发，在 Ubuntu 24.04 分别构建 Debug/Release，每种配置运行 14 项 CTest。测试覆盖：
+由 `main` / `dev_linux` push、PR 或手动触发，在 Ubuntu 24.04 分别构建 Debug/Release，每种配置运行 17 项 CTest。测试覆盖：
 
 - InputRegression、SaveDataRegression 和产品版本/身份查询。
+- Renderer3DRegression、Renderer3D_opengl、Renderer3D_vulkan，覆盖基础体、场景和 Prefab 序列化、网格与 HDR 纹理 artifact，以及 Xvfb 下双后端实际绘制。Vulkan 测试启用 Khronos validation，软件驱动来自 Mesa。
 - LinuxPlatformRegression：XDG 路径、参数传递、子进程失败/超时、文件锁和崩溃释放。
 - AudioRegression 与 LinuxAudioRegression：引擎音频逻辑及 OpenAL 的实际 PCM 输出。
 - ManagerChineseFonts / TomCatInutChineseFonts：从打包后的程序目录构建真实字体图集，检查 Hub 源码中的中文在粗体/常规字体、Hub/Editor 字号和 DPI 重建后均有实际字形，防止静默回退成问号。
@@ -120,7 +127,7 @@ Linux 桌面验收仍需检查 Editor 操作、真实 GPU/显示器、键鼠输�
 
 ## 边界
 
-- Vulkan 自动探测尚未完成 Linux 适配，当前桌面渲染使用 OpenGL。
+- Vulkan 自动探测面向 X11/XWayland，呈现兼容性在创建窗口时核验。
 - Wayland 原生后端、ARM64、Windows 单文件发布系统不在本轮范围。
 - 输入法预编辑、系统字体回退、崩溃转储、外部 C# 编辑器启动和整套 Editor
   发行包还需要专门适配；原生模块的 Windows DLL 包不能直接在 Linux 使用。

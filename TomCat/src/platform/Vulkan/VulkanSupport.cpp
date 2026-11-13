@@ -6,6 +6,8 @@
 
 #ifdef TC_PLATFORM_WINDOWS
 #include <vulkan/vulkan_win32.h>
+#elif defined(TC_PLATFORM_LINUX)
+#include <dlfcn.h>
 #endif
 
 namespace TomCat {
@@ -64,15 +66,23 @@ const char* VulkanSurfaceRequirementFailure(const VkSurfaceCapabilitiesKHR& capa
 }
 
 namespace {
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
 struct ProbeResources {
+#ifdef TC_PLATFORM_WINDOWS
     HMODULE Loader = nullptr;
+#else
+    void* Loader = nullptr;
+#endif
     VkInstance Instance = VK_NULL_HANDLE;
     PFN_vkDestroyInstance DestroyInstance = nullptr;
 
     ~ProbeResources() {
         if (Instance && DestroyInstance) DestroyInstance(Instance, nullptr);
+#ifdef TC_PLATFORM_WINDOWS
         if (Loader) FreeLibrary(Loader);
+#else
+        if (Loader) dlclose(Loader);
+#endif
     }
 };
 
@@ -99,13 +109,19 @@ VulkanSupportResult ProbeFailure(const char* operation, VkResult result) {
     return {false, std::string(operation) + " failed (VkResult " + std::to_string(result) + ")"};
 }
 
-VulkanSupportResult ProbeWindowsVulkanSupport() {
+VulkanSupportResult ProbeDesktopVulkanSupport() {
     ProbeResources resources;
+#ifdef TC_PLATFORM_WINDOWS
     // Never touch imported Vulkan entry points here: vulkan-1.dll is delay
     // loaded by the engine, and missing drivers must be a normal fallback.
     resources.Loader = LoadLibraryExW(L"vulkan-1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!resources.Loader) return {false, "Vulkan loader vulkan-1.dll is unavailable"};
     const auto getProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(resources.Loader, "vkGetInstanceProcAddr"));
+#else
+    resources.Loader = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+    if (!resources.Loader) return {false, "Vulkan loader libvulkan.so.1 is unavailable"};
+    const auto getProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(resources.Loader, "vkGetInstanceProcAddr"));
+#endif
     if (!getProc) return {false, "Vulkan loader entry point is unavailable"};
     const auto enumerateVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(getProc(VK_NULL_HANDLE, "vkEnumerateInstanceVersion"));
     if (!enumerateVersion) return {false, "Vulkan loader does not support Vulkan 1.2"};
@@ -122,7 +138,23 @@ VulkanSupportResult ProbeWindowsVulkanSupport() {
         return enumerateInstanceExtensions(nullptr, count, extensions);
     });
     if (result != VK_SUCCESS) return ProbeFailure("Enumerate Vulkan instance extensions", result);
-    const char* requiredExtensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+    std::vector<const char*> requiredExtensions = {VK_KHR_SURFACE_EXTENSION_NAME};
+#ifdef TC_PLATFORM_WINDOWS
+    requiredExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+#else
+    // Probe without connecting to a display so asset cooking and other
+    // headless consumers retain the same backend selection policy. GLFW checks
+    // presentation support against the actual X11 surface during initialization.
+    for (const char* extensionName : {"VK_KHR_xcb_surface", "VK_KHR_xlib_surface"}) {
+        if (std::any_of(instanceExtensions.begin(), instanceExtensions.end(), [&](const auto& extension) {
+            return std::strcmp(extension.extensionName, extensionName) == 0;
+        })) {
+            requiredExtensions.push_back(extensionName);
+            break;
+        }
+    }
+    if (requiredExtensions.size() == 1) return {false, "Vulkan X11 surface extensions are unavailable"};
+#endif
     for (const auto* required : requiredExtensions) {
         if (std::none_of(instanceExtensions.begin(), instanceExtensions.end(), [&](const auto& extension) {
             return std::strcmp(extension.extensionName, required) == 0;
@@ -133,8 +165,8 @@ VulkanSupportResult ProbeWindowsVulkanSupport() {
     app.apiVersion = RequiredVulkanVersion;
     VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     create.pApplicationInfo = &app;
-    create.enabledExtensionCount = 2;
-    create.ppEnabledExtensionNames = requiredExtensions;
+    create.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
+    create.ppEnabledExtensionNames = requiredExtensions.data();
     result = createInstance(&create, nullptr, &resources.Instance);
     if (result != VK_SUCCESS) return ProbeFailure("Create Vulkan probe instance", result);
     resources.DestroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(getProc(resources.Instance, "vkDestroyInstance"));
@@ -143,9 +175,12 @@ VulkanSupportResult ProbeWindowsVulkanSupport() {
     const auto getFeatures = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures>(getProc(resources.Instance, "vkGetPhysicalDeviceFeatures"));
     const auto enumerateDeviceExtensions = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(getProc(resources.Instance, "vkEnumerateDeviceExtensionProperties"));
     const auto getQueueFamilies = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(getProc(resources.Instance, "vkGetPhysicalDeviceQueueFamilyProperties"));
+#ifdef TC_PLATFORM_WINDOWS
     const auto supportsPresentation = reinterpret_cast<PFN_vkGetPhysicalDeviceWin32PresentationSupportKHR>(getProc(resources.Instance, "vkGetPhysicalDeviceWin32PresentationSupportKHR"));
+    if (!supportsPresentation) return {false, "Vulkan Win32 presentation query entry point is unavailable"};
+#endif
     if (!resources.DestroyInstance || !enumerateDevices || !getProperties || !getFeatures
-        || !enumerateDeviceExtensions || !getQueueFamilies || !supportsPresentation)
+        || !enumerateDeviceExtensions || !getQueueFamilies)
         return {false, "Vulkan device/presentation query entry points are unavailable"};
 
     std::vector<VkPhysicalDevice> devices;
@@ -186,11 +221,13 @@ VulkanSupportResult ProbeWindowsVulkanSupport() {
         std::vector<VkQueueFamilyProperties> families(count);
         getQueueFamilies(device, &count, families.data());
         for (uint32_t i = 0; i < count; ++i) {
-            // Win32 presentation support can be queried before a surface exists.
-            if (families[i].queueCount && (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-                && supportsPresentation(device, i)) return {true, {}};
+            if (!families[i].queueCount || !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) continue;
+#ifdef TC_PLATFORM_WINDOWS
+            if (!supportsPresentation(device, i)) continue;
+#endif
+            return {true, {}};
         }
-        lastFailure = devicePrefix + "no queue supports both graphics and Win32 presentation";
+        lastFailure = devicePrefix + "no compatible graphics queue is available";
     }
     if (!matchedDevice) return {false, std::string("No Vulkan physical device matches TC_VULKAN_DEVICE=\"") + requestedDevice + "\""};
     return {false, "No suitable Vulkan device: " + lastFailure};
@@ -199,9 +236,9 @@ VulkanSupportResult ProbeWindowsVulkanSupport() {
 }
 
 VulkanSupportResult ProbeVulkanSupport() {
-#ifdef TC_PLATFORM_WINDOWS
+#if defined(TC_PLATFORM_WINDOWS) || defined(TC_PLATFORM_LINUX)
     try {
-        return ProbeWindowsVulkanSupport();
+        return ProbeDesktopVulkanSupport();
     } catch (const std::exception& error) {
         return {false, std::string("Vulkan capability probe failed: ") + error.what()};
     }

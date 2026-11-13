@@ -79,8 +79,10 @@ public:
     VulkanFramebuffer* DefaultTarget = nullptr;
     const VulkanShader* Shader = nullptr;
     std::array<const VulkanTexture2D*, 32> Textures{};
+    std::array<std::shared_ptr<VulkanImageAllocation>, 32> SampledAttachments{};
     std::array<std::vector<uint8_t>, 16> Uniforms;
     bool DepthTest = true;
+    bool DepthWrite = true, DepthLessEqual = false, Blending = true, CullFaces = false;
     float LineWidth = 1.0f;
     std::array<float, 4> ClearColor{0, 0, 0, 1};
     VkViewport Viewport{0, 0, 1, 1, 0, 1};

@@ -518,7 +518,7 @@ namespace TomCat {
 		bool IsAllowedRuntimePath(const std::string& key)
 		{
 			static const std::unordered_set<std::string> rootFiles = {
-				"tomcatcli.exe", "shaderc_shared.dll", "msvcp140.dll",
+				"tomcatcli.exe", "shaderc_shared.dll", "assimp-vc143-mt.dll", "msvcp140.dll",
 				"vcruntime140.dll", "vcruntime140_1.dll"
 			};
 			static const std::unordered_set<std::string> managedFiles = {

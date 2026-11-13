@@ -4,6 +4,39 @@
 #include <cmath>
 
 namespace TomCat {
+class VulkanRenderState final : public RenderState {
+public:
+    explicit VulkanRenderState(const std::shared_ptr<VulkanDevice>& device)
+        : m_Device(device), m_Target(device->Target), m_Viewport(device->Viewport),
+          m_Shader(device->Shader), m_Textures(device->Textures), m_Attachments(device->SampledAttachments),
+          m_Uniforms(device->Uniforms), m_Depth(device->DepthTest), m_DepthWrite(device->DepthWrite),
+          m_LessEqual(device->DepthLessEqual), m_Blending(device->Blending), m_CullFaces(device->CullFaces) {}
+    void RestoreTarget() override {
+        m_Device->Target = m_Target;
+        m_Device->Viewport = m_Viewport;
+    }
+    ~VulkanRenderState() override {
+        RestoreTarget();
+        m_Device->Shader = m_Shader;
+        m_Device->Textures = m_Textures;
+        m_Device->SampledAttachments = m_Attachments;
+        m_Device->Uniforms = std::move(m_Uniforms);
+        m_Device->DepthTest = m_Depth;
+        m_Device->DepthWrite = m_DepthWrite;
+        m_Device->DepthLessEqual = m_LessEqual;
+        m_Device->Blending = m_Blending;
+        m_Device->CullFaces = m_CullFaces;
+    }
+private:
+    std::shared_ptr<VulkanDevice> m_Device;
+    VulkanFramebuffer* m_Target;
+    VkViewport m_Viewport;
+    const VulkanShader* m_Shader;
+    std::array<const VulkanTexture2D*, 32> m_Textures;
+    std::array<std::shared_ptr<VulkanImageAllocation>, 32> m_Attachments;
+    std::array<std::vector<uint8_t>, 16> m_Uniforms;
+    bool m_Depth, m_DepthWrite, m_LessEqual, m_Blending, m_CullFaces;
+};
 class VulkanRendererAPI final : public RendererAPI {
 public:
     void Init() override { m_Device = VulkanDevice::Current(); }
@@ -61,8 +94,12 @@ void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x)
         struct RestoreTexture {
             VulkanDevice& Device;
             const VulkanTexture2D* Texture;
-            ~RestoreTexture() { Device.Textures[0] = Texture; }
-        } restore{*m_Device, previousTexture};
+            std::shared_ptr<VulkanImageAllocation> Attachment;
+            ~RestoreTexture() {
+                Device.Textures[0] = Texture;
+                Device.SampledAttachments[0] = Attachment;
+            }
+        } restore{*m_Device, previousTexture, m_Device->SampledAttachments[0]};
         m_GradeTexture->Bind(0);
         m_GradeShader->SetFloat4("u_Grade", {std::clamp(exposure, -10.f, 10.f),
             std::clamp(saturation, 0.f, 2.f), std::clamp(vignette, 0.f, 1.f), 0});
@@ -75,6 +112,11 @@ void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x)
     void SetClearColor(const glm::vec4& color) override { m_Device->ClearColor = {color.r, color.g, color.b, color.a}; }
     void Clear() override { if (auto* target = m_Device->Target ? m_Device->Target : m_Device->DefaultTarget) target->Clear(m_Device->ClearColor); }
     void SetDepthTest(bool enabled) override { m_Device->DepthTest = enabled; }
+    void SetDepthWrite(bool enabled) override { m_Device->DepthWrite = enabled; }
+    void SetDepthLessEqual(bool enabled) override { m_Device->DepthLessEqual = enabled; }
+    void SetBlending(bool enabled) override { m_Device->Blending = enabled; }
+    void SetCullFaces(bool enabled) override { m_Device->CullFaces = enabled; }
+    Scope<RenderState> CaptureState() override { return CreateScope<VulkanRenderState>(m_Device); }
     void DrawIndexed(const Ref<VertexArray>& array, uint32_t count) override {
         if (!array || !array->GetIndexBuffer()) return;
         if (!m_Device->Shader) throw std::logic_error("Draw requires a bound shader");

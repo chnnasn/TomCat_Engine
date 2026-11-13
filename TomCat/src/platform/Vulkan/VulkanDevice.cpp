@@ -445,7 +445,10 @@ std::shared_ptr<VulkanImageAllocation> VulkanDevice::Image(uint32_t width, uint3
     VulkanCheck(vkCreateImageView(Device, &view, nullptr, &image->View), "Create image view");
     if (usage & VK_IMAGE_USAGE_SAMPLED_BIT) {
         VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        const bool nearest = sampling.Filter == TextureFilterMode::Nearest;
+        VkFormatProperties formatProperties{};
+        vkGetPhysicalDeviceFormatProperties(PhysicalDevice, format, &formatProperties);
+        const bool nearest = sampling.Filter == TextureFilterMode::Nearest
+            || !(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
         sampler.magFilter = sampler.minFilter = format == VK_FORMAT_R32_SINT || nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
         sampler.mipmapMode = nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR;
         sampler.addressModeU = sampling.WrapU == TextureWrapMode::Clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;

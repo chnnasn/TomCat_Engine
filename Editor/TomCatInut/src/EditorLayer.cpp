@@ -2213,7 +2213,7 @@ namespace TomCat {
 
 		style.WindowMinSize.x = previousMinimumWidth;
 
-		ImGui::EndChild(); 
+		ImGui::EndChild();
 
 		// Process asset selection and retire preview textures before the Inspector draws.
 		if (ShouldRenderDockPanel("Project"))
@@ -2443,6 +2443,14 @@ namespace TomCat {
 						renderer.Sprite = AssetManager::Get().LoadTexture(handle);
 						if (m_SceneState == SceneState::Edit)
 							CommitImmediateSceneTransaction("Create Sprite");
+					}
+					else if (metadata && !metadata->IsMissing && metadata->Type == AssetType::Mesh)
+					{
+						Entity model = m_ActiveScene->CreateEntity(PathToUTF8(metadata->FilePath.stem()));
+						model.AddComponent<MeshComponent>().MeshHandle = handle;
+						m_SceneHierarchyPanel.SetSelectedEntity(model);
+						if (m_SceneState == SceneState::Edit)
+							CommitImmediateSceneTransaction("Create Model");
 					}
 					else if (metadata && !metadata->IsMissing
 						&& metadata->Type == AssetType::Prefab)
@@ -3653,7 +3661,7 @@ namespace TomCat {
 		}
 		else
 			SaveSceneAs();
-	}	
+	}
 
 	void EditorLayer::SaveSceneAs()
 	{
