@@ -14,8 +14,8 @@ Entities:
       Rotation: [0.314159274, 0, 0]
       Scale: [1, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
-      Rotation: [0, 0, 0]
+      Translation: [0, 4, -10]
+      Rotation: [0.314159274, 0, 0]
       Scale: [1, 1, 1]
     Camera:
       Camera:
@@ -75,10 +75,10 @@ Entities:
             Value: [1, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [0, 4, -10]
           - PropertyId: 5
             StableName: LocalRotation
-            Value: [0, 0, 0]
+            Value: [0.314159274, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
             Value: [1, 1, 1]
@@ -244,7 +244,7 @@ Entities:
       Scale: [1, 1, 1]
     LocalTransform:
       Translation: [0, 0, 0]
-      Rotation: [0, 0, 0]
+      Rotation: [0.87266463, -0.610865235, 0]
       Scale: [1, 1, 1]
     Components:
       - TypeId: 11457157452030541825
@@ -295,7 +295,7 @@ Entities:
             Value: [0, 0, 0]
           - PropertyId: 5
             StableName: LocalRotation
-            Value: [0, 0, 0]
+            Value: [0.87266463, -0.610865235, 0]
           - PropertyId: 6
             StableName: LocalScale
             Value: [1, 1, 1]
@@ -347,9 +347,9 @@ Entities:
       Rotation: [-1.57079637, 0, 0]
       Scale: [18, 18, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
-      Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Translation: [0, -0.649999976, 3]
+      Rotation: [-1.57079637, 0, 0]
+      Scale: [18, 18, 1]
     Components:
       - TypeId: 11457157452030541825
         StableName: TomCat.ID
@@ -396,13 +396,13 @@ Entities:
             Value: [18, 18, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [0, -0.649999976, 3]
           - PropertyId: 5
             StableName: LocalRotation
-            Value: [0, 0, 0]
+            Value: [-1.57079637, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [18, 18, 1]
       - TypeId: 11457157452030541846
         StableName: TomCat.MeshRenderer
         SchemaVersion: 2
@@ -460,7 +460,7 @@ Entities:
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [-4.5, 0.400000006, 2]
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     Components:
@@ -509,7 +509,7 @@ Entities:
             Value: [1, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [-4.5, 0.400000006, 2]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
@@ -573,7 +573,7 @@ Entities:
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [-2.70000005, 0.400000006, 2]
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     Components:
@@ -622,7 +622,7 @@ Entities:
             Value: [1, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [-2.70000005, 0.400000006, 2]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
@@ -686,7 +686,7 @@ Entities:
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [-0.900000095, 0.400000006, 2]
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     Components:
@@ -735,7 +735,7 @@ Entities:
             Value: [1, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [-0.900000095, 0.400000006, 2]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
@@ -799,7 +799,7 @@ Entities:
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [0.899999619, 0.400000006, 2]
       Rotation: [0, 0, 0]
       Scale: [1, 1, 1]
     Components:
@@ -848,7 +848,7 @@ Entities:
             Value: [1, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [0.899999619, 0.400000006, 2]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
@@ -912,9 +912,9 @@ Entities:
       Rotation: [0, 0, 0]
       Scale: [0.129999995, 1, 0.129999995]
     LocalTransform:
-      Translation: [0, 0, 0]
+      Translation: [2.69999981, 0.400000006, 2]
       Rotation: [0, 0, 0]
-      Scale: [1, 1, 1]
+      Scale: [0.129999995, 1, 0.129999995]
     Components:
       - TypeId: 11457157452030541825
         StableName: TomCat.ID
@@ -961,13 +961,13 @@ Entities:
             Value: [0.129999995, 1, 0.129999995]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [2.69999981, 0.400000006, 2]
           - PropertyId: 5
             StableName: LocalRotation
             Value: [0, 0, 0]
           - PropertyId: 6
             StableName: LocalScale
-            Value: [1, 1, 1]
+            Value: [0.129999995, 1, 0.129999995]
       - TypeId: 11457157452030541846
         StableName: TomCat.MeshRenderer
         SchemaVersion: 2
@@ -1025,8 +1025,8 @@ Entities:
       Rotation: [0, 3.14159274, 0]
       Scale: [1, 1, 1]
     LocalTransform:
-      Translation: [0, 0, 0]
-      Rotation: [0, 0, 0]
+      Translation: [4.5, 0.400000006, 2]
+      Rotation: [0, 3.14159274, 0]
       Scale: [1, 1, 1]
     Components:
       - TypeId: 11457157452030541825
@@ -1074,10 +1074,10 @@ Entities:
             Value: [1, 1, 1]
           - PropertyId: 4
             StableName: LocalTranslation
-            Value: [0, 0, 0]
+            Value: [4.5, 0.400000006, 2]
           - PropertyId: 5
             StableName: LocalRotation
-            Value: [0, 0, 0]
+            Value: [0, 3.14159274, 0]
           - PropertyId: 6
             StableName: LocalScale
             Value: [1, 1, 1]

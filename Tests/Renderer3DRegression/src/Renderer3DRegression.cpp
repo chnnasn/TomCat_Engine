@@ -411,6 +411,13 @@ static void WriteDemo(const std::filesystem::path& path, bool primitives = false
         camera.GetComponent<Transform>()._Translation={0,4,-10};
         camera.GetComponent<Transform>()._Rotation.x=glm::radians(18.0f);
     }
+    // Every demo entity is a root, so local TRS equals world TRS. Loading rebuilds world from local,
+    // so writing only the world block would reset every entity to the origin on reload.
+    for(auto handle:scene->GetRegistry().view<Transform>()) {
+        auto& t=scene->GetRegistry().get<Transform>(handle);
+        t._LocalTranslation=t._Translation;t._LocalRotation=t._Rotation;t._LocalScale=t._Scale;
+    }
+    Check(scene->SyncTransformHierarchy(), "Demo transform hierarchy failed to synchronize");
     std::string document,error; Check(SceneArchiveCodec::Encode(scene,document,error),error);
     std::filesystem::create_directories(path.parent_path()); {std::ofstream file(path);file<<document;}
     FramebufferSpecification spec;spec.Width=960;spec.Height=540;
