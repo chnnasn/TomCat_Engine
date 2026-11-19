@@ -3840,12 +3840,36 @@ namespace TomCat {
 		return glm::vec2(velocity.x, velocity.y);
 	}
 
+    static std::string DescribeRuntimeStartException(const std::exception_ptr& error)
+    {
+        try { std::rethrow_exception(error); }
+        catch (const std::exception& exception) { return exception.what(); }
+        catch (...) { return "non-standard exception"; }
+    }
+
     bool Scene::OnRuntimeStart() {
         auto task = StartRuntimeIncrementally();
         while (!task.Done()) task.Advance(UINT32_MAX, 1e30);
+        if (const std::exception_ptr error = task.Error())
+            TC_Core_Error("Scene runtime rollback threw: {0}", DescribeRuntimeStartException(error));
         return task.Succeeded();
     }
 	FrameTask Scene::StartRuntimeIncrementally()
+	{
+		// Explicit failures inside the stages already call OnRuntimeStop. An
+		// exception would otherwise be parked in the promise with physics,
+		// audio or scripts half-started and m_RuntimeRunning left true.
+		auto stages = StartRuntimeStages();
+		while (!stages.Done()) { stages.Advance(1, 1e30); if (!stages.Done()) co_yield 1; }
+		if (const std::exception_ptr error = stages.Error())
+		{
+			TC_Core_Error("Scene runtime startup threw: {0}", DescribeRuntimeStartException(error));
+			OnRuntimeStop();
+			co_return false;
+		}
+		co_return stages.Succeeded();
+	}
+	FrameTask Scene::StartRuntimeStages()
 	{
         m_RuntimeActivating = true;
         struct ActivatingGuard { bool& Value; ~ActivatingGuard() { Value = false; } } activatingGuard{m_RuntimeActivating};
@@ -3898,6 +3922,8 @@ namespace TomCat {
 		{
 			auto scripts = Scripting::ScriptEngine::Get().StartSceneIncrementally(*this, m_RuntimeSessionGeneration, m_ScriptSceneSessionID);
             while (!scripts.Done()) { scripts.Advance(1, 1e30); if (!scripts.Done()) co_yield 1; }
+            if (const std::exception_ptr error = scripts.Error())
+                TC_Core_Error("Managed Scene startup threw: {0}", DescribeRuntimeStartException(error));
             if (!scripts.Succeeded()) m_ScriptSceneSessionID = 0;
 			if (m_ScriptSceneSessionID == 0)
 			{

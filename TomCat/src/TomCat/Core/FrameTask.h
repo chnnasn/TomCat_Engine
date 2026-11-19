@@ -34,6 +34,9 @@ public:
     ~FrameTask() { if (m_Handle) m_Handle.destroy(); }
     bool Done() const { return !m_Handle || m_Handle.done(); }
     bool Succeeded() const { return m_Handle && Done() && m_Handle.promise().Success && !m_Handle.promise().Error; }
+    // Exception that escaped the coroutine body, if any. Callers that own
+    // rollback must inspect this; unhandled_exception only records it.
+    std::exception_ptr Error() const { return m_Handle ? m_Handle.promise().Error : nullptr; }
     uint32_t Advance(uint32_t maximumUnits, double milliseconds) {
         const auto start = std::chrono::steady_clock::now();
         uint32_t count = 0;

@@ -248,6 +248,9 @@ namespace TomCat {
 		Entity FindEntityByUUID(UUID uuid);
 		std::vector<AssetReference> FindAssetReferences(AssetHandle handle);
 	private:
+		// Stage body of StartRuntimeIncrementally. The public wrapper rolls back
+		// runtime state when a stage throws instead of returning false.
+		FrameTask StartRuntimeStages();
 		std::string MakeUniqueEntityName(const std::string& requestedName) const;
 		bool ValidateTransformHierarchy();
 		bool RunFixedRuntimeStep();
