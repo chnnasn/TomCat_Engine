@@ -18,6 +18,8 @@ namespace TomCat {
 		AssetHandle EntryScene = AssetHandle(0);
 		std::filesystem::path TemplateDirectory;
 		std::vector<uint8_t> ManagedAssembly;
+		// Portable PDB of the same build; empty when the profile emitted none.
+		std::vector<uint8_t> ManagedPdb;
 		std::string ScriptManifestJson;
 		std::string ScriptBuildID;
 		std::function<bool()> ValidateBeforePublish;

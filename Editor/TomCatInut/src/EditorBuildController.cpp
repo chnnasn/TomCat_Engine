@@ -681,8 +681,14 @@ using namespace EditorLayerDetail;
 		if (!ReadBinaryFileForBuild(scriptBuild.AssemblyPath, assemblyBytes, fileError))
 			return fail("Player build failed: " + fileError);
 
+		std::vector<uint8_t> pdbBytes;
+		if (!scriptBuild.PdbPath.empty() &&
+			!ReadBinaryFileForBuild(scriptBuild.PdbPath, pdbBytes, fileError))
+			return fail("Player build failed: " + fileError);
+
 		PlayerBuildRequest request;
 		request.ProjectInstance = m_Layer.m_CurrentProject;
+		request.ManagedPdb = std::move(pdbBytes);
 		request.EntryScene = entryScene;
 		request.TemplateDirectory = PlayerBuilder::FindDefaultTemplateDirectory();
 		request.ManagedAssembly = std::move(assemblyBytes);

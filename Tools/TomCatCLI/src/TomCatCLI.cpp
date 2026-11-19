@@ -300,8 +300,12 @@ namespace {
             const std::filesystem::path output = options.OutputPath.empty()
                 ? project->GetProjectDirectory() / "Build" / "Game.tcpak"
                 : options.OutputPath;
-            const bool cooked = assets.CookToPackage(output, settings.EntrySceneHandle);
-            assets.ClearManagedCookPayload();
+            bool cooked = false;
+            {
+                struct PayloadGuard { TomCat::AssetManager& Assets; ~PayloadGuard() { Assets.ClearManagedCookPayload(); } };
+                PayloadGuard payloadGuard{ assets };
+                cooked = assets.CookToPackage(output, settings.EntrySceneHandle);
+            }
             if (!cooked)
             {
                 std::cerr << "Cook failed; see diagnostics above\n";
@@ -317,6 +321,12 @@ namespace {
 		request.TemplateDirectory = options.TemplatePath.empty()
 			? TomCat::PlayerBuilder::FindDefaultTemplateDirectory()
 			: options.TemplatePath;
+		if (!managedBuild.PdbPath.empty()
+			&& !ReadBinary(managedBuild.PdbPath, request.ManagedPdb, error))
+		{
+			std::cerr << error << '\n';
+			return 11;
+		}
 		request.ManagedAssembly = std::move(assembly);
 		request.ScriptManifestJson = std::move(manifest);
 		request.ScriptBuildID = managedBuild.BuildID;

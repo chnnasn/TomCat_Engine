@@ -764,12 +764,18 @@ namespace TomCat {
 		}
 
 		AssetManager& assets = AssetManager::Get();
-		if (!assets.SetManagedCookPayload(std::move(request.ManagedAssembly),
-			request.ScriptManifestJson, request.ScriptBuildID, {}))
-			return failStaged("The fresh managed payload was rejected.");
-		const bool cooked = assets.CookToPackage(
-			staging / "Game.tcpak", request.EntryScene);
-		assets.ClearManagedCookPayload();
+		bool cooked = false;
+		{
+			// The override lives in the AssetManager singleton; clear it on every
+			// exit, including an exception from CookToPackage.
+			struct PayloadGuard { AssetManager& Assets; ~PayloadGuard() { Assets.ClearManagedCookPayload(); } };
+			if (!assets.SetManagedCookPayload(std::move(request.ManagedAssembly),
+				request.ScriptManifestJson, request.ScriptBuildID,
+				std::move(request.ManagedPdb)))
+				return failStaged("The fresh managed payload was rejected.");
+			PayloadGuard payloadGuard{ assets };
+			cooked = assets.CookToPackage(staging / "Game.tcpak", request.EntryScene);
+		}
 		if (!cooked)
 			return failStaged("Cooking Game.tcpak failed. See preceding diagnostics.");
 
