@@ -40,6 +40,11 @@ namespace TomCat {
 		const std::vector<Ref<Project>>& GetProjects() const { return m_Projects; }
 
 		Ref<Project> CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config);
+		// Writes Assets/sample.tomcat for the "2D"/"3D" template, imports it and
+		// saves it as the project's start scene. Reuses a valid existing file.
+		// Shared by the Hub and Editor automation so both produce openable projects.
+		[[nodiscard]] static bool InstallSampleScene(const Ref<Project>& project,
+			const std::string& templateName);
 		Ref<Project> InspectProject(const std::filesystem::path& projectPath) const;
 		Ref<Project> LoadProject(const std::filesystem::path& projectPath);
 		Ref<Project> AddProject(const std::filesystem::path& projectPath);

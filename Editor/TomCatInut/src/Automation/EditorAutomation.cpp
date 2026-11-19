@@ -4,6 +4,7 @@
 #include "TomCat/Scene/SceneCommandBuffer.h"
 #include "TomCat/Scene/Serialization/SceneArchiveCodec.h"
 #include "TomCat/Utils/PathUtils.h"
+#include "TomCat/Project/ProjectManager.h"
 #include <yaml-cpp/yaml.h>
 #include <algorithm>
 #include <charconv>
@@ -818,7 +819,12 @@ std::string EditorLayer::ExecuteAutomation(const std::string& request)
                 config.Name = Text(args, "name");
                 config.Template = args["template"] ? Text(args, "template") : "3D";
                 Require(config.Template == "2D" || config.Template == "3D", "INVALID_ARGUMENT", "template must be 2D or 3D.");
-                Require(bool(Project::CreateNew(path, config)), "CREATE_FAILED", "Project creation failed; destination must be new or empty.");
+                const Ref<Project> created = Project::CreateNew(path, config);
+                Require(bool(created), "CREATE_FAILED", "Project creation failed; destination must be new or empty.");
+                // CreateNew points StartScene at sample.tomcat but writes no scene; the
+                // Hub installs it separately. Use the same step so the project opens.
+                Require(ProjectManager::InstallSampleScene(created, config.Template), "CREATE_FAILED",
+                    "Project was created, but its sample scene could not be installed.");
             }
             Require(bool(Project::Inspect(path)), "OPEN_FAILED", "Project metadata is invalid.");
             OpenProject(path);

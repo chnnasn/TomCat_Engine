@@ -8,7 +8,13 @@
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
+#include "TomCat/Asset/AssetRegistry.h"
+#include "TomCat/Scene/Components.h"
+#include "TomCat/Scene/Entity.h"
+#include "TomCat/Scene/Scene.h"
+#include "TomCat/Scene/SceneSerializer.h"
 
+#include <glm/glm.hpp>
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -918,6 +924,76 @@ namespace TomCat {
 			});
 		m_Projects = std::move(scannedProjects);
 		return true;
+	}
+
+	namespace {
+		bool HasNonEmptySampleFile(const std::filesystem::path& path)
+		{
+			std::error_code error;
+			if (!std::filesystem::is_regular_file(path, error) || error)
+				return false;
+			const auto size = std::filesystem::file_size(path, error);
+			return !error && size > 0;
+		}
+
+		bool WriteSampleScene(const std::filesystem::path& destination, const std::string& templateName)
+		{
+			// SceneSerializer owns the current schema version and field set. Generating
+			// starter scenes through it prevents packaged templates from drifting.
+			auto scene = CreateRef<Scene>();
+			scene->SetSceneName("sample");
+			Entity mainCamera = scene->CreateEntityWithUUID(
+				UUID(1000000000000000001ULL), "MainCamera");
+			auto& camera = mainCamera.AddComponent<C_Camera>();
+			if (templateName == "2D")
+				camera._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
+			else
+				camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
+
+			SceneSerializer serializer(scene);
+			return serializer.Serialize(destination) && HasNonEmptySampleFile(destination);
+		}
+	}
+
+	bool ProjectManager::InstallSampleScene(const Ref<Project>& project, const std::string& templateName)
+	{
+		if (!project)
+			return false;
+
+		const std::filesystem::path destination = project->GetAssetPath() / "sample.tomcat";
+		auto registerSample = [&]()
+		{
+			AssetRegistry registry;
+			if (!registry.Initialize(project->GetAssetPath(), project->GetLibraryPath()))
+				return false;
+			const AssetHandle handle = registry.ImportAsset(destination);
+			registry.Shutdown();
+			if (static_cast<uint64_t>(handle) == 0)
+				return false;
+			project->SetStartSceneHandle(handle);
+			return project->SetStartScene("sample.tomcat") && project->Save();
+		};
+		if (HasNonEmptySampleFile(destination))
+		{
+			if (!SceneSerializer::ValidateCurrentFormat(destination))
+			{
+				TC_Core_Error("Existing starter scene is not in the current format: {0}",
+					PathToUTF8(destination));
+				return false;
+			}
+			return registerSample();
+		}
+
+		std::error_code error;
+		std::filesystem::create_directories(destination.parent_path(), error);
+		if (error)
+		{
+			TC_Core_Error("Could not create the project's asset directory '{0}': {1}",
+				PathToUTF8(destination.parent_path()), error.message());
+			return false;
+		}
+
+		return WriteSampleScene(destination, templateName) && registerSample();
 	}
 
 	Ref<Project> ProjectManager::CreateProject(const std::filesystem::path& projectPath, const ProjectConfig& config)

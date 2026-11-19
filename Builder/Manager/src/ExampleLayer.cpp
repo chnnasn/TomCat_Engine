@@ -55,16 +55,6 @@ namespace {
 		return out;
 	}
 
-	bool HasNonEmptyFile(const std::filesystem::path& path)
-	{
-		std::error_code error;
-		if (!std::filesystem::is_regular_file(path, error) || error)
-			return false;
-
-		const auto size = std::filesystem::file_size(path, error);
-		return !error && size > 0;
-	}
-
 	bool IsValidProjectDirectoryName(const std::string& name)
 	{
 		if (name.empty() || name == "." || name == "..")
@@ -91,65 +81,6 @@ namespace {
 		};
 		return std::none_of(reservedNames.begin(), reservedNames.end(),
 			[&baseName](const char* reserved) { return baseName == reserved; });
-	}
-
-	bool WriteSampleScene(const std::filesystem::path& destination, const std::string& templateName)
-	{
-		// SceneSerializer owns the current schema version and field set. Generating
-		// starter scenes through it prevents packaged templates from drifting.
-		auto scene = TomCat::CreateRef<TomCat::Scene>();
-		scene->SetSceneName("sample");
-		TomCat::Entity mainCamera = scene->CreateEntityWithUUID(
-			TomCat::UUID(1000000000000000001ULL), "MainCamera");
-		auto& camera = mainCamera.AddComponent<TomCat::C_Camera>();
-		if (templateName == "2D")
-			camera._Camera.SetOrthographic(10.0f, 0.0f, 1000.0f);
-		else
-			camera._Camera.SetPerspective(glm::radians(45.0f), 0.01f, 1000.0f);
-
-		TomCat::SceneSerializer serializer(scene);
-		return serializer.Serialize(destination) && HasNonEmptyFile(destination);
-	}
-
-	bool EnsureSampleSceneAsset(const TomCat::Ref<TomCat::Project>& project, const std::string& templateName)
-	{
-		if (!project)
-			return false;
-
-		const std::filesystem::path destination = project->GetAssetPath() / "sample.tomcat";
-		auto registerSample = [&]()
-		{
-			TomCat::AssetRegistry registry;
-			if (!registry.Initialize(project->GetAssetPath(), project->GetLibraryPath()))
-				return false;
-			const TomCat::AssetHandle handle = registry.ImportAsset(destination);
-			registry.Shutdown();
-			if (static_cast<uint64_t>(handle) == 0)
-				return false;
-			project->SetStartSceneHandle(handle);
-			return project->SetStartScene("sample.tomcat") && project->Save();
-		};
-		if (HasNonEmptyFile(destination))
-		{
-			if (!TomCat::SceneSerializer::ValidateCurrentFormat(destination))
-			{
-				TC_Core_Error("Existing starter scene is not in the current format: {0}",
-					TomCat::PathToUTF8(destination));
-				return false;
-			}
-			return registerSample();
-		}
-
-		std::error_code error;
-		std::filesystem::create_directories(destination.parent_path(), error);
-		if (error)
-		{
-			TC_Core_Error("Could not create the project's asset directory '{0}': {1}",
-				TomCat::PathToUTF8(destination.parent_path()), error.message());
-			return false;
-		}
-
-		return WriteSampleScene(destination, templateName) && registerSample();
 	}
 
 
@@ -882,7 +813,7 @@ void ExampleLayer::OnEvent(Event& e)
 			config.Template = (m_NewProjectTemplate == 0) ? "2D" : "3D";
 			std::filesystem::path projectPath = requestedDirectory / "Project.tcproj";
 			auto project = ProjectManager::Get().CreateProject(projectPath, config);
-			if (project && EnsureSampleSceneAsset(project, config.Template))
+			if (project && ProjectManager::InstallSampleScene(project, config.Template))
 			{
 				m_Projects = ProjectManager::Get().GetProjects();
 				m_ShowNewProjectDialog = false;
