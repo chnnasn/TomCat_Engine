@@ -237,9 +237,23 @@ namespace TomCat {
                     return props;
                 }(),true)
 		{
+			// The entry point has already removed engine switches and made the
+			// project path absolute. Take the first positional argument so other
+			// leading flags are never opened as a project file.
 			std::filesystem::path startupProjectPath;
-			if (args.Count > 1)
-				startupProjectPath = UTF8ToPath(args[1]);
+			for (int index = 1; index < args.Count; ++index)
+			{
+				const char* argument = args[index];
+				if (!argument || argument[0] == '\0')
+					continue;
+				if (argument[0] == '-')
+				{
+					TC_Core_Warn("Ignoring unrecognized Editor command-line option '{0}'", argument);
+					continue;
+				}
+				startupProjectPath = UTF8ToPath(argument);
+				break;
+			}
 			
 			// EditorLayer acquires the project lock and validates current formats
 			// before activating the project.

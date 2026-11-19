@@ -38,9 +38,14 @@ int main(int argc, char** argv)
     try {
         if (const auto executable = TomCat::ApplicationPaths::GetExecutablePath()) {
             TomCat::ApplicationPaths::SetRuntimePackageRoot(executable->parent_path());
-            if (product == TomCat::ApplicationProduct::Editor && count > 1 && arguments[1][0] != '-') {
-                projectPath = std::filesystem::absolute(arguments[1]).string();
-                arguments[1] = projectPath.data();
+            if (product == TomCat::ApplicationProduct::Editor) {
+                // The Editor opens the first positional argument; leading flags are skipped.
+                for (int i = 1; i < count; ++i) {
+                    if (arguments[i][0] == '\0' || arguments[i][0] == '-') continue;
+                    projectPath = std::filesystem::absolute(arguments[i]).string();
+                    arguments[i] = projectPath.data();
+                    break;
+                }
             }
             if (product == TomCat::ApplicationProduct::Editor || product == TomCat::ApplicationProduct::Hub)
                 std::filesystem::current_path(executable->parent_path());

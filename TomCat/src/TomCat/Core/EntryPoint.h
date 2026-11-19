@@ -191,6 +191,7 @@ int wmain(int argc, wchar_t** argv) {
 		std::vector<char*> argumentPointers;
 		utf8Arguments.reserve(static_cast<size_t>(argc));
 		argumentPointers.reserve(static_cast<size_t>(argc) + 1);
+		bool editorProjectResolved = false;
 		for (int index = 0; index < argc; ++index)
 		{
 			// Engine-owned switches must not reach the product's strict parser or be
@@ -198,6 +199,20 @@ int wmain(int argc, wchar_t** argv) {
 			if (index != 0 && argv[index]
 				&& _wcsicmp(argv[index], L"--profile") == 0)
 				continue;
+			// SetPackagedWorkingDirectory may already have moved the working
+			// directory to the executable. Anchor the Editor's relative project
+			// path to the caller's directory, matching LinuxEntryPoint.h.
+			if (index != 0 && !editorProjectResolved && !launchDirectoryError
+				&& applicationProduct == TomCat::ApplicationProduct::Editor
+				&& argv[index] && argv[index][0] != L'\0' && argv[index][0] != L'-')
+			{
+				editorProjectResolved = true;
+				std::filesystem::path project(argv[index]);
+				if (project.is_relative())
+					project = (launchWorkingDirectory / project).lexically_normal();
+				utf8Arguments.push_back(TomCat::WideArgumentToUtf8(project.c_str()));
+				continue;
+			}
 			utf8Arguments.push_back(TomCat::WideArgumentToUtf8(argv[index]));
 		}
 		for (std::string& argument : utf8Arguments)
