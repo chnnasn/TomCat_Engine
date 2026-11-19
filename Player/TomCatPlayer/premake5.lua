@@ -58,3 +58,6 @@ project "TomCatPlayer"
 		runtime "Debug"
 		symbols "on"
 		links { table.unpack(TomCatConsumerLinksDebug) }
+		postbuildcommands {
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul"
+		}

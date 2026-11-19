@@ -71,7 +71,7 @@ project "TomCatInut"
 		runtime "Debug"
 		symbols "on"
 		postbuildcommands {
-			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul",
 			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Circle.tga & exit /b 1)",
 			"if not exist \"$(ProjectDir)Packages\\Resources\\Sprites\\TomCat\\Square.tga\" (echo ERROR: Required package asset is missing: Resources\\Sprites\\TomCat\\Square.tga & exit /b 1)",
 			"if not exist \"$(ProjectDir)Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" (echo ERROR: Required package asset is missing: fonts\\opensans\\OpenSans-Regular.ttf & exit /b 1)",

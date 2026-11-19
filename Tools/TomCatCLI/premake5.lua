@@ -48,7 +48,6 @@ project "TomCatCLI"
 		systemversion "latest"
 		defines { "TC_PLATFORM_WINDOWS", "YAML_CPP_STATIC_DEFINE" }
 		postbuildcommands {
-			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
 			"if not exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" (echo ERROR: Required CLI package asset is missing: Circle.tga & exit /b 1)",
 			"if not exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\\Square.tga\" (echo ERROR: Required CLI package asset is missing: Square.tga & exit /b 1)",
 			"if not exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" (echo ERROR: Required CLI package asset is missing: OpenSans-Regular.ttf & exit /b 1)",
@@ -65,6 +64,12 @@ project "TomCatCLI"
 		symbols "on"
 		links { table.unpack(TomCatConsumerLinksDebug) }
 
+	-- Debug links shaderc_sharedd.lib (Dependencies.lua); ship the matching DLL.
+	filter { "system:windows", "configurations:Debug" }
+		postbuildcommands {
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul"
+		}
+
 	filter "configurations:Release"
 		defines "TC_RELEASE"
 		runtime "Release"
@@ -76,3 +81,8 @@ project "TomCatCLI"
 		runtime "Release"
 		optimize "on"
 		links { table.unpack(TomCatConsumerLinksRelease) }
+
+	filter { "system:windows", "configurations:Release or Dist" }
+		postbuildcommands {
+			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul"
+		}
