@@ -19,7 +19,18 @@ public sealed class ScriptDomain : IDisposable
     private readonly Dictionary<ulong, ScriptDescriptor> _descriptors = [];
     private readonly Dictionary<ulong, ScriptSceneRuntime> _scenes = [];
     private WeakReference? _unloadReference;
+    // Blocks new loads and scene runtimes as soon as teardown starts.
     private bool _unloadBegun;
+    // Set only once the ALC has actually been handed to Unload() (or released on
+    // a non-collectible host). PollUnload must not report success before this.
+    private UnloadState _unloadState = UnloadState.None;
+
+    private enum UnloadState
+    {
+        None,
+        Collectible,      // ALC.Unload() called; completion tracked by _unloadReference.
+        NonCollectible    // browser-wasm: nothing to collect once references are released.
+    }
     private static long s_nextSceneId;
 
     public ScriptDomain(ScriptDomainKind kind)
@@ -96,7 +107,8 @@ public sealed class ScriptDomain : IDisposable
 
     public void BeginUnload()
     {
-        if (_unloadBegun)
+        // A previous attempt that threw before reaching Unload() may be retried.
+        if (_unloadState != UnloadState.None)
             return;
         _unloadBegun = true;
 
@@ -126,31 +138,39 @@ public sealed class ScriptDomain : IDisposable
         ManifestJson = "{\"version\":1,\"scripts\":[]}";
         _assembly = null;
 
-        ProjectLoadContext? context = _loadContext;
-        _loadContext = null;
-        if (context is not null)
+        // The constructor always creates the context and it is cleared only after
+        // a successful hand-off below, so a retry still finds it here.
+        ProjectLoadContext context = _loadContext!;
+        if (context.IsCollectible)
         {
-            if (context.IsCollectible)
-            {
-                _unloadReference = new WeakReference(context, trackResurrection: false);
-                context.Unload();
-            }
-            else
-            {
-                // browser-wasm does not support collectible ALCs. All scene
-                // instances, callbacks, cancellation and descriptors were still
-                // released above; a newly compiled assembly requires recreating
-                // the browser module, matching the Editor host contract.
-                _unloadReference = null;
-            }
+            var reference = new WeakReference(context, trackResurrection: false);
+            context.Unload();
+            _unloadReference = reference;
+            _unloadState = UnloadState.Collectible;
         }
+        else
+        {
+            // browser-wasm does not support collectible ALCs. All scene
+            // instances, callbacks, cancellation and descriptors were still
+            // released above; a newly compiled assembly requires recreating
+            // the browser module, matching the Editor host contract.
+            _unloadReference = null;
+            _unloadState = UnloadState.NonCollectible;
+        }
+        _loadContext = null;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public bool PollUnload()
     {
-        if (!_unloadBegun)
-            return false;
+        switch (_unloadState)
+        {
+            case UnloadState.None:
+                // Not started, or teardown threw before the ALC was unloaded.
+                return false;
+            case UnloadState.NonCollectible:
+                return true;
+        }
         if (_unloadReference is null || !_unloadReference.IsAlive)
             return true;
         GC.Collect();
