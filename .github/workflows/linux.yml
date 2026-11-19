@@ -18,7 +18,8 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Initialize portable dependencies
-        run: git submodule update --init --recursive TomCat/vendor/GLFW TomCat/vendor/ImGui TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/yaml-cpp TomCat/vendor/Box2D TomCat/vendor/ImGuizmo TomCat/vendor/Assimp
+        # ImGui and yaml-cpp are vendored as regular tracked files, not submodules.
+        run: git submodule update --init --recursive TomCat/vendor/GLFW TomCat/vendor/glm TomCat/vendor/spdlog TomCat/vendor/Box2D TomCat/vendor/ImGuizmo TomCat/vendor/Assimp
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
