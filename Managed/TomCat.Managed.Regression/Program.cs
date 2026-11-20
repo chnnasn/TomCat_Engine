@@ -141,10 +141,14 @@ internal static unsafe partial class Program
 	private static readonly UTF8Encoding s_strictUtf8 = new(false, true);
 	private static readonly int s_mainManagedThread = Environment.CurrentManagedThreadId;
 
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
 		{
+			if (args.Length == 1 && args[0] == WriteInteropAbiArgument)
+				return WriteInteropAbi();
+			Check(args.Length == 0, $"usage: TomCat.Managed.Regression [{WriteInteropAbiArgument}]");
+			VerifyInteropAbiIsCurrent();
 			VerifyDescriptorConstructorFactory();
 			VerifyConstructorGuard();
 			VerifySaveDocumentCodec();

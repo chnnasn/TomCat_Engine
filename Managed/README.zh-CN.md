@@ -237,6 +237,12 @@ Begin、Complete 或托管确认发生协议错误会终止当前 Play Scene，�
 权威字段签名和可直接跨边界传递的布局位于
 [InteropTypes.cs](TomCat.Managed/InteropTypes.cs)，Managed 表位于
 [ManagedApiV1.cs](TomCat.ScriptHost/ManagedApiV1.cs)。
+修改任何互操作结构体后，运行
+`dotnet run --project Managed/TomCat.Managed.Regression -- --write-interop-abi`。
+它会重新生成两个文件：`TomCat/src/TomCat/Scripting/ManagedAbiLayout.generated.h`，其中的
+static_assert 会在 `ScriptTypes.h` 的大小、偏移或字段类型与 C# 不一致时让原生构建失败；
+以及 `TomCat.WebHost/NativeCallSignatures.cs`，即浏览器构建所需的 wasm 调用签名。
+任一文件过期时，托管回归测试都会失败。
 
 - `NativeByteView` / `NativeUtf8View`：指针后接 `uint64` 字节长度。
 - `NativeEntityHandleV1`：`{ sceneSessionId, entityId, runtimeGeneration }`。

@@ -3112,9 +3112,9 @@ namespace {
 		const TomCat::ManagedPackagePayload* mountedPayload =
 			assets.GetCookedManagedPayload();
 		Require(mountedPayload
-			&& mountedPayload->NativeApiVersion == 1
-			&& mountedPayload->ManagedApiVersion == 6
-			&& mountedPayload->ScriptManifestVersion == 1
+			&& mountedPayload->NativeApiVersion == TomCat::RuntimeCompatibility::NativeApiVersion
+			&& mountedPayload->ManagedApiVersion == TomCat::RuntimeCompatibility::ManagedApiVersion
+			&& mountedPayload->ScriptManifestVersion == TomCat::RuntimeCompatibility::ScriptManifestVersion
 			&& mountedPayload->TargetFramework == "net10.0"
 			&& mountedPayload->RuntimeIdentifier == "portable"
 			&& mountedPayload->BuildID == buildID

@@ -260,7 +260,13 @@ callback transaction capability.
 
 The authoritative field signatures and blittable layouts are in
 `TomCat.Managed/InteropTypes.cs`; `ManagedApiV1` is in
-`TomCat.ScriptHost/ManagedApiV1.cs`. `NativeByteView`/`NativeUtf8View` are a pointer followed by a
+`TomCat.ScriptHost/ManagedApiV1.cs`. After changing any interop struct, run
+`dotnet run --project Managed/TomCat.Managed.Regression -- --write-interop-abi`.
+It regenerates `TomCat/src/TomCat/Scripting/ManagedAbiLayout.generated.h`, whose
+static_asserts fail the native build when `ScriptTypes.h` differs in size, offset or
+field type, and `TomCat.WebHost/NativeCallSignatures.cs`, the wasm call shapes the
+browser build needs. The managed regression fails while either file is stale.
+`NativeByteView`/`NativeUtf8View` are a pointer followed by a
 `uint64` byte length. `NativeEntityHandleV1` is `{ sceneSessionId, entityId, runtimeGeneration }`.
 `NativeScriptAttachmentV1` is `{ Entity, attachmentId, scriptAsset, int32 enabled, int32 reserved }`.
 `NativePhysicsEventV1` is `{ uint32 kind, uint32 reserved, Entity A, Entity B }`, where kinds 0..3
