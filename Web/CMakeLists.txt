@@ -89,7 +89,7 @@ add_executable(tomcat_editor
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ContentBrowserPanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ConsolePanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ProfilerPanel.cpp"
-  "${TC_ROOT}/Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
+  "${TC_ROOT}/TomCatBuild/src/Scripting/ScriptMetadataCache.cpp"
   "${TC_VENDOR}/ImGui/imgui.cpp" "${TC_VENDOR}/ImGui/imgui_draw.cpp"
   "${TC_VENDOR}/ImGui/imgui_tables.cpp" "${TC_VENDOR}/ImGui/imgui_widgets.cpp"
   "${TC_VENDOR}/ImGui/backends/imgui_impl_glfw.cpp"
@@ -98,7 +98,8 @@ add_executable(tomcat_editor
   "${TC_SRC}/TomCat/Editor/WebEditorSession.cpp"
   "${TC_SRC}/TomCat/Editor/SceneHistory.cpp")
 target_link_libraries(tomcat_editor PRIVATE tc_player_core)
-target_include_directories(tomcat_editor PRIVATE "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src")
+target_include_directories(tomcat_editor PRIVATE "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src"
+  "${TC_ROOT}/TomCatBuild/src")
 target_compile_definitions(tomcat_editor PRIVATE IMGUI_IMPL_OPENGL_ES3)
 target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatEditorModule"
@@ -128,7 +129,7 @@ add_library(tomcat_managed_web_entrypoints STATIC
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ContentBrowserPanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ConsolePanel.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/panels/ProfilerPanel.cpp"
-  "${TC_ROOT}/Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
+  "${TC_ROOT}/TomCatBuild/src/Scripting/ScriptMetadataCache.cpp"
   "${TC_VENDOR}/ImGui/imgui.cpp" "${TC_VENDOR}/ImGui/imgui_draw.cpp"
   "${TC_VENDOR}/ImGui/imgui_tables.cpp" "${TC_VENDOR}/ImGui/imgui_widgets.cpp"
   "${TC_VENDOR}/ImGui/backends/imgui_impl_glfw.cpp"
@@ -138,5 +139,5 @@ add_library(tomcat_managed_web_entrypoints STATIC
   "${TC_SRC}/TomCat/Editor/SceneHistory.cpp")
 target_link_libraries(tomcat_managed_web_entrypoints PUBLIC tc_player_core)
 target_include_directories(tomcat_managed_web_entrypoints PRIVATE
-  "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src")
+  "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src" "${TC_ROOT}/TomCatBuild/src")
 target_compile_definitions(tomcat_managed_web_entrypoints PRIVATE IMGUI_IMPL_OPENGL_ES3)

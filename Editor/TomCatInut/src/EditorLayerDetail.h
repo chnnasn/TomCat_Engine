@@ -467,38 +467,6 @@ namespace EditorLayerDetail {
 		}
 
 
-		bool ReadBinaryFileForBuild(const std::filesystem::path& path,
-			std::vector<uint8_t>& bytes, std::string& errorMessage)
-		{
-			bytes.clear();
-			std::error_code error;
-			const uintmax_t fileSize = std::filesystem::file_size(path, error);
-			if (error || fileSize > static_cast<uintmax_t>((std::numeric_limits<size_t>::max)()))
-			{
-				errorMessage = "Could not inspect '" + PathToUTF8(path) + "': " +
-					(error ? error.message() : "file is too large");
-				return false;
-			}
-			std::ifstream input(path, std::ios::binary);
-			if (!input)
-			{
-				errorMessage = "Could not open '" + PathToUTF8(path) + "'.";
-				return false;
-			}
-			bytes.resize(static_cast<size_t>(fileSize));
-			if (!bytes.empty())
-				input.read(reinterpret_cast<char*>(bytes.data()),
-					static_cast<std::streamsize>(bytes.size()));
-			if (!input || input.peek() != std::char_traits<char>::eof())
-			{
-				errorMessage = "Could not read '" + PathToUTF8(path) + "' completely.";
-				bytes.clear();
-				return false;
-			}
-			return true;
-		}
-
-
 	}
 
 }

@@ -29,6 +29,7 @@ group "Dependencies"
 group ""
 
 include "../TomCat"
+include "../TomCatBuild"
 include "PhysicsRegression"
 include "SpriteAssetRegression"
 include "ScriptCompilerRegression"

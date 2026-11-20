@@ -10,7 +10,7 @@
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/Entity.h"
 #include "../EditorIcons.h"
-#include "../Scripting/ScriptEditorMetadata.h"
+#include "Scripting/ScriptEditorMetadata.h"
 
 #include <array>
 #include <filesystem>

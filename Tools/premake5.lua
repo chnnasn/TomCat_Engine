@@ -18,5 +18,6 @@ workspace "Tools"
 	group ""
 
 	include "../TomCat"
+	include "../TomCatBuild"
 	include "TomCatCLI"
 include "CoinRunnerGen"

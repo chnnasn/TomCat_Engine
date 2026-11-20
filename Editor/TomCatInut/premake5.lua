@@ -20,6 +20,7 @@ project "TomCatInut"
         "../../TomCat/vendor/Glad/include",
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
+		"%{wks.location}/../TomCatBuild/src",
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}",
@@ -38,6 +39,7 @@ project "TomCatInut"
 
 	links
 	{
+		"TomCatBuild",
 		"TomCat",
 		"Ws2_32",
 		table.unpack(TomCatConsumerLinks)

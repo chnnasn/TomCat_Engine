@@ -51,7 +51,7 @@
 #include "TomCat/Scene/Components.h"
 #include "TomCat/Asset/Asset.h"
 #include "../EditorIcons.h"
-#include "../Scripting/ScriptEditorMetadata.h"
+#include "Scripting/ScriptEditorMetadata.h"
 
 namespace TomCat {
 namespace HierarchyDetail {

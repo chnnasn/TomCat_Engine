@@ -10,18 +10,12 @@ project "TomCatCLI"
 
 	files
 	{
-		"src/**.cpp",
-		"../../Editor/TomCatInut/src/Player/PlayerBuilder.cpp",
-		"../../Editor/TomCatInut/src/Player/PlayerBuilder.h",
-		"../../Editor/TomCatInut/src/Scripting/ScriptProjectCompiler.cpp",
-		"../../Editor/TomCatInut/src/Scripting/ScriptProjectCompiler.h",
-		"../../Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp",
-		"../../Editor/TomCatInut/src/Scripting/ScriptMetadataCache.h"
+		"src/**.cpp"
 	}
 
 	includedirs
 	{
-		"%{wks.location}/../Editor/TomCatInut/src",
+		"%{wks.location}/../TomCatBuild/src",
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
 		"%{wks.location}/../TomCat/vendor",
@@ -40,7 +34,7 @@ project "TomCatCLI"
 		"../../TomCat/vendor/yaml-cpp/bin/" .. outputdir .. "/yaml-cpp"
 	}
 
-	links { "TomCat", table.unpack(TomCatConsumerLinks) }
+	links { "TomCatBuild", "TomCat", table.unpack(TomCatConsumerLinks) }
 	buildoptions "/utf-8"
 
 	filter "system:windows"

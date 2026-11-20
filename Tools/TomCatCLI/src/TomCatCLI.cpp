@@ -1,18 +1,15 @@
 #include <TomCat.h>
 
-#include "Player/PlayerBuilder.h"
-#include "Scripting/ScriptProjectCompiler.h"
+#include "Build/BuildPipeline.h"
 
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Module/ModuleSystem.h"
-#include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Utils/PathUtils.h"
 
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -156,53 +153,20 @@ namespace {
 		return result;
 	}
 
-	bool ReadBinary(const std::filesystem::path& path,
-		std::vector<uint8_t>& bytes, std::string& error)
+	// Exit codes are documented in Tools/TomCatCLI/README.md.
+	int ExitCodeFor(TomCat::Build::BuildFailure failure)
 	{
-		bytes.clear();
-		std::ifstream input(path, std::ios::binary | std::ios::ate);
-		const std::streamoff end = input ? static_cast<std::streamoff>(input.tellg()) : -1;
-		if (end <= 0)
+		using TomCat::Build::BuildFailure;
+		switch (failure)
 		{
-			error = "could not read '" + TomCat::PathToUTF8(path) + "'";
-			return false;
+			case BuildFailure::EntryScene: return 7;
+			case BuildFailure::ManagedCompile: return 8;
+			case BuildFailure::Cook: return 9;
+			case BuildFailure::ArtifactRead: return 11;
+			case BuildFailure::PlayerBuild: return 12;
+			case BuildFailure::None: break;
 		}
-		bytes.resize(static_cast<size_t>(end));
-		input.seekg(0, std::ios::beg);
-		if (!input.read(reinterpret_cast<char*>(bytes.data()), end))
-		{
-			error = "could not read the complete file '" + TomCat::PathToUTF8(path) + "'";
-			return false;
-		}
-		return true;
-	}
-
-	bool CompileManaged(const TomCat::Ref<TomCat::Project>& project,
-		TomCat::ScriptProjectCompiler& compiler, TomCat::ScriptBuildResult& build, TomCat::ScriptBuildProfile profile,
-		std::string& error)
-	{
-		compiler.SetDiagnosticCallback([](const TomCat::ScriptCompilerDiagnostic& value)
-		{
-			std::ostream& stream = value.Level ==
-				TomCat::ScriptCompilerDiagnostic::Severity::Error ? std::cerr : std::cout;
-			stream << (value.Code.empty() ? "C#" : value.Code) << ": "
-				<< value.Message << '\n';
-		});
-		if (!compiler.Configure(project, {}, {}, profile))
-		{
-			error = "could not configure the managed Release compiler";
-			return false;
-		}
-		build = compiler.CompileNow();
-		if (!build.Succeeded || build.SourceChangedDuringBuild
-			|| build.BuildID.empty() || build.AssemblyPath.empty())
-		{
-			error = build.SourceChangedDuringBuild
-				? "C# sources changed during compilation; run again"
-				: "the managed Release build failed";
-			return false;
-		}
-		return true;
+		return 1;
 	}
 
 	int Run(const Options& options)
@@ -247,102 +211,43 @@ namespace {
 			return 6;
 		}
 
-		const TomCat::BuildSettings& settings = project->GetBuildSettings();
-		if (static_cast<uint64_t>(settings.EntrySceneHandle) == 0)
+		// The Editor runs the same pipeline (TomCatBuild/src/Build/BuildPipeline.h).
+		auto fail = [](const TomCat::Build::BuildError& failure)
 		{
-			std::cerr << "BuildSettings has no enabled entry scene\n";
-			return 7;
-		}
-		TomCat::ScriptProjectCompiler compiler;
-		TomCat::ScriptBuildResult managedBuild;
-		if (!CompileManaged(project, compiler, managedBuild, options.Profile, error))
-		{
-			std::cerr << error << '\n';
-			return 8;
-		}
-
-
-		std::string runtimeError;
-		auto runtime = TomCat::Scripting::CreateManagedScriptRuntime(
-			compiler.GetManagedRuntimeDirectory(), managedBuild.AssemblyPath,
-			managedBuild.PdbPath, {}, &runtimeError);
-		std::string manifest;
-		if (!runtime || !runtime->IsReady() || !runtime->ReadProjectMetadata(manifest))
-		{
-			std::cerr << "Could not read the fresh managed manifest: "
-				<< runtimeError << '\n';
-			return 10;
-		}
-		runtime.reset();
-		std::vector<uint8_t> assembly;
-		if (!ReadBinary(managedBuild.AssemblyPath, assembly, error))
-		{
-			std::cerr << error << '\n';
-			return 11;
-		}
-
-        if (options.Operation == Command::Cook)
-        {
-            // Use the exact build selected above, including its build profile.
-            // Rediscovering last-good.json would silently select Development.
-            std::vector<uint8_t> pdb;
-            if (!managedBuild.PdbPath.empty() && !ReadBinary(managedBuild.PdbPath, pdb, error))
-            {
-                std::cerr << error << '\n';
-                return 11;
-            }
-            if (!assets.SetManagedCookPayload(std::move(assembly), manifest,
-                managedBuild.BuildID, std::move(pdb)))
-            {
-                std::cerr << "The fresh managed cook payload was rejected\n";
-                return 9;
-            }
-            const std::filesystem::path output = options.OutputPath.empty()
-                ? project->GetProjectDirectory() / "Build" / "Game.tcpak"
-                : options.OutputPath;
-            bool cooked = false;
-            {
-                struct PayloadGuard { TomCat::AssetManager& Assets; ~PayloadGuard() { Assets.ClearManagedCookPayload(); } };
-                PayloadGuard payloadGuard{ assets };
-                cooked = assets.CookToPackage(output, settings.EntrySceneHandle);
-            }
-            if (!cooked)
-            {
-                std::cerr << "Cook failed; see diagnostics above\n";
-                return 9;
-            }
-            std::cout << "Cook succeeded: " << TomCat::PathToUTF8(output) << '\n';
-            return 0;
-        }
-
-		TomCat::PlayerBuildRequest request;
-		request.ProjectInstance = project;
-		request.EntryScene = settings.EntrySceneHandle;
-		request.TemplateDirectory = options.TemplatePath.empty()
-			? TomCat::PlayerBuilder::FindDefaultTemplateDirectory()
-			: options.TemplatePath;
-		if (!managedBuild.PdbPath.empty()
-			&& !ReadBinary(managedBuild.PdbPath, request.ManagedPdb, error))
-		{
-			std::cerr << error << '\n';
-			return 11;
-		}
-		request.ManagedAssembly = std::move(assembly);
-		request.ScriptManifestJson = std::move(manifest);
-		request.ScriptBuildID = managedBuild.BuildID;
-		request.ValidateBeforePublish = [&compiler, managedBuild]()
-		{
-			return compiler.RefreshSourceState() && compiler.IsCurrentSourceBuilt()
-				&& compiler.GetCurrentSourceHash() == managedBuild.SourceHash
-				&& compiler.GetLastGoodBuildID() == managedBuild.BuildID;
+			std::cerr << failure.Message << '\n';
+			return ExitCodeFor(failure.Kind);
 		};
-		const TomCat::PlayerBuildResult result = TomCat::PlayerBuilder::Build(
-			std::move(request));
-		if (!result.Succeeded)
+		TomCat::Build::BuildError buildError;
+		TomCat::AssetHandle entryScene;
+		if (!TomCat::Build::ResolveEntryScene(project->GetBuildSettings(), entryScene, buildError))
+			return fail(buildError);
+
+		TomCat::ScriptProjectCompiler compiler;
+		compiler.SetDiagnosticCallback([](const TomCat::ScriptCompilerDiagnostic& value)
 		{
-			std::cerr << result.Message << '\n';
-			return 12;
-		}
+			std::ostream& stream = value.Level ==
+				TomCat::ScriptCompilerDiagnostic::Severity::Error ? std::cerr : std::cout;
+			stream << (value.Code.empty() ? "C#" : value.Code) << ": "
+				<< value.Message << '\n';
+		});
+		TomCat::Build::ManagedCandidate candidate;
+		if (!TomCat::Build::PrepareManagedCandidate(project, compiler, options.Profile,
+			candidate, buildError))
+			return fail(buildError);
+
+		// Cook uses the exact candidate compiled above, including its profile.
+		// Rediscovering last-good.json would silently select Development.
+		TomCat::Build::CookOrBuildRequest request;
+		request.Output = options.Operation == Command::Cook
+			? TomCat::Build::BuildOutput::Package : TomCat::Build::BuildOutput::Player;
+		request.ProjectInstance = project;
+		request.EntryScene = entryScene;
+		request.PackagePath = options.OutputPath;
+		request.TemplateDirectory = options.TemplatePath;
+		const TomCat::Build::CookOrBuildResult result =
+			TomCat::Build::CookOrBuild(request, compiler, std::move(candidate));
+		if (!result.Succeeded)
+			return fail(result.Error);
 		std::cout << result.Message << '\n';
 		return 0;
 	}

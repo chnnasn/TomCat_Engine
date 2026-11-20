@@ -11,15 +11,12 @@ project "ScriptCompilerRegression"
 	files
 	{
 		"src/**.h",
-		"src/**.cpp",
-		"../../Editor/TomCatInut/src/Player/PlayerBuilder.cpp",
-		"../../Editor/TomCatInut/src/Scripting/ScriptProjectCompiler.cpp",
-		"../../Editor/TomCatInut/src/Scripting/ScriptMetadataCache.cpp"
+		"src/**.cpp"
 	}
 
 	includedirs
 	{
-		"%{wks.location}/../Editor/TomCatInut/src",
+		"%{wks.location}/../TomCatBuild/src",
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
 		"%{wks.location}/../TomCat/vendor",
@@ -40,6 +37,7 @@ project "ScriptCompilerRegression"
 
 	links
 	{
+		"TomCatBuild",
 		"TomCat",
 		table.unpack(TomCatConsumerLinks)
 	}

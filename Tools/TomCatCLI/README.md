@@ -65,6 +65,8 @@ Both commands take the project write lock: close any Editor or other CLI using
 that project first.
 `cook` writes the asset package; `build` also supplies the freshly compiled managed
 assembly and manifest to PlayerBuilder and publishes the standalone Player.
+Both commands run the same pipeline as the Editor's Build Settings window
+(`TomCatBuild/src/Build/BuildPipeline.h`), so they apply the same checks.
 TCPAK output and input use v8 with mandatory per-entry SHA-256 digests.
 
 | Exit code | Meaning |
@@ -72,8 +74,12 @@ TCPAK output and input use v8 with mandatory per-entry SHA-256 digests.
 | 0 | Success or help |
 | 2 | Invalid arguments |
 | 5 | Project load failed (including unsupported format or missing settings) |
-| 6–9 | Module/asset initialization, entry scene, managed compilation, or Cook failure |
-| 10–12 | Managed metadata, assembly/PDB read, or Player build failure |
+| 6 | Module or asset registry initialization failed |
+| 7 | No enabled entry scene, or it is missing or not a Scene asset |
+| 8 | Managed compilation or manifest validation failed, or sources changed during the build |
+| 9 | Cook failure |
+| 11 | Assembly or PDB could not be read |
+| 12 | Player build failure |
 | 13 | Project lock unavailable |
 
 See [project configuration](../../PROJECT_SYSTEM.md) and

@@ -13,7 +13,7 @@
 #include "TomCat/Renderer/Texture.h"
 #include "TomCat/Project/Project.h"
 #include "../EditorIcons.h"
-#include "../Scripting/ScriptEditorMetadata.h"
+#include "Scripting/ScriptEditorMetadata.h"
 
 namespace TomCat {
 

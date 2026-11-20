@@ -140,13 +140,13 @@ tc_application(TomCatInut "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/src" Ed
 tc_application(Manager "${CMAKE_CURRENT_SOURCE_DIR}/Builder/Manager/src" Hub "${CMAKE_CURRENT_SOURCE_DIR}/Builder/Manager/Packages")
 tc_application(TomCatPlayer "${CMAKE_CURRENT_SOURCE_DIR}/Player/TomCatPlayer/src" Player "")
 
-set(TC_EDITOR_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/src")
-add_library(tc_build_tools STATIC
-    "${TC_EDITOR_SRC}/Scripting/ScriptProjectCompiler.cpp"
-    "${TC_EDITOR_SRC}/Scripting/ScriptMetadataCache.cpp"
-    "${TC_EDITOR_SRC}/Player/PlayerBuilder.cpp")
-target_include_directories(tc_build_tools PUBLIC "${TC_EDITOR_SRC}")
+# TomCatBuild: the cook/build pipeline shared by the Editor and TomCatCLI.
+set(TC_BUILD_SRC "${CMAKE_CURRENT_SOURCE_DIR}/TomCatBuild/src")
+file(GLOB_RECURSE tc_build_sources CONFIGURE_DEPENDS "${TC_BUILD_SRC}/*.cpp")
+add_library(tc_build_tools STATIC ${tc_build_sources})
+target_include_directories(tc_build_tools PUBLIC "${TC_BUILD_SRC}")
 target_link_libraries(tc_build_tools PUBLIC TomCat)
+target_link_libraries(TomCatInut PRIVATE tc_build_tools)
 tc_application(TomCatCLI "${CMAKE_CURRENT_SOURCE_DIR}/Tools/TomCatCLI/src" CLI "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/Packages")
 target_link_libraries(TomCatCLI PRIVATE tc_build_tools)
 

@@ -53,6 +53,9 @@ namespace TomCat {
 		std::string BuildID;
 		std::filesystem::path AssemblyPath;
 		std::filesystem::path PdbPath;
+		// Script manifest read from the candidate during validation. Callers use
+		// it instead of hosting the assembly again just to read the metadata.
+		std::string ManifestJson;
 		std::vector<ScriptCompilerDiagnostic> Diagnostics;
 	};
 

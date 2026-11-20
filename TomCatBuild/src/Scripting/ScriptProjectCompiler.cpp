@@ -1541,6 +1541,7 @@ namespace TomCat {
 			return result;
 		}
 
+		result.ManifestJson = std::move(manifestJson);
 		result.Succeeded = true;
 		return result;
 	}

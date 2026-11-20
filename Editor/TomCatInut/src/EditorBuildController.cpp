@@ -45,6 +45,7 @@
 #include "TomCat/Scripting/ScriptEngine.h"
 #include "TomCat/Runtime/RuntimeUI.h"
 
+#include "Build/BuildPipeline.h"
 #include "Player/PlayerBuilder.h"
 #include "ImGuizmo.h"
 
@@ -595,70 +596,44 @@ using namespace EditorLayerDetail;
 		if (m_Layer.m_ScriptCompiler.IsCompileInProgress())
 			return fail("Player build failed: the background C# compilation is still running.");
 
-		const BuildSettings& buildSettings = m_Layer.m_CurrentProject->GetBuildSettings();
-		const auto entry = std::find_if(buildSettings.Scenes.begin(),
-			buildSettings.Scenes.end(), [&](const BuildSceneSettings& scene)
-			{
-				return scene.Enabled && scene.Handle == buildSettings.EntrySceneHandle;
-			});
-		if (static_cast<uint64_t>(buildSettings.EntrySceneHandle) == 0
-			|| entry == buildSettings.Scenes.end())
-		{
-			return fail("Player build failed: choose an enabled Entry Scene in Build Settings.");
-		}
-		const AssetHandle entryScene = buildSettings.EntrySceneHandle;
+		// The shared pipeline (TomCatBuild) owns every validation step; this
+		// controller only adds the Editor's scene reconcile/save and the UI.
+		Build::BuildError error;
+		AssetHandle entryScene;
+		if (!Build::ResolveEntryScene(m_Layer.m_CurrentProject->GetBuildSettings(),
+			entryScene, error))
+			return fail("Player build failed: " + error.Message);
 
+		// A Player build always compiles a fresh candidate with the selected
+		// profile on its own compiler, so the Editor's development build and its
+		// metadata runtime are left untouched.
 		ScriptProjectCompiler playerCompiler;
-        if (!playerCompiler.Configure(m_Layer.m_CurrentProject, {}, {}, m_BuildState.DevelopmentBuild
-            ? ScriptBuildProfile::Development : ScriptBuildProfile::Production))
-            return fail("Player build failed: could not configure script build profile.");
-        // Building must not replace the Editor's development metadata runtime.
-        struct RestoreRuntime {
-            std::shared_ptr<Scripting::IScriptRuntime> Previous = Scripting::ScriptEngine::Get().GetRuntime();
-            ~RestoreRuntime() { Scripting::ScriptEngine::Get().SetRuntime(std::move(Previous)); }
-        } restoreRuntime;
-        // A Player build is always based on a newly compiled and validated Release
-		// candidate. Never fall back to the previous last-good artifact here.
-		ScriptBuildResult scriptBuild = playerCompiler.CompileNow();
-		if (!scriptBuild.Succeeded || scriptBuild.SourceChangedDuringBuild ||
-			scriptBuild.BuildID.empty() || scriptBuild.AssemblyPath.empty())
+		playerCompiler.SetDiagnosticCallback([this](const ScriptCompilerDiagnostic& diagnostic)
 		{
-			return fail(scriptBuild.SourceChangedDuringBuild
-				? "Player build failed: C# sources changed during the Release compile. Build again."
-				: "Player build failed: the fresh Release C# candidate did not validate. See Console diagnostics.");
-		}
-		if (!playerCompiler.RefreshSourceState() ||
-			!playerCompiler.IsCurrentSourceBuilt() ||
-			playerCompiler.GetCurrentSourceHash() != scriptBuild.SourceHash ||
-			playerCompiler.GetLastGoodBuildID() != scriptBuild.BuildID ||
-			AbsoluteLexicalPath(playerCompiler.GetLastGoodAssemblyPath()) !=
-				AbsoluteLexicalPath(scriptBuild.AssemblyPath))
-		{
-			return fail("Player build failed: the fresh C# candidate no longer matches the current sources.");
-		}
+			ConsoleMessage message;
+			message.Source = "Player Build C#";
+			message.Code = diagnostic.Code;
+			message.Text = diagnostic.Message;
+			message.File = diagnostic.File;
+			message.Line = diagnostic.Line;
+			message.Column = diagnostic.Column;
+			message.Severity =
+				diagnostic.Level == ScriptCompilerDiagnostic::Severity::Error
+					? ConsoleMessageSeverity::Error
+					: diagnostic.Level == ScriptCompilerDiagnostic::Severity::Warning
+						? ConsoleMessageSeverity::Warning
+						: ConsoleMessageSeverity::Info;
+			m_Layer.m_ConsolePanel.Push(std::move(message));
+		});
+		Build::ManagedCandidate candidate;
+		if (!Build::PrepareManagedCandidate(m_Layer.m_CurrentProject, playerCompiler,
+			m_BuildState.DevelopmentBuild ? ScriptBuildProfile::Development
+				: ScriptBuildProfile::Production, candidate, error))
+			return fail("Player build failed: " + error.Message);
 
-		const std::filesystem::path managedDirectory =
-			playerCompiler.GetManagedRuntimeDirectory();
-		if (managedDirectory.empty())
-			return fail("Player build failed: TomCat.ScriptHost Release outputs are unavailable.");
-		std::string runtimeError;
-		auto runtime = Scripting::CreateManagedScriptRuntime(managedDirectory,
-			scriptBuild.AssemblyPath, scriptBuild.PdbPath, {}, &runtimeError);
-		if (!runtime || !runtime->IsReady())
-		{
-			if (runtimeError.empty())
-				runtimeError = "managed host initialization failed";
-			return fail("Player build failed: the fresh C# candidate could not be hosted: " +
-				runtimeError);
-		}
-		std::string scriptManifestJson;
-		if (!runtime->ReadProjectMetadata(scriptManifestJson))
-			return fail("Player build failed: the fresh C# manifest could not be read.");
 		std::string metadataError;
-		if (!m_Layer.m_ScriptMetadata.ParseAndReplace(scriptManifestJson, metadataError))
+		if (!m_Layer.m_ScriptMetadata.ParseAndReplace(candidate.Script.ManifestJson, metadataError))
 			return fail("Player build failed: the fresh C# manifest is invalid: " + metadataError);
-
-		Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
 		if (!m_Layer.m_EditorScene)
 			return fail("Player build failed: there is no current scene to reconcile and save.");
 		if (m_Layer.ReconcileManagedScriptFields(m_Layer.m_EditorScene))
@@ -666,58 +641,30 @@ using namespace EditorLayerDetail;
 		m_Layer.SaveScene();
 		if (m_Layer.m_EditorScenePath.empty() || m_Layer.IsSceneDirty())
 			return fail("Player build failed: save the current scene before building.");
-
-		AssetManager& assetManager = AssetManager::Get();
-		if (!assetManager.Refresh())
+		if (!AssetManager::Get().Refresh())
 			return fail("Player build failed: the Asset Registry could not be refreshed.");
-		const AssetMetadata* entrySceneMetadata =
-			assetManager.GetRegistry().GetMetadata(entryScene);
-		if (!entrySceneMetadata || entrySceneMetadata->IsMissing ||
-			entrySceneMetadata->Type != AssetType::Scene)
-			return fail("Player build failed: the enabled Entry Scene is missing or is not a Scene asset.");
 
-		std::vector<uint8_t> assemblyBytes;
-		std::string fileError;
-		if (!ReadBinaryFileForBuild(scriptBuild.AssemblyPath, assemblyBytes, fileError))
-			return fail("Player build failed: " + fileError);
-
-		std::vector<uint8_t> pdbBytes;
-		if (!scriptBuild.PdbPath.empty() &&
-			!ReadBinaryFileForBuild(scriptBuild.PdbPath, pdbBytes, fileError))
-			return fail("Player build failed: " + fileError);
-
-		PlayerBuildRequest request;
+		Build::CookOrBuildRequest request;
+		request.Output = Build::BuildOutput::Player;
 		request.ProjectInstance = m_Layer.m_CurrentProject;
-		request.ManagedPdb = std::move(pdbBytes);
 		request.EntryScene = entryScene;
-		request.TemplateDirectory = PlayerBuilder::FindDefaultTemplateDirectory();
-		request.ManagedAssembly = std::move(assemblyBytes);
-		request.ScriptManifestJson = scriptManifestJson;
-		request.ScriptBuildID = scriptBuild.BuildID;
-		request.ValidateBeforePublish = [&playerCompiler, scriptBuild]()
-		{
-			return playerCompiler.RefreshSourceState() &&
-				playerCompiler.IsCurrentSourceBuilt() &&
-				playerCompiler.GetCurrentSourceHash() == scriptBuild.SourceHash &&
-				playerCompiler.GetLastGoodBuildID() == scriptBuild.BuildID &&
-				AbsoluteLexicalPath(playerCompiler.GetLastGoodAssemblyPath()) ==
-					AbsoluteLexicalPath(scriptBuild.AssemblyPath);
-		};
-		PlayerBuildResult playerBuild = PlayerBuilder::Build(std::move(request));
-		if (!playerBuild.Succeeded)
-			return fail("Player build failed: " + playerBuild.Message);
+		const Build::CookOrBuildResult result =
+			Build::CookOrBuild(request, playerCompiler, std::move(candidate));
+		if (!result.Succeeded)
+			return fail("Player build failed: " + result.Error.Message);
 
 		m_BuildState.PlayerBuildSucceeded = true;
-        m_BuildState.PlayerOutputDirectory = PathToUTF8(playerBuild.OutputDirectory);
-		m_BuildState.PlayerBuildStatus = playerBuild.Message;
+        m_BuildState.PlayerOutputDirectory = PathToUTF8(result.OutputPath);
+		m_BuildState.PlayerBuildStatus = result.Message;
 		m_Layer.m_ConsolePanel.Push(ConsoleMessageSeverity::Info,
 			m_BuildState.PlayerBuildStatus, "Player Build");
 		TC_Core_Info("{0}", m_BuildState.PlayerBuildStatus);
 
-		if (runAfterBuild && !PlayerBuilder::Launch(playerBuild.PlayerExecutable,
-			playerBuild.OutputDirectory, fileError))
+		std::string launchError;
+		if (runAfterBuild && !PlayerBuilder::Launch(result.PlayerExecutable,
+			result.OutputPath, launchError))
 		{
-			return fail("Player build succeeded, but Build And Run failed: " + fileError);
+			return fail("Player build succeeded, but Build And Run failed: " + launchError);
 		}
 		return true;
 	}
